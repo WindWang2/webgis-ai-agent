@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "exportedFrom": "app/lib/cartography/component_registry.py",
   "componentTypes": [
     {
@@ -7,7 +7,12 @@
       "variants": [
         "text",
         "callout",
-        "group"
+        "group",
+        "footer",
+        "timestamp",
+        "projection_note",
+        "data_source",
+        "highlight"
       ],
       "defaultVariant": "text",
       "defaultPosition": "top-left",
@@ -60,7 +65,8 @@
         "academic",
         "compact",
         "report",
-        "horizontal"
+        "horizontal",
+        "nested"
       ],
       "defaultVariant": "academic",
       "defaultPosition": "bottom-left",
@@ -82,7 +88,25 @@
         "default",
         "compact",
         "transparent",
-        "report"
+        "report",
+        "bar",
+        "horizontal_bar",
+        "grouped_bar",
+        "stacked_bar",
+        "line",
+        "area",
+        "scatter",
+        "histogram",
+        "box_plot",
+        "pie",
+        "donut",
+        "radar",
+        "rose",
+        "timeseries",
+        "cumulative",
+        "heat_matrix",
+        "kpi_card",
+        "ranking_list"
       ],
       "defaultVariant": "default",
       "defaultPosition": "top-left",
@@ -164,7 +188,8 @@
       "type": "graticule",
       "variants": [
         "light",
-        "geographic"
+        "geographic",
+        "projected"
       ],
       "defaultVariant": "light",
       "defaultPosition": "none",
@@ -184,7 +209,8 @@
       "type": "inset_map",
       "variants": [
         "overview",
-        "location"
+        "location",
+        "hierarchy"
       ],
       "defaultVariant": "overview",
       "defaultPosition": "top-right",
@@ -206,7 +232,12 @@
         "academic",
         "compact",
         "report",
-        "horizontal"
+        "horizontal",
+        "bivariate",
+        "uncertainty",
+        "size",
+        "line",
+        "composite"
       ],
       "defaultVariant": "academic",
       "defaultPosition": "bottom-left",
@@ -248,7 +279,8 @@
       "type": "methodology_note",
       "variants": [
         "default",
-        "compact"
+        "compact",
+        "data_quality"
       ],
       "defaultVariant": "default",
       "defaultPosition": "bottom-left",
@@ -271,7 +303,8 @@
         "compass_needle",
         "compass_rose",
         "arrow_simple",
-        "monochrome"
+        "monochrome",
+        "dual_convention"
       ],
       "defaultVariant": "compass_minimal_black",
       "defaultPosition": "top-right",
@@ -314,7 +347,8 @@
       "variants": [
         "default",
         "compact",
-        "kpi"
+        "kpi",
+        "explanation"
       ],
       "defaultVariant": "default",
       "defaultPosition": "top-left",
@@ -335,7 +369,8 @@
       "variants": [
         "default",
         "academic",
-        "report"
+        "report",
+        "compact"
       ],
       "defaultVariant": "default",
       "defaultPosition": "top-center",
@@ -355,7 +390,8 @@
       "type": "table_panel",
       "variants": [
         "default",
-        "compact"
+        "compact",
+        "dense"
       ],
       "defaultVariant": "default",
       "defaultPosition": "bottom-right",
@@ -365,7 +401,11 @@
       "rendererSupport": [
         "interactive"
       ],
-      "exporterSupport": []
+      "exporterSupport": [
+        "png",
+        "pdf",
+        "svg"
+      ]
     },
     {
       "type": "title",
@@ -374,7 +414,9 @@
         "report",
         "presentation",
         "minimal",
-        "government"
+        "government",
+        "banner",
+        "compact"
       ],
       "defaultVariant": "academic",
       "defaultPosition": "top-center",
@@ -429,6 +471,15 @@
       "printSafe": false,
       "grayLevels": 4,
       "minGrayDelta": 0.0178
+    },
+    {
+      "id": "Gray",
+      "kind": "sequential",
+      "colorblindSafe": true,
+      "colorblindSafeMaxClasses": 9,
+      "printSafe": false,
+      "grayLevels": 4,
+      "minGrayDelta": 0.0513
     },
     {
       "id": "Greens",
@@ -653,6 +704,56 @@
       }
     },
     {
+      "id": "cartographic.government",
+      "profile": "light",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": false,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 700,
+        "minChromePx": 11
+      },
+      "spacing": {
+        "stackStepPx": 38,
+        "chromePaddingPx": 10
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "Blues",
+          "YlOrRd",
+          "Greens"
+        ],
+        "diverging": [
+          "RdBu"
+        ],
+        "qualitative": [
+          "Pastel1",
+          "Set2"
+        ],
+        "perceptual_uniform": [
+          "Viridis"
+        ]
+      }
+    },
+    {
       "id": "cartographic.high_contrast",
       "profile": "high_contrast",
       "outputTargets": [
@@ -856,6 +957,458 @@
           "Viridis"
         ]
       }
+    },
+    {
+      "id": "cartographic.publication",
+      "profile": "print",
+      "outputTargets": [
+        "png",
+        "pdf",
+        "svg",
+        "print"
+      ],
+      "colorblindSafeFirst": true,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 700,
+        "minChromePx": 9
+      },
+      "spacing": {
+        "stackStepPx": 32,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "YlOrRd",
+          "Blues",
+          "Greens",
+          "Reds",
+          "Oranges",
+          "Purples"
+        ],
+        "diverging": [
+          "RdBu",
+          "PuOr"
+        ],
+        "qualitative": [],
+        "perceptual_uniform": [
+          "Viridis"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.remote_sensing",
+      "profile": "dark",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": true,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 600,
+        "minChromePx": 11
+      },
+      "spacing": {
+        "stackStepPx": 36,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [],
+        "diverging": [
+          "RdBu"
+        ],
+        "qualitative": [
+          "Dark2"
+        ],
+        "perceptual_uniform": [
+          "Viridis",
+          "Magma",
+          "Inferno",
+          "Plasma"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.risk_communication",
+      "profile": "light",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": true,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 600,
+        "minChromePx": 11
+      },
+      "spacing": {
+        "stackStepPx": 36,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "Reds",
+          "YlOrRd",
+          "Oranges"
+        ],
+        "diverging": [
+          "RdBu",
+          "PuOr"
+        ],
+        "qualitative": [
+          "Dark2",
+          "Set2"
+        ],
+        "perceptual_uniform": [
+          "Inferno"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.scientific",
+      "profile": "light",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": true,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 600,
+        "minChromePx": 10
+      },
+      "spacing": {
+        "stackStepPx": 36,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "YlOrRd",
+          "Blues",
+          "Greens"
+        ],
+        "diverging": [
+          "RdBu",
+          "PuOr"
+        ],
+        "qualitative": [
+          "Set2",
+          "Dark2"
+        ],
+        "perceptual_uniform": [
+          "Viridis",
+          "Magma",
+          "Inferno",
+          "Plasma"
+        ]
+      }
+    },
+    {
+      "id": "cartographic.terrain",
+      "profile": "light",
+      "outputTargets": [
+        "interactive",
+        "png",
+        "pdf",
+        "svg"
+      ],
+      "colorblindSafeFirst": false,
+      "typography": {
+        "titleSizeToken": "text-title",
+        "bodySizeToken": "text-caption",
+        "microSizeToken": "text-micro",
+        "titleWeight": 600,
+        "minChromePx": 11
+      },
+      "spacing": {
+        "stackStepPx": 36,
+        "chromePaddingPx": 8
+      },
+      "chromeTokenRefs": {
+        "surface": "surface-panel",
+        "surface_raised": "surface-raised",
+        "ink": "text-primary",
+        "ink_muted": "text-secondary",
+        "border": "map-chrome-border",
+        "map_chrome_bg": "map-chrome-bg",
+        "map_chrome_ink": "map-chrome-text",
+        "map_chrome_ink_muted": "map-chrome-text-muted",
+        "map_chrome_border": "map-chrome-border"
+      },
+      "paletteRecommendations": {
+        "sequential": [
+          "Oranges",
+          "YlOrRd",
+          "Greens",
+          "Blues"
+        ],
+        "diverging": [
+          "RdBu"
+        ],
+        "qualitative": [
+          "Dark2"
+        ],
+        "perceptual_uniform": [
+          "Magma",
+          "Viridis"
+        ]
+      }
     }
-  ]
+  ],
+  "chartKinds": [
+    {
+      "id": "area",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "bar",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "box_plot",
+      "dataShape": "series",
+      "liveEngine": "custom-svg",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "cumulative",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "donut",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "grouped_bar",
+      "dataShape": "table",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "heat_matrix",
+      "dataShape": "matrix",
+      "liveEngine": "custom-svg",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "histogram",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "horizontal_bar",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "kpi_card",
+      "dataShape": "kpi",
+      "liveEngine": "custom-svg",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "line",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "pie",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "radar",
+      "dataShape": "table",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "ranking_list",
+      "dataShape": "table",
+      "liveEngine": "custom-svg",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "rose",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "scatter",
+      "dataShape": "xy",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "stacked_bar",
+      "dataShape": "table",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": true
+    },
+    {
+      "id": "timeseries",
+      "dataShape": "series",
+      "liveEngine": "recharts",
+      "exportLevel": "full",
+      "selectionLinkage": false
+    },
+    {
+      "id": "violin",
+      "dataShape": "series",
+      "liveEngine": "planned",
+      "exportLevel": "unsupported",
+      "selectionLinkage": false
+    }
+  ],
+  "chartStates": [
+    "anchored",
+    "collapsed",
+    "docked",
+    "expanded",
+    "floating",
+    "hidden",
+    "visible"
+  ],
+  "chartStateTransitions": [
+    "anchored>collapsed",
+    "anchored>floating",
+    "anchored>hidden",
+    "collapsed>expanded",
+    "collapsed>hidden",
+    "docked>anchored",
+    "docked>collapsed",
+    "docked>floating",
+    "docked>hidden",
+    "expanded>collapsed",
+    "expanded>hidden",
+    "floating>anchored",
+    "floating>collapsed",
+    "floating>docked",
+    "floating>hidden",
+    "hidden>visible",
+    "visible>anchored",
+    "visible>collapsed",
+    "visible>docked",
+    "visible>expanded",
+    "visible>floating"
+  ],
+  "agentChartOperations": {
+    "close": [],
+    "collapse": [
+      "anchored",
+      "docked",
+      "expanded",
+      "floating",
+      "visible"
+    ],
+    "expand": [
+      "collapsed",
+      "visible"
+    ],
+    "filter": [],
+    "highlight": [],
+    "move": [],
+    "pin": [
+      "anchored",
+      "docked",
+      "floating"
+    ],
+    "resize": [
+      "floating"
+    ],
+    "restore": [
+      "hidden"
+    ],
+    "switch_chart_type": [],
+    "switch_field": []
+  }
 }

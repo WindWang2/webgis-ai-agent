@@ -118,7 +118,9 @@ def test_validate_chart_payload_accepts_valid_bar():
 
 
 def test_validate_chart_payload_rejects_bad_type_and_points():
-    assert validate_chart_payload({"type": "rose", "title": "t", "data": [{"name": "a", "value": 1}]})
+    # V4：rose 已入 native kind 词表；真正未知类型仍拒绝（violin planned 同拒）
+    assert validate_chart_payload({"type": "hologram", "title": "t", "data": [{"name": "a", "value": 1}]})
+    assert validate_chart_payload({"type": "violin", "title": "t", "data": [{"name": "a", "value": 1}]})
     assert validate_chart_payload({"type": "bar", "title": "t", "data": [{"name": "a"}]})
     assert validate_chart_payload({"type": "bar", "title": "t", "data": []})
     assert validate_chart_payload("not-a-dict")
@@ -162,12 +164,15 @@ def test_statistics_panel_component_factory():
 
 
 def test_valid_variants_from_descriptor_registry():
-    # V3（ADR-0101 D3）：+ monochrome（黑白出版变体，渲染器已落地）
+    # V3（ADR-0101 D3）：+ monochrome；V4（Design System）：+ dual_convention
     assert set(valid_variants_for_type("north_arrow")) == {
         "compass_minimal_black", "compass_needle", "compass_rose", "arrow_simple",
-        "monochrome",
+        "monochrome", "dual_convention",
     }
     assert "horizontal" in valid_variants_for_type("continuous_colorbar")
+    # V4：chart kind 变体进入词表（violin planned 不入）
+    assert "rose" in valid_variants_for_type("chart_panel")
+    assert "violin" not in valid_variants_for_type("chart_panel")
 
 
 def test_coerce_variant_falls_back_to_default():

@@ -73,6 +73,26 @@ class ExportBatchMapsArgs(BaseModel):
     orientation: str = Field(default="landscape", description="方向: landscape / portrait")
     dpi: int = Field(default=96, ge=72, le=600, description="导出 DPI")
 
+
+class ControlFloatingChartArgs(BaseModel):
+    component_id: str = Field(..., description="目标图表面板组件 id（chart_panel 实例）")
+    operation: str = Field(
+        ...,
+        description=(
+            "操作：move / resize / pin / collapse / expand / close / restore / "
+            "switch_chart_type / set_state / highlight"
+        ),
+    )
+    state: str | None = Field(default=None, description="set_state 的目标状态（hidden/visible/collapsed/expanded/floating/docked/anchored）")
+    x: float | None = Field(default=None, description="move 的像素 x（floating）")
+    y: float | None = Field(default=None, description="move 的像素 y（floating）")
+    anchor: str | None = Field(default=None, description="move 的锚点槽位（top-left 等，与 x/y 二选一）")
+    width: float | None = Field(default=None, description="resize 的宽度")
+    height: float | None = Field(default=None, description="resize 的高度")
+    chart_type: str | None = Field(default=None, description="switch_chart_type 的图表 kind（bar/line/pie/donut/radar/rose/heat_matrix/…）")
+    categories: list[str] | None = Field(default=None, description="highlight 的联动高亮类别名列表")
+
+
 def register_cartography_tools(registry: ToolRegistry):
     """注册制图工具"""
 
@@ -552,5 +572,97 @@ def register_cartography_tools(registry: ToolRegistry):
                 f"已将 {sum(1 for c in commands if c['command'] == 'export_map')} 张地图的批量导出任务发送至前端，将按顺序合成。"
                 "每张完成后都会通过 `[系统通知]` 回传一条带下载链接的提示。"
                 "请告知用户『批量制图开始，预计耗时约 N 秒』并耐心等待结果。"
+            ),
+        }
+
+    @tool(registry, tier=2, domains=["report"], name="control_floating_chart",
+           args_model=ControlFloatingChartArgs,
+           description=(
+               "控制地图上已存在的浮动统计图表面板（chart_panel）：移动/缩放/折叠/关闭/"
+               "恢复/切换图表类型/联动高亮地图要素。与用户手动拖拽完全等价"
+               "（同一份组件状态），用户随时可以覆盖你的调整。"
+               "\n何时用：用户说『把图表挪到右下角』『把柱状图换成饼图』『关掉那个图』"
+               "『图表挡住图例了』『高亮图表里的北区』。"
+               "\n何时不用：要新建图表 —— 用 generate_chart；要调整图层 —— 用 layer 工具。"
+               "\n关键约束：hidden 态只能先 restore 回 visible；非法状态迁移会被拒绝。"
+           ))
+    def control_floating_chart(
+        component_id: str,
+        operation: str,
+        state: str | None = None,
+        x: float | None = None,
+        y: float | None = None,
+        anchor: str | None = None,
+        width: float | None = None,
+        height: float | None = None,
+        chart_type: str | None = None,
+        categories: list[str] | None = None,
+    ) -> dict:
+        op = (operation or "").strip().lower()
+        params: dict = {"componentId": component_id}
+
+        # 服务端合法性预检（词表与状态机真值在 chart_kinds 单一权威）
+        if op == "set_state":
+            st = (state or "").strip().lower()
+            from app.lib.cartography.chart_kinds import CHART_STATES
+            if st not in CHART_STATES:
+                return {"error": f"未知图表状态 '{state}'，可选：{', '.join(sorted(CHART_STATES))}"}
+            params["state"] = st
+            command = "chart_set_state"
+        elif op == "collapse":
+            params["state"] = "collapsed"
+            command = "chart_set_state"
+        elif op == "expand":
+            params["state"] = "expanded"
+            command = "chart_set_state"
+        elif op == "close":
+            command = "chart_close"
+        elif op == "restore":
+            command = "chart_restore"
+        elif op == "pin":
+            params["state"] = "floating"
+            command = "chart_set_state"
+        elif op == "move":
+            if x is None and anchor is None:
+                return {"error": "move 需要 x/y（自由定位）或 anchor（槽位）之一"}
+            if x is not None:
+                params["x"] = x
+                params["y"] = y if y is not None else 0
+            if anchor is not None:
+                params["anchor"] = anchor
+            command = "chart_move"
+        elif op == "resize":
+            if width is None:
+                return {"error": "resize 需要 width"}
+            params["width"] = width
+            if height is not None:
+                params["height"] = height
+            command = "chart_resize"
+        elif op == "switch_chart_type":
+            ct = (chart_type or "").strip().lower()
+            from app.lib.cartography.chart_kinds import resolve_chart_kind, CHART_KINDS
+            resolved = resolve_chart_kind(ct)
+            if resolved is None:
+                return {"error": f"未知图表类型 '{chart_type}'"}
+            native_ids = {k.id for k in CHART_KINDS if k.live_engine != "planned"}
+            if resolved.id not in native_ids:
+                return {"error": f"图表类型 '{resolved.id}' 尚未实现（planned）—— 请改用 box_plot 或 histogram"}
+            params["chartType"] = resolved.id
+            command = "chart_switch_type"
+        elif op == "highlight":
+            if not categories:
+                return {"error": "highlight 需要 categories（类别名列表）"}
+            params["categories"] = [str(c)[:64] for c in categories][:20]
+            command = "chart_highlight"
+        else:
+            return {"error": f"未知操作 '{operation}'（可选：move/resize/pin/collapse/expand/close/restore/switch_chart_type/set_state/highlight）"}
+
+        return {
+            "status": "chart_command_created",
+            "command": command,
+            "params": params,
+            "system_message": (
+                f"已发送图表控制指令（{op}）至前端，将作用于组件 {component_id}。"
+                "用户手动的拖拽/折叠始终优先 —— 若用户随后调整，以用户为准。"
             ),
         }

@@ -85,6 +85,7 @@
   ],
   "kind": "base",
   "layout": {
+   "conflicts": [],
    "moved": [
     "subtitle"
    ],
@@ -97,6 +98,9 @@
     "scale-bar": "bottom-right",
     "subtitle": "top-left",
     "title": "top-center"
+   },
+   "reasons": {
+    "subtitle": "fallback_zone"
    },
    "suppressed": [],
    "warning_count": 0
@@ -147,5 +151,5 @@
    ]
   }
  },
- "sha": "d0f8e15211a4f2c1"
+ "sha": "5e8f7d6f679db9c8"
 }

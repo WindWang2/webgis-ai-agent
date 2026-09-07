@@ -32,9 +32,41 @@ import {
 
 const CHART_PANEL_VARIANTS = new Set(['default', 'compact', 'transparent', 'report']);
 
+// V4：kind 变体词表（chart_kinds native 子集；与 descriptor.variants 同表）。
+// kind 变体是目录的 preset 句柄：variant 即图表类型预设（chart_switch_type
+// Agent 命令也走 variant 通道）。
+const CHART_KIND_VARIANTS = new Set([
+  'bar', 'horizontal_bar', 'grouped_bar', 'stacked_bar',
+  'line', 'area', 'scatter', 'histogram', 'box_plot',
+  'pie', 'donut', 'radar', 'rose', 'timeseries', 'cumulative',
+  'heat_matrix', 'kpi_card', 'ranking_list',
+]);
+
+/** kind 变体归属同 data-shape 家族才允许类型改写（防止 xy/矩阵数据被
+ * 强转成 bar —— 形状不兼容时保持 payload 自带类型，诚实不硬转）。 */
+const SERIES_SHAPE_KINDS = new Set([
+  'bar', 'horizontal_bar', 'line', 'area', 'histogram',
+  'pie', 'donut', 'timeseries', 'cumulative', 'rose',
+]);
+
 function resolvePanelVariant(component: MapSpecComponent): string {
   const variant = resolveVariant(component, 'default');
   return CHART_PANEL_VARIANTS.has(variant) ? variant : 'default';
+}
+
+function resolveKindPreset(component: MapSpecComponent): string | null {
+  const variant = resolveVariant(component, 'default');
+  return CHART_KIND_VARIANTS.has(variant) ? variant : null;
+}
+
+/** kind 预设应用：series-shape 家族内改写 type；其余形状保持原 type。 */
+function applyKindPreset(chart: ChartData, kind: string | null): ChartData {
+  if (!kind || chart.type === kind) return chart;
+  if (!SERIES_SHAPE_KINDS.has(kind)) return chart;
+  const seriesLike = chart.data.every(
+    (p) => typeof p.name === 'string' && typeof p.value === 'number',
+  );
+  return seriesLike ? { ...chart, type: kind as ChartData['type'] } : chart;
 }
 
 /** 内容高度：compact 160；有显式面板高度时填满，否则与 chat 内嵌一致 200。 */
@@ -71,6 +103,7 @@ function refChartState(chartRef: string, fetched: ChartData | null | undefined):
 function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
   const patched = usePlacementPatchedComponent(component);
   const variant = resolvePanelVariant(patched);
+  const kindPreset = resolveKindPreset(patched);
   const placement = patched.placement;
   const panelHeight = placement?.mode === 'floating' ? placement.height : undefined;
 
@@ -187,7 +220,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     >
       {state.status === 'ready' ? (
         <ChartCore
-          chart={state.chart}
+          chart={applyKindPreset(state.chart, kindPreset)}
           height={contentHeight(variant, panelHeight)}
           highlightedCategories={highlightedCategories}
           onSelectCategory={handleSelectCategory}

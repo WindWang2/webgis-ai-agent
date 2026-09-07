@@ -1,0 +1,40 @@
+{
+ "digest": {
+  "case": "layout::width-units",
+  "components": [],
+  "kind": "layout",
+  "layout": {
+   "compact": false,
+   "conflicts": [],
+   "has_fallback_plan": false,
+   "moved": [],
+   "placements": {
+    "narrow": "top-left",
+    "wide": "top-left"
+   },
+   "reasons": {},
+   "suppressed": [],
+   "warning_count": 0
+  },
+  "model": "administrative_choropleth",
+  "output": "interactive",
+  "profile": "a4_landscape",
+  "selection": {
+   "component_templates": {},
+   "composition_template_id": "",
+   "reason_codes": [
+    "scenario_case"
+   ],
+   "rejected_count": 0,
+   "required_slots": [],
+   "selected": []
+  },
+  "template": "",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": []
+  }
+ },
+ "sha": "99b801d802424f5d"
+}

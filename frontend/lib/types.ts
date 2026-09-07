@@ -57,12 +57,40 @@ export interface ChartDataPoint {
   value?: number;
   x?: number;
   y?: number;
+  /** V4 box_plot 五数扩展（value=median）。 */
+  q1?: number;
+  q3?: number;
+  min?: number;
+  max?: number;
 }
 
+/**
+ * V4 多序列（grouped/stacked bar、radar、heat_matrix 行）。
+ * 每个 series 携带自己的点列；data 仍是单序列形态（向后兼容）。
+ */
+export interface ChartSeries {
+  name: string;
+  data: ChartDataPoint[];
+}
+
+/**
+ * V4 图表 kind 词表：与后端 app/lib/cartography/chart_kinds.py 同源
+ * （component-catalog.generated.json 的 chartKinds 段导出）。
+ * violin（planned）不在联合内 —— 未实现的类型不可伪造。
+ */
+export type ChartKind =
+  | 'bar' | 'horizontal_bar' | 'grouped_bar' | 'stacked_bar'
+  | 'line' | 'area' | 'scatter' | 'histogram' | 'box_plot'
+  | 'pie' | 'donut' | 'radar' | 'rose' | 'timeseries' | 'cumulative'
+  | 'heat_matrix' | 'kpi_card' | 'ranking_list';
+
 export interface ChartData {
-  type: 'bar' | 'line' | 'pie' | 'scatter';
+  type: ChartKind;
   title: string;
   data: ChartDataPoint[];
+  series?: ChartSeries[];
+  /** stacked_bar 的堆叠语义开关（grouped_bar 缺省并排）。 */
+  stacked?: boolean;
   x_label?: string;
   y_label?: string;
 }
@@ -88,12 +116,19 @@ export interface MapActionCorrelation {
 export type MapActionTerminalStatus = 'succeeded' | 'failed' | 'cancelled' | 'superseded';
 
 export interface MapActionPayload {
-  command: 'add_layer' | 'remove_layer' | 'fly_to' | 'add_heatmap_raster' | 'add_raster_layer' | 'add_native_heatmap' | 'create_thematic_map' | 'APPLY_LAYER_FILTER' | 'export_map' | 'BASE_LAYER_CHANGE' | 'LAYER_VISIBILITY_UPDATE' | 'LAYER_STYLE_UPDATE' | 'REMOVE_LAYER' | 'zoom_to_bbox' | 'set_map_view' | 'REORDER_LAYER' | 'draw_measurement' | 'add_marker' | 'clear_annotations' | 'cartographic_runtime_repair' | 'query_features' | 'FINALIZE_DISPLAY' | 'MAP_FINALIZATION';
+  command: 'add_layer' | 'remove_layer' | 'fly_to' | 'add_heatmap_raster' | 'add_raster_layer' | 'add_native_heatmap' | 'create_thematic_map' | 'APPLY_LAYER_FILTER' | 'export_map' | 'BASE_LAYER_CHANGE' | 'LAYER_VISIBILITY_UPDATE' | 'LAYER_STYLE_UPDATE' | 'REMOVE_LAYER' | 'zoom_to_bbox' | 'set_map_view' | 'REORDER_LAYER' | 'draw_measurement' | 'add_marker' | 'clear_annotations' | 'cartographic_runtime_repair' | 'query_features' | 'FINALIZE_DISPLAY' | 'MAP_FINALIZATION' | 'chart_set_state' | 'chart_move' | 'chart_resize' | 'chart_switch_type' | 'chart_highlight' | 'chart_close' | 'chart_restore' | 'chart_collapse' | 'chart_expand';
   action_id?: string;
   correlation?: MapActionCorrelation;
   issued_at?: string;
   params: {
     id?: string;
+    componentId?: string;  // V4 chart_* 命令：目标 chart_panel 组件 id
+    state?: string;        // V4 chart_set_state：目标状态
+    chartType?: string;    // V4 chart_switch_type：目标图表 kind
+    categories?: string[]; // V4 chart_highlight：联动高亮类别
+    anchor?: string;       // V4 chart_move：锚点槽位
+    width?: number;        // V4 chart_resize
+    height?: number;       // V4 chart_resize
     layerId?: string;
     layer_id?: string; // Support for snake_case from backend
     name?: string;     // For base layer change

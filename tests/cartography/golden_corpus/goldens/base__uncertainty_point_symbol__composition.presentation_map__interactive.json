@@ -1,0 +1,106 @@
+{
+ "digest": {
+  "case": "base::uncertainty_point_symbol::composition.presentation_map::interactive",
+  "components": [
+   {
+    "id": "title",
+    "layerId": "",
+    "position": "top-center",
+    "priority": 10,
+    "templateId": "title/presentation",
+    "title": "uncertainty_point_symbol 专题图",
+    "type": "title",
+    "variant": "presentation"
+   },
+   {
+    "id": "legend-main",
+    "layerId": "layer-primary",
+    "position": "bottom-left",
+    "priority": 16,
+    "templateId": "legend/compact",
+    "title": "",
+    "type": "legend",
+    "variant": "compact"
+   },
+   {
+    "id": "scale-bar",
+    "layerId": "",
+    "position": "bottom-right",
+    "priority": 20,
+    "templateId": "scale-bar/minimal",
+    "title": "",
+    "type": "scale_bar",
+    "variant": "minimal"
+   },
+   {
+    "id": "north-arrow",
+    "layerId": "",
+    "position": "top-right",
+    "priority": 30,
+    "templateId": "north-arrow/minimal-black",
+    "title": "",
+    "type": "north_arrow",
+    "variant": "compass_minimal_black"
+   },
+   {
+    "id": "attribution",
+    "layerId": "",
+    "position": "bottom-left",
+    "priority": 50,
+    "templateId": "attribution/default",
+    "title": "",
+    "type": "attribution",
+    "variant": "default"
+   }
+  ],
+  "kind": "base",
+  "layout": {
+   "conflicts": [],
+   "moved": [],
+   "placements": {
+    "attribution": "bottom-left",
+    "legend-main": "bottom-left",
+    "north-arrow": "top-right",
+    "scale-bar": "bottom-right",
+    "title": "top-center"
+   },
+   "reasons": {},
+   "suppressed": [],
+   "warning_count": 0
+  },
+  "model": "uncertainty_point_symbol",
+  "output": "interactive",
+  "profile": "viewport",
+  "selection": {
+   "component_templates": {
+    "attribution": "attribution/default",
+    "legend": "legend/compact",
+    "north_arrow": "north-arrow/minimal-black",
+    "scale_bar": "scale-bar/minimal",
+    "title": "title/presentation"
+   },
+   "composition_template_id": "composition.presentation_map",
+   "reason_codes": [],
+   "rejected_count": 0,
+   "required_slots": [
+    "attribution",
+    "scale_bar",
+    "title"
+   ],
+   "selected": [
+    "attribution",
+    "legend",
+    "north_arrow",
+    "scale_bar",
+    "title"
+   ]
+  },
+  "template": "composition.presentation_map",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": []
+  }
+ },
+ "sha": "b7ec2cd6e7423d67"
+}

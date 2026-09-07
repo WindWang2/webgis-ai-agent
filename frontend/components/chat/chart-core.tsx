@@ -3,24 +3,40 @@
 /**
  * ChartCore —— Recharts 渲染核（#D2 图表协议复用）。
  *
- * 从 chart-renderer.tsx 原样抽出的 4 个 Render* 子组件 + 主题派生
- * （#741/#807）：chat 消息与地图 chart_panel 共用同一套图表 schema /
- * 主题，不出现第二套图表实现。chart-renderer.tsx 只是薄壳（卡片 + 标题）。
+ * V4（Design System）：图表 kind 词表扩至 18 种 native kind
+ * （app/lib/cartography/chart_kinds.py 单一权威；violin planned 不渲染）。
+ * - recharts 族：bar/hbar/grouped/stacked/line/area/scatter/histogram/
+ *   pie/donut/radar/rose/timeseries/cumulative
+ * - 自绘 SVG 族（recharts 无原生支持，诚实自绘）：box_plot（五数概括）/
+ *   heat_matrix（行×列色阵）/ kpi_card / ranking_list
+ *
+ * 从 chat 消息与地图 chart_panel 共用同一套图表 schema/主题，不出现
+ * 第二套图表实现。chart-renderer.tsx 只是薄壳（卡片 + 标题）。
  */
 
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell,
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend,
+  RadialBarChart, RadialBar,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from "recharts"
 
-import type { ChartData } from "@/lib/types"
+import type { ChartData, ChartDataPoint } from "@/lib/types"
 import { useHudStore } from "@/lib/store/useHudStore"
 
 const COLORS = [
   "#06b6d4", "#22d3ee", "#67e8f9", "#a5f3fc",
   "#0891b2", "#0e7490", "#155e75", "#164e63",
 ]
+
+// recharts v3 类型怪癖：极轴组件返回 ReactNode，自定义 tick 对象下
+// TS2786 误报 —— 渲染层用宽松 JSX 别名（运行时行为不变）。
+const PolarAngleAxisJsx = PolarAngleAxis as unknown as React.FC<Record<string, unknown>>;
+const PolarRadiusAxisJsx = PolarRadiusAxis as unknown as React.FC<Record<string, unknown>>;
+
+// V4：heat_matrix 固定 Blues 色阶（与 palette 家族同源的展示用 ramp）
+const HEAT_RAMP = ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"]
 
 // #741: recharts can't consume CSS vars in SVG tick fills directly — read
 // the computed token at module/init time via a helper so charts follow the
@@ -68,6 +84,33 @@ interface RenderProps {
   onSelectCategory?: ((name: string) => void) | null;
 }
 
+/** 多序列 → recharts tidy 行（name 列 + 每序列一列）。 */
+function tidySeries(chart: ChartData): Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = []
+  const byName = new Map<string, Record<string, unknown>>()
+  for (const ser of chart.series ?? []) {
+    for (const pt of ser.data) {
+      let row = byName.get(pt.name)
+      if (!row) {
+        row = { name: pt.name }
+        byName.set(pt.name, row)
+        rows.push(row)
+      }
+      row[ser.name] = pt.value ?? 0
+    }
+  }
+  return rows
+}
+
+function barClickHandler(onSelectCategory: ((name: string) => void) | null | undefined) {
+  return onSelectCategory
+    ? { onClick: (state: unknown) => {
+        const name = (state as { payload?: { name?: unknown } } | undefined)?.payload?.name;
+        if (name != null) onSelectCategory(String(name));
+      } }
+    : {};
+}
+
 function RenderBarChart({ chart, height, highlightedCategories, onSelectCategory }: RenderProps) {
   // #807: 自订阅主题 —— 外层 ChatMessageItem 是 memo 边界，主题切换不会
   // 跨过它；订阅后本组件在 toggle 时重派生 tick/tooltip 色。
@@ -83,12 +126,7 @@ function RenderBarChart({ chart, height, highlightedCategories, onSelectCategory
           dataKey="value"
           fill="#06b6d4"
           radius={[2, 2, 0, 0]}
-          {...(onSelectCategory
-            ? { onClick: (state: unknown) => {
-                const name = (state as { payload?: { name?: unknown } } | undefined)?.payload?.name;
-                if (name != null) onSelectCategory(String(name));
-              } }
-            : {})}
+          {...barClickHandler(onSelectCategory)}
         >
           {highlightedCategories?.length
             ? chart.data.map((entry, index) => (
@@ -99,6 +137,60 @@ function RenderBarChart({ chart, height, highlightedCategories, onSelectCategory
               ))
             : null}
         </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  )
+}
+
+/** V4：条形图（水平柱 —— 类目名长的排名对比）。 */
+function RenderHorizontalBarChart({ chart, height, highlightedCategories, onSelectCategory }: RenderProps) {
+  const theme = useHudStore((s) => s.theme);
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart layout="vertical" data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 20 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
+        <XAxis type="number" tick={tickStyle(theme)} />
+        <YAxis type="category" dataKey="name" width={80} tick={tickStyle(theme)} />
+        <Tooltip {...tooltipStyle(theme)} />
+        <Bar dataKey="value" fill="#06b6d4" radius={[0, 2, 2, 0]} {...barClickHandler(onSelectCategory)}>
+          {highlightedCategories?.length
+            ? chart.data.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={isHighlighted(entry.name, highlightedCategories) ? HIGHLIGHT_FILL : HIGHLIGHT_DIM} />
+              ))
+            : null}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  )
+}
+
+/** V4：分组/堆叠柱状图（多序列；stacked 语义由 chart.stacked 驱动）。 */
+function RenderMultiBarChart({ chart, height, onSelectCategory }: RenderProps) {
+  const theme = useHudStore((s) => s.theme);
+  // data-only 载荷回退为单序列（不画只有坐标轴的空图）
+  const series = chart.series?.length
+    ? chart.series
+    : [{ name: "value", data: chart.data }]
+  const rows = tidySeries({ ...chart, series })
+  const names = series.map((s) => s.name)
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={rows} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
+        <XAxis dataKey="name" tick={tickStyle(theme)} />
+        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <Tooltip {...tooltipStyle(theme)} />
+        <Legend wrapperStyle={{ fontSize: "13px" }} />
+        {names.map((n, i) => (
+          <Bar
+            key={n}
+            dataKey={n}
+            fill={COLORS[i % COLORS.length]}
+            stackId={chart.stacked ? "stack" : undefined}
+            radius={chart.stacked ? [0, 0, 0, 0] : [2, 2, 0, 0]}
+            {...barClickHandler(onSelectCategory)}
+          />
+        ))}
       </BarChart>
     </ResponsiveContainer>
   )
@@ -121,7 +213,39 @@ function RenderLineChart({ chart, height }: RenderProps) {
   )
 }
 
-function RenderPieChart({ chart, height, highlightedCategories, onSelectCategory }: RenderProps) {
+/** V4：面积图 / 累计曲线（cumulative 由调用方预衍生，此处统一画面积）。 */
+function RenderAreaChart({ chart, height }: RenderProps) {
+  const theme = useHudStore((s) => s.theme);
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <AreaChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
+        <XAxis dataKey="name" tick={tickStyle(theme)} />
+        <YAxis tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
+        <Tooltip {...tooltipStyle(theme)} />
+        <Area type="monotone" dataKey="value" stroke="#06b6d4" fill="rgba(6,182,212,0.25)" strokeWidth={2} />
+      </AreaChart>
+    </ResponsiveContainer>
+  )
+}
+
+/** V4：直方图（分箱在数据提交前由后端 classify 完成 —— 与地图分级同断点）。 */
+function RenderHistogramChart({ chart, height }: RenderProps) {
+  const theme = useHudStore((s) => s.theme);
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }} barCategoryGap="0%">
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
+        <XAxis dataKey="name" tick={tickStyle(theme)} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "#94a3b8", fontSize: 13 } : undefined} />
+        <YAxis tick={tickStyle(theme)} />
+        <Tooltip {...tooltipStyle(theme)} />
+        <Bar dataKey="value" fill="#0891b2" radius={[1, 1, 0, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  )
+}
+
+function RenderPieChart({ chart, height, highlightedCategories, onSelectCategory, donut }: RenderProps & { donut?: boolean }) {
   // #807: 自订阅主题 —— 同上。
   const theme = useHudStore((s) => s.theme);
   return (
@@ -134,6 +258,7 @@ function RenderPieChart({ chart, height, highlightedCategories, onSelectCategory
           cx="50%"
           cy="50%"
           outerRadius={70}
+          innerRadius={donut ? 42 : 0}
           label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
           labelLine={{ stroke: "#94a3b8" }}
           fontSize={13}
@@ -180,14 +305,222 @@ function RenderScatterChart({ chart, height }: RenderProps) {
   )
 }
 
-const CHART_RENDERERS: Record<ChartData["type"], React.FC<RenderProps>> = {
-  bar: RenderBarChart,
-  line: RenderLineChart,
-  pie: RenderPieChart,
-  scatter: RenderScatterChart,
+/** V4：雷达图（多维指标对比；多序列支持）。 */
+function RenderRadarChart({ chart, height }: RenderProps) {
+  const theme = useHudStore((s) => s.theme);
+  const rows = chart.series?.length
+    ? tidySeries(chart)
+    : chart.data.map((p) => ({ name: p.name, value: p.value ?? 0 }))
+  const names = chart.series?.length ? chart.series.map((s) => s.name) : ["value"]
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <RadarChart data={rows} cx="50%" cy="50%" outerRadius="70%">
+        <PolarGrid stroke="rgba(100,116,139,0.3)" />
+        <PolarAngleAxisJsx dataKey="name" tick={tickStyle(theme)} />
+        <PolarRadiusAxisJsx tick={tickStyle(theme)} />
+        {names.map((n, i) => (
+          <Radar key={n} dataKey={n} stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]} fillOpacity={0.35} />
+        ))}
+        <Tooltip {...tooltipStyle(theme)} />
+      </RadarChart>
+    </ResponsiveContainer>
+  )
 }
 
-/** 图表类型是否可渲染（bar/line/pie/scatter 单序列契约）。 */
+/** V4：玫瑰图（极区柱 —— RadialBar 近似；角度按值等分）。 */
+function RenderRoseChart({ chart, height }: RenderProps) {
+  const theme = useHudStore((s) => s.theme);
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <RadialBarChart data={chart.data} innerRadius="25%" outerRadius="85%">
+        <PolarAngleAxisJsx type="category" dataKey="name" tick={tickStyle(theme)} />
+        <RadialBar dataKey="value" background fill="#06b6d4" />
+        <Tooltip {...tooltipStyle(theme)} />
+      </RadialBarChart>
+    </ResponsiveContainer>
+  )
+}
+
+// ── 自绘 SVG 族（recharts 无原生支持 —— 诚实自绘，不伪装）──────────────
+
+function boxScales(points: ChartDataPoint[]) {
+  const nums = points.flatMap((p) => [p.min, p.q1, p.value, p.q3, p.max]).filter(
+    (v): v is number => typeof v === "number" && Number.isFinite(v),
+  );
+  if (!nums.length) return { lo: 0, hi: 1 };
+  return { lo: Math.min(...nums), hi: Math.max(...nums) };
+}
+
+/** V4：箱线图（五数概括；recharts 无原生箱线 —— 自绘 SVG）。 */
+function RenderBoxPlot({ chart, height }: RenderProps) {
+  const W = 420;
+  const H = typeof height === "number" ? height : 200;
+  const padL = 16, padR = 16, padT = 14, padB = 30;
+  const { lo, hi } = boxScales(chart.data);
+  const span = hi - lo || 1;
+  const y = (v: number) => padT + (1 - (v - lo) / span) * (H - padT - padB);
+  const slot = (W - padL - padR) / Math.max(1, chart.data.length);
+  const bw = Math.min(48, slot * 0.55);
+  const fmt = (v: number) => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(1));
+  return (
+    <svg role="img" aria-label={`箱线图 ${chart.title}`} width="100%" viewBox={`0 0 ${W} ${H}`} data-testid="chart-box-plot">
+      {[lo, (lo + hi) / 2, hi].map((v, i) => (
+        <g key={i}>
+          <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="rgba(100,116,139,0.25)" strokeDasharray="3 3" />
+          <text x={padL - 4} y={y(v) + 3} textAnchor="start" fontSize={9} fill="#94a3b8">{fmt(v)}</text>
+        </g>
+      ))}
+      {chart.data.map((p, i) => {
+        const cx = padL + slot * i + slot / 2;
+        const q1 = typeof p.q1 === "number" ? y(p.q1) : y(p.value ?? lo);
+        const q3 = typeof p.q3 === "number" ? y(p.q3) : y(p.value ?? lo);
+        const mn = typeof p.min === "number" ? y(p.min) : q1;
+        const mx = typeof p.max === "number" ? y(p.max) : q3;
+        const med = y(p.value ?? lo);
+        return (
+          <g key={i}>
+            <line x1={cx} x2={cx} y1={mn} y2={mx} stroke="#0891b2" strokeWidth={1} />
+            <line x1={cx - bw / 3} x2={cx + bw / 3} y1={mn} y2={mn} stroke="#0891b2" strokeWidth={1} />
+            <line x1={cx - bw / 3} x2={cx + bw / 3} y1={mx} y2={mx} stroke="#0891b2" strokeWidth={1} />
+            <rect x={cx - bw / 2} y={Math.min(q1, q3)} width={bw} height={Math.max(2, Math.abs(q3 - q1))} rx={2} fill="rgba(6,182,212,0.35)" stroke="#0891b2" />
+            <line x1={cx - bw / 2} x2={cx + bw / 2} y1={med} y2={med} stroke="#0e7490" strokeWidth={2} />
+            <text x={cx} y={H - 10} textAnchor="middle" fontSize={10} fill="#94a3b8">{p.name}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/** V4：热矩阵（行×列色阵；series=行、series.data=列）。 */
+function RenderHeatMatrix({ chart, height }: RenderProps) {
+  const rows = chart.series?.length ? chart.series : [{ name: "", data: chart.data }];
+  const W = 460;
+  const H = typeof height === "number" ? height : 200;
+  const padL = 70, padB = 24;
+  const values = rows.flatMap((r) => r.data.map((p) => p.value ?? 0)).filter(Number.isFinite);
+  const lo = values.length ? Math.min(...values) : 0;
+  const hi = values.length ? Math.max(...values) : 1;
+  const span = hi - lo || 1;
+  const cellW = (W - padL - 8) / Math.max(1, rows[0]?.data.length ?? 1);
+  const rowH = Math.min(30, (H - padB - 8) / Math.max(1, rows.length));
+  const colorFor = (v: number) => {
+    const t = Math.min(1, Math.max(0, (v - lo) / span));
+    return HEAT_RAMP[Math.min(HEAT_RAMP.length - 1, Math.floor(t * HEAT_RAMP.length))];
+  };
+  return (
+    <svg role="img" aria-label={`热矩阵 ${chart.title}`} width="100%" viewBox={`0 0 ${W} ${H}`} data-testid="chart-heat-matrix">
+      {rows.map((r, ri) => (
+        <g key={ri}>
+          <text x={padL - 6} y={8 + ri * rowH + rowH / 2} textAnchor="end" fontSize={10} fill="#94a3b8">
+            {r.name.length > 10 ? `${r.name.slice(0, 9)}…` : r.name}
+          </text>
+          {r.data.map((p, ci) => (
+            <g key={ci}>
+              <rect
+                x={padL + ci * cellW} y={8 + ri * rowH}
+                width={Math.max(2, cellW - 1)} height={Math.max(2, rowH - 1)}
+                fill={colorFor(p.value ?? 0)}
+              />
+              {cellW > 34 && (
+                <text x={padL + ci * cellW + cellW / 2} y={8 + ri * rowH + rowH / 2 + 3} textAnchor="middle" fontSize={9} fill="#1c2733">
+                  {p.value ?? ""}
+                </text>
+              )}
+            </g>
+          ))}
+        </g>
+      ))}
+      {rows[0]?.data.map((p, ci) => (
+        <text key={ci} x={padL + ci * cellW + cellW / 2} y={H - 8} textAnchor="middle" fontSize={9} fill="#94a3b8">
+          {(p.name ?? "").length > 6 ? `${p.name.slice(0, 5)}…` : p.name}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
+/** V4：KPI 指标卡（name=指标名，value=主值）。 */
+function RenderKpiCards({ chart }: RenderProps) {
+  return (
+    <div className="grid grid-cols-2 gap-2 p-1" data-testid="chart-kpi-cards">
+      {chart.data.slice(0, 4).map((p, i) => (
+        <div key={i} className="rounded-chrome border border-edge-subtle bg-surface-raised px-3 py-2">
+          <div className="text-micro text-map-chrome-ink-muted">{p.name}</div>
+          <div className="text-xl font-semibold tabular-nums text-map-chrome-ink">
+            {typeof p.value === "number" ? p.value.toLocaleString() : "—"}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** V4：排名列表（值降序 + 比例条）。 */
+function RenderRankingList({ chart, highlightedCategories, onSelectCategory }: RenderProps) {
+  const rows = [...chart.data].sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+  const max = Math.max(...rows.map((r) => r.value ?? 0), 1);
+  return (
+    <div className="flex flex-col gap-1 p-1" data-testid="chart-ranking-list">
+      {rows.slice(0, 10).map((r, i) => {
+        const highlighted = isHighlighted(r.name, highlightedCategories);
+        return (
+          <button
+            key={i}
+            type="button"
+            {...(onSelectCategory ? { onClick: () => onSelectCategory(r.name) } : {})}
+            className="flex items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-surface-raised"
+          >
+            <span className="w-4 text-right text-micro tabular-nums text-map-chrome-ink-muted">{i + 1}</span>
+            <span className="w-20 truncate text-micro text-map-chrome-ink">{r.name}</span>
+            <span className="h-2 flex-1 rounded-sm bg-edge-subtle">
+              <span
+                className="block h-2 rounded-sm"
+                style={{ width: `${((r.value ?? 0) / max) * 100}%`, background: highlighted ? HIGHLIGHT_FILL : "#06b6d4", opacity: highlighted || !highlightedCategories?.length ? 1 : 0.35 }}
+              />
+            </span>
+            <span className="w-14 text-right text-micro tabular-nums text-map-chrome-ink-muted">{r.value?.toLocaleString()}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** V4：累计曲线 —— 前缀和衍生（面积语义，副标题披露累计口径由调用方负责）。 */
+function toCumulative(chart: ChartData): ChartData {
+  let acc = 0;
+  return {
+    ...chart,
+    data: chart.data.map((p) => {
+      acc += p.value ?? 0;
+      return { ...p, value: acc };
+    }),
+  };
+}
+
+const CHART_RENDERERS: Partial<Record<ChartData["type"], React.FC<RenderProps>>> = {
+  bar: RenderBarChart,
+  horizontal_bar: RenderHorizontalBarChart,
+  grouped_bar: RenderMultiBarChart,
+  stacked_bar: (props) => <RenderMultiBarChart {...props} chart={{ ...props.chart, stacked: true }} />,
+  line: RenderLineChart,
+  timeseries: RenderLineChart,
+  area: RenderAreaChart,
+  cumulative: (props) => <RenderAreaChart {...props} chart={toCumulative(props.chart)} />,
+  histogram: RenderHistogramChart,
+  pie: (props) => <RenderPieChart {...props} />,
+  donut: (props) => <RenderPieChart {...props} donut />,
+  scatter: RenderScatterChart,
+  radar: RenderRadarChart,
+  rose: RenderRoseChart,
+  box_plot: RenderBoxPlot,
+  heat_matrix: RenderHeatMatrix,
+  kpi_card: RenderKpiCards,
+  ranking_list: RenderRankingList,
+}
+
+/** 图表 kind 是否可渲染（chart_kinds 词表的 native 子集）。 */
 export function isChartTypeSupported(type: string): boolean {
   return type in CHART_RENDERERS;
 }
@@ -208,7 +541,9 @@ export function ChartCore({ chart, height = 200, highlightedCategories, onSelect
   if (!Renderer) return null
   // 类别选择语义只对离散轴图表成立（line/scatter 的 x 是序列/数值域，
   // 点击语义不是类别 —— 如实不支持，不虚构回调）。
-  const categorySelect = chart.type === "bar" || chart.type === "pie" ? onSelectCategory : null;
+  const categorySelect = chart.type === "bar" || chart.type === "pie"
+    || chart.type === "horizontal_bar" || chart.type === "ranking_list"
+    ? onSelectCategory : null;
   return (
     <Renderer
       chart={chart}

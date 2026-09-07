@@ -1,0 +1,47 @@
+{
+ "digest": {
+  "case": "layout::mixed",
+  "components": [],
+  "kind": "layout",
+  "layout": {
+   "compact": false,
+   "conflicts": [],
+   "has_fallback_plan": false,
+   "moved": [
+    "legend"
+   ],
+   "placements": {
+    "chart": "top-left",
+    "colorbar": "bottom-left",
+    "legend": "bottom-center",
+    "stats": "top-left",
+    "title": "top-center"
+   },
+   "reasons": {
+    "legend": "collision_group_move"
+   },
+   "suppressed": [],
+   "warning_count": 0
+  },
+  "model": "administrative_choropleth",
+  "output": "interactive",
+  "profile": "a4_landscape",
+  "selection": {
+   "component_templates": {},
+   "composition_template_id": "",
+   "reason_codes": [
+    "scenario_case"
+   ],
+   "rejected_count": 0,
+   "required_slots": [],
+   "selected": []
+  },
+  "template": "",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": []
+  }
+ },
+ "sha": "1b37b9c498eab949"
+}

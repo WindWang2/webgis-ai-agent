@@ -6,9 +6,18 @@ from typing import Any
 
 from app.tools.registry import ToolRegistry
 
+from app.lib.cartography.chart_kinds import (
+    CHART_KINDS,
+    resolve_chart_kind as _resolve_chart_kind,
+)
+
 logger = logging.getLogger(__name__)
 
-VALID_CHART_TYPES = {"bar", "line", "pie", "scatter"}
+# V4（Design System）：图表 kind 词表来自 chart_kinds 单一权威 —— live 引擎
+# 已实现的 native kind 全部开放给 Agent；violin（planned）诚实排除，
+# 报错信息中引导回退 box_plot / histogram。
+_PLANNED_CHART_KINDS = {k.id for k in CHART_KINDS if k.live_engine == "planned"}
+VALID_CHART_TYPES = {k.id for k in CHART_KINDS} - _PLANNED_CHART_KINDS
 MAX_DATA_PAYLOAD_SIZE = 100 * 1024  # 100KB raw JSON limit
 MAX_DATA_POINTS = 500  # Maximum data points to prevent browser lag
 MAX_STRING_LENGTH = 200  # Max length for title/labels
@@ -44,6 +53,15 @@ def _validate_data_point(point: Any, chart_type: str) -> tuple[bool, str]:
         # Validate finite numbers
         if not (float('-inf') < point["x"] < float('inf')) or not (float('-inf') < point["y"] < float('inf')):
             return False, "x and y values must be finite numbers"
+    elif chart_type == "box_plot":
+        # V4：五数概括 —— name + value(median) 必填；q1/q3/min/max 可选数值
+        if "name" not in point or "value" not in point:
+            return False, "box plot points require name and value (median)"
+        if not isinstance(point.get("value"), (int, float)):
+            return False, "box plot value (median) must be a number"
+        for k in ("q1", "q3", "min", "max"):
+            if k in point and not isinstance(point[k], (int, float)):
+                return False, f"box plot {k} must be a number"
     else:
         # Bar, line, pie require name, value
         if "name" not in point or "value" not in point:
@@ -142,18 +160,40 @@ def validate_chart_payload(chart: Any) -> "str | None":
     if not isinstance(chart, dict):
         return "chart 必须是对象 {type,title,data}"
     effective_type = str(chart.get("type") or "").strip().lower()
+    # V4：与 generate_chart 同样的别名归一（两入口契约一致）
+    resolved_kind = _resolve_chart_kind(effective_type)
+    if resolved_kind is not None:
+        effective_type = resolved_kind.id
+    if effective_type in _PLANNED_CHART_KINDS:
+        return f"chart.type '{effective_type}' 尚未实现（planned）"
     if effective_type not in VALID_CHART_TYPES:
         return f"chart.type 必须是 {', '.join(sorted(VALID_CHART_TYPES))} 之一"
     title = chart.get("title")
     if not isinstance(title, str) or not title.strip():
         return "chart.title 不能为空"
     data = chart.get("data")
+    series = chart.get("series")
+    # V4：多序列形状（grouped/stacked/heat_matrix/radar）——series 存在时
+    # 允许 data 为空数组（series 携带行数据）；两者皆空仍拒绝
     if not isinstance(data, list):
         return "chart.data 必须是数组"
-    if len(data) == 0:
-        return "chart.data 不能为空"
+    if len(data) == 0 and not (isinstance(series, list) and series):
+        return "chart.data 不能为空（多序列形状请提供非空 series）"
     if len(data) > MAX_DATA_POINTS:
         return f"chart.data 超过 {MAX_DATA_POINTS} 点上限（请聚合/降采样）"
+    series = chart.get("series")
+    if isinstance(series, list) and series:
+        for si, ser in enumerate(series):
+            if not isinstance(ser, dict) or not isinstance(ser.get("data"), list):
+                return f"chart.series[{si}]: 必须是 {{name, data[]}}"
+            if not isinstance(ser.get("name"), str) or not ser.get("name"):
+                return f"chart.series[{si}]: 缺 name"
+            if len(ser["data"]) > MAX_DATA_POINTS:
+                return f"chart.series[{si}] 超过 {MAX_DATA_POINTS} 点上限"
+            for i, point in enumerate(ser["data"]):
+                is_valid, error_msg = _validate_data_point(point, effective_type)
+                if not is_valid:
+                    return f"chart.series[{si}].data[{i}]: {error_msg}"
     for i, point in enumerate(data):
         is_valid, error_msg = _validate_data_point(point, effective_type)
         if not is_valid:
@@ -173,6 +213,15 @@ def generate_chart(chart_type: str = "", title: str = "", data: Any = "",
     做字段映射。type 是 chart_type 的别名（LLM 常见命名）。
     """
     effective_type = (chart_type or type or "").strip().lower()
+    # V4：别名归一（hbar→horizontal_bar 等），planned kind 诚实引导回退
+    resolved = _resolve_chart_kind(effective_type)
+    if resolved is not None:
+        effective_type = resolved.id
+    if effective_type in _PLANNED_CHART_KINDS:
+        return {
+            "error": f"chart_type '{effective_type}' 尚未实现（planned）—— "
+                     f"请改用 box_plot 或 histogram"
+        }
     if effective_type not in VALID_CHART_TYPES:
         return {"error": f"Invalid chart_type. Must be one of: {', '.join(sorted(VALID_CHART_TYPES))}"}
 

@@ -367,29 +367,160 @@ SEED_COMPONENT_TEMPLATES: List[ComponentTemplate] = [
         name="Compact Decision Panel", variant="compact",
         default_style={"fontSize": "11px"}, priority=20,
     ),
-    # ── V3：前瞻变体（roadmap 目录；runtime_status=planned，resolver 不选）──
+    # ── V4：原前瞻变体转正（bivariate/uncertainty/hierarchy 渲染链落地）──
     ComponentTemplate(
         id="legend/bivariate", component_type="legend", category="legend.bivariate",
-        name="Bivariate Legend (planned)", variant="bivariate",
+        name="Bivariate Legend", variant="bivariate",
         default_options={"style": "bivariate"}, priority=90,
-        runtime_status="planned",
-        tags=["planned", "bivariate"],
+        compatible_map_models=["bivariate_choropleth", "bivariate_raster"],
+        tags=["bivariate", "v4"],
     ),
     ComponentTemplate(
         id="legend/uncertainty", component_type="legend", category="legend.graduated",
-        name="Uncertainty Legend (planned)", variant="uncertainty",
+        name="Uncertainty Legend", variant="uncertainty",
         default_options={"style": "uncertainty"}, priority=91,
-        runtime_status="planned",
-        tags=["planned", "uncertainty"],
+        compatible_map_models=["uncertainty_choropleth", "uncertainty_surface",
+                               "uncertainty_point_symbol"],
+        tags=["uncertainty", "v4"],
     ),
     ComponentTemplate(
         id="inset-map/hierarchy-locator", component_type="inset_map", category="inset.map",
-        name="Hierarchy Locator Inset (planned)", variant="hierarchy_locator",
-        default_options={"variant": "hierarchy_locator"}, priority=90,
-        runtime_status="planned",
-        tags=["planned", "inset"],
+        name="Hierarchy Locator Inset", variant="hierarchy",
+        default_options={"variant": "hierarchy"}, priority=90,
+        tags=["inset", "v4"],
+    ),
+    # ── V4：图例族扩展 ────────────────────────────────────────────────
+    ComponentTemplate(
+        id="legend/size", component_type="legend", category="legend.graduated",
+        name="Proportional Size Legend", variant="size",
+        default_options={"style": "size"}, priority=92,
+        compatible_map_models=["proportional_symbol", "flow_hub_map",
+                               "extrusion_3d"],
+        tags=["size", "v4"],
+    ),
+    ComponentTemplate(
+        id="legend/line", component_type="legend", category="legend.graduated",
+        name="Line Width Legend", variant="line",
+        default_options={"style": "line"}, priority=93,
+        compatible_map_models=["graduated_line", "network_flow_map",
+                               "stream_order_map", "flow_od_arc",
+                               "accessibility_network", "route_map",
+                               "network_centrality_map"],
+        tags=["line", "v4"],
+    ),
+    ComponentTemplate(
+        id="legend/composite", component_type="legend", category="legend.graduated",
+        name="Multi-layer Composite Legend", variant="composite",
+        default_options={"style": "composite"}, priority=94,
+        tags=["composite", "v4"],
+    ),
+    ComponentTemplate(
+        id="categorical-legend/nested", component_type="categorical_legend",
+        category="legend.categorical",
+        name="Nested Categorical Legend", variant="nested",
+        default_options={"style": "nested"}, priority=40,
+        tags=["nested", "v4"],
+    ),
+    # ── V4：版面附注族 ────────────────────────────────────────────────
+    ComponentTemplate(
+        id="annotation/footer", component_type="annotation", category="annotation.text",
+        name="Footer Note", variant="footer",
+        default_options={"variant": "footer", "positionHint": "bottom"},
+        priority=60, tags=["footer", "v4"],
+    ),
+    ComponentTemplate(
+        id="annotation/timestamp", component_type="annotation", category="annotation.text",
+        name="Timestamp Note", variant="timestamp",
+        default_options={"variant": "timestamp"}, priority=61,
+        tags=["timestamp", "v4"],
+    ),
+    ComponentTemplate(
+        id="annotation/projection-note", component_type="annotation", category="annotation.text",
+        name="Projection Note", variant="projection_note",
+        default_options={"variant": "projection_note"}, priority=62,
+        tags=["projection", "v4"],
+    ),
+    ComponentTemplate(
+        id="annotation/data-source", component_type="annotation", category="annotation.text",
+        name="Data Source Note", variant="data_source",
+        default_options={"variant": "data_source"}, priority=63,
+        tags=["data-source", "v4"],
+    ),
+    ComponentTemplate(
+        id="annotation/highlight", component_type="annotation", category="annotation.text",
+        name="Highlight Region", variant="highlight",
+        default_options={"variant": "highlight"}, priority=64,
+        tags=["highlight", "v4"],
+    ),
+    ComponentTemplate(
+        id="title/banner", component_type="title", category="annotation.title",
+        name="Banner Title", variant="banner",
+        default_style={"fontWeight": "700", "fontSize": "24px"}, priority=30,
+        tags=["banner", "v4"],
+    ),
+    ComponentTemplate(
+        id="title/compact", component_type="title", category="annotation.title",
+        name="Compact Title", variant="compact",
+        default_style={"fontWeight": "600", "fontSize": "14px"}, priority=40,
+        tags=["compact", "v4"],
+    ),
+    ComponentTemplate(
+        id="subtitle/compact", component_type="subtitle", category="annotation.subtitle",
+        name="Compact Subtitle", variant="compact",
+        default_style={"fontSize": "12px"}, priority=40,
+        tags=["compact", "v4"],
+    ),
+    ComponentTemplate(
+        id="graticule/projected", component_type="graticule", category="navigation.graticule",
+        name="Projected Grid", variant="projected",
+        default_options={"variant": "projected"}, priority=30,
+        tags=["projected", "v4"],
+    ),
+    ComponentTemplate(
+        id="north-arrow/dual-convention", component_type="north_arrow",
+        category="navigation.north_arrow",
+        name="Dual Convention Arrow", variant="dual_convention",
+        default_options={"variant": "dual_convention"}, priority=50,
+        tags=["dual", "v4"],
+    ),
+    ComponentTemplate(
+        id="statistics-panel/explanation", component_type="statistics_panel",
+        category="analysis.statistics_panel",
+        name="Explanation Panel", variant="explanation",
+        default_options={"style": "explanation"}, priority=40,
+        tags=["explanation", "v4"],
+    ),
+    ComponentTemplate(
+        id="table-panel/dense", component_type="table_panel",
+        category="analysis.table_panel",
+        name="Dense Table", variant="dense",
+        default_options={"style": "dense"}, priority=30,
+        tags=["dense", "v4"],
+    ),
+    ComponentTemplate(
+        id="methodology-note/data-quality", component_type="methodology_note",
+        category="disclosure.methodology_note",
+        name="Data Quality Note", variant="data_quality",
+        default_options={"style": "data_quality"}, priority=30,
+        tags=["data-quality", "v4"],
     ),
 ]
+# ── V4：图表 kind preset 模板（chart_kinds 词表；violin planned 不设）──
+_CHART_KIND_TEMPLATES = [
+    ("bar", 100), ("horizontal_bar", 101), ("grouped_bar", 102),
+    ("stacked_bar", 103), ("line", 104), ("area", 105), ("scatter", 106),
+    ("histogram", 107), ("box_plot", 108), ("pie", 109), ("donut", 110),
+    ("radar", 111), ("rose", 112), ("timeseries", 113), ("cumulative", 114),
+    ("heat_matrix", 115), ("kpi_card", 116), ("ranking_list", 117),
+]
+for _kind, _pri in _CHART_KIND_TEMPLATES:
+    SEED_COMPONENT_TEMPLATES.append(ComponentTemplate(
+        id="chart-panel/kind-" + _kind.replace("_", "-"),
+        component_type="chart_panel", category="analysis.chart_panel",
+        name="Chart Kind: " + _kind, variant=_kind,
+        default_options={"chartType": _kind}, priority=_pri,
+        tags=["chart-kind", "v4"],
+    ))
 
 
 class ComponentTemplateRegistry:

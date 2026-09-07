@@ -1,0 +1,43 @@
+{
+ "digest": {
+  "case": "layout::occupancy-full",
+  "components": [],
+  "kind": "layout",
+  "layout": {
+   "compact": false,
+   "conflicts": [],
+   "has_fallback_plan": false,
+   "moved": [
+    "chart-x"
+   ],
+   "placements": {
+    "chart-x": "top-center"
+   },
+   "reasons": {
+    "chart-x": "avoid_zone_move"
+   },
+   "suppressed": [],
+   "warning_count": 0
+  },
+  "model": "administrative_choropleth",
+  "output": "interactive",
+  "profile": "viewport",
+  "selection": {
+   "component_templates": {},
+   "composition_template_id": "",
+   "reason_codes": [
+    "scenario_case"
+   ],
+   "rejected_count": 0,
+   "required_slots": [],
+   "selected": []
+  },
+  "template": "",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": []
+  }
+ },
+ "sha": "3badc01329809e89"
+}

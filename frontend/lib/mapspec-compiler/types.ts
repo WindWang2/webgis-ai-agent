@@ -40,11 +40,20 @@ export type StyleMethod =
   | number
   | boolean;
 
+export interface ClusterSourceConfig {
+  /** 簇半径（px）。缺省 60。 */
+  radius?: number;
+  /** 簇聚合最大 zoom（超过后按原始点渲染）。缺省 14。 */
+  maxzoom?: number;
+}
+
 export interface GeoJSONMapSpecSource {
   type: "geojson";
   dataPath?: string;
   url?: string;
   inlineData?: any;
+  /** V4 point_cluster：开启 MapLibre 原生 source 聚合。 */
+  cluster?: ClusterSourceConfig;
   /** V5-E (P3-1): ref payload generation stamped at ingestion — lets the
    * spec-restore/mirror path build revisioned (v=) tile URLs without a HUD
    * descriptor. */
@@ -113,6 +122,8 @@ export interface MapSpecLayer {
   filter?: unknown[];
   /** For vector sources: MapLibre `source-layer` name. Defaults to "data" (repo MVT encoder layer). */
   sourceLayer?: string;
+  /** V4 point_cluster：编译器据此次活动簇三子层（簇圆 + 计数 + 未聚类点）。 */
+  cluster?: ClusterSourceConfig;
 }
 
 export interface MapSpecView {

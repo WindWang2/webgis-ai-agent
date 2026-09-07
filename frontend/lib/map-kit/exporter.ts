@@ -14,6 +14,7 @@ import {
   drawChromeNorthArrow,
   drawChromeScaleBar,
   drawChromeStatsPanel,
+  drawChromeTable,
   drawChromeText,
   type ExportChromeElement,
   type ExportChromeModel,
@@ -321,7 +322,8 @@ export function composeLayout(
     }
 
     // 5.5 浮动面板（statistics/chart/annotation —— 终审 F1：注释卡导出；
-    //     V3：disclosure 族（methodology/uncertainty/decision）同链导出）
+    //     V3：disclosure 族（methodology/uncertainty/decision）同链导出；
+    //     V4：table_panel 有界快照导出）
     for (const panel of chrome.panels) {
       if (panel.kind === 'statistics') {
         drawChromeStatsPanel(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
@@ -334,6 +336,8 @@ export function composeLayout(
         });
       } else if (panel.kind === 'methodology' || panel.kind === 'uncertainty' || panel.kind === 'decision') {
         drawChromeDisclosurePanel(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
+      } else if (panel.kind === 'table') {
+        drawChromeTable(d, panel, { marginX, marginY: stackOffset(panel, mPanel) });
       }
     }
 
@@ -1316,6 +1320,31 @@ export async function runExport(
               '@/lib/map-components/chart-artifact'
             );
             return (await loadChartArtifact(ref)) as any;
+          },
+          // V4：tableRef 通道 —— 与 chart 同一 artifact 装配模式（原始载荷
+          // 交回 export-chrome 统一做有界快照；拉取失败 → 面板缺席，不画空表）。
+          loadTable: async (ref) => {
+            const { loadTableArtifact } = await import(
+              '@/lib/map-components/table-data'
+            );
+            return await loadTableArtifact(ref);
+          },
+          // V4：layerId 通道 —— HUD 图层属性行（live table-panel 同源读取
+          // layer.source.features.properties；层缺席/无要素 → 面板缺席）。
+          loadLayerTable: async (layerId) => {
+            const { useHudStore } = await import('@/lib/store/useHudStore');
+            const layers = useHudStore.getState().layers as Array<{
+              id: string;
+              name?: string;
+              _mapspecLayerId?: string;
+              source?: { features?: Array<{ properties?: Record<string, unknown> }> };
+            }>;
+            const layer = layers.find(
+              (l) => l.id === layerId || l._mapspecLayerId === layerId,
+            );
+            const features = layer?.source?.features;
+            if (!Array.isArray(features) || features.length === 0) return null;
+            return features.map((f) => f.properties ?? {});
           },
         },
         { width: exportCanvas.width, height: exportCanvas.height },

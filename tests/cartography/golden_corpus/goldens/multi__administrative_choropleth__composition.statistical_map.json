@@ -75,6 +75,7 @@
   ],
   "kind": "multi",
   "layout": {
+   "conflicts": [],
    "moved": [],
    "placements": {
     "attribution": "bottom-left",
@@ -84,6 +85,9 @@
     "north-arrow": "top-right",
     "scale-bar": "bottom-right",
     "title": "top-center"
+   },
+   "reasons": {
+    "attribution": "required_overflow_kept"
    },
    "suppressed": [],
    "warning_count": 1
@@ -129,5 +133,5 @@
    ]
   }
  },
- "sha": "3016eb7bcd64e536"
+ "sha": "249f6af18e6e0ee0"
 }

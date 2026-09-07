@@ -60,10 +60,12 @@ function supersededFromError(err: unknown): MutationResponse | null {
  * 经共享串行链提交（ST-P1-2）：revision 在轮到本笔时才读，与其它
  * MapSpec mutation 写互不抢 revision。
  */
+export type ComponentPatchOutcome = { status: 'applied' | 'superseded' };
+
 export async function commitComponentPatch(
   componentId: string,
   patch: ComponentPatch,
-): Promise<void> {
+): Promise<ComponentPatchOutcome | void> {
   if (patch.enabled === undefined && patch.placement === undefined && patch.variant === undefined) {
     return;
   }
@@ -92,6 +94,7 @@ export async function commitComponentPatch(
         setMapSpecRevision(data.mutation_revision);
       }
       commitMapSpecDocument(data.mapspec, data.mutation_revision);
+      return { status: 'applied' };
     } catch (err) {
       const superseded = supersededFromError(err);
       if (!superseded) throw err;
@@ -111,6 +114,7 @@ export async function commitComponentPatch(
         }
       }
       devOnly.warn('[component-mutation] patch superseded, converged to server truth');
+      return { status: 'superseded' };
     }
   });
 }

@@ -96,12 +96,38 @@ def build_catalog() -> dict:
         }
         for t in theme_reg.themes()
     ]
+    # V4：图表 kind 词表随目录导出（id/数据形状/live 引擎/导出能力等级）
+    from app.lib.cartography.chart_kinds import (
+        AGENT_CHART_OPERATIONS,
+        CHART_KINDS,
+        CHART_STATE_TRANSITIONS,
+        CHART_STATES,
+    )
+    chart_states = sorted(CHART_STATES)
+    chart_state_transitions = sorted(f"{a}>{b}" for a, b in CHART_STATE_TRANSITIONS)
+    agent_chart_operations = {
+        op: sorted(pre) for op, pre in sorted(AGENT_CHART_OPERATIONS.items())
+    }
+    chart_kinds = [
+        {
+            "id": k.id,
+            "dataShape": k.data_shape,
+            "liveEngine": k.live_engine,
+            "exportLevel": k.export_level,
+            "selectionLinkage": k.selection_linkage,
+        }
+        for k in sorted(CHART_KINDS, key=lambda k: k.id)
+    ]
     return {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "exportedFrom": "app/lib/cartography/component_registry.py",
         "componentTypes": components,
         "palettes": palettes,
         "themes": themes,
+        "chartKinds": chart_kinds,
+        "chartStates": chart_states,
+        "chartStateTransitions": chart_state_transitions,
+        "agentChartOperations": agent_chart_operations,
     }
 
 

@@ -55,6 +55,7 @@
   ],
   "kind": "base",
   "layout": {
+   "conflicts": [],
    "moved": [],
    "placements": {
     "attribution": "bottom-left",
@@ -63,6 +64,7 @@
     "scale-bar": "bottom-right",
     "title": "top-center"
    },
+   "reasons": {},
    "suppressed": [],
    "warning_count": 0
   },
@@ -100,5 +102,5 @@
    "warning_codes": []
   }
  },
- "sha": "fb7c12fe5b67bb53"
+ "sha": "dcda622245343912"
 }

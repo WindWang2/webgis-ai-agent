@@ -85,6 +85,7 @@
   ],
   "kind": "stress",
   "layout": {
+   "conflicts": [],
    "moved": [
     "subtitle"
    ],
@@ -96,6 +97,9 @@
     "scale-bar": "bottom-right",
     "subtitle": "top-left",
     "title": "top-center"
+   },
+   "reasons": {
+    "subtitle": "fallback_zone"
    },
    "suppressed": [
     "statistics"
@@ -150,5 +154,5 @@
    ]
   }
  },
- "sha": "17608b89fb72750b"
+ "sha": "76453f5eed199cc4"
 }

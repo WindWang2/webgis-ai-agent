@@ -3,127 +3,105 @@
 > 由 `app.lib.cartography.catalog_docs` 从 MapModelRegistry 生成；
 > 手改无效。真值：`model_library.py` + `model_packs/`（ADR-0101）。
 
-共 50 个模型（native 31 / planned 19）。
+共 80 个模型（native 76 / planned 4）。
 
 | id | 名称 | 几何 | 图层 | 分级 | 色系 | 默认色带 | 状态 | 降级 |
 |---|---|---|---|---|---|---|---|---|
-| accessibility_network | 可达性网络图 | line | line | graduated | perceptual_uniform | Viridis | planned | — |
+| accessibility_network | 可达性网络图 | line | line | graduated | perceptual_uniform | Viridis | native | graduated_line |
 | administrative_aggregation | 行政区聚合参考层 | polygon | fill | graduated | sequential | Blues | native | — |
 | administrative_choropleth | 行政分级统计图 | polygon | fill | graduated | sequential | YlOrRd | native | — |
 | aggregate_grid | 格网聚合图（H3/渔网） | point | fill | graduated | sequential | YlOrRd | native | — |
-| anomaly_surface | 距平（异常场）图 | raster | raster | graduated | diverging | RdBu | planned | — |
+| anomaly_surface | 距平（异常场）图 | raster | raster | graduated | diverging | RdBu | native | change_comparison_map |
+| aspect_direction_map | 坡向八方向图 | raster | raster | categorical | qualitative | Set1 | native | classified_raster |
 | before_after_swipe | 前后对比卷帘 | raster | raster | none | none | — | planned | — |
-| bivariate_choropleth | 双变量分级统计图 | polygon | fill | graduated | none | — | planned | — |
+| bivariate_choropleth | 双变量分级统计图 | polygon | fill | graduated | none | BiPurpleOrange | native | normalized_choropleth |
+| bivariate_raster | 双变量栅格图 | raster | raster | graduated | none | BiPurpleOrange | native | classified_raster |
+| cartogram_map | 统计地图变形（cartogram） | polygon | fill | graduated | sequential | YlOrRd | planned | — |
 | categorical_thematic | 分类专题图 | point/polygon/line | fill | categorical | qualitative | Set1 | native | — |
 | categorized_line | 分类线图 | line | line | categorical | qualitative | Dark2 | native | — |
 | categorized_point | 分类点图 | point | circle | categorical | qualitative | Set1 | native | — |
 | change_comparison_map | 变化对比图 | polygon | fill | graduated | diverging | RdBu | native | diverging_choropleth |
-| classified_raster | 分级栅格图 | raster | raster | graduated | sequential | YlOrRd | planned | — |
+| classification_result_map | 分类结果图 | polygon | fill | categorical | qualitative | Set2 | native | — |
+| classified_raster | 分级栅格图 | raster | raster | graduated | sequential | YlOrRd | native | raster_surface |
+| confusion_matrix_map | 误差/混淆可视化图 | polygon | fill | categorical | qualitative | Set1 | native | categorical_thematic |
 | dasymetric_map | 分区密度图（dasymetric） | polygon | fill | graduated | sequential | YlOrRd | planned | — |
+| dbscan_cluster_map | DBSCAN 聚类簇图 | point | circle | categorical | qualitative | Set1 | native | — |
+| distance_surface | 距离场图 | raster | raster | none | sequential | Oranges | native | raster_surface |
 | diverging_choropleth | 发散分级统计图 | polygon | fill | graduated | diverging | RdBu | native | administrative_choropleth |
-| dot_density_map | 点密度图（dot density） | polygon | circle | none | none | — | planned | — |
-| elevation_tint_hillshade | 高程分层设色 + 晕渲 | raster | raster | graduated | sequential | Oranges | planned | — |
+| dot_density_map | 点密度图（dot density） | polygon | circle | none | none | — | native | — |
+| elevation_tint_hillshade | 高程分层设色 + 晕渲 | raster | raster | graduated | sequential | Oranges | native | hillshade |
 | equity_assessment | 公平性评估图 | polygon | fill | graduated | diverging | RdBu | native | diverging_choropleth |
 | extrusion_3d | 3D 挤出柱状图 | polygon | fill-extrusion | none | sequential | Oranges | native | — |
+| flow_accumulation_surface | 汇流累积面 | raster | raster | none | sequential | Purples | native | terrain_analytical_surface |
+| flow_hub_map | 流量枢纽图 | point | circle | none | sequential | Plasma | native | proportional_symbol |
 | flow_od_arc | OD 流向图 | line | line | none | sequential | Plasma | native | — |
 | graduated_line | 分级线图 | line | line | graduated | sequential | Blues | native | flow_od_arc |
 | graduated_point | 分级点图 | point | circle | graduated | sequential | Blues | native | graduated_symbol |
-| hillshade | 山体阴影 | raster | hillshade | none | none | — | planned | — |
+| gwr_coefficient_map | GWR 局部系数图 | polygon | fill | graduated | diverging | PuOr | native | diverging_choropleth |
+| hillshade | 山体阴影 | raster | raster | none | sequential | Gray | native | raster_surface |
 | hotspot_overlay | 热点显著性图层 | point/polygon | fill | categorical | diverging | RdBu | native | — |
+| huff_probability_surface | Huff 概率面 | raster/polygon | raster | none | sequential | Oranges | native | raster_surface |
+| interpolation_result_map | 插值结果面 | raster | raster | none | perceptual_uniform | Viridis | native | raster_surface |
 | isoline_contour | 等值线/等值面 | line/polygon/point/raster | line | none | sequential | Inferno | native | — |
+| kernel_density_surface | 核密度估计面 | raster | raster | none | perceptual_uniform | Magma | native | raster_surface |
+| landform_classification_map | 地貌分类图 | raster | raster | categorical | qualitative | Dark2 | native | classified_raster |
+| location_allocation_map | 区位配置图 | point/line/polygon | fill | categorical | qualitative | Dark2 | native | nearest_facility_map |
 | mcda_score_map | MCDA 评分图 | polygon | fill | graduated | sequential | Purples | native | administrative_choropleth |
-| network_centrality_map | 网络中心性图 | point/line | line | graduated | perceptual_uniform | Magma | planned | — |
+| multi_ring_buffer_map | 多环缓冲图 | polygon | fill | graduated | sequential | Blues | native | proximity_overlay |
+| nearest_facility_map | 最近设施归属图 | line/point | line | categorical | qualitative | Set2 | native | categorized_line |
+| network_centrality_map | 网络中心性图 | point/line | line | graduated | perceptual_uniform | Magma | native | graduated_line |
+| network_flow_map | 网络流量图 | line | line | graduated | perceptual_uniform | Inferno | native | graduated_line |
 | normalized_choropleth | 归一化分级统计图 | polygon | fill | graduated | sequential | Blues | native | administrative_choropleth |
-| point_cluster | 点聚类图 | point | circle | none | sequential | Blues | planned | — |
+| ols_residual_map | 回归残差图 | polygon | fill | graduated | diverging | RdBu | native | diverging_choropleth |
+| point_cluster | 点聚类图 | point | circle | none | sequential | Blues | native | — |
 | point_overlay | 点叠加层 | point | circle | none | none | — | native | — |
 | proportional_symbol | 比例符号图（气泡图） | point | circle | none | sequential | Blues | native | — |
 | proximity_overlay | 邻近/缓冲叠加 | point/line/polygon | fill | none | qualitative | Set2 | native | — |
 | raster_surface | 栅格连续色面 | raster | raster | none | perceptual_uniform | Viridis | native | — |
 | risk_exposure_classes | 风险暴露分级图 | polygon | fill | graduated | sequential | Reds | native | administrative_choropleth |
-| route_map | 路径图 | line | line | none | qualitative | Set1 | planned | — |
-| sar_change_detection | SAR 变化检测图 | raster | raster | graduated | diverging | RdBu | planned | — |
-| sar_intensity_surface | SAR 强度面 | raster | raster | none | perceptual_uniform | Inferno | planned | — |
-| sensitivity_analysis_presentation | 敏感性分析呈现图 | polygon | fill | graduated | diverging | RdBu | planned | — |
+| route_map | 路径图 | line | line | categorical | qualitative | Set1 | native | categorized_line |
+| rs_composite_map | 遥感合成影像图 | raster | raster | none | none | — | native | raster_surface |
+| sar_change_detection | SAR 变化检测图 | raster | raster | graduated | diverging | RdBu | native | change_comparison_map |
+| sar_intensity_surface | SAR 强度面 | raster | raster | none | perceptual_uniform | Inferno | native | raster_surface |
+| sensitivity_analysis_presentation | 敏感性分析呈现图 | polygon | fill | graduated | diverging | RdBu | native | mcda_score_map |
 | service_area_overlay | 服务区叠加 | polygon | fill | graduated | sequential | Blues | native | proximity_overlay |
 | simple_point_map | 轻量点图 | point | circle | none | none | — | native | — |
 | site_selection_result | 选址评价结果图 | polygon | fill | graduated | sequential | Greens | native | administrative_choropleth |
+| small_multiple_map | 小倍数地图组 | polygon/point/raster | fill | graduated | sequential | Blues | planned | — |
 | spectral_index_surface | 光谱指数面 | raster | raster | none | perceptual_uniform | Viridis | native | raster_surface |
+| stream_order_map | 河网分级图 | line | line | graduated | sequential | Blues | native | graduated_line |
 | suitability_classes | 适宜性分级图 | polygon | fill | graduated | sequential | Greens | native | administrative_choropleth |
-| temporal_trend_surface | 时序趋势面 | raster | raster | graduated | diverging | RdBu | planned | — |
+| suitability_constraint_overlay | 硬约束掩膜叠加 | polygon | fill | categorical | qualitative | Set1 | native | proximity_overlay |
+| surface_difference_map | 表面差值图 | raster | raster | graduated | diverging | RdBu | native | change_comparison_map |
+| temporal_comparison_map | 时相对比双专题图 | polygon | fill | graduated | sequential | Blues | native | change_comparison_map |
+| temporal_trend_surface | 时序趋势面 | raster | raster | graduated | diverging | RdBu | native | change_comparison_map |
 | terrain_analytical_surface | 地形解析面 | raster | raster | none | perceptual_uniform | Magma | native | raster_surface |
-| uncertainty_choropleth | 不确定性分级统计图 | polygon | fill | graduated | sequential | Purples | planned | — |
-| uncertainty_point_symbol | 不确定性点符号 | point | circle | graduated | sequential | Purples | planned | — |
-| uncertainty_surface | 不确定性面 | raster | raster | none | sequential | Purples | planned | — |
+| twi_map | 地形湿度指数图 | raster | raster | none | sequential | Blues | native | terrain_analytical_surface |
+| uncertainty_choropleth | 不确定性分级统计图 | polygon | fill | graduated | sequential | Purples | native | normalized_choropleth |
+| uncertainty_point_symbol | 不确定性点符号 | point | circle | graduated | sequential | Purples | native | graduated_point |
+| uncertainty_surface | 不确定性面 | raster | raster | none | sequential | Purples | native | raster_surface |
+| viewshed_map | 视线域/可视域图 | raster | raster | categorical | qualitative | Set1 | native | classified_raster |
 | visual_heatmap | 视觉热力图 | point | heatmap | none | perceptual_uniform | classic | native | — |
+| voronoi_partition_map | Voronoi 分割图 | polygon | fill | categorical | qualitative | Pastel1 | native | categorical_thematic |
 | vulnerability_index | 脆弱性指数图 | polygon | fill | graduated | sequential | Oranges | native | administrative_choropleth |
+| watershed_boundary_map | 流域边界图 | polygon | fill | categorical | qualitative | Set2 | native | categorical_thematic |
+| weighted_overlay_surface | 加权叠加分析面 | raster | raster | none | sequential | Greens | native | raster_surface |
 | zoning_planning | 区划/规划用地图 | polygon | fill | categorical | qualitative | Pastel1 | native | categorical_thematic |
 
 ## planned 模型的诚实披露
-
-### accessibility_network（可达性网络图）
-- planned：需要可达性计算 artifact（机会累积/引力模型），本分支未实现
-
-### anomaly_surface（距平（异常场）图）
-- planned：需要背景态参考 artifact，本分支未实现
 
 ### before_after_swipe（前后对比卷帘）
 - planned：runtime 无 swipe 交互语义与导出双帧契约，本分支未实现
 - 导出侧等价物是双帧并排（before/after 双面板），swipe 仅限交互面
 
-### bivariate_choropleth（双变量分级统计图）
-- planned：paint 投影与图例（3×3 色阵 legend）未实现，不伪装 native；色阵族未建，缺省色带留空
-- 双变量图读者负荷高 —— 仅在两变量确有交互语义时使用
-
-### classified_raster（分级栅格图）
-- planned：栅格 step 化着色需 color-relief/服务端重分类链路，本分支未实现
+### cartogram_map（统计地图变形（cartogram））
+- planned：需要面积保持变形算法（Gastner-Newman 扩散等）与变形后几何的渲染契约，本分支未实现
+- 变形图必须同时披露原始地理轮廓参照（inset），否则读者失去地理定位
 
 ### dasymetric_map（分区密度图（dasymetric））
 - planned：需要控制层数据契约与重分配算法，本分支未实现
 
-### dot_density_map（点密度图（dot density））
-- planned：需要按面单元比例约束的确定性撒点算法（本分支未实现，不伪装 native）
-- 撒点位置是示意性重分布，不是真实位置 —— 图例必须披露『Random dot within polygon』
-
-### elevation_tint_hillshade（高程分层设色 + 晕渲）
-- planned：依赖 hillshade（未接线）与多层栅格合成顺序契约
-- 受限于已注册色带库存，以 Oranges 近似经典 hypsometric 多色分层方案
-
-### hillshade（山体阴影）
-- planned：hillshade 图层在前端编译器 union 与 raster-dem source 链路均未接线
-- 光源方位角/高度角必须随图披露，否则同一 DEM 可渲染出不同地貌观感
-
-### network_centrality_map（网络中心性图）
-- planned：需要中心性计算 artifact（本分支网络算法未含 centrality）
-- 中心性对网络边界截断极敏感 —— 截断窗口必须在披露组件声明
-- 节点+边联合编码需多层组合；本模型按输入几何族单族渲染
-
-### point_cluster（点聚类图）
-- planned：依赖 maplibre source cluster 语义（前端编译器 union 未含 cluster 配置）
-- 簇计数是屏幕相关量 —— 同一数据不同缩放簇数不同，导出前固定 zoom
-
-### route_map（路径图）
-- planned：需要路由结果 artifact 契约（turn-by-turn/成本字段），本分支未实现
-
-### sar_change_detection（SAR 变化检测图）
-- planned：无 InSAR/相干性 artifact 契约，本分支未实现
-- 形变量色标必须对称且以 0 为中点，否则毫米级形变被误读
-
-### sar_intensity_surface（SAR 强度面）
-- planned：无 SAR 强度 artifact 类型与 dB 归一契约，本分支未实现
-
-### sensitivity_analysis_presentation（敏感性分析呈现图）
-- planned：需要情景/扰动 artifact 契约与多面板组合语义，本分支未实现
-
-### temporal_trend_surface（时序趋势面）
-- planned：需要趋势拟合 artifact（斜率/p 值字段），本分支未实现
-- 不显著趋势应以低饱和/置灰表达，不与显著趋势争色
-
-### uncertainty_choropleth（不确定性分级统计图）
-- planned：需要区间/方差字段契约与 hatch 填充渲染，本分支未实现
-
-### uncertainty_point_symbol（不确定性点符号）
-- planned：需要区间/方差字段契约（artifact schema 未定义 uncertainty 列）
-
-### uncertainty_surface（不确定性面）
-- planned：需要不确定性场 artifact（方差/分位带），本分支未实现
+### small_multiple_map（小倍数地图组）
+- planned：需要多画幅组合运行时（多个 MapSpec 画面的并置/联动布局），当前单画布 MapSpec 无法承载 —— 诚实保留 planned
+- 落地前替代：temporal_comparison_map（双期）或导出侧多次出图
 

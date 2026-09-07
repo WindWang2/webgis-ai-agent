@@ -66,6 +66,23 @@ helper 组槽位）。
 - `output_targets` 与槽位能力一致（resolver 会在不支持的输出上剔除组件，
   required 缺席会导致组合回退）。
 
+## 3.5 V4 新增维度（Design System）
+
+- **新增图表 kind**：在 `app/lib/cartography/chart_kinds.py` 登记
+  `ChartKindDescriptor`（live 引擎/导出能力等级/别名），前端
+  `chart-core.tsx` 加渲染分支、`chart-panel.tsx` 的 kind 变体集合同步；
+  未实现的 kind 必须标 `live_engine="planned"` + `export_level=
+  "unsupported"`（词表校验强制），前端与工具层会诚实拒绝并引导回退。
+- **新增模型的主题绑定**：`MapModel.default_theme` 必须是已注册主题 id
+  （`validate_model_library` 校验）；领域主题见 `docs/cartography/
+  design-system-v4.md` §8。
+- **图例族兼容清单**：新模型 native 化时必须把模型 id 补进 legend /
+  categorical_legend / continuous_colorbar 中相关描述符的
+  `compatible_map_models` —— 否则组合模板 required 图例槽会必然缺失
+  （corpus `stress::` 维度锁定此约束）。
+- **布局 V3**：组合产物走 `solve_layout_v3`（列单位/碰撞组/占用/诊断）；
+  新组件在 descriptor 上声明 `collision_class` 与 `states`。
+
 ## 4. 刷新生成物（按序）
 
 ```bash

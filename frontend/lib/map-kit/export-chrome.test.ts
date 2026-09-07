@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   anchorOrigin,
   buildExportChrome,
+  buildExportTableData,
   drawChromeAttribution,
   drawChromeChartPanel,
   drawChromeColorbar,
@@ -14,6 +15,7 @@ import {
   drawChromeNorthArrow,
   drawChromeScaleBar,
   drawChromeStatsPanel,
+  drawChromeTable,
   drawChromeText,
 } from './export-chrome';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
@@ -562,5 +564,257 @@ describe('P6 高级组件 —— map_border / graticule 导出通道', () => {
     drawChromeMapBorder(d(academic), { kind: 'map_border', anchor: 'none', variant: 'academic' });
     expect(academic.ctx.strokeRect).toHaveBeenCalledTimes(2); // 双框
     expect(academic.ctx.stroke).toHaveBeenCalledTimes(1);     // 角刻度路径
+  });
+});
+
+// ── V4：chart kind 扩展 / 双变量图例 / 表格导出 ─────────────────────────
+
+describe('V4 drawChromeChartPanel — chart kind 扩展', () => {
+  it('未知 kind（violin）诚实降级：画「暂不支持导出」说明，不绘制图形', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeChartPanel(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'chart', anchor: 'top-left',
+        chart: { type: 'violin', title: '小提琴', data: [{ name: 'a', value: 3 }] } as any,
+      },
+      { marginX: 40 },
+    );
+    const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
+    expect(texts).toContain('该图表类型暂不支持导出');
+    expect(texts).toContain('小提琴'); // 标题条保留
+    // 无图形：无数据 fillRect（面板底色 arcTo 路径除外）、无数据 arc
+    expect(calls.filter((c) => c.op === 'arc').length).toBe(0);
+  });
+
+  it('donut：扇形 arc + 内圈 arc（0.6 倍半径）', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeChartPanel(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'chart', anchor: 'top-left',
+        chart: { type: 'donut', title: 'D', data: [{ name: 'a', value: 2 }, { name: 'b', value: 3 }] },
+      },
+      { marginX: 40 },
+    );
+    const arcs = calls.filter((c) => c.op === 'arc');
+    expect(arcs.length).toBeGreaterThanOrEqual(3); // 2 扇形 + 1 内圈
+    const hole = arcs[arcs.length - 1]!.args as unknown[];
+    expect(hole[2]).toBeGreaterThan(0); // 内圈半径为正
+  });
+
+  it('grouped_bar：读 series 并排双条（每类目 2 条数据条）', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeChartPanel(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'chart', anchor: 'top-left',
+        chart: {
+          type: 'grouped_bar', title: 'G',
+          data: [{ name: 'a', value: 1 }, { name: 'b', value: 2 }],
+          series: [
+            { name: 's1', data: [{ name: 'a', value: 1 }, { name: 'b', value: 2 }] },
+            { name: 's2', data: [{ name: 'a', value: 3 }, { name: 'b', value: 4 }] },
+          ],
+        } as any,
+      },
+      { marginX: 40 },
+    );
+    // 面板底 + 网格外的数据条 ≥ 4（2 类目 × 2 序列）
+    expect(calls.filter((c) => c.op === 'fillRect').length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('box_plot：竖须 + 箱体 + 中位线（stroke 路径绘制）', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeChartPanel(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'chart', anchor: 'top-left',
+        chart: {
+          type: 'box_plot', title: 'B',
+          data: [{ name: 'a', value: 5, q1: 3, q3: 7, min: 1, max: 9 }],
+        } as any,
+      },
+      { marginX: 40 },
+    );
+    expect(calls.filter((c) => c.op === 'strokeRect').length).toBeGreaterThanOrEqual(2); // 绘图区框 + 箱体
+    expect(calls.filter((c) => c.op === 'stroke').length).toBeGreaterThanOrEqual(2);     // 须 + 中位线路径
+  });
+
+  it('heat_matrix：3×3 色阵（Blues ramp 9 格 fillRect）', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeChartPanel(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'chart', anchor: 'top-left',
+        chart: {
+          type: 'heat_matrix', title: 'H', data: [{ name: 'c1', value: 1 }],
+          series: [{
+            name: 'r1',
+            data: [
+              { name: 'c1', value: 1 }, { name: 'c2', value: 5 }, { name: 'c3', value: 9 },
+            ],
+          }],
+        } as any,
+      },
+      { marginX: 40 },
+    );
+    const fills = calls.filter((c) => c.op === 'fillRect');
+    // 单行 3 列 → 恰 3 个色格；色 = Blues 5 档 ramp（值 1/5/9 → 档 0/2/4）
+    expect(fills.length).toBe(3);
+    const cellColors = calls.filter((c) => c.op === 'fillStyle').map((c) => String(c.args[0]));
+    expect(cellColors).toContain('#eff3ff');
+    expect(cellColors).toContain('#6baed6');
+    expect(cellColors).toContain('#08519c');
+  });
+
+  it('kpi_card：2 列卡片 + 大数字文本', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeChartPanel(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'chart', anchor: 'top-left',
+        chart: {
+          type: 'kpi_card', title: 'K',
+          data: [{ name: '学校', value: 120 }, { name: '医院', value: 30 }],
+        } as any,
+      },
+      { marginX: 40 },
+    );
+    const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
+    expect(texts).toContain('120');
+    expect(texts).toContain('学校');
+  });
+
+  it('ranking_list：值降序 + 名次文本', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeChartPanel(
+      { ctx, ...DRAW_BASE },
+      {
+        kind: 'chart', anchor: 'top-left',
+        chart: {
+          type: 'ranking_list', title: 'R',
+          data: [{ name: '甲', value: 5 }, { name: '乙', value: 9 }, { name: '丙', value: 1 }],
+        } as any,
+      },
+      { marginX: 40 },
+    );
+    const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
+    expect(texts).toContain('1'); // 名次列（值 9 居首）
+    expect(texts).toContain('2');
+    expect(texts).toContain('3');
+    expect(texts).toContain('9'); // 首名值
+  });
+});
+
+describe('V4 drawChromeLegend — bivariate 色阵', () => {
+  const BIV = {
+    type: 'bivariate', matrix: 'tercile', n: 3,
+    colors: ['#e8e8f0', '#add8e6', '#4682b4', '#f5c6a0', '#8fb8de', '#2c6698', '#e8927c', '#c07a9d', '#3a3a6e'],
+    label_a: '人口密度', label_b: '可达性', breaks_a: [0, 3, 6], breaks_b: [0, 5, 10],
+    field: 'bivariate',
+  } as any;
+
+  it('3×3 色阵逐格绘制 + ↑/→ 轴标', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeLegend({ ctx, ...DRAW_BASE }, { kind: 'legend', anchor: 'bottom-left', legendSpec: BIV }, { marginX: 40 });
+    const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
+    expect(texts.some((t) => t.startsWith('↑'))).toBe(true);
+    expect(texts.some((t) => t.startsWith('→'))).toBe(true);
+    expect(texts.some((t) => t.includes('可达性'))).toBe(true);
+    // 9 格色块（14px 方格）
+    const squares = calls.filter((c) => c.op === 'fillRect' && c.args[2] === 14);
+    expect(squares.length).toBe(9);
+  });
+
+  it('colors 不足 n×n → 不绘制（live return null 同门，不伪造色阵）', () => {
+    const { ctx, calls } = mockCtx();
+    drawChromeLegend(
+      { ctx, ...DRAW_BASE },
+      { kind: 'legend', anchor: 'bottom-left', legendSpec: { ...BIV, colors: BIV.colors.slice(0, 5) } },
+      { marginX: 40 },
+    );
+    expect(calls.filter((c) => c.op === 'fillText').length).toBe(0);
+  });
+});
+
+describe('V4 table_panel 导出 — 有界快照', () => {
+  it('inline table → kind=table 面板进入模型；table_panel 计入 fromSpec', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({
+            id: 'tbl', type: 'table_panel', enabled: true,
+            options: {
+              title: '行政区',
+              table: { columns: ['name', 'pop'], rows: [{ name: 'A 区', pop: 12 }, { name: 'B 区', pop: 30 }] },
+            },
+          }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.fromSpec).toBe(true);
+    const panel = model.panels.find((p) => p.kind === 'table');
+    expect(panel?.table).toMatchObject({ title: '行政区', columns: ['name', 'pop'], totalCount: 2 });
+  });
+
+  it('tableRef 经 loadTable 装配；无数据 → 面板缺席（不画空表冒充）', async () => {
+    const withData = await buildExportChrome(
+      {
+        spec: specOf([comp({ id: 'tbl', type: 'table_panel', enabled: true, options: { tableRef: 'ref:tbl-1' } })]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+        loadTable: async (ref) =>
+          ref === 'ref:tbl-1' ? { table: { columns: ['name'], rows: [{ name: 'A 区' }] } } : null,
+      },
+      CANVAS,
+    );
+    expect(withData.panels.find((p) => p.kind === 'table')?.table?.rows).toHaveLength(1);
+
+    const withoutData = await buildExportChrome(
+      {
+        spec: specOf([comp({ id: 'tbl', type: 'table_panel', enabled: true, options: { tableRef: 'ref:tbl-x' } })]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+        loadTable: async () => null,
+      },
+      CANVAS,
+    );
+    expect(withoutData.panels.find((p) => p.kind === 'table')).toBeUndefined();
+  });
+
+  it('drawChromeTable：标题 + 表头 + 行 + 「…N 行未显示」尾注；8 行快照裁剪', () => {
+    const records = Array.from({ length: 20 }, (_, i) => ({ name: `row${i}`, pop: i }));
+    const table = buildExportTableData('行政区', records);
+    expect(table).toMatchObject({ totalCount: 20 });
+    expect(table!.rows).toHaveLength(8);
+
+    const { ctx, calls } = mockCtx();
+    drawChromeTable({ ctx, ...DRAW_BASE }, { kind: 'table', anchor: 'top-left', table: table! }, { marginX: 40 });
+    const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
+    expect(texts).toContain('行政区');
+    expect(texts).toContain('name');
+    expect(texts).toContain('…12 行未显示'); // 20 - 8
+  });
+
+  it('collapsed 表格导出折叠标题条（E-2 同约定）', async () => {
+    const model = await buildExportChrome(
+      {
+        spec: specOf([
+          comp({
+            id: 'tbl', type: 'table_panel', enabled: true,
+            placement: { mode: 'floating', x: 10, y: 10, width: 300, height: 200, collapsed: true },
+            options: { title: '行政区', table: { columns: ['name'], rows: [{ name: 'A' }] } },
+          }),
+        ]),
+        viewport: VIEWPORT,
+        legendSpecsByLayer: {},
+      },
+      CANVAS,
+    );
+    expect(model.panels.find((p) => p.kind === 'table')?.text).toBe('行政区');
   });
 });

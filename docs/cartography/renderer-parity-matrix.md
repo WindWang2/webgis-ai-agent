@@ -22,7 +22,7 @@
 | scale_bar | ✓ | ✓ | ✓ | ✓ | — | 同 north_arrow（enabled 开关）（native） |
 | statistics_panel | ✓ | ✓ | ✓ | ✓ | — | ADR-0081：canvas 导出绘制统计卡（placement 感知（native） |
 | subtitle | ✓ | ✓ | ✓ | ✓ | — | ADR-0081：exporter 经共享 resolveMapComponents 读 subtitle 组件（canvas 与 PDF 文本层同链）（native） |
-| table_panel | ✓ | — | — | — | — | Runtime V4：交互表格面板（虚拟化 + 跨视图 SelectionContext 联动）（native） |
+| table_panel | ✓ | ✓ | ✓ | ✓ | — | Runtime V4：交互表格面板（虚拟化 + 跨视图 SelectionContext 联动）（native） |
 | title | ✓ | ✓ | ✓ | ✓ | — | exporter runExport 读取 options.text 绘制画布标题（native） |
 | uncertainty_panel | ✓ | ✓ | ✓ | ✓ | — | V3：不确定性披露（区间/置信度/样本限制）live + canvas 导出同链（native） |
 

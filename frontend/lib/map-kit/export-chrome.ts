@@ -37,12 +37,48 @@ export interface StatsPanelData {
   items: Array<{ label?: string; value?: string | number; unit?: string }>;
 }
 
+export interface ChartPanelDataPoint {
+  name: string;
+  value?: number;
+  x?: number;
+  y?: number;
+  /** V4 box_plot 五数扩展（value=median；与 lib/types ChartDataPoint 同源）。 */
+  q1?: number;
+  q3?: number;
+  min?: number;
+  max?: number;
+}
+
+/** V4 多序列（grouped/stacked bar、radar、heat_matrix 行；与 ChartSeries 同源）。 */
+export interface ChartPanelSeries {
+  name: string;
+  data: ChartPanelDataPoint[];
+}
+
 export interface ChartPanelData {
-  type: 'bar' | 'line' | 'pie' | 'scatter';
+  /** chart_kinds 词表（18 种 native，与 lib/types ChartKind 同源）；未知 kind 由绘制端诚实降级。 */
+  type: string;
   title: string;
-  data: Array<{ name: string; value?: number; x?: number; y?: number }>;
+  data: ChartPanelDataPoint[];
+  series?: ChartPanelSeries[];
+  /** stacked_bar 的堆叠语义开关（grouped_bar 缺省并排）。 */
+  stacked?: boolean;
   x_label?: string;
   y_label?: string;
+}
+
+/**
+ * V4：table_panel 导出载荷（有界快照 —— 绘制面 ≤8 行 / ≤6 列，快照外的
+ * 行列总量走尾注披露；行数据与 live table-data 同形（props 记录））。
+ */
+export interface TablePanelData {
+  title: string;
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+  /** 快照外的总行数（诚实披露「…N 行未显示」）。 */
+  totalCount: number;
+  /** 全量列数（列被快照裁剪时用于「…N 列未显示」披露）。 */
+  totalColumns?: number;
 }
 
 /** 导出侧组件元素（从 ResolvedMapComponent 派生，含画布坐标）。 */
@@ -61,6 +97,8 @@ export interface ExportChromeElement {
   legendSpec?: LegendSpec;
   stats?: StatsPanelData;
   chart?: ChartPanelData;
+  /** V4：表格面板有界快照（buildExportChrome 双通道装配；无数据 → 面板缺席）。 */
+  table?: TablePanelData;
   /** v2 注记 callout：地理锚点 [lng, lat]（与 live annotation.tsx 同链投影）。 */
   anchorCoordinate?: [number, number];
   /** v2 注记 group：多条相关注记（≤12 条，与后端 MAX_ANNOTATION_ITEMS 同值）。 */
@@ -121,6 +159,14 @@ export interface BuildExportChromeOptions {
   fallbackLegendSpec?: LegendSpec;
   /** chartRef → ChartData 的异步加载器（大载荷走 session artifact）。 */
   loadChart?: (ref: string) => Promise<ChartPanelData | null>;
+  /**
+   * V4：tableRef → 原始表格载荷（{table:{columns,rows}} / {columns,rows} /
+   * 记录数组）的异步加载器 —— 与 loadChart 同一 artifact 装配模式；
+   * 快照有界化（≤8 行/≤6 列）由本模块统一执行。
+   */
+  loadTable?: (ref: string) => Promise<unknown | null>;
+  /** V4：layerId → 图层属性记录数组的异步解析器（live 表格 layer 通道同源）。 */
+  loadLayerTable?: (layerId: string) => Promise<Array<Record<string, unknown>> | null>;
   /** v2：live 视口地理 bounds（inset 指示框缺省 mainBbox 时使用）。 */
   viewportBounds?: { west: number; south: number; east: number; north: number };
 }
@@ -207,26 +253,140 @@ function _parseStats(raw: unknown): StatsPanelData | undefined {
   return { title: typeof title === 'string' ? title : undefined, items: parsed };
 }
 
+/** V4 多序列解析（宽容：name 必为字符串；数值字段经 isFinite 过滤）。 */
+function _parseSeries(raw: unknown): ChartPanelSeries[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: ChartPanelSeries[] = [];
+  for (const entry of raw.slice(0, 12)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const rec = entry as Record<string, unknown>;
+    if (typeof rec['name'] !== 'string' || !Array.isArray(rec['data'])) continue;
+    const data = (rec['data'] as unknown[])
+      .filter(
+        (p): p is Record<string, unknown> =>
+          !!p && typeof p === 'object' && typeof (p as Record<string, unknown>)['name'] === 'string',
+      )
+      .map((p) => {
+        const point: ChartPanelDataPoint = { name: String(p['name']) };
+        for (const key of ['value', 'x', 'y', 'q1', 'q3', 'min', 'max'] as const) {
+          const v = p[key];
+          if (typeof v === 'number' && Number.isFinite(v)) point[key] = v;
+        }
+        return point;
+      });
+    out.push({ name: rec['name'], data });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function _parseChart(raw: unknown): ChartPanelData | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const r = raw as Record<string, unknown>;
-  const type = r['type'];
-  if (type !== 'bar' && type !== 'line' && type !== 'pie' && type !== 'scatter') {
-    return undefined;
-  }
+  // V4：type 放宽为 chart_kinds 词表字符串（18 种 native）；未知 kind 仍
+  // 进入模型 —— 绘制端画「暂不支持导出」诚实降级（不静默丢面板）。
+  const type = typeof r['type'] === 'string' && r['type'].trim() ? r['type'].trim() : undefined;
   const data = r['data'];
   const title = r['title'];
-  if (!Array.isArray(data) || data.length === 0 || typeof title !== 'string') {
+  if (!type || !Array.isArray(data) || data.length === 0 || typeof title !== 'string') {
     return undefined;
   }
+  const series = _parseSeries(r['series']);
   return {
     type,
     title,
     data: data as ChartPanelData['data'],
+    ...(series ? { series } : {}),
+    ...(r['stacked'] === true ? { stacked: true } : {}),
     x_label: typeof r['x_label'] === 'string' ? r['x_label'] : undefined,
     y_label: typeof r['y_label'] === 'string' ? r['y_label'] : undefined,
   };
 }
+
+// ── V4：table_panel 导出装配（有界快照）────────────────────────────────
+// 绘制面行/列上限；快照外的总量走尾注披露（「…N 行未显示」），不画全量、
+// 更不画空表冒充。取数双通道与 live table-panel 同源（tableRef artifact /
+// layerId 图层属性 / inline table）。
+
+const EXPORT_TABLE_MAX_ROWS = 8;
+const EXPORT_TABLE_MAX_COLUMNS = 6;
+
+/** 行数组（列序对齐）→ 记录；非数组行透传对象。 */
+function _rowToRecord(columns: unknown, row: unknown): Record<string, unknown> {
+  if (!Array.isArray(row)) {
+    return row && typeof row === 'object' ? (row as Record<string, unknown>) : {};
+  }
+  const out: Record<string, unknown> = {};
+  const cols = Array.isArray(columns) ? columns.map(String) : [];
+  for (let i = 0; i < row.length && i < cols.length; i++) out[cols[i]] = row[i];
+  return out;
+}
+
+/** 列推导（live deriveColumns 同式：首 20 行键序、排除 geometry、≤32 列）。 */
+function _deriveColumns(records: Array<Record<string, unknown>>): string[] {
+  const seen: string[] = [];
+  for (const rec of records.slice(0, 20)) {
+    if (!rec || typeof rec !== 'object') continue;
+    for (const key of Object.keys(rec)) {
+      if (!seen.includes(key) && key !== 'geometry') seen.push(key);
+      if (seen.length >= 32) return seen;
+    }
+  }
+  return seen;
+}
+
+/**
+ * 原始表格载荷 → 有界 TablePanelData（宽容规整 + 快照裁剪）。
+ * 无有效行/列 → null（调用方面板缺席，不伪造）。
+ */
+export function buildExportTableData(
+  title: string,
+  payload: unknown,
+  preferredColumns?: string[],
+): TablePanelData | null {
+  let records: Array<Record<string, unknown>>;
+  let payloadColumns: string[] | undefined;
+  if (Array.isArray(payload)) {
+    records = payload as Array<Record<string, unknown>>;
+  } else if (payload && typeof payload === 'object') {
+    const obj = payload as { table?: unknown; columns?: unknown; rows?: unknown };
+    if (Array.isArray(obj.table)) {
+      records = obj.table as Array<Record<string, unknown>>;
+    } else if (obj.table && typeof obj.table === 'object') {
+      const t = obj.table as { columns?: unknown; rows?: unknown };
+      if (!Array.isArray(t.rows)) return null;
+      records = t.rows.map((r) => _rowToRecord(t.columns, r));
+      payloadColumns = Array.isArray(t.columns) ? t.columns.map(String) : undefined;
+    } else if (Array.isArray(obj.rows)) {
+      records = obj.rows as Array<Record<string, unknown>>;
+      payloadColumns = Array.isArray(obj.columns) ? obj.columns.map(String) : undefined;
+    } else {
+      return null;
+    }
+  } else {
+    return null;
+  }
+  records = records.filter(
+    (r): r is Record<string, unknown> => !!r && typeof r === 'object' && !Array.isArray(r),
+  );
+  if (records.length === 0) return null;
+  const fullColumns =
+    preferredColumns && preferredColumns.length
+      ? preferredColumns
+      : payloadColumns && payloadColumns.length
+        ? payloadColumns
+        : _deriveColumns(records);
+  const columns = fullColumns.slice(0, EXPORT_TABLE_MAX_COLUMNS);
+  if (columns.length === 0) return null;
+  return {
+    title,
+    columns,
+    rows: records.slice(0, EXPORT_TABLE_MAX_ROWS),
+    totalCount: records.length,
+    ...(fullColumns.length > columns.length ? { totalColumns: fullColumns.length } : {}),
+  };
+}
+
+
 
 // ── V3（ADR-0101 D6）：披露族导出解析（与 live 渲染器同语义）────────────
 // 归一化为「标题 + 文本行」；坏载荷 → undefined（面板缺席，不伪造）。
@@ -331,6 +491,9 @@ export async function buildExportChrome(
     // V3（ADR-0101 D6）：披露族落地 canvas 导出 —— 计入可视组件
     //（disclosure-only spec 也走 chrome 路径，否则面板被 fromSpec 门饿死）
     'methodology_note', 'uncertainty_panel', 'decision_panel',
+    // V4：表格面板落地 canvas 导出（drawChromeTable 有界快照）—— 计入
+    // 可视组件（table-only spec 也走 chrome 路径）
+    'table_panel',
   ]);
   const model: ExportChromeModel = {
     fromSpec: resolved.some((c) => VISUAL_TYPES.has(c.type) && c.enabled),
@@ -481,7 +644,9 @@ export async function buildExportChrome(
       Object.values(opts.legendSpecsByLayer).find(
         (s) => isColorbar
           ? s.type === 'continuous' || s.type === 'divergent'
-          : s.type === 'graduated' || s.type === 'categorical',
+          // V4：bivariate 加入 legend 组件的类型兜底发现（与 live
+          // legends.tsx legendForComponent 的 wanted 词表同源）
+          : s.type === 'graduated' || s.type === 'categorical' || s.type === 'bivariate',
       ) ||
       (!isColorbar ? opts.fallbackLegendSpec : undefined);
     if (!spec) continue;
@@ -687,6 +852,52 @@ export async function buildExportChrome(
           slotSize: _stackOf(c)?.slotSize ?? 0,
           disclosure,
           text: c.collapsed ? disclosure.title : undefined,
+        });
+      }
+    } else if (c.type === 'table_panel') {
+      // V4：表格导出 —— 与 live table-panel 同双通道取数（tableRef
+      // artifact / layerId 图层属性；inline table 仅在两者缺席时消费）。
+      // 有界快照（≤8 行 ≤6 列）+ 总量尾注披露；无数据 → 面板缺席
+      //（不画空表冒充，与 chart 拉取失败同纪律）。
+      const titleOpt =
+        typeof c.options['title'] === 'string' && (c.options['title'] as string).trim()
+          ? (c.options['title'] as string)
+          : undefined;
+      const columnsOpt = Array.isArray(c.options['columns'])
+        ? (c.options['columns'] as unknown[]).filter((x): x is string => typeof x === 'string')
+        : undefined;
+      const refOpt = typeof c.options['tableRef'] === 'string' ? c.options['tableRef'].trim() : '';
+      const layerOpt = typeof c.options['layerId'] === 'string' ? c.options['layerId'].trim() : '';
+      let table: TablePanelData | null = null;
+      try {
+        if (refOpt) {
+          if (opts.loadTable) {
+            table = buildExportTableData(titleOpt ?? '数据表', await opts.loadTable(refOpt), columnsOpt);
+          }
+        } else if (layerOpt) {
+          if (opts.loadLayerTable) {
+            table = buildExportTableData(
+              titleOpt ?? '属性表',
+              await opts.loadLayerTable(layerOpt),
+              columnsOpt,
+            );
+          }
+        } else if (c.options['table'] != null) {
+          table = buildExportTableData(titleOpt ?? '数据表', c.options['table'], columnsOpt);
+        }
+      } catch {
+        table = null; // 拉取失败 → 面板缺席（无数据不伪造）
+      }
+      if (table) {
+        model.panels.push({
+          kind: 'table',
+          anchor: _effectiveAnchor(c),
+          rect: _floatingRectOf(c, opts.viewport, canvas),
+          stackIndex: _stackOf(c)?.index ?? 0,
+          slotSize: _stackOf(c)?.slotSize ?? 0,
+          table,
+          // E-2 对称：collapsed 表格导出折叠标题条（与 statistics/chart 同约定）
+          text: c.collapsed ? table.title : undefined,
         });
       }
     }
@@ -1041,6 +1252,13 @@ export function drawChromeLegend(
     | undefined;
   if (!spec) return;
 
+  // V4：双变量色阵图例 —— legend.type === 'bivariate' 走专用绘制器
+  //（与 live legends.tsx 的 BivariateMatrix 类型分派同语义）。
+  if (spec.type === 'bivariate') {
+    drawChromeBivariateLegend(d, el, opts);
+    return;
+  }
+
   let colors: string[] = [];
   let labels: string[] = [];
   const fmt = (n: number) =>
@@ -1094,6 +1312,67 @@ export function drawChromeLegend(
     ctx.font = `${d.scalePx(11)}px sans-serif`;
     _text(d, labels[i], lx + padding + itemW + gapX, iy + itemH - d.scalePx(8), 'left');
   }
+}
+
+/**
+ * V4：双变量色阵图例（n×n 色阵 + 「→label_a / ↑label_b」轴标）。
+ * 颜色与 live BivariateMatrix 逐格同源（legend.colors 行主序：row=变量 B、
+ * col=变量 A）；n 夹取 [2,4]（live 同式）；colors 不足以铺 n×n → 不绘制
+ *（不伪造色阵 —— live return null 同门）。
+ */
+export function drawChromeBivariateLegend(
+  d: DrawCtx,
+  el: ExportChromeElement,
+  opts: { marginX: number; marginY?: number },
+) {
+  const spec = el.legendSpec as
+    | { type?: string; colors?: string[]; n?: number; label_a?: string; label_b?: string; title?: string }
+    | undefined;
+  if (!spec || spec.type !== 'bivariate') return;
+  const colors = Array.isArray(spec.colors) ? spec.colors : [];
+  const nRaw = Number(spec.n ?? 3);
+  if (!Number.isFinite(nRaw)) return;
+  const n = Math.min(4, Math.max(2, nRaw));
+  if (colors.length < n * n) return;
+
+  const { ctx } = d;
+  const padding = d.scalePx(10);
+  const cell = d.scalePx(14);
+  const gap = d.scalePx(1);
+  const titleH = spec.title ? d.scalePx(16) : 0;
+  const axisRowH = d.scalePx(16);
+  const axisColW = d.scalePx(18);
+  const gridW = n * cell + (n - 1) * gap;
+  const legendW = padding * 2 + axisColW + gridW;
+  const legendH = padding * 2 + titleH + gridW + axisRowH;
+
+  const origin = el.rect
+    ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
+    : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 56 });
+  const lx = origin.align === 'right' ? origin.x - legendW : origin.align === 'center' ? origin.x - legendW / 2 : origin.x;
+  const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - legendH : origin.y;
+
+  _chromePanel(d, lx, ly, legendW, legendH);
+  let y = ly + padding;
+  if (spec.title) {
+    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.9)' : '#1e293b';
+    ctx.font = `bold ${d.scalePx(11)}px sans-serif`;
+    _text(d, spec.title, lx + padding, y + d.scalePx(10), 'left');
+    y += titleH;
+  }
+  const gridX = lx + padding + axisColW;
+  // 色阵（行主序：row=变量 B、col=变量 A —— 与 live grid 逐格 colors[i] 同源）
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      ctx.fillStyle = colors[r * n + c];
+      ctx.fillRect(gridX + c * (cell + gap), y + r * (cell + gap), cell, cell);
+    }
+  }
+  // 轴标：↑label_b（行，阵左侧）/ →label_a（列，阵下方）—— live 同款箭头词
+  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(100,116,139,0.9)';
+  ctx.font = `${d.scalePx(10)}px sans-serif`;
+  _text(d, `↑${(spec.label_b ?? '').slice(0, 4)}`, gridX - d.scalePx(4), y + cell / 2 + d.scalePx(3), 'right');
+  _text(d, `→${(spec.label_a ?? '').slice(0, 10)}`, gridX, y + gridW + d.scalePx(12), 'left');
 }
 
 /** 署名行（anchor 槽位；此前导出完全不读 spec attribution 组件）。 */
@@ -1222,6 +1501,91 @@ export function drawChromeDisclosurePanel(
   }
 }
 
+/**
+ * V4：表格面板导出（有界快照 —— 标题条 + 表头 + ≤8 行 + 截断尾注）。
+ * 载荷由 buildExportChrome 双通道装配（tableRef artifact / layerId 图层
+ * 属性 / inline table）；列宽均分，单元格单行截断（导出画布无横向滚动，
+ * 与 live 虚拟化行窗口同一「有界显示面」纪律）。collapsed 导出折叠标题条
+ *（与 statistics/chart 同约定）。无数据 → 面板缺席，不画空表冒充。
+ */
+export function drawChromeTable(
+  d: DrawCtx,
+  el: ExportChromeElement,
+  opts: { marginX: number; marginY?: number },
+) {
+  const table = el.table;
+  if (!table || table.columns.length === 0 || table.rows.length === 0) return;
+  const { ctx } = d;
+  const padding = d.scalePx(12);
+  const titleH = d.scalePx(24);
+  const rowH = d.scalePx(22);
+  const collapsed = el.text !== undefined;
+  const hiddenRows = Math.max(table.totalCount - table.rows.length, 0);
+  const hiddenCols =
+    table.totalColumns !== undefined && table.totalColumns > table.columns.length
+      ? table.totalColumns - table.columns.length
+      : 0;
+  const footerParts: string[] = [];
+  if (hiddenRows > 0) footerParts.push(`…${hiddenRows} 行未显示`);
+  if (hiddenCols > 0) footerParts.push(`…${hiddenCols} 列未显示`);
+  const footerH = footerParts.length ? d.scalePx(16) : 0;
+  const boxW = el.rect?.width ?? d.scalePx(320);
+  const boxH = collapsed
+    ? d.scalePx(36)
+    : padding * 2 + titleH + rowH * (table.rows.length + 1) + footerH;
+
+  const origin = el.rect
+    ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
+    : anchorOrigin(el.anchor, { targetW: d.targetW, targetH: d.targetH, marginX: opts.marginX, marginY: opts.marginY ?? 90 });
+  const lx = origin.align === 'right' ? origin.x - boxW : origin.align === 'center' ? origin.x - boxW / 2 : origin.x;
+  const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - boxH : origin.y;
+
+  _chromePanel(d, lx, ly, boxW, boxH);
+  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.9)' : '#1e293b';
+  ctx.font = `bold ${d.scalePx(12)}px sans-serif`;
+  _text(d, collapsed ? el.text || table.title : table.title, lx + padding, ly + padding + d.scalePx(12), 'left');
+  if (collapsed) return;
+
+  const gridX = lx + padding;
+  const gridW = boxW - padding * 2;
+  const colW = gridW / table.columns.length;
+  let y = ly + padding + titleH;
+  // 表头（可截断；底部分隔线 —— live border-b 同语义）
+  ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.75)' : 'rgba(30,41,59,0.85)';
+  ctx.font = `bold ${d.scalePx(10)}px sans-serif`;
+  table.columns.forEach((col, ci) => {
+    _text(d, _clipText(ctx, col, colW - d.scalePx(8)), gridX + ci * colW + d.scalePx(4), y + d.scalePx(14), 'left');
+  });
+  ctx.strokeStyle = d.darkMode ? 'rgba(255,255,255,0.25)' : 'rgba(30,41,59,0.3)';
+  ctx.lineWidth = d.scalePx(1);
+  ctx.beginPath();
+  ctx.moveTo(gridX, y + rowH - d.scalePx(4));
+  ctx.lineTo(gridX + gridW, y + rowH - d.scalePx(4));
+  ctx.stroke();
+  y += rowH;
+  // 行快照（≤8 行；隔行淡底 —— live hover 底纹的静态近似）
+  ctx.font = `${d.scalePx(10)}px sans-serif`;
+  table.rows.forEach((row, ri) => {
+    if (ri % 2 === 1) {
+      ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)';
+      ctx.fillRect(gridX, y, gridW, rowH);
+    }
+    table.columns.forEach((col, ci) => {
+      const raw = row[col];
+      const text = raw == null ? '' : typeof raw === 'object' ? (Array.isArray(raw) ? `[…]` : '{…}') : String(raw);
+      ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.85)' : '#1e293b';
+      _text(d, _clipText(ctx, text, colW - d.scalePx(8)), gridX + ci * colW + d.scalePx(4), y + d.scalePx(14), 'left');
+    });
+    y += rowH;
+  });
+  // 截断披露（诚实：快照外行/列计数）
+  if (footerParts.length) {
+    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(100,116,139,0.9)';
+    ctx.font = `${d.scalePx(10)}px sans-serif`;
+    _text(d, footerParts.join(' · '), gridX, y + d.scalePx(12), 'left');
+  }
+}
+
 /** 画布单行文本截断（导出侧无自动换行；与 stats 卡同一裁剪约定）。 */
 function _clipText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string {
   if (ctx.measureText(text).width <= maxW) return text;
@@ -1231,6 +1595,23 @@ function _clipText(ctx: CanvasRenderingContext2D, text: string, maxW: number): s
   }
   return `${clipped}…`;
 }
+
+/**
+ * V4：导出绘制已实现的 chart kind（与 lib/types ChartKind 的 18 种 native
+ * 同词表）。词表外的 kind（如 planned violin）不绘制图形 —— 画标题条 +
+ * 「暂不支持导出」一行说明（诚实降级，不生成空组件假成功）。
+ */
+const DRAWN_CHART_KINDS = new Set([
+  'bar', 'horizontal_bar', 'grouped_bar', 'stacked_bar',
+  'line', 'area', 'scatter', 'histogram', 'box_plot',
+  'pie', 'donut', 'radar', 'rose', 'timeseries', 'cumulative',
+  'heat_matrix', 'kpi_card', 'ranking_list',
+]);
+/** 需要底部类目轴带的 kind（直角坐标系；极坐标/卡片/矩阵族无轴带）。 */
+const CHART_AXIS_KINDS = new Set([
+  'bar', 'line', 'grouped_bar', 'stacked_bar', 'scatter',
+  'histogram', 'box_plot', 'timeseries', 'area', 'cumulative',
+]);
 
 /** 静态图表（bar/line/pie/scatter 的确定性 canvas 绘制）。 */
 export function drawChromeChartPanel(
@@ -1266,7 +1647,8 @@ export function drawChromeChartPanel(
   }
   const padding = d.scalePx(12);
   const titleH = d.scalePx(24);
-  const axisH = chart.type === 'pie' ? 0 : d.scalePx(26);
+  // V4：轴带按 kind 判定（直角坐标系才留底部类目轴带；此前仅 pie 特判 0）
+  const axisH = CHART_AXIS_KINDS.has(chart.type) ? d.scalePx(26) : 0;
   const boxW = el.rect?.width ?? d.scalePx(300);
   const boxH = el.rect?.height ?? d.scalePx(220);
 
@@ -1291,6 +1673,55 @@ export function drawChromeChartPanel(
   const gridColor = d.darkMode ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)';
   const labelColor = d.darkMode ? 'rgba(255,255,255,0.6)' : 'rgba(100,116,139,0.9)';
   const CHART_COLORS = ['#3182bd', '#e6550d', '#31a354', '#756bb1', '#e41a1c', '#ffd92f'];
+
+  // V4：词表外 kind（如 planned violin）诚实降级 —— 标题条已画，正文只
+  // 放一行说明（不绘制图形、不生成空组件假成功）。
+  // 空数据披露同标准（rose/radar/donut 等数据不足时不画空绘图区）。
+  const drawEmptyDisclosure = (reason: string) => {
+    ctx.fillStyle = labelColor;
+    ctx.font = `${d.scalePx(11)}px sans-serif`;
+    _text(d, reason, plotX + plotW / 2, plotY + plotH / 2, 'center');
+  };
+  if (!DRAWN_CHART_KINDS.has(chart.type)) {
+    drawEmptyDisclosure('该图表类型暂不支持导出');
+    return;
+  }
+
+  // V4：多序列类目的序列图例（色签 + 名，绘图区右上角内联）。
+  const drawSeriesLegend = (names: string[], y: number) => {
+    ctx.font = `${d.scalePx(10)}px sans-serif`;
+    const items = names.map((nm) => _clipText(ctx, nm, d.scalePx(64)));
+    let totalW = 0;
+    for (const label of items) totalW += d.scalePx(12) + ctx.measureText(label).width + d.scalePx(8);
+    let x = plotX + plotW - totalW;
+    items.forEach((label, si) => {
+      ctx.fillStyle = CHART_COLORS[si % CHART_COLORS.length];
+      ctx.fillRect(x, y - d.scalePx(7), d.scalePx(8), d.scalePx(8));
+      ctx.fillStyle = labelColor;
+      _text(d, label, x + d.scalePx(10), y, 'left');
+      x += d.scalePx(12) + ctx.measureText(label).width + d.scalePx(8);
+    });
+  };
+  // 直角坐标 x 轴标签（首/中/尾，避免重叠 —— 与既有 bar/line 同式）。
+  const drawXLabels = (labelAt: (i: number) => string, n: number) => {
+    ctx.fillStyle = labelColor;
+    ctx.font = `${d.scalePx(10)}px sans-serif`;
+    if (n > 0) _text(d, labelAt(0), plotX, plotY + plotH + d.scalePx(14), 'left');
+    if (n > 2) _text(d, labelAt(Math.floor(n / 2)), plotX + plotW / 2, plotY + plotH + d.scalePx(14), 'center');
+    if (n > 1) _text(d, labelAt(n - 1), plotX + plotW, plotY + plotH + d.scalePx(14), 'right');
+  };
+  // 水平网格（3 段 —— 与既有 bar/line 同式）。
+  const drawGrid = () => {
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = d.scalePx(0.5);
+    for (let g = 0; g <= 3; g++) {
+      const gy = plotY + (g / 3) * plotH;
+      ctx.beginPath();
+      ctx.moveTo(plotX, gy);
+      ctx.lineTo(plotX + plotW, gy);
+      ctx.stroke();
+    }
+  };
 
   if (chart.type === 'pie') {
     const total = chart.data.reduce((s, p) => s + (p.value ?? 0), 0);
@@ -1331,6 +1762,399 @@ export function drawChromeChartPanel(
       ctx.arc(px, py, d.scalePx(3), 0, 2 * Math.PI);
       ctx.fill();
     }
+  } else if (chart.type === 'horizontal_bar') {
+    // 横向条：类目 y 轴（自上而下），条长 ∝ 值（0 基线正则化）
+    const values = chart.data.map((p) => p.value ?? 0);
+    const maxV = Math.max(...values, 0);
+    const n = chart.data.length;
+    const gutterW = Math.min(plotW * 0.35, d.scalePx(72));
+    const barX = plotX + gutterW;
+    const barWMax = Math.max(plotW - gutterW, 0);
+    const rowH = plotH / Math.max(n, 1);
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = d.scalePx(0.5);
+    ctx.strokeRect(barX, plotY, barWMax, plotH);
+    chart.data.forEach((p, i) => {
+      const v = p.value ?? 0;
+      const w = maxV > 0 ? (Math.max(v, 0) / maxV) * barWMax : 0;
+      ctx.fillStyle = CHART_COLORS[i % CHART_COLORS.length];
+      ctx.fillRect(barX, plotY + i * rowH + rowH * 0.2, w, rowH * 0.6);
+    });
+    // 类目标签：≤12 行逐行（槽宽截断），更多行只画首/中/尾
+    ctx.fillStyle = labelColor;
+    ctx.font = `${d.scalePx(10)}px sans-serif`;
+    const labelRow = (i: number) => {
+      const label = _clipText(ctx, chart.data[i]?.name ?? '', gutterW - d.scalePx(4));
+      _text(d, label, plotX, plotY + i * rowH + rowH * 0.5 + d.scalePx(3), 'left');
+    };
+    if (n <= 12) {
+      for (let i = 0; i < n; i++) labelRow(i);
+    } else if (n > 0) {
+      labelRow(0);
+      if (n > 2) labelRow(Math.floor(n / 2));
+      labelRow(n - 1);
+    }
+  } else if (chart.type === 'grouped_bar' || chart.type === 'stacked_bar') {
+    // 多序列 tidy 行按类目聚合 {name, [seriesName]: value}；grouped 并排、
+    // stacked 同列累加 y（缺 series 时 data 即单序列）。
+    const seriesList = chart.series && chart.series.length
+      ? chart.series
+      : [{ name: 'value', data: chart.data }];
+    const cats: string[] = [];
+    const catIdx = new Map<string, number>();
+    for (const s of seriesList) {
+      for (const p of s.data) {
+        if (!catIdx.has(p.name)) {
+          catIdx.set(p.name, cats.length);
+          cats.push(p.name);
+        }
+      }
+    }
+    const m = seriesList.length;
+    const grid = seriesList.map((s) => {
+      const arr = new Array<number>(cats.length).fill(0);
+      for (const p of s.data) {
+        const ci = catIdx.get(p.name);
+        if (ci !== undefined) arr[ci] = p.value ?? 0;
+      }
+      return arr;
+    });
+    const maxV = Math.max(0, ...grid.flat()) || 1;
+    drawGrid();
+    const n = cats.length;
+    const slotW = plotW / Math.max(n, 1);
+    if (chart.type === 'stacked_bar') {
+      for (let ci = 0; ci < n; ci++) {
+        let acc = 0;
+        for (let si = 0; si < m; si++) {
+          const v = grid[si][ci];
+          if (v <= 0) continue;
+          const h = (v / maxV) * plotH;
+          ctx.fillStyle = CHART_COLORS[si % CHART_COLORS.length];
+          ctx.fillRect(plotX + ci * slotW + slotW * 0.2, plotY + plotH - ((acc + v) / maxV) * plotH, slotW * 0.6, h);
+          acc += v;
+        }
+      }
+    } else {
+      const bw = (slotW / m) * 0.7;
+      for (let ci = 0; ci < n; ci++) {
+        for (let si = 0; si < m; si++) {
+          const h = (Math.max(grid[si][ci], 0) / maxV) * plotH;
+          ctx.fillStyle = CHART_COLORS[si % CHART_COLORS.length];
+          ctx.fillRect(plotX + ci * slotW + (slotW - bw * m) / 2 + si * bw, plotY + plotH - h, bw, h);
+        }
+      }
+    }
+    drawSeriesLegend(seriesList.map((s) => s.name), plotY + d.scalePx(8));
+    drawXLabels((i) => cats[i] ?? '', n);
+  } else if (chart.type === 'timeseries' || chart.type === 'area' || chart.type === 'cumulative') {
+    // timeseries 同 line；area / cumulative 折线 + 半透明填充
+    //（cumulative 数据已由上游衍生 —— live toCumulative 同约定，此处不再累加）
+    const values = chart.data.map((p) => p.value ?? 0);
+    const maxV = Math.max(...values, 0);
+    const minV = Math.min(...values, 0);
+    const span = maxV - minV || 1;
+    drawGrid();
+    const n = chart.data.length;
+    const pxAt = (i: number) => plotX + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+    const pyAt = (i: number) => plotY + plotH - (((chart.data[i]?.value ?? 0) - minV) / span) * plotH;
+    if (chart.type !== 'timeseries') {
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        if (i === 0) ctx.moveTo(pxAt(0), pyAt(0));
+        else ctx.lineTo(pxAt(i), pyAt(i));
+      }
+      ctx.lineTo(plotX + plotW, plotY + plotH);
+      ctx.lineTo(plotX, plotY + plotH);
+      ctx.closePath();
+      ctx.fillStyle = accent;
+      ctx.globalAlpha = 0.18;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = d.scalePx(2);
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      if (i === 0) ctx.moveTo(pxAt(0), pyAt(0));
+      else ctx.lineTo(pxAt(i), pyAt(i));
+    }
+    ctx.stroke();
+    drawXLabels((i) => chart.data[i]?.name ?? '', n);
+  } else if (chart.type === 'histogram') {
+    // 同 bar，barCategoryGap 0 视觉 —— 条紧贴（slot 全宽，1px 视觉缝）。
+    // 分箱计数从 0 起基线（min 基线会把最小非零 bin 画成零高度条 —— 数据失真）
+    const values = chart.data.map((p) => p.value ?? 0);
+    const maxV = Math.max(...values, 0);
+    const span = maxV || 1;
+    drawGrid();
+    const n = chart.data.length;
+    const slotW = plotW / Math.max(n, 1);
+    chart.data.forEach((p, i) => {
+      const v = p.value ?? 0;
+      const h = (v / span) * plotH;
+      ctx.fillStyle = CHART_COLORS[i % CHART_COLORS.length];
+      ctx.fillRect(plotX + i * slotW + d.scalePx(0.5), plotY + plotH - h, Math.max(d.scalePx(1), slotW - d.scalePx(1)), h);
+    });
+    drawXLabels((i) => chart.data[i]?.name ?? '', n);
+  } else if (chart.type === 'donut') {
+    // 饼图 + 内半径白圈（0.6 倍）—— 与 live donut innerRadius 同视觉
+    const total = chart.data.reduce((s, p) => s + (p.value ?? 0), 0);
+    if (total <= 0) {
+      drawEmptyDisclosure('暂无数据');
+    }
+    if (total > 0) {
+      const cx = plotX + plotW / 2;
+      const cy = plotY + plotH / 2;
+      const r = Math.min(plotW, plotH) / 2;
+      let angle = -Math.PI / 2;
+      chart.data.forEach((p, i) => {
+        const frac = (p.value ?? 0) / total;
+        if (frac <= 0) return;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, r, angle, angle + frac * 2 * Math.PI);
+        ctx.closePath();
+        ctx.fillStyle = CHART_COLORS[i % CHART_COLORS.length];
+        ctx.fill();
+        angle += frac * 2 * Math.PI;
+      });
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.6, 0, 2 * Math.PI);
+      ctx.closePath();
+      ctx.fillStyle = d.darkMode ? 'rgba(0,10,20,0.82)' : 'rgba(255,255,255,0.88)';
+      ctx.fill();
+    }
+    return;
+  } else if (chart.type === 'radar') {
+    // 闭合多边形（每序列一圈；轴 = 类目数，0 基线正则化）
+    const seriesList = chart.series && chart.series.length
+      ? chart.series
+      : [{ name: 'value', data: chart.data }];
+    const cats = seriesList[0]?.data.map((p) => p.name) ?? [];
+    const k = cats.length;
+    if (k < 3) {
+      drawEmptyDisclosure('暂无数据（雷达图至少需要 3 个轴）');
+    }
+    if (k >= 3) {
+      const values = seriesList.flatMap((s) => s.data.map((p) => p.value ?? 0));
+      const maxV = Math.max(...values, 0) || 1;
+      const cx = plotX + plotW / 2;
+      const cy = plotY + plotH / 2;
+      const R = Math.min(plotW, plotH) / 2 - d.scalePx(14);
+      const angleAt = (i: number) => -Math.PI / 2 + (i / k) * 2 * Math.PI;
+      ctx.strokeStyle = gridColor;
+      ctx.lineWidth = d.scalePx(0.5);
+      for (let i = 0; i < k; i++) {
+        const a = angleAt(i);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, 2 * Math.PI);
+      ctx.stroke();
+      seriesList.forEach((s, si) => {
+        ctx.beginPath();
+        for (let i = 0; i < k; i++) {
+          const a = angleAt(i);
+          const v = Math.max(s.data[i]?.value ?? 0, 0) / maxV;
+          const px = cx + Math.cos(a) * R * v;
+          const py = cy + Math.sin(a) * R * v;
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        const color = CHART_COLORS[si % CHART_COLORS.length];
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.25;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = d.scalePx(1.5);
+        ctx.stroke();
+      });
+      if (seriesList.length > 1) drawSeriesLegend(seriesList.map((s) => s.name), plotY + d.scalePx(8));
+      ctx.fillStyle = labelColor;
+      ctx.font = `${d.scalePx(9)}px sans-serif`;
+      const labelIdx = k <= 8 ? cats.map((_, i) => i) : [0, Math.floor(k / 2), k - 1];
+      for (const i of labelIdx) {
+        const a = angleAt(i);
+        _text(
+          d,
+          _clipText(ctx, cats[i], d.scalePx(48)),
+          cx + Math.cos(a) * (R + d.scalePx(10)),
+          cy + Math.sin(a) * (R + d.scalePx(10)) + d.scalePx(3),
+          'center',
+        );
+      }
+    }
+  } else if (chart.type === 'rose') {
+    // 极区扇形：角度等分（2π/n），半径 ∝ 值（0 基线正则化）
+    const values = chart.data.map((p) => p.value ?? 0);
+    const maxV = Math.max(...values, 0);
+    if (maxV <= 0) {
+      drawEmptyDisclosure('rose');
+    } else {
+      const cx = plotX + plotW / 2;
+      const cy = plotY + plotH / 2;
+      const R = Math.min(plotW, plotH) / 2 - d.scalePx(6);
+      const n = chart.data.length;
+      const slice = (2 * Math.PI) / Math.max(n, 1);
+      chart.data.forEach((p, i) => {
+        const rr = (Math.max(p.value ?? 0, 0) / maxV) * R;
+        if (rr <= 0) return;
+        const a0 = -Math.PI / 2 + i * slice;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, rr, a0, a0 + slice);
+        ctx.closePath();
+        ctx.fillStyle = CHART_COLORS[i % CHART_COLORS.length];
+        ctx.fill();
+      });
+    }
+  } else if (chart.type === 'box_plot') {
+    // 每类目：竖须（min-max，带端帽）+ 矩形（q1-q3）+ 中位线（value）
+    //（value 缺位回退 live RenderBoxPlot 同式：q1/q3/min/max 逐级回退 median）
+    const nums = chart.data
+      .flatMap((p) => [p.min, p.q1, p.value, p.q3, p.max])
+      .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    const lo = nums.length ? Math.min(...nums) : 0;
+    const hi = nums.length ? Math.max(...nums) : 1;
+    const span = hi - lo || 1;
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = d.scalePx(0.5);
+    ctx.strokeRect(plotX, plotY, plotW, plotH);
+    const n = chart.data.length;
+    const slotW = plotW / Math.max(n, 1);
+    const yAt = (v: number) => plotY + plotH - ((v - lo) / span) * plotH;
+    chart.data.forEach((p, i) => {
+      const cx = plotX + i * slotW + slotW / 2;
+      const bw = Math.min(d.scalePx(48), slotW * 0.55);
+      const med = yAt(p.value ?? lo);
+      const q1 = yAt(typeof p.q1 === 'number' ? p.q1 : p.value ?? lo);
+      const q3 = yAt(typeof p.q3 === 'number' ? p.q3 : p.value ?? lo);
+      const mn = typeof p.min === 'number' ? yAt(p.min) : q1;
+      const mx = typeof p.max === 'number' ? yAt(p.max) : q3;
+      const boxY = Math.min(q1, q3);
+      const boxH = Math.max(d.scalePx(2), Math.abs(q3 - q1));
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = d.scalePx(1);
+      ctx.beginPath();
+      ctx.moveTo(cx, mn); ctx.lineTo(cx, mx);
+      ctx.moveTo(cx - bw / 3, mn); ctx.lineTo(cx + bw / 3, mn);
+      ctx.moveTo(cx - bw / 3, mx); ctx.lineTo(cx + bw / 3, mx);
+      ctx.stroke();
+      ctx.fillStyle = accent;
+      ctx.globalAlpha = 0.35;
+      ctx.fillRect(cx - bw / 2, boxY, bw, boxH);
+      ctx.globalAlpha = 1;
+      ctx.strokeRect(cx - bw / 2, boxY, bw, boxH);
+      ctx.lineWidth = d.scalePx(2);
+      ctx.beginPath();
+      ctx.moveTo(cx - bw / 2, med); ctx.lineTo(cx + bw / 2, med);
+      ctx.stroke();
+    });
+    drawXLabels((i) => chart.data[i]?.name ?? '', n);
+  } else if (chart.type === 'heat_matrix') {
+    // 行列色阵（series=行、行内 data=列；无 series 单行）—— Blues 5 档
+    // ramp 按 (v-lo)/(hi-lo) 取档（与 live HEAT_RAMP 同源）。
+    const HEAT_RAMP = ['#eff3ff', '#bdd7e7', '#6baed6', '#3182bd', '#08519c'];
+    const rowsSrc: Array<{ name: string; data: ChartPanelDataPoint[] }> = chart.series && chart.series.length
+      ? chart.series
+      : [{ name: '', data: chart.data }];
+    const allVals = rowsSrc.flatMap((r) => r.data.map((p) => p.value ?? 0)).filter(Number.isFinite);
+    const lo = allVals.length ? Math.min(...allVals) : 0;
+    const hi = allVals.length ? Math.max(...allVals) : 1;
+    const span = hi - lo || 1;
+    const gutterW = rowsSrc.length > 1 ? Math.min(plotW * 0.25, d.scalePx(56)) : 0;
+    const gridX = plotX + gutterW;
+    const gridW = plotW - gutterW;
+    const cols = Math.max(rowsSrc[0]?.data.length ?? 0, 1);
+    const cellW = gridW / cols;
+    const cellH = plotH / Math.max(rowsSrc.length, 1);
+    rowsSrc.forEach((r, ri) => {
+      r.data.forEach((p, ci) => {
+        const t = Math.min(1, Math.max(0, ((p.value ?? 0) - lo) / span));
+        ctx.fillStyle = HEAT_RAMP[Math.min(HEAT_RAMP.length - 1, Math.floor(t * HEAT_RAMP.length))];
+        ctx.fillRect(
+          gridX + ci * cellW,
+          plotY + ri * cellH,
+          Math.max(d.scalePx(1), cellW - d.scalePx(1)),
+          Math.max(d.scalePx(1), cellH - d.scalePx(1)),
+        );
+      });
+      if (gutterW > 0) {
+        ctx.fillStyle = labelColor;
+        ctx.font = `${d.scalePx(9)}px sans-serif`;
+        _text(d, _clipText(ctx, r.name, gutterW - d.scalePx(4)), plotX, plotY + ri * cellH + cellH / 2 + d.scalePx(3), 'left');
+      }
+    });
+    // 列标签（首/中/尾）—— 上移进绘图区底部（heat_matrix 无轴带预算，
+    // 12px 正好是面板 padding：贴边画会压到面板边框）
+    const colNames = rowsSrc[0]?.data.map((p) => p.name) ?? [];
+    ctx.fillStyle = labelColor;
+    ctx.font = `${d.scalePx(9)}px sans-serif`;
+    const nc = colNames.length;
+    const colLabelY = plotY + plotH - d.scalePx(4);
+    if (nc > 0) _text(d, _clipText(ctx, colNames[0], cellW), gridX, colLabelY, 'left');
+    if (nc > 2) _text(d, _clipText(ctx, colNames[Math.floor(nc / 2)], cellW), gridX + gridW / 2, colLabelY, 'center');
+    if (nc > 1) _text(d, _clipText(ctx, colNames[nc - 1], cellW), gridX + gridW, colLabelY, 'right');
+  } else if (chart.type === 'kpi_card') {
+    // 2 列卡片网格（大数字 + 小标签，最多 4 个 —— live RenderKpiCards 同式）
+    const items = chart.data.slice(0, 4);
+    const rowsN = Math.max(Math.ceil(items.length / 2), 1);
+    const cellW = plotW / 2;
+    const cellH = plotH / rowsN;
+    items.forEach((p, i) => {
+      const cx = plotX + (i % 2) * cellW;
+      const cy = plotY + Math.floor(i / 2) * cellH;
+      ctx.strokeStyle = gridColor;
+      ctx.lineWidth = d.scalePx(0.5);
+      ctx.strokeRect(cx + d.scalePx(2), cy + d.scalePx(2), cellW - d.scalePx(4), cellH - d.scalePx(4));
+      ctx.fillStyle = labelColor;
+      ctx.font = `${d.scalePx(10)}px sans-serif`;
+      _text(d, _clipText(ctx, p.name, cellW - d.scalePx(16)), cx + d.scalePx(10), cy + cellH * 0.38, 'left');
+      ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.95)' : '#0f172a';
+      ctx.font = `bold ${d.scalePx(18)}px sans-serif`;
+      _text(
+        d,
+        typeof p.value === 'number' ? p.value.toLocaleString('en-US') : '—',
+        cx + d.scalePx(10),
+        cy + cellH * 0.72,
+        'left',
+      );
+    });
+  } else if (chart.type === 'ranking_list') {
+    // 值降序横条列表（最多 10 行：名次 + 名 + 比例条 + 值）
+    const rowsSrc = [...chart.data]
+      .sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
+      .slice(0, 10);
+    const maxV = Math.max(...rowsSrc.map((r) => r.value ?? 0), 1);
+    const rowH = plotH / Math.max(rowsSrc.length, 1);
+    const rankW = d.scalePx(16);
+    const nameW = Math.min(plotW * 0.3, d.scalePx(80));
+    const valueW = d.scalePx(48);
+    const fmtValue = (v: number) =>
+      v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(1)}k` : v.toLocaleString('en-US');
+    rowsSrc.forEach((r, i) => {
+      const ry = plotY + i * rowH;
+      const midY = ry + rowH / 2 + d.scalePx(3);
+      ctx.font = `${d.scalePx(10)}px sans-serif`;
+      ctx.fillStyle = labelColor;
+      _text(d, String(i + 1), plotX + rankW, midY, 'right');
+      _text(d, _clipText(ctx, r.name, nameW), plotX + rankW + d.scalePx(6), midY, 'left');
+      const barX = plotX + rankW + d.scalePx(6) + nameW + d.scalePx(6);
+      const barWMax = Math.max(plotW - (rankW + d.scalePx(6) + nameW + d.scalePx(6)) - valueW, 0);
+      const bw = (Math.max(r.value ?? 0, 0) / maxV) * barWMax;
+      ctx.fillStyle = accent;
+      ctx.globalAlpha = 0.8;
+      ctx.fillRect(barX, ry + rowH / 2 - d.scalePx(3), bw, d.scalePx(6));
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = labelColor;
+      _text(d, fmtValue(r.value ?? 0), plotX + plotW, midY, 'right');
+    });
   } else {
     const values = chart.data.map((p) => p.value ?? 0);
     const maxV = Math.max(...values, 0);

@@ -4,6 +4,7 @@ import { heatmapCommands } from './heatmapCommands';
 import { annotationCommands } from './annotationCommands';
 import { exportCommands } from './exportCommands';
 import { queryCommands } from './queryCommands';
+import { chartCommands } from './chartCommands';
 
 export type { MapCommandContext, CommandValidator, CommandEntry } from './types';
 
@@ -23,6 +24,7 @@ export const COMMAND_CATALOGUE = {
   ...annotationCommands,
   ...exportCommands,
   ...queryCommands,
+  ...chartCommands,
 } as const;
 
 export type MapCommandName = keyof typeof COMMAND_CATALOGUE;

@@ -30,7 +30,78 @@ COLOR_PALETTES: Dict[str, List[str]] = {
     "Magma": ["#000004", "#3b0f70", "#8c2981", "#de4968", "#feb078", "#fcfdbf"],
     "Inferno": ["#000004", "#420a68", "#932667", "#dd513a", "#fca50a", "#fcffa4"],
     "Plasma": ["#0d0887", "#6a00a8", "#b12a90", "#e16462", "#fca636", "#f0f921"],
+    # ── V4：灰度（hillshade 预渲染 / 灰度打印诊断参考带）────────────────
+    "Gray": ["#000000", "#404040", "#808080", "#bfbfbf", "#ffffff"],
 }
+
+
+def _hex_to_rgb_float(hex_color: str) -> tuple:
+    """'#rrggbb' → (r,g,b) 线性化前 0-1 浮点。非法输入返回黑。"""
+    try:
+        h = hex_color.lstrip("#")
+        if len(h) == 3:
+            h = "".join(ch * 2 for ch in h)
+        if len(h) != 6:
+            return (0.0, 0.0, 0.0)
+        return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except (ValueError, TypeError):
+        return (0.0, 0.0, 0.0)
+
+
+def _wcag_relative_luminance(hex_color: str) -> float:
+    """WCAG 2.x 相对亮度（sRGB 线性化 + 加权）。"""
+    r, g, b = _hex_to_rgb_float(hex_color)
+    def _lin(c: float) -> float:
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+
+
+def contrast_ratio(hex_a: str, hex_b: str) -> float:
+    """WCAG 2.x 对比度（1.0-21.0）。非法/透明色按黑处理（fail-closed）。"""
+    la = _wcag_relative_luminance(hex_a)
+    lb = _wcag_relative_luminance(hex_b)
+    lighter = max(la, lb)
+    darker = min(la, lb)
+    return round((lighter + 0.05) / (darker + 0.05), 3)
+
+
+def meets_wcag_contrast(hex_a: str, hex_b: str, *, level: str = "AA",
+                        large_text: bool = False) -> bool:
+    """WCAG 邻近判据：AA 正文 4.5 / 大字 3.0；AAA 正文 7.0 / 大字 4.5。"""
+    threshold = {
+        ("AA", False): 4.5, ("AA", True): 3.0,
+        ("AAA", False): 7.0, ("AAA", True): 4.5,
+    }.get((level, large_text), 4.5)
+    return contrast_ratio(hex_a, hex_b) >= threshold
+
+
+def palette_contrast_diagnostics(
+    palette: str, *, canvas: str = "#ffffff"
+) -> dict:
+    """调色板 × 画布对比度诊断（图例文本/符号在画布上的可读性参考）。
+
+    返回 {min_ratio, max_ratio, per_color: [{color, ratio, aa, aa_large}]}；
+    未知调色板 → 空诊断（不编造）。
+    """
+    colors = COLOR_PALETTES.get(palette)
+    if not colors:
+        return {}
+    per = []
+    for c in colors:
+        ratio = contrast_ratio(c, canvas)
+        per.append({
+            "color": c,
+            "ratio": ratio,
+            "aa": ratio >= 4.5,
+            "aa_large": ratio >= 3.0,
+        })
+    ratios = [p["ratio"] for p in per]
+    return {
+        "canvas": canvas,
+        "min_ratio": min(ratios),
+        "max_ratio": max(ratios),
+        "per_color": per,
+    }
 
 
 def get_color_from_palette(palette_name: str, value: float) -> str:

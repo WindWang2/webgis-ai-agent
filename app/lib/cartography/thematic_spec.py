@@ -71,6 +71,8 @@ GRADUATED = "graduated"
 CONTINUOUS = "continuous"
 CATEGORICAL = "categorical"
 DIVERGENT = "divergent"
+BIVARIATE = "bivariate"          # V4：双变量色阵（3×3 match on class field）
+UNCERTAINTY_OPACITY = "uncertainty_opacity"  # V4：透明度双编码（fill-opacity）
 _THEMATIC_MODES = (GRADUATED, CONTINUOUS, CATEGORICAL, DIVERGENT)
 
 #: Default no-data swatch when a thematic style declares no-data handling.
@@ -367,7 +369,61 @@ def spec_to_paint(
     if ltype == CATEGORICAL:
         return _categorical_to_match(legend_spec, fallback_color, warnings)
 
+    if ltype == BIVARIATE:
+        return _bivariate_to_match(legend_spec, warnings)
+
+    if ltype == UNCERTAINTY_OPACITY:
+        return _uncertainty_to_interpolate(legend_spec, warnings)
+
     warnings.append(f"unrecognized_legend_type: {ltype}")
+    return None, warnings
+
+
+def _bivariate_to_match(
+    legend_spec: Dict[str, Any], warnings: List[str]
+) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """V4 双变量色阵投影：class field 的 match 表达式（索引 → 色阵色）。
+
+    无数据（-1）与越界索引一律透明 —— 『没有数据』不得画成最低类。
+    """
+    colors = legend_spec.get("colors") or []
+    field = legend_spec.get("class_field", "__biv_class")
+    if field and isinstance(colors, list) and len(colors) >= 2:
+        cases = [[i, c] for i, c in enumerate(colors) if c]
+        if cases:
+            return {
+                "method": "match",
+                "field": field,
+                "cases": cases,
+                "default": "rgba(0,0,0,0)",
+            }, warnings
+    warnings.append("bivariate_legend_invalid: missing class_field or colors")
+    return None, warnings
+
+
+def _uncertainty_to_interpolate(
+    legend_spec: Dict[str, Any], warnings: List[str]
+) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """V4 不确定性透明度通道：fill-opacity ← 不确定度反向插值。
+
+    越不确定越透明（0.85 → 0.25）；min/max 为不确定度值域。
+    """
+    field = legend_spec.get("field", "")
+    min_val = legend_spec.get("min")
+    max_val = legend_spec.get("max")
+    if field and is_finite_number(min_val) and is_finite_number(max_val) and (
+        float(min_val) < float(max_val)
+    ):
+        return {
+            "method": "interpolate",
+            "field": field,
+            "stops": [
+                [round(float(min_val), 6), 0.85],
+                [round(float(max_val), 6), 0.25],
+            ],
+        }, warnings
+    warnings.append(
+        "uncertainty_legend_invalid: missing field or min>=max")
     return None, warnings
 
 

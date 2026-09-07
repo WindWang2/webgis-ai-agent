@@ -135,6 +135,9 @@ PALETTE_KINDS: Dict[str, PaletteKind] = {
         PaletteKind(palette="Magma", kind="perceptual_uniform", colorblind_safe=True),
         PaletteKind(palette="Inferno", kind="perceptual_uniform", colorblind_safe=True),
         PaletteKind(palette="Plasma", kind="perceptual_uniform", colorblind_safe=True),
+        # V4：灰度（hillshade 预渲染 / 灰度打印诊断）
+        PaletteKind(palette="Gray", kind="sequential", colorblind_safe=True,
+                    note_zh="灰度带：hillshade 预渲染与黑白打印诊断参考"),
     ]
 }
 
@@ -182,6 +185,18 @@ class MapModel(BaseModel):
     # V3（ADR-0101）：表达能力降级链 —— 当前模型不可用（数据形态不满足等）
     # 时推荐退到的模型 id；空 = 无声明。validate 校验其可解析且无环。
     fallback_model_id: str = ""
+    # ── V4（Design System）：模型级产品需求描述（纯增量，全默认值）─────
+    # 缺省主题（CartographicThemeDescriptor id 或空 = 跟随 composition）。
+    default_theme: str = ""
+    # 模型作为主表达时建议随图出现的统计图表 kind（chart_kinds.py 词表，
+    # 空清单 = 无图表建议；词表校验在 design_system.validate）。
+    chart_needs: List[str] = Field(default_factory=list)
+    # 交互需求词表（brush/swipe/cluster_expand/legend_toggle…描述性，
+    # 前端按能力矩阵执行；不支持时诚实降级，不假装可交互）。
+    interaction_needs: List[str] = Field(default_factory=list)
+    # 数据前置条件（人类可读）：native 化的模型必须把渲染链对该数据的
+    # 假设写清楚（单位/归一/掩膜/字段契约），让 planner 与 reviewer 有据可查。
+    data_preconditions_zh: List[str] = Field(default_factory=list)
 
 
 _MAPLIBRE_SPEC_URL = "https://maplibre.org/maplibre-style-spec/layers/"
@@ -554,6 +569,9 @@ def validate_model_library() -> List[str]:
 
     issues: List[str] = []
     known_palettes = set(COLOR_PALETTES) | set(NATIVE_HEATMAP_COLORS)
+    # V4：双变量色阵是独立语义族（非单色 ramp），登记为合法 default_palette
+    from app.lib.cartography.bivariate import BIVARIATE_MATRICES
+    known_palettes |= set(BIVARIATE_MATRICES)
     registry = get_map_model_registry()
 
     for model in registry._by_id.values():
@@ -582,12 +600,26 @@ def validate_model_library() -> List[str]:
         for comp in model.recommended_components:
             if comp not in component_type_ids:
                 issues.append(f"{model.id}: recommended_component '{comp}' 非 ComponentType 成员")
+        # V4：chart_needs 必须在图表 kind 词表内（防止目录虚构图表契约）
+        from app.lib.cartography.chart_kinds import CHART_KIND_IDS
+        for ck in model.chart_needs:
+            if ck not in CHART_KIND_IDS:
+                issues.append(f"{model.id}: chart_need '{ck}' 非图表 kind 词表成员")
+        if model.default_theme:
+            from app.lib.cartography.themes import get_cartographic_theme_registry
+            if get_cartographic_theme_registry().get_theme(model.default_theme) is None:
+                issues.append(f"{model.id}: default_theme '{model.default_theme}' 未注册")
         if model.runtime_status == "native":
             from app.lib.cartography.model_packs import FRONTEND_RUNTIME_LAYER_TYPES
             if mid not in FRONTEND_RUNTIME_LAYER_TYPES:
                 issues.append(
                     f"{model.id}: native 模型图层 '{mid}' 不在前端运行时支持族内"
                     f"（应为 planned）")
+            for gkind, glayer in model.geometry_layer_types.items():
+                if glayer not in FRONTEND_RUNTIME_LAYER_TYPES:
+                    issues.append(
+                        f"{model.id}: geometry_layer_types[{gkind}]='{glayer}' "
+                        f"不在前端运行时支持族内")
         if model.runtime_status == "planned" and not model.pitfalls_zh:
             issues.append(f"{model.id}: planned 模型必须登记 pitfalls（不伪装可用的原因）")
 

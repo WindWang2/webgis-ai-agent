@@ -1,0 +1,149 @@
+{
+ "digest": {
+  "case": "base::classified_raster::composition.rs_classification::png",
+  "components": [
+   {
+    "id": "title",
+    "layerId": "",
+    "position": "top-center",
+    "priority": 10,
+    "templateId": "title/academic",
+    "title": "classified_raster 专题图",
+    "type": "title",
+    "variant": "academic"
+   },
+   {
+    "id": "legend-main",
+    "layerId": "layer-primary",
+    "position": "bottom-left",
+    "priority": 16,
+    "templateId": "legend/academic",
+    "title": "",
+    "type": "legend",
+    "variant": "academic"
+   },
+   {
+    "id": "scale-bar",
+    "layerId": "",
+    "position": "bottom-right",
+    "priority": 20,
+    "templateId": "scale-bar/minimal",
+    "title": "",
+    "type": "scale_bar",
+    "variant": "minimal"
+   },
+   {
+    "id": "north-arrow",
+    "layerId": "",
+    "position": "top-right",
+    "priority": 30,
+    "templateId": "north-arrow/minimal-black",
+    "title": "",
+    "type": "north_arrow",
+    "variant": "compass_minimal_black"
+   },
+   {
+    "id": "attribution",
+    "layerId": "",
+    "position": "bottom-left",
+    "priority": 50,
+    "templateId": "attribution/default",
+    "title": "",
+    "type": "attribution",
+    "variant": "default"
+   },
+   {
+    "id": "graticule",
+    "layerId": "",
+    "position": "none",
+    "priority": 60,
+    "templateId": "graticule/light",
+    "title": "",
+    "type": "graticule",
+    "variant": "light"
+   },
+   {
+    "id": "map-border",
+    "layerId": "",
+    "position": "none",
+    "priority": 70,
+    "templateId": "frame/academic",
+    "title": "",
+    "type": "map_border",
+    "variant": "academic"
+   },
+   {
+    "id": "export-layout",
+    "layerId": "",
+    "position": "none",
+    "priority": 90,
+    "templateId": "export-layout/A4-landscape",
+    "title": "",
+    "type": "export_layout",
+    "variant": "A4_landscape"
+   }
+  ],
+  "kind": "base",
+  "layout": {
+   "conflicts": [],
+   "moved": [],
+   "placements": {
+    "attribution": "bottom-left",
+    "export-layout": "none",
+    "graticule": "none",
+    "legend-main": "bottom-left",
+    "map-border": "none",
+    "north-arrow": "top-right",
+    "scale-bar": "bottom-right",
+    "title": "top-center"
+   },
+   "reasons": {},
+   "suppressed": [],
+   "warning_count": 0
+  },
+  "model": "classified_raster",
+  "output": "png",
+  "profile": "viewport",
+  "selection": {
+   "component_templates": {
+    "attribution": "attribution/default",
+    "export_layout": "export-layout/A4-landscape",
+    "graticule": "graticule/light",
+    "legend": "legend/academic",
+    "map_border": "frame/academic",
+    "north_arrow": "north-arrow/minimal-black",
+    "scale_bar": "scale-bar/minimal",
+    "title": "title/academic"
+   },
+   "composition_template_id": "composition.rs_classification",
+   "reason_codes": [],
+   "rejected_count": 0,
+   "required_slots": [
+    "attribution",
+    "export_layout",
+    "legend",
+    "map_border",
+    "north_arrow",
+    "scale_bar",
+    "title"
+   ],
+   "selected": [
+    "attribution",
+    "export_layout",
+    "graticule",
+    "legend",
+    "map_border",
+    "north_arrow",
+    "scale_bar",
+    "title"
+   ]
+  },
+  "template": "composition.rs_classification",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": []
+  }
+ },
+ "sha": "8b2592a57ced9d9b"
+}

@@ -1,0 +1,170 @@
+{
+ "digest": {
+  "case": "stress::bivariate_raster::composition.government_report_map::a4_portrait",
+  "components": [
+   {
+    "id": "title",
+    "layerId": "",
+    "position": "top-center",
+    "priority": 10,
+    "templateId": "title/report",
+    "title": "成都市国土空间总体规划「三区三线」实施评估与城市更新单元划定专题图（2021—2035 年）",
+    "type": "title",
+    "variant": "report"
+   },
+   {
+    "id": "subtitle",
+    "layerId": "",
+    "position": "top-center",
+    "priority": 11,
+    "templateId": "subtitle/default",
+    "title": "副标题：数据口径与评价方法说明（极端长度换行压力用例 / extreme-length wrapping stress）",
+    "type": "subtitle",
+    "variant": "default"
+   },
+   {
+    "id": "legend-main",
+    "layerId": "layer-primary",
+    "position": "bottom-left",
+    "priority": 16,
+    "templateId": "legend/report",
+    "title": "",
+    "type": "legend",
+    "variant": "report"
+   },
+   {
+    "id": "scale-bar",
+    "layerId": "",
+    "position": "bottom-right",
+    "priority": 20,
+    "templateId": "scale-bar/minimal",
+    "title": "",
+    "type": "scale_bar",
+    "variant": "minimal"
+   },
+   {
+    "id": "north-arrow",
+    "layerId": "",
+    "position": "top-right",
+    "priority": 30,
+    "templateId": "north-arrow/minimal-black",
+    "title": "",
+    "type": "north_arrow",
+    "variant": "compass_minimal_black"
+   },
+   {
+    "id": "statistics",
+    "layerId": "",
+    "position": "top-left",
+    "priority": 40,
+    "templateId": "statistics-panel/default",
+    "title": "",
+    "type": "statistics_panel",
+    "variant": "default"
+   },
+   {
+    "id": "attribution",
+    "layerId": "",
+    "position": "bottom-left",
+    "priority": 50,
+    "templateId": "attribution/default",
+    "title": "",
+    "type": "attribution",
+    "variant": "default"
+   },
+   {
+    "id": "map-border",
+    "layerId": "",
+    "position": "none",
+    "priority": 70,
+    "templateId": "frame/report",
+    "title": "",
+    "type": "map_border",
+    "variant": "report"
+   },
+   {
+    "id": "export-layout",
+    "layerId": "",
+    "position": "none",
+    "priority": 90,
+    "templateId": "export-layout/A4-portrait",
+    "title": "",
+    "type": "export_layout",
+    "variant": "A4_portrait"
+   }
+  ],
+  "kind": "stress",
+  "layout": {
+   "conflicts": [],
+   "moved": [
+    "subtitle"
+   ],
+   "placements": {
+    "attribution": "bottom-left",
+    "export-layout": "none",
+    "legend-main": "bottom-left",
+    "map-border": "none",
+    "north-arrow": "top-right",
+    "scale-bar": "bottom-right",
+    "subtitle": "top-left",
+    "title": "top-center"
+   },
+   "reasons": {
+    "subtitle": "fallback_zone"
+   },
+   "suppressed": [
+    "statistics"
+   ],
+   "warning_count": 1
+  },
+  "model": "bivariate_raster",
+  "output": "pdf",
+  "profile": "a4_portrait",
+  "selection": {
+   "component_templates": {
+    "attribution": "attribution/default",
+    "export_layout": "export-layout/A4-portrait",
+    "legend": "legend/report",
+    "map_border": "frame/report",
+    "north_arrow": "north-arrow/minimal-black",
+    "scale_bar": "scale-bar/minimal",
+    "statistics_panel": "statistics-panel/default",
+    "subtitle": "subtitle/default",
+    "title": "title/report"
+   },
+   "composition_template_id": "composition.report_map",
+   "reason_codes": [
+    "wired_composition_incompatible_model"
+   ],
+   "rejected_count": 1,
+   "required_slots": [
+    "attribution",
+    "export_layout",
+    "map_border",
+    "north_arrow",
+    "scale_bar",
+    "title"
+   ],
+   "selected": [
+    "attribution",
+    "export_layout",
+    "legend",
+    "map_border",
+    "north_arrow",
+    "scale_bar",
+    "statistics_panel",
+    "subtitle",
+    "title"
+   ]
+  },
+  "template": "composition.government_report_map",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": [
+    "zone_collision"
+   ]
+  }
+ },
+ "sha": "ab3b03edaad6bd43"
+}

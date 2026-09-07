@@ -1,11 +1,12 @@
-"""Raster / 遥感 / 时序表达模型域包（ADR-0101 §B1）。
+"""Raster / 遥感 / 时序表达模型域包（ADR-0101 §B1 + Design System V4）。
 
-native：terrain 解析面、光谱指数面、变化对比面 —— raster/fill +
-连续色带/分级投影的既有机制族。
-planned：hillshade（前端 union 未含 hillshade 图层）、classified raster
-（需 color-relief/step 化栅格）、elevation tint+hillshade 合成、SAR
-强度/变化（无 SAR artifact）、趋势/异常/不确定性面（无趋势 artifact）、
-before/after swipe（runtime 无 swipe 语义）。
+native：terrain 解析面、光谱指数面、变化对比面（V3）+ V4 原生化：
+hillshade（服务端 Horn 预渲染灰度 + raster 层）、classified raster
+（断点分级离散色阶）、elevation tint+hillshade（分层设色 × 晕渲 alpha
+合成）、SAR 强度/变化、趋势/距平/不确定性面（栅格渲染链 + 数据契约）。
+V4 新增：KDE 面、插值结果面、双变量栅格、遥感合成、方向/地貌/水文地形族、
+视线域、TWI、汇流累积、距离面、表面差值。
+planned：before/after swipe（runtime 无 swipe 语义，诚实保留）。
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
             "坡向是环形量 —— 线性色带会在 0°/360° 处制造假断裂，需环形配色（planned）",
             "解析面单位是度/百分比/曲率 —— colorbar 必须带单位",
         ],
+        default_theme="cartographic.terrain",
         sources=[_MAPLIBRE_SPEC_URL, _QGIS_URL],
     ),
     m(
@@ -81,15 +83,26 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
     m(
         id="hillshade", name_zh="山体阴影",
         purpose_zh="DEM 光照晕渲（地形表达底图/单独产品）",
-        geometry_kinds=["raster"], maplibre_layer_type="hillshade",
-        classification="none", color_scheme_kind="none",
-        runtime_status="planned",
+        geometry_kinds=["raster"], maplibre_layer_type="raster",
+        classification="none", color_scheme_kind="sequential",
+        default_palette="Gray",
+        aliases=["shaded_relief", "terrain_relief"],
         accepted_artifact_types=["terrain_surface", "raster_surface"],
+        recommended_components=["continuous_colorbar", "methodology_note"],
+        export_compatibility=["png", "pdf"],
+        data_preconditions_zh=[
+            "DEM 数组（≥3×3，nan=无数据）；cell_size 单位一致",
+            "render_mode=hillshade：服务端 Horn 法预渲染灰度 PNG → raster 层",
+        ],
         qgis_renderer="hillshade 渲染器",
+        fallback_model_id="raster_surface",
         pitfalls_zh=[
-            "planned：hillshade 图层在前端编译器 union 与 raster-dem source 链路均未接线",
+            "本运行时以服务端预渲染灰度 PNG + raster 层实现晕渲视觉；"
+            "MapLibre 原生 hillshade 图层（raster-dem 源）未接线 —— 预览与"
+            "导出像素一致（同源 PNG），但无法随视角实时重算",
             "光源方位角/高度角必须随图披露，否则同一 DEM 可渲染出不同地貌观感",
         ],
+        default_theme="cartographic.terrain",
         sources=[_MAPLIBRE_SPEC_URL],
     ),
     m(
@@ -99,11 +112,19 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         classification="graduated",
         color_scheme_kind="sequential", default_palette="YlOrRd",
         recommended_classifiers=["natural_breaks", "equal_interval"],
-        runtime_status="planned",
-        accepted_artifact_types=["raster_surface", "terrain_surface"],
+        accepted_artifact_types=["raster_surface", "terrain_surface",
+                                 "remote_sensing_index"],
+        recommended_components=["legend"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="raster_surface",
+        data_preconditions_zh=[
+            "render_mode=classified：显式 breaks 或 n_classes（等距）分级",
+            "离散取色（非插值）—— 色带重采样为 n_classes 档纯色",
+        ],
         qgis_renderer="paletted / 调色板分级",
         pitfalls_zh=[
-            "planned：栅格 step 化着色需 color-relief/服务端重分类链路，本分支未实现",
+            "分级栅格的图例是离散阶梯（graduated），不是连续 colorbar",
+            "用户显式断点 100% 保留；等距自动分级需披露断点数值",
         ],
         sources=[_QGIS_URL],
     ),
@@ -113,12 +134,20 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         geometry_kinds=["raster"], maplibre_layer_type="raster",
         classification="graduated",
         color_scheme_kind="sequential", default_palette="Oranges",
-        runtime_status="planned",
-        accepted_artifact_types=["terrain_surface"],
-        pitfalls_zh=[
-            "planned：依赖 hillshade（未接线）与多层栅格合成顺序契约",
-            "受限于已注册色带库存，以 Oranges 近似经典 hypsometric 多色分层方案",
+        aliases=["hypsometric_map", "tinted_relief"],
+        accepted_artifact_types=["terrain_surface", "raster_surface"],
+        recommended_components=["legend", "methodology_note"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="hillshade",
+        data_preconditions_zh=[
+            "render_mode=hillshade_blend：连续设色 × 晕渲灰度 alpha 合成"
+            "（缺省 shade_alpha=0.4）",
         ],
+        pitfalls_zh=[
+            "受限于已注册色带库存，以 Oranges 近似经典 hypsometric 多色分层方案",
+            "晕渲 α 过高会吞没设色分级语义（α>0.6 时颜色可辨性骤降）",
+        ],
+        default_theme="cartographic.terrain",
         sources=[_MAPLIBRE_SPEC_URL],
     ),
     m(
@@ -127,11 +156,21 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         geometry_kinds=["raster"], maplibre_layer_type="raster",
         classification="none",
         color_scheme_kind="perceptual_uniform", default_palette="Inferno",
-        runtime_status="planned",
-        accepted_artifact_types=["raster_surface"],
-        pitfalls_zh=[
-            "planned：无 SAR 强度 artifact 类型与 dB 归一契约，本分支未实现",
+        aliases=["sar_backscatter_map"],
+        accepted_artifact_types=["raster_surface", "remote_sensing_index"],
+        recommended_components=["continuous_colorbar", "methodology_note"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="raster_surface",
+        data_preconditions_zh=[
+            "σ⁰ 经 dB 归一（10·log10）后作为数值栅格进入通用渲染链；"
+            "colorbar 单位标注 dB",
+            "雷达阴影/叠掩区（layover）无有效观测 —— 保持透明不置最低档色",
         ],
+        pitfalls_zh=[
+            "dB 与线性强度混用会让色标失去意义 —— 单位必须随方法论披露",
+            "斑噪（speckle）未滤波时会误读为纹理 —— 多视/滤波参数须披露",
+        ],
+        default_theme="cartographic.remote_sensing",
         sources=[],
     ),
     m(
@@ -140,11 +179,19 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         geometry_kinds=["raster"], maplibre_layer_type="raster",
         classification="graduated",
         color_scheme_kind="diverging", default_palette="RdBu",
-        runtime_status="planned",
-        accepted_artifact_types=["raster_surface"],
+        recommended_classifiers=["std_dev", "equal_interval"],
+        aliases=["insar_deformation_map"],
+        accepted_artifact_types=["raster_surface", "change_set"],
+        recommended_components=["continuous_colorbar", "uncertainty_panel"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="change_comparison_map",
+        data_preconditions_zh=[
+            "形变/变化量场以有符号数值栅格进入渲染链（mm 或 dB）",
+            "色标对称且以 0 为中点（equal_interval 对称断点）",
+        ],
         pitfalls_zh=[
-            "planned：无 InSAR/相干性 artifact 契约，本分支未实现",
-            "形变量色标必须对称且以 0 为中点，否则毫米级形变被误读",
+            "色标不对称会把毫米级形变误读为方向性信号 —— 对称断点强制",
+            "低相干区（水体/植被）形变值不可信 —— 相干性掩膜应保持透明",
         ],
         sources=[],
     ),
@@ -154,11 +201,19 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         geometry_kinds=["raster"], maplibre_layer_type="raster",
         classification="graduated",
         color_scheme_kind="diverging", default_palette="RdBu",
-        runtime_status="planned",
-        accepted_artifact_types=["raster_surface"],
+        recommended_classifiers=["std_dev", "equal_interval"],
+        aliases=["trend_surface_map"],
+        accepted_artifact_types=["raster_surface", "change_set",
+                                 "remote_sensing_index"],
+        recommended_components=["continuous_colorbar", "uncertainty_panel"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="change_comparison_map",
+        data_preconditions_zh=[
+            "趋势斜率场（OLS/Sen 斜率）为有符号数值栅格；显著性掩膜可选",
+        ],
         pitfalls_zh=[
-            "planned：需要趋势拟合 artifact（斜率/p 值字段），本分支未实现",
             "不显著趋势应以低饱和/置灰表达，不与显著趋势争色",
+            "斜率单位（每年/每期）必须在 colorbar 披露",
         ],
         sources=[],
     ),
@@ -168,10 +223,18 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         geometry_kinds=["raster"], maplibre_layer_type="raster",
         classification="graduated",
         color_scheme_kind="diverging", default_palette="RdBu",
-        runtime_status="planned",
-        accepted_artifact_types=["raster_surface"],
+        recommended_classifiers=["std_dev", "equal_interval"],
+        aliases=["anomaly_map"],
+        accepted_artifact_types=["raster_surface", "remote_sensing_index"],
+        recommended_components=["continuous_colorbar", "methodology_note"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="change_comparison_map",
+        data_preconditions_zh=[
+            "距平场 = 观测 − 背景态（气候平均/基准期）；有符号数值栅格",
+            "背景态参考期必须随方法论披露（如 1991-2020 平均）",
+        ],
         pitfalls_zh=[
-            "planned：需要背景态参考 artifact，本分支未实现",
+            "基准期不同则距平不可比 —— 跨图比较必须固定基准",
         ],
         sources=[],
     ),
@@ -181,10 +244,17 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         geometry_kinds=["raster"], maplibre_layer_type="raster",
         classification="none",
         color_scheme_kind="sequential", default_palette="Purples",
-        runtime_status="planned",
+        aliases=["variance_surface_map"],
         accepted_artifact_types=["raster_surface", "density_surface"],
+        recommended_components=["continuous_colorbar", "uncertainty_panel"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="raster_surface",
+        data_preconditions_zh=[
+            "方差/标准差/分位带宽度的数值栅格（非负）",
+        ],
         pitfalls_zh=[
-            "planned：需要不确定性场 artifact（方差/分位带），本分支未实现",
+            "不确定性面建议与主预测面成对出现（uncertainty_panel 互链），"
+            "单独展示会丢失『哪里可信』的参照",
         ],
         sources=[],
     ),
@@ -198,6 +268,278 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         pitfalls_zh=[
             "planned：runtime 无 swipe 交互语义与导出双帧契约，本分支未实现",
             "导出侧等价物是双帧并排（before/after 双面板），swipe 仅限交互面",
+        ],
+        sources=[],
+    ),
+    # ── V4 新增（Design System）：分析面/双变量栅格/地形族 ─────────────
+    m(
+        id="kernel_density_surface", name_zh="核密度估计面",
+        purpose_zh="KDE 分析级连续密度面（带宽/核函数显式，区别于视觉热力图）",
+        geometry_kinds=["raster"], maplibre_layer_type="raster",
+        classification="none",
+        color_scheme_kind="perceptual_uniform", default_palette="Magma",
+        aliases=["kde_surface", "density_analysis_surface"],
+        accepted_artifact_types=["density_surface", "raster_surface"],
+        recommended_components=["continuous_colorbar", "methodology_note"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="raster_surface",
+        data_preconditions_zh=[
+            "KDE 输出的密度值栅格（核函数/带宽由 density 算法产出）",
+            "带宽单位（地图米）必须随方法论披露，与视觉热力图的"
+            " radius_px（屏幕像素）严格区分",
+        ],
+        pitfalls_zh=[
+            "分析级 KDE 与视觉热力图（visual_heatmap）语义不同：前者可量化"
+            "对比、后者只回答『哪儿密』",
+            "边界效应：研究区边缘密度被低估 —— 稳健用法须披露核密度归一化",
+        ],
+        sources=[],
+    ),
+    m(
+        id="interpolation_result_map", name_zh="插值结果面",
+        purpose_zh="IDW/克里金/RBF 等插值的连续预测面（站点观测 → 连续场）",
+        geometry_kinds=["raster"], maplibre_layer_type="raster",
+        classification="none",
+        color_scheme_kind="perceptual_uniform", default_palette="Viridis",
+        aliases=["kriging_surface_map", "idw_surface_map"],
+        accepted_artifact_types=["density_surface", "terrain_surface",
+                                 "raster_surface", "point_feature_set"],
+        recommended_components=["continuous_colorbar", "uncertainty_panel",
+                                "methodology_note"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="raster_surface",
+        data_preconditions_zh=[
+            "插值预测面（算法已选定 IDW/OK/UK/RBF/TIN）+ 可选方差面",
+            "插值方法与变异函数参数随方法论披露",
+        ],
+        pitfalls_zh=[
+            "插值面在站点稀疏区不可信 —— 建议成对渲染 uncertainty_surface",
+            "外推区（凸包外）禁止当作可靠预测 —— 保持透明或披露",
+        ],
+        sources=[],
+    ),
+    m(
+        id="bivariate_raster", name_zh="双变量栅格图",
+        purpose_zh="双波段逐格 3×3 联合分级的栅格色阵（共现/相关空间格局）",
+        geometry_kinds=["raster"], maplibre_layer_type="raster",
+        classification="graduated",
+        # 独立色阵族（BIVARIATE_MATRICES）—— scheme 如实 none（同上）
+        color_scheme_kind="none", default_palette="BiPurpleOrange",
+        recommended_classifiers=["quantiles", "equal_interval"],
+        accepted_artifact_types=["raster_surface", "remote_sensing_index"],
+        recommended_components=["legend"],
+        export_compatibility=["png", "pdf"],
+        chart_needs=["scatter"],
+        fallback_model_id="classified_raster",
+        data_preconditions_zh=[
+            "双波段同形数组（array_a/array_b）逐格分位分级 → 色阵索引",
+            "任一波段缺失的像元透明",
+        ],
+        pitfalls_zh=[
+            "读者负荷高 —— 与 bivariate_choropleth 同样仅限确有交互语义的变量对",
+        ],
+        sources=[],
+    ),
+    m(
+        id="rs_composite_map", name_zh="遥感合成影像图",
+        purpose_zh="真彩/假彩波段合成的影像底面（RGB 波段组合）",
+        geometry_kinds=["raster"], maplibre_layer_type="raster",
+        classification="none", color_scheme_kind="none",
+        aliases=["true_color_map", "false_color_map"],
+        accepted_artifact_types=["raster_surface", "remote_sensing_index"],
+        recommended_components=["attribution", "methodology_note"],
+        supported_template_kinds=["thematic", "basemap"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="raster_surface",
+        data_preconditions_zh=[
+            "波段合成 RGB 已编码为 8bit 影像（imageRef 载体）",
+            "拉伸方式（2%/min-max）随 attribution/披露声明",
+        ],
+        pitfalls_zh=[
+            "合成影像不是专题分析结果 —— 不得直接回答数值问题，只作"
+            "背景/目视判读",
+        ],
+        default_theme="cartographic.remote_sensing",
+        sources=[],
+    ),
+    m(
+        id="aspect_direction_map", name_zh="坡向八方向图",
+        purpose_zh="坡向按 8 方向（N/NE/E…）分类的 categorical 地形图",
+        geometry_kinds=["raster"], maplibre_layer_type="raster",
+        classification="categorical",
+        # 8 方向 + 平地 = 9 类 → Set1（上限 9）；Set2 仅 8 色装不下
+        color_scheme_kind="qualitative", default_palette="Set1",
+        accepted_artifact_types=["terrain_surface", "raster_surface"],
+        recommended_components=["categorical_legend"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="classified_raster",
+        data_preconditions_zh=[
+            "坡向角（0-360°，-1=平地）按 45° 分箱为 8 方向；平地单独类置灰",
+        ],
+        pitfalls_zh=[
+            "坡向是环形量 —— 8 方向分类消除了 0°/360° 假断裂（连续色带"
+            "做不到），平地（坡度≈0）无坡向必须单独置灰",
+        ],
+        sources=[_QGIS_URL],
+    ),
+    m(
+        id="landform_classification_map", name_zh="地貌分类图",
+        purpose_zh="TPI/geomorphon 地貌单元（山顶/山脊/坡麓/谷底…）分类面",
+        geometry_kinds=["raster"], maplibre_layer_type="raster",
+        classification="categorical",
+        color_scheme_kind="qualitative", default_palette="Dark2",
+        aliases=["geomorphon_map", "landform_map"],
+        accepted_artifact_types=["terrain_surface", "raster_surface"],
+        recommended_components=["categorical_legend", "methodology_note"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="classified_raster",
+        data_preconditions_zh=[
+            "地貌单元类别栅格（TPI 分类或 geomorphon）；尺度参数随披露",
+        ],
+        pitfalls_zh=[
+            "地貌分类强烈依赖邻域尺度 —— 尺度参数必须随方法论披露",
+        ],
+        default_theme="cartographic.terrain",
+        sources=[],
+    ),
+    m(
+        id="watershed_boundary_map", name_zh="流域边界图",
+        purpose_zh="汇流分析提取的流域/子流域边界与编码填色",
+        geometry_kinds=["polygon"], maplibre_layer_type="fill",
+        classification="categorical",
+        color_scheme_kind="qualitative", default_palette="Set2",
+        geometry_layer_types={"polygon": "fill", "line": "line"},
+        aliases=["catchment_map"],
+        accepted_artifact_types=["polygon_feature_set", "raster_surface"],
+        recommended_components=["categorical_legend"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="categorical_thematic",
+        data_preconditions_zh=[
+            "流域多边形携带流域 id/级别（Strahler）；DEM 分辨率与汇流"
+            "累计阈值须披露",
+        ],
+        pitfalls_zh=[
+            "流域边界对 DEM 质量敏感 —— 平坦区（湮灭未处理）边界不可靠",
+        ],
+        sources=[],
+    ),
+    m(
+        id="stream_order_map", name_zh="河网分级图",
+        purpose_zh="Strahler 河流分级的线状表达（低阶细、高阶粗）",
+        geometry_kinds=["line"], maplibre_layer_type="line",
+        classification="graduated",
+        color_scheme_kind="sequential", default_palette="Blues",
+        accepted_artifact_types=["line_feature_set", "raster_surface"],
+        recommended_components=["legend"],
+        export_compatibility=["png", "pdf", "svg"],
+        fallback_model_id="graduated_line",
+        data_preconditions_zh=[
+            "河段线携带 Strahler 级别字段；宽度随级别递增（宽线在下层）",
+        ],
+        pitfalls_zh=[
+            "高级别河道必须压在低级别之上（否则主河道被支流吞没）",
+        ],
+        sources=[],
+    ),
+    m(
+        id="viewshed_map", name_zh="视线域/可视域图",
+        purpose_zh="观察点可视区域（可见/不可见二元或可视次数）表达",
+        geometry_kinds=["raster"], maplibre_layer_type="raster",
+        classification="categorical",
+        # 可见/不可见二元 → 定性族（YlOrRd 是顺序带，登记定性却给顺序色
+        # 是契约错配 —— 改 Set1，红=不可见区语义由图例标注）
+        color_scheme_kind="qualitative", default_palette="Set1",
+        aliases=["viewshed_analysis_map"],
+        accepted_artifact_types=["raster_surface", "terrain_surface"],
+        recommended_components=["legend", "methodology_note"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="classified_raster",
+        data_preconditions_zh=[
+            "可视性栅格（0/1 或累计可视次数）；观察点高度与目标高度须披露",
+        ],
+        pitfalls_zh=[
+            "视域对 DEM 分辨率与地球曲率设定敏感 —— 参数随方法论披露",
+        ],
+        sources=[],
+    ),
+    m(
+        id="twi_map", name_zh="地形湿度指数图",
+        purpose_zh="TWI（ln(a/tanβ)）连续湿度空间分布",
+        geometry_kinds=["raster"], maplibre_layer_type="raster",
+        classification="none",
+        color_scheme_kind="sequential", default_palette="Blues",
+        aliases=["wetness_index_map"],
+        accepted_artifact_types=["terrain_surface", "raster_surface"],
+        recommended_components=["continuous_colorbar"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="terrain_analytical_surface",
+        data_preconditions_zh=[
+            "TWI 数值栅格（比集水区面积/坡度函数）",
+        ],
+        pitfalls_zh=[
+            "平坦区 tanβ→0 使 TWI 爆炸 —— 极值截断处理须披露",
+        ],
+        sources=[],
+    ),
+    m(
+        id="flow_accumulation_surface", name_zh="汇流累积面",
+        purpose_zh="D8/D-infinity 汇流累积量的重尾密度渲染",
+        geometry_kinds=["raster"], maplibre_layer_type="raster",
+        classification="none",
+        color_scheme_kind="sequential", default_palette="Purples",
+        recommended_classifiers=["head_tail", "natural_breaks"],
+        aliases=["flow_accumulation_map"],
+        accepted_artifact_types=["terrain_surface", "raster_surface",
+                                 "density_surface"],
+        recommended_components=["continuous_colorbar", "methodology_note"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="terrain_analytical_surface",
+        data_preconditions_zh=[
+            "汇流累计栅格（格数或面积）；重尾分布建议 head_tail 分级",
+        ],
+        pitfalls_zh=[
+            "汇流累积是极端重尾量 —— 线性色带会让 99% 像元挤在最低档",
+        ],
+        sources=[],
+    ),
+    m(
+        id="distance_surface", name_zh="距离场图",
+        purpose_zh="到目标要素集的欧氏距离连续面（直线距离）",
+        geometry_kinds=["raster"], maplibre_layer_type="raster",
+        classification="none",
+        color_scheme_kind="sequential", default_palette="Oranges",
+        aliases=["euclidean_distance_map"],
+        accepted_artifact_types=["raster_surface", "density_surface"],
+        recommended_components=["continuous_colorbar"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="raster_surface",
+        data_preconditions_zh=[
+            "距离值栅格（地图单位）；单位随 colorbar 披露",
+        ],
+        pitfalls_zh=[
+            "欧氏距离 ≠ 路径/成本距离 —— 交通语义应换成本距离分析（planned）",
+        ],
+        sources=[],
+    ),
+    m(
+        id="surface_difference_map", name_zh="表面差值图",
+        purpose_zh="两期表面（DEM/深度）逐格差值的发散渲染（侵蚀/淤积）",
+        geometry_kinds=["raster"], maplibre_layer_type="raster",
+        classification="graduated",
+        color_scheme_kind="diverging", default_palette="RdBu",
+        recommended_classifiers=["std_dev", "equal_interval"],
+        aliases=["dem_difference_map", "elevation_change_map"],
+        accepted_artifact_types=["raster_surface", "change_set",
+                                 "terrain_surface"],
+        recommended_components=["continuous_colorbar", "uncertainty_panel"],
+        export_compatibility=["png", "pdf"],
+        fallback_model_id="change_comparison_map",
+        data_preconditions_zh=[
+            "两期表面同网格配准后逐格差值；单位（米）随 colorbar 披露",
+        ],
+        pitfalls_zh=[
+            "配准误差会产生虚假边缘差值 —— 配准残差须披露",
+            "色标以 0 为中点对称，否则侵蚀/淤积量级被误读",
         ],
         sources=[],
     ),

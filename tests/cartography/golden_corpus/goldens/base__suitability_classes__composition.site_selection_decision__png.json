@@ -1,0 +1,143 @@
+{
+ "digest": {
+  "case": "base::suitability_classes::composition.site_selection_decision::png",
+  "components": [
+   {
+    "id": "title",
+    "layerId": "",
+    "position": "top-center",
+    "priority": 10,
+    "templateId": "title/report",
+    "title": "suitability_classes 专题图",
+    "type": "title",
+    "variant": "report"
+   },
+   {
+    "id": "subtitle",
+    "layerId": "",
+    "position": "top-center",
+    "priority": 11,
+    "templateId": "subtitle/default",
+    "title": "",
+    "type": "subtitle",
+    "variant": "default"
+   },
+   {
+    "id": "legend-main",
+    "layerId": "layer-primary",
+    "position": "bottom-left",
+    "priority": 16,
+    "templateId": "legend/report",
+    "title": "",
+    "type": "legend",
+    "variant": "report"
+   },
+   {
+    "id": "scale-bar",
+    "layerId": "",
+    "position": "bottom-right",
+    "priority": 20,
+    "templateId": "scale-bar/minimal",
+    "title": "",
+    "type": "scale_bar",
+    "variant": "minimal"
+   },
+   {
+    "id": "north-arrow",
+    "layerId": "",
+    "position": "top-right",
+    "priority": 30,
+    "templateId": "north-arrow/minimal-black",
+    "title": "",
+    "type": "north_arrow",
+    "variant": "compass_minimal_black"
+   },
+   {
+    "id": "attribution",
+    "layerId": "",
+    "position": "bottom-left",
+    "priority": 50,
+    "templateId": "attribution/default",
+    "title": "",
+    "type": "attribution",
+    "variant": "default"
+   },
+   {
+    "id": "export-layout",
+    "layerId": "",
+    "position": "none",
+    "priority": 90,
+    "templateId": "export-layout/A4-landscape",
+    "title": "",
+    "type": "export_layout",
+    "variant": "A4_landscape"
+   }
+  ],
+  "kind": "base",
+  "layout": {
+   "conflicts": [],
+   "moved": [
+    "subtitle"
+   ],
+   "placements": {
+    "attribution": "bottom-left",
+    "export-layout": "none",
+    "legend-main": "bottom-left",
+    "north-arrow": "top-right",
+    "scale-bar": "bottom-right",
+    "subtitle": "top-left",
+    "title": "top-center"
+   },
+   "reasons": {
+    "subtitle": "fallback_zone"
+   },
+   "suppressed": [],
+   "warning_count": 0
+  },
+  "model": "suitability_classes",
+  "output": "png",
+  "profile": "viewport",
+  "selection": {
+   "component_templates": {
+    "attribution": "attribution/default",
+    "export_layout": "export-layout/A4-landscape",
+    "legend": "legend/report",
+    "north_arrow": "north-arrow/minimal-black",
+    "scale_bar": "scale-bar/minimal",
+    "subtitle": "subtitle/default",
+    "title": "title/report"
+   },
+   "composition_template_id": "composition.site_selection_decision",
+   "reason_codes": [],
+   "rejected_count": 4,
+   "required_slots": [
+    "attribution",
+    "export_layout",
+    "legend",
+    "north_arrow",
+    "scale_bar",
+    "title"
+   ],
+   "selected": [
+    "attribution",
+    "export_layout",
+    "legend",
+    "north_arrow",
+    "scale_bar",
+    "subtitle",
+    "title"
+   ]
+  },
+  "template": "composition.site_selection_decision",
+  "validation": {
+   "error_codes": [],
+   "ok": true,
+   "warning_codes": [
+    "recommended_slot_missing",
+    "recommended_slot_missing",
+    "zone_collision"
+   ]
+  }
+ },
+ "sha": "30f15be3410cc3ac"
+}
