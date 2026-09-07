@@ -1344,13 +1344,15 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             ) from exc
         if not thr_list:
             raise ValueError("thresholds 至少需要一个阈值（逗号分隔，如 '35,75,115'）")
-        if len(thresholds) > 20:
+        # F1 修复（science-v3 审计）：守卫对象是解析后的阈值个数，
+        # 此前误用原始字符串长度 —— 8 阈值合法请求（23 字符）被误拒。
+        if len(thr_list) > 20:
             from app.lib.gis.scientific_errors import ResourceScaleMismatch
 
             raise ResourceScaleMismatch(
-                f"indicator kriging 需要 {len(thresholds)} 次独立变差函数拟合+求解"
+                f"indicator kriging 需要 {len(thr_list)} 次独立变差函数拟合+求解"
                 f"（概率面 n_thr×H×W 内存线性放大）",
-                estimated=f"{len(thresholds)} thresholds × 变差函数拟合+克里金求解",
+                estimated=f"{len(thr_list)} thresholds × 变差函数拟合+克里金求解",
                 limit="≤20 thresholds",
                 correction_hint="用分位数子集（如 10/30/50/70/90 分位）刻画分布",
             )
@@ -1386,9 +1388,40 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         })
         descriptor = get_algorithm_registry().get("interpolation.indicator_kriging")
         if descriptor is not None:
+            # F2 修复（science-v3 审计）：descriptor 声明 raster_uncertainty，
+            # 工具必须实际产出 typed 块 —— 概率面摘要（不搬格网，走属性通道）。
+            from app.lib.gis.uncertainty import RasterUncertainty, UncertaintyMeasure
+
+            p_values = [
+                p
+                for rec in driver["records"]
+                for p in (rec.get("probabilities") or {}).values()
+            ]
+            uncertainty_blocks = []
+            if p_values:
+                p_mean = sum(p_values) / len(p_values)
+                uncertainty_blocks.append(RasterUncertainty(
+                    target="indicator_probability_surface",
+                    interpretation=(
+                        "阈值条件概率面 P(Z≤t)（逐阈值指示克里金）；"
+                        "摘要为全部阈值×单元概率值的有界统计，非方差"
+                    ),
+                    summary=[
+                        UncertaintyMeasure(
+                            measure="value", value=p_mean,
+                            method="mean indicator probability"),
+                        UncertaintyMeasure(
+                            measure="quantile", value=min(p_values),
+                            method="p_min"),
+                        UncertaintyMeasure(
+                            measure="quantile", value=max(p_values),
+                            method="p_max"),
+                    ],
+                ))
             pred_fc["scientific_evidence"] = build_evidence(
                 descriptor,
                 tool="indicator_kriging_surface",
+                uncertainty=uncertainty_blocks,
                 parameters_applied={
                     "value_field": params["value_field"],
                     "thresholds": thr_sorted,

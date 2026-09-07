@@ -78,7 +78,7 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
 
 块支撑克里金（2×2 离散化，Isaaks & Srivastava 1989）：块均值 + 块方差面。
 
-- **`interpolation.block_kriging`** 块克里金（`native`·成熟度 已验证，契约: `block_kriging_analysis`，出处: `isaaks_srivastava1989`, `matheron1963`）
+- **`interpolation.block_kriging`** 块克里金（`native`·成熟度 已验证，契约: `block_kriging_analysis`，出处: `isaaks_srivastava1989`, `matheron1963`，精度: approximate）
   - 假设：2×2 子点离散化近似块均值协方差（Isaaks & Srivastava 1989 惯例，近似已披露）；LHS 保持点支撑样本-样本 γ；块支撑经 RHS γ̄(x,B) 与方差修正 −γ̄(B,B) 进入；块尺寸→0 时收敛到点克里金（rtol 1e-3，conformance 固定）
   - 局限：块尺寸相对变程越大，2×2 离散化近似误差越大（更高密度离散化未实现）；块边界取矩形（H3 单元为六边形——以等面积方形近似，已披露）；块方差 ≤ 点方差仅在平均意义上成立（个别格点可反超）
   - 回退：`interpolation.kriging`→approximation
@@ -120,7 +120,7 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
 
 协同定位协同克里金（MM1 近似）：主/次变量联合建模；|ρ|<0.2 结构化拒绝。
 
-- **`interpolation.cokriging`** 协同克里金（`native`·成熟度 已验证，契约: `cokriging_analysis`，出处: `journel_huijbregts1978`, `matheron1963`）
+- **`interpolation.cokriging`** 协同克里金（`native`·成熟度 已验证，契约: `cokriging_analysis`，出处: `journel_huijbregts1978`, `matheron1963`，精度: approximate）
   - 假设：Markov Model 1 近似核化：交叉协方差 C_sy(h)=ρ·C_pp(h)（全交叉协方差未建模）；协同定位近似：次变量仅在目标格点以单一数值进入克里金系统；次变量缺失时取最近次变量值（精确协同定位格数披露）；C_ss(0)=主变量先验方差（标准化假设）
   - 局限：次变量自身变异函数未拟合（MM1 缩放假设）；次变量须与主变量共享同一工作 CRS；非协同定位部分由最近邻补格（近似）；近似语义（approximate=True）：协同克里金理论收益依赖 MM1 假设成立
   - 回退：`interpolation.kriging`→approximation
@@ -319,7 +319,7 @@ k-means 分割基座（Lloyd 1982；光谱 z-score + 加权空间坐标特征，
 
 逐阈值指示克里金（Journel 1983）：P(Z≤t) 概率面 + p50 阈值面 + 可选 E-type 估计。
 
-- **`interpolation.indicator_kriging`** 指示克里金（`native`·成熟度 已验证，契约: `indicator_kriging_analysis`，出处: `journel1983`, `matheron1963`）
+- **`interpolation.indicator_kriging`** 指示克里金（`native`·成熟度 已验证，契约: `indicator_kriging_analysis`，出处: `journel1983`, `matheron1963`，精度: exact）
   - 假设：逐阈值指示变换 I=1[z≤t] → 各自经验变异函数 + 拟合 → 指示场普通克里金；variogram_model=auto 时逐阈值在全部 6 家族里按加权 RSS 选型（逐阈值披露）；概率钳制 [0,1]：被钳制格数逐格计数（绝不静默）
   - 局限：逐阈值独立克里金不保证概率面在阈值间单调（P(Z≤t) 单调性未强制，已披露）；常量指示场（阈值在样本值域之外）输出常量概率（无变异函数拟合）；E-type 类内分布未建模——不是分位数中值的精确期望
   - 回退：`interpolation.kriging`→approximation
@@ -604,7 +604,7 @@ DEM/遥感栅格获取。
 
 OLS 趋势（协变量）+ 残差克里金的混合插值（Odeh 1995）。
 
-- **`interpolation.regression_kriging`** 回归克里金（`native`·成熟度 已验证，契约: `regression_kriging_analysis`，出处: `odeh1995`, `matheron1963`）
+- **`interpolation.regression_kriging`** 回归克里金（`native`·成熟度 已验证，契约: `regression_kriging_analysis`，出处: `odeh1995`, `matheron1963`，精度: approximate）
   - 假设：RK = OLS 趋势（z ~ 协变量）+ 残差普通克里金（auto 变异函数）；目标处协变量值由样本协变量经 IDW（k=5, power=2）近似——approximate 语义；rk_variance 仅含残差克里金方差；趋势系数不确定性未传播（如实披露）
   - 局限：协变量场在目标处不可知——IDW 近似误差进入趋势项（approximate=True）；常量协变量（零方差）结构化拒绝（DegenerateData）；至少 2 个协变量；EPSG:3857 工作 CRS 的 Web Mercator 尺度畸变（与克里金同）
   - 回退：`interpolation.kriging`→approximation
@@ -757,20 +757,20 @@ IDW / Kriging 等插值。
 - **`interpolation.idw`** IDW 插值（`native`·成熟度 已验证，契约: `idw_interpolation`，出处: `shepard1968`）
   - 假设：精确插值器（过样本点）；无理论方差——不确定性以 LOOCV 残差证据呈现；米制距离：地理输入经 estimate_utm_crs 自动投影（极区用极方位立体投影）；k=5 最近邻截断（与主路径一致）；重复坐标先按均值聚合（确定性）
   - 局限：跨带数据自动 UTM 有投影失真（单带处理，无跨带拆分）；LOOCV 残差分位数是样本内证据，不外推为置信区间；样本凸包外的外推由幂次主导，远端值趋向邻域均值
-  - 回退：`interpolation.kriging`→equivalent
-- **`interpolation.nearest_neighbor`** 最近邻插值（`native`·成熟度 已验证，契约: `nearest_neighbor_analysis`）
+  - 回退：`interpolation.kriging`→approximation
+- **`interpolation.nearest_neighbor`** 最近邻插值（`native`·成熟度 已验证，契约: `nearest_neighbor_analysis`，出处: `thiessen1911`，精度: exact）
   - 假设：每个格点取最近样本值（cKDTree k=1）：输出为样本的 Voronoi（泰森）分段常值场；无平滑：表面在单元边界处不连续（跳变是方法语义，非缺陷）；全域有值：凸包外为最近样本外推（已披露，无不确定性声明）
   - 局限：无理论方差，无残差验证证据（跳变场 LOOCV 无意义）；>20 万样本 / >400 万目标格点类型化拒绝（先拒绝不 OOM）；需要连续平滑表面时改用 IDW / kriging / 自然邻域
   - 回退：`interpolation.idw`→approximation
-- **`interpolation.rbf`** RBF 径向基插值（`native`·成熟度 已验证，契约: `rbf_interpolation`）
+- **`interpolation.rbf`** RBF 径向基插值（`native`·成熟度 已验证，契约: `rbf_interpolation`，出处: `duchon1977`，精度: exact）
   - 假设：scipy RBFInterpolator：核薄板样条默认，smoothing=0 时精确过样本点；米制距离：地理输入经 estimate_utm_crs 自动投影（与 IDW 同一 CRS 政策）；局部 RBF（neighbors ≤64）：超样本数时按 KdTree 最近邻截断
   - 局限：多二次/高斯类核在大数据集上病态（本实现未含 gaussian 核）；>2 万点确定性行距抽稀（metadata.disclosures 披露），>10 万点拒绝；外推区域行为由核多项式项主导，远端可能发散（无钳制）
   - 回退：`interpolation.idw`→approximation
-- **`interpolation.kriging`** 普通克里金插值（`native`·成熟度 生产，契约: `kriging_interpolation`，出处: `matheron1963`）
+- **`interpolation.kriging`** 普通克里金插值（`native`·成熟度 生产，契约: `kriging_interpolation`，出处: `matheron1963`，精度: exact）
   - 假设：二阶平稳性假设：变异函数从数据估计（加权 RSS 最低的模型胜出）；规范半方差构造（Isaaks & Srivastava）：nugget 进所有 h>0 项与 γ₀，对角为零；k 邻域（≤24）系统分批求解；高斯模型加 ridge 稳定化，退化逐格计数
   - 局限：EPSG:3857 被接受为工作 CRS 但含 Web Mercator 尺度畸变（高纬非真实地面距离）；趋势明显的场 OK 有系统偏差——改用 interpolation.universal_kriging；变异函数拟合失败 / 滞后 bin 不足时结构化拒绝（不静默降级）
   - 回退：`interpolation.idw`→approximation
-- **`interpolation.universal_kriging`** 泛克里金插值（`native`·成熟度 已验证，契约: `kriging_interpolation`，出处: `matheron1963`）
+- **`interpolation.universal_kriging`** 泛克里金插值（`native`·成熟度 已验证，契约: `kriging_interpolation`，出处: `matheron1963`，精度: exact）
   - 假设：线性漂移 E[Z(x)]=b0+b1·x+b2·y；变异函数在 OLS 去趋势残差上拟合；UK 系统带趋势约束 Lagrange 乘子；方差 = wᵗγ₀ + mᵗf0；零残差退化（数据严格线性）→ 精确趋势预测、方差 0、披露 zero_residual_variance
   - 局限：漂移阶数固定为线性（二次及以上趋势未实现）；EPSG:3857 被接受为工作 CRS 但含 Web Mercator 尺度畸变（与 OK 同）；样本 <12 拒绝（InsufficientSamples）；普通克里金 ≥8 即可
   - 回退：`interpolation.kriging`→approximation
@@ -1050,7 +1050,7 @@ DEM 视域：观察点视线遮挡布尔掩膜、可见比例与可见面积（�
 
 全局多项式趋势面（阶数 1-3 OLS），R²/残差方差证据，外推逐格标记。
 
-- **`interpolation.trend_surface`** 趋势面分析（`native`·成熟度 已验证，契约: `trend_surface_analysis`，出处: `webster_oliver2007`）
+- **`interpolation.trend_surface`** 趋势面分析（`native`·成熟度 已验证，契约: `trend_surface_analysis`，出处: `webster_oliver2007`，精度: exact）
   - 假设：全局多项式 OLS：z ~ u^i·v^j（i+j≤order），坐标缩放至单位盒（条件数稳定，已披露）；OLS 残差方差 σ̂²=SS_res/(n−p) 是有效的模型方差证据（区别于克里金逐点方差）；bbox 外评估照常输出但逐格标记 extrapolated（趋势模型本就全局外推）
   - 局限：全局多项式只能表达大尺度趋势——局地结构交给克里金/TIN/RBF；高阶多项式边缘振荡（Runge 现象）：order≤3 硬限制；坐标零跨度/设计矩阵不满秩结构化拒绝（DegenerateData）
   - 回退：`interpolation.kriging`→approximation
@@ -1059,11 +1059,11 @@ DEM 视域：观察点视线遮挡布尔掩膜、可见比例与可见面积（�
 
 Delaunay TIN 三角网插值（linear / clough_tocher），凸包外不外推。
 
-- **`interpolation.tin`** TIN 三角网插值（`native`·成熟度 已验证，契约: `tin_interpolation`，出处: `watson1981`, `clough_tocher1966`）
+- **`interpolation.tin`** TIN 三角网插值（`native`·成熟度 已验证，契约: `tin_interpolation`，出处: `watson1981`, `clough_tocher1966`，精度: exact）
   - 假设：Delaunay 三角剖分上的分段插值：linear=C⁰ 重心插值，clough_tocher=C¹ 三次；凸包外诚实空缺（fill_value=NaN）：TIN 不外推，格网外的缺失进 metadata；米制坐标下剖分：地理输入经 estimate_utm_crs 自动投影（与 IDW 同 CRS 政策）
   - 局限：样本共线/退化构型结构化拒绝（DegenerateData，附修正提示）；>20 万样本拒绝（Qhull 内存有界但超限先抽稀）；凸包外格网无值——需要全域覆盖时改用 IDW/趋势面（会外推）
   - 回退：`interpolation.idw`→approximation
-- **`interpolation.natural_neighbor`** 自然邻域插值（`native`·成熟度 已验证，契约: `natural_neighbor_analysis`，出处: `sibson1981`, `watson1981`）
+- **`interpolation.natural_neighbor`** 自然邻域插值（`native`·成熟度 已验证，契约: `natural_neighbor_analysis`，出处: `sibson1981`, `watson1981`，精度: exact）
   - 假设：Sibson (1981) 坐标：权重=插入点窃取的 Voronoi 面积比例（精确多边形裁剪面积）；Watson (1981) 阶梯 walk：外接圆包含格点的单形集合 = 自然邻域（邻接 walk 收集）；精确插值器：过样本点（重合格点直接返回样本值，float64 精确）
   - 局限：凸包外 NaN——不外推（需要全域覆盖时改用 IDW/趋势面）；近共线构型下 Sibson 权重几何呈长条：外墙自适应外扩保证面积精度（次数披露）；>20 万样本 / >400 万目标格点类型化拒绝；逐格点 Python 裁剪成本高
   - 回退：`interpolation.tin`→approximation

@@ -577,6 +577,20 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "21–36.",
         ),
         MethodReference(
+            "duchon1977",
+            "Thin-plate spline (RBF thin-plate kernel)",
+            "Duchon, J. (1977). Splines Minimizing Rotation-Invariant "
+            "Semi-Norms in Sobolev Spaces. In Constructive Theory of "
+            "Functions of Several Variables, Lecture Notes in Mathematics "
+            "571, Springer, 85–100.",
+        ),
+        MethodReference(
+            "thiessen1911",
+            "Thiessen (nearest-neighbour / Voronoi) polygon interpolation",
+            "Thiessen, A. H. (1911). Precipitation Averages for Large "
+            "Areas. Monthly Weather Review, 39(7), 1082–1084.",
+        ),
+        MethodReference(
             "isaaks_srivastava1989",
             "Applied geostatistics (block kriging / variogram practice)",
             "Isaaks, E. H., & Srivastava, R. M. (1989). An Introduction to "

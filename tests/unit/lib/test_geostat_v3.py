@@ -652,3 +652,48 @@ def test_v3_surface_tools_end_to_end():
     assert bk["scientific_evidence"]["algorithm"] == "interpolation.block_kriging"
     assert bk["block_metadata"]["block_size"] > 0
     assert bk["uncertainty"]["type"] == "FeatureCollection"
+
+
+# ── science-v3 审计修复回归（F1/F2）─────────────────────────────────────
+def test_indicator_threshold_guard_counts_values_not_string_length():
+    """F1：阈值上限守卫必须数阈值个数而非字符串长度。
+
+    8 个合法阈值（字符串 23 字符 > 20）曾被字符长度误拒。
+    """
+    reg = _tool_registry()
+    fc = _points_fc(n=60)
+    ik = asyncio.run(reg.dispatch("indicator_kriging_surface", {
+        "geojson": fc, "value_field": "v",
+        "thresholds": "-1.5,-1.0,-0.5,0.0,0.5,1.0,1.5,2.0",
+        "resolution": 6,
+    }))
+    assert ik["type"] == "FeatureCollection"
+    assert len(ik["indicator_metadata"]["thresholds"]) == 8
+
+
+def test_indicator_tool_emits_typed_raster_uncertainty_block():
+    """F2：descriptor 声明 raster_uncertainty，工具必须实际产出 typed 块。"""
+    reg = _tool_registry()
+    fc = _points_fc(n=60)
+    ik = asyncio.run(reg.dispatch("indicator_kriging_surface", {
+        "geojson": fc, "value_field": "v", "thresholds": "-0.5,0.0,0.5",
+        "resolution": 6,
+    }))
+    blocks = ik["scientific_evidence"]["uncertainty"]
+    raster_blocks = [b for b in blocks
+                     if b["uncertainty_type"] == "raster_uncertainty"]
+    assert raster_blocks, "indicator 工具必须产出 typed raster_uncertainty 块"
+    values = [m.get("value") for m in raster_blocks[0]["summary"]]
+    assert all(v is not None and 0.0 <= v <= 1.0 for v in values)
+
+
+def test_indicator_over_20_thresholds_still_rejected():
+    """守卫语义保持：>20 个阈值仍类型化拒绝（先拒绝不 OOM）。"""
+    reg = _tool_registry()
+    fc = _points_fc(n=60)
+    thr = ",".join(str(-2.0 + i * 0.2) for i in range(21))
+    bad = asyncio.run(reg.dispatch("indicator_kriging_surface", {
+        "geojson": fc, "value_field": "v", "thresholds": thr,
+        "resolution": 6,
+    }))
+    assert bad["success"] is False
