@@ -101,6 +101,19 @@ def test_artifact_descriptor_roundtrip_stable():
 # ── 声明认证 ─────────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _fresh_registries():
+    """声明认证基于 builtins 口径（防同进程 registry 污染）。"""
+    from app.lib.gis.algorithm_registry import reset_algorithm_registry
+    from app.lib.gis.artifacts import reset_artifact_type_registry
+    from app.lib.gis.capability_registry import reset_capability_registry
+
+    reset_algorithm_registry()
+    reset_capability_registry()
+    reset_artifact_type_registry()
+    yield
+
+
 def test_no_inconsistent_seed_policy_declarations():
     """deterministic=True 且 unseeded 是自相矛盾声明——必须为零。"""
     rows = algorithm_determinism_rows()

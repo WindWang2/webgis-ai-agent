@@ -35,10 +35,19 @@ CASES = {
 
 
 def _catalog():
+    # ADR-0104：闸必须对进程内 registry 污染免疫 —— 同一 pytest 进程里
+    # 更早的测试模块可能向全局单例注册过额外条目；闸测量前重置为
+    # builtins（单一事实源口径）。
+    from app.lib.gis.algorithm_registry import reset_algorithm_registry
+    from app.lib.gis.capability_registry import reset_capability_registry
+    from app.lib.gis.artifacts import reset_artifact_type_registry
     from app.tools import init_tools
     from app.tools.registry import ToolRegistry
     from app.services.tool_catalog import ToolCatalog
 
+    reset_algorithm_registry()
+    reset_capability_registry()
+    reset_artifact_type_registry()
     reg = ToolRegistry()
     init_tools(reg)
     return ToolCatalog(reg)

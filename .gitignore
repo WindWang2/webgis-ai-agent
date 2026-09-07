@@ -22,6 +22,11 @@ scripts/
 !/scripts/gen_chaos_registry.py
 !/scripts/gen_resource_certification.py
 !/scripts/gen_determinism_certification.py
+!/scripts/quality_runner.py
+!/scripts/quality
+# runner 本地运行状态不入库
+.agent-work/quality-v1/runner-report.json
+.agent-work/quality-v1/runner-report.md
 # Security manifest 生成器（Wave 15：SECURITY_CONTROLS.md 字节一致性闸依赖）
 !/scripts/gen_security_manifest.py
 webgis-ai-agent/

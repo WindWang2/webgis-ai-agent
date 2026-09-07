@@ -1,6 +1,6 @@
 {
  "context_chars_multi_domain_turn": {
-  "chars": 51860
+  "chars": 52475
  },
  "context_chars_network_turn": {
   "chars": 47037
@@ -9,7 +9,7 @@
   "chars": 28175
  },
  "schema_count_multi_domain_turn": {
-  "count": 71
+  "count": 69
  },
  "schema_count_network_turn": {
   "count": 58
