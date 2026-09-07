@@ -89,7 +89,8 @@ def test_dot_skips_invalid_and_suggests_unit():
     feats = [_poly_feat(float("nan")), _poly_feat(50)]
     out = generate_dot_density_features(feats, value_field="pop", unit_value=1.0)
     assert out["__dot_density_meta"]["total_dots"] == 50
-    assert suggest_unit_value([1, 2, 3]) == 1.0
+    # vmax=3, target 800 → raw 0.00375 → 0.005（1/2/5×10^k 对小量级同样成立）
+    assert suggest_unit_value([1, 2, 3]) == 0.005
     # vmax=5000, target 800 → raw 6.25 → 10
     assert suggest_unit_value([5000]) == 10.0
     assert suggest_unit_value([]) == 1.0

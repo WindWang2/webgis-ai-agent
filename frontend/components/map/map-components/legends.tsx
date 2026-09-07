@@ -15,8 +15,10 @@ function legendForComponent(component: MapSpecComponent, spec: RendererContext['
   }
   // V4：legend 类型自动发现扩展 —— bivariate/continuous 色阵与连续色带
   // 也参与兜底发现（显式 layerId 绑定仍优先）。
+  // 注：'continuous' 不进发现词表 —— legendEntries 无 continuous 分支
+  //（连续色带由 colorbar 组件承接，图例卡兜底会渲染空卡）
   const wanted: Record<string, string[]> = {
-    legend: ['graduated', 'bivariate', 'continuous'],
+    legend: ['graduated', 'bivariate'],
     categorical_legend: ['categorical'],
   };
   const types = wanted[component.type] ?? [];
@@ -70,7 +72,7 @@ function BivariateMatrix({ legend, title }: { legend: LegendSpec; title?: string
   const labelB = String((legend as unknown as { label_b?: string }).label_b ?? '');
   if (colors.length < n * n) return null;
   return (
-    <div data-testid="spec-chrome-bivariate-legend" className="map-chrome absolute z-30 rounded-chrome px-2 py-1.5 bottom-8 left-2">
+    <div data-testid="spec-chrome-bivariate-legend" className="map-chrome absolute z-30 rounded-chrome px-2 py-1.5 bottom-8 left-2" data-component-anchor>
       {title && <div className="text-micro font-medium text-map-chrome-ink">{title}</div>}
       <div className="mt-1 flex flex-col gap-0.5">
         <div className="flex items-center gap-1">

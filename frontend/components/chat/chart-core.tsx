@@ -167,8 +167,12 @@ function RenderHorizontalBarChart({ chart, height, highlightedCategories, onSele
 /** V4：分组/堆叠柱状图（多序列；stacked 语义由 chart.stacked 驱动）。 */
 function RenderMultiBarChart({ chart, height, onSelectCategory }: RenderProps) {
   const theme = useHudStore((s) => s.theme);
-  const rows = tidySeries(chart)
-  const names = (chart.series ?? []).map((s) => s.name)
+  // data-only 载荷回退为单序列（不画只有坐标轴的空图）
+  const series = chart.series?.length
+    ? chart.series
+    : [{ name: "value", data: chart.data }]
+  const rows = tidySeries({ ...chart, series })
+  const names = series.map((s) => s.name)
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={rows} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>

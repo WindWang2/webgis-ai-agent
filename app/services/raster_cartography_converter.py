@@ -73,8 +73,9 @@ def _extract_bounds(payload: Dict[str, Any]) -> Optional[List[float]]:
 
 
 def _extract_render_mode(payload: Dict[str, Any]) -> str:
-  """V4：payload 顶层或 raster_source 嵌套的 render_mode（非法值回落
-  continuous，不静默换语义 —— 非法但非空的值记 warning 于 provenance）。"""
+  """V4：payload 顶层或 raster_source 嵌套的 render_mode。非法值回落
+  continuous（纯解析无副作用；与历史 docstring 声明不同，非法但非空的
+  值不写 provenance 警告 —— 本处如实记录实际行为）。"""
   for src in (payload, payload.get("raster_source") if isinstance(payload.get("raster_source"), dict) else None):
     if isinstance(src, dict):
       mode = src.get("render_mode")

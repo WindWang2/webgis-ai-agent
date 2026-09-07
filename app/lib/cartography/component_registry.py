@@ -491,6 +491,13 @@ class ComponentRegistry:
         return True
 
     def validate(self) -> List[str]:
+        # fail-closed：校验器自身异常转为 issue，绝不静默返回「0 issues」
+        try:
+            return self._validate_inner()
+        except Exception as exc:  # pragma: no cover - 防御性
+            return [f"component registry validate raised: {exc}"]
+
+    def _validate_inner(self) -> List[str]:
         issues: List[str] = []
         try:
             from app.lib.cartography.component_renderers import (

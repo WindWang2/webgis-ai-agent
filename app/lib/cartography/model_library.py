@@ -615,6 +615,11 @@ def validate_model_library() -> List[str]:
                 issues.append(
                     f"{model.id}: native 模型图层 '{mid}' 不在前端运行时支持族内"
                     f"（应为 planned）")
+            for gkind, glayer in model.geometry_layer_types.items():
+                if glayer not in FRONTEND_RUNTIME_LAYER_TYPES:
+                    issues.append(
+                        f"{model.id}: geometry_layer_types[{gkind}]='{glayer}' "
+                        f"不在前端运行时支持族内")
         if model.runtime_status == "planned" and not model.pitfalls_zh:
             issues.append(f"{model.id}: planned 模型必须登记 pitfalls（不伪装可用的原因）")
 

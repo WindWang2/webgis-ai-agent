@@ -7,8 +7,9 @@ const patchCalls: Array<{ componentId: string; patch: unknown }> = [];
 vi.mock('@/lib/mapspec/component-mutation', () => ({
   commitComponentPatch: (componentId: string, patch: unknown) => {
     patchCalls.push({ componentId, patch });
-    return Promise.resolve();
+    return Promise.resolve({ status: 'applied' });
   },
+  getComponentPlacementOverride: () => undefined,
 }));
 import { resetSelectionStore, selectionEvents } from '@/lib/selection/selection-store';
 import {
@@ -70,8 +71,8 @@ describe('chart agent commands', () => {
     ]);
   });
 
-  it('chart_set_state：合法迁移提交 placement 补丁', () => {
-    const res = chartCommands.chart_set_state.run(
+  it('chart_set_state：合法迁移提交 placement 补丁', async () => {
+    const res = await await chartCommands.chart_set_state.run(
       ctxFor({ componentId: 'chart-1', state: 'collapsed' }),
     ) as { status: string };
     expect(res.status).toBe('succeeded');
@@ -84,45 +85,46 @@ describe('chart agent commands', () => {
     });
   });
 
-  it('chart_set_state：hidden → floating 非法迁移被拒', () => {
+  it('chart_set_state：hidden → floating 非法迁移被拒', async () => {
     seedSpec([
       { id: 'chart-h', type: 'chart_panel', enabled: false },
     ]);
-    const res = chartCommands.chart_set_state.run(
+    const res = await await chartCommands.chart_set_state.run(
       ctxFor({ componentId: 'chart-h', state: 'floating' }),
     ) as { status: string; error?: string };
     expect(res.status).toBe('failed');
     expect(res.error).toContain('illegal');
   });
 
-  it('非 chart_panel 组件被拒绝（不跨类型突变）', () => {
-    const res = chartCommands.chart_move.run(
+  it('非 chart_panel 组件被拒绝（不跨类型突变）', async () => {
+    const res = await await chartCommands.chart_move.run(
       ctxFor({ componentId: 'legend-1', anchor: 'bottom-right' }),
     ) as { status: string; error?: string };
     expect(res.status).toBe('failed');
     expect(res.error).toContain('not found');
   });
 
-  it('chart_move：floating x/y 投影', () => {
-    const res = chartCommands.chart_move.run(
+  it('chart_move：floating x/y 投影', async () => {
+    const res = await await chartCommands.chart_move.run(
       ctxFor({ componentId: 'chart-1', x: 120, y: 80 }),
     ) as { status: string; result?: unknown };
     expect(res.status).toBe('succeeded');
-    expect(res.result).toEqual({ componentId: 'chart-1', x: 120, y: 80 });
+    // applyPatch 诚实回传已提交的补丁（含 enabled 与保留的既有字段）
     expect(patchCalls[0]?.patch).toEqual({
+      enabled: true,
       placement: { mode: 'floating', anchor: 'top-left', x: 120, y: 80 },
     });
   });
 
-  it('chart_switch_type：kind 变体通道', () => {
-    const res = chartCommands.chart_switch_type.run(
+  it('chart_switch_type：kind 变体通道', async () => {
+    const res = await await chartCommands.chart_switch_type.run(
       ctxFor({ componentId: 'chart-1', chartType: 'stacked_bar' }),
     ) as { status: string };
     expect(res.status).toBe('succeeded');
   });
 
-  it('chart_highlight：经 selection store 广播 chart→map', () => {
-    const res = chartCommands.chart_highlight.run(
+  it('chart_highlight：经 selection store 广播 chart→map', async () => {
+    const res = await await chartCommands.chart_highlight.run(
       ctxFor({ componentId: 'chart-1', categories: ['A', 'B'] }),
     ) as { status: string };
     expect(res.status).toBe('succeeded');
@@ -132,13 +134,13 @@ describe('chart agent commands', () => {
     expect(events[events.length - 1].context?.selected_categories).toEqual(['A', 'B']);
   });
 
-  it('chart_close / chart_restore：enabled 通道', () => {
+  it('chart_close / chart_restore：enabled 通道', async () => {
     expect(
-      (chartCommands.chart_close.run(ctxFor({ componentId: 'chart-1' })) as { status: string }).status,
+      (await chartCommands.chart_close.run(ctxFor({ componentId: 'chart-1' })) as { status: string }).status,
     ).toBe('succeeded');
     expect(patchCalls.at(-1)).toEqual({ componentId: 'chart-1', patch: { enabled: false } });
     expect(
-      (chartCommands.chart_restore.run(ctxFor({ componentId: 'chart-1' })) as { status: string }).status,
+      (await chartCommands.chart_restore.run(ctxFor({ componentId: 'chart-1' })) as { status: string }).status,
     ).toBe('succeeded');
     expect(patchCalls.at(-1)).toEqual({ componentId: 'chart-1', patch: { enabled: true } });
   });

@@ -43,6 +43,16 @@
     "variant": "compass_minimal_black"
    },
    {
+    "id": "table_panel",
+    "layerId": "",
+    "position": "bottom-right",
+    "priority": 42,
+    "templateId": "table-panel/default",
+    "title": "",
+    "type": "table_panel",
+    "variant": "default"
+   },
+   {
     "id": "attribution",
     "layerId": "",
     "position": "bottom-left",
@@ -87,8 +97,10 @@
     "title": "top-center"
    },
    "reasons": {},
-   "suppressed": [],
-   "warning_count": 0
+   "suppressed": [
+    "table_panel"
+   ],
+   "warning_count": 1
   },
   "model": "categorical_thematic",
   "output": "png",
@@ -101,11 +113,12 @@
     "map_border": "frame/report",
     "north_arrow": "north-arrow/minimal-black",
     "scale_bar": "scale-bar/minimal",
+    "table_panel": "table-panel/default",
     "title": "title/report"
    },
    "composition_template_id": "composition.natural_resource_inventory",
    "reason_codes": [],
-   "rejected_count": 1,
+   "rejected_count": 0,
    "required_slots": [
     "attribution",
     "export_layout",
@@ -122,6 +135,7 @@
     "map_border",
     "north_arrow",
     "scale_bar",
+    "table_panel",
     "title"
    ]
   },
@@ -132,5 +146,5 @@
    "warning_codes": []
   }
  },
- "sha": "a2511ac0b368398d"
+ "sha": "85109a5d44392067"
 }

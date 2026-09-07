@@ -427,6 +427,8 @@ export function compileMapSpec(
         id: `${layer.id}__clusters`,
         type: "circle",
         source: layer.source,
+        // visibility 与主层联动（隐藏主层不得残留簇圆/计数）
+        ...(layer.layout?.visibility ? { layout: { visibility: layer.layout.visibility } } : {}),
         filter: ["has", "point_count"],
         paint: {
           "circle-color": [
@@ -451,6 +453,7 @@ export function compileMapSpec(
         id: `${layer.id}__cluster-count`,
         type: "symbol",
         source: layer.source,
+        ...(layer.layout?.visibility ? { layout: { visibility: layer.layout.visibility } } : {}),
         filter: ["has", "point_count"],
         layout: {
           "text-field": ["get", "point_count_abbreviated"],

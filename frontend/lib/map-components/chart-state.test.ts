@@ -15,12 +15,22 @@ import catalog from '@/lib/map-components/component-catalog.generated.json';
  */
 
 describe('chart state machine', () => {
-  it('七态词表与后端 catalog 导出一致', () => {
+  it('七态词表/迁移表/操作前置与后端 catalog 严格一致（一致性锁）', () => {
     expect(CHART_STATES).toHaveLength(7);
-    const manifestStates = (catalog as unknown as { chartStates?: string[] }).chartStates;
-    if (manifestStates) {
-      expect([...CHART_STATES].sort()).toEqual([...manifestStates].sort());
+    const cat = catalog as unknown as {
+      chartStates: string[];
+      chartStateTransitions: string[];
+      agentChartOperations: Record<string, string[]>;
+    };
+    expect([...CHART_STATES].sort()).toEqual([...cat.chartStates].sort());
+    // 迁移表逐条对账（有向）
+    const localEdges: string[] = [];
+    for (const a of CHART_STATES) {
+      for (const b of CHART_STATES) {
+        if (a !== b && canTransitionChartState(a, b)) localEdges.push(`${a}>${b}`);
+      }
     }
+    expect(localEdges.sort()).toEqual([...cat.chartStateTransitions].sort());
   });
 
   it('有向迁移：hidden 只能经 visible 回场', () => {
@@ -67,6 +77,11 @@ describe('chart state machine', () => {
     expect(patch).toEqual({
       enabled: true,
       placement: { mode: 'floating', x: 10, y: 20 },
+      docked: false,
     });
+    // docked 快照往返：docked 标记显式保留（dockSlice 侧恢复）
+    const docked = serializeChartState('chart-2', true, { mode: 'anchor' }, true);
+    expect(docked.state).toBe('docked');
+    expect(restoreChartState(docked)?.docked).toBe(true);
   });
 });

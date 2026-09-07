@@ -289,7 +289,7 @@ def validate_design_system() -> List[str]:
     counts = manifest["counts"]
     if counts["mapModelsNative"] + counts["mapModelsPlanned"] != counts["mapModels"]:
         issues.append("manifest: native + planned != 总模型数")
-    if set(counts["chartKinds"] for _ in [0]) and counts["chartKinds"] < 1:
+    if counts["chartKinds"] < 1:
         issues.append("manifest: chartKinds 为空")
     return issues
 

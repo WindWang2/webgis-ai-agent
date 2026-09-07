@@ -55,8 +55,10 @@ export function adaptChartData(raw: unknown): ChartData | null {
       return null
     }
 
-    // Validate data array
-    if (!Array.isArray(data) || data.length === 0) {
+    // Validate data array：series-only 载荷（grouped/stacked/heat_matrix/
+    // radar 的 matrix/table 形状）允许 data 为空数组，series 必须非空
+    const hasSeries = Array.isArray(series) && series.length > 0
+    if (!Array.isArray(data) || (data.length === 0 && !hasSeries)) {
       devOnly.warn("Invalid chart data")
       return null
     }

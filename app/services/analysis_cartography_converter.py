@@ -314,6 +314,9 @@ def convert_analysis_to_mapspec_layer(
                     id_field=str(meta_dd.get("id_field") or ""),
                 )
                 dd_meta = dots.get("__dot_density_meta") or {}
+                # 撒点成功后几何已变为 Point：强制覆盖 profile 推断
+                #（profile 描述的是原始面）—— 否则 fill 层画点 = 静默不可见
+                _dd_force_point = True
                 inline_geojson = {
                     "type": "FeatureCollection",
                     "features": dots.get("features", []),
@@ -354,6 +357,8 @@ def convert_analysis_to_mapspec_layer(
         }
         inferred_layer_type = cat_to_layer_type.get(geom_cat, "circle")
 
+        if locals().get("_dd_force_point"):
+            geom_cat = "point"
         type_hint = analysis_result.get("type_hint") or base_layer.get("type_hint")
         # ADR-0092 D4: flow_od_arc 原生支持 —— OD 流向线要素（weight 属性）
         # 落成 line 图层，宽度由权重驱动（见下方 paint 段）。几何不是线时
@@ -398,17 +403,37 @@ def convert_analysis_to_mapspec_layer(
                     f"point_cluster_guard: 几何类别为 {geom_cat or 'unknown'}，"
                     f"聚簇需要点要素，已回退常规表达")
         bivariate_hint_active = False
-        if type_hint == "bivariate_choropleth" and geom_cat == "polygon":
-            bivariate_hint_active = True
+        if type_hint == "bivariate_choropleth":
+            if geom_cat == "polygon":
+                bivariate_hint_active = True
+            else:
+                warnings.append(
+                    "bivariate_choropleth_guard: 几何类别为 "
+                    f"{geom_cat or 'unknown'}，双变量面需要面要素，已回退常规表达")
         uncertainty_poly_hint_active = False
-        if type_hint == "uncertainty_choropleth" and geom_cat == "polygon":
-            uncertainty_poly_hint_active = True
+        if type_hint == "uncertainty_choropleth":
+            if geom_cat == "polygon":
+                uncertainty_poly_hint_active = True
+            else:
+                warnings.append(
+                    "uncertainty_choropleth_guard: 几何类别为 "
+                    f"{geom_cat or 'unknown'}，需要面要素，已回退常规表达")
         uncertainty_point_hint_active = False
-        if type_hint == "uncertainty_point_symbol" and geom_cat == "point":
-            uncertainty_point_hint_active = True
+        if type_hint == "uncertainty_point_symbol":
+            if geom_cat == "point":
+                uncertainty_point_hint_active = True
+            else:
+                warnings.append(
+                    "uncertainty_point_symbol_guard: 几何类别为 "
+                    f"{geom_cat or 'unknown'}，需要点要素，已回退常规表达")
         route_hint_active = False
-        if type_hint == "route_map" and geom_cat == "line":
-            route_hint_active = True
+        if type_hint == "route_map":
+            if geom_cat == "line":
+                route_hint_active = True
+            else:
+                warnings.append(
+                    "route_map_guard: 几何类别为 "
+                    f"{geom_cat or 'unknown'}，路径需要线要素，已回退常规表达")
         # #690: deterministic guard — do not flip to heatmap when unsuitable
         heatmap_guard_triggered = False
         heatmap_guard_reason = ""

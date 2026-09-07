@@ -141,13 +141,17 @@ export function serializeChartState(
   };
 }
 
-/** replay：快照恢复为 patch（commitComponentPatch 消费）。 */
+/** replay：快照恢复为 patch（commitComponentPatch 消费）。
+ * docked 由 dockSlice 承管（不进 MapSpec）—— 快照显式携带 docked 标记，
+ * 调用方据其恢复 dock 侧信息；placement 只投影 MapSpec 可表达部分。
+ * 非法状态（词表外）返回 null —— 词表内任意自迁移恒合法。 */
 export function restoreChartState(
   snap: ReturnType<typeof serializeChartState>,
-): { enabled?: boolean; placement?: Partial<ComponentPlacement> } | null {
-  if (!canTransitionChartState(snap.state, snap.state)) return null;
+): { enabled?: boolean; placement?: Partial<ComponentPlacement>; docked: boolean } | null {
+  if (!(CHART_STATES as readonly string[]).includes(snap.state)) return null;
   return {
     enabled: snap.enabled,
     ...(snap.placement ? { placement: snap.placement } : {}),
+    docked: snap.docked,
   };
 }

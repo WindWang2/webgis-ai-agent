@@ -38,7 +38,7 @@ BIVARIATE_MATRICES: Dict[str, List[str]] = {
 }
 
 DEFAULT_BIVARIATE_MATRIX = "BiPurpleOrange"
-SUPPORTED_BIVARIATE_N = (2, 3, 4)
+SUPPORTED_BIVARIATE_N = (2, 3)   # 库存矩阵均为 3×3 —— 未登记 16 色阵前不开放 n=4
 
 
 def _breaks_quantiles(values: Sequence[float], n: int) -> List[float]:

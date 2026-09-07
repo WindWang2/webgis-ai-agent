@@ -160,18 +160,40 @@ def validate_chart_payload(chart: Any) -> "str | None":
     if not isinstance(chart, dict):
         return "chart 必须是对象 {type,title,data}"
     effective_type = str(chart.get("type") or "").strip().lower()
+    # V4：与 generate_chart 同样的别名归一（两入口契约一致）
+    resolved_kind = _resolve_chart_kind(effective_type)
+    if resolved_kind is not None:
+        effective_type = resolved_kind.id
+    if effective_type in _PLANNED_CHART_KINDS:
+        return f"chart.type '{effective_type}' 尚未实现（planned）"
     if effective_type not in VALID_CHART_TYPES:
         return f"chart.type 必须是 {', '.join(sorted(VALID_CHART_TYPES))} 之一"
     title = chart.get("title")
     if not isinstance(title, str) or not title.strip():
         return "chart.title 不能为空"
     data = chart.get("data")
+    series = chart.get("series")
+    # V4：多序列形状（grouped/stacked/heat_matrix/radar）——series 存在时
+    # 允许 data 为空数组（series 携带行数据）；两者皆空仍拒绝
     if not isinstance(data, list):
         return "chart.data 必须是数组"
-    if len(data) == 0:
-        return "chart.data 不能为空"
+    if len(data) == 0 and not (isinstance(series, list) and series):
+        return "chart.data 不能为空（多序列形状请提供非空 series）"
     if len(data) > MAX_DATA_POINTS:
         return f"chart.data 超过 {MAX_DATA_POINTS} 点上限（请聚合/降采样）"
+    series = chart.get("series")
+    if isinstance(series, list) and series:
+        for si, ser in enumerate(series):
+            if not isinstance(ser, dict) or not isinstance(ser.get("data"), list):
+                return f"chart.series[{si}]: 必须是 {{name, data[]}}"
+            if not isinstance(ser.get("name"), str) or not ser.get("name"):
+                return f"chart.series[{si}]: 缺 name"
+            if len(ser["data"]) > MAX_DATA_POINTS:
+                return f"chart.series[{si}] 超过 {MAX_DATA_POINTS} 点上限"
+            for i, point in enumerate(ser["data"]):
+                is_valid, error_msg = _validate_data_point(point, effective_type)
+                if not is_valid:
+                    return f"chart.series[{si}].data[{i}]: {error_msg}"
     for i, point in enumerate(data):
         is_valid, error_msg = _validate_data_point(point, effective_type)
         if not is_valid:
