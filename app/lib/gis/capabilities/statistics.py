@@ -70,6 +70,22 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             purpose_template="Gi* 热点分析",
         ),
 
+        # science-v3 R1（审计 03 §8）：Emerging Hot Spot 演化分类能力——
+        # 热点的时间形态学（new/persistent/intensifying/...），与单期 Gi*
+        # 热点图（getis_ord_gi_star）和 ST-DBSCAN 时空聚类正交。
+        CapabilityDescriptor(
+            id="emerging_hotspot_analysis", name="时空热点演化（EHA）",
+            category="statistics",
+            description="逐期 Getis-Ord Gi*（BH-FDR）+ 逐箱 Mann-Kendall 的 "
+                        "Emerging Hot Spot 演化分类（new/consecutive/"
+                        "intensifying/persistent/diminishing/sporadic/"
+                        "oscillating/historical + none，热点冷点镜像）。",
+            input_artifact_types=["poi_feature_set", "point_feature_set",
+                                  "grid_aggregate", "admin_aggregate_table"],
+            output_artifact_types=["stats_table"],
+            purpose_template="时空热点演化分析",
+        ),
+
         CapabilityDescriptor(
             id="spatiotemporal_clustering", name="时空聚类", category="statistics",
             description="ST-DBSCAN 等时空聚类（与 LISA 局部自相关是不同检验）。",

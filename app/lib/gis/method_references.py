@@ -157,6 +157,20 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Econometrica, 13(3), 245–259.",
         ),
         MethodReference(
+            "page1954",
+            "CUSUM (cumulative sum) change-point statistic",
+            "Page, E. S. (1954). Continuous Inspection Schemes. "
+            "Biometrika, 41(1/2), 100–115.",
+        ),
+        MethodReference(
+            "esri_eha",
+            "Emerging Hot Spot Analysis taxonomy (17 categories + none)",
+            "Esri (2024). Emerging Hot Spot Analysis—Space Time Pattern "
+            "Mining tool reference (ArcGIS Pro documentation). "
+            "https://pro.arcgis.com/en/pro-app/latest/tool-reference/"
+            "space-time-pattern-mining/emerginghotspots.htm",
+        ),
+        MethodReference(
             "kendall1975",
             "Kendall's tau / trend significance",
             "Kendall, M. G. (1975). Rank Correlation Methods (4th ed.). "
