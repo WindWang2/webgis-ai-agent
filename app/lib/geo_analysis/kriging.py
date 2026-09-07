@@ -161,6 +161,20 @@ DIRECTIONAL_MAX_TOLERANCE_DEG = 90.0       # 90° = 全向（各向同性退化�
 BLOCK_DISCRETIZATION = 2                   # 块离散化 2×2 子点（I&S 1989 惯例）
 COKRIGING_MIN_ABS_RHO = 0.2                # |ρ| 低于此协同克里金无意义（类型化拒绝）
 
+# Cressie–Hawkins (1980) 稳健半变异函数估计常数（robust opt-in）：
+# 2γ(h) = [mean|Δz|^½]⁴ / (0.457 + 0.494/|N(h)| + 0.045/|N(h)|²)
+_CRESSIE_HAWKINS_C0 = 0.457
+_CRESSIE_HAWKINS_C1 = 0.494
+_CRESSIE_HAWKINS_C2 = 0.045
+
+# fit_anisotropy（各向异性自动拟合，P1）
+ANISOTROPY_SCAN_AZIMUTH_STEP_DEG = 22.5    # 扫描步长（8 方位：0..157.5）
+ANISOTROPY_SCAN_TOLERANCE_DEG = 11.25      # 轴向半角 = 步长/2（扇区无缝铺满）
+ANISOTROPY_SCAN_N_LAGS = 48                # 扫描滞后 bin 数（近 origin 高分辨率）
+ANISOTROPY_RATIO_CLAMP = (1.0, 4.0)        # 比值钳制（防退化/防爆炸）
+ANISOTROPY_RATIO_THRESHOLD = 1.2           # is_anisotropic 判别阈值
+_ANISOTROPY_LEVELS = (0.35, 0.45, 0.55, 0.65)   # 池化椭圆拟合的 sill 分位水平
+
 
 class KrigingInputError(ValueError):
     """Structured input rejection (too few points, unfittable variogram…)."""
@@ -361,18 +375,27 @@ def empirical_variogram(
     values: np.ndarray,
     n_lags: int = DEFAULT_N_LAGS,
     max_pairs: int = MAX_PAIRS,
+    robust: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Binned empirical semivariance γ*(h) over bounded row chunks.
 
     Returns ``(lag_centers, gamma, pair_counts)``; bins with zero pairs are
     dropped. The pair matrix is walked one row at a time (O(N) peak memory)
     and a deterministic row stride keeps total pairs within ``max_pairs``.
+
+    ``robust=False``（默认，生产主路径）为经典 Matheron 估计
+    γ(h) = Σ(z_i−z_j)² / (2|N(h)|) —— 代码路径逐位不变。
+    ``robust=True`` 切换 Cressie–Hawkins (1980) 稳健估计：
+    2γ(h) = [ (1/|N(h)|)·Σ|z_i−z_j|^½ ]⁴ / (0.457 + 0.494/|N(h)| + 0.045/|N(h)|²)
+    —— 先开方再平均把离群对的影响从四次方压到线性，对少量污染对稳健；
+    高斯场合 |N(h)|→∞ 时渐近无偏（0.457 即 (E|N(0,1)^½|)⁴ 修正）。
     """
     n = len(values)
     n_lags = max(4, min(int(n_lags), 64))
     span = float(np.linalg.norm(pts_metric.max(axis=0) - pts_metric.min(axis=0))) or 1.0
     edges = np.linspace(0.0, span, n_lags + 1)
     sum_g = np.zeros(n_lags)
+    sum_q = np.zeros(n_lags)  # Σ|Δz|^½（仅 robust 路径累计）
     cnt = np.zeros(n_lags, dtype=np.int64)
 
     total_pairs = n * (n - 1) // 2
@@ -386,11 +409,24 @@ def empirical_variogram(
         if not valid.any():
             continue
         np.add.at(sum_g, b[valid], dv2[valid])
+        if robust:
+            # |Δz|^½ = (Δz²)^¼ —— 开方两次把离群对的影响从四次方压到线性
+            np.add.at(sum_q, b[valid], np.sqrt(np.sqrt(dv2[valid])))
         np.add.at(cnt, b[valid], 1)
 
     has = cnt > 0
     lags = 0.5 * (edges[:-1] + edges[1:])[has]
-    gamma = (0.5 * sum_g[has]) / cnt[has]
+    if robust:
+        m = cnt[has].astype(float)
+        mean_root = sum_q[has] / m
+        # C&H 公式左端是 2γ(h) —— 除以 2 得 γ(h)
+        gamma = mean_root ** 4 / (
+            2.0 * (_CRESSIE_HAWKINS_C0
+                   + _CRESSIE_HAWKINS_C1 / m
+                   + _CRESSIE_HAWKINS_C2 / (m * m))
+        )
+    else:
+        gamma = (0.5 * sum_g[has]) / cnt[has]
     return lags, gamma, cnt[has]
 
 
@@ -474,6 +510,7 @@ def fit_variogram(
     anisotropy_angle: float = 0.0,
     anisotropy_ratio: float = 1.0,
     matern_smoothness: float = MATERN_SMOOTHNESS_DEFAULT,
+    robust: bool = False,
 ) -> VariogramFit:
     """Fit the theoretical variogram (``auto`` = best weighted RSS of the 3).
 
@@ -485,6 +522,8 @@ def fit_variogram(
     wave / cubic are opt-in — ``auto`` keeps the legacy production trio);
     geometric anisotropy is applied to the coordinates before binning (the
     defaults are the identity); ``matern_smoothness`` is the fixed Matérn ν.
+    ``robust=True`` 透传给 :func:`empirical_variogram`（Cressie–Hawkins
+    稳健估计，opt-in；默认 False 经典主路径逐位不变）。
     """
     if model not in ALL_VARIOGRAM_MODELS and model != "auto":
         raise KrigingInputError(
@@ -497,7 +536,7 @@ def fit_variogram(
     pts_t = apply_anisotropy(pts_metric, anisotropy_angle, anisotropy_ratio)
     fit_pts, fit_vals = stratified_subsample(pts_t, values, MAX_FIT_POINTS)
     lags, gamma, counts = empirical_variogram(
-        fit_pts, fit_vals, n_lags=n_lags, max_pairs=max_pairs
+        fit_pts, fit_vals, n_lags=n_lags, max_pairs=max_pairs, robust=robust
     )
     if len(lags) < 4:
         raise KrigingInputError(
@@ -1209,6 +1248,12 @@ def directional_variogram(
     :func:`empirical_variogram` 约定（同一 span/edges/空 bin 丢弃）；
     配对行走沿用行步幅策略控制 ``max_pairs`` 预算，确定性。
 
+    入口统一预抽稀（审计 §4 第 7 行）：样本超过拟合上限
+    :data:`MAX_FIT_POINTS` 时先做确定性分层抽稀（与 ``fit_variogram``
+    同一机器）——否则行步幅会把方向过滤后的有效配对压到统计无效的极少数；
+    meta 以 ``n_samples``（实际使用）/ ``n_samples_input``（原始）/
+    ``subsample_applied`` 披露。
+
     返回 ``(lags, gamma, pair_counts, meta)``。
     """
     pts = np.asarray(pts_metric, dtype=float)
@@ -1232,6 +1277,10 @@ def directional_variogram(
             raise KrigingInputError(
                 f"band_width 必须为正数（工作 CRS 单位），got {band_width!r}"
             )
+
+    n_input = int(len(vals))
+    pts, vals = stratified_subsample(pts, vals, MAX_FIT_POINTS)
+    n = int(len(vals))
 
     n_lags = max(4, min(int(n_lags), 64))
     span = float(np.linalg.norm(pts.max(axis=0) - pts.min(axis=0))) or 1.0
@@ -1277,11 +1326,236 @@ def directional_variogram(
         "tolerance_deg": float(tol),
         "band_width": bw,
         "n_samples": int(n),
+        "n_samples_input": int(n_input),
+        "subsample_applied": bool(n_input > n),
         "n_pairs_kept": int(kept_pairs),
         "n_pairs_total": int(total_pairs),
         "n_bins": int(len(lags)),
     }
     return lags, gamma, cnt[has], meta
+
+
+def _level_crossing_lag(
+    lags: np.ndarray,
+    gamma: np.ndarray,
+    counts: np.ndarray,
+    level: float,
+    cap: float,
+    min_count: int = 3,
+) -> Optional[float]:
+    """经验曲线首达绝对 γ 水平 ``level`` 的滞后（线性插值，模型无关的程距代理）。
+
+    ``fit_anisotropy`` 的方向程距读取器：调用方以 ``sill 的水平分位``
+    （sill 以边际方差为锚，平稳场 γ(∞)=var）传入绝对水平，搜索窗口
+    截断在 ``cap``（尾部配对稀疏且超 sill 的 bin 只携带噪声）。
+    配对数 < min_count 的 bin 丢弃；全曲线未达 level 时返回 None
+    （该方位/水平不进拟合）。
+    """
+    keep = counts >= min_count
+    lags = np.minimum(lags[keep], cap)
+    gamma = gamma[keep]
+    if len(lags) < 2:
+        return None
+    idx = np.nonzero(gamma >= level)[0]
+    if len(idx) == 0:
+        return None
+    i = int(idx[0])
+    if i == 0:
+        return float(max(lags[0] * level / max(float(gamma[0]), 1e-12), 1e-9))
+    g0, g1 = float(gamma[i - 1]), float(gamma[i])
+    if g1 <= g0:
+        return float(lags[i])
+    frac = (level - g0) / (g1 - g0)
+    return max(float(lags[i - 1] + frac * (lags[i] - lags[i - 1])), 1e-9)
+
+
+def fit_anisotropy(
+    pts_metric: np.ndarray,
+    values: np.ndarray,
+    azimuth_step_deg: float = ANISOTROPY_SCAN_AZIMUTH_STEP_DEG,
+    tolerance_deg: float = ANISOTROPY_SCAN_TOLERANCE_DEG,
+    n_lags: int = ANISOTROPY_SCAN_N_LAGS,
+    max_pairs: int = MAX_PAIRS,
+) -> dict:
+    """各向异性自动拟合：多方位角方向变异函数扫描 → 几何椭圆拟合。
+
+    流程（审计 §8 建议 #2；Webster & Oliver 2007 实践）：
+
+    1. 以 ``azimuth_step_deg``（默认 22.5° → 8 方位 0..157.5，双向轴向、
+       轴向半角 ``tolerance_deg``）扫描 :func:`directional_variogram`；
+    2. 每方位以"经验曲线达 sill 水平分位的滞后"为方向程距代理
+       （sill 以边际方差为锚，线性插值，尾部截断 0.6·span）——
+       ``directional_ranges`` 输出 0.5·sill 水平的各方位程距；
+    3. 几何椭圆拟合：对水平 ℓ ∈ {0.35, 0.45, 0.55, 0.65}·sill 逐水平
+       读取穿越滞后 h_ℓ(θ)（∝ 1/q(θ)），按水平归一（消除逐水平尺度）、
+       跨全部方位×水平池化后做**闭式线性最小二乘**
+       ``q²(θ) = m − c₂·cos2θ − s₂·sin2θ``
+       （几何各向异性恒等式 q²(θ)=cos²ψ+ρ²sin²ψ 的线性形式，
+       ψ=θ−φ）。主轴方位角 ``φ = ½·atan2(s₂, c₂)``，
+       程距比 ``ρ = sqrt((m+d)/(m−d))``，d=hypot(c₂,s₂)，
+       钳制到 :data:`ANISOTROPY_RATIO_CLAMP` = [1.0, 4.0]
+       （防退化/防爆炸）。池化（8 方位 × 4 水平 ≈ 32 个读取）比
+       单水平逐方位拟合显著降低单次实现噪声。
+
+    角度约定（与 :func:`anisotropy_transform` 实现核对一致）：
+    ``angle_degrees`` = **长轴方位角**，数学约定 0°=东(+x)、逆时针为正、
+    折叠到 [0, 180)。``anisotropy_transform`` 以 ``A = diag(1, ratio)·R(−θ)``
+    使主轴位移保长（长轴程距 = α）、垂直方向拉伸 ``ratio``（短轴程距 =
+    α/ratio）——因此 ``(angle_degrees, ratio)`` 可直接作为
+    :func:`apply_anisotropy` / :func:`fit_variogram` 的
+    ``(anisotropy_angle, anisotropy_ratio)`` 输入（meta 逐字披露）。
+
+    确定性：无 RNG（扫描 / 读取 / lstsq 全确定性）。返回 dict：
+    ``{angle_degrees, ratio, directional_ranges, is_anisotropic, meta}``；
+    ``is_anisotropic = ratio ≥ ANISOTROPY_RATIO_THRESHOLD``（1.2 判别阈值，
+    各向同性场不误报）。m−d ≤ 0 的退化场合确定性回退：angle=最大程距
+    方位角、ratio=方位程距极值比（meta 以 ``ellipse_fit_degenerate``
+    披露）。
+    """
+    pts = np.asarray(pts_metric, dtype=float)
+    vals = np.asarray(values, dtype=float)
+    n_input = int(len(vals))
+    if n_input < 2 * MIN_SAMPLES:
+        raise KrigingInputError(
+            f"各向异性自动拟合至少需要 {2 * MIN_SAMPLES} 个样本点"
+            f"（8 方位扫描每方位需足够的方向配对），got {n_input}"
+        )
+    step = float(azimuth_step_deg)
+    if not (math.isfinite(step) and 0.0 < step <= 90.0):
+        raise KrigingInputError(
+            f"azimuth_step_deg 必须在 (0, 90] 内（180°/step 个方位），got {azimuth_step_deg!r}"
+        )
+    tol = float(tolerance_deg)
+    if not (math.isfinite(tol) and 0.0 < tol <= DIRECTIONAL_MAX_TOLERANCE_DEG):
+        raise KrigingInputError(
+            f"tolerance_deg 必须在 (0, {DIRECTIONAL_MAX_TOLERANCE_DEG}] 内，got {tolerance_deg!r}"
+        )
+
+    # 与 fit_variogram 同一确定性抽稀上限（directional_variogram 内部亦做，
+    # 这里先做一次保证 sill/span 锚与扫描输入同源）
+    pts, vals = stratified_subsample(pts, vals, MAX_FIT_POINTS)
+    n_used = int(len(vals))
+    sill = float(np.var(vals))
+    span = float(np.linalg.norm(pts.max(axis=0) - pts.min(axis=0))) or 1.0
+    cap = 0.6 * span
+
+    n_az = int(round(180.0 / step))
+    azimuths = [i * step for i in range(n_az)]
+    curves: list[tuple[float, np.ndarray, np.ndarray, np.ndarray]] = []
+    per_az: list[dict] = []
+    for az in azimuths:
+        lags, gamma, counts, _m = directional_variogram(
+            pts, vals, az, tolerance_deg=tol, n_lags=n_lags, max_pairs=max_pairs
+        )
+        curves.append((float(az), lags, gamma, counts.astype(float)))
+        r_half = _level_crossing_lag(lags, gamma, counts.astype(float), 0.5 * sill, cap)
+        per_az.append({
+            "azimuth_deg": float(az),
+            "range_m": r_half,                       # 0.5·sill 方向程距代理
+            "range_source": "half_sill_crossing",
+            "n_pairs": int(counts.sum()),
+            "n_bins": int(len(lags)),
+        })
+
+    # ── 池化椭圆拟合：q²(θ) = m − c₂cos2θ − s₂sin2θ（逐水平归一）──
+    # y = 1/h(θ)² ∝ q²(θ)（h = h_iso/q ⇒ 1/h² = q²/h_iso²）
+    fit_azs: list[float] = []
+    fit_ys: list[float] = []
+    for level in _ANISOTROPY_LEVELS:
+        row: list[Optional[float]] = [
+            _level_crossing_lag(lags, gamma, cnt, level * sill, cap)
+            for _az, lags, gamma, cnt in curves
+        ]
+        present = [(az, 1.0 / (v * v)) for az, v in zip(azimuths, row) if v is not None]
+        if len(present) < 4:
+            continue
+        med = float(np.median([v for _az, v in present]))
+        if med <= 0.0:
+            continue
+        for az, v in present:
+            fit_azs.append(az)
+            fit_ys.append(v / med)          # 归一后 ∝ q²(θ)
+
+    degenerate = False
+    ratio_raw: Optional[float] = None
+    if len(fit_azs) >= 8:
+        theta = np.radians(fit_azs)
+        y = np.array(fit_ys)
+        design = np.column_stack(
+            (np.ones_like(theta), -np.cos(2.0 * theta), -np.sin(2.0 * theta))
+        )
+        coef = np.linalg.lstsq(design, y, rcond=None)[0]
+        m_c, c2, s2 = (float(v) for v in coef)
+        d = math.hypot(c2, s2)
+        angle_deg = (0.5 * math.degrees(math.atan2(s2, c2))) % 180.0
+        if m_c - d > 0.0:
+            ratio_raw = math.sqrt((m_c + d) / (m_c - d))
+        else:
+            degenerate = True
+    else:
+        degenerate = True
+        angle_deg = 0.0
+
+    if degenerate:
+        # 确定性退化回退：主轴取程距最大方位（平局取方位角序），
+        # 比值取方位程距极值比
+        valid = [e for e in per_az if e["range_m"] is not None and e["range_m"] > 0.0]
+        if len(valid) < 4:
+            raise KrigingInputError(
+                f"各向异性自动拟合只有 {len(valid)} 个方位得到有效方向程距（需要 ≥4）——"
+                "样本空间分布不足以支撑方向扫描；请增加采样点。"
+            )
+        best = max(valid, key=lambda e: (e["range_m"], -e["azimuth_deg"]))
+        worst = min(valid, key=lambda e: (e["range_m"], e["azimuth_deg"]))
+        angle_deg = float(best["azimuth_deg"])
+        ratio_raw = float(best["range_m"] / max(worst["range_m"], 1e-12))
+    ratio = min(max(ratio_raw, ANISOTROPY_RATIO_CLAMP[0]), ANISOTROPY_RATIO_CLAMP[1])
+
+    result = {
+        "angle_degrees": float(angle_deg),
+        "ratio": float(ratio),
+        "directional_ranges": {
+            f"{e['azimuth_deg']:g}": (None if e["range_m"] is None else float(e["range_m"]))
+            for e in per_az
+        },
+        "is_anisotropic": bool(ratio >= ANISOTROPY_RATIO_THRESHOLD),
+        "meta": {
+            "method": "fit_anisotropy",
+            "azimuths_deg": azimuths,
+            "azimuth_step_deg": step,
+            "tolerance_deg": tol,
+            "n_lags": int(n_lags),
+            "n_samples": n_used,
+            "n_samples_input": n_input,
+            "subsample_applied": bool(n_input > n_used),
+            "azimuth_convention": (
+                "数学约定：0°=东(+x)、逆时针（与 anisotropy_angle 一致，非罗盘方位）；轴向双向"
+            ),
+            "angle_semantics": (
+                "angle_degrees = 各向异性椭圆长轴方位角（数学约定，[0,180)）；"
+                "anisotropy_transform 以 A=diag(1,ratio)·R(−θ) 使长轴位移保长、"
+                "垂直方向拉伸 ratio —— (angle_degrees, ratio) 可直接作为 "
+                "apply_anisotropy/fit_variogram 的 (anisotropy_angle, anisotropy_ratio)"
+            ),
+            "range_estimator": (
+                "方向程距代理=经验曲线达 sill 水平分位的滞后（sill=边际方差，线性插值，"
+                "尾部截断 0.6·span）；directional_ranges 取 0.5·sill 水平"
+            ),
+            "ellipse_fit": (
+                "闭式线性最小二乘：几何各向异性恒等式 q²(θ)=cos²ψ+ρ²sin²ψ 的线性形式 "
+                "q²(θ)=m−c₂·cos2θ−s₂·sin2θ；对 0.35/0.45/0.55/0.65·sill 四个水平的穿越滞后"
+                "取 1/h²（∝q²）逐水平归一后跨 8 方位池化 lstsq（≈32 读取）；"
+                "φ=½·atan2(s₂,c₂)，ρ=sqrt((m+d)/(m−d))，d=hypot(c₂,s₂)；确定性，无 RNG"
+            ),
+            "ratio_raw": ratio_raw,
+            "ratio_clamp": [ANISOTROPY_RATIO_CLAMP[0], ANISOTROPY_RATIO_CLAMP[1]],
+            "anisotropy_threshold": ANISOTROPY_RATIO_THRESHOLD,
+            "ellipse_fit_degenerate": bool(degenerate),
+            "n_pooled_readings": int(len(fit_azs)),
+            "per_azimuth": per_az,
+        },
+    }
+    return result
 
 
 def select_variogram_model(
@@ -1290,6 +1564,7 @@ def select_variogram_model(
     models: Optional[list] = None,
     n_lags: int = 12,
     matern_smoothness: float = MATERN_SMOOTHNESS_DEFAULT,
+    robust: bool = False,
 ) -> tuple[list[dict], dict]:
     """变异函数模型选择：6 家族同一经验变异函数上同台、加权 RSS 排名 + AICc。
 
@@ -1298,6 +1573,9 @@ def select_variogram_model(
     显式给出。AICc 自由度 k=3（sill/range/nugget 三个拟合参数）；
     ``matern`` k=4（固定平滑度 ν 计入——meta 逐字披露）。滞后 bin 数
     n ≤ k+2 时 AICc 诚实取 inf（不伪造小样本信息准则）。
+
+    ``robust=True`` 透传给 :func:`empirical_variogram`（Cressie–Hawkins
+    1980 稳健估计，opt-in；默认 False 经典主路径逐位不变，meta 披露）。
 
     确定性：无随机重启——每个家族跑同一有界最小二乘（curve_fit，
     失败回退有界网格搜索）。返回 ``(ranking, meta)``；``ranking`` 按
@@ -1320,7 +1598,9 @@ def select_variogram_model(
         )
     nu_request = _validate_matern_smoothness(matern_smoothness)
     fit_pts, fit_vals = stratified_subsample(pts, vals, MAX_FIT_POINTS)
-    lags, gamma, counts = empirical_variogram(fit_pts, fit_vals, n_lags=n_lags)
+    lags, gamma, counts = empirical_variogram(
+        fit_pts, fit_vals, n_lags=n_lags, robust=robust
+    )
     if len(lags) < 4:
         raise KrigingInputError(
             f"经验变异函数只有 {len(lags)} 个有效滞后 bin（需要 ≥4）—— "
@@ -1366,6 +1646,7 @@ def select_variogram_model(
         "n_samples_fit": int(len(fit_vals)),
         "n_bins": int(n_bins),
         "n_pairs": int(weights.sum()),
+        "robust_estimator": "cressie_hawkins1980" if robust else "matheron_classic",
         "best_weighted_rss": ranking[0]["model"],
         "best_aicc": by_aicc["model"],
         "aicc_param_note": (

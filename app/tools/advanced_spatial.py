@@ -1093,9 +1093,11 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "\n何时用：怀疑场有方向性结构（如沿河谷/风向的污染物输运）、"
                "为 kriging 选 anisotropy_angle/ratio 前的证据收集。"
                "\n何时不用：只要全向变异函数+克里金表面 — 用 kriging_interpolation；"
-               "要多方位角自动拟合各向异性椭圆 — 本工具不自动拟合，请多角度调用。"
+               "要多方位角自动拟合各向异性椭圆 — 本工具不自动拟合，请多角度调用"
+               "（库级 kriging.fit_anisotropy 已提供多方位扫描自动拟合）。"
                "\n关键约束：tolerance_deg 为轴向半角（≤90，90=全向退化）；"
-               "azimuth+180° 与 azimuth 返回同一条轴（双向语义）。"
+               "azimuth+180° 与 azimuth 返回同一条轴（双向语义）；"
+               "大 n 输入入口确定性分层抽稀 ≤2000（meta 披露）。"
            ),
            tier=2, domains=["statistics"], cost="medium",
            param_descriptions={
@@ -1165,6 +1167,11 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             "summary": (
                 f"方向变异函数完成：方位角 {params['azimuth_deg']}°（数学约定），"
                 f"{len(lags)} 个有效滞后 bin，保留配对 {meta['n_pairs_kept']}/{meta['n_pairs_total']}。"
+                + (
+                    f" 输入 {meta['n_samples_input']} 点已确定性分层抽稀至 "
+                    f"{meta['n_samples']}（拟合上限）。"
+                    if meta.get("subsample_applied") else ""
+                )
             ),
         }
         descriptor = get_algorithm_registry().get("interpolation.directional_variogram")
@@ -1200,7 +1207,9 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "比较 hole-effect（wave）或平滑度（matern）家族是否更贴合数据。"
                "\n何时不用：直接用 kriging_interpolation 的 auto（生产 3 族选型）即可出表面；"
                "本工具只出统计表不出表面。"
-               "\n关键约束：样本 <8 拒绝；AICc 基于加权残差（非严格极大似然，已披露）。"
+               "\n关键约束：样本 <8 拒绝；AICc 基于加权残差（非严格极大似然，已披露）；"
+               "robust=true 走 Cressie–Hawkins(1980) 稳健估计（对离群对稳健，opt-in，"
+               "默认 false 经典 Matheron 主路径逐位不变）。"
            ),
            tier=2, domains=["statistics"], cost="medium",
            param_descriptions={
@@ -1208,12 +1217,14 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "value_field": "数值字段名",
                "n_lags": "滞后 bin 数（4-64，默认 12）",
                "matern_smoothness": "Matérn 平滑度 ν（0.1-5.0，默认 0.5；仅 matern 家族使用）",
+               "robust": "稳健估计 opt-in（Cressie–Hawkins 1980；默认 false=经典 Matheron）",
            })
     def variogram_model_selection(
         geojson: Any,
         value_field: str,
         n_lags: int = 12,
         matern_smoothness: float = 0.5,
+        robust: bool = False,
     ) -> dict:
         import geopandas as gpd
 
@@ -1230,6 +1241,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             "value_field": value_field,
             "n_lags": n_lags,
             "matern_smoothness": matern_smoothness,
+            "robust": bool(robust),
         })
         lonlat, values = _parse_point_values(
             geojson, params["value_field"],
@@ -1248,6 +1260,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             pts_metric, values,
             n_lags=int(params["n_lags"]),
             matern_smoothness=float(params["matern_smoothness"]),
+            robust=bool(params["robust"]),
         )
         best = ranking[0]
         payload = {
@@ -1255,12 +1268,17 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             "ranking": ranking,
             "best": best["model"],
             "best_params": best["params"],
+            "robust": bool(params["robust"]),
             "meta": meta,
             "summary": (
                 f"变异函数模型选择完成：{len(ranking)} 家族同台，"
                 f"加权 RSS 最优={meta['best_weighted_rss']}"
                 f"（rss={best['weighted_rss']:.4f}, aicc={best['aicc']:.1f}），"
                 f"AICc 最优={meta['best_aicc']}。"
+                + (
+                    " 经验变异函数为 Cressie–Hawkins(1980) 稳健估计。"
+                    if bool(params["robust"]) else ""
+                )
             ),
         }
         descriptor = get_algorithm_registry().get("interpolation.variogram_selection")
@@ -1272,6 +1290,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                     "value_field": params["value_field"],
                     "n_lags": int(params["n_lags"]),
                     "matern_smoothness": float(params["matern_smoothness"]),
+                    "robust": bool(params["robust"]),
                 },
                 input_facts={
                     "artifact_type": "point_feature_set",

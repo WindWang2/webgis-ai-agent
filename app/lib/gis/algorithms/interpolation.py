@@ -408,29 +408,36 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             tool_candidates=["directional_variogram_analysis"],
             cpu_cost="medium", memory_cost="low", io_cost="low",
             preferred_execution_policy="INLINE", compatible_map_models=[],
-            complexity="O(pair_budget)（行步幅 20 万对上限）",
+            complexity="O(pair_budget)（入口确定性分层抽稀 ≤2000 + 行步幅 20 万对上限）",
             algorithm_family="variography",
             method_references=["webster_oliver2007", "isaaks_srivastava1989"],
             assumptions=[
                 "轴向（双向）配对过滤：方位角 +180° 属同一条轴，曲线逐位一致",
                 "方位角为数学约定：0°=东(+x)、逆时针（与 anisotropy_angle 一致，非罗盘）",
-                "滞后 bin 与全向 empirical_variogram 同一 span/edges 约定（tolerance=90° 时两者一致）",
+                "滞后 bin 与全向 empirical_variogram 同一 span/edges 约定（tolerance=90°、同输入 ≤2000 时两者逐位一致）",
                 "配对行走沿用行步幅 max_pairs 预算（确定性）",
+                "大 n 输入在入口按 ≤2000 确定性分层抽稀（stratified_subsample，与 fit_variogram 同一机器），"
+                "meta 以 n_samples（实际使用）/ n_samples_input（原始）/ subsample_applied 披露",
             ],
             limitations=[
-                "单轴单次调用：完整各向异性椭圆需多方位角扫描（本工具不自动拟合椭圆）",
+                "单轴单次调用：完整各向异性椭圆需多方位角扫描（本工具不自动拟合椭圆；"
+                "库级 kriging.fit_anisotropy 提供多方位扫描自动拟合）",
                 "带宽过滤为 GSLIB band 语义近似（配对中点到轴线垂距）",
                 "统计表输出（无表面）：结果供变异函数建模与各向异性诊断使用",
             ],
             crs_class="GEOGRAPHIC_OK",
             unit_requirements="meters",
             random_seed_policy="deterministic",
-            numerical_tolerance="tolerance=90° 时与全向 empirical_variogram 逐位一致（conformance 固定）",
+            numerical_tolerance="tolerance=90° 且同输入（≤2000）时与全向 empirical_variogram 逐位一致（conformance 固定）",
             scientific_status="VALIDATED",
             conformance_tests=[
                 "tests/unit/lib/test_geostat_v3.py::test_directional_variogram_anisotropy_discriminant",
                 "tests/unit/lib/test_geostat_v3.py::test_directional_variogram_axis_bidirectional_and_omnidirectional_parity",
                 "tests/unit/lib/test_geostat_v3.py::test_directional_variogram_input_guards",
+                "tests/unit/lib/test_geostat_v3.py::test_directional_variogram_large_n_presubsampled_meta",
+                "tests/unit/lib/test_geostat_v3.py::test_fit_anisotropy_recovers_known_angle_and_ratio",
+                "tests/unit/lib/test_geostat_v3.py::test_fit_anisotropy_isotropic_no_false_positive",
+                "tests/unit/lib/test_geostat_v3.py::test_fit_anisotropy_deterministic_and_convention_consistent",
             ],
             ),
 
@@ -447,12 +454,13 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             preferred_execution_policy="INLINE", compatible_map_models=[],
             complexity="6 家族 × 有界拟合 + AICc 排名（样本 ≤2000）",
             algorithm_family="model_selection",
-            method_references=["webster_oliver2007", "matern1986"],
+            method_references=["webster_oliver2007", "matern1986", "cressie_hawkins1980"],
             assumptions=[
                 "6 家族（spherical/exponential/gaussian/matern/wave/cubic）在同一经验变异函数上同台",
                 "加权 RSS 即 fit_variogram 的拟合目标（样本对计数 σ-权重）——与 auto 选型同源",
                 "AICc 自由度 k=3（sill/range/nugget）；matern k=4（固定平滑度 ν 计入，已披露）",
                 "完全确定性：无随机重启，复用有界网格回退；平局按模型名打破",
+                "robust=true 走 Cressie–Hawkins(1980) 稳健估计（opt-in）；默认 false 经典 Matheron 主路径逐位不变",
             ],
             limitations=[
                 "AICc 基于加权残差而非严格极大似然（信息准则是近似的，已披露）",
@@ -467,6 +475,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             conformance_tests=[
                 "tests/unit/lib/test_geostat_v3.py::test_variogram_selection_ranks_deterministic_and_complete",
                 "tests/unit/lib/test_geostat_v3.py::test_variogram_selection_aicc_disclosure_and_matern_k4",
+                "tests/unit/lib/test_geostat_v3.py::test_robust_variogram_outliers_improve_fit",
+                "tests/unit/lib/test_geostat_v3.py::test_robust_variogram_clean_matches_classical_and_false_path_bitwise",
             ],
             ),
 
@@ -857,6 +867,13 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="matern_smoothness", type="number", default=0.5,
                 minimum=0.1, maximum=5.0, unit="ratio",
                 description="Matérn 平滑度 ν（仅 matern 家族使用）",
+            ),
+            ParameterSpec(
+                name="robust", type="boolean", default=False,
+                description=(
+                    "robust 估计 opt-in：true 走 Cressie–Hawkins(1980) 稳健半变异函数"
+                    "（对离群对稳健）；false（默认）经典 Matheron 主路径逐位不变"
+                ),
             ),
         ],
     ),

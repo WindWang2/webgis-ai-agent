@@ -417,6 +417,17 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Webster, R., & Oliver, M. A. (2007). Geostatistics for "
             "Environmental Scientists (2nd ed.). Wiley.",
         ),
+        # science-v3 审计 02 域 §8 建议 #4：robust variogram 估计器出处。
+        # empirical_variogram(robust=True) 的 0.457/0.494/0.045 修正常数
+        # 即出自该文（2γ(h) = [mean|Δz|^½]⁴ / (0.457 + 0.494/|N(h)| +
+        # 0.045/|N(h)|²)，对离群对稳健）。
+        MethodReference(
+            "cressie_hawkins1980",
+            "Cressie–Hawkins robust semivariogram estimator",
+            "Cressie, N., & Hawkins, D. M. (1980). Robust Estimation of "
+            "the Variogram: I. Journal of the International Association "
+            "for Mathematical Geology, 12(2), 115–125.",
+        ),
         MethodReference(
             "odeh1995",
             "Regression kriging",
