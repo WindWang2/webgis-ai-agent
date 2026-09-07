@@ -97,6 +97,17 @@ class GISBenchmarkCase(BaseModel):
     expected_warning_codes: List[str] = Field(default_factory=list)
     forbidden_warning_codes: List[str] = Field(default_factory=list)
 
+    # ── V3 semantic planning contract（Goal §十二，全部 opt-in）────────
+    # intent 的本体 top-1 必须命中该任务 id（GIS task ontology 匹配锁）。
+    expected_ontology_task: Optional[str] = None
+    # 规划确定性：置 True 时 runner 对同一 query 双跑 plan tier，差异即败。
+    check_determinism: bool = False
+    # 数据资格 / 回退契约：提供画像时 runner 走 compile_workflow 复评
+    # （V3 qualify_data + fallback_v3），断言 per-role 状态与回退层。
+    qualification_profile: Optional[Dict[str, Any]] = None
+    expected_qualification: Dict[str, str] = Field(default_factory=dict)
+    expected_fallback_tier: Optional[str] = None
+
     # ── execute tier ──────────────────────────────────────────────────
     plan_only: bool = False
     fixture_aliases: List[str] = Field(

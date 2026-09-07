@@ -6,12 +6,20 @@ from typing import Any, Iterable, List
 from app.evaluation.runner import CaseResult
 
 #: B3 metric set, in report order. ``None`` = not measured (rendered n/a).
+#: V3（Goal §十二）追加语义规划指标（None = 该案例未声明对应契约）。
 _METRIC_ORDER = [
     "task_correct",
     "capability_precision",
     "capability_recall",
     "algorithm_correct",
     "methodology_honesty_ok",
+    "ontology_top1_correct",
+    "recipe_selection_correct",
+    "no_false_professional_analysis",
+    "qualification_states_correct",
+    "fallback_tier_correct",
+    "planning_deterministic",
+    "unnecessary_tool_count",
     "numerical_correct",
     "artifact_contract_valid",
     "map_product_complete",

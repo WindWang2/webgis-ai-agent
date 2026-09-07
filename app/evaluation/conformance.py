@@ -22,22 +22,36 @@ from app.evaluation.case import GISBenchmarkCase
 
 #: scope 注入词（前缀）。空串 = 无 scope 表述。多城 scope 用「和」连接，
 #: 不携带任务语义（不会触发 change/proximity 等规则）。
+#: V3 扩容 5→12：纯城市/省级地名，逐一核实不改变语义身份（task/recipe）。
 SCOPE_VARIANTS: Tuple[Tuple[str, str], ...] = (
     ("", "city-unspecified"),
     ("成都市", "city-chengdu"),
     ("成都武侯区", "district-wuhou"),
     ("四川省", "province-sichuan"),
     ("成都和重庆", "multi-city"),
+    ("重庆市", "city-chongqing"),
+    ("北京市", "city-beijing"),
+    ("上海市", "city-shanghai"),
+    ("广州市", "city-guangzhou"),
+    ("杭州市", "city-hangzhou"),
+    ("深圳市", "city-shenzhen"),
+    ("四川省成都市", "province-city-chengdu"),
 )
 
 #: 句式包装（语言 × 语态）。zh 模板占位 {scope}/{q}；en 模板占位
 #: {scope_en}/{q}。包装词均不携带任务语义（核实：display/疑问动词在
 #: 规则序中弱于专业规则；报告词仅触发 report_product 附加信号）。
+#: V3 扩容 4→9：新增语态逐一核实不改变语义身份。
 UTTERANCE_VARIANTS: Tuple[Tuple[str, str, str, str], ...] = (
     ("{scope}{q}", "{q} in {scope_en}", "direct"),
     ("帮我看看{scope}{q}", "please show {q} in {scope_en}", "colloquial-show"),
     ("{scope}{q}吗", "what about {q} in {scope_en}", "interrogative"),
     ("用于报告：{scope}{q}", "report: {q} in {scope_en}", "report"),
+    ("请分析{scope}{q}", "analyze {q} in {scope_en}", "analyze"),
+    ("{scope}{q}的情况", "the situation of {q} in {scope_en}", "situation"),
+    ("我想了解{scope}{q}", "i want to know about {q} in {scope_en}", "want-know"),
+    ("{scope}{q}如何", "how about {q} in {scope_en}", "how-about"),
+    ("帮忙做一下{scope}{q}", "help with {q} in {scope_en}", "help-do"),
 )
 
 #: scope 的英文展开（en 句式用）。
@@ -45,6 +59,10 @@ _SCOPE_EN = {
     "city-unspecified": "", "city-chengdu": "Chengdu",
     "district-wuhou": "Wuhou District", "province-sichuan": "Sichuan",
     "multi-city": "Chengdu and Chongqing",
+    "city-chongqing": "Chongqing", "city-beijing": "Beijing",
+    "city-shanghai": "Shanghai", "city-guangzhou": "Guangzhou",
+    "city-hangzhou": "Hangzhou", "city-shenzhen": "Shenzhen",
+    "province-city-chengdu": "Chengdu, Sichuan",
 }
 
 
@@ -75,6 +93,9 @@ class ConformanceFamily:
     alternative_tasks: Tuple[str, ...] = ()
     expected_warning_codes: Tuple[str, ...] = ()
     forbidden_warning_codes: Tuple[str, ...] = ()
+    # V3（Goal §十二）：本体任务匹配契约 —— intent 的本体 top-1 必须命中
+    # 声明任务（GIS task ontology 映射的语义回归锁；空 = 不检查）。
+    expected_ontology_task: str = ""
     group: str = "conformance"
 
 
@@ -478,6 +499,109 @@ CONFORMANCE_FAMILIES: Tuple[ConformanceFamily, ...] = (
         expected_warning_codes=("RISK_RECEPTORS_UNCONFIRMED",),
         group="conformance-decision",
     ),
+    # ── V3 扩容族（本体任务升级 / 新语义维度锁定，期望为经验核验）──────
+    ConformanceFamily(
+        "road-centrality", "network", "路网中心性（本体升级族）",
+        ("路网中心性分析", "道路介数中心性计算"),
+        (),
+        "network_route", "closest_facility_assignment",
+        (),
+        group="conformance-network",
+    ),
+    ConformanceFamily(
+        "fire-risk", "risk", "火灾风险评价",
+        ("城市火灾风险热点", "火灾风险评价"),
+        (),
+        "risk_exposure", "risk_exposure",
+        (),
+        expected_warning_codes=("RISK_RECEPTORS_UNCONFIRMED",),
+        expected_ontology_task="decision.risk_exposure",
+        group="conformance-decision",
+    ),
+    ConformanceFamily(
+        "population-exposure", "exposure", "人口暴露估算",
+        ("人口暴露估算", "洪泛区暴露人口"),
+        (),
+        "risk_exposure", "risk_exposure",
+        (),
+        group="conformance-decision",
+    ),
+    ConformanceFamily(
+        "warehouse-site", "site_selection", "仓储物流选址",
+        ("仓库选址评价", "物流园区选址"),
+        (),
+        "site_selection", "site_selection",
+        (),
+        expected_ontology_task="decision.site_selection",
+        group="conformance-decision",
+    ),
+    ConformanceFamily(
+        "od-matrix", "network", "OD 矩阵与流线",
+        ("医院之间od矩阵", "通勤流线图"),
+        (),
+        "mobility_flow", "od_flow_overview",
+        ("od_matrix",),
+        expected_ontology_task="network.od_analysis",
+        group="conformance-network",
+    ),
+    ConformanceFamily(
+        "categorical-composition", "statistics", "分类构成统计",
+        ("各设施类别占比", "设施类别构成"),
+        (),
+        "categorical_distribution", "categorical_distribution",
+        ("category_breakdown",),
+        expected_ontology_task="distribution.category_breakdown",
+        group="conformance-statistics",
+    ),
+    ConformanceFamily(
+        "change-comparison", "change_detection", "两期对比（卷帘/前后）",
+        ("两期影像卷帘对比", "变化前后对比图"),
+        (),
+        "change_detection", "raster_distribution",
+        (),
+        group="conformance-change",
+    ),
+    ConformanceFamily(
+        "sar-speckle", "sar", "SAR 斑点滤波",
+        ("sar斑点滤波", "sar影像去噪"),
+        (),
+        "sar_analysis", "sar_backscatter_overview",
+        ("sar_speckle_filtering",),
+        group="conformance-sar",
+    ),
+    ConformanceFamily(
+        "interannual-comparison", "temporal", "年际对比",
+        ("年际对比分析", "多年年际对比"),
+        (),
+        "temporal_trend", "interannual_comparison_workflow",
+        ("temporal_aggregate",),
+        group="conformance-temporal",
+    ),
+    ConformanceFamily(
+        "twi-index", "hydrology", "地形湿度指数（本体升级族）",
+        ("twi指数计算",),
+        (),
+        "terrain_analysis", "slope_analysis_workflow",
+        (),
+        group="conformance-hydrology",
+    ),
+    ConformanceFamily(
+        "spatial-regression", "statistics", "空间回归（本体升级族）",
+        ("地理加权回归gwr", "空间回归分析"),
+        (),
+        "spatial_autocorrelation", "getis_ord_hotspot_significance",
+        (),
+        expected_ontology_task="spatial_statistics.spatial_regression",
+        group="conformance-statistics",
+    ),
+    ConformanceFamily(
+        "interpolation-uncertainty", "interpolation", "插值不确定性面",
+        ("插值预测不确定性", "克里金方差面", "插值误差评估"),
+        (),
+        "raster_distribution", "raster_distribution",
+        (),
+        group="conformance-interpolation",
+    ),
 )
 
 
@@ -523,6 +647,7 @@ def _expand_family(
                     expected_recipe=family.expected_recipe,
                     expected_warning_codes=list(family.expected_warning_codes),
                     forbidden_warning_codes=list(family.forbidden_warning_codes),
+                    expected_ontology_task=family.expected_ontology_task,
                 ))
     return cases
 

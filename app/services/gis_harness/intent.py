@@ -729,12 +729,13 @@ def resolve_map_request_intent(query: str) -> MapRequestIntent:
     if task == "simple_view":
         confidence = min(confidence, 0.7)
 
-    # V3（GIS Task Ontology）：保守本体任务升级 —— 通用兜底族 + query 命中
-    # 本体专业关键词 + 目标族无 V1 seed 保护时，task 升级到专业任务族
-    # （「地理加权回归」落 spatial_autocorrelation 而非分布兜底）。
-    # 红线：泛表述（「地表覆盖分布」→ raster seed 保护族）永不升级；
-    # 显式规则命中的任务不受影响；升级记录进 matched_rules 可审计。
-    if "fallback_distribution_default" in matched:
+    # V3（GIS Task Ontology）：保守本体任务升级 —— 源任务为通用族（含
+    # 口语包装规则命中的 simple_view）+ query 命中本体专业关键词 + 目标族
+    # 无 V1 seed 保护时，task 升级到专业任务族（「帮我看看路网中心性」
+    # 落 network_route 而非「看一眼」）。专业性规则特异性更高、先行命中
+    # 不受影响；泛表述由 v1_served_tasks 守卫保护永不升级；升级记录进
+    # matched_rules 可审计。
+    if task in ("distribution_overview", "simple_view"):
         try:
             from app.services.gis_harness.gis_ontology import escalation_target
 

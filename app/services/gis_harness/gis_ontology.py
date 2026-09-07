@@ -1507,7 +1507,13 @@ class TaskOntology:
                 semantic_status=desc.semantic_status,
                 matched_signals=signals,
             ))
-        matches.sort(key=lambda m: (-m.score, m.task_id))
+        # 确定性排序：score 降序 → 直接证据（关键词命中）优先于间接信号
+        # （family/analysis 触发）→ task_id 字典序兜底。
+        matches.sort(key=lambda m: (
+            -m.score,
+            0 if any(s.startswith("kw:") for s in m.matched_signals) else 1,
+            m.task_id,
+        ))
         return matches[:limit]
 
     # ── 校验与指纹 ───────────────────────────────────────────────────
