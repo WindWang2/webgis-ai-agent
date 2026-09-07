@@ -100,11 +100,13 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         param_descriptions={
             "ref_id": "数据引用（list_datasets 返回的 id，形如 ref:geojson-…）",
             "deep": "是否深扫（默认 false 用轻量描述符；true 才有均值/唯一值统计）",
+            "propose_repairs": "是否附修复提案（plan-only：只映射诊断码 → 修复操作词表，绝不执行）",
         },
     )
     async def profile_dataset(
         ref_id: str,
         deep: bool = False,
+        propose_repairs: bool = False,
         session_id: Optional[str] = None,
     ) -> dict:
         from app.lib.data.quality import run_quality_checks
@@ -124,13 +126,21 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         from app.lib.data.large_data import access_policy, classify_features
 
         size_class = classify_features(profile.vector.row_count if profile.vector else None)
-        return {
+        out = {
             "success": True,
             "profile": profile.summary(),
             "quality": report.summary(),
             "size_class": size_class.value,
             "access_policy": access_policy(size_class).value,
         }
+        if propose_repairs:
+            # Wave-4 缝（审计 R5）：质量诊断 → 修复提案（plan-only，不执行）
+            from app.services.data_ingest.repair_planning import propose_repairs
+
+            out["repair_proposals"] = [
+                p.to_bounded_dict() for p in propose_repairs(report)
+            ]
+        return out
 
     @tool(
         registry,

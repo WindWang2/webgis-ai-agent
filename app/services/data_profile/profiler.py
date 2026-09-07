@@ -273,7 +273,15 @@ class DatasetProfiler:
             bounds = ds.bounds
             extent = [bounds.left, bounds.bottom, bounds.right, bounds.top]
             overviews = sum(len(ds.overviews(i)) for i in range(1, ds.count + 1))
-            nodata: List[Optional[float]] = [ds.nodata(i) for i in range(1, ds.count + 1)]
+            # rasterio ≥1.x：``nodata`` 是标量属性（首波段）而非方法 —— 此前
+            # 的 ``ds.nodata(i)`` 在真实调用路径上必然 TypeError（本函数此前
+            # 无生产调用方/成功路径测试，V4 接线时发现的潜在 bug）。
+            # ``nodatavals`` 是按波段的元组，与 ``count`` 对齐。
+            nodatavals = tuple(getattr(ds, "nodatavals", ()) or ())
+            nodata: List[Optional[float]] = [
+                nodatavals[i] if i < len(nodatavals) else None
+                for i in range(ds.count)
+            ]
             band_stats: List[RasterBandStats] = []
             # 降采样读：≤sample_size 边（与 raster_spec.raster_content_fingerprint
             # 同一「绝不整幅读」纪律）；统计是近似口径，忠实声明。

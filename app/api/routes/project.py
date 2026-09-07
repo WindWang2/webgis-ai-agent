@@ -32,6 +32,8 @@ from app.schemas.project_schema import (
     WorkflowRerunRequest, MapProductVersionCreate, MapProductVersionResponse,
     MapProductVersionSummary, PromoteArtifactsResponse,
     ArtifactPinRequest, ArtifactPinResponse, ArtifactCloneResponse,
+    WorkspaceSnapshotSummary, WorkspaceSnapshotListResponse,
+    WorkspaceSnapshotSaveResponse, WorkspaceSnapshotDeleteResponse,
 )
 from app.schemas.pagination import Page, clamp_pagination
 
@@ -1294,3 +1296,243 @@ def activate_carto_fact(
         raise HTTPException(status_code=404, detail="Fact not found in this project")
     db.commit()
     return {"status": "active", "fact": _carto_fact_row(fact)}
+
+
+# ── Workspace V4 — durable workspace snapshots (Wave 2, audit 02 §6) ──────
+# 快照是 manifest + 持久指针；载荷字节只在 Wave-1 BlobStore 一份。全部
+# 路由强制认证（写路径 401 / 越权一律 404 不泄露存在性）+ 项目鉴权
+# （get_project_with_auth）+ 会话所有权（SEC-08 同款 _verify_session_access
+# —— session_id 是跨租户读写原语，照 map-product lifecycle 先例守卫）。
+
+
+class WorkspaceSnapshotSaveRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    label: str = Field(default="", max_length=96)
+    materialize: Literal["none", "claimed", "all"] = "none"
+
+
+class WorkspaceSnapshotRestoreRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    mode: Literal["verify", "register"] = "verify"
+
+
+class WorkspaceSnapshotCloneRequest(BaseModel):
+    source_session_id: str = Field(min_length=1, max_length=128)
+    target_session_id: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/{project_id}/workspace/snapshots", response_model=WorkspaceSnapshotSaveResponse)
+async def save_workspace_snapshot(
+    project_id: str,
+    req: WorkspaceSnapshotSaveRequest,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Save a durable workspace snapshot for a live session.
+
+    ``materialize="claimed"|"all"`` additionally writes live payloads through
+    the durable BlobStore and stamps them ``persistence_tier="workspace"``
+    (GC interlock). Session ownership is verified first (404 without
+    existence leak); the snapshot lives under the project root and survives
+    session purge/TTL sweeps.
+    """
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _verify_session_access(req.session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    snapshot = await get_workspace_snapshot_service().save_snapshot(
+        req.session_id,
+        label=req.label,
+        project_id=project_id,
+        materialize=req.materialize,
+        owner_id=user_id or "",
+    )
+    if snapshot is None:
+        raise HTTPException(status_code=500, detail="Workspace snapshot persistence failed")
+    return WorkspaceSnapshotSaveResponse(
+        project_id=project_id,
+        home="project" if snapshot.project_id else "session",
+        snapshot_id=snapshot.snapshot_id,
+        label=snapshot.label,
+        durable_pointers=len(snapshot.durable_pointers),
+        materialize_skipped=snapshot.materialize_skipped,
+        snapshot=snapshot.model_dump(mode="json"),
+    )
+
+
+@router.get("/{project_id}/workspace/snapshots", response_model=WorkspaceSnapshotListResponse)
+async def list_workspace_snapshots(
+    project_id: str,
+    session_id: Optional[str] = Query(None, max_length=128),
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Bounded snapshot list (≤50) for the project (plus the optional
+    session's legacy session-scoped snapshots, honestly labeled ``home``)."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if session_id:
+        # 会话域快照携带 ref 归属信息 —— 跨租户 session_id 一律 404。
+        await _verify_session_access(session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    items = await get_workspace_snapshot_service().list_snapshots(
+        session_id or "", project_id=project_id
+    )
+    return WorkspaceSnapshotListResponse(
+        project_id=project_id,
+        count=len(items),
+        items=[WorkspaceSnapshotSummary(**item) for item in items],
+    )
+
+
+@router.get("/{project_id}/workspace/snapshots/{snapshot_id}")
+async def inspect_workspace_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    session_id: str = Query(..., max_length=128),
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Inspect = the verify report (liveness + pointer digest integrity).
+
+    Probes run against the caller's own session — the session gate doubles
+    as the ref-id leak guard (audit §4.3)."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _verify_session_access(session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    report = await get_workspace_snapshot_service().verify_snapshot(
+        session_id, snapshot_id, project_id=project_id
+    )
+    if not report.exists:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return report.to_dict()
+
+
+@router.post("/{project_id}/workspace/snapshots/{snapshot_id}/restore")
+async def restore_workspace_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    req: WorkspaceSnapshotRestoreRequest,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Restore a snapshot into a live session.
+
+    ``verify`` reports only; ``register`` rebinds the artifact ledger AND
+    re-materializes payloads for contracts with durable pointers
+    (digest-verified read before write; failures degrade honestly to
+    ``expired`` + ``degraded`` — dead refs are never marked valid)."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _verify_session_access(req.session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    result = await get_workspace_snapshot_service().restore_snapshot(
+        req.session_id, snapshot_id, mode=req.mode, project_id=project_id
+    )
+    error = str(result.get("error") or "")
+    if "not found" in error:
+        raise HTTPException(status_code=404, detail=error)
+    if "unknown mode" in error:
+        raise HTTPException(status_code=400, detail=error)
+    return result
+
+
+@router.post("/{project_id}/workspace/snapshots/{snapshot_id}/clone")
+async def clone_workspace_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    req: WorkspaceSnapshotCloneRequest,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Clone a snapshot (manifest copy; cross-session ref semantics are
+    disclosed by verify, never fabricated). BOTH sessions must belong to
+    the caller — the source gate is 404 without existence leak."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _verify_session_access(req.source_session_id, user, owner_token)
+    await _verify_session_access(req.target_session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    clone = await get_workspace_snapshot_service().clone_snapshot(
+        req.source_session_id,
+        snapshot_id,
+        req.target_session_id,
+        project_id=project_id,
+        owner_id=user_id or "",
+    )
+    if clone is None:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return clone
+
+
+@router.delete("/{project_id}/workspace/snapshots/{snapshot_id}", response_model=WorkspaceSnapshotDeleteResponse)
+async def delete_workspace_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    session_id: str = Query(..., max_length=128),
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Delete exactly one snapshot file (bounded unlink; never a directory
+    sweep). Snapshots created by another user within the project are
+    refused at the service layer."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _verify_session_access(session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    deleted = await get_workspace_snapshot_service().delete_snapshot(
+        session_id, snapshot_id, project_id=project_id, owner_id=user_id or ""
+    )
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return WorkspaceSnapshotDeleteResponse(
+        snapshot_id=deleted["snapshot_id"], home=deleted["home"]
+    )
+
+
+@router.get("/{project_id}/workspace")
+async def describe_workspace(
+    project_id: str,
+    session_id: Optional[str] = Query(None, max_length=128),
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Workspace inventory (§十五): snapshot count, artifact summary by
+    lifecycle state, layer refs, durable coverage %."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if session_id:
+        await _verify_session_access(session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    return await get_workspace_snapshot_service().describe_workspace(
+        session_id or "", project_id=project_id
+    )

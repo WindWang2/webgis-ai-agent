@@ -441,3 +441,48 @@ class ArtifactSummary(BaseModel):
     format: Optional[str] = None
     crs: Optional[str] = "EPSG:4326"
     created_at: datetime
+
+
+# =====================================================================
+# Workspace V4 — durable workspace snapshots (Wave 2, audit 02 §6)
+#
+# 快照是 manifest（指针集合），不是数据搬运工：响应体只携带
+# ref/指针/计数，绝不内联载荷字节。保存/恢复/克隆/删除是写路径
+# —— 路由侧强制认证 + 项目鉴权 + 会话所有权校验（SEC-08 同款）。
+# =====================================================================
+
+
+class WorkspaceSnapshotSummary(BaseModel):
+    """Slim snapshot row — list endpoints use this to slim payloads."""
+
+    snapshot_id: str
+    label: str = ""
+    created_at: Optional[float] = None
+    artifacts: int = 0
+    layers: int = 0
+    project_id: str = ""
+    home: str = "project"  # project | session（会话域为向后兼容可读）
+
+
+class WorkspaceSnapshotListResponse(BaseModel):
+    project_id: str
+    count: int = 0
+    bounded: int = Field(default=50, description="list 输出硬上限")
+    items: List[WorkspaceSnapshotSummary] = Field(default_factory=list)
+
+
+class WorkspaceSnapshotSaveResponse(BaseModel):
+    status: str = "ok"
+    project_id: str
+    home: str = "project"
+    snapshot_id: str
+    label: str = ""
+    durable_pointers: int = 0
+    materialize_skipped: List[str] = Field(default_factory=list)
+    snapshot: Dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkspaceSnapshotDeleteResponse(BaseModel):
+    status: str = "deleted"
+    snapshot_id: str
+    home: str = "project"
