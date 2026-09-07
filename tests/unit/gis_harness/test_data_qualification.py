@@ -236,7 +236,7 @@ class TestCompilerQualifyStage:
         )
 
         assert "qualify_data" in COMPILER_STAGES
-        assert len(COMPILER_STAGES) == 14
+        assert len(COMPILER_STAGES) == 15
         c = compile_workflow("成都各区的教育资源公平性如何",
                              recipe_id="education_equity_per_capita",
                              profile={"featureCount": 60,

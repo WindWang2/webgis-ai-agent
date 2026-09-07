@@ -113,7 +113,7 @@ def test_v2_recipe_compilation_coverage():
                      "fields": {"value": {"type": "number"},
                                 "population": {"type": "number"}}},
         )
-        assert len(compilation.stages) == 14, f"{rid}: stages {len(compilation.stages)}"
+        assert len(compilation.stages) == 15, f"{rid}: stages {len(compilation.stages)}"
         blocked = [s for s in compilation.stages if s.status == "blocked"]
         # 编译blocked 仅允许来自义务阻断（科学诚实），不允许编译器自身失败
         for s in blocked:

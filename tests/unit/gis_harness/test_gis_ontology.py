@@ -253,10 +253,10 @@ class TestCompilerOntologyStage:
         )
 
         assert "map_task_ontology" in COMPILER_STAGES
-        assert len(COMPILER_STAGES) == 14
+        assert len(COMPILER_STAGES) == 15
         c = compile_workflow("成都小学的分布情况")
         assert [s.stage for s in c.stages] == list(COMPILER_STAGES)
-        assert len(c.stages) == 14
+        assert len(c.stages) == 15
         stage = c.stage("map_task_ontology")
         assert stage is not None
         assert stage.evidence.get("primary_task") == "distribution.point_distribution"

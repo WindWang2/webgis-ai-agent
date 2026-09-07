@@ -12,7 +12,7 @@ evidence。设计约束：
 - durable execution 仍由 SessionPlan / Pi runtime 负责 —— 本模块只编译，
   不执行。
 
-管线（规格 §10；V3 扩展后 14 阶段）：
+管线（规格 §10；V3 扩展后 15 阶段）：
 
     1 normalize_intent          8  compile_capability_dag
     2 map_task_ontology (V3)    9  evaluate_obligations
@@ -21,6 +21,7 @@ evidence。设计约束：
     5 resolve_recipe_candidates 12 resolve_cartography
     6 resolve_data_roles       13  produce_map_product_plan
     7 qualify_data (V3)        14  produce_completion_contract
+    7b plan_candidates (V3)
 """
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ COMPILER_STAGES = (
     "resolve_recipe_candidates",
     "resolve_data_roles",
     "qualify_data",
+    "plan_candidates",
     "compile_capability_dag",
     "evaluate_obligations",
     "resolve_algorithms",
@@ -81,6 +83,8 @@ class WorkflowCompilation(BaseModel):
     ontology_matches: List[Dict[str, Any]] = Field(default_factory=list)
     # V3：数据角色资格裁决（typed data qualification，per-role 四态+修复）。
     data_qualifications: List[Dict[str, Any]] = Field(default_factory=list)
+    # V3：多候选规划候选集（selected + rejected + 拒绝理由，可解释 trace）。
+    plan_candidates: Dict[str, Any] = Field(default_factory=dict)
     # plan 为 map_product_plan 阶段的有界 dump（同 SessionPlan chapter 形态）；
     # 保持 dict 以免引入 planner 模型对编译器产物的硬依赖。
     plan: Dict[str, Any] = Field(default_factory=dict)
@@ -101,6 +105,7 @@ class WorkflowCompilation(BaseModel):
             "stages": [s.to_bounded_dict() for s in self.stages],
             "ontology_matches": self.ontology_matches[:6],
             "data_qualifications": self.data_qualifications[:16],
+            "plan_candidates": self.plan_candidates,
             "data_roles": self.data_roles[:16],
             "obligations": self.obligations[:16],
             "capability_dag": self.capability_dag,
@@ -276,6 +281,43 @@ def compile_workflow(
                 len(q.remediation) for q in data_qualifications),
         },
     ))
+
+    # ── 7b plan_candidates（V3：多候选生成/评分/可解释选择）──────────
+    from app.services.gis_harness.plan_candidates import generate_plan_candidates
+    candidate_set = generate_plan_candidates(
+        merged, profile=profile, available_tools=available_tools)
+    compilation.plan_candidates = candidate_set.to_bounded_dict()
+    selected_candidate = candidate_set.selected
+    # 零漂移改写：仅当语义 top-1 被科学阻断而最优候选可行时，改写计划
+    # 承载 recipe（候选集本身完整保留，供 trace/replay/evaluation）。
+    reroute_note = ""
+    if (candidate_set.rerouted and selected_candidate is not None
+            and not recipe_id):
+        reroute_note = candidate_set.reroute_reason
+        selected = registry.get(selected_candidate.recipe_id) or selected
+        compilation.recipe_id = selected.id
+        wf_profile = getattr(selected, "workflow", None)
+        role_resolutions = resolve_data_roles(
+            selected.id, wf_profile, resolver_profile=profile)
+        compilation.data_roles = [r.to_bounded_dict() for r in role_resolutions]
+    if selected_candidate is not None and selected_candidate.disclosures:
+        stages.append(_stage_record(
+            "plan_candidates",
+            reason_codes=[],
+            evidence={"selected": selected_candidate.candidate_id,
+                      "scenario_disclosures": list(
+                          selected_candidate.disclosures[:2])},
+        ))
+    else:
+        stages.append(_stage_record(
+            "plan_candidates",
+            reason_codes=([reroute_note] if reroute_note else []),
+            evidence={"selected": candidate_set.selected_id,
+                      "candidate_count": len(candidate_set.candidates),
+                      "rejected": sum(
+                          1 for c in candidate_set.candidates
+                          if c.status == "rejected")},
+        ))
 
     # ── 7a plan production（先编译 plan，供 8/9/12 消费确定性产物）──
     plan = planner.plan_from_intent(
