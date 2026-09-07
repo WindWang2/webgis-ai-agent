@@ -28,6 +28,9 @@ class RuntimeCorrelationFilter(logging.Filter):
         record.session_id = getattr(ctx, "session_id", None) or "-" if ctx else "-"  # type: ignore[attr-defined]
         record.turn_id = getattr(ctx, "turn_id", None) or "-" if ctx else "-"  # type: ignore[attr-defined]
         record.run_id = getattr(ctx, "run_id", None) or "-" if ctx else "-"  # type: ignore[attr-defined]
+        # ADR-0104 Wave 6：活动项目进关联主干（session 域与 project 域的桥接
+        # 已由 RuntimeContext.project_id 承载；日志面补齐同一字段）。
+        record.project_id = getattr(ctx, "project_id", None) or "-" if ctx else "-"  # type: ignore[attr-defined]
         return True
 
 
@@ -35,12 +38,12 @@ _RUNTIME_CORRELATION_FILTER = RuntimeCorrelationFilter()
 
 # 定义日志格式（#691：带关联字段；未绑定时为 "-"，可按 turn_id/session_id 直接 grep）
 LOG_FORMATTER = logging.Formatter(
-    fmt="%(asctime)s [%(levelname)-8s] [req=%(request_id)s sess=%(session_id)s turn=%(turn_id)s run=%(run_id)s] %(name)-20s: %(message)s",
+    fmt="%(asctime)s [%(levelname)-8s] [req=%(request_id)s sess=%(session_id)s turn=%(turn_id)s run=%(run_id)s proj=%(project_id)s] %(name)-20s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 
 CONSOLE_FORMATTER = logging.Formatter(
-    fmt="\033[36m%(asctime)s\033[0m [\033[1;%(levelname)sm%(levelname)s\033[0m] \033[33m%(name)-20s\033[0m [req=%(request_id)s sess=%(session_id)s turn=%(turn_id)s run=%(run_id)s]: %(message)s",
+    fmt="\033[36m%(asctime)s\033[0m [\033[1;%(levelname)sm%(levelname)s\033[0m] \033[33m%(name)-20s\033[0m [req=%(request_id)s sess=%(session_id)s turn=%(turn_id)s run=%(run_id)s proj=%(project_id)s]: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 
