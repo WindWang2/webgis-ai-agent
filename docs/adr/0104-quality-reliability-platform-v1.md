@@ -58,6 +58,27 @@ manifest 编译器；历史 import 面（`GATE_THRESHOLDS` / `collect()` /
   cartographic / security / API compatibility 全部以**可再生的认证表 +
   回归测试**交付，认证表本身是生成物。
 
+### D4 — 落地形态（本分支交付物清单）
+
+| Wave | 交付物 | 形态 |
+|---|---|---|
+| W1 | `app/lib/quality/manifest.py` + `scripts/gen_quality_manifest.py` + 闸测试 | 派生投影 + 字节闸 |
+| W2/3 | `GISBenchmarkCase` 扩展（scenario_kind / 工具类 / 预算 / trace 字段）+ `app/evaluation/quality_corpus.py` | additive DSL + 确定性语料 |
+| W4 | `app/lib/quality/drift.py` + `CONTRACT_DRIFT_REPORT` | 6 检查器 + 零 BLOCKER 闸 |
+| W5 | `app/lib/quality/trace_contract.py` + `TRACE_COMPLETENESS.md` | 任务类契约 + 诚实缺口 |
+| W6 | `app/lib/observability/` + `proj=` 关联字段 | vendor-neutral 事件面 |
+| W7/8 | `tests/fixtures/chaos.py` + 4 chaos 套件 + distributed_lock 修复 | test-only 结构性关断 |
+| W9/10 | point_pattern 取消检查点 + `certification.py` 两张表 | 行为 + 派生认证 |
+| W11/12 | 墙钟文件归入 perf 车道 + 结构基线 + `DETERMINISM.md` | 棘轮 + 双跑红线 |
+| W13/14 | 科学/制图跨系统回归套件 | 输入对抗 + 语义认证 |
+| W15 | `security_manifest.py` + 安全回归套件 + 路径穿越测试重写 | control→test 清单闸 |
+| W16 | `api_compat.py` + OpenAPI 快照 | breaking/additive 分类 |
+| W17/18 | 顺序依赖修复 + `gis_samples.py` 合成样本库 | flaky 收敛 + 夹具架构 |
+| W19/20 | `scripts/quality` runner + `QUALITY_REPORT` | 本地车道 + 聚合报告 |
+
+跨波集成由 `tests/quality/test_system_scenarios.py` 横向锁定（全链
+plan→tools→MapSpec→verify→trace 认证）。
+
 ## 后果
 
 - 正面：发现能力收敛为一份可再生清单；master 收集损坏即刻修复；后续
