@@ -9,7 +9,7 @@
 > （ResourceScaleMismatch / RasterResourceGuard），benchmark 结构门消费
 > 同一批声明。空字段 = 未声明（不构成承诺）。
 
-统计：57/171 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
+统计：58/175 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
 
 | 算法 | 复杂度 | 精度 | 资源包络 | 变体(窗口) | 取消 | 容差 | 成本 cpu/mem | 执行策略 |
 |---|---|---|---|---|---|---|---|---|
@@ -33,6 +33,7 @@
 | `network.isochrone` | — | — | — | — | — | — | high/medium | ASYNC |
 | `network.isochrone.local` | — | — | — | — | — | — | high/medium | ASYNC |
 | `network.location_allocation` | — | — | — | — | — | — | high/medium | ASYNC |
+| `network.mclp_exact` | NP-hard（MILP 分支定界，最坏指数）；模型 O(n+m) 变量、O(n+Σ|N_i|) 约束，规模由需求×候选乘积闸约束 | — | — | milp_highs(scipy,[,25000]) | — | — | high/high | ASYNC |
 | `network.od_matrix` | — | — | — | — | — | — | high/medium | ASYNC |
 | `network.optimize_route` | — | — | — | — | — | — | high/low | ASYNC |
 | `network.pcenter_exact` | — | — | — | milp_highs(scipy,[,25000]) | — | — | high/high | ASYNC |
