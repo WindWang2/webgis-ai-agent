@@ -90,7 +90,8 @@ class RingSink(Sink):
     def snapshot(self, limit: int = 100) -> List[Dict[str, Any]]:
         with self._lock:
             items = list(self._ring)
-        return items[-max(0, min(limit, self._capacity)):]
+        n = max(0, min(limit, self._capacity))
+        return items[len(items) - n:] if n > 0 else []
 
     def clear(self) -> None:
         with self._lock:
@@ -98,10 +99,19 @@ class RingSink(Sink):
 
 
 class LoggingSink(Sink):
-    """stdlib logging 汇：OTel-shaped 平面字段的 JSON 行。"""
+    """stdlib logging 汇：OTel-shaped 平面字段的 JSON 行。
+
+    注意（R1 review MINOR-7，如实披露）：本模块当前是**词表+sink 基建**，
+    app/ 内尚无 emit_event 调用点（数据面接线随各主线演进）；logger 挂接
+    共享 handler 保证事件在接线后真实落盘而非被 lastResort 丢弃。
+    """
 
     def __init__(self, logger_name: str = "webgis.observability"):
-        self._logger = logging.getLogger(logger_name)
+        # get_logger 复用共享 handler + 关联过滤器（R1 review MINOR-7：
+        # 裸 getLogger 无 handler 时 INFO 会被 lastResort 丢弃）
+        from app.core.logging_config import get_logger
+
+        self._logger = get_logger(logger_name)
 
     def write(self, record: Dict[str, Any]) -> None:
         self._logger.info(json.dumps(record, ensure_ascii=False, default=str))
@@ -131,8 +141,9 @@ def _ensure_default_sink() -> None:
             _sinks.extend(_default_sinks())
 
 
-#: 兜底敏感键扫描（allowlist 之外的第二道；本模块 allowlist 词表本身不含
-#: 敏感键，此扫描防御未来词表编辑引入的回退）
+#: 兜底敏感键扫描（allowlist 之外的第二道）。正则**派生自**
+#: ``app/services/jobs/redaction.py`` 的 SENSITIVE_KEY_PARTS（R1 review
+#: MINOR-4：自绘词表比基线弱，近形键 access_key/private_key 等会漏）。
 _SENSITIVE_KEY_RE = None
 
 
@@ -141,8 +152,14 @@ def _sensitive_re():
     if _SENSITIVE_KEY_RE is None:
         import re
 
+        try:
+            from app.services.jobs.redaction import SENSITIVE_KEY_PARTS
+            parts = sorted(SENSITIVE_KEY_PARTS)
+        except Exception:  # noqa: BLE001 —— 循环导入兜底（保持历史子集）
+            parts = ["secret", "token", "password", "api_key", "apikey",
+                     "authorization", "cookie", "credential"]
         _SENSITIVE_KEY_RE = re.compile(
-            r"(?i)(secret|token|password|api_key|apikey|authorization|cookie|credential)")
+            "(?i)(" + "|".join(re.escape(p) for p in parts) + ")")
     return _SENSITIVE_KEY_RE
 
 
@@ -187,13 +204,24 @@ def emit_event(
             continue  # allowlist 制：未声明/None 一律丢弃
         if sensitive.search(key):
             continue  # 第二道防线：词表误编辑也不会泄漏
-        record[key] = value
+        # R1 review MINOR-5：值侧有界化 —— 自由文本字段（reason/verdict/tool…）
+        # 若放行任意字符串，str(exc) 之类的载荷会绕过键防线。
+        if isinstance(value, str):
+            record[key] = value[:256] + ("…" if len(value) > 256 else "")
+        elif isinstance(value, bool) or isinstance(value, (int, float)):
+            record[key] = value
+        else:
+            record[key] = str(value)[:256]
 
     _ensure_default_sink()
     with _sinks_lock:
         sinks = list(_sinks)
     for sink in sinks:
-        sink.write(record)
+        try:
+            sink.write(record)
+        except Exception:  # noqa: BLE001 —— 观测面故障不得传染业务路径
+            logger.warning("observability sink %r write failed", sink,
+                           exc_info=True)
 
 
 def event_digest(limit: int = 500) -> Dict[str, Any]:

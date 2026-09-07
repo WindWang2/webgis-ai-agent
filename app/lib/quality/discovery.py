@@ -14,12 +14,14 @@
 from __future__ import annotations
 
 import functools
+import logging
 import re
 import subprocess
 from pathlib import Path
 from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+logger = logging.getLogger(__name__)
 
 # (repo 相对根, 后缀) —— 与 pytest.ini testpaths / vitest 配置保持同源。
 SCAN_ROOTS: tuple = (
@@ -46,13 +48,17 @@ def repo_root() -> Path:
 def _git_tracked_files(root: str) -> Optional[frozenset]:
     """git 已跟踪文件集（相对路径）。失败（非 git/无 git）返回 None。"""
     try:
+        # -z：关闭 core.quotePath 的跨环境差异（CI 默认对非 ASCII 路径
+        # 加引号，会让 is_file() 静默漏文件 → 字节闸跨机器漂移）
         out = subprocess.run(
-            ["git", "ls-files"], cwd=root, capture_output=True,
+            ["git", "ls-files", "-z"], cwd=root, capture_output=True,
             text=True, timeout=30, check=True,
         ).stdout
     except Exception:  # noqa: BLE001 —— 退化为全扫描（本地实验场景）
+        logger.warning("git ls-files unavailable; discovery falls back to "
+                       "untracked-inclusive scan (byte gates may drift)")
         return None
-    return frozenset(out.splitlines())
+    return frozenset(out.split("\0")) if out else frozenset()
 
 
 def _iter_scan_files(root: Path) -> List[Path]:

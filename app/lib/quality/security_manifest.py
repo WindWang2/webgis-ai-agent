@@ -270,6 +270,12 @@ SECURITY_CONTROLS: Tuple[SecurityControl, ...] = (
             "调用点先过会话守卫。"
         ),
     ),
+    # R1 review 残差披露（MINOR-1/MINOR-2，后续硬化项，不在本分支扩大战线）：
+# - MINOR-1：LockLostError 防护路径在 artifact_registry 各写边界未启用
+#   （fail_on_lost 默认 False）——chat/session_plan 写边界已消费 .lost。
+#   后续：共享写段落默认 fail_on_lost=True 或注册表写前轮询。
+# - MINOR-2：report.py 下载存在 swap-after-check TOCTOU 残差（复用路径
+#   再打开）；硬化方向 = dirfd 相对打开 + O_NOFOLLOW + fstat 比对。
     SecurityControl(
         control_id="SEC-KG-02",
         area="templates / knowledge delete authZ（KNOWN-GAP）",
@@ -305,12 +311,23 @@ _NODE_DEF_RE_CACHE: dict = {}
 
 
 def _node_defined(text: str, node_name: str) -> bool:
+    """节点存在性：``file::Class::test_x`` 要求 def 出现在该 class 体内
+    （R1 review MINOR-3：纯文件级 containment 会让未收集类的同名 def 误过）；
+    ``file::test_x`` 维持文件级判定。"""
     pat = _NODE_DEF_RE_CACHE.get(node_name)
     if pat is None:
         pat = re.compile(r"^\s*(?:async\s+)?def\s+" + re.escape(node_name) + r"\s*\(",
                          re.MULTILINE)
         _NODE_DEF_RE_CACHE[node_name] = pat
-    return bool(pat.search(text))
+    if "::" not in node_name:
+        return bool(pat.search(text))
+    cls, func = node_name.split("::", 1)
+    class_pat = re.compile(
+        r"^class\s+" + re.escape(cls) + r"\b.*?^\s+(?:async\s+)?def\s+"
+        + re.escape(func) + r"\s*\(",
+        re.MULTILINE | re.DOTALL,
+    )
+    return bool(class_pat.search(text))
 
 
 def validate_security_manifest(
