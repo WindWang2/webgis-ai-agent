@@ -136,9 +136,19 @@ class TestBinaryFieldPrecondition:
         r = evaluate_precondition("binary_field_required", {})
         assert r.verdict == "PASS"
 
-    def test_known_fields_without_binary_rejected(self):
+    def test_known_fields_without_binary_key_defers(self):
+        # V4（ADR-0104 #4）：binaryFields 键缺席 = 证据缺席 ≠ 证据证明违反
+        # —— deferred（修复结构性 false-reject；权威空清单才拒绝）。
         r = evaluate_precondition("binary_field_required", {
             "fields": {"income": {"type": "number"}},
+        })
+        assert r.verdict == "PASS"
+        assert "deferred" in r.message
+
+    def test_authoritative_empty_binary_list_rejected(self):
+        r = evaluate_precondition("binary_field_required", {
+            "fields": {"income": {"type": "number"}},
+            "binaryFields": [],
         })
         assert r.verdict == "INSUFFICIENT_DATA"
         assert r.transform_hint

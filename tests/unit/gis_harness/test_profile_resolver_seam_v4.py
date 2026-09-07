@@ -56,7 +56,7 @@ def _build_v3_profile(
     *,
     crs: str = "EPSG:4326",
 ) -> Any:
-    from app.lib.data.profile import ProfileQuality, profile_features
+    from app.lib.data.profile import profile_features
 
     vp, quality = profile_features(features, crs=crs)
     from app.lib.data.profile import DatasetProfileV3
@@ -356,18 +356,19 @@ class TestPreconditionAbsentFacts:
         assert result.verdict == "PASS"
 
     def test_resolver_does_not_false_reject_statistics_algorithm(self):
-        """statistics 域声明 numeric_field_required 的算法在 descriptor 派生
-        画像（fields 已知、numericFields 键缺席）上不得被科学门误拒。"""
+        """hotspot 域（stats.getis_ord_gi_star 族）声明 numeric_field_required；
+        在 descriptor 派生画像（fields 已知、numericFields 键缺席）上不得被
+        科学门误拒 —— 修复前这是结构性 false-reject（审计 gap #3）。"""
         from app.lib.gis.algorithm_registry import get_algorithm_registry
 
         registry = get_algorithm_registry()
         target = None
-        for algo in registry.algorithms_for_capability("point_pattern_analysis"):
+        for algo in registry.algorithms_for_capability("hotspot"):
             if "numeric_field_required" in (algo.scientific_preconditions or []):
                 target = algo
                 break
         if target is None:  # 能力词表漂移时退化为直接构造（仍验证语义）
-            pytest.skip("no statistics algorithm declares numeric_field_required")
+            pytest.skip("no hotspot algorithm declares numeric_field_required")
         profile = {
             "featureCount": 500,
             "geometryTypes": ["Point"],
@@ -375,12 +376,12 @@ class TestPreconditionAbsentFacts:
             "fields_status": "explicit",
         }
         resolution = AlgorithmResolver().resolve(
-            "point_pattern_analysis", profile=profile, available_tools=None,
+            "hotspot", profile=profile, available_tools=None,
         )
-        assert not any(
-            "scientific_precondition" in r and "numeric_field_required" in r
-            for r in resolution.rejected
-        ), resolution.rejected
+        assert resolution.status == "resolved"
+        assert resolution.algorithm == target.id
+        assert not any("numeric_field_required" in r for r in resolution.rejected), \
+            resolution.rejected
 
 
 # ── (d) execution-time re-resolution sees profile facts ──────────────
@@ -668,10 +669,7 @@ class TestInterpolationFactResolution:
 class TestProfileRefProducer:
     async def test_registered_artifact_carries_profile_digest_and_ref(self):
         from app.lib.data.artifact_contract import from_artifact_record
-        from app.services.artifact_registry import (
-            get_artifact,
-            register_tool_artifact,
-        )
+        from app.services.artifact_registry import register_tool_artifact
         from app.services.session_data import session_data_manager
 
         session_id = "v4-profile-ref"

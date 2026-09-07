@@ -413,32 +413,32 @@ class AlgorithmResolver:
                 fb = self.algorithms.get(fb_id)
                 if fb is None or fb.runtime_status != "native":
                     continue
-                    tool, why, fb_warns = self._check_candidate(
-                        fb, profile=profile, available_tools=available_tools)
-                    if tool:
-                        fb_bv, fb_bb, fb_bt, fb_brs = _backend_evidence(fb.id, feature_count)
-                        trail.append(FallbackStep(
-                            from_element=algo.id,
-                            to_element=fb.id,
-                            reason_code=rejected[0].split(":", 1)[0] if rejected else "INELIGIBLE",
-                            evidence={"first_rejection": rejected[0] if rejected else ""},
-                            semantics=algo.fallback_semantics.get(fb_id, "approximation"),
-                        ))
-                        return AlgorithmResolution(
-                            capability=capability,
-                            status="resolved",
-                            algorithm=fb.id,
-                            tool=tool,
-                            reason=self._candidate_reason(fb, tool, profile),
-                            rejected=rejected[:_MAX_REJECTIONS],
-                            fallback_trail=trail[:_MAX_FALLBACK_TRAIL],
-                            fallback_candidates=[fb.id],
-                            scientific_warnings=fb_warns[:_MAX_REJECTIONS],
-                            backend_variant=fb_bv,
-                            backend=fb_bb,
-                            scale_tier=fb_bt,
-                            runtime_strategy=fb_brs,
-                        )
+                tool, why, fb_warns = self._check_candidate(
+                    fb, profile=profile, available_tools=available_tools)
+                if tool:
+                    fb_bv, fb_bb, fb_bt, fb_brs = _backend_evidence(fb.id, feature_count)
+                    trail.append(FallbackStep(
+                        from_element=algo.id,
+                        to_element=fb.id,
+                        reason_code=rejected[0].split(":", 1)[0] if rejected else "INELIGIBLE",
+                        evidence={"first_rejection": rejected[0] if rejected else ""},
+                        semantics=algo.fallback_semantics.get(fb_id, "approximation"),
+                    ))
+                    return AlgorithmResolution(
+                        capability=capability,
+                        status="resolved",
+                        algorithm=fb.id,
+                        tool=tool,
+                        reason=self._candidate_reason(fb, tool, profile),
+                        rejected=rejected[:_MAX_REJECTIONS],
+                        fallback_trail=trail[:_MAX_FALLBACK_TRAIL],
+                        fallback_candidates=[fb.id],
+                        scientific_warnings=fb_warns[:_MAX_REJECTIONS],
+                        backend_variant=fb_bv,
+                        backend=fb_bb,
+                        scale_tier=fb_bt,
+                        runtime_strategy=fb_brs,
+                    )
         # 能力级 fallback（如 grid_binning → density_surface）：目标能力可
         # 运行时记录为 fallback 建议，但本能力保持 unavailable（诚实报告；
         # 实际降级由 recipe eligibility / planner 图层回退执行）。

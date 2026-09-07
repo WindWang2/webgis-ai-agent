@@ -11,10 +11,13 @@
   dispatch 期；
 - 索引失效：description-only 编辑必然重建词料（audit gap #9 修复）。
 """
+from __future__ import annotations
+
 import asyncio
 
 import pytest
 
+from app.tools.descriptor import ToolStatus
 from app.services.chat.tool_retrieval import (
     ToolLexicon,
     ToolRetrievalIndex,
@@ -51,7 +54,7 @@ def _v4_off(monkeypatch):
 # 合成注册表（隔离场景；真实 registry 只用于 golden / 安全不变式）
 # ---------------------------------------------------------------------------
 
-def _mini_registry(**tools) -> "ToolRegistry":
+def _mini_registry(**tools):
     from app.tools.registry import ToolRegistry
 
     reg = ToolRegistry()
@@ -172,32 +175,34 @@ def _select(reg, **kw):
 
 
 def test_rerank_phase_fit_moves_preferred_tool_up(registry, _v4_on):
+    # generate_chart 是 assembly phase 的 preferred tool 且非 core 前门 ——
+    # core 工具的位次固定（前门先注入），不能用位次断言。
     ctx_kw = dict(user_message="导出地图产品 输出图件", k_max=20)
     sel_assembly = _select(registry, **ctx_kw, workflow_stage="assembly")
     sel_planning = _select(registry, **ctx_kw, workflow_stage="planning")
-    comp = sel_assembly.score_components.get("webgis_map_product", {})
+    assert "generate_chart" in sel_assembly.names
+    comp = sel_assembly.score_components.get("generate_chart", {})
     assert comp.get("phase_preferred") == pytest.approx(3.0)
-    assert "phase_preferred" not in sel_planning.score_components.get(
-        "webgis_map_product", {})
-    assert sel_assembly.names.index("webgis_map_product") < sel_planning.names.index(
-        "webgis_map_product")
-    reason = next(r for r in sel_assembly.reasons["webgis_map_product"]
+    assert "phase_preferred" not in sel_planning.score_components.get("generate_chart", {})
+    assert sel_assembly.names.index("generate_chart") < sel_planning.names.index(
+        "generate_chart"), "assembly phase must rank the chart tool higher"
+    reason = next(r for r in sel_assembly.reasons["generate_chart"]
                   if r.startswith("rerank("))
     assert "phase_preferred" in reason
 
 
 def test_rerank_artifact_type_match():
     reg = _mini_registry(
-        art_consumer=dict(description="probe", tags=("artfit",),
+        zoo_consumer=dict(description="probe", tags=("artfit",),
                           input_artifacts=("geojson_fc",)),
-        art_other=dict(description="probe", tags=("artfit",)),
+        aaa_other=dict(description="probe", tags=("artfit",)),
     )
     sel = _select(reg, user_message="artfit", k_max=10,
                   session_artifact_types=("geojson_fc",))
-    assert sel.names[0] == "art_consumer"
-    assert sel.score_components["art_consumer"]["artifact_type"] == pytest.approx(2.0)
+    assert sel.names[0] == "zoo_consumer"
+    assert sel.score_components["zoo_consumer"]["artifact_type"] == pytest.approx(2.0)
     sel_none = _select(reg, user_message="artfit", k_max=10)
-    assert sel_none.names.index("art_other") < sel_none.names.index("art_consumer")
+    assert sel_none.names[0] == "aaa_other", "no artifact evidence → pure name tie-break"
 
 
 def test_rerank_crs_semantics_compatibility_moves_both_ways():
@@ -233,23 +238,26 @@ def test_rerank_prior_failure_downrank_and_fallback_boost(_v4_on):
     reg = _mini_registry(
         flaky_analyzer=dict(description="probe", tags=("failfit",),
                             fallback_tool="robust_analyzer"),
-        robust_analyzer=dict(description="probe", tags=("failfit",)),
+        robust_analyzer=dict(description="rescue path", tags=("rescue",)),
     )
+    # 双次失败：flaky 5-4=1.0 < 注入的 robust 0+1.5 → fallback 升到第一
     outcomes = ({"tool": "flaky_analyzer", "ok": False, "failure_class": "timeout"},
                 {"tool": "flaky_analyzer", "ok": False, "failure_class": "timeout"})
     sel = _select(reg, user_message="failfit", k_max=10, recent_tool_outcomes=outcomes)
     assert sel.names[0] == "robust_analyzer"
     assert sel.score_components["flaky_analyzer"]["prior_failure"] == pytest.approx(-4.0)
     assert sel.score_components["robust_analyzer"]["fallback_boost"] == pytest.approx(1.5)
-    # 失败工具只降不剔
-    assert "flaky_analyzer" in sel.names
-    # 单次失败 → -2
+    assert any("fallback_of:flaky_analyzer" in r
+               for r in sel.reasons["robust_analyzer"])
+    assert "robust_analyzer" not in _select(
+        reg, user_message="failfit", k_max=10).names, "no failure → no fallback injection"
+    # 失败工具只降不剔；单次失败 → -2
     sel1 = _select(reg, user_message="failfit", k_max=10,
                    recent_tool_outcomes=({"tool": "flaky_analyzer",
                                           "ok": False, "failure_class": "timeout"},))
     assert sel1.score_components["flaky_analyzer"]["prior_failure"] == pytest.approx(-2.0)
-    assert any("fallback_of:flaky_analyzer" in r
-               for r in sel1.reasons["robust_analyzer"])
+    assert "flaky_analyzer" in sel1.names
+    assert sel1.names[0] == "flaky_analyzer", "single failure keeps flaky ahead"
 
 
 def test_rerank_continuation_boost_and_injection(_v4_on):
@@ -346,25 +354,28 @@ def test_selection_context_absent_matches_v3_golden(registry, monkeypatch):
 
 def test_kill_switch_session_signals_unreachable(registry, monkeypatch):
     surface = DynamicToolSurface(registry)
+    # 注意：workflow_stage 是 V3 既有上下文（参与复合查询），必须两边一致；
+    # 这里变化的是三个 V4 新字段。
+    shared = dict(user_message="统计成都市各区县的小学密度并做热力图",
+                  workflow_stage="analysis", k_max=20)
     signals = dict(
-        workflow_stage="analysis",
         session_artifact_types=("geojson_fc", "crs:wgs84", "scale:large"),
         recent_tool_outcomes=({"tool": "heatmap_data", "ok": False,
                                "failure_class": "timeout"},),
         continuation_tools=("buffer_analysis",),
     )
-    plain = dict(user_message="统计成都市各区县的小学密度并做热力图", k_max=20)
 
     monkeypatch.setenv("GIS_TOOL_RETRIEVAL_V4", "0")
-    off_plain = surface.select(ToolSelectionContext(**plain)).as_dict()
-    off_signals = surface.select(ToolSelectionContext(**plain, **signals)).as_dict()
+    off_plain = surface.select(ToolSelectionContext(**shared)).as_dict()
+    off_signals = surface.select(ToolSelectionContext(**shared, **signals)).as_dict()
     assert off_plain == off_signals, "kill switch must make session signals unreachable"
     assert "rerank" not in off_signals["selection_trace"]
     assert off_signals["score_components"] == {}
 
-    proj_plain = surface.project(ToolSelectionContext(**plain, byte_budget=24576))
+    proj_plain = surface.project(
+        ToolSelectionContext(**shared, byte_budget=24576))
     proj_signals = surface.project(
-        ToolSelectionContext(**plain, byte_budget=24576, **signals))
+        ToolSelectionContext(**shared, byte_budget=24576, **signals))
     assert proj_plain["schemas"] == proj_signals["schemas"]
     assert proj_plain["fingerprint"] == proj_signals["fingerprint"]
     assert proj_plain["bytes_used"] == proj_signals["bytes_used"]
@@ -418,22 +429,53 @@ def test_tier3_never_leaks_via_v4_signals(registry, _v4_on):
 
 
 def test_destructive_tool_still_requires_dispatch_confirmation(registry, _v4_on):
-    from app.tools.descriptor import ToolStatus
+    import json as _json
 
     t3 = _tier3_tool(registry)
     desc = registry.descriptor(t3)
     assert desc.requires_confirmation, "descriptor honesty must be untouched"
     assert desc.status is not ToolStatus.PLANNED
     # ranking 阶段从不授予确认：dispatch 无 confirm_tier3 必拒
-    async def _attempt():
-        return await registry.dispatch(t3, {})
+    # （registry 以结构化错误响应拒绝，不抛异常）
+    result = asyncio.run(registry.dispatch(t3, {}))
+    assert "TIER3_CONFIRMATION_REQUIRED" in _json.dumps(result, default=str)
 
-    try:
-        asyncio.run(_attempt())
-        raised = None
-    except Exception as e:  # noqa: BLE001
-        raised = e
-    assert raised is not None, "tier-3 dispatch without confirmation must refuse"
+
+def test_recent_failure_hints_from_tool_metrics(monkeypatch, _v4_on):
+    """tool_metrics 聚合器（只读）→ recent_tool_outcomes 形状的提示。"""
+    from app.services import tool_metrics
+    from app.services.chat.tool_surface_v3 import recent_failure_hints
+
+    fake = {
+        "flaky_analyzer": {"count": 3, "error_count": 2, "cancelled_count": 0},
+        "cancelled_tool": {"count": 1, "error_count": 0, "cancelled_count": 1},
+        "healthy_tool": {"count": 9, "error_count": 0, "cancelled_count": 0},
+    }
+    monkeypatch.setattr(tool_metrics, "aggregator_snapshot", lambda: fake)
+    hints = recent_failure_hints()
+    assert hints == (
+        {"tool": "cancelled_tool", "ok": False, "failure_class": "cancelled"},
+        {"tool": "flaky_analyzer", "ok": False, "failure_class": "aggregator_error"},
+    )
+    # 提示可直接喂给选择上下文并产生 prior_failure 分量（合成 registry）
+    reg = _mini_registry(
+        cancelled_tool=dict(description="probe", tags=("hintfit",)),
+        other_tool=dict(description="probe", tags=("hintfit",)),
+    )
+    sel = _select(reg, user_message="hintfit", k_max=10,
+                  recent_tool_outcomes=recent_failure_hints())
+    assert sel.score_components["cancelled_tool"]["prior_failure"] == pytest.approx(-2.0)
+    assert sel.names[0] == "other_tool"
+    # 无失败的聚合器 → 零提示；指标面异常 → 空（绝不阻断）
+    monkeypatch.setattr(tool_metrics, "aggregator_snapshot",
+                        lambda: {"healthy_tool": {"count": 1, "error_count": 0}})
+    assert recent_failure_hints() == ()
+
+    def _boom():
+        raise RuntimeError("metrics down")
+
+    monkeypatch.setattr(tool_metrics, "aggregator_snapshot", _boom)
+    assert recent_failure_hints() == ()
 
 
 # ---------------------------------------------------------------------------

@@ -142,7 +142,9 @@ def build_workflow_contract_cases() -> List[WorkflowContractCase]:
         # ── 克里金：数值字段缺失 → block_method；角度 CRS → 降级声明 ──
         WorkflowContractCase(
             "WC-kriging-blocked-no-field", "kriging_interpolation_workflow",
-            "用克里金插值生成浓度表面", profile=_PROFILE_POINTS,
+            # V4（ADR-0104 #4）：缺席事实 ≠ 证明违反 —— 「无数值字段」必须
+            # 以权威空清单（numericFields=[]）表达才构成 blocked 证据。
+            "用克里金插值生成浓度表面", profile={**_PROFILE_POINTS, "numericFields": []},
             expect_obligation_status={"kriging_numeric_field": "blocked"},
             expect_method_blockers=("kriging_numeric_field",),
             expect_verdict="BLOCKED_BY_METHOD",

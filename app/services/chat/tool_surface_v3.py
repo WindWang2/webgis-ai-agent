@@ -113,6 +113,44 @@ def _v4_context_present(ctx: ToolSelectionContext) -> bool:
         or ctx.byte_budget is not None
     )
 
+
+def recent_failure_hints(
+    tool_names: Optional[Sequence[str]] = None,
+    *,
+    max_hints: int = _MAX_RECENT_OUTCOMES,
+) -> Tuple[Dict[str, Any], ...]:
+    """tool_metrics 聚合器 → ``recent_tool_outcomes`` 形状的**只读**提示。
+
+    进程级（非会话级）失败信号源：``tool_metrics.aggregator_snapshot`` 的
+    ``error_count``/``cancelled_count`` 映射为
+    ``{"tool", "ok": False, "failure_class": "aggregator_error"|"cancelled"}``
+    （failed 工具的 fallback_tool 由此在 rerank 中获得小幅加分）。会话级
+    精确 failure_class（含 no_progress）由调用方的会话账本提供 —— 本辅助
+    只兜底无会话账本的调用方。确定性：按工具名排序、截断有界。
+    """
+    try:
+        from app.services.tool_metrics import aggregator_snapshot
+
+        snap = aggregator_snapshot()
+    except Exception:  # noqa: BLE001 — 指标面缺席按空（绝不阻断）
+        return ()
+    names = sorted(tool_names) if tool_names is not None else sorted(snap)
+    out: List[Dict[str, Any]] = []
+    for name in names:
+        stats = snap.get(name)
+        if not stats:
+            continue
+        cancelled = int(stats.get("cancelled_count") or 0)
+        errors = int(stats.get("error_count") or 0)
+        if errors > 0:
+            out.append({"tool": name, "ok": False,
+                        "failure_class": "aggregator_error"})
+        elif cancelled > 0:
+            out.append({"tool": name, "ok": False, "failure_class": "cancelled"})
+        if len(out) >= max_hints:
+            break
+    return tuple(out)
+
 #: 角色 → 允许的副作用类（Surface 安全过滤，§十二）。
 #: 未列出的角色 = 全部允许（tier-3 仍被生命周期闸拦住）。
 ROLE_SIDE_EFFECT_POLICY: Dict[str, FrozenSet[str]] = {
@@ -327,6 +365,10 @@ class DynamicToolSurface:
 
         # --- 上下文候选注入（仍受 contract filter + k_max 约束）---
         injected_reason: Dict[str, str] = {}
+        continuation_set: FrozenSet[str] = frozenset(
+            str(n).strip() for n in list(ctx.continuation_tools)[:_MAX_CONTINUATION_TOOLS]
+            if str(n).strip()
+        )
         for name in list(ctx.continuation_tools)[:_MAX_CONTINUATION_TOOLS]:
             n = str(name).strip()
             if n and n not in scores and n not in injected_reason:
@@ -399,6 +441,8 @@ class DynamicToolSurface:
                 _add(name, "prior_failure", _RERANK_FAILURE * fail_counts[name])
             if name in injected_reason:
                 selection.reasons.setdefault(name, []).append(injected_reason[name])
+            if name in continuation_set:
+                _add(name, "continuation", _RERANK_CONTINUATION)
             if name in fallback_targets:
                 _add(name, "fallback_boost", _RERANK_FALLBACK_BOOST)
 
