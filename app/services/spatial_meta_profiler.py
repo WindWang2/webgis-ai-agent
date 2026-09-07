@@ -112,6 +112,44 @@ def _quantiles(values: List[float]) -> List[float]:
   return out
 
 
+def _derived_field_facts(
+  field_schema: Dict[str, Any],
+  *,
+  feature_count: int,
+) -> Dict[str, Any]:
+  """field_schema → 派生事实键（numericFields/binaryFields/per-field null_ratio）。
+
+  与 DatasetProfile.to_resolver_profile 同一权威规则（单一语义源）：
+  - schema 完整（complete=True）→ numeric/binary 清单是权威的，空也照发
+    （「证据证明缺席」≠「证据缺席」，scientific_preconditions 据此区分
+    deferred 与 INSUFFICIENT_DATA）；
+  - schema 截断/缺席 → 只有非空清单才发（正向证据），缺席键 = unknown。
+  """
+  numeric: List[str] = []
+  categorical: List[str] = []
+  binary: List[str] = []
+  null_ratios: Dict[str, float] = {}
+  for name, meta in field_schema.items():
+    ftype = str((meta or {}).get("type") or "unknown") if isinstance(meta, dict) else "unknown"
+    if ftype == "number":
+      numeric.append(name)
+    elif ftype == "boolean":
+      categorical.append(name)
+      binary.append(name)  # boolean 列恒为 0/1 二值域
+    elif ftype in ("string",):
+      categorical.append(name)
+    if feature_count and isinstance(meta, dict):
+      null_count = meta.get("null_count")
+      if isinstance(null_count, int) and not isinstance(null_count, bool) and null_count >= 0:
+        null_ratios[name] = round(min(null_count / feature_count, 1.0), 6)
+  return {
+    "numericFields": numeric,
+    "categoricalFields": categorical,
+    "binaryFields": binary,
+    "null_ratios": null_ratios,
+  }
+
+
 def profile_from_descriptor(descriptor: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """#688：O(1) descriptor → Spatial Meta Profile 派生（零全量遍历）。
 
@@ -124,6 +162,12 @@ def profile_from_descriptor(descriptor: Optional[Dict[str, Any]]) -> Optional[Di
     契约注释明确预留的语义：semantic review 不得把不可得的 schema 元数据
     当 missing-field 失败）。descriptor 缺失或不完整时返回 None，调用方
     降级全量 profile_geojson_source。
+
+    V4（ADR-0104 #4）：descriptor 携带 CRS 时如实透传（``crs``/``crs_status``
+    —— 此前硬编码 crs=None 使 resolver 的 crs_class 科学门在该路径上死亡）；
+    同时派生 numericFields/binaryFields/null_ratio/hasTimeField 事实键
+    （同一权威规则见 _derived_field_facts）。suggestedView 保持恒空：view
+    推导需要完整 bbox+CRS 语义，保守语义不变（ref 层 auto-view 本就不可达）。
     """
     if not isinstance(descriptor, dict):
         return None
@@ -140,22 +184,74 @@ def profile_from_descriptor(descriptor: Optional[Dict[str, Any]]) -> Optional[Di
         if field_schema is not None and descriptor.get("field_schema_complete", True)
         else "unknown"
     )
-    # suggestedView 恒空：全量 profiler 只对显式地理 CRS 计算 view（投影/
-    # 未声明坐标上给 view 不安全），而 descriptor 不携带 CRS 信息——派生
-    # 路径对齐该保守语义（ref 层 auto-view 本就走不到，见 #680）。
-    return {
+    derived = _derived_field_facts(
+        # null_count 是 store 时全量遍历的每字段真实计数（字段**键数**截断
+        # 不影响已知字段的计数有效性），null_ratio 始终可派生。
+        field_schema or {}, feature_count=fc,
+    ) if field_schema else {"numericFields": [], "categoricalFields": [], "binaryFields": [], "null_ratios": {}}
+
+    crs = descriptor.get("crs")
+    crs = str(crs).strip() if isinstance(crs, str) and str(crs).strip() else None
+    fields_out: Dict[str, Any] = dict(field_schema or {})
+    for name, ratio in derived["null_ratios"].items():
+        entry = fields_out.get(name)
+        if isinstance(entry, dict):
+            entry["null_ratio"] = ratio
+    numeric_fields = list(derived["numericFields"])
+    binary_fields = list(derived["binaryFields"])
+    categorical_fields = list(derived["categoricalFields"])
+    if fields_status != "explicit":
+        # 截断 schema：空清单不构成权威缺席 —— 只保留正向证据。
+        numeric_fields = numeric_fields or None
+        binary_fields = binary_fields or None
+        categorical_fields = categorical_fields or None
+
+    # 时间证据：字段命名启发（惰性导入，避免模块加载环）；无证据不虚构
+    # hasTimeField=False（descriptor 命名启发对「缺席」证据太弱）。
+    has_time: Optional[bool] = None
+    if field_schema:
+        try:
+            from app.lib.data.profile import looks_temporal
+
+            has_time = any(
+                looks_temporal(name, (meta or {}).get("sampleValues") or [])
+                for name, meta in field_schema.items() if isinstance(meta, dict)
+            ) or None
+        except Exception:  # noqa: BLE001 — 时间证据是增值，绝不阻断派生
+            has_time = None
+
+    profile: Dict[str, Any] = {
         "bbox": list(bbox) if isinstance(bbox, (list, tuple)) else None,
-        "crs": None,
-        "crs_status": "unknown",
+        # V4：descriptor 声明了 CRS → explicit；未声明 → unknown（原硬编码
+        # crs=None 的死亡门在此修复 —— ADR-0104 决策 #4）。
+        "crs": crs,
+        "crs_status": "explicit" if crs else "unknown",
         "featureCount": fc,
         "geometryTypes": sorted(
             t for t in (descriptor.get("geometry_types") or []) if isinstance(t, str)
         ),
-        "fields": field_schema or {},
+        "fields": fields_out,
         "fields_status": fields_status,
         "suggestedView": {},
         "temporalProfile": None,
     }
+    if numeric_fields:
+        profile["numericFields"] = numeric_fields
+    if categorical_fields:
+        profile["categoricalFields"] = categorical_fields
+    if binary_fields:
+        profile["binaryFields"] = binary_fields
+    if has_time:
+        profile["hasTimeField"] = True
+        profile["temporalObservationCount"] = fc
+    if crs:
+        try:
+            from app.lib.gis.crs_safety import classify_crs
+
+            profile["crsClass"] = classify_crs(crs)
+        except Exception:  # noqa: BLE001 — 分类失败按 absent（消费方 own 兜底）
+            pass
+    return profile
 
 
 def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]) -> Dict[str, Any]:
