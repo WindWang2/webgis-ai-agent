@@ -17,6 +17,8 @@ import {
   VISUAL_TYPES,
   type BuildExportChromeOptions,
 } from '@/lib/map-kit/export-chrome';
+import { CHROME_RENDERABLE_TYPES as LIVE_CHROME_TYPES } from '@/lib/map-components/chrome-types';
+
 
 const LEGEND_SPECS = {
   'heat-1': {
@@ -208,24 +210,15 @@ describe('§13 live/export semantic parity（十维矩阵）', () => {
  * （披露族/table_panel 曾缺行：disclosure-only spec 导出有 chrome、live 空白）。
  */
 describe('Wave 9 · live ↔ export chrome vocabulary parity', () => {
-  // 镜像 map-panel.tsx 的 CHROME_RENDERABLE_TYPES（改动需双向同步）。
-  const CHROME_RENDERABLE_TYPES: ReadonlySet<string> = new Set([
-    'title', 'subtitle', 'north_arrow', 'scale_bar', 'attribution',
-    'continuous_colorbar', 'legend', 'categorical_legend',
-    'annotation', 'statistics_panel', 'chart_panel', 'map_border', 'graticule',
-    'inset_map',
-    'methodology_note', 'uncertainty_panel', 'decision_panel', 'table_panel',
-  ]);
+  // Review R1（MAJOR-3）：live 词表从共享模块导入（单一来源，无手工镜像）。
+  const { CHROME_RENDERABLE_TYPES } = { CHROME_RENDERABLE_TYPES: LIVE_CHROME_TYPES };
 
   it('VISUAL_TYPES ⊆ CHROME_RENDERABLE_TYPES（导出所画 live 必画）', () => {
     const missing: string[] = [];
     for (const type of VISUAL_TYPES) {
       if (!CHROME_RENDERABLE_TYPES.has(type)) missing.push(type);
     }
-    expect(
-      missing,
-      `export 可渲染而 live 不挂 chrome：${missing.join(', ')} — 同步 map-panel.tsx`,
-    ).toEqual([]);
+    expect(missing, `export 可渲染而 live 不挂 chrome：${missing.join(', ')}`).toEqual([]);
   });
 
   it('披露族与 table_panel 回归锁定（audit 06 缺口）', () => {

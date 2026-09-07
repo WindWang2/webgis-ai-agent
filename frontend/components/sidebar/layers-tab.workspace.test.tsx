@@ -52,6 +52,13 @@ const store: Record<string, any> = {
       g.id === gid ? { ...g, collapsed: !g.collapsed } : g,
     );
   }),
+  pruneLayerGroups: vi.fn((valid: Set<string>) => {
+    const membership: Record<string, string> = {};
+    for (const [id, gid] of Object.entries(store.layerGroupMembership)) {
+      if (valid.has(id)) membership[id] = gid;
+    }
+    store.layerGroupMembership = membership;
+  }),
   beginIsolate: vi.fn(),
   clearIsolate: vi.fn(),
 };
@@ -158,14 +165,14 @@ describe('Layer Workspace · 锁定护栏', () => {
     expect(screen.getByRole('button', { name: '编辑图层样式 Layer One' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '删除图层' })).toBeDisabled();
     expect(screen.getByTestId('layer-row-a').getAttribute('data-locked')).toBe('true');
-    fireEvent.click(screen.getByRole('button', { name: '解锁图层 Layer One' }));
+    fireEvent.click(screen.getByRole('button', { name: /解锁图层 Layer One/ }));
     expect(store.toggleLayerLocked).toHaveBeenCalledWith('a');
   });
 
   it('未锁定行锁定按钮写入 lock 状态', () => {
     setLayers([makeLayer({ id: 'a' })]);
     render(<LayersTab />);
-    fireEvent.click(screen.getByRole('button', { name: '锁定图层 Layer One' }));
+    fireEvent.click(screen.getByRole('button', { name: /锁定图层 Layer One/ }));
     expect(store.toggleLayerLocked).toHaveBeenCalledWith('a');
   });
 });

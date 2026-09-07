@@ -336,9 +336,16 @@ export function ComparisonView({
       ref={containerRef}
       data-testid="comparison-overlay"
       role="region"
-      aria-label={`图层对比视图：${primaryName ?? '主视图'} 与 ${secondaryName ?? '副视图'}`}
+      // Review R1（architecture MAJOR-5）：主视图是未改造的主地图（全部
+      // 可见图层在場），「A 与 B 对比」的措辞会误导 —— 如实声明右侧仅显示
+      // 副图层族。
+      aria-label={`图层对比视图：左为主视图（全部可见图层），右侧仅显示 ${secondaryName ?? '副视图'}（swipe 拖动分割线查看）`}
       className="pointer-events-none absolute inset-0 z-40"
     >
+      {/* Review R1（GIS F5）：覆盖层 z-40 会盖住主图 attribution —— 副视图
+          渲染的 basemap 瓦片必须在 pane 内自带署名（OSM/厂商红线）。
+          副图自身的 attributionControl 仍是唯一署名源；这里只做主图被遮挡
+          情况下的可发现性提示。 */}
       {/* 副图覆盖层：clip-path 裁剪渲染与命中测试（裁剪区外指针穿透到主地图）。
           容器 pointer-events-none + 地图容器 pointer-events-auto：只有可见区域
           接收手势。 */}
@@ -358,6 +365,16 @@ export function ComparisonView({
           attributionControl={false}
           transformRequest={transformRequest}
         />
+        {/* Review R1（GIS F5 MAJOR）：副视图瓦片署名 —— attributionControl
+            关闭（避免 MapLibre 缺省控件与裁剪碰撞）不等于免署名；OSM/厂商
+            条款要求可见 attribution。pane 内自带一行极简署名。 */}
+        <div
+          aria-hidden
+          data-testid="comparison-attribution"
+          className="pointer-events-none absolute bottom-0 right-0 z-[5] bg-black/40 px-1 py-0.5 text-[10px] leading-none text-white/85"
+        >
+          © OpenStreetMap contributors © CARTO
+        </div>
       </div>
 
       {/* 分割线 / 分割缝 */}
@@ -417,19 +434,10 @@ export function ComparisonView({
           >
             滑动
           </button>
-          <button
-            type="button"
-            data-testid="comparison-kind-side-by-side"
-            aria-pressed={kind === 'side-by-side'}
-            className={`rounded-pill px-2 py-0.5 text-micro ${
-              kind === 'side-by-side'
-                ? 'bg-status-accent-soft font-medium text-status-accent'
-                : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
-            }`}
-            onClick={() => updateComparison?.({ kind: 'side-by-side' })}
-          >
-            并排
-          </button>
+          {/* Review R1（GIS F2 CRITICAL）：side-by-side 诚实下线 —— 主图
+              不动的约束下，双半屏相机使两图层永不覆盖同一地理（左=主图的
+              左半、右=副图的右半），无法构成有效对比。词表保留（未来真
+              双面板实现），UI 只暴露滑动模式。 */}
           <button
             type="button"
             data-testid="comparison-exit"

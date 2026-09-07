@@ -61,6 +61,11 @@ export const styleCommands: Record<string, CommandEntry> = {
       if (outcome === 'locked') {
         return { status: 'failed', error: 'layer_locked' };
       }
+      if (outcome === 'thematic_protected') {
+        // Review R1（GIS F3）：分级/连续专题层的色彩编码受保护 —— 色彩意图
+        // 必须走 reclassify 通道（后端），flat color 会抹平分级编码。
+        return { status: 'failed', error: 'thematic_color_protected' };
+      }
       return { status: 'succeeded', result: { layerId, kind: intent.kind } };
     },
   },

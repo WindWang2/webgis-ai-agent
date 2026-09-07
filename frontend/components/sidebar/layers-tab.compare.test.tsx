@@ -34,6 +34,7 @@ const store: Record<string, any> = {
   createLayerGroup: vi.fn(() => 'wg-1'),
   assignLayersToGroup: vi.fn(),
   toggleGroupCollapsed: vi.fn(),
+  pruneLayerGroups: vi.fn(),
   beginIsolate: vi.fn(),
   clearIsolate: vi.fn(),
   enterComparison: vi.fn((patch: Record<string, unknown> = {}) => {

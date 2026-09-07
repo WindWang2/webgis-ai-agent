@@ -18,16 +18,6 @@ from app.tools.registry import ToolRegistry, tool
 logger = logging.getLogger(__name__)
 
 
-def _ylorrd_colors() -> List[str]:
-    """单一色源：MapModel default_palette（YlOrRd）→ 图例色阶。"""
-    try:
-        from app.lib.cartography.palettes import COLOR_PALETTES
-
-        return [str(c) for c in (COLOR_PALETTES.get("YlOrRd") or [])[:8]]
-    except Exception:  # noqa: BLE001 — 图例是 best-effort
-        return []
-
-
 def register_dasymetric_tools(registry: ToolRegistry):
 
     @tool(registry,
@@ -109,15 +99,9 @@ def register_dasymetric_tools(registry: ToolRegistry):
             if isinstance(f.get("properties") or {}, dict)
         ]
         finite = [float(v) for v in vals if isinstance(v, (int, float))]
-        if finite:
-            fc["legend_spec"] = {
-                "type": "continuous",
-                "field": value_field,
-                "min": min(finite),
-                "max": max(finite),
-                "palette_colors": _ylorrd_colors(),
-                "title": f"{value_field}（dasymetric 重分配）",
-            }
+        # Review R1（GIS F12）：不再强制 continuous legend_spec ——
+        # dasymetric_map 是 graduated 模型（推荐 quantiles/natural_breaks），
+        # 图例由模型分级链派生，两套图例声明不打架。
         fc["scientific_evidence"] = res.evidence
         fc["summary"] = res.summary
         return fc

@@ -48,6 +48,8 @@ Explore/Analyze/Compose 是封闭词表（`MODE_TABS`），切换只改变 rail 
 
 `lib/styles/style-intent.ts` 封闭词表（set_color/set_palette/lighten/darken/set_opacity/set_stroke_width/thinner/thicker/set_classification/set_point_size）：相对意图按当前样式求值（HSL 亮度/比例宽度），逐字段钳制，非法意图如实失败。Agent 走 `apply_style_intent` 命令；落点与手动样式面板同一条 patch_layer_style 通道。**Agent 不写任意 CSS/MapLibre paint JSON。**
 
+> Review R1（MAJOR-4）接线状态：`set_mode` / `apply_style_intent` 的**前端合约已落地**（词表校验、队列回执、终端状态上报），但后端 tool/prompt 尚未发射这两条命令（catalogue-contract 只锁后端→前端方向）。后端发射接线在后续 wave 落地；在此之前它们是可达性受限的前端就绪合约，非「已生效」的 agent 能力。
+
 ## 备选与取舍
 
 - **独立 workbench store（redux 式）**：拒绝——制造第二真相与第二订阅面；slice 并入既有 store 保持单一订阅域。

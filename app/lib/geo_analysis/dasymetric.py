@@ -113,6 +113,9 @@ def dasymetric_reallocation(
         ancillary_geojson: 控制要素面 FeatureCollection（可选 weight_field）。
         value_field: 源面数值字段名（**总量语义**；缺失字段结构化拒绝）。
         weight_field: 控制面权重字段名（空 = 纯面积权重插值）。
+            语义红线（Review R1 GIS F7）：权重必须是控制面内的**总量语义**
+            （居住人口/建筑面积等计数，Eicher–Brewer 平均加权）；相对/适宜性
+            权重会引入控制面尺寸偏差，需先换算成计数再传入。
         output_crs: 输出 CRS（默认 EPSG:4326；None = 保留工作 UTM 帧）。
 
     Returns:
@@ -195,6 +198,7 @@ def dasymetric_reallocation(
         n_area_fallback = 0      # 权重全零但有覆盖 → 面积比例
         n_uncovered = 0          # 无控制覆盖 → 整面保值
         n_no_value = 0           # 值缺失/非数值 → 整面保空值
+        n_degenerate_dropped = 0  # Review R1（GIS F9）：退化碎片丢弃计数
 
         for src_idx, src_row in src.iterrows():
             geom = src_row.geometry
@@ -224,7 +228,9 @@ def dasymetric_reallocation(
                     continue
                 a = float(inter.area)
                 if a <= _MIN_FRAGMENT_AREA_M2:
-                    continue
+                    # Review R1（GIS F9）：退化碎片（缝/点接触）丢弃也要计数
+                    # ——「诚实降级，从不静默」对本模块自己的丢弃同样适用。
+                    n_degenerate_dropped += 1
                 if weight_applied:
                     zone_area = float(anc_areas[i])
                     if zone_area <= 0.0:
@@ -287,6 +293,13 @@ def dasymetric_reallocation(
                 "weight_applied": weight_applied,
                 "method": (_METHOD_ANCILLARY if weight_applied
                            else _METHOD_AREA),
+                # Review R1（GIS F8）：有效方法 —— 全部源都退化成面积比例时
+                # 顶层 method 不再虚标 ancillary_weighted（碎片级标签恒真实）。
+                "effective_method": (
+                    _METHOD_AREA if (weight_applied and n_area_fallback > 0
+                                     and n_area_fallback >= int(len(src)))
+                    else (_METHOD_ANCILLARY if weight_applied else _METHOD_AREA)
+                ),
                 "sources": int(len(src)),
                 "ancillary_zones": int(len(anc)),
                 "fragments": len(fragments),
@@ -294,12 +307,15 @@ def dasymetric_reallocation(
                 "area_proportional_fallback": n_area_fallback,
                 "uncovered_sources": n_uncovered,
                 "no_value_sources": n_no_value,
+                "dropped_degenerate_fragments": n_degenerate_dropped,
                 "nan_weights": int(wstats.get("nan_weights", 0)),
                 "clamped_weights": int(wstats.get("clamped_weights", 0)),
                 "dropped_invalid_source": src_dropped,
                 "dropped_invalid_ancillary": anc_dropped,
-                # 总量守恒：碎片值之和 = 源值之和（舍入前精确）
-                "mass_conserving": True,
+                # 总量守恒：碎片值之和 = 源值之和（舍入前精确）。
+                # Review R1（GIS F10）：负值钳制改变输入总量 —— 此时对
+                # 「输入总量」而言不再守恒，如实降级为 False。
+                "mass_conserving": n_clamped_values == 0,
                 "note": "碎片=source∩control；value_field 必须是总量语义"
                         "（可加），比率字段不可重分配",
             },

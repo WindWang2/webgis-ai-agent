@@ -129,7 +129,9 @@ def test_missing_value_field_structurally_rejected():
 
 
 def test_negative_value_clamped_and_disclosed():
-    src = _square_fc(500000.0, 3300000.0, 100.0, {"id": "src-N", "population": -50.0})
+    # Review R1（GIS F11）：源面必须与控制层同域（合法经纬度）——否则
+    # UTM 自动选带漂移、走的是 uncovered 路径而非「钳制 + 切分」。
+    src = _square_fc(LON0, LAT0, SIZE, {"id": "src-N", "population": -50.0})
     res = dasymetric_reallocation(src, _half_slabs_fc("weight"), "population",
                                   weight_field="weight", output_crs=None)
     assert res.success

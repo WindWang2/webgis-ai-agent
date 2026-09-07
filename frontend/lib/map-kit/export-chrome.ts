@@ -488,17 +488,10 @@ function _parseDecision(raw: unknown): ExportChromeElement['disclosure'] {
  * chrome 路径切换用它判定 —— live 侧 CHROME_RENDERABLE_TYPES 必须包含
  * 它（⊇ 包含测试 export-chrome.parity.test.ts 锁定反向 parity）。
  */
-export const VISUAL_TYPES: ReadonlySet<string> = new Set([
-  'title', 'subtitle', 'legend', 'categorical_legend', 'continuous_colorbar',
-  'north_arrow', 'scale_bar', 'attribution', 'statistics_panel', 'chart_panel',
-  'annotation', 'map_border', 'graticule', 'inset_map',
-  // V3（ADR-0101 D6）：披露族落地 canvas 导出 —— 计入可视组件
-  //（disclosure-only spec 也走 chrome 路径，否则面板被 fromSpec 门饿死）
-  'methodology_note', 'uncertainty_panel', 'decision_panel',
-  // V4：表格面板落地 canvas 导出（drawChromeTable 有界快照）—— 计入
-  // 可视组件（table-only spec 也走 chrome 路径）
-  'table_panel',
-]);
+// Review R1（MAJOR-3）：词表本体在 lib/map-components/chrome-types.ts
+//（live/export 单一来源）；此处 re-export 维持既有导入面。
+import { CHROME_RENDERABLE_TYPES as _SHARED_TYPES } from '@/lib/map-components/chrome-types';
+export const VISUAL_TYPES: ReadonlySet<string> = new Set(_SHARED_TYPES);
 
 /**
  * 构建导出 chrome 模型（异步：chartRef 可能需要拉取 session artifact）。

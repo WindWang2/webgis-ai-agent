@@ -36,6 +36,7 @@ export function resolveFilterState(
 import { MapActionHandler } from "./map-action-handler"
 import { LegendStack } from "./legend-stack"
 import { MapDecorations } from "./map-decorations"
+import { CHROME_RENDERABLE_TYPES, specHasDecorationComponent } from '@/lib/map-components/chrome-types'
 import { MapToolbarHUD, type MeasureMode } from "./map-toolbar-hud"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
@@ -1210,26 +1211,24 @@ export function MapPanel({
     [liveGeneration],
   )
   const specComponents = committedSpec?.layout?.components ?? []
-  // 包含清单（只认 MapSpecChrome 实际渲染的类型）：未来未知组件类型不会
-  // 静默吞掉既有 chrome。
-  // Wave 9（audit 06）：披露族 + table_panel 此前缺行 —— 仅披露/表格组件的
-  // spec 走了导出 chrome 路径（export 侧 VISUAL_TYPES 含它们）而 live 不挂
-  // MapSpecChrome，反向 parity 缺口（导出画得出、live 画不出来）。四种类型
-  // 的 live 渲染器均已注册（registry-parity 测试锁定），补行即挂载。
-  const CHROME_RENDERABLE_TYPES = new Set([
-    'title', 'subtitle', 'north_arrow', 'scale_bar', 'attribution',
-    'continuous_colorbar', 'legend', 'categorical_legend',
-    'annotation', 'statistics_panel', 'chart_panel', 'map_border', 'graticule',
-    'inset_map',
-    'methodology_note', 'uncertainty_panel', 'decision_panel', 'table_panel',
-  ])  // 终审 F4：map_border 有 live 渲染器（P6）—— map_border-only spec
-     // 此前不挂 MapSpecChrome，边框导出得出来、live 画不出来。
-     // P3：graticule live 渲染器落地（#1089 deferred 补齐）—— graticule-only
-     // spec 同理必须挂 chrome（导出画经纬网、live 也画）。
   const enabledSpecComponents = specComponents.filter((c) => c.enabled !== false)
+  const chromeEnabledTypes = new Set(
+    enabledSpecComponents.map((c) => c.type),
+  )
+  // 终审 F4：map_border 有 live 渲染器（P6）—— map_border-only spec
+  // 此前不挂 MapSpecChrome，边框导出得出来、live 画不出来。
+  // P3：graticule live 渲染器落地（#1089 deferred 补齐）—— graticule-only
+  // spec 同理必须挂 chrome（导出画经纬网、live 也画）。
+  // Wave 9 / Review R1：词表提升到 lib/map-components/chrome-types（live 与
+  // export 单一来源；parity 测试锁 VISUAL_TYPES ⊆ CHROME_RENDERABLE_TYPES）。
   const hasSpecChrome = enabledSpecComponents.some(
     (c) => CHROME_RENDERABLE_TYPES.has(c.type),
   )
+  // Review R1（MAJOR-2）：MapDecorations 的让位门改为**装饰族**子集 ——
+  // 披露/表格等分析组件在場不得静默 live 标题（MapSpecChrome 只回填
+  // 罗盘/比例尺，不回填标题；此前 disclosure-only spec 导出有 title、
+  // live 没有 —— 正是本波要消除的反向 parity）。
+  const hasSpecDecoration = specHasDecorationComponent(chromeEnabledTypes)
   // spec 图例族组件在场时，HUD 主题图例栈让位（否则同屏两份图例）。
   // 过滤交互仍可用（图层列表/属性面板）；见 PR Known Limitations。
   const hasSpecLegend = enabledSpecComponents.some((c) =>
@@ -1375,8 +1374,10 @@ export function MapPanel({
           纯点/热力会话此前永远没有比例尺；spec chrome 在场时让位
           （MapSpecChrome 自带 north_arrow/scale_bar 缺省回退，与 exporter
           一致），无组件 spec/旧会话行为不变。 */}
+      {/* Review R1（MAJOR-2）：让位门用装饰族 —— 披露/表格等分析组件在場
+          不得静默 live 标题（MapSpecChrome 只回填罗盘/比例尺，不回填标题）。 */}
       <MapDecorations
-        show={!hasSpecChrome}
+        show={!hasSpecDecoration}
         title={cartographyTitle ?? thematicLayers[0]?.name ?? null}
         zoom={decorProps.zoom}
         centerLat={decorProps.centerLat}

@@ -103,9 +103,10 @@ export function evaluateStyleIntent(current: LayerStyle, intent: StyleIntent): L
       next.color = intent.color;
       return next;
     case 'set_palette':
-      if (!intent.palette || !STYLE_PALETTES.has(intent.palette)) return null;
-      next.palette = intent.palette;
-      return next;
+      // Review R1（architecture CRITICAL）：palette 字段当前在渲染器/
+      // compile/图例派生中零消费 —— 落库即是静默无效操作。诚实失败，
+      // 等后端 resolver 接管 palette 语义后再放开（词表保留作合约预埋）。
+      return null;
     case 'lighten':
     case 'darken': {
       const amount = clamp(intent.amount ?? 0.15, 0, 0.9);
@@ -130,15 +131,12 @@ export function evaluateStyleIntent(current: LayerStyle, intent: StyleIntent): L
       next.strokeWidth = clamp(Math.round(base * factor * 10) / 10, 0.2, 24);
       return next;
     }
-    case 'set_classification': {
-      if (!intent.method || !CLASSIFICATION_METHODS.has(intent.method)) return null;
-      if (typeof intent.classes !== 'number' || !Number.isInteger(intent.classes)
-        || intent.classes < 2 || intent.classes > 9) return null;
-      // 分类参数挂在 style 上（分级渲染的 style 契约字段 —— 后端 resolver
-      // 与图例派生读取同一字段族，前端只记录意图不重算分级）。
-      next.classification = { method: intent.method, classes: intent.classes };
-      return next;
-    }
+    case 'set_classification':
+      // Review R1（architecture CRITICAL）：分级只在后端建图时计算
+      // （app/tools/cartography.py）；前端改 classification 无渲染消费面
+      // 且会以 user 语义清认证（假「待同步」）。诚实失败直至后端提供
+      // reclassify 通道。
+      return null;
     case 'set_point_size':
       if (typeof intent.size !== 'number' || !(intent.size > 0)) return null;
       next.pointSize = clamp(Math.round(intent.size * 10) / 10, 1, 40);
@@ -166,10 +164,18 @@ function styleToPaint(style: LayerStyle): Record<string, unknown> {
  * 应用意图（唯一收口）：乐观 store 更新 + spec 承载层走 patch_layer_style
  * 持久通道（与手动样式面板同一条 CAS 串行链）。返回 null = 意图非法。
  */
-export async function applyStyleIntent(layerId: string, intent: StyleIntent): Promise<'applied' | 'invalid' | 'locked'> {
+export async function applyStyleIntent(layerId: string, intent: StyleIntent): Promise<'applied' | 'invalid' | 'locked' | 'thematic_protected'> {
   const layer = useHudStore.getState().layers.find((l) => l.id === layerId);
   if (!layer) return 'invalid';
   if (useHudStore.getState().lockedLayerIds.includes(layerId)) return 'locked';
+  // Review R1（GIS F3 MAJOR）：分级/连续专题层的颜色来自 legend_spec 色带
+  // （step/interpolate 表达式）—— 设 flat color 会静默抹平分级编码（图例
+  // 与地图分叉）。此类层拒绝绝对/相对色彩意图：如示失败，不是「猜一个」。
+  const thematic = layer.legend_spec?.type != null
+    && layer.legend_spec.type !== 'categorical';
+  if (thematic && (intent.kind === 'set_color' || intent.kind === 'lighten' || intent.kind === 'darken')) {
+    return 'thematic_protected';
+  }
   const next = evaluateStyleIntent(layer.style ?? {}, intent);
   if (!next) return 'invalid';
   useHudStore.getState().updateLayer(layerId, { style: next });

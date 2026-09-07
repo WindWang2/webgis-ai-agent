@@ -45,6 +45,7 @@ const store: Record<string, unknown> = {
   createLayerGroup: vi.fn(() => 'wg-test'),
   assignLayersToGroup: vi.fn(),
   toggleGroupCollapsed: vi.fn(),
+  pruneLayerGroups: vi.fn(),
 };
 
 function setStoreLayers(layers: Layer[]) {

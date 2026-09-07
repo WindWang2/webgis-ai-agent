@@ -367,8 +367,10 @@ function LayerRow({
 
         <button
           type="button"
-          aria-label={`重新排序 ${layer.name}（第 ${globalIdx + 1} / ${totalCount} 层，Alt+↑/↓ 移动）`}
-          title="拖拽移动，或 Alt+↑/↓"
+          // Review R1（GIS F4）：叠放方向如实披露 —— 本仓数组序 = 自底向上
+          // 渲染（index 0 最先 add = 最底层），Alt+↑ 即向底层移动。
+          aria-label={`重新排序 ${layer.name}（自底向上第 ${globalIdx + 1} / ${totalCount} 层，Alt+↑ 移向底层 / Alt+↓ 移向顶层）`}
+          title="拖拽移动，或 Alt+↑/↓（↑ = 移向底层）"
           disabled={locked}
           className="flex h-control-sm w-icon-md shrink-0 cursor-grab items-center justify-center rounded-xs text-ink-disabled transition-colors hover:text-ink-secondary active:cursor-grabbing disabled:cursor-not-allowed"
           onKeyDown={(e) => {
@@ -459,7 +461,12 @@ function LayerRow({
           />
           <IconButton
             size="sm"
-            label={locked ? `解锁图层 ${layer.name}` : `锁定图层 ${layer.name}`}
+            // Review R1（MINOR-9）：lock 覆盖面如实声明 —— 护 UI/批量/隔离/
+            // turn-focus 收起与 agent set_mode 外壳；agent remove_layer/
+            // set_layer_visibility 事务通道未接 lock（后续接线）。
+            label={locked
+              ? `解锁图层 ${layer.name}（当前防护：面板操作/批量/隔离/轮次收起）`
+              : `锁定图层 ${layer.name}（防护面板操作/批量/隔离/轮次收起）`}
             icon={locked ? Lock : LockOpen}
             active={locked}
             onClick={() => toggleLayerLocked(layer.id)}
@@ -673,6 +680,10 @@ function BatchActionBar({ scopeIds }: { scopeIds: string[] }) {
             if (value === '__new__') {
               const id = createLayerGroup(`分组 ${layerGroups.length + 1}`);
               assignLayersToGroup(selectedLayerIds, id);
+            } else if (value === '__ungrouped__') {
+              // Review R1（architecture MAJOR-2）：此前落在通用 else 分支，
+              // 把字面量当 groupId 传入 → assignLayersToGroup 未知组 no-op。
+              assignLayersToGroup(selectedLayerIds, null);
             } else if (value === '') {
               assignLayersToGroup(selectedLayerIds, null);
             } else {
@@ -772,6 +783,13 @@ export function LayersTab() {
     }
   }, [layers, dragId]);
 
+  // Review R1（MINOR-7）：组成员清理接线 —— 图层删除后 membership 里的
+  // stale id 由投影兜底丢弃，但显式 prune 防止长会话内无界积累。
+  const pruneLayerGroups = useHudStore((s) => s.pruneLayerGroups);
+  useEffect(() => {
+    pruneLayerGroups(new Set(layers.map((l) => l.id)));
+  }, [layers, pruneLayerGroups]);
+
   const visibleCount = useMemo(() => layers.filter((l) => l.visible).length, [layers]);
 
   const handleDragStart = useCallback((id: string) => setDragId(id), []);
@@ -861,6 +879,9 @@ export function LayersTab() {
     <div className="flex flex-col h-full">
       {/* Stats header + 搜索 + 新建分组 */}
       <div className="flex shrink-0 items-center gap-3 border-b border-edge-subtle bg-surface-panel px-panel py-1">
+        <span className="text-micro text-ink-disabled" title="列表自下而上 = 地图自底向顶的叠放次序">
+          ↑顶层
+        </span>
         {[
           { label: '总图层', value: layers.length },
           { label: '可见', value: visibleCount },

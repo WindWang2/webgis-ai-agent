@@ -78,9 +78,10 @@ export async function batchSetVisibility(
   scopeLayerIds: readonly string[],
   visible: boolean,
 ): Promise<void> {
-  const state = useHudStore.getState();
   for (const id of scopeLayerIds) {
-    const layer = state.layers.find((l) => l.id === id);
+    // Review R1（MINOR-11）：循环内重读最新状态 —— 前一层 await 期间用户
+    // 可能改动了本层可见性；用入口快照会做出错误方向的 toggle。
+    const layer = useHudStore.getState().layers.find((l) => l.id === id);
     if (!layer || layer.visible === visible) continue;
     if (isLocked(id)) continue;
     try {
@@ -99,9 +100,9 @@ export async function batchSetOpacity(
 ): Promise<void> {
   if (!Number.isFinite(opacity)) return;
   const clamped = Math.min(1, Math.max(0, opacity));
-  const state = useHudStore.getState();
   for (const id of scopeLayerIds) {
-    const layer = state.layers.find((l) => l.id === id);
+    // Review R1（MINOR-11）：同 batchSetVisibility —— 循环内重读。
+    const layer = useHudStore.getState().layers.find((l) => l.id === id);
     if (!layer || isLocked(id)) continue;
     if (Math.abs((layer.opacity ?? 1) - clamped) <= 1e-9) continue;
     try {

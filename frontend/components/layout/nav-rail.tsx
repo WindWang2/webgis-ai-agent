@@ -127,24 +127,21 @@ export function NavRail() {
     [isTabActive, setActiveTab, toggleLeftPanel]
   );
 
+  // Review R1（MAJOR-3）：tab 协调已上收 setWorkbenchMode（store 内落
+  // activeLeftTab）—— 用户与 agent 路径共享同一协调，rail 不再重复。
   const switchMode = useCallback(
     (next: WorkbenchMode) => {
       if (next === mode) return;
       setWorkbenchMode(next, 'user');
-      // 落到该模式记忆的 tab；无记忆（首次进入）用组合首个（chat 恒在场）。
-      const remembered = useHudStore.getState().modeActiveTab[next];
-      const target = remembered ?? MODE_TABS[next][0];
-      setActiveTab(target as LeftTab);
     },
-    [mode, setWorkbenchMode, setActiveTab],
+    [mode, setWorkbenchMode],
   );
 
-  /** agent 切换模式的一键返回：恢复最近一次用户所在模式（agentOrigin 之前
-   *  的模式不可知 —— 记录在模式记忆里，这里回 explore 兜底并由用户再选）。 */
+  /** agent 切换模式的一键返回：恢复 agent 切换前用户所在模式（store 记录）。 */
   const revertAgentMode = useCallback(() => {
-    setWorkbenchMode('explore', 'user');
-    setActiveTab(useHudStore.getState().modeActiveTab.explore as LeftTab);
-  }, [setWorkbenchMode, setActiveTab]);
+    const target = useHudStore.getState().userModeBeforeAgent ?? 'explore';
+    setWorkbenchMode(target, 'user');
+  }, [setWorkbenchMode]);
 
   const onTablistKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -217,8 +214,8 @@ export function NavRail() {
           <button
             type="button"
             data-testid="mode-agent-revert"
-            aria-label="Agent 已切换工作台模式，点此返回探索模式"
-            title="Agent 已切换工作台模式 — 点此返回探索模式"
+            aria-label="Agent 已切换工作台模式，点此返回你之前的工作台模式"
+            title="Agent 已切换工作台模式 — 点此返回你之前的模式"
             onClick={revertAgentMode}
             className="flex h-9 w-9 items-center justify-center rounded-md text-status-warning transition-colors hover:bg-surface-hover"
           >

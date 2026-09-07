@@ -29,9 +29,12 @@ const store: Record<string, unknown> = {
   mode: 'explore',
   modeOrigin: null,
   modeActiveTab: { explore: 'chat', analyze: 'analysis', compose: 'components' },
+  // Review R1 MAJOR-3 后：tab 协调在 store 的 setWorkbenchMode 内 ——
+  // mock 与 store 同构（写 mode 并落该模式记忆 tab）。
   setWorkbenchMode: vi.fn((mode: string, origin?: string) => {
     store.mode = mode;
     store.modeOrigin = origin ?? 'user';
+    setActiveLeftTab(store.modeActiveTab[mode] ?? 'chat');
   }),
 };
 
@@ -97,6 +100,7 @@ describe('NavRail', () => {
     render(<NavRail />);
     fireEvent.click(screen.getByTestId('mode-analyze'));
     expect(store.setWorkbenchMode).toHaveBeenCalledWith('analyze', 'user');
+    // tab 协调已上收 store（setWorkbenchMode 落 activeLeftTab）—— mock 同构。
     expect(setActiveLeftTab).toHaveBeenCalledWith('analysis'); // modeActiveTab.analyze
   });
 

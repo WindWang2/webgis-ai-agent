@@ -69,6 +69,8 @@ export interface WorkbenchSlice {
   modeActiveTab: Record<WorkbenchMode, string>;
   /** 最近一次模式切换的来源（agent 切换时 UI 展示可发现回执）。 */
   modeOrigin: WorkbenchModeOrigin | null;
+  /** agent 切换前用户所在模式（一键返回的目标；用户切换时不清除）。 */
+  userModeBeforeAgent: WorkbenchMode;
   /** 切换模式。tab 缺省用该模式记忆值（无记忆用组合首个）。 */
   setWorkbenchMode: (mode: WorkbenchMode, origin?: WorkbenchModeOrigin) => void;
 
@@ -133,13 +135,26 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
     /* ─── Mode ─── */
     mode: 'explore',
     modeActiveTab: { explore: 'chat', analyze: 'analysis', compose: 'components' },
-    modeOrigin: null,
+    modeOrigin: null as WorkbenchModeOrigin | null,
+    userModeBeforeAgent: 'explore' as WorkbenchMode,
+    // Review R1（architecture MAJOR-3）：tab 协调上收 store —— 切模式即把
+    // activeLeftTab 落到该模式的记忆 tab（无记忆用组合首个），保证
+    // activeLeftTab ∈ MODE_TABS[mode] 对用户与 agent 路径同时成立
+    // （此前只有 NavRail 用户路径做协调，agent set_mode 会留下界外 tab）。
     setWorkbenchMode: (mode, origin = 'user') =>
       set((s) => {
         if (s.mode === mode) {
           return s.modeOrigin === origin ? s : { modeOrigin: origin };
         }
-        return { mode, modeOrigin: origin };
+        const remembered = s.modeActiveTab[mode] ?? MODE_TABS[mode][0];
+        return {
+          mode,
+          modeOrigin: origin,
+          activeLeftTab: remembered as typeof s.activeLeftTab,
+          leftPanelOpen: true,
+          // agent 切换时记录用户此前所在模式（MINOR-8：一键返回语义）。
+          userModeBeforeAgent: origin === 'agent' ? s.mode : s.userModeBeforeAgent,
+        };
       }),
 
     /* ─── Layer Selection ─── */
@@ -260,7 +275,14 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
     // enter 保留上次分割位置（再次进入不跳回缺省）。
     enterComparison: (patch) =>
       set((s) => ({
-        comparison: { ...EMPTY_COMPARISON, position: s.comparison.position, ...patch, active: true },
+        // Review R1（MINOR-12）：kind 与 position 同样保留（用户偏好不被重置）。
+        comparison: {
+          ...EMPTY_COMPARISON,
+          position: s.comparison.position,
+          kind: s.comparison.kind,
+          ...patch,
+          active: true,
+        },
       })),
     updateComparison: (patch) =>
       set((s) => (s.comparison.active ? { comparison: { ...s.comparison, ...patch } } : s)),

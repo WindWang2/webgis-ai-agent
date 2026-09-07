@@ -50,9 +50,10 @@ describe('style intent · evaluateStyleIntent', () => {
   it('set_color 拒绝非 hex；set_palette 只认目录词表', () => {
     expect(evaluateStyleIntent(base, { kind: 'set_color', color: 'red' })).toBeNull();
     expect(evaluateStyleIntent(base, { kind: 'set_color', color: '#3b82f6' })?.color).toBe('#3b82f6');
-    expect(evaluateStyleIntent(base, { kind: 'set_palette', palette: 'NotAPalette' })).toBeNull();
-    expect(evaluateStyleIntent(base, { kind: 'set_palette', palette: 'Blues' })?.palette).toBe('Blues');
-    expect(STYLE_PALETTES.has('Viridis')).toBe(true);
+    // Review R1 CRITICAL：palette/classification 无前端消费面 → 诚实失败
+    // （词表保留作合约预埋，后端通道就绪前 agent 收到 failed 而非静默无效）。
+    expect(evaluateStyleIntent(base, { kind: 'set_palette', palette: 'Blues' })).toBeNull();
+    expect(STYLE_PALETTES.has('Blues')).toBe(true);
   });
 
   it('相对意图：thinner/thicker 按比例求值并钳制', () => {
@@ -62,15 +63,10 @@ describe('style intent · evaluateStyleIntent', () => {
     expect(evaluateStyleIntent({ strokeWidth: 0.2 }, { kind: 'thinner' })?.strokeWidth).toBe(0.2);
   });
 
-  it('set_classification 校验方法与级数（2..9 整数）', () => {
+  it('set_classification 诚实失败（后端 reclassify 通道未接线）', () => {
+    // 方法/级数校验会在通道接线后恢复；当前一律 null → agent 收到 failed。
     expect(
       evaluateStyleIntent(base, { kind: 'set_classification', method: 'quantiles', classes: 7 }),
-    ).toMatchObject({ classification: { method: 'quantiles', classes: 7 } });
-    expect(
-      evaluateStyleIntent(base, { kind: 'set_classification', method: 'kmeans', classes: 7 }),
-    ).toBeNull();
-    expect(
-      evaluateStyleIntent(base, { kind: 'set_classification', method: 'quantiles', classes: 12 }),
     ).toBeNull();
   });
 
