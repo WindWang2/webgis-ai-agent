@@ -133,6 +133,15 @@ class LineageService:
         # None (genuine root) and [] (a deps-less step from the engine) both map
         # to a single root edge; a non-empty list maps to one edge per parent.
         parents = parent_artifact_ids or [None]
+        # Wave-11 (audit 08 §6.2.5): write-time redaction as defense in depth.
+        # The engine already redacts; the service redacts again (idempotent) so
+        # any OTHER caller path can never persist secrets or inline payloads as
+        # edge parameters — lineage stays links + bounded facts.
+        persisted_parameters = None
+        if parameters:
+            from app.services.provenance.manifest import redact_provenance_args
+
+            persisted_parameters = redact_provenance_args(parameters)
         # Only the FIRST/root edge carries the input-dataset provenance, so an
         # artifact fed by a dataset records DatasetVersion → Artifact without
         # fabricating a synthetic parent artifact (INV-LIN4).
@@ -148,7 +157,7 @@ class LineageService:
                 producing_algorithm=producing_algorithm,
                 mapspec_fingerprint=mapspec_fingerprint,
                 workflow_run_id=workflow_run_id,
-                parameters=parameters or {},
+                parameters=persisted_parameters or {},
                 source_dataset_id=source_dataset_id if first else None,
                 source_dataset_fingerprint=source_dataset_fingerprint if first else None,
                 content_fingerprint=content_fingerprint,

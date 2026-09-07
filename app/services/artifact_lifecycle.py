@@ -26,6 +26,7 @@ directory family.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import time
@@ -349,7 +350,18 @@ async def plan_promotion_store_gc(
     IO 在 worker 线程执行（与既有清扫步骤同纪律）。
     """
     return await asyncio.to_thread(
-        _plan_promotion_store_gc_sync,
+        plan_promotion_store_gc_sync,
+        grace_hours=grace_hours,
+        now=now,
+    )
+
+
+def plan_promotion_store_gc_sync(
+    *, grace_hours: Optional[float] = None, now: Optional[float] = None
+) -> Dict[str, Any]:
+    """``plan_promotion_store_gc`` 的同步体（W12 运维端点 / 测试直接调用 ——
+    sync 路由已在 worker 线程池，无需再起事件循环）。"""
+    return _plan_promotion_store_gc_sync(
         float(grace_hours) if grace_hours is not None else _promotion_gc_grace_hours(),
         float(now) if now is not None else time.time(),
     )
@@ -360,7 +372,14 @@ async def execute_promotion_store_gc(plan: Dict[str, Any]) -> Dict[str, Any]:
     谓词**复检后删除。绝不删除被任何 revision/Artifact 行引用的 blob。"""
     if not isinstance(plan, dict) or not plan.get("deletable"):
         return {"deleted": [], "skipped_protected": [], "failed": [], "bytes_freed": 0}
-    return await asyncio.to_thread(_execute_promotion_store_gc_sync, plan)
+    return await asyncio.to_thread(execute_promotion_store_gc_sync, plan)
+
+
+def execute_promotion_store_gc_sync(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """``execute_promotion_store_gc`` 的同步体（W12 运维端点 / 测试直接调用）。"""
+    if not isinstance(plan, dict) or not plan.get("deletable"):
+        return {"deleted": [], "skipped_protected": [], "failed": [], "bytes_freed": 0}
+    return _execute_promotion_store_gc_sync(plan)
 
 
 async def _sweep_promotion_store() -> Dict[str, Any]:
@@ -384,6 +403,42 @@ async def _sweep_promotion_store() -> Dict[str, Any]:
     except Exception as e:  # noqa: BLE001 — reclamation must not break delete
         logger.warning("[artifact-lifecycle] promotion-store gc failed: %s", e)
     return partial
+
+
+async def _sweep_retention_and_orphans() -> Dict[str, Any]:
+    """Wave 12：保留策略（unpinned 修订超龄）+ 孤儿修订行清扫。
+
+    两者都是 plan → execute pair（同一保护谓词双侧复检，W12 quota.py）。
+    默认部署（无 env）保留策略 keep-forever → 保留计划恒空；孤儿修订行
+    清理有界（FK-less 漂移防护）。fault-isolated：失败只告警不阻断。
+    sync DB/文件 IO 整体在 worker 线程执行（独立 Session，不跨线程共享）。
+    """
+    from app.services.data_lifecycle.quota import (
+        execute_orphan_revision_cleanup,
+        execute_retention_cleanup,
+        plan_orphan_revision_cleanup,
+        plan_retention_cleanup,
+    )
+
+    def _sync_body() -> Dict[str, Any]:
+        from app.core.database import SessionLocal
+
+        partial: Dict[str, Any] = {}
+        with SessionLocal() as db:
+            retention = execute_retention_cleanup(plan_retention_cleanup(db))
+            orphans = execute_orphan_revision_cleanup(
+                plan_orphan_revision_cleanup(db)
+            )
+        partial["retention_deleted_revisions"] = len(
+            retention.get("deleted_revisions") or [])
+        partial["retention_deleted_blobs"] = len(
+            retention.get("deleted_blobs") or [])
+        partial["retention_bytes_freed"] = int(retention.get("bytes_freed") or 0)
+        partial["orphan_revision_rows_removed"] = int(
+            orphans.get("deleted_count") or 0)
+        return partial
+
+    return await asyncio.to_thread(_sync_body)
 
 
 async def sweep_aged_artifacts() -> Dict[str, Any]:
@@ -556,9 +611,13 @@ async def sweep_aged_artifacts() -> Dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         logger.warning("[artifact-lifecycle] export sweep failed: %s", e)
     for step in (_sweep_reports, _sweep_orphan_uploads, _sweep_artifact_cache_dir,
-                 _report_promotion_store_usage, _sweep_promotion_store):
+                 _report_promotion_store_usage, _sweep_promotion_store,
+                 _sweep_retention_and_orphans):
         try:
-            step_result = await asyncio.wait_for(step(), timeout=30.0)
+            # 同步步骤必须经 to_thread 卸载，否则 wait_for 收到 None 结果
+            # 抛 TypeError 被吞掉 —— 步骤体执行了但超时保护失效（预存缺陷修复）。
+            coro = step() if inspect.iscoroutinefunction(step) else asyncio.to_thread(step)
+            step_result = await asyncio.wait_for(coro, timeout=30.0)
             if isinstance(step_result, dict):
                 result.update(step_result)
         except Exception as e:  # noqa: BLE001

@@ -274,7 +274,7 @@ class MapProductVersionSummary(BaseModel):
 
 class PromoteArtifactsReportItem(BaseModel):
     artifact_id: str
-    status: str = Field(description="promoted | already_promoted | no_session_context | session_expired | store_unavailable")
+    status: str = Field(description="promoted | already_promoted | no_session_context | session_expired | store_unavailable | quota_exceeded (W12: over-quota; row survives metadata-only, no bytes written)")
     content_location: Optional[str] = None
 
 
@@ -308,6 +308,12 @@ class ArtifactCloneResponse(BaseModel):
     name: Optional[str] = None
     content_location: Optional[str] = None
     content_sha256: Optional[str] = None
+
+
+class DataGcExecuteRequest(BaseModel):
+    """POST data-gc/execute body：显式 confirm 才执行破坏性清理（缺省 false
+    → 400，dry-run parity 纪律 —— 计划先行，执行必须显式表态）。"""
+    confirm: bool = False
 
 
 class ArtifactResponse(BaseModel):

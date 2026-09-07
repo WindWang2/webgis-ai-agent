@@ -31,6 +31,7 @@ from app.schemas.project_schema import (
     WorkflowRerunRequest, MapProductVersionCreate, MapProductVersionResponse,
     MapProductVersionSummary, PromoteArtifactsResponse,
     ArtifactPinRequest, ArtifactPinResponse, ArtifactCloneResponse,
+    DataGcExecuteRequest,
     WorkspaceSnapshotSummary, WorkspaceSnapshotListResponse,
     WorkspaceSnapshotSaveResponse, WorkspaceSnapshotDeleteResponse,
 )
@@ -1274,6 +1275,189 @@ def clone_artifact_endpoint(
         content_location=clone_meta.get("content_location"),
         content_sha256=clone_meta.get("content_payload_sha256"),
     )
+
+
+# ── Data usage / GC dry-run surface（Wave 12 quota·retention·GC）──────────
+# 运维面：真实使用量 + 限额 + 保留候选的只读披露（data-usage），以及
+# plan → execute 双端点（dry-run parity 纪律：execute 必须显式 confirm=true，
+# 且对计划逐项以新鲜状态 + 同一保护谓词复检 —— 绝不盲执行计划）。
+# 鉴权与 pin/clone 同款：get_project_with_auth，失败一律 404 不泄露存在性。
+# 结果有界（≤64 items + counts）；服务逻辑全部委托 data_lifecycle.quota。
+
+
+def _bounded_items(items: List[Any], bound: int = 64) -> List[Any]:
+    return list(items)[:bound]
+
+
+@router.get("/{project_id}/data-usage")
+def get_project_data_usage(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """Per-project durable data usage + limits + upcoming retention candidates."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(
+        db=db, project_id=project_id, user_id=user_id, org_id=org_id
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    from app.services.artifact_revisions import project_quota_usage
+    from app.services.data_lifecycle.quota import (
+        ProjectQuotaPolicy,
+        RetentionPolicy,
+        check_quota,
+        plan_retention_cleanup,
+    )
+
+    usage = project_quota_usage(db, project_id)
+    policy = ProjectQuotaPolicy.from_env()
+    retention_policy = RetentionPolicy.from_env()
+    decision = check_quota(db, project_id, 0, policy=policy)
+    retention_plan = plan_retention_cleanup(
+        db, project_id, policy=retention_policy
+    )
+    return {
+        "project_id": project_id,
+        "usage": {
+            "bytes": int(usage.get("bytes", 0)),
+            "artifact_count": int(usage.get("artifact_count", 0)),
+            "revision_bytes": int(usage.get("revision_bytes", 0)),
+        },
+        "limits": {
+            "max_bytes": policy.max_bytes,
+            "max_artifact_count": policy.max_artifact_count,
+            "max_revision_bytes_per_artifact": policy.max_revision_bytes_per_artifact,
+        },
+        "quota": {
+            "allowed": decision.allowed,
+            "reason": decision.reason,
+        },
+        "retention": {
+            "policy": retention_policy.model_dump(),
+            "upcoming_candidates": int(retention_plan.get(
+                "candidate_revision_count", 0)),
+            "upcoming_candidate_blobs": int(retention_plan.get(
+                "candidate_blob_count", 0)),
+        },
+    }
+
+
+@router.post("/{project_id}/data-gc/plan")
+def plan_project_data_gc(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """Dry-run GC plan（只读）：保留策略候选 + 引用计数 blob 候选（有界）。"""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(
+        db=db, project_id=project_id, user_id=user_id, org_id=org_id
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    from app.services.artifact_lifecycle import plan_promotion_store_gc_sync
+    from app.services.data_lifecycle.quota import plan_retention_cleanup
+
+    retention_plan = plan_retention_cleanup(db, project_id)
+    promotion_plan = plan_promotion_store_gc_sync()
+    return {
+        "project_id": project_id,
+        "retention": {
+            "policy": retention_plan.get("policy"),
+            "disabled": bool(retention_plan.get("disabled")),
+            "candidate_revision_count": int(retention_plan.get(
+                "candidate_revision_count", 0)),
+            "candidate_blob_count": int(retention_plan.get(
+                "candidate_blob_count", 0)),
+            "candidate_blob_bytes": int(retention_plan.get(
+                "candidate_blob_bytes", 0)),
+            "protected_counts": retention_plan.get("protected_counts") or {},
+            "candidate_revisions": _bounded_items(
+                retention_plan.get("candidate_revisions") or []),
+            "candidate_blobs": _bounded_items(
+                retention_plan.get("candidate_blobs") or []),
+        },
+        "promotion_store_gc": {
+            "grace_hours": promotion_plan.get("grace_hours"),
+            "candidate_blobs": int(promotion_plan.get("candidate_blobs", 0)),
+            "deletable_count": len(promotion_plan.get("deletable") or []),
+            "deletable_bytes": int(promotion_plan.get("deletable_bytes", 0)),
+            "protected_counts": promotion_plan.get("protected_counts") or {},
+            "deletable": _bounded_items(promotion_plan.get("deletable") or []),
+        },
+    }
+
+
+@router.post("/{project_id}/data-gc/execute")
+def execute_project_data_gc(
+    project_id: str,
+    data: DataGcExecuteRequest,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """Execute a GC round：必须显式 confirm=true（缺省 400）。
+
+    执行的是**当前新鲜状态**的 plan → execute（复检在同一谓词下进行，
+    绝不盲执行调用方缓存的计划）；项目级保留清理 + 引用计数 blob 清扫。
+    结果有界（≤64 items + counts）。
+    """
+    if not data or not data.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="confirm=true is required to execute data GC (dry-run first)",
+        )
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(
+        db=db, project_id=project_id, user_id=user_id, org_id=org_id
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    from app.services.artifact_lifecycle import (
+        execute_promotion_store_gc_sync,
+        plan_promotion_store_gc_sync,
+    )
+    from app.services.data_lifecycle.quota import (
+        execute_retention_cleanup,
+        plan_retention_cleanup,
+    )
+
+    retention_plan = plan_retention_cleanup(db, project_id)
+    retention = execute_retention_cleanup(retention_plan, db=db)
+    promotion_plan = plan_promotion_store_gc_sync()
+    promotion_gc = execute_promotion_store_gc_sync(promotion_plan)
+    deleted_blobs = list(promotion_gc.get("deleted") or [])
+    skipped = _bounded_items(
+        [
+            {"key": str(s.get("key") or s.get("revision_id") or ""),
+             "reason": str(s.get("reason") or "")[:96]}
+            for s in (retention.get("skipped_protected") or [])
+        ]
+    )
+    return {
+        "project_id": project_id,
+        "retention": {
+            "deleted_revisions": _bounded_items(
+                retention.get("deleted_revisions") or []),
+            "deleted_revision_count": len(retention.get("deleted_revisions") or []),
+            "deleted_blobs": _bounded_items(retention.get("deleted_blobs") or []),
+            "deleted_blob_count": len(retention.get("deleted_blobs") or []),
+            "bytes_freed": int(retention.get("bytes_freed") or 0),
+            "skipped_protected_count": len(
+                retention.get("skipped_protected") or []),
+            "skipped_protected": _bounded_items(
+                retention.get("skipped_protected") or []),
+        },
+        "promotion_store_gc": {
+            "deleted_count": len(deleted_blobs),
+            "deleted": _bounded_items(deleted_blobs),
+            "bytes_freed": int(promotion_gc.get("bytes_freed") or 0),
+            "failed": _bounded_items(promotion_gc.get("failed") or []),
+            "skipped_protected_count": len(
+                promotion_gc.get("skipped_protected") or []),
+        },
+        "skipped_protected": skipped,
+    }
 
 
 # ── 项目制图记忆管理（ADR-0069 / spec 开放问题 2）─────────────────────────

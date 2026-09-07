@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Optional
 
 from app.services.geocompute.drift import check_plan_drift
@@ -114,6 +115,27 @@ def build_execution_bundle(
             ev.output_ref for ev in run.evidence.values() if ev.output_ref
         ],
         "drift": verdict.to_dict(),
+    }
+
+
+def bundle_verdict_block(bundle: dict[str, Any]) -> dict[str, Any]:
+    """bundle → 有界判定块（Wave-11 接线，audit 08 §6.2.1）。
+
+    完整 bundle 不落库 —— 判定块携带 bundle 文档的 sha256[:16] 内容摘要
+    （跨 run 可比对、可验证）+ 分类/理由/指纹等标量事实；无载荷。执行器
+    在 run 终态把它折进终态证据快照的既有 JSON（``run.reproducibility``）
+    并经 REST 暴露 —— bundle 从 built-but-orphaned 变为每次执行的事实。
+    """
+    digest = hashlib.sha256(
+        canonical_dumps(bundle).encode("utf-8")
+    ).hexdigest()[:16]
+    return {
+        "classification": bundle.get("reproducibility"),
+        "reason": str(bundle.get("reproducibility_reason") or "")[:200] or None,
+        "bundle_digest": f"sha256:{digest}",
+        "plan_fingerprint": bundle.get("plan_fingerprint"),
+        "runtime_manifest_fingerprint": bundle.get("runtime_manifest_fingerprint"),
+        "backend_variant": bundle.get("backend_variant"),
     }
 
 

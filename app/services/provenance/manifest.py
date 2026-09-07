@@ -12,6 +12,8 @@ in the engine path, so doing so would make the fingerprint non-deterministic.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Dict, Iterable, List, Optional
 
 from app.services.provenance.fingerprint import canonical_dumps, _sha256
@@ -23,6 +25,94 @@ _LARGE_KEYS = frozenset(
     {"geojson", "data", "features", "geometry", "coordinates", "raster_source", "summary"}
 )
 _MAX_LEAF_LEN = 200
+
+# ── Wave 11 (audit 08 §2.4 / §6.2.5): write-time provenance redaction ────────
+# Provenance rows are links + bounded facts, never payload or credential stores.
+# Until now execution_trace[].args / ArtifactLineage.parameters / manifest step
+# args were only size-trimmed — secret values (a fabric tool's ``password`` arg)
+# and inline GeoJSON landed verbatim in DB rows. The redactor below runs at the
+# persistence boundary: keys are kept, values are redacted.
+_SECRET_KEY_MARKERS = (
+    "password", "passwd", "secret", "token", "api_key", "apikey",
+    "authorization", "credential",
+)
+#: string leaves longer than this are replaced by a sha256 digest + size note
+_MAX_PERSISTED_LEAF_CHARS = 512
+#: hard budget for the fully-redacted params JSON (audit 08 §6.2.5)
+_MAX_REDACTED_JSON_CHARS = 4096
+_REDACTED = "[REDACTED]"
+
+
+def _is_secret_key(key: Any) -> bool:
+    if not isinstance(key, str):
+        return False
+    lowered = key.lower()
+    return any(marker in lowered for marker in _SECRET_KEY_MARKERS)
+
+
+def _digest_note(value: str) -> str:
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    return f"[digest:sha256:{digest} bytes={len(value)}]"
+
+
+def _bound_redacted(value: Any) -> Any:
+    """Keep the redacted dict when it fits the JSON budget; else fall back to a
+    deterministically truncated canonical JSON string (decision_log precedent).
+    The fallback is honest about the truncation and stays within the budget in
+    its PERSISTED (JSON-escaped) form — the DB column stores json.dumps of the
+    value, so that is the length that must fit."""
+    try:
+        dumped = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        dumped = str(value)
+    if len(dumped) <= _MAX_REDACTED_JSON_CHARS:
+        return value
+    marker = "...[truncated]"
+    keep = _MAX_REDACTED_JSON_CHARS
+    fallback = dumped[:keep] + marker
+    while (
+        keep > 0
+        and len(json.dumps(fallback, ensure_ascii=False)) > _MAX_REDACTED_JSON_CHARS
+    ):
+        keep = max(0, keep - 256)
+        fallback = dumped[:keep] + marker
+    return fallback
+
+
+def redact_provenance_args(value: Any, depth: int = 0) -> Any:
+    """Redact + bound tool args before they reach provenance persistence.
+
+    - large payload keys (``_LARGE_KEYS``: features/geojson/geometry/...) are
+      dropped entirely — links stay links, lineage never becomes a shadow
+      payload store (audit 08 §5.2 last row);
+    - secret-looking keys (password/secret/token/api_key/...) keep the key,
+      the VALUE is replaced with ``"[REDACTED]"``;
+    - oversized string leaves (>512 chars) keep the key and shrink to a
+      ``sha256[:16]`` digest + byte-size note (existence verifiable, content
+      not recoverable);
+    - the result is bounded: redacted JSON exceeding 4KB is deterministically
+      truncated (with a visible marker).
+
+    Deterministic and idempotent (already-redacted values pass through), so
+    engine-side and service-side application compose safely.
+    """
+    if depth > 8:
+        return None
+    if isinstance(value, dict):
+        out: Any = {}
+        for k, v in value.items():
+            if isinstance(k, str) and k in _LARGE_KEYS:
+                continue
+            if _is_secret_key(k):
+                out[k] = _REDACTED
+            else:
+                out[k] = redact_provenance_args(v, depth + 1)
+        return _bound_redacted(out)
+    if isinstance(value, list):
+        return [redact_provenance_args(v, depth + 1) for v in value[:64]]
+    if isinstance(value, str) and len(value) > _MAX_PERSISTED_LEAF_CHARS:
+        return _digest_note(value)
+    return value
 
 
 def _trim(value: Any, depth: int = 0) -> Any:
@@ -52,18 +142,21 @@ def build_run_manifest(
     product_facets: Optional[List[Dict[str, Any]]] = None,
     qa_summary: Optional[Dict[str, Any]] = None,
     finalization_summary: Optional[Dict[str, Any]] = None,
+    reproducibility: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble the canonical run manifest (the full, storable document).
 
     ``steps`` items: {step_id, tool_name, tool_version, status, args} (args are
-    trimmed for size). ``artifacts`` items carry the truthful per-artifact
-    metadata + ids (ids are NOT part of the fingerprint).
+    secret-redacted + trimmed for size). ``artifacts`` items carry the truthful
+    per-artifact metadata + ids (ids are NOT part of the fingerprint).
 
     ADR-0092 A2 executable-snapshot extensions (all bounded projections):
     ``runtime_manifest_fingerprint`` (registry generation the run executed
     under), ``mapspec_fingerprint`` (desired map state at run end),
     ``product_facets`` / ``qa_summary`` / ``finalization_summary`` (product
-    outcome evidence). The outcome blocks are deliberately OUTSIDE the run
+    outcome evidence), and ``reproducibility`` (Wave-11, audit 08 §6.2.1:
+    {classification, basis[]} honest verdict about whether re-running would
+    reproduce the outputs). The outcome blocks are deliberately OUTSIDE the run
     fingerprint projection (see _stable_projection): they describe results,
     not the compute plan, and two replays may legitimately differ in render/QA
     timing without being different runs.
@@ -78,7 +171,7 @@ def build_run_manifest(
                 "status": s.get("status"),
                 "capability": s.get("capability"),
                 "algorithm": s.get("algorithm"),
-                "args": _trim(s.get("args") or {}),
+                "args": _trim(redact_provenance_args(s.get("args") or {})),
             }
         )
 
@@ -114,6 +207,8 @@ def build_run_manifest(
         manifest["qa_summary"] = qa_summary
     if finalization_summary:
         manifest["finalization_summary"] = finalization_summary
+    if reproducibility:
+        manifest["reproducibility"] = reproducibility
     return manifest
 
 
@@ -188,6 +283,7 @@ class RunManifestBuilder:
         self._product_facets: Optional[List[Dict[str, Any]]] = None
         self._qa_summary: Optional[Dict[str, Any]] = None
         self._finalization_summary: Optional[Dict[str, Any]] = None
+        self._reproducibility: Optional[Dict[str, Any]] = None
 
     def set_outcome_context(
         self,
@@ -197,6 +293,7 @@ class RunManifestBuilder:
         product_facets: Optional[List[Dict[str, Any]]] = None,
         qa_summary: Optional[Dict[str, Any]] = None,
         finalization_summary: Optional[Dict[str, Any]] = None,
+        reproducibility: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Attach bounded product-outcome evidence (ADR-0092 A2). Called once
         before :meth:`build`; every field is optional and omitted fields keep
@@ -211,6 +308,8 @@ class RunManifestBuilder:
             self._qa_summary = qa_summary
         if finalization_summary:
             self._finalization_summary = finalization_summary
+        if reproducibility:
+            self._reproducibility = reproducibility
 
     def add_step(
         self,
@@ -231,9 +330,9 @@ class RunManifestBuilder:
                 "status": status,
                 "capability": capability,
                 "algorithm": algorithm,
-                "args": _trim(args or {}),
-            }
-        )
+                    "args": _trim(redact_provenance_args(args or {})),
+                }
+            )
         if tool_name:
             self._tool_versions.setdefault(tool_name, tool_version)
 
@@ -254,4 +353,5 @@ class RunManifestBuilder:
             product_facets=self._product_facets,
             qa_summary=self._qa_summary,
             finalization_summary=self._finalization_summary,
+            reproducibility=self._reproducibility,
         )

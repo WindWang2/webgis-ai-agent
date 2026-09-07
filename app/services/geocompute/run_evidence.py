@@ -70,12 +70,19 @@ def _evidence_compact(ev: Any) -> dict[str, Any]:
     }
 
 
-def build_snapshot(run: Any) -> dict[str, Any]:
+def build_snapshot(run: Any, *, extras: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """ExecutionRun → 有界（≤ ``MAX_SNAPSHOT_BYTES``）JSON dict（确定性）。
 
-    阶梯：L1 完整 evidence → L2 压缩 evidence → L3 截断 evidence 集合
-    （按计划节点序保留前 K 个，截断事实随快照记录）。任何一级超限都会
-    继续降级；L3 的单条 evidence 是有界投影，16KB 内必然收敛。
+    阶梯：L1 完整 evidence → L1.5 lineage 收缩 → L2 压缩 evidence →
+    L3 截断 evidence 集合（按计划节点序保留前 K 个，截断事实随快照记录）。
+    任何一级超限都会继续降级；L3 的单条 evidence 是有界投影，16KB 内必然
+    收敛。
+
+    Wave-11（audit 08 §6.2.1，folded JSON key，无迁移）：``extras`` 可携带
+    - ``reproducibility``：可复现判定块（标量事实，随 ``run`` 字典走 ——
+      每一级降级都保留）；
+    - ``lineage``：无载荷 lineage 投影（≤32 条）—— 超限时按确定性阶梯
+      收缩（32 → 8 → 省略）：evidence 细节优先于 lineage 广度。
     """
     run_dict = {
         "run_id": run.run_id,
@@ -86,10 +93,29 @@ def build_snapshot(run: Any) -> dict[str, Any]:
         "error_code": run.error_code,
         "error_message": (run.error_message or "")[:300] or None,
     }
+    extras = extras if isinstance(extras, dict) else {}
+    verdict = extras.get("reproducibility")
+    if isinstance(verdict, dict):
+        run_dict["reproducibility"] = verdict
+    lineage = extras.get("lineage")
+    if not isinstance(lineage, list):
+        lineage = None
+
     evidence = {nid: _evidence_full(ev) for nid, ev in run.evidence.items()}
     snapshot: dict[str, Any] = {"run": run_dict, "evidence": evidence}
+    if lineage:
+        snapshot["lineage"] = lineage
     if _fits(snapshot):
         return snapshot
+
+    # L1.5：lineage 收缩到前 8 条（仍无载荷；广度让位给 evidence 细节）
+    if lineage:
+        snapshot["lineage"] = lineage[:8]
+        if _fits(snapshot):
+            return snapshot
+        snapshot.pop("lineage", None)
+        if _fits(snapshot):
+            return snapshot
 
     # L2：压缩 evidence 条目
     snapshot = {
@@ -97,6 +123,11 @@ def build_snapshot(run: Any) -> dict[str, Any]:
         "evidence": {nid: _evidence_compact(ev) for nid, ev in run.evidence.items()},
         "evidence_detail": "compact",
     }
+    if lineage:
+        snapshot["lineage"] = lineage[:8]
+    if _fits(snapshot):
+        return snapshot
+    snapshot.pop("lineage", None)
     if _fits(snapshot):
         return snapshot
 
@@ -130,12 +161,17 @@ def _fits(snapshot: dict[str, Any]) -> bool:
     return len(canonical_dumps(snapshot).encode("utf-8")) <= MAX_SNAPSHOT_BYTES
 
 
-def save_snapshot(run: Any, owner_scope: str) -> bool:
-    """run 终态快照 upsert（run_id 主键）；fail-open，返回是否落库。"""
+def save_snapshot(
+    run: Any, owner_scope: str, *, extras: Optional[dict[str, Any]] = None
+) -> bool:
+    """run 终态快照 upsert（run_id 主键）；fail-open，返回是否落库。
+
+    ``extras``（Wave-11）：可复现判定 + lineage 投影，折进快照 JSON。
+    """
     if not run or not owner_scope:
         return False
     try:
-        snapshot = build_snapshot(run)
+        snapshot = build_snapshot(run, extras=extras)
         status = (
             run.status.value if hasattr(run.status, "value") else str(run.status)
         )
@@ -193,6 +229,45 @@ def load_snapshot(
     except Exception:  # noqa: BLE001 - 回放 fail-open
         logger.debug("[geocompute] run evidence snapshot not loaded", exc_info=True)
         return None
+
+
+def load_snapshot_extras(
+    run_id: str, *, owner_scope: Optional[str] = None
+) -> dict[str, Any]:
+    """读取快照中的 Wave-11 附加证据（reproducibility 判定 + lineage 投影）。
+
+    owner 域校验与 ``load_snapshot`` 同一纪律：他人/未知 → ``{}``（不泄漏
+    存在性）。fail-open：DB 不可用 / 无快照 / 形状漂移 → ``{}``（诚实空，
+    绝不虚构判定）。返回值无载荷。
+    """
+    if not run_id:
+        return {}
+    try:
+        with session_factory() as db:
+            from app.models.db_model import GeoComputeRunEvidence
+
+            row = (
+                db.query(GeoComputeRunEvidence)
+                .filter(GeoComputeRunEvidence.run_id == run_id)
+                .first()
+            )
+            if row is None:
+                return {}
+            if owner_scope is not None and row.owner_scope != owner_scope:
+                return {}
+            snapshot = row.snapshot if isinstance(row.snapshot, dict) else {}
+            out: dict[str, Any] = {}
+            run_block = snapshot.get("run")
+            if isinstance(run_block, dict) and isinstance(
+                run_block.get("reproducibility"), dict
+            ):
+                out["reproducibility"] = run_block["reproducibility"]
+            if isinstance(snapshot.get("lineage"), list):
+                out["lineage"] = snapshot["lineage"]
+            return out
+    except Exception:  # noqa: BLE001 - 回放 fail-open
+        logger.debug("[geocompute] run evidence extras not loaded", exc_info=True)
+        return {}
 
 
 def _run_from_snapshot(snapshot: Any) -> Optional[Any]:

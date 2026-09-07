@@ -31,6 +31,37 @@ _WIRED_CATEGORIES = {
     "interpolation", "materialize", "artifact_register",
 }
 
+# Wave-11（audit 08 §6.2.4）：``lineage_inputs`` 被解析但从未被填充 —— 执行级
+# lineage 投影因此断链。构建侧从节点参数里**可证**的源身份键派生 LineageLink
+# （key 名 → 身份族）；无证据键 → 诚实为空，绝不虚构身份。
+_LINEAGE_PARAM_HINTS: tuple[tuple[str, str], ...] = (
+    ("dataset_id", "dataset_version"),
+    ("dataset_ids", "dataset_version"),
+    ("source_ref", "dataset_version"),
+    ("source_refs", "dataset_version"),
+    ("ref_id", "ref"),
+    ("ref_ids", "ref"),
+    ("artifact_id", "artifact"),
+    ("artifact_ids", "artifact"),
+)
+
+
+def _derive_lineage_inputs(raw: dict) -> list[LineageLink]:
+    """参数中的源身份 → LineageLink（≤16 条；缺证诚实为空）。"""
+    params = raw.get("parameters")
+    if not isinstance(params, dict):
+        return []
+    links: list[LineageLink] = []
+    for key, kind in _LINEAGE_PARAM_HINTS:
+        value = params.get(key)
+        items = value if isinstance(value, (list, tuple, set)) else [value]
+        for item in items:
+            if isinstance(item, str) and item.strip():
+                links.append(LineageLink(ref_id=item.strip()[:256], kind=kind))
+                if len(links) >= 16:
+                    return links
+    return links
+
 
 def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
     """JSON dict → ExecutionPlan（严格校验；未知字段/类别 → typed 错误）。"""
@@ -91,7 +122,10 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
                 },
                 lineage_inputs=[
                     LineageLink(**link) for link in (raw.get("lineage_inputs") or [])
-                ][:16],
+                ][:16]
+                # Wave-11：显式声明优先；缺省时从参数里的可证源身份派生
+                #（不参与语义指纹 —— 指纹值域不变）。
+                or _derive_lineage_inputs(raw),
                 evidence_schema={
                     str(k): str(v)
                     for k, v in (raw.get("evidence_schema") or {}).items()

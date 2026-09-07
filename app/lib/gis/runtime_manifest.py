@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import sys
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -42,6 +43,60 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 MANIFEST_VERSION = 3
+
+
+def capture_runtime_env() -> Dict[str, str]:
+    """有界数值后端环境块（Wave-11，audit 08 §2.3/§6.2.6）。
+
+    同一 (plan, params, data) 在 GEOS/PROJ/GDAL 升级后可能产出不同几何 ——
+    缺了这些版本，"reproducible" 分类跨部署不可验证。此捕获把 Python /
+    GEOS / PROJ / GDAL / shapely / pyproj / numpy 版本折叠进 manifest 指纹：
+    数值后端变化 → manifest 指纹变化 → 旧持久计划经 ``is_stale_plan`` /
+    ``check_plan_drift`` 诚实判 stale（无新存储、无 schema 变化）。
+
+    边界：导入失败 → 该键诚实标 ``"unknown"``（绝不虚构版本）；键集固定
+    （≤12 个）、值截断 —— 块有界且确定性（同环境跨进程同指纹）。
+    """
+    env: Dict[str, str] = {}
+    try:
+        major, minor, micro = sys.version_info[:3]
+        env["python"] = f"{major}.{minor}.{micro}"
+    except Exception:  # noqa: BLE001 - 环境探测失败按 unknown 披露
+        env["python"] = "unknown"
+    try:
+        import shapely
+        from shapely import geos_version_string
+
+        env["geos"] = str(geos_version_string)
+        env["shapely"] = str(shapely.__version__)
+    except Exception:  # noqa: BLE001
+        env["geos"] = "unknown"
+        env["shapely"] = "unknown"
+    try:
+        import pyproj
+
+        env["proj"] = str(
+            getattr(pyproj, "proj_version_str", None)
+            or getattr(pyproj, "proj_version", "") or "unknown"
+        )
+        env["pyproj"] = str(pyproj.__version__)
+    except Exception:  # noqa: BLE001
+        env["proj"] = "unknown"
+        env["pyproj"] = "unknown"
+    try:
+        import rasterio
+
+        env["gdal"] = str(rasterio.__gdal_version__)
+    except Exception:  # noqa: BLE001
+        env["gdal"] = "unknown"
+    try:
+        import numpy
+
+        env["numpy"] = str(numpy.__version__)
+    except Exception:  # noqa: BLE001
+        env["numpy"] = "unknown"
+    # 确定性（键排序）+ 值有界（版本串含 CAPI 后缀等，40 字符足够）。
+    return {k: v[:40] for k, v in sorted(env.items())}
 
 # severity 语义：
 #  fatal   —— 运行时必需 contract 破损：启动 fail-fast（GIS_MANIFEST_STRICT=0
@@ -69,6 +124,10 @@ class CompiledRuntimeManifest:
     compiled_at: str = ""
     fingerprint: str = ""
     issues: List[ManifestIssue] = field(default_factory=list)
+    # v3（Wave-11，audit 08 §6.2.6）：数值后端环境（python/GEOS/PROJ/GDAL/
+    # shapely/pyproj/numpy 版本）—— 参与指纹：后端变化 ⇒ 指纹变化 ⇒ 旧计划
+    # 诚实判 stale。
+    runtime_env: Dict[str, str] = field(default_factory=dict)
 
     # ── 目录投影（id/name/status/version 的有界投影，不含大描述体）────
     capabilities: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -122,6 +181,7 @@ class CompiledRuntimeManifest:
         return {
             "manifest_version": self.manifest_version,
             "fingerprint": self.fingerprint,
+            "runtime_env": dict(self.runtime_env),
             "counts": {
                 "capabilities": len(self.capabilities),
                 "algorithms": len(self.algorithms),
@@ -419,6 +479,8 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
         _warn("product_template_registry_unavailable", str(e))
 
     # ── 6. 指纹（Phase 4）────────────────────────────────────────────
+    # Wave-11：数值后端环境进指纹（先捕获再指纹 —— 同环境确定性）。
+    manifest.runtime_env = capture_runtime_env()
     fingerprint_payload = {
         "manifest_version": MANIFEST_VERSION,
         "capabilities": manifest.capabilities,
@@ -431,6 +493,7 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
         "recipes": manifest.recipes,
         "product_templates": manifest.product_templates,
         "parameter_contracts": manifest.parameter_contracts,
+        "runtime_env": manifest.runtime_env,
     }
     manifest.fingerprint = hashlib.sha256(
         _canonical(fingerprint_payload).encode("utf-8"), usedforsecurity=False,

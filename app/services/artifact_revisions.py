@@ -194,6 +194,92 @@ def artifact_content_locations(db) -> List[str]:
     return out
 
 
+def project_quota_usage(db, project_id: str) -> Dict[str, Any]:
+    """Per-project durable-artifact accounting（Wave 12 quota 的唯一口径）。
+
+    全部按 ``Artifact.project_id`` 归属。字节口径：
+
+    - ``bytes``：**物理去重字节** —— 项目内修订行按 distinct
+      content_sha256 计 max(byte_size)（CAS 内容寻址下同内容一份字节；
+      指针克隆/去重命中零新增），外加「只有 metadata head 指针、无修订
+      行」的旧晋升行按 ``metadata_json.content_summary.payload_bytes``
+      兜底（诚实近似，绝不虚构）；
+    - ``artifact_count``：Artifact 行数；
+    - ``revision_bytes``：修订账本总字节（append-only 口径，不去重 ——
+      历史修订各记一次）；
+    - ``revision_bytes_by_artifact`` / ``max_per_artifact_revision_bytes``：
+      per-artifact 修订字节（``max_revision_bytes_per_artifact`` 限额输入）。
+
+    只读；四次有界聚合查询（与 list_projects 同量级）。
+    """
+    from sqlalchemy import func, select
+
+    from app.models.project import Artifact, ArtifactRevision
+
+    pid = str(project_id or "")
+    if not pid:
+        return {
+            "bytes": 0, "artifact_count": 0, "revision_bytes": 0,
+            "revision_bytes_by_artifact": {}, "max_per_artifact_revision_bytes": 0,
+        }
+
+    join_artifact = (
+        select(ArtifactRevision.artifact_id, ArtifactRevision.content_sha256,
+               ArtifactRevision.byte_size)
+        .join(Artifact, Artifact.id == ArtifactRevision.artifact_id)
+        .where(Artifact.project_id == pid)
+    )
+    rev_rows = db.execute(join_artifact).all()
+    sha_bytes: Dict[str, int] = {}
+    per_artifact: Dict[str, int] = {}
+    revision_bytes = 0
+    for aid, sha, size in rev_rows:
+        size = int(size or 0)
+        if sha:
+            sha_bytes[str(sha)] = max(sha_bytes.get(str(sha), 0), size)
+        per_artifact[str(aid)] = per_artifact.get(str(aid), 0) + size
+        revision_bytes += size
+
+    artifact_count = int(
+        db.execute(
+            select(func.count()).select_from(Artifact).where(
+                Artifact.project_id == pid)
+        ).scalar_one() or 0
+    )
+
+    # 兜底：无修订行但有 metadata head 指针的旧行 → content_summary 兜底字节
+    fallback_bytes = 0
+    if artifact_count > len(per_artifact):
+        meta_rows = db.execute(
+            select(Artifact.metadata_json).where(
+                Artifact.project_id == pid,
+                ~Artifact.id.in_(
+                    select(ArtifactRevision.artifact_id)
+                    .join(Artifact, Artifact.id == ArtifactRevision.artifact_id)
+                    .where(Artifact.project_id == pid)
+                ),
+            )
+        ).scalars().all()
+        for meta in meta_rows:
+            if not isinstance(meta, dict) or meta.get("content_location") is None:
+                continue
+            summary = meta.get("content_summary")
+            payload_bytes = (
+                summary.get("payload_bytes")
+                if isinstance(summary, dict) else None
+            )
+            if isinstance(payload_bytes, int) and payload_bytes > 0:
+                fallback_bytes += payload_bytes
+
+    return {
+        "bytes": sum(sha_bytes.values()) + fallback_bytes,
+        "artifact_count": artifact_count,
+        "revision_bytes": revision_bytes,
+        "revision_bytes_by_artifact": per_artifact,
+        "max_per_artifact_revision_bytes": max(per_artifact.values(), default=0),
+    }
+
+
 # ── Pin / Clone（tenant-checked 服务；路由侧经 ProjectService 鉴权）──────
 
 

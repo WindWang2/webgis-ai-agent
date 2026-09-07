@@ -58,12 +58,16 @@ _MAX_SCHEMA_FIELDS = 32
 #: no_session_context— caller had no session to probe (content may be alive)
 #: session_expired   — probed the session; payload gone
 #: store_unavailable — content write failed (disk full / IO error), disclosed
+#: quota_exceeded    — per-project quota refuses the put (W12): row survives
+#:                     metadata-only with bounded details in metadata_json.quota;
+#:                     NO payload bytes are written (honest, not an error)
 ContentStatus = Literal[
     "promoted",
     "already_promoted",
     "no_session_context",
     "session_expired",
     "store_unavailable",
+    "quota_exceeded",
 ]
 
 _ROOT_CACHE: "Optional[Path]" = None
@@ -240,20 +244,24 @@ def read_content(content_location: str, expected_sha256: str = "") -> Optional[A
         return None
 
 
-def _materialize_binary_file(path: Path) -> Tuple[str, str, int]:
-    """Read a disk file and materialize its bytes as a binary blob (CAS).
+def _materialize_binary_bytes(data: bytes) -> Tuple[str, str, int]:
+    """Materialize in-memory bytes as a binary blob (CAS).
 
     Sync body（caller 经 asyncio.to_thread 卸载，同 _sha256_of_blob 纪律）。
-    Returns (sha256, location, byte_size); raises on read/write failure —
+    Returns (sha256, location, byte_size); raises on write failure —
     the caller discloses honestly (store_unavailable).
     """
     from app.services.durable_blob_store import get_filesystem_blob_store
 
-    data = path.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
     store = get_filesystem_blob_store()
     result = store.put_blob(digest, data, "binary")
     return digest, result.location, len(data)
+
+
+def _materialize_binary_file(path: Path) -> Tuple[str, str, int]:
+    """Read a disk file and materialize its bytes as a binary blob (CAS)."""
+    return _materialize_binary_bytes(path.read_bytes())
 
 
 async def _promote_raster_artifact(
@@ -263,6 +271,8 @@ async def _promote_raster_artifact(
     session_id: str,
     meta: Dict[str, Any],
     entry: Dict[str, Any],
+    *,
+    project_id: str = "",
 ) -> None:
     """Binary lane: raster disk cursors (``ref:raster/<id>`` → session PNG).
 
@@ -270,9 +280,12 @@ async def _promote_raster_artifact(
     is a disk PNG, artifact_registry.py) — before this lane such artifacts
     ended as a permanent ``session_expired``. Here promotion resolves the
     underlying file, hashes its bytes, and materializes a binary blob; an
-    unresolvable file keeps today's honest ``session_expired``.
+    unresolvable file keeps today's honest ``session_expired``. W12: the
+    per-project quota gates the put (dedup hits are free — no new bytes).
     """
     from app.services.artifact_registry import raster_png_path
+    from app.services.data_lifecycle.quota import check_quota
+    from app.services.durable_blob_store import get_filesystem_blob_store
 
     path = raster_png_path(session_id, str(art.storage_ref or ""))
     if path is None or not path.is_file():
@@ -283,7 +296,36 @@ async def _promote_raster_artifact(
         entry["status"] = meta["content_status"]
         return
     try:
-        digest, location, byte_size = await asyncio.to_thread(_materialize_binary_file, path)
+        data = await asyncio.to_thread(path.read_bytes)
+    except Exception as e:  # noqa: BLE001 — IO failure is disclosed, not fatal
+        logger.warning(
+            "[artifact_promotion] binary read failed for %s: %s", art.id, e
+        )
+        data = b""
+    if not data:
+        meta["content_status"] = "session_expired"
+        art.metadata_json = meta
+        entry["status"] = meta["content_status"]
+        return
+    digest = hashlib.sha256(data).hexdigest()
+    # Quota gate BEFORE the put: CAS dedup hit (content already in the store)
+    # writes no new bytes and is never charged; a fresh put over an exhausted
+    # quota is refused honestly — the artifact row survives metadata-only.
+    incoming = 0 if get_filesystem_blob_store().exists(digest) else len(data)
+    decision = check_quota(db, project_id or run.project_id, incoming,
+                           artifact_id=art.id)
+    if not decision.allowed:
+        quota_meta = decision.to_exception().to_metadata()
+        meta["content_status"] = "quota_exceeded"
+        meta["quota"] = quota_meta
+        art.metadata_json = meta
+        entry["status"] = meta["content_status"]
+        entry["quota"] = quota_meta
+        return
+    try:
+        digest, location, byte_size = await asyncio.to_thread(
+            _materialize_binary_bytes, data
+        )
     except Exception as e:  # noqa: BLE001 — IO failure is disclosed, not fatal
         logger.warning(
             "[artifact_promotion] binary materialization failed for %s: %s", art.id, e
@@ -342,6 +384,8 @@ async def promote_run_artifacts(
 
     from app.services.artifact_registry import is_raster_ref
     from app.services.artifact_revisions import record_revision
+    from app.services.data_lifecycle.quota import check_quota
+    from app.services.durable_blob_store import get_filesystem_blob_store
     from app.services.session_data import session_data_manager
 
     # Authoritative binding: this run's manifest artifact ids (O(1) lookups).
@@ -390,7 +434,9 @@ async def promote_run_artifacts(
         # Binary lane first: raster disk cursors never appear in the session
         # store payload path (store.get() → None) — resolve the disk file.
         if session_id and art.storage_ref and is_raster_ref(str(art.storage_ref)):
-            await _promote_raster_artifact(db, art, run, session_id, meta, entry)
+            await _promote_raster_artifact(
+                db, art, run, session_id, meta, entry, project_id=project_id
+            )
             report.append(entry)
             continue
         payload: Optional[Any] = None
@@ -444,13 +490,34 @@ async def promote_run_artifacts(
         # a payload-digest-less artifact still materializes under its
         # descriptor fingerprint, and the descriptor fingerprint is recorded
         # in metadata as a secondary index (column and its uses stay).
-        location = (
-            await asyncio.to_thread(
-                materialize_blob, payload_digest or art.content_fingerprint, blob
+        location = None
+        if blob:
+            content_key = str(payload_digest or art.content_fingerprint or "")
+            # W12 quota gate BEFORE the put. A CAS dedup hit (content already
+            # in the store) writes no new bytes and is never charged; a fresh
+            # put over an exhausted quota is refused honestly: honest
+            # content_status="quota_exceeded" + bounded typed details in
+            # metadata, artifact row survives (metadata-only), NO payload
+            # bytes are written, promotion never breaks the run.
+            incoming = (
+                0
+                if content_key and get_filesystem_blob_store().exists(content_key)
+                else len(blob.encode("utf-8"))
             )
-            if blob
-            else None
-        )
+            decision = check_quota(db, project_id, incoming, artifact_id=art.id)
+            if not decision.allowed:
+                quota_meta = decision.to_exception().to_metadata()
+                meta["content_status"] = "quota_exceeded"
+                meta["quota"] = quota_meta
+                meta["content_summary"] = await asyncio.to_thread(
+                    _schema_summary, payload
+                )
+                art.metadata_json = meta
+                entry["status"] = meta["content_status"]
+                entry["quota"] = quota_meta
+                report.append(entry)
+                continue
+            location = await asyncio.to_thread(materialize_blob, content_key, blob)
         summary = await asyncio.to_thread(_schema_summary, payload)
         if location and payload_digest:
             meta["content_status"] = "promoted"

@@ -265,6 +265,9 @@ class GeoExecutionEngine:
         # SEC：run 归属域（owner_scope_for 派生）；REST 读路径按它做
         # 读隔离（他人 run 一律 404，避免存在性预言机）。
         self._run_owners: dict[str, str] = {}
+        # Wave-11（audit 08 §6.2.1）：run 终态附加证据（reproducibility 判定
+        # + 无载荷 lineage 投影）。有界：随 run 注册表同一容量上界逐出。
+        self._run_extras: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._run_tokens: dict[str, CancellationToken] = {}
         self._run_lock = threading.Lock()
         self._run_cache_size = run_cache_size
@@ -355,6 +358,7 @@ class GeoExecutionEngine:
                 self._runs.pop(old)
                 self._run_outputs.pop(old, None)
                 self._run_owners.pop(old, None)
+                self._run_extras.pop(old, None)
         # run 级取消令牌注册（REST/工具凭 run_id 请求取消；M1）
         if cancel_token is None:
             cancel_token = CancellationToken(job_id=run_id)
@@ -413,10 +417,37 @@ class GeoExecutionEngine:
         # V5（audit 06 §6.1 step 2）：终态证据快照（有界 ≤16KB，owner 域隔离）
         # 尽力落库 —— 进程重启后 get_run 内存未命中时回放，读取不再 404。
         # fail-open：快照失败绝不倒灌执行结果。
+        # Wave-11（audit 08 §6.2.1）：built-but-orphaned 的执行包在此接线 ——
+        # run 终态即构建有界、无载荷的可复现清单：判定块 + 无载荷 lineage
+        # 投影进内存附加层与终态证据快照（folded JSON key，无迁移）。
+        # fail-open：清单构建失败绝不阻断/倒灌执行结果（诚实 trace 披露）。
+        run_extras: dict[str, Any] = {}
+        try:
+            from app.lib.gis.runtime_manifest import get_runtime_manifest
+            from app.services.geocompute import reproducibility as _rb
+
+            bundle = _rb.build_execution_bundle(
+                plan, run,
+                runtime_manifest_fingerprint=get_runtime_manifest().fingerprint,
+            )
+            run_extras = {
+                "reproducibility": _rb.bundle_verdict_block(bundle),
+                "lineage": _rb.lineage_projection(plan, run)[:32],
+            }
+            tracing.emit("run_bundled", run_id=run_id, status=run.status.value,
+                         classification=str(bundle.get("reproducibility")))
+        except Exception:  # noqa: BLE001 - 附加证据，绝不阻断执行路径
+            tracing.emit("run_bundle_skipped", run_id=run_id,
+                         status=run.status.value, reason="bundle_unavailable")
+        if run_extras:
+            with self._run_lock:
+                self._run_extras[run_id] = run_extras
+                while len(self._run_extras) > self._run_cache_size:
+                    self._run_extras.popitem(last=False)
         try:
             from app.services.geocompute import run_evidence
 
-            run_evidence.save_snapshot(run, owner_scope)
+            run_evidence.save_snapshot(run, owner_scope, extras=run_extras or None)
         except Exception:  # noqa: BLE001 - 快照是尽力而为的持久化证据
             tracing.emit("run_snapshot_skipped", run_id=run_id,
                          status=run.status.value, reason="snapshot_unavailable")
@@ -468,6 +499,29 @@ class GeoExecutionEngine:
     def get_node_output(self, run_id: str, node_id: str) -> Optional[dict[str, Any]]:
         with self._run_lock:
             return (self._run_outputs.get(run_id) or {}).get(node_id)
+
+    def get_run_extras(
+        self, run_id: str, *, owner_scope: Optional[str] = None
+    ) -> dict[str, Any]:
+        """读取 run 的 Wave-11 附加证据（reproducibility 判定 + 无载荷
+        lineage 投影）。
+
+        内存未命中 → 终态证据快照回读。owner 域隔离与 ``get_run`` 同一纪律：
+        归属不符一律 ``{}``（不区分「不存在」与「他人 run」）。返回值绝无
+        节点载荷。
+        """
+        with self._run_lock:
+            extras = self._run_extras.get(run_id)
+            if extras is not None:
+                if owner_scope is not None and self._run_owners.get(run_id) != owner_scope:
+                    return {}
+                return extras
+        try:
+            from app.services.geocompute import run_evidence
+
+            return run_evidence.load_snapshot_extras(run_id, owner_scope=owner_scope)
+        except Exception:  # noqa: BLE001 - 附加证据读取 fail-open
+            return {}
 
     # ------------------------------------------------------------ internal
 

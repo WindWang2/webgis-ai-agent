@@ -51,6 +51,10 @@ class ExecutionNodeIn(BaseModel):
     cancellable: bool = True
     locality_hint: Optional[str] = None
     description: Optional[str] = None
+    # Wave-11（audit 08 §6.2.4）：到既有 Artifact/DatasetVersion 身份的
+    # lineage 边（{ref_id, kind}，≤16）—— 与 api.build_plan_from_json 同一
+    # 契约；缺省时构建侧从参数里的可证源身份诚实派生（或为空）。
+    lineage_inputs: list[Dict[str, str]] = Field(default_factory=list)
 
 
 class ExecutionPlanIn(BaseModel):
@@ -97,6 +101,7 @@ def _plan_from_request(data: ExecutionPlanIn):
                 cancellable=n.cancellable,
                 locality_hint=n.locality_hint,
                 description=n.description,
+                lineage_inputs=n.lineage_inputs[:16],
             )
         )
     return ExecutionPlan(
@@ -109,6 +114,28 @@ def _plan_from_request(data: ExecutionPlanIn):
 
 def _plan_fingerprint(data: ExecutionPlanIn) -> str:
     return _plan_from_request(data).graph_fingerprint()
+
+
+def _run_response(run: Any, owner_scope: Optional[str]) -> Dict[str, Any]:
+    """run 摘要 + Wave-11 附加证据（additive）。
+
+    ``lineage``：无载荷 lineage 投影（节点身份/指纹/摘要，绝无
+    features/geojson/geometry）；``reproducibility``：可复现判定块。两者
+    fail-open：内存注册表与终态证据快照都缺席时省略（诚实缺省）。
+    """
+    payload = run.model_dump()
+    try:
+        from app.services.geocompute.executor import engine
+
+        extras = engine.get_run_extras(run.run_id, owner_scope=owner_scope)
+    except Exception:  # noqa: BLE001 - 附加证据读取绝不影响主应答
+        extras = {}
+    if extras:
+        if isinstance(extras.get("lineage"), list):
+            payload["lineage"] = extras["lineage"]
+        if isinstance(extras.get("reproducibility"), dict):
+            payload["reproducibility"] = extras["reproducibility"]
+    return payload
 
 
 def _authorize_session_write_sync(
@@ -196,7 +223,9 @@ async def execute_execution_plan(
         raise HTTPException(status_code=422, detail=exc.to_dict())
     except GeoComputeError as exc:
         raise HTTPException(status_code=500, detail=exc.to_dict())
-    return run.model_dump()
+    from app.services.geocompute.executor import owner_scope_for
+
+    return _run_response(run, owner_scope_for(dict(user)))
 
 
 @router.get("/runs/{run_id}", tags=["GeoCompute / 执行平面"])
@@ -208,13 +237,16 @@ async def get_execution_run(
 
     V5：内存未命中时回读终态证据快照（owner 域校验在引擎读取侧）——
     进程重启后读取不再 404（快照来源以 ``source="snapshot"`` 诚实标注）。
+    Wave-11：应答附加 ``lineage``（无载荷投影）与 ``reproducibility`` 判定
+    （快照回放路径同样携带 —— 读自快照 folded JSON）。
     """
     from app.services.geocompute.executor import engine, owner_scope_for
 
-    run = engine.get_run(run_id, owner_scope=owner_scope_for(user))
+    owner_scope = owner_scope_for(user)
+    run = engine.get_run(run_id, owner_scope=owner_scope)
     if run is None:
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
-    return run.model_dump()
+    return _run_response(run, owner_scope)
 
 
 @router.post("/plans/runs/{run_id}/cancel", tags=["GeoCompute / 执行平面"])
