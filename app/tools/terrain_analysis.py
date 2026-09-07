@@ -419,7 +419,7 @@ def register_terrain_tools(registry: ToolRegistry):
                "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
                "product": "输出产品: 'flow_accumulation'(默认) | 'flow_direction'",
                "flat_routing": "平地路由: 'none'(默认，平地即汇) | 'epsilon'(Barnes 2014 填洼后路由)",
-           })
+           },
            side_effect="deterministic_compute",
            network=False,
            deterministic=True,
