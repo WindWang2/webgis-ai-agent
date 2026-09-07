@@ -23,6 +23,19 @@ from app.lib.quality.drift import (  # noqa: E402
 )
 
 
+@pytest.fixture(autouse=True)
+def _fresh_registries():
+    """R1 review MAJOR-4：drift 校验器基于 builtins 口径（防进程内污染）。"""
+    from app.lib.gis.algorithm_registry import reset_algorithm_registry
+    from app.lib.gis.artifacts import reset_artifact_type_registry
+    from app.lib.gis.capability_registry import reset_capability_registry
+
+    reset_algorithm_registry()
+    reset_capability_registry()
+    reset_artifact_type_registry()
+    yield
+
+
 @pytest.fixture(scope="module")
 def report():
     return compile_drift_report()

@@ -53,12 +53,19 @@ def test_nominal_samples_are_valid_geojson():
 
 
 def test_bad_crs_fixture_declares_conflicting_crs():
+    """夹具必须真的"坏"：声明 CRS 与坐标域可被分类器区分（R1 review）。"""
     fc = bad_crs_fc()
     from app.lib.gis.crs_safety import classify_crs
 
-    # 坐标域是 WGS84 成都，声明是 CGCS2000 —— 分类器必须能给出 CRS 判定
-    verdict = classify_crs("EPSG:4490")
-    assert verdict is not None
+    verdict = classify_crs(fc["crs"])
+    assert verdict is not None, f"classify_crs 无法判定声明的 {fc['crs']}"
+    # 坐标域证据：样本坐标落在成都 WGS84 域（经度 ~104，纬度 ~30.6）
+    lons = [f["geometry"]["coordinates"][0] for f in fc["features"]]
+    lats = [f["geometry"]["coordinates"][1] for f in fc["features"]]
+    assert all(103.9 <= x <= 104.2 for x in lons)
+    assert all(30.5 <= y <= 30.8 for y in lats)
+    nominal = point_fc(n=1)
+    assert nominal["crs"] != fc["crs"], "bad_crs 样本与 nominal 同 CRS = 无冲突"
 
 
 def test_invalid_geometry_fixture_is_detectably_invalid():

@@ -35,7 +35,8 @@ def _reset_journal():
     reset_journal()
 
 
-async def _poll(condition, *, max_steps: int = 500, step_s: float = 0.002) -> bool:
+# R1 review：默认 1s 上限（500×2ms）在 --cov/负载下会饿死 renew 循环 → 5000 步
+async def _poll(condition, *, max_steps: int = 5000, step_s: float = 0.002) -> bool:
     """有界小步长轮询（补丁后时钟 10ms 级；上限 1s，绝不无界等待）。"""
     for _ in range(max_steps):
         if condition():

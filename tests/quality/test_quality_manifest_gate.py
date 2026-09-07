@@ -33,6 +33,19 @@ from app.lib.quality.manifest import (  # noqa: E402
 )
 
 
+@pytest.fixture(autouse=True)
+def _fresh_registries():
+    """R1 review MAJOR-4：闸对进程内 registry 污染免疫（单一事实源口径）。"""
+    from app.lib.gis.algorithm_registry import reset_algorithm_registry
+    from app.lib.gis.artifacts import reset_artifact_type_registry
+    from app.lib.gis.capability_registry import reset_capability_registry
+
+    reset_algorithm_registry()
+    reset_capability_registry()
+    reset_artifact_type_registry()
+    yield
+
+
 @pytest.fixture(scope="module")
 def manifest():
     return compile_quality_manifest()
@@ -106,3 +119,8 @@ def test_legacy_descriptor_gate_script_import_face():
     report = legacy_collect()
     assert report["total"] >= 200
     assert legacy_gate(report) == 0
+
+
+def test_gate_report_uses_module_manifest(manifest):
+    """R1 review：复用 module 级 manifest，避免第三次全量 discovery 扫描。"""
+    assert manifest.gate_report["total"] == manifest.counts["tools"]

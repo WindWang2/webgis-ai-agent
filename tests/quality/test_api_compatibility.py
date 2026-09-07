@@ -39,19 +39,31 @@ def test_snapshot_matches_and_no_breaking_changes():
         pytest.skip("snapshot refreshed")
     assert SNAPSHOT.exists(), (
         "快照缺失：API_SNAPSHOT_UPDATE=1 pytest tests/quality/test_api_compatibility.py 生成")
-    old = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
-    changes = diff_openapi(old, current)
-    breaking = [c for c in changes if c.breaking]
-    assert not breaking, (
-        "检测到未声明的 BREAKING API 变化（如属故意，请 "
-        "API_SNAPSHOT_UPDATE=1 刷新快照并在 PR 中说明）：\n"
-        + "\n".join(f"- [{c.kind}] {c.subject}: {c.detail}" for c in breaking[:20])
-    )
+    # 字节一致闸（R1 review MAJOR-2）：additive 变化也必须显式刷新快照 ——
+    # 否则「新增 path 后再删除」对旧快照静默diff干净，漂移被掩埋。
+    committed = SNAPSHOT.read_text(encoding="utf-8")
+    current_bytes = json.dumps(current, ensure_ascii=False, sort_keys=True, indent=1) + "\n"
+    if committed != current_bytes:
+        old = json.loads(committed)
+        breaking = [c for c in diff_openapi(old, current) if c.breaking]
+        assert False, (
+            "OpenAPI 快照过期（additive 变化也需显式刷新）。BREAKING 变化数："
+            f"{len(breaking)}（如属故意，API_SNAPSHOT_UPDATE=1 刷新并在 PR 说明）"
+            + "\n".join(f"- [{c.kind}] {c.subject}: {c.detail}" for c in breaking[:20])
+        )
 
 
 def test_snapshot_generation_deterministic():
+    """R1 review MINOR-1：FastAPI 缓存 openapi schema —— 必须显式失效后
+    重算，否则恒等断言是框架缓存造成的空洞。"""
+    from app.main import app
+
     a = json.dumps(snapshot_openapi(), ensure_ascii=False, sort_keys=True)
-    b = json.dumps(snapshot_openapi(), ensure_ascii=False, sort_keys=True)
+    app.openapi_schema = None
+    try:
+        b = json.dumps(snapshot_openapi(), ensure_ascii=False, sort_keys=True)
+    finally:
+        app.openapi_schema = None
     assert a == b
 
 
@@ -120,3 +132,47 @@ def test_type_change_and_enum_shrink_are_breaking():
     kinds = {c.kind for c in changes if c.breaking}
     assert "param_type_changed" in kinds
     assert "param_enum_shrunk" in kinds
+
+
+# ── R1 review 补强：分类器新增规则自测 ────────────────────────────────────
+
+
+def test_component_field_type_change_is_breaking():
+    old = {"paths": {}, "components": {"schemas": {
+        "Item": {"type": "object", "properties": {"count": {"type": "string"}}}}}}
+    new = {"paths": {}, "components": {"schemas": {
+        "Item": {"type": "object", "properties": {"count": {"type": "integer"}}}}}}
+    changes = diff_openapi(old, new)
+    kinds = {c.kind for c in changes if c.breaking}
+    assert "schema_field_type_changed" in kinds, changes
+
+
+def test_component_field_enum_addition_is_breaking():
+    old = {"paths": {}, "components": {"schemas": {
+        "Item": {"type": "object", "properties": {"kind": {"type": "string"}}}}}}
+    new = {"paths": {}, "components": {"schemas": {
+        "Item": {"type": "object", "properties": {
+            "kind": {"type": "string", "enum": ["a", "b"]}}}}}}
+    changes = diff_openapi(old, new)
+    kinds = {c.kind for c in changes if c.breaking}
+    assert "schema_field_enum_added" in kinds
+
+
+def test_param_enum_addition_is_breaking():
+    old = {"paths": {"/a": {"get": _op(parameters=[
+        {"name": "q", "in": "query", "required": False, "schema": {"type": "string"}}])}}}
+    new = {"paths": {"/a": {"get": _op(parameters=[
+        {"name": "q", "in": "query", "required": False,
+         "schema": {"type": "string", "enum": ["a"]}}])}}}
+    changes = diff_openapi(old, new)
+    assert any(c.kind == "param_enum_added" and c.breaking for c in changes)
+
+
+def test_response_media_removal_is_breaking():
+    old = {"paths": {"/a": {"get": _op(responses={"200": {
+        "description": "ok", "content": {"application/json": {"schema": {"type": "object"}}}}})}}}
+    new = {"paths": {"/a": {"get": _op(responses={"200": {
+        "description": "ok", "content": {"text/plain": {"schema": {"type": "string"}}}}})}}}
+    changes = diff_openapi(old, new)
+    kinds = {c.kind for c in changes if c.breaking}
+    assert "response_media_removed" in kinds

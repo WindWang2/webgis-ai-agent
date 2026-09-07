@@ -90,6 +90,14 @@ def diff_operation_params(
                 changes.append(CompatChange(
                     "param_enum_shrunk", True, f"{method.upper()} {path}",
                     f"parameter {key} enum lost {sorted(shrunk)}"))
+        elif not old_enum and new_enum:
+            # 自由值参数被收紧为受限枚举 —— 既有合法取值可能被拒（breaking）
+            changes.append(CompatChange(
+                "param_enum_added", True, f"{method.upper()} {path}",
+                f"parameter {key} gained enum constraint {sorted(new_enum)[:8]}"))
+
+        # media type 变化（同一参数位换了 content 形态 —— OpenAPI 参数无
+        # content 键；requestBody 由 diff_request_body 处理）
     for key in new_params:
         if key not in old_params:
             required = bool(new_params[key].get("required"))
@@ -109,6 +117,22 @@ def diff_operation_responses(
             changes.append(CompatChange(
                 "response_removed", True, f"{method.upper()} {path}",
                 f"response {code} removed"))
+            continue
+        old_content = old_resp[code].get("content") or {}
+        new_content = new_resp[code].get("content") or {}
+        for media in old_content:
+            if media not in new_content:
+                changes.append(CompatChange(
+                    "response_media_removed", True, f"{method.upper()} {path}",
+                    f"response {code} media {media} removed"))
+                continue
+            old_schema = old_content[media].get("schema")
+            new_schema = new_content[media].get("schema")
+            if old_schema is not None and new_schema is not None \
+                    and old_schema != new_schema:
+                changes.append(CompatChange(
+                    "response_schema_changed", True, f"{method.upper()} {path}",
+                    f"response {code} {media} schema changed: {old_schema} → {new_schema}"))
 
 
 def diff_request_body(
@@ -128,12 +152,20 @@ def diff_request_body(
         changes.append(CompatChange(
             "request_body_became_required", True, f"{method.upper()} {path}",
             "requestBody became required"))
-    old_ref = ((old_body.get("content") or {}).get("application/json") or {}).get("schema", {})
-    new_ref = ((new_body.get("content") or {}).get("application/json") or {}).get("schema", {})
-    if old_ref and new_ref and old_ref != new_ref:
-        changes.append(CompatChange(
-            "request_body_schema_changed", True, f"{method.upper()} {path}",
-            f"requestBody schema {old_ref} → {new_ref}"))
+    old_content = old_body.get("content") or {}
+    new_content = new_body.get("content") or {}
+    for media in old_content:
+        if media not in new_content:
+            changes.append(CompatChange(
+                "request_body_media_removed", True, f"{method.upper()} {path}",
+                f"requestBody media {media} removed"))
+            continue
+        old_ref = old_content[media].get("schema", {})
+        new_ref = new_content[media].get("schema", {})
+        if old_ref and new_ref and old_ref != new_ref:
+            changes.append(CompatChange(
+                "request_body_schema_changed", True, f"{method.upper()} {path}",
+                f"requestBody {media} schema {old_ref} → {new_ref}"))
 
 
 def diff_schema_component(
@@ -147,6 +179,34 @@ def diff_schema_component(
             changes.append(CompatChange(
                 "schema_field_removed", True, f"schema {name}",
                 f"property {prop} removed"))
+            continue
+        old_pschema = old_props[prop] or {}
+        new_pschema = new_props[prop] or {}
+        # 字段级类型/枚举变化（R1 review：响应字段 string→integer 是教科书式
+        # breaking —— 组件内容变化必须与参数同级对待）
+        old_t = old_pschema.get("type")
+        new_t = new_pschema.get("type")
+        if old_t and new_t and old_t != new_t:
+            changes.append(CompatChange(
+                "schema_field_type_changed", True, f"schema {name}",
+                f"property {prop} type {old_t} → {new_t}"))
+        old_penum, new_penum = old_pschema.get("enum"), new_pschema.get("enum")
+        if old_penum and new_penum:
+            shrunk = set(old_penum) - set(new_penum)
+            if shrunk:
+                changes.append(CompatChange(
+                    "schema_field_enum_shrunk", True, f"schema {name}",
+                    f"property {prop} enum lost {sorted(shrunk)}"))
+        elif not old_penum and new_penum:
+            changes.append(CompatChange(
+                "schema_field_enum_added", True, f"schema {name}",
+                f"property {prop} gained enum constraint {sorted(new_penum)[:8]}"))
+        old_pref = old_pschema.get("$ref") or (old_pschema.get("allOf") or [{}])[0].get("$ref")
+        new_pref = new_pschema.get("$ref") or (new_pschema.get("allOf") or [{}])[0].get("$ref")
+        if old_pref and new_pref and old_pref != new_pref:
+            changes.append(CompatChange(
+                "schema_field_ref_changed", True, f"schema {name}",
+                f"property {prop} ref {old_pref} → {new_pref}"))
     old_required = set(old.get("required") or [])
     new_required = set(new.get("required") or [])
     grew = sorted(new_required - old_required)

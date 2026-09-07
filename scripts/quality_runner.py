@@ -109,20 +109,28 @@ LANES: dict[str, dict] = {
     "perf": {
         "title": "perf（结构+墙钟基线车道；隔离执行，勿与全量混跑）",
         "commands": [
-            PYTEST + ["tests/benchmarks/test_perf_harness.py",
-                      "tests/benchmarks/test_transport_perf.py",
-                      "tests/benchmarks/test_job_runtime_perf.py",
-                      "tests/benchmarks/test_provenance_perf.py",
-                      "tests/benchmarks/test_llm_http_pooling_perf.py",
-                      "tests/perf/test_runtime_v2_perf_contracts.py",
-                      "-m", "perf", "--no-cov", "-q",
-                      "--timeout=180", "--timeout-method=thread", "-p", "no:cacheprovider"],
+            PYTEST + _perf_lane_files() + [
+                "-m", "perf", "--no-cov", "-q",
+                "--timeout=180", "--timeout-method=thread", "-p", "no:cacheprovider"],
         ],
     },
 }
 
 FULL_ORDER = ["quick", "science", "cartography", "data", "security",
-              "quality", "backend", "frontend"]
+              "quality", "backend", "frontend"]  # perf 单独跑（隔离策略 #664）
+
+
+def _perf_lane_files() -> list:
+    """R1 review MINOR：perf 车道清单单一来源化 —— 扫描 perf 标记文件，
+    与 CI 契约测试（test_every_perf_marked_file_is_wired_into_a_lane）
+    同一判定口径，本地与 CI 不漂移。"""
+    files = []
+    for pattern_dir in ("tests/benchmarks", "tests/perf"):
+        for p in sorted((REPO / pattern_dir).glob("test_*.py")):
+            src = p.read_text(encoding="utf-8")
+            if "pytestmark = pytest.mark.perf" in src or "@pytest.mark.perf" in src:
+                files.append(str(p.relative_to(REPO)))
+    return files
 
 
 def _run_lane(lane: str, retry_failed: bool) -> dict:
@@ -130,7 +138,21 @@ def _run_lane(lane: str, retry_failed: bool) -> dict:
     results = []
     for cmd in spec["commands"]:
         if retry_failed and cmd[0] == sys.executable and "pytest" in cmd[1:3]:
-            cmd = [*cmd, "--lf", "-q"]
+            # R1 review MINOR：--lf 依赖 cacheprovider —— 重试命令必须去掉
+            # no:cacheprovider 否则参数冲突
+            cmd = [c for c in cmd if c != "-p" and c != "no:cacheprovider"] \
+                if False else cmd
+            filtered = []
+            skip_next = False
+            for c in cmd:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if c == "-p":
+                    skip_next = True
+                    continue
+                filtered.append(c)
+            cmd = [*filtered, "--lf", "-q"]
         t0 = time.monotonic()
         proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
         elapsed = time.monotonic() - t0

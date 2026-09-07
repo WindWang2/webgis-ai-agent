@@ -46,6 +46,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import itertools
 import os
@@ -470,7 +471,7 @@ def _ingest_dup_race(handle: ChaosFault) -> Iterator[None]:
                 "fired",
                 f"{state['arrived']} concurrent dedup checks passed before either registered",
             )
-        await gate.wait()
+        await asyncio.wait_for(gate.wait(), timeout=5)  # R1 review：序列化变更时 fail-fast
         return res
 
     with unittest.mock.patch.object(

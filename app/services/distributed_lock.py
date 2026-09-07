@@ -251,7 +251,10 @@ class _ResilientSessionLock:
                     # = 32s > 30s TTL，判定时锁必然已过期。
                     renew_failures += 1
                     interval_ms = max(int(_RENEW_INTERVAL_S * 1000), 1)
-                    budget = max(self._ttl_ms // interval_ms + 1, 2)
+                    # R1 review note：budget×interval 即丢失检测延迟下界。小 ttl（如
+    # ttl_ms < interval_ms×2）会顶到 max(...,2) 下限，检测延迟被拉长到
+    # 2×interval —— 调用方传小 ttl 时应同步调小 renew interval。
+    budget = max(self._ttl_ms // interval_ms + 1, 2)
                     if renew_failures >= budget:
                         self._lost = True
                         logger.warning(

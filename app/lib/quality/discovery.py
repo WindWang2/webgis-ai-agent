@@ -13,9 +13,11 @@
 """
 from __future__ import annotations
 
+import functools
 import re
+import subprocess
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -40,18 +42,47 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+@functools.lru_cache(maxsize=8)
+def _git_tracked_files(root: str) -> Optional[frozenset]:
+    """git 已跟踪文件集（相对路径）。失败（非 git/无 git）返回 None。"""
+    try:
+        out = subprocess.run(
+            ["git", "ls-files"], cwd=root, capture_output=True,
+            text=True, timeout=30, check=True,
+        ).stdout
+    except Exception:  # noqa: BLE001 —— 退化为全扫描（本地实验场景）
+        return None
+    return frozenset(out.splitlines())
+
+
 def _iter_scan_files(root: Path) -> List[Path]:
+    """只扫 git 已跟踪文件（ADR-0104 R1 修复）：未跟踪/在飞的文件不得
+    进入字节闸证据面，否则本地再生会把未提交状态烤进 manifest。"""
     files: List[Path] = []
-    for rel_root, suffixes in SCAN_ROOTS:
-        base = root / rel_root
-        if not base.is_dir():
-            continue
-        for path in sorted(base.rglob("*")):
-            if not path.is_file() or path.suffix not in suffixes:
+    tracked = _git_tracked_files(str(root))
+    if tracked is None:
+        for rel_root, suffixes in SCAN_ROOTS:
+            base = root / rel_root
+            if not base.is_dir():
                 continue
-            files.append(path)
-            if len(files) >= _MAX_FILES:
+            for path in sorted(base.rglob("*")):
+                if not path.is_file() or path.suffix not in suffixes:
+                    continue
+                files.append(path)
+                if len(files) >= _MAX_FILES:
+                    return files
+        return files
+    for rel in sorted(tracked):
+        hit = False
+        for rel_root, suffixes in SCAN_ROOTS:
+            if rel.startswith(rel_root + "/") and rel.endswith(tuple(suffixes)):
+                hit = True
                 break
+        if not hit:
+            continue
+        path = root / rel
+        if path.is_file():
+            files.append(path)
         if len(files) >= _MAX_FILES:
             break
     return files
@@ -61,17 +92,31 @@ def _rel(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix()
 
 
+@functools.lru_cache(maxsize=8)
+def _discover_cached(names: Tuple[str, ...], root_str: str) -> Tuple[Tuple[str, Tuple[str, ...]], ...]:
+    refs = _discover_impl(frozenset(names), Path(root_str))
+    return tuple((n, tuple(files)) for n, files in refs.items())
+
+
 def discover_test_references(
     names: Iterable[str],
     root: Optional[Path] = None,
 ) -> Dict[str, List[str]]:
+    """带 memo 的入口：同一 (names, root) 进程内只扫一遍盘
+    （R1 review：gate 套件此前每次调用都全量重扫，10-25s 冗余）。"""
+    base = (root if root is not None else repo_root()).resolve()
+    ordered = tuple(sorted(set(names)))
+    cached = _discover_cached(ordered, str(base))
+    return {n: list(files) for n, files in cached}
+
+
+def _discover_impl(names: FrozenSet[str], base: Path) -> Dict[str, List[str]]:
     """返回 {name: [引用它的测试文件（repo 相对路径，升序）]}。
 
     只包含至少被引用一次的 name。纯标识符按词法 token 匹配；
     含非标识符字符的 name 退化为原文子串匹配。
     """
-    base = root if root is not None else repo_root()
-    wanted = sorted(set(names))
+    wanted = sorted(names)
     if not wanted:
         return {}
     ident_names = {n for n in wanted if n.isidentifier()}
