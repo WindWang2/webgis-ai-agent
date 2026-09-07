@@ -18,6 +18,7 @@ project workflow 路由同一模式），绝不阻塞事件循环。
 from __future__ import annotations
 
 import hashlib
+import logging
 import random
 import re
 import threading
@@ -27,6 +28,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from collections import OrderedDict
 from typing import Any, Optional
 
+logger = logging.getLogger(__name__)
 from app.lib.cancellation import CancellationToken, OperationCancelled, use_token
 from app.services.geocompute import graph, ops, tracing
 from app.services.geocompute.errors import (
@@ -411,16 +413,16 @@ class GeoExecutionEngine:
             run.error_message = first.error_message
         else:
             run.status = ExecutionRunStatus.COMPLETED
-        tracing.emit("run_finished", run_id=run_id, plan_fingerprint=plan_fp,
-                     status=run.status.value, duration_s=run.wall_time_s,
-                     error_code=run.error_code)
         # V5（audit 06 §6.1 step 2）：终态证据快照（有界 ≤16KB，owner 域隔离）
         # 尽力落库 —— 进程重启后 get_run 内存未命中时回放，读取不再 404。
         # fail-open：快照失败绝不倒灌执行结果。
         # Wave-11（audit 08 §6.2.1）：built-but-orphaned 的执行包在此接线 ——
         # run 终态即构建有界、无载荷的可复现清单：判定块 + 无载荷 lineage
         # 投影进内存附加层与终态证据快照（folded JSON key，无迁移）。
-        # fail-open：清单构建失败绝不阻断/倒灌执行结果（诚实 trace 披露）。
+        # fail-open：清单构建失败绝不阻断执行路径（诚实日志披露）。
+        # 注意：run_bundled 必须在 run_finished 之前发射 —— replay 校验器视
+        # run_finished 为终态，其后任何 trace 事件都判违规
+        # （test_replay_security_v4::test_happy_path_trace_is_valid）。
         run_extras: dict[str, Any] = {}
         try:
             from app.lib.gis.runtime_manifest import get_runtime_manifest
@@ -439,6 +441,9 @@ class GeoExecutionEngine:
         except Exception:  # noqa: BLE001 - 附加证据，绝不阻断执行路径
             tracing.emit("run_bundle_skipped", run_id=run_id,
                          status=run.status.value, reason="bundle_unavailable")
+        tracing.emit("run_finished", run_id=run_id, plan_fingerprint=plan_fp,
+                     status=run.status.value, duration_s=run.wall_time_s,
+                     error_code=run.error_code)
         if run_extras:
             with self._run_lock:
                 self._run_extras[run_id] = run_extras
@@ -448,9 +453,12 @@ class GeoExecutionEngine:
             from app.services.geocompute import run_evidence
 
             run_evidence.save_snapshot(run, owner_scope, extras=run_extras or None)
-        except Exception:  # noqa: BLE001 - 快照是尽力而为的持久化证据
-            tracing.emit("run_snapshot_skipped", run_id=run_id,
-                         status=run.status.value, reason="snapshot_unavailable")
+        except Exception:  # noqa: BLE001 - 快照是尽力而为的持久化证据；
+            # 终态后不得再发 trace 事件（replay 终态不变量），降级为日志。
+            logger.warning(
+                "[geocompute] run evidence snapshot unavailable: run_id=%s status=%s",
+                run_id, run.status.value,
+            )
         # 载荷保留上限（并发评审 M3）：run 终态后立即丢弃原始节点输出 ——
         # 证据/摘要已在 run.evidence；复用走字节预算化的 NodeResultStore。
         if not self._retain_outputs:

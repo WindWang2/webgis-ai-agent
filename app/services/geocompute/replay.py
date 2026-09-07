@@ -18,7 +18,11 @@ _MARKED_ALLOWED_STATUS = frozenset({"cancelled"})
 #: 重试次数硬上界（与 RetryPolicy.max_attempts le=4 一致）。
 _MAX_ATTEMPTS = 4
 
-_RUN_LEVEL = frozenset({"run_started", "run_finished"})
+_RUN_LEVEL = frozenset({
+    "run_started", "run_finished",
+    # V5/Wave-11 终态簿记事件：执行包构建结果（终态前发出，run 作用域）。
+    "run_bundled", "run_bundle_skipped",
+})
 
 
 def replay_trace(events: list[dict[str, Any]]) -> dict[str, Any]:
