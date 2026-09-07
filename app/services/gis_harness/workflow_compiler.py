@@ -85,6 +85,8 @@ class WorkflowCompilation(BaseModel):
     data_qualifications: List[Dict[str, Any]] = Field(default_factory=list)
     # V3：多候选规划候选集（selected + rejected + 拒绝理由，可解释 trace）。
     plan_candidates: Dict[str, Any] = Field(default_factory=dict)
+    # V3：四层回退裁决（preferred/degraded/minimal/blocked + 披露）。
+    fallback_resolution: Dict[str, Any] = Field(default_factory=dict)
     # plan 为 map_product_plan 阶段的有界 dump（同 SessionPlan chapter 形态）；
     # 保持 dict 以免引入 planner 模型对编译器产物的硬依赖。
     plan: Dict[str, Any] = Field(default_factory=dict)
@@ -106,6 +108,7 @@ class WorkflowCompilation(BaseModel):
             "ontology_matches": self.ontology_matches[:6],
             "data_qualifications": self.data_qualifications[:16],
             "plan_candidates": self.plan_candidates,
+            "fallback_resolution": self.fallback_resolution,
             "data_roles": self.data_roles[:16],
             "obligations": self.obligations[:16],
             "capability_dag": self.capability_dag,
@@ -462,6 +465,31 @@ def compile_workflow(
     # ── 14 produce_completion_contract ───────────────────────────────
     from app.services.gis_harness.workflow_schema import COMPLETION_DIMENSIONS
     wc = plan_dump.get("workflow_contract") or {}
+
+    # V3：四层回退裁决（preferred/degraded/minimal/blocked）。事实来源：
+    # 资格状态 + 义务阻断 + planned 能力 + 本体主任务状态 + 场景 minimal。
+    from app.services.gis_harness.fallback_v3 import resolve_fallback_tier
+    scenario_minimal = ""
+    if selected_candidate is not None and selected_candidate.scenario_id:
+        from app.services.gis_harness.workflow_families import (
+            get_workflow_family_registry,
+        )
+        _scn = get_workflow_family_registry().scenario(
+            selected_candidate.scenario_id)
+        if _scn is not None:
+            scenario_minimal = _scn.minimal_disclosure
+    fallback_res = resolve_fallback_tier(
+        ontology_task_id=(onto_matches[0].task_id if onto_matches else ""),
+        data_states=tuple(states.values()),
+        method_blockers=tuple(contract_report.method_blockers),
+        data_blockers=tuple(contract_report.data_blockers),
+        uses_planned_capability=bool(
+            selected_candidate is not None
+            and selected_candidate.cost.uses_planned_capability),
+        scenario_minimal_disclosure=scenario_minimal,
+    )
+    compilation.fallback_resolution = fallback_res.to_bounded_dict()
+
     dim_states: Dict[str, Optional[bool]] = {}
     for dim in COMPLETION_DIMENSIONS:
         if dim == "data":
@@ -483,6 +511,10 @@ def compile_workflow(
              "blocks_completion": p.blocks_completion}
             for p in (getattr(wf_profile, "fallback_policies", []) or [])[:8]
         ],
+        # V3：回退裁决进入完成契约（finalize/verdict 消费同一份证据）
+        "fallback_tier": fallback_res.tier,
+        "fallback_downgrade_class": fallback_res.downgrade_class,
+        "fallback_disclosures": fallback_res.disclosures[:6],
     }
     blocked_codes = sorted(
         set(contract_report.method_blockers + contract_report.data_blockers))
@@ -490,7 +522,8 @@ def compile_workflow(
         "produce_completion_contract",
         status="blocked" if blocked_codes else "ok",
         reason_codes=blocked_codes[:_STAGE_REASON_BUDGET],
-        evidence={"dimensions_declared": len(COMPLETION_DIMENSIONS)},
+        evidence={"dimensions_declared": len(COMPLETION_DIMENSIONS),
+                  "fallback_tier": fallback_res.tier},
     ))
 
     compilation.reason_codes = [
