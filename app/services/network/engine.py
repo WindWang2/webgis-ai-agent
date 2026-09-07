@@ -244,6 +244,7 @@ class NetworkGraphEngine:
         network_dataset: Optional[NetworkDataset] = None,
         graph: Optional[nx.DiGraph] = None,
         profile: Optional[TravelProfile] = None,
+        solver: str = "auto",
     ) -> NetworkAnalysisResult:
         """Performs P-Median or Max Coverage location-allocation optimization."""
         if graph is None and network_dataset is not None:
@@ -257,6 +258,7 @@ class NetworkGraphEngine:
             graph=graph,
             network_dataset=network_dataset,
             profile=profile,
+            solver=solver,
         )
 
     def gravity_access(
@@ -829,6 +831,7 @@ class NetworkGraphEngine:
         objective: str = "minimize_cost",
         profile: Optional[TravelProfile] = None,
         session_id: str = "",
+        solver: str = "auto",
     ) -> NetworkAnalysisResult:
         """High level location-allocation solver working with raw GeoJSON/dict inputs."""
         _OBJECTIVE_TO_PROBLEM = {
@@ -858,6 +861,7 @@ class NetworkGraphEngine:
                 network_dataset=net_ds,
                 graph=graph,
                 profile=prof,
+                solver=solver,
             )
 
         return await asyncio.to_thread(_sync_solve)

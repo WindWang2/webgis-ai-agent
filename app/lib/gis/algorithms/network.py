@@ -190,6 +190,15 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             tool_candidates=["od_flow_edges"],
             cpu_cost="medium", memory_cost="medium", io_cost="medium",
             preferred_execution_policy="ASYNC",
+            algorithm_family="flow_mapping",
+            assumptions=["OD 对 → 有界带权流向线（宽度映射显式参数，ADR-0092 D）"],
+            limitations=["线宽是渲染量（非线性量纲）——地图模型 flow_od_arc 消费"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                            "tests/unit/test_knowledge_registries_audit_fixes.py::test_flow_od_arc_model_geometry_and_artifact_parity",
+                        ],
             compatible_map_models=["flow_od_arc"], priority=10,
         ),
 
@@ -359,6 +368,95 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/test_p_center.py::test_p_center_heuristic_within_11pct_of_exact",
                 "tests/unit/test_p_center.py::test_p_center_unreachable_demand_excluded_and_disclosed",
             ],
+            parameter_contract_ref="location_allocation_analysis",
+        ),
+
+        # ── Foundation V3：p-median / p-center 精确 MILP（HiGHS）──────────
+        # 与启发式描述符共享 location_allocation 能力与工具 —— exact/heuristic
+        # 的分野是求解后端 + 独立算法 id，不另立能力（不拆语义凑数）。
+        AlgorithmDescriptor(
+            id="network.pmedian_exact", name="p-中位精确求解（MILP）", category="network_analysis",
+            capabilities=["location_allocation"],
+            output_artifact_type="point_feature_set", tool_candidates=["location_allocation"],
+            cpu_cost="high", memory_cost="high", io_cost="medium",
+            preferred_execution_policy="ASYNC", priority=31,
+            deterministic=True, random_seed_policy="deterministic",
+            algorithm_family="location_allocation",
+            method_references=["church_revelle1974"],
+            assumptions=[
+                "0/1 MILP 精确式：min Σ w_i·c_if·x_if；Σ_f x_if=1 ∀可指派需求；x_if≤y_f；Σ_f y_f=p",
+                "求解后端 scipy.optimize.milp（HiGHS 分支定界）：固定输入确定性复现",
+                "代价矩阵 = 路网 OD 行程时间；不可达对从模型剔除（不引入 1e9 惩罚近似）",
+            ],
+            limitations=[
+                "规模闸：需求×候选 ≤ 25000 且候选 ≤ 500 —— 超限抛 ResourceScaleMismatch 指向启发式路径（不静默回退）",
+                "全程不可达需求点进 summary.unassigned_ids（不参与目标，与启发式语义一致）",
+                "最优解不唯一时由 HiGHS 确定性给出其一；最优目标值不受影响",
+                "max_coverage 无 MILP 精确式（solver=exact_milp 时 UnsupportedMethod）",
+            ],
+            crs_class="GEODESIC",
+            uncertainty_outputs=[],
+            numerical_tolerance="小实例 MILP 目标与 C(m,p) 枚举最优一致（±1e-6）；两次运行逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/test_network_v3.py::TestPMedianExactMILP::test_pmedian_exact_matches_enumeration_optimum",
+                "tests/unit/test_network_v3.py::TestPMedianExactMILP::test_pmedian_exact_respects_demand_weights",
+                "tests/unit/test_network_v3.py::TestPMedianExactMILP::test_pmedian_heuristic_within_20pct_of_exact",
+                "tests/unit/test_network_v3.py::TestPMedianExactMILP::test_exact_milp_scale_guard_refusal_is_typed",
+                "tests/unit/test_network_v3.py::TestPMedianExactMILP::test_pmedian_exact_service_discloses_highs_solver",
+                "tests/unit/test_network_v3.py::TestExactMILPDeterminism::test_exact_milp_deterministic_same_result_twice",
+            ],
+            parameter_contract_ref="location_allocation_analysis",
+            fallback_algorithms=["network.location_allocation"],
+            fallback_semantics={"network.location_allocation": "approximation"},
+            backend_variants=[
+                BackendVariant(
+                    id="milp_highs", backend="scipy", tool="location_allocation",
+                    max_features=25000,
+                    notes="HiGHS MILP；max_features 按需求×候选乘积语义（另有候选≤500 闸），超限诚实拒绝",
+                ),
+            ],
+        ),
+
+        AlgorithmDescriptor(
+            id="network.pcenter_exact", name="p-中心精确求解（MILP）", category="network_analysis",
+            capabilities=["location_allocation"],
+            output_artifact_type="point_feature_set", tool_candidates=["location_allocation"],
+            cpu_cost="high", memory_cost="high", io_cost="medium",
+            preferred_execution_policy="ASYNC", priority=31,
+            deterministic=True, random_seed_policy="deterministic",
+            algorithm_family="location_allocation",
+            method_references=["hakimi1964"],
+            assumptions=[
+                "Big-M 0/1 MILP：min z；z ≥ c_if·x_if − BigM(1−x_if)；Σ_f x_if=1；x_if≤y_f；Σ_f y_f=p（BigM=最大有限代价）",
+                "Hakimi 1964 max-min 目标：最小化可指派需求的最大服务成本",
+                "不可达需求不参与 max 目标（inf 不是服务成本）、进 summary.unassigned_ids —— 与既有 p-center 语义一致",
+            ],
+            limitations=[
+                "规模闸：需求×候选 ≤ 25000 且候选 ≤ 500 —— 超限抛 ResourceScaleMismatch 指向启发式路径（不静默回退）",
+                "MILP 主目标仅 z（max 服务成本）；打平时的次级总加权成本仅作披露，不进入最优化",
+                "最优解不唯一时由 HiGHS 确定性给出其一；最优目标值不受影响",
+            ],
+            crs_class="GEODESIC",
+            uncertainty_outputs=[],
+            numerical_tolerance="小实例 MILP 目标与 C(m,p) 枚举最优一致（±1e-6）；两次运行逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/test_network_v3.py::TestPCenterExactMILP::test_pcenter_exact_matches_enumeration_optimum",
+                "tests/unit/test_network_v3.py::TestPCenterExactMILP::test_pcenter_exact_unreachable_demand_disclosed",
+                "tests/unit/test_network_v3.py::TestExactMILPDeterminism::test_exact_milp_deterministic_same_result_twice",
+                "tests/unit/test_network_v3.py::TestPMedianExactMILP::test_exact_milp_scale_guard_refusal_is_typed",
+            ],
+            parameter_contract_ref="location_allocation_analysis",
+            fallback_algorithms=["network.location_allocation"],
+            fallback_semantics={"network.location_allocation": "approximation"},
+            backend_variants=[
+                BackendVariant(
+                    id="milp_highs", backend="scipy", tool="location_allocation",
+                    max_features=25000,
+                    notes="HiGHS MILP；max_features 按需求×候选乘积语义（另有候选≤500 闸），超限诚实拒绝",
+                ),
+            ],
         ),
 
         AlgorithmDescriptor(
@@ -511,6 +609,43 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                     notes="n>2000：k=500（seed=42）采样介数，其余指标仍精确",
                 ),
             ],
+        ),
+
+        # ── Foundation V3：特征向量中心性（Bonacich 1972，幂迭代）─────────
+        # 与 network.centrality 共享 network_centrality 能力与工具；metrics
+        # 枚举 additive 扩展（opt-in，不加进 all）→ 契约 version 1→2。
+        AlgorithmDescriptor(
+            id="network.eigenvector_centrality", name="特征向量中心性", category="network_analysis",
+            capabilities=["network_centrality"],
+            output_artifact_type="stats_table", tool_candidates=["network_centrality"],
+            cpu_cost="medium", memory_cost="low", io_cost="low",
+            preferred_execution_policy="ASYNC", priority=21,
+            deterministic=True, random_seed_policy="deterministic",
+            algorithm_family="network_centrality",
+            method_references=["bonacich1972"],
+            assumptions=[
+                "Bonacich 1972 主特征向量中心性：A·x=λx，稀疏幂迭代（scipy CSR matvec）+ L2 归一",
+                "收敛判据 L1 增量 < tol（缺省 1e-10）；实际迭代数/达成增量在 meta/summary 披露",
+                "DiGraph 取左特征向量（入边语义，与 networkx 一致）：度量被高分层节点指向的程度",
+                "无向/加权图与 networkx.eigenvector_centrality(weight=…) 逐点一致（rtol 1e-6）",
+            ],
+            limitations=[
+                "负边权拒绝（UnsupportedMethod）：幂迭代依赖 Perron-Frobenius 非负前提，不做移位/取绝对值变通",
+                "不连通图照常迭代：得分反映谱半径最大（主导）分量，谱半径并列时为主导向量混合 —— meta 显式披露",
+                "max_iter 内未收敛不报错：converged=False + 实际迭代数/达成增量披露；孤立节点恒 0",
+                "metrics=all 不含 eigenvector（历史 all 契约语义不变，需显式指定 metrics=eigenvector）",
+            ],
+            crs_class="GEODESIC",
+            uncertainty_outputs=[],
+            numerical_tolerance="与 networkx.eigenvector_centrality 一致（rtol 1e-6）；两次运行逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/test_network_v3.py::TestEigenvectorCentrality::test_eigenvector_matches_networkx_weighted",
+                "tests/unit/test_network_v3.py::TestEigenvectorCentrality::test_eigenvector_deterministic_reports_iterations",
+                "tests/unit/test_network_v3.py::TestEigenvectorCentrality::test_eigenvector_negative_weight_rejected",
+                "tests/unit/test_network_v3.py::TestEigenvectorCentrality::test_eigenvector_isolated_and_disconnected_disclosure",
+            ],
+            parameter_contract_ref="network_centrality_analysis",
         ),
 
         # ── VNext（ADR-0099）：外部服务商网络服务（消除 network_tool_orphan）──
@@ -710,18 +845,44 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
         ],
     ),
     ParameterContract(
-        id="network_centrality_analysis", version=1,
-        description="网络中心性：指标集合与边权字段（度/接近/介数/边介数）。",
+        # v2（Foundation V3 additive）：metrics 枚举扩展 "eigenvector"
+        #（Bonacich 1972 幂迭代，opt-in —— 不并入 all，历史语义不变）；
+        # version 提升使指纹反映契约面变化。
+        id="network_centrality_analysis", version=2,
+        description="网络中心性：指标集合与边权字段（度/接近/介数/边介数/特征向量）。",
         parameters=[
             ParameterSpec(
                 name="metrics", type="enum", default="all",
-                enum_values=["degree", "closeness", "betweenness", "edge_betweenness", "all"],
-                description="中心性指标；all=全部（edge_betweenness 受 1500 边精确上限约束，超出诚实拒绝）",
+                enum_values=["degree", "closeness", "betweenness", "edge_betweenness",
+                             "eigenvector", "all"],
+                description="中心性指标；all=度/接近/介数/边介数（edge_betweenness 受 1500 边精确上限约束，"
+                            "超出诚实拒绝）；eigenvector=V3 opt-in 幂迭代（Bonacich 1972），不在 all 内",
             ),
             ParameterSpec(
                 name="weight", type="enum", default="travel_time",
                 enum_values=["travel_time", "length"],
                 description="边权字段：行程时间（秒）或长度（米）；度数不用权重",
+            ),
+        ],
+    ),
+    ParameterContract(
+        # Foundation V3：location_allocation 工具的算法参数契约（objective
+        # 为既有参数；solver 为 additive 求解路径参数 —— exact_milp 仅覆盖
+        # p_median / p_center，超规模闸诚实拒绝）。
+        id="location_allocation_analysis", version=1,
+        description="区位配置：选址目标与求解路径（枚举/启发式/HiGHS 精确 MILP）。",
+        parameters=[
+            ParameterSpec(
+                name="objective", type="enum", default="minimize_cost",
+                enum_values=["minimize_cost", "maximize_coverage", "minimize_max_cost"],
+                description="选址目标：minimize_cost=p-中位；maximize_coverage=MCLP；minimize_max_cost=p-中心",
+            ),
+            ParameterSpec(
+                name="solver", type="enum", default="auto",
+                enum_values=["auto", "heuristic", "exact_milp"],
+                description="求解路径：auto=小实例枚举/大实例启发式（历史行为）；heuristic=强制 "
+                            "Teitz-Bart/贪婪；exact_milp=强制 HiGHS 精确式（仅 p_median/p_center，"
+                            "需求×候选≤25000 且候选≤500，超限诚实拒绝）",
             ),
         ],
     ),

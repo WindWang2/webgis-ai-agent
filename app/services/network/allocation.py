@@ -1,6 +1,11 @@
 """
 Network Location-Allocation Service Component.
 Implements P-Median and Max Coverage facility location allocation models.
+
+Foundation V3：p-median / p-center 的精确 MILP 变体（scipy.optimize.milp，
+HiGHS 分支定界）与既有「小实例 C(m,p) 枚举 + 大实例启发式」并列 —— 精确
+MILP 路径有独立规模闸（需求×候选 ≤ 25000 且候选 ≤ 500），超限抛
+ResourceScaleMismatch 指向启发式路径（诚实拒绝，绝不静默回退）。
 """
 from __future__ import annotations
 import itertools
@@ -8,7 +13,11 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
+import numpy as np
+from scipy.optimize import Bounds, LinearConstraint, milp
+from scipy.sparse import coo_matrix
 
+from app.lib.gis.scientific_errors import ResourceScaleMismatch, UnsupportedMethod
 from app.services.network.models import (
     NetworkDataset,
     TravelProfile,
@@ -43,6 +52,299 @@ def _exact_combination_count(m_fac: int, p_count: int) -> int:
         if count > _MAX_EXACT_COMBINATIONS * 2:
             return count  # early exit, we only need the threshold decision
     return count
+
+
+# ── Foundation V3：精确 MILP（HiGHS）规模闸 ─────────────────────────
+# 变量数 = 候选数 y + 可达对 x：乘积闸直接约束 MILP 规模；候选闸约束分
+# 支定界树宽。两个闸都在**任何分配之前**检查；超限抛 ResourceScaleMismatch
+# 并把调用方指向启发式路径（solver="heuristic"）—— 诚实拒绝，不静默回退。
+_MILP_MAX_PRODUCT = 25000
+_MILP_MAX_CANDIDATES = 500
+
+# scipy.optimize.milp 结果状态码 → 诚实披露文本（HiGHS 透传 message 一并返回）。
+_MILP_STATUS_TEXT = {
+    0: "optimal",
+    1: "iteration_or_time_limit",
+    2: "infeasible",
+    3: "unbounded",
+    4: "other",
+}
+
+
+def _milp_scale_guard(n_dem: int, m_fac: int) -> None:
+    """Exact-MILP scale guard: refuse BEFORE any model allocation."""
+    if m_fac > _MILP_MAX_CANDIDATES:
+        raise ResourceScaleMismatch(
+            f"精确 MILP 的候选设施数 {m_fac} 超出上限 {_MILP_MAX_CANDIDATES}"
+            f"（规模闸：候选 ≤ {_MILP_MAX_CANDIDATES} 且 需求×候选 ≤ {_MILP_MAX_PRODUCT}）",
+            estimated=f"candidates={m_fac}",
+            limit=f"candidates<={_MILP_MAX_CANDIDATES}",
+            correction_hint=(
+                "use the heuristic path (location_allocation solver='heuristic', "
+                "Teitz-Bart / greedy) or subnet the candidate set"
+            ),
+        )
+    product = n_dem * m_fac
+    if product > _MILP_MAX_PRODUCT:
+        raise ResourceScaleMismatch(
+            f"精确 MILP 的需求×候选规模 {n_dem}×{m_fac}={product} 超出上限 {_MILP_MAX_PRODUCT}"
+            f"（规模闸：候选 ≤ {_MILP_MAX_CANDIDATES} 且 需求×候选 ≤ {_MILP_MAX_PRODUCT}）",
+            estimated=f"n_demand*n_candidates={product}",
+            limit=f"<={_MILP_MAX_PRODUCT}",
+            correction_hint=(
+                "use the heuristic path (location_allocation solver='heuristic', "
+                "Teitz-Bart / greedy) or shrink the problem"
+            ),
+        )
+
+
+def _validate_milp_inputs(
+    cost_matrix: List[List[float]], demand_weights: List[float], p_count: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    """代价矩阵/权重校验 → numpy 数组（矩形、行数一致、p 值域）。"""
+    if not cost_matrix or not demand_weights:
+        raise ValueError("代价矩阵与需求权重不能为空")
+    n_dem = len(demand_weights)
+    m_fac = len(cost_matrix[0])
+    if any(len(row) != m_fac for row in cost_matrix):
+        raise ValueError("代价矩阵必须为矩形（n_demand × n_candidates）")
+    if len(cost_matrix) != n_dem:
+        raise ValueError("代价矩阵行数与需求权重数量不一致")
+    if not 1 <= p_count <= m_fac:
+        raise ValueError(f"p_count={p_count} 必须落在 [1, {m_fac}]")
+    C = np.asarray(cost_matrix, dtype=float)
+    w = np.asarray(demand_weights, dtype=float)
+    return C, w
+
+
+def _milp_solve_stats(res: Any) -> Dict[str, Optional[float]]:
+    """HiGHS MIP 统计透传（solve_stats 披露；非有限值 → None 而非伪造）。"""
+    def _num(value: Any) -> Optional[float]:
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return None
+        return f if np.isfinite(f) else None
+
+    node_count = getattr(res, "mip_node_count", None)
+    return {
+        "mip_gap": _num(getattr(res, "mip_gap", None)),
+        "mip_node_count": int(node_count) if node_count is not None else None,
+        "mip_dual_bound": _num(getattr(res, "mip_dual_bound", None)),
+        "lp_objective": _num(getattr(res, "fun", None)),
+    }
+
+
+def solve_p_median_milp(
+    cost_matrix: List[List[float]], demand_weights: List[float], p_count: int
+) -> Dict[str, Any]:
+    """精确 p-中位（0/1 MILP，scipy.optimize.milp / HiGHS 后端）。
+
+    变量：y_f（开站，恰 p 个）+ x_{i,f}（指派，仅可达对）。
+    min Σ w_i·c_{i,f}·x_{i,f}；s.t. Σ_f x_{i,f}=1 ∀可指派需求 i；
+    x_{i,f} ≤ y_f；Σ_f y_f = p。
+    不可达对直接从模型剔除（不引入 1e9 惩罚近似）；全程不可达需求点
+    不进模型、由 unassigned_demand_indices 披露 —— 与启发式语义一致。
+
+    确定性：HiGHS 对固定输入确定性复现（无随机成分）。
+    规模闸：候选 ≤ 500 且 需求×候选 ≤ 25000，超限抛 ResourceScaleMismatch。
+    """
+    C, w = _validate_milp_inputs(cost_matrix, demand_weights, p_count)
+    n_dem, m_fac = C.shape
+    _milp_scale_guard(n_dem, m_fac)
+
+    finite = np.isfinite(C)
+    coverable = finite.any(axis=1)
+    pairs = np.argwhere(finite)  # row-major：按需求 i 有序
+    n_pairs = int(len(pairs))
+    n_vars = m_fac + n_pairs
+
+    # 目标向量：y 权 0，x 权 w_i·c_{i,f} —— 需求加权 p-中位目标，与既有
+    # 枚举/启发式的 min Σ w_i·min_j C_ij 同一目标（权重不进模型会解出
+    # 「无加权意义」的站组：x 系数漏乘 w_i 时 HiGHS 最小化的是无权和）。
+    c_obj = np.concatenate(
+        [np.zeros(m_fac), w[pairs[:, 0]] * C[pairs[:, 0], pairs[:, 1]]]
+    )
+
+    rows: List[int] = []
+    cols: List[int] = []
+    data: List[float] = []
+    lb: List[float] = []
+    ub: List[float] = []
+    r = 0
+    # (1) 指派约束：每个可指派需求 Σ_f x_{i,f} = 1（可指派需求必有 ≥1 可达对）
+    for k in range(n_pairs):
+        rows.append(r)
+        cols.append(m_fac + k)
+        data.append(1.0)
+        if k + 1 == n_pairs or pairs[k + 1][0] != pairs[k][0]:
+            lb.append(1.0)
+            ub.append(1.0)
+            r += 1
+    # (2) 链接约束：x_{i,f} − y_f ≤ 0
+    for k, (_i, j) in enumerate(pairs):
+        rows.append(r)
+        cols.append(m_fac + k)
+        data.append(1.0)
+        rows.append(r)
+        cols.append(int(j))
+        data.append(-1.0)
+        lb.append(-np.inf)
+        ub.append(0.0)
+        r += 1
+    # (3) 基数约束：Σ_f y_f = p
+    for j in range(m_fac):
+        rows.append(r)
+        cols.append(j)
+        data.append(1.0)
+    lb.append(float(p_count))
+    ub.append(float(p_count))
+    r += 1
+
+    A = coo_matrix((data, (rows, cols)), shape=(r, n_vars)).tocsr()
+    res = milp(
+        c=c_obj,
+        constraints=LinearConstraint(A, np.asarray(lb), np.asarray(ub)),
+        integrality=np.ones(n_vars),
+        bounds=Bounds(np.zeros(n_vars), np.ones(n_vars)),
+    )
+
+    y = np.asarray(res.x[:m_fac], dtype=float)
+    selected = tuple(int(j) for j in np.where(y > 0.5)[0])
+    # 从整数解按枚举同语义重算目标（可指派需求的有限最小成本加权和）；
+    # lp_objective（求解器原值）进 solve_stats 披露。
+    if selected:
+        min_cost = C[:, selected].min(axis=1)
+    else:  # pragma: no cover — p≥1 时 HiGHS 必开站
+        min_cost = np.full(n_dem, np.inf)
+    objective = float(np.sum(w[coverable] * min_cost[coverable])) if coverable.any() else 0.0
+
+    return {
+        "selected": selected,
+        "objective_value": objective,
+        "status_code": int(res.status),
+        "optimality": _MILP_STATUS_TEXT.get(int(res.status), "other"),
+        "highs_message": str(res.message),
+        "solve_stats": _milp_solve_stats(res),
+        "unassigned_demand_indices": [int(i) for i in np.where(~coverable)[0]],
+        "model_stats": {
+            "n_variables": int(n_vars),
+            "n_constraints": int(r),
+            "n_pairs": n_pairs,
+        },
+    }
+
+
+def solve_p_center_milp(
+    cost_matrix: List[List[float]], demand_weights: List[float], p_count: int
+) -> Dict[str, Any]:
+    """精确 p-中心（0/1 MILP + Big-M，scipy.optimize.milp / HiGHS 后端）。
+
+    变量：z（最大服务成本）+ y_f（开站，恰 p 个）+ x_{i,f}（指派，仅可达对）。
+    min z；s.t. Σ_f x_{i,f}=1 ∀可指派需求 i；x_{i,f} ≤ y_f；Σ_f y_f = p；
+    z ≥ c_{i,f}·x_{i,f} − BigM·(1 − x_{i,f})，BigM = 最大有限代价。
+    不可达需求不参与 max 目标（inf 不是服务成本）、由
+    unassigned_demand_indices 披露 —— 与既有 p-center 枚举/启发式语义一致。
+    """
+    C, w = _validate_milp_inputs(cost_matrix, demand_weights, p_count)
+    n_dem, m_fac = C.shape
+    _milp_scale_guard(n_dem, m_fac)
+
+    finite = np.isfinite(C)
+    coverable = finite.any(axis=1)
+    pairs = np.argwhere(finite)
+    n_pairs = int(len(pairs))
+    big_m = float(np.max(C[pairs[:, 0], pairs[:, 1]])) if n_pairs else 0.0
+    # 变量序：z(1) + y(m) + x(K)；x 列基 = 1 + m + k，y 列基 = 1 + j
+    n_vars = 1 + m_fac + n_pairs
+    x_col = 1 + m_fac
+
+    c_obj = np.zeros(n_vars)
+    c_obj[0] = 1.0  # min z
+
+    rows: List[int] = []
+    cols: List[int] = []
+    data: List[float] = []
+    lb: List[float] = []
+    ub: List[float] = []
+    r = 0
+    # (1) 指派约束：Σ_f x_{i,f} = 1
+    for k in range(n_pairs):
+        rows.append(r)
+        cols.append(x_col + k)
+        data.append(1.0)
+        if k + 1 == n_pairs or pairs[k + 1][0] != pairs[k][0]:
+            lb.append(1.0)
+            ub.append(1.0)
+            r += 1
+    # (2) 链接约束：x_{i,f} − y_f ≤ 0
+    for k, (_i, j) in enumerate(pairs):
+        rows.append(r)
+        cols.append(x_col + k)
+        data.append(1.0)
+        rows.append(r)
+        cols.append(1 + int(j))
+        data.append(-1.0)
+        lb.append(-np.inf)
+        ub.append(0.0)
+        r += 1
+    # (3) 基数约束：Σ_f y_f = p
+    for j in range(m_fac):
+        rows.append(r)
+        cols.append(1 + j)
+        data.append(1.0)
+    lb.append(float(p_count))
+    ub.append(float(p_count))
+    r += 1
+    # (4) Big-M 中心约束：z − (c_{i,f}+BigM)·x_{i,f} ≥ −BigM
+    for k, (_i, _j) in enumerate(pairs):
+        c_ij = float(C[pairs[k][0], pairs[k][1]])
+        rows.append(r)
+        cols.append(0)
+        data.append(1.0)
+        rows.append(r)
+        cols.append(x_col + k)
+        data.append(-(c_ij + big_m))
+        lb.append(-big_m)
+        ub.append(np.inf)
+        r += 1
+
+    A = coo_matrix((data, (rows, cols)), shape=(r, n_vars)).tocsr()
+    bounds_ub = np.concatenate([[big_m], np.ones(1 + m_fac + n_pairs - 1)])
+    res = milp(
+        c=c_obj,
+        constraints=LinearConstraint(A, np.asarray(lb), np.asarray(ub)),
+        integrality=np.ones(n_vars),
+        bounds=Bounds(np.zeros(n_vars), bounds_ub),
+    )
+
+    y = np.asarray(res.x[1:1 + m_fac], dtype=float)
+    selected = tuple(int(j) for j in np.where(y > 0.5)[0])
+    # 与既有 p_center_objective 同语义重算：max 只覆盖可指派需求（打平的
+    # 总加权成本作次级披露；MILP 主目标仅 z —— 披露于 summary）。
+    if selected:
+        min_cost = C[:, selected].min(axis=1)
+    else:  # pragma: no cover — p≥1 时 HiGHS 必开站
+        min_cost = np.full(n_dem, np.inf)
+    objective = float(np.max(min_cost[coverable])) if coverable.any() else 0.0
+    total_weighted = float(np.sum(w[coverable] * min_cost[coverable])) if coverable.any() else 0.0
+
+    return {
+        "selected": selected,
+        "objective_value": objective,
+        "total_weighted_cost": total_weighted,
+        "big_m": big_m,
+        "status_code": int(res.status),
+        "optimality": _MILP_STATUS_TEXT.get(int(res.status), "other"),
+        "highs_message": str(res.message),
+        "solve_stats": _milp_solve_stats(res),
+        "unassigned_demand_indices": [int(i) for i in np.where(~coverable)[0]],
+        "model_stats": {
+            "n_variables": int(n_vars),
+            "n_constraints": int(r),
+            "n_pairs": n_pairs,
+        },
+    }
 
 
 class NetworkLocationAllocationService:
@@ -205,42 +507,19 @@ class NetworkLocationAllocationService:
 
         return tuple(selected)
 
-    def location_allocation(
+    def _od_cost_matrix(
         self,
         candidate_facilities: List[Facility],
         demand_points: List[DemandPoint],
-        p_count: int,
-        problem_type: str = "p_median",
-        cutoff_cost: Optional[float] = None,
         graph: Optional[nx.DiGraph] = None,
         network_dataset: Optional[NetworkDataset] = None,
         profile: Optional[TravelProfile] = None,
-    ) -> NetworkAnalysisResult:
+    ) -> List[List[float]]:
+        """需求×候选的路网代价矩阵（不可达 = inf）。
+
+        location_allocation（枚举/启发式）与精确 MILP 路径共用同一 OD
+        语义 —— 同一请求两条路径的代价输入逐位一致。
         """
-        Solves Location-Allocation problem (P-Median, Max Coverage or P-Center).
-
-        Args:
-            candidate_facilities: List of candidate Facility objects.
-            demand_points: List of DemandPoint objects.
-            p_count: Number of facilities to select.
-            problem_type: 'p_median', 'max_coverage' or 'p_center'.
-            cutoff_cost: Optional cost cutoff threshold.
-            graph: NetworkX DiGraph.
-            network_dataset: NetworkDataset model.
-            profile: TravelProfile.
-
-        Returns:
-            NetworkAnalysisResult containing allocated facilities and assignments.
-        """
-        if not candidate_facilities or not demand_points or p_count <= 0:
-            return NetworkAnalysisResult(
-                analysis_type="location_allocation",
-                status="success",
-                summary={"problem_type": problem_type, "p_count": p_count, "selected_count": 0},
-            )
-
-        p_count = min(p_count, len(candidate_facilities))
-
         orig_coords = [(d.geometry["coordinates"][0], d.geometry["coordinates"][1]) for d in demand_points]
         dest_coords = [(f.geometry["coordinates"][0], f.geometry["coordinates"][1]) for f in candidate_facilities]
 
@@ -262,12 +541,95 @@ class NetworkLocationAllocationService:
                 idx = i * m_fac + j
                 if idx < len(od_pairs) and od_pairs[idx].reachable:
                     cost_matrix[i][j] = od_pairs[idx].travel_time_s
+        return cost_matrix
+
+    def location_allocation(
+        self,
+        candidate_facilities: List[Facility],
+        demand_points: List[DemandPoint],
+        p_count: int,
+        problem_type: str = "p_median",
+        cutoff_cost: Optional[float] = None,
+        graph: Optional[nx.DiGraph] = None,
+        network_dataset: Optional[NetworkDataset] = None,
+        profile: Optional[TravelProfile] = None,
+        solver: str = "auto",
+    ) -> NetworkAnalysisResult:
+        """
+        Solves Location-Allocation problem (P-Median, Max Coverage or P-Center).
+
+        Args:
+            candidate_facilities: List of candidate Facility objects.
+            demand_points: List of DemandPoint objects.
+            p_count: Number of facilities to select.
+            problem_type: 'p_median', 'max_coverage' or 'p_center'.
+            cutoff_cost: Optional cost cutoff threshold.
+            graph: NetworkX DiGraph.
+            network_dataset: NetworkDataset model.
+            profile: TravelProfile.
+            solver: Foundation V3 —— 'auto'（历史行为：小实例 C(m,p) 枚举、
+                大实例启发式）| 'heuristic'（强制 Teitz-Bart / 贪婪）|
+                'exact_milp'（强制 HiGHS 精确式，仅 p_median/p_center；
+                超规模闸抛 ResourceScaleMismatch，不静默回退）。
+
+        Returns:
+            NetworkAnalysisResult containing allocated facilities and assignments.
+        """
+        if solver not in ("auto", "heuristic", "exact_milp"):
+            raise UnsupportedMethod(
+                f"未知求解路径 {solver!r}（合法：auto | heuristic | exact_milp）",
+                correction_hint="choose solver='auto' (default), 'heuristic', or 'exact_milp'",
+            )
+        problem_norm = problem_type.lower()
+        if solver == "exact_milp":
+            if problem_norm == "p_median":
+                return self.p_median_exact(
+                    candidate_facilities=candidate_facilities,
+                    demand_points=demand_points,
+                    p_count=p_count,
+                    graph=graph,
+                    network_dataset=network_dataset,
+                    profile=profile,
+                )
+            if problem_norm == "p_center":
+                return self.p_center_exact(
+                    candidate_facilities=candidate_facilities,
+                    demand_points=demand_points,
+                    p_count=p_count,
+                    graph=graph,
+                    network_dataset=network_dataset,
+                    profile=profile,
+                )
+            raise UnsupportedMethod(
+                f"问题类型 {problem_type!r} 不提供 exact_milp 精确求解器"
+                "（MILP 精确式仅覆盖 p_median / p_center）",
+                correction_hint=(
+                    "use solver='auto' (exact enumeration / greedy-add) for max_coverage"
+                ),
+            )
+
+        if not candidate_facilities or not demand_points or p_count <= 0:
+            return NetworkAnalysisResult(
+                analysis_type="location_allocation",
+                status="success",
+                summary={"problem_type": problem_type, "p_count": p_count, "selected_count": 0},
+            )
+
+        p_count = min(p_count, len(candidate_facilities))
+        n_dem = len(demand_points)
+        m_fac = len(candidate_facilities)
+
+        cost_matrix = self._od_cost_matrix(
+            candidate_facilities, demand_points,
+            graph=graph, network_dataset=network_dataset, profile=profile,
+        )
 
         # GIS-11: exact enumeration for tractable instances; polynomial
         # heuristics (Teitz-Bart / greedy-add) beyond that so real inputs
         # (e.g. choose 5 of 80 candidates) terminate instead of hanging.
+        # solver='heuristic' 强制走启发式（跳过枚举分支，披露不变）。
         n_combos = _exact_combination_count(m_fac, p_count)
-        use_exact = n_combos <= _MAX_EXACT_COMBINATIONS
+        use_exact = solver == "auto" and n_combos <= _MAX_EXACT_COMBINATIONS
         solver_used = "exact" if use_exact else "heuristic"
 
         demand_weights = [d.weight for d in demand_points]
@@ -275,7 +637,6 @@ class NetworkLocationAllocationService:
         # p-center（Hakimi 1964 max-min）目标：可达需求的最大服务成本最小化。
         # 不可达需求不参与目标（inf 不是服务成本），事后以 unassigned 披露；
         # max 打平时用总加权成本做次级判据，避免局部搜索在平台上停滞。
-        problem_norm = problem_type.lower()
         if problem_norm == "p_center":
 
             def p_center_objective(subset: Tuple[int, ...]) -> Tuple[float, float]:
@@ -405,6 +766,9 @@ class NetworkLocationAllocationService:
             "unassigned_count": len(unassigned_ids),
             "unassigned_ids": unassigned_ids,
         }
+        if solver != "auto":
+            # 显式请求的求解路径如实回显（auto 历史行为不新增键）。
+            summary["solver_request"] = solver
 
         if problem_norm == "p_center":
             # p-center 披露：目标值 = 可达需求的最大服务成本（不可达需求已
@@ -412,6 +776,152 @@ class NetworkLocationAllocationService:
             max_service_cost, total_weighted_cost = p_center_objective(best_subset)
             summary["max_service_cost"] = round(max_service_cost, 2)
             summary["total_weighted_cost"] = round(total_weighted_cost, 2)
+
+        return NetworkAnalysisResult(
+            analysis_type="location_allocation",
+            status="success",
+            summary=summary,
+            allocated_facilities=allocated_facilities,
+        )
+
+    # --- Foundation V3：精确 MILP 服务面（签名镜像 location_allocation）---
+
+    def p_median_exact(
+        self,
+        candidate_facilities: List[Facility],
+        demand_points: List[DemandPoint],
+        p_count: int,
+        cutoff_cost: Optional[float] = None,  # 签名对齐；p-median 精确式无 cutoff 语义
+        graph: Optional[nx.DiGraph] = None,
+        network_dataset: Optional[NetworkDataset] = None,
+        profile: Optional[TravelProfile] = None,
+    ) -> NetworkAnalysisResult:
+        """精确 p-中位（HiGHS MILP）：输入签名与 location_allocation 镜像。
+
+        目标 min Σ w_i·min_{j∈S} C_ij 的全局最优；代价矩阵与启发式路径同源
+        （_od_cost_matrix）。规模闸（候选 ≤ 500 且 需求×候选 ≤ 25000）超限
+        抛 ResourceScaleMismatch —— 诚实拒绝，不静默回退启发式。
+        """
+        if not candidate_facilities or not demand_points or p_count <= 0:
+            return NetworkAnalysisResult(
+                analysis_type="location_allocation",
+                status="success",
+                summary={"problem_type": "p_median", "p_count": p_count,
+                         "selected_count": 0, "solver": "milp_highs"},
+            )
+        p_count = min(p_count, len(candidate_facilities))
+        cost_matrix = self._od_cost_matrix(
+            candidate_facilities, demand_points,
+            graph=graph, network_dataset=network_dataset, profile=profile,
+        )
+        milp_out = solve_p_median_milp(
+            cost_matrix, [d.weight for d in demand_points], p_count
+        )
+        return self._exact_milp_result(
+            candidate_facilities, demand_points, p_count, "p_median",
+            cost_matrix, milp_out,
+        )
+
+    def p_center_exact(
+        self,
+        candidate_facilities: List[Facility],
+        demand_points: List[DemandPoint],
+        p_count: int,
+        cutoff_cost: Optional[float] = None,  # 签名对齐；p-center 精确式无 cutoff 语义
+        graph: Optional[nx.DiGraph] = None,
+        network_dataset: Optional[NetworkDataset] = None,
+        profile: Optional[TravelProfile] = None,
+    ) -> NetworkAnalysisResult:
+        """精确 p-中心（HiGHS MILP，Big-M 最大服务成本式）。
+
+        目标 = 最小化可指派需求的最大服务成本（与既有 p-center 枚举/启发
+        式同语义：不可达需求不进 max 目标、以 unassigned 披露）。规模闸同
+        p_median_exact，超限诚实拒绝。
+        """
+        if not candidate_facilities or not demand_points or p_count <= 0:
+            return NetworkAnalysisResult(
+                analysis_type="location_allocation",
+                status="success",
+                summary={"problem_type": "p_center", "p_count": p_count,
+                         "selected_count": 0, "solver": "milp_highs"},
+            )
+        p_count = min(p_count, len(candidate_facilities))
+        cost_matrix = self._od_cost_matrix(
+            candidate_facilities, demand_points,
+            graph=graph, network_dataset=network_dataset, profile=profile,
+        )
+        milp_out = solve_p_center_milp(
+            cost_matrix, [d.weight for d in demand_points], p_count
+        )
+        return self._exact_milp_result(
+            candidate_facilities, demand_points, p_count, "p_center",
+            cost_matrix, milp_out,
+        )
+
+    def _exact_milp_result(
+        self,
+        candidate_facilities: List[Facility],
+        demand_points: List[DemandPoint],
+        p_count: int,
+        problem_type: str,
+        cost_matrix: List[List[float]],
+        milp_out: Dict[str, Any],
+    ) -> NetworkAnalysisResult:
+        """MILP 求解输出 → NetworkAnalysisResult（与启发式同形状 + 求解器披露）。
+
+        指派语义与启发式一致：每个可指派需求 → 选中设施中成本最小者
+        （平手取索引最小）。不可达需求点统一进 unassigned_ids。
+        """
+        n_dem = len(demand_points)
+        selected = milp_out["selected"]
+        unassigned_indices = set(milp_out["unassigned_demand_indices"])
+
+        allocated_facilities: List[Dict[str, Any]] = []
+        for fac_idx in selected:
+            fac = candidate_facilities[fac_idx]
+            assigned_demands: List[str] = []
+            total_assigned_weight = 0.0
+            for i in range(n_dem):
+                if i in unassigned_indices:
+                    continue
+                costs = cost_matrix[i]
+                best_fac_idx = min(selected, key=lambda j: costs[j])
+                if best_fac_idx == fac_idx:
+                    assigned_demands.append(demand_points[i].demand_id)
+                    total_assigned_weight += demand_points[i].weight
+            allocated_facilities.append({
+                "facility_id": fac.facility_id,
+                "name": fac.name,
+                "geometry": fac.geometry,
+                "assigned_demand_count": len(assigned_demands),
+                "assigned_total_weight": total_assigned_weight,
+                "assigned_demand_ids": assigned_demands,
+            })
+
+        unassigned_ids = [demand_points[i].demand_id for i in sorted(unassigned_indices)]
+
+        summary: Dict[str, Any] = {
+            "problem_type": problem_type,
+            "p_count": p_count,
+            "selected_facilities_count": len(selected),
+            "total_demand_count": n_dem,
+            "candidate_facility_count": len(candidate_facilities),
+            # 精确 MILP 披露：求解器 / 最优性状态（HiGHS 透传）/ 目标值 /
+            # 求解统计 —— 绝不让近似结果冒充精确。
+            "solver": "milp_highs",
+            "solver_request": "exact_milp",
+            "objective_value": round(float(milp_out["objective_value"]), 6),
+            "optimality": milp_out["optimality"],
+            "highs_status": milp_out["highs_message"],
+            "solve_stats": milp_out["solve_stats"],
+            "model_stats": milp_out["model_stats"],
+            "unassigned_count": len(unassigned_ids),
+            "unassigned_ids": unassigned_ids,
+        }
+        if problem_type == "p_center":
+            summary["max_service_cost"] = round(float(milp_out["objective_value"]), 2)
+            summary["total_weighted_cost"] = round(float(milp_out["total_weighted_cost"]), 2)
+            summary["big_m"] = float(milp_out["big_m"])
 
         return NetworkAnalysisResult(
             analysis_type="location_allocation",
