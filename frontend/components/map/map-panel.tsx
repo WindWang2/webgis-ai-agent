@@ -1243,18 +1243,18 @@ export function MapPanel({
     <div className="absolute inset-0 bg-surface-canvas">
       {/* WebGL Error Fallback UI */}
       {webglError ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-surface-canvas/95 backdrop-blur-md z-30 text-ink-primary">
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-surface-canvas/95 backdrop-blur-md z-30 text-ink">
           <div className="max-w-md w-full rounded-2xl border border-edge-subtle bg-surface-panel p-6 shadow-2xl space-y-4 text-center">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-500 ring-1 ring-amber-500/20">
               <AlertTriangle className="h-7 w-7" />
             </div>
             <div>
-              <h3 className="text-base font-semibold tracking-tight text-ink-primary">WebGL 上下文丢失或被阻止</h3>
+              <h3 className="text-base font-semibold tracking-tight text-ink">WebGL 上下文丢失或被阻止</h3>
               <p className="mt-1 text-xs text-ink-muted leading-relaxed">
                 浏览器 WebGL 渲染上下文发生丢失或被阻止 (Context Loss)。通常由于浏览器开启过多 3D/地图标签页或 GPU 资源受限导致。
               </p>
             </div>
-            <div className="rounded-lg bg-surface-base/80 p-3 text-left border border-edge-subtle text-[11px] text-ink-muted space-y-1">
+            <div className="rounded-lg bg-surface-sunken/80 p-3 text-left border border-edge-subtle text-[11px] text-ink-muted space-y-1">
               <div className="font-medium text-ink-secondary">建议解决方案：</div>
               <ul className="list-disc list-inside space-y-0.5 text-ink-muted">
                 <li>关闭占用显存的其他 3D / 地图标签页</li>
@@ -1266,7 +1266,7 @@ export function MapPanel({
               <button
                 type="button"
                 onClick={handleRetryWebGL}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3.5 py-2 text-xs font-medium text-white shadow-sm hover:bg-primary-500 transition-colors"
+                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-status-accent px-3.5 py-2 text-xs font-medium text-white shadow-sm hover:bg-status-accent-vivid transition-colors"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
                 重试初始化地图
@@ -1274,7 +1274,7 @@ export function MapPanel({
               <button
                 type="button"
                 onClick={() => window.location.reload()}
-                className="inline-flex items-center justify-center rounded-lg border border-edge-subtle bg-surface-base px-3.5 py-2 text-xs font-medium text-ink-primary hover:bg-surface-subtle transition-colors"
+                className="inline-flex items-center justify-center rounded-lg border border-edge-subtle bg-surface-sunken px-3.5 py-2 text-xs font-medium text-ink hover:bg-surface-subtle transition-colors"
               >
                 刷新页面
               </button>

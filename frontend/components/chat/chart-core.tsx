@@ -245,7 +245,7 @@ function RenderHistogramChart({ chart, height, onSelectCategory }: RenderProps) 
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }} barCategoryGap="0%">
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="name" tick={tickStyle(theme)} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "#94a3b8", fontSize: 13 } : undefined} />
+        <XAxis dataKey="name" tick={tickStyle(theme)} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "var(--text-muted)", fontSize: 13 } : undefined} />
         <YAxis tick={tickStyle(theme)} />
         <Tooltip {...tooltipStyle(theme)} />
         {/* Workbench V4（Wave 5）：bin 是离散类别（区间名），点击发布类别选择。 */}
@@ -270,7 +270,7 @@ function RenderPieChart({ chart, height, highlightedCategories, onSelectCategory
           outerRadius={70}
           innerRadius={donut ? 42 : 0}
           label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
-          labelLine={{ stroke: "#94a3b8" }}
+          labelLine={{ stroke: "var(--text-muted)" }}
           fontSize={13}
           {...(onSelectCategory
             ? { onClick: (state: unknown) => {
@@ -292,7 +292,7 @@ function RenderPieChart({ chart, height, highlightedCategories, onSelectCategory
           ))}
         </Pie>
         <Tooltip {...tooltipStyle(theme)} />
-        <Legend wrapperStyle={{ fontSize: "13px", color: "#94a3b8" }} />
+        <Legend wrapperStyle={{ fontSize: "13px", color: "var(--text-muted)" }} />
       </PieChart>
     </ResponsiveContainer>
   )
@@ -306,7 +306,7 @@ function RenderScatterChart({ chart, height }: RenderProps) {
     <ResponsiveContainer width="100%" height={height}>
       <ScatterChart margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="x" type="number" tick={tickStyle(theme)} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "#94a3b8", fontSize: 13 } : undefined} />
+        <XAxis dataKey="x" type="number" tick={tickStyle(theme)} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "var(--text-muted)", fontSize: 13 } : undefined} />
         <YAxis dataKey="y" type="number" tick={tickStyle(theme)} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", ...tickStyle() } : undefined} />
         <Tooltip {...tooltipStyle(theme)} />
         <Scatter data={chart.data} fill="#06b6d4" />
@@ -387,7 +387,7 @@ function RenderBoxPlot({ chart, height }: RenderProps) {
       {[lo, (lo + hi) / 2, hi].map((v, i) => (
         <g key={i}>
           <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="rgba(100,116,139,0.25)" strokeDasharray="3 3" />
-          <text x={padL - 4} y={y(v) + 3} textAnchor="start" fontSize={9} fill="#94a3b8">{fmt(v)}</text>
+          <text x={padL - 4} y={y(v) + 3} textAnchor="start" fontSize={9} fill="var(--text-muted)">{fmt(v)}</text>
         </g>
       ))}
       {chart.data.map((p, i) => {
@@ -404,7 +404,7 @@ function RenderBoxPlot({ chart, height }: RenderProps) {
             <line x1={cx - bw / 3} x2={cx + bw / 3} y1={mx} y2={mx} stroke="#0891b2" strokeWidth={1} />
             <rect x={cx - bw / 2} y={Math.min(q1, q3)} width={bw} height={Math.max(2, Math.abs(q3 - q1))} rx={2} fill="rgba(6,182,212,0.35)" stroke="#0891b2" />
             <line x1={cx - bw / 2} x2={cx + bw / 2} y1={med} y2={med} stroke="#0e7490" strokeWidth={2} />
-            <text x={cx} y={H - 10} textAnchor="middle" fontSize={10} fill="#94a3b8">{p.name}</text>
+            <text x={cx} y={H - 10} textAnchor="middle" fontSize={10} fill="var(--text-muted)">{p.name}</text>
           </g>
         );
       })}
@@ -432,7 +432,7 @@ function RenderHeatMatrix({ chart, height }: RenderProps) {
     <svg role="img" aria-label={`热矩阵 ${chart.title}`} width="100%" viewBox={`0 0 ${W} ${H}`} data-testid="chart-heat-matrix">
       {rows.map((r, ri) => (
         <g key={ri}>
-          <text x={padL - 6} y={8 + ri * rowH + rowH / 2} textAnchor="end" fontSize={10} fill="#94a3b8">
+          <text x={padL - 6} y={8 + ri * rowH + rowH / 2} textAnchor="end" fontSize={10} fill="var(--text-muted)">
             {r.name.length > 10 ? `${r.name.slice(0, 9)}…` : r.name}
           </text>
           {r.data.map((p, ci) => (
@@ -452,7 +452,7 @@ function RenderHeatMatrix({ chart, height }: RenderProps) {
         </g>
       ))}
       {rows[0]?.data.map((p, ci) => (
-        <text key={ci} x={padL + ci * cellW + cellW / 2} y={H - 8} textAnchor="middle" fontSize={9} fill="#94a3b8">
+        <text key={ci} x={padL + ci * cellW + cellW / 2} y={H - 8} textAnchor="middle" fontSize={9} fill="var(--text-muted)">
           {(p.name ?? "").length > 6 ? `${p.name.slice(0, 5)}…` : p.name}
         </text>
       ))}
