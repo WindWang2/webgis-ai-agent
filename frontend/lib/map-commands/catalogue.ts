@@ -5,6 +5,7 @@ import { annotationCommands } from './annotationCommands';
 import { exportCommands } from './exportCommands';
 import { queryCommands } from './queryCommands';
 import { chartCommands } from './chartCommands';
+import { workbenchCommands } from './workbenchCommands';
 
 export type { MapCommandContext, CommandValidator, CommandEntry } from './types';
 
@@ -25,6 +26,7 @@ export const COMMAND_CATALOGUE = {
   ...exportCommands,
   ...queryCommands,
   ...chartCommands,
+  ...workbenchCommands,
 } as const;
 
 export type MapCommandName = keyof typeof COMMAND_CATALOGUE;
