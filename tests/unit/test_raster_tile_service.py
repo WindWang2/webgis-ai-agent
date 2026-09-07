@@ -201,8 +201,9 @@ def test_multiband_read_uses_indexes_not_all_bands(monkeypatch, tmp_path):
         assert kwargs["indexes"] == (1, 2, 3)
 
     # Stats cache holds exactly the 3 rendered bands (keyed by band subset, C5).
+    # R6: entries are (stats, expire_at) — the stats tuple itself is [0].
     assert (path, (1, 2, 3)) in svc._STATS_CACHE
-    assert len(svc._STATS_CACHE[(path, (1, 2, 3))]) == 3
+    assert len(svc._STATS_CACHE[(path, (1, 2, 3))][0]) == 3
 
 
 def test_normalize_channel_explicit_stretch():

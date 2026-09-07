@@ -37,6 +37,8 @@ import threading
 from collections import OrderedDict
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from app.services.singleflight import SingleFlight
+
 logger = logging.getLogger(__name__)
 
 _LAYER_NAME = "data"
@@ -1393,8 +1395,17 @@ class SpatialIndexCache:
 
     Thread-safe (threading.Lock). Bounded by both maximum entry count (max_refs)
     and maximum total estimated bytes (max_bytes). The heavy build runs outside
-    the lock (double-checked), so concurrent misses may build twice — acceptable
-    and harmless — while the index itself is only ever queried through the lock.
+    the lock (double-checked) and — R4a (audit 07 §6.1) — under a per-key
+    singleflight: concurrent misses for one (session, ref) share ONE build
+    instead of racing N times (each previously holding a 256MB-budget slot and
+    an N×-amplified ref fetch). Follower wait is bounded (``wait_timeout`` →
+    honest degrade to direct rebuild); builder exceptions propagate to waiters.
+
+    失效语义：composite epoch ``(global_gen, per_key)`` — invalidate/overwrite
+    bumps per-key, session-wide/clear bumps global; stale builds raise
+    ``RefDataUnavailableError`` at insert time and are never cached. The
+    singleflight is a pure optimization: correctness (no ghost resurrection)
+    is enforced solely by the epoch guards, exactly as before.
     """
 
     def __init__(self, max_refs: int = 256, max_bytes: int = 256 * 1024 * 1024):
@@ -1412,6 +1423,11 @@ class SpatialIndexCache:
         # keys the per-key table has never seen (in-flight builds for
         # brand-new keys). Captures are (global, per_key) composites.
         self._global_gen = 0
+        # R4a: per-instance build dedup (thread context — get_or_build runs on
+        # asyncio.to_thread workers). Instance-scoped so independent caches
+        # (tests, alternate budgets) never share flight state. Overload above
+        # max_inflight computes directly instead of queuing.
+        self._build_flight = SingleFlight(max_inflight=128, wait_timeout=30.0)
 
     @property
     def total_bytes(self) -> int:
@@ -1447,7 +1463,12 @@ class SpatialIndexCache:
                 self._entries.move_to_end(key)
                 return entry
             build_epoch = (self._global_gen, self._epochs.get(key, 0))
-        entry = build_fn()  # heavy work outside the lock
+        # R4a: heavy work outside the lock AND deduplicated per key — concurrent
+        # tile misses share one build_fn execution. Epoch guards below are
+        # unchanged and per-caller: each waiter re-validates its own captured
+        # epoch at insert time, so an invalidation during the shared build
+        # still refuses the stale result for every participant.
+        entry = self._build_flight.run(("spatial_index", *key), build_fn)
         entry_bytes = getattr(entry, "estimated_bytes", 0)
         with self._lock:
             # P1-1: the authoritative payload was invalidated while this build

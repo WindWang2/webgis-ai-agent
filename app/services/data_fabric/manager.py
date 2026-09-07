@@ -241,7 +241,17 @@ class DataFabricManager:
                 except Exception as e:  # describe 失败 → 跳过落库（M2）
                     return _DescribeFailed(str(e))
 
-            out = cached_describe(_do, source_id, name, scope=f"source:{source_id}")
+            out = cached_describe(
+                _do, source_id, name,
+                # R5（audit 07 §6.1）：scope 携带该 source 行的租户/归属域 ——
+                # 与 fabric 路由做租户过滤用的同一权威字段（data_fabric.py
+                # _tenant_filter 的 org_id/owner_id）。metadata_cache 契约
+                # （metadata_cache.py:5-7）要求键含 auth/tenant scope：一个
+                # 租户的 descriptor 绝不服务另一个租户；org/owner 双 None
+                # 的全局源构成各自独立的共享域。旧 source-only 键按 30s TTL
+                # 自然过期（键形状变更即全量 miss，可接受）。
+                scope=f"source:{source_id}|org:{ds_model.org_id}|owner:{ds_model.owner_id}",
+            )
             if isinstance(out, _DescribeFailed):
                 describe_errors[name] = out.error
                 raise _SkipDescribe(name)

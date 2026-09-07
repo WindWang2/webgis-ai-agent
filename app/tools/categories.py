@@ -32,7 +32,10 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.chart": "rendering",
     "app.tools.chinese_maps": "data_access",
     "app.tools.coord_transform": "transformation",
+    "app.tools.data_discovery": "inspection",           # 目录/画像/lineage 只读发现
     "app.tools.data_fabric_tools": "data_access",
+    "app.tools.ingest_tools": "data_access",            # 入库（detect→profile→register）
+    "app.tools.raster_tools_cog": "transformation",     # COG 转换
     "app.tools.explorer_tools": "data_access",
     "app.tools.geocoding": "data_access",
     "app.tools.geocompute_tools": "analysis",           # 执行平面；validate/run 查询名字覆盖
@@ -64,6 +67,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.temporal_tools": "analysis",
     "app.tools.terrain_analysis": "analysis",
     "app.tools.upload_tools": "inspection",
+    "app.tools.workspace_tools": "data_access",         # workspace 持久化 save/restore
     "app.tools.web_crawler": "data_access",       # 网络 POI 采集（数据获取通道）
     "app.tools.what_if_rules": "analysis",
     "app.tools.what_if_simulate": "analysis",
@@ -116,6 +120,10 @@ _NAME_OVERRIDES: Dict[str, str] = {
     # geocompute_tools：计划校验与 run 查询是只读检视
     "validate_execution_plan": "inspection",
     "get_execution_run": "inspection",
+    "cancel_execution_run": "map_mutation",             # 运行控制是状态突变
+    # workspace_tools：盘点/列表是检视；save/restore 走模块默认 data_access
+    "describe_workspace": "inspection",
+    "list_workspace_snapshots": "inspection",
 }
 
 #: 分类有限集合（审计与披露依赖）

@@ -3,9 +3,19 @@
 Renders 256x256 Web Mercator (EPSG:3857) PNG tiles from GeoTIFF rasters
 using windowed reads (rasterio.windows.from_bounds) and reprojection on the fly.
 Only reads the requested spatial window from disk.
+
+失效语义（R6，audit 07 §6.1）：本模块的两个进程内缓存已纳入 ref lifecycle
+—— PNG tile 缓存 **TTL-free 但有字节上限 LRU**（默认 256MB，env
+``RASTER_TILE_CACHE_MAX_BYTES``），band-stats 缓存 **TTL 10min**（env
+``RASTER_STATS_CACHE_TTL_S``）；两者都经 ``register_raster_ref`` 登记的
+(session, ref) → raster_path 关联，由 ``ref_lifecycle`` 的 additive hook
+在 overwrite/rollback/删除时按路径清除（best-effort，绝不抛）。陈旧兜底：
+raster id 按工具调用唯一（tool_dispatch_service），save_png 同路径重写是
+已知残余窗口。
 """
 import io
 import collections
+import os
 import threading
 from typing import Tuple, Dict, Optional
 import numpy as np
@@ -101,9 +111,13 @@ def _normalize_channel(
 # dataset-global (vmin, vmax) per band once per raster and reuse it for every
 # tile. Bounded LRU-ish dict; double-checked under a lock (worst case two
 # threads compute the same raster's stats concurrently, one wins — harmless).
-_STATS_CACHE: "Dict[Tuple[str, Tuple[int, ...]], Tuple[Tuple[float, float], ...]]" = {}
+# R6: entries carry a TTL (default 10min) — previously TTL-free with
+# clear-on-full only, so a rewritten same-path raster served its old stretch
+# until the 512-entry table happened to roll over.
+_STATS_CACHE: "Dict[Tuple[str, Tuple[int, ...]], Tuple[Tuple[Tuple[float, float], ...], float]]" = {}
 _STATS_CACHE_LOCK = threading.Lock()
 _STATS_MAX_ENTRIES = 512
+_STATS_TTL_S = float(os.environ.get("RASTER_STATS_CACHE_TTL_S", "600"))
 # Longest-side cap for the decimated stats read: bounds the one-time cost even
 # for huge rasters. The approximation is fine — tiles need one CONSISTENT
 # stretch, not pixel-exact global extremes.
@@ -143,26 +157,47 @@ def _compute_band_stats(src, indexes: Tuple[int, ...]) -> Tuple[Tuple[float, flo
 def _get_band_stats(
     raster_path: str, src, indexes: Tuple[int, ...]
 ) -> Tuple[Tuple[float, float], ...]:
-    """Cached per-(raster, band-subset) (vmin, vmax) (double-checked, lock-protected)."""
+    """Cached per-(raster, band-subset) (vmin, vmax) (double-checked, lock-protected).
+
+    R6: TTL-bounded (``_STATS_TTL_S``) — an expired entry recomputes from the
+    currently open dataset on the next request; invalidation additionally
+    clears entries eagerly via the ref-lifecycle raster hook.
+    """
+    import time as _time
+
     cache_key = (raster_path, indexes)
     with _STATS_CACHE_LOCK:
-        stats = _STATS_CACHE.get(cache_key)
-    if stats is not None:
-        return stats
+        entry = _STATS_CACHE.get(cache_key)
+        if entry is not None:
+            stats, expire_at = entry
+            if _time.monotonic() <= expire_at:
+                return stats
+            _STATS_CACHE.pop(cache_key, None)  # expired → recompute below
     stats = _compute_band_stats(src, indexes)
     with _STATS_CACHE_LOCK:
         existing = _STATS_CACHE.get(cache_key)
-        if existing is not None:
-            return existing
+        if existing is not None and _time.monotonic() <= existing[1]:
+            return existing[0]
         if len(_STATS_CACHE) >= _STATS_MAX_ENTRIES:
-            _STATS_CACHE.clear()  # bounded working set; staleness is best-effort
-        _STATS_CACHE[cache_key] = stats
+            _STATS_CACHE.clear()  # bounded working set; staleness兜底是 TTL 非容量
+        _STATS_CACHE[cache_key] = (stats, _time.monotonic() + _STATS_TTL_S)
     return stats
 
 
 _RASTER_TILE_CACHE: Dict[Tuple[str, int, int, int, int, str], bytes] = collections.OrderedDict()
 _MAX_RASTER_CACHE_ENTRIES = 2048
+# R6: byte bound (was count-only). Estimate per entry = len(bytes).
+_RASTER_TILE_MAX_BYTES = int(os.environ.get(
+    "RASTER_TILE_CACHE_MAX_BYTES", str(256 * 1024 * 1024)
+))
+_raster_tile_total_bytes = 0
 _RASTER_CACHE_LOCK = threading.Lock()
+
+
+def raster_tile_cache_bytes() -> int:
+    """Current total cached tile bytes (observability/tests)."""
+    with _RASTER_CACHE_LOCK:
+        return _raster_tile_total_bytes
 
 
 def _get_cached_tile(key: Tuple[str, int, int, int, int, str]) -> Optional[bytes]:
@@ -174,10 +209,93 @@ def _get_cached_tile(key: Tuple[str, int, int, int, int, str]) -> Optional[bytes
 
 
 def _set_cached_tile(key: Tuple[str, int, int, int, int, str], tile_bytes: bytes) -> None:
+    global _raster_tile_total_bytes
+    if len(tile_bytes) > _RASTER_TILE_MAX_BYTES:
+        return  # oversized single entry: never cached (TileLRUCache 同策略)
     with _RASTER_CACHE_LOCK:
+        old = _RASTER_TILE_CACHE.get(key)
+        if old is not None:
+            _raster_tile_total_bytes -= len(old)
         _RASTER_TILE_CACHE[key] = tile_bytes
-        if len(_RASTER_TILE_CACHE) > _MAX_RASTER_CACHE_ENTRIES:
-            _RASTER_TILE_CACHE.popitem(last=False)
+        _RASTER_TILE_CACHE.move_to_end(key)
+        _raster_tile_total_bytes += len(tile_bytes)
+        while _RASTER_TILE_CACHE and (
+            len(_RASTER_TILE_CACHE) > _MAX_RASTER_CACHE_ENTRIES
+            or _raster_tile_total_bytes > _RASTER_TILE_MAX_BYTES
+        ):
+            _k, evicted = _RASTER_TILE_CACHE.popitem(last=False)
+            _raster_tile_total_bytes -= len(evicted)
+
+
+# ─── R6: ref-lifecycle invalidation surface ─────────────────────────────────
+# The tile/stats caches key on raster_path, which invalidate_ref_caches cannot
+# derive from (session, ref) alone. The serving route registers the
+# association at path-resolution time; the lifecycle hook drops by path.
+# Best-effort by contract: an unregistered ref (never tiled in this process)
+# has nothing to clear, and a hook failure is logged, never raised.
+
+_RASTER_REF_REGISTRY: "Dict[Tuple[str, str], str]" = collections.OrderedDict()
+_RASTER_REF_REGISTRY_MAX = 4096
+_LIFECYCLE_HOOK_REGISTERED = False
+
+
+def register_raster_ref(session_id: str, ref_id: str, raster_path: str) -> None:
+    """记住 (session, ref) → raster_path，供 lifecycle 失效按路径清除。"""
+    with _RASTER_CACHE_LOCK:
+        _RASTER_REF_REGISTRY[(session_id, ref_id)] = raster_path
+        _RASTER_REF_REGISTRY.move_to_end((session_id, ref_id))
+        while len(_RASTER_REF_REGISTRY) > _RASTER_REF_REGISTRY_MAX:
+            _RASTER_REF_REGISTRY.popitem(last=False)
+
+
+def invalidate_raster_ref(session_id: str, ref_id: str) -> int:
+    """清除该 (session, ref) 关联 raster 的 tile + stats 缓存条目。
+
+    Never raises；返回清除的条目数（tests/observability）。未登记的 ref
+    （本进程从未出过瓦片）无物可清 — 幂等。
+    """
+    global _raster_tile_total_bytes
+    with _RASTER_CACHE_LOCK:
+        raster_path = _RASTER_REF_REGISTRY.pop((session_id, ref_id), None)
+        if raster_path is None:
+            return 0
+        stale_tiles = [k for k in _RASTER_TILE_CACHE if k[0] == raster_path]
+        for k in stale_tiles:
+            evicted = _RASTER_TILE_CACHE.pop(k, None)
+            if evicted is not None:
+                _raster_tile_total_bytes -= len(evicted)
+        stale_stats = [k for k in _STATS_CACHE if k[0] == raster_path]
+        for k in stale_stats:
+            _STATS_CACHE.pop(k, None)
+    return len(stale_tiles) + len(stale_stats)
+
+
+def _on_ref_invalidation(session_id: str, ref_id: str, reason) -> None:
+    """ref_lifecycle additive hook — best-effort, never raises."""
+    try:
+        invalidate_raster_ref(session_id, ref_id)
+    except Exception:  # noqa: BLE001 - 钩子绝不影响失效权威
+        logger.debug(
+            "[raster-tile] invalidation hook failed session=%s ref=%s",
+            session_id, ref_id, exc_info=True,
+        )
+
+
+def _ensure_lifecycle_hook_registered() -> None:
+    """向 ref_lifecycle 注册本模块的失效观察者（幂等，import 时调用）。"""
+    global _LIFECYCLE_HOOK_REGISTERED
+    if _LIFECYCLE_HOOK_REGISTERED:
+        return
+    try:
+        from app.services.ref_lifecycle import register_ref_invalidation_hook
+
+        register_ref_invalidation_hook(_on_ref_invalidation)
+        _LIFECYCLE_HOOK_REGISTERED = True
+    except Exception:  # noqa: BLE001 - 注册失败仅失去主动失效（TTL/LRU 兜底）
+        logger.debug("[raster-tile] lifecycle hook registration failed", exc_info=True)
+
+
+_ensure_lifecycle_hook_registered()
 
 
 def render_raster_tile(

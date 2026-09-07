@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from app.services.geocompute.budgets import BudgetLimits, ResourceGovernor
 from app.services.geocompute.errors import GeoComputeError
+from app.services.geocompute.resource_counter import shared_counter
 from app.services.geocompute.plan import (
     CrsExpectation,
     ExecutionNode,
@@ -111,7 +112,11 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
 #: project ← 显式 project_id、session ← 稳定哈希派生；执行作用域由
 #: executor 创建/摘除。
 GOVERNOR = ResourceGovernor(
-    global_limits=BudgetLimits(max_rows=5_000_000, max_bytes=2 * 1024 * 1024 * 1024)
+    global_limits=BudgetLimits(max_rows=5_000_000, max_bytes=2 * 1024 * 1024 * 1024),
+    # Wave 8 R2：可选跨进程 advisory 计数器。默认关闭（无 REDIS_URL +
+    # WEBGIS_CROSS_PROCESS_GOVERNOR=1 时零 Redis 交互、语义与纯进程内
+    # 完全一致）；开启后也只做尽力准入建议 —— L1 树始终是权威真相。
+    cross_process=shared_counter(),
 )
 
 #: 层级并发槽位上界（有界、服务端红线；不做计费系统）。

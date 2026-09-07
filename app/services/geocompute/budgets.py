@@ -7,14 +7,16 @@
 - 限额是公开常数/显式配置（rows/bytes/nodes/concurrency），不是计费系统；
 - 超限 → 类型化 ``BudgetExceededError``，details 指明冒限的作用域并附
   可行动建议；
-- 线程安全（节点并发记账）；不做跨进程汇总（与 ADR-0094:273 同一取舍，
-  Deferred 里写明）。
+- 线程安全（节点并发记账）；跨进程汇总默认不做（与 ADR-0094:273 同一
+  取舍）—— Wave 8（audit 07 R2）起提供**可选的** advisory 层
+  ``resource_counter.CrossProcessCounter``（默认关闭、fail-open；L1
+  进程内树始终是权威真相，见 ``ResourceGovernor.cross_process``）。
 """
 from __future__ import annotations
 
 import threading
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -22,12 +24,20 @@ from app.services.geocompute.errors import BudgetExceededError
 
 
 class ScopeKind(str, Enum):
+    """作用域层级。
+
+    Wave 8（audit 07 §1.1/R7）决策记录：曾经的 ``NODE`` 成员已删除 ——
+    它从未被实例化（全仓库无 ``create_scope`` 调用方），按节点建 scope
+    只剩 governor 级锁开销与子树增长（节点记账本就沿链上报到全部祖先
+    作用域），保留成员只会造成「声明未接线」的假面。若未来需要节点级
+    限额，重新加入成员并在派发点实例化。
+    """
+
     GLOBAL = "global"
     TENANT = "tenant"
     PROJECT = "project"
     SESSION = "session"
     EXECUTION = "execution"
-    NODE = "node"
 
 
 class BudgetLimits(BaseModel):
@@ -67,11 +77,26 @@ class _Scope:
 
 
 class ResourceGovernor:
-    """层级预算树。根节点默认全局作用域（可配限额）。"""
+    """层级预算树。根节点默认全局作用域（可配限额）。
 
-    def __init__(self, global_limits: Optional[BudgetLimits] = None):
+    ``cross_process``（可选，duck-typed
+    ``resource_counter.CrossProcessCounter``）：Wave 8（audit 07 R2）的
+    **advisory** 跨进程聚合计数器。给定后 ``reserve``/``charge``/``release``
+    会在稳定祖先链键（去掉逐 run 唯一的 EXECUTION 段）上做 INCRBY/DECRBY，
+    且 reserve 时做尽力准入检查 —— 只在投影用量**确信**超过链上最具约束
+    限额时拒绝；Redis 故障一律放行（fail-open）。``None``（默认）= 纯
+    进程内，零 Redis 交互；L1 进程内树在任何配置下都是权威真相。
+    """
+
+    def __init__(
+        self,
+        global_limits: Optional[BudgetLimits] = None,
+        *,
+        cross_process: Optional[Any] = None,
+    ):
         self._root = _Scope(ScopeKind.GLOBAL, "root", global_limits)
         self._lock = threading.Lock()
+        self._cross_process = cross_process
 
     def ensure_scope(
         self,
@@ -154,7 +179,35 @@ class ResourceGovernor:
         链中途拒绝时对已记账的祖先做补偿回滚 —— 检查与记账之间不再留
         TOCTOU 窗口。``concurrency`` 是调度槽位预留（ADR-0101 D3）：
         节点派发前占用、落定后由 :meth:`release` 释放。
+
+        Wave 8 R2：装配了跨进程计数器且本调用含 rows/bytes/nodes 增量时，
+        先在其稳定链键上做 advisory 预留（确信超限 → 拒绝，details 诚实
+        披露判定依据）；随后的链式预留若被拒，对计数器做补偿回滚保持
+        两侧一致。纯 concurrency 预留不触达计数器（并发槽位是进程内
+        调度概念）。
         """
+        counter = self._cross_process
+        counter_engaged = counter is not None and bool(rows or bytes_ or nodes)
+        chain_key = self._stable_chain_key(path) if counter_engaged else ""
+        if counter_engaged:
+            decision = counter.reserve(
+                chain_key,
+                rows=rows,
+                bytes_=bytes_,
+                nodes=nodes,
+                limits=self._chain_caps(chain_key),
+            )
+            if not decision.allowed:
+                raise BudgetExceededError(
+                    "cross-process admission denied (advisory): "
+                    + "; ".join(decision.details.get("over", [])),
+                    suggestions=[
+                        "retry after in-flight runs drain (usage is a gauge)",
+                        "narrow the query extent or add filters",
+                        "raise the scope budget explicitly for approved heavy paths",
+                    ],
+                    details={"scope": chain_key, "cross_process": decision.details},
+                )
 
         def _apply(scope: _Scope, sign: int) -> None:
             # 调用方负责持锁（+1 路径在下方 with scope.lock 内；补偿路径
@@ -206,6 +259,11 @@ class ResourceGovernor:
             for scope in charged:
                 with scope.lock:
                     _apply(scope, -1)
+            if counter_engaged:
+                try:
+                    counter.release(chain_key, rows=rows, bytes_=bytes_, nodes=nodes)
+                except Exception:  # noqa: BLE001 - advisory 层补偿尽力而为
+                    pass
             raise
 
     def release(
@@ -220,10 +278,28 @@ class ResourceGovernor:
         """沿链归还预留（无上限检查；compensation 方向）。
 
         调度器在节点落定（completed/failed/cancelled/skipped）后释放其
-        concurrency 槽位 —— 与 ``reserve(concurrency=1)`` 严格配对。
+        concurrency 槽位 —— 与 ``reserve(concurrency=…)`` 严格配对
+        （Wave 8 R7：单位数与预留时一致）。
         下限钳制在 0（评审 MINOR：重复 release 不得把用量记负、变相
         抬高其他作用域的可用容量）。
+
+        Wave 8 R1：执行器在 run 收尾按「预留估计 + 实际记账」全额归还，
+        rows/bytes/nodes 由此保持**并发在飞量衡**语义 —— 长寿命祖先
+        作用域精确回到 run 前基本线（钳零是重复归还的兜底）。
+
+        Wave 8 R2：装配跨进程计数器时同步 DECRBY（TTL 兜底崩溃残留）；
+        计数器故障绝不倒灌本归还（L1 权威）。
         """
+        if self._cross_process is not None and bool(rows or bytes_ or nodes):
+            try:
+                self._cross_process.release(
+                    self._stable_chain_key(path),
+                    rows=rows,
+                    bytes_=bytes_,
+                    nodes=nodes,
+                )
+            except Exception:  # noqa: BLE001 - advisory 层绝不阻断 L1 归还
+                pass
         for scope in self._chain(path):
             with scope.lock:
                 u = scope.usage
@@ -240,7 +316,21 @@ class ResourceGovernor:
         bytes: int = 0,
         nodes: int = 0,
     ) -> None:
-        """沿链记账（全部祖先同时累加）。先 admit 后 charge。"""
+        """沿链记账（全部祖先同时累加）。先 admit 后 charge。
+
+        Wave 8 R2：装配跨进程计数器时同步 INCRBY（与 :meth:`release` 的
+        DECRBY 配对；键上 TTL 兜底崩溃残留）。
+        """
+        if self._cross_process is not None and bool(rows or bytes or nodes):
+            try:
+                self._cross_process.increase(
+                    self._stable_chain_key(path),
+                    rows=rows,
+                    bytes_=bytes,
+                    nodes=nodes,
+                )
+            except Exception:  # noqa: BLE001 - advisory 层绝不阻断 L1 记账
+                pass
         for scope in self._chain(path):
             with scope.lock:
                 scope.usage.rows += rows
@@ -273,6 +363,30 @@ class ResourceGovernor:
         return None if scope is None else scope.limits
 
     # ── 内部 ─────────────────────────────────────────────────────────
+
+    def _stable_chain_key(self, path: str) -> str:
+        """跨进程计数键：去掉尾部 EXECUTION 段后的稳定祖先链。
+
+        execution 作用域逐 run 唯一（uuid 后缀），不能作为跨进程聚合键；
+        去掉它之后同一 (tenant/…)session 的所有 run 聚合到同一键。
+        """
+        scopes = self._chain(path)
+        while len(scopes) > 1 and scopes[-1].kind is ScopeKind.EXECUTION:
+            scopes.pop()
+        return "/".join(scope.path for scope in scopes)
+
+    def _chain_caps(self, chain_key: str) -> Dict[str, Optional[int]]:
+        """稳定链上各维度的最具约束限额（None = 该维不限；advisory 检查用）。"""
+        caps: Dict[str, Optional[int]] = {"rows": None, "bytes": None, "nodes": None}
+        for scope in self._chain(chain_key):
+            lim = scope.limits
+            if lim is None:
+                continue
+            for dim in caps:
+                cap = getattr(lim, f"max_{dim}")
+                if cap is not None and (caps[dim] is None or cap < caps[dim]):
+                    caps[dim] = cap
+        return caps
 
     def _chain(self, path: str) -> List[_Scope]:
         """按路径解析作用域链；未知段按无限额透传（容忍并发创建次序）。"""

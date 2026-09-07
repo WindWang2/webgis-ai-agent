@@ -97,28 +97,42 @@ class TestGovernor:
 
 
 class TestGovernorInExecutor:
-    def test_node_completion_charges_execution_scope(self):
+    def test_node_completion_charges_execution_scope(self, monkeypatch):
         gov = ResourceGovernor()
         session_path = gov.create_scope("global:root", ScopeKind.SESSION, "s-5")
         engine = GeoExecutionEngine(max_workers=1)
+        charged: list[tuple] = []
+        real_charge = gov.charge
+
+        def spy_charge(path, **kw):
+            charged.append((kw.get("rows"), kw.get("nodes")))
+            return real_charge(path, **kw)
+
+        monkeypatch.setattr(gov, "charge", spy_charge)
         run = engine.execute_plan(
             ExecutionPlan(plan_id="p", nodes=[_filter_node()]),
             governor=gov, governor_parent_path=session_path,
         )
         assert run.status is ExecutionRunStatus.COMPLETED
-        exec_paths = [
-            f"{session_path}/{ScopeKind.EXECUTION.value}:{sid}"
-            for sid in ()
-        ]
-        assert not exec_paths  # 路径由引擎生成；用量断言见下
-        rows, _, nodes = gov.usage(session_path)
-        assert (rows, nodes) >= (2, 1)  # 4 特征里 2 个 kind=a
+        # charge 沿链发生（4 特征里 2 个 kind=a → rows=2, nodes=1）。
+        assert any(rows == 2 and nodes == 1 for rows, nodes in charged), charged
+        # Wave 8 R1 gauge 语义：run 收尾全额归还 → 会话作用域回到基本线
+        #（不再是终生累计；基线回归 pin 在 test_geocompute_governance_wave8.py）。
+        assert gov.usage(session_path) == (0, 0, 0)
 
-    def test_ancestor_budget_denies_execution(self):
+    def test_ancestor_budget_denies_execution(self, monkeypatch):
         gov = ResourceGovernor(
             global_limits=BudgetLimits(max_rows=1),
         )
         engine = GeoExecutionEngine(max_workers=1)
+        charged: list[int] = []
+        real_charge = gov.charge
+
+        def spy_charge(path, **kw):
+            charged.append(int(kw.get("rows") or 0))
+            return real_charge(path, **kw)
+
+        monkeypatch.setattr(gov, "charge", spy_charge)
         # 根只剩 1 行额度 → 2 行的节点执行期准入/记账应失败（admit 用估计，
         # 无估计时记账完成值决定）
         run = engine.execute_plan(
@@ -126,9 +140,11 @@ class TestGovernorInExecutor:
             governor=gov,
         )
         # 节点完成后记账沿链超限是**记录性**的（charge 不抛）；准入拒绝在
-        # 有估计时发生。这里诚实断言：run 完成 + 用量如实记账。
+        # 有估计时发生。这里诚实断言：run 完成 + 记账如实发生 + Wave 8 R1
+        # gauge 语义下收尾归还（基本线为 0，不再保留终生累计）。
         assert run.status is ExecutionRunStatus.COMPLETED
-        assert gov.usage("global:root")[0] == 2
+        assert sum(charged) >= 2
+        assert gov.usage("global:root") == (0, 0, 0)
 
 
 # -------------------------------------------------------------------- drift
