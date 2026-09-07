@@ -144,8 +144,19 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
 
     /* ─── Layer Selection ─── */
     selectedLayerIds: [],
+    // Review R1（MINOR-8）：等值 no-op 门（与 #739/#1078 纪律一致 ——
+    // 冗余调用不得翻转数组身份churn订阅者）。
     setSelectedLayerIds: (ids) =>
-      set({ selectedLayerIds: Array.from(new Set(ids)) }),
+      set((s) => {
+        const next = Array.from(new Set(ids));
+        if (
+          s.selectedLayerIds.length === next.length
+          && s.selectedLayerIds.every((id) => next.includes(id))
+        ) {
+          return s;
+        }
+        return { selectedLayerIds: next };
+      }),
     toggleLayerSelected: (id) =>
       set((s) => {
         if (s.selectedLayerIds.includes(id)) {
@@ -226,15 +237,19 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
         // 空组保留（用户组织结构不因图层清空而消失）。
         return changed ? { layerGroupMembership: membership } : s;
       }),
+    // Review R1（MAJOR-2）：会话切换同样退出对比 —— primary/secondary 是
+    // 旧会话的图层族 id，叠在新会话地图上是死引用；产物选择同理。
     resetLayerGroups: () =>
-      set({
+      set((s) => ({
         layerGroups: [],
         layerGroupMembership: {},
         selectedLayerIds: [],
         lockedLayerIds: [],
         isolatedLayerId: null,
         isolatedFrom: null,
-      }),
+        comparison: { ...EMPTY_COMPARISON, position: s.comparison.position },
+        selectedArtifactId: null,
+      })),
 
     /* ─── Artifact Selection ─── */
     selectedArtifactId: null,

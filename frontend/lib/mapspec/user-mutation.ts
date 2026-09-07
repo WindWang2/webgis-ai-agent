@@ -128,6 +128,10 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
           label: 'MapSpec presentation mutation',
         },
       );
+      // Review R1（state/concurrency MAJOR-1）：await 之后的会话复核 ——
+      // 60s 超时窗内切会话时，旧响应不得把旧会话的 spec/revision/回灌
+      // 写进新会话游标（stale 守卫只拒低 revision，同/高 revision 会穿透）。
+      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
       }
@@ -143,6 +147,7 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
         clearPendingPresentation(patch.layerId);
         throw err;
       }
+      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof superseded.mutation_revision === 'number') {
         setMapSpecRevision(superseded.mutation_revision);
       }
@@ -201,6 +206,8 @@ export async function commitLayerStyleAndCommit(
           label: 'MapSpec layer style mutation',
         },
       );
+      // Review R1 MAJOR-1：await 后会话复核（同 presentation 通道）。
+      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
       }
@@ -288,6 +295,8 @@ export async function commitExplicitView(view: {
           label: 'MapSpec set_view mutation',
         },
       );
+      // Review R1 MAJOR-1：await 后会话复核。
+      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
       }
@@ -328,6 +337,8 @@ export async function commitMapSpecMutation(
           label: 'MapSpec mutation',
         },
       );
+      // Review R1 MAJOR-1：await 后会话复核。
+      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
       }
@@ -360,6 +371,7 @@ export async function commitMapSpecMutation(
  */
 async function removeLayerFromSpecOnce(
   specLayerId: string,
+  enqueuedSessionId: string | undefined,
 ): Promise<'committed' | 'reflected' | 'retry'> {
   const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
   if (!sessionId) return 'reflected';
@@ -377,6 +389,8 @@ async function removeLayerFromSpecOnce(
         label: 'MapSpec remove_layer mutation',
       },
     );
+    // Review R1 MAJOR-1：await 后会话复核。
+    if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return 'reflected';
     if (typeof data.mutation_revision === 'number') {
       setMapSpecRevision(data.mutation_revision);
     }
@@ -405,10 +419,13 @@ export type RemoveLayerOutcome = 'committed' | 'reflected' | 'unsynced';
  * 决策（pendingRemoved 压制 compose），由下一次 mutation 收敛，绝不把
  * 已删层复活回地图。
  */
-export async function removeLayerFromSpec(specLayerId: string): Promise<RemoveLayerOutcome> {
-  const first = await removeLayerFromSpecOnce(specLayerId);
+export async function removeLayerFromSpec(
+  specLayerId: string,
+  enqueuedSessionId?: string | undefined,
+): Promise<RemoveLayerOutcome> {
+  const first = await removeLayerFromSpecOnce(specLayerId, enqueuedSessionId);
   if (first !== 'retry') return first;
-  const second = await removeLayerFromSpecOnce(specLayerId);
+  const second = await removeLayerFromSpecOnce(specLayerId, enqueuedSessionId);
   return second === 'retry' ? 'unsynced' : second;
 }
 
@@ -428,7 +445,7 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
           // 会话已切换：resetLiveState 已清 store 行与 pending，无需 POST。
           return 'session-switched';
         }
-        return removeLayerFromSpec(specLayerId);
+        return removeLayerFromSpec(specLayerId, enqueuedSessionId);
       },
     );
   } catch (err) {

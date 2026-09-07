@@ -105,6 +105,8 @@ export async function commitComponentPatch(
           label: 'MapSpec component patch mutation',
         },
       );
+      // Review R1 MAJOR-1：await 后会话复核 —— 旧会话响应不得写新游标。
+      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
       }

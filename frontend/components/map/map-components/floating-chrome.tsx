@@ -238,8 +238,13 @@ export function FloatingChrome({
     };
     if (geometry.width > 0) next.width = Math.round(Math.min(geometry.width, MAX_WIDTH));
     if (geometry.height > 0) next.height = Math.round(Math.min(geometry.height, MAX_HEIGHT));
-    if (placement?.mode === 'floating' && placement.zIndex !== undefined) {
-      next.zIndex = placement.zIndex;
+    // Review R1（MINOR-6）：z 序读在途 override —— bringToFront 的 z-bump
+    // 在 spec 回流前被同手势的 finishGesture 读取时，render-time placement
+    // 还是旧值，POST 会把 z-bump 回滚掉。
+    const liveZ = getComponentPlacementOverride(merged.id)?.zIndex
+      ?? placement?.zIndex;
+    if (placement?.mode === 'floating' && liveZ !== undefined) {
+      next.zIndex = liveZ;
     }
     return next;
   }
@@ -268,6 +273,13 @@ export function FloatingChrome({
       parentSize: measureParent(el),
     };
     pendingRef.current = null;
+    // Review R1（MINOR-5a）：手势开始即作废未触发的键盘去抖提交 —— 否则
+    // 500ms 窗口内的拖拽会被陈旧键盘 placement 覆盖（override + durable
+    // POST 双重回滚）。
+    if (keyCommitTimerRef.current) {
+      clearTimeout(keyCommitTimerRef.current);
+      keyCommitTimerRef.current = null;
+    }
     try {
       // 指针捕获：移出元素后 move/up 仍路由回手势元素（jsdom 无实现，静默）
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -347,7 +359,12 @@ export function FloatingChrome({
       cancelAnimationFrame(rafRef.current);
       rafRef.current = 0;
     }
-    const dropSnap = snapAnchor;
+    // Review R1（MINOR-4）：吸附判定用**最终几何**重新求值 —— snapAnchor
+    // 是最后一个 rAF 帧的提示态，pointerup 前的后续 pointermove 可能已让
+    // 真实落点离开/进入吸附半径。
+    const dropSnap = gesture.mode === 'drag'
+      ? snapTarget(finalGeometry, gesture.parentSize)
+      : null;
     setSnapAnchor(null);
     setTransient(null);
     const origin = gesture.origin;

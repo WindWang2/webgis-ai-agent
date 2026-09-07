@@ -156,6 +156,30 @@ function assertVisibilityParity(committed: MapSpec | null): void {
     const base = removedId.startsWith('custom-') ? removedId.slice(7) : removedId;
     expect(composedIds.has(removedId) || composedIds.has(base), `removed ${removedId} must not recompose`).toBe(false);
   }
+  // Review R1（MAJOR-3）：opacity parity —— compose 的 pending overlay 对
+  // paint 常量透明度的投影 == 期望值（store opacity ⊕ pending）。
+  const composedOpacity = new Map<string, number | undefined>();
+  for (const layer of composed.layers ?? []) {
+    const baseId = String(layer.id || '').split('__')[0];
+    const opacity = (layer.paint as Record<string, unknown> | undefined)?.opacity;
+    const value = typeof opacity === 'number' ? opacity : undefined;
+    composedOpacity.set(String(layer.id || ''), value);
+    composedOpacity.set(baseId, value);
+  }
+  for (const row of hud.layers) {
+    for (const key of [row.id, row._mapspecLayerId].filter(Boolean) as string[]) {
+      if (!composedOpacity.has(key)) continue;
+      const pendingPatch = pending[key] ?? pending[row.id];
+      const expected = pendingPatch?.opacity !== undefined ? pendingPatch.opacity : row.opacity;
+      const actual = composedOpacity.get(key);
+      if (actual !== undefined) {
+        expect(
+          Math.abs(actual - expected) < 1e-9,
+          `opacity parity for ${key} (row ${row.id}): compose=${actual} expected=${expected}`,
+        ).toBe(true);
+      }
+    }
+  }
 }
 
 beforeEach(async () => {
@@ -228,6 +252,25 @@ describe('workspace parity（golden model × 随机命令序列）', () => {
         expect(storeRow).toBeDefined();
         expect(storeRow!.visible).toBe(refRow.visible);
         expect(storeRow!.opacity).toBeCloseTo(refRow.opacity, 8);
+      }
+      // Review R1（MAJOR-3）：第 15 步插入服务端层集改写镜像事件
+      // （commit + syncSpecLayersToStore）—— B1 类「修剪吞新行」回归的
+      // parity 面：镜像后 store 行集必须与 spec 层集一致。
+      if (step === 15) {
+        committed = getCommittedMapSpec();
+        const { syncSpecLayersToStore } = await import('@/lib/session/map-state-restore');
+        syncSpecLayersToStore(committed, 'sid-parity');
+        assertVisibilityParity(committed);
+        const specIds = new Set(
+          (committed?.layers ?? []).map((l) => String(l.id)),
+        );
+        for (const row of useHudStore.getState().layers) {
+          if (!row._mapspecLayerId) continue;
+          expect(
+            specIds.has(row._mapspecLayerId) || specIds.has(row.id),
+            `mirror row ${row.id} not in spec after sync`,
+          ).toBe(true);
+        }
       }
     }
   });
