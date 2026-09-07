@@ -80,6 +80,14 @@ from app.services.geocompute import ops
 from app.services.geocompute.executor import GeoExecutionEngine
 from app.services.geocompute.plan import ExecutionNode, ExecutionPlan, NodeCategory
 
+
+# ── ADR-0104 Wave 11：墙钟断言统一 perf 车道（#664 隔离策略）──────────────
+# 毫秒级中位数/上限对机器与负载敏感，不得在 --cov 主车道作为回归闸；
+# 结构性断言（字节数、计数器）保留为各测试内部契约。见 production.yml
+# test-perf 车道（-m perf）与 test_ci_perf_coverage_contract 的接线锁。
+pytestmark = pytest.mark.perf
+
+
 # ---------------------------------------------------------------------------
 # shared fixture builders (deterministic; nothing committed)
 # ---------------------------------------------------------------------------
