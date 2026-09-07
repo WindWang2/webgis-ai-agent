@@ -32,6 +32,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from scipy.stats import chi2 as chi2_dist
 
+from app.lib.cancellation import checkpoint
 from app.lib.gis.crs_safety import classify_crs
 from app.lib.gis.scientific_errors import (
     DegenerateData,
@@ -210,6 +211,9 @@ def _csr_envelope_curves(curve_fn, n: int, window: tuple, draws: int,
     xmin, ymin, xmax, ymax = window
     out = np.empty((draws, n_steps))
     for i in range(draws):
+        # CSR 模拟是 draws × O(n²) 的重循环（ADR-0104 Wave 9）：每个 draw
+        # 一个协作式取消检查点——K/L/G/F/J 的 envelope 都经过这里。
+        checkpoint()
         sim_xy = np.column_stack([
             rng.uniform(xmin, xmax, n),
             rng.uniform(ymin, ymax, n),
@@ -1010,6 +1014,9 @@ def cross_k(
         rng = np.random.default_rng(_FIXED_SEED)
         sims = np.empty((permutations, n_steps))
         for i in range(permutations):
+            # 置换检验是 permutations × O(n²) 重循环（ADR-0104 Wave 9）：
+            # 每次置换一个协作式取消检查点。
+            checkpoint()
             sims[i] = _k12(lab[rng.permutation(n)])
         stat = float(np.max(np.abs(k12 - csr_vals)))
         sim_stats = np.max(np.abs(sims - np.pi * r_grid[None, :] ** 2), axis=1)
@@ -1177,6 +1184,9 @@ def knox_test(
         rng = np.random.default_rng(_FIXED_SEED)
         sim_counts = np.empty(permutations)
         for i in range(permutations):
+            # 置换检验是 permutations × O(n²) 重循环（ADR-0104 Wave 9）：
+            # 每次置换一个协作式取消检查点。
+            checkpoint()
             tp = times[rng.permutation(n)]
             sim_counts[i] = int(np.sum(np.abs(tp[i_idx] - tp[j_idx]) <= critical_time))
         p_value = (int(np.sum(sim_counts >= observed)) + 1) / (permutations + 1)
@@ -1371,6 +1381,9 @@ def space_time_k(
         rng = np.random.default_rng(_FIXED_SEED)
         sim_stats = np.empty(permutations)
         for i in range(permutations):
+            # 置换检验是 permutations × O(n²) 重循环（ADR-0104 Wave 9）：
+            # 每次置换一个协作式取消检查点。
+            checkpoint()
             sim_stats[i] = float(np.max(_kst(times[rng.permutation(n)]) - ref))
         p_value = (int(np.sum(sim_stats >= exceed)) + 1) / (permutations + 1)
         out.update({
@@ -1479,6 +1492,9 @@ def mantel_test(
         rng = np.random.default_rng(_FIXED_SEED)
         sim = np.empty(permutations)
         for i in range(permutations):
+            # 置换检验是 permutations × O(n²) 重循环（ADR-0104 Wave 9）：
+            # 每次置换一个协作式取消检查点。
+            checkpoint()
             # 单一置换同时重标 i 与 j 侧 —— 两侧必须同一标签流
             perm = rng.permutation(n)
             sim[i] = _rm(np.abs(times[perm][iu] - times[perm][ju]))
@@ -1655,6 +1671,9 @@ def cross_pair_correlation(
         rng = np.random.default_rng(_FIXED_SEED)
         sims = np.empty((permutations, n_steps))
         for i in range(permutations):
+            # 置换检验是 permutations × O(n²) 重循环（ADR-0104 Wave 9）：
+            # 每次置换一个协作式取消检查点。
+            checkpoint()
             sims[i] = _pcf_from_k(_k12(lab[rng.permutation(n)]), r_grid,
                                   bandwidth_resolved)
         stat = float(np.max(np.abs(g12 - 1.0)))

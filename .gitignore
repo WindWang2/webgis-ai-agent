@@ -19,6 +19,7 @@ scripts/
 !/scripts/gen_quality_manifest.py
 !/scripts/gen_drift_report.py
 !/scripts/gen_trace_certification.py
+!/scripts/gen_resource_certification.py
 webgis-ai-agent/
 
 # 系统与临时文件
