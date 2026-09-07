@@ -210,3 +210,31 @@ def test_kill_switch_disables_persistence(tmp_path, monkeypatch):
         {"turn_id": "t", "session_id": sid, "stages": []}, session_id=sid
     ) is False
     assert trace_store.read_chains(sid) == []
+
+
+def test_replay_exposes_chain_completeness_report(tmp_path, monkeypatch):
+    """review Round-1 MAJOR：门在 replay 评测面可达（ADR 决策 9 的接线承诺）。"""
+    import contextlib
+    import uuid
+
+    from app.evaluation import replay
+    from app.services.gis_harness import trace_store
+
+    sid = f"w8-replay-{uuid.uuid4().hex[:8]}"
+    monkeypatch.setenv("MAPSPEC_STORAGE_DIR", str(tmp_path))
+    turn_id = f"w8r-{uuid.uuid4().hex[:8]}"
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(bind_runtime_context(
+            turn_id=turn_id, session_id=sid))
+        for stage in Stage:
+            emit_chain(stage, probe=True)
+        d = get_gis_trace_registry().get(turn_id).as_dict()
+        get_gis_trace_registry().drop(turn_id)
+    d["session_id"] = sid
+    assert trace_store.persist_chain(d, session_id=sid)
+
+    report = replay.chain_completeness_report(sid)
+    assert report["passed"] is True
+    assert report["per_chain"][0]["completeness"] == 1.0
+    # 无链会话：空报告，不伪造通过
+    assert replay.chain_completeness_report(f"{sid}-empty")["passed"] is False

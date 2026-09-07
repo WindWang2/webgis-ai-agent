@@ -364,3 +364,24 @@ def route_decision_diff(decision_a: Any, decision_b: Any) -> Dict[str, Any]:
         if a.get(key) != b.get(key):
             diff[key] = {"a": a.get(key), "b": b.get(key)}
     return diff
+
+
+def chain_completeness_report(
+    session_id: str,
+    *,
+    min_completeness: float = 0.95,
+    na_stages: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """V4 Wave 8（ADR-0104 决策 9）：会话证据链完整性回归面。
+
+    从会话 JSONL（trace_store 持久化）读链并跑 `chain_gate` 门 ——
+    replay 侧的离线消费入口（链发射/持久化在 turn 收尾完成）。零 LLM、
+    零网络；链缺席 = 空报告（不伪造通过）。
+    """
+    from app.evaluation.chain_gate import run_chain_gate_for_session
+
+    return run_chain_gate_for_session(
+        session_id,
+        min_completeness=min_completeness,
+        na_stages=set(na_stages) if na_stages else None,
+    )

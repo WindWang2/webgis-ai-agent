@@ -379,7 +379,7 @@ def _dedup_gate_blocks(
         _stored_checked_revision(stored) == revision
         and _stored_render_seq(stored) == render_seq
         and str(stored.get("rows_fingerprint") or "")
-        == _rows_fingerprint(chapter)[:512]
+        == _rows_fingerprint(chapter)[:2048]
     )
 
 
@@ -432,7 +432,7 @@ def map_product_block(
     block["checked_revision"] = int(checked_revision)
     block["render_observation_seq"] = int(render_observation_seq)
     if rows_fingerprint:
-        block["rows_fingerprint"] = rows_fingerprint[:512]
+        block["rows_fingerprint"] = rows_fingerprint[:2048]
     block["projection"] = result.projection_line()
     # VNext §14：单字产品裁决（READY / READY_WITH_WARNINGS / NEEDS_REPAIR /
     # BLOCKED_BY_DATA / BLOCKED_BY_METHOD）—— 章节方法论警告参与推导
@@ -609,7 +609,7 @@ async def maybe_finalize_map_product(
                 # 行漂移守卫（review 终审 F1）：终验期间并行工具回调改了行
                 # 状态（行不推 revision）—— 旧指纹的结论不得盖上新指纹的
                 # 章节（否则陈旧 failed/complete 被门永久保护）。
-                if _rows_fingerprint(fresh.gis_chapter)[:512] != validated_fingerprint[:512]:
+                if _rows_fingerprint(fresh.gis_chapter)[:2048] != validated_fingerprint[:2048]:
                     logger.info(
                         "[MapFinalizer] rows changed mid-run session=%s — persist skipped",
                         session_id,

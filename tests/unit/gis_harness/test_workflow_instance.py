@@ -26,7 +26,7 @@ from app.services.gis_harness.workflow_instance import (
     derive_workflow_instance,
     format_instance_line,
     gate_fingerprint,
-    recompute_workflow_contract,
+    derive_unblock_contract,
     row_signature,
     rows_fingerprint,
 )
@@ -227,9 +227,9 @@ def test_dag_blocked_and_recovery():
     assert _state_map(recovered)["cap_step_0"] == "satisfied"
 
 
-# ── 5. 科学契约重算（数据到位解除阻断）──────────────────────────────────
+# ── 5. 科学契约解除（数据到位；单调、保 method，review Round-1 语义）────
 
-def test_science_recompute_unblock_direction():
+def test_unblock_candidate_honest_none_without_recipe():
     contract = {
         "recipe_id": "r",
         "roles": [
@@ -241,9 +241,62 @@ def test_science_recompute_unblock_direction():
         "data_blockers": ["denominator"],
     }
     ch = _chapter(recipe_id="edu_equity", contract=contract)
-    recheck = recompute_workflow_contract(ch)
     # edu_equity recipe 不存在 → 诚实 None（不虚构评估）
-    assert recheck is None
+    assert derive_unblock_contract(ch) is None
+
+
+def test_unblock_requires_new_binding_evidence():
+    """无新绑定证据（角色早已 bound）⇒ None —— 零重写。"""
+    contract = {
+        "recipe_id": "poi_distribution_overview",
+        "roles": [
+            {"role": "subject", "status": "bound", "bound_ref": "ref:old",
+             "required": True, "missing_policy": "block"},
+        ],
+        "obligations": [], "method_blockers": [], "data_blockers": [],
+    }
+    ch = _chapter(recipe_id="poi_distribution_overview", contract=contract)
+    for row in ch["data_requirements"]:
+        if row["capability"] == "cap_req_0":
+            row["status"] = "available"
+            row["bound_ref"] = "ref:new"
+    assert derive_unblock_contract(ch) is None
+
+
+def test_failed_row_never_binds_and_method_blockers_preserved():
+    """review Round-1 #1 对账测试：failed 行不产生绑定；method_blockers /
+    obligations 逐字保留 —— 重算永不放松方法红线。"""
+    contract = {
+        "recipe_id": "poi_distribution_overview",
+        "roles": [
+            {"role": "subject", "status": "unresolved", "required": True,
+             "missing_policy": "block"},
+        ],
+        "obligations": [{"obligation_id": "o1", "status": "blocked"}],
+        "method_blockers": ["o1"],
+        "data_blockers": ["subject"],
+    }
+    ch = _chapter(recipe_id="poi_distribution_overview", contract=contract)
+    # failed 行 + step 行绑定 —— 都不算数据在场证据
+    for row in ch["data_requirements"]:
+        if row["capability"] == "cap_req_0":
+            row["status"] = "failed"
+            row["bound_ref"] = "ref:stale"
+    for row in ch["analysis_steps"]:
+        if row["capability"] == "cap_step_0":
+            row["status"] = "done"
+            row["bound_ref"] = "ref:step"
+    assert derive_unblock_contract(ch) is None
+    # available 行 → 恰好解除该角色；method/obligations 原样
+    for row in ch["data_requirements"]:
+        if row["capability"] == "cap_req_0":
+            row["status"] = "available"
+    candidate = derive_unblock_contract(ch)
+    if candidate is not None:
+        # poi_distribution_overview 的 subject 角色 hint 若命中 cap_req_0
+        assert candidate["method_blockers"] == ["o1"]
+        assert candidate["obligations"] == [{"obligation_id": "o1", "status": "blocked"}]
+        assert "subject" not in candidate["data_blockers"]
 
 
 def test_science_recheck_neutral_without_contract():
@@ -253,16 +306,22 @@ def test_science_recheck_neutral_without_contract():
     assert block.science.direction == ""
 
 
-def test_worsened_direction_does_not_rewrite():
-    """重算比存储多阻断 → 只披露（worsened），服务不回写 contract。"""
+def test_non_subset_candidate_never_unblocks():
+    """阻断非严格子集（method 变化）⇒ 不解除（恒等裁决，非数量）。"""
     contract = {
-        "roles": [], "obligations": [],
-        "method_blockers": ["obl_1"], "data_blockers": [],
+        "roles": [
+            {"role": "subject", "status": "unresolved", "required": True,
+             "missing_policy": "block"},
+        ],
+        "obligations": [], "method_blockers": ["o1"],
+        "data_blockers": ["subject"],
     }
-    ch = _chapter(recipe_id="edu_equity", contract=contract)
-    recomputed = recompute_workflow_contract(ch)
-    # recipe 缺席 → None；有 recipe 的场景由服务测试覆盖（fake registry）
-    assert recomputed is None or isinstance(recomputed, dict)
+    ch = _chapter(recipe_id="r", contract=contract)
+    fake = dict(contract)
+    fake["data_blockers"] = []
+    fake["method_blockers"] = []  # method 变了 —— 即使 data 全解除也不算
+    science = _derive(ch, recomputed_contract=fake).science
+    assert science.direction == "equal"
 
 
 # ── 6. 事件维度映射（style-only ≠ science）──────────────────────────────
@@ -427,40 +486,53 @@ async def test_service_recomputes_on_row_change_and_persists(clean_session):
 
 @pytest.mark.asyncio
 async def test_service_unblock_direction_writes_contract(clean_session, monkeypatch):
-    """解除方向：重算 contract 写回章节（同一评估器；此处以 fake 评估注入）。"""
+    """解除方向：单调解除候选（roles + data_blockers）写回章节。
+
+    review Round-1 语义：fake 必须是合法解除形状 —— data_blockers 严格
+    子集、method_blockers 逐字保留。
+    """
     from app.services.session_plan import load_session_plan
     import app.services.gis_harness.workflow_instance as wfi
 
     contract = {
-        "recipe_id": "r", "roles": [], "obligations": [],
+        "recipe_id": "r", "roles": [
+            {"role": "denominator", "status": "unresolved", "required": True,
+             "missing_policy": "block"},
+        ],
+        "obligations": [{"obligation_id": "o1", "status": "blocked"}],
         "method_blockers": ["obl_a"], "data_blockers": ["denominator"],
     }
     ch = _chapter(recipe_id="edu_equity", contract=contract)
     await _save_plan(clean_session, ch)
-    recomputed = dict(contract)
-    recomputed["method_blockers"] = []
-    recomputed["data_blockers"] = []
-    recomputed["roles"] = [{"role": "denominator", "status": "bound"}]
+    candidate = dict(contract)
+    candidate["data_blockers"] = []           # 严格子集
+    candidate["method_blockers"] = ["obl_a"]  # method 逐字保留
+    candidate["roles"] = [
+        {"role": "denominator", "status": "bound", "bound_ref": "ref:new",
+         "required": True, "missing_policy": "block"},
+    ]
     calls = {"n": 0}
 
-    def _fake_recompute(chapter):
+    def _fake_unblock(chapter):
         calls["n"] += 1
-        return dict(recomputed)
+        return dict(candidate)
 
-    monkeypatch.setattr(wfi, "recompute_workflow_contract", _fake_recompute)
+    monkeypatch.setattr(wfi, "derive_unblock_contract", _fake_unblock)
     block = await wfi.maybe_update_workflow_instance(clean_session, reason="t")
     assert block is not None
     assert calls["n"] == 1
     fresh = await load_session_plan(clean_session)
     written = fresh.gis_chapter["workflow_contract"]
-    assert written["method_blockers"] == []
+    assert written["method_blockers"] == ["obl_a"], "method blockers must survive verbatim"
+    assert written["data_blockers"] == []
     assert written["recheck"]["source"] == "data_arrival"
     sci = fresh.gis_chapter[WORKFLOW_INSTANCE_KEY]["science"]
     assert sci["direction"] == "unblocked"
 
 
 @pytest.mark.asyncio
-async def test_service_worsened_direction_does_not_write_contract(clean_session, monkeypatch):
+async def test_service_non_subset_candidate_does_not_write_contract(clean_session, monkeypatch):
+    """非子集候选（method 变化 / 无新证据）⇒ 不回写、方向 equal。"""
     import app.services.gis_harness.workflow_instance as wfi
     from app.services.session_plan import load_session_plan
 
@@ -470,17 +542,17 @@ async def test_service_worsened_direction_does_not_write_contract(clean_session,
     }
     ch = _chapter(recipe_id="r2", contract=contract)
     await _save_plan(clean_session, ch)
-    worse = dict(contract)
-    worse["data_blockers"] = ["denominator"]
+    not_subset = dict(contract)
+    not_subset["data_blockers"] = ["denominator"]  # 增阻断 → 非子集
 
-    monkeypatch.setattr(wfi, "recompute_workflow_contract", lambda chapter: dict(worse))
+    monkeypatch.setattr(wfi, "derive_unblock_contract", lambda chapter: dict(not_subset))
     block = await wfi.maybe_update_workflow_instance(clean_session, reason="t")
     assert block is not None
     fresh = await load_session_plan(clean_session)
     assert fresh.gis_chapter["workflow_contract"]["data_blockers"] == []
     sci = fresh.gis_chapter[WORKFLOW_INSTANCE_KEY]["science"]
-    assert sci["direction"] == "worsened"
-    assert sci["divergent"] is True
+    assert sci["direction"] == "equal"
+    assert sci["divergent"] is False
 
 
 @pytest.mark.asyncio

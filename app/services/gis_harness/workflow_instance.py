@@ -299,7 +299,7 @@ class WorkflowInstanceState(BaseModel):
             "state_revision": self.state_revision,
             "state_fingerprint": self.state_fingerprint,
             "gate_fingerprint": self.gate_fingerprint,
-            "rows_fingerprint": self.rows_fingerprint[:512],
+            "rows_fingerprint": self.rows_fingerprint[:2048],
             "checked_revision": self.checked_revision,
             "render_observation_seq": self.render_observation_seq,
             "stages": [s.to_bounded_dict() for s in self.stages[:MAX_STAGES]],
@@ -325,13 +325,25 @@ def _contract_core(contract: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def recompute_workflow_contract(chapter: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """用规范评估器重算 workflow contract（纯函数，不写任何状态）。
+def derive_unblock_contract(chapter: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """数据到位后的**最小安全**契约解除（纯函数，不写任何状态）。
 
-    角色绑定从 capability_hint ↔ 行 bound_ref 推导（与 planner finalize
-    同规则）；数据画像事实缺席时按既有语义 honest-unknown
-    （unknown ≠ unsatisfied）。无 recipe / 无 workflow 画像 / 评估器异常
-    → None（调用方保持现契约，不虚构）。
+    review BLOCKER 修正（Round-1 #1/#2）：本函数**不再**重跑完整评估器
+    —— 无画像事实时 precondition 走 deferred-PASS / unknown，重算系统性
+    偏宽松，count 比较会把「事实缺席」误判成「阻断解除」，把
+    BLOCKED_BY_* 洗成 READY。改为**单调解除**：
+
+    - 绑定规则与 planner finalize 完全同源（R1-A3/R2-9）：只认
+      ``data_requirements`` 行、status ∈ {available, done} 且带
+      bound_ref；同一 capability_hint 服务多角色时声明序首个胜出；
+    - 只解除**有新绑定证据**的角色：基线 roles 中非 bound、而本次
+      绑定规则下已 bound 的角色（缺新证据 ⇒ None，零重写）；
+    - 契约只改两处：被解除角色的 role status/bound_ref，与
+      ``data_blockers`` 中对应的角色名；
+    - ``method_blockers`` / ``obligations`` / ``warnings`` **逐字保留**
+      基线 —— 方法阻断依赖画像事实，无事实绝不放松（review #1）。
+
+    返回 None = 无 recipe/无画像/无新证据/异常（调用方保持现契约）。
     """
     contract = chapter.get("workflow_contract")
     recipe_id = str(chapter.get("recipe_id") or "")
@@ -339,42 +351,89 @@ def recompute_workflow_contract(chapter: Dict[str, Any]) -> Optional[Dict[str, A
         return None
     try:
         from app.services.gis_harness.recipes import get_recipe_registry
-        from app.services.gis_harness.workflow_schema import (
-            evaluate_workflow_obligations,
-            resolve_data_roles,
-        )
+
         recipe = get_recipe_registry().get(recipe_id)
-        profile = getattr(recipe, "workflow", None) if recipe is not None else None
-        if profile is None:
+        wf_profile = getattr(recipe, "workflow", None) if recipe is not None else None
+        if wf_profile is None:
             return None
-        bound_refs = _derive_bound_refs(chapter, profile)
-        roles = resolve_data_roles(recipe_id, profile, bound_refs=bound_refs)
-        report = evaluate_workflow_obligations(
-            recipe_id, profile, role_resolutions=roles,
-        )
-        recomputed = dict(contract)
-        recomputed["roles"] = [r.to_bounded_dict() for r in roles[:16]]
-        recomputed["obligations"] = [o.to_bounded_dict() for o in report.obligations[:16]]
-        recomputed["method_blockers"] = list(report.method_blockers)[:8]
-        recomputed["data_blockers"] = list(report.data_blockers)[:8]
-        return recomputed
+        bound_refs = _derive_bound_refs(chapter, wf_profile)
+        if not bound_refs:
+            return None
+        baseline_roles = [
+            r for r in contract.get("roles") or [] if isinstance(r, dict)
+        ]
+        baseline_bound = {
+            str(r.get("role"))
+            for r in baseline_roles if str(r.get("status") or "") == "bound"
+        }
+        newly_bound = {
+            role for role in bound_refs if role not in baseline_bound
+        }
+        if not newly_bound:
+            return None
+        new_contract = dict(contract)
+        new_roles: List[Dict[str, Any]] = []
+        for r in baseline_roles:
+            role_name = str(r.get("role") or "")
+            if role_name in newly_bound:
+                updated = dict(r)
+                updated["status"] = "bound"
+                updated["bound_ref"] = str(bound_refs[role_name])[:64]
+                new_roles.append(updated)
+            else:
+                new_roles.append(dict(r))
+        # 声明了角色但基线 roles 表缺席（旧契约形状）→ 追加 bound 条目。
+        known = {str(r.get("role") or "") for r in new_roles}
+        for role in sorted(newly_bound - known):
+            new_roles.append({
+                "role": role, "required": True, "acquisition": "local",
+                "status": "bound", "bound_ref": str(bound_refs[role])[:64],
+                "source_capability": "", "missing_policy": "block",
+                "reason_code": "", "disclosure": "",
+            })
+        new_contract["roles"] = new_roles[:16]
+        baseline_data_blockers = [
+            str(b) for b in contract.get("data_blockers") or []
+        ]
+        new_contract["data_blockers"] = [
+            b for b in baseline_data_blockers if b not in newly_bound
+        ]
+        # method_blockers / obligations / warnings 逐字保留（见 docstring）。
+        new_contract["recheck"] = {
+            "source": "data_arrival",
+            "unblocked_roles": sorted(newly_bound)[:8],
+            "fingerprint": canonical_fingerprint({
+                "roles": new_contract["roles"],
+                "data_blockers": new_contract["data_blockers"],
+                "method_blockers": new_contract.get("method_blockers") or [],
+            }),
+        }
+        return new_contract
     except Exception:  # noqa: BLE001 — 重算是增值路径，失败保持现契约
         return None
 
 
 def _derive_bound_refs(chapter: Dict[str, Any], profile: Any) -> Dict[str, str]:
-    """角色 → bound_ref：capability_hint 命中已绑定行。"""
-    rows: Dict[str, str] = {}
-    for row in list(chapter.get("data_requirements") or []) + list(
-        chapter.get("analysis_steps") or []
-    ):
-        if isinstance(row, dict) and row.get("capability") and row.get("bound_ref"):
-            rows[str(row["capability"])] = str(row["bound_ref"])
-    bound: Dict[str, str] = {}
+    """角色 → bound_ref（与 planner finalize 同规则：R1-A3 + R2-9）。
+
+    只认 ``data_requirements`` 行（step 行是执行投影不是数据在场证据）；
+    status ∈ {available, done} 且带 bound_ref；同一 capability_hint 服务
+    多角色时按声明序首个胜出。
+    """
+    role_by_cap: Dict[str, str] = {}
     for req in getattr(profile, "data_roles", []) or []:
         hint = getattr(req, "capability_hint", "")
-        if hint and hint in rows:
-            bound[req.role] = rows[hint]
+        if hint and hint not in role_by_cap:
+            role_by_cap[hint] = req.role
+    bound: Dict[str, str] = {}
+    for row in chapter.get("data_requirements") or []:
+        if not isinstance(row, dict):
+            continue
+        cap = str(row.get("capability") or "")
+        role_name = role_by_cap.get(cap)
+        if (role_name and str(row.get("status") or "") in ("available", "done")
+                and row.get("bound_ref")):
+            bound[role_name] = str(row["bound_ref"])
     return bound
 
 
@@ -522,7 +581,7 @@ def derive_workflow_instance(
         state_revision=1,
         state_fingerprint="",
         gate_fingerprint="",
-        rows_fingerprint=rows_fp[:512],
+        rows_fingerprint=rows_fp[:2048],
         checked_revision=int(mapspec_revision or 0),
         render_observation_seq=int(render_seq or 0),
         stages=stages,
@@ -586,15 +645,20 @@ def _derive_science(
     chapter: Dict[str, Any],
     recomputed: Optional[Dict[str, Any]],
 ) -> ScienceRecheck:
-    """科学维裁决：重算 contract vs 基准 contract（有重算时）。
+    """科学维裁决：解除候选 vs 基准 contract（有解除候选时）。
 
     ``chapter`` 可以是整章 dict（读 ``workflow_contract`` 键）或直接是
     基准 contract dict（服务回写后的重派生传写前契约）。
 
-    - 重算阻断 < 基准阻断 ⇒ ``unblocked``（数据到位解除阻断——服务回写）；
-    - 重算阻断 > 基准阻断 ⇒ ``worsened``（只披露，等 finalize 裁决）;
-    - 阻断数相同但核心语义（roles/obligations）不同 ⇒ ``changed``；
-    - 无 recipe/画像/异常 ⇒ evaluated=False（不虚构评估）。
+    review Round-1 #1/#2 修正：``recomputed`` 是 ``derive_unblock_contract``
+    的输出 —— **单调解除**（只动 roles + data_blockers，method/obligations
+    逐字保留），因此方向裁决用**集合恒等**而非数量：
+
+    - data_blockers 严格子集（至少解除一个）⇒ ``unblocked``（服务回写）；
+    - 其余（无新证据 / 相等）⇒ ``equal``；
+    - 恶化方向不存在于本函数（重算不构造新阻断）—— 上游失效走
+      artifact-stale 事件 + STALE 阶段披露，不由契约重算虚构；
+    - 无候选 ⇒ evaluated=False（不虚构评估）。
     """
     recheck = ScienceRecheck()
     contract = chapter.get("workflow_contract") if isinstance(chapter, dict) else None
@@ -608,25 +672,18 @@ def _derive_science(
         str(b) for b in (recomputed.get("method_blockers") or [])
     ][:MAX_BLOCKERS]
     recheck.recomputed_fingerprint = canonical_fingerprint(_contract_core(recomputed))
-    old_n = len(contract.get("data_blockers") or []) + len(contract.get("method_blockers") or [])
-    new_n = len(recheck.data_blockers) + len(recheck.method_blockers)
-    same_core = canonical_fingerprint(_contract_core(recomputed)) == canonical_fingerprint(
-        _contract_core(contract))
-    if new_n < old_n:
+    baseline_data = {str(b) for b in (contract.get("data_blockers") or [])}
+    recomputed_data = set(recheck.data_blockers)
+    method_same = sorted(recheck.method_blockers) == sorted(
+        str(b) for b in (contract.get("method_blockers") or []))
+    if recomputed_data < baseline_data and method_same:
         recheck.direction = "unblocked"
         recheck.divergent = True
+        unblocked = sorted(baseline_data - recomputed_data)
         recheck.disclosure = (
-            "数据到位后科学契约重算：先前的阻断已解除（contract 由同一评估器更新）"
+            "数据到位后科学契约解除：角色 "
+            f"{','.join(unblocked[:4])} 已有绑定证据（method/obligations 未放松）"
         )
-    elif new_n > old_n:
-        recheck.direction = "worsened"
-        recheck.divergent = True
-        recheck.disclosure = (
-            "契约阻断较存储版增多：等待 finalize 以真实数据画像裁决，实例态仅披露"
-        )
-    elif not same_core:
-        recheck.direction = "changed"
-        recheck.divergent = True
     else:
         recheck.direction = "equal"
     return recheck
@@ -702,7 +759,7 @@ def _content_fingerprint(state: WorkflowInstanceState) -> str:
         "dependencies": [d.to_bounded_dict() for d in state.dependencies],
         "science": state.science.to_bounded_dict(),
         "dimensions": state.dimensions,
-        "rows_fingerprint": state.rows_fingerprint[:512],
+        "rows_fingerprint": state.rows_fingerprint[:2048],
         "checked_revision": state.checked_revision,
         "render_observation_seq": state.render_observation_seq,
     })
@@ -759,7 +816,7 @@ def gate_fingerprint(
     if isinstance(contract, dict):
         contract_fp = canonical_fingerprint(_contract_core(contract))
     return canonical_fingerprint({
-        "rows": str(rows_fp)[:512],
+        "rows": str(rows_fp)[:2048],
         "revision": int(mapspec_revision or 0),
         "render_seq": int(render_seq or 0),
         "contract": contract_fp,
@@ -854,7 +911,10 @@ async def maybe_update_workflow_instance(
         return None
 
     instance_id = f"{session_id}:{plan.envelope_id}:{chapter.get('plan_id')}"
-    recomputed = recompute_workflow_contract(chapter)
+    # review Round-1 #1：解除候选是**单调解除**（derive_unblock_contract）——
+    # 只认 data_requirements 绑定证据、只动 roles/data_blockers，方法阻断
+    # 与 obligations 逐字保留。无新绑定证据 ⇒ None ⇒ 零回写。
+    recomputed = derive_unblock_contract(chapter)
     new_state = derive_workflow_instance(
         chapter,
         instance_id=instance_id,
@@ -864,19 +924,25 @@ async def maybe_update_workflow_instance(
         event=event,
         recomputed_contract=recomputed,
     )
-    # 解除方向才回写 contract（恶化/changed 只进实例披露，等 finalize）。
-    # 回写由服务盖 provenance（写事件归写者）——重算函数保持纯。
+    # 解除方向才回写 contract（derive_unblock_contract 的输出自带 provenance
+    # ——服务兜底补齐写事件键；重算函数保持纯）。
     pending_contract: Optional[Dict[str, Any]] = None
     if new_state.science.direction == "unblocked" and isinstance(recomputed, dict):
         pending_contract = dict(recomputed)
-        pending_contract["recheck"] = {
-            "source": "data_arrival",
-            "fingerprint": canonical_fingerprint(_contract_core(recomputed)),
-        }
+        pending_contract.setdefault(
+            "recheck",
+            {"source": "data_arrival", "unblocked_roles": [], "fingerprint": ""},
+        )
         event = "science_recheck"
 
     validated_goal = goal_key(chapter, plan.user_goal)
     validated_rows = rows_fp
+    # review Round-1 #10：锁内对比用的写前契约指纹（契约缺席 = 空串 = 不守卫）。
+    baseline_contract = chapter.get("workflow_contract")
+    validated_contract_fp = (
+        canonical_fingerprint(baseline_contract)
+        if isinstance(baseline_contract, dict) else ""
+    )
     try:
         from app.services.distributed_lock import session_lock_registry
         async with session_lock_registry.lock(session_id, fail_on_degraded=True) as lock:
@@ -885,8 +951,19 @@ async def maybe_update_workflow_instance(
                 return None
             if goal_key(fresh.gis_chapter, fresh.user_goal) != validated_goal:
                 return None
-            if rows_fingerprint(fresh.gis_chapter)[:512] != validated_rows[:512]:
+            if rows_fingerprint(fresh.gis_chapter)[:2048] != validated_rows[:2048]:
                 return None
+            # review Round-1 #10：锁内契约漂移守卫 —— 等锁窗口内契约被
+            # 并发写手（finalize）改过 ⇒ 本次的解除候选基于旧契约，放弃
+            # （下一触发点基于新契约重新裁决）。
+            if validated_contract_fp and pending_contract is not None:
+                fresh_fp = canonical_fingerprint(
+                    fresh.gis_chapter.get("workflow_contract")
+                ) if isinstance(
+                    fresh.gis_chapter.get("workflow_contract"), dict
+                ) else ""
+                if fresh_fp != validated_contract_fp:
+                    return None
             if pending_contract is not None:
                 pre_write_contract = fresh.gis_chapter.get("workflow_contract")
                 fresh.gis_chapter["workflow_contract"] = pending_contract
@@ -924,7 +1001,7 @@ __all__ = [
     "row_signature",
     "rows_fingerprint",
     "canonical_fingerprint",
-    "recompute_workflow_contract",
+    "derive_unblock_contract",
     "derive_workflow_instance",
     "gate_fingerprint",
     "format_instance_line",

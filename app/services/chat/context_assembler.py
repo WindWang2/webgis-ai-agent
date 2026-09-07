@@ -399,30 +399,43 @@ class ChatContextAssembler:
         _dropped_messages: List[dict] = []
         _history_ops_summary: Optional[dict] = None
         if _policy_on:
-            from app.services.chat.context_policy import run_history_ops
-            _hist = run_history_ops(messages[1:])
-            # run_history_ops 已完成 pin 感知的折叠 + DROP_OLDEST + SUMMARIZE。
-            history = _hist["kept"]
-            dropped = _hist["dropped_turns"]
-            _dropped_messages = _hist["dropped_messages"]
-            _history_ops_summary = {
-                "pinned_messages": _hist["pinned_count"],
-                "folded_results": _hist["folded_count"],
-                "dropped_turns": _hist["dropped_turns"],
-                "summarized": bool(_hist["dropped_turns"] > 0),
-                "ops": _hist["ops"],
-            }
+            # review Round-1 MAJOR：策略路径与 legacy 同级的 never-break 纪律
+            # —— 任何策略内部异常都回退 legacy 折叠/截断，绝不失败整个装配。
+            try:
+                from app.services.chat.context_policy import run_history_ops
+                _hist = run_history_ops(messages[1:])
+                # run_history_ops 已完成 pin 感知的折叠 + DROP_OLDEST + SUMMARIZE。
+                history = _hist["kept"]
+                dropped = _hist["dropped_turns"]
+                _dropped_messages = _hist["dropped_messages"]
+                _history_ops_summary = {
+                    "pinned_messages": _hist["pinned_count"],
+                    "folded_results": _hist["folded_count"],
+                    "dropped_turns": _hist["dropped_turns"],
+                    "summarized": bool(_hist["dropped_turns"] > 0),
+                    "ops": _hist["ops"],
+                }
+            except Exception:  # noqa: BLE001 — 策略失败回退 legacy 管线
+                logger.warning(
+                    "[ContextPolicy] run_history_ops failed — legacy fallback",
+                    exc_info=True,
+                )
+                foldable = fold_intra_turn_tool_results(messages[1:])
+                history, dropped = truncate_history_by_budget(foldable)
         else:
             foldable = fold_intra_turn_tool_results(messages[1:])
             history, dropped = truncate_history_by_budget(foldable)
         if dropped > 0:
             if _policy_on:
-                from app.services.chat.context_policy import (
-                    build_truncation_notice_with_summary,
-                )
-                notice_content = build_truncation_notice_with_summary(
-                    dropped, _dropped_messages
-                )
+                try:
+                    from app.services.chat.context_policy import (
+                        build_truncation_notice_with_summary,
+                    )
+                    notice_content = build_truncation_notice_with_summary(
+                        dropped, _dropped_messages
+                    )
+                except Exception:  # noqa: BLE001 — 回退旧 notice
+                    notice_content = _build_truncation_notice(dropped)
             else:
                 notice_content = _build_truncation_notice(dropped)
             head.append({"role": "system", "content": notice_content})
@@ -433,10 +446,15 @@ class ChatContextAssembler:
             # RELOAD_REF tombstone：组装产物引用已逐出 ref 时追加有界诚实提示
             # （可从持久副本重载 vs 已失效），而非沉默。不占 head_meta（披露
             # 块不可压缩）。
-            from app.services.chat.context_policy import build_evicted_refs_tombstone
-            tombstone = await build_evicted_refs_tombstone(session_id, head, store)
-            if tombstone:
-                head.append({"role": "system", "content": tombstone})
+            try:
+                from app.services.chat.context_policy import build_evicted_refs_tombstone
+                tombstone = await build_evicted_refs_tombstone(session_id, head, store)
+                if tombstone:
+                    head.append({"role": "system", "content": tombstone})
+            except Exception:  # noqa: BLE001 — tombstone 是增值披露
+                logger.debug(
+                    "[ContextPolicy] evicted-refs tombstone failed", exc_info=True
+                )
 
         layers = map_state.get("layers", {}) if isinstance(map_state, dict) else {}
         layer_count = len(layers) if isinstance(layers, dict) else 0

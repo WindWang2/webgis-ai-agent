@@ -50,7 +50,10 @@ logger = logging.getLogger(__name__)
 #: V4（ADR-0104 #4，kill switch，默认开）：执行期 re-resolution 的 profile
 #: 事实注入。置 ``GIS_RUNTIME_PROFILE_GATES=0`` 恢复既有的 profile-blind
 #: 重跑行为（审计 gap #2 的降级通道；关掉后 manifest 证据与历史逐位兼容）。
-RUNTIME_PROFILE_GATES_ENABLED = os.environ.get("GIS_RUNTIME_PROFILE_GATES", "1") != "0"
+def _runtime_profile_gates_enabled() -> bool:
+    """per-call 读取（review Round-1 minor #5：与其他 V4 开关同纪律 ——
+    运行中翻转立即生效；"0"/"false"/"False" 均视为关）。"""
+    return os.environ.get("GIS_RUNTIME_PROFILE_GATES", "1") not in ("0", "false", "False")
 
 
 
@@ -501,7 +504,7 @@ class WorkflowEngine:
                     step_spec, step_outputs, bound_inputs
                 )
                 step_profile: Optional[Dict[str, Any]] = None
-                if RUNTIME_PROFILE_GATES_ENABLED and step_spec.capability:
+                if _runtime_profile_gates_enabled() and step_spec.capability:
                     try:
                         step_profile = await WorkflowEngine._resolver_profile_for_args(
                             session_id, tool_args
@@ -1166,7 +1169,7 @@ class WorkflowEngine:
             if spec is None or not spec.capability:
                 continue
             step_profile: Optional[Dict[str, Any]] = None
-            if RUNTIME_PROFILE_GATES_ENABLED and session_id:
+            if _runtime_profile_gates_enabled() and session_id:
                 try:
                     step_profile = await WorkflowEngine._resolver_profile_for_args(
                         session_id, dict(spec.args_template or {})

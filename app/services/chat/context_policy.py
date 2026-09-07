@@ -666,7 +666,13 @@ def retrim_messages_for_retry(messages: Sequence[dict]) -> Optional[List[dict]]:
 
 
 def _policy_retrim_hook(messages: Sequence[dict]) -> Optional[List[dict]]:
-    """挂进 llm_client 的安全包装：重裁任何异常都退回"不重试"而非中断调用方。"""
+    """挂进 llm_client 的安全包装：重裁任何异常都退回"不重试"而非中断调用方。
+
+    review Round-1 minor #8：调用时复查 kill switch —— import 期注册后
+    运行中关停（GIS_CONTEXT_POLICY=0）立即失效，不残留恢复面。
+    """
+    if not policy_enabled():
+        return None
     try:
         return retrim_messages_for_retry(messages)
     except Exception as e:  # noqa: BLE001 — 恢复面自身绝不抛
