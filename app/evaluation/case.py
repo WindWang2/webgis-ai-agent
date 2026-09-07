@@ -126,8 +126,9 @@ class GISBenchmarkCase(BaseModel):
     max_context_schema_bytes: Optional[int] = None
     # 离线契约：True 时 resolved 工具不得声明 network=True（全离线族锁定）。
     forbid_network_tools: bool = False
-    # trace 完整性需求标签：原样记入 plan evidence["trace_requirements"]，
-    # 供后续 trace-completeness wave 消费（本 wave 不断言）。
+    # trace 完整性需求标签：原样记入 plan evidence["trace_requirements"]。
+    # W5 的 trace_contract 按 task class 认证，不按本字段断言 —— 本字段是
+    # 场景级"意图声明"，供后续工作（按场景的 trace 认证）消费。
     trace_requirements: List[str] = Field(default_factory=list)
 
     # ── execute tier ──────────────────────────────────────────────────

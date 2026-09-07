@@ -22,7 +22,7 @@
 | 安全回归（W15） | `scripts/gen_security_manifest.py` + `tests/quality/test_security_regression.py` | control→test 清单闸（无孤儿行） |
 | API 兼容（W16） | `tests/quality/test_api_compatibility.py` | 快照 + breaking 分类（API_SNAPSHOT_UPDATE=1 刷新） |
 | Flaky/夹具（W17/18） | `tests/fixtures/gis_samples.py` | 确定性/小/可检出坏样本 |
-| 本地 runner（W19） | `scripts/quality`（`quick/backend/frontend/science/cartography/data/security/quality/perf/full`） | JSON+MD 报告 → `.agent-work/quality-v1/`（gitignored） |
+| 本地 runner（W19） | `scripts/quality`（`quick/backend/frontend/science/cartography/data/security/quality/perf/full`） | JSON+MD 报告 → `.agent-work/quality-v1/runner-report.*`（gitignored；该目录其余为已入库审计文档） |
 | 质量报告（W20） | `scripts/gen_quality_report.py` | 聚合投影，字节一致 |
 
 跨波集成：`tests/quality/test_system_scenarios.py`（全链
