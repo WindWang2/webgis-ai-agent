@@ -53,6 +53,7 @@ import type { MapSpec, MapSpecSource } from '@/lib/mapspec-compiler/types';
 import {
   applyCameraPatch,
   clampSwipePosition,
+  comparisonFamilyId,
   readCamera,
   resolveSyncPair,
   SWIPE_KEYBOARD_STEP,
@@ -65,11 +66,10 @@ const DEFAULT_VIEW_STATE = {
   zoom: 4,
 };
 
-/** 对比 layer id 的约定：spec 层族 id（HUD 行优先 _mapspecLayerId，否则行 id）。 */
-export function comparisonFamilyId(layer: Pick<Layer, 'id' | '_mapspecLayerId'>): string {
-  return layer._mapspecLayerId || layer.id;
-}
+/** HUD layers 缺席时的稳定空表（引用恒定 —— 见选择器纪律注释）。 */
+const EMPTY_LAYERS: Layer[] = [];
 
+/** 族 id → HUD 行显示名（无行时如实回退族 id，控制条不撒谎）。 */
 function layerNameOf(layers: Layer[], familyId: string | null): string | null {
   if (!familyId) return null;
   return layers.find((l) => comparisonFamilyId(l) === familyId)?.name ?? familyId;
@@ -110,7 +110,10 @@ export function ComparisonView({
   const syncZoom = useHudStore((s: HudState) => s.comparison?.syncZoom ?? true);
   const updateComparison = useHudStore((s: HudState) => s.updateComparison);
   const exitComparison = useHudStore((s: HudState) => s.exitComparison);
-  const layers = useHudStore((s: HudState) => s.layers ?? []);
+  // 选择器禁止内联分配（`?? []` 每次 getSnapshot 造新数组 → useSyncExternalStore
+  // 判定快照不稳定 → 无限重渲染）。缺省走模块级冻结空数组。
+  const layersRef = useHudStore((s: HudState) => s.layers);
+  const layers = layersRef ?? EMPTY_LAYERS;
   // 主地图 onLoad 后才置 true —— 主图 MapLibre 实例的可用信号（同步监听挂载门）。
   const mapLoaded = useHudStore((s: HudState) => s.mapLoaded ?? false);
 
@@ -187,8 +190,6 @@ export function ComparisonView({
     void runtimeRef.current
       .reconcileAsync(filtered)
       .catch((e) => console.warn('[comparison] secondary reconcile failed:', e));
-    // styleEpoch：底图切换（setStyle 抹层）后重挂本族图层。
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- generation 是刻意的变更信号
   }, [active, secondaryReady, secondaryLayerId, layers, liveGeneration, refSourcesGeneration, styleEpoch, sessionId, ownerToken, sessionTokenRef]);
 
   // 底图样式身份变化 → 失效 runtime 样式缓存（对齐 map-panel 的 invalidateStyle 时机）。

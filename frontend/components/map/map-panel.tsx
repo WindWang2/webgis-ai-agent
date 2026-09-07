@@ -66,6 +66,7 @@ import {
 import { computeInteractiveIds } from "@/lib/map-kit/interactive-ids"
 import { MapSpecChrome } from "@/components/map/map-spec-chrome"
 import { PoiInfoPanel } from "@/components/map/poi-info-panel"
+import { ComparisonView } from "@/components/map/comparison"
 import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
@@ -1341,6 +1342,18 @@ export function MapPanel({
       </Map>
       </div>
       )}
+
+      {/* Wave 8 对比工作区覆盖层（before/after swipe + side-by-side）：盖在主
+          地图之上、弹层之下（z-40 < z-50）。第二张 MaplibreMap 挂在覆盖层里
+          镜像 committed MapSpec 的副图层族 —— 主地图本体零改动。 */}
+      <ComparisonView
+        primaryMapRef={mapRef}
+        mapStyle={currentMapStyle}
+        transformRequest={transformRequest}
+        sessionId={sessionId}
+        ownerToken={ownerToken}
+        sessionTokenRef={sessionTokenRef}
+      />
 
       {/* Live cartography overlays — driven by layer.legend_spec */}
       {thematicLayers.length > 0 && !hasSpecLegend && (

@@ -19,6 +19,14 @@ export interface CameraSnapshot {
   pitch: number;
 }
 
+/** 对比 layer id 的约定：spec 层族 id（HUD 行优先 _mapspecLayerId，否则行 id）。
+ *  入口（layers-tab）与消费方（ComparisonView 的层族过滤）必须同源此定义。 */
+export function comparisonFamilyId(
+  layer: { id: string; _mapspecLayerId?: string | null },
+): string {
+  return layer._mapspecLayerId || layer.id;
+}
+
 /** 相机补丁（jumpTo 载荷的子集）。 */
 export type CameraPatch = Partial<CameraSnapshot>;
 
@@ -63,11 +71,11 @@ export function resolveSyncPair(
 }
 
 /**
- * swipe 分割位置夹取：契约 0..1（视口宽度比例）。非有限输入（拖拽事件
- * 异常载荷）按 0 收敛——绝不把 NaN 写进 store。
+ * swipe 分割位置夹取：契约 0..1（视口宽度比例）。NaN（拖拽事件异常载荷）
+ * 收敛为 0 —— 绝不把 NaN 写进 store；±Infinity 走常规夹取。
  */
 export function clampSwipePosition(value: number): number {
-  if (!Number.isFinite(value)) return 0;
+  if (Number.isNaN(value)) return 0;
   return Math.min(1, Math.max(0, value));
 }
 
