@@ -116,6 +116,7 @@ export async function commitComponentPatch(
       const superseded = supersededFromError(err);
       if (!superseded) throw err;
       // 静默收敛：服务端已有更新真相 —— 回灌 revision + spec，拖拽交互不打断
+      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof superseded.mutation_revision === 'number') {
         setMapSpecRevision(superseded.mutation_revision);
       }

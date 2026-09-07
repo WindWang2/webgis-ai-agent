@@ -15,7 +15,7 @@
  * 状态纪律（ADR-0104）：分组/选择/锁定/隔离是 UI projection（workbenchSlice，
  * 会话级不持久化）；地图语义真相仍只在 MapSpec / backend contract。
  */
-import React, { useMemo, useState, useCallback, useEffect, useSyncExternalStore } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import clsx from 'clsx';
 import {
   Eye, EyeOff, GripVertical, Layers as LayersIcon, LocateFixed, Palette,
@@ -134,19 +134,21 @@ function useFilterEvidenceBadges(layers: Layer[]): Record<string, FilterBadgeVie
 
 const LayerRowMemo = React.memo(
   LayerRow,
+  // Review R2（MAJOR-3）：纯合取比较 —— 此前 `prev.row === next.row ||` 短路
+  // 会在行对象身份稳定（投影 memo 命中）时跳过 status/filterBadge 检查，
+  // 冻结徽章更新（loading→ready 永不清除）。
   (prev, next) =>
-    prev.row === next.row ||
-    (prev.row.layer === next.row.layer
-      && prev.row.locked === next.row.locked
-      && prev.row.selected === next.row.selected
-      && prev.row.groupId === next.row.groupId)
-      && prev.globalIdx === next.globalIdx
-      && prev.isDragging === next.isDragging
-      && prev.isDragOver === next.isDragOver
-      && prev.isolated === next.isolated
-      && prev.status === next.status
-      && prev.filterBadge === next.filterBadge
-      && prev.styleClipboard === next.styleClipboard,
+    prev.row.layer === next.row.layer
+    && prev.row.locked === next.row.locked
+    && prev.row.selected === next.row.selected
+    && prev.row.groupId === next.row.groupId
+    && prev.globalIdx === next.globalIdx
+    && prev.isDragging === next.isDragging
+    && prev.isDragOver === next.isDragOver
+    && prev.isolated === next.isolated
+    && prev.status === next.status
+    && prev.filterBadge === next.filterBadge
+    && prev.styleClipboard === next.styleClipboard,
 );
 
 /* ─────────────────────────── 分组抬头 ─────────────────────────── */
@@ -654,6 +656,12 @@ function BatchActionBar({ scopeIds }: { scopeIds: string[] }) {
   const layerGroups = useHudStore((s) => s.layerGroups);
   const [opacity, setOpacity] = useState<number | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+  // Review R2（MINOR-6）：arm 时聚焦一次确认按钮（useEffect 键控翻转，
+  // 不用渲染期 ref 回调反复拉焦点）。
+  useEffect(() => {
+    if (confirmingDelete) confirmRef.current?.focus();
+  }, [confirmingDelete]);
 
   return (
     <div
@@ -730,7 +738,8 @@ function BatchActionBar({ scopeIds }: { scopeIds: string[] }) {
           <span role="status">删除 {selectedLayerIds.length} 层？</span>
           <button
             type="button"
-            ref={(el) => el?.focus()}
+            ref={confirmRef}
+            data-testid="batch-delete-confirm"
             className="rounded-xs bg-status-critical-soft px-1.5 py-0.5 font-medium"
             onClick={() => {
               const store = useHudStore.getState();

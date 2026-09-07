@@ -127,6 +127,58 @@ describe('workbenchSlice · layer groups', () => {
   });
 });
 
+describe('workbenchSlice · R1 行为锁定（review fixes）', () => {
+  it('setWorkbenchMode 上收 tab 协调：写 activeLeftTab 为该模式记忆 tab', () => {
+    const store = makeStore();
+    store.setState({ modeActiveTab: { explore: 'chat', analyze: 'analysis', compose: 'components' } } as any);
+    store.getState().setWorkbenchMode('compose');
+    expect(store.getState().mode).toBe('compose');
+    expect((store.getState() as any).activeLeftTab).toBe('components');
+    expect((store.getState() as any).leftPanelOpen).toBe(true);
+  });
+
+  it('agent 切换记录 userModeBeforeAgent；用户切换不覆盖', () => {
+    const store = makeStore();
+    store.setState({ mode: 'compose' } as any);
+    store.getState().setWorkbenchMode('analyze', 'agent');
+    expect((store.getState() as any).userModeBeforeAgent).toBe('compose');
+    store.getState().setWorkbenchMode('explore', 'user');
+    // 用户切换不清 agent 前模式记录
+    expect((store.getState() as any).userModeBeforeAgent).toBe('compose');
+  });
+
+  it('setSelectedLayerIds 等值 no-op（身份稳定）', () => {
+    const store = makeStore();
+    store.getState().setSelectedLayerIds(['a', 'b']);
+    const before = store.getState().selectedLayerIds;
+    store.getState().setSelectedLayerIds(['b', 'a']);
+    expect(store.getState().selectedLayerIds).toBe(before);
+  });
+
+  it('resetLayerGroups 同时退出对比并清产物选择（位置保留）', () => {
+    const store = makeStore();
+    store.getState().enterComparison({ primaryLayerId: 'a', secondaryLayerId: 'b' });
+    store.getState().updateComparison({ position: 0.42 });
+    store.getState().setSelectedArtifactId('artifact-1');
+    store.getState().resetLayerGroups();
+    const s = store.getState() as any;
+    expect(s.comparison.active).toBe(false);
+    expect(s.comparison.position).toBe(0.42);
+    expect(s.selectedArtifactId).toBeNull();
+  });
+
+  it('pruneLayerGroups 同步清理选择与锁定死 id', () => {
+    const store = makeStore();
+    store.getState().toggleLayerSelected('dead');
+    store.getState().toggleLayerSelected('alive');
+    store.getState().toggleLayerLocked('dead');
+    store.getState().pruneLayerGroups(new Set(['alive']));
+    const s = store.getState();
+    expect(s.selectedLayerIds).toEqual(['alive']);
+    expect(s.lockedLayerIds).toEqual([]);
+  });
+});
+
 describe('workbenchSlice · comparison', () => {
   beforeEach(() => {
     // groupSeq 是模块级计数器，测试间不需要重置 —— id 唯一性已由 create 保证。

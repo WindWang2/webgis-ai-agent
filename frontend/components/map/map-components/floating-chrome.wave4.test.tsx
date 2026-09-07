@@ -19,6 +19,7 @@ vi.mock('@/lib/mapspec/component-mutation', async (importOriginal) => {
 });
 
 import { FloatingChrome } from './floating-chrome';
+import { setComponentPlacementOverride } from '@/lib/mapspec/component-mutation';
 
 describe('snapTarget（纯函数）', () => {
   const parent = { width: 800, height: 600 };
@@ -66,6 +67,8 @@ function mountChrome(component: MapSpecComponent = makeComponent()) {
 
 beforeEach(() => {
   commitPatch.mockClear();
+  // 模块级 override store 跨测试持久（同 id）—— 清掉避免几何串场。
+  setComponentPlacementOverride('chart_panel-1', null);
 });
 
 describe('FloatingChrome · Wave 4 交互', () => {
@@ -91,19 +94,20 @@ describe('FloatingChrome · Wave 4 交互', () => {
     expect((commitPatch.mock.calls[1][1] as { enabled?: boolean }).enabled).toBe(false);
   });
 
-  it('拖拽落点吸附槽位 → 提交 anchor placement', async () => {
+  it('手势几何非有限（jsdom 无真实 clientX）→ 拒绝提交 placement（R2 NaN 守卫）', async () => {
     const { container } = mountChrome(makeComponent({
       placement: { mode: 'floating', x: 720, y: 20, width: 160, height: 120 },
     }));
     const titleBar = screen.getByTestId('floating-chrome-title-bar');
-    // 拖拽开始 → move 到右上槽位附近（jsdom 客户端坐标不会真正移动面板，
-    // 但手势收尾仍按 delta 计算 —— 这里直接验证 keyshortcuts/属性契约 +
-    // 手势机制不回归：完成一次小拖拽提交 floating placement）。
+    // jsdom 的 pointer 事件不带有效 clientX（NaN）—— 修复前 NaN 会被
+    // Math.round(NaN) 提交进 placement（CSS invalid → 面板消失）；守卫
+    // 现在拒绝提交。吸附→anchor 的语义转换由 snapTarget 纯函数测试锁定。
     fireEvent.pointerDown(titleBar, { button: 0, pointerId: 1, clientX: 100, clientY: 100 });
     fireEvent.pointerMove(titleBar, { pointerId: 1, clientX: 108, clientY: 100 });
     fireEvent.pointerUp(titleBar, { pointerId: 1, clientX: 108, clientY: 100 });
-    await waitFor(() => expect(commitPatch).toHaveBeenCalled());
-    expect((commitPatch.mock.calls[0][1] as { placement?: { mode?: string } }).placement?.mode).toBe('floating');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(commitPatch).not.toHaveBeenCalled();
+    // 真实有效几何路径由 floating-chrome.test.tsx 的既有手势用例覆盖。
     void container;
   });
 });

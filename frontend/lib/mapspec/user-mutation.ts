@@ -215,6 +215,7 @@ export async function commitLayerStyleAndCommit(
     } catch (err) {
       const superseded = supersededFromError(err);
       if (superseded) {
+        if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
         if (typeof superseded.mutation_revision === 'number') {
           setMapSpecRevision(superseded.mutation_revision);
         }
@@ -312,6 +313,7 @@ export async function commitExplicitView(view: {
         toastRollback('视图保存', err);
         return;
       }
+      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof superseded.mutation_revision === 'number') {
         setMapSpecRevision(superseded.mutation_revision);
       }
@@ -347,6 +349,7 @@ export async function commitMapSpecMutation(
     } catch (err) {
       const superseded = supersededFromError(err);
       if (!superseded) throw err;
+      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof superseded.mutation_revision === 'number') {
         setMapSpecRevision(superseded.mutation_revision);
       }
@@ -375,6 +378,9 @@ async function removeLayerFromSpecOnce(
 ): Promise<'committed' | 'reflected' | 'retry'> {
   const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
   if (!sessionId) return 'reflected';
+  // Review R2（MINOR-4）：重试前的预检 —— 首笔 409 与重试之间切会话时，
+  // remove_layer 不得落在新会话的端点（破坏性写 + 新会话 revision）。
+  if (sessionId !== enqueuedSessionId) return 'reflected';
   try {
     const data = await apiFetch<MutationResponse>(
       `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
@@ -401,6 +407,7 @@ async function removeLayerFromSpecOnce(
   } catch (err) {
     const superseded = supersededFromError(err);
     if (!superseded) throw err;
+    if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return 'reflected';
     if (typeof superseded.mutation_revision === 'number') {
       setMapSpecRevision(superseded.mutation_revision);
     }

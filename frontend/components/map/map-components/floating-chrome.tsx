@@ -229,7 +229,14 @@ export function FloatingChrome({
     return { x, y, width: origin.width, height: origin.height };
   }
 
-  function toPlacement(geometry: Geometry): ComponentPlacement {
+  function toPlacement(geometry: Geometry): ComponentPlacement | null {
+    // Review R2（integration MINOR-6）：jsdom/异常手势可能产生非有限几何 ——
+    // NaN 不进 placement（拒提交优于抛进 pointer 处理器；CSS invalid 回退
+    // 面板会消失）。
+    if (![geometry.x, geometry.y, geometry.width, geometry.height].every(Number.isFinite)) {
+      devOnly.warn('[floating-chrome] 非有限几何，拒绝提交 placement', geometry);
+      return null;
+    }
     const next: ComponentPlacement = {
       mode: 'floating',
       x: Math.round(geometry.x),
@@ -383,6 +390,7 @@ export function FloatingChrome({
       return;
     }
     const nextPlacement = toPlacement(finalGeometry);
+    if (!nextPlacement) return;
     commitPlacement(nextPlacement, nextPlacement);
   }
 
@@ -484,6 +492,7 @@ export function FloatingChrome({
       };
     }
     const nextPlacement = toPlacement(next);
+    if (!nextPlacement) return;
     // v2(review R4-P2-8)：键重复（~30Hz）不得每键一次 CAS —— 乐观 override
     // 即时生效，durable 提交按 500ms 静默去抖（与指针手势的"手势中节流、
     // 收尾单次提交"同款纪律）。

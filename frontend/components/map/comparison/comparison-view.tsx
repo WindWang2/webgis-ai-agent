@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * ComparisonView — Wave 8 对比工作区覆盖层（before/after swipe + side-by-side）。
+ * ComparisonView — Wave 8 对比工作区覆盖层（swipe；side-by-side 已诚实下线）。
  *
  * 实现边界（评审约定）：
  * - 主地图本体不动：本组件只挂载**第二张** react-map-gl MaplibreMap 覆盖层，
@@ -12,7 +12,7 @@
  * - swipe：覆盖层用 CSS clip-path inset 按 comparison.position 裁剪
  *   （clip-path 同时裁剪命中测试——裁剪区外的指针事件穿透到主地图）；
  *   分割把手 role=slider + 方向键 ±0.02（键盘可达）。
- * - side-by-side：同一张副图覆盖层固定裁剪在右半屏（分割缝不可拖动）。
+ * - side-by-side（已下线）：主图不动约束下双半屏永不共地理 —— 词表保留，UI 无入口。
  *   主地图保持全幅未动，因此每个窗格各显示相机中央的一侧 —— 相机全同步
  *   下两窗格严格对齐（主地图不可动的约束下的等价实现，与「两幅半宽视口」
  *   的观感差异已记录为已知取舍）。
@@ -37,6 +37,7 @@ import type { StyleSpecification } from 'maplibre-gl';
 import type { Layer } from '@/lib/types/layer';
 import { MapSpecRuntime } from '@/lib/mapspec-runtime';
 import { composeLiveMapSpec } from '@/lib/mapspec/live-spec';
+import { TILE_PROVIDERS } from '@/lib/providers';
 import {
   injectResolvedRefSources,
   subscribeRefSources,
@@ -103,6 +104,8 @@ export function ComparisonView({
   //    的最小状态形状不得炸渲染）。──
   const active = useHudStore((s: HudState) => s.comparison?.active ?? false);
   const kind = useHudStore((s: HudState) => s.comparison?.kind ?? 'swipe');
+  // Review R2（MINOR-5）：署名跟随当前底图（写死的 OSM/CARTO 对非同源
+  // 底图是错误署名 —— 同类供应商红线）。
   const position = useHudStore((s: HudState) => s.comparison?.position ?? 0.5);
   const primaryLayerId = useHudStore((s: HudState) => s.comparison?.primaryLayerId ?? null);
   const secondaryLayerId = useHudStore((s: HudState) => s.comparison?.secondaryLayerId ?? null);
@@ -139,6 +142,13 @@ export function ComparisonView({
     getRefSourcesGeneration,
   );
 
+  // Review R2（MINOR-5）：当前底图的署名文本（名称匹配 provider 目录；
+  // 未知底图给通用署名，绝不展示错误供应商署名）。
+  const baseLayerName = useHudStore((s: HudState) => s.baseLayer);
+  const basemapAttribution = useMemo(() => {
+    const provider = TILE_PROVIDERS.find((p) => p.name === baseLayerName);
+    return provider?.attribution ?? '© 各瓦片供应商';
+  }, [baseLayerName]);
   const primaryName = useMemo(() => layerNameOf(layers, primaryLayerId), [layers, primaryLayerId]);
   const secondaryName = useMemo(() => layerNameOf(layers, secondaryLayerId), [layers, secondaryLayerId]);
 
@@ -387,7 +397,7 @@ export function ComparisonView({
           data-testid="comparison-attribution"
           className="pointer-events-none absolute bottom-0 right-0 z-[5] bg-black/40 px-1 py-0.5 text-[10px] leading-none text-white/85"
         >
-          © OpenStreetMap contributors © CARTO
+          {basemapAttribution}
         </div>
       </div>
 

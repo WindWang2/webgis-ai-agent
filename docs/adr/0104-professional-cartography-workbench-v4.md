@@ -2,6 +2,7 @@
 
 状态：已实施（Goal C / Workbench V4）
 日期：2026-09-08
+审计输入：Phase 0 只读审计 ×8（UI/图层/组件/制图/图表/导出/a11y/设计系统；结论已并入本文与 docs/cartography/workbench-v4.md，工作产物不入库）。
 关联：ADR-0088（组件库/MapSpec 唯一 desired 状态）、ADR-0090（工作区交互）、ADR-0091（选择谓词/brush）、ADR-0101（制图模板库 V3）、ADR-0103（设计系统 V4）
 
 ## 背景

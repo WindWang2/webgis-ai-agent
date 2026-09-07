@@ -1,6 +1,6 @@
 # Professional Workbench V4（Goal C）
 
-> 实现记录；架构决策见 `docs/adr/0104-professional-cartography-workbench-v4.md`。审计输入见 `.agent-work/workbench-v4/01..08`（分支工作产物）。
+> 实现记录；架构决策见 `docs/adr/0104-professional-cartography-workbench-v4.md`。Phase 0 审计（8 份）为分支工作产物，不入库；结论已并入本文。
 
 ## 子系统地图
 
@@ -14,7 +14,7 @@
 | 模式化 shell + agent `set_mode` | `frontend/components/layout/nav-rail.tsx` / `frontend/lib/map-commands/workbenchCommands.ts` | `nav-rail.test.tsx` / `workbenchCommands.test.ts` |
 | 组件交互 V4（snap/置顶/键盘缩放折叠隐藏） | `frontend/components/map/map-components/floating-chrome.tsx` | `floating-chrome.wave4.test.tsx` |
 | 图表双向联动（门禁对齐/chart_highlight 修复/视野联动） | `frontend/components/chat/chart-core.tsx` / `frontend/components/map/map-components/chart-panel.tsx` / `frontend/lib/map-commands/chartCommands.ts` | `chart-linkage.wave5.test.tsx` |
-| 对比工作台（swipe/side-by-side 同步） | `frontend/components/map/comparison/` | `comparison-sync.test.ts` / `comparison-view.test.tsx` |
+| 对比工作台（swipe；side-by-side 已诚实下线，词表保留） | `frontend/components/map/comparison/` | `comparison-sync.test.ts` / `comparison-view.test.tsx` |
 | typed 样式意图 | `frontend/lib/styles/style-intent.ts` / `frontend/lib/map-commands/styleCommands.ts` | `style-intent.test.ts` |
 | 导出 parity + 显式降级 | `frontend/lib/map-kit/export-chrome.ts` / `exporter.ts` | `export-chrome.parity.test.ts` |
 | 布局几何语料 / 500 层压力 | `frontend/test/visual/workbench-layout-corpus.test.tsx` / `frontend/test/workbench-stress-500.test.tsx` | — |
@@ -32,6 +32,9 @@
 ## 已知限制
 
 - 图层 intent 状态机与 session-cursor 的手工合并（审计 02 B7/B9）未合一：turn-focus 的轮次收起是受控分叉（pending 压制、不落盘）。
-- side-by-side 对比是全视口拆分（保持主图不动的约束结果）；副视图不含图例/选择过滤/地形（文档化于组件头）。
+- side-by-side 已从 UI 诚实下线：在「主图不动」的约束下，双半屏相机的两
+  图层永不覆盖同一地理（左=主图的左半、右=副图的右半），不构成有效对比。
+  `comparison.kind` 词表保留，真双面板实现后恢复。副视图不含图例/选择
+  过滤/地形；大规模内联 GeoJSON 不做视口抽稀（受 20k ref 拉取上限约束）。
 - 分组树不跨会话持久（避免 stale layer id 垃圾）。
 - 小倍数（small_multiple）/cartogram 图保持 planned：单画布 MapSpec 与 Gastner-Newman 算法成本，见 `docs/cartography/map-model-catalog.md` 的诚实披露。
