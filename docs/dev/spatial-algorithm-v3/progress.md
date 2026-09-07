@@ -21,3 +21,13 @@
 - 进行中：SAR V3 agent、oracle 扩充 agent（303→目标 ≥1050）。
 - 计划收尾：+4 小而标准的补齐算法（EB 率平滑/双色 join count/OLS HC 稳健协方差/
   经典季节分解 + 自适应 KDE），目录再生成，7 维 review，按路径重组提交，PR。
+
+## 2026-09-07 收尾
+- Review gate 完成（CRS/回归 PASS；架构 PASS；科学审查发现 1 BLOCKING + 1 MAJOR 均已修复：
+  LJC 条件置换精确化 + join count 抽样模型披露更正）。
+- 全部 minor 修复：kriging 族 crs_class 对齐、SAR 单位披露、EB 负计数拒绝、
+  MGWR ENP 披露、indicator 阈值上限、geodetector df 措辞、doc 声明校正。
+- 历史按域重组为 11 个逻辑提交（树与重组前逐位一致），rebase 到新 master
+  （25f0cf4），解决 gitignore/spatial_stats/point_pattern_tools/terrain_analysis 四处冲突
+  （master 新工具元数据 kwargs 与本分支 additive 参数合并保留双方）。
+- 最终统计：171 算法 / 112 能力 / 106 契约 / oracle 1084 例（12 域）。
