@@ -52,11 +52,11 @@ LANES: dict[str, dict] = {
         ],
     },
     "backend": {
-        "title": "backend（后端主车道，--cov 门）",
+        "title": "backend（后端主车道，--cov 门；与 production.yml test-backend 同口径）",
         "commands": [
             PYTEST + ["-m", "not perf and not cartography and not real_services",
-                      "--cov=app", "--cov-report=term-missing", "--timeout=120",
-                      "--timeout-method=thread", "-q"],
+                      "--cov=app", "--cov-report=term-missing", "--cov-fail-under=75",
+                      "--timeout=120", "--timeout-method=thread", "-q"],
         ],
     },
     "frontend": {
