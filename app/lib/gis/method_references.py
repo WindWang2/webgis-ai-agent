@@ -190,10 +190,24 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Operations Research, 16(5), 955–961.",
         ),
         MethodReference(
+            # science-v3 审计 R1（04 域 §7/§8）：venue/卷期勘误 —— 原
+            # "IJHG, 11(1), 68–84" 有误；E2SFCA 发表于 Health & Place
+            # 15(4):1100–1107（PubMed 19576837，已 web 复核）。
             "luo_qi2009",
             "2SFCA / E2SFCA accessibility",
             "Luo, W., & Qi, Y. (2009). An Enhanced Two-Step Floating Catchment "
-            "Area (E2SFCA) Method. IJHG, 11(1), 68–84.",
+            "Area (E2SFCA) Method for Measuring Spatial Accessibility to "
+            "Primary Care Physicians. Health & Place, 15(4), 1100–1107.",
+        ),
+        MethodReference(
+            # science-v3 审计 R1：2SFCA 原始出处（floating catchment + gravity
+            # 两法统一框架），此前未登记 —— network.accessibility 方法谱系源头。
+            "luo_wang2003",
+            "2SFCA two-step floating catchment area (original)",
+            "Luo, W., & Wang, F. (2003). Measures of Spatial Accessibility to "
+            "Health Care in a GIS Environment: Synthesis and a Case Study in "
+            "the Chicago Region. Environment and Planning B: Planning and "
+            "Design, 30(6), 865–884.",
         ),
         # ── 遥感 ─────────────────────────────────────────────────────
         MethodReference(
@@ -418,6 +432,20 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Hakimi, S. L. (1964). Optimum Locations of Switching Centers "
             "and the Absolute Centers and Medians of a Graph. Operations "
             "Research, 12(3), 450–459.",
+        ),
+        MethodReference(
+            # science-v3 审计 R0（04 域 F1/§7）：p-median MILP 的标准出处。
+            # 题录经 web 复核（Wiley DOI 10.1111/j.1538-4632.1970.tb00142.x、
+            # NASA ADS 1970GeoAn...2...30R）：篇名 Central Facilities Location，
+            # Geographical Analysis 2(1), 30–42 —— 任务草案里的
+            # "Integer Programming Formulations..., 2(4), 317–328" 有误，
+            # 以出版方记录为准。ReVelle & Swain 首次把 p-median 写成整数
+            # 规划式，是 pmedian_exact 的方法学锚点（church_revelle1974
+            # 归还 MCLP/network.mclp_exact）。
+            "revelle_swain1970",
+            "p-median integer programming formulation",
+            "ReVelle, C. S., & Swain, R. W. (1970). Central Facilities "
+            "Location. Geographical Analysis, 2(1), 30–42.",
         ),
         MethodReference(
             "church_revelle1974",

@@ -330,8 +330,8 @@ class LocationAllocationArgs(BaseModel):
         default="auto",
         description=(
             "Solver path: auto (exact enumeration for small instances, Teitz-Bart/greedy beyond), "
-            "heuristic (forced polynomial heuristic), exact_milp (forced HiGHS MILP optimum, "
-            "p_median/p_center only; honestly refuses with ResourceScaleMismatch beyond "
+            "heuristic (forced polynomial heuristic), exact_milp (forced HiGHS MILP optimum for "
+            "p_median/max_coverage/p_center; honestly refuses with ResourceScaleMismatch beyond "
             "n_demand*n_candidates<=25000 and n_candidates<=500 — never silently falls back)"
         ),
     )
@@ -706,7 +706,7 @@ def register_network_tools(registry: ToolRegistry):
         name="location_allocation",
         description="设施选址优化（Location-Allocation）：从多个候选设施中选取最佳组合"
                     "（最小化加权通行成本 / 最大化需求覆盖 / 最小化最大服务成本 p-center）；"
-                    "solver=exact_milp 时以 HiGHS MILP 给出 p-median / p-center 全局最优"
+                    "solver=exact_milp 时以 HiGHS MILP 给出 p-median / MCLP 覆盖 / p-center 全局最优"
                     "（需求×候选≤25000 且候选≤500，超限诚实拒绝并指向启发式）。",
         tier=3,
         domains=["network"],
@@ -752,15 +752,19 @@ def register_network_tools(registry: ToolRegistry):
                 session_id=session_id,
             )
             out = trim_network_result(res.model_dump())
-            # Foundation V2 (A4/A7) / V3：backend 决策如实进证据诊断；
-            # 证据块锚定**实际运行的算法** —— MILP 路径锚定精确描述符
-            # （pmedian_exact / pcenter_exact），auto/启发式锚定原描述符。
+            # Foundation V2 (A4/A7) / V3 / science-v3：backend 决策如实进证据
+            # 诊断；证据块锚定**实际运行的算法** —— MILP 路径按目标锚定精确
+            # 描述符（pmedian_exact / mclp_exact / pcenter_exact），auto/启发
+            # 式锚定原描述符。
             summary = out.get("summary") or {}
             actual_solver = str(summary.get("solver", ""))
+            objective_norm = str(params["objective"])
             if actual_solver == "milp_highs":
-                algo_id = ("network.pmedian_exact"
-                           if str(params["objective"]) == "minimize_cost"
-                           else "network.pcenter_exact")
+                algo_id = {
+                    "minimize_cost": "network.pmedian_exact",
+                    "maximize_coverage": "network.mclp_exact",
+                    "minimize_max_cost": "network.pcenter_exact",
+                }.get(objective_norm, "network.location_allocation")
             else:
                 algo_id = "network.location_allocation"
             descriptor = get_algorithm_registry().get(algo_id)
