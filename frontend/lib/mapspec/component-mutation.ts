@@ -37,6 +37,14 @@ export interface ComponentPatch {
   enabled?: boolean;
   placement?: ComponentPlacement;
   variant?: string;
+  /**
+   * Workbench V4（Wave 4，additive）：前端补齐后端 patch_component 已有的
+   * 字段族 —— 此前前端合约是后端真子集（审计 03）。style/options 直传
+   * spec 组件字段；position 允许 agent/用户语义动作直接落六槽锚点。
+   */
+  style?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+  position?: string;
 }
 
 function supersededFromError(err: unknown): MutationResponse | null {
@@ -66,7 +74,11 @@ export async function commitComponentPatch(
   componentId: string,
   patch: ComponentPatch,
 ): Promise<ComponentPatchOutcome | void> {
-  if (patch.enabled === undefined && patch.placement === undefined && patch.variant === undefined) {
+  const hasExtended = patch.style !== undefined || patch.options !== undefined || patch.position !== undefined;
+  if (
+    patch.enabled === undefined && patch.placement === undefined && patch.variant === undefined
+    && !hasExtended
+  ) {
     return;
   }
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
@@ -85,6 +97,9 @@ export async function commitComponentPatch(
             ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
             ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
             ...(patch.variant !== undefined ? { variant: patch.variant } : {}),
+            ...(patch.style !== undefined ? { style: patch.style } : {}),
+            ...(patch.options !== undefined ? { options: patch.options } : {}),
+            ...(patch.position !== undefined ? { position: patch.position } : {}),
           },
           ownerToken,
           label: 'MapSpec component patch mutation',
