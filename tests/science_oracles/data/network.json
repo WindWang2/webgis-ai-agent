@@ -1,0 +1,4032 @@
+{
+ "cases": [
+  {
+   "args": [
+    [
+     116.4074,
+     39.9042
+    ],
+    [
+     121.4737,
+     31.2304
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 1067310.1709
+   },
+   "id": "haversine_pair_0",
+   "kwargs": {},
+   "note": "haversine asin 形式独立参考（R=6371 km）",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 111194.92664
+   },
+   "id": "haversine_pair_1",
+   "kwargs": {},
+   "note": "haversine asin 形式独立参考（R=6371 km）",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 111194.92664
+   },
+   "id": "haversine_pair_2",
+   "kwargs": {},
+   "note": "haversine asin 形式独立参考（R=6371 km）",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     -0.1,
+     51.5
+    ],
+    [
+     0.05,
+     51.52
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 10616.332866
+   },
+   "id": "haversine_pair_3",
+   "kwargs": {},
+   "note": "haversine asin 形式独立参考（R=6371 km）",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     179.5,
+     10.0
+    ],
+    [
+     -179.5,
+     10.0
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 109505.58394
+   },
+   "id": "haversine_pair_4",
+   "kwargs": {},
+   "note": "haversine asin 形式独立参考（R=6371 km）",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     151.2093,
+     -33.8688
+    ],
+    [
+     153.026,
+     -27.4705
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 732323.42714
+   },
+   "id": "haversine_pair_5",
+   "kwargs": {},
+   "note": "haversine asin 形式独立参考（R=6371 km）",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     13.405,
+     52.52
+    ],
+    [
+     13.405,
+     52.5201
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 11.119492664
+   },
+   "id": "haversine_pair_6",
+   "kwargs": {},
+   "note": "haversine asin 形式独立参考（R=6371 km）",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     -28.223761095030095,
+     44.25976253529319
+    ],
+    [
+     -30.9978268783537,
+     -22.21808642825954
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 7397397.0633
+   },
+   "id": "haversine_seeded_0",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     43.88879292992132,
+     -56.42429172673909
+    ],
+    [
+     -41.283160209836396,
+     28.742019879268838
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 12352582.288
+   },
+   "id": "haversine_seeded_1",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     -15.9791223246322,
+     6.668292133058344
+    ],
+    [
+     41.886761143222415,
+     30.283132936865968
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 6562484.9639
+   },
+   "id": "haversine_seeded_2",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     -35.9361783065749,
+     34.94645833018376
+    ],
+    [
+     8.245464747545029,
+     51.35891431302353
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 3943542.2583
+   },
+   "id": "haversine_seeded_3",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     11.96523501741946,
+     -58.052970143821305
+    ],
+    [
+     17.827368004395183,
+     23.801901869432356
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 9118137.6165
+   },
+   "id": "haversine_seeded_4",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     27.398529254603673,
+     -9.332662910545935
+    ],
+    [
+     -57.991577459764805,
+     40.337982790918005
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 10291264.213
+   },
+   "id": "haversine_seeded_5",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     -34.25550555419974,
+     -31.665139211963567
+    ],
+    [
+     -10.460216596829241,
+     -23.945890544531004
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 2486293.3917
+   },
+   "id": "haversine_seeded_6",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     55.15234967661563,
+     59.01749097045165
+    ],
+    [
+     26.211700791616764,
+     -3.7067301927448995
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 7426560.2154
+   },
+   "id": "haversine_seeded_7",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     -17.08460371718656,
+     -25.512868863161103
+    ],
+    [
+     41.5350486649545,
+     41.64248590209198
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 9593209.1729
+   },
+   "id": "haversine_seeded_8",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     26.836330804756273,
+     39.81793646723577
+    ],
+    [
+     -40.49871749363402,
+     -51.73852924555602
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 12079511.31
+   },
+   "id": "haversine_seeded_9",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     25.667863917747923,
+     -50.49336078727847
+    ],
+    [
+     37.13307084530727,
+     -33.873850083468625
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 2069880.3003
+   },
+   "id": "haversine_seeded_10",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     55.288188833452054,
+     -36.326183199026424
+    ],
+    [
+     1.1540664287078073,
+     -29.47518680727843
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 5045941.7318
+   },
+   "id": "haversine_seeded_11",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     31.44453932130034,
+     38.26827305578509
+    ],
+    [
+     24.234733113961468,
+     10.178852743033332
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 3205096.2154
+   },
+   "id": "haversine_seeded_12",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     3.1183886659640407,
+     58.75963377757593
+    ],
+    [
+     12.781423788425812,
+     30.32718422426774
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 3245512.6262
+   },
+   "id": "haversine_seeded_13",
+   "kwargs": {},
+   "note": "种子随机点对 asin 形式独立参考",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     116.4074,
+     39.9042
+    ],
+    [
+     116.4074,
+     39.9042
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0.0
+   },
+   "id": "haversine_same_point_zero",
+   "kwargs": {},
+   "note": "同点 → 精确 0（快路径）",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     116.4074,
+     39.9042
+    ],
+    [
+     121.4737,
+     31.2304
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 1067310.1709
+   },
+   "id": "haversine_symmetric_ab",
+   "kwargs": {},
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     121.4737,
+     31.2304
+    ],
+    [
+     116.4074,
+     39.9042
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 1067310.1709
+   },
+   "id": "haversine_symmetric_ba",
+   "kwargs": {},
+   "note": "h(a,b) == h(b,a)（对称性不变量）",
+   "target": "app.services.network.graph_builder:haversine_distance"
+  },
+  {
+   "args": [
+    [
+     [
+      1.1933809002930666,
+      0.8846264430806502
+     ],
+     [
+      0.5583288250374946,
+      1.3545152758475116
+     ],
+     [
+      1.411392569427549,
+      1.0932004631467613
+     ],
+     [
+      1.330998203842673,
+      1.3355664962663947
+     ],
+     [
+      1.0388504411733297,
+      0.7505508561503341
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 288120.1026
+   },
+   "id": "linestring_length_5pt",
+   "kwargs": {},
+   "note": "逐段 haversine 和独立复算",
+   "target": "app.services.network.graph_builder:linestring_length_m"
+  },
+  {
+   "args": [
+    [
+     [
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0
+     ],
+     [
+      1.0,
+      1.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 222389.85329
+   },
+   "id": "linestring_length_triangle",
+   "kwargs": {},
+   "target": "app.services.network.graph_builder:linestring_length_m"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      2.0
+     ],
+     [
+      2.0,
+      2.0
+     ]
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0.0
+   },
+   "id": "linestring_length_degenerate_zero",
+   "kwargs": {},
+   "note": "零长度边（重合端点）→ 0",
+   "target": "app.services.network.graph_builder:linestring_length_m"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "value": 222389.85329
+   },
+   "id": "linestring_length_reversed_equal",
+   "kwargs": {},
+   "note": "反向折线长度不变",
+   "target": "app.services.network.graph_builder:linestring_length_m"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      10.0
+     ]
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0.0
+   },
+   "id": "linestring_length_single_point",
+   "kwargs": {},
+   "target": "app.services.network.graph_builder:linestring_length_m"
+  },
+  {
+   "args": [
+    [
+     [
+      -73.9,
+      40.7
+     ],
+     [
+      -73.91428571428573,
+      40.714285714285715
+     ],
+     [
+      -73.92857142857143,
+      40.72857142857143
+     ],
+     [
+      -73.94285714285715,
+      40.74285714285714
+     ],
+     [
+      -73.95714285714286,
+      40.75714285714286
+     ],
+     [
+      -73.97142857142858,
+      40.77142857142857
+     ],
+     [
+      -73.98571428571428,
+      40.785714285714285
+     ],
+     [
+      -74.0,
+      40.8
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 13949.999038
+   },
+   "id": "linestring_length_8pt",
+   "kwargs": {},
+   "note": "8 点折线逐段 haversine 和独立复算",
+   "target": "app.services.network.graph_builder:linestring_length_m"
+  },
+  {
+   "args": [
+    [
+     [
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      2.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "value": 222389.85329
+   },
+   "id": "linestring_length_pair",
+   "kwargs": {},
+   "target": "app.services.network.graph_builder:linestring_length_m"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0,
+      3.0,
+      4.0
+     ],
+     [
+      2.0,
+      1.0,
+      5.0,
+      3.0
+     ],
+     [
+      4.0,
+      3.0,
+      1.0,
+      2.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-06,
+    "select": "objective_value",
+    "value": 6.0
+   },
+   "id": "p_median_milp_objective_dense4x4",
+   "kwargs": {},
+   "note": "C(m,p) 枚举独立参考（inf→1e9 惩罚同语义）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0,
+      3.0,
+      4.0
+     ],
+     [
+      2.0,
+      1.0,
+      5.0,
+      3.0
+     ],
+     [
+      4.0,
+      3.0,
+      1.0,
+      2.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "optimality",
+    "value": "optimal"
+   },
+   "id": "p_median_milp_status_dense4x4",
+   "kwargs": {},
+   "note": "HiGHS 最优性状态",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0,
+      3.0,
+      4.0
+     ],
+     [
+      2.0,
+      1.0,
+      5.0,
+      3.0
+     ],
+     [
+      4.0,
+      3.0,
+      1.0,
+      2.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "model_stats.n_variables",
+    "value": 20
+   },
+   "id": "p_median_milp_model_shape_dense4x4",
+   "kwargs": {},
+   "note": "变量数 = 候选数 + 有限可达对数（独立计数）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      4.0,
+      6.0
+     ],
+     [
+      3.0,
+      1.0,
+      5.0
+     ],
+     [
+      8.0,
+      6.0,
+      2.0
+     ],
+     [
+      1.0,
+      4.0,
+      4.0
+     ],
+     [
+      5.0,
+      2.0,
+      3.0
+     ],
+     [
+      2.0,
+      2.0,
+      7.0
+     ]
+    ],
+    [
+     1.0,
+     1.5,
+     2.0,
+     0.5,
+     1.0,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-06,
+    "select": "objective_value",
+    "value": 15.5
+   },
+   "id": "p_median_milp_objective_wide6x3",
+   "kwargs": {},
+   "note": "C(m,p) 枚举独立参考（inf→1e9 惩罚同语义）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      4.0,
+      6.0
+     ],
+     [
+      3.0,
+      1.0,
+      5.0
+     ],
+     [
+      8.0,
+      6.0,
+      2.0
+     ],
+     [
+      1.0,
+      4.0,
+      4.0
+     ],
+     [
+      5.0,
+      2.0,
+      3.0
+     ],
+     [
+      2.0,
+      2.0,
+      7.0
+     ]
+    ],
+    [
+     1.0,
+     1.5,
+     2.0,
+     0.5,
+     1.0,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "optimality",
+    "value": "optimal"
+   },
+   "id": "p_median_milp_status_wide6x3",
+   "kwargs": {},
+   "note": "HiGHS 最优性状态",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      4.0,
+      6.0
+     ],
+     [
+      3.0,
+      1.0,
+      5.0
+     ],
+     [
+      8.0,
+      6.0,
+      2.0
+     ],
+     [
+      1.0,
+      4.0,
+      4.0
+     ],
+     [
+      5.0,
+      2.0,
+      3.0
+     ],
+     [
+      2.0,
+      2.0,
+      7.0
+     ]
+    ],
+    [
+     1.0,
+     1.5,
+     2.0,
+     0.5,
+     1.0,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "model_stats.n_variables",
+    "value": 21
+   },
+   "id": "p_median_milp_model_shape_wide6x3",
+   "kwargs": {},
+   "note": "变量数 = 候选数 + 有限可达对数（独立计数）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      1.7,
+      2.4,
+      3.0999999999999996,
+      3.8
+     ],
+     [
+      1.7,
+      1.0,
+      1.7,
+      2.4,
+      3.0999999999999996
+     ],
+     [
+      2.4,
+      1.7,
+      1.0,
+      1.7,
+      2.4
+     ],
+     [
+      3.0999999999999996,
+      2.4,
+      1.7,
+      1.0,
+      1.7
+     ],
+     [
+      3.8,
+      3.0999999999999996,
+      2.4,
+      1.7,
+      1.0
+     ]
+    ],
+    [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    3
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-06,
+    "select": "objective_value",
+    "value": 6.4
+   },
+   "id": "p_median_milp_objective_tall5x5",
+   "kwargs": {},
+   "note": "C(m,p) 枚举独立参考（inf→1e9 惩罚同语义）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      1.7,
+      2.4,
+      3.0999999999999996,
+      3.8
+     ],
+     [
+      1.7,
+      1.0,
+      1.7,
+      2.4,
+      3.0999999999999996
+     ],
+     [
+      2.4,
+      1.7,
+      1.0,
+      1.7,
+      2.4
+     ],
+     [
+      3.0999999999999996,
+      2.4,
+      1.7,
+      1.0,
+      1.7
+     ],
+     [
+      3.8,
+      3.0999999999999996,
+      2.4,
+      1.7,
+      1.0
+     ]
+    ],
+    [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "optimality",
+    "value": "optimal"
+   },
+   "id": "p_median_milp_status_tall5x5",
+   "kwargs": {},
+   "note": "HiGHS 最优性状态",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      1.7,
+      2.4,
+      3.0999999999999996,
+      3.8
+     ],
+     [
+      1.7,
+      1.0,
+      1.7,
+      2.4,
+      3.0999999999999996
+     ],
+     [
+      2.4,
+      1.7,
+      1.0,
+      1.7,
+      2.4
+     ],
+     [
+      3.0999999999999996,
+      2.4,
+      1.7,
+      1.0,
+      1.7
+     ],
+     [
+      3.8,
+      3.0999999999999996,
+      2.4,
+      1.7,
+      1.0
+     ]
+    ],
+    [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "model_stats.n_variables",
+    "value": 30
+   },
+   "id": "p_median_milp_model_shape_tall5x5",
+   "kwargs": {},
+   "note": "变量数 = 候选数 + 有限可达对数（独立计数）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      10000000.0,
+      3.0
+     ],
+     [
+      2.0,
+      1.0
+     ],
+     [
+      10000000.0,
+      20000000.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     3.0
+    ],
+    1
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-06,
+    "select": "objective_value",
+    "value": 50000003.0
+   },
+   "id": "p_median_milp_objective_expensive_row",
+   "kwargs": {},
+   "note": "C(m,p) 枚举独立参考（inf→1e9 惩罚同语义）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      10000000.0,
+      3.0
+     ],
+     [
+      2.0,
+      1.0
+     ],
+     [
+      10000000.0,
+      20000000.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     3.0
+    ],
+    1
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "optimality",
+    "value": "optimal"
+   },
+   "id": "p_median_milp_status_expensive_row",
+   "kwargs": {},
+   "note": "HiGHS 最优性状态",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      10000000.0,
+      3.0
+     ],
+     [
+      2.0,
+      1.0
+     ],
+     [
+      10000000.0,
+      20000000.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     3.0
+    ],
+    1
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "model_stats.n_variables",
+    "value": 10
+   },
+   "id": "p_median_milp_model_shape_expensive_row",
+   "kwargs": {},
+   "note": "变量数 = 候选数 + 有限可达对数（独立计数）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      4.0
+     ],
+     [
+      2.0
+     ],
+     [
+      6.0
+     ]
+    ],
+    [
+     1.0,
+     1.0,
+     1.0
+    ],
+    1
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-06,
+    "select": "objective_value",
+    "value": 12.0
+   },
+   "id": "p_median_milp_objective_single_site",
+   "kwargs": {},
+   "note": "C(m,p) 枚举独立参考（inf→1e9 惩罚同语义）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      4.0
+     ],
+     [
+      2.0
+     ],
+     [
+      6.0
+     ]
+    ],
+    [
+     1.0,
+     1.0,
+     1.0
+    ],
+    1
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "optimality",
+    "value": "optimal"
+   },
+   "id": "p_median_milp_status_single_site",
+   "kwargs": {},
+   "note": "HiGHS 最优性状态",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      4.0
+     ],
+     [
+      2.0
+     ],
+     [
+      6.0
+     ]
+    ],
+    [
+     1.0,
+     1.0,
+     1.0
+    ],
+    1
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "model_stats.n_variables",
+    "value": 4
+   },
+   "id": "p_median_milp_model_shape_single_site",
+   "kwargs": {},
+   "note": "变量数 = 候选数 + 有限可达对数（独立计数）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      4.5,
+      2.5,
+      6.0,
+      4.0,
+      2.0
+     ],
+     [
+      2.5,
+      6.0,
+      4.0,
+      2.0,
+      5.5,
+      3.5
+     ],
+     [
+      4.0,
+      2.0,
+      5.5,
+      3.5,
+      1.5,
+      5.0
+     ],
+     [
+      5.5,
+      3.5,
+      1.5,
+      5.0,
+      3.0,
+      1.0
+     ],
+     [
+      1.5,
+      5.0,
+      3.0,
+      1.0,
+      4.5,
+      2.5
+     ],
+     [
+      3.0,
+      1.0,
+      4.5,
+      2.5,
+      6.0,
+      4.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     0.5,
+     1.5,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-06,
+    "select": "objective_value",
+    "value": 13.0
+   },
+   "id": "p_median_milp_objective_tall6x6",
+   "kwargs": {},
+   "note": "C(m,p) 枚举独立参考（inf→1e9 惩罚同语义）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      4.5,
+      2.5,
+      6.0,
+      4.0,
+      2.0
+     ],
+     [
+      2.5,
+      6.0,
+      4.0,
+      2.0,
+      5.5,
+      3.5
+     ],
+     [
+      4.0,
+      2.0,
+      5.5,
+      3.5,
+      1.5,
+      5.0
+     ],
+     [
+      5.5,
+      3.5,
+      1.5,
+      5.0,
+      3.0,
+      1.0
+     ],
+     [
+      1.5,
+      5.0,
+      3.0,
+      1.0,
+      4.5,
+      2.5
+     ],
+     [
+      3.0,
+      1.0,
+      4.5,
+      2.5,
+      6.0,
+      4.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     0.5,
+     1.5,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "optimality",
+    "value": "optimal"
+   },
+   "id": "p_median_milp_status_tall6x6",
+   "kwargs": {},
+   "note": "HiGHS 最优性状态",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      4.5,
+      2.5,
+      6.0,
+      4.0,
+      2.0
+     ],
+     [
+      2.5,
+      6.0,
+      4.0,
+      2.0,
+      5.5,
+      3.5
+     ],
+     [
+      4.0,
+      2.0,
+      5.5,
+      3.5,
+      1.5,
+      5.0
+     ],
+     [
+      5.5,
+      3.5,
+      1.5,
+      5.0,
+      3.0,
+      1.0
+     ],
+     [
+      1.5,
+      5.0,
+      3.0,
+      1.0,
+      4.5,
+      2.5
+     ],
+     [
+      3.0,
+      1.0,
+      4.5,
+      2.5,
+      6.0,
+      4.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     0.5,
+     1.5,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "model_stats.n_variables",
+    "value": 42
+   },
+   "id": "p_median_milp_model_shape_tall6x6",
+   "kwargs": {},
+   "note": "变量数 = 候选数 + 有限可达对数（独立计数）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      9.0
+     ],
+     [
+      1.0,
+      8.0
+     ],
+     [
+      3.0,
+      1.0
+     ],
+     [
+      9.0,
+      2.0
+     ],
+     [
+      4.0,
+      7.0
+     ],
+     [
+      6.0,
+      3.0
+     ],
+     [
+      1.5,
+      9.5
+     ],
+     [
+      8.5,
+      1.5
+     ]
+    ],
+    [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     2.0,
+     2.0,
+     1.0,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-06,
+    "select": "objective_value",
+    "value": 23.0
+   },
+   "id": "p_median_milp_objective_corridor8x2",
+   "kwargs": {},
+   "note": "C(m,p) 枚举独立参考（inf→1e9 惩罚同语义）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      9.0
+     ],
+     [
+      1.0,
+      8.0
+     ],
+     [
+      3.0,
+      1.0
+     ],
+     [
+      9.0,
+      2.0
+     ],
+     [
+      4.0,
+      7.0
+     ],
+     [
+      6.0,
+      3.0
+     ],
+     [
+      1.5,
+      9.5
+     ],
+     [
+      8.5,
+      1.5
+     ]
+    ],
+    [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     2.0,
+     2.0,
+     1.0,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "optimality",
+    "value": "optimal"
+   },
+   "id": "p_median_milp_status_corridor8x2",
+   "kwargs": {},
+   "note": "HiGHS 最优性状态",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      9.0
+     ],
+     [
+      1.0,
+      8.0
+     ],
+     [
+      3.0,
+      1.0
+     ],
+     [
+      9.0,
+      2.0
+     ],
+     [
+      4.0,
+      7.0
+     ],
+     [
+      6.0,
+      3.0
+     ],
+     [
+      1.5,
+      9.5
+     ],
+     [
+      8.5,
+      1.5
+     ]
+    ],
+    [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     2.0,
+     2.0,
+     1.0,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "model_stats.n_variables",
+    "value": 18
+   },
+   "id": "p_median_milp_model_shape_corridor8x2",
+   "kwargs": {},
+   "note": "变量数 = 候选数 + 有限可达对数（独立计数）",
+   "target": "app.services.network.allocation:solve_p_median_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0,
+      3.0,
+      4.0
+     ],
+     [
+      2.0,
+      1.0,
+      5.0,
+      3.0
+     ],
+     [
+      4.0,
+      3.0,
+      1.0,
+      2.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-06,
+    "select": "objective_value",
+    "value": 2.0
+   },
+   "id": "p_center_milp_objective_dense4x4",
+   "kwargs": {},
+   "note": "min-max 服务成本枚举独立参考",
+   "target": "app.services.network.allocation:solve_p_center_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      4.0,
+      6.0
+     ],
+     [
+      3.0,
+      1.0,
+      5.0
+     ],
+     [
+      8.0,
+      6.0,
+      2.0
+     ],
+     [
+      1.0,
+      4.0,
+      4.0
+     ],
+     [
+      5.0,
+      2.0,
+      3.0
+     ],
+     [
+      2.0,
+      2.0,
+      7.0
+     ]
+    ],
+    [
+     1.0,
+     1.5,
+     2.0,
+     0.5,
+     1.0,
+     1.0
+    ],
+    2
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-06,
+    "select": "objective_value",
+    "value": 3.0
+   },
+   "id": "p_center_milp_objective_wide6x3",
+   "kwargs": {},
+   "note": "min-max 服务成本枚举独立参考",
+   "target": "app.services.network.allocation:solve_p_center_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      10000000.0,
+      3.0
+     ],
+     [
+      2.0,
+      1.0
+     ],
+     [
+      10000000.0,
+      20000000.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     3.0
+    ],
+    1
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-06,
+    "select": "objective_value",
+    "value": 10000000.0
+   },
+   "id": "p_center_milp_objective_expensive_row",
+   "kwargs": {},
+   "note": "min-max 服务成本枚举独立参考",
+   "target": "app.services.network.allocation:solve_p_center_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      10000000.0,
+      3.0
+     ],
+     [
+      2.0,
+      1.0
+     ],
+     [
+      10000000.0,
+      20000000.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     3.0
+    ],
+    1
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "big_m",
+    "value": 20000000.0
+   },
+   "id": "p_center_milp_big_m",
+   "kwargs": {},
+   "note": "Big-M = 最大有限代价（独立复算）",
+   "target": "app.services.network.allocation:solve_p_center_milp"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      10000000.0,
+      3.0
+     ],
+     [
+      2.0,
+      1.0
+     ],
+     [
+      10000000.0,
+      20000000.0
+     ]
+    ],
+    [
+     1.0,
+     2.0,
+     1.0,
+     3.0
+    ],
+    1
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-06,
+    "select": "total_weighted_cost",
+    "value": 50000003.0
+   },
+   "id": "p_center_milp_total_weighted",
+   "kwargs": {},
+   "note": "总加权成本次级判据 = p-median 目标（同语义重算）",
+   "target": "app.services.network.allocation:solve_p_center_milp"
+  },
+  {
+   "args": [
+    5,
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 10
+   },
+   "id": "exact_combination_count_5_2",
+   "kwargs": {},
+   "note": "math.comb 语义（C(5,0)=1；p>m 或 p<0 → 0）",
+   "target": "app.services.network.allocation:_exact_combination_count"
+  },
+  {
+   "args": [
+    6,
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 20
+   },
+   "id": "exact_combination_count_6_3",
+   "kwargs": {},
+   "note": "math.comb 语义（C(5,0)=1；p>m 或 p<0 → 0）",
+   "target": "app.services.network.allocation:_exact_combination_count"
+  },
+  {
+   "args": [
+    10,
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 120
+   },
+   "id": "exact_combination_count_10_3",
+   "kwargs": {},
+   "note": "math.comb 语义（C(5,0)=1；p>m 或 p<0 → 0）",
+   "target": "app.services.network.allocation:_exact_combination_count"
+  },
+  {
+   "args": [
+    15,
+    4
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 1365
+   },
+   "id": "exact_combination_count_15_4",
+   "kwargs": {},
+   "note": "math.comb 语义（C(5,0)=1；p>m 或 p<0 → 0）",
+   "target": "app.services.network.allocation:_exact_combination_count"
+  },
+  {
+   "args": [
+    7,
+    7
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 1
+   },
+   "id": "exact_combination_count_7_7",
+   "kwargs": {},
+   "note": "math.comb 语义（C(5,0)=1；p>m 或 p<0 → 0）",
+   "target": "app.services.network.allocation:_exact_combination_count"
+  },
+  {
+   "args": [
+    5,
+    0
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 1
+   },
+   "id": "exact_combination_count_5_0",
+   "kwargs": {},
+   "note": "math.comb 语义（C(5,0)=1；p>m 或 p<0 → 0）",
+   "target": "app.services.network.allocation:_exact_combination_count"
+  },
+  {
+   "args": [
+    3,
+    5
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0
+   },
+   "id": "exact_combination_count_3_5",
+   "kwargs": {},
+   "note": "math.comb 语义（C(5,0)=1；p>m 或 p<0 → 0）",
+   "target": "app.services.network.allocation:_exact_combination_count"
+  },
+  {
+   "args": [
+    4,
+    -1
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0
+   },
+   "id": "exact_combination_count_4_-1",
+   "kwargs": {},
+   "note": "math.comb 语义（C(5,0)=1；p>m 或 p<0 → 0）",
+   "target": "app.services.network.allocation:_exact_combination_count"
+  },
+  {
+   "args": [
+    10,
+    10
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": null
+   },
+   "id": "milp_scale_guard_pass",
+   "kwargs": {},
+   "note": "规模闸内 → 静默放行",
+   "target": "app.services.network.allocation:_milp_scale_guard"
+  },
+  {
+   "args": [
+    50,
+    500
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": null
+   },
+   "id": "milp_scale_guard_boundary",
+   "kwargs": {},
+   "note": "候选=500 且积=25000 恰在闸上",
+   "target": "app.services.network.allocation:_milp_scale_guard"
+  },
+  {
+   "args": [
+    10,
+    501
+   ],
+   "expect": {
+    "code": "RESOURCE_SCALE_MISMATCH",
+    "kind": "error",
+    "value": null
+   },
+   "id": "milp_scale_guard_candidates",
+   "kwargs": {},
+   "target": "app.services.network.allocation:_milp_scale_guard"
+  },
+  {
+   "args": [
+    60,
+    500
+   ],
+   "expect": {
+    "code": "RESOURCE_SCALE_MISMATCH",
+    "kind": "error",
+    "value": null
+   },
+   "id": "milp_scale_guard_product",
+   "kwargs": {},
+   "target": "app.services.network.allocation:_milp_scale_guard"
+  },
+  {
+   "args": [
+    [],
+    [
+     1.0
+    ],
+    1
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "milp_inputs_empty_matrix",
+   "kwargs": {},
+   "target": "app.services.network.allocation:_validate_milp_inputs"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0
+     ]
+    ],
+    [],
+    1
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "milp_inputs_empty_weights",
+   "kwargs": {},
+   "target": "app.services.network.allocation:_validate_milp_inputs"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      1.0
+     ]
+    ],
+    [
+     1.0,
+     1.0
+    ],
+    1
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "milp_inputs_ragged",
+   "kwargs": {},
+   "target": "app.services.network.allocation:_validate_milp_inputs"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ]
+    ],
+    [
+     1.0,
+     1.0,
+     1.0
+    ],
+    1
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "milp_inputs_row_mismatch",
+   "kwargs": {},
+   "target": "app.services.network.allocation:_validate_milp_inputs"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ]
+    ],
+    [
+     1.0,
+     1.0
+    ],
+    0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "milp_inputs_p_zero",
+   "kwargs": {},
+   "target": "app.services.network.allocation:_validate_milp_inputs"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ]
+    ],
+    [
+     1.0,
+     1.0
+    ],
+    3
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "milp_inputs_p_over_m",
+   "kwargs": {},
+   "target": "app.services.network.allocation:_validate_milp_inputs"
+  },
+  {
+   "args": [
+    15.0,
+    1
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z1_first",
+   "kwargs": {},
+   "note": "带中点高斯权重闭式复算",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    15.0,
+    2
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z2_first",
+   "kwargs": {},
+   "note": "带中点高斯权重闭式复算",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    15.0,
+    3
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z3_first",
+   "kwargs": {},
+   "note": "带中点高斯权重闭式复算",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    15.0,
+    3
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 0.32465246736
+   },
+   "id": "e2sfca_weights_z3_second",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    15.0,
+    4
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z4_first",
+   "kwargs": {},
+   "note": "带中点高斯权重闭式复算",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    15.0,
+    4
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 0.32465246736
+   },
+   "id": "e2sfca_weights_z4_second",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    15.0,
+    5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z5_first",
+   "kwargs": {},
+   "note": "带中点高斯权重闭式复算",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    15.0,
+    5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 0.32465246736
+   },
+   "id": "e2sfca_weights_z5_second",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    15.0,
+    6
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z6_first",
+   "kwargs": {},
+   "note": "带中点高斯权重闭式复算",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    15.0,
+    6
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 0.32465246736
+   },
+   "id": "e2sfca_weights_z6_second",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    2
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z2_first",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    2
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 0.32465246736
+   },
+   "id": "e2sfca_weights_z2_last",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    4
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z4_first",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    4
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.043936933623
+   },
+   "id": "e2sfca_weights_z4_third",
+   "kwargs": {},
+   "note": "cutoff 不进权重公式（权重只依赖带序 r）",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    4
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "3",
+    "value": 0.0021874911182
+   },
+   "id": "e2sfca_weights_z4_last",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z5_first",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.043936933623
+   },
+   "id": "e2sfca_weights_z5_third",
+   "kwargs": {},
+   "note": "cutoff 不进权重公式（权重只依赖带序 r）",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "4",
+    "value": 4.0065297393e-05
+   },
+   "id": "e2sfca_weights_z5_last",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    7
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z7_first",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    7
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.043936933623
+   },
+   "id": "e2sfca_weights_z7_third",
+   "kwargs": {},
+   "note": "cutoff 不进权重公式（权重只依赖带序 r）",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    7
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "6",
+    "value": 6.6915860913e-10
+   },
+   "id": "e2sfca_weights_z7_last",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    8
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z8_first",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    8
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.043936933623
+   },
+   "id": "e2sfca_weights_z8_third",
+   "kwargs": {},
+   "note": "cutoff 不进权重公式（权重只依赖带序 r）",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    8
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "7",
+    "value": 6.1019366776e-13
+   },
+   "id": "e2sfca_weights_z8_last",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    9
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z9_first",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    9
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.043936933623
+   },
+   "id": "e2sfca_weights_z9_third",
+   "kwargs": {},
+   "note": "cutoff 不进权重公式（权重只依赖带序 r）",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    9
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "8",
+    "value": 2.0469717132e-16
+   },
+   "id": "e2sfca_weights_z9_last",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    10
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88249690258
+   },
+   "id": "e2sfca_weights_z10_first",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    10
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.043936933623
+   },
+   "id": "e2sfca_weights_z10_third",
+   "kwargs": {},
+   "note": "cutoff 不进权重公式（权重只依赖带序 r）",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    30.0,
+    10
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "9",
+    "value": 2.5261637809e-20
+   },
+   "id": "e2sfca_weights_z10_last",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    15.0,
+    0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "e2sfca_zones_zero",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    15.0,
+    11
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "e2sfca_zones_eleven",
+   "kwargs": {},
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._e2sfca_zone_weights"
+  },
+  {
+   "args": [
+    5.0,
+    15.0,
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 1
+   },
+   "id": "e2sfca_band_index_0",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    0.01,
+    15.0,
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0
+   },
+   "id": "e2sfca_band_index_1",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    15.0,
+    15.0,
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 2
+   },
+   "id": "e2sfca_band_index_2",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    4.999,
+    15.0,
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0
+   },
+   "id": "e2sfca_band_index_3",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    10.0,
+    15.0,
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 2
+   },
+   "id": "e2sfca_band_index_4",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    7.4,
+    15.0,
+    4
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 1
+   },
+   "id": "e2sfca_band_index_5",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    20.0,
+    30.0,
+    4
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 2
+   },
+   "id": "e2sfca_band_index_6",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    29.99,
+    30.0,
+    4
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 3
+   },
+   "id": "e2sfca_band_index_7",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    1.0,
+    15.0,
+    5
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0
+   },
+   "id": "e2sfca_band_index_8",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    14.9,
+    15.0,
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 1
+   },
+   "id": "e2sfca_band_index_9",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    0.0,
+    15.0,
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0
+   },
+   "id": "e2sfca_band_index_10",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    2.0,
+    15.0,
+    5
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0
+   },
+   "id": "e2sfca_band_index_11",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    11.0,
+    12.0,
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 1
+   },
+   "id": "e2sfca_band_index_12",
+   "kwargs": {},
+   "note": "band = min(⌊t/带宽⌋, zones−1)；t==cutoff → 末带",
+   "target": "app.services.network.accessibility:NetworkAccessibilityService._band_index"
+  },
+  {
+   "args": [
+    "all"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": [
+     "degree",
+     "closeness",
+     "betweenness",
+     "edge_betweenness"
+    ]
+   },
+   "id": "parse_metrics_all",
+   "kwargs": {},
+   "target": "app.services.network.centrality:_parse_metrics"
+  },
+  {
+   "args": [
+    "degree"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": [
+     "degree"
+    ]
+   },
+   "id": "parse_metrics_degree",
+   "kwargs": {},
+   "target": "app.services.network.centrality:_parse_metrics"
+  },
+  {
+   "args": [
+    "closeness"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": [
+     "closeness"
+    ]
+   },
+   "id": "parse_metrics_closeness",
+   "kwargs": {},
+   "target": "app.services.network.centrality:_parse_metrics"
+  },
+  {
+   "args": [
+    "betweenness"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": [
+     "betweenness"
+    ]
+   },
+   "id": "parse_metrics_betweenness",
+   "kwargs": {},
+   "target": "app.services.network.centrality:_parse_metrics"
+  },
+  {
+   "args": [
+    "edge_betweenness"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": [
+     "edge_betweenness"
+    ]
+   },
+   "id": "parse_metrics_edge_betweenness",
+   "kwargs": {},
+   "target": "app.services.network.centrality:_parse_metrics"
+  },
+  {
+   "args": [
+    "eigenvector"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": [
+     "eigenvector"
+    ]
+   },
+   "id": "parse_metrics_eigenvector",
+   "kwargs": {},
+   "target": "app.services.network.centrality:_parse_metrics"
+  },
+  {
+   "args": [
+    "DEGREE"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": [
+     "degree"
+    ]
+   },
+   "id": "parse_metrics_degree",
+   "kwargs": {},
+   "target": "app.services.network.centrality:_parse_metrics"
+  },
+  {
+   "args": [
+    "pagerank"
+   ],
+   "expect": {
+    "code": "UNSUPPORTED_METHOD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "parse_metrics_unknown",
+   "kwargs": {},
+   "target": "app.services.network.centrality:_parse_metrics"
+  },
+  {
+   "args": [
+    "alpha_mid",
+    1.0,
+    [
+     0.0,
+     3.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 1.0
+   },
+   "id": "check_param_pass_alpha_mid",
+   "kwargs": {},
+   "note": "边界值闭区间放行（原值直通）",
+   "target": "app.services.network.interaction:_check_param"
+  },
+  {
+   "args": [
+    "alpha_lo",
+    0.0,
+    [
+     0.0,
+     3.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0.0
+   },
+   "id": "check_param_pass_alpha_lo",
+   "kwargs": {},
+   "note": "边界值闭区间放行（原值直通）",
+   "target": "app.services.network.interaction:_check_param"
+  },
+  {
+   "args": [
+    "alpha_hi",
+    3.0,
+    [
+     0.0,
+     3.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 3.0
+   },
+   "id": "check_param_pass_alpha_hi",
+   "kwargs": {},
+   "note": "边界值闭区间放行（原值直通）",
+   "target": "app.services.network.interaction:_check_param"
+  },
+  {
+   "args": [
+    "beta_mid",
+    2.0,
+    [
+     0.5,
+     4.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 2.0
+   },
+   "id": "check_param_pass_beta_mid",
+   "kwargs": {},
+   "note": "边界值闭区间放行（原值直通）",
+   "target": "app.services.network.interaction:_check_param"
+  },
+  {
+   "args": [
+    "beta_lo",
+    0.5,
+    [
+     0.5,
+     4.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0.5
+   },
+   "id": "check_param_pass_beta_lo",
+   "kwargs": {},
+   "note": "边界值闭区间放行（原值直通）",
+   "target": "app.services.network.interaction:_check_param"
+  },
+  {
+   "args": [
+    "beta_hi",
+    4.0,
+    [
+     0.5,
+     4.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 4.0
+   },
+   "id": "check_param_pass_beta_hi",
+   "kwargs": {},
+   "note": "边界值闭区间放行（原值直通）",
+   "target": "app.services.network.interaction:_check_param"
+  },
+  {
+   "args": [
+    "alpha",
+    -0.1,
+    [
+     0.0,
+     3.0
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "check_param_rejects_alpha_neg0p1",
+   "kwargs": {},
+   "target": "app.services.network.interaction:_check_param"
+  },
+  {
+   "args": [
+    "alpha",
+    3.5,
+    [
+     0.0,
+     3.0
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "check_param_rejects_alpha_3p5",
+   "kwargs": {},
+   "target": "app.services.network.interaction:_check_param"
+  },
+  {
+   "args": [
+    "beta",
+    0.4,
+    [
+     0.5,
+     4.0
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "check_param_rejects_beta_0p4",
+   "kwargs": {},
+   "target": "app.services.network.interaction:_check_param"
+  },
+  {
+   "args": [
+    "beta",
+    4.5,
+    [
+     0.5,
+     4.0
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "check_param_rejects_beta_4p5",
+   "kwargs": {},
+   "target": "app.services.network.interaction:_check_param"
+  },
+  {
+   "args": [
+    [
+     [
+      "b",
+      0.3
+     ],
+     [
+      "a",
+      0.3
+     ],
+     [
+      "c",
+      0.4
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0.facility_id",
+    "value": "c"
+   },
+   "id": "top_contributions_0_id0",
+   "kwargs": {},
+   "note": "share 降序、id 升序平局裁决（确定性 top-k）",
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "b",
+      0.3
+     ],
+     [
+      "a",
+      0.3
+     ],
+     [
+      "c",
+      0.4
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "1.facility_id",
+    "value": "a"
+   },
+   "id": "top_contributions_0_id1",
+   "kwargs": {},
+   "note": "share 降序、id 升序平局裁决（确定性 top-k）",
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "b",
+      0.3
+     ],
+     [
+      "a",
+      0.3
+     ],
+     [
+      "c",
+      0.4
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "2.facility_id",
+    "value": "b"
+   },
+   "id": "top_contributions_0_id2",
+   "kwargs": {},
+   "note": "share 降序、id 升序平局裁决（确定性 top-k）",
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "b",
+      0.3
+     ],
+     [
+      "a",
+      0.3
+     ],
+     [
+      "c",
+      0.4
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0.share",
+    "value": 0.4
+   },
+   "id": "top_contributions_0_share0",
+   "kwargs": {},
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "b",
+      0.3
+     ],
+     [
+      "a",
+      0.3
+     ],
+     [
+      "c",
+      0.4
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "1.share",
+    "value": 0.3
+   },
+   "id": "top_contributions_0_share1",
+   "kwargs": {},
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "b",
+      0.3
+     ],
+     [
+      "a",
+      0.3
+     ],
+     [
+      "c",
+      0.4
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "2.share",
+    "value": 0.3
+   },
+   "id": "top_contributions_0_share2",
+   "kwargs": {},
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "x",
+      0.5
+     ],
+     [
+      "y",
+      0.5
+     ]
+    ],
+    1
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0.facility_id",
+    "value": "x"
+   },
+   "id": "top_contributions_1_id0",
+   "kwargs": {},
+   "note": "share 降序、id 升序平局裁决（确定性 top-k）",
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "x",
+      0.5
+     ],
+     [
+      "y",
+      0.5
+     ]
+    ],
+    1
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0.share",
+    "value": 0.5
+   },
+   "id": "top_contributions_1_share0",
+   "kwargs": {},
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "p",
+      0.9
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0.facility_id",
+    "value": "p"
+   },
+   "id": "top_contributions_2_id0",
+   "kwargs": {},
+   "note": "share 降序、id 升序平局裁决（确定性 top-k）",
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "p",
+      0.9
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0.share",
+    "value": 0.9
+   },
+   "id": "top_contributions_2_share0",
+   "kwargs": {},
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "a",
+      0.3333333333333333
+     ],
+     [
+      "b",
+      0.6666666666666666
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0.facility_id",
+    "value": "b"
+   },
+   "id": "top_contributions_3_id0",
+   "kwargs": {},
+   "note": "share 降序、id 升序平局裁决（确定性 top-k）",
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "a",
+      0.3333333333333333
+     ],
+     [
+      "b",
+      0.6666666666666666
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "1.facility_id",
+    "value": "a"
+   },
+   "id": "top_contributions_3_id1",
+   "kwargs": {},
+   "note": "share 降序、id 升序平局裁决（确定性 top-k）",
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "a",
+      0.3333333333333333
+     ],
+     [
+      "b",
+      0.6666666666666666
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0.share",
+    "value": 0.666667
+   },
+   "id": "top_contributions_3_share0",
+   "kwargs": {},
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    [
+     [
+      "a",
+      0.3333333333333333
+     ],
+     [
+      "b",
+      0.6666666666666666
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "1.share",
+    "value": 0.333333
+   },
+   "id": "top_contributions_3_share1",
+   "kwargs": {},
+   "target": "app.services.network.interaction:_top_contributions"
+  },
+  {
+   "args": [
+    "minutes"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "minutes"
+   },
+   "id": "normalize_break_unit_minutes",
+   "kwargs": {},
+   "target": "app.services.network.service_area:_normalize_break_unit"
+  },
+  {
+   "args": [
+    "meters"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "meters"
+   },
+   "id": "normalize_break_unit_meters",
+   "kwargs": {},
+   "target": "app.services.network.service_area:_normalize_break_unit"
+  },
+  {
+   "args": [
+    "seconds"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "seconds"
+   },
+   "id": "normalize_break_unit_seconds",
+   "kwargs": {},
+   "target": "app.services.network.service_area:_normalize_break_unit"
+  },
+  {
+   "args": [
+    "km"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "meters"
+   },
+   "id": "normalize_break_unit_km",
+   "kwargs": {},
+   "target": "app.services.network.service_area:_normalize_break_unit"
+  },
+  {
+   "args": [
+    " Minutes "
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "minutes"
+   },
+   "id": "normalize_break_unit_minutes",
+   "kwargs": {},
+   "target": "app.services.network.service_area:_normalize_break_unit"
+  },
+  {
+   "args": [
+    "hours"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "normalize_break_unit_rejects_hours",
+   "kwargs": {},
+   "target": "app.services.network.service_area:_normalize_break_unit"
+  },
+  {
+   "args": [
+    ""
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "normalize_break_unit_rejects_empty",
+   "kwargs": {},
+   "target": "app.services.network.service_area:_normalize_break_unit"
+  },
+  {
+   "args": [
+    "MIN"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "normalize_break_unit_rejects_min",
+   "kwargs": {},
+   "target": "app.services.network.service_area:_normalize_break_unit"
+  },
+  {
+   "args": [
+    15.0,
+    "minutes",
+    null
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 900.0
+   },
+   "id": "break_to_cutoff_0",
+   "kwargs": {},
+   "note": "minutes→秒 ×60；km→米别名 ×1000；meters/seconds 直通",
+   "target": "app.services.network.service_area:_break_to_cutoff"
+  },
+  {
+   "args": [
+    5.0,
+    "km",
+    null
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 5000.0
+   },
+   "id": "break_to_cutoff_1",
+   "kwargs": {},
+   "note": "minutes→秒 ×60；km→米别名 ×1000；meters/seconds 直通",
+   "target": "app.services.network.service_area:_break_to_cutoff"
+  },
+  {
+   "args": [
+    800.0,
+    "meters",
+    null
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 800.0
+   },
+   "id": "break_to_cutoff_2",
+   "kwargs": {},
+   "note": "minutes→秒 ×60；km→米别名 ×1000；meters/seconds 直通",
+   "target": "app.services.network.service_area:_break_to_cutoff"
+  },
+  {
+   "args": [
+    90.0,
+    "seconds",
+    null
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 90.0
+   },
+   "id": "break_to_cutoff_3",
+   "kwargs": {},
+   "note": "minutes→秒 ×60；km→米别名 ×1000；meters/seconds 直通",
+   "target": "app.services.network.service_area:_break_to_cutoff"
+  },
+  {
+   "args": [
+    2.5,
+    "minutes",
+    null
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 150.0
+   },
+   "id": "break_to_cutoff_4",
+   "kwargs": {},
+   "note": "minutes→秒 ×60；km→米别名 ×1000；meters/seconds 直通",
+   "target": "app.services.network.service_area:_break_to_cutoff"
+  },
+  {
+   "args": [
+    12.5,
+    "km",
+    null
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 12500.0
+   },
+   "id": "break_to_cutoff_5",
+   "kwargs": {},
+   "note": "minutes→秒 ×60；km→米别名 ×1000；meters/seconds 直通",
+   "target": "app.services.network.service_area:_break_to_cutoff"
+  },
+  {
+   "args": [
+    0.25,
+    "minutes",
+    null
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 15.0
+   },
+   "id": "break_to_cutoff_6",
+   "kwargs": {},
+   "note": "minutes→秒 ×60；km→米别名 ×1000；meters/seconds 直通",
+   "target": "app.services.network.service_area:_break_to_cutoff"
+  },
+  {
+   "args": [
+    0.75,
+    "km",
+    null
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 750.0
+   },
+   "id": "break_to_cutoff_7",
+   "kwargs": {},
+   "note": "minutes→秒 ×60；km→米别名 ×1000；meters/seconds 直通",
+   "target": "app.services.network.service_area:_break_to_cutoff"
+  },
+  {
+   "args": [
+    1.0,
+    "minutes",
+    null
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 60.0
+   },
+   "id": "break_to_cutoff_8",
+   "kwargs": {},
+   "note": "minutes→秒 ×60；km→米别名 ×1000；meters/seconds 直通",
+   "target": "app.services.network.service_area:_break_to_cutoff"
+  },
+  {
+   "args": [
+    0.5,
+    "meters",
+    null
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 0.5
+   },
+   "id": "break_to_cutoff_9",
+   "kwargs": {},
+   "note": "minutes→秒 ×60；km→米别名 ×1000；meters/seconds 直通",
+   "target": "app.services.network.service_area:_break_to_cutoff"
+  },
+  {
+   "args": [
+    "walking"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 80.0
+   },
+   "id": "speed_m_per_min_walking",
+   "kwargs": {},
+   "note": "模式速度表（大小写敏感；未知模式回退 driving）",
+   "target": "app.lib.geo_analysis.network:_speed_m_per_min"
+  },
+  {
+   "args": [
+    "cycling"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 250.0
+   },
+   "id": "speed_m_per_min_cycling",
+   "kwargs": {},
+   "note": "模式速度表（大小写敏感；未知模式回退 driving）",
+   "target": "app.lib.geo_analysis.network:_speed_m_per_min"
+  },
+  {
+   "args": [
+    "driving"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 667.0
+   },
+   "id": "speed_m_per_min_driving",
+   "kwargs": {},
+   "note": "模式速度表（大小写敏感；未知模式回退 driving）",
+   "target": "app.lib.geo_analysis.network:_speed_m_per_min"
+  },
+  {
+   "args": [
+    "transit"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 417.0
+   },
+   "id": "speed_m_per_min_transit",
+   "kwargs": {},
+   "note": "模式速度表（大小写敏感；未知模式回退 driving）",
+   "target": "app.lib.geo_analysis.network:_speed_m_per_min"
+  },
+  {
+   "args": [
+    "teleport"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 667.0
+   },
+   "id": "speed_m_per_min_teleport",
+   "kwargs": {},
+   "note": "模式速度表（大小写敏感；未知模式回退 driving）",
+   "target": "app.lib.geo_analysis.network:_speed_m_per_min"
+  },
+  {
+   "args": [
+    "WALKING"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 667.0
+   },
+   "id": "speed_m_per_min_WALKING",
+   "kwargs": {},
+   "note": "模式速度表（大小写敏感；未知模式回退 driving）",
+   "target": "app.lib.geo_analysis.network:_speed_m_per_min"
+  },
+  {
+   "args": [
+    ""
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 667.0
+   },
+   "id": "speed_m_per_min_",
+   "kwargs": {},
+   "note": "模式速度表（大小写敏感；未知模式回退 driving）",
+   "target": "app.lib.geo_analysis.network:_speed_m_per_min"
+  }
+ ],
+ "count": 177,
+ "domain": "network"
+}

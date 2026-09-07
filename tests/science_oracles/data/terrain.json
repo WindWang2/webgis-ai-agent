@@ -1,0 +1,4638 @@
+{
+ "cases": [
+  {
+   "args": [
+    3
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 3
+   },
+   "id": "validate_window_ok_3",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    5
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 5
+   },
+   "id": "validate_window_ok_5",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    101
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 101
+   },
+   "id": "validate_window_ok_101",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    7.0
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 7
+   },
+   "id": "validate_window_ok_7.0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    2
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_window_rejects_2",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    4
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_window_rejects_4",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    103
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_window_rejects_103",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    "abc"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_window_rejects_abc",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    true
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_window_rejects_True",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    null
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_window_rejects_None",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    3.5
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_window_rejects_3p5",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    []
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_window_rejects_",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    2.5
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_window_rejects_2p5",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    99.0
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 99
+   },
+   "id": "validate_window_ok_float_99.0",
+   "kwargs": {},
+   "note": "整值 float 直通",
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    3.0
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 3
+   },
+   "id": "validate_window_ok_float_3.0",
+   "kwargs": {},
+   "note": "整值 float 直通",
+   "target": "app.lib.geo_analysis.terrain:_validate_window"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     30.0,
+     45.0,
+     60.0,
+     90.0
+    ],
+    "degrees"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 0.0
+   },
+   "id": "slope_to_radians_deg_0",
+   "kwargs": {},
+   "note": "radians(deg) 换算复算",
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     30.0,
+     45.0,
+     60.0,
+     90.0
+    ],
+    "degrees"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "2",
+    "value": 0.7853981634
+   },
+   "id": "slope_to_radians_deg_2",
+   "kwargs": {},
+   "note": "radians(deg) 换算复算",
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     30.0,
+     45.0,
+     60.0,
+     90.0
+    ],
+    "degrees"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "4",
+    "value": 1.5707963268
+   },
+   "id": "slope_to_radians_deg_4",
+   "kwargs": {},
+   "note": "radians(deg) 换算复算",
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     0.5236,
+     1.2
+    ],
+    "radians"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 0.5236
+   },
+   "id": "slope_to_radians_rad_0",
+   "kwargs": {},
+   "note": "radians 直通",
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     0.5236,
+     1.2
+    ],
+    "radians"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 1.2
+   },
+   "id": "slope_to_radians_rad_1",
+   "kwargs": {},
+   "note": "radians 直通",
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     50.0,
+     100.0
+    ],
+    "percent"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 0.0
+   },
+   "id": "slope_to_radians_pct_0",
+   "kwargs": {},
+   "note": "arctan(s/100) 复算",
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     50.0,
+     100.0
+    ],
+    "percent"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 0.463647609
+   },
+   "id": "slope_to_radians_pct_1",
+   "kwargs": {},
+   "note": "arctan(s/100) 复算",
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     50.0,
+     100.0
+    ],
+    "percent"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "2",
+    "value": 0.7853981634
+   },
+   "id": "slope_to_radians_pct_2",
+   "kwargs": {},
+   "note": "arctan(s/100) 复算",
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     10.0
+    ],
+    "grad"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "slope_to_radians_bad_units",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     [
+      0.0,
+      3.0
+     ],
+     [
+      7.0,
+      15.0
+     ]
+    ],
+    2.0,
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0.0",
+    "value": 2.0
+   },
+   "id": "sca_a00",
+   "kwargs": {},
+   "note": "(accum+1)·cell_area/width 复算",
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    [
+     [
+      0.0,
+      3.0
+     ],
+     [
+      7.0,
+      15.0
+     ]
+    ],
+    2.0,
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0.1",
+    "value": 8.0
+   },
+   "id": "sca_a01",
+   "kwargs": {},
+   "note": "(accum+1)·cell_area/width 复算",
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    [
+     [
+      0.0,
+      3.0
+     ],
+     [
+      7.0,
+      15.0
+     ]
+    ],
+    2.0,
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1.0",
+    "value": 16.0
+   },
+   "id": "sca_a10",
+   "kwargs": {},
+   "note": "(accum+1)·cell_area/width 复算",
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    [
+     [
+      0.0,
+      3.0
+     ],
+     [
+      7.0,
+      15.0
+     ]
+    ],
+    2.0,
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1.1",
+    "value": 32.0
+   },
+   "id": "sca_a11",
+   "kwargs": {},
+   "note": "(accum+1)·cell_area/width 复算",
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    [
+     [
+      0.0,
+      0.0
+     ]
+    ],
+    3.0,
+    1.5,
+    1.5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0.0",
+    "value": 3.0
+   },
+   "id": "sca_anisotropic",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    2.0,
+    1.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 2.0
+   },
+   "id": "neighbor_distances_0",
+   "kwargs": {},
+   "note": "hypot(Δcol·cx, Δrow·cy) 复算（D8 编码序）",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    1.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 2.2360679775
+   },
+   "id": "neighbor_distances_1",
+   "kwargs": {},
+   "note": "hypot(Δcol·cx, Δrow·cy) 复算（D8 编码序）",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    1.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "2",
+    "value": 1.0
+   },
+   "id": "neighbor_distances_2",
+   "kwargs": {},
+   "note": "hypot(Δcol·cx, Δrow·cy) 复算（D8 编码序）",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    1.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "3",
+    "value": 2.2360679775
+   },
+   "id": "neighbor_distances_3",
+   "kwargs": {},
+   "note": "hypot(Δcol·cx, Δrow·cy) 复算（D8 编码序）",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    1.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "4",
+    "value": 2.0
+   },
+   "id": "neighbor_distances_4",
+   "kwargs": {},
+   "note": "hypot(Δcol·cx, Δrow·cy) 复算（D8 编码序）",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    1.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "5",
+    "value": 2.2360679775
+   },
+   "id": "neighbor_distances_5",
+   "kwargs": {},
+   "note": "hypot(Δcol·cx, Δrow·cy) 复算（D8 编码序）",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    1.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "6",
+    "value": 1.0
+   },
+   "id": "neighbor_distances_6",
+   "kwargs": {},
+   "note": "hypot(Δcol·cx, Δrow·cy) 复算（D8 编码序）",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    1.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "7",
+    "value": 2.2360679775
+   },
+   "id": "neighbor_distances_7",
+   "kwargs": {},
+   "note": "hypot(Δcol·cx, Δrow·cy) 复算（D8 编码序）",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    1.0,
+    1.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 1.4142135624
+   },
+   "id": "neighbor_distances_unit_1",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    1.0,
+    1.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "3",
+    "value": 1.4142135624
+   },
+   "id": "neighbor_distances_unit_3",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    3,
+    4
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0.0",
+    "value": false
+   },
+   "id": "border_inside_0_0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    3,
+    4
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "1.1",
+    "value": true
+   },
+   "id": "border_inside_1_1",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    3,
+    4
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "1.3",
+    "value": false
+   },
+   "id": "border_inside_1_3",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    3,
+    4
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "2.2",
+    "value": false
+   },
+   "id": "border_inside_2_2",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    2,
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0.0",
+    "value": false
+   },
+   "id": "border_inside_2x2_corner",
+   "kwargs": {},
+   "note": "2x2 网格全是边界",
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    5,
+    5
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "2.2",
+    "value": true
+   },
+   "id": "border_inside_5x5_center",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    4,
+    4
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "1.2",
+    "value": true
+   },
+   "id": "border_inside_4x4_1_2",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    4,
+    4
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0.2",
+    "value": false
+   },
+   "id": "border_inside_4x4_0_2",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    4,
+    4
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "3.3",
+    "value": false
+   },
+   "id": "border_inside_4x4_3_3",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    4,
+    4
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "2.0",
+    "value": false
+   },
+   "id": "border_inside_4x4_2_0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    6,
+    6
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "1.1",
+    "value": true
+   },
+   "id": "border_inside_6x6_1_1",
+   "kwargs": {},
+   "note": "6x6 内圈为非边界（窗口收缩语义的掩膜基础）",
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    6,
+    6
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "2.2",
+    "value": true
+   },
+   "id": "border_inside_6x6_2_2",
+   "kwargs": {},
+   "note": "6x6 内圈为非边界（窗口收缩语义的掩膜基础）",
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    6,
+    6
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "2.3",
+    "value": true
+   },
+   "id": "border_inside_6x6_2_3",
+   "kwargs": {},
+   "note": "6x6 内圈为非边界（窗口收缩语义的掩膜基础）",
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    6,
+    6
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "3.4",
+    "value": true
+   },
+   "id": "border_inside_6x6_3_4",
+   "kwargs": {},
+   "note": "6x6 内圈为非边界（窗口收缩语义的掩膜基础）",
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    "a",
+    "b"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": null
+   },
+   "id": "aligned_ok_returns_none",
+   "kwargs": {},
+   "note": "同形 → 静默放行（返回 None）",
+   "target": "app.lib.geo_analysis.terrain:_aligned"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      2.0
+     ]
+    ],
+    "a",
+    "b"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "aligned_mismatch_rejected",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_aligned"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      0.0,
+      5.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0
+     ],
+     [
+      0.0,
+      9.0,
+      4.0
+     ]
+    ],
+    2.0,
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0.0",
+    "value": 6.0
+   },
+   "id": "sca_b00",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      0.0,
+      5.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0
+     ],
+     [
+      0.0,
+      9.0,
+      4.0
+     ]
+    ],
+    2.0,
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1.2",
+    "value": 4.0
+   },
+   "id": "sca_b12",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      0.0,
+      5.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0
+     ],
+     [
+      0.0,
+      9.0,
+      4.0
+     ]
+    ],
+    2.0,
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "2.1",
+    "value": 20.0
+   },
+   "id": "sca_b21",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      0.0,
+      5.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0
+     ],
+     [
+      0.0,
+      9.0,
+      4.0
+     ]
+    ],
+    2.0,
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0.1",
+    "value": 2.0
+   },
+   "id": "sca_b01",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      0.0,
+      5.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0
+     ],
+     [
+      0.0,
+      9.0,
+      4.0
+     ]
+    ],
+    2.0,
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1.0",
+    "value": 4.0
+   },
+   "id": "sca_b10",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      0.0,
+      5.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0
+     ],
+     [
+      0.0,
+      9.0,
+      4.0
+     ]
+    ],
+    2.0,
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "2.2",
+    "value": 10.0
+   },
+   "id": "sca_b22",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      0.0,
+      5.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0
+     ],
+     [
+      0.0,
+      9.0,
+      4.0
+     ]
+    ],
+    2.0,
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0.2",
+    "value": 12.0
+   },
+   "id": "sca_b02",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    [
+     [
+      6.0
+     ]
+    ],
+    5.0,
+    0.5,
+    0.5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0.0",
+    "value": 35.0
+   },
+   "id": "sca_single_cell",
+   "kwargs": {},
+   "note": "各向异性像元 SCA 复算",
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    5.0,
+    0.5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 5.0
+   },
+   "id": "neighbor_distances_aniso_0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    5.0,
+    0.5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 5.0249378106
+   },
+   "id": "neighbor_distances_aniso_1",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    5.0,
+    0.5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "2",
+    "value": 0.5
+   },
+   "id": "neighbor_distances_aniso_2",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    5.0,
+    0.5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "3",
+    "value": 5.0249378106
+   },
+   "id": "neighbor_distances_aniso_3",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    5.0,
+    0.5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "4",
+    "value": 5.0
+   },
+   "id": "neighbor_distances_aniso_4",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    5.0,
+    0.5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "5",
+    "value": 5.0249378106
+   },
+   "id": "neighbor_distances_aniso_5",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    5.0,
+    0.5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "6",
+    "value": 0.5
+   },
+   "id": "neighbor_distances_aniso_6",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    5.0,
+    0.5
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "7",
+    "value": 5.0249378106
+   },
+   "id": "neighbor_distances_aniso_7",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0",
+    "value": 2.0
+   },
+   "id": "neighbor_distances_iso_0",
+   "kwargs": {},
+   "note": "正交邻域距离 = cx",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "2",
+    "value": 2.0
+   },
+   "id": "neighbor_distances_iso_2",
+   "kwargs": {},
+   "note": "正交邻域距离 = cx",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "4",
+    "value": 2.0
+   },
+   "id": "neighbor_distances_iso_4",
+   "kwargs": {},
+   "note": "正交邻域距离 = cx",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "6",
+    "value": 2.0
+   },
+   "id": "neighbor_distances_iso_6",
+   "kwargs": {},
+   "note": "正交邻域距离 = cx",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 2.8284271247
+   },
+   "id": "neighbor_distances_iso_diag_1",
+   "kwargs": {},
+   "note": "对角邻域距离 = sqrt(2)·cx",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    2.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "5",
+    "value": 2.8284271247
+   },
+   "id": "neighbor_distances_iso_diag_5",
+   "kwargs": {},
+   "note": "对角邻域距离 = sqrt(2)·cx",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    0.5,
+    3.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 0.5
+   },
+   "id": "neighbor_distances_tall_0",
+   "kwargs": {},
+   "note": "强各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    0.5,
+    3.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 3.0413812651
+   },
+   "id": "neighbor_distances_tall_1",
+   "kwargs": {},
+   "note": "强各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    0.5,
+    3.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "2",
+    "value": 3.0
+   },
+   "id": "neighbor_distances_tall_2",
+   "kwargs": {},
+   "note": "强各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    0.5,
+    3.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "3",
+    "value": 3.0413812651
+   },
+   "id": "neighbor_distances_tall_3",
+   "kwargs": {},
+   "note": "强各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    0.5,
+    3.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "4",
+    "value": 0.5
+   },
+   "id": "neighbor_distances_tall_4",
+   "kwargs": {},
+   "note": "强各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    0.5,
+    3.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "5",
+    "value": 3.0413812651
+   },
+   "id": "neighbor_distances_tall_5",
+   "kwargs": {},
+   "note": "强各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    0.5,
+    3.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "6",
+    "value": 3.0
+   },
+   "id": "neighbor_distances_tall_6",
+   "kwargs": {},
+   "note": "强各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    0.5,
+    3.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "7",
+    "value": 3.0413812651
+   },
+   "id": "neighbor_distances_tall_7",
+   "kwargs": {},
+   "note": "强各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      4.0,
+      8.0
+     ]
+    ],
+    3.0,
+    1.0,
+    3.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0.1",
+    "value": 3.0
+   },
+   "id": "sca_d01",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      4.0,
+      8.0
+     ]
+    ],
+    3.0,
+    1.0,
+    3.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1.0",
+    "value": 5.0
+   },
+   "id": "sca_d10",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_specific_catchment_area"
+  },
+  {
+   "args": [
+    1.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 1.0
+   },
+   "id": "neighbor_distances_mix_0",
+   "kwargs": {},
+   "note": "温和各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    1.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 2.2360679775
+   },
+   "id": "neighbor_distances_mix_1",
+   "kwargs": {},
+   "note": "温和各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    1.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "2",
+    "value": 2.0
+   },
+   "id": "neighbor_distances_mix_2",
+   "kwargs": {},
+   "note": "温和各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    1.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "3",
+    "value": 2.2360679775
+   },
+   "id": "neighbor_distances_mix_3",
+   "kwargs": {},
+   "note": "温和各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    1.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "4",
+    "value": 1.0
+   },
+   "id": "neighbor_distances_mix_4",
+   "kwargs": {},
+   "note": "温和各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    1.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "5",
+    "value": 2.2360679775
+   },
+   "id": "neighbor_distances_mix_5",
+   "kwargs": {},
+   "note": "温和各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    1.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "6",
+    "value": 2.0
+   },
+   "id": "neighbor_distances_mix_6",
+   "kwargs": {},
+   "note": "温和各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    1.0,
+    2.0
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "7",
+    "value": 2.2360679775
+   },
+   "id": "neighbor_distances_mix_7",
+   "kwargs": {},
+   "note": "温和各向异性像元的 D8 邻域米制距离",
+   "target": "app.lib.geo_analysis.terrain:_neighbor_distances"
+  },
+  {
+   "args": [
+    [
+     3.0,
+     87.0
+    ],
+    "degrees"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 0.05235987756
+   },
+   "id": "slope_to_radians_deg5_0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     3.0,
+     87.0
+    ],
+    "degrees"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 1.5184364492
+   },
+   "id": "slope_to_radians_deg5_1",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     3.0,
+     175.0
+    ],
+    "percent"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 0.029991004857
+   },
+   "id": "slope_to_radians_pct5_0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     3.0,
+     175.0
+    ],
+    "percent"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 1.0516502125
+   },
+   "id": "slope_to_radians_pct5_1",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    7,
+    7
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "2.3",
+    "value": true
+   },
+   "id": "border_inside_7x7_2_3",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    7,
+    7
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "3.3",
+    "value": true
+   },
+   "id": "border_inside_7x7_3_3",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    7,
+    7
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "4.1",
+    "value": true
+   },
+   "id": "border_inside_7x7_4_1",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    7,
+    7
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "0.3",
+    "value": false
+   },
+   "id": "border_inside_7x7_0_3",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    7,
+    7
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "5.6",
+    "value": false
+   },
+   "id": "border_inside_7x7_5_6",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_border_inside"
+  },
+  {
+   "args": [
+    [
+     5.0,
+     12.5,
+     33.3,
+     150.0
+    ],
+    "percent"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 0.12435499455
+   },
+   "id": "slope_to_radians_pct2_1",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     5.0,
+     12.5,
+     33.3,
+     150.0
+    ],
+    "percent"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "3",
+    "value": 0.98279372325
+   },
+   "id": "slope_to_radians_pct2_3",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     15.0,
+     75.0,
+     89.0
+    ],
+    "degrees"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 0.2617993878
+   },
+   "id": "slope_to_radians_deg2_0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     15.0,
+     75.0,
+     89.0
+    ],
+    "degrees"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "2",
+    "value": 1.5533430343
+   },
+   "id": "slope_to_radians_deg2_2",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     0.5,
+     200.0
+    ],
+    "percent"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 0.004999958334
+   },
+   "id": "slope_to_radians_pct3_0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     0.5,
+     200.0
+    ],
+    "percent"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 1.1071487178
+   },
+   "id": "slope_to_radians_pct3_1",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     89.9
+    ],
+    "degrees"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 0.01745329252
+   },
+   "id": "slope_to_radians_deg3_0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     89.9
+    ],
+    "degrees"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 1.5690509975
+   },
+   "id": "slope_to_radians_deg3_1",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     2.0,
+     88.0
+    ],
+    "degrees"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 0.03490658504
+   },
+   "id": "slope_to_radians_deg4_0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     2.0,
+     88.0
+    ],
+    "degrees"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 1.5358897418
+   },
+   "id": "slope_to_radians_deg4_1",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     7.5,
+     125.0
+    ],
+    "percent"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "0",
+    "value": 0.074859847711
+   },
+   "id": "slope_to_radians_pct4_0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     7.5,
+     125.0
+    ],
+    "percent"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "1",
+    "value": 0.89605538457
+   },
+   "id": "slope_to_radians_pct4_1",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_slope_to_radians"
+  },
+  {
+   "args": [
+    [
+     0,
+     45.0,
+     90
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": [
+     0.0,
+     45.0,
+     90.0
+    ]
+   },
+   "id": "validate_azimuth_list_ok",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_azimuth_list"
+  },
+  {
+   "args": [
+    [
+     315.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": [
+     315.0
+    ]
+   },
+   "id": "validate_azimuth_list_single",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_azimuth_list"
+  },
+  {
+   "args": [
+    [
+     "45",
+     359.99
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": [
+     45.0,
+     359.99
+    ]
+   },
+   "id": "validate_azimuth_list_coerce",
+   "kwargs": {},
+   "note": "字符串数字 coerce 后罗盘度校验",
+   "target": "app.lib.geo_analysis.terrain:_validate_azimuth_list"
+  },
+  {
+   "args": [
+    [
+     100,
+     100
+    ],
+    "terrain.test",
+    1000000
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": null
+   },
+   "id": "guard_cells_custom_cap_pass",
+   "kwargs": {},
+   "note": "注入上限内 → 放行",
+   "target": "app.lib.geo_analysis.terrain:_guard_cells"
+  },
+  {
+   "args": [
+    [
+     1000,
+     1000
+    ],
+    "terrain.test",
+    500000
+   ],
+   "expect": {
+    "code": "RESOURCE_SCALE_MISMATCH",
+    "kind": "error",
+    "value": null
+   },
+   "id": "guard_cells_custom_cap_reject",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_guard_cells"
+  },
+  {
+   "args": [
+    []
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_azimuth_rejects_empty",
+   "kwargs": {},
+   "note": "nan 用字符串传入（float('nan') 后被 isfinite 守卫拒绝）",
+   "target": "app.lib.geo_analysis.terrain:_validate_azimuth_list"
+  },
+  {
+   "args": [
+    [
+     360.0
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_azimuth_rejects_high",
+   "kwargs": {},
+   "note": "nan 用字符串传入（float('nan') 后被 isfinite 守卫拒绝）",
+   "target": "app.lib.geo_analysis.terrain:_validate_azimuth_list"
+  },
+  {
+   "args": [
+    [
+     -5.0
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_azimuth_rejects_neg",
+   "kwargs": {},
+   "note": "nan 用字符串传入（float('nan') 后被 isfinite 守卫拒绝）",
+   "target": "app.lib.geo_analysis.terrain:_validate_azimuth_list"
+  },
+  {
+   "args": [
+    [
+     "nan"
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_azimuth_rejects_nan",
+   "kwargs": {},
+   "note": "nan 用字符串传入（float('nan') 后被 isfinite 守卫拒绝）",
+   "target": "app.lib.geo_analysis.terrain:_validate_azimuth_list"
+  },
+  {
+   "args": [
+    1,
+    "terrain.horizon_angle"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 1
+   },
+   "id": "validate_horizon_radius_min",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_horizon_radius"
+  },
+  {
+   "args": [
+    100,
+    "terrain.sky_view_factor"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 100
+   },
+   "id": "validate_horizon_radius_max",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_horizon_radius"
+  },
+  {
+   "args": [
+    0,
+    "terrain.horizon_angle"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_horizon_radius_zero",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_horizon_radius"
+  },
+  {
+   "args": [
+    101,
+    "terrain.horizon_angle"
+   ],
+   "expect": {
+    "code": "RESOURCE_SCALE_MISMATCH",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_horizon_radius_over",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_horizon_radius"
+  },
+  {
+   "args": [
+    [
+     100,
+     100
+    ],
+    "terrain.sink_fill"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": null
+   },
+   "id": "guard_cells_within_limit",
+   "kwargs": {},
+   "note": "护栏内 → 静默放行（返回 None）",
+   "target": "app.lib.geo_analysis.terrain:_guard_cells"
+  },
+  {
+   "args": [
+    [
+     10000,
+     10000
+    ],
+    "terrain.sink_fill"
+   ],
+   "expect": {
+    "code": "RESOURCE_SCALE_MISMATCH",
+    "kind": "error",
+    "value": null
+   },
+   "id": "guard_cells_over_limit",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_guard_cells"
+  },
+  {
+   "args": [
+    [
+     [
+      -9999.0,
+      -9999.0
+     ],
+     [
+      -9999.0,
+      -9999.0
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "tpi_all_nodata",
+   "kwargs": {
+    "nodata": -9999.0
+   },
+   "note": "全 nodata 掩膜后无有效像元",
+   "target": "app.lib.geo_analysis.terrain:topographic_position_index"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     2.0,
+     3.0
+    ],
+    3
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "tpi_1d_input",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:topographic_position_index"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    4
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "tpi_window_even",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:topographic_position_index"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ]
+    ],
+    3
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "roughness_tiny_grid",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:roughness"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    0.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "curvature_bad_cellsize",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:surface_curvature"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    2.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "curvature_bad_cellsize_x",
+   "kwargs": {
+    "cell_size_x": -1.0
+   },
+   "target": "app.lib.geo_analysis.terrain:surface_curvature"
+  },
+  {
+   "args": [
+    [
+     [
+      -9999.0,
+      -9999.0
+     ],
+     [
+      -9999.0,
+      -9999.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "curvature_all_nodata",
+   "kwargs": {
+    "nodata": -9999.0
+   },
+   "target": "app.lib.geo_analysis.terrain:surface_curvature"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    -2.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "d8_bad_cellsize",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:d8_flow"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "d8_bad_flat_routing",
+   "kwargs": {
+    "flat_routing": "magic"
+   },
+   "target": "app.lib.geo_analysis.terrain:d8_flow"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "d8_zero_epsilon",
+   "kwargs": {
+    "flat_epsilon": 0.0,
+    "flat_routing": "epsilon"
+   },
+   "target": "app.lib.geo_analysis.terrain:d8_flow"
+  },
+  {
+   "args": [
+    [
+     [
+      -9999.0,
+      -9999.0
+     ],
+     [
+      -9999.0,
+      -9999.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "d8_all_nodata",
+   "kwargs": {
+    "nodata": -9999.0
+   },
+   "target": "app.lib.geo_analysis.terrain:d8_flow"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "fill_negative_epsilon",
+   "kwargs": {
+    "epsilon": -0.1
+   },
+   "target": "app.lib.geo_analysis.terrain:fill_depressions"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     2.0
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "fill_1d_input",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:fill_depressions"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     2.0
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "dinf_1d_input",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:dinf_flow_direction"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    0.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "dinf_bad_cellsize",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:dinf_flow_direction"
+  },
+  {
+   "args": [
+    {}
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "flow_length_bad_mode",
+   "kwargs": {
+    "cell_size": 1.0,
+    "mode": "lateral"
+   },
+   "note": "mode 契约校验先于任何网格访问",
+   "target": "app.lib.geo_analysis.terrain:flow_length"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0
+     ]
+    ],
+    0.5
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "streams_bad_threshold",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:extract_streams"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     2.0
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "streams_1d_input",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:extract_streams"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "twi_shape_mismatch",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:topographic_wetness_index"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0
+     ]
+    ],
+    [
+     [
+      1.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "twi_bad_slope_units",
+   "kwargs": {
+    "slope_units": "radians2"
+   },
+   "target": "app.lib.geo_analysis.terrain:topographic_wetness_index"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0
+     ]
+    ],
+    [
+     [
+      1.0
+     ],
+     [
+      2.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "spi_shape_mismatch",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:stream_power_index"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "ls_bad_method",
+   "kwargs": {
+    "method": "renard"
+   },
+   "target": "app.lib.geo_analysis.terrain:ls_factor"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "ls_desmet_requires_accum",
+   "kwargs": {
+    "method": "desmet_govers"
+   },
+   "target": "app.lib.geo_analysis.terrain:ls_factor"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "openness_zero_radius",
+   "kwargs": {
+    "radius_cells": 0
+   },
+   "target": "app.lib.geo_analysis.terrain:terrain_openness"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "RESOURCE_SCALE_MISMATCH",
+    "kind": "error",
+    "value": null
+   },
+   "id": "openness_radius_over_cap",
+   "kwargs": {
+    "radius_cells": 101
+   },
+   "target": "app.lib.geo_analysis.terrain:terrain_openness"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "openness_few_azimuths",
+   "kwargs": {
+    "azimuth_count": 3
+   },
+   "target": "app.lib.geo_analysis.terrain:terrain_openness"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "openness_many_azimuths",
+   "kwargs": {
+    "azimuth_count": 65
+   },
+   "target": "app.lib.geo_analysis.terrain:terrain_openness"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "geomorphon_zero_lookup",
+   "kwargs": {
+    "lookup_radius_cells": 0
+   },
+   "target": "app.lib.geo_analysis.terrain:geomorphons"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "RESOURCE_SCALE_MISMATCH",
+    "kind": "error",
+    "value": null
+   },
+   "id": "geomorphon_lookup_over_cap",
+   "kwargs": {
+    "lookup_radius_cells": 129
+   },
+   "target": "app.lib.geo_analysis.terrain:geomorphons"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "geomorphon_far_ge_lookup",
+   "kwargs": {
+    "far": 4.0,
+    "lookup_radius_cells": 4
+   },
+   "target": "app.lib.geo_analysis.terrain:geomorphons"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "geomorphon_negative_flatten",
+   "kwargs": {
+    "flatten": -1.0
+   },
+   "target": "app.lib.geo_analysis.terrain:geomorphons"
+  },
+  {
+   "args": [
+    [
+     [
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0
+     ],
+     [
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0
+     ],
+     [
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0
+     ],
+     [
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0
+     ],
+     [
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0
+     ],
+     [
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0,
+      3.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "DEGENERATE_DATA",
+    "kind": "error",
+    "value": null
+   },
+   "id": "landform_constant_dem",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:landform_classification"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "landform_bad_tolerance",
+   "kwargs": {
+    "elevation_tolerance": 0.6
+   },
+   "target": "app.lib.geo_analysis.terrain:landform_classification"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "landform_window_order",
+   "kwargs": {
+    "tpi_window_large": 5,
+    "tpi_window_small": 7
+   },
+   "target": "app.lib.geo_analysis.terrain:landform_classification"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "hillshade_zero_altitude",
+   "kwargs": {
+    "altitude": 0.0
+   },
+   "target": "app.lib.geo_analysis.terrain:hillshade_multiazimuth"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "hillshade_high_altitude",
+   "kwargs": {
+    "altitude": 95.0
+   },
+   "target": "app.lib.geo_analysis.terrain:hillshade_multiazimuth"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "hillshade_bad_combine",
+   "kwargs": {
+    "combine": "max"
+   },
+   "target": "app.lib.geo_analysis.terrain:hillshade_multiazimuth"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "hillshade_no_azimuths",
+   "kwargs": {
+    "azimuths": []
+   },
+   "target": "app.lib.geo_analysis.terrain:hillshade_multiazimuth"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "RESOURCE_SCALE_MISMATCH",
+    "kind": "error",
+    "value": null
+   },
+   "id": "horizon_radius_over_cap",
+   "kwargs": {
+    "max_search_radius": 101
+   },
+   "target": "app.lib.geo_analysis.terrain:horizon_angle"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "horizon_azimuth_out_of_range",
+   "kwargs": {
+    "azimuths": [
+     0.0,
+     360.0
+    ]
+   },
+   "target": "app.lib.geo_analysis.terrain:horizon_angle"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "horizon_no_azimuths",
+   "kwargs": {
+    "azimuths": []
+   },
+   "target": "app.lib.geo_analysis.terrain:horizon_angle"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "horizon_too_many_azimuths",
+   "kwargs": {
+    "azimuths": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "target": "app.lib.geo_analysis.terrain:horizon_angle"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "svf_few_azimuths",
+   "kwargs": {
+    "n_azimuths": 3
+   },
+   "target": "app.lib.geo_analysis.terrain:sky_view_factor"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "svf_many_azimuths",
+   "kwargs": {
+    "n_azimuths": 65
+   },
+   "target": "app.lib.geo_analysis.terrain:sky_view_factor"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "svf_zero_radius",
+   "kwargs": {
+    "max_search_radius": 0
+   },
+   "target": "app.lib.geo_analysis.terrain:sky_view_factor"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "viewshed_zero_max_distance",
+   "kwargs": {
+    "max_distance": 0.0,
+    "observer": [
+     0,
+     0
+    ]
+   },
+   "target": "app.lib.geo_analysis.terrain:viewshed"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "viewshed_observer_outside",
+   "kwargs": {
+    "observer": [
+     9.0,
+     9.0
+    ]
+   },
+   "target": "app.lib.geo_analysis.terrain:viewshed"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "viewshed_observer_nodata",
+   "kwargs": {
+    "nodata": 1.0,
+    "observer": [
+     0,
+     0
+    ]
+   },
+   "target": "app.lib.geo_analysis.terrain:viewshed"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     2.0,
+     3.0
+    ]
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "contours_1d_input",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:extract_contours"
+  },
+  {
+   "args": [
+    0.0,
+    null
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_cell_sizes_zero",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:_validate_cell_sizes"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    102
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "tpi_window_102",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:topographic_position_index"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    "abc"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "tpi_window_str",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:topographic_position_index"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    "abc"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "roughness_window_str",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:roughness"
+  },
+  {
+   "args": [
+    [
+     [
+      -9999.0,
+      -9999.0
+     ],
+     [
+      -9999.0,
+      -9999.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "tri_all_nodata",
+   "kwargs": {
+    "nodata": -9999.0
+   },
+   "target": "app.lib.geo_analysis.terrain:terrain_ruggedness_index"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     2.0,
+     3.0
+    ]
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "tri_1d_input",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:terrain_ruggedness_index"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "fill_single_cell_grid",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:fill_depressions"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "d8_cellsize_x_zero",
+   "kwargs": {
+    "cell_size_x": 0.0
+   },
+   "target": "app.lib.geo_analysis.terrain:d8_flow"
+  },
+  {
+   "args": [
+    [
+     [
+      -9999.0,
+      -9999.0
+     ],
+     [
+      -9999.0,
+      -9999.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "dinf_all_nodata",
+   "kwargs": {
+    "nodata": -9999.0
+   },
+   "target": "app.lib.geo_analysis.terrain:dinf_flow_direction"
+  },
+  {
+   "args": [
+    [
+     [
+      -9999.0,
+      -9999.0
+     ],
+     [
+      -9999.0,
+      -9999.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "contours_all_nodata",
+   "kwargs": {
+    "nodata": -9999.0
+   },
+   "target": "app.lib.geo_analysis.terrain:extract_contours"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     2.0
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "hillshade_1d_input",
+   "kwargs": {},
+   "note": "1D 网格在 _prepare 处类型化拒绝",
+   "target": "app.lib.geo_analysis.terrain:hillshade_multiazimuth"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "viewshed_negative_observer_height",
+   "kwargs": {
+    "observer": [
+     0,
+     0
+    ],
+    "observer_height": -1.0
+   },
+   "target": "app.lib.geo_analysis.terrain:viewshed"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "viewshed_negative_target_height",
+   "kwargs": {
+    "observer": [
+     0,
+     0
+    ],
+    "target_height": -0.5
+   },
+   "target": "app.lib.geo_analysis.terrain:viewshed"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    0.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "viewshed_zero_cellsize",
+   "kwargs": {
+    "observer": [
+     0,
+     0
+    ]
+   },
+   "target": "app.lib.geo_analysis.terrain:viewshed"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "viewshed_xy_needs_transform",
+   "kwargs": {
+    "observer_xy": [
+     1.0,
+     1.0
+    ]
+   },
+   "target": "app.lib.geo_analysis.terrain:viewshed"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "openness_radius_str",
+   "kwargs": {
+    "radius_cells": "abc"
+   },
+   "target": "app.lib.geo_analysis.terrain:terrain_openness"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "geomorphon_negative_far",
+   "kwargs": {
+    "far": -1.0,
+    "lookup_radius_cells": 4
+   },
+   "target": "app.lib.geo_analysis.terrain:geomorphons"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "landform_window_even",
+   "kwargs": {
+    "tpi_window_small": 4
+   },
+   "target": "app.lib.geo_analysis.terrain:landform_classification"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "horizon_radius_str",
+   "kwargs": {
+    "max_search_radius": "abc"
+   },
+   "target": "app.lib.geo_analysis.terrain:horizon_angle"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "svf_radius_bool",
+   "kwargs": {
+    "max_search_radius": true
+   },
+   "target": "app.lib.geo_analysis.terrain:sky_view_factor"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "ls_bad_slope_units",
+   "kwargs": {
+    "slope_units": "dms"
+   },
+   "target": "app.lib.geo_analysis.terrain:ls_factor"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      2.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "twi_ls_cellsize_x_zero",
+   "kwargs": {
+    "cell_size_x": 0.0
+   },
+   "target": "app.lib.geo_analysis.terrain:topographic_wetness_index"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "dinf_cellsize_x_zero",
+   "kwargs": {
+    "cell_size_x": 0.0
+   },
+   "target": "app.lib.geo_analysis.terrain:dinf_flow_direction"
+  },
+  {
+   "args": [
+    [
+     [
+      -9999.0,
+      -9999.0
+     ],
+     [
+      -9999.0,
+      -9999.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "NO_VALID_OBSERVATIONS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "fill_all_nodata",
+   "kwargs": {
+    "nodata": -9999.0
+   },
+   "target": "app.lib.geo_analysis.terrain:fill_depressions"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "openness_radius_negative",
+   "kwargs": {
+    "radius_cells": -2
+   },
+   "target": "app.lib.geo_analysis.terrain:terrain_openness"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "openness_azimuth_bool",
+   "kwargs": {
+    "azimuth_count": true
+   },
+   "target": "app.lib.geo_analysis.terrain:terrain_openness"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "geomorphon_lookup_str",
+   "kwargs": {
+    "lookup_radius_cells": "abc"
+   },
+   "target": "app.lib.geo_analysis.terrain:geomorphons"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "landform_tolerance_negative",
+   "kwargs": {
+    "elevation_tolerance": -0.1
+   },
+   "target": "app.lib.geo_analysis.terrain:landform_classification"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "horizon_azimuth_str",
+   "kwargs": {
+    "azimuths": [
+     "abc"
+    ]
+   },
+   "target": "app.lib.geo_analysis.terrain:horizon_angle"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "svf_n_azimuths_str",
+   "kwargs": {
+    "n_azimuths": "abc"
+   },
+   "target": "app.lib.geo_analysis.terrain:sky_view_factor"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    true
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "tpi_window_bool",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:topographic_position_index"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    null
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "curvature_cellsize_none",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.terrain:surface_curvature"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "d8_negative_epsilon",
+   "kwargs": {
+    "flat_epsilon": -1e-06,
+    "flat_routing": "epsilon"
+   },
+   "target": "app.lib.geo_analysis.terrain:d8_flow"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "ls_flow_length_shape_mismatch",
+   "kwargs": {
+    "flow_length_m": [
+     [
+      1.0
+     ]
+    ],
+    "method": "mccool"
+   },
+   "target": "app.lib.geo_analysis.terrain:ls_factor"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "viewshed_negative_max_distance",
+   "kwargs": {
+    "max_distance": -5.0,
+    "observer": [
+     0,
+     0
+    ]
+   },
+   "target": "app.lib.geo_analysis.terrain:viewshed"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    1.0
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "svf_n_azimuths_bool",
+   "kwargs": {
+    "n_azimuths": true
+   },
+   "target": "app.lib.geo_analysis.terrain:sky_view_factor"
+  }
+ ],
+ "count": 216,
+ "domain": "terrain"
+}
