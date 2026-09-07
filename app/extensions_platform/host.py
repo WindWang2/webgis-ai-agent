@@ -140,6 +140,7 @@ class ExtensionHost:
                 ExtensionState.ACTIVE,
                 ExtensionState.DEGRADED,
                 ExtensionState.LOADING,
+                ExtensionState.DISABLED,
             ):
                 # Round-1 审计 M3：对已激活扩展重复 discover 一律保留现记录
                 # ——覆盖成 DISCOVERED 会让台账孤儿化（投影无法回滚 → 永久
@@ -842,7 +843,13 @@ class ExtensionHost:
             ]
         was_active = record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED)
         if was_active:
-            diagnostics.extend(self.deactivate(extension_id))
+            deactivate_diags = self.deactivate(extension_id)
+            diagnostics.extend(deactivate_diags)
+            # Round-2 审计 N-2：deactivate 被拒（如 DEPENDENT_ACTIVE）时
+            # 立即中止——继续 reload 会让台账与状态索引失配，产生永久僵尸。
+            if any(d.severity is DiagnosticSeverity.ERROR for d in deactivate_diags):
+                record.diagnostics = list(record.diagnostics)
+                return diagnostics
         diagnostics.extend(self.unload(extension_id))
         manifest, parse_diags = _reread_manifest(record.path)
         if manifest is None:
@@ -881,7 +888,24 @@ class ExtensionHost:
         record.manifest = manifest
         fingerprint, fp_diag = _refingerprint(record)
         if fp_diag is None:
-            if record.fingerprint is not None and fingerprint != record.fingerprint:
+            content_changed = (
+                record.fingerprint is not None and fingerprint != record.fingerprint
+            )
+            if content_changed and record.trust in (
+                TrustLevel.TRUSTED_BUILTIN, TrustLevel.TRUSTED_EXTENSION
+            ):
+                # Round-2 审计 N-3：受信扩展内容变更必须走重新发现（重新
+                # 信任裁决），reload 不得把换血后的代码当作原包激活。
+                record.state = ExtensionState.FAILED
+                record.diagnostics.append(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.FINGERPRINT_CHANGED,
+                        "trusted extension content changed; re-discover before reload",
+                        extension_id=extension_id,
+                    )
+                )
+                return diagnostics + list(record.diagnostics)
+            if content_changed:
                 diagnostics.append(
                     ExtensionDiagnostic.warning(
                         DiagnosticCode.FINGERPRINT_CHANGED,

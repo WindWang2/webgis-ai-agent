@@ -566,3 +566,40 @@ class TestVsICurlBypassForms:
         assert validate_remote_href("/vsis3/bucket/key.tif") == "/vsis3/bucket/key.tif"
         assert validate_remote_href("/data/local/a.tif") == "/data/local/a.tif"
         assert validate_remote_href("a.tif") == "a.tif"
+
+
+class TestVsICurlRound2:
+    """Round-2 审计：重复参数 / 空值的 fail-closed。"""
+
+    def test_duplicate_url_params_rejected(self):
+        from app.lib.geo_raster.env import validate_remote_href
+
+        with pytest.raises(ValueError, match="multiple 'url' parameters"):
+            validate_remote_href(
+                "/vsicurl?url=http://no-such-host.invalid/x.tif"
+                "&url=http://169.254.169.254/latest"
+            )
+
+    def test_duplicate_filename_params_rejected(self):
+        from app.lib.geo_raster.env import validate_remote_href
+
+        with pytest.raises(ValueError, match="multiple 'filename' parameters"):
+            validate_remote_href(
+                "/vsicurl?filename=http://safe.example/a.tif"
+                "&filename=http://169.254.169.254/latest"
+            )
+
+    def test_blank_url_value_rejected(self):
+        from app.lib.geo_raster.env import validate_remote_href
+
+        with pytest.raises(ValueError, match="no resolvable url"):
+            validate_remote_href("/vsicurl?url=&utf8=1")
+
+    def test_metadata_ip_via_second_param_blocked(self):
+        from app.lib.geo_raster.env import validate_remote_href
+
+        with pytest.raises(ValueError):
+            validate_remote_href(
+                "/vsicurl?url=https://safe.example/a.tif"
+                "&url=http://169.254.169.254/latest"
+            )

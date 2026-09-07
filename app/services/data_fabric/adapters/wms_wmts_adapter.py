@@ -432,7 +432,7 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
             w, s, e, n = described_bbox
             base += f"&BBOX={w},{s},{e},{n}"
             emitted_bbox = True
-        elif described_bbox is not None and described_bbox is not None and crs is None:
+        elif described_bbox is not None and crs is None:
             # 无 CRS 时服务器默认 CRS 未知——WGS84 度值不可假设，省略。
             emitted_bbox = False
         base += "&WIDTH=256&HEIGHT=256&FORMAT=image/png"

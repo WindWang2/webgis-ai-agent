@@ -84,22 +84,27 @@ def _extract_remote_target(uri: str) -> "str | None":
             rest = rest[handler_end + 1:]
             continue
         if rest[handler_end:handler_end + 1] == "?":
-            params = parse_qs(rest[handler_end + 1:], keep_blank_values=True)
-            candidates = params.get("url") or params.get("filename")
-            if not candidates:
-                raise ValueError(
-                    f"vsicurl query form carries no resolvable url: {uri!r}"
-                )
-            rest = unquote(candidates[0])
-            continue
+            rest = rest[handler_end:]
+            break
         # /vsis3bucket 这类粘连形（无斜杠无 query）：交给后续 scheme 检查。
         rest = rest[handler_end:]
         break
     if rest.startswith("?"):
         params = parse_qs(rest[1:], keep_blank_values=True)
         candidates = params.get("url") or params.get("filename")
-        if not candidates:
-            raise ValueError(f"vsicurl query form carries no resolvable url: {uri!r}")
+        # Round-2 审计 N-1：重复 url=/filename= 参数时 GDAL 按 last-wins
+        # 取值，而门禁只能看到一个——存在即拒绝（fail closed）。
+        for key in ("url", "filename"):
+            if len(params.get(key, [])) > 1:
+                raise ValueError(
+                    f"multiple {key!r} parameters rejected by SSRF gate "
+                    f"(ambiguous target): {uri!r}"
+                )
+        if not candidates or not candidates[0].strip():
+            # Round-2 审计 N-7：空值同样拒绝。
+            raise ValueError(
+                f"vsicurl query form carries no resolvable url: {uri!r}"
+            )
         rest = unquote(candidates[0])
     if rest.startswith("/vsi"):
         # 未识别的 /vsi 复合形式：保守视为含未知远程目标。

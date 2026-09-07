@@ -9,8 +9,9 @@
   （如 examples）。代码经 code review 进 master，默认可激活。
 - ``trusted_extension``：运维通过 ``EXTENSIONS_ALLOW`` 显式点名的第三方
   扩展。manifest 里的自声明**永不**作为信任依据。
-- ``local_untrusted``：本地发现但未点名信任的扩展。可 inspect / validate /
-  以最小权限激活，但默认不授予破坏性权限。
+- ``local_untrusted``：本地发现但未点名信任的扩展。可 inspect / validate；
+  激活需要运维显式放行（``EXTENSIONS_ALLOW`` 点名或
+  ``EXTENSIONS_ACTIVATE_UNTRUSTED=true``）。
 - ``blocked``：运维显式封禁（``EXTENSIONS_BLOCK``）或命中保留策略，
   禁止加载执行。
 

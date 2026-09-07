@@ -94,3 +94,11 @@ the hardening:
 
 The example extension provider (`extdemo-pack/tile_catalog.py`) mirrors
 these semantics exactly; see [authoring-providers.md](authoring-providers.md).
+
+### Repeated query parameters (hardening)
+
+GDAL's vsicurl resolves repeated `url=`/`filename=` query parameters
+last-wins while any single-value validation would check the first. The
+gate therefore **rejects any href carrying more than one `url=` or
+`filename=` parameter** (and blank values) before validation — fail
+closed by construction (`app/lib/geo_raster/env.py`).

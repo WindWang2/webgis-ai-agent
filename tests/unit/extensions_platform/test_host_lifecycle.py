@@ -601,3 +601,47 @@ def activate(ctx):
         host.deactivate("acme.pack")
         host.unload("acme.pack")
         assert sibling_name not in __import__("sys").modules  # 随代次清理
+
+    def test_reload_refused_while_dependent_active(self, tmp_path):
+        # Round-2 N-2：依赖者活动时 reload 依赖 → 立即中止（无僵尸投影）。
+        _write_tool_ext(tmp_path, "acme", "dep")
+        _write_extension(
+            tmp_path, "acme", "top", "def activate(ctx):\n    return None\n",
+            manifest_extra={"dependencies": [{"id": "acme.dep", "required": True}]},
+        )
+        registry = ToolRegistry()
+        host = _host(tmp_path, registry)
+        self._activate_pack(tmp_path, host, "acme.dep")
+        self._activate_pack(tmp_path, host, "acme.top")
+        diags = host.reload("acme.dep")
+        assert any(d.code is DiagnosticCode.DEPENDENT_ACTIVE for d in diags)
+        assert host.get_record("acme.dep").state is ExtensionState.ACTIVE
+        assert registry.has("acme_synth_double")  # 投影健在、台账未丢
+        host.deactivate("acme.top")
+        assert not has_errors(host.deactivate("acme.dep"))
+
+    def test_reload_refuses_trusted_content_change(self, tmp_path):
+        # Round-2 N-3：受信扩展内容在 reload 中被换血 → 拒绝，不执行新代码。
+        _write_tool_ext(tmp_path, "acme", "pack")
+        host = ExtensionHost(
+            tool_registry=ToolRegistry(),
+            policy=HostPolicy(roots=(tmp_path,), allow=frozenset({"acme.pack"})),
+        )
+        host.discover()
+        self._activate_pack(tmp_path, host)
+        rec = host.get_record("acme.pack")
+        (rec.path / "extra.py").write_text("X = 1\n")  # 换血
+        diags = host.reload("acme.pack")
+        assert any(d.code is DiagnosticCode.FINGERPRINT_CHANGED for d in diags)
+        assert any(d.severity.value == "error" for d in diags)
+        assert host.get_record("acme.pack").state is ExtensionState.FAILED
+
+    def test_disable_survives_rediscover(self, tmp_path):
+        # Round-2 N-5：disable 后重复 discover 不得抹掉运维停用。
+        _write_tool_ext(tmp_path, "acme", "pack")
+        host = _host(tmp_path, ToolRegistry())
+        host.disable("acme.pack")
+        host.discover()
+        record = host.get_record("acme.pack")
+        assert record.state is ExtensionState.DISABLED
+        assert any(d.code is DiagnosticCode.EXTENSION_DISABLED for d in host.activate("acme.pack"))
