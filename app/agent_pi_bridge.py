@@ -726,6 +726,22 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             completion = await maybe_finalize_map_product(
                 session_id, reason=f"tool_result:{tool_name}"
             )
+            # V4（ADR-0104 Wave 1）：WorkflowInstance 运行态推进（廉价门 +
+            # 纯派生 + 锁内单键持久化）。增值披露，绝不阻断工具结果路径。
+            try:
+                from app.services.gis_harness.workflow_instance import (
+                    maybe_update_workflow_instance,
+                )
+                await maybe_update_workflow_instance(
+                    session_id,
+                    reason=f"tool_result:{tool_name}",
+                    event="auto",
+                )
+            except Exception:  # noqa: BLE001 — 实例态是增值披露
+                logger.debug(
+                    "[PiBridge] workflow instance update failed session=%s tool=%s",
+                    session_id, tool_name, exc_info=True,
+                )
             # pending 不披露（DAG 未终态是 turn 中段常态，[GIS Plan] 行投影
             # 已表达；每个工具结果一条 pending SSE 是纯噪声 + 前端空转）。
             # repair 改写 desired state 时附带 mapspec + revision —— 前端
@@ -800,6 +816,22 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             logger.exception(
                 "[PiBridge] SessionPlan failure mark failed session=%s tool=%s",
                 session_id, tool_name,
+            )
+        # V4（ADR-0104 Wave 1）：失败同样是实例态事件（行标 failed → DAG
+        # 下游 blocked 在下一派生可见）。
+        try:
+            from app.services.gis_harness.workflow_instance import (
+                maybe_update_workflow_instance,
+            )
+            await maybe_update_workflow_instance(
+                session_id,
+                reason=f"tool_error:{tool_name}",
+                event="tool_failure",
+            )
+        except Exception:  # noqa: BLE001 — 实例态是增值披露
+            logger.debug(
+                "[PiBridge] workflow instance update (error) failed session=%s tool=%s",
+                session_id, tool_name, exc_info=True,
             )
 
     raw = result.raw_result if isinstance(result.raw_result, dict) else {}
@@ -2160,6 +2192,17 @@ class PiBridge:
                                             turn_sid, reason="turn_settled",
                                             final_gate=True,
                                         )
+                                        # V4（ADR-0104 Wave 1）：turn 收尾同样推进
+                                        # WorkflowInstance（final gate 后的终态投影）。
+                                        try:
+                                            from app.services.gis_harness.workflow_instance import (
+                                                maybe_update_workflow_instance as _wfi_update,
+                                            )
+                                            await _wfi_update(
+                                                turn_sid, reason="turn_settled", event="auto",
+                                            )
+                                        except Exception:  # noqa: BLE001 — 增值披露
+                                            pass
                                         if _completion is not None and _completion.status != "pending":
                                             _spec_snapshot = (None, None)
                                             if _completion.repairs_applied:

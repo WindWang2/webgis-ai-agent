@@ -1616,6 +1616,19 @@ async def push_cartographic_runtime_observation(
                 "status": completion.status,
                 "render_status": completion.render_status,
             }
+        # V4（ADR-0104 Wave 1）：观察到达 = OUTPUT 维事件，推进实例态。
+        try:
+            from app.services.gis_harness.workflow_instance import (
+                maybe_update_workflow_instance,
+            )
+            await maybe_update_workflow_instance(
+                session_id, reason="render_observation", event="observation",
+            )
+        except Exception:  # noqa: BLE001 — 实例态是增值披露，不阻断观察响应
+            logger.debug(
+                "Post-observation workflow instance update failed for %s",
+                session_id, exc_info=True,
+            )
     except Exception:  # noqa: BLE001 — 终验是增值披露，不阻断观察响应
         logger.warning(
             "Post-observation map finalization failed for %s", session_id, exc_info=True

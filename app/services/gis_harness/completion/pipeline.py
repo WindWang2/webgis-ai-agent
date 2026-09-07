@@ -329,23 +329,18 @@ def _dedup_gate_blocks(
 
 
 def _rows_fingerprint(chapter: Dict[str, Any]) -> str:
-    """行状态指纹（去重门输入）：capability 行的状态/ref 绑定变化即改变。
+    """行状态指纹（去重门输入）：capability 行的状态/ref/算法/参数变化即改变。
 
-    比「行全终态」检查更强（review A-2/B-3/F-4）：行回退（重试标 failed、
-    重绑定新 ref）都会改变指纹 → 触发重验；同时让 needs_repair/failed
-    会话在无变化时跳过整轮重跑（此前只有 complete 享受去重门，异常会话
-    每个工具结果都重放整轮 finalization + SSE + toast）。
+    V4（ADR-0104 Wave 1）：实现移入 workflow_instance.rows_fingerprint
+    （单一计算源），并在 V1 的 capability:status:bound_ref 之上纳入
+    ``resolved_algorithm`` 与 ``params`` 内容哈希——修复审计 02 §A4 的洞：
+    旧签名对 parameter/algorithm 编辑失明，参数-only 编辑后陈旧 verdict
+    被门永久保护。指纹内容变化会让旧持久化块一次性打破门重验（设计目的，
+    ADR-0104 兼容性节已披露）；同输入同指纹契约由测试钉住。
     """
-    parts: List[str] = []
-    for row in list(chapter.get("data_requirements") or []) + list(
-        chapter.get("analysis_steps") or []
-    ):
-        if not isinstance(row, dict):
-            continue
-        parts.append(
-            f"{row.get('capability')}:{row.get('status')}:{row.get('bound_ref') or ''}"
-        )
-    return "|".join(sorted(parts))
+    from app.services.gis_harness.workflow_instance import rows_fingerprint
+
+    return rows_fingerprint(chapter)
 
 
 def map_product_block(
