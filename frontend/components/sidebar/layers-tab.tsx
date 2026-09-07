@@ -21,6 +21,7 @@ import {
   Eye, EyeOff, GripVertical, Layers as LayersIcon, LocateFixed, Palette,
   Lock, LockOpen, Crosshair, Copy, ClipboardPaste, RotateCw, FolderPlus,
   ChevronDown, ChevronRight, CheckSquare, Square, Trash2, MoreHorizontal, Group,
+  Columns2,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { Layer, LayerStyle } from '@/lib/types/layer';
@@ -51,6 +52,7 @@ import {
   setLayerOpacityAndCommit,
   toggleLayerAndCommit,
 } from '@/lib/mapspec/user-mutation';
+import { comparisonFamilyId } from '@/components/map/comparison/comparison-sync';
 
 function getFeatureCount(layer: Layer): number {
   // #692：MVT 挂载的大图层 source 是 ref/瓦片形态（无内联 features），
@@ -211,7 +213,7 @@ function GroupHeader({
 
       {renaming && section.id ? (
         <input
-          autoFocus
+          ref={(el) => el?.focus()}
           value={draftName}
           aria-label="重命名分组"
           onChange={(e) => setDraftName(e.target.value)}
@@ -528,6 +530,7 @@ function LayerRow({
             }}
           />
           <span className="text-micro text-ink-muted">粘贴样式</span>
+          <ComparePicker layer={layer} />
           {layer._refId && (
             <>
               <IconButton
@@ -556,6 +559,57 @@ function LayerRow({
 
 function sectionNameOf(groupId: string): string {
   return useHudStore.getState().layerGroups.find((g) => g.id === groupId)?.name ?? '分组';
+}
+
+/**
+ * Wave 8：对比工作区入口（more 行内联 select，不引入浮层焦点管理）。
+ * 状态真相在 workbenchSlice.comparison（UI projection），不经 user-mutation
+ * （对比不写 MapSpec —— enter/update/exit 是会话级工作台状态）；两视图的
+ * 图层 id 用 spec 层族 id（comparisonFamilyId，与 ComparisonView 的过滤同源）。
+ */
+function ComparePicker({ layer }: { layer: Layer }) {
+  const layers = useHudStore((s) => s.layers);
+  const enterComparison = useHudStore((s) => s.enterComparison);
+  const familyId = comparisonFamilyId(layer);
+  // 候选 = 其余可见层（隐藏层进对比无意义）；族 id 去重（同族别名不重复列出）。
+  const options = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Array<{ value: string; label: string }> = [];
+    for (const l of layers) {
+      if (l.visible === false) continue;
+      const fid = comparisonFamilyId(l);
+      if (fid === familyId || seen.has(fid)) continue;
+      seen.add(fid);
+      out.push({ value: fid, label: l.name });
+    }
+    return out;
+  }, [layers, familyId]);
+
+  return (
+    <label className="flex items-center gap-1 text-micro text-ink-muted">
+      <Columns2 aria-hidden size={12} />
+      <span className="sr-only">对比显示 {layer.name}</span>
+      <select
+        aria-label={`对比显示 ${layer.name}`}
+        defaultValue=""
+        disabled={options.length === 0}
+        title={options.length === 0 ? '暂无可对比的其他可见图层' : '选择另一图层进入对比视图'}
+        className="h-control-sm max-w-36 rounded-xs border border-edge-subtle bg-surface-panel px-1 text-micro text-ink"
+        onChange={(e) => {
+          const value = e.target.value;
+          if (value) {
+            enterComparison({ primaryLayerId: familyId, secondaryLayerId: value });
+          }
+          e.target.value = '';
+        }}
+      >
+        <option value="">对比显示…</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 /* ─────────────────────────── 批量操作条 ─────────────────────────── */

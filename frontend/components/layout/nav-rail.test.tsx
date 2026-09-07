@@ -45,7 +45,6 @@ vi.mock('@/lib/store/useHudStore', () => ({
 // Import AFTER the mock is registered.
 import { NavRail } from './nav-rail';
 
-const TAB_ORDER = ['chat', 'project', 'data_sources', 'layers', 'components', 'analysis', 'tasks', 'results', 'export_layout'];
 const TAB_LABELS: Record<string, string> = {
   chat: '对话',
   project: '项目',
