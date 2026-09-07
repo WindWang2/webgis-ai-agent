@@ -415,9 +415,26 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
         )
         if crs:
             base += f"&CRS={crs}"
-        if described_bbox is not None:
+        # Round-2 审计 MAJOR-1：describe 给出的 bbox 恒为 WGS84 度值
+        # （bbox_crs=EPSG:4326）。只有当选定 CRS 同为地理坐标时二者才能
+        # 配对；投影 CRS（米制）配 WGS84 度值是静默谎言——此时省略 BBOX
+        # 并如实说明，绝不重投影。
+        crs_is_geographic = bool(
+            crs
+            and (
+                "4326" in crs.upper()
+                or "CRS:84" in crs.upper()
+                or crs.upper().endswith("CRS84")
+            )
+        )
+        emitted_bbox = False
+        if described_bbox is not None and crs and crs_is_geographic:
             w, s, e, n = described_bbox
             base += f"&BBOX={w},{s},{e},{n}"
+            emitted_bbox = True
+        elif described_bbox is not None and described_bbox is not None and crs is None:
+            # 无 CRS 时服务器默认 CRS 未知——WGS84 度值不可假设，省略。
+            emitted_bbox = False
         base += "&WIDTH=256&HEIGHT=256&FORMAT=image/png"
 
         metadata: Dict[str, Any] = {
@@ -426,11 +443,17 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
             "pushdown_bbox": bool(query_spec.bbox),
             # 附加（additive）键：原 keys 不动。
             "crs": crs,
+            "bbox_crs": desc_meta.get("bbox_crs"),
         }
         if crs is None:
             metadata["crs_note"] = "advertised crs unknown; CRS parameter omitted"
         if described_bbox is None:
             metadata["bbox_note"] = "layer extent unknown; BBOX parameter omitted"
+        elif described_bbox is not None and not emitted_bbox:
+            metadata["bbox_note"] = (
+                "describe-time extent is WGS84 degrees; BBOX omitted because the "
+                "selected CRS is not geographic (no reprojection attempted)"
+            )
         axis_note = desc_meta.get("axis_order_note")
         if axis_note:
             metadata["axis_order_note"] = axis_note
@@ -464,6 +487,6 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
             latency = round((time.time() - start_time) * 1000, 2)
             return DataFabricHealth(
                 status="unreachable",
-                message=f"{self.service_type.upper()} health check error: {e}",
+                message=f"{self.service_type.upper()} health check error: {_redact_text(str(e))}",
                 latency_ms=latency,
             )

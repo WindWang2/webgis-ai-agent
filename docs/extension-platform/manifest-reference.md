@@ -47,6 +47,19 @@ never take down the scan.
 
 ## Naming rules
 
+- `namespace`: `^[a-z][a-z0-9_]{1,31}$`, never in the reserved list
+  (`core, webgis, app, pi, builtin, internal, gis, lib, tools, vendor`).
+- `name` / tool / algorithm / source-type / cartography-item / pack ids:
+  `^[a-z][a-z0-9_]{0,63}$` — a **single character is valid** (e.g.
+  `{"namespace": "ns", "name": "a"}`).
+- `id` must equal `<namespace>.<name>`.
+- `entry_point`: identifier segments separated by `/`
+  (`^[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*)*$`), or `""` for a
+  package-root extension (`__init__.py`). `..`, absolute paths and special
+  characters are rejected; the host additionally requires the resolved
+  entry file to stay inside the extension directory (fingerprint coverage).
+
+
 ```python
 _TOKEN_RE = re.compile(r"^[a-z][a-z0-9_]{1,31}$")   # namespace
 _NAME_RE   = re.compile(r"^[a-z][a-z0-9_]{1,63}$")  # tool/algorithm/source_type names

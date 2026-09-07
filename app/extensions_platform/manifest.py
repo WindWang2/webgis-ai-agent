@@ -59,6 +59,15 @@ class DependencyDeclaration(_StrictModel):
     required: bool = True
     feature_flag: Optional[str] = None
 
+    @field_validator("id")
+    @classmethod
+    def _dep_id_shape(cls, v: str) -> str:
+        # Round-2 审计 MINOR-4：依赖 id 即扩展 id（<ns>.<name>），必须
+        # 符合标识符形状，避免怪异键流入依赖图/对账逻辑。
+        if not re.fullmatch(r"[a-z][a-z0-9_]{1,31}\.[a-z][a-z0-9_]{0,63}", v):
+            raise ValueError(f"dependency id {v!r} must be a namespaced extension id")
+        return v
+
 
 class ToolDeclaration(_StrictModel):
     name: str = Field(..., description="工具名（不含命名空间前缀；投影为 <ns>_<name>）")
@@ -145,6 +154,13 @@ class WorkflowPackDeclaration(_StrictModel):
     pack_id: str = Field(..., description="recipe pack id（不含前缀；投影为 <ns>_<pack_id>）")
     description: str = ""
     recipe_count: int = Field(default=0, ge=0, le=MAX_DECLARED_ITEMS)
+
+    @field_validator("pack_id")
+    @classmethod
+    def _pack_id_shape(cls, v: str) -> str:
+        if not _SHORT_NAME_RE.match(v):
+            raise ValueError(f"pack_id {v!r} must match {_SHORT_NAME_RE.pattern}")
+        return v
 
 
 class GisExtensionManifest(BaseModel):

@@ -533,6 +533,8 @@ class ExtensionHost:
         context._module_dir = record.path
         try:
             module = self._load_entry_module(record)
+            # 兄弟模块命名空间（load_sibling 用）必须在 activate 之前就绪。
+            context._entry_module_name = module.__name__
             activate_fn = getattr(module, "activate", None)
             if not callable(activate_fn):
                 raise ExtensionPlatformError(

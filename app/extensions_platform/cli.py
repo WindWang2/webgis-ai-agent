@@ -687,7 +687,8 @@ def _scaffold_manifest(extension_id: str, namespace: str, name: str, tool: str) 
 def _cmd_scaffold(args: argparse.Namespace) -> int:
     # 词表与 manifest.py 同源复用（同包内私有正则），保证 CLI 预检与
     # 平台校验不出现两套标准。
-    from .manifest import RESERVED_NAMESPACES, _NAME_RE, _TOKEN_RE, manifest_from_dict
+    from .sdk.identifier import NAME_RE as _SHORT_NAME_RE
+    from .manifest import RESERVED_NAMESPACES, _TOKEN_RE, manifest_from_dict
 
     namespace, name = args.namespace, args.name
     if not _TOKEN_RE.match(namespace):
@@ -699,9 +700,10 @@ def _cmd_scaffold(args: argparse.Namespace) -> int:
     if namespace in RESERVED_NAMESPACES:
         print(f"error: namespace {namespace!r} is reserved", file=sys.stderr)
         return 2
-    if not _NAME_RE.match(name):
+    # Round-2 审计 MINOR-2：名字用与 manifest 相同的短名规则（单字符合法）。
+    if not _SHORT_NAME_RE.match(name):
         print(
-            f"error: name {name!r} must match {_NAME_RE.pattern}", file=sys.stderr
+            f"error: name {name!r} must match {_SHORT_NAME_RE.pattern}", file=sys.stderr
         )
         return 2
 

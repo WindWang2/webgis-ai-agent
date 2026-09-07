@@ -577,3 +577,27 @@ def activate(ctx):
         assert record.state is ExtensionState.FAILED or any(
             d.code in (DiagnosticCode.UNDECLARED_REGISTRATION,) for d in diagnostics
         ) or any(d.code is DiagnosticCode.REGISTRY_PROJECTION_COLLISION for d in diagnostics)
+
+    def test_load_sibling_namespaced_and_purged(self, tmp_path):
+        # Round-2 MAJOR-2：兄弟模块挂在入口模块命名空间下——unload 清理
+        # 覆盖，且跨扩展不串名。
+        main = TOOL_EXT_MAIN.replace(
+            "def activate(ctx):\n    ctx.register_tool(",
+            "def activate(ctx):\n    healthy = ctx.load_sibling(\"healthy\")\n"
+            "    assert healthy.STATUS == \"ok\"\n"
+            "    ctx.register_tool(",
+        ).replace('name="synth_double"', 'name="sibling_double"')
+        _write_tool_ext(tmp_path, "acme", "pack", main_py=main,
+                        tool_names=("sibling_double",))
+        (tmp_path / "acme-pack" / "healthy.py").write_text("STATUS = 'ok'\n")
+        registry = ToolRegistry()
+        host = _host(tmp_path, registry)
+        host.activate("acme.pack")
+        record = host.get_record("acme.pack")
+        assert record.state is ExtensionState.ACTIVE
+        entry_name = record.module.__name__
+        sibling_name = f"{entry_name}.healthy"
+        assert sibling_name in __import__("sys").modules
+        host.deactivate("acme.pack")
+        host.unload("acme.pack")
+        assert sibling_name not in __import__("sys").modules  # 随代次清理

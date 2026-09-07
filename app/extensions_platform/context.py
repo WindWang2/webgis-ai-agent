@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
 from .ledger import ProjectionLedger
@@ -47,8 +47,9 @@ class ExtensionContext:
         self._tool_registry = tool_registry
         self._ledger = ledger
         self._registered: dict[str, set[str]] = {}
-        # 扩展目录（host 注入，load_sibling 用）；可能为 None（测试直构）。
+        # 扩展目录与入口模块名（host 注入，load_sibling 用）；可能为 None。
         self._module_dir: Any = None
+        self._entry_module_name: Optional[str] = None
 
     # ── 声明核对 ──────────────────────────────────────────────────────
     def _require_declared(self, section: str, key: str) -> None:
@@ -526,12 +527,23 @@ class ExtensionContext:
     def load_sibling(self, module_name: str) -> Any:
         """加载扩展目录内的兄弟模块（扩展目录不在 sys.path 上）。
 
-        Round-1 审计 minor15：此前多文件扩展必须手写 importlib 样板
-        （示例包的 _load_sibling）。SDK 现提供官方入口：模块名确定性
-        （指纹化前缀，杜绝跨扩展串名），宿主负责清理。
+        Round-1 审计 minor15：多文件扩展不必再手写 importlib 样板。
+        Round-2 审计 MAJOR-2：兄弟模块挂在**入口模块的命名空间**下
+        （``webgis_ext_<ns>_<name>_<fp12>.<module>``）——指纹化前缀保证
+        跨扩展/跨代次唯一，unload 的按前缀清理规则天然覆盖兄弟模块，
+        reload 换代后绝不返回陈旧缓存。
         """
         import importlib.util
 
+        if not self._entry_module_name:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.ENTRY_POINT_FAILED,
+                    "load_sibling unavailable outside host activation "
+                    "(no entry module namespace)",
+                    extension_id=self.extension_id,
+                )
+            )
         if not self._module_dir:
             raise ExtensionPlatformError(
                 ExtensionDiagnostic.error(
@@ -558,7 +570,7 @@ class ExtensionContext:
                     extension_id=self.extension_id,
                 )
             )
-        qualname = f"{self._module_dir.name.replace('-', '_')}__{module_name}"
+        qualname = f"{self._entry_module_name}.{module_name}"
         if qualname in sys.modules:
             return sys.modules[qualname]
         import sys as _sys

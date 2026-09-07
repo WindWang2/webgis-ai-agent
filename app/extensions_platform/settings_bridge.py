@@ -37,17 +37,25 @@ def host_policy_from_settings() -> HostPolicy:
     )
     # Round-1 审计 minor11：feature flag 只接受严格布尔（JSON "false" 字符串
     # 曾被 bool() 变成 True）；非 object 的扩展设置显式拒绝而非静默丢 {}。
+    from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
+
     for key, value in feature_flags.items():
         if not isinstance(value, bool):
-            raise ValueError(
-                f"EXTENSION_FEATURE_FLAGS[{key!r}] must be a JSON boolean, "
-                f"got {type(value).__name__}"
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"EXTENSION_FEATURE_FLAGS[{key!r}] must be a JSON boolean, "
+                    f"got {type(value).__name__}",
+                )
             )
     for key, value in extension_settings.items():
         if not isinstance(value, dict):
-            raise ValueError(
-                f"EXTENSION_SETTINGS_JSON[{key!r}] must be a JSON object, "
-                f"got {type(value).__name__}"
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"EXTENSION_SETTINGS_JSON[{key!r}] must be a JSON object, "
+                    f"got {type(value).__name__}",
+                )
             )
     return HostPolicy(
         roots=tuple(roots),
@@ -62,12 +70,24 @@ def host_policy_from_settings() -> HostPolicy:
 
 
 def _parse_json_dict(raw: str, field_name: str) -> dict[str, Any]:
+    from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
+
     if not (raw or "").strip():
         return {}
     try:
         value = json.loads(raw)
     except ValueError as exc:
-        raise ValueError(f"{field_name} is not valid JSON: {exc}") from exc
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_PARSE_FAILED,
+                f"{field_name} is not valid JSON: {exc}",
+            )
+        ) from exc
     if not isinstance(value, dict):
-        raise ValueError(f"{field_name} must be a JSON object")
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_PARSE_FAILED,
+                f"{field_name} must be a JSON object",
+            )
+        )
     return value
