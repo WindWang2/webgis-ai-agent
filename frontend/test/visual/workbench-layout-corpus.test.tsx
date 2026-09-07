@@ -24,7 +24,7 @@ import {
   stackedBottomStyle,
   isFloating,
 } from '@/components/map/map-components/helpers';
-import type { MapSpec, MapSpecComponent } from '@/lib/mapspec-compiler/types';
+import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { projectWorkspace } from '@/lib/layers/workspace-projection';
 import type { Layer } from '@/lib/types/layer';
 
