@@ -62,7 +62,11 @@ class GISBenchmarkCase(BaseModel):
                  "conformance-change", "conformance-network",
                  "conformance-accessibility", "conformance-equity",
                  "conformance-decision", "conformance-contract",
-                 "anti-claim"]
+                 "anti-claim",
+                 # Wave 2+3（质量场景语料）：按目标文档类别分片（底图 / 科学 /
+                 # 制图 / 数据 / Agent）；additive，与 conformance-* 同规。
+                 "quality-basemap", "quality-science", "quality-cartography",
+                 "quality-data", "quality-agent"]
     query: str
     description: str = ""
 
@@ -107,6 +111,24 @@ class GISBenchmarkCase(BaseModel):
     qualification_profile: Optional[Dict[str, Any]] = None
     expected_qualification: Dict[str, str] = Field(default_factory=dict)
     expected_fallback_tier: Optional[str] = None
+
+    # ── 质量场景语料契约（Wave 2+3，全部 opt-in，缺省 = 既有行为）────────
+    # 语料族标签（goal-doc 场景类别，如 "data_bad_crs" / "agent_cancel" /
+    # "science_hotspot"）；测试按前缀分片。None = 非场景语料案例。
+    scenario_kind: Optional[str] = None
+    # 工具类别契约（ToolDescriptor.output_semantic_type 词表）：plan tier
+    # 断言 resolved 工具的输出语义类别**覆盖**期望集（extra 不罚）。
+    expected_tool_classes: List[str] = Field(default_factory=list)
+    # 导出格式契约：plan.exports 的子集断言（如 ["png", "csv"]）。
+    expected_export_formats: List[str] = Field(default_factory=list)
+    # 上下文 schema 预算（字节）：resolved 工具的 registry.schema_size 之和
+    # 不得超过该预算（大上下文回归锚）。None = 不设预算。
+    max_context_schema_bytes: Optional[int] = None
+    # 离线契约：True 时 resolved 工具不得声明 network=True（全离线族锁定）。
+    forbid_network_tools: bool = False
+    # trace 完整性需求标签：原样记入 plan evidence["trace_requirements"]，
+    # 供后续 trace-completeness wave 消费（本 wave 不断言）。
+    trace_requirements: List[str] = Field(default_factory=list)
 
     # ── execute tier ──────────────────────────────────────────────────
     plan_only: bool = False
