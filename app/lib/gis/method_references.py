@@ -116,10 +116,24 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
         ),
         MethodReference(
             "tarboton1997",
-            "D8 flow direction / flow accumulation",
+            "D-infinity flow direction / partitioned accumulation",
             "Tarboton, D. G. (1997). A New Method for the Determination of "
             "Flow Directions and Upslope Areas in Grid Digital Elevation "
             "Models. Water Resources Research, 33(2), 309–319.",
+        ),
+        MethodReference(
+            "ocallaghan_mark1984",
+            "D8 flow direction / drainage network extraction",
+            "O'Callaghan, J. F., & Mark, D. M. (1984). The Extraction of "
+            "Drainage Networks from Digital Elevation Data. Computer "
+            "Vision, Graphics, and Image Processing, 28(3), 323–344.",
+        ),
+        MethodReference(
+            "wang_robinson_white2000",
+            "Viewshed (R3 algorithm, sector-based without sightlines)",
+            "Wang, J., Robinson, G. J., & White, K. (2000). Generating "
+            "Viewsheds without Using Sightlines. Photogrammetric "
+            "Engineering & Remote Sensing, 66(1), 87–90.",
         ),
         MethodReference(
             "weiss2001",

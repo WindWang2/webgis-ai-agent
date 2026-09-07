@@ -222,11 +222,12 @@ def test_contours_ramp_interval_levels_and_world_coords():
         coords = feat["geometry"]["coordinates"]
         assert len(coords) >= 2
         lvl = feat["properties"]["level"]
-        # Straight line at world x == level, spanning rows 0..9 -> y 10..1.
-        assert all(pt[0] == lvl for pt in coords)
+        # 等值线穿过列 L 的像元**中心**：corner-origin 仿射下世界 x =
+        # (L+0.5)*1.0（science-v3 审计复核修正半像元偏差）。
+        assert all(pt[0] == pytest.approx(lvl + 0.5) for pt in coords)
         ys = [pt[1] for pt in coords]
-        assert min(ys) == pytest.approx(1.0)
-        assert max(ys) == pytest.approx(10.0)
+        assert min(ys) == pytest.approx(0.5)
+        assert max(ys) == pytest.approx(9.5)
     assert meta["levels_drawn"] == [float(v) for v in range(9)]
 
     # Explicit levels take priority; fractional level lands between cells.
@@ -234,7 +235,7 @@ def test_contours_ramp_interval_levels_and_world_coords():
     assert meta2["levels_policy"] == "explicit levels"
     assert len(fc2["features"]) == 1
     assert fc2["features"][0]["properties"]["level"] == 3.5
-    assert all(pt[0] == 3.5 for pt in fc2["features"][0]["geometry"]["coordinates"])
+    assert all(pt[0] == pytest.approx(4.0) for pt in fc2["features"][0]["geometry"]["coordinates"])
 
 
 # ── 9. Nodata semantics ───────────────────────────────────────────────
@@ -437,7 +438,8 @@ def test_extract_contours_tool(tmp_path, terrain_tools):
     lvls = {f["properties"]["level"] for f in res["contours"]["features"]}
     assert lvls == {2.0, 5.0}
     for feat in res["contours"]["features"]:
-        assert all(pt[0] == 10.0 * feat["properties"]["level"]
+        # 像元中心索引 → corner-origin 仿射需 +0.5（同上）。
+        assert all(pt[0] == 10.0 * (feat["properties"]["level"] + 0.5)
                    for pt in feat["geometry"]["coordinates"])
     ev = res["scientific_evidence"]
     assert ev["algorithm"] == "terrain.contours"
