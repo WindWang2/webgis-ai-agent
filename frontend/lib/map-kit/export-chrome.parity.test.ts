@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveMapComponents } from '@/lib/map-components/resolve-components';
 import {
   buildExportChrome,
+  VISUAL_TYPES,
   type BuildExportChromeOptions,
 } from '@/lib/map-kit/export-chrome';
 
@@ -196,5 +197,82 @@ describe('§13 live/export semantic parity（十维矩阵）', () => {
     );
     expect(model.colorbars).toHaveLength(0);
     expect(model.colorbar).toBeUndefined();
+  });
+});
+
+
+/**
+ * Wave 9（audit 06）：live/export 组件词表反向 parity 锁。
+ * export 侧 VISUAL_TYPES 必须被 live 侧 CHROME_RENDERABLE_TYPES（map-panel
+ * 的 MapSpecChrome 挂载判定）覆盖 —— 否则「导出画得出、live 画不出来」
+ * （披露族/table_panel 曾缺行：disclosure-only spec 导出有 chrome、live 空白）。
+ */
+describe('Wave 9 · live ↔ export chrome vocabulary parity', () => {
+  // 镜像 map-panel.tsx 的 CHROME_RENDERABLE_TYPES（改动需双向同步）。
+  const CHROME_RENDERABLE_TYPES: ReadonlySet<string> = new Set([
+    'title', 'subtitle', 'north_arrow', 'scale_bar', 'attribution',
+    'continuous_colorbar', 'legend', 'categorical_legend',
+    'annotation', 'statistics_panel', 'chart_panel', 'map_border', 'graticule',
+    'inset_map',
+    'methodology_note', 'uncertainty_panel', 'decision_panel', 'table_panel',
+  ]);
+
+  it('VISUAL_TYPES ⊆ CHROME_RENDERABLE_TYPES（导出所画 live 必画）', () => {
+    const missing: string[] = [];
+    for (const type of VISUAL_TYPES) {
+      if (!CHROME_RENDERABLE_TYPES.has(type)) missing.push(type);
+    }
+    expect(
+      missing,
+      `export 可渲染而 live 不挂 chrome：${missing.join(', ')} — 同步 map-panel.tsx`,
+    ).toEqual([]);
+  });
+
+  it('披露族与 table_panel 回归锁定（audit 06 缺口）', () => {
+    for (const type of ['methodology_note', 'uncertainty_panel', 'decision_panel', 'table_panel']) {
+      expect(VISUAL_TYPES.has(type)).toBe(true);
+      expect(CHROME_RENDERABLE_TYPES.has(type)).toBe(true);
+    }
+  });
+});
+
+describe('Wave 9 · 显式降级诊断', () => {
+  it('chartRef 拉取失败记录 chart_ref_unavailable（不再静默缺席）', async () => {
+    const { buildExportChrome } = await import('./export-chrome');
+    const spec = {
+      layout: {
+        components: [{
+          id: 'chart-1', type: 'chart_panel', enabled: true,
+          position: 'top-left',
+          options: { chartRef: 'ref:chart/missing' },
+        }],
+      },
+    };
+    const model = await buildExportChrome(
+      {
+        spec,
+        viewport: { width: 800, height: 600 },
+        legendSpecsByLayer: {},
+        loadChart: async () => null,
+      } as BuildExportChromeOptions,
+      { width: 800, height: 600 },
+    );
+    expect(model.panels.some((p) => p.kind === 'chart')).toBe(false);
+    expect(model.degradations).toHaveLength(1);
+    expect(model.degradations[0].code).toBe('chart_ref_unavailable');
+    expect(model.degradations[0].componentId).toBe('chart-1');
+  });
+
+  it('无降级时 degradations 为空数组', async () => {
+    const { buildExportChrome } = await import('./export-chrome');
+    const model = await buildExportChrome(
+      {
+        spec: { layout: { components: [{ id: 't', type: 'title', enabled: true, position: 'top-center', options: { text: 'T' } }] } },
+        viewport: { width: 800, height: 600 },
+        legendSpecsByLayer: {},
+      } as BuildExportChromeOptions,
+      { width: 800, height: 600 },
+    );
+    expect(model.degradations).toEqual([]);
   });
 });

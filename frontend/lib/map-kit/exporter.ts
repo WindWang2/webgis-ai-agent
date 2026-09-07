@@ -1388,13 +1388,25 @@ export async function runExport(
     const dataUrl = exportCanvas.toDataURL('image/png');
     const fmt = (format ?? 'png').toLowerCase();
 
+    // Wave 9：显式降级汇入导出后系统消息（此前 chart/table 面板拉取失败
+    // 静默缺席 —— 用户不知道导出件里少了东西）。
+    const degradationNote = chromeModel?.degradations?.length
+      ? ' 注意：以下组件未能进入导出件：' +
+        chromeModel.degradations
+          .map((d) => `${d.componentId ?? '组件'}（${d.detail ?? d.code}）`)
+          .slice(0, 5)
+          .join('、') +
+        '。请如实告知用户。'
+      : '';
+
     if (fmt === 'svg') {
       const svgBlob = buildSvgWrapper(exportCanvas, title, dataUrl);
       const upload = await uploadExport(svgBlob, 'export.svg', title);
       recordExport(getHudState, title, upload.filename, 'svg', svgBlob.size);
       getHudState().setPendingSystemMessage(
         `[系统通知] 专题地图 SVG \`${title || '未命名'}\` 已成功生成 (含嵌入位图)，` +
-          `文件已落盘并分配URL：${upload.url}。可通过以下链接下载：[下载SVG](${API_BASE}${upload.url})。注意展示完链接后直接结束。`,
+          `文件已落盘并分配URL：${upload.url}。可通过以下链接下载：[下载SVG](${API_BASE}${upload.url})。` +
+          degradationNote + `注意展示完链接后直接结束。`,
       );
       return { ok: true, format: 'svg', url: upload.url, filename: upload.filename };
     } else if (fmt === 'pdf') {
@@ -1417,7 +1429,8 @@ export async function runExport(
       getHudState().setPendingSystemMessage(
         `[系统通知] 专题底图 PDF \`${title || '未命名'}\` 已成功生成 (jsPDF 向量版)，` +
           `文件已落盘并分配URL：${upload.url}。` +
-          `请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${upload.url})。注意展示完链接后直接结束。`,
+          `请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${upload.url})。` +
+          degradationNote + `注意展示完链接后直接结束。`,
       );
       return { ok: true, format: 'pdf', url: upload.url, filename: upload.filename };
     } else {
@@ -1427,7 +1440,8 @@ export async function runExport(
       recordExport(getHudState, title, upload.filename, 'png', blob.size);
       getHudState().setPendingSystemMessage(
         `[系统通知] 专题地图 \`${title || '未命名'}\` 已成功排版合成，` +
-          `文件已落盘并分配URL：${upload.url}。 请利用Markdown的图片语法 \`![地图](${API_BASE}${upload.url})\` 将该成品展示给用户，并祝其研究顺利！注意展示完图片后直接结束。`,
+          `文件已落盘并分配URL：${upload.url}。 请利用Markdown的图片语法 \`![地图](${API_BASE}${upload.url})\` 将该成品展示给用户，并祝其研究顺利！` +
+          degradationNote + `注意展示完图片后直接结束。`,
       );
       return { ok: true, format: 'png', url: upload.url, filename: upload.filename };
     }

@@ -121,9 +121,23 @@ export interface ExportChromeElement {
   };
 }
 
+/** Wave 9：显式降级诊断（degradation matrix 的最小闭环）—— 替代静默
+ * continue。code 词表封闭；detail 有界（≤120 字符）。 */
+export interface ExportDegradation {
+  code:
+    | 'chart_ref_unavailable'
+    | 'chart_kind_unsupported_export'
+    | 'table_ref_unavailable'
+    | 'component_skipped_invalid';
+  componentId?: string;
+  detail?: string;
+}
+
 export interface ExportChromeModel {
   /** 有任何 spec chrome 元素时为 true（false → exporter 走 legacy 槽位）。 */
   fromSpec: boolean;
+  /** Wave 9：本次导出的显式降级清单（空 = 无降级）。exporter 展示给用户。 */
+  degradations: ExportDegradation[];
   title?: ExportChromeElement;
   subtitle?: ExportChromeElement;
   northArrow?: ExportChromeElement;
@@ -470,6 +484,23 @@ function _parseDecision(raw: unknown): ExportChromeElement['disclosure'] {
 }
 
 /**
+ * 导出侧「可视组件」词表（Wave 9 提升到模块级并导出）：fromSpec 门与
+ * chrome 路径切换用它判定 —— live 侧 CHROME_RENDERABLE_TYPES 必须包含
+ * 它（⊇ 包含测试 export-chrome.parity.test.ts 锁定反向 parity）。
+ */
+export const VISUAL_TYPES: ReadonlySet<string> = new Set([
+  'title', 'subtitle', 'legend', 'categorical_legend', 'continuous_colorbar',
+  'north_arrow', 'scale_bar', 'attribution', 'statistics_panel', 'chart_panel',
+  'annotation', 'map_border', 'graticule', 'inset_map',
+  // V3（ADR-0101 D6）：披露族落地 canvas 导出 —— 计入可视组件
+  //（disclosure-only spec 也走 chrome 路径，否则面板被 fromSpec 门饿死）
+  'methodology_note', 'uncertainty_panel', 'decision_panel',
+  // V4：表格面板落地 canvas 导出（drawChromeTable 有界快照）—— 计入
+  // 可视组件（table-only spec 也走 chrome 路径）
+  'table_panel',
+]);
+
+/**
  * 构建导出 chrome 模型（异步：chartRef 可能需要拉取 session artifact）。
  * 纯派生 —— 不读 DOM、不碰 map 实例；画布尺寸由调用方传入。
  */
@@ -484,19 +515,9 @@ export async function buildExportChrome(
   // 的 hasSpecChrome 对齐 —— 只有禁用 title 的 spec 走 HUD chrome 栈。
   // graticule（终审 F4）：属于可视输出（导出经纬网），计入 fromSpec ——
   // graticule-only spec 也走 chrome 路径（fallback 罗盘/比例尺 + 网格）。
-  const VISUAL_TYPES = new Set([
-    'title', 'subtitle', 'legend', 'categorical_legend', 'continuous_colorbar',
-    'north_arrow', 'scale_bar', 'attribution', 'statistics_panel', 'chart_panel',
-    'annotation', 'map_border', 'graticule', 'inset_map',
-    // V3（ADR-0101 D6）：披露族落地 canvas 导出 —— 计入可视组件
-    //（disclosure-only spec 也走 chrome 路径，否则面板被 fromSpec 门饿死）
-    'methodology_note', 'uncertainty_panel', 'decision_panel',
-    // V4：表格面板落地 canvas 导出（drawChromeTable 有界快照）—— 计入
-    // 可视组件（table-only spec 也走 chrome 路径）
-    'table_panel',
-  ]);
   const model: ExportChromeModel = {
     fromSpec: resolved.some((c) => VISUAL_TYPES.has(c.type) && c.enabled),
+    degradations: [],
     legends: [],
     colorbars: [],
     insets: [],
@@ -801,6 +822,15 @@ export async function buildExportChrome(
           /* 拉取失败 → 面板缺席（如实：无数据不伪造） */
         }
       }
+      if (!chart && c.enabled) {
+        // Wave 9：拉取失败/载荷缺失 → 此前面板静默缺席；现在记录显式降级
+        //（exporter 汇入导出后系统消息，用户知道图表面板没进导出件）。
+        model.degradations.push({
+          code: 'chart_ref_unavailable',
+          componentId: c.id,
+          detail: typeof chartRef === 'string' ? `ref ${chartRef} 不可用` : 'inline 载荷非法',
+        });
+      }
       if (chart) {
         model.panels.push({
           kind: 'chart',
@@ -887,6 +917,14 @@ export async function buildExportChrome(
         }
       } catch {
         table = null; // 拉取失败 → 面板缺席（无数据不伪造）
+      }
+      if (!table && c.enabled) {
+        // Wave 9：同 chart —— 表格面板缺席记录显式降级，不再静默。
+        model.degradations.push({
+          code: 'table_ref_unavailable',
+          componentId: c.id,
+          detail: refOpt ? `ref ${refOpt} 不可用` : layerOpt ? `图层 ${layerOpt} 无属性表` : 'inline 载荷非法',
+        });
       }
       if (table) {
         model.panels.push({

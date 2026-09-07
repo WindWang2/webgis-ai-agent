@@ -1211,11 +1211,16 @@ export function MapPanel({
   const specComponents = committedSpec?.layout?.components ?? []
   // 包含清单（只认 MapSpecChrome 实际渲染的类型）：未来未知组件类型不会
   // 静默吞掉既有 chrome。
+  // Wave 9（audit 06）：披露族 + table_panel 此前缺行 —— 仅披露/表格组件的
+  // spec 走了导出 chrome 路径（export 侧 VISUAL_TYPES 含它们）而 live 不挂
+  // MapSpecChrome，反向 parity 缺口（导出画得出、live 画不出来）。四种类型
+  // 的 live 渲染器均已注册（registry-parity 测试锁定），补行即挂载。
   const CHROME_RENDERABLE_TYPES = new Set([
     'title', 'subtitle', 'north_arrow', 'scale_bar', 'attribution',
     'continuous_colorbar', 'legend', 'categorical_legend',
     'annotation', 'statistics_panel', 'chart_panel', 'map_border', 'graticule',
     'inset_map',
+    'methodology_note', 'uncertainty_panel', 'decision_panel', 'table_panel',
   ])  // 终审 F4：map_border 有 live 渲染器（P6）—— map_border-only spec
      // 此前不挂 MapSpecChrome，边框导出得出来、live 画不出来。
      // P3：graticule live 渲染器落地（#1089 deferred 补齐）—— graticule-only
