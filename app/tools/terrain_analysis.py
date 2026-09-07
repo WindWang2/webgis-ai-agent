@@ -251,19 +251,24 @@ def register_terrain_tools(registry: ToolRegistry):
 
     @tool(registry, name="compute_vegetation_index",
            description=(
-               "在线遥感指数统一入口：NDVI(植被)/NDWI(水体)/NBR(燃烧)/EVI(增强植被)，自动 STAC 拉 Sentinel-2 波段并计算。"
+               "在线遥感指数统一入口：NDVI(植被)/NDWI(水体)/NBR(燃烧)/EVI(增强植被)，"
+               "以及 NDWI 拆名变体 ndwi_water(=ndwi，McFeeters 开放水体显式别名)/"
+               "ndwi_gao(Gao 1996 植被水分，nir−swir1——与 ndwi 开放水体不可互换)，"
+               "自动 STAC 拉 Sentinel-2 波段并计算。"
                "\n何时用：除 NDVI 外的指数（NDWI 水体面积、NBR 火烧迹地、EVI 高生物量）；指数随场景动态选择时。"
                "\n何时不用：(1) 只算 NDVI — 直接 compute_ndvi（接口更窄、参数更少）；"
                "(2) 要双时相对比 — 用 detect_vegetation_change；"
                "(3) 本地 TIFF 处理 — 用 analyze_vegetation_index。"
-               "\n关键约束：index_type ∈ {ndvi, ndwi, nbr, evi}；返回 {stats, classification, bbox}。"
+               "\n关键约束：index_type ∈ {ndvi, ndwi, ndwi_water, ndwi_gao, nbr, evi}；"
+               "返回 {stats, classification, bbox}。"
            ),
            tier=2, domains=["raster"],
            param_descriptions={
                "bbox": "边界框 [west, south, east, north]",
                "date_from": "起始日期 YYYY-MM-DD",
                "date_to": "结束日期 YYYY-MM-DD",
-               "index_type": "指数类型: 'ndvi'(默认), 'ndwi', 'nbr', 'evi'",
+               "index_type": "指数类型: 'ndvi'(默认), 'ndwi'/'ndwi_water'(开放水体), "
+                             "'ndwi_gao'(植被水分), 'nbr', 'evi'",
            },
            side_effect="cacheable_read",
            network=True,

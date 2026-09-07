@@ -224,6 +224,21 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "IJRS, 17(7), 1425–1432.",
         ),
         MethodReference(
+            "heinz_chang2001",
+            "FCLS fully constrained linear spectral unmixing",
+            "Heinz, D. C., & Chang, C.-I. (2001). Fully Constrained Least "
+            "Squares Linear Spectral Mixture Analysis Method for Material "
+            "Quantification in Hyperspectral Imagery. "
+            "IEEE TGRS, 39(3), 529–545.",
+        ),
+        MethodReference(
+            "flood2013",
+            "Medoid temporal compositing (multi-dimensional median)",
+            "Flood, N. (2013). Seasonal Composite Landsat TM/ETM+ Images "
+            "Using the Medoid (a Multi-Dimensional Median). "
+            "Remote Sensing, 5(12), 6481–6500.",
+        ),
+        MethodReference(
             "xu2006",
             "MNDWI water index",
             "Xu, H. (2006). Modification of Normalised Difference Water Index "

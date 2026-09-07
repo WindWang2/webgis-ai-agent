@@ -235,6 +235,18 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         ),
 
         CapabilityDescriptor(
+            id="spectral_unmixing", name="线性光谱解混", category="raster",
+            domain="raster",
+            description="FCLS 全约束最小二乘线性光谱解混（Heinz & Chang 2001；"
+                        "逐像元 min‖Ex−f‖² s.t. x≥0, Σx=1；丰度面 [0,1] + RMS 残差面；"
+                        "端元由调用方提供，列满秩守卫）。",
+            input_artifact_types=["raster_surface"],
+            output_artifact_types=["raster_surface"],
+            compatible_map_models=["raster_surface"],
+            purpose_template="线性光谱解混",
+        ),
+
+        CapabilityDescriptor(
             id="band_statistics", name="波段统计", category="raster",
             domain="raster",
             description="波段×波段 Pearson 相关矩阵 + 逐对样本数（公共有效掩膜约定披露；"
@@ -252,6 +264,17 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             input_artifact_types=["raster_surface"],
             output_artifact_types=["raster_surface"],
             purpose_template="时序特征提取",
+        ),
+
+        CapabilityDescriptor(
+            id="temporal_composite", name="多时相合成", category="raster",
+            domain="raster",
+            description="多时相波段栈合成（medoid 多维中位数——Flood 2013；选真实观测"
+                        "切片保持跨波段光谱一致性；NaN 切片整条剔除；generic 时序统计，"
+                        "光学/SAR 栈通用）。",
+            input_artifact_types=["raster_surface"],
+            output_artifact_types=["raster_surface"],
+            purpose_template="多时相合成",
         ),
 
         CapabilityDescriptor(

@@ -84,7 +84,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         # ── VNext：类型化光谱指数 / CVA / 比值变化 ─────────────────────
         AlgorithmDescriptor(
-            id="remote.spectral_index", name="类型化光谱指数（11 公式族）", category="remote_sensing",
+            id="remote.spectral_index", name="类型化光谱指数（13 公式族）", category="remote_sensing",
             capabilities=["spectral_index"],
             input_artifact_types=["raster_surface"],
             output_artifact_type="raster_surface",
@@ -98,6 +98,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "波段按语义角色显式命名（band_map），绝不按波段位置猜测",
                 "线性定标先于公式（DN/10000→反射率）；零分母→NaN",
                 "超理论值域只报告不钳制（out_of_range_fraction）",
+                "NDWI 拆名（审计 §3.2）：ndwi/ndwi_water = McFeeters 开放水体 "
+                "(green−nir)/(green+nir)；ndwi_gao = Gao 植被水分 "
+                "(nir−swir1)/(nir+swir1)——同名异式不可互换，与在线/本地路径一致",
             ],
             limitations=[
                 "公式出处逐指数声明（gndvi/msavi/ndmi 无词表出处，诚实留空）",
@@ -670,7 +673,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             method_references=["nielsen1998"],
             assumptions=[
                 "两期栈各自标准化 → SVD-CCA → MAD_i = a_i·X − b_i·Y（ρ 升序）",
-                "χ² 栅格自由度按 2k 约定披露；ρ 钳制 ≤1−1e-12（恒等场景防 0/0）",
+                "χ² 栅格自由度 = k=n_bands（标准化变分量方差 2(1−ρ_i) → 每分量 "
+                "1 dof，Nielsen 1998/Canty χ²_k 惯例）；ρ 钳制 ≤1−1e-12（恒等场景防 0/0）",
                 "IR-MAD 权重 w=1/χ²（均值归一 + 下限 1e-4），固定点迭代 ≤10",
             ],
             limitations=[
@@ -685,6 +689,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             scientific_status="VALIDATED",
             conformance_tests=[
                 "tests/unit/lib/test_rs_v3.py::test_mad_identical_stacks_zero_chi2",
+                "tests/unit/lib/test_rs_v3.py::test_mad_chi2_dof_equals_n_bands",
                 "tests/unit/lib/test_rs_v3.py::test_mad_localized_change_detected",
                 "tests/unit/lib/test_rs_v3.py::test_mad_irmad_iterations_and_guards",
             ],
@@ -873,6 +878,92 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/lib/test_rs_v3.py::test_cloud_qc_bright_block_and_clear_scene",
             ],
             parameter_contract_ref="cloud_qc_analysis",
+        ),
+
+        # ── V3 光学增强：FCLS 线性光谱解混（与 remote.endmember_vca 形成
+        # 端元提取 → 丰度反演链）────────────────────────────────────────
+        AlgorithmDescriptor(
+            id="remote.linear_unmixing",
+            name="线性光谱解混（FCLS 全约束最小二乘）",
+            category="remote_sensing",
+            capabilities=["spectral_unmixing"],
+            input_artifact_types=["raster_surface"],
+            output_artifact_type="raster_surface",
+            tool_candidates=["linear_unmixing"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="INLINE", priority=15,
+            approximate=False,
+            complexity="O(H·W·m²)",
+            algorithm_family="spectral_unmixing",
+            method_references=["heinz_chang2001"],
+            assumptions=[
+                "线性混合模型 f = E·x + ε；逐像元 min‖Ex−f‖² s.t. x≥0, Σx=1",
+                "端元矩阵 E（k 波段 × m 端元）逐波段对齐且列满秩（秩亏拒绝）",
+                "单纯形内部像元走和一约束闭式解（精确）；负分量像元走 δ-增广 "
+                "NNLS（δ=1e6 归一尺度，和一违背 ~O(1/δ)，计数披露）",
+                "丰度输出值域 [0,1]（非负 + 和一约束）；端元尺度整体缩放不影响解",
+            ],
+            limitations=[
+                "仅线性混合模型——非线性混合（intimate mixing/多层散射）不适用",
+                "端元由调用方提供（可接 remote.endmember_vca 输出）；端元质量"
+                "决定丰度质量，本算法不校验端元的物理合理性",
+                "n_bands·H·W ≤ 16M 像元总量（无流式实现）；欠定 m>k 被秩亏守卫拒绝",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:2"],
+            uncertainty_outputs=["field_uncertainty"],
+            uncertainty_producer_tests={
+                "field_uncertainty":
+                    "tests/unit/lib/test_linear_unmixing.py::"
+                    "test_fcls_rms_residual_tracks_noise",
+            },
+            numerical_tolerance="无噪合成 3 端元场丰度恢复 rtol 1e-4（实测 ~1e-16）；"
+                                "和一约束 |Σx−1| ≤ 1e-9；RMS 残差与注入噪声水平同量级",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_linear_unmixing.py::test_fcls_abundance_recovery_exact",
+                "tests/unit/lib/test_linear_unmixing.py::test_fcls_constraints_nonneg_and_sum_to_one",
+                "tests/unit/lib/test_linear_unmixing.py::test_fcls_guards_and_nodata",
+            ],
+            parameter_contract_ref="linear_unmixing_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="remote.medoid_composite",
+            name="medoid 时序合成（多维中位数）",
+            category="remote_sensing",
+            capabilities=["temporal_composite"],
+            input_artifact_types=["raster_surface"],
+            output_artifact_type="raster_surface",
+            tool_candidates=["medoid_composite"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="INLINE", priority=15,
+            approximate=False,
+            complexity="O(T²·H·W·k)",
+            algorithm_family="temporal_composite",
+            method_references=["flood2013"],
+            assumptions=[
+                "逐像元选 argmin_t Σ_s ‖x_t−x_s‖₂（波段欧氏）的**真实观测切片**"
+                "——跨波段光谱一致性保持（区别于逐波段 median 的独立分位拼接）",
+                "任一波段无效（NaN/哨兵）的切片整条剔除（跨波段一致性优先，"
+                "不做波段级稀释）；平局取最早时相（确定性）",
+                "实现为 generic 时序统计（与 sar.temporal_composite 同底座家族，"
+                "光学/多时相栈通用）；云/影污染时相经距离和自动边缘化",
+            ],
+            limitations=[
+                "输入须已配准对齐的多时相波段栈 (T,k,H,W)；不做云检测/掩膜",
+                "规模预算：2≤T≤24、H·W≤4096²、T·H·W≤32M（距离累加面，超限拒绝）",
+                "k=1 时退化为最接近全体一维观测的选择（奇数 T 下与 median 等价）",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            numerical_tolerance="手工 3 时相小栈：medoid 入选清洁切片、云污染切片"
+                                "永不入选（index 栅格断言）；NaN 切片剔除精确",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_medoid_composite.py::test_medoid_selects_real_clean_observation",
+                "tests/unit/lib/test_medoid_composite.py::test_medoid_nan_and_guards",
+            ],
         ),
 
         # ── Foundation V3：SAR 批次（热噪声 / 量纲换算 / MT-Lee / ───────
@@ -1116,13 +1207,16 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 PARAMETER_CONTRACTS: List[ParameterContract] = [
     ParameterContract(
         id="spectral_index_analysis", version=2,
-        description="类型化光谱指数：指数 id（INDEX_FAMILY 11 成员；波段按角色显式命名）。",
+        description="类型化光谱指数：指数 id（INDEX_FAMILY 13 成员；波段按角色显式命名）。",
         parameters=[
             ParameterSpec(
                 name="index_id", type="enum", required=True,
                 enum_values=["ndvi", "gndvi", "savi", "msavi", "ndwi",
-                             "mndwi", "ndbi", "ndmi", "nbr", "evi", "evi2"],
-                description="光谱指数 id（公式出处随结果披露）",
+                             "ndwi_gao", "ndwi_water", "mndwi", "ndbi",
+                             "ndmi", "nbr", "evi", "evi2"],
+                description="光谱指数 id（ndwi=McFeeters 开放水体；ndwi_gao=Gao "
+                            "植被水分；ndwi_water=ndwi 显式别名——三者不可互换，"
+                            "公式出处随结果披露）",
             ),
         ],
     ),
@@ -1496,6 +1590,20 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="ndvi_max_abs", type="number", minimum=0.0, maximum=1.0,
                 description="可选 |NDVI| ≤ 阈值条件（云光谱平坦；零分母不进条件）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="linear_unmixing_analysis", version=1,
+        description="FCLS 全约束线性光谱解混（Heinz & Chang 2001；x≥0 + Σx=1；"
+                    "端元由调用方提供）。",
+        parameters=[
+            ParameterSpec(
+                name="sum_to_one_weight", type="number", default=1e6,
+                minimum=1.0,
+                description="和一约束的 δ 增广权重（边界像元的 δ-增广 NNLS 路径；"
+                            "δ 越大和一越严格、代价是条件数——默认 1e6 为端元"
+                            "归一尺度下的实现常数）",
             ),
         ],
     ),

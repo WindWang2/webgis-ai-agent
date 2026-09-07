@@ -227,8 +227,11 @@ def register_rs_tools(registry: ToolRegistry):
     @tool(registry, name="compute_spectral_index",
           description=(
               "类型化光谱指数计算：波段按语义角色（red/nir/swir1/...）显式命名后，"
-              "从 11 种公式族指数（ndvi/gndvi/savi/msavi/ndwi/mndwi/ndbi/ndmi/nbr/evi/evi2）"
-              "计算，附公式出处、有效像元率与超理论值域比例（未定标 DN 输入的诚实信号）。"
+              "从 13 种公式族指数（ndvi/gndvi/savi/msavi/ndwi/ndwi_gao/ndwi_water/"
+              "mndwi/ndbi/ndmi/nbr/evi/evi2）计算，附公式出处、有效像元率与超理论值域比例"
+              "（未定标 DN 输入的诚实信号）。"
+              "\nNDWI 拆名：ndwi/ndwi_water=McFeeters 开放水体 (green−nir)/(green+nir)；"
+              "ndwi_gao=Gao 植被水分 (nir−swir1)/(nir+swir1)——同名异式不可互换。"
               "\n何时用：已有各波段数值矩阵（小范围样本/切片），需要可审计出处的指数计算；"
               "\n何时不用：(1) 要在线 Sentinel-2 NDVI —— compute_ndvi；"
               "(2) 本地上传的 TIFF —— analyze_vegetation_index；"
@@ -238,7 +241,8 @@ def register_rs_tools(registry: ToolRegistry):
           ),
           tier=2, domains=["raster"],
           param_descriptions={
-              "index_id": "指数 id：ndvi/gndvi/savi/msavi/ndwi/mndwi/ndbi/ndmi/nbr/evi/evi2",
+              "index_id": "指数 id：ndvi/gndvi/savi/msavi/ndwi/ndwi_gao/"
+                          "ndwi_water/mndwi/ndbi/ndmi/nbr/evi/evi2",
               "bands": "语义角色 → 2D 数组，如 {\"red\": [[...]], \"nir\": [[...]]}（各角色形状一致）",
               "scale_factors": "角色 → 线性定标除数，如 {\"red\": 10000, \"nir\": 10000}（DN→反射率）",
               "nodata_value": "可选标量哨兵值（等于该值的像元视为无效 → NaN）",
@@ -1491,7 +1495,8 @@ def register_rs_tools(registry: ToolRegistry):
     @tool(registry, name="mad_change",
           description=(
               "MAD / IR-MAD 变化检测（Nielsen 1998）：两期栈标准化 → SVD-CCA → "
-              "MAD 变分量（按规范相关升序，noisiest first）+ χ² 栅格（2k dof 约定披露）。"
+              "MAD 变分量（按规范相关升序，noisiest first）+ χ² 栅格"
+              "（k dof，Nielsen 1998 χ²_k 惯例）。"
               "\n何时用：两期多波段影像的结构性变化检测（对线性辐射偏移/增益不变）。"
               "\n何时不用：(1) 单波段差值/比值 —— detect_raster_change/detect_ratio_change；"
               "(2) 恒定辐射偏移（标准化吸收，不构成检测目标）。"
@@ -1551,6 +1556,133 @@ def register_rs_tools(registry: ToolRegistry):
             warnings=res["warnings"] or [res["meta"]["disclosure"]],
             diagnostics=[_backend_selection_diagnostic(
                 "remote.mad_change", int(arr_a.size))],
+        )
+
+    @tool(registry, name="linear_unmixing",
+          description=(
+              "线性光谱解混 FCLS（Heinz & Chang 2001）：逐像元 "
+              "min‖Ex−f‖² s.t. x≥0, Σx=1，输出 m 个丰度面（[0,1]）+ RMS 残差面"
+              "（重建不确定性摘要）。与 endmember_vca 组成端元提取→丰度反演链。"
+              "\n何时用：已知端元光谱（VCA/光谱库），要丰度/覆盖度反演"
+              "（矿物丰度、植被/土壤/不透水面比例）。"
+              "\n何时不用：(1) 无端元先找端元 —— extract_endmembers_vca；"
+              "(2) 单目标检测 —— matched_filter；"
+              "(3) 非线性混合（多层散射）不适用（诚实披露）。"
+              "\n关键约束：端元矩阵 k 波段×m 端元逐波段对齐、列满秩"
+              "（秩亏/端元数>波段数被拒绝）；内联数组 ≤4M 值/波段。"
+          ),
+          tier=2, domains=["raster"],
+          param_descriptions={
+              "bands": "波段栈 {role_or_index: 2D 数组}（与端元矩阵波段维逐行对齐）",
+              "endmembers": "端元矩阵 [n_bands][n_endmembers]（列=端元光谱）",
+              "sum_to_one_weight": "和一约束 δ 增广权重（默认 1e6，一般无需调整）",
+              "nodata_value": "可选标量哨兵值（任一波段无效 → 整像元 NaN）",
+          })
+    async def linear_unmixing(
+        bands: Dict[str, List[List[float]]],
+        endmembers: List[List[float]],
+        sum_to_one_weight: float = 1e6,
+        nodata_value: Optional[float] = None,
+    ) -> dict:
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.geo_analysis.rs_v3 import fcls_unmix as _fcls
+
+        params = apply_contract("linear_unmixing_analysis", {
+            "sum_to_one_weight": sum_to_one_weight})
+        arrays = _bands_to_arrays(bands)
+        e_mat = np.asarray(endmembers, dtype=float)
+        if e_mat.ndim != 2:
+            raise ValueError(
+                f"endmembers 必须是 2D 矩阵 [n_bands][n_endmembers]，"
+                f"got ndim={e_mat.ndim}")
+        res = _fcls(arrays, e_mat, sum_to_one_weight=params["sum_to_one_weight"],
+                    nodata=nodata_value)
+        rms = res["rms_residual"]
+        payload = {
+            "success": True,
+            "n_endmembers": res["meta"]["n_endmembers"],
+            "abundances": [a.round(6).tolist() for a in res["abundances"]],
+            "rms_residual": rms.round(6).tolist(),
+            "rms_residual_stats": _plane_payload(rms),
+            "n_valid_pixels": res["n_valid_pixels"],
+            "band_order": res["meta"]["band_order"],
+            "n_boundary_pixels_nnls": res["meta"]["n_boundary_pixels_nnls"],
+            "disclosure": res["meta"]["disclosure"],
+        }
+        if res["warnings"]:
+            payload["warnings"] = res["warnings"]
+        return _attach_science_evidence(
+            payload, "remote.linear_unmixing", tool="linear_unmixing",
+            parameters_applied={
+                "n_endmembers": res["meta"]["n_endmembers"],
+                "n_boundary_pixels_nnls": res["meta"]["n_boundary_pixels_nnls"],
+            },
+            input_facts={"feature_count": int(rms.size)},
+            warnings=res["warnings"] or [res["meta"]["disclosure"]],
+            diagnostics=[_backend_selection_diagnostic(
+                "remote.linear_unmixing", int(rms.size))],
+        )
+
+    @tool(registry, name="medoid_composite",
+          description=(
+              "medoid 时序合成（Flood 2013 多维中位数）：多时相波段栈逐像元选"
+              "到其余观测波段欧氏距离和最小的**真实切片**——跨波段光谱一致性保持"
+              "（逐波段 median 会拼出不存在观测）；云/影污染时相自动边缘化。"
+              "\n何时用：多时相光学合成（季节/年度底图）、云污染栈的鲁棒合成。"
+              "\n何时不用：(1) 单波段时序统计 —— sar.temporal_stats；"
+              "(2) 需要显式加权/质量掩膜合成 —— 未实现（披露）。"
+              "\n关键约束：输入须已配准对齐 (T,k,H,W)；2≤T≤24、T·H·W≤32M；"
+              "任一波段无效的切片整条剔除。"
+          ),
+          tier=2, domains=["raster"],
+          param_descriptions={
+              "stack": "4D 时相栈 [T][n_bands][H][W]（须已配准对齐）",
+              "nodata_value": "可选标量哨兵值（切片任一波段等于该值 → 整条剔除）",
+          })
+    async def medoid_composite(
+        stack: List[List[List[List[float]]]],
+        nodata_value: Optional[float] = None,
+    ) -> dict:
+        from app.lib.geo_analysis.sar_temporal import (
+            medoid_composite as _medoid,
+        )
+
+        arr = np.asarray(stack, dtype=float)
+        if arr.ndim != 4:
+            raise ValueError(
+                "stack 必须是 4D 时相栈 [T][n_bands][H][W]，"
+                f"got ndim={arr.ndim}")
+        if arr.size > _TOOL_ARRAY_MAX_VALUES:
+            from app.lib.gis.scientific_errors import ResourceScaleMismatch
+
+            raise ResourceScaleMismatch(
+                f"内联时相栈元素数 {arr.size} 超过工具上界 "
+                f"{_TOOL_ARRAY_MAX_VALUES}",
+                estimated=f"{arr.size} values (~{arr.size * 8 / 1e6:.1f} MB float64)",
+                limit=f"≤{_TOOL_ARRAY_MAX_VALUES}",
+                correction_hint="减少时相数或降采样/分块",
+            )
+        res = _medoid(arr, nodata=nodata_value)
+        out = res["array"]
+        payload = {
+            "success": True,
+            "n_bands": res["meta"]["n_bands"],
+            "time_slices": res["meta"]["time_slices"],
+            "array": out.round(6).tolist(),
+            "medoid_index": res["medoid_index"].tolist(),
+            "pixels_all_invalid": res["meta"]["pixels_all_invalid"],
+            "disclosure": res["meta"]["disclosure"],
+        }
+        return _attach_science_evidence(
+            payload, "remote.medoid_composite", tool="medoid_composite",
+            parameters_applied={
+                "time_slices": res["meta"]["time_slices"],
+                "n_bands": res["meta"]["n_bands"],
+            },
+            input_facts={"feature_count": int(out.size)},
+            warnings=[res["meta"]["disclosure"]],
+            diagnostics=[_backend_selection_diagnostic(
+                "remote.medoid_composite", int(out.size))],
         )
 
     @tool(registry, name="segment_image",
