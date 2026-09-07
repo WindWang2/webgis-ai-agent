@@ -9,6 +9,10 @@ Foundation V2（A5）新增：Priority-Flood 填洼、D∞ 多向流、流程长
 河网提取 + Strahler 分级、流域形态量测、TWI/SPI、USLE LS、地形开放度、
 geomorphons、Weiss 地类分级、多方位山体阴影（护栏/米制换算/证据模式
 与既有工具逐一同构；select_backend 决策进 diagnostics）。
+
+Terrain V3 新增：horizon_angle_analysis（地平线角）、
+sky_view_factor_analysis（天空可视因子，Steyn 1980）；flow_analysis
+追加 flat_routing additive 参数（epsilon = Barnes 2014 填洼后路由）。
 """
 import json
 import logging
@@ -406,14 +410,16 @@ def register_terrain_tools(registry: ToolRegistry):
                "DEM D8 水文分析：flow_direction（ESRI 2 的幂编码 1=E…128=NE，0=汇/出口）或 "
                "flow_accumulation（上游贡献像元数，不含自身），返回统计+降采样样本+科学证据。"
                "\n何时用：河网提取前奏、汇流趋势/流域湿润度快速评估。"
-               "\n何时不用：(1) 需要流域边界 — watershed_delineation；(2) 多向流 D∞ — 未实现（D8 单向流限制）。"
-               "\n关键约束：平地/洼地即汇（不填洼、不路由）；边界=出口。"
+               "\n何时不用：(1) 需要流域边界 — watershed_delineation；(2) 多向流 — 用 dinf_flow_analysis（terrain.dinf_flow）。"
+               "\n关键约束：默认平地/洼地即汇（flat_routing='none'，不填洼）；"
+               "flat_routing='epsilon' 先经 Barnes 2014 填洼注入梯度再路由（平地排向溢流出口）；边界=出口。"
            ),
            tier=2, domains=["raster"], cost="heavy",
            param_descriptions={
                "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
                "product": "输出产品: 'flow_accumulation'(默认) | 'flow_direction'",
-           },
+               "flat_routing": "平地路由: 'none'(默认，平地即汇) | 'epsilon'(Barnes 2014 填洼后路由)",
+           })
            side_effect="deterministic_compute",
            network=False,
            deterministic=True,
@@ -425,13 +431,18 @@ def register_terrain_tools(registry: ToolRegistry):
            result_size_policy="inline_small",
            crs_semantics="crs_agnostic",
            failure_modes=("invalid_args", "missing_data", "memory"))
-    def flow_analysis(raster_path: str, product: str = "flow_accumulation") -> dict:
-        params = apply_contract("flow_analysis", {"product": product})
+    def flow_analysis(raster_path: str, product: str = "flow_accumulation",
+                      flat_routing: str = "none") -> dict:
+        params = apply_contract("flow_analysis", {
+            "product": product, "flat_routing": flat_routing,
+        })
         product = str(params["product"])
+        flat_routing_v = str(params["flat_routing"])
         arr, transform, crs, eff_nodata, bounds = _read_terrain_window(raster_path, None)
         cy, cx, transformations = _metric_cell_sizes(crs, transform, bounds)
 
-        d8, d8_meta = terrain_lib.d8_flow(arr, cy, cell_size_x=cx, nodata=eff_nodata)
+        d8, d8_meta = terrain_lib.d8_flow(
+            arr, cy, cell_size_x=cx, nodata=eff_nodata, flat_routing=flat_routing_v)
         meta = dict(d8_meta)
         if product == "flow_direction":
             codes = d8["direction"][d8["valid"]]
@@ -459,11 +470,14 @@ def register_terrain_tools(registry: ToolRegistry):
         }
         return _terrain_evidence(
             payload, "terrain.flow", tool="flow_analysis",
-            parameters_applied={"product": product},
+            parameters_applied={"product": product, "flat_routing": flat_routing_v},
             crs=crs,
             diagnostics=_base_diagnostics(
                 transform, arr.shape[0], arr.shape[1],
-                extra=(Diagnostic(name="nodata_effective", value=eff_nodata),)),
+                extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                       Diagnostic(name="flat_routing_filled_cells", value=float(
+                           d8_meta.get("filled_cell_count", 0))
+                           if flat_routing_v == "epsilon" else None))),
             transformations=transformations or None,
             warnings=_non_metric_warning(crs) or None,
         )
@@ -1400,6 +1414,146 @@ def register_terrain_tools(registry: ToolRegistry):
                 "altitude": altitude_v, "azimuths": ",".join(str(a) for a in az_list),
                 "combine": combine_v,
             },
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations or None,
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    # ── Terrain V3：地平线角与天空可视因子（Steyn 1980）────────────────
+
+    def _parse_azimuth_list(az_raw: Any, default: str) -> List[float]:
+        """azimuths 参数（str/list）→ 罗盘度列表（照 multiazimuth_hillshade）。"""
+        if isinstance(az_raw, str):
+            try:
+                parsed = json.loads(az_raw)
+                az_list = [float(v) for v in parsed] if isinstance(parsed, list) else [float(parsed)]
+            except (ValueError, TypeError):
+                az_list = [float(v) for v in az_raw.replace(",", " ").split()]
+        elif az_raw is None:
+            try:
+                parsed = json.loads(default)
+                az_list = [float(v) for v in parsed]
+            except (ValueError, TypeError):
+                az_list = [float(v) for v in default.replace(",", " ").split()]
+        else:
+            az_list = [float(v) for v in az_raw]
+        return az_list
+
+    @tool(registry, name="horizon_angle_analysis",
+           description=(
+               "DEM 地平线角：逐方位（罗盘度）射线行走取最大正仰角（度）与跨方位 max，"
+               "天空可视因子（Steyn 1980）的输入量，也可单独做天际线/遮挡诊断。"
+               "\n何时用：天际线分析、日照/通风遮挡诊断、景观开敞度评价的前置量。"
+               "\n何时不用：(1) 要天空开敞度比值 — sky_view_factor_analysis（本工具后继）；"
+               "(2) 布尔可见性 — viewshed_analysis。"
+               "\n关键约束：射线遇 nodata 即停（数据外视作无遮挡，披露）；半径 ≤100 像元。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "azimuths": "地平线方位列表（罗盘度，逗号分隔；缺省 '0,45,90,135,180,225,270,315'）",
+               "max_search_radius": "射线搜索半径（像元 1-100，默认 100）",
+           })
+    def horizon_angle_analysis(raster_path: str,
+                               azimuths: str | list[float] | None = None,
+                               max_search_radius: int = 100) -> dict:
+        contract_params: Dict[str, Any] = {"max_search_radius": max_search_radius}
+        if azimuths is not None:
+            contract_params["azimuths"] = (
+                azimuths if isinstance(azimuths, str)
+                else ",".join(str(a) for a in azimuths))
+        params = apply_contract("terrain_horizon_analysis", contract_params)
+        radius_v = int(params["max_search_radius"])
+        az_list = _parse_azimuth_list(params.get("azimuths"), "0,45,90,135,180,225,270,315")
+
+        arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
+            raster_path, None)
+        res, meta = terrain_lib.horizon_angle(
+            arr, cy, cell_size_x=cx, azimuths=az_list,
+            max_search_radius=radius_v, nodata=eff_nodata)
+        payload = {
+            "success": True,
+            "azimuths": res["azimuths"],
+            "azimuth_mean_degrees": {
+                k: round(float(np.nanmean(v)), 6)
+                for k, v in res["horizon"].items()
+            },
+            "max_horizon": {
+                "statistics": compute_raster_stats(res["max"]),
+                "sample": _bounded_sample(res["max"]),
+            },
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, arr.shape[0], arr.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                   Diagnostic(name="radius_cells", value=float(radius_v))))
+        backend = _backend_diagnostic("terrain.horizon_angle", arr.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, "terrain.horizon_angle", tool="horizon_angle_analysis",
+            parameters_applied={
+                "azimuths": ",".join(str(a) for a in az_list),
+                "max_search_radius": radius_v,
+            },
+            crs=crs,
+            diagnostics=diagnostics,
+            transformations=transformations or None,
+            warnings=_non_metric_warning(crs) or None,
+        )
+
+    @tool(registry, name="sky_view_factor_analysis",
+           description=(
+               "DEM 天空可视因子 SVF（Steyn 1980）：SVF = (1/N)Σcos²ψ，ψ 为共用射线"
+               "行走得到的地平线角；平地 = 1、深洼/峡谷 → 0。"
+               "\n何时用：城市热岛/日照/辐射估算输入、山谷雾与通风潜势、景观开敞度制图。"
+               "\n何时不用：(1) 要逐方位地平线角本身 — horizon_angle_analysis；"
+               "(2) 布尔视域 — viewshed_analysis。"
+               "\n关键约束：半径 ≤100 像元；数据缝附近按无遮挡计（SVF 高估，披露）。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "n_azimuths": "方位数（4-64 等角距，默认 16）",
+               "max_search_radius": "地平线射线搜索半径（像元 1-100，默认 100）",
+           })
+    def sky_view_factor_analysis(raster_path: str, n_azimuths: int = 16,
+                                 max_search_radius: int = 100) -> dict:
+        params = apply_contract("terrain_svf_analysis", {
+            "n_azimuths": n_azimuths, "max_search_radius": max_search_radius,
+        })
+        n_az_v = int(params["n_azimuths"])
+        radius_v = int(params["max_search_radius"])
+        arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
+            raster_path, None)
+        res, meta = terrain_lib.sky_view_factor(
+            arr, cy, cell_size_x=cx, n_azimuths=n_az_v,
+            max_search_radius=radius_v, nodata=eff_nodata)
+        payload = {
+            "success": True,
+            "svf": {
+                "statistics": compute_raster_stats(res["svf"]),
+                "sample": _bounded_sample(res["svf"]),
+            },
+            "mean_horizon_degrees": {
+                k: round(float(np.nanmean(v)), 6)
+                for k, v in res["horizon"].items()
+            },
+            "meta": meta,
+        }
+        diagnostics = _base_diagnostics(
+            transform, arr.shape[0], arr.shape[1],
+            extra=(Diagnostic(name="nodata_effective", value=eff_nodata),
+                   Diagnostic(name="n_azimuths", value=float(n_az_v)),
+                   Diagnostic(name="radius_cells", value=float(radius_v))))
+        backend = _backend_diagnostic("terrain.sky_view_factor", arr.size)
+        if backend is not None:
+            diagnostics.append(backend)
+        return _terrain_evidence(
+            payload, "terrain.sky_view_factor", tool="sky_view_factor_analysis",
+            parameters_applied={"n_azimuths": n_az_v, "max_search_radius": radius_v},
             crs=crs,
             diagnostics=diagnostics,
             transformations=transformations or None,

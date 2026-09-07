@@ -2,6 +2,9 @@
 
 VNext：登记地形科学能力（衍生指标/视域/水文/等值线）。产出工件复用
 既有词表（raster_surface / line_feature_set），不新增 artifact 类型。
+
+Terrain V3：追加水平线与天空可视因子能力（terrain_sky_view，地平线角
++ SVF 同族；horizon angle 与 sky view factor 不拆两个能力）。
 """
 from __future__ import annotations
 
@@ -96,5 +99,20 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             output_artifact_types=["raster_surface"],
             compatible_map_models=["raster_surface"],
             purpose_template="地貌形态分类",
+        ),
+
+        # ── Terrain V3：地平线角与天空可视因子（同一能力族，不拆两个）──
+
+        CapabilityDescriptor(
+            id="terrain_sky_view", name="地平线与天空可视因子", category="raster",
+            domain="raster",
+            description=(
+                "地平线角（逐方位最大正仰角，openness 家族射线行走）与天空可视"
+                "因子 SVF（Steyn 1980 的 (1/N)Σcos²ψ 口径）；城市通风/日照/"
+                "辐射与景观开敞度分析输入。"),
+            input_artifact_types=["terrain_surface"],
+            output_artifact_types=["raster_surface"],
+            compatible_map_models=["raster_surface"],
+            purpose_template="地平线与天空可视因子分析",
         ),
 ]
