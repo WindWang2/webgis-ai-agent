@@ -110,9 +110,15 @@ re-derives reasoning each turn and re-validates completion wholesale:
    doc_crosschecker + planner/corpus_worker refinements) declare tool allowlist,
    mutation policy, max rounds/tool calls, heavy-tool budget, wall-time budget,
    model role, expected outputs, and failure behavior; `spawn_subagent` exposes
-   `role` (validated; unknown roles fail closed); role∩caller constraints stay
-   narrowing-only; bounded parallel spawn (semaphore) with per-parent budget
-   roll-up; recursion/budget/cancellation tests pin the semantics.
+   `role` (validated; unknown roles fail closed) and `parallel_tasks` (1-6 batch
+   routed to `run_parallel`; absent = legacy single-spawn path unchanged); the
+   sub-engine's registry is wrapped with a dispatch-membership proxy so the
+   allowlist is enforced at the execution boundary, not only at schema visibility
+   (review R3); role∩caller constraints stay narrowing-only; bounded parallel
+   spawn (semaphore cap 2) with per-parent budget roll-up; recursion/budget/
+   cancellation tests pin the semantics. Known limitation: token-level roll-up is
+   not enforced (the engine returns no usage data) — tool-call/heavy/wall-time
+   budgets are the enforced accounting.
 8. **Map observation completes the loop into the verdict.** The finalizer gains
    validators for: required chart/component presence (`chart_required`), map-model
    compatibility audited at completion (not only composition time), extent
@@ -127,14 +133,31 @@ re-derives reasoning each turn and re-validates completion wholesale:
    map model, template, components, MapSpec/render/observation/verdict/output as
    applicable per seam); chains serialize to bounded sanitized JSONL alongside
    provenance manifests; `chain_completeness()` becomes an offline regression gate
-   (≥95% on key GIS scenarios) wired into replay.
-10. **Evaluation corpus adds a runtime tier.** The 20,088 plan conformance corpus is
-    frozen; a deterministic runtime-tier matrix (failure injection, staleness,
-    style/visibility/chart edits, observation failure, repair outcomes, wrong CRS,
-    invalid geometry, missing/later data, timeout/cancel/overflow, provider
-    fallback — zh/en × paraphrases) extends total coverage ≥20K *runtime-inclusive*
-    with ≥100 deterministic E2E scenarios; gates stay deterministic (no LLM-judge;
-    LLM sampling, if any, is a separate non-gating lane).
+   wired into replay (`chain_completeness_report`). The gate is exercised over a
+   **real-seam scripted scenario** (ToolDispatchService dispatch of the planning
+   tools + real finalizer + persistence), with stages that cannot occur in a
+   headless scenario (model routing, tool surface, map observation, user output,
+   repair-on-clean-run) declared N/A per scenario and disclosed in the report —
+   missing emitters are never silently excused. Known limitation: the
+   completeness figure over live LLM traffic is measurable by the same report
+   once turns persist, but this PR pins the scripted-scenario lane only.
+10. **Evaluation corpus adds a runtime tier — with honest composition.** The
+    20,088 plan conformance corpus is frozen. The runtime tier has two layers,
+    stated separately to avoid inflation (review R3): (a) a **situation-indexed
+    plan-identity regression** — 24 audited runtime situations (expectation codes
+    + regression-suite traceability) × 8 audited families × scopes × zh/en ×
+    utterances = 3,456 cases over 144 unique queries; plan contracts are
+    situation-invariant (pinned), and the situation metadata indexes (does not
+    fake) the regression suites that lock each behavior; (b) a **real execution
+    layer** — 60 scripted cases over the 5 dispatch-observable situations (tool
+    failure, missing data, no-progress, multi-turn dependency, large payload) ×
+    families × data scales, executed through `simulate_agent_loop` on a real
+    registry with error-code/outcome/no-progress assertions. ≥100 E2E scenario
+    definitions (7 bases × 9 variants × zh/en) are deterministic turn-script
+    records consumable by the existing scenario runner. Combined deterministic
+    instances ≥23K; gates stay deterministic (no LLM-judge). Known limitation:
+    situations without dispatch-observable semantics (style edits, cancellation,
+    provider fallback) are locked by their dedicated suites, not by this corpus.
 
 ## Compatibility
 

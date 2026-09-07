@@ -583,3 +583,63 @@ def test_budget_remaining_wall_time_bounded():
     assert b.remaining_wall_time_s() == 0.0
     with pytest.raises(BudgetExceeded):
         b.check_wall_time()
+
+
+# ─── spawn_subagent parallel_tasks 接线（review R3 MAJOR）────────────────
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_parallel_tasks_wired(tool_registry, monkeypatch):
+    """parallel_tasks 经工具面路由到 run_parallel（≤6、fail-closed、批量结果）。"""
+    sid = "sess-v4-parallel"
+    calls = {"n": 0}
+
+    class _FakeBatch:
+        status = "completed"
+        results = []
+
+        def to_dict(self):
+            calls["n"] += 1
+            return {"success": True, "status": "completed", "results": []}
+
+    async def _fake_run_parallel(self, specs, **kwargs):
+        assert 1 <= len(specs) <= 6
+        assert specs[0].task == "t1"
+        assert specs[0].role == "result_verifier"
+        return _FakeBatch()
+
+    import app.services.subagent as sub_mod
+    monkeypatch.setattr(
+        sub_mod.SubagentDispatcher, "run_parallel", _fake_run_parallel,
+    )
+    res = await tool_registry.dispatch(
+        "spawn_subagent",
+        {"task": "ignored",
+         "parallel_tasks": [{"task": "t1", "role": "result_verifier"},
+                            {"task": "t2"}]},
+        session_id=sid,
+    )
+    if not res.get("success"):
+        raise AssertionError(f"unexpected dispatch result: {res}")
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_parallel_tasks_validation(tool_registry):
+    res = await tool_registry.dispatch(
+        "spawn_subagent",
+        {"task": "ignored", "parallel_tasks": [{"task": "t1"}] * 7},
+        session_id="sess-v4-pv",
+    )
+    assert res["success"] is False and res["code"] == "VALIDATION_ERROR"
+    res = await tool_registry.dispatch(
+        "spawn_subagent",
+        {"task": "ignored", "parallel_tasks": [{"role": "x"}]},
+        session_id="sess-v4-pv",
+    )
+    assert res["success"] is False and res["code"] == "VALIDATION_ERROR"
+    res = await tool_registry.dispatch(
+        "spawn_subagent",
+        {"task": "ignored", "parallel_tasks": [{"task": "t", "role": "nope"}]},
+        session_id="sess-v4-pv",
+    )
+    assert res["success"] is False and res["code"] == "VALIDATION_ERROR"

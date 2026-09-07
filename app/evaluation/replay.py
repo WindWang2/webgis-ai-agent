@@ -371,12 +371,14 @@ def chain_completeness_report(
     *,
     min_completeness: float = 0.95,
     na_stages: Optional[Sequence[str]] = None,
+    expected_stages: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """V4 Wave 8（ADR-0104 决策 9）：会话证据链完整性回归面。
 
     从会话 JSONL（trace_store 持久化）读链并跑 `chain_gate` 门 ——
     replay 侧的离线消费入口（链发射/持久化在 turn 收尾完成）。零 LLM、
-    零网络；链缺席 = 空报告（不伪造通过）。
+    零网络；链缺席 = 空报告（不伪造通过）。``expected_stages`` 是场景
+    必须覆盖的阶段集合（场景化回归主判据，见 chain_gate）。
     """
     from app.evaluation.chain_gate import run_chain_gate_for_session
 
@@ -384,4 +386,5 @@ def chain_completeness_report(
         session_id,
         min_completeness=min_completeness,
         na_stages=set(na_stages) if na_stages else None,
+        expected_stages=set(expected_stages) if expected_stages else None,
     )

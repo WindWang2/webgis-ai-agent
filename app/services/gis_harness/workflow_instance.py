@@ -39,6 +39,10 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # ── 词汇表 ───────────────────────────────────────────────────────────────
 
 #: gis_chapter 单键（additive；旧读者忽略）。
@@ -953,6 +957,18 @@ async def maybe_update_workflow_instance(
                 return None
             if rows_fingerprint(fresh.gis_chapter)[:2048] != validated_rows[:2048]:
                 return None
+            # review R3 minor：实例块自身漂移守卫 —— 等锁窗口内另一触发点
+            # 已写过实例块 ⇒ 本次派生基于旧 stored，写回会覆盖其转移记录/
+            # revision（有界观测日志的 lost update）。放弃，让下一触发点
+            # 基于新块重新派生（有新事件时门键必然已变）。
+            fresh_stored = fresh.gis_chapter.get(WORKFLOW_INSTANCE_KEY)
+            if (
+                isinstance(stored, dict)
+                and isinstance(fresh_stored, dict)
+                and str(fresh_stored.get("state_fingerprint") or "")
+                != str(stored.get("state_fingerprint") or "")
+            ):
+                return None
             # review Round-1 #10：锁内契约漂移守卫 —— 等锁窗口内契约被
             # 并发写手（finalize）改过 ⇒ 本次的解除候选基于旧契约，放弃
             # （下一触发点基于新契约重新裁决）。
@@ -986,6 +1002,12 @@ async def maybe_update_workflow_instance(
             await save_session_plan(fresh)
             return block
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn
+        # review R3 minor：与 docstring 一致，失败必须留痕（观测面静默
+        # 失败 = 不可诊断）。
+        logger.warning(
+            "[WorkflowInstance] persist failed session=%s (retry on next trigger)",
+            session_id, exc_info=True,
+        )
         return None
 
 

@@ -98,3 +98,58 @@ def test_combined_corpus_exceeds_20k():
     total = len(build_conformance_corpus()) + len(build_runtime_corpus()) + len(
         get_all_cases())
     assert total >= 23000, f"combined corpus {total} < 23000"
+
+
+def test_plan_corpus_unique_query_honesty():
+    """review R3 MAJOR 诚实计数：plan 层是 144 个唯一查询 × 24 情境标签的
+    **情境索引身份回归** —— 唯一查询数、情境期望码与可追溯性如实断言，
+    不冒充 3K 个独立执行场景。"""
+    cases = build_runtime_corpus()
+    unique_queries = {c.query for c in cases}
+    assert len(unique_queries) >= 140
+    assert all(c.expectation for c in cases)  # 情境元数据全程在场
+    # 同一查询在不同情境标签下的 plan 契约完全一致（身份不随标签漂移）
+    by_query: dict = {}
+    for c in cases:
+        by_query.setdefault(c.query, set()).add(
+            (c.plan_case.expected_task, c.plan_case.expected_recipe))
+    assert all(len(v) == 1 for v in by_query.values())
+
+
+@pytest.mark.asyncio
+async def test_runtime_execution_corpus_real_dispatch():
+    """review R3 MAJOR：真实执行层 —— 60 条案例经 simulate_agent_loop 在
+    真实 registry 上派发（失败注入/缺 ref/重复失败/依赖链/大载荷），
+    全量不变量零违规。"""
+    from app.evaluation.replay import simulate_agent_loop
+    from app.evaluation.runtime_corpus import build_runtime_execution_corpus
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+
+    def echo(v: int = 0, ref: str = "", geojson: object = None) -> dict:
+        return {"success": True, "value": v}
+
+    def make_data(name: str) -> dict:
+        return {"success": True, "ref": f"ref:{name}"}
+
+    def big(n: int = 100) -> dict:
+        return {"success": True, "features": [{"i": i} for i in range(n)]}
+
+    def boom(p: int = 0) -> dict:
+        return {"success": False, "error": "boom"}
+
+    for name, fn, kw in [
+        ("echo", echo, {"side_effect": "cacheable_read"}),
+        ("make_data", make_data, {"side_effect": "state_mutation"}),
+        ("big", big, {"cost": "heavy"}),
+        ("boom", boom, {}),
+    ]:
+        registry.register(name=name, description=name, func=fn, **kw)
+
+    cases = build_runtime_execution_corpus()
+    assert len(cases) >= 60
+    sid = "rtx-exec"
+    for case in cases:
+        report = await simulate_agent_loop(registry, sid, case.script)
+        assert report.invariants_held, (case.case_id, report.violations[:2])

@@ -37,6 +37,7 @@ DROP_OLDEST 与派发期卸载外，没有任何组件真正执行建议。本�
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -335,6 +336,11 @@ OFFLOAD_MIN_TOOL_TOKENS = 256
 #: 单次组装最多卸载条数（有界）。
 OFFLOAD_MAX_ITEMS = 8
 
+#: review R3 MAJOR（perf）：卸载内容去重缓存（session × content-hash → ref）。
+#: 有界；进程内 —— 跨进程重复铸造只是冗余不是错误（ref 面本身会话作用域）。
+_OFFLOAD_DEDUPE_CACHE: Dict[Tuple[str, str], str] = {}
+_OFFLOAD_DEDUPE_CACHE_MAX = 256
+
 
 def _offloaded_view(content: str, new_ref: Optional[str], refs: Sequence[str]) -> str:
     """卸载后的消息视图：卸载披露 + 摘要 + 既有 ref 游标（可解析性不减）。"""
@@ -373,6 +379,10 @@ async def offload_pass(
     decisions: List[Dict[str, Any]] = []
     if over_tokens <= 0:
         return decisions
+    # review R3 MAJOR（perf）：同一内容在每次超预算装配都会重卸载 —— store
+    # 每次铸造新 ref（无去重），长会话上 ref/磁盘无界膨胀。按内容哈希做
+    # 进程内复用（有界 LRU）：同内容复用已铸 ref，只替换视图不新铸。
+    global _OFFLOAD_DEDUPE_CACHE
     candidates: List[Tuple[int, dict]] = []
     for i in range(history_start, len(head)):
         msg = head[i]
@@ -387,17 +397,29 @@ async def offload_pass(
         content = msg["content"]
         refs = _ordered_unique_refs(content)
         new_ref: Optional[str] = None
-        try:
-            parsed = json.loads(content)
-            if isinstance(parsed, (dict, list)) and store is not None:
-                store_fn = getattr(store, "store", None)
-                if store_fn is not None:
-                    new_ref = await store_fn(session_id, parsed, prefix="data")
-        except (ValueError, TypeError):
-            new_ref = None
-        except Exception as e:  # noqa: BLE001 — 卸载失败保留原文（诚实不破坏）
-            logger.debug("offload store failed for %s: %s", session_id, e)
-            new_ref = None
+        content_hash = hashlib.sha256(content.encode("utf-8", "ignore")).hexdigest()
+        cached = _OFFLOAD_DEDUPE_CACHE.get((session_id, content_hash))
+        if cached is not None:
+            new_ref = cached
+        else:
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, (dict, list)) and store is not None:
+                    store_fn = getattr(store, "store", None)
+                    if store_fn is not None:
+                        new_ref = await store_fn(session_id, parsed, prefix="data")
+                        if new_ref:
+                            _OFFLOAD_DEDUPE_CACHE[(session_id, content_hash)] = new_ref
+                            if len(_OFFLOAD_DEDUPE_CACHE) > _OFFLOAD_DEDUPE_CACHE_MAX:
+                                for k in list(_OFFLOAD_DEDUPE_CACHE.keys())[
+                                    : -_OFFLOAD_DEDUPE_CACHE_MAX
+                                ]:
+                                    _OFFLOAD_DEDUPE_CACHE.pop(k, None)
+            except (ValueError, TypeError):
+                new_ref = None
+            except Exception as e:  # noqa: BLE001 — 卸载失败保留原文（诚实不破坏）
+                logger.debug("offload store failed for %s: %s", session_id, e)
+                new_ref = None
         if new_ref is None and len(content) <= MSG_MAX_CHARS:
             continue  # 无处可卸且不超上限 → 不动
         new_content = _offloaded_view(content, new_ref, refs)

@@ -11,9 +11,15 @@ E2E 场景 7 个（目标 ≥100）。
   续跑/披露），每类带机器可读期望码 + **可追溯性**（指向锁定该语义的
   回归套件路径 —— 语料不是自证断言，而是回归地基的索引面）；
 - ``build_runtime_corpus()``：情境 × 语义族（复用 conformance 审定
-  标签：task/recipe/capability 契约）× scope × 语言 × 句式 → 确定性
-  展开 ≥3,000 条 **可执行** plan-tier 案例（GISBenchmarkRunner 真门）
-  + runtime 期望码索引；
+  标签）× scope × 语言 × 句式 → 确定性展开 ≥3,000 条案例。**诚实构成**
+  （review R3）：这是「情境索引的 plan-身份回归」—— 144 个唯一查询 ×
+  24 情境标签，plan 契约随标签不变（同查询同身份由测试钉住）；情境
+  期望码/verdict_gate 是**可追溯元数据**（索引回归套件），不经 runner
+  断言；
+- ``build_runtime_execution_corpus()``：**真实执行层** —— 5 个派发可
+  观察情境（失败注入/缺 ref/重复失败/依赖链/大载荷）× 语义族 × 数据
+  规模 = 60 条案例，经 ``simulate_agent_loop`` 在真实 registry 派发
+  断言（错误码/结果形态/no-progress 原因码）；
 - ``build_e2e_scenario_corpus()``：7 个既有代表性场景 × 变体（续跑/
   编辑/故障注入）× 语言 → ≥100 个 ≥2-turn 复合场景定义。
 
@@ -405,4 +411,134 @@ __all__ = [
     "ScenarioTurn",
     "CompositeScenario",
     "build_e2e_scenario_corpus",
+    "RuntimeExecutionCase",
+    "build_runtime_execution_corpus",
 ]
+
+
+# ── 真实执行层（review R3 MAJOR：情境必须可执行，不是元数据标签）─────────
+
+@dataclass(frozen=True)
+class RuntimeExecutionCase:
+    """一条**真实执行**的 runtime 案例：scripted calls 经
+    ``simulate_agent_loop`` 在真实 registry 上派发（无 LLM/无网络），
+    断言错误码 / 结果形态 / no-progress 原因码。"""
+
+    case_id: str
+    situation_id: str
+    family_id: str
+    description: str
+    script: Tuple[object, ...] = ()   # ScriptedCall 序列（避免循环 import）
+
+
+def _family_payload(family_id: str, scale: int) -> Dict[str, Any]:
+    """家族 → 确定性载荷（规模/形状随家族语义变化 —— 不只是换标签）。"""
+    n = max(3, scale)
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature",
+             "geometry": {"type": "Point",
+                          "coordinates": [104.0 + (i % 10) * 0.01,
+                                          30.5 + (i // 10) * 0.01]},
+             "properties": {
+                 "name": f"{family_id}-{i}",
+                 "value": (i * 7) % 23,
+                 "population": 1000 + i,
+                 "ts": f"2024-01-{(i % 28) + 1:02d}",
+             }}
+            for i in range(n)
+        ],
+    }
+
+
+#: 情境 → 可执行脚本（(tool, args, expect_error_code, expect_outcome) 序列）。
+#: 只包含**派发语义真实对应**的情境 —— 其余情境（样式编辑/取消/降级…）
+#: 的运行时语义由其 traceability 套件在各自夹具中锁定（见
+#: RUNTIME_SITUATIONS），此处不伪造。
+_RUNTIME_EXECUTABLE = (
+    "tool-failure",
+    "missing-data",
+    "no-progress-recovery",
+    "multi-turn-followup",
+    "context-overflow",
+)
+
+_SITUATION_SCRIPTS: Dict[str, Tuple[str, Tuple[Tuple[str, Any, Optional[str], str], ...]]] = {
+    "tool-failure": (
+        "工具失败 → 结构化错误 → 修复参数成功（失败不占重试位）",
+        (
+            ("boom", {"p": 1}, "TOOL_ERROR", "error"),
+            ("echo", {"v": 1}, None, "ok"),
+        ),
+    ),
+    "missing-data": (
+        "引用缺失数据（不存在的 ref）→ 结构化错误",
+        (
+            ("echo", {"geojson": "ref:missing-data-ref"}, None, "error"),
+        ),
+    ),
+    "no-progress-recovery": (
+        "同签名重复失败 → no-progress 原因码（模式检测联动）",
+        (
+            ("boom", {"p": 7}, "TOOL_ERROR", "error"),
+            ("boom", {"p": 7}, "TOOL_ERROR", "error"),
+            ("boom", {"p": 7}, "TOOL_ERROR", "error"),
+        ),
+    ),
+    "multi-turn-followup": (
+        "多轮依赖：产出 → 消费（参数级数据流）",
+        (
+            ("make_data", {"name": "rt-data"}, None, "ok"),
+            ("echo", {"v": 2, "geojson": {"type": "FeatureCollection",
+                                          "features": []}}, None, "ok"),
+        ),
+    ),
+    "context-overflow": (
+        "大结果载荷 → ok（LLM 视图按合约视图有界化，不破坏执行）",
+        (
+            ("big", {"n": 400}, None, "ok"),
+        ),
+    ),
+}
+
+
+def build_runtime_execution_corpus(
+    *,
+    scale_small: int = 12,
+    scale_large: int = 120,
+) -> List[RuntimeExecutionCase]:
+    """真实执行层语料：可执行情境 × 语义族 × 数据规模（确定性展开）。
+
+    与 plan-identity 层的分工：本层每条案例都经 ``simulate_agent_loop``
+    在真实 registry 上派发断言（错误码/结果形态/no-progress）；语义族
+    差异化**载荷规模与形状**（不是换标签）。语言维度不参与 —— 派发语义
+    与查询语言无关（不为计数注水）。
+    """
+    from app.evaluation.replay import ScriptedCall
+
+    families = _select_runtime_families()
+    family_ids = [f.family_id for f in families][:8]
+    cases: List[RuntimeExecutionCase] = []
+    for situation_id, (desc_tpl, steps) in _SITUATION_SCRIPTS.items():
+        for family_id in family_ids:
+            for scale_tag, scale in (("small", scale_small), ("large", scale_large)):
+                script = []
+                for tool, args, err, outcome in steps:
+                    call_args = dict(args)
+                    if ("geojson" in call_args and isinstance(
+                            call_args["geojson"], dict)
+                            and call_args["geojson"].get("features")
+                            and family_id):
+                        call_args["geojson"] = _family_payload(family_id, scale)
+                    script.append(ScriptedCall(
+                        tool, call_args, expect_error_code=err,
+                        expect_outcome=outcome))
+                cases.append(RuntimeExecutionCase(
+                    case_id=f"RTX-{situation_id}-{family_id}-{scale_tag}",
+                    situation_id=situation_id,
+                    family_id=family_id,
+                    description=f"{desc_tpl}（family={family_id}, scale={scale_tag}）",
+                    script=tuple(script),
+                ))
+    return cases

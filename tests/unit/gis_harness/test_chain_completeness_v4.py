@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
+
 
 from app.lib.runtime.chain_emitters import emit_chain, emit_chain_once
 from app.lib.runtime.context import bind_runtime_context
@@ -238,3 +240,112 @@ def test_replay_exposes_chain_completeness_report(tmp_path, monkeypatch):
     assert report["per_chain"][0]["completeness"] == 1.0
     # 无链会话：空报告，不伪造通过
     assert replay.chain_completeness_report(f"{sid}-empty")["passed"] is False
+
+
+# ── 真实 seam 场景（review R3 MAJOR：门必须吃真实链，不是自证环）─────────
+
+@pytest.mark.asyncio
+async def test_real_seam_scenario_gate(tmp_path, monkeypatch):
+    """真实工具路径 turn：ToolDispatchService 真派发 webgis_map_intent /
+    webgis_map_product + 真终验 + 真持久化 → 链含核心阶段（planner/调度/
+    终验/输出族），并经 replay.chain_completeness_report 消费。
+
+    无 LLM 路由/提示面/观察回执的 headless 场景：MODEL_ROUTING /
+    TOOL_SURFACE / MAP_OBSERVATION / USER_OUTPUT 显式 N/A（分母扣除）。
+    """
+    import contextlib
+    import shutil
+    import uuid
+
+    from app.evaluation import replay
+    from app.services.gis_harness import trace_store
+    from app.services.gis_harness.workflow_instance import (
+        maybe_update_workflow_instance,
+    )
+    from app.services.gis_harness.map_completion import maybe_finalize_map_product
+    from app.services.tool_dispatch_service import ToolDispatchService
+    from app.services.session_data import session_data_manager
+
+    sid = f"w8-real-{uuid.uuid4().hex[:8]}"
+    monkeypatch.setenv("MAPSPEC_STORAGE_DIR", str(tmp_path))
+    turn_id = f"w8real-{uuid.uuid4().hex[:8]}"
+    try:
+        await session_data_manager.clear_session(sid)
+        from app.tools import init_tools
+        from app.tools.registry import ToolRegistry
+
+        registry = ToolRegistry()
+        init_tools(registry)
+        service = ToolDispatchService(registry=registry)
+        executed: set = set()
+        fc = {"type": "FeatureCollection", "features": [
+            {"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [104.0 + i * 0.01, 30.6 + (i % 5) * 0.01]},
+             "properties": {"name": f"s{i}", "students": 100 + i}}
+            for i in range(30)
+        ]}
+        ref = await session_data_manager.store(sid, fc, prefix="geojson")
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(bind_runtime_context(
+                turn_id=turn_id, session_id=sid))
+            r1 = await service.dispatch(
+                {"id": "c1", "function": {"name": "webgis_map_intent",
+                 "arguments": {"query": "成都小学分布密度热力图"}}},
+                sid, executed,
+            )
+            assert r1.status == "ok", r1.error_msg
+            # 生产路径：bridge 在 dispatch 后落账 SessionPlan（同一入口）
+            from app.services.session_plan import apply_tool_result
+
+            await apply_tool_result(
+                sid, "webgis_map_intent", r1.raw_result, success=True)
+            r2 = await service.dispatch(
+                {"id": "c2", "function": {"name": "webgis_map_product",
+                 "arguments": {"query": "成都小学分布密度热力图",
+                               "primary_ref": ref}}},
+                sid, executed,
+            )
+            assert r2.status == "ok", r2.error_msg
+            await apply_tool_result(
+                sid, "webgis_map_product", r2.raw_result, success=True,
+                geojson_ref=r2.geojson_ref)
+            # 把全部能力行带到生产终态（与 finalization 场景种子同型）——
+            # DAG 未终态时 finalizer 毫秒级返回 pending（不发链）。
+            from app.services.session_plan import load_session_plan, save_session_plan
+
+            plan2 = await load_session_plan(sid)
+            for row in plan2.gis_chapter.get("data_requirements") or []:
+                row["status"] = "available"
+                row.setdefault("bound_ref", ref)
+            for row in plan2.gis_chapter.get("analysis_steps") or []:
+                row["status"] = "done"
+                row.setdefault("bound_ref", ref)
+            await save_session_plan(plan2)
+            # 生产路径的真实终验触发（bridge/observation 同一入口）
+            completion = await maybe_finalize_map_product(
+                sid, reason="real_seam_test", force=True)
+            assert completion is not None and completion.status in (
+                "complete", "needs_repair", "failed")
+            await maybe_update_workflow_instance(sid, reason="real_seam_test")
+            # 链持久化（bridge settle 同一入口）
+            from app.services.gis_harness.trace_store import persist_turn_chain
+
+            persist_turn_chain(turn_id, session_id=sid)
+        report = replay.chain_completeness_report(
+            sid,
+            expected_stages={
+                "USER_INTENT", "PARSED_INTENT", "TASK_ONTOLOGY",
+                "CANDIDATE_WORKFLOWS", "SELECTED_WORKFLOW",
+                "TOOL_CALLS", "ARGUMENTS", "TOOL_RESULTS",
+                "VERIFICATION", "FINAL_VERDICT",
+            },
+            na_stages={
+                "MODEL_ROUTING", "TOOL_SURFACE",           # 无 LLM/提示面
+                "MAP_OBSERVATION", "USER_OUTPUT",          # 无前端回执/桥收尾
+                "REPAIR",                                   # 干净场景无修复
+            },
+        )
+        assert report["passed"], report["per_chain"][0]
+    finally:
+        await session_data_manager.clear_session(sid)

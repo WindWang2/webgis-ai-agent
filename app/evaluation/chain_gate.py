@@ -34,11 +34,17 @@ def evaluate_chain_gate(
     *,
     min_completeness: float = DEFAULT_MIN_COMPLETENESS,
     na_stages: Optional[Set[str]] = None,
+    expected_stages: Optional[Set[str]] = None,
 ) -> Dict[str, Any]:
     """门裁决（纯函数）。
 
     records: ``chain.as_dict()`` 形状列表（含 ``stages`` / ``completeness`` /
     ``turn_id``）。返回 {passed, min_required, per_chain[], n/a 披露}。
+
+    ``expected_stages``（review R3 MAJOR）：场景必须覆盖的阶段集合 ——
+    场景化回归的主判据（``expected ⊆ covered``）。条件阶段（如 REPAIR
+    仅在修复发生时发射）不应列入 expected。给 expected 时按集合覆盖
+    裁决；否则退回比率门。
     """
     na = {str(s) for s in (na_stages or set())}
     unknown_na = na - {Stage(int(i)).name for i in STAGE_IDS}
@@ -56,21 +62,35 @@ def evaluate_chain_gate(
             effective_total = len(ALL_STAGES)
         covered = len({s for s in stages if s not in na})
         ratio = covered / effective_total
-        chain_pass = ratio >= min_completeness
+        if expected_stages:
+            missing = sorted(expected_stages - stages)
+            chain_pass = not missing
+            per_chain.append({
+                "turn_id": str(rec.get("turn_id") or "")[:64],
+                "covered_stages": sorted(stages),
+                "covered_count": covered,
+                "effective_total": effective_total,
+                "completeness": round(ratio, 4),
+                "missing_expected": missing,
+                "passed": chain_pass,
+            })
+        else:
+            chain_pass = ratio >= min_completeness
+            per_chain.append({
+                "turn_id": str(rec.get("turn_id") or "")[:64],
+                "covered_stages": sorted(stages),
+                "covered_count": covered,
+                "effective_total": effective_total,
+                "completeness": round(ratio, 4),
+                "passed": chain_pass,
+            })
         passed = passed and chain_pass
-        per_chain.append({
-            "turn_id": str(rec.get("turn_id") or "")[:64],
-            "covered_stages": sorted(stages),
-            "covered_count": covered,
-            "effective_total": effective_total,
-            "completeness": round(ratio, 4),
-            "passed": chain_pass,
-        })
     return {
         "passed": passed,
         "min_required": min_completeness,
         "na_stages": sorted(na),
         "unknown_na_stages": sorted(unknown_na),
+        "expected_stages": sorted(expected_stages or set()),
         "chain_count": len(per_chain),
         "per_chain": per_chain,
     }
@@ -81,12 +101,14 @@ def run_chain_gate_for_session(
     *,
     min_completeness: float = DEFAULT_MIN_COMPLETENESS,
     na_stages: Optional[Set[str]] = None,
+    expected_stages: Optional[Set[str]] = None,
 ) -> Dict[str, Any]:
     """会话级门：读持久化链 + 裁决（评测/CI 入口）。"""
     return evaluate_chain_gate(
         load_session_chains(session_id),
         min_completeness=min_completeness,
         na_stages=na_stages,
+        expected_stages=expected_stages,
     )
 
 

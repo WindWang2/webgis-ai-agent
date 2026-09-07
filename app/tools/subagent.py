@@ -83,6 +83,7 @@ def register_subagent_tools(registry: ToolRegistry):
         extra_tools: Optional[list[str]] = None,
         max_rounds: int = 10,
         session_id: Optional[str] = None,
+        parallel_tasks: Optional[list[dict]] = None,
     ) -> dict:
         if not session_id:
             return {
@@ -119,6 +120,56 @@ def register_subagent_tools(registry: ToolRegistry):
                     "code": "VALIDATION_ERROR",
                     "message": str(e),
                 }
+
+        # ADR-0104 决策 7（review R3 MAJOR 接线）：批量并行派发 ——
+        # parallel_tasks（[{task, role?}, ...] ≤6）经 SubagentDispatcher.
+        # run_parallel 执行（信号量 ≤2、父预算汇总、部分失败如实 PARTIAL）。
+        # 单任务/无参走原路径，逐字节兼容。
+        if parallel_tasks:
+            if not isinstance(parallel_tasks, list) or not (
+                1 <= len(parallel_tasks) <= 6
+            ):
+                return {
+                    "success": False,
+                    "code": "VALIDATION_ERROR",
+                    "message": "parallel_tasks 必须是 1-6 个 {task, role?} 对象",
+                }
+            specs = []
+            for i, item in enumerate(parallel_tasks):
+                if not isinstance(item, dict) or not str(
+                        item.get("task") or "").strip():
+                    return {
+                        "success": False,
+                        "code": "VALIDATION_ERROR",
+                        "message": f"parallel_tasks[{i}].task 不能为空",
+                    }
+                item_role = item.get("role") or role
+                if item_role:
+                    try:
+                        get_subagent_role(item_role)
+                    except ValueError as e:
+                        return {
+                            "success": False,
+                            "code": "VALIDATION_ERROR",
+                            "message": f"parallel_tasks[{i}]: {e}",
+                        }
+                specs.append({
+                    "task": str(item["task"]),
+                    "role": item_role,
+                    "max_rounds": max_rounds,
+                })
+            dispatcher = SubagentDispatcher(registry, parent_session_id=session_id)
+            from app.services.subagent import SubagentTaskSpec
+
+            batch = await dispatcher.run_parallel([
+                SubagentTaskSpec(
+                    task=str(s["task"]),
+                    role=s.get("role"),
+                    max_rounds=max_rounds,
+                )
+                for s in specs
+            ])
+            return batch.to_dict()
 
         dispatcher = SubagentDispatcher(registry, parent_session_id=session_id)
         result = await dispatcher.run(

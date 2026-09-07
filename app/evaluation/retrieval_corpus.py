@@ -22,6 +22,13 @@
 ``capability_tool_map`` 反查 + registry 可见性/tier 过滤（与
 runtime_metrics.relevant_tools_for_case 同一真相，绝不复制 GIS 语义）。
 
+**度量语义（review R3 MAJOR 诚实定界）**：期望工具与选择器共享
+capability→tool 投影，因此本语料度量的是「capability 标注 → 工具面
+投影完备性」（recall@30 ≈ 投影完整度、tier-3 泄漏 = 0、schema 字节
+预算），**不是**开环 query→工具检索质量 —— 后者需要独立于选择器
+映射的人工标注（future work）。recall@5 下限是实测保守钉值，防投影
+退化；勿将其解读为语义检索精度。
+
 规模契约：全量 ≥ MIN_CORPUS_SIZE（2000）；同构建必同输出；id 全局唯一。
 """
 

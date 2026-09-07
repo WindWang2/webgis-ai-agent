@@ -311,9 +311,13 @@ V4 在既有契约（Recipe/WorkflowProfile、ToolDescriptor、ArtifactContract�
 - 链持久化：会话 JSONL（`trace_store`，≤64 turn/会话，
   `GIS_TRACE_PERSIST=0` 关停）→ `chain_gate`（≥0.95，N/A 阶段显式
   披露，缺发射绝不伪装）。
-- Runtime 语料：24 情境 × 语义族 × scope × zh/en × 句式 = 3,456 条
-  可执行 plan-tier 案例（`runtime_corpus.py`，含回归套件可追溯性）+
-  126 个 ≥2-turn 复合 E2E 场景；组合确定性语料 ≥23K。
+- Runtime 语料（诚实构成，review R3）：两层 —— (a) 情境索引 plan-身份
+  回归：24 人审定情境 × 语义族 × scope × zh/en × 句式 = 3,456 条案例
+  （144 个唯一查询 × 情境标签；情境期望码是回归套件的可追溯索引，
+  plan 契约随标签不变由测试钉住）；(b) 真实执行层：5 个派发可观察
+  情境 × 家族 × 数据规模 = 60 条案例经 `simulate_agent_loop` 真实派发
+  断言。126 个 ≥2-turn 复合 E2E 场景定义（确定性 turn 脚本记录）；
+  组合确定性语料 ≥23K。
 
 ### 兼容性红线（V4 全量）
 
