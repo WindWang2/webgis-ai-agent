@@ -618,3 +618,32 @@ def test_cv_z_count_excludes_nonfinite():
     assert report.z_count <= report.n_samples
     if report.z_score_mean is not None:
         assert np.isfinite(report.z_score_mean)
+
+
+def test_cv_z_count_actually_filters_nonfinite(monkeypatch):
+    """Round-2 MINOR-a：真实注入非有限 z（退化方差 → inf）验证过滤。"""
+    import numpy as np
+
+    from app.lib.geo_analysis import kriging as kmod
+
+    rng = np.random.default_rng(5)
+    xy = rng.uniform(0.0, 5_000.0, size=(60, 2))
+    vals = np.sin(xy[:, 0] / 400.0) + rng.normal(0, 0.05, 60)
+
+    real_ok = kmod.ordinary_kriging
+
+    def patched(xy_train, v_train, targets, g, k=12, **kw):
+        res = real_ok(xy_train, v_train, targets, g, k=k, **kw)
+        # 人造非有限校准输入：首个测试点方差=0 → z=±inf；第二个=NaN
+        if res.variances.size >= 2:
+            res.variances[0] = 0.0
+            res.variances[1] = np.nan
+        return res
+
+    monkeypatch.setattr(kmod, "ordinary_kriging", patched)
+    report = kmod.cross_validate_kriging(xy, vals, model="spherical",
+                                         folds=3, k=10)
+    assert report.z_count > 0
+    assert report.z_count < report.n_samples        # 至少剔除了注入的坏点
+    if report.z_score_mean is not None:
+        assert np.isfinite(report.z_score_mean)

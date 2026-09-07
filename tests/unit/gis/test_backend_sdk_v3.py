@@ -401,6 +401,22 @@ class TestUncertaintyProducerTests:
         assert any("uncertainty producer test node missing" in i for i in issues)
         reset_algorithm_registry()
 
+    def test_over_limit_entries_rejected(self):
+        """Round-2 MINOR-b：超过 6 条 / 超长键 → 类型化拒绝（不静默截断）。"""
+
+        with pytest.raises(ValueError):
+            self._descriptor(uncertainty_producer_tests={
+                f"k{i}": "tests/unit/gis/test_backend_sdk_v3.py::TestUncertaintyProducerTests"
+                for i in range(7)
+            })
+        long_key = "x" * 33
+        with pytest.raises(ValueError):
+            self._descriptor(uncertainty_producer_tests={long_key: "tests/unit/gis/test_backend_sdk_v3.py::T"})
+        long_node = "tests/unit/gis/test_backend_sdk_v3.py::" + "y" * 200
+        with pytest.raises(ValueError):
+            self._descriptor(uncertainty_producer_tests={
+                "scalar_uncertainty": long_node})
+
     def test_valid_producer_passes(self, sdk_registry):
         from app.lib.gis.algorithm_registry import reset_algorithm_registry
 
