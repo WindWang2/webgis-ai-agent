@@ -29,6 +29,18 @@ const store: Record<string, unknown> = {
   setEditingLayerId,
   setActiveLeftTab,
   theme: 'dark',
+  // Workbench V4 projection inputs（默认：无分组/无锁定/无选择/无隔离）
+  layerGroups: [],
+  layerGroupMembership: {},
+  lockedLayerIds: [],
+  selectedLayerIds: [],
+  isolatedLayerId: null,
+  isolatedFrom: null,
+  toggleLayerSelected: vi.fn(),
+  toggleLayerLocked: vi.fn(),
+  createLayerGroup: vi.fn(() => 'wg-test'),
+  assignLayersToGroup: vi.fn(),
+  toggleGroupCollapsed: vi.fn(),
 };
 
 const mutationMocks = vi.hoisted(() => ({

@@ -23,6 +23,7 @@ const focusLayer = vi.fn();
 
 // A mutable store the component reads from. Tests swap `layers` per case via
 // setStoreLayers(); the selector returns whatever the current store holds.
+// Workbench V4: projection inputs default to "no groups / no lock / no selection".
 const store: Record<string, unknown> = {
   layers: [] as Layer[],
   toggleLayer,
@@ -31,6 +32,19 @@ const store: Record<string, unknown> = {
   reorderLayers,
   focusLayer,
   theme: 'dark',
+  layerGroups: [],
+  layerGroupMembership: {},
+  lockedLayerIds: [],
+  selectedLayerIds: [],
+  isolatedLayerId: null,
+  isolatedFrom: null,
+  setActiveLeftTab: vi.fn(),
+  setEditingLayerId: vi.fn(),
+  toggleLayerSelected: vi.fn(),
+  toggleLayerLocked: vi.fn(),
+  createLayerGroup: vi.fn(() => 'wg-test'),
+  assignLayersToGroup: vi.fn(),
+  toggleGroupCollapsed: vi.fn(),
 };
 
 function setStoreLayers(layers: Layer[]) {

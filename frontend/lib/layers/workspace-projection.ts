@@ -51,19 +51,6 @@ export interface ProjectWorkspaceInput {
   search?: string;
 }
 
-function rowOf(
-  layer: Layer,
-  input: ProjectWorkspaceInput,
-): WorkspaceRow {
-  return {
-    layer,
-    groupId: input.membership[layer.id] ?? null,
-    semanticGroup: layer.group || 'default',
-    locked: !!input.lockedLayerIds?.includes(layer.id),
-    selected: !!input.selectedLayerIds?.includes(layer.id),
-  };
-}
-
 function matchesSearch(row: WorkspaceRow, search: string): boolean {
   if (!search) return true;
   const needle = search.trim().toLowerCase();
@@ -81,7 +68,13 @@ function matchesSearch(row: WorkspaceRow, search: string): boolean {
  * - search 过滤行（不折叠区：命中 0 行的区仍展示抬头，与 QGIS 一致）。
  */
 export function projectWorkspace(input: ProjectWorkspaceInput): WorkspaceProjection {
-  const { layers, groups, membership } = input;
+  // 边界健壮性：部分消费方（测试/mock、渐进接入路径）可能缺 workbench
+  // 字段 —— 投影层按「无分组/无锁定/无选择」缺省，绝不抛错。
+  const layers = input.layers ?? [];
+  const groups = input.groups ?? [];
+  const membership = input.membership ?? {};
+  const lockedLayerIds = input.lockedLayerIds ?? [];
+  const selectedLayerIds = input.selectedLayerIds ?? [];
   const search = input.search?.trim() ?? '';
 
   const byGroup = new Map<string | null, WorkspaceRow[]>();
@@ -89,7 +82,13 @@ export function projectWorkspace(input: ProjectWorkspaceInput): WorkspaceProject
   byGroup.set(null, []);
 
   for (const layer of layers) {
-    const row = rowOf(layer, input);
+    const row = {
+      layer,
+      groupId: membership[layer.id] ?? null,
+      semanticGroup: layer.group || 'default',
+      locked: lockedLayerIds.includes(layer.id),
+      selected: selectedLayerIds.includes(layer.id),
+    };
     if (!matchesSearch(row, search)) continue;
     const gid = membership[layer.id] ?? null;
     // 用户的 membership 指向已删除的组 → 视作未分组（组实体离场即失效）。

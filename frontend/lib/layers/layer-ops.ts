@@ -135,6 +135,29 @@ export async function duplicateStyle(fromLayerId: string, toLayerId: string): Pr
   }
 }
 
+/**
+ * 粘贴样式（Layer Workspace 行内「复制样式/粘贴样式」流）：把剪贴板样式
+ * 投影到目标层（本地 store 立即生效；spec 承载层走 patch_layer_style 持久
+ * 通道）。与 duplicateStyle 同一条持久化纪律。
+ */
+export async function pasteStyle(
+  style: Record<string, unknown>,
+  toLayerId: string,
+): Promise<void> {
+  const state = useHudStore.getState();
+  const to = state.layers.find((l) => l.id === toLayerId);
+  if (!to) return;
+  if (isLocked(toLayerId)) return;
+  useHudStore.getState().updateLayer(toLayerId, { style: { ...style } });
+  if (to._mapspecLayerId) {
+    try {
+      await commitLayerStyleAndCommit(toLayerId, layerStyleToPaint(style as Record<string, unknown>));
+    } catch (err) {
+      devOnly.warn('[layer-ops] paste style commit failed:', err);
+    }
+  }
+}
+
 /** LayerStyle → MapSpec paint 最小投影（与 layer-style-panel 同款字段族）。 */
 function layerStyleToPaint(style: Record<string, unknown>): Record<string, unknown> {
   const paint: Record<string, unknown> = {};
