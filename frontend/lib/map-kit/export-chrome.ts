@@ -1676,10 +1676,14 @@ export function drawChromeChartPanel(
 
   // V4：词表外 kind（如 planned violin）诚实降级 —— 标题条已画，正文只
   // 放一行说明（不绘制图形、不生成空组件假成功）。
-  if (!DRAWN_CHART_KINDS.has(chart.type)) {
+  // 空数据披露同标准（rose/radar/donut 等数据不足时不画空绘图区）。
+  const drawEmptyDisclosure = (reason: string) => {
     ctx.fillStyle = labelColor;
     ctx.font = `${d.scalePx(11)}px sans-serif`;
-    _text(d, '该图表类型暂不支持导出', plotX + plotW / 2, plotY + plotH / 2, 'center');
+    _text(d, reason, plotX + plotW / 2, plotY + plotH / 2, 'center');
+  };
+  if (!DRAWN_CHART_KINDS.has(chart.type)) {
+    drawEmptyDisclosure('该图表类型暂不支持导出');
     return;
   }
 
@@ -1878,17 +1882,17 @@ export function drawChromeChartPanel(
     ctx.stroke();
     drawXLabels((i) => chart.data[i]?.name ?? '', n);
   } else if (chart.type === 'histogram') {
-    // 同 bar，barCategoryGap 0 视觉 —— 条紧贴（slot 全宽，1px 视觉缝）
+    // 同 bar，barCategoryGap 0 视觉 —— 条紧贴（slot 全宽，1px 视觉缝）。
+    // 分箱计数从 0 起基线（min 基线会把最小非零 bin 画成零高度条 —— 数据失真）
     const values = chart.data.map((p) => p.value ?? 0);
     const maxV = Math.max(...values, 0);
-    const minV = Math.min(...values, 0);
-    const span = maxV - minV || 1;
+    const span = maxV || 1;
     drawGrid();
     const n = chart.data.length;
     const slotW = plotW / Math.max(n, 1);
     chart.data.forEach((p, i) => {
       const v = p.value ?? 0;
-      const h = ((v - minV) / span) * plotH;
+      const h = (v / span) * plotH;
       ctx.fillStyle = CHART_COLORS[i % CHART_COLORS.length];
       ctx.fillRect(plotX + i * slotW + d.scalePx(0.5), plotY + plotH - h, Math.max(d.scalePx(1), slotW - d.scalePx(1)), h);
     });
@@ -1896,6 +1900,9 @@ export function drawChromeChartPanel(
   } else if (chart.type === 'donut') {
     // 饼图 + 内半径白圈（0.6 倍）—— 与 live donut innerRadius 同视觉
     const total = chart.data.reduce((s, p) => s + (p.value ?? 0), 0);
+    if (total <= 0) {
+      drawEmptyDisclosure('暂无数据');
+    }
     if (total > 0) {
       const cx = plotX + plotW / 2;
       const cy = plotY + plotH / 2;
@@ -1926,6 +1933,9 @@ export function drawChromeChartPanel(
       : [{ name: 'value', data: chart.data }];
     const cats = seriesList[0]?.data.map((p) => p.name) ?? [];
     const k = cats.length;
+    if (k < 3) {
+      drawEmptyDisclosure('暂无数据（雷达图至少需要 3 个轴）');
+    }
     if (k >= 3) {
       const values = seriesList.flatMap((s) => s.data.map((p) => p.value ?? 0));
       const maxV = Math.max(...values, 0) || 1;
@@ -1984,7 +1994,9 @@ export function drawChromeChartPanel(
     // 极区扇形：角度等分（2π/n），半径 ∝ 值（0 基线正则化）
     const values = chart.data.map((p) => p.value ?? 0);
     const maxV = Math.max(...values, 0);
-    if (maxV > 0) {
+    if (maxV <= 0) {
+      drawEmptyDisclosure('rose');
+    } else {
       const cx = plotX + plotW / 2;
       const cy = plotY + plotH / 2;
       const R = Math.min(plotW, plotH) / 2 - d.scalePx(6);
@@ -2079,14 +2091,16 @@ export function drawChromeChartPanel(
         _text(d, _clipText(ctx, r.name, gutterW - d.scalePx(4)), plotX, plotY + ri * cellH + cellH / 2 + d.scalePx(3), 'left');
       }
     });
-    // 列标签（首/中/尾）
+    // 列标签（首/中/尾）—— 上移进绘图区底部（heat_matrix 无轴带预算，
+    // 12px 正好是面板 padding：贴边画会压到面板边框）
     const colNames = rowsSrc[0]?.data.map((p) => p.name) ?? [];
     ctx.fillStyle = labelColor;
     ctx.font = `${d.scalePx(9)}px sans-serif`;
     const nc = colNames.length;
-    if (nc > 0) _text(d, _clipText(ctx, colNames[0], cellW), gridX, plotY + plotH + d.scalePx(12), 'left');
-    if (nc > 2) _text(d, _clipText(ctx, colNames[Math.floor(nc / 2)], cellW), gridX + gridW / 2, plotY + plotH + d.scalePx(12), 'center');
-    if (nc > 1) _text(d, _clipText(ctx, colNames[nc - 1], cellW), gridX + gridW, plotY + plotH + d.scalePx(12), 'right');
+    const colLabelY = plotY + plotH - d.scalePx(4);
+    if (nc > 0) _text(d, _clipText(ctx, colNames[0], cellW), gridX, colLabelY, 'left');
+    if (nc > 2) _text(d, _clipText(ctx, colNames[Math.floor(nc / 2)], cellW), gridX + gridW / 2, colLabelY, 'center');
+    if (nc > 1) _text(d, _clipText(ctx, colNames[nc - 1], cellW), gridX + gridW, colLabelY, 'right');
   } else if (chart.type === 'kpi_card') {
     // 2 列卡片网格（大数字 + 小标签，最多 4 个 —— live RenderKpiCards 同式）
     const items = chart.data.slice(0, 4);
