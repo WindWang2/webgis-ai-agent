@@ -26,7 +26,8 @@ from ..diagnostics import DiagnosticCode, ExtensionDiagnostic
 from .tool import ToolExtensionSpec
 
 _VALID_SCIENTIFIC_STATUS = frozenset({"", "EXPERIMENTAL", "VALIDATED", "PRODUCTION", "DEPRECATED"})
-_VALID_RUNTIME_STATUS = frozenset({"native", "planned", "unavailable"})
+# 扩展算法的 runtime_status 由 SDK 固定为 native（绑定本扩展工具）；
+# planned/unavailable 是核心目录语义，扩展声明层不暴露，避免误导。
 
 
 @dataclass
@@ -86,10 +87,22 @@ class AlgorithmExtensionSpec:
         known_tools: Optional[frozenset[str]] = None,
     ) -> list[ExtensionDiagnostic]:
         diagnostics: list[ExtensionDiagnostic] = []
-        if not self.id or not self.id.replace("_", "").isalnum() or self.id[0].isdigit():
+        from .identifier import NAME_RE
+
+        if not NAME_RE.match(self.id or ""):
             diagnostics.append(
                 ExtensionDiagnostic.error(
                     DiagnosticCode.MANIFEST_INVALID, f"algorithm id {self.id!r} must be snake_case identifier"
+                )
+            )
+        if not self.tool_candidates:
+            # Round-1 审计 MINOR-3：runtime_status=native 且无绑定工具的
+            # 算法会在 resolver/manifest 层静默不可用——投影期 fail closed。
+            diagnostics.append(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"algorithm {self.id!r}: tool_candidates is required "
+                    "(extension algorithms must bind to a registered, namespaced tool)",
                 )
             )
         if self.scientific_status not in _VALID_SCIENTIFIC_STATUS:

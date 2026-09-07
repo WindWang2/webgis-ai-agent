@@ -62,7 +62,7 @@ class ToolExtensionSpec:
     description: str
     func: Callable[..., Any]
     summary: str = ""
-    tier: int = 2
+    tier: int = 1
     domains: list[str] = field(default_factory=list)
     execution_policy: Optional[str] = None
     timeout: Optional[float] = None
@@ -125,7 +125,9 @@ class ToolExtensionSpec:
 
     def validate(self) -> list[ExtensionDiagnostic]:
         diagnostics: list[ExtensionDiagnostic] = []
-        if not self.name or not self.name.replace("_", "").isalnum() or self.name[0].isdigit():
+        from .identifier import NAME_RE
+
+        if not NAME_RE.match(self.name or ""):
             diagnostics.append(
                 ExtensionDiagnostic.error(
                     DiagnosticCode.MANIFEST_INVALID,
@@ -165,6 +167,16 @@ class ToolExtensionSpec:
                     DiagnosticCode.MANIFEST_INVALID,
                     "extension tools cannot declare destructive side_effect "
                     "(map to tier-3 core confirmation flow instead)",
+                )
+            )
+        if self.tier == 2 and not self.domains:
+            # Round-1 审计 M6：tier 2 + 空 domains ⇒ 模型永不可见（目录按
+            # domain 命中选择）。fail closed 而不是静默失效。
+            diagnostics.append(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"tool {self.name!r}: tier 2 requires non-empty domains "
+                    "(tier 1 is always in catalog)",
                 )
             )
         if self.cost not in _VALID_COSTS:

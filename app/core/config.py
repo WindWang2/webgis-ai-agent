@@ -132,6 +132,7 @@ class Settings(BaseSettings):
     EXTENSIONS_BLOCK: str = ""
     EXTENSIONS_BUILTIN_IDS: str = ""
     EXTENSION_PERMISSION_GRANTS: str = ""
+    EXTENSIONS_ACTIVATE_UNTRUSTED: bool = False
     EXTENSION_FEATURE_FLAGS: str = "{}"
     EXTENSION_SETTINGS_JSON: str = "{}"
 

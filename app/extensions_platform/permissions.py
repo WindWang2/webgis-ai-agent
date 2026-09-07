@@ -6,7 +6,8 @@
 - 权限失败必须 typed（:class:`ExtensionPermissionDenied`），不得静默降级。
 - tool surface 继承扩展权限：扩展工具的调用被 SDK 包裹层在投影期绑定
   授权检查，核心 ToolRegistry 无需感知扩展存在。
-- 子代理只能收窄：提供 :func:`narrow_grants` 求交集，不存在扩权路径。
+- 子代理只能收窄：:meth:`PermissionGrantSet.intersect` 求交集；授权集合
+  在注册期冻结进工具包裹层，进程内不存在扩权路径。
 
 V1 权限词表固定（新增须提升 EXTENSION API 主版本）。``filesystem_*`` 与
 ``external_process`` 在当前 trusted-code 边界下只能约束 SDK 提供的辅助

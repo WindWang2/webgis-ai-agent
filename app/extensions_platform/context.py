@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any, Callable
 
 from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
@@ -46,6 +47,8 @@ class ExtensionContext:
         self._tool_registry = tool_registry
         self._ledger = ledger
         self._registered: dict[str, set[str]] = {}
+        # 扩展目录（host 注入，load_sibling 用）；可能为 None（测试直构）。
+        self._module_dir: Any = None
 
     # ── 声明核对 ──────────────────────────────────────────────────────
     def _require_declared(self, section: str, key: str) -> None:
@@ -308,6 +311,19 @@ class ExtensionContext:
         comp_type = payload.get("type")
         if not isinstance(comp_type, str) or not comp_type.startswith(f"{self.manifest.namespace}_"):
             payload["type"] = f"{self.manifest.namespace}_{comp_type or spec.id}"
+        # Round-1 审计 M8：by_type 是 last-wins 槽位——不预检就会静默
+        # 偷走同前缀已有组件的类型索引（undo 也无法恢复被遮蔽的映射）。
+        existing_by_type = registry.get_by_type(payload["type"])
+        if existing_by_type is not None:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.REGISTRY_PROJECTION_COLLISION,
+                    f"component type {payload['type']!r} already mapped to "
+                    f"{existing_by_type.id!r} (type slots are exclusive; pick a "
+                    "distinct type within your namespace)",
+                    extension_id=self.extension_id,
+                )
+            )
         if payload.get("runtime_status") not in (None, "planned", "unavailable"):
             raise ExtensionPlatformError(
                 ExtensionDiagnostic.error(
@@ -317,6 +333,9 @@ class ExtensionContext:
                 )
             )
         payload["runtime_status"] = payload.get("runtime_status") or "planned"
+        # Round-1 审计 MINOR-7：planned 组件继承默认 supported_outputs
+        # （interactive/png/pdf）会虚假宣称导出能力——强制清空。
+        payload["supported_outputs"] = []
         try:
             from app.lib.cartography.component_registry import MapComponentDescriptor
 
@@ -360,6 +379,32 @@ class ExtensionContext:
             from app.lib.cartography.model_library import MapModel
 
             model = MapModel.model_validate(payload)
+        except Exception as exc:  # noqa: BLE001
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.REGISTRY_PROJECTION_FAILED,
+                    f"map model {model_id!r} rejected by MapModelRegistry: {exc}",
+                    extension_id=self.extension_id,
+                )
+            ) from exc
+        # Round-1 审计 O3：悬空别名/fallback 会被 runtime manifest 判 fatal。
+        dangling = [
+            alias for alias in model.aliases
+            if alias != model_id and registry.get(alias) is None
+        ]
+        fallback = getattr(model, "fallback_model_id", None)
+        if fallback and fallback != model_id and registry.get(fallback) is None:
+            dangling.append(fallback)
+        if dangling:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.REGISTRY_PROJECTION_COLLISION,
+                    f"map model {model_id!r} has dangling references {dangling} "
+                    "(aliases/fallback must point at registered models)",
+                    extension_id=self.extension_id,
+                )
+            )
+        try:
             registry.register(model)
         except Exception as exc:  # noqa: BLE001
             raise ExtensionPlatformError(
@@ -420,6 +465,27 @@ class ExtensionContext:
         diagnostics = spec.validate()
         if any(d.severity.value == "error" for d in diagnostics):
             raise ExtensionPlatformError(diagnostics[0])
+        # Round-1 审计 O3：recipe 悬空 capability 引用会被 runtime manifest
+        # 编译判 fatal（启动期 RuntimeError）——在投影期先校验，fail closed
+        # 且只影响本扩展。
+        from app.lib.gis.capability_registry import get_capability_registry
+
+        known_caps = set(get_capability_registry().all_ids)
+        for recipe in spec.recipes:
+            refs = set(getattr(recipe, "preferred_analysis", None) or [])
+            refs |= set(getattr(recipe, "optional_analysis", None) or [])
+            for extra in (getattr(recipe, "task_optional_analysis", None) or {}).values():
+                refs |= set(extra or [])
+            unknown = sorted(refs - known_caps)
+            if unknown:
+                raise ExtensionPlatformError(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.REGISTRY_PROJECTION_COLLISION,
+                        f"recipe {recipe.id!r} references unknown capabilities "
+                        f"{unknown} (would fatally fail runtime manifest compile)",
+                        extension_id=self.extension_id,
+                    )
+                )
         registry = get_recipe_registry()
         projected_ids: list[str] = []
         for recipe in spec.recipes:
@@ -456,3 +522,50 @@ class ExtensionContext:
     # ── 供宿主核对声明 ↔ 实际 ────────────────────────────────────────
     def registered_ids(self) -> dict[str, set[str]]:
         return {k: set(v) for k, v in self._registered.items()}
+
+    def load_sibling(self, module_name: str) -> Any:
+        """加载扩展目录内的兄弟模块（扩展目录不在 sys.path 上）。
+
+        Round-1 审计 minor15：此前多文件扩展必须手写 importlib 样板
+        （示例包的 _load_sibling）。SDK 现提供官方入口：模块名确定性
+        （指纹化前缀，杜绝跨扩展串名），宿主负责清理。
+        """
+        import importlib.util
+
+        if not self._module_dir:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.ENTRY_POINT_FAILED,
+                    "load_sibling unavailable: module directory not recorded",
+                    extension_id=self.extension_id,
+                )
+            )
+        target = self._module_dir / f"{module_name}.py"
+        if not target.is_file():
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.ENTRY_POINT_MISSING,
+                    f"sibling module {module_name!r} not found in {str(self._module_dir)!r}",
+                    extension_id=self.extension_id,
+                )
+            )
+        # 扩展目录内不允许子路径逃逸（与 manifest entry_point 同规则）。
+        if not target.resolve().is_relative_to(self._module_dir.resolve()):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.ENTRY_POINT_MISSING,
+                    f"sibling module {module_name!r} escapes the extension directory",
+                    extension_id=self.extension_id,
+                )
+            )
+        qualname = f"{self._module_dir.name.replace('-', '_')}__{module_name}"
+        if qualname in sys.modules:
+            return sys.modules[qualname]
+        import sys as _sys
+
+        spec = importlib.util.spec_from_file_location(qualname, target)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        _sys.modules[qualname] = module
+        spec.loader.exec_module(module)
+        return module

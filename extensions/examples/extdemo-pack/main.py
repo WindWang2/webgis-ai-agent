@@ -6,7 +6,7 @@
   投影 / 卸载零残留）。
 
 内容（与 manifest.json 声明一一对应，声明 ↔ 注册 fail closed）：
-- 2 个纯计算工具（离线、确定性、tier 2）；
+- 2 个纯计算工具（离线、确定性、tier 1 常驻目录）；
 - 1 个 EXPERIMENTAL 算法（Polsby-Popper 紧凑度，带数值 smoke cases）；
 - 1 个离线栅格瓦片目录 provider（adapter 见 tile_catalog.py）；
 - 1 个 planned 制图组件（extension 组件不得自称 native）；
@@ -78,7 +78,7 @@ BBOX_AREA_TOOL = ToolExtensionSpec(
     ),
     func=_bbox_area_run,
     summary="bbox 面积（示例：纯计算工具）",
-    tier=2,
+    tier=1,
     side_effect="pure",
     deterministic=True,
     idempotent=True,
@@ -152,7 +152,7 @@ POLYGON_COMPACTNESS_TOOL = ToolExtensionSpec(
     ),
     func=_polygon_compactness_run,
     summary="多边形紧凑度（示例：纯计算工具）",
-    tier=2,
+    tier=1,
     side_effect="pure",
     deterministic=True,
     idempotent=True,

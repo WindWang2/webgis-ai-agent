@@ -27,6 +27,8 @@ from .trust import DECLARABLE_TRUST_LEVELS
 # 空间、Python 标识符、文件系统路径产生歧义。
 _TOKEN_RE = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
+# 单字符名合法（id 尾段允许 1 个字符）；namespace 保持最短 2。
+_SHORT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 # 保留命名空间：与核心子系统 / 运行时组件撞名的一律拒绝。
 RESERVED_NAMESPACES = frozenset(
@@ -62,8 +64,20 @@ class ToolDeclaration(_StrictModel):
     name: str = Field(..., description="工具名（不含命名空间前缀；投影为 <ns>_<name>）")
     description: str
     summary: str = ""
-    tier: int = Field(default=2, ge=1, le=2, description="扩展工具禁入 tier 3（安全 chokepoint）")
+    tier: int = Field(default=1, ge=1, le=2, description="扩展工具禁入 tier 3（安全 chokepoint）")
+    domains: list[str] = Field(default_factory=list, description="tier 2 工具必须至少声明一个 domain")
     side_effect: str = "unclassified"
+
+    @model_validator(mode="after")
+    def _tier2_needs_domains(self) -> "ToolDeclaration":
+        # Round-1 审计 M6/A-1：tier 2 只在 domain 命中时进目录；空 domains
+        # 的 tier 2 工具对模型永不可见（静默失效）。fail closed。
+        if self.tier == 2 and not self.domains:
+            raise ValueError(
+                f"tool {self.name!r}: tier 2 requires at least one domain "
+                "(or use tier 1 for always-catalog)"
+            )
+        return self
 
     @field_validator("name")
     @classmethod
@@ -101,9 +115,16 @@ class DataProviderDeclaration(_StrictModel):
 
 class CartographyItemDeclaration(_StrictModel):
     kind: str = Field(..., description="component | model | theme")
-    id: str
+    id: str = Field(..., description="条目 id（投影时加 <ns>_ 前缀；snake_case）")
     description: str = ""
     runtime_status: str = "planned"
+
+    @field_validator("id")
+    @classmethod
+    def _item_id_shape(cls, v: str) -> str:
+        if not _SHORT_NAME_RE.match(v):
+            raise ValueError(f"cartography item id {v!r} must match {_SHORT_NAME_RE.pattern}")
+        return v
 
     @field_validator("kind")
     @classmethod
@@ -162,6 +183,13 @@ class GisExtensionManifest(BaseModel):
     )
 
     # ── 结构校验（全部 fail closed，错误消息可读） ─────────────────────
+    @field_validator("name")
+    @classmethod
+    def _name_shape(cls, v: str) -> str:
+        if not _SHORT_NAME_RE.match(v):
+            raise ValueError(f"name {v!r} must match {_SHORT_NAME_RE.pattern}")
+        return v
+
     @field_validator("namespace")
     @classmethod
     def _ns_valid(cls, v: str) -> str:
@@ -169,6 +197,21 @@ class GisExtensionManifest(BaseModel):
             raise ValueError(f"namespace {v!r} must match {_TOKEN_RE.pattern}")
         if v in RESERVED_NAMESPACES:
             raise ValueError(f"namespace {v!r} is reserved")
+        return v
+
+    @field_validator("entry_point")
+    @classmethod
+    def _entry_point_shape(cls, v: str) -> str:
+        # Round-1 审计 F1：entry_point 曾可写 "../evil" 把包外代码拉进
+        # import 面（逃逸指纹覆盖）。只允许标识符片段与一层层子路径。
+        if not v:
+            return v  # 空串 = 包根（__init__.py 模式），host 侧处理
+        parts = v.split("/")
+        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part) for part in parts):
+            raise ValueError(
+                f"entry_point {v!r} must be identifier segments separated by '/' "
+                "(no '..', absolute paths, or special characters)"
+            )
         return v
 
     @field_validator("trust")
@@ -204,7 +247,8 @@ class GisExtensionManifest(BaseModel):
 
         if self.maximum_core_version is not None:
             lo, hi = parse_version(self.minimum_core_version), parse_version(self.maximum_core_version)
-            assert lo is not None and hi is not None
+            if lo is None or hi is None:
+                raise ValueError("invalid core version window bounds")
             if lo >= hi:
                 raise ValueError("maximum_core_version must exceed minimum_core_version")
         # 扩展类型词表。

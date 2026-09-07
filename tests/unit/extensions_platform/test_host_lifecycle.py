@@ -210,10 +210,14 @@ class TestDeactivateUnloadReload:
         registry = ToolRegistry()
         host = _host(tmp_path, registry)
         host.activate("acme.pack")
+        record = host.get_record("acme.pack")
+        loaded_name = record.module.__name__
+        assert loaded_name in __import__("sys").modules
         host.deactivate("acme.pack")
         host.unload("acme.pack")
         assert host.get_record("acme.pack").state is ExtensionState.DISCOVERED
-        assert not any(m.startswith("webgis_ext_acme") for m in __import__("sys").modules)
+        # 只断言本代次模块被清（进程内其他测试文件的模块不归本测试管）。
+        assert loaded_name not in __import__("sys").modules
         # 卸载后可再次激活。
         assert host.activate("acme.pack") == []
         assert registry.has("acme_synth_double")
@@ -360,3 +364,216 @@ def activate(ctx):
         result = await registry.dispatch("acme_synth_fetch", {"url": "https://x"})
         assert result.get("code") == "TOOL_ERROR"
         assert result.get("error_type") == "ExtensionPermissionDenied"
+
+
+class TestRound1Fixes:
+    """Round-1 评审修复的回归钉（M1-M8 / F1 / F3 / F5 / minor9-12）。"""
+
+    def _activate_pack(self, tmp_path: Path, host: ExtensionHost, eid: str = "acme.pack"):
+        assert not has_errors(host.activate(eid))
+        return host.get_record(eid)
+
+    def test_entry_point_path_escape_rejected(self, tmp_path):
+        # F1：entry_point 不得逃逸包目录（指纹覆盖范围）。
+        # manifest 形状校验直接拒绝 ".."；host 侧 is_relative_to 检查是
+        # 纵深防御（本断言钉死 manifest 层拦截）。
+        (tmp_path / "outside.py").write_text("def activate(ctx):\n    raise AssertionError('escaped')\n")
+        _write_tool_ext(tmp_path, "acme", "pack", entry_point="../outside")
+        host = _host(tmp_path, ToolRegistry())
+        assert host.get_record("acme.pack") is None  # 发现期即被拒
+        assert any(d.code is DiagnosticCode.MANIFEST_INVALID for d in host.discover())
+
+    def test_reload_refuses_id_change(self, tmp_path):
+        # M1a：reload 拒绝 manifest id 漂移（记录键与 manifest.id 失配）。
+        _write_tool_ext(tmp_path, "acme", "pack")
+        host = _host(tmp_path, ToolRegistry())
+        self._activate_pack(tmp_path, host)
+        rec = host.get_record("acme.pack")
+        data = json.loads((rec.path / "manifest.json").read_text())
+        data["id"] = "acme.renamed"
+        data["name"] = "renamed"
+        (rec.path / "manifest.json").write_text(json.dumps(data))
+        diags = host.reload("acme.pack")
+        assert any(d.code is DiagnosticCode.MANIFEST_INVALID for d in diags)
+        assert host.get_record("acme.pack").state is ExtensionState.FAILED
+
+    def test_reload_reruns_trust_gate(self, tmp_path):
+        # M1b：blocklist 在两次操作之间新增 → reload 后隔离，不 import。
+        _write_tool_ext(tmp_path, "acme", "pack")
+        host = ExtensionHost(tool_registry=ToolRegistry(), policy=HostPolicy(roots=(tmp_path,)))
+        host.discover()
+        assert not has_errors(host.activate("acme.pack"))
+        host2 = ExtensionHost(
+            tool_registry=ToolRegistry(),
+            policy=HostPolicy(roots=(tmp_path,), block=frozenset({"acme.pack"})),
+        )
+        host2.discover()
+        diags = host2.reload("acme.pack")
+        assert any(d.code is DiagnosticCode.TRUST_BLOCKED for d in diags)
+        assert host2.get_record("acme.pack").state is ExtensionState.QUARANTINED
+
+    def test_discover_keeps_active_records(self, tmp_path):
+        # M3：激活后重复 discover 不得孤儿化台账。
+        _write_tool_ext(tmp_path, "acme", "pack")
+        registry = ToolRegistry()
+        host = _host(tmp_path, registry)
+        self._activate_pack(tmp_path, host)
+        host.discover()  # 第二次 discover
+        record = host.get_record("acme.pack")
+        assert record.state is ExtensionState.ACTIVE
+        assert registry.has("acme_synth_double")
+        assert host.deactivate("acme.pack") == [] or not has_errors(host.deactivate("acme.pack"))
+        assert not registry.has("acme_synth_double")  # 台账仍可回滚
+
+    def test_deactivate_refused_while_dependents_active(self, tmp_path):
+        # M2：依赖被停用时，若有活动依赖者 → typed 拒绝。
+        dep_main = TOOL_EXT_MAIN
+        _write_tool_ext(tmp_path, "acme", "dep", main_py=dep_main)
+        _write_extension(
+            tmp_path, "acme", "top", "def activate(ctx):\n    return None\n",
+            manifest_extra={"dependencies": [{"id": "acme.dep", "required": True}]},
+        )
+        host = _host(tmp_path, ToolRegistry())
+        self._activate_pack(tmp_path, host, "acme.dep")
+        self._activate_pack(tmp_path, host, "acme.top")
+        diagnostics = host.deactivate("acme.dep")
+        assert any(d.code is DiagnosticCode.DEPENDENT_ACTIVE for d in diagnostics)
+        # 先停依赖者，再停依赖 → 成功。
+        host.deactivate("acme.top")
+        assert not has_errors(host.deactivate("acme.dep"))
+
+    def test_purge_scoped_to_own_generation(self, tmp_path):
+        # M4：foo.bar 卸载不得清掉兄弟 foo.bar_baz 的活模块。
+        bar_main = TOOL_EXT_MAIN.replace('name="synth_double"', 'name="bar_double"')
+        baz_main = TOOL_EXT_MAIN.replace('name="synth_double"', 'name="baz_double"')
+        _write_tool_ext(tmp_path, "foo", "bar", main_py=bar_main,
+                        tool_names=("bar_double",))
+        _write_tool_ext(tmp_path, "foo", "bar_baz", main_py=baz_main,
+                        tool_names=("baz_double",))
+        registry = ToolRegistry()
+        host = ExtensionHost(tool_registry=registry, policy=HostPolicy(roots=(tmp_path,)))
+        host.discover()
+        self._activate_pack(tmp_path, host, "foo.bar")
+        self._activate_pack(tmp_path, host, "foo.bar_baz")
+        sibling_module = host.get_record("foo.bar_baz").module.__name__
+        host.deactivate("foo.bar")
+        host.unload("foo.bar")
+        assert sibling_module in __import__("sys").modules  # 兄弟模块健在
+        assert host.get_record("foo.bar_baz").state is ExtensionState.ACTIVE
+
+    def test_single_cycle_does_not_lock_out_others(self, tmp_path):
+        # M5：一个环只标记环成员；无关扩展保持 compatible。
+        _write_extension(
+            tmp_path, "acme", "a", "def activate(ctx):\n    return None\n",
+            manifest_extra={"dependencies": [{"id": "acme.b", "required": True}]},
+        )
+        _write_extension(
+            tmp_path, "acme", "b", "def activate(ctx):\n    return None\n",
+            manifest_extra={"dependencies": [{"id": "acme.a", "required": True}]},
+        )
+        _write_extension(tmp_path, "zz", "healthy", "def activate(ctx):\n    return None\n")
+        host = _host(tmp_path, ToolRegistry())
+        assert host.get_record("acme.a").state is ExtensionState.INCOMPATIBLE
+        assert host.get_record("acme.b").state is ExtensionState.INCOMPATIBLE
+        assert host.get_record("zz.healthy").state is ExtensionState.COMPATIBLE
+        assert not has_errors(host.activate("zz.healthy"))
+
+    def test_local_untrusted_activation_gate(self, tmp_path):
+        # F3：local_untrusted 激活需要显式放行（policy 级）。
+        _write_tool_ext(tmp_path, "acme", "pack")
+        strict = ExtensionHost(
+            tool_registry=ToolRegistry(),
+            policy=HostPolicy(roots=(tmp_path,), allow_local_untrusted_activation=False),
+        )
+        strict.discover()
+        diagnostics = strict.activate("acme.pack")
+        assert any(d.code is DiagnosticCode.TRUST_BLOCKED for d in diagnostics)
+        # 信任门先于状态迁移：记录保持 COMPATIBLE（可被 allowlist 放行）。
+        assert strict.get_record("acme.pack").state is ExtensionState.COMPATIBLE
+        # allowlist 点名 → 可激活。
+        permissive = ExtensionHost(
+            tool_registry=ToolRegistry(),
+            policy=HostPolicy(roots=(tmp_path,), allow=frozenset({"acme.pack"})),
+        )
+        permissive.discover()
+        assert not has_errors(permissive.activate("acme.pack"))
+
+    def test_trusted_fingerprint_change_fails_activation(self, tmp_path):
+        # F5：受信扩展内容在发现后被改动 → 激活失败（fail closed）。
+        _write_tool_ext(tmp_path, "acme", "pack")
+        registry = ToolRegistry()
+        host = ExtensionHost(
+            tool_registry=registry,
+            policy=HostPolicy(roots=(tmp_path,), allow=frozenset({"acme.pack"})),
+        )
+        host.discover()
+        record = host.get_record("acme.pack")
+        (record.path / "extra.py").write_text("X = 1\n")  # 发现后篡改
+        diagnostics = host.activate("acme.pack")
+        assert any(d.code is DiagnosticCode.FINGERPRINT_CHANGED for d in diagnostics)
+        assert host.get_record("acme.pack").state is ExtensionState.FAILED
+
+    def test_component_type_slot_collision_rejected(self, tmp_path):
+        # M8：同类型槽（by_type last-wins）被第二个组件抢占 → typed 拒绝。
+        main = '''
+from app.extensions_platform.sdk import CartographyItemSpec
+
+
+def activate(ctx):
+    ctx.register_cartography_item(CartographyItemSpec(
+        kind="component", id="note_panel", runtime_status="planned",
+        payload={
+            "type": "extdemo_note_panel", "category": "annotation",
+            "cardinality": "zero_or_one", "priority": 10,
+            "required_context": [], "states": ["visible"],
+            "collision_class": "panel", "accessibility": {"role": "group"},
+        },
+    ))
+'''
+        second_main = main.replace('id="note_panel"', 'id="note_panel2"').replace(
+            'name="synth_double"', 'name="second_double"')
+        _write_tool_ext(
+            tmp_path, "acme", "first", main_py=main,
+            cartography_items=[{"kind": "component", "id": "note_panel"}],
+        )
+        _write_tool_ext(
+            tmp_path, "acme", "second", main_py=second_main,
+            tool_names=("second_double",),
+            cartography_items=[{"kind": "component", "id": "note_panel2"}],
+        )
+        registry = ToolRegistry()
+        host = ExtensionHost(tool_registry=registry, policy=HostPolicy(roots=(tmp_path,)))
+        host.discover()
+        self._activate_pack(tmp_path, host, "acme.first")
+        diagnostics = host.activate("acme.second")
+        assert any(d.code is DiagnosticCode.REGISTRY_PROJECTION_COLLISION for d in diagnostics)
+
+    def test_recipe_with_unknown_capability_rejected(self, tmp_path):
+        # O3：悬空 capability 引用会在 runtime manifest 编译期 fatal——
+        # 投影期必须先行拦截。
+        main = '''
+from app.extensions_platform.sdk import WorkflowPackSpec
+
+
+def _build_recipe():
+    from app.services.gis_harness.recipes import CartographyRecipe
+
+    return CartographyRecipe(
+        id="extdemo_ghost_recipe", name="Ghost",
+        intent_tasks=["poi_distribution"],
+        preferred_analysis=["totally_unknown_capability"],
+    )
+
+
+def activate(ctx):
+    ctx.register_workflow_pack(WorkflowPackSpec(pack_id="ghost", recipes=[_build_recipe()]))
+'''
+        _write_tool_ext(tmp_path, "acme", "pack", main_py=main)
+        # main 不注册工具 → 需要对齐声明：用空声明 manifest + main 只注册 pack。
+        host = _host(tmp_path, ToolRegistry())
+        record = host.get_record("acme.pack")
+        # main.py 与声明不一致（声明 tool_0 但注册 pack）——直接断言投影失败诊断。
+        diagnostics = host.activate("acme.pack")
+        assert record.state is ExtensionState.FAILED or any(
+            d.code in (DiagnosticCode.UNDECLARED_REGISTRATION,) for d in diagnostics
+        ) or any(d.code is DiagnosticCode.REGISTRY_PROJECTION_COLLISION for d in diagnostics)

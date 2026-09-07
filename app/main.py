@@ -83,6 +83,11 @@ async def lifespan(app: FastAPI):
             if _ext_host is not None:
                 _ext_host.discover()
                 _results = _ext_host.activate_all()
+                # Round-1 审计 A-1：扩展域词表进入 list_available_tools 的
+                # schema 枚举（init_tools 时扩展尚未激活，枚举已冻结）。
+                from app.tools.meta_tools import refresh_list_available_tools_args
+
+                refresh_list_available_tools_args(registry)
                 _failed = [
                     k for k, v in _results.items()
                     if any(d.severity.value == "error" for d in v)

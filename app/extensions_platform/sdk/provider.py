@@ -47,8 +47,10 @@ class ProviderExtensionSpec:
 
     def validate(self, declared_permissions: frozenset[str]) -> list[ExtensionDiagnostic]:
         diagnostics: list[ExtensionDiagnostic] = []
+        from .identifier import NAME_RE
+
         st = self.source_type
-        if not st or not st.replace("_", "").isalnum() or st[0].isdigit():
+        if not NAME_RE.match(st or ""):
             diagnostics.append(
                 ExtensionDiagnostic.error(
                     DiagnosticCode.MANIFEST_INVALID, f"source_type {st!r} must be snake_case identifier"

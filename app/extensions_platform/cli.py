@@ -127,12 +127,26 @@ def _build_host(root_overrides: list[str]) -> tuple[Any, list[str]]:
     调用 activate——扩展在 CLI 进程里只被发现与静态校验。设置解析失败时
     抛 ExtensionPlatformError / ValueError（fail closed，绝不半份配置继续）。
     """
+    import logging
+    import warnings
+
     from app.tools.registry import ToolRegistry  # 重依赖（约 1s）→ lazy
 
     from .host import ExtensionHost
     from .settings_bridge import host_policy_from_settings
 
-    policy = host_policy_from_settings()
+    # Round-1 审计 C-2：app.core.config 的 import 期副作用（JWT/LLM key
+    # 告警与 logger 行）会污染 CLI 输出（--json 消费方尤其受害）。在
+    # 导入与策略构建窗口内静音；CLI 自身的诊断照常输出。
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        _quiet = logging.getLogger("app")
+        prev_level = _quiet.level
+        _quiet.setLevel(logging.ERROR)
+        try:
+            policy = host_policy_from_settings()
+        finally:
+            _quiet.setLevel(prev_level)
     roots = (
         [str(p) for p in root_overrides]
         if root_overrides
@@ -592,7 +606,7 @@ def check_health() -> dict:
     return {"status": "healthy", "messages": []}
 '''
 
-_TEST_TEMPLATE = '''"""__EXT_ID__ 脚手架自检（无需宿主：直接加载入口模块驱动 activate）。"""
+_TEST_TEMPLATE = '''"""__EXT_ID__ 脚手架自检（需宿主可导入（在仓库根运行，或 PYTHONPATH=<repo>））。"""
 
 import importlib.util
 import json
@@ -619,7 +633,7 @@ def test_manifest_declares_sample_tool():
         {
             "name": "__TOOL_NAME__",
             "description": "Reverse the input text (scaffold sample tool).",
-            "tier": 2,
+            "tier": 1,
             "side_effect": "pure",
         }
     ]
@@ -661,7 +675,7 @@ def _scaffold_manifest(extension_id: str, namespace: str, name: str, tool: str) 
             {
                 "name": tool,
                 "description": "Reverse the input text (scaffold sample tool).",
-                "tier": 2,
+                "tier": 1,
                 "side_effect": "pure",
             }
         ],

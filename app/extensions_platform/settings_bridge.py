@@ -7,6 +7,7 @@ ExtensionPlatformError（含 typed diagnostic），而不是静默忽略半份�
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,7 @@ def host_policy_from_settings() -> HostPolicy:
 
     roots = [
         Path(p.strip())
-        for p in settings.EXTENSIONS_DIRS.split(":")
+        for p in settings.EXTENSIONS_DIRS.split(os.pathsep)
         if p.strip()
     ]
     allow = frozenset(p.strip() for p in settings.EXTENSIONS_ALLOW.split(",") if p.strip())
@@ -34,17 +35,29 @@ def host_policy_from_settings() -> HostPolicy:
     extension_settings = _parse_json_dict(
         settings.EXTENSION_SETTINGS_JSON, "EXTENSION_SETTINGS_JSON"
     )
+    # Round-1 审计 minor11：feature flag 只接受严格布尔（JSON "false" 字符串
+    # 曾被 bool() 变成 True）；非 object 的扩展设置显式拒绝而非静默丢 {}。
+    for key, value in feature_flags.items():
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"EXTENSION_FEATURE_FLAGS[{key!r}] must be a JSON boolean, "
+                f"got {type(value).__name__}"
+            )
+    for key, value in extension_settings.items():
+        if not isinstance(value, dict):
+            raise ValueError(
+                f"EXTENSION_SETTINGS_JSON[{key!r}] must be a JSON object, "
+                f"got {type(value).__name__}"
+            )
     return HostPolicy(
         roots=tuple(roots),
         allow=allow,
         block=block,
         builtin_ids=builtin_ids,
         grants=grants,
-        feature_flags={k: bool(v) for k, v in feature_flags.items()},
-        extension_settings={
-            str(k): dict(v) if isinstance(v, dict) else {}
-            for k, v in extension_settings.items()
-        },
+        feature_flags=dict(feature_flags),
+        extension_settings={str(k): dict(v) for k, v in extension_settings.items()},
+        allow_local_untrusted_activation=settings.EXTENSIONS_ACTIVATE_UNTRUSTED,
     )
 
 

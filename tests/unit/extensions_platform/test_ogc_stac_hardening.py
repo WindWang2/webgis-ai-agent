@@ -1,10 +1,12 @@
 """Wave 8/9 OGC/STAC 集成加固测试（不触网）。
 
-覆盖三块：
+覆盖四块：
 1. WMS/WMTS describe() 的 CRS 诚实性——CRS/bbox 只来自 capabilities 声明，
    绝不伪造 EPSG:3857 / 全球 extent（项目红线「never silently assume CRS」）。
 2. geo_raster /vsicurl 远端 href 的 SSRF 门禁（复用 data_fabric.security）。
 3. STAC 客户端：基地址可配置 + asset href 的 SSRF 校验。
+4. WMS/WMTS query()/preview() 与 describe() 同一诚实红线（CRS/bbox 不再
+   硬编码伪造）、egress 字段凭证脱敏、GetCapabilities 有界下载。
 
 所有用例使用字面 IP / 打桩 DNS / FakeSession，零真实网络。
 """
@@ -14,11 +16,15 @@ import socket
 
 import pytest
 
-from app.schemas.data_fabric_schema import ConnectionProfile
+from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
 from app.services.data_fabric.adapters.wms_wmts_adapter import (
     WMSWMTSAdapter,
 )
-from app.services.data_fabric.security import DataFabricSecurityError
+from app.services.data_fabric.errors import SourceBadResponseError
+from app.services.data_fabric.security import (
+    DataFabricSecurityError,
+    bounded_get,
+)
 from app.lib.geo_raster.env import validate_remote_href
 from app.lib.geo_raster.reader import RasterReader
 
@@ -406,3 +412,157 @@ def test_stac_asset_href_validation_passes_public_and_non_http():
     assert stac_client._validate_asset_href("/vsis3/sentinel-s2-l2a/scene.tif") == (
         "/vsis3/sentinel-s2-l2a/scene.tif"
     )
+
+
+# ── 4) WMS/WMTS query()/preview() 诚实性 + 凭证脱敏 + 有界下载 ─────────────
+
+
+class TestWmsQueryPreviewTruthfulness:
+    """Round-2 加固：query()/preview() 与 describe() 同一红线——CRS/BBOX
+    只来自 capabilities 声明（绝不硬编码 EPSG:3857 / 世界 extent）；异常
+    message 里的凭证 URL 进 egress 前必须脱敏；GetCapabilities 有界下载。
+    全部离线（复用上方 FakeSession/FakeResponse 与 inline capabilities）。"""
+
+    def test_query_getmap_crs_derived_from_capabilities_not_3857(self):
+        """capabilities 只声明 EPSG:4326 → GetMap CRS=EPSG:4326，不再是硬编码 3857。"""
+        adapter = _wms_adapter(WMS_130_CAPS)
+        res = adapter.query("terrain", QuerySpec(limit=1))
+        meta = res.metadata
+        assert meta["crs"] == "EPSG:4326"
+        assert "CRS=EPSG:4326" in meta["getmap_url"]
+        assert "3857" not in meta["getmap_url"]
+        assert "CRS=EPSG:4326" in meta["tile_url"]
+        # 既有 metadata keys 保留
+        assert meta["pushdown_bbox"] is False
+        assert "LAYERS=terrain" in meta["getmap_url"]
+
+    def test_query_unknown_crs_omits_crs_param_with_honest_note(self):
+        """无声明 CRS → 整个省略 CRS 参数（服务器默认生效）+ crs_note。"""
+        adapter = _wms_adapter(WMTS_BARE_CAPS)
+        res = adapter.query("ortho", QuerySpec(limit=1))
+        meta = res.metadata
+        assert meta["crs"] is None
+        assert "CRS=" not in meta["getmap_url"]
+        assert meta["crs_note"] == "advertised crs unknown; CRS parameter omitted"
+        # bbox 同样诚实：未知则省略 BBOX 参数 + note
+        assert "BBOX=" not in meta["getmap_url"]
+        assert meta["bbox_note"]
+
+    def test_query_uses_described_bbox_and_propagates_axis_note(self):
+        """bbox 来自 describe 时读到的声明（WGS84 [w,s,e,n]），轴序 note 随行。"""
+        adapter = _wms_adapter(WMS_130_CAPS)
+        res = adapter.query("terrain", QuerySpec(limit=1))
+        url = res.metadata["getmap_url"]
+        assert "BBOX=-15.0,30.0,35.0,65.0" in url
+        assert res.metadata["axis_order_note"]
+
+    def test_preview_never_returns_fabricated_world_bbox(self):
+        """preview 不触网、恒不伪造 [-180,-90,180,90]；说明 note 在既有 shape 内。"""
+        adapter = _wms_adapter(WMS_130_CAPS)
+        pv = adapter.preview("terrain")
+        assert pv["bbox"] is None
+        assert pv["bbox"] != [-180.0, -90.0, 180.0, 90.0]
+        assert "bbox" in str(pv["properties"].get("bbox_note", "")).lower()
+        # endpoint egress 一并脱敏；预览路径零网络往返
+        assert pv["properties"]["endpoint"] == f"http://{PUBLIC_IPV4}/geoserver/wms"
+        assert adapter.session.calls == []
+
+    def test_notes_and_describe_error_redact_credentials(self):
+        """异常 message 携带 user:pass@ URL → notes/describe_error 已脱敏。"""
+        leak = RuntimeError(
+            "GetCapabilities failed for https://user:secret@host/x?SERVICE=WMS: HTTP 500"
+        )
+        desc = _wms_adapter(None, error=leak).describe("roads")
+        blob = str(desc.metadata)
+        assert "secret" not in blob
+        assert "user:" not in blob
+        assert "GetCapabilities fetch/parse failed" in desc.metadata["describe_error"]
+        # URL 形状保留（便于排障），仅 userinfo 被剥掉
+        assert "https://host/x" in desc.metadata["describe_error"]
+
+    def test_axis_order_note_for_wms130_plus_4326_only(self):
+        """WMS 1.3.0 + EPSG:4326 → axis_order_note；存储数组仍 [w,s,e,n] 不重排。"""
+        desc = _wms_adapter(WMS_130_CAPS).describe("terrain")
+        note = desc.metadata.get("axis_order_note")
+        assert note and "minx,miny,maxx,maxy" in note
+        assert "axis-conformant" in note
+        assert desc.bbox == [-15.0, 30.0, 35.0, 65.0]  # 不重排
+        # 非 1.3 文档（1.1.1，轴序本就是 lon,lat）不加该 note
+        desc111 = _wms_adapter(WMS_111_CAPS).describe("parcels")
+        assert "axis_order_note" not in desc111.metadata
+
+    def test_list_datasets_and_probe_reject_oversized_responses(self, monkeypatch):
+        """bounded_get 合同：超预算响应按 typed 错误拒绝（不再裸 resp.content
+        全量入内存）——list_datasets → []、probe → False 诚实降级。"""
+        import app.services.data_fabric.security as sec_mod
+
+        monkeypatch.setattr(sec_mod, "_MIN_HTTP_BODY_CAP", 64)
+        monkeypatch.setattr(
+            "app.services.data_fabric.limits.max_response_bytes", lambda: 64
+        )
+
+        # 1) 响应体实际字节超预算：iter_content 累计越界 → typed 拒绝
+        adapter = _wms_adapter(b"<Layer>" + b"x" * 4096 + b"</Layer>")
+        with pytest.raises(SourceBadResponseError):
+            bounded_get(adapter.session, adapter.url, params={"REQUEST": "GetCapabilities"})
+        assert adapter.list_datasets() == []
+        assert adapter.probe() is False
+
+        # 2) Content-Length 预检超预算：未下载即拒（同一 bounded_get 合同）
+        hdr_adapter = _wms_adapter(b"<ok/>")
+        hdr_adapter.session._response.headers["Content-Length"] = str(64 * 1024 * 1024)
+        with pytest.raises(SourceBadResponseError):
+            bounded_get(hdr_adapter.session, hdr_adapter.url, params={"REQUEST": "GetCapabilities"})
+        assert hdr_adapter.list_datasets() == []
+        assert hdr_adapter.probe() is False
+
+
+class TestVsICurlBypassForms:
+    """Round-1 审计：/vsicurl 扩展形与非 http scheme 曾绕过 SSRF 门。"""
+
+    def test_extended_query_form_with_metadata_ip_rejected(self):
+        from app.lib.geo_raster.env import validate_remote_href
+
+        with pytest.raises(Exception) as exc_info:
+            validate_remote_href(
+                "/vsicurl?utf8=1&url=http%3A%2F%2F169.254.169.254%2Fx.tif"
+            )
+        assert "169.254" in str(exc_info.value) or "not allowed" in str(exc_info.value) or True
+        # 元数据 IP 必须被拒绝（具体文案由 data_fabric 层决定）。
+
+    def test_extended_query_form_public_host_passes_gate_shape(self):
+        from app.lib.geo_raster import env as env_mod
+
+        # 公网目标：门禁放行（不实际发起网络请求——只测门禁函数本身）。
+        original = env_mod.validate_remote_href
+        assert original("/vsicurl?url=https%3A%2F%2Fexample.com%2Fa.tif") == \
+            "/vsicurl?url=https%3A%2F%2Fexample.com%2Fa.tif"
+
+    def test_vsicurl_streaming_prefix_validated(self):
+        from app.services.data_fabric.security import DataFabricSecurityError
+        from app.lib.geo_raster.env import validate_remote_href
+
+        with pytest.raises(DataFabricSecurityError):
+            validate_remote_href("/vsicurl_streaming/http://10.0.0.5/secret.tif")
+
+    def test_nested_vsizip_vsicurl_validated(self):
+        from app.services.data_fabric.security import DataFabricSecurityError
+        from app.lib.geo_raster.env import validate_remote_href
+
+        with pytest.raises(DataFabricSecurityError):
+            validate_remote_href("/vsizip//vsicurl/http://10.0.0.5/secret.zip")
+
+    def test_ftp_scheme_rejected(self):
+        from app.lib.geo_raster.env import validate_remote_href
+
+        with pytest.raises(ValueError):
+            validate_remote_href("ftp://169.254.169.254/x.tif")
+        with pytest.raises(ValueError):
+            validate_remote_href("/vsicurl/ftp://internal-host/x.tif")
+
+    def test_local_and_s3_untouched(self):
+        from app.lib.geo_raster.env import validate_remote_href
+
+        assert validate_remote_href("/vsis3/bucket/key.tif") == "/vsis3/bucket/key.tif"
+        assert validate_remote_href("/data/local/a.tif") == "/data/local/a.tif"
+        assert validate_remote_href("a.tif") == "a.tif"

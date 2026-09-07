@@ -34,8 +34,11 @@ def validate_remote_href(uri: str) -> str:
     白名单、私网 A/AAAA、IPv4-mapped IPv6、云元数据 IP），**绝不另写一套
     SSRF 判定**。
 
-    - 本地路径与 ``/vsi*``、``s3`` 等非 http(s) 源原样放行（不触碰）；
-    - ``/vsicurl/http(s)://…`` 里内嵌的目标同样校验；
+    - 本地路径与 ``/vsizip/``、``s3`` 等不触网的源原样放行（不触碰）；
+    - ``/vsicurl/http(s)://…`` 与扩展形 ``/vsicurl?…&url=<url>`` 里内嵌的
+      目标同样校验（ Round-1 审计：扩展形与非 http scheme 曾绕过门禁）；
+    - 内嵌目标是 ftp/ftps 或其他远端 scheme 一律拒绝（vsicurl 对这些
+      scheme 同样会发起远程读取，不在白名单内）；
     - 校验失败抛 ``DataFabricSecurityError``（``ValueError`` 子类）。
 
     模块级函数：测试经 ``monkeypatch.setattr`` 替换本模块或 reader 模块上
@@ -43,14 +46,77 @@ def validate_remote_href(uri: str) -> str:
     """
     if not uri or not isinstance(uri, str):
         return uri
-    target = uri[len("/vsicurl/"):] if uri.startswith("/vsicurl/") else uri
-    scheme = target.split("://", 1)[0].lower() if "://" in target else ""
-    if scheme not in ("http", "https"):
-        return uri  # 本地路径 / /vsi* / s3 等原样放行
+    target = _extract_remote_target(uri)
+    if target is None:
+        return uri  # 本地路径 / 不含远程目标的 /vsi* / s3 等原样放行
     from app.services.data_fabric.security import DataFabricSecurity
 
     DataFabricSecurity.validate_url(target)
     return uri  # 校验通过：输入原样返回（绝不改写调用方的 href）
+
+
+_REMOTE_SCHEME_RE = __import__("re").compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
+
+
+def _extract_remote_target(uri: str) -> "str | None":
+    """提取 URI 中交给 GDAL 网络栈的 http(s) 目标；无远程目标返回 None。
+
+    覆盖形如（GDAL virtual file systems 官方语法）：
+    - ``http(s)://…``                                → 本体
+    - ``/vsicurl/http(s)://…``                       → 内嵌目标
+    - ``/vsicurl?utf8=1&url=http%3A%2F%2F…``         → query ``url=`` 参数
+    - ``/vsicurl?url=http://…``                      → 同上（未编码）
+    - ``/vsizip//vsicurl/http(s)://…`` 等复合前缀     → 递归提取
+    其余（本地路径、/vsis3、/vsizip 本地文件等）返回 None。
+    """
+    import re
+    from urllib.parse import parse_qs, unquote
+
+    rest = uri
+    # 剥离 /vsi*/ 前缀（含 /vsizip//vsicurl/... 复合嵌套）；handler 后跟
+    # "?"（/vsicurl?url=... 无斜杠形）时进入 query 解析分支。
+    while True:
+        m = re.match(r"^/vsi[a-z0-9_]+", rest)
+        if not m:
+            break
+        handler_end = m.end()
+        if rest[handler_end:handler_end + 1] == "/":
+            rest = rest[handler_end + 1:]
+            continue
+        if rest[handler_end:handler_end + 1] == "?":
+            params = parse_qs(rest[handler_end + 1:], keep_blank_values=True)
+            candidates = params.get("url") or params.get("filename")
+            if not candidates:
+                raise ValueError(
+                    f"vsicurl query form carries no resolvable url: {uri!r}"
+                )
+            rest = unquote(candidates[0])
+            continue
+        # /vsis3bucket 这类粘连形（无斜杠无 query）：交给后续 scheme 检查。
+        rest = rest[handler_end:]
+        break
+    if rest.startswith("?"):
+        params = parse_qs(rest[1:], keep_blank_values=True)
+        candidates = params.get("url") or params.get("filename")
+        if not candidates:
+            raise ValueError(f"vsicurl query form carries no resolvable url: {uri!r}")
+        rest = unquote(candidates[0])
+    if rest.startswith("/vsi"):
+        # 未识别的 /vsi 复合形式：保守视为含未知远程目标。
+        raise ValueError(f"unrecognized /vsi composition rejected by SSRF gate: {uri!r}")
+    if not _REMOTE_SCHEME_RE.match(rest):
+        return None
+    scheme = rest.split("://", 1)[0].lower()
+    if scheme in ("http", "https"):
+        return rest
+    # ftp/ftps/sftp 等远端 scheme 会被 GDAL 网络栈执行，但不在白名单：
+    # 显式拒绝而非放行（Round-1 审计 F2）。
+    if scheme in ("ftp", "ftps", "sftp"):
+        raise ValueError(
+            f"remote scheme {scheme!r} is not allowed through the raster SSRF gate "
+            f"(http/https only): {uri!r}"
+        )
+    return None
 
 
 @contextmanager

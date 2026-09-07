@@ -84,6 +84,12 @@ class ExtensionRecord:
     context: Optional[ExtensionContext] = None
     ledger: Optional[ProjectionLedger] = None
     fingerprint_at_activation: Optional[str] = None
+    # Round-1 审计 M2：激活本扩展时实际依赖的（required 且已激活的）扩展
+    # id。用于停用前置检查——依赖被停用而依赖者仍激活会留下悬空引用。
+    satisfied_dependencies: frozenset[str] = frozenset()
+    # Round-1 审计 minor14：发现期诊断基线。validate_extension 由此重算，
+    # 保证重复校验幂等、失败后的重试不被陈旧 error 永久锁死。
+    baseline_diagnostics: tuple[ExtensionDiagnostic, ...] = ()
 
     @property
     def extension_id(self) -> str:
@@ -101,6 +107,11 @@ class HostPolicy:
     grants: dict[str, frozenset[str]] = field(default_factory=dict)
     feature_flags: dict[str, bool] = field(default_factory=dict)
     extension_settings: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Round-1 审计 F3：local_untrusted 扩展默认仅可 inspect/validate。
+    # 生产（settings 桥）默认 False——必须 EXTENSIONS_ALLOW 点名或显式
+    # 打开 EXTENSIONS_ACTIVATE_UNTRUSTED；进程内直构 HostPolicy 的测试
+    # 缺省 True（本地开发语义）。
+    allow_local_untrusted_activation: bool = True
 
 
 class ExtensionHost:
@@ -124,6 +135,25 @@ class ExtensionHost:
             diagnostics.extend(failure.diagnostics)
         for discovered in result.extensions:
             diagnostics.extend(discovered.diagnostics)
+            existing = self._records.get(discovered.extension_id)
+            if existing is not None and existing.state in (
+                ExtensionState.ACTIVE,
+                ExtensionState.DEGRADED,
+                ExtensionState.LOADING,
+            ):
+                # Round-1 审计 M3：对已激活扩展重复 discover 一律保留现记录
+                # ——覆盖成 DISCOVERED 会让台账孤儿化（投影无法回滚 → 永久
+                # 僵尸）。内容变化只告警，走 reload 才会真正换血。
+                if discovered.fingerprint and discovered.fingerprint != existing.fingerprint:
+                    diagnostics.append(
+                        ExtensionDiagnostic.warning(
+                            DiagnosticCode.FINGERPRINT_CHANGED,
+                            f"active extension {discovered.extension_id!r} changed on "
+                            "disk; use reload() to apply",
+                            extension_id=discovered.extension_id,
+                        )
+                    )
+                continue
             trust = resolve_trust(
                 discovered.extension_id,
                 allowlist=self._policy.allow,
@@ -136,6 +166,7 @@ class ExtensionHost:
                 fingerprint=discovered.fingerprint,
                 trust=trust,
                 diagnostics=list(discovered.diagnostics),
+                baseline_diagnostics=tuple(discovered.diagnostics),
             )
             if trust is TrustLevel.BLOCKED:
                 record.state = ExtensionState.QUARANTINED
@@ -161,7 +192,9 @@ class ExtensionHost:
                     DiagnosticCode.MANIFEST_INVALID, f"unknown extension {extension_id!r}"
                 )
             ]
-        diagnostics = list(record.diagnostics)
+        # Round-1 审计 minor14：从发现期基线重算（幂等），此前每次调用
+        # 在旧诊断上追加，重复校验会把陈旧 error 钉死在 incompatible。
+        diagnostics = list(record.baseline_diagnostics)
         if record.state is ExtensionState.QUARANTINED:
             return diagnostics
         # API / 核心版本兼容（Wave 12，纯函数判定）。
@@ -246,7 +279,23 @@ class ExtensionHost:
                     )
                 )
         # 成环检测（仅 required 边，DFS 三色标记，确定性遍历序）。
+        # Round-1 审计 M5：诊断只附加到【本记录所在】的环——validate_extension
+        # 逐记录调用本方法，无条件附加全图环会把无关扩展连坐成 INCOMPATIBLE。
+        for cycle in self._cycle_memberships(record.extension_id):
+            diagnostics.append(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.DEPENDENCY_CYCLE,
+                    "dependency cycle: " + " -> ".join(cycle),
+                    extension_id=record.extension_id,
+                )
+            )
+        return diagnostics
+
+    def _detect_dependency_cycles(self) -> list[list[str]]:
+        """返回全部 required 依赖环（每个环一条，成员按遍历序）。"""
         color: dict[str, int] = {}
+        cycles: list[list[str]] = []
+        seen_cycles: set[tuple[str, ...]] = set()
         for start in sorted(self._records):
             if color.get(start):
                 continue
@@ -259,13 +308,10 @@ class ExtensionHost:
                 for nxt in it:
                     if color.get(nxt) == 1:
                         cycle = path[path.index(nxt):] + [nxt]
-                        diagnostics.append(
-                            ExtensionDiagnostic.error(
-                                DiagnosticCode.DEPENDENCY_CYCLE,
-                                "dependency cycle: " + " -> ".join(cycle),
-                                extension_id=cycle[0],
-                            )
-                        )
+                        key = tuple(sorted(set(cycle)))
+                        if key not in seen_cycles:
+                            seen_cycles.add(key)
+                            cycles.append(cycle)
                     elif not color.get(nxt):
                         color[nxt] = 1
                         path.append(nxt)
@@ -277,7 +323,10 @@ class ExtensionHost:
                     stack.pop()
                     if path and path[-1] == node:
                         path.pop()
-        return diagnostics
+        return cycles
+
+    def _cycle_memberships(self, extension_id: str) -> list[list[str]]:
+        return [c for c in self._detect_dependency_cycles() if extension_id in c]
 
     def _required_dep_ids(self, extension_id: str) -> list[str]:
         record = self._records.get(extension_id)
@@ -303,12 +352,18 @@ class ExtensionHost:
                 return record.path / "__init__.py"
             return None
         candidate = record.path / f"{entry}.py"
-        if candidate.is_file():
-            return candidate
         package_init = record.path / entry / "__init__.py"
-        if package_init.is_file():
-            return package_init
-        return None
+        resolved: Optional[Path] = None
+        if candidate.is_file():
+            resolved = candidate.resolve()
+        elif package_init.is_file():
+            resolved = package_init.resolve()
+        if resolved is None:
+            return None
+        # Round-1 审计 F1：入口必须落在包目录内（指纹覆盖范围）。
+        if not resolved.is_relative_to(record.path.resolve()):
+            return None
+        return candidate if resolved == candidate.resolve() else package_init
 
     def _module_name(self, record: ExtensionRecord) -> str:
         # 指纹参与模块名：内容变化必然获得全新命名空间，杜绝「文件已改、
@@ -354,11 +409,17 @@ class ExtensionHost:
         return module
 
     def _purge_modules(self, record: ExtensionRecord) -> None:
-        # 清理该扩展所有代次的模块（指纹后缀不同但公共前缀一致）。
-        prefix = f"{MODULE_PREFIX}{record.manifest.namespace}_{record.manifest.name}"
-        for name in list(sys.modules):
-            if name == prefix or name.startswith(prefix + "_") or name.startswith(prefix + "."):
-                sys.modules.pop(name, None)
+        # Round-1 审计 M4：只清理当前记录实际加载过的模块（精确名 + 其
+        # 子模块）。此前的宽前缀匹配（prefix + "_"）会把兄弟扩展
+        # （foo.bar vs foo.bar_baz）的活模块一并清掉。
+        base = f"{MODULE_PREFIX}{record.manifest.namespace}_{record.manifest.name}"
+        fingerprint = record.fingerprint_at_activation or record.fingerprint
+        prefixes = {f"{base}_{fingerprint[:12]}"} if fingerprint else set()
+        prefixes.add(f"{base}.")
+        for prefix in prefixes:
+            for name in list(sys.modules):
+                if name == prefix or name.startswith(prefix + "."):
+                    sys.modules.pop(name, None)
         record.module = None
 
     # ── activate ─────────────────────────────────────────────────────
@@ -371,6 +432,20 @@ class ExtensionHost:
                 )
             ]
         if record.state is ExtensionState.QUARANTINED:
+            return list(record.diagnostics)
+        if (
+            record.trust is TrustLevel.LOCAL_UNTRUSTED
+            and not self._policy.allow_local_untrusted_activation
+        ):
+            record.diagnostics.append(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.TRUST_BLOCKED,
+                    f"extension {extension_id!r} is local_untrusted; activation "
+                    "requires EXTENSIONS_ALLOW allowlist or "
+                    "EXTENSIONS_ACTIVATE_UNTRUSTED=true",
+                    extension_id=extension_id,
+                )
+            )
             return list(record.diagnostics)
         if record.state is ExtensionState.DISABLED:
             return [
@@ -397,7 +472,10 @@ class ExtensionHost:
         assert record.state is ExtensionState.COMPATIBLE, record.state
 
         flags = self._effective_flags(record.manifest)
-        unresolved = [f for f, v in record.manifest.feature_flags.items() if f not in flags]
+        host_overridden = set(self._policy.feature_flags.get(extension_id, {}))
+        unresolved = [
+            f for f in record.manifest.feature_flags if f not in host_overridden
+        ]
         warnings: list[ExtensionDiagnostic] = []
         for flag in unresolved:
             warnings.append(
@@ -452,6 +530,7 @@ class ExtensionHost:
             tool_registry=self._tool_registry,
             ledger=ledger,
         )
+        context._module_dir = record.path
         try:
             module = self._load_entry_module(record)
             activate_fn = getattr(module, "activate", None)
@@ -511,10 +590,32 @@ class ExtensionHost:
         record.module = module
         record.context = context
         record.ledger = ledger
+        record.satisfied_dependencies = frozenset(
+            dep.id
+            for dep in record.manifest.dependencies
+            if not (dep.feature_flag and not flags.get(dep.feature_flag, False))
+        )
         fingerprint, fp_diag = _refingerprint(record)
         if fp_diag is not None:
             warnings.append(fp_diag)
         elif fingerprint != record.fingerprint:
+            if record.trust in (TrustLevel.TRUSTED_BUILTIN, TrustLevel.TRUSTED_EXTENSION):
+                # Round-1 审计 F5：受信扩展内容在发现后被改动 → 拒绝激活
+                # （fail closed）；local_untrusted 保留告警（内容不受信，
+                # 告警仅为审计留痕）。
+                return self._fail_activation(
+                    record,
+                    ledger,
+                    [
+                        ExtensionDiagnostic.error(
+                            DiagnosticCode.FINGERPRINT_CHANGED,
+                            "trusted extension content changed since discovery; "
+                            "re-discover before activation",
+                            extension_id=extension_id,
+                        )
+                    ],
+                    warnings,
+                )
             warnings.append(
                 ExtensionDiagnostic.warning(
                     DiagnosticCode.FINGERPRINT_CHANGED,
@@ -550,12 +651,33 @@ class ExtensionHost:
         for kind, declared in (
             ("algorithm", {record.manifest.namespaced_algorithm_id(a.id) for a in record.manifest.algorithms}),
             ("data_provider", {record.manifest.namespaced_source_type(p.source_type) for p in record.manifest.data_providers}),
+            # Round-1 审计 minor9：cartography / workflow 声明节同样对账。
+            ("cartography", {
+                f"{record.manifest.namespace}_{c.id}"
+                for c in record.manifest.cartography_items
+            }),
         ):
             for projected in sorted(declared - registered.get(kind, set())):
                 diagnostics.append(
                     ExtensionDiagnostic.warning(
                         DiagnosticCode.DECLARED_BUT_UNREGISTERED,
                         f"declared {kind} {projected!r} was not registered (flag-gated?)",
+                        extension_id=record.extension_id,
+                    )
+                )
+        # workflow pack 级对账：recipe 以命名空间为前缀（pack 名不进
+        # recipe id），故按命名空间核对——声明了 pack 却零 recipe 投影
+        # 才是「声明未注册」。
+        declared_packs = {record.manifest.namespaced_tool_name(w.pack_id) for w in record.manifest.workflow_packs}
+        registered_recipes = registered.get("workflow_recipe", set())
+        ns_recipe_prefix = record.manifest.namespace + "_"
+        if declared_packs and not any(
+            rid.startswith(ns_recipe_prefix) for rid in registered_recipes
+        ):
+                diagnostics.append(
+                    ExtensionDiagnostic.warning(
+                        DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                        "declared workflow packs registered no recipes (flag-gated?)",
                         extension_id=record.extension_id,
                     )
                 )
@@ -641,6 +763,22 @@ class ExtensionHost:
                 )
             ]
         diagnostics: list[ExtensionDiagnostic] = []
+        # Round-1 审计 M2：先于回滚检查反向依赖——否则依赖者的工具/算法
+        # 会引用已被回滚的条目（悬空引用零诊断）。
+        active_dependents = sorted(
+            eid for eid, rec in self._records.items()
+            if rec.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED)
+            and extension_id in rec.satisfied_dependencies
+        )
+        if active_dependents:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.DEPENDENT_ACTIVE,
+                    f"cannot deactivate {extension_id!r}: active dependents "
+                    f"{active_dependents} (deactivate them first)",
+                    extension_id=extension_id,
+                )
+            ]
         if record.module is not None:
             deactivate_fn = getattr(record.module, "deactivate", None)
             if callable(deactivate_fn):
@@ -691,21 +829,53 @@ class ExtensionHost:
                 )
             ]
         diagnostics: list[ExtensionDiagnostic] = []
+        if record.state is ExtensionState.DISABLED:
+            # Round-1 审计 minor12：disable 后 reload 不得绕过运维开关。
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.EXTENSION_DISABLED,
+                    f"extension {extension_id!r} is disabled; enable() before reload()",
+                    extension_id=extension_id,
+                )
+            ]
         was_active = record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED)
         if was_active:
             diagnostics.extend(self.deactivate(extension_id))
         diagnostics.extend(self.unload(extension_id))
-        manifest, err = _reread_manifest(record.path)
+        manifest, parse_diags = _reread_manifest(record.path)
         if manifest is None:
             record.state = ExtensionState.FAILED
+            detail = "; ".join(d.message for d in parse_diags) or "manifest re-read failed"
             record.diagnostics.append(
                 ExtensionDiagnostic.error(
                     DiagnosticCode.MANIFEST_PARSE_FAILED,
-                    f"reload failed: {err}",
+                    f"reload failed: {detail}",
                     extension_id=extension_id,
                 )
             )
             return list(record.diagnostics)
+        if manifest.id != extension_id:
+            # Round-1 审计 M1：reload 拒绝 id 漂移——记录键与 manifest.id
+            # 必须一致，否则信任裁决/依赖图/状态索引全部失配。
+            record.state = ExtensionState.FAILED
+            record.diagnostics.append(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"reload refused: manifest id changed {extension_id!r} -> "
+                    f"{manifest.id!r} (re-discover instead)",
+                    extension_id=extension_id,
+                )
+            )
+            return list(record.diagnostics)
+        # Round-1 审计 M1：reload 必须重跑发现期信任门（blocklist 新增、
+        # allowlist 撤销都可能发生在两次操作之间）。
+        trust = resolve_trust(
+            extension_id,
+            allowlist=self._policy.allow,
+            blocklist=self._policy.block,
+            builtin_ids=self._policy.builtin_ids,
+        )
+        record.trust = trust
         record.manifest = manifest
         fingerprint, fp_diag = _refingerprint(record)
         if fp_diag is None:
@@ -718,6 +888,16 @@ class ExtensionHost:
                     )
                 )
             record.fingerprint = fingerprint
+        if trust is TrustLevel.BLOCKED:
+            record.state = ExtensionState.QUARANTINED
+            record.diagnostics = [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.TRUST_BLOCKED,
+                    "extension is blocked by operator policy (EXTENSIONS_BLOCK)",
+                    extension_id=extension_id,
+                )
+            ]
+            return diagnostics + list(record.diagnostics)
         record.state = ExtensionState.DISCOVERED
         record.diagnostics = []
         diagnostics.extend(self.validate_extension(extension_id))
@@ -865,10 +1045,12 @@ def _refingerprint(record: ExtensionRecord) -> tuple[Optional[str], Optional[Ext
     return compute_fingerprint(record.path)
 
 
-def _reread_manifest(path: Path) -> tuple[Optional[GisExtensionManifest], Optional[str]]:
+def _reread_manifest(
+    path: Path,
+) -> tuple[Optional[GisExtensionManifest], list[ExtensionDiagnostic]]:
     from .discovery import MANIFEST_FILENAME, _parse_manifest_file
 
-    manifest, _diags, _ = _parse_manifest_file(path / MANIFEST_FILENAME)
+    manifest, diags, _ = _parse_manifest_file(path / MANIFEST_FILENAME)
     if manifest is None:
-        return None, "manifest re-read failed"
-    return manifest, None
+        return None, list(diags)
+    return manifest, []

@@ -39,6 +39,7 @@ class DiagnosticCode(str, Enum):
     # 依赖
     DEPENDENCY_MISSING = "dependency_missing"
     DEPENDENCY_CYCLE = "dependency_cycle"
+    DEPENDENT_ACTIVE = "dependent_active"
     OPTIONAL_DEPENDENCY_ABSENT = "optional_dependency_absent"
     # 信任 / 权限
     TRUST_BLOCKED = "trust_blocked"

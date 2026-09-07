@@ -1,6 +1,7 @@
 """
 WMS & WMTS Raster Data Source Adapter
 """
+import re
 import time
 import logging
 from typing import Any, List, Dict, Optional, Tuple
@@ -25,6 +26,21 @@ logger = logging.getLogger(__name__)
 def _local_name(tag: str) -> str:
     """剥掉 XML 命名空间取本地标签名（WMS 1.1/1.3 与 WMTS 的 ns 各不相同）。"""
     return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
+# 自由文本（异常 message 等）里内嵌的绝对 URL：scheme://非空白串。
+_URL_LIKE_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9+.\-]*://\S+")
+
+
+def _redact_text(text: str) -> str:
+    """对自由文本里内嵌的每个 URL 做 userinfo 脱敏后再落到 egress 字段。
+
+    requests 的 HTTPError/ConnectionError message 携带完整请求 URL——若含
+    ``user:pass@`` userinfo，直接拼进 notes/describe_error 就是凭证泄漏；
+    复用模块统一的 redact_url 逐个剥掉 userinfo（非 URL 文本原样保留）。"""
+    return _URL_LIKE_RE.sub(
+        lambda m: DataFabricSecurity.redact_url(m.group(0)) or m.group(0), text
+    )
 
 
 def _ancestor_layers(layer_el: Any, parents: Dict[Any, Any]) -> List[Any]:
@@ -186,7 +202,7 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
         self.session = make_safe_session(allow_private=self.profile.allow_private)
 
     def probe(self) -> bool:
-        """Lightweight WMS/WMTS GetCapabilities probe."""
+        """Lightweight WMS/WMTS GetCapabilities probe（有界下载，禁裸 resp.content）。"""
         if not self.url:
             return False
         try:
@@ -196,10 +212,14 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
                 "REQUEST": "GetCapabilities",
                 "VERSION": "1.3.0" if service == "WMS" else "1.0.0",
             }
-            resp = self.session.get(self.url, params=params, timeout=5)
-            return resp.status_code in (200, 206)
+            bounded_get(self.session, self.url, params=params, timeout=5)
+            return True
         except Exception as e:
-            logger.debug(f"WMS/WMTS probe failed for {self.url}: {e}")
+            logger.debug(
+                "WMS/WMTS probe failed for %s: %s",
+                DataFabricSecurity.redact_url(self.url),
+                _redact_text(str(e)),
+            )
             return False
 
     def capabilities(self) -> List[str]:
@@ -221,10 +241,8 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
                 "SERVICE": service,
                 "REQUEST": "GetCapabilities",
             }
-            resp = self.session.get(self.url, params=params, timeout=10)
-            resp.raise_for_status()
-
-            tree = DataFabricSecurity.parse_safe_xml(resp.content)
+            body = bounded_get(self.session, self.url, params=params, timeout=10)
+            tree = DataFabricSecurity.parse_safe_xml(body)
             datasets = []
 
             for elem in tree.iter():
@@ -249,7 +267,11 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
 
             return datasets
         except Exception as e:
-            logger.warning(f"WMS/WMTS list_datasets failed for {self.url}: {e}")
+            logger.warning(
+                "WMS/WMTS list_datasets failed for %s: %s",
+                DataFabricSecurity.redact_url(self.url),
+                _redact_text(str(e)),
+            )
             return []
 
     def _get_capabilities_tree(self, notes: List[str]) -> Optional[Any]:
@@ -264,8 +286,14 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
             body = bounded_get(self.session, self.url, params=params, timeout=10)
             return DataFabricSecurity.parse_safe_xml(body)
         except Exception as e:  # noqa: BLE001 — 降级为未知，不带假值继续
-            logger.warning(f"WMS/WMTS GetCapabilities failed for {self.url}: {e}")
-            notes.append(f"GetCapabilities fetch/parse failed: {e}")
+            # 异常 message 可能携带含 user:pass@ 的完整请求 URL；先脱敏再进
+            # notes/describe_error（egress 字段绝不回显未脱敏 URL）。
+            logger.warning(
+                "WMS/WMTS GetCapabilities failed for %s: %s",
+                DataFabricSecurity.redact_url(self.url),
+                _redact_text(str(e)),
+            )
+            notes.append(f"GetCapabilities fetch/parse failed: {_redact_text(str(e))}")
             return None
 
     def describe(self, dataset_id: str) -> DatasetDescriptor:
@@ -279,9 +307,11 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
         notes: List[str] = []
         advertised_crs: List[str] = []
         bbox: Optional[List[float]] = None
+        service_version = ""
 
         root = self._get_capabilities_tree(notes)
         if root is not None:
+            service_version = root.get("version") or ""
             advertised_crs, bbox, layer_notes = _extract_layer_crs_and_bbox(
                 root, dataset_id
             )
@@ -315,6 +345,14 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
         }
         if any("GetCapabilities" in n for n in notes):
             metadata["describe_error"] = "; ".join(notes)
+        # WMS 1.3.0 + EPSG:4326 轴序诚实性（additive note，不重排存储数组：
+        # 消费方依赖 [w, s, e, n]）：存储恒为 lon,lat，而 1.3.0 GetMap 的
+        # BBOX 参数要求轴序一致（lat,lon）——显式说明差异，不静默误导。
+        if service_version.startswith("1.3") and "EPSG:4326" in normalized:
+            metadata["axis_order_note"] = (
+                "stored bbox is minx,miny,maxx,maxy (lon,lat, WGS84); WMS 1.3.0 "
+                "GetMap requires an axis-conformant BBOX (lat,lon) for EPSG:4326"
+            )
 
         return DatasetDescriptor(
             id=dataset_id,
@@ -330,26 +368,79 @@ class WMSWMTSAdapter(GeospatialDataSourceAdapter):
         )
 
     def preview(self, dataset_id: str, limit: int = 10) -> Dict[str, Any]:
-        """Fetch bounded raster metadata preview."""
+        """Fetch bounded raster metadata preview.
+
+        bbox 诚实性（与 describe() 同一红线）：预览路径不做 GetCapabilities
+        往返，extent 未知 → 恒为 None + 说明 note（放在既有 properties 里，
+        不新增顶层 shape key），绝不伪造全球 bbox。"""
         return {
             "schema": {"layer": dataset_id, "type": "Raster"},
-            "properties": {"layer_name": dataset_id, "endpoint": self.url},
+            "properties": {
+                "layer_name": dataset_id,
+                "endpoint": DataFabricSecurity.redact_url(self.url),
+                "bbox_note": (
+                    "layer extent unknown without GetCapabilities; "
+                    "no fabricated world bbox"
+                ),
+            },
             "features": [],
-            "bbox": [-180.0, -90.0, 180.0, 90.0],
+            "bbox": None,
         }
 
     def query(self, dataset_id: str, query_spec: QuerySpec) -> QueryResult:
-        """WMS/WMTS does not support vector feature queries; returns raster metadata descriptor."""
+        """WMS/WMTS does not support vector feature queries; returns raster metadata descriptor.
+
+        CRS/bbox 诚实性：GetMap URL 的 CRS/BBOX 只取 describe() 从
+        capabilities 读到的声明值（bbox 已知则带上）；未知则整个省略参数
+        （服务器默认生效）并在 metadata 里如实说明——绝不硬编码
+        EPSG:3857 或全球 extent。既有 metadata keys 全部保留。"""
+        desc_meta: Dict[str, Any] = {}
+        described_bbox: Optional[List[float]] = None
+        crs: Optional[str] = None
+        try:
+            desc = self.describe(dataset_id)
+            desc_meta = desc.metadata or {}
+            described_bbox = desc.bbox
+            crs = desc.srs
+        except Exception as e:  # noqa: BLE001 — 查询面不因 describe 失败而炸
+            logger.warning(
+                "WMS/WMTS query describe fallback for %s: %s",
+                DataFabricSecurity.redact_url(self.url),
+                _redact_text(str(e)),
+            )
+
+        base = (
+            f"{DataFabricSecurity.redact_url(self.url)}"
+            f"?SERVICE=WMS&REQUEST=GetMap&LAYERS={dataset_id}&STYLES="
+        )
+        if crs:
+            base += f"&CRS={crs}"
+        if described_bbox is not None:
+            w, s, e, n = described_bbox
+            base += f"&BBOX={w},{s},{e},{n}"
+        base += "&WIDTH=256&HEIGHT=256&FORMAT=image/png"
+
+        metadata: Dict[str, Any] = {
+            "getmap_url": base,
+            "tile_url": base,
+            "pushdown_bbox": bool(query_spec.bbox),
+            # 附加（additive）键：原 keys 不动。
+            "crs": crs,
+        }
+        if crs is None:
+            metadata["crs_note"] = "advertised crs unknown; CRS parameter omitted"
+        if described_bbox is None:
+            metadata["bbox_note"] = "layer extent unknown; BBOX parameter omitted"
+        axis_note = desc_meta.get("axis_order_note")
+        if axis_note:
+            metadata["axis_order_note"] = axis_note
+
         return QueryResult(
             dataset_id=dataset_id,
             features=[],
             total_count=0,
             schema_info={"geometry_type": "Raster", "layer": dataset_id},
-            metadata={
-                "getmap_url": f"{self.url}?SERVICE=WMS&REQUEST=GetMap&LAYERS={dataset_id}&STYLES=&CRS=EPSG:3857&WIDTH=256&HEIGHT=256&FORMAT=image/png",
-                "tile_url": f"{self.url}?SERVICE=WMS&REQUEST=GetMap&LAYERS={dataset_id}&STYLES=&CRS=EPSG:3857&WIDTH=256&HEIGHT=256&FORMAT=image/png",
-                "pushdown_bbox": bool(query_spec.bbox),
-            },
+            metadata=metadata,
         )
 
     def health(self) -> DataFabricHealth:
