@@ -578,3 +578,43 @@ def test_surface_records_carry_symmetric_pi95():
     assert np.allclose(res.pi95_high, res.predictions + pi * sd)
     assert np.all(res.pi95_low <= res.predictions)
     assert np.all(res.pi95_high >= res.predictions)
+
+
+# ── review R1 修复回归 ──────────────────────────────────────────────────
+def test_uk_zero_residual_degenerate_has_no_fake_pi():
+    """UK 零残差退化路径：方差精确 0 → 不得输出 [0,0] 假区间，
+    metadata 不得无条件宣称 prediction_interval_95（review R1-1）。"""
+    import numpy as np
+
+    from app.lib.geo_analysis.kriging import (
+        _trend_only_result,
+        universal_kriging_detrended,
+    )
+
+    # 度量坐标上的严格线性场 ⇒ 残差精确为 0 ⇒ UK 零残差退化分支。
+    rng = np.random.default_rng(3)
+    xy = rng.uniform(0.0, 5_000.0, size=(40, 2))
+    vals = 2.0 * xy[:, 0] + 1.0 * xy[:, 1]
+    res = universal_kriging_detrended(xy, vals, xy[:10])
+    assert res.pi95_low is None and res.pi95_high is None
+    assert res.variances == pytest.approx(0.0, abs=1e-12)
+    assert "zero_residual_variance" in res.disclosures
+    # _trend_only_result 直接构造同样诚实缺省（不制造 [0,0] 假区间）。
+    tr = _trend_only_result(np.array([1.0, 2.0, 3.0]), xy[:5], 40)
+    assert tr.pi95_low is None and tr.pi95_high is None
+
+
+def test_cv_z_count_excludes_nonfinite():
+    """z_count 只计非有限过滤后的样本（review R1-2/R2-6）。"""
+    import numpy as np
+
+    from app.lib.geo_analysis.kriging import cross_validate_kriging
+
+    rng = np.random.default_rng(11)
+    xy = rng.uniform(0.0, 5_000.0, size=(60, 2))
+    vals = np.sin(xy[:, 0] / 400.0) + rng.normal(0, 0.05, 60)
+    report = cross_validate_kriging(xy, vals, model="spherical", folds=3, k=10)
+    assert report.z_count > 0
+    assert report.z_count <= report.n_samples
+    if report.z_score_mean is not None:
+        assert np.isfinite(report.z_score_mean)

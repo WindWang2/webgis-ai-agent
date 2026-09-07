@@ -196,6 +196,10 @@ def _persist_filled_dem(
     src_real = validate_data_path(source_path)
     root, ext = os.path.splitext(src_real)
     target = root + "_filled" + (ext or ".tif")
+    # review R2-3：写前对 target 过同一条路径安全闸 —— data_dir 内预置的
+    # 同名 symlink（指向 data_dir 外）会被 realpath 比对拒绝（S36 威胁
+    # 模型）。同源重跑覆盖同名产物是文档化语义（确定性命名）。
+    validate_data_path(target)
     profile = {
         "driver": "GTiff",
         "height": filled.shape[0],
@@ -729,7 +733,6 @@ def register_terrain_tools(registry: ToolRegistry):
                "nodata": "可选 nodata 覆盖值（缺省用文件声明/NaN）",
                "persist_filled": "持久化填充后 DEM（*_filled.tif）并返回路径，供下游水文工具消费",
            },
-           side_effect="deterministic_compute",
            network=False,
            deterministic=True,
            latency_class="slow",
@@ -739,6 +742,10 @@ def register_terrain_tools(registry: ToolRegistry):
            output_semantic_type="stats",
            result_size_policy="inline_small",
            crs_semantics="crs_agnostic",
+           # review R2-2：persist_filled=True 会写 data_dir（*_filled.tif）
+           # —— 按「可能写」诚实标注；缺省 persist_filled=False 仍为纯计算。
+           side_effect="artifact_creation",
+           data_mutations=("artifact_write",),
            failure_modes=("invalid_args", "missing_data", "memory"))
     def depression_fill(raster_path: str, epsilon: float = 0.0,
                         nodata: float | None = None,

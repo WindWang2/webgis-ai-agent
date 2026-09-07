@@ -943,6 +943,7 @@ class NetworkLocationAllocationService:
         od_matrix_scale_guard(
             len(demand_points), len(candidate_facilities),
             context="p_median_exact",
+            max_pairs=_MILP_MAX_PRODUCT,
         )
         cost_matrix = self._od_cost_matrix(
             candidate_facilities, demand_points,
@@ -984,6 +985,7 @@ class NetworkLocationAllocationService:
         od_matrix_scale_guard(
             len(demand_points), len(candidate_facilities),
             context="p_center_exact",
+            max_pairs=_MILP_MAX_PRODUCT,
         )
         cost_matrix = self._od_cost_matrix(
             candidate_facilities, demand_points,
@@ -1027,6 +1029,7 @@ class NetworkLocationAllocationService:
         od_matrix_scale_guard(
             len(demand_points), len(candidate_facilities),
             context="max_coverage_exact",
+            max_pairs=_MILP_MAX_PRODUCT,
         )
         cost_matrix = self._od_cost_matrix(
             candidate_facilities, demand_points,

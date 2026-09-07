@@ -30,6 +30,7 @@ import pytest
 from app.lib.gis.algorithm_registry import get_algorithm_registry
 from app.lib.gis.scientific_errors import ResourceScaleMismatch
 from app.services.network import scale_guard as scale_guard_mod
+from app.services.network import allocation as allocation_mod
 from app.services.network.allocation import (
     NetworkLocationAllocationService,
     solve_max_coverage_milp,
@@ -188,8 +189,10 @@ class TestMCLPExactMILP:
             solve_max_coverage_milp(_cost_matrix(160, 157, seed=2), [1.0] * 160, 3, 10.0)
         assert "n_demand*n_candidates=25120" in (ei2.value.estimated or "")
 
-        # Service path: shrunk R3 OD guard ⇒ typed refusal BEFORE any OD work.
-        monkeypatch.setattr(scale_guard_mod, "MAX_OD_MATRIX_PAIRS", 10)
+        # Service path: shrunk MILP-scale OD guard ⇒ typed refusal BEFORE
+        # any OD work（review R2-1：MILP 服务路径用自身 25_000 刻度，
+        # 测试收缩该常量而非启发式面刻度）。
+        monkeypatch.setattr(allocation_mod, "_MILP_MAX_PRODUCT", 10)
         graph, dataset = NetworkGraphBuilder().build_graph(_chain_fc())
         with pytest.raises(ResourceScaleMismatch):
             NetworkLocationAllocationService().max_coverage_exact(
@@ -347,7 +350,8 @@ class TestODMatrixScaleGuardFamily:
         """R3 guard applies to the exact service surfaces too (统一资源包络):
         shrunk OD cap ⇒ typed refusal before the OD matrix is built, while
         the MILP model guard (25000/500) keeps bounding the solver itself."""
-        monkeypatch.setattr(scale_guard_mod, "MAX_OD_MATRIX_PAIRS", 10)
+        # review R2-1：exact 服务路径用 MILP 自身刻度 —— 收缩该常量。
+        monkeypatch.setattr(allocation_mod, "_MILP_MAX_PRODUCT", 10)
         graph, dataset = NetworkGraphBuilder().build_graph(_chain_fc())
         facilities = [_facility(f"f{i}", 116.0 + i * 0.002) for i in range(4)]
         demands = [_demand(f"d{i}", 116.0 + i * 0.001) for i in range(12)]

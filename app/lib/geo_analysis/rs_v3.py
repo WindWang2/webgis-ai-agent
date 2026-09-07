@@ -1287,6 +1287,11 @@ def _validate_endmember_matrix(E: np.ndarray, n_bands: int) -> np.ndarray:
     return E
 
 
+# review R2-4：边界像元逐像元 NNLS 的耗时面预算（超过仅披露，不拒绝
+# —— 闭式解主路径不受影响，预算用于警示批处理时长）。
+_FCLS_NNLS_BUDGET = 200_000
+
+
 def fcls_unmix(
     stack: StackInput,
     endmembers: StackInput,
@@ -1375,6 +1380,10 @@ def fcls_unmix(
         "n_valid_pixels": n_valid,
         "common_valid_fraction": fraction,
         "n_boundary_pixels_nnls": n_boundary,
+        # review R2-4：边界像元走逐像元 NNLS（Python 层），给出耗时面
+        # 预算口径 —— 超预算时披露（不静默）。
+        "nnls_budget_pixels": _FCLS_NNLS_BUDGET,
+        "nnls_budget_exceeded": bool(n_boundary > _FCLS_NNLS_BUDGET),
         "sum_to_one_weight": delta,
         "method": "fcls",
         "disclosure": (

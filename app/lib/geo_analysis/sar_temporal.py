@@ -335,6 +335,9 @@ def temporal_composite(
 
 # medoid 距离累加面的独立预算：T·H·W ≤ 32M（Σ_s ‖x_t−x_s‖² 累加面为
 # T×HW float64 = 256MB 上界）——比 sar_temporal 通用守卫更紧（披露）。
+# review R2-5 口径注记：该守卫封的是输入栈；medoid 主循环的瞬态含 x 副本
+# 与每轮 (x − x[s]) 广播临时（≈ T×HW×k），峰值 ≈ 4–5× 输入栈 —— k>1 时
+# 为 GB 级，调用方按此口径估算内存。
 _MEDOID_CELL_LIMIT = 33_554_432
 
 

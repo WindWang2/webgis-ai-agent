@@ -1204,8 +1204,10 @@ def cross_validate_kriging(
     ss_tot = float(np.sum((values - values.mean()) ** 2))
     z_mean: Optional[float] = None
     z_cover: Optional[float] = None
+    z_n = 0
     if z_scores:
         z = np.asarray([v for v in z_scores if np.isfinite(v)])
+        z_n = int(z.size)
         if z.size:
             z_mean = float(np.mean(z))
             z_cover = float(np.mean(np.abs(z) <= 1.96))
@@ -1220,7 +1222,7 @@ def cross_validate_kriging(
         per_fold=per_fold,
         z_score_mean=z_mean,
         z_coverage_95=z_cover,
-        z_count=len(z_scores),
+        z_count=z_n,
     )
 
 
@@ -2438,23 +2440,26 @@ def kriging_interpolation(
     )
 
     # science-v3（Wave 8/9）：95% 预测区间面（由 ordinary_kriging 的
-    # KrigingResult.pi95_* 投影；UK 零残差退化路径无 PI —— 诚实缺省，
-    # 方差面本身精确为 0）。
+    # KrigingResult.pi95_* 投影；UK 零残差退化路径方差面精确为 0 ——
+    # review R1-1：无 PI 时诚实省略字段与 metadata 块，不输出 [0,0]
+    # 假区间）。
     stddevs = np.sqrt(np.maximum(result.variances, 0.0))
-    records = [
-        {
+    has_pi = result.pi95_low is not None and result.pi95_high is not None
+    records = []
+    for cell, v, var, sd, lo, hi in zip(
+            target_cells, result.predictions, result.variances, stddevs,
+            result.pi95_low if has_pi else [None] * len(target_cells),
+            result.pi95_high if has_pi else [None] * len(target_cells)):
+        rec = {
             "h3_index": cell,
             "value": float(v),
             "kriging_variance": float(var),
             "kriging_stddev": float(sd),
-            "pi95_low": float(lo),
-            "pi95_high": float(hi),
         }
-        for cell, v, var, sd, lo, hi in zip(
-            target_cells, result.predictions, result.variances, stddevs,
-            result.pi95_low if result.pi95_low is not None else stddevs,
-            result.pi95_high if result.pi95_high is not None else stddevs)
-    ]
+        if lo is not None:
+            rec["pi95_low"] = float(lo)
+            rec["pi95_high"] = float(hi)
+        records.append(rec)
     metadata = {
         "algorithm": "interpolation.kriging" if method == "ordinary" else "interpolation.universal_kriging",
         "method": method,
@@ -2474,10 +2479,6 @@ def kriging_interpolation(
             round(float(result.variances.min()), 6),
             round(float(result.variances.max()), 6),
         ],
-        "prediction_interval_95": {
-            "z": 1.959963984540054,
-            "assumption": "gaussian errors (Isaaks & Srivastava); approximate interval",
-        },
         "variogram": vfit.params() if vfit is not None else None,
         "cross_validation": cv_report.metrics() if cv_report else None,
         "value_field": value_field,
@@ -2489,6 +2490,11 @@ def kriging_interpolation(
         metadata["anisotropy"] = {
             "angle_degrees": float(anisotropy_angle),
             "ratio": float(anisotropy_ratio),
+        }
+    if has_pi:
+        metadata["prediction_interval_95"] = {
+            "z": 1.959963984540054,
+            "assumption": "gaussian errors (Isaaks & Srivastava); approximate interval",
         }
     if variogram_model == "matern":
         metadata["matern_smoothness"] = float(matern_smoothness)

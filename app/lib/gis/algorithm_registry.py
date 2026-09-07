@@ -75,6 +75,9 @@ BACKEND_VOCABULARY = frozenset(
 # ApproximationClass：一个算法/变体的精度分类学。descriptor 或变体级
 # 声明；空串 = 未声明（存量算法零迁移负担）。声明即约束：
 # exact/approximate 与布尔 approximate 交叉一致（validate 强制）。
+# 语义界定（review R1-4）：exact 指该实现路径**精确求解其数学模型**
+# （如克里金方程组的精确解），不等于「精确插值器」（带 nugget 的克里金
+# 不过样本点）—— 插值性质由 assumptions/limitations 表达。
 ApproximationClass = Literal[
     "",
     "exact",
@@ -303,7 +306,16 @@ class AlgorithmDescriptor(BaseModel):
     def _bounded_producer_tests(cls, v: Dict[str, str]) -> Dict[str, str]:
         if len(v) > 6:
             raise ValueError("uncertainty_producer_tests exceeds 6 entries")
-        return {str(k)[:32]: str(node)[:220] for k, node in v.items()}
+        for key, node in v.items():
+            # review R1-3：静默截断会让键与 uncertainty_outputs 失配，
+            # 产生难排查的 validate 报错 —— 超限直接拒绝。
+            if len(str(key)) > 32:
+                raise ValueError(
+                    f"uncertainty_producer_tests key too long: {key!r}")
+            if len(str(node)) > 220:
+                raise ValueError(
+                    f"uncertainty_producer_tests node too long: {node!r}")
+        return dict(v)
 
     @field_validator("assumptions", "limitations")
     @classmethod
