@@ -228,7 +228,15 @@ class _ResilientSessionLock:
             self._fallback.release()
 
     async def _renew_loop(self):
-        """Extend the TTL while held so a slow operation doesn't lose ownership."""
+        """Extend the TTL while held so a slow operation doesn't lose ownership.
+
+        Renewal 异常（Redis 抖动）按 best-effort 重试；但连续失败跨越一个
+        完整 TTL 窗口后，锁必然已过期（最后一次成功续约距今 > TTL），此时
+        必须如实置位 ``lost`` 并停止续约 —— 否则 ``fail_on_lost`` 调用方会
+        在无锁状态下无限写下去（跨 Pod 互斥被静默丢弃，audit 05 #4）。
+        预算内的瞬时抖动仍被容忍，不改变既有语义。
+        """
+        renew_failures = 0
         try:
             while True:
                 await asyncio.sleep(_RENEW_INTERVAL_S)
@@ -237,7 +245,23 @@ class _ResilientSessionLock:
                         _RENEW_SCRIPT, 1, self._key, self._token, self._ttl_ms
                     )
                 except Exception:
+                    # 连续失败预算：floor(ttl/间隔)+1 次失败即覆盖整个 TTL 窗口
+                    # （整数毫秒运算避免浮点边界；下限 2：至少两次才判定，
+                    # 避免单次毛刺误报丢失）。默认 ttl=30s/间隔=8s → 4 次失败
+                    # = 32s > 30s TTL，判定时锁必然已过期。
+                    renew_failures += 1
+                    interval_ms = max(int(_RENEW_INTERVAL_S * 1000), 1)
+                    budget = max(self._ttl_ms // interval_ms + 1, 2)
+                    if renew_failures >= budget:
+                        self._lost = True
+                        logger.warning(
+                            "session lock renew for %s failed %d consecutive times "
+                            "(> TTL window) — marking lock lost and stopping renewal",
+                            self._key, renew_failures,
+                        )
+                        break
                     continue  # best-effort; the initial TTL still bounds stale locks
+                renew_failures = 0
                 if not renewed:
                     # Key expired and someone else owns it (or it vanished) —
                     # mark as lost and stop extending a lock we no longer hold.

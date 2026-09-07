@@ -12,7 +12,7 @@
 | 描述符富化闸（ADR-0103） | `scripts/check_tool_descriptor_coverage.py`（薄壳） | 基线棘轮，回退即红 |
 | Contract Drift Gates | `tests/quality/test_contract_drift.py` | 漂移报告工件 + BLOCKER 红 |
 | Scenario DSL 与语料 | `app/evaluation/` 扩展 + `tests/quality/scenarios/` | 生成器 → 冻结 JSON → replay |
-| Chaos / Fault Injection | `tests/fixtures/chaos.py` | test-only，fault ID + 确定性 schedule |
+| Chaos / Fault Injection | `tests/fixtures/chaos.py` + `tests/quality/test_chaos_*.py`（注册表文档：`certifications/CHAOS_FAULT_REGISTRY.md`，生成器 `scripts/gen_chaos_registry.py`） | test-only，fault ID 注册表 + 确定性 schedule + journal |
 | 认证表 | `docs/quality/certifications/` | 生成物（cancellation / resource / determinism / …） |
 | 质量报告 | `docs/quality/QUALITY_REPORT.md` | 生成物（Wave 20） |
 | 本地 runner | `scripts/quality` | 分 lane 一键质量（有界并发） |
