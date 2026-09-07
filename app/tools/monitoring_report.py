@@ -189,7 +189,18 @@ def register_monitoring_report_tools(registry: ToolRegistry):
               "format": "输出格式: html, pdf, markdown",
               "summary_text": "AI 撰写的执行摘要（可选）",
               "conclusions": "结论与建议（可选）",
-          })
+          },
+          side_effect="artifact_creation",
+          deterministic=True,
+          latency_class="medium",
+          memory_class="medium",
+          scale_class="medium",
+          tags=("监测报告", "自然资源", "ndvi", "变化检测", "pdf", "html", "汇报"),
+          output_semantic_type="report",
+          result_size_policy="inline_small",
+          required_context=("uploaded_data",),
+          data_mutations=("artifact_write",),
+          failure_modes=("missing_data", "invalid_args"))
     def generate_monitoring_report(
         title: str,
         region_name: str,

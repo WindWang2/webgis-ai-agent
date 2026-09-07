@@ -115,6 +115,19 @@ def register_annotation_tools(registry: ToolRegistry):
         # #1062: Haversine 逐坐标循环在 ~20k 顶点时 10-30ms，超 INLINE <5ms
         # 契约 —— 与 measure_area 一并迁 THREAD。
         execution_policy=ToolExecutionPolicy.THREAD,
+        side_effect="state_mutation",
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("测距", "量距", "距离", "haversine", "折线", "measure"),
+        output_semantic_type="stats",
+        result_size_policy="inline_small",
+        crs_semantics="wgs84",
+        unit_semantics="meters",
+        required_context=("map_state",),
+        map_mutations=("annotation",),
+        failure_modes=("invalid_args",),
     )
     def measure_distance(coordinates: List[List[float]], label: Optional[str] = None) -> dict:
         err = _validate_coords(coordinates, 2)
@@ -148,6 +161,19 @@ def register_annotation_tools(registry: ToolRegistry):
         ),
         args_model=MeasureAreaArgs,
         execution_policy=ToolExecutionPolicy.THREAD,
+        side_effect="state_mutation",
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("量面", "面积", "多边形", "球面面积", "measure area"),
+        output_semantic_type="stats",
+        result_size_policy="inline_small",
+        crs_semantics="wgs84",
+        unit_semantics="square_meters",
+        required_context=("map_state",),
+        map_mutations=("annotation",),
+        failure_modes=("invalid_args",),
     )
     def measure_area(coordinates: List[List[float]], label: Optional[str] = None) -> dict:
         err = _validate_coords(coordinates, 3)
@@ -180,6 +206,18 @@ def register_annotation_tools(registry: ToolRegistry):
         ),
         args_model=AddMarkerArgs,
         execution_policy=ToolExecutionPolicy.INLINE,
+        side_effect="state_mutation",
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("标注", "撒钉", "pin", "标记", "marker"),
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        crs_semantics="wgs84",
+        required_context=("map_state",),
+        map_mutations=("marker",),
+        failure_modes=("invalid_args",),
     )
     def add_marker(
         longitude: float,
@@ -210,6 +248,16 @@ def register_annotation_tools(registry: ToolRegistry):
             "\n何时不用：要保留部分标注 — 当前实现是全清，不支持精细化删除。"
         ),
         execution_policy=ToolExecutionPolicy.INLINE,
+        side_effect="state_mutation",
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=("清空标注", "清除标记", "擦除", "测量线", "clear"),
+        output_semantic_type="bool",
+        result_size_policy="inline_small",
+        required_context=("map_state",),
+        map_mutations=("annotation",),
     )
     def clear_annotations() -> dict:
         return {

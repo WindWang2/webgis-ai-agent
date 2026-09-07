@@ -100,3 +100,62 @@ bounded_summary(result, max_chars)   # trace/debug 摘要
 
 兼容既有约定：std_error_response 形状、#529/#589 错误家族、data 包裹 FC、
 `ref:` 前缀、warnings 列表。估算走 `app.lib.json_size` 预算化遍历（永不 O(巨载荷)）。
+
+## V3 契约扩展（ADR-0103）
+
+`app/tools/descriptor.py` —— 新增可选契约字段，全部缺省 unknown/None/空
+（存量工具零改动）；注册期校验覆盖每个词表字段（非法值 ValueError 即启动
+失败），未知 kwarg 依旧硬失败。
+
+### 新字段清单
+
+| 字段 | 词表 / 语义 |
+|---|---|
+| `input_artifacts` | 消费的 artifact 类型（对齐 capability 词表） |
+| `required_context` | `REQUIRED_CONTEXT_KINDS`：map_state / session_plan / data_profile / ref_cursor / project_memory / credentials / uploaded_data / cartography_state |
+| `map_mutations` | `MAP_MUTATION_KINDS`：add_layer / remove_layer / style_layer / camera / marker / component / map_product / annotation / theme / filter |
+| `data_mutations` | `DATA_MUTATION_KINDS`：upload / cache_write / project_memory_write / artifact_write / external_write / session_state |
+| `latency_class` | `LATENCY_CLASSES`：fast \| medium \| slow |
+| `memory_class` | `MEMORY_CLASSES`：light \| medium \| heavy |
+| `scale_class` | `SCALE_CLASSES`：small \| medium \| large（适用数据规模） |
+| `crs_semantics` | CRS 语义（"wgs84" / "gcj02" / "crs_agnostic" / …） |
+| `unit_semantics` | 单位语义（"meters" / "degrees" / "ratio" / …） |
+| `idempotent` | None = 由 side_effect 派生（`effective_idempotent`） |
+| `security_tier` | None = tier（`effective_security_tier`；动态面过滤按生效值） |
+| `required_permission` | e.g. "admin" / "tier3_confirm" / "bridge_secret" |
+| `examples` / `anti_examples` | 典型正确调用意图 / 已知误用模式（negative retrieval 证据） |
+| `failure_modes` | 失败类型词（failure taxonomy 自由词表） |
+| `fallback_tool` | 失败时建议替代工具（canonical 名） |
+
+### capability 溯源与派生回填
+
+`capability_source ∈ CAPABILITY_SOURCES`（`none` | `declared` |
+`derived:algorithm_registry`）—— 声明与派生永不相混。工具未声明
+capabilities 时，`ToolRegistry.descriptor()`（`app/tools/registry.py`）从
+AlgorithmRegistry 反查索引回填：既有 `tool_to_capability` + 新增
+`tool_to_algorithms`（`app/lib/gis/algorithm_registry.py`，注册表静态后按
+内容缓存、register 失效），并盖 `capability_source="derived:algorithm_registry"`
+溯源戳。回填只是引用既有语义真相 —— 不建第二 capability 注册表，也不编造。
+
+### 覆盖率 gate
+
+`scripts/check_tool_descriptor_coverage.py` 对活注册表出 per-module /
+per-field 覆盖率报告（`--json` 机器可读、`--gate` 阈值闸），并作 pytest
+红线（`tests/unit/test_descriptor_coverage_gate.py`）。闸含派生一致性检查：
+AlgorithmRegistry `tool_candidates` 已声明的工具，描述符 capabilities 必须非空
+—— 派生链路不允许静默失联。capabilities 语义是「分析能力归属」（词表 88 项
+分析/数据访问 capability），天然不覆盖地图操作/meta/编目类工具 —— 诚实策略
+是全局地板，靠编造 capability id 冲高被禁止。
+
+### 富化现状（231 tools）
+
+- side_effect / tags：100%；
+- latency_class / memory_class / output_semantic_type / result_size_policy：
+  99.6%（230/231）；
+- deterministic：96%（9 个本地/在线混合路径工具诚实留空）；
+- capabilities：54.98%（127，声明 + 派生合计）。
+
+留空是被允许且被预期的状态；gate 钉住的是「不再退化」。
+
+测试锚点：`tests/unit/test_tool_descriptor_v3.py`、
+`tests/unit/test_descriptor_coverage_gate.py`。

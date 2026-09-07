@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 TURN_CONTEXT_MARKER = "WEBGIS_TURN_CONTEXT"
 TURN_CONTEXT_MAX_AGE_SECONDS = 15 * 60
 
+#: per-turn 动态工具面激活名单 marker（ADR-0103；扩展在 before_agent_start
+#: 扫描并 pi.setActiveTools —— 名单是投影决策，不是第二注册中心）。
+ACTIVE_TOOLS_MARKER = "WEBGIS_ACTIVE_TOOLS"
+
 
 def _b64encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
@@ -90,6 +94,19 @@ def verify_turn_token(
         return None
 
 
+def _neutralize_active_tools_markers(message: str) -> str:
+    """中和用户/数据自带的同形激活 marker（review M1）。
+
+    ACTIVE_TOOLS 是 Python→extension 的**带外控制面**：若不消毒，用户消息或
+    其引用的数据里出现 ``[WEBGIS_ACTIVE_TOOLS:[...]]`` 就能绕过
+    PI_DYNAMIC_TOOL_SURFACE kill-switch 与 k_max 投影约束。只消毒用户原文，
+    不触碰 Python 自己拼接的块（它们在同函数后续 append）。
+    """
+    if not message:
+        return message
+    return message.replace(f"[{ACTIVE_TOOLS_MARKER}:", f"[{ACTIVE_TOOLS_MARKER}_NEUTRALIZED:")
+
+
 def attach_turn_context(
     message: str,
     token: str,
@@ -97,6 +114,7 @@ def attach_turn_context(
     session_plan_block: str = "",
     env_block: str = "",
     surface_block: str = "",
+    active_tools_block: str = "",
 ) -> str:
     """Attach the capability to the turn for the extension's local session view.
 
@@ -105,10 +123,12 @@ def attach_turn_context(
     ``env_block``/``surface_block``（可选，Pi 兼容补齐）：环境感知有界块
     （用户选中/聚焦/位置/视口——legacy 引擎经 build_map_state_summary 注入，
     Pi 路径此前整块丢失）与工具面偏好行（compile_tool_surface 纯派生）。
+    ``active_tools_block``（可选，ADR-0103）：动态激活名单 marker，扩展据此
+    per-turn setActiveTools。
     全部插在用户消息与 turn marker 之间；marker 必须保持最后——扩展的
     ``currentTurnToken`` 取最新 entry 的最后一个匹配。
     """
-    parts = [message]
+    parts = [_neutralize_active_tools_markers(message)]
     if cartography_block:
         parts.append(cartography_block)
     if session_plan_block:
@@ -117,6 +137,8 @@ def attach_turn_context(
         parts.append(env_block)
     if surface_block:
         parts.append(surface_block)
+    if active_tools_block:
+        parts.append(active_tools_block)
     parts.append(f"[{TURN_CONTEXT_MARKER}:{token}]")
     parts.append("(Internal routing context; do not quote or modify this marker.)")
     return "\n\n".join(parts)
@@ -132,12 +154,15 @@ async def bind_turn_prompt(
     """Open the SessionPlan slot and attach verdict + bounded plan + turn marker.
 
     Pi 兼容（V4 工具面）：从同一份 SessionPlan 信封纯派生一条有界的工具面
-    偏好行（阶段 + preferred 前门）注入 turn prompt —— Pi 无 per-round schema
-    选择（frozen native surface + webgis_execute 代理），偏好只能走 prompt
-    引导；这是 compile_tool_surface 的投影消费，不是第二计划真相。
+    偏好行（阶段 + preferred 前门）注入 turn prompt。
+    ADR-0103（动态面 Phase 3）：同一份 plan 的 capability 进度 + 用户消息
+    → DynamicToolSurface 激活名单 marker，扩展在 before_agent_start
+    setActiveTools —— 模型可见工具从冻结 7 + proxy 升级为 10-30 个相关工具；
+    执行仍全部回到 ToolRegistry（单一执行真相）。
     """
     plan_block = ""
     surface_block = ""
+    active_tools_block = ""
     if session_id:
         try:
             from app.services.session_plan import (
@@ -157,17 +182,21 @@ async def bind_turn_prompt(
             except Exception:  # noqa: BLE001 — spec 拉取失败按缺席投影
                 spec = None
             plan_block = format_session_plan_projection(plan, spec)
-            surface_block = _surface_block_for(plan)
+            surface = _compile_surface(plan)
+            if surface is not None:
+                surface_block = _render_surface_block(surface)
+                active_tools_block = _active_tools_block_for(message, surface, plan)
         except Exception:
             logger.exception("[PiTurn] SessionPlan projection failed session=%s", session_id)
     return attach_turn_context(
         message, token, cartography_block, plan_block,
         env_block=env_block, surface_block=surface_block,
+        active_tools_block=active_tools_block,
     )
 
 
-def _surface_block_for(plan: Any) -> str:
-    """SessionPlan 信封 → 有界工具面提示行（纯派生；失败 → 空串不注入）。"""
+def _compile_surface(plan: Any):
+    """SessionPlan → gis_harness ToolSurface（失败返回 None，不阻断）。"""
     try:
         from app.services.gis_harness.tool_surface import compile_tool_surface
 
@@ -177,15 +206,43 @@ def _surface_block_for(plan: Any) -> str:
             mp = chapter.get("map_product")
             if isinstance(mp, dict):
                 product_status = mp.get("status")
-        surface = compile_tool_surface(chapter=chapter, product_status=product_status)
+        return compile_tool_surface(chapter=chapter, product_status=product_status)
+    except Exception:  # noqa: BLE001 — 提示是增值上下文，绝不阻断 turn
+        return None
+
+
+def _render_surface_block(surface: Any) -> str:
+    try:
         if not surface.preferred_tools:
             return ""
         names = "、".join(sorted(surface.preferred_tools))
         return (
             f"[工具面提示] 当前产品阶段={surface.phase}；本轮优先：{names}"
-            "（原生工具直调，其余经 webgis_execute 执行；提示是偏好不是限制）。"
+            "（激活工具直调，其余经 webgis_execute 执行；提示是偏好不是限制）。"
         )
-    except Exception:  # noqa: BLE001 — 提示是增值上下文，绝不阻断 turn
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _active_tools_block_for(message: str, surface: Any, plan: Any) -> str:
+    """动态激活名单 marker（ADR-0103）。失败/关闭 → 空串，扩展保持既有面。"""
+    try:
+        from app.services.chat.pi_native_surface import compute_turn_active_tools
+
+        capabilities = tuple(
+            row.capability
+            for row in (getattr(plan, "progress", None) or ())
+            if getattr(row, "capability", "")
+        )
+        names = compute_turn_active_tools(
+            message or "",
+            active_capabilities=capabilities,
+            workflow_stage=str(getattr(surface, "phase", "") or ""),
+        )
+        if not names:
+            return ""
+        return f"[{ACTIVE_TOOLS_MARKER}:{json.dumps(names, ensure_ascii=False, separators=(',', ':'))}]"
+    except Exception:  # noqa: BLE001 — 动态面绝不阻断 turn
         return ""
 
 

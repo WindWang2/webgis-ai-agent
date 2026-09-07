@@ -113,6 +113,18 @@ def register_layer_management_tools(registry: ToolRegistry):
                "中间过程层（点云、边界、缓冲、裁剪残料）不要出现在最终地图上。"
            ),
            args_model=FinalizeDisplayArgs,
+           side_effect="state_mutation",
+           deterministic=False,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("收尾", "最终展示", "图层显示", "隐藏图层", "finalize", "显示收口"),
+           output_semantic_type="text",
+           result_size_policy="inline_small",
+           required_context=("map_state", "cartography_state"),
+           map_mutations=("style_layer",),
+           data_mutations=("session_state",),
+           failure_modes=("invalid_args",),
     )
     async def finalize_display(show_refs: List[str], session_id: Optional[str] = None) -> dict:
         """收尾显示管理：展示 show_refs，隐藏其余分析图层。
@@ -293,7 +305,17 @@ def register_layer_management_tools(registry: ToolRegistry):
 
     @tool(registry, name="alias_layer",
            description="为当前会话中的数据引用（ref:xxx）设置一个语义化的别名。设置后，后续可以直呼其名（如：'核心保护区'）来引用该数据。",
-           args_model=AliasLayerArgs)
+           args_model=AliasLayerArgs,
+           side_effect="state_mutation",
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("别名", "alias", "命名", "引用", "数据引用"),
+           output_semantic_type="text",
+           result_size_policy="inline_small",
+           data_mutations=("session_state",),
+           failure_modes=("invalid_args",))
     async def alias_layer(ref_id: str, alias: str, session_id: Optional[str] = None) -> dict:
         """为引用的数据设置别名"""
         if not session_id:
@@ -308,7 +330,15 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="inventory_layers",
-           description="展示当前会话中所有的地理数据图层（包含系统生成的引用 ID 和您设置的别名）。")
+           description="展示当前会话中所有的地理数据图层（包含系统生成的引用 ID 和您设置的别名）。",
+           side_effect="pure",
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("图层清单", "列出图层", "inventory", "引用列表", "别名列表"),
+           output_semantic_type="list",
+           result_size_policy="bounded")
     async def inventory_layers(session_id: Optional[str] = None) -> dict:
         """列出所有图层"""
         if not session_id:
@@ -329,7 +359,17 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="switch_base_layer",
-           description="切换当前地图的底图图源。支持：'Carto 深色'、'OSM 地图'、'ESRI 影像'、'OpenTopoMap'、'高德影像'。")
+           description="切换当前地图的底图图源。支持：'Carto 深色'、'OSM 地图'、'ESRI 影像'、'OpenTopoMap'、'高德影像'。",
+           side_effect="state_mutation",
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("底图", "切换底图", "卫星影像", "basemap", "深色", "影像"),
+           output_semantic_type="text",
+           result_size_policy="inline_small",
+           required_context=("map_state",),
+           map_mutations=("theme",))
     async def switch_base_layer(name: str, session_id: Optional[str] = None) -> dict:
         """切换底图"""
         if not session_id:
@@ -379,7 +419,18 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="set_layer_status",
-           description="修改图层的显示状态（如可见性和透明度）。可以通过 ID (ref:xxx)、别名或图层名称引用图层。")
+           description="修改图层的显示状态（如可见性和透明度）。可以通过 ID (ref:xxx)、别名或图层名称引用图层。",
+           side_effect="state_mutation",
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("图层", "可见性", "透明度", "显隐", "opacity", "visibility"),
+           output_semantic_type="text",
+           result_size_policy="inline_small",
+           required_context=("map_state",),
+           map_mutations=("style_layer",),
+           failure_modes=("invalid_args",))
     async def set_layer_status(layer_ref: str, visible: Optional[bool] = None, opacity: Optional[float] = None, session_id: Optional[str] = None) -> dict:
         """修改图层状态"""
         if not session_id:
@@ -407,7 +458,18 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="update_layer_appearance",
-           description="修改图层的视觉样式（如颜色、线宽、描边色、点大小、虚线样式等）。可以通过 ID (ref:xxx)、别名或图层名称引用图层。")
+           description="修改图层的视觉样式（如颜色、线宽、描边色、点大小、虚线样式等）。可以通过 ID (ref:xxx)、别名或图层名称引用图层。",
+           side_effect="state_mutation",
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("样式", "颜色", "线宽", "描边", "点大小", "style"),
+           output_semantic_type="text",
+           result_size_policy="inline_small",
+           required_context=("map_state",),
+           map_mutations=("style_layer",),
+           failure_modes=("invalid_args",))
     async def update_layer_appearance(
         layer_ref: str,
         color: Optional[str] = None,
@@ -460,7 +522,18 @@ def register_layer_management_tools(registry: ToolRegistry):
                "\n何时不用：仅想改可见性 — 用 set_layer_status；仅想改颜色 — 用 update_layer_appearance。"
                "\n关键约束：position 支持 top/bottom/up/down/before；before 时必须提供 before_ref。"
            ),
-           args_model=ReorderLayerArgs)
+           args_model=ReorderLayerArgs,
+           side_effect="state_mutation",
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("图层顺序", "置顶", "置底", "z-index", "叠放", "reorder"),
+           output_semantic_type="text",
+           result_size_policy="inline_small",
+           required_context=("map_state",),
+           map_mutations=("style_layer",),
+           failure_modes=("invalid_args",))
     async def reorder_layer(layer_ref: str, position: str = "top", before_ref: Optional[str] = None, session_id: Optional[str] = None) -> dict:
         if not session_id:
             return {"error": "Missing session_id context"}
@@ -501,7 +574,18 @@ def register_layer_management_tools(registry: ToolRegistry):
                "它同步更新 desired MapSpec 并携带 runtime 指令，避免 desired 与运行时地图分叉。"
                "\n关键约束：删除是不可逆操作；ref_id 来自 session 数据存储，删除画布上的图层不会清掉 session 数据本身。"
            ),
-           args_model=RemoveLayerArgs)
+           args_model=RemoveLayerArgs,
+           side_effect="state_mutation",
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("删除图层", "移除", "remove layer", "清掉", "删掉"),
+           output_semantic_type="text",
+           result_size_policy="inline_small",
+           required_context=("map_state",),
+           map_mutations=("remove_layer",),
+           failure_modes=("invalid_args",))
     async def remove_layer(layer_ref: str, session_id: Optional[str] = None) -> dict:
         if not session_id:
             return {"error": "Missing session_id context"}
@@ -526,7 +610,18 @@ def register_layer_management_tools(registry: ToolRegistry):
            param_descriptions={
                "layer_ref": "图层引用 (ref:xxx) 或名称",
                "expression": "过滤表达式，例如 'pop > 1000' 或 MapLibre/Mapbox GL 风格表达式。设为 null 或空字符串可清除过滤。",
-           })
+           },
+           side_effect="state_mutation",
+           deterministic=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("过滤", "筛选", "filter", "表达式", "动态显示"),
+           output_semantic_type="text",
+           result_size_policy="inline_small",
+           required_context=("map_state",),
+           map_mutations=("filter",),
+           failure_modes=("invalid_args",))
     async def apply_layer_filter(layer_ref: str, expression: Any, session_id: Optional[str] = None) -> dict:
         """应用实时图层过滤"""
         if not session_id:
@@ -557,7 +652,18 @@ def register_layer_management_tools(registry: ToolRegistry):
                "ref_id": "工具返回的 ref_id，如 'geojson-abc123'",
                "name": "显示在图层面板的名称，应简洁描述分析内容，如'锦江区大学分布'",
                "color": "（可选）图层颜色，16进制如 '#e11d48'",
-           })
+           },
+           side_effect="state_mutation",
+           deterministic=True,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("显示图层", "展示结果", "显示", "display", "图层面板", "结果图层"),
+           output_semantic_type="text",
+           result_size_policy="inline_small",
+           required_context=("map_state",),
+           map_mutations=("style_layer",),
+           failure_modes=("invalid_args",))
     def display_layer(ref_id: str, name: str, color: Optional[str] = None, session_id: Optional[str] = None) -> dict:
         """显示隐藏的结果图层"""
         if not session_id:

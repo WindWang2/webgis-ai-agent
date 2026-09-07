@@ -693,7 +693,7 @@ async def test_start_clears_death_signal(monkeypatch, tmp_path):
     entry = tmp_path / "rpc-entry.js"
     entry.write_text("// stub", encoding="utf-8")
     monkeypatch.setattr(
-        "app.services.chat.pi_native_surface.dump_native_tools",
+        "app.services.chat.pi_native_surface.dump_surface_file",
         lambda _p: tmp_path / "native-tools.json",
     )
     client = PiRpcClient(pi_rpc_entry=entry)

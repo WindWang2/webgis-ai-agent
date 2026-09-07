@@ -42,6 +42,11 @@ class Category(IntEnum):
     PROJECT_CONTEXT = 9
     DATA_REFS = 10
     TRACE_SUMMARIES = 11     # 执行轨迹摘要（最先裁）
+    # --- ADR-0103（V2）：GIS-aware 联合分区 ---
+    DATA_PROFILE = 12          # 数据画像（字段分布/资格证据；project_memory）
+    ALGORITHM_METADATA = 13    # 算法/能力元数据（算法 id、CRS/单位语义、适用性）
+    CARTOGRAPHY_METADATA = 14  # 制图元数据（配色/分级/MapSpec 校验证据）
+    TOOL_RESULTS = 15          # 本轮工具结果摘要（大结果应 offload 为 ref）
 
 
 #: tool schema 硬上限（占可用上下文比例）—— §22 红线
@@ -50,6 +55,20 @@ TOOL_SCHEMA_MAX_FRACTION = 0.35
 _OUTPUT_RESERVE_FRACTION = 0.25   # max_output + 生成余量 + 估算误差
 #: 超预算告警阈值（估算 ≥ 90% 可用 → 警告；≥ 100% → 违规）
 _WARN_FRACTION = 0.90
+
+#: V2：各 GIS 分区的可用上下文占比上限（确定性规划值；None = 不单设上限）。
+#: 设计依据：工具结果永不直接拼 prompt（ref 卸载），给 15%；数据画像/算法/
+#: 制图元数据是低价值密度高结构信息，各给 4% 上限（超限 → condense/offload
+#: 建议，不是截断 —— 截断权仍在各组件）。
+GIS_SECTION_CAPS: Dict[str, Optional[float]] = {
+    "TOOL_RESULTS": 0.15,
+    "DATA_PROFILE": 0.04,
+    "ALGORITHM_METADATA": 0.04,
+    "CARTOGRAPHY_METADATA": 0.04,
+    "SESSION_PLAN": 0.06,
+    "MAP_STATE": 0.06,
+    "TRACE_SUMMARIES": 0.05,
+}
 
 
 @dataclass(frozen=True)
@@ -131,11 +150,19 @@ def plan_budget(
     reserved = min(reserved, context_window // 2)
     usable = max(0, context_window - reserved)
     tool_budget = int(min(usable * tool_schema_fraction, 12288))
+    category_budgets = {Category.TOOL_SCHEMAS.name: tool_budget}
+    # ADR-0103 V2：GIS 分区确定性上限（占可用比例取整；≥1 token 才记录）
+    for name, fraction in GIS_SECTION_CAPS.items():
+        if fraction is None:
+            continue
+        cap = int(usable * fraction)
+        if cap >= 1:
+            category_budgets[name] = cap
     return BudgetPlan(
         context_window=context_window,
         reserved_output=reserved,
         usable=usable,
-        category_budgets={Category.TOOL_SCHEMAS.name: tool_budget},
+        category_budgets=category_budgets,
     )
 
 
@@ -225,3 +252,124 @@ def measure_assembled_context(
             category=Category.TOOL_SCHEMAS, name="tool_schemas", text=tools_payload,
         ))
     return measure_components(items, plan)
+
+
+# ---------------------------------------------------------------------------
+# ADR-0103（V2）：GIS-aware 预算建议器。
+#
+# 职责边界与 Wave 5 一致 —— advise() 只产出**决策建议**（keep/condense/
+# offload_ref/drop）与可观察报告（分区 token、被压缩/卸载/丢弃清单、输出
+# 保留、溢出原因），绝不直接改 prompt / 截断内容；执行权在调用方组件
+# （历史压缩头、schema 投影、ref 卸载管线）。同输入必同建议（确定性）。
+# ---------------------------------------------------------------------------
+
+class GisBudgetAdvisor:
+    """分区预算 → 每组件处置建议（确定性、可解释、不落刀）。"""
+
+    #: 类别 → 建议动作（按裁剪优先级从高到低对齐 Category 值）
+    _CATEGORY_ACTION: Dict[str, str] = {
+        Category.TOOL_RESULTS.name: "offload_ref",     # 大结果 → artifact/ref
+        Category.TRACE_SUMMARIES.name: "condense",     # 轨迹摘要 → 压缩
+        Category.DATA_PROFILE.name: "condense",
+        Category.ALGORITHM_METADATA.name: "condense",
+        Category.CARTOGRAPHY_METADATA.name: "condense",
+        Category.HISTORY.name: "drop_oldest",
+        Category.TOOL_SCHEMAS.name: "compress",
+        Category.SESSION_PLAN.name: "condense",
+        Category.MAP_STATE.name: "condense",
+    }
+    #: 永不建议处置的类别（用户当轮输入 / 输出保留 / 系统指令）
+    _UNTOUCHABLE = {
+        Category.RESERVED_OUTPUT.name,
+        Category.USER_PROMPT.name,
+        Category.SYSTEM_INSTRUCTIONS.name,
+    }
+
+    def __init__(self, plan: Optional[BudgetPlan] = None):
+        self._plan = plan
+
+    def advise(
+        self,
+        items: Sequence[BudgetItem],
+        *,
+        context_window: Optional[int] = None,
+        max_output_tokens: int = 0,
+    ) -> "GisBudgetAdvice":
+        plan = self._plan or plan_budget(
+            context_window=context_window or 0,
+            max_output_tokens=max_output_tokens,
+        )
+        by_section: Dict[str, int] = {}
+        actions: List[Dict[str, Any]] = []
+        section_used: Dict[str, int] = {}
+        for item in items:
+            by_section[item.category.name] = (
+                by_section.get(item.category.name, 0) + int(item.est_tokens)
+            )
+        # 分区累计 → 超限组件按「大者先建议」（tie 按名，确定性）
+        for item in sorted(items, key=lambda i: (i.category.value, -int(i.est_tokens), i.name)):
+            section = item.category.name
+            cap = plan.category_budgets.get(section)
+            if cap is None:
+                # review R2 minor：组件自带硬上限（如 HISTORY 的 6000 软预算）
+                # 也可作为该组件的判定上限 —— hard_limit_tokens 不再是无消费点。
+                cap = item.hard_limit_tokens
+            if cap is None or section in self._UNTOUCHABLE:
+                continue
+            used = section_used.get(section, 0)
+            est = int(item.est_tokens)
+            if used + est <= cap:
+                section_used[section] = used + est
+                continue
+            over = (used + est) - cap
+            action = self._CATEGORY_ACTION.get(section, "condense")
+            actions.append({
+                "item": item.name,
+                "category": section,
+                "action": action,
+                "est_tokens": est,
+                "section_cap": cap,
+                "over_by": over,
+            })
+            # 已超限部分继续占位（压缩/卸载后的残留按 40% 保守估算），
+            # 后续同分区组件据此继续判定 —— 累计语义一致。
+            section_used[section] = used + est + int(est * 0.4)
+        total = sum(by_section.values())
+        overflow_reason = None
+        if total > plan.usable:
+            overflow_reason = f"total:{total}>{plan.usable}"
+        elif total >= plan.usable * _WARN_FRACTION:
+            overflow_reason = f"near_budget:{total}/{plan.usable}"
+        return GisBudgetAdvice(
+            plan=plan,
+            by_section=by_section,
+            actions=actions,
+            overflow_reason=overflow_reason,
+            total_est_tokens=total,
+        )
+
+
+@dataclass
+class GisBudgetAdvice:
+    """预算建议结果（trace/debug bundle/评测断言面）。"""
+
+    plan: BudgetPlan
+    by_section: Dict[str, int]
+    actions: List[Dict[str, Any]]
+    overflow_reason: Optional[str]
+    total_est_tokens: int
+
+    @property
+    def reserved_output(self) -> int:
+        return self.plan.reserved_output
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "context_window": self.plan.context_window,
+            "reserved_output": self.plan.reserved_output,
+            "usable": self.plan.usable,
+            "total_est_tokens": self.total_est_tokens,
+            "by_section": dict(self.by_section),
+            "actions": [dict(a) for a in self.actions],
+            "overflow_reason": self.overflow_reason,
+        }

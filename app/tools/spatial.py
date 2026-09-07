@@ -148,7 +148,24 @@ def register_spatial_tools(registry: ToolRegistry):
                "\n关键约束：distance 必须 > 0；单位严格按 unit (默认米)；"
                "投影会自动转 UTM 做精确缓冲，结果回 WGS84。"
            ),
-           args_model=BufferAnalysisArgs)
+           args_model=BufferAnalysisArgs,
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("缓冲", "缓冲区", "buffer", "范围", "邻近", "distance"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data"),
+           examples=("学校周边500米范围", "地铁站1公里缓冲区"),
+           anti_examples=("多档距离环（如100/300/500m）用 multi_ring_buffer，不要反复调本工具",),
+           summary=("对点/线/面要素生成指定距离的缓冲多边形（自动转 UTM 精确度量，结果回 WGS84）。"
+                    "距离邻近查询的母图层与叠加分析前的几何准备。distance 必须 >0，单位 m/km。"
+                    "多距离环用 multi_ring_buffer，路网时间通达用 isochrone_analysis。"))
     @cached_tool(ttl=86400)
     def buffer_analysis(geojson: Any, distance: float, unit: str = "m") -> dict:
         data = safe_parse_geojson(geojson)
@@ -179,7 +196,22 @@ def register_spatial_tools(registry: ToolRegistry):
                "(2) 统计点集的聚集模式 — 用 nearest_neighbor / moran_i；"
                "(3) 栅格的统计 — 用 zonal_stats。"
                "\n返回：{total_area_m2, total_length_m, count, bbox, centroid}"
-           ))
+           ),
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("统计", "面积", "长度", "bbox", "中心点", "summary"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"),
+           examples=("这个图层总面积有多大", "数据总长多少公里、大致中心在哪"),
+           summary=("几何级聚合统计：对一个 FeatureCollection 返回总面积(m²)、总长度(m)、"
+                    "要素数、bbox 与平均中心点。用于图层量纲摘要；逐多边形计数用 "
+                    "spatial_aggregate，栅格统计用 zonal_stats。"))
     def spatial_stats(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
         if not isinstance(data, dict):
@@ -198,7 +230,19 @@ def register_spatial_tools(registry: ToolRegistry):
                "(2) 要画出聚类边界 — 用 spatial_cluster (DBSCAN)；"
                "(3) 要找密度等值面 — 用 kde_contours。"
                "\n输入：必须是点要素 (Point)。返回 {mean_nearest_distance, expected, R, pattern}。"
-           ))
+           ),
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("最近邻", "nearest neighbor", "聚集", "分布模式", "点格局"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="auto_project",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data"))
     def nearest_neighbor(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
         if not isinstance(data, dict):
@@ -226,7 +270,17 @@ def register_spatial_tools(registry: ToolRegistry):
            # .apply_async 后 task.get(timeout=120) 同步等结果）——重工具显式
            # 标 heavy + 显式墙钟预算（120s 任务等待 + 与原默认 300s 等量的
            # 进程内回退余量，不因显式化而收紧）。
-           cost="heavy", timeout=300.0)
+           cost="heavy", timeout=300.0,
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("热力图", "heatmap", "密度", "density", "热度", "分布"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           failure_modes=("timeout", "invalid_args", "missing_data"))
     @cached_tool(ttl=3600)
     def heatmap_data(geojson: Any, cell_size: int = 500, radius: Optional[int] = None,
                      render_type: str = "native", palette: str = "classic",
@@ -392,7 +446,16 @@ def register_spatial_tools(registry: ToolRegistry):
            param_descriptions={
                "location": "查询位置经纬度 [lng, lat]",
                "buffer_m": "查询半径（米），默认 10",
-           })
+           },
+           side_effect="state_mutation",
+           deterministic=True,
+           network=False,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="small",
+           tags=("要素查询", "点选", "identify", "属性查询", "这个点是什么"),
+           output_semantic_type="text",
+           result_size_policy="inline_small")
     def query_map_features(location: List[float], buffer_m: float = 10) -> dict:
         return {
             "command": "query_features",

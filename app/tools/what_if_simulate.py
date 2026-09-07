@@ -375,6 +375,16 @@ def register_what_if_simulate(registry: ToolRegistry):
         tier=3,
         domains=["what_if"],
         args_model=WhatIfArgs,
+        deterministic=False,  # geocode/RAG 外部依赖 + uuid 模拟引用
+        network=True,  # TargetAreaResolver 走 geocode provider HTTP
+        latency_class="medium",
+        memory_class="medium",
+        scale_class="medium",
+        output_semantic_type="stats",
+        result_size_policy="inline_small",
+        data_mutations=("session_state",),  # 模拟 GeoJSON 落 SessionStore 游标
+        tags=("what_if", "情景模拟", "影响推演", "scenario", "指标变化", "假设分析"),
+        failure_modes=("ambiguous_intent", "missing_data", "network_error"),
     )
     async def _what_if_simulate_wrapper(
         scenario: str,

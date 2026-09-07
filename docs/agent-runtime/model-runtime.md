@@ -72,3 +72,52 @@ decision.fallback_chain # 有界候选链
 契约测试：`tests/unit/test_provider_contract_v2.py`（§35 十二场景，
 MockTransport，runtime 必须诚实 settle —— 截断流显式抛
 `ProviderStreamTruncated`，绝不假成功）。
+
+## Live 路由接线（ADR-0103）
+
+`app/services/chat/model_routing_bridge.py` —— 把 ADR-0102 交付但未接入
+production 路径的 router 接上，向后兼容：
+
+- `resolve_routed_config(role, messages=, require_tools=, require_json=)` →
+  `(LLMConfig, RouteDecision|None)`：router 的 primary 就是
+  `resolve_llm_config(role)` 的既有结果（operator 配置 > runtime override）；
+  router 只叠加能力护栏（context window / tool calling / json）、健康降级链
+  （fallback_group + role fallbacks）与 reason codes。任何 router 异常 →
+  legacy 路径（`decision=None`，无 decision 就无健康表更新，行为与历史一致）；
+  `MODEL_ROUTER_ENABLED=0` 整体关闭。
+- `observe_outcome(decision, latency_s=, exc=/status_code=/finish_reason=)`：
+  失败经 `classify_exception` / `classify_status_failure` 分类后
+  `router.observe` 入健康表（breaker / cooldown / capability_mismatch）+
+  trace fallback —— 无观测不降级，观测绝不抛出。`health_snapshot()` 只读
+  快照（评测/诊断）。`LatencyTimer` 是 latency_s 来源。
+- `_estimate_context_tokens`：CJK-aware 粗估（与 context_budget 同一估算
+  语义）；估算失败返回 0 —— router 视为未知，不猜。
+
+### 引擎接线点
+
+`app/services/chat/execution_engine.py`：
+
+- `_call_llm` / `_call_llm_stream`：
+  `resolve_routed_config(self._routing_role(), messages=, require_tools=bool(tools))`
+  + `LatencyTimer`；流式在 `_observed_stream` 的 `finally` 里回报 —— 截断/
+  中断异常按失败入健康表，正常耗尽按成功；
+- `_generate_title`：title 角色同款路由 + 成功/失败回报；
+- `_llm_config` / `_planner_llm_config`：require_tools / require_json 护栏，
+  异常自动回退 legacy；
+- 子代理：SubagentDispatcher 按角色 profile 的 `model_role` 注入子引擎构造
+  （`app/services/subagent.py`）；`_routing_role()` 缺省回落 `execution`。
+
+### V3 角色 profile（roles.py）
+
+新增 8 个 policy-only 角色：architecture / debugger / scientific_review
+（`preferred_group="strong"` 强推理池）与 corpus_worker / doc_crosscheck /
+descriptor_enrichment / static_analysis（`preferred_group="cheap"` 高吞吐
+廉价池）及 code_worker（default 组）。角色只声明**策略**（max_output /
+timeout / temperature / require_tools / require_json / max_attempts /
+preferred_group），不绑任何厂商 —— 模型本体由路由器按抽象 `fallback_group`
+描述符（operator 经 `MODEL_DESCRIPTORS_FILE` 划分强弱/快慢池）+ 健康度确定
+性解析；无分组数据回落 execution 主模型，行为不劣化。
+
+测试锚点：`tests/unit/test_model_routing_bridge.py`（8 新角色存在性、
+primary 不变、能力/上下文护栏、健康回报、引擎接线）、
+`tests/unit/test_model_runtime_v2.py`。

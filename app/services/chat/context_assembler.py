@@ -413,6 +413,43 @@ class ChatContextAssembler:
                 max_output_tokens=_settings.LLM_MAX_TOKENS,
             )
             budget_report = _report.as_dict()
+            # ADR-0103 V2：GIS-aware 处置建议（不落刀 —— 建议进 report，
+            # 执行权仍在历史压缩/schema 投影/ref 卸载管线）。
+            try:
+                from app.services.chat.context_budget import (
+                    BudgetItem,
+                    Category,
+                    GisBudgetAdvisor,
+                    plan_budget as _plan_budget,
+                )
+
+                _plan = _plan_budget(
+                    context_window=_window or 0,
+                    max_output_tokens=_settings.LLM_MAX_TOKENS,
+                )
+                _items = [
+                    BudgetItem(
+                        category=Category.HISTORY, name="history",
+                        est_tokens=_report.by_category.get("HISTORY", 0),
+                        hard_limit_tokens=6000,
+                    ),
+                    BudgetItem(
+                        category=Category.TOOL_SCHEMAS, name="tool_schemas",
+                        est_tokens=_report.by_category.get("TOOL_SCHEMAS", 0),
+                    ),
+                    BudgetItem(
+                        category=Category.SYSTEM_INSTRUCTIONS, name="system",
+                        est_tokens=_report.by_category.get("SYSTEM_INSTRUCTIONS", 0),
+                    ),
+                    BudgetItem(
+                        category=Category.USER_PROMPT, name="user_final",
+                        est_tokens=_report.by_category.get("USER_PROMPT", 0),
+                    ),
+                ]
+                _advice = GisBudgetAdvisor(_plan).advise(_items)
+                budget_report["gis_advice"] = _advice.as_dict()
+            except Exception:  # noqa: BLE001 — 建议绝不阻断组装
+                pass
             if _report.over_budget:
                 logger.warning(
                     "[CONTEXT-BUDGET] session=%s over budget: %s",

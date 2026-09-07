@@ -185,7 +185,18 @@ def register_terrain_tools(registry: ToolRegistry):
            param_descriptions={
                "bbox": "边界框 [west, south, east, north]，如 [116.2, 39.7, 116.6, 40.1]",
                "products": "分析产品列表，可选: 'slope'(坡度), 'aspect'(坡向), 'hillshade'(山体阴影)，默认全部",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("坡度", "坡向", "山体阴影", "dem", "地形", "hillshade"),
+           output_semantic_type="stats",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           failure_modes=("timeout", "network_error", "empty_result"))
     async def compute_terrain(bbox: str, products: list[str] | None = None) -> dict:
         try:
             parts = parse_bbox(bbox)
@@ -210,7 +221,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "date_from": "起始日期 YYYY-MM-DD",
                "date_to": "结束日期 YYYY-MM-DD",
                "index_type": "指数类型: 'ndvi'(默认), 'ndwi', 'nbr', 'evi'",
-           })
+           },
+           side_effect="cacheable_read",
+           network=True,
+           deterministic=False,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("ndvi", "ndwi", "nbr", "evi", "植被指数", "遥感"),
+           output_semantic_type="stats",
+           result_size_policy="bounded",
+           crs_semantics="wgs84",
+           failure_modes=("network_error", "empty_result", "invalid_args"))
     async def compute_vegetation_index(bbox: str, date_from: str, date_to: str,
                                         index_type: str = "ndvi") -> dict:
         try:
@@ -238,7 +260,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "window": "TPI/粗糙度窗口（奇数 3-101，默认 3）",
                "z_factor": "垂直单位比例（z 米/值；英尺 DEM ≈0.3048，默认 1）",
                "nodata": "可选 nodata 覆盖值（缺省用文件声明/NaN）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("tpi", "tri", "地形", "曲率", "粗糙度", "dem"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def terrain_derivatives(raster_path: str, derivative: str, window: int = 3,
                             z_factor: float = 1, nodata: float | None = None) -> dict:
         contract_params: Dict[str, Any] = {
@@ -313,7 +346,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "observer_height": "观察者离地高度（米，默认 2）",
                "target_height": "目标离地高度（米，默认 0 = 地表）",
                "max_distance": "最大视线距离（米，默认 5000）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("视域", "可见性", "viewshed", "通视", "瞭望"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def viewshed_analysis(raster_path: str, observer_x: float, observer_y: float,
                           observer_height: float = 2, target_height: float = 0,
                           max_distance: float = 5000) -> dict:
@@ -369,7 +413,18 @@ def register_terrain_tools(registry: ToolRegistry):
            param_descriptions={
                "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
                "product": "输出产品: 'flow_accumulation'(默认) | 'flow_direction'",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("流向", "汇流", "d8", "水文", "flow accumulation"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def flow_analysis(raster_path: str, product: str = "flow_accumulation") -> dict:
         params = apply_contract("flow_analysis", {"product": product})
         product = str(params["product"])
@@ -426,7 +481,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
                "pour_x": "汇入点世界 x（栅格 CRS 单位；应落在河道上）",
                "pour_y": "汇入点世界 y（栅格 CRS 单位；应落在河道上）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("流域", "汇水区", "watershed", "上游", "水文"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def watershed_delineation(raster_path: str, pour_x: float, pour_y: float) -> dict:
         arr, transform, crs, eff_nodata, bounds = _read_terrain_window(raster_path, None)
         cy, cx, transformations = _metric_cell_sizes(crs, transform, bounds)
@@ -487,7 +553,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "levels": "显式等值线水平列表（如 [100, 200, 300]；优先于 interval/n_levels）",
                "n_levels": "等间隔水平数（2-30，默认 10）",
                "interval": "等值线间隔（如 50；自数据最低值起）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("等高线", "等值线", "contour", "制图", "dem"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="bounded",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data"))
     def extract_contours(raster_path: str, levels: list[float] | None = None,
                          n_levels: int = 10, interval: float | None = None) -> dict:
         # 评审 M3：显式 levels 绕过契约的 n_levels 上限 —— 语义等价界
@@ -587,7 +664,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
                "epsilon": "逐像元抬升量（米，默认 0 = 纯填洼；如 0.01 → 单调可排）",
                "nodata": "可选 nodata 覆盖值（缺省用文件声明/NaN）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("填洼", "洼地", "priority flood", "dem预处理", "水文"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def depression_fill(raster_path: str, epsilon: float = 0.0,
                         nodata: float | None = None) -> dict:
         contract_params: Dict[str, Any] = {"epsilon": epsilon}
@@ -642,7 +730,18 @@ def register_terrain_tools(registry: ToolRegistry):
            param_descriptions={
                "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
                "product": "输出产品: 'flow_accumulation'(默认) | 'flow_direction'",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("dinf", "多向流", "流向", "汇流", "水文"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def dinf_flow_analysis(raster_path: str, product: str = "flow_accumulation") -> dict:
         params = apply_contract("dinf_analysis", {"product": product})
         product = str(params["product"])
@@ -703,7 +802,19 @@ def register_terrain_tools(registry: ToolRegistry):
            param_descriptions={
                "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
                "mode": "长度口径: 'downstream'(默认) | 'upstream'",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("流程长度", "坡长", "flow length", "汇流时间", "usle"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           unit_semantics="meters",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def flow_length_analysis(raster_path: str, mode: str = "downstream") -> dict:
         params = apply_contract("flow_length_analysis", {"mode": mode})
         mode_v = str(params["mode"])
@@ -750,7 +861,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
                "threshold": "河网阈值（上游贡献像元数，≥1；如 100、1000）",
                "product": "输出产品: 'stream_order'(默认) | 'stream_mask'",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("河网", "strahler", "水系", "河流分级", "水文"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def stream_network(raster_path: str, threshold: float,
                        product: str = "stream_order") -> dict:
         params = apply_contract("stream_network", {"threshold": threshold, "product": product})
@@ -820,7 +942,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "pour_x": "pour point 世界 x（栅格 CRS 单位；应落在河道上）",
                "pour_y": "pour point 世界 y（栅格 CRS 单位）",
                "stream_threshold": "可选河网阈值（上游像元数；给定时计算排水密度）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("流域形态", "morphometry", "排水密度", "盆地", "horton"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def watershed_morphometry_analysis(raster_path: str, pour_x: float, pour_y: float,
                                        stream_threshold: float | None = None) -> dict:
         contract_params: Dict[str, Any] = {"pour_x": pour_x, "pour_y": pour_y}
@@ -875,7 +1008,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
                "product": "输出产品: 'twi'(默认) | 'spi'",
                "z_factor": "垂直单位比例（英尺 DEM ≈0.3048，默认 1）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("twi", "spi", "湿润度", "地形指数", "饱和带"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def topographic_index(raster_path: str, product: str = "twi",
                           z_factor: float = 1) -> dict:
         params = apply_contract("wetness_index", {"product": product})
@@ -928,7 +1072,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "method": "方法: 'mccool'(默认) | 'desmet_govers'",
                "flow_length": "mccool 坡长 λ（米，默认 100；建议用上游流程长度替代）",
                "z_factor": "垂直单位比例（英尺 DEM ≈0.3048，默认 1）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("usle", "ls因子", "土壤侵蚀", "坡长坡度", "侵蚀制图"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def ls_factor_analysis(raster_path: str, method: str = "mccool",
                            flow_length: float = 100.0, z_factor: float = 1) -> dict:
         params = apply_contract("ls_factor_analysis", {
@@ -983,7 +1138,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
                "radius_cells": "搜索半径（像元，1-100，默认 8）",
                "azimuth_count": "方位数（4-64 等角距，默认 16）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("开放度", "openness", "脊谷", "地貌", "天际线"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def terrain_openness_analysis(raster_path: str, radius_cells: int = 8,
                                   azimuth_count: int = 16) -> dict:
         params = apply_contract("openness_analysis", {
@@ -1040,7 +1206,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "lookup_radius_cells": "视线查找半径（像元，1-128，默认 8）",
                "flatten": "平地容差（度，默认 0；建议 ≈ DEM 高程噪声）",
                "far": "近场跳过半径（像元，默认 0 = 不跳过）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("地貌分类", "geomorphon", "形态单元", "土地形态", "dem"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def geomorphon_analysis(raster_path: str, lookup_radius_cells: int = 8,
                             flatten: float = 0.0, far: float = 0.0) -> dict:
         params = apply_contract("geomorphon_analysis", {
@@ -1095,7 +1272,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "tpi_window_small": "小尺度 TPI 窗口（奇数 3-101，默认 3）",
                "tpi_window_large": "大尺度 TPI 窗口（奇数，默认 25）",
                "elevation_tolerance": "平地带高程百分位容差（0-0.5，默认 0.1）",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("地类分级", "weiss", "tpi", "地貌单元", "landform"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def landform_classify(raster_path: str, tpi_window_small: int = 3,
                           tpi_window_large: int = 25,
                           elevation_tolerance: float = 0.1) -> dict:
@@ -1154,7 +1342,18 @@ def register_terrain_tools(registry: ToolRegistry):
                "altitude": "太阳高度角（度，0-90，默认 45）",
                "azimuths": "太阳方位列表（罗盘度，逗号分隔，默认 '315,135'）",
                "combine": "合成方式: 'mean'(默认) | 'min'",
-           })
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("山体阴影", "hillshade", "多方位", "地形制图", "晕渲"),
+           output_semantic_type="stats",
+           result_size_policy="inline_small",
+           crs_semantics="crs_agnostic",
+           failure_modes=("invalid_args", "missing_data", "memory"))
     def multiazimuth_hillshade(raster_path: str, altitude: float = 45.0,
                                azimuths: str | list[float] | None = None,
                                combine: str = "mean") -> dict:

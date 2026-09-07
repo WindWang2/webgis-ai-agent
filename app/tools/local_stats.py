@@ -54,6 +54,16 @@ def register_local_stats_tools(registry: ToolRegistry):
         },
         execution_policy=ToolExecutionPolicy.THREAD,
         timeout=60.0,
+        side_effect="pure",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="medium",
+        tags=["统计年鉴", "县域", "乡镇", "gdp", "人口", "社会经济", "yearbook"],
+        output_semantic_type="table",
+        result_size_policy="bounded",
+        failure_modes=["empty_result"],
     )
     def query_local_yearbook(
         dataset: str = "township",
@@ -123,6 +133,20 @@ def register_local_stats_tools(registry: ToolRegistry):
         domains=["poi", "dataset"],
         execution_policy=ToolExecutionPolicy.THREAD,
         timeout=120.0,
+        side_effect="pure",
+        network=True,
+        latency_class="fast",
+        memory_class="medium",
+        scale_class="large",
+        crs_semantics="wgs84",
+        tags=["poi", "兴趣点", "高德", "poi检索", "商户", "坐标", "中国"],
+        output_semantic_type="geojson_fc",
+        result_size_policy="bounded",
+        failure_modes=["missing_data", "empty_result"],
+        capabilities=["poi_query"],
+        summary="全国高德 POI 库（5174 万点，WGS84）检索主力：bbox/行政区/名称/大类过滤，返回 FeatureCollection。",
+        examples=["锦江区所有三甲医院的坐标", "成都的小学分布"],
+        anti_examples=["查境外 POI", "不给 bbox/district/adcode 任何过滤做全库扫描"],
     )
     def query_local_poi(
         bbox="",
@@ -225,6 +249,16 @@ def register_local_stats_tools(registry: ToolRegistry):
             "✅ 用于：query_local_yearbook / query_local_poi 前确认数据覆盖。"
         ),
         execution_policy=ToolExecutionPolicy.INLINE,
+        side_effect="pure",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        tags=["统计", "目录", "数据覆盖", "catalog", "年鉴", "poi库"],
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=["missing_data"],
     )
     def get_local_stats_catalog() -> dict:
         return {"yearbook": yearbook_catalog(), "gd_poi": gd_poi_catalog()}
@@ -242,6 +276,18 @@ def register_local_stats_tools(registry: ToolRegistry):
             "adcode": "可选：所属区县编码消歧（跨省同名乡镇）",
         },
         execution_policy=ToolExecutionPolicy.INLINE,
+        side_effect="pure",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        crs_semantics="wgs84",
+        tags=["乡镇", "中心点", "坐标", "地名", "township", "街道"],
+        output_semantic_type="text",
+        result_size_policy="inline_small",
+        failure_modes=["empty_result"],
+        capabilities=["poi_query"],
     )
     def get_township_center(name: str, adcode: Union[str, int] = "") -> dict:
         hit = lookup_township_center(name, _to_str(adcode))

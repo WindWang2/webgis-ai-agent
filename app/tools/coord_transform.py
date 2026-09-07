@@ -47,7 +47,18 @@ def register_coord_transform_tools(registry: ToolRegistry):
               "geojson": "输入图层 GeoJSON 或引用(ref:xxx)",
               "from_crs": "源坐标系：'wgs84' | 'gcj02' | 'bd09'",
               "to_crs": "目标坐标系：'wgs84' | 'gcj02' | 'bd09'",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="fast",
+          memory_class="medium",  # 整图层 deepcopy 进出内存
+          scale_class="medium",
+          output_semantic_type="geojson_fc",
+          result_size_policy="inline_small",  # 变换后图层原样内联返回（无 ref 卸载）
+          tags=("坐标系转换", "gcj02", "bd09", "wgs84", "火星坐标", "坐标偏移"),
+          failure_modes=("invalid_args",),
+          )
     def transform_coordinates(geojson: Any, from_crs: str, to_crs: str) -> dict:
         # Policy gate: this tool is Chinese-CRS-only. normalize_chinese_crs is
         # the deep module's single authority for "what counts as a Chinese CRS";
@@ -128,7 +139,18 @@ def register_epsg_transform_tools(registry: ToolRegistry):
               "geojson": "输入图层 GeoJSON 或引用(ref:xxx)",
               "from_epsg": "源坐标系 EPSG 代码，如 'EPSG:4326'",
               "to_epsg": "目标坐标系 EPSG 代码，如 'EPSG:32650'",
-          })
+          },
+          side_effect="deterministic_compute",
+          deterministic=True,
+          network=False,
+          latency_class="fast",
+          memory_class="medium",  # 整图层 deepcopy 进出内存
+          scale_class="medium",
+          output_semantic_type="geojson_fc",
+          result_size_policy="inline_small",  # 重投影后图层原样内联返回（无 ref 卸载）
+          tags=("投影", "epsg", "重投影", "cgcs2000", "utm", "crs"),
+          failure_modes=("invalid_args",),
+          )
     def reproject_coordinates(geojson: Any, from_epsg: str, to_epsg: str) -> dict:
         data = safe_parse(geojson)
         if not data:

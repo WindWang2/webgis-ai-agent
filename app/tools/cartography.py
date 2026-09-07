@@ -85,7 +85,18 @@ def register_cartography_tools(registry: ToolRegistry):
                "(2) 想做交互过滤 — 用 apply_layer_filter。"
                "\n关键约束：color 必须是 hex (#RRGGBB)；opacity 0-1；输出回写 properties.__style__。"
            ),
-           args_model=ApplyStyleArgs)
+           args_model=ApplyStyleArgs,
+           side_effect="state_mutation",
+           deterministic=True,
+           latency_class="fast",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("样式", "单色", "透明度", "描边", "style", "图层配色"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           required_context=("map_state",),
+           map_mutations=("style_layer",),
+           failure_modes=("invalid_args",))
     def apply_layer_style(geojson: Any, color: str, opacity: float = 0.7, stroke_width: float = 2.0, group: str = "analysis") -> dict:
         try:
             data = _safe_parse_geojson(geojson)
@@ -116,7 +127,18 @@ def register_cartography_tools(registry: ToolRegistry):
 
     @tool(registry, name="create_thematic_map",
            description="根据指定字段制作分层设色专题图 (Choropleth Map)，自动计算颜色级别。",
-           args_model=ThematicMapArgs)
+           args_model=ThematicMapArgs,
+           side_effect="state_mutation",
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("专题图", "choropleth", "分层设色", "自然断裂", "分级", "调色板", "图例"),
+           output_semantic_type="map_product",
+           result_size_policy="ref_offload",
+           required_context=("map_state",),
+           map_mutations=("add_layer", "style_layer"),
+           failure_modes=("invalid_args", "missing_data"))
     def create_thematic_map(geojson: Any, field: str, method: Optional[str] = None, k: int = 5, palette: str = "YlOrRd", group: str = "analysis") -> dict:
         try:
             data = _safe_parse_geojson(geojson)
@@ -215,7 +237,19 @@ def register_cartography_tools(registry: ToolRegistry):
                "k": "颜色分级数，默认 5",
                "method": "颜色分类方法：'natural_breaks', 'equal_interval', 'quantile' 等",
                "group": "图层分组，默认 'analysis'",
-           })
+           },
+           side_effect="state_mutation",
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("3d", "挤出", "立体", "extrusion", "高度", "专题图"),
+           output_semantic_type="map_product",
+           result_size_policy="ref_offload",
+           crs_semantics="wgs84",
+           required_context=("map_state",),
+           map_mutations=("add_layer", "style_layer"),
+           failure_modes=("invalid_args", "missing_data"))
     def create_3d_extrusion_map(
         geojson: Any,
         height_field: str,
@@ -366,7 +400,19 @@ def register_cartography_tools(registry: ToolRegistry):
                "\n何时不用：要批量导出多张图 — 用 export_batch_maps。"
                "\n关键约束：dpi>300 文件会非常大；svg 是把 PNG 嵌入 SVG 容器（兼容 Illustrator/Inkscape）。"
            ),
-           args_model=ExportMapArgs)
+           args_model=ExportMapArgs,
+           side_effect="artifact_creation",
+           deterministic=True,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="medium",
+           tags=("导出", "出图", "打印", "pdf", "png", "svg", "制图排版", "高清"),
+           output_semantic_type="map_product",
+           result_size_policy="inline_small",
+           required_context=("map_state",),
+           map_mutations=("map_product",),
+           data_mutations=("artifact_write",),
+           failure_modes=("invalid_args",))
     def export_thematic_map(
         title: str,
         subtitle: str = "",
@@ -423,7 +469,19 @@ def register_cartography_tools(registry: ToolRegistry):
                "如需每张不同视角（『总览/北部/南部』），传 views 参数（与 titles 一一对应），"
                "导出之间会自动 fly_to 到对应视图；不需要切视图就不用传。"
            ),
-           args_model=ExportBatchMapsArgs)
+           args_model=ExportBatchMapsArgs,
+           side_effect="artifact_creation",
+           deterministic=True,
+           latency_class="fast",
+           memory_class="light",
+           scale_class="medium",
+           tags=("批量导出", "多张图", "导出队列", "出图", "批量制图"),
+           output_semantic_type="map_product",
+           result_size_policy="inline_small",
+           required_context=("map_state",),
+           map_mutations=("map_product", "camera"),
+           data_mutations=("artifact_write",),
+           failure_modes=("invalid_args", "partial_coverage"))
     def export_batch_maps(
         titles: list[str],
         views: list[dict] | None = None,
