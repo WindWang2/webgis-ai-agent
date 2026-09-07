@@ -69,7 +69,7 @@ def test_unpainted_path_still_runs_without_token():
     from app.lib.geo_analysis.point_pattern import ripley_k
 
     out = ripley_k(_rng_xy(40), envelopes=5)
-    assert "K" in out or "k_function" in out or out  # 结构性返回即可
+    assert "K" in out and "L" in out  # 结构性返回契约（R1：去掉恒真尾巴）
 
 
 # ── Wave 10：typed reject ────────────────────────────────────────────────

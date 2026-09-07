@@ -98,6 +98,13 @@ class DataStateProfile:
 
 
 #: 数据状态目录（12 态）。前 4 态只变几何类别；后 8 态为语义数据状态。
+# ── R1 review 诚实性标注（GIS-science QA）────────────────────────────────
+# 以下状态在 plan tier 对全部 59 族**实证惰性**（逐族与 nominal 的资格态
+# 逐位相同，0/59 差异）：zero_variance / too_few_samples / large_data。
+# 其语义闸位于 execute 层（scientific_preconditions 消费 valueVariance /
+# 样本量事实；plan 资格面不读这些画像字段）。语料保留这些行是为了锁
+# "惰性本身"（资格面升级时强制重审），但不应把行的存在当成 plan-tier
+# 保护。接线后续：方差/样本量/投影义务纳入 qualify_data 输入面。
 DATA_STATE_PROFILES: Tuple[DataStateProfile, ...] = (
     DataStateProfile("nominal_point", "点要素数据（全事实满足）", "",
                      _facts(geometryTypes=["Point"])),

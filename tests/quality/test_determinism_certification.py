@@ -43,7 +43,8 @@ def test_plan_double_run_is_identical(query):
 
 
 def test_ripley_k_double_run_identical():
-    """固定种子 CSR 包络：双跑逐位一致。"""
+    """固定种子 CSR 包络：双跑一致（输出按模块声明的 4 位小数精度；
+    更细粒度的流漂移由 golden pin 后续承接）。"""
     from app.lib.geo_analysis.point_pattern import ripley_k
 
     rng = np.random.default_rng(7)
