@@ -74,9 +74,23 @@ GEOCOMPUTE_CANCEL_EVENTS = frozenset({"node_cancelled"})
 GEOCOMPUTE_SUCCESS_NODE_EVENTS = frozenset({"node_completed", "node_reused", "node_skipped"})
 
 # ── 脱敏契约 ─────────────────────────────────────────────────────────────
-_SENSITIVE_KEY_RE = re.compile(
-    r"(?i)(secret|token|password|api_key|apikey|authorization|cookie|credential)"
-)
+_SENSITIVE_RE_CACHE = None
+
+
+def _sensitive_key_re():
+    """派生自 jobs/redaction 的 SENSITIVE_KEY_PARTS（R2 review MINOR-5：
+    与 events.py 同一口径，不再自绘弱子集词表）。"""
+    global _SENSITIVE_RE_CACHE
+    if _SENSITIVE_RE_CACHE is None:
+        try:
+            from app.services.jobs.redaction import SENSITIVE_KEY_PARTS
+            parts = sorted(SENSITIVE_KEY_PARTS)
+        except Exception:  # noqa: BLE001 —— 循环导入兜底
+            parts = ["secret", "token", "password", "api_key", "apikey",
+                     "authorization", "cookie", "credential"]
+        _SENSITIVE_RE_CACHE = re.compile(
+            "(?i)(" + "|".join(re.escape(p) for p in parts) + ")")
+    return _SENSITIVE_RE_CACHE
 #: 单条 trace 记录序列化字节上界（有界元数据，不是载荷）
 MAX_RECORD_BYTES = 8 * 1024
 #: 单个字符串值上界
@@ -239,7 +253,7 @@ def _redaction_gaps(records: List[Dict[str, Any]]) -> List[TraceGap]:
         payload = rec.get("payload")
         items = (payload if isinstance(payload, dict) else rec).items()
         for key, value in items:
-            if _SENSITIVE_KEY_RE.search(str(key)):
+            if _sensitive_key_re().search(str(key)):
                 gaps.append(TraceGap(
                     "SENSITIVE_KEY", "BLOCKER",
                     f"sensitive-looking key {key!r} must never enter trace"))

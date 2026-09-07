@@ -41,9 +41,15 @@ def _perf_lane_files() -> list:
     """R1 review MINOR：perf 车道清单单一来源化 —— 扫描 perf 标记文件，
     与 CI 契约测试（test_every_perf_marked_file_is_wired_into_a_lane）
     同一判定口径，本地与 CI 不漂移。"""
+    # nightly 专属文件（event-loop lag / 大规模 MapSpec）排除 —— 与
+    # test_ci_perf_coverage_contract 的 NIGHTLY_ONLY_PERF_FILES 口径一致，
+    # 本地 perf 车道不跑会撞 180s 预算的墙钟子集。
+    nightly_only = {"test_perf_harness_v2.py", "test_perf_mapspec_e2e.py"}
     files = []
     for pattern_dir in ("tests/benchmarks", "tests/perf"):
         for p in sorted((REPO / pattern_dir).glob("test_*.py")):
+            if p.name in nightly_only:
+                continue
             src = p.read_text(encoding="utf-8")
             if "pytestmark = pytest.mark.perf" in src or "@pytest.mark.perf" in src:
                 files.append(str(p.relative_to(REPO)))
@@ -97,7 +103,14 @@ LANES: dict[str, dict] = {
     "data": {
         "title": "data（数据面 + fabric）",
         "commands": [
-            PYTEST + ["tests/data/", "tests/unit/test_data_runtime_v2.py",
+            PYTEST + ["tests/data/",
+                      "tests/unit/test_data_fabric_adapters.py",
+                      "tests/unit/test_data_fabric_contract.py",
+                      "tests/unit/test_data_fabric_registry.py",
+                      "tests/unit/test_data_fabric_routes.py",
+                      "tests/unit/test_data_fabric_resource_guards.py",
+                      "tests/unit/test_data_fabric_reliability.py",
+                      "tests/unit/test_data_fabric_fault_injection.py",
                       "--no-cov", "-q", "--timeout=120", "--timeout-method=thread",
                       "-p", "no:cacheprovider"],
         ],
@@ -138,10 +151,7 @@ def _run_lane(lane: str, retry_failed: bool) -> dict:
     results = []
     for cmd in spec["commands"]:
         if retry_failed and cmd[0] == sys.executable and "pytest" in cmd[1:3]:
-            # R1 review MINOR：--lf 依赖 cacheprovider —— 重试命令必须去掉
-            # no:cacheprovider 否则参数冲突
-            cmd = [c for c in cmd if c != "-p" and c != "no:cacheprovider"] \
-                if False else cmd
+            # --lf 依赖 cacheprovider：重试命令必须去掉 -p no:cacheprovider
             filtered = []
             skip_next = False
             for c in cmd:

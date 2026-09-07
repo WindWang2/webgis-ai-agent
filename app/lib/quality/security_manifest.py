@@ -322,12 +322,16 @@ def _node_defined(text: str, node_name: str) -> bool:
     if "::" not in node_name:
         return bool(pat.search(text))
     cls, func = node_name.split("::", 1)
-    class_pat = re.compile(
-        r"^class\s+" + re.escape(cls) + r"\b.*?^\s+(?:async\s+)?def\s+"
-        + re.escape(func) + r"\s*\(",
-        re.MULTILINE | re.DOTALL,
-    )
-    return bool(class_pat.search(text))
+    # 类体边界封顶：目标 def 必须出现在 class {cls} 声明之后、且先于
+    # 下一个 column-0 的 class/def（DOTALL 懒惰量词 + 边界锚，防跨类误配）。
+    for m in re.finditer(r"^class\s+" + re.escape(cls) + r"\b[^:]*:", text, re.M):
+        body_start = m.end()
+        next_top = re.search(r"^(?:class\s|def\s|async\s+def\s)", text[body_start:], re.M)
+        body_end = body_start + (next_top.start() if next_top else len(text) - body_start)
+        body = text[body_start:body_end]
+        if re.search(r"^\s+(?:async\s+)?def\s+" + re.escape(func) + r"\s*\(", body, re.M):
+            return True
+    return False
 
 
 def validate_security_manifest(
@@ -383,14 +387,15 @@ def validate_security_manifest(
                 issues.append(f"{prefix} malformed test node {node!r}")
                 continue
             rel, _, rest = node.partition("::")
-            name = rest.rsplit("::", 1)[-1]  # 类内方法取末段 callable 名
             path = root / rel
             if not path.exists():
                 issues.append(f"{prefix} test file missing: {rel}")
                 continue
             text = path.read_text(encoding="utf-8")
-            if not _node_defined(text, name):
-                issues.append(f"{prefix} test node not found in {rel}: {name}")
+            # R2 review MAJOR-2：传完整 rest（含类限定），类感知分支才可达；
+            # 类体边界由 _node_defined 的"下一个 class/column-0 def"封顶。
+            if not _node_defined(text, rest):
+                issues.append(f"{prefix} test node not found in {rel}: {rest}")
 
     return issues
 

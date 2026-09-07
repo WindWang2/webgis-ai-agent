@@ -181,14 +181,18 @@ async def test_s2_empty_source_degradation_disclosed_not_silent(clean_session):
     chain.record(Stage.TOOL_RESULTS, status="empty")
 
     result = await run_map_finalization(clean_session, chapter=chapter, reason="s2")
+    # R2 review MAJOR-1（修正 R1 修复的失效补丁）：只引用真实存在的披露通道
+    # —— MapCompletionResult 的字段是 final_map_status（见 completion/contracts.py）。
+    from app.services.gis_harness.completion.contracts import FINAL_MAP_DEGRADED
+
     disclosed = (
         result.status != STATUS_COMPLETE
         or any(f.severity in ("warning", "error") for f in result.findings)
-        or result.status_summary in ("verified_with_degradation",)
-        or getattr(result, "verdict", "") == "verified_with_degradation"
+        or getattr(result, "final_map_status", None) == FINAL_MAP_DEGRADED
     )
     assert disclosed, (
         f"空数据源被静默判定：status={result.status}, "
+        f"final_map_status={getattr(result, 'final_map_status', None)}, "
         f"findings={[f.to_dict() for f in result.findings]}")
     chain.record(Stage.FINAL_VERDICT, verdict=result.status,
                  failure_code="EMPTY_SOURCE_DISCLOSED" if result.status != STATUS_COMPLETE else "none")

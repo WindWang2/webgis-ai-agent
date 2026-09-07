@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import logging
 import threading
 import time
@@ -209,7 +210,12 @@ def emit_event(
         if isinstance(value, str):
             record[key] = value[:256] + ("…" if len(value) > 256 else "")
         elif isinstance(value, bool) or isinstance(value, (int, float)):
-            record[key] = value
+            # R2 review MINOR-6：非有限 float（NaN/Inf）会让 LoggingSink 吐出
+            # 非 strict-JSON 的字面量 —— 归一为字符串。
+            if isinstance(value, float) and not math.isfinite(value):
+                record[key] = str(value)
+            else:
+                record[key] = value
         else:
             record[key] = str(value)[:256]
 

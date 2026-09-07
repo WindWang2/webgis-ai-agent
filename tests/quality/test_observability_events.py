@@ -137,3 +137,37 @@ def test_logging_filter_injects_project_id():
     with bind_runtime_context(project_id="proj-42"):
         assert RuntimeCorrelationFilter().filter(record) is True
     assert record.project_id == "proj-42"  # type: ignore[attr-defined]
+
+
+# ── R2 review MINOR-5/6：修复项回归锁 ────────────────────────────────────
+
+
+def test_string_values_capped_and_nonfinite_float_normalized():
+    sink = RingSink()
+    register_sink(sink)
+    long_reason = "x" * 500
+    emit_event("harness", "replan", reason=long_reason)
+    emit_event("compute", "queue", depth=float("nan"))
+    recs = sink.snapshot(10)
+    assert len(recs[0]["reason"]) == 257  # 256 + "…"
+    assert recs[1]["depth"] == "nan"  # 非 strict-JSON 字面量不得入记录
+
+
+def test_snapshot_zero_returns_empty():
+    sink = RingSink()
+    register_sink(sink)
+    emit_event("harness", "dispatch", tool="t")
+    assert sink.snapshot(0) == []
+    assert sink.snapshot(-5) == []
+
+
+def test_sink_write_exception_isolated():
+    class _Boom:
+        def write(self, record):
+            raise RuntimeError("sink down")
+
+    register_sink(_Boom())
+    sink = RingSink()
+    register_sink(sink)
+    emit_event("harness", "dispatch", tool="t")  # 不得抛
+    assert len(sink.snapshot(10)) == 1  # 健康汇仍收到
