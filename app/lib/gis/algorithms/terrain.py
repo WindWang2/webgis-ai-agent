@@ -16,6 +16,10 @@ Foundation V2（A5）：追加水文与地貌量测算法族 —— Priority-Flo
 （wischmeier_smith1978 + desmet_govers1996）、开放度（yokoyama2002）、
 geomorphons（jasiewicz_stepinski2013）、Weiss 地类分级（weiss2001）、
 多方位山体阴影（horn1981），及配套参数契约。
+
+Terrain V3：地平线角与天空可视因子（steyn1980，openness 家族射线
+行走），及 terrain.flow 的 flat_routing='epsilon' 平地路由 additive
+参数（契约 v2，Barnes 2014 填洼机制）。
 """
 from __future__ import annotations
 
@@ -182,7 +186,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             algorithm_family="terrain_neighborhood",
             method_references=["wilson2007"],
             assumptions=[
-                "粗糙度 = 窗口内高程总体标准差（ddof=0，Wilson 2007 口径）",
+                "粗糙度 = 窗口内高程总体标准差（ddof=0）——注意：Wilson (2007) 原文粗糙度"
+                "为 max−min 口径，本实现采用窗口 std 惯用口径（与引用差异如实披露）",
                 "窗口为 3-101 奇数；边界收缩为可得像元",
             ],
             limitations=[
@@ -275,10 +280,15 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "最陡下降按米制像元距离（地理栅格 x 向 cos(lat)）；并列最陡取最低索引邻域",
                 "汇流累积 = 上游贡献像元数（不含自身；全流域出口 = N−1）",
                 "拓扑序（高程降序）累积，O(N log N)；边界 = 出口",
+                "flat_routing='epsilon'：先经 Barnes 2014 Priority-Flood 填洼"
+                "（terrain.sink_fill 机制）注入逐像元 epsilon 梯度，再在填充面上路由",
             ],
             limitations=[
-                "D8 单向流限制：格网平行流向偏差，D∞（Tarboton 1997）未实现",
-                "平地/洼地即汇（code 0），无 epsilon 梯度平地路由/填洼",
+                "D8 单向流限制：格网平行流向偏差；多向流为独立算法 terrain.dinf_flow"
+                "（Tarboton 1997，本包内已实现，不在本算法内混叠）",
+                "默认 flat_routing='none'：平地/洼地即汇（code 0）；可选 "
+                "flat_routing='epsilon' 经 terrain.sink_fill 的 epsilon 填洼获得"
+                "平地路由（meta 披露填充像元数与抬升量），默认路径保持不变",
                 "流出网格边界的流路终止（boundary = outlet，不外推）",
             ],
             crs_class="RASTER_GRID",
@@ -289,6 +299,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             scientific_status="VALIDATED",
             conformance_tests=[
                 "tests/unit/lib/test_terrain_science_vnext.py::test_d8_bowl_flow_toward_center_accumulation_24",
+                "tests/unit/lib/test_terrain_v3.py::test_epsilon_flat_routing_bowl_and_default_unchanged",
             ],
             parameter_contract_ref="flow_analysis",
         ),
@@ -750,6 +761,77 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ],
             parameter_contract_ref="hillshade_multiazimuth",
         ),
+
+        # ── Terrain V3：地平线角与天空可视因子（Steyn 1980）────────────
+
+        AlgorithmDescriptor(
+            id="terrain.horizon_angle", name="地平线角", category="terrain_analysis",
+            capabilities=["terrain_sky_view"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["horizon_angle_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=61,
+            algorithm_family="terrain_geomorphometry",
+            method_references=["steyn1980", "yokoyama2002"],
+            assumptions=[
+                "每方位（罗盘度，自北顺时针）取射线行走 max arctan((z(d)−z₀)/d) 的正仰角（度）",
+                "1 像元步长圆整偏移 + 实际米制距离（与 openness 同口径；各向异性感知）",
+                "射线遇 nodata/非有限即停；截断（数据外）视作无遮挡（=0，披露）",
+                "全下行射线钳为 0：地平线角不为负；平地 ≡ 0（浮点精确）",
+            ],
+            limitations=[
+                "方位离散 ≤ 360/方位数 的角分辨率（缺省 8 方位 45°）",
+                "半径 ≤ 100 像元护栏；半径外地形不参与（遮挡被低估）",
+                "数据缝后的地形被视作无遮挡 —— 诚实低估而非发明遮挡",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="平地 fixture 全方位 ≡ 0.0；墙 fixture 仰角 = arctan(H/d) 浮点精确",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_v3.py::test_horizon_flat_all_zeros",
+                "tests/unit/lib/test_terrain_v3.py::test_horizon_ridge_blocks_specific_azimuths",
+                "tests/unit/lib/test_terrain_v3.py::test_horizon_nodata_stops_ray",
+            ],
+            parameter_contract_ref="terrain_horizon_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.sky_view_factor", name="天空可视因子 SVF", category="terrain_analysis",
+            capabilities=["terrain_sky_view"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["sky_view_factor_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=62,
+            algorithm_family="terrain_geomorphometry",
+            method_references=["steyn1980"],
+            assumptions=[
+                "SVF = (1/N) Σ cos²(ψ_i)（Steyn 1980）；ψ_i = 等角距方位的地平线角（度）",
+                "ψ_i 与 terrain.horizon_angle 共用同一射线行走实现（不重复逻辑）",
+                "平地 ψ ≡ 0 → SVF ≡ 1.0（浮点精确）；深洼/封闭谷地 SVF → 0",
+                "截断射线的剩余段按无遮挡计（cos²=1）—— 数据缝附近 SVF 被高估（披露）",
+            ],
+            limitations=[
+                "方位离散：N 方位等角距采样对崎岖天际线的欠采样",
+                "半径 ≤ 100 像元护栏；半径外地形不参与天际线",
+                "无地球曲率/大气折射修正（局部地形口径）",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="平地 fixture SVF ≡ 1.0（1e-12 内）；单 cell 深洼 SVF < 0.05",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_terrain_v3.py::test_svf_flat_exact_one",
+                "tests/unit/lib/test_terrain_v3.py::test_svf_deep_pit_small_and_azimuth_invariance",
+                "tests/unit/lib/test_terrain_v3.py::test_svf_matches_steyn_formula_from_horizon",
+                "tests/unit/lib/test_terrain_v3.py::test_horizon_and_svf_guards",
+            ],
+            parameter_contract_ref="terrain_svf_analysis",
+        ),
 ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
@@ -810,13 +892,21 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
         ],
     ),
     ParameterContract(
-        id="flow_analysis", version=1,
-        description="D8 水文分析产品选择。",
+        id="flow_analysis", version=2,
+        description="D8 水文分析产品选择与平地路由模式（v2：additive flat_routing）。",
         parameters=[
             ParameterSpec(
                 name="product", type="enum", default="flow_accumulation",
                 enum_values=["flow_direction", "flow_accumulation"],
                 description="输出产品：D8 流向编码或汇流累积（默认累积）",
+            ),
+            ParameterSpec(
+                name="flat_routing", type="enum", default="none",
+                enum_values=["none", "epsilon"],
+                description=(
+                    "平地路由：none = 平地/洼地即汇（code 0）；epsilon = 先经 "
+                    "Barnes 2014 epsilon 填洼（terrain.sink_fill 机制）再路由，"
+                    "平地排向溢流出口"),
             ),
         ],
     ),
@@ -1016,6 +1106,42 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="combine", type="enum", default="mean",
                 enum_values=["mean", "min"],
                 description="合成方式：多方位均值（去阴影）或逐像元最小（制图）",
+            ),
+        ],
+    ),
+
+    # ── Terrain V3：地平线角与天空可视因子 ────────────────────────────
+
+    ParameterContract(
+        id="terrain_horizon_analysis", version=1,
+        description="地平线角射线参数：方位集合与搜索半径。",
+        parameters=[
+            ParameterSpec(
+                name="azimuths", type="string",
+                description=(
+                    "地平线方位列表（罗盘度；逗号分隔；缺省 "
+                    "'0,45,90,135,180,225,270,315'）"),
+            ),
+            ParameterSpec(
+                name="max_search_radius", type="integer", default=100, minimum=1, maximum=100,
+                unit="pixels",
+                description="射线搜索半径（像元；≤100 护栏）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="terrain_svf_analysis", version=1,
+        description="天空可视因子（Steyn 1980）：方位数与搜索半径。",
+        parameters=[
+            ParameterSpec(
+                name="n_azimuths", type="integer", default=16, minimum=4, maximum=64,
+                unit="count",
+                description="方位数（等角距，自北顺时针）",
+            ),
+            ParameterSpec(
+                name="max_search_radius", type="integer", default=100, minimum=1, maximum=100,
+                unit="pixels",
+                description="地平线射线搜索半径（像元；≤100 护栏）",
             ),
         ],
     ),

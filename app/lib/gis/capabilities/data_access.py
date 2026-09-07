@@ -26,7 +26,9 @@ CAPABILITIES: List[CapabilityDescriptor] = [
         CapabilityDescriptor(
             id="admin_boundary_query", name="行政区边界获取", category="data_access",
             description="获取行政区边界面（本地 SHP 优先）。",
-            output_artifact_types=["admin_boundary_set"],
+            # V3：算法面 admin.boundary_lookup（buffer/裁剪变体）输出一般
+            # 多边形要素集，与 admin_boundary_set 并列为合法输出。
+            output_artifact_types=["admin_boundary_set", "polygon_feature_set"],
             geometry_requirements=["polygon"],
             compatible_map_models=["administrative_aggregation"],
             purpose_template="行政边界/区划面获取",

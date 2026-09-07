@@ -1,0 +1,1745 @@
+{
+ "cases": [
+  {
+   "args": [
+    "EPSG:3413"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "projected_local_metric"
+   },
+   "id": "classify_crs_epsg3413",
+   "kwargs": {},
+   "note": "北极极方位度量投影按局部度量",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "EPSG:3031"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "projected_local_metric"
+   },
+   "id": "classify_crs_epsg3031",
+   "kwargs": {},
+   "note": "南极极方位度量投影",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "EPSG:32601"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "projected_local_metric"
+   },
+   "id": "classify_crs_epsg32601",
+   "kwargs": {},
+   "note": "UTM 北带 1（326xx 且 1≤nn≤60）",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "EPSG:32760"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "projected_local_metric"
+   },
+   "id": "classify_crs_epsg32760",
+   "kwargs": {},
+   "note": "UTM 南带 60",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "EPSG:4269"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "geographic"
+   },
+   "id": "classify_crs_epsg4269",
+   "kwargs": {},
+   "note": "NAD83 地理",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "EPSG:4258"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "geographic"
+   },
+   "id": "classify_crs_epsg4258",
+   "kwargs": {},
+   "note": "ETRS89 地理",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "wgs84"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "geographic"
+   },
+   "id": "classify_crs_wgs84",
+   "kwargs": {},
+   "note": "词法 WGS84 规则",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "CGCS2000"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "geographic"
+   },
+   "id": "classify_crs_cgcs2000",
+   "kwargs": {},
+   "note": "CGCS2000 词法规则",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "+proj=longlat +datum=WGS84"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "geographic"
+   },
+   "id": "classify_crs_proj_longlat_datum_wgs84",
+   "kwargs": {},
+   "note": "proj4 串 pyproj 兜底",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "WGS84 / UTM zone 50N"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "projected_local_metric"
+   },
+   "id": "classify_crs_wgs84_/_utm_zone_50n",
+   "kwargs": {},
+   "note": "含 utm 跳过词法地理规则；pyproj 米制非 mercator → 局部度量",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "EPSG:99999"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "unknown"
+   },
+   "id": "classify_crs_epsg99999",
+   "kwargs": {},
+   "note": "pyproj 无法解析 → 诚实未知",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "garbage:xyz"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "unknown"
+   },
+   "id": "classify_crs_garbagexyz",
+   "kwargs": {},
+   "note": "非 CRS 文本 → 未知",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    ""
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "unknown"
+   },
+   "id": "classify_crs_none",
+   "kwargs": {},
+   "note": "空串 → 未知",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    null
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "unknown"
+   },
+   "id": "classify_crs_none",
+   "kwargs": {},
+   "note": "None → 未知（非字符串）",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "epsg:4326"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "geographic"
+   },
+   "id": "classify_crs_epsg4326",
+   "kwargs": {},
+   "note": "大小写不敏感 EPSG 前缀",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "EPSG:3857"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "projected"
+   },
+   "id": "classify_crs_epsg3857",
+   "kwargs": {},
+   "note": "Web Mercator 投影米但非局部度量",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "EPSG:32701"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "projected_local_metric"
+   },
+   "id": "classify_crs_epsg32701",
+   "kwargs": {},
+   "note": "UTM 南带 1",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "EPSG:4490"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "geographic"
+   },
+   "id": "classify_crs_epsg4490",
+   "kwargs": {},
+   "note": "CGCS2000 地理",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "EPSG:2154"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "projected_local_metric"
+   },
+   "id": "classify_crs_epsg2154",
+   "kwargs": {},
+   "note": "Lambert-93 米制投影",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "EPSG:32600"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "projected_local_metric"
+   },
+   "id": "classify_crs_epsg32600",
+   "kwargs": {},
+   "note": "带号 0 不中词法规则；pyproj 解析为米制投影 → 局部度量",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    "EPSG:4327"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "geographic"
+   },
+   "id": "classify_crs_epsg4327",
+   "kwargs": {},
+   "note": "WGS84 地理（lat/long 顺序变体）",
+   "target": "app.lib.gis.crs_safety:classify_crs"
+  },
+  {
+   "args": [
+    [
+     116.0,
+     39.9,
+     117.0,
+     40.1
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32650"
+   },
+   "id": "recommend_metric_crs_0",
+   "kwargs": {},
+   "note": "北京 → 50 带",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     -0.1,
+     51.4,
+     0.1,
+     51.6
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32631"
+   },
+   "id": "recommend_metric_crs_1",
+   "kwargs": {},
+   "note": "伦敦 → 中央经线 0° = 31 带",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     151.0,
+     -34.0,
+     152.0,
+     -33.5
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32756"
+   },
+   "id": "recommend_metric_crs_2",
+   "kwargs": {},
+   "note": "悉尼 → 南带 56",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     -74.0,
+     40.6,
+     -73.8,
+     40.9
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32618"
+   },
+   "id": "recommend_metric_crs_3",
+   "kwargs": {},
+   "note": "纽约 → 18 带",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     85.0,
+     1.0,
+     86.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:3413"
+   },
+   "id": "recommend_metric_crs_4",
+   "kwargs": {},
+   "note": "北极 → UPS 北",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     -85.0,
+     1.0,
+     -84.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:3031"
+   },
+   "id": "recommend_metric_crs_5",
+   "kwargs": {},
+   "note": "南极 → UPS 南",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     -179.0,
+     5.0,
+     -178.0,
+     6.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32601"
+   },
+   "id": "recommend_metric_crs_6",
+   "kwargs": {},
+   "note": "带 1 西缘",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     179.0,
+     5.0,
+     180.0,
+     6.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32660"
+   },
+   "id": "recommend_metric_crs_7",
+   "kwargs": {},
+   "note": "带 60 东缘",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     179.5,
+     10.0,
+     -179.5,
+     11.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32631"
+   },
+   "id": "recommend_metric_crs_8",
+   "kwargs": {},
+   "note": "反经线 naive 中点 0° → 31 带（行为锚，非环绕解）",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     12.0,
+     0.0,
+     13.0,
+     1.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32633"
+   },
+   "id": "recommend_metric_crs_9",
+   "kwargs": {},
+   "note": "带边界 12° → 33 带",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     -174.0,
+     0.0,
+     -173.0,
+     1.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32602"
+   },
+   "id": "recommend_metric_crs_10",
+   "kwargs": {},
+   "note": "带 2",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     84.0,
+     1.0,
+     84.5
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:3413"
+   },
+   "id": "recommend_metric_crs_11",
+   "kwargs": {},
+   "note": "clat=84.25 > 84 → 极区（开边界语义）",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    []
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": ""
+   },
+   "id": "recommend_metric_crs_12",
+   "kwargs": {},
+   "note": "非法 bbox → 空串由调用方处理",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     2.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": ""
+   },
+   "id": "recommend_metric_crs_13",
+   "kwargs": {},
+   "note": "长度 ≠ 4 → 空串",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    "LOCAL_METRIC_REQUIRED",
+    "projected"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": false
+   },
+   "id": "crs_class_allows_0",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "LOCAL_METRIC_REQUIRED",
+    "projected_local_metric"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": true
+   },
+   "id": "crs_class_allows_1",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "LOCAL_METRIC_REQUIRED",
+    "geographic"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": false
+   },
+   "id": "crs_class_allows_2",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "PROJECTED_REQUIRED",
+    "projected"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": true
+   },
+   "id": "crs_class_allows_3",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "PROJECTED_REQUIRED",
+    "geographic"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": false
+   },
+   "id": "crs_class_allows_4",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "GEODESIC",
+    "geographic"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": true
+   },
+   "id": "crs_class_allows_5",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "GEOGRAPHIC_OK",
+    "projected_local_metric"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": true
+   },
+   "id": "crs_class_allows_6",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "CRS_AGNOSTIC",
+    "geographic"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": true
+   },
+   "id": "crs_class_allows_7",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "RASTER_GRID",
+    "projected"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": true
+   },
+   "id": "crs_class_allows_8",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "LOCAL_METRIC_REQUIRED",
+    "unknown"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": true
+   },
+   "id": "crs_class_allows_9",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "PROJECTED_REQUIRED",
+    "unknown"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": true
+   },
+   "id": "crs_class_allows_10",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "",
+    "geographic"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": true
+   },
+   "id": "crs_class_allows_11",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "GEOGRAPHIC_OK",
+    "unknown"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": true
+   },
+   "id": "crs_class_allows_12",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "CRS_AGNOSTIC",
+    "unknown"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": true
+   },
+   "id": "crs_class_allows_13",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "PROJECTED_REQUIRED",
+    "projected_local_metric"
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": true
+   },
+   "id": "crs_class_allows_14",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    "LOCAL_METRIC_REQUIRED",
+    ""
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": false
+   },
+   "id": "crs_class_allows_15",
+   "kwargs": {},
+   "note": "unknown 数据类永远放行（诚实缺省）",
+   "target": "app.lib.gis.crs_safety:crs_class_allows"
+  },
+  {
+   "args": [
+    0.0,
+    0.0,
+    1.0,
+    1.0,
+    8
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 16769
+   },
+   "id": "estimate_h3_cells_midlat_r8",
+   "kwargs": {},
+   "note": "world_cells × bbox 球面面积占比 独立复算",
+   "target": "app.lib.geo_analysis.interpolation:_estimate_h3_cells"
+  },
+  {
+   "args": [
+    0.0,
+    0.0,
+    300.0,
+    120.0,
+    2
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 5133
+   },
+   "id": "estimate_h3_cells_world_band_r2",
+   "kwargs": {},
+   "note": "world_cells × bbox 球面面积占比 独立复算",
+   "target": "app.lib.geo_analysis.interpolation:_estimate_h3_cells"
+  },
+  {
+   "args": [
+    0.0,
+    0.0,
+    60.0,
+    60.0,
+    8
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": [
+     6,
+     5
+    ]
+   },
+   "id": "suggest_lower_resolutions_huge_bbox",
+   "kwargs": {},
+   "note": "仅上限内的相邻低分辨率进入建议（独立复算）",
+   "target": "app.lib.geo_analysis.interpolation:_suggest_lower_resolutions"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     -80.0,
+     1.0,
+     -79.5
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32731"
+   },
+   "id": "recommend_metric_crs_south_boundary",
+   "kwargs": {},
+   "note": "clat=-80 不小于 -80 → UTM 南带",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     0.0,
+     -80.5,
+     1.0,
+     -80.2
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:3031"
+   },
+   "id": "recommend_metric_crs_south_polar",
+   "kwargs": {},
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     6.0,
+     0.0,
+     7.0,
+     1.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32632"
+   },
+   "id": "recommend_metric_crs_zone6_boundary",
+   "kwargs": {},
+   "note": "6° 经线恰为带界（(6+180)//6=31 → 32 带）",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     -12.0,
+     0.0,
+     -11.0,
+     1.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32629"
+   },
+   "id": "recommend_metric_crs_zone_west",
+   "kwargs": {},
+   "note": "(-12+180)//6=28 → 29 带",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     18.0,
+     -0.5,
+     19.0,
+     0.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32734"
+   },
+   "id": "recommend_metric_crs_south_equator",
+   "kwargs": {},
+   "note": "clat<0 → 南带；clon 18.5 → 34 带",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     84.0,
+     10.0,
+     85.0,
+     11.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32645"
+   },
+   "id": "recommend_metric_crs_east_zone",
+   "kwargs": {},
+   "note": "(84+180)//6=44 → 45 带",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    [
+     132.0,
+     30.0,
+     133.0,
+     31.0
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "EPSG:32653"
+   },
+   "id": "recommend_metric_crs_far_east",
+   "kwargs": {},
+   "note": "clon 132.5 → 53 带",
+   "target": "app.lib.gis.crs_safety:recommend_metric_crs"
+  },
+  {
+   "args": [
+    {
+     "nir": [
+      [
+       0.8,
+       0.6
+      ],
+      [
+       0.5,
+       0.0
+      ]
+     ],
+     "red": [
+      [
+       0.4,
+       0.2
+      ],
+      [
+       0.3,
+       0.1
+      ]
+     ]
+    },
+    "ndvi"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-07,
+    "select": "valid_pixel_fraction",
+    "value": 1.0
+   },
+   "id": "gndvi_zero_denominator_valid_fraction",
+   "kwargs": {},
+   "note": "零分母像元 → NaN（诚实无效，不计入有限像元）",
+   "target": "app.lib.geo_analysis.spectral:compute_spectral_index"
+  },
+  {
+   "args": [
+    {
+     "nir": [
+      [
+       0.8,
+       0.6
+      ],
+      [
+       0.5,
+       0.0
+      ]
+     ],
+     "red": [
+      [
+       0.4,
+       0.2
+      ],
+      [
+       0.3,
+       0.1
+      ]
+     ]
+    },
+    "ndvi"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-07,
+    "select": "mean:array",
+    "value": 0.020833333333
+   },
+   "id": "gndvi_zero_denominator_mean_null",
+   "kwargs": {},
+   "note": "mean 聚合跳过 NaN（全 NaN → null 的对偶）",
+   "target": "app.lib.geo_analysis.spectral:compute_spectral_index"
+  },
+  {
+   "args": [
+    {
+     "nir": [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     "red": [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ]
+    },
+    "ndvi"
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "mean:array",
+    "value": null
+   },
+   "id": "ndvi_all_zero_denominator_all_nan",
+   "kwargs": {},
+   "note": "全零输入 → 全 NaN → mean:array = null",
+   "target": "app.lib.geo_analysis.spectral:compute_spectral_index"
+  },
+  {
+   "args": [
+    {
+     "features": [],
+     "type": "FeatureCollection"
+    },
+    "v"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "idw_parse_empty_fc",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.interpolation:_parse_point_values"
+  },
+  {
+   "args": [
+    {
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         0.0,
+         0.0
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "v"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "idw_parse_missing_field",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.interpolation:_parse_point_values"
+  },
+  {
+   "args": [
+    [],
+    [],
+    [
+     [
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "INSUFFICIENT_SAMPLES",
+    "kind": "error",
+    "value": null
+   },
+   "id": "nn_interpolation_empty",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.interpolation:nearest_neighbor_interpolation"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      1.0
+     ]
+    ],
+    [
+     1.0
+    ],
+    [
+     [
+      2.0,
+      2.0
+     ]
+    ],
+    1
+   ],
+   "expect": {
+    "code": "INSUFFICIENT_SAMPLES",
+    "kind": "error",
+    "value": null
+   },
+   "id": "trend_single_point",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.trend_surface:trend_predict"
+  },
+  {
+   "args": [
+    [
+     [
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     1.0
+    ],
+    [
+     [
+      2.0,
+      2.0
+     ]
+    ],
+    null
+   ],
+   "expect": {
+    "code": "INSUFFICIENT_SAMPLES",
+    "kind": "error",
+    "value": null
+   },
+   "id": "kriging_single_sample",
+   "kwargs": {},
+   "note": "n=1 在任何克里金计算前类型化拒绝",
+   "target": "app.lib.geo_analysis.kriging:ordinary_kriging"
+  },
+  {
+   "args": [
+    {
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         116.0,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.01,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.02,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 2.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.03,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.04,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 4.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.05,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 5.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.06,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 6.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.07,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 7.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.08,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 8.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.09,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 9.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "v"
+   ],
+   "expect": {
+    "code": "KrigingInputError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "kriging_declares_projected_but_degrees",
+   "kwargs": {
+    "declared_crs": "EPSG:32650",
+    "resolution": 7
+   },
+   "note": "声明投影 CRS 但坐标是度 → 类型化拒绝（度≠米语义）",
+   "target": "app.lib.geo_analysis.kriging:kriging_interpolation"
+  },
+  {
+   "args": [
+    {
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         116.0,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.01,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.02,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 2.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.03,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.04,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 4.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.05,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 5.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.06,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 6.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.07,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 7.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.08,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 8.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         116.09,
+         40.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 9.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "v"
+   ],
+   "expect": {
+    "code": "KrigingCrsError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "kriging_unknown_declared_crs",
+   "kwargs": {
+    "declared_crs": "EPSG:99999999",
+    "resolution": 7
+   },
+   "target": "app.lib.geo_analysis.kriging:kriging_interpolation"
+  },
+  {
+   "args": [
+    {
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         0.0,
+         0.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         60.0,
+         60.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 1.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "v"
+   ],
+   "expect": {
+    "code": "InterpolationResourceExceededError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "idw_h3_cell_ceiling_rejected",
+   "kwargs": {
+    "cross_validate": false,
+    "resolution": 7
+   },
+   "note": "世界尺度 bbox 的 polyfill 估计超 150 万单元上限（附建议分辨率）",
+   "target": "app.lib.geo_analysis.interpolation:idw_surface"
+  },
+  {
+   "args": [
+    {
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         0.0,
+         0.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         60.0,
+         60.0
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "v": 1.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "v"
+   ],
+   "expect": {
+    "code": "InterpolationResourceExceededError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "nn_h3_cell_ceiling_rejected",
+   "kwargs": {
+    "resolution": 7
+   },
+   "target": "app.lib.geo_analysis.interpolation:nearest_neighbor_surface"
+  },
+  {
+   "args": [
+    5.0
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 5.0
+   },
+   "id": "validate_power_ok_5.0",
+   "kwargs": {},
+   "note": "闭区间 (0,5] 直通（True → float 1.0 的诚实直通）",
+   "target": "app.lib.geo_analysis.interpolation:_validate_power"
+  },
+  {
+   "args": [
+    2.5
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 2.5
+   },
+   "id": "validate_power_ok_2.5",
+   "kwargs": {},
+   "note": "闭区间 (0,5] 直通（True → float 1.0 的诚实直通）",
+   "target": "app.lib.geo_analysis.interpolation:_validate_power"
+  },
+  {
+   "args": [
+    true
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": 1.0
+   },
+   "id": "validate_power_ok_true",
+   "kwargs": {},
+   "note": "闭区间 (0,5] 直通（True → float 1.0 的诚实直通）",
+   "target": "app.lib.geo_analysis.interpolation:_validate_power"
+  },
+  {
+   "args": [
+    0.0
+   ],
+   "expect": {
+    "code": "UNSUPPORTED_METHOD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_power_rejects_0p0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.interpolation:_validate_power"
+  },
+  {
+   "args": [
+    -2.0
+   ],
+   "expect": {
+    "code": "UNSUPPORTED_METHOD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_power_rejects_-2p0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.interpolation:_validate_power"
+  },
+  {
+   "args": [
+    "abc"
+   ],
+   "expect": {
+    "code": "UNSUPPORTED_METHOD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_power_rejects_abc",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.interpolation:_validate_power"
+  },
+  {
+   "args": [
+    6.0
+   ],
+   "expect": {
+    "code": "UNSUPPORTED_METHOD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_power_rejects_6p0",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.interpolation:_validate_power"
+  },
+  {
+   "args": [
+    0
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": null
+   },
+   "id": "validate_resolution_ok_0",
+   "kwargs": {},
+   "note": "界内 → 静默放行（返回 None）",
+   "target": "app.lib.geo_analysis.interpolation:_validate_resolution"
+  },
+  {
+   "args": [
+    15
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": null
+   },
+   "id": "validate_resolution_ok_15",
+   "kwargs": {},
+   "note": "界内 → 静默放行（返回 None）",
+   "target": "app.lib.geo_analysis.interpolation:_validate_resolution"
+  },
+  {
+   "args": [
+    7
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": null
+   },
+   "id": "validate_resolution_ok_7",
+   "kwargs": {},
+   "note": "界内 → 静默放行（返回 None）",
+   "target": "app.lib.geo_analysis.interpolation:_validate_resolution"
+  },
+  {
+   "args": [
+    16
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_resolution_rejects_16",
+   "kwargs": {},
+   "note": "bool/浮点/字符串分辨率均拒绝（显式 int 契约）",
+   "target": "app.lib.geo_analysis.interpolation:_validate_resolution"
+  },
+  {
+   "args": [
+    true
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_resolution_rejects_true",
+   "kwargs": {},
+   "note": "bool/浮点/字符串分辨率均拒绝（显式 int 契约）",
+   "target": "app.lib.geo_analysis.interpolation:_validate_resolution"
+  },
+  {
+   "args": [
+    8.5
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_resolution_rejects_8p5",
+   "kwargs": {},
+   "note": "bool/浮点/字符串分辨率均拒绝（显式 int 契约）",
+   "target": "app.lib.geo_analysis.interpolation:_validate_resolution"
+  },
+  {
+   "args": [
+    "7"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validate_resolution_rejects_7",
+   "kwargs": {},
+   "note": "bool/浮点/字符串分辨率均拒绝（显式 int 契约）",
+   "target": "app.lib.geo_analysis.interpolation:_validate_resolution"
+  }
+ ],
+ "count": 87,
+ "domain": "edge_cases"
+}

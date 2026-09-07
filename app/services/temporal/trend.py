@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 from pydantic import Field
 
-from app.lib.gis.scientific_errors import InsufficientSamples, MissingRequiredField
+from app.lib.gis.scientific_errors import InsufficientSamples, MissingRequiredField, UnsupportedMethod
 from app.lib.gis.uncertainty import StatisticalSignificance
 from app.services.temporal.models import TemporalTrendResult
 from app.services.temporal.profiler import parse_value_to_instant
@@ -740,4 +740,130 @@ def cusum_change_point(
         "bootstrap_draws": draws,
         "seed": int(seed),
         "warnings": warnings,
+    }
+
+
+def seasonal_decompose_narrated(
+    values: Sequence[float],
+    period: int,
+    model: str = "additive",
+) -> Dict[str, Any]:
+    """经典季节分解（classical decomposition；Makridakis et al. 1998）。
+
+    - **中心滑动平均趋势**：窗口 = ``period``。``period`` 必须为**奇数**
+      （偶数窗口的中心对称 MA 需要 2×m 复合平均，本实现显式拒绝而非
+      静默近似——违者 UnsupportedMethod）；首尾 (period−1)/2 个位置
+      趋势无定义（None，与 statsmodels 边界语义一致）。
+    - **季节指数**：去趋势值按相位 t mod period 分组取均值；
+      additive 归一化到 Σs_k=0，multiplicative 归一化到均值 1。
+    - **余项**：additive 为 y − trend − seasonal；multiplicative 为
+      y/(trend·seasonal)。
+
+    诚实披露：这是**经典 MA 分解，不是 STL**——没有迭代稳健拟合、
+    没有季节子序列平滑，对离群值敏感。至少需要 2 个完整周期
+    （n ≥ 2×period，否则 InsufficientSamples）。
+    """
+    vals = _finite_values(values)
+    n = int(vals.size)
+    if n == 0:
+        raise InsufficientSamples(
+            "seasonal decomposition needs at least 1 finite observation",
+            correction_hint="check the value series for all-NaN input",
+        )
+    try:
+        m = int(period)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"period must be an integer, got {period!r}") from exc
+    if m < 3:
+        raise UnsupportedMethod(
+            f"period must be ≥ 3 (got {period})",
+            correction_hint="use at least a 3-step cycle, or use "
+                            "analyze_trend for non-seasonal trend",
+        )
+    if m % 2 == 0:
+        raise UnsupportedMethod(
+            f"period must be odd for the centered-MA classical decomposition "
+            f"(got {period})",
+            correction_hint="pass an odd period, or pre-aggregate to a cycle "
+                            "length where the phase count is odd",
+        )
+    model_key = str(model or "additive").lower()
+    if model_key not in ("additive", "multiplicative"):
+        raise UnsupportedMethod(
+            f"unknown model {model!r}",
+            correction_hint="use 'additive' (default) or 'multiplicative'",
+        )
+    if model_key == "multiplicative" and float(np.min(vals)) <= 0:
+        raise UnsupportedMethod(
+            "multiplicative decomposition requires a strictly positive series "
+            f"(min={float(np.min(vals)):.4g})",
+            correction_hint="use model='additive', or shift/scale the series "
+                            "positive first",
+        )
+    if n < 2 * m:
+        raise InsufficientSamples(
+            f"classical decomposition needs ≥ 2 full periods "
+            f"(n={n} < 2×period={2 * m})",
+            correction_hint="extend the series or reduce the period",
+        )
+    dropped = len(list(values)) - n
+
+    half = (m - 1) // 2
+    # 中心 MA：奇数窗口 → 窗口中心即观测时点；valid 区长度 n−2·half。
+    trend_valid = np.convolve(vals, np.ones(m) / m, mode="valid")
+
+    trend = [None] * n
+    detrended = np.full(n, np.nan)
+    for i, v in enumerate(trend_valid):
+        trend[half + i] = float(v)
+    valid_idx = np.arange(half, n - half)
+    if model_key == "additive":
+        detrended[valid_idx] = vals[valid_idx] - trend_valid
+    else:
+        detrended[valid_idx] = vals[valid_idx] / trend_valid
+
+    # 季节指数：按相位 t mod m 对去趋势值取均值，再归一化。
+    s_raw = np.full(m, np.nan)
+    for k in range(m):
+        mask = (valid_idx % m) == k
+        if bool(mask.any()):
+            s_raw[k] = float(np.nanmean(detrended[valid_idx[mask]]))
+    if np.isnan(s_raw).any():
+        # 2 个完整周期下每个相位至少有一个有效去趋势值——此分支是防御性兜底。
+        s_raw = np.where(np.isnan(s_raw), float(np.nanmean(s_raw)), s_raw)
+    if model_key == "additive":
+        seasonal_idx = s_raw - float(np.mean(s_raw))  # Σs_k = 0
+    else:
+        seasonal_idx = s_raw / float(np.mean(s_raw))  # 均值 1
+
+    seasonal = [float(seasonal_idx[t % m]) for t in range(n)]
+    remainder: list = []
+    for t in range(n):
+        if trend[t] is None:
+            remainder.append(None)
+        elif model_key == "additive":
+            remainder.append(float(vals[t] - trend[t] - seasonal[t]))
+        else:
+            remainder.append(float(vals[t] / (trend[t] * seasonal[t])))
+
+    disclosures = [
+        "经典中心滑动平均分解（classical MA decomposition），"
+        "不是 STL——无迭代稳健拟合、无季节子序列平滑，对离群值敏感",
+        "首尾 (period−1)/2 个位置趋势/余项无定义（None），季节项仍给值",
+        "季节指数按相位 t mod period 分组均值；additive 归一化 Σs=0",
+    ]
+
+    return {
+        "n": n,
+        "period": m,
+        "model": model_key,
+        "trend": trend,
+        "seasonal": seasonal,
+        "seasonal_indices": [round(float(v), 10) for v in seasonal_idx],
+        "remainder": remainder,
+        "n_valid_trend": int(trend_valid.size),
+        "dropped_nonfinite": int(dropped),
+        "method": "classical_centered_ma_decomposition",
+        "disclosures": disclosures,
+        "reference": "makridakis1998（classical decomposition；非 STL）",
     }

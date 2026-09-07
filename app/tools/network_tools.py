@@ -326,6 +326,15 @@ class LocationAllocationArgs(BaseModel):
         description="Objective: minimize_cost (p-median), maximize_coverage (MCLP), minimize_max_cost (p-center)",
     )
     profile: TravelProfileName = Field(default="driving", description="Travel profile")
+    solver: Literal["auto", "heuristic", "exact_milp"] = Field(
+        default="auto",
+        description=(
+            "Solver path: auto (exact enumeration for small instances, Teitz-Bart/greedy beyond), "
+            "heuristic (forced polynomial heuristic), exact_milp (forced HiGHS MILP optimum, "
+            "p_median/p_center only; honestly refuses with ResourceScaleMismatch beyond "
+            "n_demand*n_candidates<=25000 and n_candidates<=500 — never silently falls back)"
+        ),
+    )
 
 
 class NetworkGravityAccessArgs(BaseModel):
@@ -355,9 +364,13 @@ class NetworkHuffInteractionArgs(BaseModel):
 
 class NetworkCentralityArgs(BaseModel):
     network: Any = Field(..., description="Network GeoJSON dataset, ref ID, or 'osm_road'")
-    metrics: Literal["degree", "closeness", "betweenness", "edge_betweenness", "all"] = Field(
+    metrics: Literal["degree", "closeness", "betweenness", "edge_betweenness", "eigenvector", "all"] = Field(
         default="all",
-        description="Centrality metrics; all includes edge_betweenness (exact only up to 1500 edges, honestly refused beyond)",
+        description=(
+            "Centrality metrics; all = degree+closeness+betweenness+edge_betweenness "
+            "(edge_betweenness exact only up to 1500 edges, honestly refused beyond; "
+            "eigenvector is a V3 opt-in metric, request it explicitly — not part of all)"
+        ),
     )
     weight: Literal["travel_time", "length"] = Field(
         default="travel_time",
@@ -692,7 +705,9 @@ def register_network_tools(registry: ToolRegistry):
         registry,
         name="location_allocation",
         description="设施选址优化（Location-Allocation）：从多个候选设施中选取最佳组合"
-                    "（最小化加权通行成本 / 最大化需求覆盖 / 最小化最大服务成本 p-center）。",
+                    "（最小化加权通行成本 / 最大化需求覆盖 / 最小化最大服务成本 p-center）；"
+                    "solver=exact_milp 时以 HiGHS MILP 给出 p-median / p-center 全局最优"
+                    "（需求×候选≤25000 且候选≤500，超限诚实拒绝并指向启发式）。",
         tier=3,
         domains=["network"],
         args_model=LocationAllocationArgs,
@@ -715,36 +730,52 @@ def register_network_tools(registry: ToolRegistry):
         number_to_choose: int = 2,
         objective: str = "minimize_cost",
         profile: str = "driving",
+        solver: str = "auto",
         session_id: str = "",
     ) -> dict:
         try:
+            # Foundation V3：目标 + 求解路径参数契约（objective/solver 枚举
+            # 收敛后传引擎 —— schema 层枚举 + 契约范围双保险）。
+            params = apply_contract("location_allocation_analysis", {
+                "objective": objective,
+                "solver": solver,
+            })
             travel_profile = TravelProfile(name=profile)
             res = await engine.solve_location_allocation(
                 network=network,
                 candidate_facilities=candidate_facilities,
                 demand_points=demand_points,
                 n_to_choose=number_to_choose,
-                objective=objective,
+                objective=str(params["objective"]),
                 profile=travel_profile,
+                solver=str(params["solver"]),
                 session_id=session_id,
             )
             out = trim_network_result(res.model_dump())
-            # Foundation V2 (A4/A7)：默认路径 backend 决策如实进证据诊断
-            # （location_allocation 未声明变体 —— 记录 default 而非虚构）。
-            descriptor = get_algorithm_registry().get("network.location_allocation")
+            # Foundation V2 (A4/A7) / V3：backend 决策如实进证据诊断；
+            # 证据块锚定**实际运行的算法** —— MILP 路径锚定精确描述符
+            # （pmedian_exact / pcenter_exact），auto/启发式锚定原描述符。
+            summary = out.get("summary") or {}
+            actual_solver = str(summary.get("solver", ""))
+            if actual_solver == "milp_highs":
+                algo_id = ("network.pmedian_exact"
+                           if str(params["objective"]) == "minimize_cost"
+                           else "network.pcenter_exact")
+            else:
+                algo_id = "network.location_allocation"
+            descriptor = get_algorithm_registry().get(algo_id)
             if descriptor is not None:
                 out["scientific_evidence"] = build_evidence(
                     descriptor,
                     tool="location_allocation",
                     parameters_applied={
-                        "objective": objective,
+                        "objective": str(params["objective"]),
                         "number_to_choose": number_to_choose,
                         "profile": profile,
+                        "solver": str(params["solver"]),
                     },
                     input_facts={"feature_count": len(demand_points)},
-                    diagnostics=_backend_diagnostic(
-                        "network.location_allocation", len(demand_points)
-                    ),
+                    diagnostics=_backend_diagnostic(algo_id, len(demand_points)),
                 )
             return out
         except Exception as e:
@@ -1008,6 +1039,18 @@ def register_network_tools(registry: ToolRegistry):
                         + "；node_count=" + str(res.node_count)
                     ),
                 ))
+                if res.summary.get("eigenvector_mode"):
+                    # Foundation V3：幂迭代收敛事实如实进证据（迭代数/达成增量）。
+                    diagnostics.append(Diagnostic(
+                        name="eigenvector_convergence",
+                        value=float(res.summary["eigenvector_iterations"]),
+                        text=(
+                            f"eigenvector 幂迭代 {res.summary['eigenvector_iterations']} 轮，"
+                            f"converged={res.summary['eigenvector_converged']}，"
+                            f"L1 增量={res.summary['eigenvector_l1_delta']:.3e}，"
+                            f"connectivity={res.summary['eigenvector_connectivity']}"
+                        ),
+                    ))
                 out["scientific_evidence"] = build_evidence(
                     descriptor,
                     tool="network_centrality",

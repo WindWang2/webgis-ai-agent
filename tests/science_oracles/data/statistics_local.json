@@ -1,0 +1,4160 @@
+{
+ "cases": [
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.006
+   },
+   "id": "bh_qvalues_q0_monotone",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 0.006
+   },
+   "id": "bh_qvalues_q1_monotone",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.006
+   },
+   "id": "bh_qvalues_q2_monotone",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "3",
+    "value": 0.6
+   },
+   "id": "bh_qvalues_q3_monotone",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "4",
+    "value": 0.6
+   },
+   "id": "bh_qvalues_q4_monotone",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "5",
+    "value": 0.6
+   },
+   "id": "bh_qvalues_q5_monotone",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.2830830576678356,
+     0.9102509732720695,
+     0.8193149187381756,
+     0.29252587464078195,
+     0.8348539468142351,
+     0.9046152823505049,
+     0.2842372969798368,
+     0.8930371941138404,
+     0.3983761133697744,
+     0.5738000420622684,
+     0.19149781793003395,
+     0.8361902559254402
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.87757762392
+   },
+   "id": "bh_qvalues_q0_mixed",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.2830830576678356,
+     0.9102509732720695,
+     0.8193149187381756,
+     0.29252587464078195,
+     0.8348539468142351,
+     0.9046152823505049,
+     0.2842372969798368,
+     0.8930371941138404,
+     0.3983761133697744,
+     0.5738000420622684,
+     0.19149781793003395,
+     0.8361902559254402
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 0.91025097327
+   },
+   "id": "bh_qvalues_q1_mixed",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.2830830576678356,
+     0.9102509732720695,
+     0.8193149187381756,
+     0.29252587464078195,
+     0.8348539468142351,
+     0.9046152823505049,
+     0.2842372969798368,
+     0.8930371941138404,
+     0.3983761133697744,
+     0.5738000420622684,
+     0.19149781793003395,
+     0.8361902559254402
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.91025097327
+   },
+   "id": "bh_qvalues_q2_mixed",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.2830830576678356,
+     0.9102509732720695,
+     0.8193149187381756,
+     0.29252587464078195,
+     0.8348539468142351,
+     0.9046152823505049,
+     0.2842372969798368,
+     0.8930371941138404,
+     0.3983761133697744,
+     0.5738000420622684,
+     0.19149781793003395,
+     0.8361902559254402
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "3",
+    "value": 0.87757762392
+   },
+   "id": "bh_qvalues_q3_mixed",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.2830830576678356,
+     0.9102509732720695,
+     0.8193149187381756,
+     0.29252587464078195,
+     0.8348539468142351,
+     0.9046152823505049,
+     0.2842372969798368,
+     0.8930371941138404,
+     0.3983761133697744,
+     0.5738000420622684,
+     0.19149781793003395,
+     0.8361902559254402
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "4",
+    "value": 0.91025097327
+   },
+   "id": "bh_qvalues_q4_mixed",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.2830830576678356,
+     0.9102509732720695,
+     0.8193149187381756,
+     0.29252587464078195,
+     0.8348539468142351,
+     0.9046152823505049,
+     0.2842372969798368,
+     0.8930371941138404,
+     0.3983761133697744,
+     0.5738000420622684,
+     0.19149781793003395,
+     0.8361902559254402
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "5",
+    "value": 0.91025097327
+   },
+   "id": "bh_qvalues_q5_mixed",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.2830830576678356,
+     0.9102509732720695,
+     0.8193149187381756,
+     0.29252587464078195,
+     0.8348539468142351,
+     0.9046152823505049,
+     0.2842372969798368,
+     0.8930371941138404,
+     0.3983761133697744,
+     0.5738000420622684,
+     0.19149781793003395,
+     0.8361902559254402
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "6",
+    "value": 0.87757762392
+   },
+   "id": "bh_qvalues_q6_mixed",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.2830830576678356,
+     0.9102509732720695,
+     0.8193149187381756,
+     0.29252587464078195,
+     0.8348539468142351,
+     0.9046152823505049,
+     0.2842372969798368,
+     0.8930371941138404,
+     0.3983761133697744,
+     0.5738000420622684,
+     0.19149781793003395,
+     0.8361902559254402
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "7",
+    "value": 0.91025097327
+   },
+   "id": "bh_qvalues_q7_mixed",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.2830830576678356,
+     0.9102509732720695,
+     0.8193149187381756,
+     0.29252587464078195,
+     0.8348539468142351,
+     0.9046152823505049,
+     0.2842372969798368,
+     0.8930371941138404,
+     0.3983761133697744,
+     0.5738000420622684,
+     0.19149781793003395,
+     0.8361902559254402
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "8",
+    "value": 0.91025097327
+   },
+   "id": "bh_qvalues_q8_mixed",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.2830830576678356,
+     0.9102509732720695,
+     0.8193149187381756,
+     0.29252587464078195,
+     0.8348539468142351,
+     0.9046152823505049,
+     0.2842372969798368,
+     0.8930371941138404,
+     0.3983761133697744,
+     0.5738000420622684,
+     0.19149781793003395,
+     0.8361902559254402
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "9",
+    "value": 0.91025097327
+   },
+   "id": "bh_qvalues_q9_mixed",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.2830830576678356,
+     0.9102509732720695,
+     0.8193149187381756,
+     0.29252587464078195,
+     0.8348539468142351,
+     0.9046152823505049,
+     0.2842372969798368,
+     0.8930371941138404,
+     0.3983761133697744,
+     0.5738000420622684,
+     0.19149781793003395,
+     0.8361902559254402
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "10",
+    "value": 0.87757762392
+   },
+   "id": "bh_qvalues_q10_mixed",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.2830830576678356,
+     0.9102509732720695,
+     0.8193149187381756,
+     0.29252587464078195,
+     0.8348539468142351,
+     0.9046152823505049,
+     0.2842372969798368,
+     0.8930371941138404,
+     0.3983761133697744,
+     0.5738000420622684,
+     0.19149781793003395,
+     0.8361902559254402
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "11",
+    "value": 0.91025097327
+   },
+   "id": "bh_qvalues_q11_mixed",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.99,
+     0.5,
+     0.0002,
+     0.7,
+     0.3
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.0006
+   },
+   "id": "bh_qvalues_q0_extremes",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.99,
+     0.5,
+     0.0002,
+     0.7,
+     0.3
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 0.99
+   },
+   "id": "bh_qvalues_q1_extremes",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.99,
+     0.5,
+     0.0002,
+     0.7,
+     0.3
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.75
+   },
+   "id": "bh_qvalues_q2_extremes",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.99,
+     0.5,
+     0.0002,
+     0.7,
+     0.3
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "3",
+    "value": 0.0006
+   },
+   "id": "bh_qvalues_q3_extremes",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.99,
+     0.5,
+     0.0002,
+     0.7,
+     0.3
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "4",
+    "value": 0.84
+   },
+   "id": "bh_qvalues_q4_extremes",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.99,
+     0.5,
+     0.0002,
+     0.7,
+     0.3
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "5",
+    "value": 0.6
+   },
+   "id": "bh_qvalues_q5_extremes",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.01,
+     null,
+     0.04,
+     0.8,
+     0.02
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.05
+   },
+   "id": "bh_qvalues_q0_with_nan",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.01,
+     null,
+     0.04,
+     0.8,
+     0.02
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 1.0
+   },
+   "id": "bh_qvalues_q1_with_nan",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.01,
+     null,
+     0.04,
+     0.8,
+     0.02
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.066666666667
+   },
+   "id": "bh_qvalues_q2_with_nan",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.01,
+     null,
+     0.04,
+     0.8,
+     0.02
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "3",
+    "value": 1.0
+   },
+   "id": "bh_qvalues_q3_with_nan",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.01,
+     null,
+     0.04,
+     0.8,
+     0.02
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "4",
+    "value": 0.05
+   },
+   "id": "bh_qvalues_q4_with_nan",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     null,
+     null,
+     null,
+     null
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 1.0
+   },
+   "id": "bh_qvalues_q0_all_nan",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     null,
+     null,
+     null,
+     null
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 1.0
+   },
+   "id": "bh_qvalues_q1_all_nan",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     null,
+     null,
+     null,
+     null
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 1.0
+   },
+   "id": "bh_qvalues_q2_all_nan",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     null,
+     null,
+     null,
+     null
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "3",
+    "value": 1.0
+   },
+   "id": "bh_qvalues_q3_all_nan",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.03
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.03
+   },
+   "id": "bh_qvalues_q0_single",
+   "kwargs": {},
+   "note": "BH 逐步下确界独立复算（元素级）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.01,
+     null,
+     0.04,
+     0.8,
+     0.02
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.05
+   },
+   "id": "bh_qvalues_nan_immune_finite",
+   "kwargs": {},
+   "note": "NaN 位置置 1 不影响有限位置 q",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     null,
+     null,
+     null,
+     null
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "1",
+    "value": 1.0
+   },
+   "id": "bh_qvalues_all_nan_identity",
+   "kwargs": {},
+   "note": "全 NaN 输入 → q ≡ 1（免疫语义）",
+   "target": "app.lib.geo_analysis.statistics:_bh_qvalues"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ],
+    "bonferroni"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.006
+   },
+   "id": "mtc_bonferroni_e0_monotone",
+   "kwargs": {},
+   "note": "bonferroni 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ],
+    "bonferroni"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "3",
+    "value": 1.0
+   },
+   "id": "mtc_bonferroni_e3_monotone",
+   "kwargs": {},
+   "note": "bonferroni 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ],
+    "bonferroni"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "5",
+    "value": 1.0
+   },
+   "id": "mtc_bonferroni_e5_monotone",
+   "kwargs": {},
+   "note": "bonferroni 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ],
+    "holm"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.006
+   },
+   "id": "mtc_holm_e0_monotone",
+   "kwargs": {},
+   "note": "holm 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ],
+    "holm"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "3",
+    "value": 1.0
+   },
+   "id": "mtc_holm_e3_monotone",
+   "kwargs": {},
+   "note": "holm 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ],
+    "holm"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "5",
+    "value": 1.0
+   },
+   "id": "mtc_holm_e5_monotone",
+   "kwargs": {},
+   "note": "holm 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ],
+    "bh"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.006
+   },
+   "id": "mtc_bh_e0_monotone",
+   "kwargs": {},
+   "note": "bh 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ],
+    "bh"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "3",
+    "value": 0.6
+   },
+   "id": "mtc_bh_e3_monotone",
+   "kwargs": {},
+   "note": "bh 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ],
+    "bh"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "5",
+    "value": 0.6
+   },
+   "id": "mtc_bh_e5_monotone",
+   "kwargs": {},
+   "note": "bh 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ],
+    "none"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.001
+   },
+   "id": "mtc_none_e0_monotone",
+   "kwargs": {},
+   "note": "none 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ],
+    "none"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "3",
+    "value": 0.4
+   },
+   "id": "mtc_none_e3_monotone",
+   "kwargs": {},
+   "note": "none 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.001,
+     0.002,
+     0.003,
+     0.4,
+     0.5,
+     0.6
+    ],
+    "none"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "5",
+    "value": 0.6
+   },
+   "id": "mtc_none_e5_monotone",
+   "kwargs": {},
+   "note": "none 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.8852335358126086,
+     0.47669061343706165,
+     0.5483421898648763,
+     0.20886640923031596,
+     0.7960797313809702,
+     0.0669830006304839,
+     0.9315945151546436,
+     0.3858218939659992,
+     0.4194238083054461,
+     0.26661854034596755,
+     0.9865078897249981,
+     0.54913035414586,
+     0.30368100465348324,
+     0.37604620183266313,
+     0.7822753079297466,
+     0.6927885306931127
+    ],
+    "bonferroni"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 1.0
+   },
+   "id": "mtc_bonferroni_e0_uniform",
+   "kwargs": {},
+   "note": "bonferroni 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.8852335358126086,
+     0.47669061343706165,
+     0.5483421898648763,
+     0.20886640923031596,
+     0.7960797313809702,
+     0.0669830006304839,
+     0.9315945151546436,
+     0.3858218939659992,
+     0.4194238083054461,
+     0.26661854034596755,
+     0.9865078897249981,
+     0.54913035414586,
+     0.30368100465348324,
+     0.37604620183266313,
+     0.7822753079297466,
+     0.6927885306931127
+    ],
+    "bonferroni"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "8",
+    "value": 1.0
+   },
+   "id": "mtc_bonferroni_e8_uniform",
+   "kwargs": {},
+   "note": "bonferroni 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.8852335358126086,
+     0.47669061343706165,
+     0.5483421898648763,
+     0.20886640923031596,
+     0.7960797313809702,
+     0.0669830006304839,
+     0.9315945151546436,
+     0.3858218939659992,
+     0.4194238083054461,
+     0.26661854034596755,
+     0.9865078897249981,
+     0.54913035414586,
+     0.30368100465348324,
+     0.37604620183266313,
+     0.7822753079297466,
+     0.6927885306931127
+    ],
+    "bonferroni"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "15",
+    "value": 1.0
+   },
+   "id": "mtc_bonferroni_e15_uniform",
+   "kwargs": {},
+   "note": "bonferroni 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.8852335358126086,
+     0.47669061343706165,
+     0.5483421898648763,
+     0.20886640923031596,
+     0.7960797313809702,
+     0.0669830006304839,
+     0.9315945151546436,
+     0.3858218939659992,
+     0.4194238083054461,
+     0.26661854034596755,
+     0.9865078897249981,
+     0.54913035414586,
+     0.30368100465348324,
+     0.37604620183266313,
+     0.7822753079297466,
+     0.6927885306931127
+    ],
+    "holm"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 1.0
+   },
+   "id": "mtc_holm_e0_uniform",
+   "kwargs": {},
+   "note": "holm 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.8852335358126086,
+     0.47669061343706165,
+     0.5483421898648763,
+     0.20886640923031596,
+     0.7960797313809702,
+     0.0669830006304839,
+     0.9315945151546436,
+     0.3858218939659992,
+     0.4194238083054461,
+     0.26661854034596755,
+     0.9865078897249981,
+     0.54913035414586,
+     0.30368100465348324,
+     0.37604620183266313,
+     0.7822753079297466,
+     0.6927885306931127
+    ],
+    "holm"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "8",
+    "value": 1.0
+   },
+   "id": "mtc_holm_e8_uniform",
+   "kwargs": {},
+   "note": "holm 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.8852335358126086,
+     0.47669061343706165,
+     0.5483421898648763,
+     0.20886640923031596,
+     0.7960797313809702,
+     0.0669830006304839,
+     0.9315945151546436,
+     0.3858218939659992,
+     0.4194238083054461,
+     0.26661854034596755,
+     0.9865078897249981,
+     0.54913035414586,
+     0.30368100465348324,
+     0.37604620183266313,
+     0.7822753079297466,
+     0.6927885306931127
+    ],
+    "holm"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "15",
+    "value": 1.0
+   },
+   "id": "mtc_holm_e15_uniform",
+   "kwargs": {},
+   "note": "holm 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.8852335358126086,
+     0.47669061343706165,
+     0.5483421898648763,
+     0.20886640923031596,
+     0.7960797313809702,
+     0.0669830006304839,
+     0.9315945151546436,
+     0.3858218939659992,
+     0.4194238083054461,
+     0.26661854034596755,
+     0.9865078897249981,
+     0.54913035414586,
+     0.30368100465348324,
+     0.37604620183266313,
+     0.7822753079297466,
+     0.6927885306931127
+    ],
+    "bh"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.98650788972
+   },
+   "id": "mtc_bh_e0_uniform",
+   "kwargs": {},
+   "note": "bh 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.8852335358126086,
+     0.47669061343706165,
+     0.5483421898648763,
+     0.20886640923031596,
+     0.7960797313809702,
+     0.0669830006304839,
+     0.9315945151546436,
+     0.3858218939659992,
+     0.4194238083054461,
+     0.26661854034596755,
+     0.9865078897249981,
+     0.54913035414586,
+     0.30368100465348324,
+     0.37604620183266313,
+     0.7822753079297466,
+     0.6927885306931127
+    ],
+    "bh"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "8",
+    "value": 0.87860856663
+   },
+   "id": "mtc_bh_e8_uniform",
+   "kwargs": {},
+   "note": "bh 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.8852335358126086,
+     0.47669061343706165,
+     0.5483421898648763,
+     0.20886640923031596,
+     0.7960797313809702,
+     0.0669830006304839,
+     0.9315945151546436,
+     0.3858218939659992,
+     0.4194238083054461,
+     0.26661854034596755,
+     0.9865078897249981,
+     0.54913035414586,
+     0.30368100465348324,
+     0.37604620183266313,
+     0.7822753079297466,
+     0.6927885306931127
+    ],
+    "bh"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "15",
+    "value": 0.97979043862
+   },
+   "id": "mtc_bh_e15_uniform",
+   "kwargs": {},
+   "note": "bh 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.8852335358126086,
+     0.47669061343706165,
+     0.5483421898648763,
+     0.20886640923031596,
+     0.7960797313809702,
+     0.0669830006304839,
+     0.9315945151546436,
+     0.3858218939659992,
+     0.4194238083054461,
+     0.26661854034596755,
+     0.9865078897249981,
+     0.54913035414586,
+     0.30368100465348324,
+     0.37604620183266313,
+     0.7822753079297466,
+     0.6927885306931127
+    ],
+    "none"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.88523353581
+   },
+   "id": "mtc_none_e0_uniform",
+   "kwargs": {},
+   "note": "none 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.8852335358126086,
+     0.47669061343706165,
+     0.5483421898648763,
+     0.20886640923031596,
+     0.7960797313809702,
+     0.0669830006304839,
+     0.9315945151546436,
+     0.3858218939659992,
+     0.4194238083054461,
+     0.26661854034596755,
+     0.9865078897249981,
+     0.54913035414586,
+     0.30368100465348324,
+     0.37604620183266313,
+     0.7822753079297466,
+     0.6927885306931127
+    ],
+    "none"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "8",
+    "value": 0.41942380831
+   },
+   "id": "mtc_none_e8_uniform",
+   "kwargs": {},
+   "note": "none 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.8852335358126086,
+     0.47669061343706165,
+     0.5483421898648763,
+     0.20886640923031596,
+     0.7960797313809702,
+     0.0669830006304839,
+     0.9315945151546436,
+     0.3858218939659992,
+     0.4194238083054461,
+     0.26661854034596755,
+     0.9865078897249981,
+     0.54913035414586,
+     0.30368100465348324,
+     0.37604620183266313,
+     0.7822753079297466,
+     0.6927885306931127
+    ],
+    "none"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "15",
+    "value": 0.69278853069
+   },
+   "id": "mtc_none_e15_uniform",
+   "kwargs": {},
+   "note": "none 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.02,
+     0.9
+    ],
+    "bonferroni"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.0003
+   },
+   "id": "mtc_bonferroni_e0_tiny",
+   "kwargs": {},
+   "note": "bonferroni 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.02,
+     0.9
+    ],
+    "bonferroni"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 0.06
+   },
+   "id": "mtc_bonferroni_e1_tiny",
+   "kwargs": {},
+   "note": "bonferroni 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.02,
+     0.9
+    ],
+    "bonferroni"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 1.0
+   },
+   "id": "mtc_bonferroni_e2_tiny",
+   "kwargs": {},
+   "note": "bonferroni 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.02,
+     0.9
+    ],
+    "holm"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.0003
+   },
+   "id": "mtc_holm_e0_tiny",
+   "kwargs": {},
+   "note": "holm 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.02,
+     0.9
+    ],
+    "holm"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 0.04
+   },
+   "id": "mtc_holm_e1_tiny",
+   "kwargs": {},
+   "note": "holm 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.02,
+     0.9
+    ],
+    "holm"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.9
+   },
+   "id": "mtc_holm_e2_tiny",
+   "kwargs": {},
+   "note": "holm 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.02,
+     0.9
+    ],
+    "bh"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.0003
+   },
+   "id": "mtc_bh_e0_tiny",
+   "kwargs": {},
+   "note": "bh 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.02,
+     0.9
+    ],
+    "bh"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 0.03
+   },
+   "id": "mtc_bh_e1_tiny",
+   "kwargs": {},
+   "note": "bh 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.02,
+     0.9
+    ],
+    "bh"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.9
+   },
+   "id": "mtc_bh_e2_tiny",
+   "kwargs": {},
+   "note": "bh 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.02,
+     0.9
+    ],
+    "none"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "0",
+    "value": 0.0001
+   },
+   "id": "mtc_none_e0_tiny",
+   "kwargs": {},
+   "note": "none 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.02,
+     0.9
+    ],
+    "none"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "1",
+    "value": 0.02
+   },
+   "id": "mtc_none_e1_tiny",
+   "kwargs": {},
+   "note": "none 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.0001,
+     0.02,
+     0.9
+    ],
+    "none"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 0.9
+   },
+   "id": "mtc_none_e2_tiny",
+   "kwargs": {},
+   "note": "none 校正独立复算（元素级）",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.5,
+     0.7,
+     0.9
+    ],
+    "bonferroni"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "2",
+    "value": 1.0
+   },
+   "id": "mtc_bonferroni_element_clip",
+   "kwargs": {},
+   "note": "p·n 上限 1",
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    [
+     0.1,
+     0.2
+    ],
+    "sidak"
+   ],
+   "expect": {
+    "code": "UNSUPPORTED_METHOD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "mtc_unknown_method",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.spatial_regression:multiple_testing_correction"
+  },
+  {
+   "args": [
+    {
+     "crs": "EPSG:32650",
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         180.63309122416948,
+         398.2367607356684
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         893.8324035698779,
+         403.3860075146668
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         683.0046230279715,
+         511.08091521359466
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         535.4265530823051,
+         875.3544568202907
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         246.05194461222402,
+         142.14726818566382
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         328.62093526506254,
+         408.4948925650228
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         657.2509650148052,
+         934.4190167914918
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         216.826727961852,
+         279.64428306834
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         198.34212173931866,
+         484.25242654227986
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         269.25773954492416,
+         761.1999123479469
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         919.9378229279861,
+         633.0709794325383
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         21.327235172301062,
+         460.60094970086254
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         560.2917992381477,
+         274.227260052716
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         398.9333271516956,
+         425.0830276351266
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         165.2931720508818,
+         85.30532367587651
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         475.5060525342305,
+         793.6599424774336
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "val"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "local_geary_invalid_correction",
+   "kwargs": {
+    "correction": "sidak"
+   },
+   "target": "app.lib.geo_analysis.statistics:local_geary_narrated"
+  },
+  {
+   "args": [
+    {
+     "crs": "EPSG:32650",
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         180.63309122416948,
+         398.2367607356684
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         893.8324035698779,
+         403.3860075146668
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "val": 2.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "val"
+   ],
+   "expect": {
+    "code": "INSUFFICIENT_SAMPLES",
+    "kind": "error",
+    "value": null
+   },
+   "id": "local_geary_too_few",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.statistics:local_geary_narrated"
+  },
+  {
+   "args": [
+    {
+     "crs": "EPSG:32650",
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         180.63309122416948,
+         398.2367607356684
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         893.8324035698779,
+         403.3860075146668
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         683.0046230279715,
+         511.08091521359466
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         535.4265530823051,
+         875.3544568202907
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         246.05194461222402,
+         142.14726818566382
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         328.62093526506254,
+         408.4948925650228
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         657.2509650148052,
+         934.4190167914918
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         216.826727961852,
+         279.64428306834
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         198.34212173931866,
+         484.25242654227986
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         269.25773954492416,
+         761.1999123479469
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         919.9378229279861,
+         633.0709794325383
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         21.327235172301062,
+         460.60094970086254
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         560.2917992381477,
+         274.227260052716
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         398.9333271516956,
+         425.0830276351266
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         165.2931720508818,
+         85.30532367587651
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         475.5060525342305,
+         793.6599424774336
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "val"
+   ],
+   "expect": {
+    "code": "DEGENERATE_DATA",
+    "kind": "error",
+    "value": null
+   },
+   "id": "local_geary_constant_field",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.statistics:local_geary_narrated"
+  },
+  {
+   "args": [
+    {
+     "crs": "EPSG:32650",
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         180.63309122416948,
+         398.2367607356684
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         893.8324035698779,
+         403.3860075146668
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         683.0046230279715,
+         511.08091521359466
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         535.4265530823051,
+         875.3544568202907
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         246.05194461222402,
+         142.14726818566382
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         328.62093526506254,
+         408.4948925650228
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         657.2509650148052,
+         934.4190167914918
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         216.826727961852,
+         279.64428306834
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         198.34212173931866,
+         484.25242654227986
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         269.25773954492416,
+         761.1999123479469
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         919.9378229279861,
+         633.0709794325383
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         21.327235172301062,
+         460.60094970086254
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         560.2917992381477,
+         274.227260052716
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         398.9333271516956,
+         425.0830276351266
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         165.2931720508818,
+         85.30532367587651
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         475.5060525342305,
+         793.6599424774336
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "val"
+   ],
+   "expect": {
+    "code": "MISSING_REQUIRED_FIELD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "local_geary_missing_field",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.statistics:local_geary_narrated"
+  },
+  {
+   "args": [
+    {
+     "crs": "EPSG:32650",
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         180.63309122416948,
+         398.2367607356684
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         893.8324035698779,
+         403.3860075146668
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         683.0046230279715,
+         511.08091521359466
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         535.4265530823051,
+         875.3544568202907
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         246.05194461222402,
+         142.14726818566382
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         328.62093526506254,
+         408.4948925650228
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         657.2509650148052,
+         934.4190167914918
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         216.826727961852,
+         279.64428306834
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         198.34212173931866,
+         484.25242654227986
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         269.25773954492416,
+         761.1999123479469
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         919.9378229279861,
+         633.0709794325383
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         21.327235172301062,
+         460.60094970086254
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         560.2917992381477,
+         274.227260052716
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         398.9333271516956,
+         425.0830276351266
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         165.2931720508818,
+         85.30532367587651
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         475.5060525342305,
+         793.6599424774336
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "val"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "local_geary_permutation_contract",
+   "kwargs": {
+    "permutations": 42
+   },
+   "target": "app.lib.geo_analysis.statistics:local_geary_narrated"
+  },
+  {
+   "args": [
+    {
+     "crs": "EPSG:32650",
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         180.63309122416948,
+         398.2367607356684
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         893.8324035698779,
+         403.3860075146668
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         683.0046230279715,
+         511.08091521359466
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 2.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         535.4265530823051,
+         875.3544568202907
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         246.05194461222402,
+         142.14726818566382
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         328.62093526506254,
+         408.4948925650228
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 2.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         657.2509650148052,
+         934.4190167914918
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         216.826727961852,
+         279.64428306834
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         198.34212173931866,
+         484.25242654227986
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 2.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         269.25773954492416,
+         761.1999123479469
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         919.9378229279861,
+         633.0709794325383
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         21.327235172301062,
+         460.60094970086254
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 2.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         560.2917992381477,
+         274.227260052716
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         398.9333271516956,
+         425.0830276351266
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         165.2931720508818,
+         85.30532367587651
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 2.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         475.5060525342305,
+         793.6599424774336
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "b"
+   ],
+   "expect": {
+    "code": "UNSUPPORTED_METHOD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "local_join_count_not_binary",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.statistics:local_join_count_narrated"
+  },
+  {
+   "args": [
+    {
+     "crs": "EPSG:32650",
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         180.63309122416948,
+         398.2367607356684
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         893.8324035698779,
+         403.3860075146668
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         683.0046230279715,
+         511.08091521359466
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         535.4265530823051,
+         875.3544568202907
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         246.05194461222402,
+         142.14726818566382
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         328.62093526506254,
+         408.4948925650228
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         657.2509650148052,
+         934.4190167914918
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         216.826727961852,
+         279.64428306834
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         198.34212173931866,
+         484.25242654227986
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         269.25773954492416,
+         761.1999123479469
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         919.9378229279861,
+         633.0709794325383
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         21.327235172301062,
+         460.60094970086254
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         560.2917992381477,
+         274.227260052716
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         398.9333271516956,
+         425.0830276351266
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         165.2931720508818,
+         85.30532367587651
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         475.5060525342305,
+         793.6599424774336
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "b"
+   ],
+   "expect": {
+    "code": "DEGENERATE_DATA",
+    "kind": "error",
+    "value": null
+   },
+   "id": "local_join_count_single_class",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.statistics:local_join_count_narrated"
+  },
+  {
+   "args": [
+    {
+     "crs": "EPSG:32650",
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         180.63309122416948,
+         398.2367607356684
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         893.8324035698779,
+         403.3860075146668
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         683.0046230279715,
+         511.08091521359466
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "b"
+   ],
+   "expect": {
+    "code": "INSUFFICIENT_SAMPLES",
+    "kind": "error",
+    "value": null
+   },
+   "id": "local_join_count_too_few",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.statistics:local_join_count_narrated"
+  },
+  {
+   "args": [
+    {
+     "crs": "EPSG:32650",
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         180.63309122416948,
+         398.2367607356684
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "val": 1.0,
+        "val2": 2.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         893.8324035698779,
+         403.3860075146668
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "val": 2.0,
+        "val2": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         683.0046230279715,
+         511.08091521359466
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "val": 3.0,
+        "val2": 2.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         535.4265530823051,
+         875.3544568202907
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "val": 4.0,
+        "val2": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         246.05194461222402,
+         142.14726818566382
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "val": 5.0,
+        "val2": 2.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         328.62093526506254,
+         408.4948925650228
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "val": 6.0,
+        "val2": 1.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "val",
+    "val2"
+   ],
+   "expect": {
+    "code": "INSUFFICIENT_SAMPLES",
+    "kind": "error",
+    "value": null
+   },
+   "id": "bivariate_local_moran_too_few",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.statistics:bivariate_local_moran_narrated"
+  },
+  {
+   "args": [
+    {
+     "crs": "EPSG:32650",
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         180.63309122416948,
+         398.2367607356684
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         893.8324035698779,
+         403.3860075146668
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         683.0046230279715,
+         511.08091521359466
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         535.4265530823051,
+         875.3544568202907
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         246.05194461222402,
+         142.14726818566382
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         328.62093526506254,
+         408.4948925650228
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         657.2509650148052,
+         934.4190167914918
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         216.826727961852,
+         279.64428306834
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         198.34212173931866,
+         484.25242654227986
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         269.25773954492416,
+         761.1999123479469
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         919.9378229279861,
+         633.0709794325383
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         21.327235172301062,
+         460.60094970086254
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         560.2917992381477,
+         274.227260052716
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         398.9333271516956,
+         425.0830276351266
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         165.2931720508818,
+         85.30532367587651
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         475.5060525342305,
+         793.6599424774336
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 3.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "val",
+    "val"
+   ],
+   "expect": {
+    "code": "DEGENERATE_DATA",
+    "kind": "error",
+    "value": null
+   },
+   "id": "bivariate_local_moran_constant",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.statistics:bivariate_local_moran_narrated"
+  },
+  {
+   "args": [
+    {
+     "crs": "EPSG:32650",
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         180.63309122416948,
+         398.2367607356684
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         893.8324035698779,
+         403.3860075146668
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         683.0046230279715,
+         511.08091521359466
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         535.4265530823051,
+         875.3544568202907
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         246.05194461222402,
+         142.14726818566382
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         328.62093526506254,
+         408.4948925650228
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         657.2509650148052,
+         934.4190167914918
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         216.826727961852,
+         279.64428306834
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         198.34212173931866,
+         484.25242654227986
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         269.25773954492416,
+         761.1999123479469
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         919.9378229279861,
+         633.0709794325383
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         21.327235172301062,
+         460.60094970086254
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         560.2917992381477,
+         274.227260052716
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         398.9333271516956,
+         425.0830276351266
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         165.2931720508818,
+         85.30532367587651
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         475.5060525342305,
+         793.6599424774336
+        ],
+        "type": "Point"
+       },
+       "properties": {},
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "val",
+    "val2"
+   ],
+   "expect": {
+    "code": "MISSING_REQUIRED_FIELD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "bivariate_local_moran_missing",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.statistics:bivariate_local_moran_narrated"
+  },
+  {
+   "args": [
+    {
+     "crs": "EPSG:32650",
+     "features": [
+      {
+       "geometry": {
+        "coordinates": [
+         180.63309122416948,
+         398.2367607356684
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         893.8324035698779,
+         403.3860075146668
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         683.0046230279715,
+         511.08091521359466
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         535.4265530823051,
+         875.3544568202907
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         246.05194461222402,
+         142.14726818566382
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         328.62093526506254,
+         408.4948925650228
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         657.2509650148052,
+         934.4190167914918
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         216.826727961852,
+         279.64428306834
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         198.34212173931866,
+         484.25242654227986
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         269.25773954492416,
+         761.1999123479469
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         919.9378229279861,
+         633.0709794325383
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         21.327235172301062,
+         460.60094970086254
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         560.2917992381477,
+         274.227260052716
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         398.9333271516956,
+         425.0830276351266
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         165.2931720508818,
+         85.30532367587651
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 0.0,
+        "val": 0.0
+       },
+       "type": "Feature"
+      },
+      {
+       "geometry": {
+        "coordinates": [
+         475.5060525342305,
+         793.6599424774336
+        ],
+        "type": "Point"
+       },
+       "properties": {
+        "b": 1.0,
+        "val": 1.0
+       },
+       "type": "Feature"
+      }
+     ],
+     "type": "FeatureCollection"
+    },
+    "val"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "hotspot_invalid_significance_method",
+   "kwargs": {
+    "significance_method": "bootstrap"
+   },
+   "note": "narrated 缺字段路径返回 failure 结果而非抛错，只有非法方法名会在校验点抛 ValueError（可回放的错误语义）",
+   "target": "app.lib.geo_analysis.statistics:hotspot_narrated"
+  }
+ ],
+ "count": 86,
+ "domain": "statistics_local"
+}

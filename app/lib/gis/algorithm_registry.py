@@ -238,7 +238,11 @@ class AlgorithmRegistry:
         ids = self._by_capability.get(capability, [])
         algos = [self._by_id[i] for i in ids]
         if not include_planned:
-            algos = [a for a in algos if a.runtime_status != "unavailable"]
+            # V3 修复：参数语义是 include_planned —— planned 与 unavailable
+            # 都属"不可运行"，一律过滤（此前只滤 unavailable，planned 走漏
+            # 到调用方再被 resolver 原生门拒绝，命名与行为不符）。
+            algos = [a for a in algos
+                     if a.runtime_status not in ("planned", "unavailable")]
         return algos
 
     @property
@@ -323,6 +327,18 @@ class AlgorithmRegistry:
             for cap in algo.capabilities:
                 if not capabilities.has(cap):
                     issues.append(f"algorithm {algo.id}: unknown capability {cap}")
+                    continue
+                # V3（A1）：算法输出必须是所属能力声明输出的成员 —— 能力层
+                # output_artifact_types 是消费方（规划/校验/地图模型适配）的
+                # 合同，算法层漂移出去等于绕过合同。
+                cap_descriptor = capabilities.get(cap)
+                cap_outputs = list(getattr(cap_descriptor, "output_artifact_types", []) or [])
+                if (cap_outputs and algo.output_artifact_type
+                        and algo.output_artifact_type not in cap_outputs):
+                    issues.append(
+                        f"algorithm {algo.id}: output artifact "
+                        f"{algo.output_artifact_type} not declared by capability "
+                        f"{cap} (declared: {cap_outputs})")
             if algo.output_artifact_type and not artifact_types.has(algo.output_artifact_type):
                 issues.append(
                     f"algorithm {algo.id}: unknown output artifact {algo.output_artifact_type}")

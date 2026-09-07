@@ -534,6 +534,207 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Reflectance. IEEE Geoscience and Remote Sensing Letters, "
             "16(1), 111–115.",
         ),
+        # ── Foundation V3（spatial-algorithm-foundation-v3）────────────
+        MethodReference(
+            "fotheringham2017",
+            "MGWR (multiscale GWR, backfitting)",
+            "Fotheringham, A. S., Yang, W., & Kang, W. (2017). Multiscale "
+            "Geographically Weighted Regression (MGWR). Annals of the "
+            "American Association of Geographers, 107(6), 1247–1265.",
+        ),
+        MethodReference(
+            "anselin_li2019",
+            "Local join count (no-self-neighbor binary LISA)",
+            "Anselin, L., & Li, X. (2019). A Local Join Count Approach to "
+            "Count Data at the Local Level. Geographical Analysis, 51(2), "
+            "244–268.",
+        ),
+        MethodReference(
+            "sokal1998",
+            "Local spatial autocorrelation (join count family)",
+            "Sokal, R. R., Oden, N. L., & Thomson, B. A. (1998). Local "
+            "Spatial Autocorrelation in a Biological Model. Geographical "
+            "Analysis, 30(4), 331–354.",
+        ),
+        MethodReference(
+            "journel_huijbregts1978",
+            "Mining geostatistics (co-kriging / Markov Model 1)",
+            "Journel, A. G., & Huijbregts, C. J. (1978). Mining "
+            "Geostatistics. Academic Press.",
+        ),
+        MethodReference(
+            "journel1983",
+            "Indicator kriging (nonparametric distribution estimation)",
+            "Journel, A. G. (1983). Nonparametric Estimation of Spatial "
+            "Distributions. Journal of the International Association for "
+            "Mathematical Geology, 15(3), 445–468.",
+        ),
+        MethodReference(
+            "sibson1981",
+            "Natural neighbour interpolation (Sibson coordinates)",
+            "Sibson, R. (1981). A Brief Description of Natural Neighbor "
+            "Interpolation. In Interpolating Multivariate Data, Wiley, "
+            "21–36.",
+        ),
+        MethodReference(
+            "isaaks_srivastava1989",
+            "Applied geostatistics (block kriging / variogram practice)",
+            "Isaaks, E. H., & Srivastava, R. M. (1989). An Introduction to "
+            "Applied Geostatistics. Oxford University Press.",
+        ),
+        MethodReference(
+            "mantel1967",
+            "Mantel test (space-time distance association)",
+            "Mantel, N. (1967). The Detection of Disease Clustering and a "
+            "Generalized Regression Approach. Cancer Research, 27(2), "
+            "209–220.",
+        ),
+        MethodReference(
+            "diggle1995",
+            "Space-time K function",
+            "Diggle, P. J., Chetwynd, A. G., Häggkvist, R., & Morris, S. "
+            "(1995). Second-Order Analysis of Space-Time Clustering. "
+            "Statistical Methods in Medical Research, 4(2), 124–136.",
+        ),
+        MethodReference(
+            "ripley1988",
+            "Edge corrections for point-process summaries",
+            "Ripley, B. D. (1988). Statistical Inference for Spatial "
+            "Processes. Cambridge University Press.",
+        ),
+        MethodReference(
+            "bonacich1972",
+            "Eigenvector centrality",
+            "Bonacich, P. (1972). Factoring and Weighting Approaches to "
+            "Status Scores and Clique Identification. Journal of "
+            "Mathematical Sociology, 2(1), 113–120.",
+        ),
+        MethodReference(
+            "steyn1980",
+            "Sky view factor estimation",
+            "Steyn, D. G. (1980). The Calculation of View Factors from "
+            "Horizon Angle Data. Atmosphere-Ocean, 18(3), 203–207.",
+        ),
+        MethodReference(
+            "green1988",
+            "MNF transform (noise-whitened PCA)",
+            "Green, A. A., Berman, M., Switzer, P., & Craig, M. D. (1988). "
+            "A Transformation for Ordering Multispectral Data in Terms of "
+            "Image Quality with Implications for Noise Removal. IEEE Trans. "
+            "Geoscience and Remote Sensing, 26(1), 65–74.",
+        ),
+        MethodReference(
+            "hyvarinen1999",
+            "FastICA",
+            "Hyvärinen, A. (1999). Fast and Robust Fixed-Point Algorithms "
+            "for Independent Component Analysis. IEEE Trans. Neural "
+            "Networks, 10(3), 626–634.",
+        ),
+        MethodReference(
+            "kruse1993",
+            "Spectral angle mapper",
+            "Kruse, F. A., Lefkoff, A. B., Boardman, J. W., Heidebrecht, "
+            "K. B., Shapiro, A. T., Barloon, P. J., & Goetz, A. F. H. "
+            "(1993). The Spectral Image Processing System (SIPS)—"
+            "Interactive Visualization and Analysis of Imaging "
+            "Spectrometer Data. Remote Sensing of Environment, 44(2-3), "
+            "145–163.",
+        ),
+        MethodReference(
+            "chang2000",
+            "Spectral information divergence",
+            "Chang, C.-I. (2000). An Information-Theoretic Approach to "
+            "Spectral Variability, Similarity, and Discrimination for "
+            "Hyperspectral Image Analysis. IEEE Trans. Information Theory, "
+            "46(5), 1927–1932.",
+        ),
+        MethodReference(
+            "boardman1995",
+            "Matched filter (spectral target detection)",
+            "Boardman, J. W. (1995). Analysis of AVIRIS Data via Spectral "
+            "Unmixing and Expert Systems. JPL AVIRIS Workshop.",
+        ),
+        MethodReference(
+            "reed1990",
+            "RX anomaly detector",
+            "Reed, I. S., & Yu, X. (1990). Adaptive Multiple-Band CFAR "
+            "Detection of an Optical Pattern with Unknown Spectral "
+            "Distribution. IEEE Trans. Acoustics, Speech, and Signal "
+            "Processing, 38(10), 1760–1770.",
+        ),
+        MethodReference(
+            "nielsen1998",
+            "MAD / IR-MAD change detection",
+            "Nielsen, A. A., Conradsen, K., & Simpson, J. J. (1998). "
+            "Multivariate Alteration Detection (MAD) and MAF Postprocessing "
+            "in Multispectral, Bitemporal Image Data: New Approaches to "
+            "Change Detection Studies. Remote Sensing of Environment, "
+            "64(1), 1–19.",
+        ),
+        MethodReference(
+            "nascimento2005",
+            "Vertex component analysis (endmember extraction)",
+            "Nascimento, J. M. P., & Dias, J. M. B. (2005). Vertex "
+            "Component Analysis: A Fast Algorithm to Unmix Hyperspectral "
+            "Data. IEEE Trans. Geoscience and Remote Sensing, 43(4), "
+            "898–910.",
+        ),
+        MethodReference(
+            "lloyd1982",
+            "K-means (Lloyd) segmentation foundation",
+            "Lloyd, S. P. (1982). Least Squares Quantization in PCM. IEEE "
+            "Trans. Information Theory, 28(2), 129–137.",
+        ),
+        MethodReference(
+            "small2011",
+            "Radiometric terrain correction (gamma flattening)",
+            "Small, D. (2011). Flattening Gamma: Radiometric Terrain "
+            "Correction for SAR Imagery. IEEE Trans. Geoscience and Remote "
+            "Sensing, 49(8), 3081–3093.",
+        ),
+        MethodReference(
+            "kuan1985",
+            "Kuan adaptive noise filter",
+            "Kuan, D. T., Sawchuk, A. A., Strand, T. C., & Chavel, P. "
+            "(1985). Adaptive Noise Smoothing Filter for Images with Signal-"
+            "Dependent Noise. IEEE Trans. Pattern Analysis and Machine "
+            "Intelligence, 7(2), 165–177.",
+        ),
+        MethodReference(
+            "lee_jurkevich1994",
+            "Multi-temporal SAR speckle filtering",
+            "Lee, J.-S., & Jurkevich, I. (1994). Speckle Filtering of "
+            "Synthetic Aperture Radar Images: A Review. Remote Sensing "
+            "Reviews, 8(4), 313–340.",
+        ),
+        # ── Foundation V3（completeness batch）：稳健协方差 / EB 率平滑 /
+        #    自适应带宽核密度 / 经典季节分解 ─────────────────────────────
+        MethodReference(
+            "mackinnon_white1985",
+            "Heteroskedasticity-consistent covariance estimators (HC0/HC1/HC3)",
+            "MacKinnon, J. G., & White, H. (1985). Some Heteroskedasticity-"
+            "Consistent Covariance Matrix Estimators with Improved Finite "
+            "Sample Properties. Journal of Econometrics, 29(3), 305–325.",
+        ),
+        MethodReference(
+            "marshall1991",
+            "Empirical Bayes rate smoothing (method-of-moments prior)",
+            "Marshall, R. J. (1991). A Review of Methods for the Statistical "
+            "Analysis of Spatial Patterns of Disease. JRSS-A, 154(3), 421–441.",
+        ),
+        MethodReference(
+            "abramson1982",
+            "Adaptive kernel bandwidth (square-root law)",
+            "Abramson, I. S. (1982). On Bandwidth Variation in Kernel "
+            "Estimates—A Square Root Law. The Annals of Statistics, 10(4), "
+            "1217–1223.",
+        ),
+        MethodReference(
+            "makridakis1998",
+            "Classical time-series decomposition (centered MA trend + seasonal indices)",
+            "Makridakis, S., Wheelwright, S. C., & Hyndman, R. J. (1998). "
+            "Forecasting: Methods and Applications (3rd ed.). Wiley.",
+        ),
     ]
 }
 

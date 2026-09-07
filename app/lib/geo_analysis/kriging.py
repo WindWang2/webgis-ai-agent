@@ -67,12 +67,43 @@ byte-identical):
       [Γ  F][w]   [γ0]      F rows = [1, x_i, y_i]
       [Fᵀ  0][m] = [f0]     f0     = [1, x0, y0]
 
-  Prediction = wᵗz; kriging variance = wᵗγ0 + mᵗf0. Zero-residual
-  degenerate case (values exactly planar): the drift IS the signal — the
-  exact trend prediction is returned with zero variance and the honest
-  disclosure flag ``"zero_residual_variance"``; no variogram is fitted or
-  faked. UK needs ≥ ``UK_MIN_SAMPLES`` (12) points to constrain the drift
-  (:class:`~app.lib.gis.scientific_errors.InsufficientSamples` below that).
+    Prediction = wᵗz; kriging variance = wᵗγ0 + mᵗf0. Zero-residual
+    degenerate case (values exactly planar): the drift IS the signal — the
+    exact trend prediction is returned with zero variance and the honest
+    disclosure flag ``"zero_residual_variance"``; no variogram is fitted or
+    faked. UK needs ≥ ``UK_MIN_SAMPLES`` (12) points to constrain the drift
+    (:class:`~app.lib.gis.scientific_errors.InsufficientSamples` below that).
+
+V3 (Geostatistics/Interpolation V3 batch, all additive — the OK/UK
+production paths above are untouched):
+
+* **Directional variogram** — :func:`directional_variogram` bins the
+  empirical semivariance along ONE azimuth axis (bidirectional pair filter
+  + optional GSLIB band width). Azimuth convention: MATHEMATICAL —
+  0° = East (+x), counter-clockwise, the same convention as
+  ``anisotropy_angle``; disclosed in every meta dict.
+
+* **Variogram model selection** — :func:`select_variogram_model` fits all
+  six families on one shared empirical variogram and ranks by weighted RSS
+  (the same objective ``model="auto"`` uses) + AICc (k=3 fitted parameters;
+  matern k=4 — disclosed). Deterministic: no stochastic restarts.
+
+* **Indicator kriging** — :func:`indicator_kriging` (Journel 1983): per
+  threshold the indicator transform gets its own empirical variogram +
+  fit (``auto`` = per-threshold 6-family selection) and ordinary kriging
+  of the indicator → P(Z(x) ≤ t), clamped to [0, 1] with clamped cells
+  counted; plus the p50 threshold surface and an optional E-type estimate.
+
+* **Collocated co-kriging (Markov Model 1)** — :func:`collocated_cokriging`
+  (Journel & Huijbregts 1978 approximation): cross structure = ρ × primary
+  structure; the secondary enters the system ONLY at the target location
+  (collocated approximation); |ρ| < 0.2 is a typed rejection — the honest
+  position that weak correlation cannot beat ordinary kriging.
+
+* **Block kriging** — :func:`block_kriging`: rectangular block support via
+  a fixed 2×2 sub-point discretization (Isaaks & Srivastava 1989 practice,
+  disclosed): point-to-block averaged γ in the RHS, within-block γ̄(B,B)
+  variance correction (block variance ≤ point variance on average).
 
 All distances are computed in the CALLER-supplied projected (metric) CRS
 space — degree-space kriging silently distorts and is rejected at the tool
@@ -89,7 +120,11 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from app.lib.cancellation import cancellable
-from app.lib.gis.scientific_errors import InsufficientSamples
+from app.lib.gis.scientific_errors import (
+    DegenerateData,
+    InsufficientSamples,
+    ScientificPreconditionFailed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +154,12 @@ _SOLVE_CHUNK = 1024               # batched OK system rows per np.linalg.solve
 # ── universal kriging (VNext) ───────────────────────────────────────────────
 UK_MIN_SAMPLES = 12               # drift [1,x,y] needs ≥12 samples to constrain
 _TREND_TERMS = 3                  # linear drift terms: [1, x, y]
+
+# ── V3（Geostatistics/Interpolation 批次）────────────────────────────────────
+DIRECTIONAL_DEFAULT_TOLERANCE_DEG = 22.5   # 轴向半角默认（±22.5°）
+DIRECTIONAL_MAX_TOLERANCE_DEG = 90.0       # 90° = 全向（各向同性退化）
+BLOCK_DISCRETIZATION = 2                   # 块离散化 2×2 子点（I&S 1989 惯例）
+COKRIGING_MIN_ABS_RHO = 0.2                # |ρ| 低于此协同克里金无意义（类型化拒绝）
 
 
 class KrigingInputError(ValueError):
@@ -1099,6 +1140,659 @@ def cross_validate_kriging(
     )
 
 
+# ── V3：方向变异函数 / 模型选择 / 指示克里金 / 协同克里金 / 块克里金 ────────
+
+def directional_variogram(
+    pts_metric: np.ndarray,
+    values: np.ndarray,
+    azimuth_deg: float,
+    tolerance_deg: float = DIRECTIONAL_DEFAULT_TOLERANCE_DEG,
+    band_width: Optional[float] = None,
+    n_lags: int = 12,
+    max_pairs: int = MAX_PAIRS,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
+    """单方位角轴向经验半变异函数（方向变差函数）。
+
+    方位角约定（本模块统一披露）：**数学约定** —— 0° = 东(+x) 轴、逆时针
+    为正，与 ``anisotropy_angle`` 同一约定（不是罗盘方位角 0°=北）。配对
+    过滤是**双向轴向**语义（轴而非射线）：方位角 +180° 的配对向量属同一
+    条轴，因此 ``azimuth_deg`` 与 ``azimuth_deg + 180`` 返回逐位一致的曲线。
+
+    ``tolerance_deg`` 为轴向半角（0 < t ≤ 90；90 = 全向，各向同性退化）。
+    ``band_width``（工作 CRS 单位）进一步限制配对中点到轴线的垂距
+    （GSLIB band 语义），进 meta 披露。滞后 bin 沿用
+    :func:`empirical_variogram` 约定（同一 span/edges/空 bin 丢弃）；
+    配对行走沿用行步幅策略控制 ``max_pairs`` 预算，确定性。
+
+    返回 ``(lags, gamma, pair_counts, meta)``。
+    """
+    pts = np.asarray(pts_metric, dtype=float)
+    vals = np.asarray(values, dtype=float)
+    n = len(vals)
+    if n < 2:
+        raise KrigingInputError(f"方向变异函数至少需要 2 个样本点，got {n}")
+    tol = float(tolerance_deg)
+    if not (math.isfinite(tol) and 0.0 < tol <= DIRECTIONAL_MAX_TOLERANCE_DEG):
+        raise KrigingInputError(
+            f"tolerance_deg 必须在 (0, {DIRECTIONAL_MAX_TOLERANCE_DEG}] 内"
+            f"（轴向半角，{DIRECTIONAL_MAX_TOLERANCE_DEG}=全向），got {tolerance_deg!r}"
+        )
+    az = float(azimuth_deg)
+    if not math.isfinite(az):
+        raise KrigingInputError(f"azimuth_deg 必须是有限角度（度），got {azimuth_deg!r}")
+    bw: Optional[float] = None
+    if band_width is not None:
+        bw = float(band_width)
+        if not (math.isfinite(bw) and bw > 0):
+            raise KrigingInputError(
+                f"band_width 必须为正数（工作 CRS 单位），got {band_width!r}"
+            )
+
+    n_lags = max(4, min(int(n_lags), 64))
+    span = float(np.linalg.norm(pts.max(axis=0) - pts.min(axis=0))) or 1.0
+    edges = np.linspace(0.0, span, n_lags + 1)
+    sum_g = np.zeros(n_lags)
+    cnt = np.zeros(n_lags, dtype=np.int64)
+
+    t = math.radians(az)
+    ux, uy = math.cos(t), math.sin(t)
+    total_pairs = n * (n - 1) // 2
+    stride = max(1, int(math.ceil(total_pairs / max(max_pairs, 1))))
+    kept_pairs = 0
+    for i in cancellable(range(0, n, stride), every=64):
+        v = pts[i + 1:] - pts[i]                      # (m, 2) 配对向量
+        d = np.sqrt((v ** 2).sum(axis=1))
+        ang = np.degrees(np.arctan2(v[:, 1], v[:, 0]))
+        # 折叠到轴向 [0, 90]：方位角与其反向属同一条轴（双向语义）
+        rel = np.abs((ang - az) % 180.0)
+        rel = np.minimum(rel, 180.0 - rel)
+        keep = rel <= tol
+        if bw is not None:
+            perp = np.abs(ux * v[:, 1] - uy * v[:, 0])   # 到轴线的垂距
+            keep &= perp <= bw
+        b = np.searchsorted(edges, d, side="right") - 1
+        valid = keep & (b >= 0) & (b < n_lags)
+        if not valid.any():
+            continue
+        dv2 = (vals[i + 1:] - vals[i]) ** 2
+        np.add.at(sum_g, b[valid], dv2[valid])
+        np.add.at(cnt, b[valid], 1)
+        kept_pairs += int(valid.sum())
+
+    has = cnt > 0
+    lags = 0.5 * (edges[:-1] + edges[1:])[has]
+    gamma = (0.5 * sum_g[has]) / cnt[has]
+    meta = {
+        "method": "directional_variogram",
+        "azimuth_deg": float(az),
+        "azimuth_convention": (
+            "数学约定：0°=东(+x)、逆时针（与 anisotropy_angle 一致，非罗盘方位）；"
+            "轴向双向（+180° 同轴，曲线逐位一致）"
+        ),
+        "tolerance_deg": float(tol),
+        "band_width": bw,
+        "n_samples": int(n),
+        "n_pairs_kept": int(kept_pairs),
+        "n_pairs_total": int(total_pairs),
+        "n_bins": int(len(lags)),
+    }
+    return lags, gamma, cnt[has], meta
+
+
+def select_variogram_model(
+    pts_metric: np.ndarray,
+    values: np.ndarray,
+    models: Optional[list] = None,
+    n_lags: int = 12,
+    matern_smoothness: float = MATERN_SMOOTHNESS_DEFAULT,
+) -> tuple[list[dict], dict]:
+    """变异函数模型选择：6 家族同一经验变异函数上同台、加权 RSS 排名 + AICc。
+
+    加权 RSS 就是 :func:`fit_variogram` 拟合机器的目标（样本对计数 σ-权重）
+    —— 排名证据与 ``model="auto"`` 同源，这里扩展到全部 6 家族并逐模型
+    显式给出。AICc 自由度 k=3（sill/range/nugget 三个拟合参数）；
+    ``matern`` k=4（固定平滑度 ν 计入——meta 逐字披露）。滞后 bin 数
+    n ≤ k+2 时 AICc 诚实取 inf（不伪造小样本信息准则）。
+
+    确定性：无随机重启——每个家族跑同一有界最小二乘（curve_fit，
+    失败回退有界网格搜索）。返回 ``(ranking, meta)``；``ranking`` 按
+    weighted_rss 升序（平局按模型名，确定性）排序，条目为
+    ``{model, params, weighted_rss, aicc, fitted_manually, n_pairs}``。
+    """
+    if models is None:
+        models = list(ALL_VARIOGRAM_MODELS)
+    models = list(models)
+    unknown = [m for m in models if m not in ALL_VARIOGRAM_MODELS]
+    if unknown:
+        raise KrigingInputError(
+            f"variogram model 必须是 {ALL_VARIOGRAM_MODELS} 之一，got {unknown!r}"
+        )
+    pts = np.asarray(pts_metric, dtype=float)
+    vals = np.asarray(values, dtype=float)
+    if len(vals) < MIN_SAMPLES:
+        raise KrigingInputError(
+            f"变异函数模型选择至少需要 {MIN_SAMPLES} 个样本点，got {len(vals)}"
+        )
+    nu_request = _validate_matern_smoothness(matern_smoothness)
+    fit_pts, fit_vals = stratified_subsample(pts, vals, MAX_FIT_POINTS)
+    lags, gamma, counts = empirical_variogram(fit_pts, fit_vals, n_lags=n_lags)
+    if len(lags) < 4:
+        raise KrigingInputError(
+            f"经验变异函数只有 {len(lags)} 个有效滞后 bin（需要 ≥4）—— "
+            "样本空间分布不足以支撑模型选择；请改用 IDW 或增加采样点。"
+        )
+    var_values = float(np.var(fit_vals))
+    span = float(np.linalg.norm(fit_pts.max(axis=0) - fit_pts.min(axis=0))) or 1.0
+    weights = counts.astype(float)
+    n_bins = len(lags)
+
+    ranking: list[dict] = []
+    failures: list[str] = []
+    for m in models:
+        nu = nu_request if m == "matern" else MATERN_SMOOTHNESS_DEFAULT
+        fit = _fit_model(m, lags, gamma, weights, var_values, span, nu=nu)
+        if fit is None:
+            failures.append(m)
+            continue
+        k_params = 4 if m == "matern" else 3
+        rss = max(float(fit.rss), 1e-300)
+        if n_bins > k_params + 2:
+            aic = n_bins * math.log(rss / n_bins) + 2.0 * k_params
+            aicc = aic + (2.0 * k_params * (k_params + 1.0)) / (n_bins - k_params - 1)
+        else:
+            aicc = float("inf")
+        ranking.append({
+            "model": m,
+            "params": fit.params(),
+            "weighted_rss": float(fit.rss),
+            "aicc": float(aicc),
+            "fitted_manually": bool(fit.fitted_manually),
+            "n_pairs": int(fit.n_pairs),
+        })
+    if not ranking:
+        raise KrigingInputError(
+            f"变异函数模型选择全部失败（models={failures}）——输入无法支持地统计建模。"
+        )
+    ranking.sort(key=lambda r: (r["weighted_rss"], r["model"]))
+    by_aicc = min(ranking, key=lambda r: (r["aicc"], r["model"]))
+    meta = {
+        "method": "variogram_model_selection",
+        "n_samples": int(len(vals)),
+        "n_samples_fit": int(len(fit_vals)),
+        "n_bins": int(n_bins),
+        "n_pairs": int(weights.sum()),
+        "best_weighted_rss": ranking[0]["model"],
+        "best_aicc": by_aicc["model"],
+        "aicc_param_note": (
+            "AICc 自由度 k=3（sill/range/nugget）；matern k=4（固定平滑度 ν 计入）——已披露"
+        ),
+        "failed_models": failures,
+    }
+    return ranking, meta
+
+
+def indicator_kriging(
+    xy: np.ndarray,
+    values: np.ndarray,
+    grid_xy: np.ndarray,
+    thresholds: Any,
+    variogram_model: str = "auto",
+    n_lags: int = 12,
+    k_neighbors: int = 16,
+    etype_values: Optional[list] = None,
+) -> tuple[dict, dict]:
+    """指示克里金（Journel 1983）：逐阈值 P(Z(x) ≤ t) 概率面。
+
+    每个阈值 t：指示变换 I = 1[z ≤ t] → 该指示场自己的经验变异函数 + 拟合
+    （``variogram_model="auto"`` 经 :func:`select_variogram_model` 在全部
+    6 家族里逐阈值选型——meta 披露逐阈值选中的模型）→ 指示场的普通克里金
+    即 P(Z(x) ≤ t)。原始概率钳制到 [0, 1]，被钳制的格数计入 meta（绝不
+    静默）。注意：逐阈值独立克里金**不保证**概率面在阈值间单调
+    （P(Z≤t) 的单调性未强制——如实披露）。
+
+    ``etype_values``（与 thresholds 等长的类代表值/中值）时额外产出 E-type
+    估计 E[Z] ≈ Σ_j (p_j − p_{j−1})·m_j（p₀=0）——离散中值近似，已披露。
+
+    返回 ``({"thresholds", "probabilities" (T,C), "p50_threshold" (C,),
+    "etype" | None}, meta)``；``p50_threshold`` 为每格首个 p ≥ 0.5 的阈值
+    （全低则 NaN，计数进 meta）。
+    """
+    pts = np.asarray(xy, dtype=float)
+    vals = np.asarray(values, dtype=float)
+    targets = np.atleast_2d(np.asarray(grid_xy, dtype=float))
+    n = len(vals)
+    if n < MIN_SAMPLES:
+        raise KrigingInputError(f"指示克里金至少需要 {MIN_SAMPLES} 个样本点，got {n}")
+    thr = np.asarray(sorted({float(t) for t in thresholds}), dtype=float)
+    if thr.size == 0:
+        raise KrigingInputError("thresholds 至少需要一个阈值")
+    if not np.isfinite(thr).all():
+        raise KrigingInputError("thresholds 必须全部为有限数值")
+    ev: Optional[np.ndarray] = None
+    if etype_values is not None:
+        ev = np.asarray(etype_values, dtype=float)
+        if ev.shape != thr.shape:
+            raise KrigingInputError(
+                f"etype_values 长度必须与 thresholds 一致（{thr.size}），got {len(ev)}"
+            )
+    if variogram_model not in ALL_VARIOGRAM_MODELS + ("auto",):
+        raise KrigingInputError(
+            f"variogram model 必须是 {ALL_VARIOGRAM_MODELS + ('auto',)} 之一，"
+            f"got {variogram_model!r}"
+        )
+    n_cells = len(targets)
+    n_thr = thr.size
+    probabilities = np.empty((n_thr, n_cells), dtype=float)
+    clamped = 0
+    constant_thresholds: list[float] = []
+    models_fitted: dict[str, str] = {}
+    disclosures: list[str] = []
+    for j in cancellable(range(n_thr), every=1):
+        ind = (vals <= thr[j]).astype(float)
+        if float(ind.max()) == float(ind.min()):
+            # 常量指示场（阈值高于/低于全部样本值）：指示方差为 0，
+            # 概率场为常量——诚实输出，不拟合变异函数、不伪造结构。
+            probabilities[j, :] = float(ind.mean())
+            constant_thresholds.append(float(thr[j]))
+            continue
+        if variogram_model == "auto":
+            ranking, _ = select_variogram_model(pts, ind, n_lags=n_lags)
+            best_model = ranking[0]["model"]
+        else:
+            best_model = variogram_model
+        vfit = fit_variogram(pts, ind, model=best_model, n_lags=n_lags)
+        models_fitted[repr(float(thr[j]))] = best_model
+        res = ordinary_kriging(pts, ind, targets, vfit, k=k_neighbors)
+        p = res.predictions
+        outside = (p < 0.0) | (p > 1.0)
+        clamped += int(outside.sum())
+        probabilities[j, :] = np.clip(p, 0.0, 1.0)
+
+    p50 = np.full(n_cells, np.nan)
+    for j in range(n_thr):
+        todo = np.isnan(p50) & (probabilities[j] >= 0.5)
+        p50[todo] = thr[j]
+    n_no_p50 = int(np.isnan(p50).sum())
+
+    etype = None
+    if ev is not None:
+        cum = np.concatenate([np.zeros((1, n_cells)), probabilities], axis=0)
+        masses = np.diff(cum, axis=0)
+        etype = (masses * ev[:, None]).sum(axis=0)
+        disclosures.append(
+            "E-type 为离散中值近似：E[Z]≈Σ(p_j−p_{j−1})·m_j（p₀=0）；类内分布未建模。"
+        )
+    if constant_thresholds:
+        disclosures.append(
+            f"阈值 {constant_thresholds} 高于/低于全部样本值——指示场为常量，"
+            "概率输出常量（未拟合变异函数）。"
+        )
+    disclosures.append(
+        "逐阈值独立指示克里金：概率面在阈值间不保证单调（P(Z≤t) 单调性未强制）。"
+    )
+    result = {
+        "thresholds": thr,
+        "probabilities": probabilities,
+        "p50_threshold": p50,
+        "etype": etype,
+    }
+    meta = {
+        "method": "indicator_kriging",
+        "n_samples": int(n),
+        "n_cells": int(n_cells),
+        "n_thresholds": int(n_thr),
+        "variogram_model_request": variogram_model,
+        "models_fitted": models_fitted,
+        "constant_thresholds": constant_thresholds,
+        "clamped_cells": int(clamped),
+        "p50_missing_cells": n_no_p50,
+        "k_neighbors": int(max(2, min(int(k_neighbors), MAX_NEIGHBORS, n))),
+        "disclosures": disclosures,
+    }
+    return result, meta
+
+
+def collocated_cokriging(
+    xy_primary: np.ndarray,
+    z_primary: np.ndarray,
+    xy_secondary: np.ndarray,
+    y_secondary: np.ndarray,
+    grid_xy: np.ndarray,
+    correlation_rho: Optional[float] = None,
+    variogram_model: str = "auto",
+    n_lags: int = 12,
+    k_neighbors: int = 12,
+    variogram: Optional[VariogramFit] = None,
+    solve_backend: str = "auto",
+) -> tuple[dict, dict]:
+    """协同定位协同克里金（Markov Model 1 近似，Journel & Huijbregts 1978）。
+
+    近似核化（诚实披露，绝不冒充全模型）：
+
+    * **MM1 交叉结构** — 交叉协方差 C_sy(h) = ρ·C_pp(h)（主变量结构 ×
+      相关系数）；次变量自身变异函数不拟合，C_ss(0) 取主变量先验方差
+      （次变量标准化假设）。
+    * **协同定位近似** — 次变量只在目标格点以**单一数值**进入克里金系统
+      （collocated cokriging 近似）；目标处无次变量样本时取最近次变量值
+      （精确协同定位格数进 meta 披露）。
+    * **相关性闸门** — ``correlation_rho`` 缺省时按最近配对的 Pearson
+      估计；|ρ| < ``COKRIGING_MIN_ABS_RHO``（0.2）类型化拒绝——相关性过弱
+      时协同克里金不会优于普通克里金，不输出无意义的表面。
+
+    扩展系统（协方差形式，C(h) = (sill+nugget) − γ(h)，批量求解同 OK）：
+
+        [C_pp  c_sy 1][w]    [c_p0]
+        [c_syᵀ C_ss 1][w_s] = [c_s0]     c_sy = ρ·c_p0, C_s0 = ρ·(sill+nugget)
+        [1ᵀ    1    0][μ ]   [1 ]
+
+    预测 = wᵗz + w_s·y(目标)；方差 = C(0) − wᵗc_p0 − w_s·c_s0 − μ（钳 ≥0，
+    计数）。``variogram`` 传入预拟合变异函数可跳过重拟合（LOO 对比协议用
+    ——两种方法共用同一变异函数才公平）。
+
+    返回 ``({"predictions", "variances", "stddev"}, meta)``。
+    """
+    solve_backend = _validate_solve_backend(solve_backend)
+    ppts = np.asarray(xy_primary, dtype=float)
+    z = np.asarray(z_primary, dtype=float)
+    spts = np.asarray(xy_secondary, dtype=float)
+    y = np.asarray(y_secondary, dtype=float)
+    targets = np.atleast_2d(np.asarray(grid_xy, dtype=float))
+    n_p = len(z)
+    n_s = len(y)
+    if n_p < MIN_SAMPLES:
+        raise KrigingInputError(f"协同克里金至少需要 {MIN_SAMPLES} 个主变量样本，got {n_p}")
+    if correlation_rho is not None:
+        rho = float(correlation_rho)
+        if not math.isfinite(rho) or abs(rho) > 1.0:
+            raise KrigingInputError(
+                f"correlation_rho 必须在 [-1, 1] 内，got {correlation_rho!r}"
+            )
+        if n_s < 1:
+            raise KrigingInputError("次变量至少需要 1 个样本（目标协同定位）")
+        rho_estimated = False
+    else:
+        if n_s < 2:
+            raise KrigingInputError(
+                f"correlation_rho 未给定时至少需要 2 个次变量样本以估计 ρ，got {n_s}"
+            )
+        tree_ps = cKDTree(spts)
+        i_ps = tree_ps.query(ppts, k=1)[1]
+        y_at_p = y[i_ps]
+        if float(np.var(z)) <= 0.0 or float(np.var(y_at_p)) <= 0.0:
+            raise DegenerateData(
+                "主变量或配对次变量零方差——Pearson 相关系数 ρ 无法估计。",
+                correction_hint="检查字段是否为常量；或显式传入 correlation_rho。",
+            )
+        rho = float(np.corrcoef(z, y_at_p)[0, 1])
+        rho_estimated = True
+    if abs(rho) < COKRIGING_MIN_ABS_RHO:
+        raise ScientificPreconditionFailed(
+            f"主/次变量相关系数 |ρ|={abs(rho):.3f} < {COKRIGING_MIN_ABS_RHO}"
+            "——相关性过弱，协同克里金不会优于普通克里金（结构化拒绝，不输出）。",
+            correction_hint="改用 kriging_interpolation（单变量 OK/UK），或提供更强相关的协变量。",
+        )
+
+    g = variogram if variogram is not None else fit_variogram(
+        ppts, z, model=variogram_model, n_lags=n_lags
+    )
+    k = int(max(2, min(int(k_neighbors), MAX_NEIGHBORS, n_p)))
+    # 次变量重网格化到目标（协同定位假设；非精确协同定位取最近值——披露）
+    tree_s = cKDTree(spts)
+    d_t, i_t = tree_s.query(targets, k=1)
+    y_target = y[i_t]
+    n_exact_colocated = int((np.asarray(d_t) < 1e-9).sum())
+    tree_p = cKDTree(ppts)
+    dist_t, idx_t = tree_p.query(targets, k=k)
+    n_t = len(targets)
+    dist_t = np.asarray(dist_t).reshape(n_t, k)
+    idx_t = np.asarray(idx_t).reshape(n_t, k)
+
+    a_priori = float(abs(g.sill) + abs(g.nugget))
+    # 与 OK 相同的求解稳定化策略：对角 ridge（高斯族加强）+ 预测钳制 ±3√sill
+    ridge = 1e-6 * max(a_priori, 1e-12)
+    if g.model == "gaussian" or (g.model == "matern" and g.nu >= 2.0):
+        ridge = max(ridge, 0.01 * abs(g.sill))
+    clamp_lo = float(z.min() - 3.0 * math.sqrt(max(g.sill, 0.0)))
+    clamp_hi = float(z.max() + 3.0 * math.sqrt(max(g.sill, 0.0)))
+
+    preds = np.empty(n_t, dtype=float)
+    varis = np.empty(n_t, dtype=float)
+    degraded = 0
+    diag = np.arange(k)
+    for start in cancellable(range(0, n_t, _SOLVE_CHUNK), every=1):
+        end = min(start + _SOLVE_CHUNK, n_t)
+        nb_idx = idx_t[start:end]
+        nb_d = dist_t[start:end]
+        nb_xy = ppts[nb_idx]
+        nb_v = z[nb_idx]
+        c = end - start
+        # 样本-样本协方差 C(h) = a_priori − γ(h)，对角 C(0) = a_priori
+        diff = nb_xy[:, :, None, :] - nb_xy[:, None, :, :]
+        d_ss = np.sqrt((diff ** 2).sum(axis=-1))
+        C_ss = a_priori - _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget, nu=g.nu)
+        C_ss[:, diag, diag] = a_priori
+        # MM1 交叉结构：C_sy(h) = ρ·C_pp(h)
+        c_p0 = a_priori - _gamma(g.model, nb_d, g.sill, g.range_m, g.nugget, nu=g.nu)
+        c_sy = rho * c_p0
+        c_s0 = rho * a_priori  # 次变量(目标) ↔ 主变量(目标, 未观测) h=0 交叉
+
+        mat = np.zeros((c, k + 2, k + 2))
+        mat[:, :k, :k] = C_ss
+        C_view = mat[:, :k, :k]
+        C_view[:, diag, diag] += ridge
+        mat[:, :k, k] = c_sy
+        mat[:, k, :k] = c_sy
+        mat[:, k, k] = a_priori + ridge   # C_ss(0)：标准化假设下的次变量先验方差
+        mat[:, k + 1, :k + 1] = 1.0
+        mat[:, :k + 1, k + 1] = 1.0
+        rhs = np.ones((c, k + 2))
+        rhs[:, :k] = c_p0
+        rhs[:, k] = c_s0
+
+        sol, row_degraded = _solve_kriging_systems(mat, rhs, solve_backend)
+        failed = np.isnan(sol[:, 0])
+        degraded += row_degraded
+        w = sol[:, :k]
+        w_s = sol[:, k]
+        mu = sol[:, k + 1]
+        chunk_pred = (w * nb_v).sum(axis=1) + w_s * y_target[start:end]
+        chunk_var = a_priori - (w * c_p0).sum(axis=1) - w_s * c_s0 - mu
+        if failed.any():
+            chunk_pred[failed] = [float(np.mean(nb_v[r])) for r in np.nonzero(failed)[0]]
+            chunk_var[failed] = [
+                float(np.var(nb_v[r])) if k > 1 else float(g.sill)
+                for r in np.nonzero(failed)[0]
+            ]
+        neg_var = chunk_var < 0.0
+        if neg_var.any():
+            degraded += int(neg_var.sum())
+            np.clip(chunk_var, 0.0, None, out=chunk_var)
+        clamped = (chunk_pred < clamp_lo) | (chunk_pred > clamp_hi)
+        if clamped.any():
+            degraded += int(clamped.sum())
+            np.clip(chunk_pred, clamp_lo, clamp_hi, out=chunk_pred)
+        preds[start:end] = chunk_pred
+        varis[start:end] = chunk_var
+
+    result = {
+        "predictions": preds,
+        "variances": varis,
+        "stddev": np.sqrt(np.maximum(varis, 0.0)),
+    }
+    meta = {
+        "method": "collocated_cokriging_mm1",
+        "rho_used": float(rho),
+        "rho_estimated": bool(rho_estimated),
+        "n_primary": int(n_p),
+        "n_secondary": int(n_s),
+        "neighbors": int(k),
+        "variogram": g.params(),
+        "degraded_cells": int(degraded),
+        "n_exact_colocated": n_exact_colocated,
+        "solve_backend_used": (
+            "numpy_batched" if solve_backend == "auto" else solve_backend
+        ),
+        "disclosures": [
+            "Markov Model 1（Journel & Huijbregts 1978）近似核化：交叉协方差 "
+            "C_sy(h)=ρ·C_pp(h)；全交叉协方差矩阵未建模。",
+            "协同定位近似：次变量仅在目标格点以单一数值进入克里金系统。",
+            f"次变量到目标格点取最近邻值（协同定位假设）；精确协同定位 "
+            f"{n_exact_colocated}/{n_t} 格点。",
+            "C_ss(0) 取主变量先验方差（次变量标准化缩放假设）；次变量自身变异函数未拟合。",
+        ],
+    }
+    return result, meta
+
+
+def block_kriging(
+    xy: np.ndarray,
+    values: np.ndarray,
+    block_centers: np.ndarray,
+    block_size: float,
+    variogram_model: str = "auto",
+    n_lags: int = 12,
+    k_neighbors: int = 12,
+    variogram: Optional[VariogramFit] = None,
+    solve_backend: str = "auto",
+) -> tuple[dict, dict]:
+    """块克里金：点样本 → 矩形块支撑（Isaaks & Srivastava 1989 惯例）。
+
+    每个块用固定的 **2×2 子点网格**离散化（块均值协方差的离散化近似，
+    已披露）。克里金系统的 LHS 保持规范点支撑样本-样本 Γ（样本本身是点
+    支撑）；块支撑经由：
+
+    * **RHS** γ̄(x_i, B) —— 样本到块的平均半方差（子点平均），与
+    * **方差块内修正** −γ̄(B, B) —— 全部 16 个有序子点对（含 4 个自对
+      γ(0)=0）的平均半方差。
+
+    组成——正是块克里金方差平均意义上不大于点克里金方差的原因。预测 =
+    wᵗz；方差 = wᵗγ̄(x,B) + μ − γ̄(B,B)（钳 ≥0，负值计数）。批量求解与
+    ridge/钳制策略与 OK 相同。``variogram`` 可传预拟合变异函数（对比协议
+    共用）。
+
+    返回 ``({"predictions", "variances", "stddev"}, meta)``。
+    """
+    solve_backend = _validate_solve_backend(solve_backend)
+    pts = np.asarray(xy, dtype=float)
+    vals = np.asarray(values, dtype=float)
+    centers = np.atleast_2d(np.asarray(block_centers, dtype=float))
+    bs = float(block_size)
+    if not (math.isfinite(bs) and bs > 0.0):
+        raise KrigingInputError(
+            f"block_size 必须为正数（工作 CRS 单位），got {block_size!r}"
+        )
+    n = len(vals)
+    if n < MIN_SAMPLES:
+        raise KrigingInputError(f"块克里金至少需要 {MIN_SAMPLES} 个样本点，got {n}")
+    g = variogram if variogram is not None else fit_variogram(
+        pts, vals, model=variogram_model, n_lags=n_lags
+    )
+    k = int(max(2, min(int(k_neighbors), MAX_NEIGHBORS, n)))
+    q = bs / (2.0 * BLOCK_DISCRETIZATION)   # 2×2 子点 → ±bs/4
+    offs = np.array([[-q, -q], [q, -q], [-q, q], [q, q]], dtype=float)
+    subpoints = centers[:, None, :] + offs[None, :, :]   # (B, 4, 2)
+
+    tree = cKDTree(pts)
+    dist_c, idx_c = tree.query(centers, k=k)   # 邻域以块心为参考
+    n_b = len(centers)
+    dist_c = np.asarray(dist_c).reshape(n_b, k)
+    idx_c = np.asarray(idx_c).reshape(n_b, k)
+
+    ridge = 1e-6 * max(abs(g.sill), abs(g.nugget), 1e-12)
+    if g.model == "gaussian" or (g.model == "matern" and g.nu >= 2.0):
+        ridge = max(ridge, 0.01 * abs(g.sill))
+    clamp_lo = float(vals.min() - 3.0 * math.sqrt(max(g.sill, 0.0)))
+    clamp_hi = float(vals.max() + 3.0 * math.sqrt(max(g.sill, 0.0)))
+
+    preds = np.empty(n_b, dtype=float)
+    varis = np.empty(n_b, dtype=float)
+    degraded = 0
+    diag = np.arange(k)
+    for start in cancellable(range(0, n_b, _SOLVE_CHUNK), every=1):
+        end = min(start + _SOLVE_CHUNK, n_b)
+        nb_idx = idx_c[start:end]
+        nb_xy = pts[nb_idx]                       # (c, k, 2)
+        nb_v = vals[nb_idx]                       # (c, k)
+        sub = subpoints[start:end]                # (c, 4, 2)
+        c = end - start
+
+        # LHS：规范点支撑 Γ（nugget 进全部 h>0 项，对角 0）
+        diff = nb_xy[:, :, None, :] - nb_xy[:, None, :, :]
+        d_ss = np.sqrt((diff ** 2).sum(axis=-1))
+        gamma_ss = _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget, nu=g.nu)
+        gamma_ss[:, diag, diag] = 0.0
+        gamma_ss[:, diag, diag] = ridge
+
+        # RHS：γ̄(x_i, B) —— 样本到块 4 个子点距离的 γ 平均
+        diff_sb = nb_xy[:, :, None, :] - sub[:, None, :, :]     # (c, k, 4, 2)
+        d_sb = np.sqrt((diff_sb ** 2).sum(axis=-1))             # (c, k, 4)
+        g_sb = _gamma(g.model, d_sb, g.sill, g.range_m, g.nugget, nu=g.nu).mean(axis=2)
+
+        # 块内平均 γ̄(B,B)：16 个有序子点对（含 4 个自对 γ(0)=0）
+        diff_in = sub[:, :, None, :] - sub[:, None, :, :]       # (c, 4, 4, 2)
+        d_in = np.sqrt((diff_in ** 2).sum(axis=-1))
+        g_in = _gamma(g.model, d_in, g.sill, g.range_m, g.nugget, nu=g.nu).mean(axis=(1, 2))
+
+        mat = np.zeros((c, k + 1, k + 1))
+        mat[:, :k, :k] = gamma_ss
+        mat[:, k, :k] = 1.0
+        mat[:, :k, k] = 1.0
+        rhs = np.ones((c, k + 1))
+        rhs[:, :k] = g_sb
+
+        sol, row_degraded = _solve_kriging_systems(mat, rhs, solve_backend)
+        failed = np.isnan(sol[:, 0])
+        degraded += row_degraded
+        w = sol[:, :k]
+        mu = sol[:, k]
+        chunk_pred = (w * nb_v).sum(axis=1)
+        chunk_var = (w * g_sb).sum(axis=1) + mu - g_in
+        if failed.any():
+            chunk_pred[failed] = [float(np.mean(nb_v[r])) for r in np.nonzero(failed)[0]]
+            chunk_var[failed] = [
+                float(np.var(nb_v[r])) if k > 1 else float(g.sill)
+                for r in np.nonzero(failed)[0]
+            ]
+        neg_var = chunk_var < 0.0
+        if neg_var.any():
+            degraded += int(neg_var.sum())
+            np.clip(chunk_var, 0.0, None, out=chunk_var)
+        clamped = (chunk_pred < clamp_lo) | (chunk_pred > clamp_hi)
+        if clamped.any():
+            degraded += int(clamped.sum())
+            np.clip(chunk_pred, clamp_lo, clamp_hi, out=chunk_pred)
+        preds[start:end] = chunk_pred
+        varis[start:end] = chunk_var
+
+    result = {
+        "predictions": preds,
+        "variances": varis,
+        "stddev": np.sqrt(np.maximum(varis, 0.0)),
+    }
+    meta = {
+        "method": "block_kriging",
+        "block_size": float(bs),
+        "discretization": (
+            f"{BLOCK_DISCRETIZATION}×{BLOCK_DISCRETIZATION} 子点"
+            "（Isaaks & Srivastava 1989 块离散化惯例，近似已披露）"
+        ),
+        "n_samples": int(n),
+        "n_blocks": int(n_b),
+        "neighbors": int(k),
+        "variogram": g.params(),
+        "degraded_cells": int(degraded),
+        "solve_backend_used": (
+            "numpy_batched" if solve_backend == "auto" else solve_backend
+        ),
+        "disclosures": [
+            "2×2 子点离散化近似块均值协方差——块尺寸相对变程越大近似误差越大。",
+            "LHS 保持点支撑样本-样本 γ（样本为点支撑）；块支撑经 RHS 点-块平均 γ "
+            "与方差块内修正项 −γ̄(B,B) 进入。",
+        ],
+    }
+    return result, meta
+
+
 # ── CRS contract + H3 surface driver ────────────────────────────────────────
 
 #: Declared CRS vocabulary the kriging driver accepts. Degree CRS (4326,
@@ -1466,4 +2160,276 @@ def kriging_interpolation(
         }
     if result.disclosures:
         metadata["disclosures"] = list(result.disclosures)
+    return {"records": records, "metadata": metadata}
+
+
+# ── V3 H3 surface drivers（IDW driver parity；共享 preamble 见
+#    interpolation._metric_samples_and_target_grid）────────────────────────────
+
+def indicator_kriging_surface(
+    points_geojson: Any,
+    value_field: str,
+    thresholds: list,
+    resolution: int = 7,
+    variogram_model: str = "auto",
+    n_lags: int = 12,
+    k_neighbors: int = 16,
+    etype: bool = False,
+) -> dict:
+    """H3 指示克里金表面 driver。
+
+    records 主值 = E-type 估计（``etype=True``，类代表值取阈值本身——保守
+    近似，已披露）否则 = p50 阈值（无格点达 p≥0.5 时取最高阈值，计数披露）；
+    每条 record 另带 ``p50_threshold`` 与逐阈值概率 ``probabilities``。
+
+    ``{"records", "metadata"}``； Raises 与 :func:`indicator_kriging` 相同，
+    外加 InterpolationResourceExceededError（H3 单元上限，IDW 契约）。
+    """
+    from app.lib.geo_analysis.interpolation import _metric_samples_and_target_grid
+
+    (
+        lonlat, values, pts_metric, cell_metric, target_cells,
+        working_crs, bbox,
+    ) = _metric_samples_and_target_grid(
+        points_geojson, value_field, resolution,
+        purpose="指示克里金", label="指示克里金", log_prefix="indicator_kriging",
+    )
+    metadata: dict[str, Any] = {
+        "algorithm": "interpolation.indicator_kriging",
+        "value_field": value_field,
+        "resolution": int(resolution),
+        "working_crs": working_crs,
+        "n_samples": int(len(values)),
+        "bbox": [bbox[0], bbox[1], bbox[2], bbox[3]],
+    }
+    if not target_cells:
+        metadata["cell_count"] = 0
+        return {"records": [], "metadata": metadata}
+    etype_values = (
+        [float(t) for t in sorted({float(v) for v in thresholds})] if etype else None
+    )
+    result, ik_meta = indicator_kriging(
+        pts_metric, values, cell_metric, thresholds,
+        variogram_model=variogram_model, n_lags=n_lags,
+        k_neighbors=k_neighbors, etype_values=etype_values,
+    )
+    thr = result["thresholds"]
+    probabilities = result["probabilities"]
+    p50 = result["p50_threshold"]
+    etype_arr = result["etype"]
+    if etype_arr is not None:
+        main_value = etype_arr
+        metadata["value_semantics"] = "E-type 估计（类代表值=阈值本身，保守离散近似）"
+    else:
+        main_value = np.where(np.isfinite(p50), p50, thr[-1])
+        metadata["value_semantics"] = "p50 阈值（无格点达 p≥0.5 时取最高阈值）"
+    metadata.update({
+        "method": ik_meta["method"],
+        "thresholds": [float(t) for t in thr],
+        "models_fitted": ik_meta["models_fitted"],
+        "clamped_cells": ik_meta["clamped_cells"],
+        "p50_missing_cells": ik_meta["p50_missing_cells"],
+        "k_neighbors": ik_meta["k_neighbors"],
+        "disclosures": ik_meta["disclosures"],
+        "probability_summary": [
+            {
+                "threshold": float(thr[j]),
+                "p_mean": round(float(probabilities[j].mean()), 6),
+                "p_min": round(float(probabilities[j].min()), 6),
+                "p_max": round(float(probabilities[j].max()), 6),
+            }
+            for j in range(len(thr))
+        ],
+        "cell_count": int(len(target_cells)),
+    })
+    records = []
+    for ci, cell in enumerate(target_cells):
+        records.append({
+            "h3_index": cell,
+            "value": float(main_value[ci]),
+            "p50_threshold": (
+                float(p50[ci]) if np.isfinite(p50[ci]) else None
+            ),
+            "probabilities": {
+                str(j): round(float(probabilities[j, ci]), 6)
+                for j in range(len(thr))
+            },
+        })
+    return {"records": records, "metadata": metadata}
+
+
+def collocated_cokriging_surface(
+    points_geojson: Any,
+    value_field: str,
+    secondary_geojson: Any,
+    secondary_field: str,
+    resolution: int = 7,
+    correlation_rho: Optional[float] = None,
+    neighbors: int = 12,
+    variogram_model: str = "auto",
+) -> dict:
+    """H3 协同定位协同克里金表面 driver（主/次两个点要素集）。
+
+    次变量与主变量共用同一工作 CRS（按主变量范围选取）；次变量到目标格点
+    由 :func:`collocated_cokriging` 最近邻补格（协同定位假设，披露）。
+    records 带 ``ck_variance``/``ck_stddev``——不确定面由工具层作为第二
+    产物输出。 Raises：弱相关 → ScientificPreconditionFailed；其余同 OK。
+    """
+    import geopandas as gpd
+
+    from app.lib.geo_analysis.interpolation import (
+        _metric_samples_and_target_grid,
+        _parse_point_values,
+    )
+
+    (
+        lonlat, values, pts_metric, cell_metric, target_cells,
+        working_crs, bbox,
+    ) = _metric_samples_and_target_grid(
+        points_geojson, value_field, resolution,
+        purpose="协同克里金", label="协同克里金", log_prefix="cokriging",
+    )
+    metadata: dict[str, Any] = {
+        "algorithm": "interpolation.cokriging",
+        "value_field": value_field,
+        "secondary_field": secondary_field,
+        "resolution": int(resolution),
+        "working_crs": working_crs,
+        "n_samples": int(len(values)),
+        "bbox": [bbox[0], bbox[1], bbox[2], bbox[3]],
+    }
+    if not target_cells:
+        metadata["cell_count"] = 0
+        return {"records": [], "metadata": metadata}
+    # 次变量：同一份解析契约；投影到主变量的工作 CRS（共享空间才谈相关）
+    lonlat_sec, values_sec = _parse_point_values(
+        secondary_geojson, secondary_field,
+        purpose="协同克里金次变量", log_prefix="cokriging_secondary",
+    )
+    sec_gdf = gpd.GeoDataFrame(
+        {"v": values_sec},
+        geometry=gpd.points_from_xy(lonlat_sec[:, 0], lonlat_sec[:, 1]),
+        crs="EPSG:4326",
+    ).to_crs(working_crs)
+    sec_metric = np.column_stack(
+        (sec_gdf.geometry.x.values, sec_gdf.geometry.y.values)
+    )
+    metadata["n_secondary"] = int(len(values_sec))
+    result, ck_meta = collocated_cokriging(
+        pts_metric, values, sec_metric, values_sec, cell_metric,
+        correlation_rho=correlation_rho, variogram_model=variogram_model,
+        n_lags=DEFAULT_N_LAGS, k_neighbors=neighbors,
+    )
+    metadata.update({
+        "method": ck_meta["method"],
+        "rho_used": ck_meta["rho_used"],
+        "rho_estimated": ck_meta["rho_estimated"],
+        "neighbors": ck_meta["neighbors"],
+        "variogram": ck_meta["variogram"],
+        "degraded_cells": ck_meta["degraded_cells"],
+        "n_exact_colocated": ck_meta["n_exact_colocated"],
+        "disclosures": ck_meta["disclosures"],
+        "value_range": [
+            round(float(result["predictions"].min()), 4),
+            round(float(result["predictions"].max()), 4),
+        ],
+        "variance_range": [
+            round(float(result["variances"].min()), 6),
+            round(float(result["variances"].max()), 6),
+        ],
+        "cell_count": int(len(target_cells)),
+    })
+    records = [
+        {
+            "h3_index": cell,
+            "value": float(pred),
+            "ck_variance": float(var),
+            "ck_stddev": float(sd),
+        }
+        for cell, pred, var, sd in zip(
+            target_cells, result["predictions"], result["variances"],
+            result["stddev"],
+        )
+    ]
+    return {"records": records, "metadata": metadata}
+
+
+def block_kriging_surface(
+    points_geojson: Any,
+    value_field: str,
+    resolution: int = 7,
+    block_size: float = 0.0,
+    neighbors: int = 12,
+    variogram_model: str = "auto",
+) -> dict:
+    """H3 块克里金表面 driver。
+
+    ``block_size``（米，工作 CRS 单位）为 0 时按 H3 分辨率平均六边形边长
+    自动取值（h3.average_hexagon_edge_length，全局平均近似——已披露）。
+    records 带 ``block_variance``/``block_stddev``；块支撑经 2×2 离散化
+    进入 RHS 与方差修正（Isaaks & Srivastava 1989，披露）。
+    """
+    import h3 as _h3
+
+    from app.lib.geo_analysis.interpolation import _metric_samples_and_target_grid
+
+    (
+        lonlat, values, pts_metric, cell_metric, target_cells,
+        working_crs, bbox,
+    ) = _metric_samples_and_target_grid(
+        points_geojson, value_field, resolution,
+        purpose="块克里金", label="块克里金", log_prefix="block_kriging",
+    )
+    metadata: dict[str, Any] = {
+        "algorithm": "interpolation.block_kriging",
+        "value_field": value_field,
+        "resolution": int(resolution),
+        "working_crs": working_crs,
+        "n_samples": int(len(values)),
+        "bbox": [bbox[0], bbox[1], bbox[2], bbox[3]],
+    }
+    bs = float(block_size)
+    if bs == 0.0:
+        try:
+            bs = float(_h3.average_hexagon_edge_length(int(resolution), unit="m"))
+            metadata["block_size_auto"] = True
+        except (AttributeError, TypeError, ValueError):
+            bs = 1000.0
+            metadata["block_size_auto"] = True
+    if bs <= 0.0:
+        raise KrigingInputError(f"block_size 必须为正数（米），got {block_size!r}")
+    metadata["block_size"] = float(bs)
+    if not target_cells:
+        metadata["cell_count"] = 0
+        return {"records": [], "metadata": metadata}
+    result, bk_meta = block_kriging(
+        pts_metric, values, cell_metric, bs,
+        variogram_model=variogram_model, n_lags=DEFAULT_N_LAGS,
+        k_neighbors=neighbors,
+    )
+    metadata.update({
+        "method": bk_meta["method"],
+        "discretization": bk_meta["discretization"],
+        "neighbors": bk_meta["neighbors"],
+        "variogram": bk_meta["variogram"],
+        "degraded_cells": bk_meta["degraded_cells"],
+        "disclosures": bk_meta["disclosures"],
+        "variance_range": [
+            round(float(result["variances"].min()), 6),
+            round(float(result["variances"].max()), 6),
+        ],
+        "cell_count": int(len(target_cells)),
+    })
+    records = [
+        {
+            "h3_index": cell,
+            "value": float(pred),
+            "block_variance": float(var),
+            "block_stddev": float(sd),
+        }
+        for cell, pred, var, sd in zip(
+            target_cells, result["predictions"], result["variances"],
+            result["stddev"],
+        )
+    ]
     return {"records": records, "metadata": metadata}

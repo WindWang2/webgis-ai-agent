@@ -25,6 +25,7 @@ from app.lib.gis.scientific_errors import (
     InsufficientSamples,
     MissingRequiredField,
     NoValidObservations,
+    ResourceScaleMismatch,
     UnsupportedMethod,
 )
 from app.lib.gis.uncertainty import (
@@ -776,9 +777,26 @@ def general_g_narrated(
 
     return GeoAnalysisResult(True, data_out, narrative)
 
-def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) -> GeoAnalysisResult:
+#: Gi* 置换显著性路径的规模上限（999 次 × O(nnz) 条件随机化的内存/耗时
+#: 防线；超限先抛 ResourceScaleMismatch，不做赌博）。
+HOTSPOT_PERMUTATION_MAX_N = 5000
+
+
+def hotspot_narrated(
+    geojson: dict,
+    value_field: str,
+    distance_band: float = 0,
+    significance_method: str = "normal",
+    permutations: int = 999,
+) -> GeoAnalysisResult:
     """
     Getis-Ord Gi* local spatial autocorrelation (hotspot analysis) with narrative summary.
+
+    ``significance_method``（Foundation V3，additive；默认 "normal" 与既有
+    行为逐位一致）：normal=解析正态 p（既有路径，输出键不变）；
+    permutation=条件随机化置换 p（固定种子 42，(count+1)/(perms+1)，n≤5000
+    守卫）—— 输出在既有键之上附加 p_value_permutation /
+    p_value_normal / significance_method / permutations。
     """
     res = to_utm_gdf(geojson)
     if res is None or res[0] is None:
@@ -797,7 +815,14 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     n = len(values)
     if n < 3:
         return GeoAnalysisResult(False, None, "At least 3 features required for hotspot analysis")
-    
+
+    # Foundation V3：显著性方法（normal=既有解析路径，行为逐位不变）
+    sig_method = str(significance_method or "normal").lower()
+    if sig_method not in ("normal", "permutation"):
+        raise ValueError(
+            "significance_method must be 'normal' or 'permutation' "
+            f"(got {significance_method!r})")
+
     coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
     
     if distance_band <= 0:
@@ -851,7 +876,40 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     # MINOR-4（科学评审）：解析 p 在 |Gi*| 极大时下溢为精确 0 ——
     # 分支的 E-8「永不精确零」哲学同样适用于解析路径。
     _TINY_P = 1e-16
-    p_vals = np.maximum(2 * (1 - norm.cdf(np.abs(gi_stars))), _TINY_P)
+    p_normal = np.maximum(2 * (1 - norm.cdf(np.abs(gi_stars))), _TINY_P)
+    p_vals = p_normal
+    p_value_permutation: Optional[np.ndarray] = None
+    perms_used = 0
+    if sig_method == "permutation":
+        # Foundation V3：条件随机化显著性（固定种子 42，双侧 (count+1)/
+        # (perms+1)）。与 esda crand 同一条件化哲学：全局矩（x̄、s）取观测值
+        # 固定不动，只随机化邻域取值 —— 置换向量的自身贡献被还原为 y_i
+        # （Gi* 的核心条件），邻居样本是无放回抽取（多重集组成与严格的
+        # y_{−i} 抽样差一项，Monte-Carlo 近似，披露于叙事）。二值权重
+        # w_ii=1 ⇒ (W·pv)_i − pv_i + y_i 即条件化邻域和。规模守卫先行。
+        if n > HOTSPOT_PERMUTATION_MAX_N:
+            raise ResourceScaleMismatch(
+                f"Gi* permutation significance needs {permutations} "
+                f"conditional randomizations at n={n}",
+                estimated=f"{permutations} × O(nnz) sparse matvecs at n={n}",
+                limit=f"n ≤ {HOTSPOT_PERMUTATION_MAX_N}",
+                correction_hint="use significance_method='normal' (analytic "
+                                "normal approximation), or aggregate the data",
+            )
+        perms_used = _validate_permutations(permutations)
+        rng = np.random.default_rng(_PERMUTATION_SEED)
+        extreme = np.zeros(n, dtype=np.int64)
+        obs_abs = np.abs(gi_stars)
+        for _ in cancellable(range(perms_used)):
+            pv = rng.permutation(values)
+            wpv = np.asarray(w @ pv).ravel()
+            numerators_p = wpv - pv + values - x_bar * sum_wi
+            gz = np.where(denominators != 0,
+                          numerators_p / np.where(denominators != 0,
+                                                  denominators, 1.0), 0)
+            extreme += np.abs(gz) >= obs_abs
+        p_value_permutation = (extreme + 1) / (perms_used + 1)
+        p_vals = p_value_permutation
 
     # G-6（#870）：BH-FDR 校正 —— n 个单元各按 α=0.05 独立检验时，完全
     # 随机数据也期望产出 0.05×n 个"显著"热点并直接上图。q 值随要素输出，
@@ -884,16 +942,20 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
         default="Not Significant",
     ).tolist()
 
-    features = _assemble_features(
-        gdf_wgs84,
-        {
-            "gi_star": [round(float(v), 4) for v in gi_stars],
-            "p_value": [round(float(v), 6) for v in p_vals],
-            "q_value_fdr": [round(float(v), 6) for v in q_vals],
-            "hotspot_type": hotspot_types,
-            "confidence": confidences,
-        },
-    )
+    extra_props = {
+        "gi_star": [round(float(v), 4) for v in gi_stars],
+        "p_value": [round(float(v), 6) for v in p_vals],
+        "q_value_fdr": [round(float(v), 6) for v in q_vals],
+        "hotspot_type": hotspot_types,
+        "confidence": confidences,
+    }
+    if p_value_permutation is not None:
+        # additive：置换路径附加解析对照 p 与方法标记（normal 路径不带）
+        extra_props["p_value_permutation"] = [
+            round(float(v), 6) for v in p_value_permutation]
+        extra_props["p_value_normal"] = [
+            round(float(v), 6) for v in p_normal]
+    features = _assemble_features(gdf_wgs84, extra_props)
         
     summary = f"Hotspot analysis identified {hot_count} statistically significant hot spots and {cold_count} cold spots."
     if hot_count > 0 or cold_count > 0:
@@ -917,7 +979,28 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
         "fdr_hot_spots_count": fdr_hot_count,
         "expected_false_positives": expected_false_pos,
     }
-    
+    if p_value_permutation is not None:
+        # additive（仅置换路径）：方法与置换元数据进载荷
+        data_out["significance_method"] = "permutation"
+        data_out["permutations"] = perms_used
+
+    summary = f"Hotspot analysis identified {hot_count} statistically significant hot spots and {cold_count} cold spots."
+    if hot_count > 0 or cold_count > 0:
+        summary += f" Significant clusters of high/low values were detected using a distance band of {bw:.1f} meters."
+    else:
+        summary += " No significant hotspots were detected at the 90% confidence level."
+    # G-6（#870）：多重比较披露 —— 未校正显著数接近随机期望时降级叙述。
+    summary += (
+        f"（BH-FDR 校正后 {fdr_hot_count} 个热点 q<0.05；"
+        f"未校正 α=0.05 下 {len(p_vals)} 个单元的随机期望假阳性 ≈{expected_false_pos} 个）"
+    )
+    if sig_method == "permutation":
+        summary += (
+            f" 显著性用条件随机化置换 p（{perms_used} 次、固定种子 42，"
+            "解析正态 p 一并给出对照）。")
+    if hot_count > 0 and hot_count <= expected_false_pos:
+        summary += " 显著数不高于随机期望，热点结论不可靠，请谨慎叙述。"
+
     return GeoAnalysisResult(True, data_out, summary)
 
 def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
@@ -1763,10 +1846,11 @@ def join_count_narrated(
     distance_band: float = 0,
     permutations: int = 0,
 ) -> GeoAnalysisResult:
-    """二元 Join Count（Cliff & Ord 1973；free-sampling 解析推断）。
+    """二元 Join Count（Cliff & Ord 1973；non-free sampling 解析推断）。
 
     二值场（值 ⊆ {0,1}，否则 UnsupportedMethod）在二值对称权重上统计
-    n_BB / n_BW / n_WW；期望与方差按 free sampling（Cliff-Ord）解析公式，
+    n_BB / n_BW / n_WW；期望与方差按 non-free sampling（不放回、条件于
+    类别边际的 Cliff-Ord 矩：p=B(B−1)/(n(n−1)) 等）解析公式，
     z + 双侧正态 p；``permutations > 0`` 时附加固定种子 42 的置换复核。
     n_BB 显著偏低（n_BW 显著偏高）= 同类不相邻（空间负关联）；反之
     n_BB / n_WW 偏高 = 同类聚集（正关联）。
@@ -1841,16 +1925,19 @@ def join_count_narrated(
     n_bw = joins - n_bb - n_ww
 
     def _free_sampling(observed: float, num2: float, num4: float) -> dict:
-        """free-sampling 期望/方差（Cliff-Ord 1973）。
+        """non-free sampling 期望/方差（Cliff-Ord 1973 条件于边际）。
 
-        p = num2/(n(n−1))，q = num4/((n(n−1))(n−2)(n−3))；
-        Var = J·p(1−p) + 2J(J−1)(q − p²)。
+        p = num2/(n(n−1))（不放回：两次抽中同类的一阶矩），
+        q = num4/((n(n−1))(n−2)(n−3))（四次不放回）；
+        Var = J·p(1−p) + 2J(J−1)(q − p²)。（V3 review M1：此前误标为
+        free sampling——free 形式应为 p=(B/n)²、q=(B/n)⁴；实现的矩是
+        non-free/条件形式，属有效且更常用的检验，仅更正披露措辞。）
         """
         den2 = n * (n - 1.0)
         den4 = den2 * (n - 2.0) * (n - 3.0)
         p = num2 / den2
         expected = joins * p
-        # 经典 free-sampling 二阶矩在稀少类别（m<4 → num4=0）或高聚集
+        # 经典 non-free 二阶矩在稀少类别（m<4 → num4=0）或高聚集
         # 下可能为负 —— 经典式把所有 join 对当端点不相交，漏掉共享顶点
         # 的交叉矩。负方差钳零并报 p=1 是**伪造的「无证据」答案**
         # （评审 R2 MAJOR-2）：这里改为类型化拒绝解析推断，要求置换。
@@ -1865,7 +1952,7 @@ def join_count_narrated(
                 "observed": float(observed), "expected": float(expected),
                 "variance": None, "z": None, "p_value": None,
                 "analytic_note": (
-                    "free-sampling 方差非正（类别过稀 m<4 或分布极端）——"
+                    "non-free sampling 方差非正（类别过稀 m<4 或分布极端）——"
                     "解析 z/p 不可用，请用 permutations 置换推断"),
             }
         z_stat = (observed - expected) / np.sqrt(var)
@@ -1917,7 +2004,7 @@ def join_count_narrated(
         elif max(stats_bb["p_value"], stats_ww["p_value"]) < 0.05:
             pattern = "positive_spatial_autocorrelation"
     elif perm_p is not None:
-        # 解析方差简并（free-sampling 二阶矩的已知局限）→ 用置换 p 分类：
+        # 解析方差简并（non-free 二阶矩的已知局限）→ 用置换 p 分类：
         # 置换本是零假设分布的金标准（评审 R2 MAJOR-2 修复路径）。
         if (perm_p["n_bw"] < 0.05
                 and n_bw > stats_bw["expected"]):
@@ -1948,7 +2035,7 @@ def join_count_narrated(
         "uncertainty": [
             StatisticalSignificance(
                 target="join_count_bw",
-                statistic_name="n_BW join count (free sampling z-test)",
+                statistic_name="n_BW join count (non-free sampling z-test)",
                 statistic_value=n_bw,
                 p_value=stats_bw["p_value"],
                 method="analytic_normal",
@@ -1989,6 +2076,475 @@ def join_count_narrated(
         summary += "（解析方差简并，判别基于置换检验）"
     elif pattern == "random":
         summary += " 与 free-sampling 零假设无显著差异。"
+    return GeoAnalysisResult(True, data_out, summary)
+
+
+def bivariate_join_count_narrated(
+    geojson: dict,
+    binary_field: str,
+    weights_scheme: str = "knn",
+    k: int = 8,
+    distance_band: float = 0,
+    permutations: int = 0,
+) -> GeoAnalysisResult:
+    """双变量/双色 Join Count（two-color join count；Cliff & Ord 1973）。
+
+    与 :func:`join_count_narrated` 的 0/1 严格二值不同，本方法接受**任意
+    恰好取两个值的类别字段**（如 {urban, rural}、{3, 7}）：值按排序映射为
+    B（黑，较小值）/ W（白，较大值），在二值对称权重上统计
+    n_BB（同类连接）/ n_BW（异类连接）/ n_WW；期望/方差按 free sampling
+    （Cliff-Ord 1973）解析式，z + 双侧正态 p；``permutations > 0`` 时附加
+    固定种子 42 的置换复核。free-sampling 假设（连接两端点从两类别总体
+    有放回独立抽取，忽略权重结构细节）在 meta 中显式披露。
+    """
+    res = to_utm_gdf(geojson)
+    if res is None or res[0] is None:
+        raise NoValidObservations(
+            "invalid GeoJSON or no features found",
+            correction_hint="pass a FeatureCollection whose features carry a "
+                            "two-category numeric field",
+        )
+    gdf, _ = res
+    aligned = _filter_numeric_gdf(gdf, binary_field)
+    if aligned is None or len(aligned[1]) == 0:
+        raise MissingRequiredField(
+            f"field '{binary_field}' is missing or non-numeric",
+            correction_hint=f"provide a two-category numeric property "
+                            f"'{binary_field}' on every feature",
+        )
+    gdf, values = aligned
+    n = len(values)
+    if n < 4:
+        raise InsufficientSamples(
+            f"bivariate join count free-sampling variance needs n ≥ 4 (got {n})",
+            correction_hint="add observations",
+        )
+    uniq = np.unique(values)
+    if len(uniq) > 2:
+        raise UnsupportedMethod(
+            f"field '{binary_field}' has {len(uniq)} distinct values "
+            f"{uniq[:8].tolist()}; two-color join count needs exactly 2",
+            correction_hint="collapse the categories to two classes first, or "
+                            "use moran_i / local_geary for continuous values",
+        )
+    if len(uniq) < 2:
+        raise DegenerateData(
+            f"all '{binary_field}' values are identical ({uniq[0]:.4g}); "
+            "two-color join count is undefined",
+            correction_hint="the field must contain exactly two categories",
+        )
+
+    # 确定性颜色映射：排序后较小值 = B（黑），较大值 = W（白）。
+    cat_b, cat_w = float(uniq[0]), float(uniq[1])
+    coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
+    scheme = str(weights_scheme or "knn").lower()
+    if scheme == "knn":
+        wm = build_knn_weights(coords, k=min(int(k), n - 1),
+                               row_standardized=False)
+    elif scheme in ("queen", "rook"):
+        wm = build_contiguity_weights(gdf, scheme=scheme, row_standardized=False)
+    elif scheme == "distance_band":
+        threshold = float(distance_band) if distance_band and float(distance_band) > 0 \
+            else auto_band_8nn(coords)
+        wm = build_distance_band_weights(
+            coords, threshold=threshold, include_self=False,
+            row_standardized=False)
+    else:
+        raise ValueError(
+            f"unknown weights_scheme {weights_scheme!r}; "
+            f"expected one of {WEIGHT_SCHEMES}")
+
+    w = wm.matrix.tocoo()
+    upper = w.row < w.col  # 对称二值权重 → i<j 恰好枚举无序对
+    wu_i, wu_j, wu_v = w.row[upper], w.col[upper], w.data[upper]
+    joins = float(np.sum(wu_v))
+    if joins == 0:
+        raise DegenerateData(
+            "no neighbour joins under this weights scheme",
+            correction_hint="increase k / distance band, or check geometry connectivity",
+        )
+    b = (values == cat_b).astype(float)  # B=1 / W=0
+    black = float(np.sum(b))
+    white = n - black
+    n_bb = float(np.sum(wu_v * b[wu_i] * b[wu_j]))
+    n_ww = float(np.sum(wu_v * (1.0 - b[wu_i]) * (1.0 - b[wu_j])))
+    n_bw = joins - n_bb - n_ww
+
+    def _free_sampling(observed: float, num2: float, num4: float) -> dict:
+        """free-sampling 期望/方差（Cliff-Ord 1973；与 join_count 同式）。
+
+        p = num2/(n(n−1))，Var = J·p(1−p) + 2J(J−1)(q − p²)；二阶矩为负时
+        解析推断不可用（诚实降级，与 join_count 的 R2 MAJOR-2 语义一致）。
+        """
+        den2 = n * (n - 1.0)
+        den4 = den2 * (n - 2.0) * (n - 3.0)
+        p = num2 / den2
+        expected = joins * p
+        var = joins * p * (1.0 - p) + 2.0 * joins * (joins - 1.0) * (
+            num4 / den4 - p * p)
+        if var <= 0.0:
+            return {
+                "observed": float(observed), "expected": float(expected),
+                "variance": None, "z": None, "p_value": None,
+                "analytic_note": (
+                    "non-free sampling 方差非正（类别过稀 m<4 或分布极端）——"
+                    "解析 z/p 不可用，请用 permutations 置换推断"),
+            }
+        z_stat = (observed - expected) / np.sqrt(var)
+        return {
+            "observed": float(observed), "expected": float(expected),
+            "variance": float(var), "z": float(z_stat),
+            "p_value": float(2.0 * norm.sf(abs(z_stat))),
+        }
+
+    stats_bb = _free_sampling(n_bb, black * (black - 1.0),
+                              black * (black - 1.0) * (black - 2.0) * (black - 3.0))
+    stats_ww = _free_sampling(n_ww, white * (white - 1.0),
+                              white * (white - 1.0) * (white - 2.0) * (white - 3.0))
+    stats_bw = _free_sampling(n_bw, 2.0 * black * white,
+                              4.0 * black * (black - 1.0) * white * (white - 1.0))
+
+    perm_p = None
+    perms = int(permutations or 0)
+    if perms > 0:
+        perms = _validate_permutations(perms)
+        rng = np.random.default_rng(_PERMUTATION_SEED)
+        obs_dev = (abs(n_bb - stats_bb["expected"]),
+                   abs(n_bw - stats_bw["expected"]),
+                   abs(n_ww - stats_ww["expected"]))
+        extreme = np.zeros(3, dtype=np.int64)
+        for _ in cancellable(range(perms)):
+            bp = rng.permutation(b)
+            bb_t = float(np.sum(wu_v * bp[wu_i] * bp[wu_j]))
+            ww_t = float(np.sum(wu_v * (1.0 - bp[wu_i]) * (1.0 - bp[wu_j])))
+            bw_t = joins - bb_t - ww_t
+            devs = (abs(bb_t - stats_bb["expected"]),
+                    abs(bw_t - stats_bw["expected"]),
+                    abs(ww_t - stats_ww["expected"]))
+            extreme += np.asarray(devs) >= np.asarray(obs_dev)
+        perm_p = {
+            "n_bb": float((int(extreme[0]) + 1) / (perms + 1)),
+            "n_bw": float((int(extreme[1]) + 1) / (perms + 1)),
+            "n_ww": float((int(extreme[2]) + 1) / (perms + 1)),
+            "permutations": perms,
+        }
+
+    _analytic_ok = all(s["p_value"] is not None
+                       for s in (stats_bb, stats_bw, stats_ww))
+    pattern = "random"
+    if _analytic_ok:
+        if max(stats_bw["p_value"], 0.0) < 0.05 and stats_bw["z"] > 0:
+            pattern = "negative_spatial_autocorrelation"
+        elif max(stats_bb["p_value"], stats_ww["p_value"]) < 0.05:
+            pattern = "positive_spatial_autocorrelation"
+    elif perm_p is not None:
+        if perm_p["n_bw"] < 0.05 and n_bw > stats_bw["expected"]:
+            pattern = "negative_spatial_autocorrelation"
+        elif max(perm_p["n_bb"], perm_p["n_ww"]) < 0.05:
+            pattern = "positive_spatial_autocorrelation"
+        else:
+            pattern = "random"
+    else:
+        pattern = "analytic_inference_unavailable"
+
+    data_out = {
+        "n_features": n,
+        "n_black": black,
+        "n_white": white,
+        "category_black": cat_b,
+        "category_white": cat_w,
+        "joins": joins,
+        "weights_scheme": wm.scheme,
+        "join_counts": {"n_bb": n_bb, "n_bw": n_bw, "n_ww": n_ww},
+        "expected": {"n_bb": stats_bb["expected"],
+                     "n_bw": stats_bw["expected"],
+                     "n_ww": stats_ww["expected"]},
+        "z": {"n_bb": stats_bb["z"], "n_bw": stats_bw["z"], "n_ww": stats_ww["z"]},
+        "p_value_analytic": {"n_bb": stats_bb["p_value"],
+                             "n_bw": stats_bw["p_value"],
+                             "n_ww": stats_ww["p_value"]},
+        "assumptions_disclosed": [
+            "free sampling：连接端点从两类别总体独立抽取（有放回），"
+            "忽略权重结构细节（Cliff-Ord 1973 近似）",
+        ],
+        "pattern": pattern,
+        "weights": wm.metadata(),
+        "uncertainty": [
+            StatisticalSignificance(
+                target="bivariate_join_count_bw",
+                statistic_name="n_BW join count (two-color free-sampling z-test)",
+                statistic_value=n_bw,
+                p_value=stats_bw["p_value"],
+                method="analytic_normal",
+                alternative="two-sided",
+            ).to_evidence(),
+            StatisticalSignificance(
+                target="bivariate_join_count_bb",
+                statistic_name="n_BB join count (two-color free-sampling z-test)",
+                statistic_value=n_bb,
+                p_value=stats_bb["p_value"],
+                method="analytic_normal",
+                alternative="two-sided",
+            ).to_evidence(),
+        ],
+    }
+    if stats_bw.get("analytic_note") or stats_bb.get("analytic_note"):
+        data_out["analytic_notes"] = [
+            s["analytic_note"] for s in (stats_bb, stats_bw, stats_ww)
+            if s.get("analytic_note")]
+    if perm_p is not None:
+        data_out["p_value_permutation"] = perm_p
+
+    def _fmt_p(s: dict) -> str:
+        return f"p={s['p_value']:.4f}" if s["p_value"] is not None else "p=不可用"
+
+    summary = (
+        f"双色 Join Count（{wm.scheme}，{joins:.0f} 个无序连接，"
+        f"B={black:.0f}/W={white:.0f}）："
+        f"n_BB={n_bb:.0f}（期望 {stats_bb['expected']:.1f}，{_fmt_p(stats_bb)}）、"
+        f"n_BW={n_bw:.0f}（期望 {stats_bw['expected']:.1f}，{_fmt_p(stats_bw)}）、"
+        f"n_WW={n_ww:.0f}（期望 {stats_ww['expected']:.1f}，{_fmt_p(stats_ww)}）。")
+    if pattern == "negative_spatial_autocorrelation":
+        summary += " 异类连接显著偏高 —— 两类别空间互斥（棋盘式负关联）。"
+    elif pattern == "positive_spatial_autocorrelation":
+        summary += " 同类连接显著偏高 —— 两类别各自聚集（正关联）。"
+    elif pattern == "analytic_inference_unavailable":
+        summary += " 解析推断不可用（free-sampling 方差非正）—— 用 permutations 置换推断。"
+    if not _analytic_ok and perm_p is not None:
+        summary += "（解析方差简并，判别基于置换检验）"
+    elif pattern == "random":
+        summary += " 与 free-sampling 零假设无显著差异。"
+    summary += "（free-sampling 假设：端点独立抽取，忽略权重结构细节）"
+    return GeoAnalysisResult(True, data_out, summary)
+
+
+def empirical_bayes_rate_smooth(
+    geojson: dict,
+    count_field: str,
+    population_field: str,
+    weights_scheme: str = "",
+    k: int = 8,
+    distance_band: float = 0,
+) -> GeoAnalysisResult:
+    """经验贝叶斯率平滑（Empirical Bayes rate smoothing；Marshall 1991 MOM）。
+
+    分子为观测计数（count_field）、分母为风险人口（population_field）。
+    先验均值/方差用**矩估计（method of moments，Marshall 1991）**：
+
+    - 全局 EB（``weights_scheme`` 为空/none）：μ = ΣC/ΣP；
+      σ² = Σ P_i(r_i−μ)²/ΣP_i − nμ/ΣP_i（扣除 Poisson 抽样噪声的均摊）；
+    - 局部 EB（给定权重方案）：先验来自邻居（不含自身）的
+      人口加权均值/方差，逐区 σ²_i = v_i − m_i μ_i/ΣP_j（Marshall 1991）。
+
+    平滑率 = w·r_i + (1−w)·先验均值，收缩权重 w = σ²/(σ² + μ/P_i)。
+    σ²≤0（零方差先验）时 w=0（收缩到先验均值）并披露计数。
+    MOM 先验假设计数为 Poisson——披露于 meta/叙事。
+
+    零人口区（population ≤ 0/非有限）类型化排除：不产率值，计数披露；
+    全部为零人口时抛 DegenerateData。
+    """
+    res = to_utm_gdf(geojson)
+    if res is None or res[0] is None:
+        raise NoValidObservations(
+            "invalid GeoJSON or no features found",
+            correction_hint="pass a polygon FeatureCollection with count and "
+                            "population numeric fields",
+        )
+    gdf, _ = res
+    for f in (count_field, population_field):
+        if f not in gdf.columns:
+            raise MissingRequiredField(
+                f"field '{f}' is missing",
+                correction_hint=f"provide numeric fields '{count_field}' "
+                                f"(events) and '{population_field}' (population at risk)",
+            )
+    counts_raw = pd.to_numeric(gdf[count_field], errors="coerce").to_numpy(dtype=float)
+    pop_raw = pd.to_numeric(gdf[population_field], errors="coerce").to_numpy(dtype=float)
+    finite = np.isfinite(counts_raw) & np.isfinite(pop_raw)
+    n_dropped_nonfinite = int((~finite).sum())
+    gdf = gdf[finite].reset_index(drop=True)
+    counts = counts_raw[finite]
+    pops = pop_raw[finite]
+    n = int(len(counts))
+    if n == 0:
+        raise NoValidObservations(
+            "no features with finite count/population values",
+            correction_hint="check the count/population fields for all-NaN columns",
+        )
+
+    # 负计数 → 类型化拒绝（V3 review MINOR-2）：Marshall MOM 的先验均值
+    # μ=ΣC/ΣP 在负计数下可为负，收缩因子 σ²/(σ²+μ/P) 会落到 [0,1] 之外
+    # （率支撑之外），静默外推是伪造——计数语义上非负是方法前提。
+    if bool(np.any(counts_raw[finite] < 0)):
+        raise UnsupportedMethod(
+            "empirical Bayes rate smoothing requires non-negative counts "
+            "(negative values found)",
+            correction_hint="counts are Poisson semantics; fix the field or use a "
+                            "continuous-value method",
+        )
+    valid = pops > 0
+    zero_pop_idx = np.flatnonzero(~valid).tolist()
+    if not bool(valid.any()):
+        raise DegenerateData(
+            "every feature has zero/non-positive population at risk; "
+            "no rate can be defined",
+            correction_hint="provide the population denominator field, or use "
+                            "count aggregation instead of rates",
+        )
+    idx_v = np.flatnonzero(valid)
+    r = counts[idx_v] / pops[idx_v]
+    p_v = pops[idx_v]
+    c_v = counts[idx_v]
+    nv = len(idx_v)
+    if nv < 3:
+        raise InsufficientSamples(
+            f"EB rate smoothing needs at least 3 valid-rate features (got {nv})",
+            correction_hint="add areas with positive population",
+        )
+
+    scheme = str(weights_scheme or "").lower()
+    local = scheme not in ("", "none")
+    wm = None
+    if local:
+        if scheme == "knn":
+            wm = build_knn_weights(
+                np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values)),
+                k=min(int(k), n - 1), row_standardized=False)
+        elif scheme in ("queen", "rook"):
+            wm = build_contiguity_weights(gdf, scheme=scheme, row_standardized=False)
+        elif scheme == "distance_band":
+            threshold = float(distance_band) if distance_band and float(distance_band) > 0 \
+                else auto_band_8nn(
+                    np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values)))
+            wm = build_distance_band_weights(
+                np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values)),
+                threshold=threshold, include_self=False, row_standardized=False)
+        else:
+            raise ValueError(
+                f"unknown weights_scheme {weights_scheme!r}; "
+                f"expected one of {WEIGHT_SCHEMES} or '' (global EB)")
+        if wm.s0 == 0:
+            raise DegenerateData(
+                "spatial weights matrix is empty (every observation is an island)",
+                correction_hint="increase k / distance band, or drop "
+                                "weights_scheme for global EB",
+            )
+
+    # MOM 先验（Marshall 1991）。
+    w_map = {int(gi): vi for vi, gi in enumerate(idx_v)}
+    shrink = np.zeros(nv)
+    prior_mean = np.zeros(nv)
+    prior_var = np.zeros(nv)
+    n_island = 0
+    if local:
+        w_csr = wm.matrix.tocsr()
+        neighbors = [
+            np.asarray(w_csr.getrow(gi).nonzero()[1]).ravel()
+            for gi in idx_v
+        ]
+        n_island = 0
+        for vi, nbs in enumerate(neighbors):
+            nbs_valid = [w_map[int(j)] for j in nbs if int(j) in w_map]
+            if not nbs_valid:
+                # 孤岛：无邻居先验可用 → 不收缩（保留原始率）并披露。
+                shrink[vi] = 1.0
+                prior_mean[vi] = r[vi]
+                prior_var[vi] = 0.0
+                n_island += 1
+                continue
+            pj = p_v[nbs_valid]
+            rj = r[nbs_valid]
+            mu_i = float(np.sum(pj * rj) / np.sum(pj))
+            v_i = float(np.sum(pj * (rj - mu_i) ** 2) / np.sum(pj))
+            sigma2_i = v_i - mu_i * len(nbs_valid) / float(np.sum(pj))
+            if sigma2_i <= 0.0:
+                shrink[vi] = 0.0
+                prior_mean[vi] = mu_i
+                prior_var[vi] = 0.0
+                continue
+            prior_mean[vi] = mu_i
+            prior_var[vi] = float(sigma2_i)
+            shrink[vi] = float(sigma2_i / (sigma2_i + mu_i / p_v[vi]))
+    else:
+        mu = float(np.sum(p_v * r) / np.sum(p_v))
+        v_w = float(np.sum(p_v * (r - mu) ** 2) / np.sum(p_v))
+        sigma2 = v_w - mu * nv / float(np.sum(p_v))
+        if sigma2 <= 0.0:
+            shrink[:] = 0.0
+            prior_mean[:] = mu
+        else:
+            prior_mean[:] = mu
+            prior_var[:] = sigma2
+            shrink = sigma2 / (sigma2 + mu / p_v)
+
+    smoothed_v = shrink * r + (1.0 - shrink) * prior_mean
+    n_zero_var_prior = int(np.sum(shrink == 0.0))
+
+    # 组装 FeatureCollection（零人口/非有限行保留占位，rate=None 语义）。
+    raw_full = np.full(n, np.nan)
+    smooth_full = np.full(n, np.nan)
+    shrink_full = np.full(n, np.nan)
+    prior_mean_full = np.full(n, np.nan)
+    prior_var_full = np.full(n, np.nan)
+    raw_full[idx_v] = r
+    smooth_full[idx_v] = smoothed_v
+    shrink_full[idx_v] = shrink
+    prior_mean_full[idx_v] = prior_mean
+    prior_var_full[idx_v] = prior_var
+
+    gdf_wgs84 = gdf.to_crs("EPSG:4326")
+
+    def _nd(x):
+        return None if not np.isfinite(x) else round(float(x), 6)
+
+    extra_props = {
+        "raw_rate": [_nd(v) for v in raw_full],
+        "smoothed_rate": [_nd(v) for v in smooth_full],
+        "shrinkage_weight": [_nd(v) for v in shrink_full],
+        "prior_mean": [_nd(v) for v in prior_mean_full],
+        "prior_variance": [_nd(v) for v in prior_var_full],
+    }
+    features = _assemble_features(gdf_wgs84, extra_props)
+
+    method_id = "marshall1991_mom_local" if local else "marshall1991_mom_global"
+    summary = (
+        f"经验贝叶斯率平滑（{method_id}，{'局部邻居先验' if local else '全局先验'}）："
+        f"{nv} 个有效区，收缩权重范围 [{float(np.min(shrink)):.3f}, "
+        f"{float(np.max(shrink)):.3f}]。")
+    if zero_pop_idx:
+        summary += f" {len(zero_pop_idx)} 个零人口区被排除（不产率值）。"
+    if n_zero_var_prior:
+        summary += f" {n_zero_var_prior} 个区先验方差钳零（零方差先验→收缩至先验均值）。"
+    if local and wm is not None and n_island:
+        summary += f" {n_island} 个孤岛无邻居先验（保留原始率）。"
+    summary += " MOM 先验假设计数为 Poisson——小计数区平滑依赖该假设。"
+
+    data_out = {
+        "type": "FeatureCollection",
+        "features": features,
+        "n_features": n,
+        "n_valid_rates": nv,
+        "method": method_id,
+        "prior_parameters": {
+            "estimator": "method_of_moments (Marshall 1991)",
+            "prior_scope": "neighbor_informed" if local else "global",
+            "global_prior_mean": _nd(
+                float(np.sum(p_v * r) / np.sum(p_v))),
+            "prior_variance_range": [
+                _nd(float(np.min(prior_var))) if nv else None,
+                _nd(float(np.max(prior_var))) if nv else None,
+            ],
+            "poisson_assumption_disclosure": (
+                "MOM 先验假设各区计数近似 Poisson；方差估计扣除 Poisson 抽样噪声"),
+        },
+        "zero_population_excluded": len(zero_pop_idx),
+        "zero_variance_prior_count": n_zero_var_prior,
+        "dropped_nonfinite": n_dropped_nonfinite,
+        "uncertainty": [],
+    }
+    if local and wm is not None:
+        data_out["weights_scheme"] = wm.scheme
+        data_out["weights"] = wm.metadata()
     return GeoAnalysisResult(True, data_out, summary)
 
 
@@ -2479,4 +3035,749 @@ def weights_sensitivity_narrated(
         + (" 结论跨权重方案稳定。"
            if stable else
            " 结论随权重方案翻转 —— 空间自相关声明不可靠，请谨慎叙述。"))
+    return GeoAnalysisResult(True, data_out, summary)
+
+
+# ── Foundation V3：地理探测器生态/风险探测器 ─────────────────────────
+# Wang et al. (2010) 探测器家族的其余两件：生态探测器（两分层解释力的
+# SSW 比较 t 检验）与风险探测器（逐分层对均值差的 Welch t + 可选置换）。
+
+
+def _ssw(values: "np.ndarray", labels: "np.ndarray") -> float:
+    """层内平方和 SSW = Σ_h Σ_{i∈h} (y_i − ȳ_h)²（分层的未解释变异）。"""
+    df = pd.DataFrame({"v": np.asarray(values, dtype=float),
+                       "h": np.asarray(labels, dtype=object)})
+    grouped = df.groupby("h", observed=True)["v"]
+    counts = grouped.size().to_numpy(dtype=float)
+    sse = float((grouped.var(ddof=0).to_numpy(dtype=float) * counts).sum())
+    return sse
+
+
+def geodetector_ecological(
+    y: "np.ndarray", x1_strata: "np.ndarray", x2_strata: "np.ndarray",
+) -> dict:
+    """生态探测器（Wang et al. 2010）：两个分层对 y 的解释力比较。
+
+    SSW_j = Σ_h Σ_{i∈h} (y_i − ȳ_h)²；t 统计量（Wang 2010 族）：
+    t = [SSW₁/(n−m₁) − SSW₂/(n−m₂)] / sqrt( (SSW₁/(n−m₁))²/(n−m₁−1)
+         + (SSW₂/(n−m₂))²/(n−m₂−1) )。
+    **自由度披露**：双侧 p 用 Student t、df = n − 2 —— Wang 2010 原文未
+    规定统一的合成自由度，n−2 是可复核的固定选择；注意它并非严格保守
+    （Welch–Satterthwaite 有效自由度可以更小）（分层自由度不同的
+    精确合成需 Behrens-Fisher 类近似，超出本实现）。
+    |Y₁| 显著解释占优 ⟺ 其 SSW 显著更小（t > 0 且 p < 0.05）。
+    """
+    y = np.asarray(y, dtype=float)
+    s1 = np.asarray(x1_strata, dtype=object)
+    s2 = np.asarray(x2_strata, dtype=object)
+    n = len(y)
+    if not (len(s1) == len(s2) == n):
+        raise ValueError(
+            f"y / strata length mismatch: {n} / {len(s1)} / {len(s2)}",
+        )
+    if n < 10:
+        raise InsufficientSamples(
+            f"ecological detector needs at least 10 observations (got {n})",
+            correction_hint="add observations",
+        )
+    if float(np.ptp(y)) == 0.0:
+        raise DegenerateData(
+            "all y values are identical; SSW comparison is undefined",
+            correction_hint="check the value field for constant values",
+        )
+    m1 = len(np.unique(s1))
+    m2 = len(np.unique(s2))
+    if m1 < 2 or m2 < 2:
+        raise DegenerateData(
+            f"each stratification needs >= 2 strata (got m1={m1}, m2={m2})",
+            correction_hint="use a strata field that distinguishes at least 2 strata",
+        )
+    if max(m1, m2) > n // 2:
+        raise DegenerateData(
+            f"strata too fine ({max(m1, m2)} strata for {n} observations)",
+            correction_hint="use a coarser stratification",
+        )
+    ssw1 = _ssw(y, s1)
+    ssw2 = _ssw(y, s2)
+    n1_rate = ssw1 / (n - m1)
+    n2_rate = ssw2 / (n - m2)
+    denom = float(np.sqrt(n1_rate ** 2 / (n - m1 - 1)
+                          + n2_rate ** 2 / (n - m2 - 1)))
+    if denom <= 0:
+        # 两个分层都完全决定 y（SSW 双零）：t 无定义，诚实置 0、p=1
+        t_stat, p_value = 0.0, 1.0
+    else:
+        t_stat = float((n1_rate - n2_rate) / denom)
+        df = n - 2
+        p_value = float(2.0 * sps.t.sf(abs(t_stat), df))
+    if p_value < 0.05 and n1_rate < n2_rate:
+        decision = "Y1_significantly_dominant"
+    elif p_value < 0.05 and n2_rate < n1_rate:
+        decision = "Y2_significantly_dominant"
+    else:
+        decision = "no_significant_difference"
+    return {
+        "n": int(n), "m1": int(m1), "m2": int(m2),
+        "ssw1": float(ssw1), "ssw2": float(ssw2),
+        "rate1": float(n1_rate), "rate2": float(n2_rate),
+        "t_statistic": float(t_stat), "df": int(n - 2),
+        "p_value": float(p_value), "decision": decision,
+    }
+
+
+def geodetector_ecological_narrated(
+    geojson: dict,
+    value_field: str,
+    strata_field_1: str,
+    strata_field_2: str,
+    bins: int = 0,
+) -> GeoAnalysisResult:
+    """生态探测器（stats.geodetector_ecological）：两分层 SSW 的 t 比较。
+
+    |Y₁| 的 SSW 显著更小 → Y₁ 显著解释占优。df = n−2 的固定选择（非严格
+    保守，见 docstring 披露）、SSW
+    只度量分层解释力不构成因果证据，均在叙事/meta 披露。
+    """
+    res = to_utm_gdf(geojson)
+    if res is None or res[0] is None:
+        raise NoValidObservations(
+            "invalid GeoJSON or no features found",
+            correction_hint="pass a FeatureCollection with a value field and "
+                            "two strata fields",
+        )
+    gdf, _ = res
+    for f in (strata_field_1, strata_field_2):
+        if f not in gdf.columns:
+            raise MissingRequiredField(
+                f"strata field '{f}' is missing",
+                correction_hint=f"provide the property '{f}'",
+            )
+    aligned = _filter_numeric_gdf(gdf, value_field)
+    if aligned is None or len(aligned[1]) == 0:
+        raise MissingRequiredField(
+            f"field '{value_field}' is missing or non-numeric",
+            correction_hint=f"provide a numeric property '{value_field}'",
+        )
+    gdf, values = aligned
+    keep = gdf[strata_field_1].notna() & gdf[strata_field_2].notna()
+    n_dropped = int(len(gdf) - int(keep.sum()))
+    gdf = gdf[keep].reset_index(drop=True)
+    values = values[np.asarray(keep, dtype=bool)]
+    labels1 = _geodetector_labels(
+        gdf[strata_field_1].reset_index(drop=True), bins, strata_field_1)
+    labels2 = _geodetector_labels(
+        gdf[strata_field_2].reset_index(drop=True), bins, strata_field_2)
+    out = geodetector_ecological(values, labels1, labels2)
+    dominant = {("ssw1", "Y1"), ("ssw2", "Y2")}
+    decision_txt = {
+        "Y1_significantly_dominant":
+            f"'{strata_field_1}' 的 SSW 显著更小 —— 解释力显著占优",
+        "Y2_significantly_dominant":
+            f"'{strata_field_2}' 的 SSW 显著更小 —— 解释力显著占优",
+        "no_significant_difference":
+            "两分层的解释力差异不显著",
+    }[out["decision"]]
+    data_out = {
+        "n_features": out["n"],
+        "rows_dropped_nonfinite_or_null": n_dropped,
+        "value_field": str(value_field),
+        "strata_field_1": str(strata_field_1),
+        "strata_field_2": str(strata_field_2),
+        "ssw_1": round(out["ssw1"], 6),
+        "ssw_2": round(out["ssw2"], 6),
+        "n_strata_1": out["m1"],
+        "n_strata_2": out["m2"],
+        "t_statistic": round(out["t_statistic"], 6),
+        "df": out["df"],
+        "p_value": round(out["p_value"], 6),
+        "decision": out["decision"],
+        "df_disclosure": (
+            "双侧 p 用 Student t、df=n−2：Wang 2010 未规定合成自由度，"
+            "该固定选择并非严格保守（有效自由度可更小），"
+            "n−2 是保守可复核的选择"),
+        "uncertainty": StatisticalSignificance(
+            target="geodetector_ecological",
+            statistic_name="t of SSW comparison (Y1 vs Y2 stratifications)",
+            statistic_value=float(out["t_statistic"]),
+            p_value=float(out["p_value"]),
+            method="analytic_normal",
+            alternative="two-sided",
+        ).to_evidence(),
+    }
+    summary = (
+        f"生态探测器：SSW({strata_field_1})={out['ssw1']:.4f} vs "
+        f"SSW({strata_field_2})={out['ssw2']:.4f}；t={out['t_statistic']:.4f}"
+        f"（df={out['df']}，双侧 p={out['p_value']:.4f}）—— {decision_txt}。"
+        "SSW 只度量分层解释力，不是因果证据。")
+    return GeoAnalysisResult(True, data_out, summary)
+
+
+def geodetector_risk(
+    y: "np.ndarray", strata: "np.ndarray", permutations: int = 0,
+) -> dict:
+    """风险探测器（Wang et al. 2010）：逐分层对的均值差显著性。
+
+    每对分层做 Welch t 检验（scipy ttest_ind equal_var=False，对方差不等
+    稳健）；``permutations > 0`` 时附固定种子 42 的标签置换双侧 p
+    （(count+1)/(perms+1) 校正）。方向：显著且 mean₁ > mean₂ → higher，
+    显著且 mean₁ < mean₂ → lower，否则 not_significant。
+    """
+    from itertools import combinations
+
+    y = np.asarray(y, dtype=float)
+    s = np.asarray(strata, dtype=object)
+    n = len(y)
+    if len(s) != n:
+        raise ValueError(f"y / strata length mismatch: {n} / {len(s)}")
+    if n < 10:
+        raise InsufficientSamples(
+            f"risk detector needs at least 10 observations (got {n})",
+            correction_hint="add observations",
+        )
+    if float(np.ptp(y)) == 0.0:
+        raise DegenerateData(
+            "all y values are identical; risk detection is undefined",
+            correction_hint="check the value field for constant values",
+        )
+    levels = sorted({str(v) for v in s})
+    if len(levels) < 2:
+        raise DegenerateData(
+            "strata field has a single level; risk detection needs >= 2 strata",
+            correction_hint="use a strata field with at least 2 strata",
+        )
+    perms = int(permutations or 0)
+    if perms > 0:
+        perms = _validate_permutations(perms)
+    str_list = np.array([str(v) for v in s], dtype=object)
+    pairs: list = []
+    for a, b in combinations(levels, 2):
+        va = y[str_list == a]
+        vb = y[str_list == b]
+        entry = {
+            "stratum_1": a, "stratum_2": b,
+            "n_1": int(va.size), "n_2": int(vb.size),
+            "mean_1": round(float(va.mean()), 6),
+            "mean_2": round(float(vb.mean()), 6),
+            "mean_diff": round(float(va.mean() - vb.mean()), 6),
+            "t_statistic": None, "p_value": None,
+            "p_value_permutation": None, "direction": "not_significant",
+        }
+        if va.size < 2 or vb.size < 2:
+            entry["note"] = ("分层数 < 2，方差不可估 —— Welch t 与置换 p 均"
+                             "不可用（诚实留空）")
+            pairs.append(entry)
+            continue
+        t_res = sps.ttest_ind(va, vb, equal_var=False)
+        entry["t_statistic"] = round(float(t_res.statistic), 6)
+        entry["p_value"] = round(float(t_res.pvalue), 6)
+        if perms > 0:
+            rng = np.random.default_rng(_PERMUTATION_SEED)
+            pooled = np.concatenate([va, vb])
+            na = va.size
+            obs_diff = float(va.mean() - vb.mean())
+            extreme = 0
+            for _ in cancellable(range(perms)):
+                pv = rng.permutation(pooled)
+                if abs(pv[:na].mean() - pv[na:].mean()) >= abs(obs_diff):
+                    extreme += 1
+            entry["p_value_permutation"] = float(
+                (extreme + 1) / (perms + 1))
+        sig = entry["p_value"] < 0.05
+        entry["direction"] = (
+            "higher" if sig and entry["mean_diff"] > 0
+            else "lower" if sig and entry["mean_diff"] < 0
+            else "not_significant")
+        pairs.append(entry)
+    matrix = {a: {} for a in levels}
+    for entry in pairs:
+        # 方向矩阵按有序对存：matrix[a][b] 是「a 相对 b」的方向（a 显著
+        # 更高 → higher）；[b][a] 翻转，读者不必再查 mean_diff。
+        a, b = entry["stratum_1"], entry["stratum_2"]
+        direction_ab = entry["direction"]
+        direction_ba = {
+            "higher": "lower", "lower": "higher",
+            "not_significant": "not_significant",
+        }[direction_ab]
+        matrix[a][b] = direction_ab
+        matrix[b][a] = direction_ba
+    return {"n": int(n), "levels": levels, "pairs": pairs,
+            "matrix": matrix, "permutations": perms}
+
+
+def geodetector_risk_narrated(
+    geojson: dict,
+    value_field: str,
+    strata_field: str,
+    bins: int = 0,
+    permutations: int = 0,
+) -> GeoAnalysisResult:
+    """风险探测器（stats.geodetector_risk）：逐分层对的均值差检验。
+
+    输出对列表（Welch t + 可选固定种子 42 置换 p）与方向矩阵两种形式；
+    p<0.05 才判 higher/lower，否则 not_significant（不夸大方向）。
+    """
+    res = to_utm_gdf(geojson)
+    if res is None or res[0] is None:
+        raise NoValidObservations(
+            "invalid GeoJSON or no features found",
+            correction_hint="pass a FeatureCollection with a value field and "
+                            "a strata field",
+        )
+    gdf, _ = res
+    if strata_field not in gdf.columns:
+        raise MissingRequiredField(
+            f"strata field '{strata_field}' is missing",
+            correction_hint=f"provide the property '{strata_field}'",
+        )
+    aligned = _filter_numeric_gdf(gdf, value_field)
+    if aligned is None or len(aligned[1]) == 0:
+        raise MissingRequiredField(
+            f"field '{value_field}' is missing or non-numeric",
+            correction_hint=f"provide a numeric property '{value_field}'",
+        )
+    gdf, values = aligned
+    keep = gdf[strata_field].notna()
+    gdf = gdf[keep].reset_index(drop=True)
+    values = values[np.asarray(keep, dtype=bool)]
+    labels = _geodetector_labels(gdf[strata_field], bins, strata_field)
+    out = geodetector_risk(values, labels, permutations)
+    sig_pairs = [p for p in out["pairs"] if p["direction"] != "not_significant"]
+    data_out = {
+        "n_features": out["n"],
+        "value_field": str(value_field),
+        "strata_field": str(strata_field),
+        "n_strata": len(out["levels"]),
+        "pairs": out["pairs"],
+        "matrix": out["matrix"],
+        "permutations": out["permutations"],
+        "significant_pair_count": len(sig_pairs),
+        "uncertainty": [
+            StatisticalSignificance(
+                target="geodetector_risk",
+                statistic_name=f"Welch t ({p['stratum_1']} vs {p['stratum_2']})",
+                statistic_value=p["t_statistic"],
+                p_value=p["p_value"],
+                method="analytic_normal",
+                alternative="two-sided",
+            ).to_evidence()
+            for p in out["pairs"] if p["t_statistic"] is not None
+        ],
+    }
+    summary = (
+        f"风险探测器：'{strata_field}' 的 {len(out['levels'])} 个分层共 "
+        f"{len(out['pairs'])} 个分层对，其中 {len(sig_pairs)} 对均值差显著"
+        f"（Welch t，p<0.05"
+        + (f"；置换复核 {out['permutations']} 次、固定种子 42"
+           if out["permutations"] > 0 else "")
+        + "）。方向：higher=前一分层均值显著更高。")
+    return GeoAnalysisResult(True, data_out, summary)
+
+
+# ── Foundation V3：局部 Join Count（Anselin & Li 2019）───────────────
+
+def local_join_count_narrated(
+    geojson: dict,
+    binary_field: str,
+    weights_scheme: str = "knn",
+    k: int = 8,
+    distance_band: float = 0,
+    permutations: int = 999,
+    correction: str = "bh",
+) -> GeoAnalysisResult:
+    """局部 Join Count（stats.local_join_count；Anselin & Li 2019）。
+
+    二值场 y ⊆ {0,1}（违者 UnsupportedMethod）上 LJC_i = Σ_j w_ij·I(y_i=1)
+    ·I(y_j=1)（二值对称权重）。y_i=0 的位置 LJC ≡ 0、p≡1（不在 1-簇族
+    内）；y_i=1 的位置用条件置换推断：焦点固定为 1，其余位置从含 n₁−1
+    个 1 的剩余池重排（条件随机化；每 draw 共享重排），单侧上尾
+    (k+1)/(D+1)，D_i=有效条件 draw 数（随 i 不同，条件置换
+    的固有性质，meta 披露）。多重校正 correction ∈ {bh(默认), bonferroni,
+    holm, none}：校正族 = 焦点族（y=1 的 n₁ 个检验）——y=0 位置 LJC≡0
+    结构性不显著，不进入检验族。
+    """
+    res = to_utm_gdf(geojson)
+    if res is None or res[0] is None:
+        raise NoValidObservations(
+            "invalid GeoJSON or no features found",
+            correction_hint="pass a FeatureCollection with a binary (0/1) field",
+        )
+    gdf, _ = res
+    aligned = _filter_numeric_gdf(gdf, binary_field)
+    if aligned is None or len(aligned[1]) == 0:
+        raise MissingRequiredField(
+            f"field '{binary_field}' is missing or non-numeric",
+            correction_hint=f"provide a binary (0/1) property '{binary_field}' "
+                            "on every feature",
+        )
+    gdf, values = aligned
+    n = len(values)
+    if n < 4:
+        raise InsufficientSamples(
+            f"local join count needs at least 4 valid features (got {n})",
+            correction_hint="add observations",
+        )
+    uniq = np.unique(values)
+    if not np.all(np.isin(uniq, (0.0, 1.0))):
+        raise UnsupportedMethod(
+            f"field '{binary_field}' is not binary: unique values {uniq[:8].tolist()}",
+            correction_hint="derive a binary field (e.g. above/below threshold), "
+                            "or use local_geary / h3_lisa for continuous values",
+        )
+    if len(uniq) < 2:
+        raise DegenerateData(
+            f"all '{binary_field}' values are identical ({uniq[0]:.0f}); "
+            "local join count is undefined",
+            correction_hint="the field must contain both 0 and 1",
+        )
+    if str(correction).lower() not in _CORRECTION_METHODS:
+        raise ValueError(
+            f"correction must be one of {_CORRECTION_METHODS} (got {correction!r})")
+    correction = str(correction).lower()
+    perms = _validate_permutations(permutations)
+
+    coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
+    scheme = str(weights_scheme or "knn").lower()
+    if scheme == "knn":
+        wm = build_knn_weights(coords, k=min(int(k), n - 1),
+                               row_standardized=False)
+    elif scheme in ("queen", "rook"):
+        wm = build_contiguity_weights(gdf, scheme=scheme, row_standardized=False)
+    elif scheme == "distance_band":
+        threshold = float(distance_band) if distance_band and float(distance_band) > 0 \
+            else auto_band_8nn(coords)
+        wm = build_distance_band_weights(
+            coords, threshold=threshold, include_self=False,
+            row_standardized=False)
+    else:
+        raise ValueError(
+            f"unknown weights_scheme {weights_scheme!r}; "
+            f"expected one of {WEIGHT_SCHEMES}")
+    if wm.s0 == 0:
+        raise DegenerateData(
+            "spatial weights matrix is empty (every observation is an island)",
+            correction_hint="increase the distance band / k, or check geometry connectivity",
+        )
+
+    b = values.astype(float)
+    # LJC_i = I(y_i=1)·Σ_j w_ij·I(y_j=1)（y_i=0 → 恒 0）
+    ljc = b * np.asarray(wm.matrix @ b).ravel()
+
+    # 条件置换（Anselin 1995 条件随机化；V3 review B1 修正）：焦点 i 的
+    # 条件零假设 = 保持 y_i=1，其余 n−1 个位置带 n₁−1 个 1 均匀重排。
+    # 共享置换流逐 draw 生成全标签随机排列 pb（计数守恒）；对焦点 i 只
+    # 取 pb_i=0 的 draw——由可交换性，该条件下的邻居和 Σ_j w_ij·pb_j
+    # （权重无 w_ii 自环）恰为条件零假设分布的精确采样。p_i=(k+1)/(D+1)，
+    # D_i=pb_i=0 的有效 draw 数（随 i 不同，meta 披露）；D_i=0 → p=1
+    # （保守）。此前对全标签置换不区分 pb_i，p 被压低约 n₁/n 倍——已修复
+    # 并由独立复算锁定。固定种子 42 + 固定分块 → 确定性。
+    rng = np.random.default_rng(_PERMUTATION_SEED)
+    ones_mask = b == 1.0
+    focal = np.where(ones_mask)[0]
+    obs_sum = np.asarray(wm.matrix @ b).ravel()
+    extreme = np.zeros(n, dtype=np.int64)
+    valid = np.zeros(n, dtype=np.int64)
+    chunk = max(1, min(int(perms), int(2_000_000 // max(n, 1))))
+    w_t = wm.matrix.T
+    drawn = 0
+    while drawn < int(perms):
+        m = min(chunk, int(perms) - drawn)
+        P = np.empty((m, n))
+        for r in range(m):
+            P[r] = rng.permutation(b)
+        S = P @ w_t                      # S[r, i] = Σ_j w_ij·P[r, j]
+        Pv0 = P[:, focal] == 0.0         # 合法条件 draw：焦点处抽到 0
+        extreme[focal] += np.sum(Pv0 & (S[:, focal] >= obs_sum[focal]), axis=0)
+        valid[focal] += Pv0.sum(axis=0)
+        drawn += m
+    denom = np.where(valid > 0, valid, 1)
+    p_vals = np.where(ones_mask, (extreme + 1) / (denom + 1), 1.0)
+    # 多重校正族 = 焦点族（y=1 的 n₁ 个检验）：y=0 位置 LJC≡0 结构性
+    # 不显著（p≡1），计入族只会稀释 BH 门槛（V3 review 修正，meta 披露）。
+    p_adj_focal = multiple_testing_correction(p_vals[ones_mask], correction)
+    p_adj = np.ones(n)
+    p_adj[ones_mask] = p_adj_focal
+
+    significant = (p_adj < 0.05) & ones_mask
+    clusters = np.where(significant, "co_location_cluster", "neutral").tolist()
+    counts = {"co_location_cluster": int(np.sum(significant)),
+              "neutral": int(n - int(np.sum(significant)))}
+    sig_count = int(np.sum(significant))
+    expected_fp = round(0.05 * n, 1)
+
+    gdf_wgs84 = gdf.to_crs("EPSG:4326")
+    features = _assemble_features(
+        gdf_wgs84,
+        {
+            "local_join_count": [round(float(v), 6) for v in ljc],
+            "p_value": [round(float(v), 6) for v in p_vals],
+            f"p_{correction}" if correction != "none" else "p_value_adjusted": [
+                round(float(v), 6) for v in p_adj],
+            "local_join_count_cluster": clusters,
+        },
+    )
+
+    data_out = {
+        "type": "FeatureCollection",
+        "features": features,
+        "local_join_count_counts": counts,
+        "significant_count": sig_count,
+        "expected_false_positives": expected_fp,
+        "correction": correction,
+        "n_features": n,
+        "n_ones": int(np.sum(b)),
+        "permutations": perms,
+        "weights": wm.metadata(),
+        "uncertainty": StatisticalSignificance(
+            target="local_join_count",
+            statistic_name="share of significant local join count locations (α=0.05)",
+            statistic_value=sig_count / n,
+            p_value=None,
+            method="permutation",
+            permutations=perms,
+            multiple_testing=_CORRECTION_LABELS[correction],
+        ).to_evidence(),
+    }
+    summary = (
+        f"局部 Join Count（Anselin & Li 2019）：{int(np.sum(b))} 个 y=1 位置中 "
+        f"校正后 {counts['co_location_cluster']} 个显著共位簇（{correction.upper()}；"
+        f"未校正 α=0.05 随机期望假阳性 ≈{expected_fp} 个）。"
+        "y=0 位置 LJC≡0、p≡1（不在 1-簇族内）。")
+    return GeoAnalysisResult(True, data_out, summary)
+
+
+# ── Foundation V3：双变量局部 Moran（esda.Moran_Local_BV 委托）───────
+
+_BV_LM_QUAD_LABELS = {1: "HH", 2: "LH", 3: "LL", 4: "HL"}
+
+
+def bivariate_local_moran_narrated(
+    geojson: dict,
+    value_field: str,
+    lag_field: str,
+    weights_scheme: str = "knn",
+    k: int = 8,
+    distance_band: float = 0,
+    permutations: int = 999,
+) -> GeoAnalysisResult:
+    """双变量局部 Moran（stats.bivariate_local_moran；esda 委托，seed=42）。
+
+    I_i^BV = z(x1)_i · Σ_j w_ij z(x2)_j / S₀（esda.Moran_Local_BV，行标准化
+    权重，固定种子 42 条件随机化）。标签 HH/LH/LL/HL 取 p_sim<0.05，
+    BH q 值随要素输出。**孤岛权重警示**（与既有双变量 Moran 同款披露）：
+    无邻居位置在行标准化权重下贡献为 0、结果中性；与 esda 归一化的对齐
+    仅在无 island 权重时严格成立。共位相关 ≠ 因果/超前-滞后。
+    """
+    import esda as _esda
+    import libpysal as _libpysal
+
+    res = to_utm_gdf(geojson)
+    if res is None or res[0] is None:
+        raise NoValidObservations(
+            "invalid GeoJSON or no features found",
+            correction_hint="pass a FeatureCollection with two numeric fields",
+        )
+    gdf, _ = res
+    aligned = _filter_two_numeric_gdf(gdf, value_field, lag_field)
+    if aligned is None:
+        raise MissingRequiredField(
+            f"fields '{value_field}' / '{lag_field}' missing or non-numeric",
+            correction_hint="provide both numeric properties on every feature",
+        )
+    gdf, vx, vy = aligned
+    n = len(vx)
+    if n < 8:
+        raise InsufficientSamples(
+            f"bivariate local Moran needs at least 8 valid features (got {n})",
+            correction_hint="add observations",
+        )
+    if float(np.ptp(vx)) == 0.0 or float(np.ptp(vy)) == 0.0:
+        raise DegenerateData(
+            "one of the fields has zero variance; "
+            "bivariate local Moran is undefined",
+            correction_hint="check both fields for constant values",
+        )
+    perms = _validate_permutations(permutations)
+
+    coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
+    scheme = str(weights_scheme or "knn").lower()
+    if scheme == "knn":
+        wm = build_knn_weights(coords, k=min(int(k), n - 1),
+                               row_standardized=False)
+    elif scheme in ("queen", "rook"):
+        wm = build_contiguity_weights(gdf, scheme=scheme, row_standardized=False)
+    elif scheme == "distance_band":
+        threshold = float(distance_band) if distance_band and float(distance_band) > 0 \
+            else auto_band_8nn(coords)
+        wm = build_distance_band_weights(
+            coords, threshold=threshold, include_self=False,
+            row_standardized=False)
+    else:
+        raise ValueError(
+            f"unknown weights_scheme {weights_scheme!r}; "
+            f"expected one of {WEIGHT_SCHEMES}")
+    if wm.s0 == 0:
+        raise DegenerateData(
+            "spatial weights matrix is empty (every observation is an island)",
+            correction_hint="increase the distance band / k, or check geometry connectivity",
+        )
+    # esda 需要 libpysal W（二值矩阵 + transformation='r' 由 esda 行标准化）
+    w_lib = _libpysal.weights.WSP(wm.matrix.tocsr()).to_W()
+    ref = _esda.Moran_Local_BV(
+        vx, vy, w_lib, transformation="r", permutations=perms, seed=42)
+
+    p_sim = np.asarray(ref.p_sim, dtype=float)
+    p_adj = multiple_testing_correction(p_sim, "bh")
+    significant = p_sim < 0.05
+    quads = np.asarray(ref.q, dtype=int)
+    labels = np.where(
+        significant,
+        np.array([_BV_LM_QUAD_LABELS.get(q, "neutral") for q in quads]),
+        "not_significant",
+    ).tolist()
+    counts = {lbl: int(sum(1 for v in labels if v == lbl))
+              for lbl in ("HH", "LH", "LL", "HL", "not_significant")}
+    sig_count = int(np.sum(significant))
+    expected_fp = round(0.05 * n, 1)
+    island_note = (
+        f"权重含 {len(wm.islands)} 个孤岛位置（无邻居）：孤岛在行标准化下"
+        "贡献为 0、结果中性" if wm.islands else "权重无孤岛")
+
+    gdf_wgs84 = gdf.to_crs("EPSG:4326")
+    features = _assemble_features(
+        gdf_wgs84,
+        {
+            "local_moran_bv": [round(float(v), 6) for v in np.asarray(ref.Is)],
+            "p_value": [round(float(v), 6) for v in p_sim],
+            "p_bh": [round(float(v), 6) for v in p_adj],
+            "bivariate_local_moran_label": labels,
+        },
+    )
+
+    data_out = {
+        "type": "FeatureCollection",
+        "features": features,
+        "label_counts": counts,
+        "significant_count": sig_count,
+        "expected_false_positives": expected_fp,
+        "n_features": n,
+        "value_field": str(value_field),
+        "lag_field": str(lag_field),
+        "permutations": perms,
+        "island_caveat": island_note,
+        "weights": wm.metadata(),
+        "uncertainty": StatisticalSignificance(
+            target="bivariate_local_moran",
+            statistic_name="share of significant bivariate local Moran locations",
+            statistic_value=sig_count / n,
+            p_value=None,
+            method="permutation",
+            permutations=perms,
+            multiple_testing="BH-FDR",
+        ).to_evidence(),
+    }
+    summary = (
+        f"双变量局部 Moran（'{value_field}' vs '{lag_field}' 的空间滞后，"
+        f"esda 委托、固定种子 42）：{sig_count}/{n} 个位置 p_sim<0.05 —— "
+        f"HH={counts['HH']}、LH={counts['LH']}、LL={counts['LL']}、"
+        f"HL={counts['HL']}、not_significant={counts['not_significant']}"
+        f"（BH-FDR 后随机期望假阳性 ≈{expected_fp} 个；{island_note}）。"
+        "注意：共位相关不能解释为因果/超前-滞后关系。")
+    return GeoAnalysisResult(True, data_out, summary)
+
+
+# ── Foundation V3：空间权重诊断 ─────────────────────────────────────
+
+def weights_diagnostics_narrated(
+    geojson: dict,
+    weights_scheme: str = "knn",
+    k: int = 8,
+    distance_band: float = 0,
+) -> GeoAnalysisResult:
+    """空间权重诊断（stats.weights_diagnostics）：权重结构体检表。
+
+    输出 n / 稀疏度 / 对称性（存储矩阵与二值邻接）/ 行标准化标记 /
+    邻居数统计（mean/min/max）/ 孤岛数与孤岛 id / 连通分量
+    （networkx，二值邻接无向图）/ 结构警告。确定性、零随机成分。
+    """
+    import networkx as nx
+
+    res = to_utm_gdf(geojson)
+    if res is None or res[0] is None:
+        raise NoValidObservations(
+            "invalid GeoJSON or no features found",
+            correction_hint="pass a FeatureCollection with at least 1 feature",
+        )
+    gdf, _ = res
+    n = len(gdf)
+    if n < 1:
+        raise InsufficientSamples(
+            "weights diagnostics needs at least 1 feature",
+            correction_hint="pass a non-empty FeatureCollection",
+        )
+    wm = _autocorr_weights(gdf, n, weights_scheme, k, distance_band)
+    m = wm.matrix.tocsr()
+    row_counts = np.diff(m.indptr).astype(int)
+
+    # 对称性：存储矩阵与（更有意义的）二值邻接各查一次
+    symmetric_stored = (m != m.T).nnz == 0
+    binary = m.copy()
+    binary.data = np.ones_like(binary.data)
+    binary_symmetric = (binary != binary.T).nnz == 0
+
+    # 连通分量：二值邻接无向化（w_ij>0 视为边）
+    a_sym = binary.maximum(binary.T)
+    graph = nx.from_scipy_sparse_array(a_sym, edge_attribute=None)
+    component_sizes = sorted(
+        (len(c) for c in nx.connected_components(graph)), reverse=True)
+    n_components = len(component_sizes)
+
+    islands = list(wm.islands)
+    warnings: list = []
+    if islands:
+        warnings.append(
+            f"权重矩阵含 {len(islands)} 个孤岛（无邻居）：相关/回归类统计量"
+            "对孤岛退化为中性或 0 权重（位置："
+            f"{islands[:16]}{'…' if len(islands) > 16 else ''}）")
+    if not binary_symmetric:
+        warnings.append(
+            "二值邻接不对称 —— 要求对称权重的统计量（Moran/Geary/Join Count/"
+            "SAR-ML）会先做对称化或不可用，请确认这是期望的权重结构")
+    if n_components > 1:
+        warnings.append(
+            f"权重图有 {n_components} 个连通分量（最大分量仅覆盖 "
+            f"{component_sizes[0] / n:.1%}）—— 跨分量无空间关联，全局统计量"
+            "解释需谨慎")
+
+    data_out = {
+        "n_features": int(n),
+        "scheme": wm.scheme,
+        "row_standardized": bool(wm.row_standardized),
+        "sparsity": round(float(m.nnz) / float(n * n), 8) if n else 0.0,
+        "symmetric": bool(symmetric_stored),
+        "binary_symmetric": bool(binary_symmetric),
+        "neighbors": {
+            "mean": round(float(row_counts.mean()), 4),
+            "min": int(row_counts.min()),
+            "max": int(row_counts.max()),
+        },
+        "island_count": len(islands),
+        "island_ids": islands,
+        "connected_components": {
+            "count": n_components,
+            "sizes": component_sizes[:16],
+            "largest_share": round(component_sizes[0] / n, 6) if n else 0.0,
+        },
+        "nonzero_weights": int(m.nnz),
+        "warnings": warnings,
+        "weights": wm.metadata(),
+    }
+    summary = (
+        f"权重诊断（{wm.scheme}，行标准化={wm.row_standardized}）：n={n}，"
+        f"稀疏度={data_out['sparsity']:.2e}，邻居数 mean/min/max="
+        f"{data_out['neighbors']['mean']}/{data_out['neighbors']['min']}/"
+        f"{data_out['neighbors']['max']}，孤岛 {len(islands)} 个，"
+        f"连通分量 {n_components} 个（最大占 "
+        f"{data_out['connected_components']['largest_share']:.1%}），"
+        f"二值邻接对称={binary_symmetric}。"
+        + ("；".join(warnings) if warnings else " 无结构警告。"))
     return GeoAnalysisResult(True, data_out, summary)

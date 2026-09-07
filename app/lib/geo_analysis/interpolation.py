@@ -35,6 +35,17 @@ VNext (ADR-0099 additions, all additive):
 * Shared point-parse / H3 target-grid helpers (``_parse_point_values``,
   ``_target_cells_for_samples``) are reused by the RBF driver
   (:mod:`app.lib.geo_analysis.rbf_interpolation`) instead of duplicated.
+
+V3 (Geostatistics/Interpolation batch, additive):
+
+* :func:`nearest_neighbor_interpolation` — Voronoi/Thiessen mosaic primitive
+  (cKDTree k=1): piecewise-constant, NO smoothing, discontinuous across cell
+  boundaries; defined everywhere (beyond the data hull it is nearest-sample
+  EXTRAPOLATION, disclosed). Scale guards 200k samples / 4M target cells.
+* :func:`nearest_neighbor_surface` — the H3 driver (IDW driver parity).
+* :func:`_metric_samples_and_target_grid` — shared driver preamble
+  (parse → metric CRS → H3 target grid + cell-centre projection) reused by
+  the V3 kriging drivers (:mod:`app.lib.geo_analysis.kriging`).
 """
 import logging
 from typing import Any
@@ -49,7 +60,11 @@ from shapely.geometry import Polygon, mapping
 # 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
 # 真正释放 CPU 而不是只改 UI 状态。
 from app.lib.cancellation import cancellable
-from app.lib.gis.scientific_errors import InsufficientSamples, UnsupportedMethod
+from app.lib.gis.scientific_errors import (
+    InsufficientSamples,
+    ResourceScaleMismatch,
+    UnsupportedMethod,
+)
 from app.lib.gis.uncertainty import ValidationMetrics
 
 logger = logging.getLogger(__name__)
@@ -586,6 +601,166 @@ def idw_interpolation(
         power=power,
         cross_validate=cross_validate,
     )["records"]
+
+
+def _metric_samples_and_target_grid(
+    points_geojson: Any,
+    value_field: str,
+    resolution: int,
+    *,
+    purpose: str,
+    label: str,
+    log_prefix: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Any, str, tuple]:
+    """Shared surface-driver preamble (parse → metric CRS → H3 target grid).
+
+    Reuses the IDW contract end-to-end: :func:`_parse_point_values`,
+    :func:`_pick_metric_crs` and :func:`_target_cells_for_samples` (bbox
+    buffer + antimeridian split + resource guard), then projects the H3
+    cell centres into the same working CRS.
+
+    Returns ``(lonlat, values, pts_metric, cell_metric, target_cells,
+    working_crs, (min_lon, min_lat, max_lon, max_lat))``. ``target_cells``
+    may be empty (polar / whole-world edge case) — callers surface that
+    honestly (IDW parity) instead of pretending to interpolate.
+    """
+    import geopandas as gpd
+    import h3
+
+    _validate_resolution(resolution)
+    lonlat, values = _parse_point_values(
+        points_geojson, value_field, purpose=purpose, log_prefix=log_prefix
+    )
+    working_crs = _pick_metric_crs(lonlat)
+    pts_gdf = gpd.GeoDataFrame(
+        {"v": values},
+        geometry=gpd.points_from_xy(lonlat[:, 0], lonlat[:, 1]),
+        crs="EPSG:4326",
+    ).to_crs(working_crs)
+    pts_metric = np.column_stack(
+        (pts_gdf.geometry.x.values, pts_gdf.geometry.y.values)
+    )
+    target_cells, bbox = _target_cells_for_samples(lonlat, resolution, label=label)
+    if target_cells:
+        cell_latlng = np.array([h3.cell_to_latlng(c) for c in target_cells])
+        cell_gdf = gpd.GeoDataFrame(
+            geometry=gpd.points_from_xy(cell_latlng[:, 1], cell_latlng[:, 0]),
+            crs="EPSG:4326",
+        ).to_crs(working_crs)
+        cell_metric = np.column_stack(
+            (cell_gdf.geometry.x.values, cell_gdf.geometry.y.values)
+        )
+    else:
+        cell_metric = np.empty((0, 2), dtype=float)
+    return lonlat, values, pts_metric, cell_metric, target_cells, working_crs, bbox
+
+
+# ── nearest neighbour (V3 — Voronoi/Thiessen mosaic) ────────────────────────
+
+NN_MAX_SAMPLES = 200_000        # above this: typed rejection
+NN_MAX_GRID_CELLS = 4_000_000   # target-cell ceiling
+
+
+def nearest_neighbor_interpolation(
+    xy: np.ndarray, values: np.ndarray, grid_xy: np.ndarray
+) -> tuple[np.ndarray, dict]:
+    """最近邻插值原语（Thiessen/Voronoi 分段常值场）。
+
+    每个目标格点取最近样本值（cKDTree k=1）——输出是样本的 Voronoi
+    （泰森）多边形镶嵌：**无平滑、单元边界处不连续**（跳变是方法语义，
+    不是缺陷）。全域有值：数据凸包之外的格点属于**最近样本外推**
+    （已披露，无任何不确定性声明）。坐标必须已在投影米制 CRS
+    （``_pick_metric_crs`` 为工具侧授权选择器）。
+
+    Scale guards: >``NN_MAX_SAMPLES`` 样本或 >``NN_MAX_GRID_CELLS`` 目标
+    格点 → 类型化 :class:`ResourceScaleMismatch` 拒绝（先拒绝不 OOM）。
+
+    返回 ``(values (n_cells,), meta)``。
+    """
+    pts = np.asarray(xy, dtype=float)
+    vals = np.asarray(values, dtype=float)
+    targets = np.atleast_2d(np.asarray(grid_xy, dtype=float))
+    n = len(vals)
+    n_cells = len(targets)
+    if n < 1:
+        raise InsufficientSamples(
+            "最近邻插值至少需要 1 个样本点，got 0",
+            correction_hint="提供至少一个带数值字段的点要素。",
+        )
+    if n > NN_MAX_SAMPLES:
+        raise ResourceScaleMismatch(
+            f"最近邻插值输入 {n:,} 个样本超过上限 {NN_MAX_SAMPLES:,}。",
+            estimated=f"{n:,} samples",
+            limit=f"≤{NN_MAX_SAMPLES:,} samples",
+            correction_hint="先做确定性空间抽稀（如 kriging.stratified_subsample）。",
+        )
+    if n_cells > NN_MAX_GRID_CELLS:
+        raise ResourceScaleMismatch(
+            f"最近邻插值目标格点 {n_cells:,} 超过上限 {NN_MAX_GRID_CELLS:,}。",
+            estimated=f"{n_cells:,} target cells",
+            limit=f"≤{NN_MAX_GRID_CELLS:,} cells",
+            correction_hint="降低目标网格分辨率或缩小范围。",
+        )
+    tree = cKDTree(pts)
+    dist, idx = tree.query(targets, k=1)
+    out = np.asarray(vals[np.asarray(idx)], dtype=float)
+    meta = {
+        "method": "nearest_neighbor",
+        "n_samples": int(n),
+        "n_cells": int(n_cells),
+        "semantics": "Voronoi（泰森）多边形分段常值场：每格点取最近样本值",
+        "max_nearest_distance": (
+            round(float(np.max(dist)), 3) if n_cells else 0.0
+        ),
+        "disclosures": [
+            "无平滑：表面在 Voronoi 单元边界处不连续（跳变语义，非缺陷）。",
+            "全域有值：数据凸包之外为最近样本外推（无不确定性声明，已披露）。",
+        ],
+    }
+    return out, meta
+
+
+def nearest_neighbor_surface(
+    points_geojson: Any,
+    value_field: str,
+    resolution: int = 8,
+) -> dict:
+    """H3 最近邻表面 driver（IDW driver parity）。
+
+    ``{"records": [{"h3_index", "value"}...], "metadata": {...}}``；
+    metadata 披露 Voronoi 语义、不连续表面与凸包外外推。
+    """
+    (
+        lonlat, values, pts_metric, cell_metric, target_cells,
+        working_crs, bbox,
+    ) = _metric_samples_and_target_grid(
+        points_geojson, value_field, resolution,
+        purpose="最近邻插值", label="最近邻", log_prefix="nearest_neighbor",
+    )
+    metadata: dict[str, Any] = {
+        "algorithm": "interpolation.nearest_neighbor",
+        "value_field": value_field,
+        "resolution": int(resolution),
+        "working_crs": working_crs,
+        "n_samples": int(len(values)),
+        "bbox": [bbox[0], bbox[1], bbox[2], bbox[3]],
+    }
+    if not target_cells:
+        metadata["cell_count"] = 0
+        return {"records": [], "metadata": metadata}
+    out, meta = nearest_neighbor_interpolation(pts_metric, values, cell_metric)
+    metadata.update({
+        "method": meta["method"],
+        "semantics": meta["semantics"],
+        "max_nearest_distance": meta["max_nearest_distance"],
+        "disclosures": meta["disclosures"],
+        "cell_count": int(len(target_cells)),
+    })
+    records = [
+        {"h3_index": cell, "value": float(v)}
+        for cell, v in zip(target_cells, out)
+    ]
+    return {"records": records, "metadata": metadata}
 
 
 def h3_cell_ring(cell: str) -> list[tuple[float, float]]:

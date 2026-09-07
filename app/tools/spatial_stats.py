@@ -457,12 +457,15 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return payload
 
     @tool(registry, name="hotspot_analysis",
-           description="Getis-Ord Gi* 热点分析，识别统计显著的高值聚集区（热点）和低值聚集区（冷点）",
+           description="Getis-Ord Gi* 热点分析，识别统计显著的高值聚集区（热点）和低值聚集区（冷点）；"
+                       "significance_method=permutation 改用条件随机化置换 p（固定种子42，n≤5000）",
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "value_field": "待分析的数值字段名",
                "distance_band": "空间权重距离阈值（米），0表示自动计算（默认）",
+               "significance_method": "显著性方法：normal(默认，解析正态 p) / permutation（条件随机化置换 p）",
+               "permutations": "置换次数（仅 permutation 路径）：999(默认)/99/199/499，固定种子42",
            },
            side_effect="deterministic_compute",
            network=False,
@@ -475,9 +478,42 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            result_size_policy="ref_offload",
            crs_semantics="auto_project",
            failure_modes=("invalid_args", "missing_data"))
-    def hotspot_analysis(geojson: Any, value_field: str, distance_band: float = 0) -> dict:
-        res = SpatialAnalyzer.hotspot(geojson, value_field, distance_band=distance_band)
-        return res.to_llm_response()
+    def hotspot_analysis(geojson: Any, value_field: str, distance_band: float = 0,
+                         significance_method: str = "normal",
+                         permutations: int = 999) -> dict:
+        # Foundation V3：significance_method 枚举参数。normal（默认）路径
+        # 逐位走既有 SpatialAnalyzer.hotspot 委托，行为不变；permutation
+        # 路径经包命名空间调实现层（同文件顶部 _geo_lib 注释的理由：
+        # spatial_analyzer.py 不在本批次改动范围内）。
+        params = apply_contract("gi_star_analysis", {
+            "value_field": value_field,
+            "significance_method": significance_method,
+            "permutations": permutations,
+        })
+        if str(params["significance_method"]) == "permutation":
+            data = safe_parse_geojson(geojson)
+            res = _geo_lib.statistics.hotspot_narrated(
+                data, params["value_field"], distance_band=distance_band,
+                significance_method="permutation",
+                permutations=int(params["permutations"]),
+            )
+            payload = res.to_llm_response()
+            if res.success:
+                _attach_scientific_evidence(
+                    payload, "spatial.hotspot.local", tool="hotspot_analysis",
+                    parameters_applied={
+                        "value_field": params["value_field"],
+                        "distance_band": float(distance_band or 0),
+                        "significance_method": "permutation",
+                        "permutations": int(params["permutations"]),
+                    },
+                    feature_count=len(res.data.get("features") or []) or None,
+                    crs=extract_declared_crs(geojson) or "EPSG:4326",
+                    seed=42,
+                )
+            return payload
+        return SpatialAnalyzer.hotspot(geojson, params["value_field"],
+                                       distance_band=distance_band).to_llm_response()
 
     @tool(registry, name="kde_surface",
            description=(
@@ -485,12 +521,15 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "✅ 用于：作为后续叠加分析 / 选址建模的输入数据层。"
                "\n❌ 不要用于：首选可视化——该格网铺满分析范围、不做阈值过滤会遮挡底图；"
                "看分布趋势用 heatmap_data，要矢量等值面用 kde_contours。"
+               "\nbandwidth_method='adaptive' 启用 Abramson 平方根自适应带宽"
+               "（低密度区带宽放大、高密度区收窄；先导带宽与 λ 范围随结果披露）。"
            ),
            tier=2, domains=["statistics"],
            cost="heavy", timeout=300.0,
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "bandwidth": "核函数带宽（米），0=自动（Scott规则，并按最近邻尺度钳制防过平滑）",
+               "bandwidth_method": "'fixed'(默认，单一带宽，行为不变) / 'adaptive'（Abramson 1982 平方根先导律，逐点带宽）",
                "cell_size": "网格单元大小（米），默认500",
                "value_field": "可选：作为权重的数值字段",
                "bounds": "可选：分析范围 [xmin, ymin, xmax, ymax]（WGS84），默认数据范围+10%缓冲",
@@ -508,11 +547,32 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            unit_semantics="meters",
            failure_modes=("invalid_args", "missing_data", "memory"))
     def kde_surface(geojson: Any, bandwidth: float = 0, cell_size: float = 500,
-                    value_field: str = "", bounds: Optional[list] = None) -> dict:
-        res = SpatialAnalyzer.kde_surface(
-            geojson, bandwidth=bandwidth, cell_size=cell_size,
-            value_field=value_field, bounds=bounds,
-        )
+                    value_field: str = "", bounds: Optional[list] = None,
+                    bandwidth_method: str = "fixed") -> dict:
+        if str(bandwidth_method or "fixed").lower() == "adaptive":
+            # adaptive 分支：apply_contract 归一化新参数后经包命名空间直达
+            # 实现层（SpatialAnalyzer 委托尚未覆盖 bandwidth_method；与
+            # V2 工具同一约定）。
+            params = apply_contract("kde_surface_analysis", {
+                "bandwidth": bandwidth,
+                "bandwidth_method": "adaptive",
+                "cell_size": cell_size,
+            })
+            data = safe_parse_geojson(geojson)
+            if not isinstance(data, dict):
+                raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+            res = _geo_lib.density.kde_surface(
+                data, bandwidth=float(params["bandwidth"]),
+                cell_size=float(params["cell_size"]),
+                value_field=value_field, bounds=bounds,
+                bandwidth_method="adaptive",
+            )
+        else:
+            # fixed（默认）：既有路径逐位不变（不引入契约归一化差异）。
+            res = SpatialAnalyzer.kde_surface(
+                geojson, bandwidth=bandwidth, cell_size=cell_size,
+                value_field=value_field, bounds=bounds,
+            )
         return res.to_llm_response()
 
     @tool(registry, name="kde_contours",
@@ -843,6 +903,105 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             )
         return payload
 
+    @tool(registry, name="bivariate_join_count",
+           description="双色 Join Count（two-color join count，Cliff-Ord 1973）："
+                       "恰好取两个值的类别字段（按排序映射 B/W）的邻接同/异类连接检验；"
+                       "n_BB/n_BW/n_WW + free-sampling 解析 z 检验，可选置换复核。"
+                       "与 join_count 不同：接受任意二类数值字段（不要求 0/1）",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "binary_field": "恰好取两个值的类别字段名；>2 或 <2 个取值会被拒绝",
+               "weights_scheme": "二值权重方案：'knn'(默认) / 'queen' / 'rook'（需面要素）/ 'distance_band'",
+               "k": "kNN 邻居数（仅 knn 方案，默认8）",
+               "distance_band": "distance_band 权重的距离阈值（米），0=自动（默认）",
+               "permutations": "置换复核次数：0(默认)=只用解析检验 / 99/199/499/999，固定种子42",
+           })
+    def bivariate_join_count(geojson: Any, binary_field: str, weights_scheme: str = "knn",
+                             k: int = 8, distance_band: float = 0,
+                             permutations: int = 0) -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("bivariate_join_count_analysis", {
+            "binary_field": binary_field,
+            "weights_scheme": weights_scheme,
+            "k": k,
+            "permutations": permutations,
+        })
+        res = _geo_lib.statistics.bivariate_join_count_narrated(
+            data, params["binary_field"],
+            weights_scheme=params["weights_scheme"],
+            k=int(params["k"]),
+            distance_band=float(distance_band or 0),
+            permutations=int(params["permutations"]),
+        )
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.bivariate_join_count", tool="bivariate_join_count",
+                parameters_applied={
+                    "binary_field": params["binary_field"],
+                    "weights_scheme": params["weights_scheme"],
+                    "k": int(params["k"]),
+                    "distance_band": float(distance_band or 0),
+                    "permutations": int(params["permutations"]),
+                },
+                feature_count=res.data.get("n_features"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+                uncertainty=_coerce_uncertainty_blocks(res.data),
+                seed=42 if int(params["permutations"]) > 0 else None,
+            )
+        return payload
+
+    @tool(registry, name="rate_smoothing",
+           description="经验贝叶斯率平滑（Marshall 1991 矩估计先验）：观测计数/风险人口的"
+                       "原始率做先验收缩（weights_scheme 缺省=全局先验；给定权重方案=邻居先验）；"
+                       "输出平滑率/原始率/先验参数/收缩权重。零人口区不产率值（显式披露）",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "输入面要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "count_field": "分子：观测计数数值字段名",
+               "population_field": "分母：风险人口数值字段名（≤0/缺失的区被排除并披露）",
+               "weights_scheme": "先验范围：'none'(默认，全局 EB) / 'knn' / 'queen' / 'rook'（需面要素）/ 'distance_band'（局部邻居先验）",
+               "k": "kNN 邻居数（仅 knn 方案，默认8）",
+               "distance_band": "distance_band 权重的距离阈值（米），0=自动（默认）",
+           })
+    def rate_smoothing(geojson: Any, count_field: str, population_field: str,
+                       weights_scheme: str = "none", k: int = 8,
+                       distance_band: float = 0) -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("rate_smoothing_analysis", {
+            "count_field": count_field,
+            "population_field": population_field,
+            "weights_scheme": weights_scheme,
+            "k": k,
+        })
+        res = _geo_lib.statistics.empirical_bayes_rate_smooth(
+            data, params["count_field"], params["population_field"],
+            weights_scheme=str(params["weights_scheme"]),
+            k=int(params["k"]),
+            distance_band=float(distance_band or 0),
+        )
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.rate_smoothing", tool="rate_smoothing",
+                parameters_applied={
+                    "count_field": params["count_field"],
+                    "population_field": params["population_field"],
+                    "weights_scheme": str(params["weights_scheme"]),
+                    "k": int(params["k"]),
+                    "distance_band": float(distance_band or 0),
+                },
+                feature_count=res.data.get("n_features"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+                uncertainty=_coerce_uncertainty_blocks(res.data),
+            )
+        return payload
+
     @tool(registry, name="bivariate_moran",
            description="双变量 Moran's I（Wartenberg 1985）：x 与 y 的空间滞后 W·y 的共变；"
                        "是共位相关（co-location），不能解释为因果/超前-滞后关系",
@@ -970,7 +1129,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
     @tool(registry, name="ols_regression",
            description="OLS 回归 + 空间诊断：系数表(se/t/p/VIF)、R²/AIC、JB 正态性、"
                        "BP 异方差、残差 Moran's I、LM-lag/LM-error 及稳健版（Anselin 1988）；"
-                       "残差空间依赖显著时给出 SAR/SEM 建议（不自动换模型）",
+                       "残差空间依赖显著时给出 SAR/SEM 建议（不自动换模型）。"
+                       "cov_type 可选 HC0/HC1/HC3 异方差稳健标准误（默认 classic 不变）",
            tier=2, domains=["statistics"], cost="medium",
            param_descriptions={
                "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
@@ -980,6 +1140,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "k": "kNN 邻居数（仅 knn 方案，默认8）",
                "distance_band": "distance_band 权重的距离阈值（米），0=自动（默认）",
                "permutations": "残差 Moran's I 置换次数：99(默认)/199/499/999，固定种子42",
+               "cov_type": "系数协方差：'classic'(默认，经典 (X'X)⁻¹σ²) / 'HC0' / 'HC1' / 'HC3'（MacKinnon-White 稳健标准误，附加列不改系数）",
            },
            side_effect="deterministic_compute",
            network=False,
@@ -994,7 +1155,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            failure_modes=("invalid_args", "missing_data"))
     def ols_regression(geojson: Any, target_field: str, explanatory_fields: str,
                        weights_scheme: str = "knn", k: int = 8,
-                       distance_band: float = 0, permutations: int = 99) -> dict:
+                       distance_band: float = 0, permutations: int = 99,
+                       cov_type: str = "classic") -> dict:
         data = safe_parse_geojson(geojson)
         if not isinstance(data, dict):
             raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
@@ -1004,6 +1166,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             "weights_scheme": weights_scheme,
             "k": k,
             "permutations": permutations,
+            "cov_type": cov_type,
         })
         res = _geo_lib.spatial_regression.ols_regression_narrated(
             data, params["target_field"],
@@ -1012,6 +1175,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             k=int(params["k"]),
             distance_band=float(distance_band or 0),
             permutations=int(params["permutations"]),
+            cov_type=str(params["cov_type"]),
         )
         payload = res.to_llm_response()
         if res.success:
@@ -1024,6 +1188,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                     "k": int(params["k"]),
                     "distance_band": float(distance_band or 0),
                     "permutations": int(params["permutations"]),
+                    "cov_type": str(params["cov_type"]),
                 },
                 feature_count=res.data.get("n_features"),
                 crs=extract_declared_crs(data) or "EPSG:4326",
@@ -1318,5 +1483,293 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                 crs=extract_declared_crs(data) or "EPSG:4326",
                 uncertainty=_coerce_uncertainty_blocks(res.data),
                 seed=42,
+            )
+        return payload
+
+    # ── Foundation V3 工具 ─────────────────────────────────────────────
+    # 模式与上方 V2 工具一致：safe_parse → apply_contract → 实现 →
+    # to_llm_response → _attach_scientific_evidence。
+
+    @tool(registry, name="mgwr_regression",
+           description="多尺度地理加权回归 MGWR（Fotheringham 2017）：每个解释变量"
+                       "（含截距项）独立带宽的 bisquare 反向拟合；输出逐项带宽、"
+                       "逐观测系数面、逐项 ENP、AICc。n≤2000；反向拟合收敛到"
+                       "局部最优（不保证全局最优，已披露）",
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "target_field": "因变量 y 的数值字段名",
+               "explanatory_fields": "自变量字段名列表（逗号分隔）",
+               "bandwidth": "全局带宽初值 = 最近邻数（含自身，默认30）；逐项带宽"
+                            "由反向拟合的 LOO-CV 确定",
+           })
+    def mgwr_regression(geojson: Any, target_field: str, explanatory_fields: str,
+                        bandwidth: int = 30) -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("mgwr_analysis", {
+            "target_field": target_field,
+            "explanatory_fields": explanatory_fields,
+            "bandwidth": bandwidth,
+        })
+        res = _geo_lib.spatial_regression.mgwr_regression_narrated(
+            data, params["target_field"],
+            _split_explanatory(params["explanatory_fields"]),
+            bandwidth=int(params["bandwidth"]),
+        )
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "spatial.mgwr", tool="mgwr_regression",
+                parameters_applied={
+                    "target_field": params["target_field"],
+                    "explanatory_fields": params["explanatory_fields"],
+                    "bandwidth": int(params["bandwidth"]),
+                },
+                feature_count=res.data.get("n_features"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+                uncertainty=_coerce_uncertainty_blocks(res.data),
+            )
+        return payload
+
+    @tool(registry, name="geodetector_ecological",
+           description="生态探测器（Wang 2010）：比较两个分层字段对同一数值字段的"
+                       "解释力（SSW 比较 t 检验）；SSW 显著更小的一侧解释力显著占优"
+                       "（df=n-2 保守选择，双侧 p）",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "value_field": "被解释的数值字段名",
+               "strata_field_1": "第一分层字段名",
+               "strata_field_2": "第二分层字段名",
+               "bins": "数值分层字段的分位数分箱数（2-20）；0=按原值类别（≤12 唯一值时）",
+           })
+    def geodetector_ecological(geojson: Any, value_field: str,
+                               strata_field_1: str, strata_field_2: str,
+                               bins: int = 0) -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("geodetector_ecological_analysis", {
+            "value_field": value_field,
+            "strata_field_1": strata_field_1,
+            "strata_field_2": strata_field_2,
+            "bins": bins,
+        })
+        res = _geo_lib.statistics.geodetector_ecological_narrated(
+            data, params["value_field"],
+            params["strata_field_1"], params["strata_field_2"],
+            bins=int(params["bins"]),
+        )
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.geodetector_ecological",
+                tool="geodetector_ecological",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "strata_field_1": params["strata_field_1"],
+                    "strata_field_2": params["strata_field_2"],
+                    "bins": int(params["bins"]),
+                },
+                feature_count=res.data.get("n_features"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+                uncertainty=_coerce_uncertainty_blocks(res.data),
+            )
+        return payload
+
+    @tool(registry, name="geodetector_risk",
+           description="风险探测器（Wang 2010）：逐分层对的均值差显著性"
+                       "（Welch t + 可选固定种子42的标签置换复核）；"
+                       "输出对列表与方向矩阵，p<0.05 才判 higher/lower",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "value_field": "被解释的数值字段名",
+               "strata_field": "分层字段名（类别，或数值字段+bins 分箱）",
+               "bins": "数值分层字段的分位数分箱数（2-20）；0=按原值类别（≤12 唯一值时）",
+               "permutations": "逐对置换复核次数：0(默认)=只用 Welch t / 99/199/499/999，固定种子42",
+           })
+    def geodetector_risk(geojson: Any, value_field: str, strata_field: str,
+                         bins: int = 0, permutations: int = 0) -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("geodetector_risk_analysis", {
+            "value_field": value_field,
+            "strata_field": strata_field,
+            "bins": bins,
+            "permutations": permutations,
+        })
+        res = _geo_lib.statistics.geodetector_risk_narrated(
+            data, params["value_field"], params["strata_field"],
+            bins=int(params["bins"]),
+            permutations=int(params["permutations"]),
+        )
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.geodetector_risk", tool="geodetector_risk",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "strata_field": params["strata_field"],
+                    "bins": int(params["bins"]),
+                    "permutations": int(params["permutations"]),
+                },
+                feature_count=res.data.get("n_features"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+                uncertainty=_coerce_uncertainty_blocks(res.data),
+                seed=42 if int(params["permutations"]) > 0 else None,
+            )
+        return payload
+
+    @tool(registry, name="local_join_count",
+           description="局部 Join Count（Anselin & Li 2019）：二值(0/1)场的逐位置"
+                       "共位簇检测（LJC_i=邻域同类连接数）；条件置换 p（固定种子42）"
+                       "+ BH 多重校正；y=0 位置恒中性。非二值字段会被拒绝",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "binary_field": "二值（0/1）字段名；含其他值会被拒绝",
+               "weights_scheme": "二值对称权重方案：'knn'(默认) / 'queen' / 'rook'（需面要素）/ 'distance_band'",
+               "k": "kNN 邻居数（仅 knn 方案，默认8）",
+               "distance_band": "distance_band 权重的距离阈值（米），0=自动（默认）",
+               "permutations": "条件置换次数：999(默认)/99/199/499，固定种子42",
+               "correction": "多重校正：bh(默认)/bonferroni/holm/none",
+           })
+    def local_join_count(geojson: Any, binary_field: str,
+                         weights_scheme: str = "knn", k: int = 8,
+                         distance_band: float = 0, permutations: int = 999,
+                         correction: str = "bh") -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("local_join_count_analysis", {
+            "binary_field": binary_field,
+            "weights_scheme": weights_scheme,
+            "k": k,
+            "permutations": permutations,
+            "correction": correction,
+        })
+        res = _geo_lib.statistics.local_join_count_narrated(
+            data, params["binary_field"],
+            weights_scheme=params["weights_scheme"],
+            k=int(params["k"]),
+            distance_band=float(distance_band or 0),
+            permutations=int(params["permutations"]),
+            correction=str(params["correction"]),
+        )
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.local_join_count", tool="local_join_count",
+                parameters_applied={
+                    "binary_field": params["binary_field"],
+                    "weights_scheme": params["weights_scheme"],
+                    "k": int(params["k"]),
+                    "distance_band": float(distance_band or 0),
+                    "permutations": int(params["permutations"]),
+                    "correction": str(params["correction"]),
+                },
+                feature_count=res.data.get("n_features"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+                uncertainty=_coerce_uncertainty_blocks(res.data),
+                seed=42,
+            )
+        return payload
+
+    @tool(registry, name="bivariate_local_moran",
+           description="双变量局部 Moran（esda 委托，固定种子42）：x 与 y 空间滞后"
+                       "的逐位置共位/互斥检测（HH/LH/LL/HL 标签 + BH q 值）；"
+                       "共位相关不能解释为因果/超前-滞后关系",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "value_field": "x 的数值字段名",
+               "lag_field": "y 的数值字段名（取其空间滞后 W·y）",
+               "weights_scheme": "空间权重方案：'knn'(默认) / 'queen' / 'rook'（需面要素）/ 'distance_band'",
+               "k": "kNN 邻居数（仅 knn 方案，默认8）",
+               "distance_band": "distance_band 权重的距离阈值（米），0=自动（默认）",
+               "permutations": "条件随机化次数：999(默认)/99/199/499，固定种子42",
+           })
+    def bivariate_local_moran(geojson: Any, value_field: str, lag_field: str,
+                              weights_scheme: str = "knn", k: int = 8,
+                              distance_band: float = 0,
+                              permutations: int = 999) -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("bivariate_local_moran_analysis", {
+            "value_field": value_field,
+            "lag_field": lag_field,
+            "weights_scheme": weights_scheme,
+            "k": k,
+            "permutations": permutations,
+        })
+        res = _geo_lib.statistics.bivariate_local_moran_narrated(
+            data, params["value_field"], params["lag_field"],
+            weights_scheme=params["weights_scheme"],
+            k=int(params["k"]),
+            distance_band=float(distance_band or 0),
+            permutations=int(params["permutations"]),
+        )
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.bivariate_local_moran",
+                tool="bivariate_local_moran",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "lag_field": params["lag_field"],
+                    "weights_scheme": params["weights_scheme"],
+                    "k": int(params["k"]),
+                    "distance_band": float(distance_band or 0),
+                    "permutations": int(params["permutations"]),
+                },
+                feature_count=res.data.get("n_features"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+                uncertainty=_coerce_uncertainty_blocks(res.data),
+                seed=42,
+            )
+        return payload
+
+    @tool(registry, name="weights_diagnostics",
+           description="空间权重诊断：给定权重方案（knn/queen/rook/distance_band）"
+                       "的结构体检——稀疏度/对称性/行标准化/邻居分布/孤岛/连通分量，"
+                       "并给结构警告（孤岛、不对称、多分量）。确定性、零随机",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "weights_scheme": "待诊断的权重方案：'knn'(默认) / 'queen' / 'rook'（需面要素）/ 'distance_band'",
+               "k": "kNN 邻居数（仅 knn 方案，默认8）",
+               "distance_band": "distance_band 权重阈值（米），0=按8近邻平均距离自动（默认）",
+           })
+    def weights_diagnostics(geojson: Any, weights_scheme: str = "knn",
+                            k: int = 8, distance_band: float = 0) -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("weights_diagnostics_analysis", {
+            "weights_scheme": weights_scheme,
+            "k": k,
+        })
+        res = _geo_lib.statistics.weights_diagnostics_narrated(
+            data,
+            weights_scheme=params["weights_scheme"],
+            k=int(params["k"]),
+            distance_band=float(distance_band or 0),
+        )
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.weights_diagnostics", tool="weights_diagnostics",
+                parameters_applied={
+                    "weights_scheme": params["weights_scheme"],
+                    "k": int(params["k"]),
+                    "distance_band": float(distance_band or 0),
+                },
+                feature_count=res.data.get("n_features"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
             )
         return payload

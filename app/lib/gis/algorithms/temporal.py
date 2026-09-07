@@ -25,6 +25,17 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             output_artifact_type="stats_table", tool_candidates=["temporal_profile"],
             cpu_cost="low", memory_cost="low", io_cost="low",
             preferred_execution_policy="INLINE", priority=10,
+            algorithm_family="temporal_descriptive",
+            assumptions=["时间字段解析 NaT 剔除并披露（与 ST-DBSCAN 同约定）",
+                         "画像/聚合为描述性统计，不做趋势推断"],
+            limitations=["无时区归一（时间戳语义由输入披露决定）",
+                         "空时间维度 → 类型化错误（不伪造空统计）"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/test_temporal_gis_runtime.py::test_temporal_profiler_auto_detect",
+            ]
         ),
 
         AlgorithmDescriptor(
@@ -34,7 +45,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             output_artifact_type="stats_table", tool_candidates=["temporal_aggregate"],
             cpu_cost="medium", memory_cost="low", io_cost="low",
             preferred_execution_policy="THREAD", priority=10,
-        ),
+            algorithm_family="temporal_descriptive",
+            assumptions=["按时间粒度分组聚合（描述性）；NaT 剔除并披露"],
+            limitations=["分组键时区语义不归一（诚实披露）"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+                ),
 
         AlgorithmDescriptor(
             id="temporal.trend", name="时序趋势", category="temporal_analysis",
@@ -105,6 +121,48 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             parameter_contract_ref="temporal_changepoint_analysis",
         ),
 
+        # ── Foundation V3：经典季节分解（centered MA；非 STL）──────────
+        AlgorithmDescriptor(
+            id="temporal.seasonal_decompose", name="经典季节分解",
+            category="temporal_analysis",
+            capabilities=["temporal_trend"],
+            input_artifact_types=["stats_table"],
+            output_artifact_type="stats_table",
+            tool_candidates=["temporal_seasonal_decompose"],
+            cpu_cost="low", memory_cost="low", io_cost="low",
+            preferred_execution_policy="INLINE", priority=15,
+            algorithm_family="seasonal_decomposition",
+            method_references=["makridakis1998"],
+            assumptions=[
+                "经典 MA 分解：趋势=奇数窗口（period）中心滑动平均",
+                "季节指数=去趋势值按相位 t mod period 的组均值；additive 归一化 Σs=0",
+                "余项 additive = y−trend−seasonal；multiplicative = y/(trend·seasonal)",
+                "至少 2 个完整周期（n ≥ 2×period，否则拒绝）；首尾 (period−1)/2 "
+                "个位置趋势/余项无定义（None）",
+            ],
+            limitations=[
+                "经典 MA 分解不是 STL——无迭代稳健拟合、无季节平滑，对离群值敏感",
+                "period 必须为奇数（偶数窗口的中心 MA 需 2×m 复合平均，显式拒绝）",
+                "multiplicative 要求序列严格为正",
+            ],
+            crs_class="CRS_AGNOSTIC",
+            scientific_preconditions=[
+                "min_temporal_observations:6",
+                "temporal_field_required",
+            ],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="线性斜坡+固定季节构造下：趋势=斜坡的中心 MA、"
+                                "季节指数=构造季节、余项=0（1e-9）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_completeness_v3.py::test_seasonal_decompose_sine_plus_linear_exact",
+                "tests/unit/lib/test_completeness_v3.py::test_seasonal_decompose_additive_reconstruction",
+                "tests/unit/lib/test_completeness_v3.py::test_seasonal_decompose_typed_rejections",
+            ],
+            parameter_contract_ref="seasonal_decompose_analysis",
+        ),
+
         AlgorithmDescriptor(
             id="temporal.change", name="时序变化", category="temporal_analysis",
             capabilities=["change_detection"],
@@ -112,6 +170,15 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             output_artifact_type="change_set", tool_candidates=["temporal_change"],
             cpu_cost="medium", memory_cost="low", io_cost="low",
             preferred_execution_policy="THREAD", priority=10,
+            algorithm_family="temporal_descriptive",
+            assumptions=["双期快照对比（描述性集合差：新增/消失/保持）"],
+            limitations=["无匹配容差语义（同键精确匹配）"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/test_temporal_gis_runtime.py::test_temporal_change_engine_multi_snapshot",
+            ]
         ),
 
         AlgorithmDescriptor(
@@ -121,7 +188,13 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             output_artifact_type="hotspot_result", tool_candidates=["spatiotemporal_hotspot"],
             cpu_cost="high", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD", priority=15,
-        ),
+            algorithm_family="temporal_descriptive",
+            assumptions=["时间片 × 空间箱计数矩阵（描述性）",
+                         "非时空扫描统计（与 LISA/Knox 语义正交）"],
+            limitations=["箱宽选择敏感（参数披露）"],
+            crs_class="GEOGRAPHIC_OK",
+            random_seed_policy="deterministic",
+                ),
 
         AlgorithmDescriptor(
             id="temporal.raster_ts", name="时序栅格", category="temporal_analysis",
@@ -130,6 +203,15 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             output_artifact_type="raster_surface", tool_candidates=["temporal_raster"],
             cpu_cost="medium", memory_cost="medium", io_cost="high",
             preferred_execution_policy="THREAD", priority=30,
+            algorithm_family="temporal_descriptive",
+            assumptions=["时序栅格切片统计（逐期描述性统计）"],
+            limitations=["栈深与格网规模守卫在实现层（ResourceScaleMismatch）"],
+            crs_class="RASTER_GRID",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/test_temporal_gis_runtime.py::test_temporal_raster_engine_mock",
+            ]
         ),
 ]
 
@@ -159,6 +241,25 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="seed", type="integer", default=42,
                 description="bootstrap 随机种子（可复现）",
+            ),
+        ],
+    ),
+    # Foundation V3：经典季节分解契约（period 奇数；至少 2 个完整周期）。
+    # values 序列本身是数据输入（同 geojson），不进契约。
+    ParameterContract(
+        id="seasonal_decompose_analysis", version=1,
+        description="经典季节分解：周期（奇数）+ 分解模型（additive/multiplicative）。",
+        parameters=[
+            ParameterSpec(
+                name="period", type="integer", required=True, minimum=3,
+                unit="count",
+                description="季节周期长度（必须为奇数；n ≥ 2×period 才可分解）",
+            ),
+            ParameterSpec(
+                name="model", type="enum", default="additive",
+                enum_values=["additive", "multiplicative"],
+                description="additive=加法（默认）；multiplicative=乘法"
+                            "（要求序列严格为正）",
             ),
         ],
     ),

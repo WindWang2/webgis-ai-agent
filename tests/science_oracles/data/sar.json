@@ -1,0 +1,4240 @@
+{
+ "cases": [
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 25.0
+   },
+   "id": "calibrate_beta0_amp_00",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "beta0"
+   },
+   "note": "β⁰ = DN²/K 独立复算（振幅先平方再除 K）",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.1",
+    "value": 100.0
+   },
+   "id": "calibrate_beta0_amp_01",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "beta0"
+   },
+   "note": "β⁰ = DN²/K 独立复算（振幅先平方再除 K）",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.0",
+    "value": 225.0
+   },
+   "id": "calibrate_beta0_amp_10",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "beta0"
+   },
+   "note": "β⁰ = DN²/K 独立复算（振幅先平方再除 K）",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.1",
+    "value": 400.0
+   },
+   "id": "calibrate_beta0_amp_11",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "beta0"
+   },
+   "note": "β⁰ = DN²/K 独立复算（振幅先平方再除 K）",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 12.5
+   },
+   "id": "calibrate_sigma0_00",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "sigma0"
+   },
+   "note": "σ⁰ = (DN²/K)·sin(θ) 独立复算",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 14.43375673
+   },
+   "id": "calibrate_gamma0_00",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "gamma0"
+   },
+   "note": "γ⁰ = (DN²/K)·tan(θ) 独立复算",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.1",
+    "value": 50.0
+   },
+   "id": "calibrate_sigma0_01",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "sigma0"
+   },
+   "note": "σ⁰ = (DN²/K)·sin(θ) 独立复算",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.1",
+    "value": 57.735026919
+   },
+   "id": "calibrate_gamma0_01",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "gamma0"
+   },
+   "note": "γ⁰ = (DN²/K)·tan(θ) 独立复算",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.0",
+    "value": 112.5
+   },
+   "id": "calibrate_sigma0_10",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "sigma0"
+   },
+   "note": "σ⁰ = (DN²/K)·sin(θ) 独立复算",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.0",
+    "value": 129.90381057
+   },
+   "id": "calibrate_gamma0_10",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "gamma0"
+   },
+   "note": "γ⁰ = (DN²/K)·tan(θ) 独立复算",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.1",
+    "value": 200.0
+   },
+   "id": "calibrate_sigma0_11",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "sigma0"
+   },
+   "note": "σ⁰ = (DN²/K)·sin(θ) 独立复算",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.1",
+    "value": 230.94010768
+   },
+   "id": "calibrate_gamma0_11",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "gamma0"
+   },
+   "note": "γ⁰ = (DN²/K)·tan(θ) 独立复算",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      8.0,
+      12.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 2.0
+   },
+   "id": "calibrate_beta0_intensity_0",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "input_domain": "dn_intensity",
+    "output_product": "beta0"
+   },
+   "note": "强度域直通 I/K",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      8.0,
+      12.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.1",
+    "value": 3.0
+   },
+   "id": "calibrate_beta0_intensity_1",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "input_domain": "dn_intensity",
+    "output_product": "beta0"
+   },
+   "note": "强度域直通 I/K",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      25.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 1.25
+   },
+   "id": "calibrate_beta0_intensity2_0",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "input_domain": "dn_intensity",
+    "output_product": "beta0"
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      25.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.1",
+    "value": 6.25
+   },
+   "id": "calibrate_beta0_intensity2_1",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "input_domain": "dn_intensity",
+    "output_product": "beta0"
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "meta.products_computed",
+    "value": [
+     "sigma0",
+     "beta0",
+     "gamma0"
+    ]
+   },
+   "id": "calibrate_all_products",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "all"
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "meta.primary_product",
+    "value": "sigma0"
+   },
+   "id": "calibrate_primary_is_sigma0",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "all"
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 10.96910013
+   },
+   "id": "calibrate_sigma0_db",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "sigma0",
+    "to_db": true
+   },
+   "note": "dB = 10·log₁₀（强度量纲惯例）",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.0",
+    "value": 194.85571585
+   },
+   "id": "calibrate_incidence_map",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_map": [
+     [
+      30.0,
+      45.0
+     ],
+     [
+      60.0,
+      30.0
+     ]
+    ],
+    "input_domain": "dn_amplitude",
+    "output_product": "sigma0"
+   },
+   "note": "逐像元 σ⁰ = (DN²/K)·sin(θ_ij) 独立复算",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "meta.formula",
+    "value": "σ⁰ = (DN²/K)·sin(θ) 或 (DN/K)²·sin(θ)"
+   },
+   "id": "calibrate_formula_text",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "sigma0"
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "MISSING_REQUIRED_FIELD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "calibrate_missing_k",
+   "kwargs": {
+    "calibration_constant": null,
+    "incidence_deg": 30.0
+   },
+   "note": "K 显式缺省（JSON null）→ 拒绝虚构定标常数",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "calibrate_zero_k",
+   "kwargs": {
+    "calibration_constant": 0.0
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      -10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "UNSUPPORTED_METHOD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "calibrate_negative_dn",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "input_domain": "dn_amplitude",
+    "output_product": "beta0"
+   },
+   "note": "负振幅物理无意义（拒绝前不做任何计算）",
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "INVALID_UNITS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "calibrate_incidence_over_90",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 95.0,
+    "output_product": "sigma0"
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "INVALID_UNITS",
+    "kind": "error",
+    "value": null
+   },
+   "id": "calibrate_incidence_zero",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 0.0,
+    "output_product": "sigma0"
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "calibrate_both_incidence_modes",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "incidence_deg": 30.0,
+    "incidence_map": [
+     [
+      30.0,
+      45.0
+     ],
+     [
+      60.0,
+      30.0
+     ]
+    ],
+    "output_product": "sigma0"
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "MISSING_REQUIRED_FIELD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "calibrate_sigma0_needs_incidence",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "output_product": "sigma0"
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "calibrate_bad_product",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "output_product": "tau0"
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     [
+      10.0,
+      20.0
+     ],
+     [
+      30.0,
+      40.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "calibrate_bad_domain",
+   "kwargs": {
+    "calibration_constant": 4.0,
+    "input_domain": "db"
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     2.0
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "calibrate_1d_input",
+   "kwargs": {
+    "calibration_constant": 4.0
+   },
+   "target": "app.lib.geo_analysis.sar_calibration:calibrate_sar"
+  },
+  {
+   "args": [
+    {
+     "meta": {
+      "input_domain": "dn_amplitude",
+      "products_computed": [
+       "beta0"
+      ]
+     },
+     "to_db": false
+    }
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "calibration_input_domain",
+    "value": "dn_amplitude"
+   },
+   "id": "calibration_evidence_domain",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.sar_calibration:calibration_evidence_facts"
+  },
+  {
+   "args": [
+    {
+     "meta": {
+      "input_domain": "dn_amplitude",
+      "products_computed": [
+       "beta0"
+      ]
+     },
+     "to_db": false
+    }
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "calibration_products",
+    "value": "beta0"
+   },
+   "id": "calibration_evidence_products",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.sar_calibration:calibration_evidence_facts"
+  },
+  {
+   "args": [
+    {
+     "meta": {
+      "input_domain": "dn_amplitude",
+      "products_computed": [
+       "beta0"
+      ]
+     },
+     "to_db": true
+    }
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "calibration_to_db",
+    "value": true
+   },
+   "id": "calibration_evidence_todb",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.sar_calibration:calibration_evidence_facts"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.1.1",
+    "value": 13.927529475
+   },
+   "id": "lee_hand_window_11",
+   "kwargs": {
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "Lee 1980 MMSE 手窗口独立循环复算（reflect 窗口统计）",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.0.0",
+    "value": 13.381107665
+   },
+   "id": "lee_hand_window_00",
+   "kwargs": {
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "Lee 1980 MMSE 手窗口独立循环复算（reflect 窗口统计）",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.2.2",
+    "value": 11.603960396
+   },
+   "id": "lee_hand_window_22",
+   "kwargs": {
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "Lee 1980 MMSE 手窗口独立循环复算（reflect 窗口统计）",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.1.0",
+    "value": 13.327464669
+   },
+   "id": "lee_hand_window_10",
+   "kwargs": {
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "Lee 1980 MMSE 手窗口独立循环复算（reflect 窗口统计）",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.0.2",
+    "value": 12.409055425
+   },
+   "id": "lee_hand_window_02",
+   "kwargs": {
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "Lee 1980 MMSE 手窗口独立循环复算（reflect 窗口统计）",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.2.1",
+    "value": 12.364672365
+   },
+   "id": "lee_hand_window_21",
+   "kwargs": {
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "Lee 1980 MMSE 手窗口独立循环复算（reflect 窗口统计）",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.0.1",
+    "value": 13.095998456
+   },
+   "id": "lee_hand_window_01",
+   "kwargs": {
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "Lee 1980 MMSE 手窗口独立循环复算（reflect 窗口统计）",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.1.2",
+    "value": 12.274074074
+   },
+   "id": "lee_hand_window_12",
+   "kwargs": {
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "Lee 1980 MMSE 手窗口独立循环复算（reflect 窗口统计）",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.2.0",
+    "value": 12.594935297
+   },
+   "id": "lee_hand_window_20",
+   "kwargs": {
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "Lee 1980 MMSE 手窗口独立循环复算（reflect 窗口统计）",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      17.381935595625155,
+      5.041524118732167,
+      15.040457106712752,
+      16.87383028021428,
+      18.177208217366776
+     ],
+     [
+      14.015228363179721,
+      13.816859390120932,
+      18.51826091992219,
+      9.668663129477999,
+      19.776099598473362
+     ],
+     [
+      12.26348050390256,
+      12.219333234891627,
+      -9999.0,
+      16.706736732918934,
+      9.120503340446806
+     ],
+     [
+      13.805522141439255,
+      14.912831600359093,
+      18.52976188021734,
+      11.760968138417581,
+      16.19291569929978
+     ],
+     [
+      15.204775664664073,
+      5.173560070296613,
+      6.058270017403617,
+      18.850477724620486,
+      6.53863677952908
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.1.1",
+    "value": 14.041394271
+   },
+   "id": "lee_nodata_window_11",
+   "kwargs": {
+    "enl": 8.0,
+    "nodata": -9999.0,
+    "window": 5
+   },
+   "note": "窗口统计只在有效像元上计算（nodata 哨兵，填充 0 不计入）",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      17.381935595625155,
+      5.041524118732167,
+      15.040457106712752,
+      16.87383028021428,
+      18.177208217366776
+     ],
+     [
+      14.015228363179721,
+      13.816859390120932,
+      18.51826091992219,
+      9.668663129477999,
+      19.776099598473362
+     ],
+     [
+      12.26348050390256,
+      12.219333234891627,
+      -9999.0,
+      16.706736732918934,
+      9.120503340446806
+     ],
+     [
+      13.805522141439255,
+      14.912831600359093,
+      18.52976188021734,
+      11.760968138417581,
+      16.19291569929978
+     ],
+     [
+      15.204775664664073,
+      5.173560070296613,
+      6.058270017403617,
+      18.850477724620486,
+      6.53863677952908
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.3.3",
+    "value": 11.933102367
+   },
+   "id": "lee_nodata_window_33",
+   "kwargs": {
+    "enl": 8.0,
+    "nodata": -9999.0,
+    "window": 5
+   },
+   "note": "窗口统计只在有效像元上计算（nodata 哨兵，填充 0 不计入）",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "array.1.1",
+    "value": 5.0
+   },
+   "id": "lee_constant_field_identity",
+   "kwargs": {
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "常数场 var=0 → k=0 → 输出 = 均值（诚实恒等）",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      17.381935595625155,
+      5.041524118732167,
+      15.040457106712752,
+      16.87383028021428,
+      18.177208217366776
+     ],
+     [
+      14.015228363179721,
+      13.816859390120932,
+      18.51826091992219,
+      9.668663129477999,
+      19.776099598473362
+     ],
+     [
+      12.26348050390256,
+      12.219333234891627,
+      -9999.0,
+      16.706736732918934,
+      9.120503340446806
+     ],
+     [
+      13.805522141439255,
+      14.912831600359093,
+      18.52976188021734,
+      11.760968138417581,
+      16.19291569929978
+     ],
+     [
+      15.204775664664073,
+      5.173560070296613,
+      6.058270017403617,
+      18.850477724620486,
+      6.53863677952908
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "enl",
+    "value": 9.2681588624
+   },
+   "id": "lee_enl_moment_estimate",
+   "kwargs": {
+    "nodata": -9999.0,
+    "window": 3
+   },
+   "note": "ENL = mean²/var（总体方差 ddof=0；有效像元上）矩估计",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      17.381935595625155,
+      5.041524118732167,
+      15.040457106712752,
+      16.87383028021428,
+      18.177208217366776
+     ],
+     [
+      14.015228363179721,
+      13.816859390120932,
+      18.51826091992219,
+      9.668663129477999,
+      19.776099598473362
+     ],
+     [
+      12.26348050390256,
+      12.219333234891627,
+      -9999.0,
+      16.706736732918934,
+      9.120503340446806
+     ],
+     [
+      13.805522141439255,
+      14.912831600359093,
+      18.52976188021734,
+      11.760968138417581,
+      16.19291569929978
+     ],
+     [
+      15.204775664664073,
+      5.173560070296613,
+      6.058270017403617,
+      18.850477724620486,
+      6.53863677952908
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "enl_source",
+    "value": "estimated"
+   },
+   "id": "lee_enl_source_estimated",
+   "kwargs": {
+    "nodata": -9999.0,
+    "window": 3
+   },
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      17.381935595625155,
+      5.041524118732167,
+      15.040457106712752,
+      16.87383028021428,
+      18.177208217366776
+     ],
+     [
+      14.015228363179721,
+      13.816859390120932,
+      18.51826091992219,
+      9.668663129477999,
+      19.776099598473362
+     ],
+     [
+      12.26348050390256,
+      12.219333234891627,
+      -9999.0,
+      16.706736732918934,
+      9.120503340446806
+     ],
+     [
+      13.805522141439255,
+      14.912831600359093,
+      18.52976188021734,
+      11.760968138417581,
+      16.19291569929978
+     ],
+     [
+      15.204775664664073,
+      5.173560070296613,
+      6.058270017403617,
+      18.850477724620486,
+      6.53863677952908
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "enl_source",
+    "value": "explicit"
+   },
+   "id": "lee_enl_source_explicit",
+   "kwargs": {
+    "enl": 8.0,
+    "nodata": -9999.0,
+    "window": 3
+   },
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "frost"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.1.1",
+    "value": 13.098503178
+   },
+   "id": "frost_hand_window_11",
+   "kwargs": {
+    "damping": 1.0,
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "Frost 1982 exp(−k·d) 权重独立循环复算",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "frost"
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-09,
+    "select": "array.0.1",
+    "value": 13.680367662
+   },
+   "id": "frost_hand_window_01",
+   "kwargs": {
+    "damping": 1.0,
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "Frost 1982 exp(−k·d) 权重独立循环复算",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    "frost"
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "array.1.1",
+    "value": 5.0
+   },
+   "id": "frost_constant_field_identity",
+   "kwargs": {
+    "damping": 2.0,
+    "enl": 4.0,
+    "window": 3
+   },
+   "note": "常数场 CV=0 → k=0 → 权重全 1 → 输出 = 均值",
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ],
+     [
+      5.0,
+      5.0,
+      5.0
+     ]
+    ],
+    "refined_lee"
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "array.2.2",
+    "value": 5.0
+   },
+   "id": "refined_lee_constant_field_identity",
+   "kwargs": {
+    "enl": 8.0,
+    "window": 5
+   },
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "frost"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "frost_damping_below_range",
+   "kwargs": {
+    "damping": 0.1,
+    "enl": 4.0,
+    "window": 3
+   },
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "frost"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "frost_damping_above_range",
+   "kwargs": {
+    "damping": 6.0,
+    "enl": 4.0,
+    "window": 3
+   },
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "speckle_bad_window",
+   "kwargs": {
+    "enl": 4.0,
+    "window": 4
+   },
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      12.0,
+      13.0,
+      11.0
+     ],
+     [
+      14.0,
+      20.0,
+      12.0
+     ],
+     [
+      11.0,
+      12.0,
+      10.0
+     ]
+    ],
+    "median"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "speckle_bad_method",
+   "kwargs": {
+    "enl": 4.0
+   },
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      -1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "code": "UNSUPPORTED_METHOD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "speckle_negative_input_db",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      3.0,
+      3.0,
+      3.0,
+      3.0
+     ],
+     [
+      3.0,
+      3.0,
+      3.0,
+      3.0
+     ],
+     [
+      3.0,
+      3.0,
+      3.0,
+      3.0
+     ],
+     [
+      3.0,
+      3.0,
+      3.0,
+      3.0
+     ]
+    ],
+    "lee"
+   ],
+   "expect": {
+    "code": "DEGENERATE_DATA",
+    "kind": "error",
+    "value": null
+   },
+   "id": "speckle_constant_field_enl_undefined",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     2.0
+    ],
+    "lee"
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "speckle_1d_input",
+   "kwargs": {
+    "enl": 4.0
+   },
+   "target": "app.lib.geo_analysis.sar_filter:speckle_filter"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 3.2
+   },
+   "id": "stack_mean_reference",
+   "kwargs": {
+    "product": "mean"
+   },
+   "note": "np.nan-统计独立复算",
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.1",
+    "value": 3.2
+   },
+   "id": "stack_mean_pixel11",
+   "kwargs": {
+    "product": "mean"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 1.7204650534
+   },
+   "id": "stack_std_reference",
+   "kwargs": {
+    "product": "std"
+   },
+   "note": "np.nan-统计独立复算（总体 std ddof=0）",
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.1",
+    "value": 1.7204650534
+   },
+   "id": "stack_std_pixel11",
+   "kwargs": {
+    "product": "std"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 1.0
+   },
+   "id": "stack_min_reference",
+   "kwargs": {
+    "product": "min"
+   },
+   "note": "np.nan-统计独立复算",
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.1",
+    "value": 1.0
+   },
+   "id": "stack_min_pixel11",
+   "kwargs": {
+    "product": "min"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 6.0
+   },
+   "id": "stack_max_reference",
+   "kwargs": {
+    "product": "max"
+   },
+   "note": "np.nan-统计独立复算",
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.1",
+    "value": 6.0
+   },
+   "id": "stack_max_pixel11",
+   "kwargs": {
+    "product": "max"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 5.0
+   },
+   "id": "stack_range_reference",
+   "kwargs": {
+    "product": "range"
+   },
+   "note": "np.nan-统计独立复算",
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.1",
+    "value": 5.0
+   },
+   "id": "stack_range_pixel11",
+   "kwargs": {
+    "product": "range"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       -9999.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       -9999.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 2.6666666667
+   },
+   "id": "stack_mean_nodata_masked",
+   "kwargs": {
+    "nodata": -9999.0,
+    "product": "mean"
+   },
+   "note": "哨兵值逐切片剔除后在其余有效切片统计",
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       -9999.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       -9999.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "meta.pixels_partially_valid",
+    "value": 1
+   },
+   "id": "stack_partial_valid_meta",
+   "kwargs": {
+    "nodata": -9999.0,
+    "product": "mean"
+   },
+   "note": "部分有效像元计数（独立计数）",
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       -9999.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       -9999.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "meta.pixels_all_slices_valid",
+    "value": 3
+   },
+   "id": "stack_all_valid_meta",
+   "kwargs": {
+    "nodata": -9999.0,
+    "product": "mean"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "cv.0.0",
+    "value": 0.53764532919
+   },
+   "id": "stack_cv_reference",
+   "kwargs": {
+    "include_cv": true,
+    "product": "mean"
+   },
+   "note": "CV = std/mean（ddof=0）独立复算",
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "percentiles.p25.0.0",
+    "value": 2.0
+   },
+   "id": "stack_p25_reference",
+   "kwargs": {
+    "percentiles": [
+     25.0,
+     90.0
+    ],
+    "product": "mean"
+   },
+   "note": "np.nanpercentile 线性插值法独立复算",
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "meta.percentiles_requested",
+    "value": [
+     25.0,
+     90.0
+    ]
+   },
+   "id": "stack_percentile_requested",
+   "kwargs": {
+    "percentiles": [
+     25.0,
+     90.0
+    ],
+    "product": "mean"
+   },
+   "note": "请求顺序保留",
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "stack_bad_product",
+   "kwargs": {
+    "product": "median"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "RESOURCE_SCALE_MISMATCH",
+    "kind": "error",
+    "value": null
+   },
+   "id": "stack_T_over_24",
+   "kwargs": {
+    "product": "mean"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "stack_percentiles_over_5",
+   "kwargs": {
+    "percentiles": [
+     10.0,
+     20.0,
+     30.0,
+     40.0,
+     50.0,
+     60.0
+    ],
+    "product": "mean"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "stack_percentile_over_100",
+   "kwargs": {
+    "percentiles": [
+     101.0
+    ],
+    "product": "mean"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      1.0,
+      2.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "stack_2d_input",
+   "kwargs": {
+    "product": "mean"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_stack_statistics"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 3.0
+   },
+   "id": "composite_median_reference",
+   "kwargs": {
+    "method": "median"
+   },
+   "note": "np.nanmedian 独立复算",
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_composite"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 3.2
+   },
+   "id": "composite_mean_reference",
+   "kwargs": {
+    "method": "mean"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_composite"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 4.0
+   },
+   "id": "composite_p75_reference",
+   "kwargs": {
+    "method": "percentile",
+    "percentile": 75.0
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_composite"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "MISSING_REQUIRED_FIELD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "composite_percentile_needs_param",
+   "kwargs": {
+    "method": "percentile"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_composite"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "composite_bad_method",
+   "kwargs": {
+    "method": "sum"
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_composite"
+  },
+  {
+   "args": [
+    [
+     [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       2.0
+      ],
+      [
+       2.0,
+       2.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       3.0
+      ],
+      [
+       3.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       6.0,
+       6.0
+      ],
+      [
+       6.0,
+       6.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       4.0
+      ],
+      [
+       4.0,
+       4.0
+      ]
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "composite_percentile_range",
+   "kwargs": {
+    "method": "percentile",
+    "percentile": 101.0
+   },
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_composite"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      4.0
+     ],
+     [
+      6.0,
+      8.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 2.0
+   },
+   "id": "vh_ratio_00",
+   "kwargs": {},
+   "note": "线性功率域比值 vv/vh 独立复算",
+   "target": "app.lib.geo_analysis.sar_temporal:vh_ratio"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      4.0
+     ],
+     [
+      6.0,
+      8.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.1.0",
+    "value": 2.0
+   },
+   "id": "vh_ratio_10",
+   "kwargs": {},
+   "note": "线性功率域比值 vv/vh 独立复算",
+   "target": "app.lib.geo_analysis.sar_temporal:vh_ratio"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      4.0
+     ],
+     [
+      6.0,
+      8.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0
+     ]
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "stats.valid_pixels",
+    "value": 3
+   },
+   "id": "vh_ratio_zero_denominator_invalid",
+   "kwargs": {},
+   "note": "VH=0 像元 NaN（有效像元计数独立判定）",
+   "target": "app.lib.geo_analysis.sar_temporal:vh_ratio"
+  },
+  {
+   "args": [
+    [
+     [
+      2.0,
+      4.0
+     ],
+     [
+      6.0,
+      8.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0
+     ]
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "meta.formula",
+    "value": "vv / vh (linear power)"
+   },
+   "id": "vh_ratio_formula_text",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.sar_temporal:vh_ratio"
+  },
+  {
+   "args": [
+    [
+     [
+      -2.0,
+      4.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      2.0
+     ]
+    ]
+   ],
+   "expect": {
+    "code": "UNSUPPORTED_METHOD",
+    "kind": "error",
+    "value": null
+   },
+   "id": "vh_ratio_negative_db_input",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.sar_temporal:vh_ratio"
+  },
+  {
+   "args": [
+    [
+     [
+      4.0
+     ]
+    ],
+    [
+     [
+      2.0
+     ]
+    ]
+   ],
+   "expect": {
+    "atol": 1e-06,
+    "kind": "allclose",
+    "rtol": 1e-12,
+    "select": "array.0.0",
+    "value": 0.69314718056
+   },
+   "id": "log_ratio_reference",
+   "kwargs": {},
+   "note": "log(a) − log(b) 独立复算",
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_log_ratio_change"
+  },
+  {
+   "args": [
+    [
+     [
+      4.0
+     ]
+    ],
+    [
+     [
+      2.0
+     ]
+    ]
+   ],
+   "expect": {
+    "kind": "exact",
+    "select": "meta.symmetry",
+    "value": "log_ratio(a, b) == −log_ratio(b, a)"
+   },
+   "id": "log_ratio_symmetry_meta",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.sar_temporal:temporal_log_ratio_change"
+  },
+  {
+   "args": [
+    12.5
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "p12.5"
+   },
+   "id": "percentile_key_p12.5",
+   "kwargs": {},
+   "note": "%g 格式键名",
+   "target": "app.lib.geo_analysis.sar_temporal:_percentile_key"
+  },
+  {
+   "args": [
+    100.0
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "p100"
+   },
+   "id": "percentile_key_p100",
+   "kwargs": {},
+   "note": "%g 格式键名",
+   "target": "app.lib.geo_analysis.sar_temporal:_percentile_key"
+  },
+  {
+   "args": [
+    25.0
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "p25"
+   },
+   "id": "percentile_key_p25",
+   "kwargs": {},
+   "note": "%g 格式键名",
+   "target": "app.lib.geo_analysis.sar_temporal:_percentile_key"
+  },
+  {
+   "args": [
+    0.5
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "p0.5"
+   },
+   "id": "percentile_key_p0.5",
+   "kwargs": {},
+   "note": "%g 格式键名",
+   "target": "app.lib.geo_analysis.sar_temporal:_percentile_key"
+  },
+  {
+   "args": [
+    90.0
+   ],
+   "expect": {
+    "kind": "exact",
+    "value": "p90"
+   },
+   "id": "percentile_key_p90",
+   "kwargs": {},
+   "note": "%g 格式键名",
+   "target": "app.lib.geo_analysis.sar_temporal:_percentile_key"
+  },
+  {
+   "args": [
+    [
+     1.0,
+     2.0,
+     3.0,
+     4.0,
+     5.0,
+     6.0
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validated_percentiles_over_5",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.sar_temporal:_validated_percentiles"
+  },
+  {
+   "args": [
+    [
+     -1.0
+    ]
+   ],
+   "expect": {
+    "code": "ValueError",
+    "kind": "error",
+    "value": null
+   },
+   "id": "validated_percentiles_negative",
+   "kwargs": {},
+   "target": "app.lib.geo_analysis.sar_temporal:_validated_percentiles"
+  }
+ ],
+ "count": 101,
+ "domain": "sar"
+}

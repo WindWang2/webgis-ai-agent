@@ -179,7 +179,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "包络零假设：同 n、同窗的同质 Poisson（CSR），固定种子 42",
             ],
             limitations=[
-                "无边缘校正（矩形窗 Reduced-Sample 未实现）——边界点低估 G/F",
+                "edge_correction=none（缺省）为原始估计——边界点低估 G/F；"
+                "V3 起可选 border（reduced-sample）/isotropic（Ohser 加权）",
+                "border 校正要求焦点/查询点到四边距离 > r_max（内点不足时诚实拒绝）",
                 "J 在 F(r)→1 时分母退化记 NaN（j_undefined_from 披露）",
                 "p 值来自秩检验（+1 校正），分辨率 1/(envelopes+1)，上限 499",
             ],
@@ -344,6 +346,120 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ],
             parameter_contract_ref="ripley_k_envelope_analysis",
         ),
+
+        # ── Foundation V3：时空 K / Mantel / 双变量 g12 ────────────────
+        AlgorithmDescriptor(
+            id="point_pattern.space_time_k", name="时空 K 函数 K_st(r,t)",
+            category="point_pattern",
+            capabilities=["space_time_k_function"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table",
+            geometry_requirements=["point"],
+            tool_candidates=["space_time_k_analysis"],
+            cpu_cost="high", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", priority=20,
+            algorithm_family="point_pattern_space_time",
+            method_references=["diggle1995", "ripley1976"],
+            assumptions=[
+                "K_st(r,t)=|W|·T/(n(n−1))·Σ_{i≠j} I(d≤r)I(|Δt|≤t)/w_ij"
+                "（有序对双向计入；w_ij 与单变量 K 同款各向同性校正）",
+                "独立零假设参考 K_st=πr²·2t（K_s=πr² 与 K_t=2t 之积）",
+                "显著性：时间标签置换（固定种子 42），sup(K_st−ref) 单侧 greater",
+            ],
+            limitations=[
+                "时间维无边缘校正：观测窗端点附近 Δt 分布被截断，"
+                "结论对窗长敏感（meta 中 temporal_edge_note 披露）",
+                "O(n²) 成对统计：空间对稀疏化 + 配对预算先估后分配，"
+                "上限 2 万点",
+                "p 值分辨率 1/(permutations+1)，上限 499",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:8", "point_support_required"],
+            uncertainty_outputs=["monte_carlo_summary", "statistical_significance"],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance="构造时空聚集 fixture 的 sup(K−ref)>0 且置换 p<0.05；"
+                                "时间标签洗牌后 p>0.05",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_point_pattern_v3.py::test_space_time_k_clusters_and_shuffled",
+                "tests/unit/lib/test_point_pattern_v3.py::test_space_time_k_determinism_and_guards",
+            ],
+            parameter_contract_ref="space_time_k_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="point_pattern.mantel", name="Mantel 时空距离相关检验",
+            category="point_pattern",
+            capabilities=["mantel_test"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table",
+            geometry_requirements=["point"],
+            tool_candidates=["mantel_test_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", priority=20,
+            algorithm_family="point_pattern_space_time",
+            method_references=["mantel1967"],
+            assumptions=[
+                "标准化 Mantel r = Pearson(上三角空间距离, 上三角时间距离)",
+                "时间标签置换（固定种子 42）构成零假设分布；"
+                "alternative=greater（聚集方向，缺省）/ two-sided",
+            ],
+            limitations=[
+                "Mantel 把全部点对当独立样本（距离矩阵非独立），"
+                "对空间自相关敏感——meta 中 disclosure 披露",
+                "密集 n×n 距离矩阵：n ≤ 2000 诚实上限（超限结构化拒绝）",
+                "p 值分辨率 1/(permutations+1)，上限 999",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:6", "point_support_required"],
+            uncertainty_outputs=["monte_carlo_summary", "statistical_significance"],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance="构造关联 fixture r>0.5 且置换 p<0.05；"
+                                "时间洗牌后 |r|≈0 且 p>0.05；同输入重放逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_point_pattern_v3.py::test_mantel_association_and_shuffle",
+                "tests/unit/lib/test_point_pattern_v3.py::test_mantel_determinism_and_guards",
+            ],
+            parameter_contract_ref="mantel_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="point_pattern.cross_pcf", name="双变量成对相关函数 g12(r)",
+            category="point_pattern",
+            capabilities=["cross_pair_correlation"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table",
+            geometry_requirements=["point"],
+            tool_candidates=["cross_pcf_analysis"],
+            cpu_cost="high", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", priority=20,
+            algorithm_family="point_pattern_second_order",
+            method_references=["illian2008", "besag1977"],
+            assumptions=[
+                "g12(r)=K12′(r)/(2πr)：交叉 K12（各向同性校正）的离散导数"
+                " + Epanechnikov 平滑（与单变量 pcf 同款后处理）",
+                "random-labelling 参考 g12≡1；g12>1 两类吸引/共现，g12<1 相斥",
+                "bandwidth（米）缺省 0=一个 r 步宽（自动值在输出披露）",
+            ],
+            limitations=[
+                "g12 由 K12 的离散导数间接估计，r 网格粒度限制分辨率",
+                "每类 ≥5 点（否则诚实拒绝）；O(n²) 成对统计上限 2 万点",
+                "p 值来自 sup|g12−1| 秩检验（+1 校正），上限 499",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:10", "point_support_required"],
+            uncertainty_outputs=["monte_carlo_summary", "statistical_significance"],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance="完全空间随机 + 随机标记下 g12 包络覆盖 1；"
+                                "同输入重放逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_point_pattern_v3.py::test_cross_pcf_runs_and_labels",
+                "tests/unit/lib/test_point_pattern_v3.py::test_cross_pcf_determinism_and_guards",
+            ],
+            parameter_contract_ref="cross_pcf_analysis",
+        ),
 ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
@@ -376,8 +492,10 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
         ],
     ),
     ParameterContract(
-        id="g_f_j_analysis", version=1,
-        description="G/F/J 距离函数：r 网格、最大半径比例与 CSR 包络。",
+        # v2（Foundation V3 additive）：可选 edge_correction
+        # （none=历史缺省行为不变；border/isotropic 为新增校正）。
+        id="g_f_j_analysis", version=2,
+        description="G/F/J 距离函数：r 网格、最大半径比例、CSR 包络与边缘校正。",
         parameters=[
             ParameterSpec(
                 name="n_steps", type="integer", default=10, minimum=4, maximum=32,
@@ -393,6 +511,12 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="envelopes", type="integer", default=0, minimum=0, maximum=499,
                 unit="count",
                 description="同质 Poisson 模拟包络次数（固定种子 42）；0=关",
+            ),
+            ParameterSpec(
+                name="edge_correction", type="enum", default="none",
+                enum_values=["none", "border", "isotropic"],
+                description="边缘校正：none=原始估计（历史缺省）；"
+                            "border=reduced-sample（内点）；isotropic=Ohser 加权",
             ),
         ],
     ),
@@ -506,6 +630,79 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="grid_cols", type="integer", default=4, minimum=2, maximum=10,
                 unit="count",
                 description="样方列数",
+            ),
+        ],
+    ),
+    # ── Foundation V3：时空 K / Mantel / 双变量 g12 ─────────────────
+    ParameterContract(
+        id="space_time_k_analysis", version=1,
+        description="时空 K 函数 K_st(r,t)：r/t 网格、空间半径比例与时间置换。",
+        parameters=[
+            ParameterSpec(
+                name="n_steps_r", type="integer", default=8, minimum=4, maximum=24,
+                unit="count",
+                description="r 网格步数（r_max/n_steps_r 到 r_max 等距）",
+            ),
+            ParameterSpec(
+                name="n_steps_t", type="integer", default=8, minimum=4, maximum=24,
+                unit="count",
+                description="t 网格步数（t_max/n_steps_t 到 t_max 等距）",
+            ),
+            ParameterSpec(
+                name="max_distance_ratio", type="number", default=0.25,
+                minimum=0.05, maximum=0.5, unit="ratio",
+                description="r_max = 比例 × min(窗宽,窗高)；t_max = 时间跨度的一半",
+            ),
+            ParameterSpec(
+                name="permutations", type="enum", default="199",
+                enum_values=["0", "99", "199", "499"],
+                description="时间标签置换次数（固定种子 42）；0=关",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="mantel_analysis", version=1,
+        description="Mantel 时空检验：标准化 r + 时间标签置换。",
+        parameters=[
+            ParameterSpec(
+                name="permutations", type="enum", default="499",
+                enum_values=["0", "199", "499", "999"],
+                description="时间标签置换次数（固定种子 42）；0=关",
+            ),
+            ParameterSpec(
+                name="alternative", type="enum", default="greater",
+                enum_values=["greater", "two-sided"],
+                description="greater=时空聚集方向（缺省）；two-sided=双侧",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="cross_pcf_analysis", version=1,
+        description="双变量 g12(r)：类型字段、r 网格、平滑带宽与随机标记置换。",
+        parameters=[
+            ParameterSpec(
+                name="type_field", type="string", required=True,
+                description="类型字段名（必须恰有 2 个不同取值，每类 ≥5 点）",
+            ),
+            ParameterSpec(
+                name="n_steps", type="integer", default=10, minimum=4, maximum=32,
+                unit="count",
+                description="r 网格步数（r_max/n_steps 到 r_max 等距）",
+            ),
+            ParameterSpec(
+                name="max_distance_ratio", type="number", default=0.25,
+                minimum=0.05, maximum=0.5, unit="ratio",
+                description="r_max = 比例 × min(窗宽,窗高)；上限 0.5（半窗）",
+            ),
+            ParameterSpec(
+                name="bandwidth", type="number", default=0, minimum=0,
+                unit="meters",
+                description="Epanechnikov 平滑带宽（米，r 单位）；0=自动（一个 r 步宽）",
+            ),
+            ParameterSpec(
+                name="permutations", type="enum", default="199",
+                enum_values=["0", "99", "199", "499"],
+                description="随机标记置换次数（固定种子 42）；0=关",
             ),
         ],
     ),

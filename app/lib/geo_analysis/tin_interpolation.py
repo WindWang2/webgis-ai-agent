@@ -393,3 +393,347 @@ def tin_surface(
     if disclosures:
         metadata["disclosures"] = disclosures
     return {"records": records, "metadata": metadata}
+
+
+# ── V3：自然邻域插值（Sibson）───────────────────────────────────────────────
+#
+# Foundation V3（Geostatistics/Interpolation 批次）追加：Sibson (1981)
+# 自然邻域坐标——权重 = 插入点从每个自然邻域的 Voronoi 单元"窃取"的面积
+# 比例（精确多边形裁剪面积，非近似核函数）。与 TIN 同属 Delaunay 家族：
+# 凸包外 NaN（不外推）、米制坐标假设、精确插值（过样本点）。
+# Watson (1981) 阶梯 walk：从包含单形出发只穿越外接圆包含目标点的单形。
+
+SIBSON_MAX_SAMPLES = 200_000       # above this: typed rejection
+SIBSON_MAX_GRID_CELLS = 4_000_000  # target-cell ceiling
+_SIBSON_EXACT_HIT_M = 1e-9         # 与 IDW/TIN 同口径的精确重合阈值
+
+
+def _clip_polygon_halfplane(poly: list, a: tuple, b: tuple) -> list:
+    """Sutherland–Hodgman 裁剪：保留 |p−a| ≤ |p−b| 的一侧。
+
+    不等式 |p−a|² ≤ |p−b|² 线性化为 2·(b−a)·p ≤ |b|²−|a|²。凸多边形输入
+    输出均为凸（顶点元组列表；空列表 = 全部被裁掉）。
+    """
+    if not poly:
+        return []
+    ax, ay = float(a[0]), float(a[1])
+    bx, by = float(b[0]), float(b[1])
+    wx, wy = bx - ax, by - ay
+    c = bx * bx + by * by - (ax * ax + ay * ay)
+    out: list = []
+    m = len(poly)
+    for e in range(m):
+        p = poly[e]
+        q = poly[(e + 1) % m]
+        fp = 2.0 * (wx * p[0] + wy * p[1]) - c
+        fq = 2.0 * (wx * q[0] + wy * q[1]) - c
+        if fp <= 0.0:
+            out.append(p)
+            if fq > 0.0:
+                t = fp / (fp - fq)
+                out.append((p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])))
+        elif fq <= 0.0:
+            t = fp / (fp - fq)
+            out.append((p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])))
+    return out
+
+
+def _polygon_area(poly: list) -> float:
+    """Shoelace 面积（凸多边形；<3 顶点为 0）。"""
+    if len(poly) < 3:
+        return 0.0
+    s = 0.0
+    m = len(poly)
+    for e in range(m):
+        p = poly[e]
+        q = poly[(e + 1) % m]
+        s += p[0] * q[1] - q[0] * p[1]
+    return abs(s) * 0.5
+
+
+def _circumcircle(pa, pb, pc):
+    """外接圆 ``(cx, cy, r)``；退化（近共线）返回 None。"""
+    d = 2.0 * ((pb[0] - pa[0]) * (pc[1] - pa[1]) - (pb[1] - pa[1]) * (pc[0] - pa[0]))
+    if abs(d) < 1e-12:
+        return None
+    a2 = pa[0] * pa[0] + pa[1] * pa[1]
+    b2 = pb[0] * pb[0] + pb[1] * pb[1]
+    c2 = pc[0] * pc[0] + pc[1] * pc[1]
+    ux = ((b2 - a2) * (pc[1] - pa[1]) - (pb[1] - pa[1]) * (c2 - a2)) / d
+    uy = ((pb[0] - pa[0]) * (c2 - a2) - (pc[0] - pa[0]) * (b2 - a2)) / d
+    return ux, uy, math.hypot(ux - pa[0], uy - pa[1])
+
+
+def natural_neighbor_interpolation(
+    xy: np.ndarray, values: np.ndarray, grid_xy: np.ndarray
+) -> tuple[np.ndarray, dict]:
+    """自然邻域插值（Sibson 1981 坐标，Watson 1981 阶梯算法）。
+
+    对每个格点 x：从包含单形出发做 Delaunay 邻接 walk，收集外接圆包含 x
+    的全部单形（阶梯集合）——其顶点即 x 的**自然邻域**。Sibson 权重 =
+    V_i ∩ V_x 的精确面积比例（V_i 为原点集的 Voronoi 单元，V_x 为插入 x
+    后的单元；两者交集由平分线逐次凸裁剪得到）。Sibson 坐标精确再现线性
+    函数（Σw=1 且 Σw·x_i = x）， therefore 平面场内部复现 ≤1e-6。
+
+    诚实语义：
+
+    * **凸包外 NaN** —— 不外推（无值格点计数披露，与 TIN 同口径）；
+    * **精确命中** —— 与样本重合的格点直接返回样本值（float64 精确）；
+    * **守卫** —— >``SIBSON_MAX_SAMPLES`` 样本或 >``SIBSON_MAX_GRID_CELLS``
+      目标格点类型化拒绝；<3 非共线样本 :class:`DegenerateData`。
+
+    返回 ``(values (n_cells,), meta)``；坐标必须已在投影米制 CRS。
+    """
+    from scipy.spatial import Delaunay, QhullError, cKDTree
+
+    pts = np.asarray(xy, dtype=float)
+    vals = np.asarray(values, dtype=float)
+    targets = np.atleast_2d(np.asarray(grid_xy, dtype=float))
+    n = len(vals)
+    n_cells = len(targets)
+    if n < _MIN_TIN_SAMPLES:
+        raise DegenerateData(
+            f"自然邻域插值至少需要 {_MIN_TIN_SAMPLES} 个非共线样本点，got {n}",
+            correction_hint="补充采样点，或改用 IDW（单点也能成面）。",
+        )
+    if n > SIBSON_MAX_SAMPLES:
+        raise ResourceScaleMismatch(
+            f"自然邻域插值输入 {n:,} 个样本超过上限 {SIBSON_MAX_SAMPLES:,}"
+            "（Qhull 三角剖分 + 逐格点 Voronoi 裁剪，超限先抽稀）。",
+            estimated=f"{n:,} samples",
+            limit=f"≤{SIBSON_MAX_SAMPLES:,} samples",
+            correction_hint="先做确定性空间抽稀或降低采样密度。",
+        )
+    if n_cells > SIBSON_MAX_GRID_CELLS:
+        raise ResourceScaleMismatch(
+            f"自然邻域插值目标格点 {n_cells:,} 超过上限 {SIBSON_MAX_GRID_CELLS:,}。",
+            estimated=f"{n_cells:,} target cells",
+            limit=f"≤{SIBSON_MAX_GRID_CELLS:,} cells",
+            correction_hint="降低目标网格分辨率或缩小范围。",
+        )
+    try:
+        tri = Delaunay(pts)
+    except QhullError as exc:
+        raise DegenerateData(
+            "自然邻域三角剖分失败：样本点共线或退化（凸包面积为零）——"
+            "自然邻域插值需要 ≥3 个非共线平面点。",
+            correction_hint="补充非共线采样点，或改用 IDW / kriging。",
+        ) from exc
+
+    pred = np.full(n_cells, np.nan)
+    # 精确命中：格点与样本重合 → 直接返回样本值（float64 精确）
+    tree = cKDTree(pts)
+    d1, i1 = tree.query(targets, k=1)
+    d1 = np.asarray(d1).reshape(n_cells)
+    i1 = np.asarray(i1).reshape(n_cells)
+    exact = d1 <= _SIBSON_EXACT_HIT_M
+    pred[exact] = vals[i1[exact]]
+
+    simplices = tri.simplices
+    n_tri = len(simplices)
+    neighbors = tri.neighbors
+    # 顶点邻接（Voronoi 邻居 = Delaunay 邻接）
+    adjacency: dict[int, set] = {}
+    for s in simplices:
+        a, b, c = int(s[0]), int(s[1]), int(s[2])
+        adjacency.setdefault(a, set()).update((b, c))
+        adjacency.setdefault(b, set()).update((a, c))
+        adjacency.setdefault(c, set()).update((a, b))
+    # 初始多边形：数据 bbox 外扩 10×（顶点单元有界化）
+    span = max(float(np.ptp(pts[:, 0])), float(np.ptp(pts[:, 1])), 1.0)
+    mx, my = float(pts[:, 0].mean()), float(pts[:, 1].mean())
+
+    n_outside_hull = 0
+    n_fallback = 0
+    n_wall_escalations = 0
+    epoch_stamp = np.full(n_tri, -1, dtype=np.int64)
+    simplex_pts = pts[simplices]
+    for ci in range(n_cells):
+        if exact[ci]:
+            continue
+        x, y = float(targets[ci, 0]), float(targets[ci, 1])
+        s0 = tri.find_simplex((x, y))
+        if s0 < 0:
+            n_outside_hull += 1
+            continue  # 凸包外：NaN（不外推）
+        # Watson 阶梯：只穿越外接圆包含格点的单形（从包含单形出发）
+        epoch = ci
+        stack = [int(s0)]
+        nb_vertices: set = set()
+        while stack:
+            s = stack.pop()
+            if epoch_stamp[s] == epoch:
+                continue
+            epoch_stamp[s] = epoch
+            tp = simplex_pts[s]
+            cc = _circumcircle(tp[0], tp[1], tp[2])
+            if cc is None:
+                continue
+            ccx, ccy, r = cc
+            eps = 1e-9 * max(r, 1.0)
+            if (x - ccx) ** 2 + (y - ccy) ** 2 > (r + eps) ** 2:
+                continue  # 外接圆不含格点：阶梯在此单形停止
+            nb_vertices.update(int(v) for v in simplices[s])
+            for nb in neighbors[s]:
+                if nb >= 0 and epoch_stamp[nb] != epoch:
+                    stack.append(int(nb))
+        if len(nb_vertices) < 3:
+            # 数值兜底（理论不达）：最近样本值——计数披露，绝不静默
+            pred[ci] = vals[i1[ci]]
+            n_fallback += 1
+            continue
+        order = sorted(nb_vertices)
+        target_pt = (x, y)
+
+        # Sibson 面积权重：V_i ∩ V_x = V_i 被格点-各自然邻域平分线依次裁剪。
+        # 近共线构型下 V_x 呈长条（sliver）可延伸极远——初始外墙（10×span）
+        # 截断会破坏面积精度；裁剪结果触墙则 ×100 外扩重裁（收敛后面积
+        # 精确；外扩次数进 meta 披露）。
+        weights: list = []
+        wall_scale = 10.0 * span + 1.0
+        for _attempt in range(4):
+            m = wall_scale
+            base = [
+                (mx - m, my - m), (mx + m, my - m),
+                (mx + m, my + m), (mx - m, my + m),
+            ]
+            weights = []
+            touched = False
+            wall_tol = m * 1e-9
+            for i in order:
+                poly = list(base)
+                pi = (float(pts[i, 0]), float(pts[i, 1]))
+                for j in sorted(adjacency[i]):
+                    poly = _clip_polygon_halfplane(
+                        poly, pi, (float(pts[j, 0]), float(pts[j, 1]))
+                    )
+                for j in order:
+                    poly = _clip_polygon_halfplane(
+                        poly, target_pt, (float(pts[j, 0]), float(pts[j, 1]))
+                    )
+                for vx_, vy_ in poly:
+                    if (abs(vx_ - mx) >= m - wall_tol) or (
+                        abs(vy_ - my) >= m - wall_tol
+                    ):
+                        touched = True
+                        break
+                weights.append(_polygon_area(poly))
+            if not touched:
+                break
+            wall_scale *= 100.0
+            n_wall_escalations += 1
+        total = math.fsum(weights)
+        if not (total > 0.0):
+            pred[ci] = vals[i1[ci]]
+            n_fallback += 1
+            continue
+        pred[ci] = math.fsum(w * float(vals[i]) for w, i in zip(weights, order)) / total
+
+    meta = {
+        "method": "natural_neighbor_sibson",
+        "n_samples": int(n),
+        "n_cells": int(n_cells),
+        "n_exact_hits": int(exact.sum()),
+        "n_outside_hull": int(n_outside_hull),
+        "n_nearest_fallback": int(n_fallback),
+        "n_wall_escalations": int(n_wall_escalations),
+        "triangle_count": int(n_tri),
+        "disclosures": [
+            "Sibson (1981) 自然邻域坐标：权重=插入点窃取的 Voronoi 面积比例"
+            "（精确多边形裁剪面积）；精确再现线性函数。",
+            "凸包外 NaN——不外推（诚实空缺，与 TIN 同口径）。",
+            "与样本重合的格点直接返回样本值（float64 精确）。",
+        ],
+    }
+    return pred, meta
+
+
+def natural_neighbor_surface(
+    points_geojson: Any,
+    value_field: str,
+    resolution: int = 7,
+) -> dict:
+    """H3 自然邻域表面 driver（TIN driver parity：凸包外格网无记录）。"""
+    import geopandas as gpd
+    import h3
+
+    from app.lib.geo_analysis.interpolation import (
+        _parse_point_values,
+        _pick_metric_crs,
+        _target_cells_for_samples,
+        _validate_resolution,
+    )
+
+    _validate_resolution(resolution)
+    lonlat, values = _parse_point_values(
+        points_geojson, value_field,
+        purpose="自然邻域插值", log_prefix="natural_neighbor",
+    )
+    n = len(values)
+    if n < _MIN_TIN_SAMPLES:
+        raise DegenerateData(
+            f"自然邻域插值至少需要 {_MIN_TIN_SAMPLES} 个去重后的非共线采样点，got {n}",
+            correction_hint="补充采样点，或改用 IDW（单点也能成面）。",
+        )
+    if n > SIBSON_MAX_SAMPLES:
+        raise ResourceScaleMismatch(
+            f"自然邻域插值输入 {n:,} 个样本超过上限 {SIBSON_MAX_SAMPLES:,}。",
+            estimated=f"{n:,} samples",
+            limit=f"≤{SIBSON_MAX_SAMPLES:,} samples",
+            correction_hint="先做确定性空间抽稀或降低采样密度。",
+        )
+    working_crs = _pick_metric_crs(lonlat)
+    pts_gdf = gpd.GeoDataFrame(
+        {"v": values},
+        geometry=gpd.points_from_xy(lonlat[:, 0], lonlat[:, 1]),
+        crs="EPSG:4326",
+    ).to_crs(working_crs)
+    pts_metric = np.column_stack(
+        (pts_gdf.geometry.x.values, pts_gdf.geometry.y.values)
+    )
+    target_cells, bbox = _target_cells_for_samples(
+        lonlat, resolution, label="自然邻域"
+    )
+    metadata: dict[str, Any] = {
+        "algorithm": "interpolation.natural_neighbor",
+        "value_field": value_field,
+        "resolution": int(resolution),
+        "working_crs": working_crs,
+        "n_samples": int(n),
+        "bbox": [bbox[0], bbox[1], bbox[2], bbox[3]],
+    }
+    if not target_cells:
+        metadata["cell_count"] = 0
+        return {"records": [], "metadata": metadata}
+    cell_latlng = np.array([h3.cell_to_latlng(c) for c in target_cells])
+    cell_gdf = gpd.GeoDataFrame(
+        geometry=gpd.points_from_xy(cell_latlng[:, 1], cell_latlng[:, 0]),
+        crs="EPSG:4326",
+    ).to_crs(working_crs)
+    cell_metric = np.column_stack(
+        (cell_gdf.geometry.x.values, cell_gdf.geometry.y.values)
+    )
+    out, meta = natural_neighbor_interpolation(pts_metric, values, cell_metric)
+    n_outside = int(np.sum(~np.isfinite(out)))
+    metadata.update({
+        "method": meta["method"],
+        "triangle_count": meta["triangle_count"],
+        "n_exact_hits": meta["n_exact_hits"],
+        "n_outside_hull": n_outside,
+        "n_nearest_fallback": meta["n_nearest_fallback"],
+        "fill_fraction": round(float(np.isfinite(out).sum()) / len(target_cells), 6),
+        "disclosures": meta["disclosures"],
+        "cell_count": int(len(target_cells)),
+    })
+    records = [
+        {"h3_index": cell, "value": float(v)}
+        for cell, v in zip(target_cells, out)
+        if np.isfinite(v)
+    ]
+    if records:
+        vals_in = np.asarray([r["value"] for r in records])
+        metadata["value_range"] = [
+            round(float(vals_in.min()), 4),
+            round(float(vals_in.max()), 4),
+        ]
+    return {"records": records, "metadata": metadata}

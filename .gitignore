@@ -12,6 +12,7 @@ scripts/
 !/scripts/gen_science_catalog.py
 # 工作流目录生成器（test_workflow_guards 的 catalog 一致性门依赖它）
 !/scripts/gen_workflow_catalog.py
+!/scripts/gen_science_oracles.py
 webgis-ai-agent/
 
 # 系统与临时文件
@@ -78,6 +79,8 @@ data/
 # ...but the source package `app/lib/data` and its tests are code, not runtime data
 !app/lib/data/
 !tests/data/
+# Numerical Oracle Corpus 冻结快照是版本化交付物（Foundation V3）
+!tests/science_oracles/data/
 
 # Ad-hoc dev scripts / debug artifacts — keep on disk if useful but never commit
 scratch/

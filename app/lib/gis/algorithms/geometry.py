@@ -32,6 +32,17 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             tool_candidates=["buffer_analysis"],
             cpu_cost="medium", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD",
+            algorithm_family="geometry_construction",
+            assumptions=["距离单位为米：实现经 to_utm_gdf 自动投影到局部 UTM"],
+            limitations=["跨带 UTM 投影失真记入 transformations 披露",
+                         "缓冲段数固定惯例（圆滑度有限）"],
+            crs_class="GEOGRAPHIC_OK",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_geometry_science_vnext.py::test_buffer_monotonicity_seeded",
+                "tests/unit/lib/test_geometry_science_vnext.py::test_buffer_geographic_area_accuracy_60n",
+            ],
             compatible_map_models=["proximity_overlay"],
             priority=10,
         ),
@@ -78,7 +89,14 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             output_artifact_type="polygon_feature_set", tool_candidates=["clip_layer"],
             cpu_cost="medium", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD", priority=10,
-        ),
+            algorithm_family="geometry_overlay",
+            assumptions=["裁剪在 WGS84 工作帧做纯拓扑相交（不量度）",
+                         "面裁剪面/面裁点：输入几何有效性由上游校验"],
+            limitations=["无效自交多边形先 make_valid（披露）",
+                         "拓扑输出不保证面积/长度语义（工作帧非投影）"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+                ),
 
         AlgorithmDescriptor(
             id="geometry.dissolve", name="融合溶解", category="geometry_processing",
@@ -87,7 +105,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             output_artifact_type="polygon_feature_set", tool_candidates=["dissolve_layer"],
             cpu_cost="medium", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD", priority=10,
-        ),
+            algorithm_family="geometry_overlay",
+            assumptions=["按字段 dissolve 后 unary_union（纯拓扑，不量度）"],
+            limitations=["无效几何先 make_valid（披露）；属性只保留分组键"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+                ),
 
         AlgorithmDescriptor(
             id="geometry.spatial_join", name="空间连接", category="spatial_relationship",
@@ -96,7 +119,13 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             output_artifact_type="polygon_feature_set", tool_candidates=["spatial_join"],
             cpu_cost="medium", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD", priority=20,
-        ),
+            algorithm_family="geometry_overlay",
+            assumptions=["谓词连接（intersects/within/contains），左表输出"],
+            limitations=["大表走空间索引（STRtree）；连接谓词语义见工具描述",
+                         "不量度（工作帧非投影）——面积/长度属性不在此层生成"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+                ),
 
         # ── VNext：几何叠加/构造族（实现核实：overlay_smart 纯拓扑在 WGS84
         # 工作帧执行，不量度 → CRS_AGNOSTIC；hull/voronoi/multi_ring 经

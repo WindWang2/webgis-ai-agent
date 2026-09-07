@@ -20,12 +20,9 @@ CRS 类核实记录：
   PROJECTED_REQUIRED；EPSG:3857 被接受为工作 CRS 但含 Web Mercator 尺度
   畸变（非真实地面距离），记入 limitations。
 
-中央契约缺口（已报告，非本包可修）：中央 kriging_interpolation 契约
-（parameter_contracts._SEED_CONTRACTS，对本包只读）没有 "method" 参数。
-parity 门只校验「契约 required 参数 ⊆ 工具 schema」，因此工具上可选的
-method="universal"（interpolation.universal_kriging 路由）不违反门；但
-契约侧补 method 枚举（ordinary/universal）需要动中央文件，已在交付报告
-登记为中央文件需求。
+（V3 备注：中央 kriging_interpolation 契约现已含 method 枚举
+（ordinary/universal，见 parameter_contracts），本文件此前所称"中央契约
+缺 method 参数"的缺口已消除。）
 """
 from __future__ import annotations
 
@@ -371,6 +368,270 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/lib/test_interpolation_compare.py::test_compare_rows_carry_validation_evidence",
             ],
             ),
+
+        # ── Foundation V3（Geostatistics/Interpolation 批次）────────────
+
+        AlgorithmDescriptor(
+            id="interpolation.directional_variogram", name="方向变异函数", category="interpolation",
+            capabilities=["variogram_analysis"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table", runtime_status="native",
+            # 单个滞后 bin 至少要有样本对支撑（≥8 点经验上才可读）
+            min_features=8,
+            parameter_contract_ref="directional_variogram_analysis",
+            tool_candidates=["directional_variogram_analysis"],
+            cpu_cost="medium", memory_cost="low", io_cost="low",
+            preferred_execution_policy="INLINE", compatible_map_models=[],
+            algorithm_family="variography",
+            method_references=["webster_oliver2007", "isaaks_srivastava1989"],
+            assumptions=[
+                "轴向（双向）配对过滤：方位角 +180° 属同一条轴，曲线逐位一致",
+                "方位角为数学约定：0°=东(+x)、逆时针（与 anisotropy_angle 一致，非罗盘）",
+                "滞后 bin 与全向 empirical_variogram 同一 span/edges 约定（tolerance=90° 时两者一致）",
+                "配对行走沿用行步幅 max_pairs 预算（确定性）",
+            ],
+            limitations=[
+                "单轴单次调用：完整各向异性椭圆需多方位角扫描（本工具不自动拟合椭圆）",
+                "带宽过滤为 GSLIB band 语义近似（配对中点到轴线垂距）",
+                "统计表输出（无表面）：结果供变异函数建模与各向异性诊断使用",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            unit_requirements="meters",
+            random_seed_policy="deterministic",
+            numerical_tolerance="tolerance=90° 时与全向 empirical_variogram 逐位一致（conformance 固定）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_geostat_v3.py::test_directional_variogram_anisotropy_discriminant",
+                "tests/unit/lib/test_geostat_v3.py::test_directional_variogram_axis_bidirectional_and_omnidirectional_parity",
+                "tests/unit/lib/test_geostat_v3.py::test_directional_variogram_input_guards",
+            ],
+            ),
+
+        AlgorithmDescriptor(
+            id="interpolation.variogram_selection", name="变异函数模型选择", category="interpolation",
+            capabilities=["variogram_analysis"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table", runtime_status="native",
+            # ≥4 个有效滞后 bin 才能支撑 3 参数拟合的模型比较
+            min_features=8,
+            parameter_contract_ref="variogram_selection_analysis",
+            tool_candidates=["variogram_model_selection"],
+            cpu_cost="high", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="INLINE", compatible_map_models=[],
+            algorithm_family="model_selection",
+            method_references=["webster_oliver2007", "matern1986"],
+            assumptions=[
+                "6 家族（spherical/exponential/gaussian/matern/wave/cubic）在同一经验变异函数上同台",
+                "加权 RSS 即 fit_variogram 的拟合目标（样本对计数 σ-权重）——与 auto 选型同源",
+                "AICc 自由度 k=3（sill/range/nugget）；matern k=4（固定平滑度 ν 计入，已披露）",
+                "完全确定性：无随机重启，复用有界网格回退；平局按模型名打破",
+            ],
+            limitations=[
+                "AICc 基于加权残差而非严格极大似然（信息准则是近似的，已披露）",
+                "滞后 bin 数 n ≤ k+2 时 AICc 诚实取 inf（不伪造小样本准则）",
+                "统计表输出（无表面）；选中模型需再传入 kriging 工具出表面",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            unit_requirements="meters",
+            random_seed_policy="deterministic",
+            numerical_tolerance="同输入排名逐字节一致；各家族 RSS 与 fit_variogram 显式拟合逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_geostat_v3.py::test_variogram_selection_ranks_deterministic_and_complete",
+                "tests/unit/lib/test_geostat_v3.py::test_variogram_selection_aicc_disclosure_and_matern_k4",
+            ],
+            ),
+
+        AlgorithmDescriptor(
+            id="interpolation.indicator_kriging", name="指示克里金", category="interpolation",
+            capabilities=["indicator_kriging"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            # 与普通克里金同底（去重后 ≥8 点）
+            min_features=8,
+            parameter_contract_ref="indicator_kriging_analysis",
+            tool_candidates=["indicator_kriging_surface"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.kriging"], priority=23,
+            fallback_semantics={"interpolation.kriging": "approximation"},
+            algorithm_family="indicator_geostatistics",
+            method_references=["journel1983", "matheron1963"],
+            assumptions=[
+                "逐阈值指示变换 I=1[z≤t] → 各自经验变异函数 + 拟合 → 指示场普通克里金",
+                "variogram_model=auto 时逐阈值在全部 6 家族里按加权 RSS 选型（逐阈值披露）",
+                "概率钳制 [0,1]：被钳制格数逐格计数（绝不静默）",
+                "p50 阈值=每格首个 p≥0.5 的阈值；E-type 为离散中值近似（类代表值=阈值，保守）",
+            ],
+            limitations=[
+                "逐阈值独立克里金不保证概率面在阈值间单调（P(Z≤t) 单调性未强制，已披露）",
+                "常量指示场（阈值在样本值域之外）输出常量概率（无变异函数拟合）",
+                "E-type 类内分布未建模——不是分位数中值的精确期望",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=["min_numeric_samples:8"],
+            uncertainty_outputs=["raster_uncertainty"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="概率面 ∈ [0,1]（钳制计数披露）；同输入概率面逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_geostat_v3.py::test_indicator_kriging_probability_bounds_and_p50_semantics",
+                "tests/unit/lib/test_geostat_v3.py::test_indicator_kriging_constant_threshold_disclosed",
+                "tests/unit/lib/test_geostat_v3.py::test_indicator_kriging_etype_and_guards",
+            ],
+            ),
+
+        AlgorithmDescriptor(
+            id="interpolation.cokriging", name="协同克里金", category="interpolation",
+            capabilities=["cokriging"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            # 与普通克里金同底 ≥8 主变量样本 + ≥2 次变量样本（ρ 估计）
+            min_features=8,
+            parameter_contract_ref="cokriging_analysis",
+            tool_candidates=["cokriging_surface"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.kriging"], priority=24,
+            fallback_semantics={"interpolation.kriging": "approximation"},
+            approximate=True,
+            algorithm_family="geostatistical_interpolation",
+            method_references=["journel_huijbregts1978", "matheron1963"],
+            assumptions=[
+                "Markov Model 1 近似核化：交叉协方差 C_sy(h)=ρ·C_pp(h)（全交叉协方差未建模）",
+                "协同定位近似：次变量仅在目标格点以单一数值进入克里金系统",
+                "次变量缺失时取最近次变量值（精确协同定位格数披露）；C_ss(0)=主变量先验方差（标准化假设）",
+                "ρ 缺省按最近配对 Pearson 估计；|ρ|<0.2 类型化拒绝（弱相关不会优于 OK，不输出）",
+            ],
+            limitations=[
+                "次变量自身变异函数未拟合（MM1 缩放假设）",
+                "次变量须与主变量共享同一工作 CRS；非协同定位部分由最近邻补格（近似）",
+                "近似语义（approximate=True）：协同克里金理论收益依赖 MM1 假设成立",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=["min_numeric_samples:8"],
+            uncertainty_outputs=["raster_uncertainty"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="系统批式求解（同 OK 稳定化策略）；方差钳 ≥0（负值计数披露）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_geostat_v3.py::test_cokriging_beats_ok_loocv_with_correlated_secondary",
+                "tests/unit/lib/test_geostat_v3.py::test_cokriging_weak_correlation_typed_error",
+            ],
+            ),
+
+        AlgorithmDescriptor(
+            id="interpolation.nearest_neighbor", name="最近邻插值", category="interpolation",
+            capabilities=["spatial_interpolation"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            min_features=1,
+            parameter_contract_ref="nearest_neighbor_analysis",
+            tool_candidates=["nearest_neighbor_surface"],
+            cpu_cost="low", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.idw"], priority=11,
+            fallback_semantics={"interpolation.idw": "approximation"},
+            algorithm_family="deterministic_interpolation",
+            method_references=[],
+            assumptions=[
+                "每个格点取最近样本值（cKDTree k=1）：输出为样本的 Voronoi（泰森）分段常值场",
+                "无平滑：表面在单元边界处不连续（跳变是方法语义，非缺陷）",
+                "全域有值：凸包外为最近样本外推（已披露，无不确定性声明）",
+                "米制距离：地理输入经 estimate_utm_crs 自动投影（与 IDW 同 CRS 政策）",
+            ],
+            limitations=[
+                "无理论方差，无残差验证证据（跳变场 LOOCV 无意义）",
+                ">20 万样本 / >400 万目标格点类型化拒绝（先拒绝不 OOM）",
+                "需要连续平滑表面时改用 IDW / kriging / 自然邻域",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            random_seed_policy="deterministic",
+            numerical_tolerance="每格值精确等于其最近样本值（无近似）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_geostat_v3.py::test_nearest_neighbor_voronoi_semantics_exact",
+                "tests/unit/lib/test_geostat_v3.py::test_nearest_neighbor_scale_guards_typed",
+            ],
+            ),
+
+        AlgorithmDescriptor(
+            id="interpolation.natural_neighbor", name="自然邻域插值", category="interpolation",
+            capabilities=["triangulation_interpolation"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            # 三角剖分至少需要 3 个非共线点
+            min_features=3,
+            parameter_contract_ref="natural_neighbor_analysis",
+            tool_candidates=["natural_neighbor_surface"],
+            cpu_cost="high", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.tin"], priority=19,
+            fallback_semantics={"interpolation.tin": "approximation"},
+            algorithm_family="deterministic_interpolation",
+            method_references=["sibson1981", "watson1981"],
+            assumptions=[
+                "Sibson (1981) 坐标：权重=插入点窃取的 Voronoi 面积比例（精确多边形裁剪面积）",
+                "Watson (1981) 阶梯 walk：外接圆包含格点的单形集合 = 自然邻域（邻接 walk 收集）",
+                "精确插值器：过样本点（重合格点直接返回样本值，float64 精确）",
+                "精确再现线性函数（平面场内部复现 ≤1e-6，conformance 固定）",
+            ],
+            limitations=[
+                "凸包外 NaN——不外推（需要全域覆盖时改用 IDW/趋势面）",
+                "近共线构型下 Sibson 权重几何呈长条：外墙自适应外扩保证面积精度（次数披露）",
+                ">20 万样本 / >400 万目标格点类型化拒绝；逐格点 Python 裁剪成本高",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:3"],
+            uncertainty_outputs=["validation_metrics"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="样本点精确复现（float64）；平面场内部复现 ≤1e-6（conformance 固定）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_geostat_v3.py::test_natural_neighbor_exact_at_samples",
+                "tests/unit/lib/test_geostat_v3.py::test_natural_neighbor_plane_reproduction_and_nan_outside_hull",
+                "tests/unit/lib/test_geostat_v3.py::test_natural_neighbor_scale_and_degenerate_guards",
+            ],
+            ),
+
+        AlgorithmDescriptor(
+            id="interpolation.block_kriging", name="块克里金", category="interpolation",
+            capabilities=["block_kriging"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            # 与普通克里金同底（去重后 ≥8 点）
+            min_features=8,
+            parameter_contract_ref="block_kriging_analysis",
+            tool_candidates=["block_kriging_surface"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.kriging"], priority=25,
+            fallback_semantics={"interpolation.kriging": "approximation"},
+            approximate=True,
+            algorithm_family="geostatistical_interpolation",
+            method_references=["isaaks_srivastava1989", "matheron1963"],
+            assumptions=[
+                "2×2 子点离散化近似块均值协方差（Isaaks & Srivastava 1989 惯例，近似已披露）",
+                "LHS 保持点支撑样本-样本 γ；块支撑经 RHS γ̄(x,B) 与方差修正 −γ̄(B,B) 进入",
+                "块尺寸→0 时收敛到点克里金（rtol 1e-3，conformance 固定）",
+                "block_size=0 时按 H3 分辨率平均六边形边长自动取值（全局平均近似）",
+            ],
+            limitations=[
+                "块尺寸相对变程越大，2×2 离散化近似误差越大（更高密度离散化未实现）",
+                "块边界取矩形（H3 单元为六边形——以等面积方形近似，已披露）",
+                "块方差 ≤ 点方差仅在平均意义上成立（个别格点可反超）",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=["min_numeric_samples:8"],
+            uncertainty_outputs=["raster_uncertainty"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="小块（1e-9 m）与点克里金一致 rtol 1e-3；方差钳 ≥0（负值计数披露）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_geostat_v3.py::test_block_kriging_small_blocks_converge_to_point_kriging",
+                "tests/unit/lib/test_geostat_v3.py::test_block_kriging_variance_not_larger_than_point",
+            ],
+            ),
 ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
@@ -507,6 +768,192 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="cv_budget", type="integer", default=2500,
                 minimum=10, unit="count",
                 description="总 CV 残差评估预算（超出按固定方法序跳过并披露）",
+            ),
+        ],
+    ),
+    # ── Foundation V3（Geostatistics/Interpolation 批次）────────────────
+    ParameterContract(
+        id="directional_variogram_analysis", version=1,
+        description="方向变异函数：单轴（双向）角度过滤 + 可选带宽的经验半方差；方位角为数学约定（0°=东、逆时针）。",
+        parameters=[
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="数值字段名",
+            ),
+            ParameterSpec(
+                name="azimuth_deg", type="number", default=0.0,
+                unit="degrees",
+                description="轴方位角（数学约定 0°=东(+x)、逆时针；轴向双向，+180° 同轴）",
+            ),
+            ParameterSpec(
+                name="tolerance_deg", type="number", default=22.5,
+                minimum=1.0, maximum=90.0, unit="degrees",
+                description="轴向半角（90=全向退化）",
+            ),
+            ParameterSpec(
+                name="band_width", type="number", default=0.0,
+                minimum=0.0, unit="meters",
+                description="带宽：配对中点到轴线垂距上限（米；0=不限）",
+            ),
+            ParameterSpec(
+                name="n_lags", type="integer", default=12,
+                minimum=4, maximum=64, unit="count",
+                description="滞后 bin 数",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="variogram_selection_analysis", version=1,
+        description="变异函数模型选择：6 家族同台拟合，加权 RSS 排名 + AICc（k=3；matern k=4，已披露）。",
+        parameters=[
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="数值字段名",
+            ),
+            ParameterSpec(
+                name="n_lags", type="integer", default=12,
+                minimum=4, maximum=64, unit="count",
+                description="滞后 bin 数",
+            ),
+            ParameterSpec(
+                name="matern_smoothness", type="number", default=0.5,
+                minimum=0.1, maximum=5.0, unit="ratio",
+                description="Matérn 平滑度 ν（仅 matern 家族使用）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="indicator_kriging_analysis", version=1,
+        description="指示克里金：逐阈值指示变换 + 独立变异函数 + OK，输出 P(Z≤t) 概率面与 p50 阈值面。",
+        parameters=[
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="数值字段名",
+            ),
+            ParameterSpec(
+                name="thresholds", type="string", required=True,
+                description="阈值列表（逗号分隔，自动排序去重）",
+            ),
+            ParameterSpec(
+                name="variogram_model", type="enum", default="auto",
+                enum_values=["auto", "spherical", "exponential", "gaussian"],
+                data_dependent_default="variogram_least_rss",
+                description="指示变异函数模型（auto=逐阈值 6 家族加权 RSS 选型）",
+            ),
+            ParameterSpec(
+                name="k_neighbors", type="integer", default=16,
+                minimum=2, maximum=24, unit="count",
+                description="指示克里金邻域样本数",
+            ),
+            ParameterSpec(
+                name="n_lags", type="integer", default=12,
+                minimum=4, maximum=64, unit="count",
+                description="经验变异函数 bin 数",
+            ),
+            ParameterSpec(
+                name="resolution", type="integer", default=7,
+                minimum=5, maximum=9,
+                description="H3 分辨率",
+            ),
+            ParameterSpec(
+                name="etype", type="boolean", default=False,
+                description="是否输出 E-type 估计（类代表值=阈值本身，保守离散近似）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="cokriging_analysis", version=1,
+        description="协同定位协同克里金（MM1 近似）：交叉结构=ρ×主变量结构，次变量仅在目标协同定位点进入系统。",
+        parameters=[
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="主变量数值字段名",
+            ),
+            ParameterSpec(
+                name="secondary_field", type="string", required=True,
+                description="次变量数值字段名（次要素集的属性）",
+            ),
+            ParameterSpec(
+                name="correlation_rho", type="number", default=0.0,
+                minimum=-1.0, maximum=1.0,
+                description="主/次相关系数 ρ；0=由最近配对 Pearson 自动估计（|ρ|<0.2 结构化拒绝）",
+            ),
+            ParameterSpec(
+                name="neighbors", type="integer", default=12,
+                minimum=2, maximum=24, unit="count",
+                description="主变量克里金邻域样本数",
+            ),
+            ParameterSpec(
+                name="variogram_model", type="enum", default="auto",
+                enum_values=["auto", "spherical", "exponential", "gaussian"],
+                data_dependent_default="variogram_least_rss",
+                description="主变量变异函数模型",
+            ),
+            ParameterSpec(
+                name="resolution", type="integer", default=7,
+                minimum=5, maximum=9,
+                description="H3 分辨率",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="nearest_neighbor_analysis", version=1,
+        description="最近邻插值：Voronoi（泰森）分段常值场，无平滑、不连续；全域有值（凸包外为最近样本外推）。",
+        parameters=[
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="数值字段名",
+            ),
+            ParameterSpec(
+                name="resolution", type="integer", default=8,
+                minimum=6, maximum=9,
+                description="H3 分辨率",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="natural_neighbor_analysis", version=1,
+        description="自然邻域插值（Sibson 坐标）：权重=被窃取 Voronoi 面积比例；凸包外不外推。",
+        parameters=[
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="数值字段名",
+            ),
+            ParameterSpec(
+                name="resolution", type="integer", default=7,
+                minimum=5, maximum=9,
+                description="H3 分辨率",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="block_kriging_analysis", version=1,
+        description="块克里金：2×2 块离散化（Isaaks & Srivastava 1989），RHS 点-块平均 γ + 方差块内修正。",
+        parameters=[
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="数值字段名",
+            ),
+            ParameterSpec(
+                name="block_size", type="number", default=0.0,
+                minimum=0.0, unit="meters",
+                description="块尺寸（米）；0=按 H3 分辨率平均六边形边长自动取值",
+            ),
+            ParameterSpec(
+                name="neighbors", type="integer", default=12,
+                minimum=2, maximum=24, unit="count",
+                description="克里金邻域样本数",
+            ),
+            ParameterSpec(
+                name="variogram_model", type="enum", default="auto",
+                enum_values=["auto", "spherical", "exponential", "gaussian"],
+                data_dependent_default="variogram_least_rss",
+                description="变异函数模型",
+            ),
+            ParameterSpec(
+                name="resolution", type="integer", default=7,
+                minimum=5, maximum=9,
+                description="H3 分辨率",
             ),
         ],
     ),

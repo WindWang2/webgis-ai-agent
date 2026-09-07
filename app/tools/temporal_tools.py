@@ -640,3 +640,77 @@ def register_temporal_science_tools(registry: ToolRegistry):
         except Exception as e:
             logger.error(f"[temporal_changepoint] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"变点检测失败: {str(e)}"}
+
+    # Foundation V3：经典季节分解（centered MA；非 STL，诚实披露）。
+    @tool(
+        registry,
+        name="temporal_seasonal_decompose",
+        description=(
+            "经典季节分解（classical decomposition，Makridakis 1998）："
+            "奇数窗口中心滑动平均趋势 + 相位组均值季节指数（additive 归一化"
+            "Σs=0）+ 余项。"
+            "\n何时用：序列含固定周期（周/月/年）且想分离趋势-季节-余项三分量；"
+            "\n何时不用：需要稳健/迭代季节估计时——这是经典 MA 分解，"
+            "**不是 STL**（无迭代稳健拟合、无季节平滑，对离群值敏感）；"
+            "\n关键约束：period 必须为奇数（偶数窗口显式拒绝）；"
+            "至少 2 个完整周期（n ≥ 2×period）；首尾 (period−1)/2 个位置"
+            "趋势/余项无定义。"
+        ),
+        tier=2,
+        domains=["temporal"],
+        param_descriptions={
+            "values": "数值序列（按时间序；NaN/Inf 自动剔除并披露）",
+            "period": "季节周期长度（奇数整数，≥3；n ≥ 2×period 才可分解）",
+            "model": "'additive'(默认) / 'multiplicative'（要求序列严格为正）",
+        },
+    )
+    async def temporal_seasonal_decompose(
+        values: List[float],
+        period: int,
+        model: str = "additive",
+    ) -> dict:
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.services.temporal.trend import seasonal_decompose_narrated
+
+        try:
+            params = apply_contract(
+                "seasonal_decompose_analysis",
+                {"period": period, "model": model})
+            res = await asyncio.to_thread(
+                seasonal_decompose_narrated,
+                values,
+                int(params["period"]),
+                str(params["model"]),
+            )
+            payload = {
+                "success": True,
+                "n": res["n"],
+                "period": res["period"],
+                "model": res["model"],
+                "trend": res["trend"],
+                "seasonal": res["seasonal"],
+                "seasonal_indices": res["seasonal_indices"],
+                "remainder": res["remainder"],
+                "n_valid_trend": res["n_valid_trend"],
+                "dropped_nonfinite": res["dropped_nonfinite"],
+                "method": res["method"],
+                "disclosures": res["disclosures"],
+                "summary": (
+                    f"经典季节分解（period={res['period']}，{res['model']}）："
+                    f"{res['n']} 个观测、{res['n_valid_trend']} 个有效趋势位置。"
+                    "这是经典中心滑动平均分解，不是 STL（无迭代稳健拟合）。"
+                ),
+            }
+            _attach_trend_evidence(
+                payload,
+                method="classical_ma",
+                n_points=res["n"],
+                uncertainty=None,
+                warnings=list(res["disclosures"]),
+                algorithm_id="temporal.seasonal_decompose",
+                tool="temporal_seasonal_decompose",
+            )
+            return payload
+        except Exception as e:
+            logger.error(f"[temporal_seasonal_decompose] Failed: {e}", exc_info=True)
+            return {"type": "error", "message": f"季节分解失败: {str(e)}"}

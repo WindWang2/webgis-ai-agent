@@ -488,25 +488,81 @@ def quadrat_test(
 
 
 def _gf_curves(xy: np.ndarray, window: tuple, r_grid: np.ndarray,
-               query_xy: np.ndarray, data_tree=None) -> Tuple[np.ndarray, np.ndarray]:
-    """Raw (edge-uncorrected) G and F curves on ``r_grid``.
+               query_xy: np.ndarray, data_tree=None,
+               edge_correction: str = "none") -> Tuple[np.ndarray, np.ndarray]:
+    """G and F curves on ``r_grid`` under the requested edge correction.
 
     G：数据点最近邻距离的经验 CDF（cKDTree k=2 查询，去掉自身的
     0 距离）；F：查询格点到最近数据点距离的经验 CDF。同一个
     ``query_xy`` 网格同时用于观测与模拟集（配对比较）。
+
+    ``edge_correction``（Foundation V3）：
+    - ``"none"``：原始估计（历史行为，缺省 —— 输出逐位不变）；
+    - ``"border"``：reduced-sample——只取到四边距离均 > r_max 的
+      焦点/查询点计入 CDF（Ripley 1988），圆完全在窗内故无偏；
+    - ``"isotropic"``：逐点 Ohser 风格加权——焦点 i 的最近邻距离
+      d_i 的圆内面积比例 w_i（与 K 同款各向同性校正），
+      Ĝ(r) = Σ I(d_i≤r)/w_i / Σ 1/w_i；F 同式（焦点=查询点）。
     """
     from scipy.spatial import cKDTree
 
     if data_tree is None:
         data_tree = cKDTree(xy)
-    # G: drop the self-match (k=1 is self at distance 0 for duplicated-free
-    # data; k=2 is the true nearest neighbour even under duplicates).
-    nn = data_tree.query(xy, k=2)[0][:, 1]
-    nn_sorted = np.sort(nn)
-    g = np.searchsorted(nn_sorted, r_grid, side="right") / len(xy)
-    f_dists = np.sort(data_tree.query(query_xy, k=1)[0])
-    f = np.searchsorted(f_dists, r_grid, side="right") / len(query_xy)
-    return g, f
+    if edge_correction == "none":
+        # G: drop the self-match (k=1 is self at distance 0 for duplicated-free
+        # data; k=2 is the true nearest neighbour even under duplicates).
+        nn = data_tree.query(xy, k=2)[0][:, 1]
+        nn_sorted = np.sort(nn)
+        g = np.searchsorted(nn_sorted, r_grid, side="right") / len(xy)
+        f_dists = np.sort(data_tree.query(query_xy, k=1)[0])
+        f = np.searchsorted(f_dists, r_grid, side="right") / len(query_xy)
+        return g, f
+
+    r_max = float(r_grid[-1])
+    xmin, ymin, xmax, ymax = window
+
+    def _edge_dist(pts: np.ndarray) -> np.ndarray:
+        return np.minimum.reduce([
+            pts[:, 0] - xmin, xmax - pts[:, 0],
+            pts[:, 1] - ymin, ymax - pts[:, 1],
+        ])
+
+    if edge_correction == "border":
+        keep = _edge_dist(xy) > r_max
+        if keep.sum() < 5:
+            raise DegenerateData(
+                "border correction leaves <5 interior points at r_max "
+                "(points too close to the window edge)",
+                correction_hint="use edge_correction='isotropic', or enlarge the window",
+            )
+        nn = data_tree.query(xy[keep], k=2)[0][:, 1]
+        g = np.searchsorted(np.sort(nn), r_grid, side="right") / int(keep.sum())
+        fq = data_tree.query(query_xy, k=1)[0]
+        keep_q = _edge_dist(query_xy) > r_max
+        if keep_q.sum() < 5:
+            raise DegenerateData(
+                "border correction leaves <5 interior query points",
+                correction_hint="use edge_correction='isotropic' instead",
+            )
+        f = np.searchsorted(np.sort(fq[keep_q]), r_grid, side="right") / int(keep_q.sum())
+        return g, f
+
+    if edge_correction == "isotropic":
+        nn = data_tree.query(xy, k=2)[0][:, 1]
+        w_inv = 1.0 / _isotropic_inside_fraction(xy, window, nn)
+        order = np.argsort(nn, kind="stable")
+        d_sorted, w_sorted = nn[order], w_inv[order]
+        cum = np.concatenate(([0.0], np.cumsum(w_sorted)))
+        g = cum[np.searchsorted(d_sorted, r_grid, side="right")] / w_inv.sum()
+        fq = data_tree.query(query_xy, k=1)[0]
+        wq_inv = 1.0 / _isotropic_inside_fraction(query_xy, window, fq)
+        order_q = np.argsort(fq, kind="stable")
+        cum_q = np.concatenate(([0.0], np.cumsum(wq_inv[order_q])))
+        f = cum_q[np.searchsorted(fq[order_q], r_grid, side="right")] / wq_inv.sum()
+        return g, f
+
+    raise ValueError(
+        f"edge_correction must be one of none|border|isotropic (got {edge_correction!r})")
 
 
 def g_f_j_functions(
@@ -516,6 +572,7 @@ def g_f_j_functions(
     max_distance_ratio: float = 0.25,
     window: Optional[Sequence[float]] = None,
     envelopes: int = 0,
+    edge_correction: str = "none",
 ) -> Dict:
     """G / F / J 距离函数（Diggle 1983；van Lieshout–Baddeley 1996）。
 
@@ -523,14 +580,16 @@ def g_f_j_functions(
     查询格（``default_rng(42)`` 均匀点，n_f = min(4n, 2000)）到最近
     数据点的距离 CDF；J(r) = (1−G)/(1−F)（CSR 下 J≡1）。
 
-    如实披露：G/F 为**原始估计（无边缘校正）**——矩形窗
-    reduced-sample 校正未实现，靠近边界的点低估 G/F；显著性只经
-    固定种子（42）CSR 模拟包络给出。F(r)→1 时 J 分母退化 → J 记
-    NaN 并在 ``j_undefined_from`` 披露（1−1e−12 阈值）。
+    ``edge_correction``（Foundation V3，缺省 "none" 保持历史行为）：
+    - ``"none"``：原始估计——边界点低估 G/F，靠包络做显著性（披露）；
+    - ``"border"``：reduced-sample（Ripley 1988）——只用四边距离
+      > r_max 的焦点/查询点（内点无偏；点少时退化拒绝）；
+    - ``"isotropic"``：逐点 Ohser 加权（与 K 同款圆内面积比例权重）。
 
-    ``envelopes``（1..499，0=关）：同 n、同窗的同质 Poisson 模拟
-    G/F 曲线（同一查询格配对），p5/p50/p95 包络 + r_max 处秩双侧
-    p 值（+1 校正）。
+    F(r)→1 时 J 分母退化 → J 记 NaN 并在 ``j_undefined_from`` 披露
+    （1−1e−12 阈值）。``envelopes``（1..499，0=关）：同 n、同窗的
+    同质 Poisson 模拟 G/F 曲线（同一估计器与同一校正），p5/p50/p95
+    包络 + r_max 处秩双侧 p 值（+1 校正）。
     """
     xy = np.asarray(xy, dtype=float)
     if xy.ndim != 2 or xy.shape[1] != 2:
@@ -574,7 +633,9 @@ def g_f_j_functions(
     query_xy = query_rng.uniform(xmin, xmax, (n_query, 2))
     query_xy[:, 1] = query_rng.uniform(ymin, ymax, n_query)
 
-    g, f = _gf_curves(xy, window, r_grid, query_xy)
+    edge_correction = str(edge_correction)
+    g, f = _gf_curves(xy, window, r_grid, query_xy,
+                      edge_correction=edge_correction)
     rho = n / area
     csr_gf = 1.0 - np.exp(-np.pi * rho * r_grid**2)
 
@@ -588,6 +649,11 @@ def g_f_j_functions(
     else:
         j = (1.0 - g) / one_minus_f
 
+    _EDGE_CORRECTION_LABELS = {
+        "none": "none (raw G/F; boundary points underestimate G/F)",
+        "border": "border / reduced-sample (interior points only; Ripley 1988)",
+        "isotropic": "isotropic Ohser weights (circle-inside fraction, per point)",
+    }
     out: Dict = {
         "r": [round(float(v), 4) for v in r_grid],
         "G": [round(float(v), 6) for v in g],
@@ -600,7 +666,8 @@ def g_f_j_functions(
         "n_query_grid": n_query,
         "r_max": round(float(r_max), 4),
         "window": [round(float(v), 4) for v in window],
-        "edge_correction": "none (raw G/F; rectangular-window reduced-sample not implemented)",
+        "edge_correction": _EDGE_CORRECTION_LABELS.get(
+            edge_correction, edge_correction),
         "estimator": "G/F: empirical CDFs of NN / empty-space distances; J=(1-G)/(1-F)",
         "seed_policy": f"fixed_seed (query grid + envelopes, seed={_FIXED_SEED})",
     }
@@ -623,7 +690,8 @@ def g_f_j_functions(
 
     if envelopes:
         def _curve_fn(sxy: np.ndarray) -> np.ndarray:
-            gs, fs = _gf_curves(sxy, window, r_grid, query_xy)
+            gs, fs = _gf_curves(sxy, window, r_grid, query_xy,
+                                edge_correction=edge_correction)
             return np.concatenate([gs, fs])
 
         env = _csr_envelope_curves(
@@ -1138,8 +1206,481 @@ def knox_test(
     return out
 
 
+def space_time_k(
+    xy: np.ndarray,
+    times: np.ndarray,
+    crs: Optional[str] = None,
+    n_steps_r: int = 8,
+    n_steps_t: int = 8,
+    max_distance_ratio: float = 0.25,
+    permutations: int = 199,
+) -> Dict:
+    """时空 K 函数 K_st(r,t)（Diggle et al. 1995，Foundation V3）。
+
+    定义（估计器字符串逐字披露）：K_st(r,t) = |W|·T/(n(n−1)) ·
+    Σ_{i≠j} I(d_ij≤r)·I(|Δt_ij|≤t)/w_ij，w_ij 与单变量 K 同款各向
+    同性边缘校正（焦点 i + 距离决定；有序对双向计入）。空间-时间
+    独立零假设下 K_st = πr²·2t（同质泊松 K_s=πr²、K_t=2t 之积）。
+
+    显著性：时间标签置换（固定种子 42）——同一估计器跑在置换时间
+    上；统计量 sup_{r,t}(K_st − πr²·2t)（单侧 greater，时空聚集方向），
+    秩 p 值 +1 校正。空间对经 ``query_pairs`` 稀疏化 + 配对预算先估
+    后分配（与 Knox 同策略）。时间边缘未校正（诚实披露：窗端 t 附近
+    邻居数被截断，结论对窗长敏感）。
+    """
+    xy = np.asarray(xy, dtype=float)
+    if xy.ndim != 2 or xy.shape[1] != 2:
+        raise ValueError(f"xy must be an (n, 2) coordinate array (got shape {xy.shape})")
+    _assert_metric_xy(xy, crs)
+    times = np.asarray(times, dtype=float).ravel()
+    if len(times) != len(xy):
+        raise ValueError(
+            f"times must match xy rows (got {len(times)} times, {len(xy)} points)")
+    n_steps_r = int(n_steps_r)
+    n_steps_t = int(n_steps_t)
+    if not (4 <= n_steps_r <= 24):
+        raise ValueError(f"n_steps_r must be within 4..24 (got {n_steps_r})")
+    if not (4 <= n_steps_t <= 24):
+        raise ValueError(f"n_steps_t must be within 4..24 (got {n_steps_t})")
+    max_distance_ratio = float(max_distance_ratio)
+    if not 0.05 <= max_distance_ratio <= 0.5:
+        raise ValueError(
+            f"max_distance_ratio must be within 0.05..0.5 (got {max_distance_ratio})")
+    permutations = int(permutations)
+    if permutations and not 1 <= permutations <= _MAX_ENVELOPES:
+        raise ValueError(
+            f"permutations must be 0 (off) or within 1..{_MAX_ENVELOPES} (got {permutations})")
+
+    valid = np.isfinite(times)
+    n_dropped = int((~valid).sum())
+    if n_dropped:
+        xy = xy[valid]
+        times = times[valid]
+    n = len(xy)
+    if n < 8:
+        raise InsufficientSamples(
+            f"space-time K needs at least 8 valid points (got {n}; "
+            f"{n_dropped} non-finite time rows dropped)",
+            correction_hint="add observations; for tiny samples use knox_test",
+        )
+    if n > _MAX_KNOX_OBSERVATIONS:
+        raise ResourceScaleMismatch(
+            f"space-time K is an O(n²) pair statistic at n={n}",
+            estimated=f"{n} points",
+            limit=f"{_MAX_KNOX_OBSERVATIONS} points",
+            correction_hint="aggregate or clip to a time window first",
+        )
+
+    window = _require_window(xy)
+    xmin, ymin, xmax, ymax = window
+    area = (xmax - xmin) * (ymax - ymin)
+    t_span = float(times.max() - times.min())
+    if t_span <= 0:
+        raise DegenerateData(
+            "temporal extent degenerated to 0 (all timestamps identical?)",
+            correction_hint="check timestamps; identical times carry no temporal structure",
+        )
+    r_max = max_distance_ratio * min(xmax - xmin, ymax - ymin)
+    t_max = 0.5 * t_span
+    if r_max <= 0:
+        raise DegenerateData("r_max degenerated to 0; window extent too small")
+    r_grid = np.linspace(r_max / n_steps_r, r_max, n_steps_r)
+    t_grid = np.linspace(t_max / n_steps_t, t_max, n_steps_t)
+
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(xy)
+    n_pairs_est = int(tree.count_neighbors(tree, r_max)) - n
+    if n_pairs_est > _MAX_RIPLEY_PAIRS:
+        raise ResourceScaleMismatch(
+            f"space-time K pair budget exceeded: ~{n_pairs_est} pairs within "
+            f"r_max={r_max:.1f} m",
+            estimated=f"~{n_pairs_est * 16 / 1e9:.2f} GB pairs",
+            limit=f"{_MAX_RIPLEY_PAIRS} pairs",
+            correction_hint="reduce max_distance_ratio or subsample",
+        )
+    pairs = tree.query_pairs(r_max, output_type="ndarray")
+    if len(pairs):
+        d_pair = np.linalg.norm(xy[pairs[:, 0]] - xy[pairs[:, 1]], axis=1)
+        # 有序对双向计入：无序对 {i,j} 的加权贡献 = w_i^{-1} + w_j^{-1}
+        w_inv_i = 1.0 / _isotropic_inside_fraction(xy[pairs[:, 0]], window, d_pair)
+        w_inv_j = 1.0 / _isotropic_inside_fraction(xy[pairs[:, 1]], window, d_pair)
+        w_pair = w_inv_i + w_inv_j
+        i_idx, j_idx = pairs[:, 0], pairs[:, 1]
+    else:
+        d_pair = np.empty(0)
+        w_pair = np.empty(0)
+        i_idx = j_idx = np.empty(0, dtype=int)
+
+    norm = area * t_span / (n * (n - 1))
+    ref = np.pi * r_grid[None, :] ** 2 * (2.0 * t_grid[:, None])  # (t, r)
+
+    def _kst(t_labels: np.ndarray) -> np.ndarray:
+        """共享估计器：观测标签与每个置换都跑这一份代码。"""
+        if not len(pairs):
+            return np.zeros((n_steps_t, n_steps_r))
+        dt = np.abs(t_labels[i_idx] - t_labels[j_idx])
+        acc = np.zeros((n_steps_t, n_steps_r))
+        for ti, t_thr in enumerate(t_grid):
+            sel_t = dt <= t_thr
+            if not sel_t.any():
+                continue
+            d_t = d_pair[sel_t]
+            w_t = w_pair[sel_t]
+            order = np.argsort(d_t, kind="stable")
+            cum = np.concatenate(([0.0], np.cumsum(w_t[order])))
+            counts = np.searchsorted(d_t[order], r_grid, side="right")
+            acc[ti] = norm * cum[counts]
+        return acc
+
+    k_obs = _kst(times)
+
+    out: Dict = {
+        "n": int(n),
+        "n_time_dropped": n_dropped,
+        "r": [round(float(v), 4) for v in r_grid],
+        "t": [round(float(v), 4) for v in t_grid],
+        "K": [[round(float(v), 4) for v in row] for row in k_obs],
+        "reference_independent": [[round(float(v), 4) for v in row] for row in ref],
+        "t_span": round(t_span, 6),
+        "r_max": round(float(r_max), 4),
+        "t_max": round(float(t_max), 4),
+        "window": [round(float(v), 4) for v in window],
+        "edge_correction": "isotropic (spatial, Ripley 1976); none (temporal — disclosed)",
+        "estimator": ("K_st(r,t) = W*T/(n(n-1)) * sum_{i!=j} I(d<=r) I(|dt|<=t) / w_ij; "
+                      "independence reference pi*r^2*2t"),
+        "seed_policy": f"fixed_seed (time permutation, seed={_FIXED_SEED})" if permutations else "deterministic",
+    }
+    if n_dropped:
+        out["time_dropped_note"] = f"{n_dropped} 行时间戳不可解析，已剔除"
+    out["temporal_edge_note"] = (
+        "时间维未做边缘校正：观测窗端点附近的 Δt 分布被截断，"
+        "结论对窗长选择敏感（诚实披露）"
+    )
+
+    exceed = float(np.max(k_obs - ref))
+    out["sup_exceedance"] = round(exceed, 4)
+    tendency = (
+        "K_st 高于独立参考 πr²·2t（时空聚集）"
+        if exceed > 0 else "K_st 不高于独立参考（与时空独立相容）"
+    )
+    out["tendency"] = tendency
+    out["summary"] = f"Space-time K (n={n}, grid {n_steps_t}×{n_steps_r}): {tendency}。"
+
+    if permutations:
+        rng = np.random.default_rng(_FIXED_SEED)
+        sim_stats = np.empty(permutations)
+        for i in range(permutations):
+            sim_stats[i] = float(np.max(_kst(times[rng.permutation(n)]) - ref))
+        p_value = (int(np.sum(sim_stats >= exceed)) + 1) / (permutations + 1)
+        out.update({
+            "permutations": int(permutations),
+            "envelope_seed": _FIXED_SEED,
+            "p_value": round(float(p_value), 6),
+            "p_method": (f"one-sided greater rank of sup(K_st-ref) vs "
+                         f"{permutations} time permutations, +1 correction"),
+            "perm_sup_quantiles": {
+                "p95": round(float(np.quantile(sim_stats, 0.95)), 4),
+            },
+        })
+        verdict = "显著时空聚集" if p_value < 0.05 else "未拒绝时空独立"
+        out["summary"] += (
+            f" 时间置换 {permutations} 次（seed={_FIXED_SEED}）："
+            f"sup(K−ref)={exceed:.2f}，p={p_value:.4f}（{verdict}）。"
+        )
+    return out
+
+
+def mantel_test(
+    xy: np.ndarray,
+    times: np.ndarray,
+    crs: Optional[str] = None,
+    permutations: int = 499,
+    alternative: str = "greater",
+) -> Dict:
+    """Mantel 检验（Mantel 1967）：空间距离矩阵 × 时间距离矩阵的相关。
+
+    标准化 Mantel 统计 r_M = Pearson(上三角空间距离, 上三角时间距离)
+    （对角线自配对剔除）。时间标签置换（固定种子 42）给零假设分布；
+    ``alternative``：greater（时空聚集方向，缺省）/ two-sided。
+    密集 n×n 距离矩阵 → n ≤ 2000 诚实上限（先拒绝后分配）。
+    如实披露：Mantel 检对自身空间自相关敏感（距离矩阵非独立样本），
+    p 值是置换意义下的（非参数精确性依赖置换单位选择）。
+    """
+    xy = np.asarray(xy, dtype=float)
+    if xy.ndim != 2 or xy.shape[1] != 2:
+        raise ValueError(f"xy must be an (n, 2) coordinate array (got shape {xy.shape})")
+    _assert_metric_xy(xy, crs)
+    times = np.asarray(times, dtype=float).ravel()
+    if len(times) != len(xy):
+        raise ValueError(
+            f"times must match xy rows (got {len(times)} times, {len(xy)} points)")
+    if alternative not in ("greater", "two-sided"):
+        raise ValueError(f"alternative must be 'greater' or 'two-sided' (got {alternative!r})")
+    permutations = int(permutations)
+    if permutations and not 1 <= permutations <= 999:
+        raise ValueError(
+            f"permutations must be 0 (off) or within 1..999 (got {permutations})")
+
+    valid = np.isfinite(times)
+    n_dropped = int((~valid).sum())
+    if n_dropped:
+        xy = xy[valid]
+        times = times[valid]
+    n = len(xy)
+    if n < 6:
+        raise InsufficientSamples(
+            f"Mantel needs at least 6 valid points (got {n})",
+            correction_hint="add observations; upper-triangle correlation is unstable below 15 pairs",
+        )
+    if n > 2000:
+        raise ResourceScaleMismatch(
+            f"Mantel materializes a dense {n}×{n} distance matrix",
+            estimated=f"{n * n * 8 / 1e9:.2f} GB per matrix",
+            limit="2000 points (32 MB per matrix)",
+            correction_hint="subsample, or use space_time_k / knox_test (sparse pair statistics)",
+        )
+    t_span = float(times.max() - times.min())
+    if t_span <= 0:
+        raise DegenerateData("temporal extent degenerated to 0 (identical timestamps?)")
+
+    iu, ju = np.triu_indices(n, k=1)
+    d_spatial = np.linalg.norm(xy[iu] - xy[ju], axis=1)
+    d_time = np.abs(times[iu] - times[ju])
+
+    def _rm(dt: np.ndarray) -> float:
+        cs = d_spatial - d_spatial.mean()
+        ct = dt - dt.mean()
+        denom = math.sqrt(float(np.sum(cs * cs) * np.sum(ct * ct)))
+        if denom <= 0:
+            return 0.0
+        return float(np.sum(cs * ct) / denom)
+
+    r_m = _rm(d_time)
+
+    out: Dict = {
+        "n": int(n),
+        "n_time_dropped": n_dropped,
+        "n_pairs": int(len(iu)),
+        "mantel_r": round(r_m, 6),
+        "alternative": alternative,
+        "permutations": int(permutations),
+        "estimator": "standardized Mantel r = Pearson(upper-tri spatial dist, upper-tri temporal dist)",
+        "seed_policy": f"fixed_seed (time permutation, seed={_FIXED_SEED})" if permutations else "deterministic",
+    }
+    if n_dropped:
+        out["time_dropped_note"] = f"{n_dropped} 行时间戳不可解析，已剔除"
+    out["disclosure"] = (
+        "Mantel 检验把全部点对当独立样本（距离矩阵非独立），"
+        "对空间自相关敏感；p 值为时间置换意义下的秩 p"
+    )
+
+    if permutations:
+        rng = np.random.default_rng(_FIXED_SEED)
+        sim = np.empty(permutations)
+        for i in range(permutations):
+            # 单一置换同时重标 i 与 j 侧 —— 两侧必须同一标签流
+            perm = rng.permutation(n)
+            sim[i] = _rm(np.abs(times[perm][iu] - times[perm][ju]))
+        if alternative == "greater":
+            p_value = (int(np.sum(sim >= r_m)) + 1) / (permutations + 1)
+        else:
+            p_value = _two_sided_rank_p(r_m, sim)
+        out.update({
+            "p_value": round(float(p_value), 6),
+            "p_method": (f"{'one-sided greater' if alternative == 'greater' else 'two-sided'} "
+                         f"rank vs {permutations} time permutations, +1 correction"),
+            "perm_r_quantiles": {
+                "p5": round(float(np.quantile(sim, 0.05)), 4),
+                "p50": round(float(np.quantile(sim, 0.50)), 4),
+                "p95": round(float(np.quantile(sim, 0.95)), 4),
+            },
+        })
+        verdict = "显著空间-时间关联" if p_value < 0.05 else "未拒绝空间-时间独立"
+        out["interpretation"] = (
+            f"Mantel r={r_m:.4f}，置换 p={p_value:.4f}：{verdict}。"
+        )
+    else:
+        out["interpretation"] = (
+            f"Mantel r={r_m:.4f}（描述性——未做显著性检验）。"
+        )
+    out["summary"] = f"Mantel space-time test (n={n}): {out['interpretation']}"
+    return out
+
+
+def cross_pair_correlation(
+    xy: np.ndarray,
+    types: Sequence,
+    crs: Optional[str] = None,
+    n_steps: int = 10,
+    max_distance_ratio: float = 0.25,
+    window: Optional[Sequence[float]] = None,
+    bandwidth: float = 0.0,
+    permutations: int = 199,
+) -> Dict:
+    """双变量成对相关函数 g12(r) = K12′(r)/(2πr)（Foundation V3）。
+
+    与单变量 ``pcf`` 同款后处理：交叉 K12（``cross_k`` 同款各向同性
+    校正 + 随机标记置换共享池化成对表）的离散导数 + Epanechnikov
+    平滑。g12>1 两类空间吸引/共现，g12<1 相斥；CSR/random-labelling
+    参考 g12≡1。``permutations``：固定种子 42 随机标记，sup|g12−1|
+    秩 p（DCLF 风格，+1 校正）。
+    """
+    xy = np.asarray(xy, dtype=float)
+    if xy.ndim != 2 or xy.shape[1] != 2:
+        raise ValueError(f"xy must be an (n, 2) coordinate array (got shape {xy.shape})")
+    _assert_metric_xy(xy, crs)
+    n_steps = int(n_steps)
+    if not 4 <= n_steps <= 32:
+        raise ValueError(f"n_steps must be within 4..32 (got {n_steps})")
+    max_distance_ratio = float(max_distance_ratio)
+    if not 0.05 <= max_distance_ratio <= 0.5:
+        raise ValueError(
+            f"max_distance_ratio must be within 0.05..0.5 (got {max_distance_ratio})")
+    bandwidth = float(bandwidth)
+    if bandwidth < 0:
+        raise ValueError(f"bandwidth must be >= 0 (0 = auto one-step width), got {bandwidth}")
+    permutations = int(permutations)
+    if permutations and not 1 <= permutations <= _MAX_ENVELOPES:
+        raise ValueError(
+            f"permutations must be 0 (off) or within 1..{_MAX_ENVELOPES} (got {permutations})")
+    n = len(xy)
+    if n < 10:
+        raise InsufficientSamples(
+            f"cross-pair correlation needs at least 10 points (got {n})",
+            correction_hint="add observations; per-type K12 is unstable on tiny samples",
+        )
+    if n > _MAX_RIPLEY_OBSERVATIONS:
+        raise ResourceScaleMismatch(
+            f"cross-pair correlation is an O(n²) pair statistic at n={n}",
+            estimated=f"{n} points",
+            limit=f"{_MAX_RIPLEY_OBSERVATIONS} points",
+            correction_hint="aggregate to a grid first (h3_binning) or sample down",
+        )
+
+    type_arr = np.asarray(types)
+    if type_arr.ndim != 1 or len(type_arr) != n:
+        raise ValueError(
+            f"types must be a length-{n} 1-D array matching xy rows "
+            f"(got shape {type_arr.shape})")
+    type_keys = [str(v) for v in type_arr.tolist()]
+    distinct = list(dict.fromkeys(type_keys))
+    if len(distinct) != 2:
+        raise UnsupportedMethod(
+            f"cross-pair correlation needs exactly 2 distinct type values "
+            f"(got {len(distinct)}: {distinct[:5]})",
+            correction_hint="pick a binary type field, or use univariate pcf",
+        )
+    is1 = np.array([t == distinct[0] for t in type_keys])
+    n1, n2 = int(is1.sum()), int((~is1).sum())
+    if n1 < 5 or n2 < 5:
+        raise InsufficientSamples(
+            f"cross-pair correlation needs at least 5 points per type "
+            f"(got {n1} × '{distinct[0]}', {n2} × '{distinct[1]}')",
+            correction_hint="add observations of the minority type or merge sparse categories",
+        )
+
+    window = _require_window(xy, window)
+    xmin, ymin, xmax, ymax = window
+    area = (xmax - xmin) * (ymax - ymin)
+    r_max = max_distance_ratio * min(xmax - xmin, ymax - ymin)
+    if r_max <= 0:
+        raise DegenerateData("r_max degenerated to 0; window extent too small")
+    r_grid = np.linspace(r_max / n_steps, r_max, n_steps)
+    bandwidth_resolved = bandwidth if bandwidth > 0 else float(r_grid[1] - r_grid[0])
+    if bandwidth_resolved >= r_max:
+        raise ValueError(
+            f"bandwidth ({bandwidth_resolved:.2f} m) must stay below r_max ({r_max:.2f} m)")
+
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(xy)
+    n_pairs_est = int(tree.count_neighbors(tree, r_max)) - n
+    if n_pairs_est > _MAX_RIPLEY_PAIRS:
+        raise ResourceScaleMismatch(
+            f"cross-pair correlation pair budget exceeded: ~{n_pairs_est} pairs "
+            f"within r_max={r_max:.1f} m",
+            estimated=f"~{n_pairs_est * 16 / 1e9:.2f} GB COO pairs",
+            limit=f"{_MAX_RIPLEY_PAIRS} pairs",
+            correction_hint="reduce max_distance_ratio, aggregate to a grid, or subsample",
+        )
+    coo = tree.sparse_distance_matrix(tree, max_distance=float(r_max),
+                                      output_type="coo_matrix")
+    keep = coo.row != coo.col
+    order = np.argsort(coo.data[keep], kind="stable")
+    d_sorted = coo.data[keep][order]
+    g_focal = coo.row[keep][order]
+    g_target = coo.col[keep][order]
+    w_inv = 1.0 / _isotropic_inside_fraction(xy[g_focal], window, d_sorted)
+    lab = np.where(is1, 1, 2)
+
+    def _k12(labels: np.ndarray) -> np.ndarray:
+        sel = (labels[g_focal] == 1) & (labels[g_target] == 2)
+        cum = np.concatenate(([0.0], np.cumsum(w_inv[sel])))
+        counts = np.searchsorted(d_sorted[sel], r_grid, side="right")
+        return area / (n1 * n2) * cum[counts]
+
+    k12 = _k12(lab)
+    g12 = _pcf_from_k(k12, r_grid, bandwidth_resolved)
+
+    out: Dict = {
+        "r": [round(float(v), 4) for v in r_grid],
+        "g12": [round(float(v), 6) for v in g12],
+        "K12": [round(float(v), 4) for v in k12],
+        "type_values": distinct,
+        "n1": n1,
+        "n2": n2,
+        "n": int(n),
+        "bandwidth": round(bandwidth_resolved, 4),
+        "bandwidth_auto": bool(bandwidth <= 0),
+        "r_max": round(float(r_max), 4),
+        "window": [round(float(v), 4) for v in window],
+        "edge_correction": "isotropic (rectangular window, Ripley 1976), per-pair",
+        "estimator": "g12(r) = K12'(r)/(2*pi*r); discrete derivative + Epanechnikov smoothing",
+        "seed_policy": f"fixed_seed (random labelling, seed={_FIXED_SEED})" if permutations else "deterministic",
+    }
+
+    interpretation = (
+        "g12 高于 1 于短半径（两类空间吸引/共现）"
+        if g12[0] > 1.0
+        else "g12 不高于 1 于最短半径（两类相斥或独立）"
+    )
+    out["tendency"] = interpretation
+    out["summary"] = (
+        f"Cross pair correlation g12 (n1={n1} '{distinct[0]}', n2={n2} "
+        f"'{distinct[1]}'): {interpretation}。"
+    )
+
+    if permutations:
+        rng = np.random.default_rng(_FIXED_SEED)
+        sims = np.empty((permutations, n_steps))
+        for i in range(permutations):
+            sims[i] = _pcf_from_k(_k12(lab[rng.permutation(n)]), r_grid,
+                                  bandwidth_resolved)
+        stat = float(np.max(np.abs(g12 - 1.0)))
+        sim_stats = np.max(np.abs(sims - 1.0), axis=1)
+        p_upper = (int(np.sum(sim_stats >= stat)) + 1) / (permutations + 1)
+        out.update({
+            "permutations": int(permutations),
+            "envelope_seed": _FIXED_SEED,
+            "envelope_g12_low": [round(float(v), 6) for v in np.quantile(sims, 0.05, axis=0)],
+            "envelope_g12_median": [round(float(v), 6) for v in np.quantile(sims, 0.50, axis=0)],
+            "envelope_g12_high": [round(float(v), 6) for v in np.quantile(sims, 0.95, axis=0)],
+            "p_value": round(float(p_upper), 6),
+            "p_method": f"max_r|g12-1| rank vs {permutations} random-labelling draws, +1 correction",
+            "sup_abs_dev": round(stat, 4),
+        })
+        out["summary"] += (
+            f" random-labelling 置换（{permutations} 次，seed={_FIXED_SEED}）："
+            f"max|g12−1|={stat:.4f}，p={p_upper:.4f}"
+            f"（{'拒绝随机标记假设' if p_upper < 0.05 else '未拒绝随机标记假设'}）。"
+        )
+    return out
+
+
 __all__: List[str] = [
     "ripley_k", "quadrat_test",
     "g_f_j_functions", "pcf", "cross_k", "knox_test",
+    "space_time_k", "mantel_test", "cross_pair_correlation",
 ]
 

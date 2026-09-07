@@ -10,6 +10,10 @@ Foundation V2（A5 地形水文与地貌量测扩展）：Priority-Flood 填洼
 2002）/ geomorphons 地貌分类（Jasiewicz & Stepinski 2013）/
 Weiss 双尺度 TPI 地类分级 / 多方位山体阴影。
 
+Terrain V3：地平线角与天空可视因子（Steyn 1980，与 openness 共族
+射线行走）；D8 平地 epsilon 路由（flat_routing="epsilon"，复用
+fill_depressions 的 Barnes 2014 机制）。
+
 职责边界（CONTRACT_BACKBONE §1）：本模块只做纯 NumPy/标量数学 ——
 不读文件、不写 artifact、不挂证据块（工具层职责）。所有函数
 
@@ -64,6 +68,8 @@ __all__ = [
     "geomorphons",
     "landform_classification",
     "hillshade_multiazimuth",
+    "horizon_angle",
+    "sky_view_factor",
 ]
 
 EDGE_POLICY = "edge cells use available neighbors (window statistics shrink at the border; no padding values are invented)"
@@ -75,6 +81,13 @@ MAX_WINDOW = 101
 MAX_HYDRO_CELLS = 50_000_000
 MAX_OPENNESS_RADIUS_CELLS = 100
 MAX_GEOMORPHON_RADIUS_CELLS = 128
+
+# Terrain V3：地平线角 / 天空可视因子（openness 家族射线行走，同半径包络）。
+MAX_HORIZON_RADIUS_CELLS = 100
+MAX_HORIZON_AZIMUTHS = 64
+# d8 flat_routing="epsilon" 的默认逐像元抬升量（z 单位/像元；Barnes 2014
+# 语境的小量 —— float64 下对常见 DEM 量级（10²-10⁴ m）不损失路由单调性）。
+DEFAULT_FLAT_EPSILON = 1e-5
 
 # ESRI D8 powers-of-two encoding (row 0 = north, col 0 = west):
 # 1=E, 2=SE, 4=S, 8=SW, 16=W, 32=NW, 64=N, 128=NE; 0 = sink/outlet
@@ -554,6 +567,9 @@ def d8_flow(
     dem: np.ndarray, cell_size: float,
     cell_size_x: Optional[float] = None,
     nodata: Optional[float] = None,
+    *,
+    flat_routing: str = "none",
+    flat_epsilon: float = DEFAULT_FLAT_EPSILON,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
     """D8 单向流（ESRI 2 的幂编码；O'Callaghan & Mark / Tarboton 1997 语境）。
 
@@ -564,28 +580,52 @@ def d8_flow(
     - 取最大**严格为正**坡降；并列最陡 → 最低索引邻域（E=1 起的编码序，
       确定性裁决）；
     - 无严格更低邻域（洼地/平地/边界外流）→ 编码 0 = sink/outlet
-      （boundary = outlet）。平地不做 epsilon 梯度路由（防拓扑环，
-      limitations 披露）；
+      （boundary = outlet）；
     - nodata 邻域不参与；全 nodata 输入 → NoValidObservations。
+
+    平地路由（``flat_routing``，V3 additive 参数）：
+
+    - ``"none"``（默认）：行为与历史版本一致 —— 平地/洼地即汇（code 0），
+      不发明路由（防拓扑环）；
+    - ``"epsilon"``：先经 ``fill_depressions(epsilon=flat_epsilon)``（Barnes
+      2014 Priority-Flood 机制，terrain.sink_fill 同款）得到严格单调可排
+      的填充面，再在其上路由 —— 平地/洼地获得 epsilon 梯度并排向溢流
+      出口。``result["dem"]`` 即该填充面（汇流累积的拓扑序要求接收者
+      在**同一表面**上严格更低）；meta 披露路由模式与填充像元数。
     """
     if cell_size <= 0 or (cell_size_x is not None and cell_size_x <= 0):
         raise ValueError("cell sizes must be positive")
     cx = float(cell_size_x if cell_size_x is not None else cell_size)
     cy = float(cell_size)
+    if flat_routing not in ("none", "epsilon"):
+        raise ValueError(
+            f"flat_routing must be 'none' or 'epsilon' (got {flat_routing!r})")
+    if flat_routing == "epsilon" and not (float(flat_epsilon) > 0):
+        raise ValueError(
+            f"flat_epsilon must be > 0 when flat_routing='epsilon' "
+            f"(got {flat_epsilon!r})")
     z, valid = _prepare(dem, nodata)
-    h, w = z.shape
+
+    if flat_routing == "epsilon":
+        filled, fill_meta = fill_depressions(
+            z, cy, cell_size_x=cx, epsilon=float(flat_epsilon), nodata=nodata)
+        z_route = filled
+    else:
+        fill_meta = None
+        z_route = z
+    h, w = z_route.shape
     dists = _neighbor_distances(cx, cy)
 
     direction = np.zeros((h, w), dtype=np.int16)
     best_slope = np.zeros((h, w), dtype=np.float64)
     for idx, (_, code, dr, dc) in enumerate(_D8_NEIGHBORS):
-        zs = np.full_like(z, np.nan)
+        zs = np.full_like(z_route, np.nan)
         vs = np.zeros_like(valid)
         r0, r1 = max(0, -dr), min(h, h - dr)
         c0, c1 = max(0, -dc), min(w, w - dc)
-        zs[r0:r1, c0:c1] = z[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
+        zs[r0:r1, c0:c1] = z_route[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
         vs[r0:r1, c0:c1] = valid[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
-        slope = np.where(vs, (z - zs) / dists[idx], -np.inf)
+        slope = np.where(vs, (z_route - zs) / dists[idx], -np.inf)
         # 严格 >：并列最陡保留先遍历（最低索引）邻域。
         take = valid & (slope > best_slope)
         best_slope = np.where(take, slope, best_slope)
@@ -606,15 +646,38 @@ def d8_flow(
         "direction": direction,          # ESRI code; 0 = sink/outlet/nodata
         "receiver": receiver,            # flat index of receiver; -1 = none
         "valid": valid,
-        "dem": z,                        # 高程（flow_accumulation 拓扑序用）
+        "dem": z_route,                  # 路由面高程（flow_accumulation 拓扑序用；
+                                         # flat_routing="epsilon" 时 = epsilon 填充面）
     }
+    if flat_routing == "epsilon":
+        flats_note = (
+            "flat_routing='epsilon': routed on the Priority-Flood epsilon-filled "
+            f"surface (Barnes et al. 2014, epsilon={float(flat_epsilon):g} z-units "
+            "per cell, terrain.sink_fill machinery); flats/pits drain toward their "
+            "spill outlet instead of staying sinks (code 0)")
+        routing_meta: Dict[str, Any] = {
+            "flat_routing": "epsilon",
+            "flat_epsilon": float(flat_epsilon),
+            "filled_cell_count": int(fill_meta["filled_cell_count"]),
+            "dem_note": (
+                "result['dem'] is the epsilon-filled routing surface: "
+                "topological accumulation requires receivers strictly lower "
+                "on the same surface"),
+        }
+    else:
+        flats_note = (
+            "flats/pits are sinks (code 0) under the default flat_routing='none'; "
+            "flat_routing='epsilon' routes flats via the Barnes-2014 epsilon-"
+            "filled surface instead")
+        routing_meta = {"flat_routing": "none"}
     meta = _meta_base(
         "terrain.flow_d8", valid,
         cell_size=cy, cell_size_x=cx,
         encoding="ESRI powers-of-two: 1=E, 2=SE, 4=S, 8=SW, 16=W, 32=NW, 64=N, 128=NE; 0 = sink/outlet (no strictly lower in-grid neighbor)",
         tie_break="steepest-descent ties resolved to the lowest-index neighbor (E first)",
-        flats="flats/pits are sinks (code 0); no epsilon-gradient flat routing (prevents cycles in topological accumulation)",
+        flats=flats_note,
         boundary="grid boundary is the outlet: flow that would leave the grid terminates (cells only route to in-grid neighbors)",
+        **routing_meta,
     )
     return result, meta
 
@@ -1769,6 +1832,225 @@ def terrain_openness(
         distance_convention="actual metric distance of the rounded per-step offsets (anisotropic cell sizes honoured)",
         azimuth_policy="azimuths with no valid in-grid sample are dropped from the mean; cells with none are NaN",
         edge_policy=EDGE_POLICY,
+    )
+    return result, meta
+
+
+# ── V3-1/2. 地平线角与天空可视因子（Steyn 1980；openness 家族射线行走）──
+
+
+def _horizon_rasters(
+    z: np.ndarray, valid: np.ndarray,
+    cx: float, cy: float,
+    azimuths_deg: Sequence[float], radius_cells: int,
+) -> np.ndarray:
+    """逐方位地平线角（度）—— ``horizon_angle`` 与 ``sky_view_factor``
+    共用的唯一射线行走实现（两算法不重复逻辑）。
+
+    - 每方位（罗盘度，自北顺时针）按 k = 1..R 像元步长取圆整偏移
+      （与 openness 同口径），距离 = 偏移的实际米制欧氏距离（各向异性
+      像元感知）；
+    - 仰角 = arctan((z(d) − z₀)/d_m)，只取正值参与 running max（初始化 0
+      兜底 —— 地平线角不为负；平地 ≡ 0，浮点精确）；
+    - 射线在首个 nodata/非有限/出界采样处停止（其后更远采样不再参与：
+      数据外视作无遮挡，截断语义由调用方在 edge_policy 披露）；
+    - 返回 (n_az, h, w) float64；无效中心像元保持 0（调用方掩成 NaN）。
+    """
+    h, w = z.shape
+    n_az = len(azimuths_deg)
+    horiz = np.zeros((n_az, h, w), dtype=np.float64)
+    z0 = np.where(valid, z, 0.0)
+    for j, az_deg in enumerate(azimuths_deg):
+        az = math.radians(float(az_deg))
+        alive = valid.copy()  # 中心无效的像元不参与任何射线
+        for k in range(1, radius_cells + 1):
+            if not alive.any():
+                break
+            dc = int(round(k * math.sin(az)))
+            dr = -int(round(k * math.cos(az)))
+            if dc == 0 and dr == 0:
+                continue
+            dist = math.hypot(dc * cx, dr * cy)
+            r0, r1 = max(0, -dr), min(h, h - dr)
+            c0, c1 = max(0, -dc), min(w, w - dc)
+            vd = np.zeros((h, w), dtype=bool)
+            vd[r0:r1, c0:c1] = valid[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
+            contrib = alive & vd
+            if contrib.any():
+                zd = np.full((h, w), np.nan)
+                zd[r0:r1, c0:c1] = z[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
+                with np.errstate(invalid="ignore"):
+                    ang = np.degrees(np.arctan((zd - z0) / dist))
+                np.fmax(horiz[j], np.where(contrib, ang, -np.inf), out=horiz[j])
+            alive &= vd  # 首个无效采样处截断射线（stop-at-nodata 政策）
+    return horiz
+
+
+def _validate_horizon_radius(max_search_radius: Any, algorithm: str) -> int:
+    """射线半径护栏（horizon_angle / sky_view_factor 共用；先拒绝后分配）。"""
+    if isinstance(max_search_radius, bool) \
+            or not isinstance(max_search_radius, (int, np.integer)) \
+            or not (1 <= int(max_search_radius)):
+        raise ValueError(
+            f"max_search_radius must be a positive integer (got {max_search_radius!r})")
+    radius = int(max_search_radius)
+    if radius > MAX_HORIZON_RADIUS_CELLS:
+        raise ResourceScaleMismatch(
+            f"{algorithm}: max_search_radius {radius} > "
+            f"{MAX_HORIZON_RADIUS_CELLS} (ray walk memory/time envelope)",
+            estimated=f"max_search_radius={radius}",
+            limit=f"max_search_radius<={MAX_HORIZON_RADIUS_CELLS}",
+            correction_hint="reduce the horizon search radius")
+    return radius
+
+
+def _validate_azimuth_list(azimuths: Sequence[float]) -> List[float]:
+    """方位列表护栏：≥1 个、≤ 上限、有限罗盘度 ∈ [0, 360)。"""
+    az_list = [float(a) for a in azimuths]
+    if not az_list:
+        raise ValueError("azimuths must contain at least one compass bearing")
+    if len(az_list) > MAX_HORIZON_AZIMUTHS:
+        raise ValueError(
+            f"azimuths must contain at most {MAX_HORIZON_AZIMUTHS} bearings "
+            f"(got {len(az_list)})")
+    for a in az_list:
+        if not math.isfinite(a) or not (0.0 <= a < 360.0):
+            raise ValueError(
+                f"azimuths must be finite compass degrees in [0, 360) (got {a!r})")
+    return az_list
+
+
+def horizon_angle(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    azimuths: Sequence[float] = (0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0),
+    max_search_radius: int = 100,
+    nodata: Optional[float] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """地平线角（度；Steyn 1980 的输入量，openness 家族射线行走）。
+
+    - 每方位（罗盘度，自北顺时针）沿 1 像元步长射线取
+      max_k arctan((z(k) − z₀)/d_m) 的**正**仰角；全下行钳 0（地平线角
+      不为负）；平地 ≡ 0（浮点精确）；
+    - 射线遇 nodata/非有限像元即停；半径外/数据缝后的地形视作无遮挡
+      （截断 = 0，edge policy 披露 —— 诚实低估而非发明遮挡）；
+    - 输出 dict：``azimuths``（罗盘度列表）、``horizon``（方位键 → 地平线
+      角栅格，度）、``max``（逐像元跨方位 max，度）；NaN = 无效像元。
+
+    护栏：max_search_radius ≤ 100、方位 1..64、网格 ≤ 50M 像元（先拒绝
+    后分配）。确定性。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    radius = _validate_horizon_radius(max_search_radius, "terrain.horizon_angle")
+    az_list = _validate_azimuth_list(azimuths)
+
+    z_raw = np.asarray(dem)
+    if getattr(z_raw, "ndim", 0) != 2:
+        raise NoValidObservations(
+            f"DEM must be a 2D array (got ndim {getattr(z_raw, 'ndim', 0)})")
+    _guard_cells(z_raw.shape, "terrain.horizon_angle")
+    z, valid = _prepare(dem, nodata)
+
+    horiz = _horizon_rasters(z, valid, cx, cy, az_list, radius)
+    max_arr = horiz.max(axis=0)
+    horizon = {
+        f"{float(a):g}": np.where(valid, horiz[j], np.nan)
+        for j, a in enumerate(az_list)
+    }
+    result = {
+        "azimuths": [round(float(a), 6) for a in az_list],
+        "horizon": horizon,
+        "max": np.where(valid, max_arr, np.nan),
+    }
+    meta = _meta_base(
+        "terrain.horizon_angle", valid,
+        cell_size=cy, cell_size_x=cx,
+        azimuths=[round(float(a), 6) for a in az_list],
+        radius_cells=radius,
+        method=(
+            "horizon angle (Steyn 1980 input quantity): per-azimuth running max "
+            "of the positive elevation angle arctan((z(d) - z0)/d) along 1-cell "
+            "step rays within the radius; degrees"),
+        units="degrees",
+        distance_convention=(
+            "actual metric distance of the rounded per-step offsets "
+            "(anisotropic cell sizes honoured)"),
+        edge_policy=(
+            "horizon edge policy: rays stop at the first nodata/non-finite "
+            "sample or the grid edge; the unobserved rest of a truncated ray "
+            "counts as unobstructed (0) — disclosed underestimation beyond "
+            "data gaps, no padding values invented"),
+        clamping=(
+            "descending-only rays clamp at 0 (a horizon angle cannot be "
+            "negative); flat ground -> 0 exactly"),
+    )
+    return result, meta
+
+
+def sky_view_factor(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    n_azimuths: int = 16,
+    max_search_radius: int = 100,
+    nodata: Optional[float] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """天空可视因子 SVF（Steyn 1980）：SVF = (1/N) Σ_i cos²(ψ_i)。
+
+    - ψ_i = 与 ``horizon_angle`` 共用射线行走（``_horizon_rasters``）得到的
+      逐方位地平线角（度）；N 个等角距方位自北顺时针；
+    - 平地 ψ ≡ 0 → SVF ≡ 1.0（浮点精确）；深洼/封闭谷地 → SVF → 0；
+    - 结果同时返回逐方位地平线角栅格（``horizon``，度）供复用。
+
+    护栏：max_search_radius ≤ 100、n_azimuths ∈ [4, 64]、网格 ≤ 50M 像元
+    （先拒绝后分配）。确定性。
+    """
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    radius = _validate_horizon_radius(max_search_radius, "terrain.sky_view_factor")
+    if isinstance(n_azimuths, bool) or not isinstance(n_azimuths, (int, np.integer)) \
+            or not (4 <= int(n_azimuths) <= MAX_HORIZON_AZIMUTHS):
+        raise ValueError(
+            f"n_azimuths must be an integer in [4, {MAX_HORIZON_AZIMUTHS}] "
+            f"(got {n_azimuths!r})")
+    n_az = int(n_azimuths)
+
+    z_raw = np.asarray(dem)
+    if getattr(z_raw, "ndim", 0) != 2:
+        raise NoValidObservations(
+            f"DEM must be a 2D array (got ndim {getattr(z_raw, 'ndim', 0)})")
+    _guard_cells(z_raw.shape, "terrain.sky_view_factor")
+    z, valid = _prepare(dem, nodata)
+
+    az_list = [360.0 * j / n_az for j in range(n_az)]
+    horiz = _horizon_rasters(z, valid, cx, cy, az_list, radius)
+    with np.errstate(invalid="ignore"):
+        cos2 = np.cos(np.radians(horiz)) ** 2
+    svf_raw = cos2.mean(axis=0)
+    svf = np.where(valid, svf_raw, np.nan)
+    result = {
+        "svf": svf,
+        "azimuths": [round(float(a), 6) for a in az_list],
+        "horizon": {
+            f"{float(a):g}": np.where(valid, horiz[j], np.nan)
+            for j, a in enumerate(az_list)
+        },
+    }
+    meta = _meta_base(
+        "terrain.sky_view_factor", valid,
+        cell_size=cy, cell_size_x=cx,
+        n_azimuths=n_az, radius_cells=radius,
+        method=(
+            "sky view factor (Steyn 1980): SVF = (1/N) * sum_i cos^2(psi_i) "
+            "over N evenly spaced azimuths, psi_i = horizon angle from the "
+            "shared terrain.horizon_angle ray walk"),
+        units="ratio (0 = fully obstructed sky, 1 = fully open sky)",
+        flat_reference="flat ground has psi = 0 everywhere -> SVF = 1.0 exactly",
+        edge_policy=(
+            "svf edge policy: inherits the horizon ray policy — rays stop at "
+            "nodata/grid edge and a truncated rest-of-ray counts as "
+            "unobstructed (cos^2 = 1); disclosed overestimate of sky "
+            "openness near data gaps"),
     )
     return result, meta
 

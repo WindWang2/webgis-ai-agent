@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：88 能力 · 128 算法 · 62 参数契约。
+统计：112 能力 · 171 算法 · 106 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -28,19 +28,43 @@
 获取行政区边界面（本地 SHP 优先）。
 
 - **`admin.boundary.local`** 行政区边界获取（本地 SHP）（`native`·成熟度 —）
-- **`admin.boundary_lookup`** 行政区边界获取（`native`·成熟度 —）
+  - 假设：本地 SHP 边界面获取（不做几何改写）
+  - 局限：边界现势性依赖本地数据版本（来源披露）
+- **`admin.boundary_lookup`** 行政区边界获取（`native`·成熟度 实验）
+  - 假设：行政区边界检索（本地优先，在线兜底）
+  - 局限：在线兜底结果可变（deterministic=False 已声明）
 
 ## `analytical_density` — 分析密度
 
 定量密度（每平方公里密度等）——拒绝把视觉热力当定量结果。
 
-- **`density.analytical.mixed`** 分析密度（KDE/聚合混合路径）（`native`·成熟度 —）
+- **`density.analytical.mixed`** 分析密度（KDE/聚合混合路径）（`native`·成熟度 已验证）
+  - 假设：KDE/聚合混合路径按规模切换（切换语义披露）
+  - 局限：路径切换以规模阈值为准（诊断进证据块）
 
 ## `band_math` — 波段/栅格代数
 
 逐像元栅格代数（A/B 表达式、常数运算；A 为基准网格，B 自动对齐）。
 
-- **`raster.algebra`** 栅格计算器（窗口化）（`native`·成熟度 —）
+- **`raster.algebra`** 栅格计算器（窗口化）（`native`·成熟度 已验证）
+  - 假设：窗口化逐像元表达式求值（numexpr）；nodata 传播为 nodata
+  - 局限：表达式在声明波段角色上求值，不做隐式重采样/对齐；除零按表达式语义产 inf/NaN（不静默钳制）
+
+## `band_statistics` — 波段统计
+
+波段×波段 Pearson 相关矩阵 + 逐对样本数（公共有效掩膜约定披露；stats_table 产物）。
+
+- **`remote.band_correlation`** 波段×波段相关表（`native`·成熟度 已验证，契约: `band_correlation_analysis`）
+  - 假设：Pearson 相关（ddof=1 协方差）；公共有效掩膜（非 pairwise-complete）；逐对样本数恒等于公共有效像元数（约定披露）；standardize 不改变 Pearson r（线性不变性，诚实披露非双结果）
+  - 局限：线性相关不捕获非线性关联；零方差波段行列 NaN（不伪造）；公共掩膜 vs 逐对完整计算的差异在低重叠场景显著（披露）
+
+## `bivariate_local_moran` — 双变量局部 Moran
+
+x 与 y 空间滞后的逐位置共位/互斥检测（双变量 LISA；与全局双变量 Moran、单变量 LISA 是不同检验）。
+
+- **`stats.bivariate_local_moran`** 双变量局部 Moran（LISA）（`native`·成熟度 已验证，契约: `bivariate_local_moran_analysis`，出处: `anselin1995`, `wartenberg1985`, `benjamini_hochberg1995`）
+  - 假设：esda.Moran_Local_BV 委托（行标准化权重、固定种子 42 条件随机化）；I_i=z(x1)_i·Σ_j w_ij z(x2)_j；标签 HH/LH/LL/HL 取 p_sim<0.05；BH q 值随要素输出；孤岛位置贡献为 0、结果中性
+  - 局限：共位相关 ≠ 因果/超前-滞后；方向解读需领域模型支撑；孤岛权重处置与 esda 归一化的对齐仅在无 island 权重时严格成立；p_sim<0.05 的逐点判定在随机数据下期望产出 ~0.05n 假显著
 
 ## `bivariate_morans_i` — 双变量 Moran's I
 
@@ -50,17 +74,30 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
   - 假设：I=(n/S0)·Σ x_i(Wy)_i/(‖x-x̄‖·‖y-ȳ‖)，行标准化权重；x=y 时与单变量 Moran 严格一致（属性测试钉住）；置换只打乱 y（固定种子 42，双侧 (count+1)/(perms+1)）
   - 局限：共位相关 ≠ 因果/超前-滞后；方向解读需领域模型支撑；x 与 y 量纲无关（分子分母同除范数），但受离群值影响；与 esda 归一化对齐仅在无 island 权重时成立（S0=n）；含 island 发散 n/S0
 
+## `block_kriging` — 块克里金
+
+块支撑克里金（2×2 离散化，Isaaks & Srivastava 1989）：块均值 + 块方差面。
+
+- **`interpolation.block_kriging`** 块克里金（`native`·成熟度 已验证，契约: `block_kriging_analysis`，出处: `isaaks_srivastava1989`, `matheron1963`）
+  - 假设：2×2 子点离散化近似块均值协方差（Isaaks & Srivastava 1989 惯例，近似已披露）；LHS 保持点支撑样本-样本 γ；块支撑经 RHS γ̄(x,B) 与方差修正 −γ̄(B,B) 进入；块尺寸→0 时收敛到点克里金（rtol 1e-3，conformance 固定）
+  - 局限：块尺寸相对变程越大，2×2 离散化近似误差越大（更高密度离散化未实现）；块边界取矩形（H3 单元为六边形——以等面积方形近似，已披露）；块方差 ≤ 点方差仅在平均意义上成立（个别格点可反超）
+  - 回退：`interpolation.kriging`→approximation
+
 ## `category_breakdown` — 类别构成统计
 
 按类别字段统计构成。
 
 - **`stats.category.breakdown`** 类别构成统计（`native`·成熟度 —）
+  - 假设：按类别字段 groupby 计数/占比（描述性）
+  - 局限：类别基数过大时 top-k 截断披露（不聚合长尾）
 
 ## `change_detection` — 时序要素变化检测
 
 矢量要素的双时相对比变化集（栅格图像变化用 raster_change_detection）。
 
-- **`temporal.change`** 时序变化（`native`·成熟度 —）
+- **`temporal.change`** 时序变化（`native`·成熟度 已验证）
+  - 假设：双期快照对比（描述性集合差：新增/消失/保持）
+  - 局限：无匹配容差语义（同键精确匹配）
 
 ## `closest_facility` — 最近设施
 
@@ -70,6 +107,23 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
   - 假设：所有 需求×设施 对的代价来自同一棵逐起点 Dijkstra 最短路树（#489），选 K 近仅在代价上排序；travel_direction 决定方向性：incident_to_facility（需求→设施）或 facility_to_incident；零代价匹配（需求点恰在设施处）是合法匹配（#456）
   - 局限：网络不连通/超出 cutoff 的需求点不产路线，逐一点列入 summary.unmatched_demand_ids（不静默丢弃）；OD 树代价不含转向惩罚（树无路径上下文，#455 跨工具语义）
   - 回退：`network.shortest_path`→approximation
+
+## `cloud_qc_advisory` — 云 QC 咨询掩膜
+
+亮度阈值 + 可选 NDVI 近零的云咨询掩膜（EXPERIMENTAL——非 Fmask/云概率：无热红外、卷云、视差/多时相检验，强披露）。
+
+- **`remote.cloud_qc`** 云 QC 基础咨询（亮度阈值）（`native`·成熟度 实验，契约: `cloud_qc_analysis`）
+  - 假设：brightness=(red+nir)/2；阈值=显式绝对值或缺省场景 97.5 百分位；可选 |NDVI| ≤ ndvi_max_abs 条件（云光谱平坦）；零分母不进条件；qc_mask=True=疑似云（advisory）——非云概率产品
+  - 局限：EXPERIMENTAL：非 Fmask/cloud-probability——无热红外、卷云、视差/多时相检验（强披露）；亮地物（屋顶/沙地/雪/旱地）误报；云影不检测
+
+## `cokriging` — 协同克里金
+
+协同定位协同克里金（MM1 近似）：主/次变量联合建模；|ρ|<0.2 结构化拒绝。
+
+- **`interpolation.cokriging`** 协同克里金（`native`·成熟度 已验证，契约: `cokriging_analysis`，出处: `journel_huijbregts1978`, `matheron1963`）
+  - 假设：Markov Model 1 近似核化：交叉协方差 C_sy(h)=ρ·C_pp(h)（全交叉协方差未建模）；协同定位近似：次变量仅在目标格点以单一数值进入克里金系统；次变量缺失时取最近次变量值（精确协同定位格数披露）；C_ss(0)=主变量先验方差（标准化假设）
+  - 局限：次变量自身变异函数未拟合（MM1 缩放假设）；次变量须与主变量共享同一工作 CRS；非协同定位部分由最近邻补格（近似）；近似语义（approximate=True）：协同克里金理论收益依赖 MM1 假设成立
+  - 回退：`interpolation.kriging`→approximation
 
 ## `convex_hull` — 凸包
 
@@ -87,11 +141,29 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
   - 假设：K12(r)=A/(n1·n2)·Σ_{i∈1,j∈2} I(d≤r)/w_ij，w_ij 各向同性逐对校正；随机标记（random labelling）零假设：类型标签在固定位置间置换；置换从池化成对表重抽（非仅观测跨类对），固定种子 42
   - 局限：随机标记只检验『给定位置下的类型关联』，不检验位置格局本身；p 值来自 max|K12−πr²| 秩（+1 校正），分辨率 1/(permutations+1)；O(n²) 成对统计，上限 2 万点（超出诚实拒绝）
 
+## `cross_pair_correlation` — 双变量成对相关函数 g12
+
+双变量 g12(r)=K12′(r)/(2πr)——两类点空间吸引/相斥随尺度的谱（cross-K 的导数形式），随机标记包络。
+
+- **`point_pattern.cross_pcf`** 双变量成对相关函数 g12(r)（`native`·成熟度 已验证，契约: `cross_pcf_analysis`，出处: `illian2008`, `besag1977`）
+  - 假设：g12(r)=K12′(r)/(2πr)：交叉 K12（各向同性校正）的离散导数 + Epanechnikov 平滑（与单变量 pcf 同款后处理）；random-labelling 参考 g12≡1；g12>1 两类吸引/共现，g12<1 相斥；bandwidth（米）缺省 0=一个 r 步宽（自动值在输出披露）
+  - 局限：g12 由 K12 的离散导数间接估计，r 网格粒度限制分辨率；每类 ≥5 点（否则诚实拒绝）；O(n²) 成对统计上限 2 万点；p 值来自 sup|g12−1| 秩检验（+1 校正），上限 499
+
 ## `density_surface` — 视觉密度面
 
 视觉热力（回答『大概哪儿密』，非定量）。
 
-- **`density.visual.heatmap`** 视觉热力（渲染态密度）（`native`·成熟度 —）
+- **`density.visual.heatmap`** 视觉热力（渲染态密度）（`native`·成熟度 已验证）
+  - 假设：渲染态密度（栅格化加核）——与解析 KDE 语义分离；（§10 硬规则：不以视觉热力冒充解析 KDE）
+  - 局限：带宽/半径为渲染参数（非统计带宽选择器）
+
+## `endmember_extraction` — 端元提取
+
+VCA 顶点成分分析端元提取（Nascimento & Dias 2005 的简化确定性变体；纯像元假设；EXPERIMENTAL——结果需人工核验）。
+
+- **`remote.endmember_vca`** 端元提取（VCA）（`native`·成熟度 实验，契约: `endmember_vca_analysis`，出处: `nascimento2005`）
+  - 假设：纯像元假设——恢复端元 = 原始像元光谱；随机投影固定 seed；SVD 降维（均值正交补取前 m−1 维）+ 逐顶点随机投影选择；末顶点用已选顶点仿射包法向（带符号极值距离比较）
+  - 局限：EXPERIMENTAL：论文完整实现的简化确定性变体（披露），结果需人工核验；守卫：2 ≤ n_endmembers < n_bands（降维到 m−1 维的实现约定）；无纯像元的场景（强混合）恢复端元为近似（凸包顶点，非真实端元）
 
 ## `external_route_planning` — 外部路径规划
 
@@ -116,6 +188,12 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
 - **`stats.geodetector`** 地理探测器（因子 q + 交互）（`native`·成熟度 已验证，契约: `geodetector_analysis`，出处: `wang2010`）
   - 假设：q=1-Σ N_h σ_h²/(N σ²)（总体方差），q∈[0,1] 完全分层时 =1；数值分层字段需显式分箱（bins≥2 分位数）；唯一值≤12 按类别；F 检验解析 p；permutations>0 附固定种子 42 的置换 p 与分位
   - 局限：类别交集是两分层的公共加细，q 加细单调不减——weakened 类只在分层被粗化时出现；q 只度量分层解释力，不是因果证据；分层过细（>n/2 层）时 q 退化为 1，被显式拒绝
+- **`stats.geodetector_ecological`** 地理探测器·生态探测器（`native`·成熟度 已验证，契约: `geodetector_ecological_analysis`，出处: `wang2010`）
+  - 假设：SSW_j=Σ_h Σ_{i∈h}(y_i−ȳ_h)²（分层的未解释变异）；t=[SSW₁/(n−m₁)−SSW₂/(n−m₂)]/sqrt(速率方差合成)，Wang 2010 族；双侧 p 用 Student t、df=n−2（保守可复核的 df 选择，meta 披露）
+  - 局限：df=n−2 是保守选择：分层自由度的精确合成需 Behrens-Fisher 类近似；SSW 只度量分层解释力，不是因果证据；两分层必须行对齐（任一分层字段为空的行整行丢弃并披露计数）
+- **`stats.geodetector_risk`** 地理探测器·风险探测器（`native`·成熟度 已验证，契约: `geodetector_risk_analysis`，出处: `wang2010`）
+  - 假设：逐分层对均值差的 Welch t 检验（equal_var=False，方差不等稳健）；permutations>0 附固定种子 42 标签置换双侧 p（(count+1)/(perms+1)）；方向判定 p<0.05 才给 higher/lower，否则 not_significant
+  - 局限：两分层的均值差不构成因果证据；分层数<2 时该对的 t/p/方向不可得（not_significant + note）；多重比较未校正：对数随分层数平方增长，解读需谨慎
 
 ## `geometry_buffer` — 几何缓冲
 
@@ -138,12 +216,16 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
 要素裁剪。
 
 - **`geometry.clip`** 几何裁剪（`native`·成熟度 —）
+  - 假设：裁剪在 WGS84 工作帧做纯拓扑相交（不量度）；面裁剪面/面裁点：输入几何有效性由上游校验
+  - 局限：无效自交多边形先 make_valid（披露）；拓扑输出不保证面积/长度语义（工作帧非投影）
 
 ## `geometry_dissolve` — 融合/溶解
 
 同属性面融合。
 
 - **`geometry.dissolve`** 融合溶解（`native`·成熟度 —）
+  - 假设：按字段 dissolve 后 unary_union（纯拓扑，不量度）
+  - 局限：无效几何先 make_valid（披露）；属性只保留分组键
 
 ## `geometry_overlay` — 几何叠加
 
@@ -189,9 +271,13 @@ Hansen 势能模型 A_i=Σ S_j^α/d_ij^β：以路网 OD 成本为距离，输�
 
 点聚合入 H3 六边形/渔网格网。
 
-- **`spatial.grid.h3`** H3 六边形聚合（`native`·成熟度 —）
+- **`spatial.grid.h3`** H3 六边形聚合（`native`·成熟度 已验证）
+  - 假设：H3 分辨率显式参数；计数/数值聚合（sum/mean）显式声明；点落格按 H3 索引包含关系
+  - 局限：跨分辨率的单元面积不同（对比需归一化，披露）
   - 回退：`spatial.grid.fishnet`→approximation
-- **`spatial.grid.fishnet`** 渔网格网聚合（`native`·成熟度 —）
+- **`spatial.grid.fishnet`** 渔网格网聚合（`native`·成熟度 已验证）
+  - 假设：等矩网格（目标 CRS 米制格宽）；计数/数值聚合显式
+  - 局限：格网在投影平面定义（高纬变形与投影一致，披露）
   - 回退：`spatial.grid.h3`→approximation
 
 ## `gwr` — 地理加权回归 (GWR)
@@ -201,15 +287,42 @@ Hansen 势能模型 A_i=Σ S_j^α/d_ij^β：以路网 OD 成本为距离，输�
 - **`spatial.gwr`** 地理加权回归（GWR）（`native`·成熟度 已验证，契约: `gwr_analysis`，出处: `brunsdon1996`, `fotheringham2002`）
   - 假设：自适应 bisquare 核，带宽=最近邻数 k（默认 30，钳制 [5,n/2]）；bandwidth_selection=cv 时在有界网格上留一 CV（确定性穷举）；AIC/AICc 用帽矩阵迹 q=tr(S)+1 的高斯形式（常用近似）
   - 局限：局部共线性会让局部系数失真（全局 VIF 不代表局部）；AICc 没有唯一公认公式——比较带宽/模型时保持同一实现；CV 带宽选择在有界网格上，非连续优化
-- **`spatial.mgwr`** 多尺度地理加权回归（MGWR）（`planned`·成熟度 —，出处: `fotheringham2002`）
-  - 假设：每个解释变量独立带宽的反向拟合（backfitting）
-  - 局限：MGWR 反向拟合未实现——planned 条目，运行时会诚实拒绝
+- **`spatial.mgwr`** 多尺度地理加权回归（MGWR）（`native`·成熟度 已验证，契约: `mgwr_analysis`，出处: `fotheringham2017`, `fotheringham2002`, `brunsdon1996`）
+  - 假设：每个设计列（含截距项）独立带宽的 bisquare kNN 反向拟合；联合 GWR 解热启动；逐项部分残差 + LOO-CV 带宽搜索（≤20 候选）；ENP=逐项帽矩阵对角迹之和；AICc 用 q=ENP+1 高斯近似
+  - 局限：反向拟合是不动点迭代：收敛到局部最优，不保证全局最优；带宽为有界网格穷举而非连续优化；等带宽锚在精确可表示表面上逐位成立，噪声数据的等带宽解与 GWR 有平滑交互偏差；局部共线性会让局部系数失真；AICc 无唯一公认公式
 
 ## `hotspot` — 热点显著性分析
 
 Getis-Ord Gi* 等空间聚类显著性检验。
 
-- **`spatial.hotspot.local`** 局部热点显著性（Getis-Ord Gi*）（`native`·成熟度 —）
+- **`spatial.hotspot.local`** 局部热点显著性（Getis-Ord Gi*）（`native`·成熟度 已验证，契约: `gi_star_analysis`，出处: `getis_ord1992`）
+  - 假设：Gi* 含 w_ii=1（distance band 内二值权重，含自身）；significance_method=normal：解析正态 p（既有路径，输出键不变）；significance_method=permutation：条件随机化置换 p（固定种子 42，双侧 (count+1)/(perms+1)；全局矩取观测值，邻域值随机重排）
+  - 局限：正态近似在小样本/偏态分布下 p 值偏乐观（置换路径可对照）；置换路径 n>5000 拒绝；邻居样本为全多重集无放回抽取（与严格 y_{−i} 条件化差一项，Monte-Carlo 近似）；逐格检验的多重比较问题由 BH-FDR 缓解而非消除
+
+## `ica_transform` — ICA 独立成分分析
+
+FastICA 独立成分分解（Hyvärinen 1999；random_state=42，whiten=unit-variance；收敛性显式披露）。
+
+- **`remote.ica`** 独立成分分析（FastICA）（`native`·成熟度 已验证，契约: `ica_analysis`，出处: `hyvarinen1999`）
+  - 假设：源信号统计独立且非高斯（FastICA 负熵代理）；whiten=unit-variance；random_state=42 固定（fixed_seed）；收敛性显式披露不静默；公共有效掩膜；n_valid ≥ max(8, k+2)（whiten 数值下限）
+  - 局限：分量序与符号不唯一（ICA 固有）——跨运行比较需固定实现版本；未收敛（max_iter 内）→ converged=false 披露，分量非稳定估计
+
+## `image_segmentation` — 图像分割
+
+k-means 分割基座（Lloyd 1982；光谱 z-score + 加权空间坐标特征，random_state=42 确定性；非 SLIC——无几何紧致约束/watershed 精化，披露）。
+
+- **`remote.segmentation`** 图像分割（k-means 基座）（`native`·成熟度 已验证，契约: `segmentation_analysis`，出处: `lloyd1982`）
+  - 假设：特征 = 标准化光谱波段 + 归一化坐标·spatial_weight·compactness；KMeans(random_state=42, n_init=10)（确定性；Lloyd 1982 惯用法）；段数 > 有效像元数 → 钳制并披露（realized < requested）
+  - 局限：flat-color k-means 基座，非 SLIC 超像素：compactness 只是空间特征权重乘子（无几何紧致约束）、无 watershed 精化（诚实边界）；常量波段不进特征（剔除披露）；全常量 → 仅按坐标分割
+
+## `indicator_kriging` — 指示克里金
+
+逐阈值指示克里金（Journel 1983）：P(Z≤t) 概率面 + p50 阈值面 + 可选 E-type 估计。
+
+- **`interpolation.indicator_kriging`** 指示克里金（`native`·成熟度 已验证，契约: `indicator_kriging_analysis`，出处: `journel1983`, `matheron1963`）
+  - 假设：逐阈值指示变换 I=1[z≤t] → 各自经验变异函数 + 拟合 → 指示场普通克里金；variogram_model=auto 时逐阈值在全部 6 家族里按加权 RSS 选型（逐阈值披露）；概率钳制 [0,1]：被钳制格数逐格计数（绝不静默）
+  - 局限：逐阈值独立克里金不保证概率面在阈值间单调（P(Z≤t) 单调性未强制，已披露）；常量指示场（阈值在样本值域之外）输出常量概率（无变异函数拟合）；E-type 类内分布未建模——不是分位数中值的精确期望
+  - 回退：`interpolation.kriging`→approximation
 
 ## `interpolation_model_selection` — 插值模型选择
 
@@ -224,6 +337,9 @@ Getis-Ord Gi* 等空间聚类显著性检验。
 
 二值场的邻接同异类连接计数检验（Cliff-Ord free sampling）。
 
+- **`stats.bivariate_join_count`** 双色 Join Count（二类别空间关联）（`native`·成熟度 已验证，契约: `bivariate_join_count_analysis`，出处: `cliff_ord1973`）
+  - 假设：字段恰好取两个值（任意数值类别，违者 UnsupportedMethod/DegenerateData）；按排序映射 B=较小值 / W=较大值；二值对称权重；n_BB（同类）/n_BW（异类）/n_WW 按无序连接计数；期望/方差用 free sampling（Cliff-Ord 1973）解析式，n≥4；端点独立抽取、忽略权重结构细节（披露于结果）
+  - 局限：free sampling 是零假设近似，不反映真实类别总量约束；knn 权重是邻接的近似；queen/rook 需要面要素；小 n 下解析 z 的正态近似偏乐观（置换可对照）
 - **`stats.join_count`** Join Count（二值空间关联）（`native`·成熟度 已验证，契约: `join_count_analysis`，出处: `cliff_ord1973`, `moran1950`）
   - 假设：字段必须 ⊆ {0,1}，含 0 与 1 两个类（违者 UnsupportedMethod）；二值对称权重；n_BB/n_BW/n_WW 按无序连接计数；期望/方差用 free sampling（Cliff-Ord 1973）解析式，n≥4
   - 局限：free sampling 忽略权重结构细节（只含连接数 J）；knn 权重是邻接的近似；queen/rook 需要面要素；小 n 下解析 z 的正态近似偏乐观
@@ -232,9 +348,13 @@ Getis-Ord Gi* 等空间聚类显著性检验。
 
 KDE 连续密度面/等值线（定量密度表达）。
 
-- **`spatial.kde.contours`** 核密度等值线（`native`·成熟度 —）
+- **`spatial.kde.contours`** 核密度等值线（`native`·成熟度 已验证）
+  - 假设：KDE 表面的 marching-squares 等值线（matplotlib Agg）
+  - 局限：等值线级别为渲染选择（非分位数语义）
   - 回退：`spatial.kde.surface`→equivalent
-- **`spatial.kde.surface`** 核密度全格网表面（`native`·成熟度 —）
+- **`spatial.kde.surface`** 核密度全格网表面（`native`·成熟度 已验证，契约: `kde_surface_analysis`，出处: `silverman1986`, `abramson1982`）
+  - 假设：Silverman 规则或显式带宽（scipy gaussian_kde）；点数上限触发时降级披露；bandwidth_method=fixed（默认）：单一各向同性带宽，行为与历史逐位一致
+  - 局限：高斯核假设；大规模点集走聚合通道（fallback 已声明）；adaptive 为一步先导近似（非迭代变带宽）；先导带宽与λ 范围随结果披露；自适应评估与固定路径同阶 O(n·grid)，点数上限同 #384
   - 回退：`spatial.kde.contours`→equivalent
 
 ## `local_gearys_c` — 局部 Geary's C
@@ -244,6 +364,14 @@ KDE 连续密度面/等值线（定量密度表达）。
 - **`stats.local_geary`** 局部 Geary's C（相似性/相异性）（`native`·成熟度 已验证，契约: `local_geary_analysis`，出处: `anselin1995`, `geary1954`, `holm1979`, `benjamini_hochberg1995`）
   - 假设：C_i=Σ_j w_ij(z_i-z_j)²，z 为总体方差标准化（esda.Geary_Local 同式）；行标准化权重；置换检验固定种子 42、双侧 (count+1)/(perms+1)；多重校正默认 BH-FDR（可 bonferroni/holm/none）
   - 局限：Local Geary 只判相似/相异，高-低方向配对用 LISA（h3_lisa）；±1 二值场等离散取值下置换分布退化，p 分辨率受格子限制；逐格校正后 α=0.05 判定在随机数据下仍有 ~0.05q 假显著期望
+
+## `local_join_count` — 局部 Join Count
+
+二值场的逐位置共位簇检测（Anselin & Li 2019；全局 Join Count 的局部对应物）。
+
+- **`stats.local_join_count`** 局部 Join Count（二值共位簇）（`native`·成熟度 已验证，契约: `local_join_count_analysis`，出处: `anselin_li2019`, `sokal1998`, `benjamini_hochberg1995`）
+  - 假设：y ⊆ {0,1}（违者 UnsupportedMethod）；二值对称权重（无自环）；LJC_i=Σ_j w_ij·I(y_i=1)·I(y_j=1)；y=0 位置 LJC≡0、p≡1；条件置换推断（保持 1 的总数），单侧上尾 (count+1)/(perms+1)
+  - 局限：只检测 y=1 的共位聚集；y=0 的聚集用 0/1 翻转后再检；BH 在全 n 位置上校正（含 y=0 的 p≡1），对稀疏 1 偏保守；knn/distance_band 权重是邻接的近似；queen/rook 需要面要素
 
 ## `local_morans_i` — 局部莫兰/LISA
 
@@ -257,9 +385,25 @@ KDE 连续密度面/等值线（定量密度表达）。
 
 设施选址-分配优化（tier-3 门控）。
 
-- **`network.location_allocation`** 区位配置（`native`·成熟度 已验证，出处: `teitz_bart1968`, `hakimi1964`）
+- **`network.location_allocation`** 区位配置（`native`·成熟度 已验证，契约: `location_allocation_analysis`，出处: `teitz_bart1968`, `hakimi1964`）
   - 假设：p_median 目标 = 最小化 Σ w_i·min_{j∈S} C_ij；max_coverage = 最大化 cutoff 内覆盖需求权重；p_center（Foundation V2 A4，Hakimi 1964 max-min）= 最小化可达需求的最大服务成本（打平按总加权成本次级判据）；代价矩阵 = 路网 OD 行程时间（不可达 = inf，参与目标时按 1e9 惩罚）
   - 局限：启发式 >20k 组合；exact ≤20k —— C(m,p) 枚举在预算内给出精确最优，超出切 Teitz-Bart 顶点替换 / 贪婪覆盖 / p-center 贪婪+顶点替换（≤10 轮）；不可达需求点列入 summary.unassigned_ids（不参与选址目标）；Teitz-Bart / p-center 启发式收敛依赖初始化（前 p 个候选），无多起点重启（summary.solver 披露 exact|heuristic）
+- **`network.pcenter_exact`** p-中心精确求解（MILP）（`native`·成熟度 已验证，契约: `location_allocation_analysis`，出处: `hakimi1964`）
+  - 假设：Big-M 0/1 MILP：min z；z ≥ c_if·x_if − BigM(1−x_if)；Σ_f x_if=1；x_if≤y_f；Σ_f y_f=p（BigM=最大有限代价）；Hakimi 1964 max-min 目标：最小化可指派需求的最大服务成本；不可达需求不参与 max 目标（inf 不是服务成本）、进 summary.unassigned_ids —— 与既有 p-center 语义一致
+  - 局限：规模闸：需求×候选 ≤ 25000 且候选 ≤ 500 —— 超限抛 ResourceScaleMismatch 指向启发式路径（不静默回退）；MILP 主目标仅 z（max 服务成本）；打平时的次级总加权成本仅作披露，不进入最优化；最优解不唯一时由 HiGHS 确定性给出其一；最优目标值不受影响
+  - 回退：`network.location_allocation`→approximation
+- **`network.pmedian_exact`** p-中位精确求解（MILP）（`native`·成熟度 已验证，契约: `location_allocation_analysis`，出处: `church_revelle1974`）
+  - 假设：0/1 MILP 精确式：min Σ w_i·c_if·x_if；Σ_f x_if=1 ∀可指派需求；x_if≤y_f；Σ_f y_f=p；求解后端 scipy.optimize.milp（HiGHS 分支定界）：固定输入确定性复现；代价矩阵 = 路网 OD 行程时间；不可达对从模型剔除（不引入 1e9 惩罚近似）
+  - 局限：规模闸：需求×候选 ≤ 25000 且候选 ≤ 500 —— 超限抛 ResourceScaleMismatch 指向启发式路径（不静默回退）；全程不可达需求点进 summary.unassigned_ids（不参与目标，与启发式语义一致）；最优解不唯一时由 HiGHS 确定性给出其一；最优目标值不受影响
+  - 回退：`network.location_allocation`→approximation
+
+## `mantel_test` — Mantel 时空检验
+
+Mantel 检验（1967）——空间距离矩阵与时间距离矩阵的相关（标准化 Mantel r），时间标签置换 p 值。
+
+- **`point_pattern.mantel`** Mantel 时空距离相关检验（`native`·成熟度 已验证，契约: `mantel_analysis`，出处: `mantel1967`）
+  - 假设：标准化 Mantel r = Pearson(上三角空间距离, 上三角时间距离)；时间标签置换（固定种子 42）构成零假设分布；alternative=greater（聚集方向，缺省）/ two-sided
+  - 局限：Mantel 把全部点对当独立样本（距离矩阵非独立），对空间自相关敏感——meta 中 disclosure 披露；密集 n×n 距离矩阵：n ≤ 2000 诚实上限（超限结构化拒绝）；p 值分辨率 1/(permutations+1)，上限 999
 
 ## `mcda_evaluation` — 多准则决策评价
 
@@ -268,6 +412,14 @@ KDE 连续密度面/等值线（定量密度表达）。
 - **`decision.mcda.wsm`** MCDA 决策评价（WSM/TOPSIS）（`native`·成熟度 已验证，出处: `hwang_yoon1981`）
   - 假设：权重/准则方向由声明给定；蒙特卡洛不确定性仅在声明不确定参数时激活
   - 局限：不合成证据：无不确定参数时不注入伪噪声分布
+
+## `mnf_transform` — MNF 变换
+
+最小噪声分数变换（Green 1988：局部差分噪声白化 + 白化空间 PCA，分量按 SNR 排序，含逆变换去噪重建）。
+
+- **`remote.mnf`** 最小噪声分数变换（MNF）（`native`·成熟度 已验证，契约: `mnf_analysis`，出处: `green1988`）
+  - 假设：噪声协方差由水平/垂直一阶差分估计（(C_h+C_v)/4，差分加倍校正披露）；白化空间噪声方差=1，SNR_i = λ_i − 1（λ 为白化 PCA 特征值 ddof=1）；公共有效掩膜：任一波段无效 → 整行剔除（非 pairwise-complete）
+  - 局限：无流式实现：n_bands·H·W ≤ 16M 像元，超限先拒绝；常量/共线波段使噪声协方差奇异 → DegenerateData（诚实拒绝）；分量/载荷代数符号依 LAPACK 约定（同一构建内稳定）
 
 ## `multi_ring_buffer` — 多环缓冲
 
@@ -291,7 +443,7 @@ G/F/J 距离函数（Diggle 1983 / van Lieshout–Baddeley 1996）——最近�
 
 - **`point_pattern.g_f_j`** G/F/J 距离函数（`native`·成熟度 已验证，契约: `g_f_j_analysis`，出处: `diggle1983`, `van_lieshout_baddeley1996`, `ripley1976`）
   - 假设：G(r)=最近邻距离 CDF；F(r)=空空间函数（确定性低差异查询格）；J(r)=(1−G)/(1−F)，CSR 下 J≡1（van Lieshout–Baddeley 1996）；F 查询格：default_rng(42) 均匀点，n_f=min(4n, 2000)，观测/模拟共用
-  - 局限：无边缘校正（矩形窗 Reduced-Sample 未实现）——边界点低估 G/F；J 在 F(r)→1 时分母退化记 NaN（j_undefined_from 披露）；p 值来自秩检验（+1 校正），分辨率 1/(envelopes+1)，上限 499
+  - 局限：edge_correction=none（缺省）为原始估计——边界点低估 G/F；V3 起可选 border（reduced-sample）/isotropic（Ohser 加权）；border 校正要求焦点/查询点到四边距离 > r_max（内点不足时诚实拒绝）；J 在 F(r)→1 时分母退化记 NaN（j_undefined_from 披露）
 
 ## `network_centrality` — 网络中心性
 
@@ -300,12 +452,17 @@ G/F/J 距离函数（Diggle 1983 / van Lieshout–Baddeley 1996）——最近�
 - **`network.centrality`** 网络中心性（`native`·成熟度 已验证，契约: `network_centrality_analysis`，出处: `brandes2001`）
   - 假设：度数 = 入度+出度（DiGraph 语义：单行路段计数不对称，如实呈现）；接近/介数以边权为距离最小化（travel_time_s 秒 / length_m 米），非跳数；介数 Brandes 精确 n≤2000；n>2000 切 k=500 固定种子 42 采样（betweenness_mode 披露）
   - 局限：节点上限 20000（计算前 ResourceScaleMismatch 显式拒绝，不 OOM）；edge_betweenness 仅边数≤1500 精确；超出诚实拒绝（不做假采样）；逐节点输出上限 5000 行（按主指标降序裁剪，output_rows_trimmed 披露）
+- **`network.eigenvector_centrality`** 特征向量中心性（`native`·成熟度 已验证，契约: `network_centrality_analysis`，出处: `bonacich1972`）
+  - 假设：Bonacich 1972 主特征向量中心性：A·x=λx，稀疏幂迭代（scipy CSR matvec）+ L2 归一；收敛判据 L1 增量 < tol（缺省 1e-10）；实际迭代数/达成增量在 meta/summary 披露；DiGraph 取左特征向量（入边语义，与 networkx 一致）：度量被高分层节点指向的程度
+  - 局限：负边权拒绝（UnsupportedMethod）：幂迭代依赖 Perron-Frobenius 非负前提，不做移位/取绝对值变通；不连通图照常迭代：得分反映谱半径最大（主导）分量，谱半径并列时为主导向量混合 —— meta 显式披露；max_iter 内未收敛不报错：converged=False + 实际迭代数/达成增量披露；孤立节点恒 0
 
 ## `od_flow_mapping` — OD 流向图
 
 把 OD 对（坐标+权重）构建为有界流向线要素层。
 
-- **`flow.od_arc_build`** OD 流向构建（`native`·成熟度 —）
+- **`flow.od_arc_build`** OD 流向构建（`native`·成熟度 已验证）
+  - 假设：OD 对 → 有界带权流向线（宽度映射显式参数，ADR-0092 D）
+  - 局限：线宽是渲染量（非线性量纲）——地图模型 flow_od_arc 消费
 
 ## `od_matrix` — OD 成本矩阵
 
@@ -328,7 +485,11 @@ G/F/J 距离函数（Diggle 1983 / van Lieshout–Baddeley 1996）——最近�
 按范围/类别获取点要素（本地优先，在线兜底）。
 
 - **`poi.query.local`** POI 查询（本地优先）（`native`·成熟度 —）
-- **`poi.area_search`** 区域 POI 检索（`native`·成熟度 —）
+  - 假设：本地数据优先（本地索引），不做几何改写
+  - 局限：查询结果依赖本地数据完整性（元数据披露来源）
+- **`poi.area_search`** 区域 POI 检索（`native`·成熟度 实验）
+  - 假设：范围检索（在线 POI 服务）——external API 客户端；结果内容/排序由服务方决定（本库不重排）
+  - 局限：deterministic=False：在线结果可变（已声明）；服务配额/风控可能拒绝（结构化错误返回）
 
 ## `point_pattern_analysis` — 点格局分析
 
@@ -354,24 +515,39 @@ G/F/J 距离函数（Diggle 1983 / van Lieshout–Baddeley 1996）——最近�
 
 点数/几何/字段画像（不产出新数据，产出元数据）。
 
-- **`profile.spatial.stats`** 空间数据画像（`native`·成熟度 —）
+- **`profile.spatial.stats`** 空间数据画像（`native`·成熟度 已验证）
+  - 假设：画像为描述性统计（计数/几何/字段元数据），不产出新几何
+  - 局限：字段类型推断是启发式（数值/类别判定规则披露于工具层）
 
 ## `proximity_buffer` — 邻近缓冲
 
 距离缓冲区生成。
 
-- **`spatial.buffer.proximity`** 距离缓冲区（`native`·成熟度 —）
+- **`spatial.buffer.proximity`** 距离缓冲区（`native`·成熟度 已验证）
+  - 假设：距离单位为米：实现经 to_utm_gdf 自动投影到局部 UTM
+  - 局限：跨带 UTM 投影失真记入 transformations 披露；缓冲段数固定惯例（圆滑度有限）
+
+## `radiometric_normalization` — 辐射归一化
+
+稳健跨波段/跨场景归一化（2-98 分位拉伸或参考场景分位匹配；NaN-aware 分位、逐波段分位披露；线性增益/偏移不变）。
+
+- **`remote.robust_normalize`** 稳健波段/场景归一化（`native`·成熟度 已验证，契约: `robust_normalize_analysis`）
+  - 假设：percentile_stretch：逐波段 [2,98] 分位（可调）线性拉伸到 [0,1]；percentile_match：源分位拉伸后重缩放到参考栈同序波段分位区间；NaN-aware 分位（np.nanpercentile）；逐波段所用分位完整披露
+  - 局限：对线性增益/偏移不变——非线性辐射差异（直方图形状）不校正；常量波段（分位区间 0）→ DegenerateData；绝对辐射语义不保留；相对归一化：非伪不变目标（PIF）/直方图匹配全量实现
 
 ## `raster_change_detection` — 双时相栅格变化检测
 
 两个栅格工件的对齐像元级变化检测（差值/绝对差/归一化差 + 阈值分类）。
 
-- **`remote.change.raster`** 双时相栅格变化检测（`native`·成熟度 —）
-  - 假设：A（T1）网格为基准，B 经 WarpedVRT 对齐；对齐事实进质量证据；有效像元 = 双方都有效（任一 nodata → nodata）
-  - 局限：差值法对配准/辐射差异敏感，无语义分类（变化≠地类转移）；normalized_difference 零分母 → nodata（不产 inf）
+- **`remote.change.raster`** 双时相栅格变化检测（`native`·成熟度 已验证）
+  - 假设：A（T1）网格为基准，B 经 WarpedVRT 对齐；对齐事实进质量证据；有效像元 = 双方都有效（任一 nodata → nodata）；差值/绝对差为逐像元辐射差，不构成语义分类
+  - 局限：差值法对配准/辐射差异敏感，无语义分类（变化≠地类转移）；normalized_difference 零分母 → nodata（不产 inf）；无云/阴影 QC（跨期云污染进入差值，见 remote.cloud_qc 基础）
 - **`remote.cva`** 变化向量分析（CVA）（`native`·成熟度 已验证，出处: `malila1980`）
   - 假设：两景波段按语义角色对齐（缺角色拒绝，不按位置猜测）；幅度=全角色欧氏范数；角度=固定角色序前两分量 atan2（弧度）；同一像元任一角色任一期无效 → 输出 NaN
   - 局限：CVA 只给幅度/方向，不构成土地覆盖语义变化；方向角依赖角色序约定——跨研究比较需披露所用角色序
+- **`remote.mad_change`** MAD / IR-MAD 变化检测（`native`·成熟度 已验证，契约: `mad_change_analysis`，出处: `nielsen1998`）
+  - 假设：两期栈各自标准化 → SVD-CCA → MAD_i = a_i·X − b_i·Y（ρ 升序）；χ² 栅格自由度按 2k 约定披露；ρ 钳制 ≤1−1e-12（恒等场景防 0/0）；IR-MAD 权重 w=1/χ²（均值归一 + 下限 1e-4），固定点迭代 ≤10
+  - 局限：对逐波段线性辐射偏移/增益不变（标准化吸收）——检测结构变化；完整 IR-MAD 的 no-change 概率优化未实现（简化重加权披露）；波段共线/常量 → DegenerateData（CCA 要求满秩场景协方差）
 - **`remote.ratio_change`** 双时相比值变化（`native`·成熟度 已验证，契约: `ratio_change_analysis`）
   - 假设：比值法适用于 SAR 后向散射/强度（同量纲输入）；ratio：a/b，零分母→NaN；log_ratio：log(a)−log(b)（对数域对称）
   - 局限：比值不区分变化原因（物候/几何/定标漂移同权混合）；log_ratio 输入须为正（线性强度或 dB）
@@ -388,19 +564,25 @@ G/F/J 距离函数（Diggle 1983 / van Lieshout–Baddeley 1996）——最近�
 
 连续栅格值按方案映射为离散类别。
 
-- **`raster.reclassify.rule`** 规则重分类（`native`·成熟度 —）
+- **`raster.reclassify.rule`** 规则重分类（`native`·成熟度 已验证）
+  - 假设：规则表逐段左闭右开映射；未命中段 → nodata（披露）
+  - 局限：浮点边界比较语义（无容差）——由规则表作者负责
 
 ## `raster_resample` — 栅格重采样
 
 改变像元大小和/或 CRS（对齐预处理）。
 
-- **`raster.resample.grid`** 网格重采样/重投影（`native`·成熟度 —）
+- **`raster.resample.grid`** 网格重采样/重投影（`native`·成熟度 已验证）
+  - 假设：重采样方法（邻近/双线性/平均）显式声明；目标网格由对齐参数决定（WarpedVRT）
+  - 局限：重投影经 GDAL/PROJ；极区/跨子午线由 Warp 处理（披露）
 
 ## `raster_source` — 栅格数据源
 
 DEM/遥感栅格获取。
 
-- **`raster.source.dem`** DEM 栅格获取（`native`·成熟度 —）
+- **`raster.source.dem`** DEM 栅格获取（`native`·成熟度 实验）
+  - 假设：DEM 拉取（Copernicus 30m）经 STAC/非交互通道
+  - 局限：在线数据源：可用性与产品版本不受本库控制（external）
 
 ## `rate_aggregation` — 率/密度聚合
 
@@ -409,6 +591,14 @@ DEM/遥感栅格获取。
 - **`spatial.aggregate.rates`** 显式分母聚合（率/密度）（`native`·成熟度 实验，契约: `aggregate_with_denominator`）
   - 假设：分子 = 分子字段按区求和（NaN 值剔除并披露）或缺省的要素计数；分母三种口径：区分母字段（field）/ 区真实面积 m²（area）/ 要素计数（count）；率 = 分子 ÷ 分母；面积分母在 UTM/极方位度量 CRS 下计算（Web Mercator 不可信）
   - 局限：分母通道已接入 spatial_aggregate 工具（denominator_kind/numerator_field/denominator）——需中央接线 numerator_field/denominator_kind/denominator_field 三个参数；count 分母的输出是比值（count_ratio_not_rate），不是率/密度；分母缺失/≤0 的区 rate=None（JSON null）——从不编造 0 或 inf
+
+## `rate_smoothing` — 经验贝叶斯率平滑
+
+计数/人口率的经验贝叶斯收缩平滑（Marshall 1991 MOM 先验；全局或邻居先验；零人口区不产率值）。
+
+- **`stats.rate_smoothing`** 经验贝叶斯率平滑（Marshall 1991 MOM）（`native`·成熟度 已验证，契约: `rate_smoothing_analysis`，出处: `marshall1991`）
+  - 假设：分子=观测计数、分母=风险人口；原始率 r_i=C_i/P_i；先验均值/方差用矩估计（MOM，Marshall 1991）：假设计数近似 Poisson；weights_scheme 给定时先验来自邻居（不含自身）的人口加权矩（局部 EB）；缺省全局 EB
+  - 局限：MOM 先验假设 Poisson 计数——小计数/超散布数据下收缩失真；零人口区不产率值（类型化排除并披露），不是 0；孤岛（无有效邻居）保留原始率并披露；极端收缩不等于因果调整
 
 ## `regression_kriging` — 回归克里金
 
@@ -430,6 +620,14 @@ OLS 趋势（协变量）+ 残差克里金的混合插值（Odeh 1995）。
   - 假设：最近邻初始巡游 + 2-opt 局部搜索改进（有向代价矩阵，方向翻转计价 #540）；leg 代价 = 活动阻抗下的路网最短路（OD 树重建）
   - 局限：NN+2-opt 启发式非精确 TSP：解无最优性保证（迭代上限 100）；stops 上限 200（工具层显式拒绝超限，2-opt 超线性）
 
+## `rx_anomaly_detection` — RX 异常检测
+
+Reed-Xiaoli 全局 RX 异常检测（Mahalanobis 距离 + 尺度不变岭正则；单高斯背景假设，阈值启发式披露；局部/核 RX 未实现）。
+
+- **`remote.rx_anomaly`** RX 全局异常检测（`native`·成熟度 已验证，契约: `rx_analysis`，出处: `reed1990`）
+  - 假设：δ(x)=√((x−μ)ᵀΣ_r⁻¹(x−μ))；Σ_r = Σ + regularize·(tr Σ/k)·I；单高斯全局背景假设（局部 RX/核 RX 未实现，披露）；阈值 mean(δ)+k·σ(δ) 为启发式建议（k 显式参数，非假设检验）
+  - 局限：≥3 波段推荐（2 波段可运行但背景估计弱）；常量场 → δ=0 披露；异常≠语义目标——δ 高只说明偏离全局统计
+
 ## `sar_analysis` — SAR 时序/极化分析
 
 SAR 时序栈统计（含 CV/鲁棒分位数）、时序合成、VV/VH 极化比与双时相对数比值（滤波/定标为独立能力：sar_speckle_filtering / sar_radiometric_calibration）。
@@ -447,21 +645,52 @@ SAR 时序栈统计（含 CV/鲁棒分位数）、时序合成、VV/VH 极化比
   - 假设：log(a)−log(b)：对数域对称（增强=衰减镜像），SAR 双期惯用量；经 detect_ratio_change 工具 method=log_ratio 参数执行
   - 局限：比值不区分变化原因；输入须为正（线性强度或 dB）
 
+## `sar_coherence` — SAR 相干性估计
+
+复数 SLC 双通道相干性 γ 窗口估计（|Σ a·b*|/√(Σ|a|²Σ|b|²)；EXPERIMENTAL——无轨道元数据/配准质量披露；强度-only 输入类型化拒绝）。
+
+- **`sar.coherence`** 复数相干性估计（窗口化）（`native`·成熟度 实验，契约: `sar_coherence_analysis`，出处: `oliver_quegan1998`）
+  - 假设：γ = |Σ a·b*| / √(Σ|a|²·Σ|b|²)（窗口化，nodata 感知累加）；输入为双通道复 SLC（(re, im) 二元组或 complex）——两历元同网格；分母为 0 的窗口 → NaN；γ 钳 [0,1]（超 1 像元计数披露）
+  - 局限：EXPERIMENTAL：无轨道元数据/配准质量输入——窗口估计有偏差，需人工核验；强度-only 输入（纯实数/虚部全零）被类型化拒绝（相位不可虚构）；不输出干涉相位/解缠（仅相干性幅度）
+
 ## `sar_radiometric_calibration` — SAR 辐射定标
 
 DN → β⁰/σ⁰/γ⁰ 常数辐射定标（定标常数显式必需；逐像元 LUT 与热噪声去除未实现——披露）。
 
-- **`sar.radiometric_calibration`** SAR 辐射定标（β⁰/σ⁰/γ⁰ 常数定标）（`native`·成熟度 已验证，契约: `sar_calibration_analysis`，出处: `oliver_quegan1998`）
-  - 假设：标准定标关系：β⁰=I/K、σ⁰=β⁰·sin(θᵢ)、γ⁰=β⁰·tan(θᵢ)，I=DN²（振幅域）；calibration_constant（K，如 Sentinel-1 A²/AUT）显式必需——缺失拒绝；入射角：标量或逐像元平面（与网格同形），(0,90) 开区间（度）
-  - 局限：逐像元定标 LUT 未实现（仅常数定标）——LUT 场景精度受限；热噪声去除未实现（Sentinel-1 GRD 噪声底未扣，弱信号偏乐观）；不修正地形起伏（无地形辐射校正/局部入射角模型）
+- **`sar.radiometric_calibration`** SAR 辐射定标（β⁰/σ⁰/γ⁰；标量 K + 入射角 LUT）（`native`·成熟度 已验证，契约: `sar_calibration_analysis`，出处: `oliver_quegan1998`）
+  - 假设：标准定标关系：β⁰=I/K、σ⁰=β⁰·sin(θᵢ)、γ⁰=β⁰·tan(θᵢ)，I=DN²（振幅域）；calibration_constant（K，如 Sentinel-1 A²/AUT）显式必需——缺失拒绝；入射角：标量或逐像元 2D LUT（与网格同形，(0,90) 开区间；lut_pixels 披露；V3 additive）
+  - 局限：定标常数 K 为标量——σ⁰ 逐像元定标 LUT（SAFE annotation XML）不解析（入射角 LUT 已支持）；热噪声去除为独立算法 sar.thermal_noise_removal（本工具不做隐式前置/后置）；不修正地形起伏（地形辐射校正见独立算法 sar.rtc）
+- **`sar.log_scaling`** SAR 量纲换算（振幅/强度/dB 恒等式）（`native`·成熟度 已验证，契约: `sar_log_scaling_analysis`）
+  - 假设：纯代数恒等式：I=A²、A=√I、dB=10·log₁₀(x)、x=10^(dB/10)；round-trip 精确（float64 恒等；测试锁定）；线性→dB 对 ≤0 钳 ε=1e-12 下限（计数披露，非静默）
+  - 局限：无定标语义（量纲假定由调用方负责）——只做换算；振幅/强度域负值物理无意义 → NaN（计数披露）
+- **`sar.thermal_noise_removal`** SAR 热噪声去除（噪声底/LUT 相减）（`native`·成熟度 已验证，契约: `sar_thermal_noise_removal_analysis`，出处: `oliver_quegan1998`）
+  - 假设：I_dn = max(I − N, 0)：噪声项 N 为标量噪声底或同形逐像元 LUT（互斥）；输入须线性强度（非负；dB 输入被拒绝）；去噪后负值钳 0（clamped_pixels 计数披露）
+  - 局限：不解析 Sentinel-1 SAFE annotation XML（denoising 需逐 swath 插值）——仅接收已提取的噪声底/LUT；钳 0 使弱信号像元强度统计右偏（正偏披露，不静默）
 
 ## `sar_speckle_filtering` — SAR 斑点滤波
 
 SAR 相干斑点噪声抑制（Lee 1980 / Refined-Lee 边缘方向 MMSE / Frost 1982；ENL 显式优先、缺省矩估计披露；refined_lee 为 7 子窗近似实现）。
 
-- **`sar.speckle_filter`** SAR 斑点噪声滤波（Lee/Refined-Lee/Frost）（`native`·成熟度 已验证，契约: `sar_speckle_filter_analysis`，出处: `lee1980`, `lee1981`, `lopes1990`, `frost1982`）
+- **`sar.multitemporal_speckle`** 多时相斑点抑制（强度域 MT-Lee）（`native`·成熟度 已验证，契约: `sar_multitemporal_speckle_analysis`，出处: `lee1980`, `oliver_quegan1998`）
+  - 假设：逐切片：时序均值与空域 Lee 估计的逐像元逆方差加权（确定性）；权重 σ²：空域=Lee 残差代理 k²·Var；时序=Var_temp/n_t（n_t<2 回退空域）；栈已配准对齐；ENL 显式优先（缺省整图矩估计，披露）
+  - 局限：非 Quegan 谱域多时相滤波（需 SLC 复数相干分解）——强度栈近似，披露；时序方差计入真实地物变化 → 权重保守偏向空域估计；栈深 ≥3 且 ≤24、H·W ≤4096²（超限 ResourceScaleMismatch）
+- **`sar.speckle_filter`** SAR 斑点噪声滤波（Lee/Refined-Lee/Frost/Gamma MAP/Kuan）（`native`·成熟度 已验证，契约: `sar_speckle_filter_analysis`，出处: `lee1980`, `lee1981`, `lopes1990`, `frost1982`, `kuan1985`, `lee_jurkevich1994`）
   - 假设：斑点为乘性噪声（x=R·n）；输入须线性强度（非负，dB 被拒绝）；ENL 显式参数优先；缺省整图矩估计 ENL=mean²/var（均匀假设，披露）；窗口 ∈ {3,5,7}；窗口统计 nodata 感知（全无效窗口 → NaN）
-  - 局限：refined_lee 子窗选择为 MSE 代理（方差+中心偏差²）——非 Lopes 1990 完整 MAP 变体；斑点抑制同时平滑真实纹理；不恢复被斑点淹没的像元信息；边界：lee/refined_lee 窗口统计 reflect 补齐（frost 有效集归一）
+  - 局限：refined_lee 子窗选择为 MSE 代理（方差+中心偏差²）——非 Lopes 1990 完整 MAP 变体；gamma_map 为 Lopes 1990 / Lee & Jurkevich 1994 滤波核实现——不含完整先验结构比模型；发散像元冻结上一迭代（确定性披露）；斑点抑制同时平滑真实纹理；不恢复被斑点淹没的像元信息
+- **`sar.enl_map`** 滑窗 ENL 估计图（`native`·成熟度 已验证，契约: `sar_enl_map_analysis`，出处: `oliver_quegan1998`）
+  - 假设：ENL = mean²/var（滑窗、总体方差 ddof=0、nan 感知）；全局 ENL 由整图有效像元估计（均匀假设）；退化窗口（方差 ≤ ε）→ NaN（计数披露）
+  - 局限：非均匀窗口把纹理方差计入 → ENL 被低估（估计偏差，披露）；dB 输入被拒绝（矩估计仅线性强度有意义）
+
+## `sar_terrain_geometry_correction` — SAR 地形几何/辐射校正
+
+SAR 地形效应校正：RTC gamma 平坦化（Small 2011，γ_flat=σ⁰·cosθi/cosθl）与叠掩/阴影几何分类（{0=normal,1=layover,2=shadow,3=nodata}；Horn 坡度坡向 + 本地入射角；range-only 无轨道元数据简化披露）。
+
+- **`sar.layover_shadow`** SAR 叠掩/阴影几何分类（`native`·成熟度 已验证，契约: `sar_layover_shadow_analysis`，出处: `small2011`, `horn1981`）
+  - 假设：分类 {0=normal,1=layover,2=shadow,3=nodata} + 占比；layover = 面坡（cos(β−β_r)>0）且坡度陡于入射角（α > θi）；shadow = 本地入射角余弦 ≤ 0（背坡超掠射角）
+  - 局限：cell_size 必须为米制单位：度网格 DEM 的像元尺寸需调用方先换算（地形域的 cos(lat) 自动换算不在本域内）；range-only 几何简化：无轨道元数据/传感器位置（传感器位置无关近似，披露）；不含视线遮蔽（ray-casting cast shadow）——单像元几何判定
+- **`sar.rtc`** SAR 地形辐射校正 RTC（gamma 平坦化）（`native`·成熟度 已验证，契约: `sar_rtc_analysis`，出处: `small2011`, `horn1981`）
+  - 假设：γ_flat = σ⁰·cosθi/cosθl（Small 2011 gamma 平坦化）；本地入射角：cos θl = cosθi·cosα + sinθi·sinα·cos(β−β_r)（α=坡度、β=下坡方位角、β_r=雷达视线方位角）；DEM Horn 3×3 梯度；北朝上网格；方位角顺时针自北
+  - 局限：cell_size 必须为米制单位：度网格 DEM 的像元尺寸需调用方先换算（地形域的 cos(lat) 自动换算不在本域内）；range-only 几何简化：无轨道元数据/传感器位置/方位向分量（披露）；叠掩（面坡且 α>θi）与阴影（cosθl≤0）→ nodata（计数披露）
 
 ## `sar_texture` — GLCM 纹理特征
 
@@ -505,6 +734,14 @@ Knox 时空交互检验（1964）——事件在空间与时间上是否同时�
   - 假设：观测=同时落在 critical_distance（米）与 critical_time（秒）内的点对数；独立零假设期望 E=2·S·T/(n(n−1))；时间置换（固定种子 42）给单侧 p；critical_distance=0 → 自动取中位最近邻距离（输出披露）
   - 局限：阈值（距离/时间）敏感且结果随阈值变化——建议多阈值对照；时间置换保边际分布，不校正时空趋势（Mantel 类检验更合适）；空间邻近对经 query_pairs 稀疏化，预算超限诚实拒绝
 
+## `space_time_k_function` — 时空 K 函数
+
+时空 K 函数 K_st(r,t)（Diggle 1995）——二阶时空聚集强度随空间/时间尺度的谱（与 Knox 单一阈值检验互补），时间置换包络。
+
+- **`point_pattern.space_time_k`** 时空 K 函数 K_st(r,t)（`native`·成熟度 已验证，契约: `space_time_k_analysis`，出处: `diggle1995`, `ripley1976`）
+  - 假设：K_st(r,t)=|W|·T/(n(n−1))·Σ_{i≠j} I(d≤r)I(|Δt|≤t)/w_ij（有序对双向计入；w_ij 与单变量 K 同款各向同性校正）；独立零假设参考 K_st=πr²·2t（K_s=πr² 与 K_t=2t 之积）；显著性：时间标签置换（固定种子 42），sup(K_st−ref) 单侧 greater
+  - 局限：时间维无边缘校正：观测窗端点附近 Δt 分布被截断，结论对窗长敏感（meta 中 temporal_edge_note 披露）；O(n²) 成对统计：空间对稀疏化 + 配对预算先估后分配，上限 2 万点；p 值分辨率 1/(permutations+1)，上限 499
+
 ## `spatial_interaction` — 空间相互作用
 
 Huff 概率模型 P_ij：需求点选择各设施的概率、市场份额、专属（captive）份额与份额熵。
@@ -521,6 +758,10 @@ IDW / Kriging 等插值。
   - 假设：精确插值器（过样本点）；无理论方差——不确定性以 LOOCV 残差证据呈现；米制距离：地理输入经 estimate_utm_crs 自动投影（极区用极方位立体投影）；k=5 最近邻截断（与主路径一致）；重复坐标先按均值聚合（确定性）
   - 局限：跨带数据自动 UTM 有投影失真（单带处理，无跨带拆分）；LOOCV 残差分位数是样本内证据，不外推为置信区间；样本凸包外的外推由幂次主导，远端值趋向邻域均值
   - 回退：`interpolation.kriging`→equivalent
+- **`interpolation.nearest_neighbor`** 最近邻插值（`native`·成熟度 已验证，契约: `nearest_neighbor_analysis`）
+  - 假设：每个格点取最近样本值（cKDTree k=1）：输出为样本的 Voronoi（泰森）分段常值场；无平滑：表面在单元边界处不连续（跳变是方法语义，非缺陷）；全域有值：凸包外为最近样本外推（已披露，无不确定性声明）
+  - 局限：无理论方差，无残差验证证据（跳变场 LOOCV 无意义）；>20 万样本 / >400 万目标格点类型化拒绝（先拒绝不 OOM）；需要连续平滑表面时改用 IDW / kriging / 自然邻域
+  - 回退：`interpolation.idw`→approximation
 - **`interpolation.rbf`** RBF 径向基插值（`native`·成熟度 已验证，契约: `rbf_interpolation`）
   - 假设：scipy RBFInterpolator：核薄板样条默认，smoothing=0 时精确过样本点；米制距离：地理输入经 estimate_utm_crs 自动投影（与 IDW 同一 CRS 政策）；局部 RBF（neighbors ≤64）：超样本数时按 KdTree 最近邻截断
   - 局限：多二次/高斯类核在大数据集上病态（本实现未含 gaussian 核）；>2 万点确定性行距抽稀（metadata.disclosures 披露），>10 万点拒绝；外推区域行为由核多项式项主导，远端可能发散（无钳制）
@@ -539,13 +780,15 @@ IDW / Kriging 等插值。
 按拓扑关系把右表属性挂到左表（区别于几何裁剪）。
 
 - **`geometry.spatial_join`** 空间连接（`native`·成熟度 —）
+  - 假设：谓词连接（intersects/within/contains），左表输出
+  - 局限：大表走空间索引（STRtree）；连接谓词语义见工具描述；不量度（工作帧非投影）——面积/长度属性不在此层生成
 
 ## `spatial_regression` — 空间回归
 
 OLS+空间诊断 / SLX / SAR-ML / SEM-ML（LM 决策树支撑）。
 
-- **`spatial.ols_regression`** OLS + 空间诊断（`native`·成熟度 已验证，契约: `ols_regression_analysis`，出处: `anselin1988`, `jarque_bera1980`, `breusch_pagan1979`, `moran1950`）
-  - 假设：y~X（含截距）；lstsq 求解，se/t/p 由 (X'X)⁻¹σ² 给出；残差 Moran's I 固定种子 42 置换（双侧 +1）；LM-lag/LM-error/稳健版与 spreg LMtests 逐式一致（Anselin 1988）
+- **`spatial.ols_regression`** OLS + 空间诊断（`native`·成熟度 已验证，契约: `ols_regression_analysis`，出处: `anselin1988`, `jarque_bera1980`, `breusch_pagan1979`, `moran1950`, `mackinnon_white1985`）
+  - 假设：y~X（含截距）；lstsq 求解，se/t/p 由 (X'X)⁻¹σ² 给出；cov_type=classic（默认）行为与历史逐位一致；HC0/HC1/HC3 附 MacKinnon-White 异方差稳健标准误列（系数不变）；残差 Moran's I 固定种子 42 置换（双侧 +1）
   - 局限：残差 Moran 显著时只给 SAR/SEM 建议文本，不替用户自动换模型；n < 2p+2 拒绝（InsufficientSamples）；VIF 在仅一个解释变量时不可得（诚实留空）
 - **`spatial.sar_ml`** 空间滞后 ML（SAR）（`native`·成熟度 已验证，契约: `sar_ml_analysis`，出处: `ord1975`, `anselin1988`）
   - 假设：y=ρWy+Xβ+ε；log|I-ρW|=Σ ln(1-ρκᵢ)（Ord 1975 特征值法）；ρ 在平稳域 (1/κ_min,1/κ_max) 内有界 Brent 最大化（确定性）；LR 检验 vs OLS（df=1）；伪 R²=1-SSE_SAR/SSE_OLS
@@ -559,12 +802,24 @@ OLS+空间诊断 / SLX / SAR-ML / SEM-ML（LM 决策树支撑）。
   - 假设：y~[X, WX]；WX 为行标准化权重的空间滞后解释变量；系数表含 WX 滞后项（邻居溢出的直接估计）；孤岛观测的 WX 行为 0（披露于 weights 元数据）
   - 局限：直接/间接效应分解未做（需 SAR/SDM 类模型的偏导推导）；参数量翻倍，n<2p+2 时拒绝
 
+## `spatial_weights_diagnostics` — 空间权重诊断
+
+权重结构体检：稀疏度/对称性/邻居分布/孤岛/连通分量。
+
+- **`stats.weights_diagnostics`** 空间权重诊断（`native`·成熟度 已验证，契约: `weights_diagnostics_analysis`，出处: `anselin1988`）
+  - 假设：诊断对象=既有空间权重构造器（knn/queen/rook/distance_band）产物；对称性分别检查存储矩阵与二值邻接（行标准化矩阵一般不对称）；连通分量在二值邻接的无向图上计算（networkx）
+  - 局限：诊断只覆盖权重结构，不覆盖权重方案的选择恰当性；连通分量是无向近似：有向 kNN 的互邻关系按无向边处理
+
 ## `spatiotemporal_clustering` — 时空聚类
 
 ST-DBSCAN 等时空聚类（与 LISA 局部自相关是不同检验）。
 
 - **`temporal.hotspot`** 时空热点（`native`·成熟度 —）
-- **`stats.st_dbscan`** 时空 DBSCAN 聚类（`native`·成熟度 —）
+  - 假设：时间片 × 空间箱计数矩阵（描述性）；非时空扫描统计（与 LISA/Knox 语义正交）
+  - 局限：箱宽选择敏感（参数披露）
+- **`stats.st_dbscan`** 时空 DBSCAN 聚类（`native`·成熟度 已验证，出处: `ester_kriegel1996`）
+  - 假设：ST-DBSCAN：空间 ε（米，自动投影 UTM）+ 时间 ετ 双阈值；时间字段解析 NaT 剔除并披露
+  - 局限：minPts/ε 选择敏感（无自动带宽）；簇数为结果而非假设
 
 ## `spectral_index` — 类型化光谱指数
 
@@ -573,6 +828,20 @@ ST-DBSCAN 等时空聚类（与 LISA 局部自相关是不同检验）。
 - **`remote.spectral_index`** 类型化光谱指数（11 公式族）（`native`·成熟度 已验证，契约: `spectral_index_analysis`，出处: `rouse1974`, `huete1988`, `gao1996`, `xu2006`, `zha_woodcock2003`, `key_benson2006`, `mcfeeters1996`）
   - 假设：波段按语义角色显式命名（band_map），绝不按波段位置猜测；线性定标先于公式（DN/10000→反射率）；零分母→NaN；超理论值域只报告不钳制（out_of_range_fraction）
   - 局限：公式出处逐指数声明（gndvi/msavi/ndmi 无词表出处，诚实留空）；EVI/EVI2 常数项只在反射率单位下成立（#382）
+
+## `spectral_target_detection` — 光谱目标检测
+
+已知光谱签名下的逐像元目标检测/相似度：光谱角 SAM（Kruse 1993）、光谱信息散度 SID（Chang 2000）、匹配滤波（Boardman 1995）。
+
+- **`remote.matched_filter`** 匹配滤波目标检测（`native`·成熟度 已验证，契约: `matched_filter_analysis`，出处: `boardman1995`）
+  - 假设：score = tᵀΣ⁻¹(x−μ)/(tᵀΣ⁻¹t)；μ/Σ 由全场景公共有效像元估计；纯目标像元得分≈1、背景≈0（丰度式解读）；目标向量与波段序逐波段对齐（band_order 披露）
+  - 局限：单高斯背景假设——强背景结构会污染白化统计；零方差波段剔除（dropped_bands 披露）；pinv 伪逆数值稳定
+- **`remote.sam`** 光谱角制图（SAM）（`native`·成熟度 已验证，契约: `sam_analysis`，出处: `kruse1993`）
+  - 假设：θ=arccos(⟨x,e⟩/(‖x‖·‖e‖))（弧度缺省，degrees 可选）；端元向量与波段序逐波段对齐（band_order 披露，不按位置猜测）；零范数像元（无亮度）→ NaN；零范数端元全 NaN 并披露
+  - 局限：只度量光谱形状（对亮度增益不变），不区分亮度差异；argmin 类别仅在有有限角度的端元上取（全 NaN → NaN）
+- **`remote.sid`** 光谱信息散度（SID）（`native`·成熟度 已验证，契约: `sid_analysis`，出处: `chang2000`）
+  - 假设：对称形式 D(x,e)=Σp·ln(p/q)+Σq·ln(q/p)，p=x/Σx、q=e/Σe；像元/端元出现非正分量或非正和 → NaN（熵在非正测度无定义）；要求反射率类正值输入（SAR dB 等不适用，披露）
+  - 局限：非正分量占比仅报告（nonpositive_fraction），不做钳制；SID 比 SAM 对分布差异更敏感，但对定标噪声同样敏感
 
 ## `tasseled_cap_transformation` — Tasseled Cap 冠层变换
 
@@ -587,6 +856,8 @@ ST-DBSCAN 等时空聚类（与 LISA 局部自相关是不同检验）。
 按时间窗重采样汇总。
 
 - **`temporal.aggregate`** 时间聚合（`native`·成熟度 —）
+  - 假设：按时间粒度分组聚合（描述性）；NaT 剔除并披露
+  - 局限：分组键时区语义不归一（诚实披露）
 
 ## `temporal_change_point` — 时序均值变点
 
@@ -596,11 +867,21 @@ CUSUM 单均值漂移定位 + 固定种子 bootstrap 显著性（多变点不在
   - 假设：单均值漂移假设：变点 = argmax|Σ(x−x̄)|（k 取 1..n−1）；显著性 = 无变化零假设下固定种子 bootstrap 的 max-CUSUM 分布；p ≥ alpha 时不给 change_point_index（candidate 恒给）
   - 局限：多变点/方差变化不在模型内；n<10 变点定位不稳定（警告）；bootstrap p 分辨率 1/(draws+1)
 
+## `temporal_feature_extraction` — 时序特征提取
+
+逐像元时序特征（min/max/mean/std/amplitude/first−last + 单周期谐波；无物候模型拟合——线性趋势 + 单谐波边界披露）。
+
+- **`remote.temporal_features`** 时序特征提取（`native`·成熟度 已验证，契约: `temporal_features_analysis`）
+  - 假设：栈第 0 轴 = 时间序；std 为总体标准差（ddof=0，披露）；谐波 = [1, t, sin(2πt), cos(2πt)] 联合 LS（单周期 = 栈跨度）；谐波要求完整序列 + 满秩设计（T≥4），否则 NaN（披露）
+  - 局限：无物候模型拟合（无双谐波/SG 滤波/物候期提取）——诚实边界；first−last 对首尾无效像元 → NaN；min/max/mean 对有限切片 nan-aware
+
 ## `temporal_profile` — 时间画像
 
 时间字段/跨度/粒度画像（元数据，不产新数据）。
 
-- **`temporal.profile`** 时间画像（`native`·成熟度 —）
+- **`temporal.profile`** 时间画像（`native`·成熟度 已验证）
+  - 假设：时间字段解析 NaT 剔除并披露（与 ST-DBSCAN 同约定）；画像/聚合为描述性统计，不做趋势推断
+  - 局限：无时区归一（时间戳语义由输入披露决定）；空时间维度 → 类型化错误（不伪造空统计）
 
 ## `temporal_trend` — 时序趋势
 
@@ -609,7 +890,12 @@ CUSUM 单均值漂移定位 + 固定种子 bootstrap 显著性（多变点不在
 - **`temporal.trend`** 时序趋势（`native`·成熟度 已验证，契约: `temporal_trend_analysis`，出处: `sen1968`, `mann1945`, `kendall1975`）
   - 假设：缺省 ols_sen：Sen 中位斜率 + OLS，行为与历史逐位一致；MK 族：tie 校正方差 + 连续性校正正态 z + 双侧 p；显著性证据仅在 mann_kendall/seasonal 分支产出（ols_sen 无 p 值）
   - 局限：序列相关（lag-1 秩自相关超限）会夸大 MK 显著性——结果内警告；季节 MK 无预白化（prewhitening 未实现）；观测 <3 的季节跳过并披露；两时间点无法定义趋势统计量（n=2 拒绝，非降级描述）
-- **`temporal.raster_ts`** 时序栅格（`native`·成熟度 —）
+- **`temporal.seasonal_decompose`** 经典季节分解（`native`·成熟度 已验证，契约: `seasonal_decompose_analysis`，出处: `makridakis1998`）
+  - 假设：经典 MA 分解：趋势=奇数窗口（period）中心滑动平均；季节指数=去趋势值按相位 t mod period 的组均值；additive 归一化 Σs=0；余项 additive = y−trend−seasonal；multiplicative = y/(trend·seasonal)
+  - 局限：经典 MA 分解不是 STL——无迭代稳健拟合、无季节平滑，对离群值敏感；period 必须为奇数（偶数窗口的中心 MA 需 2×m 复合平均，显式拒绝）；multiplicative 要求序列严格为正
+- **`temporal.raster_ts`** 时序栅格（`native`·成熟度 已验证）
+  - 假设：时序栅格切片统计（逐期描述性统计）
+  - 局限：栈深与格网规模守卫在实现层（ResourceScaleMismatch）
 
 ## `terrain_aspect` — 坡向分析
 
@@ -638,7 +924,7 @@ DEM 邻域地形指标：TPI（Weiss 2001）/TRI（Riley 1999）/粗糙度（Wil
   - 假设：TRI = sqrt(Σ(z − z_nb)²)，8 个直接邻域（Riley 1999 原式）；边界收缩为可得邻域；平坦面 ≡ 0
   - 局限：只反映 1 像元尺度起伏，不表征多尺度崎岖度；各向异性像元不做距离加权（与 Riley 原式一致的纯差分）
 - **`terrain.roughness`** 地形粗糙度（`native`·成熟度 已验证，契约: `terrain_derivative`，出处: `wilson2007`）
-  - 假设：粗糙度 = 窗口内高程总体标准差（ddof=0，Wilson 2007 口径）；窗口为 3-101 奇数；边界收缩为可得像元
+  - 假设：粗糙度 = 窗口内高程总体标准差（ddof=0）——注意：Wilson (2007) 原文粗糙度为 max−min 口径，本实现采用窗口 std 惯用口径（与引用差异如实披露）；窗口为 3-101 奇数；边界收缩为可得像元
   - 局限：对离群高程敏感（无稳健尺度）；积分图方差在窗口均值远大于离散度时有浮点精度损失
 - **`terrain.curvature`** 平面/剖面曲率（`native`·成熟度 已验证，契约: `terrain_derivative`，出处: `zevenbergen_thorne1987`）
   - 假设：Zevenbergen-Thorne 二阶差分：profile 沿最陡下降方向、plan 沿等高线方向；单位 z_units·cell⁻²（惯例 ×100 报告；元数据披露）；符号约定：profile>0 凸（水流减速）/ plan>0 分散；z=x² 检验 profile=+2、plan=0
@@ -675,7 +961,7 @@ D8 单向流流向（ESRI 2 的幂编码）、拓扑序汇流累积与逆 D8 上
 
 - **`terrain.flow`** D8 流向与汇流累积（`native`·成熟度 已验证，契约: `flow_analysis`，出处: `tarboton1997`）
   - 假设：D8 单向流（ESRI 2 的幂编码 1=E…128=NE；0=sink/outlet）；最陡下降按米制像元距离（地理栅格 x 向 cos(lat)）；并列最陡取最低索引邻域；汇流累积 = 上游贡献像元数（不含自身；全流域出口 = N−1）
-  - 局限：D8 单向流限制：格网平行流向偏差，D∞（Tarboton 1997）未实现；平地/洼地即汇（code 0），无 epsilon 梯度平地路由/填洼；流出网格边界的流路终止（boundary = outlet，不外推）
+  - 局限：D8 单向流限制：格网平行流向偏差；多向流为独立算法 terrain.dinf_flow（Tarboton 1997，本包内已实现，不在本算法内混叠）；默认 flat_routing='none'：平地/洼地即汇（code 0）；可选 flat_routing='epsilon' 经 terrain.sink_fill 的 epsilon 填洼获得平地路由（meta 披露填充像元数与抬升量），默认路径保持不变；流出网格边界的流路终止（boundary = outlet，不外推）
 - **`terrain.watershed`** 流域圈定（`native`·成熟度 已验证，出处: `tarboton1997`）
   - 假设：逆 D8 BFS：汇入 pour point 的全部上游像元（含 pour point 自身）；依赖 D8 单向流语义（编码与平局裁决同 terrain.flow）
   - 局限：pour point 不做河道 snap（未对齐河道时流域偏小，由调用方负责）；D8 格网流向偏差会传递到流域边界
@@ -702,6 +988,17 @@ Priority-Flood 填洼（Barnes 2014，epsilon 单调变体）、D∞ 多向流�
 - **`terrain.morphometry`** 流域形态量测（`native`·成熟度 已验证，契约: `morphometry_analysis`，出处: `strahler1957`）
   - 假设：面积/周长来自逆 D8 上流域掩膜；周长 = 边界边缘长度和（网格外视作流域外）；basin length = 流域内 MAX upstream 流程长度（最长山脊→出口路径）；form factor = A/L²；elongation = 2√(A/π)/L（Strahler 1957）
   - 局限：basin length 的 MAX 口径对狭长流域外的形状敏感（非主轴拟合）；排水密度继承河网阈值敏感性；pour point 不做河道 snap
+
+## `terrain_sky_view` — 地平线与天空可视因子
+
+地平线角（逐方位最大正仰角，openness 家族射线行走）与天空可视因子 SVF（Steyn 1980 的 (1/N)Σcos²ψ 口径）；城市通风/日照/辐射与景观开敞度分析输入。
+
+- **`terrain.horizon_angle`** 地平线角（`native`·成熟度 已验证，契约: `terrain_horizon_analysis`，出处: `steyn1980`, `yokoyama2002`）
+  - 假设：每方位（罗盘度，自北顺时针）取射线行走 max arctan((z(d)−z₀)/d) 的正仰角（度）；1 像元步长圆整偏移 + 实际米制距离（与 openness 同口径；各向异性感知）；射线遇 nodata/非有限即停；截断（数据外）视作无遮挡（=0，披露）
+  - 局限：方位离散 ≤ 360/方位数 的角分辨率（缺省 8 方位 45°）；半径 ≤ 100 像元护栏；半径外地形不参与（遮挡被低估）；数据缝后的地形被视作无遮挡 —— 诚实低估而非发明遮挡
+- **`terrain.sky_view_factor`** 天空可视因子 SVF（`native`·成熟度 已验证，契约: `terrain_svf_analysis`，出处: `steyn1980`）
+  - 假设：SVF = (1/N) Σ cos²(ψ_i)（Steyn 1980）；ψ_i = 等角距方位的地平线角（度）；ψ_i 与 terrain.horizon_angle 共用同一射线行走实现（不重复逻辑）；平地 ψ ≡ 0 → SVF ≡ 1.0（浮点精确）；深洼/封闭谷地 SVF → 0
+  - 局限：方位离散：N 方位等角距采样对崎岖天际线的欠采样；半径 ≤ 100 像元护栏；半径外地形不参与天际线；无地球曲率/大气折射修正（局部地形口径）
 
 ## `terrain_slope` — 坡度分析
 
@@ -766,6 +1063,21 @@ Delaunay TIN 三角网插值（linear / clough_tocher），凸包外不外推。
   - 假设：Delaunay 三角剖分上的分段插值：linear=C⁰ 重心插值，clough_tocher=C¹ 三次；凸包外诚实空缺（fill_value=NaN）：TIN 不外推，格网外的缺失进 metadata；米制坐标下剖分：地理输入经 estimate_utm_crs 自动投影（与 IDW 同 CRS 政策）
   - 局限：样本共线/退化构型结构化拒绝（DegenerateData，附修正提示）；>20 万样本拒绝（Qhull 内存有界但超限先抽稀）；凸包外格网无值——需要全域覆盖时改用 IDW/趋势面（会外推）
   - 回退：`interpolation.idw`→approximation
+- **`interpolation.natural_neighbor`** 自然邻域插值（`native`·成熟度 已验证，契约: `natural_neighbor_analysis`，出处: `sibson1981`, `watson1981`）
+  - 假设：Sibson (1981) 坐标：权重=插入点窃取的 Voronoi 面积比例（精确多边形裁剪面积）；Watson (1981) 阶梯 walk：外接圆包含格点的单形集合 = 自然邻域（邻接 walk 收集）；精确插值器：过样本点（重合格点直接返回样本值，float64 精确）
+  - 局限：凸包外 NaN——不外推（需要全域覆盖时改用 IDW/趋势面）；近共线构型下 Sibson 权重几何呈长条：外墙自适应外扩保证面积精度（次数披露）；>20 万样本 / >400 万目标格点类型化拒绝；逐格点 Python 裁剪成本高
+  - 回退：`interpolation.tin`→approximation
+
+## `variogram_analysis` — 变异函数分析
+
+方向变异函数 + 6 家族模型选择（加权 RSS + AICc），结构分析统计表输出。
+
+- **`interpolation.directional_variogram`** 方向变异函数（`native`·成熟度 已验证，契约: `directional_variogram_analysis`，出处: `webster_oliver2007`, `isaaks_srivastava1989`）
+  - 假设：轴向（双向）配对过滤：方位角 +180° 属同一条轴，曲线逐位一致；方位角为数学约定：0°=东(+x)、逆时针（与 anisotropy_angle 一致，非罗盘）；滞后 bin 与全向 empirical_variogram 同一 span/edges 约定（tolerance=90° 时两者一致）
+  - 局限：单轴单次调用：完整各向异性椭圆需多方位角扫描（本工具不自动拟合椭圆）；带宽过滤为 GSLIB band 语义近似（配对中点到轴线垂距）；统计表输出（无表面）：结果供变异函数建模与各向异性诊断使用
+- **`interpolation.variogram_selection`** 变异函数模型选择（`native`·成熟度 已验证，契约: `variogram_selection_analysis`，出处: `webster_oliver2007`, `matern1986`）
+  - 假设：6 家族（spherical/exponential/gaussian/matern/wave/cubic）在同一经验变异函数上同台；加权 RSS 即 fit_variogram 的拟合目标（样本对计数 σ-权重）——与 auto 选型同源；AICc 自由度 k=3（sill/range/nugget）；matern k=4（固定平滑度 ν 计入，已披露）
+  - 局限：AICc 基于加权残差而非严格极大似然（信息准则是近似的，已披露）；滞后 bin 数 n ≤ k+2 时 AICc 诚实取 inf（不伪造小样本准则）；统计表输出（无表面）；选中模型需再传入 kriging 工具出表面
 
 ## `voronoi_tessellation` — Voronoi 剖分
 
@@ -787,4 +1099,6 @@ Delaunay TIN 三角网插值（linear / clough_tocher），凸包外不外推。
 
 面内栅格 min/max/mean/sum 统计。
 
-- **`remote.zonal_stats`** 分区统计（`native`·成熟度 —）
+- **`remote.zonal_stats`** 分区统计（`native`·成熟度 已验证）
+  - 假设：统计量在面掩膜内计算（nan-aware）；栅格与面 CRS 一致由上层保证；rasterstats/zonal 统计实现（all_touched=False 惯例）
+  - 局限：面跨界像元按像元中心归属（惯例披露）

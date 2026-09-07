@@ -1,6 +1,8 @@
 """高级空间分析工具 (FC)"""
 import logging
 from typing import Any, List, Optional
+
+import numpy as np
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
@@ -1080,6 +1082,697 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                 validation=val_metrics,
             )
         return geojson_result
+
+    # ── Foundation V3（Geostatistics/Interpolation 批次）────────────────
+
+    @tool(registry, name="directional_variogram_analysis",
+           description=(
+               "方向变异函数：沿单一方位角轴向（双向）计算经验半方差曲线，"
+               "带角度容差与可选带宽（GSLIB band 语义），用于各向异性诊断与变异函数建模。"
+               "方位角为数学约定：0°=东(+x)、逆时针（与 kriging 的 anisotropy_angle 一致，非罗盘方位）。"
+               "\n何时用：怀疑场有方向性结构（如沿河谷/风向的污染物输运）、"
+               "为 kriging 选 anisotropy_angle/ratio 前的证据收集。"
+               "\n何时不用：只要全向变异函数+克里金表面 — 用 kriging_interpolation；"
+               "要多方位角自动拟合各向异性椭圆 — 本工具不自动拟合，请多角度调用。"
+               "\n关键约束：tolerance_deg 为轴向半角（≤90，90=全向退化）；"
+               "azimuth+180° 与 azimuth 返回同一条轴（双向语义）。"
+           ),
+           tier=2, domains=["statistics"], cost="medium",
+           param_descriptions={
+               "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
+               "value_field": "数值字段名",
+               "azimuth_deg": "轴方位角（度，数学约定 0°=东、逆时针；默认 0=东西向）",
+               "tolerance_deg": "轴向半角（度，默认 22.5；90=全向）",
+               "band_width": "带宽（米，配对中点到轴线垂距上限；默认不限）",
+               "n_lags": "滞后 bin 数（4-64，默认 12）",
+           })
+    def directional_variogram_analysis(
+        geojson: Any,
+        value_field: str,
+        azimuth_deg: float = 0.0,
+        tolerance_deg: float = 22.5,
+        band_width: Optional[float] = None,
+        n_lags: int = 12,
+    ) -> dict:
+        import geopandas as gpd
+
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.geo_analysis.interpolation import (
+            _parse_point_values,
+            _pick_metric_crs,
+        )
+        from app.lib.geo_analysis.kriging import (
+            directional_variogram as _directional,
+        )
+
+        params = apply_contract("directional_variogram_analysis", {
+            "value_field": value_field,
+            "azimuth_deg": azimuth_deg,
+            "tolerance_deg": tolerance_deg,
+            "band_width": band_width if band_width is not None else 0.0,
+            "n_lags": n_lags,
+        })
+        lonlat, values = _parse_point_values(
+            geojson, params["value_field"],
+            purpose="方向变异函数", log_prefix="directional_variogram",
+        )
+        utm_crs = _pick_metric_crs(lonlat)
+        pts_gdf = gpd.GeoDataFrame(
+            {"v": values},
+            geometry=gpd.points_from_xy(lonlat[:, 0], lonlat[:, 1]),
+            crs="EPSG:4326",
+        ).to_crs(utm_crs)
+        pts_metric = np.column_stack(
+            (pts_gdf.geometry.x.values, pts_gdf.geometry.y.values)
+        )
+        bw = float(params["band_width"]) if float(params["band_width"]) > 0 else None
+        lags, gamma, counts, meta = _directional(
+            pts_metric, values, float(params["azimuth_deg"]),
+            tolerance_deg=float(params["tolerance_deg"]),
+            band_width=bw, n_lags=int(params["n_lags"]),
+        )
+        payload = {
+            "success": True,
+            "azimuth_deg": float(params["azimuth_deg"]),
+            "tolerance_deg": float(params["tolerance_deg"]),
+            "band_width": bw,
+            "lags": [round(float(x), 3) for x in lags],
+            "gamma": [round(float(x), 6) for x in gamma],
+            "pair_counts": [int(c) for c in counts],
+            "meta": meta,
+            "summary": (
+                f"方向变异函数完成：方位角 {params['azimuth_deg']}°（数学约定），"
+                f"{len(lags)} 个有效滞后 bin，保留配对 {meta['n_pairs_kept']}/{meta['n_pairs_total']}。"
+            ),
+        }
+        descriptor = get_algorithm_registry().get("interpolation.directional_variogram")
+        if descriptor is not None:
+            payload["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="directional_variogram_analysis",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "azimuth_deg": float(params["azimuth_deg"]),
+                    "tolerance_deg": float(params["tolerance_deg"]),
+                    "band_width": bw,
+                    "n_lags": int(params["n_lags"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "auto-projected to metric CRS (estimate_utm_crs/polar) before pair geometry",
+                ],
+            )
+        return payload
+
+    @tool(registry, name="variogram_model_selection",
+           description=(
+               "变异函数模型选择：spherical/exponential/gaussian/matern/wave/cubic 6 家族"
+               "在同一经验变异函数上同台拟合，按加权 RSS 排名并附 AICc"
+               "（k=3：sill/range/nugget；matern k=4，已披露）。完全确定性。"
+               "\n何时用：克里金前为 variogram_model 选型提供证据；"
+               "比较 hole-effect（wave）或平滑度（matern）家族是否更贴合数据。"
+               "\n何时不用：直接用 kriging_interpolation 的 auto（生产 3 族选型）即可出表面；"
+               "本工具只出统计表不出表面。"
+               "\n关键约束：样本 <8 拒绝；AICc 基于加权残差（非严格极大似然，已披露）。"
+           ),
+           tier=2, domains=["statistics"], cost="medium",
+           param_descriptions={
+               "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
+               "value_field": "数值字段名",
+               "n_lags": "滞后 bin 数（4-64，默认 12）",
+               "matern_smoothness": "Matérn 平滑度 ν（0.1-5.0，默认 0.5；仅 matern 家族使用）",
+           })
+    def variogram_model_selection(
+        geojson: Any,
+        value_field: str,
+        n_lags: int = 12,
+        matern_smoothness: float = 0.5,
+    ) -> dict:
+        import geopandas as gpd
+
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.geo_analysis.interpolation import (
+            _parse_point_values,
+            _pick_metric_crs,
+        )
+        from app.lib.geo_analysis.kriging import select_variogram_model as _select
+
+        params = apply_contract("variogram_selection_analysis", {
+            "value_field": value_field,
+            "n_lags": n_lags,
+            "matern_smoothness": matern_smoothness,
+        })
+        lonlat, values = _parse_point_values(
+            geojson, params["value_field"],
+            purpose="变异函数模型选择", log_prefix="variogram_selection",
+        )
+        utm_crs = _pick_metric_crs(lonlat)
+        pts_gdf = gpd.GeoDataFrame(
+            {"v": values},
+            geometry=gpd.points_from_xy(lonlat[:, 0], lonlat[:, 1]),
+            crs="EPSG:4326",
+        ).to_crs(utm_crs)
+        pts_metric = np.column_stack(
+            (pts_gdf.geometry.x.values, pts_gdf.geometry.y.values)
+        )
+        ranking, meta = _select(
+            pts_metric, values,
+            n_lags=int(params["n_lags"]),
+            matern_smoothness=float(params["matern_smoothness"]),
+        )
+        best = ranking[0]
+        payload = {
+            "success": True,
+            "ranking": ranking,
+            "best": best["model"],
+            "best_params": best["params"],
+            "meta": meta,
+            "summary": (
+                f"变异函数模型选择完成：{len(ranking)} 家族同台，"
+                f"加权 RSS 最优={meta['best_weighted_rss']}"
+                f"（rss={best['weighted_rss']:.4f}, aicc={best['aicc']:.1f}），"
+                f"AICc 最优={meta['best_aicc']}。"
+            ),
+        }
+        descriptor = get_algorithm_registry().get("interpolation.variogram_selection")
+        if descriptor is not None:
+            payload["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="variogram_model_selection",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "n_lags": int(params["n_lags"]),
+                    "matern_smoothness": float(params["matern_smoothness"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "auto-projected to metric CRS (estimate_utm_crs/polar) before variogram binning",
+                ],
+            )
+        return payload
+
+    @tool(registry, name="indicator_kriging_surface",
+           description=(
+               "指示克里金：逐阈值把数值转为指示变量（I=1[z≤t]），各自拟合指示变异函数后做"
+               "普通克里金，输出每个 H3 单元 P(Z≤t) 概率、p50 阈值面（首个 p≥0.5 的阈值）"
+               "与可选 E-type 估计。适用于类别/越界风险制图（如污染物超标概率）。"
+               "\n何时用：『某处 PM2.5 超过 75 的概率』类问题；需要空间风险/概率面而非均值面。"
+               "\n何时不用：只要连续均值面 — 用 kriging_interpolation；样本<8 — 用 idw_interpolation。"
+               "\n关键约束：概率面已钳制 [0,1]（钳制计数披露）；逐阈值独立克里金"
+               "不保证阈值间单调（如实披露）；auto 模型=逐阈值 6 家族加权 RSS 选型。"
+           ),
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
+               "value_field": "数值字段名",
+               "thresholds": "阈值列表（逗号分隔，如 '35,75,115'；自动排序去重）",
+               "resolution": "H3 分辨率（5-9），默认 7",
+               "variogram_model": "指示变异函数模型: auto(默认,逐阈值6族选型)/spherical/exponential/gaussian",
+               "k_neighbors": "指示克里金邻域样本数(2-24)，默认 16",
+               "n_lags": "经验变异函数 bin 数（4-64，默认 12）",
+               "etype": "是否输出 E-type 估计（类代表值=阈值本身，保守离散近似），默认 false",
+           })
+    def indicator_kriging_surface(
+        geojson: Any,
+        value_field: str,
+        thresholds: str,
+        resolution: int = 7,
+        variogram_model: str = "auto",
+        k_neighbors: int = 16,
+        n_lags: int = 12,
+        etype: bool = False,
+    ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+        from app.lib.geo_analysis.kriging import (
+            indicator_kriging_surface as _indicator,
+        )
+
+        params = apply_contract("indicator_kriging_analysis", {
+            "value_field": value_field,
+            "thresholds": thresholds,
+            "variogram_model": variogram_model,
+            "k_neighbors": k_neighbors,
+            "n_lags": n_lags,
+            "resolution": resolution,
+            "etype": bool(etype),
+        })
+        try:
+            thr_list = [
+                float(t) for t in str(params["thresholds"]).replace("；", ",").replace(";", ",").split(",")
+                if str(t).strip()
+            ]
+        except ValueError as exc:
+            raise ValueError(
+                f"thresholds 解析失败：'{params['thresholds']}' 不是逗号分隔的数值列表"
+            ) from exc
+        if not thr_list:
+            raise ValueError("thresholds 至少需要一个阈值（逗号分隔，如 '35,75,115'）")
+        if len(thresholds) > 20:
+            from app.lib.gis.scientific_errors import ResourceScaleMismatch
+
+            raise ResourceScaleMismatch(
+                f"indicator kriging 需要 {len(thresholds)} 次独立变差函数拟合+求解"
+                f"（概率面 n_thr×H×W 内存线性放大）",
+                estimated=f"{len(thresholds)} thresholds × 变差函数拟合+克里金求解",
+                limit="≤20 thresholds",
+                correction_hint="用分位数子集（如 10/30/50/70/90 分位）刻画分布",
+            )
+        data = safe_parse_geojson(geojson)
+        driver = _indicator(
+            data, params["value_field"], thr_list,
+            resolution=int(params["resolution"]),
+            variogram_model=params["variogram_model"],
+            n_lags=int(params["n_lags"]),
+            k_neighbors=int(params["k_neighbors"]),
+            etype=bool(params["etype"]),
+        )
+        meta = driver["metadata"]
+
+        pred_fc = h3_to_geojson(
+            [{"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]],
+            params["value_field"],
+        )
+        thr_sorted = meta["thresholds"]
+        for feat, rec in zip(pred_fc["features"], driver["records"]):
+            props = feat["properties"]
+            props["p50_threshold"] = rec["p50_threshold"]
+            for j, p in (rec.get("probabilities") or {}).items():
+                props[f"p_le_{thr_sorted[int(j)]}"] = p
+        pred_fc.update({
+            "summary": (
+                f"指示克里金完成：{len(pred_fc['features'])} 个 H3 单元，"
+                f"{len(thr_sorted)} 个阈值（{thr_sorted}）；"
+                f"概率钳制 {meta['clamped_cells']} 格，p50 缺失 {meta['p50_missing_cells']} 格"
+                f"{'；E-type 已随主值输出' if params['etype'] else ''}。"
+            ),
+            "indicator_metadata": meta,
+        })
+        descriptor = get_algorithm_registry().get("interpolation.indicator_kriging")
+        if descriptor is not None:
+            pred_fc["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="indicator_kriging_surface",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "thresholds": thr_sorted,
+                    "variogram_model": params["variogram_model"],
+                    "k_neighbors": int(params["k_neighbors"]),
+                    "n_lags": int(params["n_lags"]),
+                    "resolution": int(params["resolution"]),
+                    "etype": bool(params["etype"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "auto-projected to metric CRS (estimate_utm_crs/polar) before kriging",
+                ],
+            )
+        return pred_fc
+
+    @tool(registry, name="cokriging_surface",
+           description=(
+               "协同定位协同克里金（Markov Model 1 近似）：主/次两个点要素集联合建模，"
+               "交叉结构=ρ×主变量结构，次变量仅在目标格点协同定位进入系统，"
+               "在 H3 网格上同时输出预测面与协同克里金方差(不确定性)面。"
+               "ρ 缺省由最近配对 Pearson 自动估计；|ρ|<0.2 结构化拒绝（弱相关时"
+               "协同克里金不会优于普通克里金——诚实拒绝而非输出无意义表面）。"
+               "\n何时用：有一个强相关的易得协变量（如高程↔气温、AOD↔PM2.5）且希望"
+               "把它注入克里金。"
+               "\n何时不用：没有协变量 — 用 kriging_interpolation；弱相关（|ρ|<0.2）— 同样用普通克里金。"
+               "\n诚实边界：MM1 为近似核化（全交叉协方差未建模）；次变量标准化假设；"
+               "非协同定位处次变量由最近邻补格（均已披露）。"
+           ),
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "主变量点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
+               "secondary_geojson": "次变量点要素集 GeoJSON 或引用(ref:xxx)（覆盖同一区域）",
+               "value_field": "主变量数值字段名",
+               "secondary_field": "次变量数值字段名（次要素集的属性）",
+               "resolution": "H3 分辨率（5-9），默认 7",
+               "correlation_rho": "主/次相关系数 ρ（-1~1）；缺省 0=自动估计",
+               "neighbors": "主变量克里金邻域样本数(2-24)，默认 12",
+               "variogram_model": "主变量变异函数模型: auto(默认)/spherical/exponential/gaussian",
+           })
+    def cokriging_surface(
+        geojson: Any,
+        secondary_geojson: Any,
+        value_field: str,
+        secondary_field: str,
+        resolution: int = 7,
+        correlation_rho: Optional[float] = None,
+        neighbors: int = 12,
+        variogram_model: str = "auto",
+    ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.gis.uncertainty import (
+            RasterUncertainty,
+            UncertaintyMeasure,
+        )
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+        from app.lib.geo_analysis.kriging import (
+            collocated_cokriging_surface as _cokriging,
+        )
+
+        params = apply_contract("cokriging_analysis", {
+            "value_field": value_field,
+            "secondary_field": secondary_field,
+            "correlation_rho": correlation_rho if correlation_rho is not None else 0.0,
+            "neighbors": neighbors,
+            "variogram_model": variogram_model,
+            "resolution": resolution,
+        })
+        data = safe_parse_geojson(geojson)
+        sec_data = safe_parse_geojson(secondary_geojson)
+        rho_arg = float(params["correlation_rho"])
+        driver = _cokriging(
+            data, params["value_field"], sec_data, params["secondary_field"],
+            resolution=int(params["resolution"]),
+            correlation_rho=rho_arg if rho_arg != 0.0 else None,
+            neighbors=int(params["neighbors"]),
+            variogram_model=params["variogram_model"],
+        )
+        meta = driver["metadata"]
+
+        pred_records = [
+            {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
+        ]
+        prediction_fc = h3_to_geojson(pred_records, params["value_field"])
+        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+            feat["properties"]["ck_variance"] = round(rec["ck_variance"], 6)
+            feat["properties"]["ck_stddev"] = round(rec["ck_stddev"], 6)
+        uncertainty_records = [
+            {"h3_index": r["h3_index"], "value": r["ck_stddev"]}
+            for r in driver["records"]
+        ]
+        uncertainty_fc = h3_to_geojson(uncertainty_records, "ck_stddev")
+
+        rho_text = (
+            f"ρ={meta['rho_used']:.3f}"
+            + ("（自动估计）" if meta["rho_estimated"] else "（显式给定）")
+        )
+        prediction_fc.update({
+            "summary": (
+                f"协同克里金完成：{len(prediction_fc['features'])} 个 H3 单元，"
+                f"主样本 {meta['n_samples']} / 次样本 {meta['n_secondary']}，{rho_text}；"
+                f"不确定面(ck_stddev)已随本结果输出。"
+            ),
+            "uncertainty": uncertainty_fc,
+            "ck_metadata": meta,
+        })
+        descriptor = get_algorithm_registry().get("interpolation.cokriging")
+        if descriptor is not None:
+            variance_range = meta.get("variance_range") or [None, None]
+            prediction_fc["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="cokriging_surface",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "secondary_field": params["secondary_field"],
+                    "correlation_rho": meta["rho_used"],
+                    "neighbors": int(params["neighbors"]),
+                    "variogram_model": params["variogram_model"],
+                    "resolution": int(params["resolution"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "secondary regridded to target cells by nearest neighbour (collocation assumption)",
+                ],
+                uncertainty=[RasterUncertainty(
+                    target="ck_variance",
+                    interpretation="collocated cokriging variance (MM1 approximation, working CRS units squared)",
+                    summary=[UncertaintyMeasure(
+                        measure="value", value=variance_range[1],
+                        method="max cokriging variance",
+                    )],
+                )],
+            )
+        return prediction_fc
+
+    @tool(registry, name="nearest_neighbor_surface",
+           description=(
+               "最近邻插值：每个 H3 单元取最近样本值，输出 Voronoi（泰森）分段常值场。"
+               "无平滑、单元边界不连续（跳变是方法语义）；全域有值——凸包外为最近样本外推（已披露）。"
+               "\n何时用：类别/离散标签的面化（土地利用分区、行政归属填充）；"
+               "要求每个单元严格归属最近采样站的场景。"
+               "\n何时不用：连续变量需要平滑面 — 用 idw_interpolation / kriging_interpolation；"
+               "需要概率面 — 用 indicator_kriging_surface。"
+               "\n关键约束：>20 万样本或 >400 万目标格点类型化拒绝。"
+           ),
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何）",
+               "value_field": "数值字段名",
+               "resolution": "H3 分辨率（6-9），默认 8",
+           })
+    def nearest_neighbor_surface(geojson: Any, value_field: str, resolution: int = 8) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+        from app.lib.geo_analysis.interpolation import (
+            nearest_neighbor_surface as _nn_surface,
+        )
+
+        params = apply_contract("nearest_neighbor_analysis", {
+            "value_field": value_field,
+            "resolution": resolution,
+        })
+        data = safe_parse_geojson(geojson)
+        driver = _nn_surface(
+            data, params["value_field"], resolution=int(params["resolution"])
+        )
+        meta = driver["metadata"]
+        geojson_result = h3_to_geojson(driver["records"], params["value_field"])
+        geojson_result["summary"] = (
+            f"最近邻插值完成：{len(geojson_result['features'])} 个 H3 单元"
+            f"(res={params['resolution']})；Voronoi 分段常值场，无平滑；"
+            f"最大最近样本距离 {meta.get('max_nearest_distance')} m。"
+        )
+        geojson_result["nn_metadata"] = meta
+        descriptor = get_algorithm_registry().get("interpolation.nearest_neighbor")
+        if descriptor is not None:
+            geojson_result["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="nearest_neighbor_surface",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "resolution": int(params["resolution"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "auto-projected to metric CRS (estimate_utm_crs/polar) before nearest-neighbour math",
+                ],
+            )
+        return geojson_result
+
+    @tool(registry, name="natural_neighbor_surface",
+           description=(
+               "自然邻域插值（Sibson 坐标）：权重=插入点从各自然邻域 Voronoi 单元"
+               "窃取的面积比例（精确面积，Watson 阶梯算法收集自然邻域）。"
+               "平滑、精确过样本点、精确再现线性函数；凸包外诚实空缺（不外推）。"
+               "\n何时用：地形/气象类连续场的平滑插值，且不允许凸包外虚构值；"
+               "比 IDW 平滑、比 TIN 更连续（C¹ 类行为、无网格伪影）。"
+               "\n何时不用：需要凸包外覆盖 — 用 idw_interpolation / trend_surface；"
+               "需要克里金方差 — 用 kriging_interpolation。"
+               "\n关键约束：样本≥3 且非共线；>20 万样本 / >400 万目标格点类型化拒绝。"
+           ),
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥3 个非共线点）",
+               "value_field": "数值字段名",
+               "resolution": "H3 分辨率（5-9），默认 7",
+           })
+    def natural_neighbor_surface(geojson: Any, value_field: str, resolution: int = 7) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+        from app.lib.geo_analysis.tin_interpolation import (
+            natural_neighbor_surface as _sibson_surface,
+        )
+
+        params = apply_contract("natural_neighbor_analysis", {
+            "value_field": value_field,
+            "resolution": resolution,
+        })
+        data = safe_parse_geojson(geojson)
+        driver = _sibson_surface(
+            data, params["value_field"], resolution=int(params["resolution"])
+        )
+        meta = driver["metadata"]
+
+        geojson_result = h3_to_geojson(driver["records"], params["value_field"])
+        geojson_result["summary"] = (
+            f"自然邻域插值完成：{len(geojson_result['features'])} 个 H3 单元"
+            f"(res={params['resolution']}, 三角形数={meta['triangle_count']}, "
+            f"凸包覆盖率={meta['fill_fraction']})；凸包外格网不外推（无值）。"
+        )
+        geojson_result["sibson_metadata"] = meta
+        descriptor = get_algorithm_registry().get("interpolation.natural_neighbor")
+        if descriptor is not None:
+            geojson_result["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="natural_neighbor_surface",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "resolution": int(params["resolution"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "auto-projected to metric CRS (estimate_utm_crs/polar) before Delaunay/Sibson math",
+                ],
+            )
+        return geojson_result
+
+    @tool(registry, name="block_kriging_surface",
+           description=(
+               "块克里金：以块支撑（默认自动=H3 单元尺度）估计块均值与块方差，"
+               "2×2 子点离散化近似块均值协方差（Isaaks & Srivastava 1989，已披露）。"
+               "块方差平均意义上不大于点方差——支撑越大不确定越小，输出面更稳健。"
+               "\n何时用：关心『这个单元/地块的平均值』而非点值（环境限值对标、网格化报表）；"
+               "样本点密集但采样噪声大，需要支撑平滑。"
+               "\n何时不用：需要点尺度预测 — 用 kriging_interpolation；样本<8 — 用 idw_interpolation。"
+               "\n关键约束：block_size=0 时按 H3 分辨率平均六边形边长自动取值；"
+               "块尺寸相对变程越大离散化近似误差越大。"
+           ),
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
+               "value_field": "数值字段名",
+               "resolution": "H3 分辨率（5-9），默认 7",
+               "block_size": "块尺寸（米）；默认 0=按 H3 分辨率平均六边形边长自动取值",
+               "neighbors": "克里金邻域样本数(2-24)，默认 12",
+               "variogram_model": "变异函数模型: auto(默认)/spherical/exponential/gaussian",
+           })
+    def block_kriging_surface(
+        geojson: Any,
+        value_field: str,
+        resolution: int = 7,
+        block_size: float = 0.0,
+        neighbors: int = 12,
+        variogram_model: str = "auto",
+    ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.gis.uncertainty import (
+            RasterUncertainty,
+            UncertaintyMeasure,
+        )
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+        from app.lib.geo_analysis.kriging import (
+            block_kriging_surface as _block_surface,
+        )
+
+        params = apply_contract("block_kriging_analysis", {
+            "value_field": value_field,
+            "block_size": block_size,
+            "neighbors": neighbors,
+            "variogram_model": variogram_model,
+            "resolution": resolution,
+        })
+        data = safe_parse_geojson(geojson)
+        driver = _block_surface(
+            data, params["value_field"],
+            resolution=int(params["resolution"]),
+            block_size=float(params["block_size"]),
+            neighbors=int(params["neighbors"]),
+            variogram_model=params["variogram_model"],
+        )
+        meta = driver["metadata"]
+
+        pred_records = [
+            {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
+        ]
+        prediction_fc = h3_to_geojson(pred_records, params["value_field"])
+        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+            feat["properties"]["block_variance"] = round(rec["block_variance"], 6)
+            feat["properties"]["block_stddev"] = round(rec["block_stddev"], 6)
+        uncertainty_records = [
+            {"h3_index": r["h3_index"], "value": r["block_stddev"]}
+            for r in driver["records"]
+        ]
+        uncertainty_fc = h3_to_geojson(uncertainty_records, "block_stddev")
+
+        prediction_fc.update({
+            "summary": (
+                f"块克里金完成：{len(prediction_fc['features'])} 个 H3 单元"
+                f"(res={params['resolution']}, 块尺寸={meta['block_size']:.1f}m, "
+                f"{meta['discretization']})；不确定面(block_stddev)已随本结果输出。"
+            ),
+            "uncertainty": uncertainty_fc,
+            "block_metadata": meta,
+        })
+        descriptor = get_algorithm_registry().get("interpolation.block_kriging")
+        if descriptor is not None:
+            variance_range = meta.get("variance_range") or [None, None]
+            prediction_fc["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="block_kriging_surface",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "block_size": float(params["block_size"]),
+                    "neighbors": int(params["neighbors"]),
+                    "variogram_model": params["variogram_model"],
+                    "resolution": int(params["resolution"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "block support discretized with a fixed 2x2 sub-point grid (Isaaks & Srivastava 1989)",
+                ],
+                uncertainty=[RasterUncertainty(
+                    target="block_variance",
+                    interpretation="block kriging variance incl. within-block correction −γ̄(B,B)",
+                    summary=[UncertaintyMeasure(
+                        measure="value", value=variance_range[1],
+                        method="max block kriging variance",
+                    )],
+                )],
+            )
+        return prediction_fc
 
     @tool(registry, name="overlay_analysis",
            description="对两个几何图层进行空间叠加分析（如求交、合并、擦除等），返回结果及其统计信息",

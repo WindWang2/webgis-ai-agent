@@ -37,15 +37,22 @@ _RATIONALE_MAX = 160
 class ScaleProfile:
     """触发 backend 选择的规模画像（全部可缺省 —— 缺省按 unknown 处理）。
 
-    ``raster_cells`` 目前是**保留字段**：变体规模窗口只按
-    ``feature_count`` 匹配（与 BackendVariant.min/max_features 的语义
-    一致）；栅格类调用方应把像元规模折算进 feature_count 或直接以
-    feature_count 传入。未消费前不参与任何判定（评审 R1 MINOR-3）。
+    V3（D10）：``raster_cells`` 从保留字段变为**真实决策输入** ——
+    ``feature_count`` 缺省而 ``raster_cells`` 存在时（栅格主导型算法的
+    常见调用形态），以像元数折算规模窗口与分层；两者同时存在时
+    ``feature_count`` 优先（向量语义不变）。``estimated_bytes`` 是可选
+    的内存估算：超过预算常量时在 rationale 里追加内存注记（本层是
+    建议性诊断，不做硬闸 —— 硬闸在实现层 ResourceScaleMismatch）。
     """
 
     feature_count: Optional[int] = None
     raster_cells: Optional[int] = None
     export: bool = False
+    estimated_bytes: Optional[int] = None
+
+
+# 内存注记阈值：诊断性预算（不拒绝），>2 GiB 估算提示分块/服务端通道。
+_MEMORY_NOTE_BYTES = 2 * 1024 ** 3
 
 
 @dataclass(frozen=True)
@@ -101,6 +108,11 @@ def select_backend(
         algorithm_registry = get_algorithm_registry()
 
     n = scale.feature_count
+    raster_source = False
+    if n is None and scale.raster_cells is not None:
+        # 栅格主导：像元数折算规模（窗口/分层语义与向量一致）
+        n = scale.raster_cells
+        raster_source = True
     tier = scale_tier(n)
     descriptor = algorithm_registry.get(algorithm_id)
     if descriptor is None:
@@ -133,15 +145,22 @@ def select_backend(
         hits = [v for v in variants if _window_contains(v, n)]
         if hits:
             chosen = hits[0]
+            source = "像元数" if raster_source else "n"
             rationale = (
-                f"n={n} 落入 {chosen.id} 声明窗口 "
+                f"{source}={n} 落入 {chosen.id} 声明窗口 "
                 f"[{chosen.min_features}, {chosen.max_features}]（声明序优先）")
         else:
             unbounded = [v for v in variants if v.max_features is None]
             chosen = unbounded[0] if unbounded else variants[0]
+            source = "像元数" if raster_source else "n"
             rationale = (
-                f"n={n} 不在任何变体窗口内，降级取 {chosen.id}（无界上界优先）——"
+                f"{source}={n} 不在任何变体窗口内，降级取 {chosen.id}（无界上界优先）——"
                 "科学语义不变，性能预算自行声明")
+
+    if scale.estimated_bytes is not None and scale.estimated_bytes > _MEMORY_NOTE_BYTES:
+        rationale = (
+            f"{rationale}; 内存估算 {scale.estimated_bytes / 1024 ** 3:.1f} GiB "
+            f"超 {_MEMORY_NOTE_BYTES / 1024 ** 3:.0f} GiB 预算，建议分块/服务端通道")
 
     return BackendDecision(
         algorithm_id=algorithm_id,
