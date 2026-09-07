@@ -178,10 +178,13 @@ describe('Layer Workspace · 锁定护栏', () => {
 });
 
 describe('Layer Workspace · 批量操作', () => {
-  it('选择 checkbox 写入选择状态（无重渲染断言 store 变更）', () => {
+  it('选择 checkbox 写入选择状态（role=checkbox，store 变更断言）', () => {
     setLayers([makeLayer({ id: 'a' })]);
     render(<LayersTab />);
-    fireEvent.click(screen.getByRole('button', { name: '选择 Layer One' }));
+    // Review R1（a11y MINOR-8）：选择控件现为 role=checkbox + aria-checked。
+    const box = screen.getByRole('checkbox', { name: '选择 Layer One' });
+    expect(box).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(box);
     expect(store.toggleLayerSelected).toHaveBeenCalledWith('a');
   });
 
