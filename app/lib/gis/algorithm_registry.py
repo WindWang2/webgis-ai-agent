@@ -292,6 +292,18 @@ class AlgorithmDescriptor(BaseModel):
     resource_envelope: Optional[ResourceEnvelope] = None  # 声明式资源包络
     tolerance: Optional[NumericalTolerance] = None  # 结构化数值容差
     cancellation_profile: CancellationProfile = ""  # 协作式取消响应能力
+    # ── Wave 8（不确定性契约）：declared uncertainty → producer test ────
+    # 键 = uncertainty_outputs 成员；值 = 真实产出该不确定性类型并断言其
+    # 形状/数值的 conformance 测试节点（AST 存在性校验，同 conformance_tests）。
+    # 缺省空表 = 不约束存量算法；声明即机器可查（审计 G1 缺口的闭环）。
+    uncertainty_producer_tests: Dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("uncertainty_producer_tests")
+    @classmethod
+    def _bounded_producer_tests(cls, v: Dict[str, str]) -> Dict[str, str]:
+        if len(v) > 6:
+            raise ValueError("uncertainty_producer_tests exceeds 6 entries")
+        return {str(k)[:32]: str(node)[:220] for k, node in v.items()}
 
     @field_validator("assumptions", "limitations")
     @classmethod
@@ -656,41 +668,60 @@ class AlgorithmRegistry:
         # 存在性（评审 M1：文件级检查放过节点改名腐烂 —— VALIDATED 的
         # 可审计承诺必须钉到真实测试函数）。确定性 AST 解析，零导入。
         if algo.conformance_tests:
-            import ast
-            import os
-
-            if os.path.isdir("tests"):
-                for node in algo.conformance_tests:
-                    path, _, func = node.partition("::")
-                    if not path.startswith("tests/") or not os.path.exists(path):
-                        if path.startswith("tests/"):
-                            issues.append(
-                                f"algorithm {algo.id}: conformance test file "
-                                f"missing: {path}"
-                            )
-                        continue
-                    if func:
-                        try:
-                            tree = ast.parse(open(path, encoding="utf-8").read())
-                        except (OSError, SyntaxError):
-                            continue
-                        names = {
-                            n.name
-                            for n in ast.walk(tree)
-                            if isinstance(
-                                n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-                            )
-                        }
-                        # 节点路径可为 file::func 或 file::Class::method ——
-                        # 逐段存在性校验。
-                        segments = [s for s in func.split("::") if s]
-                        if any(s not in names for s in segments):
-                            issues.append(
-                                f"algorithm {algo.id}: conformance test node "
-                                f"missing: {node}"
-                            )
+            issues.extend(self._check_test_nodes(
+                algo, list(algo.conformance_tests), "conformance test"))
+        # ── Wave 8（不确定性契约）：declared uncertainty → producer test。
+        # 键必须是 uncertainty_outputs 成员；值节点经同一 AST 校验 ——
+        # 「声明了不确定性就必须有真实产出并断言它的测试」机器可查。
+        if algo.uncertainty_producer_tests:
+            for u in algo.uncertainty_producer_tests:
+                if u not in algo.uncertainty_outputs:
+                    issues.append(
+                        f"algorithm {algo.id}: uncertainty_producer_tests key "
+                        f"{u!r} not declared in uncertainty_outputs")
+            issues.extend(self._check_test_nodes(
+                algo, list(algo.uncertainty_producer_tests.values()),
+                "uncertainty producer test"))
         # ── Backend SDK V3（ADR-0117）：additive —— 只约束显式声明 ────
         issues.extend(self._validate_backend_sdk(algo))
+        return issues
+
+    @staticmethod
+    def _check_test_nodes(
+        algo: AlgorithmDescriptor, nodes: List[str], kind: str,
+    ) -> List[str]:
+        """测试节点存在性（文件 + AST 级逐段校验；确定性、零导入）。"""
+        import ast
+        import os
+
+        issues: List[str] = []
+        if not os.path.isdir("tests"):
+            return issues
+        for node in nodes:
+            path, _, func = node.partition("::")
+            if not path.startswith("tests/") or not os.path.exists(path):
+                if path.startswith("tests/"):
+                    issues.append(
+                        f"algorithm {algo.id}: {kind} file missing: {path}")
+                continue
+            if func:
+                try:
+                    tree = ast.parse(open(path, encoding="utf-8").read())
+                except (OSError, SyntaxError):
+                    continue
+                names = {
+                    n.name
+                    for n in ast.walk(tree)
+                    if isinstance(
+                        n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                    )
+                }
+                # 节点路径可为 file::func 或 file::Class::method ——
+                # 逐段存在性校验。
+                segments = [s for s in func.split("::") if s]
+                if any(s not in names for s in segments):
+                    issues.append(
+                        f"algorithm {algo.id}: {kind} node missing: {node}")
         return issues
 
     @staticmethod

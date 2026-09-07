@@ -351,3 +351,64 @@ class TestCatalogRendering:
         assert "精度:" not in text
         assert "资源包络" not in text
         assert "取消：" not in text
+
+
+class TestUncertaintyProducerTests:
+    """Wave 8：declared uncertainty → producer test 机器可查闭环。"""
+
+    def _descriptor(self, **kw):
+        from app.lib.gis.algorithm_registry import AlgorithmDescriptor
+        base = dict(
+            id="test.sdk.producer", name="producer 测试",
+            capabilities=["point_profile"],
+            input_artifact_types=["point_feature_set"],
+            output_artifact_type="point_feature_set",
+            tool_candidates=["spatial_stats"],
+            uncertainty_outputs=["statistical_significance"],
+        )
+        base.update(kw)
+        return AlgorithmDescriptor(**base)
+
+    def test_kriging_has_producer_tests(self):
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+        d = get_algorithm_registry().get("interpolation.kriging")
+        assert d.uncertainty_producer_tests
+        assert set(d.uncertainty_producer_tests) <= set(d.uncertainty_outputs)
+        assert get_algorithm_registry().validate() == []
+
+    def test_key_must_be_declared_output(self, sdk_registry):
+        from app.lib.gis.algorithm_registry import reset_algorithm_registry
+
+        reg = sdk_registry
+        reg.register(self._descriptor(
+            uncertainty_producer_tests={
+                "validation_metrics": "tests/unit/gis/test_backend_sdk_v3.py::TestUncertaintyProducerTests",
+            }))
+        issues = [i for i in reg.validate() if "test.sdk.producer" in i]
+        assert any("not declared in uncertainty_outputs" in i for i in issues)
+        reset_algorithm_registry()
+
+    def test_node_must_exist(self, sdk_registry):
+        from app.lib.gis.algorithm_registry import reset_algorithm_registry
+
+        reg = sdk_registry
+        reg.register(self._descriptor(
+            uncertainty_producer_tests={
+                "statistical_significance": "tests/unit/gis/test_backend_sdk_v3.py::TestNoSuchClassHere",
+            }))
+        issues = [i for i in reg.validate() if "test.sdk.producer" in i]
+        assert any("uncertainty producer test node missing" in i for i in issues)
+        reset_algorithm_registry()
+
+    def test_valid_producer_passes(self, sdk_registry):
+        from app.lib.gis.algorithm_registry import reset_algorithm_registry
+
+        reg = sdk_registry
+        reg.register(self._descriptor(
+            uncertainty_producer_tests={
+                "statistical_significance": "tests/unit/gis/test_backend_sdk_v3.py::TestUncertaintyProducerTests",
+            }))
+        issues = [i for i in reg.validate() if "test.sdk.producer" in i]
+        assert issues == []
+        reset_algorithm_registry()

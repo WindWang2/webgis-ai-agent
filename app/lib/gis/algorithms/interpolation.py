@@ -120,6 +120,11 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             "tests/unit/lib/test_interpolation_science_vnext.py::test_kriging_driver_deterministic_repeat",
             "tests/unit/lib/test_interpolation_science_vnext.py::test_kriging_tool_structured_validation_block",
         ],
+        # Wave 8：declared uncertainty → producer test 机器可查闭环。
+        uncertainty_producer_tests={
+            "raster_uncertainty": "tests/unit/lib/test_kriging_interpolation.py::test_ok_uncertainty_grows_away_from_samples",
+            "validation_metrics": "tests/unit/lib/test_interpolation_science_vnext.py::test_kriging_tool_structured_validation_block",
+        },
         backend_variants=[
             BackendVariant(id="numpy_batched", backend="numpy", deterministic=True,
                            min_features=8, max_features=100_000,
