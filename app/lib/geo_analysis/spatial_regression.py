@@ -304,6 +304,31 @@ def _ols_core(y: np.ndarray, x_mat: np.ndarray) -> Dict:
     }
 
 
+def _hc_covariance(
+    x_mat: np.ndarray, resid: np.ndarray, cov_type: str,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """异方差稳健协方差（MacKinnon-White 1985 三档）。
+
+    - HC0（White 1980）：(X'X)⁻¹(Σ x_i x_i' e_i²)(X'X)⁻¹；
+    - HC1：n/(n−p) × HC0（自由度校正）；
+    - HC3：夹心 meat 用 e_i²/(1−h_i)² 加权（h_i 为帽矩阵对角/杠杆；
+      小样本下比 HC0/HC1 保守，MacKinnon-White 1985 推荐）。
+
+    返回 ``(cov, se)``；系数点估计不变——稳健性只作用于标准误。
+    """
+    n, p = x_mat.shape
+    xtx_inv = np.linalg.pinv(x_mat.T @ x_mat)
+    e2 = resid ** 2
+    if cov_type == "HC3":
+        h = np.einsum("ij,jk,ik->i", x_mat, xtx_inv, x_mat)
+        e2 = e2 / np.maximum(1.0 - h, 1e-12) ** 2
+    meat = (x_mat * e2[:, None]).T @ x_mat
+    cov = xtx_inv @ meat @ xtx_inv
+    if cov_type == "HC1":
+        cov = cov * (n / max(n - p, 1))
+    return cov, np.sqrt(np.maximum(np.diag(cov), 0.0))
+
+
 def _jarque_bera(resid: np.ndarray) -> Dict:
     """残差正态性 JB 检验（scipy.stats.jarque_bera，Jarque-Bera 1980）。"""
     jb = sps.jarque_bera(resid)
@@ -617,6 +642,7 @@ def ols_regression_narrated(
     k: int = 8,
     distance_band: float = 0.0,
     permutations: int = 99,
+    cov_type: str = "classic",
 ) -> GeoAnalysisResult:
     """OLS 线性回归 + 完整空间诊断（Foundation V2 · spatial.ols_regression）。
 
@@ -624,6 +650,11 @@ def ols_regression_narrated(
     Koenker-BP 异方差、残差 Moran's I（固定种子 42 置换）、LM-lag /
     LM-error / 稳健双版 / SARMA（Anselin 1988；与 spreg 同式）。残差
     Moran 显著时叙事按 LM 决策树给出 SAR/SEM 建议 —— 不替用户静默换模型。
+
+    ``cov_type``（Foundation V3 additive；默认 "classic" 行为逐位不变）：
+    "HC0" / "HC1" / "HC3" 时系数表附加 ``robust_std_error`` 列
+    （MacKinnon-White 1985 异方差稳健夹心标准误），输出附 ``cov_type``
+    与披露；classic 的 se/t/p 列保持经典 (X'X)⁻¹σ² 口径不变。
     """
     names_raw = [f.strip() for f in explanatory_fields if str(f).strip()]
     gdf, y, x_raw, names = _regression_inputs(geojson, target_field, names_raw)
@@ -638,7 +669,18 @@ def ols_regression_narrated(
     perms = _validate_permutation_count(permutations)
     wm = _regression_weights(gdf, n, weights_scheme, k, distance_band)
 
+    # Foundation V3 additive：异方差稳健协方差（默认 classic 逐位不变）。
+    cov_key = str(cov_type or "classic")
+    if cov_key not in ("classic", "HC0", "HC1", "HC3"):
+        raise UnsupportedMethod(
+            f"unknown cov_type {cov_type!r}",
+            correction_hint="use one of 'classic' (default), 'HC0', 'HC1', 'HC3'",
+        )
+
     ols = _ols_core(y, x_mat)
+    robust_se: Optional[np.ndarray] = None
+    if cov_key != "classic":
+        _, robust_se = _hc_covariance(x_mat, ols["residuals"], cov_key)
     jb = _jarque_bera(ols["residuals"])
     bp = _breusch_pagan(ols["residuals"], x_mat)
     vifs = _vif(x_mat, col_names)
@@ -689,6 +731,19 @@ def ols_regression_narrated(
             ).to_evidence(),
         ],
     }
+    if cov_key != "classic":
+        # additive：稳健标准误列 + 方法披露（classic 路径不带任何新键）。
+        for i, row in enumerate(data_out["coefficients"]):
+            row["robust_std_error"] = (
+                float(robust_se[i]) if np.isfinite(robust_se[i]) else None)
+        data_out["cov_type"] = cov_key
+        data_out["cov_type_disclosure"] = (
+            f"robust_std_error 列为 MacKinnon-White {cov_key} 异方差稳健夹心"
+            "标准误（HC3 用杠杆 (1−h_i)² 校正）；std_error/t_stat/p_value 列"
+            "仍为经典 (X'X)⁻¹σ² 口径——稳健性只作用于标准误，不改系数估计")
+        narrative_cov = (
+            f" 协方差为 MacKinnon-White {cov_key} 异方差稳健估计"
+            "（系数不变，仅标准误换稳健口径）。")
     sig_counts = sum(
         1 for c in data_out["coefficients"][1:]
         if c["p_value"] is not None and c["p_value"] < 0.05)
@@ -709,6 +764,8 @@ def ols_regression_narrated(
         else:
             narrative += " 残差 Moran's I 不显著 —— 无明显空间依赖证据。"
     narrative += f" JB p={jb['p_value']:.4f}、BP p={bp['p_value']:.4f}。"
+    if cov_key != "classic":
+        narrative += narrative_cov
     return GeoAnalysisResult(True, data_out, narrative)
 
 
@@ -1257,4 +1314,392 @@ def gwr_regression_narrated(
     if n > GWR_FULL_SURFACE_MAX_N:
         narrative += (
             f" n={n} 超过全系数面上限 {GWR_FULL_SURFACE_MAX_N} —— 仅回摘要。")
+    return GeoAnalysisResult(True, data_out, narrative)
+
+
+# ── MGWR（逐变量独立带宽的反向拟合；Fotheringham-Yang-Kang 2017）─────
+# 与 GWR 的关系（等带宽一致性锚）：把所有项（含截距）的带宽钳到同一个 k
+# 且核完全相同时，反向拟合的不动点与联合 GWR/WLS 解一致 —— 在精确可表示
+# 的表面上逐位恢复（tests/unit/lib/test_spatial_stats_v3.py 的 rtol 1e-4
+# conformance 锚）。收敛 honesty：反向拟合是坐标式不动点迭代，只保证收敛
+# 到局部最优，不保证全局最优（披露于 descriptor limitations 与叙事）。
+
+#: MGWR 全系数面（逐观测系数）的输出/计算上限；超限先抛
+#: ResourceScaleMismatch，不做内存赌博（与 GWR 同一防线）。
+MGWR_MAX_N = 2000
+
+#: 解释变量数上限（逐变量的带宽搜索是 O(p·候选·n·K)，防组合爆炸）。
+MGWR_MAX_VARS = 20
+
+#: 反向拟合迭代与相对 RSS 收敛容差（Foundation V3 规格）。
+MGWR_MAX_ITER = 200
+MGWR_TOL = 1e-5
+
+#: 逐变量带宽候选网格的确定性子采样上限。
+_MGWR_MAX_CANDIDATES = 20
+
+
+def _bisquare_rows(d: np.ndarray, d_max: np.ndarray) -> np.ndarray:
+    """逐行 bisquare 核（d_max 为同形数组；d_max≤0 的行全零，与 _bisquare
+    的标量语义一致 —— _bisquare 本体有标量 guard，不能收数组）。"""
+    safe = d_max > 0
+    u = d / np.where(safe, d_max, 1.0)
+    return np.where(safe & (u < 1.0), (1.0 - u * u) ** 2, 0.0)
+
+
+def _knn_neighbour_tables(
+    coords: np.ndarray, take_max: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """排序去自身的 kNN 近邻表 (dist[n×K], idx[n×K])（与 GWR 同 cKDTree 语义）。
+
+    表中**不含自身**（E-4 显式剔除 + 距离稳定排序）；终拟合时按 GWR 约定
+    追加自身 w=1。列数 K = min(take_max, n−1)。
+    """
+    from scipy.spatial import cKDTree
+
+    coords = np.asarray(coords, dtype=float)
+    n = len(coords)
+    k_take = int(min(max(int(take_max), 1), n - 1))
+    tree = cKDTree(coords)
+    nn_dist, nn_idx = tree.query(coords, k=k_take + 1)
+    nn_idx = np.atleast_2d(nn_idx)
+    nn_dist = np.atleast_2d(nn_dist)
+    tab_idx = np.zeros((n, k_take), dtype=np.int64)
+    tab_dist = np.zeros((n, k_take), dtype=float)
+    for i in range(n):
+        nbr = np.atleast_1d(nn_idx[i])
+        dist = np.atleast_1d(nn_dist[i])
+        keep = nbr != i  # E-4：重合点 tie-break 可能排错自身 —— 显式剔除
+        nbr, dist = nbr[keep], dist[keep]
+        order = np.argsort(dist, kind="stable")[:k_take]
+        tab_idx[i] = nbr[order]
+        tab_dist[i] = dist[order]
+    return tab_dist, tab_idx
+
+
+def _uni_term_fit(
+    x_col: np.ndarray, resid: np.ndarray,
+    tab_dist: np.ndarray, tab_idx: np.ndarray, bandwidth: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """单项（过原点单列）的 bisquare-kNN 局地 WLS。
+
+    返回 (beta[n], fitted[n], hat_diag[n])：帽子对角 s_ii = x_i²/Σ_l w_il x_l²
+    （含自身 w_ii=1）—— ENP_j = Σ_i s_ii 的闭式逐项迹，无需 n×n 矩阵。
+    局地分母为 0（全零列 + 全零权重）时该项系数诚实置 0。
+    """
+    n = len(x_col)
+    take = int(min(max(int(bandwidth) - 1, 0), tab_dist.shape[1]))
+    beta = np.zeros(n)
+    fitted = np.zeros(n)
+    hat_diag = np.zeros(n)
+    x_self2 = x_col * x_col
+    if take > 0:
+        d = tab_dist[:, :take]
+        nbr = tab_idx[:, :take]
+        d_max = np.maximum(d[:, -1:], 1e-30)
+        w = _bisquare_rows(d, d_max)
+        xn = x_col[nbr]
+        s0 = (w * xn * xn).sum(axis=1)
+        s1 = (w * xn * resid[nbr]).sum(axis=1)
+        den = s0 + x_self2
+        num = s1 + x_col * resid
+        safe = den > 0
+        beta = np.where(safe, num / np.where(safe, den, 1.0), 0.0)
+        hat_diag = np.where(safe, x_self2 / np.where(safe, den, 1.0), 0.0)
+    else:
+        safe = x_self2 > 0
+        beta = np.where(safe, resid / np.where(safe, x_col, 1.0), 0.0)
+        hat_diag = np.where(safe, 1.0, 0.0)
+    fitted = x_col * beta
+    return beta, fitted, hat_diag
+
+
+def _uni_term_loocv(
+    x_col: np.ndarray, resid: np.ndarray,
+    tab_dist: np.ndarray, tab_idx: np.ndarray, bandwidth: int,
+) -> float:
+    """单项局地 WLS 的留一 CV 分数 Σ_i (r_i − x_i·β̂_{−i}(i))²。
+
+    近邻表已不含自身 → 表内加权和天然是剔除自身的拟合（与 GWR 带宽 CV
+    同一核尺度：k = 含自身的邻域点数，LOO 取 k−1 个其他邻居）。
+    """
+    take = int(min(max(int(bandwidth) - 1, 0), tab_dist.shape[1]))
+    if take == 0:
+        return float(np.sum(resid ** 2))
+    d = tab_dist[:, :take]
+    nbr = tab_idx[:, :take]
+    d_max = np.maximum(d[:, -1:], 1e-30)
+    w = _bisquare_rows(d, d_max)
+    xn = x_col[nbr]
+    s0 = (w * xn * xn).sum(axis=1)
+    s1 = (w * xn * resid[nbr]).sum(axis=1)
+    beta_loo = np.where(s0 > 0, s1 / np.where(s0 > 0, s0, 1.0), 0.0)
+    return float(np.sum((resid - x_col * beta_loo) ** 2))
+
+
+def _mgwr_bandwidth_grid(n: int, n_terms: int) -> List[int]:
+    """逐变量带宽候选网格 [max(p+2, n//20) .. min(n, n//2)]，确定性子采样
+    到 ≤20 个候选（整数等距；与 GWR 带宽 CV 同为有界网格穷举，非连续优化）。
+    """
+    lo = max(n_terms + 1, n // 20)  # p 变量 + 截距 → n_terms = p+1
+    hi = max(min(n, n // 2), 2)
+    lo = int(min(lo, hi))
+    span = hi - lo + 1
+    if span <= _MGWR_MAX_CANDIDATES:
+        return list(range(lo, hi + 1))
+    picks = np.round(np.linspace(lo, hi, _MGWR_MAX_CANDIDATES)).astype(int)
+    return sorted(set(int(v) for v in picks))
+
+
+def _mgwr_backfitting(
+    coords: np.ndarray, y: np.ndarray, x_mat: np.ndarray,
+    init_bandwidth: int, max_iterations: int, tolerance: float,
+    fixed_bandwidths: Optional[Sequence[int]] = None,
+) -> Dict:
+    """反向拟合主循环（GWR 初始化 → 逐项部分残差 → 逐项带宽搜索/更新）。
+
+    - 初始化：联合 GWR（带宽=init_bandwidth）的系数面 —— Fotheringham
+      2017 的标准 warm start，同时保证等带宽时精确平面立即收敛到 GWR 解
+      （conformance 锚）。
+    - 每次扫掠：对每项 j，r_j = y − Σ_{k≠j} ŷ_k，在候选网格上以 LOO-CV
+      选带宽（fixed_bandwidths 给定时跳过搜索），再做单项局地 WLS 更新
+      ŷ_j。逐项就地更新（Gauss-Seidel 式）。
+    - 收敛：相对 RSS 变化 ≤ tolerance；返回 rss_trajectory 供诚实披露
+      （max 迭代内未达标 → converged=False，绝不静默宣称收敛）。
+    """
+    n, m = x_mat.shape
+    k_init = int(min(max(int(init_bandwidth), 5), max(n // 2, 5)))
+    grid = _mgwr_bandwidth_grid(n, m)
+    take_max = max(max(grid) - 1, k_init - 1)
+    tab_dist, tab_idx = _knn_neighbour_tables(coords, take_max)
+
+    # GWR warm start（联合解作为反向拟合的起点）
+    betas_gwr, _fitted_gwr, _sse_gwr, _tr = _gwr_local_fit(
+        coords, y, x_mat, k_init, leave_self_out=False)
+    betas = betas_gwr.T.copy()          # (m, n)
+    y_hat = x_mat.T * betas             # (m, n)：ŷ_j = x_j · β_j 面
+    total = y_hat.sum(axis=0)
+    if fixed_bandwidths is not None:
+        fixed = [int(min(max(int(b), 2), n - 1)) for b in fixed_bandwidths]
+        if len(fixed) != m:
+            raise InsufficientSamples(
+                f"fixed_bandwidths needs {m} entries (one per term incl. "
+                f"intercept), got {len(fixed)}",
+                correction_hint="pass one bandwidth per design column",
+            )
+    else:
+        fixed = None
+
+    bandwidths = np.array(fixed if fixed is not None else [k_init] * m,
+                          dtype=int)
+    rss_trajectory: List[float] = []
+    converged = False
+    iterations = 0
+    for it in range(1, int(max_iterations) + 1):
+        iterations = it
+        for j in range(m):
+            r_j = y - (total - y_hat[j])
+            if fixed is None:
+                cvs = [_uni_term_loocv(x_mat[:, j], r_j, tab_dist, tab_idx, kk)
+                       for kk in grid]
+                bandwidths[j] = int(grid[int(np.argmin(cvs))])
+            beta_j, fitted_j, _hat = _uni_term_fit(
+                x_mat[:, j], r_j, tab_dist, tab_idx, int(bandwidths[j]))
+            betas[j] = beta_j
+            y_hat[j] = fitted_j
+            total = y_hat.sum(axis=0)
+        rss = float(np.sum((y - total) ** 2))
+        rss_trajectory.append(rss)
+        if len(rss_trajectory) > 1:
+            prev = rss_trajectory[-2]
+            if abs(prev - rss) <= tolerance * max(prev, 1e-30):
+                converged = True
+                break
+
+    # ENP：逐项帽迹（闭式对角和，终带宽下重算 —— 与残差无关）
+    enp_per_term = np.zeros(m)
+    for j in range(m):
+        r_j = y - (total - y_hat[j])
+        _b, _f, hat_diag = _uni_term_fit(
+            x_mat[:, j], r_j, tab_dist, tab_idx, int(bandwidths[j]))
+        enp_per_term[j] = float(hat_diag.sum())
+
+    return {
+        "betas": betas,                      # (m, n)
+        "fitted": total,
+        "bandwidths": bandwidths,            # (m,) 含截距项
+        "bandwidth_grid": grid,
+        "enp_per_term": enp_per_term,
+        "iterations": iterations,
+        "converged": converged,
+        "rss_trajectory": rss_trajectory,
+        "sse": float(np.sum((y - total) ** 2)),
+    }
+
+
+def mgwr_regression_narrated(
+    geojson: dict,
+    target_field: str,
+    explanatory_fields: Sequence[str],
+    bandwidth: int = 30,
+    max_iterations: int = MGWR_MAX_ITER,
+    tolerance: float = MGWR_TOL,
+    fixed_bandwidths: Optional[Sequence[int]] = None,
+) -> GeoAnalysisResult:
+    """多尺度地理加权回归（spatial.mgwr；Fotheringham-Yang-Kang 2017）。
+
+    每个解释变量（含截距项）独立带宽的自适应 bisquare 核反向拟合：
+    GWR 联合解热启动 → 逐项部分残差 → 候选网格（确定性 ≤20 点）LOO-CV
+    选带宽 → 单项局地 WLS 更新，直到相对 RSS 收敛或达 max_iterations。
+    输出逐变量带宽、逐观测系数面、逐项 ENP（帽迹）、AICc（高斯近似）。
+    **诚实披露**：反向拟合是不动点迭代，收敛到局部最优、不保证全局最优；
+    带宽是有界网格穷举非连续优化；AICc 无唯一公认公式。等带宽一致性锚
+    （与 GWR/WLS 联合解 rtol 1e-4）见 test_spatial_stats_v3。
+    """
+    names_raw = [f.strip() for f in explanatory_fields if str(f).strip()]
+    gdf, y, x_raw, names = _regression_inputs(geojson, target_field, names_raw)
+    x_mat, col_names = _design_matrix(x_raw, names)
+    n, m = x_mat.shape
+    _check_min_samples(n, m)
+    if float(np.ptp(y)) == 0.0:
+        raise DegenerateData(
+            f"target '{target_field}' has zero variance",
+            correction_hint="check the target field for constant values",
+        )
+    if m - 1 > MGWR_MAX_VARS:
+        raise UnsupportedMethod(
+            f"MGWR backfitting supports at most {MGWR_MAX_VARS} explanatory "
+            f"variables (got {m - 1})",
+            correction_hint="drop explanatory fields or use gwr_regression",
+        )
+    if n > MGWR_MAX_N:
+        raise ResourceScaleMismatch(
+            f"MGWR backfitting needs full local coefficient surfaces for "
+            f"n={n} observations",
+            estimated=f"O(iter·p·candidates·n·k) at n={n}, p={m - 1}",
+            limit=f"n ≤ {MGWR_MAX_N}",
+            correction_hint="aggregate the data or use ols/gwr below the cap",
+        )
+    if not np.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError(f"tolerance must be positive finite (got {tolerance})")
+    max_iter = int(max_iterations)
+    if max_iter < 1:
+        raise ValueError(f"max_iterations must be >= 1 (got {max_iterations})")
+
+    result = _mgwr_backfitting(
+        np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values)),
+        y, x_mat, bandwidth, max_iter, tolerance, fixed_bandwidths,
+    )
+    betas = result["betas"]                 # (m, n)
+    bandwidths = result["bandwidths"]
+    fitted = result["fitted"]
+    sse = result["sse"]
+    ss_tot = float(((y - y.mean()) ** 2).sum())
+    r2 = 1.0 - sse / ss_tot if ss_tot > 0 else 0.0
+    enp_total = float(result["enp_per_term"].sum())
+    q_eff = enp_total + 1.0  # +1 计 σ²（与 GWR 的 AIC 同约定）
+    if sse > 0:
+        aic = n * (np.log(2.0 * np.pi) + np.log(sse / n) + 1.0) + 2.0 * q_eff
+        aicc = aic + (2.0 * q_eff * (q_eff + 1.0) / (n - q_eff - 1.0)
+                      if n - q_eff - 1.0 > 0 else 0.0)
+    else:
+        aic = aicc = None  # 完全拟合：高斯似然无定义（诚实留空）
+    rmse = float(np.sqrt(sse / n)) if n > 0 else 0.0
+    local_r2 = _gwr_local_r2(
+        np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values)),
+        y, x_mat, betas.T, int(bandwidths[0]))  # 局部 R² 用截距项带宽（披露）
+
+    variation: Dict[str, Dict] = {}
+    for j, name in enumerate(col_names):
+        col = betas[j]
+        variation[name] = {
+            **_gwr_summarize(col),
+            "iqr": round(float(np.percentile(col, 75)
+                               - np.percentile(col, 25)), 6),
+        }
+
+    data_out: Dict = {
+        "n_features": int(n),
+        "rows_dropped_nonfinite": int(gdf.attrs.get("rows_dropped_nonfinite", 0)),
+        "target_field": str(target_field),
+        "explanatory_fields": list(names),
+        "r_squared": round(float(r2), 6),
+        "aic": None if aic is None else round(float(aic), 6),
+        "aicc": None if aicc is None else round(float(aicc), 6),
+        "effective_params": round(float(enp_total), 6),
+        "enp_note": ("各变量在最终带宽下的局部帽迹之和——backfitting 复合"
+                  "算子的交叉项未计入（与 pysal mgwr 惯用近似一致，披露）"),
+        "rmse": round(rmse, 6),
+        "bandwidths": {
+            "initial_global": int(min(max(int(bandwidth), 5), max(n // 2, 5))),
+            "per_term": {name: int(bandwidths[j])
+                         for j, name in enumerate(col_names)},
+            "candidate_grid": [int(v) for v in result["bandwidth_grid"]],
+            "note": "逐项独立带宽（含截距项）；LOO-CV 有界网格穷举（确定性）",
+        },
+        "enp_per_term": {name: round(float(result["enp_per_term"][j]), 6)
+                         for j, name in enumerate(col_names)},
+        "local_r2": _gwr_summarize(local_r2),
+        "local_r2_bandwidth_term": col_names[0],
+        "coefficient_variation": variation,
+        "backfitting": {
+            "max_iterations": max_iter,
+            "tolerance": tolerance,
+            "iterations": int(result["iterations"]),
+            "converged": bool(result["converged"]),
+            "rss_trajectory": [round(float(v), 10) for v in result["rss_trajectory"]],
+        },
+        "full_coefficient_surfaces": True,
+        "surfaces": {
+            name: [round(float(v), 6) for v in betas[j]]
+            for j, name in enumerate(col_names)
+        },
+        "surfaces_local_r2": [round(float(v), 6) for v in local_r2],
+        "uncertainty": [
+            ValidationMetrics(
+                target="mgwr_regression",
+                method="in_sample",
+                r_squared=float(r2),
+                rmse=rmse,
+                sample_count=int(n),
+            ).to_evidence(),
+            FieldUncertainty(
+                target="mgwr_bandwidths",
+                field_name=", ".join(col_names[:8]),
+                summary=[
+                    UncertaintyMeasure(
+                        measure="value",
+                        value=int(bandwidths[j]),
+                        method=f"selected bandwidth (kNN count) of term '{name}'",
+                    )
+                    for j, name in enumerate(col_names[:8])
+                ],
+                sample_count=int(n),
+            ).to_evidence(),
+            SensitivityEnvelope(
+                target="mgwr_per_term_bandwidth",
+                perturbation_scheme=(
+                    f"per-term LOO-CV over bounded grid "
+                    f"{[int(v) for v in result['bandwidth_grid']]} "
+                    f"(≤{_MGWR_MAX_CANDIDATES} deterministic candidates)"),
+                tipping_points=[
+                    f"{name}={int(bandwidths[j])}"
+                    for j, name in enumerate(col_names)
+                ],
+                notes="反向拟合收敛到局部最优；等带宽一致性锚见 conformance 测试",
+            ).to_evidence(),
+        ],
+    }
+    bw_txt = ", ".join(f"{name}={int(bandwidths[j])}"
+                       for j, name in enumerate(col_names))
+    narrative = (
+        f"MGWR（逐变量 bisquare 反向拟合，GWR 热启动）：R²={r2:.4f}，"
+        f"AICc={'不可用（完全拟合）' if aicc is None else f'{aicc:.1f}'}，"
+        f"有效参数 q={enp_total:.1f}。逐项带宽（最近邻数，含截距）：{bw_txt}；"
+        f"{result['iterations']} 次扫掠"
+        + ("已收敛。" if result["converged"] else
+           f" 达 max_iterations={max_iter} 未达相对 RSS 容差 —— 如实披露未收敛。"))
+    narrative += (
+        " 注意：反向拟合收敛到局部最优，不保证全局最优；带宽为有界网格"
+        "穷举而非连续优化。")
     return GeoAnalysisResult(True, data_out, narrative)

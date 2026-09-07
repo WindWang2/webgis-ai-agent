@@ -141,4 +141,49 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             output_artifact_types=["stats_table"],
             purpose_template="地理加权回归",
         ),
+
+        # ── Foundation V3：真正的新能力族（局部 Join Count 是二值局部
+        #    统计、双变量局部 Moran 是双变量 LISA、权重诊断是权重结构
+        #    体检 —— 均不与既有能力同语义，不拆现有能力凑数）──────────
+        CapabilityDescriptor(
+            id="local_join_count", name="局部 Join Count", category="statistics",
+            description="二值场的逐位置共位簇检测（Anselin & Li 2019；"
+                        "全局 Join Count 的局部对应物）。",
+            input_artifact_types=["admin_aggregate_table"],
+            output_artifact_types=["hotspot_result"],
+            compatible_map_models=["hotspot_overlay"],
+            purpose_template="二值共位簇检测",
+        ),
+
+        CapabilityDescriptor(
+            id="bivariate_local_moran", name="双变量局部 Moran", category="statistics",
+            description="x 与 y 空间滞后的逐位置共位/互斥检测（双变量 LISA；"
+                        "与全局双变量 Moran、单变量 LISA 是不同检验）。",
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate"],
+            output_artifact_types=["hotspot_result"],
+            compatible_map_models=["hotspot_overlay"],
+            purpose_template="双变量 LISA 共位检测",
+        ),
+
+        CapabilityDescriptor(
+            id="spatial_weights_diagnostics", name="空间权重诊断", category="statistics",
+            description="权重结构体检：稀疏度/对称性/邻居分布/孤岛/连通分量。",
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_types=["stats_table"],
+            purpose_template="空间权重结构诊断",
+        ),
+
+        # ── Foundation V3：经验贝叶斯率平滑（与 rate_aggregation 是不同
+        #    语义——聚合产出原始率；EB 平滑对原始率做先验收缩）──────────
+        CapabilityDescriptor(
+            id="rate_smoothing", name="经验贝叶斯率平滑", category="statistics",
+            description="计数/人口率的经验贝叶斯收缩平滑（Marshall 1991 MOM "
+                        "先验；全局或邻居先验；零人口区不产率值）。",
+            input_artifact_types=["admin_boundary_set", "admin_aggregate_table",
+                                  "polygon_feature_set"],
+            output_artifact_types=["admin_aggregate_table"],
+            compatible_map_models=["administrative_choropleth"],
+            purpose_template="经验贝叶斯率平滑",
+        ),
 ]

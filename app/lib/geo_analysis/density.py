@@ -26,6 +26,7 @@ from shapely.geometry import box, mapping
 from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf
 from app.lib.geo_analysis.statistics import _filter_numeric_gdf
 from app.lib.geo_analysis._vector import extract_centroids
+from app.lib.gis.scientific_errors import UnsupportedMethod
 
 logger = logging.getLogger(__name__)
 
@@ -172,12 +173,71 @@ def _evaluate_kde(kde, points):
     return out
 
 
+# Adaptive bandwidth (Abramson 1982 square-root pilot): per-point kernel
+# block / eval chunk are smaller than the fixed path because the evaluation
+# materializes an explicit (block × eval-chunk) distance matrix.
+_ADAPTIVE_KERNEL_BLOCK = 1024
+_ADAPTIVE_EVAL_CHUNK = 8192
+
+
+def _evaluate_adaptive_kde(data, h_is, weights, points):
+    """Sum per-point-bandwidth Gaussian kernels directly (Abramson 1982).
+
+    ``scipy.stats.gaussian_kde`` cannot carry per-point bandwidths, so the
+    adaptive estimate is implemented here: density(x) = Σ_i w̃_i
+    N(x; x_i, h_i²I) with w̃ normalized weights. Chunked over both data
+    blocks and evaluation cells to bound the (block × cells) temporary.
+    """
+    n = data.shape[1]
+    w = (np.ones(n, dtype=float) if weights is None
+         else np.asarray(weights, dtype=float))
+    w = w / max(float(w.sum()), np.finfo(float).tiny)
+    h_is = np.asarray(h_is, dtype=float)
+    total = points.shape[1]
+    out = np.empty(total, dtype=float)
+    for cs in range(0, total, _ADAPTIVE_EVAL_CHUNK):
+        ce = min(cs + _ADAPTIVE_EVAL_CHUNK, total)
+        qx = points[0, cs:ce][None, :]
+        qy = points[1, cs:ce][None, :]
+        acc = np.zeros(ce - cs, dtype=float)
+        for bs in range(0, n, _ADAPTIVE_KERNEL_BLOCK):
+            be = min(bs + _ADAPTIVE_KERNEL_BLOCK, n)
+            dx = data[0, bs:be][:, None] - qx
+            dy = data[1, bs:be][:, None] - qy
+            hh = h_is[bs:be][:, None]
+            d2 = dx * dx + dy * dy
+            kern = np.exp(-0.5 * d2 / (hh * hh)) / (2.0 * np.pi * hh * hh)
+            acc += w[bs:be] @ kern
+        out[cs:ce] = acc
+    return out
+
+
+def _adaptive_bandwidths(kde, kde_data, bw, kde_weights):
+    """Abramson square-root-law adaptive bandwidths.
+
+    Pilot = fixed-bandwidth density (the shared isotropic KDE path) evaluated
+    at the data points; λ_i = (pilot_i / geometric_mean(pilot))^(−1/2);
+    h_i = h0·λ_i. Returns ``(h_is, lambda_min, lambda_max)``.
+    """
+    pilot = _evaluate_kde(kde, kde_data)
+    # 数值防线：重合点/极小带宽下 pilot 可下溢为 0 —— 钳到正可表示值，
+    # 否则几何均值/开方无定义（钳制属于数值细节，λ 范围照常披露）。
+    positive = pilot[pilot > 0]
+    floor = (float(positive.min()) if positive.size else 1.0) * 1e-16
+    pilot = np.maximum(pilot, floor)
+    log_gm = float(np.mean(np.log(pilot)))
+    lam = np.power(pilot / float(np.exp(log_gm)), -0.5)
+    h_is = bw * lam
+    return h_is, float(lam.min()), float(lam.max())
+
+
 def kde_surface(
     geojson: dict,
     bandwidth: float = 0,
     cell_size: float = 500,
     value_field: str = "",
     bounds: Optional[list] = None,
+    bandwidth_method: str = "fixed",
 ) -> GeoAnalysisResult:
     """Gaussian KDE surface grid over the input points.
 
@@ -188,12 +248,26 @@ def kde_surface(
         value_field: optional numeric field used as point weights.
         bounds: optional ``[xmin, ymin, xmax, ymax]`` (WGS84) analysis extent;
             defaults to data bounds + 10% buffer.
+        bandwidth_method: ``"fixed"``（默认，行为与历史逐位一致）或
+            ``"adaptive"``（Abramson 1982 平方根先导带宽：先导密度来自
+            既有固定带宽路径，λ_i = (pilot_i/几何均值)^(−1/2)，
+            h_i = h0·λ_i；评估对每点带宽直接求和——gaussian_kde 不支持
+            逐点带宽）。评估成本与固定路径同阶 O(n·grid)。
 
     Returns:
         ``GeoAnalysisResult`` whose ``data`` is a FeatureCollection of
         thresholded grid cells with a ``density`` property, plus ``grid_size``,
-        ``stats``, and ``bandwidth_m`` envelope keys.
+        ``stats``, and ``bandwidth_m`` envelope keys. The adaptive path adds
+        ``bandwidth_mode`` / ``adaptive_bandwidth`` (pilot bandwidth + λ range)
+        disclosure keys.
     """
+    method_key = str(bandwidth_method or "fixed").lower()
+    if method_key not in ("fixed", "adaptive"):
+        raise UnsupportedMethod(
+            f"unknown bandwidth_method {bandwidth_method!r}",
+            correction_hint="use 'fixed' (default, single isotropic bandwidth) "
+                            "or 'adaptive' (Abramson square-root pilot)",
+        )
     if not geojson:
         return GeoAnalysisResult(
             False, None, "无效的 GeoJSON 输入",
@@ -311,7 +385,15 @@ def kde_surface(
     grid_y = np.linspace(ymin, ymax, ny)
     gx, gy = np.meshgrid(grid_x, grid_y)
     grid_coords = np.vstack([gx.ravel(), gy.ravel()])
-    density = _evaluate_kde(kde, grid_coords).reshape(ny, nx)
+    if method_key == "adaptive":
+        # Abramson 1982：先导密度复用既有固定带宽 KDE 路径（含权重/钳制
+        # 语义），逐点 λ/h 后直接按点核求和（gaussian_kde 不支持逐点带宽）。
+        h_is, lam_min, lam_max = _adaptive_bandwidths(
+            kde, kde_data, bw, kde_weights)
+        density = _evaluate_adaptive_kde(
+            kde_data, h_is, kde_weights, grid_coords).reshape(ny, nx)
+    else:
+        density = _evaluate_kde(kde, grid_coords).reshape(ny, nx)
 
     max_d = density.max()
     threshold = max_d * 0.1
@@ -361,6 +443,21 @@ def kde_surface(
             "自动带宽（Scott 规则）对强聚集数据过平滑，已钳制为最近邻尺度；"
             "需要更平滑的密度面请显式传 bandwidth（米）。"
         )
+    if method_key == "adaptive":
+        # additive：自适应带宽披露（先导带宽 + λ 范围）。fixed 路径
+        # （默认）不新增任何键 —— 历史行为逐位不变。
+        fc["bandwidth_mode"] = "adaptive"
+        fc["adaptive_bandwidth"] = {
+            "pilot_bandwidth_m": round(bw, 1),
+            "lambda_min": round(lam_min, 6),
+            "lambda_max": round(lam_max, 6),
+            "pilot_bandwidth_clamped": bool(bw_clamped),
+            "method": "abramson1982_sqrt_pilot",
+            "disclosure": (
+                "自适应带宽 = Abramson 平方根先导律：先导密度来自固定带宽"
+                " KDE，低密度区带宽放大、高密度区收窄；评估为逐点带宽核的"
+                "直接求和（同 O(n·grid) 成本）"),
+        }
     if n_points_used < n_points_total:
         # #384: input was subsampled to the point cap; say so on the envelope.
         fc["sampled_points"] = {"used": n_points_used, "total": n_points_total}
