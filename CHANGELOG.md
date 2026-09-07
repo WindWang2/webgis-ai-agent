@@ -1,5 +1,85 @@
 # Changelog
 
+## [Unreleased] - 2026-09-07
+
+### Added
+- Durable workspace snapshots: project-side snapshot save/list/get/restore/
+  clone/delete under `/api/v1/projects/{project_id}/workspace/...` plus
+  `describe_workspace` and snapshot tools. Snapshots survive session purge/TTL;
+  save accepts `materialize=` to write payload bytes into the durable content
+  store; restore re-materializes with digest verification and explicitly
+  discloses degraded refs (dead refs are never restored as valid).
+- Durable artifact revisions: every materialization now records an immutable
+  revision keyed by payload digest (`artifact_revisions`), with artifact pinning,
+  zero-copy clone, and reference-counted content GC (grace period
+  `PROMOTION_STORE_GC_GRACE_HOURS`, default 168h).
+- Upload/ingest pipeline: re-uploading the same file in a session is now
+  idempotent (returns the existing record via `content_sha256`); CSV decoding
+  falls back utf-8 → gb18030 with honest errors; CRS assumptions are disclosed
+  instead of silently defaulting; rasters get nodata/overview profiles at
+  upload; new `ingest_dataset` tool exposes the pipeline to agents.
+- Data quality repair: quality issues now produce reviewable repair proposals
+  (plan-only by default — nothing is auto-applied); executing a repair creates
+  a new artifact with bounded digest-only evidence and never mutates the
+  source; dataset `quality_status` gains `repairable`/`blocked` states.
+- GeoCompute run control: `POST /api/v1/geocompute/plans/runs/{run_id}/cancel`
+  and a `cancel_execution_run` tool; run results survive process restarts via
+  bounded evidence snapshots; nodes route to six capability queues
+  (light_cpu/heavy_cpu/high_memory/raster/network/external_io — single-worker
+  deployments consume all queues and behave exactly as before), with
+  worker-loss retries re-affine to the same queue.
+- Vector performance lane: GeoParquet sources can execute filter/projection/
+  aggregate natively in Arrow when `pyarrow` is installed (results disclose
+  which lane ran); without pyarrow everything falls back to the universal
+  dict path. Aggregate semantics (count/stddev/distinct-count) unified across
+  both lanes.
+- Raster runtime: chunk-level execution with opt-in resumable chunk cache
+  (`WEBGIS_CHUNK_CACHE_BYTES`), COG conversion at ingest or on demand
+  (`convert_raster_to_cog` tool), a typed "Zarr unavailable" foundation (no new
+  dependency), terrain full-read byte guards, and streamed STAC DEM windows
+  (bit-identical results).
+- Federated queries: filters are now pushed down per-clause — partially
+  pushable filters no longer pull full datasets (with a pinned bit-compatible
+  fallback when equivalence cannot be proven); N-source chain federation is
+  exposed as a `query_federated_chain` tool; per-source minimal projections
+  are derived by default; semi-join reduction now also applies to two-source
+  joins.
+- Per-project storage quotas (`WEBGIS_PROJECT_ARTIFACT_MAX_BYTES/_MAX_COUNT/
+  _MAX_REVISION_BYTES`, default unlimited) with an honest `quota_exceeded`
+  status (the record survives metadata-only; no bytes written); retention
+  policy (`WEBGIS_RETENTION_MAX_AGE_DAYS`, default keep-forever) sharing one
+  protection predicate (pinned / workspace / lineage-rooted) with GC;
+  operator endpoints `GET .../data-usage` and `POST .../data-gc/plan|execute`
+  (confirm-gated).
+- Provenance hardening: run lineage carries a reproducibility verdict and a
+  runtime environment fingerprint (Python/GEOS/PROJ/GDAL/shapely versions);
+  lineage parameters and trace args are redacted at write time (secrets →
+  `[REDACTED]`, oversized values → digests).
+
+### Fixed
+- Resource governor self-denial-of-service: rows/bytes/nodes were lifetime
+  counters, so ~25 estimate-heavy runs could permanently exhaust global
+  budgets until restart. Usage is now a concurrent in-flight gauge — fully
+  returned when a run ends (regression-tested), with an opt-in cross-process
+  Redis counter (`WEBGIS_CROSS_PROCESS_GOVERNOR`, advisory and fail-open) and
+  heavy nodes consuming weighted concurrency slots.
+- Cache isolation and stampede safety: tool cache keys now include the
+  session owner domain (cross-user sharing eliminated for session-bearing
+  tools), describe-cache keys include tenant/owner scope, hot rebuilds are
+  single-flighted, and the raster tile cache gained a byte bound
+  (`RASTER_TILE_CACHE_MAX_BYTES`, 256 MiB) plus TTL'd stats
+  (`RASTER_STATS_CACHE_TTL_S`) wired into the existing invalidation authority.
+- A raster materialization path could report success before bytes were
+  durable; ingest/materialize rollback ordering is now write-first.
+- Lineage write-time redaction closes a secrets-hygiene gap where inline
+  GeoJSON and credentials could land verbatim in database rows.
+
+### Changed
+- Four additive migrations (0026–0029): `artifact_revisions`,
+  `uploads.content_sha256`, `artifact_lineages.repair_evidence` + quality
+  CHECK vocabulary, and two GeoCompute cache/evidence tables. All are pure
+  additions; with no new env vars set, deployment behavior is unchanged.
+
 ## [Unreleased] - 2026-08-28
 
 ### Fixed

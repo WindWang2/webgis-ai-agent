@@ -4,6 +4,12 @@ ADR-0101 (`docs/adr/0101-geocompute-data-fabric-v4.md`) is the governing
 design document. This guide maps the V4 subsystems to code and states the
 operational contracts each one upholds.
 
+> **V5 note:** the data control plane build on top of V4 (durable artifact
+> store, workspace V4, ingest seam, capability queues, governor gauges,
+> quota/retention/GC) is documented in `v5-data-control-plane.md`
+> (ADR-0104). This guide remains accurate for the V4 execution/query plane
+> it describes.
+
 ## Execution plane (`app/services/geocompute/`)
 
 | Module | Responsibility |
