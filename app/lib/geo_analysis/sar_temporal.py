@@ -35,6 +35,7 @@ __all__ = [
     "medoid_composite",
     "vh_ratio",
     "temporal_log_ratio_change",
+    "stack_comparability_warnings",
 ]
 
 
@@ -495,3 +496,26 @@ def acquisition_comparability(metas: List[SARAcquisitionMeta]) -> Dict[str, obje
     if len(pols) > 1:
         warnings.append(f"极化混搭 {sorted(pols)}——不是同极化时序")
     return {"comparable": not warnings, "warnings": warnings}
+
+
+def stack_comparability_warnings(
+    records: Optional[List[Dict[str, object]]], t_slices: int,
+) -> List[str]:
+    """JSON 通道获取元数据 → 时序可比性警告（R-2/FN-2 工具面接线）。
+
+    ``records`` 为每切片一条的获取元数据 dict（键：
+    polarization / acquisition_date / incidence_angle_deg /
+    orbit_direction；词表与格式由 ``SARAcquisitionMeta`` 校验，非法值
+    抛 ValueError）。可比性差异（入射角差 >5°、升降轨混搭、极化混搭）
+    返回**披露级警告**（不拒绝——可比性是披露语义）；元数据缺省 →
+    空列表（不虚构可比性，也不虚构不可比）。
+    """
+    if not records:
+        return []
+    if len(records) != int(t_slices):
+        raise ValueError(
+            f"acquisitions 条数 {len(records)} 与栈切片数 {t_slices} 不一致"
+            "（每切片一条获取元数据）")
+    metas = [SARAcquisitionMeta.model_validate(r) for r in records]
+    comp = acquisition_comparability(metas)
+    return [str(w) for w in comp["warnings"]]  # type: ignore[arg-type]

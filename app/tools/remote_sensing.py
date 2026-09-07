@@ -329,7 +329,10 @@ def register_rs_tools(registry: ToolRegistry):
               "诚实边界：不做斑点滤波、不做辐射定标（两者为独立工具 sar_speckle_filter/"
               "sar_calibrate）——假定输入已几何校正并对齐。"
               "\n何时用：已对齐的多期 SAR 切片（小范围）需要时序合成/极值/变异分析；"
-              "\n关键约束：栈深 ≤24、H·W ≤ 4096×4096（超限结构化拒绝）。"
+              "\n关键约束：栈深 ≤24、H·W ≤ 4096×4096（超限结构化拒绝）；"
+              "可选 acquisitions 获取元数据（每切片：极化/日期/入射角/轨道向）"
+              "→ 可比性检查（入射角差>5°/升降轨混搭 → 证据块 warnings，"
+              "披露级不拒绝）。"
           ),
           tier=2, domains=["raster"],
           param_descriptions={
@@ -338,6 +341,9 @@ def register_rs_tools(registry: ToolRegistry):
               "nodata_value": "可选标量哨兵值（逐切片剔除，剩余有效切片上统计）",
               "include_cv": "是否追加 CV=std/mean（|mean|≤1e-12 → NaN；描述性披露）",
               "percentiles": "逗号分隔分位数（如 '10,50,90'；≤5 个，0-100；空=不计算）",
+              "acquisitions": "可选每切片获取元数据数组 [{polarization, "
+                              "acquisition_date, incidence_angle_deg, "
+                              "orbit_direction}]（与栈切片数一致；可比性差异 → warnings）",
           },
           side_effect="deterministic_compute",
           deterministic=True,
@@ -357,9 +363,13 @@ def register_rs_tools(registry: ToolRegistry):
         nodata_value: Optional[float] = None,
         include_cv: bool = False,
         percentiles: str = "",
+        acquisitions: Optional[List[Dict[str, Any]]] = None,
     ) -> dict:
         from app.lib.gis.parameter_contracts import apply_contract
-        from app.lib.geo_analysis.sar_temporal import temporal_stack_statistics
+        from app.lib.geo_analysis.sar_temporal import (
+            stack_comparability_warnings,
+            temporal_stack_statistics,
+        )
 
         pct_req: tuple = ()
         if (percentiles or "").strip():
@@ -385,9 +395,13 @@ def register_rs_tools(registry: ToolRegistry):
                 limit=f"≤{_TOOL_ARRAY_MAX_VALUES}",
                 correction_hint="分块/分年统计，或走栅格工件路径",
             )
+        # R-2/FN-2：可比性守卫接线（披露级——差异进证据块 warnings，不拒绝）。
+        comp_warnings = stack_comparability_warnings(
+            acquisitions, int(arr.shape[0]))
         res = temporal_stack_statistics(
             arr, product=params["product"], nodata=nodata_value,
             include_cv=params["include_cv"], percentiles=pct_req)
+        res["meta"]["comparability_warnings"] = comp_warnings
         finite = np.isfinite(res["array"])
         payload = {
             "success": True,
@@ -414,16 +428,20 @@ def register_rs_tools(registry: ToolRegistry):
                 "nodata_value": nodata_value if nodata_value is not None else "none",
                 "include_cv": bool(params["include_cv"]),
                 "percentiles": params["percentiles"] or "none",
+                "acquisitions": "provided" if acquisitions else "none",
             },
             input_facts={"feature_count": int(res["array"].size)},
-            warnings=[res["meta"]["disclosure"]],
+            warnings=[res["meta"]["disclosure"], *comp_warnings],
         )
 
     @tool(registry, name="sar_vh_ratio",
           description=(
-              "SAR VV/VH 极化比（植被结构对比代理；VH=0 → NaN）。"
-              "线性域为比值、dB 域为 dB 差（VV−VH）——单位语义由输入决定。"
-              "\n何时用：同景双极化 SAR（如 Sentinel-1 VV+VH）的结构对比。"
+              "SAR VV/VH 极化比（植被结构对比代理；仅线性功率域比值 vv/vh；"
+              "VH=0 → NaN）。"
+              "dB 对数域输入被类型化拒绝（UnsupportedMethod）——dB 域对比"
+              "请改用 detect_ratio_change 的 log-ratio（VV−VH 语义）。"
+              "\n何时用：同景双极化 SAR（如 Sentinel-1 VV+VH）的线性强度"
+              "结构对比（先经 sar_calibrate 定标）。"
           ),
           tier=2, domains=["raster"],
           param_descriptions={
@@ -1014,7 +1032,9 @@ def register_rs_tools(registry: ToolRegistry):
               "sar_calibrate）。"
               "\n何时用：已对齐多期 SAR 切片的季节/年度底图合成。"
               "\n关键约束：栈深 ≤24、H·W ≤ 4096×4096；method=percentile 需显式"
-              " percentile 参数（0-100）。"
+              " percentile 参数（0-100）；可选 acquisitions 获取元数据（每切片："
+              "极化/日期/入射角/轨道向）→ 可比性检查（入射角差>5°/升降轨混搭 → "
+              "证据块 warnings，披露级不拒绝）。"
           ),
           tier=2, domains=["raster"],
           param_descriptions={
@@ -1022,6 +1042,9 @@ def register_rs_tools(registry: ToolRegistry):
               "method": "mean(默认)/median/percentile",
               "percentile": "分位数（0-100；method=percentile 时必需）",
               "nodata_value": "可选标量哨兵值",
+              "acquisitions": "可选每切片获取元数据数组 [{polarization, "
+                              "acquisition_date, incidence_angle_deg, "
+                              "orbit_direction}]（与栈切片数一致；可比性差异 → warnings）",
           },
           side_effect="deterministic_compute",
           deterministic=True,
@@ -1040,9 +1063,13 @@ def register_rs_tools(registry: ToolRegistry):
         method: str = "mean",
         percentile: Optional[float] = None,
         nodata_value: Optional[float] = None,
+        acquisitions: Optional[List[Dict[str, Any]]] = None,
     ) -> dict:
         from app.lib.gis.parameter_contracts import apply_contract
-        from app.lib.geo_analysis.sar_temporal import temporal_composite
+        from app.lib.geo_analysis.sar_temporal import (
+            stack_comparability_warnings,
+            temporal_composite,
+        )
 
         contract_params: Dict[str, Any] = {"method": method}
         if percentile is not None:
@@ -1059,15 +1086,20 @@ def register_rs_tools(registry: ToolRegistry):
                 limit=f"≤{_TOOL_ARRAY_MAX_VALUES}",
                 correction_hint="分块合成，或走栅格工件路径",
             )
+        # R-2/FN-2：可比性守卫接线（披露级——差异进证据块 warnings，不拒绝）。
+        comp_warnings = stack_comparability_warnings(
+            acquisitions, int(arr.shape[0]))
         res = temporal_composite(
             arr, method=params["method"],
             percentile=params.get("percentile"), nodata=nodata_value)
+        res["meta"]["comparability_warnings"] = comp_warnings
         finite = np.isfinite(res["array"])
         payload = {
             "success": True,
             "method": res["method"],
             "percentile": res["percentile"],
             "time_slices": res["meta"]["time_slices"],
+            "comparability_warnings": comp_warnings,
             "stats": {
                 "min": float(np.nanmin(res["array"])) if finite.any() else None,
                 "max": float(np.nanmax(res["array"])) if finite.any() else None,
@@ -1084,9 +1116,10 @@ def register_rs_tools(registry: ToolRegistry):
                 "percentile": res["percentile"]
                 if res["percentile"] is not None else "n/a",
                 "time_slices": res["meta"]["time_slices"],
+                "acquisitions": "provided" if acquisitions else "none",
             },
             input_facts={"feature_count": int(res["array"].size)},
-            warnings=[res["meta"]["disclosure"]],
+            warnings=[res["meta"]["disclosure"], *comp_warnings],
             diagnostics=[_backend_selection_diagnostic(
                 "sar.temporal_composite", int(res["array"].size))],
         )
@@ -2100,12 +2133,15 @@ def register_rs_tools(registry: ToolRegistry):
               "SAR 热噪声去除：I_dn = max(I − N, 0)（标量噪声底或逐像元噪声 "
               "LUT 相减，二者互斥）；钳 0 像元数披露。"
               "诚实边界：Sentinel-1 GRD IPF 噪声 LUT 是 annotation XML"
-              "（denoising 需逐 swath 插值）——本工具接收**已提取**的"
+              "（denoising 需逐 swath 插值；ESA S-1 MPC 技术注记 MPC-0392 / "
+              "ESA-RS-CLI-52-0946）——本工具接收**已提取**的"
               "噪声底/LUT，不解析 SAFE XML。"
               "\n何时用：Sentinel-1 GRD 强度切片定标前的噪声底扣除"
               "（配合 sar_calibrate）。"
               "\n关键约束：输入须线性强度（dB 被拒绝）；noise_floor 或 "
-              "noise_lut 必须提供其一（绝不虚构噪声参数）。"
+              "noise_lut 必须提供其一（绝不虚构噪声参数）；负值检测为符号"
+              "启发式（全正 dB 场不可检测）——input_domain 可显式声明量纲"
+              "（auto 缺省行为不变；db → 类型化拒绝）。"
           ),
           tier=2, domains=["raster"],
           param_descriptions={
@@ -2113,17 +2149,20 @@ def register_rs_tools(registry: ToolRegistry):
               "noise_floor": "标量噪声底（≥0，线性强度域；与 noise_lut 互斥）",
               "noise_lut": "可选逐像元噪声 LUT（2D 数组，与 intensity 同形）",
               "nodata_value": "可选标量哨兵值",
+              "input_domain": "输入量纲显式声明：auto(默认)/linear/db"
+                              "（db → 类型化拒绝，先 db_to_linear 换算）",
           })
     async def sar_remove_thermal_noise(
         intensity: List[List[float]],
         noise_floor: Optional[float] = None,
         noise_lut: Optional[List[List[float]]] = None,
         nodata_value: Optional[float] = None,
+        input_domain: str = "auto",
     ) -> dict:
         from app.lib.gis.parameter_contracts import apply_contract
         from app.lib.geo_analysis.sar_calibration import remove_thermal_noise
 
-        contract_params: Dict[str, Any] = {}
+        contract_params: Dict[str, Any] = {"input_domain": input_domain}
         if noise_floor is not None:
             contract_params["noise_floor"] = noise_floor
         params = apply_contract("sar_thermal_noise_removal_analysis",
@@ -2136,11 +2175,13 @@ def register_rs_tools(registry: ToolRegistry):
                 raise ValueError(
                     f"noise_lut 形状 {lut.shape} 与 intensity {arr.shape} 不一致")
         res = remove_thermal_noise(
-            arr, params.get("noise_floor"), lut, nodata=nodata_value)
+            arr, params.get("noise_floor"), lut, nodata=nodata_value,
+            input_domain=params["input_domain"])
         finite = np.isfinite(res["array"])
         payload = {
             "success": True,
             "mode": res["mode"],
+            "input_domain": res["meta"]["input_domain"],
             "clamped_pixels": res["meta"]["clamped_pixels"],
             "invalid_pixels": res["meta"]["invalid_pixels"],
             "stats": {
@@ -2157,6 +2198,7 @@ def register_rs_tools(registry: ToolRegistry):
             tool="sar_remove_thermal_noise",
             parameters_applied={
                 "mode": res["mode"],
+                "input_domain": res["meta"]["input_domain"],
                 "noise_floor": res["meta"]["noise_floor"],
                 "clamped_pixels": res["meta"]["clamped_pixels"],
             },
@@ -2329,6 +2371,7 @@ def register_rs_tools(registry: ToolRegistry):
             "window": res["meta"]["window"],
             "scientific_status": res["meta"]["scientific_status"],
             "clamped_pixels": res["meta"]["clamped_pixels"],
+            "ci_method": res["meta"]["ci_method"],
             "stats": {
                 "min": float(np.nanmin(res["gamma"])) if finite.any() else None,
                 "max": float(np.nanmax(res["gamma"])) if finite.any() else None,
@@ -2338,6 +2381,8 @@ def register_rs_tools(registry: ToolRegistry):
             },
             "gamma": res["gamma"].round(6).tolist(),
             "valid_pairs": np.asarray(res["valid_pairs"]).round(3).tolist(),
+            "gamma_ci95_low": np.asarray(res["gamma_ci95_low"]).round(6).tolist(),
+            "gamma_ci95_high": np.asarray(res["gamma_ci95_high"]).round(6).tolist(),
             "disclosure": res["meta"]["disclosure"],
         }
         return _attach_science_evidence(
@@ -2520,10 +2565,12 @@ def register_rs_tools(registry: ToolRegistry):
     @tool(registry, name="sar_enl_map",
           description=(
               "滑窗 ENL（等效视数）估计图：ENL = mean²/var（nan 感知）+ "
-              "全局 ENL。斑点模型诊断量（滤波/定标质检）。"
+              "全局 ENL（附 95% 置信区间 enl_ci95，delta 法、均匀场景）。"
+              "斑点模型诊断量（滤波/定标质检）。"
               "\n何时用：检查 SAR 切片视数/处理一致性（常数图=均匀处理）。"
               "\n关键约束：非均匀窗口把纹理计入方差 → ENL 被低估（估计偏差"
-              "披露）；退化窗口（方差≈0）→ NaN（计数披露）；dB 输入被拒绝。"
+              "披露）；CI 只覆盖抽样噪声、不覆盖非均匀偏差；退化窗口（方差≈0）"
+              "→ NaN（计数披露）；dB 输入被拒绝。"
           ),
           tier=2, domains=["raster"],
           param_descriptions={
@@ -2547,6 +2594,9 @@ def register_rs_tools(registry: ToolRegistry):
             "success": True,
             "window": res["meta"]["window"],
             "global_enl": round(res["global_enl"], 6),
+            "enl_ci95": [round(res["enl_ci95"][0], 6),
+                         round(res["enl_ci95"][1], 6)],
+            "enl_ci_method": res["meta"]["enl_ci_method"],
             "degenerate_windows": res["meta"]["degenerate_windows"],
             "stats": {
                 "min": float(np.nanmin(res["enl_map"])) if finite.any() else None,

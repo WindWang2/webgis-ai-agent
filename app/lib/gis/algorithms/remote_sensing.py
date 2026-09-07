@@ -190,6 +190,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "nodata/NaN 逐切片剔除，剩余有效切片上统计（部分有效像元披露）",
                 "CV=std/mean（可选）：|mean|≤1e-12 → NaN；dB 域 CV 无物理量纲（披露）",
                 "percentiles（可选）=np.nanpercentile 线性插值，≤5 个 [0,100]",
+                "acquisitions（可选）=每切片获取元数据（极化/日期/入射角/轨道向）"
+                "→ 可比性检查：入射角差>5°/升降轨混搭/极化混搭 → 证据块 "
+                "warnings（披露级，不拒绝；缺省不做可比性判断）",
             ],
             limitations=[
                 "本工具无滤波/定标隐式前置——独立原生算法见 "
@@ -203,6 +206,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/test_temporal_science_vnext.py::test_sar_stack_scale_guard",
                 "tests/unit/lib/test_sar_filters_v2.py::test_sar_stats_cv_and_percentiles",
                 "tests/unit/lib/test_sar_filters_v2.py::test_sar_stats_defaults_preserve_v1_shape",
+                "tests/unit/lib/test_sar_science_fixes_v3.py::test_r2_acquisitions_comparability_wired_to_tools",
             ],
             parameter_contract_ref="sar_temporal_stats_analysis",
         ),
@@ -217,8 +221,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             preferred_execution_policy="INLINE", priority=15,
             algorithm_family="sar_polarimetry",
             assumptions=[
-                "VV/VH：线性域为比值、dB 域为 dB 差（VV−VH）；VH=0 → NaN",
-                "同景双极化（如 Sentinel-1 VV+VH）",
+                "仅线性功率/强度域比值 vv/vh（dB 对数域输入 → UnsupportedMethod"
+                "类型化拒绝——负值守卫 + 显式量纲声明）",
+                "dB 域对比请改用 log-ratio（sar.log_ratio_change，VV−VH 语义）",
+                "VH=0 → NaN；同景双极化（如 Sentinel-1 VV+VH）",
             ],
             limitations=[
                 "无辐射定标假定下仅作结构对比代理，非物理量",
@@ -227,6 +233,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             scientific_status="VALIDATED",
             conformance_tests=[
                 "tests/unit/test_temporal_science_vnext.py::test_sar_vh_ratio_and_log_ratio_exact",
+                "tests/unit/lib/test_sar_science_fixes_v3.py::test_r1_vh_ratio_db_rejected_and_contract_text",
             ],
         ),
 
@@ -455,6 +462,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             assumptions=[
                 "时间维聚合为描述性合成（median 为斑点拖尾下的鲁棒惯用）",
                 "nodata/NaN 逐切片剔除；全切片无效像元 → NaN（披露）",
+                "acquisitions（可选）=每切片获取元数据（极化/日期/入射角/轨道向）"
+                "→ 可比性检查：入射角差>5°/升降轨混搭/极化混搭 → 证据块 "
+                "warnings（披露级，不拒绝；缺省不做可比性判断）",
             ],
             limitations=[
                 "无滤波/定标隐式前置（独立原生算法见 sar.speckle_filter 等）",
@@ -465,6 +475,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             conformance_tests=[
                 "tests/unit/lib/test_sar_filters_v2.py::test_sar_temporal_composite_median_exact",
                 "tests/unit/lib/test_sar_filters_v2.py::test_sar_temporal_composite_methods_and_guards",
+                "tests/unit/lib/test_sar_science_fixes_v3.py::test_r2_acquisitions_comparability_wired_to_tools",
             ],
             parameter_contract_ref="sar_temporal_composite_analysis",
         ),
@@ -979,15 +990,19 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cpu_cost="low", memory_cost="low", io_cost="low",
             preferred_execution_policy="INLINE", priority=20,
             algorithm_family="sar_calibration",
-            method_references=["oliver_quegan1998"],
+            method_references=["oliver_quegan1998", "esa_s1_ipf_denoising"],
             assumptions=[
                 "I_dn = max(I − N, 0)：噪声项 N 为标量噪声底或同形逐像元 LUT（互斥）",
                 "输入须线性强度（非负；dB 输入被拒绝）",
+                "input_domain（可选）=auto/linear/db 显式声明量纲：负值检测为"
+                "符号启发式（全正 dB 场不可检测），显式 db → 类型化拒绝；"
+                "缺省 auto 行为不变",
                 "去噪后负值钳 0（clamped_pixels 计数披露）",
             ],
             limitations=[
                 "不解析 Sentinel-1 SAFE annotation XML（denoising 需逐 swath "
-                "插值）——仅接收已提取的噪声底/LUT",
+                "插值；ESA S-1 MPC 技术注记 MPC-0392 / ESA-RS-CLI-52-0946）"
+                "——仅接收已提取的噪声底/LUT",
                 "钳 0 使弱信号像元强度统计右偏（正偏披露，不静默）",
             ],
             crs_class="RASTER_GRID",
@@ -998,6 +1013,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             conformance_tests=[
                 "tests/unit/lib/test_sar_v3.py::test_thermal_noise_floor_removal_exact",
                 "tests/unit/lib/test_sar_v3.py::test_thermal_noise_guards",
+                "tests/unit/lib/test_sar_science_fixes_v3.py::test_r6_thermal_noise_esa_reference_and_input_domain",
             ],
             parameter_contract_ref="sar_thermal_noise_removal_analysis",
         ),
@@ -1082,6 +1098,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "γ = |Σ a·b*| / √(Σ|a|²·Σ|b|²)（窗口化，nodata 感知累加）",
                 "输入为双通道复 SLC（(re, im) 二元组或 complex）——两历元同网格",
                 "分母为 0 的窗口 → NaN；γ 钳 [0,1]（超 1 像元计数披露）",
+                "gamma_ci95_low/high：逐窗 95% CI（Fisher z：z=atanh γ、"
+                "SE≈1/√(n_pairs−3)；n_pairs≤3 → NaN；正态近似披露）",
             ],
             limitations=[
                 "EXPERIMENTAL：无轨道元数据/配准质量输入——窗口估计有偏差，需人工核验",
@@ -1095,6 +1113,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             conformance_tests=[
                 "tests/unit/lib/test_sar_v3.py::test_coherence_self_is_one_and_decorrelation",
                 "tests/unit/lib/test_sar_v3.py::test_coherence_guards",
+                "tests/unit/lib/test_sar_science_fixes_v3.py::test_r4_coherence_fisher_z_ci_coverage_and_width",
             ],
             parameter_contract_ref="sar_coherence_analysis",
         ),
@@ -1184,10 +1203,13 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             assumptions=[
                 "ENL = mean²/var（滑窗、总体方差 ddof=0、nan 感知）",
                 "全局 ENL 由整图有效像元估计（均匀假设）",
+                "enl_ci95：全局 ENL 的 Wald 95% CI（delta 法 "
+                "var(ENL̂)≈2·ENL·(ENL+1)/n，均匀场景；下界钳 0）",
                 "退化窗口（方差 ≤ ε）→ NaN（计数披露）",
             ],
             limitations=[
                 "非均匀窗口把纹理方差计入 → ENL 被低估（估计偏差，披露）",
+                "CI 只覆盖抽样噪声、不覆盖非均匀偏差（均匀场景假设披露）",
                 "dB 输入被拒绝（矩估计仅线性强度有意义）",
             ],
             crs_class="RASTER_GRID",
@@ -1197,6 +1219,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             conformance_tests=[
                 "tests/unit/lib/test_sar_v3.py::test_enl_map_recovers_synthetic_enl",
                 "tests/unit/lib/test_sar_v3.py::test_enl_map_guards",
+                "tests/unit/lib/test_sar_science_fixes_v3.py::test_r3_enl_confidence_interval_covers_truth",
             ],
             parameter_contract_ref="sar_enl_map_analysis",
         ),
@@ -1232,11 +1255,14 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
         ],
     ),
     ParameterContract(
-        # v2（Foundation V2 · A6 additive）：可选 include_cv / percentiles
-        # ——默认关闭（历史输出形状不变）；percentiles 以逗号分隔字符串
-        # 过 JSON 通道（≤5 个、0-100）。
-        id="sar_temporal_stats_analysis", version=2,
-        description="SAR 时序栈统计量（时间维聚合；规模守卫 T≤24、H·W≤4096²）。",
+        # v3（R-2/FN-2 additive）：可选 acquisitions 获取元数据 → 时序
+        # 可比性检查（入射角差>5°/升降轨混搭/极化混搭 → 证据块 warnings，
+        # 披露级不拒绝）。数组/对象不经 JSON 契约词表（无 array/object
+        # 类型）——每切片一条 dict 经内联 JSON 通道传入，词表/格式校验在
+        # 实现层（SARAcquisitionMeta）；本条目为文档位。
+        id="sar_temporal_stats_analysis", version=3,
+        description="SAR 时序栈统计量（时间维聚合；规模守卫 T≤24、H·W≤4096²；"
+                    "v3：可选 acquisitions 获取元数据 → 可比性警告）。",
         parameters=[
             ParameterSpec(
                 name="product", type="enum", default="mean",
@@ -1250,6 +1276,14 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="percentiles", type="string", default="",
                 description="逗号分隔分位数（如 '10,50,90'；≤5 个，0-100；空=不计算）",
+            ),
+            ParameterSpec(
+                name="acquisitions", type="string",
+                description="获取元数据文档位：每切片一条 dict "
+                            "{polarization, acquisition_date, "
+                            "incidence_angle_deg, orbit_direction} 经内联 "
+                            "JSON 通道（词表校验在实现层；可比性差异 → "
+                            "证据块 warnings，披露级不拒绝）",
             ),
         ],
     ),
@@ -1385,8 +1419,12 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
         ],
     ),
     ParameterContract(
-        id="sar_temporal_composite_analysis", version=1,
-        description="SAR 时序栈合成（mean/median/percentile；nodata 感知时间维聚合）。",
+        # v2（R-2/FN-2 additive）：+ 可选 acquisitions 获取元数据（文档位，
+        # 同 sar_temporal_stats_analysis v3 的口径——可比性差异 → 证据块
+        # warnings，披露级不拒绝）。
+        id="sar_temporal_composite_analysis", version=2,
+        description="SAR 时序栈合成（mean/median/percentile；nodata 感知时间维"
+                    "聚合；v2：可选 acquisitions 获取元数据 → 可比性警告）。",
         parameters=[
             ParameterSpec(
                 name="method", type="enum", default="mean",
@@ -1396,6 +1434,14 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="percentile", type="number", minimum=0.0, maximum=100.0,
                 description="分位数（method=percentile 时必需）",
+            ),
+            ParameterSpec(
+                name="acquisitions", type="string",
+                description="获取元数据文档位：每切片一条 dict "
+                            "{polarization, acquisition_date, "
+                            "incidence_angle_deg, orbit_direction} 经内联 "
+                            "JSON 通道（词表校验在实现层；可比性差异 → "
+                            "证据块 warnings，披露级不拒绝）",
             ),
         ],
     ),
@@ -1610,9 +1656,12 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
 
     # ── Foundation V3：SAR 批次参数契约 ────────────────────────────────
     ParameterContract(
-        id="sar_thermal_noise_removal_analysis", version=1,
+        # v2（R-6 additive）：+ input_domain（auto/linear/db）显式量纲声明
+        # ——负值检测是符号启发式（全正 dB 场不可检测），显式 db → 类型化
+        # 拒绝；缺省 auto 行为不变。
+        id="sar_thermal_noise_removal_analysis", version=2,
         description="SAR 热噪声去除：I_dn=max(I−N,0)（标量噪声底/逐像元 LUT 互斥；"
-                    "钳 0 计数披露；不解析 SAFE XML）。",
+                    "钳 0 计数披露；不解析 SAFE XML；v2：input_domain 显式量纲）。",
         parameters=[
             ParameterSpec(
                 name="noise_floor", type="number", minimum=0.0,
@@ -1623,6 +1672,12 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="noise_lut", type="string",
                 description="逐像元噪声 LUT 文档位：2D 嵌套数组经内联 JSON 通道"
                             "（与网格同形；形状校验在工具签名与实现层）",
+            ),
+            ParameterSpec(
+                name="input_domain", type="enum", default="auto",
+                enum_values=["auto", "linear", "db"],
+                description="输入量纲显式声明：auto=符号启发式（缺省行为不变）；"
+                            "linear=声明线性强度；db=类型化拒绝（先 db_to_linear）",
             ),
         ],
     ),
