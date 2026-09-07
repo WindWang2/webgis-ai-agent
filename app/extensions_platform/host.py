@@ -372,6 +372,14 @@ class ExtensionHost:
             ]
         if record.state is ExtensionState.QUARANTINED:
             return list(record.diagnostics)
+        if record.state is ExtensionState.DISABLED:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.EXTENSION_DISABLED,
+                    f"extension {extension_id!r} is disabled by operator (enable first)",
+                    extension_id=extension_id,
+                )
+            ]
         if record.state is ExtensionState.ACTIVE or record.state is ExtensionState.DEGRADED:
             return []  # 幂等：重复 activate 是 no-op
         if record.state is ExtensionState.FAILED or record.state is ExtensionState.INCOMPATIBLE:
@@ -569,6 +577,51 @@ class ExtensionHost:
             [e.message for e in errors],
         )
         return list(record.diagnostics)
+
+    # ── disable / enable（ADR-0104 Wave 2：运维开关，非失败态）────────
+    def disable(self, extension_id: str) -> list[ExtensionDiagnostic]:
+        """运维显式停用：active 的先停用回滚，之后拒绝再激活。"""
+        record = self._records.get(extension_id)
+        if record is None:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID, f"unknown extension {extension_id!r}"
+                )
+            ]
+        diagnostics: list[ExtensionDiagnostic] = []
+        if record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
+            diagnostics.extend(self.deactivate(extension_id))
+        if record.state in (ExtensionState.QUARANTINED,):
+            return [
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.TRUST_BLOCKED,
+                    f"extension {extension_id!r} is quarantined; disable is a no-op",
+                    extension_id=extension_id,
+                )
+            ]
+        record.state = ExtensionState.DISABLED
+        return diagnostics
+
+    def enable(self, extension_id: str) -> list[ExtensionDiagnostic]:
+        """解除 DISABLED，回到 compatible（重新校验）。"""
+        record = self._records.get(extension_id)
+        if record is None:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID, f"unknown extension {extension_id!r}"
+                )
+            ]
+        if record.state is not ExtensionState.DISABLED:
+            return [
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"extension {extension_id!r} is {record.state.value}, not disabled",
+                    extension_id=extension_id,
+                )
+            ]
+        record.state = ExtensionState.DISCOVERED
+        record.diagnostics = []
+        return self.validate_extension(extension_id)
 
     # ── deactivate / unload / reload ─────────────────────────────────
     def deactivate(self, extension_id: str) -> list[ExtensionDiagnostic]:

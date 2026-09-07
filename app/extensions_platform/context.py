@@ -84,6 +84,16 @@ class ExtensionContext:
                 )
             )
         self._require_declared("tools", spec.name)
+        undeclared_perms = sorted(set(spec.required_permissions) - set(self.manifest.permissions))
+        if undeclared_perms:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.PERMISSION_DECLARATION_INVALID,
+                    f"tool {spec.name!r} requires permissions {undeclared_perms} that the "
+                    "manifest does not declare (tool surface inherits extension grants)",
+                    extension_id=self.extension_id,
+                )
+            )
         diagnostics = spec.validate()
         if any(d.severity.value == "error" for d in diagnostics):
             raise ExtensionPlatformError(diagnostics[0])
@@ -161,7 +171,8 @@ class ExtensionContext:
                 )
             )
         self._require_declared("algorithms", spec.id)
-        diagnostics = spec.validate(known_capabilities=frozenset(), known_tools=frozenset())
+        # 第一遍：仅结构校验（None = 跳过存在性检查）。
+        diagnostics = spec.validate()
         if any(d.severity.value == "error" for d in diagnostics):
             raise ExtensionPlatformError(diagnostics[0])
         registry = get_algorithm_registry()

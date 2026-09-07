@@ -80,7 +80,11 @@ class AlgorithmExtensionSpec:
     scale_guard_features: Optional[int] = None
     cancellation_probe: Optional[Callable[[], Any]] = None
 
-    def validate(self, known_capabilities: frozenset[str], known_tools: frozenset[str]) -> list[ExtensionDiagnostic]:
+    def validate(
+        self,
+        known_capabilities: Optional[frozenset[str]] = None,
+        known_tools: Optional[frozenset[str]] = None,
+    ) -> list[ExtensionDiagnostic]:
         diagnostics: list[ExtensionDiagnostic] = []
         if not self.id or not self.id.replace("_", "").isalnum() or self.id[0].isdigit():
             diagnostics.append(
@@ -101,7 +105,7 @@ class AlgorithmExtensionSpec:
                 )
             )
         for cap in self.capabilities:
-            if known_capabilities and cap not in known_capabilities:
+            if known_capabilities is not None and cap not in known_capabilities:
                 diagnostics.append(
                     ExtensionDiagnostic.error(
                         DiagnosticCode.REGISTRY_PROJECTION_COLLISION,
@@ -110,7 +114,7 @@ class AlgorithmExtensionSpec:
                     )
                 )
         for tool in self.tool_candidates:
-            if known_tools and tool not in known_tools:
+            if known_tools is not None and tool not in known_tools:
                 diagnostics.append(
                     ExtensionDiagnostic.error(
                         DiagnosticCode.REGISTRY_PROJECTION_COLLISION,

@@ -58,6 +58,7 @@ class DiagnosticCode(str, Enum):
     DISCOVERY_LIMIT_EXCEEDED = "discovery_limit_exceeded"
     FINGERPRINT_CHANGED = "fingerprint_changed"
     FEATURE_FLAG_UNRESOLVED = "feature_flag_unresolved"
+    EXTENSION_DISABLED = "extension_disabled"
 
 
 @dataclass(frozen=True)

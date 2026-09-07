@@ -26,7 +26,7 @@ CORE_RELEASE_VERSION = "0.1.3"
 MANIFEST_SCHEMA_VERSION = 1
 
 _SEMVER_RE = re.compile(
-    r"^(?P<major>\d+)\.(?P<minor>\d+)(?:\.(?P<patch>\d+))?"
+    r"^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)(?:\.(?P<patch>0|[1-9]\d*))?"
     r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
 

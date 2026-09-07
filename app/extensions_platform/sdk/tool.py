@@ -136,7 +136,14 @@ class ToolExtensionSpec:
             diagnostics.append(
                 ExtensionDiagnostic.error(DiagnosticCode.MANIFEST_INVALID, "func must be callable")
             )
-        if self.tier < 1 or self.tier > 2:
+        if not isinstance(self.tier, int) or isinstance(self.tier, bool):
+            diagnostics.append(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"tier must be an int, got {type(self.tier).__name__}",
+                )
+            )
+        elif self.tier < 1 or self.tier > 2:
             # tier 3 是核心安全 chokepoint（list_available_tools + 显式确认），
             # 扩展工具禁入。
             diagnostics.append(
