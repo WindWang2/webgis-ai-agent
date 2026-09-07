@@ -143,15 +143,13 @@ export function ComparisonView({
   const secondaryName = useMemo(() => layerNameOf(layers, secondaryLayerId), [layers, secondaryLayerId]);
 
   // ── 副图业务图层挂载（只挂副图层族；diff/patch 全权交给 MapSpecRuntime）──
-  useEffect(() => {
-    if (!active || !secondaryReady || !secondaryLayerId) return;
-    const secondary = secondaryMapRef.current?.getMap();
-    if (!secondary) return;
-    if (!runtimeRef.current) {
-      runtimeRef.current = new MapSpecRuntime(secondary, {
-        onStyleRecovery: () => setStyleEpoch((e) => e + 1),
-      });
-    }
+  // Review R1（perf MAJOR-5）：compose → 族过滤提升到 useMemo —— compose 的
+  // 输入身份 memo 在 resolved 未变时返回同一对象，族过滤也只依赖
+  // (resolved, secondaryLayerId)；过滤产物身份稳定 → reconcileAsync 的
+  // appliedSpec === nextSpec 门在无关变更（如图层选中）时短路，不再每轮
+  // 支付共享 diff worker 的全量 diff。
+  const filteredSpec = useMemo(() => {
+    if (!active || !secondaryLayerId) return null;
     const spec0 = composeLiveMapSpec(
       getCommittedMapSpec(),
       {
@@ -186,11 +184,25 @@ export function ComparisonView({
     for (const [sid, source] of Object.entries(resolved.sources || {})) {
       if (usedSources.has(sid)) sources[sid] = source;
     }
-    const filtered: MapSpec = { ...resolved, sources, layers: familyLayers };
+    return { ...resolved, sources, layers: familyLayers } as MapSpec;
+    // styleEpoch 是 style 恢复后的刻意重算信号。
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refSourcesGeneration/liveGeneration 驱动重读
+  }, [active, secondaryLayerId, layers, liveGeneration, refSourcesGeneration, styleEpoch, sessionId, ownerToken]);
+
+  useEffect(() => {
+    if (!active || !secondaryReady || !secondaryLayerId) return;
+    const secondary = secondaryMapRef.current?.getMap();
+    if (!secondary) return;
+    if (!runtimeRef.current) {
+      runtimeRef.current = new MapSpecRuntime(secondary, {
+        onStyleRecovery: () => setStyleEpoch((e) => e + 1),
+      });
+    }
+    if (!filteredSpec) return;
     void runtimeRef.current
-      .reconcileAsync(filtered)
+      .reconcileAsync(filteredSpec)
       .catch((e) => console.warn('[comparison] secondary reconcile failed:', e));
-  }, [active, secondaryReady, secondaryLayerId, layers, liveGeneration, refSourcesGeneration, styleEpoch, sessionId, ownerToken, sessionTokenRef]);
+  }, [active, secondaryReady, secondaryLayerId, filteredSpec, styleEpoch]);
 
   // 底图样式身份变化 → 失效 runtime 样式缓存（对齐 map-panel 的 invalidateStyle 时机）。
   useEffect(() => {

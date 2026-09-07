@@ -15,7 +15,7 @@
  * 状态纪律（ADR-0104）：分组/选择/锁定/隔离是 UI projection（workbenchSlice，
  * 会话级不持久化）；地图语义真相仍只在 MapSpec / backend contract。
  */
-import { useMemo, useState, useCallback, useEffect, useSyncExternalStore } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useSyncExternalStore } from 'react';
 import clsx from 'clsx';
 import {
   Eye, EyeOff, GripVertical, Layers as LayersIcon, LocateFixed, Palette,
@@ -36,7 +36,7 @@ import {
   getFilterEvidenceGeneration,
   subscribeFilterEvidence,
 } from '@/lib/layers/filter-evidence';
-import { LAYER_STATUS_LABELS } from '@/lib/layers/layer-status';
+import { LAYER_STATUS_LABELS, type LayerStatus } from '@/lib/layers/layer-status';
 import { projectWorkspace, semanticGroupLabel, type WorkspaceRow, type WorkspaceSection } from '@/lib/layers/workspace-projection';
 import {
   isolateLayerAndCommit,
@@ -132,6 +132,23 @@ function useFilterEvidenceBadges(layers: Layer[]): Record<string, FilterBadgeVie
   }, [layers, generation]);
 }
 
+const LayerRowMemo = React.memo(
+  LayerRow,
+  (prev, next) =>
+    prev.row === next.row ||
+    (prev.row.layer === next.row.layer
+      && prev.row.locked === next.row.locked
+      && prev.row.selected === next.row.selected
+      && prev.row.groupId === next.row.groupId)
+      && prev.globalIdx === next.globalIdx
+      && prev.isDragging === next.isDragging
+      && prev.isDragOver === next.isDragOver
+      && prev.isolated === next.isolated
+      && prev.status === next.status
+      && prev.filterBadge === next.filterBadge
+      && prev.styleClipboard === next.styleClipboard,
+);
+
 /* ─────────────────────────── 分组抬头 ─────────────────────────── */
 
 function GroupHeader({
@@ -154,7 +171,6 @@ function GroupHeader({
   const removeLayerGroup = useHudStore((s) => s.removeLayerGroup);
   const assignLayersToGroup = useHudStore((s) => s.assignLayersToGroup);
   const selectedLayerIds = useHudStore((s) => s.selectedLayerIds);
-  const layers = useHudStore((s) => s.layers);
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(section.name);
 
@@ -162,10 +178,11 @@ function GroupHeader({
     () => section.rows.map((row) => row.layer.id),
     [section.rows],
   );
-  const allVisible = useMemo(() => {
-    if (memberIds.length === 0) return false;
-    return memberIds.every((id) => layers.find((l) => l.id === id)?.visible !== false);
-  }, [memberIds, layers]);
+  // Review R1（perf MAJOR-2）：可见性读行投影（不再全表 find）。
+  const allVisible = useMemo(
+    () => section.rows.length > 0 && section.rows.every((r) => r.visible),
+    [section.rows],
+  );
 
   const toggleGroupVisibility = useCallback(() => {
     void batchSetVisibility(memberIds, !allVisible);
@@ -286,6 +303,8 @@ function LayerRow({
   isDragging,
   isDragOver,
   isolated,
+  status,
+  filterBadge,
   onDragStart,
   onDragOverRow,
   onDropOnRow,
@@ -300,6 +319,8 @@ function LayerRow({
   isDragging: boolean;
   isDragOver: boolean;
   isolated: boolean;
+  status?: LayerStatus;
+  filterBadge?: FilterBadgeView;
   onDragStart: (id: string) => void;
   onDragOverRow: (e: React.DragEvent, id: string) => void;
   onDropOnRow: (e: React.DragEvent, id: string) => void;
@@ -311,9 +332,9 @@ function LayerRow({
   const layer = row.layer;
   const selected = row.selected;
   const locked = row.locked;
-  const statuses = useLayerStatuses([layer]);
-  const status = statuses[layer.id];
-  const filterBadge = useFilterEvidenceBadges([layer])[layer.id];
+  // Review R1（perf MAJOR-4）：状态/过滤徽标由父层一次性派生后经 props 下发
+  // —— 此前每行注册 2-3 个全局代际订阅，任一观测/过滤代际 bump 都会重渲
+  // 全部 500 行。
   const toggleLayerSelected = useHudStore((s) => s.toggleLayerSelected);
   const toggleLayerLocked = useHudStore((s) => s.toggleLayerLocked);
   const isolatedActive = useHudStore((s) => s.isolatedLayerId);
@@ -779,6 +800,13 @@ export function LayersTab() {
     }),
     [layers, layerGroups, layerGroupMembership, lockedLayerIds, selectedLayerIds, search],
   );
+  // Review R1（perf MAJOR-1/4）：O(1) 行索引 + 父层一次性派生状态/徽标。
+  const indexById = useMemo(
+    () => new Map(layers.map((l, i) => [l.id, i] as const)),
+    [layers],
+  );
+  const statusMap = useLayerStatuses(layers);
+  const filterBadgeMap = useFilterEvidenceBadges(layers);
 
   // B10 边角：图层删除后清理残留的拖拽/搜索无关状态（锁定选择由调用方语义决定）。
   useEffect(() => {
@@ -945,8 +973,6 @@ export function LayersTab() {
           <div className="py-1">
             {projection.sections.map((section) => {
               const isUserGroup = section.id != null && userGroupIds.has(section.id);
-              const globalIndexOf = (row: WorkspaceRow) =>
-                layers.findIndex((l) => l.id === row.layer.id);
               return (
                 <div key={section.id ?? `semantic-${section.name}`} className="mb-1">
                   <GroupHeader
@@ -960,14 +986,16 @@ export function LayersTab() {
                   {!section.collapsed && (
                     <div>
                       {section.rows.map((row) => (
-                        <LayerRow
+                        <LayerRowMemo
                           key={row.layer.id}
                           row={row}
-                          globalIdx={globalIndexOf(row)}
+                          globalIdx={indexById.get(row.layer.id) ?? 0}
                           totalCount={layers.length}
                           isDragging={dragId === row.layer.id}
                           isDragOver={overId === row.layer.id}
                           isolated={isolatedLayerId === row.layer.id}
+                          status={statusMap[row.layer.id]}
+                          filterBadge={filterBadgeMap[row.layer.id]}
                           onDragStart={handleDragStart}
                           onDragOverRow={handleDragOverRow}
                           onDropOnRow={handleDropOnRow}

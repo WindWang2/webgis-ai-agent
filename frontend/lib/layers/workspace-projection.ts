@@ -25,6 +25,9 @@ export interface WorkspaceRow {
   semanticGroup: string;
   locked: boolean;
   selected: boolean;
+  /** Review R1（perf MAJOR-2）：可见性在投影时随行携带 —— 组头批量开关
+   *  不再对全表做 O(members × total) 的 find 扫描。 */
+  visible: boolean;
 }
 
 export interface WorkspaceSection {
@@ -88,6 +91,7 @@ export function projectWorkspace(input: ProjectWorkspaceInput): WorkspaceProject
       semanticGroup: layer.group || 'default',
       locked: lockedLayerIds.includes(layer.id),
       selected: selectedLayerIds.includes(layer.id),
+      visible: layer.visible !== false,
     };
     if (!matchesSearch(row, search)) continue;
     const gid = membership[layer.id] ?? null;

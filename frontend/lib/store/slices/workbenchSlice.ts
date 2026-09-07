@@ -250,7 +250,15 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
           else changed = true;
         }
         // 空组保留（用户组织结构不因图层清空而消失）。
-        return changed ? { layerGroupMembership: membership } : s;
+        const next: Partial<HudState> = {};
+        if (changed) next.layerGroupMembership = membership;
+        // Review R1（perf MINOR-7）：删除层的死 id 同步出选择/锁定 ——
+        // 批量条「已选 N」不再虚计，锁定守卫不再遍历死 id。
+        const selected = s.selectedLayerIds.filter((id) => validLayerIds.has(id));
+        if (selected.length !== s.selectedLayerIds.length) next.selectedLayerIds = selected;
+        const locked = s.lockedLayerIds.filter((id) => validLayerIds.has(id));
+        if (locked.length !== s.lockedLayerIds.length) next.lockedLayerIds = locked;
+        return Object.keys(next).length > 0 ? next : s;
       }),
     // Review R1（MAJOR-2）：会话切换同样退出对比 —— primary/secondary 是
     // 旧会话的图层族 id，叠在新会话地图上是死引用；产物选择同理。
