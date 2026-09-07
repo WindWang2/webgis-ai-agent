@@ -540,6 +540,9 @@ class KrigingResult:
     n_samples_fit: int
     neighbors: int
     degraded_cells: int = 0   # predictions that fell back to the local mean
+    # ── science-v3：95% 预测区间（高斯误差近似；None = 退化路径诚实缺省）──
+    pi95_low: Optional[np.ndarray] = None
+    pi95_high: Optional[np.ndarray] = None
     # ── VNext additive fields (OK path leaves them at defaults) ────────────
     disclosures: list[str] = field(default_factory=list)
     drift_coefficients: Optional[np.ndarray] = None  # UK linear drift [1,x,y]
@@ -730,9 +733,15 @@ def ordinary_kriging(
         preds[start:end] = chunk_pred
         varis[start:end] = chunk_var
 
+    # science-v3（Wave 8/9）：95% 预测区间（高斯误差假设下的近似区间，
+    # z=1.959963…，Isaaks & Srivastava 口径）。
+    _PI95 = 1.959963984540054
+    _sd = np.sqrt(varis)
     return KrigingResult(
         predictions=preds,
         variances=varis,
+        pi95_low=preds - _PI95 * _sd,
+        pi95_high=preds + _PI95 * _sd,
         variogram=g,
         n_samples=n,
         n_samples_fit=n,
@@ -912,9 +921,15 @@ def universal_kriging(
         preds[start:end] = chunk_pred
         varis[start:end] = chunk_var
 
+    # science-v3（Wave 8/9）：95% 预测区间（高斯误差假设下的近似区间，
+    # z=1.959963…，Isaaks & Srivastava 口径）。
+    _PI95 = 1.959963984540054
+    _sd = np.sqrt(varis)
     return KrigingResult(
         predictions=preds,
         variances=varis,
+        pi95_low=preds - _PI95 * _sd,
+        pi95_high=preds + _PI95 * _sd,
         variogram=g,
         n_samples=n,
         n_samples_fit=n,
@@ -980,6 +995,11 @@ class CrossValidationReport:
     # ── V2 additive: fold-assignment scheme + per-fold evidence ────────────
     scheme: str = "index"       # "index" | "spatial_block"
     per_fold: list = field(default_factory=list)  # [{fold, rmse, n_test, block_ids}]
+    # ── science-v3（Wave 8/9）：不确定性校准证据 —— LOOCV 误差与逐点
+    # 克里金 σ 的 z-score 统计（σ 是否可信的直接度量）。
+    z_score_mean: Optional[float] = None    # ≈0 = 无系统偏差
+    z_coverage_95: Optional[float] = None   # |z|≤1.96 的比例（标定好 ≈0.95）
+    z_count: int = 0                        # 参与统计的测试点数
 
     def metrics(self) -> dict[str, Any]:
         out: dict[str, Any] = {"n_samples": self.n_samples, "folds": self.folds}
@@ -989,6 +1009,18 @@ class CrossValidationReport:
         if self.note:
             out["note"] = self.note
         out["scheme"] = self.scheme
+        # 不确定性校准证据（science-v3）：z ≈0 均值 + |z|≤1.96 覆盖率
+        # ≈0.95 表示克里金 σ 与实际误差尺度一致。
+        if self.z_count > 0:
+            out["uncertainty_calibration"] = {
+                "z_score_mean": (
+                    round(self.z_score_mean, 6)
+                    if self.z_score_mean is not None else None),
+                "z_coverage_95": (
+                    round(self.z_coverage_95, 6)
+                    if self.z_coverage_95 is not None else None),
+                "n": self.z_count,
+            }
         if self.per_fold:
             out["per_fold"] = [
                 {
@@ -1077,6 +1109,7 @@ def cross_validate_kriging(
         block_id = None
     pts_t = apply_anisotropy(pts_metric, anisotropy_angle, anisotropy_ratio)
     errs: list[float] = []
+    z_scores: list[float] = []
     folds_used = 0
     per_fold: list[dict] = []
     for f in range(folds):
@@ -1112,6 +1145,8 @@ def cross_validate_kriging(
         folds_used += 1
         fold_err = res.predictions - values[test]
         errs.extend(fold_err.tolist())
+        z_scores.extend(
+            (fold_err / np.sqrt(np.maximum(res.variances, 0.0))).tolist())
         entry: dict = {
             "fold": int(f),
             "rmse": float(np.sqrt(np.mean(fold_err ** 2))),
@@ -1128,6 +1163,13 @@ def cross_validate_kriging(
     e = np.asarray(errs)
     ss_res = float(np.sum(e ** 2))
     ss_tot = float(np.sum((values - values.mean()) ** 2))
+    z_mean: Optional[float] = None
+    z_cover: Optional[float] = None
+    if z_scores:
+        z = np.asarray([v for v in z_scores if np.isfinite(v)])
+        if z.size:
+            z_mean = float(np.mean(z))
+            z_cover = float(np.mean(np.abs(z) <= 1.96))
     return CrossValidationReport(
         rmse=float(np.sqrt(np.mean(e ** 2))),
         mae=float(np.mean(np.abs(e))),
@@ -1137,6 +1179,9 @@ def cross_validate_kriging(
         folds=folds_used,
         scheme=cv_scheme,
         per_fold=per_fold,
+        z_score_mean=z_mean,
+        z_coverage_95=z_cover,
+        z_count=len(z_scores),
     )
 
 
@@ -2111,14 +2156,23 @@ def kriging_interpolation(
         if cross_validate else None
     )
 
+    # science-v3（Wave 8/9）：95% 预测区间面（由 ordinary_kriging 的
+    # KrigingResult.pi95_* 投影；UK 零残差退化路径无 PI —— 诚实缺省，
+    # 方差面本身精确为 0）。
+    stddevs = np.sqrt(np.maximum(result.variances, 0.0))
     records = [
         {
             "h3_index": cell,
             "value": float(v),
             "kriging_variance": float(var),
-            "kriging_stddev": float(np.sqrt(max(var, 0.0))),
+            "kriging_stddev": float(sd),
+            "pi95_low": float(lo),
+            "pi95_high": float(hi),
         }
-        for cell, v, var in zip(target_cells, result.predictions, result.variances)
+        for cell, v, var, sd, lo, hi in zip(
+            target_cells, result.predictions, result.variances, stddevs,
+            result.pi95_low if result.pi95_low is not None else stddevs,
+            result.pi95_high if result.pi95_high is not None else stddevs)
     ]
     metadata = {
         "algorithm": "interpolation.kriging" if method == "ordinary" else "interpolation.universal_kriging",
@@ -2139,6 +2193,10 @@ def kriging_interpolation(
             round(float(result.variances.min()), 6),
             round(float(result.variances.max()), 6),
         ],
+        "prediction_interval_95": {
+            "z": 1.959963984540054,
+            "assumption": "gaussian errors (Isaaks & Srivastava); approximate interval",
+        },
         "variogram": vfit.params() if vfit is not None else None,
         "cross_validation": cv_report.metrics() if cv_report else None,
         "value_field": value_field,

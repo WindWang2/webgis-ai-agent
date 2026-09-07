@@ -529,3 +529,52 @@ def test_cv_reports_folds_actually_used():
     cv = cross_validate_kriging(xy, z, model="spherical")
     assert cv.rmse is not None
     assert 1 <= cv.folds <= 5
+
+
+# ── science-v3：不确定性校准 + 95% 预测区间（Wave 8/9 增强）─────────────
+def test_cv_reports_uncertainty_calibration_on_calibrated_gaussian_field():
+    """标定高斯场：z 均值 ≈0，95% 覆盖率落在容差带内（σ 可信的直接证据）。"""
+    import numpy as np
+
+    from app.lib.geo_analysis.kriging import cross_validate_kriging
+
+    rng = np.random.default_rng(42)
+    n = 120
+    xy = rng.uniform(0.0, 10_000.0, size=(n, 2))
+
+    # 球状模型随机场：先生成白噪声再低通平滑获得空间相关 + 已知尺度
+    from scipy.ndimage import gaussian_filter
+    grid = rng.normal(0.0, 1.0, (40, 40))
+    field = gaussian_filter(grid, sigma=3.0) * 10.0
+    pts = (xy / 10_000.0 * 39).astype(int)
+    vals = field[pts[:, 0], pts[:, 1]]
+
+    report = cross_validate_kriging(xy, vals, model="spherical", folds=4, k=12)
+    assert report.z_count == n
+    assert report.z_score_mean is not None
+    assert abs(report.z_score_mean) < 0.75          # 无系统偏差
+    assert report.z_coverage_95 is not None
+    assert 0.6 <= report.z_coverage_95 <= 1.0       # 校准带（小样本容忍）
+    metrics = report.metrics()
+    assert metrics["uncertainty_calibration"]["n"] == n
+
+
+def test_surface_records_carry_symmetric_pi95():
+    """预测区间面：pi95_low/high 与 stddev 一致（对称 ±1.96σ）。"""
+    import numpy as np
+
+    from app.lib.geo_analysis.kriging import fit_variogram, ordinary_kriging
+
+    rng = np.random.default_rng(7)
+    xy = rng.uniform(0.0, 5_000.0, size=(40, 2))
+    vals = np.sin(xy[:, 0] / 500.0) + rng.normal(0, 0.05, 40)
+    vfit = fit_variogram(xy, vals, model="spherical")
+    targets = rng.uniform(0.0, 5_000.0, size=(25, 2))
+    res = ordinary_kriging(xy, vals, targets, vfit, k=12)
+
+    pi = 1.959963984540054
+    sd = np.sqrt(np.maximum(res.variances, 0.0))
+    assert np.allclose(res.pi95_low, res.predictions - pi * sd)
+    assert np.allclose(res.pi95_high, res.predictions + pi * sd)
+    assert np.all(res.pi95_low <= res.predictions)
+    assert np.all(res.pi95_high >= res.predictions)
