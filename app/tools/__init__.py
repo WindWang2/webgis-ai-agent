@@ -29,6 +29,7 @@ _TOOL_MODULES = [
     ("app.tools.spatial_stats", "register_spatial_stats_tools"),
     ("app.tools.point_pattern_tools", "register_point_pattern_tools"),
     ("app.tools.terrain_analysis", "register_terrain_tools"),
+    ("app.tools.raster_tools_cog", "register_raster_cog_tools"),
     # ("app.tools.interpolation_network", "register_interpolation_network_tools"), # Deleted in v3.4 refactor
     ("app.tools.report", "register_report_tools"),
     ("app.tools.change_detection", "register_change_detection_tools"),

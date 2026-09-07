@@ -17,7 +17,6 @@ from app.services.project_service import ProjectService
 from app.services.workflow_engine import WorkflowEngine
 from app.services.lineage_service import LineageService
 from app.services.spatial_quality_service import SpatialQualityEngine
-from app.services.spatial_repair_pipeline import SpatialRepairPipeline
 from app.agent_pi_bridge import get_tool_registry
 from app.schemas.project_schema import (
     ProjectCreate, ProjectUpdate, ProjectResponse,
@@ -1051,19 +1050,96 @@ def repair_spatial_dataset(
     if not geojson_data:
         raise HTTPException(status_code=400, detail="Missing 'geojson' in payload")
 
-    repaired_geojson, logs = SpatialRepairPipeline.repair_dataset(geojson_data, operations)
-    feature_count = (
-        len(repaired_geojson.get("features", []))
-        if isinstance(repaired_geojson, dict) else 0
+    # Wave-4 (audit 08 §6.2.2): the repaired FC is registered as a NEW session
+    # ref (never an overwrite of the source payload) and bounded digest-only
+    # repair evidence is built for the project lineage edge. Tool-context is
+    # unavailable in this route → session registration only happens when the
+    # caller explicitly supplies session_id/source_ref (register_artifact with
+    # honest inputs; absent session → skipped honestly, not fabricated).
+    import asyncio
+
+    from app.services.data_quality.repair_execution import (
+        execute_repair,
+        persist_repair_lineage,
     )
+
+    session_id = str(payload.get("session_id") or "")[:80] or None
+    source_ref = str(payload.get("source_ref") or "")[:80] or None
+    dataset_id = str(payload.get("dataset_id") or "")[:80] or None
+    issue_codes = [str(c)[:64] for c in (payload.get("issue_codes") or [])][:16]
+
+    execution = asyncio.run(
+        execute_repair(
+            geojson=geojson_data,
+            operations=operations,
+            session_id=session_id,
+            source_ref=source_ref,
+            issue_codes=issue_codes,
+        )
+    )
+
+    # Project-side evidence: repaired output becomes a project artifact whose
+    # root lineage edge carries repair_evidence (record_lineage). The route is
+    # sync (threadpool) so the DB writes stay off the event loop. Failures are
+    # disclosed honestly and never fail the repair itself.
+    lineage_status = "skipped"
+    lineage_artifact_id = None
+    lineage_error = None
+    try:
+        src_ds_id = src_ds_fp = None
+        if dataset_id:
+            from app.models.project import ProjectDataset
+            from sqlalchemy import select as _select
+
+            row = db.execute(
+                _select(ProjectDataset).where(
+                    ProjectDataset.id == dataset_id,
+                    ProjectDataset.project_id == project.id,
+                )
+            ).scalar_one_or_none()
+            if row is not None:
+                src_ds_id = row.id
+                src_ds_fp = row.version_fingerprint
+            else:
+                lineage_status = "dataset_not_found"
+        if not dataset_id or src_ds_id is not None:
+            lineage_artifact_id = persist_repair_lineage(
+                db,
+                project.id,
+                repair_evidence=execution["repair_evidence"],
+                content_fingerprint=execution["content_digest_after"],
+                crs=execution["output_crs"],
+                storage_ref=execution["repaired_ref"]
+                or execution["content_digest_after"],
+                source_dataset_id=src_ds_id,
+                source_dataset_fingerprint=src_ds_fp,
+            )
+            lineage_status = "recorded"
+    except Exception as exc:  # noqa: BLE001 — 证据落地失败如实披露
+        db.rollback()
+        logger.warning("[repair route] lineage persistence failed: %s", exc)
+        lineage_status = "error"
+        lineage_error = str(exc)[:200]
+
     # Fetch-on-Demand: trim the repaired geometry out of the inline response.
     from app.tools._utils import trim_features
     return {
         "project_id": project_id,
-        "operations_applied": operations,
-        "repair_logs": logs,
-        "feature_count": feature_count,
-        "repaired_geojson_preview": trim_features(repaired_geojson, max_features=50),
+        "operations_applied": execution["operations_applied"],
+        "ops_evidence": execution["ops_evidence"],
+        "repair_logs": execution["logs"],
+        "logs_count": execution["logs_count"],
+        "feature_count": execution["feature_count"],
+        "feature_count_before": execution["feature_count_before"],
+        "repaired_ref": execution["repaired_ref"],
+        "ref_registration_error": execution["ref_registration_error"],
+        "repair_evidence": execution["repair_evidence"],
+        "lineage_status": lineage_status,
+        "lineage_artifact_id": lineage_artifact_id,
+        "lineage_error": lineage_error,
+        "repaired_geojson_preview": trim_features(
+            execution["repaired_geojson"], max_features=50
+        ),
     }
 
 

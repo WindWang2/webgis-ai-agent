@@ -188,6 +188,257 @@ def publish_artifact(key: str, src_path: str, compute: Callable[[], str]) -> str
     return final
 
 
+# ── Chunk cache (Wave 6, audit 05 §7.3) ─────────────────────────────
+#
+# Per-chunk persistence for windowed execution: same chassis (atomic
+# publish + meta sidecar + byte-cap LRU), a DEDICATED directory and a
+# DEDICATED byte cap so chunk sweeps can never evict whole-artifact
+# entries (and vice versa). Key derivation mirrors ``make_artifact_key``:
+# sha256(source mtime+size identity, chunk descriptor canonical JSON,
+# operation, ARTIFACT_VERSION_NS) truncated to 16 hex.
+#
+# Scope honesty: chunk entries are element-wise windowed outputs. They are
+# only sound for ops the runtime has gate-checked as window_safe with no
+# halo / global stat (see app/lib/geo_raster/chunk.ChunkCacheBackend).
+
+CHUNK_DIR = os.path.join(ARTIFACT_DIR, "chunks")
+
+#: Dedicated chunk-cache cap (default 1 GiB), env-overridable. Read per
+#: call (not import time) so deployments/tests can retune without a
+#: process restart.
+CHUNK_CACHE_DEFAULT_BYTES = 1 * 1024 ** 3
+
+
+def _chunk_cache_cap() -> int:
+    raw = os.environ.get("WEBGIS_CHUNK_CACHE_BYTES", "")
+    try:
+        return max(int(raw), 0)
+    except (TypeError, ValueError):
+        return CHUNK_CACHE_DEFAULT_BYTES
+
+
+def make_chunk_cache_key(
+    source_path: str,
+    descriptor: dict,
+    operation: str,
+) -> str:
+    """Content-addressed key for one chunk result.
+
+    ``descriptor`` is the chunk descriptor's canonical projection (see
+    ``RasterChunkDescriptor.canonical_json``); the source side uses the
+    same mtime+size identity as ``make_artifact_key`` — one derivation
+    discipline, no new scheme.
+    """
+    canonical = json.dumps(
+        {
+            "src": _source_identity(source_path),
+            "op": operation,
+            "params": descriptor,
+            "ns": f"{ARTIFACT_VERSION_NS}|chunk-v1",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+def _chunk_path(key: str) -> str:
+    return os.path.join(CHUNK_DIR, f"{key}.npy")
+
+
+def _chunk_meta_path(key: str) -> str:
+    return os.path.join(CHUNK_DIR, f"{key}.meta")
+
+
+def get_chunk(key: str) -> Optional[str]:
+    """Return the cached chunk (.npy) path if present and still fresh.
+
+    Same invalidation defense as :func:`get_artifact`: the recorded source
+    identity is re-verified so an out-of-band same-mtime source rewrite
+    degrades to a miss. Any meta corruption → miss (never raise).
+    """
+    path = _chunk_path(key)
+    meta = _chunk_meta_path(key)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(meta, "r", encoding="utf-8") as f:
+            recorded = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if recorded.get("src_identity") != _source_identity(recorded.get("src_path", "")):
+        return None
+    os.utime(meta, None)  # LRU recency bump
+    return path
+
+
+def publish_chunk(
+    key: str,
+    payload: "bytes | bytearray | str",
+    *,
+    source_path: str = "",
+) -> Optional[str]:
+    """Atomically publish one chunk payload; return the stored path.
+
+    ``payload`` is raw .npy bytes or a path to copy from. Atomicity mirrors
+    :func:`publish_artifact` (mkstemp → write → ``os.replace``): a crash
+    leaves the previous entry (or none), never a half chunk. The meta
+    sidecar carries the source identity for the fresh check in
+    :func:`get_chunk`. Best-effort: callers treat failure as a future miss.
+    """
+    os.makedirs(CHUNK_DIR, exist_ok=True)
+    final = _chunk_path(key)
+    fd, tmp = tempfile.mkstemp(suffix=".npy", dir=CHUNK_DIR)
+    try:
+        os.close(fd)
+        if isinstance(payload, (bytes, bytearray)):
+            with open(tmp, "wb") as dst_f:
+                dst_f.write(payload)
+        else:
+            with open(payload, "rb") as src_f, open(tmp, "wb") as dst_f:
+                while True:
+                    block = src_f.read(1024 * 1024)
+                    if not block:
+                        break
+                    dst_f.write(block)
+        os.replace(tmp, final)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        logger.warning(f"[artifact_cache] chunk publish failed for {key}", exc_info=True)
+        return None
+    try:
+        with open(_chunk_meta_path(key), "w", encoding="utf-8") as f:
+            json.dump({
+                "key": key,
+                "src_path": source_path,
+                "src_identity": _source_identity(source_path) if source_path else "",
+                "created_at": time.time(),
+            }, f)
+    except OSError:
+        pass
+    _evict_chunks_if_needed()
+    return final
+
+
+def _evict_chunks_if_needed() -> None:
+    """LRU eviction under the DEDICATED chunk cap; also drops meta entries
+    whose .npy has vanished (self-healing accounting)."""
+    try:
+        cap = _chunk_cache_cap()
+        entries = []
+        for name in os.listdir(CHUNK_DIR):
+            if not name.endswith(".meta"):
+                continue
+            meta_p = os.path.join(CHUNK_DIR, name)
+            key = name[:-5]
+            chunk_p = _chunk_path(key)
+            try:
+                st = os.stat(meta_p)
+                size = os.path.getsize(chunk_p) if os.path.exists(chunk_p) else 0
+                if size == 0:
+                    # orphaned meta (npy gone): drop so accounting stays true
+                    os.unlink(meta_p)
+                    continue
+                entries.append((st.st_mtime, key, size, meta_p, chunk_p))
+            except OSError:
+                continue
+        total = sum(e[2] for e in entries)
+        if total <= cap:
+            return
+        entries.sort(key=lambda e: e[0])
+        for _, key, size, meta_p, chunk_p in entries:
+            if total <= cap:
+                break
+            for p in (chunk_p, meta_p):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+            total -= size
+            logger.info(f"[artifact_cache] evicted chunk {key} ({size} bytes) for LRU")
+    except OSError:
+        pass
+
+
+def clear_chunk_cache() -> int:
+    """Remove all cached chunks; returns the count removed (test helper)."""
+    removed = 0
+    try:
+        for name in os.listdir(CHUNK_DIR):
+            p = os.path.join(CHUNK_DIR, name)
+            try:
+                if os.path.isfile(p):
+                    os.unlink(p)
+                    removed += 1
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return removed
+
+
+def sweep_orphan_chunk_cache(*, now: Optional[float] = None) -> dict:
+    """Orphan/aged sweep for the chunk directory (same policy family as
+    :func:`sweep_orphan_disk_artifacts`, applied to ``.npy``/``.meta``)."""
+    result = {"chunk_temp_leftovers": 0, "chunk_orphan_npy": 0,
+              "chunk_orphan_meta": 0, "chunk_aged": 0}
+    current = time.time() if now is None else now
+    cutoff = current - _disk_retention_seconds()
+    grace_cutoff = current - _sweep_grace_seconds()
+    try:
+        names = os.listdir(CHUNK_DIR)
+    except OSError:
+        return result
+    npy_keys: set = set()
+    meta_keys: set = set()
+    for name in names:
+        stem, _, ext = name.rpartition(".")
+        if ext == "npy" and _KEY_RE.match(stem):
+            npy_keys.add(stem)
+        elif ext == "meta" and _KEY_RE.match(stem):
+            meta_keys.add(stem)
+        else:
+            p = os.path.join(CHUNK_DIR, name)
+            try:
+                if os.path.isfile(p) and os.stat(p).st_mtime < grace_cutoff:
+                    os.unlink(p)
+                    result["chunk_temp_leftovers"] += 1
+            except OSError:
+                continue
+    for stem in npy_keys - meta_keys:
+        try:
+            if os.stat(_chunk_path(stem)).st_mtime >= grace_cutoff:
+                continue
+            os.unlink(_chunk_path(stem))
+            result["chunk_orphan_npy"] += 1
+        except OSError:
+            continue
+    for stem in meta_keys - npy_keys:
+        try:
+            if os.stat(_chunk_meta_path(stem)).st_mtime >= grace_cutoff:
+                continue
+            os.unlink(_chunk_meta_path(stem))
+            result["chunk_orphan_meta"] += 1
+        except OSError:
+            continue
+    for stem in npy_keys & meta_keys:
+        try:
+            if os.stat(_chunk_meta_path(stem)).st_mtime < cutoff:
+                for p in (_chunk_path(stem), _chunk_meta_path(stem)):
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
+                result["chunk_aged"] += 1
+        except OSError:
+            continue
+    return result
+
+
 def _evict_if_needed() -> None:
     """LRU eviction: if total bytes exceed the cap, remove oldest until under."""
     try:
@@ -333,4 +584,14 @@ def sweep_orphan_disk_artifacts(*, now: Optional[float] = None) -> dict:
             continue
     if any(result.values()):
         logger.info("[artifact_cache] orphan sweep: %s", result)
+    # Chunk directory: same discipline, dedicated namespace (Wave 6). Run
+    # INSIDE the periodic sweep (its only caller) but keep the returned
+    # dict shape pinned to the root keys — the contract is asserted
+    # verbatim by tests/data/test_gc.py. Chunk keys are logged separately.
+    try:
+        chunk_result = sweep_orphan_chunk_cache(now=current)
+        if any(chunk_result.values()):
+            logger.info("[artifact_cache] chunk sweep: %s", chunk_result)
+    except Exception:  # noqa: BLE001 — sweep is best-effort by contract
+        logger.warning("[artifact_cache] chunk sweep failed", exc_info=True)
     return result

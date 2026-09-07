@@ -46,6 +46,7 @@ class LineageService:
         producing_capability: Optional[str] = None,
         producing_algorithm: Optional[str] = None,
         mapspec_fingerprint: Optional[str] = None,
+        repair_evidence: Optional[Dict[str, Any]] = None,
         commit: bool = True,
     ) -> List[ArtifactLineage]:
         """Record one lineage edge per parent (or a single root edge for inputs).
@@ -58,6 +59,14 @@ class LineageService:
         ``producing_capability`` / ``producing_algorithm`` / ``mapspec_fingerprint``
         (ADR-0092 A4) record the semantic chain Dataset → Capability → Algorithm
         → Tool → Artifact → MapSpec on the existing edge — no second graph.
+
+        ``repair_evidence`` (Wave-4, audit 08 §6.2.2): bounded digest-only facts
+        about an executed repair (ops / addressed issue codes / counts /
+        content digests). Attach-only: ``None`` (default) leaves the column
+        untouched; when present it is written on the FIRST/root edge only —
+        the evidence describes the whole repair execution, duplicating it per
+        parent edge would just multiply the same fact. Callers must pass a
+        payload-free dict (no feature payloads, bounded keys).
 
         Raises ``LineageCycleError`` for self- or multi-hop cycle attempts.
         """
@@ -143,6 +152,7 @@ class LineageService:
                 source_dataset_id=source_dataset_id if first else None,
                 source_dataset_fingerprint=source_dataset_fingerprint if first else None,
                 content_fingerprint=content_fingerprint,
+                repair_evidence=repair_evidence if first else None,
                 created_at=datetime.now(timezone.utc),
             )
             db.add(lineage)

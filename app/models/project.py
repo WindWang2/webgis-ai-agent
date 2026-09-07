@@ -68,7 +68,10 @@ class ProjectDataset(Base):
         # Cheap "active datasets for a project" lookup that skips tombstones.
         Index("idx_project_dataset_pid_detached", "project_id", "detached_at"),
         CheckConstraint(
-            "quality_status IN ('unchecked', 'valid', 'invalid', 'warning', 'unknown', 'pending', 'verified')",
+            # Wave-4（审计 08 §6.2.3）：quality_status 不再冻结在 "unchecked"
+            # —— 摄入/剖析后的 compose_status 四态（valid/warning/repairable/
+            # blocked）会回写；'repairable'/'blocked' 是 0028 追加值。
+            "quality_status IN ('unchecked', 'valid', 'invalid', 'warning', 'unknown', 'pending', 'verified', 'repairable', 'blocked')",
             name="ck_project_dataset_quality_status",
         ),
     )
@@ -270,6 +273,12 @@ class ArtifactLineage(Base):
     # Denormalized content fingerprint of the child artifact for cheap duplicate
     # detection along the lineage edge.
     content_fingerprint = Column(String(64), nullable=True)
+    # Wave-4 bounded repair evidence (audit 08 §6.2.2): digest-only facts about
+    # an executed repair — {plan_id, ops_applied[], op_evidence[],
+    # issue_codes_addressed[], before/after feature_count + content digest}.
+    # Links stay links: NO feature payloads ever land here. NULL = edge was
+    # not produced by a repair execution.
+    repair_evidence = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (

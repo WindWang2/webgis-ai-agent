@@ -139,3 +139,58 @@ def range_read_probe(
         }
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:200]}
+
+
+# ── Ingest seam (Wave 6, audit 05 §7.4): the writer/validator above had
+#    ZERO production callers. These two entry points give upload/ingest and
+#    tool surfaces an honest opt-in conversion path. Honest caller note:
+#    app/services/data_parser.parse_raster and app/services/upload.py are
+#    NOT wired here (other waves own them) — today the callers are the
+#    ``convert_raster_to_cog`` tool (app/tools/raster_tools_cog.py) and any
+#    service that opts in explicitly. Nothing converts silently.
+
+def to_cog(
+    src_path: str | Path,
+    dst_dir: str | Path,
+    *,
+    compress: str = "DEFLATE",
+    blocksize: int = 512,
+) -> Path:
+    """Convert any readable raster to a validated COG under ``dst_dir``.
+
+    Always writes a NEW file (``<dst_dir>/<stem>.tif`` — an existing file
+    is replaced atomically by ``write_cog``), then structurally validates
+    the RESULT: a conversion that does not yield tiled + overviewed output
+    raises :class:`CogWriteError` instead of pretending success. Missing
+    source → :class:`CogWriteError` (typed, tool-facing).
+    """
+    src = Path(src_path)
+    if not src.is_file():
+        raise CogWriteError(f"source raster not found: {src}")
+    out_dir = Path(dst_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{src.stem}.tif"
+    write_cog(str(src), out, compress=compress, blocksize=blocksize)
+    report = validate_cog(str(out))
+    if not report.get("ok"):
+        raise CogWriteError(
+            f"COG conversion of {src} produced a non-conforming file "
+            f"({out}): issues={report.get('issues')}"
+        )
+    return out
+
+
+def ensure_cog(path: str | Path, out_dir: str | Path) -> Path:
+    """Idempotent ingest utility: return the path if it is ALREADY a
+    structurally valid COG, otherwise convert it via :func:`to_cog`.
+
+    The structural check is the same advisory one the reader uses (tiled +
+    overviews). Missing file → :class:`CogWriteError`. No conversion is
+    attempted in place — the original file is never mutated.
+    """
+    p = Path(path)
+    if not p.is_file():
+        raise CogWriteError(f"raster not found: {p}")
+    if validate_cog(str(p)).get("ok"):
+        return p
+    return to_cog(p, out_dir)

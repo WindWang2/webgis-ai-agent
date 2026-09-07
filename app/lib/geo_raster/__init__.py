@@ -44,6 +44,13 @@ from app.lib.geo_raster.fingerprint import (
     content_fingerprint,
     raster_content_fingerprint_v5,
 )
+from app.lib.geo_raster.chunk import (
+    ChunkCacheBackend,
+    RasterChunkDescriptor,
+    iter_chunk_descriptors,
+    raster_runtime_capabilities,
+)
+from app.lib.geo_raster.cog import ensure_cog, to_cog
 
 __all__ = [
     "RasterSource",
@@ -63,4 +70,11 @@ __all__ = [
     "content_digest",
     "content_fingerprint",
     "raster_content_fingerprint_v5",
+    # Wave 6 chunk runtime (audit 05 §7.1-§7.5)
+    "RasterChunkDescriptor",
+    "iter_chunk_descriptors",
+    "ChunkCacheBackend",
+    "raster_runtime_capabilities",
+    "ensure_cog",
+    "to_cog",
 ]

@@ -422,6 +422,15 @@ class WorkflowEngine:
 
         step_dispatch_service = None  # #694: lazily built ToolDispatchService
         step_executed_tools: set = set()
+        # Wave-4 (audit 08 §6.2.4): the mapspec_fingerprint lineage column has
+        # existed since migration 0022 but was never populated by the engine.
+        # Resolve it ONCE per run when a session map context exists (same
+        # helper as _attach_outcome_context) and pass it at the record_lineage
+        # call below. Best-effort: absent session/mapspec → None → column
+        # untouched (INV-LIN guards preserved; evidence never load-bearing).
+        session_mapspec_fingerprint = await WorkflowEngine._session_mapspec_fingerprint(
+            session_id
+        )
         try:
             for step_id in execution_order:
                 step_spec = step_map[step_id]
@@ -526,6 +535,7 @@ class WorkflowEngine:
                     tool_version=tool_version,
                     producing_capability=step_capability,
                     producing_algorithm=step_algorithm,
+                    mapspec_fingerprint=session_mapspec_fingerprint,
                     parent_artifact_ids=parent_artifact_ids,
                     workflow_run_id=run_id,
                     parameters=tool_args,
@@ -961,6 +971,29 @@ class WorkflowEngine:
             seed_trace=seed_trace,
             seed_artifact_records=seed_artifacts,
         )
+
+    @staticmethod
+    async def _session_mapspec_fingerprint(session_id: Optional[str]) -> Optional[str]:
+        """Session map context → cartographic MapSpec fingerprint (best-effort).
+
+        Wave-4 (audit 08 §6.2.4): value fed to the record_lineage call so the
+        plumbed ``mapspec_fingerprint`` column stops being test-only. Same
+        derivation as ``_attach_outcome_context`` (cartographic_fingerprint
+        over the session MapSpec); any absence/failure → None → the column
+        stays untouched rather than fabricated.
+        """
+        if not session_id:
+            return None
+        try:
+            from app.lib.cartography.quality_loop import cartographic_fingerprint
+            from app.services.mapspec.store import mapspec_store_instance
+
+            mapspec = await mapspec_store_instance.get_mapspec(session_id)
+            if isinstance(mapspec, dict) and mapspec:
+                return cartographic_fingerprint(mapspec)
+        except Exception:  # noqa: BLE001 — 增值证据，绝不阻塞执行
+            return None
+        return None
 
     @staticmethod
     async def _attach_outcome_context(

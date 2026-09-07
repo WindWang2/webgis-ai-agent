@@ -28,7 +28,10 @@ from app.tools._utils import parse_bbox, trim_features
 from app.utils.path import validate_data_path
 
 from app.lib.geo_analysis import terrain as terrain_lib
-from app.lib.geo_analysis.raster_guard import RasterResourceGuard
+from app.lib.geo_analysis.raster_guard import (
+    RasterResourceExceededError,
+    RasterResourceGuard,
+)
 from app.lib.geo_analysis.raster_math import rasterio_env
 from app.lib.gis.algorithm_registry import get_algorithm_registry
 from app.lib.gis.backend_selection import ScaleProfile, select_backend
@@ -95,6 +98,42 @@ def _terrain_evidence(
     return payload
 
 
+def _check_full_read_budget(src) -> None:
+    """Wave 6（audit 05 §2 整读隐患 #1）：整波段 read + float64 提升会把
+    工作集翻倍 —— check_grid 只计像元数（float32 口径，最多放进 ~1 GiB
+    名义 / ~2 GiB 实际），这里在**读取发生之前**按 2× 记账（px × 8 字节
+    = float64 目标 + 源缓冲瞬态）对齐字节护栏，超限抛类型化错误。
+    全局算法（D8/视域/BFS）仍是有意的整读面 —— 本护栏只拒绝超出预算者，
+    不改变算法语义。"""
+    pixels = int(src.width) * int(src.height)
+    estimated = pixels * 8  # float64 cast target (2× the 4-byte baseline)
+    cap = int(RasterResourceGuard.MAX_ESTIMATED_OUTPUT_BYTES)
+    if estimated <= cap:
+        return
+    bounds = (
+        float(src.bounds.left), float(src.bounds.bottom),
+        float(src.bounds.right), float(src.bounds.top),
+    )
+    suggested = RasterResourceGuard.suggest_safe_resolutions(bounds)
+    msg = (
+        f"Terrain tools read the whole band and cast to float64 "
+        f"({src.width}x{src.height} = {pixels:,} px → ~{estimated / (1024 ** 3):.2f} GiB "
+        f"working set, budget {cap / (1024 ** 3):.1f} GiB). "
+        f"Downsample or clip the DEM first (suggested target_resolution "
+        f"values: {suggested})."
+    )
+    logger.warning("[terrain] full-read budget exceeded: %s", msg)
+    raise RasterResourceExceededError(
+        message=msg,
+        requested_width=int(src.width),
+        requested_height=int(src.height),
+        total_pixels=pixels,
+        estimated_bytes=estimated,
+        suggested_resolutions=suggested,
+        error_code="RASTER_FULL_READ_BUDGET_EXCEEDED",
+    )
+
+
 def _read_terrain_window(
     raster_path: str, nodata_override: Optional[float],
 ) -> Tuple[np.ndarray, Tuple[float, ...], str, Optional[float], Tuple[float, ...]]:
@@ -105,6 +144,7 @@ def _read_terrain_window(
     with rasterio_env():
         with rasterio.open(path) as src:
             RasterResourceGuard.check_grid(src.width, src.height, num_bands=src.count)
+            _check_full_read_budget(src)
             arr = src.read(1).astype("float64")
             transform = tuple(float(v) for v in src.transform)[:6]
             crs = str(src.crs) if src.crs is not None else ""
