@@ -53,6 +53,8 @@ def _algorithm_bullet(algo) -> str:
     if algo.method_references:
         refs = ", ".join(f"`{r}`" for r in algo.method_references)
         parts.append(f"，出处: {refs}")
+    if getattr(algo, "approximation_class", ""):
+        parts.append(f"，精度: {algo.approximation_class}")
     parts.append("）")
     lines = ["".join(parts)]
     if algo.assumptions:
@@ -62,6 +64,31 @@ def _algorithm_bullet(algo) -> str:
     for target in algo.fallback_algorithms:
         semantics = algo.fallback_semantics.get(target, "")
         lines.append(f"  - 回退：`{target}`→{semantics}")
+    env = getattr(algo, "resource_envelope", None)
+    if env is not None:
+        bits = []
+        if env.bytes_per_feature is not None:
+            bits.append(f"{env.bytes_per_feature:g}B/要素")
+        if env.bytes_per_cell is not None:
+            bits.append(f"{env.bytes_per_cell:g}B/像元")
+        if env.max_pairs is not None:
+            bits.append(f"对预算 {env.max_pairs}")
+        if env.hard_max_features is not None:
+            bits.append(f"要素硬上限 {env.hard_max_features}")
+        if env.hard_max_cells is not None:
+            bits.append(f"像元硬上限 {env.hard_max_cells}")
+        if bits:
+            lines.append(f"  - 资源包络：{'，'.join(bits)}")
+    if getattr(algo, "cancellation_profile", ""):
+        lines.append(f"  - 取消：{algo.cancellation_profile}")
+    tol = getattr(algo, "tolerance", None)
+    if tol is not None and (tol.rtol is not None or tol.atol is not None):
+        tbits = []
+        if tol.rtol is not None:
+            tbits.append(f"rtol={tol.rtol:g}")
+        if tol.atol is not None:
+            tbits.append(f"atol={tol.atol:g}")
+        lines.append(f"  - 数值容差：{'，'.join(tbits)}")
     return "\n".join(lines)
 
 
