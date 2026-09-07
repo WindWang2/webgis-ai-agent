@@ -22,7 +22,9 @@ scripts/
 !/scripts/gen_chaos_registry.py
 !/scripts/gen_resource_certification.py
 !/scripts/gen_determinism_certification.py
+!/scripts/gen_quality_report.py
 !/scripts/quality_runner.py
+!/scripts/gen_quality_report.py
 !/scripts/quality
 # runner 本地运行状态不入库
 .agent-work/quality-v1/runner-report.json

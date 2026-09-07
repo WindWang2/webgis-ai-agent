@@ -1,0 +1,48 @@
+{
+ "aggregates": {
+  "certifications": {
+   "cancellation_coverage": "docs/quality/certifications/CANCELLATION_COVERAGE.md",
+   "chaos_fault_registry": "docs/quality/certifications/CHAOS_FAULT_REGISTRY.md",
+   "determinism": "docs/quality/certifications/DETERMINISM.md",
+   "resource_safety": "docs/quality/certifications/RESOURCE_SAFETY.md",
+   "security_controls": "docs/quality/certifications/SECURITY_CONTROLS.md",
+   "trace_completeness": "docs/quality/certifications/TRACE_COMPLETENESS.md"
+  },
+  "contract_drift": {
+   "counts": {
+    "BLOCKER": 0,
+    "MAJOR": 0,
+    "MINOR": 0,
+    "total": 0
+   },
+   "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  "quality_manifest": {
+   "counts": {
+    "algorithms": 171,
+    "artifact_types": 21,
+    "capabilities": 112,
+    "findings": 232,
+    "recipes": 164,
+    "tools": 279
+   },
+   "findings_by_code": {
+    "ALGO_HEAVY_NO_VARIANTS": 22,
+    "ALGO_NO_CONFORMANCE": 17,
+    "CAPABILITY_NO_CONFORMANCE": 12,
+    "TOOL_DESCRIPTOR_INCOMPLETE": 152,
+    "TOOL_UNTESTED": 29
+   },
+   "fingerprint": "2bc56600ced10fb10f64c3fdf053fa7c38af28c15a4fd3edcefaa2df46bfdebc",
+   "gate": {
+    "pass": true,
+    "total": 279
+   }
+  },
+  "scenario_corpus": {
+   "module": "app/evaluation/quality_corpus.py",
+   "note": "规模与确定性由 tests/quality/test_quality_scenario_corpus.py 锁定"
+  }
+ },
+ "artifact": "QUALITY_REPORT"
+}
