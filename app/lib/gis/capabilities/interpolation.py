@@ -14,6 +14,10 @@ variogram_analysis（方向变异函数 + 模型选择，统计表输出）、bl
 （块支撑克里金）。nearest_neighbor 归入既有 spatial_interpolation（通用
 插值能力）、natural_neighbor 归入既有 triangulation_interpolation（同为
 Delaunay 家族、凸包外不外推）——不拆语义重复的新能力。
+
+dasymetric 原生化（Wave 6）：新增 areal_interpolation（面插值 —— 源统计
+面总量按控制要素面权重切分重分配，输出面碎片要素集），配套算法
+interpolation.dasymetric 与地图模型 dasymetric_map。
 """
 from __future__ import annotations
 
@@ -95,5 +99,18 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_types=["terrain_surface"],
             purpose_template="块克里金",
+        ),
+
+        # ── dasymetric 原生化（Wave 6）：面插值（总量守恒重分配）────────
+        CapabilityDescriptor(
+            id="areal_interpolation", name="面插值（dasymetric）", category="analysis",
+            description="源统计面总量按控制要素面（可带权重）的面积-权重比例切分重分配；"
+                        "输出 source∩control 碎片面要素集，总量守恒。",
+            input_artifact_types=["admin_aggregate_table", "admin_boundary_set",
+                                  "polygon_feature_set"],
+            output_artifact_types=["polygon_feature_set"],
+            geometry_requirements=["polygon"],
+            compatible_map_models=["dasymetric_map"],
+            purpose_template="面统计量按控制要素重分配",
         ),
 ]

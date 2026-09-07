@@ -6,7 +6,9 @@ equity/zoning 语义分级面（V3）+ V4 原生化的 bivariate choropleth（�
 编码契约）。
 V4 新增：temporal comparison / classification result / confusion matrix /
 voronoi partition / suitability constraint overlay。
-planned：dasymetric —— 控制要素重分配算法未实现（诚实保留）。
+dasymetric 原生化（Wave 6）：interpolation.dasymetric 面插值（控制要素
+重分配，总量守恒）已实现 —— app/lib/geo_analysis/dasymetric.py +
+dasymetric_reallocation 工具；渲染/图例/导出走 generic 分级面链。
 """
 from __future__ import annotations
 
@@ -119,11 +121,28 @@ POLYGON_STATISTICAL_PACK: List[MapModel] = [
         geometry_kinds=["polygon"], maplibre_layer_type="fill",
         classification="graduated",
         color_scheme_kind="sequential", default_palette="YlOrRd",
-        runtime_status="planned",
+        recommended_classifiers=["quantiles", "natural_breaks"],
         accepted_artifact_types=["admin_aggregate_table", "polygon_feature_set"],
+        recommended_components=["legend"],
+        export_compatibility=["png", "pdf", "svg"],
         qgis_renderer="graduated（前置 dasymetric 分区）",
+        # 原生化（Wave 6）：interpolation.dasymetric 面插值（app/lib/
+        # geo_analysis/dasymetric.py + dasymetric_reallocation 工具）。
+        # 无控制层时降级为归一化分级统计图 —— 降级链仍可解析。
+        fallback_model_id="normalized_choropleth",
+        data_preconditions_zh=[
+            "输入 = 源统计面（总量字段：人口/户数等**可加量**）+ 控制要素面"
+            "（土地利用/居住区；可选权重字段）",
+            "总量守恒：碎片值之和 = 源值；负值钳 0；比率字段不可重分配"
+            "（先乘分母换算成总量）",
+            "控制权重缺失/全零的源面退化为纯面积比例插值（逐源计数披露，"
+            "从不静默）",
+        ],
         pitfalls_zh=[
-            "planned：需要控制层数据契约与重分配算法，本分支未实现",
+            "结果几何是 source∩control 碎片面 —— 源行政区边界不再出现，"
+            "读图口径必须随图例说明",
+            "控制分区内密度均质是方法假设 —— 控制层质量决定结果可信度，"
+            "控制层来源必须披露",
         ],
         sources=[_QGIS_URL],
     ),
