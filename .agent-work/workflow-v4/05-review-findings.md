@@ -34,6 +34,36 @@
 
 **Round 1 verdict**：需修复后合并 → 6 MAJOR 全修 + 8 MINOR 顺手修，922 绿。
 
-## Round 2（性能/安全/可维护性/UX）
+## Round 2（性能/安全/可维护性/UX，独立 Explore reviewer）
 
-（进行中）
+范围：origin/master..HEAD（9 commits，含 Round 1 修复）。reviewer 实跑全部 V4 单测 + 只读探针，确认 Round 1 六 MAJOR 修复落地且未引入新问题。
+
+### 红线核对结论（reviewer INFO 确认）
+
+- 性能复杂度 ✅（全模块 O(V+E)/O(N log N)，registry 全进程单例，无意外 O(n²)）
+- 内存 ✅（全部产物有界；图构造期截断；截断悬空由 TYPED_DAG_* 诚实暴露）
+- 安全 ✅（query pydantic 400 界；semver fullmatch 无 ReDoS；profile 注入面类型检查只读；无泄露）
+- 多租户 ✅（无 session 数据/凭据进证据；无跨会话读取）
+- unknown ≠ 满足 ✅ 全程保持；可维护性 ✅ 无循环依赖；ADR-0118 承诺与实现一致 ✅
+
+### Findings 与处置（c26df354）
+
+| ID | 级别 | 摘要 | 处置 |
+|---|---|---|---|
+| MAJOR-1 | MAJOR | CPU-bound 全链编译在事件循环上同步执行（tool 注册为 async → ASYNC 策略） | tool 改 sync def（registry 自动 THREAD）；orchestrator 证据路径 asyncio.to_thread ✅ |
+| MINOR-1 | MINOR | tool 与 orchestrator 资格披露不对等，note 措辞过强 | tool 补 qualification_basis + 条件化 note ✅ |
+| MINOR-2 | MINOR | _MAX_COMPILED_FORM_BYTES 死常量 | emit 时运行时强制（>64KB raise）✅ |
+| MINOR-3 | MINOR | integer 参数接受任意浮点 | 严格 int 校验（bool/float 拒绝→回落默认+披露）✅ |
+| MINOR-4 | MINOR | validate 死分支 + 循环内重复 import | 谓词在场跳过 task set + import 提升 ✅ |
+| MINOR-5 | MINOR | Plan.workflow_v4 无渲染消费方 | ADR 标注渲染面为 follow-up ✅ |
+| MINOR-6 | MINOR | orchestrator 输入无长度界（tool 有 400） | user_message[:400] 对齐 ✅ |
+| MINOR-7 | MINOR | 恒真断言 + memo 收益未锁定 | 真异常注入测试 + second ≤ first×1.5 断言 ✅ |
+| MINOR-8 | MINOR | ADR 模块计数 10→实际 11 | 已修 ✅ |
+| MINOR-9 | MINOR | "dem" 子串过匹配 demographic | 边界化 " dem"/"dem "（实测 demographic 不再误路由，DEM 查询保持命中）✅ |
+
+**Round 2 verdict**：需修复后合并（1 MAJOR）→ 全修，986 绿。
+
+## 最终状态
+
+- 两轮独立 review 完成；BLOCKER/CRITICAL/MAJOR 全部修复；
+- 全部 MAJOR 修复有具名回归测试锁定。
