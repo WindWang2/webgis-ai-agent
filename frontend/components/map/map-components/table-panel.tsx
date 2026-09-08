@@ -361,7 +361,7 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
               onChange={(e) => setFilterText(e.target.value)}
               placeholder="过滤行…"
               aria-label="表格行过滤"
-              className="h-6 min-w-0 flex-1 rounded-xs border border-map-chrome-border bg-surface-base px-1.5 text-caption text-map-chrome-ink"
+              className="h-6 min-w-0 flex-1 rounded-xs border border-map-chrome-border bg-surface-sunken px-1.5 text-caption text-map-chrome-ink"
             />
             {layerId && (
               <button

@@ -32,7 +32,11 @@
   --muted: 210 33% 95%;               /* --surface-sunken */
   --muted-foreground: 215 18% 43%;    /* --text-muted #5b6b82 */
 
-  --accent: 142 72% 29%;
+  /* Wave 10（audit 08）：shadcn 块的 HSL --accent 声明已删除 —— 此前在
+     :root 与下方 V4 token 块双重声明（后者 hex 胜出），使 tailwind 的
+     hsl(var(--accent)) 别名解析为非法颜色（零消费者，但是暗雷）。
+     shadcn 别名已改为直指 var(--accent)（合法 hex）。accent-foreground
+     仍为 HSL 三元组，保留。 */
   --accent-foreground: 142 72% 25%;
 
   --destructive: 347 82% 41%;         /* --critical #be123c */

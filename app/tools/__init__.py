@@ -53,6 +53,7 @@ _TOOL_MODULES = [
     ("app.tools.data_discovery", "register_data_discovery_tools"),
     ("app.tools.semantic_tools", "register_semantic_tools"),
     ("app.tools.flow_tools", "register_flow_tools"),
+    ("app.tools.dasymetric_tools", "register_dasymetric_tools"),
     ("app.tools.geocompute_tools", "register_geocompute_tools"),
 ]
 

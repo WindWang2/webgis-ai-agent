@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：115 能力 · 175 算法 · 107 参数契约。
+统计：116 能力 · 176 算法 · 108 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -41,6 +41,14 @@
 - **`density.analytical.mixed`** 分析密度（KDE/聚合混合路径）（`native`·成熟度 已验证）
   - 假设：KDE/聚合混合路径按规模切换（切换语义披露）
   - 局限：路径切换以规模阈值为准（诊断进证据块）
+
+## `areal_interpolation` — 面插值（dasymetric）
+
+源统计面总量按控制要素面（可带权重）的面积-权重比例切分重分配；输出 source∩control 碎片面要素集，总量守恒。
+
+- **`interpolation.dasymetric`** 分区密度重分配（`native`·成熟度 已验证，契约: `dasymetric_reallocation`，出处: `wright1936`）
+  - 假设：value_field 必须是总量语义（可加：人口/户数/建筑面积）；比率不可重分配；碎片权重 = 控制密度 d_j=w_j/A_j × 碎片面积；控制面密度均质假设（Wright 1936）；权重字段缺失/全零的源退化为纯面积权重插值（逐源计数披露，从不静默）
+  - 局限：输出是 source∩control 碎片面 —— 源边界不再出现（渲染按碎片值分级）；控制层未覆盖的源面整面保值（no_ancillary_coverage），不参与密度表达；控制密度均质假设是方法上界：真实人口密度在控制分区内仍有亚片区差异
 
 ## `band_math` — 波段/栅格代数
 

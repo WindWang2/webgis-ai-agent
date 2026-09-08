@@ -117,6 +117,15 @@ export function markRefSourceFailed(refId: string): void {
   cacheSet(refId, FAILED);
 }
 
+/** 用户显式重试（Layer Workspace 单层 retry）：清除失败墓碑 + 缓存条目，
+ *  允许立即重拉（不等 30s TTL 自然过期）。additive（workbench-v4 Wave 2）。 */
+export function clearRefSourceFailed(refId: string): void {
+  if (!refId) return;
+  const hadTombstone = tombstones.delete(refId);
+  const hadEntry = cache.delete(refId);
+  if (hadTombstone || hadEntry) emit();
+}
+
 export function getRefSourceState(refId: string): 'unresolved' | 'resolved' | 'failed' {
   if (tombstoneActive(refId)) return 'failed';
   const value = cache.get(refId);

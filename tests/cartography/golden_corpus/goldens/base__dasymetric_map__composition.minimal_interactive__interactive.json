@@ -1,6 +1,6 @@
 {
  "digest": {
-  "case": "planned-gate::dasymetric_map",
+  "case": "base::dasymetric_map::composition.minimal_interactive::interactive",
   "components": [
    {
     "id": "title",
@@ -8,7 +8,7 @@
     "position": "top-center",
     "priority": 10,
     "templateId": "title/academic",
-    "title": "planned 门禁用例",
+    "title": "dasymetric_map 专题图",
     "type": "title",
     "variant": "academic"
    },
@@ -43,7 +43,7 @@
     "variant": "default"
    }
   ],
-  "kind": "planned-gate",
+  "kind": "base",
   "layout": {
    "conflicts": [],
    "moved": [],
@@ -68,9 +68,7 @@
     "title": "title/academic"
    },
    "composition_template_id": "composition.minimal_interactive",
-   "reason_codes": [
-    "model_planned"
-   ],
+   "reason_codes": [],
    "rejected_count": 3,
    "required_slots": [
     "attribution",
@@ -83,12 +81,12 @@
     "title"
    ]
   },
-  "template": "",
+  "template": "composition.minimal_interactive",
   "validation": {
    "error_codes": [],
    "ok": true,
    "warning_codes": []
   }
  },
- "sha": "3eede13803ae2615"
+ "sha": "2cdce31627ad88fd"
 }

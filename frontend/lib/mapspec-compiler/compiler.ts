@@ -422,6 +422,7 @@ export function compileMapSpec(
     let labelLayerCountDelta = 0;
     if (clusterCfg && layerType === "circle") {
       maplibreLayer.filter = ["!", ["has", "point_count"]];
+      // clusterCfg.radius 语义由 MapLibre cluster 源配置承载（这里不直接消费）。
       const clusterLayer: any = {
         id: `${layer.id}__clusters`,
         type: "circle",

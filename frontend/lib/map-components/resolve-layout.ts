@@ -68,6 +68,9 @@ export const COMPONENT_LAYOUT_META: Record<string, ComponentLayoutMeta> = {
   methodology_note: { defaultSlot: 'bottom-left', priority: 3, stackStepPx: 34 },
   uncertainty_panel: { defaultSlot: 'bottom-right', priority: 3, stackStepPx: 34 },
   decision_panel: { defaultSlot: 'top-left', priority: 3, stackStepPx: 40 },
+  // Workbench V4（Wave 4）：table_panel 与 backend registry defaultPosition
+  // 同表（bottom-right）—— resolver/meta/默认表三处单一默认值源（E-9）。
+  table_panel: { defaultSlot: 'bottom-right', priority: 4, stackStepPx: 40 },
   // P6：全画布/叠加型 —— 无槽（求解器排除，catalog defaultPosition='none'）
   map_border: { defaultSlot: 'none', priority: 70 },
   graticule: { defaultSlot: 'none', priority: 60 },

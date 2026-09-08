@@ -27,6 +27,8 @@ const hudState = vi.hoisted(() => ({
   focusLayer: vi.fn(),
   historyOpen: false,
   resetDockState: vi.fn(),
+  // Workbench V4：会话切换清理分组树/多选/锁定/隔离。
+  resetLayerGroups: vi.fn(),
 }));
 
 vi.mock('@/lib/store/useHudStore', () => ({
