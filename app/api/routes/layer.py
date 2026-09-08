@@ -396,6 +396,22 @@ def _compute_descriptor_fallback(data) -> dict:
     except Exception:
         raster_capable = isinstance(data, dict) and ("file_path" in data or "path" in data)
 
+    # V4（ADR-0104 #4，additive）：与存储侧 compute_descriptor 同源的证据面
+    # —— 载荷显式声明的 CRS（未声明 → None，诚实缺省）。
+    crs: Optional[str] = None
+    try:
+        from app.services.spatial_meta_profiler import _declared_crs as _extract_crs
+
+        for crs_source in (fc, data):
+            if not isinstance(crs_source, dict):
+                continue
+            extracted, status = _extract_crs(crs_source)
+            if extracted and status == "explicit":
+                crs = str(extracted)[:64]
+                break
+    except Exception:
+        crs = None
+
     return {
         "points": points,
         "features": features,
@@ -406,6 +422,7 @@ def _compute_descriptor_fallback(data) -> dict:
         "filterable_fields": filterable_fields,
         "field_schema": field_schema,
         "field_schema_complete": field_schema_complete,
+        "crs": crs,
     }
 
 

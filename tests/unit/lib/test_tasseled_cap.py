@@ -155,8 +155,9 @@ def test_spectral_evi2_hand_golden():
         {"red": np.array([[0.0]]), "nir": np.array([[0.0]])}, "evi2")
     assert np.isnan(zero["array"][0, 0])
 
-    # 族计数 11（原 10 + evi2，全部既有指数不动）；所需角色 = (red, nir)
-    assert len(INDEX_FAMILY) == 11
+    # 族计数 13（11 + NDWI 拆名对 ndwi_gao/ndwi_water，审计 §3.2）；
+    # 所需角色 = (red, nir)
+    assert len(INDEX_FAMILY) == 13
     assert INDEX_FAMILY["evi2"].required_roles == ("red", "nir")
     assert INDEX_FAMILY["evi2"].valid_range == (-1.0, 2.5)
     for existing in ("ndvi", "savi", "evi", "nbr", "msavi"):

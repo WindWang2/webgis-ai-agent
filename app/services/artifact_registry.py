@@ -41,6 +41,9 @@ MAX_ARTIFACT_RECORDS = 128
 # logical_role / persistence / stale 诊断 / content 指纹等有界键 ——
 # 12 → 24 的翻倍仍是硬预算（每键值都有界），旧记录不足 12 键不受影响。
 MAX_RECORD_METADATA_KEYS = 24
+# V4：profile digest 进 metadata 的键数硬界（有界存储；值侧另由
+# profile_digest 生产方封顶）。
+_PROFILE_DIGEST_MAX_KEYS = 24
 LEDGER_PREFIX = "artifact-ledger"
 LEDGER_ALIAS = "artifacts"
 
@@ -370,6 +373,7 @@ async def register_artifact(
     descriptor: Optional[Dict[str, Any]] = None,
     revision: int = 0,
     metadata: Optional[Dict[str, Any]] = None,
+    profile_digest: Optional[Dict[str, Any]] = None,
     lock: Any = None,
 ) -> Optional[ArtifactRecord]:
     """注册/更新一条产物记录（幂等 upsert；同 capability 换 ref 自动 supersede）。
@@ -377,6 +381,12 @@ async def register_artifact(
     返回写入后的记录；失败（锁降级/存储异常）返回 None —— 注册是增值
     记录，绝不阻断工具路径。``lock``：调用方已持有 per-session lock 时
     透传复用（避免非重入自锁）；否则内部获取。
+
+    ``profile_digest``（V4，ADR-0104 #4，additive）：DatasetProfileV3 派生的
+    有界画像 digest（形状见 data_profile.profiler.profile_digest）。在场时
+    写入 ``metadata["profile_digest"]`` 并派生确定性检索键
+    ``metadata["profile_ref"]`` —— ArtifactContract.profile_ref 由此获得
+    真实生产方。缺席 → 不写（诚实缺省，绝不虚构）。
     """
     from app.services.distributed_lock import session_lock_registry
 
@@ -415,6 +425,21 @@ async def register_artifact(
         if metadata:
             merged = dict(rec.metadata)
             merged.update(metadata)
+            rec.metadata = merged
+        if isinstance(profile_digest, dict) and profile_digest:
+            # V4：profile link 生产方（有界、确定性、无时间戳）。检索键 =
+            # f"profile:v3:{artifact_id}@{revision}"（与 profiler LRU 的
+            # revision 键控同一新鲜度机制 —— 不新建存储）。
+            merged = dict(rec.metadata)
+            merged.setdefault(
+                "profile_ref",
+                f"profile:v3:{str(artifact_id)[:120]}@{int(rec.revision or 0)}",
+            )
+            merged["profile_digest"] = {
+                str(k)[:96]: v
+                for k, v in list(profile_digest.items())[:_PROFILE_DIGEST_MAX_KEYS]
+                if k != "created_at"  # 决定论：时间戳永不入证据
+            }
             rec.metadata = merged
         # 复活必须先验尸（audit §6.2.1）：expired/failed/superseded 记录
         # 此前被重注册无条件拉回 valid —— 从不探测载荷的调用方（如
@@ -480,6 +505,7 @@ async def register_tool_artifact(
     raster_fingerprints: Optional[Dict[str, str]] = None,
     ref_revisions: Optional[Dict[str, int]] = None,
     inputs: Optional[List[str]] = None,
+    profile_digest: Optional[Dict[str, Any]] = None,
 ) -> Optional[ArtifactRecord]:
     """dispatch/chart seam 的便捷注册（无 capability 上下文；type 由推断得出）。
 
@@ -496,9 +522,22 @@ async def register_tool_artifact(
     参数级血缘捕获），写台账血缘边 —— 会话血缘图由此覆盖 dispatch 接缝
     （审计 Agent C 缺口 #1）；register_artifact 内部有界（≤16），此处
     先剔除自引用。
+    ``profile_digest``（V4，ADR-0104 #4）：DatasetProfileV3 派生的有界画像
+    digest。缺席时**惰性派生**：本 ref 的 session descriptor（store 时一次
+    遍历产物，O(1) 读取）可得即投影 —— profile_ref 的真实生产方；描述符
+    缺席/派生失败 → None（诚实缺省，绝不虚构）。
     """
     if not ref or not str(ref).startswith("ref:"):
         return None
+    if profile_digest is None:
+        try:
+            from app.services.data_profile.profiler import descriptor_profile_digest
+            from app.services.session_data import session_data_manager
+
+            descriptor = await session_data_manager.get_ref_descriptor(session_id, ref)
+            profile_digest = descriptor_profile_digest(descriptor, ref=ref)
+        except Exception:  # noqa: BLE001 — digest 是增值记录，绝不阻断注册
+            profile_digest = None
     metadata: Dict[str, Any] = {"seam": "dispatch"} if result is None else {
         "seam": "dispatch",
         "result_type": str(result.get("type") or "")[:32],
@@ -531,6 +570,7 @@ async def register_tool_artifact(
         producer_tool=tool,
         inputs=[str(i) for i in (inputs or []) if i and i != ref],
         metadata=metadata,
+        profile_digest=profile_digest,
     )
 
 

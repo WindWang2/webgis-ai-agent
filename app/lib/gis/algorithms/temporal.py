@@ -8,6 +8,12 @@ VNext（ADR-0099）：temporal.trend 补齐非参数方法族科学元数据
 （method 参数：ols_sen 缺省逐位不变 / mann_kendall / seasonal_mann_kendall），
 新增 temporal.changepoint（CUSUM 均值变点，固定种子 bootstrap）。
 实现位于 app/services/temporal/trend.py，工具层只做薄包装 + 证据块。
+
+science-v3（审计 03 §8 R1/R9）：temporal.hotspot 语义修正为 ST-DBSCAN
+真实实现（审计 F1），新增 temporal.emerging_hotspot（Emerging Hot Spot
+Analysis：逐期 Gi* + 逐箱 MK → ESRI 17+1 演化分类，实现位于
+app/lib/geo_analysis/spatiotemporal_eha.py）；temporal.aggregate 补
+科学元数据；temporal.changepoint 补 method_references（page1954）。
 """
 from __future__ import annotations
 
@@ -46,10 +52,18 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cpu_cost="medium", memory_cost="low", io_cost="low",
             preferred_execution_policy="THREAD", priority=10,
             algorithm_family="temporal_descriptive",
-            assumptions=["按时间粒度分组聚合（描述性）；NaT 剔除并披露"],
-            limitations=["分组键时区语义不归一（诚实披露）"],
+            assumptions=["按时间粒度分组聚合（描述性）；NaT 剔除并披露",
+                         "count=分组计数；sum/mean/min/max 作用于显式 metric_fields"],
+            limitations=["分组键时区语义不归一（诚实披露）",
+                         "空分组/全 NaT 不伪造统计（类型化空结果）"],
             crs_class="CRS_AGNOSTIC",
+            scientific_preconditions=["temporal_field_required"],
             random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/test_temporal_gis_runtime.py::test_temporal_aggregation_daily",
+                "tests/unit/test_temporal_gis_runtime.py::test_temporal_aggregation_monthly",
+            ],
                 ),
 
         AlgorithmDescriptor(
@@ -99,6 +113,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cpu_cost="low", memory_cost="low", io_cost="low",
             preferred_execution_policy="INLINE", priority=15,
             algorithm_family="change_point",
+            method_references=["page1954"],
             assumptions=[
                 "单均值漂移假设：变点 = argmax|Σ(x−x̄)|（k 取 1..n−1）",
                 "显著性 = 无变化零假设下固定种子 bootstrap 的 max-CUSUM 分布",
@@ -181,20 +196,86 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ]
         ),
 
+        # 审计 F1 修正：本条目的真实语义是 ST-DBSCAN 时空密度聚类
+        # （引擎 SpatiotemporalClusterEngine → st_dbscan 同核），不再是
+        # 失实的「时间片×空间箱计数」；箱计数×逐期 Gi*×MK 的热点演化
+        # 分析见 temporal.emerging_hotspot。
         AlgorithmDescriptor(
-            id="temporal.hotspot", name="时空热点", category="temporal_analysis",
+            id="temporal.hotspot", name="时空热点簇（ST-DBSCAN）",
+            category="temporal_analysis",
             capabilities=["spatiotemporal_clustering"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="hotspot_result", tool_candidates=["spatiotemporal_hotspot"],
             cpu_cost="high", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD", priority=15,
-            algorithm_family="temporal_descriptive",
-            assumptions=["时间片 × 空间箱计数矩阵（描述性）",
-                         "非时空扫描统计（与 LISA/Knox 语义正交）"],
-            limitations=["箱宽选择敏感（参数披露）"],
+            algorithm_family="spatiotemporal_clustering",
+            method_references=["ester_kriegel1996"],
+            assumptions=["ST-DBSCAN 时空密度聚类：eps_spatial_m（米）/ "
+                         "eps_temporal_days（天）/ min_samples 参数语义",
+                         "输出为时空簇计数与成员要素（描述性密度聚类）；"
+                         "不是逐期 Gi*、不做 Emerging Hotspot 演化分类"
+                         "（后者见 temporal.emerging_hotspot）",
+                         "时间字段解析 NaT 剔除并披露（与 temporal.profile 同约定）"],
+            limitations=["无自动带宽：eps 需调用方给定，结果对 eps/min_samples 敏感（参数披露）",
+                         "簇计数输出无显著性检验语义（密度聚类的诚实边界）"],
             crs_class="GEOGRAPHIC_OK",
             random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/test_temporal_gis_runtime.py::test_spatiotemporal_cluster_engine",
+            ],
                 ),
+
+        # science-v3 R1（审计 03 §8）：Emerging Hot Spot Analysis——
+        # 把 temporal.hotspot 原先失实宣称的「箱计数矩阵」语义真正落地。
+        AlgorithmDescriptor(
+            id="temporal.emerging_hotspot", name="时空热点演化（EHA）",
+            category="temporal_analysis",
+            capabilities=["emerging_hotspot_analysis"],
+            input_artifact_types=["grid_aggregate", "admin_aggregate_table",
+                                  "poi_feature_set", "point_feature_set"],
+            output_artifact_type="stats_table",
+            tool_candidates=["emerging_hotspot_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", priority=15,
+            algorithm_family="spatiotemporal_statistics",
+            method_references=["getis_ord1992", "mann1945", "kendall1975", "esri_eha"],
+            assumptions=[
+                "输入为已聚合的空间箱 × 时间期计数量矩阵（space-time cube，"
+                "H3/格网聚合由调用方完成；某期缺失的箱按 0 计入并披露）",
+                "逐期对全箱计算 Getis-Ord Gi* z（距离段二值权重、含自身 "
+                "w_ii=1），双侧解析 p 经 BH-FDR 校正后判显著（q<alpha）",
+                "对每个箱的 Gi* z 值时序跑 Mann-Kendall（tie 校正方差 + "
+                "连续性校正）；按 ESRI Emerging Hot Spot Analysis 决策树"
+                "输出 17 类 + none（互斥完备；类别码 ±1..±8/0）",
+                "≥90% 期显著才进入 intensifying/persistent/diminishing/"
+                "historical 分支；MK 需 n_periods ≥ 4，否则趋势不可得、"
+                "分类退化为形态学规则并披露",
+            ],
+            limitations=[
+                "逐期 Gi* 用纯空间邻域（非时空 lag 邻域）——与 ArcGIS 实现同口径，"
+                "但对期数少、箱数少的立方显著性偏保守",
+                "空间箱 <8 或期数 <8 时正态近似偏保守（仅描述性解读，警告在场）",
+                "某期各箱计数全同（零方差）时该期无空间对比，z 置 0 并披露",
+                "分类对 binning 粒度与 distance_band 敏感（band=0 自动取平均 "
+                "8-NN 距离，自动值在输出中披露）",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=[
+                "min_numeric_samples:3",
+                "min_temporal_observations:2",
+            ],
+            uncertainty_outputs=["statistical_significance"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="解析公式（无模拟/置换）：同输入逐位可复现；"
+                                "Gi*/MK 手算锚点见 conformance 测试",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_emerging_hotspot.py::test_gistar_hand_anchor_and_fdr",
+                "tests/unit/lib/test_emerging_hotspot.py::test_categories_new_persistent_sporadic_consecutive_historical",
+                "tests/unit/lib/test_emerging_hotspot.py::test_classification_mutually_exclusive_and_complete",
+            ],
+        ),
 
         AlgorithmDescriptor(
             id="temporal.raster_ts", name="时序栅格", category="temporal_analysis",

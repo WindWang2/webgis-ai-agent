@@ -115,6 +115,7 @@ def attach_turn_context(
     env_block: str = "",
     surface_block: str = "",
     active_tools_block: str = "",
+    evicted_refs_block: str = "",
 ) -> str:
     """Attach the capability to the turn for the extension's local session view.
 
@@ -125,6 +126,8 @@ def attach_turn_context(
     Pi 路径此前整块丢失）与工具面偏好行（compile_tool_surface 纯派生）。
     ``active_tools_block``（可选，ADR-0103）：动态激活名单 marker，扩展据此
     per-turn setActiveTools。
+    ``evicted_refs_block``（可选，ADR-0104 #6）：用户消息引用的 ref 已被逐出时
+    的有界诚实 tombstone（可重载 vs 已失效）——与 legacy 组装路径同一策略。
     全部插在用户消息与 turn marker 之间；marker 必须保持最后——扩展的
     ``currentTurnToken`` 取最新 entry 的最后一个匹配。
     """
@@ -139,6 +142,8 @@ def attach_turn_context(
         parts.append(surface_block)
     if active_tools_block:
         parts.append(active_tools_block)
+    if evicted_refs_block:
+        parts.append(evicted_refs_block)
     parts.append(f"[{TURN_CONTEXT_MARKER}:{token}]")
     parts.append("(Internal routing context; do not quote or modify this marker.)")
     return "\n\n".join(parts)
@@ -163,6 +168,7 @@ async def bind_turn_prompt(
     plan_block = ""
     surface_block = ""
     active_tools_block = ""
+    evicted_refs_block = ""
     if session_id:
         try:
             from app.services.session_plan import (
@@ -188,10 +194,28 @@ async def bind_turn_prompt(
                 active_tools_block = _active_tools_block_for(message, surface, plan)
         except Exception:
             logger.exception("[PiTurn] SessionPlan projection failed session=%s", session_id)
+        # ADR-0104 #6：逐出 ref 的诚实 tombstone（有界、廉价、绝不阻断）。
+        # 复用 legacy 组装路径的同一构建器（单一策略实现）。
+        try:
+            from app.services.chat.context_policy import (
+                build_evicted_refs_tombstone,
+                policy_enabled,
+            )
+            from app.services.session_data import session_data_manager
+
+            if policy_enabled():
+                evicted_refs_block = await build_evicted_refs_tombstone(
+                    session_id,
+                    [{"role": "user", "content": message}],
+                    session_data_manager,
+                )
+        except Exception:  # noqa: BLE001 — tombstone 是增值披露，绝不阻断 turn
+            evicted_refs_block = ""
     return attach_turn_context(
         message, token, cartography_block, plan_block,
         env_block=env_block, surface_block=surface_block,
         active_tools_block=active_tools_block,
+        evicted_refs_block=evicted_refs_block,
     )
 
 

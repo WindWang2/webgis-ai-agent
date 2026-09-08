@@ -192,6 +192,12 @@ async def simulate_agent_loop(
             report.violations.append(
                 f"step {idx}: expected ok, got error {view.error_code}: {view.message[:80]}"
             )
+        # re-review LOW：expect_outcome="error" 且未指名错误码时同样断言
+        # （否则「缺 ref → 结构化错误」类案例对错误形态零约束）。
+        if step.expect_outcome == "error" and view.ok and step.expect_error_code is None:
+            report.violations.append(
+                f"step {idx}: expected error, got ok"
+            )
 
         # 不变量 c：no-progress 模式联动（工具类别由描述符声明 —— 波 1 语义
         # 分类驱动波 6 模式检测的闭环）
@@ -364,3 +370,27 @@ def route_decision_diff(decision_a: Any, decision_b: Any) -> Dict[str, Any]:
         if a.get(key) != b.get(key):
             diff[key] = {"a": a.get(key), "b": b.get(key)}
     return diff
+
+
+def chain_completeness_report(
+    session_id: str,
+    *,
+    min_completeness: float = 0.95,
+    na_stages: Optional[Sequence[str]] = None,
+    expected_stages: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """V4 Wave 8（ADR-0104 决策 9）：会话证据链完整性回归面。
+
+    从会话 JSONL（trace_store 持久化）读链并跑 `chain_gate` 门 ——
+    replay 侧的离线消费入口（链发射/持久化在 turn 收尾完成）。零 LLM、
+    零网络；链缺席 = 空报告（不伪造通过）。``expected_stages`` 是场景
+    必须覆盖的阶段集合（场景化回归主判据，见 chain_gate）。
+    """
+    from app.evaluation.chain_gate import run_chain_gate_for_session
+
+    return run_chain_gate_for_session(
+        session_id,
+        min_completeness=min_completeness,
+        na_stages=set(na_stages) if na_stages else None,
+        expected_stages=set(expected_stages) if expected_stages else None,
+    )

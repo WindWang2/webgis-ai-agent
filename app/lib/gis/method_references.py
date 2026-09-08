@@ -116,10 +116,24 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
         ),
         MethodReference(
             "tarboton1997",
-            "D8 flow direction / flow accumulation",
+            "D-infinity flow direction / partitioned accumulation",
             "Tarboton, D. G. (1997). A New Method for the Determination of "
             "Flow Directions and Upslope Areas in Grid Digital Elevation "
             "Models. Water Resources Research, 33(2), 309–319.",
+        ),
+        MethodReference(
+            "ocallaghan_mark1984",
+            "D8 flow direction / drainage network extraction",
+            "O'Callaghan, J. F., & Mark, D. M. (1984). The Extraction of "
+            "Drainage Networks from Digital Elevation Data. Computer "
+            "Vision, Graphics, and Image Processing, 28(3), 323–344.",
+        ),
+        MethodReference(
+            "wang_robinson_white2000",
+            "Viewshed (R3 algorithm, sector-based without sightlines)",
+            "Wang, J., Robinson, G. J., & White, K. (2000). Generating "
+            "Viewsheds without Using Sightlines. Photogrammetric "
+            "Engineering & Remote Sensing, 66(1), 87–90.",
         ),
         MethodReference(
             "weiss2001",
@@ -141,6 +155,20 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Mann-Kendall trend test",
             "Mann, H. B. (1945). Nonparametric Tests Against Trend. "
             "Econometrica, 13(3), 245–259.",
+        ),
+        MethodReference(
+            "page1954",
+            "CUSUM (cumulative sum) change-point statistic",
+            "Page, E. S. (1954). Continuous Inspection Schemes. "
+            "Biometrika, 41(1/2), 100–115.",
+        ),
+        MethodReference(
+            "esri_eha",
+            "Emerging Hot Spot Analysis taxonomy (17 categories + none)",
+            "Esri (2024). Emerging Hot Spot Analysis—Space Time Pattern "
+            "Mining tool reference (ArcGIS Pro documentation). "
+            "https://pro.arcgis.com/en/pro-app/latest/tool-reference/"
+            "space-time-pattern-mining/emerginghotspots.htm",
         ),
         MethodReference(
             "kendall1975",
@@ -176,10 +204,24 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Operations Research, 16(5), 955–961.",
         ),
         MethodReference(
+            # science-v3 审计 R1（04 域 §7/§8）：venue/卷期勘误 —— 原
+            # "IJHG, 11(1), 68–84" 有误；E2SFCA 发表于 Health & Place
+            # 15(4):1100–1107（PubMed 19576837，已 web 复核）。
             "luo_qi2009",
             "2SFCA / E2SFCA accessibility",
             "Luo, W., & Qi, Y. (2009). An Enhanced Two-Step Floating Catchment "
-            "Area (E2SFCA) Method. IJHG, 11(1), 68–84.",
+            "Area (E2SFCA) Method for Measuring Spatial Accessibility to "
+            "Primary Care Physicians. Health & Place, 15(4), 1100–1107.",
+        ),
+        MethodReference(
+            # science-v3 审计 R1：2SFCA 原始出处（floating catchment + gravity
+            # 两法统一框架），此前未登记 —— network.accessibility 方法谱系源头。
+            "luo_wang2003",
+            "2SFCA two-step floating catchment area (original)",
+            "Luo, W., & Wang, F. (2003). Measures of Spatial Accessibility to "
+            "Health Care in a GIS Environment: Synthesis and a Case Study in "
+            "the Chicago Region. Environment and Planning B: Planning and "
+            "Design, 30(6), 865–884.",
         ),
         # ── 遥感 ─────────────────────────────────────────────────────
         MethodReference(
@@ -208,6 +250,21 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "McFeeters, S. K. (1996). The Use of the Normalized Difference "
             "Water Index (NDWI) in the Delineation of Open Water Features. "
             "IJRS, 17(7), 1425–1432.",
+        ),
+        MethodReference(
+            "heinz_chang2001",
+            "FCLS fully constrained linear spectral unmixing",
+            "Heinz, D. C., & Chang, C.-I. (2001). Fully Constrained Least "
+            "Squares Linear Spectral Mixture Analysis Method for Material "
+            "Quantification in Hyperspectral Imagery. "
+            "IEEE TGRS, 39(3), 529–545.",
+        ),
+        MethodReference(
+            "flood2013",
+            "Medoid temporal compositing (multi-dimensional median)",
+            "Flood, N. (2013). Seasonal Composite Landsat TM/ETM+ Images "
+            "Using the Medoid (a Multi-Dimensional Median). "
+            "Remote Sensing, 5(12), 6481–6500.",
         ),
         MethodReference(
             "xu2006",
@@ -360,6 +417,17 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Webster, R., & Oliver, M. A. (2007). Geostatistics for "
             "Environmental Scientists (2nd ed.). Wiley.",
         ),
+        # science-v3 审计 02 域 §8 建议 #4：robust variogram 估计器出处。
+        # empirical_variogram(robust=True) 的 0.457/0.494/0.045 修正常数
+        # 即出自该文（2γ(h) = [mean|Δz|^½]⁴ / (0.457 + 0.494/|N(h)| +
+        # 0.045/|N(h)|²)，对离群对稳健）。
+        MethodReference(
+            "cressie_hawkins1980",
+            "Cressie–Hawkins robust semivariogram estimator",
+            "Cressie, N., & Hawkins, D. M. (1980). Robust Estimation of "
+            "the Variogram: I. Journal of the International Association "
+            "for Mathematical Geology, 12(2), 115–125.",
+        ),
         MethodReference(
             "odeh1995",
             "Regression kriging",
@@ -389,6 +457,20 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Hakimi, S. L. (1964). Optimum Locations of Switching Centers "
             "and the Absolute Centers and Medians of a Graph. Operations "
             "Research, 12(3), 450–459.",
+        ),
+        MethodReference(
+            # science-v3 审计 R0（04 域 F1/§7）：p-median MILP 的标准出处。
+            # 题录经 web 复核（Wiley DOI 10.1111/j.1538-4632.1970.tb00142.x、
+            # NASA ADS 1970GeoAn...2...30R）：篇名 Central Facilities Location，
+            # Geographical Analysis 2(1), 30–42 —— 任务草案里的
+            # "Integer Programming Formulations..., 2(4), 317–328" 有误，
+            # 以出版方记录为准。ReVelle & Swain 首次把 p-median 写成整数
+            # 规划式，是 pmedian_exact 的方法学锚点（church_revelle1974
+            # 归还 MCLP/network.mclp_exact）。
+            "revelle_swain1970",
+            "p-median integer programming formulation",
+            "ReVelle, C. S., & Swain, R. W. (1970). Central Facilities "
+            "Location. Geographical Analysis, 2(1), 30–42.",
         ),
         MethodReference(
             "church_revelle1974",
@@ -506,6 +588,14 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Aperture Radar Images. Artech House.",
         ),
         MethodReference(
+            "esa_s1_ipf_denoising",
+            "Sentinel-1 GRD thermal noise denoising (IPF noise LUT semantics)",
+            "European Space Agency (2017). Thermal Denoising of Products "
+            "Generated by the Sentinel-1 IPF. S-1 Mission Performance Centre "
+            "Technical Note, MPC-0392, Issue 1.1 (doc. ref. "
+            "ESA-RS-CLI-52-0946), ESA.",
+        ),
+        MethodReference(
             "haralick1973",
             "GLCM texture features",
             "Haralick, R. M., Shanmugam, K., & Dinstein, I. (1973). Textural "
@@ -575,6 +665,20 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Sibson, R. (1981). A Brief Description of Natural Neighbor "
             "Interpolation. In Interpolating Multivariate Data, Wiley, "
             "21–36.",
+        ),
+        MethodReference(
+            "duchon1977",
+            "Thin-plate spline (RBF thin-plate kernel)",
+            "Duchon, J. (1977). Splines Minimizing Rotation-Invariant "
+            "Semi-Norms in Sobolev Spaces. In Constructive Theory of "
+            "Functions of Several Variables, Lecture Notes in Mathematics "
+            "571, Springer, 85–100.",
+        ),
+        MethodReference(
+            "thiessen1911",
+            "Thiessen (nearest-neighbour / Voronoi) polygon interpolation",
+            "Thiessen, A. H. (1911). Precipitation Averages for Large "
+            "Areas. Monthly Weather Review, 39(7), 1082–1084.",
         ),
         MethodReference(
             "isaaks_srivastava1989",

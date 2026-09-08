@@ -56,6 +56,15 @@ class AlgorithmResolution(BaseModel):
     # 拒绝时建议的数据变换（如「重投影到 UTM」）。
     scientific_warnings: List[str] = Field(default_factory=list)
     required_transformations: List[str] = Field(default_factory=list)
+    # V4（ADR-0104 #5，additive）：plan-time backend 证据 —— 选中算法的
+    # 实现变体 + 资源分层（backend_selection.select_backend 纯函数投影，
+    # 消费本 resolution 的 ExecutionPlan 面记录）。空 = 算法未声明变体或
+    # registry 投影不可得。**非门**：backend 选择不改变 capability→algorithm
+    # 语义（backend_selection 模块冻结注释的边界不变）。
+    backend_variant: str = ""
+    backend: str = ""
+    scale_tier: str = ""
+    runtime_strategy: str = ""
 
 
 def _dominant_geometry(profile: Optional[Dict[str, Any]]) -> str:
@@ -82,6 +91,26 @@ def _profile_fields(profile: Optional[Dict[str, Any]]) -> Optional[set]:
     if not isinstance(fields, dict) or not fields:
         return None
     return set(fields.keys())
+
+
+def _backend_evidence(algorithm_id: str, feature_count: Optional[int]) -> tuple:
+    """选中算法的 plan-time backend 投影（纯函数；失败 = 全空，诚实缺省）。
+
+    select_backend 无状态无 I/O（backend_selection 模块契约），此处只在
+    resolution 记录其决策 —— 不改门、不改 capability→algorithm 语义。
+    """
+    try:
+        from app.lib.gis.backend_selection import ScaleProfile, select_backend
+
+        d = select_backend(algorithm_id, ScaleProfile(feature_count=feature_count))
+        return (
+            d.variant_id or "",
+            d.backend or "",
+            d.scale_tier or "",
+            d.runtime_strategy or "",
+        )
+    except Exception:  # noqa: BLE001 — 证据是增值，绝不影响裁决
+        return ("", "", "", "")
 
 
 class AlgorithmResolver:
@@ -347,6 +376,7 @@ class AlgorithmResolver:
                 reason += (
                     f" + policy={policy} cost[{best_score}:{best_bd}]"
                 )
+            bv, bb, bt, brs = _backend_evidence(best.id, feature_count)
             return AlgorithmResolution(
                 capability=capability,
                 status="resolved",
@@ -359,6 +389,10 @@ class AlgorithmResolver:
                 cost_score=best_score if contested else None,
                 cost_breakdown=best_bd if contested else "",
                 scientific_warnings=best_warns[:_MAX_REJECTIONS],
+                backend_variant=bv,
+                backend=bb,
+                scale_tier=bt,
+                runtime_strategy=brs,
             )
 
         # ADR-0099：全拒场景把拒绝理由里的 ;transform= 建议汇成有界
@@ -382,6 +416,7 @@ class AlgorithmResolver:
                 tool, why, fb_warns = self._check_candidate(
                     fb, profile=profile, available_tools=available_tools)
                 if tool:
+                    fb_bv, fb_bb, fb_bt, fb_brs = _backend_evidence(fb.id, feature_count)
                     trail.append(FallbackStep(
                         from_element=algo.id,
                         to_element=fb.id,
@@ -399,6 +434,10 @@ class AlgorithmResolver:
                         fallback_trail=trail[:_MAX_FALLBACK_TRAIL],
                         fallback_candidates=[fb.id],
                         scientific_warnings=fb_warns[:_MAX_REJECTIONS],
+                        backend_variant=fb_bv,
+                        backend=fb_bb,
+                        scale_tier=fb_bt,
+                        runtime_strategy=fb_brs,
                     )
         # 能力级 fallback（如 grid_binning → density_surface）：目标能力可
         # 运行时记录为 fallback 建议，但本能力保持 unavailable（诚实报告；

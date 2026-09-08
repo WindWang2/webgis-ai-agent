@@ -77,7 +77,11 @@ def test_spectral_reference_provenance_registry():
         "gndvi": "",
         "savi": "huete1988",
         "msavi": "",
-        "ndwi": "gao1996",
+        # NDWI 拆名（审计 §3.2）：裸 ndwi = McFeeters 开放水体；
+        # ndwi_gao = Gao 植被水分；ndwi_water = ndwi 显式别名。
+        "ndwi": "mcfeeters1996",
+        "ndwi_gao": "gao1996",
+        "ndwi_water": "mcfeeters1996",
         "mndwi": "xu2006",
         "ndbi": "zha_woodcock2003",
         "ndmi": "",

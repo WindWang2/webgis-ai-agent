@@ -8,6 +8,12 @@ VNext（ADR-0099）：temporal_trend 增加非参数方法分支
 证据块附加），新增 temporal_changepoint（CUSUM 均值变点，固定种子
 bootstrap 显著性）。实现位于 app/services/temporal/trend.py——工具只做
 validate → 调实现 → 挂证据。
+
+science-v3（审计 03 §8）：spatiotemporal_hotspot 话术修正为 ST-DBSCAN
+真实语义（审计 F4）；新增 emerging_hotspot_analysis（R1 Emerging Hot
+Spot Analysis：逐期 Gi* + 逐箱 MK → ESRI 17+1 分类），实现位于
+app/lib/geo_analysis/spatiotemporal_eha.py，descriptor =
+temporal.emerging_hotspot。
 """
 import asyncio
 import logging
@@ -151,6 +157,22 @@ class SpatiotemporalHotspotArgs(BaseModel):
     eps_spatial_m: float = Field(default=1000.0, description="Spatial search radius in meters")
     eps_temporal_days: float = Field(default=30.0, description="Temporal search window in days")
     min_samples: int = Field(default=5, description="Minimum cluster size")
+
+
+class EmergingHotspotArgs(BaseModel):
+    dataset: Any = Field(
+        ..., description=(
+            "GeoJSON FeatureCollection：每个 Feature = 一个空间箱"
+            "（Point 或 Polygon，取质心），属性含逐期计数字段"
+        ))
+    counts_field: str = Field(
+        default="counts",
+        description="逐期计数数组属性名（数组长度=期数，所有箱一致；缺失期按 0 计入）")
+    distance_band_m: float = Field(
+        default=0.0,
+        description="空间权重距离段（米，含自身）；0=自动（平均 8-NN 距离，输出中披露）")
+    alpha: float = Field(
+        default=0.05, description="显著性水平（逐期 Gi* 经 BH-FDR 校正后 q<alpha 判显著）")
 
 
 class TemporalRasterArgs(BaseModel):
@@ -432,7 +454,12 @@ def register_temporal_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="spatiotemporal_hotspot",
-        description="时空联合聚类与热点发现（ST-DBSCAN）：识别在特定空间距离与时间窗口内聚集的时空持续/偶发热点。",
+        description=(
+            "时空密度聚类（ST-DBSCAN）：在给定空间半径（米）与时间窗口（天）内"
+            "发现满足 min_samples 的高密度时空点簇，输出簇计数与成员要素"
+            "（描述性聚类，无显著性检验；不做逐期热点演化分类——那请用 "
+            "emerging_hotspot_analysis）。"
+        ),
         tier=3,
         domains=["temporal", "statistics"],
         args_model=SpatiotemporalHotspotArgs,
@@ -523,8 +550,10 @@ def _attach_trend_evidence(
     algorithm_id: str = "temporal.trend",
     tool: str = "temporal_trend",
     seed: Optional[int] = None,
+    parameters_applied: Optional[dict] = None,
 ) -> dict:
-    """挂 temporal.trend / temporal.changepoint 的 VNext 科学证据块。"""
+    """挂 temporal.trend / temporal.changepoint / temporal.emerging_hotspot
+    的 VNext 科学证据块（descriptor 为 assumptions/limitations 单一事实源）。"""
     from app.lib.gis.algorithm_registry import get_algorithm_registry
     from app.lib.gis.scientific_evidence import build_evidence
 
@@ -532,10 +561,13 @@ def _attach_trend_evidence(
     if descriptor is None:
         logger.warning("scientific evidence requested for unknown algorithm %s", algorithm_id)
         return payload
+    params = {"method": method}
+    if parameters_applied:
+        params.update(parameters_applied)
     payload["scientific_evidence"] = build_evidence(
         descriptor,
         tool=tool,
-        parameters_applied={"method": method},
+        parameters_applied=params,
         input_facts=(
             {"feature_count": int(n_points)} if n_points is not None else {}),
         warnings=warnings,
@@ -714,3 +746,153 @@ def register_temporal_science_tools(registry: ToolRegistry):
         except Exception as e:
             logger.error(f"[temporal_seasonal_decompose] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"季节分解失败: {str(e)}"}
+
+    # science-v3 R1（审计 03 §8）：Emerging Hot Spot Analysis——
+    # temporal.hotspot 原失实宣称的「箱计数 × 逐期 Gi* × MK」语义落地。
+    @tool(
+        registry,
+        name="emerging_hotspot_analysis",
+        description=(
+            "时空热点演化分析（Emerging Hot Spot Analysis）：对「空间箱 × 时间期」"
+            "计数量矩阵逐期计算 Getis-Ord Gi*（BH-FDR 校正后判显著），再对每箱的 "
+            "Gi* z 值时序跑 Mann-Kendall，按 ESRI 分类树输出 "
+            "new/consecutive/intensifying/persistent/diminishing/sporadic/"
+            "oscillating/historical（热点+冷点镜像）与 none——互斥完备 17+1 类。"
+            "\n何时用：想知道热点在「新生/持续/增强/消退/反复」的哪个阶段"
+            "（而非单期热点图）；"
+            "\n关键约束：输入须是已聚合的箱×期计数（H3/格网聚合先行，缺失期按 0）；"
+            "期数 ≥2（MK 趋势需 ≥4）；箱数 ≥3；需米制坐标（自动投影 UTM）。"
+        ),
+        tier=2,
+        domains=["temporal", "statistics"],
+        args_model=EmergingHotspotArgs,
+        side_effect="deterministic_compute",
+        deterministic=True,
+        network=False,
+        latency_class="medium",
+        memory_class="medium",
+        scale_class="medium",
+        output_semantic_type="stats",
+        result_size_policy="inline_small",
+        unit_semantics="meters",
+        tags=("时空热点演化", "emerging_hotspot", "getis_ord", "mann_kendall",
+              "热点分析", "时空立方"),
+        failure_modes=("missing_data", "invalid_args", "empty_result"),
+    )
+    async def emerging_hotspot_analysis(
+        dataset: Any,
+        counts_field: str = "counts",
+        distance_band_m: float = 0.0,
+        alpha: float = 0.05,
+        session_id: str = "",
+    ) -> dict:
+        import json as _json
+
+        import numpy as np
+
+        from app.lib.geo_analysis._vector import extract_centroids
+        from app.lib.geo_analysis.spatiotemporal_eha import emerging_hotspot_narrated
+        from app.lib.geo_processor.core import (
+            extract_declared_crs,
+            safe_parse as safe_parse_geojson,
+            to_utm_gdf,
+        )
+        from app.lib.gis.uncertainty import StatisticalSignificance
+
+        try:
+            data = safe_parse_geojson(dataset)
+            if not isinstance(data, dict) or not data.get("features"):
+                return {"type": "error",
+                        "message": "时空热点演化分析失败: 输入不是含要素的 GeoJSON FeatureCollection"}
+            res = to_utm_gdf(data)
+            if res is None or res[0] is None:
+                return {"type": "error",
+                        "message": "时空热点演化分析失败: 输入无有效点/面要素"}
+            gdf, _ = res
+            field = str(counts_field)
+            if field not in gdf.columns:
+                return {"type": "error",
+                        "message": (f"时空热点演化分析失败: 逐期计数字段 '{field}' "
+                                    "不在要素属性中（每要素属性应含逐期计数数组）")}
+            series: List[List[float]] = []
+            for i, v in enumerate(gdf[field].tolist()):
+                if isinstance(v, (list, tuple, np.ndarray)):
+                    series.append([float(x) for x in v])
+                elif isinstance(v, str):
+                    try:
+                        series.append([float(x) for x in _json.loads(v)])
+                    except Exception:
+                        return {"type": "error",
+                                "message": (f"时空热点演化分析失败: 第 {i} 个要素的 "
+                                            f"'{field}' 不是可解析的计数数组")}
+                else:
+                    return {"type": "error",
+                            "message": (f"时空热点演化分析失败: 第 {i} 个要素的 "
+                                        f"'{field}' 不是逐期计数数组")}
+            if len({len(s) for s in series}) > 1:
+                return {"type": "error",
+                        "message": "时空热点演化分析失败: 各箱的逐期计数数组长度不一致（期数须相同）"}
+            coords = np.asarray(extract_centroids(gdf), dtype=float)
+            counts = np.asarray(series, dtype=float)
+            declared_crs = extract_declared_crs(data) or "EPSG:4326"
+
+            result = await asyncio.to_thread(
+                emerging_hotspot_narrated,
+                counts, coords, "", float(distance_band_m), float(alpha))
+
+            payload = dict(result)
+            payload["counts_field"] = field
+            payload["declared_crs"] = declared_crs
+            # 报文护栏：矩阵全量内联仅在小立方时；大立方只给分类与汇总。
+            if result["n_locations"] * result["n_periods"] > 5000:
+                for key in ("gi_star_z", "gi_star_p", "gi_star_q_fdr"):
+                    payload[key] = None
+                payload["_matrices_omitted"] = (
+                    "箱数×期数 > 5000，逐格 z/p/q 矩阵未内联（分类/计数/证据完整）；"
+                    "需要矩阵请缩小范围或分层调用")
+
+            flat_z = [abs(v) for row in result["gi_star_z"] for v in row]
+            mk_avail = [m for m in result["mk_trend"] if m["available"]]
+            uncertainty = [
+                StatisticalSignificance(
+                    target="gi_star_periodic",
+                    statistic_name="Getis-Ord Gi* (max |z|, bins x periods)",
+                    statistic_value=(max(flat_z) if flat_z else 0.0),
+                    p_value=(min(min(row) for row in result["gi_star_p"])
+                             if result["gi_star_p"] else None),
+                    method="analytic_normal",
+                    alternative="two-sided",
+                    multiple_testing="BH-FDR",
+                ),
+                StatisticalSignificance(
+                    target="mk_trend_per_bin",
+                    statistic_name="Mann-Kendall z on per-bin Gi* z-series",
+                    statistic_value=(max((abs(m["z"]) for m in mk_avail), default=0.0)
+                                     if mk_avail else None),
+                    p_value=(min(m["p_value"] for m in mk_avail) if mk_avail else None),
+                    method="analytic_normal",
+                    alternative="two-sided",
+                ),
+            ]
+            warnings = list(result["warnings"] or [])
+            warnings.append(
+                f"坐标已自动投影到局部 UTM（米制 Gi* 权重）；声明 CRS={declared_crs}")
+            _attach_trend_evidence(
+                payload,
+                method="emerging_hotspot_analysis",
+                n_points=result["n_locations"],
+                uncertainty=uncertainty,
+                warnings=warnings or None,
+                algorithm_id="temporal.emerging_hotspot",
+                tool="emerging_hotspot_analysis",
+                parameters_applied={
+                    "counts_field": field,
+                    "distance_band_m": float(distance_band_m),
+                    "alpha": float(alpha),
+                    "n_periods": result["n_periods"],
+                },
+            )
+            return payload
+        except Exception as e:
+            logger.error(f"[emerging_hotspot_analysis] Failed: {e}", exc_info=True)
+            return {"type": "error", "message": f"时空热点演化分析失败: {str(e)}"}

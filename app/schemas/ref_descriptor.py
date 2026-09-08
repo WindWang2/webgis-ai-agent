@@ -67,6 +67,11 @@ class RefDescriptor:
     # False = 命中 100 键上限被截断：缺失字段不再是权威缺失（fields_status
     # 回落 unknown，宽松分支）。
     field_schema_complete: bool = True
+    # V4（ADR-0104 #4）：载荷显式声明的 CRS（FC ``crs`` 成员 / ingest
+    # ``declared_crs``）。None = 载荷未声明（诚实缺省 —— 绝不虚构
+    # EPSG:4326）。resolver 的 crs_class 科学门（PROJECTED_REQUIRED 族）
+    # 由此在 descriptor 驱动的 finalize 路径上首次变活。
+    crs: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Serialize to dict for SSE/JSON responses."""
@@ -84,6 +89,7 @@ class RefDescriptor:
             "filterable_fields": self.filterable_fields,
             "field_schema": self.field_schema,
             "field_schema_complete": self.field_schema_complete,
+            "crs": self.crs,
         }
 
     @classmethod
@@ -103,6 +109,7 @@ class RefDescriptor:
             filterable_fields=d.get("filterable_fields"),
             field_schema=d.get("field_schema"),
             field_schema_complete=d.get("field_schema_complete", True),
+            crs=d.get("crs"),
         )
 
 
@@ -388,6 +395,25 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
     filterable_fields = collect_filterable_fields(features)
     field_schema, field_schema_complete = collect_field_schema(features)
 
+    # V4（ADR-0104 #4）：仅采信载荷显式声明的 CRS 证据（FC ``crs`` 成员，
+    # pre-RFC dict 形取 properties.name）——与全量 profiler 同一提取语义；
+    # 未声明 → None（诚实缺省，绝不虚构 EPSG:4326）。
+    crs: Optional[str] = None
+    try:
+        # 惰性导入（schemas 层不反向依赖 services 层的模块加载）；提取
+        # 语义单一事实源在 spatial_meta_profiler._declared_crs。
+        from app.services.spatial_meta_profiler import _declared_crs as _extract_crs
+
+        for crs_source in (fc, data):
+            if not isinstance(crs_source, dict):
+                continue
+            extracted, status = _extract_crs(crs_source)
+            if extracted and status == "explicit":
+                crs = str(extracted)[:64]
+                break
+    except Exception:  # noqa: BLE001 — CRS 证据缺席按 None（描述符是热路径）
+        crs = None
+
     return RefDescriptor(
         ref_id=ref_id,
         feature_count=feature_count,
@@ -401,4 +427,5 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
         filterable_fields=filterable_fields,
         field_schema=field_schema,
         field_schema_complete=field_schema_complete,
+        crs=crs,
     )

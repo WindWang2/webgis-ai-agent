@@ -221,6 +221,49 @@ def _base_diagnostics(
     return diags
 
 
+def _persist_filled_dem(
+    source_path: str, filled: np.ndarray,
+    transform: Tuple[float, ...], crs: str,
+    nodata: Optional[float],
+) -> str:
+    """填充后 DEM → data_dir 内 GeoTIFF（水文组合链的持久化半边）。
+
+    science-v3 审计 P0：depression_fill 此前只返回统计/样本，填充面
+    无法传递给任何下游水文工具 —— 「fill(epsilon)→D∞/河网/TWI」组合
+    在工具层不可执行。写盘文件名 = 源名 + ``_filled`` 后缀（确定性，
+    同源重跑覆盖同文件）。
+    """
+    import os
+
+    import rasterio
+    from rasterio.transform import Affine
+
+    src_real = validate_data_path(source_path)
+    root, ext = os.path.splitext(src_real)
+    target = root + "_filled" + (ext or ".tif")
+    # review R2-3：写前对 target 过同一条路径安全闸 —— data_dir 内预置的
+    # 同名 symlink（指向 data_dir 外）会被 realpath 比对拒绝（S36 威胁
+    # 模型）。同源重跑覆盖同名产物是文档化语义（确定性命名）。
+    validate_data_path(target)
+    profile = {
+        "driver": "GTiff",
+        "height": filled.shape[0],
+        "width": filled.shape[1],
+        "count": 1,
+        "dtype": "float64",
+        "transform": Affine.from_gdal(*[float(v) for v in transform[:6]]),
+        "nodata": float(nodata) if nodata is not None else -9999.0,
+    }
+    if crs:
+        profile["crs"] = crs
+    with rasterio_env():
+        with rasterio.open(target, "w", **profile) as dst:
+            dst.write(filled, 1)
+    # 绝对路径：validate_data_path 对 data_dir 内绝对路径放行，
+    # 下游工具可直接把该返回值作为 raster_path 消费。
+    return target
+
+
 def register_terrain_tools(registry: ToolRegistry):
 
     @tool(registry, name="compute_terrain",
@@ -257,19 +300,24 @@ def register_terrain_tools(registry: ToolRegistry):
 
     @tool(registry, name="compute_vegetation_index",
            description=(
-               "在线遥感指数统一入口：NDVI(植被)/NDWI(水体)/NBR(燃烧)/EVI(增强植被)，自动 STAC 拉 Sentinel-2 波段并计算。"
+               "在线遥感指数统一入口：NDVI(植被)/NDWI(水体)/NBR(燃烧)/EVI(增强植被)，"
+               "以及 NDWI 拆名变体 ndwi_water(=ndwi，McFeeters 开放水体显式别名)/"
+               "ndwi_gao(Gao 1996 植被水分，nir−swir1——与 ndwi 开放水体不可互换)，"
+               "自动 STAC 拉 Sentinel-2 波段并计算。"
                "\n何时用：除 NDVI 外的指数（NDWI 水体面积、NBR 火烧迹地、EVI 高生物量）；指数随场景动态选择时。"
                "\n何时不用：(1) 只算 NDVI — 直接 compute_ndvi（接口更窄、参数更少）；"
                "(2) 要双时相对比 — 用 detect_vegetation_change；"
                "(3) 本地 TIFF 处理 — 用 analyze_vegetation_index。"
-               "\n关键约束：index_type ∈ {ndvi, ndwi, nbr, evi}；返回 {stats, classification, bbox}。"
+               "\n关键约束：index_type ∈ {ndvi, ndwi, ndwi_water, ndwi_gao, nbr, evi}；"
+               "返回 {stats, classification, bbox}。"
            ),
            tier=2, domains=["raster"],
            param_descriptions={
                "bbox": "边界框 [west, south, east, north]",
                "date_from": "起始日期 YYYY-MM-DD",
                "date_to": "结束日期 YYYY-MM-DD",
-               "index_type": "指数类型: 'ndvi'(默认), 'ndwi', 'nbr', 'evi'",
+               "index_type": "指数类型: 'ndvi'(默认), 'ndwi'/'ndwi_water'(开放水体), "
+                             "'ndwi_gao'(植被水分), 'nbr', 'evi'",
            },
            side_effect="cacheable_read",
            network=True,
@@ -568,6 +616,10 @@ def register_terrain_tools(registry: ToolRegistry):
         interior4 = (padded[:-2, 1:-1] & padded[2:, 1:-1]
                      & padded[1:-1, :-2] & padded[1:-1, 2:])
         edge_rows, edge_cols = np.nonzero(mask & ~interior4)
+        # 注（science-v3 审计复核）：GDAL 6 参数 transform 的原点是 UL
+        # 角点 —— 实测 t*(0,0)=(0,210)=栅格角、src.xy(0,0)=(5,205)=中心，
+        # 故像元中心映射必须 +0.5（此处原实现正确，审计 F3 判定有误，
+        # 不采纳其删 +0.5 的建议）。
         centers_col = edge_cols.astype("float64") + 0.5
         centers_row = edge_rows.astype("float64") + 0.5
         a, b, c, d, e, f = transform
@@ -715,7 +767,8 @@ def register_terrain_tools(registry: ToolRegistry):
                "epsilon>0 变体给平地注入梯度 → 填后表面严格单调可排（D8/D∞ 前置）。"
                "\n何时用：水文分析前的 DEM 预处理（平地/洼地即汇的解药）。"
                "\n何时不用：(1) 只要洼地/汇位置 — flow_analysis 的 sink 统计；"
-               "(2) 需要填洼后流向 — 本工具后接 flow_analysis。"
+               "(2) 需要填洼后流向 — persist_filled=True 持久化填充面后，"
+               "把返回的 filled_raster_path 喂给 flow_analysis / dinf_flow_analysis。"
                "\n关键约束：nodata/边界视作排水出口；返回填深统计+降采样样本+科学证据。"
            ),
            tier=2, domains=["raster"], cost="heavy",
@@ -723,8 +776,8 @@ def register_terrain_tools(registry: ToolRegistry):
                "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
                "epsilon": "逐像元抬升量（米，默认 0 = 纯填洼；如 0.01 → 单调可排）",
                "nodata": "可选 nodata 覆盖值（缺省用文件声明/NaN）",
+               "persist_filled": "持久化填充后 DEM（*_filled.tif）并返回路径，供下游水文工具消费",
            },
-           side_effect="deterministic_compute",
            network=False,
            deterministic=True,
            latency_class="slow",
@@ -734,16 +787,23 @@ def register_terrain_tools(registry: ToolRegistry):
            output_semantic_type="stats",
            result_size_policy="inline_small",
            crs_semantics="crs_agnostic",
+           # review R2-2：persist_filled=True 会写 data_dir（*_filled.tif）
+           # —— 按「可能写」诚实标注；缺省 persist_filled=False 仍为纯计算。
+           side_effect="artifact_creation",
+           data_mutations=("artifact_write",),
            failure_modes=("invalid_args", "missing_data", "memory"))
     def depression_fill(raster_path: str, epsilon: float = 0.0,
-                        nodata: float | None = None) -> dict:
+                        nodata: float | None = None,
+                        persist_filled: bool = False) -> dict:
         contract_params: Dict[str, Any] = {"epsilon": epsilon}
         if nodata is not None:
             contract_params["nodata"] = nodata
+        contract_params["persist_filled"] = bool(persist_filled)
         params = apply_contract("sink_fill", contract_params)
         epsilon_v = float(params["epsilon"])
         nodata_v = params.get("nodata")
         nodata_v = float(nodata_v) if nodata_v is not None else None
+        persist_v = bool(params.get("persist_filled", False))
 
         arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
             raster_path, nodata_v)
@@ -759,6 +819,12 @@ def register_terrain_tools(registry: ToolRegistry):
             "sample": _bounded_sample(filled),
             "meta": meta,
         }
+        if persist_v:
+            filled_path = _persist_filled_dem(
+                raster_path, filled, transform, crs, eff_nodata)
+            payload["filled_raster_path"] = filled_path
+            transformations = list(transformations or []) + [
+                "filled DEM persisted as GeoTIFF for downstream hydrology tools"]
         diagnostics = _base_diagnostics(
             transform, arr.shape[0], arr.shape[1],
             extra=(Diagnostic(name="nodata_effective", value=eff_nodata),

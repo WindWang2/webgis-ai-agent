@@ -888,14 +888,15 @@ def test_viewport_no_bbox_warning_code_exists():
 
 @pytest.mark.asyncio
 async def test_fingerprint_gate_survives_truncation(clean_session):
-    """行指纹 >512 字符（≥8 行长 ref）时去重门仍生效（终审 F2：存储侧
-    截断、比较侧全量 → 永不匹配 → 门失效、每触发点重跑）。"""
+    """行指纹超存储宽度（V4 起 2048，原 512 —— Round-1 minor #6 收窄碰撞
+    窗口；≥8 行长 ref 即超 512）时去重门仍生效（终审 F2：存储侧截断、
+    比较侧同宽 → 永不匹配 → 门失效、每触发点重跑；同宽修复）。"""
     from app.services.session_plan import load_session_plan
 
     ref = await _store_ref(clean_session)
     chapter = _chapter(bound_ref=ref)
-    # 长度超 512：附加带长 ref 的行
-    for i in range(8):
+    # 长度超存储宽度（2048）：附加带长 ref 的行（每行 ≈60+ 字符）
+    for i in range(40):
         chapter["analysis_steps"].append(
             {
                 "capability": f"cap_{i}",
@@ -911,7 +912,7 @@ async def test_fingerprint_gate_survives_truncation(clean_session):
     assert first is not None and first.status == STATUS_COMPLETE
     plan = await load_session_plan(clean_session)
     block = plan.gis_chapter["map_product"]
-    assert len(block["rows_fingerprint"]) == 512  # 存储侧确实截断
+    assert len(block["rows_fingerprint"]) == 2048  # 存储侧确实截断（V4 宽度）
     # 门在截断下仍跳过（修复前此处会重跑）
     assert await maybe_finalize_map_product(clean_session) is None
 

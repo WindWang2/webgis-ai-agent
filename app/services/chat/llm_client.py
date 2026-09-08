@@ -17,7 +17,7 @@ import re
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Callable, Optional
 
 import httpx
 
@@ -178,11 +178,15 @@ def _build_payload(cfg: LLMConfig, messages: list[dict], tools: Optional[list], 
 #     Wired into the FastAPI lifespan shutdown alongside the existing aiohttp
 #     ``close_shared_client()``.
 #
-# No retry is performed at this layer. A mid-stream retry would duplicate tokens
-# and a post-send retry could double-execute tool calls; the only safe retry
-# boundary is connect/pool-phase only (ConnectError / ConnectTimeout /
-# PoolTimeout) and real resilience belongs at the orchestration layer after a
-# clean LLM error. That seam is intentionally left unimplemented here.
+# No retry is performed at this layer for general failures. A mid-stream retry
+# would duplicate tokens and a post-send retry could double-execute tool calls;
+# the only safe retry boundary is connect/pool-phase only (ConnectError /
+# ConnectTimeout / PoolTimeout) and real resilience belongs at the orchestration
+# layer after a clean LLM error. THE ONE EXCEPTION (ADR-0104 decision #6g) is a
+# provider-declared CONTEXT_TOO_LARGE failure: it happens strictly before any
+# token is produced, and the retry input is deterministically re-trimmed (not
+# replayed) by a registered hook — exactly one re-trim + one retry, never silent
+# (see the "确定性溢出恢复" block below).
 
 # Bounded pool defaults, exposed for tests/ops. Pool sizing must be >= peak
 # concurrent in-flight LLM calls + headroom (streams dominate); the per-request
@@ -375,12 +379,93 @@ def _is_retryable_failure(exc: BaseException) -> bool:
     return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in _RETRY_STATUS
 
 
+# ── ADR-0104 决策 #6(g)：确定性溢出恢复（context_too_large → 一次重裁 + 重试）──
+# 上面的池化契约注释仍然成立：本层绝不重试一般性失败；唯一例外是 provider 明确
+# 判定的 CONTEXT_TOO_LARGE（400/413/422 + context 提示词）。这类失败发生在任何
+# token 产出之前，重试不会重复内容/双执行工具；且"重裁输入"是确定性纯函数
+# （context_policy 注册的 hook：收紧历史预算重跑 DROP_OLDEST/折叠），不是盲目重放。
+# 阶梯严格有界：恰好 1 次重裁 + 1 次重试，重裁后仍失败则原样上抛 —— 永不静默。
+#
+# hook 注册在 app/services/chat/context_policy.py（GIS_CONTEXT_POLICY=0 时不注册，
+# 行为退回"裸失败"）。
+
+ContextRetrimFn = Callable[[list[dict]], Optional[list[dict]]]
+_context_retrim_fn: Optional[ContextRetrimFn] = None
+
+
+def register_context_retrim_hook(fn: Optional[ContextRetrimFn]) -> None:
+    """注册/清除（传 None）确定性重裁函数。fn(messages) -> 收紧后的 messages | None。"""
+    global _context_retrim_fn
+    _context_retrim_fn = fn
+
+
+def _is_context_too_large_failure(exc: BaseException) -> bool:
+    """provider 明确判定的上下文超限失败（与 FailureKind.CONTEXT_TOO_LARGE 同源词汇）。"""
+    # 惰性 import：model_runtime 包 __init__ 反向依赖本模块的 LLMConfig，
+    # 顶层 import 会构成循环（provider.py 本身无依赖，仅包初始化有环）。
+    from app.services.chat.model_runtime.provider import (
+        FailureKind,
+        classify_status_failure,
+    )
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            status = exc.response.status_code
+            body = exc.response.text[:2000]
+        except Exception:  # noqa: BLE001 — 响应体不可读时只看状态码
+            status, body = exc.response.status_code, ""
+        return classify_status_failure(status, body) is FailureKind.CONTEXT_TOO_LARGE
+    lowered = str(exc).lower()
+    return any(
+        hint in lowered
+        for hint in ("context length", "maximum context", "context_length_exceeded", "input too long")
+    )
+
+
+def _maybe_retrim(messages: list[dict]) -> Optional[list[dict]]:
+    """确定性重裁一次；hook 缺席/失败/无效果 → None（不重试）。"""
+    if _context_retrim_fn is None or not messages:
+        return None
+    try:
+        trimmed = _context_retrim_fn(messages)
+    except Exception as e:  # noqa: BLE001 — 重裁失败走原失败路径，不吞异常
+        logger.warning("[CONTEXT-RETRIM] retrim hook raised (%s); failing honestly", e)
+        return None
+    if not trimmed or trimmed == messages:
+        return None
+    return trimmed
+
+
 async def call_llm(
     cfg: LLMConfig,
     messages: list[dict],
     tools: Optional[list] = None,
 ) -> dict:
-    """同步（非流式）调用 LLM API；返回完整响应 JSON（含 usage）。"""
+    """同步（非流式）调用 LLM API；返回完整响应 JSON（含 usage）。
+
+    ADR-0104 #6(g)：provider 判定 CONTEXT_TOO_LARGE 时，经确定性重裁 hook 收紧
+    输入后重试**恰好一次**；仍失败则原样上抛（诚实失败，绝不静默降级）。
+    """
+    try:
+        return await _call_llm_attempt(cfg, messages, tools)
+    except Exception as exc:  # noqa: BLE001 — 分型后决定重裁重试或原样上抛
+        if not _is_context_too_large_failure(exc):
+            raise
+        trimmed = _maybe_retrim(messages)
+        if trimmed is None:
+            raise
+        logger.warning(
+            "[CONTEXT-RETRIM] provider rejected context (%s); deterministic re-trim "
+            "%d -> %d messages; retrying once (ladder 1/1) for %s",
+            type(exc).__name__, len(messages), len(trimmed), cfg.model,
+        )
+        return await _call_llm_attempt(cfg, trimmed, tools)
+
+
+async def _call_llm_attempt(
+    cfg: LLMConfig,
+    messages: list[dict],
+    tools: Optional[list] = None,
+) -> dict:
     headers = _build_headers(cfg)
     payload = _build_payload(cfg, messages, tools, stream=False)
     _key, prefix = _normalize_base_url(cfg.base_url)
@@ -447,6 +532,51 @@ async def call_llm_stream(
     tools: Optional[list] = None,
 ) -> AsyncGenerator[tuple[str, dict], None]:
     """流式调用 LLM。Yields (event_type, data)：
+    - ('token', {'content': str, 'is_reasoning': bool}) — 增量 token
+    - ('done', {'message': dict, 'finish_reason': str|None,
+                'usage': dict|None}) — 流结束、整条 assistant 消息与用量
+
+    ADR-0104 #6(g)：CONTEXT_TOO_LARGE 在任何 token 产出之前即失败（首个
+    __anext__ 抛出）—— 此时经确定性重裁 hook 收紧输入重试**恰好一次**；
+    一旦已有事件产出则绝不重试（会重复内容）。
+    """
+    gen = _call_llm_stream_attempt(cfg, messages, tools)
+    try:
+        try:
+            first = await gen.__anext__()
+        except StopAsyncIteration:
+            return
+        except Exception as exc:  # noqa: BLE001 — 分型后重裁重试或原样上抛
+            if not _is_context_too_large_failure(exc):
+                raise
+            trimmed = _maybe_retrim(messages)
+            if trimmed is None:
+                raise
+            logger.warning(
+                "[CONTEXT-RETRIM] provider rejected context (%s); deterministic re-trim "
+                "%d -> %d messages; retrying stream once (ladder 1/1) for %s",
+                type(exc).__name__, len(messages), len(trimmed), cfg.model,
+            )
+            gen = _call_llm_stream_attempt(cfg, trimmed, tools)
+            # 第二次尝试的首个事件；再失败则原样上抛（诚实失败）。
+            first = await gen.__anext__()
+        yield first
+        async for event in gen:
+            yield event
+    finally:
+        # 首 peek 后放弃/提前关闭时回收底层流连接（幂等安全）。
+        try:
+            await gen.aclose()
+        except Exception:  # noqa: BLE001 — 关闭失败不影响主流程
+            pass
+
+
+async def _call_llm_stream_attempt(
+    cfg: LLMConfig,
+    messages: list[dict],
+    tools: Optional[list] = None,
+) -> AsyncGenerator[tuple[str, dict], None]:
+    """流式调用（单次尝试；重试阶梯见 call_llm_stream）。Yields (event_type, data)：
     - ('token', {'content': str, 'is_reasoning': bool}) — 增量 token
     - ('done', {'message': dict, 'finish_reason': str|None,
                 'usage': dict|None}) — 流结束、整条 assistant 消息与用量

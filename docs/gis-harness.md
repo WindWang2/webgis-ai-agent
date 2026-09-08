@@ -217,3 +217,112 @@ GIS 侧的产品规划职责。
   Pi 会话上同样成立——差异只在『回合级任务规划』这一层。
 - 把 legacy 规划链移植进 Pi 回车 preamble 是独立的 roadmap 项，需要 Pi 侧
   多工具 schema 支持，不在本 seam 隐式实现。
+
+## V4 — Autonomous Spatial Reasoning & Execution Runtime（ADR-0104）
+
+> 状态：已实现（2026-09，`feat/gis-harness-autonomous-runtime-v4`）。
+> 审计基线：`.agent-work/harness-v4/01..08`（只读审计，master@16d1c70）。
+
+V4 在既有契约（Recipe/WorkflowProfile、ToolDescriptor、ArtifactContract、
+18 阶段链常量）之上，把生产运行时从「每轮从自然语言重推导 + 整体重验」
+升级为**状态驱动、可恢复、可观测**的执行面：
+
+### WorkflowInstance（运行态状态机）
+
+- `app/services/gis_harness/workflow_instance.py`：从章节事实纯派生的
+  实例块（`gis_chapter["workflow_instance"]`，additive 单键）。单调
+  `state_revision`、canonical `state_fingerprint`、逐阶段证据版本
+  （staleness = 指纹失配）、有界转移记录。
+- 事件维度化（data/algorithm/parameter/style/output）：style-only 突变
+  只推进呈现面，科学阶段零触碰；数据到位自动重算科学契约（解除方向
+  回写 `workflow_contract`——同一纯评估器；恶化方向只披露）。
+- `rows_fingerprint` V2：`resolved_algorithm` + params 哈希可见 —— 参数
+  编辑不再被终验去重门漏过。
+- 开关：`GIS_WORKFLOW_INSTANCE=0`。
+
+### SpatialGoalGraph（方法学骨架）
+
+- `app/services/gis_harness/goal_graph.py`：goal/acquire/inspect/validate/
+  transform/analyze/aggregate/model/compare/verify/cartography/observe/
+  deliver/disclose 十四类节点的确定性展开（零 LLM），typed 依赖边，
+  可 diff / 可序列化 / 有界（≤48 节点）。
+- 成都小学公平性类目标：分母获取 + 人均归一化以 BLOCKED 科学节点显性
+  出现在图上（红线可见，不藏文案）。
+- `validate_candidate_graph`：LLM 建议图由确定性 validator 收敛
+  （词表/规模/环/capability 对账）。
+
+### 数据画像 → 算法裁决（打通 deferred seam）
+
+- `DatasetProfile.to_resolver_profile` 为唯一适配器，emit 完整事实词表
+  （geometry/CRS class/feature count/字段/null/bands/temporal）；V3 画像
+  经 `from_profile_v3` 接入。
+- `RefDescriptor.crs`（additive）：descriptor 驱动的 finalize 路径上
+  projected-CRS 硬门复活；precondition 缺事实 = deferred-PASS（不虚构
+  违反）；运行期重裁决由 `workflow_engine` 消费事实
+  （`GIS_RUNTIME_PROFILE_GATES=0` 关停）。
+- 插值族：事实投影（点数/度量/CRS/趋势）驱动候选与 hint —— 事实胜过
+  文本点名，硬门最终裁决；backend 选择在计划期以纯函数记录。
+
+### Tool Retrieval V4
+
+- `tool_surface_v3` 之上的确定性 rerank：phase / artifact 语义类型 /
+  CRS 语义 / scale 档 / 延迟内存档 / deterministic / 近期失败降权 /
+  fallback 补位 / 续跑加成 —— 全部可解释（score_components）。
+- 词法索引键入完整 descriptor 指纹；`ToolSelectionContext` 三个可选
+  证据面（artifact 类型 / 近期结果 / 续跑工具）在生产装配点接入。
+- 语料 3,028 条（`app/evaluation/retrieval_corpus.py`）+ 离线门：
+  recall@10 ≥0.98、tier-3 泄漏 = 0、schema 字节预算内。
+- 开关：`GIS_TOOL_RETRIEVAL_V4=0`（证据门：无上下文证据时与 V3 逐位一致）。
+
+### Context Memory Runtime V4
+
+- `app/services/chat/context_policy.py`：把 `GisBudgetAdvisor` 的建议
+  **执行**化（KEEP pin / CONDENSE / OFFLOAD_REF / SUMMARIZE /
+  DROP_OLDEST / RELOAD_REF），装配期生效；安全事实 pin 不再被折叠丢失。
+- ref 驱逐落盘 + ref_resolver 持久回退（reload 有来源）；溢出一次
+  确定性 re-trim 重试；未配置窗口时如实报 unknown（不再恒报 over_budget）。
+- 开关：`GIS_CONTEXT_POLICY=0`。
+
+### Specialist Subagent Team
+
+- 角色注册表扩至 9 个专家角色（含 spatial_scientist / algorithm_reviewer /
+  map_observer / result_verifier / doc_crosschecker），每个声明工具
+  allowlist / mutation policy / 轮数与工具调用与 heavy 预算 / 墙钟预算 /
+  model role / expected_outputs / failure_behavior。
+- `spawn_subagent` 暴露 `role`（未知角色 fail-closed）；有界并行 spawn
+  （≤2 并发）+ 父预算汇总 + 部分失败如实 PARTIAL。
+- 角色约束只能收窄调用方权限（既有 intersection 语义不变）。
+
+### Map Observation / Verification 闭环强化
+
+- `chart_required` 并入 required 槽面：期望态（组件缺失）+ 观察态
+  （渲染缺失）+ 修复通道三面覆盖。
+- 完成期审计：地图模型兼容性复核（`F_MAP_MODEL_MISMATCH`）、全透明
+  结果层结构代理（`F_LAYER_TRANSPARENT`，诚实标注非像素验证）、
+  zoom 形态 viewport 服务端近似 bbox（extent 检查不再失明）。
+- 不确定性披露维要求正证据（`chapter["uncertainty_disclosures"]`）；
+  `task_complete` 布尔 = 裁决 ∈ READY* 且 final_map ∈ verified*
+  —— BLOCKED_* 不再以 disclosure-only 冒充完成。
+
+### 18 阶段证据链 + 评测
+
+- 发射点 5/18 → 18/18（planner/dispatch/finalizer/observation/settle 全
+  缝接入；emit-once 去重；无 turn 上下文 = 诚实不发射）。
+- 链持久化：会话 JSONL（`trace_store`，≤64 turn/会话，
+  `GIS_TRACE_PERSIST=0` 关停）→ `chain_gate`（≥0.95，N/A 阶段显式
+  披露，缺发射绝不伪装）。
+- Runtime 语料（诚实构成，review R3）：两层 —— (a) 情境索引 plan-身份
+  回归：24 人审定情境 × 语义族 × scope × zh/en × 句式 = 3,456 条案例
+  （144 个唯一查询 × 情境标签；情境期望码是回归套件的可追溯索引，
+  plan 契约随标签不变由测试钉住）；(b) 真实执行层：5 个派发可观察
+  情境 × 家族 × 数据规模 = 60 条案例经 `simulate_agent_loop` 真实派发
+  断言。126 个 ≥2-turn 复合 E2E 场景定义（确定性 turn 脚本记录）；
+  组合确定性语料 ≥23K。
+
+### 兼容性红线（V4 全量）
+
+- 冻结缝（ToolRegistry/CapabilityRegistry/AlgorithmRegistry/SessionPlan/
+  MapSpec/ArtifactContract/ExecutionPlan）零破坏性变更；所有新运行面有
+  显式开关且缺省保持旧行为的数据路径（事实缺席 = 诚实 unknown，不虚构）。
+- `rows_fingerprint` 内容升级为一次性打破陈旧终验门（设计目的，ADR-0104
+  兼容性节披露）；同输入同指纹契约由测试钉住。

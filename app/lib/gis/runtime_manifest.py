@@ -234,6 +234,9 @@ def _project_algorithm(algo) -> Dict[str, Any]:
         # 引用/前置条件/回退分类的变化都改变解析语义 ⇒ 旧 plan 判 stale。
         "crs_class": getattr(algo, "crs_class", ""),
         "scientific_status": getattr(algo, "scientific_status", ""),
+        # V3（ADR-0117）：精度分类改变科学等价性语义 ⇒ 进指纹（缺省 ""
+        # 时与旧投影逐位一致，存量计划不误判 stale）。
+        "approximation_class": getattr(algo, "approximation_class", ""),
         "parameter_contract_ref": getattr(algo, "parameter_contract_ref", ""),
         "scientific_preconditions": sorted(
             getattr(algo, "scientific_preconditions", None) or []),

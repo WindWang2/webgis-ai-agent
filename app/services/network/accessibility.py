@@ -17,6 +17,7 @@ from app.services.network.models import (
     DemandPoint,
     AccessibilityResult,
 )
+from app.services.network.scale_guard import od_matrix_scale_guard
 from app.services.network.snapping import PointSnappingService
 from app.services.network.routing import NetworkRoutingService
 from app.services.network.od_matrix import NetworkODMatrixService
@@ -98,6 +99,12 @@ class NetworkAccessibilityService:
                 coverage_percentage=0.0,
                 average_travel_time_min=0.0,
             )
+
+        # science-v3 R3：n×m OD 代价矩阵统一规模闸 —— time_matrix 按
+        # 需求×设施全量物化，超闸先拒绝（不 OOM、不静默截断）。
+        od_matrix_scale_guard(
+            len(demand_points), len(facilities), context="network_accessibility"
+        )
 
         # Build OD matrix
         orig_coords = [(d.geometry["coordinates"][0], d.geometry["coordinates"][1]) for d in demand_points]
