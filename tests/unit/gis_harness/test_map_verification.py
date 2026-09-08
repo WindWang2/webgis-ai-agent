@@ -12,7 +12,6 @@
 """
 from __future__ import annotations
 
-import pytest
 
 from app.services.gis_harness.completion.contracts import (
     FINAL_MAP_DEGRADED,
@@ -33,7 +32,6 @@ from app.services.gis_harness.completion.contracts import (
 from app.services.gis_harness.completion.map_verification import (
     aggregate_final_map_status,
     collect_final_map_findings,
-    verify_final_map,
 )
 
 

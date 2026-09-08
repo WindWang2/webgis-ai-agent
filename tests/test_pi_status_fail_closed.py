@@ -187,7 +187,9 @@ async def test_dispatch_unknown_bare_name_rejects_with_discovery_guidance():
     resp = await dispatch_tool(
         PiToolRequest(
             toolCallId="tc-bare-name",
-            name="heatmap_data",
+            # 探针必须保持未注册：heatmap_data 已是真实注册工具（#425 时代
+            # 的旧探针随动态注册面落地而失效）。
+            name="heatmap_data_never_registered_probe",
             arguments={"render_type": "native"},
             sessionId="sess-bare-name",
         )
