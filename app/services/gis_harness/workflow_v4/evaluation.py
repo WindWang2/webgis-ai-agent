@@ -168,10 +168,7 @@ def evaluate_case(case: MethodologyCase) -> List[CaseEvaluation]:
             if missing_obl:
                 ev.failures.append(f"missing obligation hints: {missing_obl}")
 
-        if not ev.passed:
-            evaluations.append(ev)
-        else:
-            evaluations.append(ev)
+        evaluations.append(ev)
     return evaluations
 
 

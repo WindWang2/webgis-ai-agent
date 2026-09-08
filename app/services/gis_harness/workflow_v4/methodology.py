@@ -650,6 +650,17 @@ class MethodologyRegistry:
                     missing = [a for a in m.output_artifacts
                                if not artifact_type_exists(a)]
                     violations.append(f"{mtag}: artifact type {missing} 未注册")
+                from app.services.gis_harness.workflow_schema import (
+                    DATA_ROLES,
+                )
+                for role in m.requires_roles:
+                    if role not in DATA_ROLES:
+                        violations.append(f"{mtag}: unknown requires_role {role}")
+                _GEOMETRY_VOCAB = {"point", "line", "polygon", "raster",
+                                   "table", "network", "unknown"}
+                for gk in m.geometry_kinds:
+                    if gk not in _GEOMETRY_VOCAB:
+                        violations.append(f"{mtag}: unknown geometry kind {gk}")
                 if m.approximate and not m.downgrade_class:
                     violations.append(f"{mtag}: approximate 候选需要 downgrade_class")
                 if m.downgrade_class:
@@ -756,25 +767,42 @@ def _geometry_fact(profile: Optional[Dict[str, Any]]) -> Optional[str]:
     gts = profile.get("geometryTypes")
     if isinstance(gts, list) and gts:
         from app.services.gis_harness.data_qualification import (
-            _geometry_category,
+            geometry_category,
         )
-        return _geometry_category([str(g) for g in gts])
+        return geometry_category([str(g) for g in gts])
     return None
 
 
-def _evaluate_precondition_pass(
+#: precondition 四态（委托算法层裁决后的归一化）：
+#: pass=满足 / unknown=事实不足（≠ 不满足）/ transform=可修复（先变换
+#: 即可用，软惩罚+披露，不拒绝——与 data_qualification.transform_required
+#: 同哲学）/ fail=科学不成立（硬拒绝）。
+PRECONDITION_STATES = ("pass", "unknown", "transform", "fail")
+
+_TRANSFORM_NEUTRAL_SCORE = 0.6
+
+
+def _evaluate_precondition_state(
     precondition_id: str, profile: Optional[Dict[str, Any]],
-) -> Optional[bool]:
-    """委托算法层 precondition（单一事实源）。None = 事实不足（unknown）。"""
+) -> str:
+    """委托算法层 precondition（单一事实源），归一化为四态。
+
+    - 事实不足（facts_used 为空且非显式失败）→ unknown（不奖不罚）；
+    - REQUIRES_TRANSFORM → transform（可修复：软惩罚 + 披露，不拒绝 ——
+      地理坐标系先投影即可用，typed DAG 有 transform 节点物化修复链）；
+    - INSUFFICIENT_DATA / INVALID_METHOD → fail（科学不成立，硬拒绝）。
+    """
     if profile is None:
-        return None
+        return "unknown"
     from app.lib.gis.scientific_preconditions import evaluate_precondition
     result = evaluate_precondition(precondition_id, profile)
-    if result.facts_used:
-        return result.verdict in ("PASS", "PASS_WITH_WARNINGS")
+    if result.verdict == "REQUIRES_TRANSFORM":
+        return "transform"
+    if result.verdict in ("PASS", "PASS_WITH_WARNINGS"):
+        return "pass" if result.facts_used else "unknown"
     if result.verdict in ("INSUFFICIENT_DATA", "INVALID_METHOD"):
-        return False
-    return None
+        return "fail"
+    return "unknown"
 
 
 def qualify_method_candidates(
@@ -841,24 +869,29 @@ def qualify_method_candidates(
         )
 
         # ── 硬准则 4：算法层 precondition（委托，不重复科学语义）──────
+        # 四态：pass=1.0 / unknown=0.5 / transform=0.6（软惩罚+披露，
+        # 不拒绝）/ fail=0.0（硬拒绝）。
         precondition_score = _UNKNOWN_NEUTRAL_SCORE
         if m.preconditions:
             results = [
-                (pid, _evaluate_precondition_pass(pid, profile))
+                (pid, _evaluate_precondition_state(pid, profile))
                 for pid in m.preconditions
             ]
-            evidence["preconditions"] = {
-                pid: ("unknown" if p is None else ("pass" if p else "fail"))
-                for pid, p in results
-            }
-            precondition_score = (
-                1.0 if all(p is True for _, p in results)
-                else (0.0 if any(p is False for _, p in results)
-                      else _UNKNOWN_NEUTRAL_SCORE)
-            )
-            for pid, p in results:
-                if p is False:
+            evidence["preconditions"] = {pid: st for pid, st in results}
+            states_seen = {st for _, st in results}
+            if "fail" in states_seen:
+                precondition_score = 0.0
+            elif states_seen == {"pass"}:
+                precondition_score = 1.0
+            elif "transform" in states_seen:
+                precondition_score = _TRANSFORM_NEUTRAL_SCORE
+            for pid, st in results:
+                if st == "fail":
                     reasons.append(f"{REJECT_PRECONDITION}:{pid}")
+                elif st == "transform":
+                    disclosures.append(
+                        f"{pid}：数据需先变换（如重投影）即可满足；"
+                        "修复链已物化为 transform step。")
 
         # ── 软排序分量 ─────────────────────────────────────────────────
         method_quality = (

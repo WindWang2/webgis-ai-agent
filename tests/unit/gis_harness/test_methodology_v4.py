@@ -148,9 +148,10 @@ def test_role_blocked_rejects_with_stable_code() -> None:
                for c in rejected.reason_codes)
 
 
-def test_crs_precondition_delegation_rejects_geographic_degrees() -> None:
-    """地理坐标系（度）→ 度量类地形方法被算法层 precondition 拒绝
-    （委托 scientific_preconditions，不重复科学语义）。"""
+def test_crs_transform_is_soft_not_rejecting() -> None:
+    """地理坐标系（度）→ 度量类方法 precondition = REQUIRES_TRANSFORM：
+    软惩罚 + 披露（可修复），不硬拒绝 —— 与 data_qualification 的
+    transform_required 同哲学（修复链物化为 transform step）。"""
     q = qualify_method_candidates(
         "terrain_hydrology",
         role_states={"elevation": "eligible"},
@@ -158,11 +159,27 @@ def test_crs_precondition_delegation_rejects_geographic_degrees() -> None:
     )
     slope = next(x for x in q.qualifications
                  if x.method_id == "terrain.slope_aspect")
-    assert slope.status == "rejected"
-    assert any(
-        c.startswith("METHOD_PRECONDITION_UNSATISFIED:local_metric_crs_required")
-        for c in slope.reason_codes
+    assert slope.status in ("selected", "eligible")
+    assert not slope.reason_codes
+    assert any("先变换" in d or "重投影" in d for d in slope.disclosures)
+    assert slope.evidence["preconditions"]["local_metric_crs_required"] == "transform"
+    assert not q.all_rejected
+
+
+def test_precondition_insufficient_data_still_hard_rejects() -> None:
+    """事实在场且科学不成立（INSUFFICIENT_DATA/INVALID_METHOD）→ 仍硬拒绝
+    （unknown ≠ 不满足 的边界不因 transform 软化而失守）。"""
+    q = qualify_method_candidates(
+        "interpolation",
+        role_states={"subject": "eligible", "measure": "eligible"},
+        profile={"featureCount": 5, "geometryTypes": ["Point"],
+                 "fields": {"v": {"type": "number"}}},
     )
+    kriging = next(x for x in q.qualifications
+                   if x.method_id == "interp.ordinary_kriging")
+    assert kriging.status == "rejected"
+    assert any(c.startswith("METHOD_PRECONDITION_UNSATISFIED")
+               for c in kriging.reason_codes)
 
 
 def test_qualification_deterministic_same_input() -> None:

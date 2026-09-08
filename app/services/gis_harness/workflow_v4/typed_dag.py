@@ -79,6 +79,7 @@ class TypedWorkflowNode(BaseModel):
     fallback_of: str = ""              # 该节点是谁的回退（空 = 非回退）
     parallel_safe: bool = False        # 无副作用/输入独立 → 可并行
     optional: bool = False
+    parameters: Tuple[str, ...] = ()   # 该节点拥有的工作流参数名（recompute 消费）
 
     def to_bounded_dict(self) -> Dict[str, Any]:
         return {
@@ -93,6 +94,7 @@ class TypedWorkflowNode(BaseModel):
             "fallback_of": self.fallback_of[:64],
             "parallel_safe": self.parallel_safe,
             "optional": self.optional,
+            "parameters": [{"name": p[:48]} for p in self.parameters[:8]],
             "inputs": [p.to_bounded_dict() for p in self.inputs[:6]],
             "outputs": [p.to_bounded_dict() for p in self.outputs[:6]],
         }
@@ -250,6 +252,9 @@ def validate_typed_dag(graph: TypedWorkflowGraph) -> List[str]:
     for n in graph.nodes:
         if n.kind == "output" and n.node_id not in reachable:
             violations.append(f"TYPED_DAG_UNREACHABLE_OUTPUT:{n.node_id}")
+    if graph.primary_output and graph.primary_output not in by_id:
+        violations.append(
+            f"TYPED_DAG_DANGLING_PRIMARY_OUTPUT:{graph.primary_output}")
     return violations
 
 
@@ -411,6 +416,28 @@ def build_typed_dag(
         # 结构依赖 = 执行顺序约束（仅节点元数据，不生成数据流边 —— 类型
         # 兼容只在真实数据流边上裁决；悬空依赖由 validate_typed_dag 拦截）。
 
+    # ── 连通性兜底（MAJOR-4）：方法未声明 requires_roles 时，无任何
+    # 数据流入边的 analysis 节点接入全部角色供给 —— 保证图从输入侧可达
+    # （确定性：按节点声明序处理）。方法声明角色优先，兜底只补零入度。
+    def _has_incoming(node_id: str) -> bool:
+        return any(e.to_node == node_id for e in edges)
+
+    if not method_roles:
+        all_sources = [
+            src for src in (
+                _role_source(role) for role in sorted(resolved_roles)
+            ) if src is not None
+        ]
+        for n in [x for x in nodes if x.kind == "analysis"]:
+            if _has_incoming(n.node_id) or not all_sources or not n.inputs:
+                continue
+            for src in all_sources:
+                edges.append(TypedWorkflowEdge(
+                    from_node=src, from_port=(
+                        "output" if src.startswith("transform:")
+                        else "data"),
+                    to_node=n.node_id, to_port=n.inputs[0].name))
+
     # ── output 节点 ───────────────────────────────────────────────────
     # 产出者裁决：artifact 的产出 analysis 节点 = 其解析算法的
     # output_artifact_type 匹配者（plan 真实产出，防类型失配边）。
@@ -423,7 +450,7 @@ def build_typed_dag(
             None,
         )
 
-    emitted_outputs = 0
+    emitted_output_ids: List[str] = []
     for art in method_outputs[:6]:
         producer = _producer_for(art)
         if producer is None:
@@ -436,14 +463,15 @@ def build_typed_dag(
         edges.append(TypedWorkflowEdge(
             from_node=producer.node_id, from_port="output",
             to_node=f"output:{art}", to_port="product"))
-        emitted_outputs += 1
-    if emitted_outputs == 0 and analysis_nodes_for_outputs:
+        emitted_output_ids.append(f"output:{art}")
+    if not emitted_output_ids and analysis_nodes_for_outputs:
         # 方法产出与 plan 无一对应 → 主输出挂 plan 尾节点（最后声明 =
         # 产品链末端），端口类型取其真实产出。
         tail = analysis_nodes_for_outputs[-1]
         tail_art = tail.outputs[0].artifact_type if tail.outputs else ""
+        tail_id = f"output:{tail_art or 'product'}"
         nodes.append(TypedWorkflowNode(
-            node_id=f"output:{tail_art or 'product'}", kind="output",
+            node_id=tail_id, kind="output",
             inputs=[TypedPort(
                 name="product", artifact_type=tail_art,
                 geometry_kind=_artifact_geometry(tail_art) if tail_art else "unknown",
@@ -451,17 +479,21 @@ def build_typed_dag(
         ))
         edges.append(TypedWorkflowEdge(
             from_node=tail.node_id, from_port="output",
-            to_node=f"output:{tail_art or 'product'}", to_port="product"))
+            to_node=tail_id, to_port="product"))
+        emitted_output_ids.append(tail_id)
+
+    # 主输出 = 实际 emit 的第一个 output 节点（MAJOR-3：不指向幽灵节点）；
+    # 显式指定且真实存在时优先。
+    preferred = f"output:{primary_output_artifact}" if primary_output_artifact else ""
+    primary = (
+        preferred if preferred in emitted_output_ids
+        else (emitted_output_ids[0] if emitted_output_ids else "")
+    )
 
     graph = TypedWorkflowGraph(
         nodes=nodes[:_MAX_GRAPH_NODES],
         edges=edges[:_MAX_GRAPH_EDGES],
-        primary_output=(
-            f"output:{primary_output_artifact}"
-            if primary_output_artifact and method_outputs
-            and primary_output_artifact in method_outputs
-            else (f"output:{method_outputs[0]}" if method_outputs else "")
-        ),
+        primary_output=primary,
     )
     graph.validation_violations = validate_typed_dag(graph)
     return graph

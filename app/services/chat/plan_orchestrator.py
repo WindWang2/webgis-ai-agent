@@ -622,7 +622,8 @@ class AgentPlanOrchestrator:
         plan.recipe_id = recipe.id
         self._apply_capability_validation(plan, registry)
         plan.workflow_v4 = self._compile_v4_evidence(
-            user_message, intent, recipe.id, available)
+            user_message, intent, recipe.id, available,
+            available_profile=False)
         await self._persist_new_plan(session_id, plan)
         logger.info(
             f"[plan_orchestrator] session={session_id} harness 确定性合成计划"
@@ -636,12 +637,18 @@ class AgentPlanOrchestrator:
         intent: object,
         recipe_id: str,
         available_tools: Optional[set],
+        available_profile: bool = False,
     ) -> Optional[dict]:
         """Workflow Compiler V4 有界证据（确定性、可选、失败即 None）。
 
         编译器是既有 planner/registry/资格评估器的编排（单一事实源）；
         planner memo 让重复编译近似零成本。产物只取语义摘要（不含证据
         倾倒），供渲染/审计面展示「应该做什么、为什么、义务是什么」。
+
+        成本注记（MINOR-4）：memo 冷启动时编译含完整 15 阶段重放，
+        实测 ~300ms/次；memo 命中后为纯 V4 阶段（毫秒级）。同步执行
+        是有意取舍：证据失败已隔离（except → None），量级远低于其
+        包裹的 LLM 规划调用。
         """
         try:
             from app.services.gis_harness.workflow_v4.compiler_v4 import (
@@ -681,6 +688,12 @@ class AgentPlanOrchestrator:
                 },
                 "package_fingerprint": c.package_fingerprint,
                 "reason_codes": c.reason_codes[:10],
+                # 审计披露（MINOR-5）：合成路径无数据画像 → 资格裁决全在
+                # unknown 中性态，selected 实由方法质量+优先序决定；数据
+                # 到位后 finalize/profile 通道重评为事实驱动裁决。
+                "qualification_basis": (
+                    "profile_grounded" if available_profile else
+                    "profile_absent_neutral"),
             }
         except Exception as e:  # noqa: BLE001 — 证据失败绝不阻塞规划
             logger.info(

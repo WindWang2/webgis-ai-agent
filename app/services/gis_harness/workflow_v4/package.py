@@ -32,13 +32,14 @@ from app.services.gis_harness.workflow_v4.compiler_v4 import (
 #: 包 schema 版本（compiled form 结构演进时递增 minor）。
 WORKFLOW_PACKAGE_SCHEMA_VERSION = "1.0.0"
 
-_SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+_SEMVER_RE = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 
 _MAX_COMPILED_FORM_BYTES = 64_000
 
 
 def parse_semver(version: str) -> Optional[Tuple[int, int, int]]:
-    m = _SEMVER_RE.match(str(version or "").strip())
+    """严格 semver 解析（fullmatch 拒绝尾随字符/前导零）。"""
+    m = _SEMVER_RE.fullmatch(str(version or "").strip())
     if not m:
         return None
     return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
@@ -99,7 +100,10 @@ def _canonical_fingerprint(compiled: Dict[str, Any]) -> str:
 def next_version(
     previous: Optional[str], *, change: str,
 ) -> str:
-    """确定性版本推进：change ∈ {major, minor, patch}（契约破坏/增补/文案）。"""
+    """确定性版本推进：change ∈ {major, minor, patch}；非法 change 拒绝
+    （不静默降级 patch —— 版本语义必须显式）。"""
+    if change not in ("major", "minor", "patch"):
+        raise ValueError(f"invalid version change: {change!r}")
     cur = parse_semver(previous or "1.0.0") or (1, 0, 0)
     major, minor, patch = cur
     if change == "major":
@@ -124,6 +128,12 @@ def emit_workflow_package(
         "method_qualification": compilation.method_qualification,
         "typed_dag": compilation.typed_dag,
         "completion_contract": base.completion_contract,
+        # 解析参数（name→value/provenance）：diff 的 parameter 维度事实源
+        "parameters": list(compilation.parameters[:16]),
+        # blocked 阶段显式分级（MINOR-9）：包指纹携带阻断态，审计面可见
+        "blocked_stages": [
+            s.stage for s in compilation.v4_stages if s.status == "blocked"
+        ][:8],
         "stage_sequence": compilation.full_stage_sequence,
     }
     recipe_fp = ""

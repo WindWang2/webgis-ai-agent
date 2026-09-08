@@ -112,6 +112,11 @@ def _geometry_category(geometry_types: Sequence[str]) -> str:
     return max(counts, key=lambda c: counts[c]) if active else "unknown"
 
 
+#: 公共别名（防副本漂移，同 plan_candidates.DATA_FIT_SCORE 前例）：
+#: 方法资格引擎（workflow_v4.methodology）消费同一几何归约。
+geometry_category = _geometry_category
+
+
 def _profile_fields(profile: Dict[str, Any]) -> Dict[str, Any]:
     fields = profile.get("fields")
     return fields if isinstance(fields, dict) else {}

@@ -166,7 +166,8 @@ def compile_workflow_v4(
     wf_profile = getattr(recipe, "workflow", None)
     role_resolutions = resolve_data_roles(
         base.recipe_id, wf_profile, resolver_profile=profile)
-    role_states = {r.role: r.status for r in role_resolutions}
+    role_states = _derive_role_states(
+        wf_profile, role_resolutions, resolver_profile=profile)
     qual_set = qualify_method_candidates(
         family.family_id, role_states=role_states, profile=profile,
         registry=registry,
@@ -200,6 +201,13 @@ def compile_workflow_v4(
         t for t in (base.transformations or [])
         if t.get("source") == "data_qualification" and t.get("role")
     ]
+    # 方法参数（algorithm 层 parameter contracts 单一事实源提取）先行：
+    # 注入 owning 节点（recompute 的 parameter 维度依赖 node.parameters）。
+    from app.services.gis_harness.workflow_v4.parameters import (
+        extract_workflow_parameters,
+    )
+    method_caps = tuple(getattr(selected_method, "capabilities", ()) or ())
+    params = extract_workflow_parameters(selected_method, node_id="")
     graph = build_typed_dag(
         analysis_steps,
         data_roles=role_resolutions,
@@ -207,6 +215,21 @@ def compile_workflow_v4(
         extra_transforms=transforms,
         extra_roles=family.data_role_demands,
     )
+    if params:
+        # owner 解析优先序：方法声明能力命中的 plan 节点 → 携带
+        # method_id 的首个 analysis 节点 → 任意 analysis 节点（保底，
+        # 不让参数悬挂在图外 —— recompute 的 parameter 维可达）。
+        analysis_nodes = [n for n in graph.nodes if n.kind == "analysis"]
+        owner = next(
+            (n for n in analysis_nodes if n.capability in method_caps),
+            next((n for n in analysis_nodes if n.method_id), None),
+            )
+        if owner is None and analysis_nodes:
+            owner = analysis_nodes[0]
+        if owner is not None:
+            owner.parameters = tuple(p.name for p in params)
+            for p in params:
+                p.node_id = owner.node_id
     result.typed_dag = graph.to_bounded_dict()
     v4_stages.append(WorkflowStageRecord(
         stage="compile_typed_dag",
@@ -244,13 +267,7 @@ def compile_workflow_v4(
 
     # ── 20 resolve_parameters：契约默认 → hint → user（不阻塞）────────
     from app.services.gis_harness.workflow_v4.parameters import (
-        extract_workflow_parameters,
         resolve_workflow_parameters,
-    )
-    params = extract_workflow_parameters(
-        selected_method,
-        node_id=(f"cap:{selected_method.capabilities[0]}"
-                 if getattr(selected_method, "capabilities", ()) else ""),
     )
     resolved_params = resolve_workflow_parameters(
         params, hint_values=hint)
@@ -317,7 +334,57 @@ def compile_workflow_v4(
         },
     ))
 
+    # 显式回赋（MINOR-10：不依赖 pydantic 别名语义）
+    result.v4_stages = v4_stages
     result.reason_codes = [
         rc for s in v4_stages for rc in s.reason_codes
     ][:_STAGE_REASON_BUDGET * 2]
     return result
+
+
+#: 角色解析态 → 资格态映射（DataRoleResolution.status 词表只有
+#: bound/external/unresolved/degraded；资格引擎词表是 eligible/
+#: transform_required/degraded/blocked/unknown —— 显式映射，不混用：
+#: bound=已绑定即 eligible；external/unresolved=规划期不可证伪 → unknown
+#: （unknown ≠ 不满足）；degraded 同名直映）。
+_RESOLUTION_TO_QUALIFICATION = {
+    "bound": "eligible",
+    "external": "unknown",
+    "unresolved": "unknown",
+    "degraded": "degraded",
+}
+
+
+def _derive_role_states(
+    wf_profile: Any,
+    role_resolutions: Any,
+    *,
+    resolver_profile: Any,
+) -> Dict[str, str]:
+    """编译期角色状态：资格评估器重放优先（含 blocked 真事实），映射兜底。
+
+    - recipe 带 workflow profile → 重放 stage 7 同一评估器
+      （qualify_workflow_data_roles），五态事实（含 blocked）真实可达；
+    - 无 profile（V1 seed）→ 解析态显式映射（bound→eligible 等），
+      未绑定角色按 unknown 中性（不虚构资格）。
+    """
+    states: Dict[str, str] = {}
+    for r in role_resolutions:
+        states[r.role] = _RESOLUTION_TO_QUALIFICATION.get(r.status, "unknown")
+    if wf_profile is not None and getattr(wf_profile, "data_roles", None):
+        from app.services.gis_harness.data_qualification import (
+            qualify_workflow_data_roles,
+        )
+        crs_obligation = any(
+            "projected_crs" in (getattr(o, "precondition_id", "") or "")
+            or "local_metric_crs" in (getattr(o, "precondition_id", "") or "")
+            for o in wf_profile.obligations
+        )
+        quals = qualify_workflow_data_roles(
+            wf_profile.data_roles, role_resolutions,
+            resolver_profile=resolver_profile,
+            crs_projection_obligation=crs_obligation,
+        )
+        for q in quals:
+            states[q.role] = q.state
+    return states
