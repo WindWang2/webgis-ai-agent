@@ -52,14 +52,17 @@ def _ctx(rows_by_source=None, kinds=None):
 # ── fetch 窗口 ─────────────────────────────────────────────────────────────
 
 
-def test_build_side_window_widens_to_join_cap():
+def test_fetch_windows_v5_parity_identity():
+    """V5 奇偶默认：窗口恒等（放宽属显式契约变更 —— ADR-0118 follow-up）。
+
+    差分语料证明放宽会改变结果（V5 欠取漏配 vs V6 找回）—— 红线：优化器
+    不改变结果语义。
+    """
     ctx = _ctx()
     budget = ExecutionBudget()
     windows = derive_fetch_windows(ctx, budget)
-    # b、c 都是 build 侧 → 窗口放宽到 max(limit, join cap)
-    assert windows["b"] == min(budget.max_rows, MAX_JOIN_CANDIDATES)
-    assert windows["c"] == min(budget.max_rows, MAX_JOIN_CANDIDATES)
-    assert "a" not in windows, "probe 链首保持 req.limit（V5 链语义）"
+    assert windows == {}
+    assert MAX_JOIN_CANDIDATES > 0  # 硬界仍存在（executor 侧消费）
 
 
 def test_apply_fetch_windows_rewrites_scans_only():
@@ -82,11 +85,8 @@ def test_apply_fetch_windows_rewrites_scans_only():
     out = apply_fetch_windows(tree, windows)
     new_a = out.input.left
     new_b = out.input.right
-    assert new_a.fetch_limit == 1000, "a 是 probe 侧：窗口不变"
-    assert new_b.fetch_limit == windows["b"], "b 是 build 侧：窗口放宽"
-    h_before = tree.plan_hash()
-    h_after = out.plan_hash()
-    assert h_before != h_after, "窗口是执行决策，进计划哈希"
+    assert new_a.fetch_limit == 1000 and new_b.fetch_limit == 1000
+    assert out.plan_hash() == tree.plan_hash(), "恒等窗口不改计划"
 
 
 # ── 聚合下推裁决 ───────────────────────────────────────────────────────────

@@ -104,27 +104,16 @@ __all__ = [
 
 
 def derive_fetch_windows(ctx: EnumerationContext, budget: Any) -> Dict[str, int]:
-    """按角色派生每源 fetch 窗口。
+    """每源 fetch 窗口（V5 奇偶默认：恒等映射 → 全部源 = ``req.limit``）。
 
-    - build 侧（链上作为右源被物化的源）：窗口放宽到 V5 两源路径同款硬界
-      ``min(budget.max_rows, MAX_JOIN_CANDIDATES)`` —— 半连接约减下更多
-      候选 = 更完整的 join 覆盖（V5 链曾用 req.limit 单一窗口，可能在
-      右侧行数远超 limit 时漏配）；传输仍受 budget fail-fast 保护；
-    - probe 侧（链首/累积侧）：``req.limit``（V5 链语义不变）。
+    曾经的 build 侧放宽设计（窗口 → ``min(budget.max_rows, MAX_JOIN_CANDIDATES)``）
+    在差分语料中造成**结果分歧**：V5 的窗口欠取会漏掉窗口外的匹配行，V6 放宽
+    后会找回它们 —— 「优化器不改变结果语义」红线胜过覆盖改进。窗口放宽属于
+    显式契约变更（跟随 ADR-0118 Known Limitations 的 follow-up），当前不启用。
 
-    返回 source_id → 窗口（未列出的源 = req.limit）。
+    返回空 dict（``apply_fetch_windows`` 对空窗口为恒等）。
     """
-    from app.services.data_fabric.query.federation import MAX_JOIN_CANDIDATES
-
-    build_cap = min(budget.max_rows, MAX_JOIN_CANDIDATES)
-    windows: Dict[str, int] = {}
-    n = len(ctx.sources)
-    for i, e in enumerate(ctx.joins):
-        if i + 1 < n:
-            rid = e.right_source_id
-            if rid:
-                windows[rid] = max(build_cap, windows.get(rid, 0))
-    return windows
+    return {}
 
 
 def apply_fetch_windows(plan_tree: LogicalNode, windows: Dict[str, int]) -> LogicalNode:
