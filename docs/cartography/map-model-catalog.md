@@ -92,13 +92,20 @@
 
 ### before_after_swipe（前后对比卷帘）
 - planned：runtime 无 swipe 交互语义与导出双帧契约，本分支未实现
-- 导出侧等价物是双帧并排（before/after 双面板），swipe 仅限交互面
+- V5（ADR-0118 D7）部分落地：live swipe 对比的静态导出现已显式组合
+  （第二画布按 position 裁剪 + 分界线，`comparison_export_composed`）或
+  诚实披露（`comparison_second_view_not_exported`），不再静默丢第二视图；
+  交互面 swipe 本体仍属 Workbench
 
 ### cartogram_map（统计地图变形（cartogram））
 - planned：需要面积保持变形算法（Gastner-Newman 扩散等）与变形后几何的渲染契约，本分支未实现
 - 变形图必须同时披露原始地理轮廓参照（inset），否则读者失去地理定位
+- V5（ADR-0118 D8）：导出请求携带 cartogram 意图时诚实降级
+  （`cartogram_unsupported`，按未变形几何渲染）—— 不伪造变形支持
 
 ### small_multiple_map（小倍数地图组）
 - planned：需要多画幅组合运行时（多个 MapSpec 画面的并置/联动布局），当前单画布 MapSpec 无法承载 —— 诚实保留 planned
-- 落地前替代：temporal_comparison_map（双期）或导出侧多次出图
+- V5（ADR-0118 D8）导出侧最小真实闭环：`ExportRequest.frames` 多帧运行时
+  （逐帧 filter/extent 确定性执行 → pdf pages / png grid 拼板），可作为
+  小倍数导出的承载面；spec 级多画幅模型仍待后续 Epic
 
