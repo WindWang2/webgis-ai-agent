@@ -19,7 +19,7 @@ fallback_strategy / 场景 minimal 兜底）收敛为单一确定性裁决：
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -73,7 +73,6 @@ def resolve_fallback_tier(
     优先级：blocked > minimal > degraded > preferred（只降不升）。
     """
     from app.services.gis_harness.gis_ontology import get_task_ontology
-    from app.services.gis_harness.workflow_schema import DOWNGRADE_CLASSES
 
     disclosures: List[str] = list(extra_disclosures)
     blocked_reasons: List[str] = (
