@@ -34,6 +34,7 @@ from .api_version import (
     CORE_API_VERSION,
     check_core_version_window,
     check_extension_api_compatibility,
+    parse_version,
 )
 from .context import ExtensionContext
 from .diagnostics import (
@@ -53,6 +54,7 @@ from .permissions import (
     grants_for,
     validate_declared_permissions,
 )
+from . import resolver
 from .signing import (
     STATUS_INVALID,
     STATUS_MISSING,
@@ -357,6 +359,13 @@ class ExtensionHost:
                 )
         # 依赖可解析 + 环检测（在 discovered 集合内）。
         diagnostics.extend(self._check_dependencies(record))
+        # V2（ADR-0105 Wave 8）：依赖版本约束校验（required 不满足 → error）。
+        diagnostics.extend(
+            resolver.constraint_diagnostics_for(
+                _record_view(record),
+                {eid: _record_view(rec) for eid, rec in self._records.items()},
+            )
+        )
         # 入口文件存在（不 import——import 只发生在 activate）。
         if self._resolve_entry_path(record) is None:
             diagnostics.append(
@@ -1141,7 +1150,12 @@ class ExtensionHost:
         record.state = ExtensionState.DISCOVERED
         return []
 
-    def reload(self, extension_id: str, activate: bool = True) -> list[ExtensionDiagnostic]:
+    def reload(
+        self,
+        extension_id: str,
+        activate: bool = True,
+        allow_downgrade: bool = False,
+    ) -> list[ExtensionDiagnostic]:
         record = self._records.get(extension_id)
         if record is None:
             return [
@@ -1194,6 +1208,21 @@ class ExtensionHost:
                 )
             )
             return list(record.diagnostics)
+        # V2（Wave 8）：降级闸 —— 磁盘版本低于当前记录版本时拒绝，
+        # 除非 allow_downgrade=True（回滚 = 运维恢复旧 pack + 显式降级）。
+        new_v = parse_version(manifest.version)
+        cur_v = parse_version(record.manifest.version)
+        if new_v is not None and cur_v is not None and new_v < cur_v and not allow_downgrade:
+            record.state = ExtensionState.FAILED
+            record.diagnostics.append(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"reload refused: version downgrade {record.manifest.version!r} -> "
+                    f"{manifest.version!r} requires allow_downgrade=True",
+                    extension_id=extension_id,
+                )
+            )
+            return diagnostics + list(record.diagnostics)
         # Round-1 审计 M1：reload 必须重跑发现期信任门（blocklist 新增、
         # allowlist 撤销都可能发生在两次操作之间）。
         trust = resolve_trust(
@@ -1249,32 +1278,89 @@ class ExtensionHost:
             diagnostics.extend(self.activate(extension_id))
         return diagnostics
 
+    def upgrade(
+        self, extension_id: str, allow_downgrade: bool = False
+    ) -> list[ExtensionDiagnostic]:
+        """升级（V2 Wave 8）：磁盘 pack 已被替换为新版本后的安全换血。
+
+        预检（不触碰当前运行状态）：
+        - manifest 可重读且 id 不漂移；
+        - 版本回归必须显式 ``allow_downgrade=True``（回滚语义）；
+        - ``resolver.check_upgrade_conflicts``：任何依赖者的版本约束被
+          新版本破坏 → DEPENDENCY_CONFLICT，升级被拒，旧版继续运行。
+        通过后委托 reload（deactivate → unload → 重读 → activate）。
+        """
+        record = self._records.get(extension_id)
+        if record is None:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID, f"unknown extension {extension_id!r}"
+                )
+            ]
+        if record.state is ExtensionState.DISABLED:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.EXTENSION_DISABLED,
+                    f"extension {extension_id!r} is disabled; enable() before upgrade()",
+                    extension_id=extension_id,
+                )
+            ]
+        if record.state is ExtensionState.QUARANTINED:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.TRUST_BLOCKED,
+                    f"extension {extension_id!r} is quarantined; re-discover instead",
+                    extension_id=extension_id,
+                )
+            ]
+        manifest, parse_diags = _reread_manifest(record.path)
+        if manifest is None:
+            detail = "; ".join(d.message for d in parse_diags) or "manifest re-read failed"
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"upgrade preflight failed: {detail}",
+                    extension_id=extension_id,
+                )
+            ]
+        if manifest.id != extension_id:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"upgrade refused: manifest id changed {extension_id!r} -> "
+                    f"{manifest.id!r} (re-discover instead)",
+                    extension_id=extension_id,
+                )
+            ]
+        new_v = parse_version(manifest.version)
+        cur_v = parse_version(record.manifest.version)
+        if new_v is not None and cur_v is not None and new_v < cur_v and not allow_downgrade:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"upgrade refused: {manifest.version!r} is older than active "
+                    f"{record.manifest.version!r}; use allow_downgrade=True to roll back",
+                    extension_id=extension_id,
+                )
+            ]
+        views = {eid: _record_view(r) for eid, r in self._records.items()}
+        conflicts = resolver.check_upgrade_conflicts(extension_id, manifest.version, views)
+        if conflicts:
+            return conflicts
+        return self.reload(extension_id, activate=True, allow_downgrade=allow_downgrade)
+
     # ── 批量激活（topo 序）────────────────────────────────────────────
     def activate_all(self) -> dict[str, list[ExtensionDiagnostic]]:
         results: dict[str, list[ExtensionDiagnostic]] = {}
-        # Kahn 拓扑：节点 = compatible 扩展，边 = required 依赖。
-        candidates = sorted(
+        # V2 Wave 8：激活序收敛到 resolver（Kahn 拓扑 + id tie-break，
+        # 与 resolver.resolve_activation_plan 同一事实源）。
+        views = {eid: _record_view(r) for eid, r in self._records.items()}
+        eligible = {
             eid for eid, r in self._records.items() if r.state is ExtensionState.COMPATIBLE
-        )
-        indegree = {eid: 0 for eid in candidates}
-        dependents: dict[str, list[str]] = {eid: [] for eid in candidates}
-        for eid in candidates:
-            for dep in self._required_dep_ids(eid):
-                if dep in indegree:
-                    indegree[eid] += 1
-                    dependents[dep].append(eid)
-        ready = sorted(eid for eid, d in indegree.items() if d == 0)
-        ordered: list[str] = []
-        while ready:
-            eid = ready.pop(0)
-            ordered.append(eid)
-            for dependent in sorted(dependents[eid]):
-                indegree[dependent] -= 1
-                if indegree[dependent] == 0:
-                    ready.append(dependent)
-            ready.sort()
-        # 环内成员不在 ordered 中（validate 阶段已诊断），跳过即可。
-        for eid in ordered:
+        }
+        plan = resolver.resolve_activation_plan(views, eligible)
+        # 环内/无序成员不在 ordered 中（validate 阶段已诊断），跳过即可。
+        for eid in plan.ordered:
             results[eid] = self.activate(eid)
         return results
 
@@ -1370,6 +1456,32 @@ def configure_extension_host(host: ExtensionHost) -> ExtensionHost:
 
 def get_extension_host() -> Optional[ExtensionHost]:
     return _host
+
+
+def _record_view(record: ExtensionRecord) -> "resolver.RecordView":
+    """ExtensionRecord → resolver.RecordView（解析层与 host 类型解耦）。"""
+    from .manifest import DependencyDeclaration
+
+    def _deps(deps: list[DependencyDeclaration], required: bool) -> tuple:
+        return tuple(
+            resolver.DepView(
+                id=d.id,
+                # optional_dependencies 节整体按 optional 语义处理（与
+                # host._check_dependencies 的既有判定一致）。
+                required=d.required and required,
+                version_constraint=d.version,
+                feature_flag=d.feature_flag,
+            )
+            for d in deps
+        )
+
+    return resolver.RecordView(
+        id=record.extension_id,
+        version=record.manifest.version,
+        state=record.state.value,
+        deps=_deps(record.manifest.dependencies, True)
+        + _deps(record.manifest.optional_dependencies, False),
+    )
 
 
 def _refingerprint(record: ExtensionRecord) -> tuple[Optional[str], Optional[ExtensionDiagnostic]]:
