@@ -914,6 +914,56 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if status.status in (STATUS_SIGNED_VERIFIED, STATUS_MISSING) else 1
 
 
+# ── sbom（Wave 7 物料清单）───────────────────────────────────────────────
+def _cmd_sbom(args: argparse.Namespace) -> int:
+    from .sbom import build_sbom
+
+    host, roots = _build_host(args.root)
+    record = host.get_record(args.extension_id)
+    if record is None:
+        print(
+            f"error: extension {args.extension_id!r} was not discovered "
+            f"(roots: {roots or ['(none)']}); it may have failed discovery — run `list`",
+            file=sys.stderr,
+        )
+        return 1
+    if record.fingerprint is None:
+        # 指纹不可得（包体超界）→ SBOM 无法锚定内容，fail closed。
+        print(
+            f"error: pack {args.extension_id!r} has no content fingerprint "
+            "(bounds exceeded); SBOM refused",
+            file=sys.stderr,
+        )
+        return 1
+    payload = build_sbom(record.path, record.manifest, record.fingerprint)
+    if args.json:
+        _print_json(payload)
+        return 0
+    # 人读摘要（完整机器可读清单走 --json）。
+    scan = payload["secret_scan"]
+    print(
+        f"extension: {payload['extension_id']} v{payload['version']} "
+        f"(sbom_version {payload['sbom_version']})"
+    )
+    print(f"fingerprint: {payload['fingerprint']}")
+    print(f"files: {len(payload['files'])}")
+    print("python_imports: " + (", ".join(payload["python_imports"]) or "(none)"))
+    print("dependencies:")
+    if not payload["dependencies"]:
+        print("  (none)")
+    for dep in payload["dependencies"]:
+        optional = " (optional)" if dep["optional"] else ""
+        version = f" {dep['version']}" if dep["version"] else ""
+        print(f"  {dep['id']}{version}{optional}")
+    if scan["clean"]:
+        print("secret_scan: clean")
+    else:
+        print("secret_scan: FINDINGS (informational; verify before publishing)")
+        for finding in scan["findings"]:
+            print(f"  {finding['kind']}: {finding['file']}")
+    return 0
+
+
 # ── 参数解析 ─────────────────────────────────────────────────────────────
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -1010,6 +1060,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_verify.add_argument("--json", action="store_true", help="stdout 输出纯 JSON")
     p_verify.set_defaults(handler=_cmd_verify)
+
+    p_sbom = sub.add_parser(
+        "sbom", parents=[common], help="扩展包确定性 SBOM（文件清单/imports/依赖/secret 扫描）"
+    )
+    p_sbom.add_argument("extension_id", help="扩展 id（<namespace>.<name>）")
+    p_sbom.set_defaults(handler=_cmd_sbom)
     return parser
 
 
