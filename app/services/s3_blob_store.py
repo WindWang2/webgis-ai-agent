@@ -324,13 +324,11 @@ def _default_client_factory() -> Any:
 
 
 def build_s3_client_from_env() -> Any:
-    """env 配置 → boto3 client（构建期 SSRF 门；缺配置 → typed 降级）。"""
-    try:
-        import boto3
-    except Exception as e:  # noqa: BLE001 — any import failure = unavailable
-        raise S3StoreUnavailable(
-            "the optional 'boto3' dependency is not installed"
-        ) from e
+    """env 配置 → boto3 client（构建期 SSRF 门；缺配置 → typed 降级）。
+
+    配置/SSRF 校验先于 optional 依赖导入 —— endpoint 安全门不依赖 boto3
+    是否在场（配置错了就拒绝，与运行时依赖无关）。
+    """
     cfg = s3_config_from_env()
     if not cfg["bucket"] or not cfg["endpoint_url"]:
         raise S3StoreUnavailable(
@@ -343,6 +341,12 @@ def build_s3_client_from_env() -> Any:
         DataFabricSecurity.validate_url(cfg["endpoint_url"])
     except Exception as e:  # noqa: BLE001 — SSRF 门拒绝 = 配置错误，typed 暴露
         raise S3StoreUnavailable(f"s3 endpoint rejected by SSRF gate: {e}") from e
+    try:
+        import boto3
+    except Exception as e:  # noqa: BLE001 — any import failure = unavailable
+        raise S3StoreUnavailable(
+            "the optional 'boto3' dependency is not installed"
+        ) from e
     session = boto3.session.Session(
         aws_access_key_id=cfg["access_key_id"] or None,
         aws_secret_access_key=cfg["secret_access_key"] or None,
