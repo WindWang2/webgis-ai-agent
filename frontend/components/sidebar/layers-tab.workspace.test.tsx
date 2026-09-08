@@ -54,7 +54,7 @@ const store: Record<string, any> = {
   }),
   pruneLayerGroups: vi.fn((valid: Set<string>) => {
     const membership: Record<string, string> = {};
-    for (const [id, gid] of Object.entries(store.layerGroupMembership)) {
+    for (const [id, gid] of Object.entries(store.layerGroupMembership as Record<string, string>)) {
       if (valid.has(id)) membership[id] = gid;
     }
     store.layerGroupMembership = membership;

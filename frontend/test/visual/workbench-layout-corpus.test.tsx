@@ -54,7 +54,7 @@ describe('Wave 12 · 组件布局几何语料', () => {
       // —— 全画布/叠加型）；其余必须有落点。
       const exempt = ['basemap', 'export_layout', 'graticule', 'map_border'].includes(comp.type);
       if (exempt) continue;
-      const anchor = resolvePosition(comp);
+      const anchor = resolvePosition(comp.component);
       if (anchor === 'none' || !DEFAULT_COMPONENT_ANCHOR[comp.type]) {
         hidden.push(`${comp.type} → ${anchor}`);
       }
@@ -68,7 +68,7 @@ describe('Wave 12 · 组件布局几何语料', () => {
       'bottom-3 left-3', 'bottom-3 left-1/2 -translate-x-1/2', 'bottom-3 right-3', 'hidden',
     ]);
     for (const comp of resolveMapComponents({ layout: { components: corpusSpec() } })) {
-      expect(legal.has(positionClass(comp)), `${comp.type}: ${positionClass(comp)}`).toBe(true);
+      expect(legal.has(positionClass(comp.component)), `${comp.type}: ${positionClass(comp.component)}`).toBe(true);
     }
   });
 

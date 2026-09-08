@@ -9,12 +9,12 @@ import { snapTarget } from './floating-chrome';
 import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 
 // commitComponentPatch mock（组件 mutation 通道的唯一出口）
-const commitPatch = vi.fn(async () => ({ status: 'applied' as const }));
+const commitPatch = vi.fn(async (..._args: unknown[]) => ({ status: 'applied' as const }));
 vi.mock('@/lib/mapspec/component-mutation', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/mapspec/component-mutation')>();
   return {
     ...actual,
-    commitComponentPatch: (...args: unknown[]) => commitPatch(...(args as [string, never])),
+    commitComponentPatch: (...args: unknown[]) => commitPatch(...args),
   };
 });
 

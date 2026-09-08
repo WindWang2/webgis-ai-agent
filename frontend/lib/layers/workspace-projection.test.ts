@@ -41,7 +41,7 @@ describe('projectWorkspace · 用户分组', () => {
     const layers = [
       mkLayer('a', { group: 'analysis' }),
       mkLayer('b', { group: 'base' }),
-      mkLayer('c', { group: 'default' }),
+      mkLayer('c', { group: 'default' as any }),
       mkLayer('d', { group: 'weird-custom' as any }),
     ];
     const result = projectWorkspace({ ...baseInput, layers });

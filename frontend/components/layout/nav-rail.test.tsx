@@ -34,7 +34,7 @@ const store: Record<string, unknown> = {
   setWorkbenchMode: vi.fn((mode: string, origin?: string) => {
     store.mode = mode;
     store.modeOrigin = origin ?? 'user';
-    setActiveLeftTab(store.modeActiveTab[mode] ?? 'chat');
+    setActiveLeftTab((store.modeActiveTab as Record<string, string>)[mode] ?? 'chat');
   }),
 };
 
