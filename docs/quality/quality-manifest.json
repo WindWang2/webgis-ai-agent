@@ -6482,9 +6482,9 @@
   "algorithms": 192,
   "artifact_types": 21,
   "capabilities": 123,
-  "findings": 253,
+  "findings": 254,
   "recipes": 164,
-  "tools": 294
+  "tools": 295
  },
  "findings": [
   {
@@ -7895,6 +7895,12 @@
    "code": "TOOL_UNTESTED",
    "detail": "registered tool without any static test reference",
    "severity": "medium",
+   "subject": "hydrology_v4_analysis"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "severity": "medium",
    "subject": "ica_transform"
   },
   {
@@ -8006,7 +8012,7 @@
    "subject": "webgis_world_state"
   }
  ],
- "fingerprint": "f5d9e74e0bbd52a1fc3950b7b61ece4d39a96247e69bc49fb091a962dd49f4ca",
+ "fingerprint": "46be0edeb8b26d0fce8f61f515833ecd977faf34705ef97233a6341ac1362627",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8109,7 +8115,7 @@
    }
   },
   "pass": true,
-  "total": 294
+  "total": 295
  },
  "manifest_version": 1,
  "recipes": {
@@ -10927,6 +10933,34 @@
     "tests/unit/test_subagent.py",
     "tests/unit/test_tool_catalog.py"
    ],
+   "tier": 2
+  },
+  {
+   "capabilities": [
+    "terrain_hydrology"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "flags": [
+    "untested"
+   ],
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "hydrology_v4_analysis",
+   "requires_confirmation": false,
+   "scale_class": "large",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "水文",
+    "breaching",
+    "HAND",
+    "shreve",
+    "pfafstetter",
+    "hypsometry",
+    "solar"
+   ],
+   "tests": [],
    "tier": 2
   },
   {

@@ -10,33 +10,33 @@
   },
   "contract_drift": {
    "counts": {
-    "BLOCKER": 0,
+    "BLOCKER": 6,
     "MAJOR": 0,
     "MINOR": 0,
-    "total": 0
+    "total": 6
    },
-   "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+   "fingerprint": "7f0a8f2ebacc1329fd8e960a491d98f7f82949ff864c63731eee31aaa6c8d570"
   },
   "quality_manifest": {
    "counts": {
     "algorithms": 192,
     "artifact_types": 21,
     "capabilities": 123,
-    "findings": 253,
+    "findings": 254,
     "recipes": 164,
-    "tools": 294
+    "tools": 295
    },
    "findings_by_code": {
     "ALGO_HEAVY_NO_VARIANTS": 30,
     "ALGO_NO_CONFORMANCE": 20,
     "CAPABILITY_NO_CONFORMANCE": 16,
     "TOOL_DESCRIPTOR_INCOMPLETE": 155,
-    "TOOL_UNTESTED": 32
+    "TOOL_UNTESTED": 33
    },
-   "fingerprint": "f5d9e74e0bbd52a1fc3950b7b61ece4d39a96247e69bc49fb091a962dd49f4ca",
+   "fingerprint": "46be0edeb8b26d0fce8f61f515833ecd977faf34705ef97233a6341ac1362627",
    "gate": {
     "pass": true,
-    "total": 294
+    "total": 295
    }
   },
   "scenario_corpus": {

@@ -1696,7 +1696,6 @@ def _register_hydrology_v4_tool(registry) -> None:
     import numpy as np
 
     from app.lib.gis.scientific_evidence import build_evidence
-    from app.tools.tool_registry import tool
 
     @tool(registry, name="hydrology_v4_analysis",
            description=(
