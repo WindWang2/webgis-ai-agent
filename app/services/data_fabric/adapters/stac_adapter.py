@@ -512,9 +512,19 @@ class STACAdapter(GeospatialDataSourceAdapter):
 
         stac_remote, stac_local = resolve_plan_filter_split(v2.filter, plan)
         stac_predicate = stac_local if stac_local is not None else stac_remote
+        # F2（round2）：远端口径命中数（bbox/datetime/分页窗口内的
+        # numberMatched），仅在属性谓词本地求值时留存并如实命名。
+        remote_scoped_matched: Optional[int] = None
         if stac_predicate is not None:
             features = [f for f in features if evaluate_predicate(stac_predicate, f.get("properties") or {})]
             returned = len(features)
+            # STAC 从不下推属性过滤（caps.filter_pushdown=False → 拆分/守卫
+            # 路径整体本地求值）—— numberMatched 只是下推范围（bbox/datetime/
+            # 分页窗口）的远端命中数，冒充 total_matching 不诚实 → 如实置
+            # None；远端口径计数以 remote_scoped_matched 进入 metadata 证据
+            # 面。bbox/datetime-only 查询不受影响（远端命中范围即查询范围）。
+            remote_scoped_matched = matched
+            matched = None
         if v2.temporal is not None:
             features = [f for f in features if self._temporal_matches(v2.temporal, f.get("properties") or {})]
             returned = len(features)
@@ -572,6 +582,10 @@ class STACAdapter(GeospatialDataSourceAdapter):
             metadata=self._metadata(plan, evidence, started, extra={
                 "is_demo": False,
                 "source": "remote",
+                # F2（round2）：属性过滤查询的远端口径命中数如实命名留存
+                # （total_matching 已置 None，绝不冒充全量命中数）。
+                **({"remote_scoped_matched": remote_scoped_matched}
+                   if remote_scoped_matched is not None else {}),
             }),
         )
 

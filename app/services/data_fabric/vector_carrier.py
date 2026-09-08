@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Union
 
 from app.services.data_fabric.errors import DataFabricError
 
@@ -69,7 +69,7 @@ def _require_pa() -> Tuple[Any, Any]:
 
 
 def _geo_metadata(
-    crs: Optional[str] = None,
+    crs: Optional[Union[str, Dict[str, Any]]] = None,
     *,
     bbox: Optional[List[float]] = None,
     geometry_types: Optional[List[str]] = None,
@@ -79,6 +79,13 @@ def _geo_metadata(
     Wave 5：编码时由数据计算 ``bbox``（[minx,miny,maxx,maxy]）与
     ``geometry_types``（排序去重），使写入的文件自描述（此前其自身读取器
     只能诚实报告 bbox=None）。
+
+    ``crs`` 契约（round-2 review MINOR，显式化而非偶然直通）：
+
+    - **PROJJSON dict** → **原样写入** schema（轴序/单位/椭球等完整参数
+      保留，精度绝不降级为名称串）；
+    - **字符串**（名称/``EPSG:xxxx`` 形态）→ 现状行为照写（GeoArrow/GeoParquet
+      允许字符串形态，读取方按名称解析 —— 有意保留，文档化）。
     """
     # encoding 大写 "WKB" 是 GeoParquet 1.1 规范拼写（评审 MINOR：
     # 小写会破坏严格第三方读取器的互操作）。
@@ -94,7 +101,10 @@ def _geo_metadata(
     }
     geom_col = meta["columns"]["geometry"]
     if crs:
-        geom_col["crs"] = crs
+        if isinstance(crs, dict):
+            geom_col["crs"] = dict(crs)  # PROJJSON 逐键保真直通
+        else:
+            geom_col["crs"] = crs  # 字符串形态（现状行为，docstring 已述）
     if bbox is not None:
         geom_col["bbox"] = [float(c) for c in bbox]
     if geometry_types:
@@ -211,11 +221,14 @@ def _wkb_to_geometry(wkb: Optional[bytes]) -> Optional[Dict[str, Any]]:
 
 
 def features_to_arrow(
-    features: List[Dict[str, Any]], *, crs: Optional[str] = None
+    features: List[Dict[str, Any]],
+    *,
+    crs: Optional[Union[str, Dict[str, Any]]] = None,
 ) -> Any:
     """GeoJSON features → pyarrow.Table（geo WKB 元数据；schema/null 保留）。
 
-    ``geo`` 元数据附编码时计算的 ``bbox`` / ``geometry_types``（文件自描述）。
+    ``geo`` 元数据附编码时计算的 ``bbox`` / ``geometry_types``（文件自描述）；
+    ``crs`` 接受名称串或 PROJJSON dict（见 ``_geo_metadata`` 的契约）。
     """
     if not arrow_available():
         raise VectorCarrierUnavailable(
@@ -278,7 +291,10 @@ def arrow_to_features(table: Any) -> List[Dict[str, Any]]:
 
 
 def iter_arrow_chunks(
-    features: List[Dict[str, Any]], *, crs: Optional[str] = None, chunk_size: int = 4096
+    features: List[Dict[str, Any]],
+    *,
+    crs: Optional[Union[str, Dict[str, Any]]] = None,
+    chunk_size: int = 4096,
 ) -> Iterator[Any]:
     """分块传输：GeoJSON features → RecordBatch 迭代（零整表物化）。"""
     table = features_to_arrow(features, crs=crs)
@@ -316,7 +332,7 @@ def iter_features_to_arrow_batches(
     chunk_size: int = 4096,
     schema: Optional[Any] = None,
     on_schema_conflict: str = "strict",
-    crs: Optional[str] = None,
+    crs: Optional[Union[str, Dict[str, Any]]] = None,
 ) -> Iterator[Any]:
     """批式载体输入：``Iterable[List[feature]]`` → RecordBatch 迭代。
 
@@ -456,7 +472,7 @@ def arrow_batches_geo_metadata(batches: Iterable[Any]) -> Dict[str, Any]:
         )
     combined_bbox: Optional[List[float]] = None
     types: set = set()
-    crs: Optional[str] = None
+    crs: Optional[Union[str, Dict[str, Any]]] = None
     for batch in batches:
         raw = (batch.schema.metadata or {}).get(b"geo")
         if not raw:
@@ -495,8 +511,11 @@ def geoparquet_to_features(path: str) -> List[Dict[str, Any]]:
     return arrow_to_features(table)
 
 
-def table_crs(table: Any) -> Optional[str]:
-    """从 schema geo 元数据读回 CRS（round-trip 保留证据）。"""
+def table_crs(table: Any) -> Optional[Union[str, Dict[str, Any]]]:
+    """从 schema geo 元数据读回 CRS（round-trip 保留证据）。
+
+    返回形态与写入侧契约一致：PROJJSON dict 或名称字符串（未知 → None）。
+    """
     import pyarrow  # noqa: F401
 
     meta = table.schema.metadata or {}

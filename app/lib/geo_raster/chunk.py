@@ -32,6 +32,7 @@ work, they do not parallelize them.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 from dataclasses import dataclass
@@ -271,7 +272,16 @@ def fn_fingerprint(fn: Any) -> str:
     a window fn invalidates cached chunks — it is NOT part of
     :class:`RasterChunkDescriptor` (descriptor identity stays
     data-defined).
+
+    round-2 review MINOR: ``inspect.unwrap`` first — ``functools.wraps``
+    decorators otherwise poison the digest with the WRAPPER's bytecode
+    while keeping the wrapped fn's qualname (same algorithm, different
+    digest per decorating module ⇒ cache keys that never reproduce across
+    call sites). Residual blindness (documented, accepted): the digest
+    still cannot see closure cell contents or mutated defaults — editing
+    only those does not invalidate cached chunks.
     """
+    fn = inspect.unwrap(fn)
     qualname = str(
         getattr(fn, "__qualname__", None) or getattr(fn, "__name__", "") or ""
     )

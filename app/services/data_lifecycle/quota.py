@@ -83,15 +83,21 @@ def promotion_blob_protection(*args: Any, **kwargs: Any) -> Optional[str]:
 SNAPSHOT_POINTER_SCAN_CAP = 5000
 
 
-def workspace_snapshot_protected_pointers() -> Tuple[set, set]:
+def workspace_snapshot_protected_pointers() -> Tuple[set, set, bool]:
     """全部工作空间快照 manifest 引用的持久指针集合（只读，有界）。
 
-    Returns ``(locations, shas)``：``content_location`` 集合与
-    ``content_payload_sha256`` 集合。调用方（promotion GC / retention 的
-    plan 与 execute）把它们交给单一保护谓词
+    Returns ``(locations, shas, truncated)``：``content_location`` 集合、
+    ``content_payload_sha256`` 集合与**截断标志**。调用方（promotion GC /
+    retention 的 plan 与 execute）把它们交给单一保护谓词
     ``promotion_blob_protection``，凡是 location 或 sha 命中的 blob 一律
-    PROTECTED。超过 ``SNAPSHOT_POINTER_SCAN_CAP`` 条即停止扫描并告警
-    （保护面截断是诚实降级 —— 绝不让清扫器无界扫盘）。
+    PROTECTED。超过 ``SNAPSHOT_POINTER_SCAN_CAP`` 条**去重后条目**即停止
+    扫描并告警（同一条目的 loc+sha 只计 1，重复指针不重复计数 —— round-2
+    review MAJOR）。
+
+    round-2 review MAJOR（fail-open → fail-closed）：截断不再只是告警 ——
+    ``truncated=True`` 表示保护面**可能不完整**，调用方必须把该标志传入
+    保护输入并在该清扫周期**跳过 blob 删除阶段**（保护优先：保护面残缺
+    时任何「可删」判定都不可信，绝不删除）。绝不让清扫器无界扫盘。
     """
     from app.services.workspace.snapshot import _read_json, _workspaces_root
 
@@ -100,14 +106,15 @@ def workspace_snapshot_protected_pointers() -> Tuple[set, set]:
     try:
         root = _workspaces_root()
     except Exception:  # noqa: BLE001 — 配置漂移按空保护面（调用方如实降级）
-        return locations, shas
+        return locations, shas, False
     if not root.is_dir():
-        return locations, shas
+        return locations, shas, False
     try:
         project_dirs = sorted(p for p in root.iterdir() if p.is_dir())
     except OSError:
-        return locations, shas
+        return locations, shas, False
     counted = 0
+    seen_entries: set = set()
     for proj_dir in project_dirs:
         sdir = proj_dir / "workspace-snapshots"
         if not sdir.is_dir():
@@ -118,24 +125,29 @@ def workspace_snapshot_protected_pointers() -> Tuple[set, set]:
             if not isinstance(pointers, dict):
                 continue
             for ptr in pointers.values():
+                if not isinstance(ptr, dict):
+                    continue
+                loc = str(ptr.get("content_location") or "")
+                sha = str(ptr.get("content_payload_sha256") or "")
+                if not loc and not sha:
+                    continue
+                entry_key = (loc, sha)
+                if entry_key in seen_entries:
+                    continue  # 重复指针不重复计数（round-2 review MAJOR a）
                 if counted >= SNAPSHOT_POINTER_SCAN_CAP:
                     logger.warning(
                         "[quota] workspace snapshot pointer scan hit cap %d — "
                         "truncating protection scan (project=%s)",
                         SNAPSHOT_POINTER_SCAN_CAP, proj_dir.name,
                     )
-                    return locations, shas
-                if not isinstance(ptr, dict):
-                    continue
-                loc = str(ptr.get("content_location") or "")
-                sha = str(ptr.get("content_payload_sha256") or "")
+                    return locations, shas, True
+                seen_entries.add(entry_key)
+                counted += 1
                 if loc:
                     locations.add(loc)
-                    counted += 1
                 if sha:
                     shas.add(sha)
-                    counted += 1
-    return locations, shas
+    return locations, shas, False
 
 
 # ── Env discipline（与 artifact_lifecycle._retention_days 同款）───────────
@@ -394,33 +406,41 @@ def _retention_revision_protection(
 def _retention_scan_state(db) -> Tuple[set, set]:
     """head 修订 id 集合 + 有下游的 artifact id 集合（单查询口径）。
 
-    round-1 review PERF MAJOR-2：head 复查按 artifact_id 分片 IN（≤10k/条），
-    可命中 ``uq_artifact_revision_no`` 的 artifact 前缀；谓词全部裸列
-    （无函数包裹），created_at/pinned_at 索引（0031）可用。
+    round-1 review PERF MAJOR-2：谓词全部裸列（无函数包裹），
+    created_at/pinned_at 索引（0031）可用。
+    round-2 review MINOR：head 选择改写为**索引聚合**（GROUP BY
+    artifact_id + MAX(revision_no) 回联，命中 ``uq_artifact_revision_no``
+    的 artifact 前缀）—— plan/execute 不再把整表修订行拉进 Python 逐行
+    比较（旧实现第二段查询物化全部行），聚合与回联都在 SQL 侧完成；
+    语义与旧实现完全一致（每 artifact ``revision_no`` 最大的那行即 head；
+    ``uq_artifact_revision_no`` 保证 (artifact_id, revision_no) 唯一，
+    每 artifact 恰好回联一行）。
     """
-    from sqlalchemy import func, select
+    from sqlalchemy import and_, func, select
 
     from app.models.project import ArtifactLineage, ArtifactRevision
-    from app.services.artifact_revisions import chunked
 
-    maxima = {
-        aid: int(no)
-        for aid, no in db.execute(
-            select(
-                ArtifactRevision.artifact_id,
-                func.max(ArtifactRevision.revision_no),
-            ).group_by(ArtifactRevision.artifact_id)
-        ).all()
-    }
-    head_ids: set = set()
-    for id_chunk in chunked(list(maxima.keys())):
-        for rid, aid, no in db.execute(
-            select(ArtifactRevision.id, ArtifactRevision.artifact_id,
-                   ArtifactRevision.revision_no).where(
-                ArtifactRevision.artifact_id.in_(id_chunk))
-        ).all():
-            if maxima.get(aid) == int(no):
-                head_ids.add(rid)
+    maxima_sq = (
+        select(
+            ArtifactRevision.artifact_id.label("artifact_id"),
+            func.max(ArtifactRevision.revision_no).label("max_no"),
+        )
+        .group_by(ArtifactRevision.artifact_id)
+        .subquery()
+    )
+    head_ids = set(
+        db.execute(
+            select(ArtifactRevision.id)
+            .join(
+                maxima_sq,
+                and_(
+                    ArtifactRevision.artifact_id
+                    == maxima_sq.c.artifact_id,
+                    ArtifactRevision.revision_no == maxima_sq.c.max_no,
+                ),
+            )
+        ).scalars().all()
+    )
     lineage_parent_ids = set(
         db.execute(
             select(ArtifactLineage.parent_artifact_id).where(
@@ -447,6 +467,11 @@ def plan_retention_cleanup(
     谓词（``promotion_blob_protection``：引用计数 / head 指针 / pin /
     blob mtime 宽限期）的物理 blob。默认策略（无 env）= keep-forever，
     返回空计划（disabled）。
+
+    round-2 review MAJOR（fail-closed）：快照 manifest 指针扫描若被
+    ``SNAPSHOT_POINTER_SCAN_CAP`` 截断，计划带
+    ``protection_scan_truncated=True`` 且 ``candidate_blobs`` 恒空
+    （本轮跳过 blob 删除阶段 —— 保护面可能不完整时绝不删除）。
     """
     from sqlalchemy import select
 
@@ -472,6 +497,7 @@ def plan_retention_cleanup(
         "candidate_revision_count": 0,
         "candidate_blob_count": 0,
         "candidate_blob_bytes": 0,
+        "protection_scan_truncated": False,
     }
     if policy.max_age_days <= 0:
         return plan
@@ -513,6 +539,12 @@ def plan_retention_cleanup(
             "content_sha256": r.content_sha256,
             "content_location": r.content_location,
             "byte_size": int(r.byte_size or 0),
+            # 计划内年龄（天，向下取整；供路由的脱敏投影使用）。
+            "age_days": max(
+                0,
+                int((now - (r.created_at or datetime.now(timezone.utc))
+                     .timestamp()) // 86400),
+            ),
         }
         for r in candidates
     ]
@@ -546,9 +578,21 @@ def plan_retention_cleanup(
     }
     # 快照 manifest 指针与 promotion GC 同一保护输入（round-1 review
     # CRITICAL：plan/execute 双侧同源，绝不 fork 第二份扫描）。
-    snap_locations, snap_shas = workspace_snapshot_protected_pointers()
+    snap_locations, snap_shas, snap_truncated = workspace_snapshot_protected_pointers()
     snap["snapshot_locations"] = snap_locations
     snap["snapshot_shas"] = snap_shas
+    snap["protection_scan_truncated"] = snap_truncated
+    if snap_truncated:
+        # round-2 review MAJOR（fail-closed）：保护面截断 ⇒ 保护集可能不完整
+        # —— 本轮跳过 blob 删除阶段（plan 与 execute 同规则：保护优先，
+        # 绝不带残缺保护面删除）。候选修订行照常披露，blob 候选恒空。
+        plan["protection_scan_truncated"] = True
+        logger.warning(
+            "[quota] retention plan: snapshot protection scan truncated — "
+            "skipping blob-deletion phase this cycle (project=%s)",
+            project_id,
+        )
+        return plan
     seen_blobs: set = set()
     candidate_blobs: List[Dict[str, Any]] = []
     blob_protected: Dict[str, int] = {}
@@ -605,6 +649,11 @@ def execute_retention_cleanup(
     policy_d = dict((plan or {}).get("policy") or {})
     now = float((plan or {}).get("now") or time.time())
     grace_hours = float(policy_d.get("grace_hours") or 0.0)
+    plan_truncated = bool((plan or {}).get("protection_scan_truncated"))
+    if plan_truncated:
+        # plan 侧已因保护面截断跳过 blob 阶段（candidate_blobs 恒空）——
+        # result 如实披露（诚实降级，绝不假装「没有 blob 可删」）。
+        result["protection_scan_truncated"] = True
     if not candidates and not blob_candidates:
         return result
 
@@ -655,34 +704,47 @@ def execute_retention_cleanup(
                 "artifact_locations": set(artifact_content_locations(db)),
                 "pinned_shas": set(pinned_content_sha256s(db)),
             }
-            snap_locations, snap_shas = workspace_snapshot_protected_pointers()
+            snap_locations, snap_shas, snap_truncated = (
+                workspace_snapshot_protected_pointers()
+            )
             snap["snapshot_locations"] = snap_locations
             snap["snapshot_shas"] = snap_shas
-            shas = [str(b.get("key") or "") for b in blob_candidates]
-            snap["refcounts_by_sha"] = referencing_sha_counts(db, shas)
-            for b in blob_candidates:
-                key = str(b.get("key") or "")
-                loc = str(b.get("location") or "")
-                if not key or not loc:
-                    continue
-                path = store.root / loc
-                reason = promotion_blob_protection(
-                    key, loc, store.blob_mtime(path),
-                    now=now, grace_hours=grace_hours, **snap,
+            snap["protection_scan_truncated"] = snap_truncated
+            if snap_truncated:
+                # round-2 review MAJOR（fail-closed）：execute 侧新鲜扫描
+                # 仍截断 ⇒ 保护面可能不完整 —— 本轮绝不删除任何 blob
+                #（与 plan 同规则；修订行删除照常，blob 全部幸存）。
+                result["protection_scan_truncated"] = True
+                logger.warning(
+                    "[quota] retention execute: snapshot protection scan "
+                    "truncated — skipping blob-deletion phase this cycle"
                 )
-                if reason is not None:
-                    result["skipped_protected"].append(
-                        {"key": key, "reason": reason})
-                    continue
-                try:
-                    size = int(path.stat().st_size)
-                except OSError:
-                    size = 0
-                if store.delete_blob(key):
-                    result["deleted_blobs"].append(key)
-                    result["bytes_freed"] += size
-                else:
-                    result["failed"].append(key)
+            else:
+                shas = [str(b.get("key") or "") for b in blob_candidates]
+                snap["refcounts_by_sha"] = referencing_sha_counts(db, shas)
+                for b in blob_candidates:
+                    key = str(b.get("key") or "")
+                    loc = str(b.get("location") or "")
+                    if not key or not loc:
+                        continue
+                    path = store.root / loc
+                    reason = promotion_blob_protection(
+                        key, loc, store.blob_mtime(path),
+                        now=now, grace_hours=grace_hours, **snap,
+                    )
+                    if reason is not None:
+                        result["skipped_protected"].append(
+                            {"key": key, "reason": reason})
+                        continue
+                    try:
+                        size = int(path.stat().st_size)
+                    except OSError:
+                        size = 0
+                    if store.delete_blob(key):
+                        result["deleted_blobs"].append(key)
+                        result["bytes_freed"] += size
+                    else:
+                        result["failed"].append(key)
     finally:
         if owned:
             db.close()

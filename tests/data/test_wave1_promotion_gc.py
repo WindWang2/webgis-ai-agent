@@ -9,6 +9,7 @@
 """
 import asyncio
 import hashlib
+import os
 import time
 import uuid
 
@@ -363,7 +364,7 @@ def test_workspace_snapshot_materialized_blob_survives_gc(db, monkeypatch, tmp_p
         ))
         assert snap is not None and ref in snap.durable_pointers
         ptr = snap.durable_pointers[ref]
-        locations, shas = workspace_snapshot_protected_pointers()
+        locations, shas, _truncated = workspace_snapshot_protected_pointers()
         assert ptr.content_location in locations
         assert ptr.content_payload_sha256 in shas
 
@@ -394,3 +395,151 @@ def test_workspace_snapshot_materialized_blob_survives_gc(db, monkeypatch, tmp_p
         assert store.exists(ptr.content_payload_sha256) is False
     finally:
         reset_workspace_snapshot_service()
+
+
+# ── 扫描 cap 截断 = fail-closed（round-2 review MAJOR）────────────────────
+
+
+def test_snapshot_pointer_scan_truncation_skips_blob_deletion(
+    db, monkeypatch, tmp_path,
+):
+    """扫描 cap 强制为极小值 → 保护面可能不完整 ⇒ plan 与 execute 双侧
+    **跳过 blob 删除阶段**（deletable 恒空 + ``protection_scan_truncated``
+    如实披露）；同一条目 loc+sha 只计 1、重复指针不重复计数 —— 去重后
+    不越 cap 就绝不截断。"""
+    import time as _time
+
+    from app.core.config import settings
+    from app.services import project_artifact_promotion as pap
+    from app.services.artifact_lifecycle import (
+        execute_promotion_store_gc_sync,
+        plan_promotion_store_gc_sync,
+    )
+    from app.services.data_lifecycle import quota as quota_mod
+    from app.services.data_lifecycle.quota import (
+        execute_retention_cleanup,
+        plan_retention_cleanup,
+        workspace_snapshot_protected_pointers,
+    )
+    from app.services.durable_blob_store import get_filesystem_blob_store
+    from app.services.workspace.snapshot import (
+        SnapshotDurablePointer,
+        WorkspaceSnapshot,
+        _atomic_write_json,
+        _project_snapshots_dir,
+    )
+
+    monkeypatch.setenv("WEBGIS_RETENTION_MAX_AGE_DAYS", "1")
+    monkeypatch.setenv("WEBGIS_RETENTION_GRACE_HOURS", "1")
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    monkeypatch.setattr(settings, "DATA_DIR", str(data_root))
+    monkeypatch.setattr(pap, "content_store_root", lambda: tmp_path / "blobs")
+    store = get_filesystem_blob_store()
+
+    def _aged_blob(name, data):
+        key = hashlib.sha256(data).hexdigest()
+        store.put_blob(key, data, "json")
+        loc = f"{key[:4]}/{key}.json"
+        old = _time.time() - 48 * 3600
+        os.utime(store.root / loc, (old, old))
+        return key, loc
+
+    # key_g：manifest 指针引用（完整扫描下永受保护）；key_h：零引用超龄
+    # blob —— 扫描完整时本可删（fail-closed 的对照物）。
+    key_g, loc_g = _aged_blob("manifested", b"manifested-blob")
+    key_h, loc_h = _aged_blob("unreferenced", b"unreferenced-garbage")
+
+    # manifest 指针 3 条去重后独立条目（其中一条指向 key_g）
+    pid = f"proj_{uuid.uuid4().hex[:8]}"
+    pdir = _project_snapshots_dir(pid)
+    assert pdir is not None
+    ptrs = [
+        (loc_g, key_g),
+        ("aaaa/" + "a" * 60 + ".json", "a" * 64),
+        ("bbbb/" + "b" * 60 + ".json", "b" * 64),
+    ]
+    for i, (loc, sha) in enumerate(ptrs):
+        _atomic_write_json(pdir / f"ws-{i}.json", WorkspaceSnapshot(
+            snapshot_id=f"ws-{i}", session_id="s_x", project_id=pid,
+            durable_pointers={f"ref:{i}": SnapshotDurablePointer(
+                content_location=loc, content_payload_sha256=sha)},
+        ).model_dump(mode="json"))
+
+    # (a) 去重计数：cap=3 恰好容纳 3 条去重条目；重复指针（loc+sha 同一条目
+    #     计 1，写 3 份重复 manifest）不产生新条目 → 不越 cap、不截断。
+    monkeypatch.setattr(quota_mod, "SNAPSHOT_POINTER_SCAN_CAP", 3)
+    for i in range(3):  # 与 ws-0 完全相同的指针重复 3 次
+        _atomic_write_json(pdir / f"ws-dup-{i}.json", WorkspaceSnapshot(
+            snapshot_id=f"ws-dup-{i}", session_id="s_x", project_id=pid,
+            durable_pointers={"ref:dup": SnapshotDurablePointer(
+                content_location=ptrs[0][0],
+                content_payload_sha256=ptrs[0][1])},
+        ).model_dump(mode="json"))
+    locations, shas, truncated = workspace_snapshot_protected_pointers()
+    assert truncated is False, "重复指针去重计数 → 不越 cap"
+    assert key_g in shas and loc_g in locations
+
+    # retention 候选修订（超龄 unpinned 非 head）→ blob 阶段可达
+    from app.models.db_model import User
+    from app.models.project import Artifact, ArtifactRevision, Project
+
+    with SessionLocal() as s:
+        s.merge(User(id="u_trunc", username="trunc", email="t@example.com",
+                     password_hash="x", role="viewer", is_active=True))
+        s.add(Project(id=pid, name="p", owner_id="u_trunc"))
+        s.commit()
+    from datetime import datetime, timedelta, timezone
+
+    art_id = f"art_{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as s:
+        s.add(Artifact(id=art_id, project_id=pid, name="out",
+                       artifact_type="vector", metadata_json={}))
+        s.add(ArtifactRevision(
+            id=str(uuid.uuid4()), artifact_id=art_id, revision_no=1,
+            content_sha256=key_h, content_location=loc_h, content_type="json",
+            byte_size=20, created_at=datetime.now(timezone.utc) - timedelta(days=10),
+        ))
+        s.add(ArtifactRevision(
+            id=str(uuid.uuid4()), artifact_id=art_id, revision_no=2,
+            content_sha256="f" * 64, content_location="ffff/" + "f" * 60 + ".json",
+            content_type="json", byte_size=1,
+        ))
+        s.commit()
+
+    # (b) cap=2 < 3 条去重条目 → 截断：plan 双侧（promotion GC + retention）
+    #     的可删集合恒空（连零引用超龄 blob 也不删 —— 保护优先）+ 标志披露。
+    monkeypatch.setattr(quota_mod, "SNAPSHOT_POINTER_SCAN_CAP", 2)
+    plan = plan_promotion_store_gc_sync(grace_hours=1.0)
+    assert plan["protection_scan_truncated"] is True
+    assert plan["deletable"] == []
+    assert plan["deletable_bytes"] == 0
+
+    # promotion execute 侧新鲜扫描仍截断 → 即使拿到伪造的可删计划也绝不删除
+    forged = {"grace_hours": 1.0, "now": _time.time(),
+              "deletable": [{"key": key_h, "location": loc_h, "bytes": 20}]}
+    result = execute_promotion_store_gc_sync(forged)
+    assert result["deleted"] == []
+    assert result.get("protection_scan_truncated") is True
+    assert store.exists(key_h) is True
+
+    with SessionLocal() as s:
+        rplan = plan_retention_cleanup(s, pid)
+    assert rplan["protection_scan_truncated"] is True
+    assert rplan["candidate_revision_count"] == 1, "候选修订行照常披露"
+    assert rplan["candidate_blobs"] == [], "截断 → blob 删除阶段整轮跳过"
+    rex = execute_retention_cleanup(rplan)
+    assert len(rex["deleted_revisions"]) == 1
+    assert rex["deleted_blobs"] == []
+    assert rex.get("protection_scan_truncated") is True
+    assert store.exists(key_h) is True
+
+    # (c) 截断解除（cap 恢复）→ 同一状态恢复正常判定：修订行已删、key_h
+    #     零引用超宽限 → 可删；key_g 仍被 manifest 指针保护。
+    monkeypatch.setattr(quota_mod, "SNAPSHOT_POINTER_SCAN_CAP", 5000)
+    plan_ok = plan_promotion_store_gc_sync(grace_hours=1.0)
+    assert plan_ok["protection_scan_truncated"] is False
+    assert [d["key"] for d in plan_ok["deletable"]] == [key_h]
+    assert execute_promotion_store_gc_sync(plan_ok)["deleted"] == [key_h]
+    assert store.exists(key_h) is False
+    assert store.exists(key_g) is True, "manifest 保护的 blob 完整扫描下仍不删"

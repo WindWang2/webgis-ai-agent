@@ -439,6 +439,13 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
             col_meta = (geo_meta.get("columns") or {}).get(primary_geom) or {}
             crs_info = col_meta.get("crs")
             if isinstance(crs_info, dict):
+                # schema_info["crs"] 契约是 str：优先 "AUTHORITY:code"（机器
+                # 可解释，PROJ 可解析），其次 PROJJSON name（叙述性兜底）。
+                # round-2 review：折叠为纯 name 对严格 GeoParquet 读者不可解释。
+                crs_id = crs_info.get("id")
+                if isinstance(crs_id, dict) and crs_id.get("code") is not None:
+                    authority = crs_id.get("authority") or "EPSG"
+                    return f"{authority}:{crs_id['code']}"
                 return crs_info.get("name") or None
             return str(crs_info) if crs_info else None
         except Exception:

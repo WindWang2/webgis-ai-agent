@@ -618,3 +618,39 @@ def test_project_quota_usage_query_count_bounded(db):
     assert len(statements) <= 6, (
         f"project_quota_usage issued {len(statements)} SELECTs — "
         "accounting must stay bounded SQL aggregates, not O(N) row loads")
+
+
+# ── round-2 review MINOR：SQL JSON 提取的方言编译断言（无需 DB server）─────
+
+
+def test_artifact_content_locations_compiles_to_dialect_json_extraction():
+    """``artifact_content_locations`` 的 head 指针查询必须走 **SQL 侧** JSON
+    提取（PG ``->>`` / SQLite ``json_extract``），绝不退化为整表 JSON 物化
+    后的 Python 逐行解析。捕获真实执行的语句并按两种方言编译断言。"""
+    from sqlalchemy.dialects import postgresql, sqlite
+
+    from app.services.artifact_revisions import artifact_content_locations
+
+    class _CaptureDB:
+        """最小 db 假体：只记录传入的 select 语句（零行结果）。"""
+
+        def __init__(self):
+            self.captured = None
+
+        def execute(self, stmt, *args, **kwargs):
+            self.captured = stmt
+            return iter(())
+
+    cap = _CaptureDB()
+    assert artifact_content_locations(cap) == []
+    assert cap.captured is not None, "helper must issue exactly its select stmt"
+
+    pg_sql = str(cap.captured.compile(
+        dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "->>" in pg_sql, f"PG 方言应编译为 ->> 提取，got: {pg_sql}"
+    assert "'content_location'" in pg_sql, "键名必须内联为 JSON 提取键"
+
+    lite_sql = str(cap.captured.compile(
+        dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "json_extract" in lite_sql.lower(), (
+        f"SQLite 方言应编译为 json_extract，got: {lite_sql}")

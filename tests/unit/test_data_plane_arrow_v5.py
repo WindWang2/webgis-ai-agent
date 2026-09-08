@@ -239,6 +239,35 @@ def test_features_to_arrow_geo_metadata_enriched():
     assert col["crs"] == "EPSG:4326"
 
 
+@pytest.mark.skipif(not arrow_available(), reason="pyarrow not installed")
+def test_geo_metadata_projjson_dict_passthrough_verbatim():
+    """round-2 review MINOR：PROJJSON dict 形态的 CRS **逐键保真直通** schema
+    （轴序/单位等完整参数绝不降级为名称串）；字符串形态维持现状照写。"""
+    projjson = {
+        "$schema": "https://proj.org/schemas/v0.7/projjson.schema.json",
+        "type": "GeographicCRS",
+        "name": "WGS 84",
+        "datum": {"type": "GeodeticReferenceFrame", "name": "World Geodetic System 1984"},
+        "coordinate_system": {
+            "subtype": "ellipsoidal",
+            "axis": [
+                {"name": "Geodetic latitude", "abbreviation": "lat", "direction": "north", "unit": "degree"},
+                {"name": "Geodetic longitude", "abbreviation": "lon", "direction": "east", "unit": "degree"},
+            ],
+        },
+    }
+    table = features_to_arrow(_fc(2), crs=projjson)
+    col = json.loads(table.schema.metadata[b"geo"])["columns"]["geometry"]
+    assert col["crs"] == projjson, "PROJJSON 必须原样保留（无 name 降级）"
+
+    from app.services.data_fabric.vector_carrier import table_crs
+
+    assert table_crs(table) == projjson
+    # 字符串形态：现状行为（照写），回归保护
+    table_s = features_to_arrow(_fc(2), crs="EPSG:4326")
+    assert json.loads(table_s.schema.metadata[b"geo"])["columns"]["geometry"]["crs"] == "EPSG:4326"
+
+
 def test_iter_features_to_arrow_batches_unavailable_is_typed(monkeypatch):
     import app.services.data_fabric.vector_carrier as vc
 

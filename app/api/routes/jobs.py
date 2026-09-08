@@ -247,6 +247,15 @@ async def retry_job(
             # 接管（绝不投递到没有消费者声明的队列）。
             retry_queue = spec.get("queue") if spec else None
             if retry_queue not in DECLARED_QUEUE_NAMES:
+                if retry_queue:
+                    # round-2 review MINOR-F5：静默回退可见化 —— dispatch_spec
+                    # 声明了队列但该队列不在已声明词表（部署漂移/词表变更），
+                    # 回退默认路由是正确行为，但必须留痕供运维对账。
+                    logger.warning(
+                        "[jobs] retry queue %r not in declared queues %s — "
+                        "falling back to default routing (job_id=%s)",
+                        retry_queue, sorted(DECLARED_QUEUE_NAMES), record.id,
+                    )
                 retry_queue = None
             # 计算隔离不变式 1：send_task publish 是 broker socket I/O，
             # offload 到线程（#386）。

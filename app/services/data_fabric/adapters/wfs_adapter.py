@@ -525,6 +525,11 @@ class WFSAdapter(GeospatialDataSourceAdapter):
         if local_slice is not None:
             features = features[local_slice[0]: local_slice[0] + local_slice[1]]
 
+        # F1（round2）：本页远端窗口在本地余项过滤**前**定格（切片后、过滤
+        # 前）—— 过滤只收缩返回行，has_more 的 >=limit 回落以窗口大小为准
+        # （numberMatched 缺省 + 满页被过滤丢 1 行时，不得误判无下一页）。
+        remote_window = len(features)
+
         # V5：拆分计划的本地余项在页窗口切片后精确求值。
         if local_filter is not None:
             from app.services.data_fabric.query.predicates import evaluate_predicate
@@ -533,7 +538,7 @@ class WFSAdapter(GeospatialDataSourceAdapter):
                 f for f in features if evaluate_predicate(local_filter, f.get("properties") or {})
             ]
         returned = len(features)
-        truncated = returned >= limit
+        truncated = remote_window >= limit
         if total_matched is not None:
             truncated = total_matched > offset + returned
 

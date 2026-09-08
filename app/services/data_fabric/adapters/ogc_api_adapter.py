@@ -372,8 +372,13 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
         features = geojson.get("features", []) if isinstance(geojson, dict) else []
         if not isinstance(features, list):
             features = []
+        # F1（round2）：远端页窗口在本地余项过滤**前**定格 —— 过滤只收缩
+        # 返回行，has_more 的 >=limit 回落以窗口大小为准（满页丢 1 行不得
+        # 误判为没有下一页、游标停摆静默丢页）。
+        remote_window = len(features)
 
-        # V5：拆分计划的本地余项在页内精确求值（页窗口以远端行数为准）。
+        # V5：拆分计划的本地余项在页内精确求值（页窗口以远端行数为准，
+        # 即上方过滤前的 remote_window）。
         if local_filter is not None:
             from app.services.data_fabric.query.predicates import evaluate_predicate
 
@@ -402,7 +407,9 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                     break
 
         returned = len(features)
-        truncated = returned >= v2.page.limit
+        # F1（round2）：>=limit 回落用本地过滤**前**的远端窗口（远端页是否
+        # 满）；matched 上界分支保持原样（matched 在场时本就是保守上界）。
+        truncated = remote_window >= v2.page.limit
         if matched is not None and isinstance(v2.page, OffsetPage):
             truncated = matched > (v2.page.offset + returned)
         next_cursor = encode_cursor([next_url]) if (truncated and next_url) else None

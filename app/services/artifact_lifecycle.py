@@ -205,6 +205,7 @@ def _promotion_blob_protection(
     pinned_shas: set,
     snapshot_locations: set = frozenset(),
     snapshot_shas: set = frozenset(),
+    protection_scan_truncated: bool = False,
 ) -> Optional[str]:
     """共享保护判定（plan 与 execute 都调用）：返回保护原因；None = 可删。
 
@@ -213,6 +214,11 @@ def _promotion_blob_protection(
     manifest 指针是第五条（round-1 review CRITICAL：快照物化的 blob 没有
     revision 行 / head 指针，manifest 是它们唯一的账面 —— location 或 sha
     命中即受保护）；宽限期只保护"新写入尚未入账"的窗口。
+
+    ``protection_scan_truncated``（round-2 review MAJOR）不参与逐 blob 判定
+    —— 它是保护面完整性信号，由 plan/execute 调用方在**整轮**粒度上消费
+    （截断 ⇒ 跳过 blob 删除阶段）；谓词只接受它以保持与保护快照字典的
+    同形（``**snap`` 直传）。
     """
     if key in pinned_shas:
         return "pinned"
@@ -231,7 +237,12 @@ def _promotion_blob_protection(
 
 def _promotion_gc_snapshot(db, locations):
     """一次 DB 快照：引用计数（按 location 与按 sha 双口径）+ head 指针 + pin
-    + 工作空间快照 manifest 指针（plan/execute、promotion GC/retention 同源）。"""
+    + 工作空间快照 manifest 指针（plan/execute、promotion GC/retention 同源）。
+
+    round-2 review MAJOR：快照带 ``protection_scan_truncated`` —— manifest
+    指针扫描被 ``SNAPSHOT_POINTER_SCAN_CAP`` 截断时为 True，plan 与 execute
+    双侧据此**跳过本轮 blob 删除**（保护面可能不完整 ⇒ 绝不删除）。
+    """
     from sqlalchemy import func, select
 
     from app.models.project import ArtifactRevision
@@ -251,7 +262,9 @@ def _promotion_gc_snapshot(db, locations):
         ).group_by(ArtifactRevision.content_sha256)
     ).all()
     ref_by_sha = {sha: int(cnt) for sha, cnt in sha_rows}
-    snap_locations, snap_shas = workspace_snapshot_protected_pointers()
+    snap_locations, snap_shas, snap_truncated = (
+        workspace_snapshot_protected_pointers()
+    )
     return {
         "refcounts_by_location": ref_by_loc,
         "refcounts_by_sha": ref_by_sha,
@@ -259,6 +272,7 @@ def _promotion_gc_snapshot(db, locations):
         "pinned_shas": set(pinned_content_sha256s(db)),
         "snapshot_locations": snap_locations,
         "snapshot_shas": snap_shas,
+        "protection_scan_truncated": snap_truncated,
     }
 
 
@@ -279,22 +293,32 @@ def _plan_promotion_store_gc_sync(grace_hours: float, now: float) -> Dict[str, A
     deletable = []
     protected: Dict[str, int] = {}
     deletable_bytes = 0
-    for (key, path), location in zip(candidates, locations):
-        if not location:
-            continue
-        reason = _promotion_blob_protection(
-            key, location, store.blob_mtime(path),
-            now=now, grace_hours=grace_hours, **snap,
+    scan_truncated = bool(snap.get("protection_scan_truncated"))
+    if scan_truncated:
+        # round-2 review MAJOR（fail-open → fail-closed）：保护面截断 ⇒
+        # 任何「可删」判定都不可信 —— 本轮跳过 blob 删除阶段（plan 与
+        # execute 同规则：保护优先，绝不带残缺保护面删除）。
+        logger.warning(
+            "[artifact-lifecycle] promotion-store gc plan: snapshot "
+            "protection scan truncated — deletable list emptied this cycle"
         )
-        if reason is not None:
-            protected[reason] = protected.get(reason, 0) + 1
-            continue
-        try:
-            size = path.stat().st_size
-        except OSError:
-            size = 0
-        deletable.append({"key": key, "location": location, "bytes": size})
-        deletable_bytes += size
+    else:
+        for (key, path), location in zip(candidates, locations):
+            if not location:
+                continue
+            reason = _promotion_blob_protection(
+                key, location, store.blob_mtime(path),
+                now=now, grace_hours=grace_hours, **snap,
+            )
+            if reason is not None:
+                protected[reason] = protected.get(reason, 0) + 1
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = 0
+            deletable.append({"key": key, "location": location, "bytes": size})
+            deletable_bytes += size
     deletable.sort(key=lambda d: d["key"])
     return {
         "grace_hours": grace_hours,
@@ -303,6 +327,7 @@ def _plan_promotion_store_gc_sync(grace_hours: float, now: float) -> Dict[str, A
         "protected_counts": dict(sorted(protected.items())),
         "deletable": deletable,
         "deletable_bytes": deletable_bytes,
+        "protection_scan_truncated": scan_truncated,
     }
 
 
@@ -321,6 +346,20 @@ def _execute_promotion_store_gc_sync(plan: Dict[str, Any]) -> Dict[str, Any]:
     locations = [loc for _k, loc in planned]
     with SessionLocal() as db:
         snap = _promotion_gc_snapshot(db, locations)
+    if snap.get("protection_scan_truncated"):
+        # round-2 review MAJOR（fail-closed）：execute 侧新鲜扫描仍截断 ⇒
+        # 保护面可能不完整 —— 本轮绝不删除任何 blob（与 plan 同规则）。
+        logger.warning(
+            "[artifact-lifecycle] promotion-store gc execute: snapshot "
+            "protection scan truncated — skipping deletion this cycle"
+        )
+        return {
+            "deleted": [],
+            "skipped_protected": [],
+            "failed": [],
+            "bytes_freed": 0,
+            "protection_scan_truncated": True,
+        }
     deleted = []
     skipped = []
     bytes_freed = 0
@@ -384,14 +423,21 @@ async def execute_promotion_store_gc(plan: Dict[str, Any]) -> Dict[str, Any]:
     """执行 dry-run 计划：对计划中的每个 key 以新鲜 DB 状态 + **同一保护
     谓词**复检后删除。绝不删除被任何 revision/Artifact 行引用的 blob。"""
     if not isinstance(plan, dict) or not plan.get("deletable"):
-        return {"deleted": [], "skipped_protected": [], "failed": [], "bytes_freed": 0}
+        base = {"deleted": [], "skipped_protected": [], "failed": [], "bytes_freed": 0}
+        if isinstance(plan, dict) and plan.get("protection_scan_truncated"):
+            # 截断计划的空 deletable = 保护性跳过（非「无事可做」）—— 如实透传。
+            base["protection_scan_truncated"] = True
+        return base
     return await asyncio.to_thread(execute_promotion_store_gc_sync, plan)
 
 
 def execute_promotion_store_gc_sync(plan: Dict[str, Any]) -> Dict[str, Any]:
     """``execute_promotion_store_gc`` 的同步体（W12 运维端点 / 测试直接调用）。"""
     if not isinstance(plan, dict) or not plan.get("deletable"):
-        return {"deleted": [], "skipped_protected": [], "failed": [], "bytes_freed": 0}
+        base = {"deleted": [], "skipped_protected": [], "failed": [], "bytes_freed": 0}
+        if isinstance(plan, dict) and plan.get("protection_scan_truncated"):
+            base["protection_scan_truncated"] = True
+        return base
     return _execute_promotion_store_gc_sync(plan)
 
 

@@ -28,6 +28,24 @@
   compute 风格仅在请求时命名 ``count`` / ``func_field``）。
 
 本模块纯 stdlib，不依赖 pyarrow（dict lane 与 Arrow lane 共用）。
+
+与 V4 基线的语义差异（round-2 review MINOR：统一两套实现时有意收敛的
+分叉，如实列出，绝不宣称"行为不变"）：
+
+- **可转数值的字符串改走数值轨**：``min("9", "10")`` 按 V4 字符串字典序
+  返回 ``"10"``，本实现因 ``float("9")`` 可转而走数值轨返回 ``9`` ——
+  字典序比较 → 数值比较的语义变化；
+- **bool 被 min/max 排除**（与 sum/avg/stddev 同一排除口径）—— V4 部分
+  路径把 ``True/False`` 当 ``1/0`` 混入最值；
+- **数值 min/max 恒返回 float**：``min(1, 2)`` → ``1.0``（float(value)
+  归一）—— V4 保留原始 int 类型；
+- **混合 str/int 不再抛 TypeError**：各值按可转性分流（数值进数值轨、
+  其余可排序字符串进字符串轨、互不跨轨比较，finalize 有数值取数值否则
+  取字符串）—— V4 的 ``min([1, "a"])`` 直接崩溃。
+
+收敛原则：能算就算、算不了诚实跳过/分流；语义由 data-plane parity 测试
+（``tests/unit/test_data_plane_vector_v4.py`` /
+``tests/unit/test_data_plane_arrow_v5.py``）钉住。
 """
 from __future__ import annotations
 

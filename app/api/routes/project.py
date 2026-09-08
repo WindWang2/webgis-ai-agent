@@ -1370,7 +1370,15 @@ def plan_project_data_gc(
     promotion-store GC —— 全局清扫只属于周期 sweep
     （artifact_lifecycle.sweep_aged_artifacts）。这里的「可删 blob」是本项目
     保留候选中已通过单一保护谓词（``_promotion_blob_protection``，含宽限期）
-    的物理 blob，即本轮保留清扫实际可释放的 promotion-store 字节；
+    的物理 blob，即本轮保留清扫实际可释放的 promotion-store 字节。
+
+    review round-2 SEC MAJOR-F3（脱敏投影落在路由层，与计划内部结构解耦）：
+    - ``candidate_revisions`` 只披露 {artifact_id, revision_no, age_days,
+      byte_size} —— 绝不携带 revision_id / content_sha256 / content_location；
+    - ``candidate_blobs`` 只披露 {sha_prefix(12), byte_size} —— 绝不携带
+      完整 sha / location；
+    - 快照保护面截断（``protection_scan_truncated``）时本轮跳过 blob 删除，
+      计划如实带出该标志。
     key/location 字符串一律不出网（sha 前缀 + 字节足够运维决策）。
     """
     user_id, org_id = actor_ids(user)
@@ -1389,6 +1397,22 @@ def plan_project_data_gc(
         }
         for b in (retention_plan.get("candidate_blobs") or [])
     ]
+    candidate_revisions = [
+        {
+            "artifact_id": str(c.get("artifact_id") or ""),
+            "revision_no": int(c.get("revision_no") or 0),
+            "age_days": int(c.get("age_days") or 0),
+            "byte_size": int(c.get("byte_size") or 0),
+        }
+        for c in (retention_plan.get("candidate_revisions") or [])
+    ]
+    candidate_blobs = [
+        {
+            "sha_prefix": str(b.get("key") or "")[:12],
+            "byte_size": int(b.get("bytes") or 0),
+        }
+        for b in (retention_plan.get("candidate_blobs") or [])
+    ]
     return {
         "project_id": project_id,
         "scoped_to_project": True,
@@ -1402,10 +1426,10 @@ def plan_project_data_gc(
             "candidate_blob_bytes": int(retention_plan.get(
                 "candidate_blob_bytes", 0)),
             "protected_counts": retention_plan.get("protected_counts") or {},
-            "candidate_revisions": _bounded_items(
-                retention_plan.get("candidate_revisions") or []),
-            "candidate_blobs": _bounded_items(
-                retention_plan.get("candidate_blobs") or []),
+            "protection_scan_truncated": bool(retention_plan.get(
+                "protection_scan_truncated")),
+            "candidate_revisions": _bounded_items(candidate_revisions),
+            "candidate_blobs": _bounded_items(candidate_blobs),
         },
         "promotion_store_gc": {
             "scoped_to_project": True,

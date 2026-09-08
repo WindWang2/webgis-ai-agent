@@ -31,6 +31,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 from typing import Callable, Optional
 
@@ -361,6 +362,12 @@ def publish_chunk(
 # periodic orphan sweep independently reconciles the real directory state.
 _ADVISORY_DIR_BYTES: dict = {}
 
+#: round-2 review MINOR：get-or-scan / read-modify-write 各自是两条字节码，
+#: 线程交错会丢更新（计数漂移 → 过早/过晚逐出）。模块级锁把 RMW 收敛为
+#: 临界区（进程内精确；跨进程仍按上文的 advisory 语义兜底）。锁本身廉价
+#: （无竞争路径一次 acquire/release），eviction 测试行为不变。
+_ADVISORY_LOCK = threading.Lock()
+
 
 def _scan_dir_total(dir_path: str, body_path_for: Callable[[str], str]) -> int:
     """One bounded-memory pass: total bytes of complete meta+body entries."""
@@ -379,23 +386,29 @@ def _scan_dir_total(dir_path: str, body_path_for: Callable[[str], str]) -> int:
 
 def _advisory_total(dir_path: str, body_path_for: Callable[[str], str]) -> int:
     """Counter value, lazily initialized from one full scan (per process)."""
-    total = _ADVISORY_DIR_BYTES.get(dir_path)
-    if total is None:
-        total = _scan_dir_total(dir_path, body_path_for)
-        _ADVISORY_DIR_BYTES[dir_path] = total
-    return total
+    with _ADVISORY_LOCK:
+        total = _ADVISORY_DIR_BYTES.get(dir_path)
+        if total is None:
+            total = _scan_dir_total(dir_path, body_path_for)
+            _ADVISORY_DIR_BYTES[dir_path] = total
+        return total
 
 
 def _bump_advisory_total(dir_path: str, delta: int) -> None:
-    """Publish-side counter bump (no-op while unknown → next call lazily inits)."""
-    current = _ADVISORY_DIR_BYTES.get(dir_path)
-    if current is not None:
-        _ADVISORY_DIR_BYTES[dir_path] = current + int(delta)
+    """Publish-side counter bump (no-op while unknown → next call lazily inits).
+
+    round-2 review MINOR：RMW 在锁内完成 —— 并发 publish 不再丢更新。
+    """
+    with _ADVISORY_LOCK:
+        current = _ADVISORY_DIR_BYTES.get(dir_path)
+        if current is not None:
+            _ADVISORY_DIR_BYTES[dir_path] = current + int(delta)
 
 
 def _invalidate_advisory_total(dir_path: str) -> None:
     """Out-of-band mutation (sweep/clear): counter unknown until next publish."""
-    _ADVISORY_DIR_BYTES[dir_path] = None
+    with _ADVISORY_LOCK:
+        _ADVISORY_DIR_BYTES[dir_path] = None
 
 
 def _scan_and_evict(

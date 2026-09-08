@@ -170,6 +170,10 @@ artifact_revisions 挂在既有 `Artifact` 身份之下；durable 复用索引�
   字节未写、可事后重试。
 - **Repair plan-only 默认**。质量提案永远不自动执行；执行是显式 seam，
   产出新 ref + 有界证据，原 ref/dataset 不被触碰。
+- **统一聚合器与 V4 基线的语义差异**。`min`/`max` 收敛到双轨累加器：
+  可转数值的字符串走数值轨（字典序→数值序）、bool 不参与、数值最值恒为
+  float、混合 str/int 不再 TypeError（分流不跨轨比较）——见
+  `accumulators.py` 模块 docstring「与 V4 基线的语义差异」。
 - **AND-split 下推 + bit-compat fallback**。过滤器按子句拆分：可推子句推远端、
   余项本地求值，`partial` 诚实披露；守卫路径（无法证明等价时）走 golden-pinned
   的位兼容 fallback——宁可退回旧行为，不可静默改变结果。

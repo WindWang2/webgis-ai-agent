@@ -874,7 +874,11 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "bbox": "可选空间裁剪（应用到所有源）",
             "limit": "最终行数上限，默认 10000（超预算返回 QUERY_BUDGET_EXCEEDED）",
             "order_strategy": "链序策略：cost(默认,按 estimated_rows 提示) | given | cost_stats(需统计提示)",
-            "derive_projection": "是否自动派生每源最小投影（默认 true；空间跳端点永不被裁剪）",
+            "derive_projection": (
+                "是否自动派生每源最小投影（默认 true；空间跳端点永不被裁剪；"
+                "where 为不可解析的自由字符串的源被排除在派生外 —— 该源按"
+                "全列取数，只是多取，安全）"
+            ),
             "session_id": "用户会话 ID",
         },
         execution_policy=ToolExecutionPolicy.ASYNC,

@@ -659,6 +659,56 @@ class TestSplitExecutionParity:
         finally:
             invalidate_statistics(fp)
 
+    def test_stac_attribute_filter_total_matching_none_remote_scoped_kept(self):
+        """F2（round2）端到端（STAC）：属性过滤从不下推（caps.filter_pushdown
+        =False → 守卫路径整体本地求值）—— numberMatched 只是 bbox/datetime/
+        分页窗口的远端命中数，冒充 total_matching 不诚实 → 如实置 None；
+        远端口径计数以 ``remote_scoped_matched`` 如实命名留存于 metadata
+        证据面。bbox-only 查询（无属性过滤）语义不变。"""
+        from app.services.data_fabric.adapters import STACAdapter
+        from app.services.data_fabric.metadata_cache import _describe_cache
+
+        profile = ConnectionProfile(source_type="stac",
+                                    endpoint_url="https://example.com/stac",
+                                    name="test_stac")
+        adapter = STACAdapter(profile)
+        collection = {
+            "id": "scenes", "title": "Scenes", "itemType": "feature",
+            "summaries": {"cloud": {"min": 0, "max": 100}},
+            "extent": {"spatial": {"bbox": [[-180.0, -90.0, 180.0, 90.0]]}},
+        }
+        search_doc = {
+            "type": "FeatureCollection",
+            "numberMatched": 57,
+            "features": [
+                {"type": "Feature", "properties": {"cloud": 5}, "geometry": None},
+                {"type": "Feature", "properties": {"cloud": 80}, "geometry": None},
+            ],
+            "links": [],
+        }
+        adapter.session.get = lambda url, **kw: _FakeResp(collection)
+        adapter.session.post = lambda url, **kw: _FakeResp(search_doc)
+        _describe_cache.invalidate()
+        try:
+            res = adapter.query("scenes", QuerySpec(
+                limit=10, filter_expr={"op": "lt", "field": "cloud", "value": 50}))
+            assert [f["properties"]["cloud"] for f in res.features] == [5]
+            assert res.total_matching is None, \
+                "属性过滤查询的远端窗口命中数不得冒充 total_matching"
+            assert res.metadata["remote_scoped_matched"] == 57, \
+                "远端口径命中数必须如实命名留存"
+            ev = res.metadata["query_evidence"]
+            assert ev["total_matching"] is None
+            assert res.metadata["query_plan"]["filter_split"]["pushed"] is None
+
+            # bbox-only（无属性过滤）：远端命中范围即查询范围 → 原语义不变。
+            res2 = adapter.query(
+                "scenes", QuerySpec(limit=10, bbox=[0.0, 0.0, 1.0, 1.0]))
+            assert res2.total_matching == 57
+            assert "remote_scoped_matched" not in res2.metadata
+        finally:
+            _describe_cache.invalidate()
+
 
 # ── 3. 统计接线（剩余 adapter）─────────────────────────────────────────────
 

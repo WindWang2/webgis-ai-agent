@@ -823,7 +823,20 @@ def test_data_gc_endpoints_plan_and_confirm_gate(db, monkeypatch, tmp_path):
     assert set(promo["deletable"][0].keys()) == {"sha_prefix", "bytes"}
     assert key_orphan not in str(promo)
     assert loc_orphan not in str(promo)
-    assert len(plan_body["retention"]["candidate_revisions"]) <= 64
+    # round-2 review SEC MAJOR-F3：retention 段同样是脱敏投影 —— 候选修订
+    # 只有 {artifact_id, revision_no, age_days, byte_size}，候选 blob 只有
+    # {sha_prefix(12), byte_size}；完整 sha / location / revision_id 绝不出现。
+    ret = plan_body["retention"]
+    assert len(ret["candidate_revisions"]) == 1
+    assert set(ret["candidate_revisions"][0].keys()) == {
+        "artifact_id", "revision_no", "age_days", "byte_size"}
+    assert ret["candidate_revisions"][0]["age_days"] >= 1
+    assert set(ret["candidate_blobs"][0].keys()) == {"sha_prefix", "byte_size"}
+    assert ret["candidate_blobs"][0]["sha_prefix"] == key[:12]
+    plan_str = str(plan_body)
+    assert key not in plan_str, "完整 content sha 绝不出网"
+    assert loc not in plan_str, "content_location 绝不出网"
+    assert plan_body["retention"]["protection_scan_truncated"] is False
 
     # 无 confirm → 400（dry-run 纪律）
     with SessionLocal() as s:
@@ -999,7 +1012,7 @@ def test_retention_respects_workspace_snapshot_manifest_pointers(
         durable_pointers={"ref:kept": SnapshotDurablePointer(
             content_location=loc_v, content_payload_sha256=key_v)},
     ).model_dump(mode="json"))
-    locations, shas = workspace_snapshot_protected_pointers()
+    locations, shas, _truncated = workspace_snapshot_protected_pointers()
     assert loc_v in locations and key_v in shas
 
     # plan 侧：manifest 在 → blob 不入候选（dry-run，不删任何字节）

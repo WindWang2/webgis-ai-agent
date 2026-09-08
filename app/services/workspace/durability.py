@@ -95,6 +95,18 @@ async def materialize_ref_payload(
         if path is None:
             return None, None
 
+        # round-2 review INFO：stat() 预检 —— 明显超预算的 PNG 在整读进内存
+        # **之前**就跳过（此前先整读再量尺 = 预算闸门前的无谓 O(payload)
+        # IO）。行为不变：读后仍以实际字节复核（stat→read 之间文件可能
+        # 变化，读后量尺仍是权威闸门）。
+        if budget_bytes is not None:
+            try:
+                pre_size = path.stat().st_size
+            except OSError:
+                pre_size = None
+            if pre_size is not None and pre_size > int(budget_bytes):
+                return None, "budget"
+
         def _read() -> Optional[bytes]:
             try:
                 return path.read_bytes()

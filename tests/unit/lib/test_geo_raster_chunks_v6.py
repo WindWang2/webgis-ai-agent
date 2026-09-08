@@ -362,6 +362,28 @@ class TestChunkCache:
         # 共享后端多次执行：operation 追加幂等（键不漂移）
         assert cache.key_for(d, operation=f"op|fn:{fp_a}") == k_a
 
+    def test_fn_fingerprint_unwraps_wrapped_functions(self):
+        """round-2 review MINOR：@functools.wraps 装饰的窗口函数与裸函数
+        同指纹（unwrap 后取底层 qualname+co_code），与无关函数不同 ——
+        装饰器包装不再毒化缓存命名空间。"""
+        import functools
+
+        def window_fn(a, c, r):
+            return a * 2.0
+
+        @functools.wraps(window_fn)
+        def traced(a, c, r):
+            return window_fn(a, c, r)
+
+        def unrelated(a, c, r):
+            return a - 999.0
+
+        bare = fn_fingerprint(window_fn)
+        assert fn_fingerprint(traced) == bare, (
+            "wraps 装饰只换包装字节码 —— 指纹必须看穿到底层函数")
+        assert fn_fingerprint(window_fn) == bare  # 重算一致
+        assert fn_fingerprint(unrelated) != bare
+
     def test_cache_refuses_halo_and_global_ops(self, chunk_cache_env, tiled_raster):
         p, _ = tiled_raster
         cache = ChunkCacheBackend(p, "op")
