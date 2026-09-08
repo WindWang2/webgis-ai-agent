@@ -359,11 +359,11 @@ def enumerate_federation(ctx: EnumerationContext) -> EnumeratedPlan:
     id_order = [s.source_id for s in ctx.sources]
 
     if any(not e.id_addressed for e in ctx.joins):
-        return _enumerate_fixed_chain(ctx, by_id, id_order)
+        return _enumerate_fixed_chain(ctx, by_id, id_order, positional=True)
     if all(s.estimated_rows is None for s in ctx.sources):
         # 无任何成本信号 → 保持 given 序（V5 默认行为逐位一致：重排会翻转
         # __right__ 的归属侧，属用户可见形状变化 —— 没有测量背书不做）。
-        plan = _enumerate_fixed_chain(ctx, by_id, id_order)
+        plan = _enumerate_fixed_chain(ctx, by_id, id_order, positional=False)
         plan.warnings.insert(
             0,
             "no estimated_rows hints available; order follows the given "
@@ -496,12 +496,21 @@ def _enumerate_fixed_chain(
     ctx: EnumerationContext,
     by_id: Dict[str, SourceFacts],
     id_order: List[str],
+    *,
+    positional: bool = True,
 ) -> EnumeratedPlan:
-    """位置寻址回退：给定的左深链逐跳估价（无重排 —— V5 parity）。"""
-    warnings = [
-        "positional joins detected; order is the given sequence "
-        "(declare left/right_source_id to enable cost-based enumeration)"
-    ]
+    """给定序左深链逐跳估价（无重排 —— V5 parity）。
+
+    ``positional``：仅当请求确实使用位置寻址 joins 时披露该 warning；
+    无统计提示的 id 寻址链同样走本路径，但语义是「保持 given 序」，
+    不应误导用户去声明已有的 id 对（m-1，评审 R2）。
+    """
+    warnings = []
+    if positional:
+        warnings.append(
+            "positional joins detected; order is the given sequence "
+            "(declare left/right_source_id to enable cost-based enumeration)"
+        )
     tree: LogicalNode = _scan_tree(by_id[id_order[0]], ctx)
     card = _scan_transfer_rows(by_id[id_order[0]])
     cost = (

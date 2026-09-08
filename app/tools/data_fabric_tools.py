@@ -881,8 +881,9 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 "全列取数，只是多取，安全）"
             ),
             "engine": (
-                "执行引擎：v6（默认，cost-based join 枚举/流式批执行/Bloom 预滤/"
-                "自适应重排，非 typed 异常自动回退 v5）| v5（左深链基线）"
+                "执行引擎：v6（默认，cost-based join 树枚举/流式批执行/Bloom 预滤/"
+                "执行期基数观测，非 typed 异常自动回退 v5）| v5（左深链基线）。"
+                "自适应尾重排仅在 join graph 存在替代有向链时触发"
             ),
             "session_id": "用户会话 ID",
         },
@@ -985,6 +986,10 @@ def register_data_fabric_tools(registry: ToolRegistry):
                     return {"status": "error", "error_type": "INVALID_QUERY",
                             "error": f"joins[{i}] invalid: {e}"}
 
+            engine_norm = str(engine or "").strip().lower()
+            if engine_norm not in ("v5", "v6"):
+                return {"status": "error", "error_type": "INVALID_QUERY",
+                        "error": f"engine must be 'v5' or 'v6' (got {engine!r})"}
             req = FederatedChainRequest(
                 sources=chain_sources,
                 joins=chain_joins,
@@ -992,7 +997,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 limit=limit,
                 order_strategy=order_strategy,
                 derive_projection=derive_projection,
-                engine="v6" if str(engine).lower() == "v6" else "v5",
+                engine=engine_norm,
             )
             executor = FederatedExecutor(lambda src: adapters_by_id.get(src))
             try:

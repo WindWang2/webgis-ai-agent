@@ -1738,13 +1738,12 @@ def execute_chain_v6(
         tree = plan.tree
         given_ids = [s.source_id for s in req.sources]
         if getattr(req, "derive_projection", True) and plan.order == given_ids:
-            from app.services.data_fabric.query.federated.logical import (
-                chain_to_logical,
-            )
-
             derived = derive_chain_fields(req, list(req.sources), list(req.joins))
             if derived:
-                tree = _apply_scan_fields(chain_to_logical(req), derived)
+                # C-1（评审 R2）：在**实际计划树**上写投影（保留
+                # LogicalReproject 等全部节点）—— 重建 given 序链会静默丢弃
+                # 变换节点，混 CRS 链默认配置下静默错答。
+                tree = _apply_scan_fields(plan.tree, derived)
                 plan.warnings.append(
                     "minimal projection derived per source (V6, given-order): "
                     + json.dumps(derived, ensure_ascii=False, sort_keys=True)
@@ -1772,8 +1771,9 @@ def execute_chain_v6(
         logger.warning("[Federation] V6 engine failed (%s); falling back to V5", e)
         result = execute_federated_chain(executor, req)
         result["engine"] = "v5_fallback"
+        reason = str(e)[:200]
         result["warnings"] = list(result.get("warnings") or []) + [
-            f"engine=v6 failed ({e}); executed with V5 engine"
+            f"engine=v6 failed ({reason}); executed with V5 engine"
         ]
         return result
 

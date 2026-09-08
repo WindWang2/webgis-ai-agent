@@ -21,3 +21,23 @@ Reviewer 全新上下文，对 445ad30..HEAD 全量 diff 走读 + 运行时探�
 验证：修复后 V6 targeted 341 passed；**完整 tests/unit 8527 passed, 105 skipped**（8m10s）。
 
 未修复（记录为 follow-up）：m1（extract_hop_estimates bushy 次序）、m6 部分常量镜像、m7（hop 内取消检查点，V5 parity）、m8（bushy plans 展示序）、m10（offset 分页窗口）、NIT 组。
+
+# Review Round 2 发现与修复（独立 reviewer：性能/安全/可维护性/故障披露）
+
+| 级别 | 发现 | 修复 |
+|---|---|---|
+| CRITICAL C-1 | R1 的 M2 修复缺陷：`_apply_scan_fields(chain_to_logical(req))` 重建 given 序树 → **丢弃 LogicalReproject 节点**，混 CRS 链 + 默认 derive_projection 静默 0 行且 EXPLAIN 谎报变换（reviewer 实测复现） | 改为在实际 `plan.tree` 上写投影（保留全部节点）；新增生产入口回归测试 `test_production_entry_mixed_crs_with_default_derive_projection` |
+| MAJOR M-2 | 差分语料绕过生产入口 `execute_chain_v6`（R1 的 M2 分支因此漏网） | 新增生产分派差分：混 CRS 默认配置 + 语料子集（属性/空间/三跳）经 `execute_chain(engine="v6")` 双引擎对齐 |
+| MAJOR M-1 | 工具文案宣称"自适应重排"但生产 n-1 边约束下采纳路径不可达 | 工具 engine 描述改为诚实表述（"仅在 join graph 存在替代有向链时触发"）；执行器保留 edge_specs 超集能力（有测试锁定） |
+| MINOR m-1 | 无统计的 id 寻址链收到误导性 "positional joins" warning | `_enumerate_fixed_chain(positional=)` 区分两种回退语义 |
+| MINOR m-2 | EXPLAIN 宣称 MAX_JOIN_CANDIDATES 硬界但执行器不消费 | 文案改为真实口径（fetch_window + budget.max_rows 逐跳 fail-fast） |
+| MINOR m-3 | `_chain_row_key` 逐行函数级 import（20 万行 ~20ms） | 提升到模块级 |
+| MINOR m-4 | Bloom 生效后 keyset semi-join 无条件二跑 | Bloom 已生效时跳过（键超集过滤，精确键集为重复遍历） |
+| MINOR m-5 | 镜像常量/函数无对账 | 新增 `test_federated_mirror_parity.py`（8 项：源数/占位行数/收缩因子/CRS 解析同域等价/页大小/自适应阈值/键上限） |
+| MINOR m-6 | 回退 warning 内嵌原始异常文本 | 截断 200 字符 |
+| MINOR m-7 | engine 非法值静默按 v5 | 工具层 strict 校验（非法值 INVALID_QUERY） |
+| NIT | 死 edge_index、physical 未用 logger、_scans 重复导入 | 清理 |
+
+安全核查（未上报 = 干净）：注入面（where 经 normalize/参数化编译）、多租户 owner 作用域、DoS/预算边界、日志泄露、warnings/notes 界、engine 可区分性、FederatedChainRequest 关键字构造兼容（全仓 50+ 调用点）。
+
+验证：R2 修复后完整 tests/unit **8537 passed, 105 skipped**（7m36s）；`ruff check app tests` 全绿。

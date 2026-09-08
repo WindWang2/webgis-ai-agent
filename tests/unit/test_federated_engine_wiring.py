@@ -207,3 +207,124 @@ def test_same_source_first_hop_delegates_to_v5():
     res = FederatedExecutor(lambda sid: adapters.get(sid)).execute_chain(req)
     assert res["engine"] == "v5_server_first_hop"
     assert any("delegated" in w for w in res["warnings"])
+
+
+# ── M-2（评审 R2）：生产入口差分 —— 混 CRS × derive_projection ──────────────
+
+
+def _poly(minx, miny, maxx, maxy, **props):
+    return {
+        "type": "Feature",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+                [[minx, miny], [maxx, miny], [maxx, maxy], [minx, maxy], [minx, miny]]
+            ],
+        },
+        "properties": props,
+    }
+
+
+def test_production_entry_mixed_crs_with_default_derive_projection():
+    """C-1 回归（评审 R2）：混 CRS 空间跳 + 属性跳 + 默认 derive_projection
+    经生产分派 execute_chain(engine="v6") 必须给出正确行 —— 派生投影不得
+    丢弃计划中的 LogicalReproject 节点。"""
+    pts = [
+        _pt(1.001, 1.001, name="p1", kind="a"),   # 变换后落在 D1 内
+        _pt(5.0, 5.0, name="p2", kind="a"),
+    ]
+    polys_3857 = [
+        _poly(111319.0, 111325.0, 111600.0, 111600.0, district="D1"),
+    ]
+    dims = [{"properties": {"district": "D1", "tag": "t1", "kind": "a"}}]
+    data = {"pts": pts, "polys": polys_3857, "dims": dims}
+
+    class _A:
+        def query(self, dataset_id, spec):
+            feats = data[dataset_id]
+            limit = spec.limit or 100
+            offset = spec.offset or 0
+            return QueryResult(dataset_id=dataset_id, features=feats[offset : offset + limit])
+
+    adapters = {sid: _A() for sid in ("g", "m", "d")}
+    req = FederatedChainRequest(
+        sources=[
+            ChainSource(source_id="g", dataset_id="pts", srs="EPSG:4326"),
+            ChainSource(source_id="m", dataset_id="polys", srs="EPSG:3857"),
+            ChainSource(source_id="d", dataset_id="dims"),
+        ],
+        joins=[
+            ChainJoin(kind="spatial_join", spatial_op="within",
+                      left_source_id="g", right_source_id="m"),
+            ChainJoin(kind="attribute_join", join_field_left="district",
+                      join_field_right="district",
+                      left_source_id="m", right_source_id="d"),
+        ],
+        limit=10_000,
+        engine="v6",
+    )
+    res = FederatedExecutor(lambda sid: adapters.get(sid)).execute_chain(req)
+    assert res["engine"] == "v6"
+    assert res["row_count"] == 1, "混 CRS + 默认派生投影不得静默空结果"
+    row = res["rows"][0]
+    assert row["name"] == "p1"
+    assert row["__right__"]["tag"] == "t1"
+
+
+def test_production_entry_corpus_parity_engine_dispatch():
+    """M-2（评审 R2）：W11 语料子集经生产分派（execute_chain）双引擎对齐。"""
+    import json
+
+    pts = [_pt(104.0 + i * 0.1, 30.0, region=f"R{i}", k=i) for i in range(8)]
+    dims = [{"properties": {"region": f"R{i}", "label": f"L{i}"}} for i in range(8)]
+    polys = [_poly(104.0, 30.0, 104.5, 30.5, district="R0")]
+
+    def _canon(rows):
+        return sorted(json.dumps(r, sort_keys=True, ensure_ascii=False) for r in rows)
+
+    class _A:
+        def __init__(self, d):
+            self._d = d
+
+        def query(self, dataset_id, spec):
+            feats = self._d[dataset_id]
+            limit = spec.limit or 100
+            offset = spec.offset or 0
+            return QueryResult(dataset_id=dataset_id, features=feats[offset : offset + limit])
+
+    data = {"pts": pts, "dims": dims, "polys": polys}
+    adapters = {sid: _A(data) for sid in ("sA", "sC", "sB")}
+    base = dict(limit=10_000)
+    reqs = [
+        FederatedChainRequest(
+            sources=[ChainSource(source_id="sA", dataset_id="pts"),
+                     ChainSource(source_id="sC", dataset_id="dims")],
+            joins=[ChainJoin(kind="attribute_join", join_field_left="region",
+                             join_field_right="region",
+                             left_source_id="sA", right_source_id="sC")],
+            engine="v6", **base),
+        FederatedChainRequest(
+            sources=[ChainSource(source_id="sA", dataset_id="pts"),
+                     ChainSource(source_id="sB", dataset_id="polys")],
+            joins=[ChainJoin(kind="spatial_join", spatial_op="within",
+                             left_source_id="sA", right_source_id="sB")],
+            engine="v6", **base),
+        FederatedChainRequest(
+            sources=[ChainSource(source_id="sA", dataset_id="pts"),
+                     ChainSource(source_id="sB", dataset_id="polys"),
+                     ChainSource(source_id="sC", dataset_id="dims")],
+            joins=[ChainJoin(kind="attribute_join", join_field_left="region",
+                             join_field_right="district",
+                             left_source_id="sA", right_source_id="sB"),
+                   ChainJoin(kind="attribute_join", join_field_left="district",
+                             join_field_right="region",
+                             left_source_id="sB", right_source_id="sC")],
+            engine="v6", **base),
+    ]
+    for req in reqs:
+        v5 = FederatedExecutor(lambda sid: adapters.get(sid)).execute_chain(
+            FederatedChainRequest(
+                sources=req.sources, joins=req.joins, limit=req.limit))
+        v6 = FederatedExecutor(lambda sid: adapters.get(sid)).execute_chain(req)
+        assert _canon(v6["rows"]) == _canon(v5["rows"]), f"生产入口差分失败: {req.joins}"
+        assert v6["engine"] == "v6"

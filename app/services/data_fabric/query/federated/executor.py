@@ -27,6 +27,7 @@ from app.services.data_fabric.query.federated.bloom import (
     build_bloom_from_rows,
     semi_join_plan,
 )
+from app.services.data_fabric.query.federation import _chain_row_key
 from app.services.data_fabric.query.federated.logical import (
     LogicalJoin,
     LogicalLimit,
@@ -379,10 +380,6 @@ class PhysicalExecutor:
         scan_by_id: Dict[str, LogicalScan] = {base.source_id: base}
         for h in hops:
             scan_by_id[h.right.source_id] = h.right
-        edge_index: Dict[Tuple[str, str], LogicalJoin] = {}
-        for j, h in enumerate(hops):
-            prev = base.source_id if j == 0 else hops[j - 1].right.source_id
-            edge_index[(prev, h.right.source_id)] = h
         i = 0
         total = len(accumulated)
         while i < len(hops):
@@ -534,18 +531,20 @@ class PhysicalExecutor:
                     }
                 )
                 semi_stats["bloom_filtered"] = pre["filtered"]
-        # V5 键集 semi-join（历史路径；Bloom 未启用/饱和时的兜底）
-        reduced, original = _semi_join_reduce_right(
-            accumulated,
-            right_rows,
-            _ChainJoinShim(node.join_field_left, node.join_field_right),
-        )
-        if reduced is not right_rows:
-            semi_stats["keyset_reduction"] = {
-                "right_rows_before": original,
-                "right_rows_after": len(reduced),
-            }
-            right_rows = reduced
+        # V5 键集 semi-join（m-4，评审 R2：Bloom 已生效时跳过 —— Bloom 是
+        # 键超集过滤（无假阴性），精确键集再筛一遍是纯重复遍历）
+        if "bloom_filtered" not in semi_stats:
+            reduced, original = _semi_join_reduce_right(
+                accumulated,
+                right_rows,
+                _ChainJoinShim(node.join_field_left, node.join_field_right),
+            )
+            if reduced is not right_rows:
+                semi_stats["keyset_reduction"] = {
+                    "right_rows_before": original,
+                    "right_rows_after": len(reduced),
+                }
+                right_rows = reduced
         return right_rows, semi_stats
 
     def _build_index(self, right_rows: List[Dict[str, Any]], field: str):
@@ -555,8 +554,6 @@ class PhysicalExecutor:
 
     @staticmethod
     def _chain_row_key(row: Dict[str, Any], field: str) -> Any:
-        from app.services.data_fabric.query.federation import _chain_row_key
-
         return _chain_row_key(row, field)
 
     @staticmethod

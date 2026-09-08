@@ -128,8 +128,10 @@ def explain_v6_lines(
             f"    source {n.source_id}: estimated_rows={n.estimated_rows}"
             f" fetch_window={n.fetch_limit}"
         )
-    lines.append("  materialization: build sides are materialized under the")
-    lines.append("    MAX_JOIN_CANDIDATES hard cap; probe sides stream page-wise")
+    lines.append(
+        "  materialization: build sides materialize up to their fetch_window"
+        " (per-hop fail-fast at budget.max_rows); probe sides stream page-wise"
+    )
     if plan.alternatives:
         lines.append("  alternatives:")
         for a in plan.alternatives[:6]:
