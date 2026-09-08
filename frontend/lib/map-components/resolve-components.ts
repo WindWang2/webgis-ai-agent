@@ -47,6 +47,10 @@ export const DEFAULT_COMPONENT_ANCHOR: Record<string, ChromeAnchor> = {
   methodology_note: 'bottom-left',
   uncertainty_panel: 'bottom-right',
   decision_panel: 'top-left',
+  // Workbench V4（audit 03 P0）：table_panel 缺行导致无显式 placement 时
+  // resolver 落 'none' → 组件静默隐藏（与 backend registry defaultPosition
+  // bottom-right 同表）。export_layout/basemap 仍为画布级（无槽位语义）。
+  table_panel: 'bottom-right',
   // P6：全画布/叠加型组件 —— 不参与槽位堆叠（'none'）
   map_border: 'none',
   graticule: 'none',

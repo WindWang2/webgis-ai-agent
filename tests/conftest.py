@@ -99,6 +99,18 @@ _ENV_BASELINE = {
         # 测试钉 false：生产/dev 默认 true（仓内 vendor/pi）。pytest 不得
         # 每个 TestClient lifespan 拉起 Node 子进程。
         "USE_NEW_AGENT": "false",
+        # GIS Extension Platform（ADR-0104）——与 Settings 默认等价的
+        # 安全值（默认全关；空白名单/黑名单/授权表；空目录）。
+        "EXTENSIONS_ENABLED": "false",
+        "EXTENSIONS_DIRS": "",
+        "EXTENSIONS_ALLOW": "",
+        "EXTENSIONS_BLOCK": "",
+        "EXTENSIONS_BUILTIN_IDS": "",
+        "EXTENSION_PERMISSION_GRANTS": "",
+        "EXTENSIONS_ACTIVATE_UNTRUSTED": "false",
+        "EXTENSION_FEATURE_FLAGS": "{}",
+        "EXTENSION_SETTINGS_JSON": "{}",
+        "STAC_API_URL": "https://earth-search.aws.element84.com/v1",
 }
 for _key, _value in _ENV_BASELINE.items():
     os.environ.setdefault(_key, _value)

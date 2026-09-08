@@ -25,16 +25,29 @@ const store: Record<string, unknown> = {
   layers: [],
   exports: [],
   results: [],
+  // Workbench V4：模式词表（缺省 explore = 全量 tab 组合不变式仍可测）
+  mode: 'explore',
+  modeOrigin: null,
+  modeActiveTab: { explore: 'chat', analyze: 'analysis', compose: 'components' },
+  // Review R1 MAJOR-3 后：tab 协调在 store 的 setWorkbenchMode 内 ——
+  // mock 与 store 同构（写 mode 并落该模式记忆 tab）。
+  setWorkbenchMode: vi.fn((mode: string, origin?: string) => {
+    store.mode = mode;
+    store.modeOrigin = origin ?? 'user';
+    setActiveLeftTab((store.modeActiveTab as Record<string, string>)[mode] ?? 'chat');
+  }),
 };
 
 vi.mock('@/lib/store/useHudStore', () => ({
-  useHudStore: (selector: (s: any) => any) => selector(store),
+  useHudStore: Object.assign(
+    (selector: (s: any) => any) => selector(store),
+    { getState: () => store },
+  ),
 }));
 
 // Import AFTER the mock is registered.
 import { NavRail } from './nav-rail';
 
-const TAB_ORDER = ['chat', 'project', 'data_sources', 'layers', 'components', 'analysis', 'tasks', 'results', 'export_layout'];
 const TAB_LABELS: Record<string, string> = {
   chat: '对话',
   project: '项目',
@@ -55,18 +68,23 @@ describe('NavRail', () => {
     store.layers = [];
     store.exports = [];
     store.results = [];
+    store.mode = 'explore';
+    store.modeOrigin = null;
   });
 
-  it('renders 9 tabs with tablist semantics and roving tabindex', () => {
+  it('renders mode-filtered tabs with tablist semantics and roving tabindex (explore)', () => {
     render(<NavRail />);
 
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
 
+    // Workbench V4：explore 模式只渲染 MODE_TABS.explore 组合内的 tab，
+    // rail 顺序保持 RAIL_GROUPS 稳定序（不随模式重排 —— 空间记忆不变）。
     const tabs = screen.getAllByRole('tab');
-    expect(tabs).toHaveLength(9);
+    const exploreOrder = ['chat', 'project', 'data_sources', 'layers', 'tasks'];
+    expect(tabs).toHaveLength(exploreOrder.length);
     expect(tabs.map((t) => t.getAttribute('aria-label'))).toEqual(
-      TAB_ORDER.map((k) => TAB_LABELS[k])
+      exploreOrder.map((k) => TAB_LABELS[k])
     );
 
     // active tab 可聚焦，其余 roving -1
@@ -76,6 +94,23 @@ describe('NavRail', () => {
     for (const t of tabs) {
       if (t !== chat) expect(t).toHaveAttribute('tabindex', '-1');
     }
+  });
+
+  it('mode radio switches mode and lands on the remembered tab', () => {
+    render(<NavRail />);
+    fireEvent.click(screen.getByTestId('mode-analyze'));
+    expect(store.setWorkbenchMode).toHaveBeenCalledWith('analyze', 'user');
+    // tab 协调已上收 store（setWorkbenchMode 落 activeLeftTab）—— mock 同构。
+    expect(setActiveLeftTab).toHaveBeenCalledWith('analysis'); // modeActiveTab.analyze
+  });
+
+  it('agent mode switch shows the revert control; click reverts to explore', () => {
+    store.mode = 'compose';
+    store.modeOrigin = 'agent';
+    render(<NavRail />);
+    const revert = screen.getByTestId('mode-agent-revert');
+    fireEvent.click(revert);
+    expect(store.setWorkbenchMode).toHaveBeenCalledWith('explore', 'user');
   });
 
   it('aria-selected reflects the active tab even when the panel is collapsed', () => {
@@ -100,30 +135,31 @@ describe('NavRail', () => {
     expect(setActiveLeftTab).not.toHaveBeenCalled();
   });
 
-  it('ArrowDown activates the next tab; ArrowUp wraps to the last', () => {
+  it('ArrowDown activates the next tab; ArrowUp wraps to the last (mode-filtered)', () => {
     render(<NavRail />);
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
 
+    // explore 可见序：chat → project → data_sources → layers → tasks
     fireEvent.keyDown(tablist, { key: 'ArrowDown' });
     expect(setActiveLeftTab).toHaveBeenCalledWith('project');
 
     fireEvent.keyDown(tablist, { key: 'ArrowUp' });
-    expect(setActiveLeftTab).toHaveBeenCalledWith('export_layout');
+    expect(setActiveLeftTab).toHaveBeenCalledWith('tasks');
   });
 
-  it('Home/End jump to first/last tab', () => {
+  it('Home/End jump to first/last tab (mode-filtered)', () => {
     store.activeLeftTab = 'layers';
     render(<NavRail />);
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
 
     fireEvent.keyDown(tablist, { key: 'End' });
-    expect(setActiveLeftTab).toHaveBeenCalledWith('export_layout');
+    expect(setActiveLeftTab).toHaveBeenCalledWith('tasks');
 
     fireEvent.keyDown(tablist, { key: 'Home' });
     expect(setActiveLeftTab).toHaveBeenCalledWith('chat');
   });
 
-  it('shows layer/export count badges only when non-zero', () => {
+  it('shows layer/export count badges only when non-zero (per mode)', () => {
     const { rerender } = render(<NavRail />);
     expect(screen.getByRole('tab', { name: '图层' }).textContent).toBe('');
 
@@ -131,6 +167,11 @@ describe('NavRail', () => {
     store.exports = [{ id: 'E1' }];
     rerender(<NavRail />);
     expect(screen.getByRole('tab', { name: '图层' }).textContent).toBe('3');
+    // explore 模式不渲染 制图 tab —— 徽标随模式组合出现。
+    expect(screen.queryByRole('tab', { name: '制图' })).toBeNull();
+
+    store.mode = 'compose';
+    rerender(<NavRail />);
     expect(screen.getByRole('tab', { name: '制图' }).textContent).toBe('1');
   });
 

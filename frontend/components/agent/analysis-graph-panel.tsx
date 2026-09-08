@@ -264,7 +264,7 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
     if (loading) {
       return (
         <section
-          className="rounded-lg border border-edge-subtle bg-surface p-2"
+          className="rounded-lg border border-edge-subtle bg-surface-panel p-2"
           data-testid="analysis-graph-panel"
           aria-label="分析图"
         >
@@ -287,7 +287,7 @@ export function AnalysisGraphPanel({ sessionId, ownerToken, refreshKey = 0 }: Pr
 
   return (
     <section
-      className="rounded-lg border border-edge-subtle bg-surface p-2"
+      className="rounded-lg border border-edge-subtle bg-surface-panel p-2"
       data-testid="analysis-graph-panel"
       aria-label="分析图"
     >

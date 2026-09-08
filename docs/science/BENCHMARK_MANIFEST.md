@@ -9,7 +9,7 @@
 > （ResourceScaleMismatch / RasterResourceGuard），benchmark 结构门消费
 > 同一批声明。空字段 = 未声明（不构成承诺）。
 
-统计：59/180 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
+统计：59/181 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
 
 | 算法 | 复杂度 | 精度 | 资源包络 | 变体(窗口) | 取消 | 容差 | 成本 cpu/mem | 执行策略 |
 |---|---|---|---|---|---|---|---|---|

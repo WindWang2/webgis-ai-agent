@@ -37,13 +37,22 @@ const PRESENTATION_FIELDS = new Set([
  * Server-authored cartographic tags certify one exact presentation generation.
  * A user-facing presentation change must invalidate those tags; source-body
  * hydration and explicitly tagged server updates may retain them.
+ *
+ * B3（workbench-v4）：服务端回灌（applyCommittedMapSpec / SSE 镜像）走
+ * `source: 'server'` —— 服务端真相回落到与本地一致时**不得**再次清鉴权，
+ * 否则任何并发改动回灌后该行永久失去认证（假「待同步」的第二个来源）。
  */
+export interface UpdateLayerOptions {
+  source?: 'user' | 'server';
+}
+
 function withAttestationPolicy(
   updates: Partial<HudState['layers'][number]>,
+  source: UpdateLayerOptions['source'] = 'user',
 ): Partial<HudState['layers'][number]> {
   const serverAttested = typeof updates._mapspecFingerprint === 'string';
   const changesPresentation = Object.keys(updates).some((key) => PRESENTATION_FIELDS.has(key));
-  if (serverAttested || !changesPresentation) return updates;
+  if (serverAttested || source === 'server' || !changesPresentation) return updates;
   return {
     ...updates,
     _mapspecFingerprint: undefined,
@@ -87,14 +96,14 @@ export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>
         )),
       };
     }),
-  updateLayer: (id, updates) =>
+  updateLayer: (id, updates, opts) =>
     set((s) => {
       const target = s.layers.find((l) => l.id === id);
       if (target) {
         // #739 同款 no-op 短路：SSE 挂载路径 addLayer 后紧跟 updateLayer，
         // 等值更新会 bump layers 身份 + intentGeneration → reconcile effect
         // 双跑（第二次 diff 为空但付全 effect 开销）。
-        const effective = withAttestationPolicy(updates);
+        const effective = withAttestationPolicy(updates, opts?.source);
         let noOp = true;
         for (const key of Object.keys(effective)) {
           if ((target as unknown as Record<string, unknown>)[key]
@@ -110,7 +119,7 @@ export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>
         layerIntentGeneration: generation,
         layers: s.layers.map((l) => (
           l.id === id
-            ? { ...l, ...withAttestationPolicy(updates), _intentGeneration: generation }
+            ? { ...l, ...withAttestationPolicy(updates, opts?.source), _intentGeneration: generation }
             : l
         )),
       };

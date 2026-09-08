@@ -52,7 +52,7 @@ function MethodologyNoteView({ component, ctx }: { component: MapSpecComponent; 
       bodyClassName={variant === 'compact' ? 'p-1.5' : 'p-2'}
     >
       {warnings ? (
-        <ul className={`flex flex-col ${variant === 'compact' ? 'gap-0.5' : 'gap-1'}`} role="list">
+        <ul className={`flex flex-col ${variant === 'compact' ? 'gap-0.5' : 'gap-1'}`}>
           {warnings.map((w, i) => (
             <li
               key={`${w.code ?? w.pattern ?? 'warn'}#${i}`}

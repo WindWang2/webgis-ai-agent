@@ -32,6 +32,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.chart": "rendering",
     "app.tools.chinese_maps": "data_access",
     "app.tools.coord_transform": "transformation",
+    "app.tools.dasymetric_tools": "analysis",       # 面插值重分配（量守恒分析）
     "app.tools.data_discovery": "inspection",           # 目录/画像/lineage 只读发现
     "app.tools.data_fabric_tools": "data_access",
     "app.tools.ingest_tools": "data_access",            # 入库（detect→profile→register）

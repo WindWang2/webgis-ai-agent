@@ -13,6 +13,29 @@ logger = logging.getLogger(__name__)
 
 _STAC_CATALOG_URL = "https://earth-search.aws.element84.com/v1"
 
+
+def _catalog_url() -> str:
+    """STAC API 基地址：settings.STAC_API_URL 可配置（Wave 8/9），
+    缺省回退 earth-search 默认目录（此前硬编码在此）。"""
+    try:
+        from app.core.config import settings
+
+        return getattr(settings, "STAC_API_URL", None) or _STAC_CATALOG_URL
+    except Exception:  # noqa: BLE001 — 配置缺席按保守默认
+        return _STAC_CATALOG_URL
+
+
+def _validate_asset_href(href: str) -> str:
+    """SSRF 门禁：STAC asset href 在打开/下载前必须通过统一校验。
+
+    复用 geo_raster 门禁入口（内部委托 data_fabric.security.validate_url，
+    绝不另写 SSRF 判定）：私网/回环/云元数据 IP 一律拒绝，本地路径与非
+    http(s) scheme 原样放行。失败抛 ``DataFabricSecurityError``
+    （ValueError 子类）。模块级函数，测试可 monkeypatch 注入。"""
+    from app.lib.geo_raster.env import validate_remote_href
+
+    return validate_remote_href(href)
+
 # DEM elevation sentinels used by spectral_engine.compute_terrain's nodata
 # mask; legitimate elevations never reach this depth (Dead Sea shore ≈ −430 m).
 DEM_SENTINEL_NODATA = -9999.0
@@ -114,7 +137,7 @@ class StacClientPrimitive:
     @lru_cache(maxsize=1)
     def _get_catalog(self):
         import pystac_client
-        return pystac_client.Client.open(_STAC_CATALOG_URL)
+        return pystac_client.Client.open(_catalog_url())
 
     async def open_catalog(self):
         loop = asyncio.get_running_loop()
@@ -265,6 +288,9 @@ class StacClientPrimitive:
                                     logger.warning(f"Asset '{asset_key}' not found in STAC item {item.id}")
                                     continue
                                 href = item.assets[asset_key].href
+                                # SSRF 门禁（Wave 8/9）：asset href 在交给
+                                # GDAL (/vsicurl) 之前必须过统一校验。
+                                href = _validate_asset_href(href)
                                 # V4 runtime entry: RasterReader.open routes
                                 # through the shared rasterio_env (HTTP
                                 # timeout/retry hardening) and wraps remote

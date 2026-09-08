@@ -43,13 +43,16 @@ function isBoundaryContextLayer(specLayerId: string | undefined): boolean {
 }
 
 function parkStaleLayers(exceptLayerId: string): void {
-  const { layers, updateLayer } = useHudStore.getState();
+  const { layers, updateLayer, lockedLayerIds } = useHudStore.getState();
   for (const layer of layers ?? []) {
     if (layer.id === exceptLayerId) continue;
     // group 缺失（旧路径恢复的层）按 analysis 处理；只排除显式的 base 等组。
     if ((layer.group ?? 'analysis') !== 'analysis' || !layer.visible) continue;
     // 用户 pin 的层不收起（跨轮持续——用户显式点开且未手动隐藏）。
     if ((layer as { _userPinned?: boolean })._userPinned) continue;
+    // Workbench V4 lock 护栏：锁定层不受 agent 轮次收起影响（用户显式锁定的
+    // 意图强度高于 _userPinned —— lock 在面板里有显式控件）。
+    if (lockedLayerIds.includes(layer.id)) continue;
     // 未标记（会话恢复的存量层）视为第 0 轮 —— 新轮展示时同样让位。
     const displayTurn = layer._displayTurn ?? 0;
     if (displayTurn >= turn) continue;
@@ -97,8 +100,12 @@ export function untagUserPinned(layerId: string): void {
   useHudStore.getState().updateLayer(layerId, { _userPinned: false });
 }
 
-/** finalize/收口豁免：用户手动点开且仍 pin 的层不自动隐藏（用户优先）。 */
+/** finalize/收口豁免：用户手动点开且仍 pin 的层不自动隐藏（用户优先）。
+ *  Workbench V4：显式锁定（lockedLayerIds）同样是豁免 —— lock 控件的意图
+ *  强度与 pin 同族且更持久。 */
 export function isUserPinned(layerId: string): boolean {
-  const layer = useHudStore.getState().layers?.find((l) => l.id === layerId);
+  const state = useHudStore.getState();
+  if (state.lockedLayerIds.includes(layerId)) return true;
+  const layer = state.layers?.find((l) => l.id === layerId);
   return Boolean((layer as { _userPinned?: boolean } | undefined)?._userPinned);
 }

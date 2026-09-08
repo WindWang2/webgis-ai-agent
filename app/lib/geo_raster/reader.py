@@ -23,6 +23,8 @@ from typing import Any, Optional, Sequence
 
 import numpy as np
 
+from app.lib.geo_raster.env import validate_remote_href
+
 logger = logging.getLogger(__name__)
 
 #: Default whole-array read ceiling (cells × dtype bytes). Full reads above
@@ -86,6 +88,11 @@ class RasterReader:
     # ── lifecycle ────────────────────────────────────────────────────
     @classmethod
     def open(cls, uri: str) -> "RasterReader":
+        # SSRF 门禁（Wave 8/9）：远端 http(s) href 在交给 GDAL（内部转
+        # /vsicurl）之前必须通过统一校验——私网/回环/云元数据一律拒绝。
+        # 校验失败抛 DataFabricSecurityError（ValueError 子类），绝不进入
+        # rasterio.open。模块级绑定：测试可 monkeypatch 注入。
+        validate_remote_href(uri)
         # Delegate to the canonical shared env (GDAL_HTTP_TIMEOUT/RETRY/
         # READDIR + GDAL_CACHEMAX from RASTER_GDAL_CACHE_MAX_MB +
         # GDAL_NUM_THREADS=1 — app/lib/geo_raster/env.py). The env is HELD

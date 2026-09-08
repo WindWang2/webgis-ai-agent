@@ -82,7 +82,7 @@ function DecisionPanelView({ component, ctx }: { component: MapSpecComponent; ct
             </div>
           ) : null}
           {decision.rows ? (
-            <ol className="flex flex-col" role="list">
+            <ol className="flex flex-col">
               {decision.rows.map((row, i) => (
                 <li
                   key={`${row.name}#${i}`}

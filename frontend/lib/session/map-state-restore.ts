@@ -268,17 +268,21 @@ export function syncSpecLayersToStore(
   // 会对服务端未知层发 patch。会话重入本就自愈（restore 的 allowedIds
   // 过滤），live 路径此前只增不删。保留：pending 压制行 / 过程层行 /
   // 非 spec 镜像的自建行（无 _mapspecLayerId 且 id 不在 spec——用户命令层）。
+  // B1（workbench-v4）：修剪必须基于**当前** store —— 上方 add 循环刚镜像的
+  // 行不在 add 前快照里，用旧快照过滤会把同轮新增行一并抹掉（一个 spec
+  // 事件既 add X 又 remove Y 时，X 被吞到下一个事件才自愈）。
+  const currentLayers = useHudStore.getState().layers ?? [];
   const specIds = new Set(specLayers.map(
     (raw) => String((raw as Record<string, any>)?.id || ''),
   ));
-  const keepRows = storeLayers.filter((row) => {
+  const keepRows = currentLayers.filter((row) => {
     if (!row._mapspecLayerId) return true;
     if (pendingIds.has(String(row._mapspecLayerId))) return true;
     const mirrored = specIds.has(String(row._mapspecLayerId))
       || specIds.has(String(row.id));
     return mirrored;
   });
-  if (keepRows.length !== storeLayers.length) {
+  if (keepRows.length !== currentLayers.length) {
     useHudStore.getState().setLayers(keepRows);
   }
 }
