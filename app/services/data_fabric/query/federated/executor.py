@@ -19,6 +19,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.data_fabric.errors import QueryBudgetExceededError
+from app.services.data_fabric.query.federated.adaptive import (
+    AdaptiveController,
+    pick_tail_order,
+)
 from app.services.data_fabric.query.federated.bloom import (
     build_bloom_from_rows,
     semi_join_plan,
@@ -50,6 +54,7 @@ class ExecutionTrace:
     per_source_rows: Dict[str, int] = field(default_factory=dict)
     pages_fetched: int = 0
     hop_stats: List[Dict[str, Any]] = field(default_factory=list)
+    adaptive_notes: List[str] = field(default_factory=list)
     bloom_stats: List[Dict[str, Any]] = field(default_factory=list)
     crs_transforms_applied: List[Dict[str, Any]] = field(default_factory=list)
     cancelled: bool = False
@@ -68,6 +73,8 @@ class PhysicalExecutor:
         cancel_event: Optional[threading.Event] = None,
         ndv_hints: Optional[Dict[str, Dict[str, int]]] = None,
         page_size: int = DEFAULT_PAGE_SIZE,
+        adaptive: bool = True,
+        order_strategy: str = "cost",
     ):
         self._adapter_factory = adapter_factory
         self._budget = budget
@@ -75,6 +82,10 @@ class PhysicalExecutor:
         self._bbox = bbox
         self._ndv_hints = ndv_hints or {}
         self._page_size = page_size
+        self._order_strategy = order_strategy
+        self.adaptive = AdaptiveController(
+            enabled=adaptive and order_strategy != "given"
+        )
         self.token = CancelToken(
             deadline_s=budget.deadline_s, cancel_event=cancel_event
         )
@@ -82,7 +93,9 @@ class PhysicalExecutor:
 
     # ── 对外入口 ─────────────────────────────────────────────────────
 
-    def execute(self, plan_tree: LogicalNode) -> Dict[str, Any]:
+    def execute(
+        self, plan_tree: LogicalNode, hop_estimates: Optional[List[int]] = None
+    ) -> Dict[str, Any]:
         from app.services.data_fabric.query.execution import StreamingBudget
 
         started = time.monotonic()
@@ -92,11 +105,18 @@ class PhysicalExecutor:
             max_vertices=self._budget.max_vertices,
         )
         try:
-            rows, joined_total = self._eval(plan_tree, lift_key=None)
+            chain = _flatten_chain(plan_tree)
+            if chain is not None and len(chain[1]) >= 2 and self.adaptive.enabled:
+                rows, joined_total = self._execute_chain_adaptive(
+                    chain[0], chain[1], hop_estimates=hop_estimates or []
+                )
+            else:
+                rows, joined_total = self._eval(plan_tree, lift_key=None)
         except CancelledError:
             self.trace.cancelled = True
             raise
         final_rows = rows[: self._limit]
+        self.trace.adaptive_notes = list(self.adaptive.notes)
         return {
             "rows": final_rows,
             "row_count": len(final_rows),
@@ -107,6 +127,8 @@ class PhysicalExecutor:
             "hop_stats": self.trace.hop_stats,
             "bloom_stats": self.trace.bloom_stats,
             "crs_transforms_applied": self.trace.crs_transforms_applied,
+            "adaptive_observations": self.trace.adaptive_notes,
+            "replans_used": self.adaptive.replans_used,
             "cancelled": self.trace.cancelled,
         }
 
@@ -207,13 +229,6 @@ class PhysicalExecutor:
     def _join(
         self, node: LogicalJoin, *, lift_key: Optional[str]
     ) -> Tuple[List[Dict[str, Any]], int]:
-        from app.services.data_fabric.query.federation import (
-            FederatedQueryError,
-            _chain_left_features,
-            aggregate_join_rows,
-            attribute_join_local,
-            spatial_join_local,
-        )
 
         # 左 = probe（累积行），右 = build（物化，硬界）。
         my_pos = _left_depth(node)  # 本跳在左深链上的位置（F3 检查语义同 V5）
@@ -222,7 +237,28 @@ class PhysicalExecutor:
             node.right,
             lift_key=node.join_field_right if node.kind != "spatial_join" else None,
         )
-        hop_pos = my_pos
+        rows = self._apply_hop(node, left_rows, right_rows, hop_pos=my_pos)
+        if lift_key:
+            self._lift(rows, lift_key)
+        return rows, len(rows)
+
+    def _apply_hop(
+        self,
+        node: LogicalJoin,
+        left_rows: List[Dict[str, Any]],
+        right_rows: List[Dict[str, Any]],
+        *,
+        hop_pos: int,
+    ) -> List[Dict[str, Any]]:
+        """单跳应用（连接语义；_join 与自适应链循环共用）。"""
+        from app.services.data_fabric.query.federation import (
+            FederatedQueryError,
+            _chain_left_features,
+            aggregate_join_rows,
+            attribute_join_local,
+            spatial_join_local,
+        )
+
         max_output = self._budget.max_rows
 
         if node.join_kind == "attribute_join":
@@ -314,9 +350,72 @@ class PhysicalExecutor:
                     "per_source_rows": self.trace.per_source_rows,
                 },
             )
-        if lift_key:
-            self._lift(accumulated, lift_key)
-        return accumulated, joined_total
+        return accumulated
+
+    def _execute_chain_adaptive(
+        self,
+        base: LogicalScan,
+        hops: List[LogicalJoin],
+        *,
+        hop_estimates: List[int],
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """链形计划的迭代执行 + 自适应观测（W8）。
+
+        每跳后对比估计与实际基数；显著偏差触发**一次性**受护栏尾重排
+        （可连通 + 更优才切换）。方向语义边（spatial/aggregate）按原方向
+        键索引 —— 缺边即不可连通，绝不猜测。
+        """
+        accumulated, _ = self._eval(base, lift_key=None)
+        last_consumed = base.source_id
+        edge_index: Dict[Tuple[str, str], LogicalJoin] = {}
+        for j, h in enumerate(hops):
+            prev = base.source_id if j == 0 else hops[j - 1].right.source_id
+            edge_index[(prev, h.right.source_id)] = h
+        i = 0
+        total = len(accumulated)
+        while i < len(hops):
+            hop = hops[i]
+            right_rows, _ = self._eval(
+                hop.right,
+                lift_key=hop.join_field_right if hop.kind != "spatial_join" else None,
+            )
+            accumulated = self._apply_hop(hop, accumulated, right_rows, hop_pos=i)
+            total = len(accumulated)
+            # F1：跳后提升下一跳左键（V5 链不变量；_chain_lift_next_join_key
+            # 自身对 spatial 跳早退）。
+            if i + 1 < len(hops) and hops[i + 1].join_field_left:
+                self._lift(accumulated, hops[i + 1].join_field_left)
+            est = hop_estimates[i] if i < len(hop_estimates) else None
+            obs = self.adaptive.observe(hop=i, estimated_rows=est, actual_rows=total)
+            if obs and self.adaptive.can_replan() and i + 1 < len(hops):
+                remaining = hops[i + 1 :]
+                tail_ids = [h.right.source_id for h in remaining]
+                tail_sources = [
+                    (sid, self.trace.per_source_rows.get(sid)) for sid in tail_ids
+                ]
+                tail_edges: Dict[Tuple[str, str], Dict[str, Any]] = {}
+                prev = last_consumed
+                for h in remaining:
+                    tail_edges[(prev, h.right.source_id)] = {"kind": h.join_kind}
+                    prev = h.right.source_id
+                ndv = {sid: self._ndv_hints.get(sid, {}) for sid in tail_ids}
+                new_tail, adopted = pick_tail_order(
+                    controller=self.adaptive,
+                    original_tail=tail_ids,
+                    observed_first_card=total,
+                    tail_sources=tail_sources,
+                    tail_edges=tail_edges,
+                    ndv_by_source=ndv,
+                )
+                if adopted:
+                    seq = [last_consumed] + new_tail
+                    hops = hops[: i + 1] + [
+                        edge_index[(seq[k], seq[k + 1])] for k in range(len(seq) - 1)
+                    ]
+                    continue  # 以新尾序继续（不重复已执行跳）
+            last_consumed = hop.right.source_id
+            i += 1
+        return accumulated, total
 
     # ── 辅助 ─────────────────────────────────────────────────────────
 
@@ -408,6 +507,23 @@ class _ChainJoinShim:
         self.join_field_left = join_field_left
         self.join_field_right = join_field_right
         self.kind = "attribute_join"
+
+
+def _flatten_chain(
+    node: LogicalNode,
+) -> Optional[Tuple[LogicalScan, List[LogicalJoin]]]:
+    """纯 scan/join 左深链 → (基表, 有序跳)；含包装节点/bushy → None
+    （自适应只对纯链形计划生效；其余走静态递归求值）。"""
+    hops: List[LogicalJoin] = []
+    cur = node
+    while isinstance(cur, LogicalJoin):
+        if not isinstance(cur.right, LogicalScan):
+            return None
+        hops.append(cur)
+        cur = cur.left
+    if not isinstance(cur, LogicalScan):
+        return None
+    return cur, list(reversed(hops))
 
 
 def _left_depth(node: LogicalNode) -> int:
