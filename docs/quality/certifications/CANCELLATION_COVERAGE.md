@@ -21,7 +21,7 @@
 | app/lib/geo_analysis/heatmap_grid.py | 1 | 6 | certified |
 | app/lib/geo_analysis/interpolation.py | 2 | 23 | certified |
 | app/lib/geo_analysis/interpolation_compare.py | 0 | 4 | no-checkpoints |
-| app/lib/geo_analysis/kriging.py | 7 | 69 | certified |
+| app/lib/geo_analysis/kriging.py | 9 | 85 | certified |
 | app/lib/geo_analysis/network.py | 3 | 30 | certified |
 | app/lib/geo_analysis/point_pattern.py | 6 | 76 | certified |
 | app/lib/geo_analysis/raster_change.py | 1 | 4 | certified |

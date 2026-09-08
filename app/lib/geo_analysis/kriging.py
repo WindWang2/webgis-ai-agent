@@ -248,8 +248,13 @@ def _gamma(
     rng: float,
     nugget: float,
     nu: float = MATERN_SMOOTHNESS_DEFAULT,
+    structures: Optional[list] = None,
 ) -> np.ndarray:
-    """Theoretical semivariance γ(h) for the fitted model."""
+    """Theoretical semivariance γ(h) for the fitted model.
+
+    science-v4 W4：``model="nested"`` 时经 ``structures`` 逐结构叠加
+    （普通路径 structures=None 不受影响，逐位兼容）。
+    """
     h = np.asarray(h, dtype=float)
     if model == "spherical":
         out = np.empty_like(h)
@@ -284,6 +289,19 @@ def _gamma(
         xi = x[inside]
         poly = 7.0 * xi ** 2 - 8.75 * xi ** 3 + 3.5 * xi ** 5 - 0.75 * xi ** 7
         out[inside] = nugget + sill * poly
+        return out
+    if model == "nested":
+        # science-v4 W4：嵌套模型 γ(h) = nugget + Σ_i sill_i·shape_i(h/range_i)。
+        # structures = [(model, sill, range_m), ...]（逐结构纯形状，nugget 全局
+        # 只计一次）；嵌套 fit 由 fit_nested_variogram 产出。未带 structures
+        # 到达此处 = 调用方错误 —— 类型化拒绝，不静默回退单结构。
+        if not structures:
+            raise KrigingInputError(
+                "nested variogram 需要 structures=[(model, sill, range_m), …]"
+                "（可用 fit_nested_variogram 拟合）")
+        out = np.full_like(h, float(nugget), dtype=float)
+        for m_i, sill_i, rng_i in structures:
+            out = out + _gamma(m_i, h, float(sill_i), float(rng_i), 0.0, nu=nu)
         return out
     raise KrigingInputError(f"unknown variogram model: {model!r}")
 
@@ -729,7 +747,8 @@ def ordinary_kriging(
         # sample-sample semivariances WITH nugget (c, k, k), zero diagonal
         diff = nb_xy[:, :, None, :] - nb_xy[:, None, :, :]
         d_ss = np.sqrt((diff ** 2).sum(axis=-1))
-        gamma_ss = _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget, nu=g.nu)
+        gamma_ss = _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget, nu=g.nu,
+                    structures=getattr(g, "structures", None))
         idx_diag = np.arange(k)
         gamma_ss[:, idx_diag, idx_diag] = 0.0
         gamma_ss[:, idx_diag, idx_diag] = ridge
@@ -742,7 +761,8 @@ def ordinary_kriging(
         rhs = np.ones((c, k + 1))
         # γ₀ also carries the nugget — a target exactly at a sample site
         # then recovers the sample value (exact interpolation honoured).
-        rhs[:, :k] = _gamma(g.model, nb_d, g.sill, g.range_m, g.nugget, nu=g.nu)
+        rhs[:, :k] = _gamma(g.model, nb_d, g.sill, g.range_m, g.nugget, nu=g.nu,
+                       structures=getattr(g, "structures", None))
 
         sol, row_degraded = _solve_kriging_systems(mat, rhs, solve_backend)
         failed = np.isnan(sol[:, 0])
@@ -917,7 +937,8 @@ def universal_kriging(
         # construction shared with OK) — anisotropic space
         diff = nb_xy_t[:, :, None, :] - nb_xy_t[:, None, :, :]
         d_ss = np.sqrt((diff ** 2).sum(axis=-1))
-        gamma_ss = _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget, nu=g.nu)
+        gamma_ss = _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget, nu=g.nu,
+                    structures=getattr(g, "structures", None))
         idx_diag = np.arange(k)
         gamma_ss[:, idx_diag, idx_diag] = 0.0
         gamma_ss[:, idx_diag, idx_diag] = ridge
@@ -932,7 +953,8 @@ def universal_kriging(
         mat[:, k:, :k] = F.transpose(0, 2, 1)
         rhs = np.zeros((c, k + _TREND_TERMS))
         # γ₀ carries the nugget (exact interpolation at sample sites honoured)
-        rhs[:, :k] = _gamma(g.model, nb_d, g.sill, g.range_m, g.nugget, nu=g.nu)
+        rhs[:, :k] = _gamma(g.model, nb_d, g.sill, g.range_m, g.nugget, nu=g.nu,
+                       structures=getattr(g, "structures", None))
         rhs[:, k:] = f0
 
         sol, row_degraded = _solve_kriging_systems(mat, rhs, solve_backend)
@@ -1897,10 +1919,12 @@ def collocated_cokriging(
         # 样本-样本协方差 C(h) = a_priori − γ(h)，对角 C(0) = a_priori
         diff = nb_xy[:, :, None, :] - nb_xy[:, None, :, :]
         d_ss = np.sqrt((diff ** 2).sum(axis=-1))
-        C_ss = a_priori - _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget, nu=g.nu)
+        C_ss = a_priori - _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget, nu=g.nu,
+                    structures=getattr(g, "structures", None))
         C_ss[:, diag, diag] = a_priori
         # MM1 交叉结构：C_sy(h) = ρ·C_pp(h)
-        c_p0 = a_priori - _gamma(g.model, nb_d, g.sill, g.range_m, g.nugget, nu=g.nu)
+        c_p0 = a_priori - _gamma(g.model, nb_d, g.sill, g.range_m, g.nugget, nu=g.nu,
+                       structures=getattr(g, "structures", None))
         c_sy = rho * c_p0
         c_s0 = rho * a_priori  # 次变量(目标) ↔ 主变量(目标, 未观测) h=0 交叉
 
@@ -2047,7 +2071,8 @@ def block_kriging(
         # LHS：规范点支撑 Γ（nugget 进全部 h>0 项，对角 0）
         diff = nb_xy[:, :, None, :] - nb_xy[:, None, :, :]
         d_ss = np.sqrt((diff ** 2).sum(axis=-1))
-        gamma_ss = _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget, nu=g.nu)
+        gamma_ss = _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget, nu=g.nu,
+                    structures=getattr(g, "structures", None))
         gamma_ss[:, diag, diag] = 0.0
         gamma_ss[:, diag, diag] = ridge
 
@@ -2130,6 +2155,492 @@ def block_kriging(
 SUPPORTED_DECLARED_CRS = ("EPSG:4326", "EPSG:4490", "EPSG:3857")
 
 
+
+# ── science-v4（W4）：normal-score / simple kriging / KED / 嵌套变异函数 ────
+
+NESTED_MIN_STRUCTURES = 2
+NESTED_MAX_STRUCTURES = 3
+
+
+@dataclass
+class NormalScoreTransform:
+    """经验高斯变形（empirical Gaussian anamorphosis）的变换状态。
+
+    前向：按升序秩映射到 Φ⁻¹((i+0.5)/n)（Blom 绘图位置）；后向：在
+    (z, value) 单调对上线性插值，尾部钳制到 [min, max]（如实披露，不外
+    推）。并列值（ties）按稳定排序拆分为不同 z —— 秩变换的标准代价，
+    由 descriptor limitations 披露。确定性：无随机成分。
+    """
+
+    sorted_values: np.ndarray  # 升序原始值
+    z_quantiles: np.ndarray    # Φ⁻¹((i+0.5)/n)，升序
+    n: int
+
+    def forward(self, values: np.ndarray) -> np.ndarray:
+        return np.interp(values, self.sorted_values, self.z_quantiles)
+
+    def backward(self, z: np.ndarray) -> np.ndarray:
+        return np.interp(z, self.z_quantiles, self.sorted_values)
+
+    def to_dict(self) -> dict:
+        return {
+            "n": int(self.n),
+            "value_min": round(float(self.sorted_values[0]), 6),
+            "value_max": round(float(self.sorted_values[-1]), 6),
+        }
+
+
+def normal_score_transform(
+    values: np.ndarray,
+) -> tuple[np.ndarray, NormalScoreTransform]:
+    """Normal-score（秩高斯）变换：任意分布 → 标准正态分数。
+
+    Returns:
+        ``(z_scores, state)`` —— ``z_scores`` 与输入同序；``state`` 供
+        后向变换（SGS 模拟面回变换/任意预测回变换）。
+
+    Raises:
+        InsufficientSamples: <2 个样本。
+        DegenerateData: 非有限值或零方差（变换不可定义）。
+    """
+    from scipy.special import ndtri
+
+    v = np.asarray(values, dtype=float)
+    if v.size < 2:
+        raise InsufficientSamples(
+            f"normal-score 变换至少需要 2 个样本（got {v.size}）")
+    if not np.isfinite(v).all():
+        raise DegenerateData("normal-score 变换要求全部有限数值")
+    if float(np.ptp(v)) == 0.0:
+        raise DegenerateData(
+            "零方差场 normal-score 变换未定义（秩-分位映射退化）",
+            correction_hint="零方差场无需模拟——直接以常量场输出并披露")
+    order = np.argsort(v, kind="stable")
+    u = (np.arange(v.size, dtype=float) + 0.5) / v.size
+    zq = ndtri(u)
+    zs = np.empty_like(zq)
+    zs[order] = zq
+    return zs, NormalScoreTransform(
+        sorted_values=np.sort(v), z_quantiles=zq, n=int(v.size))
+
+
+@dataclass
+class NestedVariogramFit:
+    """嵌套（多结构）变异函数拟合：γ(h) = nugget + Σ_i sill_i·shape_i(h/range_i)。
+
+    与 :class:`VariogramFit` 属性兼容（sill=Σ结构基台、range_m=最大变程、
+    model="nested"），故 OK/UK/co-kriging/block 的求解路径无需分支即可
+    消费（``_gamma`` 经 ``structures`` 逐结构叠加）。结构词表限于
+    spherical/exponential/gaussian（嵌套可识别性；matern/wave/cubic 不
+    进入嵌套，如实披露）。
+    """
+
+    structures: list  # [(model, sill, range_m), ...]
+    nugget: float
+    rss: float = 0.0
+    n_pairs: int = 0
+    n_lags: int = 0
+    fitted_manually: bool = False
+    nu: float = MATERN_SMOOTHNESS_DEFAULT  # 兼容 VariogramFit 接口（嵌套不用）
+
+    @property
+    def model(self) -> str:
+        return "nested"
+
+    @property
+    def sill(self) -> float:
+        return float(sum(s for _, s, _ in self.structures))
+
+    @property
+    def range_m(self) -> float:
+        return float(max(r for _, _, r in self.structures))
+
+    def params(self) -> dict:
+        return {
+            "model": "nested",
+            "sill": round(self.sill, 6),
+            "range_meters": round(self.range_m, 3),
+            "nugget": round(float(self.nugget), 3),
+            "structures": [
+                {"model": m, "sill": round(float(s), 6),
+                 "range_meters": round(float(r), 3)}
+                for m, s, r in self.structures
+            ],
+            "rss": round(float(self.rss), 6),
+        }
+
+    def semivariance(self, h: np.ndarray) -> np.ndarray:
+        return _gamma("nested", np.asarray(h, dtype=float), self.sill,
+                      self.range_m, self.nugget, structures=self.structures)
+
+
+def fit_nested_variogram(
+    pts_metric: np.ndarray,
+    values: np.ndarray,
+    n_structures: int = 2,
+    n_lags: int = DEFAULT_N_LAGS,
+    max_pairs: int = MAX_PAIRS,
+    anisotropy_angle: float = 0.0,
+    anisotropy_ratio: float = 1.0,
+) -> NestedVariogramFit:
+    """嵌套变异函数拟合（逐结构残差分解，确定性、有界）。
+
+    第一结构（spherical）拟合全经验曲线（含短程），全局 nugget 取其
+    nugget；随后逐结构在**非负残差**上拟合下一结构（exponential，长程）
+    —— 结构数 ≤ ``NESTED_MAX_STRUCTURES``。最终以嵌套 RSS 对单结构最优
+    RSS 的改进为收敛判据：嵌套拟合未优于单结构 → ``ConvergenceFailure``
+    （诚实地用单结构，而不是输出更差的多结构模型）。
+
+    Raises:
+        KrigingInputError: 参数/样本不足以拟合。
+        ConvergenceFailure: 结构退化（sill→0）或嵌套 RSS 未优于单结构。
+    """
+    from app.lib.gis.scientific_errors import ConvergenceFailure
+
+    if not (NESTED_MIN_STRUCTURES <= int(n_structures) <= NESTED_MAX_STRUCTURES):
+        raise KrigingInputError(
+            f"n_structures 必须在 [{NESTED_MIN_STRUCTURES}, "
+            f"{NESTED_MAX_STRUCTURES}]（嵌套可识别性），got {n_structures!r}")
+    anisotropy_transform(anisotropy_angle, anisotropy_ratio)
+    pts_t = apply_anisotropy(pts_metric, anisotropy_angle, anisotropy_ratio)
+    fit_pts, fit_vals = stratified_subsample(pts_t, values, MAX_FIT_POINTS)
+    lags, gamma, counts = empirical_variogram(
+        fit_pts, fit_vals, n_lags=n_lags, max_pairs=max_pairs)
+    if len(lags) < 4:
+        raise KrigingInputError(
+            f"经验变异函数只有 {len(lags)} 个有效滞后 bin（需要 ≥4）—— "
+            "样本空间分布不足以拟合嵌套变异函数。")
+    var_values = float(np.var(fit_vals))
+    var_floor = max(var_values, 1e-12)
+    span = float(np.linalg.norm(fit_pts.max(axis=0) - fit_pts.min(axis=0))) or 1.0
+    weights = counts.astype(float)
+
+    single_best: Optional[VariogramFit] = None
+    for m in AUTO_VARIOGRAM_MODELS:
+        fit = _fit_model(m, lags, gamma, weights, var_values, span)
+        if fit is not None and (single_best is None or fit.rss < single_best.rss):
+            single_best = fit
+    if single_best is None:
+        raise KrigingInputError("嵌套拟合的基线单结构拟合失败（输入无法支持克里金）")
+
+    structure_models = ("spherical", "exponential", "gaussian")
+    structures: list = []
+    global_nugget = 0.0
+    # 短程→长程的逐结构**残差**拟合（标准实践）：第一结构（spherical）
+    # 在近 origin 的滞后 bin（前 1/4，≥3 个 bin）上拟合，变程上界钳到
+    # 2×该窗口最大滞后 —— 短程结构由原点行为识别；随后从全 lag 轴的
+    # 残差中扣除已拟合结构的纯形状，下一结构（exponential/gaussian）在
+    # 剩余残差上拟合长程。全局 nugget 取第一结构的 nugget。确定性、
+    # 有界、无随机重启。
+    n_s = int(n_structures)
+    residual = gamma.copy()
+    # 近 origin 窗口：lag 轴的前 1/8（≥3 bin）—— 短程结构的到基台行为
+    # 集中在最初几个 bin；窗口过宽会把长程上升也吸进第一结构。
+    short_bins = max(3, len(lags) // 8)
+    for i in range(n_s):
+        m_i = structure_models[i]
+        if i == 0:
+            # 短结构变程上界 = 2×span_eff ≤ 近 origin 窗口末端（第一结构
+            # 必须在窗口内到基台，长程分量留给后续结构的残差拟合）。
+            span_eff = max(float(lags[short_bins - 1]) / 2.0, span / 500.0)
+            fit_i = _fit_model(
+                m_i, lags[:short_bins], residual[:short_bins],
+                weights[:short_bins], var_values, span_eff)
+            if fit_i is not None:
+                global_nugget = float(fit_i.nugget)
+                residual = np.maximum(
+                    residual - (global_nugget + _gamma(
+                        m_i, lags, fit_i.sill, fit_i.range_m, 0.0)), 0.0)
+        else:
+            # 第 2+ 结构：在残差上对候选家族确定性择优（加权 RSS 最低，
+            # 与 auto 选型同判据）—— 长程分量的光滑度先验未知。
+            fit_i = None
+            for m_cand in ("exponential", "gaussian"):
+                cand = _fit_model(m_cand, lags, residual, weights,
+                                  var_values, span)
+                if cand is None:
+                    continue
+                cand_rss = float(np.sum(
+                    ((residual - _gamma(m_cand, lags, cand.sill,
+                                        cand.range_m, 0.0)) / np.sqrt(
+                        np.maximum(weights / weights.max(), 1e-6))) ** 2))
+                if fit_i is None or cand_rss < fit_i.rss:
+                    m_i = m_cand
+                    fit_i = cand
+            if fit_i is not None:
+                residual = np.maximum(
+                    residual - _gamma(m_i, lags, fit_i.sill, fit_i.range_m, 0.0),
+                    0.0)
+        if fit_i is None or fit_i.sill <= 1e-12 * var_floor:
+            raise ConvergenceFailure(
+                f"嵌套变异函数第 {i + 1} 结构（{m_i}）拟合退化"
+                f"（sill→0 或不收敛）",
+                correction_hint="减少结构数（n_structures）或改用单结构 "
+                                "fit_variogram / variogram_model_selection",
+            )
+        structures.append((m_i, float(fit_i.sill), float(fit_i.range_m)))
+
+    nested = NestedVariogramFit(
+        structures=structures, nugget=global_nugget,
+        n_pairs=int(weights.sum()), n_lags=len(lags),
+    )
+    pred = nested.semivariance(lags)
+    sigma = 1.0 / np.sqrt(np.maximum(weights / weights.max(), 1e-6))
+    nested.rss = float(np.sum(((pred - gamma) / sigma) ** 2))
+    if not (nested.rss < single_best.rss):
+        raise ConvergenceFailure(
+            f"嵌套拟合 RSS {nested.rss:.4g} 未优于单结构最优 "
+            f"{single_best.model} RSS {single_best.rss:.4g} —— 不输出更差的"
+            "多结构模型",
+            correction_hint="数据由单一结构主导；使用 fit_variogram 的单结构结果",
+        )
+    return nested
+
+
+def simple_kriging(
+    fit_pts: np.ndarray,
+    fit_vals: np.ndarray,
+    target_pts: np.ndarray,
+    variogram: VariogramFit,
+    k: int = 12,
+    mean: Optional[float] = None,
+    anisotropy_angle: float = 0.0,
+    anisotropy_ratio: float = 1.0,
+    solve_backend: str = "auto",
+) -> KrigingResult:
+    """Simple Kriging（已知/估计均值；SGS 的基础求解器）。
+
+    协方差形式 C(h) = (nugget+sill) − γ(h)（γ 为 canonically 构造的半方
+    差，含 nugget 语义），系统 C·w = c₀ 无无偏约束项：
+
+        pred = m + wᵗ(z − m)，  var = C(0) − wᵗc₀ = total − wᵗc₀。
+
+    ``mean=None`` 时以样本均值估计（disclosure 披露 —— 先验均值是 SK 的
+    方法输入，静默估计等于隐藏模型假设）。nugget>0 时 SK 不是精确插值器
+    （C(0)=total ≠ C(0⁺)=sill，理论语义，与 OK 的规范构造一致）。
+    批式求解 / ridge / 钳制 / 退化记账与 :func:`ordinary_kriging` 同一
+    机器（逐位兼容的稳定化策略，从不静默）。
+    """
+    solve_backend = _validate_solve_backend(solve_backend)
+    n = len(fit_vals)
+    if n < 2:
+        raise InsufficientSamples(
+            f"simple kriging needs at least 2 samples (got {n})")
+    k = int(max(2, min(k, MAX_NEIGHBORS, n)))
+    mean_estimated = mean is None
+    if mean_estimated:
+        mean = float(np.mean(fit_vals))
+    disclosures: list[str] = (
+        ["prior mean estimated from sample mean (SK model input, disclosed)"]
+        if mean_estimated else []
+    )
+    fit_pts_t = apply_anisotropy(fit_pts, anisotropy_angle, anisotropy_ratio)
+    target_pts_t = apply_anisotropy(target_pts, anisotropy_angle, anisotropy_ratio)
+    tree = cKDTree(fit_pts_t)
+    dist_t, idx_t = tree.query(target_pts_t, k=k)
+    n_t = len(target_pts)
+    dist_t = np.asarray(dist_t).reshape(n_t, k)
+    idx_t = np.asarray(idx_t).reshape(n_t, k)
+
+    g = variogram
+    total = abs(float(g.sill)) + abs(float(g.nugget))  # C(0) = nugget + sill
+    preds = np.empty(n_t, dtype=float)
+    varis = np.empty(n_t, dtype=float)
+    degraded = 0
+    ridge = 1e-6 * max(abs(g.sill), abs(g.nugget), 1e-12)
+    if g.model == "gaussian" or (g.model == "matern" and g.nu >= 2.0):
+        ridge = max(ridge, 0.01 * abs(g.sill))
+    clamp_lo = float(fit_vals.min() - 3.0 * np.sqrt(abs(g.sill)))
+    clamp_hi = float(fit_vals.max() + 3.0 * np.sqrt(abs(g.sill)))
+    dev = fit_vals - float(mean)
+
+    for start in cancellable(range(0, n_t, _SOLVE_CHUNK), every=1):
+        end = min(start + _SOLVE_CHUNK, n_t)
+        nb_idx = idx_t[start:end]
+        nb_d = dist_t[start:end]
+        nb_xy_t = fit_pts_t[nb_idx]
+        nb_dev = dev[nb_idx]
+
+        diff = nb_xy_t[:, :, None, :] - nb_xy_t[:, None, :, :]
+        d_ss = np.sqrt((diff ** 2).sum(axis=-1))
+        gamma_ss = _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget,
+                          nu=g.nu, structures=getattr(g, "structures", None))
+        idx_diag = np.arange(k)
+        gamma_ss[:, idx_diag, idx_diag] = ridge  # C 对角减 ridge（协方差形式）
+        C_mat = total - gamma_ss
+        c0 = total - _gamma(g.model, nb_d, g.sill, g.range_m, g.nugget,
+                            nu=g.nu, structures=getattr(g, "structures", None))
+
+        sol, row_degraded = _solve_kriging_systems(C_mat, c0, solve_backend)
+        failed = np.isnan(sol[:, 0])
+        degraded += row_degraded
+        chunk_pred = float(mean) + np.einsum("ck,ck->c", sol, nb_dev)
+        chunk_var = total - np.einsum("ck,ck->c", sol, c0)
+        if failed.any():
+            nb_v = fit_vals[nb_idx]
+            chunk_pred[failed] = [float(np.mean(nb_v[r])) for r in np.nonzero(failed)[0]]
+            chunk_var[failed] = [
+                float(np.var(nb_v[r])) if k > 1 else float(g.sill)
+                for r in np.nonzero(failed)[0]
+            ]
+        neg_var = chunk_var < 0.0
+        if neg_var.any():
+            degraded += int(neg_var.sum())
+            np.clip(chunk_var, 0.0, None, out=chunk_var)
+        clamped = (chunk_pred < clamp_lo) | (chunk_pred > clamp_hi)
+        if clamped.any():
+            degraded += int(clamped.sum())
+            np.clip(chunk_pred, clamp_lo, clamp_hi, out=chunk_pred)
+        preds[start:end] = chunk_pred
+        varis[start:end] = chunk_var
+
+    _PI95 = 1.959963984540054
+    _sd = np.sqrt(varis)
+    return KrigingResult(
+        predictions=preds,
+        variances=varis,
+        pi95_low=preds - _PI95 * _sd,
+        pi95_high=preds + _PI95 * _sd,
+        variogram=g,
+        n_samples=n,
+        n_samples_fit=n,
+        neighbors=k,
+        degraded_cells=degraded,
+        disclosures=disclosures,
+        solve_backend_used="numpy_batched" if solve_backend == "auto" else solve_backend,
+    )
+
+
+def external_drift_kriging(
+    fit_pts: np.ndarray,
+    fit_vals: np.ndarray,
+    drift_vals: np.ndarray,
+    target_pts: np.ndarray,
+    drift_targets: np.ndarray,
+    variogram: VariogramFit,
+    k: int = 12,
+    anisotropy_angle: float = 0.0,
+    anisotropy_ratio: float = 1.0,
+    solve_backend: str = "auto",
+) -> KrigingResult:
+    """Kriging with External Drift（KED）：辅助变量漂移的泛克里金。
+
+    漂移场 d(x) 必须在样本与目标处**都已知**（驱动层对目标处的 d 用
+    IDW 近似时按 regression_kriging 同款 approximate 语义披露）。系统
+    在 OK 基础上带两个约束乘子（常均值 + 漂移场，universality 条件）：
+
+        [Γ  1  d_s][w]   [γ₀ ]
+        [1ᵀ 0  0 ][    = [1  ]
+        [d_sᵀ 0 0]      ]   [d_t]
+
+    var = wᵗγ₀ + μ₁ + μ₂·d_t（钳 ≥0，负值计数）。漂移在邻域内为常量时
+    系统奇异 → 逐行回退邻域均值（counted，从不静默）。
+    """
+    solve_backend = _validate_solve_backend(solve_backend)
+    n = len(fit_vals)
+    d_s = np.asarray(drift_vals, dtype=float)
+    d_t = np.asarray(drift_targets, dtype=float)
+    if n < 4:
+        raise InsufficientSamples(
+            f"KED 需要至少 4 个样本约束 [1, d(x)] 漂移（got {n}）")
+    if d_s.shape[0] != n or d_t.shape[0] != len(target_pts):
+        raise DegenerateData(
+            "KED 漂移数组与样本/目标数不一致"
+            f"（drift {d_s.shape[0]} vs n {n}；target {d_t.shape[0]} vs "
+            f"{len(target_pts)}）")
+    if not (np.isfinite(d_s).all() and np.isfinite(d_t).all()):
+        raise DegenerateData("KED 漂移场含非有限值")
+    if float(np.ptp(d_s)) == 0.0:
+        raise DegenerateData(
+            "KED 漂移场为常量（零方差）——外部漂移不可识别",
+            correction_hint="常量漂移请改用 ordinary kriging；漂移场需有空间变异")
+    k = int(max(3, min(k, MAX_NEIGHBORS, n)))
+    fit_pts_t = apply_anisotropy(fit_pts, anisotropy_angle, anisotropy_ratio)
+    target_pts_t = apply_anisotropy(target_pts, anisotropy_angle, anisotropy_ratio)
+    tree = cKDTree(fit_pts_t)
+    dist_t, idx_t = tree.query(target_pts_t, k=k)
+    n_t = len(target_pts)
+    dist_t = np.asarray(dist_t).reshape(n_t, k)
+    idx_t = np.asarray(idx_t).reshape(n_t, k)
+
+    g = variogram
+    preds = np.empty(n_t, dtype=float)
+    varis = np.empty(n_t, dtype=float)
+    degraded = 0
+    ridge = 1e-6 * max(abs(g.sill), abs(g.nugget), 1e-12)
+    if g.model == "gaussian" or (g.model == "matern" and g.nu >= 2.0):
+        ridge = max(ridge, 0.01 * abs(g.sill))
+    clamp_lo = float(fit_vals.min() - 3.0 * np.sqrt(abs(g.sill)))
+    clamp_hi = float(fit_vals.max() + 3.0 * np.sqrt(abs(g.sill)))
+
+    for start in cancellable(range(0, n_t, _SOLVE_CHUNK), every=1):
+        end = min(start + _SOLVE_CHUNK, n_t)
+        nb_idx = idx_t[start:end]
+        nb_d = dist_t[start:end]
+        nb_xy_t = fit_pts_t[nb_idx]
+        nb_v = fit_vals[nb_idx]
+        nb_ds = d_s[nb_idx]
+        nb_dt = d_t[start:end]
+        c = end - start
+
+        diff = nb_xy_t[:, :, None, :] - nb_xy_t[:, None, :, :]
+        d_ss = np.sqrt((diff ** 2).sum(axis=-1))
+        gamma_ss = _gamma(g.model, d_ss, g.sill, g.range_m, g.nugget,
+                          nu=g.nu, structures=getattr(g, "structures", None))
+        idx_diag = np.arange(k)
+        gamma_ss[:, idx_diag, idx_diag] = 0.0
+        gamma_ss[:, idx_diag, idx_diag] = ridge
+
+        F = np.stack([np.ones((c, k)), nb_ds], axis=2)      # (c, k, 2)
+        f0 = np.column_stack([np.ones(c), nb_dt])           # (c, 2)
+        mat = np.zeros((c, k + 2, k + 2))
+        mat[:, :k, :k] = gamma_ss
+        mat[:, :k, k:] = F
+        mat[:, k:, :k] = F.transpose(0, 2, 1)
+        rhs = np.zeros((c, k + 2))
+        rhs[:, :k] = _gamma(g.model, nb_d, g.sill, g.range_m, g.nugget,
+                            nu=g.nu, structures=getattr(g, "structures", None))
+        rhs[:, k:] = f0
+
+        sol, row_degraded = _solve_kriging_systems(mat, rhs, solve_backend)
+        failed = np.isnan(sol[:, 0])
+        degraded += row_degraded
+        chunk_pred = np.einsum("ck,ck->c", sol[:, :k], nb_v)
+        chunk_var = np.einsum("ck,ck->c", sol[:, :k], rhs[:, :k]) + np.einsum(
+            "cf,cf->c", sol[:, k:], f0)
+        if failed.any():
+            chunk_pred[failed] = [float(np.mean(nb_v[r])) for r in np.nonzero(failed)[0]]
+            chunk_var[failed] = [
+                float(np.var(nb_v[r])) if k > 1 else float(g.sill)
+                for r in np.nonzero(failed)[0]
+            ]
+        neg_var = chunk_var < 0.0
+        if neg_var.any():
+            degraded += int(neg_var.sum())
+            np.clip(chunk_var, 0.0, None, out=chunk_var)
+        clamped = (chunk_pred < clamp_lo) | (chunk_pred > clamp_hi)
+        if clamped.any():
+            degraded += int(clamped.sum())
+            np.clip(chunk_pred, clamp_lo, clamp_hi, out=chunk_pred)
+        preds[start:end] = chunk_pred
+        varis[start:end] = chunk_var
+
+    _PI95 = 1.959963984540054
+    _sd = np.sqrt(varis)
+    return KrigingResult(
+        predictions=preds,
+        variances=varis,
+        pi95_low=preds - _PI95 * _sd,
+        pi95_high=preds + _PI95 * _sd,
+        variogram=g,
+        n_samples=n,
+        n_samples_fit=n,
+        neighbors=k,
+        degraded_cells=degraded,
+        solve_backend_used="numpy_batched" if solve_backend == "auto" else solve_backend,
+    )
+
+
 class KrigingCrsError(ValueError):
     """Declared CRS is outside the supported vocabulary (never a silent
     WGS84 fallback)."""
@@ -2180,6 +2691,8 @@ def kriging_interpolation(
     matern_smoothness: float = MATERN_SMOOTHNESS_DEFAULT,
     cv_scheme: str = "index",
     solve_backend: str = "auto",
+    mean: Optional[float] = None,
+    drift_field: Optional[str] = None,
 ) -> dict:
     """Kriging surface over the sample bbox on an H3 grid.
 
@@ -2230,10 +2743,17 @@ def kriging_interpolation(
         raise KrigingInputError(
             f"variogram_model 必须是 auto/{'/'.join(VariogramModelNames)}，got {variogram_model!r}"
         )
-    if method not in ("ordinary", "universal"):
+    if method not in ("ordinary", "universal", "simple", "external_drift"):
         raise KrigingInputError(
-            f"method 必须是 'ordinary' 或 'universal'，got {method!r}"
+            f"method 必须是 'ordinary'/'universal'/'simple'/'external_drift'，"
+            f"got {method!r}"
         )
+    if method == "external_drift" and not drift_field:
+        raise KrigingInputError(
+            "method='external_drift' 需要 drift_field（辅助漂移变量字段名）")
+    if drift_field is not None and method != "external_drift":
+        raise KrigingInputError(
+            "drift_field 仅在 method='external_drift' 时可用")
     if variogram_model == "matern":
         matern_smoothness = _validate_matern_smoothness(matern_smoothness)
     anisotropy_transform(anisotropy_angle, anisotropy_ratio)  # validate ≥1/finiteness
@@ -2251,6 +2771,7 @@ def kriging_interpolation(
     lons: list[float] = []
     lats: list[float] = []
     raw_vals: list[Any] = []
+    raw_drift: list[Any] = []  # KED：与 value 同一循环提取（样本对齐保证）
     for f in features:
         if not isinstance(f, dict):
             continue
@@ -2266,6 +2787,8 @@ def kriging_interpolation(
         lons.append(float(coords[0]))
         lats.append(float(coords[1]))
         raw_vals.append(props[value_field])
+        if method == "external_drift":
+            raw_drift.append(props.get(drift_field))
     if not lons:
         raise ValueError(
             f"没有可用于克里金的点要素（需要 Point 几何且含字段 '{value_field}'）"
@@ -2276,11 +2799,30 @@ def kriging_interpolation(
     if coerced.isna().any():
         raise ValueError(f"字段 '{value_field}' 包含非数值（无法克里金）")
     vals = coerced.astype(float).to_numpy()
+    drift_vals: Optional[np.ndarray] = None
+    if method == "external_drift":
+        drift_coerced = pd.to_numeric(pd.Series(raw_drift), errors="coerce")
+        drift_vals = drift_coerced.to_numpy(dtype=float)
+        drift_missing = ~np.isfinite(drift_vals)
+        if drift_missing.any():
+            # 漂移缺失的样本整体剔除（value/drift/坐标对齐）；计数披露
+            keep_mask = ~drift_missing
+            lons = [x for x, keep in zip(lons, keep_mask) if keep]
+            lats = [x for x, keep in zip(lats, keep_mask) if keep]
+            vals = vals[keep_mask]
+            drift_vals = drift_vals[keep_mask]
+        if len(drift_vals) < 4:
+            raise InsufficientSamples(
+                f"KED 漂移字段 '{drift_field}' 有限样本不足（需 ≥4），"
+                f"got {len(drift_vals)}",
+                correction_hint="补齐辅助变量观测或改用 ordinary kriging")
     finite = np.isfinite(vals)
     if not finite.all():
         lons = [x for x, keep in zip(lons, finite) if keep]
         lats = [x for x, keep in zip(lats, finite) if keep]
         vals = vals[finite]
+        if drift_vals is not None:
+            drift_vals = drift_vals[finite]
     if not lons:
         raise ValueError(f"字段 '{value_field}' 没有有限的数值可用于克里金")
     if len(lons) > MAX_INPUT_POINTS:
@@ -2391,7 +2933,7 @@ def kriging_interpolation(
         apply_anisotropy(pts_metric, anisotropy_angle, anisotropy_ratio),
         vals, MAX_FIT_POINTS,
     )
-    if method == "ordinary":
+    if method in ("ordinary", "simple", "external_drift"):
         vfit = fit_variogram(
             pts_metric, vals, model=variogram_model,
             anisotropy_angle=anisotropy_angle, anisotropy_ratio=anisotropy_ratio,
@@ -2421,6 +2963,29 @@ def kriging_interpolation(
             solve_backend=solve_backend,
         )
         vfit = result.variogram
+    elif method == "simple":
+        result = simple_kriging(
+            pts_metric, vals, cell_metric, vfit, k=neighbors,
+            mean=mean,
+            anisotropy_angle=anisotropy_angle, anisotropy_ratio=anisotropy_ratio,
+            solve_backend=solve_backend,
+        )
+    elif method == "external_drift":
+        # 目标处漂移值：样本漂移经 IDW（k=5, power=2）近似 —— 与
+        # regression_kriging 同款 approximate 语义（disclosed）。
+        from scipy.spatial import cKDTree as _KD
+
+        _dtree = _KD(pts_metric)
+        _dd, _didx = _dtree.query(cell_metric, k=min(5, len(vals)))
+        _didx = np.atleast_2d(_didx)
+        _dw = 1.0 / np.maximum(np.atleast_2d(_dd), 1e-12) ** 2.0
+        drift_targets = np.sum(drift_vals[_didx] * _dw, axis=1) / _dw.sum(axis=1)
+        result = external_drift_kriging(
+            pts_metric, vals, drift_vals, cell_metric, drift_targets, vfit,
+            k=neighbors,
+            anisotropy_angle=anisotropy_angle, anisotropy_ratio=anisotropy_ratio,
+            solve_backend=solve_backend,
+        )
     else:
         result = ordinary_kriging(
             pts_metric, vals, cell_metric, vfit, k=neighbors,
@@ -2428,6 +2993,7 @@ def kriging_interpolation(
             solve_backend=solve_backend,
         )
 
+    cv_unsupported = method in ("simple", "external_drift")
     cv_report = (
         cross_validate_kriging(
             pts_metric, vals, model=variogram_model, method=method,
@@ -2436,7 +3002,7 @@ def kriging_interpolation(
             matern_smoothness=matern_smoothness,
             solve_backend=solve_backend,
         )
-        if cross_validate else None
+        if cross_validate and not cv_unsupported else None
     )
 
     # science-v3（Wave 8/9）：95% 预测区间面（由 ordinary_kriging 的
@@ -2461,7 +3027,12 @@ def kriging_interpolation(
             rec["pi95_high"] = float(hi)
         records.append(rec)
     metadata = {
-        "algorithm": "interpolation.kriging" if method == "ordinary" else "interpolation.universal_kriging",
+        "algorithm": {
+            "ordinary": "interpolation.kriging",
+            "universal": "interpolation.universal_kriging",
+            "simple": "interpolation.simple_kriging",
+            "external_drift": "interpolation.external_drift_kriging",
+        }[method],
         "method": method,
         "declared_crs": declared_crs or "EPSG:4326",
         "working_crs": working_crs,
@@ -2505,6 +3076,14 @@ def kriging_interpolation(
         }
     if result.disclosures:
         metadata["disclosures"] = list(result.disclosures)
+    if method == "external_drift":
+        metadata["drift"] = {
+            "field": drift_field,
+            "target_approximation": "idw_k5_power2 (regression_kriging 同款近似语义)",
+        }
+    if cv_unsupported:
+        metadata.setdefault("disclosures", []).append(
+            f"cross_validation unsupported for method={method}（诚实省略，不伪造 CV 指标）")
     return {"records": records, "metadata": metadata}
 
 

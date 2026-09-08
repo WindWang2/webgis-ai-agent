@@ -3,14 +3,14 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**1**
-- 内容指纹：`938b5bf1bd1c2584…`
+- 内容指纹：`0d9912983a8f32dc…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
 | tools | 291 | 261 | 182 |
-| algorithms | 181 | 146 | 43 |
+| algorithms | 183 | 146 | 45 |
 | capabilities | 121 | 69 | 16 |
 | artifact_types | 21 | 21 | 0 |
 | recipes | 164 | 164（conformance 由 workflow 闸保护） | 0 |
@@ -168,15 +168,17 @@
 - `workspace.inspection.readonly`（medium）— algorithm declares no conformance test node ids
 - `workspace.snapshot.durable`（medium）— algorithm declares no conformance test node ids
 
-### ALGO_HEAVY_NO_VARIANTS（23）
+### ALGO_HEAVY_NO_VARIANTS（25）
 
 - `data.ingest.pipeline`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.block_kriging`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.cokriging`（medium）— memory_cost=high but no backend_variants scale windows
+- `interpolation.external_drift_kriging`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.idw`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.indicator_kriging`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.rbf`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.regression_kriging`（medium）— memory_cost=high but no backend_variants scale windows
+- `interpolation.simple_kriging`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.universal_kriging`（medium）— memory_cost=high but no backend_variants scale windows
 - `point_pattern.ripley_k_env`（medium）— memory_cost=high but no backend_variants scale windows
 - `remote.ica`（medium）— memory_cost=high but no backend_variants scale windows

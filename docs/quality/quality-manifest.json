@@ -427,6 +427,29 @@
    ],
    "category": "interpolation",
    "conformance_tests": [
+    "tests/unit/lib/test_kriging_v4.py::test_ked_recovers_drift_dominated_field_and_beats_ok",
+    "tests/unit/lib/test_kriging_v4.py::test_ked_constant_drift_typed_reject",
+    "tests/unit/lib/test_kriging_v4.py::test_driver_method_external_drift_end_to_end",
+    "tests/unit/lib/test_kriging_v4.py::test_driver_ked_requires_drift_field"
+   ],
+   "deterministic": true,
+   "id": "interpolation.external_drift_kriging",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": [
+    "raster_uncertainty"
+   ]
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "spatial_interpolation"
+   ],
+   "category": "interpolation",
+   "conformance_tests": [
     "tests/unit/lib/test_idw_interpolation.py::test_idw_cell_centered_on_input_point_is_exact",
     "tests/unit/lib/test_idw_interpolation.py::test_idw_matches_independent_metric_reference",
     "tests/unit/lib/test_idw_interpolation.py::test_idw_uses_metric_not_degree_distance",
@@ -630,6 +653,29 @@
    "uncertainty_outputs": [
     "raster_uncertainty",
     "validation_metrics"
+   ]
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "spatial_interpolation"
+   ],
+   "category": "interpolation",
+   "conformance_tests": [
+    "tests/unit/lib/test_kriging_v4.py::test_simple_kriging_exact_at_samples_nugget_zero",
+    "tests/unit/lib/test_kriging_v4.py::test_simple_kriging_known_mean_beats_ok_near_boundary",
+    "tests/unit/lib/test_kriging_v4.py::test_driver_method_simple_end_to_end",
+    "tests/unit/lib/test_kriging_v4.py::test_simple_kriging_variance_grows_away_from_samples"
+   ],
+   "deterministic": true,
+   "id": "interpolation.simple_kriging",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": [
+    "raster_uncertainty"
    ]
   },
   {
@@ -5694,10 +5740,12 @@
    "domain": "general",
    "id": "spatial_interpolation",
    "producer_algorithms": [
+    "interpolation.external_drift_kriging",
     "interpolation.idw",
     "interpolation.kriging",
     "interpolation.nearest_neighbor",
     "interpolation.rbf",
+    "interpolation.simple_kriging",
     "interpolation.universal_kriging"
    ],
    "status": "native",
@@ -6202,6 +6250,7 @@
     "tests/unit/gis/test_algorithm_registry_phase2.py",
     "tests/unit/lib/test_geo_analysis_pro.py",
     "tests/unit/lib/test_geo_raster_v4.py",
+    "tests/unit/lib/test_geometry_repair_v4.py",
     "tests/unit/test_crs_correctness_round3.py",
     "tests/unit/test_domain_c_raster.py",
     "tests/unit/test_raster_runtime_v3.py",
@@ -6210,10 +6259,10 @@
   }
  ],
  "counts": {
-  "algorithms": 181,
+  "algorithms": 183,
   "artifact_types": 21,
   "capabilities": 121,
-  "findings": 241,
+  "findings": 243,
   "recipes": 164,
   "tools": 291
  },
@@ -6240,6 +6289,12 @@
    "code": "ALGO_HEAVY_NO_VARIANTS",
    "detail": "memory_cost=high but no backend_variants scale windows",
    "severity": "medium",
+   "subject": "interpolation.external_drift_kriging"
+  },
+  {
+   "code": "ALGO_HEAVY_NO_VARIANTS",
+   "detail": "memory_cost=high but no backend_variants scale windows",
+   "severity": "medium",
    "subject": "interpolation.idw"
   },
   {
@@ -6259,6 +6314,12 @@
    "detail": "memory_cost=high but no backend_variants scale windows",
    "severity": "medium",
    "subject": "interpolation.regression_kriging"
+  },
+  {
+   "code": "ALGO_HEAVY_NO_VARIANTS",
+   "detail": "memory_cost=high but no backend_variants scale windows",
+   "severity": "medium",
+   "subject": "interpolation.simple_kriging"
   },
   {
    "code": "ALGO_HEAVY_NO_VARIANTS",
@@ -7665,7 +7726,7 @@
    "subject": "webgis_world_state"
   }
  ],
- "fingerprint": "938b5bf1bd1c25845ce518cfa2ac973300f5671fd374e8fd9a3907b32918e107",
+ "fingerprint": "0d9912983a8f32dca6650de5ec9c7c20b22eaa7128e2accfdd2473efb93eba2d",
  "gate": {
   "fields": {
    "capabilities": {

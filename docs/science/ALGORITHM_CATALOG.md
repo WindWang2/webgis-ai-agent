@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：121 能力 · 181 算法 · 108 参数契约。
+统计：121 能力 · 183 算法 · 108 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -849,6 +849,20 @@ IDW / Kriging 等插值。
   - 局限：漂移阶数固定为线性（二次及以上趋势未实现）；EPSG:3857 被接受为工作 CRS 但含 Web Mercator 尺度畸变（与 OK 同）；样本 <12 拒绝（InsufficientSamples）；普通克里金 ≥8 即可
   - 回退：`interpolation.kriging`→approximation
   - 资源包络：24B/要素，对预算 200000，要素硬上限 500000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-06，atol=1e-09
+- **`interpolation.simple_kriging`** 简单克里金（`native`·成熟度 已验证，契约: `kriging_interpolation`，出处: `matheron1963`，精度: exact）
+  - 假设：SK 协方差形式 C(h)=(nugget+sill)−γ(h)：pred=m+wᵗ(z−m)，var=C(0)−wᵗc₀；先验均值是模型输入：mean 参数缺省时以样本均值估计并在 disclosures 披露；nugget>0 时 SK 不是精确插值器（C(0)≠C(0⁺)，理论语义，非数值缺陷）
+  - 局限：先验均值的可信度决定 SK 的优势——均值未知且样本均值有偏时改用 OK；EPSG:3857 工作 CRS 的 Web Mercator 尺度畸变（与 OK 同）；样本 <8 拒绝（与 OK 同底）
+  - 回退：`interpolation.kriging`→approximation
+  - 资源包络：24B/要素，对预算 200000，要素硬上限 500000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-06，atol=1e-09
+- **`interpolation.external_drift_kriging`** 外部漂移克里金（`native`·成熟度 已验证，契约: `kriging_interpolation`，出处: `matheron1963`，精度: exact）
+  - 假设：KED：漂移场 d(x) 在样本与目标处都已知；系统带 [1, d] 两个约束乘子；驱动层目标处漂移经 IDW(k=5,power=2) 近似——approximate 分量已披露；漂移场常量（零方差）结构化拒绝（外部漂移不可识别）
+  - 局限：目标处漂移的 IDW 近似误差进入趋势项（与 regression_kriging 同款近似语义）；EPSG:3857 工作 CRS 的 Web Mercator 尺度畸变（与 OK 同）；CV 不支持（诚实省略，不伪造 CV 指标）
+  - 回退：`interpolation.universal_kriging`→approximation
+  - 资源包络：32B/要素，对预算 200000，要素硬上限 500000
   - 取消：chunk_boundary
   - 数值容差：rtol=1e-06，atol=1e-09
 

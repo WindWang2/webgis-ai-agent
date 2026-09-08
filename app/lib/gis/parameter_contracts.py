@@ -284,8 +284,23 @@ _SEED_CONTRACTS: List[ParameterContract] = [
             ),
             ParameterSpec(
                 name="method", type="enum", default="ordinary",
-                enum_values=["ordinary", "universal"],
-                description="ordinary=常均值 OK；universal=线性坐标漂移 UK（残差变异函数）",
+                enum_values=["ordinary", "universal", "simple", "external_drift"],
+                description=(
+                    "ordinary=常均值 OK；universal=线性坐标漂移 UK（残差变异函数）；"
+                    "simple=SK（已知/估计先验均值，配合 mean 参数）；"
+                    "external_drift=KED（辅助变量漂移，配合 drift_field 参数）"
+                ),
+            ),
+            ParameterSpec(
+                name="mean", type="number", required=False,
+                description="SK 先验均值（method=simple 时使用；缺省以样本均值估计并披露）",
+            ),
+            ParameterSpec(
+                name="drift_field", type="string", required=False,
+                description=(
+                    "KED 辅助漂移变量字段名（method=external_drift 时必需；"
+                    "目标处漂移经 IDW 近似，approximate 语义披露）"
+                ),
             ),
             ParameterSpec(
                 name="matern_smoothness", type="number", default=0.5,

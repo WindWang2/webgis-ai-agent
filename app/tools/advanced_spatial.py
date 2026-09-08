@@ -200,7 +200,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "拟合变异函数(spherical/exponential/gaussian)后在 H3 网格上同时产出预测面与克里金方差(不确定性)面，"
                "附 K 折交叉验证指标(RMSE/MAE/bias/R²)。适用于需要不确定性量化的连续变量建模(地统计)。"
                "\n何时用：『用克里金插值』/ 需要置信度或误差棒的表面 / 样本≥8 且空间相关；"
-               "趋势明显(如沿海拔线性变化)时选 method=universal（样本≥12）。"
+               "趋势明显(如沿海拔线性变化)时选 method=universal（样本≥12）或有辅助变量时 method=external_drift（KED，漂移字段目标处经 IDW 近似）；已知先验均值时 method=simple（SK）。"
                "\n何时不用：样本<8 或只求快速表面 — 用 idw_interpolation。"
                "\n失败语义：变异函数拟合失败时抛结构化错误(建议改用 IDW)，不静默降级。"
                "\nV2 可选项：anisotropy_angle/ratio(几何各向异性,默认各向同性)、cv_scheme="
@@ -223,6 +223,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "anisotropy_ratio": "各向异性长短轴变程比（≥1，默认 1=各向同性）",
                "cv_scheme": "CV 分折方案: index(默认,索引取模)/spatial_block(确定性网格分块)",
                "solve_backend": "线性求解后端: auto(默认,批式numpy+逐行回退)/numpy_batched/scipy_linalg",
+               "mean": "SK 先验均值（method=simple；缺省=样本均值估计并披露）",
+               "drift_field": "KED 辅助漂移变量字段名（method=external_drift 必需；目标处 IDW 近似）",
            },
            side_effect="deterministic_compute",
            network=False,
@@ -249,6 +251,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         anisotropy_ratio: float = 1.0,
         cv_scheme: str = "index",
         solve_backend: str = "auto",
+        mean: Optional[float] = None,
+        drift_field: Optional[str] = None,
     ) -> dict:
         from app.lib.gis.algorithm_registry import get_algorithm_registry
         from app.lib.gis.backend_selection import ScaleProfile, select_backend
@@ -313,6 +317,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             anisotropy_ratio=anisotropy_ratio,
             cv_scheme=cv_scheme,
             solve_backend=effective_backend,
+            mean=mean,
+            drift_field=drift_field,
         )
         meta = driver["metadata"]
         meta["backend_selection"] = {
