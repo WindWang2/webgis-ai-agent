@@ -111,6 +111,7 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         tier=2,
         domains=["dataset"],
         name="profile_dataset",
+        capabilities=['dataset_profiling_quality'],
         side_effect="pure",
         tags=('数据画像', '质量诊断', '统计', '只读'),
         description=(

@@ -1868,6 +1868,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="attribute_filter",
+    capabilities=['data_source_pipeline'],
            description=(
                "属性筛选：按 Pandas 风格查询表达式从要素集中筛出新的要素集。"
                "✅ 用于：要把筛选结果作为新图层用于后续分析 / 导出。"

@@ -368,6 +368,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
         # visibility. Keep webgis_map_product tier=2: it runs only after data
         # tools returned.
         tier=1, domains=["statistics", "report", "network", "temporal"], name="webgis_map_intent",
+        capabilities=['thematic_cartography'],
         # #996: audit4 #979 给 result 形状加了 guidance 键（有界 capability→tool
         # 裁决投影）——RESULT 契约变更，contract_version 1→2（指纹 1.0#cv2）。
         contract_version=2,
@@ -535,6 +536,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["statistics", "report", "network", "temporal"], name="webgis_map_product",
+        capabilities=['thematic_cartography'],
         # #996: audit4 #979 给 result 形状加了 guidance 键（绑定/fallback/
         # 完备度有界投影）——RESULT 契约变更，contract_version 1→2（1.0#cv2）。
         contract_version=2,
@@ -1175,6 +1177,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["report"], name="webgis_component_update",
+        capabilities=['thematic_cartography'],
         description=(
             "制图组件局部突变：只改命中的单个组件（id 或类型），其余组件与所有"
             "数据图层完全不动——不触发任何数据重查/重分析。"

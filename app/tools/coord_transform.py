@@ -30,6 +30,7 @@ def register_coord_transform_tools(registry: ToolRegistry):
     """注册中国坐标系互转工具。"""
 
     @tool(registry, name="transform_coordinates",
+    capabilities=['crs_transformation'],
           tier=2, domains=["chinese"],
           description=(
               "中国坐标系互转 (WGS84 ↔ GCJ-02 ↔ BD-09)：批量把一张 GeoJSON 图层从一种坐标系平移到另一种。"
@@ -120,6 +121,7 @@ def register_epsg_transform_tools(registry: ToolRegistry):
     """Register general-purpose EPSG-to-EPSG reprojection tool."""
 
     @tool(registry, name="reproject_coordinates",
+    capabilities=['crs_transformation'],
           tier=2,
           # audit4 #983: 零 domains 的 tier-2 工具永不入 catalog 且
           # list_available_tools 也查不到（空域不命中任何查询）——EPSG

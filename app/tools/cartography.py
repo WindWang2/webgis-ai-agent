@@ -97,6 +97,7 @@ def register_cartography_tools(registry: ToolRegistry):
     """注册制图工具"""
 
     @tool(registry, name="apply_layer_style",
+    capabilities=['thematic_cartography'],
            description=(
                "为图层注入统一显示样式 (单色 / 描边 / 透明度) 并返回带样式 hint 的 GeoJSON。"
                "\n何时用：分析输出后给图层定型 (一次性单色覆盖整个图层)；"
@@ -146,6 +147,7 @@ def register_cartography_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, name="create_thematic_map",
+    capabilities=['thematic_cartography'],
            description="根据指定字段制作分层设色专题图 (Choropleth Map)，自动计算颜色级别。",
            args_model=ThematicMapArgs,
            side_effect="state_mutation",
@@ -238,6 +240,7 @@ def register_cartography_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, name="create_3d_extrusion_map",
+    capabilities=['thematic_cartography'],
            description=(
                "制作 3D 挤出立体多边形专题图（extrusion_3d）。"
                "\n✅ 用于：以高度（米）直观表达要素的数值大小（如各区人口总量、GDP总量、建筑高度等），"
@@ -412,6 +415,7 @@ def register_cartography_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, tier=2, domains=["report"], name="export_thematic_map",
+    capabilities=['map_export_publishing'],
            description=(
                "当用户请求导出精美地图、制图排版、保存当前地图视图为图片或 PDF 时调用。"
                "该工具会指挥前端抽取当前地图画面，叠加指北针、比例尺、图例，并合成带标题的高质量图件。"
@@ -481,6 +485,7 @@ def register_cartography_tools(registry: ToolRegistry):
         }
 
     @tool(registry, tier=2, domains=["report"], name="export_batch_maps",
+    capabilities=['map_export_publishing'],
            description=(
                "批量导出多张地图：按 titles 顺序依次触发导出，每张都用同样的排版/纸张/DPI 设置。"
                "\n何时用：『把当前结果做成 3 张图：总览、北部、南部』『按图层各导一张』。"
@@ -576,6 +581,7 @@ def register_cartography_tools(registry: ToolRegistry):
         }
 
     @tool(registry, tier=2, domains=["report"], name="control_floating_chart",
+    capabilities=['thematic_cartography'],
     side_effect="state_mutation",
     tags=('浮动图表', '图表控制', 'chart_panel', '面板'),
            args_model=ControlFloatingChartArgs,

@@ -380,6 +380,7 @@ def register_osm_tools(registry: ToolRegistry):
         return result
 
     @tool(registry, name="query_osm_roads",
+    capabilities=['local_data_query'],
            description=(
                "OSM 道路网络查询：按区域+道路等级拉取 LineString 路网 GeoJSON。"
                "中国境内优先查本地 roads GPKG；本地未命中再走 Overpass。"
@@ -436,6 +437,7 @@ def register_osm_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="query_osm_buildings",
+    capabilities=['local_data_query'],
            description=(
                "OSM 建筑物轮廓查询：在指定区域拉取所有带 building=* tag 的多边形 GeoJSON。"
                "\n何时用：用户要看建筑物轮廓底图；做建筑密度/容积率/建筑年代统计；"

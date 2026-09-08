@@ -128,6 +128,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="standard_deviational_ellipse",
+           capabilities=["directional_distribution_analysis"],
            description="计算标准离差椭圆（SDE），用于分析地理要素的空间分布趋势和方向性。",
            tier=2, domains=["statistics"],
            param_descriptions={

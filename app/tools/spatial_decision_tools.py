@@ -78,6 +78,7 @@ def register_spatial_decision_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="spatial_decision_v2",
+        capabilities=['scenario_simulation'],
         description="Data-Grounded Spatial Decision Intelligence V2: 基于真实空间数据、RAG 证据链与工程规则，进行情景推演、指标计算、MapSpec 地图生成与报告产出。",
         tier=3,
         domains=["what_if"],

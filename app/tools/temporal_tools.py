@@ -224,6 +224,7 @@ def register_temporal_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="temporal_filter",
+        capabilities=['temporal_filtering'],
         description="基于时间点、时间段区间或相对时间窗口（如'最近 7 天'、'过去 3 个月'）对 GIS 数据进行精准筛选。",
         tier=2,
         domains=["temporal"],

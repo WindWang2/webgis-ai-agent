@@ -97,6 +97,7 @@ def register_layer_management_tools(registry: ToolRegistry):
     @tool(
            registry,
            name="finalize_display",
+           capabilities=['layer_display_control'],
            tier=2,
            # audit4 #978: 域必须是 DOMAIN_KEYWORDS 的键。此前误标 "cartography"
            # （词表中不存在的域）→ tier-2 永不命中，SYSTEM_PROMPT 强制的每轮
@@ -304,6 +305,7 @@ def register_layer_management_tools(registry: ToolRegistry):
         return result
 
     @tool(registry, name="alias_layer",
+    capabilities=['layer_display_control'],
            description="为当前会话中的数据引用（ref:xxx）设置一个语义化的别名。设置后，后续可以直呼其名（如：'核心保护区'）来引用该数据。",
            args_model=AliasLayerArgs,
            side_effect="state_mutation",
@@ -360,6 +362,7 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="switch_base_layer",
+    capabilities=['layer_display_control'],
            description="切换当前地图的底图图源。支持：'Carto 深色'、'OSM 地图'、'ESRI 影像'、'OpenTopoMap'、'高德影像'。",
            side_effect="state_mutation",
            deterministic=False,
@@ -420,6 +423,7 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="set_layer_status",
+    capabilities=['layer_display_control'],
            description="修改图层的显示状态（如可见性和透明度）。可以通过 ID (ref:xxx)、别名或图层名称引用图层。",
            side_effect="state_mutation",
            deterministic=False,
@@ -459,6 +463,7 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="update_layer_appearance",
+    capabilities=['layer_display_control'],
            description="修改图层的视觉样式（如颜色、线宽、描边色、点大小、虚线样式等）。可以通过 ID (ref:xxx)、别名或图层名称引用图层。",
            side_effect="state_mutation",
            deterministic=False,
@@ -517,6 +522,7 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="reorder_layer",
+    capabilities=['layer_display_control'],
            description=(
                "调整图层在地图上的 Z 顺序 (上下叠放层级)。"
                "\n何时用：用户说『把分析结果放到最上面』『底图盖住了热力图』『让这个图层置顶』。"
@@ -567,6 +573,7 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="remove_layer",
+    capabilities=['layer_display_control'],
            description=(
                "从地图上移除指定图层 (同时释放其 source)。"
                "\n何时用：用户说『把 XX 删掉』『关掉这个图层』『清掉分析结果』，且确实不再需要该数据。"
@@ -603,6 +610,7 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="apply_layer_filter",
+    capabilities=['layer_display_control'],
            description=(
                "实时图层过滤：按属性条件动态隐藏/显示现有图层的要素。"
                "✅ 用于：快速筛选可见要素（如『只看人口>1000的区域』），不产生新图层。"
@@ -643,6 +651,7 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="display_layer",
+    capabilities=['layer_display_control'],
            description=(
                "将已加载但隐藏的数据图层显示到地图上，并赋予有意义的名称。"
                "✅ 必须在任务结束前调用：只显示与任务目标直接相关的最终结果图层。"

@@ -67,6 +67,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         registry,
         tier=2, domains=["dataset"],
         name="connect_data_source",
+        capabilities=['data_source_pipeline'],
         description=(
             "连接与注册地理空间数据源（PostGIS, OGC API, WFS, WMS, WMTS, ArcGIS, STAC, GeoParquet, PMTiles, S3 等；"
             "generic/mock/sample 为显式演示适配器，返回合成数据并以 is_demo 标注）。"
@@ -158,6 +159,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         registry,
         tier=2, domains=["dataset"],
       name="inspect_data_source",
+      capabilities=['data_source_pipeline'],
         description=(
             "检查已连接数据源的诊断健康状态、协议能力标识（ capabilities ）以及可用的数据集/图层列表。"
             "\n返回：{status, profile_id, health, capabilities, datasets}"
@@ -212,6 +214,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         registry,
         tier=2, domains=["dataset"],
       name="search_spatial_catalog",
+      capabilities=['data_source_pipeline'],
         description=(
             "在 SpatialCatalog 中检索数据集。支持关键字、空间包围盒 (bbox)、空间参考系 (CRS/SRS)、标签 (tags) 和数据源类型综合过滤。"
             "\n返回：{total, items=[{id, title, description, geometry_type, srs, bbox, tags, ...}], limit, offset}"
@@ -265,6 +268,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         registry,
         tier=2, domains=["dataset"],
         name="describe_dataset",
+        capabilities=['data_source_pipeline'],
         description=(
             "获取指定数据集的完整 DatasetDescriptor 属性元数据契约（Schema 字段、几何类型、SRS、FeatureCount、Extent 范围），"
             "并计算确定性 DatasetFingerprint 校验哈希。"
@@ -328,6 +332,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         registry,
         tier=2, domains=["dataset"],
       name="query_dataset",
+      capabilities=['data_source_pipeline'],
         description=(
             "针对数据集执行 QuerySpec V2 下推查询（limit/offset/cursor 分页、bbox 空间裁剪、where 属性过滤、"
             "fields 投影、SRS 输出、聚合统计、确定性采样）。"
@@ -546,6 +551,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["dataset"], name="refresh_data_source",
+        capabilities=['data_source_pipeline'],
         description=(
             "刷新数据源元数据缓存、重新发现数据集/图层，重新触发健康度探测，并更新 SpatialCatalog 索引。"
             "\n返回：{status, profile_id, sync_details, health}"
@@ -591,6 +597,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["dataset"], name="plan_data_query",
+        capabilities=['data_source_pipeline'],
         description=(
             "dry-run 查询计划（explain）：不执行查询，返回 pushdown 划分、行数估算、"
             "分页策略、结果模式与警告——用于判断'为什么快/为什么慢/为什么只采样'。"
@@ -687,6 +694,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["dataset"], name="aggregate_dataset",
+        capabilities=['data_source_pipeline'],
         description=(
             "数据集聚合统计（STATISTICS 模式，零几何传输）：count/sum/avg/min/max/stddev/"
             "distinct_count，支持 group_by。支持聚合下推的源（如 PostGIS）在服务器执行，"

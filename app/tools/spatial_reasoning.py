@@ -318,6 +318,7 @@ def register_spatial_reasoning(registry: ToolRegistry):
     @tool(
         registry,
         name="spatial_reasoning",
+        capabilities=['scenario_simulation'],
         description="空间规则推演：基于地理/城市规划规则库，对空间现象进行可解释的逻辑推理。适用于趋势分析、选址对比、空间关联分析等场景。",
         tier=3,
         domains=["what_if"],
