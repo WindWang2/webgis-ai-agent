@@ -1,0 +1,111 @@
+{
+ "artifacts": {
+  "docs/quality/CONTRACT_DRIFT_REPORT.md": {
+   "generator": "scripts/gen_drift_report.py",
+   "input_fingerprint": "efa1823853ac59b97bac01e9f607b56e83597ea6198b8af60d546070a8fc6fb5",
+   "inputs": [
+    "app/lib/quality/drift.py",
+    "app/api/routes"
+   ]
+  },
+  "docs/quality/QUALITY_MANIFEST.md": {
+   "generator": "scripts/gen_quality_manifest.py",
+   "input_fingerprint": "1e03e928d0bc6aabe4c3d8cfd424cfa77e7bdae288839bd42d2a5592cc51364a",
+   "inputs": [
+    "app/lib/quality/manifest.py",
+    "app/lib/quality/discovery.py",
+    "app/lib/quality/behavioral.py",
+    "app/lib/gis/algorithms",
+    "app/lib/gis/capabilities",
+    "app/tools"
+   ]
+  },
+  "docs/quality/QUALITY_REPORT.md": {
+   "generator": "scripts/gen_quality_report.py",
+   "input_fingerprint": "0f46ebcac11a5d07b38e802162a3c5bec0f483586b243da050905eeb94ce6d1e",
+   "inputs": [
+    "app/lib/quality/manifest.py",
+    "docs/quality/quality-manifest.json",
+    "docs/quality/contract-drift-report.json"
+   ]
+  },
+  "docs/quality/certifications/CANCELLATION_COVERAGE.md": {
+   "generator": "scripts/gen_resource_certification.py",
+   "input_fingerprint": "abd175dc78d92b725b14fe937567abbe970938559b7a15fdb62e4a07a0e9c9a6",
+   "inputs": [
+    "app/lib/cancellation.py",
+    "app/lib/geo_analysis"
+   ]
+  },
+  "docs/quality/certifications/CHAOS_FAULT_REGISTRY.md": {
+   "generator": "scripts/gen_chaos_registry.py",
+   "input_fingerprint": "b6f73c09152fcda1a705e26294fa77ff45bcd79e8796e600b678ef3d04a83e57",
+   "inputs": [
+    "tests/fixtures/chaos.py"
+   ]
+  },
+  "docs/quality/certifications/DETERMINISM.md": {
+   "generator": "scripts/gen_determinism_certification.py",
+   "input_fingerprint": "d2e2dfae67612f18e675bd36116b2395e3bba79ba53ee5752d47729d7b4745a8",
+   "inputs": [
+    "app/lib/gis/algorithms"
+   ]
+  },
+  "docs/quality/certifications/RESOURCE_SAFETY.md": {
+   "generator": "scripts/gen_resource_certification.py",
+   "input_fingerprint": "abd175dc78d92b725b14fe937567abbe970938559b7a15fdb62e4a07a0e9c9a6",
+   "inputs": [
+    "app/lib/cancellation.py",
+    "app/lib/geo_analysis"
+   ]
+  },
+  "docs/quality/certifications/SECURITY_CONTROLS.md": {
+   "generator": "scripts/gen_security_manifest.py",
+   "input_fingerprint": "df4054b890e89aa3a0aa9747129886b0401952bf2a8668e698b1b86509778232",
+   "inputs": [
+    "app/lib/quality/security_manifest.py"
+   ]
+  },
+  "docs/quality/contract-drift-report.json": {
+   "generator": "scripts/gen_drift_report.py",
+   "input_fingerprint": "efa1823853ac59b97bac01e9f607b56e83597ea6198b8af60d546070a8fc6fb5",
+   "inputs": [
+    "app/lib/quality/drift.py",
+    "app/api/routes"
+   ]
+  },
+  "docs/quality/quality-manifest.json": {
+   "generator": "scripts/gen_quality_manifest.py",
+   "input_fingerprint": "1e03e928d0bc6aabe4c3d8cfd424cfa77e7bdae288839bd42d2a5592cc51364a",
+   "inputs": [
+    "app/lib/quality/manifest.py",
+    "app/lib/quality/discovery.py",
+    "app/lib/quality/behavioral.py",
+    "app/lib/gis/algorithms",
+    "app/lib/gis/capabilities",
+    "app/tools"
+   ]
+  },
+  "docs/quality/quality-report.json": {
+   "generator": "scripts/gen_quality_report.py",
+   "input_fingerprint": "0f46ebcac11a5d07b38e802162a3c5bec0f483586b243da050905eeb94ce6d1e",
+   "inputs": [
+    "app/lib/quality/manifest.py",
+    "docs/quality/quality-manifest.json",
+    "docs/quality/contract-drift-report.json"
+   ]
+  },
+  "tests/quality/snapshots/realtime-contract.json": {
+   "generator": "app/lib/quality/api_compat.py",
+   "input_fingerprint": "c1860e0547e52f175ebb4f0613561132e81089c12ce7760503c6b5d9e1ab38ad",
+   "inputs": [
+    "app/services/ws_service.py",
+    "app/api/routes/ws.py",
+    "app/utils/sse.py",
+    "app/lib/quality/api_compat.py"
+   ]
+  }
+ },
+ "note": "生成物输入指纹账本（app/lib/quality/artifact_graph.py 派生）。流程：跑各 gen_* 再生成 → 本脚本 --update 刷新指纹 → 提交。check_generated_staleness.py 在合并前比对，stale 即红。",
+ "updated": "2026-09-09"
+}

@@ -73,6 +73,7 @@ LANES: dict[str, dict] = {
             [sys.executable, "scripts/gen_resource_certification.py", "--check"],
             [sys.executable, "scripts/gen_determinism_certification.py", "--check"],
             [sys.executable, "scripts/gen_quality_report.py", "--check"],
+            [sys.executable, "scripts/check_generated_staleness.py"],
         ],
     },
     "backend": {
