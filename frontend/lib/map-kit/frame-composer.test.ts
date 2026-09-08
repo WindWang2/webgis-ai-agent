@@ -194,6 +194,17 @@ describe('composeGridCanvas', () => {
     expect(grid.width).toBe(24 + 200 + 12);
     expect(grid.height).toBe(24 + 2 * 108 + 12);
   });
+
+  it('review-r2：拼板画布超浏览器尺寸上限 → 诚实抛错（不静默产出空白拼板）', () => {
+    // 50 帧 × 4000×4000 → cols=8，width ≈ 32k px > 16384 —— 此前会静默
+    // 创建超限画布并上传空白拼板（伪成功），现在必须抛可读错误。
+    const canvases = Array.from({ length: 50 }, () =>
+      Object.assign(document.createElement('canvas'), { width: 4000, height: 4000 }),
+    );
+    expect(() => composeGridCanvas(canvases, canvases.map((_, i) => `f${i}`))).toThrow(
+      /超出浏览器上限/,
+    );
+  });
 });
 
 // ── runExport 集成：frames 非空 → frame-composer 分支 ────────────────────

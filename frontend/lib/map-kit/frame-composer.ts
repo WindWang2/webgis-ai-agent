@@ -38,6 +38,9 @@ export type FrameLayout = 'pages' | 'grid';
 /** 单帧上限（与后端图集页上限同口径；超出确定性截断）。 */
 export const MAX_FRAMES = 50;
 
+/** 拼板画布单边安全上限（Safari 硬限 16384px；Chrome 面积限同量级）。 */
+export const GRID_MAX_DIM_PX = 16384;
+
 // grid 拼板常量（逻辑像素；帧 canvas 已含 dpi 增益）
 export const GRID_MARGIN = 12;
 export const GRID_GAP = 12;
@@ -200,6 +203,16 @@ export function composeGridCanvas(
   const width = GRID_MARGIN * 2 + cols * cellW + (cols - 1) * GRID_GAP;
   const height =
     GRID_MARGIN * 2 + rows * (cellH + GRID_CAPTION_H) + (rows - 1) * GRID_GAP;
+
+  // review-r2（MAJOR）：拼板画布尺寸守卫 —— 高 dpi × 50 帧时 width/height 可
+  // 超浏览器画布上限（Safari 16384px 硬限 / Chrome ~16384² 面积限），超限画布
+  // 绘制静默失效，会**成功上传一张空白拼板图**（伪成功）。诚实失败：可读报错
+  // 经 runExport catch 进入「导出失败」消息，用户减帧/降 dpi 后重试。
+  if (width > GRID_MAX_DIM_PX || height > GRID_MAX_DIM_PX) {
+    throw new Error(
+      `多帧拼板画布 ${width}×${height}px 超出浏览器上限 ${GRID_MAX_DIM_PX}px（帧数 × dpi 过高）—— 请减少帧数或降低导出 dpi`,
+    );
+  }
 
   const grid = document.createElement('canvas');
   grid.width = width;
