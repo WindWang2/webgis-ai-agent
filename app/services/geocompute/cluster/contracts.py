@@ -174,7 +174,8 @@ class ResourceClaim(BaseModel):
 #: plan 快照落库上界（防止 DB 行膨胀 DoS；typed 413 拒绝）。
 MAX_PLAN_SNAPSHOT_BYTES = 256 * 1024
 
-#: run 级重试上界（lease 丢失 reclaim 计数；超过 → failed[WORKER_LOSS]）。
+#: run 级重试上界（attempts = lease **丢失**（reclaim）次数；第 max 次丢失
+#: 即 failed[WORKER_LOSS] —— 总执行次数 ≤ 1 + (max-1) 次恢复重试）。
 DEFAULT_MAX_RUN_ATTEMPTS = 3
 
 #: 抢占次数安全上界（livelock 保险丝；超过 → failed[PREEMPT_EXHAUSTED]）。

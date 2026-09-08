@@ -340,4 +340,136 @@ class GeoComputeRunEvidence(Base):
     )
 
 
-__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "get_init_sql"]
+class GeoComputeClusterRun(Base):
+    """GeoCompute V6 run 级持久生命周期（cluster control plane 真相）。
+
+    V5 的 run 注册表是进程内存态（executor._runs）—— 多副本下 cancel/
+    get_run 只见本进程，进程崩溃后在飞 run 无任何记录。本表给 run 获得
+    job 级（analysis_tasks）早已具备的语义：持久状态、lease/epoch fencing、
+    心跳、取消旗标、attempt 计数。
+
+    单一事实源边界（01-architecture.md）：
+    - 本表 = run **生命周期**真相（状态/lease/取消/优先级/plan 快照）；
+    - 节点 job 真相仍 = ``analysis_tasks``（绝不建第二任务状态机）；
+    - 终态证据仍 = ``geocompute_run_evidence``（本表不复制 snapshot，
+      ``terminal`` 后读取侧按 run_id 关联证据表）；
+    - 载荷 = session ref（绝无 features/rows 进 DB 行）。
+    """
+    __tablename__ = "geocompute_runs"
+
+    #: 自增提交序号（SQLite 需要 INTEGER PK 才有 autoincrement；fairness
+    #: 的 submit seq / 列表排序都以它为准 —— 单调、无墙钟歧义）。
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    #: run id（"gexec-<hex12>"，与 engine 内存注册表/证据表同一词表）
+    run_id = Column(String(64), nullable=False)
+    #: owner 域（executor.owner_scope_for）；读隔离与证据表同一纪律
+    owner_scope = Column(String(40), nullable=False)
+    #: cluster 状态机（cluster.contracts.ClusterRunStatus 词表）
+    status = Column(String(20), nullable=False, default="queued")
+    #: 计划指纹（graph_fingerprint）
+    plan_fingerprint = Column(String(32), nullable=False)
+    #: plan JSON 快照（ExecutionPlan.model_dump；≤256KB 上界在写入侧强制，
+    #: coordinator 崩溃后据此重建计划 —— 恢复的唯一输入）
+    plan_snapshot = Column(JSON, nullable=False)
+    session_id = Column(String(255), nullable=True)
+    #: 身份域哈希（tenant ← org_id、project ← project_id；owner_scope 同款
+    #: 哈希域 —— 绝不明文身份入集群控制面）
+    tenant_key = Column(String(40), nullable=True)
+    project_key = Column(String(40), nullable=True)
+    #: 优先级（RunPriority 词表 0/5/10；抢占与公平排序键）
+    priority = Column(Integer, nullable=False, default=5)
+    #: lease 认领次数（reclaim 上界 DEFAULT_MAX_RUN_ATTEMPTS）
+    #: lease 丢失（reclaim）次数（上界 DEFAULT_MAX_RUN_ATTEMPTS）
+    attempts = Column(Integer, nullable=False, default=0)
+    #: 被抢占次数（livelock 保险丝 MAX_PREEMPTS）
+    preempts = Column(Integer, nullable=False, default=0)
+    #: fencing epoch（每次认领 +1；所有写路径 CAS 校验）
+    lease_epoch = Column(Integer, nullable=False, default=0)
+    coordinator_id = Column(String(128), nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
+    heartbeat_at = Column(DateTime, nullable=True)
+    #: 取消请求的持久事实源（任意进程可写；与 analysis_tasks.cancel_requested_at 同模式）
+    cancel_requested_at = Column(DateTime, nullable=True)
+    #: 抢占请求旗标（跨 coordinator；执行侧心跳循环观察后在节点边界让出）
+    yield_requested_at = Column(DateTime, nullable=True)
+    #: 最近一次派发序号（= 本行 id；fairness 的租户轮转状态可由
+    #: MAX(dispatch_seq) GROUP BY tenant 重建 —— coordinator 无隐藏内存态）
+    dispatch_seq = Column(Integer, nullable=True)
+    #: 集群账本预留（reclaim 时按此精确归还 —— 与状态转移同事务）
+    reserved_rows = Column(Integer, nullable=False, default=0)
+    reserved_bytes = Column(Integer, nullable=False, default=0)
+    reserved_units = Column(Integer, nullable=False, default=0)
+    #: 必需 profile 通道（["raster","heavy_cpu"]）；能力匹配的依据
+    required_profiles = Column(JSON, nullable=True)
+    error_code = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    terminal_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_gc_run_run_id"),
+        CheckConstraint(
+            "status IN ('queued','leased','running','completed','failed',"
+            "'cancelled','preempted')",
+            name="ck_gc_run_status",
+        ),
+        CheckConstraint("priority IN (0,5,10)", name="ck_gc_run_priority"),
+        Index("idx_gc_run_owner_id", "owner_scope", "id"),
+        Index("idx_gc_run_status_priority", "status", "priority"),
+        Index("idx_gc_run_lease_expiry", "status", "lease_expires_at"),
+        Index("idx_gc_run_tenant_dispatch", "tenant_key", "dispatch_seq"),
+    )
+
+
+class GeoComputeClusterWorker(Base):
+    """GeoCompute V6 worker/coordinator 注册表（心跳 + 能力 + leadership）。
+
+    coordinator 行复用本表（role='coordinator'）：leadership 就是它身上的
+    lease epoch CAS —— 任一时刻仅一个 coordinator 持有调度权（脑裂时旧者
+    的 CAS 全部失败）。celery worker 行声明其消费的 profile 队列与槽位，
+    scheduler 据此做能力匹配（无对应通道的 run 留队，消除队头阻塞）。
+    """
+    __tablename__ = "geocompute_workers"
+
+    worker_id = Column(String(128), primary_key=True)
+    role = Column(String(20), nullable=False, default="worker")
+    #: {profile: slots}（coordinator 为空 dict）
+    profiles = Column(JSON, nullable=True)
+    heartbeat_at = Column(DateTime, nullable=False)
+    lease_epoch = Column(Integer, nullable=False, default=0)
+    lease_expires_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    info = Column(JSON, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("role IN ('coordinator','worker')", name="ck_gc_worker_role"),
+        Index("idx_gc_worker_role_heartbeat", "role", "heartbeat_at"),
+    )
+
+
+class GeoComputeResourceUsage(Base):
+    """GeoCompute V6 集群资源账本（tenant/project/global 三级，run 粒度）。
+
+    记账全部是**单语句条件 UPDATE**（SQLite/PG 同语义）：
+    - reserve：``usage + Δ <= limit`` 才生效（rowcount=0 → 拒绝）；
+    - release：``MAX(0, usage - Δ)`` 钳零（与 reclaim 同事务，CAS 保证
+      exactly-once）。
+    ``limit`` 列 NULL = 不设限。这是集群层准入（防止 N coordinator 各自
+    L1 governor 叠加成 N 倍全局限额）；进程内 L1 树（budgets.ResourceGovernor）
+    在任何模式下仍是执行进程的权威 —— 两层各管一个爆炸半径。
+    """
+    __tablename__ = "geocompute_resource_usage"
+
+    #: "global" | "t:<hash12>" | "p:<hash12>"
+    scope_key = Column(String(80), primary_key=True)
+    usage_rows = Column(Integer, nullable=False, default=0)
+    usage_bytes = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
+    usage_units = Column(Integer, nullable=False, default=0)
+    limit_rows = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=True)
+    limit_bytes = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=True)
+    limit_units = Column(Integer, nullable=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeResourceUsage", "get_init_sql"]
