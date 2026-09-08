@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from app.lib.cancellation import checkpoint, cancellable
+from app.lib.cancellation import checkpoint
 
 from app.lib.gis.scientific_errors import (
     DegenerateData,
