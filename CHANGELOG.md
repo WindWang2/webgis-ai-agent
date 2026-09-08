@@ -3,6 +3,37 @@
 ## [Unreleased] - 2026-09-08
 
 ### Added
+- GIS Extension Platform V1（ADR-0104）：第三方/内部扩展的统一宿主
+  `app/extensions_platform/` —— `GisExtensionManifest`（fail-closed、
+  schema 版本化、命名空间强制、保留词表）、typed 诊断码、扩展 API/核心
+  版本窗口兼容判定、权限模型（声明≠授权、typed 拒绝、仅可收窄）、
+  信任分级（trusted-code boundary，不宣称沙箱）、有界发现 + 内容指纹、
+  完整生命周期（discover→validate→activate→health→deactivate→unload
+  →reload，激活原子、卸载零僵尸、依赖环检测、disable/enable）。
+- 五个扩展 SDK：tool / algorithm / provider / cartography / workflow
+  pack —— 声明式 spec、词表与宿主规则校验、权限包裹、与核心 register
+  完全同构的投影；扩展条目强制命名空间前缀，物理上不可遮蔽核心 ID。
+- Developer CLI：`python -m app.extensions_platform`
+  list/inspect/validate/doctor/scaffold/catalog（human + --json）。
+- 示例扩展包 `extensions/examples/extdemo-pack/`：2 工具 + 1 算法 +
+  1 离线 tile-catalog provider + 1 planned 制图组件 + 1 recipe，
+  兼作集成测试 fixture（零网络）。
+- 一致性语料库：2014 个确定性 case（manifest 矩阵 / 权限矩阵 /
+  策略×manifest 评估 / 生命周期不变量），`tests/unit/extensions_platform/`。
+- 完整文档 `docs/extension-platform/`（架构 / manifest 参考 / 各 SDK
+  authoring 指南 / 权限与信任 / 兼容性 / 打包 / 测试 / CLI / OGC-STAC /
+  已知限制）。
+- 设置项（默认全关，不配置即零行为变化）：`EXTENSIONS_ENABLED`、
+  `EXTENSIONS_DIRS`、`EXTENSIONS_ALLOW/BLOCK/BUILTIN_IDS`、
+  `EXTENSION_PERMISSION_GRANTS`、`EXTENSION_FEATURE_FLAGS`、
+  `EXTENSION_SETTINGS_JSON`、`STAC_API_URL`。
+
+### Fixed
+- WMS/WMTS `describe()` 不再伪造 `EPSG:3857` 与全球 bbox：CRS/bbox 取自
+  capabilities（WMS 1.1.1/1.3.0 双形、URN 归一、父 Layer 继承），
+  不可判定时诚实置空并附 metadata 说明。
+- GDAL `/vsicurl` 远程读取接入 SSRF 门（复用 data_fabric
+  `validate_url`；本机/私网/云元数据地址拒绝）；STAC asset href 同门前置。
 - Professional Cartography Workbench V4（feat/professional-cartography-workbench-v4）:
   Explore / Analyze / Compose 三模式工作台（模式只改面板组合；agent `set_mode`
   确定性合约 + 一键返回）；专业图层工作台（用户分组树/折叠/锁定/隔离/批量

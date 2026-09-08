@@ -85,6 +85,19 @@ class AdapterRegistry:
             )
         return spec
 
+    def unregister(self, canonical: str) -> bool:
+        """ADR-0104：扩展数据 provider 卸载回滚用——移除 canonical 及其
+        全部别名键；目标不存在返回 False（幂等）。内置 source type 从不
+        调用（append-only 契约只对扩展写入放开）。"""
+        key = canonical.lower().strip()
+        spec = self._by_canonical.get(key)
+        if spec is None:
+            return False
+        for name in spec.names:
+            self._by_name.pop(name.lower().strip(), None)
+        self._by_canonical.pop(key, None)
+        return True
+
     def is_supported(self, source_type: Optional[str]) -> bool:
         return bool((source_type or "").lower().strip() in self._by_name)
 

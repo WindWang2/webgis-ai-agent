@@ -484,6 +484,21 @@ class CartographicThemeRegistry:
         # 推荐清单只含已注册色带（注册表是权威；主题引用陈旧 id 时收敛）
         return [i for i in ids if i in self._palettes]
 
+    # ── 扩展投影（ADR-0104）──
+    def register_theme(self, theme: CartographicThemeDescriptor) -> None:
+        """扩展 cartography SDK 投影入口：注册表本是只读目录，扩展运行时
+        注入是唯一的动态写路径。同 id 已存在时抛错（扩展侧先查后写，
+        不静默覆盖种子主题）。"""
+        if theme.id in self._themes:
+            raise ValueError(f"duplicate theme id: {theme.id}")
+        self._themes[theme.id] = theme
+
+    def unregister_theme(self, theme_id: str) -> bool:
+        if theme_id not in self._themes:
+            return False
+        del self._themes[theme_id]
+        return True
+
     # ── 校验 ──
     def validate(self) -> List[str]:
         from app.lib.cartography.model_library import PALETTE_KINDS

@@ -67,6 +67,37 @@ async def lifespan(app: FastAPI):
 
     registry = ToolRegistry()
     init_tools(registry)
+    # ADR-0104：扩展平台引导（默认全关）。必须发生在 runtime manifest 编译
+    # 之前——扩展投影的工具/算法要进入同一份 manifest 与 cross-registry
+    # 校验；任何扩展失败只影响自身（typed diagnostic），绝不阻断启动。
+    if settings.EXTENSIONS_ENABLED:
+        try:
+            from app.extensions_platform.host import (
+                ExtensionHost,
+                configure_extension_host,
+                get_extension_host,
+            )
+
+            configure_extension_host(ExtensionHost.from_settings(tool_registry=registry))
+            _ext_host = get_extension_host()
+            if _ext_host is not None:
+                _ext_host.discover()
+                _results = _ext_host.activate_all()
+                # Round-1 审计 A-1：扩展域词表进入 list_available_tools 的
+                # schema 枚举（init_tools 时扩展尚未激活，枚举已冻结）。
+                from app.tools.meta_tools import refresh_list_available_tools_args
+
+                refresh_list_available_tools_args(registry)
+                _failed = [
+                    k for k, v in _results.items()
+                    if any(d.severity.value == "error" for d in v)
+                ]
+                if _failed:
+                    logger.warning("[lifespan] extensions failed activation: %s", _failed)
+                else:
+                    logger.info("[lifespan] extension platform activated")
+        except Exception as e:
+            logger.warning(f"[lifespan] extension platform bootstrap skipped: {e}")
     # v2(Phase 3, audit R1)：启动即编译 Compiled GIS Runtime Manifest 并做
     # cross-registry 校验 —— 此前 validate_gis_library 只有测试调用，悬空
     # 引用（孤儿工具/错绑 capability/dangling alias）在运行期静默降级。

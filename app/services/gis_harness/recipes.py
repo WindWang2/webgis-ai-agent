@@ -766,6 +766,43 @@ class RecipeRegistry:
     def get(self, recipe_id: str) -> Optional[CartographyRecipe]:
         return self._by_id.get(recipe_id)
 
+    def unregister(self, recipe_id: str) -> bool:
+        """ADR-0104：扩展 recipe 卸载回滚用。从 by-id / by-task / by-domain /
+        关键词倒排与内容指纹缓存中清干净目标 recipe；目标不存在返回 False
+        （幂等）。ASCII 整词集合按剩余倒排重建（关键词可能被多条 recipe
+        共享，不能按条目直接摘除）。核心种子 recipe 从不调用。"""
+        recipe = self._by_id.get(recipe_id)
+        if recipe is None:
+            return False
+        del self._by_id[recipe_id]
+        self._content_fps.pop(recipe_id, None)
+        for task in recipe.intent_tasks:
+            candidates = self._by_task.get(task)
+            if candidates and recipe in candidates:
+                candidates.remove(recipe)
+                if not candidates:
+                    self._by_task.pop(task, None)
+        wf = recipe.workflow
+        if wf is not None:
+            domain_candidates = self._by_domain.get(wf.domain or "general")
+            if domain_candidates and recipe in domain_candidates:
+                domain_candidates.remove(recipe)
+                if not domain_candidates:
+                    self._by_domain.pop(wf.domain or "general", None)
+            for kw in list(wf.keywords_zh) + list(wf.keywords_en):
+                key = kw.strip().lower()
+                if not key:
+                    continue
+                hits = self._keyword_index.get(key)
+                if hits and recipe in hits:
+                    hits.remove(recipe)
+                    if not hits:
+                        self._keyword_index.pop(key, None)
+        self._ascii_keywords = {
+            key for key in self._keyword_index if key.isascii() and key.isalnum()
+        }
+        return True
+
     def default_recipe(self) -> CartographyRecipe:
         """确定性兜底（通用 POI 分布）；注册表为空属编程错误，fail loud。"""
         return self._by_id["poi_distribution_overview"]
