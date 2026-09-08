@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from app.tools.descriptor import SideEffectClass, ToolStatus
 from app.tools.registry import ToolRegistry

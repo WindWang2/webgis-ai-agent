@@ -542,7 +542,6 @@ async def test_tool_registry_parity_and_new_tools():
 def test_rate_smoothing_rejects_negative_counts():
     """负计数 → 类型化拒绝（V3 review MINOR-2）：MOM 先验均值为负会把
     收缩因子推出率支撑 [0,1]——静默外推是伪造。"""
-    import numpy as np
     import pytest
     from app.lib.gis.scientific_errors import UnsupportedMethod
     from app.lib.geo_analysis.statistics import empirical_bayes_rate_smooth

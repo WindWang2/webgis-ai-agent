@@ -14,17 +14,14 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.gis_harness.recipe_packs._kit import role
 from app.services.gis_harness.recipes import (
     CartographyRecipe,
     RecipeRegistry,
     get_recipe_registry,
-    reset_recipe_registry,
 )
 from app.services.gis_harness.workflow_families import (
     FAMILY_LAYER_VERSION,
     CompositeRecipe,
-    ScenarioTemplate,
     WorkflowFamilyRegistry,
     build_families_from_registry,
     get_workflow_family_registry,

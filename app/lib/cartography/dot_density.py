@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 # 总点数上限（资源护栏；触顶即截断并披露，不静默缩放语义）
 MAX_TOTAL_DOTS = 20000

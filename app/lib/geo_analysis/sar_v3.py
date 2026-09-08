@@ -404,7 +404,7 @@ def coherence_estimate(
     if comp_a.shape != comp_b.shape:
         raise ValueError(
             f"两历元形状不一致：{comp_a.shape} vs {comp_b.shape}")
-    plane = _check_plane(comp_a.real, "coherence 网格")
+    _check_plane(comp_a.real, "coherence 网格")
 
     valid = valid_a & valid_b
     if nodata is not None:
@@ -583,7 +583,6 @@ def layover_shadow_mask(
     shadow = finite_geom & (cos_tl <= 0)
     layover = finite_geom & ~shadow & facing & (geom["slope"] > theta_rad)
     normal = finite_geom & ~shadow & ~layover
-    invalid = ~finite_geom
 
     mask = np.full(dem_p.shape, 3.0, dtype=float)
     mask[normal] = 0.0

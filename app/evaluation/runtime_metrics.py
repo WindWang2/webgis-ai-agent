@@ -15,8 +15,8 @@ golden case 的 expected_capabilities —— 不引入新的人工标注真相�
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Sequence
 
 
 # ---------------------------------------------------------------------------
