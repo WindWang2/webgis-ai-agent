@@ -25,6 +25,7 @@ import {
   getViewportGeneration,
   subscribeViewportContext,
 } from '@/lib/selection/viewport-context';
+import { registerChartRenderState, unregisterChartRenderState } from '@/lib/map-components/chart-render-registry';
 import { commitComponentPatch } from '@/lib/mapspec/component-mutation';
 
 /**
@@ -295,6 +296,19 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
       options: { ...(options ?? {}), extentLinked: !extentLinked },
     }).catch(() => { /* 提交失败静默 —— 乐观面在 spec 回流时收敛 */ });
   };
+
+  // V5 W5 rendered-state telemetry：把「面板是否真实渲染出带数据的
+  // series」发布进观测注册表（RenderObservation.charts 消费，服务端
+  // chart_required 数据级核验）。发布在渲染提交后一拍，零轮询。
+  React.useEffect(() => {
+    const ready = state.status === 'ready' && !!extentFilteredChart
+      && Array.isArray(extentFilteredChart.data) && extentFilteredChart.data.length > 0;
+    registerChartRenderState(String(patched.id ?? ''), {
+      rendered: ready,
+      data_points: ready ? extentFilteredChart.data.length : 0,
+    });
+    return () => unregisterChartRenderState(String(patched.id ?? ''));
+  }, [state.status, extentFilteredChart, patched.id]);
 
   const bodyClass = variant === 'compact' ? 'p-1.5' : variant === 'report' ? 'p-3' : 'p-2';
 

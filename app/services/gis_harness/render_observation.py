@@ -37,11 +37,14 @@ from app.services.gis_harness.map_completion import (
     MapCompletionFinding,
     RESULT_LAYER_ROLES,
     _layer_declared_visible,
+    F_CHART_DATA_MISSING,
     F_RENDER_COMPONENT_MISSING,
     F_RENDER_ERROR,
+    F_RENDER_INCOMPLETE,
     F_RENDER_LAYER_MISSING,
     F_RENDER_REVISION_STALE,
     F_RENDER_SOURCE_MISSING,
+    F_RENDER_STYLE_NOT_APPLIED,
     F_RENDER_UNVERIFIED,
 )
 
@@ -245,8 +248,46 @@ def validate_render_observation(
                 target=lid,
                 detail="observed layer source not converged (ref resolution pending?)",
             ))
+        # V5 W5 rendered-state telemetry（全部 optional 门控 —— 旧客户端
+        # 条目不带新字段时不产生新 finding）：
+        if entry.get("source_status") == "error":
+            # 源加载失败是 requested(挂载) ↔ actual(加载错误) 的硬分歧，
+            # 比"未收敛"强 —— error 级。
+            findings.append(MapCompletionFinding(
+                code=F_RENDER_SOURCE_MISSING,
+                severity="error",
+                target=lid,
+                detail="observed layer source in error state at current revision",
+            ))
+        if entry.get("render_complete") is False:
+            findings.append(MapCompletionFinding(
+                code=F_RENDER_INCOMPLETE,
+                severity="error",
+                target=lid,
+                detail="layer family mounted but render not complete (tiles/source pending)",
+            ))
+        if entry.get("style_converged") is False:
+            findings.append(MapCompletionFinding(
+                code=F_RENDER_STYLE_NOT_APPLIED,
+                severity="warning",
+                target=lid,
+                detail="requested style not converged on live layer (presentation pending)",
+            ))
+        try:
+            feature_count = entry.get("feature_count")
+            if isinstance(feature_count, (int, float)) and \
+                    not isinstance(feature_count, bool) and int(feature_count) == 0:
+                findings.append(MapCompletionFinding(
+                    code=F_RENDER_INCOMPLETE,
+                    severity="warning",
+                    target=lid,
+                    detail="layer rendered with zero observed features (viewport-scoped count)",
+                ))
+        except (TypeError, ValueError):
+            pass
 
     # required 组件槽族：观察到的组件必须覆盖（fallback 注入与 chrome 同规则）
+    chart_required = False
     if required_slots:
         components = observation.get("components") or []
         observed_types: Dict[str, bool] = {}
@@ -260,6 +301,8 @@ def validate_render_observation(
             observed_types[ctype] = bool(observed_types.get(ctype)) or mounted
         for family in required_slots:
             family = [t for t in family if t] or ["title"]
+            chart_required = chart_required or any(
+                "chart" in t for t in family)
             if not _component_family_observed(family, observed_types):
                 findings.append(MapCompletionFinding(
                     code=F_RENDER_COMPONENT_MISSING,
@@ -269,6 +312,43 @@ def validate_render_observation(
                         f"required component slot '{family[0]}' not observed in live chrome"
                     ),
                 ))
+
+    # V5 W5：chart_required 的**数据级**核验（V4 只断言组件槽在场）。
+    # requested(chart with data) ↔ actual(rendered series) —— telemetry
+    # 缺席（旧客户端）→ 诚实 warning 披露，不假通过也不误伤兼容性。
+    if chart_required:
+        charts = observation.get("charts")
+        if isinstance(charts, list) and charts:
+            rendered_ok = False
+            for ch in charts:
+                if not isinstance(ch, dict):
+                    continue
+                points = ch.get("data_points")
+                pts = points if isinstance(points, (int, float)) and \
+                    not isinstance(points, bool) else 0
+                if bool(ch.get("rendered")) and int(pts) > 0:
+                    rendered_ok = True
+                    break
+            if not rendered_ok:
+                findings.append(MapCompletionFinding(
+                    code=F_CHART_DATA_MISSING,
+                    severity="error",
+                    target="chart_panel",
+                    detail=(
+                        f"{len(charts)} chart panel(s) observed but none "
+                        "rendered with data"
+                    ),
+                ))
+        elif "charts" not in observation:
+            findings.append(MapCompletionFinding(
+                code=F_CHART_DATA_MISSING,
+                severity="warning",
+                target="chart_panel",
+                detail=(
+                    "chart required but no chart render telemetry received — "
+                    "validated at component-slot level only"
+                ),
+            ))
 
     # 有界 runtime error 披露（瞬态瓦片错误不判失败 —— 层/源在场性才是判据）
     errors = observation.get("runtime_errors")

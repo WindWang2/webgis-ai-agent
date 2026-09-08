@@ -228,6 +228,28 @@ export function collectCartographicRuntimeObservation(
       generation_attested: attested,
       runtime_layer_count: live.length,
       runtime_layer_ids: expected.map((candidate) => candidate.id).slice(0, 16),
+      // V5 W5 rendered-state telemetry（optional，服务端逐层核对用）：
+      // render_complete = 样式收敛 ∧ 全部源已加载完（无 pending 瓦片请求）；
+      // source_status = loaded / pending / error 三态；
+      // feature_count = 源内当前可查要素数（矢量全量 / 瓦片视口内）。
+      render_complete: styleConverged
+        && expected.every((candidate) => map.isSourceLoaded?.(candidate.source) !== false),
+      source_status: !sourceConverged && expected.length > 0
+        ? 'error'
+        : (expected.every((candidate) => map.isSourceLoaded?.(candidate.source) !== false)
+          ? 'loaded'
+          : 'pending'),
+      feature_count: (() => {
+        const sourceIds = Array.from(new Set(expected.map((c) => String(c.source ?? '')))).filter(Boolean);
+        let total = 0;
+        for (const sourceId of sourceIds) {
+          try {
+            const feats = map.querySourceFeatures?.(sourceId);
+            if (Array.isArray(feats)) total += feats.length;
+          } catch { /* 源缺席/类型不支持 → 按未计数处理 */ }
+        }
+        return total;
+      })(),
     };
   });
   return {

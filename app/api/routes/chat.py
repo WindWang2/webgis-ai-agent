@@ -1432,6 +1432,9 @@ class CartographicRuntimeObservationRequest(BaseModel):
     components: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
     # 有界 runtime error 环（dedup 后 ≤8 条：message≤160 + target）。
     runtime_errors: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+    # V5 W5：chart_panel 渲染 telemetry（id/rendered/data_points —— ID、
+    # 布尔与计数，无载荷体；旧客户端缺席 = 槽级校验口径）。
+    charts: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
     # bounded settle 结果（map 'idle' race 超时）。
     map_idle: Optional[bool] = None
     observed_at: Optional[int] = Field(default=None, ge=0, le=9_007_199_254_740_991)
@@ -1555,6 +1558,7 @@ async def push_cartographic_runtime_observation(
                 # 语义（payload 全部 ID/布尔/小元数据，有界）。
                 "components": _bounded_observation_list(req.components),
                 "runtime_errors": _bounded_observation_list(req.runtime_errors),
+                "charts": _bounded_observation_list(req.charts),
                 "map_idle": bool(req.map_idle) if req.map_idle is not None else None,
                 "observed_at": req.observed_at,
             }
