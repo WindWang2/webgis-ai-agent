@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import base64
 import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -32,6 +33,61 @@ class DeclaredWorkerTool:
     name: str  # 本地名（不含命名空间前缀）
     description: str
     kwargs: dict[str, Any]  # ToolRegistry.register kwargs（不含 name/description/func）
+
+
+class BrokerFacade:
+    """扩展侧 broker 门面：类型化方法 → 跨进程 broker 请求。
+
+    每次调用都是显式授权检查点（宿主侧默认 deny）；拒绝抛 typed
+    ``ExtensionPlatformError``。二进制载荷走 base64。
+    """
+
+    def __init__(self, request: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._request = request
+
+    def http_request(
+        self,
+        url: str,
+        method: str = "GET",
+        *,
+        headers: Optional[dict[str, str]] = None,
+        body: Optional[bytes | str] = None,
+        timeout_s: float = 10.0,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "url": url,
+            "method": method,
+            "timeout_s": timeout_s,
+        }
+        if headers:
+            payload["headers"] = dict(headers)
+        if body is not None:
+            if isinstance(body, bytes):
+                payload["body"] = base64.b64encode(body).decode("ascii")
+                payload["body_is_b64"] = True
+            else:
+                payload["body"] = body
+        result = self._request("network_request", payload)
+        return {
+            "status": result.get("status", 0),
+            "content_type": result.get("content_type", ""),
+            "body": base64.b64decode(result.get("body_b64") or ""),
+            "truncated": bool(result.get("truncated")),
+        }
+
+    def read_artifact(self, path: str) -> bytes:
+        result = self._request("artifact_read", {"path": path})
+        return base64.b64decode(result.get("content_b64") or "")
+
+    def write_artifact(self, path: str, data: bytes) -> int:
+        result = self._request(
+            "artifact_write",
+            {"path": path, "content_b64": base64.b64encode(bytes(data)).decode("ascii")},
+        )
+        return int(result.get("bytes_written", 0))
+
+    def get_secret(self, ref: str) -> str:
+        return str(self._request("secret_get", {"ref": ref})["value"])
 
 
 class WorkerContext:
@@ -59,6 +115,8 @@ class WorkerContext:
         self._declared_tools: dict[str, DeclaredWorkerTool] = {}
         # 运行时工具函数（永不离开 worker 进程；按本地名索引）。
         self._tool_funcs: dict[str, Callable[..., Any]] = {}
+        # 扩展侧 broker 门面（transport 为 None 时调用 typed 失败）。
+        self.broker = BrokerFacade(self.broker_request)
 
     # ── 工具注册（收集 + 校验，不写 registry）────────────────────────
     def register_tool(self, spec: Any) -> str:

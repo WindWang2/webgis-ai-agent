@@ -113,6 +113,7 @@ _ENV_BASELINE = {
         # ADR-0105 V2：与 Settings 默认等价（供应链/隔离配置全部关闭/空）。
         "EXTENSION_SECRETS_JSON": "{}",
         "EXTENSION_NETWORK_ALLOW": "",
+        "EXTENSION_ARTIFACT_ROOTS": "",
         "EXTENSION_TRUSTED_PUBLISHERS": "",
         "EXTENSIONS_TRUST_SIGNED": "false",
         "EXTENSIONS_ALLOW_UNSIGNED_DEV": "false",

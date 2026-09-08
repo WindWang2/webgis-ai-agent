@@ -70,6 +70,11 @@ def host_policy_from_settings() -> HostPolicy:
         allow_local_untrusted_activation=settings.EXTENSIONS_ACTIVATE_UNTRUSTED,
         secrets=_parse_secrets(settings.EXTENSION_SECRETS_JSON),
         network_allow=parse_network_allow(settings.EXTENSION_NETWORK_ALLOW),
+        artifact_roots=tuple(
+            Path(p.strip()).resolve()
+            for p in settings.EXTENSION_ARTIFACT_ROOTS.split(os.pathsep)
+            if p.strip()
+        ),
         trusted_publishers=parse_trusted_publishers(settings.EXTENSION_TRUSTED_PUBLISHERS),
         trust_signed=settings.EXTENSIONS_TRUST_SIGNED,
         allow_unsigned_dev=settings.EXTENSIONS_ALLOW_UNSIGNED_DEV,

@@ -63,6 +63,7 @@ class WorkerServer:
         self._module: Any = None
         self._pending: list[dict[str, Any]] = []
         self._broker_wait_id: Optional[str] = None
+        self._broker_seq = 0
         self._broker_response: Optional[dict[str, Any]] = None
 
     # ── 握手 ─────────────────────────────────────────────────────────
@@ -196,7 +197,8 @@ class WorkerServer:
 
     # ── broker 传输（WorkerContext 回调）──────────────────────────────
     def _broker_transport(self, op: str, payload: dict[str, Any]) -> Any:
-        request_id = f"b{id(payload):x}-{op}"
+        self._broker_seq += 1
+        request_id = f"b{self._broker_seq}-{op}"
         write_frame(self._outfile, {"type": "broker_request", "id": request_id, "op": op, "payload": payload})
         self._broker_wait_id = request_id
         try:

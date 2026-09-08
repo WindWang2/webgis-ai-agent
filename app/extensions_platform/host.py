@@ -119,6 +119,8 @@ class HostPolicy:
     secrets: dict[str, dict[str, str]] = field(default_factory=dict)
     # worker broker 出网 allowlist：ext_id → host 集合（"*" = 全部放行）。
     network_allow: dict[str, frozenset[str]] = field(default_factory=dict)
+    # worker broker artifact 根目录（空 = 拒绝全部 artifact 操作）。
+    artifact_roots: tuple[Path, ...] = ()
     # 受信发布者：key_id → HMAC 密钥文件路径。
     trusted_publishers: dict[str, Path] = field(default_factory=dict)
     # 验签通过且发布者受信 → 提权 trusted_extension。
@@ -134,6 +136,8 @@ class ExtensionHost:
         self._tool_registry = tool_registry
         self._policy = policy
         self._records: dict[str, ExtensionRecord] = {}
+        # V2：按扩展 id 的 broker 审计环（bounded；CLI/status 消费）。
+        self._broker_audit: dict[str, Any] = {}
 
     # ── 构造 ─────────────────────────────────────────────────────────
     @classmethod
@@ -708,6 +712,7 @@ class ExtensionHost:
             settings=dict(self._policy.extension_settings.get(manifest.id, {})),
             startup_timeout_s=execution.startup_timeout_s,
             call_timeout_s=execution.call_timeout_s,
+            broker_handler=self._make_broker_handler(record.extension_id),
         )
         try:
             worker.start()
@@ -812,6 +817,27 @@ class ExtensionHost:
             "extension %s worker activation failed: %s", record.extension_id, error.message
         )
         return list(record.diagnostics)
+
+    def _make_broker_handler(self, extension_id: str) -> Any:
+        """为一次 worker 激活构造 broker 分派器（默认 deny；审计入环）。"""
+        from .broker import BrokerAuditLog, CapabilityBroker
+
+        audit = self._broker_audit.setdefault(extension_id, BrokerAuditLog())
+        broker = CapabilityBroker(
+            extension_id=extension_id,
+            grants=grants_for(extension_id, self._policy.grants),
+            network_allow=self._policy.network_allow.get(extension_id, frozenset()),
+            secrets=self._policy.secrets.get(extension_id, {}),
+            artifact_roots=self._policy.artifact_roots,
+            audit=audit,
+        )
+        return broker.handle
+
+    def broker_audit(self, extension_id: str) -> list[dict[str, Any]]:
+        audit = self._broker_audit.get(extension_id)
+        if audit is None:
+            return []
+        return audit.snapshot()
 
     def _make_worker_proxy(
         self, record: ExtensionRecord, worker: Any, projected: str, call_timeout_s: float

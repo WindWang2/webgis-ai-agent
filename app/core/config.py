@@ -142,6 +142,9 @@ class Settings(BaseSettings):
     # EXTENSION_NETWORK_ALLOW: "id:host1,host2;id2:*" 形式的出网 allowlist
     #   （worker broker 的 network 能力默认 deny；按 host 匹配）。
     EXTENSION_NETWORK_ALLOW: str = ""
+    # EXTENSION_ARTIFACT_ROOTS: os.pathsep 分隔的 artifact 根目录（worker
+    #   broker 的 artifact_read/write 仅限根内路径；空 = 拒绝全部）。
+    EXTENSION_ARTIFACT_ROOTS: str = ""
     # EXTENSION_TRUSTED_PUBLISHERS: "key_id:keyfile_path,..." 发布者密钥表。
     EXTENSION_TRUSTED_PUBLISHERS: str = ""
     # EXTENSIONS_TRUST_SIGNED: 验签通过且发布者受信 → 提权 trusted_extension。
