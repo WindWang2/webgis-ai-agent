@@ -224,18 +224,33 @@ class S3BlobStore(BlobStore):
         }).encode("utf-8")
         client.put_object(Bucket=self._bucket, Key=meta_key, Body=body)
 
+    @staticmethod
+    def _is_absent(exc: Exception) -> bool:
+        """缺席 vs 传输/权限错误的区分（review M5：二者折叠会把网络故障
+        报成 digest_mismatch，DR 状态失真；缺席 = 404/NoSuchKey 语义）。"""
+        text = str(exc).lower()
+        return "404" in text or "nosuchkey" in text or "not found" in text
+
     def _head(self, client: Any, object_key: str) -> Optional[dict]:
         try:
             return client.head_object(Bucket=self._bucket, Key=object_key)
-        except Exception:  # noqa: BLE001 — 404/网络错误按缺席（诚实保守）
-            return None
+        except Exception as e:
+            if self._is_absent(e):
+                return None
+            raise S3StoreUnavailable(
+                f"s3 head failed for {object_key[:64]}: {e}"
+            ) from e
 
     def _get_bytes(self, client: Any, object_key: str) -> Optional[bytes]:
         try:
             resp = client.get_object(Bucket=self._bucket, Key=object_key)
             return bytes(resp["Body"].read())
-        except Exception:  # noqa: BLE001 — 缺席/读失败按 None（诚实）
-            return None
+        except Exception as e:
+            if self._is_absent(e):
+                return None
+            raise S3StoreUnavailable(
+                f"s3 get failed for {object_key[:64]}: {e}"
+            ) from e
 
     def get_blob(self, key: str, expected_sha256: Optional[str] = None) -> Optional[bytes]:
         key = safe_blob_key(key)
@@ -311,16 +326,6 @@ class S3BlobStore(BlobStore):
             except (ValueError, UnicodeDecodeError):
                 return None
         return None
-
-
-def _default_client_factory() -> Any:
-    """生产 client factory：lazy boto3 + SSRF 门 + secret 注入。"""
-    import boto3  # noqa: F401 — ImportError → typed 降级
-
-    raise S3StoreUnavailable(
-        "configure WEBGIS_S3_* env vars (endpoint/bucket/credentials) to "
-        "enable the s3 backend"
-    )
 
 
 def build_s3_client_from_env() -> Any:

@@ -1,40 +1,53 @@
-"""Lakehouse V6 Wave 13 — REST 面行为契约。
+"""Lakehouse V6 Wave 13/Review — REST 面行为契约（含跨租户回归）。
 
-最小 app + 独立 router（test_session_api.py 同款 harness）；所有权守卫
-经 patch AsyncHistoryService.get_session_meta 通过（正向/负向跨租户
-由 test_cross_tenant_isolation 端到端覆盖）。覆盖：
-
-- manifest 读取（owner 校验：非 owner = 404，不泄漏存在性）；
-- 矢量窗口扫描（剪枝证据 + 死 ref 404 + 非法窗口 400）；
-- cube 构建 / 窗口读（session 域）；
-- DR verify（state 透传）。
+最小 app + 独立 router。所有权守卫用**保真 fake**（复刻 verify_session_owner
+的 allow/deny 语义 —— 拒绝时抛同样的 404），不整体覆盖路由逻辑：POST 端点
+的 body session_id 与守卫的绑定关系由此真实受测（review B1 的回归锁）。
+覆盖：manifest 读取（非 owner 404 不泄漏）、矢量窗口扫描（剪枝证据 + 跨租户
+404）、cube 构建/窗口读/修订、无界窗口拒绝、project_id 拒绝。
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import rasterio
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from rasterio.transform import from_origin
 
+from app.api.routes import lakehouse as lakehouse_mod
 from app.api.routes.lakehouse import router
 
 pytest.importorskip("zarr")
 pytest.importorskip("pyarrow")
 
+_OWNED_SESSIONS = {
+    "sess-api", "sess-cube", "sess-obj", "sess-win",
+}
+
 
 @pytest.fixture()
 def client():
-    """最小 app + 所有权守卫放行（FastAPI dependency_overrides —— 路由
-    装饰时已捕获 require_owned_session，patch 模块属性无效）。"""
-    from app.core.auth import require_owned_session
+    """最小 app + 保真所有权守卫 fake：deny 抛 404（同 verify_session_owner
+    语义），allow 返回带 session_id 的 conv —— POST 的 body session_id 与
+    守卫的绑定关系真实受测。"""
+    async def fake_verify(db, session_id, **kw):
+        if session_id not in _OWNED_SESSIONS:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return SimpleNamespace(session_id=session_id)
 
+    lakehouse_mod.verify_session_owner = fake_verify
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
-    app.dependency_overrides[require_owned_session] = lambda: MagicMock()
+
+    from app.core.auth import get_async_db
+
+    async def _fake_db():
+        yield object()
+
+    app.dependency_overrides[get_async_db] = _fake_db
     with TestClient(app) as c:
         yield c
 
@@ -91,13 +104,14 @@ def test_scan_endpoint_prunes_and_honest_404(client, data_dir):
     assert body["properties"]["row_groups_read"] < body["properties"]["row_groups_total"]
     assert [f["properties"]["tag"] for f in body["features"]] == ["a"] * 4
 
-    # 死 ref → 404（不泄漏）。
+    # 跨租户：body 的 victim session 不为调用方所有 → 守卫 404（B1 回归锁：
+    # 守卫绑定 body session_id，而非可伪造的旁路参数）。
     resp = client.post("/api/v1/lakehouse/vector/scan", json={
-        "session_id": "other", "ref": res["ref"],
+        "session_id": "victim-session", "ref": res["ref"],
         "bbox": [0, 0, 1, 1],
     })
     assert resp.status_code == 404
-    # 非法窗口 → schema 校验 422（bbox 长度契约在请求模型层强制）。
+    # 非法窗口 → schema 校验 422。
     resp = client.post("/api/v1/lakehouse/vector/scan", json={
         "session_id": "sess-api", "ref": res["ref"], "bbox": [0, 1],
     })
@@ -128,11 +142,37 @@ def test_cube_endpoints(client, data_dir):
     assert float(data["bands"]["b1"][0][0][0]) == 2.0
     assert data["times"] == ["2024-02"]
 
-    # 跨会话 → 404。
+    # 无界窗口（全 cube 读）→ 422（review M-2）。
     resp = client.post("/api/v1/lakehouse/cubes/window", json={
-        "session_id": "other", "ref": body["ref"],
+        "session_id": "sess-cube", "ref": body["ref"],
+    })
+    assert resp.status_code == 422
+    # 负切片 → 422。
+    resp = client.post("/api/v1/lakehouse/cubes/window", json={
+        "session_id": "sess-cube", "ref": body["ref"], "y": [-2, 2],
+    })
+    assert resp.status_code == 422
+    # 跨租户 → 404。
+    resp = client.post("/api/v1/lakehouse/cubes/window", json={
+        "session_id": "other", "ref": body["ref"], "time": [0, 1],
     })
     assert resp.status_code == 404
+
+    # 修订端点（fork 的生产调用方）：t=0 以新源重写。
+    resp = client.post("/api/v1/lakehouse/cubes/revise", json={
+        "session_id": "sess-cube",
+        "ref": body["ref"],
+        "title": "rev1",
+        "updates": [
+            {"band": "b1", "time_index": 0,
+             "source": _write_slice(src / "new0.tif", 9.0)},
+        ],
+    })
+    assert resp.status_code == 200, resp.text
+    rev = resp.json()
+    assert rev["ref"] != body["ref"]
+    assert rev["revision_of"] == body["ref"]
+    assert float(rev["first_step_preview"]["b1"][0][0][0]) == 9.0
 
 
 def test_object_manifest_and_verify_owner_gated(client, data_dir):
@@ -149,8 +189,13 @@ def test_object_manifest_and_verify_owner_gated(client, data_dir):
 
     # 非 owner → 404（不泄漏存在性）。
     resp = client.get(f"/api/v1/lakehouse/objects/{identity.data_object_id}"
-                      f"?session_id=sess-other")
+                      f"?session_id=sess-obj2")
     assert resp.status_code == 404
+
+    # project_id 在 REST 面显式拒绝（review M1/M-5）。
+    resp = client.get(f"/api/v1/lakehouse/objects/{identity.data_object_id}"
+                      f"?project_id=p1")
+    assert resp.status_code == 400
 
     resp = client.post(f"/api/v1/lakehouse/objects/{identity.data_object_id}/verify",
                        json={"session_id": "sess-obj"})
@@ -158,5 +203,5 @@ def test_object_manifest_and_verify_owner_gated(client, data_dir):
     assert resp.json()["state"] == "verified"
 
     resp = client.post(f"/api/v1/lakehouse/objects/{identity.data_object_id}/verify",
-                       json={"session_id": "sess-other"})
+                       json={"session_id": "sess-obj2"})
     assert resp.status_code == 404

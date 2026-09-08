@@ -24,7 +24,6 @@ id，即新不可变修订。零 DB 迁移（append-only 语义在 manifest 层�
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import shutil
@@ -294,13 +293,10 @@ def collect_cube_entries(
         if not path.is_file():
             continue
         rel = path.relative_to(base).as_posix()
-        h = hashlib.sha256()
-        size = 0
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                h.update(chunk)
-                size += len(chunk)
-        entries.append((rel, h.hexdigest(), size))
+        from app.lib.data.fingerprints import sha256_of_file
+
+        size = path.stat().st_size
+        entries.append((rel, sha256_of_file(path), size))
         if len(entries) > MAX_MANIFEST_BLOBS:
             raise DataObjectError(
                 f"cube declares more than {MAX_MANIFEST_BLOBS} files — "
@@ -433,12 +429,18 @@ def fork_cube_revision(
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.mkdir()
 
-    def _link_or_copy(s: Path, t: Path) -> None:
+    def _link_or_copy(s: Path, t: Path, *, allow_link: bool = True) -> None:
         t.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            os.link(s, t)
-        except OSError:
-            shutil.copy2(s, t)
+        # 硬链接只用于**永不重写**的 chunk 文件；元数据（zarr.json 等）可能
+        # 在修订中被 zarr 原地改写 —— 若共享 inode 会击穿源修订的逐字节
+        # 不变性（review C2），元数据一律真实拷贝。
+        if allow_link:
+            try:
+                os.link(s, t)
+                return
+            except OSError:
+                pass
+        shutil.copy2(s, t)
 
     for path in sorted(src.rglob("*")):
         if not path.is_file():
@@ -451,9 +453,11 @@ def fork_cube_revision(
                 t_index = coords[0]
                 if (band, t_index) in replaced:
                     continue  # 该时间片整体重写 —— 绝不链接旧 chunk
-                _link_or_copy(path, dst / rel)
+                _link_or_copy(path, dst / rel, allow_link=True)
                 continue
-        _link_or_copy(path, dst / rel)
+            _link_or_copy(path, dst / rel, allow_link=False)  # 元数据：拷贝
+            continue
+        _link_or_copy(path, dst / rel, allow_link=False)  # 未知布局：全拷贝
 
     # 重写更新的时间片（validate-then-write：网格/铺排校验复用 foundation）。
     for band, per_band in sorted(updates.items()):
@@ -502,9 +506,9 @@ def fork_cube_revision(
 
     # 修订事件戳：uuid 使 fork 后的 store 字节必然不同于源（同一逻辑内容
     # 的两次 fork 是两个不同修订事件 —— 不可变修订需要这一点；内容寻址的
-    # "同内容同 id" 语义保留给非 fork 的 cube 发布）。
+    # "同内容同 id" 语义保留给非 fork 的 cube 发布）。绝不写服务器路径
+    # （会进入 manifest 并可被 manifest 读取面暴露 —— review M）。
     new_root = zarr.open_group(store=str(dst), mode="a")
-    new_root.attrs["revision_forked_from"] = str(src)
     new_root.attrs["revision_id"] = uuid.uuid4().hex
     consolidate_cube_metadata(dst)
     return dst

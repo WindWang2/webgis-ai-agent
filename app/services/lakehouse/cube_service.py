@@ -205,6 +205,8 @@ async def build_session_cube(
                 "cube_id": cube_id,
                 **({"data_object_id": durable.get("data_object_id")}
                    if durable.get("data_object_id") else {}),
+                **({"content_location": durable.get("manifest")}
+                   if durable.get("manifest") else {}),
                 "storage": "disk-cursor",
             },
         )
@@ -255,7 +257,6 @@ async def read_session_cube_window(
 ) -> Dict[str, Any]:
     """会话 cube 窗口读（chunk 粒度；owner = session 域）。"""
     from app.services.artifact_registry import cube_ref_exists, cube_store_path, is_cube_ref
-    from app.services.lakehouse.cube_store import read_cube_window
 
     if not is_cube_ref(ref):
         raise CubeServiceError(f"not a cube ref: {str(ref)[:64]!r}")
@@ -264,8 +265,203 @@ async def read_session_cube_window(
         raise CubeServiceError(
             f"cube not alive: {ref}", code="CUBE_REF_MISSING"
         )
+    # 全 cube 读拒绝（review M-2 OOM DoS）：至少一个有限切片，且读量受
+    # 单元预算约束（轴长未知的切片在读前按 cube 形状钳制）。
+    if time is None and y is None and x is None:
+        raise CubeServiceError(
+            "window read requires at least one bounded slice (time/y/x); "
+            "whole-cube reads are refused",
+            code="CUBE_WINDOW_UNBOUNDED",
+        )
+    for name, pair in (("time", time), ("y", y), ("x", x)):
+        if isinstance(pair, slice) and (
+            (pair.start is not None and pair.start < 0)
+            or (pair.stop is not None and pair.stop < 0)
+        ):
+            raise CubeServiceError(
+                f"{name} slice must be non-negative", code="CUBE_WINDOW_INVALID",
+            )
     result = await asyncio.to_thread(
-        read_cube_window, path, time=time, y=y, x=x,
+        _read_window_bounded, path, time, y, x,
     )
     result["ref"] = ref
     return result
+
+
+#: 单次窗口读的单元预算（bands × time × y × x 的元素总数上限）。
+CUBE_WINDOW_MAX_CELLS = 8_000_000
+
+
+def _read_window_bounded(
+    path, time: Optional[Any], y: Optional[Any], x: Optional[Any],
+) -> Dict[str, Any]:
+    """窗口读 + 形状钳制 + 单元预算（切片越界 = 钳制，负号已在上游拒绝）。"""
+    from app.services.lakehouse.cube_store import open_cube, read_cube_window
+
+    root = open_cube(path)
+    bands = list(root.attrs.get("bands") or [])
+    if not bands:
+        raise CubeServiceError("cube declares no bands")
+    n_t, n_y, n_x = (int(v) for v in root[bands[0]].shape)
+
+    def _clamp(s: Optional[slice], n: int) -> Optional[slice]:
+        if s is None:
+            return None
+        start = 0 if s.start is None else min(int(s.start), n)
+        stop = n if s.stop is None else min(int(s.stop), n)
+        return slice(start, max(start, stop))
+
+    time_s, y_s, x_s = _clamp(time, n_t), _clamp(y, n_y), _clamp(x, n_x)
+    t_len = (time_s.stop - time_s.start) if time_s else n_t
+    y_len = (y_s.stop - y_s.start) if y_s else n_y
+    x_len = (x_s.stop - x_s.start) if x_s else n_x
+    cells = len(bands) * t_len * y_len * x_len
+    if cells > CUBE_WINDOW_MAX_CELLS:
+        raise CubeServiceError(
+            f"window requests {cells} cells, exceeding the bounded budget "
+            f"{CUBE_WINDOW_MAX_CELLS} — narrow the slice",
+            code="CUBE_WINDOW_TOO_LARGE",
+        )
+    return read_cube_window(path, time=time_s, y=y_s, x=x_s)
+
+
+async def revise_session_cube(
+    session_id: str,
+    ref: str,
+    *,
+    updates: Sequence[Mapping[str, Any]],
+    title: str,
+) -> Dict[str, Any]:
+    """cube 修订生产路径（fork_cube_revision 的真实调用方）：
+
+    ``updates = [{"band", "time_index", "source"}, ...]`` —— 源 store 逐字节
+    不动，指定 (band, time) 片以新源重写，产出新不可变修订（新 ref +
+    新 DataObject 身份）。血缘 source_refs 携带全部修订源指纹。
+    """
+    from app.lib.geo_raster.chunk import iter_chunk_descriptors
+    from app.lib.geo_raster.reader import RasterReader
+    from app.services.artifact_registry import (
+        cube_ref_exists,
+        cube_store_path,
+        get_artifact,
+        is_cube_ref,
+        register_artifact,
+    )
+    from app.services.lakehouse.cube_store import (
+        fork_cube_revision,
+        publish_cube,
+        read_cube_window,
+    )
+
+    if not isinstance(session_id, str) or not _CUBE_ID_RE.match(session_id):
+        raise CubeServiceError(f"invalid session id: {session_id!r}")
+    if not is_cube_ref(ref):
+        raise CubeServiceError(f"not a cube ref: {str(ref)[:64]!r}")
+    source_dir = cube_store_path(session_id, ref)
+    if source_dir is None or not cube_ref_exists(session_id, ref):
+        raise CubeServiceError(f"cube not alive: {ref}", code="CUBE_REF_MISSING")
+
+    import numpy as _np
+
+    resolved_updates: Dict[str, list] = {}
+    source_prints: Dict[str, str] = {}
+    for step in updates[:64]:
+        band = str(step.get("band") or "")
+        t_index = int(step.get("time_index") or 0)
+        source = str(step.get("source") or "")
+        path = await asyncio.to_thread(_resolve_time_source, session_id, source)
+        reader = await asyncio.to_thread(RasterReader.open, str(path))
+        try:
+            descriptors = list(await asyncio.to_thread(
+                iter_chunk_descriptors, reader,
+                identity_extra=f"revise:{band}:t={t_index}",
+            ))
+        finally:
+            reader.close()
+        if not descriptors:
+            raise CubeServiceError(
+                f"no chunks for revision source: {source[:64]}"
+            )
+        resolved_updates.setdefault(band, []).append(
+            (t_index, descriptors, None)
+        )
+        source_prints[str(path)] = await asyncio.to_thread(_raster_fingerprint, path)
+
+    new_id = secrets.token_hex(8)
+    new_ref = f"ref:cube/{new_id}"
+    new_dir = cube_store_path(session_id, new_ref)
+    if new_dir is None:  # 防御性
+        raise CubeServiceError("unresolvable revision id")
+    try:
+        await asyncio.to_thread(
+            lambda: fork_cube_revision(
+                source_dir, new_dir, updates=resolved_updates,
+            ),
+        )
+    except Exception as e:
+        raise CubeServiceError(f"cube revision failed: {e}") from e
+
+    old_record = await get_artifact(session_id, ref)
+    prev_meta = (old_record.metadata if old_record is not None else {}) or {}
+    durable: Dict[str, Any] = {"published": False, "reason": "publish_failed"}
+    try:
+        publication = await asyncio.to_thread(
+            publish_cube,
+            new_dir,
+            session_id=session_id,
+            payload_extra={
+                "title": title,
+                "times": prev_meta.get("times") or [],
+                "revision_of": ref,
+                "revision_source_fingerprints": source_prints,
+            },
+            producer={"capability": "lakehouse.cube_revise",
+                      "tool": "revise_session_cube"},
+            source_refs=[f"fingerprint:{d}" for d in source_prints.values()],
+        )
+        durable = publication
+    except Exception as e:  # noqa: BLE001 — 诚实降级
+        logger.warning("[cube_service] revision publish failed: %s", e)
+
+    try:
+        await register_artifact(
+            session_id,
+            artifact_id=new_ref,
+            artifact_type="lakehouse_cube",
+            producer_capability="lakehouse.cube_revise",
+            producer_tool="revise_session_cube",
+            inputs=[ref],
+            descriptor={"feature_count": len(prev_meta.get("times") or [])},
+            metadata={
+                "title": title,
+                "times": prev_meta.get("times") or [],
+                "cube_id": new_id,
+                "revision_of": ref,
+                **({"data_object_id": durable.get("data_object_id")}
+                   if durable.get("data_object_id") else {}),
+                **({"content_location": durable.get("manifest")}
+                   if durable.get("manifest") else {}),
+                "storage": "disk-cursor",
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[cube_service] revision ledger registration skipped: %s", e)
+
+    window = await asyncio.to_thread(
+        read_cube_window, new_dir, time=slice(0, 1),
+    )
+    return {
+        "status": "success",
+        "success": True,
+        "ref": new_ref,
+        "cube_id": new_id,
+        "revision_of": ref,
+        "path": str(new_dir),
+        "title": title,
+        "times": prev_meta.get("times") or [],
+        "first_step_preview": {
+            band: _np.asarray(data).tolist()
+            for band, data in (window.get("bands") or {}).items()
+        },
+        **durable,
+    }

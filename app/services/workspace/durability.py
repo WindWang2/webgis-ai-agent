@@ -91,12 +91,10 @@ async def materialize_ref_payload(
         is_raster_ref,
         raster_png_path,
     )
-    from app.services.durable_blob_store import (
-        get_filesystem_blob_store,
-        sha256_of_bytes,
-    )
+    from app.services.durable_blob_store import sha256_of_bytes
+    from app.services.s3_blob_store import get_object_store
 
-    store = get_filesystem_blob_store()
+    store = get_object_store()
     if is_raster_ref(ref):
         path = raster_png_path(session_id, ref)
         if path is None:
@@ -281,14 +279,12 @@ def verify_durable_pointer(pointer: Dict[str, Any]) -> str:
     - ``digest_mismatch``—— 内容在场但字节被篡改/损坏；
     - ``pointer_missing``—— 指针记录了但内容缺失 / 越界 / 不可读。
     """
-    from app.services.durable_blob_store import (
-        get_filesystem_blob_store,
-        sha256_of_bytes,
-    )
+    from app.services.durable_blob_store import sha256_of_bytes
+    from app.services.s3_blob_store import get_object_store
 
+    store = get_object_store()
     digest = str(pointer.get("content_payload_sha256") or "")
     content_type = str(pointer.get("content_type") or "json")
-    store = get_filesystem_blob_store()
     if content_type == "lakehouse_manifest":
         # V6：cube 指针 —— manifest blob 在场且 digest 相符 = verified。
         # 深层 chunk 校验归 DR（lakehouse.verify_data_object），快照 verify
@@ -332,7 +328,7 @@ def read_back_payload(pointer: Dict[str, Any]) -> Optional[Any]:
     """
     import json
 
-    from app.services.durable_blob_store import get_filesystem_blob_store
+    from app.services.s3_blob_store import get_object_store
 
     digest = str(pointer.get("content_payload_sha256") or "")
     content_type = str(pointer.get("content_type") or "json")
@@ -340,7 +336,7 @@ def read_back_payload(pointer: Dict[str, Any]) -> Optional[Any]:
         # V6：cube 指针读回 = manifest dict（调用方据其走 DR 物化/校验）。
         if not digest:
             return None
-        raw = get_filesystem_blob_store().get_blob(digest, expected_sha256=digest)
+        raw = get_object_store().get_blob(digest, expected_sha256=digest)
         if raw is None:
             return None
         try:
@@ -350,7 +346,7 @@ def read_back_payload(pointer: Dict[str, Any]) -> Optional[Any]:
     if content_type == "binary":
         if not digest:
             return None
-        raw = get_filesystem_blob_store().get_blob(digest, expected_sha256=digest)
+        raw = get_object_store().get_blob(digest, expected_sha256=digest)
         if raw is None:
             return None
         return RestoredBinary(data=raw, content_type="binary")

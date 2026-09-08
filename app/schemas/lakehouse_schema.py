@@ -38,6 +38,20 @@ class CubeWindowRequest(BaseModel):
     x: Optional[List[int]] = Field(default=None, min_items=2, max_items=2)
 
 
+class CubeRevisionUpdate(BaseModel):
+    band: str = Field(min_length=1, max_length=64)
+    time_index: int = Field(ge=0)
+    # 时间片源（与构建同语义：路径 / ref:fabric-parquet/*）
+    source: str = Field(min_length=1, max_length=1024)
+
+
+class CubeRevisionRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    ref: str = Field(min_length=1, max_length=256)
+    title: str = Field(default="cube revision", max_length=256)
+    updates: List[CubeRevisionUpdate] = Field(min_items=1, max_items=64)
+
+
 class ObjectVerifyRequest(BaseModel):
     session_id: Optional[str] = Field(default=None, max_length=128)
     project_id: Optional[str] = Field(default=None, max_length=128)

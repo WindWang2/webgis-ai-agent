@@ -226,9 +226,10 @@ def lakehouse_environment_fingerprint() -> str:
 
 
 def _store():
-    from app.services.durable_blob_store import get_filesystem_blob_store
+    """内容后端选择（env 驱动 —— s3 后端由此真实生效，review C1/M-1）。"""
+    from app.services.s3_blob_store import get_object_store
 
-    return get_filesystem_blob_store()
+    return get_object_store()
 
 
 def _digest_bytes(data: bytes) -> str:
@@ -251,25 +252,35 @@ def publish_data_object(
 ) -> DataObjectIdentity:
     """把一组文件/字节发布为不可变 DataObject（blobs + manifest，全 CAS）。
 
-    同内容重发布 = 全部 CAS 命中（deduped=True，零重写）。超预算在写
-    **任何** blob 之前即拒绝（先量尺后落盘 —— 预算闸门纪律）。
+    同内容重发布 = 全部 CAS 命中（deduped=True，零重写）。执行顺序兑现
+    预算承诺（review M3）：**第一遍**流式量尺+摘要（不驻留大内存、不写
+    任何字节）→ 预算与 manifest 构造全部通过后 **第二遍**才写 blob ——
+    manifest 拒绝（oversized metadata）时零 blob 落盘。
     """
     store = store or _store()
+    from app.lib.data.fingerprints import canonical_dumps, sha256_of_file
+
+    # 第一遍：量尺 + 摘要（纯读，无写入）。
     entries: List[Tuple[str, str, int]] = []
+    total = 0
     for rel_path in sorted(source_files):
         if not rel_path or rel_path.startswith("/") or ".." in rel_path \
                 or "\\" in rel_path or "\x00" in rel_path:
             raise DataObjectError(f"unsafe object member path: {rel_path[:64]!r}")
         src = source_files[rel_path]
-        data = src if isinstance(src, bytes) else Path(src).read_bytes()
-        if sum(n for _p, _d, n in entries) + len(data) > max_total_bytes:
+        if isinstance(src, bytes):
+            digest, size = _digest_bytes(src), len(src)
+        else:
+            size = Path(src).stat().st_size
+            digest = sha256_of_file(src)
+        total += size
+        if total > max_total_bytes:
             raise DataObjectTooLargeError(
                 f"object exceeds {max_total_bytes} bytes — refusing before write"
             )
-        entries.append((rel_path, _digest_bytes(data), len(data)))
-        blob_key = entries[-1][1]
-        store.put_blob(blob_key, data, "binary")
+        entries.append((rel_path, digest, size))
 
+    # manifest 构造（尺寸闸）先于任何 blob 写入。
     manifest = build_object_manifest(
         kind=kind,
         owner_scope=owner_scope,
@@ -279,7 +290,14 @@ def publish_data_object(
         source_refs=source_refs,
         input_fingerprint=input_fingerprint,
     )
-    from app.lib.data.fingerprints import canonical_dumps
+
+    # 第二遍：blob 落盘（CAS；路径内容确定性 ⇒ 中断重试自然续齐）。
+    for rel_path, digest, _size in entries:
+        src = source_files[rel_path]
+        if isinstance(src, bytes):
+            store.put_blob(digest, src, "binary")
+        else:
+            store.put_blob(digest, Path(src).read_bytes(), "binary")
 
     blob = canonical_dumps(manifest).encode("utf-8")
     manifest_id = _digest_bytes(blob)

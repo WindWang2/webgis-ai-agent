@@ -53,14 +53,10 @@ _FABRIC_PARQUET_BLOB_PUBLISH_BUDGET_BYTES = 256 * 1024 * 1024
 
 
 def _file_sha256(path: Path) -> str:
-    """流式 sha256（O(payload) IO，无大内存驻留）。"""
-    import hashlib
+    """流式 sha256（仓库唯一口径 app/lib/data/fingerprints.sha256_of_file）。"""
+    from app.lib.data.fingerprints import sha256_of_file
 
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    return sha256_of_file(path)
 
 
 def _publish_parquet_object(

@@ -115,7 +115,7 @@ def backup_cube_chunks(
 
     预算内整备；超预算诚实 ``{"backed_up": False, "reason": "oversized"}``。
     """
-    from app.services.durable_blob_store import get_filesystem_blob_store
+    from app.services.s3_blob_store import get_object_store
 
     base = Path(store_dir)
     if not base.is_dir():
@@ -124,7 +124,7 @@ def backup_cube_chunks(
     total = sum(n for _p, _d, n in entries)
     if total > max_total_bytes:
         return {"backed_up": False, "reason": "oversized", "byte_size": total}
-    store = get_filesystem_blob_store()
+    store = get_object_store()
     written = 0
     for rel, digest, _size in entries:
         result = store.put_blob(digest, (base / rel).read_bytes(), "binary")
@@ -163,10 +163,17 @@ def scan_orphan_manifests(*, referenced_ids: Iterable[str]) -> List[str]:
     """
     import json
 
-    from app.services.durable_blob_store import get_filesystem_blob_store
+    from app.services.s3_blob_store import get_object_store
 
     referenced = {str(r) for r in referenced_ids}
-    store = get_filesystem_blob_store()
+    store = get_object_store()
+    if not hasattr(store, "iter_blob_files"):
+        from app.services.lakehouse.data_object import DataObjectError
+
+        raise DataObjectError(
+            "orphan-manifest scan requires a listable (filesystem) store; "
+            "the selected object store does not support enumeration"
+        )
     orphans: List[str] = []
     for key, path in store.iter_blob_files():
         if key in referenced or len(key) != 64:

@@ -144,8 +144,6 @@ def publish_cog_data_object(
 
 
 def _streaming_sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    from app.lib.data.fingerprints import sha256_of_file
+
+    return sha256_of_file(path)

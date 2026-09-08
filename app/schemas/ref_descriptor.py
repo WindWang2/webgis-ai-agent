@@ -28,8 +28,11 @@ class RefDescriptor:
         content_hash: Payload digest (Wave 1, audit §7.9). **V6 default ON**
             (ADR-0118): the sha256 of the canonical payload is computed for
             payloads ≤1MB — still off the event loop (both store backends run
-            compute_descriptor via asyncio.to_thread), so content identity
-            participates in ref identity by default without blocking.
+            compute_descriptor via asyncio.to_thread). Evidence field for
+            dedup/identity tooling — note nothing in the ref runtime yet
+            branches on it (change detection uses content_revision); the
+            tier where content addressing drives identity is the durable
+            DataObject layer, unconditionally.
             >1MB payloads keep None (honest cost gate). Set
             WEBGIS_REF_CONTENT_HASH to 0/false/no/off to restore the legacy
             opt-in behavior (always None). The durable lakehouse DataObject

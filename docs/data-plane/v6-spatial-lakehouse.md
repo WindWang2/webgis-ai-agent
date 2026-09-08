@@ -41,10 +41,13 @@ boto3 为 optional 依赖，缺失 typed `S3StoreUnavailable`。
 3. **Cube**：`POST /lakehouse/cubes`（时间片栅格，网格一致强制）→
    `ref:cube/<id>` + durable 身份；`POST /lakehouse/cubes/window` chunk
    粒度窗口读；修订 = `fork_cube_revision`（硬链接 CoW）。
-4. **快照**：workspace snapshot（`materialize="claimed"`）物化
+4. **Cube 修订**：`POST /api/v1/lakehouse/cubes/revise`（fork_cube_revision
+   的生产调用方）—— 源 store 逐字节不动，指定 (band, time) 片以新源重写，
+   产出新不可变修订（新 ref + 新 DataObject 身份，血缘携带修订源指纹）。
+5. **快照**：workspace snapshot（`materialize="claimed"`）物化
    fabric-parquet/cube 指针；restore 从 BlobStore 验真复原（会话死亡后
    reopen）。
-5. **DR**：`verify_cube_store`/`repair_cube_store`/`backup_cube_chunks`/
+6. **DR**：`verify_cube_store`/`repair_cube_store`/`backup_cube_chunks`/
    `scan_orphan_manifests`（只读扫描；破坏性清扫归既有 GC 闸）。
 
 ## Lazy materialization 纪律
@@ -53,6 +56,14 @@ vector 读 = row-group 剪枝（`webgis:row_groups` 元数据，真实几何计�
 缺席退化为有界顺序读）；raster 读 = `RasterReader.read_window`（既有唯一
 窗口权威）；cube 读 = zarr 原生 chunk 粒度。结构性证明：剪枝计数、chunk
 触达计数（counting store）、tracemalloc 峰值护栏。
+
+## GC 生命周期语义
+
+lakehouse 发布的内容/manifest blob 与晋升内容共库，按同一引用纪律参与
+promotion GC：会话期受宽限期（168h）保护；**长生命周期必须落到受保护
+引用面**（workspace 快照指针 / promotion revision 行 / Artifact head
+指针），否则宽限期后按未引用内容回收。台账元数据的
+`data_object_id`/`content_location` 是证据，不是保护引用。
 
 ## 已知限制（诚实清单）
 
