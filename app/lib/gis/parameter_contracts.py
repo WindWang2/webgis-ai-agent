@@ -331,6 +331,36 @@ _SEED_CONTRACTS: List[ParameterContract] = [
     ),
 
         ParameterContract(
+            id="cokriging_lmc_analysis", version=1,
+            description="LMC 全共克里金（线性共区域化模型，逐结构 PSD）",
+            parameters=[
+                ParameterSpec(
+                    name="primary_field", type="string", required=True,
+                    description="主变量数值字段名",
+                ),
+                ParameterSpec(
+                    name="secondary_field", type="string", required=True,
+                    description="次变量数值字段名（须携带独立信息，|ρ|≥0.2）",
+                ),
+                ParameterSpec(
+                    name="resolution", type="integer", default=7,
+                    minimum=5, maximum=9,
+                    description="H3 分辨率",
+                ),
+                ParameterSpec(
+                    name="neighbors1", type="integer", default=12,
+                    minimum=2, maximum=24,
+                    description="主变量邻域样本数上限",
+                ),
+                ParameterSpec(
+                    name="neighbors2", type="integer", default=8,
+                    minimum=2, maximum=24,
+                    description="次变量邻域样本数上限",
+                ),
+            ],
+        ),
+
+        ParameterContract(
             id="sgs_analysis", version=1,
             description="SGS 条件高斯模拟（多实现 ensemble：P10/P50/P90/std）",
             parameters=[

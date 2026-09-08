@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：122 能力 · 184 算法 · 109 参数契约。
+统计：122 能力 · 185 算法 · 110 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -141,6 +141,13 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
   - 资源包络：24B/要素，对预算 200000，要素硬上限 500000
   - 取消：chunk_boundary
   - 数值容差：rtol=1e-06，atol=1e-09
+- **`interpolation.cokriging_lmc`** LMC 全共克里金（`native`·成熟度 已验证，契约: `cokriging_lmc_analysis`，出处: `journel_huijbregts1978`, `goovaerts1997`，精度: exact）
+  - 假设：LMC：γ_ij(h)=Σ_u b_ij^u·g_u(h)，共享 2 结构（球状短程/指数长程）；B^u = [[s1u, ρ√(s1u·s2u)],[…, s2u]] —— |ρ|≤1 ⇒ 逐结构半正定（按构造）；全共克里金：主/次变量样本全部进入邻域（非仅目标协同定位）
+  - 局限：结构 sill 按 35/65 固定比例分解（非完整 Goulard–Voltz 迭代拟合，近似已披露）；完全复制的次变量（同点位同值）使系统近奇异，方差不可信——次变量须携带独立信息；|ρ|<0.2 类型化拒绝（弱相关不会优于单变量克里金）
+  - 回退：`interpolation.kriging`→approximation
+  - 资源包络：32B/要素，要素硬上限 500000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-09，atol=0
 
 ## `convex_hull` — 凸包
 

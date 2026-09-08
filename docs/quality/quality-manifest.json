@@ -371,6 +371,30 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "cokriging"
+   ],
+   "category": "interpolation",
+   "conformance_tests": [
+    "tests/unit/lib/test_cokriging_lmc_v4.py::test_lmc_structures_psd_by_construction",
+    "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_beats_ok_with_correlated_secondary",
+    "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_weak_correlation_typed_reject",
+    "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_strong_secondary_reduces_variance",
+    "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_deterministic"
+   ],
+   "deterministic": true,
+   "id": "interpolation.cokriging_lmc",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": [
+    "raster_uncertainty"
+   ]
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "areal_interpolation"
    ],
    "category": "interpolation",
@@ -675,7 +699,9 @@
    "random_seed_policy": "caller_seeded",
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
-   "tests": [],
+   "tests": [
+    "tests/unit/lib/test_kriging_simulation_v4.py"
+   ],
    "uncertainty_outputs": [
     "monte_carlo_summary",
     "raster_uncertainty"
@@ -4569,7 +4595,8 @@
    "domain": "general",
    "id": "cokriging",
    "producer_algorithms": [
-    "interpolation.cokriging"
+    "interpolation.cokriging",
+    "interpolation.cokriging_lmc"
    ],
    "status": "native",
    "supports_large_data": true,
@@ -6299,12 +6326,12 @@
   }
  ],
  "counts": {
-  "algorithms": 184,
+  "algorithms": 185,
   "artifact_types": 21,
   "capabilities": 122,
-  "findings": 246,
+  "findings": 249,
   "recipes": 164,
-  "tools": 292
+  "tools": 293
  },
  "findings": [
   {
@@ -6324,6 +6351,12 @@
    "detail": "memory_cost=high but no backend_variants scale windows",
    "severity": "medium",
    "subject": "interpolation.cokriging"
+  },
+  {
+   "code": "ALGO_HEAVY_NO_VARIANTS",
+   "detail": "memory_cost=high but no backend_variants scale windows",
+   "severity": "medium",
+   "subject": "interpolation.cokriging_lmc"
   },
   {
    "code": "ALGO_HEAVY_NO_VARIANTS",
@@ -6780,6 +6813,12 @@
    "detail": "missing descriptor fields: side_effect,tags",
    "severity": "low",
    "subject": "cloud_qc_basic"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: side_effect,tags",
+   "severity": "low",
+   "subject": "cokriging_lmc_surface"
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
@@ -7613,6 +7652,12 @@
    "code": "TOOL_UNTESTED",
    "detail": "registered tool without any static test reference",
    "severity": "medium",
+   "subject": "cokriging_lmc_surface"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "severity": "medium",
    "subject": "control_floating_chart"
   },
   {
@@ -7784,7 +7829,7 @@
    "subject": "webgis_world_state"
   }
  ],
- "fingerprint": "82114ef0a081a6cbd2c416e754a6b0152f816122da9b0089f808d1999085f51e",
+ "fingerprint": "5e44b53edfd8a5e3cbf65fca128eef48af9e56304307d7e3ac01dd3d838cad96",
  "gate": {
   "fields": {
    "capabilities": {
@@ -7830,13 +7875,14 @@
     "threshold": 95
    },
    "side_effect": {
-    "coverage": 84,
+    "coverage": 83,
     "missing": [
      "band_correlation_table",
      "bivariate_join_count",
      "bivariate_local_moran",
      "block_kriging_surface",
      "cloud_qc_basic",
+     "cokriging_lmc_surface",
      "cokriging_surface",
      "control_floating_chart",
      "describe_artifact",
@@ -7850,21 +7896,21 @@
      "ica_transform",
      "indicator_kriging_surface",
      "linear_unmixing",
-     "list_datasets",
-     "local_join_count"
+     "list_datasets"
     ],
-    "missing_count": 48,
+    "missing_count": 49,
     "pass": true,
     "threshold": 83
    },
    "tags": {
-    "coverage": 84,
+    "coverage": 83,
     "missing": [
      "band_correlation_table",
      "bivariate_join_count",
      "bivariate_local_moran",
      "block_kriging_surface",
      "cloud_qc_basic",
+     "cokriging_lmc_surface",
      "cokriging_surface",
      "control_floating_chart",
      "describe_artifact",
@@ -7878,16 +7924,15 @@
      "ica_transform",
      "indicator_kriging_surface",
      "linear_unmixing",
-     "list_datasets",
-     "local_join_count"
+     "list_datasets"
     ],
-    "missing_count": 48,
+    "missing_count": 49,
     "pass": true,
     "threshold": 83
    }
   },
   "pass": true,
-  "total": 292
+  "total": 293
  },
  "manifest_version": 1,
  "recipes": {
@@ -8502,6 +8547,27 @@
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
    ],
+   "tier": 2
+  },
+  {
+   "capabilities": [
+    "cokriging"
+   ],
+   "deterministic": null,
+   "execution_policy": "thread",
+   "flags": [
+    "untested",
+    "descriptor_incomplete"
+   ],
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "cokriging_lmc_surface",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "unclassified",
+   "status": "stable",
+   "tags": [],
+   "tests": [],
    "tier": 2
   },
   {

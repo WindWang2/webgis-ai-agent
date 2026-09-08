@@ -897,6 +897,53 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="seed_reproducibility"),
             ),
 
+        # ── Science V4（W6）：LMC 全共克里金 ─────────────────────
+
+        AlgorithmDescriptor(
+            id="interpolation.cokriging_lmc", name="LMC 全共克里金", category="interpolation",
+            capabilities=["cokriging"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            min_features=8,
+            parameter_contract_ref="cokriging_lmc_analysis",
+            tool_candidates=["cokriging_lmc_surface"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.kriging"], priority=29,
+            fallback_semantics={"interpolation.kriging": "approximation"},
+            complexity="逐目标 (k1+k2+2)³ 系统求解 + LMC 拟合 O(N_fit²)",
+            approximation_class="exact",
+            algorithm_family="geostatistical_interpolation",
+            method_references=["journel_huijbregts1978", "goovaerts1997"],
+            assumptions=[
+                "LMC：γ_ij(h)=Σ_u b_ij^u·g_u(h)，共享 2 结构（球状短程/指数长程）",
+                "B^u = [[s1u, ρ√(s1u·s2u)],[…, s2u]] —— |ρ|≤1 ⇒ 逐结构半正定（按构造）",
+                "全共克里金：主/次变量样本全部进入邻域（非仅目标协同定位）",
+                "无偏条件 Σw1=1、Σw2=0；经验 |ρ|>1+1e-9 → NumericalInstability",
+            ],
+            limitations=[
+                "结构 sill 按 35/65 固定比例分解（非完整 Goulard–Voltz 迭代拟合，近似已披露）",
+                "完全复制的次变量（同点位同值）使系统近奇异，方差不可信——次变量须携带独立信息",
+                "|ρ|<0.2 类型化拒绝（弱相关不会优于单变量克里金）",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:8"],
+            uncertainty_outputs=["raster_uncertainty"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="同输入预测/方差逐位一致（确定性求解，conformance 固定）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_cokriging_lmc_v4.py::test_lmc_structures_psd_by_construction",
+                "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_beats_ok_with_correlated_secondary",
+                "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_weak_correlation_typed_reject",
+                "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_strong_secondary_reduces_variance",
+                "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_deterministic",
+            ],
+            resource_envelope=ResourceEnvelope(hard_max_features=500_000, bytes_per_feature=32, notes="次变量 >2 万点确定性抽稀；LMC_MAX_SECONDARY=50 万硬顶"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
+            ),
+
         # ── dasymetric 原生化（Wave 6）：面插值（areal interpolation）────
 
         AlgorithmDescriptor(

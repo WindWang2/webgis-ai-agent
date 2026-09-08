@@ -3,14 +3,14 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**1**
-- 内容指纹：`82114ef0a081a6cb…`
+- 内容指纹：`5e44b53edfd8a5e3…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 292 | 261 | 184 |
-| algorithms | 184 | 148 | 46 |
+| tools | 293 | 261 | 186 |
+| algorithms | 185 | 149 | 47 |
 | capabilities | 122 | 69 | 16 |
 | artifact_types | 21 | 21 | 0 |
 | recipes | 164 | 164（conformance 由 workflow 闸保护） | 0 |
@@ -19,22 +19,23 @@
 
 | field | coverage | threshold | status |
 |---|---|---|---|
-| side_effect | 84% | 83% | PASS（缺 48） |
-| tags | 84% | 83% | PASS（缺 48） |
+| side_effect | 83% | 83% | PASS（缺 49） |
+| tags | 83% | 83% | PASS（缺 49） |
 | latency_class | 100% | 95% | PASS（缺 0） |
 | memory_class | 100% | 95% | PASS（缺 0） |
 | capabilities | 62% | 60% | PASS（缺 112） |
 
-**gate: PASS**（`total=292`）
+**gate: PASS**（`total=293`）
 
 ## Findings（派生线索，非缺陷判定）
 
 > 静态引用 ≠ 行为覆盖。findings 只回答"哪里没有任何测试证据"，修复优先级需结合 02-coverage-risk-map 的风险分级。
 
-### TOOL_UNTESTED（31）
+### TOOL_UNTESTED（32）
 
 - `apply_layer_style`（medium）— registered tool without any static test reference
 - `cancel_execution_run`（medium）— registered tool without any static test reference
+- `cokriging_lmc_surface`（medium）— registered tool without any static test reference
 - `control_floating_chart`（medium）— registered tool without any static test reference
 - `cross_pcf_analysis`（medium）— registered tool without any static test reference
 - `describe_artifact`（medium）— registered tool without any static test reference
@@ -69,7 +70,7 @@
 
 （无）
 
-### TOOL_DESCRIPTOR_INCOMPLETE（153）
+### TOOL_DESCRIPTOR_INCOMPLETE（154）
 
 - `add_marker`（low）— missing descriptor fields: capabilities
 - `aggregate_dataset`（low）— missing descriptor fields: capabilities
@@ -88,6 +89,7 @@
 - `cancel_execution_run`（low）— missing descriptor fields: capabilities
 - `clear_annotations`（low）— missing descriptor fields: capabilities
 - `cloud_qc_basic`（low）— missing descriptor fields: side_effect,tags
+- `cokriging_lmc_surface`（low）— missing descriptor fields: side_effect,tags
 - `cokriging_surface`（low）— missing descriptor fields: side_effect,tags
 - `combine_map_theme`（low）— missing descriptor fields: capabilities
 - `connect_data_source`（low）— missing descriptor fields: capabilities
@@ -120,8 +122,7 @@
 - `get_execution_run`（low）— missing descriptor fields: capabilities
 - `get_lineage`（low）— missing descriptor fields: side_effect,tags,capabilities
 - `get_local_osm_catalog`（low）— missing descriptor fields: capabilities
-- `get_local_stats_catalog`（low）— missing descriptor fields: capabilities
-- …另有 103 条，见 quality-manifest.json
+- …另有 104 条，见 quality-manifest.json
 
 ### CAPABILITY_NO_PRODUCER（0）
 
@@ -169,11 +170,12 @@
 - `workspace.inspection.readonly`（medium）— algorithm declares no conformance test node ids
 - `workspace.snapshot.durable`（medium）— algorithm declares no conformance test node ids
 
-### ALGO_HEAVY_NO_VARIANTS（26）
+### ALGO_HEAVY_NO_VARIANTS（27）
 
 - `data.ingest.pipeline`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.block_kriging`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.cokriging`（medium）— memory_cost=high but no backend_variants scale windows
+- `interpolation.cokriging_lmc`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.external_drift_kriging`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.idw`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.indicator_kriging`（medium）— memory_cost=high but no backend_variants scale windows

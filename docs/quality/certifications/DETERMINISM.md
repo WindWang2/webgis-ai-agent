@@ -9,15 +9,15 @@
 
 | class | count | 语义 |
 |---|---|---|
-| deterministic | 152 | 确定性计算（同输入同输出） |
+| deterministic | 153 | 确定性计算（同输入同输出） |
 | seeded-stochastic | 30 | 种子化随机（可复现；种子来源已声明） |
 | stochastic-unseeded | 2 | 无种子随机（声明型 nondeterministic） |
 | INCONSISTENT | 0 | 自相矛盾声明（deterministic=True 且 unseeded）——禁止 |
-| total | 184 | |
+| total | 185 | |
 
 ## INCONSISTENT / stochastic-unseeded 明细
 
 - `admin.boundary_lookup`（stochastic-unseeded，status=EXPERIMENTAL）
 - `poi.area_search`（stochastic-unseeded，status=EXPERIMENTAL）
 
-- 内容指纹：`0c188d2ae4caad59…`
+- 内容指纹：`dc624f1a028b8a30…`

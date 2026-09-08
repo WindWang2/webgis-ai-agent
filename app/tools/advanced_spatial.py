@@ -1962,6 +1962,118 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             )
         return prediction_fc
 
+    @tool(registry, name="cokriging_lmc_surface",
+           description=(
+               "LMC 全共克里金：线性共区域化模型（逐结构半正定）下主/次变量"
+               "联合建模，次变量样本全部进入邻域系统（非仅目标协同定位——"
+               "区别于 MM1 近似的 cokriging_surface）。"
+               "\n何时用：次变量密集且与主变量强相关(|ρ|≥0.2)、需要真实全共克里金；"
+               "次变量在目标处有独立观测信息。"
+               "\n何时不用：|ρ|<0.2（弱相关不如 OK）；次变量与主变量完全复制"
+               "（系统近奇异，方差不可信）。"
+           ),
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "主变量点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
+               "secondary_geojson": "次变量点要素集 GeoJSON（Point 几何，≥4 点；>2 万点自动确定性抽稀）",
+               "primary_field": "主变量数值字段名",
+               "secondary_field": "次变量数值字段名",
+               "resolution": "H3 分辨率（5-9），默认 7",
+               "neighbors1": "主变量邻域样本数(2-24)，默认 12",
+               "neighbors2": "次变量邻域样本数(2-24)，默认 8",
+           })
+    def cokriging_lmc_surface(
+        geojson: Any,
+        secondary_geojson: Any,
+        primary_field: str,
+        secondary_field: str,
+        resolution: int = 7,
+        neighbors1: int = 12,
+        neighbors2: int = 8,
+    ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.gis.uncertainty import (
+            RasterUncertainty,
+            UncertaintyMeasure,
+        )
+        from app.lib.geo_analysis.cokriging_lmc import (
+            cokriging_lmc_surface as _ck_surface,
+        )
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+
+        params = apply_contract("cokriging_lmc_analysis", {
+            "primary_field": primary_field,
+            "secondary_field": secondary_field,
+            "resolution": resolution,
+            "neighbors1": neighbors1,
+            "neighbors2": neighbors2,
+        })
+        data = safe_parse_geojson(geojson)
+        data_sec = safe_parse_geojson(secondary_geojson)
+        driver = _ck_surface(
+            data, params["primary_field"], data_sec, params["secondary_field"],
+            resolution=int(params["resolution"]),
+            neighbors1=int(params["neighbors1"]),
+            neighbors2=int(params["neighbors2"]),
+        )
+        meta = driver["metadata"]
+        if not driver["records"]:
+            return {
+                "summary": "LMC 共克里金：0 个目标单元（极地/范围退化）——诚实空结果。",
+                "features": [],
+                "lmc_metadata": meta,
+            }
+        pred_records = [
+            {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
+        ]
+        prediction_fc = h3_to_geojson(pred_records, params["primary_field"])
+        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+            feat["properties"]["ck_variance"] = round(rec["ck_variance"], 6)
+            feat["properties"]["ck_stddev"] = round(rec["ck_stddev"], 6)
+        prediction_fc.update({
+            "summary": (
+                f"LMC 全共克里金完成：{len(prediction_fc['features'])} 个 H3 单元；"
+                f"主/次相关 ρ={meta['lmc']['rho']}，次变量 {meta['n_secondary']} 点"
+                f"（k1={meta['neighbors']['primary']}, k2={meta['neighbors']['secondary']}）；"
+                "方差面已随结果输出。"
+            ),
+            "lmc_metadata": meta,
+        })
+        descriptor = get_algorithm_registry().get("interpolation.cokriging_lmc")
+        if descriptor is not None:
+            prediction_fc["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="cokriging_lmc_surface",
+                parameters_applied={
+                    "primary_field": params["primary_field"],
+                    "secondary_field": params["secondary_field"],
+                    "resolution": int(params["resolution"]),
+                    "neighbors1": int(params["neighbors1"]),
+                    "neighbors2": int(params["neighbors2"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "LMC: two shared structures, B matrices PSD by construction",
+                    "full cokriging system with both variables in the neighborhood",
+                ],
+                uncertainty=[RasterUncertainty(
+                    target="ck_variance",
+                    interpretation="full cokriging variance under the fitted LMC",
+                    summary=[UncertaintyMeasure(
+                        measure="value", value=float(meta["variance_range"][1]),
+                        method="max cokriging variance"),
+                    ]),
+                ],
+            )
+        return prediction_fc
+
     @tool(registry, name="overlay_analysis",
            description="对两个几何图层进行空间叠加分析（如求交、合并、擦除等），返回结果及其统计信息",
            args_model=OverlayAnalysisArgs,

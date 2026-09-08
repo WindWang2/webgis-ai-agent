@@ -9,7 +9,7 @@
 > （ResourceScaleMismatch / RasterResourceGuard），benchmark 结构门消费
 > 同一批声明。空字段 = 未声明（不构成承诺）。
 
-统计：89/184 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
+统计：90/185 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
 
 | 算法 | 复杂度 | 精度 | 资源包络 | 变体(窗口) | 取消 | 容差 | 成本 cpu/mem | 执行策略 |
 |---|---|---|---|---|---|---|---|---|
@@ -17,6 +17,7 @@
 | `density.analytical.mixed` | — | approximate | — | — | — | — | high/medium | CELERY |
 | `interpolation.block_kriging` | 块离散化 2×2 + OK 系统（−γ̄(B,B) 修正） | approximate | 24B/feat pairs≤200000 feat≤500000 | — | chunk_boundary | rtol=0.001,atol=1e-09 | high/high | CELERY |
 | `interpolation.cokriging` | 协同定位系统 O(m·(k+2)³)（MM1 近似） | approximate | 24B/feat pairs≤200000 feat≤500000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
+| `interpolation.cokriging_lmc` | 逐目标 (k1+k2+2)³ 系统求解 + LMC 拟合 O(N_fit²) | exact | 32B/feat feat≤500000 | — | chunk_boundary | rtol=1e-09,atol=0 | high/high | CELERY |
 | `interpolation.dasymetric` | — | — | 128B/feat | — | none | rtol=1e-06,atol=1e-06 | medium/medium | THREAD |
 | `interpolation.directional_variogram` | O(pair_budget)（入口确定性分层抽稀 ≤2000 + 行步幅 20 万对上限） | — | pairs≤200000 feat≤2000 | — | chunk_boundary | rtol=1e-09,atol=0 | medium/low | INLINE |
 | `interpolation.external_drift_kriging` | 同 UK：拟合 O(N_fit²) + 预测 O(m·(k+3)³)（漂移约束 ×2 乘子） | exact | 32B/feat pairs≤200000 feat≤500000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |

@@ -5,13 +5,14 @@
 > cancellable）；行为认证：tests/quality/
 > test_cancellation_resource_certification.py。
 
-- 覆盖：**15/54** 个重计算文件含取消检查点。
+- 覆盖：**16/55** 个重计算文件含取消检查点。
 
 | file | cancellation sites | loop sites（粗计） | status |
 |---|---|---|---|
 | app/lib/geo_analysis/__init__.py | 0 | 0 | no-checkpoints |
 | app/lib/geo_analysis/_vector.py | 0 | 6 | no-checkpoints |
 | app/lib/geo_analysis/aggregation.py | 2 | 26 | certified |
+| app/lib/geo_analysis/cokriging_lmc.py | 1 | 10 | certified |
 | app/lib/geo_analysis/dasymetric.py | 0 | 11 | no-checkpoints |
 | app/lib/geo_analysis/density.py | 0 | 23 | no-checkpoints |
 | app/lib/geo_analysis/evidence.py | 0 | 1 | no-checkpoints |
