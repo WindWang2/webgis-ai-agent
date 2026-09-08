@@ -110,6 +110,13 @@ _ENV_BASELINE = {
         "EXTENSIONS_ACTIVATE_UNTRUSTED": "false",
         "EXTENSION_FEATURE_FLAGS": "{}",
         "EXTENSION_SETTINGS_JSON": "{}",
+        # ADR-0105 V2：与 Settings 默认等价（供应链/隔离配置全部关闭/空）。
+        "EXTENSION_SECRETS_JSON": "{}",
+        "EXTENSION_NETWORK_ALLOW": "",
+        "EXTENSION_TRUSTED_PUBLISHERS": "",
+        "EXTENSIONS_TRUST_SIGNED": "false",
+        "EXTENSIONS_ALLOW_UNSIGNED_DEV": "false",
+        "EXTENSIONS_MAX_WORKER_CRASHES": "2",
         "STAC_API_URL": "https://earth-search.aws.element84.com/v1",
 }
 for _key, _value in _ENV_BASELINE.items():

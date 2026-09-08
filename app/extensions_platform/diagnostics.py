@@ -60,6 +60,22 @@ class DiagnosticCode(str, Enum):
     FINGERPRINT_CHANGED = "fingerprint_changed"
     FEATURE_FLAG_UNRESOLVED = "feature_flag_unresolved"
     EXTENSION_DISABLED = "extension_disabled"
+    # ── V2（ADR-0105）：隔离 worker / 供应链 / 解析器 ──────────────────
+    WORKER_MODE_INVALID = "worker_mode_invalid"
+    WORKER_PROTOCOL_MISMATCH = "worker_protocol_mismatch"
+    WORKER_STARTUP_TIMEOUT = "worker_startup_timeout"
+    WORKER_CALL_TIMEOUT = "worker_call_timeout"
+    WORKER_CRASHED = "worker_crashed"
+    WORKER_RESTART_QUARANTINED = "worker_restart_quarantined"
+    BROKER_DENIED = "broker_denied"
+    OUTPUT_LIMIT_EXCEEDED = "output_limit_exceeded"
+    RESOURCE_LIMIT_UNAVAILABLE = "resource_limit_unavailable"
+    SIGNATURE_INVALID = "signature_invalid"
+    PUBLISHER_UNTRUSTED = "publisher_untrusted"
+    PACKAGE_TAMPERED = "package_tampered"
+    DEPENDENCY_CONSTRAINT_INVALID = "dependency_constraint_invalid"
+    DEPENDENCY_CONFLICT = "dependency_conflict"
+    OPERATION_IN_FLIGHT = "operation_in_flight"
 
 
 @dataclass(frozen=True)

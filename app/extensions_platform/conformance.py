@@ -53,11 +53,13 @@ INVALID_VERSIONS = [
     "1.2.3.4.5", "01.2", "1..2", ".1", "1.", "1.2-beta!",
 ]
 VALID_API_VERSIONS = ["1.0.0", "1.0", "0.9"]
-INCOMPATIBLE_API_VERSIONS = ["2.0.0", "1.1.0", "0.8.0", "1.2.0", "0.1.0", "9.9.9"]
+# ADR-0105 V2：宿主 api_version 升至 1.1.0 —— "1.1.0" 移入兼容侧（V2 case
+# 家族覆盖）；model_provider 移入受支持类型（V2 case 家族覆盖接受/拒绝矩阵）。
+INCOMPATIBLE_API_VERSIONS = ["2.0.0", "1.2.0", "0.8.0", "0.1.0", "9.9.9"]
 TRUST_VALUES = ["trusted_builtin", "trusted_extension", "local_untrusted"]
 INVALID_TRUSTS = ["core", "blocked", "sandboxed", "", "trusted", "untrusted"]
 INVALID_TIERS = [3, 4, 0, -1, 2.5, "two"]
-FUTURE_EXTENSION_TYPES = ["model_provider", "marketplace", "wallet", "theme_engine", "secret_store"]
+FUTURE_EXTENSION_TYPES = ["marketplace", "wallet", "theme_engine", "secret_store"]
 BAD_SCHEMA_VERSIONS = [0, -1, 99, 2]
 INVALID_PERMISSIONS = ["become_admin", "NETWORK", "net-work", "network ", "sudo", "write_all", "net", ""]
 PERMISSION_VOCAB = [

@@ -135,6 +135,21 @@ class Settings(BaseSettings):
     EXTENSIONS_ACTIVATE_UNTRUSTED: bool = False
     EXTENSION_FEATURE_FLAGS: str = "{}"
     EXTENSION_SETTINGS_JSON: str = "{}"
+    # ── V2（ADR-0105）：隔离执行 / 供应链。默认全部关闭/为空 = V1 行为 ──
+    # EXTENSION_SECRETS_JSON: {extension_id: {ref: value}}；供给即授权，
+    #   值只经 broker 送达对应扩展，不进入状态/日志/LLM 可见面。
+    EXTENSION_SECRETS_JSON: str = "{}"
+    # EXTENSION_NETWORK_ALLOW: "id:host1,host2;id2:*" 形式的出网 allowlist
+    #   （worker broker 的 network 能力默认 deny；按 host 匹配）。
+    EXTENSION_NETWORK_ALLOW: str = ""
+    # EXTENSION_TRUSTED_PUBLISHERS: "key_id:keyfile_path,..." 发布者密钥表。
+    EXTENSION_TRUSTED_PUBLISHERS: str = ""
+    # EXTENSIONS_TRUST_SIGNED: 验签通过且发布者受信 → 提权 trusted_extension。
+    EXTENSIONS_TRUST_SIGNED: bool = False
+    # EXTENSIONS_ALLOW_UNSIGNED_DEV: 未签名包的显式开发模式（大声告警）。
+    EXTENSIONS_ALLOW_UNSIGNED_DEV: bool = False
+    # EXTENSIONS_MAX_WORKER_CRASHES: worker 连续崩溃达到该值 → quarantine。
+    EXTENSIONS_MAX_WORKER_CRASHES: int = 2
 
     # 仓内 vendor/pi 是默认 agent 宿主：API 启动即拉起 bundled RPC 子进程。
     # 测试套件在 conftest 钉 false，避免每个 TestClient 起 Node。

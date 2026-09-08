@@ -112,6 +112,19 @@ class HostPolicy:
     # 打开 EXTENSIONS_ACTIVATE_UNTRUSTED；进程内直构 HostPolicy 的测试
     # 缺省 True（本地开发语义）。
     allow_local_untrusted_activation: bool = True
+    # ── V2（ADR-0105）────────────────────────────────────────────────
+    # 按扩展 id 供给的凭据（供给即授权；值不进入任何状态/日志面）。
+    secrets: dict[str, dict[str, str]] = field(default_factory=dict)
+    # worker broker 出网 allowlist：ext_id → host 集合（"*" = 全部放行）。
+    network_allow: dict[str, frozenset[str]] = field(default_factory=dict)
+    # 受信发布者：key_id → HMAC 密钥文件路径。
+    trusted_publishers: dict[str, Path] = field(default_factory=dict)
+    # 验签通过且发布者受信 → 提权 trusted_extension。
+    trust_signed: bool = False
+    # 未签名包显式开发模式（大声告警；不改变权限语义）。
+    allow_unsigned_dev: bool = False
+    # worker 连续崩溃达到该值 → quarantine。
+    max_worker_crashes: int = 2
 
 
 class ExtensionHost:
