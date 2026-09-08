@@ -915,6 +915,23 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 
 
 # ── sbom（Wave 7 物料清单）───────────────────────────────────────────────
+def _cmd_certify(args: argparse.Namespace) -> int:
+    from .certification import certify_extension
+
+    host, roots = _build_host(args.root)
+    report = certify_extension(host, args.extension_id)
+    if args.json:
+        _print_json(report)
+        return 0 if report["certified"] else 1
+    print(
+        f"extension: {report['extension_id']}  certified: {report['certified']}  "
+        f"trust: {report['trust']}  mode: {report['execution_mode']}"
+    )
+    for check in report["checks"]:
+        print(f"  [{check['status']:^4}] {check['check']}: {check['detail']}")
+    return 0 if report["certified"] else 1
+
+
 def _cmd_sbom(args: argparse.Namespace) -> int:
     from .sbom import build_sbom
 
@@ -1066,6 +1083,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_sbom.add_argument("extension_id", help="扩展 id（<namespace>.<name>）")
     p_sbom.set_defaults(handler=_cmd_sbom)
+    p_certify = sub.add_parser(
+        "certify", parents=[common], help="扩展认证套件（契约/供应链/依赖/生命周期 smoke）"
+    )
+    p_certify.add_argument("extension_id", help="扩展 id（<namespace>.<name>）")
+    p_certify.set_defaults(handler=_cmd_certify)
     return parser
 
 

@@ -874,6 +874,170 @@ def _policy_matrix_cases() -> list[ConformanceCase]:
             )
     return cases
 
+def _v2_contract_cases() -> list[ConformanceCase]:
+    """V2（ADR-0105）契约案例族：worker 执行模式、model_provider 类型、
+    依赖版本约束的接受/拒绝矩阵（manifest 层，确定性）。"""
+    cases: list[ConformanceCase] = []
+
+    def add(cid: str, expectation: str, manifest: dict[str, Any], entry: str | None = NOOP_MAIN) -> None:
+        if expectation == "fail:manifest_invalid":
+            entry = None  # 非法 manifest 走 manifest 层分支（不物化目录）
+        cases.append(
+            ConformanceCase(
+                case_id=f"v2/{cid}",
+                category="v2_contract",
+                expectation=expectation,
+                manifest=manifest,
+                entry_source=entry,
+            )
+        )
+
+    worker_exec = {"mode": "worker", "startup_timeout_s": 5, "call_timeout_s": 5}
+    # ── execution 节 ──
+    # worker 激活（真实子进程 smoke；NOOP 入口注册零工具 → 声明的工具
+    # 未投影 → warning → DEGRADED）。
+    add(
+        "execution/worker_minimal",
+        f"state:{ExtensionState.DEGRADED.value}",
+        _manifest("acme", "pack", api_version="1.1.0", execution=worker_exec),
+    )
+    add(
+        "execution/in_process_explicit",
+        "pass",
+        _manifest("acme", "pack", api_version="1.1.0", execution={"mode": "in_process"}),
+        entry=None,
+    )
+    add(
+        "execution/worker_needs_api_floor",
+        "fail:manifest_invalid",
+        _manifest("acme", "pack", api_version="1.0.0", execution=worker_exec),
+    )
+    add(
+        "execution/worker_rejects_algorithms",
+        "fail:manifest_invalid",
+        _manifest(
+            "acme", "pack", api_version="1.1.0", execution=worker_exec,
+            algorithms=[{"id": "kde", "description": "x"}],
+        ),
+    )
+    add(
+        "execution/worker_rejects_data_providers",
+        "fail:manifest_invalid",
+        _manifest(
+            "acme", "pack", api_version="1.1.0", execution=worker_exec,
+            data_providers=[{"source_type": "tiles", "description": "x"}],
+        ),
+    )
+    add(
+        "execution/worker_rejects_external_process",
+        "fail:manifest_invalid",
+        _manifest(
+            "acme", "pack", api_version="1.1.0", execution=worker_exec,
+            permissions=["external_process"],
+        ),
+    )
+    for budget_field, value in (
+        ("startup_timeout_s", 0.1), ("call_timeout_s", 99999.0),
+        ("max_memory_mb", 4), ("max_cpu_seconds", 0), ("max_output_bytes", 8),
+    ):
+        add(
+            f"execution/budget_{budget_field}",
+            "fail:manifest_invalid",
+            _manifest(
+                "acme", "pack", api_version="1.1.0",
+                execution={"mode": "worker", field: value},
+            ),
+        )
+    # ── model_provider 类型 ──
+    add(
+        "model_provider/supported_at_1_1",
+        "pass",
+        _manifest(
+            "acme", "pack", api_version="1.1.0",
+            extension_types=["tools", "model_provider"],
+            model_providers=[{"id": "echo", "description": "x", "capabilities": ["cancellation"]}],
+        ),
+        entry=None,
+    )
+    add(
+        "model_provider/rejected_at_1_0",
+        "fail:manifest_invalid",
+        _manifest(
+            "acme", "pack", api_version="1.0.0",
+            model_providers=[{"id": "echo", "description": "x"}],
+        ),
+    )
+    add(
+        "model_provider/unknown_capability",
+        "fail:manifest_invalid",
+        _manifest(
+            "acme", "pack", api_version="1.1.0",
+            model_providers=[{"id": "echo", "description": "x", "capabilities": ["teleport"]}],
+        ),
+    )
+    add(
+        "model_provider/worker_rejects_streaming",
+        "fail:manifest_invalid",
+        _manifest(
+            "acme", "pack", api_version="1.1.0", execution=worker_exec,
+            model_providers=[{"id": "echo", "description": "x", "capabilities": ["streaming"]}],
+        ),
+    )
+    add(
+        "model_provider/lifecycle_projection",
+        f"state:{ExtensionState.ACTIVE.value}",
+        _manifest(
+            "acme", "pack", api_version="1.1.0", tools=0,
+            permissions=["model_provider"],
+            extension_types=["model_provider"],
+            model_providers=[{"id": "echo", "description": "x", "capabilities": ["cancellation"]}],
+        ),
+        entry=textwrap.dedent(
+            """
+            from app.extensions_platform.sdk import ModelProviderSpec
+
+
+            def _echo(request, ctx):
+                return {"type": "final", "echo": request.get("text", "")}
+
+
+            def activate(ctx):
+                ctx.register_model_provider(ModelProviderSpec(
+                    provider_id="echo", description="x", invoke_fn=_echo,
+                    capabilities=["cancellation"],
+                ))
+            """
+        ),
+    )
+    # ── 依赖版本约束 ──
+    add(
+        "dependency/constraint_needs_api_floor",
+        "fail:manifest_invalid",
+        _manifest("acme", "pack", api_version="1.0.0",
+                  dependencies=[{"id": "acme.base", "version": ">=1.0"}]),
+    )
+    add(
+        "dependency/valid_constraint",
+        "pass",
+        _manifest("acme", "pack", api_version="1.1.0",
+                  dependencies=[{"id": "acme.base", "version": ">=1.0,<2.0"}]),
+        entry=None,
+    )
+    add(
+        "dependency/invalid_constraint_syntax",
+        "fail:manifest_invalid",
+        _manifest("acme", "pack", api_version="1.1.0",
+                  dependencies=[{"id": "acme.base", "version": "1.0"}]),
+    )
+    add(
+        "dependency/unsatisfied_constraint",
+        f"fail:{DiagnosticCode.DEPENDENCY_MISSING.value}",
+        _manifest("acme", "pack", api_version="1.1.0",
+                  dependencies=[{"id": "acme.ghost", "version": ">=1.0"}]),
+    )
+    return cases
+
+
 def build_conformance_cases() -> list[ConformanceCase]:
     cases = [
         *_manifest_valid_cases(),
@@ -886,6 +1050,7 @@ def build_conformance_cases() -> list[ConformanceCase]:
         *_disabled_extension_cases(),
         *_provider_sdk_cases(),
         *_policy_matrix_cases(),
+        *_v2_contract_cases(),
     ]
     cases.sort(key=lambda c: c.case_id)
     return cases
@@ -940,7 +1105,9 @@ def execute_case(
     """执行单个 case；host_factory 由测试注入（通常包一个新 ToolRegistry）。"""
     from pydantic import ValidationError
 
-    if case.category in {"manifest_valid", "manifest_invalid"}:
+    if case.category in {"manifest_valid", "manifest_invalid"} or (
+        case.category == "v2_contract" and case.entry_source is None
+    ):
         try:
             GisExtensionManifest.model_validate(case.manifest)
             if case.expectation == "pass":
