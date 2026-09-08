@@ -846,6 +846,57 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             ),
 
+        # ── Science V4（W5）：SGS 条件高斯模拟 ─────────────────────
+
+        AlgorithmDescriptor(
+            id="interpolation.sgs", name="SGS 条件高斯模拟", category="interpolation",
+            capabilities=["geostatistical_simulation"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            min_features=8,
+            parameter_contract_ref="sgs_analysis",
+            tool_candidates=["sgs_simulation"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.kriging"], priority=28,
+            fallback_semantics={"interpolation.kriging": "approximation"},
+            complexity="O(R·N·k³)（R=实现数、N=格点、k≤24；R×N 预算硬顶 2000 万）",
+            approximation_class="sampling",
+            approximate=True,
+            algorithm_family="geostatistical_simulation",
+            method_references=["goovaerts1997"],
+            assumptions=[
+                "Goovaerts 1997 标准流程：normal-score 域沿随机路径逐节点条件 SK，"
+                "条件集 = k 近邻原始样本 + k 近邻已模拟节点",
+                "caller_seeded：单一 PCG64 流（路径+噪声同源），同 seed 逐位复现",
+                "ensemble 统计（P10/P50/P90/std）来自真实多实现——非解析方差面",
+                "条件树每 1024 节点增量重建——模拟值可见性滞后 ≤1 chunk（近似语义）",
+            ],
+            limitations=[
+                "蒙特卡洛近似：实现数有限时分位数有采样误差（R≥100 推荐用于分位数）",
+                "高斯性假设经 normal-score 秩变换近似成立——非高斯依赖结构未建模",
+                "病态邻域回退条件值经验抽样（与 OK 邻域均值回退同口径）",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:8"],
+            uncertainty_outputs=["monte_carlo_summary", "raster_uncertainty"],
+            random_seed_policy="caller_seeded",
+            numerical_tolerance="同 seed 双跑实现矩阵逐位一致（conformance 固定）；不同 seed 统计收敛随 R 增长",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_same_seed_bitwise_reproducible",
+                "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_ensemble_quantiles_ordered",
+                "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_budget_typed_reject",
+                "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_driver_end_to_end",
+            ],
+            uncertainty_producer_tests={
+                "monte_carlo_summary": "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_ensemble_quantiles_ordered",
+            },
+            resource_envelope=ResourceEnvelope(hard_max_cells=20_000_000, notes="R×N ensemble 单元硬顶；R≤2000、N≤4e6"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="seed_reproducibility"),
+            ),
+
         # ── dasymetric 原生化（Wave 6）：面插值（areal interpolation）────
 
         AlgorithmDescriptor(

@@ -1832,6 +1832,136 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             )
         return prediction_fc
 
+    @tool(registry, name="sgs_simulation",
+           description=(
+               "SGS 条件高斯模拟：序贯高斯多实现采样，输出逐格 P10/P50/P90 与"
+               "实现间标准差（风险制图 / 不确定性带，而非单一面）。normal-score "
+               "域条件 SK + 随机路径；同 seed 逐位复现（caller_seeded）。"
+               "\n何时用：需要『区间/概率/风险』而非单值——污染超标概率、储量区间、"
+               "不确定性制图；克里金方差面不够时（方差≠分布）。"
+               "\n何时不用：只要最优估计面 — 用 kriging_interpolation；样本<8 — 用 idw。"
+               "\n关键约束：实现数×格点数有预算硬顶（先拒绝不 OOM）；"
+               "ensemble 统计是蒙特卡洛近似（k 邻域条件近似，已披露）。"
+           ),
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
+               "value_field": "数值字段名",
+               "resolution": "H3 分辨率（5-9），默认 7",
+               "n_realizations": "模拟实现数（默认 100；越大 ensemble 越稳、耗时线性增）",
+               "seed": "随机种子（默认 42；同 seed 逐位复现）",
+               "neighbors": "条件 SK 邻域样本数(2-24)，默认 16",
+           })
+    def sgs_simulation(
+        geojson: Any,
+        value_field: str,
+        resolution: int = 7,
+        n_realizations: int = 100,
+        seed: int = 42,
+        neighbors: int = 16,
+    ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.gis.uncertainty import (
+            MonteCarloSummary,
+            UncertaintyMeasure,
+        )
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+        from app.lib.geo_analysis.kriging_simulation import (
+            sgs_simulation_surface as _sgs_surface,
+        )
+
+        params = apply_contract("sgs_analysis", {
+            "value_field": value_field,
+            "resolution": resolution,
+            "n_realizations": n_realizations,
+            "seed": seed,
+            "neighbors": neighbors,
+        })
+        data = safe_parse_geojson(geojson)
+        driver = _sgs_surface(
+            data, params["value_field"],
+            resolution=int(params["resolution"]),
+            n_realizations=int(params["n_realizations"]),
+            seed=int(params["seed"]),
+            neighbors=int(params["neighbors"]),
+        )
+        meta = driver["metadata"]
+        if not driver["records"]:
+            return {
+                "summary": "SGS：0 个目标单元（极地/范围退化）——诚实空结果。",
+                "features": [],
+                "sgs_metadata": meta,
+            }
+
+        pred_records = [
+            {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
+        ]
+        prediction_fc = h3_to_geojson(pred_records, params["value_field"])
+        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+            feat["properties"]["sgs_std"] = round(rec["sgs_std"], 6)
+            feat["properties"]["p10"] = round(rec["p10"], 6)
+            feat["properties"]["p90"] = round(rec["p90"], 6)
+        # P90−P10 宽度面：逐格不确定性带（map/export 披露消费）
+        width_records = [
+            {"h3_index": r["h3_index"], "value": r["p90"] - r["p10"]}
+            for r in driver["records"]
+        ]
+        uncertainty_fc = h3_to_geojson(width_records, "p90_minus_p10")
+
+        prediction_fc.update({
+            "summary": (
+                f"SGS 模拟完成：{len(prediction_fc['features'])} 个 H3 单元 × "
+                f"{meta['n_realizations']} 实现（seed={meta['seed']}，同 seed 逐位复现）；"
+                f"主值=P50，P90−P10 不确定带面已随结果输出。"
+            ),
+            "uncertainty": uncertainty_fc,
+            "sgs_metadata": meta,
+        })
+        descriptor = get_algorithm_registry().get("interpolation.sgs")
+        if descriptor is not None:
+            prediction_fc["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="sgs_simulation",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "resolution": int(params["resolution"]),
+                    "n_realizations": int(params["n_realizations"]),
+                    "seed": int(params["seed"]),
+                    "neighbors": int(params["neighbors"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "normal-score transform -> conditional SK on random path -> back-transform",
+                ],
+                uncertainty=[
+                    MonteCarloSummary(
+                        target="sgs_ensemble",
+                        interpretation=(
+                            "多实现 ensemble 统计（P10/P50/P90/实现间 std）——"
+                            "来自真实多实现采样，非解析方差面"),
+                        summary=[
+                            UncertaintyMeasure(
+                                measure="std", value=float(meta["ensemble_std_range"][1]),
+                                method="max inter-realization std (ddof=1)"),
+                            UncertaintyMeasure(
+                                measure="p10", value=float(meta["p10_range"][0]),
+                                method="ensemble min p10"),
+                            UncertaintyMeasure(
+                                measure="p90", value=float(meta["p90_range"][1]),
+                                method="ensemble max p90"),
+                        ],
+                    ),
+                ],
+            )
+        return prediction_fc
+
     @tool(registry, name="overlay_analysis",
            description="对两个几何图层进行空间叠加分析（如求交、合并、擦除等），返回结果及其统计信息",
            args_model=OverlayAnalysisArgs,

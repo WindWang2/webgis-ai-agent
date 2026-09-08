@@ -660,6 +660,13 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Geostatistics. Academic Press.",
         ),
         MethodReference(
+            "goovaerts1997",
+            "Geostatistics for Natural Resources Evaluation (SGS: sequential Gaussian simulation)",
+            "Goovaerts, P. (1997). Geostatistics for Natural Resources "
+            "Evaluation. Oxford University Press. (Ch. 7: conditional "
+            "simulation — sequential Gaussian algorithm.)",
+        ),
+        MethodReference(
             "journel1983",
             "Indicator kriging (nonparametric distribution estimation)",
             "Journel, A. G. (1983). Nonparametric Estimation of Spatial "

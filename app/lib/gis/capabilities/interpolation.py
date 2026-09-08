@@ -101,6 +101,16 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             purpose_template="块克里金",
         ),
 
+        # ── Science V4（W5）：地统计模拟 ─────────────────────────────
+        CapabilityDescriptor(
+            id="geostatistical_simulation", name="地统计模拟", category="analysis",
+            description="条件高斯多实现模拟（SGS）：P10/P50/P90/std ensemble，"
+                        "风险制图与不确定性传播；caller_seeded 可复现。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["terrain_surface"],
+            purpose_template="条件高斯模拟",
+        ),
+
         # ── dasymetric 原生化（Wave 6）：面插值（总量守恒重分配）────────
         CapabilityDescriptor(
             id="areal_interpolation", name="面插值（dasymetric）", category="analysis",

@@ -438,7 +438,9 @@
    "random_seed_policy": "deterministic",
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
-   "tests": [],
+   "tests": [
+    "tests/unit/lib/test_kriging_v4.py"
+   ],
    "uncertainty_outputs": [
     "raster_uncertainty"
    ]
@@ -658,6 +660,30 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "geostatistical_simulation"
+   ],
+   "category": "interpolation",
+   "conformance_tests": [
+    "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_same_seed_bitwise_reproducible",
+    "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_ensemble_quantiles_ordered",
+    "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_budget_typed_reject",
+    "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_driver_end_to_end"
+   ],
+   "deterministic": true,
+   "id": "interpolation.sgs",
+   "memory_cost": "high",
+   "random_seed_policy": "caller_seeded",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": [
+    "monte_carlo_summary",
+    "raster_uncertainty"
+   ]
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "spatial_interpolation"
    ],
    "category": "interpolation",
@@ -673,7 +699,9 @@
    "random_seed_policy": "deterministic",
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
-   "tests": [],
+   "tests": [
+    "tests/unit/lib/test_kriging_v4.py"
+   ],
    "uncertainty_outputs": [
     "raster_uncertainty"
    ]
@@ -4773,6 +4801,18 @@
    "tests": []
   },
   {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "general",
+   "id": "geostatistical_simulation",
+   "producer_algorithms": [
+    "interpolation.sgs"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
    "category": "statistics",
    "deterministic": true,
    "domain": "general",
@@ -6259,12 +6299,12 @@
   }
  ],
  "counts": {
-  "algorithms": 183,
+  "algorithms": 184,
   "artifact_types": 21,
-  "capabilities": 121,
-  "findings": 243,
+  "capabilities": 122,
+  "findings": 246,
   "recipes": 164,
-  "tools": 291
+  "tools": 292
  },
  "findings": [
   {
@@ -6314,6 +6354,12 @@
    "detail": "memory_cost=high but no backend_variants scale windows",
    "severity": "medium",
    "subject": "interpolation.regression_kriging"
+  },
+  {
+   "code": "ALGO_HEAVY_NO_VARIANTS",
+   "detail": "memory_cost=high but no backend_variants scale windows",
+   "severity": "medium",
+   "subject": "interpolation.sgs"
   },
   {
    "code": "ALGO_HEAVY_NO_VARIANTS",
@@ -7315,6 +7361,12 @@
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
    "detail": "missing descriptor fields: side_effect,tags",
    "severity": "low",
+   "subject": "sgs_simulation"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: side_effect,tags",
+   "severity": "low",
    "subject": "sky_view_factor_analysis"
   },
   {
@@ -7681,6 +7733,12 @@
    "code": "TOOL_UNTESTED",
    "detail": "registered tool without any static test reference",
    "severity": "medium",
+   "subject": "sgs_simulation"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "severity": "medium",
    "subject": "space_time_k_analysis"
   },
   {
@@ -7726,7 +7784,7 @@
    "subject": "webgis_world_state"
   }
  ],
- "fingerprint": "0d9912983a8f32dca6650de5ec9c7c20b22eaa7128e2accfdd2473efb93eba2d",
+ "fingerprint": "82114ef0a081a6cbd2c416e754a6b0152f816122da9b0089f808d1999085f51e",
  "gate": {
   "fields": {
    "capabilities": {
@@ -7795,7 +7853,7 @@
      "list_datasets",
      "local_join_count"
     ],
-    "missing_count": 47,
+    "missing_count": 48,
     "pass": true,
     "threshold": 83
    },
@@ -7823,13 +7881,13 @@
      "list_datasets",
      "local_join_count"
     ],
-    "missing_count": 47,
+    "missing_count": 48,
     "pass": true,
     "threshold": 83
    }
   },
   "pass": true,
-  "total": 291
+  "total": 292
  },
  "manifest_version": 1,
  "recipes": {
@@ -11037,7 +11095,8 @@
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
     "tests/unit/lib/test_interpolation_science_vnext.py",
-    "tests/unit/lib/test_kriging_interpolation.py"
+    "tests/unit/lib/test_kriging_interpolation.py",
+    "tests/unit/lib/test_kriging_v4.py"
    ],
    "tier": 2
   },
@@ -14085,6 +14144,27 @@
     "tests/unit/test_planning_v3_scenarios.py"
    ],
    "tier": 1
+  },
+  {
+   "capabilities": [
+    "geostatistical_simulation"
+   ],
+   "deterministic": null,
+   "execution_policy": "thread",
+   "flags": [
+    "untested",
+    "descriptor_incomplete"
+   ],
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "sgs_simulation",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "unclassified",
+   "status": "stable",
+   "tags": [],
+   "tests": [],
+   "tier": 2
   },
   {
    "capabilities": [

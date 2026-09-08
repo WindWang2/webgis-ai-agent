@@ -3,15 +3,15 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**1**
-- 内容指纹：`0d9912983a8f32dc…`
+- 内容指纹：`82114ef0a081a6cb…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 291 | 261 | 182 |
-| algorithms | 183 | 146 | 45 |
-| capabilities | 121 | 69 | 16 |
+| tools | 292 | 261 | 184 |
+| algorithms | 184 | 148 | 46 |
+| capabilities | 122 | 69 | 16 |
 | artifact_types | 21 | 21 | 0 |
 | recipes | 164 | 164（conformance 由 workflow 闸保护） | 0 |
 
@@ -19,19 +19,19 @@
 
 | field | coverage | threshold | status |
 |---|---|---|---|
-| side_effect | 84% | 83% | PASS（缺 47） |
-| tags | 84% | 83% | PASS（缺 47） |
+| side_effect | 84% | 83% | PASS（缺 48） |
+| tags | 84% | 83% | PASS（缺 48） |
 | latency_class | 100% | 95% | PASS（缺 0） |
 | memory_class | 100% | 95% | PASS（缺 0） |
 | capabilities | 62% | 60% | PASS（缺 112） |
 
-**gate: PASS**（`total=291`）
+**gate: PASS**（`total=292`）
 
 ## Findings（派生线索，非缺陷判定）
 
 > 静态引用 ≠ 行为覆盖。findings 只回答"哪里没有任何测试证据"，修复优先级需结合 02-coverage-risk-map 的风险分级。
 
-### TOOL_UNTESTED（30）
+### TOOL_UNTESTED（31）
 
 - `apply_layer_style`（medium）— registered tool without any static test reference
 - `cancel_execution_run`（medium）— registered tool without any static test reference
@@ -55,6 +55,7 @@
 - `restore_workspace_snapshot`（medium）— registered tool without any static test reference
 - `save_workspace_snapshot`（medium）— registered tool without any static test reference
 - `search_datasets`（medium）— registered tool without any static test reference
+- `sgs_simulation`（medium）— registered tool without any static test reference
 - `space_time_k_analysis`（medium）— registered tool without any static test reference
 - `temporal_changepoint`（medium）— registered tool without any static test reference
 - `webgis_checkpoint`（medium）— registered tool without any static test reference
@@ -68,7 +69,7 @@
 
 （无）
 
-### TOOL_DESCRIPTOR_INCOMPLETE（152）
+### TOOL_DESCRIPTOR_INCOMPLETE（153）
 
 - `add_marker`（low）— missing descriptor fields: capabilities
 - `aggregate_dataset`（low）— missing descriptor fields: capabilities
@@ -120,7 +121,7 @@
 - `get_lineage`（low）— missing descriptor fields: side_effect,tags,capabilities
 - `get_local_osm_catalog`（low）— missing descriptor fields: capabilities
 - `get_local_stats_catalog`（low）— missing descriptor fields: capabilities
-- …另有 102 条，见 quality-manifest.json
+- …另有 103 条，见 quality-manifest.json
 
 ### CAPABILITY_NO_PRODUCER（0）
 
@@ -168,7 +169,7 @@
 - `workspace.inspection.readonly`（medium）— algorithm declares no conformance test node ids
 - `workspace.snapshot.durable`（medium）— algorithm declares no conformance test node ids
 
-### ALGO_HEAVY_NO_VARIANTS（25）
+### ALGO_HEAVY_NO_VARIANTS（26）
 
 - `data.ingest.pipeline`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.block_kriging`（medium）— memory_cost=high but no backend_variants scale windows
@@ -178,6 +179,7 @@
 - `interpolation.indicator_kriging`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.rbf`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.regression_kriging`（medium）— memory_cost=high but no backend_variants scale windows
+- `interpolation.sgs`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.simple_kriging`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.universal_kriging`（medium）— memory_cost=high but no backend_variants scale windows
 - `point_pattern.ripley_k_env`（medium）— memory_cost=high but no backend_variants scale windows

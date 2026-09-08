@@ -9,7 +9,7 @@
 > （ResourceScaleMismatch / RasterResourceGuard），benchmark 结构门消费
 > 同一批声明。空字段 = 未声明（不构成承诺）。
 
-统计：88/183 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
+统计：89/184 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
 
 | 算法 | 复杂度 | 精度 | 资源包络 | 变体(窗口) | 取消 | 容差 | 成本 cpu/mem | 执行策略 |
 |---|---|---|---|---|---|---|---|---|
@@ -28,6 +28,7 @@
 | `interpolation.nearest_neighbor` | O(n log n + m)（cKDTree k=1 分段常值场） | exact | 8B/cell feat≤200000 cells≤4000000 | — | coarse | rtol=1e-12,atol=0 | low/medium | CELERY |
 | `interpolation.rbf` | O(n³) 系统分解 + O(m·n) 求值（RBF_HARD_CAP 类型化拒绝） | exact | 8B/feat feat≤100000 | — | none | rtol=1e-06,atol=1e-09 | high/high | CELERY |
 | `interpolation.regression_kriging` | OLS 趋势 + 残差 OK + 协变量 IDW 近似（目标栅格通道） | approximate | 24B/feat pairs≤200000 feat≤500000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
+| `interpolation.sgs` | O(R·N·k³)（R=实现数、N=格点、k≤24；R×N 预算硬顶 2000 万） | sampling | cells≤20000000 | — | chunk_boundary | rtol=1e-09,atol=0 | high/high | CELERY |
 | `interpolation.simple_kriging` | 同 OK：拟合 O(N_fit²) + 预测 O(m·(k+1)³)（协方差形式，无约束行） | exact | 24B/feat pairs≤200000 feat≤500000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
 | `interpolation.tin` | Delaunay O(n log n) + 逐格重心定位（>20 万样本类型化拒绝） | exact | 32B/feat feat≤200000 | — | none | rtol=1e-09,atol=0 | medium/medium | CELERY |
 | `interpolation.trend_surface` | O(n·d²)（单位盒缩放 OLS，d=多项式项数） | exact | 64B/feat | — | none | rtol=1e-09,atol=1e-12 | low/low | INLINE |

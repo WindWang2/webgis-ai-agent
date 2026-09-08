@@ -329,6 +329,36 @@ _SEED_CONTRACTS: List[ParameterContract] = [
             ),
         ],
     ),
+
+        ParameterContract(
+            id="sgs_analysis", version=1,
+            description="SGS 条件高斯模拟（多实现 ensemble：P10/P50/P90/std）",
+            parameters=[
+                ParameterSpec(
+                    name="value_field", type="string", required=True,
+                    description="模拟数值字段名",
+                ),
+                ParameterSpec(
+                    name="resolution", type="integer", default=7,
+                    minimum=5, maximum=9,
+                    description="H3 分辨率",
+                ),
+                ParameterSpec(
+                    name="n_realizations", type="integer", default=100,
+                    minimum=1, maximum=2000,
+                    description="模拟实现数（ensemble 预算 R×N 有硬顶）",
+                ),
+                ParameterSpec(
+                    name="seed", type="integer", default=42,
+                    description="随机种子（caller_seeded：同 seed 逐位复现）",
+                ),
+                ParameterSpec(
+                    name="neighbors", type="integer", default=16,
+                    minimum=2, maximum=24,
+                    description="条件 SK 邻域样本数上限",
+                ),
+            ],
+        ),
 ]
 
 

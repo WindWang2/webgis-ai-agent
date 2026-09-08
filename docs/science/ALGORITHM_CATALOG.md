@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：121 能力 · 183 算法 · 108 参数契约。
+统计：122 能力 · 184 算法 · 109 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -275,6 +275,18 @@ GEOS 拓扑叠加（intersection/union/difference 等），纯拓扑不量度。
 - **`geometry.overlay`** 几何叠加（`native`·成熟度 已验证）
   - 假设：GEOS 精确拓扑叠加（intersection/union/difference/symmetric_difference/identity）；叠加在 WGS84 工作帧执行：图层 CRS 不一致时先对齐到 layer_a；结果属性 = 两图层属性列的并集（gpd.overlay 语义）
   - 局限：纯拓扑运算：叠加输出坐标仍是度，叠加面积须另投影后量测；输入几何经 make_valid 修复（无效多边形可能改变边界形状）；面×点叠加结果是点集（输出按 polygon_feature_set 声明以面×面为主）
+
+## `geostatistical_simulation` — 地统计模拟
+
+条件高斯多实现模拟（SGS）：P10/P50/P90/std ensemble，风险制图与不确定性传播；caller_seeded 可复现。
+
+- **`interpolation.sgs`** SGS 条件高斯模拟（`native`·成熟度 已验证，契约: `sgs_analysis`，出处: `goovaerts1997`，精度: sampling）
+  - 假设：Goovaerts 1997 标准流程：normal-score 域沿随机路径逐节点条件 SK，条件集 = k 近邻原始样本 + k 近邻已模拟节点；caller_seeded：单一 PCG64 流（路径+噪声同源），同 seed 逐位复现；ensemble 统计（P10/P50/P90/std）来自真实多实现——非解析方差面
+  - 局限：蒙特卡洛近似：实现数有限时分位数有采样误差（R≥100 推荐用于分位数）；高斯性假设经 normal-score 秩变换近似成立——非高斯依赖结构未建模；病态邻域回退条件值经验抽样（与 OK 邻域均值回退同口径）
+  - 回退：`interpolation.kriging`→approximation
+  - 资源包络：像元硬上限 20000000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-09，atol=0
 
 ## `getis_ord_gi_star` — Getis-Ord Gi*
 
