@@ -17,7 +17,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 
@@ -51,7 +51,7 @@ def polygon_fc(n: int = 8, seed: int = 7, crs: str = _WGS84,
                value_field: Optional[str] = "value") -> Dict[str, Any]:
     """n 个网格对齐矩形多边形（2×4 布局内切分），无重叠。确定。"""
     rng = _rng(seed)
-    cols, rows = 4, (n + 3) // 4
+    cols = 4
     x0, y0, dx, dy = 103.95, 30.55, 0.04, 0.04
     features = []
     for i in range(n):

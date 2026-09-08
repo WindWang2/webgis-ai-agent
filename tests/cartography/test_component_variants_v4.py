@@ -15,7 +15,6 @@ from app.lib.cartography.chart_kinds import (
     AGENT_CHART_OPERATIONS,
     CHART_STATES,
     CHART_KINDS,
-    chart_kind_ids,
 )
 from app.lib.cartography.component_registry import get_component_registry
 from app.lib.cartography.component_templates import (

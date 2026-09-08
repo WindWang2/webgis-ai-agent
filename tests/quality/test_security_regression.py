@@ -506,7 +506,7 @@ SENSITIVE_BASELINE: tuple[str, ...] = (
 class TestSensitiveKeyParity:
     def test_jobs_redaction_denylist_covers_baseline_behaviorally(self):
         """落库面（analysis_tasks.parameters）：每个基线键的值都必须被替换。"""
-        from app.services.jobs.redaction import REDACTED, SENSITIVE_KEY_PARTS, safe_parameters
+        from app.services.jobs.redaction import SENSITIVE_KEY_PARTS, safe_parameters
 
         for key in SENSITIVE_BASELINE:
             scrubbed = safe_parameters({key: "LEAK-VALUE"})
@@ -575,7 +575,6 @@ class TestSecurityManifestGate:
         assert issues and tampered[0].control_id in issues[0]
 
     def test_manifest_flags_tested_control_without_tests(self):
-        import copy
 
         from app.lib.quality.security_manifest import SECURITY_CONTROLS, SecurityControl, validate_security_manifest
 

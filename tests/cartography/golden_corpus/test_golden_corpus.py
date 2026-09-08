@@ -34,7 +34,6 @@ def test_corpus_size_is_meaningful() -> None:
     # V4（Design System）：500+ 结构化用例 —— 模型×模板×变体钉选×版式×
     # 布局约束×标注场景×多层绑定×边界全覆盖
     assert len(cases) >= 500, f"corpus 过小: {len(cases)}"
-    from collections import Counter
     kinds = {c["kind"] for c in cases}
     assert {"base", "variants", "stress", "profiles", "layout", "labels",
             "multi", "planned-gate", "edge"} <= kinds

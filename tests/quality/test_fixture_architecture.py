@@ -28,7 +28,6 @@ MAX_BYTES = 256 * 1024  # 任何样本 ≤256KB（实际都在几 KB 量级）
 
 @pytest.mark.parametrize("name", sorted(SCENARIO_BUILDERS))
 def test_fixtures_are_deterministic(name):
-    import functools
 
     builder = SCENARIO_BUILDERS[name]
     sig = __import__("inspect").signature(builder).parameters

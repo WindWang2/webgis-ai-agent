@@ -539,7 +539,7 @@ def render_markdown(manifest: QualityManifest) -> str:
     lines.append("")
     gate_report = manifest.gate_report
     verdict = "PASS" if gate_report["pass"] else "FAIL"
-    lines.append(f"| field | coverage | threshold | status |")
+    lines.append("| field | coverage | threshold | status |")
     lines.append("|---|---|---|---|")
     for f in GATE_FIELDS:
         fd = gate_report["fields"][f]

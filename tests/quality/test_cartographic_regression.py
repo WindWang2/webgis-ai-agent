@@ -144,7 +144,7 @@ async def test_analysis_artifact_layer_parity_expected_vs_observed(
     assert not res.is_error, res.error_msg
 
     spec = await mapspec_store_instance.get_mapspec(clean_session)
-    observed = [(l["id"], l["type"]) for l in spec["layers"]]
+    observed = [(layer["id"], layer["type"]) for layer in spec["layers"]]
     assert observed == [(expected_layer["id"], expected_layer["type"])], observed
     # source 面也必须在册且带派生 profile（观测不缺证据）
     src = (spec.get("sources") or {}).get(expected_layer["source"]) or {}
@@ -178,7 +178,7 @@ async def test_presentation_patch_expected_state_matches_observed(clean_session)
         PatchLayerPresentationIntent(layer_id="pts", visible=False, opacity=0.3),
     )
     spec = await mapspec_store_instance.get_mapspec(clean_session)
-    ly = next(l for l in spec["layers"] if l["id"] == "pts")
+    ly = next(layer for layer in spec["layers"] if layer["id"] == "pts")
     assert (ly.get("layout") or {}).get("visibility") == "none"
     paint = ly.get("paint") or {}
     observed_opacity = paint.get("circle-opacity", paint.get("opacity"))
@@ -189,7 +189,7 @@ async def test_presentation_patch_expected_state_matches_observed(clean_session)
         clean_session, PatchLayerPresentationIntent(layer_id="pts", visible=True)
     )
     spec2 = await mapspec_store_instance.get_mapspec(clean_session)
-    ly2 = next(l for l in spec2["layers"] if l["id"] == "pts")
+    ly2 = next(layer for layer in spec2["layers"] if layer["id"] == "pts")
     assert (ly2.get("layout") or {}).get("visibility") != "none"
 
 
@@ -210,7 +210,7 @@ async def test_zorder_reorder_expected_vs_observed(clean_session):
         clean_session, ReorderLayersIntent(layer_ids=["top", "base"])
     )
     spec = await mapspec_store_instance.get_mapspec(clean_session)
-    assert [l["id"] for l in spec["layers"]] == ["top", "base"]
+    assert [layer["id"] for layer in spec["layers"]] == ["top", "base"]
 
 
 async def test_user_wins_hide_disclosed_not_overridden(clean_session):
@@ -310,7 +310,7 @@ async def test_choropleth_requires_legend_and_semantic_review_certifies(clean_se
 )
 async def test_legend_hide_mutation_is_observed_after_converter_upsert(clean_session):
     """期望态（隐藏地图图例）必须等于提交后的观测态 —— 静默丢弃即违规。"""
-    spec = await _upsert_choropleth(clean_session)
+    await _upsert_choropleth(clean_session)
     engine = MapSpecLifecycleEngine()
     res = await engine.apply_mutation(
         clean_session, SetLayoutIntent(legend={"visible": False})

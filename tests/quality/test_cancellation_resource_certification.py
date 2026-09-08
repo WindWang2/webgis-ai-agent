@@ -23,8 +23,6 @@ from gen_resource_certification import DEFAULT_CANCELLATION, DEFAULT_RESOURCE, g
 from app.lib.cancellation import CancellationToken, OperationCancelled, CURRENT_TOKEN  # noqa: E402
 from app.lib.quality.certification import (  # noqa: E402
     cancellation_coverage,
-    render_cancellation_md,
-    render_resource_md,
 )
 
 
