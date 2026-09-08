@@ -5,6 +5,7 @@ confidence；绝不虚构精度（ADR-0094 honest-unknown 文化的延伸）。
 统计以 **descriptor fingerprint 为键** —— 数据集修订变化后旧统计自然
 失配（配合 planner 的 revision warning），缓存只是性能优化不是真相。
 """
+
 from __future__ import annotations
 
 import logging
@@ -40,18 +41,26 @@ class DatasetStatistics(BaseModel):
     dataset_fingerprint: str
     source_type: Optional[str] = None
     row_count: Optional[int] = Field(default=None, ge=0)
-    extent: Optional[List[float]] = None          # [minx, miny, maxx, maxy]
+    extent: Optional[List[float]] = None  # [minx, miny, maxx, maxy]
     geometry_type: Optional[str] = None
     has_spatial_index: Optional[bool] = None
-    resolution: Optional[float] = None            # 栅格源（米/度每像素）
+    resolution: Optional[float] = None  # 栅格源（米/度每像素）
     overview_levels: Optional[int] = None
     columns: List[ColumnStatistics] = Field(default_factory=list)
-    revision_strength: str = "weak"               # strong | weak
+    revision_strength: str = "weak"  # strong | weak
     collected_at: Optional[str] = None
-    collector: str = "descriptor"                 # descriptor | postgis_pgstats | geoparquet_footer
+    collector: str = "descriptor"  # descriptor | postgis_pgstats | geoparquet_footer
     # ---- V4 additive（ADR-0101 D6）：footer/文件级事实 ----
     row_group_count: Optional[int] = Field(default=None, ge=0)
     total_bytes: Optional[int] = Field(default=None, ge=0)  # 压缩后文件字节
+    # ---- V6 additive（ADR-0118 W2）：空间统计（dict 形态避免反向依赖）----
+    crs: Optional[str] = None  # 源 CRS 声明（如 "EPSG:4326"）
+    avg_vertices: Optional[float] = Field(
+        default=None, gt=0
+    )  # 每要素平均顶点（复杂度）
+    spatial_histogram: Optional[Dict[str, Any]] = (
+        None  # 网格直方图 meta（spatial_stats 模型）
+    )
 
     def column(self, name: str) -> Optional[ColumnStatistics]:
         for c in self.columns:
@@ -84,14 +93,24 @@ def statistics_from_descriptor(descriptor: Any) -> Optional[DatasetStatistics]:
     stats = DatasetStatistics(
         dataset_fingerprint=str(fp),
         source_type=getattr(descriptor, "source_type", None),
-        row_count=meta.get("row_count") or _coerce_int(getattr(descriptor, "feature_count", None)),
-        extent=_coerce_bbox(getattr(descriptor, "bbox", None)) or _coerce_bbox(meta.get("bbox")),
+        row_count=meta.get("row_count")
+        or _coerce_int(getattr(descriptor, "feature_count", None)),
+        extent=_coerce_bbox(getattr(descriptor, "bbox", None))
+        or _coerce_bbox(meta.get("bbox")),
         geometry_type=getattr(descriptor, "geometry_type", None),
         has_spatial_index=_coerce_bool(meta.get("has_geometry_index")),
         resolution=_coerce_float(meta.get("resolution")),
         overview_levels=_coerce_int(meta.get("overview_levels")),
         row_group_count=_coerce_int(meta.get("num_row_groups")),
         revision_strength=meta.get("revision_strength", "weak"),
+        # V6 additive（ADR-0118 W2）：CRS / 复杂度 / 空间直方图 meta。
+        crs=_coerce_str(meta.get("srs") or meta.get("crs")),
+        avg_vertices=_coerce_positive_float(meta.get("avg_vertices")),
+        spatial_histogram=(
+            meta["spatial_histogram"]
+            if isinstance(meta.get("spatial_histogram"), dict)
+            else None
+        ),
         # ADR-0101 D6：采集器由 descriptor 显式标注（geoparquet footer 生产者），
         # 缺省仍是 descriptor 收割。
         collector=meta.get("stats_collector") or "descriptor",
@@ -99,17 +118,30 @@ def statistics_from_descriptor(descriptor: Any) -> Optional[DatasetStatistics]:
     col_stats = meta.get("column_statistics")
     if isinstance(col_stats, list):
         stats.columns = [
-            ColumnStatistics(**c) for c in col_stats
+            ColumnStatistics(**c)
+            for c in col_stats
             if isinstance(c, dict) and isinstance(c.get("name"), str)
         ][:128]
-    if stats.row_count is None and not stats.columns:
+    if (
+        stats.row_count is None
+        and not stats.columns
+        and stats.spatial_histogram is None
+    ):
         return None  # 没有任何真实统计 —— 诚实返回 None
     return stats
 
 
-def observe_row_count(
-    source_type: str, dataset_fingerprint: str, count: Any
-) -> bool:
+def _coerce_str(v: Any) -> Optional[str]:
+    return v if isinstance(v, str) and v else None
+
+
+def _coerce_positive_float(v: Any) -> Optional[float]:
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+        return float(v)
+    return None
+
+
+def observe_row_count(source_type: str, dataset_fingerprint: str, count: Any) -> bool:
     """V5（Wave 9）：把响应里**已收到**的诚实总量计数收割为行级统计。
 
     供 ArcGIS returnCountOnly / OGC-API·WFS·STAC numberMatched 等"查询
@@ -127,13 +159,15 @@ def observe_row_count(
         fp = str(dataset_fingerprint or "")
         if not fp:
             return False
-        _store.put(DatasetStatistics(
-            dataset_fingerprint=fp,
-            source_type=source_type,
-            row_count=count,
-            revision_strength="weak",
-            collector="observed_count",
-        ))
+        _store.put(
+            DatasetStatistics(
+                dataset_fingerprint=fp,
+                source_type=source_type,
+                row_count=count,
+                revision_strength="weak",
+                collector="observed_count",
+            )
+        )
         return True
     except Exception:  # noqa: BLE001 - 统计收割绝不阻断查询路径
         return False
@@ -152,14 +186,18 @@ def _coerce_bool(v: Any) -> Optional[bool]:
 
 
 def _coerce_bbox(v: Any) -> Optional[List[float]]:
-    if isinstance(v, (list, tuple)) and len(v) == 4 and all(
-        isinstance(x, (int, float)) for x in v
+    if (
+        isinstance(v, (list, tuple))
+        and len(v) == 4
+        and all(isinstance(x, (int, float)) for x in v)
     ):
         return [float(x) for x in v]
     return None
 
 
-def statistics_for_request(descriptor: Any, fingerprint: Optional[str] = None) -> Optional[DatasetStatistics]:
+def statistics_for_request(
+    descriptor: Any, fingerprint: Optional[str] = None
+) -> Optional[DatasetStatistics]:
     """请求期统计收割（G-F3 生产接线；V4 增加持久层旁路）。
 
     进程 TTL 缓存 → descriptor 收割 → **durable store**（advisory，
@@ -192,7 +230,9 @@ class StatisticsStore:
     指纹失效；**绝不以缓存寿命做正确性机制**（统计弱新鲜度由 planner
     的 revision warning 表达）。"""
 
-    def __init__(self, ttl_s: float = STATISTICS_TTL_S, max_entries: int = _STAT_MAX_ENTRIES):
+    def __init__(
+        self, ttl_s: float = STATISTICS_TTL_S, max_entries: int = _STAT_MAX_ENTRIES
+    ):
         self._ttl = ttl_s
         self._max = max_entries
         self._entries: OrderedDict[str, tuple[float, DatasetStatistics]] = OrderedDict()
@@ -241,7 +281,9 @@ def invalidate_statistics(fingerprint: Optional[str] = None) -> None:
     _store.invalidate(fingerprint)
 
 
-def collect_postgis_statistics(fetch_all: Any, schema: str, table: str, limit_columns: int = 64) -> Dict[str, Dict[str, Any]]:
+def collect_postgis_statistics(
+    fetch_all: Any, schema: str, table: str, limit_columns: int = 64
+) -> Dict[str, Dict[str, Any]]:
     """pg_stats 轻量探针：每列 n_distinct/null_frac（单条有界查询）。
 
     ``fetch_all(sql, params) -> rows`` 由调用方注入（adapter 的连接上下文），
@@ -272,7 +314,9 @@ def collect_postgis_statistics(fetch_all: Any, schema: str, table: str, limit_co
     return out
 
 
-def collect_geoparquet_statistics(path: str, dataset_fingerprint: str) -> Optional[DatasetStatistics]:
+def collect_geoparquet_statistics(
+    path: str, dataset_fingerprint: str
+) -> Optional[DatasetStatistics]:
     """GeoParquet footer 统计（V4：兑现 V3 声明过的 collector，诚实生产者）。
 
     只读 footer/metadata，**绝不读列数据**：
@@ -307,7 +351,11 @@ def collect_geoparquet_statistics(path: str, dataset_fingerprint: str) -> Option
             import pyogrio  # type: ignore
 
             info = pyogrio.read_info(path)
-            row_count = _coerce_int(int(info.get("features") or 0)) if info.get("features") is not None else None
+            row_count = (
+                _coerce_int(int(info.get("features") or 0))
+                if info.get("features") is not None
+                else None
+            )
             geometry_type = info.get("geometry_type")
             names = [f.get("name") for f in (info.get("fields") or [])]
     except Exception as exc:  # noqa: BLE001 - 统计收集绝不阻断查询路径
@@ -383,7 +431,8 @@ class DurableStatisticsStore:
         with self._pool_lock:
             if self._pool is None:
                 self._pool = ThreadPoolExecutor(
-                    max_workers=2, thread_name_prefix="stats-db")
+                    max_workers=2, thread_name_prefix="stats-db"
+                )
             return self._pool
 
     def _call_with_timeout(self, fn, *args):
@@ -395,7 +444,9 @@ class DurableStatisticsStore:
 
         return SessionLocal()
 
-    def load(self, dataset_fingerprint: str, *, now: Optional[Any] = None) -> Optional[DatasetStatistics]:
+    def load(
+        self, dataset_fingerprint: str, *, now: Optional[Any] = None
+    ) -> Optional[DatasetStatistics]:
         from datetime import datetime, timezone
 
         try:
@@ -410,7 +461,10 @@ class DurableStatisticsStore:
                 with self._session() as db:
                     return (
                         db.query(DatasetStatisticsRecord)
-                        .filter(DatasetStatisticsRecord.dataset_fingerprint == str(dataset_fingerprint))
+                        .filter(
+                            DatasetStatisticsRecord.dataset_fingerprint
+                            == str(dataset_fingerprint)
+                        )
                         .order_by(DatasetStatisticsRecord.collected_at.desc())
                         .limit(1)
                         .first()
@@ -436,16 +490,18 @@ class DurableStatisticsStore:
 
             def _insert() -> None:
                 with self._session() as db:
-                    db.add(DatasetStatisticsRecord(
-                        dataset_fingerprint=stats.dataset_fingerprint[:64],
-                        source_type=stats.source_type,
-                        collector=stats.collector,
-                        confidence=stats.confidence,
-                        revision_strength=stats.revision_strength,
-                        stats_json=stats.model_dump(mode="json"),
-                        collected_at=now,
-                        expires_at=now + timedelta(seconds=self._ttl_s),
-                    ))
+                    db.add(
+                        DatasetStatisticsRecord(
+                            dataset_fingerprint=stats.dataset_fingerprint[:64],
+                            source_type=stats.source_type,
+                            collector=stats.collector,
+                            confidence=stats.confidence,
+                            revision_strength=stats.revision_strength,
+                            stats_json=stats.model_dump(mode="json"),
+                            collected_at=now,
+                            expires_at=now + timedelta(seconds=self._ttl_s),
+                        )
+                    )
                     db.commit()
 
             ok = self._call_with_timeout(_insert)
@@ -475,24 +531,37 @@ class DurableStatisticsStore:
             removed = 0
             with SessionLocal() as db:
                 expired = [
-                    r[0] for r in db.query(DatasetStatisticsRecord.id).filter(
+                    r[0]
+                    for r in db.query(DatasetStatisticsRecord.id)
+                    .filter(
                         DatasetStatisticsRecord.expires_at.isnot(None),
                         DatasetStatisticsRecord.expires_at < cutoff,
-                    ).limit(self._prune_batch).all()
+                    )
+                    .limit(self._prune_batch)
+                    .all()
                 ]
                 if expired:
-                    db.execute(delete(DatasetStatisticsRecord).where(
-                        DatasetStatisticsRecord.id.in_(expired)))
+                    db.execute(
+                        delete(DatasetStatisticsRecord).where(
+                            DatasetStatisticsRecord.id.in_(expired)
+                        )
+                    )
                     removed += len(expired)
                 # 保留上限：按 collected_at 倒序保留 max_rows，多余删除。
                 extra = [
-                    r[0] for r in db.query(DatasetStatisticsRecord.id).order_by(
-                        DatasetStatisticsRecord.collected_at.desc()
-                    ).offset(self._max_rows).limit(self._prune_batch).all()
+                    r[0]
+                    for r in db.query(DatasetStatisticsRecord.id)
+                    .order_by(DatasetStatisticsRecord.collected_at.desc())
+                    .offset(self._max_rows)
+                    .limit(self._prune_batch)
+                    .all()
                 ]
                 if extra:
-                    db.execute(delete(DatasetStatisticsRecord).where(
-                        DatasetStatisticsRecord.id.in_(extra)))
+                    db.execute(
+                        delete(DatasetStatisticsRecord).where(
+                            DatasetStatisticsRecord.id.in_(extra)
+                        )
+                    )
                     removed += len(extra)
                 db.commit()
             return removed
