@@ -1,5 +1,32 @@
 # Changelog
 
+## [Unreleased] - 2026-09-09
+
+### Added
+- GeoCompute Cluster Runtime V6: runs gain a durable control plane
+  (`geocompute_runs`/`geocompute_workers`/`geocompute_resource_usage`) with
+  lease/epoch fencing, coordinator leadership arbitration, stale-lease
+  reclamation, distributed cancellation (any process can request; queued runs
+  converge directly, running runs via 0.5s heartbeat watchdog), priority
+  preemption at node boundaries, tenant weighted-fair dispatch with
+  starvation-free round-robin, profile channel matching, and a cluster
+  resource ledger (advisory by default, `WEBGIS_CLUSTER_LEDGER_ENFORCING=1`
+  for enforced admission). New REST: `POST /geocompute/plans/runs` (202 async
+  submit with 413/429 bounds), `GET /geocompute/runs` (owner-scoped merge of
+  cluster rows and terminal snapshots), upgraded `GET /runs/{id}` /
+  `POST /plans/runs/{id}/cancel` (cross-process), `GET /geocompute/cluster/
+  metrics` (admin, bounded cardinality). Coordinator is opt-in via
+  `WEBGIS_CLUSTER_COORDINATOR=1`; sync `/plans/execute` behavior is unchanged.
+  Durable node dispatch now carries the plan budget into the worker task body
+  (worker-side row caps no longer rely on the hard node cap alone).
+
+### Fixed
+- GeoCompute default session factories (`run_evidence`, `reuse_index`) returned
+  a `sessionmaker` instead of a `Session`, which is not a context manager on
+  SQLAlchemy 2.0 — production default-path run evidence snapshots and
+  cross-process reuse records were silently dropped (fail-open). They now
+  return a session instance (same discipline as the jobs subsystem).
+
 ## [Unreleased] - 2026-09-07
 
 ### Added
