@@ -11,6 +11,12 @@ import { setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 
 import { devOnly } from "@/lib/utils/logger";
 import { resetViewportSeq } from "@/lib/utils/viewport-seq";
+import {
+  markWorkbenchHydrated,
+  notifyWorkbenchSessionChanged,
+  startWorkbenchPersistence,
+  workbenchPersistenceArmed,
+} from '@/lib/workbench/persistence';
 
 const MAX_SESSION_OWNER_TOKENS = 128;
 
@@ -127,6 +133,11 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     if (historyOpen) refreshSessions();
   }, [historyOpen, refreshSessions]);
 
+  // Workbench V5（W3）：组织态持久化订阅（workspace 挂载一次；幂等）。
+  useEffect(() => {
+    startWorkbenchPersistence();
+  }, []);
+
   const selectSession = useCallback(
     async (sid: string, onRestoreMessages: (messages: any[], notice?: string) => void) => {
       // Cancel previous session restoration requests to avoid stale layer insertions
@@ -153,6 +164,10 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       useHudStore.getState().resetDockState();
       // Workbench V4：分组树/多选引用旧会话图层 id —— 同 dock 语义，随会话清空。
       useHudStore.getState().resetLayerGroups();
+      // Workbench V5（W3）：组织态持久化切换目标会话并解除武装 —— 恢复完成
+      // （hydrateWorkbenchFromSpec / markWorkbenchHydrated）前绝不提交，
+      // 防恢复竞态把空 doc 盖掉新会话的服务器端 doc。
+      notifyWorkbenchSessionChanged(sid);
       // #548: explorer task cards are session-scoped — a session switch must not
       // leak the previous session's cards into the new session's task tab.
       clearExplorerTasks();
@@ -239,6 +254,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
           // #552: 图层还原逻辑抽到 lib/session/map-state-restore（观察态优先 +
           // ref 数据回填），会话切换与 /story 分享页共用同一份实现。
           await restoreSessionMapLayers(state, { sessionId: sid, token, signal });
+        } else {
+          // 无 map_state（空会话）：武装空基线 —— 用户编辑从此开始持久化。
+          markWorkbenchHydrated();
         }
 
         // 审计 F39：切换会话后必须刷新分析资产列表，否则 session A 的资产
@@ -308,6 +326,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       useHudStore.getState().resetDockState();
       // Workbench V4：分组树/多选引用旧会话图层 id —— 同 dock 语义，随会话清空。
       useHudStore.getState().resetLayerGroups();
+      // Workbench V5（W3）：新会话（尚无 sid）——解除组织态持久化武装。
+      notifyWorkbenchSessionChanged(null);
       // #548: new session = fresh explorer task tab (same session-scope rule as
       // selectSession, this path had no clear at all before).
       clearExplorerTasks();
@@ -327,6 +347,13 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
 
   const rememberSessionToken = useCallback((sid: string, token: string) => {
     if (!sid || !token) return;
+    // Workbench V5（W3）：新会话（首发消息后 SSE 签发 sid/token）没有
+    // selectSession 恢复路径 —— 以空基线武装组织态持久化（已在恢复流程中
+    // 武装时为 no-op，不打断正确基线）。
+    if (!workbenchPersistenceArmed()) {
+      notifyWorkbenchSessionChanged(sid);
+      markWorkbenchHydrated();
+    }
     // Cap capability retention: long-lived tabs may visit many anonymous
     // sessions, but ACK routing only needs a bounded recent working set.
     if (!sessionTokensRef.current.has(sid)) {
