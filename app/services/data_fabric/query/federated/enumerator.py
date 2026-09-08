@@ -75,6 +75,7 @@ class SourceFacts:
     where_raw: Optional[str] = None  # 不可解析的原始过滤（诚实保留）
     fields: Optional[List[str]] = None
     stats: Optional[DatasetStatistics] = None  # 完整统计（可选；selectivity 消费）
+    caps: Optional[Any] = None  # AdapterCapabilitiesV2（W10 探测注入；下推边界解释）
 
 
 @dataclass
