@@ -852,6 +852,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["dataset"], name="query_federated_chain",
+        capabilities=["federated_dataset_query"],
         description=(
             "N 源（2..4）有界左深链式联邦查询：属性连接 / 点面空间连接 / 聚合+连接逐跳串联。"
             "成本排序（estimated_rows 提示，可选 stats 提示的有界枚举）、最小投影自动派生、"

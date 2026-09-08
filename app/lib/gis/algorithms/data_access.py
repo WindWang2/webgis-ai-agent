@@ -96,4 +96,63 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             random_seed_policy="unseeded",
             scientific_status="EXPERIMENTAL",
         ),
-]
+
+        # ── 数据控制平面（Data Control Plane V4 / GeoCompute V5）──────────
+
+        AlgorithmDescriptor(
+            id="data.ingest.pipeline", name="会话数据摄入管线",
+            capabilities=["dataset_ingest"],
+            output_artifact_type="feature_collection",
+            tool_candidates=["ingest_dataset"],
+            cpu_cost="medium", memory_cost="high", io_cost="medium",
+            preferred_execution_policy="ASYNC",
+            algorithm_family="data_access",
+            assumptions=["内容指纹去重可重复触发（同载荷幂等返回既有 ref）"],
+            limitations=["内联载荷 ≤8MB；更大文件走 POST /upload 通道"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+            priority=10,
+        ),
+
+        AlgorithmDescriptor(
+            id="data.federated.chain", name="多源链式联邦查询",
+            capabilities=["federated_dataset_query"],
+            output_artifact_type="stats_table",
+            tool_candidates=["query_federated_chain"],
+            cpu_cost="medium", memory_cost="medium", io_cost="high",
+            preferred_execution_policy="CELERY",
+            algorithm_family="data_access",
+            assumptions=["左深链计划；半连接右表约减在预算内"],
+            limitations=["逐跳预算 fail-fast；绝不拉全量大表"],
+            crs_class="PROJECTED_REQUIRED",
+            random_seed_policy="deterministic",
+            priority=10,
+        ),
+
+        AlgorithmDescriptor(
+            id="workspace.snapshot.durable", name="工作空间快照（保存/恢复）",
+            capabilities=["workspace_snapshot"],
+            tool_candidates=["save_workspace_snapshot", "restore_workspace_snapshot"],
+            cpu_cost="low", memory_cost="medium", io_cost="medium",
+            preferred_execution_policy="ASYNC",
+            algorithm_family="data_access",
+            assumptions=["快照元数据始终落盘；materialize=claimed 时载荷物化到持久内容库"],
+            limitations=["materialize=none 的快照在会话过期后仅元数据可读"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+            priority=10,
+        ),
+
+        AlgorithmDescriptor(
+            id="workspace.inspection.readonly", name="工作空间状态检视（只读）",
+            capabilities=["workspace_state_inspection"],
+            tool_candidates=["describe_workspace", "list_workspace_snapshots"],
+            cpu_cost="low", memory_cost="low", io_cost="low",
+            preferred_execution_policy="LOCAL",
+            algorithm_family="data_access",
+            assumptions=["只读投影，绝不改工作空间状态"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+            priority=10,
+        ),
+    ]

@@ -27,6 +27,7 @@ def register_raster_cog_tools(registry: ToolRegistry):
 
     @tool(registry, name="convert_raster_to_cog",
           tier=2, domains=["raster"],
+          capabilities=["raster_cog_conversion"],
           description=(
               "栅格转 Cloud-Optimized GeoTIFF (COG)：tiled + 内置金字塔 + 压缩，远程/瓦片读取提速。"
               "\n何时用：(1) 上传的大 TIFF 要发布为可流式瓦片图层；(2) 栅格要供远端 range-read 访问；"

@@ -50,6 +50,11 @@ def register_ingest_tools(registry: ToolRegistry) -> None:
         tier=2,
         domains=["dataset"],
         name="ingest_dataset",
+        side_effect="artifact_creation",
+        tags=["摄入", "ingest", "会话数据资产"],
+        capabilities=["dataset_ingest"],
+        latency_class="medium",
+        memory_class="heavy",
         description=(
             "把一个内联 GeoJSON FeatureCollection 摄入当前会话：内容指纹去重 →"
             "有界画像 → 质量诊断 → 会话产物登记（账本可追溯、可复用）。"

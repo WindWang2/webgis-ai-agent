@@ -29,6 +29,11 @@ def register_workspace_tools(registry) -> None:
         tier=2,
         domains=["dataset"],
         name="save_workspace_snapshot",
+        side_effect="state_mutation",
+        tags=["快照", "workspace", "持久化"],
+        capabilities=["workspace_snapshot"],
+        latency_class="medium",
+        memory_class="medium",
         description=(
             "保存当前工作空间快照：产物账本 + 图层引用 + 视图设置 + 持久指针。"
             "materialize=claimed 时把存活载荷物化到持久内容库（会话过期后仍可"
@@ -84,6 +89,11 @@ def register_workspace_tools(registry) -> None:
         tier=2,
         domains=["dataset"],
         name="list_workspace_snapshots",
+        side_effect="pure",
+        tags=["快照", "清单", "只读"],
+        capabilities=["workspace_state_inspection"],
+        latency_class="fast",
+        memory_class="light",
         description=(
             "列出本会话可读的工作空间快照（id/标签/时间/产物数；≤50 条）。"
             "✅ 用于：恢复前先看看有哪些存档。"
@@ -104,6 +114,11 @@ def register_workspace_tools(registry) -> None:
         tier=2,
         domains=["dataset"],
         name="restore_workspace_snapshot",
+        side_effect="state_mutation",
+        tags=["快照", "恢复", "重物化"],
+        capabilities=["workspace_snapshot"],
+        latency_class="medium",
+        memory_class="medium",
         description=(
             "核查或恢复一个工作空间快照。mode=verify 只出报告（哪些产物/图层"
             "已失效、持久指针是否完好）；mode=register 恢复产物账本血缘，并把"
@@ -142,6 +157,11 @@ def register_workspace_tools(registry) -> None:
         tier=2,
         domains=["dataset"],
         name="describe_workspace",
+        side_effect="pure",
+        tags=["工作空间", "盘点", "持久化健康度"],
+        capabilities=["workspace_state_inspection"],
+        latency_class="fast",
+        memory_class="light",
         description=(
             "盘点当前工作空间：快照数量、产物生命周期分布、图层/图表引用、"
             "持久覆盖率（多少产物已有可恢复的持久内容）。✅ 用于：评估当前"
