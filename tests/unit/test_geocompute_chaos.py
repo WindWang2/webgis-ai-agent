@@ -341,7 +341,8 @@ def test_executor_marks_node_failed_when_durable_job_dies_stale(monkeypatch):
     descendants, fail the run, and leave no node output behind."""
     from app.services.geocompute import durable as durable_mod
 
-    def fake_dispatch(node, *, session_id, plan_fingerprint, deadline_s):
+    def fake_dispatch(node, *, session_id, plan_fingerprint, deadline_s,
+                      budget=None):  # budget: V6 穿透参数（跟随真实签名）
         return {"job_id": 4242}
 
     def stale_await(job_id, *, session_id, deadline_ts, cancel_token=None):

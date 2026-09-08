@@ -18,7 +18,6 @@ from sqlalchemy.orm import sessionmaker
 from app.services.geocompute import ops
 from app.services.geocompute.cluster.scheduler import ClusterCoordinator
 from app.services.geocompute.cluster.store import (
-    ClusterLedger,
     ClusterRunStore,
     _utcnow,
 )
@@ -429,10 +428,8 @@ class TestFairness:
     def test_fair_state_rebuild_from_dispatch_seq(self, env):
         store, make_coordinator, _ = env
         coord = make_coordinator("coord-a")
-        rids = [
+        for i in range(4):
             _submit(store, _simple_plan(unique=f"fair{i}"), tenant_raw=f"org{i % 2}")
-            for i in range(4)
-        ]
         for _ in range(4):
             coord.tick()
         last = store.tenant_last_dispatch()

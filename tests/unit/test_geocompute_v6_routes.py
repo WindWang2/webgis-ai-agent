@@ -150,9 +150,6 @@ class TestSubmit:
         assert resp.json()["detail"]["code"] == "PLAN_SNAPSHOT_TOO_LARGE"
 
     def test_submit_backpressure_429(self, v6_env):
-        from app.services.geocompute.cluster.errors import (
-            ClusterBackpressureError,
-        )
         from app.services.geocompute.cluster.store import ClusterRunStore
 
         # 直接塞满租户队列（REST 路径用默认上限 32）

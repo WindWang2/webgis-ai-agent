@@ -204,7 +204,6 @@ class TestReclaim:
         assert snap["global"]["usage_rows"] == 0
         assert snap["global"]["usage_units"] == 0
         # reclaim 归还后 reserved_* 清零（崩溃清理的幂等证明）
-        row = a.get_run(rid)
         with factory() as db:
             r = db.execute(
                 select_from_run(rid)

@@ -160,7 +160,7 @@ class TestWorkerBudgetPenetration:
             node_id="n1", category="filter", operation="eq",
             parameters={"features": [{"x": 1}]},
         )
-        plan = ExecutionPlan(plan_id="p", nodes=[node])
+        ExecutionPlan(plan_id="p", nodes=[node])  # 契约可构建（形状自检）
         monkeypatch.setattr(submit_mod, "submit_durable_job", fake_submit)
         monkeypatch.setattr(
             "app.services.geocompute.durable.submit_durable_job", fake_submit,

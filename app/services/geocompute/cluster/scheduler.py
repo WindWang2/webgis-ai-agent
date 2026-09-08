@@ -35,7 +35,6 @@ from app.services.geocompute.cluster.contracts import (
     DEFAULT_MAX_RUN_ATTEMPTS,
     MAX_PREEMPTS,
     ClusterRunStatus,
-    RunPriority,
 )
 from app.services.geocompute.cluster.fairness import fair_pick, matches_profiles
 from app.services.geocompute.cluster.store import ClusterLedger, ClusterRunStore
@@ -309,7 +308,7 @@ class ClusterCoordinator:
 
     def _execute_run(self, exec_state: _RunExecution) -> None:
         """工作线程：重建计划 → run_plan_sync 全链路 → fenced 终态落库。"""
-        run_id, epoch = exec_state.run_id, exec_state.epoch
+        run_id = exec_state.run_id
         terminal_status: ClusterRunStatus = ClusterRunStatus.FAILED
         error_code: Optional[str] = None
         try:

@@ -258,7 +258,7 @@ async def submit_execution_plan(
         ClusterBackpressureError,
         PlanSnapshotTooLargeError,
     )
-    from app.services.geocompute.cluster.store import ClusterRunStore, hash_scope_key
+    from app.services.geocompute.cluster.store import ClusterRunStore
 
     try:
         plan = _plan_from_request(body.plan)

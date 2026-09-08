@@ -11,14 +11,12 @@
 
 from __future__ import annotations
 
-import threading
 import time
 
 import pytest
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, update
 from sqlalchemy.orm import sessionmaker
 
-from app.services.geocompute import ops
 from app.services.geocompute.cluster.scheduler import ClusterCoordinator
 from app.services.geocompute.cluster.store import (
     ClusterLedger,
@@ -273,7 +271,6 @@ class TestDbTransientFailure:
                 ))
                 db.commit()
             coord.tick()  # reclaim + 重新派发（占用 units=1）
-            row = store.get_run(rid)
             # 在跑时账本恰有 1 单位在用；崩溃回收后回到 0
         assert _wait_terminal_ticked(store, coord, rid) == "completed"
         snap = store.ledger_snapshot()
@@ -315,7 +312,7 @@ class TestKillWorkerChannel:
         from app.services.task_queue import celery_app
 
         coord = make_coordinator("coord-chan")
-        rid = _submit(store, "chan", required_profiles=["raster"])
+        _submit(store, "chan", required_profiles=["raster"])
         store.upsert_worker("w-raster", profiles={"raster": 1})
         with pytest.MonkeyPatch.context() as mp:
             mp.setitem(celery_app.conf, "task_always_eager", False)

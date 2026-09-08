@@ -14,7 +14,6 @@ from typing import Any, Optional
 
 from app.services.geocompute.cluster.contracts import (
     DISPATCHABLE_STATUSES,
-    TERMINAL_STATUSES,
     ClusterRunStatus,
 )
 from app.services.geocompute.cluster.store import ClusterRunStore
