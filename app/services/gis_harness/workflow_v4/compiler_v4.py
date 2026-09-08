@@ -34,24 +34,35 @@ from app.services.gis_harness.workflow_compiler import (
 #: V4 编译器版本（semver；major = V4 契约，minor = 阶段增补，patch = 文案）。
 WORKFLOW_COMPILER_VERSION = "4.0.0"
 
-#: V4 扩展阶段序（追加式；与 COMPILER_STAGES 拼接为完整 18 阶段）。
+#: V4 扩展阶段序（追加式；与 COMPILER_STAGES 拼接为完整 23 阶段）。
 WORKFLOW_V4_STAGES = (
     "resolve_methodology",
     "select_method",
     "compile_typed_dag",
+    "inherit_obligations",
+    "resolve_parameters",
+    "evaluate_cartographic_obligations",
+    "plan_acquisition",
+    "emit_workflow_package",
 )
 
 _STAGE_REASON_BUDGET = 8
 
 
 class WorkflowCompilationV4(BaseModel):
-    """V4 编译产物：base（15 阶段）+ V4 语义层（方法族/方法/typed DAG）。"""
+    """V4 编译产物：base（15 阶段）+ V4 语义层（方法/方法族/typed DAG/
+    义务链/参数/制图义务/获取声明/包）。"""
     base: WorkflowCompilation
     v4_stages: List[WorkflowStageRecord] = Field(default_factory=list)
     methodology_family: str = ""
     methodology_family_zh: str = ""
     method_qualification: Dict[str, Any] = Field(default_factory=dict)
     typed_dag: Dict[str, Any] = Field(default_factory=dict)
+    obligation_chain: Dict[str, Any] = Field(default_factory=dict)
+    parameters: List[Dict[str, Any]] = Field(default_factory=list)
+    cartographic_obligations: List[Dict[str, Any]] = Field(default_factory=list)
+    acquisition_plan: Dict[str, Any] = Field(default_factory=dict)
+    package_fingerprint: str = ""
     compiler_version: str = WORKFLOW_COMPILER_VERSION
     methodology_fingerprint: str = ""
     reason_codes: List[str] = Field(default_factory=list)
@@ -70,6 +81,11 @@ class WorkflowCompilationV4(BaseModel):
             "methodology_family_zh": self.methodology_family_zh[:60],
             "method_qualification": self.method_qualification,
             "typed_dag": self.typed_dag,
+            "obligation_chain": self.obligation_chain,
+            "parameters": self.parameters[:16],
+            "cartographic_obligations": self.cartographic_obligations[:8],
+            "acquisition_plan": self.acquisition_plan,
+            "package_fingerprint": self.package_fingerprint[:64],
             "methodology_fingerprint": self.methodology_fingerprint[:64],
             "reason_codes": [str(c)[:64] for c in self.reason_codes[:12]],
         }
@@ -197,6 +213,103 @@ def compile_workflow_v4(
             "edges": len(graph.edges),
             "primary_output": graph.primary_output[:64],
             "parallel_safe": sum(1 for n in graph.nodes if n.parallel_safe),
+        },
+    ))
+
+    # 后续阶段共享的中间事实（全部为既有评估器的确定性重放）
+    secondary_cartography = tuple(
+        getattr(recipe, "secondary_cartography", ()) or ())
+
+    # ── 19 inherit_obligations：recipe(+家族上下文) → 义务链 ─────────
+    from app.services.gis_harness.workflow_v4.obligations import (
+        inherit_obligations,
+        profile_to_source,
+    )
+    chain = inherit_obligations([profile_to_source(
+        base.recipe_id, wf_profile, family=family.family_id)])
+    result.obligation_chain = chain.to_bounded_dict()
+    v4_stages.append(WorkflowStageRecord(
+        stage="inherit_obligations",
+        evidence={
+            "sources": chain.sources_count,
+            "obligations": len(chain.obligations),
+            "conflicts": sum(1 for o in chain.obligations if o.conflict),
+            "fingerprint": chain.fingerprint[:16],
+        },
+    ))
+
+    # ── 20 resolve_parameters：契约默认 → hint → user（不阻塞）────────
+    from app.services.gis_harness.workflow_v4.parameters import (
+        extract_workflow_parameters,
+        resolve_workflow_parameters,
+    )
+    params = extract_workflow_parameters(
+        selected_method,
+        node_id=(f"cap:{selected_method.capabilities[0]}"
+                 if getattr(selected_method, "capabilities", ()) else ""),
+    )
+    resolved_params = resolve_workflow_parameters(
+        params, hint_values=hint)
+    result.parameters = [p.to_bounded_dict() for p in resolved_params]
+    v4_stages.append(WorkflowStageRecord(
+        stage="resolve_parameters",
+        reason_codes=[
+            f"PARAM_FALLBACK_DEFAULT:{p.name}"
+            for p in resolved_params if p.disclosure][:_STAGE_REASON_BUDGET],
+        evidence={
+            "count": len(resolved_params),
+            "provenances": sorted({p.provenance for p in resolved_params}),
+        },
+    ))
+
+    # ── 21 evaluate_cartographic_obligations：表达-数据资格义务 ───────
+    from app.services.gis_harness.workflow_v4.cartography import (
+        evaluate_cartographic_obligations,
+    )
+    carto_obls = evaluate_cartographic_obligations(
+        selected_method, role_states=role_states, profile=profile,
+        secondary_cartography=secondary_cartography)
+    result.cartographic_obligations = [
+        o.to_bounded_dict() for o in carto_obls]
+    v4_stages.append(WorkflowStageRecord(
+        stage="evaluate_cartographic_obligations",
+        status="blocked" if any(
+            o.on_violation == "block_method" for o in carto_obls) else "ok",
+        reason_codes=[
+            o.rule_code for o in carto_obls
+            if o.on_violation in ("block_method", "degrade_with_disclosure")
+        ][:_STAGE_REASON_BUDGET],
+        evidence={"count": len(carto_obls)},
+    ))
+
+    # ── 22 plan_acquisition：获取备选声明（不抓取）────────────────────
+    from app.services.gis_harness.workflow_v4.acquisition import (
+        plan_acquisition,
+    )
+    acq_plan = plan_acquisition(role_resolutions)
+    result.acquisition_plan = acq_plan.to_bounded_dict()
+    v4_stages.append(WorkflowStageRecord(
+        stage="plan_acquisition",
+        evidence={
+            "roles": len(acq_plan.roles),
+            "feasible_local": sum(
+                1 for r in acq_plan.roles if "local" in r.feasible_channels),
+            "synthetic_demo": acq_plan.synthetic_demo_allowed,
+        },
+    ))
+
+    # ── 23 emit_workflow_package：不可变包指纹 ─────────────────────────
+    from app.services.gis_harness.workflow_v4.package import (
+        emit_workflow_package,
+    )
+    package = emit_workflow_package(result)
+    result.package_fingerprint = package.fingerprint
+    v4_stages.append(WorkflowStageRecord(
+        stage="emit_workflow_package",
+        evidence={
+            "package_id": package.package_id[:64],
+            "version": package.version,
+            "fingerprint": package.fingerprint[:16],
         },
     ))
 
