@@ -97,7 +97,8 @@ def test_cube_roundtrip(cube_store):
     assert res["bands"]["red"].shape == (2, 48, 64)
     assert float(res["bands"]["red"][0, 0, 0]) == 20.0
     assert res["crs"] == "EPSG:4326"
-    assert res["times"][1] == TIMES[1]
+    # 时间标签跟随切片（窗口真相）。
+    assert res["times"] == TIMES[1:3]
 
 
 def test_cube_rejects_invalid_band_groups(tmp_path):
