@@ -9,23 +9,28 @@
 > （ResourceScaleMismatch / RasterResourceGuard），benchmark 结构门消费
 > 同一批声明。空字段 = 未声明（不构成承诺）。
 
-统计：59/181 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
+统计：86/181 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
 
 | 算法 | 复杂度 | 精度 | 资源包络 | 变体(窗口) | 取消 | 容差 | 成本 cpu/mem | 执行策略 |
 |---|---|---|---|---|---|---|---|---|
 | `data.ingest.pipeline` | — | — | — | — | — | — | medium/high | ASYNC |
 | `density.analytical.mixed` | — | approximate | — | — | — | — | high/medium | CELERY |
-| `interpolation.block_kriging` | 块离散化 2×2 + OK 系统（−γ̄(B,B) 修正） | approximate | — | — | — | — | high/high | CELERY |
-| `interpolation.cokriging` | 协同定位系统 O(m·(k+2)³)（MM1 近似） | approximate | — | — | — | — | high/high | CELERY |
-| `interpolation.idw` | O(n log n + m·k)（cKDTree 邻域 k=5） | — | — | — | — | — | high/high | CELERY |
-| `interpolation.indicator_kriging` | T × OK（T=阈值数 ≤20；概率面 T×H×W 内存线性放大） | exact | — | — | — | — | high/high | CELERY |
-| `interpolation.kriging` | 拟合 O(N_fit²)（N_fit≤2000）+ 预测 O(m·(k+1)³)（k≤24, chunk 1024） | exact | — | numpy_batched(numpy,[8,100000],exact);scipy_linalg(scipy,[100001,500000],exact) | — | — | high/high | CELERY |
-| `interpolation.model_compare` | Σ 方法 CV 预算走查（cv_budget 上限；固定确定性顺序） | — | — | — | — | — | high/medium | CELERY |
-| `interpolation.natural_neighbor` | Delaunay O(n log n) + Sibson 面积裁剪/ Watson walk 逐格 | exact | — | — | — | — | high/medium | CELERY |
-| `interpolation.rbf` | O(n³) 系统分解 + O(m·n) 求值（RBF_HARD_CAP 类型化拒绝） | exact | — | — | — | — | high/high | CELERY |
-| `interpolation.regression_kriging` | OLS 趋势 + 残差 OK + 协变量 IDW 近似（目标栅格通道） | approximate | — | — | — | — | high/high | CELERY |
-| `interpolation.universal_kriging` | OLS 趋势 O(n·d²) + 残差 OK（同 kriging 窗口） | exact | — | — | — | — | high/high | CELERY |
-| `interpolation.variogram_selection` | 6 家族 × 有界拟合 + AICc 排名（样本 ≤2000） | — | — | — | — | — | high/medium | INLINE |
+| `interpolation.block_kriging` | 块离散化 2×2 + OK 系统（−γ̄(B,B) 修正） | approximate | 24B/feat pairs≤200000 feat≤500000 | — | chunk_boundary | rtol=0.001,atol=1e-09 | high/high | CELERY |
+| `interpolation.cokriging` | 协同定位系统 O(m·(k+2)³)（MM1 近似） | approximate | 24B/feat pairs≤200000 feat≤500000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
+| `interpolation.dasymetric` | — | — | 128B/feat | — | none | rtol=1e-06,atol=1e-06 | medium/medium | THREAD |
+| `interpolation.directional_variogram` | O(pair_budget)（入口确定性分层抽稀 ≤2000 + 行步幅 20 万对上限） | — | pairs≤200000 feat≤2000 | — | chunk_boundary | rtol=1e-09,atol=0 | medium/low | INLINE |
+| `interpolation.idw` | O(n log n + m·k)（cKDTree 邻域 k=5） | — | 24B/feat cells≤1500000 | — | coarse | rtol=1e-06,atol=1e-09 | high/high | CELERY |
+| `interpolation.indicator_kriging` | T × OK（T=阈值数 ≤20；概率面 T×H×W 内存线性放大） | exact | 24B/feat pairs≤200000 feat≤500000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
+| `interpolation.kriging` | 拟合 O(N_fit²)（N_fit≤2000）+ 预测 O(m·(k+1)³)（k≤24, chunk 1024） | exact | 24B/feat pairs≤200000 feat≤500000 | numpy_batched(numpy,[8,100000],exact);scipy_linalg(scipy,[100001,500000],exact) | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
+| `interpolation.model_compare` | Σ 方法 CV 预算走查（cv_budget 上限；固定确定性顺序） | — | 32B/feat | — | none | rtol=1e-09,atol=0 | high/medium | CELERY |
+| `interpolation.natural_neighbor` | Delaunay O(n log n) + Sibson 面积裁剪/ Watson walk 逐格 | exact | 8B/cell feat≤200000 cells≤4000000 | — | none | rtol=1e-06,atol=1e-09 | high/medium | CELERY |
+| `interpolation.nearest_neighbor` | O(n log n + m)（cKDTree k=1 分段常值场） | exact | 8B/cell feat≤200000 cells≤4000000 | — | coarse | rtol=1e-12,atol=0 | low/medium | CELERY |
+| `interpolation.rbf` | O(n³) 系统分解 + O(m·n) 求值（RBF_HARD_CAP 类型化拒绝） | exact | 8B/feat feat≤100000 | — | none | rtol=1e-06,atol=1e-09 | high/high | CELERY |
+| `interpolation.regression_kriging` | OLS 趋势 + 残差 OK + 协变量 IDW 近似（目标栅格通道） | approximate | 24B/feat pairs≤200000 feat≤500000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
+| `interpolation.tin` | Delaunay O(n log n) + 逐格重心定位（>20 万样本类型化拒绝） | exact | 32B/feat feat≤200000 | — | none | rtol=1e-09,atol=0 | medium/medium | CELERY |
+| `interpolation.trend_surface` | O(n·d²)（单位盒缩放 OLS，d=多项式项数） | exact | 64B/feat | — | none | rtol=1e-09,atol=1e-12 | low/low | INLINE |
+| `interpolation.universal_kriging` | OLS 趋势 O(n·d²) + 残差 OK（同 kriging 窗口） | exact | 24B/feat pairs≤200000 feat≤500000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
+| `interpolation.variogram_selection` | 6 家族 × 有界拟合 + AICc 排名（样本 ≤2000） | — | pairs≤200000 feat≤2000 | — | chunk_boundary | rtol=1e-09,atol=0 | high/medium | INLINE |
 | `network.accessibility` | — | — | — | — | — | — | high/medium | ASYNC |
 | `network.centrality` | — | — | — | exact_brandes(networkx,[,2000]);sampled_brandes(networkx,[2001,∞]) | — | — | high/high | ASYNC |
 | `network.closest_facility` | — | — | — | — | — | — | high/medium | ASYNC |
@@ -68,7 +73,29 @@
 | `stats.local_geary` | — | — | — | — | — | — | high/medium | THREAD |
 | `stats.st_dbscan` | — | — | — | — | — | — | high/medium | THREAD |
 | `temporal.hotspot` | — | — | — | — | — | — | high/medium | THREAD |
-| `terrain.aspect` | — | — | — | — | — | — | medium/high | THREAD |
-| `terrain.hillshade` | — | — | — | — | — | — | medium/high | THREAD |
-| `terrain.sink_fill` | O(N log N) | — | — | — | — | — | medium/high | THREAD |
-| `terrain.slope` | — | — | — | — | — | — | medium/high | THREAD |
+| `terrain.aspect` | — | — | 40B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
+| `terrain.contours` | — | — | 16B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
+| `terrain.curvature` | — | — | 48B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.dinf_flow` | O(N log N) | — | 40B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.flow` | — | — | 48B/cell | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
+| `terrain.flow_length` | O(N log N) | — | 32B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.geomorphons` | — | — | 24B/cell cells≤50000000 | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
+| `terrain.hillshade` | — | — | 40B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
+| `terrain.hillshade_multi` | — | — | 56B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.horizon_angle` | — | — | 24B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.landform` | — | — | 32B/cell cells≤50000000 | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
+| `terrain.ls_factor` | — | — | 24B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
+| `terrain.morphometry` | — | — | 40B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.openness` | — | — | 32B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.roughness` | — | — | 32B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.sink_fill` | O(N log N) | — | 32B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
+| `terrain.sky_view_factor` | — | — | 24B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.slope` | — | — | 40B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
+| `terrain.spi` | — | — | 24B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
+| `terrain.strahler` | O(N log N) | — | 32B/cell cells≤50000000 | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
+| `terrain.streams` | — | — | 16B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
+| `terrain.tpi` | — | — | 32B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.tri` | — | — | 32B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.twi` | — | — | 24B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
+| `terrain.viewshed` | — | approximate | 16B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.watershed` | — | — | 32B/cell | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |

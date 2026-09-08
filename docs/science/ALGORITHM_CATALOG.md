@@ -49,6 +49,9 @@
 - **`interpolation.dasymetric`** 分区密度重分配（`native`·成熟度 已验证，契约: `dasymetric_reallocation`，出处: `wright1936`）
   - 假设：value_field 必须是总量语义（可加：人口/户数/建筑面积）；比率不可重分配；碎片权重 = 控制密度 d_j=w_j/A_j × 碎片面积；控制面密度均质假设（Wright 1936）；权重字段缺失/全零的源退化为纯面积权重插值（逐源计数披露，从不静默）
   - 局限：输出是 source∩control 碎片面 —— 源边界不再出现（渲染按碎片值分级）；控制层未覆盖的源面整面保值（no_ancillary_coverage），不参与密度表达；控制密度均质假设是方法上界：真实人口密度在控制分区内仍有亚片区差异
+  - 资源包络：128B/要素
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-06
 
 ## `band_math` — 波段/栅格代数
 
@@ -90,6 +93,9 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
   - 假设：2×2 子点离散化近似块均值协方差（Isaaks & Srivastava 1989 惯例，近似已披露）；LHS 保持点支撑样本-样本 γ；块支撑经 RHS γ̄(x,B) 与方差修正 −γ̄(B,B) 进入；块尺寸→0 时收敛到点克里金（rtol 1e-3，conformance 固定）
   - 局限：块尺寸相对变程越大，2×2 离散化近似误差越大（更高密度离散化未实现）；块边界取矩形（H3 单元为六边形——以等面积方形近似，已披露）；块方差 ≤ 点方差仅在平均意义上成立（个别格点可反超）
   - 回退：`interpolation.kriging`→approximation
+  - 资源包络：24B/要素，对预算 200000，要素硬上限 500000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=0.001，atol=1e-09
 
 ## `category_breakdown` — 类别构成统计
 
@@ -132,6 +138,9 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
   - 假设：Markov Model 1 近似核化：交叉协方差 C_sy(h)=ρ·C_pp(h)（全交叉协方差未建模）；协同定位近似：次变量仅在目标格点以单一数值进入克里金系统；次变量缺失时取最近次变量值（精确协同定位格数披露）；C_ss(0)=主变量先验方差（标准化假设）
   - 局限：次变量自身变异函数未拟合（MM1 缩放假设）；次变量须与主变量共享同一工作 CRS；非协同定位部分由最近邻补格（近似）；近似语义（approximate=True）：协同克里金理论收益依赖 MM1 假设成立
   - 回退：`interpolation.kriging`→approximation
+  - 资源包络：24B/要素，对预算 200000，要素硬上限 500000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `convex_hull` — 凸包
 
@@ -355,6 +364,9 @@ k-means 分割基座（Lloyd 1982；光谱 z-score + 加权空间坐标特征，
   - 假设：逐阈值指示变换 I=1[z≤t] → 各自经验变异函数 + 拟合 → 指示场普通克里金；variogram_model=auto 时逐阈值在全部 6 家族里按加权 RSS 选型（逐阈值披露）；概率钳制 [0,1]：被钳制格数逐格计数（绝不静默）
   - 局限：逐阈值独立克里金不保证概率面在阈值间单调（P(Z≤t) 单调性未强制，已披露）；常量指示场（阈值在样本值域之外）输出常量概率（无变异函数拟合）；E-type 类内分布未建模——不是分位数中值的精确期望
   - 回退：`interpolation.kriging`→approximation
+  - 资源包络：24B/要素，对预算 200000，要素硬上限 500000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `interpolation_model_selection` — 插值模型选择
 
@@ -364,6 +376,9 @@ k-means 分割基座（Lloyd 1982；光谱 z-score + 加权空间坐标特征，
   - 假设：以各方法库级 LOOCV/CV 证据（RMSE）排名——方法选择基于证据而非惯例；固定方法序 + 预算序贯走查：完全确定性（同输入必同表）；样本下限：idw≥2/tin≥4/trend≥6/rbf≥3/kriging≥20（各方法 CV 下限）
   - 局限：CV 证据是样本内泛化估计——极端外推场景不外推结论；cv_budget 预算走查按固定方法序跳过后续方法（跳过原因逐行披露）；比较运行于样本（无表面输出）；最终表面仍需调用对应插值工具
   - 回退：`interpolation.idw`→approximation
+  - 资源包络：32B/要素
+  - 取消：none
+  - 数值容差：rtol=1e-09，atol=0
 
 ## `join_count_statistics` — Join Count 统计
 
@@ -652,6 +667,9 @@ OLS 趋势（协变量）+ 残差克里金的混合插值（Odeh 1995）。
   - 假设：RK = OLS 趋势（z ~ 协变量）+ 残差普通克里金（auto 变异函数）；目标处协变量值由样本协变量经 IDW（k=5, power=2）近似——approximate 语义；rk_variance 仅含残差克里金方差；趋势系数不确定性未传播（如实披露）
   - 局限：协变量场在目标处不可知——IDW 近似误差进入趋势项（approximate=True）；常量协变量（零方差）结构化拒绝（DegenerateData）；至少 2 个协变量；EPSG:3857 工作 CRS 的 Web Mercator 尺度畸变（与克里金同）
   - 回退：`interpolation.kriging`→approximation
+  - 资源包络：24B/要素，对预算 200000，要素硬上限 500000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `route_optimization` — 路线优化
 
@@ -802,22 +820,37 @@ IDW / Kriging 等插值。
   - 假设：精确插值器（过样本点）；无理论方差——不确定性以 LOOCV 残差证据呈现；米制距离：地理输入经 estimate_utm_crs 自动投影（极区用极方位立体投影）；k=5 最近邻截断（与主路径一致）；重复坐标先按均值聚合（确定性）
   - 局限：跨带数据自动 UTM 有投影失真（单带处理，无跨带拆分）；LOOCV 残差分位数是样本内证据，不外推为置信区间；样本凸包外的外推由幂次主导，远端值趋向邻域均值
   - 回退：`interpolation.kriging`→approximation
+  - 资源包络：24B/要素，像元硬上限 1500000
+  - 取消：coarse
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`interpolation.nearest_neighbor`** 最近邻插值（`native`·成熟度 已验证，契约: `nearest_neighbor_analysis`，出处: `thiessen1911`，精度: exact）
   - 假设：每个格点取最近样本值（cKDTree k=1）：输出为样本的 Voronoi（泰森）分段常值场；无平滑：表面在单元边界处不连续（跳变是方法语义，非缺陷）；全域有值：凸包外为最近样本外推（已披露，无不确定性声明）
   - 局限：无理论方差，无残差验证证据（跳变场 LOOCV 无意义）；>20 万样本 / >400 万目标格点类型化拒绝（先拒绝不 OOM）；需要连续平滑表面时改用 IDW / kriging / 自然邻域
   - 回退：`interpolation.idw`→approximation
+  - 资源包络：8B/像元，要素硬上限 200000，像元硬上限 4000000
+  - 取消：coarse
+  - 数值容差：rtol=1e-12，atol=0
 - **`interpolation.rbf`** RBF 径向基插值（`native`·成熟度 已验证，契约: `rbf_interpolation`，出处: `duchon1977`，精度: exact）
   - 假设：scipy RBFInterpolator：核薄板样条默认，smoothing=0 时精确过样本点；米制距离：地理输入经 estimate_utm_crs 自动投影（与 IDW 同一 CRS 政策）；局部 RBF（neighbors ≤64）：超样本数时按 KdTree 最近邻截断
   - 局限：多二次/高斯类核在大数据集上病态（本实现未含 gaussian 核）；>2 万点确定性行距抽稀（metadata.disclosures 披露），>10 万点拒绝；外推区域行为由核多项式项主导，远端可能发散（无钳制）
   - 回退：`interpolation.idw`→approximation
+  - 资源包络：8B/要素，要素硬上限 100000
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`interpolation.kriging`** 普通克里金插值（`native`·成熟度 生产，契约: `kriging_interpolation`，出处: `matheron1963`，精度: exact）
   - 假设：二阶平稳性假设：变异函数从数据估计（加权 RSS 最低的模型胜出）；规范半方差构造（Isaaks & Srivastava）：nugget 进所有 h>0 项与 γ₀，对角为零；k 邻域（≤24）系统分批求解；高斯模型加 ridge 稳定化，退化逐格计数
   - 局限：EPSG:3857 被接受为工作 CRS 但含 Web Mercator 尺度畸变（高纬非真实地面距离）；趋势明显的场 OK 有系统偏差——改用 interpolation.universal_kriging；变异函数拟合失败 / 滞后 bin 不足时结构化拒绝（不静默降级）
   - 回退：`interpolation.idw`→approximation
+  - 资源包络：24B/要素，对预算 200000，要素硬上限 500000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`interpolation.universal_kriging`** 泛克里金插值（`native`·成熟度 已验证，契约: `kriging_interpolation`，出处: `matheron1963`，精度: exact）
   - 假设：线性漂移 E[Z(x)]=b0+b1·x+b2·y；变异函数在 OLS 去趋势残差上拟合；UK 系统带趋势约束 Lagrange 乘子；方差 = wᵗγ₀ + mᵗf0；零残差退化（数据严格线性）→ 精确趋势预测、方差 0、披露 zero_residual_variance
   - 局限：漂移阶数固定为线性（二次及以上趋势未实现）；EPSG:3857 被接受为工作 CRS 但含 Web Mercator 尺度畸变（与 OK 同）；样本 <12 拒绝（InsufficientSamples）；普通克里金 ≥8 即可
   - 回退：`interpolation.kriging`→approximation
+  - 资源包络：24B/要素，对预算 200000，要素硬上限 500000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `spatial_join` — 空间连接
 
@@ -964,6 +997,9 @@ DEM 坡向。
 - **`terrain.aspect`** 坡向（`native`·成熟度 已验证，出处: `horn1981`）
   - 假设：3×3 Horn 梯度；度栅格需 z_factor/纬度修正；坡向 = 下坡方位（顺时针自北 0-360°）；平地 → NaN
   - 局限：平地/近平地坡向数值不稳定（梯度趋于 0）；边界像元 edge 复制延拓（单侧差分）
+  - 资源包络：40B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `terrain_contours` — 等值线提取
 
@@ -972,6 +1008,9 @@ DEM 等值线提取（marching squares → GeoJSON LineString，顶点映射到�
 - **`terrain.contours`** 等值线提取（`native`·成熟度 已验证，契约: `extract_contours`）
   - 假设：marching squares 等值线（matplotlib Agg，无显示环境）；水平选取优先级：显式 levels > interval（自 vmin 等间隔）> n_levels（vmin..vmax 等间隔）；nodata/非有限像元 → NaN 断线；顶点经栅格仿射变换映射到世界坐标
   - 局限：level == 数据极值的退化等值线可能为空（不产要素，meta 披露 levels_drawn）；顶点密度受像元网格限制（无样条平滑/加密）
+  - 资源包络：16B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `terrain_derivatives` — 地形衍生指标
 
@@ -980,15 +1019,27 @@ DEM 邻域地形指标：TPI（Weiss 2001）/TRI（Riley 1999）/粗糙度（Wil
 - **`terrain.tpi`** 地形位置指数 TPI（`native`·成熟度 已验证，契约: `terrain_derivative`，出处: `weiss2001`）
   - 假设：TPI = z − 窗口均值（含中心像元）；线性坡面上 ≡ 0；窗口为 3-101 奇数；边界收缩为可得像元（不发明填充值）；与像元尺寸无关（高程同量纲输出）
   - 局限：Weiss 地类分级需双尺度（如 3/25 格）对照，单一窗口不构成分类；积分图均值-平方差在窗口均值远大于离散度时有浮点精度损失
+  - 资源包络：32B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.tri`** 地形崎岖度指数 TRI（`native`·成熟度 已验证，契约: `terrain_derivative`，出处: `wilson2007`）
   - 假设：TRI = sqrt(Σ(z − z_nb)²)，8 个直接邻域（Riley 1999 原式）；边界收缩为可得邻域；平坦面 ≡ 0
   - 局限：只反映 1 像元尺度起伏，不表征多尺度崎岖度；各向异性像元不做距离加权（与 Riley 原式一致的纯差分）
+  - 资源包络：32B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.roughness`** 地形粗糙度（`native`·成熟度 已验证，契约: `terrain_derivative`，出处: `wilson2007`）
   - 假设：粗糙度 = 窗口内高程总体标准差（ddof=0）——注意：Wilson (2007) 原文粗糙度为 max−min 口径，本实现采用窗口 std 惯用口径（与引用差异如实披露）；窗口为 3-101 奇数；边界收缩为可得像元
   - 局限：对离群高程敏感（无稳健尺度）；积分图方差在窗口均值远大于离散度时有浮点精度损失
+  - 资源包络：32B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.curvature`** 平面/剖面曲率（`native`·成熟度 已验证，契约: `terrain_derivative`，出处: `zevenbergen_thorne1987`）
   - 假设：Zevenbergen-Thorne 二阶差分：profile 沿最陡下降方向、plan 沿等高线方向；单位 z_units·cell⁻²（惯例 ×100 报告；元数据披露）；符号约定：profile>0 凸（水流减速）/ plan>0 分散；z=x² 检验 profile=+2、plan=0
   - 局限：3×3 模板对噪声敏感（无预平滑）；边界像元 edge 复制延拓退化为单侧差分
+  - 资源包络：48B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `terrain_geomorphometry` — 地貌形态分类
 
@@ -997,15 +1048,27 @@ DEM 邻域地形指标：TPI（Weiss 2001）/TRI（Riley 1999）/粗糙度（Wil
 - **`terrain.openness`** 地形开放度（`native`·成熟度 已验证，契约: `openness_analysis`，出处: `yokoyama2002`）
   - 假设：正开放度 = mean_φ max_d arctan((z₀−z(d))/d)；负开放度同式取反向差（度）；16 方位（4-64 可调）× 半径 1..R 像元；偏移圆整后的实际米制距离；平地 ≡ 0；山脊高正开放度、谷地高负开放度幅值
   - 局限：方位离散 ≤ 360/azimuth_count（默认 22.5°）角分辨率；无有效采样的方位从均值剔除（栅格角隅诚实退化）；半径 ≤ 100 像元护栏（射线行走内存/时间包络）
+  - 资源包络：32B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.geomorphons`** Geomorphons 地貌分类（`native`·成熟度 已验证，契约: `geomorphon_analysis`，出处: `jasiewicz_stepinski2013`）
   - 假设：8 方位视线三元码（zenith/nadir 角 vs flatten 容差）→ 10 类决策表；决策表（优先级级联）：全-1 summit；全+1 depression；≥6 环 ridge/valley；双 3-5 环 slope；单 3-5 环 shoulder/hollow；1-2 环 spur/footslope；否则 flat；far>0 跳过近场采样（skip 半径）；无采样腿按 0（平）计并披露
   - 局限：相对高程形态学：无绝对坡度语义（缓坡大尺度可判 flat）；lookup ≤ 128 像元护栏；flatten=0 时 DEM 噪声直通分类；角隅像元方位被网格截断（无采样腿按平计）
+  - 资源包络：24B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-12，atol=0
 - **`terrain.landform`** 双尺度 TPI 地类分级（`native`·成熟度 已验证，契约: `landform_analysis`，出处: `weiss2001`）
   - 假设：Weiss 2001 双尺度标准化 TPI（TPI/SD）+ 高程百分位 10 类决策表；中性带 |TPI/SD|<1；平地带按 elevation_tolerance 截 percentile 分档；TPI 窗口含中心像元（与 terrain.tpi 同口径）；边缘收缩
   - 局限：窗口与容差需按景观尺度率定（缺省 3/25 格、0.1 为海报惯例起点）；常量面（TPI SD=0）→ DegenerateData（分类阈值无定义）
+  - 资源包络：32B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-12，atol=0
 - **`terrain.hillshade_multi`** 多方位山体阴影（`native`·成熟度 已验证，契约: `hillshade_multiazimuth`，出处: `horn1981`）
   - 假设：单方位公式与 band_math.compute_hillshade 逐位一致（#379 罗盘语义）；combine=mean 多方位均值（去阴影）/ min 逐像元最小（制图）；NaN 像元传播为 NaN（与渲染掩膜一致）
   - 局限：朗伯面近似：无次级散射/大气效应；3×3 Horn 梯度 edge 复制延拓（单侧差分）
+  - 资源包络：56B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `terrain_hillshade` — 山体阴影
 
@@ -1014,6 +1077,9 @@ DEM 山体阴影。
 - **`terrain.hillshade`** 山体阴影（`native`·成熟度 已验证，出处: `horn1981`）
   - 假设：3×3 Horn 梯度；度栅格需 z_factor/纬度修正；罗盘方位光照模型：照度 = sin(alt)cos(θ) + cos(alt)sin(θ)cos(az − aspect)
   - 局限：无次级散射/大气效应（朗伯面近似）；边界像元 edge 复制延拓（单侧差分）
+  - 资源包络：40B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `terrain_hydrology` — D8 水文分析
 
@@ -1022,9 +1088,15 @@ D8 单向流流向（ESRI 2 的幂编码）、拓扑序汇流累积与逆 D8 上
 - **`terrain.flow`** D8 流向与汇流累积（`native`·成熟度 已验证，契约: `flow_analysis`，出处: `ocallaghan_mark1984`）
   - 假设：D8 单向流（ESRI 2 的幂编码 1=E…128=NE；0=sink/outlet）；最陡下降按米制像元距离（地理栅格 x 向 cos(lat)）；并列最陡取最低索引邻域；汇流累积 = 上游贡献像元数（不含自身；全流域出口 = N−1）
   - 局限：D8 单向流限制：格网平行流向偏差；多向流为独立算法 terrain.dinf_flow（Tarboton 1997，本包内已实现，不在本算法内混叠）；默认 flat_routing='none'：平地/洼地即汇（code 0）；可选 flat_routing='epsilon' 经 terrain.sink_fill 的 epsilon 填洼获得平地路由（meta 披露填充像元数与抬升量），默认路径保持不变；流出网格边界的流路终止（boundary = outlet，不外推）
+  - 资源包络：48B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-12，atol=0
 - **`terrain.watershed`** 流域圈定（`native`·成熟度 已验证，出处: `ocallaghan_mark1984`）
   - 假设：逆 D8 BFS：汇入 pour point 的全部上游像元（含 pour point 自身）；依赖 D8 单向流语义（编码与平局裁决同 terrain.flow）
   - 局限：pour point 不做河道 snap（未对齐河道时流域偏小，由调用方负责）；D8 格网流向偏差会传递到流域边界
+  - 资源包络：32B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-12，atol=0
 
 ## `terrain_hydrology_advanced` — 高级地形水文
 
@@ -1033,21 +1105,39 @@ Priority-Flood 填洼（Barnes 2014，epsilon 单调变体）、D∞ 多向流�
 - **`terrain.sink_fill`** Priority-Flood 填洼（`native`·成熟度 已验证，契约: `sink_fill`，出处: `barnes2014`）
   - 假设：Priority-Flood（Barnes 2014）heapq 漫水；种子 = 网格边界 + nodata 邻接有效像元；nodata/网格外视作排水出口；epsilon>0 时逐像元抬升 → 表面严格单调可排；meta 报告 filled_volume（z_units·m²）/filled_cell_count/max_fill_depth
   - 局限：epsilon=0 时填后平地仍为汇（与 d8 不发明路由语义衔接）；纯 Python 堆循环，>10M 像元耗时显著（护栏 50M 像元先拒绝）；无嵌套洼地深度分层报告（单层溢流面）
+  - 资源包络：32B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.dinf_flow`** D∞ 多向流（`native`·成熟度 已验证，契约: `dinf_analysis`，出处: `ocallaghan_mark1984`）
   - 假设：8 三角面平面梯度最陡下降（Tarboton 1997）；角度弧度 ∈ [0,2π)，x=东 y=北；汇流按面内角度比例分流到两下游邻域；拓扑序（高程降序）累积；平地/洼地 → 角度 -1 哨兵；nodata → NaN；函数内不填洼
   - 局限：D∞ 不消解格网平行流向偏差的极端情形（面离散 45°）；推荐组合 fill_depressions(epsilon>0) 先行获得单调可排面；缺角邻域的面跳过（边缘只用可得邻域）
+  - 资源包络：40B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.flow_length`** 流程长度（`native`·成熟度 已验证，契约: `flow_length_analysis`，出处: `ocallaghan_mark1984`, `strahler1957`）
   - 假设：downstream = 沿 D8 接收者到出口的米制步长和（汇/出口 = 0）；upstream = 距最远山脊源的最大路径长（MAX 口径，文档化）；步长 = hypot(Δcol·cx, Δrow·cy)；地理栅格由调用方传 cos(lat) 修正 cx
   - 局限：继承 D8 格网流向偏差（路径沿 8 邻域折线）；平地不路由（d8 code 0）→ 平地内长度为 0
+  - 资源包络：32B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.streams`** 河网提取（`native`·成熟度 已验证，契约: `stream_network`，出处: `strahler1957`）
   - 假设：河网像元 = 汇流累积 ≥ threshold（上游贡献像元数口径）；阈值由调用方按流域尺度率定（无普适默认）
   - 局限：阈值敏感：过低生成伪河网、过高断头（无自动率定）；继承 D8 单向流的河网走向偏差
+  - 资源包络：16B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.strahler`** Strahler 河流分级（`native`·成熟度 已验证，契约: `stream_network`，出处: `strahler1957`）
   - 假设：Strahler 1957：源头 = 1 级；最高上游级唯一 → 同级，并列 → +1；拓扑序 = 高程降序（接收者严格更低；同高程 (row,col) 兜底）；meta 报告 order_distribution 与 max_order
   - 局限：河网输入依赖 accumulation 阈值（见 terrain.streams 局限）；格网平行汇流会高估并列（+1 升级）频率
+  - 资源包络：32B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-12，atol=0
 - **`terrain.morphometry`** 流域形态量测（`native`·成熟度 已验证，契约: `morphometry_analysis`，出处: `strahler1957`）
   - 假设：面积/周长来自逆 D8 上流域掩膜；周长 = 边界边缘长度和（网格外视作流域外）；basin length = 流域内 MAX upstream 流程长度（最长山脊→出口路径）；form factor = A/L²；elongation = 2√(A/π)/L（Strahler 1957）
   - 局限：basin length 的 MAX 口径对狭长流域外的形状敏感（非主轴拟合）；排水密度继承河网阈值敏感性；pour point 不做河道 snap
+  - 资源包络：40B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `terrain_sky_view` — 地平线与天空可视因子
 
@@ -1056,9 +1146,15 @@ Priority-Flood 填洼（Barnes 2014，epsilon 单调变体）、D∞ 多向流�
 - **`terrain.horizon_angle`** 地平线角（`native`·成熟度 已验证，契约: `terrain_horizon_analysis`，出处: `steyn1980`, `yokoyama2002`）
   - 假设：每方位（罗盘度，自北顺时针）取射线行走 max arctan((z(d)−z₀)/d) 的正仰角（度）；1 像元步长圆整偏移 + 实际米制距离（与 openness 同口径；各向异性感知）；射线遇 nodata/非有限即停；截断（数据外）视作无遮挡（=0，披露）
   - 局限：方位离散 ≤ 360/方位数 的角分辨率（缺省 8 方位 45°）；半径 ≤ 100 像元护栏；半径外地形不参与（遮挡被低估）；数据缝后的地形被视作无遮挡 —— 诚实低估而非发明遮挡
+  - 资源包络：24B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.sky_view_factor`** 天空可视因子 SVF（`native`·成熟度 已验证，契约: `terrain_svf_analysis`，出处: `steyn1980`）
   - 假设：SVF = (1/N) Σ cos²(ψ_i)（Steyn 1980）；ψ_i = 等角距方位的地平线角（度）；ψ_i 与 terrain.horizon_angle 共用同一射线行走实现（不重复逻辑）；平地 ψ ≡ 0 → SVF ≡ 1.0（浮点精确）；深洼/封闭谷地 SVF → 0
   - 局限：方位离散：N 方位等角距采样对崎岖天际线的欠采样；半径 ≤ 100 像元护栏；半径外地形不参与天际线；无地球曲率/大气折射修正（局部地形口径）
+  - 资源包络：24B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `terrain_slope` — 坡度分析
 
@@ -1067,6 +1163,9 @@ DEM 坡度。
 - **`terrain.slope`** 坡度（`native`·成熟度 已验证，出处: `horn1981`）
   - 假设：3×3 Horn 梯度；度栅格需 z_factor/纬度修正；坡度 = arctan|∇z|（度）；cell_size_x 承接地理栅格 cos(lat) 东西向修正
   - 局限：边界像元 edge 复制延拓（单侧差分）；地理 DEM 未做 cos(lat) 修正时东西向坡度低估 ~cos(lat)；垂直单位非米（英尺 DEM）时需显式 z_factor
+  - 资源包络：40B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `terrain_viewshed` — 视域分析
 
@@ -1075,6 +1174,9 @@ DEM 视域：观察点视线遮挡布尔掩膜、可见比例与可见面积（�
 - **`terrain.viewshed`** 视域分析（`native`·成熟度 已验证，契约: `viewshed_analysis`，出处: `wang_robinson_white2000`）
   - 假设：无地球曲率/大气折射；目标高度默认 0；扇区视线角判据：目标仰角 ≥ 沿途地形运行最大仰角即可见（切切记可见）；观察点高程 = 观察点地形 + observer_height；射线 ~1 像元 bilinear 采样
   - 局限：扇区角离散 ≈ 最大距离处 1 像元弧长（远距目标近似误差 ≤ 半扇区宽）；观察点邻接 nodata 时高程退化为最近有效像元；地理栅格按 cos(lat) 换算米制像元（带向不修正）
+  - 资源包络：16B/像元，像元硬上限 50000000
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `terrain_wetness_indices` — 湿润与侵蚀指数
 
@@ -1083,12 +1185,21 @@ DEM 视域：观察点视线遮挡布尔掩膜、可见比例与可见面积（�
 - **`terrain.twi`** 地形湿润指数 TWI（`native`·成熟度 已验证，契约: `wetness_index`，出处: `beven_kirkby1979`）
   - 假设：TWI = ln(SCA/tanβ)；SCA = (accum+1)·cell_area/contour_width；等流宽度 = cell_size（y 向）；κ=1 flat 口径（单流向近似，meta 披露）；tanβ 下限 1e-6：平地处 TWI 为截断上界（非物理解）
   - 局限：D8/D∞ 单向累积低估发散坡的 SCA（无多向 κ 分解）；slope 与 accum 网格必须同形对齐（无重采样）
+  - 资源包络：24B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.spi`** 水流功率指数 SPI（`native`·成熟度 已验证，契约: `wetness_index`，出处: `beven_kirkby1979`）
   - 假设：SPI = SCA·tanβ（侵蚀/输沙潜势代理）；SCA 口径同 terrain.twi；tanβ 无下限（平地 → SPI 0）
   - 局限：静态地形代理，无降雨/土壤参数（非过程模型）；SCA 单流向近似偏差同 terrain.twi
+  - 资源包络：24B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.ls_factor`** USLE LS 因子（`native`·成熟度 已验证，契约: `ls_factor_analysis`，出处: `wischmeier_smith1978`, `desmet_govers1996`）
   - 假设：mccool：LS=(λ/22.13)^m·(65.41sin²θ+4.56sinθ+0.065)；m 表 McCool 1987：<1%→0.2、1-3%→0.3、3-5%→0.4、≥5%→0.5；desmet_govers：LS=(m+1)·(SCA/22.13)^m·(sinβ/0.0896)^1.3；SCA 口径同 TWI；λ 建议传 upstream 流程长度（缺省固定 100 m，meta 披露）
   - 局限：标准径流小区经验式的栅格外推（无降雨/植被因子）；n=1.3 固定（Desmet-Govers 1996 实现惯例），不暴露调参
+  - 资源包络：24B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `traffic_status` — 实时路况
 
@@ -1114,6 +1225,9 @@ DEM 视域：观察点视线遮挡布尔掩膜、可见比例与可见面积（�
   - 假设：全局多项式 OLS：z ~ u^i·v^j（i+j≤order），坐标缩放至单位盒（条件数稳定，已披露）；OLS 残差方差 σ̂²=SS_res/(n−p) 是有效的模型方差证据（区别于克里金逐点方差）；bbox 外评估照常输出但逐格标记 extrapolated（趋势模型本就全局外推）
   - 局限：全局多项式只能表达大尺度趋势——局地结构交给克里金/TIN/RBF；高阶多项式边缘振荡（Runge 现象）：order≤3 硬限制；坐标零跨度/设计矩阵不满秩结构化拒绝（DegenerateData）
   - 回退：`interpolation.kriging`→approximation
+  - 资源包络：64B/要素
+  - 取消：none
+  - 数值容差：rtol=1e-09，atol=1e-12
 
 ## `triangulation_interpolation` — 三角网插值
 
@@ -1123,10 +1237,16 @@ Delaunay TIN 三角网插值（linear / clough_tocher），凸包外不外推。
   - 假设：Delaunay 三角剖分上的分段插值：linear=C⁰ 重心插值，clough_tocher=C¹ 三次；凸包外诚实空缺（fill_value=NaN）：TIN 不外推，格网外的缺失进 metadata；米制坐标下剖分：地理输入经 estimate_utm_crs 自动投影（与 IDW 同 CRS 政策）
   - 局限：样本共线/退化构型结构化拒绝（DegenerateData，附修正提示）；>20 万样本拒绝（Qhull 内存有界但超限先抽稀）；凸包外格网无值——需要全域覆盖时改用 IDW/趋势面（会外推）
   - 回退：`interpolation.idw`→approximation
+  - 资源包络：32B/要素，要素硬上限 200000
+  - 取消：none
+  - 数值容差：rtol=1e-09，atol=0
 - **`interpolation.natural_neighbor`** 自然邻域插值（`native`·成熟度 已验证，契约: `natural_neighbor_analysis`，出处: `sibson1981`, `watson1981`，精度: exact）
   - 假设：Sibson (1981) 坐标：权重=插入点窃取的 Voronoi 面积比例（精确多边形裁剪面积）；Watson (1981) 阶梯 walk：外接圆包含格点的单形集合 = 自然邻域（邻接 walk 收集）；精确插值器：过样本点（重合格点直接返回样本值，float64 精确）
   - 局限：凸包外 NaN——不外推（需要全域覆盖时改用 IDW/趋势面）；近共线构型下 Sibson 权重几何呈长条：外墙自适应外扩保证面积精度（次数披露）；>20 万样本 / >400 万目标格点类型化拒绝；逐格点 Python 裁剪成本高
   - 回退：`interpolation.tin`→approximation
+  - 资源包络：8B/像元，要素硬上限 200000，像元硬上限 4000000
+  - 取消：none
+  - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `variogram_analysis` — 变异函数分析
 
@@ -1135,9 +1255,15 @@ Delaunay TIN 三角网插值（linear / clough_tocher），凸包外不外推。
 - **`interpolation.directional_variogram`** 方向变异函数（`native`·成熟度 已验证，契约: `directional_variogram_analysis`，出处: `webster_oliver2007`, `isaaks_srivastava1989`）
   - 假设：轴向（双向）配对过滤：方位角 +180° 属同一条轴，曲线逐位一致；方位角为数学约定：0°=东(+x)、逆时针（与 anisotropy_angle 一致，非罗盘）；滞后 bin 与全向 empirical_variogram 同一 span/edges 约定（tolerance=90°、同输入 ≤2000 时两者逐位一致）
   - 局限：单轴单次调用：完整各向异性椭圆需多方位角扫描（本工具不自动拟合椭圆；库级 kriging.fit_anisotropy 提供多方位扫描自动拟合）；带宽过滤为 GSLIB band 语义近似（配对中点到轴线垂距）；统计表输出（无表面）：结果供变异函数建模与各向异性诊断使用
+  - 资源包络：对预算 200000，要素硬上限 2000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-09，atol=0
 - **`interpolation.variogram_selection`** 变异函数模型选择（`native`·成熟度 已验证，契约: `variogram_selection_analysis`，出处: `webster_oliver2007`, `matern1986`, `cressie_hawkins1980`）
   - 假设：6 家族（spherical/exponential/gaussian/matern/wave/cubic）在同一经验变异函数上同台；加权 RSS 即 fit_variogram 的拟合目标（样本对计数 σ-权重）——与 auto 选型同源；AICc 自由度 k=3（sill/range/nugget）；matern k=4（固定平滑度 ν 计入，已披露）
   - 局限：AICc 基于加权残差而非严格极大似然（信息准则是近似的，已披露）；滞后 bin 数 n ≤ k+2 时 AICc 诚实取 inf（不伪造小样本准则）；统计表输出（无表面）；选中模型需再传入 kriging 工具出表面
+  - 资源包络：对预算 200000，要素硬上限 2000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-09，atol=0
 
 ## `voronoi_tessellation` — Voronoi 剖分
 

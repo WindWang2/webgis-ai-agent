@@ -35,12 +35,21 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
+from app.lib.gis.algorithm_registry import (
+    AlgorithmDescriptor,
+    BackendVariant,
+    NumericalTolerance,
+    ResourceEnvelope,
+)
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_feature=24, hard_max_cells=1500000, notes="H3 单元硬顶（预估计+polyfill 双闸）+ 样本三元组字节"),
+            cancellation_profile="coarse",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.idw", name="IDW 插值", category="interpolation",
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -84,6 +93,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=500000, bytes_per_feature=24, notes="拟合抽稀 ≤2000 点、对预算 20 万；solve chunk 1024"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance_dual_run"),
             id="interpolation.kriging", name="普通克里金插值", category="interpolation",
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -147,6 +160,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # ── VNext 插值科学新算法 ─────────────────────────────────────────
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_features=100000, bytes_per_feature=8, notes="核矩阵 O(n²)：8·n² 字节主导（RBF_HARD_CAP 类型化拒绝）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.rbf", name="RBF 径向基插值", category="interpolation",
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -189,6 +206,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=500000, bytes_per_feature=24, notes="与 OK 同底预算；趋势 OLS + 残差 solve chunk 1024"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance_dual_run"),
             id="interpolation.universal_kriging", name="泛克里金插值", category="interpolation",
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -232,6 +253,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # ── Foundation V2 · A2（插值 V2 新算法）──────────────────────────
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_features=200000, bytes_per_feature=32, notes="Qhull 单形内存有界（TIN_HARD_CAP 类型化拒绝）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
             id="interpolation.tin", name="TIN 三角网插值", category="interpolation",
             capabilities=["triangulation_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -275,6 +300,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_feature=64, notes="单位盒 OLS 设计矩阵（n×d float64）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=1e-12, policy="conformance"),
             id="interpolation.trend_surface", name="趋势面分析", category="interpolation",
             capabilities=["trend_surface"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -317,6 +346,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=500000, bytes_per_feature=24, notes="残差 OK 与 kriging 同底预算；LOOCV ≤200 点"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.regression_kriging", name="回归克里金", category="interpolation",
             capabilities=["regression_kriging"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -362,6 +395,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_feature=32, notes="CV 预算走查：有界方法数 × 样本数"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
             id="interpolation.model_compare", name="插值模型比较", category="interpolation",
             capabilities=["interpolation_model_selection"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -405,6 +442,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # ── Foundation V3（Geostatistics/Interpolation 批次）────────────
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=2000, notes="入口分层抽稀 ≤2000 + 行步幅对预算 20 万"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
             id="interpolation.directional_variogram", name="方向变异函数", category="interpolation",
             capabilities=["variogram_analysis"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -449,6 +490,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=2000, notes="6 家族 × 有界网格拟合（样本 ≤2000）"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
             id="interpolation.variogram_selection", name="变异函数模型选择", category="interpolation",
             capabilities=["variogram_analysis"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -488,6 +533,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=500000, bytes_per_feature=24, notes="概率面 T×H×W 线性放大（T≤20 类型化拒绝）"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.indicator_kriging", name="指示克里金", category="interpolation",
             capabilities=["indicator_kriging"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -529,6 +578,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=500000, bytes_per_feature=24, notes="MM1 协同定位系统；solve chunk 1024"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.cokriging", name="协同克里金", category="interpolation",
             capabilities=["cokriging"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -570,6 +623,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_features=200000, hard_max_cells=4000000, bytes_per_cell=8, notes="NN_MAX_SAMPLES / NN_MAX_GRID_CELLS 类型化拒绝"),
+            cancellation_profile="coarse",
+            tolerance=NumericalTolerance(rtol=1e-12, atol=0.0, policy="conformance"),
             id="interpolation.nearest_neighbor", name="最近邻插值", category="interpolation",
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -607,6 +664,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_features=200000, hard_max_cells=4000000, bytes_per_cell=8, notes="SIBSON_MAX_SAMPLES / SIBSON_MAX_GRID_CELLS 类型化拒绝"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.natural_neighbor", name="自然邻域插值", category="interpolation",
             capabilities=["triangulation_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -648,6 +709,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=500000, bytes_per_feature=24, notes="2×2 块离散化 ×4 子点系统（BLOCK_DISCRETIZATION）"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-3, atol=1e-9, policy="conformance"),
             id="interpolation.block_kriging", name="块克里金", category="interpolation",
             capabilities=["block_kriging"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -691,6 +756,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # ── dasymetric 原生化（Wave 6）：面插值（areal interpolation）────
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_feature=128, notes="源∩控制碎片多边形坐标数组"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-6, policy="conformance"),
             id="interpolation.dasymetric", name="分区密度重分配", category="interpolation",
             capabilities=["areal_interpolation"],
             input_artifact_types=["admin_aggregate_table", "admin_boundary_set",
