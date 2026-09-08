@@ -67,6 +67,14 @@ Understand→…→Resume，且每步有可持久化/审计/重放/恢复的证�
   session store、observation POST、session-plan alias）。
 - 兼容：V4 无 seq 的 JSONL 文件可读可续写（新记录 seq 从 1 起，历史不伪造）；
   observation 新字段 optional；两套原 FailureClass 不动。
+- 评审后修正（两轮独立 review，全部落地）：resume 返回 `ref_map`
+  （old→new 能力令牌映射）并把 chapter 内 `ref:` 引用重写为新 id /
+  不可恢复置空 + `dangling_refs` 披露；resume 即建归属用户的
+  Conversation 行（一等会话，消除所有权认领窗口）；chart telemetry
+  三态（pending 取数中 → warning 非 error）；trace 窗口无条件有界 +
+  原子重写；`charts` 缺席（旧客户端）≠ 空集（DTO Optional、键省略）；
+  `feature_count` 仅对 queryable 源求和；`RemediationLedger` 带 TTL
+  衰减。
 - 已知限制（诚实记录）：RemediationLedger / tool_metrics 同为进程级口径；
   retrieval 开环 p@1 0.65 说明纯词面检索有真实上限（语义检索 hook 是既有
   扩展点，非本 Epic 范围）；chart telemetry 依赖前端注册表（旧构建缺席 →

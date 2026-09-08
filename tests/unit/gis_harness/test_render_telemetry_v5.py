@@ -148,6 +148,33 @@ def test_chart_required_telemetry_absent_is_honest_warning():
     assert chart_findings and chart_findings[0].severity == "warning"
 
 
+def test_chart_all_pending_is_warning_not_error():
+    """review R2 #3：取数竞速（全 pending）→ warning，绝不假 NEEDS_REPAIR。"""
+    obs = _with_chart_slot(_observation())
+    obs["charts"] = [{"id": "chart-1", "rendered": False,
+                      "data_points": 0, "pending": True}]
+    status, findings = validate_render_observation(
+        _chapter(), _mapspec(), obs, REV, [["chart_panel"]])
+    assert status == "verified"
+    chart_findings = [f for f in findings if f.code == F_CHART_DATA_MISSING]
+    assert chart_findings and chart_findings[0].severity == "warning"
+
+
+def test_chart_mixed_pending_and_empty_is_error():
+    """任一 chart 已终态且无数据 → 仍是 error（pending 不豁免终态失败）。"""
+    obs = _with_chart_slot(_observation())
+    obs["charts"] = [
+        {"id": "chart-1", "rendered": False, "data_points": 0,
+         "pending": True},
+        {"id": "chart-2", "rendered": False, "data_points": 0},
+    ]
+    status, findings = validate_render_observation(
+        _chapter(), _mapspec(), obs, REV, [["chart_panel"]])
+    assert status == "issues"
+    assert any(f.code == F_CHART_DATA_MISSING and f.severity == "error"
+               for f in findings)
+
+
 def test_new_runtime_codes_in_needs_repair_vocabulary():
     """新码进 runtime-render 词表（自愈语义 → needs_repair 而非 failed）。"""
     for code in (F_RENDER_INCOMPLETE, F_RENDER_STYLE_NOT_APPLIED,

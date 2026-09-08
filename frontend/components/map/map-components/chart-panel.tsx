@@ -301,11 +301,14 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
   // series」发布进观测注册表（RenderObservation.charts 消费，服务端
   // chart_required 数据级核验）。发布在渲染提交后一拍，零轮询。
   React.useEffect(() => {
+    // review R2 #3：loading/取数中 = pending（非终态）—— 服务端对全 pending
+    // 的观察按 warning 披露，绝不把取数竞速误判为「渲染了但无数据」error。
     const ready = state.status === 'ready' && !!extentFilteredChart
       && Array.isArray(extentFilteredChart.data) && extentFilteredChart.data.length > 0;
     registerChartRenderState(String(patched.id ?? ''), {
       rendered: ready,
       data_points: ready ? extentFilteredChart.data.length : 0,
+      pending: state.status === 'loading',
     });
     return () => unregisterChartRenderState(String(patched.id ?? ''));
   }, [state.status, extentFilteredChart, patched.id]);

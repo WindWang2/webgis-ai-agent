@@ -64,6 +64,33 @@ class _FakeDb:
     async def get(self, model, pk):
         return self.rows.get(pk)
 
+    class _Result:
+        def __init__(self, row):
+            self._row = row
+
+        def scalar_one_or_none(self):
+            return self._row
+
+    async def execute(self, stmt):
+        # upsert 查询：按 session_id 选最新 —— 桩里全表线性过滤
+        from app.models.project import WorkflowResumeAnchor
+
+        sid = None
+        try:
+            for desc in stmt.whereclause.clauses:
+                left = str(desc.left)
+                if "session_id" in left:
+                    sid = desc.right.value
+        except Exception:  # noqa: BLE001
+            sid = None
+        row = None
+        for r in self.rows.values():
+            if isinstance(r, WorkflowResumeAnchor) and (
+                sid is None or r.session_id == sid
+            ):
+                row = r
+        return self._Result(row)
+
 
 @pytest.fixture()
 async def seeded_session():
@@ -123,6 +150,13 @@ async def test_save_and_resume_roundtrip_with_restart(seeded_session):
     # map_state 标记
     ms = await session_data_manager.get_map_state(new_sid)
     assert ms.get("_resumed_from", {}).get("anchor_id") == anchor_id
+
+    # review R2 #2：恢复的 session 立即拥有一等 Conversation 行（归属恢复者）
+    from app.models.db_model import Conversation
+
+    conv = await db.get(Conversation, new_sid)
+    assert conv is not None
+    assert conv.user_id == "u-v5"
 
     # ref 载荷在旧 session 清空后无法重水合 → missing 诚实披露
     assert result["missing_refs"] or result["restored_refs"]

@@ -15,6 +15,8 @@ export interface ChartRenderState {
   rendered: boolean;
   /** 当前渲染的数据点数（rendered=false 时为 0）。 */
   data_points: number;
+  /** 数据仍在加载（非终态 —— 服务端按 warning 披露而非 error）。 */
+  pending?: boolean;
 }
 
 const MAX_CHART_STATES = 32;
@@ -46,7 +48,7 @@ export function snapshotChartRenderStates(): Array<
 > {
   const out: Array<{ id: string } & ChartRenderState> = [];
   for (const [id, state] of states) {
-    out.push({
+    const entry: { id: string } & ChartRenderState = {
       id,
       rendered: state.rendered === true,
       data_points:
@@ -54,7 +56,9 @@ export function snapshotChartRenderStates(): Array<
           && Number.isFinite(state.data_points)
           ? Math.max(0, Math.floor(state.data_points))
           : 0,
-    });
+    };
+    if (state.pending === true) entry.pending = true;
+    out.push(entry);
   }
   return out;
 }

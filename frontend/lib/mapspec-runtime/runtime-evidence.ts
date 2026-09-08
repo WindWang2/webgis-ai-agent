@@ -246,16 +246,22 @@ export function collectCartographicRuntimeObservation(
         return allLoaded ? 'loaded' : 'pending';
       })(),
       feature_count: (() => {
-        const isQueryable = new Set(
-          expected.map((c) => String(
-            desired.sources[c.source]?.type ?? '')),
-        );
-        if ([...isQueryable].some((t) => t === 'raster' || t === 'image')) {
-          return undefined; // 栅格/图片源：要素计数无意义（键省略）
+        // review R2 #5：仅对 queryable（geojson/vector）源求和 —— 栅格/
+        // 图片源无要素语义；混合族不因一个栅格源丢掉整个计数。
+        const sourceTypes = new Map<string, string>();
+        for (const candidate of expected) {
+          const sid = String(candidate.source ?? '');
+          if (sid && !sourceTypes.has(sid)) {
+            sourceTypes.set(
+              sid, String(desired.sources[candidate.source]?.type ?? ''));
+          }
         }
-        const sourceIds = Array.from(new Set(expected.map((c) => String(c.source ?? '')))).filter(Boolean);
+        const queryable = [...sourceTypes.entries()]
+          .filter(([, t]) => t !== 'raster' && t !== 'image')
+          .map(([sid]) => sid);
+        if (!queryable.length) return undefined;
         let total = 0;
-        for (const sourceId of sourceIds) {
+        for (const sourceId of queryable) {
           try {
             const feats = map.querySourceFeatures?.(sourceId);
             if (Array.isArray(feats)) total += feats.length;

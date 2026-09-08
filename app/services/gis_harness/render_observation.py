@@ -320,16 +320,30 @@ def validate_render_observation(
         charts = observation.get("charts")
         if isinstance(charts, list) and charts:
             rendered_ok = False
+            any_settled = False
             for ch in charts:
                 if not isinstance(ch, dict):
                     continue
+                # review R2 #3：pending（取数中）非终态 —— 全 pending 的
+                # 观察按 warning 披露，不判 error（避免 400ms settle 窗口
+                # 与 chart 数据 fetch 竞速产生假 NEEDS_REPAIR）。
+                if ch.get("pending") is True:
+                    continue
+                any_settled = True
                 points = ch.get("data_points")
                 pts = points if isinstance(points, (int, float)) and \
                     not isinstance(points, bool) else 0
                 if bool(ch.get("rendered")) and int(pts) > 0:
                     rendered_ok = True
                     break
-            if not rendered_ok:
+            if not any_settled:
+                findings.append(MapCompletionFinding(
+                    code=F_CHART_DATA_MISSING,
+                    severity="warning",
+                    target="chart_panel",
+                    detail="chart render still pending (data fetch in flight)",
+                ))
+            elif not rendered_ok:
                 findings.append(MapCompletionFinding(
                     code=F_CHART_DATA_MISSING,
                     severity="error",

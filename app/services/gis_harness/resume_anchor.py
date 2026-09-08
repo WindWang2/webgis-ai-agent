@@ -84,6 +84,25 @@ async def save_anchor(
     anchor = await build_anchor(session_id)
     if anchor is None:
         raise ValueError("session has no resumable plan")
+    # review R2 #4：同 session upsert（保留最新一条）—— 否则反复保存无界
+    # 增行。异 session 各自一行（锚点按 session 语义，同 session 旧锚点
+    # 指向的恢复面被新锚点完全覆盖）。
+    from sqlalchemy import select as _select
+
+    existing = (
+        await db.execute(
+            _select(WorkflowResumeAnchor)
+            .where(WorkflowResumeAnchor.session_id == session_id)
+            .order_by(WorkflowResumeAnchor.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.user_id = user_id
+        existing.project_id = project_id
+        existing.anchor = anchor
+        await db.commit()
+        return {"anchor_id": existing.id, "anchor": anchor}
     row = WorkflowResumeAnchor(
         session_id=session_id,
         user_id=user_id,
@@ -120,9 +139,30 @@ async def resume_from_anchor(
     if not user_id or str(row.user_id or "") != str(user_id):
         raise PermissionError("resume anchor is not owned by current user")
 
+    def _rewrite_refs(node: Any) -> Any:
+        """chapter 内的旧 ref id → 新 session id（review R2 #1）。
+
+        ref id 是 session 域能力令牌：恢复后的 workflow_instance /
+        map_product 里若保留旧 id，plan 会带着悬空引用谎报「已绑定」。
+        可重水合的 ref 重写为新 id；不可恢复的 ref 形字符串置空并记入
+        dangling_refs（诚实披露 —— 置空 = 未绑定，等 agent 重新获取，
+        绝不悬空谎报）。
+        """
+        if isinstance(node, dict):
+            return {k: _rewrite_refs(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_rewrite_refs(v) for v in node]
+        if isinstance(node, str) and node.startswith("ref:"):
+            if node in ref_map:
+                return ref_map[node]
+            dangling.append(node)
+            return ""
+        return node
+
     anchor = row.anchor if isinstance(row.anchor, dict) else {}
     old_sid = str(anchor.get("source_session_id") or row.session_id)
     new_sid = f"resume-{anchor_id[:8]}-{uuid.uuid4().hex[:8]}"
+    dangling: List[str] = []
 
     # ref 载荷重水合：旧 session 仍在 → 直取；否则 RefSpill（24h）兜底；
     # 双双缺席 → missing_refs 诚实披露（不伪造）。
@@ -163,7 +203,7 @@ async def resume_from_anchor(
         session_id=new_sid,
         user_goal=str(anchor.get("user_goal") or ""),
         gis_chapter={
-            k: v
+            k: _rewrite_refs(v)
             for k, v in (anchor.get("gis_chapter") or {}).items()
             if k in RESTORABLE_CHAPTER_KEYS
         },
@@ -175,15 +215,37 @@ async def resume_from_anchor(
         "anchor_id": anchor_id,
         "source_session_id": old_sid,
         "resumed_at": time.time(),
+        # 未重水合成功的旧 ref id（已置空；此处披露供 agent 重新获取）
+        "dangling_refs": sorted(set(dangling))[:32],
     }
     await save_session_plan(plan)
     await session_data_manager.set_map_state(
         new_sid, "_resumed_from", {"anchor_id": anchor_id, "source_session_id": old_sid}
     )
 
+    # review R2 #2：立即创建归属当前用户的 Conversation 行 —— 否则所有
+    # require_owned_session 路径（observation 上报/map mutation）对新
+    # session 404，且首个发言者可「认领」该 session（所有权泄漏窗口）。
+    owner_token: Optional[str] = None
+    try:
+        from app.models.db_model import Conversation
+
+        existing = await db.get(Conversation, new_sid)
+        if existing is None:
+            conv = Conversation(id=new_sid, user_id=user_id,
+                                title=str(anchor.get("user_goal") or "恢复的会话")[:200])
+            db.add(conv)
+            await db.commit()
+    except Exception:  # noqa: BLE001 — DB 不可用时恢复本身仍成功（诚实降级：
+        # conversation 行缺失 → require_owned_session 路径 404，agent 主链路
+        # 经 chat get-or-create 兜底）
+        logger.warning("[ResumeAnchor] conversation row create failed sid=%s",
+                       new_sid, exc_info=True)
+
     return {
         "session_id": new_sid,
         "source_session_id": old_sid,
+        "owner_token": owner_token,
         "user_goal": plan.user_goal,
         "restored_chapter_keys": [
             k for k in RESTORABLE_CHAPTER_KEYS
