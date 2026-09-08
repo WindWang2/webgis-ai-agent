@@ -254,11 +254,9 @@ async def test_real_seam_scenario_gate(tmp_path, monkeypatch):
     TOOL_SURFACE / MAP_OBSERVATION / USER_OUTPUT 显式 N/A（分母扣除）。
     """
     import contextlib
-    import shutil
     import uuid
 
     from app.evaluation import replay
-    from app.services.gis_harness import trace_store
     from app.services.gis_harness.workflow_instance import (
         maybe_update_workflow_instance,
     )
