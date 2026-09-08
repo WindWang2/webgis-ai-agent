@@ -1252,7 +1252,9 @@ export function drawChromeColorbar(
   };
   // W7 nodata parity：色条尾部 nodata 色块条目（与 drawChromeLegend/live
   // legendEntries 同源 —— nodata.color 来自 withNoDataGuard 同一规则）。
-  const nodata = spec.nodata?.color ? spec.nodata : undefined;
+  const nodata = spec.nodata?.color
+    ? { color: spec.nodata.color, label: spec.nodata.label || '无数据' }
+    : undefined;
   const nodataH = nodata ? d.scalePx(16) : 0;
   const drawNodataRow = (nx: number, ny: number) => {
     if (!nodata) return;
