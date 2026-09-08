@@ -10,8 +10,15 @@
  */
 import { useHudStore } from '@/lib/store/useHudStore';
 import { buildWorkbenchDoc } from '@/lib/store/slices/workbenchSlice';
-import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { getMapSpecSessionCursor, setMapSpecRevision } from '@/lib/mapspec/session-cursor';
 import { normalizeWorkbenchDoc, workbenchDocBytes, WORKBENCH_DOC_MAX_BYTES, type WorkbenchDocV5 } from './doc';
+import {
+  bindCollabAdapters,
+  collabBroadcastDoc,
+  collabSessionChanged,
+  startWorkbenchCollab,
+  stopWorkbenchCollab,
+} from './collab';
 import { devOnly } from '@/lib/utils/logger';
 
 const PERSIST_DEBOUNCE_MS = 800;
@@ -38,6 +45,8 @@ export function notifyWorkbenchSessionChanged(sessionId: string | null): void {
     clearTimeout(debounceTimer);
     debounceTimer = null;
   }
+  // W5：协同通道随会话切换（晚到 tab 发 hello 请求当前 doc）。
+  collabSessionChanged(sessionId);
 }
 
 /**
@@ -47,6 +56,7 @@ export function notifyWorkbenchSessionChanged(sessionId: string | null): void {
 export function markWorkbenchHydrated(): void {
   lastCommittedJson = currentDocJson();
   armed = true;
+  startWorkbenchCollab();
 }
 
 /** 恢复路径入口：归一化 spec.workbench → store 水合 → 武装提交门。 */
@@ -96,7 +106,12 @@ async function commitNow(): Promise<void> {
     });
     // 提交成功以「本次提交的 json」收敛基线 —— inflight 窗口内的后续编辑
     // （dirtyAfterInflight）由订阅触发下一轮提交，永不丢增量。
-    if (result !== undefined) lastCommittedJson = json;
+    if (result !== undefined) {
+      lastCommittedJson = json;
+      // W5：向同会话其它 tab 广播已提交真相（CAS revision 随行）。
+      const revision = (result as { mutation_revision?: number }).mutation_revision;
+      collabBroadcastDoc(doc, typeof revision === 'number' ? revision : -1);
+    }
   } catch (err) {
     // 409 superseded 已由 commitMapSpecMutation 收敛（回灌服务端真相 →
     // 订阅再次触发 → 与 lastCommittedJson 不同则重提交）；其它错误保脏，
@@ -110,6 +125,26 @@ async function commitNow(): Promise<void> {
     }
   }
 }
+
+/**
+ * W5：接收其它 tab 广播的已提交 doc —— 水合 + 对齐本地基线与 revision
+ * （不回声提交：远端 doc 就是服务器已提交真相）。
+ */
+function adoptRemoteDoc(doc: WorkbenchDocV5, revision: number): void {
+  useHudStore.getState().hydrateWorkbenchDoc(doc);
+  lastCommittedJson = JSON.stringify(buildWorkbenchDoc(useHudStore.getState()));
+  if (revision >= 0) setMapSpecRevision(revision);
+}
+
+// 协同适配器绑定（模块加载一次；persistence ↔ collab 单向依赖）。
+bindCollabAdapters({
+  adoptDoc: adoptRemoteDoc,
+  currentDoc: () => {
+    if (!armed) return null;
+    const s = useHudStore.getState();
+    return { doc: buildWorkbenchDoc(s), revision: getMapSpecSessionCursor().revision };
+  },
+});
 
 /** 启动 store 订阅（app bootstrap 一次）。重复调用幂等。 */
 export function startWorkbenchPersistence(): void {
@@ -136,6 +171,7 @@ export function stopWorkbenchPersistence(): void {
   lastCommittedJson = '';
   inflight = false;
   dirtyAfterInflight = false;
+  stopWorkbenchCollab();
 }
 
 /** 测试断言辅助：当前防抖基线。 */
