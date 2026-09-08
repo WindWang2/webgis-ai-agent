@@ -52,14 +52,13 @@ GATE_FIELDS: Tuple[str, ...] = (
     "capabilities",
 )
 GATE_THRESHOLDS: Dict[str, int] = {
-    # 2026-09 基线棘轮：279 个可执行工具实测 side_effect/tags=83%、
-    # capabilities=60%、latency/memory=100%。阈值钉在基线（100% 类留 5%
-    # 新工具余量），任何批量回退即红；上调需后续 ADR。
-    "side_effect": 83,
-    "tags": 83,
+    # ADR-0118 收紧：Quality V2 收敛后全部字段实测 100%（291 可执行工具）。
+    # 阈值统一 95%（新工具留 5% 余量），任何批量回退即红；上调需后续 ADR。
+    "side_effect": 95,
+    "tags": 95,
     "latency_class": 95,
     "memory_class": 95,
-    "capabilities": 60,
+    "capabilities": 95,
 }
 
 # findings 词表（稳定 code；消费方包括闸测试与 Wave 20 质量报告）

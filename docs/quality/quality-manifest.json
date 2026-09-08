@@ -6,7 +6,9 @@
     "admin_boundary_query"
    ],
    "category": "",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_admin_boundary_local_level_and_identifier_contract"
+   ],
    "deterministic": true,
    "id": "admin.boundary.local",
    "memory_cost": "low",
@@ -22,7 +24,10 @@
     "admin_boundary_query"
    ],
    "category": "data_access",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_admin_boundary_lookup_local_first_hit",
+    "tests/unit/gis/test_algo_conformance_v2.py::test_admin_boundary_lookup_typed_token_error_when_unconfigured"
+   ],
    "deterministic": false,
    "id": "admin.boundary_lookup",
    "memory_cost": "low",
@@ -38,7 +43,10 @@
     "federated_dataset_query"
    ],
    "category": "",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_federated_chain_two_source_attribute_join_oracle",
+    "tests/unit/gis/test_algo_conformance_v2.py::test_federated_chain_typed_errors"
+   ],
    "deterministic": true,
    "id": "data.federated.chain",
    "memory_cost": "medium",
@@ -49,12 +57,15 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "dataset_ingest"
    ],
    "category": "",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_ingest_pipeline_fingerprint_dedup_and_bounded_profile",
+    "tests/unit/gis/test_algo_conformance_v2.py::test_ingest_pipeline_tool_typed_payload_rejection"
+   ],
    "deterministic": true,
    "id": "data.ingest.pipeline",
    "memory_cost": "high",
@@ -179,7 +190,9 @@
     "geometry_centroid"
    ],
    "category": "geometry_processing",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_center_statistics_mean_center_oracle"
+   ],
    "deterministic": true,
    "id": "geometry.center_statistics",
    "memory_cost": "low",
@@ -195,7 +208,9 @@
     "geometry_clip"
    ],
    "category": "geometry_processing",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_clip_layer_area_oracle"
+   ],
    "deterministic": true,
    "id": "geometry.clip",
    "memory_cost": "medium",
@@ -232,7 +247,9 @@
     "geometry_dissolve"
    ],
    "category": "geometry_processing",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_dissolve_layer_adjacent_merge_oracle"
+   ],
    "deterministic": true,
    "id": "geometry.dissolve",
    "memory_cost": "medium",
@@ -289,7 +306,9 @@
     "spatial_join"
    ],
    "category": "spatial_relationship",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_spatial_join_counts_oracle"
+   ],
    "deterministic": true,
    "id": "geometry.spatial_join",
    "memory_cost": "medium",
@@ -323,7 +342,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "block_kriging"
    ],
@@ -346,7 +365,7 @@
    ]
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "cokriging"
    ],
@@ -421,7 +440,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "spatial_interpolation"
    ],
@@ -451,7 +470,7 @@
    ]
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "indicator_kriging"
    ],
@@ -581,7 +600,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "spatial_interpolation"
    ],
@@ -605,7 +624,7 @@
    ]
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "regression_kriging"
    ],
@@ -686,7 +705,7 @@
    ]
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "spatial_interpolation"
    ],
@@ -889,7 +908,10 @@
     "service_area"
    ],
    "category": "",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_isochrone_typed_validation",
+    "tests/unit/gis/test_algo_conformance_v2.py::test_isochrone_unconfigured_provider_typed_error"
+   ],
    "deterministic": false,
    "id": "network.isochrone",
    "memory_cost": "medium",
@@ -1083,7 +1105,9 @@
     "external_route_planning"
    ],
    "category": "network_analysis",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_plan_route_unconfigured_typed_error"
+   ],
    "deterministic": false,
    "id": "network.route_external_api",
    "memory_cost": "low",
@@ -1147,7 +1171,9 @@
     "service_area"
    ],
    "category": "",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_service_area_simple_travel_time_radius_oracle"
+   ],
    "deterministic": true,
    "id": "network.service_area.simple",
    "memory_cost": "low",
@@ -1190,7 +1216,9 @@
     "traffic_status"
    ],
    "category": "network_analysis",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_traffic_status_typed_validation_and_unconfigured"
+   ],
    "deterministic": false,
    "id": "network.traffic_status_external",
    "memory_cost": "low",
@@ -1208,7 +1236,9 @@
     "transit_routing"
    ],
    "category": "network_analysis",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_transit_route_typed_validation_and_unconfigured"
+   ],
    "deterministic": false,
    "id": "network.transit_route_external",
    "memory_cost": "low",
@@ -1223,10 +1253,301 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "crs_transformation"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_crs_transformation"
+   ],
+   "deterministic": true,
+   "id": "platform.crs_transformation",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "data_source_pipeline"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_data_source_pipeline"
+   ],
+   "deterministic": true,
+   "id": "platform.data_source_pipeline",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "dataset_profiling_quality"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_dataset_profiling_quality"
+   ],
+   "deterministic": true,
+   "id": "platform.dataset_profiling_quality",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "directional_distribution_analysis"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_directional_distribution_analysis"
+   ],
+   "deterministic": true,
+   "id": "platform.directional_distribution_analysis",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "geocoding"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_geocoding"
+   ],
+   "deterministic": true,
+   "id": "platform.geocoding",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "layer_display_control"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_layer_display_control"
+   ],
+   "deterministic": true,
+   "id": "platform.layer_display_control",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "local_data_query"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_local_data_query"
+   ],
+   "deterministic": true,
+   "id": "platform.local_data_query",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "map_annotation_measurement"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_map_annotation_measurement"
+   ],
+   "deterministic": true,
+   "id": "platform.map_annotation_measurement",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "map_export_publishing"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_map_export_publishing"
+   ],
+   "deterministic": true,
+   "id": "platform.map_export_publishing",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "map_viewport_control"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_map_viewport_control"
+   ],
+   "deterministic": true,
+   "id": "platform.map_viewport_control",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "meta_tool_surface"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_meta_tool_surface"
+   ],
+   "deterministic": true,
+   "id": "platform.meta_tool_surface",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_plan_workflow_orchestration"
+   ],
+   "deterministic": true,
+   "id": "platform.plan_workflow_orchestration",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "report_charting"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_report_charting"
+   ],
+   "deterministic": true,
+   "id": "platform.report_charting",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "scenario_simulation"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_scenario_simulation"
+   ],
+   "deterministic": true,
+   "id": "platform.scenario_simulation",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "temporal_filtering"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_temporal_filtering"
+   ],
+   "deterministic": true,
+   "id": "platform.temporal_filtering",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "thematic_cartography"
+   ],
+   "category": "platform",
+   "conformance_tests": [
+    "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_thematic_cartography"
+   ],
+   "deterministic": true,
+   "id": "platform.thematic_cartography",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "poi_query"
    ],
    "category": "data_access",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_poi_around_typed_geometry_contract",
+    "tests/unit/gis/test_algo_conformance_v2.py::test_poi_polygon_extraction_typed_contract"
+   ],
    "deterministic": false,
    "id": "poi.area_search",
    "memory_cost": "low",
@@ -1242,7 +1563,10 @@
     "poi_query"
    ],
    "category": "",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_query_local_poi_db_missing_typed_contract",
+    "tests/unit/gis/test_algo_conformance_v2.py::test_query_local_poi_polygon_format_typed_contract"
+   ],
    "deterministic": true,
    "id": "poi.query.local",
    "memory_cost": "low",
@@ -1467,7 +1791,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "point_pattern_analysis"
    ],
@@ -1558,7 +1882,10 @@
     "raster_cog_conversion"
    ],
    "category": "",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_cog_convert_roundtrip_and_idempotent",
+    "tests/unit/gis/test_algo_conformance_v2.py::test_cog_convert_invalid_path_typed"
+   ],
    "deterministic": true,
    "id": "raster.cog.convert",
    "memory_cost": "medium",
@@ -1614,7 +1941,10 @@
     "raster_source"
    ],
    "category": "",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_fetch_dem_bbox_typed",
+    "tests/unit/gis/test_algo_conformance_v2.py::test_fetch_dem_item_mapping_oracle"
+   ],
    "deterministic": true,
    "id": "raster.source.dem",
    "memory_cost": "medium",
@@ -1729,7 +2059,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "ica_transform"
    ],
@@ -1774,7 +2104,7 @@
    ]
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "raster_change_detection"
    ],
@@ -1839,7 +2169,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "mnf_transform"
    ],
@@ -1862,7 +2192,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "ndvi"
    ],
@@ -1887,7 +2217,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "raster_dimensionality_reduction"
    ],
@@ -2169,7 +2499,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "sar_texture"
    ],
@@ -2252,7 +2582,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "sar_speckle_filtering"
    ],
@@ -2319,7 +2649,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "sar_speckle_filtering"
    ],
@@ -2598,7 +2928,7 @@
    ]
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "kde_density"
    ],
@@ -2619,7 +2949,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "kde_density"
    ],
@@ -2873,7 +3203,9 @@
     "category_breakdown"
    ],
    "category": "",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_spatial_stats_geometry_summary_oracle"
+   ],
    "deterministic": true,
    "id": "stats.category.breakdown",
    "memory_cost": "low",
@@ -3435,7 +3767,7 @@
    ]
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "terrain_aspect"
    ],
@@ -3576,7 +3908,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "terrain_hillshade"
    ],
@@ -3739,7 +4071,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "terrain_hydrology_advanced"
    ],
@@ -3784,7 +4116,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "terrain_slope"
    ],
@@ -3970,7 +4302,9 @@
     "workspace_state_inspection"
    ],
    "category": "",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_workspace_inspection_readonly_contract"
+   ],
    "deterministic": true,
    "id": "workspace.inspection.readonly",
    "memory_cost": "low",
@@ -3986,7 +4320,9 @@
     "workspace_snapshot"
    ],
    "category": "",
-   "conformance_tests": [],
+   "conformance_tests": [
+    "tests/unit/gis/test_algo_conformance_v2.py::test_workspace_snapshot_durable_roundtrip"
+   ],
    "deterministic": true,
    "id": "workspace.snapshot.durable",
    "memory_cost": "medium",
@@ -4047,7 +4383,8 @@
     "tests/unit/gis_harness/test_product_graph.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
-    "tests/unit/test_map_product_finalization_scenarios.py"
+    "tests/unit/test_map_product_finalization_scenarios.py",
+    "tests/unit/tools/test_behavioral_data_discovery.py"
    ]
   },
   {
@@ -4127,7 +4464,9 @@
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_data_qualification.py",
     "tests/unit/gis_harness/test_harness_tools.py",
-    "tests/unit/test_reproducible_gis_runtime.py"
+    "tests/unit/test_reproducible_gis_runtime.py",
+    "tests/unit/tools/test_behavioral_data_discovery.py",
+    "tests/unit/tools/test_behavioral_workspace.py"
    ]
   },
   {
@@ -4217,9 +4556,9 @@
   }
  ],
  "behavioral": {
-  "dispatch": 120,
+  "dispatch": 150,
   "mention": 141,
-  "none": 30
+  "none": 0
  },
  "capabilities": [
   {
@@ -4456,7 +4795,8 @@
     "tests/unit/gis_harness/test_product_facets.py",
     "tests/unit/test_audit4_tools_meta.py",
     "tests/unit/test_harness_round_856_864.py",
-    "tests/unit/test_raster_runtime_v3.py"
+    "tests/unit/test_raster_runtime_v3.py",
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
    ]
   },
   {
@@ -4553,6 +4893,30 @@
    ]
   },
   {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "crs_transformation",
+   "producer_algorithms": [
+    "platform.crs_transformation"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "data_source_pipeline",
+   "producer_algorithms": [
+    "platform.data_source_pipeline"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
    "category": "data_access",
    "deterministic": true,
    "domain": "general",
@@ -4561,6 +4925,18 @@
     "data.ingest.pipeline"
    ],
    "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "dataset_profiling_quality",
+   "producer_algorithms": [
+    "platform.dataset_profiling_quality"
+   ],
+   "status": "planned",
    "supports_large_data": true,
    "tests": []
   },
@@ -4590,8 +4966,21 @@
     "tests/unit/gis_harness/test_product_graph.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
-    "tests/unit/test_map_product_finalization_scenarios.py"
+    "tests/unit/test_map_product_finalization_scenarios.py",
+    "tests/unit/tools/test_behavioral_data_discovery.py"
    ]
+  },
+  {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "directional_distribution_analysis",
+   "producer_algorithms": [
+    "platform.directional_distribution_analysis"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
   },
   {
    "category": "statistics",
@@ -4655,6 +5044,28 @@
    "supports_large_data": true,
    "tests": [
     "tests/unit/lib/test_spatial_stats_conformance.py"
+   ]
+  },
+  {
+   "category": "platform",
+   "deterministic": false,
+   "domain": "platform",
+   "id": "geocoding",
+   "producer_algorithms": [
+    "platform.geocoding"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": [
+    "tests/test_context_builder_injection.py",
+    "tests/test_geocode_stage.py",
+    "tests/test_geocoding.py",
+    "tests/unit/test_audit4_tools_meta.py",
+    "tests/unit/test_chinese_maps_providers.py",
+    "tests/unit/test_chinese_maps_split.py",
+    "tests/unit/test_osm_provider_degradation.py",
+    "tests/unit/test_spatial_decision_correctness.py",
+    "tests/unit/test_tool_error_standardization.py"
    ]
   },
   {
@@ -4880,7 +5291,9 @@
    ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ]
   },
   {
    "category": "raster",
@@ -4957,6 +5370,30 @@
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_capability_registry_parity.py"
    ]
+  },
+  {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "layer_display_control",
+   "producer_algorithms": [
+    "platform.layer_display_control"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "local_data_query",
+   "producer_algorithms": [
+    "platform.local_data_query"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
   },
   {
    "category": "statistics",
@@ -5042,6 +5479,42 @@
    ]
   },
   {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "map_annotation_measurement",
+   "producer_algorithms": [
+    "platform.map_annotation_measurement"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "map_export_publishing",
+   "producer_algorithms": [
+    "platform.map_export_publishing"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "map_viewport_control",
+   "producer_algorithms": [
+    "platform.map_viewport_control"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
    "category": "analysis",
    "deterministic": true,
    "domain": "general",
@@ -5058,6 +5531,18 @@
    ]
   },
   {
+   "category": "platform",
+   "deterministic": false,
+   "domain": "platform",
+   "id": "meta_tool_surface",
+   "producer_algorithms": [
+    "platform.meta_tool_surface"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
    "category": "raster",
    "deterministic": true,
    "domain": "raster",
@@ -5067,7 +5552,9 @@
    ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ]
   },
   {
    "category": "analysis",
@@ -5220,6 +5707,18 @@
     "point_pattern.pcf"
    ],
    "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "plan_workflow_orchestration",
+   "producer_algorithms": [
+    "platform.plan_workflow_orchestration"
+   ],
+   "status": "planned",
    "supports_large_data": true,
    "tests": []
   },
@@ -5486,6 +5985,18 @@
    ]
   },
   {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "report_charting",
+   "producer_algorithms": [
+    "platform.report_charting"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
    "category": "network",
    "deterministic": true,
    "domain": "network",
@@ -5604,6 +6115,18 @@
    "tests": [
     "tests/unit/lib/test_sar_filters_v2.py"
    ]
+  },
+  {
+   "category": "platform",
+   "deterministic": false,
+   "domain": "platform",
+   "id": "scenario_simulation",
+   "producer_algorithms": [
+    "platform.scenario_simulation"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
   },
   {
    "category": "network",
@@ -5896,6 +6419,18 @@
    "tests": []
   },
   {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "temporal_filtering",
+   "producer_algorithms": [
+    "platform.temporal_filtering"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
    "category": "statistics",
    "deterministic": true,
    "domain": "general",
@@ -6079,6 +6614,18 @@
    "tests": []
   },
   {
+   "category": "platform",
+   "deterministic": true,
+   "domain": "platform",
+   "id": "thematic_cartography",
+   "producer_algorithms": [
+    "platform.thematic_cartography"
+   ],
+   "status": "planned",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
    "category": "network",
    "deterministic": false,
    "domain": "network",
@@ -6215,1502 +6762,32 @@
   }
  ],
  "counts": {
-  "algorithms": 181,
+  "algorithms": 197,
   "artifact_types": 21,
-  "capabilities": 121,
-  "findings": 181,
+  "capabilities": 137,
+  "findings": 0,
   "recipes": 164,
   "tools": 291
  },
- "findings": [
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "data",
-   "severity": "medium",
-   "subject": "data.ingest.pipeline",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "interpolation",
-   "severity": "medium",
-   "subject": "interpolation.block_kriging",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "interpolation",
-   "severity": "medium",
-   "subject": "interpolation.cokriging",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "interpolation",
-   "severity": "medium",
-   "subject": "interpolation.idw",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "interpolation",
-   "severity": "medium",
-   "subject": "interpolation.indicator_kriging",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "interpolation",
-   "severity": "medium",
-   "subject": "interpolation.rbf",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "interpolation",
-   "severity": "medium",
-   "subject": "interpolation.regression_kriging",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "interpolation",
-   "severity": "medium",
-   "subject": "interpolation.universal_kriging",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "point_pattern",
-   "severity": "medium",
-   "subject": "point_pattern.ripley_k_env",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "remote",
-   "severity": "medium",
-   "subject": "remote.ica",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "remote",
-   "severity": "medium",
-   "subject": "remote.mad_change",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "remote",
-   "severity": "medium",
-   "subject": "remote.mnf",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "remote",
-   "severity": "medium",
-   "subject": "remote.ndvi",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "remote",
-   "severity": "medium",
-   "subject": "remote.pca",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "sar",
-   "severity": "medium",
-   "subject": "sar.glcm_texture",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "sar",
-   "severity": "medium",
-   "subject": "sar.multitemporal_speckle",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "sar",
-   "severity": "medium",
-   "subject": "sar.speckle_filter",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "spatial",
-   "severity": "medium",
-   "subject": "spatial.kde.contours",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "spatial",
-   "severity": "medium",
-   "subject": "spatial.kde.surface",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "terrain",
-   "severity": "medium",
-   "subject": "terrain.aspect",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "terrain",
-   "severity": "medium",
-   "subject": "terrain.hillshade",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "terrain",
-   "severity": "medium",
-   "subject": "terrain.sink_fill",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "terrain",
-   "severity": "medium",
-   "subject": "terrain.slope",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "admin",
-   "severity": "medium",
-   "subject": "admin.boundary.local",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "admin",
-   "severity": "medium",
-   "subject": "admin.boundary_lookup",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "data",
-   "severity": "medium",
-   "subject": "data.federated.chain",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "data",
-   "severity": "medium",
-   "subject": "data.ingest.pipeline",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "geometry",
-   "severity": "medium",
-   "subject": "geometry.center_statistics",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "geometry",
-   "severity": "medium",
-   "subject": "geometry.clip",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "geometry",
-   "severity": "medium",
-   "subject": "geometry.dissolve",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "geometry",
-   "severity": "medium",
-   "subject": "geometry.spatial_join",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "network",
-   "severity": "medium",
-   "subject": "network.isochrone",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "network",
-   "severity": "medium",
-   "subject": "network.route_external_api",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "network",
-   "severity": "medium",
-   "subject": "network.service_area.simple",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "network",
-   "severity": "medium",
-   "subject": "network.traffic_status_external",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "network",
-   "severity": "medium",
-   "subject": "network.transit_route_external",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "poi",
-   "severity": "medium",
-   "subject": "poi.area_search",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "poi",
-   "severity": "medium",
-   "subject": "poi.query.local",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "raster",
-   "severity": "medium",
-   "subject": "raster.cog.convert",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "raster",
-   "severity": "medium",
-   "subject": "raster.source.dem",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "stats",
-   "severity": "medium",
-   "subject": "stats.category.breakdown",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "workspace",
-   "severity": "medium",
-   "subject": "workspace.inspection.readonly",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_NO_CONFORMANCE",
-   "detail": "algorithm declares no conformance test node ids",
-   "domain": "workspace",
-   "severity": "medium",
-   "subject": "workspace.snapshot.durable",
-   "surface": "algorithms"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "general",
-   "severity": "medium",
-   "subject": "admin_boundary_query",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "general",
-   "severity": "medium",
-   "subject": "category_breakdown",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "general",
-   "severity": "medium",
-   "subject": "dataset_ingest",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "network",
-   "severity": "medium",
-   "subject": "external_route_planning",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "general",
-   "severity": "medium",
-   "subject": "federated_dataset_query",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "general",
-   "severity": "medium",
-   "subject": "geometry_centroid",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "general",
-   "severity": "medium",
-   "subject": "geometry_clip",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "general",
-   "severity": "medium",
-   "subject": "geometry_dissolve",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "general",
-   "severity": "medium",
-   "subject": "poi_query",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "raster",
-   "severity": "medium",
-   "subject": "raster_cog_conversion",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "raster",
-   "severity": "medium",
-   "subject": "raster_source",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "general",
-   "severity": "medium",
-   "subject": "spatial_join",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "network",
-   "severity": "medium",
-   "subject": "traffic_status",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "network",
-   "severity": "medium",
-   "subject": "transit_routing",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "general",
-   "severity": "medium",
-   "subject": "workspace_snapshot",
-   "surface": "capabilities"
-  },
-  {
-   "code": "CAPABILITY_NO_CONFORMANCE",
-   "detail": "native capability whose producers declare no conformance tests",
-   "domain": "general",
-   "severity": "medium",
-   "subject": "workspace_state_inspection",
-   "surface": "capabilities"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "add_marker",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "aggregate_dataset",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "alias_layer",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "apply_layer_filter",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "apply_layer_style",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "apply_template",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "attribute_filter",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "audit_spatial_quality",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "batch_geocode_cn",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "cancel_execution_run",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "clear_annotations",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "combine_map_theme",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "connect_data_source",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "control_floating_chart",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "create_3d_extrusion_map",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "create_new_skill",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "create_thematic_map",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "deep_explore",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "describe_dataset",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "display_layer",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "execute_execution_plan",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "execute_plan",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "export_batch_maps",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "export_thematic_map",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "finalize_display",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "fly_to_location",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "generate_analysis_report",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "generate_chart",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "generate_monitoring_report",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "geocode",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "geocode_cn",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "get_execution_run",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "get_local_osm_catalog",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "get_local_stats_catalog",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "get_plan_status",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "inspect_data_source",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "list_available_tools",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "list_templates",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "manage_analysis_asset",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "measure_area",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "measure_distance",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "plan_data_query",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "profile_dataset",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "profile_dataset_semantics",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "propose_plan",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "query_dataset",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "query_local_osm",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "query_local_yearbook",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "query_map_features",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "query_osm_buildings",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "query_osm_roads",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "refresh_data_source",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "refresh_skill_surface",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "remove_layer",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "reorder_layer",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "repair_spatial_dataset",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "reproject_coordinates",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "rerun_workflow",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "reset_map_view",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "reverse_geocode",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "reverse_geocode_cn",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "save_plan_as_workflow",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "search_spatial_catalog",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "set_layer_status",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "set_map_view",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "spatial_decision_v2",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "spatial_reasoning",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "spawn_subagent",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "standard_deviational_ellipse",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "suggest_analysis_patterns",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "switch_base_layer",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "temporal_filter",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "transform_coordinates",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "update_layer_appearance",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "validate_execution_plan",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "web_search",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_cartography_status",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_compile_maplibre",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_component_update",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_layer_remove",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_layer_upsert",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_layout_set",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_map_combine",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_map_intent",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_map_product",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_project_init",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_runtime_validate",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_validate",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_view_set",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "what_if_simulate",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "zoom_to_bbox",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "zoom_to_layer",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "apply_layer_style",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "cancel_execution_run",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "control_floating_chart",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "cross_pcf_analysis",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "describe_artifact",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "detect_change_cva",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "detect_ratio_change",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "execute_execution_plan",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "find_artifacts_by_role",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "geary_c",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "get_execution_run",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "get_lineage",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "ica_transform",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "interpolation_model_compare",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "list_workspace_snapshots",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "mantel_test_analysis",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "mgwr_regression",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "mnf_transform",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "quadrat_analysis",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "restore_workspace_snapshot",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "save_workspace_snapshot",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "search_datasets",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "space_time_k_analysis",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "temporal_changepoint",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "webgis_checkpoint",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "webgis_compile_maplibre",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "webgis_map_combine",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "webgis_rollback",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "webgis_validate",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "webgis_world_state",
-   "surface": "tools"
-  }
- ],
+ "findings": [],
  "findings_ratchet": {
-  "behavioral_dispatch": 120,
+  "behavioral_dispatch": 150,
   "expired_waivers": [],
-  "min_behavioral_dispatch": 120,
+  "min_behavioral_dispatch": 150,
   "pass": true,
   "violations": [],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "9c549e361389f9bcc8bffb14a9de972e372169e66d145e188ab0943ca8f89bd1",
+ "fingerprint": "8a64895ebf2a2b8660c4714c63ac6e90cf336c4e662b6275156b778e97e84b48",
  "gate": {
   "fields": {
    "capabilities": {
-    "coverage": 68,
-    "missing": [
-     "add_marker",
-     "aggregate_dataset",
-     "alias_layer",
-     "apply_layer_filter",
-     "apply_layer_style",
-     "apply_template",
-     "attribute_filter",
-     "audit_spatial_quality",
-     "batch_geocode_cn",
-     "cancel_execution_run",
-     "clear_annotations",
-     "combine_map_theme",
-     "connect_data_source",
-     "control_floating_chart",
-     "create_3d_extrusion_map",
-     "create_new_skill",
-     "create_thematic_map",
-     "deep_explore",
-     "describe_dataset",
-     "display_layer"
-    ],
-    "missing_count": 92,
+    "coverage": 100,
+    "missing": [],
+    "missing_count": 0,
     "pass": true,
-    "threshold": 60
+    "threshold": 95
    },
    "latency_class": {
     "coverage": 100,
@@ -7731,14 +6808,14 @@
     "missing": [],
     "missing_count": 0,
     "pass": true,
-    "threshold": 83
+    "threshold": 95
    },
    "tags": {
     "coverage": 100,
     "missing": [],
     "missing_count": 0,
     "pass": true,
-    "threshold": 83
+    "threshold": 95
    }
   },
   "pass": true,
@@ -7777,12 +6854,11 @@
  "tools": [
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_annotation_measurement"
+   ],
    "deterministic": true,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "add_marker",
@@ -7806,12 +6882,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "data_source_pipeline"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "light",
    "name": "aggregate_dataset",
@@ -7835,12 +6910,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "layer_display_control"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "alias_layer",
@@ -7892,12 +6966,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "layer_display_control"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "apply_layer_filter",
@@ -7919,14 +6992,12 @@
    "tier": 1
   },
   {
-   "behavior": "none",
-   "capabilities": [],
+   "behavior": "dispatch",
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested",
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "medium",
    "name": "apply_layer_style",
@@ -7942,17 +7013,18 @@
     "style",
     "图层配色"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_map_extras.py"
+   ],
    "tier": 1
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "apply_template",
@@ -7977,12 +7049,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "data_source_pipeline"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "medium",
    "name": "attribute_filter",
@@ -8009,12 +7080,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "dataset_profiling_quality"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "heavy",
    "name": "audit_spatial_quality",
@@ -8062,12 +7132,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "geocoding"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "light",
    "name": "batch_geocode_cn",
@@ -8257,14 +7326,12 @@
    "tier": 1
   },
   {
-   "behavior": "none",
-   "capabilities": [],
+   "behavior": "dispatch",
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": false,
    "execution_policy": "thread",
-   "flags": [
-    "untested",
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "cancel_execution_run",
@@ -8279,7 +7346,9 @@
     "cancel",
     "运行控制"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_execution.py"
+   ],
    "tier": 2
   },
   {
@@ -8313,12 +7382,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_annotation_measurement"
+   ],
    "deterministic": true,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "clear_annotations",
@@ -8416,12 +7484,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "combine_map_theme",
@@ -8573,12 +7640,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "data_source_pipeline"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "light",
    "name": "connect_data_source",
@@ -8602,14 +7668,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
-   "capabilities": [],
+   "behavior": "dispatch",
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "untested",
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "control_floating_chart",
@@ -8623,7 +7687,9 @@
     "chart_panel",
     "面板"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_map_extras.py"
+   ],
    "tier": 2
   },
   {
@@ -8685,12 +7751,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "create_3d_extrusion_map",
@@ -8713,12 +7778,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "meta_tool_surface"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "create_new_skill",
@@ -8743,12 +7807,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "create_thematic_map",
@@ -8803,15 +7866,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "cross_pair_correlation"
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "slow",
    "memory_class": "medium",
    "name": "cross_pcf_analysis",
@@ -8827,7 +7887,9 @@
     "随机标记",
     "空间关联"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
    "tier": 2
   },
   {
@@ -8860,12 +7922,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "meta_tool_surface"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "slow",
    "memory_class": "medium",
    "name": "deep_explore",
@@ -8915,15 +7976,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "workspace_state_inspection"
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "describe_artifact",
@@ -8937,17 +7995,18 @@
     "血缘",
     "只读"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_data_discovery.py"
+   ],
    "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "data_source_pipeline"
+   ],
    "deterministic": false,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "light",
    "name": "describe_dataset",
@@ -8995,15 +8054,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "raster_change_detection"
    ],
    "deterministic": true,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "medium",
    "memory_class": "heavy",
    "name": "detect_change_cva",
@@ -9019,7 +8075,9 @@
     "变化幅度",
     "变化方向"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
    "tier": 2
   },
   {
@@ -9050,15 +8108,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "raster_change_detection"
    ],
    "deterministic": true,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "medium",
    "memory_class": "heavy",
    "name": "detect_ratio_change",
@@ -9074,7 +8129,9 @@
     "双期对比",
     "变化检测"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
    "tier": 2
   },
   {
@@ -9159,12 +8216,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "layer_display_control"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "display_layer",
@@ -9271,14 +8327,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
-   "capabilities": [],
+   "behavior": "dispatch",
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": false,
    "execution_policy": "thread",
-   "flags": [
-    "untested",
-    "descriptor_incomplete"
-   ],
    "latency_class": "slow",
    "memory_class": "heavy",
    "name": "execute_execution_plan",
@@ -9295,17 +8349,18 @@
     "物化",
     "execute"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_execution.py"
+   ],
    "tier": 2
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": false,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "slow",
    "memory_class": "medium",
    "name": "execute_plan",
@@ -9349,12 +8404,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_export_publishing"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "export_batch_maps",
@@ -9378,12 +8432,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_export_publishing"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "export_thematic_map",
@@ -9516,12 +8569,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "layer_display_control"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "finalize_display",
@@ -9552,15 +8604,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "workspace_state_inspection"
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "find_artifacts_by_role",
@@ -9574,7 +8623,9 @@
     "检索",
     "只读"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_data_discovery.py"
+   ],
    "tier": 2
   },
   {
@@ -9664,12 +8715,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_viewport_control"
+   ],
    "deterministic": true,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "fly_to_location",
@@ -9719,15 +8769,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "global_gearys_c"
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "geary_c",
@@ -9742,7 +8789,9 @@
     "聚集检验",
     "p值"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
    "tier": 2
   },
   {
@@ -9773,12 +8822,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "report_charting"
+   ],
    "deterministic": true,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "generate_analysis_report",
@@ -9803,12 +8851,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "report_charting"
+   ],
    "deterministic": true,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "generate_chart",
@@ -9840,12 +8887,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "report_charting"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "generate_monitoring_report",
@@ -9869,12 +8915,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "geocoding"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "geocode",
@@ -9923,12 +8968,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "geocoding"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "geocode_cn",
@@ -10142,14 +9186,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
-   "capabilities": [],
+   "behavior": "dispatch",
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": false,
    "execution_policy": "thread",
-   "flags": [
-    "untested",
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "get_execution_run",
@@ -10164,19 +9206,18 @@
     "evidence",
     "运行记录"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_execution.py"
+   ],
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "workspace_state_inspection"
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "get_lineage",
@@ -10190,7 +9231,9 @@
     "数据资产",
     "只读"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_data_discovery.py"
+   ],
    "tier": 2
   },
   {
@@ -10257,12 +9300,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "local_data_query"
+   ],
    "deterministic": true,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "get_local_osm_catalog",
@@ -10285,12 +9327,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "local_data_query"
+   ],
    "deterministic": true,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "get_local_stats_catalog",
@@ -10313,12 +9354,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": false,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "get_plan_status",
@@ -10681,15 +9721,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "ica_transform"
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "ica_transform",
@@ -10703,7 +9740,9 @@
     "降维",
     "遥感"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
    "tier": 2
   },
   {
@@ -10814,12 +9853,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "data_source_pipeline"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "light",
    "name": "inspect_data_source",
@@ -10841,15 +9879,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "interpolation_model_selection"
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "slow",
    "memory_class": "heavy",
    "name": "interpolation_model_compare",
@@ -10864,7 +9899,9 @@
     "rmse",
     "选型"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
    "tier": 2
   },
   {
@@ -11193,12 +10230,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "meta_tool_surface"
+   ],
    "deterministic": true,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "list_available_tools",
@@ -11267,12 +10303,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": false,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "list_templates",
@@ -11327,15 +10362,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "workspace_state_inspection"
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "list_workspace_snapshots",
@@ -11348,7 +10380,9 @@
     "清单",
     "只读"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_workspace.py"
+   ],
    "tier": 2
   },
   {
@@ -11493,12 +10527,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "data_source_pipeline"
+   ],
    "deterministic": false,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "manage_analysis_asset",
@@ -11521,15 +10554,12 @@
    "tier": 3
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "mantel_test"
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "slow",
    "memory_class": "medium",
    "name": "mantel_test_analysis",
@@ -11544,7 +10574,9 @@
     "mantel_test",
     "置换检验"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
    "tier": 2
   },
   {
@@ -11603,12 +10635,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_annotation_measurement"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "measure_area",
@@ -11631,12 +10662,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_annotation_measurement"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "measure_distance",
@@ -11685,15 +10715,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "gwr"
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "mgwr_regression",
@@ -11707,19 +10734,18 @@
     "空间回归",
     "地理加权"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "mnf_transform"
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "mnf_transform",
@@ -11733,7 +10759,9 @@
     "降维",
     "遥感"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
    "tier": 2
   },
   {
@@ -12366,12 +11394,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "data_source_pipeline"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "light",
    "name": "plan_data_query",
@@ -12428,12 +11455,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "dataset_profiling_quality"
+   ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "profile_dataset",
@@ -12455,12 +11481,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "dataset_profiling_quality"
+   ],
    "deterministic": true,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "medium",
    "name": "profile_dataset_semantics",
@@ -12483,12 +11508,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": false,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "propose_plan",
@@ -12513,15 +11537,12 @@
    "tier": 1
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "point_pattern_analysis"
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "fast",
    "memory_class": "medium",
    "name": "quadrat_analysis",
@@ -12537,17 +11558,18 @@
     "均匀",
     "点格局"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
    "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "data_source_pipeline"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "light",
    "name": "query_dataset",
@@ -12628,12 +11650,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "local_data_query"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "medium",
    "name": "query_local_osm",
@@ -12711,12 +11732,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "local_data_query"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "query_local_yearbook",
@@ -12741,12 +11761,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_annotation_measurement"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "query_map_features",
@@ -12800,12 +11819,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "local_data_query"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "query_osm_buildings",
@@ -12866,18 +11884,19 @@
     "tests/unit/test_tool_catalog.py",
     "tests/unit/test_tool_dispatch_service.py",
     "tests/unit/test_tool_error_standardization.py",
-    "tests/unit/test_tool_registry_rationalization.py"
+    "tests/unit/test_tool_registry_rationalization.py",
+    "tests/unit/tools/test_behavioral_data_discovery.py",
+    "tests/unit/tools/test_behavioral_workspace.py"
    ],
    "tier": 2
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "local_data_query"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "query_osm_roads",
@@ -13076,12 +12095,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "data_source_pipeline"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "light",
    "name": "refresh_data_source",
@@ -13104,12 +12122,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "meta_tool_surface"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "light",
    "name": "refresh_skill_surface",
@@ -13159,12 +12176,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "layer_display_control"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "remove_layer",
@@ -13190,12 +12206,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "layer_display_control"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "reorder_layer",
@@ -13218,12 +12233,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "dataset_profiling_quality"
+   ],
    "deterministic": true,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "heavy",
    "name": "repair_spatial_dataset",
@@ -13247,12 +12261,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "crs_transformation"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "medium",
    "name": "reproject_coordinates",
@@ -13279,12 +12292,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "slow",
    "memory_class": "medium",
    "name": "rerun_workflow",
@@ -13308,12 +12320,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_viewport_control"
+   ],
    "deterministic": true,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "reset_map_view",
@@ -13334,15 +12345,12 @@
    "tier": 1
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "workspace_snapshot"
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "restore_workspace_snapshot",
@@ -13355,17 +12363,18 @@
     "恢复",
     "重物化"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_workspace.py"
+   ],
    "tier": 2
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "geocoding"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "reverse_geocode",
@@ -13392,12 +12401,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "geocoding"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "reverse_geocode_cn",
@@ -13888,12 +12896,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "save_plan_as_workflow",
@@ -13915,15 +12922,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "workspace_snapshot"
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "save_workspace_snapshot",
@@ -13936,7 +12940,9 @@
     "workspace",
     "持久化"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_workspace.py"
+   ],
    "tier": 2
   },
   {
@@ -13995,15 +13001,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "workspace_state_inspection"
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "search_datasets",
@@ -14017,7 +13020,9 @@
     "过滤",
     "只读"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_data_discovery.py"
+   ],
    "tier": 2
   },
   {
@@ -14130,12 +13135,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "data_source_pipeline"
+   ],
    "deterministic": false,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "search_spatial_catalog",
@@ -14265,12 +13269,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "layer_display_control"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "set_layer_status",
@@ -14294,12 +13297,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_viewport_control"
+   ],
    "deterministic": true,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "set_map_view",
@@ -14373,15 +13375,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "space_time_k_function"
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "slow",
    "memory_class": "medium",
    "name": "space_time_k_analysis",
@@ -14396,7 +13395,9 @@
     "space_time_k",
     "置换检验"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
    "tier": 2
   },
   {
@@ -14473,12 +13474,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "scenario_simulation"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "slow",
    "memory_class": "medium",
    "name": "spatial_decision_v2",
@@ -14564,12 +13564,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "scenario_simulation"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "light",
    "name": "spatial_reasoning",
@@ -14635,7 +13634,8 @@
     "tests/unit/test_spatial_stats.py",
     "tests/unit/test_spatial_stats_contract.py",
     "tests/unit/test_spatial_tools_crs_passthrough_review.py",
-    "tests/unit/test_tool_dispatch_service.py"
+    "tests/unit/test_tool_dispatch_service.py",
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
    ],
    "tier": 1
   },
@@ -14669,12 +13669,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "meta_tool_surface"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "slow",
    "memory_class": "medium",
    "name": "spawn_subagent",
@@ -14785,12 +13784,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "directional_distribution_analysis"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "medium",
    "name": "standard_deviational_ellipse",
@@ -14839,12 +13837,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "dataset_profiling_quality"
+   ],
    "deterministic": true,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "suggest_analysis_patterns",
@@ -14867,12 +13864,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "layer_display_control"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "switch_base_layer",
@@ -14977,15 +13973,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "temporal_change_point"
    ],
    "deterministic": true,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "temporal_changepoint",
@@ -15001,7 +13994,9 @@
     "changepoint",
     "时间序列"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
    "tier": 2
   },
   {
@@ -15031,12 +14026,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "temporal_filtering"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "medium",
    "name": "temporal_filter",
@@ -15276,12 +14270,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "crs_transformation"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "medium",
    "name": "transform_coordinates",
@@ -15332,12 +14325,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "layer_display_control"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "update_layer_appearance",
@@ -15361,12 +14353,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "validate_execution_plan",
@@ -15523,12 +14514,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "meta_tool_surface"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "light",
    "name": "web_search",
@@ -15554,12 +14544,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_export_publishing"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "webgis_cartography_status",
@@ -15588,15 +14577,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "workspace_snapshot"
    ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "webgis_checkpoint",
@@ -15611,18 +14597,18 @@
     "回滚点",
     "数据落地"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_webgis.py"
+   ],
    "tier": 2
   },
   {
-   "behavior": "none",
-   "capabilities": [],
+   "behavior": "dispatch",
+   "capabilities": [
+    "map_export_publishing"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "untested",
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "webgis_compile_maplibre",
@@ -15638,7 +14624,9 @@
     "发布",
     "地图产品"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_webgis.py"
+   ],
    "tier": 2
   },
   {
@@ -15671,12 +14659,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "webgis_component_update",
@@ -15711,12 +14698,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "webgis_layer_remove",
@@ -15740,12 +14726,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "webgis_layer_upsert",
@@ -15786,12 +14771,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "webgis_layout_set",
@@ -15815,14 +14799,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
-   "capabilities": [],
+   "behavior": "dispatch",
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "untested",
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "webgis_map_combine",
@@ -15837,17 +14819,18 @@
     "组件槽位",
     "mapspec"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_webgis.py"
+   ],
    "tier": 2
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": true,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "webgis_map_intent",
@@ -15896,12 +14879,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "webgis_map_product",
@@ -15947,12 +14929,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_export_publishing"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "webgis_project_init",
@@ -15975,15 +14956,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "workspace_snapshot"
    ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "webgis_rollback",
@@ -15998,17 +14976,18 @@
     "撤销",
     "checkpoint"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_webgis.py"
+   ],
    "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "map_export_publishing"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "slow",
    "memory_class": "medium",
    "name": "webgis_runtime_validate",
@@ -16086,14 +15065,12 @@
    "tier": 1
   },
   {
-   "behavior": "none",
-   "capabilities": [],
+   "behavior": "dispatch",
+   "capabilities": [
+    "map_export_publishing"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "untested",
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "webgis_validate",
@@ -16109,17 +15086,18 @@
     "stops",
     "编译前检查"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_webgis.py"
+   ],
    "tier": 2
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_viewport_control"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "webgis_view_set",
@@ -16149,15 +15127,12 @@
    "tier": 1
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "workspace_state_inspection"
    ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "webgis_world_state",
@@ -16174,7 +15149,9 @@
     "用户隐藏",
     "只读"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/tools/test_behavioral_webgis.py"
+   ],
    "tier": 2
   },
   {
@@ -16231,12 +15208,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "scenario_simulation"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "what_if_simulate",
@@ -16298,12 +15274,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_viewport_control"
+   ],
    "deterministic": true,
    "execution_policy": "inline",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "zoom_to_bbox",
@@ -16325,12 +15300,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "map_viewport_control"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "zoom_to_layer",
