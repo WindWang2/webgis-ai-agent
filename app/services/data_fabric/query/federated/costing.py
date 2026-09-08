@@ -211,11 +211,13 @@ def decide_crs_transform(
     stats_left: Optional[DatasetStatistics] = None,
     stats_right: Optional[DatasetStatistics] = None,
 ) -> CrsTransformDecision:
-    """join 两侧 CRS 对齐决策：server 优先 → 本地变换较小侧。
+    """join 两侧 CRS 对齐决策：两侧分别估价，取总变换成本最小的一侧。
 
     - 任一 CRS 未知 → 不变换（诚实 unknown；V5 语义：未知 CRS 视为兼容）；
-    - 空间 join 且 CRS 不同 → 必须对齐；属性 join 不比较几何 → 只记录
-      correctness note（几何列随行输出，结果 CRS 混合如实披露）。
+    - 空间 join 且 CRS 不同 → 必须对齐；server 变换每行成本 ≈ 本地的 1/15，
+      因此较大侧的 server 变换可以胜过较小侧的本地变换；
+    - 属性 join 不比较几何 → 只记录 correctness note（几何列随行输出，
+      结果 CRS 混合如实披露），不做变换。
     """
     if left_crs_srid is None or right_crs_srid is None:
         return CrsTransformDecision(
@@ -234,20 +236,30 @@ def decide_crs_transform(
             placement="none", transform_side=None, reason="CRS already aligned"
         )
 
-    # 严格小于才选左 —— 平局（含双 None 占位相等）偏向右侧：链式执行里
-    # 右侧是 build 侧，变换一次进缓存即可，代价低于流式探针侧。
-    smaller_is_left = (est_left_rows or _UNESTIMATED_ROWS) < (
-        est_right_rows or _UNESTIMATED_ROWS
+    # 两侧分别估价（server 优先/本地兜底），取总变换成本最小的一侧；
+    # 平局偏 build 侧（右）：链式执行里右侧变换一次进缓存，代价低于流式探针侧。
+    rows_left = est_left_rows if est_left_rows is not None else _UNESTIMATED_ROWS
+    rows_right = est_right_rows if est_right_rows is not None else _UNESTIMATED_ROWS
+    complexity_left = max(1.0, _complexity(stats_left)) / _COMPLEXITY_NORM_VERTICES
+    complexity_right = max(1.0, _complexity(stats_right)) / _COMPLEXITY_NORM_VERTICES
+    cost_left = rows_left * (
+        _W_SERVER_REPROJECT_PER_ROW
+        if getattr(caps_left, "server_reprojection", False)
+        else _W_LOCAL_REPROJECT_PER_ROW * complexity_left
     )
-    if smaller_is_left:
-        side, src_srid, dst_srid = "left", left_crs_srid, right_crs_srid
-        caps, stats = caps_left, stats_left
-    else:
+    cost_right = rows_right * (
+        _W_SERVER_REPROJECT_PER_ROW
+        if getattr(caps_right, "server_reprojection", False)
+        else _W_LOCAL_REPROJECT_PER_ROW * complexity_right
+    )
+    if cost_right <= cost_left:
         side, src_srid, dst_srid = "right", right_crs_srid, left_crs_srid
-        caps, stats = caps_right, stats_right
+        caps, rows = caps_right, est_right_rows
+    else:
+        side, src_srid, dst_srid = "left", left_crs_srid, right_crs_srid
+        caps, rows = caps_left, est_left_rows
 
     note = None
-    per_row = 0.0
     if join_kind != "spatial_join":
         return CrsTransformDecision(
             placement="none",
@@ -260,21 +272,30 @@ def decide_crs_transform(
                 )
             ),
         )
-    if getattr(caps, "server_reprojection", False):
-        per_row = _W_SERVER_REPROJECT_PER_ROW
+    server = getattr(caps, "server_reprojection", False)
+    per_row = (
+        _W_SERVER_REPROJECT_PER_ROW
+        if server
+        else (
+            _W_LOCAL_REPROJECT_PER_ROW
+            * max(1.0, _complexity(stats_left if side == "left" else stats_right))
+            / _COMPLEXITY_NORM_VERTICES
+        )
+    )
+    side_rows = rows if rows is not None else _UNESTIMATED_ROWS
+    if server:
         reason = (
             f"server-side ST_Transform EPSG:{src_srid}→EPSG:{dst_srid} on "
-            f"{side} (smaller estimated side)"
+            f"{side} (smaller total transform cost, ~{int(side_rows)} rows)"
         )
     else:
-        complexity = max(1.0, _complexity(stats)) / _COMPLEXITY_NORM_VERTICES
-        per_row = _W_LOCAL_REPROJECT_PER_ROW * complexity
         reason = (
             f"local pyproj transform EPSG:{src_srid}→EPSG:{dst_srid} on {side} "
-            "(source cannot reproject; smaller side transformed once into build cache)"
+            "(source cannot reproject; smaller total-cost side transformed "
+            "once into build cache)"
         )
     return CrsTransformDecision(
-        placement="server" if per_row == _W_SERVER_REPROJECT_PER_ROW else "local",
+        placement="server" if server else "local",
         transform_side=side,
         reason=reason,
         per_row_cost=per_row,
