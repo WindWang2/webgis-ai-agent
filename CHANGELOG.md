@@ -1,5 +1,48 @@
 # Changelog
 
+## [Unreleased] - 2026-09-09
+
+### Added (Harness V5 — ADR-0118)
+- Durable trace V5: session trace-chain JSONL is now multi-worker safe
+  (cross-process flock + per-session monotonic `seq` + settle idempotency);
+  FINAL_VERDICT records are never dropped by the rolling window; chains survive
+  in-registry LRU eviction via a bounded pinned area (multi-process zero-loss
+  contract test: 8 processes × 6 records).
+- Unified failure taxonomy + typed remediation: 11-class `HarnessFailureClass`
+  (CRS/renderer/stale-ref/timeout/partial/... ) adapters over the existing
+  planning/geocompute enums; the dispatch error seam now attaches a
+  `harness_failure` verdict with bounded retry budget (max 3 per class,
+  exhaustion → `abort_with_disclosure`); pyproj CRS failures no longer escape
+  as generic TOOL_ERROR (KNOWN-GAP #1 fixed, xfail promoted).
+- Longitude-convention hardening: new pure `app/lib/gis/longitude.py`
+  (pm180/e360 detection that never guesses, antimeridian geometry splitting,
+  0–360 normalization) + profile facts feeding the planner.
+- Progressive DatasetProfile: explicit cheap→deep `deepen_profile` (cheap
+  provenance kept, deep-failure falls back to cheap); longitude facts flow into
+  the resolver contract additively (emitted only with real evidence).
+- Rendered-state observation: per-layer telemetry (`source_status`,
+  `render_complete`, `feature_count`) and chart render telemetry
+  (`charts[].rendered/data_points`) — all optional, old clients keep the V4
+  gate; finalization now detects requested-vs-actual mismatches including
+  "chart mounted but rendered without data".
+- Subagent accounting: child runs bind a dedicated TurnEvidence so provider
+  token usage rolls up into `SubagentBudget.llm_usage` and the parent turn
+  evidence (once, idempotent); results carry `budget_usage` + lineage
+  (parent_turn_id/depth/role).
+- Open-loop query→tool retrieval evaluation: 66 hand-gold cases (direct/
+  near-duplicate/hard-negative/ambiguous, zh+en) with precision@1 over the
+  ranked (non-core) segment; measured pins p@1 0.65 / invalid-selection 0.33
+  recorded as the honest V5 baseline.
+- Project-level workflow resume: `workflow_resume_anchors` table (migration
+  0032) + `POST /chat/sessions/{id}/workflow-resume-anchor` and
+  `POST /chat/workflow-resume/{anchor_id}` — resume creates a fresh session
+  with the plan/goal/instance blocks restored, ref payloads rehydrated
+  best-effort, `missing_refs` disclosed, anonymous resume refused.
+- Live-failure corpus (8 categories) with deterministic typed expectations and
+  a budget-ladder termination proof, plus an end-to-end mid-failure recovery
+  scenario (CRS fault → typed diagnose → remediation retry → verified
+  finalization with render telemetry → durable trace).
+
 ## [Unreleased] - 2026-09-07
 
 ### Added
