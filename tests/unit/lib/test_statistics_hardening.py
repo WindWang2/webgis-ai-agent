@@ -221,3 +221,35 @@ def test_h3_lisa_output_json_serializable():
     props = res.data["features"][0]["properties"]
     assert isinstance(props["count"], int) and not hasattr(props["count"], "item") or isinstance(props["count"], int)
     assert json.dumps(props["count"])
+
+
+# --------------------------------------------------------------------------- #
+# 审计 F-3：h3_lisa 声明 statistical_significance —— 证据块与 BH q 真实产出
+# --------------------------------------------------------------------------- #
+def test_h3_lisa_statistical_significance_block():
+    """producer test（stats.h3_lisa → statistical_significance）：逐格 p_sim
+    附 BH-FDR q_value_fdr；data_out 携带真实填充的显著性证据块（esda
+    条件置换 999 次、固定 seed=42）。"""
+    fc = _h3_grid()
+    for i, f in enumerate(fc["features"]):
+        f["properties"]["val"] = float((i * 37) % 11 + 1.0)  # 非常数
+    res = h3_lisa(fc, "val")
+    assert res.success, res.summary
+    # 逐格 BH q 与 p_sim 单调一致（q ≥ p）
+    p_all = np.asarray([f["properties"]["p_value"] for f in res.data["features"]]) \
+        if "p_value" in res.data["features"][0]["properties"] else None
+    q_all = np.asarray([f["properties"]["q_value_fdr"]
+                        for f in res.data["features"]])
+    assert np.all(np.isfinite(q_all)) and np.all(q_all >= 0) and np.all(q_all <= 1)
+    if p_all is not None:
+        assert np.all(q_all >= p_all - 1e-9)
+    # 证据块：置换方法/次数/多重校正/最小 p 真实填充
+    blocks = [u for u in res.data["uncertainty"]
+              if u.get("uncertainty_type") == "statistical_significance"]
+    assert len(blocks) == 1
+    blk = blocks[0]
+    assert blk["target"] == "lisa_local"
+    assert blk["method"] == "permutation"
+    assert blk["permutations"] == 999
+    assert blk["multiple_testing"] == "BH-FDR"
+    assert 0.0 < blk["p_value"] <= 1.0

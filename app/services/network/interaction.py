@@ -32,6 +32,7 @@ from app.services.network.models import (
     GravityAccessResult,
     HuffInteractionResult,
 )
+from app.services.network.scale_guard import od_matrix_scale_guard
 from app.services.network.snapping import PointSnappingService
 from app.services.network.od_matrix import NetworkODMatrixService
 
@@ -129,6 +130,8 @@ class NetworkInteractionService:
         beta = _check_param("distance_decay", distance_decay, _DISTANCE_DECAY_BOUNDS)
 
         n_dem, m_fac = len(demand_points), len(facilities)
+        # science-v3 R3：n×m OD 代价矩阵统一规模闸 —— 物化之前拒绝。
+        od_matrix_scale_guard(n_dem, m_fac, context="gravity_accessibility")
         costs = _cost_matrix_from_od(
             self.od_service, demand_points, facilities, graph, network_dataset, profile
         )
@@ -224,6 +227,8 @@ class NetworkInteractionService:
         beta = _check_param("distance_decay", distance_decay, _DISTANCE_DECAY_BOUNDS)
 
         n_dem, m_fac = len(demand_points), len(facilities)
+        # science-v3 R3：n×m OD 代价矩阵统一规模闸 —— 物化之前拒绝。
+        od_matrix_scale_guard(n_dem, m_fac, context="huff_interaction")
         costs = _cost_matrix_from_od(
             self.od_service, demand_points, facilities, graph, network_dataset, profile
         )

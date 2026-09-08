@@ -166,6 +166,13 @@ class VectorProfileData(BaseModel):
     fields: Dict[str, FieldProfile] = Field(default_factory=dict)
     fields_truncated: bool = False
     temporal_fields: List[str] = Field(default_factory=list)
+    # V4（ADR-0104 #4）：点支撑（Point/MultiPoint）的重复/唯一叶子坐标计数
+    # —— 仅深扫口径（scanned_rows>0）；面/线环的闭合重复顶点不计（那是
+    # GeoJSON 环语义，不是数据质量证据）。克里金的 ≥8 门作用于去重后样本
+    # （geo_analysis/kriging MIN_SAMPLES），该证据让 resolver/规划层能在
+    # 执行前看到「200 个堆叠重复点」的假阳性规模（审计 gap #9）。
+    duplicate_coordinate_count: int = 0
+    unique_coordinate_count: int = 0
 
     @field_validator("extent")
     @classmethod
@@ -540,8 +547,11 @@ def profile_features(
     accs: Dict[str, _FieldAccumulator] = {}
     fields_truncated = False
     scanned = 0
+    # V4：点支撑重复坐标证据（有界集合；超限后仅继续计已跟踪键 —— 确定性
+    # 下界口径，确定性不被破坏）。
+    point_coords: Dict[Tuple[float, float], int] = {}
 
-    def _observe_point(x: Any, y: Any) -> None:
+    def _observe_point(x: Any, y: Any, *, track: bool = False) -> None:
         nonlocal minx, miny, maxx, maxy, impossible_coords, zero_zero
         try:
             fx, fy = float(x), float(y)
@@ -549,6 +559,12 @@ def profile_features(
             return
         if not (math.isfinite(fx) and math.isfinite(fy)):
             return
+        if track:
+            key = (fx, fy)
+            if key in point_coords:
+                point_coords[key] += 1
+            elif len(point_coords) < _UNIQUE_SET_CAP:
+                point_coords[key] = 1
         if fx == 0.0 and fy == 0.0:
             zero_zero += 1
         if not (-180.0 <= fx <= 180.0 and -90.0 <= fy <= 90.0):
@@ -584,16 +600,18 @@ def profile_features(
             geom_type_counts[gtype] = geom_type_counts.get(gtype, 0) + 1
             coords = geometry.get("coordinates")
             has_leaf = False
+            # 仅点支撑几何参与重复坐标计数（面/线闭合环顶点是环语义）。
+            track_coords = gtype in ("Point", "MultiPoint")
             if gtype == "GeometryCollection":
                 for sub in geometry.get("geometries") or []:
                     if isinstance(sub, dict):
                         for x, y in _iter_leaf_coords(sub.get("coordinates")):
                             has_leaf = True
-                            _observe_point(x, y)
+                            _observe_point(x, y, track=track_coords)
             else:
                 for x, y in _iter_leaf_coords(coords):
                     has_leaf = True
-                    _observe_point(x, y)
+                    _observe_point(x, y, track=track_coords)
             if not has_leaf:
                 empty_geometry += 1
         props = feature.get("properties")
@@ -621,6 +639,9 @@ def profile_features(
     }
     temporal_fields = [n for n, f in fields.items() if f.temporal_hint]
 
+    coord_observations = sum(point_coords.values())
+    unique_coords = len(point_coords)
+
     vp = VectorProfileData(
         row_count=total,
         scanned_rows=scanned,
@@ -633,6 +654,8 @@ def profile_features(
         fields=fields,
         fields_truncated=fields_truncated,
         temporal_fields=temporal_fields,
+        duplicate_coordinate_count=max(coord_observations - unique_coords, 0),
+        unique_coordinate_count=unique_coords,
     )
     return vp, quality
 

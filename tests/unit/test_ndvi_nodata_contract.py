@@ -92,3 +92,48 @@ def test_calculate_ndvi_zero_fill_no_longer_counts_as_valid(tmp_path, allow_tmp_
     )
     assert res["success"] is True, res.get("error")
     assert res["stats"]["mean"] == pytest.approx(0.6, abs=1e-9)
+
+# ── science-v3 审计修复回归（strict 波段语义 · HIGH）────────────────────
+def _write_rgbn(path, n=8):
+    """4 波段 GeoTIFF（RGBN 布局；band i 值 = 100·(i+1)）。"""
+    bands = [np.full((n, n), 100.0 * (i + 1)) for i in range(4)]
+    with rasterio.open(
+        path, "w", driver="GTiff", height=n, width=n, count=4,
+        dtype="float64", crs="EPSG:4326",
+        transform=from_origin(116.0, 40.0, 1.0, 1.0),
+    ) as dst:
+        for i, b in enumerate(bands, start=1):
+            dst.write(b, i)
+    return path
+
+
+def test_calculate_ndvi_rejects_positional_guess_by_default(
+        tmp_path, allow_tmp_paths):
+    """4 波段影像缺省只能靠 RGBN 位置猜测 —— strict 默认类型化拒绝。"""
+    tif = _write_rgbn(str(tmp_path / "rgbn.tif"))
+    res = NatureResourceAnalyzer.calculate_ndvi(
+        tif, output_dir=str(tmp_path / "out"))
+    assert res["success"] is False
+    assert res["error_type"] == "band_semantics_guess_rejected"
+    assert set(res["guessed_roles"]) == {"red", "nir"}
+    assert res["detected_bands"]["source"] == "guess-4band-rgbn"
+
+
+def test_calculate_ndvi_non_strict_discloses_guess(tmp_path, allow_tmp_paths):
+    """strict=False 显式放行 guess —— payload 与 quality_evidence 必须携带
+    强制披露。"""
+    tif = _write_rgbn(str(tmp_path / "rgbn2.tif"))
+    res = NatureResourceAnalyzer.calculate_ndvi(
+        tif, output_dir=str(tmp_path / "out"), strict_band_semantics=False)
+    assert res["success"] is True, res.get("error")
+    assert res["band_semantics_warnings"]
+    assert res["quality_evidence"]["warnings"] == res["band_semantics_warnings"]
+
+
+def test_calculate_ndvi_explicit_bands_pass_strict(tmp_path, allow_tmp_paths):
+    """显式传参（既有调用方契约）不受 strict 影响。"""
+    tif = _write_rgbn(str(tmp_path / "rgbn3.tif"))
+    res = NatureResourceAnalyzer.calculate_ndvi(
+        tif, red_band=1, nir_band=4, output_dir=str(tmp_path / "out"))
+    assert res["success"] is True, res.get("error")
+    assert "band_semantics_warnings" not in res

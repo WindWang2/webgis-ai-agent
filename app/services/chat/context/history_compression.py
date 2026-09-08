@@ -85,6 +85,7 @@ def truncate_history_by_budget(
     history: list[dict],
     budget: int = HISTORY_TOKEN_BUDGET,
     min_turns: int = HISTORY_MIN_TURNS,
+    pinned: set[int] | None = None,
 ) -> tuple[list[dict], int]:
     """按 token 预算截断历史，返回 (保留下来的消息序列, 被丢弃的轮次数)。
 
@@ -92,6 +93,10 @@ def truncate_history_by_budget(
     - 把消息切成"轮次"（user 开头的连续段）
     - 从最新轮反向纳入，累计 token 不超预算
     - 永远至少保留最近 min_turns 轮，即使总和已超预算
+    - ADR-0104 #6（KEEP pin）：``pinned`` 是消息下标集合（``find_safety_pinned_indexes``
+      的产物）；含 pinned 消息的轮次永不被丢弃（安全事实不随预算消失）。pin 有界：
+      只保护最近 ``MAX_PINNED_TURNS`` 个 pinned 轮次，更早的 pinned 轮照常按预算淘汰。
+      ``pinned=None`` 时行为与本函数历史版本逐字节一致。
     """
     if not history:
         return history, 0
@@ -100,16 +105,22 @@ def truncate_history_by_budget(
     if len(turns) <= min_turns:
         return history, 0
 
+    pinned_turns = _pinned_turn_indexes(turns, pinned)
+
     kept_rev: list[list[dict]] = []
     used = 0
-    for turn in reversed(turns):
+    overflow_reached = False
+    for ti in range(len(turns) - 1, -1, -1):
+        turn = turns[ti]
         turn_cost = sum(_message_tokens(m) for m in turn)
-        if len(kept_rev) < min_turns:
+        if len(kept_rev) < min_turns or ti in pinned_turns:
             kept_rev.append(turn)
             used += turn_cost
             continue
-        if used + turn_cost > budget:
-            break
+        if overflow_reached or used + turn_cost > budget:
+            # 继续扫描（不 break）：更早的 pinned 轮仍须被保护。
+            overflow_reached = True
+            continue
         kept_rev.append(turn)
         used += turn_cost
 
@@ -119,6 +130,56 @@ def truncate_history_by_budget(
         return history, 0
     flat = [m for turn in kept for m in turn]
     return flat, dropped
+
+
+#: KEEP pin 的有界性上限：最多保护最近 N 个含安全标记的轮次（防 pin 无界吃预算）。
+MAX_PINNED_TURNS = 8
+
+#: 安全相关内容标记（KEEP pin 的廉价确定性探测，无 LLM）：
+#: - ``[CARTOGRAPHY_VERDICT]``：制图裁决（verdict_summary 同款 marker）；
+#: - ``[工具执行失败]``：自愈错误指引（construct_self_healing_message）；
+#: - ``confirm_destructive`` / ``Tier 3``：Tier-3 破坏性操作确认回执。
+SAFETY_PIN_MARKERS: tuple[str, ...] = (
+    "[CARTOGRAPHY_VERDICT]",
+    "[工具执行失败]",
+    "confirm_destructive",
+    "Tier 3",
+)
+
+
+def find_safety_pinned_indexes(messages: list[dict]) -> set[int]:
+    """扫描出携带安全标记的消息下标（KEEP pin 探测；确定性、有界、无 LLM）。"""
+    if not messages:
+        return set()
+    pinned: set[int] = set()
+    for i, msg in enumerate(messages):
+        content = msg.get("content")
+        text = content if isinstance(content, str) else ""
+        if not text:
+            continue
+        for marker in SAFETY_PIN_MARKERS:
+            if marker in text:
+                pinned.add(i)
+                break
+    return pinned
+
+
+def _pinned_turn_indexes(
+    turns: list[list[dict]], pinned: set[int] | None,
+) -> set[int]:
+    """消息下标 → 含 pinned 消息的轮次下标（只保留最近 MAX_PINNED_TURNS 个）。"""
+    if not pinned:
+        return set()
+    result: set[int] = set()
+    start = 0
+    for ti, turn in enumerate(turns):
+        end = start + len(turn)
+        if any(start <= idx < end for idx in pinned):
+            result.add(ti)
+        start = end
+    if len(result) > MAX_PINNED_TURNS:
+        result = set(sorted(result)[-MAX_PINNED_TURNS:])
+    return result
 
 
 # ── audit4 #980: 轮内（intra-turn）tool 结果软预算 ──────────────────────────
@@ -140,6 +201,7 @@ _FOLDED_TOOL_PLACEHOLDER = (
 def fold_intra_turn_tool_results(
     messages: list[dict],
     keep_recent: int = _TURN_TOOL_KEEP_RECENT,
+    pinned: set[int] | None = None,
 ) -> list[dict]:
     """折叠**当前回合**内较早的 tool 结果（仅影响发给 LLM 的视图，不改动库）。
 
@@ -147,6 +209,9 @@ def fold_intra_turn_tool_results(
       ``[工具执行结果]`` 载体）之后的全部消息。
     - 回合内 tool 消息 ≤ fold_min 时不动作，返回原列表。
     - 被折叠消息的 content 替换为单行占位（配对不变），其余字段原样保留。
+    - ADR-0104 #6（KEEP pin）：``pinned``（``find_safety_pinned_indexes`` 产物，
+      绝对下标）中的 tool 消息永不折叠——安全/裁决事实不因折叠丢失。
+      ``pinned=None`` 时行为与本函数历史版本逐字节一致。
     """
     if not messages:
         return messages
@@ -178,6 +243,10 @@ def fold_intra_turn_tool_results(
                 continue
 
     fold_set = set(tool_positions[:-keep_recent]) if keep_recent > 0 else set(tool_positions)
+    if pinned:
+        # KEEP pin：pinned 消息（绝对下标 → tail 相对下标）退出折叠集。
+        pinned_tail = {idx - (last_user_idx + 1) for idx in pinned if idx > last_user_idx}
+        fold_set -= pinned_tail
     if not fold_set:
         return messages
     new_tail: list[dict] = []

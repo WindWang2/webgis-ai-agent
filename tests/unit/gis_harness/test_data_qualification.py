@@ -107,6 +107,7 @@ class TestScientificDelegation:
     def test_numeric_measure_role_with_numeric_field(self):
         req = role("measure", capability="", artifacts=(), geometry=())
         profile = {"featureCount": 40, "geometryTypes": ["Point"],
+                   "fields_status": "explicit",
                    "fields": {"value": {"type": "number"}}}
         q = qualify_data_role(req, "bound", resolver_profile=profile)
         checks = {c["check"]: c["passed"] for c in q.checks}
@@ -115,6 +116,7 @@ class TestScientificDelegation:
     def test_numeric_measure_role_without_numeric_field(self):
         req = role("measure", capability="", artifacts=(), geometry=())
         profile = {"featureCount": 40, "geometryTypes": ["Point"],
+                   "fields_status": "explicit",
                    "fields": {"name": {"type": "string"}}}
         q = qualify_data_role(req, "bound", resolver_profile=profile)
         checks = {c["check"]: c["passed"] for c in q.checks}
@@ -312,3 +314,33 @@ class TestRemediationBacking:
                 else:
                     assert b.startswith(("fn:", "op:")), (
                         f"{op}: 未知背书形态 {b}")
+
+
+class TestV4FactAuthorityNegative:
+    """review R2/R3 负向测试：非显式 schema 的数值事实缺席必须是 deferred，
+    不得洗成 authoritative-empty → false-REJECT。"""
+
+    def test_unknown_schema_no_numeric_field_is_not_false_reject(self):
+        req = role("measure", capability="", artifacts=(), geometry=())
+        # fields_status 未声明（unknown）+ 无数值字段证据 —— 断言缺证据 ≠ 违反
+        profile = {"featureCount": 40, "geometryTypes": ["Point"],
+                   "fields": {"name": {"type": "string"}}}
+        q = qualify_data_role(req, "bound", resolver_profile=profile)
+        checks = {c["check"]: c for c in q.checks}
+        nf = checks.get("numeric_field")
+        assert nf is not None
+        # deferred-PASS：verdict PASS（unknown ≠ unsatisfied），不产生
+        # INSUFFICIENT_DATA 降级
+        assert nf.get("verdict") == "PASS"
+        assert q.state != "degraded"
+        assert q.state != "blocked"
+
+    def test_truncated_schema_with_numeric_field_still_positive(self):
+        """显式声明 explicit 的 schema 保留正向证据（数值字段在场 → PASS）。"""
+        req = role("measure", capability="", artifacts=(), geometry=())
+        profile = {"featureCount": 40, "geometryTypes": ["Point"],
+                   "fields_status": "explicit",
+                   "fields": {"value": {"type": "number"}}}
+        q = qualify_data_role(req, "bound", resolver_profile=profile)
+        checks = {c["check"]: c["passed"] for c in q.checks}
+        assert checks.get("numeric_field") is True

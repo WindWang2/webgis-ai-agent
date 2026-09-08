@@ -6,6 +6,7 @@ ToolDispatchService —— 本注册表只持 metadata，不持数据、不执�
 第二套 runtime。新增算法 = 注册 AlgorithmDescriptor，Harness 主规划代码
 不改。
 """
+
 from __future__ import annotations
 
 from typing import Dict, List, Literal, Optional
@@ -25,25 +26,171 @@ _UNIT_VOCABULARY = frozenset({"meters", "kilometers", "degrees", "pixels", "seco
 # ── VNext（ADR-0099）科学元数据词表 ─────────────────────────────────
 # crs_class：resolver 硬门消费（crs_safety.crs_class_allows）。
 CRSSpatialClass = Literal[
-    "", "CRS_AGNOSTIC", "GEOGRAPHIC_OK", "PROJECTED_REQUIRED",
-    "LOCAL_METRIC_REQUIRED", "GEODESIC", "RASTER_GRID",
+    "",
+    "CRS_AGNOSTIC",
+    "GEOGRAPHIC_OK",
+    "PROJECTED_REQUIRED",
+    "LOCAL_METRIC_REQUIRED",
+    "GEODESIC",
+    "RASTER_GRID",
 ]
 # fallback 科学等价性（resolver fallback trail 携带；proxy/degraded 必须
 # 显现在证据里 —— 「网络可达性不可用 → 欧氏缓冲」是 proxy，不是 equivalent）。
 FallbackSemanticsClass = Literal[
-    "equivalent", "approximation", "proxy", "degraded", "not_allowed",
+    "equivalent",
+    "approximation",
+    "proxy",
+    "degraded",
+    "not_allowed",
 ]
 ScientificStatus = Literal["", "EXPERIMENTAL", "VALIDATED", "PRODUCTION", "DEPRECATED"]
 RandomSeedPolicy = Literal[
-    "deterministic", "fixed_seed", "caller_seeded", "unseeded", "none",
+    "deterministic",
+    "fixed_seed",
+    "caller_seeded",
+    "unseeded",
+    "none",
 ]
 # backend_variants 的实现后端词表（封闭；新增需同步 validate 消费方）。
-BACKEND_VOCABULARY = frozenset({
-    "pure_python", "numpy", "scipy", "shapely", "geopandas", "rasterio",
-    "gdal", "pysal", "scikit-learn", "networkx", "h3", "matplotlib",
-    "numexpr", "external",
-})
+BACKEND_VOCABULARY = frozenset(
+    {
+        "pure_python",
+        "numpy",
+        "scipy",
+        "shapely",
+        "geopandas",
+        "rasterio",
+        "gdal",
+        "pysal",
+        "scikit-learn",
+        "networkx",
+        "h3",
+        "matplotlib",
+        "numexpr",
+        "external",
+    }
+)
 
+# ── Backend SDK V3（ADR-0117）词表与结构化契约 ────────────────────────
+# ApproximationClass：一个算法/变体的精度分类学。descriptor 或变体级
+# 声明；空串 = 未声明（存量算法零迁移负担）。声明即约束：
+# exact/approximate 与布尔 approximate 交叉一致（validate 强制）。
+# 语义界定（review R1-4）：exact 指该实现路径**精确求解其数学模型**
+# （如克里金方程组的精确解），不等于「精确插值器」（带 nugget 的克里金
+# 不过样本点）—— 插值性质由 assumptions/limitations 表达。
+ApproximationClass = Literal[
+    "",
+    "exact",
+    "approximate",
+    "heuristic",
+    "sampling",
+    "streaming",
+]
+_APPROXIMATION_CLASSES_REQUIRING_FLAG = frozenset(
+    {"approximate", "heuristic", "sampling", "streaming"}
+)
+# 变体级声明的合法词表（不含空串——变体显式声明时必须给出分类）。
+APPROXIMATION_CLASS_VOCABULARY = frozenset(
+    {"exact", "approximate", "heuristic", "sampling", "streaming"}
+)
+
+# CancellationProfile：算法对协作式取消（app/lib/cancellation）的响应
+# 能力声明 —— none=无取消点；coarse=仅入口/出口；chunk_boundary=分块
+# 边界可响应（栅格窗口/批量迭代）；fine=内层重循环检查点。空 = 未声明。
+CancellationProfile = Literal[
+    "",
+    "none",
+    "coarse",
+    "chunk_boundary",
+    "fine",
+]
+
+
+class ResourceEnvelope(BaseModel):
+    """声明式资源包络（estimate-before-allocate 的机器可读事实源）。
+
+    把散落在各实现的护栏常数（_MAX_IDW_OBSERVATIONS / RBF_HARD_CAP /
+    时维上限 / pair 截断…）中**可声明**的部分上收为 descriptor 契约，
+    供 backend_selection 做结构化内存/对预算估算（诊断性）—— 实现层
+    的类型化硬闸（ResourceScaleMismatch）仍是执行权威，本模型不替代。
+    全字段可缺省；至少声明一项。
+    """
+
+    bytes_per_feature: Optional[float] = None  # 向量：每要素主数组字节
+    bytes_per_cell: Optional[float] = None  # 栅格：每像元主数组字节
+    max_pairs: Optional[int] = None  # O(n²) 对预算硬上限
+    hard_max_features: Optional[int] = None  # 实现层拒绝阈值（向量）
+    hard_max_cells: Optional[int] = None  # 实现层拒绝阈值（栅格）
+    notes: str = ""  # 口径说明（有界）
+
+    @field_validator("notes")
+    @classmethod
+    def _bounded_notes(cls, v: str) -> str:
+        return v[:160]
+
+    @field_validator("bytes_per_feature", "bytes_per_cell")
+    @classmethod
+    def _nonneg_bytes(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and v < 0:
+            raise ValueError("resource envelope byte coefficients must be >= 0")
+        return v
+
+    @field_validator("max_pairs", "hard_max_features", "hard_max_cells")
+    @classmethod
+    def _positive_caps(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 1:
+            raise ValueError("resource envelope caps must be >= 1")
+        return v
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> "ResourceEnvelope":
+        declared = (
+            self.bytes_per_feature is not None
+            or self.bytes_per_cell is not None
+            or self.max_pairs is not None
+            or self.hard_max_features is not None
+            or self.hard_max_cells is not None
+        )
+        if not declared:
+            raise ValueError("resource_envelope must declare at least one bound")
+        return self
+
+
+class NumericalTolerance(BaseModel):
+    """结构化数值容差（Wave 9 golden/双跑验证的机器可读锚）。
+
+    自由文本 ``numerical_tolerance`` 保留为人类可读口径；本模型供
+    验证框架消费（rtol/atol 语义对齐 numpy.isclose）。
+    """
+
+    rtol: Optional[float] = None  # 相对容差 (0, 0.1]
+    atol: Optional[float] = None  # 绝对容差 [0, ∞)
+    policy: str = ""  # 验证口径（"golden"/"double_run"…）
+
+    @field_validator("rtol")
+    @classmethod
+    def _rtol_range(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and not 0.0 < float(v) <= 0.1:
+            raise ValueError("tolerance rtol must be in (0, 0.1]")
+        return v
+
+    @field_validator("atol")
+    @classmethod
+    def _atol_range(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and v < 0:
+            raise ValueError("tolerance atol must be >= 0")
+        return v
+
+    @field_validator("policy")
+    @classmethod
+    def _bounded_policy(cls, v: str) -> str:
+        return v[:64]
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> "NumericalTolerance":
+        if self.rtol is None and self.atol is None:
+            raise ValueError("tolerance must declare rtol and/or atol")
+        return self
 
 
 # （原 ALGORITHM_TAXONOMY 已删除 —— 2026-09 VNext 死元数据清理：
@@ -62,13 +209,16 @@ class BackendVariant(BaseModel):
     选择并把决策写入证据块 —— 变体不再是纯 metadata。
     """
 
-    id: str                                  # 变体内唯一（如 "numpy_batched"）
-    backend: str                             # BACKEND_VOCABULARY
-    tool: str = ""                           # 绑定的工具实现（可空 = lib 内部）
+    id: str  # 变体内唯一（如 "numpy_batched"）
+    backend: str  # BACKEND_VOCABULARY
+    tool: str = ""  # 绑定的工具实现（可空 = lib 内部）
     deterministic: bool = True
     notes: str = ""
-    min_features: Optional[int] = None       # 变体适用规模下界（含）
-    max_features: Optional[int] = None       # 变体适用规模上界（含）
+    min_features: Optional[int] = None  # 变体适用规模下界（含）
+    max_features: Optional[int] = None  # 变体适用规模上界（含）
+    # V3（ADR-0117）：变体级精度分类 —— exact 与 approximate 变体共存时
+    # backend 选择层据此披露近似语义（空 = 未声明，随 descriptor）。
+    approximation_class: ApproximationClass = ""
 
     @field_validator("notes")
     @classmethod
@@ -84,7 +234,8 @@ class BackendVariant(BaseModel):
             raise ValueError("backend variant max_features must be >= 1")
         if lo is not None and hi is not None and lo > hi:
             raise ValueError(
-                f"backend variant {self.id!r}: min_features {lo} > max_features {hi}")
+                f"backend variant {self.id!r}: min_features {lo} > max_features {hi}"
+            )
         return self
 
 
@@ -123,20 +274,48 @@ class AlgorithmDescriptor(BaseModel):
     contract_version: int = 1
     # ── VNext（ADR-0099）：科学元数据（全部 additive；每个字段有
     # validate() 校验器或明确消费方，杜绝学术百科式死元数据）─────────
-    algorithm_family: str = ""               # 如 "kriging" / "spatial_autocorrelation"
-    method_references: List[str] = Field(default_factory=list)   # method_references.py id
-    assumptions: List[str] = Field(default_factory=list)         # 进证据块
+    algorithm_family: str = ""  # 如 "kriging" / "spatial_autocorrelation"
+    method_references: List[str] = Field(
+        default_factory=list
+    )  # method_references.py id
+    assumptions: List[str] = Field(default_factory=list)  # 进证据块
     limitations: List[str] = Field(default_factory=list)
-    crs_class: CRSSpatialClass = ""          # resolver CRS 硬门
+    crs_class: CRSSpatialClass = ""  # resolver CRS 硬门
     scientific_preconditions: List[str] = Field(default_factory=list)
     uncertainty_outputs: List[str] = Field(default_factory=list)  # uncertainty 词表
     random_seed_policy: RandomSeedPolicy = "deterministic"
-    numerical_tolerance: str = ""            # 容差声明（有界文本）
-    scientific_status: ScientificStatus = "" # 与 runtime_status 正交：验证强度
+    numerical_tolerance: str = ""  # 容差声明（有界文本）
+    scientific_status: ScientificStatus = ""  # 与 runtime_status 正交：验证强度
     conformance_tests: List[str] = Field(default_factory=list)  # pytest 节点 id
     backend_variants: List[BackendVariant] = Field(default_factory=list)
     # target_id → 科学等价性分类；键必须是 fallback_algorithms 成员。
     fallback_semantics: Dict[str, FallbackSemanticsClass] = Field(default_factory=dict)
+    # ── Backend SDK V3（ADR-0117）：全部 additive，缺省 = 存量语义不变 ──
+    approximation_class: ApproximationClass = ""  # 算法级精度分类
+    resource_envelope: Optional[ResourceEnvelope] = None  # 声明式资源包络
+    tolerance: Optional[NumericalTolerance] = None  # 结构化数值容差
+    cancellation_profile: CancellationProfile = ""  # 协作式取消响应能力
+    # ── Wave 8（不确定性契约）：declared uncertainty → producer test ────
+    # 键 = uncertainty_outputs 成员；值 = 真实产出该不确定性类型并断言其
+    # 形状/数值的 conformance 测试节点（AST 存在性校验，同 conformance_tests）。
+    # 缺省空表 = 不约束存量算法；声明即机器可查（审计 G1 缺口的闭环）。
+    uncertainty_producer_tests: Dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("uncertainty_producer_tests")
+    @classmethod
+    def _bounded_producer_tests(cls, v: Dict[str, str]) -> Dict[str, str]:
+        if len(v) > 6:
+            raise ValueError("uncertainty_producer_tests exceeds 6 entries")
+        for key, node in v.items():
+            # review R1-3：静默截断会让键与 uncertainty_outputs 失配，
+            # 产生难排查的 validate 报错 —— 超限直接拒绝。
+            if len(str(key)) > 32:
+                raise ValueError(
+                    f"uncertainty_producer_tests key too long: {key!r}")
+            if len(str(node)) > 220:
+                raise ValueError(
+                    f"uncertainty_producer_tests node too long: {node!r}")
+        return dict(v)
 
     @field_validator("assumptions", "limitations")
     @classmethod
@@ -250,7 +429,10 @@ class AlgorithmRegistry:
         return algorithm_id in self._by_id
 
     def algorithms_for_capability(
-        self, capability: str, *, include_planned: bool = False,
+        self,
+        capability: str,
+        *,
+        include_planned: bool = False,
     ) -> List[AlgorithmDescriptor]:
         ids = self._by_capability.get(capability, [])
         algos = [self._by_id[i] for i in ids]
@@ -258,8 +440,9 @@ class AlgorithmRegistry:
             # V3 修复：参数语义是 include_planned —— planned 与 unavailable
             # 都属"不可运行"，一律过滤（此前只滤 unavailable，planned 走漏
             # 到调用方再被 resolver 原生门拒绝，命名与行为不符）。
-            algos = [a for a in algos
-                     if a.runtime_status not in ("planned", "unavailable")]
+            algos = [
+                a for a in algos if a.runtime_status not in ("planned", "unavailable")
+            ]
         return algos
 
     @property
@@ -349,16 +532,25 @@ class AlgorithmRegistry:
                 # output_artifact_types 是消费方（规划/校验/地图模型适配）的
                 # 合同，算法层漂移出去等于绕过合同。
                 cap_descriptor = capabilities.get(cap)
-                cap_outputs = list(getattr(cap_descriptor, "output_artifact_types", []) or [])
-                if (cap_outputs and algo.output_artifact_type
-                        and algo.output_artifact_type not in cap_outputs):
+                cap_outputs = list(
+                    getattr(cap_descriptor, "output_artifact_types", []) or []
+                )
+                if (
+                    cap_outputs
+                    and algo.output_artifact_type
+                    and algo.output_artifact_type not in cap_outputs
+                ):
                     issues.append(
                         f"algorithm {algo.id}: output artifact "
                         f"{algo.output_artifact_type} not declared by capability "
-                        f"{cap} (declared: {cap_outputs})")
-            if algo.output_artifact_type and not artifact_types.has(algo.output_artifact_type):
+                        f"{cap} (declared: {cap_outputs})"
+                    )
+            if algo.output_artifact_type and not artifact_types.has(
+                algo.output_artifact_type
+            ):
                 issues.append(
-                    f"algorithm {algo.id}: unknown output artifact {algo.output_artifact_type}")
+                    f"algorithm {algo.id}: unknown output artifact {algo.output_artifact_type}"
+                )
             for ref in algo.input_artifact_types:
                 if not artifact_types.has(ref):
                     issues.append(f"algorithm {algo.id}: unknown input artifact {ref}")
@@ -368,19 +560,26 @@ class AlgorithmRegistry:
                 missing = [t for t in algo.tool_candidates if t not in available_tools]
                 if missing:
                     issues.append(
-                        f"algorithm {algo.id}: tools not registered: {missing}")
+                        f"algorithm {algo.id}: tools not registered: {missing}"
+                    )
             for fb in algo.fallback_algorithms:
                 if fb not in self._by_id:
-                    issues.append(f"algorithm {algo.id}: fallback algorithm {fb} not registered")
+                    issues.append(
+                        f"algorithm {algo.id}: fallback algorithm {fb} not registered"
+                    )
             # V2(P3) 契约一致性：unit_requirements 只接受已知单位词
             # （封闭词表）；自由字符串等于永远无人可消费的死 metadata。
             # （approximate 与 deterministic 正交：前者是精度折衷，后者是
             # 可复现性 —— 不做静态矛盾判定，§27 的随机性披露由 descriptor
             # 声明者负责。）
-            if algo.unit_requirements and algo.unit_requirements not in _UNIT_VOCABULARY:
+            if (
+                algo.unit_requirements
+                and algo.unit_requirements not in _UNIT_VOCABULARY
+            ):
                 issues.append(
                     f"algorithm {algo.id}: unknown unit_requirements "
-                    f"'{algo.unit_requirements}' (vocabulary: {sorted(_UNIT_VOCABULARY)})")
+                    f"'{algo.unit_requirements}' (vocabulary: {sorted(_UNIT_VOCABULARY)})"
+                )
             # ── VNext（ADR-0099）科学元数据校验：每个声明字段都有
             # 存在性/一致性消费方 —— 死 metadata 在注册表门被拒。──────
             issues.extend(self._validate_scientific_metadata(algo))
@@ -396,36 +595,43 @@ class AlgorithmRegistry:
         if algo.parameter_contract_ref:
             from app.lib.gis.parameter_contracts import get_parameter_contract_registry
 
-            contract = get_parameter_contract_registry().get(algo.parameter_contract_ref)
+            contract = get_parameter_contract_registry().get(
+                algo.parameter_contract_ref
+            )
             if contract is None:
                 issues.append(
                     f"algorithm {algo.id}: parameter_contract_ref "
-                    f"'{algo.parameter_contract_ref}' not registered")
+                    f"'{algo.parameter_contract_ref}' not registered"
+                )
             elif not contract.parameters:
                 issues.append(
                     f"algorithm {algo.id}: parameter contract "
-                    f"'{algo.parameter_contract_ref}' has zero parameters")
+                    f"'{algo.parameter_contract_ref}' has zero parameters"
+                )
         if algo.method_references:
             from app.lib.gis.method_references import reference_exists
 
             for ref in algo.method_references:
                 if not reference_exists(ref):
                     issues.append(
-                        f"algorithm {algo.id}: unknown method reference {ref}")
+                        f"algorithm {algo.id}: unknown method reference {ref}"
+                    )
         if algo.scientific_preconditions:
             from app.lib.gis.scientific_preconditions import precondition_exists
 
             for pid in algo.scientific_preconditions:
                 if not precondition_exists(pid):
                     issues.append(
-                        f"algorithm {algo.id}: unknown scientific precondition {pid}")
+                        f"algorithm {algo.id}: unknown scientific precondition {pid}"
+                    )
         if algo.uncertainty_outputs:
             from app.lib.gis.uncertainty import UNCERTAINTY_TYPE_VOCABULARY
 
             for u in algo.uncertainty_outputs:
                 if u not in UNCERTAINTY_TYPE_VOCABULARY:
                     issues.append(
-                        f"algorithm {algo.id}: unknown uncertainty output {u}")
+                        f"algorithm {algo.id}: unknown uncertainty output {u}"
+                    )
         # 复现策略与 deterministic 声明一致性：
         #   "deterministic"（无随机）⇒ 必须 deterministic=True；
         #   "unseeded"（随机不可控）⇒ 必须 deterministic=False；
@@ -434,35 +640,43 @@ class AlgorithmRegistry:
         #   （种子是参数）与两旗兼容。
         if algo.random_seed_policy == "deterministic" and not algo.deterministic:
             issues.append(
-                f"algorithm {algo.id}: deterministic=False 不得声明 deterministic 种子策略")
+                f"algorithm {algo.id}: deterministic=False 不得声明 deterministic 种子策略"
+            )
         if algo.random_seed_policy == "unseeded" and algo.deterministic:
-            issues.append(
-                f"algorithm {algo.id}: deterministic=True 与 unseeded 矛盾")
+            issues.append(f"algorithm {algo.id}: deterministic=True 与 unseeded 矛盾")
         # backend_variants：后端词表 + 实现存在性（native 才谈变体）
         for variant in algo.backend_variants:
             if variant.backend not in BACKEND_VOCABULARY:
                 issues.append(
                     f"algorithm {algo.id}: variant {variant.id} backend "
-                    f"'{variant.backend}' not in vocabulary")
-        if algo.backend_variants and algo.runtime_status == "native" \
-                and not algo.tool_candidates:
+                    f"'{variant.backend}' not in vocabulary"
+                )
+        if (
+            algo.backend_variants
+            and algo.runtime_status == "native"
+            and not algo.tool_candidates
+        ):
             issues.append(
-                f"algorithm {algo.id}: native with backend_variants but no tools")
+                f"algorithm {algo.id}: native with backend_variants but no tools"
+            )
         # fallback 语义：键合法 + not_allowed 不得同时是可自动回退目标
         for target, semantics in algo.fallback_semantics.items():
             if target not in algo.fallback_algorithms:
                 issues.append(
                     f"algorithm {algo.id}: fallback_semantics key {target} "
-                    f"不在 fallback_algorithms 里")
+                    f"不在 fallback_algorithms 里"
+                )
             if semantics == "not_allowed":
                 issues.append(
                     f"algorithm {algo.id}: fallback {target} 标记 not_allowed "
-                    f"却列在 fallback_algorithms（resolver 会自动采用）")
+                    f"却列在 fallback_algorithms（resolver 会自动采用）"
+                )
         for target in algo.fallback_algorithms:
             if target not in algo.fallback_semantics:
                 issues.append(
                     f"algorithm {algo.id}: fallback {target} 缺科学等价性声明 "
-                    f"(fallback_semantics)")
+                    f"(fallback_semantics)"
+                )
         # 成熟度必要条件（PRODUCTION/VALIDATED 是可审计承诺）
         if algo.scientific_status == "PRODUCTION":
             if algo.runtime_status != "native" or not algo.tool_candidates:
@@ -477,40 +691,95 @@ class AlgorithmRegistry:
             issues.append(f"algorithm {algo.id}: VALIDATED 需要 conformance tests")
         elif algo.scientific_status == "DEPRECATED" and not algo.fallback_algorithms:
             issues.append(
-                f"algorithm {algo.id}: DEPRECATED 必须给出 fallback（否则规划死端）")
+                f"algorithm {algo.id}: DEPRECATED 必须给出 fallback（否则规划死端）"
+            )
         # conformance 节点：仓库布局可用时校验文件存在性 + **节点级**
         # 存在性（评审 M1：文件级检查放过节点改名腐烂 —— VALIDATED 的
         # 可审计承诺必须钉到真实测试函数）。确定性 AST 解析，零导入。
         if algo.conformance_tests:
-            import ast
-            import os
+            issues.extend(self._check_test_nodes(
+                algo, list(algo.conformance_tests), "conformance test"))
+        # ── Wave 8（不确定性契约）：declared uncertainty → producer test。
+        # 键必须是 uncertainty_outputs 成员；值节点经同一 AST 校验 ——
+        # 「声明了不确定性就必须有真实产出并断言它的测试」机器可查。
+        if algo.uncertainty_producer_tests:
+            for u in algo.uncertainty_producer_tests:
+                if u not in algo.uncertainty_outputs:
+                    issues.append(
+                        f"algorithm {algo.id}: uncertainty_producer_tests key "
+                        f"{u!r} not declared in uncertainty_outputs")
+            issues.extend(self._check_test_nodes(
+                algo, list(algo.uncertainty_producer_tests.values()),
+                "uncertainty producer test"))
+        # ── Backend SDK V3（ADR-0117）：additive —— 只约束显式声明 ────
+        issues.extend(self._validate_backend_sdk(algo))
+        return issues
 
-            if os.path.isdir("tests"):
-                for node in algo.conformance_tests:
-                    path, _, func = node.partition("::")
-                    if not path.startswith("tests/") or not os.path.exists(path):
-                        if path.startswith("tests/"):
-                            issues.append(
-                                f"algorithm {algo.id}: conformance test file "
-                                f"missing: {path}")
-                        continue
-                    if func:
-                        try:
-                            tree = ast.parse(
-                                open(path, encoding="utf-8").read())
-                        except (OSError, SyntaxError):
-                            continue
-                        names = {
-                            n.name for n in ast.walk(tree)
-                            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef,
-                                              ast.ClassDef))}
-                        # 节点路径可为 file::func 或 file::Class::method ——
-                        # 逐段存在性校验。
-                        segments = [s for s in func.split("::") if s]
-                        if any(s not in names for s in segments):
-                            issues.append(
-                                f"algorithm {algo.id}: conformance test node "
-                                f"missing: {node}")
+    @staticmethod
+    def _check_test_nodes(
+        algo: AlgorithmDescriptor, nodes: List[str], kind: str,
+    ) -> List[str]:
+        """测试节点存在性（文件 + AST 级逐段校验；确定性、零导入）。"""
+        import ast
+        import os
+
+        issues: List[str] = []
+        if not os.path.isdir("tests"):
+            return issues
+        for node in nodes:
+            path, _, func = node.partition("::")
+            if not path.startswith("tests/") or not os.path.exists(path):
+                if path.startswith("tests/"):
+                    issues.append(
+                        f"algorithm {algo.id}: {kind} file missing: {path}")
+                continue
+            if func:
+                try:
+                    tree = ast.parse(open(path, encoding="utf-8").read())
+                except (OSError, SyntaxError):
+                    continue
+                names = {
+                    n.name
+                    for n in ast.walk(tree)
+                    if isinstance(
+                        n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                    )
+                }
+                # 节点路径可为 file::func 或 file::Class::method ——
+                # 逐段存在性校验。
+                segments = [s for s in func.split("::") if s]
+                if any(s not in names for s in segments):
+                    issues.append(
+                        f"algorithm {algo.id}: {kind} node missing: {node}")
+        return issues
+
+    @staticmethod
+    def _validate_backend_sdk(algo: AlgorithmDescriptor) -> List[str]:
+        """V3 新字段的一致性校验（缺省字段零约束，存量算法不迁移）。"""
+        issues: List[str] = []
+        if algo.approximation_class:
+            expects_flag = (
+                algo.approximation_class in _APPROXIMATION_CLASSES_REQUIRING_FLAG
+            )
+            if expects_flag and not algo.approximate:
+                issues.append(
+                    f"algorithm {algo.id}: approximation_class "
+                    f"'{algo.approximation_class}' 需要 approximate=True"
+                )
+            if algo.approximation_class == "exact" and algo.approximate:
+                issues.append(
+                    f"algorithm {algo.id}: approximation_class 'exact' "
+                    f"与 approximate=True 矛盾"
+                )
+        for variant in algo.backend_variants:
+            if (
+                variant.approximation_class
+                and variant.approximation_class not in APPROXIMATION_CLASS_VOCABULARY
+            ):
+                issues.append(
+                    f"algorithm {algo.id}: variant {variant.id} unknown "
+                    f"approximation_class {variant.approximation_class!r}"
+                )
         return issues
 
 

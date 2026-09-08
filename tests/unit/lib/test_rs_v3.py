@@ -321,8 +321,18 @@ def test_mad_identical_stacks_zero_chi2():
     assert float(np.max(res["chi2_raster"])) < 1e-9
     assert np.allclose(res["canonical_correlations"], 1.0, atol=1e-9)
     assert float(np.max(np.asarray(res["variate_variances"]))) < 1e-12
-    assert res["meta"]["chi2_dof"] == 4          # 2k dof（任务约定披露）
+    assert res["meta"]["chi2_dof"] == 2          # k dof（Nielsen 1998 χ²_k 惯例）
     assert res["iterations_ran"] == 0            # n_iterms=0：无 IR 迭代
+
+
+def test_mad_chi2_dof_equals_n_bands():
+    """χ² 自由度 = k=n_bands（对 3 波段栈钉死公式，而非常数 2）。"""
+    rng = np.random.RandomState(7)
+    stack_a = rng.uniform(0, 1, (3, 8, 8))
+    stack_b = stack_a + rng.normal(0.0, 0.05, stack_a.shape)
+    res = mad_change(stack_a, stack_b)
+    assert res["meta"]["chi2_dof"] == 3
+    assert "chi2_dof_derivation" in res["meta"]
 
 
 def test_mad_localized_change_detected():

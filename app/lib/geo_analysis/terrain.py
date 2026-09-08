@@ -376,22 +376,33 @@ def _bilinear_sample(
 def _world_to_cell(
     transform: Sequence[float], x: float, y: float,
 ) -> Tuple[float, float]:
-    """rasterio 仿射 (a,b,c,d,e,f) → (col, row)（解 2x2 线性系统）。"""
+    """世界坐标 → (col, row)（**像元中心索引空间**：整数 = 像元中心）。
+
+    science-v3 审计复核：GDAL 6 参数仿射原点是 UL **角点**（实测
+    ``t*(0,0)``=栅格角、``src.xy(0,0)``=首像元中心），故逆变换后须减
+    0.5 才与数组索引语义（整数 = 像元中心）一致 —— 与 ``_cell_to_world``
+    互为正逆变换。
+    """
     a, b, c, d, e, f = (float(v) for v in transform[:6])
     det = a * e - b * d
     if det == 0:
         raise ValueError(f"degenerate raster transform (det=0): {tuple(transform[:6])}")
-    col = (e * (x - c) - b * (y - f)) / det
-    row = (a * (y - f) - d * (x - c)) / det
+    col = (e * (x - c) - b * (y - f)) / det - 0.5
+    row = (a * (y - f) - d * (x - c)) / det - 0.5
     return col, row
 
 
 def _cell_to_world(
     transform: Sequence[float], cols: np.ndarray, rows: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """(col, row)（像元中心索引空间）→ 世界坐标。
+
+    输入索引是「整数 = 像元中心」的数组/等值线索引语义；GDAL 仿射把
+    (col+0.5, row+0.5) 映射到该像元中心，故先加 0.5 再过仿射。
+    """
     a, b, c, d, e, f = (float(v) for v in transform[:6])
-    xs = a * cols + b * rows + c
-    ys = d * cols + e * rows + f
+    xs = a * (cols + 0.5) + b * (rows + 0.5) + c
+    ys = d * (cols + 0.5) + e * (rows + 0.5) + f
     return xs, ys
 
 
@@ -440,6 +451,10 @@ def viewshed(
         obs_row, obs_col = float(observer[0]), float(observer[1])
     z, valid = _prepare(dem, nodata)
     h, w = z.shape
+    # science-v3 审计：viewshed 此前无 lib 护栏 —— 距离/方位/bin/仰角
+    # 等 ~6-8 个 (h,w) 工作数组在 250M 像元读护栏下可达 10+ GB；
+    # 统一纳入像元包络（先拒绝后分配）。
+    _guard_cells((h, w), "terrain.viewshed")
     if not (-0.5 <= obs_row <= h - 0.5 and -0.5 <= obs_col <= w - 0.5):
         raise ValueError(
             f"observer ({obs_row:.3f}, {obs_col:.3f}) is outside the DEM "
@@ -1780,13 +1795,20 @@ def terrain_openness(
     h, w = z.shape
 
     n_az = azimuth_count
-    pos_max = np.full((n_az, h, w), -np.inf)
-    neg_max = np.full((n_az, h, w), -np.inf)
-    az_has = np.zeros((n_az, h, w), dtype=bool)
+    # P0 内存重构（science-v3 审计）：此前物化 pos_max/neg_max/az_has 三个
+    # (n_az,h,w) 栈 —— 64 方位 × 50M 像元 ≈ 25-77 GB 在「像元护栏内」爆炸。
+    # 逐方位 running max（(h,w) 瞬态）+ (h,w) 累加器，峰值 O(h·w)；
+    # 求和顺序（j 升序）与原 axis=0 归约一致（n_az ≤ 64 单 block 顺序求和）。
+    pos_sum = np.zeros((h, w), dtype=np.float64)
+    neg_sum = np.zeros((h, w), dtype=np.float64)
+    az_count = np.zeros((h, w), dtype=np.float64)
 
     z0 = np.where(valid, z, 0.0)
     for j in range(n_az):
         az = 2.0 * math.pi * j / n_az  # 自北顺时针
+        pos_max = np.full((h, w), -np.inf)
+        neg_max = np.full((h, w), -np.inf)
+        az_has = np.zeros((h, w), dtype=bool)
         for k in range(1, radius_cells + 1):
             dc = int(round(k * math.sin(az)))
             dr = -int(round(k * math.cos(az)))
@@ -1807,13 +1829,13 @@ def terrain_openness(
                 down = np.degrees(np.arctan((z0 - zd) / dist))
             up = np.where(usable, up, -np.inf)
             down = np.where(usable, down, -np.inf)
-            np.fmax(pos_max[j], down, out=pos_max[j])
-            np.fmax(neg_max[j], up, out=neg_max[j])
-            az_has[j] |= usable
+            np.fmax(pos_max, down, out=pos_max)
+            np.fmax(neg_max, up, out=neg_max)
+            az_has |= usable
+        pos_sum += np.where(az_has, pos_max, 0.0)
+        neg_sum += np.where(az_has, neg_max, 0.0)
+        az_count += az_has
 
-    pos_sum = np.where(az_has, pos_max, 0.0).sum(axis=0)
-    neg_sum = np.where(az_has, neg_max, 0.0).sum(axis=0)
-    az_count = az_has.sum(axis=0).astype(np.float64)
     has_any = az_count > 0
     denom = np.where(has_any, az_count, 1.0)
     positive = np.where(valid & has_any, pos_sum / denom, np.nan)
@@ -1839,51 +1861,67 @@ def terrain_openness(
 # ── V3-1/2. 地平线角与天空可视因子（Steyn 1980；openness 家族射线行走）──
 
 
-def _horizon_rasters(
+def _horizon_single_azimuth(
     z: np.ndarray, valid: np.ndarray,
     cx: float, cy: float,
-    azimuths_deg: Sequence[float], radius_cells: int,
+    az_deg: float, radius_cells: int,
 ) -> np.ndarray:
-    """逐方位地平线角（度）—— ``horizon_angle`` 与 ``sky_view_factor``
+    """单方位地平线角（度）—— ``horizon_angle`` 与 ``sky_view_factor``
     共用的唯一射线行走实现（两算法不重复逻辑）。
 
-    - 每方位（罗盘度，自北顺时针）按 k = 1..R 像元步长取圆整偏移
-      （与 openness 同口径），距离 = 偏移的实际米制欧氏距离（各向异性
-      像元感知）；
+    - 罗盘度方位自北顺时针，按 k = 1..R 像元步长取圆整偏移（与 openness
+      同口径），距离 = 偏移的实际米制欧氏距离（各向异性像元感知）；
     - 仰角 = arctan((z(d) − z₀)/d_m)，只取正值参与 running max（初始化 0
       兜底 —— 地平线角不为负；平地 ≡ 0，浮点精确）；
     - 射线在首个 nodata/非有限/出界采样处停止（其后更远采样不再参与：
       数据外视作无遮挡，截断语义由调用方在 edge_policy 披露）；
-    - 返回 (n_az, h, w) float64；无效中心像元保持 0（调用方掩成 NaN）。
+    - 返回 (h, w) float64；无效中心像元保持 0（调用方掩成 NaN）。
     """
     h, w = z.shape
-    n_az = len(azimuths_deg)
-    horiz = np.zeros((n_az, h, w), dtype=np.float64)
+    horiz = np.zeros((h, w), dtype=np.float64)
     z0 = np.where(valid, z, 0.0)
-    for j, az_deg in enumerate(azimuths_deg):
-        az = math.radians(float(az_deg))
-        alive = valid.copy()  # 中心无效的像元不参与任何射线
-        for k in range(1, radius_cells + 1):
-            if not alive.any():
-                break
-            dc = int(round(k * math.sin(az)))
-            dr = -int(round(k * math.cos(az)))
-            if dc == 0 and dr == 0:
-                continue
-            dist = math.hypot(dc * cx, dr * cy)
-            r0, r1 = max(0, -dr), min(h, h - dr)
-            c0, c1 = max(0, -dc), min(w, w - dc)
-            vd = np.zeros((h, w), dtype=bool)
-            vd[r0:r1, c0:c1] = valid[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
-            contrib = alive & vd
-            if contrib.any():
-                zd = np.full((h, w), np.nan)
-                zd[r0:r1, c0:c1] = z[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
-                with np.errstate(invalid="ignore"):
-                    ang = np.degrees(np.arctan((zd - z0) / dist))
-                np.fmax(horiz[j], np.where(contrib, ang, -np.inf), out=horiz[j])
-            alive &= vd  # 首个无效采样处截断射线（stop-at-nodata 政策）
+    az = math.radians(float(az_deg))
+    alive = valid.copy()  # 中心无效的像元不参与任何射线
+    for k in range(1, radius_cells + 1):
+        if not alive.any():
+            break
+        dc = int(round(k * math.sin(az)))
+        dr = -int(round(k * math.cos(az)))
+        if dc == 0 and dr == 0:
+            continue
+        dist = math.hypot(dc * cx, dr * cy)
+        r0, r1 = max(0, -dr), min(h, h - dr)
+        c0, c1 = max(0, -dc), min(w, w - dc)
+        vd = np.zeros((h, w), dtype=bool)
+        vd[r0:r1, c0:c1] = valid[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
+        contrib = alive & vd
+        if contrib.any():
+            zd = np.full((h, w), np.nan)
+            zd[r0:r1, c0:c1] = z[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
+            with np.errstate(invalid="ignore"):
+                ang = np.degrees(np.arctan((zd - z0) / dist))
+            np.fmax(horiz, np.where(contrib, ang, -np.inf), out=horiz)
+        alive &= vd  # 首个无效采样处截断射线（stop-at-nodata 政策）
     return horiz
+
+
+# 方位×像元联合包络：horizon_angle / sky_view_factor 的 API 契约返回
+# 逐方位栅格 —— n_az×h×w 的输出体量本身是结果的一部分。联合积超过该
+# 上限时类型化拒绝（先拒绝不 OOM；修正建议=减方位或降分辨率）。
+MAX_HORIZON_AZIMUTH_CELLS = 64_000_000
+
+
+def _guard_horizon_stack(n_az: int, shape: Tuple[int, int], algorithm: str) -> None:
+    total = n_az * shape[0] * shape[1]
+    if total > MAX_HORIZON_AZIMUTH_CELLS:
+        raise ResourceScaleMismatch(
+            f"{algorithm}: azimuths×cells = {n_az}×{shape[0]}×{shape[1]} = "
+            f"{total} 超过联合包络 {MAX_HORIZON_AZIMUTH_CELLS} "
+            f"（逐方位栅格输出体量是结果的一部分）",
+            estimated=f"{total} azimuth-cells (float64)",
+            limit=f"azimuths*cells<={MAX_HORIZON_AZIMUTH_CELLS}",
+            correction_hint="减少方位数或降低 DEM 分辨率",
+        )
 
 
 def _validate_horizon_radius(max_search_radius: Any, algorithm: str) -> int:
@@ -1938,8 +1976,8 @@ def horizon_angle(
     - 输出 dict：``azimuths``（罗盘度列表）、``horizon``（方位键 → 地平线
       角栅格，度）、``max``（逐像元跨方位 max，度）；NaN = 无效像元。
 
-    护栏：max_search_radius ≤ 100、方位 1..64、网格 ≤ 50M 像元（先拒绝
-    后分配）。确定性。
+    护栏：max_search_radius ≤ 100、方位 1..64、网格 ≤ 50M 像元、
+    方位×像元联合包络（先拒绝后分配）。确定性。
     """
     cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
     radius = _validate_horizon_radius(max_search_radius, "terrain.horizon_angle")
@@ -1951,13 +1989,17 @@ def horizon_angle(
             f"DEM must be a 2D array (got ndim {getattr(z_raw, 'ndim', 0)})")
     _guard_cells(z_raw.shape, "terrain.horizon_angle")
     z, valid = _prepare(dem, nodata)
+    _guard_horizon_stack(len(az_list), z.shape, "terrain.horizon_angle")
 
-    horiz = _horizon_rasters(z, valid, cx, cy, az_list, radius)
-    max_arr = horiz.max(axis=0)
-    horizon = {
-        f"{float(a):g}": np.where(valid, horiz[j], np.nan)
-        for j, a in enumerate(az_list)
-    }
+    # P0 内存重构（science-v3 审计）：逐方位流式构造输出 dict，不再物化
+    # (n_az,h,w) 中间栈 —— 峰值 ≈ 输出体量 + 单方位瞬态。
+    horizon: Dict[str, Any] = {}
+    max_arr: Optional[np.ndarray] = None
+    for az_deg in az_list:
+        h_row = _horizon_single_azimuth(z, valid, cx, cy, az_deg, radius)
+        horizon[f"{float(az_deg):g}"] = np.where(valid, h_row, np.nan)
+        max_arr = h_row if max_arr is None else np.fmax(max_arr, h_row)
+    assert max_arr is not None  # az_list ≥ 1（_validate_azimuth_list 保证）
     result = {
         "azimuths": [round(float(a), 6) for a in az_list],
         "horizon": horizon,
@@ -2023,18 +2065,23 @@ def sky_view_factor(
     z, valid = _prepare(dem, nodata)
 
     az_list = [360.0 * j / n_az for j in range(n_az)]
-    horiz = _horizon_rasters(z, valid, cx, cy, az_list, radius)
-    with np.errstate(invalid="ignore"):
-        cos2 = np.cos(np.radians(horiz)) ** 2
-    svf_raw = cos2.mean(axis=0)
+    _guard_horizon_stack(n_az, z.shape, "terrain.sky_view_factor")
+
+    # P0 内存重构（science-v3 审计）：逐方位流式累加 cos² 并构造输出
+    # dict，不再物化 (n_az,h,w) 的 horiz/cos2 中间栈。
+    cos2_sum = np.zeros(z.shape, dtype=np.float64)
+    horizon: Dict[str, Any] = {}
+    for az_deg in az_list:
+        h_row = _horizon_single_azimuth(z, valid, cx, cy, az_deg, radius)
+        horizon[f"{float(az_deg):g}"] = np.where(valid, h_row, np.nan)
+        with np.errstate(invalid="ignore"):
+            cos2_sum += np.cos(np.radians(h_row)) ** 2
+    svf_raw = cos2_sum / n_az
     svf = np.where(valid, svf_raw, np.nan)
     result = {
         "svf": svf,
         "azimuths": [round(float(a), 6) for a in az_list],
-        "horizon": {
-            f"{float(a):g}": np.where(valid, horiz[j], np.nan)
-            for j, a in enumerate(az_list)
-        },
+        "horizon": horizon,
     }
     meta = _meta_base(
         "terrain.sky_view_factor", valid,

@@ -529,3 +529,121 @@ def test_cv_reports_folds_actually_used():
     cv = cross_validate_kriging(xy, z, model="spherical")
     assert cv.rmse is not None
     assert 1 <= cv.folds <= 5
+
+
+# ── science-v3：不确定性校准 + 95% 预测区间（Wave 8/9 增强）─────────────
+def test_cv_reports_uncertainty_calibration_on_calibrated_gaussian_field():
+    """标定高斯场：z 均值 ≈0，95% 覆盖率落在容差带内（σ 可信的直接证据）。"""
+    import numpy as np
+
+    from app.lib.geo_analysis.kriging import cross_validate_kriging
+
+    rng = np.random.default_rng(42)
+    n = 120
+    xy = rng.uniform(0.0, 10_000.0, size=(n, 2))
+
+    # 球状模型随机场：先生成白噪声再低通平滑获得空间相关 + 已知尺度
+    from scipy.ndimage import gaussian_filter
+    grid = rng.normal(0.0, 1.0, (40, 40))
+    field = gaussian_filter(grid, sigma=3.0) * 10.0
+    pts = (xy / 10_000.0 * 39).astype(int)
+    vals = field[pts[:, 0], pts[:, 1]]
+
+    report = cross_validate_kriging(xy, vals, model="spherical", folds=4, k=12)
+    assert report.z_count == n
+    assert report.z_score_mean is not None
+    assert abs(report.z_score_mean) < 0.75          # 无系统偏差
+    assert report.z_coverage_95 is not None
+    assert 0.6 <= report.z_coverage_95 <= 1.0       # 校准带（小样本容忍）
+    metrics = report.metrics()
+    assert metrics["uncertainty_calibration"]["n"] == n
+
+
+def test_surface_records_carry_symmetric_pi95():
+    """预测区间面：pi95_low/high 与 stddev 一致（对称 ±1.96σ）。"""
+    import numpy as np
+
+    from app.lib.geo_analysis.kriging import fit_variogram, ordinary_kriging
+
+    rng = np.random.default_rng(7)
+    xy = rng.uniform(0.0, 5_000.0, size=(40, 2))
+    vals = np.sin(xy[:, 0] / 500.0) + rng.normal(0, 0.05, 40)
+    vfit = fit_variogram(xy, vals, model="spherical")
+    targets = rng.uniform(0.0, 5_000.0, size=(25, 2))
+    res = ordinary_kriging(xy, vals, targets, vfit, k=12)
+
+    pi = 1.959963984540054
+    sd = np.sqrt(np.maximum(res.variances, 0.0))
+    assert np.allclose(res.pi95_low, res.predictions - pi * sd)
+    assert np.allclose(res.pi95_high, res.predictions + pi * sd)
+    assert np.all(res.pi95_low <= res.predictions)
+    assert np.all(res.pi95_high >= res.predictions)
+
+
+# ── review R1 修复回归 ──────────────────────────────────────────────────
+def test_uk_zero_residual_degenerate_has_no_fake_pi():
+    """UK 零残差退化路径：方差精确 0 → 不得输出 [0,0] 假区间，
+    metadata 不得无条件宣称 prediction_interval_95（review R1-1）。"""
+    import numpy as np
+
+    from app.lib.geo_analysis.kriging import (
+        _trend_only_result,
+        universal_kriging_detrended,
+    )
+
+    # 度量坐标上的严格线性场 ⇒ 残差精确为 0 ⇒ UK 零残差退化分支。
+    rng = np.random.default_rng(3)
+    xy = rng.uniform(0.0, 5_000.0, size=(40, 2))
+    vals = 2.0 * xy[:, 0] + 1.0 * xy[:, 1]
+    res = universal_kriging_detrended(xy, vals, xy[:10])
+    assert res.pi95_low is None and res.pi95_high is None
+    assert res.variances == pytest.approx(0.0, abs=1e-12)
+    assert "zero_residual_variance" in res.disclosures
+    # _trend_only_result 直接构造同样诚实缺省（不制造 [0,0] 假区间）。
+    tr = _trend_only_result(np.array([1.0, 2.0, 3.0]), xy[:5], 40)
+    assert tr.pi95_low is None and tr.pi95_high is None
+
+
+def test_cv_z_count_excludes_nonfinite():
+    """z_count 只计非有限过滤后的样本（review R1-2/R2-6）。"""
+    import numpy as np
+
+    from app.lib.geo_analysis.kriging import cross_validate_kriging
+
+    rng = np.random.default_rng(11)
+    xy = rng.uniform(0.0, 5_000.0, size=(60, 2))
+    vals = np.sin(xy[:, 0] / 400.0) + rng.normal(0, 0.05, 60)
+    report = cross_validate_kriging(xy, vals, model="spherical", folds=3, k=10)
+    assert report.z_count > 0
+    assert report.z_count <= report.n_samples
+    if report.z_score_mean is not None:
+        assert np.isfinite(report.z_score_mean)
+
+
+def test_cv_z_count_actually_filters_nonfinite(monkeypatch):
+    """Round-2 MINOR-a：真实注入非有限 z（退化方差 → inf）验证过滤。"""
+    import numpy as np
+
+    from app.lib.geo_analysis import kriging as kmod
+
+    rng = np.random.default_rng(5)
+    xy = rng.uniform(0.0, 5_000.0, size=(60, 2))
+    vals = np.sin(xy[:, 0] / 400.0) + rng.normal(0, 0.05, 60)
+
+    real_ok = kmod.ordinary_kriging
+
+    def patched(xy_train, v_train, targets, g, k=12, **kw):
+        res = real_ok(xy_train, v_train, targets, g, k=k, **kw)
+        # 人造非有限校准输入：首个测试点方差=0 → z=±inf；第二个=NaN
+        if res.variances.size >= 2:
+            res.variances[0] = 0.0
+            res.variances[1] = np.nan
+        return res
+
+    monkeypatch.setattr(kmod, "ordinary_kriging", patched)
+    report = kmod.cross_validate_kriging(xy, vals, model="spherical",
+                                         folds=3, k=10)
+    assert report.z_count > 0
+    assert report.z_count < report.n_samples        # 至少剔除了注入的坏点
+    if report.z_score_mean is not None:
+        assert np.isfinite(report.z_score_mean)

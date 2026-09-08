@@ -357,15 +357,24 @@ class WindowedRasterWriter:
 
 # 指数 → 波段角色契约（truth：app/services/rs/band_math.INDEX_FORMULAS）。
 # 每种指数在此明确 required bands / 输出语义，供波段探测与契约测试。
+#
+# NDWI 同名异式拆名（审计 §3.2）：裸名 `ndwi` 一律 = McFeeters (1996)
+# 开放水体 (green−nir)/(green+nir)；`ndwi_gao` = Gao (1996) 植被水分
+# (nir−swir1)/(nir+swir1)；`ndwi_water` 为 McFeeters 版显式别名。
+# 两式不可互换（band_math.INDEX_DESCRIPTIONS 有逐条人类可读描述）。
 INDEX_BAND_ROLES: Dict[str, Tuple[str, ...]] = {
     "ndvi": ("red", "nir"),
     "ndwi": ("green", "nir"),
+    "ndwi_water": ("green", "nir"),
+    "ndwi_gao": ("nir", "swir1"),
     "nbr": ("nir", "swir1"),
     "evi": ("blue", "red", "nir"),
 }
 INDEX_VALID_RANGE: Dict[str, Tuple[float, float]] = {
     "ndvi": (-1.0, 1.0),
     "ndwi": (-1.0, 1.0),
+    "ndwi_water": (-1.0, 1.0),
+    "ndwi_gao": (-1.0, 1.0),
     "nbr": (-1.0, 1.0),
     # EVI 物理上可达 ~[-1, 2.5]（公式系数 2.5）。
     "evi": (-1.0, 2.5),

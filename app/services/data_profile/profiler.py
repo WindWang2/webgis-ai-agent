@@ -59,6 +59,146 @@ def _dominant_kind(kinds: set) -> str:
     return "unknown"
 
 
+def shallow_profile_from_descriptor(ref: str, descriptor: Dict[str, Any]) -> DatasetProfileV3:
+    """RefDescriptor → V3 浅投影（零扫描、PARTIAL 语义；模块级纯函数）。"""
+    field_schema = descriptor.get("field_schema")
+    vp, quality = profile_from_field_schema(
+        field_schema if isinstance(field_schema, dict) else None,
+        complete=bool(descriptor.get("field_schema_complete", True)),
+        row_count=int(descriptor.get("feature_count") or 0),
+        geometry_types=[str(g) for g in (descriptor.get("geometry_types") or [])],
+        bbox=descriptor.get("bbox") if isinstance(descriptor.get("bbox"), list) else None,
+        crs=str(descriptor.get("crs") or ""),
+    )
+    category = "raster" if descriptor.get("raster_capable") else _category_from_geometry_types(
+        [str(g) for g in (descriptor.get("geometry_types") or [])]
+    )
+    return DatasetProfileV3(
+        target_ref=ref,
+        category=category,
+        crs=str(descriptor.get("crs") or ""),
+        extent=(
+            [float(x) for x in descriptor.get("bbox")]
+            if isinstance(descriptor.get("bbox"), list) and len(descriptor.get("bbox")) == 4
+            else None
+        ),
+        vector=vp,
+        profile_quality=quality,
+        source_revision=int(descriptor.get("content_revision") or 0),
+        diagnostics=[] if field_schema else ["no_field_schema_evidence"],
+    )
+
+
+# ── V4（ADR-0104 #4）：profile digest —— ArtifactContract.profile_ref 的
+# 有界内联存储形状。生产方（register_tool_artifact / register_artifact）
+# 在画像可得时附加；缺席恒 None（绝不虚构）。确定性：剔除时间戳、键序
+# 稳定、字段清单封顶 —— 同一输入恒产出同一 digest。
+
+_PROFILE_DIGEST_MAX_FIELDS = 12
+_PROFILE_DIGEST_MAX_KEYS = 24
+
+
+def profile_digest(
+    profile: Optional[DatasetProfileV3],
+    *,
+    max_fields: int = _PROFILE_DIGEST_MAX_FIELDS,
+) -> Optional[Dict[str, Any]]:
+    """DatasetProfileV3 → 有界 digest（profile_ref 的诚实存储形状）。
+
+    只保留 resolver/后续波次消费需要的有界字段（类别/质量/修订/CRS/范围/
+    行数/几何族/字段类型+null 率/栅格维度/重复坐标证据）。``created_at``
+    等时间性字段一律不进 digest（ADR 决定论约束：证据无时间戳）。
+    画像缺席或无任何证据 → None。
+    """
+    if profile is None:
+        return None
+    vector = profile.vector
+    raster = profile.raster
+    table = profile.table
+    quality_raw = getattr(profile, "profile_quality", None)
+    quality = getattr(quality_raw, "value", quality_raw)
+    digest: Dict[str, Any] = {
+        "v": int(profile.profile_version),
+        "category": str(profile.category or "")[:32],
+        "quality": str(quality)[:16],
+        "revision": int(profile.source_revision or 0),
+    }
+    if profile.crs:
+        digest["crs"] = str(profile.crs)[:64]
+    if isinstance(profile.extent, list) and len(profile.extent) == 4:
+        try:
+            digest["extent"] = [round(float(x), 6) for x in profile.extent]
+        except (TypeError, ValueError):
+            pass
+    if vector is not None:
+        digest["row_count"] = int(vector.row_count)
+        if vector.geometry_types:
+            digest["geometry_types"] = [str(g)[:32] for g in vector.geometry_types[:8]]
+        if vector.temporal_fields:
+            digest["temporal_fields"] = [str(t)[:64] for t in vector.temporal_fields[:8]]
+        if vector.empty_geometry_count:
+            digest["empty_geometry_count"] = int(vector.empty_geometry_count)
+        if vector.impossible_coordinate_count:
+            digest["impossible_coordinate_count"] = int(vector.impossible_coordinate_count)
+        if getattr(vector, "scanned_rows", 0):
+            # 重复坐标证据只在深扫口径下有效（浅投影不得虚构 0 = 无重复）。
+            digest["duplicate_coordinate_count"] = int(
+                getattr(vector, "duplicate_coordinate_count", 0) or 0)
+            digest["unique_coordinate_count"] = int(
+                getattr(vector, "unique_coordinate_count", 0) or 0)
+        fields: Dict[str, Any] = {}
+        for name in sorted(vector.fields.keys())[:max_fields]:
+            fp = vector.fields[name]
+            entry: Dict[str, Any] = {"t": str(getattr(fp, "dtype", ""))[:16]}
+            rate = getattr(fp, "null_rate", None)
+            if isinstance(rate, (int, float)) and not isinstance(rate, bool):
+                entry["nr"] = round(float(rate), 4)
+            fields[str(name)[:96]] = entry
+        if fields:
+            digest["fields"] = fields
+        if vector.fields_truncated:
+            digest["fields_truncated"] = True
+    elif table is not None:
+        digest["row_count"] = int(table.row_count)
+        if table.columns:
+            digest["columns"] = [
+                str(c)[:96] for c in sorted(table.columns.keys())[:max_fields]
+            ]
+    if raster is not None:
+        rshape: Dict[str, Any] = {}
+        if raster.width is not None:
+            rshape["width"] = int(raster.width)
+        if raster.height is not None:
+            rshape["height"] = int(raster.height)
+        if raster.band_count is not None:
+            rshape["band_count"] = int(raster.band_count)
+        if rshape:
+            digest["raster"] = rshape
+    return digest
+
+
+def descriptor_profile_digest(
+    descriptor: Any,
+    *,
+    ref: str = "",
+) -> Optional[Dict[str, Any]]:
+    """RefDescriptor（dict 形）→ V3 浅投影 → 有界 digest（O(1)）。
+
+    产物注册接缝（artifact_registry）用：descriptor 缺席 / 无有效
+    feature_count → None（注册侧诚实缺省，profile_ref 不虚构）。
+    """
+    if not isinstance(descriptor, dict):
+        return None
+    fc = descriptor.get("feature_count")
+    if not isinstance(fc, int) or isinstance(fc, bool) or fc < 0:
+        return None
+    try:
+        profile = shallow_profile_from_descriptor(ref, descriptor)
+        return profile_digest(profile)
+    except Exception:  # noqa: BLE001 — digest 是增值记录，绝不阻断注册
+        return None
+
+
 class DatasetProfiler:
     """有界剖析服务（进程内单例；缓存绑定修订）。"""
 
@@ -138,32 +278,7 @@ class DatasetProfiler:
         return profile
 
     def _shallow_profile_ref(self, ref: str, descriptor: Dict[str, Any]) -> DatasetProfileV3:
-        field_schema = descriptor.get("field_schema")
-        vp, quality = profile_from_field_schema(
-            field_schema if isinstance(field_schema, dict) else None,
-            complete=bool(descriptor.get("field_schema_complete", True)),
-            row_count=int(descriptor.get("feature_count") or 0),
-            geometry_types=[str(g) for g in (descriptor.get("geometry_types") or [])],
-            bbox=descriptor.get("bbox") if isinstance(descriptor.get("bbox"), list) else None,
-            crs=str(descriptor.get("crs") or ""),
-        )
-        category = "raster" if descriptor.get("raster_capable") else _category_from_geometry_types(
-            [str(g) for g in (descriptor.get("geometry_types") or [])]
-        )
-        return DatasetProfileV3(
-            target_ref=ref,
-            category=category,
-            crs=str(descriptor.get("crs") or ""),
-            extent=(
-                [float(x) for x in descriptor.get("bbox")]
-                if isinstance(descriptor.get("bbox"), list) and len(descriptor.get("bbox")) == 4
-                else None
-            ),
-            vector=vp,
-            profile_quality=quality,
-            source_revision=int(descriptor.get("content_revision") or 0),
-            diagnostics=[] if field_schema else ["no_field_schema_evidence"],
-        )
+        return shallow_profile_from_descriptor(ref, descriptor)
 
     async def _deep_profile_ref(
         self,

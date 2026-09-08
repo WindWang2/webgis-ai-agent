@@ -369,10 +369,15 @@ def qualify_data_role(
                     auto_applicable=False, confidence=0.3,
                 ))
 
-    # 2) 数值字段（measure 族角色）——科学性委托算法层 precondition
+    # 2) 数值字段（measure 族角色）——科学性委托算法层 precondition。
+    # review R2 MAJOR-1：字段补全只在**显式 schema**（fields_status ==
+    # "explicit"）下注入 —— 截断/未知 schema 的空列表不是「无数值字段」
+    # 的证据，注入会把 unknown 洗成 authoritative-empty → false-REJECT。
+    # 事实缺席时 precondition 自行走 deferred-PASS（unknown ≠ unsatisfied）。
     if req.role in _MEASURE_ROLES:
         enriched = dict(profile)
-        enriched["numericFields"] = _derived_numeric_fields(profile)
+        if str(profile.get("fields_status") or "") == "explicit":
+            enriched["numericFields"] = _derived_numeric_fields(profile)
         passed, result = _evaluate_precondition_facts(
             "numeric_field_required", enriched)
         _record(passed, _check(
