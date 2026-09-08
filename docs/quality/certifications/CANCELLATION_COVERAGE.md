@@ -5,7 +5,7 @@
 > cancellable）；行为认证：tests/quality/
 > test_cancellation_resource_certification.py。
 
-- 覆盖：**14/47** 个重计算文件含取消检查点。
+- 覆盖：**14/48** 个重计算文件含取消检查点。
 
 | file | cancellation sites | loop sites（粗计） | status |
 |---|---|---|---|
@@ -19,7 +19,7 @@
 | app/lib/geo_analysis/heatmap_grid.py | 1 | 6 | certified |
 | app/lib/geo_analysis/interpolation.py | 2 | 23 | certified |
 | app/lib/geo_analysis/interpolation_compare.py | 0 | 4 | no-checkpoints |
-| app/lib/geo_analysis/kriging.py | 7 | 58 | certified |
+| app/lib/geo_analysis/kriging.py | 7 | 69 | certified |
 | app/lib/geo_analysis/network.py | 3 | 30 | certified |
 | app/lib/geo_analysis/point_pattern.py | 6 | 76 | certified |
 | app/lib/geo_analysis/raster_change.py | 1 | 4 | certified |
@@ -31,17 +31,18 @@
 | app/lib/geo_analysis/raster_windowed.py | 2 | 16 | certified |
 | app/lib/geo_analysis/rbf_interpolation.py | 1 | 5 | certified |
 | app/lib/geo_analysis/regression_kriging.py | 0 | 17 | no-checkpoints |
-| app/lib/geo_analysis/rs_v3.py | 0 | 31 | no-checkpoints |
+| app/lib/geo_analysis/rs_v3.py | 0 | 33 | no-checkpoints |
 | app/lib/geo_analysis/sar_calibration.py | 0 | 3 | no-checkpoints |
 | app/lib/geo_analysis/sar_filter.py | 0 | 6 | no-checkpoints |
-| app/lib/geo_analysis/sar_temporal.py | 0 | 6 | no-checkpoints |
+| app/lib/geo_analysis/sar_temporal.py | 0 | 9 | no-checkpoints |
 | app/lib/geo_analysis/sar_v3.py | 0 | 2 | no-checkpoints |
-| app/lib/geo_analysis/spatial_regression.py | 2 | 56 | certified |
+| app/lib/geo_analysis/spatial_regression.py | 2 | 70 | certified |
 | app/lib/geo_analysis/spatial_weights.py | 0 | 5 | no-checkpoints |
+| app/lib/geo_analysis/spatiotemporal_eha.py | 0 | 18 | no-checkpoints |
 | app/lib/geo_analysis/spectral.py | 0 | 8 | no-checkpoints |
-| app/lib/geo_analysis/statistics.py | 8 | 116 | certified |
+| app/lib/geo_analysis/statistics.py | 8 | 117 | certified |
 | app/lib/geo_analysis/tasseled_cap.py | 0 | 10 | no-checkpoints |
-| app/lib/geo_analysis/terrain.py | 0 | 64 | no-checkpoints |
+| app/lib/geo_analysis/terrain.py | 0 | 63 | no-checkpoints |
 | app/lib/geo_analysis/tin_interpolation.py | 0 | 21 | no-checkpoints |
 | app/lib/geo_analysis/trend_surface.py | 0 | 11 | no-checkpoints |
 | app/lib/geo_raster/__init__.py | 0 | 1 | no-checkpoints |

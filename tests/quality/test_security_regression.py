@@ -90,8 +90,13 @@ class TestAllowPrivateStoredProfile:
             return fn(None)  # 不进 worker 线程/SessionLocal —— 纯参数捕获
 
         monkeypatch.setattr(df_routes, "_run_sync_orm", _fake_run_sync)
+        # 类级 staticmethod 补丁：实例级 setattr 在恢复时把原函数写成
+        # 实例属性，永久遮蔽类方法（singleton manager 跨用例残留，
+        # 后续类级补丁全部失效 —— offload 测试实录真网络调用）。
+        from app.services.data_fabric.manager import DataFabricManager
+
         monkeypatch.setattr(
-            df_routes.data_fabric_manager, "create_data_source", _fake_create
+            DataFabricManager, "create_data_source", staticmethod(_fake_create)
         )
 
         app = FastAPI()
@@ -139,9 +144,12 @@ class TestAllowPrivateStoredProfile:
 
         monkeypatch.setattr(
             DataFabricManager, "probe_profile",
-            lambda profile: SimpleNamespace(status="healthy"),
+            staticmethod(lambda profile: SimpleNamespace(status="healthy")),
         )
-        monkeypatch.setattr(DataFabricManager, "sync_catalog", lambda db, source_id: None)
+        monkeypatch.setattr(
+            DataFabricManager, "sync_catalog",
+            staticmethod(lambda db, source_id: None),
+        )
 
         eng = create_engine(f"sqlite:///{tmp_path / 'df-pin.db'}")
         Base.metadata.create_all(bind=eng)

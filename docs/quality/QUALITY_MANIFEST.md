@@ -3,15 +3,15 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**1**
-- 内容指纹：`2bc56600ced10fb1…`
+- 内容指纹：`4f7dc1ee110e273b…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 279 | 250 | 181 |
-| algorithms | 171 | 141 | 39 |
-| capabilities | 112 | 65 | 12 |
+| tools | 282 | 255 | 178 |
+| algorithms | 175 | 145 | 37 |
+| capabilities | 115 | 68 | 11 |
 | artifact_types | 21 | 21 | 0 |
 | recipes | 164 | 164（conformance 由 workflow 闸保护） | 0 |
 
@@ -19,19 +19,19 @@
 
 | field | coverage | threshold | status |
 |---|---|---|---|
-| side_effect | 83% | 83% | PASS（缺 48） |
-| tags | 83% | 83% | PASS（缺 48） |
+| side_effect | 83% | 83% | PASS（缺 47） |
+| tags | 83% | 83% | PASS（缺 47） |
 | latency_class | 100% | 95% | PASS（缺 0） |
 | memory_class | 100% | 95% | PASS（缺 0） |
-| capabilities | 60% | 60% | PASS（缺 111） |
+| capabilities | 61% | 60% | PASS（缺 111） |
 
-**gate: PASS**（`total=279`）
+**gate: PASS**（`total=282`）
 
 ## Findings（派生线索，非缺陷判定）
 
 > 静态引用 ≠ 行为覆盖。findings 只回答"哪里没有任何测试证据"，修复优先级需结合 02-coverage-risk-map 的风险分级。
 
-### TOOL_UNTESTED（29）
+### TOOL_UNTESTED（27）
 
 - `apply_layer_style`（medium）— registered tool without any static test reference
 - `control_floating_chart`（medium）— registered tool without any static test reference
@@ -51,8 +51,6 @@
 - `mnf_transform`（medium）— registered tool without any static test reference
 - `quadrat_analysis`（medium）— registered tool without any static test reference
 - `repair_spatial_dataset`（medium）— registered tool without any static test reference
-- `sar_temporal_stats`（medium）— registered tool without any static test reference
-- `sar_vh_ratio`（medium）— registered tool without any static test reference
 - `search_datasets`（medium）— registered tool without any static test reference
 - `space_time_k_analysis`（medium）— registered tool without any static test reference
 - `temporal_changepoint`（medium）— registered tool without any static test reference
@@ -67,7 +65,7 @@
 
 （无）
 
-### TOOL_DESCRIPTOR_INCOMPLETE（152）
+### TOOL_DESCRIPTOR_INCOMPLETE（151）
 
 - `add_marker`（low）— missing descriptor fields: capabilities
 - `aggregate_dataset`（low）— missing descriptor fields: capabilities
@@ -92,7 +90,6 @@
 - `create_3d_extrusion_map`（low）— missing descriptor fields: capabilities
 - `create_new_skill`（low）— missing descriptor fields: capabilities
 - `create_thematic_map`（low）— missing descriptor fields: capabilities
-- `cross_pcf_analysis`（low）— missing descriptor fields: side_effect,tags
 - `deep_explore`（low）— missing descriptor fields: capabilities
 - `describe_artifact`（low）— missing descriptor fields: side_effect,tags,capabilities
 - `describe_dataset`（low）— missing descriptor fields: capabilities
@@ -119,13 +116,14 @@
 - `get_lineage`（low）— missing descriptor fields: side_effect,tags,capabilities
 - `get_local_osm_catalog`（low）— missing descriptor fields: capabilities
 - `get_local_stats_catalog`（low）— missing descriptor fields: capabilities
-- …另有 102 条，见 quality-manifest.json
+- `get_plan_status`（low）— missing descriptor fields: capabilities
+- …另有 101 条，见 quality-manifest.json
 
 ### CAPABILITY_NO_PRODUCER（0）
 
 （无）
 
-### CAPABILITY_NO_CONFORMANCE（12）
+### CAPABILITY_NO_CONFORMANCE（11）
 
 - `admin_boundary_query`（medium）— native capability whose producers declare no conformance tests
 - `category_breakdown`（medium）— native capability whose producers declare no conformance tests
@@ -136,11 +134,10 @@
 - `poi_query`（medium）— native capability whose producers declare no conformance tests
 - `raster_source`（medium）— native capability whose producers declare no conformance tests
 - `spatial_join`（medium）— native capability whose producers declare no conformance tests
-- `temporal_aggregate`（medium）— native capability whose producers declare no conformance tests
 - `traffic_status`（medium）— native capability whose producers declare no conformance tests
 - `transit_routing`（medium）— native capability whose producers declare no conformance tests
 
-### ALGO_NO_CONFORMANCE（17）
+### ALGO_NO_CONFORMANCE（15）
 
 - `admin.boundary.local`（medium）— algorithm declares no conformance test node ids
 - `admin.boundary_lookup`（medium）— algorithm declares no conformance test node ids
@@ -157,8 +154,6 @@
 - `poi.query.local`（medium）— algorithm declares no conformance test node ids
 - `raster.source.dem`（medium）— algorithm declares no conformance test node ids
 - `stats.category.breakdown`（medium）— algorithm declares no conformance test node ids
-- `temporal.aggregate`（medium）— algorithm declares no conformance test node ids
-- `temporal.hotspot`（medium）— algorithm declares no conformance test node ids
 
 ### ALGO_HEAVY_NO_VARIANTS（22）
 

@@ -17,25 +17,25 @@
 
 | stage | 运行时填充位置 | 状态 |
 |---|---|---|
-| USER_INTENT | — | contract-only（缺口：无生产代码填充） |
-| PARSED_INTENT | — | contract-only（缺口：无生产代码填充） |
-| TASK_ONTOLOGY | — | contract-only（缺口：无生产代码填充） |
-| DATA_PROFILE | — | contract-only（缺口：无生产代码填充） |
-| CANDIDATE_WORKFLOWS | — | contract-only（缺口：无生产代码填充） |
-| SELECTED_WORKFLOW | — | contract-only（缺口：无生产代码填充） |
-| TOOL_SURFACE | — | contract-only（缺口：无生产代码填充） |
+| USER_INTENT | app/services/gis_harness/planner.py | runtime-populated |
+| PARSED_INTENT | app/services/gis_harness/planner.py | runtime-populated |
+| TASK_ONTOLOGY | app/services/gis_harness/planner.py | runtime-populated |
+| DATA_PROFILE | app/services/gis_harness/planner.py | runtime-populated |
+| CANDIDATE_WORKFLOWS | app/services/gis_harness/planner.py | runtime-populated |
+| SELECTED_WORKFLOW | app/services/gis_harness/planner.py | runtime-populated |
+| TOOL_SURFACE | app/services/chat/pi_native_surface.py | runtime-populated |
 | MODEL_ROUTING | app/services/chat/model_routing_bridge.py | runtime-populated |
-| TOOL_CALLS | app/agent_pi_bridge.py | runtime-populated |
-| ARGUMENTS | app/agent_pi_bridge.py | runtime-populated |
-| TOOL_RESULTS | app/agent_pi_bridge.py | runtime-populated |
-| ARTIFACT_CREATION | — | contract-only（缺口：无生产代码填充） |
+| TOOL_CALLS | app/agent_pi_bridge.py, app/services/tool_dispatch_service.py | runtime-populated |
+| ARGUMENTS | app/agent_pi_bridge.py, app/services/tool_dispatch_service.py | runtime-populated |
+| TOOL_RESULTS | app/agent_pi_bridge.py, app/services/tool_dispatch_service.py | runtime-populated |
+| ARTIFACT_CREATION | app/services/tool_dispatch_service.py | runtime-populated |
 | MAP_MUTATIONS | app/agent_pi_bridge.py | runtime-populated |
-| MAP_OBSERVATION | — | contract-only（缺口：无生产代码填充） |
-| VERIFICATION | — | contract-only（缺口：无生产代码填充） |
-| REPAIR | — | contract-only（缺口：无生产代码填充） |
-| FINAL_VERDICT | — | contract-only（缺口：无生产代码填充） |
-| USER_OUTPUT | — | contract-only（缺口：无生产代码填充） |
+| MAP_OBSERVATION | app/api/routes/chat.py | runtime-populated |
+| VERIFICATION | app/services/gis_harness/completion/pipeline.py | runtime-populated |
+| REPAIR | app/services/gis_harness/completion/pipeline.py | runtime-populated |
+| FINAL_VERDICT | app/services/gis_harness/completion/pipeline.py | runtime-populated |
+| USER_OUTPUT | app/agent_pi_bridge.py | runtime-populated |
 
 > contract-only 阶段是已声明的 trace 缺口：契约先行，填充随各主线演进；认证不得为未填充阶段伪造 passed。
 
-- 内容指纹：`f87a1137d4a33733…`
+- 内容指纹：`2d17932ba236b98b…`
