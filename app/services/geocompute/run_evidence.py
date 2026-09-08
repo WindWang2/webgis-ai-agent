@@ -206,6 +206,45 @@ def save_snapshot(
         return False
 
 
+def list_snapshots(
+    owner_scope: str,
+    *,
+    limit: int = 50,
+    exclude_ids: Optional[set[str]] = None,
+) -> list[dict[str, Any]]:
+    """owner 域的终态快照列表（V6 run 列表合并域；有界 ≤100）。
+
+    只暴露有界摘要列（绝无快照 JSON 本体/载荷）；``exclude_ids`` 用于与
+    cluster run 行列表去重（同一 run 两个真相域只出现一次 —— 行域优先，
+    它有更完整的状态历史）。
+    """
+    if not owner_scope:
+        return []
+    limit = max(1, min(int(limit), 100))
+    try:
+        with session_factory() as db:
+            from app.models.db_model import GeoComputeRunEvidence
+
+            q = db.query(GeoComputeRunEvidence).filter(
+                GeoComputeRunEvidence.owner_scope == owner_scope
+            )
+            if exclude_ids:
+                q = q.filter(~GeoComputeRunEvidence.run_id.in_(set(exclude_ids)))
+            rows = q.order_by(GeoComputeRunEvidence.created_at.desc()).limit(limit).all()
+            return [
+                {
+                    "run_id": r.run_id,
+                    "status": r.status,
+                    "source": "snapshot",
+                    "created_at": r.created_at.isoformat() + "Z"
+                    if r.created_at else None,
+                }
+                for r in rows
+            ]
+    except Exception:  # noqa: BLE001 - 证据域缺席 → 空列表（诚实降级）
+        return []
+
+
 def load_snapshot(
     run_id: str, *, owner_scope: Optional[str] = None
 ) -> Optional[Any]:

@@ -158,6 +158,7 @@ def dispatch_node(
     session_id: str,
     plan_fingerprint: str,
     deadline_s: Optional[float],
+    budget: Optional[Any] = None,
 ) -> dict[str, Any]:
     """把节点提交为 durable job（幂等键 = 节点语义指纹 + 会话）。
 
@@ -186,6 +187,13 @@ def dispatch_node(
             "node": node_dict,
             "session_id": session_id,
             "deadline_s": deadline_s,
+            # V6（P0-3）：plan budget 穿透到 worker 任务体；只进 task_kwargs
+            # 不进 params —— 幂等键（params 摘要）不含治理元数据。
+            "budget": (
+                budget.model_dump(mode="json")
+                if budget is not None and hasattr(budget, "model_dump")
+                else budget
+            ),
         },
         session_id=session_id,
         queue=queue,

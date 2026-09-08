@@ -107,3 +107,79 @@ class TestWorkerCapability:
     def test_role_pattern(self):
         with pytest.raises(Exception):
             WorkerCapability(worker_id="w", role="admin")
+
+
+class TestWorkerBudgetPenetration:
+    """V6 wave 6（P0-3 修复）：plan budget 穿透到 worker 任务体。"""
+
+    def test_task_body_restores_budget(self):
+        from app.services.geocompute.plan import ExecutionNode, ResourceBudget
+        from app.services.geocompute.tasks import run_geocompute_node
+
+        node = ExecutionNode(node_id="n1", category="filter", operation="eq")
+        budget = ResourceBudget(max_rows=17)
+        captured = {}
+
+        class _FakeOps:
+            @staticmethod
+            def execute_node(ctx, node_, upstream):
+                captured["budget"] = ctx.budget
+                return {"features": [], "metadata": {}}
+
+        import app.services.geocompute.ops as ops_mod
+
+        real_execute = ops_mod.execute_node
+        ops_mod.execute_node = _FakeOps.execute_node
+        try:
+            run_geocompute_node.run(
+                node.model_dump(mode="json"), session_id=None, job_id=None,
+                budget=budget.model_dump(mode="json"),
+            )
+        finally:
+            ops_mod.execute_node = real_execute
+        assert isinstance(captured["budget"], ResourceBudget)
+        assert captured["budget"].max_rows == 17
+
+    def test_budget_excluded_from_idempotency_params(self, monkeypatch):
+        """budget 只进 task_kwargs 不进 params —— 治理元数据不改变幂等键。"""
+        from app.services.geocompute import durable
+        from app.services.geocompute.plan import (
+            ExecutionNode, ExecutionPlan, ResourceBudget,
+        )
+
+        captured = []
+        job_ids = iter(({"job_id": 1}, {"job_id": 1}))
+
+        def fake_submit(**kw):
+            captured.append(kw)
+            return next(job_ids)
+
+        import app.services.jobs.submit as submit_mod
+
+        node = ExecutionNode(
+            node_id="n1", category="filter", operation="eq",
+            parameters={"features": [{"x": 1}]},
+        )
+        plan = ExecutionPlan(plan_id="p", nodes=[node])
+        monkeypatch.setattr(submit_mod, "submit_durable_job", fake_submit)
+        monkeypatch.setattr(
+            "app.services.geocompute.durable.submit_durable_job", fake_submit,
+            raising=False,
+        )
+        # dispatch_node 内部 import submit_durable_job —— patch 源模块
+        real_run = durable.dispatch_node
+        budget = ResourceBudget(max_rows=99)
+        ret1 = real_run(
+            node, session_id="s1", plan_fingerprint="fp", deadline_s=None,
+            budget=budget,
+        )
+        ret2 = real_run(
+            node, session_id="s1", plan_fingerprint="fp", deadline_s=None,
+            budget=None,
+        )
+        # 幂等键一致（同一 job 行）
+        assert ret1["job_id"] == ret2["job_id"]
+        # budget 确实进了 task_kwargs（第一次派发），且 params 不含它
+        assert captured[0]["task_kwargs"]["budget"]["max_rows"] == 99
+        assert "budget" not in captured[0]["params"]
+        assert captured[1]["task_kwargs"]["budget"] is None

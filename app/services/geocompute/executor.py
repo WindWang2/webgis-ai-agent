@@ -822,6 +822,7 @@ class GeoExecutionEngine:
                 cancel_token=cancel_token, node_deadline=node_deadline,
                 governor=governor, gov_path=gov_path,
                 charge_ledger=charge_ledger,
+                budget=budget,
             )
             if ev.status in {"completed", "reused"} and node.node_id in outputs:
                 outputs_fp[node.node_id] = _output_fingerprint(outputs[node.node_id])
@@ -1025,6 +1026,7 @@ class GeoExecutionEngine:
         governor: Optional[Any],
         gov_path: Optional[str],
         charge_ledger: Optional[Any] = None,
+        budget: Any = None,
     ) -> None:
         """durable_job 分支：穿透既有 AnalysisTask 运行时（无第二真相）。
 
@@ -1038,6 +1040,11 @@ class GeoExecutionEngine:
           上游指纹一致 + result_ref 存活才命中）—— 最贵的 durable 节点
           终于进入复用；
         - eager（无 Redis）时诚实标注 ``backend_variant="in_process_eager"``。
+
+        V6（P0-3 修复）：plan budget 随派发穿透到 worker 任务体 —— 此前
+        worker 侧 ``OperatorContext`` 无 budget，行数红线只剩
+        HARD_NODE_ROW_CAP，plan 级预算在 durable 路径形同虚设。budget 走
+        task_kwargs（不进 params）—— 不改幂等键（治理元数据≠节点身份）。
         """
         started_dj = time.monotonic()
         if node.reuse == NodeReusePolicy.ALLOW and self._durable_reuse_hit(
@@ -1068,6 +1075,7 @@ class GeoExecutionEngine:
                     plan_fingerprint=run.plan_fingerprint,
                     deadline_s=(node_deadline - time.monotonic())
                     if node.deadline_s is not None else None,
+                    budget=budget,
                 )
                 if ret.get("backend_variant"):
                     # V5 step 5：eager 降级诚实披露（reproducibility honesty）。

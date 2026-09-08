@@ -40,27 +40,29 @@ from app.services.geocompute.cluster.contracts import (
     RunPriority,
     run_error_for_reclaim,
 )
-from app.services.geocompute.errors import GeoComputeError
+from app.services.geocompute.cluster.errors import (
+    ClusterBackpressureError,
+    PlanSnapshotTooLargeError,
+)
 
 logger = logging.getLogger(__name__)
 
-
-class ClusterBackpressureError(GeoComputeError):
-    """队列背压（租户/全局 queued 上限）。submit 侧映射 429。"""
-
-    code = "CLUSTER_BACKPRESSURE"
-
-
-class PlanSnapshotTooLargeError(GeoComputeError):
-    """plan 快照超出落库上界（typed 413 语义）。submit 侧映射 413。"""
-
-    code = "PLAN_SNAPSHOT_TOO_LARGE"
+__all__ = [
+    "ClusterBackpressureError",
+    "ClusterLedger",
+    "ClusterRunStore",
+    "PlanSnapshotTooLargeError",
+    "hash_scope_key",
+    "new_run_id",
+]
 
 
 def _default_session_factory():
+    # 返回 **Session 实例**（jobs 层同一纪律；sessionmaker 在 SQLAlchemy 2.0
+    # 无上下文协议 —— 与 run_evidence/reuse_index 的 round0 修复同因）。
     from app.core.database import SessionLocal
 
-    return SessionLocal
+    return SessionLocal()
 
 
 #: 可注入的会话工厂（测试替换为临时 SQLite 工厂）。
@@ -573,6 +575,26 @@ class ClusterRunStore:
                 .limit(max(1, int(limit)))
             ).scalars().all()
             return [_scan_projection(r) for r in rows]
+
+    def count_runs_by_status(self) -> dict[str, int]:
+        """status → 计数（封闭词表；metrics 用）。"""
+        with self._factory() as db:
+            rows = db.execute(
+                select(_Run.status, func.count()).group_by(_Run.status)
+            ).all()
+            return {status: int(n) for status, n in rows}
+
+    def sum_preempts(self) -> int:
+        with self._factory() as db:
+            return int(db.execute(
+                select(func.coalesce(func.sum(_Run.preempts), 0))
+            ).scalar_one())
+
+    def sum_attempts(self) -> int:
+        with self._factory() as db:
+            return int(db.execute(
+                select(func.coalesce(func.sum(_Run.attempts), 0))
+            ).scalar_one())
 
     def tenant_last_dispatch(self) -> dict[str, int]:
         """租户最近派发序（fairness 的可重建轮转状态；无隐藏内存态）。"""

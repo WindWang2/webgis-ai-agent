@@ -27,6 +27,7 @@ from app.core.auth import (
     get_current_user,
     get_current_user_optional,
     get_owner_token,
+    require_admin,
 )
 from app.services.geocompute import BudgetExceededError, GeoComputeError
 
@@ -67,6 +68,9 @@ class ExecutionPlanIn(BaseModel):
 class ExecutePlanRequest(BaseModel):
     plan: ExecutionPlanIn
     session_id: Optional[str] = None
+    # V6（cluster submit，additive）：优先级（0/5/10）与项目归属（公平/账本键）
+    priority: int = 5
+    project_id: Optional[str] = None
 
 
 def _plan_from_request(data: ExecutionPlanIn):
@@ -232,6 +236,160 @@ async def execute_execution_plan(
     return _run_response(run, owner_scope_for(dict(user)))
 
 
+@router.post("/plans/runs", status_code=202, tags=["GeoCompute / Cluster Runtime V6"])
+async def submit_execution_plan(
+    body: ExecutePlanRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """V6 cluster 提交：plan → 持久 run 行（queued）→ 202 立即返回。
+
+    与同步 ``/plans/execute`` 同一 authz 纪律（强制认证 + session 写归属
+    校验）；plan 快照落 ``geocompute_runs``（≤256KB，超限 413），由
+    cluster coordinator 持久调度执行（lease/心跳/抢占/恢复）。priority ∈
+    {0,5,10}（可选）；project_id（可选）参与租户/项目级公平与账本。
+
+    立即返回 202 + run_id；后续经 ``GET /runs/{id}`` 轮询（活投影来自
+    持久行，任意进程可读）。背压：租户/全局 queued 超限 → 429。
+    """
+    from app.services.geocompute import graph
+    from app.services.geocompute.cluster.contracts import RunPriority
+    from app.services.geocompute.cluster.errors import (
+        ClusterBackpressureError,
+        PlanSnapshotTooLargeError,
+    )
+    from app.services.geocompute.cluster.store import ClusterRunStore, hash_scope_key
+
+    try:
+        plan = _plan_from_request(body.plan)
+    except ValueError as exc:
+        # 未知类别/策略词表 → typed 422（execute 端点既有行为是 500，
+        # V6 submit 起按契约诚实映射；不改 execute 避免行为漂移）
+        raise HTTPException(status_code=422, detail={
+            "code": "PLAN_INVALID", "message": str(exc),
+        })
+    try:
+        graph.validate_plan(plan)
+    except GeoComputeError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_dict())
+
+    def _submit():
+        if body.session_id:
+            _authorize_session_write_sync(body.session_id, user, owner_token)
+        from app.core.auth import actor_ids
+        from app.services.geocompute.durable import queue_for_node
+        from app.services.geocompute.executor import owner_scope_for
+
+        uid, org_id = actor_ids(user)
+        # durable 节点的必需 profile 通道（能力匹配依据；in_process 无要求）
+        profiles = sorted({
+            queue_for_node(n).removesuffix("_queue")
+            for n in plan.nodes if n.policy.value == "durable_job"
+        })
+        store = ClusterRunStore()
+        run_id = store.create_run(
+            plan_snapshot=plan.model_dump(mode="json"),
+            plan_fingerprint=plan.graph_fingerprint(),
+            owner_scope=owner_scope_for(dict(user), body.session_id),
+            session_id=body.session_id,
+            creator_id=str(uid) if uid else None,
+            org_id=str(org_id) if org_id else None,
+            tenant_raw=str(org_id) if org_id else None,
+            project_raw=body.project_id,
+            priority=RunPriority.coerce(body.priority),
+            required_profiles=profiles,
+        )
+        return store.get_run(run_id)
+
+    try:
+        row = await asyncio.to_thread(_submit)
+    except PlanSnapshotTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=exc.to_dict())
+    except ClusterBackpressureError as exc:
+        raise HTTPException(status_code=429, detail=exc.to_dict())
+    except HTTPException:
+        raise
+    except GeoComputeError as exc:
+        raise HTTPException(status_code=500, detail=exc.to_dict())
+    row = row or {}
+    return {
+        "run_id": row.get("run_id"),
+        "status": row.get("status"),
+        "plan_fingerprint": row.get("plan_fingerprint"),
+        "required_profiles": row.get("required_profiles") or [],
+        "source": "cluster",
+    }
+
+
+@router.get("/runs", tags=["GeoCompute / Cluster Runtime V6"])
+async def list_execution_runs(
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """V6：列出**我的** runs（强制认证 + owner 域隔离）。
+
+    合并两个真相域：cluster run 行（任意状态）∪ 终态证据快照（进程内
+    同步执行的持久痕迹）—— 每域独立有界（各 ≤100 条），不复制载荷。
+    """
+    from app.services.geocompute.cluster.store import ClusterRunStore
+    from app.services.geocompute.executor import owner_scope_for
+
+    owner_scope = owner_scope_for(user)
+    statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
+
+    def _list():
+        try:
+            store = ClusterRunStore()
+            items = store.list_runs(owner_scope, statuses=statuses,
+                                    limit=limit, offset=offset)
+        except Exception:  # noqa: BLE001 - cluster 域不可用 → 空域（诚实降级）
+            logger.warning("[geocompute] cluster list store unavailable")
+            items = []
+        listed_ids = {item["run_id"] for item in items}
+        snapshots: list[Dict[str, Any]] = []
+        try:
+            from app.services.geocompute import run_evidence
+
+            snapshots = run_evidence.list_snapshots(
+                owner_scope, limit=limit, exclude_ids=listed_ids
+            )
+        except Exception:  # noqa: BLE001 - 证据域缺席不阻塞列表
+            snapshots = []
+        return items, snapshots
+
+    items, snapshots = await asyncio.to_thread(_list)
+    return {
+        "runs": items,
+        "terminal_snapshots": snapshots,
+        "limit": max(1, min(int(limit), 100)),
+        "offset": max(0, int(offset)),
+    }
+
+
+@router.get("/cluster/metrics", tags=["GeoCompute / Cluster Runtime V6"])
+async def cluster_metrics(
+    user: Dict[str, Any] = Depends(require_admin),
+):
+    """V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。
+
+    有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；
+    取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。
+    """
+    from app.services.geocompute.cluster.metrics import ClusterMetrics
+
+    def _snap():
+        return ClusterMetrics().snapshot()
+
+    try:
+        return await asyncio.to_thread(_snap)
+    except Exception as exc:  # noqa: BLE001 - 集群域不可用 → typed 503
+        raise HTTPException(status_code=503, detail={
+            "code": "CLUSTER_METRICS_UNAVAILABLE", "message": str(exc)[:200],
+        })
+
+
 @router.get("/runs/{run_id}", tags=["GeoCompute / 执行平面"])
 async def get_execution_run(
     run_id: str,
@@ -243,14 +401,42 @@ async def get_execution_run(
     进程重启后读取不再 404（快照来源以 ``source="snapshot"`` 诚实标注）。
     Wave-11：应答附加 ``lineage``（无载荷投影）与 ``reproducibility`` 判定
     （快照回放路径同样携带 —— 读自快照 folded JSON）。
+    V6：快照也未命中时回读 cluster run 行的**活投影**（queued/leased/
+    running 等执行中状态跨进程可见 —— ``source="cluster"`` 诚实标注）。
     """
     from app.services.geocompute.executor import engine, owner_scope_for
 
     owner_scope = owner_scope_for(user)
     run = engine.get_run(run_id, owner_scope=owner_scope)
-    if run is None:
+    if run is not None:
+        return _run_response(run, owner_scope)
+
+    def _cluster_row():
+        from app.services.geocompute.cluster.store import ClusterRunStore
+
+        return ClusterRunStore().get_run_owned(run_id, owner_scope)
+
+    try:
+        row = await asyncio.to_thread(_cluster_row)
+    except Exception:  # noqa: BLE001 - cluster 域不可用 → 与未命中同语义
+        logger.warning("[geocompute] cluster run store unavailable: %s", run_id)
+        row = None
+    if row is None:
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
-    return _run_response(run, owner_scope)
+    return {
+        "run_id": row["run_id"],
+        "plan_fingerprint": row["plan_fingerprint"],
+        "status": row["status"],
+        "source": "cluster",
+        "priority": row["priority"],
+        "attempts": row["attempts"],
+        "preempts": row["preempts"],
+        "error_code": row["error_code"],
+        "required_profiles": row["required_profiles"],
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "terminal_at": row["terminal_at"],
+    }
 
 
 @router.post("/plans/runs/{run_id}/cancel", tags=["GeoCompute / 执行平面"])
@@ -258,32 +444,68 @@ async def cancel_execution_run(
     run_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """请求取消一个 in-process run（V5，audit 06 §6.1 step 2）。
+    """请求取消一个 run（V6 起跨进程生效）。
 
     与 run 读端点同一 authz 纪律：强制认证 + owner 域读隔离（未知 run 与
-    他人 run 一律 404，不泄漏存在性）。取消经 ``engine.cancel_run``（run 级
-    CancellationToken）：未启动节点立即收敛；在飞节点经各自协作 checkpoint
-    收敛；durable 分支级联写 job 行取消（既有机制，无新状态机）。
+    他人 run 一律 404，不泄漏存在性）。
 
-    进程可见性（DIST round1 如实声明）：在飞 run 注册表是**本进程内存态**
-    （``engine.get_run`` 只见本进程启动的 run）—— 多 worker / 多副本部署
-    下，cancel 请求须落在**正在执行该 run 的进程**才能点燃在飞取消；
-    durable 分支的取消事实落库（AnalysisTask 行），由执行侧探针跨进程
-    收敛，不受此限制。幂等：已终态 / 快照回放的 run 返回 200 且
-    ``cancelled=false`` 并附当前终态 —— 与 durable job 取消的幂等语义一致。
+    取消链路（两级，幂等）：
+    1. 本进程内存 token（``engine.cancel_run``）：在飞节点经协作 checkpoint
+       收敛；durable 分支级联写 job 行取消（既有机制）。
+    2. 持久取消旗标（``geocompute_runs.cancel_requested_at``）：V6 新增 ——
+       任意进程可写；执行侧 coordinator 心跳（≤0.5s）点燃本地 token；
+       排队中的 run 由 coordinator cancel sweep 直接收敛终态。
+
+    幂等：已终态 / 快照回放的 run 返回 200 且 ``cancelled=false`` 并附当前
+    终态 —— 与 durable job 取消的幂等语义一致。
     """
     from app.services.geocompute.executor import engine, owner_scope_for
 
     owner_scope = owner_scope_for(user)
     run = engine.get_run(run_id, owner_scope=owner_scope)
-    if run is None:
-        raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
-    cancelled = engine.cancel_run(run_id, reason="cancelled via API")
+    if run is not None:
+        cancelled = engine.cancel_run(run_id, reason="cancelled via API")
+        return {
+            "run_id": run_id,
+            "cancelled": bool(cancelled),
+            "status": run.status.value,
+            "source": run.source,
+        }
+    # 本进程内存未命中（多副本在飞 run / cluster 排队 run）→ 持久旗标路径。
+    # owner 域校验在 store 侧（他人/未知一律 None → 404，不泄漏存在性）。
+    def _cancel_persistent():
+        from app.services.geocompute.cluster.store import ClusterRunStore
+
+        store = ClusterRunStore()
+        row = store.get_run_owned(run_id, owner_scope)
+        if row is None:
+            return None, None
+        changed, observed = store.request_cancel(run_id)
+        return changed, observed
+
+    try:
+        changed, observed = await asyncio.to_thread(_cancel_persistent)
+    except Exception:  # noqa: BLE001 - cluster 域不可用（未迁移库）→ V5 语义
+        logger.warning("[geocompute] cluster cancel store unavailable: %s", run_id)
+        changed, observed = None, None
+    if observed is None:
+        # cluster 行未命中 → 快照回放域校验（终态 run 幂等 no-op 语义），
+        # 全未命中才 404。get_run 二次调用此刻走快照回读。
+        snap = engine.get_run(run_id, owner_scope=owner_scope)
+        if snap is None:
+            raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
+        return {
+            "run_id": run_id,
+            "cancelled": False,
+            "status": snap.status.value,
+            "source": snap.source,
+        }
     return {
         "run_id": run_id,
-        "cancelled": bool(cancelled),
-        "status": run.status.value,
-        "source": run.source,
+        "cancelled": bool(changed),
+        "requested": bool(changed),
+        "status": observed,
+        "source": "cluster",
     }
 
 
