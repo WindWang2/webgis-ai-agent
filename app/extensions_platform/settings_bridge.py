@@ -153,15 +153,6 @@ def parse_network_allow(raw: str) -> dict[str, frozenset[str]]:
                     f"EXTENSION_NETWORK_ALLOW entry {chunk!r} lists no hosts",
                 )
             )
-        for host in hosts:
-            if host != "*" and ("/" in host or " " in host or host.startswith(":")):
-                raise ExtensionPlatformError(
-                    ExtensionDiagnostic.error(
-                        DiagnosticCode.MANIFEST_PARSE_FAILED,
-                        f"EXTENSION_NETWORK_ALLOW host {host!r} is not a plain host "
-                        "(use host or host:port, or '*' for all)",
-                    )
-                )
         existing = allowed.get(ext_id, frozenset())
         allowed[ext_id] = existing | hosts
     return allowed

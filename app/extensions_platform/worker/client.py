@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import queue
 import subprocess
+import tempfile
 import sys
 import threading
 import time
@@ -116,7 +117,7 @@ class WorkerProcess:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=self._child_env(),
-                cwd=str(_REPO_ROOT),
+                cwd=tempfile.gettempdir(),
                 start_new_session=hasattr(os, "setsid"),
             )
             self.pid = self._proc.pid
@@ -171,12 +172,17 @@ class WorkerProcess:
                 raise
 
     def _child_env(self) -> dict[str, str]:
+        # Round-2 审查 C-1：标记位令 worker 侧 Settings 跳过 ``.env`` 解析
+        # （app.core.config 据此短路 env_file），cwd 同时移出 repo root
+        # ——否则 worker 经 ``from app.core.config import settings`` 一次
+        # 读走宿主全部 secrets，击穿「供给即授权」模型。
         env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "PYTHONPATH": str(_REPO_ROOT),
             "LANG": "C.UTF-8",
             "HOME": os.environ.get("HOME", "/tmp"),
             "PYTHONHASHSEED": "0",
+            "WEBGIS_EXTENSION_WORKER": "1",
         }
         return env
 
@@ -229,7 +235,8 @@ class WorkerProcess:
         import time as _time
 
         proc = self._proc
-        if proc is None or proc.stderr is None:
+        stderr = getattr(proc, "stderr", None) if proc is not None else None
+        if stderr is None:
             return ""
         try:
             if proc.poll() is None:
@@ -242,7 +249,7 @@ class WorkerProcess:
             pass
         data = b""
         try:
-            fd = proc.stderr.fileno()
+            fd = stderr.fileno()
             deadline = _time.monotonic() + 0.5
             while _time.monotonic() < deadline and len(data) < 65536:
                 ready, _, _ = select.select([fd], [], [], 0.1)
@@ -341,7 +348,12 @@ class WorkerProcess:
             response["error"] = value if isinstance(value, dict) else error_payload(
                 DiagnosticCode.BROKER_DENIED.value, str(value)
             )
-        write_frame(self._proc.stdin, response)
+        try:
+            write_frame(self._proc.stdin, response)
+        except (ProtocolError, BrokenPipeError, OSError) as exc:
+            # worker 在等待 broker 应答期间死亡 → 归一为 typed 崩溃
+            # （Round-2 m-4：此前 BrokenPipe 逃逸崩溃计数/回滚路径）。
+            raise self._crashed(f"worker died while receiving broker response: {exc}") from exc
 
     # ── 退出 ─────────────────────────────────────────────────────────
     @property

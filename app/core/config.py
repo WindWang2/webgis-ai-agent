@@ -13,10 +13,23 @@ from pydantic import field_validator, model_validator
 logger = logging.getLogger(__name__)
 
 
+def _worker_env_file() -> str | None:
+    """worker 子进程禁止读取 ``.env``（Round-2 审查 C-1）。
+
+    worker 以 repo root 为 PYTHONPATH，pydantic-settings 的 ``.env`` 解析
+    相对 CWD——不堵住该通道，扩展 worker 可经 ``app.core.config.settings``
+    一次性读走全部宿主 secrets（伪造每扩展按 ref 供给的模型）。spawn 侧
+    注入 ``WEBGIS_EXTENSION_WORKER=1`` 标记，类定义期即短路。
+    """
+    import os
+
+    return None if os.environ.get("WEBGIS_EXTENSION_WORKER") == "1" else ".env"
+
+
 class Settings(BaseSettings):
     """应用配置"""
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_worker_env_file(),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",

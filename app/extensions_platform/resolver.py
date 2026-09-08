@@ -125,6 +125,8 @@ def resolve_activation_plan(
             indegree[dependent] -= 1
             if indegree[dependent] == 0:
                 ready.append(dependent)
+        # 字典序 tie-break（Round-2 NOTE：与 V1 activate_all 的排序语义一致）。
+        ready.sort()
     return ResolutionResult(ordered=tuple(ordered))
 
 

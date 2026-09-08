@@ -129,7 +129,7 @@ def certify_extension(host: ExtensionHost, extension_id: str) -> dict[str, Any]:
         add(
             "lifecycle_smoke",
             False,
-            f"extension is {record.state.value}; re-discover before certification",
+            f"extension is {record.state.value}; enable() or re-discover first",
         )
     certified = all(c["status"] != "fail" for c in checks)
     return {

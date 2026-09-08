@@ -214,28 +214,58 @@ class CapabilityBroker:
             elif not isinstance(body, (str, bytes)):
                 raise _deny(DiagnosticCode.BROKER_DENIED, "body must be string/bytes",
                             extension_id=self._extension_id)
-        timeout_s = min(
-            float(payload.get("timeout_s") or self._limits.http_timeout_s),
-            self._limits.http_timeout_s,
-        )
+        import math
+
+        raw_timeout = payload.get("timeout_s")
+        try:
+            requested = (
+                float(raw_timeout) if raw_timeout is not None else self._limits.http_timeout_s
+            )
+        except (TypeError, ValueError):
+            raise _deny(DiagnosticCode.BROKER_DENIED, "timeout_s must be a number",
+                        extension_id=self._extension_id)
+        if not math.isfinite(requested) or requested <= 0:
+            raise _deny(
+                DiagnosticCode.BROKER_DENIED,
+                f"timeout_s {raw_timeout!r} is not a positive finite number",
+                extension_id=self._extension_id,
+            )
+        timeout_s = min(requested, self._limits.http_timeout_s)
+        cap = self._limits.max_http_response_bytes
         try:
             if self._http_transport is not None:
+                # 测试注入面：小响应契约（单次 request）。
                 response = self._http_transport.request(
                     method, url, headers=headers, content=body, timeout=timeout_s
                 )
-            else:
-                with httpx.Client(follow_redirects=False, timeout=timeout_s) as client:
-                    response = client.request(method, url, headers=headers, content=body)
+                raw = response.content or b""
+                return {
+                    "status": response.status_code,
+                    "content_type": response.headers.get("content-type", ""),
+                    "body_b64": base64.b64encode(raw[:cap]).decode("ascii"),
+                    "truncated": len(raw) > cap,
+                }
+            # Round-2 M-2：流式下载并在 cap 处中止——httpx 默认整响应缓冲，
+            # 敌意/超大响应体会把宿主打到 OOM。
+            with httpx.Client(follow_redirects=False, timeout=timeout_s) as client:
+                with client.stream(method, url, headers=headers, content=body) as response:
+                    status = response.status_code
+                    content_type = response.headers.get("content-type", "")
+                    buf = bytearray()
+                    truncated = False
+                    for chunk in response.iter_raw():
+                        buf.extend(chunk)
+                        if len(buf) > cap:
+                            truncated = True
+                            break
+            return {
+                "status": status,
+                "content_type": content_type,
+                "body_b64": base64.b64encode(bytes(buf[:cap])).decode("ascii"),
+                "truncated": truncated,
+            }
         except httpx.HTTPError as exc:
             return {"status": 0, "error": f"{type(exc).__name__}", "content_type": "", "body_b64": "", "truncated": False}
-        raw = response.content or b""
-        cap = self._limits.max_http_response_bytes
-        return {
-            "status": response.status_code,
-            "content_type": response.headers.get("content-type", ""),
-            "body_b64": base64.b64encode(raw[:cap]).decode("ascii"),
-            "truncated": len(raw) > cap,
-        }
 
     # ── artifact read/write ───────────────────────────────────────────
     def _confine(self, raw_path: Any) -> Path:
@@ -262,13 +292,17 @@ class CapabilityBroker:
         if not target.is_file():
             raise _deny(DiagnosticCode.BROKER_DENIED, f"artifact {str(target)!r} not found",
                         extension_id=self._extension_id)
-        data = target.read_bytes()
+        # Round-2 M-1：先 stat 再有界读取——此前 read_bytes() 整文件进内存，
+        # GB 级 artifact 会把宿主打到 OOM（worker 有 rlimit，宿主没有）。
         cap = self._limits.max_artifact_bytes
+        size = target.stat().st_size
+        with target.open("rb") as fh:
+            data = fh.read(cap + 1)
         return {
             "path": str(target),
-            "size": len(data),
+            "size": size,
             "content_b64": base64.b64encode(data[:cap]).decode("ascii"),
-            "truncated": len(data) > cap,
+            "truncated": size > cap,
         }
 
     def _artifact_write(self, payload: dict[str, Any]) -> dict[str, Any]:

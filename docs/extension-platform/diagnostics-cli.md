@@ -95,7 +95,7 @@ activation; warnings degrade it.
 | `worker_call_timeout` | error | A worker call exceeded `execution.call_timeout_s`; process group killed, projections roll back |
 | `worker_crashed` | error | The worker process died (EOF / exit / protocol failure); stderr tail attached; projections roll back |
 | `worker_restart_quarantined` | error | `EXTENSIONS_MAX_WORKER_CRASHES` consecutive crashes reached; the extension is quarantined until re-discovered |
-| `worker_result_invalid` | error | Reserved code for a worker result frame failing host-side validation (defined in the append-only vocabulary; no current emission path — a malformed result surfaces as `worker_protocol_mismatch` or `worker_crashed`) |
+- `worker_result_invalid` — worker 工具结果不可 JSON 序列化时由 worker server 产出（typed 错误应答，进程存活）。v2 引入。
 | `broker_denied` | error | The capability broker refused an op (no grant, allowlist miss, path outside artifact roots, unprovisioned secret ref, unknown op, SSRF gate) |
 | `output_limit_exceeded` | error | A serialized tool result exceeded `execution.max_output_bytes` (typed error result; the worker survives). Also broker artifact writes over 32 MiB |
 | `resource_limit_unavailable` | warning | POSIX rlimits could not be applied for this worker (non-POSIX or `setrlimit` failure); wall-clock kill remains. Honest degradation — no sandbox claims |

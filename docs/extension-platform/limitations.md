@@ -178,6 +178,7 @@ limitations. If you find a deviation, it is a bug, not a policy; see
 - **`EXTENSIONS_MAX_WORKER_CRASHES` counts crashes per discovered
   record**, not over all time: the counter lives on the
   `ExtensionRecord`, so a fresh discovery that replaces a non-active
+  - 一次**优雅 deactivate**（worker 存活时主动停用）同样把计数清零；崩溃路径不清零（worker 已死，计数必须跨代次存活才能到达 quarantine）。
   record (or `host.reset()`) clears it — while `enable()` alone does not.
   An extension that crashes twice, gets re-discovered, and crashes twice
   again has not yet reached the default quarantine threshold — quarantine

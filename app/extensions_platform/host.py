@@ -1059,15 +1059,7 @@ class ExtensionHost:
                 if record.manifest.namespaced_model_provider_tool(provider_id) != projected_tool:
                     continue
                 if stream:
-                    if record.worker is not None:
-                        raise ExtensionPlatformError(
-                            ExtensionDiagnostic.error(
-                                DiagnosticCode.WORKER_MODE_INVALID,
-                                f"model provider {projected_tool!r} runs in a "
-                                "worker; streaming is unavailable (single-frame RPC)",
-                                extension_id=eid,
-                            )
-                        )
+                    # worker 分支在上方已提前处理并 continue；此处必为 in-process。
                     return spec.invoke_fn(dict(request or {}), ctx)
                 from .sdk.model import aggregate_stream_events
 

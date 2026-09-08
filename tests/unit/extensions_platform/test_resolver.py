@@ -113,7 +113,8 @@ class TestPureResolver:
             "d.solo": self._view("d.solo", "1.0.0"),
         }
         plan = resolve_activation_plan(records, set(records))
-        assert list(plan.ordered) == ["a.base", "d.solo", "b.mid", "c.top"]
+        # 字典序 tie-break（与 V1 activate_all 的 ready.sort() 语义一致）。
+        assert list(plan.ordered) == ["a.base", "b.mid", "c.top", "d.solo"]
 
     def test_cycle_members_excluded_from_plan(self):
         records = {

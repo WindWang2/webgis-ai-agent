@@ -31,9 +31,13 @@ In-process 扩展不经过 broker、不做资源强制、没有超时——它�
   `MemoryError` → typed `worker_crashed`，宿主不受影响。
   钉死：`test_resource_limits.py`, `test_worker_integration.py`。
 - **无 ambient authority。** spawn 环境只含
-  `PATH / PYTHONPATH / LANG / HOME / PYTHONHASHSEED`——宿主的环境变量面
-  （含 API keys）不进入 worker。钉死：
-  `test_worker_integration.py::test_worker_env_is_sanitized`。
+  `PATH / PYTHONPATH / LANG / HOME / PYTHONHASHSEED / WEBGIS_EXTENSION_WORKER`
+  ——宿主的环境变量面（含 API keys）不进入 worker；worker 进程同时以
+  临时目录为 CWD 且 `WEBGIS_EXTENSION_WORKER=1` 令 `app.core.config` 跳过
+  `.env` 解析（否则 worker 可经 `from app.core.config import settings`
+  一次读走宿主全部 secrets，Round-2 审查 C-1 堵住的通道）。钉死：
+  `test_worker_integration.py::test_worker_env_is_sanitized`,
+  `test_review_r2_fixes.py::TestSecretsNotReadableViaSettings`。
 - **CPU 与墙钟预算。** `RLIMIT_CPU = execution.max_cpu_seconds`（SIGXCPU
   杀进程）；宿主侧另有 `call_timeout_s` 墙钟预算 + `killpg` 整组兜底。
   钉死：`test_resource_limits.py::TestCpuLimit`,
