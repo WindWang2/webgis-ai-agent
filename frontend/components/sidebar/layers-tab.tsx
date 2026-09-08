@@ -53,6 +53,20 @@ import {
   toggleLayerAndCommit,
 } from '@/lib/mapspec/user-mutation';
 import { comparisonFamilyId } from '@/components/map/comparison/comparison-sync';
+import { useVirtualRows } from '@/lib/hooks/use-virtual-rows';
+
+/* ─── W8：树行扁平化与窗口虚拟化 ───
+ * 10k 图层不 O(N) 渲染：投影后扁平行描述符数组 + 固定行高窗口（自研
+ * useVirtualRows，不引依赖）。≤VIRTUAL_THRESHOLD 行按普通路径全量渲染
+ * （DOM 结构与 V4 一致）。渲染统一走 renderTreeRow —— 两条路径共享同一
+ * 行实现，折叠传播（hiddenSectionIds）在扁平化时统一生效。 */
+const TREE_ROW_HEIGHT = 34; // px（行/组头 min 高 + 边距折算）
+const VIRTUAL_THRESHOLD = 200;
+
+type TreeRow =
+  | { kind: 'group'; key: string; section: WorkspaceSection; isUserGroup: boolean }
+  | { kind: 'layer'; key: string; row: WorkspaceRow }
+  | { kind: 'note'; key: string; section: WorkspaceSection; emptyBySearch: boolean };
 
 function getFeatureCount(layer: Layer): number {
   // #692：MVT 挂载的大图层 source 是 ref/瓦片形态（无内联 features），
@@ -202,6 +216,7 @@ function GroupHeader({
         'flex items-center gap-1 px-panel py-1',
         isDropTarget && 'bg-surface-selected outline outline-1 outline-dashed outline-status-accent-border',
       )}
+      style={section.depth > 0 ? { paddingLeft: `${12 + section.depth * 14}px` } : undefined}
       data-testid={`group-header-${section.id ?? section.name}`}
       onDragOver={(e) => {
         if (isUserGroup || section.id === null) {
@@ -917,6 +932,77 @@ export function LayersTab() {
     [layerGroups],
   );
 
+  // W8：投影 → 扁平行描述符（组头 + 行 + 空组提示），折叠传播统一生效
+  //（hiddenSectionIds 的区与其子孙整棵跳过 —— 折叠 ≠ 删除）。
+  const flatRows = useMemo(() => {
+    const out: TreeRow[] = [];
+    for (const section of projection.sections) {
+      const isUserGroup = section.id != null && userGroupIds.has(section.id);
+      out.push({
+        kind: 'group',
+        key: `g-${section.id ?? section.name}`,
+        section,
+        isUserGroup,
+      });
+      if (section.collapsed || projection.hiddenSectionIds.has(section.id)) continue;
+      for (const row of section.rows) {
+        out.push({ kind: 'layer', key: `l-${row.layer.id}`, row });
+      }
+      if (section.rows.length === 0) {
+        out.push({
+          kind: 'note',
+          key: `n-${section.id ?? section.name}`,
+          section,
+          emptyBySearch: Boolean(search),
+        });
+      }
+    }
+    return out;
+  }, [projection, userGroupIds, search]);
+
+  const virtual = useVirtualRows(flatRows.length, TREE_ROW_HEIGHT);
+
+  const renderTreeRow = useCallback((tr: TreeRow) => {
+    if (tr.kind === 'group') {
+      return (
+        <GroupHeader
+          section={tr.section}
+          isUserGroup={tr.isUserGroup}
+          layerCount={tr.section.rows.length}
+          isDropTarget={overGroupId === (tr.section.id ?? 'semantic') && dragId != null}
+          onDropOnGroup={handleDropOnGroup}
+          onDragOverGroup={handleDragOverGroup}
+        />
+      );
+    }
+    if (tr.kind === 'layer') {
+      return (
+        <LayerRowMemo
+          row={tr.row}
+          globalIdx={indexById.get(tr.row.layer.id) ?? 0}
+          totalCount={layers.length}
+          isDragging={dragId === tr.row.layer.id}
+          isDragOver={overId === tr.row.layer.id}
+          isolated={isolatedLayerId === tr.row.layer.id}
+          status={statusMap[tr.row.layer.id]}
+          filterBadge={filterBadgeMap[tr.row.layer.id]}
+          onDragStart={handleDragStart}
+          onDragOverRow={handleDragOverRow}
+          onDropOnRow={handleDropOnRow}
+          onDragEnd={handleDragEnd}
+          onMove={moveLayer}
+          styleClipboard={styleClipboard}
+          setStyleClipboard={setStyleClipboard}
+        />
+      );
+    }
+    return (
+      <div className="px-panel py-1 text-micro text-ink-disabled">
+        {tr.emptyBySearch ? '无匹配图层' : '空分组 —— 拖入或选择图层移入'}
+      </div>
+    );
+  }, [overGroupId, dragId, handleDropOnGroup, handleDragOverGroup, indexById, layers.length, overId, isolatedLayerId, statusMap, filterBadgeMap, handleDragStart, handleDragOverRow, handleDropOnRow, handleDragEnd, moveLayer, styleClipboard]);
+
   return (
     <div className="flex flex-col h-full">
       {/* Stats header + 搜索 + 新建分组 */}
@@ -978,52 +1064,29 @@ export function LayersTab() {
               action={{ label: '前往数据源', onClick: () => setActiveLeftTab('data_sources') }}
             />
           </div>
+        ) : flatRows.length > VIRTUAL_THRESHOLD ? (
+          /* W8：>200 行窗口渲染 —— 只挂可见窗 + overscan，10k 行仍恒定 DOM 量 */
+          <div
+            ref={virtual.scrollRef}
+            onScroll={virtual.onScroll}
+            data-testid="layer-tree-virtual"
+            className="h-full overflow-y-auto"
+          >
+            <div style={{ height: virtual.totalHeight, position: 'relative' }}>
+              <div style={{ transform: `translateY(${virtual.offsetY}px)` }}>
+                {flatRows.slice(virtual.start, virtual.end).map((tr) => (
+                  <div key={tr.key} style={{ height: TREE_ROW_HEIGHT }} className="overflow-hidden">
+                    {renderTreeRow(tr)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         ) : (
           <div className="py-1">
-            {projection.sections.map((section) => {
-              const isUserGroup = section.id != null && userGroupIds.has(section.id);
-              return (
-                <div key={section.id ?? `semantic-${section.name}`} className="mb-1">
-                  <GroupHeader
-                    section={section}
-                    isUserGroup={isUserGroup}
-                    layerCount={section.rows.length}
-                    isDropTarget={overGroupId === (section.id ?? 'semantic') && dragId != null}
-                    onDropOnGroup={handleDropOnGroup}
-                    onDragOverGroup={handleDragOverGroup}
-                  />
-                  {!section.collapsed && (
-                    <div>
-                      {section.rows.map((row) => (
-                        <LayerRowMemo
-                          key={row.layer.id}
-                          row={row}
-                          globalIdx={indexById.get(row.layer.id) ?? 0}
-                          totalCount={layers.length}
-                          isDragging={dragId === row.layer.id}
-                          isDragOver={overId === row.layer.id}
-                          isolated={isolatedLayerId === row.layer.id}
-                          status={statusMap[row.layer.id]}
-                          filterBadge={filterBadgeMap[row.layer.id]}
-                          onDragStart={handleDragStart}
-                          onDragOverRow={handleDragOverRow}
-                          onDropOnRow={handleDropOnRow}
-                          onDragEnd={handleDragEnd}
-                          onMove={moveLayer}
-                          styleClipboard={styleClipboard}
-                          setStyleClipboard={setStyleClipboard}
-                        />
-                      ))}
-                      {section.rows.length === 0 && (
-                        <div className="px-panel py-1 text-micro text-ink-disabled">
-                          {search ? '无匹配图层' : '空分组 —— 拖入或选择图层移入'}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {flatRows.map((tr) => (
+              <React.Fragment key={tr.key}>{renderTreeRow(tr)}</React.Fragment>
+            ))}
           </div>
         )}
       </div>

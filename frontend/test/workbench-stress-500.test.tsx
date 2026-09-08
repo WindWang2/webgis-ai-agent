@@ -58,14 +58,19 @@ describe('Wave 13 · Layer Workspace 500 层压力冒烟', () => {
     expect(counted).toBe(visible);
   });
 
-  it('渲染 500 层工作台：全部行出现在 DOM，搜索收窄到唯一命中', async () => {
+  it('渲染 500 层工作台：V5 虚拟化窗口（>200 行恒定 DOM 量），搜索收窄到唯一命中', async () => {
     const layers = makeLayers(500);
     useHudStore.setState({ layers, layerGroups: [], layerGroupMembership: {}, lockedLayerIds: [], selectedLayerIds: [] });
     render(<LayersTab />);
+    // W8 虚拟化：500 行 > VIRTUAL_THRESHOLD(200) —— 只渲染窗口 + overscan，
+    // DOM 行量与总行数无关（V4 的「全量 500 行在 DOM」契约由虚拟化替代）。
     await waitFor(() => {
-      expect(document.querySelectorAll('[data-testid^="layer-row-"]').length).toBe(500);
+      const domRows = document.querySelectorAll('[data-testid^="layer-row-"]').length;
+      expect(domRows).toBeGreaterThan(0);
+      expect(domRows).toBeLessThan(100);
+      expect(document.querySelector('[data-testid="layer-tree-virtual"]')).toBeTruthy();
     });
-    // 搜索过滤：命中唯一层，DOM 行数收窄（大列表交互预算）
+    // 搜索过滤：命中唯一层，收窄到阈值以下后走普通路径精确渲染
     fireEvent.change(screen.getByRole('searchbox', { name: /搜索图层/ }), { target: { value: '分析结果 499' } });
     await waitFor(() => {
       expect(document.querySelectorAll('[data-testid^="layer-row-"]').length).toBeLessThanOrEqual(2);

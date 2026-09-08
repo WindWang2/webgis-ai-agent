@@ -44,6 +44,8 @@ export interface WorkspaceProjection {
   sections: WorkspaceSection[];
   /** 展开可见的行数（自身或任一祖先 collapsed 的区不计）。 */
   visibleRowCount: number;
+  /** V5：被祖先折叠隐藏的区 id 集合（渲染层跳过其行 —— 折叠 ≠ 删除）。 */
+  hiddenSectionIds: Set<string>;
 }
 
 export interface ProjectWorkspaceInput {
@@ -116,6 +118,7 @@ export function projectWorkspace(input: ProjectWorkspaceInput): WorkspaceProject
     childrenOf.set(key, bucket);
   }
   let visibleRowCount = 0;
+  const hiddenSectionIds = new Set<string>();
   const walkGroups = (nodes: LayerGroupEntity[], depth: number, ancestorHidden: boolean) => {
     for (const group of nodes) {
       const hidden = ancestorHidden || group.collapsed;
@@ -127,7 +130,8 @@ export function projectWorkspace(input: ProjectWorkspaceInput): WorkspaceProject
         depth,
         rows,
       });
-      if (!hidden) visibleRowCount += rows.length;
+      if (hidden) hiddenSectionIds.add(group.id);
+      else visibleRowCount += rows.length;
       walkGroups(childrenOf.get(group.id) ?? [], depth + 1, hidden);
     }
   };
@@ -156,7 +160,7 @@ export function projectWorkspace(input: ProjectWorkspaceInput): WorkspaceProject
     visibleRowCount += rows.length;
   }
 
-  return { sections, visibleRowCount };
+  return { sections, visibleRowCount, hiddenSectionIds };
 }
 
 /** 语义组显示名（与现 layers-tab 词表一致）。 */
