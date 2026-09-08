@@ -72,6 +72,8 @@ def upgrade() -> None:
             sa.Column("plan_fingerprint", sa.String(length=32), nullable=False),
             sa.Column("plan_snapshot", sa.JSON(), nullable=False),
             sa.Column("session_id", sa.String(length=255), nullable=True),
+            sa.Column("creator_id", sa.String(length=255), nullable=True),
+            sa.Column("org_id", sa.String(length=255), nullable=True),
             sa.Column("tenant_key", sa.String(length=40), nullable=True),
             sa.Column("project_key", sa.String(length=40), nullable=True),
             sa.Column("priority", sa.Integer(), nullable=False, server_default="5"),

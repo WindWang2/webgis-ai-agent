@@ -100,6 +100,8 @@ class ClusterRunStore:
         plan_fingerprint: str,
         owner_scope: str,
         session_id: Optional[str] = None,
+        creator_id: Optional[str] = None,
+        org_id: Optional[str] = None,
         tenant_raw: Optional[str] = None,
         project_raw: Optional[str] = None,
         priority: int = RunPriority.NORMAL,
@@ -157,6 +159,8 @@ class ClusterRunStore:
                 plan_fingerprint=plan_fingerprint,
                 plan_snapshot=plan_snapshot,
                 session_id=session_id,
+                creator_id=creator_id,
+                org_id=org_id,
                 tenant_key=tenant_key,
                 project_key=project_key,
                 priority=RunPriority.coerce(priority),
@@ -458,6 +462,40 @@ class ClusterRunStore:
             db.commit()
             return True, row.status
 
+    def cancel_flagged(self, *, limit: int = 32) -> list[str]:
+        """取消收敛 sweep：cancel_requested_at 已置位的**未派发** run →
+        直接 cancelled 终态（排队中的 run 没有执行体，旗标即终态指令）。
+        在跑 run 的取消由执行侧心跳收敛（fencing），本方法不碰。
+
+        幂等：CAS 限定 dispatchable 状态；已被认领/终态的行不动。
+        """
+        cancelled: list[str] = []
+        with self._factory() as db:
+            rows = db.execute(
+                select(_Run)
+                .where(
+                    _Run.cancel_requested_at.is_not(None),
+                    _Run.status.in_([s.value for s in DISPATCHABLE_STATUSES]),
+                )
+                .order_by(_Run.id.asc())
+                .limit(max(1, int(limit)))
+            ).scalars().all()
+            now = _utcnow()
+            for row in rows:
+                rowcount = db.execute(
+                    update(_Run)
+                    .where(
+                        _Run.id == row.id,
+                        _Run.status.in_([s.value for s in DISPATCHABLE_STATUSES]),
+                    )
+                    .values(status=ClusterRunStatus.CANCELLED.value,
+                            terminal_at=now, updated_at=now)
+                ).rowcount
+                if rowcount:
+                    cancelled.append(row.run_id)
+            db.commit()
+        return cancelled
+
     def request_yield(self, run_id: str) -> bool:
         """持久抢占请求旗标（幂等；跨 coordinator）。"""
         with self._factory() as db:
@@ -487,6 +525,64 @@ class ClusterRunStore:
     def consume_yield_if_requested(self, run_id: str) -> bool:
         row = self.get_run(run_id)
         return bool(row and row["yield_requested_at"])
+
+    # ------------------------------------------------- control-plane scan
+
+    def get_run_internal(self, run_id: str) -> Optional[dict[str, Any]]:
+        """coordinator 专用的完整行读取（含 plan_snapshot/执行身份）。
+
+        **绝不**进任何 REST/工具应答 —— plan 快照与 creator/org 是执行
+        输入，不是用户可见投影（用户面走 ``get_run`` / engine 注册表）。
+        """
+        with self._factory() as db:
+            row = db.execute(
+                select(_Run).where(_Run.run_id == run_id)
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            proj = _run_projection(row)
+            proj.update({
+                "plan_snapshot": row.plan_snapshot,
+                "creator_id": row.creator_id,
+                "org_id": row.org_id,
+                "project_key": row.project_key,
+            })
+            return proj
+
+    def scan_dispatchable(self, *, limit: int = 32) -> list[dict[str, Any]]:
+        """可派发候选（queued/preempted；控制面信任域扫描，无 owner 过滤）。"""
+        with self._factory() as db:
+            rows = db.execute(
+                select(_Run)
+                .where(_Run.status.in_([s.value for s in DISPATCHABLE_STATUSES]))
+                .order_by(_Run.priority.desc(), _Run.id.asc())
+                .limit(max(1, int(limit)))
+            ).scalars().all()
+            return [_scan_projection(r) for r in rows]
+
+    def scan_running(self, *, limit: int = 64) -> list[dict[str, Any]]:
+        """在跑 run（leased/running；抢占受害者扫描用）。
+
+        排序 = 抢占受害者优先序（低优先级在前；同优先级后启动者在前）。
+        """
+        with self._factory() as db:
+            rows = db.execute(
+                select(_Run)
+                .where(_Run.status.in_([s.value for s in LEASED_STATUSES]))
+                .order_by(_Run.priority.asc(), _Run.started_at.desc())
+                .limit(max(1, int(limit)))
+            ).scalars().all()
+            return [_scan_projection(r) for r in rows]
+
+    def tenant_last_dispatch(self) -> dict[str, int]:
+        """租户最近派发序（fairness 的可重建轮转状态；无隐藏内存态）。"""
+        with self._factory() as db:
+            rows = db.execute(
+                select(_Run.tenant_key, func.max(_Run.dispatch_seq))
+                .where(_Run.tenant_key.is_not(None))
+                .group_by(_Run.tenant_key)
+            ).all()
+            return {tenant: int(seq or 0) for tenant, seq in rows}
 
     # ---------------------------------------------------------- workers
 
@@ -880,3 +976,18 @@ def _run_projection(row: Any) -> dict[str, Any]:
         "started_at": row.started_at.isoformat() + "Z" if row.started_at else None,
         "terminal_at": row.terminal_at.isoformat() + "Z" if row.terminal_at else None,
     }
+
+
+def _scan_projection(row: Any) -> dict[str, Any]:
+    """控制面扫描投影（调度决策输入；比用户投影多 run 内部键，绝无载荷）。"""
+    proj = _run_projection(row)
+    proj.update({
+        "id": row.id,
+        "tenant_key": row.tenant_key,
+        "dispatch_seq": row.dispatch_seq,
+        "started_at": row.started_at.isoformat() + "Z" if row.started_at else None,
+        "lease_expires_at": (
+            row.lease_expires_at.isoformat() + "Z" if row.lease_expires_at else None
+        ),
+    })
+    return proj

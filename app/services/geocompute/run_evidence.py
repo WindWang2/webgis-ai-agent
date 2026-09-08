@@ -29,9 +29,13 @@ _SNAPSHOT_ERROR_CHARS = 120
 
 
 def _default_session_factory():
+    # 评审修复（V6 round0）：返回 **Session 实例**（jobs 层同一纪律）——
+    # 此前返回 sessionmaker 本体，SQLAlchemy 2.0 的 sessionmaker 不支持
+    # 上下文协议 → ``with session_factory()`` 必然 TypeError，默认路径的
+    # 快照/复用记录被 fail-open 静默丢弃（测试因注入工厂而未暴露）。
     from app.core.database import SessionLocal
 
-    return SessionLocal
+    return SessionLocal()
 
 
 #: 可注入的会话工厂（测试替换为临时 SQLite 工厂）。

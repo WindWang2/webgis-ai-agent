@@ -372,13 +372,16 @@ class GeoComputeClusterRun(Base):
     #: coordinator 崩溃后据此重建计划 —— 恢复的唯一输入）
     plan_snapshot = Column(JSON, nullable=False)
     session_id = Column(String(255), nullable=True)
+    #: 执行身份（coordinator 恢复执行所需的最小身份集；与 analysis_tasks 的
+    #: creator_id/org_id 同一明文纪律 —— 目录准入/治理作用域跨 failover 可重建）
+    creator_id = Column(String(255), nullable=True)
+    org_id = Column(String(255), nullable=True)
     #: 身份域哈希（tenant ← org_id、project ← project_id；owner_scope 同款
-    #: 哈希域 —— 绝不明文身份入集群控制面）
+    #: 哈希域 —— 账本/公平排序键绝不明文身份）
     tenant_key = Column(String(40), nullable=True)
     project_key = Column(String(40), nullable=True)
     #: 优先级（RunPriority 词表 0/5/10；抢占与公平排序键）
     priority = Column(Integer, nullable=False, default=5)
-    #: lease 认领次数（reclaim 上界 DEFAULT_MAX_RUN_ATTEMPTS）
     #: lease 丢失（reclaim）次数（上界 DEFAULT_MAX_RUN_ATTEMPTS）
     attempts = Column(Integer, nullable=False, default=0)
     #: 被抢占次数（livelock 保险丝 MAX_PREEMPTS）

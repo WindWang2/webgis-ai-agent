@@ -6,6 +6,14 @@
 - 终态证据 = ``geocompute_run_evidence``（run_evidence 模块，本包不复制）；
 - 载荷 = session ref。
 """
+from app.services.geocompute.cluster.fairness import fair_pick, matches_profiles
+from app.services.geocompute.cluster.store import (
+    ClusterBackpressureError,
+    ClusterLedger,
+    ClusterRunStore,
+    PlanSnapshotTooLargeError,
+)
+
 from app.services.geocompute.cluster.contracts import (
     DEFAULT_MAX_RUN_ATTEMPTS,
     DISPATCHABLE_STATUSES,
@@ -40,4 +48,10 @@ __all__ = [
     "is_terminal",
     "run_error_for_reclaim",
     "transition_allowed",
+    "fair_pick",
+    "matches_profiles",
+    "ClusterBackpressureError",
+    "ClusterLedger",
+    "ClusterRunStore",
+    "PlanSnapshotTooLargeError",
 ]
