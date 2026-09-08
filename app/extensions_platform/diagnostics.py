@@ -67,6 +67,7 @@ class DiagnosticCode(str, Enum):
     WORKER_CALL_TIMEOUT = "worker_call_timeout"
     WORKER_CRASHED = "worker_crashed"
     WORKER_RESTART_QUARANTINED = "worker_restart_quarantined"
+    WORKER_RESULT_INVALID = "worker_result_invalid"
     BROKER_DENIED = "broker_denied"
     OUTPUT_LIMIT_EXCEEDED = "output_limit_exceeded"
     RESOURCE_LIMIT_UNAVAILABLE = "resource_limit_unavailable"

@@ -24,9 +24,7 @@
 
 from __future__ import annotations
 
-import importlib.util
 import logging
-import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -47,6 +45,8 @@ from .diagnostics import (
 )
 from .discovery import DiscoveryResult, discover_extensions
 from .ledger import ProjectionLedger
+# MODULE_PREFIX 由 loader.py 单一维护；此处保留 re-export 兼容旧引用。
+from .loader import MODULE_PREFIX  # noqa: F401
 from .manifest import GisExtensionManifest
 from .permissions import (
     HIGH_RISK_PERMISSIONS,
@@ -56,8 +56,6 @@ from .permissions import (
 from .trust import TrustLevel, resolve_trust
 
 logger = logging.getLogger(__name__)
-
-MODULE_PREFIX = "webgis_ext_"
 
 
 class ExtensionState(str, Enum):
@@ -358,82 +356,43 @@ class ExtensionHost:
         flags.update(self._policy.feature_flags.get(manifest.id, {}))
         return flags
 
-    # ── entry point 解析 ─────────────────────────────────────────────
+    # ── entry point 解析（共享实现见 loader.py；in-process 与 worker 同规则）──
     def _resolve_entry_path(self, record: ExtensionRecord) -> Optional[Path]:
-        entry = record.manifest.entry_point.strip()
-        if not entry or entry == "__init__":
-            if (record.path / "__init__.py").is_file():
-                return record.path / "__init__.py"
-            return None
-        candidate = record.path / f"{entry}.py"
-        package_init = record.path / entry / "__init__.py"
-        resolved: Optional[Path] = None
-        if candidate.is_file():
-            resolved = candidate.resolve()
-        elif package_init.is_file():
-            resolved = package_init.resolve()
-        if resolved is None:
-            return None
-        # Round-1 审计 F1：入口必须落在包目录内（指纹覆盖范围）。
-        if not resolved.is_relative_to(record.path.resolve()):
-            return None
-        return candidate if resolved == candidate.resolve() else package_init
+        from .loader import resolve_entry_path
+
+        return resolve_entry_path(record.path, record.manifest.entry_point)
 
     def _module_name(self, record: ExtensionRecord) -> str:
         # 指纹参与模块名：内容变化必然获得全新命名空间，杜绝「文件已改、
         # sys.modules 还挂着旧代码」的陈旧模块风险（unload/reload 按公共
         # 前缀清理所有代次）。
-        fingerprint = record.fingerprint or "unknown"
-        return f"{MODULE_PREFIX}{record.manifest.namespace}_{record.manifest.name}_{fingerprint[:12]}"
+        from .loader import module_name_for
+
+        return module_name_for(
+            record.manifest.namespace, record.manifest.name, record.fingerprint
+        )
 
     def _load_entry_module(self, record: ExtensionRecord) -> Any:
-        module_name = self._module_name(record)
-        if module_name in sys.modules:
-            return sys.modules[module_name]
-        entry_path = self._resolve_entry_path(record)
-        if entry_path is None:
-            raise ExtensionPlatformError(
-                ExtensionDiagnostic.error(
-                    DiagnosticCode.ENTRY_POINT_MISSING,
-                    f"entry_point {record.manifest.entry_point!r} not found",
-                    extension_id=record.extension_id,
-                )
-            )
-        is_package = entry_path.name == "__init__.py"
-        spec = importlib.util.spec_from_file_location(
-            module_name,
-            entry_path,
-            submodule_search_locations=[str(record.path)] if is_package else None,
+        from .loader import load_entry_module
+
+        return load_entry_module(
+            record.path,
+            record.manifest.namespace,
+            record.manifest.name,
+            record.manifest.entry_point,
+            record.fingerprint,
+            extension_id=record.extension_id,
         )
-        if spec is None or spec.loader is None:
-            raise ExtensionPlatformError(
-                ExtensionDiagnostic.error(
-                    DiagnosticCode.ENTRY_POINT_FAILED,
-                    f"cannot build import spec for {str(entry_path)!r}",
-                    extension_id=record.extension_id,
-                )
-            )
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        try:
-            spec.loader.exec_module(module)
-        except Exception:
-            sys.modules.pop(module_name, None)
-            raise
-        return module
 
     def _purge_modules(self, record: ExtensionRecord) -> None:
-        # Round-1 审计 M4：只清理当前记录实际加载过的模块（精确名 + 其
-        # 子模块）。此前的宽前缀匹配（prefix + "_"）会把兄弟扩展
-        # （foo.bar vs foo.bar_baz）的活模块一并清掉。
-        base = f"{MODULE_PREFIX}{record.manifest.namespace}_{record.manifest.name}"
-        fingerprint = record.fingerprint_at_activation or record.fingerprint
-        prefixes = {f"{base}_{fingerprint[:12]}"} if fingerprint else set()
-        prefixes.add(f"{base}.")
-        for prefix in prefixes:
-            for name in list(sys.modules):
-                if name == prefix or name.startswith(prefix + "."):
-                    sys.modules.pop(name, None)
+        from .loader import purge_modules
+
+        purge_modules(
+            record.manifest.namespace,
+            record.manifest.name,
+            record.fingerprint_at_activation,
+            record.fingerprint,
+        )
         record.module = None
 
     # ── activate ─────────────────────────────────────────────────────
@@ -988,37 +947,9 @@ class ExtensionHost:
         return report
 
     def _run_health(self, record: ExtensionRecord, module: Any) -> dict[str, Any]:
-        entry = record.manifest.diagnostics_entry
-        if not entry:
-            return {"status": "healthy", "messages": []}
-        module_name, _, fn_name = entry.partition(":")
-        if not fn_name:
-            fn_name = module_name
-            owner = module
-        else:
-            owner = getattr(module, module_name, None)
-        health_fn = getattr(owner, fn_name, None) if owner is not None else None
-        if not callable(health_fn):
-            return {
-                "status": "degraded",
-                "messages": [f"diagnostics entry {entry!r} not resolvable"],
-            }
-        try:
-            result = health_fn()
-        except Exception as exc:  # noqa: BLE001 - 健康检查失败 ≠ 宿主失败
-            return {
-                "status": "degraded",
-                "messages": [f"health check raised {type(exc).__name__}: {exc}"],
-            }
-        if isinstance(result, dict) and "status" in result:
-            return result
-        status = getattr(result, "status", None)
-        if status:
-            return {
-                "status": str(status),
-                "messages": list(getattr(result, "messages", []) or []),
-            }
-        return {"status": "healthy", "messages": []}
+        from .loader import resolve_health_report
+
+        return resolve_health_report(module, record.manifest.diagnostics_entry)
 
     # ── 内省（CLI / 诊断）─────────────────────────────────────────────
     def status_report(self) -> dict[str, Any]:
