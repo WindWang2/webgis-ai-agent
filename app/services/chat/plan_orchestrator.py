@@ -621,9 +621,18 @@ class AgentPlanOrchestrator:
         plan.gis_intent = intent.model_dump()
         plan.recipe_id = recipe.id
         self._apply_capability_validation(plan, registry)
-        plan.workflow_v4 = self._compile_v4_evidence(
-            user_message, intent, recipe.id, available,
-            available_profile=False)
+        try:
+            import asyncio as _asyncio
+            # CPU-bound 编译卸载线程（review R2 MAJOR-1）；输入界与
+            # semantic tool 对齐（R2 MINOR-6）。
+            plan.workflow_v4 = await _asyncio.to_thread(
+                self._compile_v4_evidence,
+                user_message[:400], intent, recipe.id, available,
+                False)
+        except Exception as e:  # noqa: BLE001 — 证据失败绝不阻塞规划
+            logger.info(
+                f"[plan_orchestrator] workflow_v4 证据编译失败（忽略）: {e}")
+            plan.workflow_v4 = None
         await self._persist_new_plan(session_id, plan)
         logger.info(
             f"[plan_orchestrator] session={session_id} harness 确定性合成计划"

@@ -294,12 +294,14 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
         result_size_policy="bounded",
         failure_modes=["ambiguous_intent"],
     )
-    async def compile_workflow_semantics(
+    def compile_workflow_semantics(
         query: str,
         recipe_id: Optional[str] = None,
         profile: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        # sync def：registry 自动路由 THREAD 策略（CPU-bound 全链编译
+        # 不上事件循环 —— review R2 MAJOR-1）。
         try:
             from app.services.gis_harness.workflow_v4.compiler_v4 import (
                 compile_workflow_v4,
@@ -343,9 +345,19 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
                 },
                 "package_fingerprint": c.package_fingerprint,
                 "reason_codes": c.reason_codes[:10],
+                # 与 orchestrator 证据同源披露（review R2 MINOR-1）
+                "qualification_basis": (
+                    "profile_grounded" if profile
+                    else "profile_absent_neutral"),
                 "note": (
-                    "确定性编译产物（advisory/audit）：方法选择由资格事实"
-                    "决定，rejected 方法不得绕过；执行仍经 planner/runtime。"
+                    "确定性编译产物（advisory/audit）：rejected 方法不得绕过；"
+                    + (
+                        "方法选择由数据画像事实驱动。"
+                        if profile
+                        else "未提供数据画像：资格裁决为 unknown 中性态，"
+                             "选择由方法质量与专业优先序决定，数据到位后重评。"
+                    )
+                    + "执行仍经 planner/runtime。"
                 ),
             }
         except Exception as e:  # noqa: BLE001

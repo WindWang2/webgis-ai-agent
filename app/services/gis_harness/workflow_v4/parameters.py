@@ -112,9 +112,14 @@ def _value_valid(param: WorkflowParameter, value: Any) -> bool:
         return False
     if param.enum_values:
         return str(value) in param.enum_values
-    if param.value_type in ("number", "integer"):
+    if param.value_type == "integer":
+        # integer 严格：拒绝浮点/布尔静默通过（不静默接受非法值红线）
+        if isinstance(value, bool) or not isinstance(value, int):
+            return False
+    elif param.value_type == "number":
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return False
+    if param.value_type in ("number", "integer"):
         if param.minimum is not None and value < param.minimum:
             return False
         if param.maximum is not None and value > param.maximum:

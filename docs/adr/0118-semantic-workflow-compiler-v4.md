@@ -24,7 +24,7 @@ V3 已建立 Recipe DSL V2（WorkflowProfile）、GIS 任务本体 V3（47 任�
 ## 决策
 
 1. **新子包 `app/services/gis_harness/workflow_v4/`**（Epic 专属 ownership），
-   10 个确定性模块，全部零 LLM / 零 I/O / 产物有界：
+   11 个确定性模块，全部零 LLM / 零 I/O / 产物有界：
    - `methodology.py`：12 方法族（描述制图/分布密度/插值/分区统计/适宜性/
      网络/地形水文/遥感/变化检测/空间统计/多准则/组合制图）+ 44 审定
      候选方法 + 资格排序引擎（硬准则拒绝 + 确定性评分排序）；
@@ -59,7 +59,8 @@ V3 已建立 Recipe DSL V2（WorkflowProfile）、GIS 任务本体 V3（47 任�
    - 新 tier-2 确定性语义工具 `compile_workflow_semantics`（advisory 零
      执行）——LLM 面首次可见编译器产物；
    - `AgentPlanOrchestrator` 合成路径附加 `Plan.workflow_v4` 有界语义
-     摘要（planner memo 复用近似零成本；失败/未映射 → None，绝不阻塞）。
+     摘要（planner memo 复用；CPU 编译经线程卸载；失败/未映射 → None，
+     绝不阻塞）。渲染面消费该证据为 follow-up（当前为审计/LLM 工具面）。
    15 阶段生产行为零漂移（测试锁定）。
 5. **中央校验收编**：methodology registry 并入 `validate_gis_library`
    （task/capability/algorithm/artifact 四谓词对账，悬空 fatal）。

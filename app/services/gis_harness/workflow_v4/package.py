@@ -155,6 +155,11 @@ def emit_workflow_package(
         compiled_form=compiled,
     )
     pkg.fingerprint = _canonical_fingerprint(pkg.compiled_form)
+    # 运行时强制有界（review R2 MINOR-2：常量不再是死字）
+    if len(json.dumps(pkg.compiled_form, ensure_ascii=False)) > _MAX_COMPILED_FORM_BYTES:
+        raise ValueError(
+            "workflow package compiled form exceeds budget "
+            f"({_MAX_COMPILED_FORM_BYTES} bytes) —— 产物必须是摘要")
     return pkg
 
 

@@ -487,7 +487,7 @@ _CURATED_FAMILIES: Tuple[MethodologyFamily, ...] = (
         "terrain_hydrology.composite_analysis", "terrain_hydrology.watershed",
         "terrain_hydrology.stream_network", "terrain_hydrology.indices"),
        tuple(m for m in _CURATED_CANDIDATES if m.family_id == "terrain_hydrology"),
-       keywords_zh=("坡度", "坡向", "dem", "流域", "水文", "河网", "地形",), keywords_en=("slope", "aspect", "dem", "watershed", "terrain", "hillshade", "basin",),
+       keywords_zh=("坡度", "坡向", "流域", "水文", "河网", "地形",), keywords_en=("slope", "aspect", " dem", "dem ", "watershed", "terrain", "hillshade", "basin",),
 ),
     _f("remote_sensing", "遥感解译", "Remote Sensing",
        "光谱指数/分类/异常检测与 SAR 预处理链。",
