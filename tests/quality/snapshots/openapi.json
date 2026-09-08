@@ -787,6 +787,142 @@
     "title": "CreateTemplateRequest",
     "type": "object"
    },
+   "CubeBuildRequest": {
+    "properties": {
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "time_sources": {
+      "items": {
+       "$ref": "#/components/schemas/CubeTimeSource"
+      },
+      "maxItems": 512,
+      "minItems": 1,
+      "title": "Time Sources",
+      "type": "array"
+     },
+     "title": {
+      "default": "cube",
+      "maxLength": 256,
+      "title": "Title",
+      "type": "string"
+     },
+     "window_side": {
+      "anyOf": [
+       {
+        "maximum": 8192.0,
+        "minimum": 1.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Window Side"
+     }
+    },
+    "required": [
+     "session_id",
+     "time_sources"
+    ],
+    "title": "CubeBuildRequest",
+    "type": "object"
+   },
+   "CubeTimeSource": {
+    "properties": {
+     "source": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "title": "Source",
+      "type": "string"
+     },
+     "time": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Time",
+      "type": "string"
+     }
+    },
+    "required": [
+     "time",
+     "source"
+    ],
+    "title": "CubeTimeSource",
+    "type": "object"
+   },
+   "CubeWindowRequest": {
+    "properties": {
+     "ref": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Ref",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "time": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "integer"
+        },
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Time"
+     },
+     "x": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "integer"
+        },
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "X"
+     },
+     "y": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "integer"
+        },
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Y"
+     }
+    },
+    "required": [
+     "session_id",
+     "ref"
+    ],
+    "title": "CubeWindowRequest",
+    "type": "object"
+   },
    "DataGcExecuteRequest": {
     "description": "POST data-gc/execute body：显式 confirm 才执行破坏性清理（缺省 false\n→ 400，dry-run parity 纪律 —— 计划先行，执行必须显式表态）。",
     "properties": {
@@ -2243,6 +2379,36 @@
      "catalog_item_id"
     ],
     "title": "MaterializeRequest",
+    "type": "object"
+   },
+   "ObjectVerifyRequest": {
+    "properties": {
+     "project_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     }
+    },
+    "title": "ObjectVerifyRequest",
     "type": "object"
    },
    "Page_ArtifactSummary_": {
@@ -4448,6 +4614,59 @@
      "type"
     ],
     "title": "ValidationError",
+    "type": "object"
+   },
+   "VectorScanRequest": {
+    "properties": {
+     "bbox": {
+      "items": {
+       "type": "number"
+      },
+      "maxItems": 4,
+      "minItems": 4,
+      "title": "Bbox",
+      "type": "array"
+     },
+     "columns": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Columns"
+     },
+     "max_rows": {
+      "default": 50000,
+      "maximum": 200000.0,
+      "minimum": 1.0,
+      "title": "Max Rows",
+      "type": "integer"
+     },
+     "ref": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Ref",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "ref",
+     "bbox"
+    ],
+    "title": "VectorScanRequest",
     "type": "object"
    },
    "WorkflowCreate": {
@@ -8819,6 +9038,404 @@
     "tags": [
      "知识库管理",
      "知识库管理"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/cubes": {
+   "post": {
+    "description": "时间片栅格 → 会话 cube（``ref:cube/<id>`` + durable 身份）。",
+    "operationId": "build_lakehouse_cube_api_v1_lakehouse_cubes_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CubeBuildRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Build Lakehouse Cube Api V1 Lakehouse Cubes Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Build Lakehouse Cube",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/cubes/window": {
+   "post": {
+    "description": "cube 窗口读（zarr chunk 粒度；只触窗口相交 chunk）。",
+    "operationId": "read_lakehouse_cube_window_api_v1_lakehouse_cubes_window_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CubeWindowRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Read Lakehouse Cube Window Api V1 Lakehouse Cubes Window Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Read Lakehouse Cube Window",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/objects/{data_object_id}": {
+   "get": {
+    "description": "DataObject manifest（owner 校验后只读）。",
+    "operationId": "get_lakehouse_object_api_v1_lakehouse_objects__data_object_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "data_object_id",
+      "required": true,
+      "schema": {
+       "title": "Data Object Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Lakehouse Object Api V1 Lakehouse Objects  Data Object Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Lakehouse Object",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/objects/{data_object_id}/verify": {
+   "post": {
+    "description": "DR 完整性校验（manifest + 全部 content blob 的 digest 校验）。",
+    "operationId": "verify_lakehouse_object_api_v1_lakehouse_objects__data_object_id__verify_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "data_object_id",
+      "required": true,
+      "schema": {
+       "title": "Data Object Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ObjectVerifyRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Verify Lakehouse Object Api V1 Lakehouse Objects  Data Object Id  Verify Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Verify Lakehouse Object",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/vector/scan": {
+   "post": {
+    "description": "``ref:fabric-parquet/<id>`` 的 bbox 窗口扫描（row-group 剪枝）。",
+    "operationId": "scan_lakehouse_vector_api_v1_lakehouse_vector_scan_post",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/VectorScanRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Scan Lakehouse Vector Api V1 Lakehouse Vector Scan Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Scan Lakehouse Vector",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
     ]
    }
   },
