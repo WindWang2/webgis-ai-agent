@@ -305,6 +305,16 @@ export function ComparisonView({
     };
   }, [active, mapLoaded, primaryMapRef, syncPan, syncZoom, secondaryReady]);
 
+  // W12 a11y：Escape 退出对比（键盘路径与可见关闭按钮等价 —— WCAG 2.1.1）。
+  useEffect(() => {
+    if (!active) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') exitComparison?.();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [active, exitComparison]);
+
   // 副图就绪即对齐主图当前相机（进入对比 / 切层重挂不跳回默认视野）。
   const handleSecondaryLoad = useCallback(() => {
     setSecondaryReady(true);

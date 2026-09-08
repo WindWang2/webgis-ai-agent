@@ -20,6 +20,7 @@ import {
   boundedVisibilityRepair,
 } from './visibility-transaction';
 import { LOCK_CONFLICT_ERROR, partitionByLock } from '@/lib/workbench/layer-lock';
+import { journalOnly } from '@/lib/workbench/undo';
 
 // 身份解析已集中到 layer-identity.ts（LayerIdentityResolver 单一深接口）；
 // 此处 re-export 保持既有导入路径（tests / 兄弟命令）兼容。
@@ -309,6 +310,12 @@ export const layerCommands: Record<string, CommandEntry> = {
         targetIds.length > 0 ? targetIds : [target],
       );
       if (lockPartition.locked.length > 0 && lockPartition.allowed.length === 0) {
+        // W2/W9：typed 冲突入 journal（agent 删除被用户锁拦截的审计痕迹）。
+        journalOnly({
+          type: 'lock_conflict',
+          label: `Agent 删除被用户锁拦截：${lockPartition.locked.join(', ')}`,
+          actor: 'agent',
+        });
         return {
           status: 'failed',
           error: LOCK_CONFLICT_ERROR,

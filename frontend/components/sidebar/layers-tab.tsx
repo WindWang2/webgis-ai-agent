@@ -21,7 +21,7 @@ import {
   Eye, EyeOff, GripVertical, Layers as LayersIcon, LocateFixed, Palette,
   Lock, LockOpen, Crosshair, Copy, ClipboardPaste, RotateCw, FolderPlus,
   ChevronDown, ChevronRight, CheckSquare, Square, Trash2, MoreHorizontal, Group,
-  Columns2,
+  Columns2, Workflow,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { Layer, LayerStyle } from '@/lib/types/layer';
@@ -54,6 +54,7 @@ import {
 } from '@/lib/mapspec/user-mutation';
 import { comparisonFamilyId } from '@/components/map/comparison/comparison-sync';
 import { useVirtualRows } from '@/lib/hooks/use-virtual-rows';
+import { withDocUndo } from '@/lib/workbench/undo';
 
 /* ─── W8：树行扁平化与窗口虚拟化 ───
  * 10k 图层不 O(N) 渲染：投影后扁平行描述符数组 + 固定行高窗口（自研
@@ -186,6 +187,7 @@ function GroupHeader({
   const renameLayerGroup = useHudStore((s) => s.renameLayerGroup);
   const removeLayerGroup = useHudStore((s) => s.removeLayerGroup);
   const assignLayersToGroup = useHudStore((s) => s.assignLayersToGroup);
+  const createLayerGroup = useHudStore((s) => s.createLayerGroup);
   const selectedLayerIds = useHudStore((s) => s.selectedLayerIds);
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(section.name);
@@ -206,7 +208,13 @@ function GroupHeader({
 
   const commitRename = () => {
     const name = draftName.trim();
-    if (name && name !== section.name && section.id) renameLayerGroup(section.id, name);
+    // W9：组织态突变入 undo 栈（反向 = 水合先前 doc 切片，持久化由
+    // persistence 订阅随动 —— 同一通道无第二真相）。
+    if (name && name !== section.name && section.id) {
+      withDocUndo(`重命名分组 ${section.name} → ${name}`, 'user', () =>
+        renameLayerGroup(section.id!, name),
+      );
+    }
     setRenaming(false);
   };
 
@@ -237,7 +245,14 @@ function GroupHeader({
           aria-label={`${section.collapsed ? '展开' : '折叠'}分组 ${section.name}`}
           aria-expanded={!section.collapsed}
           className="flex h-control-sm w-control-sm items-center justify-center rounded-xs text-ink-muted hover:bg-surface-hover hover:text-ink"
-          onClick={() => section.id && toggleGroupCollapsed(section.id)}
+          onClick={() =>
+                    section.id
+                    && withDocUndo(
+                      section.collapsed ? `展开分组 ${section.name}` : `折叠分组 ${section.name}`,
+                      'user',
+                      () => toggleGroupCollapsed(section.id!),
+                    )
+                  }
         >
           {section.collapsed ? <ChevronRight aria-hidden size={12} /> : <ChevronDown aria-hidden size={12} />}
         </button>
@@ -288,12 +303,32 @@ function GroupHeader({
               label={`将选中图层移入分组 ${section.name}`}
               icon={Group}
               disabled={selectedLayerIds.length === 0}
-              onClick={() => assignLayersToGroup(selectedLayerIds, section.id)}
+              onClick={() =>
+                withDocUndo(`移入分组 ${section.name}`, 'user', () =>
+                  assignLayersToGroup(selectedLayerIds, section.id),
+                )
+              }
+            />
+            {/* W9：嵌套组 —— 在任意用户组下创建子组（深度守卫由 store/doc 层执行）。 */}
+            <IconButton
+              size="sm"
+              label={`在分组 ${section.name} 下新建子组`}
+              icon={FolderPlus}
+              onClick={() =>
+                withDocUndo(`新建子组（${section.name} 下）`, 'user', () =>
+                  createLayerGroup('新分组', section.id),
+                )
+              }
             />
             <ConfirmAction
               label={`删除分组 ${section.name}（图层保留）`}
               confirmLabel="确认删除分组？"
-              onConfirm={() => section.id && removeLayerGroup(section.id)}
+              onConfirm={() => {
+                if (!section.id) return;
+                withDocUndo(`删除分组 ${section.name}`, 'user', () =>
+                  removeLayerGroup(section.id!),
+                );
+              }}
             />
           </>
         )}
@@ -446,6 +481,22 @@ function LayerRow({
           {layer.name}
         </span>
 
+        {/* W10 artifact linkage：分析产物溯源徽标 —— 点击前往结果工作台检视
+            （血缘真相在 backend ArtifactLineage，此处只读 provenance 投影，
+            不建第二 lineage store）。 */}
+        {layer.provenance?.result_ref && (
+          <button
+            type="button"
+            data-testid={`provenance-badge-${layer.id}`}
+            title={`分析产物：${layer.provenance.result_ref}${layer.provenance.tool_call_id ? `\n工具调用: ${layer.provenance.tool_call_id}` : ''}\n点击前往结果工作台检视`}
+            aria-label={`查看 ${layer.name} 的产物溯源`}
+            className="flex h-control-sm w-control-sm shrink-0 items-center justify-center rounded-xs text-ink-muted hover:bg-surface-hover hover:text-ink"
+            onClick={() => useHudStore.getState().setActiveLeftTab('results')}
+          >
+            <Workflow aria-hidden size={12} />
+          </button>
+        )}
+
         {/* 状态徽标：ready 是健康常态，不占行宽；其余六态一望即知。 */}
         {status && status !== 'ready' && (
           <StatusBadge status={status} label={LAYER_STATUS_LABELS[status]} />
@@ -503,15 +554,20 @@ function LayerRow({
           />
           <IconButton
             size="sm"
-            // Review R1（MINOR-9）：lock 覆盖面如实声明 —— 护 UI/批量/隔离/
-            // turn-focus 收起与 agent set_mode 外壳；agent remove_layer/
-            // set_layer_visibility 事务通道未接 lock（后续接线）。
+            // W2/W9：lock 覆盖面已含 agent 通道（visibility 事务 + remove_layer
+            // typed lock_conflict），label 如实更新。
             label={locked
-              ? `解锁图层 ${layer.name}（当前防护：面板操作/批量/隔离/轮次收起）`
-              : `锁定图层 ${layer.name}（防护面板操作/批量/隔离/轮次收起）`}
+              ? `解锁图层 ${layer.name}（防护：面板/批量/隔离/轮次收起/agent 显隐与删除）`
+              : `锁定图层 ${layer.name}（防护：面板/批量/隔离/轮次收起/agent 显隐与删除）`}
             icon={locked ? Lock : LockOpen}
             active={locked}
-            onClick={() => toggleLayerLocked(layer.id)}
+            onClick={() =>
+              withDocUndo(
+                locked ? `解锁 ${layer.name}` : `锁定 ${layer.name}`,
+                'user',
+                () => toggleLayerLocked(layer.id),
+              )
+            }
           />
           <IconButton
             size="sm"
@@ -893,7 +949,10 @@ export function LayersTab() {
       setOverGroupId(null);
       setOverId(null);
       if (!dragId) return;
-      useHudStore.getState().assignLayersToGroup([dragId], groupId);
+      // W9：换组是可逆组织态突变（undo 反向水合先前 doc）。
+      withDocUndo(`移动 ${dragId} 到${groupId ? '分组' : '未分组'}`, 'user', () =>
+        useHudStore.getState().assignLayersToGroup([dragId], groupId),
+      );
       setDragId(null);
     },
     [dragId],
@@ -1031,7 +1090,11 @@ export function LayersTab() {
           size="sm"
           label="新建分组"
           icon={FolderPlus}
-          onClick={() => createLayerGroup(`分组 ${layerGroups.length + 1}`)}
+          onClick={() =>
+            withDocUndo('新建分组', 'user', () =>
+              createLayerGroup(`分组 ${layerGroups.length + 1}`),
+            )
+          }
         />
       </div>
 

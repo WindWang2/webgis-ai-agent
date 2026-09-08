@@ -119,8 +119,13 @@ export function projectWorkspace(input: ProjectWorkspaceInput): WorkspaceProject
   }
   let visibleRowCount = 0;
   const hiddenSectionIds = new Set<string>();
+  // 防御：visited 集保证重复 id / 异常数据（id 撞车）下 walk 恒终止 ——
+  // 投影层绝不抛错、不无限递归。
+  const walked = new Set<string>();
   const walkGroups = (nodes: LayerGroupEntity[], depth: number, ancestorHidden: boolean) => {
     for (const group of nodes) {
+      if (group.id != null && walked.has(group.id)) continue;
+      if (group.id != null) walked.add(group.id);
       const hidden = ancestorHidden || group.collapsed;
       const rows = byGroup.get(group.id) ?? [];
       sections.push({

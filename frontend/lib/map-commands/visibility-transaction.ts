@@ -11,7 +11,7 @@ import {
 import { ApiError, apiFetch } from '@/lib/api/transport';
 import { presentationFromMapSpec } from '@/lib/session/map-state-restore';
 import { LOCK_CONFLICT_ERROR, partitionByLock } from '@/lib/workbench/layer-lock';
-import { presentationCommand } from '@/lib/workbench/undo';
+import { journalOnly, presentationCommand } from '@/lib/workbench/undo';
 import type { MapCommandContext, MapCommandResult } from './types';
 import {
   matchMapLayers,
@@ -228,6 +228,12 @@ export function applyLayerVisibilityTransaction(
     : partitionByLock(resolvedIds);
   const lockedTargets = lockPartition.locked;
   if (lockPartition.allowed.length === 0) {
+    // W2/W9：typed 冲突入 journal（who/what 审计 —— agent 被用户锁拦截）。
+    journalOnly({
+      type: 'lock_conflict',
+      label: `Agent 显隐操作被用户锁拦截：${lockedTargets.join(', ')}`,
+      actor: 'agent',
+    });
     return {
       status: 'failed',
       error: LOCK_CONFLICT_ERROR,
