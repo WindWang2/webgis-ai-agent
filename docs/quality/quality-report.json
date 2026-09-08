@@ -10,12 +10,12 @@
   },
   "contract_drift": {
    "counts": {
-    "BLOCKER": 6,
+    "BLOCKER": 0,
     "MAJOR": 0,
     "MINOR": 0,
-    "total": 6
+    "total": 0
    },
-   "fingerprint": "7f0a8f2ebacc1329fd8e960a491d98f7f82949ff864c63731eee31aaa6c8d570"
+   "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
   },
   "quality_manifest": {
    "counts": {

@@ -1698,7 +1698,6 @@ def pfafstetter_codes(
     direction = d8["direction"]
     receiver = d8["receiver"]
     valid = d8["valid"]
-    z = np.asarray(d8["dem"], dtype=np.float64)
     h, w = direction.shape
     if acc.shape != (h, w):
         raise ValueError(

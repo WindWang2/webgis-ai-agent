@@ -19,7 +19,7 @@
 
 ## Contract Drift
 
-- total 6 · BLOCKER 6 · MAJOR 0 · MINOR 0
+- total 0 · BLOCKER 0 · MAJOR 0 · MINOR 0
 
 ## Certifications
 
