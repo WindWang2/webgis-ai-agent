@@ -12,10 +12,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import { resolveMapComponents } from '@/lib/map-components/resolve-components';
+import catalog from '@/lib/map-components/component-catalog.generated.json';
 import {
   buildExportChrome,
   VISUAL_TYPES,
   type BuildExportChromeOptions,
+  type ExportDegradationCode,
 } from '@/lib/map-kit/export-chrome';
 import { CHROME_RENDERABLE_TYPES as LIVE_CHROME_TYPES } from '@/lib/map-components/chrome-types';
 
@@ -267,5 +269,41 @@ describe('Wave 9 · 显式降级诊断', () => {
       { width: 800, height: 600 },
     );
     expect(model.degradations).toEqual([]);
+  });
+});
+
+describe('V5 · 渲染诊断词表对齐（ADR-0118 D1）', () => {
+  // 唯一权威：app/lib/cartography/render_diagnostics.py，经目录导出。
+  const authoritative = new Set(
+    (catalog as unknown as { renderDiagnostics: { code: string }[] })
+      .renderDiagnostics.map((d) => d.code),
+  );
+
+  it('前端 ExportDegradation 码必须是后端权威词表的子集', () => {
+    expect(authoritative.size).toBeGreaterThanOrEqual(19);
+    const frontendCodes: ExportDegradationCode[] = [
+      'chart_ref_unavailable',
+      'chart_kind_unsupported_export',
+      'table_ref_unavailable',
+      'component_skipped_invalid',
+      'label_truncated',
+      'label_suppressed_too_long',
+      'legend_entries_truncated',
+      'features_truncated',
+      'export_timeout_partial',
+      'vector_svg_fallback_raster',
+      'basemap_omitted_vector_svg',
+      'pdf_text_rasterized_cjk',
+      'comparison_second_view_not_exported',
+      'comparison_export_composed',
+      'cartogram_unsupported',
+      'small_multiple_panel_skipped',
+      'atlas_page_skipped',
+      'atlas_page_limit_truncated',
+      'terrain_3d_scale_caveat',
+    ];
+    for (const code of frontendCodes) {
+      expect(authoritative.has(code), `code ${code} 不在后端权威词表`).toBe(true);
+    }
   });
 });

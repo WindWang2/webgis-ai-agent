@@ -122,13 +122,34 @@ export interface ExportChromeElement {
 }
 
 /** Wave 9：显式降级诊断（degradation matrix 的最小闭环）—— 替代静默
- * continue。code 词表封闭；detail 有界（≤120 字符）。 */
+ * continue。V5（ADR-0118 D1）：code 词表升为后端权威词表的子集
+ * （component-catalog.generated.json `renderDiagnostics` 段，唯一权威
+ * app/lib/cartography/render_diagnostics.py）；detail 有界（≤200 字符）。
+ * 后端专属码（label_truncated / features_truncated 等）由孪生编译侧发射，
+ * 前端不发射但类型保持同词表以便 sidecar 透传。 */
+export type ExportDegradationCode =
+  | 'chart_ref_unavailable'
+  | 'chart_kind_unsupported_export'
+  | 'table_ref_unavailable'
+  | 'component_skipped_invalid'
+  | 'label_truncated'
+  | 'label_suppressed_too_long'
+  | 'legend_entries_truncated'
+  | 'features_truncated'
+  | 'export_timeout_partial'
+  | 'vector_svg_fallback_raster'
+  | 'basemap_omitted_vector_svg'
+  | 'pdf_text_rasterized_cjk'
+  | 'comparison_second_view_not_exported'
+  | 'comparison_export_composed'
+  | 'cartogram_unsupported'
+  | 'small_multiple_panel_skipped'
+  | 'atlas_page_skipped'
+  | 'atlas_page_limit_truncated'
+  | 'terrain_3d_scale_caveat';
+
 export interface ExportDegradation {
-  code:
-    | 'chart_ref_unavailable'
-    | 'chart_kind_unsupported_export'
-    | 'table_ref_unavailable'
-    | 'component_skipped_invalid';
+  code: ExportDegradationCode;
   componentId?: string;
   detail?: string;
 }
