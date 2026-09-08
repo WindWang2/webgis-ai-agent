@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from app.tools.registry import ToolRegistry, tool
 
@@ -88,17 +88,10 @@ def register_dasymetric_tools(registry: ToolRegistry):
         fc = dict(res.data) if isinstance(res.data, dict) else res.data
         if not isinstance(fc, dict):
             return {"success": False, "error": "dasymetric 实现返回了非 FC 载荷"}
-        meta = fc.get("metadata") or {}
         # 渲染接线（与 od_flow_edges 同模式）：type_hint → dasymetric_map，
         # render/legend/export 走 generic 分级面链（模型已是 native）。
         fc["command"] = "add_layer"
         fc["type_hint"] = "dasymetric_map"
-        vals = [
-            (f.get("properties") or {}).get(value_field)
-            for f in fc.get("features", [])
-            if isinstance(f.get("properties") or {}, dict)
-        ]
-        finite = [float(v) for v in vals if isinstance(v, (int, float))]
         # Review R1（GIS F12）：不再强制 continuous legend_spec ——
         # dasymetric_map 是 graduated 模型（推荐 quantiles/natural_breaks），
         # 图例由模型分级链派生，两套图例声明不打架。

@@ -153,7 +153,6 @@ def test_determinism_same_input_same_output():
 
 def test_feature_cap_hard_reject():
     """超上限硬拒绝（先拒绝不 OOM）。"""
-    from app.lib.geo_analysis.dasymetric import DASYMETRIC_MAX_SOURCE_FEATURES
     big = {
         "type": "FeatureCollection",
         "features": [_square_fc(LON0 + i * 0.101, LAT0, SIZE,
