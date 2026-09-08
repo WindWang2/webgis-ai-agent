@@ -944,7 +944,7 @@ export function LayersTab() {
         section,
         isUserGroup,
       });
-      if (section.collapsed || projection.hiddenSectionIds.has(section.id)) continue;
+      if (section.collapsed || (section.id != null && projection.hiddenSectionIds.has(section.id))) continue;
       for (const row of section.rows) {
         out.push({ kind: 'layer', key: `l-${row.layer.id}`, row });
       }

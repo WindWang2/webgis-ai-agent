@@ -179,6 +179,11 @@ export function MapPanel({
   const [runtimeRecoveryGeneration, setRuntimeRecoveryGeneration] = useState(0)
   // is3D 来自 store，与设置面板 setIs3D 联动。原先 useState 死锁在 false。
   const is3D = useHudStore((s: HudState) => s.is3D)
+  // W6 真双面板：side-by-side 激活时主图画布收缩为左半幅 —— 主图视口真实
+  // 变为半宽，与右侧副图 pane 相机同步后覆盖同一地理范围（有效对比）。
+  const comparisonSideBySide = useHudStore(
+    (s: HudState) => s.comparison?.active === true && s.comparison?.kind === "side-by-side",
+  )
   const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
   // Workspace V2（Goal D3）：chart→map 类别选择 → per-layer MapLibre 过滤
   // 表达式（与图例 activeFilters 同一 compose/reconcile 通道）。成本语义：
@@ -1286,7 +1291,11 @@ export function MapPanel({
         /* VNext §18：地图画布可访问名 —— MapLibre 自带键盘导航（方向键
            平移、+/- 缩放），role=application 告知辅助技术这是自定义键盘
            交互区（键盘语义由 MapLibre canvas 承载）。 */
-        <div className="absolute inset-0" role="application" aria-label="地图画布（方向键平移，加号/减号缩放）">
+        <div
+          className={comparisonSideBySide ? "absolute inset-y-0 left-0 right-1/2" : "absolute inset-0"}
+          role="application"
+          aria-label="地图画布（方向键平移，加号/减号缩放）"
+        >
         <Map
           key={`maplibre-instance-${mapKey}`}
           id="default"
@@ -1352,6 +1361,8 @@ export function MapPanel({
         sessionId={sessionId}
         ownerToken={ownerToken}
         sessionTokenRef={sessionTokenRef}
+        activeFilters={activeFilters}
+        selectionFilters={selectionFilters}
       />
 
       {/* Live cartography overlays — driven by layer.legend_spec */}
