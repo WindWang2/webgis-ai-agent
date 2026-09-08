@@ -1,6 +1,6 @@
 import type { GeoJSONSource, ImageSource, Map } from 'maplibre-gl';
 import { ThematicStyleDef } from './types';
-import { filterFeaturesByBounds } from '@/lib/utils/geo';
+import { filterFeaturesByBounds, thinFeaturesForViewport } from '@/lib/utils/geo';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 /**
@@ -17,6 +17,20 @@ const _lastGeoJsonData = new WeakMap<object, unknown>();
  * 用 WeakMap 让 source 被 GC 时自动清理。
  */
 const _lastImageUrl = new WeakMap<object, string>();
+
+/**
+ * W7：视口内渲染预算 —— bbox 过滤后仍超预算的 source 做确定性网格抽稀
+ * （与 MVT 通道阈值同 rationale：屏幕内 5k+ 要素的 setData 解析成本超过
+ * 增量收益；放大后视口内数量自然下降，抽稀自动解除）。
+ */
+const VIEWPORT_RENDER_BUDGET = 5000;
+
+/**
+ * W7：陈旧视口应用取消 —— refresh 的重活在 idle 回调里执行；新一轮
+ * refresh 使旧 token 失效，旧回调不再 setData（避免排队中的过时视口
+ * 突变逐个落地，表现为缩放停止后地图"抖动回放"）。
+ */
+let _viewportRefreshGeneration = 0;
 
 /**
  * Phase 8: viewport-driven feature culling for large inline GeoJSON sources.
@@ -71,12 +85,17 @@ function isMvtSourceId(id: string): boolean {
 function _filterForViewport(source: object | undefined, data: any, viewport: ViewportBBox): unknown {
   // Before addSource the source object doesn't exist yet — nothing to cache
   // against (WeakMap keys must be objects), and this only happens once per id.
-  if (!source) return filterFeaturesByBounds(data, viewport);
+  if (!source) return thinFeaturesForViewport(filterFeaturesByBounds(data, viewport), viewport, VIEWPORT_RENDER_BUDGET);
   const cached = _filteredBySource.get(source);
   if (cached && sameViewport(cached.viewport, viewport)) {
     return cached.data;
   }
-  const effective = filterFeaturesByBounds(data, viewport);
+  // W7：bbox 过滤后超预算 → 确定性网格抽稀（同输入同视口 ⇒ 同输出）。
+  const effective = thinFeaturesForViewport(
+    filterFeaturesByBounds(data, viewport),
+    viewport,
+    VIEWPORT_RENDER_BUDGET,
+  );
   _filteredBySource.set(source, { data: effective, viewport: [...viewport] });
   return effective;
 }
@@ -169,18 +188,32 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
  */
 export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox) {
   if (!map) return;
-  _registeredGeoJsonSourceIds.forEach((id) => {
-    if (isMvtSourceId(id)) return; // #668: double-crop guard
-    const source = map.getSource?.(id) as GeoJSONSource;
-    if (!source) return;
-    const raw = _rawDataBySource.get(source);
-    if (raw === undefined) return; // tile/url source — nothing to trim
-    const effective = _filterForViewport(source, raw, viewport);
-    if (_lastGeoJsonData.get(source) !== effective) {
-      _lastGeoJsonData.set(source, effective);
-      source.setData(effective as any);
-    }
-  });
+  // W7：新一代 token 使在途旧回调失效 —— 连续平移/缩放时排队中的过时
+  // 视口应用被取消（最后稳定视口的 refresh 是唯一落地的写）。
+  const generation = ++_viewportRefreshGeneration;
+  const apply = () => {
+    if (generation !== _viewportRefreshGeneration) return; // stale → cancelled
+    _registeredGeoJsonSourceIds.forEach((id) => {
+      if (generation !== _viewportRefreshGeneration) return; // 中途失效同样取消
+      if (isMvtSourceId(id)) return; // #668: double-crop guard
+      const source = map.getSource?.(id) as GeoJSONSource;
+      if (!source) return;
+      const raw = _rawDataBySource.get(source);
+      if (raw === undefined) return; // tile/url source — nothing to trim
+      const effective = _filterForViewport(source, raw, viewport);
+      if (_lastGeoJsonData.get(source) !== effective) {
+        _lastGeoJsonData.set(source, effective);
+        source.setData(effective as any);
+      }
+    });
+  };
+  // idle 回调（不可用环境回退 16ms timeout）：重计算不阻塞交互帧。
+  const ric = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback;
+  if (typeof ric === 'function') {
+    ric(apply, { timeout: 200 });
+  } else {
+    setTimeout(apply, 16);
+  }
 }
 
 export function unregisterGeoJsonSource(id: string) {

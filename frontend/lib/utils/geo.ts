@@ -145,3 +145,89 @@ export function filterFeaturesByBounds(
   }
   return { type: 'FeatureCollection', features: kept };
 }
+
+// ---------------------------------------------------------------------------
+// Deterministic viewport thinning (Workbench V5 / W7) — after bbox filtering,
+// a zoomed-out view of a 100k-feature layer can still keep ~all features in
+// view (e.g. a nationwide point layer): setData still parses them all. The
+// grid thinner caps on-screen features to a bounded budget with stable,
+// reproducible selection — same input + same viewport ⇒ same output.
+//
+// Determinism contract (tests lock this):
+//  - larger-area features win their cell quota first (roads > noise points);
+//  - ties broken by original index (stable sort ⇒ no render jitter);
+//  - survivors are returned in ORIGINAL collection order (render order stable).
+// ---------------------------------------------------------------------------
+
+/** 网格维度（8×8 = 64 cell：视口内空间均匀配额的最小有用粒度）。 */
+const THIN_GRID_DIM = 8;
+
+/**
+ * Thin a bbox-filtered FeatureCollection to at most ``maxFeatures`` features
+ * using a uniform spatial grid over the viewport. Pure function; input is not
+ * mutated. Features below ``minFilter`` pass through untouched.
+ */
+export function thinFeaturesForViewport(
+  fc: FeatureCollectionLike,
+  viewport: [number, number, number, number],
+  maxFeatures = 5000,
+  minFilter = 1000,
+): FeatureCollectionLike {
+  if (!fc || !Array.isArray(fc.features)) return fc;
+  if (fc.features.length <= maxFeatures || fc.features.length < minFilter) return fc;
+
+  const [west, south, east, north] = viewport;
+  const cellW = (east - west) / THIN_GRID_DIM || 1;
+  const cellH = (north - south) / THIN_GRID_DIM || 1;
+
+  // 1. 分配 cell（按 bbox 中心），记录面积与原序。
+  interface Candidate {
+    index: number;
+    cell: number;
+    area: number;
+  }
+  const cells = new Map<number, Candidate[]>();
+  for (let i = 0; i < fc.features.length; i++) {
+    const feat = fc.features[i];
+    const bbox = geometryBBox(feat.geometry);
+    if (!bbox) continue;
+    const cx = (bbox[0] + bbox[2]) / 2;
+    const cy = (bbox[1] + bbox[3]) / 2;
+    let gx = Math.floor((cx - west) / cellW);
+    let gy = Math.floor((cy - south) / cellH);
+    if (gx < 0) gx = 0;
+    if (gx >= THIN_GRID_DIM) gx = THIN_GRID_DIM - 1;
+    if (gy < 0) gy = 0;
+    if (gy >= THIN_GRID_DIM) gy = THIN_GRID_DIM - 1;
+    const cell = gy * THIN_GRID_DIM + gx;
+    const area = Math.max(bbox[2] - bbox[0], 0) * Math.max(bbox[3] - bbox[1], 0);
+    const list = cells.get(cell);
+    const candidate = { index: i, cell, area };
+    if (list) list.push(candidate);
+    else cells.set(cell, [candidate]);
+  }
+
+  // 2. 空间均匀配额：cell 配额 ∝ cell 数量占比（不是全局均分）——密集区
+  //    不被稀疏区挤占，稀疏区不因全局 cap 被清空。
+  const nonEmptyCells = cells.size;
+  if (nonEmptyCells === 0) return { type: 'FeatureCollection', features: [] };
+  const baseQuota = Math.floor(maxFeatures / nonEmptyCells);
+  let remainder = maxFeatures % nonEmptyCells;
+  const survivingIndices: number[] = [];
+  for (const list of cells.values()) {
+    // 面积降序（大要素优先），同面积按原序（稳定 → 无渲染抖动）。
+    list.sort((a, b) => (b.area - a.area) || (a.index - b.index));
+    let quota = baseQuota;
+    if (remainder > 0) {
+      quota += 1;
+      remainder -= 1;
+    }
+    const take = Math.min(quota, list.length);
+    for (let k = 0; k < take; k++) survivingIndices.push(list[k].index);
+  }
+
+  // 3. 恢复原序（渲染顺序稳定 —— 与 thinning 前 setData 的绘制语义一致）。
+  survivingIndices.sort((a, b) => a - b);
+  const features = survivingIndices.map((i) => fc.features[i]);
+  return { type: 'FeatureCollection', features };
+}
