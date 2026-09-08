@@ -86,7 +86,8 @@ def explain_v6_lines(
     lines.append(f"  estimated_cost: {plan.cost:.0f}")
     lines.append("  plan_tree:")
     lines += [
-        f"    {l}" if not l.startswith("  ") else l for l in render_tree(plan.tree)
+        f"    {ln}" if not ln.startswith("  ") else ln
+        for ln in render_tree(plan.tree)
     ]
     lines.append("  cost_components:")
     for k, v in plan.components.items():
@@ -104,7 +105,7 @@ def explain_v6_lines(
             pushdown_boundary_lines,
         )
 
-        lines += [f"    {l}" for l in pushdown_boundary_lines(ctx)]
+        lines += [f"    {ln}" for ln in pushdown_boundary_lines(ctx)]
     else:
         lines.append("    (context unavailable)")
     lines.append("  network_fetch:")
