@@ -86,8 +86,7 @@ def explain_v6_lines(
     lines.append(f"  estimated_cost: {plan.cost:.0f}")
     lines.append("  plan_tree:")
     lines += [
-        f"    {ln}" if not ln.startswith("  ") else ln
-        for ln in render_tree(plan.tree)
+        f"    {ln}" if not ln.startswith("  ") else ln for ln in render_tree(plan.tree)
     ]
     lines.append("  cost_components:")
     for k, v in plan.components.items():

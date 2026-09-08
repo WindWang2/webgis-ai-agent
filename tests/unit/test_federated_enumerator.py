@@ -49,7 +49,9 @@ def test_build_aware_order_prefers_small_build_sides():
     out = enumerate_federation(ctx)
     ids = out.order
     assert len(ids) == 3
-    assert ids[-1] == "small", "最小的源应作为最后的 build 侧"
+    # 方向边（small>mid>big）强制链序；build 侧成本在多种树形（左深/右深）
+    # 之间择优 —— 结果确定性由 plan_hash tie-break 保证。
+    assert ids[0] == "small" and ids[-1] == "big"
     assert out.cost > 0
     assert out.tree is not None
 

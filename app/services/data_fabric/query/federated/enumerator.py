@@ -614,14 +614,11 @@ def _join_candidate(
         and edge.right_source_id in right.sources_in
     ):
         eff = edge
-    elif (
-        edge.kind == "attribute_join"
-        and edge.right_source_id in left.sources_in
-        and edge.left_source_id in right.sources_in
-    ):
-        eff = edge.swapped()  # 对称内连接：方位归一
     else:
-        return None  # spatial/aggregate 方向敏感：绝不换位
+        # 方向语义守卫：边方位决定行形状（__right__ 归属）与 spatial/aggregate
+        # 语义 —— 绝不换位（attribute 内连接虽逻辑对称，翻转属于用户可见的
+        # 输出形状变化，必须由声明的边方向决定）。
+        return None
     lsrc = by_id.get(eff.left_source_id) or _first_src(left, by_id)
     rsrc = by_id.get(eff.right_source_id) or _first_src(right, by_id)
     crs_cost, crs_meta = _crs_transform_meta(eff, lsrc, rsrc, left.card, right.card)
@@ -636,6 +633,9 @@ def _join_candidate(
             "cpu": round(cpu, 2),
             "build_rows": right.card,
         },
+        # 嵌套子树成分（extract_hop_estimates 的 post-order 链序提取依赖它）
+        "left": left.components,
+        "right": right.components,
     }
     transforms = list(left.crs_transforms) + list(right.crs_transforms)
     left_tree, right_tree = left.tree, right.tree

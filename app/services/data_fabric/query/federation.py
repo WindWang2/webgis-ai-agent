@@ -17,6 +17,7 @@ max_execution_s / max_join_candidates``。
 - 跨源：先执行"小结果侧"（聚合侧/多边形侧），把 join 键/几何载入本地索引，
   另一侧流式分页扫描 + 逐页 join，行数计入预算。
 """
+
 from __future__ import annotations
 
 import json
@@ -55,15 +56,17 @@ class FederatedQueryError(DataFabricError):
 class FederatedPlan:
     """两源联邦计划（可序列化描述）。"""
 
-    kind: str                       # attribute_join | spatial_join | aggregate_join
-    left: Dict[str, Any] = field(default_factory=dict)   # {source_id, dataset_id, spec extras}
+    kind: str  # attribute_join | spatial_join | aggregate_join
+    left: Dict[str, Any] = field(
+        default_factory=dict
+    )  # {source_id, dataset_id, spec extras}
     right: Dict[str, Any] = field(default_factory=dict)
     join_field_left: Optional[str] = None
     join_field_right: Optional[str] = None
-    spatial_op: Optional[str] = None            # within | intersects
+    spatial_op: Optional[str] = None  # within | intersects
     group_by_right: Optional[List[str]] = None
     aggregates: Optional[List[Dict[str, Any]]] = None
-    strategy: str = "local_hash_or_strtree"     # server_side | local_hash | local_strtree
+    strategy: str = "local_hash_or_strtree"  # server_side | local_hash | local_strtree
     estimated_left_rows: Optional[int] = None
     estimated_right_rows: Optional[int] = None
     warnings: List[str] = field(default_factory=list)
@@ -102,10 +105,10 @@ class FederatedQueryRequest:
     join_field_left: Optional[str] = None
     join_field_right: Optional[str] = None
     # spatial join
-    spatial_op: Optional[str] = None            # within | intersects
+    spatial_op: Optional[str] = None  # within | intersects
     # aggregate+join
     group_by_right: Optional[List[str]] = None
-    aggregates: Optional[List[Dict[str, Any]]] = None   # [{func, field}]
+    aggregates: Optional[List[Dict[str, Any]]] = None  # [{func, field}]
     # 共同谓词（分别应用到两侧源查询）
     left_where: Optional[Any] = None
     right_where: Optional[Any] = None
@@ -119,19 +122,20 @@ def plan_federated(req: FederatedQueryRequest) -> FederatedPlan:
     if req.spatial_op and req.join_field_left:
         raise FederatedQueryError("cannot mix spatial join and attribute join")
     if not req.spatial_op and not (req.join_field_left and req.join_field_right):
-        raise FederatedQueryError(
-            "attribute join requires join_field on both sides"
-        )
+        raise FederatedQueryError("attribute join requires join_field on both sides")
     if req.spatial_op and req.spatial_op not in ("within", "intersects"):
         raise FederatedQueryError(
             f"unsupported spatial_op {req.spatial_op!r} (within|intersects)"
         )
     if req.aggregates and not req.group_by_right:
-        raise FederatedQueryError("aggregate join requires group_by fields from the right side")
+        raise FederatedQueryError(
+            "aggregate join requires group_by fields from the right side"
+        )
 
     kind = (
-        "aggregate_join" if req.aggregates else
-        ("spatial_join" if req.spatial_op else "attribute_join")
+        "aggregate_join"
+        if req.aggregates
+        else ("spatial_join" if req.spatial_op else "attribute_join")
     )
     plan = FederatedPlan(
         kind=kind,
@@ -152,7 +156,9 @@ def plan_federated(req: FederatedQueryRequest) -> FederatedPlan:
     if req.limit > req.budget.max_rows:
         raise QueryBudgetExceededError(
             f"federated limit {req.limit} exceeds budget {req.budget.max_rows}",
-            details={"hint": "reduce limit, add bbox/filters, or aggregate on the source"},
+            details={
+                "hint": "reduce limit, add bbox/filters, or aggregate on the source"
+            },
         )
     return plan
 
@@ -222,12 +228,17 @@ def spatial_join_local(
             shp_polys.append((g, p))
     # R4-M4：调用方可注入复用的空间索引（跨左页扫描只构建一次 STRtree）
     index = spatial_index or _LocalSpatialIndex([g for g, _ in shp_polys])
-    if index._tree is None and len(points) * max(1, len(shp_polys)) > MAX_JOIN_CANDIDATES * 10:
+    if (
+        index._tree is None
+        and len(points) * max(1, len(shp_polys)) > MAX_JOIN_CANDIDATES * 10
+    ):
         # 仅线性回退时产品积守卫才有意义；STRtree 的复杂度是 O(N·candidates)
         raise QueryBudgetExceededError(
             f"join candidate space {len(points)}x{len(shp_polys)} too large "
             "(no STRtree available)",
-            details={"hint": "install shapely, or apply bbox/filters to reduce both sides"},
+            details={
+                "hint": "install shapely, or apply bbox/filters to reduce both sides"
+            },
         )
 
     out: List[Dict[str, Any]] = []
@@ -241,7 +252,11 @@ def spatial_join_local(
         for cand_idx in index.candidates(g):
             pg, props = shp_polys[cand_idx]
             try:
-                ok = pg.contains(g) or pg.equals(g) if spatial_op == "within" else pg.intersects(g)
+                ok = (
+                    pg.contains(g) or pg.equals(g)
+                    if spatial_op == "within"
+                    else pg.intersects(g)
+                )
             except Exception:
                 continue
             if ok:
@@ -284,13 +299,18 @@ def attribute_join_local(
     形状与内部索引一致）；缺省 None 时本函数自建（历史路径逐位不变）。
     """
     index: Dict[Any, List[Dict[str, Any]]] = (
-        right_index if right_index is not None
+        right_index
+        if right_index is not None
         else build_attribute_index(right_rows, join_field_right)
     )
     out: List[Dict[str, Any]] = []
     for lrow in left_rows:
         if budget is not None:
-            budget.add_feature(lrow if isinstance(lrow, dict) and "properties" in lrow else {"properties": lrow})
+            budget.add_feature(
+                lrow
+                if isinstance(lrow, dict) and "properties" in lrow
+                else {"properties": lrow}
+            )
         if left_key_resolver is not None:
             key = left_key_resolver(lrow, join_field_left)
         else:
@@ -372,8 +392,12 @@ class _AggregateState:
             for a in self.aggs:
                 name = a.func if a.field is None else f"{a.func}_{a.field}"
                 acc["cells"][name] = {
-                    "count": 0, "sum": 0.0, "sumsq": 0.0,
-                    "min": None, "max": None, "distinct": set(),
+                    "count": 0,
+                    "sum": 0.0,
+                    "sumsq": 0.0,
+                    "min": None,
+                    "max": None,
+                    "distinct": set(),
                 }
             self.groups[key] = acc
         acc["n"] += 1
@@ -385,7 +409,9 @@ class _AggregateState:
                 continue
             v = None
             if a.field is not None:
-                left_props = {k: v2_ for k, v2_ in row.items() if not k.startswith("__")}
+                left_props = {
+                    k: v2_ for k, v2_ in row.items() if not k.startswith("__")
+                }
                 right_props = row.get("__right__") or {}
                 if a.field in left_props:
                     v = left_props[a.field]  # 左（事实表）优先
@@ -423,7 +449,9 @@ class _AggregateState:
                 elif a.func == "sum":
                     result[name] = cell["sum"] if cell["count"] else None
                 elif a.func == "avg":
-                    result[name] = (cell["sum"] / cell["count"]) if cell["count"] else None
+                    result[name] = (
+                        (cell["sum"] / cell["count"]) if cell["count"] else None
+                    )
                 elif a.func == "min":
                     result[name] = cell["min"]
                 elif a.func == "max":
@@ -479,25 +507,38 @@ class FederatedExecutor:
                     group_by_polygon_field=(req.group_by_right or [None])[0],
                     limit=req.limit,
                 )
-                return self._result(plan, rows, started, strategy="server_side",
-                                    rows_fetched=len(rows))
+                return self._result(
+                    plan, rows, started, strategy="server_side", rows_fetched=len(rows)
+                )
             except DataFabricError:
                 raise
             except Exception as e:  # server join 不可用 → 本地回退（记录）
-                logger.info("[Federation] server-side join unavailable, falling back: %s", e)
-                plan.warnings.append(f"server-side join failed ({e}); local execution used")
+                logger.info(
+                    "[Federation] server-side join unavailable, falling back: %s", e
+                )
+                plan.warnings.append(
+                    f"server-side join failed ({e}); local execution used"
+                )
 
         return self._execute_local(req, plan, left_adapter, right_adapter, started)
 
     # ── 内部 ─────────────────────────────────────────────────────────
 
     def execute_chain(self, req) -> Dict[str, Any]:
-        """N 源左深链执行（V3 additive）。"""
+        """N 源链执行（V3 additive；V6：engine 分派）。"""
+        if getattr(req, "engine", "v5") == "v6":
+            return execute_chain_v6(self, req)
         return execute_federated_chain(self, req)
 
     def _source_query(
-        self, adapter, dataset_id: str, req: FederatedQueryRequest,
-        side_where: Optional[Any], *, fields: Optional[List[str]], limit: int,
+        self,
+        adapter,
+        dataset_id: str,
+        req: FederatedQueryRequest,
+        side_where: Optional[Any],
+        *,
+        fields: Optional[List[str]],
+        limit: int,
     ) -> List[Dict[str, Any]]:
         extras: Dict[str, Any] = {}
         if fields:
@@ -530,13 +571,19 @@ class FederatedExecutor:
         if req.join_field_right:
             right_fields = [req.join_field_right] + (req.group_by_right or [])
         right_rows = self._source_query(
-            right_adapter, req.right_dataset_id, req, req.right_where,
-            fields=right_fields, limit=min(req.budget.max_rows, MAX_JOIN_CANDIDATES),
+            right_adapter,
+            req.right_dataset_id,
+            req,
+            req.right_where,
+            fields=right_fields,
+            limit=min(req.budget.max_rows, MAX_JOIN_CANDIDATES),
         )
         if len(right_rows) > MAX_JOIN_CANDIDATES:
             raise QueryBudgetExceededError(
                 f"right side has {len(right_rows)} rows (> {MAX_JOIN_CANDIDATES} join candidates)",
-                details={"hint": "filter the right (dimension/polygon) side before joining"},
+                details={
+                    "hint": "filter the right (dimension/polygon) side before joining"
+                },
             )
 
         # 左侧流式分页扫描 + 逐页 join（页大小 JOIN_PAGE_SIZE，页数受预算约束）
@@ -553,39 +600,61 @@ class FederatedExecutor:
         spatial_index = None
         if plan.kind in ("spatial_join", "aggregate_join") and req.spatial_op:
             shp_polys = [
-                g for g in (
-                    _shapely_from_geojson(p.get("geometry")) for p in right_rows
-                ) if g is not None and not g.is_empty
+                g
+                for g in (_shapely_from_geojson(p.get("geometry")) for p in right_rows)
+                if g is not None and not g.is_empty
             ]
             spatial_index = _LocalSpatialIndex(shp_polys)
         while len(joined) < req.limit:
             if time.monotonic() > deadline:
                 raise QueryBudgetExceededError(
                     f"federated join exceeded {req.budget.deadline_s}s deadline",
-                    details={"hint": "reduce scope (bbox/filters) or aggregate on sources"},
+                    details={
+                        "hint": "reduce scope (bbox/filters) or aggregate on sources"
+                    },
                 )
             fetch_size = min(JOIN_PAGE_SIZE, req.limit - len(joined) + 1)
-            page = self._source_query(
-                left_adapter, req.left_dataset_id, req, req.left_where,
-                fields=left_fields, limit=fetch_size,
-            ) if offset == 0 else self._source_query_page(
-                left_adapter, req.left_dataset_id, req, req.left_where,
-                fields=left_fields, limit=fetch_size, offset=offset,
+            page = (
+                self._source_query(
+                    left_adapter,
+                    req.left_dataset_id,
+                    req,
+                    req.left_where,
+                    fields=left_fields,
+                    limit=fetch_size,
+                )
+                if offset == 0
+                else self._source_query_page(
+                    left_adapter,
+                    req.left_dataset_id,
+                    req,
+                    req.left_where,
+                    fields=left_fields,
+                    limit=fetch_size,
+                    offset=offset,
+                )
             )
             rows_fetched += len(page)
             if rows_fetched > req.budget.max_rows:
                 raise QueryBudgetExceededError(
                     f"left side scanned {rows_fetched} rows (budget {req.budget.max_rows})",
-                    details={"hint": "narrow bbox or add filters; or aggregate on the source"},
+                    details={
+                        "hint": "narrow bbox or add filters; or aggregate on the source"
+                    },
                 )
             if not page:
                 break
             remaining = req.limit - len(joined)
-            if (plan.kind == "spatial_join") or (plan.kind == "aggregate_join" and req.spatial_op):
+            if (plan.kind == "spatial_join") or (
+                plan.kind == "aggregate_join" and req.spatial_op
+            ):
                 batch = spatial_join_local(
-                    page, right_rows, spatial_op=req.spatial_op or "within",
-                    join_field_right=req.join_field_right, budget=budget,
-                    max_output=remaining + 1,   # +1 探测是否还有更多（R4-C2）
+                    page,
+                    right_rows,
+                    spatial_op=req.spatial_op or "within",
+                    join_field_right=req.join_field_right,
+                    budget=budget,
+                    max_output=remaining + 1,  # +1 探测是否还有更多（R4-C2）
                     spatial_index=spatial_index,
                 )
             else:
@@ -593,16 +662,19 @@ class FederatedExecutor:
                 # 键集过大/全 None 时诚实放弃原样返回）。
                 reduced, original = _semi_join_reduce_right(page, right_rows, plan)
                 if reduced is not right_rows:
-                    semi_join_stats.append({
-                        "left_row_offset": offset,
-                        "right_rows_before": original,
-                        "right_rows_after": len(reduced),
-                    })
+                    semi_join_stats.append(
+                        {
+                            "left_row_offset": offset,
+                            "right_rows_before": original,
+                            "right_rows_after": len(reduced),
+                        }
+                    )
                     right_effective = reduced
                 else:
                     right_effective = right_rows
                 batch = attribute_join_local(
-                    page, right_effective,
+                    page,
+                    right_effective,
                     join_field_left=req.join_field_left or "",
                     join_field_right=req.join_field_right or "",
                     budget=budget,
@@ -615,19 +687,36 @@ class FederatedExecutor:
 
         if plan.kind == "aggregate_join" and req.aggregates:
             rows = aggregate_join_rows(joined, req.aggregates, req.group_by_right or [])
-            return self._result(plan, rows, started, strategy=plan.strategy,
-                                rows_fetched=rows_fetched, joined_rows=len(joined),
-                                semi_join_stats=semi_join_stats)
+            return self._result(
+                plan,
+                rows,
+                started,
+                strategy=plan.strategy,
+                rows_fetched=rows_fetched,
+                joined_rows=len(joined),
+                semi_join_stats=semi_join_stats,
+            )
         # plain join：剥除内部键后返回
         for row in joined:
             row.pop("__right_geometry__", None)
-        return self._result(plan, joined[: req.limit], started, strategy=plan.strategy,
-                            rows_fetched=rows_fetched, semi_join_stats=semi_join_stats)
+        return self._result(
+            plan,
+            joined[: req.limit],
+            started,
+            strategy=plan.strategy,
+            rows_fetched=rows_fetched,
+            semi_join_stats=semi_join_stats,
+        )
 
-    def _source_query_page(self, adapter, dataset_id, req, side_where, *, fields, limit, offset):
-        extras: Dict[str, Any] = {"limit": limit, "offset": offset,
-                                  "deadline_s": req.budget.deadline_s,
-                                  "max_rows": req.budget.max_rows}
+    def _source_query_page(
+        self, adapter, dataset_id, req, side_where, *, fields, limit, offset
+    ):
+        extras: Dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+            "deadline_s": req.budget.deadline_s,
+            "max_rows": req.budget.max_rows,
+        }
         if fields:
             extras["fields"] = fields
         if side_where is not None:
@@ -637,8 +726,17 @@ class FederatedExecutor:
         result = adapter.query(dataset_id, QuerySpec(**extras))
         return result.features or []
 
-    def _result(self, plan, rows, started, *, strategy, rows_fetched, joined_rows=None,
-                semi_join_stats=None):
+    def _result(
+        self,
+        plan,
+        rows,
+        started,
+        *,
+        strategy,
+        rows_fetched,
+        joined_rows=None,
+        semi_join_stats=None,
+    ):
         out = {
             "status": "success",
             "plan": plan.to_dict(),
@@ -647,7 +745,9 @@ class FederatedExecutor:
             "row_count": len(rows),
             "joined_row_count": joined_rows,
             "rows_fetched": rows_fetched,
-            "pushdown_ratio": (round(len(rows) / rows_fetched, 6) if rows_fetched else None),
+            "pushdown_ratio": (
+                round(len(rows) / rows_fetched, 6) if rows_fetched else None
+            ),
             "execution_duration_s": round(time.monotonic() - started, 4),
             "warnings": plan.warnings,
         }
@@ -711,10 +811,10 @@ class ChainJoin:
     缺省保持 V3 位置寻址语义逐位不变。
     """
 
-    kind: str                                    # attribute_join | spatial_join | aggregate_join
-    join_field_left: Optional[str] = None        # 累积行的键（顶层，或 "__right__.x"）
+    kind: str  # attribute_join | spatial_join | aggregate_join
+    join_field_left: Optional[str] = None  # 累积行的键（顶层，或 "__right__.x"）
     join_field_right: Optional[str] = None
-    spatial_op: Optional[str] = None             # within | intersects
+    spatial_op: Optional[str] = None  # within | intersects
     group_by_right: Optional[List[str]] = None
     aggregates: Optional[List[Dict[str, Any]]] = None
     left_source_id: Optional[str] = None
@@ -729,7 +829,7 @@ class FederatedChainRequest:
     joins: List[ChainJoin] = field(default_factory=list)
     bbox: Optional[List[float]] = None
     limit: int = 10_000
-    order_strategy: str = "cost"                 # cost | given | cost_stats
+    order_strategy: str = "cost"  # cost | given | cost_stats
     budget: ExecutionBudget = field(
         default_factory=lambda: ExecutionBudget(**FEDERATION_BUDGET.model_dump())
     )
@@ -742,6 +842,9 @@ class FederatedChainRequest:
     #: 奇偶校验由既有链测试锁定，几何不变量守卫防止空间跳端点被裁剪成
     #: 静默空结果）；``derive_projection=False`` 显式退出（输出形状复原）。
     derive_projection: bool = True
+    #: 执行引擎（V6 additive，ADR-0118）：``"v5"``（默认，位级不变）或
+    #: ``"v6"``（cost-based 枚举 + 流式批执行；非 typed 异常回退 v5）。
+    engine: str = "v5"
 
 
 def _chain_budget(req: FederatedChainRequest) -> ExecutionBudget:
@@ -759,11 +862,13 @@ def _chain_order_indices(req: FederatedChainRequest) -> List[int]:
     """
     order = list(range(len(req.sources)))
     if req.order_strategy in ("cost", "cost_stats"):
-        order.sort(key=lambda i: (
-            req.sources[i].estimated_rows is None,
-            req.sources[i].estimated_rows or 0,
-            i,
-        ))
+        order.sort(
+            key=lambda i: (
+                req.sources[i].estimated_rows is None,
+                req.sources[i].estimated_rows or 0,
+                i,
+            )
+        )
     return order
 
 
@@ -802,13 +907,23 @@ def _chain_order_cost(
     sources = req.sources
     stats = req.stats_hints or {}
     total = sum(
-        (sources[i].estimated_rows if sources[i].estimated_rows is not None
-         else _UNESTIMATED_ROWS)
+        (
+            sources[i].estimated_rows
+            if sources[i].estimated_rows is not None
+            else _UNESTIMATED_ROWS
+        )
         for i in order
     )
-    acc = sources[order[0]].estimated_rows if sources[order[0]].estimated_rows is not None else _UNESTIMATED_ROWS
+    acc = (
+        sources[order[0]].estimated_rows
+        if sources[order[0]].estimated_rows is not None
+        else _UNESTIMATED_ROWS
+    )
     for pos in range(len(order) - 1):
-        left_id, right_id = sources[order[pos]].source_id, sources[order[pos + 1]].source_id
+        left_id, right_id = (
+            sources[order[pos]].source_id,
+            sources[order[pos + 1]].source_id,
+        )
         j = id_joins.get(f"{left_id}>{right_id}")
         if j is None:
             ndv_l = ndv_r = None
@@ -842,7 +957,9 @@ def _chain_plan_order(req: FederatedChainRequest) -> tuple:
 
     n = len(req.sources)
     # islice 结构性封顶（评审 MINOR：n 上限将来放宽也不会失去界限）。
-    candidates = list(itertools.islice(itertools.permutations(range(n)), MAX_ORDER_CANDIDATES))
+    candidates = list(
+        itertools.islice(itertools.permutations(range(n)), MAX_ORDER_CANDIDATES)
+    )
     if not id_joins:
         # 位置寻址的 join 无法安全跟随重排 —— 诚实回落 V3 排序并披露。
         warning = (
@@ -851,11 +968,13 @@ def _chain_plan_order(req: FederatedChainRequest) -> tuple:
             "to enable bounded enumeration)"
         )
         return _chain_order_indices(req), [], warning
+
     # 评审 MAJOR：成本枚举只在**可成链**的排列上选优 —— 否则统计变化会
     # 让原本可执行的请求突然 typed 失败（最便宜序未必 join-连通）。
     def _connected(p) -> bool:
         return all(
-            f"{req.sources[p[i]].source_id}>{req.sources[p[i + 1]].source_id}" in id_joins
+            f"{req.sources[p[i]].source_id}>{req.sources[p[i + 1]].source_id}"
+            in id_joins
             for i in range(n - 1)
         )
 
@@ -906,8 +1025,11 @@ def _map_chain_joins_to_order(
     return mapped
 
 
-def derive_chain_fields(req: FederatedChainRequest, ordered_sources: List[ChainSource],
-                        ordered_joins: List[ChainJoin]) -> Dict[str, List[str]]:
+def derive_chain_fields(
+    req: FederatedChainRequest,
+    ordered_sources: List[ChainSource],
+    ordered_joins: List[ChainJoin],
+) -> Dict[str, List[str]]:
     """为各源派生最小必要字段（ADR-0101 D7，opt-in ``derive_projection``）。
 
     只包含可**证明**需要的字段：两侧连接键、聚合分组/聚合字段、源 where
@@ -917,7 +1039,10 @@ def derive_chain_fields(req: FederatedChainRequest, ordered_sources: List[ChainS
     量 F3），诚实返回空投影（= 不投影）。派生是输出形状变更 —— 由调用
     方显式 opt-in。
     """
-    from app.services.data_fabric.query.predicates import iter_fields, predicate_from_dict
+    from app.services.data_fabric.query.predicates import (
+        iter_fields,
+        predicate_from_dict,
+    )
 
     required: Dict[str, set] = {s.source_id: set() for s in ordered_sources}
     # M1（审计 round1）：源的本地 where 过滤字段是可证明必要的 —— 投影
@@ -958,7 +1083,10 @@ def derive_chain_fields(req: FederatedChainRequest, ordered_sources: List[ChainS
             # 下一跳左键必须能从本跳右侧属性提升（F1）。
             if pos + 1 < len(ordered_joins):
                 nxt = ordered_joins[pos + 1]
-                if nxt.kind in ("attribute_join", "aggregate_join") and nxt.join_field_left:
+                if (
+                    nxt.kind in ("attribute_join", "aggregate_join")
+                    and nxt.join_field_left
+                ):
                     required[right_id].add(nxt.join_field_left)
         elif join.kind == "aggregate_join":
             required[left_id].add(join.join_field_left)
@@ -970,7 +1098,10 @@ def derive_chain_fields(req: FederatedChainRequest, ordered_sources: List[ChainS
                     required[right_id].add(field)
             if pos + 1 < len(ordered_joins):
                 nxt = ordered_joins[pos + 1]
-                if nxt.kind in ("attribute_join", "aggregate_join") and nxt.join_field_left:
+                if (
+                    nxt.kind in ("attribute_join", "aggregate_join")
+                    and nxt.join_field_left
+                ):
                     required[right_id].add(nxt.join_field_left)
         else:  # spatial_join：几何承载不变量，不裁剪
             required[left_id] = set()
@@ -1015,13 +1146,24 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
     for i, join in enumerate(req.joins):
         if join.kind not in ("attribute_join", "spatial_join", "aggregate_join"):
             raise FederatedQueryError(f"joins[{i}].kind {join.kind!r} unsupported")
-        if join.kind == "attribute_join" and not (join.join_field_left and join.join_field_right):
-            raise FederatedQueryError(f"joins[{i}] attribute join needs both join fields")
-        if join.kind == "spatial_join" and join.spatial_op not in ("within", "intersects"):
-            raise FederatedQueryError(f"joins[{i}] spatial join needs within|intersects")
+        if join.kind == "attribute_join" and not (
+            join.join_field_left and join.join_field_right
+        ):
+            raise FederatedQueryError(
+                f"joins[{i}] attribute join needs both join fields"
+            )
+        if join.kind == "spatial_join" and join.spatial_op not in (
+            "within",
+            "intersects",
+        ):
+            raise FederatedQueryError(
+                f"joins[{i}] spatial join needs within|intersects"
+            )
         if join.kind == "aggregate_join":
             if not join.group_by_right:
-                raise FederatedQueryError(f"joins[{i}] aggregate join needs group_by_right")
+                raise FederatedQueryError(
+                    f"joins[{i}] aggregate join needs group_by_right"
+                )
             # F2：链上聚合先连接后聚合 —— 必须给出连接字段，否则右源无法并入
             if not (join.join_field_left and join.join_field_right):
                 raise FederatedQueryError(
@@ -1062,7 +1204,8 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
     ordered_joins = _map_chain_joins_to_order(req, order, ordered_sources)
     derived_fields = (
         derive_chain_fields(req, ordered_sources, ordered_joins)
-        if req.derive_projection else {}
+        if req.derive_projection
+        else {}
     )
     if derived_fields:
         chain_warnings.append(
@@ -1071,28 +1214,40 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
         )
     plans: List[FederatedPlan] = []
     for i, join in enumerate(ordered_joins):
-        plans.append(FederatedPlan(
-            kind=join.kind,
-            left={"source_id": ordered_sources[i].source_id,
-                  "dataset_id": ordered_sources[i].dataset_id,
-                  "chain_position": i,
-                  **({"fields": derived_fields[ordered_sources[i].source_id]}
-                     if ordered_sources[i].source_id in derived_fields else {})},
-            right={"source_id": ordered_sources[i + 1].source_id,
-                   "dataset_id": ordered_sources[i + 1].dataset_id,
-                   "chain_position": i + 1,
-                   **({"fields": derived_fields[ordered_sources[i + 1].source_id]}
-                      if ordered_sources[i + 1].source_id in derived_fields else {})},
-            join_field_left=join.join_field_left,
-            join_field_right=join.join_field_right,
-            spatial_op=join.spatial_op,
-            group_by_right=join.group_by_right,
-            aggregates=join.aggregates,
-            estimated_left_rows=ordered_sources[i].estimated_rows,
-            estimated_right_rows=ordered_sources[i + 1].estimated_rows,
-            warnings=chain_warnings if i == 0 else [],
-            rejected_orders=rejected_orders if i == 0 else [],
-        ))
+        plans.append(
+            FederatedPlan(
+                kind=join.kind,
+                left={
+                    "source_id": ordered_sources[i].source_id,
+                    "dataset_id": ordered_sources[i].dataset_id,
+                    "chain_position": i,
+                    **(
+                        {"fields": derived_fields[ordered_sources[i].source_id]}
+                        if ordered_sources[i].source_id in derived_fields
+                        else {}
+                    ),
+                },
+                right={
+                    "source_id": ordered_sources[i + 1].source_id,
+                    "dataset_id": ordered_sources[i + 1].dataset_id,
+                    "chain_position": i + 1,
+                    **(
+                        {"fields": derived_fields[ordered_sources[i + 1].source_id]}
+                        if ordered_sources[i + 1].source_id in derived_fields
+                        else {}
+                    ),
+                },
+                join_field_left=join.join_field_left,
+                join_field_right=join.join_field_right,
+                spatial_op=join.spatial_op,
+                group_by_right=join.group_by_right,
+                aggregates=join.aggregates,
+                estimated_left_rows=ordered_sources[i].estimated_rows,
+                estimated_right_rows=ordered_sources[i + 1].estimated_rows,
+                warnings=chain_warnings if i == 0 else [],
+                rejected_orders=rejected_orders if i == 0 else [],
+            )
+        )
     return plans
 
 
@@ -1114,7 +1269,9 @@ def _chain_row_key(row: Dict[str, Any], field: str) -> Any:
     return None
 
 
-def _chain_lift_next_join_key(rows: List[Dict[str, Any]], next_join: "ChainJoin") -> None:
+def _chain_lift_next_join_key(
+    rows: List[Dict[str, Any]], next_join: "ChainJoin"
+) -> None:
     """F1：把下一跳需要的连接键提升到累积行顶层（仅当顶层缺失；左字段优先）。
 
     上一跳的右属性嵌在 ``__right__`` 下；下一跳 attribute/aggregate 连接的
@@ -1156,7 +1313,8 @@ SEMI_JOIN_MAX_KEYS = 1000
 
 
 def _semi_join_reduce_right(
-    accumulated: List[Dict[str, Any]], right_rows: List[Dict[str, Any]],
+    accumulated: List[Dict[str, Any]],
+    right_rows: List[Dict[str, Any]],
     join: "ChainJoin",
 ) -> tuple:
     """半连接约减（ADR-0101 D7）：右侧行只保留键出现在左侧键集的行。
@@ -1181,13 +1339,16 @@ def _semi_join_reduce_right(
     if not keys:
         return right_rows, len(right_rows)
     reduced = [
-        r for r in right_rows
+        r
+        for r in right_rows
         if _hashable_key((r.get("properties") or r).get(field)) in keys
     ]
     return reduced, len(right_rows)
 
 
-def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRequest) -> Dict[str, Any]:
+def execute_federated_chain(
+    executor: "FederatedExecutor", req: FederatedChainRequest
+) -> Dict[str, Any]:
     """执行左深链（每源一次有界拉取；逐跳 join 预算 fail-fast）。
 
     与两源执行器共用 ``_source_query`` 的预算/有界语义。中间结果超过
@@ -1224,9 +1385,12 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
     # 有序 joins 从计划重建（计划携带全部 join 语义字段）。
     ordered_joins = [
         ChainJoin(
-            kind=p.kind, join_field_left=p.join_field_left,
-            join_field_right=p.join_field_right, spatial_op=p.spatial_op,
-            group_by_right=p.group_by_right, aggregates=p.aggregates,
+            kind=p.kind,
+            join_field_left=p.join_field_left,
+            join_field_right=p.join_field_right,
+            spatial_op=p.spatial_op,
+            group_by_right=p.group_by_right,
+            aggregates=p.aggregates,
         )
         for p in plans
     ]
@@ -1245,10 +1409,16 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
                 f"chain source '{src.source_id}' is not connected",
                 details={"source_id": src.source_id},
             )
-        fields = src.fields if src.fields is not None else derived_fields.get(src.source_id)
+        fields = (
+            src.fields if src.fields is not None else derived_fields.get(src.source_id)
+        )
         return executor._source_query(
-            adapter, src.dataset_id, _SideView(req, src),
-            src.where, fields=fields, limit=req.limit,
+            adapter,
+            src.dataset_id,
+            _SideView(req, src),
+            src.where,
+            fields=fields,
+            limit=req.limit,
         )
 
     streaming = StreamingBudget(
@@ -1285,10 +1455,14 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
         except DataFabricError:
             raise
         except Exception as e:  # noqa: BLE001 - server join 不可用 → 本地回退
-            logger.info("[Federation] chain server-side first hop unavailable, "
-                        "falling back to local: %s", e)
+            logger.info(
+                "[Federation] chain server-side first hop unavailable, "
+                "falling back to local: %s",
+                e,
+            )
             plans[0].warnings.append(
-                f"server-side first hop failed ({e}); local execution used")
+                f"server-side first hop failed ({e}); local execution used"
+            )
     if not server_side_first_hop:
         for src in ordered_sources:
             feats = _fetch(src)
@@ -1314,63 +1488,83 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
         if join.kind == "attribute_join":
             reduced, original = _semi_join_reduce_right(accumulated, right_rows, join)
             if reduced is not right_rows:
-                semi_join_stats.append({
-                    "hop": src_pos, "right_rows_before": original,
-                    "right_rows_after": len(reduced),
-                })
+                semi_join_stats.append(
+                    {
+                        "hop": src_pos,
+                        "right_rows_before": original,
+                        "right_rows_after": len(reduced),
+                    }
+                )
                 right_rows = reduced
             # F1：左键经 _chain_row_key 穿透（顶层优先，回退上一跳 __right__）
             accumulated = _self.attribute_join_local(
-                accumulated, right_rows,
+                accumulated,
+                right_rows,
                 join_field_left=str(join.join_field_left),
                 join_field_right=str(join.join_field_right),
-                budget=streaming, max_output=req.budget.max_rows,
+                budget=streaming,
+                max_output=req.budget.max_rows,
                 left_key_resolver=_chain_row_key,
             )
         elif join.kind == "spatial_join":
             # F3：累积行重建为左要素（几何来自上一空间跳的 __left_geometry__）
             left_features = _chain_left_features(accumulated)
-            if src_pos > 0 and not any(isinstance(f.get("geometry"), dict) for f in left_features):
+            if src_pos > 0 and not any(
+                isinstance(f.get("geometry"), dict) for f in left_features
+            ):
                 raise FederatedQueryError(
                     f"chain spatial join {src_pos} has no left geometry: the preceding hop "
                     "did not carry one",
-                    details={"hint": "make the preceding hop a spatial join (it stores "
-                                     "__left_geometry__), or reproject/carried geometry "
-                                     "before the chain"},
+                    details={
+                        "hint": "make the preceding hop a spatial join (it stores "
+                        "__left_geometry__), or reproject/carried geometry "
+                        "before the chain"
+                    },
                 )
             accumulated = _self.spatial_join_local(
-                left_features, right_rows,
+                left_features,
+                right_rows,
                 spatial_op=join.spatial_op or "within",
-                budget=streaming, max_output=req.budget.max_rows,
+                budget=streaming,
+                max_output=req.budget.max_rows,
                 carry_left_geometry=True,
             )
         else:  # aggregate_join
             reduced, original = _semi_join_reduce_right(accumulated, right_rows, join)
             if reduced is not right_rows:
-                semi_join_stats.append({
-                    "hop": src_pos, "right_rows_before": original,
-                    "right_rows_after": len(reduced),
-                })
+                semi_join_stats.append(
+                    {
+                        "hop": src_pos,
+                        "right_rows_before": original,
+                        "right_rows_after": len(reduced),
+                    }
+                )
                 right_rows = reduced
             # F2：先连接（右源行进入 __right__），再按右源字段分组聚合 ——
             # 否则 right_rows 被丢弃、分组键全部落空（单一全 None 组）
             joined = _self.attribute_join_local(
-                accumulated, right_rows,
+                accumulated,
+                right_rows,
                 join_field_left=str(join.join_field_left or ""),
                 join_field_right=str(join.join_field_right or ""),
-                budget=streaming, max_output=req.budget.max_rows,
+                budget=streaming,
+                max_output=req.budget.max_rows,
                 left_key_resolver=_chain_row_key,
             )
             accumulated = _self.aggregate_join_rows(
-                joined, join.aggregates or [], join.group_by_right or [],
+                joined,
+                join.aggregates or [],
+                join.group_by_right or [],
             )
         joined_total = len(accumulated)
         if joined_total > req.budget.max_rows:
             raise QueryBudgetExceededError(
                 f"chain join {src_pos} produced {joined_total} rows "
                 f"(budget {req.budget.max_rows}); fail-fast stops the chain",
-                details={"hint": "filter sources harder, or aggregate before joining",
-                         "per_source_rows": per_source_rows},
+                details={
+                    "hint": "filter sources harder, or aggregate before joining",
+                    "per_source_rows": per_source_rows,
+                },
             )
         # F1：为下一跳提升仅存于 __right__ 的连接键到顶层（原地；左字段优先）
         if i + 1 < len(hops):
@@ -1380,7 +1574,9 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
     rows_fetched = sum(per_source_rows)
     result = {
         "status": "success",
-        "strategy": "server_side_first_hop" if server_side_first_hop else "left_deep_chain",
+        "strategy": "server_side_first_hop"
+        if server_side_first_hop
+        else "left_deep_chain",
         "order": [s.source_id for s in ordered_sources],
         "rows": final_rows,
         "row_count": len(final_rows),
@@ -1394,7 +1590,7 @@ def execute_federated_chain(executor: "FederatedExecutor", req: FederatedChainRe
             round(len(final_rows) / rows_fetched, 6) if rows_fetched else None
         ),
         "execution_duration_s": round(time.monotonic() - started, 4),
-        "warnings": plans[0].warnings,   # F7：planner 收集的 warnings 随计划返回
+        "warnings": plans[0].warnings,  # F7：planner 收集的 warnings 随计划返回
     }
     if semi_join_stats:
         result["semi_join_reduction"] = semi_join_stats
@@ -1439,9 +1635,13 @@ def chain_explain_lines(result: Dict[str, Any], *, max_hops: int = 3) -> List[st
         lines.append(f"... {len(plans) - max_hops} more hops")
     reduction = result.get("semi_join_reduction") or []
     if reduction:
-        saved = sum(max(0, r.get("right_rows_before", 0) - r.get("right_rows_after", 0))
-                    for r in reduction)
-        lines.append(f"Semi-join reduction: {len(reduction)} hop(s), {saved} right rows skipped")
+        saved = sum(
+            max(0, r.get("right_rows_before", 0) - r.get("right_rows_after", 0))
+            for r in reduction
+        )
+        lines.append(
+            f"Semi-join reduction: {len(reduction)} hop(s), {saved} right rows skipped"
+        )
     for w in (result.get("warnings") or [])[:3]:
         lines.append(f"Warning: {w}")
     return lines
@@ -1471,3 +1671,138 @@ __all__ = [
     "execute_chain",
     "chain_explain_lines",
 ]
+
+
+# ── V6 引擎（ADR-0118 W10）：cost-based 枚举 + 流式批执行 ──────────────────
+
+
+def execute_chain_v6(
+    executor: "FederatedExecutor", req: FederatedChainRequest
+) -> Dict[str, Any]:
+    """``engine="v6"`` 入口：typed 错误原样上抛（与 V5 同错误契约）；
+    V6 内部非 typed 异常 → 一次性回退 V5 执行并在 warnings 如实披露。
+
+    同源 server-side 首跳快路径仍委托 V5 执行器（``server_spatial_join``
+    是 V5 执行器能力；V6 树路径不重复实现 —— 无第二真相）。
+    """
+    first_two = [s.source_id for s in req.sources[:2]]
+    same_source_first_hop = (
+        len(first_two) == 2
+        and first_two[0] == first_two[1]
+        and req.joins
+        and req.joins[0].kind in ("spatial_join", "aggregate_join")
+        and hasattr(executor._adapter_factory(first_two[0]), "server_spatial_join")
+    )
+    if same_source_first_hop:
+        result = execute_federated_chain(executor, req)
+        result["engine"] = "v5_server_first_hop"
+        result["warnings"] = list(result.get("warnings") or []) + [
+            "engine=v6: same-source server-side first hop delegated to V5 executor"
+        ]
+        return result
+    try:
+        from app.services.data_fabric.query.federated.executor import (
+            PhysicalExecutor,
+            extract_hop_estimates,
+        )
+        from app.services.data_fabric.query.federated.explain import explain_v6_lines
+        from app.services.data_fabric.query.federated.planner import (
+            plan_federation_v6,
+        )
+
+        plan = plan_federation_v6(req)
+        px = PhysicalExecutor(
+            adapter_factory=executor._adapter_factory,
+            budget=req.budget,
+            limit=req.limit,
+            bbox=req.bbox,
+            adaptive=True,
+            order_strategy=getattr(req, "order_strategy", "cost"),
+        )
+        exec_result = px.execute(plan.tree, hop_estimates=extract_hop_estimates(plan))
+    except DataFabricError:
+        raise  # typed 错误契约与 V5 一致（预算/构造错误绝不静默回退）
+    except Exception as e:  # noqa: BLE001 - V6 非 typed 异常 → 诚实回退 V5
+        logger.warning("[Federation] V6 engine failed (%s); falling back to V5", e)
+        result = execute_federated_chain(executor, req)
+        result["engine"] = "v5_fallback"
+        result["warnings"] = list(result.get("warnings") or []) + [
+            f"engine=v6 failed ({e}); executed with V5 engine"
+        ]
+        return result
+
+    rows = exec_result["rows"]
+    per_source = exec_result.get("per_source_rows") or {}
+    rows_fetched = sum(per_source.values())
+    warnings = list(plan.warnings)
+    if any(s.estimated_rows is not None for s in req.sources):
+        warnings.append("join order chosen by cost-based enumeration (V6 DP)")
+    return {
+        "status": "success",
+        "engine": "v6",
+        "strategy": "v6_cost_based_tree",
+        "order": plan.order,
+        "rows": rows,
+        "row_count": exec_result["row_count"],
+        "joined_row_count": exec_result.get("joined_row_count"),
+        "rows_fetched": rows_fetched,
+        "per_source_rows": per_source,
+        "plans": _v6_plan_dicts(plan),
+        "pushdown_ratio": (
+            round(exec_result["row_count"] / rows_fetched, 6) if rows_fetched else None
+        ),
+        "execution_duration_s": exec_result.get("execution_duration_s"),
+        "warnings": warnings,
+        "explain_v6": explain_v6_lines(plan, exec_result=exec_result),
+        "semi_join_reduction": exec_result.get("hop_stats"),
+        "bloom_reduction": exec_result.get("bloom_stats"),
+        "replans_used": exec_result.get("replans_used", 0),
+    }
+
+
+def _v6_plan_dicts(plan) -> List[Dict[str, Any]]:
+    """把 V6 计划树投影为 V5 ``plans`` 形状的逐跳 dict（工具契约兼容）。"""
+    from app.services.data_fabric.query.federated.logical import (
+        LogicalJoin,
+        LogicalReproject,
+        LogicalScan,
+    )
+
+    out: List[Dict[str, Any]] = []
+
+    def side_dict(node) -> Dict[str, Any]:
+        if isinstance(node, LogicalScan):
+            return {
+                "source_id": node.source_id,
+                "dataset_id": node.dataset_id,
+                "fetch_limit": node.fetch_limit,
+            }
+        if isinstance(node, LogicalReproject):
+            return {"reproject": f"{node.from_crs}→{node.to_crs}"}
+        if isinstance(node, LogicalJoin):
+            return {"subtree": node.join_kind}
+        return {"node": getattr(node, "kind", "?")}
+
+    def walk(node, depth: int) -> None:
+        if isinstance(node, LogicalJoin):
+            walk(node.left, depth + 1)
+            out.append(
+                {
+                    "kind": node.join_kind,
+                    "left": side_dict(node.left),
+                    "right": side_dict(node.right),
+                    "join_field_left": node.join_field_left,
+                    "join_field_right": node.join_field_right,
+                    "spatial_op": node.spatial_op,
+                    "group_by_right": node.group_by_right,
+                    "aggregates": node.aggregates,
+                    "chain_position": depth,
+                }
+            )
+            if not isinstance(node.right, LogicalScan):
+                walk(node.right, depth + 1)
+        elif isinstance(node, LogicalReproject):
+            walk(node.input, depth)
+
+    walk(plan.tree, 0)
+    return out

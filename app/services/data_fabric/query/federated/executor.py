@@ -509,6 +509,27 @@ class _ChainJoinShim:
         self.kind = "attribute_join"
 
 
+def extract_hop_estimates(plan) -> List[int]:
+    """从 EnumeratedPlan.components 按**链跳序**提取 join 基数估计
+    （post-order：左子树 → 本跳 → 右子树；与 _flatten_chain 的 hop 序一致；
+    自适应观测的 estimated 侧输入）。"""
+    comps = getattr(plan, "components", None) or {}
+    out: List[int] = []
+
+    def walk(c: Any) -> None:
+        if not isinstance(c, dict):
+            return
+        if "join" in c and isinstance(c["join"], dict):
+            walk(c.get("left") or {})
+            card = c["join"].get("card")
+            if isinstance(card, (int, float)) and card > 0:
+                out.append(int(card))
+            walk(c.get("right") or {})
+
+    walk(comps)
+    return out
+
+
 def _flatten_chain(
     node: LogicalNode,
 ) -> Optional[Tuple[LogicalScan, List[LogicalJoin]]]:
@@ -536,4 +557,4 @@ def _left_depth(node: LogicalNode) -> int:
     return depth
 
 
-__all__ = ["PhysicalExecutor", "ExecutionTrace"]
+__all__ = ["PhysicalExecutor", "ExecutionTrace", "extract_hop_estimates"]
