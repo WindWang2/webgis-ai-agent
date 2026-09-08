@@ -304,6 +304,69 @@ class GISBenchmarkRunner:
                 failures.append(
                     f"tool_calls: planned {planned_calls} > max {case.max_tool_calls}"
                 )
+        # ── 质量场景 DSL 契约（Wave 2+3，全部 opt-in）────────────────────
+        # resolved 工具名（去重、保序）；描述符查询可能对未注册名 raise，
+        # 逐一兜底（未知名 = 该工具类别未知，诚实跳过，不虚构失败）。
+        resolved_tools: List[str] = []
+        for r in plan.data_requirements:
+            if r.resolved_tool and r.resolved_tool not in resolved_tools:
+                resolved_tools.append(r.resolved_tool)
+        if any((
+            case.expected_tool_classes,
+            case.expected_export_formats,
+            case.max_context_schema_bytes is not None,
+            case.forbid_network_tools,
+            case.trace_requirements,
+        )):
+            registry = self._ensure_registry()
+            got_classes: set = set()
+            context_schema_bytes = 0
+            unknown_schema_tools: List[str] = []
+            for name in resolved_tools:
+                try:
+                    desc = registry.descriptor(name)
+                except Exception:  # noqa: BLE001 — 未注册工具按未知处理
+                    continue
+                if desc.output_semantic_type:
+                    got_classes.add(desc.output_semantic_type)
+                if case.forbid_network_tools and desc.network:
+                    failures.append(
+                        f"network tool forbidden but resolved: {name}"
+                    )
+                if case.max_context_schema_bytes is not None:
+                    size = registry.schema_size(name)
+                    if size is None:
+                        unknown_schema_tools.append(name)
+                    else:
+                        context_schema_bytes += size
+            if case.expected_tool_classes:
+                missing_classes = sorted(
+                    set(case.expected_tool_classes) - got_classes)
+                if missing_classes:
+                    failures.append(
+                        f"tool classes: expected {case.expected_tool_classes} "
+                        f"but resolved tools cover {sorted(got_classes)}"
+                    )
+            if case.expected_export_formats:
+                missing_exports = sorted(
+                    set(case.expected_export_formats) - set(plan.exports or []))
+                if missing_exports:
+                    failures.append(
+                        f"export formats: expected {case.expected_export_formats} "
+                        f"in plan.exports {sorted(plan.exports or [])}"
+                    )
+            if case.max_context_schema_bytes is not None:
+                # 仅声明预算时记入 evidence；未知 schema 的工具如实留痕。
+                evidence["context_schema_bytes"] = context_schema_bytes
+                if unknown_schema_tools:
+                    evidence["context_schema_unknown_tools"] = unknown_schema_tools
+                if context_schema_bytes > case.max_context_schema_bytes:
+                    failures.append(
+                        f"context schema: {context_schema_bytes} bytes "
+                        f"> budget {case.max_context_schema_bytes}"
+                    )
+            if case.trace_requirements:
+                evidence["trace_requirements"] = list(case.trace_requirements)
         facet_failures = self._check_facet_contract(plan, case.expected_product_facets)
         failures.extend(facet_failures)
 

@@ -319,8 +319,10 @@ def test_adversarial_cancellation_cleans_temp(monkeypatch):
                 np.ones((2048, 2048), dtype="float32"))
     out = pa.replace(".tif", "_calc.tif")
     # 强制小窗口 → 多个窗口边界可触发取消
+    # （Wave 17：保存真实原值恢复，而非硬编码 256 —— settings 可能因 env 不同）
     monkeypatch.setenv("RASTER_PROCESSING_MEMORY_MB", "1")
     from app.core.config import settings
+    _original_mb = settings.RASTER_PROCESSING_MEMORY_MB
     settings.RASTER_PROCESSING_MEMORY_MB = 1
     token = CancellationToken(job_id="test-cancel")
     token.cancel("user cancelled")
@@ -332,7 +334,7 @@ def test_adversarial_cancellation_cleans_temp(monkeypatch):
         parts = [f for f in os.listdir(td) if ".part-" in f]
         assert parts == [] or all(not f.startswith("cancel_") for f in parts)
     finally:
-        settings.RASTER_PROCESSING_MEMORY_MB = 256
+        settings.RASTER_PROCESSING_MEMORY_MB = _original_mb
         os.remove(pa)
 
 
