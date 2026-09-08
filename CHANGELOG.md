@@ -1,5 +1,47 @@
 # Changelog
 
+## [Unreleased] - 2026-09-09
+
+### Added (Workbench V5 & Collaboration — ADR-0105)
+- Workbench organization state (nested group tree / membership / layer locks /
+  workbench mode) is now durable: new `patch_workbench_state` MapSpec mutation
+  intent persists a `WorkbenchDocV5` into the session's `mapspec["workbench"]`
+  branch over the existing lock + CAS + provenance chain (256KB real-UTF-8
+  gate, deterministic structural validation). Selection/isolate remain
+  session-transient per ADR-0104; no second truth store.
+- Agent layer-lock enforcement: `set_layer_visibility` and `remove_layer`
+  transactions partition targets by the user lock set - fully locked targets
+  fail with a typed `layer_locked` ack error; partially locked targets apply
+  to unlocked ones and disclose `locked_layer_ids`. User unlock is the only
+  override.
+- Undo/redo (bounded 50, session-scoped) via a capture-before-execute command
+  model that replays inverse mutations through the same CAS channels; removal
+  is journaled as irreversible. Ops journal (opsLog) now receives live writes
+  with who/what/reversible metadata; panel header undo/redo buttons + global
+  Ctrl/Command+Z / Shift+Z / Ctrl+Y.
+- Same-session multi-tab foundation: committed workbench docs broadcast over
+  BroadcastChannel (`wb5:{sessionId}`) with revision-gated adoption;
+  deterministic conflict resolution stays server-side CAS last-writer-wins.
+- Refresh resume: authenticated sessions auto-restore via a localStorage
+  session anchor (pointer only, 7-day TTL, no tokens persisted); pagehide
+  best-effort flush of pending doc edits.
+- True side-by-side comparison: the primary canvas shrinks to the left half
+  while the secondary pane owns the right half with synced cameras; secondary
+  parity for terrain (is3D), legend filters, selection filters, and the
+  secondary layer family legend (same LegendStack). Escape exits comparison.
+- 10k-layer panel virtualization (windowed rendering above 200 rows, stable
+  row keys, collapsed-subtree pruning) and deterministic viewport grid
+  thinning for large inline GeoJSON (8x8 cells, area-first, 5000-feature
+  budget) with stale-viewport apply cancellation (generation token + idle).
+- Layer provenance badge (backend `provenance.result_ref`/`tool_call_id`)
+  linking to the results workbench - reads existing lineage facts only.
+
+### Changed (Workbench V5)
+- Nested user groups replace the flat V4 group list (`parentId` on
+  `LayerGroupEntity`, depth <= 4, cycle-safe projection with visited guard);
+  rename/remove/assign/lock/drop mutations are undoable doc commands;
+  group removal promotes children.
+
 ## [Unreleased] - 2026-09-07
 
 ### Added
