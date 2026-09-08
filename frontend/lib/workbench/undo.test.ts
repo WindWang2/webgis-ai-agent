@@ -13,8 +13,10 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { resetLiveState } from '@/lib/mapspec/session-cursor';
 
 const commitPresentationSpy = vi.fn().mockResolvedValue(undefined);
+const commitMutationSpy = vi.fn().mockResolvedValue({ mutation_revision: 1 });
 vi.mock('@/lib/mapspec/user-mutation', () => ({
   commitLayerPresentation: (...args: unknown[]) => commitPresentationSpy(...args),
+  commitMapSpecMutation: (...args: unknown[]) => commitMutationSpy(...args),
   reorderLayersAndCommit: vi.fn().mockResolvedValue(undefined),
 }));
 import {
@@ -143,6 +145,24 @@ describe('undo/redo 命令模型（W4）', () => {
     expect(log[1].type).toBe('toggle');
     expect(log[1].reversible).toBe(true);
     expect(log[1].actor).toBe('agent');
+  });
+
+  it('R1-M1: reorder 重放走裸提交 —— 不再 recordCommand（undo 栈不被污染）', async () => {
+    const { reorderCommand } = await import('./undo');
+    const a = [{ id: 'l1' }, { id: 'l2' }];
+    const b = [{ id: 'l2' }, { id: 'l1' }];
+    reorderCommand('调整图层顺序', 'user', a, b);
+    undo();
+    redo();
+    // 重放异步落地
+    await new Promise((r) => setTimeout(r, 20));
+    // redo 把命令放回 undo 栈（正常语义）—— 再 undo 一次后栈必须清空：
+    // 不得存在重放产生的多余条目（bug 症状：重放经 reorderLayersAndCommit
+    // → recordCommand 再入栈 → 一次 redo 需要 undo 两次才能抵消）。
+    expect(undo()).toBe(true);
+    expect(undo()).toBe(false);
+    // 重放确实发起了裸提交
+    expect(commitMutationSpy).toHaveBeenCalled();
   });
 
   it('空栈 undo/redo 返回 false（无异常）', () => {

@@ -165,7 +165,12 @@ export function clearUndoHistory(): void {
 
 /* ─── 命令构造器（capture-before-execute）─────────────────────────────── */
 
-/** 组织态命令（分组/成员/锁/模式）：inverse = 水合先前 doc 切片。 */
+/**
+ * 组织态命令（分组树/成员/锁）：inverse = 水合先前切片。
+ * R1-M2：不含 mode —— 模式切换有自己的协调入口（setWorkbenchMode 联动
+ * activeLeftTab）且不应被组织态撤销静默回退；mode 的持久化随下一次
+ * 组织态提交的 doc 快照自然收敛。
+ */
 export function docCommand(
   label: string,
   actor: 'user' | 'agent',
@@ -187,7 +192,6 @@ function applyDocSlices(doc: WorkbenchDocV5): void {
     layerGroups: doc.groups.map((g) => ({ ...g })),
     layerGroupMembership: { ...doc.membership },
     lockedLayerIds: [...doc.lockedLayerIds],
-    mode: doc.mode,
   });
 }
 
@@ -195,27 +199,15 @@ function currentDoc(): WorkbenchDocV5 {
   return buildWorkbenchDoc(useHudStore.getState());
 }
 
-/** 快照式组织态命令：自动捕获执行前 doc（调用方在**变更后**调用）。 */
-export function recordDocChange(label: string, actor: 'user' | 'agent', beforeDoc?: WorkbenchDocV5): void {
-  const before = beforeDoc ?? pendingBeforeDoc;
-  pendingBeforeDoc = null;
-  if (!before) return;
-  docCommand(label, actor, before, currentDoc());
-}
-
-let pendingBeforeDoc: WorkbenchDocV5 | null = null;
-
-/** 变更前显式捕获（供组件在同一事件循环内 before/after 配对）。 */
-export function captureDocSnapshot(): void {
-  pendingBeforeDoc = currentDoc();
-}
-
 /** 一步式组织态命令包装：捕获 → 执行 → 记录（组件调用点最小化）。 */
 export function withDocUndo(label: string, actor: 'user' | 'agent', mutate: () => void): void {
   const before = currentDoc();
   mutate();
   const after = currentDoc();
-  if (JSON.stringify(before) === JSON.stringify(after)) return;
+  // R1-M2：比较与回放均不含 mode（组织态撤销只管组织态）。
+  const orgSlice = (d: WorkbenchDocV5) =>
+    JSON.stringify({ g: d.groups, m: d.membership, l: d.lockedLayerIds });
+  if (orgSlice(before) === orgSlice(after)) return;
   docCommand(label, actor, before, after);
 }
 
@@ -258,7 +250,12 @@ function loadUserMutation(): Promise<UserMutationModule> {
   return userMutationPromise;
 }
 
-/** reorder 命令：inverse = 以先前 z 序重放 reorderAndCommit。 */
+/**
+ * reorder 命令：inverse = 裸提交（store 重排 + commitMapSpecMutation）。
+ * R1-M1：重放**不得**经过 reorderLayersAndCommit —— 该函数会再次
+ * recordCommand（清空 redo 栈 + 污染 undo 栈，redo 一次需 undo 两次）。
+ * 裸路径只做正向提交，不进 undo 记账。
+ */
 export function reorderCommand(
   label: string,
   actor: 'user' | 'agent',
@@ -270,9 +267,21 @@ export function reorderCommand(
     kind: 'reorder',
     actor,
     layerIds: beforeOrder.slice(0, 5).map((l) => l.id),
-    undo: () => void loadUserMutation().then(({ reorderLayersAndCommit }) => reorderLayersAndCommit(beforeOrder)).catch((err) => devOnly.warn('[undo] reorder replay failed:', err)),
-    redo: () => void loadUserMutation().then(({ reorderLayersAndCommit }) => reorderLayersAndCommit(afterOrder)).catch((err) => devOnly.warn('[undo] reorder replay failed:', err)),
+    undo: () => void replayReorder(beforeOrder),
+    redo: () => void replayReorder(afterOrder),
   });
+}
+
+function replayReorder(order: { id: string; _mapspecLayerId?: string }[]): void {
+  Promise.all([
+    useHudStore.getState().reorderLayers(order as never),
+    loadUserMutation().then(({ commitMapSpecMutation }) =>
+      commitMapSpecMutation({
+        intent: 'reorder_layers',
+        layer_ids: order.map((layer) => String(layer._mapspecLayerId || layer.id)),
+      }),
+    ),
+  ]).catch((err) => devOnly.warn('[undo] reorder replay failed:', err));
 }
 
 /** 测试隔离。 */
@@ -280,6 +289,5 @@ export function resetUndoForTests(): void {
   undoStack = [];
   redoStack = [];
   seq = 0;
-  pendingBeforeDoc = null;
   emitChange();
 }

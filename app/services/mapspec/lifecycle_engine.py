@@ -1,3 +1,4 @@
+import json
 """MapSpecLifecycleEngine - 核心 MapSpec 意图声明与生命周期引擎。
 
 深入封装 MapSpec 意图变迁 (InitProject, SetView, UpsertLayer, RemoveLayer, SetLayout)、
@@ -368,7 +369,11 @@ class SetWorkbenchStateIntent:
 
 
 # workbench doc 载荷上限（组织态不携带数据 —— 大载荷属 layers/sources/ref）。
-_MAX_WORKBENCH_DOC_BYTES = 64 * 1024
+# 256KB 与前端预检同值（R2-C1：10k 图层全量 membership ~250-300KB，64KB
+# 会让旗舰场景持久化停摆）。口径为真实 UTF-8 字节 —— 前端 TextEncoder 同
+# 款精确口径（M-1：estimate_json_bytes 是码点近似、按其自述仅用于 metrics，
+# 不作正确性闸）。
+_MAX_WORKBENCH_DOC_BYTES = 256 * 1024
 _WORKBENCH_GROUP_MAX_DEPTH = 4
 _WORKBENCH_MODES = {"explore", "analyze", "compose"}
 
@@ -379,17 +384,17 @@ def _workbench_doc_error(doc: Any) -> Optional[str]:
         return "workbench doc must be an object."
     if doc.get("version") != 5:
         return "workbench doc requires version == 5."
+    # 真实字节口径（与前端 TextEncoder 一致）；doc 小，全量序列化成本可忽略。
     try:
-        from app.lib.json_size import estimate_json_bytes
-
-        if estimate_json_bytes(doc) > _MAX_WORKBENCH_DOC_BYTES:
-            return (
-                "workbench doc exceeds "
-                f"{_MAX_WORKBENCH_DOC_BYTES // 1024}KB — organization state "
-                "does not carry data payloads."
-            )
-    except Exception:  # noqa: BLE001 — 估算失败按超限处理（宁可拒绝）
-        return "workbench doc size could not be estimated."
+        actual_bytes = len(json.dumps(doc, ensure_ascii=False).encode("utf-8"))
+    except Exception:  # noqa: BLE001 — 不可序列化载荷直接拒绝
+        return "workbench doc is not JSON-serializable."
+    if actual_bytes > _MAX_WORKBENCH_DOC_BYTES:
+        return (
+            "workbench doc exceeds "
+            f"{_MAX_WORKBENCH_DOC_BYTES // 1024}KB — organization state "
+            "does not carry data payloads."
+        )
 
     groups = doc.get("groups")
     if not isinstance(groups, list):

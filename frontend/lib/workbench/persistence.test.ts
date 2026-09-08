@@ -101,6 +101,35 @@ describe('workbench persistence（W3）', () => {
     expect(commitSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('R1-C1: 409 superseded 不算提交成功 —— 不写基线/不广播，回灌服务端真相', async () => {
+    setMapSpecSessionCursor('sess-sup', 1);
+    notifyWorkbenchSessionChanged('sess-sup');
+    hydrateWorkbenchFromSpec(undefined);
+    // 首次提交被 CAS 拒绝：返回 superseded + 服务端已收敛的 workbench 分支
+    commitSpy.mockResolvedValueOnce({
+      status: 'superseded',
+      mutation_revision: 9,
+      mapspec: {
+        workbench: {
+          version: 5,
+          groups: [{ id: 'server-g', name: '服务端组', collapsed: false, parentId: null }],
+          membership: {},
+          lockedLayerIds: [],
+          mode: 'explore',
+        },
+      },
+    });
+    useHudStore.getState().createLayerGroup('本地未落盘组');
+    await tickDebounce();
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+    // 服务端真相回灌（本地被拒版本不得残留）
+    const s = useHudStore.getState();
+    expect(s.layerGroups).toHaveLength(1);
+    expect(s.layerGroups[0].name).toBe('服务端组');
+    // superseded 响应的 revision 已收敛
+    expect(getMapSpecSessionCursor().revision).toBe(9);
+  });
+
   it('P3: 会话切换重置武装 —— 排队提交作废、跨会话不写', async () => {
     setMapSpecSessionCursor('sess-a', 1);
     notifyWorkbenchSessionChanged('sess-a');

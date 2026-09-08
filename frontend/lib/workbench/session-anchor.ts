@@ -56,14 +56,18 @@ export function clearSessionAnchor(): void {
   }
 }
 
+/** 锚的新鲜度上限（R2-m-6：过期锚不再自动恢复远古会话）。 */
+const ANCHOR_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
- * 刷新恢复判定：认证会话 + 仍持有认证凭据 → 自动恢复；匿名会话或已登出
- * → 不恢复（返回 null 由调用方保持新会话语义）。
+ * 刷新恢复判定：认证会话 + 仍持有认证凭据 + 锚未过期 → 自动恢复；匿名
+ * 会话/已登出/过期锚 → 不恢复（返回 null 由调用方保持新会话语义）。
  */
 export function restorableSessionAnchor(): SessionAnchor | null {
   const anchor = readSessionAnchor();
   if (!anchor) return null;
   if (!anchor.authed) return null;
   if (getAccessToken() == null) return null;
+  if (Date.now() - anchor.savedAt > ANCHOR_TTL_MS) return null;
   return anchor;
 }

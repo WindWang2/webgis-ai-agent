@@ -5,8 +5,13 @@
  * session 锁 + provenance）落盘到 `mapspec.workbench` 分支 —— 本模块不建
  * 第二真相（无 localStorage 投影、无独立端点）：
  *   - hydrateWorkbenchFromSpec：恢复路径把 spec.workbench 归一化后水合 store；
- *   - startWorkbenchPersistence：store 订阅 + 防抖提交（armed 门：恢复完成
- *     前绝不提交，防会话切换竞态把空 doc 盖掉新会话的服务器端 doc）。
+ *   - startWorkbenchPersistence：store 订阅（切片引用变化门控）+ 防抖提交
+ *     （armed 门：恢复完成前绝不提交，防会话切换竞态把空 doc 盖掉新会话的
+ *     服务器端 doc）。
+ * - 409 superseded（R1-C1/R2-M2 修复）：superseded 返回**不是**提交成功 ——
+ *   不写基线、不广播；从响应 mapspec.workbench 回灌服务端真相（workbench
+ *   分支不在 applyCommittedMapSpec 的 layers 回灌范围内）后以服务端真相为
+ *   基线；本地若有更新编辑由订阅再驱动重提交。
  */
 import { useHudStore } from '@/lib/store/useHudStore';
 import { buildWorkbenchDoc } from '@/lib/store/slices/workbenchSlice';
@@ -30,10 +35,37 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let inflight = false;
 let dirtyAfterInflight = false;
 let unsubscribe: (() => void) | null = null;
+let oversizeToastShown = false;
+
+/** 组织态四个源切片的引用门（R2-M4：无关 store 变更不触发序列化）。 */
+interface DocSlices {
+  groups: unknown;
+  membership: unknown;
+  locks: unknown;
+  mode: unknown;
+}
+
+function currentSlices(): DocSlices {
+  const s = useHudStore.getState();
+  return {
+    groups: s.layerGroups,
+    membership: s.layerGroupMembership,
+    locks: s.lockedLayerIds,
+    mode: s.mode,
+  };
+}
+
+function slicesChanged(a: DocSlices, b: DocSlices): boolean {
+  return (
+    a.groups !== b.groups
+    || a.membership !== b.membership
+    || a.locks !== b.locks
+    || a.mode !== b.mode
+  );
+}
 
 function currentDocJson(): string {
-  const s = useHudStore.getState();
-  return JSON.stringify(buildWorkbenchDoc(s));
+  return JSON.stringify(buildWorkbenchDoc(useHudStore.getState()));
 }
 
 /** 会话切换时调用（恢复流程）：重置武装门，此前排队的防抖提交全部作废。 */
@@ -69,9 +101,9 @@ export function hydrateWorkbenchFromSpec(
   return ok;
 }
 
-function scheduleCommit(): void {
+function scheduleCommit(precomputedJson?: string): void {
   if (!armed || targetSessionId == null) return;
-  const json = currentDocJson();
+  const json = precomputedJson ?? currentDocJson();
   if (json === lastCommittedJson) return;
   if (debounceTimer != null) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
@@ -91,10 +123,20 @@ async function commitNow(): Promise<void> {
   const doc: WorkbenchDocV5 = buildWorkbenchDoc(s);
   const json = JSON.stringify(doc);
   if (json === lastCommittedJson) return;
-  // 64KB 闸的客户端预检（与后端引擎同款上限）：超限拒绝并提示 ——
-  // 组织态不携带数据（大载荷属 layers/sources/ref 通道）。
+  // 体积闸的客户端预检（与后端同款上限，真实 UTF-8 字节口径）：超限拒绝并
+  // 给一次性用户可见提示（R2-C1 —— 静默失效会让组织态持久化整体停摆）。
   if (workbenchDocBytes(doc) > WORKBENCH_DOC_MAX_BYTES) {
     devOnly.warn('[workbench-persist] doc exceeds size cap; not committed');
+    if (!oversizeToastShown) {
+      oversizeToastShown = true;
+      try {
+        const { useToastStore } = await import('@/components/ui/toast');
+        useToastStore.getState().addToast(
+          '工作台组织状态过大，已暂停自动保存（分组/锁定等刷新后可能丢失）——请减少分组数量或图层入组规模',
+          'warning',
+        );
+      } catch { /* toast 不可用不得影响状态收敛 */ }
+    }
     return;
   }
   inflight = true;
@@ -104,18 +146,36 @@ async function commitNow(): Promise<void> {
       intent: 'patch_workbench_state',
       doc,
     });
-    // 提交成功以「本次提交的 json」收敛基线 —— inflight 窗口内的后续编辑
-    // （dirtyAfterInflight）由订阅触发下一轮提交，永不丢增量。
-    if (result !== undefined) {
+    const asRecord = result as
+      | { status?: string; mutation_revision?: number; mapspec?: Record<string, unknown> }
+      | undefined;
+    if (asRecord !== undefined && asRecord?.status === 'superseded') {
+      // R1-C1/R2-M2：superseded ≠ 提交成功。服务端 CAS 拒绝了本 doc ——
+      // 不写基线、不广播；从响应 mapspec.workbench 回灌服务端真相并以其为
+      // 基线（该分支不在 commitMapSpecMutation 的 layers 回灌范围内）。
+      if (typeof asRecord.mutation_revision === 'number') {
+        setMapSpecRevision(asRecord.mutation_revision);
+      }
+      const serverDoc = normalizeWorkbenchDoc(asRecord.mapspec?.workbench);
+      if (serverDoc) {
+        useHudStore.getState().hydrateWorkbenchDoc(serverDoc);
+        lastCommittedJson = JSON.stringify(buildWorkbenchDoc(useHudStore.getState()));
+      } else {
+        lastCommittedJson = '';
+      }
+      return;
+    }
+    if (asRecord !== undefined) {
       lastCommittedJson = json;
-      // W5：向同会话其它 tab 广播已提交真相（CAS revision 随行）。
-      const revision = (result as { mutation_revision?: number }).mutation_revision;
-      collabBroadcastDoc(doc, typeof revision === 'number' ? revision : -1);
+      // W5：向同会话其它 tab 广播已提交真相（CAS revision 随行；revision
+      // 缺失时省略广播 —— 发送必被对端丢弃的消息没有意义）。
+      const revision = asRecord.mutation_revision;
+      if (typeof revision === 'number') {
+        collabBroadcastDoc(doc, revision);
+      }
     }
   } catch (err) {
-    // 409 superseded 已由 commitMapSpecMutation 收敛（回灌服务端真相 →
-    // 订阅再次触发 → 与 lastCommittedJson 不同则重提交）；其它错误保脏，
-    // 由下一次组织态编辑或恢复重试驱动，不打断用户。
+    // 其它错误保脏，由下一次组织态编辑或恢复重试驱动，不打断用户。
     devOnly.warn('[workbench-persist] commit failed (kept dirty):', err);
   } finally {
     inflight = false;
@@ -128,7 +188,9 @@ async function commitNow(): Promise<void> {
 
 /**
  * W5：接收其它 tab 广播的已提交 doc —— 水合 + 对齐本地基线与 revision
- * （不回声提交：远端 doc 就是服务器已提交真相）。
+ * （不回声提交：远端 doc 就是服务器已提交真相）。注意：800ms 防抖窗口内
+ * 的本地未提交编辑会被远端 doc 覆盖（全量 LWW 的固有代价 —— CAS 在服务端
+ * 裁决，本模块只传播已提交事实）。
  */
 function adoptRemoteDoc(doc: WorkbenchDocV5, revision: number): void {
   useHudStore.getState().hydrateWorkbenchDoc(doc);
@@ -137,24 +199,42 @@ function adoptRemoteDoc(doc: WorkbenchDocV5, revision: number): void {
 }
 
 // 协同适配器绑定（模块加载一次；persistence ↔ collab 单向依赖）。
+// hello 应答只回「已提交基线」—— 防抖窗口内未落盘的本地编辑不得冒充
+// 已提交真相被晚到 tab 吸收为基线（R1-m7）。
 bindCollabAdapters({
   adoptDoc: adoptRemoteDoc,
   currentDoc: () => {
-    if (!armed) return null;
-    const s = useHudStore.getState();
-    return { doc: buildWorkbenchDoc(s), revision: getMapSpecSessionCursor().revision };
+    if (!armed || lastCommittedJson === '') return null;
+    try {
+      return {
+        doc: JSON.parse(lastCommittedJson) as WorkbenchDocV5,
+        revision: getMapSpecSessionCursor().revision,
+      };
+    } catch {
+      return null;
+    }
   },
 });
 
 /** 启动 store 订阅（app bootstrap 一次）。重复调用幂等。 */
 export function startWorkbenchPersistence(): void {
   if (unsubscribe != null) return;
-  let prev = currentDocJson();
+  let prevSlices = currentSlices();
+  let prevJson = currentDocJson();
   unsubscribe = useHudStore.subscribe((state) => {
+    // R2-M4：切片引用门 —— presentation/chat/视口等无关变更零序列化成本。
+    const slices: DocSlices = {
+      groups: state.layerGroups,
+      membership: state.layerGroupMembership,
+      locks: state.lockedLayerIds,
+      mode: state.mode,
+    };
+    if (!slicesChanged(slices, prevSlices)) return;
+    prevSlices = slices;
     const json = JSON.stringify(buildWorkbenchDoc(state));
-    if (json === prev) return;
-    prev = json;
-    scheduleCommit();
+    if (json === prevJson) return;
+    prevJson = json;
+    scheduleCommit(json);
   });
 }
 
@@ -171,6 +251,7 @@ export function stopWorkbenchPersistence(): void {
   lastCommittedJson = '';
   inflight = false;
   dirtyAfterInflight = false;
+  oversizeToastShown = false;
   stopWorkbenchCollab();
 }
 

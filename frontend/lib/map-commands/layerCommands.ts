@@ -541,8 +541,13 @@ export const layerCommands: Record<string, CommandEntry> = {
 
       // 「地图随对话」：agent 显式展示 → 先标记当前轮再收起旧轮（同 ref
       // 的多层同属当前轮展示集，互不收起）——与事务解耦，事务内不重复。
+      // W2/R1-m3：锁定目标不标记 —— ack 报 layer_locked 时旧轮不得被收起
+      // （标记副作用与 typed 冲突结果保持一致）。
       if (visible === true) {
-        for (const id of resolveLayerTargetsByRef(layer_id, ctx.getHudState)) {
+        const { allowed } = partitionByLock(
+          resolveLayerTargetsByRef(layer_id, ctx.getHudState),
+        );
+        for (const id of allowed) {
           noteAgentDisplayed(id);
         }
       }
@@ -630,13 +635,17 @@ export const layerCommands: Record<string, CommandEntry> = {
       const visibleLayerIds: string[] = [];
       const hiddenLayerIds: string[] = [];
       const unresolvedLayerIds: string[] = [];
+      const lockConflictIds: string[] = [];
       const storePendingRepair: { layerId: string; visible: boolean }[] = [];
 
       for (const id of show) {
         if (respect.has(id)) continue; // 用户手动隐藏的展示目标：保留用户决策
         const res = applyLayerVisibilityTransaction(ctx, { layerId: id, visible: true, durable: false });
         if (res.status === 'failed') {
-          unresolvedLayerIds.push(id);
+          // R1-m4：lock 冲突与 target miss 分开归因 —— 把被用户锁拦截的层
+          // 报成 target_not_found 会误导 agent 修正回路。
+          if (res.error === 'layer_locked') lockConflictIds.push(id);
+          else unresolvedLayerIds.push(id);
         } else {
           visibleLayerIds.push(id);
           if (res.result?.store_updated) storePendingRepair.push({ layerId: id, visible: true });
@@ -671,13 +680,15 @@ export const layerCommands: Record<string, CommandEntry> = {
         });
       }
 
+      const allShowFailed = visibleLayerIds.length === 0
+        && unresolvedLayerIds.length + lockConflictIds.length > 0;
       return {
-        status: unresolvedLayerIds.length > 0 && visibleLayerIds.length === 0
-          ? 'failed'
-          : 'succeeded',
-        error: unresolvedLayerIds.length > 0 && visibleLayerIds.length === 0
-          ? 'target_not_found'
-          : undefined,
+        status: allShowFailed ? 'failed' : 'succeeded',
+        error: !allShowFailed
+          ? undefined
+          : lockConflictIds.length > 0 && unresolvedLayerIds.length === 0
+            ? 'layer_locked'
+            : 'target_not_found',
         result: {
           shown: visibleLayerIds.length,
           hidden: hiddenLayerIds.length,
@@ -686,6 +697,7 @@ export const layerCommands: Record<string, CommandEntry> = {
           visible_layer_ids: visibleLayerIds,
           hidden_layer_ids: hiddenLayerIds,
           unresolved_layer_ids: unresolvedLayerIds,
+          ...(lockConflictIds.length > 0 ? { locked_layer_ids: lockConflictIds } : {}),
         },
       };
     },

@@ -14,8 +14,19 @@ import type { WorkbenchMode } from '@/lib/store/slices/workbenchSlice';
 /** 嵌套深度上限（扁平 V4 = 1；V5 允许 4 层，防失控深树与栈风险）。 */
 export const WORKBENCH_GROUP_MAX_DEPTH = 4;
 
-/** doc 持久化体积上限（JSON 字节数；后端同款 422 闸的客户端预检）。 */
-export const WORKBENCH_DOC_MAX_BYTES = 64 * 1024;
+/**
+ * doc 持久化体积上限（真实 UTF-8 字节；后端同款闸）。
+ * 256KB 依据 10k 图层目标场景：全量 membership（layerId→groupId 平铺）在
+ * 10k 键时约 250-300KB —— 64KB 会让旗舰场景的持久化整体停摆（R2-C1）。
+ * 组织态仍不携带数据载荷（大载荷属 layers/sources/ref 通道）。
+ */
+export const WORKBENCH_DOC_MAX_BYTES = 256 * 1024;
+
+/** 恢复归一化的数量上限（与体积闸共同约束 —— 防畸形广播/手写 payload）。 */
+export const WORKBENCH_MAX_GROUPS = 2000;
+export const WORKBENCH_GROUP_NAME_MAX = 200;
+export const WORKBENCH_MAX_MEMBERSHIP = 20_000;
+export const WORKBENCH_MAX_LOCKED = 20_000;
 
 export interface WorkbenchGroupNode {
   id: string;
@@ -149,12 +160,13 @@ export function rootGroupsFirst(groups: readonly GroupNodeLike[]): GroupNodeLike
  * 恢复归一化：后端/广播来的任意 payload → 合法 doc；非法则返回 null
  * （调用方保持当前 doc 不变）。环/超深/孤儿在结构层修复（孤儿提升为根，
  * 超深环截断），成员/锁保留原始键（stale layer id 由既有 prune 清理）。
+ * 数量上限（组数/名称长度/成员与锁键数）与体积闸共同约束畸形 payload。
  */
 export function normalizeWorkbenchDoc(raw: unknown): WorkbenchDocV5 | null {
   if (typeof raw !== 'object' || raw == null) return null;
   const candidate = raw as Partial<WorkbenchDocV5> & { version?: number };
   if (candidate.version !== 5) return null;
-  if (!Array.isArray(candidate.groups)) return null;
+  if (!Array.isArray(candidate.groups) || candidate.groups.length > WORKBENCH_MAX_GROUPS) return null;
   const mode: WorkbenchMode =
     candidate.mode === 'analyze' || candidate.mode === 'compose' ? candidate.mode : 'explore';
 
@@ -165,9 +177,10 @@ export function normalizeWorkbenchDoc(raw: unknown): WorkbenchDocV5 | null {
     const node = g as Partial<WorkbenchGroupNode>;
     if (typeof node.id !== 'string' || node.id.length === 0 || seen.has(node.id)) continue;
     seen.add(node.id);
+    const rawName = typeof node.name === 'string' && node.name.length > 0 ? node.name : node.id;
     groups.push({
       id: node.id,
-      name: typeof node.name === 'string' && node.name.length > 0 ? node.name : node.id,
+      name: rawName.slice(0, WORKBENCH_GROUP_NAME_MAX),
       collapsed: node.collapsed === true,
       parentId: null, // 先全部落根，第二轮再恢复合法父子
     });
@@ -185,12 +198,19 @@ export function normalizeWorkbenchDoc(raw: unknown): WorkbenchDocV5 | null {
 
   const membership: Record<string, string> = {};
   if (typeof candidate.membership === 'object' && candidate.membership != null) {
+    let count = 0;
     for (const [layerId, gid] of Object.entries(candidate.membership)) {
-      if (typeof layerId === 'string' && typeof gid === 'string') membership[layerId] = gid;
+      if (count >= WORKBENCH_MAX_MEMBERSHIP) break;
+      if (typeof layerId === 'string' && typeof gid === 'string') {
+        membership[layerId] = gid;
+        count += 1;
+      }
     }
   }
   const lockedLayerIds = Array.isArray(candidate.lockedLayerIds)
-    ? candidate.lockedLayerIds.filter((id): id is string => typeof id === 'string')
+    ? candidate.lockedLayerIds
+        .filter((id): id is string => typeof id === 'string')
+        .slice(0, WORKBENCH_MAX_LOCKED)
     : [];
   return { version: 5, groups, membership, lockedLayerIds, mode };
 }

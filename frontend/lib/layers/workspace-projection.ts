@@ -52,8 +52,8 @@ export interface ProjectWorkspaceInput {
   layers: Layer[];
   groups: LayerGroupEntity[];
   membership: Record<string, string>;
-  lockedLayerIds?: readonly string[];
-  selectedLayerIds?: readonly string[];
+  lockedLayerIds?: readonly string[] | ReadonlySet<string>;
+  selectedLayerIds?: readonly string[] | ReadonlySet<string>;
   /** 名称搜索（大小写不敏感子串；空 = 不过滤）。 */
   search?: string;
 }
@@ -89,13 +89,21 @@ export function projectWorkspace(input: ProjectWorkspaceInput): WorkspaceProject
   for (const group of groups) byGroup.set(group.id, []);
   byGroup.set(null, []);
 
+  // R2-M5：Set 化锁定/选择 —— 10k 层投影从 O(n×(L+S)) 降为 O(n)。
+  const lockedSet = lockedLayerIds instanceof Set
+    ? lockedLayerIds
+    : new Set(lockedLayerIds);
+  const selectedSet = selectedLayerIds instanceof Set
+    ? selectedLayerIds
+    : new Set(selectedLayerIds);
+
   for (const layer of layers) {
     const row = {
       layer,
       groupId: membership[layer.id] ?? null,
       semanticGroup: layer.group || 'default',
-      locked: lockedLayerIds.includes(layer.id),
-      selected: selectedLayerIds.includes(layer.id),
+      locked: lockedSet.has(layer.id),
+      selected: selectedSet.has(layer.id),
       visible: layer.visible !== false,
     };
     if (!matchesSearch(row, search)) continue;

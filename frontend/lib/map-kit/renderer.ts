@@ -193,19 +193,25 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
   const generation = ++_viewportRefreshGeneration;
   const apply = () => {
     if (generation !== _viewportRefreshGeneration) return; // stale → cancelled
-    _registeredGeoJsonSourceIds.forEach((id) => {
-      if (generation !== _viewportRefreshGeneration) return; // 中途失效同样取消
-      if (isMvtSourceId(id)) return; // #668: double-crop guard
-      const source = map.getSource?.(id) as GeoJSONSource;
-      if (!source) return;
-      const raw = _rawDataBySource.get(source);
-      if (raw === undefined) return; // tile/url source — nothing to trim
-      const effective = _filterForViewport(source, raw, viewport);
-      if (_lastGeoJsonData.get(source) !== effective) {
-        _lastGeoJsonData.set(source, effective);
-        source.setData(effective as any);
-      }
-    });
+    // R1-m13：idle 回调推迟 ≤200ms 执行 —— 地图可能已卸载/样式已重建，
+    // 全体访问有界包裹（与 boundedVisibilityRepair 同款防御口径）。
+    try {
+      _registeredGeoJsonSourceIds.forEach((id) => {
+        if (generation !== _viewportRefreshGeneration) return; // 中途失效同样取消
+        if (isMvtSourceId(id)) return; // #668: double-crop guard
+        const source = map.getSource?.(id) as GeoJSONSource;
+        if (!source) return;
+        const raw = _rawDataBySource.get(source);
+        if (raw === undefined) return; // tile/url source — nothing to trim
+        const effective = _filterForViewport(source, raw, viewport);
+        if (_lastGeoJsonData.get(source) !== effective) {
+          _lastGeoJsonData.set(source, effective);
+          source.setData(effective as any);
+        }
+      });
+    } catch (err) {
+      console.warn('[renderer] viewport refresh apply failed (map disposed?):', err);
+    }
   };
   // idle 回调（不可用环境回退 16ms timeout）：重计算不阻塞交互帧。
   const ric = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback;

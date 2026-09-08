@@ -21,7 +21,7 @@ import {
   Eye, EyeOff, GripVertical, Layers as LayersIcon, LocateFixed, Palette,
   Lock, LockOpen, Crosshair, Copy, ClipboardPaste, RotateCw, FolderPlus,
   ChevronDown, ChevronRight, CheckSquare, Square, Trash2, MoreHorizontal, Group,
-  Columns2, Workflow,
+  Columns2, Workflow, Undo2, Redo2,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { Layer, LayerStyle } from '@/lib/types/layer';
@@ -54,7 +54,8 @@ import {
 } from '@/lib/mapspec/user-mutation';
 import { comparisonFamilyId } from '@/components/map/comparison/comparison-sync';
 import { useVirtualRows } from '@/lib/hooks/use-virtual-rows';
-import { withDocUndo } from '@/lib/workbench/undo';
+import { journalOnly, withDocUndo } from '@/lib/workbench/undo';
+import { useUndoRedo } from '@/lib/workbench/use-undo';
 
 /* ─── W8：树行扁平化与窗口虚拟化 ───
  * 10k 图层不 O(N) 渲染：投影后扁平行描述符数组 + 固定行高窗口（自研
@@ -245,14 +246,17 @@ function GroupHeader({
           aria-label={`${section.collapsed ? '展开' : '折叠'}分组 ${section.name}`}
           aria-expanded={!section.collapsed}
           className="flex h-control-sm w-control-sm items-center justify-center rounded-xs text-ink-muted hover:bg-surface-hover hover:text-ink"
-          onClick={() =>
-                    section.id
-                    && withDocUndo(
-                      section.collapsed ? `展开分组 ${section.name}` : `折叠分组 ${section.name}`,
-                      'user',
-                      () => toggleGroupCollapsed(section.id!),
-                    )
-                  }
+          onClick={() => {
+            // R2-M6：折叠/展开是轻量展示态切换且高频 —— 只入 journal，
+            // 不产生两份全量 doc 快照进 undo 栈（撤销折叠价值低、内存代价高）。
+            if (!section.id) return;
+            journalOnly({
+              type: 'group',
+              label: section.collapsed ? `展开分组 ${section.name}` : `折叠分组 ${section.name}`,
+              actor: 'user',
+            });
+            toggleGroupCollapsed(section.id);
+          }}
         >
           {section.collapsed ? <ChevronRight aria-hidden size={12} /> : <ChevronDown aria-hidden size={12} />}
         </button>
@@ -491,7 +495,11 @@ function LayerRow({
             title={`分析产物：${layer.provenance.result_ref}${layer.provenance.tool_call_id ? `\n工具调用: ${layer.provenance.tool_call_id}` : ''}\n点击前往结果工作台检视`}
             aria-label={`查看 ${layer.name} 的产物溯源`}
             className="flex h-control-sm w-control-sm shrink-0 items-center justify-center rounded-xs text-ink-muted hover:bg-surface-hover hover:text-ink"
-            onClick={() => useHudStore.getState().setActiveLeftTab('results')}
+            onClick={() => {
+              const hud = useHudStore.getState();
+              if (layer._refId) hud.setSelectedArtifactId(layer._refId);
+              hud.setActiveLeftTab('results');
+            }}
           >
             <Workflow aria-hidden size={12} />
           </button>
@@ -863,6 +871,8 @@ export function LayersTab() {
 
   const [search, setSearch] = useState('');
   const [styleClipboard, setStyleClipboard] = useState<LayerStyle | null>(null);
+  // R2-m-5：撤销/重做可用态（useSyncExternalStore 驱动按钮 disabled）。
+  const undoRedo = useUndoRedo();
 
   // 拖拽状态：行重排（跨组 = 重排 + 换组）与组头投放（换组）。
   const [dragId, setDragId] = useState<string | null>(null);
@@ -1095,6 +1105,21 @@ export function LayersTab() {
               createLayerGroup(`分组 ${layerGroups.length + 1}`),
             )
           }
+        />
+        {/* W9/R2-m-5：undo/redo 可见面板入口（快捷键之外的发现性 + 触屏路径）。 */}
+        <IconButton
+          size="sm"
+          label="撤销上一步工作台操作（Ctrl+Z）"
+          icon={Undo2}
+          disabled={!undoRedo.canUndo}
+          onClick={undoRedo.undo}
+        />
+        <IconButton
+          size="sm"
+          label="重做（Ctrl+Shift+Z）"
+          icon={Redo2}
+          disabled={!undoRedo.canRedo}
+          onClick={undoRedo.redo}
         />
       </div>
 

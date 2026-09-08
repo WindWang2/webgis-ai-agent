@@ -11,7 +11,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 export interface VirtualRowsResult {
-  scrollRef: React.RefObject<HTMLDivElement | null>;
+  /** callback ref：容器挂载即附着 ResizeObserver（R2-M3 —— 迟到挂载
+   *  （图层异步到达跨过虚拟化阈值）也能正确测量视口高）。 */
+  scrollRef: (el: HTMLDivElement | null) => void;
   /** 渲染窗口 [start, end)（含 overscan）。 */
   start: number;
   end: number;
@@ -29,23 +31,35 @@ export function useVirtualRows(
   rowHeight: number,
   overscan = 8,
 ): VirtualRowsResult {
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const elRef = useRef<HTMLDivElement | null>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(FALLBACK_VIEWPORT_H);
 
-  useEffect(() => {
-    const el = scrollRef.current;
+  // callback ref：节点挂载/卸载都会调用 —— 观察器生命周期与容器严格同步，
+  // 容器因阈值跨越/搜索过滤卸载重挂后仍保持正确测量。
+  const scrollRef = useCallback((el: HTMLDivElement | null) => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    elRef.current = el;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver((entries) => {
       const h = entries[0]?.contentRect.height;
       if (typeof h === 'number' && h > 0) setViewportH(h);
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    observerRef.current = ro;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      observerRef.current?.disconnect();
+      observerRef.current = null;
+    };
   }, []);
 
   const onScroll = useCallback(() => {
-    const el = scrollRef.current;
+    const el = elRef.current;
     if (el) setScrollTop(el.scrollTop);
   }, []);
 

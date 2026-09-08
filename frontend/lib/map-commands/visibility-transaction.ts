@@ -313,19 +313,30 @@ export function applyLayerVisibilityTransaction(
   //    重试；agent 路径此前缺失——reload 后 Agent 可见性决策丢失的根因）。
   if (input.durable !== false && (visible != null || opacity != null)) {
     enqueueDurability(targetSpecPairs, visible, opacity);
-    // V5/W4：agent 突变进 undo 栈（inverse=先前 presentation 反向重放）。
+    // V5/W4 + R1-M3：agent 突变入 undo 栈。undoBefore 只对单目标层捕获
+    // （一 ref 多层的多目标事务只覆盖首层会造成"半撤销"）—— 多目标走
+    // journalOnly（诚实可逆性元数据：不可整单撤销就不入 undo 栈）。
     if (input.respectLock !== false) {
       const after = {
         ...(visible != null ? { visible: Boolean(visible) } : {}),
         ...(opacity != null ? { opacity: Number(opacity) } : {}),
       };
-      presentationCommand(
-        `Agent 调整 ${targetIds[0]} 显示状态`,
-        targetIds[0],
-        'agent',
-        undoBefore,
-        after,
-      );
+      if (targetIds.length === 1) {
+        presentationCommand(
+          `Agent 调整 ${targetIds[0]} 显示状态`,
+          targetIds[0],
+          'agent',
+          undoBefore,
+          after,
+        );
+      } else {
+        journalOnly({
+          type: 'toggle',
+          label: `Agent 批量调整 ${targetIds.length} 层显示状态`,
+          detail: `图层: ${targetIds.slice(0, 3).join(', ')}${targetIds.length > 3 ? ' …' : ''}`,
+          actor: 'agent',
+        });
+      }
     }
   }
 

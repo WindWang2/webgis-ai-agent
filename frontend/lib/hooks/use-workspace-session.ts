@@ -173,12 +173,12 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // Workspace V2：dock 归属描述的是旧会话的组件实例 —— 新会话的
       // MapSpec 没有这些 id，停靠区随之清空（避免空 dock/幽灵面板）。
       useHudStore.getState().resetDockState();
+      // Workbench V5（W3/R1-m15）：**先**解除持久化武装再清 store ——
+      // resetLayerGroups 触发的组织态订阅不得以旧会话身份提交空 doc
+      // （顺序敏感：disarm 与清 store 之间不得插入 await）。
+      notifyWorkbenchSessionChanged(sid);
       // Workbench V4：分组树/多选引用旧会话图层 id —— 同 dock 语义，随会话清空。
       useHudStore.getState().resetLayerGroups();
-      // Workbench V5（W3）：组织态持久化切换目标会话并解除武装 —— 恢复完成
-      // （hydrateWorkbenchFromSpec / markWorkbenchHydrated）前绝不提交，
-      // 防恢复竞态把空 doc 盖掉新会话的服务器端 doc。
-      notifyWorkbenchSessionChanged(sid);
       // V5/W4：undo 栈随会话清空（跨会话命令不可撤销 —— 图层 id 语义已变）。
       clearUndoHistory();
       // #548: explorer task cards are session-scoped — a session switch must not
@@ -288,6 +288,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         // session-switch cancellation.
         if (err?.name === 'AbortError') return;
         devOnly.error('Load session failed:', err);
+        // W3/R1-m8：恢复失败也武装空基线 —— 该会话此后的组织态编辑仍可
+        // 持久化（不因一次恢复失败永久断供）。
+        markWorkbenchHydrated();
         // #392: 消息 GET 失败 -> 无条件重置 transcript（否则上一会话的
         // 聊天残留屏幕、下一条消息延续旧 transcript），并附错误提示，
         // 不再静默吞掉失败。
