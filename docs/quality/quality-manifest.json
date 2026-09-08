@@ -751,7 +751,9 @@
    "random_seed_policy": "deterministic",
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
-   "tests": [],
+   "tests": [
+    "tests/unit/lib/test_kriging_st_v4.py"
+   ],
    "uncertainty_outputs": [
     "raster_uncertainty"
    ]
@@ -3582,6 +3584,25 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "terrain_hydrology"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_breach_removes_internal_sinks_with_less_work_than_fill",
+    "tests/unit/lib/test_hydrology_v4.py::test_breach_max_depth_fallback_to_fill"
+   ],
+   "deterministic": true,
+   "id": "terrain.breach",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "terrain_contours"
    ],
    "category": "terrain_analysis",
@@ -3702,6 +3723,24 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "terrain_hydrology"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_hand_zero_on_streams_and_finite_offstream"
+   ],
+   "deterministic": true,
+   "id": "terrain.hand",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "terrain_hillshade"
    ],
    "category": "terrain_analysis",
@@ -3761,6 +3800,24 @@
    "tests": [
     "tests/unit/lib/test_terrain_v3.py"
    ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "terrain_geomorphometry"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_hypsometry_rectangle_and_monotone"
+   ],
+   "deterministic": true,
+   "id": "terrain.hypsometry",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
    "uncertainty_outputs": []
   },
   {
@@ -3847,6 +3904,24 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "terrain_hydrology"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_pfafstetter_odd_even_convention"
+   ],
+   "deterministic": true,
+   "id": "terrain.pfafstetter",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "terrain_derivatives"
    ],
    "category": "terrain_analysis",
@@ -3855,6 +3930,24 @@
    ],
    "deterministic": true,
    "id": "terrain.roughness",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "terrain_hydrology"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_shreve_sums_upstream_magnitudes"
+   ],
+   "deterministic": true,
+   "id": "terrain.shreve",
    "memory_cost": "medium",
    "random_seed_policy": "deterministic",
    "runtime_status": "native",
@@ -3926,6 +4019,24 @@
    "tests": [
     "tests/unit/gis_harness/test_component_composition.py"
    ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "terrain_derivatives"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_solar_radiation_analytic_anchor_and_bounds"
+   ],
+   "deterministic": true,
+   "id": "terrain.solar_radiation",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
    "uncertainty_outputs": []
   },
   {
@@ -6107,6 +6218,7 @@
    "producer_algorithms": [
     "terrain.curvature",
     "terrain.roughness",
+    "terrain.solar_radiation",
     "terrain.tpi",
     "terrain.tri"
    ],
@@ -6124,6 +6236,7 @@
    "producer_algorithms": [
     "terrain.geomorphons",
     "terrain.hillshade_multi",
+    "terrain.hypsometry",
     "terrain.landform",
     "terrain.openness"
    ],
@@ -6149,7 +6262,11 @@
    "domain": "raster",
    "id": "terrain_hydrology",
    "producer_algorithms": [
+    "terrain.breach",
     "terrain.flow",
+    "terrain.hand",
+    "terrain.pfafstetter",
+    "terrain.shreve",
     "terrain.watershed"
    ],
    "status": "native",
@@ -6362,10 +6479,10 @@
   }
  ],
  "counts": {
-  "algorithms": 186,
+  "algorithms": 192,
   "artifact_types": 21,
   "capabilities": 123,
-  "findings": 252,
+  "findings": 253,
   "recipes": 164,
   "tools": 294
  },
@@ -6519,6 +6636,18 @@
    "detail": "memory_cost=high but no backend_variants scale windows",
    "severity": "medium",
    "subject": "terrain.aspect"
+  },
+  {
+   "code": "ALGO_HEAVY_NO_VARIANTS",
+   "detail": "memory_cost=high but no backend_variants scale windows",
+   "severity": "medium",
+   "subject": "terrain.breach"
+  },
+  {
+   "code": "ALGO_HEAVY_NO_VARIANTS",
+   "detail": "memory_cost=high but no backend_variants scale windows",
+   "severity": "medium",
+   "subject": "terrain.hand"
   },
   {
    "code": "ALGO_HEAVY_NO_VARIANTS",
@@ -7838,12 +7967,6 @@
    "code": "TOOL_UNTESTED",
    "detail": "registered tool without any static test reference",
    "severity": "medium",
-   "subject": "st_kriging_surface"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "severity": "medium",
    "subject": "temporal_changepoint"
   },
   {
@@ -7883,7 +8006,7 @@
    "subject": "webgis_world_state"
   }
  ],
- "fingerprint": "084fb036cc470ecc9382a4439751ee10214fbf29b980d174e7c88afa4db3e323",
+ "fingerprint": "f5d9e74e0bbd52a1fc3950b7b61ece4d39a96247e69bc49fb091a962dd49f4ca",
  "gate": {
   "fields": {
    "capabilities": {
@@ -14733,7 +14856,6 @@
    "deterministic": null,
    "execution_policy": "thread",
    "flags": [
-    "untested",
     "descriptor_incomplete"
    ],
    "latency_class": "unknown",
@@ -14744,7 +14866,9 @@
    "side_effect": "unclassified",
    "status": "stable",
    "tags": [],
-   "tests": [],
+   "tests": [
+    "tests/unit/lib/test_kriging_st_v4.py"
+   ],
    "tier": 2
   },
   {

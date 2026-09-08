@@ -47,7 +47,7 @@
 | app/lib/geo_analysis/spectral.py | 0 | 8 | no-checkpoints |
 | app/lib/geo_analysis/statistics.py | 8 | 117 | certified |
 | app/lib/geo_analysis/tasseled_cap.py | 0 | 10 | no-checkpoints |
-| app/lib/geo_analysis/terrain.py | 0 | 63 | no-checkpoints |
+| app/lib/geo_analysis/terrain.py | 0 | 80 | no-checkpoints |
 | app/lib/geo_analysis/tin_interpolation.py | 0 | 21 | no-checkpoints |
 | app/lib/geo_analysis/trend_surface.py | 0 | 11 | no-checkpoints |
 | app/lib/geo_raster/__init__.py | 0 | 1 | no-checkpoints |

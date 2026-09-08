@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：123 能力 · 186 算法 · 111 参数契约。
+统计：123 能力 · 192 算法 · 112 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -1085,11 +1085,23 @@ DEM 邻域地形指标：TPI（Weiss 2001）/TRI（Riley 1999）/粗糙度（Wil
   - 资源包络：48B/像元
   - 取消：none
   - 数值容差：rtol=1e-06，atol=1e-09
+- **`terrain.solar_radiation`** 晴空太阳辐射（`native`·成熟度 已验证，契约: `hydrology_v4_analysis`，出处: `fao56`，精度: heuristic）
+  - 假设：FAO-56 大气顶日辐射 Ra（dr/δ/ωs 解析）× 晴空透射（0.75）；地形入射因子 f = cos β + sin β·cos(az_sun − aspect)，钳 ≥0.15（散射底）；日积分代表方位 az_sun = π + δ（单方位近似）
+  - 局限：heuristic：无地平线遮蔽积分/多时步太阳轨迹（horizon_angle 工具可做后处理）；海拔-大气修正未含（Rso 常数透射）
+  - 资源包络：48B/像元
+  - 取消：coarse
+  - 数值容差：rtol=0.02，atol=0.5
 
 ## `terrain_geomorphometry` — 地貌形态分类
 
 地形开放度（Yokoyama 2002）、geomorphons 地貌分类（Jasiewicz & Stepinski 2013）、Weiss 双尺度 TPI 地类分级与多方位山体阴影。
 
+- **`terrain.hypsometry`** 高程面积分析（`native`·成熟度 已验证，契约: `hydrology_v4_analysis`，出处: `strahler1952`，精度: approximate）
+  - 假设：曲线 a(e) = 高于归一化高程 e 的面积占比（n_levels 级直方）；HI = ∫a de（矩形 = 1；Strahler 1952 侵蚀循环代理）
+  - 局限：直方分级离散化（连续曲线的级别近似）；常数面退化 HI=0（诚实披露，不伪造曲线）
+  - 资源包络：8B/像元
+  - 取消：coarse
+  - 数值容差：rtol=1e-09，atol=0
 - **`terrain.openness`** 地形开放度（`native`·成熟度 已验证，契约: `openness_analysis`，出处: `yokoyama2002`）
   - 假设：正开放度 = mean_φ max_d arctan((z₀−z(d))/d)；负开放度同式取反向差（度）；16 方位（4-64 可调）× 半径 1..R 像元；偏移圆整后的实际米制距离；平地 ≡ 0；山脊高正开放度、谷地高负开放度幅值
   - 局限：方位离散 ≤ 360/azimuth_count（默认 22.5°）角分辨率；无有效采样的方位从均值剔除（栅格角隅诚实退化）；半径 ≤ 100 像元护栏（射线行走内存/时间包络）
@@ -1141,6 +1153,30 @@ D8 单向流流向（ESRI 2 的幂编码）、拓扑序汇流累积与逆 D8 上
   - 局限：pour point 不做河道 snap（未对齐河道时流域偏小，由调用方负责）；D8 格网流向偏差会传递到流域边界
   - 资源包络：32B/像元
   - 取消：none
+  - 数值容差：rtol=1e-12，atol=0
+- **`terrain.breach`** 洼地切沟（Breaching）（`native`·成熟度 已验证，契约: `hydrology_v4_analysis`，出处: `lindsay2016`，精度: approximate）
+  - 假设：Lindsay 2016 选择性切沟简化：填洼识别洼地 → epsilon 填面 D8 接收者链定位 pit→出口路径 → 沿路径下切（min 语义 = 最小开挖）；切沟线 = pit 高程 − k·epsilon（pit→出口方向严格下降）；只降不升：非洼地像元永不改高
+  - 局限：路径为填面最陡下降链（非全局最小代价路径 LCP）；超深回退填洼（max_breach_depth 限制；计数披露）
+  - 资源包络：32B/像元，像元硬上限 50000000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-09，atol=0
+- **`terrain.hand`** 最近排水高程（HAND）（`native`·成熟度 已验证，契约: `hydrology_v4_analysis`，出处: `renno2008`，精度: exact）
+  - 假设：HAND = z(cell) − z(D8 下游链第一个河网像元)；望远镜求和单遍；河网 = 填后 D8 汇流累积 ≥ threshold；边界排出且未遇河网 → NaN（诚实缺省，计数披露）
+  - 局限：河网阈值敏感性：阈值决定『最近排水』的定义；洪泛区语义为地形近似（非水动力淹没模型）
+  - 资源包络：40B/像元，像元硬上限 50000000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-12，atol=0
+- **`terrain.pfafstetter`** Pfafstetter 编码（单级）（`native`·成熟度 已验证，契约: `hydrology_v4_analysis`，出处: `pfafstetter1989`，精度: exact）
+  - 假设：干流 = 出口上溯每步取汇流最大的上游河网像元；偶数码 2,4,… 沿干流等分；4 大支流（junction 汇流降序）取奇数 1,3,5,7；支流子流域 = junction 上游河网像元（下游-first 归属）
+  - 局限：单级层级（多级递归子盆地编码未实现——hierarchy_note 披露）；出口必须在河网上（否则类型化拒绝）
+  - 资源包络：24B/像元，像元硬上限 50000000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-12，atol=0
+- **`terrain.shreve`** Shreve 河流量级（`native`·成熟度 已验证，契约: `hydrology_v4_analysis`，出处: `shreve1966`，精度: exact）
+  - 假设：量级 = 上游量级之和（源头 = 1）；拓扑序 = 降序高程；河网 = 汇流累积 ≥ threshold（与 streams/strahler 同口径）
+  - 局限：单线程长河量级线性增长（对排水强度敏感、对形态不敏感——与 Strahler 互补）
+  - 资源包络：24B/像元，像元硬上限 50000000
+  - 取消：chunk_boundary
   - 数值容差：rtol=1e-12，atol=0
 
 ## `terrain_hydrology_advanced` — 高级地形水文

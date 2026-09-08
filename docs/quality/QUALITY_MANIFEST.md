@@ -3,14 +3,14 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**1**
-- 内容指纹：`084fb036cc470ecc…`
+- 内容指纹：`f5d9e74e0bbd52a1…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 294 | 261 | 188 |
-| algorithms | 186 | 149 | 48 |
+| tools | 294 | 262 | 187 |
+| algorithms | 192 | 150 | 50 |
 | capabilities | 123 | 69 | 16 |
 | artifact_types | 21 | 21 | 0 |
 | recipes | 164 | 164（conformance 由 workflow 闸保护） | 0 |
@@ -31,7 +31,7 @@
 
 > 静态引用 ≠ 行为覆盖。findings 只回答"哪里没有任何测试证据"，修复优先级需结合 02-coverage-risk-map 的风险分级。
 
-### TOOL_UNTESTED（33）
+### TOOL_UNTESTED（32）
 
 - `apply_layer_style`（medium）— registered tool without any static test reference
 - `cancel_execution_run`（medium）— registered tool without any static test reference
@@ -58,7 +58,6 @@
 - `search_datasets`（medium）— registered tool without any static test reference
 - `sgs_simulation`（medium）— registered tool without any static test reference
 - `space_time_k_analysis`（medium）— registered tool without any static test reference
-- `st_kriging_surface`（medium）— registered tool without any static test reference
 - `temporal_changepoint`（medium）— registered tool without any static test reference
 - `webgis_checkpoint`（medium）— registered tool without any static test reference
 - `webgis_compile_maplibre`（medium）— registered tool without any static test reference
@@ -171,7 +170,7 @@
 - `workspace.inspection.readonly`（medium）— algorithm declares no conformance test node ids
 - `workspace.snapshot.durable`（medium）— algorithm declares no conformance test node ids
 
-### ALGO_HEAVY_NO_VARIANTS（28）
+### ALGO_HEAVY_NO_VARIANTS（30）
 
 - `data.ingest.pipeline`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.block_kriging`（medium）— memory_cost=high but no backend_variants scale windows
@@ -198,6 +197,8 @@
 - `spatial.kde.contours`（medium）— memory_cost=high but no backend_variants scale windows
 - `spatial.kde.surface`（medium）— memory_cost=high but no backend_variants scale windows
 - `terrain.aspect`（medium）— memory_cost=high but no backend_variants scale windows
+- `terrain.breach`（medium）— memory_cost=high but no backend_variants scale windows
+- `terrain.hand`（medium）— memory_cost=high but no backend_variants scale windows
 - `terrain.hillshade`（medium）— memory_cost=high but no backend_variants scale windows
 - `terrain.sink_fill`（medium）— memory_cost=high but no backend_variants scale windows
 - `terrain.slope`（medium）— memory_cost=high but no backend_variants scale windows

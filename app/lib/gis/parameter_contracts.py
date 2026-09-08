@@ -331,6 +331,39 @@ _SEED_CONTRACTS: List[ParameterContract] = [
     ),
 
         ParameterContract(
+            id="hydrology_v4_analysis", version=1,
+            description="水文/地形 V4 合并入口（breach/hand/shreve/pfafstetter/hypsometry/solar）",
+            parameters=[
+                ParameterSpec(
+                    name="analysis", type="enum", required=True,
+                    enum_values=["breach", "hand", "shreve", "pfafstetter",
+                                 "hypsometry", "solar_radiation"],
+                    description="分析类型",
+                ),
+                ParameterSpec(
+                    name="stream_threshold", type="number", default=1000.0,
+                    minimum=1.0,
+                    description="河网阈值（上游像元数；hand/shreve/pfafstetter）",
+                ),
+                ParameterSpec(
+                    name="latitude_deg", type="number", default=30.0,
+                    minimum=-90.0, maximum=90.0, unit="degrees",
+                    description="solar 纬度",
+                ),
+                ParameterSpec(
+                    name="day_of_year", type="integer", default=172,
+                    minimum=1, maximum=366,
+                    description="solar 年积日",
+                ),
+                ParameterSpec(
+                    name="transmissivity", type="number", default=0.75,
+                    minimum=0.1, maximum=1.0,
+                    description="solar 晴空透射率",
+                ),
+            ],
+        ),
+
+        ParameterContract(
             id="st_kriging_analysis", version=1,
             description="时空克里金（separable/product-sum 时空协方差，秒制时间）",
             parameters=[

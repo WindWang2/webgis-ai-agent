@@ -9,7 +9,7 @@
 > （ResourceScaleMismatch / RasterResourceGuard），benchmark 结构门消费
 > 同一批声明。空字段 = 未声明（不构成承诺）。
 
-统计：91/186 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
+统计：97/192 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
 
 | 算法 | 复杂度 | 精度 | 资源包络 | 变体(窗口) | 取消 | 容差 | 成本 cpu/mem | 执行策略 |
 |---|---|---|---|---|---|---|---|---|
@@ -79,23 +79,29 @@
 | `stats.st_dbscan` | — | — | — | — | — | — | high/medium | THREAD |
 | `temporal.hotspot` | — | — | — | — | — | — | high/medium | THREAD |
 | `terrain.aspect` | — | — | 40B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
+| `terrain.breach` | O(N log N)（priority-flood ×2 + 逐洼地路径切沟） | approximate | 32B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-09,atol=0 | medium/high | — |
 | `terrain.contours` | — | — | 16B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
 | `terrain.curvature` | — | — | 48B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.dinf_flow` | O(N log N) | — | 40B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.flow` | — | — | 48B/cell | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
 | `terrain.flow_length` | O(N log N) | — | 32B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.geomorphons` | — | — | 24B/cell cells≤50000000 | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
+| `terrain.hand` | O(N log N)（fill + d8 + accum + 单遍逆拓扑） | exact | 40B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-12,atol=0 | medium/high | — |
 | `terrain.hillshade` | — | — | 40B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
 | `terrain.hillshade_multi` | — | — | 56B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.horizon_angle` | — | — | 24B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.hypsometry` | O(N)（确定性直方） | approximate | 8B/cell | — | coarse | rtol=1e-09,atol=0 | low/low | — |
 | `terrain.landform` | — | — | 32B/cell cells≤50000000 | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
 | `terrain.ls_factor` | — | — | 24B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
 | `terrain.morphometry` | — | — | 40B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.openness` | — | — | 32B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.pfafstetter` | O(S log S)（干流上溯 + 支流归属 BFS，S=河网像元） | exact | 24B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-12,atol=0 | medium/medium | — |
 | `terrain.roughness` | — | — | 32B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.shreve` | O(N log N)（与 Strahler 同拓扑机器） | exact | 24B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-12,atol=0 | medium/medium | — |
 | `terrain.sink_fill` | O(N log N) | — | 32B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
 | `terrain.sky_view_factor` | — | — | 24B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.slope` | — | — | 40B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
+| `terrain.solar_radiation` | O(N)（解析 Ra + gradient 坡面因子） | heuristic | 48B/cell | — | coarse | rtol=0.02,atol=0.5 | low/medium | — |
 | `terrain.spi` | — | — | 24B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
 | `terrain.strahler` | O(N log N) | — | 32B/cell cells≤50000000 | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
 | `terrain.streams` | — | — | 16B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |

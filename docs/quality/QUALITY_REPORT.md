@@ -6,16 +6,16 @@
 
 ## Capability Coverage（QualityManifest）
 
-- tools 294 · algorithms 186 · capabilities 123 · artifact_types 21 · recipes 164
+- tools 294 · algorithms 192 · capabilities 123 · artifact_types 21 · recipes 164
 - 描述符富化闸：**PASS**（可执行工具 294）
 
 | finding code | count |
 |---|---|
-| ALGO_HEAVY_NO_VARIANTS | 28 |
+| ALGO_HEAVY_NO_VARIANTS | 30 |
 | ALGO_NO_CONFORMANCE | 20 |
 | CAPABILITY_NO_CONFORMANCE | 16 |
 | TOOL_DESCRIPTOR_INCOMPLETE | 155 |
-| TOOL_UNTESTED | 33 |
+| TOOL_UNTESTED | 32 |
 
 ## Contract Drift
 

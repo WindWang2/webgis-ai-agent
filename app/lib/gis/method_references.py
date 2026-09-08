@@ -660,6 +660,51 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Geostatistics. Academic Press.",
         ),
         MethodReference(
+            "lindsay2016",
+            "Depression breaching (selective breaching)",
+            "Lindsay, J. B. (2016). The practice of DEM fluxation: "
+            "depressions, breaching and fluvial modelling. Hydrological "
+            "Processes, 30(4), 610-622. (Selective breaching variant.)",
+        ),
+        MethodReference(
+            "renno2008",
+            "HAND: Height Above the Nearest Drainage",
+            "Rennó, C. D., Nobre, A. D., Cuartas, L. A., et al. (2008). "
+            "HAND, a new terrain descriptor using SRTM-DEM: mapping terra-"
+            "firme rainforest environments in Amazonia. Remote Sensing of "
+            "Environment, 112(9), 3469-3481.",
+        ),
+        MethodReference(
+            "shreve1966",
+            "Shreve stream magnitude",
+            "Shreve, R. L. (1966). Statistical law of stream numbers. "
+            "Journal of Geology, 74(1), 17-37. (Magnitude = number of "
+            "headwater links upstream.)",
+        ),
+        MethodReference(
+            "pfafstetter1989",
+            "Pfafstetter basin coding",
+            "Pfafstetter, O. (1989). Classification of hydrographic basins: "
+            "coding methodology. (Unpublished manuscript, Brazilian "
+            "National Department of Water Resources; widely reproduced, "
+            "e.g. Verdin & Verdin 1999.)",
+        ),
+        MethodReference(
+            "strahler1952",
+            "Hypsometric (area-altitude) analysis",
+            "Strahler, A. N. (1952). Hypsometric (area-altitude) analysis "
+            "of erosional topography. Geological Society of America "
+            "Bulletin, 63(11), 1117-1142.",
+        ),
+        MethodReference(
+            "fao56",
+            "FAO Irrigation and Drainage Paper 56 (extraterrestrial radiation)",
+            "Allen, R. G., Pereira, L. S., Raes, D., & Smith, M. (1998). "
+            "Crop evapotranspiration — Guidelines for computing crop water "
+            "requirements. FAO Irrigation and Drainage Paper 56. (Eq. 21: "
+            "extraterrestrial daily radiation.)",
+        ),
+        MethodReference(
             "cressie1999",
             "Spatio-temporal covariance modelling (product-sum)",
             "Cressie, N. & Huang, H.-C. (1999). Classes of nonseparable, "
