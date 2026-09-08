@@ -5,7 +5,6 @@
 - bridge 侧 no_progress hints：details 携带 hints（additive）；
 - 子代理递归深度防线：嵌套 spawn 诚实失败。
 """
-import pytest
 
 from app.services.chat.no_progress import GisProgressTracker
 
