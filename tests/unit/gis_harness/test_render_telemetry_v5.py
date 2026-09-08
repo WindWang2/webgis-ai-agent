@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-import pytest
 
 from app.services.gis_harness.completion.contracts import (
     F_CHART_DATA_MISSING,
