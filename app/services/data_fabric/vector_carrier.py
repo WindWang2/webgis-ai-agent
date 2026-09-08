@@ -527,3 +527,34 @@ def table_crs(table: Any) -> Optional[Union[str, Dict[str, Any]]]:
         return geo.get("columns", {}).get("geometry", {}).get("crs")
     except Exception:  # noqa: BLE001
         return None
+
+
+def table_geo_summary(table: Any) -> Dict[str, Any]:
+    """整表 schema geo 元数据的汇总投影（crs/bbox/geometry_types）。
+
+    features_to_arrow 在编码时已把**从数据算得**的 bbox/geometry_types 写进
+    schema ``geo`` 元数据 —— 本助手零额外几何扫描读回它，供台账 descriptor
+    与 DataObject payload 使用（真实证据，绝不虚构）。无 geo 元数据 → 空
+    dict（诚实缺省）。
+    """
+    meta = getattr(table.schema, "metadata", None) or {}
+    raw = meta.get(b"geo")
+    if not raw:
+        return {}
+    try:
+        geo = json.loads(raw)
+    except Exception:  # noqa: BLE001 — 外来元数据容错
+        return {}
+    col = (geo.get("columns") or {}).get("geometry") or {}
+    out: Dict[str, Any] = {}
+    if col.get("crs"):
+        out["crs"] = col["crs"] if isinstance(col["crs"], str) else col["crs"]
+    bbox = col.get("bbox")
+    if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+        try:
+            out["bbox"] = [float(v) for v in bbox]
+        except (TypeError, ValueError):
+            pass
+    if col.get("geometry_types"):
+        out["geometry_types"] = sorted(str(t) for t in col["geometry_types"])
+    return out
