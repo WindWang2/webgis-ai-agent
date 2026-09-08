@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
     get_async_db,
+    get_current_user,
     get_current_user_optional,
     require_owned_session,
 )
@@ -56,7 +57,7 @@ async def create_workflow_resume_anchor(
 async def resume_workflow_from_anchor(
     anchor_id: str,
     db: AsyncSession = Depends(get_async_db),
-    user: dict = Depends(get_current_user_optional),
+    user: dict = Depends(get_current_user),
 ):
     """从锚点恢复新 session（旧 session 过期不影响锚点有效性）。"""
     from app.services.gis_harness.resume_anchor import resume_from_anchor
