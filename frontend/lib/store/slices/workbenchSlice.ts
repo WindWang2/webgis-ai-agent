@@ -361,21 +361,21 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
  * 纯函数：只读入参，不触 store。
  */
 export function buildWorkbenchDoc(state: {
-  layerGroups: LayerGroupEntity[];
-  layerGroupMembership: Record<string, string>;
-  lockedLayerIds: string[];
-  mode: WorkbenchMode;
+  layerGroups?: LayerGroupEntity[];
+  layerGroupMembership?: Record<string, string>;
+  lockedLayerIds?: string[];
+  mode?: WorkbenchMode;
 }): WorkbenchDocV5 {
   return {
     version: 5,
-    groups: state.layerGroups.map((g) => ({
+    groups: (state.layerGroups ?? []).map((g) => ({
       id: g.id,
       name: g.name,
       collapsed: g.collapsed,
       parentId: g.parentId ?? null,
     })),
-    membership: { ...state.layerGroupMembership },
-    lockedLayerIds: [...state.lockedLayerIds],
-    mode: state.mode,
+    membership: { ...(state.layerGroupMembership ?? {}) },
+    lockedLayerIds: [...(state.lockedLayerIds ?? [])],
+    mode: state.mode ?? 'explore',
   };
 }

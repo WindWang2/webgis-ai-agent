@@ -77,7 +77,7 @@ describe('10k 投影扁平化（W8 压测）', () => {
     const flat: string[] = [];
     for (const section of projection.sections) {
       flat.push(`g-${section.id ?? section.name}`);
-      if (section.collapsed || projection.hiddenSectionIds.has(section.id)) continue;
+      if (section.collapsed || (section.id != null && projection.hiddenSectionIds.has(section.id))) continue;
       for (const row of section.rows) flat.push(`l-${row.layer.id}`);
     }
     // 组头×2 + 9500 可见行（折叠子组的 500 行被折叠传播剔除）
