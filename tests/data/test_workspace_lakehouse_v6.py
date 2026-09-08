@@ -172,9 +172,11 @@ async def test_snapshot_end_to_end_reopen(data_dir, tmp_path):
     original = open(res["path"], "rb").read()
 
     svc = get_workspace_snapshot_service()
-    snap = await svc.save_snapshot(sid, label="pre-restart")
+    snap = await svc.save_snapshot(sid, label="pre-restart", materialize="claimed")
     assert snap is not None
     assert ref in {c.artifact_id for c in snap.artifact_contracts}
+    # 物化 lane 真实生效：指针在场（缺省 "none" 只收 promoted 指针）。
+    assert ref in snap.durable_pointers
 
     # 会话死亡：工作载荷消失。
     import os
