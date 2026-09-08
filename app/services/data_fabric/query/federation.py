@@ -271,6 +271,7 @@ def attribute_join_local(
     budget: Optional[StreamingBudget] = None,
     max_output: Optional[int] = None,
     left_key_resolver: Optional[Callable[[Dict[str, Any], str], Any]] = None,
+    right_index: Optional[Dict[Any, List[Dict[str, Any]]]] = None,
 ) -> List[Dict[str, Any]]:
     """等值连接（右侧哈希索引；左行流式探测）。
 
@@ -278,12 +279,14 @@ def attribute_join_local(
     返回连接键。链式累积行是扁平属性 dict——上一跳的右属性嵌在 ``__right__``
     下，需用 ``_chain_row_key`` 穿透取键；缺省 None 时保持两源路径的顶层取键
     语义（逐字节不变）。
+
+    ``right_index``（V6 W6 additive）：调用方预建的右侧哈希索引（跨页复用，
+    形状与内部索引一致）；缺省 None 时本函数自建（历史路径逐位不变）。
     """
-    index: Dict[Any, List[Dict[str, Any]]] = {}
-    for r in right_rows:
-        key = (r.get("properties") or r).get(join_field_right)
-        if key is not None:
-            index.setdefault(_hashable_key(key), []).append(r)
+    index: Dict[Any, List[Dict[str, Any]]] = (
+        right_index if right_index is not None
+        else build_attribute_index(right_rows, join_field_right)
+    )
     out: List[Dict[str, Any]] = []
     for lrow in left_rows:
         if budget is not None:
@@ -303,6 +306,18 @@ def attribute_join_local(
             if max_output is not None and len(out) >= max_output:
                 return out
     return out
+
+
+def build_attribute_index(
+    right_rows: Sequence[Dict[str, Any]], join_field_right: str
+) -> Dict[Any, List[Dict[str, Any]]]:
+    """右侧哈希索引（``attribute_join_local`` 内部形状；V6 跨页复用入口）。"""
+    index: Dict[Any, List[Dict[str, Any]]] = {}
+    for r in right_rows:
+        key = (r.get("properties") or r).get(join_field_right)
+        if key is not None:
+            index.setdefault(_hashable_key(key), []).append(r)
+    return index
 
 
 def _hashable_key(v: Any) -> Any:
@@ -329,25 +344,40 @@ def _aggregate_with_right(rows, aggs, group_by):
     """分组聚合（R4-M5：标量累加器，不再复制全部成员行——峰值内存 O(组数)）。
 
     stddev 为样本口径（与 Postgres STDDEV 一致）：在线 Welford。
+    V6（ADR-0118 W6）：增量内核提取为 ``_AggregateState``（单一语义真相），
+    本函数与 V6 流式执行器共用同一实现 —— 逐位行为不变。
     """
-    out: List[Dict[str, Any]] = []
-    groups: Dict[Tuple, Dict[str, Any]] = {}
+    state = _AggregateState(aggs, group_by)
     for row in rows:
+        state.update(row)
+    return state.finalize()
+
+
+class _AggregateState:
+    """join 行分组聚合的增量内核（V6 W6 提取；``_aggregate_with_right``
+    与 V6 物理执行器共用 —— 语义单一真相，流式喂行，O(组数) 内存）。"""
+
+    def __init__(self, aggs, group_by):
+        self.aggs = list(aggs)
+        self.group_by = list(group_by)
+        self.groups: Dict[Tuple, Dict[str, Any]] = {}
+
+    def update(self, row: Dict[str, Any]) -> None:
         right = row.get("__right__") or {}
-        key = tuple(right.get(g) for g in group_by)
-        acc = groups.get(key)
+        key = tuple(right.get(g) for g in self.group_by)
+        acc = self.groups.get(key)
         if acc is None:
             # 每个 agg 一个累加器槽：count / sum / sumsq / min / max / distinct-set
             acc = {"n": 0, "cells": {}}
-            for a in aggs:
+            for a in self.aggs:
                 name = a.func if a.field is None else f"{a.func}_{a.field}"
                 acc["cells"][name] = {
                     "count": 0, "sum": 0.0, "sumsq": 0.0,
                     "min": None, "max": None, "distinct": set(),
                 }
-            groups[key] = acc
+            self.groups[key] = acc
         acc["n"] += 1
-        for a in aggs:
+        for a in self.aggs:
             name = a.func if a.field is None else f"{a.func}_{a.field}"
             cell = acc["cells"][name]
             if a.func == "count" and a.field is None:
@@ -374,37 +404,40 @@ def _aggregate_with_right(rows, aggs, group_by):
             else:
                 cell["min"] = v if cell["min"] is None else min(cell["min"], v, key=str)
                 cell["max"] = v if cell["max"] is None else max(cell["max"], v, key=str)
-    for key, acc in groups.items():
-        result: Dict[str, Any] = {}
-        for g, v in zip(group_by, key):
-            result[g] = v
-        for a in aggs:
-            name = a.func if a.field is None else f"{a.func}_{a.field}"
-            cell = acc["cells"][name]
-            import math as _math
 
-            if a.func == "count":
-                result[name] = cell["count"]
-            elif a.func == "distinct_count":
-                result[name] = len(cell["distinct"])
-            elif a.func == "sum":
-                result[name] = cell["sum"] if cell["count"] else None
-            elif a.func == "avg":
-                result[name] = (cell["sum"] / cell["count"]) if cell["count"] else None
-            elif a.func == "min":
-                result[name] = cell["min"]
-            elif a.func == "max":
-                result[name] = cell["max"]
-            elif a.func == "stddev":
-                n = cell["count"]
-                if n < 2:
-                    result[name] = None
-                else:
-                    mean = cell["sum"] / n
-                    var = max(0.0, (cell["sumsq"] - n * mean * mean) / (n - 1))
-                    result[name] = _math.sqrt(var)
-        out.append(result)
-    return out
+    def finalize(self) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for key, acc in self.groups.items():
+            result: Dict[str, Any] = {}
+            for g, v in zip(self.group_by, key):
+                result[g] = v
+            for a in self.aggs:
+                name = a.func if a.field is None else f"{a.func}_{a.field}"
+                cell = acc["cells"][name]
+                import math as _math
+
+                if a.func == "count":
+                    result[name] = cell["count"]
+                elif a.func == "distinct_count":
+                    result[name] = len(cell["distinct"])
+                elif a.func == "sum":
+                    result[name] = cell["sum"] if cell["count"] else None
+                elif a.func == "avg":
+                    result[name] = (cell["sum"] / cell["count"]) if cell["count"] else None
+                elif a.func == "min":
+                    result[name] = cell["min"]
+                elif a.func == "max":
+                    result[name] = cell["max"]
+                elif a.func == "stddev":
+                    n = cell["count"]
+                    if n < 2:
+                        result[name] = None
+                    else:
+                        mean = cell["sum"] / n
+                        var = max(0.0, (cell["sumsq"] - n * mean * mean) / (n - 1))
+                        result[name] = _math.sqrt(var)
+            out.append(result)
+        return out
 
 
 # ── 执行器 ──────────────────────────────────────────────────────────────────

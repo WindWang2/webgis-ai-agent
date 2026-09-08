@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.services.data_fabric.query.federated.logical import (
     LogicalJoin,
     LogicalNode,
+    LogicalReproject,
     LogicalScan,
 )
 from app.services.data_fabric.query.federated.spatial_stats import (
@@ -71,6 +72,7 @@ class SourceFacts:
     extent: Optional[List[float]] = None
     spatial_histogram: Optional[Dict[str, Any]] = None
     where: Optional[Any] = None  # Predicate 实例（已解析）
+    where_raw: Optional[str] = None  # 不可解析的原始过滤（诚实保留）
     fields: Optional[List[str]] = None
     stats: Optional[DatasetStatistics] = None  # 完整统计（可选；selectivity 消费）
 
@@ -169,67 +171,64 @@ def _crs_transform_meta(
     card_left: int,
     card_right: int,
 ) -> Tuple[float, Optional[Dict[str, Any]]]:
-    """空间跳的 CRS 对齐成本（消费 W3 的决策语义）；非空间跳只披露。"""
+    """CRS 对齐成本（单一决策 API：costing.decide_crs_transform，local-only）。
+
+    server placement 需要跨 adapter 的 output.crs 下推管道 —— 显式
+    follow-up（ADR-0118 Known Limitations）；本层计划绝不声称执行不了的
+    placement。
+    """
+    from app.services.data_fabric.query.federated.costing import decide_crs_transform
+
     ls, rs = _parse_srid(left.crs), _parse_srid(right.crs)
-    if edge.kind != "spatial_join":
-        if ls is not None and rs is not None and ls != rs:
-            return 0.0, {
-                "placement": "none",
-                "transform_side": None,
-                "reason": (
-                    f"CRS differs (EPSG:{ls} vs EPSG:{rs}) but join does not "
-                    "compare geometry"
-                ),
-                "correctness_note": (
-                    f"output mixes EPSG:{ls} and EPSG:{rs} geometry columns"
-                ),
-            }
-        return 0.0, None
-    if ls is None or rs is None:
+    decision = decide_crs_transform(
+        left_crs_srid=ls,
+        right_crs_srid=rs,
+        join_kind=edge.kind,
+        caps_left=left,
+        caps_right=right,
+        est_left_rows=card_left,
+        est_right_rows=card_right,
+        allow_server=False,
+    )
+    if decision.placement == "none":
         return 0.0, {
             "placement": "none",
             "transform_side": None,
-            "reason": "CRS unknown on at least one side; no transform planned",
-            "correctness_note": "mixed/unknown CRS: geometry columns are carried as-is",
-        }
-    if ls == rs:
-        return 0.0, None
-    # 两侧分别估价（server ≈ 本地的 1/15 每行），取总变换成本最小的一侧；
-    # 平局偏 build 侧（右）：变换一次进缓存，代价低于流式探针侧。
-    cost_left = card_left * (0.1 if left.server_reprojection else 1.5)
-    cost_right = card_right * (0.1 if right.server_reprojection else 1.5)
-    if cost_right <= cost_left:
-        side, src, dst = "right", rs, ls
-        server = right.server_reprojection
-        rows = card_right
-    else:
-        side, src, dst = "left", ls, rs
-        server = left.server_reprojection
-        rows = card_left
-    if server:
-        return rows * 0.1 * _W_CRS_TRANSFORM_PER_ROW, {
-            "placement": "server",
-            "transform_side": side,
-            "reason": (
-                f"server-side ST_Transform EPSG:{src}→EPSG:{dst} on {side} "
-                "(smaller total transform cost)"
+            "reason": decision.reason,
+            **(
+                {"correctness_note": decision.correctness_note}
+                if decision.correctness_note
+                else {}
             ),
-            "from_crs": f"EPSG:{src}",
-            "to_crs": f"EPSG:{dst}",
-            "estimated_rows": rows,
         }
-    return rows * 1.5 * _W_CRS_TRANSFORM_PER_ROW, {
-        "placement": "local",
-        "transform_side": side,
-        "reason": (
-            f"local pyproj transform EPSG:{src}→EPSG:{dst} on {side} "
-            "(source cannot reproject; smaller total-cost side transformed "
-            "once into build cache)"
+    cost = (
+        decision.per_row_cost
+        * (card_left if decision.transform_side == "left" else card_right)
+        * _W_CRS_TRANSFORM_PER_ROW
+    )
+    return cost, {
+        "placement": decision.placement,
+        "transform_side": decision.transform_side,
+        "reason": decision.reason,
+        "from_crs": f"EPSG:{src_of(decision, ls, rs)}",
+        "to_crs": f"EPSG:{dst_of(decision, ls, rs)}",
+        "estimated_rows": (
+            card_left if decision.transform_side == "left" else card_right
         ),
-        "from_crs": f"EPSG:{src}",
-        "to_crs": f"EPSG:{dst}",
-        "estimated_rows": rows,
     }
+
+
+def src_of(decision: Any, ls: Optional[int], rs: Optional[int]) -> Optional[int]:
+    """变换侧的源 SRID（decision transform_side → srid）。"""
+    if decision.transform_side == "left":
+        return ls
+    return rs
+
+
+def dst_of(decision: Any, ls: Optional[int], rs: Optional[int]) -> Optional[int]:
+    if decision.transform_side == "left":
+        return rs
+    return ls
 
 
 def _extent_overlap_ratio(left: SourceFacts, right: SourceFacts) -> Optional[float]:
@@ -287,6 +286,7 @@ def _scan_tree(src: SourceFacts, ctx: EnumerationContext) -> LogicalScan:
         source_id=src.source_id,
         dataset_id=src.dataset_id,
         where=src.where if getattr(src.where, "op", None) else None,
+        where_raw=src.where_raw,
         bbox=list(ctx.bbox) if ctx.bbox else None,
         fields=list(src.fields) if src.fields else None,
         fetch_limit=ctx.limit,
@@ -350,6 +350,16 @@ def enumerate_federation(ctx: EnumerationContext) -> EnumeratedPlan:
 
     if any(not e.id_addressed for e in ctx.joins):
         return _enumerate_fixed_chain(ctx, by_id, id_order)
+    if all(s.estimated_rows is None for s in ctx.sources):
+        # 无任何成本信号 → 保持 given 序（V5 默认行为逐位一致：重排会翻转
+        # __right__ 的归属侧，属用户可见形状变化 —— 没有测量背书不做）。
+        plan = _enumerate_fixed_chain(ctx, by_id, id_order)
+        plan.warnings.insert(
+            0,
+            "no estimated_rows hints available; order follows the given "
+            "sequence (estimates are assumptions)",
+        )
+        return plan
 
     id_edges: Dict[str, JoinEdge] = {}
     for e in ctx.joins:
@@ -530,10 +540,26 @@ def _enumerate_fixed_chain(
         cpu = new_card * _W_LOCAL_CPU_PER_ROW
         build = right_rows * _W_BUILD_PER_ROW
         cost = cost + right_bytes + cpu + build + crs_cost
+        left_tree: LogicalNode = tree
+        right_tree: LogicalNode = right_cand.tree
+        if (
+            crs_meta
+            and crs_meta.get("placement") == "local"
+            and crs_meta.get("transform_side")
+        ):
+            reproj_kwargs = {
+                "from_crs": crs_meta["from_crs"],
+                "to_crs": crs_meta["to_crs"],
+                "placement": "local",
+            }
+            if crs_meta["transform_side"] == "left":
+                left_tree = LogicalReproject(input=left_tree, **reproj_kwargs)
+            else:
+                right_tree = LogicalReproject(input=right_tree, **reproj_kwargs)
         tree = LogicalJoin(
             join_kind=edge.kind,
-            left=tree,
-            right=right_cand.tree,
+            left=left_tree,
+            right=right_tree,
             join_field_left=edge.join_field_left,
             join_field_right=edge.join_field_right,
             spatial_op=edge.spatial_op if edge.kind == "spatial_join" else None,
@@ -611,12 +637,25 @@ def _join_candidate(
         },
     }
     transforms = list(left.crs_transforms) + list(right.crs_transforms)
+    left_tree, right_tree = left.tree, right.tree
     if crs_meta:
         transforms.append(crs_meta)
+        # 本地变换成为显式计划节点：executor 在 build/探针缓存构建前
+        # 一次性变换该侧几何（physical.transform_rows_geometry）。
+        if crs_meta.get("placement") == "local" and crs_meta.get("transform_side"):
+            reproj_kwargs = {
+                "from_crs": crs_meta["from_crs"],
+                "to_crs": crs_meta["to_crs"],
+                "placement": "local",
+            }
+            if crs_meta["transform_side"] == "left":
+                left_tree = LogicalReproject(input=left_tree, **reproj_kwargs)
+            else:
+                right_tree = LogicalReproject(input=right_tree, **reproj_kwargs)
     tree = LogicalJoin(
         join_kind=eff.kind,
-        left=left.tree,
-        right=right.tree,
+        left=left_tree,
+        right=right_tree,
         join_field_left=eff.join_field_left,
         join_field_right=eff.join_field_right,
         spatial_op=eff.spatial_op if eff.kind == "spatial_join" else None,

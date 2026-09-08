@@ -144,7 +144,7 @@ def test_alternatives_bounded():
 # ── CRS / 过滤感知 ─────────────────────────────────────────────────────────
 
 
-def test_mixed_crs_spatial_join_records_transform():
+def test_mixed_crs_spatial_join_records_local_transform():
     ctx = EnumerationContext(
         sources=[
             _src("a", rows=10, crs="EPSG:4326", extent=[0, 0, 1, 1]),
@@ -162,8 +162,12 @@ def test_mixed_crs_spatial_join_records_transform():
     out = enumerate_federation(ctx)
     assert out.crs_transforms, "混 CRS 空间跳必须产出变换决策"
     dec = out.crs_transforms[0]
-    assert dec["placement"] == "server"
-    assert "3857" in dec["reason"] or "4326" in dec["reason"]
+    # V6 只做本地变换决策（server placement 是 output.crs 管道的 follow-up）
+    assert dec["placement"] == "local"
+    assert dec["transform_side"] == "left", "较小总成本侧（a，10 行）被变换"
+    assert dec["from_crs"] == "EPSG:4326" and dec["to_crs"] == "EPSG:3857"
+    # 变换进入计划树（executor 据此执行一次性变换）
+    assert "reproject" in str(out.tree.canonical_dict())
 
 
 def test_scan_filter_selectivity_shrinks_estimate():

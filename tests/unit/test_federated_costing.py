@@ -154,7 +154,9 @@ def test_unknown_crs_honest_no_transform():
     assert d.correctness_note is not None
 
 
-def test_server_placement_on_smaller_side():
+def test_server_placement_opt_in_only():
+    # allow_server=False（当前生产默认）：server placement 不产 —— 需要跨
+    # adapter 的 output.crs 管道（deferred），计划绝不声称执行不了的 placement
     d = decide_crs_transform(
         left_crs_srid=4326,
         right_crs_srid=3857,
@@ -163,6 +165,22 @@ def test_server_placement_on_smaller_side():
         caps_right=_Caps(server_reprojection=True),
         est_left_rows=1000,
         est_right_rows=10,
+    )
+    assert d.placement == "local"
+    assert d.transform_side == "right"
+
+
+def test_server_placement_when_allowed():
+    # allow_server=True：server 每行成本 ≈ 本地 1/15 → 大侧 server 胜过小侧本地
+    d = decide_crs_transform(
+        left_crs_srid=4326,
+        right_crs_srid=3857,
+        join_kind="spatial_join",
+        caps_left=_Caps(),
+        caps_right=_Caps(server_reprojection=True),
+        est_left_rows=1000,
+        est_right_rows=10,
+        allow_server=True,
     )
     assert d.placement == "server"
     assert d.transform_side == "right"

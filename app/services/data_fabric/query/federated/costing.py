@@ -210,12 +210,16 @@ def decide_crs_transform(
     est_right_rows: Optional[int],
     stats_left: Optional[DatasetStatistics] = None,
     stats_right: Optional[DatasetStatistics] = None,
+    allow_server: bool = False,
 ) -> CrsTransformDecision:
     """join 两侧 CRS 对齐决策：两侧分别估价，取总变换成本最小的一侧。
 
     - 任一 CRS 未知 → 不变换（诚实 unknown；V5 语义：未知 CRS 视为兼容）；
-    - 空间 join 且 CRS 不同 → 必须对齐；server 变换每行成本 ≈ 本地的 1/15，
-      因此较大侧的 server 变换可以胜过较小侧的本地变换；
+    - 空间 join 且 CRS 不同 → 必须对齐。server 变换每行成本 ≈ 本地的
+      1/15，但 server placement 需要跨 adapter 的 output.crs 下推管道
+      （legacy QuerySpec 无该字段）—— ``allow_server=False``（当前默认）
+      时只产本地变换决策；server 是显式 follow-up（ADR-0118 Known
+      Limitations），计划绝不声称执行不了的 placement；
     - 属性 join 不比较几何 → 只记录 correctness note（几何列随行输出，
       结果 CRS 混合如实披露），不做变换。
     """
@@ -236,20 +240,20 @@ def decide_crs_transform(
             placement="none", transform_side=None, reason="CRS already aligned"
         )
 
-    # 两侧分别估价（server 优先/本地兜底），取总变换成本最小的一侧；
-    # 平局偏 build 侧（右）：链式执行里右侧变换一次进缓存，代价低于流式探针侧。
+    # 两侧分别估价（allow_server 时 server 每行成本 ≈ 本地 1/15），
+    # 取总变换成本最小的一侧；平局偏 build 侧（右）。
     rows_left = est_left_rows if est_left_rows is not None else _UNESTIMATED_ROWS
     rows_right = est_right_rows if est_right_rows is not None else _UNESTIMATED_ROWS
     complexity_left = max(1.0, _complexity(stats_left)) / _COMPLEXITY_NORM_VERTICES
     complexity_right = max(1.0, _complexity(stats_right)) / _COMPLEXITY_NORM_VERTICES
     cost_left = rows_left * (
         _W_SERVER_REPROJECT_PER_ROW
-        if getattr(caps_left, "server_reprojection", False)
+        if (allow_server and getattr(caps_left, "server_reprojection", False))
         else _W_LOCAL_REPROJECT_PER_ROW * complexity_left
     )
     cost_right = rows_right * (
         _W_SERVER_REPROJECT_PER_ROW
-        if getattr(caps_right, "server_reprojection", False)
+        if (allow_server and getattr(caps_right, "server_reprojection", False))
         else _W_LOCAL_REPROJECT_PER_ROW * complexity_right
     )
     if cost_right <= cost_left:
@@ -272,7 +276,7 @@ def decide_crs_transform(
                 )
             ),
         )
-    server = getattr(caps, "server_reprojection", False)
+    server = allow_server and getattr(caps, "server_reprojection", False)
     per_row = (
         _W_SERVER_REPROJECT_PER_ROW
         if server
