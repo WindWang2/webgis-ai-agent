@@ -15,7 +15,6 @@ from app.lib.gis.scientific_errors import DegenerateData, InsufficientSamples
 from app.lib.geo_analysis.kriging import fit_variogram
 from app.lib.geo_analysis.kriging_st import (
     ST_MIN_SAMPLES,
-    STModel,
     fit_st_model,
     st_covariance,
     st_kriging,

@@ -260,17 +260,83 @@ def st_kriging_surface(
     样本须带 ``time_field``（epoch/相对**秒**）；CRS 语义与 IDW/SGS 同
     （自动米制工作帧）。
     """
+    import geopandas as gpd
+    import h3
     import pandas as pd
 
-    from app.lib.geo_analysis.interpolation import _metric_samples_and_target_grid
-
-    (
-        lonlat, values, pts_metric, cell_metric, target_cells,
-        working_crs, bbox,
-    ) = _metric_samples_and_target_grid(
-        points_geojson, value_field, resolution,
-        purpose="时空克里金", label="时空克里金", log_prefix="st_kriging",
+    from app.lib.geo_analysis.interpolation import (
+        _pick_metric_crs,
+        _target_cells_for_samples,
+        _validate_resolution,
     )
+    from app.lib.geo_processor.core import safe_parse, to_feature_collection
+
+    # review R1-C3/R2-C1：时间戳必须与样本**同一循环**提取 —— preamble 的
+    # _parse_point_values 会丢弃非有限值并聚合重复坐标（不保基数），第三次
+    # 遍历对齐会错位/越界。此处自解析（value+time 同循环），网格仍复用
+    # 共享机器（_pick_metric_crs/_target_cells_for_samples）。
+    _validate_resolution(resolution)
+    parsed = safe_parse(points_geojson)
+    if parsed is None:
+        raise ValueError("无法解析输入点要素 GeoJSON")
+    features = to_feature_collection(parsed).get("features", [])
+    lons: list[float] = []
+    lats: list[float] = []
+    vals: list[Any] = []
+    tms: list[Any] = []
+    for f in features:
+        if not isinstance(f, dict):
+            continue
+        geom = f.get("geometry")
+        if not isinstance(geom, dict) or geom.get("type") != "Point":
+            continue
+        props = f.get("properties") or {}
+        if value_field not in props or time_field not in props:
+            continue
+        coords = geom.get("coordinates") or []
+        if len(coords) < 2:
+            continue
+        lons.append(float(coords[0]))
+        lats.append(float(coords[1]))
+        vals.append(props[value_field])
+        tms.append(props[time_field])
+    if not lons:
+        raise ValueError(
+            f"没有可用于时空克里金的点要素（需 Point 几何且含字段 "
+            f"'{value_field}'/'{time_field}'）")
+    v_arr = pd.to_numeric(pd.Series(vals), errors="coerce").to_numpy(dtype=float)
+    t_arr = pd.to_numeric(pd.Series(tms), errors="coerce").to_numpy(dtype=float)
+    ok = np.isfinite(v_arr) & np.isfinite(t_arr)
+    lonlat = np.column_stack([np.asarray(lons, float), np.asarray(lats, float)])[ok]
+    values = v_arr[ok]
+    times = t_arr[ok]
+    if len(values) < ST_MIN_SAMPLES or float(np.ptp(times)) == 0.0:
+        raise DegenerateData(
+            "时空样本时间维不足（需 ≥12 且跨多时相，秒制时间戳）",
+            correction_hint="检查 time_field 是否为 epoch/相对秒，且覆盖多个时刻")
+
+    working_crs = _pick_metric_crs(lonlat)
+    pts_gdf = gpd.GeoDataFrame(
+        {"v": values},
+        geometry=gpd.points_from_xy(lonlat[:, 0], lonlat[:, 1]),
+        crs="EPSG:4326",
+    ).to_crs(working_crs)
+    pts_metric = np.column_stack(
+        (pts_gdf.geometry.x.values, pts_gdf.geometry.y.values)
+    )
+    target_cells, bbox = _target_cells_for_samples(
+        lonlat, resolution, label="时空克里金")
+    if target_cells:
+        cell_latlng = np.array([h3.cell_to_latlng(c) for c in target_cells])
+        cell_gdf = gpd.GeoDataFrame(
+            geometry=gpd.points_from_xy(cell_latlng[:, 1], cell_latlng[:, 0]),
+            crs="EPSG:4326",
+        ).to_crs(working_crs)
+        cell_metric = np.column_stack(
+            (cell_gdf.geometry.x.values, cell_gdf.geometry.y.values)
+        )
+    else:
+        cell_metric = np.empty((0, 2), dtype=float)
     metadata: dict[str, Any] = {
         "algorithm": "interpolation.st_kriging",
         "value_field": value_field,
@@ -285,34 +351,6 @@ def st_kriging_surface(
         metadata["cell_count"] = 0
         return {"records": [], "metadata": metadata}
 
-    from app.lib.geo_processor.core import safe_parse, to_feature_collection
-
-    parsed = safe_parse(points_geojson)
-    features = to_feature_collection(parsed).get("features", [])
-    raw_t: list[Any] = []
-    for f in features:
-        if not isinstance(f, dict):
-            continue
-        geom = f.get("geometry")
-        if not isinstance(geom, dict) or geom.get("type") != "Point":
-            continue
-        props = f.get("properties") or {}
-        if value_field not in props:
-            continue
-        coords = geom.get("coordinates") or []
-        if len(coords) < 2:
-            continue
-        raw_t.append(props.get(time_field))
-    times = pd.to_numeric(pd.Series(raw_t), errors="coerce").to_numpy(dtype=float)
-    ok = np.isfinite(times)
-    # 与 preamble 的样本顺序对齐：_parse_point_values 保序，ok 过滤两端同步
-    values, pts_metric = values[ok], pts_metric[ok]
-    times = times[ok]
-    if len(times) < ST_MIN_SAMPLES or float(np.ptp(times)) == 0.0:
-        raise DegenerateData(
-            "时空样本时间维不足（需 ≥12 且跨多时相，秒制时间戳）",
-            correction_hint="检查 time_field 是否为 epoch/相对秒，且覆盖多个时刻")
-
     st = fit_st_model(
         pts_metric=pts_metric, values=values,
         temporal_range_sec=temporal_range_sec, model=model)
@@ -322,6 +360,8 @@ def st_kriging_surface(
         k=neighbors, time_window_sec=time_window_sec,
     )
     metadata["st_model"] = st.params()
+    metadata["effective_time_window_sec"] = (
+        float(time_window_sec) if time_window_sec is not None else None)
     metadata["degraded_cells"] = result["degraded_cells"]
     metadata["variance_range"] = [
         round(float(result["variances"].min()), 6),

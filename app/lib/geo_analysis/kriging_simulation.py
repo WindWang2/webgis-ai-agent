@@ -48,7 +48,9 @@ logger = logging.getLogger(__name__)
 
 # ── resource ceilings（descriptor resource_envelope 对齐）─────────────────
 SGS_MAX_REALIZATIONS = 2_000            # 实现数上限
-SGS_MAX_TARGETS = 4_000_000             # 目标格点上限（与 NN/Sibson 同级）
+# review R2-M7：逐节点 Python 条件循环（O(k³)/节点 + chunk 树重建）的
+# 可操作规模上限 —— 4M 格点在纯 Python 下不可完成，收紧到 20 万。
+SGS_MAX_TARGETS = 200_000               # 目标格点上限
 SGS_MAX_ENSEMBLE_CELLS = 20_000_000     # n_realizations × n_targets 硬顶
 SGS_SIM_CHUNK = 1_024                   # 模拟节点分块（条件树重建节奏）
 
@@ -73,6 +75,7 @@ class SGSEnsemble:
     transform_info: dict                    # 变换状态摘要（不含完整 ECDF）
     disclosures: list[str]
     realizations: Optional[np.ndarray] = None  # (R, N) 原始值域
+    n_degenerate_nodes: int = 0             # 病态邻域回退计数（review R2-M3）
 
     def to_dict(self) -> dict:
         def rng(a: np.ndarray) -> list[float]:
@@ -89,6 +92,7 @@ class SGSEnsemble:
             "p90_range": rng(self.p90),
             "variogram": self.variogram.params(),
             "transform": dict(self.transform_info),
+            "n_degenerate_nodes": int(self.n_degenerate_nodes),
             "disclosures": list(self.disclosures),
         }
 
@@ -184,6 +188,7 @@ def sequential_gaussian_simulation(
                                    nu=g.nu, structures=structures)
 
     realizations = np.empty((n_realizations, n_t), dtype=float)
+    n_degenerate_nodes = 0
     for r in cancellable(range(n_realizations), every=1):
         path = rng.permutation(n_t)
         sim_values = np.empty(n_t, dtype=float)   # normal-score 域
@@ -241,8 +246,9 @@ def sequential_gaussian_simulation(
                     var = max(total_sill - float(sol @ rhs), 0.0)
                     sim_values[t_idx] = pred + np.sqrt(var) * rng.standard_normal()
                 except np.linalg.LinAlgError:
-                    # 病态邻域：条件值经验分布近似抽样（不静默——实现级
-                    # 抖动即其披露，同 OK 的邻域均值回退口径）
+                    # 病态邻域：条件值经验分布近似抽样（counted，从不静默
+                    # —— review R2-M3：回退频次进入 disclosures/metadata）
+                    n_degenerate_nodes += 1
                     sim_values[t_idx] = (
                         float(np.mean(cond_vals))
                         + float(np.std(cond_vals) + 1e-9) * rng.standard_normal())
@@ -256,6 +262,11 @@ def sequential_gaussian_simulation(
         f"{SGS_SIM_CHUNK} nodes) — ensemble statistics are Monte Carlo "
         "estimates, not exact distributions",
     ]
+    if n_degenerate_nodes:
+        disclosures.append(
+            f"{n_degenerate_nodes} node draws fell back to empirical "
+            "sampling of the conditioning values (ill-conditioned systems, "
+            "counted)")
 
     mean = realizations.mean(axis=0)
     std = (realizations.std(axis=0, ddof=1) if n_realizations > 1
@@ -272,6 +283,7 @@ def sequential_gaussian_simulation(
             "domain": "normal_score (rank-gaussian)",
         },
         disclosures=disclosures,
+        n_degenerate_nodes=int(n_degenerate_nodes),
         realizations=(realizations if return_realizations else None),
     )
 

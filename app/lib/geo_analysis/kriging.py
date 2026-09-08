@@ -2327,7 +2327,7 @@ def fit_nested_variogram(
     structures: list = []
     global_nugget = 0.0
     # 短程→长程的逐结构**残差**拟合（标准实践）：第一结构（spherical）
-    # 在近 origin 的滞后 bin（前 1/4，≥3 个 bin）上拟合，变程上界钳到
+    # 在近 origin 的滞后 bin（前 1/8，≥3 个 bin）上拟合，变程上界钳到
     # 2×该窗口最大滞后 —— 短程结构由原点行为识别；随后从全 lag 轴的
     # 残差中扣除已拟合结构的纯形状，下一结构（exponential/gaussian）在
     # 剩余残差上拟合长程。全局 nugget 取第一结构的 nugget。确定性、
@@ -2804,6 +2804,7 @@ def kriging_interpolation(
         drift_coerced = pd.to_numeric(pd.Series(raw_drift), errors="coerce")
         drift_vals = drift_coerced.to_numpy(dtype=float)
         drift_missing = ~np.isfinite(drift_vals)
+        n_drift_dropped = int(drift_missing.sum())
         if drift_missing.any():
             # 漂移缺失的样本整体剔除（value/drift/坐标对齐）；计数披露
             keep_mask = ~drift_missing
@@ -2832,7 +2833,15 @@ def kriging_interpolation(
         )
 
     lonlat = np.column_stack([np.asarray(lons, float), np.asarray(lats, float)])
-    lonlat, vals = _aggregate_duplicates(lonlat, vals)
+    lonlat_raw = lonlat
+    if drift_vals is not None:
+        # review R2-minor8：重复坐标聚合必须同机覆盖 drift 列（否则形状
+        # 失配）。_aggregate_duplicates 只吃 1D 值 —— 用同一 lonlat 调两次
+        # （分组确定性 → 两次 keep-set/顺序完全一致）。
+        lonlat, vals = _aggregate_duplicates(lonlat, vals)
+        _, drift_vals = _aggregate_duplicates(lonlat_raw, drift_vals)
+    else:
+        lonlat, vals = _aggregate_duplicates(lonlat, vals)
     if method == "universal" and len(vals) < UK_MIN_SAMPLES:
         raise InsufficientSamples(
             f"泛克里金（universal kriging）至少需要 {UK_MIN_SAMPLES} 个去重后的采样点"
@@ -3080,6 +3089,10 @@ def kriging_interpolation(
         metadata["drift"] = {
             "field": drift_field,
             "target_approximation": "idw_k5_power2 (regression_kriging 同款近似语义)",
+            "dropped_samples": n_drift_dropped,
+            "variogram_scope": (
+                "fitted on raw values（趋势计入短程结构——KED 残差拟合未实现，"
+                "已披露）"),
         }
     if cv_unsupported:
         metadata.setdefault("disclosures", []).append(

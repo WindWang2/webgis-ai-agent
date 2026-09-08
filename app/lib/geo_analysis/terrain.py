@@ -1036,7 +1036,7 @@ def fill_depressions(
     n_cells = h * w
     _pop_count = 0
     while heap:
-        # science-v4 W10：堆循环取消检查点（64K 弹出粒度，>10M 像元可中断）
+        # science-v4 W10：堆循环取消检查点（8192 弹出粒度，>10M 像元可中断）
         _pop_count += 1
         if _pop_count % 8192 == 0:
             checkpoint()
@@ -1517,6 +1517,7 @@ def breach_depressions(
     fallback_filled_cells = 0
     max_depth_hit = 0.0
     for pit in np.nonzero(pit_mask.ravel())[0]:
+        checkpoint()  # science-v4 review R1-M3：逐洼地取消点
         # epsilon 填面上接收者链 pit → 出口（离开洼地即出口）
         path = [int(pit)]
         cur = int(pit)
@@ -1533,17 +1534,40 @@ def breach_depressions(
         # 路径切沟：pit→出口方向严格**下降**（切沟低于 pit 高程 − k·eps），
         # 使 pit 及沿途洼地获得通往边界的下降链；近 pit 像元原高程已低于
         # 切沟线则保持原高程（min 语义 → 最小开挖量）。
+        # review R1-M2：出口后继续延伸切沟直至**接到低于沟线的地形**（或
+        # 步数上限）—— 否则沟口可成为新局部最小（「汇搬移」）。
         chain = zflat[path[0]]
         depths = []
         too_deep = False
+        # 延伸段：从出口向下游（沿接收者链）逐格 −eps，直到地形低于沟线
+        ext_cells = []
+        cc = int(path[-1])
+        ext_chain = chain
+        ext_guard = 4 * (h + w)
+        while rvalid[cc] and ext_guard > 0:
+            nxt = int(flat[cc])
+            if nxt == cc or nxt in seen:
+                break
+            ext_chain = ext_chain - eps
+            ext_guard -= 1
+            if zflat[nxt] <= ext_chain:
+                break
+            ext_cells.append((nxt, min(zflat[nxt], ext_chain), zflat[nxt]))
+            cc = nxt
         for k_i in range(1, len(path)):
-            chain = chain - eps
+            chain_k = zflat[path[0]] - k_i * eps
             orig = zflat[path[k_i]]
-            new_z = min(orig, chain)
+            new_z = min(orig, chain_k)
             if max_breach_depth is not None and (orig - new_z) > max_breach_depth:
                 too_deep = True
                 break
             depths.append((path[k_i], new_z, orig))
+        if not too_deep:
+            for cell_i, new_z, orig_z in ext_cells:
+                if max_breach_depth is not None and (orig_z - new_z) > max_breach_depth:
+                    too_deep = True
+                    break
+                depths.append((cell_i, new_z, orig_z))
         if too_deep:
             # 超深回退填洼（诚实计数）：该洼地用填后表面
             for cell_i in path:
@@ -1609,17 +1633,23 @@ def hand(
     hd = hand_out.ravel()
     vflat = valid.ravel()
     # 升序高程处理（接收者严格更低 → **先**结算，望远镜求和成立）
+    _n = 0
     for parent in _topology_order(z, valid, descending=False).tolist():
+        # science-v4 review R1：O(N) 主循环取消检查点（64K 粒度）
+        _n += 1
+        if _n % 65536 == 0:
+            checkpoint()
         if not vflat[parent]:
             continue
         if sm[parent]:
             hd[parent] = 0.0
             continue
-        if flat_valid[parent]:
-            recv = int(flat_recv[parent])
-            if np.isfinite(hd[recv]):
-                hd[parent] = hd[recv] + (zflat[parent] - zflat[recv])
-                continue
+        # receiver 哨兵 −1（边界排出/无路由）必须显式守卫 —— Python 负索引
+        # 会静默读到格尾像元（review R1-C1）。
+        recv = int(flat_recv[parent]) if flat_valid[parent] else -1
+        if recv >= 0 and np.isfinite(hd[recv]):
+            hd[parent] = hd[recv] + (zflat[parent] - zflat[recv])
+            continue
         # 边界排出且未遇河网（或上游未解析）：NaN（诚实缺省）
     unresolvable = int((vflat & ~sm & ~np.isfinite(hd)).sum())
     meta = _meta_base(
@@ -1663,7 +1693,12 @@ def shreve_magnitude(
     streams = np.isfinite(acc) & (acc >= float(threshold)) & valid
     magnitude = np.zeros((h, w), dtype=np.int32)
     children, parents = _child_table(receiver)
+    _n = 0
     for parent in _topology_order(z, valid & streams, descending=True).tolist():
+        # science-v4 review R1-M3：主循环取消检查点
+        _n += 1
+        if _n % 65536 == 0:
+            checkpoint()
         lo = np.searchsorted(parents, parent, side="left")
         hi = np.searchsorted(parents, parent, side="right")
         child_mags = magnitude.ravel()[children[lo:hi]]
@@ -1747,6 +1782,7 @@ def pfafstetter_codes(
     cur = out_flat
     seen = {cur}
     while True:
+        checkpoint()  # science-v4 review R1-M3：干流上溯取消点
         ups = [c for c in upstream_stream_cells(cur) if c not in seen]
         if not ups:
             break
@@ -2856,8 +2892,8 @@ def hypsometry(
     """高程面积曲线（hypsometric curve）与高程积分（Strahler 1952）。
 
     曲线 = (归一化高程 e, 高于 e 的面积占比 a(e))，n_levels 级确定性直方；
-    高程积分 HI = ∫a de（矩形 = 1：侵蚀循环阶段的机器可读代理——
-    HI≈1.5·... 口径为 [0,1] 矩形归一）。返回 ``(curve, meta)``。
+    高程积分 HI = ∫a de（矩形 = 1，值域 [0,1]；Strahler 1952 侵蚀循环
+    阶段代理）。返回 ``(curve, meta)``。
     """
     z, valid = _prepare(dem, nodata)
     h, w = z.shape
@@ -2873,7 +2909,7 @@ def hypsometry(
         meta = _meta_base(
             "terrain.hypsometry", valid,
             method="constant surface (degenerate): integral undefined → 0.0",
-            hypsometric_integral=0.0, n_levels=[zmin, zmax],
+            hypsometric_integral=0.0, n_levels=2,
             elevation_range=[zmin, zmax], degenerate=True,
         )
         return curve, meta
@@ -2883,8 +2919,10 @@ def hypsometry(
     mids = (edges[:-1] + edges[1:]) / 2.0
     above = np.cumsum(counts[::-1])[::-1] / total  # a(e_mid)：e 以上占比
     elev_norm = (mids - zmin) / (zmax - zmin)
-    # HI = ∫₀¹ a(e) de（梯形；a 已随 e 增单调降至 ~0）
-    hi = float(np.trapezoid(above, elev_norm))
+    # HI = ∫₀¹ a(e) de（梯形；a 已随 e 增单调降至 ~0）；numpy 1.x 无
+    # trapezoid（2.0 改名）—— 兼容回退
+    _trapz = getattr(np, "trapezoid", None) or np.trapz
+    hi = float(_trapz(above, elev_norm))
     curve = (elev_norm, above)
     meta = _meta_base(
         "terrain.hypsometry", valid,

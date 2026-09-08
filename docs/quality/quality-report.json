@@ -22,7 +22,7 @@
     "algorithms": 192,
     "artifact_types": 21,
     "capabilities": 123,
-    "findings": 253,
+    "findings": 252,
     "recipes": 164,
     "tools": 295
    },
@@ -31,9 +31,9 @@
     "ALGO_NO_CONFORMANCE": 20,
     "CAPABILITY_NO_CONFORMANCE": 16,
     "TOOL_DESCRIPTOR_INCOMPLETE": 155,
-    "TOOL_UNTESTED": 33
+    "TOOL_UNTESTED": 32
    },
-   "fingerprint": "3e41c014106f8f9be492c867afccb67a8f41d9cd69a850dea0c92a416a37ec6b",
+   "fingerprint": "c19ad2858b0ca9417bae690c1aa9dc15153503cfd0a77e5fa2806e02ec3d46b0",
    "gate": {
     "pass": true,
     "total": 295

@@ -423,7 +423,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                                notes="全量 heapq Priority-Flood（Barnes 2014）——reference 变体"),
                 BackendVariant(id="chunked_band", backend="numpy", deterministic=True,
                                approximation_class="approximate",
-                               notes="列带分块 + 邻带裁决（heap 峰值 O(带宽×H)）；seam 可欠/过填（以参考最大填深为界，parity conformance 钉死）"),
+                               notes="列带分块 + 邻带裁决（heap 峰值 O(带宽×H)）；seam 可欠/过填（以参考最大填深为界，parity conformance 钉死）；lib API opt-in（fill_depressions_chunked），非 runtime dispatch"),
             ],
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.sink_fill", name="Priority-Flood 填洼", category="terrain_analysis",

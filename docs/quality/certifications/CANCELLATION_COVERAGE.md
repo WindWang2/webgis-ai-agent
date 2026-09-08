@@ -24,7 +24,7 @@
 | app/lib/geo_analysis/interpolation_compare.py | 0 | 4 | no-checkpoints |
 | app/lib/geo_analysis/kriging.py | 9 | 85 | certified |
 | app/lib/geo_analysis/kriging_simulation.py | 1 | 5 | certified |
-| app/lib/geo_analysis/kriging_st.py | 1 | 4 | certified |
+| app/lib/geo_analysis/kriging_st.py | 1 | 5 | certified |
 | app/lib/geo_analysis/network.py | 3 | 30 | certified |
 | app/lib/geo_analysis/point_pattern.py | 6 | 76 | certified |
 | app/lib/geo_analysis/raster_change.py | 1 | 4 | certified |
@@ -47,7 +47,7 @@
 | app/lib/geo_analysis/spectral.py | 0 | 8 | no-checkpoints |
 | app/lib/geo_analysis/statistics.py | 8 | 117 | certified |
 | app/lib/geo_analysis/tasseled_cap.py | 0 | 10 | no-checkpoints |
-| app/lib/geo_analysis/terrain.py | 5 | 87 | certified |
+| app/lib/geo_analysis/terrain.py | 9 | 88 | certified |
 | app/lib/geo_analysis/tin_interpolation.py | 0 | 21 | no-checkpoints |
 | app/lib/geo_analysis/trend_surface.py | 0 | 11 | no-checkpoints |
 | app/lib/geo_raster/__init__.py | 0 | 1 | no-checkpoints |

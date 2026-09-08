@@ -6484,7 +6484,7 @@
   "algorithms": 192,
   "artifact_types": 21,
   "capabilities": 123,
-  "findings": 253,
+  "findings": 252,
   "recipes": 164,
   "tools": 295
  },
@@ -7891,12 +7891,6 @@
    "code": "TOOL_UNTESTED",
    "detail": "registered tool without any static test reference",
    "severity": "medium",
-   "subject": "hydrology_v4_analysis"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "severity": "medium",
    "subject": "ica_transform"
   },
   {
@@ -8008,7 +8002,7 @@
    "subject": "webgis_world_state"
   }
  ],
- "fingerprint": "3e41c014106f8f9be492c867afccb67a8f41d9cd69a850dea0c92a416a37ec6b",
+ "fingerprint": "c19ad2858b0ca9417bae690c1aa9dc15153503cfd0a77e5fa2806e02ec3d46b0",
  "gate": {
   "fields": {
    "capabilities": {
@@ -10937,9 +10931,6 @@
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "slow",
    "memory_class": "heavy",
    "name": "hydrology_v4_analysis",
@@ -10956,7 +10947,9 @@
     "hypsometry",
     "solar"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/lib/test_hydrology_v4.py"
+   ],
    "tier": 2
   },
   {

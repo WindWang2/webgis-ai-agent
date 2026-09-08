@@ -47,7 +47,7 @@ def test_breach_removes_internal_sinks_with_less_work_than_fill():
     assert bm["carved_volume"] < fm["filled_volume"]
     # flow consistency：切沟面上洼地获得下降链（D8 接收者覆盖率不低于填面）
     d8b, _ = d8_flow(breached, CELL)
-    valid_b = d8b["valid"]
+    d8b["valid"]
     routing_b = float(d8b["valid"].sum())
     assert routing_b > 0
     # 切沟没有把非洼地改高（只降不升）
@@ -63,7 +63,6 @@ def test_breach_max_depth_fallback_to_fill():
 def test_hand_zero_on_streams_and_finite_offstream():
     z = _basin()
     hand_arr, hm = hand(z, CELL, stream_threshold=200)
-    assert hm["unresolvable_cells"] == 0
     filled, _ = fill_depressions(z, CELL)
     d8, _ = d8_flow(filled, CELL)
     acc, _ = flow_accumulation(d8)
@@ -72,6 +71,11 @@ def test_hand_zero_on_streams_and_finite_offstream():
     off = (~streams) & np.isfinite(hand_arr)
     assert np.isfinite(hand_arr[off]).all()
     assert float(np.nanmax(hand_arr)) > 0.0
+    # review R1-C1 回归：receiver 哨兵 −1 必须走 NaN 通道（负索引会静默
+    # 产出错误值——包括负 HAND）
+    assert not (hand_arr < 0).any()
+    # 未解析 = 下游链离开网格仍未遇河网的像元（诚实 NaN，计数一致）
+    assert hm["unresolvable_cells"] == int((~streams & ~np.isfinite(hand_arr)).sum())
 
 
 def test_shreve_sums_upstream_magnitudes():
@@ -206,3 +210,40 @@ def test_terrain_cancellation_checkpoints_reachable():
             fill_depressions_chunked(z, CELL, n_bands=4)
     finally:
         CURRENT_TOKEN.reset(ctx)
+
+
+def test_hydrology_tool_hypsometry_branch(tmp_path, monkeypatch):
+    """review R1-C2 回归：工具 hypsometry 分支端到端（此前 meta 误用必崩）。
+
+    raster_path 走 validate_data_path 安全闸 —— 测试把 DATA_DIR 指向 tmp。
+    """
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from app.tools.terrain_analysis import ToolRegistry, register_terrain_tools
+
+    monkeypatch.setattr("app.utils.path.validate_data_path.__defaults__",
+                        (str(tmp_path),))
+    z = _basin()
+    path = tmp_path / "dem.tif"
+    with rasterio.open(
+        path, "w", driver="GTiff", width=z.shape[1], height=z.shape[0],
+        count=1, dtype="float32", crs="EPSG:4326",
+        transform=from_origin(103.0, 30.0, 0.001, 0.001),
+    ) as dst:
+        dst.write(z.astype("float32"), 1)
+
+    registry = ToolRegistry()
+    register_terrain_tools(registry)
+    import asyncio
+
+    async def _call():
+        return await registry.dispatch("hydrology_v4_analysis", {
+            "raster_path": str(path),
+            "analysis": "hypsometry",
+        })
+
+    out = asyncio.run(_call())
+    body = out if isinstance(out, dict) else out.get("data", out)
+    assert "高程积分" in str(body.get("summary", ""))
+    assert "curve_preview" in body

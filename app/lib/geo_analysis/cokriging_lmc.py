@@ -112,8 +112,13 @@ def fit_lmc(
         raise DegenerateData(
             "LMC 某变量零方差——共区域化不可识别",
             correction_hint="零方差变量直接以常量输出，无需共克里金")
-    rho = float(np.corrcoef(z1, z2)[0, 1]) if len(z1) == len(z2) else _rho_from_pairs(
-        pts1, z1, pts2, z2)
+    # review R1-minor8：等长但点位不同时按行序配对无意义 —— 只有坐标
+    # 逐点一致才允许索引配对，否则一律最近邻配对。
+    if len(z1) == len(z2) and np.allclose(
+            np.asarray(pts1, float), np.asarray(pts2, float)):
+        rho = float(np.corrcoef(z1, z2)[0, 1])
+    else:
+        rho = _rho_from_pairs(pts1, z1, pts2, z2)
     if abs(rho) > 1.0 + _LMC_RHO_TOL:
         raise NumericalInstability(
             f"经验相关系数 |ρ|={abs(rho):.6f} 越界 (>1+1e-9)",
@@ -236,26 +241,37 @@ def cokriging_lmc(
         g = _gamma(model, h, 1.0, rng, 0.0)
         return 1.0 - g  # g(0)=0 → corr=1；h→∞ → 0
 
+    # review R1-M1：拟合 nugget 不再丢弃 —— 进入各自直接协方差的对角/
+    # 近程项；交叉 nugget 取 ρ·√(nug1·nug2)（MM1 同款一致化，PSD 保持）。
+    nug1 = max(float(lmc.variogram1.nugget), 0.0)
+    nug2 = max(float(lmc.variogram2.nugget), 0.0)
+    nug12 = abs(rho) * float(np.sqrt(nug1 * nug2))
+
     def C11(h: np.ndarray) -> np.ndarray:
-        out = np.zeros_like(np.asarray(h, dtype=float))
+        h = np.asarray(h, dtype=float)
+        out = np.zeros_like(h)
         for m, s1u, _, r in lmc.structures:
             out = out + s1u * struct_corr(m, h, r)
+        out = np.where(h <= 0.0, nug1 + out, out + nug12)
         return out
 
     def C22(h: np.ndarray) -> np.ndarray:
-        out = np.zeros_like(np.asarray(h, dtype=float))
+        h = np.asarray(h, dtype=float)
+        out = np.zeros_like(h)
         for m, _, s2u, r in lmc.structures:
             out = out + s2u * struct_corr(m, h, r)
+        out = np.where(h <= 0.0, nug2 + out, out + nug12)
         return out
 
     def C12(h: np.ndarray) -> np.ndarray:
-        out = np.zeros_like(np.asarray(h, dtype=float))
+        h = np.asarray(h, dtype=float)
+        out = np.zeros_like(h)
         for m, s1u, s2u, r in lmc.structures:
             out = out + rho * np.sqrt(max(s1u, 0.0) * max(s2u, 0.0)) \
                 * struct_corr(m, h, r)
-        return out
+        return out + nug12
 
-    C00 = float(C11(np.array([0.0]))[0])  # = Σs1u = v1 sill
+    C00 = float(C11(np.array([0.0]))[0])  # = nug1 + Σs1u
 
     for start in cancellable(range(0, n_t, 512), every=1):
         end = min(start + 512, n_t)
@@ -332,6 +348,10 @@ def cokriging_lmc(
             "exponential); B matrices PSD by construction (b12 = ρ·√(b11·b22))",
             "non-collocated secondary samples enter the full kriging system "
             "(k2 nearest to each target)",
+            "fitted nuggets retained: direct diagonals carry nug1/nug2, "
+            "cross-nugget = ρ·√(nug1·nug2) (MM1-consistent, PSD kept); "
+            "degraded counter mixes negative-variance clamps and "
+            "neighbourhood-mean fallbacks",
         ],
     )
 

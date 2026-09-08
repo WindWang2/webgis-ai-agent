@@ -291,7 +291,7 @@ GEOS 拓扑叠加（intersection/union/difference 等），纯拓扑不量度。
   - 假设：Goovaerts 1997 标准流程：normal-score 域沿随机路径逐节点条件 SK，条件集 = k 近邻原始样本 + k 近邻已模拟节点；caller_seeded：单一 PCG64 流（路径+噪声同源），同 seed 逐位复现；ensemble 统计（P10/P50/P90/std）来自真实多实现——非解析方差面
   - 局限：蒙特卡洛近似：实现数有限时分位数有采样误差（R≥100 推荐用于分位数）；高斯性假设经 normal-score 秩变换近似成立——非高斯依赖结构未建模；病态邻域回退条件值经验抽样（与 OK 邻域均值回退同口径）
   - 回退：`interpolation.kriging`→approximation
-  - 资源包络：像元硬上限 20000000
+  - 资源包络：8B/像元，要素硬上限 200000，像元硬上限 20000000
   - 取消：chunk_boundary
   - 数值容差：rtol=1e-09，atol=0
 

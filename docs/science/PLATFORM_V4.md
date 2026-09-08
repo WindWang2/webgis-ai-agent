@@ -29,7 +29,8 @@ CancellationProfile / NumericalTolerance 从字段位变成**机器可查 ratche
   任一即红（`test_science_contract_v4_ratchet.py`，48 断言）。
 - interpolation(16) + terrain(32) 全量三声明，与实现护栏常数逐一对齐。
 - `terrain.sink_fill` 首发**非插值域 backend variants**（full_heap=reference /
-  chunked_band=approximate）。
+  chunked_band=approximate；chunked_band 为 **lib API opt-in**
+  `fill_depressions_chunked`——运行时 dispatch 尚未按规模自动选择，见 limitations）。
 
 ## 错误披露（Wave 2/3）
 

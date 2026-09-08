@@ -335,10 +335,26 @@ _SEED_CONTRACTS: List[ParameterContract] = [
             description="水文/地形 V4 合并入口（breach/hand/shreve/pfafstetter/hypsometry/solar）",
             parameters=[
                 ParameterSpec(
+                    name="raster_path", type="string", required=True,
+                    description="DEM GeoTIFF 路径（data_dir 内）",
+                ),
+                ParameterSpec(
                     name="analysis", type="enum", required=True,
                     enum_values=["breach", "hand", "shreve", "pfafstetter",
                                  "hypsometry", "solar_radiation"],
                     description="分析类型",
+                ),
+                ParameterSpec(
+                    name="outlet_row", type="integer", default=-1,
+                    description="pfafstetter 出口行（数组坐标；-1=未提供）",
+                ),
+                ParameterSpec(
+                    name="outlet_col", type="integer", default=-1,
+                    description="pfafstetter 出口列",
+                ),
+                ParameterSpec(
+                    name="nodata", type="number", required=False,
+                    description="可选 nodata 覆盖值",
                 ),
                 ParameterSpec(
                     name="stream_threshold", type="number", default=1000.0,

@@ -1935,7 +1935,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                     "artifact_type": "point_feature_set",
                     "feature_count": meta.get("n_samples"),
                     "crs": "EPSG:4326",
-                    "units": "m",
+                    "units": "degrees (input); metric working frame internally",
                 },
                 transformations=[
                     "normal-score transform -> conditional SK on random path -> back-transform",
@@ -2077,7 +2077,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
     @tool(registry, name="st_kriging_surface",
            description=(
                "时空克里金：在 (x,y,t) 时空协方差下预测指定时刻的表面。"
-               "product_sum（积和，k3 取有效界上确界，按构造半正定）或 "
+               "product_sum（双时间尺度可分离正混合，按构造半正定）或 "
                "separable（可分离）模型；时间单位秒（epoch/相对秒）。"
                "\n何时用：多时相观测（站点时序、传感器网络），需要『某时刻』"
                "的连续面且时间相关性真实存在。"
@@ -2131,13 +2131,19 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             "neighbors": neighbors,
         })
         data = safe_parse_geojson(geojson)
+        # review R2-M1：工具缺省 None 会绕过 lib 的 30 天默认窗（显式 None
+        # = 无窗）—— 此处落地缺省并把生效窗写进 metadata。
+        effective_window = (
+            float(params["time_window_sec"])
+            if params["time_window_sec"] is not None
+            else 2592000.0)
         driver = _st_surface(
             data, params["value_field"], params["time_field"],
             target_time_sec=params["target_time_sec"],
             resolution=int(params["resolution"]),
             model=params["model"],
             temporal_range_sec=float(params["temporal_range_sec"]),
-            time_window_sec=params["time_window_sec"],
+            time_window_sec=effective_window,
             neighbors=int(params["neighbors"]),
         )
         meta = driver["metadata"]

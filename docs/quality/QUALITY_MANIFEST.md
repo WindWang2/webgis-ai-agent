@@ -3,13 +3,13 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**1**
-- 内容指纹：`3e41c014106f8f9b…`
+- 内容指纹：`c19ad2858b0ca941…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 295 | 262 | 188 |
+| tools | 295 | 263 | 187 |
 | algorithms | 192 | 150 | 49 |
 | capabilities | 123 | 69 | 16 |
 | artifact_types | 21 | 21 | 0 |
@@ -31,7 +31,7 @@
 
 > 静态引用 ≠ 行为覆盖。findings 只回答"哪里没有任何测试证据"，修复优先级需结合 02-coverage-risk-map 的风险分级。
 
-### TOOL_UNTESTED（33）
+### TOOL_UNTESTED（32）
 
 - `apply_layer_style`（medium）— registered tool without any static test reference
 - `cancel_execution_run`（medium）— registered tool without any static test reference
@@ -46,7 +46,6 @@
 - `geary_c`（medium）— registered tool without any static test reference
 - `get_execution_run`（medium）— registered tool without any static test reference
 - `get_lineage`（medium）— registered tool without any static test reference
-- `hydrology_v4_analysis`（medium）— registered tool without any static test reference
 - `ica_transform`（medium）— registered tool without any static test reference
 - `interpolation_model_compare`（medium）— registered tool without any static test reference
 - `list_workspace_snapshots`（medium）— registered tool without any static test reference

@@ -72,6 +72,7 @@ class GeometryRepairReport:
             "repaired": self.repaired,
             "failed": self.failed,
             "area_delta_total": self.area_delta_total,
+            "records_truncated": len(self.records) > 32,
             "records": [r.to_dict() for r in self.records[:32]],
         }
 

@@ -1738,10 +1738,30 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
         outlet_col: int = -1,
         latitude_deg: float = 30.0,
         day_of_year: int = 172,
+        transmissivity: float = 0.75,
+        persist_output: bool = False,
         nodata: float | None = None,
     ) -> dict:
         from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
         from app.lib.gis.scientific_errors import DegenerateData
+
+        params = apply_contract("hydrology_v4_analysis", {
+            "raster_path": raster_path,
+            "analysis": analysis,
+            "stream_threshold": float(stream_threshold),
+            "outlet_row": int(outlet_row),
+            "outlet_col": int(outlet_col),
+            "latitude_deg": float(latitude_deg),
+            "day_of_year": int(day_of_year),
+            "transmissivity": float(transmissivity),
+        })
+        params.setdefault("nodata", None)
+        analysis = params["analysis"]
+        stream_threshold = float(params["stream_threshold"])
+        latitude_deg = float(params["latitude_deg"])
+        day_of_year = int(params["day_of_year"])
+        transmissivity = float(params["transmissivity"])
 
         algo_map = {
             "breach": "terrain.breach",
@@ -1767,6 +1787,10 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
                     f"回退填洼像元 {meta['fallback_filled_cells']}。"),
                 "breach_metadata": meta,
             }
+            # review R2-M4：切沟 DEM 是本分析的产出物 —— persist 供下游消费
+            if persist_output:
+                result["output_raster"] = _persist_filled_dem(
+                    raster_path, breached, transform, crs, eff_nodata)
         elif analysis == "hand":
             hand_arr, meta = terrain_lib.hand(
                 arr, cy, cell_size_x=cx,
@@ -1779,6 +1803,9 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
                 "hand_stats": meta,
                 "hand_preview": np.nanpercentile(hand_arr, [5, 25, 50, 75, 95]).round(4).tolist(),
             }
+            if persist_output:
+                result["output_raster"] = _persist_filled_dem(
+                    raster_path, hand_arr, transform, crs, eff_nodata)
         elif analysis == "shreve":
             filled, _ = terrain_lib.fill_depressions(arr, cy, cell_size_x=cx, nodata=eff_nodata)
             d8, _ = terrain_lib.d8_flow(filled, cy, cell_size_x=cx, nodata=eff_nodata)
@@ -1808,20 +1835,24 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
             }
         elif analysis == "hypsometry":
             hyp, meta = terrain_lib.hypsometry(arr, cy, cell_size_x=cx, nodata=eff_nodata)
+            # review R1-C2：meta["n_levels"] 是 int（非容器）；curve 在返回
+            # 值 hyp（元组）而非 meta —— 此前双重 bug 工具路径必崩。
+            n_levels = int(meta.get("n_levels", 0) or 0)
             result = {
                 "summary": (
-                    f"Hypsometry 完成：高程面积曲线 {len(meta['n_levels'])} 级，"
+                    f"Hypsometry 完成：高程面积曲线 {n_levels} 级，"
                     f"高程积分 {meta['hypsometric_integral']}（矩形=1）。"),
-                "hypsometry": {k: v for k, v in meta.items() if k != "curve"},
+                "hypsometry": dict(meta),
                 "curve_preview": {
-                    "elevation_norm": [round(float(v), 4) for v in meta["curve"][0][:24]],
-                    "area_above_norm": [round(float(v), 4) for v in meta["curve"][1][:24]],
+                    "elevation_norm": [round(float(v), 4) for v in hyp[0][:24]],
+                    "area_above_norm": [round(float(v), 4) for v in hyp[1][:24]],
                 },
             }
         else:  # solar_radiation
             sol, meta = terrain_lib.solar_radiation(
-                arr, cy, cell_size_x=cx, latitude_deg=float(latitude_deg),
-                day_of_year=int(day_of_year), nodata=eff_nodata)
+                arr, cy, cell_size_x=cx, latitude_deg=latitude_deg,
+                day_of_year=day_of_year, transmissivity=transmissivity,
+                nodata=eff_nodata)
             result = {
                 "summary": (
                     f"Solar radiation 完成（lat={latitude_deg}°, DOY={day_of_year}，"

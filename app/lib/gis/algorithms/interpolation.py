@@ -892,7 +892,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             uncertainty_producer_tests={
                 "monte_carlo_summary": "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_ensemble_quantiles_ordered",
             },
-            resource_envelope=ResourceEnvelope(hard_max_cells=20_000_000, notes="R×N ensemble 单元硬顶；R≤2000、N≤4e6"),
+            resource_envelope=ResourceEnvelope(hard_max_cells=20_000_000, hard_max_features=200_000, bytes_per_cell=8, notes="R×N ensemble 单元硬顶 2000 万；R≤2000、N≤20 万（逐节点条件循环的可操作规模）"),
             cancellation_profile="chunk_boundary",
             tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="seed_reproducibility"),
             ),
