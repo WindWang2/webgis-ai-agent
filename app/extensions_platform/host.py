@@ -149,6 +149,8 @@ class ExtensionHost:
         self._records: dict[str, ExtensionRecord] = {}
         # V2：按扩展 id 的 broker 审计环（bounded；CLI/status 消费）。
         self._broker_audit: dict[str, Any] = {}
+        # V2（Wave 9）：投影变化钩子（main lifespan 接权威视图刷新器）。
+        self._projection_hook: Any = None
 
     # ── 构造 ─────────────────────────────────────────────────────────
     @classmethod
@@ -156,6 +158,25 @@ class ExtensionHost:
         from .settings_bridge import host_policy_from_settings
 
         return cls(tool_registry=tool_registry, policy=host_policy_from_settings())
+
+    def set_projection_change_hook(self, hook: Any) -> None:
+        """V2：注册投影变化回调（extension_id, event）。
+
+        event ∈ {"activate", "deactivate", "rollback", "failed"}；回调异常
+        被吞并告警——刷新失败绝不把生命周期操作变成宿主故障。
+        """
+        self._projection_hook = hook
+
+    def _notify_projection_change(self, extension_id: str, event: str) -> None:
+        if self._projection_hook is None:
+            return
+        try:
+            self._projection_hook(extension_id, event)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "projection-change hook failed after %s.%s: %s",
+                extension_id, event, exc,
+            )
 
     # ── discover / validate ──────────────────────────────────────────
     def discover(self) -> list[ExtensionDiagnostic]:
@@ -729,6 +750,7 @@ class ExtensionHost:
             else ExtensionState.ACTIVE
         )
         logger.info("extension %s activated (state=%s)", extension_id, record.state.value)
+        self._notify_projection_change(extension_id, "activate")
         return list(record.diagnostics)
 
     def _reconcile_declarations(
@@ -795,6 +817,7 @@ class ExtensionHost:
             record.extension_id,
             [e.message for e in errors],
         )
+        self._notify_projection_change(record.extension_id, "rollback")
         return list(record.diagnostics)
 
     # ── V2：worker 隔离执行（ADR-0105）────────────────────────────────
@@ -925,6 +948,7 @@ class ExtensionHost:
             "extension %s activated in worker mode (state=%s, pid=%s)",
             record.extension_id, record.state.value, worker.pid,
         )
+        self._notify_projection_change(record.extension_id, "activate")
         return list(record.diagnostics)
 
     def _fail_worker_activation(
@@ -939,6 +963,7 @@ class ExtensionHost:
         logger.warning(
             "extension %s worker activation failed: %s", record.extension_id, error.message
         )
+        self._notify_projection_change(record.extension_id, "failed")
         return list(record.diagnostics)
 
     def _make_broker_handler(self, extension_id: str) -> Any:
@@ -1124,6 +1149,7 @@ class ExtensionHost:
         record.ledger = None
         record.state = ExtensionState.COMPATIBLE
         logger.info("extension %s deactivated", extension_id)
+        self._notify_projection_change(extension_id, "deactivate")
         return diagnostics
 
     def unload(self, extension_id: str) -> list[ExtensionDiagnostic]:
