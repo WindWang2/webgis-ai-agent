@@ -26,7 +26,6 @@ from app.lib.cartography.chart_kinds import (
     CHART_STATES,
     CHART_KINDS,
     can_transition,
-    resolve_chart_kind,
 )
 
 DESIGN_SYSTEM_SCHEMA_VERSION = 4
@@ -43,7 +42,6 @@ def build_design_system_manifest() -> Dict[str, Any]:
     from app.lib.cartography.component_renderers import (
         get_component_renderer_registry,
     )
-    from app.lib.cartography.chart_kinds import chart_kind_ids
 
     model_reg = get_map_model_registry()
     comp_reg = get_component_registry()

@@ -15,7 +15,7 @@ hillshade / classified_raster / elevation_tint_hillshade / bivariate_raster
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Sequence, Tuple
 
 import numpy as np
 
@@ -43,9 +43,14 @@ def hillshade_array(
     # g h i]，列 +1 = 东、行 +1 = 南（行 0 = 北缘）：
     #   ∂z/∂x（东向）= ((c+2f+i) − (a+2d+g)) / 8·cell
     #   ∂z/∂y（北向）= ((a+2b+c) − (g+2h+i)) / 8·cell
-    a_ = z[0:-2, 0:-2]; b_ = z[0:-2, 1:-1]; c_ = z[0:-2, 2:]
-    d_ = z[1:-1, 0:-2];                     f_ = z[1:-1, 2:]
-    g_ = z[2:, 0:-2];   h_ = z[2:, 1:-1];   i_ = z[2:, 2:]
+    a_ = z[0:-2, 0:-2]
+    b_ = z[0:-2, 1:-1]
+    c_ = z[0:-2, 2:]
+    d_ = z[1:-1, 0:-2]
+    f_ = z[1:-1, 2:]
+    g_ = z[2:, 0:-2]
+    h_ = z[2:, 1:-1]
+    i_ = z[2:, 2:]
     dz_dx = np.full_like(z, np.nan)
     dz_dy = np.full_like(z, np.nan)
     dz_dx[1:-1, 1:-1] = ((c_ + 2 * f_ + i_) - (a_ + 2 * d_ + g_)) / (8 * cell_size)

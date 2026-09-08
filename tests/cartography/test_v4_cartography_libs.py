@@ -1,7 +1,6 @@
 """V4 制图算法库测试：dot_density / bivariate / raster_render."""
 from __future__ import annotations
 
-import math
 
 import numpy as np
 import pytest

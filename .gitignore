@@ -14,6 +14,8 @@ scripts/
 # 工作流目录生成器（test_workflow_guards 的 catalog 一致性门依赖它）
 !/scripts/gen_workflow_catalog.py
 !/scripts/gen_science_oracles.py
+# ADR-0103 描述符覆盖率闸的测试 import 此脚本，必须入库（否则 master 收集失败）
+!/scripts/check_tool_descriptor_coverage.py
 webgis-ai-agent/
 
 # 系统与临时文件
