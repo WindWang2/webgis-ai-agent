@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -39,8 +38,8 @@ def main() -> int:
         payload = {
             "note": "生成物输入指纹账本（app/lib/quality/artifact_graph.py 派生）。"
                     "流程：跑各 gen_* 再生成 → 本脚本 --update 刷新指纹 → 提交。"
-                    "check_generated_staleness.py 在合并前比对，stale 即红。",
-            "updated": date.today().isoformat(),
+                    "check_generated_staleness.py 在合并前比对，stale 即红。"
+                    "（R2 review：不写时间戳 —— 与 ADR-0118 确定性声明一致）",
             "artifacts": build_graph_state(),
         }
         GRAPH_PATH.parent.mkdir(parents=True, exist_ok=True)
