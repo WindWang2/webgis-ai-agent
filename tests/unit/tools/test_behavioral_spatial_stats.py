@@ -149,19 +149,22 @@ async def test_quadrat_analysis_behavioral(registry):
         "quadrat_analysis", {"geojson": _fc([]), "grid_rows": 2, "grid_cols": 2})
     _assert_error_readable(empty)
 
-    # happy path：注意 —— 疑似生产 bug：SpatialAnalyzer.quadrat_test 返回
-    # GeoAnalysisResult 对象，而工具体按 dict 下标取值（result["summary"]），
-    # 任何合法输入都会 TypeError（'GeoAnalysisResult' object is not
-    # subscriptable）。此处钉住该真实失败行为，不掩盖。
+    # happy path：曾为生产 bug（工具体对 spatial_operator 包装的
+    # GeoAnalysisResult 按 dict 下标取值 → 任何合法输入 TypeError），
+    # Quality V2 修复为 .data/.summary 消费（同文件 moran/geary 惯例）。
     rng = np.random.default_rng(3)
     feats = [_point(116.0 + abs(float(rng.normal(0, 0.002))),
                     39.0 + abs(float(rng.normal(0, 0.002))))
              for _ in range(40)]
     out = await registry.dispatch(
         "quadrat_analysis", {"geojson": _fc(feats), "grid_rows": 4, "grid_cols": 4})
-    _assert_error_readable(out)
-    assert out.get("code") == "TOOL_ERROR"
-    assert "not subscriptable" in (out.get("message") or "")
+    assert out.get("success") is True, out
+    body = out.get("data") or {}
+    assert {"n", "chi2", "p_value"} <= set(body), (
+        f"quadrat 结果契约缺失字段: {sorted(body)}")
+    assert body["n"] == 40
+    ev = out.get("evidence") or out.get("scientific_evidence")
+    assert ev, "科学证据块必须附加"
 
 
 @pytest.mark.asyncio

@@ -438,20 +438,22 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             grid_rows=int(params["grid_rows"]),
             grid_cols=int(params["grid_cols"]),
         )
-        payload = {"success": True, "summary": result["summary"], "data": result}
+        # spatial_operator 统一包装成 GeoAnalysisResult：数据体在 .data、
+        # 摘要在 .summary（与同文件 moran/geary/general_g 的消费惯例一致）。
+        payload = {"success": True, "summary": result.summary, "data": result.data}
         _attach_scientific_evidence(
             payload, "point_pattern.quadrat_test", tool="quadrat_analysis",
             parameters_applied={
                 "grid_rows": int(params["grid_rows"]),
                 "grid_cols": int(params["grid_cols"]),
             },
-            feature_count=result.get("n"),
+            feature_count=result.data.get("n"),
             crs=extract_declared_crs(data) or "EPSG:4326",
             uncertainty=[StatisticalSignificance(
                 target="quadrat_chi2",
-                statistic_name=f"quadrat chi2 (df={result.get('df')})",
-                statistic_value=result.get("chi2"),
-                p_value=result.get("p_value"),
+                statistic_name=f"quadrat chi2 (df={result.data.get('df')})",
+                statistic_value=result.data.get("chi2"),
+                p_value=result.data.get("p_value"),
             )],
         )
         return payload
