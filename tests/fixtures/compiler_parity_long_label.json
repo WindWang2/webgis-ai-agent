@@ -1,0 +1,49 @@
+{
+  "_comment": "V5 (ADR-0118 W10) cross-twin long-label truncation parity fixture. Both the Python twin (compile_mapspec_to_svg_detailed, in-renderer fit_label_text) and the TS export path (buildVectorSvgExport post-process truncation) must emit the identical 59-code-point prefix plus ellipsis for the 220-char label, and must NOT embed the full text. Shared by tests/unit/test_compiler_parity_long_label.py and frontend/lib/map-kit/vector-svg-export.parity.test.ts.",
+  "sources": {
+    "s1": {
+      "type": "geojson",
+      "data": {
+        "type": "FeatureCollection",
+        "features": [
+          {
+            "type": "Feature",
+            "geometry": {
+              "type": "Point",
+              "coordinates": [
+                116.4,
+                39.9
+              ]
+            },
+            "properties": {
+              "name": "北京市海淀区中关村科学城北区综合服务示范区重点建设项目地块标注文本超长场景用于渲染引擎截断契约验证追加段落二追加段落三追加段落四追加段落五追加段落六追加段落七追加段落八追加段落九追加段落十追加段落十一追加段落十二完补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补补"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "layers": [
+    {
+      "id": "pts",
+      "type": "circle",
+      "source": "s1",
+      "paint": {
+        "circle-color": "#de2d26",
+        "circle-radius": 5
+      }
+    },
+    {
+      "id": "labels",
+      "type": "symbol",
+      "source": "s1",
+      "layout": {
+        "text-field": "{name}",
+        "text-size": 12
+      },
+      "paint": {
+        "text-color": "#111827"
+      }
+    }
+  ]
+}
