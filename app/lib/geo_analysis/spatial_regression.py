@@ -1592,7 +1592,6 @@ def mgwr_regression_narrated(
     )
     betas = result["betas"]                 # (m, n)
     bandwidths = result["bandwidths"]
-    fitted = result["fitted"]
     sse = result["sse"]
     ss_tot = float(((y - y.mean()) ** 2).sum())
     r2 = 1.0 - sse / ss_tot if ss_tot > 0 else 0.0

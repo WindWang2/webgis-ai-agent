@@ -15,7 +15,6 @@ from app.lib.cartography.chart_kinds import (
     AGENT_CHART_OPERATIONS,
     CHART_STATES,
     CHART_KINDS,
-    chart_kind_ids,
 )
 from app.lib.cartography.component_registry import get_component_registry
 from app.lib.cartography.component_templates import (
@@ -40,7 +39,6 @@ def test_v4_bidirectional_variant_template_coverage():
     """native 模板 variant ⊆ descriptor 词表（validate 已锁），此处锁反向：
     descriptor 词表的每个变体都有模板条目。"""
     reg = get_component_registry()
-    tmpl_reg = get_component_template_registry()
     for desc in reg.native_descriptors():
         for v in desc.variants:
             hit = any(

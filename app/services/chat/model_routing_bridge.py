@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 from app.services.chat.llm_client import LLMConfig
 from app.services.chat.model_config import ModelRole

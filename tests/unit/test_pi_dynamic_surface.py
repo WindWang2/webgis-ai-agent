@@ -14,7 +14,6 @@ import pytest
 from app.services.chat.pi_native_surface import (
     EXECUTE_PROXY_NAME,
     NATIVE_TOOL_NAMES,
-    compute_turn_active_tools,
     pi_surface_for_spawn,
     registered_surface_names,
     resolve_pi_tool_call,
