@@ -20,4 +20,4 @@
 - `admin.boundary_lookup`（stochastic-unseeded，status=EXPERIMENTAL）
 - `poi.area_search`（stochastic-unseeded，status=EXPERIMENTAL）
 
-- 内容指纹：`54c8b7e60c77a5b1…`
+- 内容指纹：`fc04b830c5bdc571…`

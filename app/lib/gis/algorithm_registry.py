@@ -9,7 +9,7 @@ ToolDispatchService —— 本注册表只持 metadata，不持数据、不执�
 
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -490,7 +490,7 @@ class AlgorithmRegistry:
         return mapping
 
     @staticmethod
-    def _is_analysis_capability(cap: str, capabilities) -> bool:
+    def _is_analysis_capability(cap: str, capabilities: Any) -> bool:
         """capability 缺席（未注册，容错）或 native 才算分析语义派生源。"""
         descriptor = capabilities.get(cap)
         return descriptor is None or descriptor.status == "native"
@@ -504,9 +504,20 @@ class AlgorithmRegistry:
         cached = self._tool_to_algorithms_cache
         if cached is not None:
             return cached
+        # R1 review：与 tool_to_capability 同 filter（非 native/planned
+        # 绑定算法不进派生视图）—— 防止 caps=() 而 algorithms=("platform.*",)
+        # 的半截派生态把平台工具带进复用/回填语义。
+        from app.lib.gis.capability_registry import get_capability_registry
+
+        capabilities = get_capability_registry().descriptors() \
+            if hasattr(get_capability_registry(), "descriptors") \
+            else {}
         ordered = sorted(self._by_id.values(), key=lambda a: (a.priority, a.id))
         mapping: Dict[str, List[str]] = {}
         for algo in ordered:
+            cap = algo.capabilities[0] if algo.capabilities else ""
+            if not cap or not self._is_analysis_capability(cap, capabilities):
+                continue
             for tool in algo.tool_candidates:
                 bucket = mapping.setdefault(tool, [])
                 if algo.id not in bucket:

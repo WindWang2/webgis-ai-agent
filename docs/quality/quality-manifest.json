@@ -1351,10 +1351,10 @@
    "conformance_tests": [
     "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_geocoding"
    ],
-   "deterministic": true,
+   "deterministic": false,
    "id": "platform.geocoding",
    "memory_cost": "low",
-   "random_seed_policy": "deterministic",
+   "random_seed_policy": "none",
    "runtime_status": "native",
    "scientific_status": "",
    "tests": [],
@@ -1459,10 +1459,10 @@
    "conformance_tests": [
     "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_meta_tool_surface"
    ],
-   "deterministic": true,
+   "deterministic": false,
    "id": "platform.meta_tool_surface",
    "memory_cost": "low",
-   "random_seed_policy": "deterministic",
+   "random_seed_policy": "none",
    "runtime_status": "native",
    "scientific_status": "",
    "tests": [],
@@ -1513,10 +1513,10 @@
    "conformance_tests": [
     "tests/unit/gis/test_platform_capabilities.py::test_platform_capability_scenario_simulation"
    ],
-   "deterministic": true,
+   "deterministic": false,
    "id": "platform.scenario_simulation",
    "memory_cost": "low",
-   "random_seed_policy": "deterministic",
+   "random_seed_policy": "none",
    "runtime_status": "native",
    "scientific_status": "",
    "tests": [],
@@ -6847,7 +6847,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "b1acd2f7fcb42cd8077c6cbdccca0010a9ab28f753ed72df16f36c0d8c6f5bd5",
+ "fingerprint": "5b0d9d70245ed1333856e5fbfc259e8f2cc821b1e384665fcb47c60831855e9d",
  "gate": {
   "fields": {
    "capabilities": {

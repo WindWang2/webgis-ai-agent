@@ -160,11 +160,15 @@ def pytest_collection_modifyitems(config, items):
     seed_raw = (os.environ.get("QUALITY_ORDER_SEED") or "").strip()
     if seed_raw and seed_raw != "0":
         import random as _random
+        import warnings as _warnings
 
         try:
             seed = int(seed_raw)
         except ValueError:
             seed = 0
+            _warnings.warn(
+                f"QUALITY_ORDER_SEED={seed_raw!r} 不是整数，顺序轮换未启用"
+                "（R2 review：静默退化会掩盖 runner 侧笔误）")
         if seed:
             _random.Random(seed).shuffle(items)
 

@@ -21,7 +21,8 @@ _CONF = "tests/unit/gis/test_platform_capabilities.py::"
 
 
 def _platform_binding(cap_id: str, name: str, tools: List[str],
-                      assumptions_extra: str = "") -> AlgorithmDescriptor:
+                      assumptions_extra: str = "",
+                      deterministic: bool = True) -> AlgorithmDescriptor:
     assumptions = [
         "绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式"
         "声明本能力（conformance 节点逐能力钉住，漂移即红）",
@@ -36,7 +37,10 @@ def _platform_binding(cap_id: str, name: str, tools: List[str],
         runtime_status="native",
         cpu_cost="low", memory_cost="low", io_cost="low",
         preferred_execution_policy="INLINE",
-        deterministic=True, random_seed_policy="deterministic",
+        deterministic=deterministic,
+        # RandomSeedPolicy 词表无 "seeded"；非确定性绑定用 "none"（方法无
+        # 随机成分的绑定面；外部 provider 非确定性已由 capability 披露）
+        random_seed_policy="deterministic" if deterministic else "none",
         crs_class="CRS_AGNOSTIC",
         algorithm_family="platform_surface",
         assumptions=assumptions,
@@ -85,6 +89,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
          "reverse_geocode", "reverse_geocode_cn"],
         assumptions_extra="外部 provider 的可用性由各工具的类型化降级契约保证"
                           "（未配置 key → 结构化错误，见 conformance）",
+        deterministic=False,
     ),
     _platform_binding(
         "local_data_query", "本地数据目录与查询（工具面绑定契约）",
@@ -108,11 +113,13 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
     _platform_binding(
         "scenario_simulation", "情景推演（工具面绑定契约）",
         ["spatial_decision_v2", "spatial_reasoning", "what_if_simulate"],
+        deterministic=False,
     ),
     _platform_binding(
         "meta_tool_surface", "元工具面（工具面绑定契约）",
         ["create_new_skill", "deep_explore", "list_available_tools",
          "refresh_skill_surface", "spawn_subagent", "web_search"],
+        deterministic=False,
     ),
     _platform_binding(
         "report_charting", "报告与图表（工具面绑定契约）",

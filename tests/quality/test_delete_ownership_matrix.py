@@ -41,23 +41,51 @@ def test_no_route_module_calls_artifact_registry_directly():
 
     路由必须经过已过 verify_session_owner / 会话守卫的 service/tool 边界；
     新增便捷路由直连注册表 = 绕过 owner 语义，直接红。
+
+    覆盖形态（R2 review MAJOR 修复）：绝对 import、`from app.services
+    import artifact_registry`（ImportFrom 的 alias 名）、`import
+    app.services.artifact_registry as x`、模块属性引用
+    `<x>.artifact_registry`、以及裸名引用（import 进来的模块名直接出现
+    在本模块作用域 —— Name 节点匹配，防别名调用漏检）。动态形态
+    （importlib.import_module / getattr 字符串）由字符串常量探针兜底。
     """
     offenders: list[str] = []
     for path in _route_modules():
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        imported_names: set[str] = set()
         for node in ast.walk(tree):
             hit = None
-            if isinstance(node, ast.ImportFrom) and node.module and \
-                    "artifact_registry" in node.module:
-                hit = f"import from {node.module}"
+            if isinstance(node, ast.ImportFrom):
+                if node.module and "artifact_registry" in node.module:
+                    hit = f"import from {node.module}"
+                for alias in node.names:
+                    if "artifact_registry" in alias.name:
+                        hit = f"from {node.module} import {alias.name}"
+                        break
+                if hit:
+                    # `from app.services import artifact_registry` 把模块
+                    # 名绑进本模块作用域 —— 记录以捕获后续裸名调用
+                    for alias in node.names:
+                        if "artifact_registry" in alias.name:
+                            imported_names.add(alias.asname or alias.name)
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     if "artifact_registry" in alias.name:
                         hit = f"import {alias.name}"
-            elif isinstance(node, ast.Attribute) and node.attr == "artifact_registry":
+                        imported_names.add(alias.asname or
+                                           alias.name.split(".")[0])
+            elif isinstance(node, ast.Attribute) and \
+                    node.attr == "artifact_registry":
                 hit = "attribute reference"
+            elif isinstance(node, ast.Name) and node.id in imported_names:
+                hit = f"reference to imported module name {node.id}"
+            elif isinstance(node, ast.Constant) and \
+                    isinstance(node.value, str) and \
+                    "artifact_registry" in node.value:
+                hit = f"dynamic import/probe string {node.value!r}"
             if hit:
-                offenders.append(f"{path.relative_to(REPO)}: {hit}")
+                rel = path.relative_to(REPO)
+                offenders.append(f"{rel}: {hit}")
     assert not offenders, (
         "路由层禁止直调 artifact_registry（SEC-KG-01）；违规: " + "; ".join(offenders)
     )
@@ -406,3 +434,24 @@ async def test_knowledge_service_no_identity_fail_closed(knowledge_env):
     assert ok is False
     never.assert_not_called()
     assert await _document_exists(knowledge_env[1], doc_id)
+
+
+def test_knowledge_delete_binds_versioned_auth_dependency():
+    """R2 review MINOR：delete 路由必须绑定 token_version 校验版依赖
+    （logout bump ver 后旧 token 不能删文档）。换成 unversioned 依赖即红。"""
+    import inspect
+
+    from app.api.routes import knowledge as knowledge_routes
+
+    dep_callable = None
+    for route in knowledge_routes.router.routes:
+        # router 带 prefix（/knowledge）；匹配挂载段路径
+        if getattr(route, "path", "").endswith("/document/{document_id}" ) \
+                and "DELETE" in getattr(route, "methods", set()):
+            dep_callable = route.endpoint
+            break
+    assert dep_callable is not None, "delete_document 路由缺失"
+    src = inspect.getsource(dep_callable)
+    assert "get_current_user_with_version" in src, (
+        "knowledge delete 必须显式绑定 versioned 认证依赖（token_version "
+        "语义），发现绑定: " + src[:200])

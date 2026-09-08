@@ -673,4 +673,54 @@ def diff_realtime_contract(
                 "sse_primitive_removed", True, f"sse.{prim}", "primitive removed"
             )
         )
+    for prim in sorted(new_prim - old_prim):
+        changes.append(
+            CompatChange(
+                "sse_primitive_added", False, f"sse.{prim}", "primitive added"
+            )
+        )
+
+    # R2 review 漏类补齐：resume 语义锚 / 信封与 wire 形状
+    old_resume = old_sse.get("resume") or {}
+    new_resume = new_sse.get("resume") or {}
+    for anchor in sorted(set(old_resume) | set(new_resume)):
+        if old_resume.get(anchor) and not new_resume.get(anchor):
+            changes.append(
+                CompatChange(
+                    "sse_resume_anchor_dropped",
+                    True,
+                    f"sse.resume.{anchor}",
+                    "resume semantic anchor lost",
+                )
+            )
+        elif anchor not in old_resume and anchor in new_resume:
+            changes.append(
+                CompatChange(
+                    "sse_resume_anchor_added",
+                    False,
+                    f"sse.resume.{anchor}",
+                    "resume anchor added",
+                )
+            )
+
+    for keys, label in (
+        (("websocket", "inbound_envelope"), "ws.inbound"),
+        (("websocket", "outbound_envelope"), "ws.outbound"),
+        (("sse", "wire_format"), "sse.wire"),
+    ):
+        old_shape: Any = old
+        new_shape: Any = new
+        for key in keys:
+            old_shape = (old_shape or {}).get(key)
+            new_shape = (new_shape or {}).get(key)
+        if old_shape is not None and new_shape is not None \
+                and old_shape != new_shape:
+            changes.append(
+                CompatChange(
+                    f"{label}_envelope_changed",
+                    True,
+                    label,
+                    f"envelope/wire shape changed: {old_shape} → {new_shape}",
+                )
+            )
     return changes

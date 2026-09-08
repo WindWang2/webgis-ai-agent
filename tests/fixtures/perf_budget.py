@@ -113,17 +113,11 @@ def assert_within_budget(
     墙钟断言同强度，只是把单次采样换成 median 抗噪；注入 baseline 后
     获得 harness 同款的「基线 × factor」上界。
     """
-    samples: list[float] = []
-    for _ in range(max(1, int(iterations))):
-        t0 = time.perf_counter()
-        fn()
-        samples.append(time.perf_counter() - t0)
-    med = statistics.median(samples)
+    med = measure_median(fn, iterations)
     limit = budget_limit(name, floor_s, factor, baseline)
     assert med <= limit, (
         f"[perf_budget] {name}: median {med:.4f}s > limit {limit:.4f}s "
-        f"(floor_s={floor_s}, factor={factor}, "
-        f"samples={[round(s, 4) for s in samples]})"
+        f"(floor_s={floor_s}, factor={factor}, iterations={iterations})"
     )
     return med
 
@@ -138,16 +132,10 @@ async def aassert_within_budget(
     baseline: Optional[Mapping[str, float]] = None,
 ) -> float:
     """:func:`assert_within_budget` 的异步版（在被测事件循环内 await）。"""
-    samples: list[float] = []
-    for _ in range(max(1, int(iterations))):
-        t0 = time.perf_counter()
-        await fn()
-        samples.append(time.perf_counter() - t0)
-    med = statistics.median(samples)
+    med = await ameasure_median(fn, iterations)
     limit = budget_limit(name, floor_s, factor, baseline)
     assert med <= limit, (
         f"[perf_budget] {name}: median {med:.4f}s > limit {limit:.4f}s "
-        f"(floor_s={floor_s}, factor={factor}, "
-        f"samples={[round(s, 4) for s in samples]})"
+        f"(floor_s={floor_s}, factor={factor}, iterations={iterations})"
     )
     return med

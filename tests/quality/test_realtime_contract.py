@@ -38,8 +38,7 @@ def snapshot():
 def test_snapshot_is_current(snapshot):
     current = json.dumps(snapshot, ensure_ascii=False, sort_keys=True,
                          indent=1) + "\n"
-    if not SNAPSHOT.exists() or UPDATE_ENV == "force":
-        raise AssertionError("快照缺失")
+    assert SNAPSHOT.exists(), "快照缺失"
     committed = SNAPSHOT.read_text(encoding="utf-8")
     if committed != current and __import__("os").environ.get(UPDATE_ENV) == "1":
         SNAPSHOT.write_text(current, encoding="utf-8")

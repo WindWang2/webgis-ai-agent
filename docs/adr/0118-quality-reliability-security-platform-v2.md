@@ -41,7 +41,7 @@ wave）。Phase 0 审计（`.agent-work/quality-v2/00-baseline.md`）确认的
 ### D2 — findings 修复走真实语义，不 suppress（W2/W3/W4）
 
 - TOOL_DESCRIPTOR_INCOMPLETE 152→0：60 个工具补齐
-  side_effect/tags/capabilities（逐工具语义判断）；92 个词表外工具通过
+  side_effect/tags/capabilities（逐工具语义判断）；93 个词表外工具通过
   **扩展 capability 分类**（platform 域 planned-status 包）收口——
   planned 诚实表达"工具面真实、算法级 producer/conformance 契约未建"；
 - TOOL_UNTESTED 30→0：真实 dispatch 行为测试（validation/happy/error

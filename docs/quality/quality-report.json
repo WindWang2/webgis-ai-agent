@@ -27,7 +27,7 @@
     "tools": 291
    },
    "findings_by_code": {},
-   "fingerprint": "b1acd2f7fcb42cd8077c6cbdccca0010a9ab28f753ed72df16f36c0d8c6f5bd5",
+   "fingerprint": "5b0d9d70245ed1333856e5fbfc259e8f2cc821b1e384665fcb47c60831855e9d",
    "gate": {
     "pass": true,
     "total": 291

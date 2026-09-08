@@ -461,11 +461,19 @@ def gate(report: Dict[str, Any]) -> int:
 
 
 def load_findings_baseline(root: Optional[Path] = None) -> Dict[str, Any]:
+    """R2 review：畸形 JSON 不许 traceback 崩溃 —— 返回哨兵（空上限 +
+    负 dispatch 下限）让棘轮以可读违规红出来。"""
     base = root if root is not None else repo_root()
     path = base / FINDINGS_BASELINE_PATH
     if not path.exists():
         return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"{FINDINGS_BASELINE_PATH} 不是合法 JSON（棘轮账本损坏）: {e}"
+        ) from e
+    return data if isinstance(data, dict) else {}
 
 
 def load_waivers(root: Optional[Path] = None) -> List[Dict[str, str]]:
@@ -473,8 +481,14 @@ def load_waivers(root: Optional[Path] = None) -> List[Dict[str, str]]:
     path = base / WAIVERS_PATH
     if not path.exists():
         return []
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return list(payload.get("waivers", []))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"{WAIVERS_PATH} 不是合法 JSON（豁免账本损坏）: {e}") from e
+    if isinstance(payload, dict):
+        return [w for w in payload.get("waivers", []) if isinstance(w, dict)]
+    return []
 
 
 def evaluate_findings_ratchet(
@@ -482,7 +496,7 @@ def evaluate_findings_ratchet(
     behavioral_dispatch: int,
     baseline: Optional[Dict[str, Any]] = None,
     waivers: Optional[List[Dict[str, str]]] = None,
-    today: Optional[Any] = None,
+    today: "Optional[Any]" = None,  # datetime.date | str（ISO）| None
 ) -> Dict[str, Any]:
     """棘轮判定（纯函数；today 便于测试注入，缺省 date.today）。"""
     import datetime
@@ -711,7 +725,9 @@ def render_markdown(manifest: QualityManifest) -> str:
         f"（dispatch 下限 {r.get('min_behavioral_dispatch', 0)}，"
         f"当前 {r.get('behavioral_dispatch', 0)}；"
         f"active waivers {r.get('waivers_active', 0)}，"
-        f"过期 {len(r.get('expired_waivers', []))}）"
+        f"过期 {len(r.get('expired_waivers', []))}，"
+        f"被豁免 findings {r.get('waived_current', 0)} —— "
+        "豁免项仍在上方法量清单中可见）"
     )
     for v in r.get("violations", []):
         lines.append(

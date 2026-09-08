@@ -10,7 +10,7 @@
   },
   "docs/quality/QUALITY_MANIFEST.md": {
    "generator": "scripts/gen_quality_manifest.py",
-   "input_fingerprint": "70ad0f0389bf264e3e0fb273b82966272dcc6c96aff390b6859e275f6aaf33d1",
+   "input_fingerprint": "33c6e76d1cbc55384f6dbddb18dc415d8cb2e0cec947b38fc7ad1e5718f87689",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -22,7 +22,7 @@
   },
   "docs/quality/QUALITY_REPORT.md": {
    "generator": "scripts/gen_quality_report.py",
-   "input_fingerprint": "9c90567835cb1893f72a5e55ed24418f9911cc0fc50fa29853069ab5c9e4545f",
+   "input_fingerprint": "95b4e49b261168a64f2321f1994f872dd8460ca0fd432d2daaebe888012bc2ca",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -46,7 +46,7 @@
   },
   "docs/quality/certifications/DETERMINISM.md": {
    "generator": "scripts/gen_determinism_certification.py",
-   "input_fingerprint": "4822aedd2276be32f3eb10e2c08b3ea7ee7e716feeb6e08cad907e6bbffcfe40",
+   "input_fingerprint": "53430e3effdcf34ce2dcca349fbc958e8c3808ab151abf33fada9104ce773552",
    "inputs": [
     "app/lib/gis/algorithms"
    ]
@@ -76,7 +76,7 @@
   },
   "docs/quality/quality-manifest.json": {
    "generator": "scripts/gen_quality_manifest.py",
-   "input_fingerprint": "70ad0f0389bf264e3e0fb273b82966272dcc6c96aff390b6859e275f6aaf33d1",
+   "input_fingerprint": "33c6e76d1cbc55384f6dbddb18dc415d8cb2e0cec947b38fc7ad1e5718f87689",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -88,7 +88,7 @@
   },
   "docs/quality/quality-report.json": {
    "generator": "scripts/gen_quality_report.py",
-   "input_fingerprint": "9c90567835cb1893f72a5e55ed24418f9911cc0fc50fa29853069ab5c9e4545f",
+   "input_fingerprint": "95b4e49b261168a64f2321f1994f872dd8460ca0fd432d2daaebe888012bc2ca",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -97,7 +97,7 @@
   },
   "tests/quality/snapshots/realtime-contract.json": {
    "generator": "app/lib/quality/api_compat.py",
-   "input_fingerprint": "c1860e0547e52f175ebb4f0613561132e81089c12ce7760503c6b5d9e1ab38ad",
+   "input_fingerprint": "9a83df59ab5de60ff87133bfaf99651f43d1be40c72415963f5cb4180be8ce1b",
    "inputs": [
     "app/services/ws_service.py",
     "app/api/routes/ws.py",
@@ -106,6 +106,5 @@
    ]
   }
  },
- "note": "生成物输入指纹账本（app/lib/quality/artifact_graph.py 派生）。流程：跑各 gen_* 再生成 → 本脚本 --update 刷新指纹 → 提交。check_generated_staleness.py 在合并前比对，stale 即红。",
- "updated": "2026-09-09"
+ "note": "生成物输入指纹账本（app/lib/quality/artifact_graph.py 派生）。流程：跑各 gen_* 再生成 → 本脚本 --update 刷新指纹 → 提交。check_generated_staleness.py 在合并前比对，stale 即红。（R2 review：不写时间戳 —— 与 ADR-0118 确定性声明一致）"
 }

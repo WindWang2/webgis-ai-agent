@@ -46,8 +46,13 @@ def _expand(entry: str) -> List[Tuple[str, Path]]:
     path = REPO_ROOT / entry
     if path.is_dir():
         files = sorted(p for p in path.rglob("*.py") if p.is_file())
-        return [(f.relative_to(REPO_ROOT).as_posix(), f)
-                for f in files[:_MAX_DIR_FILES]]
+        if len(files) > _MAX_DIR_FILES:
+            # R2 review：静默截断 = 新增文件不计入指纹（staleness 盲区）
+            # —— 超限必须显式失败，逼迫把目录拆细或上调上限（需 ADR）。
+            raise ValueError(
+                f"artifact_graph 输入目录 {entry} 含 {len(files)} 个 .py，"
+                f"超过有界上限 {_MAX_DIR_FILES}；请拆分声明或显式上调上限")
+        return [(f.relative_to(REPO_ROOT).as_posix(), f) for f in files]
     return [(entry, path)]
 
 
