@@ -8,10 +8,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 type FetchCall = { url: string; init: { rawBody: FormData } };
-const fetchCalls: FetchCall[] = [];
-const apiFetch = vi.fn(async (url: string, init: { rawBody: FormData }) => {
-  fetchCalls.push({ url, init });
-  return { url: '/x.png', filename: 'x.png' };
+
+// review-r2 修复：vi.mock 工厂被提升到 const 声明之前 —— 模块顶层
+// `const apiFetch = vi.fn(...)` + `vi.mock(..., () => ({ apiFetch }))`
+// 在 exporter 静态导入触发工厂时必然 TDZ（Cannot access 'apiFetch'
+// before initialization），本文件此前在任何运行方式下都无法通过。
+// vi.hoisted 让 mock 与其闭包状态与工厂同批提升。
+const { apiFetch, fetchCalls } = vi.hoisted(() => {
+  const fetchCalls: FetchCall[] = [];
+  const apiFetch = vi.fn(async (url: string, init: { rawBody: FormData }) => {
+    fetchCalls.push({ url, init });
+    return { url: '/x.png', filename: 'x.png' };
+  });
+  return { apiFetch, fetchCalls };
 });
 
 vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8001' }));

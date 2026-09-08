@@ -155,6 +155,30 @@ describe('composeFrames', () => {
       expect.objectContaining({ code: 'cartogram_unsupported' }),
     );
   });
+
+  it('review-r2 BLOCKER 回归：getCanvas 返回同一 live canvas 时逐帧快照必须各自独立拷贝', async () => {
+    // 真实 MapLibre `getCanvas()` 恒返回同一 live canvas 实例（
+    // `getCanvas(){return this.canvas}`）。若 composeFrames 直接持引用，
+    // 所有帧都指向同一画布 —— 导出产物全部是最后一帧内容（静默错帧）。
+    // 快照契约：每帧 push 独立拷贝（与 live 实例不同、帧间互不相同、尺寸一致）。
+    const live = Object.assign(document.createElement('canvas'), { width: 100, height: 80 });
+    const map = makeMockMap();
+    (map.getCanvas as Mock).mockImplementation(() => live);
+
+    const { canvases } = await composeFrames({ map, waitForIdle: idle }, [
+      { title: '甲' },
+      { title: '乙' },
+      { title: '丙' },
+    ]);
+
+    expect(canvases).toHaveLength(3);
+    for (const snap of canvases) {
+      expect(snap).not.toBe(live); // 不持 live 引用 —— 下一帧渲染不覆盖已抓帧
+      expect(snap.width).toBe(100);
+      expect(snap.height).toBe(80);
+    }
+    expect(new Set(canvases).size).toBe(3); // 帧间互为独立拷贝
+  });
 });
 
 describe('composeGridCanvas', () => {
@@ -234,6 +258,30 @@ describe('runExport frames branch（W9）', () => {
     const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)![0] as string;
     expect(finalMsg).toContain('图集');
     expect(finalMsg).toContain('2 帧');
+  });
+
+  it('review-r2：部分帧跳过时成功消息如实注明「成功 X/Y 帧」', async () => {
+    const map = makeMockMap({ failIdleOnFrame: 2 }); // 第 2 帧超时 → 跳过
+    const deps = makeRunExportDeps(map);
+    deps.idleTimeoutMs = 20;
+    stubUpload();
+    vi.spyOn(MapExporterEngine, 'exportToPDF').mockResolvedValue(
+      new Blob(['pdf'], { type: 'application/pdf' }),
+    );
+
+    const req: ExportRequest = {
+      title: '跳帧图集',
+      format: 'pdf',
+      frames: [{ title: '甲' }, { title: '乙' }, { title: '丙' }],
+    };
+    const outcome = await runExport(deps, req);
+
+    expect(outcome.ok).toBe(true);
+    const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)![0] as string;
+    expect(finalMsg).toContain('成功 2/3 帧');
+    expect(finalMsg).toContain('已跳过');
+    // 降级清单也如实入清单（atlas_page_skipped）
+    expect(finalMsg).toContain('atlas_page_skipped');
   });
 
   it('png + frames → grid 拼板上传（多帧 grid 系统消息）', async () => {

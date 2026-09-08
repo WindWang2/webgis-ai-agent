@@ -1232,13 +1232,18 @@ function buildSvgWrapper(
 /**
  * Wave 9 / W5：显式降级 → 导出后系统消息片段（有界披露：≤8 条，code+detail）。
  * 语义 = 「用户应知道导出件里少了/改了什么」，不静默。
+ * review-r2：清单超 8 条时此前静默丢弃余量（如 50 帧 atlas 跳过 20 帧 →
+ * 只列 8 条且无总数）—— 现在注明总数与截断，与「不静默」的自身语义一致。
  */
 function formatDegradationNote(degradations: ExportDegradation[]): string {
   if (!degradations.length) return '';
+  const listed = degradations.slice(0, 8);
+  const omitted = degradations.length - listed.length;
   return (
-    ' 注意：本次导出存在降级：' +
-    degradations
-      .slice(0, 8)
+    ` 注意：本次导出存在降级（共 ${degradations.length} 条` +
+    (omitted > 0 ? `，此处仅列前 ${listed.length} 条` : '') +
+    '）：' +
+    listed
       .map((d) => `${d.code}${d.detail ? `（${d.detail}）` : ''}`)
       .join('、') +
     '。请如实告知用户。'
@@ -1396,6 +1401,15 @@ async function runFrameExport(
   }
   const fmt = (req.format ?? 'png').toLowerCase();
   const degradationNote = formatDegradationNote(composed.degradations);
+  // review-r2：成功消息必须注明跳过帧数（此前「N 帧成功」不提跳过 —— 跳过
+  // 信息只藏在降级清单里，清单超 8 条时还会被截断）。
+  const skippedFrames = composed.degradations.filter(
+    (d) => d.code === 'atlas_page_skipped',
+  ).length;
+  const frameStat =
+    skippedFrames > 0
+      ? `成功 ${composed.canvases.length}/${composed.canvases.length + skippedFrames} 帧（${skippedFrames} 帧渲染失败已跳过）`
+      : `${composed.canvases.length} 帧`;
 
   if (fmt === 'pdf') {
     const pdfDegradations: ExportDegradation[] = [];
@@ -1419,7 +1433,7 @@ async function runFrameExport(
     recordExport(getHudState, ctx.title, upload.filename, 'pdf', pdfBlob.size);
     getHudState().setPendingSystemMessage(
       `[系统通知] 图集 PDF \`${ctx.title || '未命名'}\` 已成功生成` +
-        `（${composed.canvases.length} 帧，首页为封面·嵌入第 1 帧；地图为位图画布 + 页标题矢量/栅格化混合文本层），` +
+        `（${frameStat}，首页为封面·嵌入第 1 帧；地图为位图画布 + 页标题矢量/栅格化混合文本层），` +
         `文件已落盘并分配URL：${upload.url}。请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${upload.url})。` +
         degradationNote + formatDegradationNote(pdfDegradations) +
         `注意展示完链接后直接结束。`,
@@ -1452,7 +1466,7 @@ async function runFrameExport(
     recordExport(getHudState, ctx.title, upload.filename, 'svg', svgBlob.size);
     getHudState().setPendingSystemMessage(
       `[系统通知] 多帧拼板 SVG \`${ctx.title || '未命名'}\` 已成功生成` +
-        `（${composed.canvases.length} 帧，位图回退：多帧拼板为位图合成，不含矢量要素），` +
+        `（${frameStat}，位图回退：多帧拼板为位图合成，不含矢量要素），` +
         `文件已落盘并分配URL：${upload.url}。可通过以下链接下载：[下载SVG](${API_BASE}${upload.url})。` +
         degradationNote +
         formatDegradationNote([{ code: 'vector_svg_fallback_raster', detail: '多帧拼板为位图合成' }]) +
@@ -1467,7 +1481,7 @@ async function runFrameExport(
   recordExport(getHudState, ctx.title, upload.filename, 'png', blob.size);
   getHudState().setPendingSystemMessage(
     `[系统通知] 多帧拼板图 \`${ctx.title || '未命名'}\` 已成功生成` +
-      `（${composed.canvases.length} 帧 grid 拼板，行优先 + 每帧小标题），` +
+      `（${frameStat} grid 拼板，行优先 + 每帧小标题），` +
       `文件已落盘并分配URL：${upload.url}。 请利用Markdown的图片语法 \`![地图](${API_BASE}${upload.url})\` 将该成品展示给用户。` +
       degradationNote + `注意展示完图片后直接结束。`,
   );

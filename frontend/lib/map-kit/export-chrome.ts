@@ -700,10 +700,14 @@ export async function buildExportChrome(
       usedFallbackLegend = true;
     }
     // W7：与 live 的内容差异披露 —— live 图例仅示前 8 条（legends.tsx
-    // entries.slice(0, 8)），导出件画全集；条目超限时显式披露该差异。
+    // entries.slice(0, 8) + 「…+N」指示），导出件画全集；条目超限时显式披露
+    // 该差异。entryCount 口径与 live legendEntries 一致：nodata 条目计入
+    // （legendEntries 在 entries 末尾追加 nodata 后再做 >8 判断）。
+    // review-r2：categorical 此前漏计 nodata（graduated 已计）—— 与 live
+    // 及 render-scene legendEntryCount 对齐。
     const entryCount =
       spec.type === 'categorical'
-        ? (spec.categories?.length ?? 0)
+        ? (spec.categories?.length ?? 0) + (spec.nodata?.color ? 1 : 0)
         : spec.type === 'graduated'
           ? Math.min(
               Math.max((spec.breaks?.length ?? 0) - 1, 0),

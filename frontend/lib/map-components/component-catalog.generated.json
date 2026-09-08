@@ -1480,7 +1480,7 @@
     {
       "code": "legend_entries_truncated",
       "severity": "info",
-      "message": "图例条目过多，导出件仅绘制前 {detail} 条"
+      "message": "图例条目较多：live 界面仅显示前 8 条，导出件绘制全部条目"
     },
     {
       "code": "pdf_text_rasterized_cjk",

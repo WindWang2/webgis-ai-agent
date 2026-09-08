@@ -24,6 +24,8 @@ DIAGNOSTIC_SEVERITIES = ("info", "warning", "error")
 MAX_DIAGNOSTICS_PER_EXPORT = 64
 #: detail 文本上限（与前端 ExportDegradation.detail ≤200 对齐）。
 MAX_DETAIL_CHARS = 200
+#: layer_id / component_id 文本上限（外部提交的标识符同样有界入库）。
+MAX_ID_CHARS = 200
 
 
 @dataclass(frozen=True)
@@ -70,7 +72,11 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
         # —— 图例 / 内容截断 ——
         RenderDiagnosticSpec(
             "legend_entries_truncated", "info",
-            "图例条目过多，导出件仅绘制前 {detail} 条",
+            # review-r2 修复：原文案「导出件仅绘制前 {detail} 条」与事实相反
+            # —— live 图例仅示前 8 条（legends.tsx entries.slice(0, 8) +
+            # 「…+N」指示），导出件（drawChromeLegend / svg marginalia 图例）
+            # 画全集。本码披露的是这一 live↔导出差异，不是导出侧截断。
+            "图例条目较多：live 界面仅显示前 8 条，导出件绘制全部条目",
         ),
         RenderDiagnosticSpec(
             "features_truncated", "warning",
@@ -166,14 +172,17 @@ def diagnostic(
     spec = RENDER_DIAGNOSTICS.get(code)
     if spec is None:
         return None
+    # review-r2 修复：detail 先截断再插值 —— message 与 detail 同界，防止
+    # 超长 detail 经 message 模板进入持久化载荷/sidecar（有界披露不变式）。
+    detail = (detail or "")[:MAX_DETAIL_CHARS]
     message = spec.message.format(detail=detail) if detail else spec.message
     return RenderDiagnostic(
         code=code,
         severity=spec.severity,
         message=message,
-        detail=detail[:MAX_DETAIL_CHARS],
-        layer_id=layer_id,
-        component_id=component_id,
+        detail=detail,
+        layer_id=layer_id[:MAX_ID_CHARS] if layer_id else None,
+        component_id=component_id[:MAX_ID_CHARS] if component_id else None,
     )
 
 
@@ -214,17 +223,24 @@ def normalize_render_diagnostics(
         detail = item.get("detail", "")
         if not isinstance(detail, str):
             detail = str(detail)
+        # review-r2 修复：与 diagnostic() 同口径 —— 先截断再插值 message，
+        # 标识符同界；外部载荷无论如何形状，入库的每一段都有界。
+        detail = detail[:MAX_DETAIL_CHARS]
+        layer_id = item.get("layer_id")
+        layer_id = layer_id[:MAX_ID_CHARS] if isinstance(layer_id, str) and layer_id else None
+        component_id = item.get("component_id")
+        component_id = (
+            component_id[:MAX_ID_CHARS]
+            if isinstance(component_id, str) and component_id
+            else None
+        )
         entry = RenderDiagnostic(
             code=code,
             severity=spec.severity,
             message=spec.message.format(detail=detail) if detail else spec.message,
-            detail=detail[:MAX_DETAIL_CHARS],
-            layer_id=item.get("layer_id")
-            if isinstance(item.get("layer_id"), str)
-            else None,
-            component_id=item.get("component_id")
-            if isinstance(item.get("component_id"), str)
-            else None,
+            detail=detail,
+            layer_id=layer_id,
+            component_id=component_id,
         )
         accepted.append(entry.to_dict())
     return accepted, rejected

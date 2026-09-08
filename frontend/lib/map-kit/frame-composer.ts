@@ -145,8 +145,18 @@ export async function composeFrames(
 
       await waitForIdle(map, idleTimeoutMs ?? 30_000);
 
-      const canvas = map.getCanvas();
-      canvases.push(canvas);
+      // 逐帧位图快照（review-r2 BLOCKER 修复）：MapLibre `getCanvas()` 每次返回
+      // 同一个 live canvas 实例（`getCanvas(){return this.canvas}`），直接持引用
+      // 会让所有帧都指向同一画布 —— 导出产物全部是最后一帧的内容（且不发射任何
+      // 降级诊断，纯静默错帧）。必须在下一帧改变相机/filter 前 copy 出独立画布。
+      const live = map.getCanvas();
+      const snapshot = document.createElement('canvas');
+      snapshot.width = live.width;
+      snapshot.height = live.height;
+      const sctx = snapshot.getContext('2d');
+      if (!sctx) throw new Error('快照画布 2d 上下文不可用');
+      sctx.drawImage(live, 0, 0);
+      canvases.push(snapshot);
       titles.push(title);
     } catch (e) {
       // 单帧失败跳过 + 显式披露（帧序号/标题），继续后续帧

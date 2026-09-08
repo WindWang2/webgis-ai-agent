@@ -151,3 +151,86 @@ async def test_sidecar_traversal_resists(client):
         mp.setattr(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR)
         resp = await client.get("/api/v1/export/diagnostics/..%2F..%2Fsecret.png")
     assert resp.status_code in (401, 403, 404)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# review-r2：载荷有界性 —— message/detail/标识符全部有界入库（DoS 面）
+# ────────────────────────────────────────────────────────────────────────
+
+
+def test_normalize_caps_detail_and_message():
+    """超长 detail：detail 与经模板插值的 message 都必须 ≤ 上界 + 模板本身。
+
+    此前 detail 先插值进 message 再截断，message 无界 —— 10MB detail 会
+    原样落 sidecar 并经读取端点回显。
+    """
+    from app.lib.cartography.render_diagnostics import (
+        MAX_DETAIL_CHARS,
+        normalize_render_diagnostics,
+    )
+
+    huge = "x" * (MAX_DETAIL_CHARS * 100)
+    accepted, rejected = normalize_render_diagnostics(
+        [{"code": "label_truncated", "detail": huge}]
+    )
+    assert accepted and not rejected
+    entry = accepted[0]
+    assert len(entry["detail"]) == MAX_DETAIL_CHARS
+    assert len(entry["message"]) <= len(entry["detail"]) + 200
+
+
+def test_normalize_caps_identifier_fields():
+    """layer_id / component_id 同样有界入库（此前无长度上限）。"""
+    from app.lib.cartography.render_diagnostics import (
+        MAX_ID_CHARS,
+        normalize_render_diagnostics,
+    )
+
+    accepted, _ = normalize_render_diagnostics(
+        [
+            {
+                "code": "features_truncated",
+                "detail": "50000",
+                "layer_id": "L" * (MAX_ID_CHARS * 10),
+                "component_id": "C" * (MAX_ID_CHARS * 10),
+            }
+        ]
+    )
+    assert accepted
+    assert len(accepted[0]["layer_id"]) == MAX_ID_CHARS
+    assert len(accepted[0]["component_id"]) == MAX_ID_CHARS
+
+
+def test_diagnostic_factory_caps_detail_in_message():
+    """编译器路径（diagnostic()）同一口径：message 与 detail 同界。"""
+    from app.lib.cartography.render_diagnostics import (
+        MAX_DETAIL_CHARS,
+        diagnostic,
+    )
+
+    d = diagnostic("label_truncated", detail="长" * (MAX_DETAIL_CHARS * 50))
+    assert d is not None
+    assert len(d.detail) == MAX_DETAIL_CHARS
+    assert len(d.message) <= len(d.detail) + 200
+
+
+@pytest.mark.asyncio
+async def test_upload_oversized_detail_stays_bounded_on_disk(client):
+    """端到端：超大（200KB，低于 Starlette 1MB form part 上限）detail 上传
+    → sidecar 中 detail/message 均按 200 字符契约有界落盘。"""
+    from app.lib.cartography.render_diagnostics import MAX_DETAIL_CHARS
+
+    _auth(client, _owner_user)
+    payload = json.dumps(
+        [{"code": "label_truncated", "detail": "x" * (200 * 1024)}]
+    )
+    resp = await _upload(client, payload)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["render_diagnostics"]["accepted"] == 1
+    sidecar = os.path.join(_TEST_EXPORT_DIR, body["filename"] + ".diagnostics.json")
+    with open(sidecar, encoding="utf-8") as fh:
+        stored = json.load(fh)
+    entry = stored["diagnostics"][0]
+    assert len(entry["detail"]) == MAX_DETAIL_CHARS
+    assert len(entry["message"]) <= len(entry["detail"]) + 200
