@@ -20,13 +20,19 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor
+from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="remote.ndvi", name="NDVI 植被指数", category="remote_sensing",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_band_math", backend="numpy", deterministic=True,
+                    min_features=1, max_features=16777216,
+                    notes="闭式波段运算；窗口按 RS 域闸同口径保守取 1677 万像元（n_bands·H·W；实现无显式闸，超限由内存兜底）"),
+            ],
             capabilities=["ndvi"],
             input_artifact_types=["raster_surface", "terrain_surface"],
             output_artifact_type="raster_surface", tool_candidates=["compute_ndvi", "compute_vegetation_index"],
@@ -88,7 +94,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             capabilities=["spectral_index"],
             input_artifact_types=["raster_surface"],
             output_artifact_type="raster_surface",
-            tool_candidates=["compute_spectral_index", "analyze_vegetation_index"],
+            tool_candidates=["compute_spectral_index"],
             cpu_cost="medium", memory_cost="medium", io_cost="low",
             preferred_execution_policy="INLINE", priority=15,
             algorithm_family="spectral_index",
@@ -264,6 +270,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # ── Foundation V3（additive）：+gamma_map/kuan（契约 v2）────────
         AlgorithmDescriptor(
             id="sar.speckle_filter",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_speckle_filters", backend="numpy", deterministic=True,
+                    min_features=1, max_features=16777216,
+                    notes="SPECKLE_SCALE_LIMIT_PIXELS=1677 万像元类型化拒绝；gamma-map Newton 迭代 ≤10"),
+            ],
             name="SAR 斑点噪声滤波（Lee/Refined-Lee/Frost/Gamma MAP/Kuan）",
             category="remote_sensing",
             capabilities=["sar_speckle_filtering"],
@@ -349,6 +361,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="sar.glcm_texture",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_glcm_windows", backend="numpy", deterministic=True,
+                    min_features=1, max_features=64000000,
+                    notes="窗口以 cells·window²·offsets 操作估算计：GLCM_OPS_LIMIT=6400 万 pair-ops 类型化拒绝"),
+            ],
             name="GLCM 纹理特征（Haralick 窗口化）",
             category="remote_sensing",
             capabilities=["sar_texture"],
@@ -384,6 +402,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="remote.pca", name="波段栈 PCA（SVD 降维）", category="remote_sensing",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_cov_pca", backend="numpy", deterministic=True,
+                    min_features=1, max_features=16777216,
+                    notes="PCA_SCALE_LIMIT_CELLS=1677 万（n_bands·H·W）类型化拒绝；得分预览 ≤1 万行披露"),
+            ],
             capabilities=["raster_dimensionality_reduction"],
             input_artifact_types=["raster_surface"],
             output_artifact_type="raster_surface",
@@ -483,6 +507,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # ── Foundation V3：遥感 V3 批次（波段栈科学算法族）────────────
         AlgorithmDescriptor(
             id="remote.mnf", name="最小噪声分数变换（MNF）", category="remote_sensing",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_noise_whitened_pca", backend="numpy", deterministic=True,
+                    min_features=1, max_features=16777216,
+                    notes="窗口以 n_bands·H·W 总像元计：RS_SCALE_LIMIT_CELLS=1677 万（无流式实现，超限先拒绝）"),
+            ],
             capabilities=["mnf_transform"],
             input_artifact_types=["raster_surface"],
             output_artifact_type="raster_surface",
@@ -517,6 +547,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="remote.ica", name="独立成分分析（FastICA）", category="remote_sensing",
+            backend_variants=[
+                BackendVariant(
+                    id="sklearn_fastica", backend="scikit-learn", deterministic=True,
+                    min_features=1, max_features=16777216,
+                    notes="窗口以 n_bands·H·W 总像元计：RS_SCALE_LIMIT_CELLS=1677 万类型化拒绝；random_state=42 固定、未收敛披露"),
+            ],
             capabilities=["ica_transform"],
             input_artifact_types=["raster_surface"],
             output_artifact_type="raster_surface",
@@ -674,6 +710,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="remote.mad_change", name="MAD / IR-MAD 变化检测", category="remote_sensing",
+            backend_variants=[
+                BackendVariant(
+                    id="windowed_rasterio", backend="rasterio", deterministic=True,
+                    min_features=1, max_features=250000000,
+                    notes="窗口化读写（内存 O(window)）；RasterResourceGuard 输出足迹闸 2.5 亿像元 / 1GiB"),
+            ],
             capabilities=["raster_change_detection"],
             input_artifact_types=["raster_surface"],
             output_artifact_type="raster_surface",
@@ -1051,6 +1093,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="sar.multitemporal_speckle",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_mt_lee", backend="numpy", deterministic=True,
+                    min_features=1, max_features=16777216,
+                    notes="T∈[3,24] 且单切片 H·W ≤1677 万像元（SPECKLE 闸同口径）；栈须配准对齐"),
+            ],
             name="多时相斑点抑制（强度域 MT-Lee）",
             category="remote_sensing",
             capabilities=["sar_speckle_filtering"],

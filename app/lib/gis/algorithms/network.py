@@ -29,6 +29,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="network.isochrone", name="网络等时圈",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_isochrone_typed_validation",
+                "tests/unit/gis/test_algo_conformance_v2.py::test_isochrone_unconfigured_provider_typed_error",
+            ],
             capabilities=["service_area"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="service_area",
@@ -57,6 +61,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="network.service_area.simple", name="简化服务区（速度表缓冲）",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_service_area_simple_travel_time_radius_oracle",
+            ],
             capabilities=["service_area"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="service_area",
@@ -710,6 +717,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # deterministic=False（服务商实时数据）；外部依赖进 limitations。
         AlgorithmDescriptor(
             id="network.route_external_api", name="外部路径规划（高德/百度）",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_plan_route_unconfigured_typed_error",
+            ],
             category="network_analysis",
             capabilities=["external_route_planning"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -736,6 +746,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="network.transit_route_external", name="公交路径规划（高德）",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_transit_route_typed_validation_and_unconfigured",
+            ],
             category="network_analysis",
             capabilities=["transit_routing"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -761,6 +774,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="network.traffic_status_external", name="实时路况（高德）",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_traffic_status_typed_validation_and_unconfigured",
+            ],
             category="network_analysis",
             capabilities=["traffic_status"],
             output_artifact_type="stats_table",
