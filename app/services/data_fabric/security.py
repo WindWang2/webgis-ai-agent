@@ -255,6 +255,9 @@ class DataFabricSecurity:
         sensitive_keys = {
             "password", "secret", "secret_key", "token", "api_key", "access_key",
             "credential", "authorization", "auth", "x-api-key", "apikey",
+            # Wave 15 审计近形键补齐：连字符形 "api-key"（原集只有 x-api-key /
+            # 下划线形 api_key/apikey，裸 {"api-key": …} 会原样外泄）。
+            "api-key",
             "passwd", "pwd", "private_key", "client_secret", "session_token",
         }
 

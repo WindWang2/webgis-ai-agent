@@ -23,9 +23,19 @@ These are not "speed" benchmarks (CI runners are noisy). They pin the
 algorithmic shape so a regression to linear-scan registry or Python-side
 filtering is immediately visible.
 """
+import pytest
+
 import statistics
 import time
 from typing import List
+
+
+# ── ADR-0104 Wave 11：墙钟断言统一 perf 车道（#664 隔离策略）──────────────
+# 毫秒级中位数/上限对机器与负载敏感，不得在 --cov 主车道作为回归闸；
+# 结构性断言（字节数、计数器）保留为各测试内部契约。见 production.yml
+# test-perf 车道（-m perf）与 test_ci_perf_coverage_contract 的接线锁。
+pytestmark = pytest.mark.perf
+
 
 
 

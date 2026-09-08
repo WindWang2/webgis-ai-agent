@@ -12,6 +12,33 @@ from starlette.websockets import WebSocketDisconnect
 from app.api.routes.ws import router as ws_router
 from app.core.auth import create_access_token
 
+import app.tools._utils as _utils
+import app.api.routes.ws as ws_module
+
+# ── ADR-0104 Wave 17：顺序依赖修复 ────────────────────────────────────────
+# _make_app_with_session 会永久改写 _utils.async_db_session 与
+# ws_module.get_rate_limiter（模块级补丁无恢复），并泄漏 mkdtemp 目录 ——
+# 同进程内后续测试文件被这些残留污染。autouse fixture 每测试后恢复快照
+# 并清理本测试创建的临时目录。
+_TMPDIRS_CREATED = []
+
+
+@pytest.fixture(autouse=True)
+def _restore_patched_module_state():
+    _snapshots = [
+        (ws_module, "get_rate_limiter", getattr(ws_module, "get_rate_limiter", None)),
+        (_utils, "async_db_session", getattr(_utils, "async_db_session", None)),
+    ]
+    _before = set(_TMPDIRS_CREATED)
+    yield
+    for mod, attr, original in _snapshots:
+        setattr(mod, attr, original)
+    import shutil as _shutil
+    for d in list(_TMPDIRS_CREATED):
+        if d not in _before:
+            _shutil.rmtree(d, ignore_errors=True)
+            _TMPDIRS_CREATED.remove(d)
+
 
 def _make_app_with_session(session_id: str = "sess-valid", user_id: str = "user-123",
                            user_token_version: int = 0):
@@ -28,6 +55,7 @@ def _make_app_with_session(session_id: str = "sess-valid", user_id: str = "user-
     import app.api.routes.ws as ws_module
 
     tmpdir = tempfile.mkdtemp()
+    _TMPDIRS_CREATED.append(tmpdir)
     db_path = os.path.join(tmpdir, "ws_test.db")
 
     # Create schema + seed data via sync sqlite3 (no event loop needed)
