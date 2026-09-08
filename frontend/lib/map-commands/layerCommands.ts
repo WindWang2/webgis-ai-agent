@@ -19,6 +19,7 @@ import {
   applyLayerVisibilityTransaction,
   boundedVisibilityRepair,
 } from './visibility-transaction';
+import { LOCK_CONFLICT_ERROR, partitionByLock } from '@/lib/workbench/layer-lock';
 
 // 身份解析已集中到 layer-identity.ts（LayerIdentityResolver 单一深接口）；
 // 此处 re-export 保持既有导入路径（tests / 兄弟命令）兼容。
@@ -301,7 +302,21 @@ export const layerCommands: Record<string, CommandEntry> = {
       // 身份解析与 visibility 对称（此前 remove 不做 ref 展开：恢复会话里
       // ref 目标假 target_not_found；一个 ref 背的多层只删一层留下残件）。
       const targetIds = resolveLayerTargetsByRef(target, getHudState);
-      const effectiveTargets = targetIds.length > 0 ? targetIds : [target];
+      // V5/W2 lock 门：锁定层是用户意图护栏 —— agent 删除被锁目标 → typed
+      // layer_locked 冲突（用户解锁是唯一 override）；部分被锁只删未锁目标
+      // 并在 result 披露 locked_layer_ids（不静默）。
+      const lockPartition = partitionByLock(
+        targetIds.length > 0 ? targetIds : [target],
+      );
+      if (lockPartition.locked.length > 0 && lockPartition.allowed.length === 0) {
+        return {
+          status: 'failed',
+          error: LOCK_CONFLICT_ERROR,
+          result: { locked_layer_ids: [...lockPartition.locked] },
+        };
+      }
+      const effectiveTargets = lockPartition.allowed;
+      const lockedLayerIds = lockPartition.locked;
 
       const specLayerIds = new Set(
         ((getCommittedMapSpec()?.layers || []) as any[]).map((l) => String(l.id)),
@@ -430,23 +445,29 @@ export const layerCommands: Record<string, CommandEntry> = {
 
       // 5. V3 round-2 FIX-B: post-mutation verification — the resolved stack
       //    must be gone from the map. (#462: registry read.)
+      // V5/W2：部分 lock 冲突在各出口披露 locked_layer_ids（不静默）。
+      const withLocked = (result: Record<string, unknown> | undefined) =>
+        lockedLayerIds.length > 0 ? { ...result, locked_layer_ids: [...lockedLayerIds] } : result;
       const layersAfter = renderer.getStyleLayerIds(map);
       const stillPresent = matchedAll.some(
         (id) => !!map.getLayer?.(id) || !!map.getSource?.(id) || layersAfter.includes(id),
       );
       if (sawFailure) {
         return storeMatchedAll.length > 0
-          ? { status: 'succeeded', result: { store_updated: true } }
+          ? { status: 'succeeded', result: withLocked({ store_updated: true }) }
           : { status: 'failed', error: 'mutation_failed' };
       }
       if (!runtimeRemovedAny) {
         // 全部目标是 store-only（reconcile 拥有 map 子层）→ 无同步可验证的
         // map 状态，诚实 store_updated（后端视作未收敛）。
-        return { status: 'succeeded', result: { store_updated: true } };
+        return { status: 'succeeded', result: withLocked({ store_updated: true }) };
       }
-      if (stillPresent) return nonConfirmableAck(storeMatchedAll);
+      if (stillPresent) {
+        const ack = nonConfirmableAck(storeMatchedAll);
+        return { ...ack, result: withLocked(ack.result as Record<string, unknown> | undefined) };
+      }
       // V3: verifiable marker (layer remove — harness convergence evidence).
-      return { status: 'succeeded', result: { confirmed: true } };
+      return { status: 'succeeded', result: withLocked({ confirmed: true }) };
     },
   },
 

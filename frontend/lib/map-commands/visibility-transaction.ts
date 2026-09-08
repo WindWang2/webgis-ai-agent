@@ -10,6 +10,7 @@ import {
 } from '@/lib/mapspec/session-cursor';
 import { ApiError, apiFetch } from '@/lib/api/transport';
 import { presentationFromMapSpec } from '@/lib/session/map-state-restore';
+import { LOCK_CONFLICT_ERROR, partitionByLock } from '@/lib/workbench/layer-lock';
 import type { MapCommandContext, MapCommandResult } from './types';
 import {
   matchMapLayers,
@@ -22,7 +23,8 @@ import {
  * LayerVisibilityTransaction —— 可见性突变的单一事务（Goal C/D）。
  *
  * 每次可见性变更走同一深接口，杜绝「UI 一套 / Agent 一套 / finalize 一套」：
- *   resolve identity → desired（HUD store + pending presentation）
+ *   resolve identity → lock gate（V5/W2：锁定层从目标集中剔除，全部被锁
+ *   → typed layer_locked 冲突）→ desired（HUD store + pending presentation）
  *   → runtime（MapLibre setLayoutProperty 即时生效）
  *   → durability（后端 MapSpec patch_layer_presentation 提交，CAS）
  *   → postcondition（getLayoutProperty 读回验证）
@@ -44,6 +46,11 @@ export interface VisibilityTransactionInput {
   color?: string;
   /** false = 跳过后端持久化（restore 内部路径已持真相时）。 */
   durable?: boolean;
+  /**
+   * false = 豁免 lock 门（仅限用户自身路径 —— 手动面板与批量操作先于本
+   * 事务自查 lock；agent 通道缺省 true，锁定即 typed 冲突）。
+   */
+  respectLock?: boolean;
 }
 
 export interface VisibilityTransactionResult extends MapCommandResult {
@@ -51,6 +58,8 @@ export interface VisibilityTransactionResult extends MapCommandResult {
     confirmed?: boolean;
     store_updated?: boolean;
     target_ids?: string[];
+    /** 被 lock 门剔除的目标（部分冲突时非空 —— 不静默吞目标）。 */
+    locked_layer_ids?: string[];
   };
 }
 
@@ -206,10 +215,30 @@ export function applyLayerVisibilityTransaction(
   const { layerId, visible, opacity, name, color } = input;
 
   // 1. 身份解析（ref → 多 spec 层目标，group 语义）
-  const targetIds = resolveLayerTargetsByRef(layerId, getHudState);
-  if (targetIds.length === 0) {
+  const resolvedIds = resolveLayerTargetsByRef(layerId, getHudState);
+  if (resolvedIds.length === 0) {
     return { status: 'failed', error: 'target_not_found' };
   }
+
+  // 1.5 lock 门（V5/W2）：agent 通道（缺省）锁定目标即剔除；全部被锁 →
+  // typed layer_locked 冲突（ack.error 机器可读，用户解锁是唯一 override）。
+  const lockPartition = input.respectLock === false
+    ? { allowed: [...resolvedIds], locked: [] as string[] }
+    : partitionByLock(resolvedIds);
+  const lockedTargets = lockPartition.locked;
+  if (lockPartition.allowed.length === 0) {
+    return {
+      status: 'failed',
+      error: LOCK_CONFLICT_ERROR,
+      result: { locked_layer_ids: lockedTargets, target_ids: resolvedIds },
+    };
+  }
+  const targetIds = lockPartition.allowed;
+  // 部分冲突时各出口 result 附加 locked_layer_ids（不静默）。
+  const withLocked = (
+    result: VisibilityTransactionResult['result'],
+  ): VisibilityTransactionResult['result'] =>
+    lockedTargets.length > 0 ? { ...result, locked_layer_ids: lockedTargets } : result;
 
   // 2. MapLibre 命中（双方案；目标在地图与 store 都不存在 → 真未命中）
   const matched = Array.from(new Set(targetIds.flatMap((id) => matchMapLayers(map, id))));
@@ -266,7 +295,7 @@ export function applyLayerVisibilityTransaction(
     // 未收敛，observation 循环续证）。
     return {
       status: 'succeeded',
-      result: { store_updated: true, target_ids: targetIds },
+      result: withLocked({ store_updated: true, target_ids: targetIds }),
     };
   }
   const want = wantVisibility(visible);
@@ -275,7 +304,9 @@ export function applyLayerVisibilityTransaction(
       return {
         status: storeMatched.length > 0 ? 'succeeded' : 'failed',
         error: storeMatched.length > 0 ? undefined : 'mutation_failed',
-        result: storeMatched.length > 0 ? { store_updated: true, target_ids: targetIds } : undefined,
+        result: withLocked(
+          storeMatched.length > 0 ? { store_updated: true, target_ids: targetIds } : undefined,
+        ),
       };
     }
     if (
@@ -285,13 +316,15 @@ export function applyLayerVisibilityTransaction(
       return {
         status: storeMatched.length > 0 ? 'succeeded' : 'failed',
         error: storeMatched.length > 0 ? undefined : 'mutation_failed',
-        result: storeMatched.length > 0 ? { store_updated: true, target_ids: targetIds } : undefined,
+        result: withLocked(
+          storeMatched.length > 0 ? { store_updated: true, target_ids: targetIds } : undefined,
+        ),
       };
     }
   }
   return {
     status: 'succeeded',
-    result: { confirmed: true, target_ids: targetIds },
+    result: withLocked({ confirmed: true, target_ids: targetIds }),
   };
 }
 
