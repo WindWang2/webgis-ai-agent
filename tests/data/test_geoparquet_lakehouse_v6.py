@@ -98,7 +98,6 @@ def test_window_scan_without_metadata_degrades_bounded(tmp_path):
 
     from app.services.data_fabric.vector_carrier import (
         features_to_arrow,
-        table_to_geoparquet,
     )
 
     feats = _cluster_features(1.0, 1.0, 4, "x")

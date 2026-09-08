@@ -28,6 +28,15 @@ from app.services.lakehouse.raster_object import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _sandbox_data_dir(tmp_path, monkeypatch):
+    """publish_cog_data_object 走 BlobStore 单例 —— DATA_DIR 沙箱化，
+    绝不写仓库 ./data。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+
+
 def _write_raster(path: Path, width=64, height=48, blocksize=0, seed=7):
     import rasterio
     from rasterio.transform import from_origin

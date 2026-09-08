@@ -40,6 +40,15 @@ GRID = RasterGridProfile(
 TIMES = ["2024-01-01T00:00:00Z", "2024-02-01T00:00:00Z", "2024-03-01T00:00:00Z"]
 
 
+@pytest.fixture(autouse=True)
+def _sandbox_data_dir(tmp_path, monkeypatch):
+    """经 BlobStore 单例发布的测试不得写进仓库 ./data（与 tests/data/conftest
+    的缓存重置配套 —— 本文件 publish 走默认根，这里把 DATA_DIR 沙箱化）。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+
+
 def _write_slice(path, value, h=48, w=64, t=""):
     with rasterio.open(
         path, "w", driver="GTiff", width=w, height=h, count=1,
