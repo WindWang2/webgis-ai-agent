@@ -60,6 +60,13 @@ class AdaptiveController:
         self.notes.append(f"replan {'adopted' if adopted else 'rejected'}: {reason}")
 
 
+def _spec_field(spec: Any, name: str) -> Any:
+    """join 语义字段访问（dict 或 ChainJoin 形状兼容）。"""
+    if isinstance(spec, dict):
+        return spec.get(name)
+    return getattr(spec, name, None)
+
+
 def evaluate_tail_orders(
     *,
     accumulated_card: int,
@@ -68,6 +75,7 @@ def evaluate_tail_orders(
         Tuple[str, str], Dict[str, Any]
     ],  # (left_id, right_id) → join 语义
     ndv_by_source: Dict[str, Dict[str, int]],
+    entry_sources: Optional[set] = None,  # 累积侧可达的首尾跳源（M3）
 ) -> List[Tuple[int, List[str]]]:
     """剩余尾序的成本排序（确定性；只计跳基数 CPU + build 行）。
 
@@ -85,6 +93,9 @@ def evaluate_tail_orders(
     est = {sid: rows for sid, rows in tail_sources}
     out: List[Tuple[int, List[str]]] = []
     for perm in permutations(ids):
+        # M3：首尾跳的左侧是累积行 —— 该源必须从已消费集合有向可达。
+        if entry_sources is not None and perm[0] not in entry_sources:
+            continue
         # 连通性：首源须有边来自已累积侧之外的首跳语义 —— 保守要求
         # 尾部自身成链（边存在于相邻两源之间）。
         ok = True
@@ -106,13 +117,13 @@ def evaluate_tail_orders(
             left_ndv_sid = perm[i - 1] if i >= 1 else None
             ndv_l = (
                 ndv_by_source.get(left_ndv_sid, {}).get(
-                    edge.get("join_field_left") or ""
+                    str(_spec_field(edge, "join_field_left") or "")
                 )
                 if left_ndv_sid
                 else None
             )
             ndv_r = ndv_by_source.get(perm[i + 1], {}).get(
-                edge.get("join_field_right") or ""
+                str(_spec_field(edge, "join_field_right") or "")
             )
             ndv = max(ndv_l or 1, ndv_r or 1)
             card = max(1, (left_card * right_card) // ndv)
@@ -131,6 +142,7 @@ def pick_tail_order(
     tail_sources: Sequence[Tuple[str, Optional[int]]],
     tail_edges: Dict[Tuple[str, str], Dict[str, Any]],
     ndv_by_source: Dict[str, Dict[str, int]],
+    entry_sources: Optional[set] = None,
 ) -> Tuple[List[str], bool]:
     """受护栏重排：更优才切换（严格小于），最多一次。"""
     if not controller.can_replan():

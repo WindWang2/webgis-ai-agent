@@ -219,3 +219,28 @@ def test_spatial_hop_uses_extent_overlap():
     )
     out, out2 = enumerate_federation(disjoint), enumerate_federation(overlapping)
     assert out.cost < out2.cost
+
+
+def test_mixed_crs_multi_hop_propagates_subtree_output_crs():
+    """C1（评审 R1）：第二跳的左侧输入 CRS 是**子树输出**（4326），不是边
+    声明源的 CRS —— 否则 sC(3857) 会被误判 aligned 而静默错位。"""
+    ctx = EnumerationContext(
+        sources=[
+            _src("a", rows=10, crs="EPSG:4326", extent=[0, 0, 1, 1]),
+            _src("b", rows=10, crs="EPSG:3857", extent=[0, 0, 100000, 100000]),
+            _src("c", rows=10, crs="EPSG:3857", extent=[0, 0, 100000, 100000]),
+        ],
+        joins=[
+            _edge("a", "b", kind="spatial_join", spatial_op="intersects"),
+            _edge("b", "c", kind="spatial_join", spatial_op="intersects"),
+        ],
+        limit=100,
+    )
+    out = enumerate_federation(ctx)
+    assert len(out.crs_transforms) == 2, (
+        "两跳都必须变换：hop1 b→4326；hop2 左侧已变为 4326，c(3857) 仍需变换"
+    )
+    assert all(t.get("placement") == "local" for t in out.crs_transforms)
+    # 树中两个 reproject 节点
+    text = str(out.tree.canonical_dict())
+    assert text.count('"kind":"reproject"') == 2 or text.count("reproject") >= 2

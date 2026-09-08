@@ -74,6 +74,21 @@ def render_tree(
     return [f"{pad}- node kind={getattr(node, 'kind', '?')}"]
 
 
+def _scans(node):
+    """收集计划树中的全部 scan 节点（est/fetch_window 渲染用）。"""
+    from app.services.data_fabric.query.federated.logical import (
+        LogicalJoin,
+        LogicalScan,
+    )
+
+    if isinstance(node, LogicalScan):
+        return [node]
+    if isinstance(node, LogicalJoin):
+        return _scans(node.left) + _scans(node.right)
+    inner = getattr(node, "input", None)
+    return _scans(inner) if inner is not None else []
+
+
 def explain_v6_lines(
     plan: EnumeratedPlan,
     ctx: Optional[EnumerationContext] = None,
@@ -108,13 +123,11 @@ def explain_v6_lines(
     else:
         lines.append("    (context unavailable)")
     lines.append("  network_fetch:")
-    if ctx is not None:
-        for s in ctx.sources:
-            w = "unknown"
-            lines.append(
-                f"    source {s.source_id}: estimated_rows={s.estimated_rows}"
-                f" fetch_window={w}"
-            )
+    for n in _scans(plan.tree):
+        lines.append(
+            f"    source {n.source_id}: estimated_rows={n.estimated_rows}"
+            f" fetch_window={n.fetch_limit}"
+        )
     lines.append("  materialization: build sides are materialized under the")
     lines.append("    MAX_JOIN_CANDIDATES hard cap; probe sides stream page-wise")
     if plan.alternatives:

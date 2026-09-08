@@ -1116,13 +1116,14 @@ def derive_chain_fields(
     return out
 
 
-def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
-    """校验并产出左深链计划（成本排序；纯函数，无 IO，不改写请求）。
+def validate_chain_shape(
+    req: FederatedChainRequest, *, check_crs_mix: bool = True
+) -> None:
+    """链请求结构校验（V5/V6 单一真相；M1，评审 R1）。
 
-    排序按 ``estimated_rows`` 提示升序（小表建侧/先物化，None 视为最大），
-    稳定排序保证同序输入的确定性。fail-fast：limit/CRS 混用/join 数等预算
-    与结构先检。planner 产生的 warnings 附在 ``plans[0].warnings`` 返回
-    （不追加到 ``req.warnings``——本函数文档约定为纯函数）。
+    V6 的 ``execute_chain_v6`` 以 ``check_crs_mix=False`` 调用 —— 混 CRS 在
+    V6 是可执行的（计划内变换，ADR-0118），其余契约（limit/join 数/join
+    字段/spatial_op/group_by）两引擎逐字一致。
     """
     if len(req.sources) < 2:
         raise FederatedQueryError("chain federation requires at least 2 sources")
@@ -1136,13 +1137,14 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
             f"chain requires exactly len(sources)-1 joins "
             f"({len(req.joins)} given for {len(req.sources)} sources)"
         )
-    # F4：链内 CRS 一致性 —— V3 链不做在线坐标变换，混用即计划期 typed 失败
-    srs_values = {src.srs for src in req.sources if src.srs}
-    if len(srs_values) > 1:
-        raise FederatedQueryError(
-            f"chain sources mix CRS: {sorted(srs_values)}; reproject the sources "
-            "upstream or declare a single srs (no on-the-fly transform in V3 chains)"
-        )
+    if check_crs_mix:
+        # F4：链内 CRS 一致性 —— V3 链不做在线坐标变换，混用即计划期 typed 失败
+        srs_values = {src.srs for src in req.sources if src.srs}
+        if len(srs_values) > 1:
+            raise FederatedQueryError(
+                f"chain sources mix CRS: {sorted(srs_values)}; reproject the sources "
+                "upstream or declare a single srs (no on-the-fly transform in V3 chains)"
+            )
     for i, join in enumerate(req.joins):
         if join.kind not in ("attribute_join", "spatial_join", "aggregate_join"):
             raise FederatedQueryError(f"joins[{i}].kind {join.kind!r} unsupported")
@@ -1174,8 +1176,21 @@ def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
     if req.limit > budget.max_rows:
         raise QueryBudgetExceededError(
             f"chain limit {req.limit} exceeds budget {budget.max_rows}",
-            details={"hint": "reduce limit, add bbox/filters, or aggregate per source"},
+            details={
+                "hint": "reduce limit, add bbox/filters, or aggregate per source"
+            },
         )
+
+
+def plan_federated_chain(req: FederatedChainRequest) -> List[FederatedPlan]:
+    """校验并产出左深链计划（成本排序；纯函数，无 IO，不改写请求）。
+
+    排序按 ``estimated_rows`` 提示升序（小表建侧/先物化，None 视为最大），
+    稳定排序保证同序输入的确定性。fail-fast：limit/CRS 混用/join 数等预算
+    与结构先检。planner 产生的 warnings 附在 ``plans[0].warnings`` 返回
+    （不追加到 ``req.warnings``——本函数文档约定为纯函数）。
+    """
+    validate_chain_shape(req, check_crs_mix=True)
 
     order, rejected_orders, order_warning = _chain_plan_order(req)
     chain_warnings: List[str] = []
@@ -1686,12 +1701,17 @@ def execute_chain_v6(
     是 V5 执行器能力；V6 树路径不重复实现 —— 无第二真相）。
     """
     first_two = [s.source_id for s in req.sources[:2]]
+    first_adapter = executor._adapter_factory(first_two[0]) if first_two else None
     same_source_first_hop = (
         len(first_two) == 2
         and first_two[0] == first_two[1]
+        and first_adapter is not None
+        # m9（评审 R1）：与 V5 同款 adapter **同一实例**判定 —— factory 每次
+        # 返回新实例时不误标 server 路径。
+        and first_adapter is executor._adapter_factory(first_two[1])
         and req.joins
         and req.joins[0].kind in ("spatial_join", "aggregate_join")
-        and hasattr(executor._adapter_factory(first_two[0]), "server_spatial_join")
+        and hasattr(first_adapter, "server_spatial_join")
     )
     if same_source_first_hop:
         result = execute_federated_chain(executor, req)
@@ -1700,6 +1720,7 @@ def execute_chain_v6(
             "engine=v6: same-source server-side first hop delegated to V5 executor"
         ]
         return result
+    validate_chain_shape(req, check_crs_mix=False)
     try:
         from app.services.data_fabric.query.federated.executor import (
             PhysicalExecutor,
@@ -1711,6 +1732,23 @@ def execute_chain_v6(
         )
 
         plan = plan_federation_v6(req)
+        # M2（评审 R1）：derive_projection 接线 —— 与 V5 derive_chain_fields
+        # 单一真相；仅当 V6 选择的序 == given 序（派生的"下一跳左键"集合
+        # 依赖跳序，重排序下宁可多取全列，绝不缺字段静默失真）。
+        tree = plan.tree
+        given_ids = [s.source_id for s in req.sources]
+        if getattr(req, "derive_projection", True) and plan.order == given_ids:
+            from app.services.data_fabric.query.federated.logical import (
+                chain_to_logical,
+            )
+
+            derived = derive_chain_fields(req, list(req.sources), list(req.joins))
+            if derived:
+                tree = _apply_scan_fields(chain_to_logical(req), derived)
+                plan.warnings.append(
+                    "minimal projection derived per source (V6, given-order): "
+                    + json.dumps(derived, ensure_ascii=False, sort_keys=True)
+                )
         px = PhysicalExecutor(
             adapter_factory=executor._adapter_factory,
             budget=req.budget,
@@ -1719,7 +1757,15 @@ def execute_chain_v6(
             adaptive=True,
             order_strategy=getattr(req, "order_strategy", "cost"),
         )
-        exec_result = px.execute(plan.tree, hop_estimates=extract_hop_estimates(plan))
+        exec_result = px.execute(
+            tree,
+            hop_estimates=extract_hop_estimates(plan),
+            edge_specs={
+                (j.left_source_id, j.right_source_id): j
+                for j in req.joins
+                if j.left_source_id and j.right_source_id
+            },
+        )
     except DataFabricError:
         raise  # typed 错误契约与 V5 一致（预算/构造错误绝不静默回退）
     except Exception as e:  # noqa: BLE001 - V6 非 typed 异常 → 诚实回退 V5
@@ -1753,7 +1799,9 @@ def execute_chain_v6(
         ),
         "execution_duration_s": exec_result.get("execution_duration_s"),
         "warnings": warnings,
-        "explain_v6": explain_v6_lines(plan, exec_result=exec_result),
+        "explain_v6": explain_v6_lines(
+            plan, _v6_explain_ctx(req), exec_result=exec_result
+        ),
         "semi_join_reduction": exec_result.get("hop_stats"),
         "bloom_reduction": exec_result.get("bloom_stats"),
         "replans_used": exec_result.get("replans_used", 0),
@@ -1806,3 +1854,34 @@ def _v6_plan_dicts(plan) -> List[Dict[str, Any]]:
 
     walk(plan.tree, 0)
     return out
+
+
+def _v6_explain_ctx(req: FederatedChainRequest):
+    """EXPLAIN 用的轻量 ctx（源事实视图；M5 评审 R1：下推边界按提示如实渲染）。"""
+    from app.services.data_fabric.query.federated.planner import (
+        build_enumeration_context,
+    )
+
+    return build_enumeration_context(req)
+
+
+def _apply_scan_fields(tree, fields_by_sid):
+    """把派生投影写回计划树的 scan 节点（M2；返回新树）。"""
+    from app.services.data_fabric.query.federated.logical import (
+        LogicalScan,
+        logical_from_dict,
+    )
+
+    if isinstance(tree, LogicalScan):
+        f = fields_by_sid.get(tree.source_id)
+        if f and tree.fields is None:
+            return tree.model_copy(update={"fields": sorted(f)})
+        return tree
+    data = tree.model_dump()
+    for side in ("input", "left", "right"):
+        child = data.get(side)
+        if isinstance(child, dict) and "kind" in child:
+            data[side] = _apply_scan_fields(
+                logical_from_dict(child), fields_by_sid
+            ).model_dump()
+    return logical_from_dict(data)

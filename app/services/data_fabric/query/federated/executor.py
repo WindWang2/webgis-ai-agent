@@ -94,7 +94,10 @@ class PhysicalExecutor:
     # ── 对外入口 ─────────────────────────────────────────────────────
 
     def execute(
-        self, plan_tree: LogicalNode, hop_estimates: Optional[List[int]] = None
+        self,
+        plan_tree: LogicalNode,
+        hop_estimates: Optional[List[int]] = None,
+        edge_specs: Optional[Dict[Tuple[str, str], Any]] = None,
     ) -> Dict[str, Any]:
         from app.services.data_fabric.query.execution import StreamingBudget
 
@@ -104,11 +107,15 @@ class PhysicalExecutor:
             max_bytes=self._budget.max_bytes,
             max_vertices=self._budget.max_vertices,
         )
+        self.trace = ExecutionTrace()  # m3（评审 R1）：复用实例时证据不串台
         try:
             chain = _flatten_chain(plan_tree)
             if chain is not None and len(chain[1]) >= 2 and self.adaptive.enabled:
                 rows, joined_total = self._execute_chain_adaptive(
-                    chain[0], chain[1], hop_estimates=hop_estimates or []
+                    chain[0],
+                    chain[1],
+                    hop_estimates=hop_estimates or [],
+                    edge_specs=edge_specs or {},
                 )
             else:
                 rows, joined_total = self._eval(plan_tree, lift_key=None)
@@ -231,11 +238,12 @@ class PhysicalExecutor:
     ) -> Tuple[List[Dict[str, Any]], int]:
 
         # 左 = probe（累积行），右 = build（物化，硬界）。
-        my_pos = _left_depth(node)  # 本跳在左深链上的位置（F3 检查语义同 V5）
+        # 0-based 跳位（F3 检查语义同 V5：首跳不检查几何）。
+        my_pos = _left_depth(node) - 1
         left_rows, _ = self._eval(node.left, lift_key=node.join_field_left)
         right_rows, _ = self._eval(
             node.right,
-            lift_key=node.join_field_right if node.kind != "spatial_join" else None,
+            lift_key=node.join_field_right if node.join_kind != "spatial_join" else None,
         )
         rows = self._apply_hop(node, left_rows, right_rows, hop_pos=my_pos)
         if lift_key:
@@ -358,6 +366,7 @@ class PhysicalExecutor:
         hops: List[LogicalJoin],
         *,
         hop_estimates: List[int],
+        edge_specs: Dict[Tuple[str, str], Any],
     ) -> Tuple[List[Dict[str, Any]], int]:
         """链形计划的迭代执行 + 自适应观测（W8）。
 
@@ -367,6 +376,9 @@ class PhysicalExecutor:
         """
         accumulated, _ = self._eval(base, lift_key=None)
         last_consumed = base.source_id
+        scan_by_id: Dict[str, LogicalScan] = {base.source_id: base}
+        for h in hops:
+            scan_by_id[h.right.source_id] = h.right
         edge_index: Dict[Tuple[str, str], LogicalJoin] = {}
         for j, h in enumerate(hops):
             prev = base.source_id if j == 0 else hops[j - 1].right.source_id
@@ -377,7 +389,7 @@ class PhysicalExecutor:
             hop = hops[i]
             right_rows, _ = self._eval(
                 hop.right,
-                lift_key=hop.join_field_right if hop.kind != "spatial_join" else None,
+                lift_key=hop.join_field_right if hop.join_kind != "spatial_join" else None,
             )
             accumulated = self._apply_hop(hop, accumulated, right_rows, hop_pos=i)
             total = len(accumulated)
@@ -391,13 +403,30 @@ class PhysicalExecutor:
                 remaining = hops[i + 1 :]
                 tail_ids = [h.right.source_id for h in remaining]
                 tail_sources = [
-                    (sid, self.trace.per_source_rows.get(sid)) for sid in tail_ids
+                    (
+                        sid,
+                        self.trace.per_source_rows.get(sid)
+                        or getattr(scan_by_id.get(sid), "estimated_rows", None),
+                    )
+                    for sid in tail_ids
                 ]
-                tail_edges: Dict[Tuple[str, str], Dict[str, Any]] = {}
-                prev = last_consumed
-                for h in remaining:
-                    tail_edges[(prev, h.right.source_id)] = {"kind": h.join_kind}
-                    prev = h.right.source_id
+                # M3（评审 R1）：尾重排的连通图来自**完整 join graph**——
+                # 首跳左侧是累积行（携带全部已消费源的字段，_chain_row_key 可
+                # 穿透 __right__ 取键），因此任何 (已消费源 → 尾源) 的有向边
+                # 都可执行；仅用链邻接边会让重排结构性不可达。
+                consumed = set(self.trace.per_source_rows.keys())
+                tail_set = set(tail_ids)
+                tail_edges: Dict[Tuple[str, str], Any] = {}
+                entry_sources = set()
+                for (x, y), spec in edge_specs.items():
+                    if y not in tail_set:
+                        continue
+                    if x in tail_set:
+                        tail_edges[(x, y)] = spec
+                    elif x in consumed:
+                        # 累积侧 → 尾源：首尾跳的合法入口（累积行携带全部
+                        # 已消费源字段，_chain_row_key 穿透 __right__ 取键）。
+                        entry_sources.add(y)
                 ndv = {sid: self._ndv_hints.get(sid, {}) for sid in tail_ids}
                 new_tail, adopted = pick_tail_order(
                     controller=self.adaptive,
@@ -406,16 +435,59 @@ class PhysicalExecutor:
                     tail_sources=tail_sources,
                     tail_edges=tail_edges,
                     ndv_by_source=ndv,
+                    entry_sources=entry_sources,
                 )
                 if adopted:
-                    seq = [last_consumed] + new_tail
-                    hops = hops[: i + 1] + [
-                        edge_index[(seq[k], seq[k + 1])] for k in range(len(seq) - 1)
-                    ]
-                    continue  # 以新尾序继续（不重复已执行跳）
+                    # 新首尾跳的左侧可以是**任意已消费源**（累积行携带其字段）；
+                    # 确定性：按 per_source_rows 插入序取第一个有入口边者。
+                    seq0 = None
+                    for x in self.trace.per_source_rows:
+                        if (x, new_tail[0]) in edge_specs:
+                            seq0 = x
+                            break
+                    seq = ([seq0] if seq0 is not None else [last_consumed]) + new_tail
+                    rebuilt = []
+                    feasible = True
+                    for k in range(len(seq) - 1):
+                        spec = edge_specs.get((seq[k], seq[k + 1]))
+                        if spec is None:
+                            feasible = False
+                            break
+                        rebuilt.append(
+                            self._synthesize_hop(spec, scan_by_id, seq[k + 1])
+                        )
+                    if feasible:
+                        hops = hops[: i + 1] + rebuilt
+                        # 修复评审 R1 双执行：推进到**新尾序的第一跳**（重建
+                        # 列表已保留旧 hops[:i+1]，hops[i] 不再重跑）。
+                        i += 1
+                        continue
+                    # 未成链：退还一次性预算，退回原序继续（hops 未被改动）
+                    self.adaptive.replans_used -= 1
+                    self.adaptive.notes.append(
+                        "replan aborted: rebuilt tail not connected under edge specs")
             last_consumed = hop.right.source_id
             i += 1
         return accumulated, total
+
+    def _synthesize_hop(
+        self,
+        spec: Any,
+        scan_by_id: Dict[str, LogicalScan],
+        right_sid: str,
+    ) -> LogicalJoin:
+        """从 join 语义 spec（ChainJoin 形状）合成单跳 LogicalJoin。"""
+        return LogicalJoin(
+            join_kind=spec.kind,
+            left=scan_by_id.get(right_sid)
+            or LogicalScan(source_id=right_sid, dataset_id=right_sid),
+            right=scan_by_id[right_sid],
+            join_field_left=spec.join_field_left,
+            join_field_right=spec.join_field_right,
+            spatial_op=spec.spatial_op if spec.kind == "spatial_join" else None,
+            group_by_right=list(spec.group_by_right) if spec.group_by_right else None,
+            aggregates=list(spec.aggregates) if spec.aggregates else None,
+        )
 
     # ── 辅助 ─────────────────────────────────────────────────────────
 

@@ -148,6 +148,10 @@ class _Candidate:
     components: Dict[str, Any]
     crs_transforms: List[Dict[str, Any]]
     key: str  # 确定性 tie-break
+    #: 子树输出的**累积几何 CRS**（首个空间跳左源经变换后的 srid）。
+    #: C1（评审 R1）：join 的 CRS 决策必须以两侧子树的输出 CRS 为输入，
+    #: 不能用边声明源的 CRS 代表整个子树 —— 否则混合 CRS 多跳链会静默错位。
+    out_srid: Optional[int] = None
 
 
 # ── 成本核（纯函数）──────────────────────────────────────────────────────
@@ -171,6 +175,8 @@ def _crs_transform_meta(
     right: SourceFacts,
     card_left: int,
     card_right: int,
+    left_srid: Optional[int] = None,
+    right_srid: Optional[int] = None,
 ) -> Tuple[float, Optional[Dict[str, Any]]]:
     """CRS 对齐成本（单一决策 API：costing.decide_crs_transform，local-only）。
 
@@ -180,7 +186,10 @@ def _crs_transform_meta(
     """
     from app.services.data_fabric.query.federated.costing import decide_crs_transform
 
-    ls, rs = _parse_srid(left.crs), _parse_srid(right.crs)
+    # C1（评审 R1）：CRS 输入用**子树输出 srid**（调用方传入）；缺省回落
+    # 边声明源（单跳链两者一致）。
+    ls = left_srid if left_srid is not None else _parse_srid(left.crs)
+    rs = right_srid if right_srid is not None else _parse_srid(right.crs)
     decision = decide_crs_transform(
         left_crs_srid=ls,
         right_crs_srid=rs,
@@ -405,6 +414,7 @@ def enumerate_federation(ctx: EnumerationContext) -> EnumeratedPlan:
                 components={"scans": {sid: {"rows": rows, "bytes": bytes_}}},
                 crs_transforms=[],
                 key=f"scan:{sid}",
+                out_srid=_parse_srid(src.crs),
             )
         ]
 
@@ -507,6 +517,7 @@ def _enumerate_fixed_chain(
         }
     }
     transforms: List[Dict[str, Any]] = []
+    acc_out_srid: Optional[int] = _parse_srid(by_id[id_order[0]].crs)
     sources_in: Tuple[str, ...] = (id_order[0],)
     for i, edge in enumerate(ctx.joins):
         right_sid = id_order[i + 1]
@@ -514,8 +525,11 @@ def _enumerate_fixed_chain(
         right_rows = _scan_transfer_rows(right_src)
         right_bytes = right_rows * _per_feature_bytes(right_src.fields)
         left_src = by_id[sources_in[0]]
+        left_srid = acc_out_srid if acc_out_srid is not None else _parse_srid(left_src.crs)
+        right_srid = _parse_srid(right_src.crs)
         crs_cost, crs_meta = _crs_transform_meta(
-            edge, left_src, right_src, card, right_rows
+            edge, left_src, right_src, card, right_rows,
+            left_srid=left_srid, right_srid=right_srid,
         )
         if crs_meta:
             transforms.append(crs_meta)
@@ -548,6 +562,7 @@ def _enumerate_fixed_chain(
             and crs_meta.get("placement") == "local"
             and crs_meta.get("transform_side")
         ):
+            acc_out_srid = _parse_srid(crs_meta["to_crs"])
             reproj_kwargs = {
                 "from_crs": crs_meta["from_crs"],
                 "to_crs": crs_meta["to_crs"],
@@ -557,6 +572,8 @@ def _enumerate_fixed_chain(
                 left_tree = LogicalReproject(input=left_tree, **reproj_kwargs)
             else:
                 right_tree = LogicalReproject(input=right_tree, **reproj_kwargs)
+        elif left_srid is not None:
+            acc_out_srid = left_srid
         tree = LogicalJoin(
             join_kind=edge.kind,
             left=left_tree,
@@ -619,9 +636,21 @@ def _join_candidate(
         # 语义 —— 绝不换位（attribute 内连接虽逻辑对称，翻转属于用户可见的
         # 输出形状变化，必须由声明的边方向决定）。
         return None
+    # 空间跳的 build 侧必须是**原始 scan**（或其 Reproject 包装）：join 子树
+    # 的累积行几何存于 __right_geometry__/__left_geometry__，spatial_join_local
+    # 读 "geometry" 字段 —— 子树右孩子会静默空结果（评审 R1 对 C1 探针的推广）。
+    if eff.kind == "spatial_join" and not _is_scan_like(right.tree):
+        return None
     lsrc = by_id.get(eff.left_source_id) or _first_src(left, by_id)
     rsrc = by_id.get(eff.right_source_id) or _first_src(right, by_id)
-    crs_cost, crs_meta = _crs_transform_meta(eff, lsrc, rsrc, left.card, right.card)
+    # C1：左侧输入 CRS = 左子树**输出** CRS（累积几何的真实坐标系），
+    # 绝不用边声明源 CRS 代表整个子树（混合 CRS 多跳链会静默错位）。
+    left_srid = left.out_srid if left.out_srid is not None else _parse_srid(lsrc.crs)
+    right_srid = right.out_srid if right.out_srid is not None else _parse_srid(rsrc.crs)
+    crs_cost, crs_meta = _crs_transform_meta(
+        eff, lsrc, rsrc, left.card, right.card,
+        left_srid=left_srid, right_srid=right_srid,
+    )
     card = _join_cardinality(eff, left, right, by_id)
     cpu = card * _W_LOCAL_CPU_PER_ROW
     build = right.card * _W_BUILD_PER_ROW  # 右侧物化进哈希/空间索引
@@ -663,6 +692,11 @@ def _join_candidate(
         group_by_right=list(eff.group_by_right) if eff.group_by_right else None,
         aggregates=list(eff.aggregates) if eff.aggregates else None,
     )
+    # 输出几何 CRS：变换后 = 目标 CRS；否则沿左子树（V5 链累积几何来自左侧）。
+    if crs_meta and crs_meta.get("placement") == "local" and crs_meta.get("transform_side"):
+        out_srid = _parse_srid(crs_meta["to_crs"])
+    else:
+        out_srid = left_srid if left_srid is not None else right_srid
     return _Candidate(
         tree=tree,
         sources_in=left.sources_in + right.sources_in,
@@ -671,7 +705,17 @@ def _join_candidate(
         components=comps,
         crs_transforms=transforms,
         key=tree.plan_hash(),
+        out_srid=out_srid,
     )
+
+
+def _is_scan_like(tree: LogicalNode) -> bool:
+    """scan 或 Reproject(scan)（空间跳 build 侧的合法形状）。"""
+    from app.services.data_fabric.query.federated.logical import LogicalReproject
+
+    while isinstance(tree, LogicalReproject):
+        tree = tree.input
+    return isinstance(tree, LogicalScan)
 
 
 def _first_src(cand: _Candidate, by_id: Dict[str, SourceFacts]) -> SourceFacts:
@@ -707,7 +751,9 @@ def _join_cardinality(
                 has_ndv = True
         if has_ndv and ndv_product > 0:
             groups = int(min(ndv_product, 1_000_000))
-        return max(1, min(left.card * min(right.card, groups), left.card * right.card))
+        # 聚合输出行数以**左侧行数**为上界（每左行归属恰一组；评审 R1 m2：
+        # 旧式 left×right 高估一整个量级，扭曲 DP 排序）。
+        return max(1, min(left.card, groups))
     # attribute：|A|·|B| / max(ndv)（V5 _chain_join_cardinality 同式）
     ndv = max(
         _ndv_of(left.sources_in, edge.join_field_left, by_id) or 1,

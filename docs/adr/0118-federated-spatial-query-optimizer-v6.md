@@ -60,13 +60,26 @@ FederatedChainRequest(engine="v5"|"v6")
   output.crs 管道 —— 显式 follow-up）；fetch 窗口保持 V5 奇偶（差分语料证明
   build 侧窗口放宽会改变结果，列为 follow-up）。
 
-## 行为变更（唯一一处）
+## 行为变更（engine="v6" 的完整 delta 清单，评审 R1 后修订）
 
-`query_federated_chain` 工具 `engine` 参数默认 `"v6"`：**树形 join graph**
-（如星形，两跳共享父源）不再 typed 失败 —— V5 左深链契约以 `engine="v5"`
-显式测试锁定（`test_non_chainable_id_joins_typed_error`），V6 行为改进由
-`test_non_chainable_id_joins_v6_tree_executes` 锁定。V6 内部非 typed 异常
-自动回退 V5 并在 warnings 披露；typed 错误（预算/构造）与 V5 同契约原样上抛。
+`query_federated_chain` 工具 `engine` 参数默认 `"v6"`。V6 相对 V5 的**全部**
+行为差异（结构校验经 `validate_chain_shape` 单一真相共享，除下列有意差异外
+逐字一致）：
+
+1. **树形 join graph 可执行**：星形图（两跳共享父源）不再 typed 失败 —— V5
+   左深链契约以 `engine="v5"` 显式测试锁定；V6 行为改进由对照测试锁定。
+2. **链内混 CRS 可执行**：V5 计划期 typed 失败；V6 在计划内插入本地
+   `LogicalReproject`（一次性变换较小总成本侧，子树输出 CRS 逐跳传播）。
+3. **`derive_projection` 仅在 V6 选择 given 序时生效**：派生投影的"下一跳
+   左键"集合依赖跳序；重排序下宁可多取全列（如实 warning 披露），绝不缺
+   字段静默失真。
+4. **自适应尾重排**：观测偏差 ×4 触发、一次性、更优才切换；重排连通性来自
+   完整 join graph（edge_specs），入口边从任意已消费源出发。
+
+V6 内部非 typed 异常自动回退 V5 并在 warnings 披露；typed 错误（预算/构造）
+与 V5 同契约原样上抛。统计/能力提示（`stats_hints`）直接驱动成本；
+**adapter 能力探测（caps）注入是 follow-up** —— 未探测时 EXPLAIN 如实标注
+"capabilities not probed"。
 
 ## Consequences
 
@@ -84,7 +97,9 @@ FederatedChainRequest(engine="v5"|"v6")
 3. **build 侧 fetch 窗口放宽**：可提升 join 覆盖（找回 V5 欠取漏配），但属
    结果语义契约变更 —— 差分语料已证明，需独立决策。
 4. **bushy 计划的自适应重排**：当前自适应仅链形计划；树形中途重排需要
-   子树级 estimate 传播。
+   子树级 estimate 传播。空间跳的 build 侧限定为原始 scan（join 子树的
+   累积行几何存于 `__right_geometry__`，`spatial_join_local` 读取不到 ——
+   枚举器已加方向/形状守卫）。
 5. **跨进程 feedback / 查询结果缓存**：沿 ADR-0101 Deferred 不变。
 6. **聚合下推到源**：aggregate_join 语义是"先连接后聚合（左优先取值）"，
    源侧 GROUP BY 会统计未命中行 —— 语义不安全，已在 EXPLAIN 中作为

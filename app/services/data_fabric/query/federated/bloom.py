@@ -6,8 +6,9 @@
 降级：键数超容量 → ``saturated=True``，调用方回退 V5 键集 semi-join
 （``federation._semi_join_reduce_right`` 的诚实放弃文化在此延续）。
 
-键归一化与 V5 join 语义逐位一致（``federation._hashable_key``：1 与 1.0
-同一 join 键）—— bloom 过滤与精确 join 的键空间必须相同。
+键归一化与 V5 join 语义的**相等类**对齐（``federation._hashable_key``：
+1 ≡ 1.0、list/dict ≡ 同文本 str）；未知标量类型产出多等价变体并在探测侧
+任一命中即保留 —— 假阳性方向冗余，绝不产生假阴性。
 """
 
 from __future__ import annotations
@@ -26,21 +27,42 @@ PROFIT_THRESHOLD = 2.0
 MIN_REDUCTION_RATIO = 0.1
 
 
-def _canonical_join_key(v: Any) -> bytes:
-    """join 键 → 确定性字节（与 federation._hashable_key 同一归一化语义）。"""
+def canonical_variants(v: Any) -> List[bytes]:
+    """join 键的全部等价 canonical 形态（M4，评审 R1）。
+
+    与 ``federation._hashable_key`` 的**相等类**对齐：
+    - list/dict → ``str(v)``（V5 中与同文本字符串**会**相等连接）；
+    - int 与整值 float 同槽（1 ≡ 1.0）；
+    - 未知标量类型（如 Decimal）：V5 字典相等可能跨类型命中
+      （``hash(Decimal("1")) == hash(1)``）→ 保守产出多变体，
+      ``contains`` 任一命中即保留（只多留，绝不漏）。
+    """
     if v is None:
-        return b"n:"
+        return [b"n:"]
     if isinstance(v, bool):
-        return b"i:1" if v else b"i:0"
-    if isinstance(v, float) and v == int(v):
-        return b"i:" + str(int(v)).encode("ascii")
+        return [b"i:1" if v else b"i:0"]
     if isinstance(v, int):
-        return b"i:" + str(v).encode("ascii")
+        return [b"i:" + str(v).encode("ascii")]
     if isinstance(v, float):
-        return b"f:" + repr(v).encode("ascii")
+        if v == int(v):
+            return [b"i:" + str(int(v)).encode("ascii"), b"f:" + repr(v).encode("ascii")]
+        return [b"f:" + repr(v).encode("ascii")]
     if isinstance(v, str):
-        return b"s:" + v.encode("utf-8", "surrogatepass")
-    return b"o:" + str(v).encode("utf-8", "replace")
+        return [b"s:" + v.encode("utf-8", "surrogatepass")]
+    if isinstance(v, (list, dict)):
+        return [b"s:" + str(v).encode("utf-8", "replace"), b"o:" + str(v).encode("utf-8", "replace")]
+    variants = [b"o:" + str(v).encode("utf-8", "replace")]
+    try:
+        if v == int(v):
+            variants.append(b"i:" + str(int(v)).encode("ascii"))
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return variants
+
+
+def _canonical_join_key(v: Any) -> bytes:
+    """单一主形态（构建位图用；探测侧用 canonical_variants 全覆盖）。"""
+    return canonical_variants(v)[0]
 
 
 class BloomFilter:
@@ -76,7 +98,8 @@ class BloomFilter:
         return bytes(self._bits)
 
     def add(self, key: Any) -> None:
-        self._set(_canonical_join_key(key))
+        for variant in canonical_variants(key):
+            self._set(variant)
         self.keys_added += 1
         # 经验饱和信号：键数超过按 1% fp 的理想容量 → 调用方降级。
         if not self.saturated:
@@ -85,7 +108,8 @@ class BloomFilter:
                 self.saturated = True
 
     def __contains__(self, key: Any) -> bool:
-        return self._might_contain(_canonical_join_key(key))
+        # 任一等价形态命中即保留（假阳性方向；绝不产生假阴性）
+        return any(self._might_contain(variant) for variant in canonical_variants(key))
 
     def _positions(self, digest_key: bytes):
         h = hashlib.sha256(digest_key).digest()
