@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from app.lib.cancellation import cancellable, checkpoint
 from app.lib.gis.scientific_errors import (
     DegenerateData,
     NoValidObservations,
@@ -514,6 +515,7 @@ def viewshed(
         # 可见性 —— 峰值内存 O(chunk x k_eff)，不物化全扇区矩阵。
         js = np.arange(1, k_eff + 1, dtype=np.float64) * step
         for s0 in range(0, n_sectors, _VIEWSHED_SECTOR_CHUNK):
+            checkpoint()  # ADR-0052: 扇区分块边界协作式取消
             s1 = min(s0 + _VIEWSHED_SECTOR_CHUNK, n_sectors)
             thetas = -math.pi + (np.arange(s0, s1, dtype=np.float64) + 0.5) * d_theta
             sx = np.cos(thetas)[:, None] * js[None, :]
@@ -723,7 +725,8 @@ def flow_accumulation(
     contrib = cells[order]
     recv_flat = receiver[contrib]
     acc_flat = acc.ravel()
-    for src, dst in zip(contrib.tolist(), recv_flat.tolist()):
+    for src, dst in cancellable(zip(contrib.tolist(), recv_flat.tolist()),
+                                every=4096):
         if dst >= 0:
             acc_flat[dst] += acc_flat[src] + 1
     meta = {
