@@ -779,6 +779,13 @@ def test_data_usage_endpoint_real_numbers(db):
 
 
 def test_data_gc_endpoints_plan_and_confirm_gate(db, monkeypatch, tmp_path):
+    """review round-1 SEC CRITICAL-2 更新后的端点契约：
+
+    - plan/execute 都是**项目域**：plan 绝不返回全局 blob key/location
+      （只给 sha 前缀 + 字节），也绝不再运行 GLOBAL promotion-store GC；
+    - 本项目候选修订 + 其 blob 被清理，**其他项目的无主 blob 不动**
+      （全局清扫只属于周期 sweep —— 服务级由 promotion GC 测试直接钉住）。
+    """
     from app.api.routes.project import (
         execute_project_data_gc,
         plan_project_data_gc,
@@ -789,8 +796,6 @@ def test_data_gc_endpoints_plan_and_confirm_gate(db, monkeypatch, tmp_path):
     from fastapi import HTTPException
 
     _retention_env(monkeypatch, max_age_days=1, grace_hours=1)
-    # 端点的 promotion GC 用默认宽限来源（env）——测试钉为 1h
-    monkeypatch.setenv("PROMOTION_STORE_GC_GRACE_HOURS", "1")
     monkeypatch.setattr(pap, "content_store_root", lambda: tmp_path)
     store = get_filesystem_blob_store()
     pid = f"proj_{uuid.uuid4().hex[:8]}"
@@ -801,15 +806,24 @@ def test_data_gc_endpoints_plan_and_confirm_gate(db, monkeypatch, tmp_path):
     _mk_revision(art_id, key, loc, age_days=10, revision_no=1)
     # 新鲜 head 修订（否则 r1 就是 head → 受 head 保护，不构成候选）
     _mk_revision(art_id, "3" * 64, "3333/" + "3" * 64 + ".json", revision_no=2)
-    key_orphan, _, _ = _mk_blob(store, "endpoint-orphan", age_hours=48)
+    # 「其他项目的无主 blob」：无任何修订行引用 —— 旧实现里项目路由会把它
+    # 当 GLOBAL promotion-GC 候选删掉；新契约下路由绝不动它。
+    key_orphan, loc_orphan, _ = _mk_blob(store, "endpoint-orphan", age_hours=48)
 
     with SessionLocal() as s:
         plan_body = plan_project_data_gc(
             project_id=pid, db=s, user={"user_id": _OWNER})
+    assert plan_body["scoped_to_project"] is True
     assert plan_body["retention"]["candidate_revision_count"] == 1
-    assert plan_body["promotion_store_gc"]["deletable_count"] == 1
+    # 项目域投影：只有本项目候选 blob，只给 sha 前缀 + 字节（key/location
+    # 全局字符串绝不出现在 promotion_store_gc 段）。
+    promo = plan_body["promotion_store_gc"]
+    assert promo["deletable_count"] == 1
+    assert promo["deletable"][0]["sha_prefix"] == key[:16]
+    assert set(promo["deletable"][0].keys()) == {"sha_prefix", "bytes"}
+    assert key_orphan not in str(promo)
+    assert loc_orphan not in str(promo)
     assert len(plan_body["retention"]["candidate_revisions"]) <= 64
-    assert len(plan_body["promotion_store_gc"]["deletable"]) <= 64
 
     # 无 confirm → 400（dry-run 纪律）
     with SessionLocal() as s:
@@ -834,8 +848,11 @@ def test_data_gc_endpoints_plan_and_confirm_gate(db, monkeypatch, tmp_path):
             db=s, user={"user_id": _OWNER})
     assert result["retention"]["deleted_revision_count"] == 1
     assert result["retention"]["deleted_blobs"] == [key]
-    assert result["promotion_store_gc"]["deleted"] == [key_orphan]
-    assert store.exists(key_orphan) is False
+    # 反转断言（round-1）：路由不删其他项目/无主 blob —— 全局 promotion
+    # GC 只属于周期 sweep（artifact_lifecycle._sweep_promotion_store）。
+    assert store.exists(key_orphan) is True
+    assert "promotion_store_gc" not in result
+    assert result["orphan_revisions"]["deleted_count"] == 0
 
 
 # ── 5. 孤儿修订行（FK-less drift）有界清理 ────────────────────────────────
@@ -935,6 +952,101 @@ def test_snapshot_pointer_integrity_disclosure(db, tmp_path, monkeypatch):
     assert report["items"][0]["missing_pointers"] == ["ref:dead"]
     # 只读：两次调用结果一致（无副作用）
     assert snapshot_pointer_integrity(pid)["pointers_missing_total"] == 1
+
+
+# ── 6b. 快照 manifest 指针 = retention blob 保护输入（round-1 CRITICAL）───
+
+
+def test_retention_respects_workspace_snapshot_manifest_pointers(
+    db, tmp_path, monkeypatch,
+):
+    """manifest 物化的 blob（零 DB 行引用）在 retention 的 plan 与 execute
+    双侧都被保护；manifest 删除后同一 blob 恢复可删（超龄 + 超宽限）。"""
+    from app.services import project_artifact_promotion as pap
+    from app.services.data_lifecycle.quota import (
+        execute_retention_cleanup,
+        plan_retention_cleanup,
+        workspace_snapshot_protected_pointers,
+    )
+    from app.services.durable_blob_store import get_filesystem_blob_store
+    from app.services.workspace.snapshot import (
+        SnapshotDurablePointer,
+        WorkspaceSnapshot,
+        _atomic_write_json,
+        _project_snapshots_dir,
+    )
+
+    _retention_env(monkeypatch)  # max_age_days=1, grace_hours=1
+    monkeypatch.setattr(pap, "content_store_root", lambda: tmp_path / "blobs")
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+    store = get_filesystem_blob_store()
+    pid = f"proj_{uuid.uuid4().hex[:8]}"
+    _mk_project(pid)
+    art_id = f"art_{uuid.uuid4().hex[:8]}"
+    _mk_artifact(pid, art_id)
+    # 超龄修订 + 超龄 blob（无 pin、非 head、零其它引用 —— 本可删）
+    key_v, loc_v, _ = _mk_blob(store, "victim", age_hours=48)
+    _mk_revision(art_id, key_v, loc_v, age_days=10, revision_no=1)
+    _mk_revision(art_id, "f" * 64, "ffff/" + "f" * 64 + ".json", revision_no=2)
+
+    # 快照 manifest 引用同一个 blob（blob 无任何 DB 行引用它）
+    pdir = _project_snapshots_dir(pid)
+    manifest = pdir / "ws-protect.json"
+    _atomic_write_json(manifest, WorkspaceSnapshot(
+        snapshot_id="ws-protect", session_id="s_x", project_id=pid,
+        durable_pointers={"ref:kept": SnapshotDurablePointer(
+            content_location=loc_v, content_payload_sha256=key_v)},
+    ).model_dump(mode="json"))
+    locations, shas = workspace_snapshot_protected_pointers()
+    assert loc_v in locations and key_v in shas
+
+    # plan 侧：manifest 在 → blob 不入候选（dry-run，不删任何字节）
+    with SessionLocal() as s:
+        plan = plan_retention_cleanup(s, pid)
+    assert plan["candidate_revision_count"] == 1
+    assert plan["candidate_blob_count"] == 0, "manifest 指针保护 blob 不入候选"
+    assert (plan.get("blob_protected_counts") or {}).get(
+        "workspace snapshot manifest pointer") == 1
+    assert store.exists(key_v) is True
+
+    # execute 侧复检（plan → execute 之间 manifest 又回来了）：新鲜扫描
+    # 再保护一次 —— 删除修订行，但 blob 绝不删
+    manifest.unlink()
+    with SessionLocal() as s:
+        plan_x = plan_retention_cleanup(s, pid)
+    assert [b["key"] for b in plan_x["candidate_blobs"]] == [key_v]
+    _atomic_write_json(manifest, WorkspaceSnapshot(
+        snapshot_id="ws-protect", session_id="s_x", project_id=pid,
+        durable_pointers={"ref:kept": SnapshotDurablePointer(
+            content_location=loc_v, content_payload_sha256=key_v)},
+    ).model_dump(mode="json"))
+    result_x = execute_retention_cleanup(plan_x)
+    assert len(result_x["deleted_revisions"]) == 1
+    assert result_x["deleted_blobs"] == []
+    assert any(s.get("reason") == "workspace snapshot manifest pointer"
+               for s in result_x["skipped_protected"])
+    assert store.exists(key_v) is True
+
+    # manifest 删除 → 保护输入消失 → blob 恢复可删（plan+execute parity）
+    manifest.unlink()
+    with SessionLocal() as s:
+        plan2 = plan_retention_cleanup(s, pid)
+    assert [b["key"] for b in plan2["candidate_blobs"]] == []
+    assert store.exists(key_v) is True, "修订行已删：retention 不再独立候选 blob"
+
+    # 兜底口径：promotion GC 以同一谓词复判（同一新鲜扫描）→ 可删
+    from app.services.artifact_lifecycle import (
+        execute_promotion_store_gc,
+        plan_promotion_store_gc,
+    )
+
+    plan3 = asyncio.run(plan_promotion_store_gc(grace_hours=1.0))
+    assert [d["key"] for d in plan3["deletable"]] == [key_v]
+    result3 = asyncio.run(execute_promotion_store_gc(plan3))
+    assert result3["deleted"] == [key_v]
+    assert store.exists(key_v) is False
 
 
 # ── 7. 保护常量同源（docs-level invariant 的代码锚点）─────────────────────

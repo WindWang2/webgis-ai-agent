@@ -407,6 +407,12 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
             truncated = matched > (v2.page.offset + returned)
         next_cursor = encode_cursor([next_url]) if (truncated and next_url) else None
 
+        # m1（审计 round1）：拆分活跃（存在本地余项，含守卫的整本地方案）时
+        # numberMatched 只是下推半的命中数，冒充 total_matching 不诚实 →
+        # 如实置 None（截断判定仍可用它作保守上界，上面已计算）。
+        if local_filter is not None:
+            matched = None
+
         evidence = build_evidence(
             plan, started_at=started, result_count=returned,
             total_matching=matched, truncated=truncated,
@@ -428,7 +434,7 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
                 "exec_time_ms": round((_time.monotonic() - started) * 1000, 2),
                 "pushdown_bbox": plan.pushed_spatial,
                 "pushdown_filter": bool(plan.pushed_filters),
-                "cql2_used": bool(v2.filter is not None),
+                "cql2_used": remote_filter is not None,
                 "query_plan": plan.model_dump(),
                 "query_evidence": evidence.model_dump(),
                 "is_demo": False,

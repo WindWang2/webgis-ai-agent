@@ -366,6 +366,40 @@ class TestDerivedProjection:
         assert adapters["a"].calls[0]["fields"] == ["key"]
         assert adapters["b"].calls[0]["fields"] == ["key"]
 
+    def test_where_filter_fields_included_in_derived_projection(self):
+        """M1（round1）：源 where 过滤引用的字段（非连接键、非分组键）必须
+        进入派生投影 —— 否则投影裁剪后过滤静默失真。"""
+        sources = [
+            ChainSource("a", "d-a", where={"op": "eq", "field": "region", "value": "cn"}),
+            ChainSource("b", "d-b", where={
+                "op": "and", "args": [
+                    {"op": "ge", "field": "amt", "value": 1},
+                    {"op": "in", "field": "cat", "values": ["x", "y"]},
+                ]}),
+        ]
+        joins = [ChainJoin(kind="attribute_join", join_field_left="key",
+                           join_field_right="key")]
+        plans = plan_federated_chain(FederatedChainRequest(
+            sources=sources, joins=joins, derive_projection=True))
+        # 左源：连接键 + 过滤字段。
+        assert plans[0].left["fields"] == ["key", "region"]
+        # 右源：连接键 + and 子树全部过滤字段。
+        assert plans[0].right["fields"] == ["amt", "cat", "key"]
+
+    def test_string_where_excludes_source_from_derivation(self):
+        """字符串 where 无法可靠解析为 AST → 该源整体退出派生（不猜测，
+        宁可多取 —— 绝不带着未知过滤字段做裁剪）。"""
+        sources = [
+            ChainSource("a", "d-a", where="region = 'cn'"),
+            ChainSource("b", "d-b"),
+        ]
+        joins = [ChainJoin(kind="attribute_join", join_field_left="key",
+                           join_field_right="key")]
+        plans = plan_federated_chain(FederatedChainRequest(
+            sources=sources, joins=joins, derive_projection=True))
+        assert "fields" not in plans[0].left, "字符串 where 不可证明 → 不投影"
+        assert plans[0].right.get("fields") == ["key"]
+
 
 # ----------------------------------------------------------- 分级下推模型
 

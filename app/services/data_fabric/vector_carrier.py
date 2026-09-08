@@ -190,16 +190,19 @@ def _geometry_to_wkb(geom: Optional[Dict[str, Any]]) -> Optional[bytes]:
 
 
 def _wkb_to_geometry(wkb: Optional[bytes]) -> Optional[Dict[str, Any]]:
-    """Arrow → GeoJSON 几何。WKB 解码失败记 debug 日志后按缺失几何处理
-    （外来 GeoParquet 的容错方向；编码侧失败是 typed 硬错误）。"""
+    """Arrow → GeoJSON 几何。空几何（POINT EMPTY 等）返回**空 GeoJSON 几何
+    字典**（round-1 review MAJOR：空几何是合法数据，静默变 None 是数据
+    损失）；WKB 解码失败记 debug 日志后按缺失几何处理（None 保留给不可
+    读字节 —— 外来 GeoParquet 的容错方向；编码侧失败是 typed 硬错误）。"""
     if not wkb:
         return None
     try:
         import shapely
 
         shape = shapely.from_wkb(bytes(wkb))
-        if shape.is_empty:
+        if shape is None:
             return None
+        # 空几何原样往返（如 {"type": "Point", "coordinates": []}）
         return json.loads(shapely.to_geojson(shape))
     except Exception as exc:
         logger.debug("[vector-carrier] WKB decode failed (%s); geometry=None",
@@ -381,7 +384,18 @@ def iter_features_to_arrow_batches(
 
         arrays: List[Any] = []
         for k, frozen in frozen_types.items():
-            values = columns.get(k) or [None] * len(features)
+            if k not in columns:
+                # round-1 review MAJOR：后续批次**缺失**冻结列 ≠ 全 null 列。
+                # strict 直接 typed 拒绝（静默 null 填充会伪造数据丢失）；
+                # coerce 显式 null 填充（声明过的宽松策略）。
+                if on_schema_conflict == "strict":
+                    raise VectorCarrierSchemaDriftError(
+                        f"column '{k}' frozen at batch 0 vanished in batch "
+                        f"{batch_idx}; vanishing columns are structural drift "
+                        f"(policy=strict)")
+                arrays.append(pa.array([None] * len(features), type=frozen))
+                continue
+            values = columns[k]
             try:
                 arr = pa.array(values)
             except Exception as exc:

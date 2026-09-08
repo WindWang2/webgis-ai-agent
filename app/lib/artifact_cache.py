@@ -59,11 +59,13 @@ def _source_identity(source_path: str) -> str:
     invalidation (a rewrite changes mtime; a same-size rewrite is vanishingly
     unlikely to produce identical GIS output). Falls back to the path string
     when the file is missing (e.g. a remote ref) - callers should not cache
-    those.
+    those. Uses ``st_mtime_ns`` (round-1 review MINOR): ``int(st.st_mtime)``
+    truncates sub-second rewrites — two builds within the same second of a
+    same-size source would collide on one cache key.
     """
     try:
         st = os.stat(source_path)
-        return f"{source_path}|{int(st.st_mtime)}|{st.st_size}"
+        return f"{source_path}|{st.st_mtime_ns}|{st.st_size}"
     except OSError:
         return f"{source_path}|unstatable"
 
@@ -183,6 +185,13 @@ def publish_artifact(key: str, src_path: str, compute: Callable[[], str]) -> str
             }, f)
     except OSError:
         pass
+
+    # PERF MAJOR-3: the published size is known — bump the advisory counter
+    # (the eviction check below full-scans only when the counter crosses cap).
+    try:
+        _bump_advisory_total(ARTIFACT_DIR, os.path.getsize(final))
+    except OSError:
+        _invalidate_advisory_total(ARTIFACT_DIR)
 
     _evict_if_needed()
     return final
@@ -320,52 +329,148 @@ def publish_chunk(
             }, f)
     except OSError:
         pass
+    # PERF MAJOR-3: bump the advisory counter with the stored size (chunk
+    # publishes are frequent small writes — never full-scan here unless the
+    # counter crosses the dedicated cap).
+    if isinstance(payload, (bytes, bytearray)):
+        _bump_advisory_total(CHUNK_DIR, len(payload))
+    else:
+        try:
+            _bump_advisory_total(CHUNK_DIR, os.path.getsize(final))
+        except OSError:
+            _invalidate_advisory_total(CHUNK_DIR)
     _evict_chunks_if_needed()
     return final
 
 
-def _evict_chunks_if_needed() -> None:
-    """LRU eviction under the DEDICATED chunk cap; also drops meta entries
-    whose .npy has vanished (self-healing accounting)."""
-    try:
-        cap = _chunk_cache_cap()
-        entries = []
-        for name in os.listdir(CHUNK_DIR):
-            if not name.endswith(".meta"):
-                continue
-            meta_p = os.path.join(CHUNK_DIR, name)
-            key = name[:-5]
-            chunk_p = _chunk_path(key)
-            try:
-                st = os.stat(meta_p)
-                size = os.path.getsize(chunk_p) if os.path.exists(chunk_p) else 0
-                if size == 0:
-                    # orphaned meta (npy gone): drop so accounting stays true
+# ── Advisory running byte totals（round-1 review PERF MAJOR-3）───────────
+#
+# Per-cache-dir IN-PROCESS byte counters, replacing the "full directory stat
+# scan on every publish" eviction precondition:
+#   - lazily initialized from ONE full scan on the first publish per process;
+#   - bumped by the published size on publish;
+#   - reset to the scanned post-eviction total by the (rare) full eviction
+#     scan, and invalidated (→ None) by every out-of-band mutator
+#     (clear_*, sweep_orphan_*).
+# Eviction therefore full-scans ONLY when the counter crosses the cap.
+#
+# Multi-process honesty: the counter is ADVISORY. Other processes'
+# publishes/evictions are invisible here, so worst case is one extra scan
+# or a slightly-late eviction (eviction still enforces the cap whenever the
+# counter — always an under-estimate in that scenario — crosses it); the
+# periodic orphan sweep independently reconciles the real directory state.
+_ADVISORY_DIR_BYTES: dict = {}
+
+
+def _scan_dir_total(dir_path: str, body_path_for: Callable[[str], str]) -> int:
+    """One bounded-memory pass: total bytes of complete meta+body entries."""
+    total = 0
+    for name in os.listdir(dir_path):
+        if not name.endswith(".meta"):
+            continue
+        body_p = body_path_for(name[:-5])
+        try:
+            if os.path.exists(body_p):
+                total += os.path.getsize(body_p)
+        except OSError:
+            continue
+    return total
+
+
+def _advisory_total(dir_path: str, body_path_for: Callable[[str], str]) -> int:
+    """Counter value, lazily initialized from one full scan (per process)."""
+    total = _ADVISORY_DIR_BYTES.get(dir_path)
+    if total is None:
+        total = _scan_dir_total(dir_path, body_path_for)
+        _ADVISORY_DIR_BYTES[dir_path] = total
+    return total
+
+
+def _bump_advisory_total(dir_path: str, delta: int) -> None:
+    """Publish-side counter bump (no-op while unknown → next call lazily inits)."""
+    current = _ADVISORY_DIR_BYTES.get(dir_path)
+    if current is not None:
+        _ADVISORY_DIR_BYTES[dir_path] = current + int(delta)
+
+
+def _invalidate_advisory_total(dir_path: str) -> None:
+    """Out-of-band mutation (sweep/clear): counter unknown until next publish."""
+    _ADVISORY_DIR_BYTES[dir_path] = None
+
+
+def _scan_and_evict(
+    dir_path: str,
+    cap: int,
+    body_path_for: Callable[[str], str],
+    *,
+    heal_orphans: bool,
+    label: str,
+) -> int:
+    """The (single) full LRU scan: evict oldest entries until under cap.
+
+    Returns the post-eviction total (the new advisory counter value).
+    ``heal_orphans=True`` (chunk dir) drops meta whose body vanished so
+    accounting stays true; the artifact dir keeps them visible to LRU
+    (historical behavior)."""
+    entries = []
+    for name in os.listdir(dir_path):
+        if not name.endswith(".meta"):
+            continue
+        meta_p = os.path.join(dir_path, name)
+        key = name[:-5]
+        body_p = body_path_for(key)
+        try:
+            st = os.stat(meta_p)
+            size = os.path.getsize(body_p) if os.path.exists(body_p) else 0
+            if size == 0:
+                # orphaned meta (body gone): drop so accounting stays true
+                if heal_orphans:
                     os.unlink(meta_p)
                     continue
-                entries.append((st.st_mtime, key, size, meta_p, chunk_p))
-            except OSError:
-                continue
-        total = sum(e[2] for e in entries)
-        if total <= cap:
-            return
-        entries.sort(key=lambda e: e[0])
-        for _, key, size, meta_p, chunk_p in entries:
+            entries.append((st.st_mtime, key, size, meta_p, body_p))
+        except OSError:
+            continue
+    total = sum(e[2] for e in entries)
+    if total > cap:
+        entries.sort(key=lambda e: e[0])  # oldest first
+        for _, key, size, meta_p, body_p in entries:
             if total <= cap:
                 break
-            for p in (chunk_p, meta_p):
+            for p in (body_p, meta_p):
                 try:
                     os.unlink(p)
                 except OSError:
                     pass
             total -= size
-            logger.info(f"[artifact_cache] evicted chunk {key} ({size} bytes) for LRU")
+            logger.info(
+                f"[artifact_cache] evicted {label}{key} ({size} bytes) for LRU")
+    return total
+
+
+def _evict_chunks_if_needed() -> None:
+    """LRU eviction under the DEDICATED chunk cap; also drops meta entries
+    whose .npy has vanished (self-healing accounting).
+
+    Round-1 review PERF MAJOR-3: a full directory scan runs ONLY when the
+    advisory byte counter (see ``_ADVISORY_DIR_BYTES``) exceeds the cap —
+    a burst of small-chunk publishes pays one scan (lazy init) instead of
+    one scan per publish.
+    """
+    try:
+        cap = _chunk_cache_cap()
+        if _advisory_total(CHUNK_DIR, _chunk_path) <= cap:
+            return
+        _ADVISORY_DIR_BYTES[CHUNK_DIR] = _scan_and_evict(
+            CHUNK_DIR, cap, _chunk_path,
+            heal_orphans=True, label="chunk",
+        )
     except OSError:
         pass
 
 
 def clear_chunk_cache() -> int:
     """Remove all cached chunks; returns the count removed (test helper)."""
+    _invalidate_advisory_total(CHUNK_DIR)
     removed = 0
     try:
         for name in os.listdir(CHUNK_DIR):
@@ -389,6 +494,7 @@ def sweep_orphan_chunk_cache(*, now: Optional[float] = None) -> dict:
     current = time.time() if now is None else now
     cutoff = current - _disk_retention_seconds()
     grace_cutoff = current - _sweep_grace_seconds()
+    _invalidate_advisory_total(CHUNK_DIR)
     try:
         names = os.listdir(CHUNK_DIR)
     except OSError:
@@ -440,41 +546,26 @@ def sweep_orphan_chunk_cache(*, now: Optional[float] = None) -> dict:
 
 
 def _evict_if_needed() -> None:
-    """LRU eviction: if total bytes exceed the cap, remove oldest until under."""
+    """LRU eviction: if total bytes exceed the cap, remove oldest until under.
+
+    Round-1 review PERF MAJOR-3: advisory-counter discipline (see
+    ``_ADVISORY_DIR_BYTES``) — the full scan runs only when the running
+    byte total exceeds ``MAX_ARTIFACT_BYTES``.
+    """
     try:
-        entries = []
-        for name in os.listdir(ARTIFACT_DIR):
-            if not name.endswith(".meta"):
-                continue
-            meta_p = os.path.join(ARTIFACT_DIR, name)
-            try:
-                st = os.stat(meta_p)
-                key = name[:-5]
-                art_p = _artifact_path(key)
-                art_size = os.path.getsize(art_p) if os.path.exists(art_p) else 0
-                entries.append((st.st_mtime, key, art_size, meta_p, art_p))
-            except OSError:
-                continue
-        total = sum(e[2] for e in entries)
-        if total <= MAX_ARTIFACT_BYTES:
+        if _advisory_total(ARTIFACT_DIR, _artifact_path) <= MAX_ARTIFACT_BYTES:
             return
-        entries.sort(key=lambda e: e[0])  # oldest first
-        for _, key, art_size, meta_p, art_p in entries:
-            if total <= MAX_ARTIFACT_BYTES:
-                break
-            for p in (art_p, meta_p):
-                try:
-                    os.unlink(p)
-                except OSError:
-                    pass
-            total -= art_size
-            logger.info(f"[artifact_cache] evicted {key} ({art_size} bytes) for LRU")
+        _ADVISORY_DIR_BYTES[ARTIFACT_DIR] = _scan_and_evict(
+            ARTIFACT_DIR, MAX_ARTIFACT_BYTES, _artifact_path,
+            heal_orphans=False, label="",
+        )
     except OSError:
         pass
 
 
 def clear_artifact_cache() -> int:
     """Remove all artifacts; returns the count removed (test helper)."""
+    _invalidate_advisory_total(ARTIFACT_DIR)
     removed = 0
     try:
         for name in os.listdir(ARTIFACT_DIR):
@@ -534,6 +625,7 @@ def sweep_orphan_disk_artifacts(*, now: Optional[float] = None) -> dict:
     current = time.time() if now is None else now
     cutoff = current - _disk_retention_seconds()
     grace_cutoff = current - _sweep_grace_seconds()
+    _invalidate_advisory_total(ARTIFACT_DIR)
     try:
         names = os.listdir(ARTIFACT_DIR)
     except OSError:

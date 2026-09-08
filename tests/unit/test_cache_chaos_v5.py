@@ -183,14 +183,14 @@ async def test_ref_fetch_leader_crash_followers_degrade_to_direct(_fresh_ref_fet
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("leader boom")
-            return ({"gen": "ok"}, 32)
+            return ({"gen": "ok"}, 32, 0)
 
     r1, r2 = await asyncio.gather(
         sdr.ref_fetch_shared(FakeStore(), "sess-crash", "ref:x", "data:1"),
         sdr.ref_fetch_shared(FakeStore(), "sess-crash", "ref:x", "data:1"),
     )
-    assert r1 == ({"gen": "ok"}, 32)
-    assert r2 == ({"gen": "ok"}, 32)
+    assert r1 == ({"gen": "ok"}, 32, 0)
+    assert r2 == ({"gen": "ok"}, 32, 0)
     assert 2 <= calls["n"] <= 3, "degrade must be bounded (direct rebuild), not a storm"
 
 
@@ -220,7 +220,7 @@ async def test_ref_fetch_shared_singleflight_dedups_concurrent_misses(_fresh_ref
         async def _fetch_shared_payload(self, session_id, ref_id, data_key):
             calls["n"] += 1
             await asyncio.wait_for(gate.wait(), timeout=5)
-            return ({"gen": "shared"}, 16)
+            return ({"gen": "shared"}, 16, 0)
 
     async def caller():
         return await sdr.ref_fetch_shared(FakeStore(), "sess-dedup", "ref:z", "data:3")
@@ -231,8 +231,71 @@ async def test_ref_fetch_shared_singleflight_dedups_concurrent_misses(_fresh_ref
     await asyncio.sleep(0.05)  # let task2 register on the leader's future
     gate.set()
     r1, r2 = await asyncio.gather(task1, task2)
-    assert r1 == ({"gen": "shared"}, 16) and r2 == ({"gen": "shared"}, 16)
+    assert r1 == ({"gen": "shared"}, 16, 0) and r2 == ({"gen": "shared"}, 16, 0)
     assert calls["n"] == 1
+
+
+async def test_get_shared_follower_never_resurrects_pre_overwrite_payload(
+    _fresh_ref_fetch_flight,
+):
+    """CONC MAJOR-1（round1）：确定性交错 —— leader 的 GET 阻塞期间发生
+    overwrite（epoch 递增），跟随者带着自己的新 epoch 加入飞行共享到 leader
+    的**前覆写**取回结果。
+
+    修复语义：跟随者入缓存用 min(own_epoch, fetch_epoch) → 旧取回对不上
+    当前 epoch，put_if_current 拒收；缓存随后的读取只服务新 payload。
+    """
+    from app.services.ref_payload_cache import ref_payload_cache
+
+    sid, ref = "sess-epoch-race", "ref:race"
+    redis_state = {"data": {"old": "payload"}}
+    gate = asyncio.Event()
+    leader_started = asyncio.Event()
+
+    class FakeStore:
+        async def _fetch_shared_payload(self, session_id, ref_id, data_key):
+            # leader：飞行体内、读源前捕获 fetch_epoch（=0）与 GET 读到的
+            # 前覆写载荷，随后阻塞 —— 覆写（epoch→1）发生在捕获与返回之间
+            # 的窗口内（GET 在覆写前发出，返回的必然是旧字节）。
+            fetch_epoch = ref_payload_cache.current_epoch(session_id, ref_id)
+            payload = redis_state["data"]
+            leader_started.set()
+            await asyncio.wait_for(gate.wait(), timeout=5)
+            return (payload, 8, fetch_epoch)
+
+    async def leader():
+        # 直接走 get_shared 的共享单元路径（epoch 捕获/put 语义由真实
+        # get_shared 执行 —— 这里手工复刻同一交错，避免拉起真 Redis 客户端）。
+        fetched = await sdr.ref_fetch_shared(
+            FakeStore(), sid, ref, "data:race")
+        data, raw_len, fetch_epoch = fetched
+        own_epoch = ref_payload_cache.current_epoch(sid, ref)
+        return ref_payload_cache.put_if_current(
+            sid, ref, data, raw_len, min(own_epoch, fetch_epoch))
+
+    async def follower():
+        await leader_started.wait()
+        # 覆写：epoch 0 → 1（invalidate 递增），Redis 里已是新 payload。
+        ref_payload_cache.invalidate(sid, ref)
+        redis_state["data"] = {"new": "payload"}
+        fetched = await sdr.ref_fetch_shared(
+            FakeStore(), sid, ref, "data:race")
+        data, raw_len, fetch_epoch = fetched
+        own_epoch = ref_payload_cache.current_epoch(sid, ref)
+        assert own_epoch == 1 and fetch_epoch == 0, "交错前置条件"
+        return ref_payload_cache.put_if_current(
+            sid, ref, data, raw_len, min(own_epoch, fetch_epoch))
+
+    leader_task = asyncio.create_task(leader())
+    follower_task = asyncio.create_task(follower())
+    await asyncio.sleep(0.05)  # follower 已在飞行上等待
+    gate.set()
+    put_leader, put_follower = await asyncio.gather(leader_task, follower_task)
+
+    assert put_leader is False, "leader 的旧 epoch 入缓存被拒（既有 M7 语义）"
+    assert put_follower is False, (
+        "跟随者绝不能把 leader 的前覆写 payload 复活到新 epoch 下")
+    assert ref_payload_cache.get(sid, ref) is None, "缓存只服务覆写后的 payload"
 
 
 # ── 3. R3: tool_cache owner-domain key isolation ────────────────────────────
@@ -477,7 +540,8 @@ def test_delete_during_read_refuses_cache_put_and_bumps_index_epoch():
     sid, rid = "sess-del-chaos", "ref:del-chaos"
     from app.services.ref_payload_cache import ref_payload_cache as payload_singleton
 
-    before_index_epoch = spatial_index_cache._epochs.get((sid, rid), 0)
+    # CONC MINOR-1：epoch 行现为 (gen, bumped_at) 二元组（prune 宽限期）。
+    before_index_epoch = spatial_index_cache._epochs.get((sid, rid), (0, 0.0))[0]
 
     started, release = threading.Event(), threading.Event()
     outcome: dict = {}
@@ -500,6 +564,80 @@ def test_delete_during_read_refuses_cache_put_and_bumps_index_epoch():
 
     assert outcome["stored"] is False, "superseded payload must be refused"
     assert payload_singleton.get(sid, rid) is None
-    assert spatial_index_cache._epochs.get((sid, rid), 0) == before_index_epoch + 1, (
+    assert spatial_index_cache._epochs.get((sid, rid), (0, 0.0))[0] == before_index_epoch + 1, (
         "authority must bump the index projection even with no entry materialized"
     )
+
+
+# ── 7. CONC MINOR-4a: dispatch-level tool-cache key isolation ────────────────
+
+
+@pytest.fixture()
+def _mock_tool_cache_store():
+    """Fake redis backing the tool cache (same fake as
+    test_tool_cache_singleflight.py — storage-backed MagicMock client)."""
+    from unittest.mock import MagicMock, patch
+
+    from app.lib.tool_cache import _reset_redis_client_for_tests
+
+    storage = {}
+    locks = {}
+
+    def fake_set(name, value, nx=False, px=None):
+        if nx:
+            if name in locks:
+                return False
+            locks[name] = value
+            return True
+        storage[name] = value
+        return True
+
+    with patch("app.lib.tool_cache._get_redis_client") as mock_client:
+        mock_redis = MagicMock()
+        mock_redis.set.side_effect = fake_set
+        mock_redis.setex.side_effect = lambda k, ttl, v: storage.__setitem__(k, v)
+        mock_redis.get.side_effect = lambda k: storage.get(k)
+        mock_redis.exists.side_effect = lambda k: 1 if k in locks else 0
+        mock_redis.eval.side_effect = lambda script, num, key, token: (
+            1 if locks.get(key) == token and locks.pop(key, None) is not None else 0
+        )
+        mock_client.return_value = mock_redis
+        _reset_redis_client_for_tests()
+        yield storage
+        _reset_redis_client_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_session_injection_partitions_tool_cache(_mock_tool_cache_store):
+    """CONC MINOR-4a（round1）：带会话身份的缓存工具经**真实 registry
+    dispatch** 调用 —— 两个不同 session_id 的同名同参调用必须得到不同的
+    缓存条目。registry.dispatch 把上下文 session 注入工具 kwargs，注入是
+    make_cache_key owner 域隔离的前提 —— 注入一旦丢失，此测试即回归
+    （跨会话缓存共享 = 跨用户时序侧信道）。"""
+    from app.lib.tool_cache import cached_tool, make_cache_key
+    from app.tools.registry import ToolRegistry
+
+    calls = {"n": 0}
+
+    @cached_tool(ttl=3600)
+    async def chaos_probe_tool(region: str, session_id=None):
+        calls["n"] += 1
+        return {"region": region, "epoch": calls["n"]}
+
+    reg = ToolRegistry()
+    reg.register("chaos_probe_tool", "cache key isolation probe", chaos_probe_tool)
+
+    # 注入的 session_id 必须参与键派生（键形状回归的对称断言）。
+    k_a = make_cache_key("chaos_probe_tool", {"region": "cn", "session_id": "sess-iso-a"})
+    k_b = make_cache_key("chaos_probe_tool", {"region": "cn", "session_id": "sess-iso-b"})
+    assert k_a is not None and k_b is not None and k_a != k_b
+
+    r1 = await reg.dispatch("chaos_probe_tool", {"region": "cn"}, session_id="sess-iso-a")
+    r2 = await reg.dispatch("chaos_probe_tool", {"region": "cn"}, session_id="sess-iso-a")
+    r3 = await reg.dispatch("chaos_probe_tool", {"region": "cn"}, session_id="sess-iso-b")
+
+    assert r1 == r2, "同 session 同参调用必须命中同一缓存条目"
+    assert calls["n"] == 2, "两个 session 各自计算一次（绝不共享条目）"
+    assert r3.get("epoch") == 2, "sess-b 不得读到 sess-a 的缓存值"
+    stored_keys = [k for k in _mock_tool_cache_store if k.startswith("tool_cache:v2:")]
+    assert len(stored_keys) == 2, "两个 session 各占一个独立缓存条目"

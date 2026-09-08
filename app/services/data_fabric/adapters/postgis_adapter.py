@@ -59,6 +59,11 @@ MVT_MAX_FEATURES_PER_TILE = 20_000
 MVT_MIN_ZOOM = 0
 MVT_MAX_ZOOM = 22
 
+# C1：``_compile_where`` 的 filter_override 缺省哨兵 —— 区分"调用方未给
+# override（历史路径：编译 v2.filter）"与"显式 None（split 守卫路径：整体
+# 本地，不编译任何过滤子句）"。
+_FILTER_OVERRIDE_UNSET = object()
+
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -697,6 +702,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             budget = v2.execution
 
             # V5（Wave 9）：AND 边拆分的执行真相（计划即执行）。
+            # C1：历史/拆分/守卫三态统一 —— filter_split 在场时只编译计划
+            # 的下推半（守卫路径 pushed=None → 不编译任何过滤子句，整体
+            # 本地求值）；缺席（历史）时 resolve 原样返回 v2.filter，逐位不变。
             from app.services.data_fabric.query.pushdown import (
                 local_predicates_present,
                 resolve_plan_filter_split,
@@ -712,7 +720,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     details={"hint": "avoid ops declared in filter_ops_local for aggregates"},
                 )
             where_sql, params, spatial_pushed = self._compile_where(
-                v2, meta, descriptor, filter_override=remote_filter if plan.filter_split else None,
+                v2, meta, descriptor, filter_override=remote_filter,
             )
             if not spatial_pushed and v2.spatial is not None:
                 # plan 如实降级：spatial 未下推 → 本地过滤（hybrid）
@@ -909,12 +917,15 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     f for f in features if evaluate_predicate(local_filter, f["properties"])
                 ]
 
-            # total_matching：仅第一页计算（count 复用同一 WHERE）
+            # total_matching：仅第一页计算（count 复用同一 WHERE）。
+            # m1（审计 round1）：拆分活跃（存在本地余项，含守卫的整本地方案）
+            # 时 WHERE 只含下推半 —— count 是下推半命中数，冒充 total_matching
+            # 不诚实 → 如实置 None（has_more 回落保守的 fetched>=limit 口径）。
             total_matching: Optional[int] = None
             first_page = (isinstance(page, OffsetPage) and page.offset == 0) or (
                 isinstance(page, CursorPage) and not page.cursor
             )
-            if first_page:
+            if first_page and local_filter is None:
                 count_sql = (
                     f'SELECT COUNT(*) FROM "{meta.schema}"."{meta.table}"'
                     f"{(' WHERE ' + where_sql) if where_sql else ''}"
@@ -989,7 +1000,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
 
     def _compile_where(
         self, v2: QuerySpecV2, meta: _TableMeta, descriptor: DatasetDescriptor,
-        filter_override=None,
+        filter_override=_FILTER_OVERRIDE_UNSET,
     ):
         """谓词 → WHERE。返回 (where_sql, params, spatial_pushed)。
 
@@ -997,9 +1008,11 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         空间谓词不能下推（没有源 CRS 可表达 envelope）——返回
         ``spatial_pushed=False``，调用方对有界结果做本地 bbox 过滤并如实记录。
 
-        V5（Wave 9）：``filter_override`` 非空时编译它而非 ``v2.filter``
-        （AND 边拆分的下推半 —— 计划即执行；None + filter_split 在场 =
-        拆分守卫的"整体本地"，where 不含任何过滤子句）。
+        V5（Wave 9）：``filter_override`` 显式给出时编译它而非 ``v2.filter``
+        （AND 边拆分的下推半 —— 计划即执行）。C1：显式 ``None``（split 在场
+        但 pushed=None 的守卫路径）= 拆分守卫的"整体本地"，where 不含任何
+        过滤子句，调用方在取回后本地求值整棵 AST；哨兵缺省（不传）= 历史路径
+        （count_rows 等内部调用），仍编译 ``v2.filter`` 逐位不变。
         """
         clauses: List[str] = []
         params: List[Any] = []
@@ -1029,7 +1042,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 clauses.append(sql_s)
                 params.extend(p)
                 spatial_pushed = True
-        filter_to_compile = v2.filter if filter_override is None else filter_override
+        filter_to_compile = (
+            v2.filter if filter_override is _FILTER_OVERRIDE_UNSET else filter_override
+        )
         if filter_to_compile is not None:
             sql_f, p = compile_predicate_sql(filter_to_compile, allowed_fields=meta.field_names)
             clauses.append(sql_f)

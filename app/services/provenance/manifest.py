@@ -16,6 +16,7 @@ import hashlib
 import json
 from typing import Any, Dict, Iterable, List, Optional
 
+from app.services.jobs.redaction import SENSITIVE_KEY_PARTS
 from app.services.provenance.fingerprint import canonical_dumps, _sha256
 
 # Keys whose values are typically large inline payloads — excluded from the
@@ -32,10 +33,13 @@ _MAX_LEAF_LEN = 200
 # args were only size-trimmed — secret values (a fabric tool's ``password`` arg)
 # and inline GeoJSON landed verbatim in DB rows. The redactor below runs at the
 # persistence boundary: keys are kept, values are redacted.
-_SECRET_KEY_MARKERS = (
-    "password", "passwd", "secret", "token", "api_key", "apikey",
-    "authorization", "credential",
-)
+# Round-1 review (SEC MINOR-1): the marker list is the UNION with the durable
+# jobs redactor's ``SENSITIVE_KEY_PARTS`` (app/services/jobs/redaction.py) —
+# ``s3_access_key`` / ``signed_url`` / ``private_key`` style args were not
+# covered by the narrower local tuple. Import direction is verified safe:
+# ``jobs.redaction`` is a pure-stdlib leaf module and the ``jobs`` package
+# never imports ``provenance`` (no cycle).
+_SECRET_KEY_MARKERS: tuple = SENSITIVE_KEY_PARTS
 #: string leaves longer than this are replaced by a sha256 digest + size note
 _MAX_PERSISTED_LEAF_CHARS = 512
 #: hard budget for the fully-redacted params JSON (audit 08 §6.2.5)

@@ -537,6 +537,11 @@ class WFSAdapter(GeospatialDataSourceAdapter):
         if total_matched is not None:
             truncated = total_matched > offset + returned
 
+        # m1（审计 round1）：拆分活跃（存在本地余项）时 numberMatched 只是
+        # 下推半的命中数 → total_matching 如实置 None（截断判定已先行计算）。
+        if local_filter is not None:
+            total_matched = None
+
         evidence = build_evidence(
             plan, started_at=started, result_count=returned,
             total_matching=total_matched, truncated=truncated,

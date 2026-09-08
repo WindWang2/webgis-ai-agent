@@ -5,6 +5,7 @@ and health-monitoring Data Fabric geospatial data sources.
 """
 import asyncio
 import logging
+import math
 from typing import Optional
 from app.tools.registry import ToolRegistry, tool, ToolExecutionPolicy
 from app.schemas.data_fabric_schema import (
@@ -936,12 +937,20 @@ def register_data_fabric_tools(registry: ToolRegistry):
                         "error": f"No connected data source adapter for dataset '{s['dataset_id']}'.",
                     }
                 est = s.get("estimated_rows")
+                # m3（审计 round1）：NaN/inf 估算不是合法的成本提示 ——
+                # int(nan) raises ValueError / int(inf) raises OverflowError
+                # 会令整个工具崩溃 → 如实降级为 None（无提示，排序回退）。
+                est_ok = (
+                    isinstance(est, (int, float))
+                    and float(est) == float(est)  # NaN 检验
+                    and math.isfinite(float(est))
+                )
                 chain_sources.append(ChainSource(
                     source_id=sid,
                     dataset_id=str(s["dataset_id"]),
                     where=s.get("where"),
                     fields=list(s["fields"]) if s.get("fields") else None,
-                    estimated_rows=int(est) if isinstance(est, (int, float)) else None,
+                    estimated_rows=int(est) if est_ok else None,
                     srs=s.get("srs"),
                 ))
                 adapters_by_id[sid] = adapter

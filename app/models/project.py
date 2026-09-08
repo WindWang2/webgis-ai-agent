@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, BigInteger, ForeignKey, Index, JSON,
-    CheckConstraint, UniqueConstraint
+    CheckConstraint, UniqueConstraint, text
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -337,8 +337,23 @@ class ArtifactRevision(Base):
         # 唯一组合索引同时服务 artifact 前缀扫描（0020 约定：不建冗余
         # 左前缀单列索引）。
         Index("uq_artifact_revision_content", "artifact_id", "content_sha256", unique=True),
+        # 修订号单调唯一（0030）：并发不同内容修订读到同一 head 时不得产生
+        # 重复 revision_no —— record_revision 撞此约束重读 head 重试一次。
+        Index("uq_artifact_revision_no", "artifact_id", "revision_no", unique=True),
         Index("idx_artifact_revision_sha", "content_sha256"),
         Index("idx_artifact_revision_run", "workflow_run_id"),
+        # round-1 review PERF MAJOR-2：GC / 保留扫描的三条覆盖索引（0031 同步
+        # 建，存在性守卫）—— content_location = 引用计数 IN 扫描；
+        # created_at = 保留策略超龄 cutoff 谓词（裸列，无函数包裹）；
+        # pinned_at = pin 保护扫描（PG 部分索引只含未 pin 为 NULL 的行；
+        # SQLite 退化普通索引 —— 列元组一致，漂移守卫按列元组比对）。
+        Index("idx_artifact_revision_content_location", "content_location"),
+        Index("idx_artifact_revision_created_at", "created_at"),
+        Index(
+            "idx_artifact_revision_pinned_at",
+            "pinned_at",
+            postgresql_where=text("pinned_at IS NOT NULL"),
+        ),
         CheckConstraint("revision_no >= 1", name="ck_artifact_revision_no_pos"),
         CheckConstraint(
             "content_type IN ('json', 'binary')", name="ck_artifact_revision_content_type"

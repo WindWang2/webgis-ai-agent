@@ -31,7 +31,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -86,6 +86,13 @@ class ZarrGridError(ValueError):
         super().__init__(message)
         self.message = message
         self.code = ZarrGridError.code
+
+
+#: Tiling verification bound（round-1 review MAJOR）：单个时间片的 descriptor
+#: 数超过此值即 typed 拒绝（有界验证，绝不 O(n²) 扫 10 万+ 矩形）。
+_MAX_TILING_RECTS = 100_000
+#: sweep 内层比较步数上限（防御性：病态输入下的有界退化）。
+_MAX_SWEEP_STEPS = 10_000_000
 
 
 def zarr_available() -> bool:
@@ -187,7 +194,11 @@ def zarr_chunk_descriptors(store_path: str | Path) -> List[Any]:
 
     2D arrays map their (y, x) chunk grid directly. 3D ``(t, y, x)`` cubes
     expose time slices as ``band_indexes=(t+1,)`` on otherwise-identical
-    spatial windows. ``source_fingerprint`` is the structural store
+    spatial windows — **one descriptor per time slice**（round-1 review
+    MINOR：``chunks[0] > 1`` 的存储此前每个 zarr chunk 只铸出第一个时间片，
+    静默丢掉其余 t）。descriptor 总数超过 :data:`_MAX_TILING_RECTS` 即
+    typed 拒绝（有界，绝不无界铸十万+ 描述符）。
+    ``source_fingerprint`` is the structural store
     fingerprint (see :func:`_store_fingerprint`); ``source_uri`` is empty
     (the store is the source — round-tripping into ``write_zarr_cube``
     requires an explicit ``read_chunk`` loader).
@@ -202,14 +213,23 @@ def zarr_chunk_descriptors(store_path: str | Path) -> List[Any]:
     grid = _grid_from_attrs(arr, f"zarr store {store_path}")
     fingerprint = _store_fingerprint(store_path, arr)
     t_n = int(arr.shape[0]) if arr.ndim == 3 else 1
-    chunk_t = int(arr.chunks[0]) if arr.ndim == 3 else 1
     chunk_y = int(arr.chunks[-2])
     chunk_x = int(arr.chunks[-1])
     height = int(arr.shape[-2])
     width = int(arr.shape[-1])
 
+    n_t = t_n
+    n_y = (height + chunk_y - 1) // chunk_y
+    n_x = (width + chunk_x - 1) // chunk_x
+    if n_t * n_y * n_x > _MAX_TILING_RECTS:
+        raise ZarrGridError(
+            f"store would mint {n_t * n_y * n_x} chunk descriptors "
+            f"(t={n_t} x y={n_y} x x={n_x}), exceeding the bounded cap "
+            f"{_MAX_TILING_RECTS}; refusing (read time slices via open_zarr_array)"
+        )
+
     descriptors: List[Any] = []
-    for t0 in range(0, t_n, chunk_t):
+    for t in range(n_t):
         for y0 in range(0, height, chunk_y):
             for x0 in range(0, width, chunk_x):
                 descriptors.append(
@@ -217,13 +237,85 @@ def zarr_chunk_descriptors(store_path: str | Path) -> List[Any]:
                         grid,
                         (x0, y0, min(chunk_x, width - x0), min(chunk_y, height - y0)),
                         dtype=str(arr.dtype),
-                        band_indexes=(t0 + 1,),
+                        band_indexes=(t + 1,),
                         source_fingerprint=fingerprint,
                         source_uri=str(store_path),
-                        identity_extra=f"zarr:t={t0}",
+                        identity_extra=f"zarr:t={t}",
                     )
                 )
     return descriptors
+
+
+def _verify_descriptor_tiling(
+    descriptors: Sequence[Any], *, height: int, width: int, what: str
+) -> None:
+    """一个时间片的 descriptors 必须恰好铺满 (height, width) 网格。
+
+    round-1 review MAJOR：写数组前验证 Σwindow 面积 == W×H **且**两两不
+    相交 —— 缺 chunk 的 descriptors 此前会把 zarr 数组的裸零字节永久留在
+    立方体里（读回是无声的 0，不是错误）。不相交性用 x 扫描线有界检查
+    （排序 + 活跃集行区间两两比较，O(n log n) 常规情形）；违例与超界均
+    抛 typed :class:`ZarrGridError`，绝不创建半铺满的数组。
+    """
+    if len(descriptors) > _MAX_TILING_RECTS:
+        raise ZarrGridError(
+            f"{what}: {len(descriptors)} chunk descriptors exceed the bounded "
+            f"tiling-verification cap ({_MAX_TILING_RECTS}); refusing to write "
+            "an unverifiable cube"
+        )
+    rects: List[Tuple[int, int, int, int]] = []  # (row0, col0, row1, col1)
+    total_area = 0
+    for d in descriptors:
+        col, row, cw, ch = (int(v) for v in d.window)
+        if cw <= 0 or ch <= 0 or col < 0 or row < 0 \
+                or col + cw > width or row + ch > height:
+            raise ZarrGridError(
+                f"{what}: chunk {getattr(d, 'chunk_id', '?')} window "
+                f"{(col, row, cw, ch)} falls outside the {width}x{height} grid"
+            )
+        total_area += cw * ch
+        rects.append((row, col, row + ch, col + cw))
+    if total_area != height * width:
+        raise ZarrGridError(
+            f"{what}: chunk windows cover {total_area} pixels but the grid is "
+            f"{width}x{height} = {width * height} — descriptors must tile the "
+            "grid exactly once (missing/overlapping chunk)"
+        )
+
+    # x 扫描线：在每条 col0 事件线上，活跃（列区间横跨该线的）矩形的行
+    # 区间必须两两不相交。重叠矩形与某条事件线必有正宽度的共同列区间，
+    # 其左端点即某矩形的 col0 —— 在事件线上检查是完备的。合法铺排的
+    # 常规代价 O(n log n)；病态输入由步数预算有界化。
+    import bisect
+
+    steps = 0
+    rects_by_col: Dict[int, List[Tuple[int, int, int, int]]] = {}
+    for r in rects:
+        rects_by_col.setdefault(r[1], []).append(r)
+    events = sorted(rects_by_col)
+    active: List[Tuple[int, int, int]] = []  # (row0, row1, col1)，按 row0 有序
+    for x in events:
+        # 过期（列区间已结束于 x 之前）矩形出列
+        if active:
+            steps += len(active)
+            active = [a for a in active if a[2] > x]
+        for r in rects_by_col[x]:
+            bisect.insort(active, (r[0], r[2], r[3]))
+        prev_end = -1
+        for row0, row1, _col1 in active:
+            steps += 1
+            if steps > _MAX_SWEEP_STEPS:
+                raise ZarrGridError(
+                    f"{what}: tiling verification exceeded the bounded sweep "
+                    f"budget ({_MAX_SWEEP_STEPS} steps); refusing to guess"
+                )
+            if row0 < prev_end:
+                raise ZarrGridError(
+                    f"{what}: chunk windows overlap at column {x} "
+                    f"(row interval {row0}..{row1} inside previous ..{prev_end}) "
+                    "— descriptors must tile the grid exactly once"
+                )
+            prev_end = max(prev_end, row1)
 
 
 def write_zarr_cube(
@@ -277,6 +369,13 @@ def write_zarr_cube(
 
     height = int(grid.height)
     width = int(grid.width)
+    # 铺排验证先于建数组（round-1 review MAJOR）：每个时间片的 descriptors
+    # 必须恰好铺满网格一次 —— 缺 chunk 的半铺排此前会把裸零字节永久留在
+    # 立方体里。typed ZarrGridError，绝不创建半铺满的数组。
+    for t, group in enumerate(descriptors):
+        _verify_descriptor_tiling(
+            group, height=height, width=width, what=f"time slice {t} ({times[t]})"
+        )
     # Uniform zarr chunk geometry from the first descriptor's window
     # (variable edge windows still write fine — chunks cap the geometry).
     w0 = descriptors[0][0]

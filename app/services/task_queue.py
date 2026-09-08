@@ -38,6 +38,14 @@ GEOCOMPUTE_PROFILE_QUEUES: tuple[str, ...] = tuple(
     _queue_name_for_profile(p) for p in _GEOCOMPUTE_PROFILES
 )
 
+#: 全部已声明队列名（默认队列 + 全部 profile 队列）。任务中心的手工 retry
+#: （jobs.py send_task 路径）据此校验 dispatch_spec.queue 的亲和目标 ——
+#: 未声明/缺失的队列名一律忽略，让按任务名的默认路由接管（绝不投递到
+#: 没有消费者声明的队列）。
+DECLARED_QUEUE_NAMES: frozenset[str] = frozenset(
+    {_GEOCOMPUTE_DEFAULT_QUEUE, *GEOCOMPUTE_PROFILE_QUEUES}
+)
+
 _task_queues = [Queue(_GEOCOMPUTE_DEFAULT_QUEUE)] + [
     Queue(name) for name in GEOCOMPUTE_PROFILE_QUEUES
 ]

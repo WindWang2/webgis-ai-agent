@@ -167,8 +167,22 @@ class FilesystemBlobStore(BlobStore):
         path = self.primary_path(key, content_type)
         location = str(path.relative_to(self.root))
         if path.exists():
-            # put-if-absent：同键 = 同内容（CAS），跳过重写（同 promotion :168-169）
-            return PutResult(put_new=False, location=location)
+            # put-if-absent：同键 = 同内容（CAS），跳过重写（同 promotion :168-169）。
+            # 信任前先验（round-1 review MINOR）：既有文件的 size+digest 与本次
+            # 内容一致才按去重命中跳过；不符（磁盘损坏 / 外部覆写 / 外来内容
+            # 占位）即原子重写 —— 绝不把坏字节当命中，也绝不去删别人的键。
+            try:
+                existing = path.read_bytes()
+            except OSError:
+                existing = None
+            if (existing is not None
+                    and len(existing) == len(data)
+                    and sha256_of_bytes(existing) == sha256_of_bytes(data)):
+                return PutResult(put_new=False, location=location)
+            logger.warning(
+                "[blob_store] existing blob %s failed identity check "
+                "(size/digest mismatch) — rewriting atomically", key,
+            )
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex[:8]}")

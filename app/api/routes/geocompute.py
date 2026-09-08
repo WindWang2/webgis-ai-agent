@@ -200,9 +200,13 @@ async def execute_execution_plan(
 
     强制认证（无/坏 Bearer → 401）。``session_id`` 归属校验与执行同一
     工作线程顺序执行（校验先于任何节点运行）。
+
+    DIST（round1）：REST 执行与工具路径共用 ``run_plan_sync`` —— 服务端
+    ``GOVERNOR`` 层级准入（tenant/session 作用域 + 全局上限）对两条入口
+    一视同仁；此前本路由直连 ``engine.execute_plan`` 完全绕过治理。
     """
-    from app.services.geocompute.executor import engine
     from app.services.geocompute import graph
+    from app.services.geocompute.api import run_plan_sync
 
     plan = _plan_from_request(body.plan)
     try:
@@ -213,7 +217,7 @@ async def execute_execution_plan(
     def _run():
         if body.session_id:
             _authorize_session_write_sync(body.session_id, user, owner_token)
-        return engine.execute_plan(
+        return run_plan_sync(
             plan, session_id=body.session_id, caller=dict(user)
         )
 
@@ -261,8 +265,12 @@ async def cancel_execution_run(
     CancellationToken）：未启动节点立即收敛；在飞节点经各自协作 checkpoint
     收敛；durable 分支级联写 job 行取消（既有机制，无新状态机）。
 
-    幂等：已终态 / 快照回放的 run 返回 200 且 ``cancelled=false`` 并附当前
-    终态 —— 与 durable job 取消的幂等语义一致。
+    进程可见性（DIST round1 如实声明）：在飞 run 注册表是**本进程内存态**
+    （``engine.get_run`` 只见本进程启动的 run）—— 多 worker / 多副本部署
+    下，cancel 请求须落在**正在执行该 run 的进程**才能点燃在飞取消；
+    durable 分支的取消事实落库（AnalysisTask 行），由执行侧探针跨进程
+    收敛，不受此限制。幂等：已终态 / 快照回放的 run 返回 200 且
+    ``cancelled=false`` 并附当前终态 —— 与 durable job 取消的幂等语义一致。
     """
     from app.services.geocompute.executor import engine, owner_scope_for
 

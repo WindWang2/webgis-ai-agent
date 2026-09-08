@@ -1039,7 +1039,13 @@ def repair_spatial_dataset(
     project_id: str,
     payload: Dict[str, Any],
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    # review round-1 SEC CRITICAL-1: the caller-supplied session_id flows into
+    # execute_repair → session_data_manager.store — an unauthenticated write
+    # into ANY session. Write path ⇒ authenticated (same rule as the other
+    # session-writing routes in this file); anonymous callers get 401.
+    user: Dict[str, Any] = Depends(get_current_user),
+    # SEC-08 匿名会话所有权同款凭据：X-Session-Token 请求头（owner_token）。
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
     user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
@@ -1068,6 +1074,14 @@ def repair_spatial_dataset(
     source_ref = str(payload.get("source_ref") or "")[:80] or None
     dataset_id = str(payload.get("dataset_id") or "")[:80] or None
     issue_codes = [str(c)[:64] for c in (payload.get("issue_codes") or [])][:16]
+
+    # review round-1 SEC CRITICAL-1: 会话所有权守卫（SEC-08 同款，本文件
+    # record_map_product_version / run 等会话写路径同一纪律）—— 外来
+    # session_id 一律 404（不泄露存在性）；缺失/无权都到不了 execute_repair。
+    # 本路由是 sync（threadpool，无运行中事件循环）→ asyncio.run 与上方
+    # 既有用法一致。
+    if session_id:
+        asyncio.run(_verify_session_access(session_id, user, owner_token))
 
     execution = asyncio.run(
         execute_repair(
@@ -1349,20 +1363,35 @@ def plan_project_data_gc(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    """Dry-run GC plan（只读）：保留策略候选 + 引用计数 blob 候选（有界）。"""
+    """Dry-run GC plan（只读）：**项目域**保留候选 + 项目过滤后的可删 blob
+    投影（仅 sha 前缀 + 字节）。
+
+    review round-1 SEC CRITICAL-2：per-project 端点绝不运行/披露 GLOBAL
+    promotion-store GC —— 全局清扫只属于周期 sweep
+    （artifact_lifecycle.sweep_aged_artifacts）。这里的「可删 blob」是本项目
+    保留候选中已通过单一保护谓词（``_promotion_blob_protection``，含宽限期）
+    的物理 blob，即本轮保留清扫实际可释放的 promotion-store 字节；
+    key/location 字符串一律不出网（sha 前缀 + 字节足够运维决策）。
+    """
     user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(
         db=db, project_id=project_id, user_id=user_id, org_id=org_id
     )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    from app.services.artifact_lifecycle import plan_promotion_store_gc_sync
     from app.services.data_lifecycle.quota import plan_retention_cleanup
 
     retention_plan = plan_retention_cleanup(db, project_id)
-    promotion_plan = plan_promotion_store_gc_sync()
+    scoped_deletable = [
+        {
+            "sha_prefix": str(b.get("key") or "")[:16],
+            "bytes": int(b.get("bytes") or 0),
+        }
+        for b in (retention_plan.get("candidate_blobs") or [])
+    ]
     return {
         "project_id": project_id,
+        "scoped_to_project": True,
         "retention": {
             "policy": retention_plan.get("policy"),
             "disabled": bool(retention_plan.get("disabled")),
@@ -1379,12 +1408,13 @@ def plan_project_data_gc(
                 retention_plan.get("candidate_blobs") or []),
         },
         "promotion_store_gc": {
-            "grace_hours": promotion_plan.get("grace_hours"),
-            "candidate_blobs": int(promotion_plan.get("candidate_blobs", 0)),
-            "deletable_count": len(promotion_plan.get("deletable") or []),
-            "deletable_bytes": int(promotion_plan.get("deletable_bytes", 0)),
-            "protected_counts": promotion_plan.get("protected_counts") or {},
-            "deletable": _bounded_items(promotion_plan.get("deletable") or []),
+            "scoped_to_project": True,
+            "grace_hours": (retention_plan.get("policy") or {}).get(
+                "grace_hours"),
+            "deletable_count": len(scoped_deletable),
+            "deletable_bytes": sum(
+                int(b["bytes"]) for b in scoped_deletable),
+            "deletable": _bounded_items(scoped_deletable),
         },
     }
 
@@ -1394,13 +1424,19 @@ def execute_project_data_gc(
     project_id: str,
     data: DataGcExecuteRequest,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    # review round-1 SEC CRITICAL-2(a)：破坏性路径必须认证（匿名不可触发
+    # 任何删除）。
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Execute a GC round：必须显式 confirm=true（缺省 400）。
 
     执行的是**当前新鲜状态**的 plan → execute（复检在同一谓词下进行，
-    绝不盲执行调用方缓存的计划）；项目级保留清理 + 引用计数 blob 清扫。
-    结果有界（≤64 items + counts）。
+    绝不盲执行调用方缓存的计划）；范围 = **本项目**保留清理 + 孤儿修订行
+    清理（quota.py 的项目过滤 plan/execute pair）。GLOBAL promotion-store
+    GC 不在这里跑（review round-1 SEC CRITICAL-2：项目路由触发全局清扫
+    会放大爆炸半径并删除其他项目的无主 blob）—— 它只属于周期 sweep
+    （``artifact_lifecycle.sweep_aged_artifacts``）。结果有界（≤64 items +
+    counts）。
     """
     if not data or not data.confirm:
         raise HTTPException(
@@ -1413,20 +1449,18 @@ def execute_project_data_gc(
     )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    from app.services.artifact_lifecycle import (
-        execute_promotion_store_gc_sync,
-        plan_promotion_store_gc_sync,
-    )
     from app.services.data_lifecycle.quota import (
+        execute_orphan_revision_cleanup,
         execute_retention_cleanup,
+        plan_orphan_revision_cleanup,
         plan_retention_cleanup,
     )
 
     retention_plan = plan_retention_cleanup(db, project_id)
     retention = execute_retention_cleanup(retention_plan, db=db)
-    promotion_plan = plan_promotion_store_gc_sync()
-    promotion_gc = execute_promotion_store_gc_sync(promotion_plan)
-    deleted_blobs = list(promotion_gc.get("deleted") or [])
+    orphans = execute_orphan_revision_cleanup(
+        plan_orphan_revision_cleanup(db), db=db
+    )
     skipped = _bounded_items(
         [
             {"key": str(s.get("key") or s.get("revision_id") or ""),
@@ -1448,13 +1482,10 @@ def execute_project_data_gc(
             "skipped_protected": _bounded_items(
                 retention.get("skipped_protected") or []),
         },
-        "promotion_store_gc": {
-            "deleted_count": len(deleted_blobs),
-            "deleted": _bounded_items(deleted_blobs),
-            "bytes_freed": int(promotion_gc.get("bytes_freed") or 0),
-            "failed": _bounded_items(promotion_gc.get("failed") or []),
-            "skipped_protected_count": len(
-                promotion_gc.get("skipped_protected") or []),
+        "orphan_revisions": {
+            "deleted_count": int(orphans.get("deleted_count") or 0),
+            "deleted_revision_ids": _bounded_items(
+                orphans.get("deleted_revision_ids") or []),
         },
         "skipped_protected": skipped,
     }

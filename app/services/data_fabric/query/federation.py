@@ -877,12 +877,36 @@ def derive_chain_fields(req: FederatedChainRequest, ordered_sources: List[ChainS
                         ordered_joins: List[ChainJoin]) -> Dict[str, List[str]]:
     """为各源派生最小必要字段（ADR-0101 D7，opt-in ``derive_projection``）。
 
-    只包含可**证明**需要的字段：两侧连接键、聚合分组/聚合字段、以及
-    下一跳左键（经 F1 提升必须存在于上一跳右属性里）。首源额外保留
-    下一跳左键。空间跳不能裁剪（几何承载不变量 F3），诚实返回空投影
-    （= 不投影）。派生是输出形状变更 —— 由调用方显式 opt-in。
+    只包含可**证明**需要的字段：两侧连接键、聚合分组/聚合字段、源 where
+    过滤引用的字段（M1：过滤器在投影裁剪后仍须可求值 —— 过滤字段缺了
+    会静默改变查询语义）、以及下一跳左键（经 F1 提升必须存在于上一跳
+    右属性里）。首源额外保留下一跳左键。空间跳不能裁剪（几何承载不变
+    量 F3），诚实返回空投影（= 不投影）。派生是输出形状变更 —— 由调用
+    方显式 opt-in。
     """
+    from app.services.data_fabric.query.predicates import iter_fields, predicate_from_dict
+
     required: Dict[str, set] = {s.source_id: set() for s in ordered_sources}
+    # M1（审计 round1）：源的本地 where 过滤字段是可证明必要的 —— 投影
+    # 裁掉过滤字段会让远端/本地过滤静默失真。dict 形式经 predicate AST
+    # 解析后提取；字符串形式无法可靠解析 → 不猜测（宁可多取）；AST 解析
+    # 失败的源整体退出派生（绝不带着未知过滤字段做裁剪）。
+    unprovable: set = set()
+    for s in ordered_sources:
+        w = s.where
+        if w is None:
+            continue
+        if isinstance(w, dict):
+            try:
+                required[s.source_id].update(iter_fields(predicate_from_dict(w)))
+            except Exception:
+                unprovable.add(s.source_id)
+        elif not isinstance(w, str) and getattr(w, "op", None):
+            required[s.source_id].update(iter_fields(w))
+        else:
+            # 字符串/未知形状：无法可靠解析 → 该源整体退出派生（宁可多取，
+            # 绝不带着未知过滤字段做裁剪）。
+            unprovable.add(s.source_id)
     # 评审 CRITICAL：参与空间跳的源**绝不投影** —— 空间连接的右侧行必须
     # 带几何（spatial_join_local 对无几何右行静默跳过）；仅按属性需求
     # 推导会在「属性跳后接空间跳」的链里把几何裁没（成功 0 行的静默
@@ -920,8 +944,8 @@ def derive_chain_fields(req: FederatedChainRequest, ordered_sources: List[ChainS
             required[right_id] = set()
     out: Dict[str, List[str]] = {}
     for s in ordered_sources:
-        if s.source_id in spatial_sources:
-            continue  # 空间跳端点：不派生投影（几何不变量优先）
+        if s.source_id in spatial_sources or s.source_id in unprovable:
+            continue  # 空间跳端点/过滤不可解析：不派生投影（安全优先）
         fields = sorted(f for f in required.get(s.source_id, set()) if f)
         if fields and s.fields is None:
             out[s.source_id] = fields

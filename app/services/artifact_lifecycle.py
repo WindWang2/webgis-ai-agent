@@ -203,12 +203,16 @@ def _promotion_blob_protection(
     refcounts_by_sha: Dict[str, int],
     artifact_locations: set,
     pinned_shas: set,
+    snapshot_locations: set = frozenset(),
+    snapshot_shas: set = frozenset(),
 ) -> Optional[str]:
     """共享保护判定（plan 与 execute 都调用）：返回保护原因；None = 可删。
 
     前四条是引用保护（与层级无关 —— 被任何 revision/Artifact 行引用的
-    blob 永不删除；pin 是用户显式表态，报告优先级最高）；宽限期只保护
-    "新写入尚未入账"的窗口。
+    blob 永不删除；pin 是用户显式表态，报告优先级最高）；工作空间快照
+    manifest 指针是第五条（round-1 review CRITICAL：快照物化的 blob 没有
+    revision 行 / head 指针，manifest 是它们唯一的账面 —— location 或 sha
+    命中即受保护）；宽限期只保护"新写入尚未入账"的窗口。
     """
     if key in pinned_shas:
         return "pinned"
@@ -218,13 +222,16 @@ def _promotion_blob_protection(
         return "referenced by artifact_revisions (sha)"
     if location in artifact_locations:
         return "head pointer (Artifact.metadata_json.content_location)"
+    if location in snapshot_locations or key in snapshot_shas:
+        return "workspace snapshot manifest pointer"
     if mtime > now - grace_hours * 3600.0:
         return "grace period"
     return None
 
 
 def _promotion_gc_snapshot(db, locations):
-    """一次 DB 快照：引用计数（按 location 与按 sha 双口径）+ head 指针 + pin。"""
+    """一次 DB 快照：引用计数（按 location 与按 sha 双口径）+ head 指针 + pin
+    + 工作空间快照 manifest 指针（plan/execute、promotion GC/retention 同源）。"""
     from sqlalchemy import func, select
 
     from app.models.project import ArtifactRevision
@@ -232,6 +239,9 @@ def _promotion_gc_snapshot(db, locations):
         artifact_content_locations,
         pinned_content_sha256s,
         referencing_counts,
+    )
+    from app.services.data_lifecycle.quota import (
+        workspace_snapshot_protected_pointers,
     )
 
     ref_by_loc = referencing_counts(db, locations)
@@ -241,11 +251,14 @@ def _promotion_gc_snapshot(db, locations):
         ).group_by(ArtifactRevision.content_sha256)
     ).all()
     ref_by_sha = {sha: int(cnt) for sha, cnt in sha_rows}
+    snap_locations, snap_shas = workspace_snapshot_protected_pointers()
     return {
         "refcounts_by_location": ref_by_loc,
         "refcounts_by_sha": ref_by_sha,
         "artifact_locations": set(artifact_content_locations(db)),
         "pinned_shas": set(pinned_content_sha256s(db)),
+        "snapshot_locations": snap_locations,
+        "snapshot_shas": snap_shas,
     }
 
 

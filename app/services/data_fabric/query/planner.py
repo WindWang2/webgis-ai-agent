@@ -217,6 +217,14 @@ def plan_query(
         if split.pushed is None:
             # 无任何可推叶（含源声明部分 op 本地的情形）→ 整体本地。
             local_filters.append(predicate_summary(spec.filter))
+            # C1（审计 round1）：守卫路径也必须落执行真相 —— 计划携带
+            # ``filter_split={"pushed": None, "local": 整棵 AST}``，执行侧
+            # （resolve_plan_filter_split → 各 adapter）据此绝不向远端编译
+            # 任何过滤子句，余项整体在取回后本地求值。历史路径（本字段缺席）
+            # 曾让 executor 把整棵 AST 编译下发 —— 计划与执行不一致。
+            # execution_mode / fallback_reason 保持原判（本守卫只补真相，
+            # 不改决策文案）。
+            filter_split = {"pushed": None, "local": spec.filter.model_dump()}
             if caps.filter_pushdown:
                 filter_ok = False
                 rejected_split_reason = (
@@ -242,9 +250,11 @@ def plan_query(
             )
         else:
             # 正确性守卫：混合可推性但无统计背书 → 整体本地（绝不把源声明
-            # 推不了的 op 发往远端），并如实记录被拒绝的替代。
+            # 推不了的 op 发往远端），并如实记录被拒绝的替代。C1：与上面的
+            # 全本地守卫同理，执行真相必须落盘 —— 远端一个子句都不编译。
             local_filters.append(predicate_summary(spec.filter))
             filter_ok = False
+            filter_split = {"pushed": None, "local": spec.filter.model_dump()}
             rejected_split_reason = (
                 "mixed filter pushability detected but no column statistics; "
                 "conservative whole-filter local execution"

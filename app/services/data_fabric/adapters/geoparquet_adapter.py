@@ -425,6 +425,25 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
         except Exception:
             return {}
 
+    @staticmethod
+    def _result_crs(geo_meta: Dict[str, Any], primary_geom: str) -> Optional[str]:
+        """geo 元数据 → 结果面 CRS 字符串（round-1 review MAJOR）。
+
+        materialize（geoparquet）分支从 ``schema_info["crs"]`` 取值编码进
+        Arrow/GeoParquet schema —— 此前没有任何 adapter 写这个键，投影 CRS
+        在物化时静默丢失。同时接受 PROJJSON（取 ``name``）与字符串两种
+        携带形态（与 _describe_pyarrow 同源 geo_meta，但字符串形态不再被
+        丢弃）。未知 → None（诚实，绝不伪造 EPSG:4326）。
+        """
+        try:
+            col_meta = (geo_meta.get("columns") or {}).get(primary_geom) or {}
+            crs_info = col_meta.get("crs")
+            if isinstance(crs_info, dict):
+                return crs_info.get("name") or None
+            return str(crs_info) if crs_info else None
+        except Exception:
+            return None
+
     def preview(self, dataset_id: str, limit: int = 10) -> Dict[str, Any]:
         """Fetch sample records with bounded limit."""
         bounded_limit = max(1, min(limit, MAX_PREVIEW_LIMIT))
@@ -696,6 +715,9 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
             schema_info={
                 "columns": non_geom_cols,
                 "dataset_bbox": descriptor.bbox,
+                # round-1 review MAJOR：CRS 进结果面 —— materialize(geoparquet)
+                # 由此把源 CRS 编码进 Arrow/GeoParquet schema（不再静默丢失）。
+                "crs": self._result_crs(geo_meta, primary_geom),
             },
             metadata=self._metadata(plan, evidence, started, extra={
                 "is_demo": False,
@@ -900,6 +922,8 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
             schema_info={
                 "columns": non_geom_cols,
                 "dataset_bbox": descriptor.bbox,
+                # 与 dict lane 同款：CRS 进结果面（materialize 源）。
+                "crs": self._result_crs(self._read_geo_meta(pf), primary_geom),
             },
             metadata=self._metadata(plan, evidence, started, extra={
                 "is_demo": False,

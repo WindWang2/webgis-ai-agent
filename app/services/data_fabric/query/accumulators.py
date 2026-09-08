@@ -6,8 +6,14 @@
 本模块就是那"一个真相"：
 
 - ``count``（无字段）= 组内行数；``count(field)`` = 非 null 计数；
-- 数值聚合（sum/avg/min/max/stddev）**排除 bool 与不可转 float 的值**；
-- ``stddev`` 为样本口径（n-1，对齐 Postgres STDDEV_SAMP；n<2 → None）；
+- 数值聚合（sum/avg/stddev）**排除 bool 与不可转 float 的值**；
+- ``min``/``max`` 双轨（round-1 review CRITICAL，pre-W5 语义对齐）：数值轨
+  （bool 与不可转 float 的值不参与）+ 字符串轨（ISO 日期串等按 Python
+  字典序 = 时间序比较）；finalize 时**有数值取数值，否则取字符串**
+  —— 可排序的非数值列（日期、名称）不再悄悄变 None；
+- ``stddev`` 为样本口径（n-1，对齐 Postgres STDDEV_SAMP；n<2 → None），
+  按 Welford 单遍算法累计（数值稳定：UTM 量级 ~5e5 的坐标列不再因
+  naive ``E[x²]−E[x]²`` 灾难性抵消丢精度）；
 - ``distinct_count`` 有界：去重集合容量到 ``DISTINCT_COUNT_CAP`` 即停并置
   ``approximate`` 标记（诚实近似，绝不无界内存）；
 
@@ -26,10 +32,42 @@
 from __future__ import annotations
 
 import math
+import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from app.services.data_fabric.errors import DataFabricError, QUERY_BUDGET_EXCEEDED
 
 #: distinct_count 去重集合容量上界（到顶即置 approximate，诚实近似）。
 DISTINCT_COUNT_CAP = 10_000
+
+#: group_by 组基数容量上界（round-1 review PERF MINOR-3）：``_groups`` 字典
+#: 在高基数 group_by（如逐点 id）下无界增长 = O(组数) 内存无红线。到顶即
+#: 抛 typed 错误诚实拒绝（env 可调；0/非法值回退默认）。
+DEFAULT_GROUP_CAP = 100_000
+_ENV_GROUP_CAP = "WEBGIS_FABRIC_AGGREGATE_GROUP_CAP"
+
+
+def group_count_cap() -> int:
+    """每次驱动构造时读取（测试/部署可按查询调参，无需进程重启）。"""
+    raw = os.environ.get(_ENV_GROUP_CAP, "")
+    try:
+        return max(int(float(raw)), 1)
+    except (TypeError, ValueError):
+        return DEFAULT_GROUP_CAP
+
+
+class AggregateGroupCapExceeded(DataFabricError):
+    """group_by 组基数越过容量上界（PERF MINOR-3 的诚实 typed 拒绝）。
+
+    结果行是喂给工具/前端的纯 dict —— 没有天然的 metadata 通道，伪造一行
+    ``__overflow__`` 会把虚假分组混进数值输出。因此按上游错误分类学抛
+    typed 错误，``code`` 复用 ``QUERY_BUDGET_EXCEEDED``：与 StreamingBudget
+    的行/字节/顶点预算同一处理面（compute_aggregates / stream_aggregate /
+    Arrow lane 三个 lane 都从 ``AggregateDriver.update`` 抛出 —— 一种行为，
+    差分 parity 测试钉住）。
+    """
+
+    code = QUERY_BUDGET_EXCEEDED
 
 #: 支持的聚合函数（与 AggSpec 的 Literal 一致）。
 _SUPPORTED_FUNCS = ("count", "sum", "avg", "min", "max", "stddev", "distinct_count")
@@ -69,9 +107,12 @@ class ScalarAccumulator:
     值语义与原 ``streaming._accumulate``/``_finalize`` 逐条对齐（Wave 5 把它
     定为唯一真相）：bool 永不参与数值聚合；数值尝试 ``float(v)``（不可转则
     跳过）；``count(field)`` 计非 null；``distinct_count`` 有界并带诚实近似。
+    ``min``/``max`` 双轨见模块 docstring（数值轨 + 字符串轨）；``stddev``
+    走 Welford (n, mean, M2)。
     """
 
-    __slots__ = ("func", "field", "n", "_sum", "_sumsq", "_min", "_max",
+    __slots__ = ("func", "field", "n", "_sum", "_mean", "_m2",
+                 "_num_min", "_num_max", "_str_min", "_str_max",
                  "_seen", "_distinct_truncated")
 
     def __init__(self, func: Optional[str], field: Optional[str] = None):
@@ -82,9 +123,12 @@ class ScalarAccumulator:
         self.field = field
         self.n = 0
         self._sum = 0.0
-        self._sumsq = 0.0
-        self._min: Optional[float] = None
-        self._max: Optional[float] = None
+        self._mean = 0.0
+        self._m2 = 0.0
+        self._num_min: Optional[float] = None
+        self._num_max: Optional[float] = None
+        self._str_min: Optional[str] = None
+        self._str_max: Optional[str] = None
         self._seen: Optional[set] = set() if func == "distinct_count" else None
         self._distinct_truncated = False
 
@@ -110,15 +154,31 @@ class ScalarAccumulator:
         if value is None or isinstance(value, bool):
             # bool 不参与数值聚合（与本地聚合器同一排除口径）。
             return
+        if self.func in ("min", "max"):
+            # 双轨（pre-W5 语义对齐）：可转 float 的值进数值轨；其余可排序
+            # 值（str，含 ISO 日期串）进字符串轨 —— O(1)/组，绝不缓冲全值。
+            try:
+                fv = float(value)
+            except (TypeError, ValueError):
+                if isinstance(value, str):
+                    self._str_min = value if self._str_min is None else min(self._str_min, value)
+                    self._str_max = value if self._str_max is None else max(self._str_max, value)
+                return
+            self.n += 1
+            self._num_min = fv if self._num_min is None else min(self._num_min, fv)
+            self._num_max = fv if self._num_max is None else max(self._num_max, fv)
+            return
         try:
             fv = float(value)
         except (TypeError, ValueError):
             return
         self.n += 1
         self._sum += fv
-        self._sumsq += fv * fv
-        self._min = fv if self._min is None else min(self._min, fv)
-        self._max = fv if self._max is None else max(self._max, fv)
+        # Welford（round-1 review MAJOR）：单遍数值稳定的矩累计，
+        # O(组数) 内存；替代 naive ``E[x²]−E[x]²``（UTM 量级灾难性抵消）。
+        delta = fv - self._mean
+        self._mean += delta / self.n
+        self._m2 += delta * (fv - self._mean)
 
     @property
     def approximate(self) -> bool:
@@ -130,22 +190,26 @@ class ScalarAccumulator:
             return group_rows if self.field is None else self.n
         if self.func == "distinct_count":
             return len(self._seen) if self._seen is not None else 0
+        if self.func == "min":
+            # 有数值取数值，否则字符串轨（日期/名称列不再悄悄变 None）。
+            if self._num_min is not None:
+                return self._num_min
+            return self._str_min
+        if self.func == "max":
+            if self._num_max is not None:
+                return self._num_max
+            return self._str_max
         if self.n == 0:
             return None
         if self.func == "sum":
             return self._sum
         if self.func == "avg":
             return self._sum / self.n
-        if self.func == "min":
-            return self._min
-        if self.func == "max":
-            return self._max
-        # stddev：样本口径与 PG STDDEV_SAMP 对齐：n<2 → None
+        # stddev：样本口径与 PG STDDEV_SAMP 对齐：n<2 → None（Welford M2）
         if self.n < 2:
             return None
-        mean = self._sum / self.n
-        var = max(0.0, self._sumsq / self.n - mean * mean)
-        return math.sqrt(var * self.n / (self.n - 1))
+        var = max(0.0, self._m2 / (self.n - 1))
+        return math.sqrt(var)
 
 
 class _GroupState:
@@ -183,11 +247,25 @@ class AggregateDriver:
         self.group_by = list(group_by or [])
         self.emit_empty_global_row = emit_empty_global_row
         self._groups: Dict[Tuple, _GroupState] = {}
+        self._group_cap = group_count_cap()
 
     def update(self, props: Any) -> None:
         key = tuple(props.get(g) for g in self.group_by)
         st = self._groups.get(key)
         if st is None:
+            if len(self._groups) >= self._group_cap:
+                # PERF MINOR-3：无界组基数的诚实红线（无 group_by 的全局
+                # 聚合恒为单组，永不触顶）。
+                raise AggregateGroupCapExceeded(
+                    f"group cardinality exceeded cap ({self._group_cap})",
+                    details={
+                        "cap": self._group_cap,
+                        "hint": (
+                            "raise WEBGIS_FABRIC_AGGREGATE_GROUP_CAP, "
+                            "coarsen group_by, or pre-aggregate upstream"
+                        ),
+                    },
+                )
             st = _GroupState(key, [ScalarAccumulator(r.func, r.field) for r in self.requests])
             self._groups[key] = st
         st.rows += 1
@@ -236,8 +314,11 @@ class AggregateDriver:
 
 __all__ = [
     "DISTINCT_COUNT_CAP",
+    "DEFAULT_GROUP_CAP",
+    "AggregateGroupCapExceeded",
     "AggRequest",
     "ScalarAccumulator",
     "AggregateDriver",
+    "group_count_cap",
     "normalize_agg_specs",
 ]

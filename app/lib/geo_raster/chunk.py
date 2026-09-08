@@ -229,12 +229,14 @@ def build_chunk_descriptor(
     *,
     band: int = 1,
     bands: Optional[Sequence[int]] = None,
+    identity_extra: str = "",
 ) -> RasterChunkDescriptor:
     """Descriptor for one window of a reader's source (header-only IO).
 
     The source fingerprint is the reader's cached V5 content fingerprint
     (``RasterMetadata.fingerprint[:16]`` — computed once per metadata
-    resolution, never re-read here).
+    resolution, never re-read here). ``identity_extra`` participates in the
+    chunk id only (see :func:`build_chunk_descriptor_from_grid`).
     """
     meta = reader.metadata()
     grid = getattr(meta, "grid_profile", None)
@@ -254,7 +256,31 @@ def build_chunk_descriptor(
         band_indexes=band_indexes,
         source_fingerprint=(meta.fingerprint or "")[:16],
         source_uri=getattr(reader, "uri", ""),
+        identity_extra=identity_extra,
     )
+
+
+def fn_fingerprint(fn: Any) -> str:
+    """Bounded, process-stable function identity (round-1 review MINOR).
+
+    ``sha256(qualname + code object bytes)[:16]`` — same algorithm on the
+    same source → same digest in every process (no memory addresses, no
+    pickled closures). Callables without a ``__code__`` (functools.partial,
+    C builtins) degrade to their qualname digest. This feeds the chunk
+    CACHE operation namespace (``ChunkCacheBackend.operation``) so editing
+    a window fn invalidates cached chunks — it is NOT part of
+    :class:`RasterChunkDescriptor` (descriptor identity stays
+    data-defined).
+    """
+    qualname = str(
+        getattr(fn, "__qualname__", None) or getattr(fn, "__name__", "") or ""
+    )
+    h = hashlib.sha256()
+    h.update(qualname.encode("utf-8", "replace"))
+    code = getattr(fn, "__code__", None)
+    if code is not None:
+        h.update(bytes(getattr(code, "co_code", b"") or b""))
+    return h.hexdigest()[:_CHUNK_ID_HEX]
 
 
 def iter_chunk_descriptors(
@@ -264,6 +290,7 @@ def iter_chunk_descriptors(
     bands: Optional[Sequence[int]] = None,
     window_size: Optional[Tuple[int, int]] = None,
     window_side: Optional[int] = None,
+    identity_extra: str = "",
 ) -> Iterator[RasterChunkDescriptor]:
     """Descriptor-yielding variant of the bounded window partition.
 
@@ -271,6 +298,8 @@ def iter_chunk_descriptors(
     :func:`raster_grid.iter_bounded_windows` verbatim (that function remains
     the single partition authority — this is a projection over it, not a
     second iterator). Existing bare-``Window`` callers are untouched.
+    ``identity_extra`` passes through to the chunk id (execute_windowed
+    mints its descriptors with ``out_dtype=…`` — round-1 review MINOR).
     """
     from app.lib.geo_analysis.raster_grid import iter_bounded_windows
 
@@ -286,6 +315,7 @@ def iter_chunk_descriptors(
             (int(win.col_off), int(win.row_off), int(win.width), int(win.height)),
             band=band,
             bands=bands,
+            identity_extra=identity_extra,
         )
 
 
@@ -331,13 +361,19 @@ class ChunkCacheBackend:
         self.source_path = str(source_path)
         self.operation = str(operation)
 
-    def key_for(self, descriptor: RasterChunkDescriptor) -> str:
+    def key_for(
+        self, descriptor: RasterChunkDescriptor, *, operation: Optional[str] = None
+    ) -> str:
         from app.lib.artifact_cache import make_chunk_cache_key
 
         return make_chunk_cache_key(
             self.source_path,
             json.loads(descriptor.canonical_json()),
-            self.operation,
+            # chunk_id 参与缓存命名空间：canonical_json 刻意不含
+            # identity_extra（如 out_dtype），chunk_id 是含它在内的完整身份
+            # —— 缓存键绝不把两个不同身份的输出混为一谈（round-1 review）。
+            f"{operation if operation is not None else self.operation}"
+            f"|cid:{descriptor.chunk_id}",
         )
 
     def load(

@@ -23,7 +23,9 @@ from app.lib.geo_raster import AlgorithmProfile
 from app.lib.geo_raster.chunk import (
     ChunkCacheBackend,
     RasterChunkDescriptor,
+    build_chunk_descriptor,
     chunk_digest,
+    fn_fingerprint,
     iter_chunk_descriptors,
     raster_runtime_capabilities,
 )
@@ -177,7 +179,13 @@ class TestExecuteWindowedHooks:
         p, data = tiled_raster
         seen: list[tuple] = []
         with RasterReader.open(p) as reader:
-            descs = list(iter_chunk_descriptors(reader, window_size=(128, 128)))
+            # execute_windowed mints its descriptors with the out_dtype in
+            # the chunk identity (round-1 review MINOR: cache keys must
+            # separate different dst_dtype outputs on the same window).
+            descs = list(iter_chunk_descriptors(
+                reader, window_size=(128, 128),
+                identity_extra=f"out_dtype={np.dtype('float64').str}",
+            ))
             res = execute_windowed(
                 reader, AlgorithmProfile(), lambda a, c, r: a.astype("float64") * 2,
                 window_size=(128, 128), dst_dtype="float64",
@@ -316,6 +324,44 @@ class TestChunkCache:
         np.testing.assert_array_equal(r1.array, r2.array)
         np.testing.assert_array_equal(r2.array, data.astype(np.float64) * 3)
 
+    def test_cache_key_folds_out_dtype(self, chunk_cache_env, tiled_raster):
+        """round-1 review MINOR：out_dtype 参与缓存身份（identity_extra）——
+        同一源窗口、不同 dst_dtype 的输出绝不共享缓存键。"""
+        p, _ = tiled_raster
+        cache = ChunkCacheBackend(p, "op")
+        with RasterReader.open(p) as reader:
+            d_u8 = build_chunk_descriptor(
+                reader, (0, 0, 64, 64),
+                identity_extra=f"out_dtype={np.dtype('uint8').str}")
+            d_f8 = build_chunk_descriptor(
+                reader, (0, 0, 64, 64),
+                identity_extra=f"out_dtype={np.dtype('float64').str}")
+        assert d_u8.chunk_id != d_f8.chunk_id
+        assert cache.key_for(d_u8) != cache.key_for(d_f8)
+
+    def test_cache_key_folds_fn_identity(self, chunk_cache_env, tiled_raster):
+        """round-1 review MINOR：fn 指纹（qualname + co_code 摘要）进缓存
+        operation 命名空间 —— 编辑算法后旧 chunk 不复用；跨进程确定。"""
+        p, _ = tiled_raster
+        cache = ChunkCacheBackend(p, "op")
+
+        def fn_a(a, c, r):
+            return a
+
+        def fn_b(a, c, r):
+            return a + 1
+
+        fp_a, fp_b = fn_fingerprint(fn_a), fn_fingerprint(fn_b)
+        assert fp_a != fp_b
+        assert fn_fingerprint(fn_a) == fp_a  # 同 fn 重算一致（无内存地址）
+        with RasterReader.open(p) as reader:
+            d = build_chunk_descriptor(reader, (0, 0, 64, 64))
+        k_a = cache.key_for(d, operation=f"op|fn:{fp_a}")
+        k_b = cache.key_for(d, operation=f"op|fn:{fp_b}")
+        assert k_a != k_b
+        # 共享后端多次执行：operation 追加幂等（键不漂移）
+        assert cache.key_for(d, operation=f"op|fn:{fp_a}") == k_a
+
     def test_cache_refuses_halo_and_global_ops(self, chunk_cache_env, tiled_raster):
         p, _ = tiled_raster
         cache = ChunkCacheBackend(p, "op")
@@ -353,13 +399,23 @@ class TestChunkCache:
     def test_backend_roundtrip_via_execute_windowed_store(self, chunk_cache_env, tiled_raster):
         p, _ = tiled_raster
         cache = ChunkCacheBackend(p, "op")
+
+        def identity_fn(a, c, r):
+            return a
+
         with RasterReader.open(p) as reader:
-            descs = list(iter_chunk_descriptors(reader, window_size=(128, 128)))
-            execute_windowed(reader, AlgorithmProfile(),
-                             lambda a, c, r: a, window_size=(128, 128),
-                             chunk_cache=cache)
+            # the runtime folds out_dtype into the descriptor identity and
+            # the fn fingerprint into the operation namespace (round-1
+            # review MINOR) — derive the key the same way here
+            descs = list(iter_chunk_descriptors(
+                reader, window_size=(128, 128),
+                identity_extra=f"out_dtype={np.dtype('uint8').str}",
+            ))
+            execute_windowed(reader, AlgorithmProfile(), identity_fn,
+                             window_size=(128, 128), chunk_cache=cache)
         # chunk ids from a fresh backend over the same source reproduce keys
         cache2 = ChunkCacheBackend(p, "op")
+        cache2.operation = f"{cache2.operation}|fn:{fn_fingerprint(identity_fn)}"
         key = cache2.key_for(descs[0])
         arr = cache2.load(key, expected_shape=(64, 64), expected_dtype="uint8")
         assert arr is not None
@@ -402,6 +458,20 @@ class TestCogIngest:
         cog = ensure_cog(src, tmp_path / "cog")
         again = ensure_cog(cog, tmp_path / "cog")
         assert again == cog  # already a COG → same path, no reconvert
+
+    def test_to_cog_512_fixture_converts_cleanly(self, tmp_path):
+        """round-1 review MINOR：512² 夹具（short_side/2 = 256 恰在阶梯边界，
+        GDAL COG 以单覆盖块布局写出）必须干净转换 —— 小栅格不被
+        "无 overview / 非分块" 拒绝。"""
+        from app.lib.geo_raster.cog import to_cog, validate_cog
+
+        src = self._write_strip(tmp_path / "small.tif", size=512)
+        out = to_cog(src, tmp_path / "cog")
+        report = validate_cog(str(out))
+        assert report["ok"], report["issues"]
+        assert report["size"] == [512, 512]
+        with rasterio.open(src) as s, rasterio.open(out) as o:
+            assert (s.read(1) == o.read(1)).all()
 
     def test_typed_errors_on_missing_file(self, tmp_path):
         from app.lib.geo_raster.cog import CogWriteError, ensure_cog, to_cog
@@ -501,7 +571,9 @@ class TestTerrainFullReadBudget:
         from app.tools.terrain_analysis import _read_terrain_window
 
         # 15000×15000 = 225M px ≤ 250M pixel cap (check_grid passes) but
-        # 225M × 8 B = 1.8 GiB > 1 GiB float64 budget → the new guard fires.
+        # 225M × (8+1) B = ~1.89 GiB > 1 GiB budget → the new guard fires
+        # (round-1 review MINOR: source transient is now accounted —
+        # uint8 source ⇒ px × (8 + 1)).
         w = h = 15000
         # sparse GTiff (header + no tiles written) — creation only, no pixels
         with rasterio.open(
@@ -518,7 +590,7 @@ class TestTerrainFullReadBudget:
             # validate_data_path resolves relative inputs under ./data
             _read_terrain_window("big.tif", None)
         assert ei.value.error_code == "RASTER_FULL_READ_BUDGET_EXCEEDED"
-        assert ei.value.estimated_bytes == w * h * 8
+        assert ei.value.estimated_bytes == w * h * (8 + 1)
         assert spy.reads == [], "guard must fire BEFORE the whole read"
 
     def test_small_grid_still_passes(self, terrain_env, monkeypatch):
@@ -574,7 +646,9 @@ class TestDemSentinelBoundedRead:
         expected = _nan_block_mean(full, out_h, out_w)
         assert got.shape == expected.shape
         assert (np.isnan(got) == np.isnan(expected)).all()
-        np.testing.assert_allclose(got, expected, equal_nan=True)
+        # bit-identity：流式分条与整读必须逐位一致（allclose 容忍 ±rtol·|b|
+        # 漂移，会把真实位差放行 —— round-1 review MINOR）
+        assert np.array_equal(got, expected, equal_nan=True)
         assert len(ds.calls) > 1, "streaming actually split the read"
 
     def test_single_strip_matches_full_read_too(self):

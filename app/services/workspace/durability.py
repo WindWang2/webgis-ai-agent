@@ -63,12 +63,25 @@ def _sha256_of_text(text: str) -> str:
 # ── 物化（save 侧；字节只进 BlobStore，绝不进快照）────────────────────
 
 
-async def materialize_ref_payload(session_id: str, ref: str) -> Optional[Dict[str, Any]]:
+async def materialize_ref_payload(
+    session_id: str,
+    ref: str,
+    *,
+    budget_bytes: Optional[int] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """把一个**存活**的会话 ref 载荷物化为 BlobStore 内容（幂等 CAS）。
 
-    Returns pointer dict ``{content_location, content_payload_sha256,
-    content_type, byte_size}``，或 None（载荷不存活 / 不可序列化 / 写盘
-    失败 —— 调用方如实缺指针，verify 报告真相，绝不伪造）。
+    ``budget_bytes``（pre-size gate，round-1 review MAJOR）：canonical 字节
+    序列化/读盘**之后**、写 BlobStore **之前**量尺 —— 超过预算即返回
+    ``(None, "budget")``，绝不落盘，绝不透支预算。None 预算 = 无界（兼容
+    旧调用语义）。
+
+    Returns ``(pointer, skip_reason)``：
+    - ``({"content_location", "content_payload_sha256", "content_type",
+      "byte_size"}, None)`` —— 物化成功；
+    - ``(None, "budget")`` —— 载荷存活但超过预算（调用方如实披露）；
+    - ``(None, None)`` —— 载荷不存活 / 不可序列化 / 写盘失败（调用方
+      如实缺指针，verify 报告真相，绝不伪造）。
     """
     from app.services.artifact_registry import is_raster_ref, raster_png_path
     from app.services.durable_blob_store import (
@@ -80,7 +93,7 @@ async def materialize_ref_payload(session_id: str, ref: str) -> Optional[Dict[st
     if is_raster_ref(ref):
         path = raster_png_path(session_id, ref)
         if path is None:
-            return None
+            return None, None
 
         def _read() -> Optional[bytes]:
             try:
@@ -90,19 +103,23 @@ async def materialize_ref_payload(session_id: str, ref: str) -> Optional[Dict[st
 
         data = await asyncio.to_thread(_read)
         if not data:
-            return None
-        digest = sha256_of_bytes(data)
+            return None, None
+        if budget_bytes is not None and len(data) > int(budget_bytes):
+            return None, "budget"
+        # round-1 review PERF MINOR-audit: sha256 over the full PNG bytes is
+        # O(payload) CPU — same worker-thread discipline as the read itself.
+        digest = await asyncio.to_thread(sha256_of_bytes, data)
         try:
             result = await asyncio.to_thread(store.put_blob, digest, data, "binary")
         except Exception as e:  # noqa: BLE001 — 持久化失败由调用方诚实披露
             logger.warning("[workspace.durability] binary put failed for %s: %s", ref, e)
-            return None
+            return None, None
         return {
             "content_location": result.location,
             "content_payload_sha256": digest,
             "content_type": "binary",
             "byte_size": len(data),
-        }
+        }, None
     # JSON lane：canonical 序列化一次 → 同一批字节回填摘要与写盘
     # （与 promotion 的 single-serialization 契约一致）。
     from app.services.session_data import session_data_manager
@@ -110,15 +127,23 @@ async def materialize_ref_payload(session_id: str, ref: str) -> Optional[Dict[st
     try:
         payload = await session_data_manager.get(session_id, ref)
     except Exception:  # noqa: BLE001 — store 故障按载荷不存活（诚实）
-        return None
+        return None, None
     if payload is None:
-        return None
+        return None, None
     try:
         from app.services.project_artifact_promotion import canonical_dumps
 
-        blob = canonical_dumps(payload)
+        # round-1 review PERF MINOR-2: canonical serialization is O(payload)
+        # CPU (sort-keys JSON dumps over potentially multi-MB refs) — never
+        # on the event loop; the digest + materialize steps below were
+        # already threaded (single-serialization contract unchanged).
+        blob = await asyncio.to_thread(canonical_dumps, payload)
     except Exception:  # noqa: BLE001 — 不可序列化 → 诚实缺指针
-        return None
+        return None, None
+    # 同一 O(payload) 纪律：UTF-8 计长（编码即一次全量拷贝）也不上事件循环。
+    blob_size = await asyncio.to_thread(lambda: len(blob.encode("utf-8")))
+    if budget_bytes is not None and blob_size > int(budget_bytes):
+        return None, "budget"
     digest = await asyncio.to_thread(_sha256_of_text, blob)
     try:
         from app.services.project_artifact_promotion import materialize_blob
@@ -126,15 +151,15 @@ async def materialize_ref_payload(session_id: str, ref: str) -> Optional[Dict[st
         location = await asyncio.to_thread(materialize_blob, digest, blob)
     except Exception as e:  # noqa: BLE001
         logger.warning("[workspace.durability] json put failed for %s: %s", ref, e)
-        return None
+        return None, None
     if not location:
-        return None
+        return None, None
     return {
         "content_location": location,
         "content_payload_sha256": digest,
         "content_type": "json",
-        "byte_size": len(blob.encode("utf-8")),
-    }
+        "byte_size": blob_size,
+    }, None
 
 
 # ── 校验 / 读回（restore + verify 侧；verify-before-write）────────────
@@ -294,6 +319,11 @@ async def write_back_session_payload(
         if not new_ref:
             return False, "store_failed"
         await session_data_manager.set_alias(session_id, new_ref, ref)
+        # round-1 review MAJOR（documented choice）：alias 模式下 descriptor
+        # 索引键在 new_ref 名下（session store 无公开的 descriptor 写入口，
+        # 从这里伸手进内部 ``_descriptors`` 不是一个干净的选项）—— 因此
+        # verify_snapshot 的探测带 ``store.get()`` 兜底（见
+        # snapshot._probe_ref_live），别名命中的载荷不会被误报 missing。
         return True, "alias"
     except Exception as e:  # noqa: BLE001
         logger.warning("[workspace.durability] alias restore failed for %s: %s", ref, e)

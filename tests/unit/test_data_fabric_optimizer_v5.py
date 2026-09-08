@@ -155,7 +155,8 @@ class TestAndEdgeSplit:
         stats = DatasetStatistics(dataset_fingerprint="fp", row_count=100)
         plan = _plan("postgis", OR_MIXED, caps=_partial_caps("postgis", ["like"]), stats=stats)
         assert plan.pushed_filters == []
-        assert plan.filter_split is None
+        # C1：守卫路径携带执行真相 —— pushed=None + 整棵 OR 为本地余项。
+        assert plan.filter_split == {"pushed": None, "local": OR_MIXED}
         # 整个 OR 子树作为单一本地余项（摘要 = 原子 OR）。
         assert plan.local_filters and plan.local_filters[0] == "(g eq OR g like)"
 
@@ -168,26 +169,41 @@ class TestAndEdgeSplit:
         assert "partial" not in plan.pushdown_classes.values()
 
     def test_none_pushable_whole_local(self):
-        """声明的本地 op 覆盖全部叶 → 整体本地（绝不推送源推不了的 op）。"""
+        """声明的本地 op 覆盖全部叶 → 整体本地（绝不推送源推不了的 op）。
+
+        C1：守卫路径落执行真相 —— ``filter_split={"pushed": None,
+        "local": 整棵 AST}``，执行侧据此绝不向远端编译任何过滤子句。"""
         caps = _partial_caps("postgis", ["like"])
         plan = _plan("postgis", {"op": "like", "field": "g", "pattern": "%x%"}, caps=caps)
         assert plan.pushed_filters == []
         assert plan.local_filters and "g like" in plan.local_filters[0]
-        assert plan.filter_split is None
+        assert plan.filter_split == {
+            "pushed": None,
+            "local": {"op": "like", "field": "g", "pattern": "%x%"},
+        }
+        # 计划即执行：resolve 返回（None, 整体）→ 远端零编译。
+        pushed, local = resolve_plan_filter_split(plan.filter_split["local"], plan)
+        assert pushed is None and local.op == "like"
 
     def test_single_leaf_behaves_as_baseline(self):
         """单叶过滤器与基线逐位一致（无 ops_local 时 push 判定不变）。"""
         base = _plan("postgis", {"op": "eq", "field": "g", "value": "a"})
         assert base.pushed_filters == ["g eq"]
+        assert base.filter_split is None
         local = _plan("geoparquet", {"op": "eq", "field": "g", "value": "a"})
         assert local.pushed_filters == []
-        assert local.filter_split is None
+        # C1：geoparquet 声明无过滤下推 → 全本地守卫路径携带执行真相。
+        assert local.filter_split == {
+            "pushed": None,
+            "local": {"op": "eq", "field": "g", "value": "a"},
+        }
 
     def test_no_stats_mixed_guard_with_rejected_alternative(self):
         """混合可推 + 无统计 → 正确性守卫整体本地 + 确定性的被拒替代记录。"""
         plan = _plan("postgis", MIXED, caps=_partial_caps("postgis", ["like"]), stats=None)
         assert plan.pushed_filters == []
-        assert plan.filter_split is None
+        # C1：无统计守卫路径同样落执行真相（远端零编译）。
+        assert plan.filter_split == {"pushed": None, "local": MIXED}
         alt = [a for a in plan.alternatives if a["name"] == "partial_filter_pushdown"]
         assert len(alt) == 1 and alt[0]["feasible"] is False
         assert "no column statistics" in alt[0]["rejected_reason"]
@@ -198,36 +214,52 @@ class TestAndEdgeSplit:
 
     # 实现前（pre-V5 代码路径）捕获的 golden：7 源类型 × 4 过滤形态，
     # no-stats + 默认能力矩阵 → 计划必须与基线逐位一致（sha256 钉死）。
+    #
+    # C1（round1 修复）再生说明：``filter_split`` 为守卫路径新增的执行真相
+    # 字段 —— 源默认能力矩阵不带过滤下推（ogc_api/stac/geoparquet/pmtiles）
+    # 或声明本地 op 时，计划走全本地守卫路径，现在携带
+    # ``{"pushed": None, "local": 整棵 AST}``。下列 16 个 golden 在 C1 修复
+    # 前钉死（当时 filter_split 恒为 None），修复即变更本身 → 已按修复后
+    # 计划再生（hash 覆盖含 filter_split 的完整 plan dump）。其余 12 个
+    # （postgis/arcgis/wfs 全可推路径）保持 pre-V5 原值：剔除缺省的
+    # ``filter_split=None`` 后其余内容必须与基线逐位一致。
     GOLDEN_PLAN_HASHES = {
         "arcgis|and_all": "bad7c835b5259ba0",
         "arcgis|and_mixed": "f2e07a6fb7eca3d7",
         "arcgis|eq": "4e8d36b77102e99a",
         "arcgis|or_atomic": "df20d2571090aad7",
-        "geoparquet|and_all": "44f82e01a25c63b7",
-        "geoparquet|and_mixed": "85e4ebe9d489029f",
-        "geoparquet|eq": "6dc0fa8a26289092",
-        "geoparquet|or_atomic": "46be5d27fde6beeb",
-        "ogc_api|and_all": "ed69e7ce874df3b3",
-        "ogc_api|and_mixed": "895abf178a643640",
-        "ogc_api|eq": "4f2c713afb8c8284",
-        "ogc_api|or_atomic": "09c43bebc08944a1",
-        "pmtiles|and_all": "a66a4b2545a650d7",
-        "pmtiles|and_mixed": "e71b876e4b825a57",
-        "pmtiles|eq": "61828bcd0ece4576",
-        "pmtiles|or_atomic": "76668855bbe1c3ae",
+        "geoparquet|and_all": "64fb329a1e0ffc20",
+        "geoparquet|and_mixed": "99f424088a383398",
+        "geoparquet|eq": "cbcb1bfca0a7d7dd",
+        "geoparquet|or_atomic": "a63a00f531d217dc",
+        "ogc_api|and_all": "432ea4ea435bea08",
+        "ogc_api|and_mixed": "d4cb954d1fbf5ba9",
+        "ogc_api|eq": "d40d4404735642f4",
+        "ogc_api|or_atomic": "bb54bfd6614c1679",
+        "pmtiles|and_all": "a703b1427ff69e6e",
+        "pmtiles|and_mixed": "e7730e8db11b0fc6",
+        "pmtiles|eq": "55f2a8c3d8a397af",
+        "pmtiles|or_atomic": "680f42cc3c98dc12",
         "postgis|and_all": "4752757322fbfd7c",
         "postgis|and_mixed": "a0f5a907f286bacc",
         "postgis|eq": "dab489e478a1d8fe",
         "postgis|or_atomic": "14b40eec56cdf967",
-        "stac|and_all": "79cee18e0c78dc5d",
-        "stac|and_mixed": "6e971c270ab51478",
-        "stac|eq": "d01334fa44ebba08",
-        "stac|or_atomic": "f64a686477177bff",
+        "stac|and_all": "684d152042351dfc",
+        "stac|and_mixed": "bd62d71066e5100a",
+        "stac|eq": "cd4dd5f282edd184",
+        "stac|or_atomic": "8ad65cf05e9395d3",
         "wfs|and_all": "c461fc60c29127e3",
         "wfs|and_mixed": "cb6bc05b5f6efa6e",
         "wfs|eq": "ffc3acccd3bfff2f",
         "wfs|or_atomic": "4ed0c260a2fd4f2e",
     }
+
+    # C1 再生的守卫路径 pin（filter_split 纳入 hash；见上注释）。
+    GUARD_PATH_REGENERATED = frozenset(
+        f"{st}|{f}"
+        for st in ("geoparquet", "ogc_api", "pmtiles", "stac")
+        for f in ("eq", "and_all", "and_mixed", "or_atomic")
+    )
 
     @pytest.mark.parametrize("key", sorted(GOLDEN_PLAN_HASHES))
     def test_no_stats_plans_bit_identical_to_baseline(self, key):
@@ -236,9 +268,13 @@ class TestAndEdgeSplit:
                    "and_mixed": MIXED, "and_all": ALL_PUSHABLE, "or_atomic": OR_MIXED}
         plan = _plan(st, filters[fname], descriptor=_descriptor(st))
         dump = plan.model_dump()
-        # V5 新增的 filter_split 缺省 None 是定义上的可加字段（历史计划无此
-        # 键）；剔除后其余全部内容必须与基线逐位一致。
-        assert dump.pop("filter_split") is None
+        if key in self.GUARD_PATH_REGENERATED:
+            # C1：守卫路径的执行真相是 hash 的一部分（pushed=None + 整体本地）。
+            assert dump["filter_split"] == {"pushed": None, "local": filters[fname]}
+        else:
+            # V5 新增的 filter_split 缺省 None 是定义上的可加字段（历史计划无此
+            # 键）；剔除后其余全部内容必须与基线逐位一致。
+            assert dump.pop("filter_split") is None
         payload = json.dumps(dump, sort_keys=True,
                              ensure_ascii=False, separators=(",", ":"))
         assert hashlib.sha256(payload.encode()).hexdigest()[:16] == self.GOLDEN_PLAN_HASHES[key]
@@ -373,6 +409,181 @@ class TestSplitExecutionParity:
             assert res.metadata["query_plan"]["filter_split"] is None
         finally:
             invalidate_statistics(fp)
+
+    def test_arcgis_guard_path_compiles_nothing_remotely(self):
+        """C1 端到端（ArcGIS）：全本地守卫路径 —— 远端 where 不含任何本地方案
+        声明的 op（整体 1=1），过滤在取回后本地求值。"""
+        adapter = _make_arcgis(ops_local=["like"])
+        res = adapter.query("0", QuerySpec(limit=10, filter_expr={
+            "op": "like", "field": "name", "pattern": "alpha"}))
+        call = [c for c in adapter.session.calls if c["url"].rstrip("/").endswith("/query")][-1]
+        assert call["params"]["where"] == "1=1", "守卫路径绝不向远端编译任何过滤子句"
+        assert "like" not in call["params"]["where"].lower()
+        # 本地余项（整棵 AST）取回后求值：只保留匹配行。
+        assert [f["properties"]["name"] for f in res.features] == ["alpha"]
+        plan = res.metadata["query_plan"]
+        assert plan["filter_split"] == {
+            "pushed": None,
+            "local": {"op": "like", "field": "name", "pattern": "alpha"},
+        }
+        # 无统计守卫路径：执行真相在场（不再依赖 adapter 二次决策）。
+        assert plan["local_filters"], "整体本地必须如实记录"
+
+    def test_ogc_guard_path_sends_no_filter_param(self):
+        """C1 端到端（OGC API）：全本地守卫路径 —— 远端请求完全不带 filter
+        参数，余项本地求值；numberMatched 是无过滤命中数 → total_matching
+        如实置 None（m1）。"""
+        from app.services.data_fabric.adapters import OGCAPIAdapter
+        from tests.unit.test_ogc_adapters_753 import (
+            FakeResponse,
+            OGC_COLLECTIONS,
+            OGC_PARCELS,
+            OGC_QUERYABLES,
+        )
+
+        profile = ConnectionProfile(provider_type="ogc_api", endpoint="")
+        profile.url = "https://example.com/ogc"
+
+        class _Ogc(OGCAPIAdapter):
+            def _capabilities_v2(self):
+                return super()._capabilities_v2().model_copy(
+                    update={"filter_ops_local": ["like"]})
+
+        adapter = _Ogc(profile)
+        s = MagicMock()
+        items = {
+            "type": "FeatureCollection",
+            "numberMatched": 2,
+            "features": [
+                {"type": "Feature", "properties": {"owner": "alpha"}, "geometry": None},
+                {"type": "Feature", "properties": {"owner": "beta"}, "geometry": None},
+            ],
+        }
+
+        def route(url, params=None, timeout=None, **kwargs):
+            p = dict(params or {})
+            s.calls.append({"url": url, "params": p})
+            if "conformance" in url:
+                return FakeResponse(json_data={"conformsTo": [
+                    "http://www.opengis.net/doc/IS/ogcapi-features-2/1.0"]})
+            if url.rstrip("/").endswith("/collections"):
+                return FakeResponse(json_data=OGC_COLLECTIONS)
+            if url.rstrip("/").endswith("/queryables"):
+                return FakeResponse(json_data=OGC_QUERYABLES)
+            if url.rstrip("/").endswith("/collections/parcels"):
+                return FakeResponse(json_data=OGC_PARCELS)
+            if url.rstrip("/").endswith("/items"):
+                return FakeResponse(json_data=items)
+            return FakeResponse(json_data={})
+
+        s.get = route
+        s.calls = []
+        adapter.session = s
+        res = adapter.query("parcels", QuerySpec(limit=10, filter_expr={
+            "op": "like", "field": "owner", "pattern": "a%"}))
+        call = [c for c in adapter.session.calls if c["url"].rstrip("/").endswith("/items")][-1]
+        assert "filter" not in call["params"], "守卫路径不携带任何远端过滤参数"
+        assert "filter-lang" not in call["params"]
+        assert [f["properties"]["owner"] for f in res.features] == ["alpha"]
+        assert res.total_matching is None, "存在本地余项 → total_matching 如实为 None"
+        plan = res.metadata["query_plan"]
+        assert plan["filter_split"]["pushed"] is None
+
+    def test_postgis_guard_path_where_has_no_local_op_and_count_skipped(self):
+        """C1 端到端（PostGIS）：全本地守卫路径 —— 主查询 WHERE 不含声明本地
+        的 op；m1：存在本地余项 → 不再以下推半（此处为空 WHERE）count 冒充
+        total_matching，count SQL 根本不执行。"""
+        from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
+        from app.services.data_fabric.query.capabilities import default_capabilities
+
+        executed: list = []
+
+        class _Cursor:
+            def __init__(self):
+                self.description = []
+                self._result = None
+
+            def execute(self, sql, params=()):
+                executed.append((sql, params))
+                self.description = []
+                self._result = None
+                sql_l = sql.lower()
+                if "information_schema.columns" in sql_l:
+                    self.description = [("name",), ("type",)]
+                    self._result = [("name", "text"), ("geom", "geometry")]
+                elif "from geometry_columns" in sql_l and "f_geometry_column, srid, type" in sql_l:
+                    self._result = ("geom", 4326, "POINT")
+                elif "geometry_columns" in sql_l:
+                    self._result = ("geom", 4326)
+                elif "pg_index" in sql_l:
+                    self._result = []
+                elif "pg_indexes" in sql_l:
+                    self._result = None
+                elif "count(*)" in sql_l:
+                    self._result = (2,)
+                elif "estimatedextent" in sql_l:
+                    self._result = None
+                else:
+                    self.description = [("name",), ("_geojson",)]
+                    self._result = [
+                        ("alpha", '{"type":"Point","coordinates":[116.5,39.5]}'),
+                        ("beta", '{"type":"Point","coordinates":[116.6,39.6]}'),
+                    ]
+
+            def fetchone(self):
+                if isinstance(self._result, list):
+                    return self._result[0] if self._result else None
+                return self._result
+
+            def fetchall(self):
+                if isinstance(self._result, list):
+                    return self._result
+                return []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return None
+
+        adapter = PostGISAdapter.__new__(PostGISAdapter)
+        caps = default_capabilities("postgis").model_copy(update={"filter_ops_local": ["like"]})
+
+        class _Conn:
+            def cursor(self):
+                return _Cursor()
+
+            def rollback(self):
+                pass
+
+        class _ConnCtx:
+            def __enter__(self):
+                return _Conn()
+
+            def __exit__(self, *a):
+                return None
+
+        adapter._connection_context = _ConnCtx
+        adapter._meta_cache = {}
+        adapter._caps = caps
+        adapter.profile = ConnectionProfile(id="p_guard", source_type="postgis")
+
+        res = adapter.query("public.roads_guard", QuerySpec(limit=10, filter_expr={
+            "op": "like", "field": "name", "pattern": "a%"}))
+
+        main_sqls = [
+            sql for sql, _ in executed
+            if 'FROM "public"."roads_guard"' in sql and sql.strip().startswith("SELECT")
+        ]
+        assert main_sqls, "main feature query must have executed"
+        assert "LIKE" not in main_sqls[0].upper(), "守卫路径 WHERE 绝不编译声明本地的 op"
+        # 本地余项求值：只保留匹配行。
+        assert [f["properties"]["name"] for f in res.features] == ["alpha"]
+        # m1：count 只在 meta 装载时出现过一次（feature_count），分页 count
+        # 被跳过（下推半为空 WHERE，其命中数不诚实）。
+        assert sum("count(*)" in sql.lower() for sql, _ in executed) == 1
+        assert res.total_matching is None
+        assert res.metadata["query_plan"]["filter_split"]["pushed"] is None
 
     def test_ogc_cursor_preserved_with_local_remainder(self):
         """cursor 分页 + 本地余项：links.next 游标保留（页协商不变），页内
@@ -809,6 +1020,25 @@ class TestChainTool:
                                     "join_field_right": "key"}])
         assert res["status"] == "error"
         assert res["error_type"] == "INVALID_QUERY"
+
+    def test_nan_inf_estimated_rows_degrade_to_none(self, chain_env):
+        """m3（round1）：NaN/inf 成本提示不再令 int() 崩溃 —— 如实降级为
+        None（无提示），计划照常产出。"""
+        reg = _registered_tools()
+        adapters = chain_env
+        with patch("app.tools.data_fabric_tools.connection_manager") as cm:
+            cm.get_adapter.side_effect = lambda pid, owner=None: adapters.get(pid)
+            res = _run_tool(reg, "query_federated_chain",
+                            sources=[{"dataset_id": "d0", "profile_id": "p0",
+                                      "estimated_rows": float("nan")},
+                                     {"dataset_id": "d1", "profile_id": "p1",
+                                      "estimated_rows": float("inf")}],
+                            joins=[{"kind": "attribute_join", "join_field_left": "key",
+                                    "join_field_right": "key"}],
+                            limit=100)
+        assert res["status"] == "success", res.get("error")
+        assert res["row_count"] >= 0
+        assert res["plans"], "计划必须产出（NaN 估算视为无提示）"
 
     def test_single_source_rejected(self, chain_env):
         reg = _registered_tools()

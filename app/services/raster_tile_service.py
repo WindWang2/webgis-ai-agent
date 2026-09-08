@@ -264,9 +264,15 @@ def invalidate_raster_ref(session_id: str, ref_id: str) -> int:
             evicted = _RASTER_TILE_CACHE.pop(k, None)
             if evicted is not None:
                 _raster_tile_total_bytes -= len(evicted)
-        stale_stats = [k for k in _STATS_CACHE if k[0] == raster_path]
-        for k in stale_stats:
-            _STATS_CACHE.pop(k, None)
+        # CONC MAJOR-2（audit round1）：stats 表的扫描/删除必须持它自己的
+        # 锁 —— 此前只在 _RASTER_CACHE_LOCK 内裸改 _STATS_CACHE，与
+        # _get_band_stats 的插入/过期弹出并发时是 "dict changed size
+        # during iteration" 的现成竞态。锁序固定 raster→stats（stats 锁
+        # 内绝不反向取 raster 锁 —— _get_band_stats 只持 stats 锁）。
+        with _STATS_CACHE_LOCK:
+            stale_stats = [k for k in _STATS_CACHE if k[0] == raster_path]
+            for k in stale_stats:
+                _STATS_CACHE.pop(k, None)
     return len(stale_tiles) + len(stale_stats)
 
 

@@ -133,6 +133,30 @@ class TestIterFeaturesToArrowBatches:
         with pytest.raises(VectorCarrierSchemaDriftError):
             list(iter_features_to_arrow_batches([b1, b2], on_schema_conflict="coerce"))
 
+    def test_strict_vanishing_column_raises_typed(self):
+        """round-1 review MAJOR：strict 模式下后续批次**缺失**冻结列是
+        结构漂移 —— 必须 typed 拒绝，绝不静默 null 填充（伪造数据丢失）。"""
+        b1 = [{"type": "Feature", "geometry": None,
+               "properties": {"v": 1, "s": "x"}}]
+        b2 = [{"type": "Feature", "geometry": None, "properties": {"v": 2}}]
+        with pytest.raises(VectorCarrierSchemaDriftError) as ei:
+            list(iter_features_to_arrow_batches([b1, b2]))
+        assert ei.value.code == "VECTOR_CARRIER_SCHEMA_DRIFT"
+        assert "vanished" in str(ei.value) and "s" in str(ei.value)
+
+    def test_coerce_mode_null_fills_vanishing_column(self):
+        import pyarrow as pa
+
+        """coerce（声明过的宽松策略）显式 null 填充消失列。"""
+        b1 = [{"type": "Feature", "geometry": None,
+               "properties": {"v": 1, "s": "x"}}]
+        b2 = [{"type": "Feature", "geometry": None, "properties": {"v": 2}}]
+        batches = list(iter_features_to_arrow_batches(
+            [b1, b2], on_schema_conflict="coerce"))
+        table = pa.Table.from_batches(batches)
+        assert table.column("v").to_pylist() == [1, 2]
+        assert table.column("s").to_pylist() == ["x", None]
+
     def test_lazy_input_consumption(self):
         consumed = []
 
@@ -345,6 +369,65 @@ class TestAccumulatorParity:
         assert compute_rows[0]["distinct_count_s"] == DISTINCT_COUNT_CAP
         assert compute_rows[0]["distinct_count_s_approximate"] is True
 
+    def test_min_max_cover_orderable_non_numeric_values(self):
+        """round-1 review CRITICAL：min/max 双轨 —— ISO 日期串等可排序非
+        数值参与 min/max（字典序 == 时间序），不再悄悄变 None；两 lane 同值。"""
+        rows = [
+            {"d": "2024-03-01"},
+            {"d": "2024-01-15"},
+            {"d": None},
+            {"d": "2024-02-01"},
+        ]
+        aggs = [{"func": "min", "field": "d"}, {"func": "max", "field": "d"}]
+        stream_rows, compute_rows = _run_both(rows, aggs, [])
+        assert compute_rows[0]["min_d"] == "2024-01-15"
+        assert compute_rows[0]["max_d"] == "2024-03-01"
+        assert stream_rows[0]["min_d"] == compute_rows[0]["min_d"]
+        assert stream_rows[0]["max_d"] == compute_rows[0]["max_d"]
+
+    def test_min_max_numeric_track_wins_over_string_track(self):
+        """数值轨优先：混合列（数值 + 数值不可转的字符串）取数值 min/max；
+        纯字符串组走字符串轨（与 OLD compute_aggregates 的可比较语义对齐，
+        绝不让混合列 TypeError 炸掉整个聚合）。"""
+        rows = [
+            {"g": "num", "v": 5},
+            {"g": "num", "v": "2024-01-01"},
+            {"g": "str", "v": "2024-02-01"},
+            {"g": "str", "v": "2024-01-15"},
+        ]
+        aggs = [{"func": "min", "field": "v"}, {"func": "max", "field": "v"}]
+        stream_rows, compute_rows = _run_both(rows, aggs, ["g"])
+        by_key = {r["g"]: r for r in compute_rows}
+        assert by_key["num"]["min_v"] == 5
+        assert by_key["num"]["max_v"] == 5
+        assert by_key["str"]["min_v"] == "2024-01-15"
+        assert by_key["str"]["max_v"] == "2024-02-01"
+        by_key_s = {r["g"]: r for r in stream_rows}
+        assert by_key_s["num"]["min_v"] == by_key["num"]["min_v"]
+        assert by_key_s["str"]["max_v"] == by_key["str"]["max_v"]
+
+    def test_stddev_welford_utm_magnitude_accuracy(self):
+        """round-1 review MAJOR：Welford 单遍 —— UTM 量级（5e5±0.1）的样本
+        stddev 与两遍参考值 rel-err < 1e-9（naive E[x²]−E[x]² 在该量级
+        灾难性抵消）。"""
+        import math
+
+        vals = [500000.0 + ((i % 7) - 3) * 0.1 for i in range(400)]
+        rows = [{"v": v} for v in vals]
+        stream_rows, compute_rows = _run_both(
+            rows, [{"func": "stddev", "field": "v"}], [])
+        mean = sum(vals) / len(vals)
+        expected = math.sqrt(
+            sum((x - mean) ** 2 for x in vals) / (len(vals) - 1))
+        got = compute_rows[0]["stddev_v"]
+        rel_err = abs(got - expected) / expected
+        assert rel_err < 1e-9
+        assert stream_rows[0]["stddev_v"] == got
+        # 对照：naive 公式在该量级的误差显著更大（钉住 Welford 的必要性）
+        naive_var = max(0.0, sum(x * x for x in vals) / len(vals) - mean * mean)
+        naive = math.sqrt(naive_var * len(vals) / (len(vals) - 1))
+        assert abs(naive - expected) / expected > rel_err
+
     def test_unknown_func_rejected(self):
         with pytest.raises(ValueError, match="unsupported aggregate func"):
             AggregateDriver([{"func": "median", "field": "v"}], [])
@@ -357,6 +440,57 @@ class TestAccumulatorParity:
             if len(seen._groups) > 3:  # noqa: SLF001 - 测试内省
                 break
         assert len(seen._groups) == 3
+
+    def test_group_cap_typed_error_parity(self, monkeypatch):
+        """PERF MINOR-3：高基数 group_by 的诚实红线 —— 两个驱动（stream /
+        compute）+ Arrow lane 共用 AggregateDriver，到顶抛同一 typed 错误
+        （code=QUERY_BUDGET_EXCEEDED，与 StreamingBudget 同一处理面）。"""
+        from app.services.data_fabric.errors import QUERY_BUDGET_EXCEEDED
+        from app.services.data_fabric.query.accumulators import (
+            DEFAULT_GROUP_CAP,
+            AggregateGroupCapExceeded,
+            group_count_cap,
+        )
+
+        assert DEFAULT_GROUP_CAP == 100_000
+        assert group_count_cap() == DEFAULT_GROUP_CAP
+        monkeypatch.setenv("WEBGIS_FABRIC_AGGREGATE_GROUP_CAP", "4")
+        assert group_count_cap() == 4
+
+        rows = [{"k": f"g{i}", "v": i} for i in range(20)]
+
+        with pytest.raises(AggregateGroupCapExceeded) as ei:
+            compute_aggregates(
+                [dict(r) for r in rows], [{"func": "count", "field": "v"}], ["k"])
+        assert ei.value.code == QUERY_BUDGET_EXCEEDED
+        assert ei.value.details["cap"] == 4
+
+        with pytest.raises(AggregateGroupCapExceeded):
+            list(stream_aggregate(
+                ({"properties": r} for r in rows),
+                [{"func": "count", "field": "v"}], ["k"]))
+
+        # Arrow lane 同一驱动 ⇒ 同一行为（差分 parity）。
+        pytest.importorskip("pyarrow")
+        import pyarrow as pa
+
+        from app.services.data_fabric.arrow_ops import arrow_aggregate_batches
+        with pytest.raises(AggregateGroupCapExceeded):
+            arrow_aggregate_batches(
+                pa.Table.from_pylist(rows),
+                [{"func": "count", "field": "v"}], ["k"])
+
+        # 无 group_by 的全局聚合恒为单组 —— 永不触顶。
+        assert compute_aggregates(
+            [dict(r) for r in rows], [{"func": "count", "field": "v"}], None
+        ) == [{"count_v": 20}]
+
+        # cap 之下行为不变（4 组 ≤ cap 5）。
+        monkeypatch.setenv("WEBGIS_FABRIC_AGGREGATE_GROUP_CAP", "5")
+        ok = compute_aggregates(
+            [{"k": f"g{i % 4}", "v": i} for i in range(20)],
+            [{"func": "count", "field": "v"}], ["k"])
+        assert len(ok) == 4
 
 
 # ----------------------------------------------------- governor 公开 API

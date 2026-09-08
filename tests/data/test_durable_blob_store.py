@@ -62,12 +62,31 @@ class TestDedup:
         data = b"same-bytes"
         first = store.put_blob(key, data, "json")
         assert first.put_new is True
-        # 改写盘上文件以检测"真的没有重写"（CAS skip）
-        (tmp_path / first.location).write_bytes(b"tombstone-marker")
+        # 检测"真的没有重写"（CAS skip）：mtime_ns 与内容都原样保留。
+        # （round-1 review MINOR：skip 路径现在先验 size/digest —— 内容一致
+        # 时依旧跳过；故意篡改字节的场景见下一个测试。）
+        path = tmp_path / first.location
+        mtime_before = path.stat().st_mtime_ns
         second = store.put_blob(key, data, "json")
         assert second.put_new is False
         assert second.location == first.location
-        assert (tmp_path / first.location).read_bytes() == b"tombstone-marker"
+        assert path.stat().st_mtime_ns == mtime_before
+
+    def test_put_blob_rewrites_corrupt_existing(self, store, tmp_path):
+        """round-1 review MINOR：skip 路径信任前先验 —— 既有文件损坏/被
+        外部覆写（digest 与键内容不符）时原子重写，绝不把坏字节当命中。"""
+        key = "e" * 64
+        data = b"trusted-bytes"
+        first = store.put_blob(key, data, "json")
+        assert first.put_new is True
+        path = tmp_path / first.location
+        path.write_bytes(b"corrupt-or-foreign-bytes")
+        second = store.put_blob(key, data, "json")
+        assert second.put_new is True, "mismatched existing content must be rewritten"
+        assert path.read_bytes() == data
+        # 修复后再 put：恢复 CAS skip 语义
+        third = store.put_blob(key, data, "json")
+        assert third.put_new is False
 
 
 class TestDigestVerifiedRead:

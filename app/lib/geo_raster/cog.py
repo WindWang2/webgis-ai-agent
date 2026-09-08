@@ -29,6 +29,24 @@ class CogWriteError(ValueError):
     """Structured COG write/reject error."""
 
 
+def overview_ladder(width: int, height: int) -> list[int]:
+    """The canonical overview factor ladder: 2× steps while
+    ``short_side // f >= 256`` (round-1 review MINOR — small rasters
+    legitimately have NO overviews; the ladder is empty for them).
+
+    Single definition shared by the writer (:func:`write_cog`) and the
+    validator (:func:`validate_cog`) so a converter output never fails its
+    own structural check just for being small.
+    """
+    dim = max(1, min(int(width), int(height)))
+    factors: list[int] = []
+    f = 2
+    while dim // f >= 256:
+        factors.append(f)
+        f *= 2
+    return factors
+
+
 def write_cog(
     source_uri: str,
     out_path: str | Path,
@@ -40,8 +58,9 @@ def write_cog(
     """Write ``source_uri`` as a COG at ``out_path`` (parent dirs created).
 
     Preserves dtype/bands/nodata/CRS/transform; adds internal overviews
-    (2× ladder by default). Raises :class:`CogWriteError` on unreadable
-    sources or a failed write — never leaves a truncated file behind.
+    (the :func:`overview_ladder` 2× ladder by default — empty for small
+    sources). Raises :class:`CogWriteError` on unreadable sources or a
+    failed write — never leaves a truncated file behind.
     """
     import rasterio
     from rasterio.shutil import copy as rio_copy
@@ -59,12 +78,7 @@ def write_cog(
       with rasterio_env():
         with rasterio.open(source_uri) as src:
             if overviews is None:
-                overviews = []
-                dim = max(src.width, src.height)
-                f = 2
-                while dim // f >= 256:
-                    overviews.append(f)
-                    f *= 2
+                overviews = overview_ladder(src.width, src.height)
             try:
                 # GDAL ≥3.1 COG driver: overviews + tiling in one pass.
                 cog_profile = {
@@ -94,20 +108,32 @@ def write_cog(
 
 
 def validate_cog(uri: str) -> dict[str, Any]:
-    """Structural COG validation report (ok / missing items)."""
+    """Structural COG validation report (ok / missing items).
+
+    Overview/tile requirements follow the same :func:`overview_ladder` rule
+    the writer uses (round-1 review MINOR): a raster whose short side cannot
+    yield a >=256px second level — or whose COG layout is a single
+    full-coverage block (GDAL's own choice for images ≤ blocksize, where an
+    overview can never be cheaper than the one-block read) — legitimately
+    has no overviews and is NOT flagged ``no_overviews``/``not_tiled``.
+    """
     import rasterio
 
     report: dict[str, Any] = {"uri": uri, "ok": False, "issues": []}
     try:
         with rasterio.open(uri) as ds:
             report["driver"] = ds.driver
-            if not getattr(ds, "is_tiled", False):
-                report["issues"].append("not_tiled")
             ovs = ds.overviews(1) if ds.count else []
             report["overviews"] = list(ovs)
-            if not ovs:
+            block = ds.block_shapes[0] if ds.block_shapes else None
+            full_coverage_block = bool(
+                block) and block[0] >= ds.height and block[1] >= ds.width
+            if not getattr(ds, "is_tiled", False) and not full_coverage_block:
+                report["issues"].append("not_tiled")
+            if not ovs and overview_ladder(ds.width, ds.height) \
+                    and not full_coverage_block:
                 report["issues"].append("no_overviews")
-            report["block_shape"] = list(ds.block_shapes[0]) if ds.block_shapes else []
+            report["block_shape"] = list(block) if block else []
             report["compressor"] = (ds.profile or {}).get("compress") or "none"
             report["size"] = [ds.width, ds.height]
             report["bands"] = ds.count

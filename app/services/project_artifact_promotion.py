@@ -312,8 +312,12 @@ async def _promote_raster_artifact(
     # writes no new bytes and is never charged; a fresh put over an exhausted
     # quota is refused honestly — the artifact row survives metadata-only.
     incoming = 0 if get_filesystem_blob_store().exists(digest) else len(data)
-    decision = check_quota(db, project_id or run.project_id, incoming,
-                           artifact_id=art.id)
+    # round-1 review PERF MAJOR-1: check_quota 是 sync DB 聚合 —— 与本函数
+    # 其余 DB/IO 步骤同纪律卸载到 worker 线程，不占事件循环。
+    decision = await asyncio.to_thread(
+        check_quota, db, project_id or run.project_id, incoming,
+        artifact_id=art.id,
+    )
     if not decision.allowed:
         quota_meta = decision.to_exception().to_metadata()
         meta["content_status"] = "quota_exceeded"
@@ -504,7 +508,10 @@ async def promote_run_artifacts(
                 if content_key and get_filesystem_blob_store().exists(content_key)
                 else len(blob.encode("utf-8"))
             )
-            decision = check_quota(db, project_id, incoming, artifact_id=art.id)
+            # round-1 review PERF MAJOR-1: sync DB 聚合 → worker 线程（同上）。
+            decision = await asyncio.to_thread(
+                check_quota, db, project_id, incoming, artifact_id=art.id
+            )
             if not decision.allowed:
                 quota_meta = decision.to_exception().to_metadata()
                 meta["content_status"] = "quota_exceeded"

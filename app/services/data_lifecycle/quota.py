@@ -61,12 +61,81 @@ def promotion_blob_protection(*args: Any, **kwargs: Any) -> Optional[str]:
     """Single blob-level protection predicate (re-export, W1 discipline).
 
     Delegates to ``artifact_lifecycle._promotion_blob_protection`` — 引用计数
-    （revision location/sha）+ Artifact head 指针 + pin + 宽限期的**唯一**
-    blob 保护判定；plan 与 execute 双侧共用。绝不在此模块 fork 第二份。
+    （revision location/sha）+ Artifact head 指针 + pin + 宽限期 + **工作空间
+    快照 manifest 指针**（round-1 review CRITICAL）的**唯一** blob 保护判定；
+    plan 与 execute 双侧共用。绝不在此模块 fork 第二份。
     """
     from app.services.artifact_lifecycle import _promotion_blob_protection
 
     return _promotion_blob_protection(*args, **kwargs)
+
+
+# ── Workspace snapshot manifest protection scan（round-1 review CRITICAL）──
+#
+# 快照 manifest（``DATA_DIR/workspaces/<project>/workspace-snapshots/*.json``）
+# 的 ``durable_pointers`` 是晋升内容库 GC 的保护输入：manifest 物化的 blob
+# 没有 revision 行 / Artifact head 指针 —— 此前两轮保护都看不见它们，宽限
+# 期一过就被 GC 删除（restore 永久 degraded）。plan 与 execute、promotion GC
+# 与 quota retention 必须共享同一份扫描结果（单一保护路径不变式）。
+
+#: 指针条目扫描上限（全部项目域 manifest 合计；超过即停 + 告警 —— 扫描
+#: 绝不无界，也不得拖挂 GC 周期）。
+SNAPSHOT_POINTER_SCAN_CAP = 5000
+
+
+def workspace_snapshot_protected_pointers() -> Tuple[set, set]:
+    """全部工作空间快照 manifest 引用的持久指针集合（只读，有界）。
+
+    Returns ``(locations, shas)``：``content_location`` 集合与
+    ``content_payload_sha256`` 集合。调用方（promotion GC / retention 的
+    plan 与 execute）把它们交给单一保护谓词
+    ``promotion_blob_protection``，凡是 location 或 sha 命中的 blob 一律
+    PROTECTED。超过 ``SNAPSHOT_POINTER_SCAN_CAP`` 条即停止扫描并告警
+    （保护面截断是诚实降级 —— 绝不让清扫器无界扫盘）。
+    """
+    from app.services.workspace.snapshot import _read_json, _workspaces_root
+
+    locations: set = set()
+    shas: set = set()
+    try:
+        root = _workspaces_root()
+    except Exception:  # noqa: BLE001 — 配置漂移按空保护面（调用方如实降级）
+        return locations, shas
+    if not root.is_dir():
+        return locations, shas
+    try:
+        project_dirs = sorted(p for p in root.iterdir() if p.is_dir())
+    except OSError:
+        return locations, shas
+    counted = 0
+    for proj_dir in project_dirs:
+        sdir = proj_dir / "workspace-snapshots"
+        if not sdir.is_dir():
+            continue
+        for f in sorted(sdir.glob("*.json")):
+            data = _read_json(f)
+            pointers = data.get("durable_pointers") if isinstance(data, dict) else None
+            if not isinstance(pointers, dict):
+                continue
+            for ptr in pointers.values():
+                if counted >= SNAPSHOT_POINTER_SCAN_CAP:
+                    logger.warning(
+                        "[quota] workspace snapshot pointer scan hit cap %d — "
+                        "truncating protection scan (project=%s)",
+                        SNAPSHOT_POINTER_SCAN_CAP, proj_dir.name,
+                    )
+                    return locations, shas
+                if not isinstance(ptr, dict):
+                    continue
+                loc = str(ptr.get("content_location") or "")
+                sha = str(ptr.get("content_payload_sha256") or "")
+                if loc:
+                    locations.add(loc)
+                    counted += 1
+                if sha:
+                    shas.add(sha)
+                    counted += 1
+    return locations, shas
 
 
 # ── Env discipline（与 artifact_lifecycle._retention_days 同款）───────────
@@ -323,10 +392,16 @@ def _retention_revision_protection(
 
 
 def _retention_scan_state(db) -> Tuple[set, set]:
-    """head 修订 id 集合 + 有下游的 artifact id 集合（单查询口径）。"""
+    """head 修订 id 集合 + 有下游的 artifact id 集合（单查询口径）。
+
+    round-1 review PERF MAJOR-2：head 复查按 artifact_id 分片 IN（≤10k/条），
+    可命中 ``uq_artifact_revision_no`` 的 artifact 前缀；谓词全部裸列
+    （无函数包裹），created_at/pinned_at 索引（0031）可用。
+    """
     from sqlalchemy import func, select
 
     from app.models.project import ArtifactLineage, ArtifactRevision
+    from app.services.artifact_revisions import chunked
 
     maxima = {
         aid: int(no)
@@ -338,11 +413,11 @@ def _retention_scan_state(db) -> Tuple[set, set]:
         ).all()
     }
     head_ids: set = set()
-    if maxima:
+    for id_chunk in chunked(list(maxima.keys())):
         for rid, aid, no in db.execute(
             select(ArtifactRevision.id, ArtifactRevision.artifact_id,
                    ArtifactRevision.revision_no).where(
-                ArtifactRevision.artifact_id.in_(list(maxima.keys())))
+                ArtifactRevision.artifact_id.in_(id_chunk))
         ).all():
             if maxima.get(aid) == int(no):
                 head_ids.add(rid)
@@ -380,6 +455,7 @@ def plan_retention_cleanup(
         artifact_content_locations,
         pinned_content_sha256s,
         referencing_counts,
+        referencing_sha_counts,
     )
     from app.services.durable_blob_store import get_filesystem_blob_store
 
@@ -450,17 +526,8 @@ def plan_retention_cleanup(
     locations = list({r.content_location for r in candidates if r.content_location})
     # 存活引用 = 全部引用 − 候选修订自身（其余修订行 / head 指针 / pin 全算）
     all_by_loc = referencing_counts(db, locations)
-    from sqlalchemy import func as _func
 
-    sha_counts = {
-        sha: int(cnt)
-        for sha, cnt in db.execute(
-            select(ArtifactRevision.content_sha256,
-                   _func.count(ArtifactRevision.id))
-            .where(ArtifactRevision.content_sha256.in_(shas))
-            .group_by(ArtifactRevision.content_sha256)
-        ).all()
-    }
+    sha_counts = referencing_sha_counts(db, shas)
     candidate_loc = {r.content_location for r in candidates}
     candidate_sha = {r.content_sha256 for r in candidates}
     surviving_by_loc = {
@@ -477,6 +544,11 @@ def plan_retention_cleanup(
         "artifact_locations": set(artifact_content_locations(db)),
         "pinned_shas": set(pinned_content_sha256s(db)),
     }
+    # 快照 manifest 指针与 promotion GC 同一保护输入（round-1 review
+    # CRITICAL：plan/execute 双侧同源，绝不 fork 第二份扫描）。
+    snap_locations, snap_shas = workspace_snapshot_protected_pointers()
+    snap["snapshot_locations"] = snap_locations
+    snap["snapshot_shas"] = snap_shas
     seen_blobs: set = set()
     candidate_blobs: List[Dict[str, Any]] = []
     blob_protected: Dict[str, int] = {}
@@ -573,6 +645,7 @@ def execute_retention_cleanup(
                 artifact_content_locations,
                 pinned_content_sha256s,
                 referencing_counts,
+                referencing_sha_counts,
             )
 
             store = get_filesystem_blob_store()
@@ -582,18 +655,11 @@ def execute_retention_cleanup(
                 "artifact_locations": set(artifact_content_locations(db)),
                 "pinned_shas": set(pinned_content_sha256s(db)),
             }
-            from sqlalchemy import func as _func
-
+            snap_locations, snap_shas = workspace_snapshot_protected_pointers()
+            snap["snapshot_locations"] = snap_locations
+            snap["snapshot_shas"] = snap_shas
             shas = [str(b.get("key") or "") for b in blob_candidates]
-            snap["refcounts_by_sha"] = {
-                sha: int(cnt)
-                for sha, cnt in db.execute(
-                    select(ArtifactRevision.content_sha256,
-                           _func.count(ArtifactRevision.id))
-                    .where(ArtifactRevision.content_sha256.in_(shas))
-                    .group_by(ArtifactRevision.content_sha256)
-                ).all()
-            }
+            snap["refcounts_by_sha"] = referencing_sha_counts(db, shas)
             for b in blob_candidates:
                 key = str(b.get("key") or "")
                 loc = str(b.get("location") or "")

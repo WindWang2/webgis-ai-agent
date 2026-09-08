@@ -256,8 +256,12 @@ def split_filter_pushdown(filter_node: Any, caps: Any) -> FilterPushdownSplit:
     """
     profile = pushdown_profile(caps)
     leaves = flatten_conjunction(filter_node)
-    pushed_leaves = [leaf for leaf in leaves if filter_subtree_pushable(leaf, caps, profile)]
-    local_leaves = [leaf for leaf in leaves if not filter_subtree_pushable(leaf, caps, profile)]
+    # round-1 review PERF MINOR-4：每叶只判一次可推性（原实现 pushed/local
+    # 两个列表推导各调一次 ``filter_subtree_pushable`` = 每叶两遍子树遍历；
+    # 行为不变 —— 分箱结果与叶子顺序完全一致）。
+    pushable = [(leaf, filter_subtree_pushable(leaf, caps, profile)) for leaf in leaves]
+    pushed_leaves = [leaf for leaf, ok in pushable if ok]
+    local_leaves = [leaf for leaf, ok in pushable if not ok]
     pushed = _recombine(pushed_leaves)
     local = _recombine(local_leaves)
     return FilterPushdownSplit(
@@ -295,7 +299,9 @@ def resolve_plan_filter_split(filter_node: Any, plan: Any) -> Tuple[Optional[Any
     """执行侧单一真相：按计划取（远端编译谓词, 本地余项谓词）。
 
     - ``plan.filter_split`` 存在（V5 拆分/守卫路径）→ 直接取计划里的两半
-      （计划即执行，adapter 不做第二次能力决策）；
+      （计划即执行，adapter 不做第二次能力决策）。守卫路径（C1）写
+      ``{"pushed": None, "local": 整棵 AST}`` → 返回 ``(None, 整体)``：
+      adapter 不得向远端编译任何过滤子句，整体在取回后本地求值；
     - 缺席（历史路径）→ 维持既有行为逐位不变：过滤器存在即整体编译下发
       （本地求值型 adapter 本就不走编译路径）。
     """

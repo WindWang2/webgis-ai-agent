@@ -109,6 +109,8 @@ class WorkspaceSnapshot(BaseModel):
     settings: Dict[str, Any] = Field(default_factory=dict)
     workflow_refs: List[str] = Field(default_factory=list)
     created_by: str = ""            # 服务侧所有权记录（路由侧强制鉴权）
+    #: 预算跳过披露（每条 reason="budget"）：预算耗尽后仍活的 ref，以及
+    #: 单个载荷超过剩余预算的 ref（pre-size gate，写 BlobStore 之前跳过）。
     materialize_skipped: List[str] = Field(default_factory=list)
 
     @field_validator("artifact_contracts")
@@ -360,10 +362,18 @@ def _fetch_promoted_pointers_sync(
                     continue
                 rev = head_revision(db, row.id)
                 version_no = meta.get("map_product_version_no")
+                # head 修订的 content_type 是真相（binary lane 的 raster 晋升
+                # 不得被投影成 json —— round-1 review MINOR）；无修订行的旧
+                # 晋升行只有 json 语义 head 指针。
+                content_type = (
+                    str(rev.content_type)
+                    if rev is not None and rev.content_type
+                    else "json"
+                )
                 out[str(row.storage_ref)] = {
                     "content_location": location,
                     "content_payload_sha256": str(meta.get("content_payload_sha256") or ""),
-                    "content_type": "json",
+                    "content_type": content_type,
                     "byte_size": int(rev.byte_size or 0) if rev is not None else 0,
                     "workflow_run_id": str(rev.workflow_run_id or "") if rev is not None else "",
                     "map_product_version_no": int(version_no) if isinstance(version_no, int) else None,
@@ -375,6 +385,31 @@ def _fetch_promoted_pointers_sync(
 
 
 # ── 服务 ─────────────────────────────────────────────────────────────
+
+
+async def _probe_ref_live(session_id: str, ref: str) -> bool:
+    """ref 存活探测：descriptor/raster 探测 miss 时的 ``store.get()`` 兜底。
+
+    round-1 review MAJOR（alias-mode restore）：``write_back_session_payload``
+    的 alias 分支把载荷放回会话 store 的**新 ref** 并 ``set_alias`` 指回原
+    ref —— descriptor 索引键在新 ref 名下，按原 ref 走 descriptor 探测会
+    miss，而 ``get()`` 经别名命中。verify 绝不与事实自相矛盾：探测 miss 时
+    对同一 session 做一次有界读兜底（只读；LRU recency 副作用与
+    ``ref_exists`` 同款）。raster ref 的探测本就是磁盘 stat，无别名语义，
+    不兜底。
+    """
+    from app.services.artifact_registry import is_raster_ref, probe_ref
+
+    if await probe_ref(session_id, ref) is not None:
+        return True
+    if is_raster_ref(ref):
+        return False
+    try:
+        from app.services.session_data import session_data_manager
+
+        return await session_data_manager.get(session_id, ref) is not None
+    except Exception:  # noqa: BLE001 — store 故障按不存活（诚实保守）
+        return False
 
 
 class WorkspaceSnapshotService:
@@ -475,7 +510,11 @@ class WorkspaceSnapshotService:
         - 全部声明 ref 盖 ``persistence_tier="workspace"`` 章 ——
           ``collect_orphan_refs`` 的保护规则零改动即生效（audit §6.5）。
         """
-        from app.services.artifact_registry import probe_ref, update_record_metadata
+        from app.services.artifact_registry import (
+            get_artifact,
+            probe_ref,
+            update_record_metadata,
+        )
         from app.services.workspace.durability import (
             WORKSPACE_TIER,
             materialize_ref_payload,
@@ -516,7 +555,17 @@ class WorkspaceSnapshotService:
                 if await probe_ref(session_id, ref) is not None:
                     skipped.append(ref)
                 continue
-            ptr = await materialize_ref_payload(session_id, ref)
+            # pre-size gate（round-1 review MAJOR）：载荷先量尺再落盘 ——
+            # 单个载荷超过**剩余**预算即在写 BlobStore 之前跳过并披露，
+            # 绝不让一个巨型 payload 透支预算（materialize_skipped 全部
+            # 条目的语义都是 reason="budget"）。预算不被透支消耗：
+            # 后续小载荷仍有物化机会。
+            ptr, skip_reason = await materialize_ref_payload(
+                session_id, ref, budget_bytes=remaining
+            )
+            if skip_reason == "budget":
+                skipped.append(ref)
+                continue
             if ptr is None:
                 continue  # 载荷不存活/写盘失败 —— 如实缺指针
             pointers[ref] = SnapshotDurablePointer(**ptr)
@@ -526,10 +575,22 @@ class WorkspaceSnapshotService:
         # GC interlock：被快照声明的 ref 一律盖 workspace 章（含"已有持久
         # 指针"与"载荷仍活但本轮未物化"的 —— 防的是 GC 提前删，TTL 老化
         # 仍由物化路径对抗）。best-effort：无账本记录的 ref 更新即 no-op。
+        # 持久层只升不降（round-1 review INFO）：已是 persistent 章的 ref
+        # 绝不被本方法降级回 workspace。
+        tier_rank = {"session": 0, WORKSPACE_TIER: 1, "persistent": 2}
         stamped = set(pointers.keys())
         if materialize != "none":
             stamped.update(claimed)
         for ref in sorted(stamped)[:_MAX_SNAPSHOT_ARTIFACTS + _MAX_LAYER_REFS]:
+            try:
+                rec = await get_artifact(session_id, ref)
+                existing_tier = str(
+                    ((rec.metadata if rec is not None else None) or {}).get(
+                        "persistence_tier") or "")
+            except Exception:  # noqa: BLE001 — 账本缺席按未盖章处理
+                existing_tier = ""
+            if tier_rank.get(existing_tier, -1) >= tier_rank[WORKSPACE_TIER]:
+                continue
             await update_record_metadata(
                 session_id, ref, metadata={"persistence_tier": WORKSPACE_TIER}
             )
@@ -666,7 +727,6 @@ class WorkspaceSnapshotService:
         report.integrity_ok = True
         report.mapspec_available = bool(snapshot.mapspec_fingerprint)
 
-        from app.services.artifact_registry import probe_ref
         from app.services.workspace.durability import (
             INTEGRITY_DIGEST_MISMATCH,
             INTEGRITY_NO_POINTER,
@@ -676,7 +736,10 @@ class WorkspaceSnapshotService:
         contract_ids = {c.artifact_id for c in snapshot.artifact_contracts}
         for contract in snapshot.artifact_contracts:
             report.artifacts_total += 1
-            live = await probe_ref(session_id, contract.artifact_id) if contract.artifact_id.startswith("ref:") else True
+            live = (
+                await _probe_ref_live(session_id, contract.artifact_id)
+                if contract.artifact_id.startswith("ref:") else True
+            )
             if live:
                 report.artifacts_live += 1
             else:
@@ -685,7 +748,7 @@ class WorkspaceSnapshotService:
             if not layer.source_ref:
                 continue  # inline/外部源：不计 ref 存活
             report.layers_total += 1
-            live = await probe_ref(session_id, layer.source_ref)
+            live = await _probe_ref_live(session_id, layer.source_ref)
             if live:
                 report.layers_live += 1
             else:
@@ -943,6 +1006,17 @@ class WorkspaceSnapshotService:
         total = len(all_refs)
         coverage = round(100.0 * durable / total, 1) if total else 100.0
         snapshots = await self.list_snapshots(session_id, project_id=project_id)
+        # 指针完整性披露（round-1 review CRITICAL 接线，additive 字段）：
+        # 项目域快照 manifest 里指向已删 blob 的持久指针如实上报
+        # （quota.snapshot_pointer_integrity —— 单一 manifest 读取器）。
+        try:
+            from app.services.data_lifecycle.quota import snapshot_pointer_integrity
+
+            pointer_integrity: Optional[Dict[str, Any]] = (
+                await asyncio.to_thread(snapshot_pointer_integrity, project_id)
+            )
+        except Exception:  # noqa: BLE001 — 披露是增值，绝不阻断盘点
+            pointer_integrity = None
         out.update({
             "snapshots": {"count": len(snapshots), "items": snapshots[:10]},
             "artifacts": {
@@ -958,6 +1032,12 @@ class WorkspaceSnapshotService:
                 "refs_total": total,
                 "refs_durable": durable,
                 "coverage_pct": coverage,
+            },
+            "pointer_integrity": pointer_integrity or {
+                "project_id": project_id,
+                "snapshots_checked": 0,
+                "pointers_missing_total": 0,
+                "items": [],
             },
         })
         return out

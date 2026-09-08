@@ -142,13 +142,35 @@ class TestMaterializeOnSave:
     async def test_budget_cap_skips(self, data_dir):
         sid = "wsv4-budget"
         _, payloads = await _seed(sid, n_extra_payloads=1)
+        # pre-size gate（round-1 review MAJOR）：1 字节预算下第一个载荷就
+        # 超限 → 写 BlobStore **之前**跳过并披露；预算不被透支消耗 ——
+        # 第二个载荷同样获得量尺机会（两个都进 skipped，一个都不落盘）。
         snap = await get_workspace_snapshot_service().save_snapshot(
             sid, project_id="proj-budget", materialize="claimed",
             max_materialize_bytes=1,
         )
         assert snap is not None
-        assert len(snap.durable_pointers) == 1
-        assert len(snap.materialize_skipped) == 1
+        assert len(snap.durable_pointers) == 0
+        assert set(snap.materialize_skipped) == set(payloads)
+
+    async def test_budget_gate_never_lets_single_payload_exceed_budget(
+        self, data_dir,
+    ):
+        """pre-size gate：预算恰好容纳第一个载荷 → 第一个物化；第二个载荷
+        超过剩余预算 → 跳过披露，且剩余预算不受第一个载荷之外的侵蚀。"""
+        sid = "wsv4-budget2"
+        ref, payloads = await _seed(sid, n_extra_payloads=1)
+        from app.services.project_artifact_promotion import canonical_dumps
+
+        first_size = len(canonical_dumps(
+            await session_data_manager.get(sid, payloads[0])).encode("utf-8"))
+        snap = await get_workspace_snapshot_service().save_snapshot(
+            sid, project_id="proj-budget2", materialize="claimed",
+            max_materialize_bytes=first_size,
+        )
+        assert snap is not None
+        assert set(snap.durable_pointers) == {payloads[0]}
+        assert snap.materialize_skipped == [payloads[1]]
 
     async def test_invalid_materialize_rejected(self, data_dir):
         assert await get_workspace_snapshot_service().save_snapshot(
@@ -560,3 +582,136 @@ class TestRouteAuthz:
             headers=_auth(route_env["uid_b"]),
         )
         assert d.status_code == 404
+
+
+# ── round-1 review fixes：promoted 指针投影 / alias restore verify / 层章 ──
+
+
+@pytest.fixture()
+def project_tables():
+    """项目域表重建（promoted 指针投影需要真实 DB 行）。"""
+    from pathlib import Path
+
+    from app.core.database import Base, Engine
+
+    Path("./data").mkdir(parents=True, exist_ok=True)
+    project_tables_names = (
+        "artifact_revisions",
+        "map_products", "artifact_lineages", "artifacts",
+        "workflow_runs", "workflow_revisions", "workflows",
+        "project_datasets", "carto_project_facts", "projects",
+    )
+    metadata_tables = [
+        t for t in Base.metadata.sorted_tables if t.name in project_tables_names
+    ]
+    for tbl in reversed(metadata_tables):
+        tbl.drop(bind=Engine, checkfirst=True)
+    for tbl in metadata_tables:
+        tbl.create(bind=Engine, checkfirst=True)
+
+
+class TestPromotedPointerProjection:
+    async def test_raster_promoted_pointer_keeps_binary_content_type(
+        self, data_dir, project_tables,
+    ):
+        """round-1 review MINOR：投影用 head 修订的 content_type —— raster
+        的 binary 晋升不得被硬编码成 json（restore 才能走 binary lane）。"""
+        from app.core.database import SessionLocal
+        from app.models.db_model import User
+        from app.models.project import Artifact, ArtifactRevision, Project
+
+        sid = "wsv4-promoted-raster"
+        ref = f"ref:raster/{uuid.uuid4().hex[:12]}"
+        project_id = f"proj_{uuid.uuid4().hex[:8]}"
+        art_id = f"art_{uuid.uuid4().hex[:8]}"
+        sha = "ab" * 32
+        with SessionLocal() as s:
+            s.merge(User(id="u_wsv4", username="wsv4", email="wsv4@example.com",
+                         password_hash="x", role="viewer", is_active=True))
+            s.add(Project(id=project_id, name="p", owner_id="u_wsv4"))
+            s.add(Artifact(
+                id=art_id, project_id=project_id, name="map", artifact_type="raster",
+                storage_ref=ref,
+                metadata_json={"content_status": "promoted",
+                               "content_location": f"{sha[:4]}/{sha}.bin",
+                               "content_payload_sha256": sha},
+            ))
+            s.add(ArtifactRevision(
+                id=str(uuid.uuid4()), artifact_id=art_id, revision_no=1,
+                content_sha256=sha, content_location=f"{sha[:4]}/{sha}.bin",
+                content_type="binary", byte_size=123,
+            ))
+            s.commit()
+
+        await register_artifact(sid, artifact_id=ref, producer_tool="export_map")
+        snap = await get_workspace_snapshot_service().save_snapshot(
+            sid, project_id=project_id, materialize="none",
+        )
+        assert snap is not None
+        ptr = snap.durable_pointers.get(ref)
+        assert ptr is not None
+        assert ptr.content_type == "binary", "head 修订的 content_type 是投影真相"
+
+    async def test_pointer_integrity_wired_into_describe(
+        self, data_dir, project_tables,
+    ):
+        """round-1 review CRITICAL 接线：describe_workspace 披露
+        snapshot_pointer_integrity（additive 字段）。"""
+        out = await get_workspace_snapshot_service().describe_workspace(
+            "wsv4-describe-int", project_id="proj-describe-int"
+        )
+        assert "pointer_integrity" in out
+        assert out["pointer_integrity"]["pointers_missing_total"] == 0
+        assert out["pointer_integrity"]["snapshots_checked"] == 0
+
+
+class TestRestoreAliasMode:
+    async def test_verify_reports_alias_restored_ref_live(
+        self, data_dir, monkeypatch,
+    ):
+        """round-1 review MAJOR：alias 模式恢复后，descriptor 探测 miss 的
+        ref 经 store.get() 兜底命中 —— verify 不再与事实自相矛盾。"""
+        sid = "wsv4-alias-verify"
+        ref, _ = await _seed(sid)
+        svc = get_workspace_snapshot_service()
+        snap = await svc.save_snapshot(
+            sid, project_id="proj-alias", materialize="claimed"
+        )
+        await session_data_manager.delete_ref(sid, ref)
+
+        async def _no_overwrite(session_id, ref_id, data):
+            return False  # 内存后端 replace-only 语义 → 强制走 alias 分支
+
+        monkeypatch.setattr(session_data_manager, "overwrite", _no_overwrite)
+        result = await svc.restore_snapshot(
+            sid, snap.snapshot_id, mode="register", project_id="proj-alias"
+        )
+        assert result["restored_payloads"] >= 1
+        # 载荷经别名回到原 ref 的读取语义
+        assert await session_data_manager.get(sid, ref) == _FC
+        # verify：descriptor 探测 miss，但 get() 兜底命中 → 如实 live
+        verification = await svc.verify_snapshot(
+            sid, snap.snapshot_id, project_id="proj-alias"
+        )
+        assert ref not in verification.artifacts_missing
+        assert verification.artifacts_live >= 1
+
+
+class TestTierPreservation:
+    async def test_persistent_tier_not_downgraded_to_workspace(self, data_dir):
+        """round-1 review INFO：持久层只升不降 —— 已盖 persistent 章的 ref
+        绝不被 _claim_durability 覆写回 workspace。"""
+        sid = "wsv4-tier"
+        ref, payloads = await _seed(sid, n_extra_payloads=1)
+        await update_record_metadata(
+            sid, ref, metadata={"persistence_tier": "persistent"}
+        )
+        snap = await get_workspace_snapshot_service().save_snapshot(
+            sid, project_id="proj-tier", materialize="claimed"
+        )
+        assert snap is not None
+        rec = await get_artifact(sid, ref)
+        assert rec.metadata.get("persistence_tier") == "persistent"
+        # 其它 ref 照常盖 workspace 章（对照）
+        rec2 = await get_artifact(sid, payloads[1])
+        assert rec2.metadata.get("persistence_tier") == "workspace"

@@ -390,6 +390,42 @@ class TestDurableReuseIndex:
 
             assert db.query(AnalysisTask).count() == 1
 
+    def test_reuse_hit_charges_governor_like_execution(self, v5_env, monkeypatch):
+        """DIST（round1）：durable 复用也是资源消费 —— 命中路径必须与执行
+        完成路径同一口径 charge governor（行数/字节/节点数）。"""
+        from app.services.geocompute.budgets import ResourceGovernor
+
+        gov = ResourceGovernor()
+        charged: list[dict] = []
+        real_charge = gov.charge
+
+        def spy_charge(path, **kw):
+            charged.append(kw)
+            return real_charge(path, **kw)
+
+        monkeypatch.setattr(gov, "charge", spy_charge)
+
+        first = GeoExecutionEngine(max_workers=1).execute_plan(
+            self._plan(), session_id="v5-reuse-charge-sess", governor=gov)
+        assert first.status is ExecutionRunStatus.COMPLETED
+        exec_rows = first.evidence["dn1"].rows_emitted
+        assert exec_rows, "执行完成路径必须产出行数"
+        assert any(
+            c.get("rows") == exec_rows and c.get("nodes") == 1 for c in charged
+        ), f"执行完成路径必须 charge: {charged}"
+        charged.clear()
+
+        # 第二个全新引擎：索引命中（reused）→ 同样 charge。
+        second = GeoExecutionEngine(max_workers=1).execute_plan(
+            self._plan(), session_id="v5-reuse-charge-sess", governor=gov)
+        assert second.status is ExecutionRunStatus.COMPLETED
+        assert second.evidence["dn1"].status == "reused"
+        assert any(
+            c.get("rows") == second.evidence["dn1"].rows_emitted
+            and c.get("nodes") == 1
+            for c in charged
+        ), f"复用命中必须与执行同口径 charge: {charged}"
+
     def test_two_node_plan_reuses_with_upstream_validation(self, v5_env, scan_stub):
         from app.services.geocompute import reuse_index
 

@@ -201,6 +201,71 @@ class TestZarrCubeRoundtrip:
     def test_capabilities_reflect_true_probe(self):
         assert raster_runtime_capabilities()["zarr"] is True
 
+    def test_missing_chunk_typed_error_before_array_creation(self, tmp_path):
+        """round-1 review MAJOR：缺 chunk 的 descriptors 必须在建数组**之前**
+        typed 拒绝 —— 裸零字节不再被无声留在立方体里，也不留半成品 store。"""
+        incomplete = [[group[0] for group in _default_descriptors(["a.tif"])][:3]]
+        with pytest.raises(ZarrGridError, match="tile the grid"):
+            write_zarr_cube(
+                incomplete, TIMES[:1], tmp_path / "cube.zarr",
+                read_chunk=lambda d, t: np.zeros(
+                    (d.window[3], d.window[2]), "float32"))
+        assert not (tmp_path / "cube.zarr").exists()
+
+    def test_overlapping_chunks_typed_error(self, tmp_path):
+        """Σ面积恰好等于网格但互相重叠 → 扫描线查出 → typed 拒绝。"""
+        half = build_chunk_descriptor_from_grid(
+            GRID, (0, 0, 32, 48), dtype="float32")
+        duplicated = [half, half]
+        with pytest.raises(ZarrGridError, match="overlap"):
+            write_zarr_cube(
+                [duplicated], TIMES[:1], tmp_path / "cube2.zarr",
+                read_chunk=lambda d, t: np.zeros(
+                    (d.window[3], d.window[2]), "float32"))
+
+    def test_valid_partial_grid_tiles_exactly(self, tmp_path):
+        """整窗（单 chunk 覆盖全网格）合法铺排照常写入（verify 不误伤）。"""
+        whole = build_chunk_descriptor_from_grid(
+            GRID, (0, 0, 64, 48), dtype="float32", source_uri="a.tif")
+        out = write_zarr_cube(
+            [[whole]], TIMES[:1], tmp_path / "cube3.zarr",
+            read_chunk=lambda d, t: np.zeros((48, 64), "float32"))
+        arr = open_zarr_array(out)
+        assert arr.shape == (1, 48, 64)
+
+    def test_chunk_descriptors_emit_every_time_slice(self, tmp_path):
+        """round-1 review MINOR：chunks[0] > 1 的 3D 存储每个时间片各铸一个
+        descriptor（此前只铸每 zarr chunk 的第一个时间片，静默丢片）。"""
+        bare = zarr_mod.create_array(
+            store=str(tmp_path / "t4.zarr"), shape=(4, 48, 64),
+            chunks=(2, 32, 32), dtype="float32")
+        bare.attrs["crs"] = "EPSG:4326"
+        bare.attrs["transform"] = list(GRID.transform)
+        descs = zarr_chunk_descriptors(tmp_path / "t4.zarr")
+        assert len(descs) == 4 * 4  # 4 时间片 × 2×2 spatial chunks
+        assert sorted({d.band_indexes[0] for d in descs}) == [1, 2, 3, 4]
+        windows = {d.window for d in descs}
+        assert windows == {(0, 0, 32, 32), (32, 0, 32, 32),
+                           (0, 32, 32, 16), (32, 32, 32, 16)}
+        # chunks[0] == 1 的存储行为不变（逐时间片映射）
+        out = write_zarr_cube(
+            _default_descriptors(cube_sources and [
+                _write_slice(tmp_path / f"g{t}.tif", float(t + 1))
+                for t in range(3)]), TIMES, tmp_path / "cube4.zarr")
+        descs1 = zarr_chunk_descriptors(out)
+        assert len(descs1) == 12  # 3 times × 2×2（既有契约不变）
+        assert sorted({d.band_indexes[0] for d in descs1}) == [1, 2, 3]
+
+    def test_chunk_descriptors_refuse_absurd_slice_count(self, tmp_path):
+        """descriptor 总数超过有界上限 → typed 拒绝（绝不无界铸描述符）。"""
+        bare = zarr_mod.create_array(
+            store=str(tmp_path / "big.zarr"), shape=(200000, 16, 16),
+            chunks=(4, 8, 8), dtype="float32")
+        bare.attrs["crs"] = "EPSG:4326"
+        bare.attrs["transform"] = list(GRID.transform)
+        with pytest.raises(ZarrGridError, match="cap"):
+            zarr_chunk_descriptors(tmp_path / "big.zarr")
+
     def test_raster_reader_window_matches_cube_payload(self, tmp_path, cube_sources):
         """Default loader is the sanctioned bounded window read (spy-clean)."""
         out = write_zarr_cube(

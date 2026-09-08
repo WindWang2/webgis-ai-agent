@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.routes.chat import get_engine
 from app.core.auth import get_current_user_optional, get_owner_token, verify_session_owner
 from app.core.database import get_async_db
-from app.services.task_queue import celery_app
+from app.services.task_queue import DECLARED_QUEUE_NAMES, celery_app
 from app.services.jobs import (
     ACTIVE_POLL_INTERVAL_MS,
     DEFAULT_LIST_LIMIT,
@@ -240,6 +240,14 @@ async def retry_job(
         # 状态已是 queued —— 现在必须真的把任务重新交给 worker。
         # 只改状态而不入队会留下一个永远不推进的 job（比不提供 retry 更糟）。
         try:
+            # DIST（round1）：重试保持原队列亲和 —— dispatch_spec.queue 记录
+            # 的是首次派发的调度事实，重试丢队列会把 raster/heavy_cpu 等
+            # profile 任务错投默认队列（异构 worker 拆分后无法执行）。队列名
+            # 必须在已声明词表内：未知/缺失一律省略，让按任务名的默认路由
+            # 接管（绝不投递到没有消费者声明的队列）。
+            retry_queue = spec.get("queue") if spec else None
+            if retry_queue not in DECLARED_QUEUE_NAMES:
+                retry_queue = None
             # 计算隔离不变式 1：send_task publish 是 broker socket I/O，
             # offload 到线程（#386）。
             async_result = await asyncio.to_thread(
@@ -247,6 +255,7 @@ async def retry_job(
                 spec["task"],
                 args=list(spec.get("args") or []),
                 kwargs={**(spec.get("kwargs") or {}), "job_id": int(record.id)},
+                **({"queue": retry_queue} if retry_queue else {}),
             )
         except Exception as exc:  # noqa: BLE001 —— broker 不可用不应让端点 500
             # 入队本身失败 → 消息不存在，把 job 收敛为 failed 才是真话

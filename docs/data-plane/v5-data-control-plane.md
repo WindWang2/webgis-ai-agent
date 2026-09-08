@@ -189,8 +189,11 @@ parameters 与 `execution_trace[].args` 落库前过 redactor（敏感 key →
   keep-forever；宽限复用晋升 GC 168h 纪律）；plan/execute 共享同一 W1 保护
   谓词（pin / workspace tier / lineage root），parity 矩阵测试锁定。
 - 运维入口：`GET /api/v1/projects/{project_id}/data-usage`、
-  `POST .../data-gc/plan`、`POST .../data-gc/execute`（confirm 门控）、
-  孤儿修订清理随 GC 走。
+  `POST .../data-gc/plan`、`POST .../data-gc/execute`（confirm 门控 + 认证必需；
+  round-1 review SEC CRITICAL-2：per-project 端点只做**项目域**保留 + 孤儿
+  修订清理 —— plan 的可删 blob 只给 sha 前缀 + 字节，绝不返回全局
+  key/location；GLOBAL promotion-store GC 只属于周期 sweep）、孤儿修订清理
+  随 GC 走。
 
 ## 环境变量参考（本批次新增）
 

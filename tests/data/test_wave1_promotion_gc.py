@@ -301,7 +301,7 @@ def test_execute_recheck_protects_newly_referenced_blob(db, monkeypatch, tmp_pat
 
         art = s.execute(select(Artifact).limit(1)).scalars().first()
         s.add(ArtifactRevision(
-            id=str(uuid.uuid4()), artifact_id=art.id, revision_no=1,
+            id=str(uuid.uuid4()), artifact_id=art.id, revision_no=2,
             content_sha256=keys["orphan"],
             content_location=f"{keys['orphan'][:4]}/{keys['orphan']}.json",
             content_type="json", byte_size=1,
@@ -314,3 +314,83 @@ def test_execute_recheck_protects_newly_referenced_blob(db, monkeypatch, tmp_pat
         result["skipped_protected"][0]["reason"]
     )
     assert store.exists(keys["orphan"]) is True
+
+
+# ── 快照 manifest 指针保护（round-1 review CRITICAL）──────────────────────
+
+
+def test_workspace_snapshot_materialized_blob_survives_gc(db, monkeypatch, tmp_path):
+    """workspace save 物化的 blob 被**快照 manifest 指针**保护：超宽限期、
+    零 DB 引用也绝不删；manifest 删除后（同参数）变为可删。plan 与
+    execute 共享同一 manifest 扫描（quota.workspace_snapshot_protected_pointers）。"""
+    import os
+    import time as _time
+
+    from app.core.config import settings
+    from app.services import project_artifact_promotion as pap
+    from app.services.artifact_lifecycle import (
+        execute_promotion_store_gc,
+        plan_promotion_store_gc,
+    )
+    from app.services.artifact_registry import register_artifact
+    from app.services.data_lifecycle.quota import (
+        workspace_snapshot_protected_pointers,
+    )
+    from app.services.durable_blob_store import get_filesystem_blob_store
+    from app.services.session_data import session_data_manager
+    from app.services.workspace.snapshot import (
+        get_workspace_snapshot_service,
+        reset_workspace_snapshot_service,
+    )
+
+    # DATA_DIR → tmp：workspaces 快照根 + 内容库根同域（调用时解析）
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    monkeypatch.setattr(settings, "DATA_DIR", str(data_root))
+    monkeypatch.setattr(pap, "content_store_root", lambda: data_root / "project_artifacts")
+    reset_workspace_snapshot_service()
+    try:
+        sid = "sess-snap-gc"
+        project_id = f"proj_snap_{uuid.uuid4().hex[:8]}"
+        payload = {"type": "FeatureCollection",
+                   "features": [{"type": "Feature",
+                                 "geometry": {"type": "Point", "coordinates": [1.0, 2.0]},
+                                 "properties": {"k": "v"}}]}
+        ref = asyncio.run(session_data_manager.store(sid, payload, prefix="geojson"))
+        asyncio.run(register_artifact(sid, artifact_id=ref, producer_tool="buffer"))
+        snap = asyncio.run(get_workspace_snapshot_service().save_snapshot(
+            sid, project_id=project_id, materialize="claimed",
+        ))
+        assert snap is not None and ref in snap.durable_pointers
+        ptr = snap.durable_pointers[ref]
+        locations, shas = workspace_snapshot_protected_pointers()
+        assert ptr.content_location in locations
+        assert ptr.content_payload_sha256 in shas
+
+        store = get_filesystem_blob_store()
+        blob_path = store.root / ptr.content_location
+        assert blob_path.is_file()
+        # blob 超出宽限期（无 DB 行 / 无 head 指针 —— manifest 是唯一账面）
+        old = _time.time() - 48 * 3600
+        os.utime(blob_path, (old, old))
+
+        plan = asyncio.run(plan_promotion_store_gc(grace_hours=1.0))
+        assert all(d["key"] != ptr.content_payload_sha256 for d in plan["deletable"])
+        assert plan["protected_counts"].get(
+            "workspace snapshot manifest pointer") == 1
+        result = asyncio.run(execute_promotion_store_gc(plan))
+        assert result["deleted"] == []
+        assert store.exists(ptr.content_payload_sha256) is True, (
+            "快照物化 blob 绝不因宽限期过期被 GC")
+        # manifest 删除 → 保护输入消失 → blob 超龄可删（plan+execute parity）
+        deleted = asyncio.run(get_workspace_snapshot_service().delete_snapshot(
+            sid, snap.snapshot_id, project_id=project_id,
+        ))
+        assert deleted is not None and deleted["deleted"] is True
+        plan2 = asyncio.run(plan_promotion_store_gc(grace_hours=1.0))
+        assert [d["key"] for d in plan2["deletable"]] == [ptr.content_payload_sha256]
+        result2 = asyncio.run(execute_promotion_store_gc(plan2))
+        assert result2["deleted"] == [ptr.content_payload_sha256]
+        assert store.exists(ptr.content_payload_sha256) is False
+    finally:
+        reset_workspace_snapshot_service()

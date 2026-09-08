@@ -1009,6 +1009,7 @@ class GeoExecutionEngine:
         started_dj = time.monotonic()
         if node.reuse == NodeReusePolicy.ALLOW and self._durable_reuse_hit(
             run, node, outputs, outputs_fp, ev, owner_scope,
+            governor=governor, gov_path=gov_path, charge_ledger=charge_ledger,
         ):
             ev.duration_s = round(time.monotonic() - started_dj, 6)
             return
@@ -1117,6 +1118,10 @@ class GeoExecutionEngine:
         outputs_fp: dict[str, str],
         ev: NodeEvidence,
         owner_scope: str,
+        *,
+        governor: Optional[Any] = None,
+        gov_path: Optional[str] = None,
+        charge_ledger: Optional[Any] = None,
     ) -> bool:
         """durable 节点派发前的跨进程 checkpoint 复用（audit 06 §6.1 step 3）。
 
@@ -1139,6 +1144,7 @@ class GeoExecutionEngine:
                 self._accept_durable_reuse(
                     run, node, outputs, outputs_fp, ev, payload,
                     source="in_process", out_fp=cached.get(_OUT_FP_KEY),
+                    governor=governor, gov_path=gov_path, charge_ledger=charge_ledger,
                 )
                 return True
             self._note_reuse_skip(
@@ -1196,6 +1202,7 @@ class GeoExecutionEngine:
         self._accept_durable_reuse(
             run, node, outputs, outputs_fp, ev, payload,
             source="cross_process_index", out_fp=out_fp,
+            governor=governor, gov_path=gov_path, charge_ledger=charge_ledger,
         )
         return True
 
@@ -1210,8 +1217,15 @@ class GeoExecutionEngine:
         *,
         source: str,
         out_fp: Optional[str],
+        governor: Optional[Any] = None,
+        gov_path: Optional[str] = None,
+        charge_ledger: Optional[Any] = None,
     ) -> None:
-        """接受复用：写载荷/指纹/证据（浅拷贝防缓存别名腐蚀，同 in_process 路径）。"""
+        """接受复用：写载荷/指纹/证据（浅拷贝防缓存别名腐蚀，同 in_process 路径）。
+
+        DIST（round1）：复用也是资源消费 —— 与执行完成路径同一口径沿层级链
+        记账（gauge 语义下漏记会让长寿命作用域的基线被复用流量无偿侵占）。
+        """
         outputs[node.node_id] = payload
         outputs_fp[node.node_id] = out_fp or _output_fingerprint(payload)
         ev.status = "reused"
@@ -1219,6 +1233,7 @@ class GeoExecutionEngine:
         ev.reuse_source = source
         ev.rows_emitted = self._count_rows(payload)
         ev.output_ref = payload.get("ref_id")
+        self._governor_charge(governor, gov_path, node, payload, charge_ledger)
         tracing.emit("node_reused", run_id=run.run_id, node_id=node.node_id,
                      status="reused", rows=ev.rows_emitted, checkpoint="verified",
                      reuse_source=source)

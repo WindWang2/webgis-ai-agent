@@ -145,13 +145,19 @@ def execute_windowed(
                 f"(halo=0, no global stat); got halo={profile.halo}, "
                 f"global_stat_required={profile.global_stat_required}"
             )
-        from app.lib.geo_raster.chunk import ChunkCacheBackend
+        from app.lib.geo_raster.chunk import ChunkCacheBackend, fn_fingerprint
 
         if not isinstance(chunk_cache, ChunkCacheBackend):
             raise RasterReaderError(
                 "chunk_cache must be a chunk.ChunkCacheBackend instance"
             )
         cache = chunk_cache
+        # fn 指纹进缓存 operation 命名空间（round-1 review MINOR）：缓存键
+        # 必须随窗口算法的字节码失效 —— 编辑 fn 后旧 chunk 不得再被复用。
+        # 进 operation 字符串而非 RasterChunkDescriptor（descriptor 身份
+        # 保持数据定义）；qualname + co_code 摘要跨进程确定。对共享后端
+        # 幂等（绝不反复追加）。
+        cache_operation = f"{cache.operation}|fn:{fn_fingerprint(fn)}"
     need_chunks = on_chunk_done is not None or cache is not None
     if need_chunks:
         from app.lib.geo_raster import chunk as chunk_mod  # noqa: F811
@@ -183,9 +189,13 @@ def execute_windowed(
             descriptor = chunk_mod.build_chunk_descriptor(
                 reader, (col0, row0, w, h), band=band,
                 bands=tuple(band_list) if bands is not None else None,
+                # out_dtype 参与身份（round-1 review MINOR）：同一源窗口、
+                # 不同 dst_dtype 的输出互不相同 —— 不参与会让 float64 缓存
+                # 被当作 uint8 结果复用（或反之）。
+                identity_extra=f"out_dtype={np.dtype(out_dtype).str}",
             )
             if cache is not None:
-                cache_key = cache.key_for(descriptor)
+                cache_key = cache.key_for(descriptor, operation=cache_operation)
                 cached = cache.load(
                     cache_key,
                     expected_shape=(h, w),

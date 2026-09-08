@@ -481,6 +481,51 @@ class TestProvenanceRedaction:
         assert "features" not in args
         assert args["query"].startswith("[digest:sha256:")
 
+    def test_w11_marker_union_redacts_s3_and_signed_urls(self, db_session):
+        """round-1 SEC MINOR-1: provenance 的敏感 key 集合 = jobs 脱敏器
+        ``SENSITIVE_KEY_PARTS`` 的并集 —— ``s3_access_key`` / ``signed_url``
+        一类凭据此前不在窄列表里，值原样落库。现在：值一律 [REDACTED]
+        （不可恢复），超长串走 sha256 摘要（存在可验证、内容不可取回）。
+        """
+        from app.services.jobs.redaction import SENSITIVE_KEY_PARTS
+        from app.services.provenance.manifest import _SECRET_KEY_MARKERS
+
+        assert set(_SECRET_KEY_MARKERS) >= set(SENSITIVE_KEY_PARTS), (
+            "provenance redaction markers must cover the jobs redactor union")
+        for probe in ("s3_access_key", "signed_url", "private_key",
+                      "owner_token", "cookie"):
+            assert any(m in probe for m in _SECRET_KEY_MARKERS), probe
+
+        s3 = "AKIAIOSFODNN7EXAMPLE"
+        signed = "https://blobs.example/x?" + "X-Amz-Signature=" + "f" * 128
+        args = {
+            "s3_access_key": s3,
+            "signed_url": signed,
+            "note": "z" * 600,  # 非敏感但超长 → 摘要化
+        }
+        db = db_session
+        proj = _seed(db)
+        wf = _wf(db, proj.id, [{
+            "step_id": "s1", "tool_name": "create_data_source",
+            "args_template": args, "dependencies": [],
+        }])
+        run = _run_wf(db, wf, proj)
+        assert run.status == "completed"
+
+        db.expire_all()
+        persisted = db.execute(
+            select(WorkflowRun).where(WorkflowRun.id == run.id)).scalar_one()
+        edges = db.execute(
+            select(ArtifactLineage).where(
+                ArtifactLineage.workflow_run_id == run.id)).scalars().all()
+        assert edges
+        for surface in (persisted.execution_trace[0]["args"], edges[0].parameters):
+            assert surface["s3_access_key"] == "[REDACTED]"
+            assert surface["signed_url"] == "[REDACTED]"
+            assert surface["note"].startswith("[digest:sha256:")
+        blob = json.dumps(persisted.execution_trace, default=str)
+        assert s3 not in blob and signed not in blob
+
 
 # ── §6.2.6: numeric backend environment capture ────────────────────────────
 

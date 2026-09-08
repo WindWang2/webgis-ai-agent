@@ -357,3 +357,51 @@ async def test_materialize_geoparquet_rejects_bad_session_id(monkeypatch, tmp_pa
     table = features_to_arrow(_point_features(2))
     with pytest.raises(ValueError, match="session id"):
         await materialization_service.materialize_geoparquet("../evil", table, "T")
+
+
+# ── round-1 review MAJOR：CRS 经 schema_info 进结果面 ────────────────────────
+
+
+def test_query_result_carries_crs_both_lanes(monkeypatch, tmp_path):
+    """adapter 在 query() 结果面携带 geo 元数据声明的 CRS（dict/arrow 两
+    lane 同源）—— materialize(geoparquet) 由此取源 CRS。"""
+    feats = _point_features(4)
+    path = str(tmp_path / "utm.parquet")
+    table_to_geoparquet(features_to_arrow(feats, crs="EPSG:32633"), path)
+    adapter = _adapter(monkeypatch, tmp_path, path)
+
+    spec = QuerySpec(limit=100)
+    fast = adapter.query("utm", spec)
+    assert fast.schema_info.get("crs") == "EPSG:32633"
+
+    import app.services.data_fabric.vector_carrier as vc
+
+    monkeypatch.setattr(vc, "arrow_available", lambda: False)  # → dict lane
+    slow = adapter.query("utm", spec)
+    assert slow.metadata["execution_lane"] == "dict"
+    assert slow.schema_info.get("crs") == "EPSG:32633"
+
+
+@pytest.mark.asyncio
+async def test_materialize_projected_crs_table_keeps_crs(monkeypatch, tmp_path):
+    """materialize(geoparquet)：投影 CRS 表的 geo 元数据携带 crs ——
+    源 CRS 不再在物化时静默丢失（round-1 review MAJOR）。"""
+    import pyarrow.parquet as pq
+
+    from app.core.config import settings
+    from app.services.data_fabric import materialization_service as mat_mod
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+    feats = _point_features(4)
+    path = str(tmp_path / "utm.parquet")
+    table_to_geoparquet(features_to_arrow(feats, crs="EPSG:32633"), path)
+    adapter = _adapter(monkeypatch, tmp_path, path)
+    qr = adapter.query("utm", QuerySpec(limit=100))
+
+    res = await mat_mod.materialization_service.materialize(
+        "utm", qr, session_id="sess-utm", output_format="geoparquet")
+    assert res["success"] is True and res["format"] == "geoparquet"
+    md = pq.read_metadata(res["path"]).metadata or {}
+    geo = json.loads(md[b"geo"].decode("utf-8"))
+    crs = (geo.get("columns") or {}).get("geometry", {}).get("crs")
+    assert crs == "EPSG:32633"

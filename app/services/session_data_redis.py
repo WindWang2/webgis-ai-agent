@@ -71,10 +71,11 @@ async def ref_fetch_shared(store: "RedisSessionStore", session_id: str,
                            ref_id: str, data_key: str):
     """一次 (session, ref) 的 Redis GET + parse，per-key singleflight 去重。
 
-    返回 ``(parsed, raw_len)``；非 JSON payload 返回 ``(raw_str, None)``（照
-    原样返回、不入缓存，与既有语义一致）；键不存在返回 ``None``。共享构建
-    失败（leader 异常传播给等待者）时降级为直接重取一次 —— 崩溃不传染，
-    重复计算有界。
+    返回 ``(parsed, raw_len, fetch_epoch)``（epoch 在飞行体内捕获，见
+    ``_fetch_shared_payload``）；非 JSON payload 返回 ``(raw_str, None,
+    fetch_epoch)``（照原样返回、不入缓存，与既有语义一致）；键不存在返回
+    ``None``。共享构建失败（leader 异常传播给等待者）时降级为直接重取一次
+    —— 崩溃不传染，重复计算有界。
     """
     flight = _get_ref_fetch_flight()
     key = ("ref_payload", session_id, ref_id)
@@ -583,10 +584,21 @@ class RedisSessionStore(BaseSessionStore):
     async def _fetch_shared_payload(self, session_id: str, ref_id: str, data_key: str):
         """R4b 单飞共享单元：一次 Redis GET + json.loads。
 
-        返回 ``(parsed, raw_len)``；非 JSON payload 返回 ``(raw_str, None)``
-        （照原样返回、不入缓存）；键不存在返回 ``None``。Redis 异常原样抛出
-        （由 get_shared 的既有兜底转 cache-miss 语义）。
+        返回 ``(parsed, raw_len, fetch_epoch)``；非 JSON payload 返回
+        ``(raw_str, None, fetch_epoch)``（照原样返回、不入缓存）；键不存在
+        返回 ``None``。Redis 异常原样抛出（由 get_shared 的既有兜底转
+        cache-miss 语义）。
+
+        CONC MAJOR-1（audit round1）：``fetch_epoch`` 在**飞行体内、读源前**
+        捕获。等待者共享的是 leader 的取回结果，但 leader 的 GET 可能早于
+        一次 overwrite/invalidate —— 等待者自己的（较新）epoch 若直接用于
+        入缓存，会把 leader 的**前覆写 payload** 复活到新 epoch 下。调用方
+        以 ``min(own_epoch, fetch_epoch)`` 入缓存：取回早于本线程 epoch 的
+        结果必然对不上当前 epoch → put_if_current 拒收。
         """
+        from app.services.ref_payload_cache import ref_payload_cache
+
+        fetch_epoch = ref_payload_cache.current_epoch(session_id, ref_id)
         raw = await self._r.get(data_key)
         if raw is None:
             return None
@@ -594,8 +606,8 @@ class RedisSessionStore(BaseSessionStore):
         try:
             data = await asyncio.to_thread(json.loads, raw_str)
         except Exception:  # noqa: BLE001 非 JSON payload 原样返回（与 get() 同语义），不入缓存
-            return (raw_str, None)
-        return (data, len(raw_str))
+            return (raw_str, None, fetch_epoch)
+        return (data, len(raw_str), fetch_epoch)
 
     async def get_shared(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
         """P-1（#874）：共享只读读取 —— 进程内已解析 payload 缓存。
@@ -629,10 +641,16 @@ class RedisSessionStore(BaseSessionStore):
             fetched = await ref_fetch_shared(self, session_id, ref_id, data_key)
             if fetched is None:
                 return None
-            data, raw_len = fetched
+            data, raw_len, fetch_epoch = fetched
             if raw_len is None:
                 return data  # 非 JSON：原样返回，不入缓存
-            ref_payload_cache.put_if_current(session_id, ref_id, data, raw_len, epoch)
+            # CONC MAJOR-1（audit round1）：等待者可能共享到 leader 在更早
+            # epoch 发起的取回（leader GET 阻塞期间发生 overwrite）—— 用
+            # min(own, fetch) 入缓存，旧取回必然对不上当前 epoch 被拒收，
+            # 绝不复活前覆写 payload。
+            ref_payload_cache.put_if_current(
+                session_id, ref_id, data, raw_len, min(epoch, fetch_epoch)
+            )
 
             # Best-effort TTL/recency 刷新（仅 miss 路径；失败不转为 miss）。
             try:

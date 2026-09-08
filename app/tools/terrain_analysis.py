@@ -101,12 +101,17 @@ def _terrain_evidence(
 def _check_full_read_budget(src) -> None:
     """Wave 6（audit 05 §2 整读隐患 #1）：整波段 read + float64 提升会把
     工作集翻倍 —— check_grid 只计像元数（float32 口径，最多放进 ~1 GiB
-    名义 / ~2 GiB 实际），这里在**读取发生之前**按 2× 记账（px × 8 字节
-    = float64 目标 + 源缓冲瞬态）对齐字节护栏，超限抛类型化错误。
-    全局算法（D8/视域/BFS）仍是有意的整读面 —— 本护栏只拒绝超出预算者，
-    不改变算法语义。"""
+    名义 / ~2 GiB 实际），这里在**读取发生之前**记账：px × (8 + 源
+    itemsize) 字节 = float64 目标 + 源缓冲瞬态（round-1 review MINOR：
+    此前只记 8 字节目标，16-bit DEM 的源缓冲被漏记 —— 实际工作集是
+    px×8 + px×itemsize）。超限抛类型化错误。全局算法（D8/视域/BFS）仍是
+    有意的整读面 —— 本护栏只拒绝超出预算者，不改变算法语义。"""
     pixels = int(src.width) * int(src.height)
-    estimated = pixels * 8  # float64 cast target (2× the 4-byte baseline)
+    try:
+        itemsize = int(np.dtype(src.dtypes[0]).itemsize)
+    except (IndexError, TypeError, ValueError):
+        itemsize = 2  # DEM 常态 uint16 的保守缺省
+    estimated = pixels * (8 + itemsize)  # float64 cast target + source transient
     cap = int(RasterResourceGuard.MAX_ESTIMATED_OUTPUT_BYTES)
     if estimated <= cap:
         return
