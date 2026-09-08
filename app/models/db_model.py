@@ -372,10 +372,15 @@ class GeoComputeClusterRun(Base):
     #: coordinator 崩溃后据此重建计划 —— 恢复的唯一输入）
     plan_snapshot = Column(JSON, nullable=False)
     session_id = Column(String(255), nullable=True)
-    #: 执行身份（coordinator 恢复执行所需的最小身份集；与 analysis_tasks 的
-    #: creator_id/org_id 同一明文纪律 —— 目录准入/治理作用域跨 failover 可重建）
+    #: 执行身份（coordinator 恢复执行所需的最小身份集）。与 analysis_tasks
+    #: 同一**明文纪律**（但本表无 FK：org_id 存字符串原文，跨库可移植）——
+    #: 绝不出现在任何用户面投影（get_run_internal 仅 coordinator 消费）。
     creator_id = Column(String(255), nullable=True)
     org_id = Column(String(255), nullable=True)
+    #: 原始 project_id（与 analysis_tasks.project_id 同一明文纪律）——
+    #: 治理作用域命名与同步执行路径一致（project_key 哈希只做账本/公平键，
+    #: 再哈希会造成 cluster 与同步路径 scope 不互通，round1 m3）
+    project_id = Column(String(255), nullable=True)
     #: 身份域哈希（tenant ← org_id、project ← project_id；owner_scope 同款
     #: 哈希域 —— 账本/公平排序键绝不明文身份）
     tenant_key = Column(String(40), nullable=True)

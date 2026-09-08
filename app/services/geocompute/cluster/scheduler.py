@@ -95,6 +95,7 @@ class ClusterCoordinator:
         max_run_attempts: int = DEFAULT_MAX_RUN_ATTEMPTS,
         preempt_wait_s: float = DEFAULT_PREEMPT_WAIT_S,
         max_preempts: int = MAX_PREEMPTS,
+        retention_s: float = 24 * 3600.0,
         governor: Optional[Any] = None,
         engine: Optional[Any] = None,
     ):
@@ -112,6 +113,7 @@ class ClusterCoordinator:
         self._max_run_attempts = max(1, int(max_run_attempts))
         self._preempt_wait_s = float(preempt_wait_s)
         self._max_preempts = int(max_preempts)
+        self._retention_s = float(retention_s)
         self._governor = governor
         self._engine = engine
         self._pool = ThreadPoolExecutor(
@@ -145,6 +147,13 @@ class ClusterCoordinator:
         stats["leader"] = self.is_leader
         if not self.is_leader:
             return stats
+        # M6：续约校验必须先于一切破坏性 sweep —— 过期 leader 不带权威跑
+        # reclaim/cancel（虽有 run 级 epoch CAS 兜底，语义上先自证再动手）。
+        if not self._renew_leadership():
+            # 续约失败（failover 已发生）→ 本轮起卸任；在跑 run 由心跳
+            # 线程正常完成，其终态写路径自带 epoch fencing。
+            self._leadership_epoch = None
+            return stats
 
         reclaimed = self._store.reclaim_expired(
             limit=self._batch_size,
@@ -154,12 +163,11 @@ class ClusterCoordinator:
         stats["reclaimed"] = len(reclaimed)
         cancelled = self._store.cancel_flagged(limit=self._batch_size)
         stats["cancel_swept"] = len(cancelled)
+        for run_id in cancelled:
+            record_cancellation_latency(run_id, self._store)
         self._store.prune_workers()
-        if not self._renew_leadership():
-            # 续约失败（failover 已发生）→ 本轮起卸任；在跑 run 由心跳
-            # 线程正常完成，其终态写路径自带 epoch fencing。
-            self._leadership_epoch = None
-            return stats
+        # M1：终态行 retention（分帧删除，每 tick 有界批）
+        self._store.purge_terminal(older_than_s=self._retention_s, limit=64)
 
         self._dispatch(stats)
         stats["preempt_requests"] = self._maybe_preempt()
@@ -266,7 +274,12 @@ class ClusterCoordinator:
             with self._lock:
                 self._inflight[run_id] = exec_state
             if not self._store.mark_running(run_id, epoch=epoch):
-                # CAS 失败（被并发转移）→ 不执行
+                # CAS 失败（被并发转移）→ 诚实收敛为 FAILED（同事务归还
+                # 账本预留），不留 leased 僵尸等 30s reclaim 白记一次 attempt。
+                self._store.finish_run(
+                    run_id, epoch=epoch, status=ClusterRunStatus.FAILED,
+                    error_code="CLAIM_RACE", ledger=self._ledger,
+                )
                 with self._lock:
                     self._inflight.pop(run_id, None)
                 continue
@@ -295,6 +308,19 @@ class ClusterCoordinator:
                         continue
                     if row.get("cancel_requested_at"):
                         exec_state.token.cancel("cancelled via control plane")
+                        try:
+                            from datetime import datetime
+
+                            from app.services.geocompute.cluster.metrics import (
+                                record_cancellation_latency as _record,
+                            )
+
+                            flag_ts = datetime.fromisoformat(
+                                str(row["cancel_requested_at"]).replace("Z", "+00:00")
+                            ).timestamp()
+                            _record(max(0.0, time.time() - flag_ts))
+                        except Exception:  # noqa: BLE001 - 观测失败不阻断
+                            pass
                     if row.get("yield_requested_at"):
                         exec_state.yield_event.set()
                 except Exception:  # noqa: BLE001 - DB 抖动由 lease TTL 容纳
@@ -329,7 +355,7 @@ class ClusterCoordinator:
                 cancel_token=exec_state.token,
                 caller=caller,
                 governor=self._governor,
-                project_id=internal.get("project_key"),
+                project_id=internal.get("project_id"),
                 run_id=run_id,
                 yield_check=exec_state.yield_event.is_set,
                 owner_scope_override=internal.get("owner_scope"),
@@ -365,25 +391,39 @@ class ClusterCoordinator:
         status: ClusterRunStatus,
         error_code: Optional[str],
     ) -> None:
-        run_id, epoch = exec_state.run_id, exec_state.epoch
+        run_id = exec_state.run_id
         try:
-            ok = self._store.finish_run(
-                run_id, epoch=epoch, status=status, error_code=error_code,
-                ledger=self._ledger,
+            self._finish_locked(exec_state, status, error_code)
+        except Exception:  # noqa: BLE001 - 终态写失败绝不带走线程：
+            # run 行滞留由 lease 过期 reclaim 自愈（round1 M1）。
+            logger.exception(
+                "[geocompute-v6] terminal write crashed run_id=%s", run_id
             )
-            if ok and status == ClusterRunStatus.PREEMPTED:
-                # 两段：PREEMPTED 可驻留（客户端可见）→ 立即回队尾重排。
-                self._store.requeue_preempted(run_id, epoch=epoch)
-            if not ok:
-                # lease 已易主：本地结果诚实丢弃（fencing 生效的证据）。
-                logger.warning(
-                    "[geocompute-v6] fenced terminal write dropped run_id=%s "
-                    "status=%s", run_id, status.value,
-                )
         finally:
             with self._lock:
                 self._inflight.pop(run_id, None)
             exec_state.done.set()
+
+    def _finish_locked(
+        self,
+        exec_state: _RunExecution,
+        status: ClusterRunStatus,
+        error_code: Optional[str],
+    ) -> None:
+        run_id, epoch = exec_state.run_id, exec_state.epoch
+        ok = self._store.finish_run(
+            run_id, epoch=epoch, status=status, error_code=error_code,
+            ledger=self._ledger,
+        )
+        if ok and status == ClusterRunStatus.PREEMPTED:
+            # 两段：PREEMPTED 可驻留（客户端可见）→ 立即回队尾重排。
+            self._store.requeue_preempted(run_id, epoch=epoch)
+        if not ok:
+            # lease 已易主：本地结果诚实丢弃（fencing 生效的证据）。
+            logger.warning(
+                "[geocompute-v6] fenced terminal write dropped run_id=%s "
+                "status=%s", run_id, status.value,
+            )
 
     # -------------------------------------------------------- preemption
 
@@ -395,13 +435,20 @@ class ClusterCoordinator:
         者的在跑 run 中优先级最低者（同优先级不抢）；preempts 已达保险丝
         的 run 受保护（防抢占 livelock）。
         """
-        running = self._store.scan_running(limit=self._batch_size)
         waiting = self._store.scan_dispatchable(limit=self._batch_size)
-        if not running or not waiting:
+        if not waiting:
             return 0
-        # 只有当高优先级等待者无法立即获得槽位时才抢占：本地满员即可
-        # （多 coordinator 时各自决定，语义一致且单调）。
+        # 只有当本地槽位满员（有等待者拿不到槽位）时才抢占。
         if len(self._inflight) < self._local_slots:
+            return 0
+        # M4：受害者仅限**本 coordinator** 的在跑 run —— 抢占的目的是给
+        # 本地等待者腾槽位；对远端 run 让出不释放本地槽位，只是浪费一次
+        # 完整重执行。
+        running = [
+            r for r in self._store.scan_running(limit=self._batch_size)
+            if r.get("coordinator_id") == self._coordinator_id
+        ]
+        if not running:
             return 0
         now = time.time()
         requests = 0
@@ -430,12 +477,41 @@ class ClusterCoordinator:
         if not created:
             return 0.0
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
 
-            ts = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+            text = str(created).replace("Z", "+00:00")
+            ts = datetime.fromisoformat(text)
+            # DB 列是 naive UTC（repo 约定）—— 显式按 UTC 解释，绝不吃
+            # 服务器本地时区偏移（round2 m2）。
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
             return max(0.0, now - ts.timestamp())
         except ValueError:
             return 0.0
+
+
+def record_cancellation_latency(run_id: str, store: ClusterRunStore) -> None:
+    """取消旗标 → 终态 的可观测延迟（cancel sweep 路径；心跳路径在 _loop）。
+
+    有界样本（metrics 侧 deque ≤128）；失败静默 —— 观测绝不倒灌控制面。
+    """
+    try:
+        from datetime import datetime
+
+        row = store.get_run(run_id)
+        if not row or not row.get("cancel_requested_at") or not row.get("terminal_at"):
+            return
+
+        def _parse(ts: str) -> float:
+            return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+
+        from app.services.geocompute.cluster.metrics import (
+            record_cancellation_latency as _record,
+        )
+
+        _record(max(0.0, _parse(row["terminal_at"]) - _parse(row["cancel_requested_at"])))
+    except Exception:  # noqa: BLE001 - 观测失败不阻断控制面
+        pass
 
 
 def tracing_preempt(victim_run_id: str, waiter_run_id: str) -> None:
@@ -465,6 +541,13 @@ def get_coordinator() -> Optional[ClusterCoordinator]:
                 _coordinator = ClusterCoordinator(
                     ledger=ClusterLedger(enforcing=enforcing),
                     governor=_production_governor(),
+                    preempt_wait_s=_env_float(
+                        "WEBGIS_CLUSTER_PREEMPT_WAIT_S", DEFAULT_PREEMPT_WAIT_S
+                    ),
+                    local_slots=_env_int("WEBGIS_COORDINATOR_SLOTS", 2),
+                    retention_s=_env_float(
+                        "WEBGIS_CLUSTER_RUN_RETENTION_H", 24.0
+                    ) * 3600.0,
                 )
     return _coordinator
 

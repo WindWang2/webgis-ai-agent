@@ -68,7 +68,13 @@ class ExecutionPlanIn(BaseModel):
 class ExecutePlanRequest(BaseModel):
     plan: ExecutionPlanIn
     session_id: Optional[str] = None
-    # V6（cluster submit，additive）：优先级（0/5/10）与项目归属（公平/账本键）
+
+
+class ClusterSubmitRequest(ExecutePlanRequest):
+    """cluster submit 专属字段（不进入同步 /plans/execute 契约 —— round1 m4：
+    共享模型会让同步端点静默接受并忽略 submit 语义的字段）。"""
+
+    # V6（cluster submit）：优先级（0/5/10）与项目归属（公平/账本键）
     priority: int = 5
     project_id: Optional[str] = None
 
@@ -238,7 +244,7 @@ async def execute_execution_plan(
 
 @router.post("/plans/runs", status_code=202, tags=["GeoCompute / Cluster Runtime V6"])
 async def submit_execution_plan(
-    body: ExecutePlanRequest,
+    body: ClusterSubmitRequest,
     user: Dict[str, Any] = Depends(get_current_user),
     owner_token: Optional[str] = Depends(get_owner_token),
 ):
@@ -281,10 +287,17 @@ async def submit_execution_plan(
         from app.services.geocompute.executor import owner_scope_for
 
         uid, org_id = actor_ids(user)
-        # durable 节点的必需 profile 通道（能力匹配依据；in_process 无要求）
+        # durable 节点的必需 profile 通道（能力匹配依据；in_process 无要求）。
+        # 默认兜底队列 "celery" 不是能力通道 —— 任何 worker 都消费它，
+        # 保留会让 required_profiles 含未注册词 → 非 eager 下永久留队
+        # （round1 review C2）。
+        from app.services.geocompute.durable import EXECUTION_QUEUE_PROFILES
+
         profiles = sorted({
-            queue_for_node(n).removesuffix("_queue")
-            for n in plan.nodes if n.policy.value == "durable_job"
+            p for p in (
+                queue_for_node(n).removesuffix("_queue")
+                for n in plan.nodes if n.policy.value == "durable_job"
+            ) if p in EXECUTION_QUEUE_PROFILES
         })
         store = ClusterRunStore()
         run_id = store.create_run(
@@ -294,6 +307,7 @@ async def submit_execution_plan(
             session_id=body.session_id,
             creator_id=str(uid) if uid else None,
             org_id=str(org_id) if org_id else None,
+            project_id=body.project_id,
             tenant_raw=str(org_id) if org_id else None,
             project_raw=body.project_id,
             priority=RunPriority.coerce(body.priority),
@@ -306,7 +320,8 @@ async def submit_execution_plan(
     except PlanSnapshotTooLargeError as exc:
         raise HTTPException(status_code=413, detail=exc.to_dict())
     except ClusterBackpressureError as exc:
-        raise HTTPException(status_code=429, detail=exc.to_dict())
+        raise HTTPException(status_code=429, detail=exc.to_dict(),
+                            headers={"Retry-After": "5"})
     except HTTPException:
         raise
     except GeoComputeError as exc:
@@ -340,13 +355,9 @@ async def list_execution_runs(
     statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
 
     def _list():
-        try:
-            store = ClusterRunStore()
-            items = store.list_runs(owner_scope, statuses=statuses,
-                                    limit=limit, offset=offset)
-        except Exception:  # noqa: BLE001 - cluster 域不可用 → 空域（诚实降级）
-            logger.warning("[geocompute] cluster list store unavailable")
-            items = []
+        store = ClusterRunStore()
+        items = store.list_runs(owner_scope, statuses=statuses,
+                                limit=limit, offset=offset)
         listed_ids = {item["run_id"] for item in items}
         snapshots: list[Dict[str, Any]] = []
         try:
@@ -359,7 +370,13 @@ async def list_execution_runs(
             snapshots = []
         return items, snapshots
 
-    items, snapshots = await asyncio.to_thread(_list)
+    try:
+        items, snapshots = await asyncio.to_thread(_list)
+    except Exception as exc:  # noqa: BLE001 - 控制面不可用 → typed 503（M5）
+        logger.warning("[geocompute] cluster list store unavailable")
+        raise HTTPException(status_code=503, detail={
+            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
+        })
     return {
         "runs": items,
         "terminal_snapshots": snapshots,
@@ -418,9 +435,11 @@ async def get_execution_run(
 
     try:
         row = await asyncio.to_thread(_cluster_row)
-    except Exception:  # noqa: BLE001 - cluster 域不可用 → 与未命中同语义
+    except Exception as exc:  # noqa: BLE001 - 控制面不可用 → typed 503（M5）
         logger.warning("[geocompute] cluster run store unavailable: %s", run_id)
-        row = None
+        raise HTTPException(status_code=503, detail={
+            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
+        })
     if row is None:
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
     return {
@@ -432,6 +451,8 @@ async def get_execution_run(
         "attempts": row["attempts"],
         "preempts": row["preempts"],
         "error_code": row["error_code"],
+        # m1：客户端取消后轮询能看到「取消已受理、待收敛」
+        "cancel_requested_at": row.get("cancel_requested_at"),
         "required_profiles": row["required_profiles"],
         "created_at": row["created_at"],
         "started_at": row["started_at"],
@@ -465,6 +486,20 @@ async def cancel_execution_run(
     run = engine.get_run(run_id, owner_scope=owner_scope)
     if run is not None:
         cancelled = engine.cancel_run(run_id, reason="cancelled via API")
+        # R1-M4：本地命中也**先落持久旗标** —— 若执行进程在本地取消生效前
+        # 崩溃，lease 过期 reclaim 后无旗标会把整个 run 静默重跑。旗标幂等
+        # 且 cluster 行缺席（纯同步执行路径）时是 no-op。
+        try:
+            def _persist_flag():
+                from app.services.geocompute.cluster.store import ClusterRunStore
+
+                store = ClusterRunStore()
+                if store.get_run_owned(run_id, owner_scope) is not None:
+                    store.request_cancel(run_id)
+
+            await asyncio.to_thread(_persist_flag)
+        except Exception:  # noqa: BLE001 - 旗标持久化失败不阻断本地取消
+            logger.warning("[geocompute] cancel flag persist failed: %s", run_id)
         return {
             "run_id": run_id,
             "cancelled": bool(cancelled),
@@ -485,9 +520,12 @@ async def cancel_execution_run(
 
     try:
         changed, observed = await asyncio.to_thread(_cancel_persistent)
-    except Exception:  # noqa: BLE001 - cluster 域不可用（未迁移库）→ V5 语义
+    except Exception as exc:  # noqa: BLE001 - 控制面不可用 ≠ run 不存在：
+        # 故障必须如实暴露（伪装成 404 会让客户端误判；round2 M5）
         logger.warning("[geocompute] cluster cancel store unavailable: %s", run_id)
-        changed, observed = None, None
+        raise HTTPException(status_code=503, detail={
+            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
+        })
     if observed is None:
         # cluster 行未命中 → 快照回放域校验（终态 run 幂等 no-op 语义），
         # 全未命中才 404。get_run 二次调用此刻走快照回读。

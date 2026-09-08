@@ -23,8 +23,6 @@ from app.services.geocompute.cluster.store import (
 )
 from datetime import timedelta
 
-S = "ClusterRunStatusPlaceholder"
-
 
 @pytest.fixture(autouse=True)
 def _celery_offline(monkeypatch):
@@ -197,8 +195,8 @@ class TestDurableScheduling:
         assert stats_b["leader"] is False
         assert stats_b["dispatched"] == 0
         assert _wait_terminal(store, rid) == "completed"
-        row = store.get_run(rid)
-        assert row["coordinator_id"] == "coord-a"
+        # coordinator_id 是控制面键（用户投影已剔除）—— 走 internal 投影
+        assert store.get_run_internal(rid)["coordinator_id"] == "coord-a"
 
     def test_leader_failover_recovers_inflight_run(self, env):
         """coordinator A 崩溃（lease 过期）→ B 当选 → reclaim → 重执行完成。"""
@@ -327,8 +325,8 @@ class TestDistributedCancellation:
             # rid1 落定后的下一次 tick：cancel sweep 把排队中的 rid2 收敛为终态
             coord.tick()
             assert _wait_terminal(store, rid2) == "cancelled"
-            # rid2 从未被任何 coordinator 执行
-            assert store.get_run(rid2)["coordinator_id"] is None
+            # rid2 从未被任何 coordinator 执行（internal 投影验证）
+            assert store.get_run_internal(rid2)["coordinator_id"] is None
         finally:
             release.set()
             ops.execute_node = real_execute
@@ -426,12 +424,24 @@ class TestFairness:
         assert len(set(tenants)) == 3, "3 槽位应分属 3 个租户（轮转）"
 
     def test_fair_state_rebuild_from_dispatch_seq(self, env):
-        store, make_coordinator, _ = env
+        """轮转状态可从非终态行重建（M1：终态行不进聚合 —— 有 retention）。"""
+        store, make_coordinator, factory = env
         coord = make_coordinator("coord-a")
         for i in range(4):
             _submit(store, _simple_plan(unique=f"fair{i}"), tenant_raw=f"org{i % 2}")
         for _ in range(4):
             coord.tick()
+        # 全部落定后聚合为空（终态行不污染 tick 热路径）
+        assert store.tenant_last_dispatch() == {}
+        # 造一个在跑 run（dispatch_seq 已记）→ 轮转状态可重建
+        from app.models.db_model import GeoComputeClusterRun as Run
+        from sqlalchemy import update as _upd
+
+        _submit(store, _simple_plan(unique="fair-live"), tenant_raw="org9")
+        with factory() as db:
+            db.execute(_upd(Run).where(Run.status == "queued").values(
+                status="running", dispatch_seq=Run.id, coordinator_id="x"))
+            db.commit()
         last = store.tenant_last_dispatch()
-        assert len(last) == 2
-        assert all(v > 0 for v in last.values())
+        assert len(last) == 1 and last["t:" + __import__("hashlib").sha1(
+            b"org9", usedforsecurity=False).hexdigest()[:12]] > 0

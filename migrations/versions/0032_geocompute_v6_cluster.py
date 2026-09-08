@@ -26,7 +26,7 @@ tests/test_deploy_migration_wiring.py 按列元组比对）。downgrade 反序�
 """
 from typing import Sequence, Union
 
-from alembic import op
+from alembic import context, op
 import sqlalchemy as sa
 
 
@@ -49,6 +49,15 @@ _RUN_INDEXES = {
 _WORKER_INDEXES = {
     "idx_gc_worker_role_heartbeat": ["role", "heartbeat_at"],
 }
+_RUN_CHECKS = (
+    ("ck_gc_run_status",
+     "status IN ('queued','leased','running','completed','failed',"
+     "'cancelled','preempted')"),
+    ("ck_gc_run_priority", "priority IN (0,5,10)"),
+)
+_WORKER_CHECKS = (
+    ("ck_gc_worker_role", "role IN ('coordinator','worker')"),
+)
 
 
 def _table_exists(table: str) -> bool:
@@ -58,6 +67,13 @@ def _table_exists(table: str) -> bool:
 
 def _index_exists(table: str, index: str) -> bool:
     return index in {i["name"] for i in sa.inspect(op.get_bind()).get_indexes(table)}
+
+
+def _constraint_exists(table: str, name: str) -> bool:
+    return name in {
+        ck["name"]
+        for ck in sa.inspect(op.get_bind()).get_check_constraints(table)
+    }
 
 
 def upgrade() -> None:
@@ -74,6 +90,7 @@ def upgrade() -> None:
             sa.Column("session_id", sa.String(length=255), nullable=True),
             sa.Column("creator_id", sa.String(length=255), nullable=True),
             sa.Column("org_id", sa.String(length=255), nullable=True),
+            sa.Column("project_id", sa.String(length=255), nullable=True),
             sa.Column("tenant_key", sa.String(length=40), nullable=True),
             sa.Column("project_key", sa.String(length=40), nullable=True),
             sa.Column("priority", sa.Integer(), nullable=False, server_default="5"),
@@ -96,10 +113,30 @@ def upgrade() -> None:
             sa.Column("started_at", sa.DateTime(), nullable=True),
             sa.Column("terminal_at", sa.DateTime(), nullable=True),
             sa.UniqueConstraint("run_id", name="uq_gc_run_run_id"),
+            sa.CheckConstraint(
+                "status IN ('queued','leased','running','completed','failed',"
+                "'cancelled','preempted')", name="ck_gc_run_status"),
+            sa.CheckConstraint("priority IN (0,5,10)",
+                               name="ck_gc_run_priority"),
         )
     for name, cols in _RUN_INDEXES.items():
         if not _index_exists(_RUN_TABLE, name):
             op.create_index(name, _RUN_TABLE, cols)
+    # CHECK 约束（模型声明；repo 惯例 —— 词表兜底必须随迁移建出，
+    # round1 M2：drift guard 不比约束，这里缺失即生产库裸奔）。
+    # create_all 预存在表（无约束）→ SQLite 走 batch（表重建），PG 直改。
+    if context.get_context().dialect.name == "sqlite":
+        if _RUN_CHECKS and not all(
+            _constraint_exists(_RUN_TABLE, n) for n, _e in _RUN_CHECKS
+        ):
+            with op.batch_alter_table(_RUN_TABLE, schema=None) as batch_op:
+                for name, expr in _RUN_CHECKS:
+                    if not _constraint_exists(_RUN_TABLE, name):
+                        batch_op.create_check_constraint(name, _RUN_TABLE, expr)
+    else:
+        for name, expr in _RUN_CHECKS:
+            if not _constraint_exists(_RUN_TABLE, name):
+                op.create_check_constraint(name, _RUN_TABLE, expr)
 
     if not _table_exists(_WORKER_TABLE):
         op.create_table(
@@ -112,10 +149,22 @@ def upgrade() -> None:
             sa.Column("lease_expires_at", sa.DateTime(), nullable=True),
             sa.Column("started_at", sa.DateTime(), nullable=False),
             sa.Column("info", sa.JSON(), nullable=True),
+            sa.CheckConstraint("role IN ('coordinator','worker')",
+                               name="ck_gc_worker_role"),
         )
     for name, cols in _WORKER_INDEXES.items():
         if not _index_exists(_WORKER_TABLE, name):
             op.create_index(name, _WORKER_TABLE, cols)
+    if context.get_context().dialect.name == "sqlite":
+        if not _constraint_exists(_WORKER_TABLE, "ck_gc_worker_role"):
+            with op.batch_alter_table(_WORKER_TABLE, schema=None) as batch_op:
+                batch_op.create_check_constraint(
+                    "ck_gc_worker_role", _WORKER_TABLE,
+                    "role IN ('coordinator','worker')")
+    else:
+        for name, expr in _WORKER_CHECKS:
+            if not _constraint_exists(_WORKER_TABLE, name):
+                op.create_check_constraint(name, _WORKER_TABLE, expr)
 
     if not _table_exists(_USAGE_TABLE):
         op.create_table(
@@ -136,12 +185,30 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if _table_exists(_WORKER_TABLE):
+        if context.get_context().dialect.name == "sqlite":
+            if _constraint_exists(_WORKER_TABLE, "ck_gc_worker_role"):
+                with op.batch_alter_table(_WORKER_TABLE, schema=None) as b:
+                    b.drop_constraint("ck_gc_worker_role", type_="check")
+        else:
+            for name, _expr in _WORKER_CHECKS:
+                if _constraint_exists(_WORKER_TABLE, name):
+                    op.drop_constraint(name, _WORKER_TABLE, type_="check")
     for name in _WORKER_INDEXES:
         if _table_exists(_WORKER_TABLE) and _index_exists(_WORKER_TABLE, name):
             op.drop_index(name, table_name=_WORKER_TABLE)
     if _table_exists(_WORKER_TABLE):
         op.drop_table(_WORKER_TABLE)
     if _table_exists(_RUN_TABLE):
+        if context.get_context().dialect.name == "sqlite":
+            with op.batch_alter_table(_RUN_TABLE, schema=None) as batch_op:
+                for name, _expr in _RUN_CHECKS:
+                    if _constraint_exists(_RUN_TABLE, name):
+                        batch_op.drop_constraint(name, type_="check")
+        else:
+            for name, _expr in _RUN_CHECKS:
+                if _constraint_exists(_RUN_TABLE, name):
+                    op.drop_constraint(name, _RUN_TABLE, type_="check")
         for name in _RUN_INDEXES:
             if _index_exists(_RUN_TABLE, name):
                 op.drop_index(name, table_name=_RUN_TABLE)

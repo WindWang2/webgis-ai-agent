@@ -588,6 +588,46 @@
     "title": "ChatResponse",
     "type": "object"
    },
+   "ClusterSubmitRequest": {
+    "description": "cluster submit 专属字段（不进入同步 /plans/execute 契约 —— round1 m4：\n共享模型会让同步端点静默接受并忽略 submit 语义的字段）。",
+    "properties": {
+     "plan": {
+      "$ref": "#/components/schemas/ExecutionPlanIn"
+     },
+     "priority": {
+      "default": 5,
+      "title": "Priority",
+      "type": "integer"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     }
+    },
+    "required": [
+     "plan"
+    ],
+    "title": "ClusterSubmitRequest",
+    "type": "object"
+   },
    "ComponentPlacement": {
     "description": "自由布局放置（可选增强，向后兼容）。\n\n旧组件只有 ``position`` 六槽锚点；``placement`` 引入显式 typed 布局：\n- anchor 模式：等价旧语义（anchor = 七槽字面量），与 ``position`` 双写\n  保持一致，不新增第二种真相；\n- floating 模式：x/y 像素自由定位 + 可选 width/height/zIndex/collapsed，\n  服务拖拽/缩放后的持久化。缺省字段由渲染端兜底。",
     "properties": {
@@ -893,22 +933,6 @@
     "properties": {
      "plan": {
       "$ref": "#/components/schemas/ExecutionPlanIn"
-     },
-     "priority": {
-      "default": 5,
-      "title": "Priority",
-      "type": "integer"
-     },
-     "project_id": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Project Id"
      },
      "session_id": {
       "anyOf": [
@@ -8373,7 +8397,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/ExecutePlanRequest"
+        "$ref": "#/components/schemas/ClusterSubmitRequest"
        }
       }
      },

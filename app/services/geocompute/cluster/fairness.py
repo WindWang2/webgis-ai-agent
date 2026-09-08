@@ -27,7 +27,9 @@ def fair_pick(
     ``last_dispatch``：tenant_key → 最近派发序（缺省视为 -1，新租户最先）。
 
     算法：租户队列内部按 (-priority, id) 排序；租户按 (最近派发序, 键名)
-    排序后循环轮转，每轮每租户取一个 —— 直到取满 slots 或取空。
+    排序成**固定环**，游标逐格推进、空队列跳过但游标不移除 —— 经典 DRR
+    写法（round1 M5：重算 remaining + 取模会让租户队列中途耗尽时产生
+    系统性跳位偏袒）。同一轮内确定性成立。
     """
     slots = max(0, int(slots))
     if slots == 0 or not candidates:
@@ -42,14 +44,15 @@ def fair_pick(
         by_tenant, key=lambda t: (last.get(t, -1), t)
     )
     picked: list[dict[str, Any]] = []
-    idx = 0
+    cursor = 0
     while len(picked) < slots:
-        remaining = [t for t in tenant_cycle if by_tenant.get(t)]
-        if not remaining:
+        remaining_any = any(by_tenant[t] for t in tenant_cycle)
+        if not remaining_any:
             break
-        tenant = remaining[idx % len(remaining)]
-        picked.append(by_tenant[tenant].pop(0))
-        idx += 1
+        tenant = tenant_cycle[cursor % len(tenant_cycle)]
+        cursor += 1  # 空队列也推进游标（跳过但不移位 —— 无漂移）
+        if by_tenant[tenant]:
+            picked.append(by_tenant[tenant].pop(0))
     return picked
 
 

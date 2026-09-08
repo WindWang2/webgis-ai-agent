@@ -162,6 +162,30 @@ async def lifespan(app: FastAPI):
     # 收敛为 stale（终态但可 retry）。
     stale_sweep_task = asyncio.create_task(_periodic_stale_job_sweep())
 
+    # GeoCompute V6（B1 修复）：cluster coordinator 接线 —— opt-in
+    # （WEBGIS_CLUSTER_COORDINATOR=1），默认关闭时提交端点之外的调度面
+    # 不存在、行为与 V5 一致。run_forever 是阻塞循环（DB 轮询），放
+    # daemon 线程；shutdown 时 stop() 通知退出并取消在跑 run 的本地 token。
+    _cluster_coordinator = None
+    try:
+        from app.services.geocompute.cluster.scheduler import get_coordinator
+
+        _cluster_coordinator = get_coordinator()
+        if _cluster_coordinator is not None:
+            import threading as _threading
+
+            _coord_thread = _threading.Thread(
+                target=_cluster_coordinator.run_forever,
+                name="geocompute-v6-coordinator", daemon=True,
+            )
+            _coord_thread.start()
+            logger.info(
+                "[lifespan] geocompute cluster coordinator started: %s",
+                _cluster_coordinator.coordinator_id,
+            )
+    except Exception as e:  # noqa: BLE001 - coordinator 启动失败不阻断应用
+        logger.warning(f"[lifespan] geocompute cluster coordinator skipped: {e}")
+
     yield
 
     # 关闭后台清理任务
@@ -170,6 +194,12 @@ async def lifespan(app: FastAPI):
         try:
             await bg_task
         except asyncio.CancelledError:
+            pass
+
+    if _cluster_coordinator is not None:
+        try:
+            _cluster_coordinator.stop()
+        except Exception:  # noqa: BLE001 - 停机尽力而为
             pass
 
     # F15-wiring：teardown 前排空 chat fire-and-forget 背景任务（标题生成、

@@ -123,9 +123,12 @@ def queue_for_node(node: ExecutionNode) -> str:
 
 
 def _default_session_factory():
-    from app.services.jobs.worker import _default_session_factory
+    # 必须**调用** jobs 层工厂（返回 Session 实例）—— 返回函数对象本身时
+    # ``with session_factory() as db`` 拿到的是函数，TypeError（V5 既有
+    # 生产缺陷，eager 测试因注入工厂而未暴露；V6 round2 review C3 修复）。
+    from app.services.jobs.worker import _default_session_factory as _jobs_factory
 
-    return _default_session_factory
+    return _jobs_factory()
 
 
 #: 可注入的会话工厂（测试替换为临时 SQLite 工厂）。

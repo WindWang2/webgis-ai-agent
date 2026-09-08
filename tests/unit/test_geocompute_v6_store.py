@@ -111,7 +111,8 @@ class TestLeaseAndFencing:
         assert b.claim_lease(rid, coordinator_id="coord-b", ttl_s=30) is None
         row = a.get_run(rid)
         assert row["status"] == "leased"
-        assert row["coordinator_id"] == "coord-a"
+        # coordinator_id 是控制面键（用户投影剔除）→ internal 投影
+        assert a.get_run_internal(rid)["coordinator_id"] == "coord-a"
         assert row["lease_epoch"] == 1
 
     def test_finish_requires_current_epoch(self, env):
@@ -238,9 +239,10 @@ class TestCancelAndYield:
         assert changed and status == "queued"
         changed2, _ = a.request_cancel(rid)
         assert changed2 is False  # 幂等：旗标已存在
-        epoch = a.claim_lease(rid, coordinator_id="c", ttl_s=30)
-        assert epoch is not None  # 已请求取消的 run 仍可被认领（取消由执行侧收敛）
-        assert a.finish_run(rid, epoch=epoch, status=S.CANCELLED)
+        # m3（round1）：已请求取消的 run 不再被认领 —— cancel sweep 负责把
+        # 排队 run 直接收敛为终态（执行侧心跳只处理在跑 run 的取消）。
+        assert a.claim_lease(rid, coordinator_id="c", ttl_s=30) is None
+        assert a.cancel_flagged() == [rid]
         changed3, status3 = a.request_cancel(rid)
         assert changed3 is False and status3 == "cancelled"  # 终态 no-op
 

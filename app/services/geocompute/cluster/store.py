@@ -34,6 +34,7 @@ from app.services.geocompute.cluster.contracts import (
     DISPATCHABLE_STATUSES,
     LEASED_STATUSES,
     MAX_PLAN_SNAPSHOT_BYTES,
+    MAX_PREEMPTS,
     TERMINAL_STATUSES,
     ClusterRunStatus,
     ResourceClaim,
@@ -59,7 +60,7 @@ __all__ = [
 
 def _default_session_factory():
     # 返回 **Session 实例**（jobs 层同一纪律；sessionmaker 在 SQLAlchemy 2.0
-    # 无上下文协议 —— 与 run_evidence/reuse_index 的 round0 修复同因）。
+    # 无上下文协议 —— run_evidence/reuse_index/durable 的同因缺陷见各自修复）。
     from app.core.database import SessionLocal
 
     return SessionLocal()
@@ -104,6 +105,7 @@ class ClusterRunStore:
         session_id: Optional[str] = None,
         creator_id: Optional[str] = None,
         org_id: Optional[str] = None,
+        project_id: Optional[str] = None,
         tenant_raw: Optional[str] = None,
         project_raw: Optional[str] = None,
         priority: int = RunPriority.NORMAL,
@@ -163,6 +165,7 @@ class ClusterRunStore:
                 session_id=session_id,
                 creator_id=creator_id,
                 org_id=org_id,
+                project_id=project_id,
                 tenant_key=tenant_key,
                 project_key=project_key,
                 priority=RunPriority.coerce(priority),
@@ -220,6 +223,15 @@ class ClusterRunStore:
         耗尽（≥ max_attempts，理论上有 reclaim 兜底）同样拒绝认领。
         返回新 epoch；竞争失败/不可派发 → None。
         """
+        # 账本 scope 行预建（独立事务；业务事务内只读检查，无 session 中毒）
+        if ledger is not None:
+            internal = self.get_run_internal(run_id)
+            if internal is not None:
+                ledger.ensure_scopes(
+                    _scope_keys_for("global", internal.get("tenant_key"),
+                                    internal.get("project_key")),
+                    factory=self._factory,
+                )
         with self._factory() as db:
             row = db.execute(
                 select(_Run).where(_Run.run_id == run_id)
@@ -234,6 +246,8 @@ class ClusterRunStore:
                     _Run.id == row.id,
                     _Run.status.in_([s.value for s in DISPATCHABLE_STATUSES]),
                     _Run.lease_epoch == row.lease_epoch,
+                    # 已请求取消的 run 不再认领（cancel sweep 负责收敛终态）
+                    _Run.cancel_requested_at.is_(None),
                 )
                 .values(
                     status=ClusterRunStatus.LEASED.value,
@@ -315,6 +329,14 @@ class ClusterRunStore:
         """
         if status not in TERMINAL_STATUSES and status != ClusterRunStatus.PREEMPTED:
             return False
+        if ledger is not None:
+            internal = self.get_run_internal(run_id)
+            if internal is not None:
+                ledger.ensure_scopes(
+                    _scope_keys_for("global", internal.get("tenant_key"),
+                                    internal.get("project_key")),
+                    factory=self._factory,
+                )
         with self._factory() as db:
             row = db.execute(
                 select(_Run).where(_Run.run_id == run_id)
@@ -331,6 +353,13 @@ class ClusterRunStore:
             if status == ClusterRunStatus.PREEMPTED:
                 # 抢占是治理行为不是失败：单独计数（livelock 保险丝的数据源）
                 values["preempts"] = _Run.preempts + 1
+                if int(row.preempts or 0) + 1 >= MAX_PREEMPTS:
+                    # 保险丝（contracts 承诺的语义）：抢占次数达到上界 →
+                    # 终态 failed[PREEMPT_EXHAUSTED]，绝不无限自噬。
+                    values["status"] = ClusterRunStatus.FAILED.value
+                    values["error_code"] = "PREEMPT_EXHAUSTED"
+                    values["terminal_at"] = now
+                    status = ClusterRunStatus.FAILED
             rowcount = db.execute(
                 update(_Run)
                 .where(
@@ -342,7 +371,10 @@ class ClusterRunStore:
             ).rowcount
             if not rowcount:
                 return False
-            if ledger is not None and status != ClusterRunStatus.PREEMPTED:
+            if ledger is not None:
+                # 预留生命周期 = lease 生命周期：终态与 PREEMPTED（回队重排）
+                # 都在此精确归还 —— 下次认领重新 reserve。否则 requeue 覆写
+                # reserved_* 会把上一轮预留永久悬空（round2 C2 泄漏）。
                 ledger.release_claims(db, _reserved_claims_from_row(row))
                 db.execute(
                     update(_Run)
@@ -354,7 +386,12 @@ class ClusterRunStore:
 
     def requeue_preempted(self, run_id: str, *, epoch: int) -> bool:
         """PREEMPTED → QUEUED（由 coordinator 在记录 PREEMPTED 后立即执行；
-        分两步是为了让客户端能看到「被抢占」可驻留态）。"""
+        分两步是为了让客户端能看到「被抢占」可驻留态）。
+
+        **必须**清除 yield_requested_at：旗标是让出请求的一次性指令，
+        残留会让下一 attempt 的心跳立即再次让出 → 无限抢占自噬
+        （round2 review C1 livelock）。
+        """
         with self._factory() as db:
             rowcount = db.execute(
                 update(_Run)
@@ -366,6 +403,7 @@ class ClusterRunStore:
                 .values(status=ClusterRunStatus.QUEUED.value,
                         coordinator_id=None,
                         lease_expires_at=None,
+                        yield_requested_at=None,
                         updated_at=_utcnow())
             ).rowcount
             db.commit()
@@ -386,6 +424,19 @@ class ClusterRunStore:
         """
         now = now or _utcnow()
         outcomes: list[dict[str, str]] = []
+        if ledger is not None:
+            with self._factory() as db:
+                keys = {
+                    k
+                    for r in db.execute(
+                        select(_Run.tenant_key, _Run.project_key)
+                        .where(_Run.status.in_(
+                            [s.value for s in LEASED_STATUSES]))
+                        .limit(max(1, int(limit)) * 4)
+                    ).all()
+                    for k in _scope_keys_for("global", r[0], r[1])
+                }
+                ledger.ensure_scopes(keys, factory=self._factory)
         with self._factory() as db:
             rows = db.execute(
                 select(_Run)
@@ -453,16 +504,20 @@ class ClusterRunStore:
                 return False, row.status
             if row.cancel_requested_at is not None:
                 return False, row.status
-            db.execute(
+            # UPDATE 同时 guard 状态：SELECT→UPDATE 之间落入终态时旗标
+            # 不写（终态 run 的取消是 no-op，与 docstring 一致；round1 m1）
+            changed = db.execute(
                 update(_Run)
                 .where(
                     _Run.id == row.id,
                     _Run.cancel_requested_at.is_(None),
+                    _Run.status.in_([s.value for s in DISPATCHABLE_STATUSES]
+                                    + [s.value for s in LEASED_STATUSES]),
                 )
                 .values(cancel_requested_at=_utcnow(), updated_at=_utcnow())
-            )
+            ).rowcount
             db.commit()
-            return True, row.status
+            return bool(changed), row.status
 
     def cancel_flagged(self, *, limit: int = 32) -> list[str]:
         """取消收敛 sweep：cancel_requested_at 已置位的**未派发** run →
@@ -547,7 +602,9 @@ class ClusterRunStore:
                 "plan_snapshot": row.plan_snapshot,
                 "creator_id": row.creator_id,
                 "org_id": row.org_id,
+                "project_id": row.project_id,
                 "project_key": row.project_key,
+                "coordinator_id": row.coordinator_id,
             })
             return proj
 
@@ -597,14 +654,46 @@ class ClusterRunStore:
             ).scalar_one())
 
     def tenant_last_dispatch(self) -> dict[str, int]:
-        """租户最近派发序（fairness 的可重建轮转状态；无隐藏内存态）。"""
+        """租户最近派发序（fairness 的可重建轮转状态；无隐藏内存态）。
+
+        只聚合**非终态**行：终态行有 retention 清理（purge_terminal），
+        全表聚合会随历史单调恶化 tick 热路径（round2 M1）。租户全部 run
+        终态后轮转位归零 —— 新租户优先，公平语义不受影响。
+        """
         with self._factory() as db:
             rows = db.execute(
                 select(_Run.tenant_key, func.max(_Run.dispatch_seq))
-                .where(_Run.tenant_key.is_not(None))
+                .where(
+                    _Run.tenant_key.is_not(None),
+                    _Run.status.notin_([s.value for s in TERMINAL_STATUSES]),
+                )
                 .group_by(_Run.tenant_key)
             ).all()
             return {tenant: int(seq or 0) for tenant, seq in rows}
+
+    def purge_terminal(self, *, older_than_s: float, limit: int = 256) -> int:
+        """终态行 retention（round2 M1）：run 生命周期真相有界，历史证据
+        仍在 geocompute_run_evidence（append-once）—— 这里只清控制面行。"""
+        cutoff = _utcnow() - timedelta(seconds=max(60.0, float(older_than_s)))
+        with self._factory() as db:
+            # PG 无 DELETE ... LIMIT —— 先选 id 再按 id 删（可移植、有界）
+            ids = db.execute(
+                select(_Run.id)
+                .where(
+                    _Run.status.in_([s.value for s in TERMINAL_STATUSES]),
+                    _Run.terminal_at.is_not(None),
+                    _Run.terminal_at < cutoff,
+                )
+                .order_by(_Run.terminal_at.asc())
+                .limit(max(1, int(limit)))
+            ).scalars().all()
+            if not ids:
+                return 0
+            deleted = db.execute(
+                delete(_Run).where(_Run.id.in_(ids))
+            ).rowcount
+            db.commit()
+            return int(deleted or 0)
 
     # ---------------------------------------------------------- workers
 
@@ -833,31 +922,48 @@ class ClusterLedger:
     def enforcing(self) -> bool:
         return self._enforcing
 
+    def ensure_scopes(self, scope_keys: Iterable[str],
+                      *, factory: Optional[Callable[[], Any]] = None) -> None:
+        """预建 scope 行（**独立短事务**，在 claim/finish/reclaim 事务之前）。
+
+        ``factory``：调用方（store）的会话工厂 —— 账本必须与 run 行同库
+        （默认构造的 ledger 在测试/多库环境下会指向错误的数据库）。
+
+        INSERT 竞争（并发首用）在此回滚本辅助会话并复检 —— 决不让
+        IntegrityError 毒化调用方的业务事务（round1 M1：SQLAlchemy 2.0
+        flush 失败后同 session 必抛 PendingRollbackError）。
+        """
+        target = factory or self._factory
+        for scope_key in set(scope_keys):
+            with target() as db:
+                if db.execute(
+                    select(_Usage.scope_key).where(_Usage.scope_key == scope_key)
+                ).scalar_one_or_none() is not None:
+                    continue
+                limits = self._limits.get(scope_key) or self._limits.get(
+                    scope_key.split(":", 1)[0],
+                    {"rows": None, "bytes": None, "units": None},
+                )
+                db.add(_Usage(
+                    scope_key=scope_key,
+                    usage_rows=0, usage_bytes=0, usage_units=0,
+                    limit_rows=limits.get("rows"),
+                    limit_bytes=limits.get("bytes"),
+                    limit_units=limits.get("units"),
+                ))
+                try:
+                    db.commit()
+                except Exception:  # noqa: BLE001 - 并发首用竞争 → 对方已建
+                    db.rollback()
+
     def _ensure_scope_row(self, db: Any, scope_key: str) -> bool:
-        """首次使用的 scope 建行（INSERT-if-missing；**绝不**用 merge ——
-        那会把已有用量重置为 0）。返回 False = 建行竞争失败（调用方按
-        enforcing/advisory 语义处理）。"""
+        """业务事务内的 scope 行检查 —— **只读**，绝不 INSERT（预建见
+        ``ensure_scopes``）。缺席（罕见竞争）→ False，调用方按
+        enforcing/advisory 语义处理；无 flush 失败即无 session 中毒。"""
         exists = db.execute(
             select(_Usage.scope_key).where(_Usage.scope_key == scope_key)
         ).scalar_one_or_none()
-        if exists is not None:
-            return True
-        limits = self._limits.get(scope_key) or self._limits.get(
-            scope_key.split(":", 1)[0],
-            {"rows": None, "bytes": None, "units": None},
-        )
-        try:
-            db.add(_Usage(
-                scope_key=scope_key,
-                usage_rows=0, usage_bytes=0, usage_units=0,
-                limit_rows=limits.get("rows"),
-                limit_bytes=limits.get("bytes"),
-                limit_units=limits.get("units"),
-            ))
-            db.flush()
-            return True
-        except Exception:  # noqa: BLE001 - 唯一键竞争（并发首用）→ 放弃本轮
-            return False
+        return exists is not None
 
     def _scope_limit(self, scope_key: str, dim: str) -> Optional[int]:
         family = scope_key.split(":", 1)[0] if ":" in scope_key else scope_key
@@ -930,6 +1036,26 @@ class ClusterLedger:
 # 私有别名已移至模块顶部 import（避免底部 import 的 lint 噪声）。
 
 
+def _scope_keys_for(global_key: str, tenant_key: Optional[str],
+                    project_key: Optional[str]) -> list[str]:
+    keys = [global_key]
+    if tenant_key:
+        keys.append(tenant_key)
+    if project_key:
+        keys.append(project_key)
+    return keys
+
+
+def _estimate_from_snapshot(plan_snapshot: Optional[dict[str, Any]]
+                            ) -> tuple[int, int]:
+    est_rows = est_bytes = 0
+    for node in (plan_snapshot or {}).get("nodes") or []:
+        est = node.get("estimate") or {}
+        est_rows += int(est.get("rows") or 0)
+        est_bytes += int(est.get("bytes") or 0)
+    return est_rows, est_bytes
+
+
 def _claims_for_row(row: Any, *, units: int) -> dict[str, ResourceClaim]:
     """run 行 → 账本 claim 集（global + tenant + project；估计值钳上限防止
     预留值本身超限造成永久锁死 —— 无自 DoS）。"""
@@ -987,7 +1113,8 @@ def _run_projection(row: Any) -> dict[str, Any]:
         "attempts": row.attempts,
         "preempts": row.preempts,
         "lease_epoch": row.lease_epoch,
-        "coordinator_id": row.coordinator_id,
+        # coordinator_id 是内部拓扑（hostname:pid），不进用户投影
+        # （控制面扫描投影 _scan_projection 保留）
         "cancel_requested_at": row.cancel_requested_at.isoformat() + "Z"
         if row.cancel_requested_at else None,
         "yield_requested_at": row.yield_requested_at.isoformat() + "Z"
@@ -1006,6 +1133,8 @@ def _scan_projection(row: Any) -> dict[str, Any]:
     proj.update({
         "id": row.id,
         "tenant_key": row.tenant_key,
+        # 内部拓扑键：仅控制面调度/leader 视图消费，绝不进用户 REST 投影
+        "coordinator_id": row.coordinator_id,
         "dispatch_seq": row.dispatch_seq,
         "started_at": row.started_at.isoformat() + "Z" if row.started_at else None,
         "lease_expires_at": (

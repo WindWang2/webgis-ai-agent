@@ -38,10 +38,11 @@ queued/preempted/leased/running → cancelled（持久取消旗标，任意进�
 
 - **Leadership**：`geocompute_workers` 行上的 epoch CAS 当选；续约带
   epoch + 「无其他在任者」互斥校验（旧 leader 续约失败即卸任）。
-- **tick**（`ClusterCoordinator.tick()`）：renew leadership → reclaim 过期
-  lease（attempt 预算内回队，耗尽 failed[WORKER_LOSS]）→ cancel sweep
-  （排队 run 的取消旗标直接收敛终态）→ prune 失联 worker → fairness 派发
-  → 抢占判定。
+- **tick**（`ClusterCoordinator.tick()`）：acquire/renew leadership（续约
+  失败立即卸任，绝不带过期权威做破坏性 sweep）→ reclaim 过期 lease
+  （attempt 预算内回队，耗尽 failed[WORKER_LOSS]）→ cancel sweep（排队
+  run 的取消旗标直接收敛终态）→ prune 失联 worker → 终态行 retention →
+  fairness 派发 → 抢占判定（受害者仅限本 coordinator 的在跑 run）。
 - **执行**：认领（含账本 reserve）→ 本地线程 `run_plan_sync` 全链路
   （governor/预算/复用/分类重试不变）→ fenced 终态落库。
 - **心跳 watchdog**（每 run 一线程，0.5s）：续 lease；读取消/抢占旗标；
@@ -76,6 +77,8 @@ queued/preempted/leased/running → cancelled（持久取消旗标，任意进�
 | `WEBGIS_COORDINATOR_SLOTS` | 2 | 本进程并发执行的 run 数（防 OOM 第一道闸） |
 | `WEBGIS_CLUSTER_LEDGER_ENFORCING` | 未设（advisory） | `=1` 集群账本强制准入（显式部署决策） |
 | `WEBGIS_WORKER_PROFILE_SLOTS` | 全 profile ×1 | celery worker 的 profile 槽位 JSON |
+| `WEBGIS_CLUSTER_PREEMPT_WAIT_S` | 5.0 | 高优先级等待多久才允许发起抢占 |
+| `WEBGIS_CLUSTER_RUN_RETENTION_H` | 24 | 终态 run 行保留时长（小时；证据快照不受影响） |
 
 ## 与 V5 缺陷的收敛
 
@@ -101,3 +104,8 @@ queued/preempted/leased/running → cancelled（持久取消旗标，任意进�
    最坏是重复 reclaim 尝试被 CAS 拒绝。
 4. **_async_bridge 进程级串行锁**未动（ADR-0096 Deferred，V7 候选）。
 5. **trace 仍 process-local**（1024 条 ring）；控制面事件走结构化日志。
+6. **多机时钟偏移**：lease TTL 的写与过期判定用各进程本机时钟
+   （naive UTC）—— 偏移直接换算成误 reclaim/迟 reclaim；与 Celery
+   visibility timeout 同级取舍，部署需 NTP。
+7. **抢占的等待时间**从提交时刻（created_at）起算；被抢占 run 的已完成
+   durable 节点经复用索引减损，进程内节点会重算。

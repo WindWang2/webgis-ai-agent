@@ -21,11 +21,12 @@
   (worker-side row caps no longer rely on the hard node cap alone).
 
 ### Fixed
-- GeoCompute default session factories (`run_evidence`, `reuse_index`) returned
-  a `sessionmaker` instead of a `Session`, which is not a context manager on
-  SQLAlchemy 2.0 — production default-path run evidence snapshots and
-  cross-process reuse records were silently dropped (fail-open). They now
-  return a session instance (same discipline as the jobs subsystem).
+- GeoCompute default session factories (`run_evidence`, `reuse_index`,
+  `durable`) handed back a `sessionmaker`/function object instead of a
+  `Session`, which is not a context manager on SQLAlchemy 2.0 — production
+  default-path run evidence snapshots, cross-process reuse records, and
+  durable-node await polling silently failed (fail-open). They now return a
+  session instance (same discipline as the jobs subsystem).
 
 ## [Unreleased] - 2026-09-07
 
