@@ -26,6 +26,7 @@ import { API_BASE } from '@/lib/api/config';
 import { apiFetch, isApiError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
 import { hydrateMvtLayers } from '@/lib/store/layer-data';
+import { getComparisonExport } from '@/lib/map/comparison-export-registry';
 import { metersPerPixelAt } from './meters-per-pixel';
 import {
   graticuleIntervalForZoom,
@@ -1211,6 +1212,55 @@ export async function composeExportSpec(
   );
 }
 
+/**
+ * W8（ADR-0118）：swipe 对比导出组合 —— 副图 canvas 按 position 裁剪画在
+ * 右侧（与 live clip-path inset(0 0 0 position*100%) 同侧同几何），并画
+ * 分界线。主图/副图裁剪分数对齐（A4 裁剪下两图同一视口分数区域）。
+ * @returns false = 副图 canvas 不可用（未渲染/跨域污染）—— 调用方回退
+ *          主图单图导出并发 comparison_second_view_not_exported 诊断。
+ */
+export function composeComparisonOnExportCanvas(
+  exportCanvas: HTMLCanvasElement,
+  comparison: {
+    getSecondCanvas: () => HTMLCanvasElement | null;
+    kind: string;
+    position: number;
+  },
+  crop: { srcX: number; srcY: number; srcW: number; srcH: number },
+  base: { width: number; height: number },
+): boolean {
+  const second = comparison.getSecondCanvas();
+  const ctx = exportCanvas.getContext('2d');
+  if (!second || second.width === 0 || second.height === 0 || !ctx) return false;
+  // 退化位置防御（与 clampSwipePosition 同方向的兜底，导出件至少 2% 可见）
+  const pos = Math.min(0.98, Math.max(0.02, comparison.position || 0));
+  // 主图裁剪分数（A4 居中裁剪）→ 同一分数应用到副图，保持地理对齐
+  const fx = crop.srcX / base.width;
+  const fy = crop.srcY / base.height;
+  const fw = crop.srcW / base.width;
+  const fh = crop.srcH / base.height;
+  ctx.drawImage(
+    second,
+    second.width * (fx + fw * pos),
+    second.height * fy,
+    second.width * fw * (1 - pos),
+    second.height * fh,
+    exportCanvas.width * pos,
+    0,
+    exportCanvas.width * (1 - pos),
+    exportCanvas.height,
+  );
+  // 分界线（白描边 + 深色芯 —— 亮暗主题都可辨）
+  const dividerX = Math.round(exportCanvas.width * pos);
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.fillRect(dividerX - 1, 0, 2, exportCanvas.height);
+  ctx.fillStyle = 'rgba(15,23,42,0.6)';
+  ctx.fillRect(dividerX, 0, 1, exportCanvas.height);
+  ctx.restore();
+  return true;
+}
+
 export async function runExport(
   deps: ExportDeps,
   req: ExportRequest,
@@ -1295,11 +1345,39 @@ export async function runExport(
         : targetPixelRatio > 1
           ? targetPixelRatio
           : 1;
-    const { canvas: exportCanvas } = prepareExportCanvas(baseCanvas, {
+    const prepare = prepareExportCanvas(baseCanvas, {
       paperSize: paperSize as any,
       orientation: orientation as any,
       dpi: 96,
     });
+    const exportCanvas = prepare.canvas;
+
+    // W8（ADR-0118）：swipe 对比导出组合 —— 副图视图按 position 裁剪进
+    // 导出件 + 分界线（此前对比态导出静默只截主图）。chrome 绘制在前，
+    // 整饰（标题/图例）不受副图覆盖影响。SVG 真矢量件的数据层来自 MapSpec
+    // 全幅编译（不含副图位图视图）→ 如实披露副图未进导出件，不假装组合。
+    const comparisonDegradations: ExportDegradation[] = [];
+    const comparison = getComparisonExport();
+    if (comparison) {
+      if (fmtEarly === 'svg') {
+        comparisonDegradations.push({
+          code: 'comparison_second_view_not_exported',
+          detail: '矢量 SVG 不含对比副图视图（数据层来自 MapSpec）',
+        });
+      } else {
+        const composed = composeComparisonOnExportCanvas(
+          exportCanvas,
+          comparison,
+          { srcX: prepare.srcX, srcY: prepare.srcY, srcW: prepare.srcW, srcH: prepare.srcH },
+          { width: baseCanvas.width, height: baseCanvas.height },
+        );
+        comparisonDegradations.push(
+          composed
+            ? { code: 'comparison_export_composed', detail: `${Math.round(comparison.position * 100)}%` }
+            : { code: 'comparison_second_view_not_exported', detail: '副图画布未渲染或不可读，仅导出主图视图' },
+        );
+      }
+    }
 
     const storeState = getHudState();
     const { legendSpec, thematicLayer, heatmapLegend } = discoverLegendData(
@@ -1493,8 +1571,11 @@ export async function runExport(
     const fmt = fmtEarly;
 
     // Wave 9：显式降级汇入导出后系统消息（此前 chart/table 面板拉取失败
-    // 静默缺席 —— 用户不知道导出件里少了东西）。
-    const chromeDegradations = chromeModel?.degradations ?? [];
+    // 静默缺席 —— 用户不知道导出件里少了东西）。W8：对比组合/回退诊断并入。
+    const chromeDegradations = [
+      ...(chromeModel?.degradations ?? []),
+      ...comparisonDegradations,
+    ];
 
     if (fmt === 'svg') {
       // V5（ADR-0118 W5）：真矢量优先 —— 孪生编译器产出数据层矢量要素 +
