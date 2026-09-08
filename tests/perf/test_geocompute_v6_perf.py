@@ -33,6 +33,26 @@ def _celery_offline(monkeypatch):
     monkeypatch.setitem(celery_app.conf, "task_always_eager", True)
 
 
+@pytest.fixture(autouse=True)
+def scan_stub(monkeypatch):
+    """SOURCE_SCAN 测试桩（与 V6 调度测试同惯例）：内联 features 返回。
+
+    不打桩时 run 走真实处理器 → 快速 failed（与测试读状态竞速 → B3 假阳性）。
+    """
+    import time as _time
+
+    from app.services.geocompute.ops import REGISTRY
+    from app.services.geocompute.plan import NodeCategory
+
+    def _scan(ctx, node, payloads):
+        params = node.parameters
+        if params.get("_sleep"):
+            _time.sleep(params["_sleep"])
+        return {"features": params.get("features") or [], "metadata": {}}
+
+    monkeypatch.setitem(REGISTRY, NodeCategory.SOURCE_SCAN, _scan)
+
+
 @pytest.fixture()
 def env(tmp_path):
     eng = create_engine(f"sqlite:///{tmp_path / 'v6-perf.db'}",
@@ -138,13 +158,17 @@ class TestStructuralBudgets:
                                    tick_interval_s=0.01)
         rid = _submit_many(store, 1)[0]
         ticks = 0
+        history: list[dict] = []
         while ticks < 3:
-            coord.tick()
+            stats = coord.tick()
             ticks += 1
-            if store.get_run(rid)["status"] in {"leased", "running",
-                                                "completed"}:
+            status = store.get_run(rid)["status"]
+            history.append({"tick": ticks, "status": status, **stats})
+            if status in {"leased", "running", "completed"}:
                 break
-        assert ticks <= 2, f"派发延迟 {ticks} ticks > 2（违反派发预算）"
+        assert ticks <= 2, (
+            f"派发延迟 {ticks} ticks > 2（违反派发预算）；tick 历史={history}"
+        )
 
     def test_b4_inflight_handles_bounded_by_slots(self, env):
         """B4：在飞句柄 ≤ local_slots（无未bounded集合 —— OOM 防线）。"""
