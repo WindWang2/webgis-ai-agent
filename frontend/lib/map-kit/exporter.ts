@@ -1159,14 +1159,21 @@ export function discoverLegendData(layers: any[]): LegendData {
   };
 }
 
-async function uploadExport(
+export async function uploadExport(
   blob: Blob,
   filename: string,
   title?: string,
+  degradations?: ExportDegradation[],
 ): Promise<{ url: string; filename: string }> {
   const form = new FormData();
   form.append('file', blob, filename);
   if (title) form.append('title', title);
+  // V5（ADR-0118 D6）：诊断随成品上传 —— 服务端按权威词表校验后持久化
+  // sidecar（POST /api/v1/export 的 render_diagnostics Form 字段），
+  // 导出降级证据获得服务端锚点，不再只存在于一次对话系统消息里。
+  if (degradations && degradations.length > 0) {
+    form.append('render_diagnostics', JSON.stringify(degradations));
+  }
 
   // 走统一 transport：rawBody 走 FormData，transport 不会 set Content-Type
   // (由浏览器自动加 multipart boundary)；typed ApiError 携带 FastAPI detail。
@@ -1405,7 +1412,10 @@ async function runFrameExport(
         onDegradation: (d) => pdfDegradations.push(d),
       },
     );
-    const upload = await uploadExport(pdfBlob, 'export-atlas.pdf', ctx.title);
+    const upload = await uploadExport(
+      pdfBlob, 'export-atlas.pdf', ctx.title,
+      [...composed.degradations, ...pdfDegradations],
+    );
     recordExport(getHudState, ctx.title, upload.filename, 'pdf', pdfBlob.size);
     getHudState().setPendingSystemMessage(
       `[系统通知] 图集 PDF \`${ctx.title || '未命名'}\` 已成功生成` +
@@ -1434,7 +1444,11 @@ async function runFrameExport(
 
   if (fmt === 'svg') {
     const svgBlob = buildSvgWrapper(grid, ctx.title, dataUrl);
-    const upload = await uploadExport(svgBlob, 'export-atlas.svg', ctx.title);
+    const upload = await uploadExport(
+      svgBlob, 'export-atlas.svg', ctx.title,
+      [...composed.degradations,
+       { code: 'vector_svg_fallback_raster', detail: '多帧拼板为位图合成' }],
+    );
     recordExport(getHudState, ctx.title, upload.filename, 'svg', svgBlob.size);
     getHudState().setPendingSystemMessage(
       `[系统通知] 多帧拼板 SVG \`${ctx.title || '未命名'}\` 已成功生成` +
@@ -1449,7 +1463,7 @@ async function runFrameExport(
 
   const res = await fetch(dataUrl);
   const blob = await res.blob();
-  const upload = await uploadExport(blob, 'export-atlas.png', ctx.title);
+  const upload = await uploadExport(blob, 'export-atlas.png', ctx.title, composed.degradations);
   recordExport(getHudState, ctx.title, upload.filename, 'png', blob.size);
   getHudState().setPendingSystemMessage(
     `[系统通知] 多帧拼板图 \`${ctx.title || '未命名'}\` 已成功生成` +
@@ -1833,7 +1847,9 @@ export async function runExport(
       }
       const rasterFallback = svgDegradations.some((d) => d.code === 'vector_svg_fallback_raster');
       const svgBlob = new Blob([svgText], { type: 'image/svg+xml' });
-      const upload = await uploadExport(svgBlob, 'export.svg', title);
+      const upload = await uploadExport(
+        svgBlob, 'export.svg', title, [...chromeDegradations, ...svgDegradations],
+      );
       recordExport(getHudState, title, upload.filename, 'svg', svgBlob.size);
       getHudState().setPendingSystemMessage(
         `[系统通知] 专题地图 SVG \`${title || '未命名'}\` 已成功生成` +
@@ -1870,7 +1886,9 @@ export async function runExport(
           textLayer: pdfVectorText ? 'vector' : 'skip',
         },
       );
-      const upload = await uploadExport(pdfBlob, 'export.pdf', title);
+      const upload = await uploadExport(
+        pdfBlob, 'export.pdf', title, [...chromeDegradations, ...pdfDegradations],
+      );
       recordExport(getHudState, title, upload.filename, 'pdf', pdfBlob.size);
       getHudState().setPendingSystemMessage(
         `[系统通知] 专题底图 PDF \`${title || '未命名'}\` 已成功生成` +
@@ -1884,7 +1902,7 @@ export async function runExport(
     } else {
       const res = await fetch(dataUrl);
       const blob = await res.blob();
-      const upload = await uploadExport(blob, 'export.png', title);
+      const upload = await uploadExport(blob, 'export.png', title, chromeDegradations);
       recordExport(getHudState, title, upload.filename, 'png', blob.size);
       getHudState().setPendingSystemMessage(
         `[系统通知] 专题地图 \`${title || '未命名'}\` 已成功排版合成，` +
