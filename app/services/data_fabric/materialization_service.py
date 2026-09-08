@@ -273,6 +273,8 @@ class MaterializationService:
         session_id: str,
         table: Any,
         title: str,
+        *,
+        row_group_size: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Arrow Table → GeoParquet 磁盘工件（V6：一等台账公民 + 内容身份）。
 
@@ -321,7 +323,9 @@ class MaterializationService:
 
         def _write() -> int:
             path.parent.mkdir(parents=True, exist_ok=True)
-            table_to_geoparquet(table, str(path), compression="zstd")
+            table_to_geoparquet(
+                table, str(path), compression="zstd", row_group_size=row_group_size,
+            )
             return path.stat().st_size
 
         size = await asyncio.to_thread(_write)
