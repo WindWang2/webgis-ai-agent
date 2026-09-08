@@ -88,6 +88,10 @@ class ExtensionRecord:
     # Round-1 审计 minor14：发现期诊断基线。validate_extension 由此重算，
     # 保证重复校验幂等、失败后的重试不被陈旧 error 永久锁死。
     baseline_diagnostics: tuple[ExtensionDiagnostic, ...] = ()
+    # ── V2（ADR-0105）：worker 隔离执行 ──────────────────────────────
+    # worker 模式下非 None；in-process 模式恒为 None。
+    worker: Any = None
+    worker_crash_count: int = 0
 
     @property
     def extension_id(self) -> str:
@@ -493,6 +497,8 @@ class ExtensionHost:
                 )
 
         record.state = ExtensionState.LOADING
+        if record.manifest.is_worker_mode:
+            return self._activate_worker(record, warnings)
         ledger = ProjectionLedger(extension_id=extension_id)
         grants = grants_for(extension_id, self._policy.grants)
         context = ExtensionContext(
@@ -675,6 +681,188 @@ class ExtensionHost:
         )
         return list(record.diagnostics)
 
+    # ── V2：worker 隔离执行（ADR-0105）────────────────────────────────
+    def _activate_worker(
+        self, record: ExtensionRecord, warnings: list[ExtensionDiagnostic]
+    ) -> list[ExtensionDiagnostic]:
+        """worker 模式激活：spawn 隔离进程，宿主只投影 proxy 工具。
+
+        与 in-process 同样的原子性：任何失败 → 已注册 proxy 逆序回滚 →
+        FAILED；worker 进程保证被回收。声明对账沿用同一规则（undeclared
+        = error；declared but missing = warning）。
+        """
+        from .ledger import ProjectionLedger
+        from .worker.client import WorkerProcess
+
+        manifest = record.manifest
+        execution = manifest.execution
+        assert execution is not None
+        ledger = ProjectionLedger(extension_id=record.extension_id)
+        worker = WorkerProcess(
+            pack_dir=record.path,
+            extension_id=manifest.id,
+            namespace=manifest.namespace,
+            name=manifest.name,
+            fingerprint=record.fingerprint or "",
+            grants=sorted(self._policy.grants.get(manifest.id, frozenset())),
+            settings=dict(self._policy.extension_settings.get(manifest.id, {})),
+            startup_timeout_s=execution.startup_timeout_s,
+            call_timeout_s=execution.call_timeout_s,
+        )
+        try:
+            worker.start()
+        except ExtensionPlatformError as exc:
+            record.worker_crash_count += 1
+            return self._fail_worker_activation(record, warnings, exc.diagnostic)
+        # 声明对账：worker 握手申报 vs manifest 声明（undeclared = error）。
+        declared = {manifest.namespaced_tool_name(t.name) for t in manifest.tools}
+        offered = {str(t.get("name")) for t in worker.tools}
+        undeclared = sorted(offered - declared)
+        if undeclared:
+            worker.shutdown()
+            return self._fail_worker_activation(
+                record,
+                warnings,
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.UNDECLARED_REGISTRATION,
+                    f"worker offered undeclared tools {undeclared} "
+                    "(declaration and handshake must match; fail closed)",
+                    extension_id=record.extension_id,
+                ),
+            )
+        missing = sorted(declared - offered)
+        if missing:
+            warnings.append(
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                    f"declared tools {missing} were not offered by the worker "
+                    "(flag-gated?)",
+                    extension_id=record.extension_id,
+                )
+            )
+        # proxy 投影（经台账，保证失败逆序回滚）。
+        for tool in worker.tools:
+            projected = str(tool.get("name"))
+            kwargs = dict(tool.get("kwargs") or {})
+            description = str(tool.get("description") or "")
+            proxy = self._make_worker_proxy(record, worker, projected, execution.call_timeout_s)
+            try:
+                self._tool_registry.register(projected, description, proxy, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - 归一为投影失败
+                worker.shutdown()
+                return self._fail_worker_activation(
+                    record,
+                    warnings + ledger.rollback(),
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.REGISTRY_PROJECTION_FAILED,
+                        f"worker tool {projected!r} rejected by ToolRegistry: {exc}",
+                        extension_id=record.extension_id,
+                    ),
+                )
+            ledger.record("tool", projected, lambda n=projected: self._tool_registry.unregister(n))
+            logger.info("extension %s projected worker tool %s", record.extension_id, projected)
+        # 健康门：带超时 RPC（worker 模式不再有 unbounded sync health）。
+        try:
+            health_report = worker.health()
+        except ExtensionPlatformError as exc:
+            worker.shutdown()
+            return self._fail_worker_activation(
+                record, warnings + ledger.rollback(), exc.diagnostic
+            )
+        if health_report.get("status") == "unhealthy":
+            worker.shutdown()
+            return self._fail_worker_activation(
+                record,
+                warnings + ledger.rollback(),
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.HEALTH_UNHEALTHY,
+                    f"post-activation worker health unhealthy: {health_report.get('messages')}",
+                    extension_id=record.extension_id,
+                ),
+            )
+        if health_report.get("status") == "degraded":
+            warnings.append(
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.HEALTH_CHECK_FAILED,
+                    f"worker health degraded: {health_report.get('messages')}",
+                    extension_id=record.extension_id,
+                )
+            )
+        record.worker = worker
+        record.ledger = ledger
+        record.fingerprint_at_activation = record.fingerprint
+        record.diagnostics = warnings
+        record.state = ExtensionState.DEGRADED if warnings else ExtensionState.ACTIVE
+        logger.info(
+            "extension %s activated in worker mode (state=%s, pid=%s)",
+            record.extension_id, record.state.value, worker.pid,
+        )
+        return list(record.diagnostics)
+
+    def _fail_worker_activation(
+        self,
+        record: ExtensionRecord,
+        diagnostics: list[ExtensionDiagnostic],
+        error: ExtensionDiagnostic,
+    ) -> list[ExtensionDiagnostic]:
+        """worker 激活失败：无台账可回（proxy 注册前失败或已回滚）。"""
+        record.state = ExtensionState.FAILED
+        record.diagnostics = list(diagnostics) + [error]
+        logger.warning(
+            "extension %s worker activation failed: %s", record.extension_id, error.message
+        )
+        return list(record.diagnostics)
+
+    def _make_worker_proxy(
+        self, record: ExtensionRecord, worker: Any, projected: str, call_timeout_s: float
+    ) -> Any:
+        """生成宿主侧工具代理：转发到 worker，崩溃/超时触发隔离语义。"""
+        host = self
+
+        def _worker_proxy(**kwargs: Any) -> Any:
+            try:
+                return worker.call(projected, kwargs, timeout=call_timeout_s)
+            except ExtensionPlatformError as exc:
+                if exc.diagnostic.code in (
+                    DiagnosticCode.WORKER_CRASHED,
+                    DiagnosticCode.WORKER_CALL_TIMEOUT,
+                ):
+                    host._on_worker_death(record, exc.diagnostic)
+                raise
+
+        _worker_proxy.__name__ = projected
+        _worker_proxy.__qualname__ = projected
+        return _worker_proxy
+
+    def _on_worker_death(
+        self, record: ExtensionRecord, diagnostic: ExtensionDiagnostic
+    ) -> None:
+        """worker 崩溃/超时：回滚投影 → COMPATIBLE（可重新激活）；
+        连续崩溃达到上限 → QUARANTINED（运维介入）。"""
+        if record.worker is not None:
+            record.worker.kill()
+            record.worker = None
+        record.worker_crash_count += 1
+        logger.warning(
+            "extension %s worker died: %s (crashes=%d/%d)",
+            record.extension_id,
+            diagnostic.message,
+            record.worker_crash_count,
+            self._policy.max_worker_crashes,
+        )
+        if record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
+            self.deactivate(record.extension_id)
+        if record.worker_crash_count >= self._policy.max_worker_crashes:
+            record.state = ExtensionState.QUARANTINED
+            record.diagnostics.append(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.WORKER_RESTART_QUARANTINED,
+                    f"worker crashed {record.worker_crash_count} times; quarantined "
+                    "(re-discover or reset the extension to retry)",
+                    extension_id=record.extension_id,
+                )
+            )
+
     # ── disable / enable（ADR-0104 Wave 2：运维开关，非失败态）────────
     def disable(self, extension_id: str) -> list[ExtensionDiagnostic]:
         """运维显式停用：active 的先停用回滚，之后拒绝再激活。"""
@@ -754,6 +942,20 @@ class ExtensionHost:
                     extension_id=extension_id,
                 )
             ]
+        # V2：worker 模式 —— 调用进行中拒绝停用（in-flight 语义），否则
+        # 优雅关停 worker 进程（投影回滚仍在下方台账路径执行）。
+        if record.worker is not None:
+            if record.worker.in_flight:
+                return [
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.OPERATION_IN_FLIGHT,
+                        f"cannot deactivate {extension_id!r}: a worker call is "
+                        "in flight (retry after it completes)",
+                        extension_id=extension_id,
+                    )
+                ]
+            record.worker.shutdown()
+            record.worker = None
         if record.module is not None:
             deactivate_fn = getattr(record.module, "deactivate", None)
             if callable(deactivate_fn):
@@ -791,6 +993,10 @@ class ExtensionHost:
                     extension_id=extension_id,
                 )
             ]
+        if record.worker is not None:
+            # 双保险：deactivate 正常路径已关停；异常路径兜底 kill。
+            record.worker.kill()
+            record.worker = None
         self._purge_modules(record)
         record.state = ExtensionState.DISCOVERED
         return []
@@ -942,6 +1148,15 @@ class ExtensionHost:
                 "status": "unhealthy",
                 "messages": [f"extension is {record.state.value}"],
             }
+        if record.worker is not None:
+            # V2：worker 模式健康检查走带超时 RPC（无界 sync 健康检查的
+            # limitation 在 worker 路径被消除；in-process 语义保持不变）。
+            try:
+                report = record.worker.health()
+            except ExtensionPlatformError as exc:
+                report = {"status": "unhealthy", "messages": [exc.diagnostic.message]}
+            report["state"] = record.state.value
+            return report
         report = self._run_health(record, record.module)
         report["state"] = record.state.value
         return report
@@ -971,6 +1186,11 @@ class ExtensionHost:
                     ),
                     "entry_point": record.manifest.entry_point,
                     "host_api_version": CORE_API_VERSION,
+                    "execution": (
+                        record.manifest.execution.mode if record.manifest.execution else "in_process"
+                    ),
+                    "worker_pid": record.worker.pid if record.worker is not None else None,
+                    "worker_crash_count": record.worker_crash_count,
                     "diagnostics": [d.to_dict() for d in record.diagnostics],
                 }
             )
@@ -989,6 +1209,9 @@ class ExtensionHost:
         """测试专用：回滚一切并清空索引（不做 sys.modules 清理之外的事）。"""
         for eid in list(self._records):
             record = self._records[eid]
+            if record.worker is not None:
+                record.worker.kill()
+                record.worker = None
             if record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
                 self.deactivate(eid)
             self._purge_modules(record)

@@ -351,7 +351,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not pack_dir.is_dir():
         print(f"pack dir not found: {pack_dir}", file=sys.stderr)
         return EXIT_USAGE
-    server = WorkerServer(pack_dir, sys.stdin, sys.stdout)
+    server = WorkerServer(pack_dir, sys.stdin.buffer, sys.stdout.buffer)
     try:
         if not server.handshake():
             return EXIT_ACTIVATION_FAILED
@@ -359,7 +359,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         # 握手期协议失败：尽力回帧后退出。
         try:
             write_frame(
-                sys.stdout,
+                sys.stdout.buffer,
                 {
                     "type": "handshake_failed",
                     "error": error_payload(
