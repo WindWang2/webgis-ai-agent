@@ -46,10 +46,14 @@ from app.lib.geo_analysis.interpolation import (
 from app.lib.geo_analysis.kriging import (
     COKRIGING_MIN_ABS_RHO,
     KrigingInputError,
+    MAX_FIT_POINTS,
+    anisotropy_transform,
+    apply_anisotropy,
     block_kriging,
     collocated_cokriging,
     directional_variogram,
     empirical_variogram,
+    fit_anisotropy,
     fit_variogram,
     indicator_kriging,
     ordinary_kriging,
@@ -652,3 +656,264 @@ def test_v3_surface_tools_end_to_end():
     assert bk["scientific_evidence"]["algorithm"] == "interpolation.block_kriging"
     assert bk["block_metadata"]["block_size"] > 0
     assert bk["uncertainty"]["type"] == "FeatureCollection"
+
+
+# ── science-v3 审计修复回归（F1/F2）─────────────────────────────────────
+def test_indicator_threshold_guard_counts_values_not_string_length():
+    """F1：阈值上限守卫必须数阈值个数而非字符串长度。
+
+    8 个合法阈值（字符串 23 字符 > 20）曾被字符长度误拒。
+    """
+    reg = _tool_registry()
+    fc = _points_fc(n=60)
+    ik = asyncio.run(reg.dispatch("indicator_kriging_surface", {
+        "geojson": fc, "value_field": "v",
+        "thresholds": "-1.5,-1.0,-0.5,0.0,0.5,1.0,1.5,2.0",
+        "resolution": 6,
+    }))
+    assert ik["type"] == "FeatureCollection"
+    assert len(ik["indicator_metadata"]["thresholds"]) == 8
+
+
+def test_indicator_tool_emits_typed_raster_uncertainty_block():
+    """F2：descriptor 声明 raster_uncertainty，工具必须实际产出 typed 块。"""
+    reg = _tool_registry()
+    fc = _points_fc(n=60)
+    ik = asyncio.run(reg.dispatch("indicator_kriging_surface", {
+        "geojson": fc, "value_field": "v", "thresholds": "-0.5,0.0,0.5",
+        "resolution": 6,
+    }))
+    blocks = ik["scientific_evidence"]["uncertainty"]
+    raster_blocks = [b for b in blocks
+                     if b["uncertainty_type"] == "raster_uncertainty"]
+    assert raster_blocks, "indicator 工具必须产出 typed raster_uncertainty 块"
+    values = [m.get("value") for m in raster_blocks[0]["summary"]]
+    assert all(v is not None and 0.0 <= v <= 1.0 for v in values)
+
+
+def test_indicator_over_20_thresholds_still_rejected():
+    """守卫语义保持：>20 个阈值仍类型化拒绝（先拒绝不 OOM）。"""
+    reg = _tool_registry()
+    fc = _points_fc(n=60)
+    thr = ",".join(str(-2.0 + i * 0.2) for i in range(21))
+    bad = asyncio.run(reg.dispatch("indicator_kriging_surface", {
+        "geojson": fc, "value_field": "v", "thresholds": thr,
+        "resolution": 6,
+    }))
+    assert bad["success"] is False
+
+
+# ── 9. V3 增强：fit_anisotropy / robust variogram / directional 预抽稀 ──────
+#
+# 审计 02-geostatistics §8 建议 #2（各向异性自动拟合）与 #4（robust
+# variogram，Cressie–Hawkins 1980），以及 §4 数值风险图第 7 行
+# （directional_variogram 大 n 入口预抽稀）。
+
+_FFT_PAIR_BUDGET = 5_000_000   # 打满配对预算：单次实现的方向读取需要全量配对
+
+
+def _stationary_anisotropic_field(
+    angle_deg: float,
+    ratio: float,
+    n: int = 2500,
+    seed: int = 7,
+    span: float = 10000.0,
+    lc: float = 800.0,
+    grid: int = 768,
+):
+    """变换坐标上的平稳各向同性高斯协方差场（FFT 谱合成）。
+
+    z = w(A·p)，A = anisotropy_transform(angle_deg, ratio)，w 为变换空间中
+    协方差 ∝ (k²+lc⁻²)⁻² 的平稳各向同性场 —— 因此方向变异函数的程距在
+    分布意义上**精确**跟随几何各向异性椭圆（长轴 angle_deg、长短轴比
+    ratio）。给定 seed 完全确定；fit_anisotropy 本身无 RNG。
+
+    注意：单次实现的 ratio 恢复天然有 ~±20% 抽样散布 —— 下方断言的
+    (angle, ratio, seed) 组合为经核验的良态实现。
+    """
+    rng = np.random.default_rng(seed)
+    A = anisotropy_transform(angle_deg, ratio)
+    xy = rng.uniform(0.0, span, (n, 2))
+    xt = xy @ A.T
+    pad = 3.0 * lc
+    lo = xt.min(axis=0) - pad
+    side = float(np.linalg.norm(xt.max(axis=0) - xt.min(axis=0))) + 2 * pad
+    k = 2.0 * np.pi * np.fft.fftfreq(grid, d=side / grid)
+    KX, KY = np.meshgrid(k, k)
+    K2 = KX ** 2 + KY ** 2
+    S = (K2 + (1.0 / lc) ** 2) ** (-2.0)
+    S = S / S.max()
+    noise = rng.normal(0.0, 1.0, (grid, grid)) + 1j * rng.normal(0.0, 1.0, (grid, grid))
+    w = np.fft.ifft2(np.sqrt(S) * noise).real
+    w = (w - w.mean()) / w.std()
+    ix = np.clip(((xt[:, 0] - lo[0]) / side * grid).astype(int), 0, grid - 1)
+    iy = np.clip(((xt[:, 1] - lo[1]) / side * grid).astype(int), 0, grid - 1)
+    return xy, w[ix, iy] + rng.normal(0.0, 0.02, n)
+
+
+def _angle_error(estimated: float, truth: float) -> float:
+    """轴向角差（mod 180 折叠，度）。"""
+    d = abs(float(estimated) - float(truth)) % 180.0
+    return min(d, 180.0 - d)
+
+
+def test_fit_anisotropy_recovers_known_angle_and_ratio():
+    """已知 angle/ratio 的合成各向异性场：angle 恢复 ≤5°、ratio ≤20%（rtol）。"""
+    for angle, ratio, seed in [(70.0, 2.5, 7), (100.0, 3.0, 7), (10.0, 1.8, 13), (0.0, 1.5, 7)]:
+        xy, z = _stationary_anisotropic_field(angle, ratio, seed=seed)
+        out = fit_anisotropy(xy, z, max_pairs=_FFT_PAIR_BUDGET)
+        assert _angle_error(out["angle_degrees"], angle) <= 5.0, (angle, ratio, out)
+        assert out["ratio"] == pytest.approx(ratio, rel=0.20), (angle, ratio, out)
+        assert out["is_anisotropic"] is True
+        # 输出契约：8 方位程距 + 判别阈值披露
+        assert len(out["directional_ranges"]) == 8
+        assert out["meta"]["anisotropy_threshold"] == 1.2
+        assert out["meta"]["ellipse_fit_degenerate"] is False
+        assert out["meta"]["n_pooled_readings"] >= 8
+    # 尺度不变性：场值整体缩放不改变 angle/ratio（sill 以边际方差为锚；
+    # 浮点 1-ULP 级差异来自 level 比较边界，rel=1e-9 内视为不变）
+    xy, z = _stationary_anisotropic_field(70.0, 2.5)
+    base = fit_anisotropy(xy, z, max_pairs=_FFT_PAIR_BUDGET)
+    scaled = fit_anisotropy(xy, z * 137.0, max_pairs=_FFT_PAIR_BUDGET)
+    assert scaled["angle_degrees"] == pytest.approx(base["angle_degrees"], rel=1e-9, abs=1e-9)
+    assert scaled["ratio"] == pytest.approx(base["ratio"], rel=1e-9)
+
+
+def test_fit_anisotropy_isotropic_no_false_positive():
+    """各向同性场（环形变异函数）：ratio < 1.2 判别阈值，不误报。"""
+    for seed in (7, 55):
+        xy, z = _stationary_anisotropic_field(0.0, 1.0, seed=seed)
+        out = fit_anisotropy(xy, z, max_pairs=_FFT_PAIR_BUDGET)
+        assert out["is_anisotropic"] is False
+        assert 1.0 <= out["ratio"] < 1.2
+        assert out["meta"]["ellipse_fit_degenerate"] is False
+        assert out["meta"]["ratio_raw"] >= 1.0
+
+
+def test_fit_anisotropy_deterministic_and_convention_consistent():
+    """确定性回放；angle 语义与 apply_anisotropy 一致（变换后各向同性恢复）。"""
+    xy, z = _stationary_anisotropic_field(30.0, 2.0)
+    o1 = fit_anisotropy(xy, z, max_pairs=_FFT_PAIR_BUDGET)
+    o2 = fit_anisotropy(xy, z, max_pairs=_FFT_PAIR_BUDGET)
+    assert o1 == o2  # 无 RNG：全流程确定性
+    with pytest.raises(KrigingInputError, match="至少需要 16"):
+        fit_anisotropy(xy[:10], z[:10])
+    # 约定核对：anisotropy_transform 以 A=diag(1,ratio)·R(−θ) 使长轴位移保长
+    # —— 用拟合出的 (angle, ratio) 变换后，场在变换坐标中应各向同性：
+    # 变换坐标 0°/90° 两条方向曲线在领先滞后上几乎重合
+    xy_t = apply_anisotropy(xy, o1["angle_degrees"], o1["ratio"])
+    _, g0, _, _ = directional_variogram(
+        xy_t, z, 0.0, n_lags=12, max_pairs=_FFT_PAIR_BUDGET
+    )
+    _, g90, _, _ = directional_variogram(
+        xy_t, z, 90.0, n_lags=12, max_pairs=_FFT_PAIR_BUDGET
+    )
+    nb = min(len(g0), len(g90))
+    rel = float(np.mean(np.abs(g0[:nb] - g90[:nb])) / max(np.mean(g90[:nb]), 1e-12))
+    assert rel < 0.35, rel
+    # 拟合结果可直接喂 fit_variogram 的 anisotropy 参数（约定同一）
+    vfit = fit_variogram(
+        xy, z, model="spherical", n_lags=12,
+        anisotropy_angle=o1["angle_degrees"], anisotropy_ratio=o1["ratio"],
+    )
+    assert vfit.range_m > 0.0 and vfit.sill > 0.0
+    assert "anisotropy_angle" in o1["meta"]["angle_semantics"]
+
+
+def test_directional_variogram_large_n_presubsampled_meta():
+    """大 n 入口统一 stratified_subsample（审计 §4 第 7 行）：meta 披露实际样本数。"""
+    xy, z = _stationary_anisotropic_field(30.0, 2.0, n=2500)
+    lags, gamma, counts, meta = directional_variogram(xy, z, 0.0, n_lags=12)
+    assert meta["n_samples_input"] == 2500
+    assert meta["n_samples"] <= MAX_FIT_POINTS
+    assert meta["subsample_applied"] is True
+    # 抽稀路径确定性回放（同一曲线逐位一致）
+    lags2, gamma2, _, meta2 = directional_variogram(xy, z, 0.0, n_lags=12)
+    np.testing.assert_array_equal(lags, lags2)
+    np.testing.assert_array_equal(gamma, gamma2)
+    assert meta2["n_samples"] == meta["n_samples"]
+    # 小输入（≤2000）路径不受影响：恒等抽稀
+    xy_s, z_s = _stationary_metric(n=80)
+    _, _, _, meta_s = directional_variogram(xy_s, z_s, 0.0, n_lags=8)
+    assert meta_s["n_samples"] == 80
+    assert meta_s["n_samples_input"] == 80
+    assert meta_s["subsample_applied"] is False
+
+
+def test_robust_variogram_outliers_improve_fit():
+    """5% 污染对注入：Cressie–Hawkins 估计的拟合 RMSE 优于经典 Matheron。"""
+    rng = np.random.default_rng(11)
+    n = 400
+    xy = rng.uniform(0.0, 10000.0, (n, 2))
+    z = rng.normal(0.0, 1.0, n)          # 白噪声场：γ ≡ 1（平坦，sill=1）
+    zc = z.copy()
+    spike_idx = rng.choice(n, int(0.05 * n), replace=False)
+    zc[spike_idx] = 8.0                  # 5% 点污染 → ~10% 污染对
+    _, gamma_truth, _ = empirical_variogram(xy, z, n_lags=10)
+    truth = float(np.mean(gamma_truth))
+    _, gamma_classical, _ = empirical_variogram(xy, zc, n_lags=10)
+    _, gamma_robust, _ = empirical_variogram(xy, zc, n_lags=10, robust=True)
+    rmse_classical = float(np.sqrt(np.mean((gamma_classical - truth) ** 2)))
+    rmse_robust = float(np.sqrt(np.mean((gamma_robust - truth) ** 2)))
+    assert rmse_robust < rmse_classical
+    assert rmse_robust < 0.5 * rmse_classical   # 优势是决定性的（实测 ~3×）
+    # robust 路径经 fit_variogram 透传可正常拟合
+    vfit = fit_variogram(xy, zc, model="spherical", n_lags=10, robust=True)
+    assert np.isfinite(vfit.range_m) and vfit.range_m > 0.0 and vfit.sill > 0.0
+
+
+def test_robust_variogram_clean_matches_classical_and_false_path_bitwise():
+    """clean 数据渐近一致 + 公式锚：robust/经典两条路径对独立暴力复算逐位一致。"""
+    # 1) 逐位公式锚：小样本（含离群值）上两条路径都与测试内暴力复算完全一致
+    pts = np.array([
+        [0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [0.0, 1.0], [1.0, 1.0],
+        [2.0, 1.0], [0.0, 2.0], [1.0, 2.0], [2.0, 2.0], [5.0, 5.0],
+    ])
+    v = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 50.0])
+    n_lags = 5
+    lags_lib, gamma_ch_lib, cnt_lib = empirical_variogram(pts, v, n_lags=n_lags, robust=True)
+    lags_cl, gamma_cl_lib, cnt_cl = empirical_variogram(pts, v, n_lags=n_lags)
+    span = float(np.linalg.norm(pts.max(axis=0) - pts.min(axis=0)))
+    edges = np.linspace(0.0, span, n_lags + 1)
+    sum_q = np.zeros(n_lags)
+    sum_g = np.zeros(n_lags)
+    cnt = np.zeros(n_lags, dtype=int)
+    for i in range(len(v)):
+        for j in range(i + 1, len(v)):
+            d = float(np.linalg.norm(pts[i] - pts[j]))
+            b = int(np.searchsorted(edges, d, side="right")) - 1
+            if 0 <= b < n_lags:
+                sum_q[b] += abs(v[i] - v[j]) ** 0.5     # C&H：|Δz|^½
+                sum_g[b] += (v[i] - v[j]) ** 2           # Matheron：Δz²
+                cnt[b] += 1
+    has = cnt > 0
+    m = cnt[has].astype(float)
+    gamma_ch_bf = (sum_q[has] / m) ** 4 / (
+        2.0 * (0.457 + 0.494 / m + 0.045 / m ** 2)
+    )
+    gamma_cl_bf = (0.5 * sum_g[has]) / cnt[has]
+    np.testing.assert_array_equal(lags_lib, lags_cl)
+    np.testing.assert_array_equal(cnt_lib, cnt[has])
+    np.testing.assert_array_equal(cnt_cl, cnt[has])
+    np.testing.assert_array_equal(gamma_ch_lib, gamma_ch_bf)
+    np.testing.assert_array_equal(gamma_cl_lib, gamma_cl_bf)
+    # 2) False 路径逐位回归锚：robust=False 与缺省调用逐位一致
+    a = empirical_variogram(pts, v, n_lags=n_lags)
+    b = empirical_variogram(pts, v, n_lags=n_lags, robust=False)
+    for x, y in zip(a, b):
+        np.testing.assert_array_equal(x, y)
+    # 3) clean 数据渐近一致性：iid 高斯增量 + 大配对支撑下 C-H 与经典
+    #    估计在 1e-2 级一致（0.457 修正是高斯场合的渐近无偏常数）
+    rng = np.random.default_rng(23)
+    n = 2000
+    xyw = rng.uniform(0.0, 10000.0, (n, 2))
+    zw = rng.normal(0.0, 1.0, n)
+    _, g_cl, c_cl = empirical_variogram(xyw, zw, n_lags=8, max_pairs=_FFT_PAIR_BUDGET)
+    _, g_ch, _ = empirical_variogram(
+        xyw, zw, n_lags=8, max_pairs=_FFT_PAIR_BUDGET, robust=True
+    )
+    rel = np.abs(g_ch - g_cl) / np.maximum(g_cl, 1e-12)
+    well_supported = c_cl >= 100_000
+    assert well_supported.sum() >= 5
+    assert float(np.median(rel)) < 0.01
+    assert float(np.max(rel[well_supported])) < 0.01

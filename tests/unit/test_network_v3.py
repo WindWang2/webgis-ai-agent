@@ -203,7 +203,8 @@ class TestPMedianExactMILP:
         HiGHS status message, solve_stats and model_stats; the MILP optimum
         matches enumeration on the service's own OD cost matrix; explicit
         solver dispatch works (exact_milp ↔ p_median_exact, forced heuristic
-        skips enumeration), and max_coverage has no MILP path."""
+        skips enumeration), and max_coverage's exact_milp dispatch now routes
+        to the MCLP MILP (R2; details in test_network_mclp.py)."""
         graph, dataset = NetworkGraphBuilder().build_graph(_chain_fc())
         facilities = [_facility(f"f{i}", 116.0 + i * 0.002) for i in range(4)]
         demands = [_demand(f"d{i}", 116.0 + i * 0.001, weight=1.0 + (i % 3)) for i in range(12)]
@@ -252,13 +253,15 @@ class TestPMedianExactMILP:
         )
         assert _objective_of(C, w, forced_subset) >= optimum - 1e-6
 
-        # max_coverage has no MILP exact path — typed refusal, no fallback.
-        with pytest.raises(UnsupportedMethod):
-            svc.location_allocation(
-                candidate_facilities=facilities, demand_points=demands,
-                p_count=3, problem_type="max_coverage",
-                graph=graph, network_dataset=dataset, solver="exact_milp",
-            )
+        # max_coverage (R2, science-v3)：MCLP 精确 MILP 已补齐 —— dispatch
+        # 返回 milp_highs 结果（金标准细节见 tests/unit/test_network_mclp.py）。
+        via_mclp = svc.location_allocation(
+            candidate_facilities=facilities, demand_points=demands,
+            p_count=3, problem_type="max_coverage",
+            graph=graph, network_dataset=dataset, solver="exact_milp",
+        )
+        assert via_mclp.summary["solver"] == "milp_highs"
+        assert via_mclp.summary["problem_type"] == "max_coverage"
 
 
 # ── 2. exact p-center MILP ───────────────────────────────────────────
@@ -482,7 +485,7 @@ class TestNetworkV3Surface:
         )
 
         mine = ("network.pmedian_exact", "network.pcenter_exact",
-                "network.eigenvector_centrality")
+                "network.eigenvector_centrality", "network.mclp_exact")
         issues = [i for i in get_algorithm_registry().validate()
                   if any(m in i for m in mine)]
         assert issues == []
@@ -526,7 +529,11 @@ class TestNetworkV3Surface:
         assert out["summary"]["solver"] == "milp_highs"
         ev = out["scientific_evidence"]
         assert ev["algorithm"] == "network.pmedian_exact"
-        assert "church_revelle1974" in ev["method_references"]
+        # R0（审计 04 域 F1）：p-median MILP 出处 = ReVelle & Swain 1970
+        #（+ Hakimi 1964）；church_revelle1974 归还 MCLP（network.mclp_exact）。
+        assert "revelle_swain1970" in ev["method_references"]
+        assert "hakimi1964" in ev["method_references"]
+        assert "church_revelle1974" not in ev["method_references"]
         assert ev["parameters_applied"]["solver"] == "exact_milp"
         names = [d["name"] for d in ev["diagnostics"]]
         assert "backend_selection" in names

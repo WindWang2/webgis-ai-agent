@@ -244,6 +244,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cpu_cost="medium", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=44,
             algorithm_family="viewshed",
+            approximate=True,
+            method_references=["wang_robinson_white2000"],
             assumptions=[
                 "无地球曲率/大气折射；目标高度默认 0",
                 "扇区视线角判据：目标仰角 ≥ 沿途地形运行最大仰角即可见（切切记可见）",
@@ -274,7 +276,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cpu_cost="medium", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=45,
             algorithm_family="terrain_hydrology_d8",
-            method_references=["tarboton1997"],
+            method_references=["ocallaghan_mark1984"],
             assumptions=[
                 "D8 单向流（ESRI 2 的幂编码 1=E…128=NE；0=sink/outlet）",
                 "最陡下降按米制像元距离（地理栅格 x 向 cos(lat)）；并列最陡取最低索引邻域",
@@ -312,7 +314,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cpu_cost="medium", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=46,
             algorithm_family="terrain_hydrology_d8",
-            method_references=["tarboton1997"],
+            method_references=["ocallaghan_mark1984"],
             assumptions=[
                 "逆 D8 BFS：汇入 pour point 的全部上游像元（含 pour point 自身）",
                 "依赖 D8 单向流语义（编码与平局裁决同 terrain.flow）",
@@ -403,7 +405,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cpu_cost="medium", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=49,
             algorithm_family="terrain_hydrology_dinf", complexity="O(N log N)",
-            method_references=["tarboton1997"],
+            method_references=["ocallaghan_mark1984"],
             assumptions=[
                 "8 三角面平面梯度最陡下降（Tarboton 1997）；角度弧度 ∈ [0,2π)，x=东 y=北",
                 "汇流按面内角度比例分流到两下游邻域；拓扑序（高程降序）累积",
@@ -435,7 +437,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cpu_cost="medium", memory_cost="medium", io_cost="low",
             preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=50,
             algorithm_family="terrain_hydrology_d8", complexity="O(N log N)",
-            method_references=["tarboton1997", "strahler1957"],
+            method_references=["ocallaghan_mark1984", "strahler1957"],
             assumptions=[
                 "downstream = 沿 D8 接收者到出口的米制步长和（汇/出口 = 0）",
                 "upstream = 距最远山脊源的最大路径长（MAX 口径，文档化）",
@@ -933,8 +935,8 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
     # ── Foundation V2（A5）：水文与地貌量测扩展 ────────────────────────
 
     ParameterContract(
-        id="sink_fill", version=1,
-        description="Priority-Flood 填洼：epsilon 变体与 nodata 覆盖。",
+        id="sink_fill", version=2,
+        description="Priority-Flood 填洼：epsilon 变体、nodata 覆盖与填充面持久化。",
         parameters=[
             ParameterSpec(
                 name="epsilon", type="number", default=0.0, minimum=0.0,
@@ -944,6 +946,11 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="nodata", type="number",
                 description="nodata 覆盖值（缺省用文件声明或 NaN 语义）",
+            ),
+            ParameterSpec(
+                name="persist_filled", type="boolean", default=False,
+                description="持久化填充后 DEM 为 GeoTIFF（data_dir 内 *_filled.tif），"
+                            "返回 filled_raster_path 供下游水文工具（D∞/河网/TWI）直接消费",
             ),
         ],
     ),

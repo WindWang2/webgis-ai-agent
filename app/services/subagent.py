@@ -19,10 +19,12 @@
     )
 返回 SubagentResult 含 success / summary / refs / rounds_used / tools_called。
 
-未来扩展（不在 MVP 内）：
-- 并行 spawn 多个 subagent（每域一个）
-- 子代理也可调 propose_plan 二次嵌套
-- 子代理用更小/更快的 LLM（成本优化）
+并行委派（ADR-0104 决策 7，Wave 6）：
+    batch = await dispatcher.run_parallel([SubagentTaskSpec(task=...), ...])
+- 有界并行：asyncio.Semaphore 上限 SUBAGENT_PARALLEL_CONCURRENCY=2；
+- 父预算 roll-up：传入 parent_budget → 子代理的每次工具调用同时计入父预算；
+- 失败隔离：gather(return_exceptions=True)，单个子代理失败不取消兄弟；
+- 诚实 settle：全成=completed / 部分失败=partial / 全败=failed。
 """
 from __future__ import annotations
 
@@ -30,17 +32,27 @@ import asyncio
 import contextlib
 import contextvars
 import logging
+import os
 from dataclasses import dataclass, field
-from typing import Optional, TYPE_CHECKING, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING, Union
 
 from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from app.services.chat_engine import ChatEngine
-    from app.services.subagent_roles import SubagentRole
+    from app.services.subagent_roles import SubagentBudget, SubagentRole
 
 logger = logging.getLogger(__name__)
+
+
+# ADR-0104 决策 7：并行委派的有界上限（kill switch：GIS_SUBAGENT_PARALLEL=0
+# 时 run_parallel 诚实拒绝，不 spawn 任何子代理；省略 role/并行的调用路径
+# 行为与本模块历史版本逐字节一致）。
+SUBAGENT_PARALLEL_CONCURRENCY = 2
+SUBAGENT_MAX_PARALLEL_CHILDREN = 6
+_SUBAGENT_PARALLEL_KILL_SWITCH_ENV = "GIS_SUBAGENT_PARALLEL"
+_KILL_SWITCH_OFF_VALUES = {"0", "false", "no", "off"}
 
 
 # ─────────────────────────── 结果数据类 ───────────────────────────
@@ -60,6 +72,48 @@ class SubagentResult:
             "summary": self.summary,
             "refs": self.refs,
             "reasoning": self.reasoning,
+            "error": self.error,
+        }
+
+
+@dataclass(frozen=True)
+class SubagentTaskSpec:
+    """并行委派的单个子任务声明（ADR-0104 决策 7）。
+
+    role 为注册表角色名（get_subagent_role 校验，未知角色 fail-closed）；
+    预算/域约束沿用 role∩caller 交集语义（角色只收紧不放宽）。
+    """
+
+    task: str
+    domains: Optional[Tuple[str, ...]] = None
+    extra_tools: Optional[Tuple[str, ...]] = None
+    max_rounds: int = 10
+    role: Optional[str] = None
+
+
+@dataclass
+class SubagentBatchResult:
+    """并行委派的诚实 settle 结果。
+
+    status: completed（全成）/ partial（部分失败）/ failed（全败或被禁用）。
+    results 顺序与传入 specs 一一对应（asyncio.gather 保序）。
+    """
+
+    status: str
+    results: List[SubagentResult] = field(default_factory=list)
+    budget_usage: Dict[str, Any] = field(default_factory=dict)
+    error: Optional[str] = None
+
+    @property
+    def success(self) -> bool:
+        return self.status == "completed"
+
+    def to_dict(self) -> dict:
+        return {
+            "status": self.status,
+            "success": self.success,
+            "results": [r.to_dict() for r in self.results],
+            "budget_usage": dict(self.budget_usage),
             "error": self.error,
         }
 
@@ -154,6 +208,37 @@ def select_tools_for_subagent(
 # ─────────────────────────── 派遣器 ──────────────────────────
 
 
+class AllowlistDispatchRegistry:
+    """dispatch 边界成员校验代理（review R2 MAJOR-8）。
+
+    包装真 registry：白名单之外的工具名在 dispatch 边界拒绝（结构化
+    TOOL_NOT_ALLOWLISTED，不执行），其余属性全部委托（narrowing-only）。
+    模块级定义以便直接测试。
+    """
+
+    def __init__(self, inner: Any, allowed: "set[str]") -> None:
+        self._inner = inner
+        self._allowed = allowed
+
+    def dispatch(self, tool_name: str, *args: Any, **kwargs: Any):
+        if tool_name not in self._allowed:
+            return {
+                "success": False,
+                "error": (
+                    f"工具 {tool_name} 不在本子代理的授权工具面内 "
+                    "(subagent tool allowlist)"
+                ),
+                "code": "TOOL_NOT_ALLOWLISTED",
+            }
+        return self._inner.dispatch(tool_name, *args, **kwargs)
+
+    def get_schemas(self, *args: Any, **kwargs: Any):
+        return self._inner.get_schemas_subset(self._allowed)
+
+    def __getattr__(self, item: str):
+        return getattr(self._inner, item)
+
+
 class SubagentDispatcher:
     """对接到主 ChatEngine 之外、按需启动短生命周期子代理的派遣器。
 
@@ -184,6 +269,7 @@ class SubagentDispatcher:
         extra_tools: Optional[list[str]] = None,
         max_rounds: int = 10,
         role: Optional[Union[str, "SubagentRole"]] = None,
+        budget_overlay: Optional["SubagentBudget"] = None,
     ) -> SubagentResult:
         _depth = _subagent_depth.get(0)
         if _depth >= 2:
@@ -269,9 +355,13 @@ class SubagentDispatcher:
             _orig_dispatch = _dispatch_service.dispatch
 
             async def _budgeted_dispatch(tc, session_id, executed_tools=None):
-                return await wrap_dispatch_with_budget(_orig_dispatch, budget, self.registry)(
-                    tc, session_id, executed_tools
-                )
+                # V4 §32 roll-up：声明 parent_budget（run_parallel 传入）时，
+                # 子代理每次工具调用先查父预算再查自身预算 —— 任一超限即
+                # BudgetExceeded（子代理诚实失败，兄弟不受影响）。
+                checked = wrap_dispatch_with_budget(_orig_dispatch, budget, self.registry)
+                if budget_overlay is not None:
+                    checked = wrap_dispatch_with_budget(checked, budget_overlay, self.registry)
+                return await checked(tc, session_id, executed_tools)
 
             _dispatch_service.dispatch = _budgeted_dispatch  # type: ignore[method-assign]
 
@@ -294,11 +384,19 @@ class SubagentDispatcher:
 
         wrapped_task_text = f"{self.SUB_SYSTEM_PROMPT}\n\n# 子任务\n{task}"
         if role_obj is not None:
+            # ADR-0104：expected_outputs 结构化输出契约注入任务头（声明式；
+            # 旧角色该字段为空 → 任务文本与历史版本逐字节一致）。
+            _expected_line = (
+                f"[期望输出] {'；'.join(role_obj.expected_outputs)}\n"
+                if role_obj.expected_outputs
+                else ""
+            )
             wrapped_task_text = (
                 f"[角色] {role_obj.title}\n"
                 f"[纪律] 工具调用上限 {budget.max_tool_calls} 次（重工具 ≤ "
                 f"{budget.max_heavy_tool_calls}）、墙钟 ≤ {budget.max_wall_time_s:.0f}s、"
-                f"{'禁止修改任何会话/地图状态' if not role_obj.allow_mutation else '允许读写会话数据'}。\n\n"
+                f"{'禁止修改任何会话/地图状态' if not role_obj.allow_mutation else '允许读写会话数据'}。\n"
+                f"{_expected_line}\n"
                 + wrapped_task_text
             )
         try:
@@ -314,10 +412,16 @@ class SubagentDispatcher:
                     # review R1 MAJOR：墙钟预算真实执行 —— asyncio.wait 带
                     # 剩余预算超时（此前只有注释宣称 asyncio.timeout，纯 LLM
                     # 子代理完全不受墙钟约束，timeout 处理分支是死代码）。
+                    # V4 roll-up：声明父预算时子代理墙钟 = min(自身, 父剩余)。
+                    _wall_budget_s = budget.max_wall_time_s
+                    if budget_overlay is not None:
+                        _wall_budget_s = min(
+                            _wall_budget_s, budget_overlay.remaining_wall_time_s()
+                        )
                     done, pending = await asyncio.wait(
                         {chat_task, cancel_task},
                         return_when=asyncio.FIRST_COMPLETED,
-                        timeout=max(0.1, budget.max_wall_time_s),
+                        timeout=max(0.1, _wall_budget_s),
                     )
                 except BaseException:
                     # review M-C1：派发器自身被硬取消（客户端断开/turn 拆除）
@@ -454,12 +558,154 @@ class SubagentDispatcher:
             refs=new_refs,
         )
 
+    # ─── 并行委派（ADR-0104 决策 7）──────────────────────────
+
+    async def run_parallel(
+        self,
+        specs: Sequence[SubagentTaskSpec],
+        *,
+        parent_budget: Optional["SubagentBudget"] = None,
+        concurrency: int = SUBAGENT_PARALLEL_CONCURRENCY,
+    ) -> SubagentBatchResult:
+        """有界并行委派：信号量上限 2、父预算 roll-up、失败隔离、诚实 settle。
+
+        - kill switch：``GIS_SUBAGENT_PARALLEL=0`` → 诚实拒绝（不 spawn 任何
+          子代理）；省略本方法的旧调用路径不受影响。
+        - fail-closed 预检：空列表 / 超过 SUBAGENT_MAX_PARALLEL_CHILDREN /
+          任何 spec 的 role 非法 → 直接 ValueError，不启动任何子代理。
+        - 失败隔离：gather(return_exceptions=True)，单个子代理失败/异常不
+          取消兄弟；每个子代理给诚实的 SubagentResult。
+        - 取消传播（协作式）：每个子代理启动前（拿到信号量槽位后）检查
+          当前取消令牌与既有任务注册表（cancellation.registry.is_cancelled），
+          已取消则剩余子代理不再启动、逐个返回 cancelled 诚实结果。
+        - 诚实 settle：completed / partial（任一子代理失败）/ failed。
+        """
+        if os.getenv(_SUBAGENT_PARALLEL_KILL_SWITCH_ENV, "1").lower() in _KILL_SWITCH_OFF_VALUES:
+            return SubagentBatchResult(
+                status="failed",
+                results=[],
+                error="subagent_parallel_disabled (GIS_SUBAGENT_PARALLEL=0)",
+            )
+        if not specs:
+            raise ValueError("run_parallel 需要至少一个 SubagentTaskSpec")
+        if len(specs) > SUBAGENT_MAX_PARALLEL_CHILDREN:
+            raise ValueError(
+                f"并行子代理数量 {len(specs)} 超过上限 {SUBAGENT_MAX_PARALLEL_CHILDREN}"
+            )
+        for i, spec in enumerate(specs):
+            if not spec.task or not spec.task.strip():
+                raise ValueError(f"specs[{i}].task 不能为空")
+            if spec.role is not None:
+                # fail-closed：任何一个未知角色都不允许启动任何子代理
+                from app.services.subagent_roles import get_subagent_role
+                get_subagent_role(spec.role)
+
+        from app.lib.cancellation import (
+            OperationCancelled,
+            current_token as _current_cancel_token,
+            registry as _cancel_registry,
+        )
+        from app.services.subagent_roles import BudgetExceeded
+
+        sem = asyncio.Semaphore(max(1, min(concurrency, SUBAGENT_PARALLEL_CONCURRENCY)))
+
+        def _cancelled_reason() -> Optional[str]:
+            tok = _current_cancel_token()
+            if tok is None:
+                return None
+            if tok.cancelled:
+                return tok.reason or "parent turn cancelled"
+            job_id = getattr(tok, "job_id", None)
+            if job_id is not None and _cancel_registry.is_cancelled(job_id):
+                return "task cancelled (registry)"
+            return None
+
+        async def _one(spec: SubagentTaskSpec) -> SubagentResult:
+            reason = _cancelled_reason()
+            if reason:
+                return SubagentResult(
+                    success=False, summary=f"子代理已取消: {reason}", error="cancelled",
+                )
+            async with sem:
+                # 子代理之间的协作式取消检查点：拿到槽位后再查一次
+                reason = _cancelled_reason()
+                if reason:
+                    return SubagentResult(
+                        success=False,
+                        summary=f"子代理已取消: {reason}",
+                        error="cancelled",
+                    )
+                try:
+                    return await self.run(
+                        task=spec.task,
+                        domains=list(spec.domains) if spec.domains else None,
+                        extra_tools=list(spec.extra_tools) if spec.extra_tools else None,
+                        max_rounds=spec.max_rounds,
+                        role=spec.role,
+                        budget_overlay=parent_budget,
+                    )
+                except BudgetExceeded as e:
+                    # 防御：run 内已把预算信号 settle 成诚实结果；这里兜住
+                    # 父预算 roll-up 信号的任何漏网路径。
+                    return SubagentResult(
+                        success=False,
+                        summary=f"子代理超过预算被终止: {e}",
+                        error="budget_exceeded:tools",
+                    )
+                except OperationCancelled:
+                    return SubagentResult(
+                        success=False, summary="子代理已取消", error="cancelled",
+                    )
+                except BaseException as e:  # noqa: BLE001 — 单子代理失败绝不炸兄弟
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
+                    return SubagentResult(
+                        success=False,
+                        summary=f"子代理执行失败: {e}",
+                        error=type(e).__name__,
+                    )
+
+        raw = await asyncio.gather(
+            *(_one(s) for s in specs), return_exceptions=True,
+        )
+        results: List[SubagentResult] = []
+        for item in raw:
+            if isinstance(item, BaseException):
+                # 最终兜底：任何漏网异常 → 该子代理诚实失败（兄弟已不受影响）
+                results.append(SubagentResult(
+                    success=False,
+                    summary=f"子代理执行失败: {item}",
+                    error=type(item).__name__,
+                ))
+            else:
+                results.append(item)
+        ok_count = sum(1 for r in results if r.success)
+        if ok_count == len(results):
+            status = "completed"
+        elif ok_count == 0:
+            status = "failed"
+        else:
+            status = "partial"
+        return SubagentBatchResult(
+            status=status,
+            results=results,
+            budget_usage=parent_budget.usage() if parent_budget is not None else {},
+        )
+
     # ─── helpers ────────────────────────────────────────────
 
     def _build_sub_engine(self, tool_subset: list[dict], max_rounds: int) -> "ChatEngine":
         """造一个轻量 ChatEngine：用同一份 registry，但通过 catalog stub 把
-        工具白名单固定为 tool_subset（绕过域关键词匹配）。"""
+        工具白名单固定为 tool_subset（绕过域关键词匹配）。
+
+        review R2 MAJOR-8：catalog stub 只限制模型**看到**的工具 —— 被注入
+        的子代理 LLM 仍可直接点名隐藏工具并经共享 registry 执行。这里包一层
+        **dispatch 成员校验代理**：白名单之外的名字在 dispatch 边界拒绝
+        （honest error，不执行），把「只可见」升级为「只可执行」。"""
+
         from app.services.chat_engine import ChatEngine
+
+        allowed_names = {s["function"]["name"] for s in tool_subset}
 
         class _FrozenCatalog:
             """只返回 tool_subset 的 catalog stub，禁用粘性 / 关键词匹配。
@@ -494,7 +740,7 @@ class SubagentDispatcher:
                 return set()
 
         engine = ChatEngine(
-            self.registry,
+            AllowlistDispatchRegistry(self.registry, allowed_names),
             tool_catalog=_FrozenCatalog(tool_subset),
             is_subagent_engine=True,
         )

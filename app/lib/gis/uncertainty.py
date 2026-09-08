@@ -24,6 +24,7 @@ UNCERTAINTY_TYPE_VOCABULARY = frozenset({
     "sensitivity_envelope",      # 权重/参数扰动下的结论稳定性
     "validation_metrics",        # 交叉验证 RMSE/MAE/bias/R²
     "monte_carlo_summary",       # MC 分布摘要（分位数 + P(约束)）
+    "approximation_disclosure",  # 近似后端引入的额外不确定性披露（V3）
 })
 
 _BoundedStr = str
@@ -212,10 +213,40 @@ class MonteCarloSummary(BaseModel):
         }
 
 
+class ApproximationDisclosure(BaseModel):
+    """近似后端/降级路径引入的额外不确定性披露（V3 ADR-0117）。
+
+    声明「本结果是近似/启发式/抽样/流式近似，与 exact 语义的差距来源」
+    —— 不给数值区间（那是其他块的事），只做诚实的类型化披露。
+    """
+
+    target: str
+    uncertainty_type: Literal["approximation_disclosure"] = "approximation_disclosure"
+    approximation_class: str = ""          # ApproximationClass 词表成员
+    source: str = ""                       # variant id / backend 名
+    exact_alternative: str = ""            # 对应 exact 路径（无则空）
+    note: str = ""
+
+    @field_validator("note")
+    @classmethod
+    def _bounded_note(cls, v: str) -> str:
+        return v[:160]
+
+    def to_evidence(self) -> Dict[str, Any]:
+        return {
+            "target": self.target,
+            "uncertainty_type": self.uncertainty_type,
+            "approximation_class": self.approximation_class,
+            "source": self.source,
+            "exact_alternative": self.exact_alternative,
+            "note": self.note,
+        }
+
+
 UncertaintyBlock = (
     ScalarUncertainty | FieldUncertainty | RasterUncertainty
     | StatisticalSignificance | SensitivityEnvelope | ValidationMetrics
-    | MonteCarloSummary
+    | MonteCarloSummary | ApproximationDisclosure
 )
 
 

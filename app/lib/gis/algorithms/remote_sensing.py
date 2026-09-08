@@ -84,7 +84,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         # ── VNext：类型化光谱指数 / CVA / 比值变化 ─────────────────────
         AlgorithmDescriptor(
-            id="remote.spectral_index", name="类型化光谱指数（11 公式族）", category="remote_sensing",
+            id="remote.spectral_index", name="类型化光谱指数（13 公式族）", category="remote_sensing",
             capabilities=["spectral_index"],
             input_artifact_types=["raster_surface"],
             output_artifact_type="raster_surface",
@@ -98,6 +98,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "波段按语义角色显式命名（band_map），绝不按波段位置猜测",
                 "线性定标先于公式（DN/10000→反射率）；零分母→NaN",
                 "超理论值域只报告不钳制（out_of_range_fraction）",
+                "NDWI 拆名（审计 §3.2）：ndwi/ndwi_water = McFeeters 开放水体 "
+                "(green−nir)/(green+nir)；ndwi_gao = Gao 植被水分 "
+                "(nir−swir1)/(nir+swir1)——同名异式不可互换，与在线/本地路径一致",
             ],
             limitations=[
                 "公式出处逐指数声明（gndvi/msavi/ndmi 无词表出处，诚实留空）",
@@ -187,6 +190,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "nodata/NaN 逐切片剔除，剩余有效切片上统计（部分有效像元披露）",
                 "CV=std/mean（可选）：|mean|≤1e-12 → NaN；dB 域 CV 无物理量纲（披露）",
                 "percentiles（可选）=np.nanpercentile 线性插值，≤5 个 [0,100]",
+                "acquisitions（可选）=每切片获取元数据（极化/日期/入射角/轨道向）"
+                "→ 可比性检查：入射角差>5°/升降轨混搭/极化混搭 → 证据块 "
+                "warnings（披露级，不拒绝；缺省不做可比性判断）",
             ],
             limitations=[
                 "本工具无滤波/定标隐式前置——独立原生算法见 "
@@ -200,6 +206,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/test_temporal_science_vnext.py::test_sar_stack_scale_guard",
                 "tests/unit/lib/test_sar_filters_v2.py::test_sar_stats_cv_and_percentiles",
                 "tests/unit/lib/test_sar_filters_v2.py::test_sar_stats_defaults_preserve_v1_shape",
+                "tests/unit/lib/test_sar_science_fixes_v3.py::test_r2_acquisitions_comparability_wired_to_tools",
             ],
             parameter_contract_ref="sar_temporal_stats_analysis",
         ),
@@ -214,8 +221,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             preferred_execution_policy="INLINE", priority=15,
             algorithm_family="sar_polarimetry",
             assumptions=[
-                "VV/VH：线性域为比值、dB 域为 dB 差（VV−VH）；VH=0 → NaN",
-                "同景双极化（如 Sentinel-1 VV+VH）",
+                "仅线性功率/强度域比值 vv/vh（dB 对数域输入 → UnsupportedMethod"
+                "类型化拒绝——负值守卫 + 显式量纲声明）",
+                "dB 域对比请改用 log-ratio（sar.log_ratio_change，VV−VH 语义）",
+                "VH=0 → NaN；同景双极化（如 Sentinel-1 VV+VH）",
             ],
             limitations=[
                 "无辐射定标假定下仅作结构对比代理，非物理量",
@@ -224,6 +233,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             scientific_status="VALIDATED",
             conformance_tests=[
                 "tests/unit/test_temporal_science_vnext.py::test_sar_vh_ratio_and_log_ratio_exact",
+                "tests/unit/lib/test_sar_science_fixes_v3.py::test_r1_vh_ratio_db_rejected_and_contract_text",
             ],
         ),
 
@@ -452,6 +462,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             assumptions=[
                 "时间维聚合为描述性合成（median 为斑点拖尾下的鲁棒惯用）",
                 "nodata/NaN 逐切片剔除；全切片无效像元 → NaN（披露）",
+                "acquisitions（可选）=每切片获取元数据（极化/日期/入射角/轨道向）"
+                "→ 可比性检查：入射角差>5°/升降轨混搭/极化混搭 → 证据块 "
+                "warnings（披露级，不拒绝；缺省不做可比性判断）",
             ],
             limitations=[
                 "无滤波/定标隐式前置（独立原生算法见 sar.speckle_filter 等）",
@@ -462,6 +475,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             conformance_tests=[
                 "tests/unit/lib/test_sar_filters_v2.py::test_sar_temporal_composite_median_exact",
                 "tests/unit/lib/test_sar_filters_v2.py::test_sar_temporal_composite_methods_and_guards",
+                "tests/unit/lib/test_sar_science_fixes_v3.py::test_r2_acquisitions_comparability_wired_to_tools",
             ],
             parameter_contract_ref="sar_temporal_composite_analysis",
         ),
@@ -670,7 +684,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             method_references=["nielsen1998"],
             assumptions=[
                 "两期栈各自标准化 → SVD-CCA → MAD_i = a_i·X − b_i·Y（ρ 升序）",
-                "χ² 栅格自由度按 2k 约定披露；ρ 钳制 ≤1−1e-12（恒等场景防 0/0）",
+                "χ² 栅格自由度 = k=n_bands（标准化变分量方差 2(1−ρ_i) → 每分量 "
+                "1 dof，Nielsen 1998/Canty χ²_k 惯例）；ρ 钳制 ≤1−1e-12（恒等场景防 0/0）",
                 "IR-MAD 权重 w=1/χ²（均值归一 + 下限 1e-4），固定点迭代 ≤10",
             ],
             limitations=[
@@ -685,6 +700,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             scientific_status="VALIDATED",
             conformance_tests=[
                 "tests/unit/lib/test_rs_v3.py::test_mad_identical_stacks_zero_chi2",
+                "tests/unit/lib/test_rs_v3.py::test_mad_chi2_dof_equals_n_bands",
                 "tests/unit/lib/test_rs_v3.py::test_mad_localized_change_detected",
                 "tests/unit/lib/test_rs_v3.py::test_mad_irmad_iterations_and_guards",
             ],
@@ -875,6 +891,92 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             parameter_contract_ref="cloud_qc_analysis",
         ),
 
+        # ── V3 光学增强：FCLS 线性光谱解混（与 remote.endmember_vca 形成
+        # 端元提取 → 丰度反演链）────────────────────────────────────────
+        AlgorithmDescriptor(
+            id="remote.linear_unmixing",
+            name="线性光谱解混（FCLS 全约束最小二乘）",
+            category="remote_sensing",
+            capabilities=["spectral_unmixing"],
+            input_artifact_types=["raster_surface"],
+            output_artifact_type="raster_surface",
+            tool_candidates=["linear_unmixing"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="INLINE", priority=15,
+            approximate=False,
+            complexity="O(H·W·m²)",
+            algorithm_family="spectral_unmixing",
+            method_references=["heinz_chang2001"],
+            assumptions=[
+                "线性混合模型 f = E·x + ε；逐像元 min‖Ex−f‖² s.t. x≥0, Σx=1",
+                "端元矩阵 E（k 波段 × m 端元）逐波段对齐且列满秩（秩亏拒绝）",
+                "单纯形内部像元走和一约束闭式解（精确）；负分量像元走 δ-增广 "
+                "NNLS（δ=1e6 归一尺度，和一违背 ~O(1/δ)，计数披露）",
+                "丰度输出值域 [0,1]（非负 + 和一约束）；端元尺度整体缩放不影响解",
+            ],
+            limitations=[
+                "仅线性混合模型——非线性混合（intimate mixing/多层散射）不适用",
+                "端元由调用方提供（可接 remote.endmember_vca 输出）；端元质量"
+                "决定丰度质量，本算法不校验端元的物理合理性",
+                "n_bands·H·W ≤ 16M 像元总量（无流式实现）；欠定 m>k 被秩亏守卫拒绝",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:2"],
+            uncertainty_outputs=["field_uncertainty"],
+            uncertainty_producer_tests={
+                "field_uncertainty":
+                    "tests/unit/lib/test_linear_unmixing.py::"
+                    "test_fcls_rms_residual_tracks_noise",
+            },
+            numerical_tolerance="无噪合成 3 端元场丰度恢复 rtol 1e-4（实测 ~1e-16）；"
+                                "和一约束 |Σx−1| ≤ 1e-9；RMS 残差与注入噪声水平同量级",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_linear_unmixing.py::test_fcls_abundance_recovery_exact",
+                "tests/unit/lib/test_linear_unmixing.py::test_fcls_constraints_nonneg_and_sum_to_one",
+                "tests/unit/lib/test_linear_unmixing.py::test_fcls_guards_and_nodata",
+            ],
+            parameter_contract_ref="linear_unmixing_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="remote.medoid_composite",
+            name="medoid 时序合成（多维中位数）",
+            category="remote_sensing",
+            capabilities=["temporal_composite"],
+            input_artifact_types=["raster_surface"],
+            output_artifact_type="raster_surface",
+            tool_candidates=["medoid_composite"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="INLINE", priority=15,
+            approximate=False,
+            complexity="O(T²·H·W·k)",
+            algorithm_family="temporal_composite",
+            method_references=["flood2013"],
+            assumptions=[
+                "逐像元选 argmin_t Σ_s ‖x_t−x_s‖₂（波段欧氏）的**真实观测切片**"
+                "——跨波段光谱一致性保持（区别于逐波段 median 的独立分位拼接）",
+                "任一波段无效（NaN/哨兵）的切片整条剔除（跨波段一致性优先，"
+                "不做波段级稀释）；平局取最早时相（确定性）",
+                "实现为 generic 时序统计（与 sar.temporal_composite 同底座家族，"
+                "光学/多时相栈通用）；云/影污染时相经距离和自动边缘化",
+            ],
+            limitations=[
+                "输入须已配准对齐的多时相波段栈 (T,k,H,W)；不做云检测/掩膜",
+                "规模预算：2≤T≤24、H·W≤4096²、T·H·W≤32M（距离累加面，超限拒绝）",
+                "k=1 时退化为最接近全体一维观测的选择（奇数 T 下与 median 等价）",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            numerical_tolerance="手工 3 时相小栈：medoid 入选清洁切片、云污染切片"
+                                "永不入选（index 栅格断言）；NaN 切片剔除精确",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_medoid_composite.py::test_medoid_selects_real_clean_observation",
+                "tests/unit/lib/test_medoid_composite.py::test_medoid_nan_and_guards",
+            ],
+        ),
+
         # ── Foundation V3：SAR 批次（热噪声 / 量纲换算 / MT-Lee / ───────
         # ── 相干性（EXPERIMENTAL）/ RTC / 叠掩阴影 / ENL 图）────────────
         AlgorithmDescriptor(
@@ -888,15 +990,19 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cpu_cost="low", memory_cost="low", io_cost="low",
             preferred_execution_policy="INLINE", priority=20,
             algorithm_family="sar_calibration",
-            method_references=["oliver_quegan1998"],
+            method_references=["oliver_quegan1998", "esa_s1_ipf_denoising"],
             assumptions=[
                 "I_dn = max(I − N, 0)：噪声项 N 为标量噪声底或同形逐像元 LUT（互斥）",
                 "输入须线性强度（非负；dB 输入被拒绝）",
+                "input_domain（可选）=auto/linear/db 显式声明量纲：负值检测为"
+                "符号启发式（全正 dB 场不可检测），显式 db → 类型化拒绝；"
+                "缺省 auto 行为不变",
                 "去噪后负值钳 0（clamped_pixels 计数披露）",
             ],
             limitations=[
                 "不解析 Sentinel-1 SAFE annotation XML（denoising 需逐 swath "
-                "插值）——仅接收已提取的噪声底/LUT",
+                "插值；ESA S-1 MPC 技术注记 MPC-0392 / ESA-RS-CLI-52-0946）"
+                "——仅接收已提取的噪声底/LUT",
                 "钳 0 使弱信号像元强度统计右偏（正偏披露，不静默）",
             ],
             crs_class="RASTER_GRID",
@@ -907,6 +1013,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             conformance_tests=[
                 "tests/unit/lib/test_sar_v3.py::test_thermal_noise_floor_removal_exact",
                 "tests/unit/lib/test_sar_v3.py::test_thermal_noise_guards",
+                "tests/unit/lib/test_sar_science_fixes_v3.py::test_r6_thermal_noise_esa_reference_and_input_domain",
             ],
             parameter_contract_ref="sar_thermal_noise_removal_analysis",
         ),
@@ -991,6 +1098,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "γ = |Σ a·b*| / √(Σ|a|²·Σ|b|²)（窗口化，nodata 感知累加）",
                 "输入为双通道复 SLC（(re, im) 二元组或 complex）——两历元同网格",
                 "分母为 0 的窗口 → NaN；γ 钳 [0,1]（超 1 像元计数披露）",
+                "gamma_ci95_low/high：逐窗 95% CI（Fisher z：z=atanh γ、"
+                "SE≈1/√(n_pairs−3)；n_pairs≤3 → NaN；正态近似披露）",
             ],
             limitations=[
                 "EXPERIMENTAL：无轨道元数据/配准质量输入——窗口估计有偏差，需人工核验",
@@ -1004,6 +1113,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             conformance_tests=[
                 "tests/unit/lib/test_sar_v3.py::test_coherence_self_is_one_and_decorrelation",
                 "tests/unit/lib/test_sar_v3.py::test_coherence_guards",
+                "tests/unit/lib/test_sar_science_fixes_v3.py::test_r4_coherence_fisher_z_ci_coverage_and_width",
             ],
             parameter_contract_ref="sar_coherence_analysis",
         ),
@@ -1093,10 +1203,13 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             assumptions=[
                 "ENL = mean²/var（滑窗、总体方差 ddof=0、nan 感知）",
                 "全局 ENL 由整图有效像元估计（均匀假设）",
+                "enl_ci95：全局 ENL 的 Wald 95% CI（delta 法 "
+                "var(ENL̂)≈2·ENL·(ENL+1)/n，均匀场景；下界钳 0）",
                 "退化窗口（方差 ≤ ε）→ NaN（计数披露）",
             ],
             limitations=[
                 "非均匀窗口把纹理方差计入 → ENL 被低估（估计偏差，披露）",
+                "CI 只覆盖抽样噪声、不覆盖非均匀偏差（均匀场景假设披露）",
                 "dB 输入被拒绝（矩估计仅线性强度有意义）",
             ],
             crs_class="RASTER_GRID",
@@ -1106,6 +1219,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             conformance_tests=[
                 "tests/unit/lib/test_sar_v3.py::test_enl_map_recovers_synthetic_enl",
                 "tests/unit/lib/test_sar_v3.py::test_enl_map_guards",
+                "tests/unit/lib/test_sar_science_fixes_v3.py::test_r3_enl_confidence_interval_covers_truth",
             ],
             parameter_contract_ref="sar_enl_map_analysis",
         ),
@@ -1116,13 +1230,16 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 PARAMETER_CONTRACTS: List[ParameterContract] = [
     ParameterContract(
         id="spectral_index_analysis", version=2,
-        description="类型化光谱指数：指数 id（INDEX_FAMILY 11 成员；波段按角色显式命名）。",
+        description="类型化光谱指数：指数 id（INDEX_FAMILY 13 成员；波段按角色显式命名）。",
         parameters=[
             ParameterSpec(
                 name="index_id", type="enum", required=True,
                 enum_values=["ndvi", "gndvi", "savi", "msavi", "ndwi",
-                             "mndwi", "ndbi", "ndmi", "nbr", "evi", "evi2"],
-                description="光谱指数 id（公式出处随结果披露）",
+                             "ndwi_gao", "ndwi_water", "mndwi", "ndbi",
+                             "ndmi", "nbr", "evi", "evi2"],
+                description="光谱指数 id（ndwi=McFeeters 开放水体；ndwi_gao=Gao "
+                            "植被水分；ndwi_water=ndwi 显式别名——三者不可互换，"
+                            "公式出处随结果披露）",
             ),
         ],
     ),
@@ -1138,11 +1255,14 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
         ],
     ),
     ParameterContract(
-        # v2（Foundation V2 · A6 additive）：可选 include_cv / percentiles
-        # ——默认关闭（历史输出形状不变）；percentiles 以逗号分隔字符串
-        # 过 JSON 通道（≤5 个、0-100）。
-        id="sar_temporal_stats_analysis", version=2,
-        description="SAR 时序栈统计量（时间维聚合；规模守卫 T≤24、H·W≤4096²）。",
+        # v3（R-2/FN-2 additive）：可选 acquisitions 获取元数据 → 时序
+        # 可比性检查（入射角差>5°/升降轨混搭/极化混搭 → 证据块 warnings，
+        # 披露级不拒绝）。数组/对象不经 JSON 契约词表（无 array/object
+        # 类型）——每切片一条 dict 经内联 JSON 通道传入，词表/格式校验在
+        # 实现层（SARAcquisitionMeta）；本条目为文档位。
+        id="sar_temporal_stats_analysis", version=3,
+        description="SAR 时序栈统计量（时间维聚合；规模守卫 T≤24、H·W≤4096²；"
+                    "v3：可选 acquisitions 获取元数据 → 可比性警告）。",
         parameters=[
             ParameterSpec(
                 name="product", type="enum", default="mean",
@@ -1156,6 +1276,14 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="percentiles", type="string", default="",
                 description="逗号分隔分位数（如 '10,50,90'；≤5 个，0-100；空=不计算）",
+            ),
+            ParameterSpec(
+                name="acquisitions", type="string",
+                description="获取元数据文档位：每切片一条 dict "
+                            "{polarization, acquisition_date, "
+                            "incidence_angle_deg, orbit_direction} 经内联 "
+                            "JSON 通道（词表校验在实现层；可比性差异 → "
+                            "证据块 warnings，披露级不拒绝）",
             ),
         ],
     ),
@@ -1291,8 +1419,12 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
         ],
     ),
     ParameterContract(
-        id="sar_temporal_composite_analysis", version=1,
-        description="SAR 时序栈合成（mean/median/percentile；nodata 感知时间维聚合）。",
+        # v2（R-2/FN-2 additive）：+ 可选 acquisitions 获取元数据（文档位，
+        # 同 sar_temporal_stats_analysis v3 的口径——可比性差异 → 证据块
+        # warnings，披露级不拒绝）。
+        id="sar_temporal_composite_analysis", version=2,
+        description="SAR 时序栈合成（mean/median/percentile；nodata 感知时间维"
+                    "聚合；v2：可选 acquisitions 获取元数据 → 可比性警告）。",
         parameters=[
             ParameterSpec(
                 name="method", type="enum", default="mean",
@@ -1302,6 +1434,14 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ParameterSpec(
                 name="percentile", type="number", minimum=0.0, maximum=100.0,
                 description="分位数（method=percentile 时必需）",
+            ),
+            ParameterSpec(
+                name="acquisitions", type="string",
+                description="获取元数据文档位：每切片一条 dict "
+                            "{polarization, acquisition_date, "
+                            "incidence_angle_deg, orbit_direction} 经内联 "
+                            "JSON 通道（词表校验在实现层；可比性差异 → "
+                            "证据块 warnings，披露级不拒绝）",
             ),
         ],
     ),
@@ -1499,12 +1639,29 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ),
         ],
     ),
+    ParameterContract(
+        id="linear_unmixing_analysis", version=1,
+        description="FCLS 全约束线性光谱解混（Heinz & Chang 2001；x≥0 + Σx=1；"
+                    "端元由调用方提供）。",
+        parameters=[
+            ParameterSpec(
+                name="sum_to_one_weight", type="number", default=1e6,
+                minimum=1.0,
+                description="和一约束的 δ 增广权重（边界像元的 δ-增广 NNLS 路径；"
+                            "δ 越大和一越严格、代价是条件数——默认 1e6 为端元"
+                            "归一尺度下的实现常数）",
+            ),
+        ],
+    ),
 
     # ── Foundation V3：SAR 批次参数契约 ────────────────────────────────
     ParameterContract(
-        id="sar_thermal_noise_removal_analysis", version=1,
+        # v2（R-6 additive）：+ input_domain（auto/linear/db）显式量纲声明
+        # ——负值检测是符号启发式（全正 dB 场不可检测），显式 db → 类型化
+        # 拒绝；缺省 auto 行为不变。
+        id="sar_thermal_noise_removal_analysis", version=2,
         description="SAR 热噪声去除：I_dn=max(I−N,0)（标量噪声底/逐像元 LUT 互斥；"
-                    "钳 0 计数披露；不解析 SAFE XML）。",
+                    "钳 0 计数披露；不解析 SAFE XML；v2：input_domain 显式量纲）。",
         parameters=[
             ParameterSpec(
                 name="noise_floor", type="number", minimum=0.0,
@@ -1515,6 +1672,12 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="noise_lut", type="string",
                 description="逐像元噪声 LUT 文档位：2D 嵌套数组经内联 JSON 通道"
                             "（与网格同形；形状校验在工具签名与实现层）",
+            ),
+            ParameterSpec(
+                name="input_domain", type="enum", default="auto",
+                enum_values=["auto", "linear", "db"],
+                description="输入量纲显式声明：auto=符号启发式（缺省行为不变）；"
+                            "linear=声明线性强度；db=类型化拒绝（先 db_to_linear）",
             ),
         ],
     ),

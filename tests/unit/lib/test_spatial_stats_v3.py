@@ -537,7 +537,8 @@ def test_hotspot_permutation_significance_option():
 
 
 def test_hotspot_normal_path_unchanged():
-    """normal（默认）路径输出键集与既有契约逐键一致 —— 不带置换键。"""
+    """normal（默认）路径输出键集与既有契约逐键一致 —— 不带置换键。
+    （审计 F-3：新增 uncertainty 证据块，feature 属性键仍逐键不变。）"""
     fc = _hotspot_fc()
     res = hotspot_narrated(fc, "val", distance_band=1500)
     assert res.success
@@ -549,7 +550,46 @@ def test_hotspot_normal_path_unchanged():
     assert "p_value_permutation" not in res.data["features"][0]["properties"]
     assert set(res.data) == {"type", "features", "hot_spots_count",
                              "cold_spots_count", "distance_band_m",
-                             "fdr_hot_spots_count", "expected_false_positives"}
+                             "fdr_hot_spots_count", "expected_false_positives",
+                             "uncertainty"}
+
+
+def test_hotspot_uncertainty_evidence_block():
+    """审计 F-3（spatial.hotspot.local producer test）：Gi* 的 data_out
+    必须携带真实填充的 StatisticalSignificance 证据块 —— p 值/方法/
+    置换数/多重校正字段逐项核实（块级统计量 = max|Gi*| 与 min-p 配对）。"""
+    fc = _hotspot_fc()
+    # normal 路径：analytic_normal、无置换、BH-FDR
+    res = hotspot_narrated(fc, "val", distance_band=1500)
+    assert res.success
+    blocks = [u for u in res.data["uncertainty"]
+              if u.get("uncertainty_type") == "statistical_significance"]
+    assert len(blocks) == 1
+    blk = blocks[0]
+    assert blk["target"] == "gi_star_local"
+    assert blk["method"] == "analytic_normal"
+    assert blk["permutations"] is None
+    assert blk["multiple_testing"] == "BH-FDR"
+    assert 0.0 < blk["p_value"] <= 1.0
+    # max|Gi*| 与 min p 同位配对（双侧正态 p 的自洽性守卫；容差 =
+    # 属性通道舍入：gi_star 舍 4 位、p_value 舍 6 位）
+    gi = np.asarray([f["properties"]["gi_star"]
+                     for f in res.data["features"]])
+    p_all = np.asarray([f["properties"]["p_value"]
+                        for f in res.data["features"]])
+    assert blk["statistic_value"] == pytest.approx(float(np.max(np.abs(gi))),
+                                                   abs=1e-4)
+    assert blk["p_value"] == pytest.approx(float(np.min(p_all)), abs=1e-6)
+    # permutation 路径：方法与置换数真实填充
+    res_p = hotspot_narrated(fc, "val", distance_band=1500,
+                             significance_method="permutation",
+                             permutations=99)
+    assert res_p.success
+    blk_p = [u for u in res_p.data["uncertainty"]
+             if u.get("uncertainty_type") == "statistical_significance"][0]
+    assert blk_p["method"] == "permutation"
+    assert blk_p["permutations"] == 99
+    assert 0.0 < blk_p["p_value"] <= 1.0
 
 
 def test_hotspot_permutation_scale_guard(monkeypatch):

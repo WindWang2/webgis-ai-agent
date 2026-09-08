@@ -13,6 +13,7 @@
 - ``mad_change``      —— MAD / IR-MAD 变化检测（Nielsen 1998）
 - ``segment_image``   —— k-means 分割基座（Lloyd 1982；非 SLIC，披露）
 - ``extract_endmembers_vca`` —— 端元提取 VCA（Nascimento & Dias 2005，EXPERIMENTAL）
+- ``fcls_unmix``      —— FCLS 全约束线性光谱解混（Heinz & Chang 2001）
 - ``band_correlation_table`` —— 波段×波段 Pearson 相关表（公共有效掩膜）
 - ``temporal_features`` —— 逐像元时序特征（单周期谐波 + 线性去趋势，披露）
 - ``robust_normalize`` —— 稳健跨波段/跨场景归一化（2-98 分位，披露）
@@ -57,6 +58,7 @@ __all__ = [
     "mad_change",
     "segment_image",
     "extract_endmembers_vca",
+    "fcls_unmix",
     "band_correlation_table",
     "temporal_features",
     "robust_normalize",
@@ -872,8 +874,9 @@ def mad_change(
     两期栈各自标准化 → SVD-CCA → MAD 变分量 MAD_i = a_i·X − b_i·Y
     （按规范相关 ρ 升序——noisiest first，Nielsen 约定）。变分量方差
     （理论值 2(1−ρ)，随实测经验方差一并在输出披露）。χ² 栅格 =
-    Σ_i MAD_i²/Var_i（按任务约定参考自由度 2k，披露）；ρ 钳制
-    ≤1−1e-12（防恒等场景 0/0）。
+    Σ_i MAD_i²/Var_i，自由度 k=n_bands（k 个标准化变分量，每个方差
+    2(1−ρ_i) → 每分量 1 自由度；Nielsen 1998 / Canty IR-MAD 惯例
+    χ²_k）；ρ 钳制 ≤1−1e-12（防恒等场景 0/0）。
 
     ``n_iterms`` > 0 → IR-MAD 迭代重加权：w = 1/χ²（均值归一、下限
     1e-4，披露），加权均值/协方差重做 CCA；迭代上限 10，报告收敛增量
@@ -963,13 +966,18 @@ def mad_change(
         "iterations_ran": int(iterations_ran),
         "convergence_delta": delta,
         "converged": converged,
-        "chi2_dof": 2 * n_bands,
+        "chi2_dof": n_bands,
         "variate_variance_theory": "Var(MAD_i) = 2(1−ρ_i)（标准化场景）",
+        "chi2_dof_derivation": (
+            "χ² 自由度 = k = n_bands：k 个标准化变分量每个方差 2(1−ρ_i)，"
+            "标准化后每分量贡献 1 个自由度（Nielsen 1998 / Canty IR-MAD "
+            "惯例 χ²_k）；历史实现曾用 2k（本版修正）"),
         "rho_clamp": _MAD_RHO_CLAMP,
         "weight_floor": _IRMAD_WEIGHT_FLOOR if w is not None else None,
         "disclosure": (
             "MAD 按 Nielsen (1998)：SVD-CCA + 变分量按 ρ 升序（noisiest "
-            "first）；χ² 栅格自由度按 2k 约定披露；ρ 钳制 ≤1−1e-12（恒等"
+            "first）；χ² 栅格自由度 = k（标准化变分量方差 2(1−ρ) → 每分量 "
+            "1 dof，Nielsen/Canty χ²_k 惯例）；ρ 钳制 ≤1−1e-12（恒等"
             "场景 χ²≈0 而非 0/0）；IR-MAD 为固定点重加权迭代（w=1/χ²，"
             "均值归一 + 下限 1e-4）——完整学术实现含 no-change 概率优化，"
             "未在本迭代实现（披露）"),
@@ -1232,6 +1240,162 @@ def extract_endmembers_vca(
         "endmembers": endmembers,
         "locations": locations,
         "valid_indices": found_idx,
+        "n_valid_pixels": n_valid,
+        "common_valid_fraction": fraction,
+        "warnings": warn,
+        "meta": meta,
+    }
+
+
+# ── 9b. FCLS 线性光谱解混（Heinz & Chang 2001）────────────────────────
+
+# δ 增广行权重（和一约束的罚强度；在按端元列范数归一的系统中取值，
+# 端元谱 O(1) 时残差 O(1) → 和一违背 ~O(1/δ)，边界像元经 scipy NNLS
+# 求解。值为实现常数、进 meta 披露）。
+_FCLS_SUM_TO_ONE_WEIGHT = 1e6
+# 闭合式解的数值负容忍（|x_i| ≤ tol 视为 0，不触发逐像元 NNLS 回退）。
+_FCLS_NEG_TOL = 1e-12
+
+
+def _validate_endmember_matrix(E: np.ndarray, n_bands: int) -> np.ndarray:
+    """端元矩阵校验：2D (k, m)、波段数一致、有限、列满秩（秩亏拒绝）。"""
+    E = np.asarray(E, dtype=float)
+    if E.ndim != 2:
+        raise ValueError(
+            f"endmembers 必须是 2D 矩阵 [n_bands][n_endmembers]，got ndim={E.ndim}")
+    k, m = E.shape
+    if k != n_bands:
+        raise ValueError(
+            f"endmembers 波段维 {k} 与栈波段数 {n_bands} 不一致"
+            "（端元光谱必须逐波段对齐）")
+    if m < 2:
+        raise ValueError(f"endmembers 必须 ≥2 个端元（单端元无混合），got {m!r}")
+    if not np.isfinite(E).all():
+        raise ValueError("endmembers 含 NaN/Inf——端元光谱必须有限")
+    norms = np.linalg.norm(E, axis=0)
+    if (norms <= 1e-12).any():
+        raise DegenerateData(
+            f"端元 {np.where(norms <= 1e-12)[0].tolist()} 为零向量——解混无定义",
+            correction_hint="检查端元光谱提取是否失败")
+    # 列满秩：秩亏（含 m > k 的欠定）→ EᵀE 奇异，FCLS 无良定义唯一解
+    rank = int(np.linalg.matrix_rank(E))
+    if rank < m:
+        raise DegenerateData(
+            f"端元矩阵秩亏（rank={rank} < m={m}，共线或端元数>波段数）——"
+            "FCLS 约束解不唯一",
+            correction_hint="剔除共线端元或减少端元数（m ≤ 波段数）")
+    return E
+
+
+# review R2-4：边界像元逐像元 NNLS 的耗时面预算（超过仅披露，不拒绝
+# —— 闭式解主路径不受影响，预算用于警示批处理时长）。
+_FCLS_NNLS_BUDGET = 200_000
+
+
+def fcls_unmix(
+    stack: StackInput,
+    endmembers: StackInput,
+    *,
+    sum_to_one_weight: float = _FCLS_SUM_TO_ONE_WEIGHT,
+    nodata: Optional[float] = None,
+) -> Dict[str, object]:
+    """全约束最小二乘线性光谱解混 FCLS（Heinz & Chang 2001）。
+
+    逐像元求解 ``min ‖E·x − f‖²  s.t.  x ≥ 0, Σx = 1``，E 为 k 波段 ×
+    m 端元矩阵。输出 m 个丰度面（值域 [0,1]）+ 逐像元 RMS 残差面
+    ``‖E·x − f‖₂/√k``（波段均方根，不确定性摘要——field_uncertainty）。
+
+    实现（与 Heinz & Chang 2001 的增广最小二乘框架一致）：
+
+    - 全体像元先做向量化**和一约束闭式解**（Lagrange 乘子法，论文
+      eq.14–16 路线）：x_c = R⁻¹(Eᵀf − λ1)，λ=(1ᵀR⁻¹Eᵀf − 1)/(1ᵀR⁻¹1)，
+      R=EᵀE；解在单纯形内部时即精确约束最优（KKT 成立）；
+    - 出现负分量的边界像元逐像元回退 **δ-增广 NNLS**（[E; δ·1ᵀ]x =
+      [f; δ]，δ=``sum_to_one_weight``（默认 1e6）、按端元列范数归一的
+      尺度下）：scipy NNLS 给出增广问题的精确非负解，δ→∞ 收敛到真
+      FCLS（和一违背 ~O(1/δ)，披露）；
+    - 端元矩阵列满秩守卫（秩亏/端元数>波段数 → DegenerateData）；
+    - 无随机成分（deterministic）；公共有效掩膜 + NaN 回填同本模块约定。
+    """
+    E = np.asarray(endmembers, dtype=float)
+    arr, band_names = _as_stack(stack)
+    _check_scale(arr, "FCLS 线性光谱解混")
+    n_bands, height, width = arr.shape
+    E = _validate_endmember_matrix(E, n_bands)
+    k, m = E.shape
+    delta = float(sum_to_one_weight)
+    if not (np.isfinite(delta) and delta >= 1.0):
+        raise ValueError(
+            f"sum_to_one_weight（δ 增广权重）必须为 ≥1 的有限数，got {delta!r}")
+
+    common, n_valid, fraction, warn = _common_valid(arr, nodata, "FCLS 解混")
+    # 逐像元独立 LS：无全局统计估计，样本下限仅要求 ≥1 个有效场像元
+    # （本模块统一走 InsufficientSamples 语义，取 2 作最低场规模）。
+    _require_samples(n_valid, 2, "FCLS 解混")
+    f_pixels = arr[:, common].T                   # (n, k)
+
+    # 端元尺度归一（整体缩放不改变丰度解；δ 在该尺度下固定）。
+    col_norms = np.linalg.norm(E, axis=0)
+    scale = float(col_norms.max())
+    En = E / scale
+    fn = f_pixels / scale
+
+    # ── 阶段 A：向量化和一约束闭式解（Lagrange；单纯形内部 = 精确）──
+    r_mat = En.T @ En                             # (m, m)
+    r_inv = np.linalg.pinv(r_mat)
+    u_vec = r_inv @ np.ones(m)                    # R⁻¹1
+    denom = float(np.ones(m) @ u_vec)             # 1ᵀR⁻¹1（满秩 > 0）
+    x_ls = fn @ En @ r_inv                        # (n, m) 无约束 LS（R⁻¹Eᵀfᵀ）
+    lag = (np.ones(m) @ x_ls.T - 1.0) / denom     # (n,) λ（论文 eq.15-16）
+    x_con = x_ls - lag[:, None] * u_vec[None, :]
+    interior = x_con.min(axis=1) >= -_FCLS_NEG_TOL
+    x_con[interior[:, None] & (x_con < 0.0)] = 0.0   # 数值尘埃（|x|≤1e-12）归零
+
+    # ── 阶段 B：边界像元 δ-增广 NNLS（scipy 精确非负解，披露路径）──
+    n_boundary = int((~interior).sum())
+    x_all = x_con
+    if n_boundary:
+        from scipy.optimize import nnls as _nnls
+
+        e_aug = np.vstack([En, np.full((1, m), delta)])
+        x_bnd = np.empty((n_boundary, m), dtype=float)
+        for i, f_row in enumerate(fn[~interior]):
+            b_aug = np.append(f_row, delta)
+            x_bnd[i], _ = _nnls(e_aug, b_aug)
+        x_all[~interior] = x_bnd
+
+    # 逐像元 RMS 残差（原始端元尺度；field_uncertainty 摘要）。
+    resid = f_pixels - x_all @ E.T
+    rms_vals = np.sqrt(np.mean(resid ** 2, axis=1))
+
+    abundances = [
+        _backfill(x_all[:, c], common, height, width) for c in range(m)
+    ]
+    rms_raster = _backfill(rms_vals, common, height, width)
+
+    meta: Dict[str, object] = {
+        "n_bands": n_bands,
+        "band_order": band_names,
+        "n_endmembers": m,
+        "n_valid_pixels": n_valid,
+        "common_valid_fraction": fraction,
+        "n_boundary_pixels_nnls": n_boundary,
+        # review R2-4：边界像元走逐像元 NNLS（Python 层），给出耗时面
+        # 预算口径 —— 超预算时披露（不静默）。
+        "nnls_budget_pixels": _FCLS_NNLS_BUDGET,
+        "nnls_budget_exceeded": bool(n_boundary > _FCLS_NNLS_BUDGET),
+        "sum_to_one_weight": delta,
+        "method": "fcls",
+        "disclosure": (
+            "FCLS（Heinz & Chang 2001）：min‖Ex−f‖² s.t. x≥0, Σx=1；"
+            "单纯形内部像元走和一约束闭式解（精确），"
+            f"{n_boundary} 个边界像元走 δ-增广 NNLS（δ={delta:g} 归一尺度，"
+            "和一违背 ~O(1/δ)）；丰度值域 [0,1]，RMS 残差为波段均方根"
+            "（重建不确定性摘要）；端元矩阵列满秩守卫"),
+    }
+    return {
+        "abundances": abundances,
+        "rms_residual": rms_raster,
         "n_valid_pixels": n_valid,
         "common_valid_fraction": fraction,
         "warnings": warn,

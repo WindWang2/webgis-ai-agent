@@ -31,3 +31,29 @@
   （25f0cf4），解决 gitignore/spatial_stats/point_pattern_tools/terrain_analysis 四处冲突
   （master 新工具元数据 kwargs 与本分支 additive 参数合并保留双方）。
 - 最终统计：171 算法 / 112 能力 / 106 契约 / oracle 1084 例（12 域）。
+
+## 2026-09-08（science-v3 / Platform V3）
+
+- Phase 0 完成：8 域只读审计（统计/地统计/点格局/网络/地形/光学/SAR/基建）
+  + 综合文档，全部入库 `.agent-work/science-v3/`。结论：无 fake-native。
+- Wave 1 Backend SDK V3（ADR-0117）：ResourceEnvelope/ApproximationClass/
+  NumericalTolerance/CancellationProfile/BackendEvidence/变体级精度分类；
+  select_backend 消费包络做估算+预警+近似披露（声明面/执行面口径分离）。
+- Wave 8 不确定性契约：uncertainty_producer_tests 映射 + validate() AST 级
+  「declared→produced→tested」闭环；kriging 与统计域 descriptor 接线。
+- Wave 10：gen_science_benchmark_manifest.py + BENCHMARK_MANIFEST.md
+  （57 heavy 算法声明面投影，parity 锁定，gitignore 白名单）。
+- 修复包（自实现）：geostat F1-F6；terrain P0（openness/horizon/SVF 内存
+  重构+联合包络、viewshed 护栏、水文组合链 persist_filled、D8 引用归属、
+  坐标约定复核——审计 F3 经实测推翻并在代码留证）；strict 波段语义。
+- 实现批次（并行 agent，≤2 并发约定）：
+  statistics 72500f3（GWR/MGWR 局地 SE/t、h3 接线、join_count 口径、
+  证据块、GWR envelope）；optical 5b3c22e（NDWI 拆名、MAD dof 2k→k、
+  FCLS 解混、medoid）；network 87ea957（MCLP 精确 MILP + 枚举对拍抓
+  coo 重复求和 bug、引文勘误、统一 OD 规模闸）；point-pattern 2b724f3
+  （EHA 17+1 类、temporal.hotspot 语义落地、pcf 守卫、descriptor 修复）；
+  sar 4a26e02（vh_ratio dB 宣称删除、可比性接线、ENL/coherence CI、
+  ESA IPF 引用 + input_domain）；geostat b0c6796（自实现：克里金 95%
+  预测区间面 + LOOCV z-score 校准）。
+- 文档：ADR-0117 + docs/science/PLATFORM_V3.md + 审计文档入库。
+- 待办：catalog/manifest 再生成 → 全量验收 → 两轮 review → rebase + PR。

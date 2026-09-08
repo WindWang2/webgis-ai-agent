@@ -136,9 +136,19 @@ class TestBinaryFieldPrecondition:
         r = evaluate_precondition("binary_field_required", {})
         assert r.verdict == "PASS"
 
-    def test_known_fields_without_binary_rejected(self):
+    def test_known_fields_without_binary_key_defers(self):
+        # V4（ADR-0104 #4）：binaryFields 键缺席 = 证据缺席 ≠ 证据证明违反
+        # —— deferred（修复结构性 false-reject；权威空清单才拒绝）。
         r = evaluate_precondition("binary_field_required", {
             "fields": {"income": {"type": "number"}},
+        })
+        assert r.verdict == "PASS"
+        assert "deferred" in r.message
+
+    def test_authoritative_empty_binary_list_rejected(self):
+        r = evaluate_precondition("binary_field_required", {
+            "fields": {"income": {"type": "number"}},
+            "binaryFields": [],
         })
         assert r.verdict == "INSUFFICIENT_DATA"
         assert r.transform_hint
@@ -183,3 +193,20 @@ def test_catalog_doc_matches_registry_projection():
     assert generate() == committed, (
         "ALGORITHM_CATALOG.md 与注册表投影不一致 —— 请运行 "
         "`python scripts/gen_science_catalog.py` 再提交")
+
+
+# ── benchmark manifest parity（Wave 10 · science-v3）────────────────
+def test_benchmark_manifest_matches_registry_projection():
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(root / "scripts"))
+    try:
+        from gen_science_benchmark_manifest import generate
+    finally:
+        sys.path.pop(0)
+    committed = (root / "docs" / "science" / "BENCHMARK_MANIFEST.md").read_text(
+        encoding="utf-8")
+    assert generate() == committed, (
+        "BENCHMARK_MANIFEST.md 与注册表投影不一致 —— 请运行 "
+        "`python scripts/gen_science_benchmark_manifest.py` 再提交")
