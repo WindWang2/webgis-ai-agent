@@ -41,6 +41,33 @@ from .validators import (
     validate_semantics,
 )
 
+def _emit_finalization_chain(result: MapCompletionResult, *, passes: int = 0) -> None:
+    """终验链发射（阶段 15/16/17；turn 上下文缺席时静默跳过）。"""
+    try:
+        from app.lib.runtime.chain_emitters import emit_chain, emit_chain_once
+        from app.lib.runtime.gis_trace import Stage
+
+        emit_chain_once(
+            Stage.VERIFICATION,
+            status=result.status,
+            render_status=result.render_status,
+            finding_codes=sorted({f.code for f in result.findings})[:8],
+        )
+        if result.repairs_applied:
+            emit_chain(
+                Stage.REPAIR,
+                applied=list(result.repairs_applied[:6]),
+                passes=int(passes),
+            )
+        emit_chain_once(
+            Stage.FINAL_VERDICT,
+            verdict=result.product_verdict,
+            final_map_status=result.final_map_status,
+        )
+    except Exception:  # noqa: BLE001 — 记录面绝不阻断终验
+        pass
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,6 +93,18 @@ def _validate_all(inputs: Dict[str, Any], chapter: Dict[str, Any]) -> List[MapCo
             records=inputs.get("artifact_records"),
         )
     )
+    # V4 Wave 7（ADR-0104）：completion-time 模型兼容/全透明结构代理审计
+    # （warning 级增值披露；validators import 放函数内防环）。
+    try:
+        from .validators.observation import (
+            validate_map_model_compat as _vmmc,
+            validate_layer_visibility_quality as _vlvq,
+        )
+
+        findings.extend(_vmmc(chapter, mapspec))
+        findings.extend(_vlvq(chapter, mapspec))
+    except Exception:  # noqa: BLE001 — 增值审计缺席不阻断终验
+        pass
     return findings[:MAX_FINDINGS]
 
 
@@ -278,6 +317,22 @@ async def run_map_finalization(
         except Exception:  # noqa: BLE001 — 聚合失败诚实留 unknown
             result.final_map_status = "unknown"
 
+    # V4 Wave 7：裁决快照上 result（SSE task_complete 消费；与
+    # map_product_block 的 derive 同源——同一纯函数、同一章节输入）。
+    try:
+        from .contracts import derive_product_verdict
+        result.product_verdict = str(derive_product_verdict(
+            result,
+            [w for w in chapter.get("methodology_warnings") or [] if isinstance(w, dict)],
+            chapter=chapter,
+        ).get("verdict") or "")
+    except Exception:  # noqa: BLE001 — 快照失败留空（旧路径语义）
+        result.product_verdict = ""
+
+    # V4 Wave 8：证据链阶段 15/16/17（VERIFICATION / REPAIR /
+    # FINAL_VERDICT）—— 终验事实入链（turn 上下文缺席时静默跳过）。
+    _emit_finalization_chain(result, passes=result.passes)
+
     logger.info(
         "[MapFinalizer] finalization_pass session=%s status=%s passes=%d repairs=%d",
         session_id, result.status, result.passes, len(result.repairs_applied),
@@ -324,28 +379,23 @@ def _dedup_gate_blocks(
         _stored_checked_revision(stored) == revision
         and _stored_render_seq(stored) == render_seq
         and str(stored.get("rows_fingerprint") or "")
-        == _rows_fingerprint(chapter)[:512]
+        == _rows_fingerprint(chapter)[:2048]
     )
 
 
 def _rows_fingerprint(chapter: Dict[str, Any]) -> str:
-    """行状态指纹（去重门输入）：capability 行的状态/ref 绑定变化即改变。
+    """行状态指纹（去重门输入）：capability 行的状态/ref/算法/参数变化即改变。
 
-    比「行全终态」检查更强（review A-2/B-3/F-4）：行回退（重试标 failed、
-    重绑定新 ref）都会改变指纹 → 触发重验；同时让 needs_repair/failed
-    会话在无变化时跳过整轮重跑（此前只有 complete 享受去重门，异常会话
-    每个工具结果都重放整轮 finalization + SSE + toast）。
+    V4（ADR-0104 Wave 1）：实现移入 workflow_instance.rows_fingerprint
+    （单一计算源），并在 V1 的 capability:status:bound_ref 之上纳入
+    ``resolved_algorithm`` 与 ``params`` 内容哈希——修复审计 02 §A4 的洞：
+    旧签名对 parameter/algorithm 编辑失明，参数-only 编辑后陈旧 verdict
+    被门永久保护。指纹内容变化会让旧持久化块一次性打破门重验（设计目的，
+    ADR-0104 兼容性节已披露）；同输入同指纹契约由测试钉住。
     """
-    parts: List[str] = []
-    for row in list(chapter.get("data_requirements") or []) + list(
-        chapter.get("analysis_steps") or []
-    ):
-        if not isinstance(row, dict):
-            continue
-        parts.append(
-            f"{row.get('capability')}:{row.get('status')}:{row.get('bound_ref') or ''}"
-        )
-    return "|".join(sorted(parts))
+    from app.services.gis_harness.workflow_instance import rows_fingerprint
+
+    return rows_fingerprint(chapter)
 
 
 def map_product_block(
@@ -382,7 +432,7 @@ def map_product_block(
     block["checked_revision"] = int(checked_revision)
     block["render_observation_seq"] = int(render_observation_seq)
     if rows_fingerprint:
-        block["rows_fingerprint"] = rows_fingerprint[:512]
+        block["rows_fingerprint"] = rows_fingerprint[:2048]
     block["projection"] = result.projection_line()
     # VNext §14：单字产品裁决（READY / READY_WITH_WARNINGS / NEEDS_REPAIR /
     # BLOCKED_BY_DATA / BLOCKED_BY_METHOD）—— 章节方法论警告参与推导
@@ -559,7 +609,7 @@ async def maybe_finalize_map_product(
                 # 行漂移守卫（review 终审 F1）：终验期间并行工具回调改了行
                 # 状态（行不推 revision）—— 旧指纹的结论不得盖上新指纹的
                 # 章节（否则陈旧 failed/complete 被门永久保护）。
-                if _rows_fingerprint(fresh.gis_chapter)[:512] != validated_fingerprint[:512]:
+                if _rows_fingerprint(fresh.gis_chapter)[:2048] != validated_fingerprint[:2048]:
                     logger.info(
                         "[MapFinalizer] rows changed mid-run session=%s — persist skipped",
                         session_id,
@@ -661,7 +711,33 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
         "session_id": session_id,
         "status": str(stored.get("status") or STATUS_PENDING),
         "summary": str(stored.get("summary") or "")[:120],
+        # V4 Wave 7（审计 06 建议 4）：任务级「真完成」判定面 —— 观测/
+        # 裁决进入最终完成判定：BLOCKED_* / 渲染未证实的会话不再是
+        # disclosure-only 的 complete。additive 键，旧读者忽略。
+        "task_complete": _is_task_complete(stored),
     }
+
+
+def _is_task_complete(stored: Dict[str, Any]) -> bool:
+    """stored map_product 块 → 任务级完成布尔（纯函数，有界输入）。
+
+    完成 = 产品裁决 ∈ {READY, READY_WITH_WARNINGS} 且最终地图状态 ∈
+    {verified, verified_with_degradation}。needs_repair / pending /
+    BLOCKED_BY_* / failed / unknown 一律不算完成。
+    """
+    from .contracts import (
+        FINAL_MAP_DEGRADED,
+        FINAL_MAP_VERIFIED,
+        VERDICT_READY,
+        VERDICT_READY_WITH_WARNINGS,
+    )
+
+    verdict = str(stored.get("product_verdict") or "")
+    final_status = str(stored.get("final_map_status") or "")
+    return (
+        verdict in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS)
+        and final_status in (FINAL_MAP_VERIFIED, FINAL_MAP_DEGRADED)
+    )
 
 
 def finalization_sse_payload(
@@ -687,6 +763,13 @@ def finalization_sse_payload(
         "issues": [f.to_dict() for f in result.findings[:4]],
         "repairs": list(result.repairs_applied[:4]),
     }
+    # V4 Wave 7：任务级完成布尔 = 裁决 ∈ READY* 且最终地图状态 ∈ verified*
+    # （与 read_stored_map_product 的 task_complete 同一折叠；verdict 来自
+    # finalize 管线的推导快照，载荷侧零重复推导）。
+    payload["task_complete"] = (
+        str(result.product_verdict) in ("READY", "READY_WITH_WARNINGS")
+        and result.final_map_status in ("verified", "verified_with_degradation")
+    )
     if session_id:
         payload["session_id"] = session_id
     if mapspec is not None and result.repairs_applied:
