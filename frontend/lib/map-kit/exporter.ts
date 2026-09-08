@@ -18,6 +18,7 @@ import {
   drawChromeText,
   type ExportChromeElement,
   type ExportChromeModel,
+  type ExportDegradation,
 } from './export-chrome';
 import { DEFAULT_STACK_STEP_PX } from '@/lib/map-components/resolve-layout';
 export type { ExportChromeModel } from './export-chrome';
@@ -1099,6 +1100,22 @@ function buildSvgWrapper(
 }
 
 /**
+ * Wave 9 / W5：显式降级 → 导出后系统消息片段（有界披露：≤8 条，code+detail）。
+ * 语义 = 「用户应知道导出件里少了/改了什么」，不静默。
+ */
+function formatDegradationNote(degradations: ExportDegradation[]): string {
+  if (!degradations.length) return '';
+  return (
+    ' 注意：本次导出存在降级：' +
+    degradations
+      .slice(0, 8)
+      .map((d) => `${d.code}${d.detail ? `（${d.detail}）` : ''}`)
+      .join('、') +
+    '。请如实告知用户。'
+  );
+}
+
+/**
  * #527：高 DPI 分支在 `map.once('idle')` 上无界等待 —— WebGL 上下文丢失或画布
  * 隐藏时 idle 永不触发，finally 里的 pixelRatio 恢复永远不可达（3.125x @300DPI
  * → ~10x backing store 泄漏）。这里给等待加 deadline：超时抛类型化错误，走既有
@@ -1390,23 +1407,55 @@ export async function runExport(
 
     // Wave 9：显式降级汇入导出后系统消息（此前 chart/table 面板拉取失败
     // 静默缺席 —— 用户不知道导出件里少了东西）。
-    const degradationNote = chromeModel?.degradations?.length
-      ? ' 注意：以下组件未能进入导出件：' +
-        chromeModel.degradations
-          .map((d) => `${d.componentId ?? '组件'}（${d.detail ?? d.code}）`)
-          .slice(0, 5)
-          .join('、') +
-        '。请如实告知用户。'
-      : '';
+    const chromeDegradations = chromeModel?.degradations ?? [];
 
     if (fmt === 'svg') {
-      const svgBlob = buildSvgWrapper(exportCanvas, title, dataUrl);
+      // V5（ADR-0118 W5）：真矢量优先 —— 孪生编译器产出数据层矢量要素 +
+      // svg-marginalia 整饰（图框/指北针/比例尺/图例）；编译/合成异常回退
+      // 既有位图包装（<image> 嵌 PNG）并显式发 vector_svg_fallback_raster。
+      let svgText: string;
+      let svgDegradations: ExportDegradation[];
+      try {
+        const { buildVectorSvgExport } = await import('./vector-svg-export');
+        const vector = buildVectorSvgExport({
+          spec: committedSpec,
+          viewport: { width: exportCanvas.width, height: exportCanvas.height },
+          paperSize,
+          orientation,
+          dpi,
+          title: title || specTitle || '',
+          subtitle: subtitle || specSubtitle || '',
+          chromeModel,
+          metersPerPixel: (() => {
+            try {
+              return metersPerPixelAt(map.getZoom(), map.getCenter().lat);
+            } catch {
+              return undefined;
+            }
+          })(),
+          fallbackRaster: () => buildSvgWrapper(exportCanvas, title, dataUrl),
+        });
+        svgText = vector.svg;
+        svgDegradations = vector.degradations;
+      } catch (e) {
+        // fallbackRaster 未注入/自身抛错的双保险位图回退（不静默）。
+        devOnly.warn('[MapExporter] vector svg build failed — raster fallback', e);
+        const wrapper = buildSvgWrapper(exportCanvas, title, dataUrl);
+        svgText = await wrapper.text();
+        svgDegradations = [
+          { code: 'vector_svg_fallback_raster', detail: e instanceof Error ? e.message : String(e) },
+        ];
+      }
+      const rasterFallback = svgDegradations.some((d) => d.code === 'vector_svg_fallback_raster');
+      const svgBlob = new Blob([svgText], { type: 'image/svg+xml' });
       const upload = await uploadExport(svgBlob, 'export.svg', title);
       recordExport(getHudState, title, upload.filename, 'svg', svgBlob.size);
       getHudState().setPendingSystemMessage(
-        `[系统通知] 专题地图 SVG \`${title || '未命名'}\` 已成功生成 (含嵌入位图)，` +
+        `[系统通知] 专题地图 SVG \`${title || '未命名'}\` 已成功生成` +
+          `（${rasterFallback ? '位图回退：数据层矢量编译失败，含嵌入位图' : '真矢量：数据层矢量要素，不含栅格底图'}），` +
           `文件已落盘并分配URL：${upload.url}。可通过以下链接下载：[下载SVG](${API_BASE}${upload.url})。` +
-          degradationNote + `注意展示完链接后直接结束。`,
+          formatDegradationNote([...chromeDegradations, ...svgDegradations]) +
+          `注意展示完链接后直接结束。`,
       );
       return { ok: true, format: 'svg', url: upload.url, filename: upload.filename };
     } else if (fmt === 'pdf') {
@@ -1430,7 +1479,7 @@ export async function runExport(
         `[系统通知] 专题底图 PDF \`${title || '未命名'}\` 已成功生成 (jsPDF 向量版)，` +
           `文件已落盘并分配URL：${upload.url}。` +
           `请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${upload.url})。` +
-          degradationNote + `注意展示完链接后直接结束。`,
+          formatDegradationNote(chromeDegradations) + `注意展示完链接后直接结束。`,
       );
       return { ok: true, format: 'pdf', url: upload.url, filename: upload.filename };
     } else {
@@ -1441,7 +1490,7 @@ export async function runExport(
       getHudState().setPendingSystemMessage(
         `[系统通知] 专题地图 \`${title || '未命名'}\` 已成功排版合成，` +
           `文件已落盘并分配URL：${upload.url}。 请利用Markdown的图片语法 \`![地图](${API_BASE}${upload.url})\` 将该成品展示给用户，并祝其研究顺利！` +
-          degradationNote + `注意展示完图片后直接结束。`,
+          formatDegradationNote(chromeDegradations) + `注意展示完图片后直接结束。`,
       );
       return { ok: true, format: 'png', url: upload.url, filename: upload.filename };
     }
