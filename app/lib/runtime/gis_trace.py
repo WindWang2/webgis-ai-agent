@@ -14,6 +14,7 @@ failure / cost / tokens / latency），形成从用户意图到最终地图修�
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import OrderedDict
@@ -22,6 +23,8 @@ from enum import IntEnum
 from typing import Any, Dict, List, Optional
 
 from app.lib.runtime.trace import bound_meta
+
+logger = logging.getLogger(__name__)
 
 
 class Stage(IntEnum):
@@ -120,11 +123,19 @@ class GisTraceChain:
 
 
 class GisTraceRegistry:
-    """turn → chain 的 LRU 注册表（进程内；有界）。"""
+    """turn → chain 的 LRU 注册表（进程内；有界）。
 
-    def __init__(self, max_chains: int = 128):
+    V5：pinned 区（start 即 pin、persist 成功 unpin，有界 FIFO）——
+    LRU 驱逐不再使 settle 期持久化丢失链（V4 行交错/丢链窗口修复的
+    registry 半边；文件锁半边在 trace_store）。pinned 上限超出时丢最旧
+    并 debug 记录 —— 与 LRU 同为有界纪律，不构成无界增长。
+    """
+
+    def __init__(self, max_chains: int = 128, max_pinned: int = 1024):
         self.max_chains = max_chains
+        self.max_pinned = max_pinned
         self._chains: "OrderedDict[str, GisTraceChain]" = OrderedDict()
+        self._pinned: "OrderedDict[str, GisTraceChain]" = OrderedDict()
         # RLock：record() 持锁调用 start()（同线程重入），必须可重入锁。
         self._lock = threading.RLock()
 
@@ -134,15 +145,30 @@ class GisTraceRegistry:
             self._chains[turn_id] = chain
             while len(self._chains) > self.max_chains:
                 self._chains.popitem(last=False)
+            self._pinned[turn_id] = chain
+            while len(self._pinned) > self.max_pinned:
+                dropped_id, _ = self._pinned.popitem(last=False)
+                logger.debug(
+                    "[GisTrace] pinned overflow drop turn=%s", dropped_id
+                )
         return chain
 
     def get(self, turn_id: str) -> Optional[GisTraceChain]:
         with self._lock:
-            return self._chains.get(turn_id)
+            chain = self._chains.get(turn_id)
+            if chain is None:
+                chain = self._pinned.get(turn_id)
+            return chain
 
     def drop(self, turn_id: str) -> None:
         with self._lock:
             self._chains.pop(turn_id, None)
+            self._pinned.pop(turn_id, None)
+
+    def unpin(self, turn_id: str) -> None:
+        """settle 持久化成功后释放 pin（pinned 区只收留未 settle 的链）。"""
+        with self._lock:
+            self._pinned.pop(turn_id, None)
 
     def record(self, turn_id: str, stage: Stage, **payload: Any) -> bool:
         """便捷记录：链不存在则惰性创建（保证发射侧零前置依赖）。"""
