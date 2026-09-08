@@ -111,6 +111,7 @@ def compile_workflow_v4(
     from app.services.gis_harness.workflow_v4.methodology import (
         get_methodology_registry,
         qualify_method_candidates,
+        resolve_methodology_family_for_query,
     )
     from app.services.gis_harness.workflow_v4.typed_dag import (
         build_typed_dag,
@@ -128,13 +129,12 @@ def compile_workflow_v4(
     registry = get_methodology_registry()
     result.methodology_fingerprint = registry.fingerprint
 
-    # ── 16 resolve_methodology：本体任务 → 方法族 ─────────────────────
+    # ── 16 resolve_methodology：专业词 + 本体任务 → 方法族 ────────────
     primary_task = (
         base.ontology_matches[0].get("task_id", "")
         if base.ontology_matches else ""
     )
-    family = registry.family_for_task(primary_task)
-    family = family[0] if family else None
+    family = resolve_methodology_family_for_query(query, primary_task)
     if family is None:
         v4_stages.append(WorkflowStageRecord(
             stage="resolve_methodology", status="skipped",
@@ -145,12 +145,15 @@ def compile_workflow_v4(
         return result
     result.methodology_family = family.family_id
     result.methodology_family_zh = family.label_zh
+    covering = primary_task in family.ontology_task_ids
     v4_stages.append(WorkflowStageRecord(
         stage="resolve_methodology",
-        reason_codes=[f"planned_family:{family.family_id}"],
+        reason_codes=[f"planned_family:{family.family_id}"]
+        + ([] if covering else ["FAMILY_TASK_DIVERGENCE"]),
         evidence={
             "ontology_task": primary_task[:64],
-            "all_families": [
+            "task_coverage": covering,
+            "covering_families": [
                 f.family_id for f in registry.family_for_task(primary_task)
             ][:6],
             "label_zh": family.label_zh[:60],
@@ -202,6 +205,7 @@ def compile_workflow_v4(
         data_roles=role_resolutions,
         selected_method=selected_method,
         extra_transforms=transforms,
+        extra_roles=family.data_role_demands,
     )
     result.typed_dag = graph.to_bounded_dict()
     v4_stages.append(WorkflowStageRecord(

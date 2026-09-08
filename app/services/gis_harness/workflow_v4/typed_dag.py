@@ -296,6 +296,7 @@ def build_typed_dag(
     data_roles: Sequence[Any],
     selected_method: Any = None,
     extra_transforms: Sequence[Dict[str, Any]] = (),
+    extra_roles: Sequence[str] = (),
     primary_output_artifact: str = "",
 ) -> TypedWorkflowGraph:
     """从 plan 分析步骤 + 数据角色解析 + 方法裁决确定性构建 typed DAG。
@@ -305,8 +306,12 @@ def build_typed_dag(
     - 每个分析步骤 → analysis 节点（方法候选选中时带 method_id /
       algorithm_id；端口从算法描述符投影）；
     - remediation transform（auto_applicable）→ transform 节点；
-    - 选中方法的 output_artifacts → output 节点（第一个 = 主输出）；
-    - 边：角色/变换 → 消费它的分析节点（无显式绑定时按结构 depends_on）。
+    - ``extra_roles``（方法族角色诉求）并入规划期输入（unknown 态入图
+      —— 家族级数据需求是方法论声明的"应考虑"集合）；
+    - 选中方法的 output_artifacts → output 节点（有 plan 真实产出者才
+      入边，防类型失配）；
+    - 边：角色/变换 → 方法声明消费它的分析节点（数据流），结构
+      depends_on 仅作顺序约束元数据。
     """
     nodes: List[TypedWorkflowNode] = []
     edges: List[TypedWorkflowEdge] = []
@@ -327,6 +332,8 @@ def build_typed_dag(
             resolved_roles[role] = status or "unknown"
     for role in method_roles:
         resolved_roles.setdefault(role, "unknown")
+    for role in extra_roles:
+        resolved_roles.setdefault(str(role), "unknown")
     present_roles: List[str] = []
     for role in sorted(resolved_roles):
         present_roles.append(role)

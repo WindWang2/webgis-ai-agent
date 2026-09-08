@@ -128,6 +128,11 @@ class MethodologyFamily(BaseModel):
     # 家族级数据角色诉求（成员任务 required_data_roles 并集的投影，载入期
     # 从 ontology 派生 —— 不手写，防第二事实源）。
     data_role_demands: Tuple[str, ...] = ()
+    # 专业路由词（query 子串命中 → 方法族消歧；与 V3 registry 路由词
+    # 同策略：紧词表防过匹配）。任务本体匹配是词汇模糊的；专业词决定
+    # 方法族透镜（长短语权重更高）。
+    keywords_zh: Tuple[str, ...] = ()
+    keywords_en: Tuple[str, ...] = ()
 
     def to_bounded_dict(self) -> Dict[str, Any]:
         return {
@@ -422,11 +427,14 @@ _CURATED_CANDIDATES: Tuple[MethodCandidate, ...] = (
 # ── 审定族表（family → 本体任务透镜；task_id 全部注册期校验）─────────────
 
 def _f(family_id: str, label_zh: str, label_en: str, description: str,
-       tasks: Tuple[str, ...], methods: Tuple[MethodCandidate, ...]) -> MethodologyFamily:
+       tasks: Tuple[str, ...], methods: Tuple[MethodCandidate, ...],
+       keywords_zh: Tuple[str, ...] = (),
+       keywords_en: Tuple[str, ...] = ()) -> MethodologyFamily:
     return MethodologyFamily(
         family_id=family_id, label_zh=label_zh, label_en=label_en,
         description=description, ontology_task_ids=tasks,
         candidate_methods=methods,
+        keywords_zh=keywords_zh, keywords_en=keywords_en,
     )
 
 
@@ -435,66 +443,90 @@ _CURATED_FAMILIES: Tuple[MethodologyFamily, ...] = (
        "要素/分类的直接地图表达：是什么、在哪里、构成如何。",
        ("distribution.point_distribution", "distribution.category_breakdown",
         "cartographic.report_map"),
-       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "descriptive_mapping")),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "descriptive_mapping"),
+       keywords_zh=("分布情况", "在哪里", "画出来", "展示",), keywords_en=("show", "where", "map the", "display",),
+),
     _f("distribution_density", "分布与密度", "Distribution & Density",
        "点/事件的空间分布刻画与密度估计：核密度、行政区率、网格聚合。",
        ("distribution.point_distribution", "distribution.density_quantitative",
         "distribution.regional_aggregation", "distribution.ranking_comparison"),
-       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "distribution_density")),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "distribution_density"),
+       keywords_zh=("密度", "热力图", "热力", "核密度", "聚集程度",), keywords_en=("density", "heatmap", "hot spot map",),
+),
     _f("interpolation", "空间插值", "Spatial Interpolation",
        "点观测 → 连续预测面：克里金族、IDW、趋势面与不确定性。",
        ("interpolation.deterministic_surface", "interpolation.geostatistical_kriging",
         "interpolation.regression_kriging", "interpolation.trend_surface",
         "interpolation.uncertainty_surface"),
-       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "interpolation")),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "interpolation"),
+       keywords_zh=("插值", "克里金", "内插", "浓度面", "表面", "监测站",), keywords_en=("kriging", "interpolation", "idw", "surface", "monitoring station",),
+),
     _f("zonal_statistics", "分区统计", "Zonal Statistics",
        "按行政/网格分区的聚合统计与率计算，含跨分区面插值。",
        ("distribution.regional_aggregation", "cartographic.statistical_map",
         "decision.spatial_equity"),
-       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "zonal_statistics")),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "zonal_statistics"),
+       keywords_zh=("各区", "各区县", "按区", "分区统计", "制表", "汇总",), keywords_en=("per district", "by district", "zonal", "per region",),
+),
     _f("suitability", "适宜性分析", "Suitability Analysis",
        "约束过滤 + 因子叠加的选址/适宜性评价。",
        ("decision.suitability", "decision.site_selection"),
-       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "suitability")),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "suitability"),
+       keywords_zh=("选址", "适宜", "宜建", "布局评价",), keywords_en=("suitability", "siting", "site selection",),
+),
     _f("network", "网络分析", "Network Analysis",
        "路径/服务区/可达性/OD/区位配置等网络方法。",
        ("network.route", "network.accessibility", "network.service_area",
         "network.od_analysis", "network.centrality", "network.facility_location"),
-       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "network")),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "network"),
+       keywords_zh=("路径", "可达", "服务区", "最短", "路网", "区位配置",), keywords_en=("route", "service area", "shortest path", "accessibility", "network",),
+),
     _f("terrain_hydrology", "地形与水文", "Terrain & Hydrology",
        "DEM 衍生（坡度坡向/地形指数）与水文（流域/河网）方法。",
        ("terrain_hydrology.slope_aspect", "terrain_hydrology.hillshade_viewshed",
         "terrain_hydrology.composite_analysis", "terrain_hydrology.watershed",
         "terrain_hydrology.stream_network", "terrain_hydrology.indices"),
-       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "terrain_hydrology")),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "terrain_hydrology"),
+       keywords_zh=("坡度", "坡向", "dem", "流域", "水文", "河网", "地形",), keywords_en=("slope", "aspect", "dem", "watershed", "terrain", "hillshade", "basin",),
+),
     _f("remote_sensing", "遥感解译", "Remote Sensing",
        "光谱指数/分类/异常检测与 SAR 预处理链。",
        ("remote_sensing.spectral_index", "remote_sensing.classification",
         "remote_sensing.anomaly_detection", "remote_sensing.temporal_analysis",
         "sar.radiometric_calibration", "sar.speckle_filtering",
         "sar.interpretation"),
-       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "remote_sensing")),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "remote_sensing"),
+       keywords_zh=("影像", "ndvi", "光谱", "遥感", "卫星", "植被指数", "波段",), keywords_en=("ndvi", "spectral", "satellite", "classification", "remote sensing", "band",),
+),
     _f("change_detection", "变化检测", "Change Detection",
        "双时相/时序变化：栅格变化、分类后比较、时序趋势、SAR 变化。",
        ("remote_sensing.change_detection", "remote_sensing.temporal_analysis",
         "cartographic.comparison_map"),
-       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "change_detection")),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "change_detection"),
+       keywords_zh=("变化检测", "变迁", "城市扩张", "前后对比", "变化",), keywords_en=("change detection", "land change", "urban growth", "change between",),
+),
     _f("spatial_statistics", "空间统计", "Spatial Statistics",
        "空间自相关/局部聚类/热点显著性与空间回归。",
        ("spatial_statistics.global_autocorrelation", "spatial_statistics.local_cluster",
         "spatial_statistics.hotspot_significance", "spatial_statistics.heterogeneity",
         "spatial_statistics.spatial_regression"),
-       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "spatial_statistics")),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "spatial_statistics"),
+       keywords_zh=("空间自相关", "自相关", "热点", "空间聚类", "显著性", "空间回归", "空间统计",), keywords_en=("autocorrelation", "spatial autocorrelation", "moran", "hotspot", "cluster", "spatial regression",),
+),
     _f("multi_criteria", "多准则决策", "Multi-Criteria Decision",
        "多准则/风险-暴露/脆弱性/公平性等综合评价方法。",
        ("decision.multi_criteria", "decision.risk_exposure",
         "decision.vulnerability", "decision.spatial_equity"),
-       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "multi_criteria")),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "multi_criteria"),
+       keywords_zh=("多准则", "风险评价", "风险", "脆弱性", "综合评价", "暴露度", "暴露",), keywords_en=("multi-criteria", "risk assessment", "vulnerability", "exposure", "mcda",),
+),
     _f("compositional_mapping", "组合制图", "Compositional Mapping",
        "多产品组合输出：对比图/统计图/报告图的多图层组合。",
        ("cartographic.comparison_map", "cartographic.statistical_map",
         "cartographic.report_map", "distribution.ranking_comparison"),
-       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "compositional_mapping")),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "compositional_mapping"),
+       keywords_zh=("对比图", "统计表", "报告", "组合", "专题图集",), keywords_en=("report", "comparison map", "stats table", "compose",),
+),
 )
 
 
@@ -514,9 +546,21 @@ class MethodologyRegistry:
 
     # ── 载入 ──────────────────────────────────────────────────────────
     def load_curated(self) -> None:
-        """载入审定族表（幂等：重复载入覆盖同 id）。"""
+        """载入审定族表（幂等：重复载入覆盖同 id）。
+
+        ``data_role_demands`` 在此派生：成员本体任务的 required_data_roles
+        并集（ontology = 数据需求单一事实源，本注册表不手写）。"""
+        from app.services.gis_harness.gis_ontology import ONTOLOGY_TASKS
+        task_roles = {t.task_id: t.required_data_roles for t in ONTOLOGY_TASKS}
         for fam in _CURATED_FAMILIES:
-            self._families[fam.family_id] = fam
+            demands: List[str] = []
+            for tid in fam.ontology_task_ids:
+                for role in task_roles.get(tid, ()):
+                    if role not in demands:
+                        demands.append(role)
+            self._families[fam.family_id] = fam.model_copy(update={
+                "data_role_demands": tuple(demands),
+            })
             for m in fam.candidate_methods:
                 self._methods[m.method_id] = m
         self._fingerprint = self._compute_fingerprint()
@@ -643,6 +687,47 @@ def resolve_methodology_family(
     """本体任务 → 主方法族（词表序第一个；确定性）。"""
     matches = get_methodology_registry().family_for_task(ontology_task_id)
     return matches[0] if matches else None
+
+
+def _family_keyword_score(family: MethodologyFamily, lowered: str) -> int:
+    """家族路由词命中分（长短语权重更高：sum of hit keyword lengths）。"""
+    score = 0
+    for kw in family.keywords_zh:
+        if kw and kw in lowered:
+            score += len(kw)
+    for kw in family.keywords_en:
+        if kw and kw in lowered:
+            score += len(kw)
+    return score
+
+
+def resolve_methodology_family_for_query(
+    query: str,
+    ontology_task_id: str,
+) -> Optional[MethodologyFamily]:
+    """query + 本体任务 → 方法族（确定性二级裁决）。
+
+    1. 专业词命中最高者（全族扫描，长短语加权；同分 → 词表序）——
+       任务本体匹配是词汇模糊的（"分布"可描述制图也可密度分析），
+       专业词（密度/自相关/坡度/各区…）决定方法论透镜，允许与任务
+       覆盖族分歧（调用方把分歧记入 evidence，不静默）；
+    2. 零命中 → 任务覆盖族按词表序（与 resolve_methodology_family 一致）；
+    3. 任务也未覆盖任何族 → None（诚实未映射）。
+    """
+    reg = get_methodology_registry()
+    lowered = (query or "").lower()
+    scored = [
+        (_family_keyword_score(f, lowered), -METHODOLOGY_FAMILIES.index(f.family_id), f)
+        for f in reg.families()
+    ]
+    hits = [t for t in scored if t[0] > 0]
+    if hits:
+        return max(hits, key=lambda t: (t[0], t[1]))[2]
+    covering = [
+        f for _, _, f in scored
+        if ontology_task_id in f.ontology_task_ids
+    ]
+    return covering[0] if covering else None
 
 
 # ── 资格引擎（Wave 2：事实驱动的候选排序，替代任意选择）──────────────────
