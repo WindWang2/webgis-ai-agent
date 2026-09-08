@@ -230,16 +230,29 @@ export function collectCartographicRuntimeObservation(
       runtime_layer_ids: expected.map((candidate) => candidate.id).slice(0, 16),
       // V5 W5 rendered-state telemetry（optional，服务端逐层核对用）：
       // render_complete = 样式收敛 ∧ 全部源已加载完（无 pending 瓦片请求）；
-      // source_status = loaded / pending / error 三态；
-      // feature_count = 源内当前可查要素数（矢量全量 / 瓦片视口内）。
+      // source_status 三态 —— 'error' 仅当期望源在 live style 里整体缺席
+      // （真实源失败；review R1 #3：spec 未收敛只是 pending，不是 error，
+      // 否则与 source_converged warning 双报且互相矛盾）；
+      // feature_count 仅对 geojson/vector 源发布（review R1 #4：栅格/
+      // 图片源 querySourceFeatures 恒空，零值不是证据）。
       render_complete: styleConverged
         && expected.every((candidate) => map.isSourceLoaded?.(candidate.source) !== false),
-      source_status: !sourceConverged && expected.length > 0
-        ? 'error'
-        : (expected.every((candidate) => map.isSourceLoaded?.(candidate.source) !== false)
-          ? 'loaded'
-          : 'pending'),
+      source_status: (() => {
+        const missingSource = expected.some(
+          (candidate) => !map.getSource?.(candidate.source));
+        if (missingSource && expected.length > 0) return 'error';
+        const allLoaded = expected.every(
+          (candidate) => map.isSourceLoaded?.(candidate.source) !== false);
+        return allLoaded ? 'loaded' : 'pending';
+      })(),
       feature_count: (() => {
+        const isQueryable = new Set(
+          expected.map((c) => String(
+            desired.sources[c.source]?.type ?? '')),
+        );
+        if ([...isQueryable].some((t) => t === 'raster' || t === 'image')) {
+          return undefined; // 栅格/图片源：要素计数无意义（键省略）
+        }
         const sourceIds = Array.from(new Set(expected.map((c) => String(c.source ?? '')))).filter(Boolean);
         let total = 0;
         for (const sourceId of sourceIds) {

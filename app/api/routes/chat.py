@@ -1433,8 +1433,9 @@ class CartographicRuntimeObservationRequest(BaseModel):
     # 有界 runtime error 环（dedup 后 ≤8 条：message≤160 + target）。
     runtime_errors: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
     # V5 W5：chart_panel 渲染 telemetry（id/rendered/data_points —— ID、
-    # 布尔与计数，无载荷体；旧客户端缺席 = 槽级校验口径）。
-    charts: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
+    # 布尔与计数，无载荷体）。None = 客户端未上报（旧构建）—— 持久层
+    # 省略该键，服务端按「telemetry 缺席」诚实披露而非误读为空集。
+    charts: Optional[list[dict[str, Any]]] = Field(default=None, max_length=32)
     # bounded settle 结果（map 'idle' race 超时）。
     map_idle: Optional[bool] = None
     observed_at: Optional[int] = Field(default=None, ge=0, le=9_007_199_254_740_991)
@@ -1558,7 +1559,10 @@ async def push_cartographic_runtime_observation(
                 # 语义（payload 全部 ID/布尔/小元数据，有界）。
                 "components": _bounded_observation_list(req.components),
                 "runtime_errors": _bounded_observation_list(req.runtime_errors),
-                "charts": _bounded_observation_list(req.charts),
+                # review R1 #2：仅客户端显式上报时才落 charts 键 —— None
+                # （旧客户端缺席）≠ 空集（上报了但全无数据），二者语义不同。
+                **({"charts": _bounded_observation_list(req.charts)}
+                   if req.charts is not None else {}),
                 "map_idle": bool(req.map_idle) if req.map_idle is not None else None,
                 "observed_at": req.observed_at,
             }

@@ -23,6 +23,7 @@ V5 契约：
 from __future__ import annotations
 
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
@@ -71,8 +72,6 @@ REMEDIATION_POLICY: Dict[HarnessFailureClass, Tuple[RemediationAction, int]] = {
     HarnessFailureClass.UNKNOWN: ("replan", 1),
 }
 
-_MAX_POLICY_ATTEMPTS = max(m for _, m in REMEDIATION_POLICY.values())
-
 # 消息级标记（小写子串；表内顺序即优先级，确定性）。
 _CRS_MARKERS = (
     "crs", "pyproj", "epsg", "投影", "坐标系", "坐标参考",
@@ -103,8 +102,13 @@ def _has_any(markers: Tuple[str, ...], text: str) -> bool:
 def _is_crs_exception(exception: Optional[Exception]) -> bool:
     if exception is None:
         return False
-    type_name = type(exception).__name__
-    if type_name in ("CRSError", "ProjError"):
+    names = {type(exception).__name__}
+    mro = {c.__name__ for c in type(exception).__mro__}
+    # InvalidCRS（scientific_errors）按限定名识别 —— review R1 #9：
+    # 收口后的 typed 错误进入分类器必须走类型而非消息巧合。
+    if "InvalidCRS" in mro or "InvalidCRS" in names:
+        return True
+    if names & {"CRSError", "ProjError", "CRSException"}:
         return True
     try:  # pyproj 可选依赖，懒探测
         from pyproj.exceptions import ProjError  # noqa: F401
@@ -239,29 +243,43 @@ class RemediationDecision:
         }
 
 
+#: 账本条目 TTL（秒）：超过后计数衰减归零重计 —— review R1 #7：无衰减
+#: 时同 (session, tool, class) 的历史失败会渗漏到未来的 turn（几天后
+#: 一次失败立即 abort）。进程级口径不变，衰减只影响时间上远离的旧账。
+LEDGER_TTL_S = 3600.0
+
+
 class RemediationLedger:
-    """进程级 (session, tool, class) → attempts 有界账本（LRU ≤ cap）。
+    """进程级 (session, tool, class) → attempts 有界账本（LRU ≤ cap + TTL）。
 
     诚实口径：进程级（与 tool_metrics 聚合器一致）；会话级持久预算由
     finalizer / runtime-repair 的既有账本负责。任何失败不抛出。
     """
 
-    def __init__(self, cap: int = 512):
+    def __init__(self, cap: int = 512, ttl_s: float = LEDGER_TTL_S):
         self._cap = cap
-        self._counts: "OrderedDict[Tuple[str, str, str], int]" = OrderedDict()
+        self._ttl = ttl_s
+        self._counts: "OrderedDict[Tuple[str, str, str], Any]" = OrderedDict()
         self._lock = threading.Lock()
 
     def record(self, key: Tuple[str, str, str]) -> int:
+        now = time.monotonic()
         with self._lock:
-            self._counts[key] = self._counts.get(key, 0) + 1
-            self._counts.move_to_end(key)
+            entry = self._counts.get(key)
+            if entry is None or now - entry[1] > self._ttl:
+                self._counts[key] = [1, now]  # [attempts, last_ts]
+            else:
+                entry[0] += 1
+                entry[1] = now
+                self._counts.move_to_end(key)
             while len(self._counts) > self._cap:
                 self._counts.popitem(last=False)
-            return self._counts[key]
+            return self._counts[key][0]
 
     def attempts(self, key: Tuple[str, str, str]) -> int:
         with self._lock:
-            return self._counts.get(key, 0)
+            entry = self._counts.get(key)
+            return int(entry[0]) if entry else 0
 
     def reset(self, key: Optional[Tuple[str, str, str]] = None) -> None:
         with self._lock:

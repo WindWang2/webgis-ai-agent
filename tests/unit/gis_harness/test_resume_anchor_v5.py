@@ -136,7 +136,10 @@ async def test_resume_rehydrates_live_refs(seeded_session):
     saved = await save_anchor(db, session_id=sid, user_id="u-v5")
     result = await resume_from_anchor(
         db, anchor_id=saved["anchor_id"], user_id="u-v5")
-    assert ref in result["restored_refs"]
+    # ref id 是 session 域能力令牌：restored_refs 必须是**新** id，
+    # 且提供 old→new 映射（review R1 #1 契约 —— 旧 id 在新 session 不存在）
+    assert ref not in result["restored_refs"]
+    assert result["ref_map"].get(ref) in result["restored_refs"]
     assert result["missing_refs"] == []
     # 新 session 中可读出同载荷
     new_refs = await session_data_manager.list_refs(result["session_id"])

@@ -146,6 +146,14 @@ def _split_e360_geometry(geom: Dict[str, Any]) -> List[Dict[str, Any]]:
     for part, shift in ((west_part, False), (east_part, True)):
         if part.is_empty:
             continue
+        # review R1 #10：恰在 180 经线上的几何会在两侧 box 各产生一次退化
+        # 命中（零面积碎片重复）—— 丢弃退化面积碎片。
+        if part.geom_type.startswith(("Polygon", "MultiPolygon")):
+            try:
+                if float(part.area) < 1e-12:
+                    continue
+            except Exception:  # noqa: BLE001 — 面积不可得按原样保留
+                pass
         geo = part.__geo_interface__
         if shift:
             geo = {

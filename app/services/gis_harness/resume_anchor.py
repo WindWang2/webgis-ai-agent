@@ -126,6 +126,10 @@ async def resume_from_anchor(
 
     # ref 载荷重水合：旧 session 仍在 → 直取；否则 RefSpill（24h）兜底；
     # 双双缺席 → missing_refs 诚实披露（不伪造）。
+    # review R1 #1（CRITICAL 修复）：ref id 是 session 域能力令牌 —— store
+    # 生成**新** id，必须返回 old→new 映射（ref_map），restored_refs 以
+    # 新 id 计，调用方用新 id 寻址；绝不把旧 id 谎报为可用。
+    ref_map: Dict[str, str] = {}
     restored_refs: List[str] = []
     missing_refs: List[str] = []
     for ref_id in anchor.get("ref_ids") or []:
@@ -147,7 +151,10 @@ async def resume_from_anchor(
         try:
             new_ref = await session_data_manager.store(new_sid, payload)
             if new_ref:
-                restored_refs.append(ref_id)
+                ref_map[ref_id] = new_ref
+                restored_refs.append(new_ref)
+            else:
+                missing_refs.append(ref_id)
         except Exception:  # noqa: BLE001 — 新 session 写失败也如实披露
             missing_refs.append(ref_id)
 
@@ -183,6 +190,7 @@ async def resume_from_anchor(
             if k in (plan.gis_chapter or {})
         ],
         "restored_refs": restored_refs,
+        "ref_map": ref_map,
         "missing_refs": missing_refs,
         "trace_last_seq": int(anchor.get("trace_last_seq") or 0),
     }

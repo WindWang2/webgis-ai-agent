@@ -113,10 +113,11 @@ def test_persist_idempotent_on_settle_retry(store_dir):
 # ---------------------------------------------------------------- trim 保护
 
 def test_trim_preserves_final_verdict_records(store_dir):
+    """适度溢出：非保护行先淘汰，FINAL_VERDICT 存活（review R1 #5 语义）。"""
     verdict = _make_chain_dict("turn-verdict", final=True)
     assert trace_store.persist_chain(verdict, session_id="trim")
-    # 写满窗口（全部普通记录）
-    for i in range(trace_store.MAX_RECORDS_PER_SESSION + 10):
+    # 溢出量 < 窗口余量：verdict 之后仍留得住
+    for i in range(trace_store.MAX_RECORDS_PER_SESSION - 2):
         assert trace_store.persist_chain(
             _make_chain_dict(f"fill-{i}"), session_id="trim")
     records = trace_store.read_chains("trim")
@@ -125,6 +126,17 @@ def test_trim_preserves_final_verdict_records(store_dir):
         "FINAL_VERDICT 记录被 trim 丢弃"
     seqs = [r["seq"] for r in records]
     assert len(set(seqs)) == len(seqs)
+
+
+def test_trim_window_unconditionally_bounded(store_dir):
+    """极端溢出（保护记录被挤出）：文件仍严格有界 —— 无界增长禁止。"""
+    verdict = _make_chain_dict("turn-verdict-extreme", final=True)
+    assert trace_store.persist_chain(verdict, session_id="trim-extreme")
+    for i in range(trace_store.MAX_RECORDS_PER_SESSION * 3):
+        assert trace_store.persist_chain(
+            _make_chain_dict(f"flood-{i}"), session_id="trim-extreme")
+    records = trace_store.read_chains("trim-extreme")
+    assert len(records) == trace_store.MAX_RECORDS_PER_SESSION
 
 
 # ---------------------------------------------------------------- V4 兼容

@@ -168,23 +168,32 @@ def persist_chain(chain_dict: Dict[str, Any], session_id: str = "") -> bool:
             chain_dict = dict(chain_dict)
             chain_dict["seq"] = max_seq + 1
 
-            # Trim：超限时先丢最旧的非保护行（保护行永不丢）。
-            if len(parsed) + 1 > MAX_RECORDS_PER_SESSION:
-                overflow = len(parsed) + 1 - MAX_RECORDS_PER_SESSION
+            # Trim：超限先丢最旧非保护行；仍超限（保护记录占满）再丢最旧
+            # 保护行 —— review R1 #5：窗口必须**无条件有界**（否则长会话
+            # 全保护记录时文件无界增长，违背 bounded-everything 纪律）。
+            # 原子重写（tmp + os.replace）：无锁读者不会读到撕裂文件
+            # （review R1 #6 —— last_seq/read_chains 锁外读的前提）。
+            total = len(parsed) + 1
+            if total > MAX_RECORDS_PER_SESSION:
+                overflow = total - MAX_RECORDS_PER_SESSION
                 kept: List[str] = [ln for _, ln, _ in parsed]
-                drop_idx: List[int] = []
-                for i, (_, _, rec) in enumerate(parsed):
+                keep_flags = [not _is_protected(rec) for _, _, rec in parsed]
+                # 先丢非保护（最旧优先），不够再丢保护（最旧优先）
+                for pass_protected in (False, True):
+                    for i in range(len(kept)):
+                        if overflow <= 0:
+                            break
+                        if keep_flags[i] is not pass_protected:
+                            continue
+                        kept[i] = None
+                        overflow -= 1
                     if overflow <= 0:
                         break
-                    if not _is_protected(rec):
-                        drop_idx.append(i)
-                        overflow -= 1
-                for i in reversed(drop_idx):
-                    kept.pop(i)
-                if kept or drop_idx:
-                    path.write_text(
-                        "".join(ln + "\n" for ln in kept), encoding="utf-8"
-                    )
+                kept = [ln for ln in kept if ln is not None]
+                tmp = path.with_suffix(path.suffix + ".tmp")
+                tmp.write_text("".join(ln + "\n" for ln in kept),
+                               encoding="utf-8")
+                os.replace(tmp, path)
 
             line = json.dumps(chain_dict, ensure_ascii=False, sort_keys=False,
                               default=str)
