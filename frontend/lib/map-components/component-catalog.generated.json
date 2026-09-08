@@ -1415,7 +1415,7 @@
     {
       "code": "atlas_page_limit_truncated",
       "severity": "warning",
-      "message": "atlas 页数超出上限，仅渲染前 {detail} 页"
+      "message": "atlas 页数超出上限（{detail}），仅保留上限内页面"
     },
     {
       "code": "atlas_page_skipped",
@@ -1466,11 +1466,6 @@
       "code": "features_truncated",
       "severity": "warning",
       "message": "要素数量超出导出预算，已截断至 {detail} 条"
-    },
-    {
-      "code": "label_suppressed_too_long",
-      "severity": "warning",
-      "message": "标注文本过长且无法放入任何候选位置，已省略（{detail}）"
     },
     {
       "code": "label_truncated",

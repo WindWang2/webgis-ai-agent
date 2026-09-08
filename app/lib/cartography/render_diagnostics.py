@@ -61,13 +61,13 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "组件配置无效，已跳过渲染",
         ),
         # —— label engine V5（长文本不再静默溢出）——
+        # review-r1：移除 label_suppressed_too_long —— 词表内唯一无发射器的
+        # 死码（孪生编译器只截断不省略，fit_label_text 无"放不下"路径；
+        # solve_labels 生产零接线）。ADR-0118 D1 死码禁止：待放置求解器
+        # 真实接入导出链时再随发射器一并回归词表。
         RenderDiagnosticSpec(
             "label_truncated", "warning",
             "标注文本过长，已截断显示（{detail}）",
-        ),
-        RenderDiagnosticSpec(
-            "label_suppressed_too_long", "warning",
-            "标注文本过长且无法放入任何候选位置，已省略（{detail}）",
         ),
         # —— 图例 / 内容截断 ——
         RenderDiagnosticSpec(
@@ -125,7 +125,10 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
         ),
         RenderDiagnosticSpec(
             "atlas_page_limit_truncated", "warning",
-            "atlas 页数超出上限，仅渲染前 {detail} 页",
+            # review-r1 修复：发射端 detail 是「请求→实际上限」箭头对（如
+            # 55→50），原模板「仅渲染前 {detail} 页」会插值成病句
+            # 「仅渲染前 55→50 页」。模板改为对 detail 做原样括注。
+            "atlas 页数超出上限（{detail}），仅保留上限内页面",
         ),
         # —— 地形 / 3D 披露 ——
         RenderDiagnosticSpec(

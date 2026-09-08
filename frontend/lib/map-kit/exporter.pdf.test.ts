@@ -181,4 +181,38 @@ describe('runExport PDF single title source', () => {
     expect(finalMsg).not.toContain('jsPDF 向量版');
     expect(finalMsg).not.toContain('pdf_text_rasterized_cjk');
   });
+
+  it('review-r1 死码激活：3D 视角 + 比例尺在场 → terrain_3d_scale_caveat（词表零死码）', async () => {
+    const hudState = {
+      theme: 'light' as const,
+      layers: [],
+      is3D: true,
+      addExport: vi.fn(),
+      setPendingSystemMessage: vi.fn(),
+    };
+    const deps: ExportDeps = {
+      map: {
+        getPixelRatio: vi.fn(() => 1),
+        getCanvas: vi.fn(() => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 800;
+          canvas.height = 600;
+          return canvas;
+        }),
+        getCenter: vi.fn(() => ({ lat: 39.9, lng: 116.4 })),
+        getZoom: vi.fn(() => 10),
+        getBearing: vi.fn(() => 0),
+        once: vi.fn((_event: string, cb: () => void) => cb()),
+      } as any,
+      getHudState: () => hudState,
+    };
+    mockFetchUpload('/exports/map.png', 'map.png');
+
+    const req: ExportRequest = { title: 'T', format: 'png', showScale: true };
+    const outcome = await runExport(deps, req);
+
+    expect(outcome.ok).toBe(true);
+    const finalMsg = (hudState.setPendingSystemMessage.mock.calls.at(-1)?.[0] ?? '') as string;
+    expect(finalMsg).toContain('terrain_3d_scale_caveat');
+  });
 });

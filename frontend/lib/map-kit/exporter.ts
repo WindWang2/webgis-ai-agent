@@ -1391,20 +1391,33 @@ async function runFrameExport(
 ): Promise<ExportOutcome> {
   const { map, getHudState } = deps;
   const { composeFrames, composeGridCanvas } = await import('./frame-composer');
+  // review-r1（死码修复）：容器语义决定单帧跳过码 —— pdf→pages（atlas）发
+  // atlas_page_skipped；png/svg→grid（small-multiple）发
+  // small_multiple_panel_skipped。词表两码各有真实发射路径（ADR-0118 D1）。
+  const fmtEarlyFrame = (req.format ?? 'png').toLowerCase();
   const composed = await composeFrames(
     { map, waitForIdle: waitForMapIdle, idleTimeoutMs: deps.idleTimeoutMs },
     frames,
+    {
+      skippedCode:
+        fmtEarlyFrame === 'pdf'
+          ? 'atlas_page_skipped'
+          : 'small_multiple_panel_skipped',
+    },
   );
   if (composed.canvases.length === 0) {
-    // 全帧失败 → 如实失败（atlas_page_skipped 语义已在诊断中披露）
+    // 全帧失败 → 如实失败（skipped 码语义已在诊断中披露）
     throw new Error('多帧导出失败：所有帧均未完成（地图在预算内未就绪）');
   }
-  const fmt = (req.format ?? 'png').toLowerCase();
+  const fmt = fmtEarlyFrame;
   const degradationNote = formatDegradationNote(composed.degradations);
   // review-r2：成功消息必须注明跳过帧数（此前「N 帧成功」不提跳过 —— 跳过
-  // 信息只藏在降级清单里，清单超 8 条时还会被截断）。
+  // 信息只藏在降级清单里，清单超 8 条时还会被截断）。review-r1：两种容器
+  // 跳过码都计入。
   const skippedFrames = composed.degradations.filter(
-    (d) => d.code === 'atlas_page_skipped',
+    (d) =>
+      d.code === 'atlas_page_skipped' ||
+      d.code === 'small_multiple_panel_skipped',
   ).length;
   const frameStat =
     skippedFrames > 0
@@ -1788,6 +1801,9 @@ export async function runExport(
 
     // #614：经 MapExporterEngine 调 composeLayout（与 exportToPDF 同款路由），
     // 便于测试 spyOn 断言 theme 选项（模块内直接绑定无法被 mock 拦截）。
+    // review-r1：提取为局部变量 —— 3D 比例尺 caveat 与 composeLayout 同一口径。
+    const showScaleEffective =
+      req.showScale ?? req.include_scale ?? specShowScale ?? true;
     MapExporterEngine.composeLayout(exportCanvas, effTitle, effSubtitle, {
       dpi,
       theme,
@@ -1795,7 +1811,7 @@ export async function runExport(
       pixelsPerLogicalPx: canvasDpr,
       // W6：PDF 矢量文本层时画布不画标题（单一事实源 —— PDF 头部 doc.text）
       skipTitle: pdfSkipCanvasTitle,
-      showScale: req.showScale ?? req.include_scale ?? specShowScale ?? true,
+      showScale: showScaleEffective,
       showCompass: req.showCompass ?? req.include_compass ?? specShowCompass ?? true,
       showWatermark,
       showLegend,
@@ -1817,10 +1833,15 @@ export async function runExport(
 
     // Wave 9：显式降级汇入导出后系统消息（此前 chart/table 面板拉取失败
     // 静默缺席 —— 用户不知道导出件里少了东西）。W8：对比组合/回退诊断并入。
+    // review-r1（死码激活）：3D/倾斜视角 + 比例尺在场 → terrain_3d_scale_caveat
+    //（比例尺换算 metersPerPixelAt 是平面口径，此前该码词表内零发射器）。
     const chromeDegradations = [
       ...(chromeModel?.degradations ?? []),
       ...comparisonDegradations,
     ];
+    if (storeState.is3D && showScaleEffective) {
+      chromeDegradations.push({ code: 'terrain_3d_scale_caveat' });
+    }
 
     if (fmt === 'svg') {
       // V5（ADR-0118 W5）：真矢量优先 —— 孪生编译器产出数据层矢量要素 +

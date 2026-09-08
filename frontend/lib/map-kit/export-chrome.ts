@@ -133,7 +133,8 @@ export type ExportDegradationCode =
   | 'table_ref_unavailable'
   | 'component_skipped_invalid'
   | 'label_truncated'
-  | 'label_suppressed_too_long'
+  /* review-r1：label_suppressed_too_long 移除 —— 词表唯一无发射器死码，
+   * 后端权威词表同步删除（待放置求解器接入导出链再回归）。 */
   | 'legend_entries_truncated'
   | 'features_truncated'
   | 'export_timeout_partial'

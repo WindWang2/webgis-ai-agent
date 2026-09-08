@@ -4,7 +4,7 @@
 
 ### Added
 - Professional Cartographic Rendering V5 (ADR-0118): authoritative render
-  diagnostics vocabulary (`app/lib/cartography/render_diagnostics.py`, 19
+  diagnostics vocabulary (`app/lib/cartography/render_diagnostics.py`, 18
   codes) exported via component catalog schemaVersion 5 and locked as a
   frontend subset by registry-parity tests; diagnostics now travel with the
   exported artifact (`render_diagnostics` form field on `POST /api/v1/export`)

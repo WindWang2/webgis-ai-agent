@@ -179,6 +179,27 @@ describe('composeFrames', () => {
     }
     expect(new Set(canvases).size).toBe(3); // 帧间互为独立拷贝
   });
+
+  it('review-r1 死码修复：grid 容器（small-multiple）单帧失败发 small_multiple_panel_skipped', async () => {
+    const map = makeMockMap({ failIdleOnFrame: 1 });
+    const { canvases, degradations } = await composeFrames(
+      { map, waitForIdle: (m, t) => new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('idle timeout')), t ?? 30);
+          (m as unknown as { once: (e: string, cb: () => void) => void }).once('idle', () => {
+            clearTimeout(timer);
+            resolve();
+          });
+        }), idleTimeoutMs: 30 },
+      [{ title: '甲' }],
+      { skippedCode: 'small_multiple_panel_skipped' },
+    );
+
+    expect(canvases).toHaveLength(0);
+    expect(degradations).toContainEqual(
+      expect.objectContaining({ code: 'small_multiple_panel_skipped' }),
+    );
+    expect(degradations.some((d) => d.code === 'atlas_page_skipped')).toBe(false);
+  });
 });
 
 describe('composeGridCanvas', () => {

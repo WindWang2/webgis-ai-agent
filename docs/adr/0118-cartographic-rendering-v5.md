@@ -33,7 +33,8 @@ Phase A 只读审计（证据：`.agent-work/cartography-v5/00-baseline.md`）�
 ### D1 — Render Diagnostics 权威词表（唯一真相 + catalog 投影）
 
 `app/lib/cartography/render_diagnostics.py` 是渲染/导出降级诊断的**唯一
-权威词表**（19 码，severity ∈ info/warning/error，中文 message 模板）。
+权威词表**（18 码，severity ∈ info/warning/error，中文 message 模板；
+review-r1 移除无发射器死码 label_suppressed_too_long，19→18）。
 经 `component-catalog.generated.json` 的 `renderDiagnostics` 段（schema
 4→5）导出前端；前端 `ExportDegradation` 类型收窄为其子集，registry-parity
 测试锁定。死码禁止：每个码必须被真实发射路径消费。诊断不是状态、不是

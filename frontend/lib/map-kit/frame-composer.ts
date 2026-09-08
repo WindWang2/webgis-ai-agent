@@ -7,7 +7,8 @@
  * 有界 idle 等待（复用 exporter 的 30s 预算）→ 抓 canvas → 恢复原状。
  *
  * 诚实降级：上限 50 帧（超出截断 + atlas_page_limit_truncated）；单帧失败
- * 跳过 + atlas_page_skipped（detail=帧序号/标题）继续；frames 带
+ * 跳过 + skippedCode（atlas pages → atlas_page_skipped，small-multiple grid →
+ * small_multiple_panel_skipped；detail=帧序号/标题）继续；frames 带
  * projection:'cartogram' → cartogram_unsupported（warning）并按未变形几何
  * 渲染（不伪造变形）。
  */
@@ -64,6 +65,16 @@ interface SavedFilter {
   filter?: unknown;
 }
 
+/** review-r1（死码修复）：单帧失败跳过码由容器语义决定 —— 词表两码都必须
+ * 有真实发射路径（ADR-0118 D1 死码禁止）。atlas pages 用 atlas_page_skipped，
+ * small-multiple grid 用 small_multiple_panel_skipped。 */
+export type FrameSkippedCode = 'atlas_page_skipped' | 'small_multiple_panel_skipped';
+
+export interface ComposeFramesOptions {
+  /** 单帧失败跳过时发射的降级码；缺省 atlas_page_skipped（pages 容器）。 */
+  skippedCode?: FrameSkippedCode;
+}
+
 function frameTitle(frame: ExportFrame, index: number): string {
   if (frame.title) return frame.title;
   if (frame.where) return `${frame.where.field} = ${frame.where.equal}`;
@@ -77,8 +88,10 @@ function frameTitle(frame: ExportFrame, index: number): string {
 export async function composeFrames(
   deps: FrameComposerDeps,
   frames: ExportFrame[],
+  options: ComposeFramesOptions = {},
 ): Promise<FrameComposeResult> {
   const { map, waitForIdle, idleTimeoutMs } = deps;
+  const skippedCode = options.skippedCode ?? 'atlas_page_skipped';
   const degradations: ExportDegradation[] = [];
 
   // 上限截断（先于逐帧执行 —— 不做无界工作）
@@ -164,7 +177,7 @@ export async function composeFrames(
     } catch (e) {
       // 单帧失败跳过 + 显式披露（帧序号/标题），继续后续帧
       degradations.push({
-        code: 'atlas_page_skipped',
+        code: skippedCode,
         detail: `${i + 1}/${title}${e instanceof Error ? `：${e.message}` : ''}`,
       });
     } finally {

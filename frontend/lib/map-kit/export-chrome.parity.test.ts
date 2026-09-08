@@ -280,14 +280,14 @@ describe('V5 · 渲染诊断词表对齐（ADR-0118 D1）', () => {
   );
 
   it('前端 ExportDegradation 码必须是后端权威词表的子集', () => {
-    expect(authoritative.size).toBeGreaterThanOrEqual(19);
+    // review-r1：label_suppressed_too_long 移除（无发射器死码），词表 19→18。
+    expect(authoritative.size).toBeGreaterThanOrEqual(18);
     const frontendCodes: ExportDegradationCode[] = [
       'chart_ref_unavailable',
       'chart_kind_unsupported_export',
       'table_ref_unavailable',
       'component_skipped_invalid',
       'label_truncated',
-      'label_suppressed_too_long',
       'legend_entries_truncated',
       'features_truncated',
       'export_timeout_partial',
