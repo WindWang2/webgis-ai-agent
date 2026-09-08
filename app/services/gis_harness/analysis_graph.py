@@ -242,6 +242,16 @@ def build_analysis_graph(
         "product": len(product),
     }
     graph["next_action"] = next_action
+    # V4（ADR-0104 Wave 3）：SpatialGoalGraph 方法学骨架（additive 节；
+    # 确定性展开自章节事实，零持久化——与图其余部分同一重建不变式）。
+    try:
+        from app.services.gis_harness.goal_graph import build_goal_graph
+
+        goal_graph = build_goal_graph(chapter)
+        graph["goal_graph"] = goal_graph.to_bounded_dict()
+        graph["notes"].append(goal_graph.summary_line())
+    except Exception:  # noqa: BLE001 — 方法骨架是增值投影，缺席不阻断
+        graph["goal_graph"] = None
     if getattr(plan, "superseded", False):
         graph["notes"].append("plan superseded by a newer goal")
     return graph

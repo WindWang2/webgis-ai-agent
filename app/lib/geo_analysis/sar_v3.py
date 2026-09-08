@@ -67,9 +67,12 @@ __all__ = [
     "radiometric_terrain_correction",
     "layover_shadow_mask",
     "enl_map",
+    "enl_confidence_interval",
 ]
 
 ENL_EPS = 1e-12                          # ENL = mean²/var 的方差下限
+_Z95 = 1.959963984540054                 # 双侧 95% 标准正态分位数
+_COHERENCE_Z_CLIP = 1.0 - 1e-12          # arctanh 的 γ 上钳（避免 inf）
 MT_SPECKLE_MIN_T = 3                     # MT-Lee 最少期数（诚实下限）
 COHERENCE_WINDOW_SIZES = SPECKLE_WINDOW_SIZES
 ENL_MAP_WINDOW_SIZES = SPECKLE_WINDOW_SIZES
@@ -394,9 +397,14 @@ def coherence_estimate(
     EXPERIMENTAL：无轨道元数据/配准质量输入，窗口估计有偏差（披露）；
     不输出干涉相位/解缠。
 
+    R-4（审计 §6）：逐窗 95% 置信区间走 Fisher z 近似——
+    z = atanh(γ)、SE ≈ 1/√(n_pairs−3)、γ CI = tanh(z ± 1.96·SE)
+    （n_pairs ≤ 3 → SE 无定义 → CI NaN，诚实不虚构）。
+
     Returns:
         dict: gamma（相干性栅格，钳 [0,1]，超 1 计数披露）、
-        valid_pairs（逐像元窗口有效对数）、array（= gamma）、meta。
+        valid_pairs（逐像元窗口有效对数）、gamma_ci95_low/high（逐窗
+        95% CI 下/上界）、array（= gamma）、meta。
     """
     w = _check_window(window, "window")
     comp_a, valid_a = _as_complex(slc_pair_a, "slc_pair_a")
@@ -404,7 +412,7 @@ def coherence_estimate(
     if comp_a.shape != comp_b.shape:
         raise ValueError(
             f"两历元形状不一致：{comp_a.shape} vs {comp_b.shape}")
-    _check_plane(comp_a.real, "coherence 网格")
+    _check_plane(comp_a.real, "coherence 网格")   # 网格规模闸（先估算后分配）
 
     valid = valid_a & valid_b
     if nodata is not None:
@@ -435,16 +443,35 @@ def coherence_estimate(
     # uniform_filter = 窗口均值 → 有效对占比 × w² = 有效对计数
     # （reflect 边界把镜像像元计入——边界计数偏高，披露）。
     n_pairs = uniform_filter(valid_f, size=w, mode="reflect") * float(w * w)
+
+    # R-4：Fisher z 95% CI（z=atanh(γ)、SE≈1/√(n_pairs−3)）。γ 钳到
+    # [0, 1−ε] 再 atanh（γ=1 自相干 → 大而有限的 z，CI 收敛到 [≈1, 1]）；
+    # n_pairs ≤ 3 或 γ 无定义（NaN）的窗口 → CI NaN。
+    with np.errstate(divide="ignore", invalid="ignore"):
+        z = np.arctanh(np.clip(gamma, 0.0, _COHERENCE_Z_CLIP))
+        n_eff = n_pairs - 3.0
+        se = np.where(n_eff > 0, 1.0 / np.sqrt(np.where(n_eff > 0, n_eff, 1.0)),
+                      np.nan)
+        ci_ok = np.isfinite(z) & (n_eff > 0)
+        ci_lo = np.tanh(z - _Z95 * se)
+        ci_hi = np.tanh(z + _Z95 * se)
+    gamma_ci_lo = np.where(ci_ok, np.clip(ci_lo, 0.0, 1.0), np.nan)
+    gamma_ci_hi = np.where(ci_ok, np.clip(ci_hi, 0.0, 1.0), np.nan)
+
     disclosure = (
         "EXPERIMENTAL：窗口复相干性 γ = |Σ a·b*|/√(Σ|a|²Σ|b|²)；无轨道"
         "元数据/配准质量输入（估计偏差披露）；仅复 SLC（re/im 双通道）——"
         "强度-only 输入被类型化拒绝（相位不可虚构）；不输出干涉相位/解缠；"
-        "γ 钳 [0,1]（数值超 1 像元 " + str(clamped) + "，披露）")
+        "γ 钳 [0,1]（数值超 1 像元 " + str(clamped) + "，披露）；"
+        "逐窗 95% CI 为 Fisher z 近似（z=atanh γ、SE≈1/√(n_pairs−3)、"
+        "正态近似，小样本/高 γ 下区间偏窄——披露）")
     meta: Dict[str, object] = {
         "window": w,
         "scientific_status": "EXPERIMENTAL",
         "clamped_pixels": clamped,
         "valid_pair_pixels": int(np.sum(valid)),
+        "ci_method": ("Fisher z：z=atanh(γ)、SE≈1/√(n_pairs−3)、双侧 95%"
+                      "（n_pairs≤3 → NaN）"),
         "formula": "γ = |Σ a·b*| / √(Σ|a|²·Σ|b|²)",
         "disclosure": disclosure,
     }
@@ -452,6 +479,8 @@ def coherence_estimate(
         "gamma": np.asarray(gamma, dtype=float),
         "array": np.asarray(gamma, dtype=float),
         "valid_pairs": n_pairs,
+        "gamma_ci95_low": np.asarray(gamma_ci_lo, dtype=float),
+        "gamma_ci95_high": np.asarray(gamma_ci_hi, dtype=float),
         "meta": meta,
     }
 
@@ -624,16 +653,47 @@ def layover_shadow_mask(
 
 # ── 滑窗 ENL 估计图 ──────────────────────────────────────────────────
 
+def enl_confidence_interval(
+    enl: float, n_samples: int, *, level: float = 0.95,
+) -> Tuple[float, float]:
+    """ENL 矩估计的 Wald 置信区间（delta 法；均匀场景假设）。
+
+    R-3（审计 §6）：对 ENL = mean²/var 在 gamma(L) 斑点（均匀场景，
+    Oliver & Quegan §4 量级）上做 delta 法方差传播：
+
+        var(ENL̂) ≈ 2·ENL·(ENL + 1) / n
+
+    （n = 有效像元数；由 m̂ 的方差 σ²/n、v̂ 的方差 (κ−1)σ⁴/n、
+    Cov(m̂, v̂) = μ₃/n 代入 f=m²/v 的线性化，L=ENL。）
+    下界钳 0（ENL 物理非负）；level 支持 0.90/0.95/0.99，其余 ValueError。
+    """
+    z = {0.90: 1.6448536269514722, 0.95: _Z95,
+         0.99: 2.5758293035489004}.get(round(float(level), 2))
+    if z is None:
+        raise ValueError(
+            f"level 仅支持 0.90/0.95/0.99，got {level!r}")
+    enl_f = float(enl)
+    n = int(n_samples)
+    if not (np.isfinite(enl_f) and enl_f > 0):
+        raise ValueError(f"enl 必须为正有限数，got {enl!r}")
+    if n < 1:
+        raise ValueError(f"n_samples 必须为正整数（有效像元数），got {n_samples!r}")
+    se = float(np.sqrt(2.0 * enl_f * (enl_f + 1.0) / n))
+    return max(enl_f - z * se, 0.0), enl_f + z * se
+
+
 def enl_map(
     intensity: np.ndarray,
     *,
     window: int = 7,
     nodata: Optional[float] = None,
 ) -> Dict[str, object]:
-    """滑窗 ENL 估计图（ENL = mean²/var，nan 感知）+ 全局 ENL。
+    """滑窗 ENL 估计图（ENL = mean²/var，nan 感知）+ 全局 ENL（附 95% CI）。
 
     估计偏差披露：非均匀窗口（纹理/边缘）把纹理方差计入 → ENL 被低估；
     全局 ENL 假定整图均匀。方差 ≤ ε 的退化窗口 → NaN（计数披露）。
+    enl_ci95：全局 ENL 的 Wald 95% 置信区间（delta 法，均匀场景；
+    只覆盖抽样噪声、不覆盖非均匀偏差——披露）。
     """
     w = _check_window(window, "window")
     plane = _check_plane(intensity, "intensity")
@@ -670,14 +730,24 @@ def enl_map(
             correction_hint="常数场无斑点语义；ENL 估计不适用")
     global_enl = (float(vals.mean()) ** 2) / var0
 
+    # R-3：全局 ENL 的 95% CI（delta 法 var(ENL̂)≈2L(L+1)/n；均匀场景
+    # 假设——非均匀场景 CI 只反映抽样噪声，不覆盖纹理偏差，披露）。
+    ci_lo, ci_hi = enl_confidence_interval(global_enl, int(vals.size))
+
     disclosure = (
         "滑窗 ENL = mean²/var（总体方差 ddof=0，nan 感知）；非均匀窗口把"
         "纹理方差计入 → ENL 被低估（估计偏差，披露）；全局 ENL 假定整图"
         f"均匀；退化窗口（方差 ≤ ε·mean²，含常数窗口数值残差）→ NaN"
-        f"（{degenerate_windows} 像元披露）")
+        f"（{degenerate_windows} 像元披露）；enl_ci95 为 delta 法 Wald "
+        "区间（var(ENL̂)≈2·ENL·(ENL+1)/n，只覆盖抽样噪声、不覆盖非均匀"
+        "偏差）")
     meta: Dict[str, object] = {
         "window": w,
         "global_enl": global_enl,
+        "enl_ci95": [ci_lo, ci_hi],
+        "enl_ci_method": ("Wald 95%（delta 法：var(ENL̂)≈2·ENL·(ENL+1)/n，"
+                          "均匀场景；下界钳 0）"),
+        "enl_ci_samples": int(vals.size),
         "degenerate_windows": degenerate_windows,
         "formula": "ENL = mean²/var（窗口总体方差）",
         "disclosure": disclosure,
@@ -686,5 +756,6 @@ def enl_map(
         "enl_map": np.asarray(enl_plane, dtype=float),
         "array": np.asarray(enl_plane, dtype=float),
         "global_enl": global_enl,
+        "enl_ci95": [float(ci_lo), float(ci_hi)],
         "meta": meta,
     }

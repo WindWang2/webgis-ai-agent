@@ -19,6 +19,7 @@ Provenance contract (see .scratch/workflow-lineage-v2/invariants.md):
 import uuid
 import json
 import logging
+import os
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone
 from collections import defaultdict, deque
@@ -45,6 +46,14 @@ from app.services.provenance.context import (
 from app.schemas.project_schema import WorkflowStepSpec
 
 logger = logging.getLogger(__name__)
+
+#: V4（ADR-0104 #4，kill switch，默认开）：执行期 re-resolution 的 profile
+#: 事实注入。置 ``GIS_RUNTIME_PROFILE_GATES=0`` 恢复既有的 profile-blind
+#: 重跑行为（审计 gap #2 的降级通道；关掉后 manifest 证据与历史逐位兼容）。
+def _runtime_profile_gates_enabled() -> bool:
+    """per-call 读取（review Round-1 minor #5：与其他 V4 开关同纪律 ——
+    运行中翻转立即生效；"0"/"false"/"False" 均视为关）。"""
+    return os.environ.get("GIS_RUNTIME_PROFILE_GATES", "1") not in ("0", "false", "False")
 
 
 
@@ -125,6 +134,7 @@ class WorkflowEngine:
         step_spec: WorkflowStepSpec,
         tool_registry,
         available: Optional[set] = None,
+        profile: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, Optional[str], Optional[str], Dict[str, Any]]:
         """Resolve the tool a step executes, honoring capability semantics.
 
@@ -138,6 +148,12 @@ class WorkflowEngine:
         ``available``: a precomputed set of registered tool names — callers
         that resolve many steps build it once instead of paying
         O(steps × registry_size) rebuilding it per step.
+
+        ``profile`` (V4, ADR-0104 #4): resolver camelCase 事实画像 —— 执行期
+        re-resolution 的 min_features / 几何 / CRS 类 / 科学前置条件硬门由此
+        变活（此前只传 available_tools，所有 profile 依赖的门在运行时失活，
+        审计 gap #2）。None = 画像不可得 → 诚实降级为既有行为（未知事实
+        ≠ 不满足，旧 manifest 证据逐位兼容）。
 
         Returns (tool_name, capability, algorithm, resolution_evidence).
         """
@@ -153,13 +169,19 @@ class WorkflowEngine:
                 except Exception:  # noqa: BLE001 — registry view unknown → resolver default
                     available = None
             resolution = get_algorithm_resolver().resolve(
-                capability, available_tools=available
+                capability, available_tools=available, profile=profile
             )
             evidence: Dict[str, Any] = {
                 "resolver_status": resolution.status,
                 "resolver_reason": resolution.reason,
                 "recorded_tool": step_spec.tool_name,
             }
+            if profile is not None:
+                # 有界证据：只记事实键名（≤16），不记值（值可含坐标/bbox）。
+                evidence["profile_facts"] = sorted(
+                    str(k) for k in list(profile.keys())[:32]
+                    if profile.get(k) is not None
+                )[:16]
             if resolution.status == "resolved" and resolution.tool:
                 if step_spec.algorithm_preference and resolution.algorithm != step_spec.algorithm_preference:
                     evidence["algorithm_changed_from"] = step_spec.algorithm_preference
@@ -183,6 +205,53 @@ class WorkflowEngine:
                 step_spec.algorithm_preference,
                 {"resolver_error": str(e)[:200], "used_recorded_tool": True},
             )
+
+    @staticmethod
+    async def _resolver_profile_for_args(
+        session_id: Optional[str], tool_args: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """step args → resolver 事实画像（descriptor O(1) 投影；有界、诚实）。
+
+        审计 (d) 推荐路径的落实：workflow_engine 拿不到持久化 profile 时，
+        从 step args 里的 ``ref:`` 游标取 session descriptor（store 时一次
+        遍历的产物，O(1) 读取），经 profile_from_descriptor 投影为 camelCase
+        事实。无 session / 无 ref / descriptor 缺席 → None（诚实降级 =
+        既有 profile-blind 行为；绝不虚构事实）。最多探测 4 个 ref。
+        """
+        if not session_id or not isinstance(tool_args, dict):
+            return None
+        refs: List[str] = []
+
+        def _scan(value: Any) -> None:
+            if isinstance(value, str):
+                if value.startswith("ref:") and value not in refs:
+                    refs.append(value)
+            elif isinstance(value, list):
+                for item in value[:8]:
+                    _scan(item)
+            elif isinstance(value, dict):
+                for item in list(value.values())[:8]:
+                    _scan(item)
+
+        for value in list(tool_args.values())[:16]:
+            _scan(value)
+            if len(refs) >= 4:
+                break
+        if not refs:
+            return None
+        from app.services.session_data import session_data_manager
+        from app.services.spatial_meta_profiler import profile_from_descriptor
+
+        for ref in refs[:4]:
+            try:
+                descriptor = await session_data_manager.get_ref_descriptor(session_id, ref)
+            except Exception:  # noqa: BLE001 — 描述符缺席按 None（诚实降级）
+                descriptor = None
+            if isinstance(descriptor, dict):
+                profile = profile_from_descriptor(descriptor)
+                if profile:
+                    return profile
+        return None
 
     # ── authorization & revision helpers ───────────────────────────────────
 
@@ -427,17 +496,29 @@ class WorkflowEngine:
                 step_spec = step_map[step_id]
                 # ADR-0092 A5: capability-bearing steps re-resolve through the
                 # registries at execution time (never a blind tool-id replay).
+                # V4（ADR-0104 #4）：args 先解析（零副作用），capability 步骤
+                # 从 args 的 ref 游标派生事实画像，硬门（min_features/几何/
+                # CRS 类/科学前置条件）在执行期变活；画像不可得 → None（诚实
+                # 降级，旧行为逐位保留）。
+                tool_args = WorkflowEngine._resolve_step_args(
+                    step_spec, step_outputs, bound_inputs
+                )
+                step_profile: Optional[Dict[str, Any]] = None
+                if _runtime_profile_gates_enabled() and step_spec.capability:
+                    try:
+                        step_profile = await WorkflowEngine._resolver_profile_for_args(
+                            session_id, tool_args
+                        )
+                    except Exception:  # noqa: BLE001 — 画像失败不阻断执行
+                        step_profile = None
                 tool_name, step_capability, step_algorithm, resolution_evidence = (
                     WorkflowEngine.resolve_step_tool(
-                        step_spec, tool_registry, available=available_tools
+                        step_spec, tool_registry, available=available_tools,
+                        profile=step_profile,
                     )
                 )
                 tool_version = tool_registry.tool_version(tool_name)
                 step_start = datetime.now(timezone.utc)
-
-                tool_args = WorkflowEngine._resolve_step_args(
-                    step_spec, step_outputs, bound_inputs
-                )
 
                 # OBSERVABILITY/SEC-REDACT: log only structural fingerprints of the
                 # args (key names + a bounded size estimate), NEVER the values —
@@ -1062,12 +1143,13 @@ class WorkflowEngine:
         return out
 
     @staticmethod
-    def _stale_seed_steps(
+    async def _stale_seed_steps(
         steps: List[WorkflowStepSpec],
         seed_completed: List[str],
         tool_registry,
         available: Optional[set] = None,
         step_map: Optional[Dict[str, WorkflowStepSpec]] = None,
+        session_id: Optional[str] = None,
     ) -> List[str]:
         """Seed steps whose capability re-resolves to a different algorithm.
 
@@ -1076,6 +1158,9 @@ class WorkflowEngine:
         silently mixing outputs from two algorithm generations. Steps without
         a capability (pure tool steps) are never stale by this definition —
         tool-version drift is captured by compare_runs.
+
+        V4：与执行期同一事实口径 —— capability 步骤从 args_template 的 ref
+        游标派生画像后 re-resolve（数据换了规模/CRS，旧算法输出不再复用）。
         """
         step_map = step_map or {s.step_id: s for s in steps}
         stale: List[str] = []
@@ -1083,8 +1168,16 @@ class WorkflowEngine:
             spec = step_map.get(sid)
             if spec is None or not spec.capability:
                 continue
+            step_profile: Optional[Dict[str, Any]] = None
+            if _runtime_profile_gates_enabled() and session_id:
+                try:
+                    step_profile = await WorkflowEngine._resolver_profile_for_args(
+                        session_id, dict(spec.args_template or {})
+                    )
+                except Exception:  # noqa: BLE001 — 画像失败按 None（诚实复用）
+                    step_profile = None
             _tool, _cap, algo, evidence = WorkflowEngine.resolve_step_tool(
-                spec, tool_registry, available=available
+                spec, tool_registry, available=available, profile=step_profile
             )
             if evidence.get("resolver_status") != "resolved":
                 continue  # registry unavailable → keep honest reuse
@@ -1163,9 +1256,10 @@ class WorkflowEngine:
         # Stale-compute guard (ADR-0092 A5): a seed step whose capability now
         # re-resolves to a DIFFERENT algorithm must not silently ride on its
         # old output — invalidate it (and its descendants) too, with a record.
-        stale_steps = WorkflowEngine._stale_seed_steps(
+        stale_steps = await WorkflowEngine._stale_seed_steps(
             steps, seed_completed, tool_registry,
             available=available_tools, step_map=step_map,
+            session_id=session_id,
         )
         if stale_steps:
             logger.info(

@@ -352,6 +352,62 @@ def dump_surface_file(path: Path) -> Path:
     return write_surface_file(get_tool_registry(), path)
 
 
+def _session_artifact_types_snapshot() -> list[str]:
+    """当前会话的 artifact 语义类型快照（V4 rerank 证据；有界 ≤12）。
+
+    来源：RuntimeContext.session_id → ArtifactRegistry 记录的
+    ``artifact_type``。任何缺席/失败 → 空列表（= 零贡献 = V3 行为）。
+    """
+    session_id = ""
+    try:
+        from app.lib.runtime.context import current_runtime_context
+
+        ctx = current_runtime_context()
+        session_id = str(getattr(ctx, "session_id", "") or "") if ctx else ""
+    except Exception:  # noqa: BLE001
+        return []
+    if not session_id:
+        return []
+    try:
+        from app.services.artifact_registry import list_artifacts
+
+        types: list[str] = []
+        for rec in list_artifacts(session_id):
+            t = str(getattr(rec, "artifact_type", "") or "")
+            if t and t not in types:
+                types.append(t)
+            if len(types) >= 12:
+                break
+        return types
+    except Exception:  # noqa: BLE001 — 证据缺席 = 空贡献
+        return []
+
+
+def _continuation_tools_snapshot(active_capabilities: Sequence[str]) -> list[str]:
+    """续跑工具快照：当前未完成 capability 的候选工具（有界 ≤8）。
+
+    来源：AlgorithmRegistry.capability_tool_map（单一事实源）。这些工具
+    在 rerank 中获得小幅 continuation 加成 —— 上一 turn 正在做的事优先
+    浮出，但不改变硬门/契约过滤。
+    """
+    if not active_capabilities:
+        return []
+    try:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+        cap_map = get_algorithm_registry().capability_tool_map()
+        tools: list[str] = []
+        for cap in active_capabilities:
+            for t in cap_map.get(cap, ())[:4]:
+                if t not in tools:
+                    tools.append(t)
+                if len(tools) >= 8:
+                    return tools
+        return tools
+    except Exception:  # noqa: BLE001 — 证据缺席 = 空贡献
+        return []
+
+
 def compute_turn_active_tools(
     message: str,
     *,
@@ -384,8 +440,42 @@ def compute_turn_active_tools(
             k_max=max(k_max, len(NATIVE_TOOL_NAMES)),
             role=role,
         )
+        # V4 Wave 4 生产装配（ADR-0104 决策 5）：会话 artifact 语义类型 +
+        # 近期工具结果 + 续跑工具三路上下文证据（缺席 = 空贡献 = V3 行为
+        # 不变；所有来源只读、有界、任何失败静默降级）。
+        try:
+            ctx.session_artifact_types = tuple(
+                _session_artifact_types_snapshot()
+            )  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — 证据缺席 = 空贡献
+            pass
+        try:
+            from app.services.chat.tool_surface_v3 import recent_failure_hints
+
+            ctx.recent_tool_outcomes = recent_failure_hints()  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — 证据缺席 = 空贡献
+            pass
+        try:
+            ctx.continuation_tools = tuple(
+                _continuation_tools_snapshot(active_capabilities)
+            )  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — 证据缺席 = 空贡献
+            pass
         selection = DynamicToolSurface(registry).select(ctx)
         names = list(dict.fromkeys([*NATIVE_TOOL_NAMES, *selection.names]))
+        # V4 Wave 8（ADR-0104）：证据链阶段 7（TOOL_SURFACE）——per-turn
+        # 动态面裁决入链（emit-once：每 turn 一条；上下文缺席静默跳过）。
+        try:
+            from app.lib.runtime.chain_emitters import emit_chain_once
+            from app.lib.runtime.gis_trace import Stage
+
+            emit_chain_once(
+                Stage.TOOL_SURFACE,
+                dynamic_count=len(selection.names),
+                workflow_stage=str(workflow_stage or "")[:48],
+            )
+        except Exception:  # noqa: BLE001 — 记录面绝不阻断 turn
+            pass
         safe: list[str] = []
         for name in names:
             try:

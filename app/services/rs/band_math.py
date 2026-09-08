@@ -50,6 +50,14 @@ class RasterAnalysisResult:
 # Sentinel-2 L2A nodata, where bands are 0) are left at NaN, not 0, so they
 # are excluded by compute_raster_stats instead of diluting vegetation/water
 # coverage as plausible-looking 0.0 indices (audit B-F09).
+#
+# NDWI 同名异式拆名（审计 §3.2）：本表（在线 STAC 路径）与
+# raster_windowed.INDEX_BAND_ROLES（本地 TIFF 路径）中的裸名 `ndwi`
+# 一律是 McFeeters (1996) 开放水体 (green−nir)/(green+nir)；
+# Gao (1996) 植被水分 (nir−swir1)/(nir+swir1) 一律叫 `ndwi_gao`；
+# `ndwi_water` 是 McFeeters 版的显式别名（语义自明，推荐外部调用方
+# 使用）。两个公式**不可互换**——同名裸 ndwi 在历史 typed 层
+# （geo_analysis/spectral.py）曾指 Gao 式，现也统一为 McFeeters。
 INDEX_FORMULAS: Dict[str, Tuple[List[str], Callable[..., np.ndarray]]] = {
     "ndvi": (["red", "nir"], lambda r, nir: np.divide(
         nir - r, nir + r,
@@ -60,6 +68,16 @@ INDEX_FORMULAS: Dict[str, Tuple[List[str], Callable[..., np.ndarray]]] = {
         g - nir, g + nir,
         out=np.full_like(g - nir, np.nan, dtype=float),
         where=(g + nir) > 0,
+    )),
+    "ndwi_water": (["green", "nir"], lambda g, nir: np.divide(
+        g - nir, g + nir,
+        out=np.full_like(g - nir, np.nan, dtype=float),
+        where=(g + nir) > 0,
+    )),
+    "ndwi_gao": (["nir", "swir11"], lambda nir, swir11: np.divide(
+        nir - swir11, nir + swir11,
+        out=np.full_like(nir - swir11, np.nan, dtype=float),
+        where=(nir + swir11) > 0,
     )),
     "nbr": (["nir", "swir12"], lambda nir, swir: np.divide(
         nir - swir, nir + swir,
@@ -75,6 +93,22 @@ INDEX_FORMULAS: Dict[str, Tuple[List[str], Callable[..., np.ndarray]]] = {
         # plausible-looking 0.0 indices. Explicitly exclude the all-zero input.
         where=((nir + 6 * r - 7.5 * b + 1) > 0) & ~((b == 0) & (r == 0) & (nir == 0)),
     )),
+}
+
+
+# 人类可读公式描述（工具面/parity 测试共用；NDWI 家族条目必须写明
+# 「与另一名不可互换」——同一 ndwi 缩写在文献中有两个不兼容公式）。
+INDEX_DESCRIPTIONS: Dict[str, str] = {
+    "ndwi": (
+        "NDWI (McFeeters 1996 开放水体) = (green − nir) / (green + nir)；"
+        "与 ndwi_gao（Gao 1996 植被水分）同名异式，不可互换"),
+    "ndwi_water": (
+        "ndwi_water = ndwi（McFeeters 1996 开放水体）的显式别名 = "
+        "(green − nir) / (green + nir)；与 ndwi_gao（Gao 1996 植被水分）"
+        "同名异式，不可互换"),
+    "ndwi_gao": (
+        "NDWI (Gao 1996 植被液态水) = (nir − swir1) / (nir + swir1)；"
+        "与 ndwi/ndwi_water（McFeeters 1996 开放水体）同名异式，不可互换"),
 }
 
 

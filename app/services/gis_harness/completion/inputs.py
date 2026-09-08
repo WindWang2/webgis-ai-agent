@@ -142,6 +142,17 @@ async def gather_completion_inputs(
                 continue
             refs[ref] = desc  # 存活 dict 或 None（缺失）
 
+    # facet contract（语义级 QA 输入）：派生只读，失败退化为 None。
+    # V4（ADR-0104 Wave 7）：先于 required 槽面收敛 —— chart_required
+    # 信号需要并入 required 槽（desired + observed + repair 三面共用）。
+    facet_contract = None
+    try:
+        from app.services.gis_harness.product_facets import derive_facet_contract
+
+        facet_contract = derive_facet_contract(chapter)
+    except Exception:  # noqa: BLE001 — 契约缺席只丢语义级披露
+        facet_contract = None
+
     # required 组件以 composition slot 族语义表达（slot id ≠ 组件类型名：
     # "legend" 槽可由 legend/categorical_legend/continuous_colorbar 任一满足
     # —— 校验/修复按 allowed_component_types 族判定，不发明第二套 schema）。
@@ -169,15 +180,17 @@ async def gather_completion_inputs(
         # 兜底：组合证据缺失时按最小契约断言（title + scale_bar）—— 与
         # composition seeds 一致，避免旧章节误报。
         required_slots = [["title"], ["scale_bar"]]
-
-    # facet contract（语义级 QA 输入）：派生只读，失败退化为 None。
-    facet_contract = None
-    try:
-        from app.services.gis_harness.product_facets import derive_facet_contract
-
-        facet_contract = derive_facet_contract(chapter)
-    except Exception:  # noqa: BLE001 — 契约缺席只丢语义级披露
-        facet_contract = None
+    # V4 Wave 7（审计 06 缺口）：chart_required 此前只被 ProductGraph
+    # pending 节点消费，完成管线从不断言图表在场 —— 并入 required 槽后，
+    # 槽位校验（F_COMPONENT_MISSING）、渲染观察校验
+    # （F_RENDER_COMPONENT_MISSING）与修复通道（add_component）三面同时
+    # 覆盖，零新词表。
+    if (
+        facet_contract is not None
+        and getattr(facet_contract, "chart_required", False)
+        and not any("chart" in t for slot in required_slots for t in slot)
+    ):
+        required_slots.append(["chart_panel"])
 
     # artifact records 快照（CRS 契约输入；best-effort，失败 → {}）
     artifact_records: Dict[str, Any] = {}

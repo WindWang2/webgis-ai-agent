@@ -10,6 +10,7 @@ scripts/
 /scripts/*
 !/scripts/ci-local.sh
 !/scripts/gen_science_catalog.py
+!/scripts/gen_science_benchmark_manifest.py
 # 工作流目录生成器（test_workflow_guards 的 catalog 一致性门依赖它）
 !/scripts/gen_workflow_catalog.py
 !/scripts/gen_science_oracles.py

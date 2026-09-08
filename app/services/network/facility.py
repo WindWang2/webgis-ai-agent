@@ -18,6 +18,7 @@ from app.services.network.models import (
     Route,
     NetworkAnalysisResult,
 )
+from app.services.network.scale_guard import od_matrix_scale_guard
 from app.services.network.snapping import PointSnappingService
 from app.services.network.routing import NetworkRoutingService
 from app.services.network.od_matrix import NetworkODMatrixService
@@ -73,6 +74,13 @@ class NetworkClosestFacilityService:
                 status="success",
                 summary={"demand_count": len(normalized_demands), "facility_count": len(normalized_facilities)},
             )
+
+        # science-v3 R3：n×m OD 代价矩阵统一规模闸 —— OD 树按 需求×设施
+        # 全量配对（#489 多源 Dijkstra 复用），超闸先拒绝（不 OOM）。
+        od_matrix_scale_guard(
+            len(normalized_demands), len(normalized_facilities),
+            context="closest_facility",
+        )
 
         if travel_direction == "facility_to_incident":
             origins, destinations = normalized_facilities, normalized_demands

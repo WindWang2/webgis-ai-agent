@@ -76,6 +76,15 @@ F_LAYER_ORDER = "layer_order_issue"
 F_EXTENT_MISMATCH = "result_outside_viewport"
 F_STALE_OVERLAY = "stale_overlay"
 
+# V4 Wave 7（ADR-0104）completion-time 审计 finding codes：
+# - 地图模型兼容性此前只在组合期（component_resolver）过滤，完成期不
+#   复核 —— 组合被绕过（手工组件/图层改动）时无披露。
+F_MAP_MODEL_MISMATCH = "map_model_mismatch"
+# - 「全透明结果层」的**结构代理**检查：spec 层 paint 不透明度为 0 且
+#   enabled+visible —— 像素级空白画布验证仍是 agent 工具
+#   （heuristic_visual_proxies，不进判定门），本码只做诚实披露。
+F_LAYER_TRANSPARENT = "layer_transparent"
+
 RUNTIME_RENDER_CODES = frozenset({
     F_RENDER_LAYER_MISSING,
     F_RENDER_SOURCE_MISSING,
@@ -186,9 +195,48 @@ def evaluate_completion_contract(
     )
     observed_ok = result.render_status in ("verified", "not_applicable")
     methodology_ok = obligation_codes.issubset(disclosed_codes)
+    # V4 Wave 7（审计 06）：uncertainty 维此前只检测 blocked 义务 ——
+    # 「欠不确定性披露但仅 warning」的义务照样过维。收紧： owed 义务
+    # （warning/degraded/blocked）在场时必须有**匹配 owed 码**的披露证据：
+    # - 显式通道：chapter["uncertainty_disclosures"]（[{code, text}]）；
+    # - 既有披露通道：methodology_warnings 中与 owed 义务 warning_code
+    #   相同的码（planner 义务联动会自动写入 —— review R2 MAJOR-6：
+    #   此前该键无任何生产写者 → 结构性 false-REJECT；且无码匹配校验
+    #   → 证据可伪造。两处一并修复）。
+    uncertainty_owed = [
+        o for o in obligations
+        if str(o.get("kind")) == "uncertainty"
+        and str(o.get("status")) in ("warning", "degraded", "blocked")
+    ]
+    owed_codes = {
+        str(o.get("warning_code")) for o in uncertainty_owed if o.get("warning_code")
+    }
+    owed_ids = {str(o.get("obligation_id")) for o in uncertainty_owed}
+    explicit_codes = {
+        str(d.get("code") or "")
+        for d in chapter.get("uncertainty_disclosures") or []
+        if isinstance(d, dict)
+    }
+    disclosed_warning_codes = {str(w.get("code")) for w in mw if w.get("code")}
+    # re-review LOW：owed 义务可能无 warning_code（schema 允许空串）——
+    # 退化到 obligation_id 匹配（义务联动的 warnings 载荷携带 id）；两者
+    # 皆无机器标识的 owed 义务以「任意显式披露在场」作保守证据。
+    disclosed_ids = {
+        str(w.get("obligation_id") or "")
+        for w in mw if isinstance(w, dict) and w.get("obligation_id")
+    }
+    if owed_codes:
+        uncertainty_evidence = bool(
+            (owed_codes & explicit_codes) or (owed_codes & disclosed_warning_codes)
+            or (owed_ids & disclosed_ids)
+        )
+    else:
+        uncertainty_evidence = bool(explicit_codes) or bool(disclosed_ids)
+    uncertainty_evidence = uncertainty_evidence and bool(uncertainty_owed)
     uncertainty_ok = not any(
         str(o.get("kind")) == "uncertainty" and str(o.get("status")) == "blocked"
-        for o in obligations)
+        for o in obligations
+    ) and (not uncertainty_owed or uncertainty_evidence)
 
     dimensions = {
         "data": data_ok,
@@ -205,6 +253,8 @@ def evaluate_completion_contract(
         "data_blockers": data_blockers[:8],
         "blocking_fallbacks": blocking_fallbacks[:8],
         "workflow_present": bool(wf_contract),
+        "uncertainty_owed": len(uncertainty_owed),
+        "uncertainty_disclosed": int(uncertainty_evidence),
     }
 
 
@@ -354,6 +404,10 @@ class MapCompletionResult:
     passes: int = 0
     result_bbox: Optional[List[float]] = None
     summary: str = ""
+    # V4 Wave 7（ADR-0104）：finalize 管线推导的单字产品裁决快照（与
+    # map_product_block["product_verdict"] 同源）—— SSE 载荷的
+    # task_complete 折叠直接消费，避免载荷侧重复推导。空 = 旧路径。
+    product_verdict: str = ""
 
     # ── 派生 ─────────────────────────────────────────────────────────
     @property

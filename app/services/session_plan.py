@@ -216,8 +216,20 @@ def format_session_plan_projection(
         line = str(product.get("projection") or "")
         if line:
             product_line = "\n" + line
+    # V4（ADR-0104 Wave 1）：WorkflowInstance 运行态行（additive、单行、
+    # 有界；从章节实例块只读投影——rev/维度/阻断/stale/ready。首行契约
+    # 不变，无实例块的旧章节零漂移）。
+    instance_line = ""
+    try:
+        from app.services.gis_harness.workflow_instance import format_instance_line
+
+        instance_line = format_instance_line(plan.gis_chapter)
+        if instance_line:
+            instance_line = "\n" + instance_line
+    except Exception:  # noqa: BLE001 — 投影失败只少一行
+        instance_line = ""
     if not plan.gis_chapter.get("data_requirements"):
-        return head + product_line
+        return head + instance_line + product_line
     try:
         from app.services.gis_harness.plan_graph import (
             build_plan_graph,
@@ -226,9 +238,9 @@ def format_session_plan_projection(
         graph = build_plan_graph(plan.gis_chapter)
         block = project_graph_block(graph)
     except Exception:  # noqa: BLE001 — 图投影是增值信号，绝不阻断 turn 上下文
-        return head + product_line
+        return head + instance_line + product_line
     if not block:
-        return head + product_line
+        return head + instance_line + product_line
     # ADR-0085：目标→产品 facets 投影行（纯派生、单行有界；章节/MapSpec
     # 之外零新状态 —— 让 Pi 看见"产品 = facets 集合"而非单个 heatmap）。
     products_line = ""
@@ -264,8 +276,8 @@ def format_session_plan_projection(
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         next_action_line = ""
     if not products_line.strip():
-        return head + "\n" + block + product_line
-    return head + "\n" + block + products_line + next_action_line + product_line
+        return head + instance_line + "\n" + block + product_line
+    return head + instance_line + "\n" + block + products_line + next_action_line + product_line
 
 
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:

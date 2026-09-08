@@ -30,12 +30,14 @@ def register_nature_resource_tools(registry: ToolRegistry):
     @tool(registry, name="analyze_vegetation_index",
           tier=2, domains=["raster"],
           description=(
-              "本地 TIFF 的光谱指数计算 (Celery 异步)：用户上传遥感影像后调用，自动探测 RGBN/Sentinel-2 波段，"
+              "本地 TIFF 的光谱指数计算 (Celery 异步)：用户上传遥感影像后调用，"
               "支持 ndvi/ndwi/nbr/evi，持久化为分析资产并入库。"
               "\n何时用：用户已通过 /upload 上传 .tif/.tiff 后请求『算下 NDVI/NDWI/NBR/EVI』；要把结果保存供后续 zonal_stats。"
               "\n何时不用：(1) 在线 bbox 计算 — 用 compute_ndvi（无需上传）；"
-              "(2) 双时相变化 — 用 detect_vegetation_change（STAC）或 detect_raster_change（本地两个栅格资产）；"
-              "(3) 不知道波段顺序 — 工具会自动探测，但 3 波段 RGB 无 NIR 时会失败。"
+              "(2) 双时相变化 — 用 detect_vegetation_change（STAC）或 detect_raster_change（本地两个栅格资产）。"
+              "\n关键约束（strict 波段语义）：波段角色不能靠波段数位置猜测 —— "
+              "缺省角色若只能由 guess/preset 来源填充会被类型化拒绝；请显式传 "
+              "red_band/nir_band 等索引（如 S2 NDVI: red=4, nir=8）。"
               "\n关键约束：raster_path 必须是 list_uploaded_data 返回过的路径；任务异步，返回 task_id 后需轮询。"
           ),
           # #996: 工具体经 submit_durable_job 内部投递 Celery
