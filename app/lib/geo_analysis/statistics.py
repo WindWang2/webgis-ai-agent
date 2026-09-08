@@ -2394,7 +2394,6 @@ def empirical_bayes_rate_smooth(
     idx_v = np.flatnonzero(valid)
     r = counts[idx_v] / pops[idx_v]
     p_v = pops[idx_v]
-    c_v = counts[idx_v]
     nv = len(idx_v)
     if nv < 3:
         raise InsufficientSamples(
@@ -3168,7 +3167,6 @@ def geodetector_ecological_narrated(
     labels2 = _geodetector_labels(
         gdf[strata_field_2].reset_index(drop=True), bins, strata_field_2)
     out = geodetector_ecological(values, labels1, labels2)
-    dominant = {("ssw1", "Y1"), ("ssw2", "Y2")}
     decision_txt = {
         "Y1_significantly_dominant":
             f"'{strata_field_1}' 的 SSW 显著更小 —— 解释力显著占优",

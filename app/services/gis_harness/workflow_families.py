@@ -27,7 +27,7 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 #: 分层组合版本（进入指纹）。
 FAMILY_LAYER_VERSION = 3

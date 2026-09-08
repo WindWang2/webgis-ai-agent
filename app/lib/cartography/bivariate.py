@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence
 
 # 双变量色阵（3×3，行=变量 B 低→高，列=变量 A 低→高；行主序 9 色）。
 # 配色结构：行内沿 A 轴亮度递进，列间沿 B 轴色相偏移（两轴各自单调可辨）。
