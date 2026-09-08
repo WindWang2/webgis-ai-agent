@@ -678,7 +678,9 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   )
   async def webgis_layout_set(
       legend: Optional[Dict[str, Any]] = None,
-      controls: Optional[Dict[str, Any]] = None,
+      # V5: 与 SetLayoutIntent.controls / SetLayoutBody.controls /
+      # 前端 MapSpecControlConfig[] 同形 —— 控件是列表，不是 dict。
+      controls: Optional[List[Dict[str, Any]]] = None,
       margins: Optional[Dict[str, Any]] = None,
       components: Optional[List[Dict[str, Any]]] = None,
       session_id: Optional[str] = None,

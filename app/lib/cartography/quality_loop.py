@@ -468,6 +468,9 @@ class CartographicLoopResult:
     attempts: List[Dict[str, Any]] = field(default_factory=list)
     termination_reason: str = ""
     counters: Dict[str, int] = field(default_factory=dict)
+    # V5（ADR-0118 D2）：被调用方声明抑制、未执行的 repair operations
+    # （user-wins —— 显式 intent 不被 AUTO_SAFE 静默覆盖）。
+    suppressed_repairs: List[str] = field(default_factory=list)
 
     @property
     def repair_count(self) -> int:
@@ -484,6 +487,7 @@ class CartographicLoopResult:
             "repair_count": self.repair_count,
             "termination_reason": self.termination_reason,
             "counters": self.counters,
+            "suppressed_repairs": self.suppressed_repairs,
         }
 
 
@@ -535,12 +539,19 @@ def review_and_repair_cartography(
     max_iterations: int = MAX_REPAIR_ITERATIONS,
     repair_executor: RepairExecutor = _apply_repairs,
     is_current: Optional[CurrentGuard] = None,
+    suppressed_repairs: Optional[set] = None,
 ) -> CartographicLoopResult:
     """Review and repair an immutable desired MapSpec with hard termination.
 
     This stage does not claim frontend convergence. ``is_current`` is a
     generation guard for callers that reconcile against mutable state; a false
     result terminates as ``superseded`` before a patch is applied.
+
+    ``suppressed_repairs``（V5，ADR-0118 D2）：调用方声明本轮变异**不许被
+    自动修复覆盖**的 repair operation 集合 —— 典型是 SetLayoutIntent 显式
+    ``legend.visible=False`` 时的 ``set_map_legend_visibility``。被抑制的
+    finding 仍进入 review 证据（诚实披露可读性顾虑），但提交对象保持
+    用户/agent 的显式意图（user-wins）。
     """
     bounded_iterations = max(0, min(int(max_iterations), MAX_REPAIR_ITERATIONS))
     current = _presentation_copy(mapspec)
@@ -550,6 +561,7 @@ def review_and_repair_cartography(
     seen_patches: set[str] = set()
     review_invocations = 0
     rule_invocations = 0
+    applied_suppressions: List[str] = []
 
     while True:
         report = evaluate_cartography_semantics(current, source_profiles)
@@ -577,6 +589,13 @@ def review_and_repair_cartography(
         seen_failures.add(failure_fp)
 
         repairs = _plan_auto_safe_repairs(review)
+        if suppressed_repairs:
+            kept = [r for r in repairs if r.get("operation") not in suppressed_repairs]
+            for r in repairs:
+                op = r.get("operation")
+                if op in suppressed_repairs and op not in applied_suppressions:
+                    applied_suppressions.append(op)
+            repairs = kept
         if not repairs:
             has_semantic_risk = any(
                 check.get("status") == "fail"
@@ -632,6 +651,7 @@ def review_and_repair_cartography(
             "full_data_loads": 0,
             "repair_attempts": len(attempts),
         },
+        suppressed_repairs=sorted(applied_suppressions),
     )
 
 
