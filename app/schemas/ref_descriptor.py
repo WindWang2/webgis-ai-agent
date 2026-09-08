@@ -25,15 +25,15 @@ class RefDescriptor:
             file_path or path key) servable by the raster tile endpoint.
         estimated_bytes: Rough size estimate (feature-count heuristic; exact
             byte count is not computed to avoid blocking the store() hot path)
-        content_hash: Opt-in payload digest (Wave 1, audit §7.9). Default OFF
-            (None) — computing a stable hash would require json.dumps + sha256
-            of the full payload on the store hot path (30 MB → seconds of
-            blocking, defeats V3 off-loop goal). When WEBGIS_REF_CONTENT_HASH
-            is enabled, the sha256 of the canonical payload is computed for
+        content_hash: Payload digest (Wave 1, audit §7.9). **V6 default ON**
+            (ADR-0118): the sha256 of the canonical payload is computed for
             payloads ≤1MB — still off the event loop (both store backends run
-            compute_descriptor via asyncio.to_thread), so the flag buys content
-            identity at the session tier without blocking. >1MB payloads keep
-            None (honest default, cost gate).
+            compute_descriptor via asyncio.to_thread), so content identity
+            participates in ref identity by default without blocking.
+            >1MB payloads keep None (honest cost gate). Set
+            WEBGIS_REF_CONTENT_HASH to 0/false/no/off to restore the legacy
+            opt-in behavior (always None). The durable lakehouse DataObject
+            tier is content-addressed unconditionally (no flag exists there).
         filterable_fields: Distinct property keys present across features,
             used as tile attribute whitelist for MVT setFilter contract (#668).
             Bounded to 100 distinct keys (sorted, first 100) to keep descriptor
@@ -280,22 +280,26 @@ def is_raster_capable(data) -> bool:
     return isinstance(data, dict) and ("file_path" in data or "path" in data)
 
 
-# ── content_hash opt-in（Wave 1，audit §7.9）──────────────────────────────
-# 环境开关 WEBGIS_REF_CONTENT_HASH（默认关）：开启时对 ≤1MB 载荷计算
-# canonical sha256 写入 RefDescriptor.content_hash —— 会话层内容身份的
-# 小而诚实的一步。默认关时行为与历史逐字节一致（恒 None）。哈希口径复用
-# 既有 canonical 序列化（app/lib/data/fingerprints），保证与晋升/BlobStore
-# 的摘要同源 —— content_fingerprint or payload_digest 由此可收敛到载荷摘要。
+# ── content_hash 默认参与身份（V6 Wave 1，ADR-0118）───────────────────────
+# 环境开关 WEBGIS_REF_CONTENT_HASH：对 ≤1MB 载荷计算 canonical sha256 写入
+# RefDescriptor.content_hash —— 会话层内容身份。**V6 起默认开启**；显式设
+# "0/false/no/off" 可关回历史行为（恒 None）。哈希口径复用既有 canonical
+# 序列化（app/lib/data/fingerprints），保证与晋升/BlobStore/lakehouse
+# manifest 的摘要同源 —— content_fingerprint or payload_digest 由此可
+# 收敛到载荷摘要。
 
 _REF_CONTENT_HASH_ENV = "WEBGIS_REF_CONTENT_HASH"
 _REF_CONTENT_HASH_MAX_BYTES = 1024 * 1024
+_CONTENT_HASH_OFF_VALUES = ("0", "false", "no", "off")
 
 
 def _content_hash_enabled() -> bool:
     import os
 
     raw = os.environ.get(_REF_CONTENT_HASH_ENV, "").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+    if raw in _CONTENT_HASH_OFF_VALUES:
+        return False
+    return True
 
 
 def _opt_in_content_hash(data) -> Optional[str]:
@@ -382,13 +386,12 @@ def compute_descriptor(ref_id: str, data) -> RefDescriptor:
     else:
         estimated_bytes = estimate_bytes(0)
     
-    # content_hash: default-off opt-in (Wave 1 §7.9). Omitted from hot-path
-    # compute unless WEBGIS_REF_CONTENT_HASH is enabled — two full json.dumps +
-    # SHA256 of a 30MB payload would block the event loop in store(). Even when
-    # enabled, only payloads ≤1MB are hashed (cost gate; bigger keeps None).
-    # Both store backends run compute_descriptor via asyncio.to_thread, so an
-    # enabled hash is already off-loop. Checkpoint hashes independently for its
-    # own dedup, unchanged.
+    # content_hash: default-ON since V6 (ADR-0118). Still off the store hot
+    # path's event loop — both store backends run compute_descriptor via
+    # asyncio.to_thread. Only payloads ≤1MB are hashed (cost gate; bigger
+    # keeps None). WEBGIS_REF_CONTENT_HASH=0/false/no/off restores the legacy
+    # opt-in behavior. Checkpoint hashes independently for its own dedup,
+    # unchanged.
     content_hash = _opt_in_content_hash(data)
 
     # #668: attribute whitelist via shared helper (identical to fallback path)
