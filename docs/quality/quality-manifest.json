@@ -7665,7 +7665,7 @@
    "subject": "webgis_world_state"
   }
  ],
- "fingerprint": "938b5bf1bd1c25845ce518cfa2ac973300f5671fd374e8fd9a3907b32918e107",
+ "fingerprint": "a176ff71ffcb43b7be56036a5f1f7efb02de0f8f8770cefb4c9c58d98387dd8e",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8629,6 +8629,7 @@
     "瓦片"
    ],
    "tests": [
+    "tests/data/test_raster_lakehouse_v6.py",
     "tests/unit/lib/test_geo_raster_chunks_v6.py"
    ],
    "tier": 2
