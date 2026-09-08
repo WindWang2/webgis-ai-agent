@@ -109,10 +109,34 @@ export default function Home() {
     selectSession,
     startNewSession,
     refreshSessions,
+    autoRestoreFromAnchor,
   } = useWorkspaceSession(dispatchAction);
 
   // Workbench V5（W4）：全局 undo/redo 快捷键（Ctrl/⌘+Z、⇑+Z、Ctrl+Y）。
   useWorkbenchUndoKeys();
+
+  // Workbench V5（W11）：刷新自动恢复 —— 锚指向的认证会话走完整恢复管线
+  // （仅 mount 一次判定；失败/匿名会话保持新会话语义，不打断用户）。
+  const autoRestoreFromAnchorRef = useRef(false);
+  useEffect(() => {
+    if (autoRestoreFromAnchorRef.current) return;
+    autoRestoreFromAnchorRef.current = true;
+    autoRestoreFromAnchor((restored, notice) => {
+      setMessages(
+        notice
+          ? [
+              {
+                id: `session-error-${Date.now()}`,
+                role: 'assistant' as const,
+                content: notice,
+                timestamp: new Date(),
+              },
+            ]
+          : restored
+      );
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // #1048: SessionPlan hydrate-then-delta 状态（page 级，与 agentRuntime 同款
   // 下行路径）。增量由 useSSEStream 的分发链驱动，视图经 ContextPanel → ChatTab

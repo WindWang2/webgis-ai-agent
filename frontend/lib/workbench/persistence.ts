@@ -178,3 +178,18 @@ export function stopWorkbenchPersistence(): void {
 export function workbenchPersistenceArmed(): boolean {
   return armed;
 }
+
+/**
+ * W11：页面卸载（pagehide）前尽力冲刷未落盘的 doc 变更 —— 防抖窗口
+ * （800ms）内的组织态编辑随页面死亡丢失。best-effort：fetch 可能因卸载
+ * 中断，服务端 CAS 保证不产生半提交。
+ */
+export function flushWorkbenchDoc(): void {
+  if (debounceTimer != null) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+  }
+  if (!armed || targetSessionId == null || inflight) return;
+  if (currentDocJson() === lastCommittedJson) return;
+  void commitNow();
+}

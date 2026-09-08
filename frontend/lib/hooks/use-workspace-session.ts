@@ -12,12 +12,18 @@ import { setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { devOnly } from "@/lib/utils/logger";
 import { resetViewportSeq } from "@/lib/utils/viewport-seq";
 import {
+  flushWorkbenchDoc,
   markWorkbenchHydrated,
   notifyWorkbenchSessionChanged,
   startWorkbenchPersistence,
   workbenchPersistenceArmed,
 } from '@/lib/workbench/persistence';
 import { clearUndoHistory } from '@/lib/workbench/undo';
+import {
+  clearSessionAnchor,
+  restorableSessionAnchor,
+  writeSessionAnchor,
+} from '@/lib/workbench/session-anchor';
 
 const MAX_SESSION_OWNER_TOKENS = 128;
 
@@ -137,6 +143,10 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   // Workbench V5（W3）：组织态持久化订阅（workspace 挂载一次；幂等）。
   useEffect(() => {
     startWorkbenchPersistence();
+    // W11：页面卸载前尽力冲刷未落盘的 doc 变更（防抖窗口丢失防护）。
+    const onPageHide = () => flushWorkbenchDoc();
+    window.addEventListener('pagehide', onPageHide);
+    return () => window.removeEventListener('pagehide', onPageHide);
   }, []);
 
   const selectSession = useCallback(
@@ -230,6 +240,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         }
         onRestoreMessages(restored);
         messagesRestored = true;
+        // W11：恢复成功 → 写会话锚（刷新自动恢复指针；仅指针不存内容）。
+        writeSessionAnchor(sid);
 
         // setSessionId 已在函数开头同步调用（审计 F38），这里不再重复
 
@@ -333,6 +345,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       notifyWorkbenchSessionChanged(null);
       // V5/W4：undo 栈随会话清空。
       clearUndoHistory();
+      // W11：新会话语义 → 清刷新恢复锚。
+      clearSessionAnchor();
       // #548: new session = fresh explorer task tab (same session-scope rule as
       // selectSession, this path had no clear at all before).
       clearExplorerTasks();
@@ -359,6 +373,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       notifyWorkbenchSessionChanged(sid);
       markWorkbenchHydrated();
     }
+    // W11：新会话建立 → 写刷新恢复锚（认证会话可自动恢复）。
+    writeSessionAnchor(sid);
     // Cap capability retention: long-lived tabs may visit many anonymous
     // sessions, but ACK routing only needs a bounded recent working set.
     if (!sessionTokensRef.current.has(sid)) {
@@ -381,6 +397,21 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     );
   }, []);
 
+  /**
+   * W11：刷新自动恢复 —— mount 时若锚指向可恢复的认证会话且当前无会话，
+   * 走既有 selectSession 管线（消息 + map-state + 图层 + workbench doc
+   * 全量恢复；ghost 防御复用 restore 的 allowedIds/pendingRemoved 机制）。
+   */
+  const autoRestoreFromAnchor = useCallback(
+    (onRestoreMessages: (messages: any[], notice?: string) => void) => {
+      if (sessionIdRef.current) return;
+      const anchor = restorableSessionAnchor();
+      if (!anchor) return;
+      void selectSession(anchor.sessionId, onRestoreMessages);
+    },
+    [selectSession],
+  );
+
   return {
     sessionId,
     setSessionId,
@@ -398,5 +429,6 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     refreshSessions,
     selectSession,
     startNewSession,
+    autoRestoreFromAnchor,
   };
 }
