@@ -17,6 +17,10 @@ OOM），pytest 自带 timeout 兜底；frontend lane 受 pnpm 自身并发控�
     python scripts/quality_runner.py full                  # 以上全部（串行）
     python scripts/quality_runner.py full --retry-failed   # 失败车道重试（--lf）
 
+Quality V2 profiles（分层；报告与 flake 统计写 .agent-work/quality-v2/）：
+    python scripts/quality_runner.py changed              # git diff 驱动的受影响面 + 顺序轮换
+    python scripts/quality_runner.py full-local           # 全量本地验收（含顺序 seed 轮换；perf 隔离）
+
 输出：
     .agent-work/quality-v1/runner-report.json   机器可读
     .agent-work/quality-v1/runner-report.md     人可读
@@ -25,13 +29,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-REPORT_DIR = REPO / ".agent-work" / "quality-v1"
+REPORT_DIR = REPO / ".agent-work" / "quality-v2"
 PYTEST = [sys.executable, "-m", "pytest"]
 
 #: 后端车道默认资源护栏（bounded；不用 -n auto）
@@ -146,12 +151,68 @@ FULL_ORDER = ["quick", "science", "cartography", "data", "security",
               "quality", "backend", "frontend"]  # perf 单独跑（隔离策略 #664）
 
 
+def _changed_py_targets() -> list:
+    """git diff（工作区 + 最近一次 merge-base 与 origin/master）驱动的
+    受影响测试目标：改动 app/ 下某目录 → 对应 tests 目录 + tests/quality
+    红线恒跑；改动 tests/ → 原样跑。返回 pytest 路径参数列表（有界）。"""
+    import subprocess
+
+    def _git(args: list) -> str:
+        return subprocess.run(["git"] + args, cwd=REPO, capture_output=True,
+                              text=True, timeout=30).stdout
+
+    files = set(_git(["diff", "--name-only", "HEAD"]).splitlines())
+    files |= set(_git(["diff", "--name-only", "origin/master...HEAD"]
+                      ).splitlines())
+    targets: list = []
+    for f in sorted(files):
+        if f.startswith("tests/") and f.endswith(".py"):
+            targets.append(f)
+        elif f.startswith("app/"):
+            # app/lib/gis/algorithms → tests/unit/gis；app/tools → tests/unit/tools
+            parts = f.split("/")
+            mapped = {
+                "app/lib/gis": "tests/unit/gis",
+                "app/lib/quality": "tests/quality",
+                "app/tools": "tests/unit/tools",
+                "app/services": "tests/unit",
+                "app/api": "tests",
+                "app/core": "tests",
+            }.get("/".join(parts[:3]))
+            if mapped and (REPO / mapped).is_dir():
+                targets.append(mapped)
+    # 顺序污染轮换：changed profile 恒定启用（Quality V2 W10）
+    os.environ.setdefault("QUALITY_ORDER_SEED", str(int(time.time()) % 100000))
+    # 红线闸恒跑 + 去重有界
+    base = ["tests/quality/", "tests/unit/tools/"]
+    seen: set = set()
+    ordered = []
+    for t in [*base, *targets]:
+        if t not in seen:
+            seen.add(t)
+            ordered.append(t)
+    return ordered[:40]
+
+
 def _run_lane(lane: str, retry_failed: bool) -> dict:
     spec = LANES[lane]
     results = []
     for cmd in spec["commands"]:
-        if retry_failed and cmd[0] == sys.executable and "pytest" in cmd[1:3]:
-            # --lf 依赖 cacheprovider：重试命令必须去掉 -p no:cacheprovider
+        t0 = time.monotonic()
+        proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
+        elapsed = time.monotonic() - t0
+        tail = "\n".join((proc.stdout or "").splitlines()[-12:])
+        step = {
+            "command": " ".join(str(c) for c in cmd),
+            "exit": proc.returncode,
+            "elapsed_s": round(elapsed, 1),
+            "tail": tail,
+        }
+        # Quality V2 flake 统计：仅在显式 --retry-failed 时，失败的 pytest
+        # 步骤用 --lf 重跑一次；重跑全绿 = 顺序/负载敏感的 flake 候选
+        # （recovered=true 计入报告，不改变车道判定口径——ok 仍按首次）。
+        if retry_failed and proc.returncode != 0 \
+                and cmd[0] == sys.executable and "pytest" in cmd[1:3]:
             filtered = []
             skip_next = False
             for c in cmd:
@@ -162,19 +223,19 @@ def _run_lane(lane: str, retry_failed: bool) -> dict:
                     skip_next = True
                     continue
                 filtered.append(c)
-            cmd = [*filtered, "--lf", "-q"]
-        t0 = time.monotonic()
-        proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
-        elapsed = time.monotonic() - t0
-        tail = "\n".join((proc.stdout or "").splitlines()[-12:])
-        results.append({
-            "command": " ".join(str(c) for c in cmd),
-            "exit": proc.returncode,
-            "elapsed_s": round(elapsed, 1),
-            "tail": tail,
-        })
+            retry_cmd = [*filtered, "--lf", "-q"]
+            t1 = time.monotonic()
+            retry_proc = subprocess.run(retry_cmd, cwd=REPO,
+                                        capture_output=True, text=True)
+            step["recovered"] = retry_proc.returncode == 0
+            step["retry_tail"] = "\n".join(
+                (retry_proc.stdout or "").splitlines()[-12:])
+            step["retry_elapsed_s"] = round(time.monotonic() - t1, 1)
+        results.append(step)
     ok = all(r["exit"] == 0 for r in results)
-    return {"lane": lane, "title": spec["title"], "ok": ok, "steps": results}
+    flake_recovered = sum(1 for r in results if r.get("recovered"))
+    return {"lane": lane, "title": spec["title"], "ok": ok,
+            "flake_recovered": flake_recovered, "steps": results}
 
 
 def _render_md(report: dict) -> str:
@@ -201,13 +262,36 @@ def _render_md(report: dict) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("lane", choices=[*LANES.keys(), "full"])
+    parser.add_argument("lane", choices=[*LANES.keys(), "full",
+                                         "changed", "full-local"])
     parser.add_argument("--retry-failed", action="store_true",
                         help="失败车道用 pytest --lf 重试")
     parser.add_argument("--json", action="store_true", help="只打印 JSON 摘要")
     args = parser.parse_args()
 
-    lanes = FULL_ORDER if args.lane == "full" else [args.lane]
+    if args.lane == "changed":
+        # changed profile：受影响面 pytest + 红线再生成检查（顺序轮换已在
+        # _changed_py_targets 内启用）
+        targets = _changed_py_targets()
+        LANES["changed"] = {
+            "title": "changed（git diff 驱动受影响面 + 顺序轮换 "
+                     f"QUALITY_ORDER_SEED={os.environ['QUALITY_ORDER_SEED']}）",
+            "commands": [
+                PYTEST + targets + ["--no-cov", "-q", "--timeout=120",
+                                    "--timeout-method=thread",
+                                    "-p", "no:cacheprovider"],
+                [sys.executable, "scripts/gen_quality_manifest.py", "--check"],
+            ],
+        }
+        lanes = ["changed"]
+    elif args.lane == "full-local":
+        # 全量本地验收：完整车道 + 顺序轮换 seed（每轮不同 → 连跑两轮
+        # 不同序，暴露顺序污染）；perf 仍隔离。
+        os.environ.setdefault("QUALITY_ORDER_SEED",
+                              str(int(time.time()) % 100000))
+        lanes = FULL_ORDER
+    else:
+        lanes = FULL_ORDER if args.lane == "full" else [args.lane]
     started = time.monotonic()
     lane_reports = []
     for lane in lanes:
