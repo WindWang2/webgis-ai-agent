@@ -62,7 +62,7 @@ def test_plan_hash_in_explain_and_deterministic():
     l1 = explain_v6_lines(plan)
     l2 = explain_v6_lines(plan)
     assert l1 == l2
-    assert any("plan_hash" in l for l in l1)
+    assert any("plan_hash" in ln for ln in l1)
 
 
 def test_explain_with_actual_side():
@@ -89,8 +89,8 @@ def test_explain_dry_run_has_no_actual():
     req = _req()
     plan = plan_federation_v6(req)
     lines = explain_v6_lines(plan)
-    assert not any("actual:" in l for l in lines)
-    assert any("estimated_cost" in l for l in lines)
+    assert not any("actual:" in ln for ln in lines)
+    assert any("estimated_cost" in ln for ln in lines)
 
 
 def test_explain_includes_alternatives_and_warnings():
