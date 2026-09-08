@@ -272,6 +272,45 @@ def publish_data_object(
     )
 
 
+def publish_manifest_only(
+    entries: List[Tuple[str, str, int]],
+    *,
+    kind: str,
+    owner_scope: Mapping[str, str],
+    payload: Optional[Mapping[str, Any]] = None,
+    producer: Optional[Mapping[str, Any]] = None,
+    source_refs: Optional[List[str]] = None,
+    input_fingerprint: Optional[str] = None,
+    store: Optional[Any] = None,
+) -> DataObjectIdentity:
+    """只发布 manifest（不复制内容 blob）—— 大对象（如超大 cube）的诚实
+    降级：身份/完整性/lineage 证据齐备，但 BlobStore 侧无可物化字节
+    （调用方必须如实标注 durable="manifest_only"，绝不冒充 published）。"""
+    store = store or _store()
+    manifest = build_object_manifest(
+        kind=kind,
+        owner_scope=owner_scope,
+        entries=entries,
+        payload=payload,
+        producer=producer,
+        source_refs=source_refs,
+        input_fingerprint=input_fingerprint,
+    )
+    from app.lib.data.fingerprints import canonical_dumps
+
+    blob = canonical_dumps(manifest).encode("utf-8")
+    manifest_id = _digest_bytes(blob)
+    result = store.put_blob(manifest_id, blob, "json")
+    return DataObjectIdentity(
+        data_object_id=manifest_id,
+        manifest_location=result.location,
+        content_sha256=str(manifest["content_sha256"]),
+        byte_size=int(manifest["byte_size"]),
+        blob_count=0,  # 内容 blob 未进 BlobStore（manifest-only 语义）
+        deduped=not result.put_new,
+    )
+
+
 def resolve_data_object(
     data_object_id: str, *, store: Optional[Any] = None
 ) -> Optional[dict]:
