@@ -2,11 +2,106 @@
 
 Compiles a declarative MapSpec into resolution-independent SVG vector markup
 with DPI resolution scaling for WeasyPrint PDF report generation.
+
+W4 correctness contract (``compile_mapspec_to_svg_detailed``): visibility
+semantics (``layout.visibility=="none"`` / top-level ``visible:False`` layers
+are skipped, MapLibre-consistent), enforced thresholds
+(``spec.thresholds.maxFeatures`` / ``timeoutMs`` — deterministic truncation
+and cooperative timeout instead of decorative fields), label text fitting
+(``fit_label_text`` + ``label_truncated`` diagnostics) and structured
+diagnostics on the authoritative render-diagnostics vocabulary.
 """
 
 import html as _html
 import math as _math
-from typing import Any, Dict, Tuple
+import time as _time
+from dataclasses import dataclass
+from typing import Any, Dict, List, Tuple
+
+from app.lib.cartography.label_engine import (
+    MAX_SVG_LABEL_CHARS as _MAX_SVG_LABEL_CHARS,
+)
+from app.lib.cartography.label_engine import (
+    fit_label_text as _fit_label_text,
+)
+from app.lib.cartography.render_diagnostics import (
+    MAX_DIAGNOSTICS_PER_EXPORT as _MAX_DIAGNOSTICS_PER_EXPORT,
+)
+from app.lib.cartography.render_diagnostics import (
+    diagnostic as _render_diagnostic,
+)
+
+#: 单图层特征数上限默认值（spec.thresholds.maxFeatures 缺省时）。
+DEFAULT_MAX_FEATURES = 50000
+#: 编译超时默认值毫秒（spec.thresholds.timeoutMs 缺省时）。
+DEFAULT_EXPORT_TIMEOUT_MS = 30000.0
+#: 单标签字符上限（label engine 契约常量再导出 —— 本编译器截断口径）。
+MAX_SVG_LABEL_CHARS = _MAX_SVG_LABEL_CHARS
+
+
+@dataclass
+class SvgCompilation:
+    """``compile_mapspec_to_svg_detailed`` 的结构化产物。
+
+    ``svg`` 与旧 ``compile_mapspec_to_svg`` 的 str 返回逐字节相同；
+    ``diagnostics`` 为权威词表 ``RenderDiagnostic.to_dict()`` 载荷（发射序、
+    封顶 ``MAX_DIAGNOSTICS_PER_EXPORT`` 条）；``feature_count`` 统计实际
+    产出 ≥1 个 SVG 元素的要素数；``truncated_features`` / ``timed_out``
+    标记两种有损降级是否发生。
+    """
+
+    svg: str
+    diagnostics: List[Dict[str, Any]]
+    feature_count: int
+    truncated_features: bool
+    timed_out: bool
+
+
+def _resolve_export_thresholds(
+    mapspec: Any,
+    max_features: Any,
+    timeout_ms: Any,
+) -> Tuple[int, float]:
+    """解析特征数 / 超时预算：显式入参 > ``spec.thresholds`` > 默认值。
+
+    非法值（非数值、NaN/Inf、bool、<=0）按缺省链路回退，绝不抛错；
+    显式 ``timeout_ms=0`` 是合法预算（立即协作中止），用于确定性测试。
+    """
+    thresholds = mapspec.get("thresholds") if isinstance(mapspec, dict) else None
+    if not isinstance(thresholds, dict):
+        thresholds = {}
+
+    def _valid(val: Any, *, allow_zero: bool) -> bool:
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            return False
+        try:
+            f = float(val)
+        except (ValueError, TypeError):
+            return False
+        if not _math.isfinite(f):
+            return False
+        return f >= 0 if allow_zero else f > 0
+
+    if _valid(max_features, allow_zero=False):
+        cap = int(max_features)
+    elif _valid(thresholds.get("maxFeatures"), allow_zero=False):
+        cap = int(thresholds["maxFeatures"])
+    else:
+        cap = DEFAULT_MAX_FEATURES
+
+    if _valid(timeout_ms, allow_zero=True):
+        t_ms = float(timeout_ms)
+    elif _valid(thresholds.get("timeoutMs"), allow_zero=True):
+        t_ms = float(thresholds["timeoutMs"])
+    else:
+        t_ms = DEFAULT_EXPORT_TIMEOUT_MS
+    return cap, t_ms
+
+
+def resolve_spec_timeout_ms(mapspec: Any) -> float:
+    """与编译器同口径解析导出超时预算（毫秒）—— report_service 包
+    ``asyncio.wait_for`` 时共用此值，避免两处口径漂移。"""
+    return _resolve_export_thresholds(mapspec, None, None)[1]
 
 
 def _escape_svg_attr(value: Any) -> str:
@@ -289,6 +384,43 @@ def compile_mapspec_to_svg(
     height: int = 800,
     padding: int = 40,
 ) -> str:
+    """兼容入口：签名与 str 返回与 W4 之前逐字节一致。"""
+    return compile_mapspec_to_svg_detailed(
+        mapspec, target_dpi=target_dpi, width=width, height=height,
+        padding=padding,
+    ).svg
+
+
+def compile_mapspec_to_svg_detailed(
+    mapspec: Dict[str, Any],
+    target_dpi: int = 300,
+    width: int = 1200,
+    height: int = 800,
+    padding: int = 40,
+    max_features: Any = None,
+    timeout_ms: Any = None,
+) -> SvgCompilation:
+    cap, timeout_ms_val = _resolve_export_thresholds(
+        mapspec, max_features, timeout_ms)
+    timeout_s = timeout_ms_val / 1000.0
+    start_mono = _time.monotonic()
+    diagnostics: List[Dict[str, Any]] = []
+    feature_count = 0
+    truncated_features = False
+    timed_out = False
+
+    def _emit_diag(code: str, detail: str = "", layer_id: Any = None) -> None:
+        """按权威词表发射诊断（封顶防 DoS；未知码由工厂拒绝为 None）。"""
+        if len(diagnostics) >= _MAX_DIAGNOSTICS_PER_EXPORT:
+            return
+        d = _render_diagnostic(
+            code,
+            detail=detail,
+            layer_id=str(layer_id) if layer_id is not None else None,
+        )
+        if d is not None:
+            diagnostics.append(d.to_dict())
+
     try:
         if not isinstance(mapspec, dict):
             mapspec = {}
@@ -417,6 +549,30 @@ def compile_mapspec_to_svg(
             for layer in layers:
                 if not isinstance(layer, dict):
                     continue
+
+                # W4 可见性语义（与 MapLibre 一致）：layout.visibility=="none"
+                # 或顶层 visible:False 的图层不进导出产物。sources 不动
+                # （范围计算仍读全量 sources，保持既有输出不变）。
+                _layer_layout = (
+                    layer.get("layout") if isinstance(layer.get("layout"), dict) else {}
+                )
+                if _layer_layout.get("visibility") == "none" or layer.get("visible") is False:
+                    continue
+
+                # W4 阈值执行：逐图层协作式超时检查（预算耗尽即停止添加要素，
+                # 产物以 export_timeout_partial 诊断诚实标注为部分产物）。
+                if not timed_out and (_time.monotonic() - start_mono) >= timeout_s:
+                    timed_out = True
+                    _emit_diag(
+                        "export_timeout_partial",
+                        detail=f"elapsed>={int(timeout_ms_val)}ms",
+                        layer_id=layer.get("id"),
+                    )
+                if timed_out:
+                    break
+
+                _lid = layer.get("id")
+                _lid = str(_lid) if _lid is not None else None
                 try:
                     src_id = layer.get("source")
                     src = sources.get(src_id, {}) if isinstance(sources, dict) else {}
@@ -492,9 +648,26 @@ def compile_mapspec_to_svg(
                     if not isinstance(features, list):
                         features = [data]
 
+                    # W4 阈值执行：每图层特征数超限 → 确定性截断（保持原
+                    # 顺序取前 N）+ features_truncated 诊断。
+                    if len(features) > cap:
+                        features = features[:cap]
+                        truncated_features = True
+                        _emit_diag("features_truncated", detail=str(cap), layer_id=_lid)
+
                     for feat in features:
                         if not isinstance(feat, dict):
                             continue
+                        if not timed_out and (_time.monotonic() - start_mono) >= timeout_s:
+                            timed_out = True
+                            _emit_diag(
+                                "export_timeout_partial",
+                                detail=f"elapsed>={int(timeout_ms_val)}ms",
+                                layer_id=_lid,
+                            )
+                        if timed_out:
+                            break
+                        n_svg_before = len(elements_svg)
                         geom = feat.get("geometry")
                         if not isinstance(geom, dict):
                             continue
@@ -628,6 +801,19 @@ def compile_mapspec_to_svg(
                             if not raw_text:
                                 continue
 
+                            # W4：接入 label engine 文本适配契约 —— 长文本按
+                            # MAX_SVG_LABEL_CHARS 截断并发射 label_truncated，
+                            # 不再原样嵌入溢出画布。
+                            text_value = str(raw_text)
+                            fitted_text, text_truncated = _fit_label_text(
+                                text_value, max_chars=_MAX_SVG_LABEL_CHARS)
+                            if text_truncated:
+                                _emit_diag(
+                                    "label_truncated",
+                                    detail=f"layer={_lid} len={len(text_value)}",
+                                    layer_id=_lid,
+                                )
+
                             gtype = geom.get("type")
                             coords = geom.get("coordinates")
                             coord = None
@@ -709,7 +895,7 @@ def compile_mapspec_to_svg(
                                 svg_text_anchor = "end"
                                 svg_dominant_baseline = "ideographic"
 
-                            text_escaped = _escape_svg_attr(raw_text)
+                            text_escaped = _escape_svg_attr(fitted_text)
 
                             base_halo_w = _safe_float(_resolve_paint_value(paint.get("text-halo-width") or layout.get("text-halo-width") or paint.get("haloWidth") or layout.get("haloWidth") or paint.get("textHaloWidth"), props, 0.0), 0.0)
                             if base_halo_w > 0:
@@ -721,25 +907,42 @@ def compile_mapspec_to_svg(
 
                             elements_svg += f'<text x="{x}" y="{y}" font-size="{font_size}" font-family="{font_family}" fill="{color}" fill-opacity="{opacity}" text-anchor="{svg_text_anchor}" dominant-baseline="{svg_dominant_baseline}">{text_escaped}</text>\n'
 
+                        # W4：feature_count 统计实际产出 ≥1 个 SVG 元素的要素
+                        # （各分支的守卫 continue 会跳过本计数，语义正确）。
+                        if len(elements_svg) > n_svg_before:
+                            feature_count += 1
+
                 except Exception:
                     continue
 
         viewbox_w = _fmt_num(scaled_width)
         viewbox_h = _fmt_num(scaled_height)
 
-        return f"""<svg width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">
+        return SvgCompilation(
+            svg=f"""<svg width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">
   <rect width="100%" height="100%" fill="#ffffff" />
   <g class="mapspec-vector-layers">
     {elements_svg}
   </g>
-</svg>"""
+</svg>""",
+            diagnostics=diagnostics,
+            feature_count=feature_count,
+            truncated_features=truncated_features,
+            timed_out=timed_out,
+        )
 
     except Exception:
         w_fallback = width if isinstance(width, (int, float)) and width > 0 else 1200
         h_fallback = height if isinstance(height, (int, float)) and height > 0 else 800
-        return f"""<svg width="{int(w_fallback)}" height="{int(h_fallback)}" viewBox="0 0 {int(w_fallback)} {int(h_fallback)}" xmlns="http://www.w3.org/2000/svg">
+        return SvgCompilation(
+            svg=f"""<svg width="{int(w_fallback)}" height="{int(h_fallback)}" viewBox="0 0 {int(w_fallback)} {int(h_fallback)}" xmlns="http://www.w3.org/2000/svg">
   <rect width="100%" height="100%" fill="#ffffff" />
   <g class="mapspec-vector-layers">
   </g>
-</svg>"""
+</svg>""",
+            diagnostics=diagnostics,
+            feature_count=feature_count,
+            truncated_features=truncated_features,
+            timed_out=timed_out,
+        )
 
