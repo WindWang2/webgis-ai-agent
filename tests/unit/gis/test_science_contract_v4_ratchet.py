@@ -42,14 +42,13 @@ def test_new_heavy_algorithms_must_declare_v4_contract():
     assert not offenders, (
         "heavy 算法缺 V4 科学契约声明（新增算法必须声明 resource_envelope/"
         "cancellation_profile/tolerance，或在 science_contract_v4 allowlist "
-        f"记录基线）：\n" + "\n".join(offenders)
+        "记录基线）：\n" + "\n".join(offenders)
     )
 
 
 def test_allowlist_members_are_still_undeclared_and_heavy():
     """洗白检测：成员必须仍 heavy 且仍缺声明 —— 补齐后必须同步删条目。"""
     stale = []
-    known_ids = {aid for aid, _ in _all_descriptors()}
     for aid in sorted(UNDECLARED_HEAVY_ALLOWLIST):
         algo = get_algorithm_registry().get(aid)
         if algo is None:
