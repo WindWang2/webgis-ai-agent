@@ -26,6 +26,14 @@ PR_LANE_PERF_FILES = (
     "test_dispatch_stall_perf.py",
     "test_perf_large_workspace.py",
     "test_data_control_plane_v5.py",
+    # ADR-0104 Wave 11：墙钟断言统一 perf 车道（原散落在 --cov 主车道，
+    # 与 #664 隔离策略冲突；接线见 production.yml test-perf 与 ci-local.sh）
+    "test_gis_registry_perf.py",
+    "test_template_registry_perf.py",
+    "test_planner_runtime_perf.py",
+    "test_pi_perf.py",
+    "test_data_runtime_v2_perf.py",
+    "test_geobench_v3.py",
 )
 
 # Perf-marked files that stay nightly-only. They are collected by

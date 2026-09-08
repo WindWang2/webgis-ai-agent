@@ -43,8 +43,12 @@ SENSITIVE_KEY_PARTS: tuple[str, ...] = (
     "credential",
     "authorization",
     "auth_header",
+    # Wave 15 审计近形键补齐：裸 "auth"（{"auth": "Bearer …"} 落库泄漏）与
+    # 连字符形 "api-key"/"x-api-key"（原表只有下划线形 api_key/apikey）。
+    "auth",
     "api_key",
     "apikey",
+    "api-key",
     "access_key",
     "private_key",
     "signed_url",

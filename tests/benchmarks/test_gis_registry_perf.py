@@ -5,9 +5,19 @@
 template selection 均为 O(1)/有界操作，中位数在毫秒级以下量级。
 """
 
+import pytest
+
 import statistics
 
 from app.services.gis_harness.intent import resolve_map_request_intent
+
+
+# ── ADR-0104 Wave 11：墙钟断言统一 perf 车道（#664 隔离策略）──────────────
+# 毫秒级中位数/上限对机器与负载敏感，不得在 --cov 主车道作为回归闸；
+# 结构性断言（字节数、计数器）保留为各测试内部契约。见 production.yml
+# test-perf 车道（-m perf）与 test_ci_perf_coverage_contract 的接线锁。
+pytestmark = pytest.mark.perf
+
 
 
 def _median_ms(fn, n=50):

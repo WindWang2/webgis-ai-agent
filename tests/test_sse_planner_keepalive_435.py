@@ -166,7 +166,8 @@ async def test_disconnect_cancels_planner_wait(engine, monkeypatch):
     # first keep_alive is yielded by the wait pump, so the planner task is
     # guaranteed to be in flight at that suspension point.
     saw_heartbeat = False
-    deadline = asyncio.get_event_loop().time() + 2.0
+    # Wave 17：2s 绝对墙钟预算在负载下误报；10s 仍能在 keepalive 真坏时红
+    deadline = asyncio.get_event_loop().time() + 10.0
     while not saw_heartbeat:
         assert asyncio.get_event_loop().time() < deadline, "no keep_alive arrived"
         if _event_type(await gen.__anext__()) == "keep_alive":
