@@ -3,7 +3,7 @@
 > 由 `app.lib.cartography.catalog_docs` 从 MapModelRegistry 生成；
 > 手改无效。真值：`model_library.py` + `model_packs/`（ADR-0101）。
 
-共 80 个模型（native 76 / planned 4）。
+共 80 个模型（native 77 / planned 3）。
 
 | id | 名称 | 几何 | 图层 | 分级 | 色系 | 默认色带 | 状态 | 降级 |
 |---|---|---|---|---|---|---|---|---|
@@ -24,7 +24,7 @@
 | classification_result_map | 分类结果图 | polygon | fill | categorical | qualitative | Set2 | native | — |
 | classified_raster | 分级栅格图 | raster | raster | graduated | sequential | YlOrRd | native | raster_surface |
 | confusion_matrix_map | 误差/混淆可视化图 | polygon | fill | categorical | qualitative | Set1 | native | categorical_thematic |
-| dasymetric_map | 分区密度图（dasymetric） | polygon | fill | graduated | sequential | YlOrRd | planned | — |
+| dasymetric_map | 分区密度图（dasymetric） | polygon | fill | graduated | sequential | YlOrRd | native | normalized_choropleth |
 | dbscan_cluster_map | DBSCAN 聚类簇图 | point | circle | categorical | qualitative | Set1 | native | — |
 | distance_surface | 距离场图 | raster | raster | none | sequential | Oranges | native | raster_surface |
 | diverging_choropleth | 发散分级统计图 | polygon | fill | graduated | diverging | RdBu | native | administrative_choropleth |
@@ -97,9 +97,6 @@
 ### cartogram_map（统计地图变形（cartogram））
 - planned：需要面积保持变形算法（Gastner-Newman 扩散等）与变形后几何的渲染契约，本分支未实现
 - 变形图必须同时披露原始地理轮廓参照（inset），否则读者失去地理定位
-
-### dasymetric_map（分区密度图（dasymetric））
-- planned：需要控制层数据契约与重分配算法，本分支未实现
 
 ### small_multiple_map（小倍数地图组）
 - planned：需要多画幅组合运行时（多个 MapSpec 画面的并置/联动布局），当前单画布 MapSpec 无法承载 —— 诚实保留 planned

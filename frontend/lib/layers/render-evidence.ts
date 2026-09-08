@@ -99,7 +99,14 @@ export function recordLayerEvidence(observation: {
     next.set(hudId, {
       mounted: count > 0,
       visible: entry.visible !== false,
-      converged: entry.source_converged !== false && entry.style_converged !== false,
+      // B2（workbench-v4）：优先读 presentation_converged（不含鉴权条款的
+      // runtime 收敛）—— 旧观测无此字段时回退 style_converged（原语义）。
+      converged: entry.presentation_converged !== undefined
+        ? (
+          entry.presentation_converged !== false
+          && entry.source_converged !== false
+        )
+        : (entry.source_converged !== false && entry.style_converged !== false),
       revision: currentRevision,
       at,
     });

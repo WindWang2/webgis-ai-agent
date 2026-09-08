@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "id": "extdemo.pack",
+  "name": "pack",
+  "namespace": "extdemo",
+  "version": "1.0.0",
+  "api_version": "1.0.0",
+  "minimum_core_version": "0.1.0",
+  "title": "ExtDemo Example Pack",
+  "description": "扩展平台示例包（活文档 + 集成测试夹具）：2 个纯计算工具、1 个 EXPERIMENTAL 算法、1 个离线栅格瓦片目录 provider、1 个 planned 制图组件、1 个最小 recipe 包。全部离线、确定性、无网络调用。",
+  "vendor": "webgis-ai-agent examples",
+  "trust": "trusted_builtin",
+  "permissions": [
+    "network"
+  ],
+  "extension_types": [
+    "tools",
+    "algorithms",
+    "data_providers",
+    "cartography",
+    "workflow"
+  ],
+  "entry_point": "main",
+  "diagnostics_entry": "health:check",
+  "tools": [
+    {
+      "name": "bbox_area",
+      "description": "Compute the planar area of an axis-aligned bounding box in CRS units.",
+      "summary": "bbox 面积（纯计算示例）",
+      "tier": 1,
+      "side_effect": "pure"
+    },
+    {
+      "name": "polygon_compactness",
+      "description": "Polsby-Popper compactness (4*pi*A/P^2) of a GeoJSON Polygon (first ring).",
+      "summary": "多边形紧凑度（纯计算示例）",
+      "tier": 1,
+      "side_effect": "pure"
+    }
+  ],
+  "algorithms": [
+    {
+      "id": "compactness",
+      "description": "Polsby-Popper shape compactness; scale-free morphometry (EXPERIMENTAL).",
+      "scientific_status": "EXPERIMENTAL"
+    }
+  ],
+  "data_providers": [
+    {
+      "source_type": "demo_tile_catalog",
+      "description": "Offline demo raster-tile catalog backed by a bundled static JSON file.",
+      "supports_query": false
+    }
+  ],
+  "cartography_items": [
+    {
+      "kind": "component",
+      "id": "note_scale_bar",
+      "description": "Annotation-style scale bar variant; planned (no renderer evidence).",
+      "runtime_status": "planned"
+    }
+  ],
+  "workflow_packs": [
+    {
+      "pack_id": "demo_overview",
+      "description": "Minimal compilable CartographyRecipe demonstrating the workflow pack projection.",
+      "recipe_count": 1
+    }
+  ]
+}

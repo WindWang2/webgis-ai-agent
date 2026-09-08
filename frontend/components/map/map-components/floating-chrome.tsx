@@ -34,12 +34,45 @@ const MIN_WIDTH = 160;    // 最小尺寸（缩放钳制）
 const MIN_HEIGHT = 120;
 const MAX_WIDTH = 960;    // 后端 placement 字段上限（Field le）
 const MAX_HEIGHT = 720;
+/** Workbench V4（Wave 4）：拖拽吸附 —— 面板中心落入锚槽目标点 SNAP_RADIUS
+ *  像素内 → 落点转 anchor 槽位（QGIS 式语义吸附；视觉提示经 data-snap）。 */
+const SNAP_RADIUS = 48;
 
 interface Geometry {
   x: number;
   y: number;
   width: number;
   height: number;
+}
+
+/** 锚槽目标点（父容器坐标；槽位锚点即 ChromeAnchor 六槽）。 */
+const SLOT_TARGETS: Array<{ anchor: string; fx: number; fy: number }> = [
+  { anchor: 'top-left', fx: 0, fy: 0 },
+  { anchor: 'top-center', fx: 0.5, fy: 0 },
+  { anchor: 'top-right', fx: 1, fy: 0 },
+  { anchor: 'bottom-left', fx: 0, fy: 1 },
+  { anchor: 'bottom-center', fx: 0.5, fy: 1 },
+  { anchor: 'bottom-right', fx: 1, fy: 1 },
+];
+
+/** 计算拖拽落点的吸附槽位（无命中 → null = 保持 floating）。 */
+export function snapTarget(
+  geometry: Geometry,
+  parentSize: { width: number; height: number },
+): string | null {
+  if (parentSize.width <= 0 || parentSize.height <= 0) return null;
+  const cx = geometry.x + geometry.width / 2;
+  const cy = geometry.y + geometry.height / 2;
+  let best: { anchor: string; dist: number } | null = null;
+  for (const slot of SLOT_TARGETS) {
+    const tx = slot.fx * parentSize.width;
+    const ty = slot.fy * parentSize.height;
+    const dist = Math.hypot(cx - tx, cy - ty);
+    if (dist <= SNAP_RADIUS && (best === null || dist < best.dist)) {
+      best = { anchor: slot.anchor, dist };
+    }
+  }
+  return best?.anchor ?? null;
 }
 
 interface Gesture {
@@ -128,6 +161,8 @@ export function FloatingChrome({
   const rafRef = useRef(0);
   // 手势瞬态几何（仅手势期间存在；pointerup 后清空，渲染回归 spec/override）
   const [transient, setTransient] = useState<Geometry | null>(null);
+  // 吸附提示（拖拽中面板中心接近锚槽 → data-snap 高亮；落点转 anchor）。
+  const [snapAnchor, setSnapAnchor] = useState<string | null>(null);
 
   useEffect(() => () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -194,7 +229,14 @@ export function FloatingChrome({
     return { x, y, width: origin.width, height: origin.height };
   }
 
-  function toPlacement(geometry: Geometry): ComponentPlacement {
+  function toPlacement(geometry: Geometry): ComponentPlacement | null {
+    // Review R2（integration MINOR-6）：jsdom/异常手势可能产生非有限几何 ——
+    // NaN 不进 placement（拒提交优于抛进 pointer 处理器；CSS invalid 回退
+    // 面板会消失）。
+    if (![geometry.x, geometry.y, geometry.width, geometry.height].every(Number.isFinite)) {
+      devOnly.warn('[floating-chrome] 非有限几何，拒绝提交 placement', geometry);
+      return null;
+    }
     const next: ComponentPlacement = {
       mode: 'floating',
       x: Math.round(geometry.x),
@@ -203,8 +245,13 @@ export function FloatingChrome({
     };
     if (geometry.width > 0) next.width = Math.round(Math.min(geometry.width, MAX_WIDTH));
     if (geometry.height > 0) next.height = Math.round(Math.min(geometry.height, MAX_HEIGHT));
-    if (placement?.mode === 'floating' && placement.zIndex !== undefined) {
-      next.zIndex = placement.zIndex;
+    // Review R1（MINOR-6）：z 序读在途 override —— bringToFront 的 z-bump
+    // 在 spec 回流前被同手势的 finishGesture 读取时，render-time placement
+    // 还是旧值，POST 会把 z-bump 回滚掉。
+    const liveZ = getComponentPlacementOverride(merged.id)?.zIndex
+      ?? placement?.zIndex;
+    if (placement?.mode === 'floating' && liveZ !== undefined) {
+      next.zIndex = liveZ;
     }
     return next;
   }
@@ -233,6 +280,13 @@ export function FloatingChrome({
       parentSize: measureParent(el),
     };
     pendingRef.current = null;
+    // Review R1（MINOR-5a）：手势开始即作废未触发的键盘去抖提交 —— 否则
+    // 500ms 窗口内的拖拽会被陈旧键盘 placement 覆盖（override + durable
+    // POST 双重回滚）。
+    if (keyCommitTimerRef.current) {
+      clearTimeout(keyCommitTimerRef.current);
+      keyCommitTimerRef.current = null;
+    }
     try {
       // 指针捕获：移出元素后 move/up 仍路由回手势元素（jsdom 无实现，静默）
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -243,6 +297,7 @@ export function FloatingChrome({
   function onTitlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
     // 标题栏上的按钮（折叠/复位/隐藏）不触发拖拽
     if ((e.target as HTMLElement).closest('button')) return;
+    bringToFront();
     startGesture(e, 'drag');
   }
 
@@ -254,8 +309,36 @@ export function FloatingChrome({
       // rAF 节流：逐 pointermove 只记账，帧回调里一次性落到本地 state
       rafRef.current = requestAnimationFrame(() => {
         rafRef.current = 0;
-        if (pendingRef.current) setTransient(pendingRef.current);
+        if (pendingRef.current) {
+          setTransient(pendingRef.current);
+          // 拖拽中的吸附提示（resize 手势不吸附）。
+          setSnapAnchor(
+            gesture.mode === 'drag'
+              ? snapTarget(pendingRef.current, gesture.parentSize)
+              : null,
+          );
+        }
       });
+    }
+  }
+
+  /** 点击置顶（Wave 4）：floating 面板在拖拽/点击标题时把自己 z 序抬到
+   *  兄弟面板之上（仅当已不是最高时提交一次 —— 每次点击零提交常态）。 */
+  function bringToFront(): void {
+    if (!floating) return;
+    const el = containerRef.current;
+    const parent = (el?.offsetParent ?? el?.parentElement) as HTMLElement | null;
+    if (!el || !parent) return;
+    const currentZ = placement?.zIndex ?? 40;
+    let maxZ = currentZ;
+    for (const sibling of parent.querySelectorAll<HTMLElement>('[role="region"][data-floating]')) {
+      if (sibling === el) continue;
+      const z = parseInt(sibling.style.zIndex || '', 10);
+      if (Number.isFinite(z) && z > maxZ) maxZ = z;
+    }
+    if (maxZ > currentZ && placement?.mode === 'floating') {
+      const next: ComponentPlacement = { ...placement, zIndex: maxZ + 1 };
+      commitPlacement(next, next);
     }
   }
 
@@ -283,13 +366,31 @@ export function FloatingChrome({
       cancelAnimationFrame(rafRef.current);
       rafRef.current = 0;
     }
+    // Review R1（MINOR-4）：吸附判定用**最终几何**重新求值 —— snapAnchor
+    // 是最后一个 rAF 帧的提示态，pointerup 前的后续 pointermove 可能已让
+    // 真实落点离开/进入吸附半径。
+    const dropSnap = gesture.mode === 'drag'
+      ? snapTarget(finalGeometry, gesture.parentSize)
+      : null;
+    setSnapAnchor(null);
     setTransient(null);
     const origin = gesture.origin;
     const moved =
       finalGeometry.x !== origin.x || finalGeometry.y !== origin.y ||
       finalGeometry.width !== origin.width || finalGeometry.height !== origin.height;
     if (!moved) return; // 原地点击（无位移）不提交
+    // Wave 4 吸附：拖拽落点贴近锚槽 → 转 anchor placement（保留折叠态）。
+    if (gesture.mode === 'drag' && dropSnap) {
+      const snapped: ComponentPlacement = {
+        mode: 'anchor',
+        anchor: dropSnap,
+        collapsed: placement?.collapsed ?? false,
+      };
+      commitPlacement(snapped, null);
+      return;
+    }
     const nextPlacement = toPlacement(finalGeometry);
+    if (!nextPlacement) return;
     commitPlacement(nextPlacement, nextPlacement);
   }
 
@@ -339,7 +440,20 @@ export function FloatingChrome({
   // v2(#1079)：键盘移动 —— 方向键 8px、Shift/Alt+方向键 24px；以当前
   // 几何为原点换算 delta 后走与指针手势相同的提交通道（乐观 override +
   // 单次 CAS）。锚定态首次移动即转 floating（与拖拽语义一致）。
+  // Wave 4 增量：Ctrl+方向键 = 缩放（8px / Shift 24px）；Enter = 折叠；
+  // Delete = 隐藏（键盘等价物，aria-keyshortcuts 已声明）。
   function onTitleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      toggleCollapse();
+      return;
+    }
+    if (e.key === 'Delete') {
+      e.preventDefault();
+      hidePanel();
+      return;
+    }
+    const resizing = e.ctrlKey || e.metaKey;
     const delta = keyboardMoveDelta(e.key, e.shiftKey || e.altKey);
     if (!delta) return;
     e.preventDefault();
@@ -348,17 +462,37 @@ export function FloatingChrome({
     const origin = measureOrigin(el);
     const parent = measureParent(el);
     const hasLayout = parent.width > 0 || parent.height > 0;
-    const next: Geometry = {
-      x: hasLayout
-        ? clamp(origin.x + delta.dx, EDGE_MARGIN, Math.max(EDGE_MARGIN, parent.width - origin.width - EDGE_MARGIN))
-        : origin.x + delta.dx,
-      y: hasLayout
-        ? clamp(origin.y + delta.dy, EDGE_MARGIN, Math.max(EDGE_MARGIN, parent.height - origin.height - EDGE_MARGIN))
-        : origin.y + delta.dy,
-      width: origin.width,
-      height: origin.height,
-    };
+    let next: Geometry;
+    if (resizing) {
+      // Ctrl+方向 = SE 角缩放（与指针手柄同语义：Right/Down 增大）。
+      next = {
+        x: origin.x,
+        y: origin.y,
+        width: clamp(
+          origin.width + delta.dx,
+          MIN_WIDTH,
+          hasLayout ? Math.max(MIN_WIDTH, parent.width - origin.x - EDGE_MARGIN) : MAX_WIDTH,
+        ),
+        height: clamp(
+          origin.height + delta.dy,
+          MIN_HEIGHT,
+          hasLayout ? Math.max(MIN_HEIGHT, parent.height - origin.y - EDGE_MARGIN) : MAX_HEIGHT,
+        ),
+      };
+    } else {
+      next = {
+        x: hasLayout
+          ? clamp(origin.x + delta.dx, EDGE_MARGIN, Math.max(EDGE_MARGIN, parent.width - origin.width - EDGE_MARGIN))
+          : origin.x + delta.dx,
+        y: hasLayout
+          ? clamp(origin.y + delta.dy, EDGE_MARGIN, Math.max(EDGE_MARGIN, parent.height - origin.height - EDGE_MARGIN))
+          : origin.y + delta.dy,
+        width: origin.width,
+        height: origin.height,
+      };
+    }
     const nextPlacement = toPlacement(next);
+    if (!nextPlacement) return;
     // v2(review R4-P2-8)：键重复（~30Hz）不得每键一次 CAS —— 乐观 override
     // 即时生效，durable 提交按 500ms 静默去抖（与指针手势的"手势中节流、
     // 收尾单次提交"同款纪律）。
@@ -423,9 +557,11 @@ export function FloatingChrome({
     <div
       ref={containerRef}
       role="region"
-      aria-label={`${title} 面板（方向键移动，Shift+方向键大幅移动）`}
+      aria-label={`${title} 面板（方向键移动，Shift+方向键大幅移动，Ctrl+方向键缩放，Enter 折叠，Delete 隐藏）`}
       data-testid={testId}
       data-variant={dataVariant}
+      data-floating={floating || undefined}
+      data-snap={snapAnchor || undefined}
       className={`${transparent
         ? 'border border-map-chrome-border bg-transparent text-map-chrome-ink'
         : 'map-chrome text-map-chrome-ink'} absolute flex flex-col overflow-hidden rounded-chrome ${gestureActive || floating ? '' : `z-30 ${positionClass(merged)}`} ${className ?? ''}`}
@@ -434,7 +570,7 @@ export function FloatingChrome({
       <div
         data-testid={testId ? `${testId}-title-bar` : 'floating-chrome-title-bar'}
         tabIndex={0}
-        aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight"
+        aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight Control+ArrowUp Control+ArrowDown Control+ArrowLeft Control+ArrowRight Enter Delete"
         className="flex cursor-grab select-none touch-none items-center justify-between gap-2 border-b border-map-chrome-border px-2 py-1 outline-none focus-visible:ring-1 focus-visible:ring-map-chrome-ink/40 active:cursor-grabbing"
         onKeyDown={onTitleKeyDown}
         onPointerDown={onTitlePointerDown}

@@ -125,7 +125,14 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   activeLeftTab: 'chat' as LeftTab,
   // UI V3：选择 tab 即打开 context panel（nav rail 语义）；折叠由
   // toggleLeftPanel / setLeftPanelOpen 或再次点击 active rail item 完成。
-  setActiveLeftTab: (tab: LeftTab) => set({ activeLeftTab: tab, leftPanelOpen: true }),
+  // Workbench V4（Wave 3）：tab 切换同时记入当前模式的记忆槽 —— 模式切换
+  // 时不丢各模式自己的上下文（面板组合不复制地图状态）。
+  setActiveLeftTab: (tab: LeftTab) =>
+    set((s) => ({
+      activeLeftTab: tab,
+      leftPanelOpen: true,
+      modeActiveTab: { ...s.modeActiveTab, [s.mode]: tab },
+    })),
   activeTool: null,
   setActiveTool: (tool: string | null) => set({ activeTool: tool }),
   // UI V3 overlay 互斥：history / settings / templates 同时最多打开一个，

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { PanelRightClose, PanelBottomClose } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useSyncExternalStore } from 'react';
@@ -70,6 +70,27 @@ function DockChrome({
   activePanel: string | null;
   onSelect: (id: string) => void;
 }) {
+  // Wave 11（audit 07 P1）：dock 标签页此前无键盘导航 —— roving tabindex +
+  // 方向键（WAI-APG tabs；与 nav-rail 同款习惯，水平 tablist 用 ←/→）。
+  const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const onTablistKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (tabs.length === 0) return;
+      const currentIndex = tabs.findIndex((t) => t.id === activePanel);
+      let nextIndex: number | null = null;
+      if (e.key === 'ArrowRight') nextIndex = ((currentIndex < 0 ? 0 : currentIndex) + 1) % tabs.length;
+      else if (e.key === 'ArrowLeft')
+        nextIndex = ((currentIndex < 0 ? 0 : currentIndex) - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'Home') nextIndex = 0;
+      else if (e.key === 'End') nextIndex = tabs.length - 1;
+      if (nextIndex === null) return;
+      e.preventDefault();
+      const next = tabs[nextIndex];
+      onSelect(next.id);
+      tabRefs.current.get(next.id)?.focus();
+    },
+    [tabs, activePanel, onSelect],
+  );
   return (
     <div
       data-dock-region={region}
@@ -85,13 +106,23 @@ function DockChrome({
         <span className="eyebrow">{title}</span>
         <span className="flex-1" />
         {tabs.length > 1 && (
-          <div role="tablist" aria-label="停靠面板" className="flex items-center gap-0.5">
+          <div
+            role="tablist"
+            aria-label="停靠面板"
+            onKeyDown={onTablistKeyDown}
+            className="flex items-center gap-0.5"
+          >
             {tabs.map((tab) => (
               <button
                 key={tab.id}
+                ref={(el) => {
+                  if (el) tabRefs.current.set(tab.id, el);
+                  else tabRefs.current.delete(tab.id);
+                }}
                 type="button"
                 role="tab"
                 aria-selected={tab.id === activePanel}
+                tabIndex={tab.id === activePanel ? 0 : -1}
                 onClick={() => onSelect(tab.id)}
                 className={
                   tab.id === activePanel

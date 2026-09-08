@@ -20,6 +20,12 @@ import {
   publishSelection,
   subscribeSelection,
 } from '@/lib/selection/selection-store';
+import {
+  getViewportContext,
+  getViewportGeneration,
+  subscribeViewportContext,
+} from '@/lib/selection/viewport-context';
+import { commitComponentPatch } from '@/lib/mapspec/component-mutation';
 
 /**
  * chart_panel 渲染器（D2）：MapSpec 图表面板。
@@ -73,6 +79,60 @@ function applyKindPreset(chart: ChartData, kind: string | null): ChartData {
 function contentHeight(variant: string, panelHeight: number | undefined): number | `${number}%` {
   if (typeof panelHeight === 'number' && panelHeight > 48) return '100%';
   return variant === 'compact' ? 160 : 200;
+}
+
+/* ── Workbench V4（Wave 5）：linked extent（视野联动过滤）──────────────────
+ * options.extentLinked === true（显式 opt-in）时，图表数据点按绑定图层在
+ * 当前视口内命中的要素属性（selectionField 值集）过滤展示。
+ *
+ * 无环设计：视口 → 图表是单向只读投影（viewport-context 是 transient
+ * store，图表过滤不发布 selection、不改 MapSpec、不动视口）；图表自身的
+ * 点击发布 selection（另一维度），selection 不驱动视口 —— 两个方向互不
+ * 构成环。数据点没有绑定图层可过滤时如实展示全量（降级不伪装）。 */
+
+/** 要素几何是否与 bbox 相交（有界采样：坐标序列取前 64 点近似）。导出仅供测试。 */
+export function geometryIntersectsBbox(geometry: unknown, bbox: [number, number, number, number]): boolean {
+  const [w, s, e, n] = bbox;
+  const inBox = (x: number, y: number) => x >= w && x <= e && y >= s && y <= n;
+  const coords = (c: unknown, depth = 0): number[] | null => {
+    if (typeof c !== 'object' || c === null) return null;
+    if (Array.isArray(c)) {
+      if (typeof c[0] === 'number' && typeof c[1] === 'number') {
+        return inBox(c[0], c[1]) ? [c[0], c[1]] : null;
+      }
+      if (depth > 3) return null;
+      for (const item of c.slice(0, 64)) {
+        const hit = coords(item, depth + 1);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  };
+  const geom = geometry as { type?: string; coordinates?: unknown } | null;
+  if (!geom?.coordinates) return false;
+  return coords(geom.coordinates) !== null;
+}
+
+/** 视口内命中要素的 selectionField 值集（有界 ≤ 512）。导出仅供测试。 */
+export function visibleCategoryValues(
+  source: unknown,
+  field: string,
+  bbox: [number, number, number, number],
+): Set<string> | null {
+  const fc = source as { features?: Array<{ geometry?: unknown; properties?: Record<string, unknown> }> } | null;
+  if (!fc || !Array.isArray(fc.features) || fc.features.length === 0) return null;
+  const out = new Set<string>();
+  const cap = Math.min(fc.features.length, 5000);
+  for (let i = 0; i < cap; i += 1) {
+    const f = fc.features[i];
+    const value = f?.properties?.[field];
+    if (value == null) continue;
+    if (geometryIntersectsBbox(f?.geometry, bbox)) {
+      out.add(String(value));
+      if (out.size >= 512) break;
+    }
+  }
+  return out;
 }
 
 type ChartState =
@@ -147,6 +207,11 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
     : '';
   const boundLayerId = typeof options['layerId'] === 'string' ? (options['layerId'] as string) : '';
 
+  // Workbench V4（Wave 5）：视野联动（显式 opt-in：options.extentLinked）。
+  useSyncExternalStore(subscribeViewportContext, getViewportGeneration);
+  const extentLinked = options['extentLinked'] === true;
+  const extentFilterField = selectionField;
+
   // 面板卸载（隐藏 enabled:false / spec 移除 / dock 换页）时，清掉本面板
   // 发布的 chart 选择 —— 否则一张不可见图表面板的过滤会持续作用于地图
   // （无主的 stale filter）。只清自己 layer 上的 chart 选择（map/table
@@ -206,6 +271,31 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
       ? state.chart.title
       : '图表';
 
+  // 视口过滤投影（Wave 5）：绑定图层已落地 GeoJSON 且视口 bbox 在场时，
+  // 按 selectionField 值集过滤数据点；无法判定时展示全量（诚实降级）。
+  // useMemo 键在视口代数上 —— 视口未变时重渲不重扫（有界扫描预算）。
+  const boundRow = useHudStore((s) =>
+    boundLayerId ? s.layers.find((row: { _mapspecLayerId?: string; id: string }) =>
+      row.id === boundLayerId || row._mapspecLayerId === boundLayerId) : undefined);
+  const extentFilteredChart = React.useMemo(() => {
+    if (state.status !== 'ready' || !extentLinked || !extentFilterField || !boundRow) {
+      return state.status === 'ready' ? state.chart : null;
+    }
+    const viewport = getViewportContext();
+    if (!viewport?.bbox) return state.chart;
+    const values = visibleCategoryValues(boundRow.source, extentFilterField, viewport.bbox);
+    if (!values || values.size === 0) return state.chart;
+    const filtered = state.chart.data.filter((p) => values.has(p.name));
+    // 全不命中 = 视野内无该图层要素 —— 保留全量并降级（避免清空面板抖动）。
+    return filtered.length > 0 ? { ...state.chart, data: filtered } : state.chart;
+  }, [state, extentLinked, extentFilterField, boundRow]);
+
+  const toggleExtentLinked = () => {
+    void commitComponentPatch(patched.id, {
+      options: { ...(options ?? {}), extentLinked: !extentLinked },
+    }).catch(() => { /* 提交失败静默 —— 乐观面在 spec 回流时收敛 */ });
+  };
+
   const bodyClass = variant === 'compact' ? 'p-1.5' : variant === 'report' ? 'p-3' : 'p-2';
 
   return (
@@ -218,13 +308,27 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
       transparent={variant === 'transparent'}
       bodyClassName={bodyClass}
     >
-      {state.status === 'ready' ? (
-        <ChartCore
-          chart={applyKindPreset(state.chart, kindPreset)}
-          height={contentHeight(variant, panelHeight)}
-          highlightedCategories={highlightedCategories}
-          onSelectCategory={handleSelectCategory}
-        />
+      {state.status === 'ready' && extentFilteredChart ? (
+        <>
+          <ChartCore
+            chart={applyKindPreset(extentFilteredChart, kindPreset)}
+            height={contentHeight(variant, panelHeight)}
+            highlightedCategories={highlightedCategories}
+            onSelectCategory={handleSelectCategory}
+          />
+          {boundLayerId && (
+            <button
+              type="button"
+              aria-pressed={extentLinked}
+              data-testid="chart-extent-linked"
+              title="地图视野联动：图表只统计当前视野内的要素"
+              onClick={toggleExtentLinked}
+              className="mt-1 rounded-xs px-1 py-0.5 text-micro text-map-chrome-ink-muted transition-colors hover:bg-surface-hover hover:text-map-chrome-ink"
+            >
+              {extentLinked ? '◉ 视野联动' : '○ 视野联动'}
+            </button>
+          )}
+        </>
       ) : (
         <div
           className="flex h-full min-h-16 items-center justify-center px-2 py-3 text-caption text-map-chrome-ink-muted"

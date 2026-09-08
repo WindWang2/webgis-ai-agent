@@ -774,6 +774,36 @@ class ToolRegistry:
     def get_schemas(self) -> list[dict]:
         return self._schemas
 
+    def has(self, name: str) -> bool:
+        """扩展平台投影（ADR-0104）：注册前碰撞检查用；只读。"""
+        return name in self._tools
+
+    def tool_names(self) -> list[str]:
+        """扩展平台投影（ADR-0104）：引用存在性检查用；确定性排序。"""
+        return sorted(self._tools.keys())
+
+    def unregister(self, name: str) -> bool:
+        """ADR-0104：扩展卸载回滚用——把一次 register 的全部痕迹清干净。
+
+        只服务扩展投影的 undo；核心工具从不调用。清理面与 register 的
+        写入面一一对应（_tools/_models/_schemas/_schema_sizes/_metadata +
+        三个描述符缓存 + 全库指纹），避免留下「schema 还在、工具没了」的
+        僵尸条目。目标不存在返回 False（幂等）。
+        """
+        if name not in self._tools:
+            return False
+        self._tools.pop(name, None)
+        self._models.pop(name, None)
+        self._schemas = [s for s in self._schemas if s["function"]["name"] != name]
+        self._schema_sizes.pop(name, None)
+        self._metadata.pop(name, None)
+        self._descriptor_cache.pop(name, None)
+        self._schema_fp_cache.pop(name, None)
+        self._descriptor_fp_cache.pop(name, None)
+        self._registry_fp = None
+        return True
+
+
     def update_args_model(self, name: str, args_model: Type[BaseModel]) -> None:
         """Replace a registered tool's args model and rebuild its schema in place,
         preserving the tool description / tier / domains metadata.

@@ -1,5 +1,75 @@
 # Changelog
 
+## [Unreleased] - 2026-09-08
+
+### Added
+- GIS Extension Platform V1（ADR-0104）：第三方/内部扩展的统一宿主
+  `app/extensions_platform/` —— `GisExtensionManifest`（fail-closed、
+  schema 版本化、命名空间强制、保留词表）、typed 诊断码、扩展 API/核心
+  版本窗口兼容判定、权限模型（声明≠授权、typed 拒绝、仅可收窄）、
+  信任分级（trusted-code boundary，不宣称沙箱）、有界发现 + 内容指纹、
+  完整生命周期（discover→validate→activate→health→deactivate→unload
+  →reload，激活原子、卸载零僵尸、依赖环检测、disable/enable）。
+- 五个扩展 SDK：tool / algorithm / provider / cartography / workflow
+  pack —— 声明式 spec、词表与宿主规则校验、权限包裹、与核心 register
+  完全同构的投影；扩展条目强制命名空间前缀，物理上不可遮蔽核心 ID。
+- Developer CLI：`python -m app.extensions_platform`
+  list/inspect/validate/doctor/scaffold/catalog（human + --json）。
+- 示例扩展包 `extensions/examples/extdemo-pack/`：2 工具 + 1 算法 +
+  1 离线 tile-catalog provider + 1 planned 制图组件 + 1 recipe，
+  兼作集成测试 fixture（零网络）。
+- 一致性语料库：2014 个确定性 case（manifest 矩阵 / 权限矩阵 /
+  策略×manifest 评估 / 生命周期不变量），`tests/unit/extensions_platform/`。
+- 完整文档 `docs/extension-platform/`（架构 / manifest 参考 / 各 SDK
+  authoring 指南 / 权限与信任 / 兼容性 / 打包 / 测试 / CLI / OGC-STAC /
+  已知限制）。
+- 设置项（默认全关，不配置即零行为变化）：`EXTENSIONS_ENABLED`、
+  `EXTENSIONS_DIRS`、`EXTENSIONS_ALLOW/BLOCK/BUILTIN_IDS`、
+  `EXTENSION_PERMISSION_GRANTS`、`EXTENSION_FEATURE_FLAGS`、
+  `EXTENSION_SETTINGS_JSON`、`STAC_API_URL`。
+
+### Fixed
+- WMS/WMTS `describe()` 不再伪造 `EPSG:3857` 与全球 bbox：CRS/bbox 取自
+  capabilities（WMS 1.1.1/1.3.0 双形、URN 归一、父 Layer 继承），
+  不可判定时诚实置空并附 metadata 说明。
+- GDAL `/vsicurl` 远程读取接入 SSRF 门（复用 data_fabric
+  `validate_url`；本机/私网/云元数据地址拒绝）；STAC asset href 同门前置。
+- Professional Cartography Workbench V4（feat/professional-cartography-workbench-v4）:
+  Explore / Analyze / Compose 三模式工作台（模式只改面板组合；agent `set_mode`
+  确定性合约 + 一键返回）；专业图层工作台（用户分组树/折叠/锁定/隔离/批量
+  显隐与不透明度/复制粘贴样式/单层重载/搜索，列表自下而上如实标注叠放方向）；
+  图层与地图的 golden-model parity 测试与 500 层压力冒烟。
+- 浮动图表双向联动补全：9 类图表可点选发布地图过滤（分级/连续专题层色彩
+  受保护，拒绝会抹平分级的改色意图）；可选「视野联动」（地图视野 → 图表
+  过滤，显式 opt-in，结构无环）。
+- 对比工作台（swipe 卷帘）：键盘可达分割线、主副视图相机同步（防回环）；
+  side-by-side 在「主图不动」约束下无法构成有效对比，诚实下线（词表保留）。
+- typed 样式意图合约（`apply_style_intent`）：颜色/透明度/线宽/点径等封闭
+  词表，相对意图按当前样式求值；palette/分级改写在后端通道就绪前如实失败。
+- 导出显式降级：图表面板/表格面板数据拉取失败不再静默缺席 —— 导出完成的
+  系统消息会列出未进入成品件的组件。
+- `dasymetric_map`（分区密度图）planned → native：控制要素重分配算法
+  （总量守恒、负值钳制披露、退化碎片计数、确定性），工具 `dasymetric_reallocation`。
+
+### Changed
+- 模式化导航栏：rail 顶部模式切换，tab 组合随模式过滤（每模式记忆自己的
+  工作面板）；dock 标签页支持键盘切换。
+- 组件运行时：浮动面板拖拽吸附锚槽、点击置顶、键盘缩放/折叠/隐藏
+  （Ctrl+方向键 / Enter / Delete）；`patch_component` 合约补齐
+  style/options/position 字段。
+
+### Fixed
+- 图层状态：spec 镜像修剪吞新行的窗口（B1）；用户改显隐/不透明度后永久
+  假「待同步」徽章（B2/B3：观测新增 presentation_converged，服务端回灌
+  保留认证）；跨组拖拽不生效（B4）；批量操作/隔离跳过锁定层。
+- live/export 组件词表反向 parity（披露族/表格面板此前导出画、live 不挂）
+  —— 包含测试锁定单一词表来源。
+- 设计 token：修复无背景/无配色的 WebGL 错误兜底与卡片（坏 utility）、
+  `--accent` 双重声明暗雷、删除漂移的第二主题色表；图表轴灰对比度达标。
+- 无障碍：分组重命名键盘可达、模式切换焦点保持、skip link + 地图地标、
+  dock 键盘导航、批量删除确认聚焦、锁定/专题保护语义在失败提示中可感知；
+  eslint 接入 jsx-a11y（`--max-warnings 0` 门保持通过）。
+
 ## [Unreleased] - 2026-08-28
 
 ### Fixed

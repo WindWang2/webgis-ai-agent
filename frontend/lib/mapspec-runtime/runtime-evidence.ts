@@ -182,6 +182,19 @@ export function collectCartographicRuntimeObservation(
       && expected.length === live.length
       && expected.every((candidate) => layerConverged(map, candidate))
     );
+    // B2（workbench-v4）：attestation 只证明「观测代次与 store 盖章代次同一」，
+    // 不是 runtime 收敛本身。用户 presentation 编辑清空 _mapspecFingerprint 后
+    // attested 永假，但地图与 desired 可能完全一致 —— 状态派生若读
+    // style_converged 会把这种行永久标成「待同步」。presentation_converged
+    // 是**不含鉴权条款**的同一判定（additive 字段，服务端忽略未知键），
+    // 供前端状态词表与假 stale 修复使用；修复域仍以 style_converged 为准。
+    const presentationConverged = (
+      styleLoaded
+      && !reconcileError
+      && sourceConverged
+      && expected.length === live.length
+      && expected.every((candidate) => layerConverged(map, candidate))
+    );
     const rasterSource = (
       hud.source
       && typeof hud.source === "object"
@@ -211,6 +224,7 @@ export function collectCartographicRuntimeObservation(
       raster_bbox: rasterSource?.bbox,
       source_converged: sourceConverged,
       style_converged: styleConverged,
+      presentation_converged: presentationConverged,
       generation_attested: attested,
       runtime_layer_count: live.length,
       runtime_layer_ids: expected.map((candidate) => candidate.id).slice(0, 16),

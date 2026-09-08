@@ -257,6 +257,14 @@ export default function Home() {
       className='h-screen w-screen flex flex-col overflow-hidden bg-surface-canvas'
       style={{ fontSize: `${fontSize}px` }}
     >
+      {/* Wave 11（audit 07 P1）：skip link —— 键盘用户 Tab 首停即「跳到地图」，
+          不必穿越 rail/panel 的数十个停靠点。可见性：聚焦即现（sr-only 常规态）。 */}
+      <a
+        href='#map-canvas'
+        className='sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-[200] focus:rounded-sm focus:bg-status-accent focus:px-2 focus:py-1 focus:text-caption focus:text-white'
+      >
+        跳到地图画布
+      </a>
       <MemoTopBar
         sessionName={currentSessionTitle}
         onNewSession={handleNewSession}
@@ -283,6 +291,10 @@ export default function Home() {
             MapLibre 的 ResizeObserver 自动 resize 并把地理中心保持在收缩后
             画布的中心，视口随显示面积重算；位移动画与面板滑入同步（0.25s）。 */}
         <div
+          id='map-canvas'
+          role='region'
+          aria-label='地图画布'
+          tabIndex={-1}
           style={{
             position: 'absolute',
             top: 0,

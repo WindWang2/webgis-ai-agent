@@ -744,7 +744,7 @@ export function useSSEStream(
               _cartographicRepairs: Array.isArray(runtimePatch.repair_attempts)
                 ? runtimePatch.repair_attempts.slice(0, 2)
                 : undefined,
-            });
+            }, { source: 'server' });
           }
           // 「地图随对话」：runtime_patch 声明 visible（agent 的展示意图，
           // 含热力图等自动挂载可见路径）→ 标记当前轮并收起旧轮可见层。

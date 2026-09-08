@@ -23,6 +23,13 @@ CRS 类核实记录：
 （V3 备注：中央 kriging_interpolation 契约现已含 method 枚举
 （ordinary/universal，见 parameter_contracts），本文件此前所称"中央契约
 缺 method 参数"的缺口已消除。）
+
+dasymetric 原生化（Wave 6）：新增 interpolation.dasymetric —— 面插值
+（源统计面总量按控制要素面权重切分重分配，输出 source∩control 碎片面
+要素集）。实现位于 app/lib/geo_analysis/dasymetric.py，工具层
+（app/tools/dasymetric_tools.py）只做 validate → 调实现 → 挂证据/图例。
+CRS 类核实：输入为面要素（度数即可），米制面积/相交在内部自动 UTM 工作
+帧完成 —— crs_class=GEOGRAPHIC_OK（跨带投影失真记入 limitations）。
 """
 from __future__ import annotations
 
@@ -680,6 +687,50 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/lib/test_geostat_v3.py::test_block_kriging_variance_not_larger_than_point",
             ],
             ),
+
+        # ── dasymetric 原生化（Wave 6）：面插值（areal interpolation）────
+
+        AlgorithmDescriptor(
+            id="interpolation.dasymetric", name="分区密度重分配", category="interpolation",
+            capabilities=["areal_interpolation"],
+            input_artifact_types=["admin_aggregate_table", "admin_boundary_set",
+                                  "polygon_feature_set"],
+            output_artifact_type="polygon_feature_set",
+            geometry_requirements=["polygon"],
+            parameter_contract_ref="dasymetric_reallocation",
+            tool_candidates=["dasymetric_reallocation"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD",
+            compatible_map_models=["dasymetric_map"],
+            priority=12,
+            algorithm_family="areal_interpolation",
+            method_references=["wright1936"],
+            assumptions=[
+                "value_field 必须是总量语义（可加：人口/户数/建筑面积）；比率不可重分配",
+                "碎片权重 = 控制密度 d_j=w_j/A_j × 碎片面积；控制面密度均质假设（Wright 1936）",
+                "权重字段缺失/全零的源退化为纯面积权重插值（逐源计数披露，从不静默）",
+                "总量守恒：Σ碎片值 = 源值（浮点舍入前精确）；负值钳 0 并计数",
+            ],
+            limitations=[
+                "输出是 source∩control 碎片面 —— 源边界不再出现（渲染按碎片值分级）",
+                "控制层未覆盖的源面整面保值（no_ancillary_coverage），不参与密度表达",
+                "控制密度均质假设是方法上界：真实人口密度在控制分区内仍有亚片区差异",
+                "跨带自动 UTM 有投影失真（单带处理）；面积比例在小范围内近似精确",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="同输入逐位一致（固定累加序：源输入序×控制索引序）；碎片值舍入 6 位",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_dasymetric_reallocation.py::test_exact_proportional_split_on_square",
+                "tests/unit/lib/test_dasymetric_reallocation.py::test_mass_conservation_and_fragment_count",
+                "tests/unit/lib/test_dasymetric_reallocation.py::test_zero_weight_falls_back_to_area_proportional",
+                "tests/unit/lib/test_dasymetric_reallocation.py::test_missing_value_field_rejected",
+                "tests/unit/lib/test_dasymetric_reallocation.py::test_deterministic_repeat",
+                "tests/unit/lib/test_dasymetric_reallocation.py::test_negative_values_clamped",
+            ],
+            ),
 ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
@@ -1009,6 +1060,29 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="resolution", type="integer", default=7,
                 minimum=5, maximum=9,
                 description="H3 分辨率",
+            ),
+        ],
+    ),
+    # ── dasymetric 原生化（Wave 6）────────────────────────────────────
+    ParameterContract(
+        id="dasymetric_reallocation", version=1,
+        description="分区密度重分配：源统计面总量按控制要素面权重切分到 source∩control 碎片（总量守恒）。",
+        parameters=[
+            ParameterSpec(
+                name="source_geojson", type="string", required=True,
+                description="源统计面 GeoJSON FeatureCollection（或数据引用）",
+            ),
+            ParameterSpec(
+                name="ancillary_geojson", type="string", required=True,
+                description="控制要素面 GeoJSON FeatureCollection（或数据引用）",
+            ),
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="源面总量字段名（可加语义；比率不可重分配）",
+            ),
+            ParameterSpec(
+                name="weight_field", type="string", default="",
+                description="控制面权重字段名（空 = 纯面积权重插值）",
             ),
         ],
     ),
