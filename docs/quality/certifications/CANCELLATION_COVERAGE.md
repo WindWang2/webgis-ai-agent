@@ -5,7 +5,7 @@
 > cancellable）；行为认证：tests/quality/
 > test_cancellation_resource_certification.py。
 
-- 覆盖：**14/52** 个重计算文件含取消检查点。
+- 覆盖：**14/53** 个重计算文件含取消检查点。
 
 | file | cancellation sites | loop sites（粗计） | status |
 |---|---|---|---|
@@ -16,6 +16,7 @@
 | app/lib/geo_analysis/density.py | 0 | 23 | no-checkpoints |
 | app/lib/geo_analysis/evidence.py | 0 | 1 | no-checkpoints |
 | app/lib/geo_analysis/geometry_ops.py | 2 | 11 | certified |
+| app/lib/geo_analysis/geometry_repair.py | 0 | 3 | no-checkpoints |
 | app/lib/geo_analysis/glcm.py | 0 | 14 | no-checkpoints |
 | app/lib/geo_analysis/heatmap_grid.py | 1 | 6 | certified |
 | app/lib/geo_analysis/interpolation.py | 2 | 23 | certified |

@@ -484,6 +484,9 @@ def to_utm_gdf_with_note(
                 ),
             ) from exc
     gdf = gpd.GeoDataFrame(rows, crs=source_crs or "EPSG:4326")
+    # science-v4 W3：make_valid 修复计数（披露进 note.geometry_repaired）——
+    # 修复动作不再静默。
+    _invalid_before = int((~gdf.geometry.is_valid).sum())
     gdf["geometry"] = gdf.geometry.make_valid()
     gdf._original_crs = original_crs_explicit or (str(gdf.crs) if gdf.crs else "EPSG:4326")
 
@@ -603,6 +606,7 @@ def to_utm_gdf_with_note(
         "target_crs": result[1],
         "source_crs": gdf._original_crs,
         "gcj02_normalized": chinese_crs in ("gcj02", "bd09"),
+        "geometry_repaired": _invalid_before,
     }
 
     # Cache the canonical result. Callers get copies; the cached gdf itself is

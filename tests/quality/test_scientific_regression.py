@@ -193,17 +193,14 @@ def test_invalid_geometry_explicit_repair_discloses_audit_log():
     assert shape(fc["features"][0]["geometry"]).is_valid is False
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "KNOWN-GAP #2（坏几何类）：zonal_statistics 对自交 bowtie 静默产出"
-        "貌似合理的统计（GEOS 歧义解释），既无 InvalidGeometry 类型化拒绝、"
-        "也无告警；to_utm_gdf_with_note 的 make_valid() 同样无修复披露。"
-        "修复（统计入口加几何有效性门/告警）后本测试自动转绿。"
-    ),
-)
 def test_invalid_geometry_analysis_path_typed_reject(tmp_path):
-    """分析入口对 semantically-invalid 几何必须类型化拒绝（科学词表）。"""
+    """分析入口对 semantically-invalid 几何必须类型化拒绝（科学词表）。
+
+    science-v4 W3 收口（原 KNOWN-GAP #2，xfail 已转正）：zonal_statistics
+    默认 strict=True，自交 bowtie → InvalidGeometry（科学词表 +
+    correction_hint）；strict=False 时修复带 geometry_repair 披露（见
+    test_geometry_repair_v4）。
+    """
     import rasterio
     from rasterio.transform import from_origin
 
