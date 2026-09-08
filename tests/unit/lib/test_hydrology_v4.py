@@ -145,3 +145,64 @@ def test_solar_radiation_analytic_anchor_and_bounds():
         solar_radiation(z, CELL, latitude_deg=120.0)
     with pytest.raises(ValueError):
         solar_radiation(z, CELL, day_of_year=400)
+
+
+# ── W10：分块 Priority-Flood + 取消下沉 + backend variant parity ─────────
+
+def _dem_200() -> np.ndarray:
+    rng = np.random.default_rng(2)
+    n = 200
+    yy, xx = np.mgrid[0:n, 0:n]
+    z = (100.0 - 0.05 * np.sqrt((yy - 100) ** 2 + (xx - 100) ** 2)
+         + rng.normal(0, 0.4, (n, n)))
+    z[40:60, 120:160] -= 8.0
+    z[100:120, 30:80] -= 5.0
+    return z
+
+
+def test_chunked_pf_never_underfills_and_bounded_overfill():
+    """parity（variant 对：full_heap=reference / chunked_band）：单侧界。"""
+    from app.lib.geo_analysis.terrain import fill_depressions_chunked
+
+    z = _dem_200()
+    full, fm = fill_depressions(z, CELL)
+    for bands in (4, 8):
+        chunk, cm = fill_depressions_chunked(z, CELL, n_bands=bands)
+        # 偏差有界：|chunked − full| ≤ 参考解最大填深（带固定点的披露界）
+        diff = np.abs(chunk - full)
+        assert float(diff.max()) <= fm["max_fill_depth"] + 1e-9
+        assert cm["converged"] is True
+        # 体积同量级（结构界：不翻倍）
+        assert cm["filled_volume"] <= 3.0 * fm["filled_volume"]
+
+
+def test_chunked_pf_deterministic():
+    from app.lib.geo_analysis.terrain import fill_depressions_chunked
+
+    z = _dem_200()
+    a, _ = fill_depressions_chunked(z, CELL, n_bands=8)
+    b, _ = fill_depressions_chunked(z, CELL, n_bands=8)
+    assert np.array_equal(a, b)
+
+
+def test_terrain_cancellation_checkpoints_reachable():
+    """fill 堆循环 / 分块扫描的取消点真实可达（OperationCancelled 上抛）。"""
+    from app.lib.cancellation import (
+        CURRENT_TOKEN,
+        CancellationToken,
+        OperationCancelled,
+    )
+
+    z = _dem_200()
+    token = CancellationToken(job_id="terrain-cancel")
+    token.cancel()
+    ctx = CURRENT_TOKEN.set(token)
+    try:
+        with pytest.raises(OperationCancelled):
+            fill_depressions(z, CELL)
+        from app.lib.geo_analysis.terrain import fill_depressions_chunked
+
+        with pytest.raises(OperationCancelled):
+            fill_depressions_chunked(z, CELL, n_bands=4)
+    finally:
+        CURRENT_TOKEN.reset(ctx)

@@ -15,4 +15,4 @@
 | tool_args_bytes | 262144 | bytes | app/lib/json_size.py | args oversized 门（Registry） |
 | algorithm_min_features_declarations | 20/192 | algorithms | app/lib/gis/algorithm_registry.py | 数据资格四态（qualify_data） |
 | algorithm_max_features_hint_declarations | 4/192 | algorithms | app/lib/gis/algorithm_registry.py | 数据资格四态（qualify_data） |
-| algorithm_backend_variants | 6/192 | algorithms | app/lib/gis/algorithm_registry.py | ScaleProfile 窗口（dispatch） |
+| algorithm_backend_variants | 7/192 | algorithms | app/lib/gis/algorithm_registry.py | ScaleProfile 窗口（dispatch） |

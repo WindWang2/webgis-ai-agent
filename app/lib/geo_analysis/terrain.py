@@ -36,6 +36,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from app.lib.cancellation import checkpoint, cancellable
+
 from app.lib.gis.scientific_errors import (
     DegenerateData,
     NoValidObservations,
@@ -514,6 +516,7 @@ def viewshed(
         # 可见性 —— 峰值内存 O(chunk x k_eff)，不物化全扇区矩阵。
         js = np.arange(1, k_eff + 1, dtype=np.float64) * step
         for s0 in range(0, n_sectors, _VIEWSHED_SECTOR_CHUNK):
+            checkpoint()  # science-v4 W10：扇区块边界取消点
             s1 = min(s0 + _VIEWSHED_SECTOR_CHUNK, n_sectors)
             thetas = -math.pi + (np.arange(s0, s1, dtype=np.float64) + 0.5) * d_theta
             sx = np.cos(thetas)[:, None] * js[None, :]
@@ -1031,7 +1034,12 @@ def fill_depressions(
         counter += 1
 
     n_cells = h * w
+    _pop_count = 0
     while heap:
+        # science-v4 W10：堆循环取消检查点（64K 弹出粒度，>10M 像元可中断）
+        _pop_count += 1
+        if _pop_count % 8192 == 0:
+            checkpoint()
         elev, _, cur = heapq.heappop(heap)
         cur_r, cur_c = divmod(cur, w)
         for _, _, dr, dc in _D8_NEIGHBORS:
@@ -1257,6 +1265,9 @@ def dinf_flow_accumulation(
     fa = frac_a[contrib]
     fb = frac_b[contrib]
     for i, src in enumerate(contrib.tolist()):
+        # science-v4 W10：拓扑循环取消检查点（64K 像元粒度）
+        if i % 65536 == 65535:
+            checkpoint()
         unit = acc_flat[src] + 1.0
         if ra[i] >= 0 and fa[i] > 0.0:
             acc_flat[ra[i]] += unit * fa[i]
@@ -2957,3 +2968,138 @@ def solar_radiation(
         mean_insolation=round(float(np.nanmean(insolation[valid])), 4),
     )
     return insolation, meta
+
+
+# ── Science V4（W10）：分块 Priority-Flood（大栅格通道）─────────────────────
+
+PF_CHUNK_BANDS = 8            # 缺省列带数
+_PF_CHUNK_MIN_COLS = 64       # 低于此列数不分块（全量路径更高效）
+
+
+def fill_depressions_chunked(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    epsilon: float = 0.0,
+    nodata: Optional[float] = None,
+    n_bands: int = PF_CHUNK_BANDS,
+    max_sweeps: int = 8,
+    cancellable_check: bool = True,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """列带（band）分块 Priority-Flood + 交替方向迭代到收敛。
+
+    语义：每带用与 :func:`fill_depressions` 完全同一 heapq 泛洪机器
+    （单一事实源）；排水种子 = 网格真边界 + nodata 邻接 + 邻带裁决缘
+    （带内竖直边缘不是排水口——seam correctness 关键）。带缘以邻带当前
+    填充列做排水裁决。**近似语义（approximate）**：带固定点 ≠ 全局
+    最小-最大路径解——seam 处可欠填或过填，偏差以参考解的最大填深为界
+    （conformance 钉死 |chunked − full| ≤ reference max_fill_depth）；
+    需要精确解时使用全量路径（reference variant）。heap 峰值内存
+    O(带宽×H)——大栅格低堆占用通道。
+    """
+    z, valid = _prepare(dem, nodata)
+    h, w = z.shape
+    _guard_cells((h, w), "terrain.sink_fill_chunked")
+    if not (1 <= int(n_bands) <= 64):
+        raise ValueError(f"n_bands must be in [1, 64] (got {n_bands!r})")
+    if w < _PF_CHUNK_MIN_COLS:
+        n_bands = 1
+    band_w = int(math.ceil(w / int(n_bands)))
+    filled = z.copy()
+    sweeps = 0
+    changed = 0
+    for sweep in range(int(max_sweeps)):
+        if cancellable_check:
+            checkpoint()
+        sweeps += 1
+        changed = 0
+        order = (range(int(n_bands)) if sweep % 2 == 0
+                 else range(int(n_bands) - 1, -1, -1))
+        for b in order:
+            c0 = b * band_w
+            c1 = min(c0 + band_w, w)
+            # Jacobi 迭代：每带从**原始 z** 重新泛洪（只升不降的泛洪不能
+            # 从上一轮的过填值收敛回真实解——过填必须允许被修正）。
+            band_z = z[:, c0:c1].copy()
+            band_valid = valid[:, c0:c1]
+            bh, bw = band_z.shape
+            invalid = ~band_valid
+            near_invalid = np.zeros((bh, bw), dtype=bool)
+            for _, _, dr, dc in _D8_NEIGHBORS:
+                r0, r1 = max(0, -dr), min(bh, bh - dr)
+                cc0, cc1 = max(0, -dc), min(bw, bw - dc)
+                shifted = np.zeros((bh, bw), dtype=bool)
+                shifted[r0:r1, cc0:cc1] = invalid[r0 + dr:r1 + dr, cc0 + dc:cc1 + dc]
+                near_invalid |= shifted
+            seed = band_valid & near_invalid
+            seed[0, :] |= band_valid[0, :]
+            seed[-1, :] |= band_valid[-1, :]
+            if b == 0:
+                seed[:, 0] |= band_valid[:, 0]
+            if b == int(n_bands) - 1:
+                seed[:, -1] |= band_valid[:, -1]
+            for edge, outside in ((0, c0 - 1), (bw - 1, c1)):
+                if 0 <= outside < w:
+                    # 邻带裁决 = 邻带**当前累计**填充值（收敛解的下界估计，
+                    # 单调升 → 整体单调收敛到全量 flood 不动点）
+                    nb_col = filled[:, outside]
+                    verdict = np.maximum(band_z[:, edge], nb_col)
+                    changed += int(np.count_nonzero(
+                        band_valid[:, edge] & (np.abs(verdict - filled[:, c0:c1][:, edge]) > 1e-12)))
+                    band_z[:, edge] = verdict
+                    seed[:, edge] |= band_valid[:, edge]
+            known = seed.copy()
+            heap: List[Tuple[float, int, int]] = []
+            counter = 0
+            for flat_i in np.flatnonzero(seed.ravel()).tolist():
+                heapq.heappush(heap, (float(band_z.ravel()[flat_i]), counter, flat_i))
+                counter += 1
+            pops = 0
+            while heap:
+                pops += 1
+                if cancellable_check and pops % 65536 == 0:
+                    checkpoint()
+                elev, _, cur = heapq.heappop(heap)
+                cur_r, cur_c = divmod(cur, bw)
+                for _, _, dr, dc in _D8_NEIGHBORS:
+                    nb_r, nb_c = cur_r + dr, cur_c + dc
+                    if not (0 <= nb_r < bh and 0 <= nb_c < bw):
+                        continue
+                    nb = nb_r * bw + nb_c
+                    if not band_valid.ravel()[nb] or known.ravel()[nb]:
+                        continue
+                    known.ravel()[nb] = True
+                    target = elev + epsilon
+                    z_nb = float(band_z.ravel()[nb])
+                    new_v = z_nb if z_nb > target else target
+                    band_z.ravel()[nb] = new_v
+                    heapq.heappush(heap, (band_z.ravel()[nb], counter, nb))
+                    counter += 1
+            diff_cells = int(np.count_nonzero(
+                band_valid & (np.abs(band_z - filled[:, c0:c1]) > 1e-12)))
+            changed += diff_cells
+            filled[:, c0:c1] = band_z
+        if changed == 0:
+            break
+    lift = filled - z
+    meta = _meta_base(
+        "terrain.sink_fill_chunked", valid,
+        cell_size=cell_size,
+        epsilon=float(epsilon),
+        method=(
+            "banded priority-flood (approximate): per-band heapq flood, "
+            "neighbour-band verdicts on band edges; over-fill possible at "
+            "seams (verdict = neighbour water level) — use full "
+            "fill_depressions for the exact reference"),
+        n_bands=int(n_bands),
+        max_sweeps=int(max_sweeps),
+        sweeps_executed=int(sweeps),
+        converged=bool(changed == 0),
+        approximation=(
+            "band fixed-point ≠ global min-max path: seams may under/over-fill "
+            "(bounded by reference max_fill_depth; exact = fill_depressions)"),
+        filled_volume=round(float(lift.sum()), 9),
+        filled_cell_count=int(np.count_nonzero(lift > 0.0)),
+        max_fill_depth=round(float(lift.max()) if valid.any() else 0.0, 9),
+    )
+    return filled, meta

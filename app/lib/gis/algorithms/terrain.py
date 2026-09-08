@@ -27,6 +27,7 @@ from typing import List
 
 from app.lib.gis.algorithm_registry import (
     AlgorithmDescriptor,
+    BackendVariant,
     NumericalTolerance,
     ResourceEnvelope,
 )
@@ -271,7 +272,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         AlgorithmDescriptor(
             # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
             resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=16, notes="R3 扇区化（chunk 256）+ _guard_cells 闸"),
-            cancellation_profile="none",
+            cancellation_profile="chunk_boundary",
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.viewshed", name="视域分析", category="terrain_analysis",
             capabilities=["terrain_viewshed"],
@@ -415,7 +416,15 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         AlgorithmDescriptor(
             # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
             resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=32, notes="heapq O(N log N)（MAX_HYDRO_CELLS 闸）"),
-            cancellation_profile="none",
+            cancellation_profile="chunk_boundary",
+            backend_variants=[
+                BackendVariant(id="full_heap", backend="numpy", deterministic=True,
+                               approximation_class="exact",
+                               notes="全量 heapq Priority-Flood（Barnes 2014）——reference 变体"),
+                BackendVariant(id="chunked_band", backend="numpy", deterministic=True,
+                               approximation_class="approximate",
+                               notes="列带分块 + 邻带裁决（heap 峰值 O(带宽×H)）；seam 可欠/过填（以参考最大填深为界，parity conformance 钉死）"),
+            ],
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.sink_fill", name="Priority-Flood 填洼", category="terrain_analysis",
             capabilities=["terrain_hydrology_advanced"],
@@ -442,6 +451,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             numerical_tolerance="5×7 单洼地 fixture：洼底恰填至溢流高程（浮点精确）",
             scientific_status="VALIDATED",
             conformance_tests=[
+                "tests/unit/lib/test_hydrology_v4.py::test_chunked_pf_never_underfills_and_bounded_overfill",
+                "tests/unit/lib/test_hydrology_v4.py::test_chunked_pf_deterministic",
                 "tests/unit/lib/test_terrain_hydrology_v2.py::test_fill_depressions_single_pit_spill_elevation_exact",
                 "tests/unit/lib/test_terrain_hydrology_v2.py::test_fill_depressions_volume_and_epsilon_monotone",
                 "tests/unit/lib/test_terrain_hydrology_v2.py::test_hydrology_nodata_adversarial_and_guards",
@@ -452,7 +463,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         AlgorithmDescriptor(
             # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
             resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=40, notes="D∞ 角度分配多副本（_guard_cells 闸）"),
-            cancellation_profile="none",
+            cancellation_profile="chunk_boundary",
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.dinf_flow", name="D∞ 多向流", category="terrain_analysis",
             capabilities=["terrain_hydrology_advanced"],

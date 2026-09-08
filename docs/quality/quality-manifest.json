@@ -3956,12 +3956,14 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 2,
    "capabilities": [
     "terrain_hydrology_advanced"
    ],
    "category": "terrain_analysis",
    "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_chunked_pf_never_underfills_and_bounded_overfill",
+    "tests/unit/lib/test_hydrology_v4.py::test_chunked_pf_deterministic",
     "tests/unit/lib/test_terrain_hydrology_v2.py::test_fill_depressions_single_pit_spill_elevation_exact",
     "tests/unit/lib/test_terrain_hydrology_v2.py::test_fill_depressions_volume_and_epsilon_monotone",
     "tests/unit/lib/test_terrain_hydrology_v2.py::test_hydrology_nodata_adversarial_and_guards"
@@ -6482,7 +6484,7 @@
   "algorithms": 192,
   "artifact_types": 21,
   "capabilities": 123,
-  "findings": 254,
+  "findings": 253,
   "recipes": 164,
   "tools": 295
  },
@@ -6654,12 +6656,6 @@
    "detail": "memory_cost=high but no backend_variants scale windows",
    "severity": "medium",
    "subject": "terrain.hillshade"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "severity": "medium",
-   "subject": "terrain.sink_fill"
   },
   {
    "code": "ALGO_HEAVY_NO_VARIANTS",
@@ -8012,7 +8008,7 @@
    "subject": "webgis_world_state"
   }
  ],
- "fingerprint": "46be0edeb8b26d0fce8f61f515833ecd977faf34705ef97233a6341ac1362627",
+ "fingerprint": "3e41c014106f8f9be492c867afccb67a8f41d9cd69a850dea0c92a416a37ec6b",
  "gate": {
   "fields": {
    "capabilities": {

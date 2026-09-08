@@ -82,7 +82,7 @@
 | `terrain.breach` | O(N log N)（priority-flood ×2 + 逐洼地路径切沟） | approximate | 32B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-09,atol=0 | medium/high | — |
 | `terrain.contours` | — | — | 16B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
 | `terrain.curvature` | — | — | 48B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
-| `terrain.dinf_flow` | O(N log N) | — | 40B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.dinf_flow` | O(N log N) | — | 40B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.flow` | — | — | 48B/cell | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
 | `terrain.flow_length` | O(N log N) | — | 32B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.geomorphons` | — | — | 24B/cell cells≤50000000 | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
@@ -98,7 +98,7 @@
 | `terrain.pfafstetter` | O(S log S)（干流上溯 + 支流归属 BFS，S=河网像元） | exact | 24B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-12,atol=0 | medium/medium | — |
 | `terrain.roughness` | — | — | 32B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.shreve` | O(N log N)（与 Strahler 同拓扑机器） | exact | 24B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-12,atol=0 | medium/medium | — |
-| `terrain.sink_fill` | O(N log N) | — | 32B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
+| `terrain.sink_fill` | O(N log N) | — | 32B/cell cells≤50000000 | full_heap(numpy,[,∞],exact);chunked_band(numpy,[,∞],approximate) | chunk_boundary | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
 | `terrain.sky_view_factor` | — | — | 24B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.slope` | — | — | 40B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
 | `terrain.solar_radiation` | O(N)（解析 Ra + gradient 坡面因子） | heuristic | 48B/cell | — | coarse | rtol=0.02,atol=0.5 | low/medium | — |
@@ -108,5 +108,5 @@
 | `terrain.tpi` | — | — | 32B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.tri` | — | — | 32B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.twi` | — | — | 24B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
-| `terrain.viewshed` | — | approximate | 16B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
+| `terrain.viewshed` | — | approximate | 16B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.watershed` | — | — | 32B/cell | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |

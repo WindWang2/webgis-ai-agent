@@ -3,14 +3,14 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**1**
-- 内容指纹：`46be0edeb8b26d0f…`
+- 内容指纹：`3e41c014106f8f9b…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
 | tools | 295 | 262 | 188 |
-| algorithms | 192 | 150 | 50 |
+| algorithms | 192 | 150 | 49 |
 | capabilities | 123 | 69 | 16 |
 | artifact_types | 21 | 21 | 0 |
 | recipes | 164 | 164（conformance 由 workflow 闸保护） | 0 |
@@ -171,7 +171,7 @@
 - `workspace.inspection.readonly`（medium）— algorithm declares no conformance test node ids
 - `workspace.snapshot.durable`（medium）— algorithm declares no conformance test node ids
 
-### ALGO_HEAVY_NO_VARIANTS（30）
+### ALGO_HEAVY_NO_VARIANTS（29）
 
 - `data.ingest.pipeline`（medium）— memory_cost=high but no backend_variants scale windows
 - `interpolation.block_kriging`（medium）— memory_cost=high but no backend_variants scale windows
@@ -201,7 +201,6 @@
 - `terrain.breach`（medium）— memory_cost=high but no backend_variants scale windows
 - `terrain.hand`（medium）— memory_cost=high but no backend_variants scale windows
 - `terrain.hillshade`（medium）— memory_cost=high but no backend_variants scale windows
-- `terrain.sink_fill`（medium）— memory_cost=high but no backend_variants scale windows
 - `terrain.slope`（medium）— memory_cost=high but no backend_variants scale windows
 
 ### ALGO_SEED_POLICY_CONFLICT（0）

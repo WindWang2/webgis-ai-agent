@@ -1187,13 +1187,13 @@ Priority-Flood 填洼（Barnes 2014，epsilon 单调变体）、D∞ 多向流�
   - 假设：Priority-Flood（Barnes 2014）heapq 漫水；种子 = 网格边界 + nodata 邻接有效像元；nodata/网格外视作排水出口；epsilon>0 时逐像元抬升 → 表面严格单调可排；meta 报告 filled_volume（z_units·m²）/filled_cell_count/max_fill_depth
   - 局限：epsilon=0 时填后平地仍为汇（与 d8 不发明路由语义衔接）；纯 Python 堆循环，>10M 像元耗时显著（护栏 50M 像元先拒绝）；无嵌套洼地深度分层报告（单层溢流面）
   - 资源包络：32B/像元，像元硬上限 50000000
-  - 取消：none
+  - 取消：chunk_boundary
   - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.dinf_flow`** D∞ 多向流（`native`·成熟度 已验证，契约: `dinf_analysis`，出处: `ocallaghan_mark1984`）
   - 假设：8 三角面平面梯度最陡下降（Tarboton 1997）；角度弧度 ∈ [0,2π)，x=东 y=北；汇流按面内角度比例分流到两下游邻域；拓扑序（高程降序）累积；平地/洼地 → 角度 -1 哨兵；nodata → NaN；函数内不填洼
   - 局限：D∞ 不消解格网平行流向偏差的极端情形（面离散 45°）；推荐组合 fill_depressions(epsilon>0) 先行获得单调可排面；缺角邻域的面跳过（边缘只用可得邻域）
   - 资源包络：40B/像元，像元硬上限 50000000
-  - 取消：none
+  - 取消：chunk_boundary
   - 数值容差：rtol=1e-06，atol=1e-09
 - **`terrain.flow_length`** 流程长度（`native`·成熟度 已验证，契约: `flow_length_analysis`，出处: `ocallaghan_mark1984`, `strahler1957`）
   - 假设：downstream = 沿 D8 接收者到出口的米制步长和（汇/出口 = 0）；upstream = 距最远山脊源的最大路径长（MAX 口径，文档化）；步长 = hypot(Δcol·cx, Δrow·cy)；地理栅格由调用方传 cos(lat) 修正 cx
@@ -1256,7 +1256,7 @@ DEM 视域：观察点视线遮挡布尔掩膜、可见比例与可见面积（�
   - 假设：无地球曲率/大气折射；目标高度默认 0；扇区视线角判据：目标仰角 ≥ 沿途地形运行最大仰角即可见（切切记可见）；观察点高程 = 观察点地形 + observer_height；射线 ~1 像元 bilinear 采样
   - 局限：扇区角离散 ≈ 最大距离处 1 像元弧长（远距目标近似误差 ≤ 半扇区宽）；观察点邻接 nodata 时高程退化为最近有效像元；地理栅格按 cos(lat) 换算米制像元（带向不修正）
   - 资源包络：16B/像元，像元硬上限 50000000
-  - 取消：none
+  - 取消：chunk_boundary
   - 数值容差：rtol=1e-06，atol=1e-09
 
 ## `terrain_wetness_indices` — 湿润与侵蚀指数
