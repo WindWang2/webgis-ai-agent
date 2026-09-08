@@ -26,6 +26,11 @@ def db():
     from pathlib import Path
 
     Path("./data").mkdir(parents=True, exist_ok=True)
+    # 先幂等建全库：projects.org_id FK→organizations —— 本文件是
+    # tests/data 的第一个套件，真 Postgres 上被引用表必须先存在
+    # （SQLite 不强制，此前本地全绿 CI 39 errors 即此）。与 multiturn
+    # 场景 fixture 同款（create_all checkfirst → 再裁剪域表）。
+    Base.metadata.create_all(bind=Engine, checkfirst=True)
     metadata_tables = [
         t for t in Base.metadata.sorted_tables if t.name in _PROJECT_DOMAIN_TABLES
     ]
