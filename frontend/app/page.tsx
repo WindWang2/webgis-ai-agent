@@ -8,6 +8,7 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 
 // Refactored custom hooks
 import { useWorkspaceSession } from '@/lib/hooks/use-workspace-session';
+import { useWorkbenchUndoKeys } from '@/lib/workbench/use-undo';
 import { useSSEStream } from '@/lib/hooks/use-sse-stream';
 import { useSessionPlan } from '@/lib/hooks/use-session-plan';
 
@@ -109,6 +110,9 @@ export default function Home() {
     startNewSession,
     refreshSessions,
   } = useWorkspaceSession(dispatchAction);
+
+  // Workbench V5（W4）：全局 undo/redo 快捷键（Ctrl/⌘+Z、⇑+Z、Ctrl+Y）。
+  useWorkbenchUndoKeys();
 
   // #1048: SessionPlan hydrate-then-delta 状态（page 级，与 agentRuntime 同款
   // 下行路径）。增量由 useSSEStream 的分发链驱动，视图经 ContextPanel → ChatTab

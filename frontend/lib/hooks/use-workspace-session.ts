@@ -17,6 +17,7 @@ import {
   startWorkbenchPersistence,
   workbenchPersistenceArmed,
 } from '@/lib/workbench/persistence';
+import { clearUndoHistory } from '@/lib/workbench/undo';
 
 const MAX_SESSION_OWNER_TOKENS = 128;
 
@@ -168,6 +169,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // （hydrateWorkbenchFromSpec / markWorkbenchHydrated）前绝不提交，
       // 防恢复竞态把空 doc 盖掉新会话的服务器端 doc。
       notifyWorkbenchSessionChanged(sid);
+      // V5/W4：undo 栈随会话清空（跨会话命令不可撤销 —— 图层 id 语义已变）。
+      clearUndoHistory();
       // #548: explorer task cards are session-scoped — a session switch must not
       // leak the previous session's cards into the new session's task tab.
       clearExplorerTasks();
@@ -328,6 +331,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       useHudStore.getState().resetLayerGroups();
       // Workbench V5（W3）：新会话（尚无 sid）——解除组织态持久化武装。
       notifyWorkbenchSessionChanged(null);
+      // V5/W4：undo 栈随会话清空。
+      clearUndoHistory();
       // #548: new session = fresh explorer task tab (same session-scope rule as
       // selectSession, this path had no clear at all before).
       clearExplorerTasks();

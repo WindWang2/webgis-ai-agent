@@ -11,6 +11,7 @@ import {
 import { ApiError, apiFetch } from '@/lib/api/transport';
 import { presentationFromMapSpec } from '@/lib/session/map-state-restore';
 import { LOCK_CONFLICT_ERROR, partitionByLock } from '@/lib/workbench/layer-lock';
+import { presentationCommand } from '@/lib/workbench/undo';
 import type { MapCommandContext, MapCommandResult } from './types';
 import {
   matchMapLayers,
@@ -240,6 +241,25 @@ export function applyLayerVisibilityTransaction(
   ): VisibilityTransactionResult['result'] =>
     lockedTargets.length > 0 ? { ...result, locked_layer_ids: lockedTargets } : result;
 
+  // V5/W4：agent 突变的 undo 载荷必须在 store 更新前捕获（步骤 3 会改写
+  // visible/opacity）。用户路径（respectLock=false）不在此记录 —— 已由
+  // toggle/opacity 提交函数记录，避免双重入栈。
+  const undoBefore: { visible?: boolean; opacity?: number } = {};
+  if (input.respectLock !== false && input.durable !== false) {
+    if (visible != null) {
+      const cur = (getHudState().layers ?? []).find(
+        (l: HudLayerLike) => l.id === targetIds[0],
+      ) as { visible?: boolean } | undefined;
+      undoBefore.visible = cur?.visible !== false;
+    }
+    if (opacity != null) {
+      const cur = (getHudState().layers ?? []).find(
+        (l: HudLayerLike) => l.id === targetIds[0],
+      ) as { opacity?: number } | undefined;
+      undoBefore.opacity = cur?.opacity ?? 1;
+    }
+  }
+
   // 2. MapLibre 命中（双方案；目标在地图与 store 都不存在 → 真未命中）
   const matched = Array.from(new Set(targetIds.flatMap((id) => matchMapLayers(map, id))));
   const storeMatched = matched.filter(
@@ -287,6 +307,20 @@ export function applyLayerVisibilityTransaction(
   //    重试；agent 路径此前缺失——reload 后 Agent 可见性决策丢失的根因）。
   if (input.durable !== false && (visible != null || opacity != null)) {
     enqueueDurability(targetSpecPairs, visible, opacity);
+    // V5/W4：agent 突变进 undo 栈（inverse=先前 presentation 反向重放）。
+    if (input.respectLock !== false) {
+      const after = {
+        ...(visible != null ? { visible: Boolean(visible) } : {}),
+        ...(opacity != null ? { opacity: Number(opacity) } : {}),
+      };
+      presentationCommand(
+        `Agent 调整 ${targetIds[0]} 显示状态`,
+        targetIds[0],
+        'agent',
+        undoBefore,
+        after,
+      );
+    }
   }
 
   // 6. postcondition：读回验证（只对本次请求要改的属性比对）
