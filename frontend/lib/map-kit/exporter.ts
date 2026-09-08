@@ -1177,6 +1177,40 @@ async function waitForMapIdle(map: Map, timeoutMs: number): Promise<void> {
   });
 }
 
+/**
+ * W7（ADR-0118）：导出侧 spec 事实源 = live 同一合成器（composeLiveMapSpec）
+ * —— committed MapSpec 叠加 pendingPresentation/pendingRemoved。乐观可见性
+ * 翻转/图层移除期间，导出与 live 读同一时刻的可见状态（此前导出只读
+ * committed spec，两侧不同源）。hudState 形状与 map-panel reconcile effect
+ * 的 HudToSpecInput 同一（layers/processLayers/activeFilters/selectionFilters/is3D）。
+ */
+export async function composeExportSpec(
+  committed: unknown,
+  hudState: {
+    layers?: unknown[];
+    processLayers?: Record<string, unknown>;
+    activeFilters?: Record<string, unknown>;
+    selectionFilters?: Record<string, unknown>;
+    is3D?: boolean;
+  },
+  pending: Record<string, { visible?: boolean; opacity?: number }> = {},
+  removed: string[] = [],
+): Promise<unknown> {
+  const { composeLiveMapSpec } = await import('@/lib/mapspec/live-spec');
+  return composeLiveMapSpec(
+    committed as Parameters<typeof composeLiveMapSpec>[0],
+    {
+      layers: (hudState.layers ?? []) as Parameters<typeof composeLiveMapSpec>[1]['layers'],
+      processLayers: (hudState.processLayers ?? {}) as Parameters<typeof composeLiveMapSpec>[1]['processLayers'],
+      activeFilters: (hudState.activeFilters ?? {}) as Parameters<typeof composeLiveMapSpec>[1]['activeFilters'],
+      selectionFilters: (hudState.selectionFilters ?? {}) as Parameters<typeof composeLiveMapSpec>[1]['selectionFilters'],
+      is3D: hudState.is3D ?? false,
+    },
+    pending,
+    removed,
+  );
+}
+
 export async function runExport(
   deps: ExportDeps,
   req: ExportRequest,
@@ -1284,8 +1318,19 @@ export async function runExport(
     let specShowScale: boolean | undefined;
     let committedSpec: { layout?: { components?: any[] }; layers?: any[] } | null = null;
     try {
-      const { getCommittedMapSpec } = await import('@/lib/mapspec/session-cursor');
-      committedSpec = getCommittedMapSpec() ?? null;
+      // W7：导出 spec 经 live 同一合成器（composeLiveMapSpec）—— 叠加
+      // pendingPresentation/pendingRemoved，与 live 同一时刻的可见状态。
+      const {
+        getCommittedMapSpec,
+        getPendingPresentation,
+        getPendingRemoved,
+      } = await import('@/lib/mapspec/session-cursor');
+      committedSpec = (await composeExportSpec(
+        getCommittedMapSpec() ?? null,
+        storeState,
+        getPendingPresentation(),
+        getPendingRemoved(),
+      )) as typeof committedSpec;
       const specComps = committedSpec?.layout?.components ?? [];
       if (specComps.length) {
         const isEnabled = (t: string) =>
