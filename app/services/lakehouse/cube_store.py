@@ -256,18 +256,22 @@ def read_cube_window(
         raise CubeError("cube declares no bands")
     out: Dict[str, Any] = {}
     meta: Dict[str, Any] = {}
+    axis_times: List[str] = []
     for band in wanted:
         if band not in root:
             raise CubeError(f"band {band!r} not in cube")
         arr = root[band]
+        axis_times = [str(t) for t in (arr.attrs.get("times") or [])]
         out[band] = np.asarray(arr[time or slice(None), y or slice(None), x or slice(None)])
         if not meta:
             meta = {
-                "times": list(arr.attrs.get("times") or []),
                 "crs": arr.attrs.get("crs"),
                 "transform": arr.attrs.get("transform"),
                 "nodata": arr.attrs.get("nodata"),
             }
+    # 时间标签跟随切片（窗口真相，而非整轴标签）。
+    t_sel = time or slice(None)
+    meta["times"] = axis_times[t_sel] if isinstance(t_sel, slice) else axis_times
     return {"bands": out, **meta}
 
 

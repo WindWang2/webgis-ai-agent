@@ -367,6 +367,42 @@ def fabric_parquet_ref_exists(session_id: str, ref: str) -> bool:
         return False
 
 
+# ── Lakehouse Cube 磁盘工件 V6（ADR-0118 Wave 7）─────────────────────────
+# ref:cube/<id> → DATA_DIR/<sid>/lakehouse-cubes/<id>.zarr（**目录**形态
+# 的 disk-cursor —— zarr store 是目录树）。与 raster/fabric-parquet 完全
+# 同形（注册 + O(1) 探测 + GC 清除），仅"文件 → 目录"语义差。
+
+_CUBE_REF_PREFIX = "ref:cube/"
+
+
+def is_cube_ref(ref: str) -> bool:
+    """lakehouse cube ref（路径不透明 cursor；目录路径是实现细节）。"""
+    return isinstance(ref, str) and ref.startswith(_CUBE_REF_PREFIX)
+
+
+def cube_store_path(session_id: str, ref: str) -> Optional["Path"]:
+    """ref:cube/<id> → 会话 lakehouse-cubes 目录下的 zarr store 路径。"""
+    cube_id = ref[len(_CUBE_REF_PREFIX):]
+    if not cube_id or not _RASTER_ID_RE.match(cube_id):
+        return None
+    if not _RASTER_ID_RE.match(session_id or ""):
+        return None
+    from app.core.config import settings
+
+    return Path(settings.DATA_DIR) / session_id / "lakehouse-cubes" / cube_id
+
+
+def cube_ref_exists(session_id: str, ref: str) -> bool:
+    """cube 活性（O(1) is_dir；路径非法 → False）。"""
+    path = cube_store_path(session_id, ref)
+    if path is None:
+        return False
+    try:
+        return path.is_dir()
+    except OSError:  # noqa: BLE001 — stat 失败按不存活（诚实保守）
+        return False
+
+
 async def probe_ref(
     session_id: str,
     ref: str,
@@ -390,6 +426,11 @@ async def probe_ref(
 
         exists = await _asyncio.to_thread(fabric_parquet_ref_exists, session_id, ref)
         return {"kind": "fabric_geoparquet", "exists": exists} if exists else None
+    if is_cube_ref(ref):
+        import asyncio as _asyncio
+
+        exists = await _asyncio.to_thread(cube_ref_exists, session_id, ref)
+        return {"kind": "lakehouse_cube", "exists": exists} if exists else None
     if session_data_manager is None:
         from app.services.session_data import session_data_manager
 
@@ -990,6 +1031,26 @@ async def collect_orphan_refs(
                                 return False
 
                         if await _asyncio.to_thread(_unlink_parquet):
+                            deleted.append(aid)
+                            records[aid].status = A_EXPIRED
+                            records[aid].updated_at = time.time()
+                    elif is_cube_ref(aid):
+                        # V6：lakehouse cube 孤儿 —— rmtree zarr store（目录
+                        # 形态 disk-cursor；同一活引用复检纪律）。
+                        import asyncio as _asyncio
+                        import shutil as _shutil
+
+                        def _rmtree_cube(ref: str = aid) -> bool:
+                            path = cube_store_path(session_id, ref)
+                            if path is None or not path.is_dir():
+                                return False
+                            try:
+                                _shutil.rmtree(path)
+                                return True
+                            except OSError:
+                                return False
+
+                        if await _asyncio.to_thread(_rmtree_cube):
                             deleted.append(aid)
                             records[aid].status = A_EXPIRED
                             records[aid].updated_at = time.time()
