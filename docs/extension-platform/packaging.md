@@ -101,6 +101,13 @@ or an unknown permission word aborts policy construction).
 | `EXTENSION_PERMISSION_GRANTS` | str, `""` | Grant table `id:perm1,perm2;id2:perm3`; see [permissions-and-trust.md](permissions-and-trust.md) |
 | `EXTENSION_FEATURE_FLAGS` | str, `"{}"` | JSON object `{ext_id: {flag: bool}}`; host overrides for manifest flags |
 | `EXTENSION_SETTINGS_JSON` | str, `"{}"` | JSON object `{ext_id: {...}}`; delivered to `activate(ctx)` as `ctx.extension_settings` (typically `settings_schema` instance values) |
+| `EXTENSION_SECRETS_JSON` | str, `"{}"` | V2: JSON object `{ext_id: {ref: value}}`; provisioning-as-authorization for `ctx.get_secret` / broker `secret_get`. Values never appear in status, logs, or audit |
+| `EXTENSION_NETWORK_ALLOW` | str, `""` | V2: worker broker egress allowlist `"id:host1,host2;id2:*"` (hostname-level, per extension id; `"*"` still passes the SSRF gate, not around it) |
+| `EXTENSION_ARTIFACT_ROOTS` | str, `""` | V2: `os.pathsep`-separated roots confining worker broker `artifact_read`/`artifact_write`; **empty = all artifact ops denied** |
+| `EXTENSION_TRUSTED_PUBLISHERS` | str, `""` | V2: publisher key table `"key_id:keyfile,..."` (file content = HMAC key bytes); used by `verify` and host-side signature verdicts |
+| `EXTENSIONS_TRUST_SIGNED` | bool, `False` | V2: a verified signature from a trusted publisher elevates `local_untrusted` → `trusted_extension` (never lowers an existing level) |
+| `EXTENSIONS_ALLOW_UNSIGNED_DEV` | bool, `False` | V2: explicit unsigned-dev mode — loud warning diagnostic, no permission semantics change |
+| `EXTENSIONS_MAX_WORKER_CRASHES` | int, `2` | V2: consecutive worker crashes (range 1–10) before the extension is quarantined |
 
 The STAC-related `STAC_API_URL` setting (default
 `https://earth-search.aws.element84.com/v1`) is core data-fabric
@@ -140,3 +147,88 @@ Prod checklist:
    this process — see [permissions-and-trust.md](permissions-and-trust.md).
 5. Pre-flight: `python -m app.extensions_platform doctor` (read-only;
    settings summary, per-extension state, common-problem hints).
+
+## Signing a pack (V2)
+
+`signing.py` adds content signing to the packaging flow. The signature
+covers the same content the fingerprint covers — `signature.json` itself
+is excluded from the fingerprint (no circularity), everything else
+including data files is included.
+
+`signature.json` (written into the pack dir by `package`):
+
+```json
+{
+  "algorithm": "hmac-sha256",
+  "key_id": "acme-release",
+  "fingerprint": "<sha256 content fingerprint>",
+  "signature": "<hex hmac>",
+  "signed_at": "2026-09-09T00:00:00+00:00"
+}
+```
+
+- The HMAC payload is domain-separated:
+  `webgis-extension-signature-v1 \n key_id \n fingerprint`. `signed_at` is
+  informational only — verification is deterministic and replayable, never
+  time-based.
+- Re-signing identical content with the same key is idempotent (only
+  `signed_at` differs).
+
+Usage:
+
+```bash
+# publisher side: write signature.json (key material is never printed)
+python -m app.extensions_platform package /path/to/acme-pack \
+    --key-id acme-release --key-file /path/to/acme-release.key
+
+# operator side: deterministic verdict (exit 0 = verified/missing,
+# 1 = invalid / tampered / signed_untrusted)
+python -m app.extensions_platform verify /path/to/acme-pack \
+    --publisher acme-release:/path/to/acme-release.key
+python -m app.extensions_platform verify /path/to/acme-pack --json
+```
+
+Key management: `EXTENSION_TRUSTED_PUBLISHERS="key_id:keyfile,..."` maps
+publisher ids to HMAC key files (file *content* is the key). On the host,
+discovery runs `verify_pack_signature` against this table and applies the
+verdict:
+
+| Verdict | Host action |
+| --- | --- |
+| `tampered` / `invalid` | **quarantined, even if the id is allowlisted** — re-sign and re-discover (`package_tampered` / `signature_invalid`) |
+| `signed_verified` + `EXTENSIONS_TRUST_SIGNED=true` | `local_untrusted` elevates to `trusted_extension` (`signature_verified`, info); existing trust levels are never lowered |
+| `signed_untrusted` | warning `publisher_untrusted` when trust-signed policy is on; falls back to operator trust config |
+| `missing` | default policy: silent (V1 behavior preserved); under `EXTENSIONS_ALLOW_UNSIGNED_DEV=true`: loud warning only |
+
+Honest positioning: this is **shared-key authentication** (anyone who can
+verify holds the signing secret — publisher ≈ operator), not independent
+publisher identity. Asymmetric signatures are a follow-up. And signing
+complements, never replaces, the trusted-code boundary — see
+[security-boundary.md](security-boundary.md).
+
+## SBOM (V2)
+
+`sbom.py` produces a **deterministic** bill of materials: same pack +
+same fingerprint ⇒ byte-identical JSON (no timestamps, everything
+sorted). Contents:
+
+- `files` — path / bytes / sha256 for every file the fingerprint covers
+  (same bounds: 512 files / 8 MiB; exceeded ⇒ typed refusal);
+- `python_imports` — top-level module names parsed from the AST of all
+  `*.py` files, excluding the standard library, the platform SDK (`app`),
+  and relative (sibling) imports;
+- `dependencies` — mirror of the manifest dependency declarations,
+  including `version` constraint strings and the optional flag;
+- `secret_scan` — high-confidence secret *shapes* (AWS access keys,
+  private-key blocks, Slack / GitHub / OpenAI-style tokens) reported as
+  `{file, kind}` findings; shape hits only, no network verification.
+  `signature.json` is scanned too (it can leak just like anything else).
+
+```bash
+python -m app.extensions_platform sbom extdemo.pack --root extensions/examples
+python -m app.extensions_platform sbom extdemo.pack --json
+```
+
+Publishing checklist: run `sbom`, resolve `secret_scan` findings, then
+`package` (sign) — a leaked key found by the scan should never make it
+into a signed artifact. `certify` runs the scan as part of its suite.

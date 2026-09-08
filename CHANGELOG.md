@@ -1,5 +1,34 @@
 # Changelog
 
+## [Unreleased] - 2026-09-09
+
+### Added
+- GIS Extension Platform V2 (ADR-0105): worker-isolated execution
+  (`execution.mode=worker` — extension code runs in a subprocess the host
+  never imports, with a sanitized environment, RLIMIT memory/CPU budgets,
+  output caps, and crash → rollback → quarantine) plus a default-deny
+  capability broker for worker host access (network allowlist + the
+  authoritative SSRF gate, confined artifact roots, provisioning-gated
+  secrets with an audited ring).
+- Supply chain for extension packs: HMAC content signing (`package` /
+  `verify` — tampered or invalid signatures quarantine a pack even if
+  allowlisted, and verified signatures can elevate trust under
+  `EXTENSIONS_TRUST_SIGNED`), a deterministic SBOM with secret-shape
+  scanning (`sbom`), and a certification suite (`certify`).
+- `model_provider` extension type for GIS domain inference models: each
+  provider projects to a typed invoke tool on the real dispatch path
+  (in-process streaming via event iterators with cooperative
+  cancellation; worker mode = single-frame aggregate, streaming
+  typed-refused). Example pack: `extensions/examples/extdemo-ml-pack`.
+- Dependency version constraints (`">=1.2,<2.0"` syntax) checked at
+  validate time, deterministic topological activation order,
+  upgrade-conflict refusal (`dependency_conflict`), and explicit
+  `allow_downgrade=True` rollback semantics.
+- A host projection-change hook: every post-startup activate / deactivate /
+  rollback (including worker-crash auto-deactivation) now recompiles the
+  runtime manifest and refreshes tool args, removing the V1 known
+  limitation that left the manifest stale after deactivation.
+
 ## [Unreleased] - 2026-09-07
 
 ### Added

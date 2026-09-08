@@ -5,17 +5,24 @@ Entry point: `python -m app.extensions_platform <command>` (thin
 
 Hard contract of the CLI:
 
-- **Read-only + scaffold only.** No command ever activates an extension —
-  everything stops at discover / `validate_extension`. The host is built on
-  a fresh throwaway `ToolRegistry()`, so the live server's registries are
-  never touched.
+- **Read-only + scaffold + supply-chain commands.** No command ever
+  activates an extension — lifecycle commands stop at discover /
+  `validate_extension`. The host is built on a fresh throwaway
+  `ToolRegistry()`, so the live server's registries are never touched.
+  The V2 commands write only where documented: `package` writes
+  `signature.json` into the given pack directory (that is its purpose);
+  `verify` / `sbom` / `certify` are read-only. No command prints key or
+  secret material.
 - Default output is human-readable text; `--json` makes stdout **pure
   JSON** (trust-boundary notices become JSON fields), errors go to stderr.
 - Exit codes: `0` success (findings reported by `list` / `doctor` /
-  `catalog` are not failures), `1` validation failure / unknown id / settings
-  parse failure, `2` usage error (bad scaffold arguments, target exists).
-- Every command accepts `--root PATH` (repeatable; overrides
-  `EXTENSIONS_DIRS` entirely) and `--json`.
+  `catalog` are not failures; `verify` counts `verified`/`missing` as
+  success; `certify` counts a `certified` report as success), `1`
+  validation failure / unknown id / settings parse failure, `2` usage
+  error (bad scaffold arguments, target exists).
+- Every lifecycle command accepts `--root PATH` (repeatable; overrides
+  `EXTENSIONS_DIRS` entirely) and `--json`. `package` / `verify` operate
+  directly on a pack directory and take no `--root`.
 
 ## Commands
 
@@ -27,6 +34,10 @@ Hard contract of the CLI:
 | `doctor` | Settings summary, parsed grants table, roots in use, per-extension state + diagnostics, `problems` and `hints` sections (common-problem advice keyed by stable diagnostic code); pure read-only |
 | `scaffold <ns> <name> --dir OUT_DIR` | Generate a starter pack (`manifest.json`, `main.py`, `health.py`, `test_<name>.py`) that passes `validate` immediately; refuses reserved namespaces, bad tokens, and existing targets (exit `2`). The manifest is checked through the real parser before anything is written |
 | `catalog` | Declaration catalog grouped by namespace (markdown by default; `--json` machine-readable), including projected names and honesty metadata |
+| `package <pack-dir> --key-id ID --key-file PATH` | V2: content-sign the pack (writes `signature.json`, HMAC-SHA256; key material never printed). See [packaging.md](packaging.md) |
+| `verify <pack-dir> [--publisher KEY_ID:PATH ...]` | V2: deterministic signature verdict (`signed_verified` / `signed_untrusted` / `invalid` / `tampered` / `missing`); exit 0 for verified/missing, 1 otherwise |
+| `sbom <ext-id>` | V2: deterministic SBOM — file inventory (path/bytes/sha256), python imports, dependency mirror incl. version constraints, secret-shape scan (`--json` for the full document) |
+| `certify <ext-id>` | V2: certification suite — manifest contract, api compat, dependency constraints, signature status, SBOM secret scan, execution mode, real lifecycle smoke (activate → health → deactivate; ACTIVE records get health-only). exit 0 iff `certified` |
 
 Typical loop:
 
@@ -56,7 +67,7 @@ activation; warnings degrade it.
 | `id_collision` | error | The same extension id was discovered under multiple roots; the later-sorted copy is quarantined |
 | `core_version_incompatible` | error | Core release outside the extension's `[minimum_core_version, maximum_core_version)` window |
 | `api_version_incompatible` | error | Manifest `api_version` major ≠ host major, or minor newer than the host's |
-| `extension_type_unsupported` | error | Manifest declares a reserved future extension type (e.g. `model_provider`) — not supported in API 1.x |
+| `extension_type_unsupported` | error | Manifest declares a reserved future extension type (`marketplace`, `wallet`, `theme_engine`, `secret_store`) — not supported in API 1.x. (`model_provider` is supported since API 1.1.0; declaring it below the V2 floor surfaces as `manifest_invalid` with the api-floor rule in the message) |
 | `dependency_missing` | error | A required dependency was not discovered (or is quarantined), or is not active at activation time |
 | `dependency_cycle` | error | A required-dependency cycle across manifests (three-color DFS over the discovered set) |
 | `optional_dependency_absent` | warning | An optional dependency is absent; activation proceeds as `degraded` |
@@ -76,6 +87,23 @@ activation; warnings degrade it.
 | `fingerprint_changed` | error / warning | error: directory exceeds fingerprint bounds (> 512 files or > 8 MiB). warning: content changed since discovery/last load (anti-tamper signal; the new fingerprint is adopted) |
 | `feature_flag_unresolved` | warning | A declared feature flag has no host override; the manifest default is used |
 | `extension_disabled` | error | Activation attempted on an operator-disabled extension; enable it first |
+| `worker_mode_invalid` | error | A worker-mode rule was violated: manifest structure (forbidden section / permission / streaming capability, or api below the V2 floor), a class-instance projection API called inside a worker, `args_model` instead of explicit `parameters`, or `stream=True` on a worker model provider |
+| `worker_protocol_mismatch` | error | RPC protocol version or frame shape mismatch between host and worker |
+| `worker_startup_timeout` | error | The worker missed the `execution.startup_timeout_s` handshake budget; killed |
+| `worker_call_timeout` | error | A worker call exceeded `execution.call_timeout_s`; process group killed, projections roll back |
+| `worker_crashed` | error | The worker process died (EOF / exit / protocol failure); stderr tail attached; projections roll back |
+| `worker_restart_quarantined` | error | `EXTENSIONS_MAX_WORKER_CRASHES` consecutive crashes reached; the extension is quarantined until re-discovered |
+| `worker_result_invalid` | error | Reserved code for a worker result frame failing host-side validation (defined in the append-only vocabulary; no current emission path — a malformed result surfaces as `worker_protocol_mismatch` or `worker_crashed`) |
+| `broker_denied` | error | The capability broker refused an op (no grant, allowlist miss, path outside artifact roots, unprovisioned secret ref, unknown op, SSRF gate) |
+| `output_limit_exceeded` | error | A serialized tool result exceeded `execution.max_output_bytes` (typed error result; the worker survives). Also broker artifact writes over 32 MiB |
+| `resource_limit_unavailable` | warning | POSIX rlimits could not be applied for this worker (non-POSIX or `setrlimit` failure); wall-clock kill remains. Honest degradation — no sandbox claims |
+| `signature_invalid` | error / warning | error: `signature.json` malformed, wrong algorithm, HMAC mismatch, key unreadable, or unsigned pack under `EXTENSIONS_TRUST_SIGNED` / `EXTENSIONS_ALLOW_UNSIGNED_DEV` (warning variants). error ⇒ quarantined |
+| `publisher_untrusted` | warning | Signature present but its `key_id` is not in `EXTENSION_TRUSTED_PUBLISHERS`; operator trust config decides |
+| `package_tampered` | error | Pack content changed after signing (fingerprint ≠ signed fingerprint) or between discovery and worker handshake ⇒ quarantined even if allowlisted |
+| `signature_verified` | info | Signature verified and publisher trusted; recorded when `EXTENSIONS_TRUST_SIGNED` elevates trust |
+| `dependency_constraint_invalid` | error | A `dependencies[].version` constraint string is malformed (also a parse error at manifest level) |
+| `dependency_conflict` | error | Upgrade preflight: the new version violates a dependent's version constraint; upgrade refused, old version keeps running |
+| `operation_in_flight` | error | Deactivate (or a second call) attempted while a worker call is in flight; retry after completion |
 
 ## Health check contract
 

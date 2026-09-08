@@ -322,10 +322,18 @@ class WorkerServer:
 
         execution = self._ctx.manifest.execution if self._ctx is not None else None
         cap = execution.max_output_bytes if execution is not None else None
-        if cap is None:
-            return
-        size = len(encode_frame({"type": "result", "value": value}))
-        if size > cap:
+        try:
+            size = len(encode_frame({"type": "result", "value": value}))
+        except ProtocolError as exc:
+            # 不可序列化结果 → typed 错误应答（worker 不崩溃，工具面存活）。
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.WORKER_RESULT_INVALID,
+                    f"tool result is not JSON-serializable: {exc}",
+                    extension_id=self._ctx.extension_id if self._ctx is not None else None,
+                )
+            ) from exc
+        if cap is not None and size > cap:
             raise ExtensionPlatformError(
                 ExtensionDiagnostic.error(
                     DiagnosticCode.OUTPUT_LIMIT_EXCEEDED,

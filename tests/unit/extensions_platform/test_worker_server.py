@@ -359,3 +359,41 @@ def _boot_ctx_only(pack: Path, grants: list[str]):
     )
     getattr(module, "activate")(ctx)
     return ctx
+
+
+class TestResultSerialization:
+    def test_non_serializable_result_is_typed_error_not_crash(self, tmp_path):
+        main = textwrap.dedent(
+            """
+            from app.extensions_platform.sdk import ToolExtensionSpec
+
+
+            def _weird() -> dict:
+                return {"obj": object()}
+
+
+            def _noop() -> dict:
+                return {}
+
+
+            def activate(ctx):
+                for name, func in (("weird", _weird), ("noop", _noop)):
+                    ctx.register_tool(ToolExtensionSpec(
+                        name=name, description=name, func=func,
+                        side_effect="pure", deterministic=True,
+                        parameters={"type": "object", "properties": {}},
+                    ))
+            """
+        )
+        pack = _make_pack(tmp_path, main, tools=[
+            {"name": "weird", "description": "w"},
+            {"name": "noop", "description": "n"},
+        ])
+        pipe = _Pipe()
+        server = WorkerServer(pack, *pipe.server_streams())
+        server._ctx = _boot_ctx_only(pack, grants=[])
+        pipe.host_send({"type": "call", "id": "w1", "tool": "acme_weird", "args": {}})
+        server.serve_once()
+        frame = pipe.host_recv()
+        assert frame["ok"] is False
+        assert frame["error"]["code"] == "worker_result_invalid"
