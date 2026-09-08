@@ -48,6 +48,10 @@ _DATA_FIT_SCORE = {
     "unknown": 0.5,
 }
 
+#: 公共别名（防副本漂移，同 workflow_schema.DENOMINATOR_FIELD_HINTS 前例）：
+#: 方法资格引擎（workflow_v4.methodology）消费同一映射，不复制词表。
+DATA_FIT_SCORE = _DATA_FIT_SCORE
+
 #: 维度权重（确定性；科学合法与数据贴合主导，意图与质量次之）。
 _DIMENSION_WEIGHTS = {
     "semantic_fit": 0.20,
