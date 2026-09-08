@@ -3,15 +3,15 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**1**
-- 内容指纹：`4f7dc1ee110e273b…`
+- 内容指纹：`298c92afb65202d8…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 282 | 255 | 178 |
-| algorithms | 175 | 145 | 37 |
-| capabilities | 115 | 68 | 11 |
+| tools | 283 | 256 | 178 |
+| algorithms | 176 | 146 | 37 |
+| capabilities | 116 | 69 | 11 |
 | artifact_types | 21 | 21 | 0 |
 | recipes | 164 | 164（conformance 由 workflow 闸保护） | 0 |
 
@@ -25,7 +25,7 @@
 | memory_class | 100% | 95% | PASS（缺 0） |
 | capabilities | 61% | 60% | PASS（缺 111） |
 
-**gate: PASS**（`total=282`）
+**gate: PASS**（`total=283`）
 
 ## Findings（派生线索，非缺陷判定）
 

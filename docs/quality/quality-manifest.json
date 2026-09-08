@@ -339,6 +339,32 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "areal_interpolation"
+   ],
+   "category": "interpolation",
+   "conformance_tests": [
+    "tests/unit/lib/test_dasymetric_reallocation.py::test_exact_proportional_split_on_square",
+    "tests/unit/lib/test_dasymetric_reallocation.py::test_mass_conservation_and_fragment_count",
+    "tests/unit/lib/test_dasymetric_reallocation.py::test_zero_weight_falls_back_to_area_proportional",
+    "tests/unit/lib/test_dasymetric_reallocation.py::test_missing_value_field_rejected",
+    "tests/unit/lib/test_dasymetric_reallocation.py::test_deterministic_repeat",
+    "tests/unit/lib/test_dasymetric_reallocation.py::test_negative_values_clamped"
+   ],
+   "deterministic": true,
+   "id": "interpolation.dasymetric",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [
+    "tests/unit/lib/test_dasymetric_reallocation.py",
+    "tests/unit/test_model_library.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "variogram_analysis"
    ],
    "category": "interpolation",
@@ -4122,6 +4148,8 @@
     "tests/cartography/test_component_variants_v4.py",
     "tests/perf/test_runtime_v2_perf_contracts.py",
     "tests/test_network_temporal_harness.py",
+    "tests/unit/extensions_platform/test_host_lifecycle.py",
+    "tests/unit/extensions_platform/test_sdk_projections.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
     "tests/unit/gis_harness/test_harness_tools.py",
     "tests/unit/gis_harness/test_intent.py",
@@ -4206,6 +4234,20 @@
     "tests/unit/gis_harness/test_model_injection.py",
     "tests/unit/gis_harness/test_planner.py",
     "tests/unit/test_semantic_gis_intelligence.py"
+   ]
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "general",
+   "id": "areal_interpolation",
+   "producer_algorithms": [
+    "interpolation.dasymetric"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": [
+    "tests/unit/lib/test_dasymetric_reallocation.py"
    ]
   },
   {
@@ -6023,12 +6065,12 @@
   }
  ],
  "counts": {
-  "algorithms": 175,
+  "algorithms": 176,
   "artifact_types": 21,
-  "capabilities": 115,
+  "capabilities": 116,
   "findings": 226,
   "recipes": 164,
-  "tools": 282
+  "tools": 283
  },
  "findings": [
   {
@@ -7388,7 +7430,7 @@
    "subject": "webgis_world_state"
   }
  ],
- "fingerprint": "4f7dc1ee110e273b544da87e7419cbbebf26ff95adc33512c378ad02fa7884ad",
+ "fingerprint": "298c92afb65202d8a23810b26e9808aa4f09ee9b0b821dfeae14aa8cbf594d13",
  "gate": {
   "fields": {
    "capabilities": {
@@ -7491,7 +7533,7 @@
    }
   },
   "pass": true,
-  "total": 282
+  "total": 283
  },
  "manifest_version": 1,
  "recipes": {
@@ -8474,6 +8516,33 @@
     "空间关联"
    ],
    "tests": [],
+   "tier": 2
+  },
+  {
+   "capabilities": [
+    "areal_interpolation"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "medium",
+   "memory_class": "medium",
+   "name": "dasymetric_reallocation",
+   "requires_confirmation": false,
+   "scale_class": "medium",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "分区密度",
+    "dasymetric",
+    "面插值",
+    "重分配",
+    "控制要素"
+   ],
+   "tests": [
+    "tests/unit/lib/test_dasymetric_reallocation.py",
+    "tests/unit/test_dasymetric_reallocation_unit.py",
+    "tests/unit/test_model_library.py"
+   ],
    "tier": 2
   },
   {
@@ -10702,6 +10771,7 @@
    "tags": [],
    "tests": [
     "tests/test_event_loop_offload_425.py",
+    "tests/unit/extensions_platform/test_ogc_stac_hardening.py",
     "tests/unit/test_adapter_contract_v2.py",
     "tests/unit/test_cloud_geospatial_adapters.py",
     "tests/unit/test_data_fabric_catalog_sync.py",

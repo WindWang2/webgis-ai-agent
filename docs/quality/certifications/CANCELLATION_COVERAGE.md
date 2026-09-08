@@ -5,13 +5,14 @@
 > cancellable）；行为认证：tests/quality/
 > test_cancellation_resource_certification.py。
 
-- 覆盖：**14/48** 个重计算文件含取消检查点。
+- 覆盖：**14/49** 个重计算文件含取消检查点。
 
 | file | cancellation sites | loop sites（粗计） | status |
 |---|---|---|---|
 | app/lib/geo_analysis/__init__.py | 0 | 0 | no-checkpoints |
 | app/lib/geo_analysis/_vector.py | 0 | 6 | no-checkpoints |
 | app/lib/geo_analysis/aggregation.py | 2 | 26 | certified |
+| app/lib/geo_analysis/dasymetric.py | 0 | 11 | no-checkpoints |
 | app/lib/geo_analysis/density.py | 0 | 23 | no-checkpoints |
 | app/lib/geo_analysis/evidence.py | 0 | 1 | no-checkpoints |
 | app/lib/geo_analysis/geometry_ops.py | 2 | 11 | certified |
@@ -47,7 +48,7 @@
 | app/lib/geo_analysis/trend_surface.py | 0 | 11 | no-checkpoints |
 | app/lib/geo_raster/__init__.py | 0 | 1 | no-checkpoints |
 | app/lib/geo_raster/cog.py | 0 | 1 | no-checkpoints |
-| app/lib/geo_raster/env.py | 0 | 2 | no-checkpoints |
+| app/lib/geo_raster/env.py | 0 | 3 | no-checkpoints |
 | app/lib/geo_raster/fingerprint.py | 0 | 4 | no-checkpoints |
 | app/lib/geo_raster/reader.py | 0 | 10 | no-checkpoints |
 | app/lib/geo_raster/remote.py | 0 | 3 | no-checkpoints |
