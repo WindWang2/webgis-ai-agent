@@ -174,6 +174,7 @@ def build_object_manifest(
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "kind": kind,
         "owner_scope": scope,
+        "environment_fingerprint": lakehouse_environment_fingerprint(),
         "content_sha256": root,
         "byte_size": total,
         "content_blobs": [
@@ -201,6 +202,27 @@ def build_object_manifest(
 
 
 # ── 发布 / 解析 / 物化（唯一经 BlobStore 的通道）────────────────────────
+
+
+def lakehouse_environment_fingerprint() -> str:
+    """产出环境的确定性指纹（canonical sha256，有界投影）。
+
+    参与可复现性身份：同输入+同参数在不同运行时环境下产出**不同**的
+    DataObject id（诚实 —— 重跑可复现性判定因此可比较环境）。只取版本
+    事实（python/geo 栈），绝不包含路径、主机名、时间或凭据。
+    """
+    import sys
+
+    facts: Dict[str, str] = {"python": "{}.{}.{}".format(*sys.version_info[:3])}
+    for name in ("numpy", "rasterio", "pyarrow", "zarr", "geopandas", "shapely"):
+        try:
+            module = __import__(name)
+            facts[name] = str(getattr(module, "__version__", "") or "")
+        except Exception:  # noqa: BLE001 — 未安装的可选依赖缺席是事实
+            facts[name] = ""
+    from app.lib.data.fingerprints import canonical_dumps, sha256_hex
+
+    return sha256_hex(canonical_dumps(facts))
 
 
 def _store():
