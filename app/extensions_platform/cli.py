@@ -26,6 +26,9 @@ trusted-code boundary 而非沙箱——CLI 输出不得使用 "sandbox" 宣传�
     package   对扩展包做内容签名（写 signature.json；绝不输出密钥材料）
     verify    按受信发布者验签（exit 0 = verified/missing，1 = 其它裁决）
     sbom      打印扩展包的确定性 SBOM（文件清单/imports/依赖/secret 扫描）
+    certify   认证套件 —— 注意：**会执行扩展代码**（lifecycle smoke 真实
+              activate→health→deactivate；worker 包拉起真实子进程），
+              只对受信内容运行
 
 main(argv) 返回退出码：0 成功（list/doctor/catalog 的「发现问题」不算
 失败），1 校验失败 / 目标不存在 / 设置解析失败，2 用法错误（scaffold
@@ -1084,7 +1087,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sbom.add_argument("extension_id", help="扩展 id（<namespace>.<name>）")
     p_sbom.set_defaults(handler=_cmd_sbom)
     p_certify = sub.add_parser(
-        "certify", parents=[common], help="扩展认证套件（契约/供应链/依赖/生命周期 smoke）"
+        "certify",
+        parents=[common],
+        help="扩展认证套件（会执行扩展代码：lifecycle smoke；只对受信内容运行）",
     )
     p_certify.add_argument("extension_id", help="扩展 id（<namespace>.<name>）")
     p_certify.set_defaults(handler=_cmd_certify)

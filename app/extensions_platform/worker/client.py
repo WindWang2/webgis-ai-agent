@@ -221,17 +221,39 @@ class WorkerProcess:
         )
 
     def _stderr_tail(self, limit: int = 400) -> str:
+        """崩溃留痕抽取。Round-1 审查 CRITICAL-1 修复：必须先 killpg 并有界
+        等待死亡，再以 select+os.read 非阻塞抽取——此前的无界阻塞
+        ``stderr.read()`` 会被「关 stdout 但存活并握住 stderr」的 worker
+        永久挂起宿主线程（击穿崩溃隔离声明）。"""
+        import select
+        import time as _time
+
         proc = self._proc
         if proc is None or proc.stderr is None:
             return ""
         try:
-            proc.stderr.flush()
+            if proc.poll() is None:
+                if hasattr(os, "killpg"):
+                    os.killpg(os.getpgid(proc.pid), 9)
+                else:
+                    proc.kill()
+                proc.wait(timeout=2)
+        except Exception:  # noqa: BLE001 - 进程已死/权限/等待超时都不阻断留痕
+            pass
+        data = b""
+        try:
+            fd = proc.stderr.fileno()
+            deadline = _time.monotonic() + 0.5
+            while _time.monotonic() < deadline and len(data) < 65536:
+                ready, _, _ = select.select([fd], [], [], 0.1)
+                if not ready:
+                    break
+                chunk = os.read(fd, 8192)
+                if not chunk:
+                    break
+                data += chunk
         except Exception:  # noqa: BLE001
             pass
-        try:
-            data = proc.stderr.read() or b""
-        except Exception:  # noqa: BLE001
-            data = b""
         return data.decode("utf-8", "replace")[-limit:].strip()
 
     # ── 调用面 ───────────────────────────────────────────────────────

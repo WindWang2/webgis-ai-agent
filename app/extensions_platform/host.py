@@ -635,7 +635,20 @@ class ExtensionHost:
 
         record.state = ExtensionState.LOADING
         if record.manifest.is_worker_mode:
-            return self._activate_worker(record, warnings)
+            try:
+                return self._activate_worker(record, warnings)
+            except ExtensionPlatformError as exc:
+                return self._fail_worker_activation(record, warnings, exc.diagnostic)
+            except Exception as exc:  # noqa: BLE001 - spawn/pipe OSError 等兜底
+                return self._fail_worker_activation(
+                    record,
+                    warnings,
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.ENTRY_POINT_FAILED,
+                        f"worker startup failed: {type(exc).__name__}: {exc}",
+                        extension_id=extension_id,
+                    ),
+                )
         ledger = ProjectionLedger(extension_id=extension_id)
         grants = grants_for(extension_id, self._policy.grants)
         context = ExtensionContext(
@@ -957,6 +970,14 @@ class ExtensionHost:
             )
         record.worker = worker
         record.ledger = ledger
+        effective_flags = self._effective_flags(manifest)
+        record.satisfied_dependencies = frozenset(
+            dep.id
+            for dep in manifest.dependencies
+            if not (
+                dep.feature_flag and not effective_flags.get(dep.feature_flag, False)
+            )
+        )
         record.fingerprint_at_activation = record.fingerprint
         record.diagnostics = warnings
         record.state = ExtensionState.DEGRADED if warnings else ExtensionState.ACTIVE
@@ -1017,11 +1038,19 @@ class ExtensionHost:
                                 extension_id=eid,
                             )
                         )
-                    return record.worker.call(
-                        projected_tool, {"request": dict(request or {})},
-                        timeout=record.manifest.execution.call_timeout_s
-                        if record.manifest.execution else 30.0,
-                    )
+                    try:
+                        return record.worker.call(
+                            projected_tool, {"request": dict(request or {})},
+                            timeout=record.manifest.execution.call_timeout_s
+                            if record.manifest.execution else 30.0,
+                        )
+                    except ExtensionPlatformError as exc:
+                        if exc.diagnostic.code in (
+                            DiagnosticCode.WORKER_CRASHED,
+                            DiagnosticCode.WORKER_CALL_TIMEOUT,
+                        ):
+                            self._on_worker_death(record, exc.diagnostic)
+                        raise
             ctx = record.context
             if ctx is None:
                 continue
@@ -1161,6 +1190,10 @@ class ExtensionHost:
         diagnostics: list[ExtensionDiagnostic] = []
         if record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
             diagnostics.extend(self.deactivate(extension_id))
+            # Round-1 MINOR-2：deactivate 被拒（in-flight/依赖者活跃）时
+            # 不得带病置 DISABLED（投影仍在，DISABLED 语义失真）。
+            if any(d.severity is DiagnosticSeverity.ERROR for d in diagnostics):
+                return diagnostics
         if record.state in (ExtensionState.QUARANTINED,):
             return [
                 ExtensionDiagnostic.warning(
@@ -1241,6 +1274,9 @@ class ExtensionHost:
                 ]
             record.worker.shutdown()
             record.worker = None
+            # Round-1 MINOR-1：优雅停用清零崩溃计数（「连续」= 跨越一次
+            # 干净关停才中断；崩溃路径 worker 已死、不清零，quarantine 可达）。
+            record.worker_crash_count = 0
         if record.module is not None:
             deactivate_fn = getattr(record.module, "deactivate", None)
             if callable(deactivate_fn):

@@ -468,6 +468,17 @@ class GisExtensionManifest(BaseModel):
                     f"execution.mode=worker model providers {streaming_providers} "
                     "cannot declare the 'streaming' capability (single-frame RPC)"
                 )
+        # Round-1 MINOR-6（不限 worker）：工具 <pid>_invoke 与 provider <pid>
+        # 都投影为 <ns>_<pid>_invoke —— 跨节投影名碰撞在解析期拒绝。
+        invoke_tools = {t.name for t in self.tools}
+        colliding = sorted(
+            m.id for m in self.model_providers if f"{m.id}_invoke" in invoke_tools
+        )
+        if colliding:
+            raise ValueError(
+                f"model providers {colliding} project to invoke tools whose names "
+                "collide with declared tools (<pid>_invoke); rename the tool or provider"
+            )
 
     def declared_type_set(self) -> frozenset[str]:
         """由声明节推导的扩展类型（extension_types 允许缺省时兜底）。"""

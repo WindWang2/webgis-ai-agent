@@ -11,8 +11,10 @@ Hard contract of the CLI:
   `ToolRegistry()`, so the live server's registries are never touched.
   The V2 commands write only where documented: `package` writes
   `signature.json` into the given pack directory (that is its purpose);
-  `verify` / `sbom` / `certify` are read-only. No command prints key or
-  secret material.
+  `verify` / `sbom` are read-only. `certify` **executes extension code**
+  (its lifecycle smoke performs a real activate → health → deactivate, and
+  worker packs spawn a real subprocess) — only run it on packs you trust.
+  No command prints key or secret material.
 - Default output is human-readable text; `--json` makes stdout **pure
   JSON** (trust-boundary notices become JSON fields), errors go to stderr.
 - Exit codes: `0` success (findings reported by `list` / `doctor` /

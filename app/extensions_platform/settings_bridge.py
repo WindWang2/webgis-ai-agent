@@ -128,7 +128,24 @@ def parse_network_allow(raw: str) -> dict[str, frozenset[str]]:
                     f"EXTENSION_NETWORK_ALLOW entry {chunk!r} lacks extension id",
                 )
             )
-        hosts = frozenset(h.strip().lower() for h in hosts_csv.split(",") if h.strip())
+        # 先按原始形态拒绝非法条目（path/space/前导冒号），再把 host:port
+        # 规约为 host 部分（broker 按 URL hostname 匹配，端口维度无法强制；
+        # 静默保留 :port 会让条目永不命中——Round-1 MINOR-5 footgun）。
+        hosts = set()
+        for raw in hosts_csv.split(","):
+            entry = raw.strip().lower()
+            if not entry:
+                continue
+            if "/" in entry or " " in entry or entry.startswith(":"):
+                raise ExtensionPlatformError(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.MANIFEST_PARSE_FAILED,
+                        f"EXTENSION_NETWORK_ALLOW host {entry!r} is not a plain host "
+                        "(use host or host:port, or '*' for all)",
+                    )
+                )
+            hosts.add(entry.partition(":")[0] or entry)
+        hosts = frozenset(hosts)
         if not hosts:
             raise ExtensionPlatformError(
                 ExtensionDiagnostic.error(

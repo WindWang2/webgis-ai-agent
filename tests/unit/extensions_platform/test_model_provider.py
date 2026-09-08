@@ -60,7 +60,7 @@ class TestModelProviderProjection:
         host, registry = ml_host
         assert registry.has("extdemoml_wordfreq_invoke")
         result = registry._tools["extdemoml_wordfreq_invoke"](
-            {"text": "a b a c a", "top_k": 2}
+            text="a b a c a", top_k=2
         )
         assert result["final"]["total_tokens"] == 5
         assert result["final"]["top_k"] == [{"token": "a", "count": 3}, {"token": "b", "count": 1}]
@@ -78,7 +78,7 @@ class TestModelProviderProjection:
 
     def test_secret_provisioned_and_never_echoed(self, ml_host):
         host, registry = ml_host
-        result = registry._tools["extdemoml_wordfreq_invoke"]({"text": "q"})
+        result = registry._tools["extdemoml_wordfreq_invoke"](text="q")
         # 凭据值不进入结果面（只参与 nonce 派生）。
         assert "demo-123456" not in str(result)
 
@@ -97,7 +97,7 @@ class TestModelProviderProjection:
         host.discover()
         assert not has_errors(host.activate(EXTENSION_ID))
         with pytest.raises(Exception, match="not provisioned"):
-            registry._tools["extdemoml_wordfreq_invoke"]({"text": "q"})
+            registry._tools["extdemoml_wordfreq_invoke"](text="q")
         host.reset()
 
     def test_inventory_reflects_declaration(self, ml_host):

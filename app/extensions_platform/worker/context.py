@@ -214,8 +214,13 @@ class WorkerContext:
         owner_ctx = self
         invoke_fn = spec.invoke_fn
 
-        def _invoke(request: dict | None = None) -> Any:
-            return aggregate_stream_events(invoke_fn(dict(request or {}), owner_ctx))
+        def _invoke(**kwargs: Any) -> Any:
+            # 与 in-process 相同的扁平/包膜双形态规约（Round-1 CRITICAL-2）。
+            if set(kwargs) == {"request"} and isinstance(kwargs["request"], dict):
+                req = dict(kwargs["request"])
+            else:
+                req = dict(kwargs)
+            return aggregate_stream_events(invoke_fn(req, owner_ctx))
 
         tool_spec = ToolExtensionSpec(
             name=local_name,

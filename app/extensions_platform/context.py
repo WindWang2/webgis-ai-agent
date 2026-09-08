@@ -565,8 +565,15 @@ class ExtensionContext:
         invoke_fn = spec.invoke_fn
         owner_ctx = self
 
-        def _model_invoke(request: dict | None = None, **_kwargs: Any) -> Any:
-            req = dict(request or {})
+        def _model_invoke(**kwargs: Any) -> Any:
+            # 真实 agent 派发约定是 tool_func(**arguments)（扁平 kwargs）。
+            # 兼容两种形态：显式 ``request={...}`` 单参，或全部扁平 kwargs
+            # 即请求本身（Round-1 审查 CRITICAL-2：此前扁平 kwargs 被静默
+            # 丢弃，provider 拿到空请求返回似是而非的结果）。
+            if set(kwargs) == {"request"} and isinstance(kwargs["request"], dict):
+                req = dict(kwargs["request"])
+            else:
+                req = dict(kwargs)
             result = invoke_fn(req, owner_ctx)
             return aggregate_stream_events(result)
 
