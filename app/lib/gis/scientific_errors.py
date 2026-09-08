@@ -167,3 +167,32 @@ class ResourceScaleMismatch(ScientificError):
         out["estimated"] = self.estimated
         out["limit"] = self.limit
         return out
+
+
+class NumericalInstability(ScientificError):
+    """数值不稳定：矩阵非正定 / 病态越过稳定化能力 / 变换退化。
+
+    语义边界：实现层的 ridge 稳定化、方差钳制等**可披露的**自救不 raise
+    （走 degraded/disclosure 通道）；只有自救后仍不能产出科学有效结果时
+    才用本错误（如协方差矩阵半正定校验失败）。
+    """
+
+    scientific_code = "NUMERICAL_INSTABILITY"
+
+    def _default_hint(self) -> str:
+        return (
+            "reduce ill-conditioning (deduplicate points, rescale units, "
+            "increase nugget) or choose a stabler method"
+        )
+
+
+class ConvergenceFailure(ScientificError):
+    """迭代/优化过程未收敛（如嵌套变异函数结构拟合不收敛）。"""
+
+    scientific_code = "CONVERGENCE_FAILURE"
+
+    def _default_hint(self) -> str:
+        return (
+            "simplify the model (fewer structures), widen parameter bounds, "
+            "or provide more informative sampling"
+        )

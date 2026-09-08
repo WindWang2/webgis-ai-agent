@@ -121,20 +121,13 @@ def test_crs_mismatch_metric_second_order_statistics_reject_degrees(declared_crs
     _assert_scientific_reject(rq.value)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "KNOWN-GAP #1（CRS 类）：不可解析 CRS（EPSG:99999999）在 "
-        "to_utm_gdf_with_note 内以裸 pyproj.CRSError 逃逸（geopandas 构造器），"
-        "未折叠成 scientific_errors.InvalidCRS —— dispatch 层变 TOOL_ERROR，"
-        "丢 correction_hint 科学通道。修复（在统计入口收口为 InvalidCRS）后本测试自动转绿。"
-    ),
-)
 def test_crs_mismatch_unparseable_crs_is_typed_scientific_reject():
     """不可解析 CRS 必须落在科学词表内（InvalidCRS），而不是裸三方异常。
 
-    今天实际逃逸的是 pyproj 的 CRSError（geopandas 构造器内部抛出），
-    不是 InvalidCRS —— 本测试因此 xfail（见模块 docstring KNOWN-GAP #1）。
+    science-v4 W2 收口（原 KNOWN-GAP #1，xfail 已转正）：to_utm_gdf_with_note
+    在 GeoDataFrame 构造前校验声明 CRS 可解析性，pyproj.CRSError 在边界
+    折叠成 InvalidCRS（ValueError 系）—— dispatch 保留 scientific_code 与
+    correction_hint 科学通道。
     """
     from app.lib.gis.scientific_errors import InvalidCRS
     from app.lib.geo_analysis.statistics import moran_i_narrated

@@ -145,22 +145,31 @@ def _read_terrain_window(
     """validate → 有界读取（RasterResourceGuard 护栏）→ (数组, transform, crs, nodata, bounds)。"""
     path = validate_data_path(raster_path)
     import rasterio
+    from rasterio.errors import RasterioIOError
 
-    with rasterio_env():
-        with rasterio.open(path) as src:
-            RasterResourceGuard.check_grid(src.width, src.height, num_bands=src.count)
-            _check_full_read_budget(src)
-            arr = src.read(1).astype("float64")
-            transform = tuple(float(v) for v in src.transform)[:6]
-            crs = str(src.crs) if src.crs is not None else ""
-            nodata = (
-                float(nodata_override) if nodata_override is not None
-                else (float(src.nodata) if src.nodata is not None else None)
-            )
-            bounds = (
-                float(src.bounds.left), float(src.bounds.bottom),
-                float(src.bounds.right), float(src.bounds.top),
-            )
+    # science-v4 W2：裸 RasterioIOError 经 dispatch 变 TOOL_ERROR 丢修正
+    # 提示 —— 与 lib reader（geo_raster/reader.py RasterReaderError）同款
+    # ValueError 包装，保住科学错误通道。
+    from app.lib.geo_raster.reader import RasterReaderError
+
+    try:
+        with rasterio_env():
+            with rasterio.open(path) as src:
+                RasterResourceGuard.check_grid(src.width, src.height, num_bands=src.count)
+                _check_full_read_budget(src)
+                arr = src.read(1).astype("float64")
+                transform = tuple(float(v) for v in src.transform)[:6]
+                crs = str(src.crs) if src.crs is not None else ""
+                nodata = (
+                    float(nodata_override) if nodata_override is not None
+                    else (float(src.nodata) if src.nodata is not None else None)
+                )
+                bounds = (
+                    float(src.bounds.left), float(src.bounds.bottom),
+                    float(src.bounds.right), float(src.bounds.top),
+                )
+    except RasterioIOError as exc:
+        raise RasterReaderError(f"cannot open raster {path!r}: {exc}") from exc
     return arr, transform, crs, nodata, bounds
 
 
@@ -256,9 +265,16 @@ def _persist_filled_dem(
     }
     if crs:
         profile["crs"] = crs
-    with rasterio_env():
-        with rasterio.open(target, "w", **profile) as dst:
-            dst.write(filled, 1)
+    from rasterio.errors import RasterioIOError
+
+    from app.lib.geo_raster.reader import RasterReaderError
+
+    try:
+        with rasterio_env():
+            with rasterio.open(target, "w", **profile) as dst:
+                dst.write(filled, 1)
+    except RasterioIOError as exc:
+        raise RasterReaderError(f"cannot write filled raster {target!r}: {exc}") from exc
     # 绝对路径：validate_data_path 对 data_dir 内绝对路径放行，
     # 下游工具可直接把该返回值作为 raster_path 消费。
     return target

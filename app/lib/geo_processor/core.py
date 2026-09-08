@@ -462,6 +462,27 @@ def to_utm_gdf_with_note(
         )
 
     original_crs_explicit = source_crs
+    # science-v4 W2（KNOWN-GAP #1 收口）：不可解析的声明 CRS 此前从
+    # GeoDataFrame 构造器以裸 pyproj.CRSError（RuntimeError 系）逃逸，
+    # dispatch 的 ValueError 映射接不住 → 丢 scientific_code/correction_hint。
+    # 在边界折叠成 typed InvalidCRS（ValueError 系，走科学错误通道）。
+    if source_crs:
+        from pyproj import CRS
+        from pyproj.exceptions import CRSError
+
+        from app.lib.gis.scientific_errors import InvalidCRS
+
+        try:
+            CRS.from_user_input(source_crs)
+        except CRSError as exc:
+            raise InvalidCRS(
+                f"declared CRS {source_crs!r} cannot be parsed by pyproj",
+                correction_hint=(
+                    "use a resolvable CRS identifier (EPSG:xxxx, WKT or "
+                    "PROJJSON); omit the crs member only when coordinates "
+                    "truly are WGS84"
+                ),
+            ) from exc
     gdf = gpd.GeoDataFrame(rows, crs=source_crs or "EPSG:4326")
     gdf["geometry"] = gdf.geometry.make_valid()
     gdf._original_crs = original_crs_explicit or (str(gdf.crs) if gdf.crs else "EPSG:4326")
