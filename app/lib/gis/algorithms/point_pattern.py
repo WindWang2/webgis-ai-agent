@@ -219,7 +219,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ],
             limitations=[
                 "g 由 K 的离散导数间接估计，r 网格粒度限制分辨率",
-                "Epanechnikov 平滑带宽敏感：小带宽噪声大、大带宽抹平峰值",
+                "Epanechnikov 平滑带宽敏感：小带宽噪声大、大带宽抹平峰值"
+                "（< 半个 r 步宽类型化拒绝 DegenerateData——R10-guard，杜绝 NaN 进输出）",
                 "O(n²) 成对统计，上限 2 万点（超出诚实拒绝）",
             ],
             crs_class="GEOGRAPHIC_OK",

@@ -66,6 +66,26 @@ class NatureResourceAnalyzer:
 
         return {"source": "unknown"}
 
+    # science-v3 审计（HIGH）：按波段数位置猜测（含 S2 预设）是
+    # 「位置猜波段」风险集中点 —— guess/preset 来源的波段在 strict 模式
+    # 下类型化拒绝，非 strict 模式必须以 warning 强制披露。
+    _GUESS_SOURCES = ("guess-", "preset-")
+
+    @classmethod
+    def _guessed_roles(
+        cls, detected: Dict[str, int], explicit: Dict[str, Optional[int]],
+        required_roles,
+    ) -> Dict[str, int]:
+        """必需角色中由位置猜测填充（且调用方未显式给出）的 {role: band}。"""
+        source = str(detected.get("source", ""))
+        if not source.startswith(cls._GUESS_SOURCES):
+            return {}
+        return {
+            role: detected[role]
+            for role in required_roles
+            if role in detected and not explicit.get(role)
+        }
+
     @classmethod
     def calculate_index(
         cls,
@@ -77,12 +97,18 @@ class NatureResourceAnalyzer:
         blue_band: Optional[int] = None,
         swir_band: Optional[int] = None,
         output_dir: Optional[str] = None,
+        strict_band_semantics: bool = True,
     ) -> Dict:
         """窗口化计算本地 GeoTIFF 的光谱指数（NDVI/NDWI/NBR/EVI）并落盘。
 
         Contract: 失败时返回 {"success": False, "error": "..."}，不抛异常。
         输出 float32 / nodata -9999（#537 头/字节一致契约）；产物带
         descriptor（写者已知，零重开）、内容指纹与 quality evidence。
+
+        strict_band_semantics（science-v3 审计 HIGH 修复，默认 True）：
+        波段角色不能靠波段数位置猜测 —— 缺省角色若只能由 guess/preset
+        来源填充，strict 模式类型化拒绝（要求显式传波段索引）；False 时
+        放行但强制在 payload 与 quality_evidence 中披露 guess 来源。
         """
         import rasterio
 
@@ -117,6 +143,29 @@ class NatureResourceAnalyzer:
         try:
             with rasterio.open(resolved_tif_path) as src:
                 detected = cls.auto_detect_bands(src)
+
+            explicit_args = {
+                "red": red_band, "nir": nir_band, "green": green_band,
+                "blue": blue_band, "swir1": swir_band,
+            }
+            required_roles = INDEX_BAND_ROLES[idx]
+            # science-v3 审计 HIGH：guess/preset 来源的角色（调用方未显式
+            # 传参）在 strict 模式下类型化拒绝 —— 位置猜波段不再静默放行。
+            guessed = cls._guessed_roles(detected, explicit_args, required_roles)
+            if guessed and strict_band_semantics:
+                return {
+                    "success": False,
+                    "error": (
+                        f"波段角色 {sorted(guessed)} 来自位置猜测"
+                        f"（{detected.get('source')}），已按 strict 波段语义拒绝。"
+                        f"请显式指定 {'/'.join(sorted(guessed))} 波段索引，"
+                        "或确认影像波段布局后重试（strict_band_semantics=False "
+                        "可放行但结果会携带 guess 披露）。"
+                    ),
+                    "error_type": "band_semantics_guess_rejected",
+                    "guessed_roles": guessed,
+                    "detected_bands": detected,
+                }
 
             # 显式波段参数优先；缺省按角色从探测结果/预设取。
             band_map = {
@@ -161,7 +210,19 @@ class NatureResourceAnalyzer:
 
             finite = [v for v in (stats.get("min"), stats.get("max"), stats.get("mean"))
                       if v is not None]
-            return {
+            quality_evidence = {
+                "algorithm": res["algorithm"],
+                "parameters": {"band_map": res["band_map"]},
+                **input_grid,
+                "output_width": res["descriptor"].width,
+                "output_height": res["descriptor"].height,
+                "output_crs": crs,
+                "resampled": False,
+                "reprojected": False,
+                "valid_pixel_count": stats.get("valid_pixel_count"),
+                "nodata_pixel_count": stats.get("nodata_pixel_count"),
+            }
+            payload = {
                 "success": True,
                 "result_path": res["output_path"],
                 "filename": filename,
@@ -178,19 +239,18 @@ class NatureResourceAnalyzer:
                 "valid_range": list(valid_range) if valid_range else None,
                 "content_fingerprint": res["content_fingerprint"],
                 "descriptor": res["descriptor"].to_dict(),
-                "quality_evidence": {
-                    "algorithm": res["algorithm"],
-                    "parameters": {"band_map": res["band_map"]},
-                    **input_grid,
-                    "output_width": res["descriptor"].width,
-                    "output_height": res["descriptor"].height,
-                    "output_crs": crs,
-                    "resampled": False,
-                    "reprojected": False,
-                    "valid_pixel_count": stats.get("valid_pixel_count"),
-                    "nodata_pixel_count": stats.get("nodata_pixel_count"),
-                },
+                "quality_evidence": quality_evidence,
             }
+            if guessed:
+                # 非 strict 放行路径：guess 来源必须强制披露（quality
+                # evidence 的 warnings 是下游可机器消费的通道）。
+                warnings = [
+                    f"波段角色 {sorted(guessed)} 来自位置猜测"
+                    f"（{detected.get('source')}）：结果科学有效性依赖猜测正确性。"
+                ]
+                payload["band_semantics_warnings"] = warnings
+                quality_evidence["warnings"] = warnings
+            return payload
         except Exception as e:
             logger.error(f"{index_type.upper()} calculation failed: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
@@ -201,7 +261,8 @@ class NatureResourceAnalyzer:
         tif_path: str,
         red_band: Optional[int] = None,
         nir_band: Optional[int] = None,
-        output_dir: Optional[str] = None
+        output_dir: Optional[str] = None,
+        strict_band_semantics: bool = True,
     ) -> Dict:
         """计算归一化植被指数 (NDVI)：(NIR - Red) / (NIR + Red)。
 
@@ -212,4 +273,5 @@ class NatureResourceAnalyzer:
         return cls.calculate_index(
             tif_path, "ndvi",
             red_band=red_band, nir_band=nir_band, output_dir=output_dir,
+            strict_band_semantics=strict_band_semantics,
         )

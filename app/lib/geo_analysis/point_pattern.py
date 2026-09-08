@@ -721,7 +721,24 @@ def g_f_j_functions(
 def _pcf_from_k(k_vals: np.ndarray, r_grid: np.ndarray,
                 bandwidth: float) -> np.ndarray:
     """g(r) = K′(r)/(2πr)：K 的离散导数（np.gradient，端点单侧）+
-    r 网格上的 Epanechnikov 平滑（权重 0.75·(1−u²)，|u|≤1）。"""
+    r 网格上的 Epanechnikov 平滑（权重 0.75·(1−u²)，|u|≤1）。
+
+    R10-guard（audit 03 §4 P1）：``bandwidth`` 小于半个 r 步宽时平滑窗
+    连相邻网格点都盖不住（退化为逐格原始导数），bandwidth≤0 时
+    Epanechnikov 权重全 0 → 0/0=NaN 直入 JSON——在唯一入口处类型化
+    拒绝（DegenerateData，ValueError 子类），杜绝 NaN 进输出。
+    """
+    r_grid = np.asarray(r_grid, dtype=float)
+    step = float(r_grid[1] - r_grid[0]) if r_grid.size > 1 else 0.0
+    if not bandwidth > 0 or (step > 0 and bandwidth < 0.5 * step):
+        raise DegenerateData(
+            f"Epanechnikov bandwidth ({bandwidth}) must be >= half the r "
+            f"step width ({0.5 * step if step > 0 else 'n/a'} m) — smaller "
+            "windows leave the smoothing weights degenerate (NaN risk)",
+            correction_hint=(
+                "pass bandwidth=0 (auto: one r step width) or a value "
+                f">= 0.5 * step (step={step:.6g} m)"),
+        )
     dk = np.gradient(k_vals, r_grid)
     g_raw = dk / (2.0 * np.pi * r_grid)
     u = (r_grid[:, None] - r_grid[None, :]) / bandwidth

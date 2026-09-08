@@ -156,10 +156,34 @@ INDEX_FAMILY: Dict[str, SpectralIndexSpec] = {
             (-1.0, 1.0), "",
         ),
         SpectralIndexSpec(
-            "ndwi", ("nir", "swir1"),
+            # NDWI 拆名（审计 §3.2）：本 typed 层的裸 `ndwi` 历史上指 Gao
+            # (1996) 植被水分，与在线/本地路径（band_math.INDEX_FORMULAS、
+            # raster_windowed.INDEX_BAND_ROLES）的 McFeeters (1996) 开放水体
+            # 同名异式。现统一：裸 `ndwi` = McFeeters 开放水体（三路径同名
+            # 同式）；Gao 式一律叫 `ndwi_gao`；`ndwi_water` 是 McFeeters 版
+            # 的显式别名。两式**不可互换**（波段角色都不同：green/nir vs
+            # nir/swir1）。
+            "ndwi", ("green", "nir"),
+            lambda green, nir: _safe_div(green - nir, green + nir),
+            "(Green − NIR) / (Green + NIR)  [开放水体，McFeeters 1996；"
+            "与 ndwi_gao 植被水分不可互换]",
+            (-1.0, 1.0), "mcfeeters1996",
+        ),
+        SpectralIndexSpec(
+            "ndwi_gao", ("nir", "swir1"),
             lambda nir, swir1: _safe_div(nir - swir1, nir + swir1),
-            "(NIR − SWIR1) / (NIR + SWIR1)  [植被水分]",
+            "(NIR − SWIR1) / (NIR + SWIR1)  [植被液态水，Gao 1996；"
+            "与 ndwi/ndwi_water 开放水体不可互换]",
             (-1.0, 1.0), "gao1996",
+        ),
+        SpectralIndexSpec(
+            # ndwi_water ≡ ndwi（McFeeters 开放水体）的显式别名：语义自明，
+            # 外部调用方应用此名避免裸 ndwi 的历史二义（审计 §3.2）。
+            "ndwi_water", ("green", "nir"),
+            lambda green, nir: _safe_div(green - nir, green + nir),
+            "(Green − NIR) / (Green + NIR)  [开放水体；ndwi 的 McFeeters "
+            "显式别名，与 ndwi_gao 植被水分不可互换]",
+            (-1.0, 1.0), "mcfeeters1996",
         ),
         SpectralIndexSpec(
             "mndwi", ("green", "swir1"),
@@ -174,8 +198,8 @@ INDEX_FAMILY: Dict[str, SpectralIndexSpec] = {
             (-1.0, 1.0), "zha_woodcock2003",
         ),
         SpectralIndexSpec(
-            # NDMI 与 Gao-NDWI 公式同形、语义命名不同（植被水分监测惯称）；
-            # 正典出处 (Wilson & Sader 2002) 不在词表 → 留空。
+            # NDMI 与 ndwi_gao（Gao 1996）公式同形、语义命名不同（植被水分
+            # 监测惯称）；正典出处 (Wilson & Sader 2002) 不在词表 → 留空。
             "ndmi", ("nir", "swir1"),
             lambda nir, swir1: _safe_div(nir - swir1, nir + swir1),
             "(NIR − SWIR1) / (NIR + SWIR1)  [植被水分，NDMI 惯称]",

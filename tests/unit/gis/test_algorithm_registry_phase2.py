@@ -50,7 +50,9 @@ class TestAlgorithmHonestyFixes:
         # h3_lisa 双声明拆分：LISA 与 Gi* 各归其位
         assert reg.get("stats.h3_lisa").capabilities == ["local_morans_i"]
         assert reg.get("stats.h3_hotspot").capabilities == ["getis_ord_gi_star"]
-        assert reg.get("stats.h3_hotspot").tool_candidates == ["h3_lisa"]
+        # 审计 F-1（A2）：Gi* 描述符接线到真实 Gi* 实现 hotspot_analysis
+        # （h3_lisa 只产 LISA 象限标签，不产 Gi* z/p/q_value_fdr）
+        assert reg.get("stats.h3_hotspot").tool_candidates == ["hotspot_analysis"]
 
     def test_no_dead_code_capability_hacks(self):
         from app.lib.gis.algorithm_registry import get_algorithm_registry

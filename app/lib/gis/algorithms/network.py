@@ -282,9 +282,11 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             preferred_execution_policy="ASYNC",
             compatible_map_models=["proximity_overlay"], priority=10,
             algorithm_family="accessibility",
-            method_references=["luo_qi2009"],
+            # science-v3 审计 R1（F2）：2SFCA 源头 Luo & Wang 2003 与增强版
+            # Luo & Qi 2009（E2SFCA）并列登记 —— 方法谱系完整可审计。
+            method_references=["luo_wang2003", "luo_qi2009"],
             assumptions=[
-                "2SFCA: 供给/需求两步浮动捕获 —— 第一步 R_j=容量_j/catchment 内需求权重和，第二步 A_i=Σ(cutoff 内 R_j)",
+                "2SFCA: 供给/需求两步浮动捕获 —— 第一步 R_j=容量_j/catchment 内需求权重和，第二步 A_i=Σ(cutoff 内 R_j)（Luo & Wang 2003）",
                 "E2SFCA（Foundation V2 A4，Luo & Qi 2009）：cutoff 等分 decay_zones 带，带中点高斯权 w_r=exp(−0.5·(r+0.5)²)",
                 "15min_circle 法：需求点在 cutoff 内可达任一设施即计入 served（0/1 覆盖，非 2SFCA）",
                 "可达性以路网行程时间（分钟）度量，cutoff_minutes 为浮动捕获半径",
@@ -352,6 +354,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ],
             limitations=[
                 "启发式 >20k 组合；exact ≤20k —— C(m,p) 枚举在预算内给出精确最优，超出切 Teitz-Bart 顶点替换 / 贪婪覆盖 / p-center 贪婪+顶点替换（≤10 轮）",
+                "max_coverage 贪婪覆盖是次模函数的经典贪婪：有 (1−1/e)≈0.632 近似保证（无数据相关最坏界更差），非精确最优 —— 精确路径走 solver=exact_milp（network.mclp_exact）",
                 "不可达需求点列入 summary.unassigned_ids（不参与选址目标）",
                 "Teitz-Bart / p-center 启发式收敛依赖初始化（前 p 个候选），无多起点重启（summary.solver 披露 exact|heuristic）",
             ],
@@ -382,7 +385,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             preferred_execution_policy="ASYNC", priority=31,
             deterministic=True, random_seed_policy="deterministic",
             algorithm_family="location_allocation",
-            method_references=["church_revelle1974"],
+            # science-v3 审计 R0（F1）：p-median MILP 的出处是 ReVelle &
+            # Swain 1970（首次整数规划式）+ Hakimi 1964；church_revelle1974
+            # 是 MCLP 文献，归还给 network.mclp_exact。
+            method_references=["revelle_swain1970", "hakimi1964"],
             assumptions=[
                 "0/1 MILP 精确式：min Σ w_i·c_if·x_if；Σ_f x_if=1 ∀可指派需求；x_if≤y_f；Σ_f y_f=p",
                 "求解后端 scipy.optimize.milp（HiGHS 分支定界）：固定输入确定性复现",
@@ -392,7 +398,6 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "规模闸：需求×候选 ≤ 25000 且候选 ≤ 500 —— 超限抛 ResourceScaleMismatch 指向启发式路径（不静默回退）",
                 "全程不可达需求点进 summary.unassigned_ids（不参与目标，与启发式语义一致）",
                 "最优解不唯一时由 HiGHS 确定性给出其一；最优目标值不受影响",
-                "max_coverage 无 MILP 精确式（solver=exact_milp 时 UnsupportedMethod）",
             ],
             crs_class="GEODESIC",
             uncertainty_outputs=[],
@@ -446,6 +451,58 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/test_network_v3.py::TestPCenterExactMILP::test_pcenter_exact_unreachable_demand_disclosed",
                 "tests/unit/test_network_v3.py::TestExactMILPDeterminism::test_exact_milp_deterministic_same_result_twice",
                 "tests/unit/test_network_v3.py::TestPMedianExactMILP::test_exact_milp_scale_guard_refusal_is_typed",
+            ],
+            parameter_contract_ref="location_allocation_analysis",
+            fallback_algorithms=["network.location_allocation"],
+            fallback_semantics={"network.location_allocation": "approximation"},
+            backend_variants=[
+                BackendVariant(
+                    id="milp_highs", backend="scipy", tool="location_allocation",
+                    max_features=25000,
+                    notes="HiGHS MILP；max_features 按需求×候选乘积语义（另有候选≤500 闸），超限诚实拒绝",
+                ),
+            ],
+        ),
+
+        # ── science-v3（审计 04 域 R2/F8）：MCLP 精确 MILP（HiGHS）──────
+        # 三目标（p-median/p-center/max_coverage）中最后补齐的 exact 路径：
+        # max Σ w_i·z_i；z_i ≤ Σ_{j∈N_i} y_j；Σ_f y_f = p（N_i = 覆盖 i 的
+        # 候选集，c_ij ≤ cutoff）。出处 church_revelle1974（MCLP 原始文献，
+        # R0 之后从 pmedian_exact 归还到此）。
+        AlgorithmDescriptor(
+            id="network.mclp_exact", name="最大覆盖精确求解（MILP）", category="network_analysis",
+            capabilities=["location_allocation"],
+            output_artifact_type="point_feature_set", tool_candidates=["location_allocation"],
+            cpu_cost="high", memory_cost="high", io_cost="medium",
+            preferred_execution_policy="ASYNC", priority=32,
+            deterministic=True, random_seed_policy="deterministic",
+            approximate=False,
+            complexity="NP-hard（MILP 分支定界，最坏指数）；模型 O(n+m) 变量、O(n+Σ|N_i|) 约束，规模由需求×候选乘积闸约束",
+            algorithm_family="location_allocation",
+            method_references=["church_revelle1974"],
+            assumptions=[
+                "0/1 MILP 精确式（Church & ReVelle 1974 MCLP）：max Σ w_i·z_i；z_i ≤ Σ_{j∈N_i} y_j；Σ_f y_f=p；N_i={j: c_ij ≤ cutoff}",
+                "覆盖半径 cutoff 以活动阻抗为单位（默认行程时间秒，缺省 900s=15min，与启发式路径同缺省）",
+                "求解后端 scipy.optimize.milp（HiGHS 分支定界）：固定输入确定性复现",
+                "代价矩阵 = 路网 OD 行程时间；cutoff 外/不可达候选不进覆盖集（不引入软覆盖）",
+            ],
+            limitations=[
+                "规模闸：需求×候选 ≤ 25000 且候选 ≤ 500 —— 超限抛 ResourceScaleMismatch 指向启发式路径（不静默回退）",
+                "无候选落入 cutoff 的需求点不可能被覆盖：不进模型、进 summary.unassigned_ids（与枚举/启发式语义一致）",
+                "最优解不唯一时由 HiGHS 确定性给出其一；最优覆盖权重不受影响",
+                "贪婪启发式（network.location_allocation）保持 (1−1/e) 近似披露，绝不冒充精确",
+            ],
+            crs_class="GEODESIC",
+            uncertainty_outputs=[],
+            numerical_tolerance="小实例 MILP 覆盖目标与 C(m,p) 枚举最优一致（±1e-6）；两次运行逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/test_network_mclp.py::TestMCLPExactMILP::test_mclp_exact_matches_enumeration_optimum",
+                "tests/unit/test_network_mclp.py::TestMCLPExactMILP::test_mclp_exact_respects_demand_weights_and_cutoff_boundary",
+                "tests/unit/test_network_mclp.py::TestMCLPExactMILP::test_mclp_exact_uncappable_demand_disclosed",
+                "tests/unit/test_network_mclp.py::TestMCLPExactMILP::test_mclp_scale_guard_refusal_is_typed",
+                "tests/unit/test_network_mclp.py::TestMCLPExactMILP::test_mclp_exact_service_discloses_highs_solver",
+                "tests/unit/test_network_mclp.py::TestMCLPDeterminism::test_mclp_exact_deterministic_same_result_twice",
             ],
             parameter_contract_ref="location_allocation_analysis",
             fallback_algorithms=["network.location_allocation"],
@@ -866,10 +923,10 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
         ],
     ),
     ParameterContract(
-        # Foundation V3：location_allocation 工具的算法参数契约（objective
-        # 为既有参数；solver 为 additive 求解路径参数 —— exact_milp 仅覆盖
-        # p_median / p_center，超规模闸诚实拒绝）。
-        id="location_allocation_analysis", version=1,
+        # science-v3：solver=exact_milp 的覆盖面扩到三目标（R2 新增
+        # network.mclp_exact）—— 枚举值不变、语义面变化 → version 1→2。
+        # 超规模闸（需求×候选≤25000 且候选≤500）诚实拒绝不变。
+        id="location_allocation_analysis", version=2,
         description="区位配置：选址目标与求解路径（枚举/启发式/HiGHS 精确 MILP）。",
         parameters=[
             ParameterSpec(
@@ -881,8 +938,8 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="solver", type="enum", default="auto",
                 enum_values=["auto", "heuristic", "exact_milp"],
                 description="求解路径：auto=小实例枚举/大实例启发式（历史行为）；heuristic=强制 "
-                            "Teitz-Bart/贪婪；exact_milp=强制 HiGHS 精确式（仅 p_median/p_center，"
-                            "需求×候选≤25000 且候选≤500，超限诚实拒绝）",
+                            "Teitz-Bart/贪婪；exact_milp=强制 HiGHS 精确式（p_median/max_coverage/"
+                            "p_center 三目标，需求×候选≤25000 且候选≤500，超限诚实拒绝）",
             ),
         ],
     ),

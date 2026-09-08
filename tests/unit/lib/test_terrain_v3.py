@@ -505,3 +505,36 @@ def test_v3_registry_and_parity_clean():
         if "terrain." in issue
     ]
     assert parity == []
+
+
+# ── science-v3 审计修复回归（水文组合链 P0）─────────────────────────────
+def test_depression_fill_persists_dem_for_downstream_hydrology(
+        bowl_tif, terrain_tools, tmp_path):
+    """fill(persist_filled=True) → 填充面落盘 → D∞/D8 消费填充面无洼地哨兵。
+
+    science-v3 审计 F2/P0：depression_fill 此前不持久化填充面，
+    「fill(epsilon)→D∞」组合在工具层不可执行。
+    """
+    call = terrain_tools._tools
+    out = call["depression_fill"](
+        str(bowl_tif), epsilon=0.01, persist_filled=True)
+    assert out["success"] is True
+    filled_path = out["filled_raster_path"]
+    assert str(filled_path).endswith("_filled.tif")
+
+    import rasterio
+    with rasterio.open(str(filled_path)) as src:
+        filled = src.read(1)
+    # 填充面 ≥ 原 DEM 且内部洼地已被填平（epsilon 抬升后单调可排）
+    dinf, _ = tlib.dinf_flow_direction(filled, 10.0, cell_size_x=10.0)
+    valid = dinf["valid"]
+    no_flow = valid & (dinf["angle"] == tlib._DINF_NO_FLOW)
+    # 填充后内部无平地/洼地哨兵；残余 no-flow 只能是栅格边界出口
+    # （边界=排水口的既定语义）。
+    rr, cc = np.nonzero(no_flow)
+    assert all(r in (0, filled.shape[0] - 1) or c in (0, filled.shape[1] - 1)
+               for r, c in zip(rr, cc))
+
+    # 默认行为不变：不传 persist_filled 不落盘
+    out2 = call["depression_fill"](str(bowl_tif), epsilon=0.01)
+    assert "filled_raster_path" not in out2

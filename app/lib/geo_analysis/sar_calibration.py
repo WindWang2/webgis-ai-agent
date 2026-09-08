@@ -42,6 +42,7 @@ __all__ = [
     "CALIBRATION_PRODUCTS",
     "CALIBRATION_SCALE_LIMIT_PIXELS",
     "LOG_SCALE_MODES",
+    "THERMAL_INPUT_DOMAINS",
     "calibrate_sar",
     "remove_thermal_noise",
     "sar_log_scale",
@@ -246,7 +247,10 @@ def calibration_evidence_facts(
 
 # ── Foundation V3：热噪声去除 / 量纲换算 ─────────────────────────────
 
-def _noise_input_plane(arr: object, what: str, nodata: Optional[float]) -> Tuple[np.ndarray, np.ndarray]:
+def _noise_input_plane(
+    arr: object, what: str, nodata: Optional[float],
+    domain: str = "auto",
+) -> Tuple[np.ndarray, np.ndarray]:
     """强度输入解析：2D + 规模闸 + 负值守卫（dB/负强度物理无意义）。"""
     plane = np.asarray(arr, dtype=float)
     if plane.ndim != 2:
@@ -266,12 +270,18 @@ def _noise_input_plane(arr: object, what: str, nodata: Optional[float]) -> Tuple
         valid &= plane != float(nodata)
     if valid.any() and (plane[valid] < 0).any():
         raise UnsupportedMethod(
-            f"{what} 检测到负值——热噪声去除/换算假定线性强度输入（非负）；"
-            "输入疑似 dB 对数域",
+            f"{what} 检测到负值（input_domain={domain}）——"
+            "热噪声去除/换算假定线性强度输入（非负）；"
+            "输入疑似 dB 对数域（符号启发式：全正 dB 场不可检测——"
+            "请显式声明 input_domain）",
             correction_hint="先做线性定标（见 sar.radiometric_calibration）"
-                            "或改用 db_to_linear 换算",
+                            "或改用 db_to_linear 换算；或显式传 "
+                            "input_domain 声明量纲",
         )
     return plane, valid
+
+
+THERMAL_INPUT_DOMAINS = ("auto", "linear", "db")
 
 
 def remove_thermal_noise(
@@ -280,23 +290,44 @@ def remove_thermal_noise(
     noise_lut: Optional[np.ndarray] = None,
     *,
     nodata: Optional[float] = None,
+    input_domain: str = "auto",
 ) -> Dict[str, object]:
     """SAR 热噪声去除：I_dn = max(I − N, 0)（标量噪声底或逐像元 LUT）。
 
     honest 边界（进 meta，绝不静默）：真实 Sentinel-1 GRD IPF 噪声 LUT 是
-    **annotation XML**（denoising 需逐 swath 重采样/插值）——本工具接收
-    **已提取**的噪声底标量或同形 LUT，**不解析 SAFE XML**。
+    **annotation XML**（denoising 需逐 swath 重采样/插值；ESA S-1 MPC
+    技术注记 MPC-0392 / ESA-RS-CLI-52-0946）——本工具接收**已提取**的
+    噪声底标量或同形 LUT，**不解析 SAFE XML**。
+
+    R-6（审计 R6）：负值检测是**符号启发式**（全正 dB 场可穿透），补
+    可选 ``input_domain`` 显式声明量纲：``auto``（缺省，行为与历史逐位
+    一致——负值 → UnsupportedMethod）/ ``linear``（声明线性强度；负值
+    仍拒绝——线性强度物理非负）/ ``db``（声明 dB 对数域 → 直接类型化
+    拒绝：热噪声去除需要线性强度，请先 db_to_linear 换算）。
 
     Args:
         intensity: 2D 线性强度栅格（非负；dB 输入被拒绝）。
         noise_floor: 标量噪声底（≥0；与 noise_lut 互斥）。
         noise_lut: 逐像元噪声 LUT（与网格同形；与 noise_floor 互斥）。
         nodata: 标量哨兵值；NaN/Inf 自动视为无效（输出 NaN）。
+        input_domain: ``auto`` / ``linear`` / ``db``（量纲显式声明；
+            缺省 auto 行为不变）。
 
     Returns:
         dict: array（无效像元 NaN；钳 0 像元数披露 clamped_pixels）、
-        mode（scalar/lut）、meta（公式 + SAFE-XML 诚实披露）。
+        mode（scalar/lut）、meta（公式 + SAFE-XML 诚实披露 + input_domain）。
     """
+    domain_key = (input_domain or "auto").lower()
+    if domain_key not in THERMAL_INPUT_DOMAINS:
+        raise ValueError(
+            f"unsupported input_domain '{input_domain}'; "
+            f"valid: {list(THERMAL_INPUT_DOMAINS)}")
+    if domain_key == "db":
+        raise UnsupportedMethod(
+            "input_domain='db'：热噪声去除需要**线性强度**输入（dB 对数域"
+            "无物理意义）——请先用 sar_log_scale(db_to_linear) 换算",
+            correction_hint="db_to_linear first, then remove thermal noise",
+        )
     if noise_floor is None and noise_lut is None:
         raise MissingRequiredField(
             "需要 noise_floor（标量噪声底）或 noise_lut（逐像元 LUT）"
@@ -307,7 +338,8 @@ def remove_thermal_noise(
         raise ValueError(
             "noise_floor 与 noise_lut 只能二选一（标量或逐像元 LUT）")
 
-    plane, valid = _noise_input_plane(intensity, "intensity", nodata)
+    plane, valid = _noise_input_plane(intensity, "intensity", nodata,
+                                      domain=domain_key)
 
     floor_plane: Optional[np.ndarray] = None
     mode = "scalar"
@@ -338,11 +370,14 @@ def remove_thermal_noise(
 
     disclosure = (
         "热噪声去除 I_dn = max(I − N, 0)：真实 Sentinel-1 GRD IPF 噪声 LUT "
-        "为 annotation XML（denoising 需逐 swath 插值）——本工具接收已提取"
-        "的噪声底/LUT，不解析 SAFE XML；负值钳 0（clamped_pixels 披露，"
-        "弱信号统计右偏）；dB 输入被拒绝（线性强度必需）")
+        "为 annotation XML（denoising 需逐 swath 插值；ESA S-1 MPC 技术注记 "
+        "MPC-0392 / ESA-RS-CLI-52-0946）——本工具接收已提取的噪声底/LUT，"
+        "不解析 SAFE XML；负值钳 0（clamped_pixels 披露，弱信号统计右偏）；"
+        "dB 输入被拒绝（线性强度必需）；负值检测为符号启发式（全正 dB 场"
+        "不可检测）——input_domain 参数可显式声明量纲（auto 缺省行为不变）")
     meta: Dict[str, object] = {
         "mode": mode,
+        "input_domain": domain_key,
         "noise_floor": float(noise_floor) if noise_floor is not None else None,
         "clamped_pixels": clamped,
         "invalid_pixels": int(plane.size - np.sum(np.isfinite(denoised))),

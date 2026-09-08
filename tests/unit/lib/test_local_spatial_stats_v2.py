@@ -30,6 +30,7 @@ import pytest
 
 from app.lib.geo_analysis.statistics import (
     _classify_interaction,
+    bivariate_join_count_narrated,
     bivariate_moran_narrated,
     geodetector_narrated,
     join_count_narrated,
@@ -184,7 +185,7 @@ def test_join_count_checkerboard_golden():
     res = join_count_narrated(fc, "val", weights_scheme="rook")
     assert res.success, res.summary
     assert res.data["join_counts"] == {"n_bb": 0.0, "n_bw": 4.0, "n_ww": 0.0}
-    # free-sampling 期望：E[n_BW] = J·2ml/(n(n-1)) = 4·16/12 = 8/3
+    # non-free sampling 期望（条件于类别边际，审计 F-2）：E[n_BW]=J·2ml/(n(n-1))
     assert res.data["expected"]["n_bw"] == pytest.approx(8.0 / 3.0)
     assert res.data["joins"] == 4.0
     assert res.data["n_black"] == 2.0 and res.data["n_white"] == 2.0
@@ -488,3 +489,37 @@ async def test_tool_registry_parity_and_evidence():
     assert payload_moran["success"] is True, payload_moran.get("summary")
     diags = payload_moran["scientific_evidence"]["diagnostics"]
     assert any(d["name"] == "backend_selection" for d in diags)
+
+
+def test_join_count_nonfree_sampling_wording_sync():
+    """审计 F-2（A3）：descriptor/证据块与实现的 sampling 口径同步 ——
+    实现是 non-free sampling（Cliff-Ord 条件矩），全部披露面必须一致，
+    数值结果不受措辞修正影响（golden 值不变）。"""
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+    fc = _grid_fc(8, 8, lambda r, c: float((r + c) % 2))
+    res = join_count_narrated(fc, "val", weights_scheme="rook")
+    assert res.success, res.summary
+    # 证据块 statistic_name 一律 non-free（此前 n_BB 误标 free sampling）
+    for block in res.data["uncertainty"]:
+        assert block["uncertainty_type"] == "statistical_significance"
+        assert "non-free sampling" in block["statistic_name"]
+        assert "free sampling" not in block["statistic_name"].replace(
+            "non-free sampling", "")
+    # 叙事不再出现 free-sampling 口径
+    assert "free-sampling" not in res.summary
+    assert "non-free sampling" in res.summary
+    # 双色 join count 同步：assumptions_disclosed 与证据块
+    fc2 = _grid_fc(4, 4, lambda r, c: float((r + c) % 2))
+    res_bv = bivariate_join_count_narrated(fc2, "val", weights_scheme="rook")
+    assert res_bv.success, res_bv.summary
+    assert any("non-free sampling" in s
+               for s in res_bv.data["assumptions_disclosed"])
+    for block in res_bv.data["uncertainty"]:
+        assert "non-free sampling" in block["statistic_name"]
+    assert "free-sampling" not in res_bv.summary
+    # descriptor 假设与实现口径一致（校验 + producer test 锚）
+    desc = get_algorithm_registry().get("stats.join_count")
+    assert any("non-free sampling" in a for a in desc.assumptions)
+    assert not any(a.strip().startswith("期望/方差用 free sampling")
+                   for a in desc.assumptions)
