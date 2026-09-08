@@ -1688,10 +1688,10 @@ def register_terrain_tools(registry: ToolRegistry):
         )
 
     # Science V4（W8/W9）：水文与地形分析 V4 合并入口
-    _register_hydrology_v4_tool(registry)
+    _register_hydrology_v4_tool(registry, _load_dem=_load_dem)
 
 
-def _register_hydrology_v4_tool(registry) -> None:
+def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
     """Science V4（W8/W9）：水文与地形分析 V4 合并入口（单工具分派）。"""
     import numpy as np
 
