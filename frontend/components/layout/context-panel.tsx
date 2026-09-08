@@ -27,6 +27,7 @@ import {
   ListChecks,
   Printer,
   ClipboardList,
+  LayoutDashboard,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -101,6 +102,7 @@ const PANEL_META: Record<string, PanelMeta> = {
   project: { icon: Folder, title: '项目', description: '工作区 · 数据集 · 工作流' },
   data_sources: { icon: Database, title: '数据', description: '空间目录与数据源' },
   layers: { icon: Layers, title: '图层', description: '可见性 · 样式 · 顺序' },
+  components: { icon: LayoutDashboard, title: '组件', description: '地图组件 · 布局 · 图表' },
   analysis: { icon: Triangle, title: '分析', description: '空间分析工具' },
   tasks: { icon: ListChecks, title: '任务', description: '后台作业中心' },
   results: { icon: ClipboardList, title: '分析结果', description: '结果工作台 · 输入 · 指标 · 输出' },

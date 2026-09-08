@@ -100,6 +100,13 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Shepard, D. (1968). A Two-Dimensional Interpolation Function for "
             "Irregularly-Spaced Data. ACM-1968, 517–524.",
         ),
+        MethodReference(
+            "wright1936",
+            "Dasymetric mapping (ancillary-weighted areal interpolation)",
+            "Wright, J. K. (1936). A Method of Mapping Densities of Rural "
+            "Population: With an Application to the Isle of Man. "
+            "Geographical Review, 31(3), 392–402.",
+        ),
         # ── 地形 ─────────────────────────────────────────────────────
         MethodReference(
             "horn1981",

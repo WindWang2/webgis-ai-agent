@@ -151,6 +151,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // Workspace V2：dock 归属描述的是旧会话的组件实例 —— 新会话的
       // MapSpec 没有这些 id，停靠区随之清空（避免空 dock/幽灵面板）。
       useHudStore.getState().resetDockState();
+      // Workbench V4：分组树/多选引用旧会话图层 id —— 同 dock 语义，随会话清空。
+      useHudStore.getState().resetLayerGroups();
       // #548: explorer task cards are session-scoped — a session switch must not
       // leak the previous session's cards into the new session's task tab.
       clearExplorerTasks();
@@ -304,6 +306,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // Workspace V2：dock 归属描述的是旧会话的组件实例 —— 新会话的
       // MapSpec 没有这些 id，停靠区随之清空（避免空 dock/幽灵面板）。
       useHudStore.getState().resetDockState();
+      // Workbench V4：分组树/多选引用旧会话图层 id —— 同 dock 语义，随会话清空。
+      useHudStore.getState().resetLayerGroups();
       // #548: new session = fresh explorer task tab (same session-scope rule as
       // selectSession, this path had no clear at all before).
       clearExplorerTasks();

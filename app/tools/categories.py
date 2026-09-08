@@ -32,6 +32,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.chart": "rendering",
     "app.tools.chinese_maps": "data_access",
     "app.tools.coord_transform": "transformation",
+    "app.tools.dasymetric_tools": "analysis",       # 面插值重分配（量守恒分析）
     "app.tools.data_fabric_tools": "data_access",
     # 数据发现/血缘族全部只读（目录/画像/检视语义）——R1 审计 #6 缺口：
     # 该模块此前漏登记，test_every_tool_is_classified 在 master 即红

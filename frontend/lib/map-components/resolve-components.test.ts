@@ -116,3 +116,31 @@ describe('scaleFloatingRect — 视口→画布换算', () => {
     expect(out).toEqual({ x: 100, y: 50 });
   });
 });
+
+/**
+ * Workbench V4（audit 03 P0 防线）：目录中每个 rendererRequired 且
+ * defaultPosition ≠ 'none' 的类型必须在 DEFAULT_COMPONENT_ANCHOR 有行 ——
+ * 缺行 → resolver 落 'none' → 组件静默隐藏（table_panel 曾中招）。
+ */
+import catalog from '@/lib/map-components/component-catalog.generated.json';
+
+describe('component catalog ↔ default anchor parity', () => {
+  it('defaultPosition≠none 的目录类型都有默认槽位行', () => {
+    const entries = (catalog.componentTypes as Array<{
+      type: string;
+      rendererRequired: boolean;
+      defaultPosition: string;
+    }>).filter((t) => t.rendererRequired && t.defaultPosition !== 'none');
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entry of entries) {
+      expect(
+        DEFAULT_COMPONENT_ANCHOR[entry.type],
+        `type "${entry.type}" (defaultPosition=${entry.defaultPosition}) missing from DEFAULT_COMPONENT_ANCHOR`,
+      ).toBeDefined();
+    }
+  });
+
+  it('table_panel 不再静默隐藏（回归锁定）', () => {
+    expect(DEFAULT_COMPONENT_ANCHOR.table_panel).toBe('bottom-right');
+  });
+});

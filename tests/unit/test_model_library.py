@@ -46,6 +46,10 @@ class TestModelLibraryIntegrity:
         # ADR-0095: extrusion_3d and isoline_contour promoted to native
         assert "extrusion_3d" in native
         assert "isoline_contour" in native
+        # Wave 6: dasymetric_map promoted to native（interpolation.dasymetric
+        # 面插值已实现 —— geo_analysis/dasymetric.py + dasymetric_reallocation 工具）
+        assert "dasymetric_map" in native
+        assert "dasymetric_map" not in planned
         for mid in planned:
             assert get_map_model(mid).runtime_status == "planned"
 

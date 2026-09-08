@@ -116,7 +116,8 @@ const config: Config = {
           foreground: "hsl(var(--muted-foreground))",
         },
         accent: {
-          DEFAULT: "hsl(var(--accent))",
+          // Wave 10：--accent 现为 hex（V4 权威声明），不能包 hsl()。
+          DEFAULT: "var(--accent)",
           foreground: "hsl(var(--accent-foreground))",
         },
         card: {
