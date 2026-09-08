@@ -13,6 +13,6 @@
 | raster_output_bytes | 1073741824 | bytes | app/lib/geo_analysis/raster_guard.py | RasterResourceExceededError |
 | json_node_budget | 20000 | nodes | app/lib/json_size.py | args oversized 门（Registry） |
 | tool_args_bytes | 262144 | bytes | app/lib/json_size.py | args oversized 门（Registry） |
-| algorithm_min_features_declarations | 19/185 | algorithms | app/lib/gis/algorithm_registry.py | 数据资格四态（qualify_data） |
-| algorithm_max_features_hint_declarations | 4/185 | algorithms | app/lib/gis/algorithm_registry.py | 数据资格四态（qualify_data） |
-| algorithm_backend_variants | 6/185 | algorithms | app/lib/gis/algorithm_registry.py | ScaleProfile 窗口（dispatch） |
+| algorithm_min_features_declarations | 20/186 | algorithms | app/lib/gis/algorithm_registry.py | 数据资格四态（qualify_data） |
+| algorithm_max_features_hint_declarations | 4/186 | algorithms | app/lib/gis/algorithm_registry.py | 数据资格四态（qualify_data） |
+| algorithm_backend_variants | 6/186 | algorithms | app/lib/gis/algorithm_registry.py | ScaleProfile 窗口（dispatch） |

@@ -2074,6 +2074,131 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             )
         return prediction_fc
 
+    @tool(registry, name="st_kriging_surface",
+           description=(
+               "时空克里金：在 (x,y,t) 时空协方差下预测指定时刻的表面。"
+               "product_sum（积和，k3 取有效界上确界，按构造半正定）或 "
+               "separable（可分离）模型；时间单位秒（epoch/相对秒）。"
+               "\n何时用：多时相观测（站点时序、传感器网络），需要『某时刻』"
+               "的连续面且时间相关性真实存在。"
+               "\n何时不用：单一时刻观测（用 kriging_interpolation）；"
+               "时间维退化（全部同时刻→结构化拒绝）。"
+           ),
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "点要素集 GeoJSON（Point 几何，≥12 点、跨多时相）",
+               "value_field": "数值字段名",
+               "time_field": "时间字段名（epoch/相对秒）",
+               "target_time_sec": "目标时刻（秒）",
+               "resolution": "H3 分辨率（5-9），默认 7",
+               "model": "时空协方差: product_sum(默认)/separable",
+               "temporal_range_sec": "时间相关变程（秒，默认 30 天）",
+               "time_window_sec": "邻域时间窗（秒，默认 30 天）",
+               "neighbors": "时空邻域样本数(2-24)，默认 16",
+           })
+    def st_kriging_surface(
+        geojson: Any,
+        value_field: str,
+        time_field: str,
+        target_time_sec: float,
+        resolution: int = 7,
+        model: str = "product_sum",
+        temporal_range_sec: float = 2592000.0,
+        time_window_sec: Optional[float] = None,
+        neighbors: int = 16,
+    ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.gis.uncertainty import (
+            RasterUncertainty,
+            UncertaintyMeasure,
+        )
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+        from app.lib.geo_analysis.kriging_st import (
+            st_kriging_surface as _st_surface,
+        )
+
+        params = apply_contract("st_kriging_analysis", {
+            "value_field": value_field,
+            "time_field": time_field,
+            "target_time_sec": float(target_time_sec),
+            "resolution": resolution,
+            "model": model,
+            "temporal_range_sec": float(temporal_range_sec),
+            "time_window_sec": (
+                float(time_window_sec) if time_window_sec is not None else None),
+            "neighbors": neighbors,
+        })
+        data = safe_parse_geojson(geojson)
+        driver = _st_surface(
+            data, params["value_field"], params["time_field"],
+            target_time_sec=params["target_time_sec"],
+            resolution=int(params["resolution"]),
+            model=params["model"],
+            temporal_range_sec=float(params["temporal_range_sec"]),
+            time_window_sec=params["time_window_sec"],
+            neighbors=int(params["neighbors"]),
+        )
+        meta = driver["metadata"]
+        if not driver["records"]:
+            return {
+                "summary": "时空克里金：0 个目标单元（极地/范围退化）——诚实空结果。",
+                "features": [],
+                "st_metadata": meta,
+            }
+        pred_records = [
+            {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
+        ]
+        prediction_fc = h3_to_geojson(pred_records, params["value_field"])
+        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+            feat["properties"]["st_variance"] = round(rec["st_variance"], 6)
+            feat["properties"]["st_stddev"] = round(rec["st_stddev"], 6)
+        prediction_fc.update({
+            "summary": (
+                f"时空克里金完成：{len(prediction_fc['features'])} 个 H3 单元 @ "
+                f"t={meta['target_time_sec']:.0f}s（{meta['st_model']['model']} 模型，"
+                f"时间变程 {meta['st_model']['temporal_range_seconds']:.0f}s）；"
+                "方差面已随结果输出。"
+            ),
+            "st_metadata": meta,
+        })
+        descriptor = get_algorithm_registry().get("interpolation.st_kriging")
+        if descriptor is not None:
+            prediction_fc["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="st_kriging_surface",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "time_field": params["time_field"],
+                    "target_time_sec": params["target_time_sec"],
+                    "model": params["model"],
+                    "temporal_range_sec": params["temporal_range_sec"],
+                    "time_window_sec": params["time_window_sec"],
+                    "neighbors": int(params["neighbors"]),
+                    "resolution": int(params["resolution"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "space-time covariance (separable/product-sum, PSD by construction)",
+                    "time-bounded neighborhoods (windowed samples only)",
+                ],
+                uncertainty=[RasterUncertainty(
+                    target="st_variance",
+                    interpretation="space-time kriging variance at target_time_sec",
+                    summary=[UncertaintyMeasure(
+                        measure="value", value=float(meta["variance_range"][1]),
+                        method="max ST kriging variance"),
+                    ]),
+                ],
+            )
+        return prediction_fc
+
     @tool(registry, name="overlay_analysis",
            description="对两个几何图层进行空间叠加分析（如求交、合并、擦除等），返回结果及其统计信息",
            args_model=OverlayAnalysisArgs,

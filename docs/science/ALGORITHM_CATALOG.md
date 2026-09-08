@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：122 能力 · 185 算法 · 110 参数契约。
+统计：123 能力 · 186 算法 · 111 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -930,6 +930,18 @@ ST-DBSCAN 等时空聚类（与 LISA 局部自相关是不同检验）。
 - **`stats.st_dbscan`** 时空 DBSCAN 聚类（`native`·成熟度 已验证，出处: `ester_kriegel1996`）
   - 假设：ST-DBSCAN：空间 ε（米，自动投影 UTM）+ 时间 ετ 双阈值；时间字段解析 NaT 剔除并披露
   - 局限：minPts/ε 选择敏感（无自动带宽）；簇数为结果而非假设
+
+## `spatiotemporal_interpolation` — 时空插值
+
+(x,y,t) 时空协方差克里金（separable/product-sum，秒制时间）；目标时刻表面 + 方差。
+
+- **`interpolation.st_kriging`** 时空克里金（`native`·成熟度 已验证，契约: `st_kriging_analysis`，出处: `goovaerts1997`, `cressie1999`，精度: exact）
+  - 假设：时间单位秒（epoch/相对秒由调用方声明）；空间米制（自动投影）；product_sum：双时间尺度可分离混合 s·ρ_s·[w·ρ_t(τ/r)+(1−w)·ρ_t(τ/3r)]——正组合按构造半正定（De Iaco product-sum 类）；separable：C=s·ρ_s·ρ_t 严格有效；τ=0 两模型都精确退化为空间协方差；邻域 = 空间 k 近邻 × 时间窗过滤；窗内不足时放宽为纯空间 k 近邻（计数披露）
+  - 局限：时间相关为单参数指数形状（非参数时间变异函数未实现）；时空交叉结构不可识别时 product-sum 退化为可分离的加权和（已披露）；EPSG:3857 工作 CRS 的 Web Mercator 尺度畸变（与 OK 同）
+  - 回退：`interpolation.kriging`→approximation
+  - 资源包络：40B/要素，要素硬上限 300000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-09，atol=0
 
 ## `spectral_index` — 类型化光谱指数
 

@@ -101,6 +101,16 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             purpose_template="块克里金",
         ),
 
+        # ── Science V4（W7）：时空插值 ─────────────────────────────
+        CapabilityDescriptor(
+            id="spatiotemporal_interpolation", name="时空插值", category="analysis",
+            description="(x,y,t) 时空协方差克里金（separable/product-sum，"
+                        "秒制时间）；目标时刻表面 + 方差。",
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_types=["terrain_surface"],
+            purpose_template="时空克里金预测",
+        ),
+
         # ── Science V4（W5）：地统计模拟 ─────────────────────────────
         CapabilityDescriptor(
             id="geostatistical_simulation", name="地统计模拟", category="analysis",

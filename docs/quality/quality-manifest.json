@@ -735,6 +735,30 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "spatiotemporal_interpolation"
+   ],
+   "category": "interpolation",
+   "conformance_tests": [
+    "tests/unit/lib/test_kriging_st_v4.py::test_product_sum_covariance_psd_and_origin",
+    "tests/unit/lib/test_kriging_st_v4.py::test_separable_tau_zero_reduces_to_spatial",
+    "tests/unit/lib/test_kriging_st_v4.py::test_st_kriging_deterministic_and_valid",
+    "tests/unit/lib/test_kriging_st_v4.py::test_st_degenerate_time_typed_reject",
+    "tests/unit/lib/test_kriging_st_v4.py::test_st_driver_end_to_end"
+   ],
+   "deterministic": true,
+   "id": "interpolation.st_kriging",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": [
+    "raster_uncertainty"
+   ]
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "triangulation_interpolation"
    ],
    "category": "interpolation",
@@ -5898,6 +5922,18 @@
    ]
   },
   {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "general",
+   "id": "spatiotemporal_interpolation",
+   "producer_algorithms": [
+    "interpolation.st_kriging"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
    "category": "raster",
    "deterministic": true,
    "domain": "raster",
@@ -6326,12 +6362,12 @@
   }
  ],
  "counts": {
-  "algorithms": 185,
+  "algorithms": 186,
   "artifact_types": 21,
-  "capabilities": 122,
-  "findings": 249,
+  "capabilities": 123,
+  "findings": 252,
   "recipes": 164,
-  "tools": 293
+  "tools": 294
  },
  "findings": [
   {
@@ -6399,6 +6435,12 @@
    "detail": "memory_cost=high but no backend_variants scale windows",
    "severity": "medium",
    "subject": "interpolation.simple_kriging"
+  },
+  {
+   "code": "ALGO_HEAVY_NO_VARIANTS",
+   "detail": "memory_cost=high but no backend_variants scale windows",
+   "severity": "medium",
+   "subject": "interpolation.st_kriging"
   },
   {
    "code": "ALGO_HEAVY_NO_VARIANTS",
@@ -7440,6 +7482,12 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
+   "detail": "missing descriptor fields: side_effect,tags",
+   "severity": "low",
+   "subject": "st_kriging_surface"
+  },
+  {
+   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
    "detail": "missing descriptor fields: capabilities",
    "severity": "low",
    "subject": "standard_deviational_ellipse"
@@ -7790,6 +7838,12 @@
    "code": "TOOL_UNTESTED",
    "detail": "registered tool without any static test reference",
    "severity": "medium",
+   "subject": "st_kriging_surface"
+  },
+  {
+   "code": "TOOL_UNTESTED",
+   "detail": "registered tool without any static test reference",
+   "severity": "medium",
    "subject": "temporal_changepoint"
   },
   {
@@ -7829,7 +7883,7 @@
    "subject": "webgis_world_state"
   }
  ],
- "fingerprint": "5e44b53edfd8a5e3cbf65fca128eef48af9e56304307d7e3ac01dd3d838cad96",
+ "fingerprint": "084fb036cc470ecc9382a4439751ee10214fbf29b980d174e7c88afa4db3e323",
  "gate": {
   "fields": {
    "capabilities": {
@@ -7898,7 +7952,7 @@
      "linear_unmixing",
      "list_datasets"
     ],
-    "missing_count": 49,
+    "missing_count": 50,
     "pass": true,
     "threshold": 83
    },
@@ -7926,13 +7980,13 @@
      "linear_unmixing",
      "list_datasets"
     ],
-    "missing_count": 49,
+    "missing_count": 50,
     "pass": true,
     "threshold": 83
    }
   },
   "pass": true,
-  "total": 293
+  "total": 294
  },
  "manifest_version": 1,
  "recipes": {
@@ -14670,6 +14724,27 @@
     "tests/unit/test_spatial_analyzer_cache.py",
     "tests/unit/test_st_dbscan.py"
    ],
+   "tier": 2
+  },
+  {
+   "capabilities": [
+    "spatiotemporal_interpolation"
+   ],
+   "deterministic": null,
+   "execution_policy": "thread",
+   "flags": [
+    "untested",
+    "descriptor_incomplete"
+   ],
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "st_kriging_surface",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "unclassified",
+   "status": "stable",
+   "tags": [],
+   "tests": [],
    "tier": 2
   },
   {

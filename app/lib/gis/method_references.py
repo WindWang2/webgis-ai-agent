@@ -660,6 +660,13 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Geostatistics. Academic Press.",
         ),
         MethodReference(
+            "cressie1999",
+            "Spatio-temporal covariance modelling (product-sum)",
+            "Cressie, N. & Huang, H.-C. (1999). Classes of nonseparable, "
+            "spatio-temporal stationary covariance functions. Journal of "
+            "the American Statistical Association, 94(448), 1330–1340.",
+        ),
+        MethodReference(
             "goovaerts1997",
             "Geostatistics for Natural Resources Evaluation (SGS: sequential Gaussian simulation)",
             "Goovaerts, P. (1997). Geostatistics for Natural Resources "

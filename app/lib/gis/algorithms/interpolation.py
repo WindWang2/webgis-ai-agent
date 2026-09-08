@@ -944,6 +944,55 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
             ),
 
+        # ── Science V4（W7）：时空克里金 ──────────────────────────
+
+        AlgorithmDescriptor(
+            id="interpolation.st_kriging", name="时空克里金", category="interpolation",
+            capabilities=["spatiotemporal_interpolation"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            min_features=12,
+            parameter_contract_ref="st_kriging_analysis",
+            tool_candidates=["st_kriging_surface"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.kriging"], priority=30,
+            fallback_semantics={"interpolation.kriging": "approximation"},
+            complexity="逐目标 (k+1)³ 时空系统 + 空间 cKDTree × 时间窗邻域",
+            approximation_class="exact",
+            algorithm_family="spatiotemporal_geostatistics",
+            method_references=["goovaerts1997", "cressie1999"],
+            assumptions=[
+                "时间单位秒（epoch/相对秒由调用方声明）；空间米制（自动投影）",
+                "product_sum：双时间尺度可分离混合 s·ρ_s·[w·ρ_t(τ/r)+(1−w)·ρ_t(τ/3r)]"
+                "——正组合按构造半正定（De Iaco product-sum 类）；"
+                "separable：C=s·ρ_s·ρ_t 严格有效；τ=0 两模型都精确退化为空间协方差",
+                "邻域 = 空间 k 近邻 × 时间窗过滤；窗内不足时放宽为纯空间 k 近邻（计数披露）",
+                "时间维退化（全部同时刻）结构化拒绝（改用空间克里金）",
+            ],
+            limitations=[
+                "时间相关为单参数指数形状（非参数时间变异函数未实现）",
+                "时空交叉结构不可识别时 product-sum 退化为可分离的加权和（已披露）",
+                "EPSG:3857 工作 CRS 的 Web Mercator 尺度畸变（与 OK 同）",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:12"],
+            uncertainty_outputs=["raster_uncertainty"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="同输入预测/方差逐位一致；τ=0 可分离模型退化为纯空间协方差（conformance 锚）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_kriging_st_v4.py::test_product_sum_covariance_psd_and_origin",
+                "tests/unit/lib/test_kriging_st_v4.py::test_separable_tau_zero_reduces_to_spatial",
+                "tests/unit/lib/test_kriging_st_v4.py::test_st_kriging_deterministic_and_valid",
+                "tests/unit/lib/test_kriging_st_v4.py::test_st_degenerate_time_typed_reject",
+                "tests/unit/lib/test_kriging_st_v4.py::test_st_driver_end_to_end",
+            ],
+            resource_envelope=ResourceEnvelope(hard_max_features=300_000, bytes_per_feature=40, notes="时空三元组 + 时间窗邻域矩阵；ST_MAX_SAMPLES=30 万"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
+            ),
+
         # ── dasymetric 原生化（Wave 6）：面插值（areal interpolation）────
 
         AlgorithmDescriptor(

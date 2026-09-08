@@ -331,6 +331,49 @@ _SEED_CONTRACTS: List[ParameterContract] = [
     ),
 
         ParameterContract(
+            id="st_kriging_analysis", version=1,
+            description="时空克里金（separable/product-sum 时空协方差，秒制时间）",
+            parameters=[
+                ParameterSpec(
+                    name="value_field", type="string", required=True,
+                    description="数值字段名",
+                ),
+                ParameterSpec(
+                    name="time_field", type="string", required=True,
+                    description="时间字段名（epoch/相对秒）",
+                ),
+                ParameterSpec(
+                    name="target_time_sec", type="number", required=True,
+                    description="目标时刻（秒，与 time_field 同基准）",
+                ),
+                ParameterSpec(
+                    name="resolution", type="integer", default=7,
+                    minimum=5, maximum=9,
+                    description="H3 分辨率",
+                ),
+                ParameterSpec(
+                    name="model", type="enum", default="product_sum",
+                    enum_values=["product_sum", "separable"],
+                    description="时空协方差模型",
+                ),
+                ParameterSpec(
+                    name="temporal_range_sec", type="number", default=2592000.0,
+                    minimum=1.0,
+                    description="时间相关变程（秒，指数形状）",
+                ),
+                ParameterSpec(
+                    name="time_window_sec", type="number", required=False,
+                    description="邻域时间窗（秒；缺省 30 天；窗外样本不进入邻域）",
+                ),
+                ParameterSpec(
+                    name="neighbors", type="integer", default=16,
+                    minimum=2, maximum=24,
+                    description="时空邻域样本数上限",
+                ),
+            ],
+        ),
+
+        ParameterContract(
             id="cokriging_lmc_analysis", version=1,
             description="LMC 全共克里金（线性共区域化模型，逐结构 PSD）",
             parameters=[
