@@ -368,16 +368,16 @@ describe('W7 · 导出真相 parity（ADR-0118）', () => {
     };
     const hud = { layers: [], processLayers: {}, activeFilters: {}, selectionFilters: {}, is3D: false };
     const plain = await composeExportSpec(committed as never, hud as never, {}, []);
-    expect(plain.layers).toHaveLength(2);
+    expect((plain as { layers?: unknown[] }).layers).toHaveLength(2);
 
-    const merged = await composeExportSpec(
+    const merged = (await composeExportSpec(
       committed as never,
       hud as never,
       { 'lyr-a': { visible: false } },
       ['lyr-b'],
-    );
-    expect(merged.layers?.find((l) => l.id === 'lyr-a')?.layout?.visibility).toBe('none');
-    expect(merged.layers?.some((l) => l.id === 'lyr-b')).toBe(false);
+    )) as { layers?: Array<{ id: string; layout?: { visibility?: string } }> };
+    expect(merged.layers?.find((l: { id: string }) => l.id === 'lyr-a')?.layout?.visibility).toBe('none');
+    expect(merged.layers?.some((l: { id: string }) => l.id === 'lyr-b')).toBe(false);
   });
 
   it('② 图例标题 parity：导出画 legend.title（live 同源），缺失回退字段格式', async () => {

@@ -7,18 +7,23 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const apiFetch = vi.fn(async () => ({ url: '/x.png', filename: 'x.png' }));
+type FetchCall = { url: string; init: { rawBody: FormData } };
+const fetchCalls: FetchCall[] = [];
+const apiFetch = vi.fn(async (url: string, init: { rawBody: FormData }) => {
+  fetchCalls.push({ url, init });
+  return { url: '/x.png', filename: 'x.png' };
+});
 
 vi.mock('@/lib/api/config', () => ({ API_BASE: 'http://localhost:8001' }));
-vi.mock('@/lib/api/transport', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
+vi.mock('@/lib/api/transport', () => ({ apiFetch }));
 vi.mock('@/lib/utils/logger', () => ({ devOnly: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 
 import { uploadExport } from './exporter';
 
 describe('uploadExport · render_diagnostics 透传（ADR-0118 D6）', () => {
   beforeEach(() => {
+    fetchCalls.length = 0;
     apiFetch.mockClear();
-    apiFetch.mockImplementation(async () => ({ url: '/x.png', filename: 'x.png' }));
   });
 
   it('带降级清单时附加 render_diagnostics JSON 字段', async () => {
@@ -27,12 +32,11 @@ describe('uploadExport · render_diagnostics 透传（ADR-0118 D6）', () => {
       { code: 'label_truncated', detail: 'layer=a len=240' },
       { code: 'chart_ref_unavailable', componentId: 'chart-1' },
     ]);
-    expect(apiFetch).toHaveBeenCalledTimes(1);
-    const form = apiFetch.mock.calls[0][1].rawBody as FormData;
-    const raw = form.get('render_diagnostics');
+    expect(fetchCalls).toHaveLength(1);
+    const raw = fetchCalls[0]!.init.rawBody.get('render_diagnostics');
     expect(raw).toBeTruthy();
-    const parsed = JSON.parse(String(raw));
-    expect(parsed.map((d: { code: string }) => d.code)).toEqual([
+    const parsed = JSON.parse(String(raw)) as Array<{ code: string }>;
+    expect(parsed.map((d) => d.code)).toEqual([
       'label_truncated',
       'chart_ref_unavailable',
     ]);
@@ -42,9 +46,9 @@ describe('uploadExport · render_diagnostics 透传（ADR-0118 D6）', () => {
     const blob = new Blob(['png'], { type: 'image/png' });
     await uploadExport(blob, 'export.png', 't', []);
     await uploadExport(blob, 'export2.png', 't');
-    for (const call of apiFetch.mock.calls) {
-      const form = call[1].rawBody as FormData;
-      expect(form.get('render_diagnostics')).toBeNull();
+    expect(fetchCalls).toHaveLength(2);
+    for (const call of fetchCalls) {
+      expect(call.init.rawBody.get('render_diagnostics')).toBeNull();
     }
   });
 });

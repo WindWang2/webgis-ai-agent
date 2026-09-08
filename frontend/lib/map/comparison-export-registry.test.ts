@@ -191,7 +191,7 @@ describe('runExport comparison composition', () => {
     const outcome = await runExport(deps, req);
 
     expect(outcome.ok).toBe(true);
-    const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)[0] as string;
+    const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)![0] as string;
     expect(finalMsg).toContain('comparison_export_composed');
     expect(finalMsg).toContain('70%');
   });
@@ -205,7 +205,7 @@ describe('runExport comparison composition', () => {
     const outcome = await runExport(deps, req);
 
     expect(outcome.ok).toBe(true);
-    const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)[0] as string;
+    const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)![0] as string;
     expect(finalMsg).toContain('comparison_second_view_not_exported');
   });
 });

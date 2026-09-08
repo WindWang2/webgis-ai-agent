@@ -78,22 +78,23 @@ export function describeRenderScene(
   spec: MapSpec | null | undefined,
   opts: { degradations?: ExportDegradation[] } = {},
 ): RenderSceneSnapshot {
-  const layers: RenderSceneLayer[] = Array.isArray(spec?.layers)
-    ? spec.layers
-        .filter((l): l is NonNullable<typeof l> => !!l && typeof l === 'object' && typeof l.id === 'string')
-        .map((l) => {
-          const layout = (l.layout ?? {}) as { visibility?: string; labelField?: string };
-          const label = (l as { label?: unknown }).label;
-          const legendSpec = (l as { legend_spec?: unknown }).legend_spec;
-          return {
-            id: l.id,
-            visible: layout.visibility !== 'none' && l.visible !== false,
-            hasLegendSpec: !!legendSpec && typeof legendSpec === 'object',
-            hasLabel: !!label || !!layout.labelField,
-          };
-        })
-        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-    : [];
+  type SceneLayer = MapSpec['layers'] extends (infer T)[] | undefined ? T : never;
+  const specLayers = spec && Array.isArray(spec.layers) ? spec.layers : [];
+  const layers: RenderSceneLayer[] = specLayers
+    .filter((l): l is SceneLayer & { id: string } => !!l && typeof (l as { id?: unknown }).id === 'string')
+    .map((l) => {
+      const layout = (l.layout ?? {}) as { visibility?: string; labelField?: string };
+      const label = (l as { label?: unknown }).label;
+      const legendSpec = (l as { legend_spec?: unknown }).legend_spec;
+      const topLevelVisible = (l as { visible?: unknown }).visible;
+      return {
+        id: l.id,
+        visible: layout.visibility !== 'none' && topLevelVisible !== false,
+        hasLegendSpec: !!legendSpec && typeof legendSpec === 'object',
+        hasLabel: !!label || !!layout.labelField,
+      };
+    })
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
   const components: RenderSceneComponent[] = resolveMapComponents(spec)
     .map((c) => ({
@@ -106,22 +107,19 @@ export function describeRenderScene(
     }))
     .sort((a, b) => a.id.localeCompare(b.id) || a.type.localeCompare(b.type));
 
-  const legends: RenderSceneLegend[] = Array.isArray(spec?.layers)
-    ? spec.layers
-        .filter(
-          (l): l is NonNullable<typeof l> & { legend_spec: unknown } =>
-            !!l && typeof l === 'object' &&
-            typeof (l as { id?: unknown }).id === 'string' &&
-            !!(l as { legend_spec?: unknown }).legend_spec,
-        )
-        .map((l) => ({
-          layerId: l.id,
-          title: legendTitle(l.legend_spec),
-          entryCount: legendEntryCount(l.legend_spec),
-          hasNodata: !!(l.legend_spec as { nodata?: { color?: string } }).nodata?.color,
-        }))
-        .sort((a, b) => a.layerId.localeCompare(b.layerId))
-    : [];
+  const legends: RenderSceneLegend[] = specLayers
+    .filter(
+      (l): l is SceneLayer & { id: string; legend_spec: unknown } =>
+        !!l && typeof (l as { id?: unknown }).id === 'string' &&
+        !!(l as { legend_spec?: unknown }).legend_spec,
+    )
+    .map((l) => ({
+      layerId: l.id,
+      title: legendTitle(l.legend_spec),
+      entryCount: legendEntryCount(l.legend_spec),
+      hasNodata: !!(l.legend_spec as { nodata?: { color?: string } }).nodata?.color,
+    }))
+    .sort((a, b) => a.layerId.localeCompare(b.layerId));
 
   const degradationCodes = Array.from(
     new Set((opts.degradations ?? []).map((d) => d.code)),

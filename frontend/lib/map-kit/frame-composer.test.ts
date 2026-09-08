@@ -30,12 +30,14 @@ interface MockMapOptions {
 }
 
 function makeMockMap(opts: MockMapOptions = {}) {
-  const filters = new Map<string, unknown>();
+  // 注意：此处不能用 `new Map(...)` —— 测试环境全局 Map 类型被 maplibre
+  // 的 Map 类遮蔽（TS2339），用 plain record 承载 filter 断言状态。
+  const filters: Record<string, unknown> = {};
   let idleWaits = 0;
   const map = {
-    getFilter: vi.fn((id: string) => filters.get(id)),
+    getFilter: vi.fn((id: string) => filters[id]),
     setFilter: vi.fn((id: string, f: unknown) => {
-      filters.set(id, f);
+      filters[id] = f;
     }),
     getLayer: vi.fn((id: string) => id === 'lyr' || id === 'lyr-label'),
     fitBounds: vi.fn(),
@@ -229,7 +231,7 @@ describe('runExport frames branch（W9）', () => {
     // pages = 全部帧（首页为封面·嵌入第 1 帧）
     const pdfArgs = pdfSpy.mock.calls[0];
     expect((pdfArgs[3] as { pages?: unknown[] }).pages).toHaveLength(2);
-    const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)[0] as string;
+    const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)![0] as string;
     expect(finalMsg).toContain('图集');
     expect(finalMsg).toContain('2 帧');
   });
@@ -248,7 +250,7 @@ describe('runExport frames branch（W9）', () => {
 
     expect(outcome.ok).toBe(true);
     expect(outcome.format).toBe('png');
-    const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)[0] as string;
+    const finalMsg = (deps.getHudState().setPendingSystemMessage as Mock).mock.calls.at(-1)![0] as string;
     expect(finalMsg).toContain('grid 拼板');
   });
 
