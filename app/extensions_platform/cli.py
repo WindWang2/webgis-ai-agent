@@ -23,6 +23,9 @@ trusted-code boundary 而非沙箱——CLI 输出不得使用 "sandbox" 宣传�
     doctor    设置摘要 + 每扩展状态 + 常见问题提示（纯只读，永不激活）
     scaffold  生成可立即通过 validate 的起步扩展包（manifest/main/health/test）
     catalog   按命名空间分组的声明目录（默认 markdown，--json 机器可读）
+    package   对扩展包做内容签名（写 signature.json；绝不输出密钥材料）
+    verify    按受信发布者验签（exit 0 = verified/missing，1 = 其它裁决）
+    sbom      打印扩展包的确定性 SBOM（文件清单/imports/依赖/secret 扫描）
 
 main(argv) 返回退出码：0 成功（list/doctor/catalog 的「发现问题」不算
 失败），1 校验失败 / 目标不存在 / 设置解析失败，2 用法错误（scaffold
@@ -857,6 +860,60 @@ def _cmd_catalog(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── package / verify（Wave 6 签名）───────────────────────────────────────
+def _cmd_package(args: argparse.Namespace) -> int:
+    from .signing import SIGNATURE_FILENAME, sign_pack
+
+    pack_dir = Path(args.pack_dir)
+    summary = sign_pack(pack_dir, args.key_id, Path(args.key_file))
+    payload = {
+        "pack": str(pack_dir),
+        "key_id": summary["key_id"],
+        "fingerprint": summary["fingerprint"],
+        "signature_file": str(pack_dir / SIGNATURE_FILENAME),
+    }
+    if args.json:
+        _print_json(payload)
+        return 0
+    print(f"pack: {payload['pack']}")
+    print(f"key_id: {payload['key_id']}")
+    print(f"fingerprint: {payload['fingerprint']}")
+    print(f"signature_file: {payload['signature_file']}")
+    return 0
+
+
+def _cmd_verify(args: argparse.Namespace) -> int:
+    from .settings_bridge import parse_trusted_publishers
+    from .signing import (
+        STATUS_MISSING,
+        STATUS_SIGNED_VERIFIED,
+        verify_pack_signature,
+    )
+
+    # --publisher 可重复或逗号分隔；统一拼成原始串走 settings_bridge 的
+    # 同一解析器（fail closed：坏条目抛 typed 异常 → main 归一 exit 1）。
+    publishers = parse_trusted_publishers(",".join(args.publisher))
+    pack_dir = Path(args.pack_dir)
+    status = verify_pack_signature(pack_dir, publishers)
+    payload = {
+        "pack": str(pack_dir),
+        "status": status.status,
+        "publisher": status.publisher,
+        "detail": status.detail,
+    }
+    if args.json:
+        _print_json(payload)
+    else:
+        print(f"pack: {payload['pack']}")
+        print(f"status: {payload['status']}")
+        print(f"publisher: {payload['publisher'] or '-'}")
+        if status.detail:
+            print(f"detail: {status.detail}")
+    # 退出码契约：verified / missing 算通过（missing 由宿主策略告警），
+    # invalid / tampered / signed_untrusted 算失败。
+    return 0 if status.status in (STATUS_SIGNED_VERIFIED, STATUS_MISSING) else 1
+
+
 # ── 参数解析 ─────────────────────────────────────────────────────────────
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -924,6 +981,35 @@ def _build_parser() -> argparse.ArgumentParser:
         "catalog", parents=[common], help="按命名空间分组的声明目录（默认 markdown）"
     )
     p_catalog.set_defaults(handler=_cmd_catalog)
+
+    # package / verify 直接操作包目录，无需发现根（--root 不适用）；
+    # --json 单独挂载。
+    p_package = sub.add_parser(
+        "package", help="对扩展包做内容签名（写 signature.json；不输出密钥材料）"
+    )
+    p_package.add_argument("pack_dir", help="扩展包目录（含 manifest.json）")
+    p_package.add_argument(
+        "--key-id", required=True, metavar="ID", help="发布者 key_id（小写标识符）"
+    )
+    p_package.add_argument(
+        "--key-file", required=True, metavar="PATH", help="HMAC 密钥文件（文件内容即密钥字节）"
+    )
+    p_package.add_argument("--json", action="store_true", help="stdout 输出纯 JSON")
+    p_package.set_defaults(handler=_cmd_package)
+
+    p_verify = sub.add_parser(
+        "verify", help="按受信发布者验签（exit 0 = verified/missing，1 = 其它裁决）"
+    )
+    p_verify.add_argument("pack_dir", help="扩展包目录")
+    p_verify.add_argument(
+        "--publisher",
+        action="append",
+        default=[],
+        metavar="KEY_ID:PATH",
+        help="受信发布者 key_id:密钥文件路径（可重复或逗号分隔多个）",
+    )
+    p_verify.add_argument("--json", action="store_true", help="stdout 输出纯 JSON")
+    p_verify.set_defaults(handler=_cmd_verify)
     return parser
 
 

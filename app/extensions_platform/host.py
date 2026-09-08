@@ -5,7 +5,7 @@
     discover → discovered ──(validate)──→ compatible ──(activate)──→ active
                   │            │                │   ↘ degraded（警告级诊断）
                   │            └→ incompatible  └→ failed（回滚后）
-                  └→ quarantined（信任封锁 / id 碰撞）
+                  └→ quarantined（信任封锁 / id 碰撞 / 签名无效或篡改）
     active/degraded ──(deactivate)──→ compatible ──(unload)──→ discovered
     reload = deactivate? → unload → 重读 manifest → activate?
 
@@ -52,6 +52,15 @@ from .permissions import (
     HIGH_RISK_PERMISSIONS,
     grants_for,
     validate_declared_permissions,
+)
+from .signing import (
+    STATUS_INVALID,
+    STATUS_MISSING,
+    STATUS_SIGNED_UNTRUSTED,
+    STATUS_SIGNED_VERIFIED,
+    STATUS_TAMPERED,
+    SignatureStatus,
+    verify_pack_signature,
 )
 from .trust import TrustLevel, resolve_trust
 
@@ -199,9 +208,103 @@ class ExtensionHost:
                 )
             else:
                 record.state = ExtensionState.DISCOVERED
+                # Wave 6：验签信任流（BLOCKED 路径不验签——隔离语义已定，
+                # 签名无从改变生死）。签名裁决属发现期事实，并入基线，
+                # 否则末尾 validate_extension 重算诊断时会把它抹掉。
+                record.diagnostics.extend(
+                    self._apply_signature_verdict(
+                        record,
+                        verify_pack_signature(
+                            discovered.path, self._policy.trusted_publishers
+                        ),
+                    )
+                )
+                record.baseline_diagnostics = tuple(record.diagnostics)
             self._records[record.extension_id] = record
         for record in self._records.values():
             self.validate_extension(record.extension_id)
+        return diagnostics
+
+    def _apply_signature_verdict(
+        self, record: ExtensionRecord, status: SignatureStatus
+    ) -> list[ExtensionDiagnostic]:
+        """Wave 6：按验签裁决执行信任流（BLOCKED 路径不进入本方法）。
+
+        - tampered / invalid → QUARANTINED（即使 allowlist 点名也不放行：
+          内容被篡改或签名损坏的包必须重签后重新发现；既有 QUARANTINED
+          状态机保证永不 import、永不激活）；
+        - signed_verified + trust_signed → local_untrusted 提权
+          trusted_extension（已有信任级别保持不变，只升不降），info 留痕；
+        - signed_untrusted / missing → 依 trust_signed / allow_unsigned_dev
+          大声告警；缺省策略下 missing 不产出任何诊断（V1 行为逐字节保持）。
+        """
+        extension_id = record.extension_id
+        if status.status == STATUS_TAMPERED:
+            record.state = ExtensionState.QUARANTINED
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.PACKAGE_TAMPERED,
+                    "pack content changed after signing (fingerprint mismatch vs "
+                    f"signature.json, publisher {status.publisher!r}); quarantined "
+                    "even if allowlisted — re-sign and re-discover",
+                    extension_id=extension_id,
+                )
+            ]
+        if status.status == STATUS_INVALID:
+            record.state = ExtensionState.QUARANTINED
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.SIGNATURE_INVALID,
+                    f"signature.json is invalid ({status.detail}); quarantined — "
+                    "fix or remove the signature and re-discover",
+                    extension_id=extension_id,
+                )
+            ]
+        diagnostics: list[ExtensionDiagnostic] = []
+        if status.status == STATUS_SIGNED_VERIFIED:
+            if self._policy.trust_signed:
+                if record.trust is TrustLevel.LOCAL_UNTRUSTED:
+                    record.trust = TrustLevel.TRUSTED_EXTENSION
+                diagnostics.append(
+                    ExtensionDiagnostic.info(
+                        DiagnosticCode.SIGNATURE_VERIFIED,
+                        f"signature verified for publisher {status.publisher!r}; "
+                        "trust elevated by EXTENSIONS_TRUST_SIGNED",
+                        extension_id=extension_id,
+                    )
+                )
+        elif status.status == STATUS_SIGNED_UNTRUSTED:
+            if self._policy.trust_signed:
+                diagnostics.append(
+                    ExtensionDiagnostic.warning(
+                        DiagnosticCode.PUBLISHER_UNTRUSTED,
+                        "signature present but publisher key unknown; falls back "
+                        "to operator trust config",
+                        extension_id=extension_id,
+                    )
+                )
+        elif status.status == STATUS_MISSING:
+            if self._policy.trust_signed:
+                diagnostics.append(
+                    ExtensionDiagnostic.warning(
+                        DiagnosticCode.SIGNATURE_INVALID,
+                        "unsigned pack under EXTENSIONS_TRUST_SIGNED policy; stays "
+                        "local_untrusted unless explicitly allowed",
+                        extension_id=extension_id,
+                    )
+                )
+            elif (
+                self._policy.allow_unsigned_dev
+                and record.trust is TrustLevel.LOCAL_UNTRUSTED
+            ):
+                diagnostics.append(
+                    ExtensionDiagnostic.warning(
+                        DiagnosticCode.SIGNATURE_INVALID,
+                        "unsigned dev mode (EXTENSIONS_ALLOW_UNSIGNED_DEV=true); "
+                        "pack stays local_untrusted",
+                        extension_id=extension_id,
+                    )
+                )
         return diagnostics
 
     def validate_extension(self, extension_id: str) -> list[ExtensionDiagnostic]:

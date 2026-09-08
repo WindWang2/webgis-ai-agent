@@ -77,6 +77,8 @@ class DiagnosticCode(str, Enum):
     DEPENDENCY_CONSTRAINT_INVALID = "dependency_constraint_invalid"
     DEPENDENCY_CONFLICT = "dependency_conflict"
     OPERATION_IN_FLIGHT = "operation_in_flight"
+    # wave-6 追加（append-only）：签名验签通过且发布者受信（info 级留痕）。
+    SIGNATURE_VERIFIED = "signature_verified"
 
 
 @dataclass(frozen=True)
