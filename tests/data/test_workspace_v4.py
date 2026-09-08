@@ -636,6 +636,9 @@ class TestPromotedPointerProjection:
                                "content_location": f"{sha[:4]}/{sha}.bin",
                                "content_payload_sha256": sha},
             ))
+            # PG：unit-of-work 对无 relationship 的两张表不保证 FK 序，
+            # flush 钉住 artifacts 先落（SQLite 无 FK 故此前误绿）。
+            s.flush()
             s.add(ArtifactRevision(
                 id=str(uuid.uuid4()), artifact_id=art_id, revision_no=1,
                 content_sha256=sha, content_location=f"{sha[:4]}/{sha}.bin",

@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 import app.models.db_model  # noqa: F401 — 在 fixture 之前把 ORM 模型注册进 Base.metadata
 import app.models.project  # noqa: F401
@@ -885,6 +885,12 @@ def test_orphan_revision_cleanup_bounded(db):
     _mk_revision(art_id, "7" * 64, "7777/" + "7" * 64 + ".json", revision_no=1)
     orphan_ids = []
     with SessionLocal() as s:
+        # 孤儿修订在 FK 模型下只能人为制造：约束删除后插入（本套件
+        # fixture 每测重建域表，约束状态自愈；SQLite 不强制 FK，跳过）。
+        if Engine.dialect.name == "postgresql":
+            s.execute(text(
+                "ALTER TABLE artifact_revisions "
+                "DROP CONSTRAINT artifact_revisions_artifact_id_fkey"))
         for i in range(3):
             rid = str(uuid.uuid4())
             orphan_ids.append(rid)
