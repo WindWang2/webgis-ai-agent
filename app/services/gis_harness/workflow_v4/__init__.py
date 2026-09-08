@@ -28,3 +28,10 @@ from app.services.gis_harness.workflow_v4.methodology import (  # noqa: F401
     qualify_method_candidates,
     resolve_methodology_family,
 )
+
+from app.services.gis_harness.workflow_v4.compiler_v4 import (  # noqa: F401
+    WORKFLOW_COMPILER_VERSION,
+    WORKFLOW_V4_STAGES,
+    WorkflowCompilationV4,
+    compile_workflow_v4,
+)

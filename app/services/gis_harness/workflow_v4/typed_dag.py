@@ -317,12 +317,18 @@ def build_typed_dag(
         getattr(selected_method, "requires_roles", ()) or ())
 
     # ── data_input 节点 ────────────────────────────────────────────────
-    present_roles: List[str] = []
+    # 输入 = 角色解析 ∪ 选中方法声明消费的角色（方法论声明数据需求；
+    # 未解析角色按 unknown 入图 —— 规划期 unknown 是诚实事实）。
+    resolved_roles: Dict[str, str] = {}
     for r in data_roles:
         role = str(getattr(r, "role", "") or (r.get("role") if isinstance(r, dict) else ""))
         status = str(getattr(r, "status", "") or (r.get("status") if isinstance(r, dict) else ""))
-        if not role or status in ("degraded",):
-            continue
+        if role and status != "degraded":
+            resolved_roles[role] = status or "unknown"
+    for role in method_roles:
+        resolved_roles.setdefault(role, "unknown")
+    present_roles: List[str] = []
+    for role in sorted(resolved_roles):
         present_roles.append(role)
         nodes.append(TypedWorkflowNode(
             node_id=f"data:{role}", kind="data_input", role=role,
@@ -399,22 +405,46 @@ def build_typed_dag(
         # 兼容只在真实数据流边上裁决；悬空依赖由 validate_typed_dag 拦截）。
 
     # ── output 节点 ───────────────────────────────────────────────────
-    method_caps = tuple(getattr(selected_method, "capabilities", ()) or ())
-    analysis_nodes = [n for n in nodes if n.kind == "analysis"]
-    producer = next(
-        (n for n in analysis_nodes if n.capability in method_caps),
-        analysis_nodes[0] if analysis_nodes else None,
-    )
+    # 产出者裁决：artifact 的产出 analysis 节点 = 其解析算法的
+    # output_artifact_type 匹配者（plan 真实产出，防类型失配边）。
+    analysis_nodes_for_outputs = [n for n in nodes if n.kind == "analysis"]
+
+    def _producer_for(artifact: str) -> Optional[TypedWorkflowNode]:
+        return next(
+            (n for n in nodes if n.kind == "analysis"
+             and n.outputs and n.outputs[0].artifact_type == artifact),
+            None,
+        )
+
+    emitted_outputs = 0
     for art in method_outputs[:6]:
+        producer = _producer_for(art)
+        if producer is None:
+            continue  # plan 不产出该 artifact：诚实跳过（不造失配边）
         nodes.append(TypedWorkflowNode(
             node_id=f"output:{art}", kind="output",
             inputs=[TypedPort(name="product", artifact_type=art,
                               geometry_kind=_artifact_geometry(art))],
         ))
-        if producer is not None:
-            edges.append(TypedWorkflowEdge(
-                from_node=producer.node_id, from_port="output",
-                to_node=f"output:{art}", to_port="product"))
+        edges.append(TypedWorkflowEdge(
+            from_node=producer.node_id, from_port="output",
+            to_node=f"output:{art}", to_port="product"))
+        emitted_outputs += 1
+    if emitted_outputs == 0 and analysis_nodes_for_outputs:
+        # 方法产出与 plan 无一对应 → 主输出挂 plan 尾节点（最后声明 =
+        # 产品链末端），端口类型取其真实产出。
+        tail = analysis_nodes_for_outputs[-1]
+        tail_art = tail.outputs[0].artifact_type if tail.outputs else ""
+        nodes.append(TypedWorkflowNode(
+            node_id=f"output:{tail_art or 'product'}", kind="output",
+            inputs=[TypedPort(
+                name="product", artifact_type=tail_art,
+                geometry_kind=_artifact_geometry(tail_art) if tail_art else "unknown",
+            )],
+        ))
+        edges.append(TypedWorkflowEdge(
+            from_node=tail.node_id, from_port="output",
+            to_node=f"output:{tail_art or 'product'}", to_port="product"))
 
     graph = TypedWorkflowGraph(
         nodes=nodes[:_MAX_GRAPH_NODES],
