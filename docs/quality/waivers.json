@@ -1,0 +1,5 @@
+{
+ "version": 1,
+ "note": "findings 豁免登记（Quality V2）：waiver 必须 (code, subject) 精确匹配且带 ISO 日期 expires；过期即闸红。豁免不计入棘轮计数，但仍在 findings 全量清单中可见（诚实披露）。本 Epic 目标：无需任何 waiver。",
+ "waivers": []
+}

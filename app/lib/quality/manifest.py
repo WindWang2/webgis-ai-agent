@@ -29,9 +29,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.lib.quality.behavioral import behavior_level, discover_behavioral_dispatch
 from app.lib.quality.discovery import discover_test_references, repo_root
 
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
+
+#: findings 棘轮 / waiver 配置文件（提交物；由 tests/quality 闸保护）。
+FINDINGS_BASELINE_PATH = "docs/quality/findings-baseline.json"
+WAIVERS_PATH = "docs/quality/waivers.json"
 
 # findings 数量边界：MD 渲染时每个 code 最多列出的条目数（JSON 永远全量）。
 MD_FINDINGS_LIMIT = 50
@@ -76,12 +81,18 @@ _SEVERITIES: Tuple[str, ...] = ("high", "medium", "low")
 
 @dataclass(frozen=True)
 class QualityFinding:
-    """一条派生发现（code 稳定、subject 是 registry 标识、detail 人类可读）。"""
+    """一条派生发现（code 稳定、subject 是 registry 标识、detail 人类可读）。
+
+    V2：``surface`` 定位到 manifest 分区，``domain`` 定位到业务域，
+    让每条 findings 可路由到 owner（.agent-work/quality-v2/01-architecture）。
+    """
 
     code: str
     severity: str
     subject: str
     detail: str
+    surface: str = ""
+    domain: str = ""
 
     def to_dict(self) -> Dict[str, str]:
         return {
@@ -89,6 +100,8 @@ class QualityFinding:
             "severity": self.severity,
             "subject": self.subject,
             "detail": self.detail,
+            "surface": self.surface,
+            "domain": self.domain,
         }
 
 
@@ -106,6 +119,10 @@ class QualityManifest:
     artifact_types: List[Dict[str, Any]] = field(default_factory=list)
     recipes: Dict[str, Any] = field(default_factory=dict)
     findings: List[Dict[str, str]] = field(default_factory=list)
+    #: 行为化覆盖统计（V2）：{"dispatch": n, "mention": n, "none": n}
+    behavioral: Dict[str, int] = field(default_factory=dict)
+    #: findings 棘轮判定（不进指纹：waiver expiry 有日期语义）
+    ratchet_report: Dict[str, Any] = field(default_factory=dict)
 
 
 def _canonical_json(payload: Any) -> str:
@@ -136,6 +153,7 @@ def _collect_registry_names() -> Dict[str, List[str]]:
 def _tool_rows(
     tool_registry: Any,
     test_refs: Dict[str, List[str]],
+    behavioral: Dict[str, List[str]],
 ) -> Tuple[List[Dict[str, Any]], List[QualityFinding]]:
     from app.tools.descriptor import SideEffectClass, ToolStatus
 
@@ -163,6 +181,7 @@ def _tool_rows(
             "deterministic": getattr(d, "deterministic", None),
             "requires_confirmation": requires_confirmation,
             "tests": tests,
+            "behavior": behavior_level(name, behavioral, tests),
         }
         # ── findings ────────────────────────────────────────────────
         executable = status != ToolStatus.PLANNED.value
@@ -178,6 +197,8 @@ def _tool_rows(
                         if requires_confirmation
                         else "registered tool without any static test reference"
                     ),
+                    surface="tools",
+                    domain="tools",
                 )
             )
             if requires_confirmation:
@@ -188,6 +209,8 @@ def _tool_rows(
                         severity="high",
                         subject=name,
                         detail="requires_confirmation tool without any test reference",
+                        surface="tools",
+                        domain="tools",
                     )
                 )
         missing = []
@@ -204,6 +227,8 @@ def _tool_rows(
                     severity="low",
                     subject=name,
                     detail="missing descriptor fields: " + ",".join(missing),
+                    surface="tools",
+                    domain="tools",
                 )
             )
         rows.append(row)
@@ -248,6 +273,8 @@ def _algorithm_rows(
                     severity="medium",
                     subject=aid,
                     detail="algorithm declares no conformance test node ids",
+                    surface="algorithms",
+                    domain=aid.split(".")[0],
                 )
             )
         if str(algo.memory_cost) == "high" and not variants:
@@ -257,6 +284,8 @@ def _algorithm_rows(
                     severity="medium",
                     subject=aid,
                     detail="memory_cost=high but no backend_variants scale windows",
+                    surface="algorithms",
+                    domain=aid.split(".")[0],
                 )
             )
         if not bool(algo.deterministic) and str(algo.random_seed_policy) == "deterministic":
@@ -266,6 +295,8 @@ def _algorithm_rows(
                     severity="medium",
                     subject=aid,
                     detail="deterministic=False but random_seed_policy=deterministic",
+                    surface="algorithms",
+                    domain=aid.split(".")[0],
                 )
             )
         if (
@@ -278,6 +309,8 @@ def _algorithm_rows(
                     severity="medium",
                     subject=aid,
                     detail="scientific_status=PRODUCTION without uncertainty_outputs",
+                    surface="algorithms",
+                    domain=aid.split(".")[0],
                 )
             )
     return rows, findings
@@ -331,6 +364,8 @@ def _capability_rows(
                     severity="high",
                     subject=cap.id,
                     detail="native capability without algorithm/tool producer",
+                    surface="capabilities",
+                    domain=cap.domain,
                 )
             )
         elif str(cap.status) == "native" and not has_conformance:
@@ -340,6 +375,8 @@ def _capability_rows(
                     severity="medium",
                     subject=cap.id,
                     detail="native capability whose producers declare no conformance tests",
+                    surface="capabilities",
+                    domain=cap.domain,
                 )
             )
     return rows, findings
@@ -363,6 +400,8 @@ def _artifact_rows(
                     severity="medium",
                     subject=tid,
                     detail="artifact type without any static test reference",
+                    surface="artifact_types",
+                    domain="artifacts",
                 )
             )
     return rows, findings
@@ -415,6 +454,95 @@ def gate(report: Dict[str, Any]) -> int:
     return 0 if report.get("pass") else 1
 
 
+# ── Quality V2：findings 棘轮 + waiver ───────────────────────────────────
+# 语义：findings 只许下降不许回升（baseline 是每 code 的数量上限）；
+# 豁免必须显式登记且带过期日（过期即红）；行为化 dispatch 覆盖数只许
+# 上升（min_behavioral_dispatch 下限）。这让"质量债务"成为可执行约束，
+# 而不是滚动报告。
+
+
+def load_findings_baseline(root: Optional[Path] = None) -> Dict[str, Any]:
+    base = root if root is not None else repo_root()
+    path = base / FINDINGS_BASELINE_PATH
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_waivers(root: Optional[Path] = None) -> List[Dict[str, str]]:
+    base = root if root is not None else repo_root()
+    path = base / WAIVERS_PATH
+    if not path.exists():
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return list(payload.get("waivers", []))
+
+
+def evaluate_findings_ratchet(
+    findings: List[Dict[str, str]],
+    behavioral_dispatch: int,
+    baseline: Optional[Dict[str, Any]] = None,
+    waivers: Optional[List[Dict[str, str]]] = None,
+    today: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """棘轮判定（纯函数；today 便于测试注入，缺省 date.today）。"""
+    import datetime
+
+    baseline = baseline or {}
+    waivers = waivers or []
+    if today is None:
+        today = datetime.date.today()
+    elif isinstance(today, str):
+        today = datetime.date.fromisoformat(today)
+
+    caps = {k: int(v) for k, v in (baseline.get("findings_max") or {}).items()}
+    min_behavioral = int(baseline.get("min_behavioral_dispatch") or 0)
+
+    waived_keys = {(w.get("code", ""), w.get("subject", "")) for w in waivers}
+    expired: List[Dict[str, str]] = []
+    active: List[Dict[str, str]] = []
+    for w in waivers:
+        try:
+            exp = datetime.date.fromisoformat(str(w.get("expires", "")))
+        except ValueError:
+            exp = datetime.date(1970, 1, 1)  # 缺失/非法 expires → 视为已过期
+        (active if exp >= today else expired).append(w)
+
+    current: Dict[str, int] = {}
+    waived_count = 0
+    for f in findings:
+        code = f["code"]
+        if (code, f.get("subject", "")) in waived_keys:
+            waived_count += 1
+            continue  # 豁免项不计入棘轮计数（但仍在 findings 全量清单中）
+        current[code] = current.get(code, 0) + 1
+
+    violations: List[Dict[str, Any]] = []
+    for code in sorted(set(current) | set(caps)):
+        now = current.get(code, 0)
+        cap = caps.get(code)
+        if cap is None:
+            # 新 code 未登记 → 视为上限 0（防止静默新增债务类别）
+            violations.append({"code": code, "baseline": 0, "current": now})
+        elif now > cap:
+            violations.append({"code": code, "baseline": cap, "current": now})
+
+    behavioral_ok = behavioral_dispatch >= min_behavioral
+    return {
+        "pass": not violations and not expired and behavioral_ok,
+        "violations": violations,
+        "expired_waivers": [
+            {"code": w.get("code", ""), "subject": w.get("subject", ""),
+             "expires": str(w.get("expires", ""))}
+            for w in expired
+        ],
+        "waivers_active": len(active),
+        "waived_current": waived_count,
+        "behavioral_dispatch": behavioral_dispatch,
+        "min_behavioral_dispatch": min_behavioral,
+    }
+
+
 def compile_quality_manifest(
     tool_registry: Optional[Any] = None,
     root: Optional[Path] = None,
@@ -434,8 +562,9 @@ def compile_quality_manifest(
         tool_names + names["capabilities"] + names["algorithms"] + names["artifact_types"],
         root=base,
     )
+    behavioral = discover_behavioral_dispatch(root=base)
 
-    tools, f_tools = _tool_rows(tool_registry, refs)
+    tools, f_tools = _tool_rows(tool_registry, refs, behavioral)
     algorithms, f_algos = _algorithm_rows(refs)
     capabilities, f_caps = _capability_rows(refs)
     artifact_types, f_arts = _artifact_rows(refs)
@@ -463,6 +592,18 @@ def compile_quality_manifest(
     }
     gate_report = _gate_report(tools)
 
+    behavioral_stats = {"dispatch": 0, "mention": 0, "none": 0}
+    for t in tools:
+        behavioral_stats[t["behavior"]] = behavioral_stats.get(t["behavior"], 0) + 1
+
+    # 棘轮判定（不进指纹：baseline/waiver 有日期语义；失败信息进渲染物）
+    ratchet = evaluate_findings_ratchet(
+        [f.to_dict() for f in findings],
+        behavioral_stats["dispatch"],
+        baseline=load_findings_baseline(base),
+        waivers=load_waivers(base),
+    )
+
     fingerprint_payload = {
         "manifest_version": MANIFEST_VERSION,
         "counts": counts,
@@ -484,6 +625,8 @@ def compile_quality_manifest(
         artifact_types=artifact_types,
         recipes=recipes,
         findings=[f.to_dict() for f in findings],
+        behavioral=behavioral_stats,
+        ratchet_report=ratchet,
     )
 
 
@@ -496,6 +639,8 @@ def render_json(manifest: QualityManifest) -> str:
         "fingerprint": manifest.fingerprint,
         "counts": manifest.counts,
         "gate": manifest.gate_report,
+        "behavioral": manifest.behavioral,
+        "findings_ratchet": manifest.ratchet_report,
         "tools": manifest.tools,
         "algorithms": manifest.algorithms,
         "capabilities": manifest.capabilities,
@@ -549,6 +694,32 @@ def render_markdown(manifest: QualityManifest) -> str:
         )
     lines.append("")
     lines.append(f"**gate: {verdict}**（`total={gate_report['total']}`）")
+    lines.append("")
+
+    lines.append("## 行为化覆盖与 findings 棘轮（Quality V2）")
+    lines.append("")
+    b = manifest.behavioral
+    total_tools = sum(b.values()) or 1
+    lines.append(
+        f"- 工具行为证据：dispatch **{b.get('dispatch', 0)}** / mention "
+        f"{b.get('mention', 0)} / none {b.get('none', 0)}"
+        f"（dispatch 覆盖率 {round(b.get('dispatch', 0) * 100 / total_tools)}%）"
+    )
+    r = manifest.ratchet_report
+    ratchet_verdict = "PASS" if r.get("pass") else "FAIL"
+    lines.append(
+        f"- findings 棘轮：**{ratchet_verdict}**"
+        f"（dispatch 下限 {r.get('min_behavioral_dispatch', 0)}，"
+        f"当前 {r.get('behavioral_dispatch', 0)}；"
+        f"active waivers {r.get('waivers_active', 0)}，"
+        f"过期 {len(r.get('expired_waivers', []))}）"
+    )
+    for v in r.get("violations", []):
+        lines.append(
+            f"  - 违规：`{v['code']}` 当前 {v['current']} > 基线 {v['baseline']}"
+        )
+    for w in r.get("expired_waivers", []):
+        lines.append(f"  - waiver 过期：`{w['code']}` `{w['subject']}`（{w['expires']}）")
     lines.append("")
 
     lines.append("## Findings（派生线索，非缺陷判定）")

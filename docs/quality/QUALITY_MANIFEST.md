@@ -2,8 +2,8 @@
 
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
-- Manifest 版本：**1**
-- 内容指纹：`938b5bf1bd1c2584…`
+- Manifest 版本：**2**
+- 内容指纹：`080db5eeb63f1c20…`
 
 ## 总览
 
@@ -26,6 +26,11 @@
 | capabilities | 62% | 60% | PASS（缺 112） |
 
 **gate: PASS**（`total=291`）
+
+## 行为化覆盖与 findings 棘轮（Quality V2）
+
+- 工具行为证据：dispatch **120** / mention 141 / none 30（dispatch 覆盖率 41%）
+- findings 棘轮：**PASS**（dispatch 下限 120，当前 120；active waivers 0，过期 0）
 
 ## Findings（派生线索，非缺陷判定）
 
