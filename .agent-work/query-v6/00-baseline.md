@@ -90,3 +90,19 @@
 - 单源 `plan_query` 行为逐位不变（V6 是联邦层的纵向深化，不动单源语义）。
 
 **兼容红线**：V5 公共 API（`plan_federated_chain` / `execute_chain` / `plan_query`）签名与行为默认逐位不变；V6 通过显式 `engine="v6"` 入口接入生产工具，V5 路径保留为回退。
+
+## 4. Subagent 审计增补（context-sweeper，独立验证）
+
+主 agent 独立审计后，Subagent A 的全仓扫描确认了上述事实，并补充：
+
+- **生产路径第三层**：REST `POST /data-fabric/catalog/{id}/query`（routes/data_fabric.py:867）→ manager → **adapter 内部**调 normalize+plan_query（postgis_adapter.py:663-717），plan/evidence 附 QueryResult.metadata。联邦仅工具面暴露（无 REST）。
+- **statistics 已有**：PostGIS pg_stats collector（statistics.py:244-272）、GeoParquet footer collector（275-332，仅本地路径）、进程 TTL + DurableStatisticsStore（351-501）、`statistics_for_request` fail-open（162-187）。
+- **pushdown 分级**：`PushdownClass = exact|equivalent|coarse`（pushdown.py:23-28）；`limit` 族恒 EXACT（:83）；`join` 族恒 UNSUPPORTED（:84）。**CQL2-JSON 是 ADR-0094 显式 Deferred** —— V6 不做，沿用 CQL2-text conformance 探测路径。
+- **streaming.py 已有**：iter_batches/stream_filter/stream_aggregate + governor 批大小折半（batch_size_for:43-69）+ 批边界取消钩子（28-41）；arrow_ops 谓词不可等价执行时 typed 拒绝。**V6 物理层复用这些原语**。
+- **accumulators.py AggregateDriver**：dict lane 与 Arrow lane 单一语义真相（test_data_plane_arrow_v5.py 差分对齐）—— V6 BatchAggregate 必须委托它。
+- **ADR-0101 D7 明示 deferred**："no bushy join-tree search"、"multi-hop in-database federation"、"Arrow batches between seams" —— 本 Epic 即这些 deferred 的纵向落地。
+- **查询结果缓存不存在**（Deferred），query_fingerprint 只进审计行；capability/provider 版本不在 key 内（审计项记录为 known limitation，不在本 Epic 引入结果缓存）。
+- **安全网测试**：test_data_fabric_optimizer_v5.py 的位级兼容 + TestSplitExecutionParity 差分是 V6 不可破坏的红线。
+- **query/ 目录 TODO/FIXME 几乎为零**（仅 feedback.py:132 跨进程持久化 Deferred）。
+
+结论：Scope 冻结（§3）不变；W2 统计扩展改为 **additive dict 字段**（沿用 QueryPlan.cost 的"dict 形态避免反向依赖"先例）；W6 物理执行器复用 streaming.py governor + accumulators.py AggregateDriver；W7 不做 CQL2-JSON（Deferred 尊重），下推解释复用 pushdown_classes 分级。

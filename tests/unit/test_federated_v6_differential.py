@@ -16,7 +16,6 @@ from app.services.data_fabric.query.federation import (
 )
 from app.services.data_fabric.query.federated.planner import plan_federation_v6
 from app.services.data_fabric.query.federated.executor import PhysicalExecutor
-from app.services.data_fabric.query.models import ExecutionBudget
 
 
 class _Adapter:
