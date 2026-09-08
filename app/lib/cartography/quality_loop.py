@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import math
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from app.lib.cartography.semantic_checks import (
     _paint_methods,
@@ -539,7 +539,7 @@ def review_and_repair_cartography(
     max_iterations: int = MAX_REPAIR_ITERATIONS,
     repair_executor: RepairExecutor = _apply_repairs,
     is_current: Optional[CurrentGuard] = None,
-    suppressed_repairs: Optional[set] = None,
+    suppressed_repairs: Optional[Set[str]] = None,
 ) -> CartographicLoopResult:
     """Review and repair an immutable desired MapSpec with hard termination.
 

@@ -438,6 +438,18 @@ class ReportService:
                     "timeout budget %.0f ms — artifact may be partial",
                     timeout_ms,
                 )
+                # 部分产物同样带 artifact 内降级标记（与占位图同词汇），
+                # 读者不依赖日志也能识别本图不完整。
+                comp_svg = comp.svg
+                root_idx = comp_svg.find("<svg")
+                if root_idx >= 0 and 'data-export-degraded' not in comp_svg[:comp_svg.find('>', root_idx) + 1]:
+                    comp_svg = (
+                        comp_svg[:root_idx + 4]
+                        + ' data-export-degraded="true" '
+                        + 'data-export-degraded-reason="export_timeout_partial"'
+                        + comp_svg[root_idx + 4:]
+                    )
+                    return comp_svg
             if comp.diagnostics:
                 logger.info(
                     "report export: %d render diagnostics emitted", len(comp.diagnostics)

@@ -104,6 +104,25 @@ async def test_partial_legend_intent_preserves_existing_keys():
 
 
 @pytest.mark.asyncio
+async def test_legend_hidden_state_survives_unrelated_mutations():
+    """跨变异 user-wins（review-r1 MAJOR-4）：先显式关图例，随后仅改
+    margins 的变异不得让 AUTO_SAFE 把显式 False 翻回 True。"""
+    engine = await _seed_thematic_session("v5_legend_off_3")
+    res1 = await engine.apply_mutation(
+        "v5_legend_off_3", SetLayoutIntent(legend={"visible": False})
+    )
+    assert res1.is_error is False
+    res2 = await engine.apply_mutation(
+        "v5_legend_off_3", SetLayoutIntent(margins={"top": 48})
+    )
+    assert res2.is_error is False, res2.error_msg
+    legend = res2.mapspec["layout"]["legend"]
+    assert legend["visible"] is False, (
+        "explicit legend hidden state must survive unrelated mutations"
+    )
+
+
+@pytest.mark.asyncio
 async def test_layout_margins_partial_merge():
     engine = MapSpecLifecycleEngine()
     sid = "v5_margins_merge_1"

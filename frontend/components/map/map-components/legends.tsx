@@ -170,7 +170,7 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
         {entries.length > 8 && (
           // W7：溢出指示（导出件为全集 —— 差异由导出侧 legend_entries_truncated
           // 诊断披露，live 侧如实告知还有 N 条未示）。
-          <div className="text-micro text-map-chrome-ink-muted">…+{entries.length - 8}</div>
+          <div className="text-micro text-map-chrome-ink-muted" aria-label={`还有 ${entries.length - 8} 条图例未显示`}>…+{entries.length - 8}</div>
         )}
       </div>
       {variant === 'uncertainty' && (

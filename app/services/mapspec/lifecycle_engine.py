@@ -1452,15 +1452,14 @@ class MapSpecLifecycleEngine:
                 # before structural validation/commit so the persisted MapSpec
                 # and runtime layer projection share one fingerprint. Rollback
                 # restores an exact historical snapshot and is review-only.
-                # V5（ADR-0118 D2）user-wins：显式 layout intent 声明的可视性
-                # 语义不许被 AUTO_SAFE 静默翻回 —— 抑制对应修复，finding 照常
-                # 进入 review 证据（诚实披露），提交对象保持显式意图。
+                # V5（ADR-0118 D2）user-wins：legend 显式关闭是用户的 durable
+                # 决策（与 ST-P2-2 层可见性 user-wins 同类）—— 只要 merge 后
+                # 的 committed 状态 visible=False（无论本次还是先前变异显式
+                # 声明），AUTO_SAFE 一律不得翻回；finding 照常进入 review
+                # 证据（诚实披露）。agent 要图例必须显式 visible=True。
                 suppressed_repairs: set = set()
-                if (
-                    isinstance(intent, SetLayoutIntent)
-                    and isinstance(intent.legend, dict)
-                    and intent.legend.get("visible") is False
-                ):
+                merged_legend = (mapspec.get("layout") or {}).get("legend")
+                if isinstance(merged_legend, dict) and merged_legend.get("visible") is False:
                     suppressed_repairs.add("set_map_legend_visibility")
                 try:
                     cartographic_loop = review_and_repair_cartography(

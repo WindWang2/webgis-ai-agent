@@ -43,9 +43,11 @@ review-r1 移除无发射器死码 label_suppressed_too_long，19→18）。
 ### D2 — Layout intent user-wins（意图不可被静默改写）
 
 `review_and_repair_cartography` 新增 `suppressed_repairs` 声明通道：
-SetLayoutIntent 显式 `legend.visible=False` 时抑制
-`set_map_legend_visibility` 自动修复 —— finding 照常进入 review 证据
-（可读性顾虑诚实披露），但提交对象保持显式意图。`CartographicLoopResult`
+只要 merge 后的 committed 状态 `legend.visible=False`（无论本次还是先前
+变异显式声明），即抑制 `set_map_legend_visibility` 自动修复 —— 显式关闭
+是用户的 durable 决策（跨变异不变式，与 ST-P2-2 层可见性 user-wins
+同类）；finding 照常进入 review 证据（可读性顾虑诚实披露），但提交对象
+保持显式意图。`CartographicLoopResult`
 新增 `suppressed_repairs` 字段留痕。legend/margins 改**字段级 merge**，
 partial intent 不再丢键。附带修复：`apply_presentation_batch` 缓存驱逐
 `popitem(arg)` TypeError（缓存满 256 即整批回滚）、
@@ -105,6 +107,8 @@ exporter 经 `composeLiveMapSpec` 合并 pendingPresentation/pendingRemoved
 
 ### D8 — 多帧导出运行时（atlas / small multiples 最小真实闭环）
 
+生产入口：`export_thematic_map` 的 `frames` 参数（≤50 帧，形状确定性
+校验、非法 fail-loud）→ `export_map` 命令 params → 前端
 `ExportRequest.frames/frameLayout` + `frame-composer.ts`：逐帧确定性执行
 （保存 → apply → idle → 抓帧 → 恢复），pdf→pages（multipage）/
 png→grid（拼板）。上限 50 帧（`atlas_page_limit_truncated`）、单帧失败
