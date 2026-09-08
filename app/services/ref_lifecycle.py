@@ -12,12 +12,18 @@ drops exactly the derived state that must not outlive the transition.
 
 invalidate ≠ delete: lifecycle invalidation only clears projections; the
 authoritative payload deletion stays with the store (``delete_ref``).
+
+失效语义一句话：**本模块是唯一失效权威**（per-ref epoch bump + 投影清除，
+advisory 广播可丢）；派生缓存经 ``register_ref_invalidation_hook`` 以
+best-effort 观察者身份接入（R6，如 raster tile/stats 按路径清除），观察者
+失败绝不影响权威，正确性从不依赖观察者被调用。
 """
 from __future__ import annotations
 
 import logging
+import threading
 from enum import Enum
-from typing import Optional
+from typing import Callable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +57,42 @@ def _emit(event: RefLifecycleEvent, session_id: str, ref_id: str, reason: Option
     )
 
 
+# ─── R6（audit 07 §6.1）：additive invalidation observers ───────────────────
+# 派生缓存（如 raster tile/stats，键是 raster_path 而非 (session, ref)）通过
+# 这里注册观察者，无需失效权威反向 import 重模块（numpy/rasterio）——import
+# 方向保持「缓存模块 → lifecycle」。观察者**绝不影响权威路径**：异常只记
+# 日志，注册幂等，正确性从不依赖观察者被调用（LRU/TTL 兜底）。
+
+_invalidation_hooks: List[Callable[[str, str, RefInvalidationReason], None]] = []
+_invalidation_hooks_lock = threading.Lock()
+
+
+def register_ref_invalidation_hook(
+    hook: Callable[[str, str, RefInvalidationReason], None],
+) -> None:
+    """Register an additive observer invoked on every per-ref invalidation.
+
+    ``hook(session_id, ref_id, reason)`` must be idempotent, fast and
+    never-raise-minded — the authority swallows hook failures by design.
+    """
+    with _invalidation_hooks_lock:
+        if hook not in _invalidation_hooks:
+            _invalidation_hooks.append(hook)
+
+
+def _run_invalidation_hooks(
+    session_id: str, ref_id: str, reason: RefInvalidationReason
+) -> None:
+    for hook in tuple(_invalidation_hooks):
+        try:
+            hook(session_id, ref_id, reason)
+        except Exception:  # noqa: BLE001 - 观察者绝不影响失效权威
+            logger.debug(
+                "[ref_lifecycle] invalidation hook failed session=%s ref=%s",
+                session_id, ref_id, exc_info=True,
+            )
+
+
 def invalidate_ref_caches(
     session_id: str,
     ref_ids: list[str],
@@ -77,6 +119,9 @@ def invalidate_ref_caches(
         if include_payload_cache:
             from app.services.ref_payload_cache import ref_payload_cache
             ref_payload_cache.invalidate(session_id, ref_id)
+        # R6: additive observers (e.g. raster tile/stats caches, keyed by
+        # raster_path) — best-effort, failures logged, never raised.
+        _run_invalidation_hooks(session_id, ref_id, reason)
         _emit(RefLifecycleEvent.REF_INVALIDATED, session_id, ref_id, reason.value)
         if reason in (RefInvalidationReason.OVERWRITE, RefInvalidationReason.ROLLBACK):
             _schedule_staleness_propagation(session_id, ref_id)

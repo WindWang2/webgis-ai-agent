@@ -140,6 +140,9 @@ class TestTraceReplay:
                     failure_class=FailureClass.TRANSIENT_REMOTE)
             return {"features": node.parameters.get("features") or []}
 
+        # 保存/恢复原处理器 —— REGISTRY 是模块级全局，pop 会把原实现一并
+        # 删掉并污染后续测试（曾致跨文件 FILTER 全部 OPERATION_UNSUPPORTED）。
+        _orig_scan = ops.REGISTRY.get(NodeCategory.SOURCE_SCAN)
         ops.REGISTRY[NodeCategory.SOURCE_SCAN] = _scan
         try:
             plan = ExecutionPlan(plan_id="r4b", nodes=[
@@ -152,7 +155,10 @@ class TestTraceReplay:
             events = [e for e in tracing.recent_events(limit=1024)
                       if e.get("run_id") == run.run_id]
         finally:
-            ops.REGISTRY.pop(NodeCategory.SOURCE_SCAN, None)
+            if _orig_scan is None:
+                ops.REGISTRY.pop(NodeCategory.SOURCE_SCAN, None)
+            else:
+                ops.REGISTRY[NodeCategory.SOURCE_SCAN] = _orig_scan
         report = replay_trace(events)
         assert report["valid"], report["violations"]
         assert report["nodes"]["boom"]["attempt_failures"] == 2
@@ -263,6 +269,7 @@ class TestChaosInjections:
             raise NodeExecutionError("transient", retry_safe=True,
                                      failure_class=FailureClass.TRANSIENT_REMOTE)
 
+        _orig_filter = ops.REGISTRY.get(NodeCategory.FILTER)
         ops.REGISTRY[NodeCategory.FILTER] = flaky
         token = CancellationToken(job_id="c2")
         try:
@@ -280,7 +287,10 @@ class TestChaosInjections:
             ct.join(timeout=10)
             assert run.evidence["a"].status == "cancelled"
         finally:
-            ops.REGISTRY.pop(NodeCategory.FILTER, None)
+            if _orig_filter is None:
+                ops.REGISTRY.pop(NodeCategory.FILTER, None)
+            else:
+                ops.REGISTRY[NodeCategory.FILTER] = _orig_filter
 
     def test_deadline_during_retry_backoff_converges(self):
         """退避长于剩余 deadline → 拒绝重试，快速失败（不空转）。"""
@@ -293,6 +303,7 @@ class TestChaosInjections:
             raise NodeExecutionError("transient", retry_safe=True,
                                      failure_class=FailureClass.TRANSIENT_REMOTE)
 
+        _orig_filter2 = ops.REGISTRY.get(NodeCategory.FILTER)
         ops.REGISTRY[NodeCategory.FILTER] = flaky
         try:
             engine = GeoExecutionEngine(max_workers=1)
@@ -310,7 +321,10 @@ class TestChaosInjections:
             assert run.evidence["a"].attempts == 1  # deadline 感知拒绝重试
             assert elapsed < 5  # 没有真的睡 9s
         finally:
-            ops.REGISTRY.pop(NodeCategory.FILTER, None)
+            if _orig_filter2 is None:
+                ops.REGISTRY.pop(NodeCategory.FILTER, None)
+            else:
+                ops.REGISTRY[NodeCategory.FILTER] = _orig_filter2
 
     def test_cancelled_node_never_registers_output(self):
         """取消节点不产 output_ref / 不落 artifact（§31 红线）。"""

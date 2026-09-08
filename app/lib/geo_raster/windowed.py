@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 
@@ -73,6 +73,8 @@ def execute_windowed(
     window_size: Optional[tuple[int, int]] = None,
     on_progress: Optional[Callable[[int, int], None]] = None,
     dst_dtype: Optional[str] = None,
+    on_chunk_done: Optional[Callable[[Any, str, int], None]] = None,
+    chunk_cache: Optional[Any] = None,
 ) -> WindowResult:
     """Run ``fn`` over every window and merge the outputs.
 
@@ -90,6 +92,22 @@ def execute_windowed(
       is ``(len(bands), h, w)`` and ``fn`` returns ``(h, w)`` (multi-band
       INPUT, single-band OUTPUT — the index-math shape). ``band`` is
       ignored when ``bands`` is given.
+
+    Wave 6 chunk runtime (audit 05 §7.1-§7.3) — both opt-in, default None:
+    - ``on_chunk_done(descriptor, digest, byte_size)`` — called once per
+      window with a serializable :class:`RasterChunkDescriptor`, the
+      per-chunk content digest (sha256 seeded with grid identity over the
+      chunk's OUTPUT bytes — the writer-stream scheme generalized), and
+      the output payload size in bytes. Pure observability: progress,
+      provenance, resume bookkeeping.
+    - ``chunk_cache`` (:class:`chunk.ChunkCacheBackend`) — consults and
+      publishes per-window OUTPUT arrays on the artifact-cache chassis.
+      On a hit ``fn`` is NOT invoked and (for local sources) the window is
+      NOT read — cancelled runs resume from the last persisted chunk.
+      Refused (typed error) for halo / global-stat profiles: chunk reuse
+      is only sound for element-wise ops. Cooperative cancellation
+      checkpoints already exist via the ``cancellable`` loop — this does
+      not duplicate them; the persistence is what makes them cheap.
     """
     if not profile.window_safe:
         raise RasterReaderError(
@@ -116,6 +134,34 @@ def execute_windowed(
 
     window_side = window_size[0] if window_size else window_side_from_budget()
 
+    # Wave 6 chunk runtime: descriptors + optional per-chunk cache. Lazy
+    # import keeps the module graph identical for default callers.
+    chunk_mod = None
+    cache = None
+    if chunk_cache is not None:
+        if profile.halo or profile.global_stat_required:
+            raise RasterReaderError(
+                "chunk cache requires element-wise window-safe algorithms "
+                f"(halo=0, no global stat); got halo={profile.halo}, "
+                f"global_stat_required={profile.global_stat_required}"
+            )
+        from app.lib.geo_raster.chunk import ChunkCacheBackend, fn_fingerprint
+
+        if not isinstance(chunk_cache, ChunkCacheBackend):
+            raise RasterReaderError(
+                "chunk_cache must be a chunk.ChunkCacheBackend instance"
+            )
+        cache = chunk_cache
+        # fn 指纹进缓存 operation 命名空间（round-1 review MINOR）：缓存键
+        # 必须随窗口算法的字节码失效 —— 编辑 fn 后旧 chunk 不得再被复用。
+        # 进 operation 字符串而非 RasterChunkDescriptor（descriptor 身份
+        # 保持数据定义）；qualname + co_code 摘要跨进程确定。对共享后端
+        # 幂等（绝不反复追加）。
+        cache_operation = f"{cache.operation}|fn:{fn_fingerprint(fn)}"
+    need_chunks = on_chunk_done is not None or cache is not None
+    if need_chunks:
+        from app.lib.geo_raster import chunk as chunk_mod  # noqa: F811
+
     out_dtype = dst_dtype or meta.dtype
     out = np.empty((meta.height, meta.width), dtype=out_dtype)
     windows = list(iter_bounded_windows(meta.width, meta.height, window_side=window_side, src=ds))
@@ -136,6 +182,38 @@ def execute_windowed(
         r_w = min(meta.width, col0 + w + halo) - r_col
         r_h = min(meta.height, row0 + h + halo) - r_row
         from rasterio.windows import Window
+
+        descriptor = None
+        cache_key = None
+        if need_chunks:
+            descriptor = chunk_mod.build_chunk_descriptor(
+                reader, (col0, row0, w, h), band=band,
+                bands=tuple(band_list) if bands is not None else None,
+                # out_dtype 参与身份（round-1 review MINOR）：同一源窗口、
+                # 不同 dst_dtype 的输出互不相同 —— 不参与会让 float64 缓存
+                # 被当作 uint8 结果复用（或反之）。
+                identity_extra=f"out_dtype={np.dtype(out_dtype).str}",
+            )
+            if cache is not None:
+                cache_key = cache.key_for(descriptor, operation=cache_operation)
+                cached = cache.load(
+                    cache_key,
+                    expected_shape=(h, w),
+                    expected_dtype=str(np.dtype(out_dtype)),
+                )
+                if cached is not None:
+                    # Hit: fn skipped, window not read — the resume win.
+                    out[row0:row0 + h, col0:col0 + w] = cached
+                    done += 1
+                    if on_progress is not None:
+                        on_progress(done, n_windows)
+                    if on_chunk_done is not None:
+                        on_chunk_done(
+                            descriptor,
+                            chunk_mod.chunk_digest(meta.grid_profile or descriptor.grid, cached),
+                            int(cached.nbytes),
+                        )
+                    continue
 
         if bands is not None:
             # 与 reader.read_window(bands=…) 同口径的字节预算（512MiB 红线）。
@@ -167,10 +245,18 @@ def execute_windowed(
             raise RasterReaderError(
                 f"window fn returned {core_result.shape}, expected {expected}"
             )
+        if cache is not None and cache_key is not None:
+            cache.store(cache_key, core_result)
         out[row0:row0 + h, col0:col0 + w] = core_result
         done += 1
         if on_progress is not None:
             on_progress(done, n_windows)
+        if on_chunk_done is not None and descriptor is not None:
+            on_chunk_done(
+                descriptor,
+                chunk_mod.chunk_digest(meta.grid_profile or descriptor.grid, core_result),
+                int(np.ascontiguousarray(core_result).nbytes),
+            )
 
     return WindowResult(
         array=out,

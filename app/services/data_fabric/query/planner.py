@@ -10,7 +10,7 @@ QueryResult.metadata["query_plan"]）。
 """
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from app.services.data_fabric.errors import (
     CrsInvalidError,
@@ -99,6 +99,10 @@ def _estimate_rows(
     stats: Optional[DatasetStatistics] = None,
 ) -> Optional[int]:
     total = getattr(descriptor, "feature_count", None)
+    if not isinstance(total, (int, float)) or total <= 0:
+        # V5（Wave 9）：descriptor 未携带要素数时，行级统计（观测计数/
+        # numberMatched 收割）作为诚实兜底 —— 无统计路径不受影响。
+        total = stats.row_count if (stats is not None and stats.row_count) else None
     if not isinstance(total, (int, float)) or total <= 0:
         return None
     sel = (
@@ -198,11 +202,63 @@ def plan_query(
     local_filters: List[str] = []
 
     filter_ok = spec.filter is not None and caps.filter_pushdown
+    filter_split: Optional[Dict[str, Any]] = None
+    split_families: Optional[tuple] = None
+    rejected_split_reason: Optional[str] = None
     if spec.filter is not None:
-        if filter_ok:
-            pushed_filters.append(predicate_summary(spec.filter))
-        else:
+        # V5（Wave 9）：AND 边分解的逐子句拆分。能力只读（pushdown 分级
+        # 粒度），门在 planner：仅当源声明了部分下推契约
+        # （caps.filter_ops_local 非空 → 存在混合可推性的现实可能）且
+        # 统计在场（有测量背书才值得改变传输语义）时才拆；其余情形与
+        # 历史整过滤决策逐位一致。
+        from app.services.data_fabric.query.pushdown import split_filter_pushdown
+
+        split = split_filter_pushdown(spec.filter, caps)
+        if split.pushed is None:
+            # 无任何可推叶（含源声明部分 op 本地的情形）→ 整体本地。
             local_filters.append(predicate_summary(spec.filter))
+            # C1（审计 round1）：守卫路径也必须落执行真相 —— 计划携带
+            # ``filter_split={"pushed": None, "local": 整棵 AST}``，执行侧
+            # （resolve_plan_filter_split → 各 adapter）据此绝不向远端编译
+            # 任何过滤子句，余项整体在取回后本地求值。历史路径（本字段缺席）
+            # 曾让 executor 把整棵 AST 编译下发 —— 计划与执行不一致。
+            # execution_mode / fallback_reason 保持原判（本守卫只补真相，
+            # 不改决策文案）。
+            filter_split = {"pushed": None, "local": spec.filter.model_dump()}
+            if caps.filter_pushdown:
+                filter_ok = False
+                rejected_split_reason = (
+                    "filter clauses are declared local by the source "
+                    "(filter_ops_local); whole-filter local execution"
+                )
+        elif not split.partial:
+            # 全部可推 → 历史整过滤下推（摘要逐位一致）。
+            pushed_filters.append(predicate_summary(spec.filter))
+        elif stats is not None:
+            pushed_filters.append(predicate_summary(split.pushed))
+            local_filters.append(predicate_summary(split.local))
+            filter_ok = True  # 部分下推成立：备选生成不再建议属性下推
+            filter_split = {
+                "pushed": split.pushed.model_dump(),
+                "local": split.local.model_dump(),
+            }
+            split_families = (split.pushed_families, split.local_families)
+            warnings.append(
+                "filter split along AND edges: pushable clauses pushed to source, "
+                "remainder evaluated locally (page windows bound source-side rows; "
+                "a page may return fewer rows than requested)"
+            )
+        else:
+            # 正确性守卫：混合可推性但无统计背书 → 整体本地（绝不把源声明
+            # 推不了的 op 发往远端），并如实记录被拒绝的替代。C1：与上面的
+            # 全本地守卫同理，执行真相必须落盘 —— 远端一个子句都不编译。
+            local_filters.append(predicate_summary(spec.filter))
+            filter_ok = False
+            filter_split = {"pushed": None, "local": spec.filter.model_dump()}
+            rejected_split_reason = (
+                "mixed filter pushability detected but no column statistics; "
+                "conservative whole-filter local execution"
+            )
 
     pushed_spatial = False
     if spec.spatial is not None:
@@ -426,7 +482,11 @@ def plan_query(
             },
             caps,
             spatial_op=spec.spatial.op if spec.spatial is not None else None,
+            filter_split_families=split_families,
         ),
+        # V5（Wave 9）：拆分/守卫路径的执行真相（resolve_plan_filter_split
+        # 消费）；历史路径保持 None（adapter 行为逐位不变）。
+        filter_split=filter_split,
     )
 
     # ---- V3：成本分解 + 有界备选 + 假设标注（additive；不改选中决策）----
@@ -465,6 +525,25 @@ def plan_query(
         plan.assumptions.append(
             "selectivity uses built-in default constants (no column statistics "
             "available); estimates are assumptions, not measurements"
+        )
+    if rejected_split_reason:
+        # V5（Wave 9）：被拒绝的替代 —— 拆分被正确性守卫拦下时如实记录
+        #（确定性文案；有界 ≤MAX_ALTERNATIVES；不构成第二执行真相）。
+        rejected_alt = {
+            "name": "partial_filter_pushdown",
+            "description": (
+                "AND-edge split would push the pushable clauses and keep the "
+                "remainder local"
+            ),
+            "feasible": False,
+            "rejected_reason": rejected_split_reason,
+            "estimated_cost": None,
+        }
+        plan.alternatives = (
+            [a for a in plan.alternatives if a.get("name") != rejected_alt["name"]][
+                : optimizer.MAX_ALTERNATIVES - 1
+            ]
+            + [rejected_alt]
         )
     if feedback_note:
         plan.assumptions.append(feedback_note)

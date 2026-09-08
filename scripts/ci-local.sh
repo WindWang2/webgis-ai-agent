@@ -76,6 +76,7 @@ pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_per
   tests/benchmarks/test_llm_http_pooling_perf.py \
   tests/benchmarks/test_perf_mapspec_mutation_cost.py tests/benchmarks/test_dispatch_stall_perf.py \
   tests/benchmarks/test_perf_large_workspace.py \
+  tests/benchmarks/test_data_control_plane_v5.py \
   tests/benchmarks/test_gis_registry_perf.py tests/benchmarks/test_template_registry_perf.py \
   tests/benchmarks/test_planner_runtime_perf.py tests/benchmarks/test_pi_perf.py \
   tests/benchmarks/test_data_runtime_v2_perf.py tests/benchmarks/test_geobench_v3.py \

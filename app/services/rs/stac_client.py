@@ -68,6 +68,69 @@ def _nan_block_mean(src: np.ndarray, out_h: int, out_w: int) -> np.ndarray:
         return sums / counts
 
 
+# Wave 6（audit 05 §2 整读隐患 #2）：DEM 哨兵掩膜路径的原生分辨率窗口读
+# 上限（单条 strip 的原生像元字节预算，float64 记账）。大 AOI × 30 m DEM
+# 的整窗原生读不再被允许 —— 分条流式处理，峰值 O(strip)。
+DEM_SENTINEL_STRIP_BYTES = 64 * 1024 * 1024
+
+
+def _read_sentinel_masked_decimated(
+    ds,
+    win,
+    out_h: int,
+    out_w: int,
+    *,
+    sentinel: float = DEM_SENTINEL_NODATA,
+    strip_bytes: int = DEM_SENTINEL_STRIP_BYTES,
+) -> np.ndarray:
+    """#1002/#578 语义（降采样**前**剔除哨兵）+ 有界原生读。
+
+    旧实现 ``ds.read(1, window=win)`` 一次性物化整个原生分辨率窗口再
+    ``_nan_block_mean`` —— 大 AOI 下无字节护栏（同函数其余两个分支都在
+    read 内 out_shape 降采样，但哨兵必须先掩膜，不能照搬 out_shape：
+    GDAL average 不感知未声明的 -9999，会平均出"看似合法"的中间值）。
+    本实现按行分条（每条 ≤ ``strip_bytes``）流式读取，逐条掩膜后用与
+    ``_nan_block_mean`` 完全相同的全局块划分公式累加 sums/counts ——
+    结果与旧实现逐位一致（strip 边界即块边界，块绝不跨条）。
+    """
+    from rasterio.windows import Window
+
+    H, W = int(win.height), int(win.width)
+    out_h = max(1, min(int(out_h), H))
+    out_w = max(1, min(int(out_w), W))
+    row_starts = (np.arange(out_h) * H) // out_h
+    row_ends = np.append(row_starts[1:], H)
+    col_starts = (np.arange(out_w) * W) // out_w
+    # 每条 strip 的原生行数下限 = 一个输出块（否则退化成逐行读）。
+    min_block_rows = max(1, H // out_h)
+    rows_per_strip = max(min_block_rows, int(strip_bytes // max(1, W * 16)))
+    sums = np.zeros((out_h, out_w), dtype=np.float64)
+    counts = np.zeros((out_h, out_w), dtype=np.int64)
+    j = 0
+    while j < out_h:
+        j1 = min(out_h, j + rows_per_strip)
+        r0 = int(row_starts[j])
+        r1 = int(row_ends[j1 - 1])
+        strip_win = Window(
+            float(win.col_off), float(win.row_off) + r0, float(win.width), r1 - r0
+        )
+        strip = ds.read(1, window=strip_win).astype(float)
+        strip[strip <= sentinel] = np.nan
+        valid = np.isfinite(strip)
+        filled = np.where(valid, strip, 0.0)
+        local_starts = row_starts[j:j1] - r0
+        with np.errstate(invalid="ignore", divide="ignore"):
+            sums[j:j1] = np.add.reduceat(
+                np.add.reduceat(filled, local_starts, axis=0), col_starts, axis=1)
+            counts[j:j1] = np.add.reduceat(
+                np.add.reduceat(valid.astype(np.int64), local_starts, axis=0),
+                col_starts, axis=1,
+            )
+        j = j1
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return sums / counts
+
+
 class StacClientPrimitive:
     """STAC 检索与波段读取服务"""
 
@@ -282,9 +345,13 @@ class StacClientPrimitive:
                                             resampling=Resampling.average,
                                         ).astype(float)
                                     elif mask_sentinel_nodata:
-                                        full = ds.read(1, window=win).astype(float)
-                                        full[full <= DEM_SENTINEL_NODATA] = np.nan
-                                        data = _nan_block_mean(full, out_h, out_w)
+                                        # Wave 6：哨兵必须先掩膜再降采样
+                                        # (#578)，但原生整窗读无字节护栏
+                                        # (audit 05 §2 隐患 #2) —— 分条
+                                        # 流式：掩膜语义逐位保持，读上界
+                                        # O(strip)。
+                                        data = _read_sentinel_masked_decimated(
+                                            ds, win, out_h, out_w)
                                     else:
                                         data = ds.read(
                                             1,

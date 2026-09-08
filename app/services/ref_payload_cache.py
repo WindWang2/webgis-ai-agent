@@ -10,6 +10,9 @@ Redis 流量、零解析成本。
 - ``overwrite`` / ``delete_ref`` / ``store`` 内 LRU 淘汰 / ``clear_session``
   时就地失效；
 - 跨副本写入由 TTL 兜底（与 map_state L1 同策略，取 5s）。
+- 失效语义一句话：**content revision（epoch）为主，TTL 5s 兜底**；miss 路
+  径的 GET+parse 另有 per-(session, ref) singleflight（session_data_redis
+  R4b）—— 纯优化，epoch guard 仍是唯一正确性机制。
 
 只读约定：缓存命中返回**同一对象**（不拷贝）——调用方（registry 解引用、
 数据面序列化）不得就地修改 payload；需要可变副本的路径继续走 ``get()``

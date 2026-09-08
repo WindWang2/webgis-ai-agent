@@ -274,7 +274,7 @@ class MapProductVersionSummary(BaseModel):
 
 class PromoteArtifactsReportItem(BaseModel):
     artifact_id: str
-    status: str = Field(description="promoted | already_promoted | no_session_context | session_expired | store_unavailable")
+    status: str = Field(description="promoted | already_promoted | no_session_context | session_expired | store_unavailable | quota_exceeded (W12: over-quota; row survives metadata-only, no bytes written)")
     content_location: Optional[str] = None
 
 
@@ -284,6 +284,36 @@ class PromoteArtifactsResponse(BaseModel):
     materialized: int = Field(description="artifacts whose content was materialized by THIS call")
     artifacts: List[PromoteArtifactsReportItem]
     note: str = Field(description="Semantics of the per-artifact statuses for this session-less path")
+
+
+class ArtifactPinRequest(BaseModel):
+    """POST pin body（缺省 body = pin；DELETE 路由 = unpin）。"""
+    pinned: bool = True
+
+
+class ArtifactPinResponse(BaseModel):
+    status: str
+    artifact_id: str
+    revision_no: Optional[int] = None
+    content_sha256: Optional[str] = None
+    pinned: bool = False
+    pinned_at: Optional[str] = None
+
+
+class ArtifactCloneResponse(BaseModel):
+    """Clone-as-pointer：新行指向同一 content_location（零字节复制）。"""
+    status: str
+    artifact_id: str = Field(description="the NEW clone artifact id")
+    source_artifact_id: str
+    name: Optional[str] = None
+    content_location: Optional[str] = None
+    content_sha256: Optional[str] = None
+
+
+class DataGcExecuteRequest(BaseModel):
+    """POST data-gc/execute body：显式 confirm 才执行破坏性清理（缺省 false
+    → 400，dry-run parity 纪律 —— 计划先行，执行必须显式表态）。"""
+    confirm: bool = False
 
 
 class ArtifactResponse(BaseModel):
@@ -417,3 +447,48 @@ class ArtifactSummary(BaseModel):
     format: Optional[str] = None
     crs: Optional[str] = "EPSG:4326"
     created_at: datetime
+
+
+# =====================================================================
+# Workspace V4 — durable workspace snapshots (Wave 2, audit 02 §6)
+#
+# 快照是 manifest（指针集合），不是数据搬运工：响应体只携带
+# ref/指针/计数，绝不内联载荷字节。保存/恢复/克隆/删除是写路径
+# —— 路由侧强制认证 + 项目鉴权 + 会话所有权校验（SEC-08 同款）。
+# =====================================================================
+
+
+class WorkspaceSnapshotSummary(BaseModel):
+    """Slim snapshot row — list endpoints use this to slim payloads."""
+
+    snapshot_id: str
+    label: str = ""
+    created_at: Optional[float] = None
+    artifacts: int = 0
+    layers: int = 0
+    project_id: str = ""
+    home: str = "project"  # project | session（会话域为向后兼容可读）
+
+
+class WorkspaceSnapshotListResponse(BaseModel):
+    project_id: str
+    count: int = 0
+    bounded: int = Field(default=50, description="list 输出硬上限")
+    items: List[WorkspaceSnapshotSummary] = Field(default_factory=list)
+
+
+class WorkspaceSnapshotSaveResponse(BaseModel):
+    status: str = "ok"
+    project_id: str
+    home: str = "project"
+    snapshot_id: str
+    label: str = ""
+    durable_pointers: int = 0
+    materialize_skipped: List[str] = Field(default_factory=list)
+    snapshot: Dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkspaceSnapshotDeleteResponse(BaseModel):
+    status: str = "deleted"
+    snapshot_id: str
+    home: str = "project"

@@ -231,17 +231,31 @@ class IngestPipeline:
         profile.target_ref = ref_id
         result.profile_summary = profile.summary()
         result.quality_summary = report.summary()
-        result.ok = True
-        if materialize:
-            # V3 语义中 materialize = 确认会话载荷就是持久载体（当前全部
-            # 会话 ref 即 session store 载荷）—— 显式声明 session 持久层。
-            from app.services.artifact_registry import update_record_metadata
 
-            await update_record_metadata(
-                session_id, ref_id, metadata={"materialization_policy": "cached",
-                                              "persistence_tier": "session"}
-            )
-            result.steps_completed.append("materialize")
+        # ok=True 必须等最后一步（含 materialize 元数据声明）成功后才置位 ——
+        # 审计 R7：旧代码在 materialize 步之前置 ok=True，update_record_metadata
+        # 抛出会带着「已注册的产物 + 未完成的管线」逃逸给调用方（无错误形状、
+        # 无回滚）。这里与 register 失败同一纪律：补偿删除 ref + 标准错误形状。
+        if materialize:
+            try:
+                # V3 语义中 materialize = 确认会话载荷就是持久载体（当前全部
+                # 会话 ref 即 session store 载荷）—— 显式声明 session 持久层。
+                from app.services.artifact_registry import update_record_metadata
+
+                await update_record_metadata(
+                    session_id, ref_id, metadata={"materialization_policy": "cached",
+                                                  "persistence_tier": "session"}
+                )
+                result.steps_completed.append("materialize")
+            except Exception as e:  # noqa: BLE001
+                await self._rollback_ref(session_id, ref_id)
+                result.profile_summary = {}
+                result.quality_summary = {}
+                result.ref_id = ""
+                result.error_code = "MATERIALIZE_FAILED_ROLLED_BACK"
+                result.error = f"materialize failed, ref rolled back: {e}"
+                return result
+        result.ok = True
         return result
 
     async def _find_duplicate(self, session_id: str, fingerprint: str) -> Optional[str]:

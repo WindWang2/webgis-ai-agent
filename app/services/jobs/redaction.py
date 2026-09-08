@@ -256,6 +256,12 @@ def safe_dispatch_spec(spec: Any) -> dict[str, Any] | None:
         return {"__truncated__": "dispatch_spec", "reason": "sensitive_argument"}
 
     candidate: dict[str, Any] = {"task": task, "args": list(args), "kwargs": dict(kwargs)}
+    # V5（audit 06 §6.1 step 1/4）：队列是 retry 亲和水印（geocompute
+    # profile 队列）—— 纯调度事实，无敏感面，随 dispatch_spec 保留，
+    # 供手工 retry 重新入队时路由到同一 profile 队列；绝不进 kwargs/params。
+    queue = spec.get("queue")
+    if isinstance(queue, str) and queue and len(queue) <= 100:
+        candidate["queue"] = queue
     if not _fits(candidate, MAX_DISPATCH_BYTES):
         return {"__truncated__": "dispatch_spec", "reason": "too_large"}
     return candidate

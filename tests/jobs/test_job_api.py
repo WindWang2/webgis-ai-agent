@@ -448,6 +448,92 @@ async def test_retry_without_dispatch_spec_is_refused(client, db, tenants):
 
 
 @pytest.mark.asyncio
+async def test_retry_keeps_declared_queue_affinity(client, db, tenants, monkeypatch):
+    """DIST（round1）：dispatch_spec.queue 是首次派发的调度事实 —— 重试必须
+    复用同一队列（raster/heavy_cpu 等 profile 任务不能错投默认队列）。"""
+    from app.services.jobs import JobStatus
+
+    sent: list[dict] = []
+
+    class _Result:
+        id = "celery-retry-q"
+
+    def fake_send_task(name, args=None, kwargs=None, **opts):
+        sent.append({"name": name, "args": args, "kwargs": kwargs, **opts})
+        return _Result()
+
+    monkeypatch.setattr("app.api.routes.jobs.celery_app.send_task", fake_send_task)
+
+    job = await _make_job(
+        db, owner=tenants["user_a"], session_id="sess-a", status=JobStatus.failed,
+        dispatch_spec={
+            "task": "app.services.geocompute.tasks.run_geocompute_node",
+            "args": [],
+            "kwargs": {},
+            "queue": "raster_queue",
+        },
+    )
+    resp = await client.post(
+        f"/api/v1/tasks/jobs/{job.id}/retry", headers=_auth(tenants["user_a"])
+    )
+    assert resp.status_code == 200
+    assert resp.json()["retried"] is True
+    assert len(sent) == 1
+    assert sent[0]["queue"] == "raster_queue", "重试必须保持原队列亲和"
+
+
+@pytest.mark.asyncio
+async def test_retry_without_or_unknown_queue_omits_queue_kwarg(
+    client, db, tenants, monkeypatch
+):
+    """spec 无 queue 或队列名未声明 → 不带 queue kwarg（按任务名的默认路由
+    接管），绝不投递到没有消费者声明的队列。"""
+    from app.services.jobs import JobStatus
+
+    sent: list[dict] = []
+
+    class _Result:
+        def __init__(self, task_id: str):
+            self.id = task_id
+
+    def fake_send_task(name, args=None, kwargs=None, **opts):
+        sent.append({"name": name, "args": args, "kwargs": kwargs, **opts})
+        return _Result(f"celery-retry-nq-{len(sent)}")
+
+    monkeypatch.setattr("app.api.routes.jobs.celery_app.send_task", fake_send_task)
+
+    # 无 queue。
+    job = await _make_job(
+        db, owner=tenants["user_a"], session_id="sess-a", status=JobStatus.failed
+    )
+    resp = await client.post(
+        f"/api/v1/tasks/jobs/{job.id}/retry", headers=_auth(tenants["user_a"])
+    )
+    assert resp.status_code == 200
+    assert resp.json()["retried"] is True
+    assert len(sent) == 1
+    assert "queue" not in sent[0], "spec 无 queue → 不得传 queue kwarg"
+
+    # 未声明队列名 → 忽略（省略 kwarg），让默认路由接管。
+    job2 = await _make_job(
+        db, owner=tenants["user_a"], session_id="sess-a", status=JobStatus.failed,
+        dispatch_spec={
+            "task": "app.services.spatial_tasks.run_ndvi_analysis",
+            "args": ["/data/a.tif"],
+            "kwargs": {},
+            "queue": "not_a_declared_queue",
+        },
+    )
+    resp2 = await client.post(
+        f"/api/v1/tasks/jobs/{job2.id}/retry", headers=_auth(tenants["user_a"])
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["retried"] is True
+    assert len(sent) == 2
+    assert "queue" not in sent[1], "未声明队列名 → 省略 queue kwarg"
+
+
+@pytest.mark.asyncio
 async def test_cancelled_job_retry_is_refused(client, db, tenants):
     """Scenario 12 / 规范 §17：取消绝不能被 retry。"""
     from app.services.jobs import JobStatus

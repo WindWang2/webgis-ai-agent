@@ -120,7 +120,7 @@ class _FakeConn:
         pass
 
 
-def _adapter(executed, *, srid=4326, **cursor_kwargs):
+def _adapter(executed, *, srid=4326, caps=None, **cursor_kwargs):
     adapter = PostGISAdapter.__new__(PostGISAdapter)
 
     class _ConnCtx:
@@ -135,7 +135,7 @@ def _adapter(executed, *, srid=4326, **cursor_kwargs):
 
     adapter._connection_context = _ConnCtx
     adapter._meta_cache = {}
-    adapter._caps = default_capabilities("postgis")
+    adapter._caps = caps if caps is not None else default_capabilities("postgis")
     adapter.profile = ConnectionProfile(id="p_v2", source_type="postgis")
     return adapter
 
@@ -529,6 +529,47 @@ def test_stddev_sample_semantics_local():
 
     expected = math.sqrt(sum((x - 2.5) ** 2 for x in [1, 2, 3, 4]) / 3)  # sample
     assert abs(out[0]["stddev_v"] - expected) < 1e-9
+
+
+# ── F1/F6（round2）回归 ─────────────────────────────────────────────────────
+
+
+def test_has_more_survives_local_remainder_on_full_page():
+    """F1（round2）：守卫路径下远端满页（3 行）被本地余项过滤丢 1 行 →
+    has_more 必须仍为 True（回落口径 = 本地过滤前的远端窗口行数）。
+
+    回归锚点：修复前 fetched(过滤后)=2 >= limit(3) 为 False → has_more
+    误判耗尽、游标停摆、后续页静默丢失。"""
+    executed: list = []
+    geo = '{"type":"Point","coordinates":[104,30]}'
+    rows = [("alpha", geo, 1), ("beta", geo, 2), ("alpine", geo, 3)]
+    caps = default_capabilities("postgis").model_copy(update={"filter_ops_local": ["like"]})
+    a = _adapter(executed, rows=rows, caps=caps)
+    res = a.query("public.schools", QuerySpec(
+        limit=3, fields=["name"],
+        filter_expr={"op": "like", "field": "name", "pattern": "al%"}))
+    assert [f["properties"]["name"] for f in res.features] == ["alpha", "alpine"]
+    assert res.total_matching is None, "本地余项在场 → 下推半 count 不得冒充 total_matching"
+    assert res.has_more is True, "远端满页被本地过滤收缩 → 不得误判无下一页"
+    assert res.truncated is True
+    assert res.metadata["query_plan"]["filter_split"]["pushed"] is None
+
+
+def test_mvt_tile_rejects_attribute_filter_typed():
+    """F6（round2）：serve_mvt_tile 无计划解析 → 传入属性过滤必须 typed
+    拒绝（绝不静默编译为远端 SQL）；无过滤调用行为不变。"""
+    from app.services.data_fabric.errors import DataFabricError, QueryUnsupportedError
+    from app.services.data_fabric.query.models import QuerySpecV2
+
+    executed: list = []
+    a = _adapter(executed)
+    where_v2 = QuerySpecV2(filter={"op": "like", "field": "name", "pattern": "a%"})
+    with pytest.raises(QueryUnsupportedError, match="no filter pushdown planning"):
+        a.serve_mvt_tile("public.schools", 10, 512, 300, where_v2=where_v2)
+    assert isinstance(QueryUnsupportedError(), DataFabricError)
+    assert not any("ST_AsMVT" in sql for sql, _ in executed), "拒绝路径不得触达数据库"
+    # 无过滤调用仍正常出瓦片。
+    assert a.serve_mvt_tile("public.schools", 10, 512, 300) == b"\x1a\x02tile"
 
 
 @pytest.fixture(autouse=True)

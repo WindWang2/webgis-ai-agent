@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：116 能力 · 176 算法 · 108 参数契约。
+统计：121 能力 · 181 算法 · 108 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -157,6 +157,14 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
   - 假设：g12(r)=K12′(r)/(2πr)：交叉 K12（各向同性校正）的离散导数 + Epanechnikov 平滑（与单变量 pcf 同款后处理）；random-labelling 参考 g12≡1；g12>1 两类吸引/共现，g12<1 相斥；bandwidth（米）缺省 0=一个 r 步宽（自动值在输出披露）
   - 局限：g12 由 K12 的离散导数间接估计，r 网格粒度限制分辨率；每类 ≥5 点（否则诚实拒绝）；O(n²) 成对统计上限 2 万点；p 值来自 sup|g12−1| 秩检验（+1 校正），上限 499
 
+## `dataset_ingest` — 数据集摄入
+
+内联 GeoJSON FeatureCollection 摄入会话：指纹去重、有界画像、质量诊断、产物登记（有界返回，不含数据本体）。
+
+- **`data.ingest.pipeline`** 会话数据摄入管线（`native`·成熟度 —）
+  - 假设：内容指纹去重可重复触发（同载荷幂等返回既有 ref）
+  - 局限：内联载荷 ≤8MB；更大文件走 POST /upload 通道
+
 ## `density_surface` — 视觉密度面
 
 视觉热力（回答『大概哪儿密』，非定量）。
@@ -188,6 +196,14 @@ VCA 顶点成分分析端元提取（Nascimento & Dias 2005 的简化确定性�
 - **`network.route_external_api`** 外部路径规划（高德/百度）（`native`·成熟度 实验）
   - 假设：路线/距离/耗时完全由服务商（高德或百度）路径规划 API 给出，本地不做路网构图；输入为 WGS84 [lng,lat]，由服务商做坐标与路况语义解释
   - 局限：外部依赖：需 AMAP_API_KEY 或 BAIDU_API_KEY；配额/可达性/口径随服务商；结果含 fetched_at 戳：实时路况敏感，逐次调用不可复现（deterministic=False）；与服务商计费口径一致的路线不与本地路网分析（network.shortest_path）互相 fallback
+
+## `federated_dataset_query` — 联邦数据集查询
+
+N 源（2..4）有界左深链式联邦查询：属性/空间连接与聚合逐跳串联，成本排序、最小投影、半连接约减、逐跳预算 fail-fast。
+
+- **`data.federated.chain`** 多源链式联邦查询（`native`·成熟度 —）
+  - 假设：左深链计划；半连接右表约减在预算内
+  - 局限：逐跳预算 fail-fast；绝不拉全量大表
 
 ## `general_g` — Getis-Ord General G
 
@@ -571,6 +587,14 @@ G/F/J 距离函数（Diggle 1983 / van Lieshout–Baddeley 1996）——最近�
 - **`remote.ratio_change`** 双时相比值变化（`native`·成熟度 已验证，契约: `ratio_change_analysis`）
   - 假设：比值法适用于 SAR 后向散射/强度（同量纲输入）；ratio：a/b，零分母→NaN；log_ratio：log(a)−log(b)（对数域对称）
   - 局限：比值不区分变化原因（物候/几何/定标漂移同权混合）；log_ratio 输入须为正（线性强度或 dB）
+
+## `raster_cog_conversion` — COG 栅格转换
+
+单文件 GeoTIFF → Cloud Optimized GeoTIFF：分块重排 + 多级概视图（金字塔重采样）+ footer 索引，产出可流式范围读取的云原生栅格。
+
+- **`raster.cog.convert`** Cloud Optimized GeoTIFF 转换（`native`·成熟度 —）
+  - 假设：概视图金字塔重采样（nearest），footer 索引按 COG 规范
+  - 局限：单文件 GeoTIFF 输入；已有 COG 结构则直接通过
 
 ## `raster_dimensionality_reduction` — 波段降维（PCA）
 
@@ -1130,6 +1154,21 @@ Delaunay TIN 三角网插值（linear / clough_tocher），凸包外不外推。
 - **`stats.weights_sensitivity`** 权重方案敏感性（Moran's I）（`native`·成熟度 已验证，契约: `weights_sensitivity_analysis`，出处: `moran1950`, `anselin1988`）
   - 假设：方案集固定：knn(k)/queen/rook/distance_band(auto 8nn)；queen/rook 对点输入如实跳过并披露（不做静默替换）；逐方案 Moran I + 固定种子 42 置换 p；判读多数一致性=稳定性
   - 局限：四方案是常见代表性集合，不是穷举权重空间；稳定性=判读一致比例，不代表 I 的点估计置信区间
+
+## `workspace_snapshot` — 工作空间快照
+
+工作空间快照保存/恢复：产物账本 + 图层引用 + 视图设置，可选物化存活载荷到持久内容库。
+
+- **`workspace.snapshot.durable`** 工作空间快照（保存/恢复）（`native`·成熟度 —）
+  - 假设：快照元数据始终落盘；materialize=claimed 时载荷物化到持久内容库
+  - 局限：materialize=none 的快照在会话过期后仅元数据可读
+
+## `workspace_state_inspection` — 工作空间状态检视
+
+只读检视会话工作空间（产物账本、图层引用、快照清单）。
+
+- **`workspace.inspection.readonly`** 工作空间状态检视（只读）（`native`·成熟度 —）
+  - 假设：只读投影，绝不改工作空间状态
 
 ## `zonal_statistics` — 分区统计
 

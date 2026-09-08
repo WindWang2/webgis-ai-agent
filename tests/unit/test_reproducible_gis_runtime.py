@@ -88,7 +88,7 @@ def _gis_chapter(status="available", *, include_optional_row=False):
 #: schema is always THIS branch's (create_all does not ALTER existing tables,
 #: so a stale ./data/webgis.db would otherwise miss migration-0022 columns).
 _PROJECT_DOMAIN_TABLES = (
-    "map_products", "artifact_lineages", "artifacts",
+    "map_products", "artifact_lineages", "artifact_revisions", "artifacts",
     "workflow_runs", "workflow_revisions", "workflows",
     "project_datasets", "carto_project_facts", "projects",
 )

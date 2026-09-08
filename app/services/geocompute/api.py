@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from app.services.geocompute.budgets import BudgetLimits, ResourceGovernor
 from app.services.geocompute.errors import GeoComputeError
+from app.services.geocompute.resource_counter import shared_counter
 from app.services.geocompute.plan import (
     CrsExpectation,
     ExecutionNode,
@@ -29,6 +30,37 @@ _WIRED_CATEGORIES = {
     "attribute_join", "vector_operation", "raster_window_operation",
     "interpolation", "materialize", "artifact_register",
 }
+
+# Wave-11（audit 08 §6.2.4）：``lineage_inputs`` 被解析但从未被填充 —— 执行级
+# lineage 投影因此断链。构建侧从节点参数里**可证**的源身份键派生 LineageLink
+# （key 名 → 身份族）；无证据键 → 诚实为空，绝不虚构身份。
+_LINEAGE_PARAM_HINTS: tuple[tuple[str, str], ...] = (
+    ("dataset_id", "dataset_version"),
+    ("dataset_ids", "dataset_version"),
+    ("source_ref", "dataset_version"),
+    ("source_refs", "dataset_version"),
+    ("ref_id", "ref"),
+    ("ref_ids", "ref"),
+    ("artifact_id", "artifact"),
+    ("artifact_ids", "artifact"),
+)
+
+
+def _derive_lineage_inputs(raw: dict) -> list[LineageLink]:
+    """参数中的源身份 → LineageLink（≤16 条；缺证诚实为空）。"""
+    params = raw.get("parameters")
+    if not isinstance(params, dict):
+        return []
+    links: list[LineageLink] = []
+    for key, kind in _LINEAGE_PARAM_HINTS:
+        value = params.get(key)
+        items = value if isinstance(value, (list, tuple, set)) else [value]
+        for item in items:
+            if isinstance(item, str) and item.strip():
+                links.append(LineageLink(ref_id=item.strip()[:256], kind=kind))
+                if len(links) >= 16:
+                    return links
+    return links
 
 
 def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
@@ -90,7 +122,10 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
                 },
                 lineage_inputs=[
                     LineageLink(**link) for link in (raw.get("lineage_inputs") or [])
-                ][:16],
+                ][:16]
+                # Wave-11：显式声明优先；缺省时从参数里的可证源身份派生
+                #（不参与语义指纹 —— 指纹值域不变）。
+                or _derive_lineage_inputs(raw),
                 evidence_schema={
                     str(k): str(v)
                     for k, v in (raw.get("evidence_schema") or {}).items()
@@ -111,7 +146,11 @@ def build_plan_from_json(data: dict[str, Any]) -> ExecutionPlan:
 #: project ← 显式 project_id、session ← 稳定哈希派生；执行作用域由
 #: executor 创建/摘除。
 GOVERNOR = ResourceGovernor(
-    global_limits=BudgetLimits(max_rows=5_000_000, max_bytes=2 * 1024 * 1024 * 1024)
+    global_limits=BudgetLimits(max_rows=5_000_000, max_bytes=2 * 1024 * 1024 * 1024),
+    # Wave 8 R2：可选跨进程 advisory 计数器。默认关闭（无 REDIS_URL +
+    # WEBGIS_CROSS_PROCESS_GOVERNOR=1 时零 Redis 交互、语义与纯进程内
+    # 完全一致）；开启后也只做尽力准入建议 —— L1 树始终是权威真相。
+    cross_process=shared_counter(),
 )
 
 #: 层级并发槽位上界（有界、服务端红线；不做计费系统）。

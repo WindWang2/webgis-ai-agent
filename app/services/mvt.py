@@ -34,8 +34,11 @@ import asyncio
 import logging
 import math
 import threading
+import time
 from collections import OrderedDict
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from app.services.singleflight import SingleFlight
 
 logger = logging.getLogger(__name__)
 
@@ -1388,13 +1391,28 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
     )
 
 
+#: CONC MINOR-1：epoch 行的 prune 宽限期 —— bump 后 60s 内的行绝不允许被
+#: prune（它们是在飞构建 insert 检查的拦截依据）。表仍然有界：超龄行在
+#: 后续 prune 中必然被回收。
+_EPOCH_PRUNE_GRACE_S = 60.0
+
+
 class SpatialIndexCache:
     """Per-(session_id, ref_id) STRtree cache with bounded count & byte LRU eviction.
 
     Thread-safe (threading.Lock). Bounded by both maximum entry count (max_refs)
     and maximum total estimated bytes (max_bytes). The heavy build runs outside
-    the lock (double-checked), so concurrent misses may build twice — acceptable
-    and harmless — while the index itself is only ever queried through the lock.
+    the lock (double-checked) and — R4a (audit 07 §6.1) — under a per-key
+    singleflight: concurrent misses for one (session, ref) share ONE build
+    instead of racing N times (each previously holding a 256MB-budget slot and
+    an N×-amplified ref fetch). Follower wait is bounded (``wait_timeout`` →
+    honest degrade to direct rebuild); builder exceptions propagate to waiters.
+
+    失效语义：composite epoch ``(global_gen, per_key)`` — invalidate/overwrite
+    bumps per-key, session-wide/clear bumps global; stale builds raise
+    ``RefDataUnavailableError`` at insert time and are never cached. The
+    singleflight is a pure optimization: correctness (no ghost resurrection)
+    is enforced solely by the epoch guards, exactly as before.
     """
 
     def __init__(self, max_refs: int = 256, max_bytes: int = 256 * 1024 * 1024):
@@ -1407,11 +1425,19 @@ class SpatialIndexCache:
         # including when no entry exists yet, which is exactly the
         # invalidate-during-build window (build_fn holds the pre-invalidation
         # epoch; the insert-time check below then discards the stale build).
-        self._epochs: dict[tuple, int] = {}
+        # CONC MINOR-1（round1）：值带 ``bumped_at``（monotonic）—— epoch 行
+        # 的 prune 只针对超过宽限期的旧行，刚刚 bump 的行绝不可删（删掉会让
+        # 在飞构建的 insert 检查 ``get(key, 0)`` 重新读到 0，等于把拦截解除）。
+        self._epochs: "Dict[tuple, Tuple[int, float]]" = {}
         # Session-wide/clear events bump a GLOBAL generation: they also affect
         # keys the per-key table has never seen (in-flight builds for
         # brand-new keys). Captures are (global, per_key) composites.
         self._global_gen = 0
+        # R4a: per-instance build dedup (thread context — get_or_build runs on
+        # asyncio.to_thread workers). Instance-scoped so independent caches
+        # (tests, alternate budgets) never share flight state. Overload above
+        # max_inflight computes directly instead of queuing.
+        self._build_flight = SingleFlight(max_inflight=128, wait_timeout=30.0)
 
     @property
     def total_bytes(self) -> int:
@@ -1446,15 +1472,20 @@ class SpatialIndexCache:
             if entry is not None:
                 self._entries.move_to_end(key)
                 return entry
-            build_epoch = (self._global_gen, self._epochs.get(key, 0))
-        entry = build_fn()  # heavy work outside the lock
+            build_epoch = (self._global_gen, self._epochs.get(key, (0, 0.0))[0])
+        # R4a: heavy work outside the lock AND deduplicated per key — concurrent
+        # tile misses share one build_fn execution. Epoch guards below are
+        # unchanged and per-caller: each waiter re-validates its own captured
+        # epoch at insert time, so an invalidation during the shared build
+        # still refuses the stale result for every participant.
+        entry = self._build_flight.run(("spatial_index", *key), build_fn)
         entry_bytes = getattr(entry, "estimated_bytes", 0)
         with self._lock:
             # P1-1: the authoritative payload was invalidated while this build
             # ran — inserting would resurrect ghost geometry derived from the
             # superseded payload. Raise so the caller refetches fresh data and
             # retries (the tile route's existing RefDataUnavailableError path).
-            if (self._global_gen, self._epochs.get(key, 0)) != build_epoch:
+            if (self._global_gen, self._epochs.get(key, (0, 0.0))[0]) != build_epoch:
                 self._prune_epochs_locked()
                 raise RefDataUnavailableError(
                     f"spatial index build staled by concurrent invalidation: {key}"
@@ -1486,7 +1517,8 @@ class SpatialIndexCache:
         """
         key = (session_id, ref_id)
         with self._lock:
-            self._epochs[key] = self._epochs.get(key, 0) + 1
+            prev = self._epochs.get(key)
+            self._epochs[key] = ((prev[0] if prev else 0) + 1, time.monotonic())
             entry = self._entries.pop(key, None)
             if entry is not None:
                 self._total_bytes -= getattr(entry, "estimated_bytes", 0)
@@ -1498,10 +1530,20 @@ class SpatialIndexCache:
 
         Called on the insert path. An in-flight build whose epoch row was
         pruned simply sees 0 != captured and discards (safe over-invalidation).
+
+        CONC MINOR-1（round1）：刚刚 bump（60s 宽限期内）的行**绝不 prune**
+        —— 它正是某个在飞构建的拦截依据；删掉行会让 insert 检查重新读到
+        缺省 0，恰好等于构建捕获的旧 epoch → 幽灵复活。只删「无 entry 且
+        bump 已超龄」的行；表仍然有界（每行随时间必然超龄，后续 prune
+        回收）。
         """
         if len(self._epochs) <= self._max_refs * 4:
             return
-        for k in [k for k in self._epochs if k not in self._entries]:
+        now = time.monotonic()
+        for k in [
+            k for k, v in self._epochs.items()
+            if k not in self._entries and (now - v[1]) >= _EPOCH_PRUNE_GRACE_S
+        ]:
             del self._epochs[k]
 
     def invalidate_session(self, session_id: str) -> int:
@@ -1664,10 +1706,18 @@ class SingleFlightManager:
     Bounded: when max_inflight keys are already in flight, new callers fall
     through and compute directly instead of waiting. Thread-safe registration
     with an asyncio.Future as the shared result channel.
+
+    CONC MINOR-3（round1）：等待者的等待是**有界且诚实降级**的（镜像线程版
+    ``SingleFlight``）——leader 崩溃（含 CancelledError）或等待超过
+    ``wait_timeout``（默认 30s，防 leader 挂死传染）时，等待者降级为直接
+    ``coro_factory()`` 自行计算，绝不共享/吞掉 leader 的异常（leader 的
+    CancelledError 是它自己任务的取消，传播给等待者等于取消无关任务）。
+    等待者自身的取消原样传播（``return_fut`` 未完成即自身取消）。
     """
 
-    def __init__(self, max_inflight: int = 512):
+    def __init__(self, max_inflight: int = 512, wait_timeout: float = 30.0):
         self._max_inflight = max_inflight
+        self._wait_timeout = max(0.0, float(wait_timeout))
         self._inflight: Dict[Any, "asyncio.Future"] = {}
         self._waiter_counts: Dict[Any, int] = {}
         self._lock = threading.Lock()
@@ -1704,12 +1754,27 @@ class SingleFlightManager:
         # NB: never await while holding the lock above — a suspended waiter
         # would block the leader's finally-pop and deadlock.
         if return_fut is not None:
+            degraded = False
             try:
-                return await asyncio.shield(return_fut)
+                try:
+                    if self._wait_timeout > 0:
+                        return await asyncio.wait_for(
+                            asyncio.shield(return_fut), self._wait_timeout
+                        )
+                    return await asyncio.shield(return_fut)
+                except asyncio.TimeoutError:
+                    degraded = True  # leader 挂死 → 有界等待后诚实降级
+                except BaseException as exc:  # noqa: BLE001
+                    if isinstance(exc, asyncio.CancelledError) and not return_fut.done():
+                        raise  # 等待者自身取消：原样传播（绝不吞）
+                    degraded = True  # leader 崩溃 → 降级直接重算，不消费其异常
             finally:
                 with self._lock:
                     if key in self._waiter_counts:
                         self._waiter_counts[key] = max(0, self._waiter_counts[key] - 1)
+            assert degraded
+            coro = coro_factory() if callable(coro_factory) else coro_factory
+            return await coro
 
         coro = coro_factory() if callable(coro_factory) else coro_factory
         if direct:
@@ -1718,15 +1783,10 @@ class SingleFlightManager:
             result = await coro
         except BaseException as exc:
             if not fut.done():
-                with self._lock:
-                    waiters = self._waiter_counts.get(key, 0)
-                if waiters > 0:
-                    fut.set_exception(exc)
-                else:
-                    # No waiters attached: set exception and consume it to prevent
-                    # asyncio "Future exception was never retrieved" warning
-                    fut.set_exception(exc)
-                    _ = fut.exception()
+                fut.set_exception(exc)
+                # 标记已检索 → 无 "Future exception was never retrieved" 警告；
+                # 等待者仍会从 await 处看到异常并各自降级（见上方等待者路径）。
+                _ = fut.exception()
             raise
         else:
             if not fut.done():

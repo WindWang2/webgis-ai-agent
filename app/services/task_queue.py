@@ -18,6 +18,53 @@ celery_app = Celery(
     include=["app.services.spatial_tasks", "app.tasks.explorer.task_chain", "app.services.geocompute.tasks"]
 )
 
+# ── GeoCompute V5 异构队列（audit 06 §6.1 step 1）────────────────────────
+# profile 词表与 queue_for_node 的真值在 durable.py（调度语义归执行面）；
+# 这里只负责把每个 profile 声明为一个具名队列 + 默认队列。
+#
+# 单 worker 部署语义不变（CRITICAL）：docker-compose.yml 的 celery-worker
+# 以 `-Q celery,<全部 profile 队列>` 启动、消费**所有**队列 —— 队列只是
+# 就位的路由真相，运维按 profile 拆 worker（各自 -Q 子集）之前不产生任何
+# 行为差异。Redis 缺席时 task_always_eager=True，队列完全不参与路由。
+from kombu import Queue  # noqa: E402
+
+from app.services.geocompute.durable import (  # noqa: E402
+    DEFAULT_QUEUE as _GEOCOMPUTE_DEFAULT_QUEUE,
+    EXECUTION_QUEUE_PROFILES as _GEOCOMPUTE_PROFILES,
+    queue_name_for_profile as _queue_name_for_profile,
+)
+
+GEOCOMPUTE_PROFILE_QUEUES: tuple[str, ...] = tuple(
+    _queue_name_for_profile(p) for p in _GEOCOMPUTE_PROFILES
+)
+
+#: 全部已声明队列名（默认队列 + 全部 profile 队列）。任务中心的手工 retry
+#: （jobs.py send_task 路径）据此校验 dispatch_spec.queue 的亲和目标 ——
+#: 未声明/缺失的队列名一律忽略，让按任务名的默认路由接管（绝不投递到
+#: 没有消费者声明的队列）。
+DECLARED_QUEUE_NAMES: frozenset[str] = frozenset(
+    {_GEOCOMPUTE_DEFAULT_QUEUE, *GEOCOMPUTE_PROFILE_QUEUES}
+)
+
+_task_queues = [Queue(_GEOCOMPUTE_DEFAULT_QUEUE)] + [
+    Queue(name) for name in GEOCOMPUTE_PROFILE_QUEUES
+]
+# 具名路由（声明性兜底）：geocompute 节点任务的实际路由发生在派发点
+# （durable.dispatch_node 传 apply_async(queue=...)，显式选项优先于
+# routes）。这些条目保证**按任务名**的无队列投递（如任务中心的手工
+# retry 走 send_task）确定性地落在默认队列 —— 全队列 worker 一定能取走，
+# 而不是被静默丢进未声明队列。profile 别名条目让每个已声明队列都有
+# 按名寻址的路由（工具/测试可据此校验 routes↔queues 覆盖关系）。
+_task_routes = {
+    "app.services.geocompute.tasks.run_geocompute_node": {
+        "queue": _GEOCOMPUTE_DEFAULT_QUEUE,
+    },
+    **{
+        f"geocompute.{profile}": {"queue": _queue_name_for_profile(profile)}
+        for profile in _GEOCOMPUTE_PROFILES
+    },
+}
+
 
 # 常规配置
 celery_app.conf.update(
@@ -30,6 +77,9 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     task_time_limit=3600,  # 1小时超时
+    # GeoCompute V5：每个 profile 一个具名队列 + 默认队列（见上方注释）。
+    task_queues=_task_queues,
+    task_routes=_task_routes,
     # #386：broker/backend 的 socket 超时压到 1-2s —— 前端每 3s 轮询任务状态，
     # Redis 不可达/慢响应时若长时间挂起，轮询请求会堆满事件循环线程池并卡住
     # 所有并发 SSE 流。2s 超时让 /tasks/status 在 backend 不可用时快速降级

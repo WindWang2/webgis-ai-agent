@@ -112,7 +112,11 @@ def test_lru_eviction_leaves_clean_directory_family(tmp_path):
         "驱逐必须成对删除，不留半边孤儿"
     )
     names = os.listdir(os.path.dirname(_artifact_path("0" * 16)))
-    assert all(name.endswith((".tif", ".meta")) for name in names)
+    # chunks/ 是流式分块缓存的结构目录（CHUNK_DIR，data plane V5）——
+    # 驱逐清空后允许空目录骨架存在；文件仍必须成对 .tif/.meta。
+    assert all(
+        name.endswith((".tif", ".meta")) or name == "chunks" for name in names
+    )
 
 
 # ── 2. publish 复制失败（审计 #2：幻影 .tif / 记账腐蚀）───────────────────
@@ -141,7 +145,7 @@ def test_publish_replace_failure_leaves_no_partial_artifact(tmp_path):
     leftovers = [
         n
         for n in os.listdir(os.path.dirname(_artifact_path(key)))
-        if n not in (f"{key}.tif", f"{key}.meta")
+        if n not in (f"{key}.tif", f"{key}.meta") and n != "chunks"
     ]
     assert leftovers == [], f"publish 失败遗留临时件: {leftovers}"
 

@@ -64,6 +64,59 @@ class QualityIssue(BaseModel):
     message: str
     feature_index: Optional[int] = None
     details: Dict[str, Any] = Field(default_factory=dict)
+    # ── Wave-4 additive convergence (audit 08 §4.1/§6.2.3) ────────────────
+    # This engine's QualityIssue previously had NO repair linkage — a second,
+    # divergent taxonomy from app/lib/data/quality.py. Every audit issue now
+    # states whether a deterministic repair op exists and which REMEDIATION_OPS
+    # entry would back it (resolved through data_ingest.repair_planning's W3
+    # mapping — NOT a second repair vocabulary). Existing codes/severity
+    # semantics are unchanged (additive fields only, honest False/None when no
+    # backing op exists).
+    repairable: bool = False
+    remediation_op: Optional[str] = None
+
+
+# Audit code → app/lib/data/quality.py diagnostic code (alias layer between
+# the two taxonomies; the code→OP mapping itself stays single-sourced in
+# data_ingest.repair_planning). Absent = no deterministic repair op — honest
+# (repairable=False, remediation_op=None), never force-fitted.
+_AUDIT_CODE_TO_QUALITY_CODE: Dict[str, str] = {
+    "MISSING_CRS": "crs_missing",
+    "SUSPICIOUS_CRS": "crs_suspicious",
+    "IMPOSSIBLE_LAT_LON": "impossible_coordinates",
+    "NULL_ISLAND": "zero_coordinates",
+    "EMPTY_GEOMETRY": "empty_geometry",
+    "INVALID_GEOMETRY": "invalid_geometry",
+    # Unclosed/short rings are malformed polygons; make_valid is the canonical
+    # deterministic fix attempt (may legitimately fail → repair re-audits).
+    "RING_CHECK_FAILED": "invalid_geometry",
+    "SELF_INTERSECTION": "self_intersection",
+    "DUPLICATE_GEOMETRY": "duplicate_geometries",
+    "DUPLICATE_FEATURE": "duplicate_geometries",
+    "DUPLICATE_PRIMARY_KEY": "duplicate_rows",
+    "HIGH_NULL_RATIO": "null_heavy_field",
+}
+
+
+def repair_linkage_for_code(code: str) -> Tuple[bool, Optional[str]]:
+    """audit code → (repairable, remediation_op|None) via the W3 mapping.
+
+    repairable = a REMEDIATION_OPS-backed proposal exists (mirrors
+    app/lib/data/quality.py where e.g. crs_missing is repairable even though
+    it needs a user-declared CRS — auto_applicability is a separate dimension
+    carried by the proposal/plan, not by this flag).
+    """
+    from app.services.data_ingest.repair_planning import (
+        propose_repairs_for_issue_codes,
+    )
+
+    lib_code = _AUDIT_CODE_TO_QUALITY_CODE.get(str(code))
+    if not lib_code:
+        return False, None
+    proposals = propose_repairs_for_issue_codes([lib_code])
+    if not proposals:
+        return False, None
+    return True, proposals[0].operation
 
 
 class SpatialQualityReport(BaseModel):
@@ -788,6 +841,17 @@ class SpatialQualityEngine:
                 "candidates_skipped_by_budget": candidates_skipped,
                 "dangling_endpoints_undetermined": dangling_undetermined,
             }
+
+        # ----------------------------------------------------
+        # Wave-4 repair linkage (additive): annotate every emitted issue with
+        # repairable/remediation_op resolved through the W3 mapping — a
+        # single bounded pass keyed by code (never per-issue re-resolution).
+        # ----------------------------------------------------
+        linkages = {
+            code: repair_linkage_for_code(code) for code in {issue.code for issue in issues}
+        }
+        for issue in issues:
+            issue.repairable, issue.remediation_op = linkages[issue.code]
 
         return SpatialQualityReport(
             dataset_id=dataset_id,

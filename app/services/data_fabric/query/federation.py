@@ -511,6 +511,10 @@ class FederatedExecutor:
         joined: List[Dict[str, Any]] = []
         rows_fetched = 0
         offset = 0
+        # V5（Wave 9 审计步骤 5）：链式半连接约减回迁两源路径 —— 等值 join
+        # 的右行只在键出现于本页左侧键集时才进哈希索引（内连接语义不变；
+        # 键集超上限诚实放弃）。spatial join 无键可约减，不适用。
+        semi_join_stats: List[Dict[str, Any]] = []
         deadline = started + req.budget.deadline_s
         # R4-M4：右侧空间索引只构建一次（跨左页复用）
         spatial_index = None
@@ -552,8 +556,20 @@ class FederatedExecutor:
                     spatial_index=spatial_index,
                 )
             else:
+                # V5：本页键集对右侧行做半连接约减（等值内连接语义不变；
+                # 键集过大/全 None 时诚实放弃原样返回）。
+                reduced, original = _semi_join_reduce_right(page, right_rows, plan)
+                if reduced is not right_rows:
+                    semi_join_stats.append({
+                        "left_row_offset": offset,
+                        "right_rows_before": original,
+                        "right_rows_after": len(reduced),
+                    })
+                    right_effective = reduced
+                else:
+                    right_effective = right_rows
                 batch = attribute_join_local(
-                    page, right_rows,
+                    page, right_effective,
                     join_field_left=req.join_field_left or "",
                     join_field_right=req.join_field_right or "",
                     budget=budget,
@@ -567,12 +583,13 @@ class FederatedExecutor:
         if plan.kind == "aggregate_join" and req.aggregates:
             rows = aggregate_join_rows(joined, req.aggregates, req.group_by_right or [])
             return self._result(plan, rows, started, strategy=plan.strategy,
-                                rows_fetched=rows_fetched, joined_rows=len(joined))
+                                rows_fetched=rows_fetched, joined_rows=len(joined),
+                                semi_join_stats=semi_join_stats)
         # plain join：剥除内部键后返回
         for row in joined:
             row.pop("__right_geometry__", None)
         return self._result(plan, joined[: req.limit], started, strategy=plan.strategy,
-                            rows_fetched=rows_fetched)
+                            rows_fetched=rows_fetched, semi_join_stats=semi_join_stats)
 
     def _source_query_page(self, adapter, dataset_id, req, side_where, *, fields, limit, offset):
         extras: Dict[str, Any] = {"limit": limit, "offset": offset,
@@ -587,8 +604,9 @@ class FederatedExecutor:
         result = adapter.query(dataset_id, QuerySpec(**extras))
         return result.features or []
 
-    def _result(self, plan, rows, started, *, strategy, rows_fetched, joined_rows=None):
-        return {
+    def _result(self, plan, rows, started, *, strategy, rows_fetched, joined_rows=None,
+                semi_join_stats=None):
+        out = {
             "status": "success",
             "plan": plan.to_dict(),
             "strategy": strategy,
@@ -600,6 +618,10 @@ class FederatedExecutor:
             "execution_duration_s": round(time.monotonic() - started, 4),
             "warnings": plan.warnings,
         }
+        if semi_join_stats:
+            # V5 additive：两源半连接约减披露（与链式结果同一字段名）。
+            out["semi_join_reduction"] = semi_join_stats
+        return out
 
 
 # ── N 源有界链式联邦（V3 additive，ADR-0096 D3；两源 API 保持原样）──────────
@@ -683,8 +705,10 @@ class FederatedChainRequest:
     #: source_id → 统计提示；``order_strategy="cost_stats"`` 时驱动有界
     #: 序枚举（≤24 候选，绝不指数），无提示时自动回落 V3 排序。
     stats_hints: Optional[Dict[str, ChainSourceStats]] = None
-    #: 为各源派生最小投影字段（opt-in；输出形状会因此变小）。
-    derive_projection: bool = False
+    #: 为各源派生最小投影字段。V5（Wave 9）起默认开启（审计 06 §6.2 步骤 4；
+    #: 奇偶校验由既有链测试锁定，几何不变量守卫防止空间跳端点被裁剪成
+    #: 静默空结果）；``derive_projection=False`` 显式退出（输出形状复原）。
+    derive_projection: bool = True
 
 
 def _chain_budget(req: FederatedChainRequest) -> ExecutionBudget:
@@ -853,12 +877,36 @@ def derive_chain_fields(req: FederatedChainRequest, ordered_sources: List[ChainS
                         ordered_joins: List[ChainJoin]) -> Dict[str, List[str]]:
     """为各源派生最小必要字段（ADR-0101 D7，opt-in ``derive_projection``）。
 
-    只包含可**证明**需要的字段：两侧连接键、聚合分组/聚合字段、以及
-    下一跳左键（经 F1 提升必须存在于上一跳右属性里）。首源额外保留
-    下一跳左键。空间跳不能裁剪（几何承载不变量 F3），诚实返回空投影
-    （= 不投影）。派生是输出形状变更 —— 由调用方显式 opt-in。
+    只包含可**证明**需要的字段：两侧连接键、聚合分组/聚合字段、源 where
+    过滤引用的字段（M1：过滤器在投影裁剪后仍须可求值 —— 过滤字段缺了
+    会静默改变查询语义）、以及下一跳左键（经 F1 提升必须存在于上一跳
+    右属性里）。首源额外保留下一跳左键。空间跳不能裁剪（几何承载不变
+    量 F3），诚实返回空投影（= 不投影）。派生是输出形状变更 —— 由调用
+    方显式 opt-in。
     """
+    from app.services.data_fabric.query.predicates import iter_fields, predicate_from_dict
+
     required: Dict[str, set] = {s.source_id: set() for s in ordered_sources}
+    # M1（审计 round1）：源的本地 where 过滤字段是可证明必要的 —— 投影
+    # 裁掉过滤字段会让远端/本地过滤静默失真。dict 形式经 predicate AST
+    # 解析后提取；字符串形式无法可靠解析 → 不猜测（宁可多取）；AST 解析
+    # 失败的源整体退出派生（绝不带着未知过滤字段做裁剪）。
+    unprovable: set = set()
+    for s in ordered_sources:
+        w = s.where
+        if w is None:
+            continue
+        if isinstance(w, dict):
+            try:
+                required[s.source_id].update(iter_fields(predicate_from_dict(w)))
+            except Exception:
+                unprovable.add(s.source_id)
+        elif not isinstance(w, str) and getattr(w, "op", None):
+            required[s.source_id].update(iter_fields(w))
+        else:
+            # 字符串/未知形状：无法可靠解析 → 该源整体退出派生（宁可多取，
+            # 绝不带着未知过滤字段做裁剪）。
+            unprovable.add(s.source_id)
     # 评审 CRITICAL：参与空间跳的源**绝不投影** —— 空间连接的右侧行必须
     # 带几何（spatial_join_local 对无几何右行静默跳过）；仅按属性需求
     # 推导会在「属性跳后接空间跳」的链里把几何裁没（成功 0 行的静默
@@ -896,8 +944,8 @@ def derive_chain_fields(req: FederatedChainRequest, ordered_sources: List[ChainS
             required[right_id] = set()
     out: Dict[str, List[str]] = {}
     for s in ordered_sources:
-        if s.source_id in spatial_sources:
-            continue  # 空间跳端点：不派生投影（几何不变量优先）
+        if s.source_id in spatial_sources or s.source_id in unprovable:
+            continue  # 空间跳端点/过滤不可解析：不派生投影（安全优先）
         fields = sorted(f for f in required.get(s.source_id, set()) if f)
         if fields and s.fields is None:
             out[s.source_id] = fields
@@ -1329,6 +1377,43 @@ class _SideView:
         self.limit = req.limit
 
 
+def chain_explain_lines(result: Dict[str, Any], *, max_hops: int = 3) -> List[str]:
+    """链式联邦结果的有界 explain 行（工具/REST 证据投影；确定性顺序）。
+
+    只复述执行结果里已有的量（order/strategy/行数/跳计划/半连接约减/
+    警告），绝不引入第二份决策；行数有界（≤ 4 + max_hops×2 + 警告 3）。
+    """
+    lines: List[str] = [
+        f"Strategy: {result.get('strategy')}",
+        "Order: " + " -> ".join(result.get("order") or []),
+        (
+            f"Rows: {result.get('row_count')} (joined={result.get('joined_row_count')}, "
+            f"fetched={result.get('rows_fetched')})"
+        ),
+    ]
+    for sid, n in (result.get("per_source_rows") or {}).items():
+        lines.append(f"Source {sid}: {n} rows")
+    plans = result.get("plans") or []
+    for i, p in enumerate(plans[:max_hops]):
+        left = (p.get("left") or {}).get("source_id", "?")
+        right = (p.get("right") or {}).get("source_id", "?")
+        fields = (p.get("right") or {}).get("fields")
+        hop = f"Hop {i + 1}: {p.get('kind')} {left} -> {right}"
+        if fields:
+            hop += f" (projected: {','.join(fields)})"
+        lines.append(hop)
+    if len(plans) > max_hops:
+        lines.append(f"... {len(plans) - max_hops} more hops")
+    reduction = result.get("semi_join_reduction") or []
+    if reduction:
+        saved = sum(max(0, r.get("right_rows_before", 0) - r.get("right_rows_after", 0))
+                    for r in reduction)
+        lines.append(f"Semi-join reduction: {len(reduction)} hop(s), {saved} right rows skipped")
+    for w in (result.get("warnings") or [])[:3]:
+        lines.append(f"Warning: {w}")
+    return lines
+
+
 def execute_chain(req: FederatedChainRequest, *, adapter_factory) -> Dict[str, Any]:
     """模块级便捷入口：executor-free 链式执行。"""
     return execute_federated_chain(FederatedExecutor(adapter_factory), req)
@@ -1351,4 +1436,5 @@ __all__ = [
     "plan_federated_chain",
     "execute_federated_chain",
     "execute_chain",
+    "chain_explain_lines",
 ]

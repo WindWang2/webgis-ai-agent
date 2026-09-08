@@ -288,7 +288,15 @@ async def get_mvt_tile(
         # 索引构建一次后即按 (session_id, ref_id) 常驻 LRU，不再重复读大 JSON。
         data = None
         if spatial_index_cache.get((session_id, ref_id)) is None:
-            data = await _fetch_ref_data(session_id, ref_id, owner_token)
+            # R4c（audit 07 §6.1）：冷 ref 去重 —— N 个不同瓦片的首建请求共享
+            # **一次**授权 ref 拉取（此前每瓦片各拉一次 11MB 级 payload）。
+            # 索引构建本体另有 per-(session, ref) singleflight（mvt
+            # SpatialIndexCache R4a），冷 ref 不再可能经不同瓦片并发竞跑 N 次
+            # 索引构建 —— 路由层只需收口拉取缝。
+            data = await single_flight.run(
+                ("ref_fetch", session_id, ref_id),
+                lambda: _fetch_ref_data(session_id, ref_id, owner_token),
+            )
         try:
             return await asyncio.to_thread(_encode_tile_cached, session_id, ref_id, z, x, y, data)
         except RefDataUnavailableError:
@@ -596,6 +604,14 @@ async def _resolve_raster_tile_path(session_id: str, ref_id: str, owner_token: O
     except ValueError as e:
         logger.warning(f"[layer] raster tile path rejected: {e}")
         raise HTTPException(status_code=400, detail="非法栅格路径")
+
+    # R6（audit 07 §6.1）：登记 (session, ref) → raster_path 关联 —— 瓦片/
+    # stats 缓存键是路径，ref_lifecycle 无法从 (session, ref) 反推；登记后
+    # overwrite/rollback 经 additive hook 按路径主动清除（未登记 = 本进程
+    # 从未出瓦片，无物可清；TTL/LRU 仍兜底）。
+    from app.services.raster_tile_service import register_raster_ref
+
+    register_raster_ref(session_id, ref_id, safe_path)
 
     _raster_path_cache[key] = (safe_path, _time.monotonic() + _RASTER_PATH_TTL_S)
     _raster_path_cache.move_to_end(key)

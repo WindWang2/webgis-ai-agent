@@ -90,6 +90,41 @@ class TestVectorCarrier:
         back = geoparquet_to_features(path)
         assert [b["properties"]["v"] for b in back] == [0, 1, 2, 3]
 
+    @pytest.mark.skipif(not arrow_available(), reason="pyarrow not installed")
+    def test_empty_geometry_survives_roundtrip(self):
+        """round-1 review MAJOR：空几何（POINT EMPTY）是合法数据 —— 解码
+        必须返回空 GeoJSON 几何字典，None 只留给不可读 WKB。"""
+        import json
+
+        import shapely
+
+        from app.services.data_fabric.vector_carrier import _wkb_to_geometry
+
+        empty_point = shapely.from_wkt("POINT EMPTY")
+        wkb = shapely.to_wkb(empty_point)
+        geom = _wkb_to_geometry(wkb)
+        assert geom is not None
+        assert geom["type"] == "Point"
+        # 空几何字典可被 shapely 再次解析（GeoJSON 合法）
+        assert shapely.from_geojson(json.dumps(geom)) is not None
+        # 完整 feature 往返：编码（GeoJSON → WKB）→ 解码保持空几何
+        feats = [{"type": "Feature",
+                  "geometry": {"type": "Point", "coordinates": []},
+                  "properties": {"v": 1}}]
+        table = features_to_arrow(feats)
+        back = arrow_to_features(table)
+        assert back[0]["geometry"] is not None
+        assert back[0]["geometry"]["type"] == "Point"
+
+    @pytest.mark.skipif(not arrow_available(), reason="pyarrow not installed")
+    def test_unreadable_wkb_still_decodes_to_none(self):
+        """容错外部 lane 不变：垃圾 WKB → None（debug 日志，不抛）。"""
+        from app.services.data_fabric.vector_carrier import _wkb_to_geometry
+
+        assert _wkb_to_geometry(b"not-wkb-at-all") is None
+        assert _wkb_to_geometry(None) is None
+        assert _wkb_to_geometry(b"") is None
+
 
 # --------------------------------------------------------------- 流式缝隙
 

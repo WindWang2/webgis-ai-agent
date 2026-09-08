@@ -214,7 +214,7 @@ def test_cache_key_none_when_ref_walk_budget_exhausted():
 def test_cache_key_still_built_for_small_ref_free_args():
     """对照组：小而无 ref 的 args 照常产出缓存键（预算门不误伤正常路径）。"""
     key = make_cache_key("small_tool", {"geojson": {"type": "Point"}, "n": 1})
-    assert key is not None and key.startswith("tool_cache:v1:")
+    assert key is not None and key.startswith("tool_cache:v2:")
 
 
 def test_cache_key_none_for_shallow_ref_args():

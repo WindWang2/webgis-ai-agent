@@ -283,3 +283,62 @@ async def test_singleflight_no_unretrieved_exception_leak_on_cancellation():
     # Verify inflight is clean and no hanging future
     assert key not in sf._inflight
     assert key not in sf._waiter_counts
+
+
+@pytest.mark.asyncio
+async def test_singleflight_leader_cancel_waiter_computes_own():
+    """CONC MINOR-3（round1）：leader 被取消（CancelledError）且存在等待者时，
+    等待者必须降级为直接 ``coro_factory()`` 自行计算并成功 —— 绝不消费
+    leader 的 CancelledError（那等于取消一个无关任务）。"""
+    sf = SingleFlightManager(max_inflight=512)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = {"n": 0}
+
+    async def leader_work():
+        started.set()
+        await release.wait()
+        return b"leader"
+
+    async def waiter_work():
+        calls["n"] += 1
+        return b"waiter-own"
+
+    leader = asyncio.create_task(sf.run(("s-c", "r-c"), leader_work))
+    await started.wait()
+    waiter = asyncio.create_task(sf.run(("s-c", "r-c"), waiter_work))
+    await asyncio.sleep(0.05)  # waiter 已注册到 leader 的 future
+    leader.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await leader
+    assert await waiter == b"waiter-own"
+    release.set()
+    assert calls["n"] == 1, "等待者必须通过自己的计算成功"
+    assert ("s-c", "r-c") not in sf._inflight
+
+
+@pytest.mark.asyncio
+async def test_singleflight_hung_leader_waiter_degrades_after_timeout():
+    """CONC MINOR-3（round1）：等待者的等待有界 —— leader 挂死时，等待者
+    在 ``wait_timeout`` 后降级为直接计算（短超时测试），绝不永久卡死。"""
+    sf = SingleFlightManager(max_inflight=512, wait_timeout=0.1)
+    started = asyncio.Event()
+
+    async def hung_work():
+        started.set()
+        await asyncio.sleep(30.0)
+        return b"never"
+
+    async def waiter_work():
+        return b"own"
+
+    leader = asyncio.create_task(sf.run(("s-h", "r-h"), hung_work))
+    await started.wait()
+    waiter = asyncio.create_task(sf.run(("s-h", "r-h"), waiter_work))
+    t0 = asyncio.get_running_loop().time()
+    assert await waiter == b"own"
+    elapsed = asyncio.get_running_loop().time() - t0
+    assert elapsed < 5.0, "等待必须有界（wait_timeout 后降级）"
+    leader.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await leader

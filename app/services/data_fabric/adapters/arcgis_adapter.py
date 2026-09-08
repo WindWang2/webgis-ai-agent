@@ -280,9 +280,30 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         oid_field = str(meta.get("object_id_field", "OBJECTID"))
 
         caps = self.capabilities_v2(descriptor)
-        plan = plan_query(v2, descriptor, caps, source_id=self.profile.id, dataset_fingerprint=fp)
+        # V5（Wave 9）：统计收割进计划（描述符/观测计数 → DatasetStatistics；
+        # 无统计时逐位回落历史行为）。
+        from app.services.data_fabric.query.statistics import statistics_for_request
+
+        stats = statistics_for_request(descriptor, fp)
+        plan = plan_query(v2, descriptor, caps, source_id=self.profile.id,
+                          dataset_fingerprint=fp, stats=stats)
+        # V5：拆分计划的执行真相（历史路径 filter_split=None → 行为不变）。
+        from app.services.data_fabric.query.pushdown import (
+            local_predicates_present,
+            resolve_plan_filter_split,
+        )
+
+        remote_filter, local_filter = resolve_plan_filter_split(v2.filter, plan)
+        split_active = local_predicates_present(plan)
         # STATISTICS：count-only（returnCountOnly，零几何传输）
         if plan.result_mode == ResultMode.STATISTICS:
+            if split_active:
+                raise InvalidQueryError(
+                    "source declared partial filter pushdown and this query has a "
+                    "local filter remainder; count-only pushdown cannot apply it. "
+                    "Use a fully pushable filter for counts.",
+                    details={"hint": "avoid ops declared in filter_ops_local for counts"},
+                )
             if v2.aggregate and len(v2.aggregate) == 1 and v2.aggregate[0].func == "count" and not v2.group_by:
                 params = self._base_params(v2)
                 params["returnCountOnly"] = "true"
@@ -294,6 +315,12 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
                 count = data.get("count") if isinstance(data, dict) else None
                 if not isinstance(count, int):
                     raise SourceBadResponseError("ArcGIS returnCountOnly returned no count")
+                # V5：无过滤的纯 count 是数据集行数的诚实观测 → 收割为
+                # 行级统计（advisory；绝不以过滤后的命中数冒充总量）。
+                if count >= 0 and v2.filter is None and v2.spatial is None and v2.temporal is None:
+                    from app.services.data_fabric.query.statistics import observe_row_count
+
+                    observe_row_count("arcgis", fp, count)
                 evidence = build_evidence(plan, started_at=started, result_count=1,
                                           total_matching=count, rows_fetched=0,
                                           rows_returned=1, http_requests=1)
@@ -339,14 +366,14 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         else:
             params["resultRecordCount"] = limit
 
-        # where：AST 编译（单引号 doubling）
+        # where：AST 编译（单引号 doubling）。V5：拆分计划只编译下推半。
         where_sql = "1=1"
-        if v2.filter is not None:
+        if remote_filter is not None:
             allowed = [f["name"] for f in descriptor.fields if f.get("name")]
             from app.services.data_fabric.query.predicates import validate_predicate_fields
 
-            validate_predicate_fields(v2.filter, allowed)
-            where_sql = compile_predicate_arcgis(v2.filter)
+            validate_predicate_fields(remote_filter, allowed)
+            where_sql = compile_predicate_arcgis(remote_filter)
 
         # temporal → where 片段（AND 连接；值经 _arcgis_quote 转义）
         if v2.temporal is not None:
@@ -427,6 +454,14 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
             features = []
         if local_slice is not None:
             features = features[local_slice[0]: local_slice[0] + local_slice[1]]
+
+        # V5：拆分计划的本地余项在页窗口切片后精确求值（页窗口以远端行数为准）。
+        if local_filter is not None:
+            from app.services.data_fabric.query.predicates import evaluate_predicate
+
+            features = [
+                f for f in features if evaluate_predicate(local_filter, f.get("properties") or {})
+            ]
 
         # 诚实截断语义（审计 M-2）：exceededTransferLimit 说明还有数据
         exceeded = bool(data.get("exceededTransferLimit")) if isinstance(data, dict) else False

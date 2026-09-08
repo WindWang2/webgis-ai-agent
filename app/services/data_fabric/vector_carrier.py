@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+import math
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Union
 
 from app.services.data_fabric.errors import DataFabricError
 
@@ -34,6 +35,14 @@ class VectorCarrierEncodeError(DataFabricError):
     """几何/属性编码失败（诚实失败：绝不把坏几何静默降级为 null）。"""
 
     code = "VECTOR_CARRIER_ENCODE_ERROR"
+
+
+class VectorCarrierSchemaDriftError(VectorCarrierEncodeError):
+    """批式输入的 schema 漂移：后续批次与批次 1 冻结的 schema 冲突
+    （strict 策略直接拒绝；coerce 策略安全强制失败时同样拒绝 —— 绝不
+    静默错位）。"""
+
+    code = "VECTOR_CARRIER_SCHEMA_DRIFT"
 
 
 def arrow_available() -> bool:
@@ -59,8 +68,25 @@ def _require_pa() -> Tuple[Any, Any]:
     return pa, pq
 
 
-def _geo_metadata(crs: Optional[str]) -> Dict[str, Any]:
-    """GeoArrow/GeoParquet 同族的 ``geo`` schema 元数据（WKB 编码）。"""
+def _geo_metadata(
+    crs: Optional[Union[str, Dict[str, Any]]] = None,
+    *,
+    bbox: Optional[List[float]] = None,
+    geometry_types: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """GeoArrow/GeoParquet 同族的 ``geo`` schema 元数据（WKB 编码）。
+
+    Wave 5：编码时由数据计算 ``bbox``（[minx,miny,maxx,maxy]）与
+    ``geometry_types``（排序去重），使写入的文件自描述（此前其自身读取器
+    只能诚实报告 bbox=None）。
+
+    ``crs`` 契约（round-2 review MINOR，显式化而非偶然直通）：
+
+    - **PROJJSON dict** → **原样写入** schema（轴序/单位/椭球等完整参数
+      保留，精度绝不降级为名称串）；
+    - **字符串**（名称/``EPSG:xxxx`` 形态）→ 现状行为照写（GeoArrow/GeoParquet
+      允许字符串形态，读取方按名称解析 —— 有意保留，文档化）。
+    """
     # encoding 大写 "WKB" 是 GeoParquet 1.1 规范拼写（评审 MINOR：
     # 小写会破坏严格第三方读取器的互操作）。
     meta: Dict[str, Any] = {
@@ -73,9 +99,54 @@ def _geo_metadata(crs: Optional[str]) -> Dict[str, Any]:
             }
         },
     }
+    geom_col = meta["columns"]["geometry"]
     if crs:
-        meta["columns"]["geometry"]["crs"] = crs
+        if isinstance(crs, dict):
+            geom_col["crs"] = dict(crs)  # PROJJSON 逐键保真直通
+        else:
+            geom_col["crs"] = crs  # 字符串形态（现状行为，docstring 已述）
+    if bbox is not None:
+        geom_col["bbox"] = [float(c) for c in bbox]
+    if geometry_types:
+        geom_col["geometry_types"] = sorted(set(geometry_types))
     return meta
+
+
+def _iter_geom_coords(node: Any) -> Iterator[Tuple[float, float]]:
+    """GeoJSON coordinates 树的 (x, y) 迭代（迭代式；与 stream_bbox_filter
+    同一形状判定：数字对 = 坐标点，其余嵌套列表下钻）。"""
+    stack: List[Any] = [node]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, (list, tuple)) and cur and isinstance(cur[0], (int, float)) \
+                and len(cur) >= 2 and isinstance(cur[1], (int, float)):
+            yield float(cur[0]), float(cur[1])
+        elif isinstance(cur, (list, tuple)):
+            stack.extend(cur)
+
+
+def _features_geo_stats(
+    features: List[Dict[str, Any]],
+) -> Tuple[Optional[List[float]], List[str]]:
+    """从 feature 批次计算 (bbox, geometry_types)：bbox = 全坐标包围盒
+    （无坐标几何 → None，诚实未知）；types = 排序去重几何类型。"""
+    minx = miny = math.inf
+    maxx = maxy = -math.inf
+    types: set = set()
+    for feat in features:
+        geom = feat.get("geometry") if isinstance(feat, dict) else None
+        if not isinstance(geom, dict):
+            continue
+        t = geom.get("type")
+        if isinstance(t, str):
+            types.add(t)
+        for x, y in _iter_geom_coords(geom.get("coordinates")):
+            minx = min(minx, x)
+            maxx = max(maxx, x)
+            miny = min(miny, y)
+            maxy = max(maxy, y)
+    bbox = [minx, miny, maxx, maxy] if math.isfinite(minx) else None
+    return bbox, sorted(types)
 
 
 def _safe_exc_text(exc: BaseException, limit: int = 200) -> str:
@@ -129,16 +200,19 @@ def _geometry_to_wkb(geom: Optional[Dict[str, Any]]) -> Optional[bytes]:
 
 
 def _wkb_to_geometry(wkb: Optional[bytes]) -> Optional[Dict[str, Any]]:
-    """Arrow → GeoJSON 几何。WKB 解码失败记 debug 日志后按缺失几何处理
-    （外来 GeoParquet 的容错方向；编码侧失败是 typed 硬错误）。"""
+    """Arrow → GeoJSON 几何。空几何（POINT EMPTY 等）返回**空 GeoJSON 几何
+    字典**（round-1 review MAJOR：空几何是合法数据，静默变 None 是数据
+    损失）；WKB 解码失败记 debug 日志后按缺失几何处理（None 保留给不可
+    读字节 —— 外来 GeoParquet 的容错方向；编码侧失败是 typed 硬错误）。"""
     if not wkb:
         return None
     try:
         import shapely
 
         shape = shapely.from_wkb(bytes(wkb))
-        if shape.is_empty:
+        if shape is None:
             return None
+        # 空几何原样往返（如 {"type": "Point", "coordinates": []}）
         return json.loads(shapely.to_geojson(shape))
     except Exception as exc:
         logger.debug("[vector-carrier] WKB decode failed (%s); geometry=None",
@@ -147,9 +221,15 @@ def _wkb_to_geometry(wkb: Optional[bytes]) -> Optional[Dict[str, Any]]:
 
 
 def features_to_arrow(
-    features: List[Dict[str, Any]], *, crs: Optional[str] = None
+    features: List[Dict[str, Any]],
+    *,
+    crs: Optional[Union[str, Dict[str, Any]]] = None,
 ) -> Any:
-    """GeoJSON features → pyarrow.Table（geo WKB 元数据；schema/null 保留）。"""
+    """GeoJSON features → pyarrow.Table（geo WKB 元数据；schema/null 保留）。
+
+    ``geo`` 元数据附编码时计算的 ``bbox`` / ``geometry_types``（文件自描述）；
+    ``crs`` 接受名称串或 PROJJSON dict（见 ``_geo_metadata`` 的契约）。
+    """
     if not arrow_available():
         raise VectorCarrierUnavailable(
             "GeoArrow carrier requires the optional 'pyarrow' dependency; "
@@ -172,10 +252,14 @@ def features_to_arrow(
     for k, arr in zip(order, arrays):
         fields.append(pa.field(k, arr.type))
     geometry_array = pa.array(wkb_list, type=pa.binary())
+    bbox, geometry_types = _features_geo_stats(features)
     table = pa.Table.from_arrays(
         [*arrays, geometry_array],
-        schema=pa.schema([*fields, pa.field("geometry", pa.binary())],
-                         metadata={"geo": json.dumps(_geo_metadata(crs))}),
+        schema=pa.schema(
+            [*fields, pa.field("geometry", pa.binary())],
+            metadata={"geo": json.dumps(
+                _geo_metadata(crs, bbox=bbox, geometry_types=geometry_types))},
+        ),
     )
     return table
 
@@ -207,12 +291,211 @@ def arrow_to_features(table: Any) -> List[Dict[str, Any]]:
 
 
 def iter_arrow_chunks(
-    features: List[Dict[str, Any]], *, crs: Optional[str] = None, chunk_size: int = 4096
+    features: List[Dict[str, Any]],
+    *,
+    crs: Optional[Union[str, Dict[str, Any]]] = None,
+    chunk_size: int = 4096,
 ) -> Iterator[Any]:
     """分块传输：GeoJSON features → RecordBatch 迭代（零整表物化）。"""
     table = features_to_arrow(features, crs=crs)
     for batch in table.to_batches(max_chunksize=max(1, chunk_size)):
         yield batch
+
+
+def _coercible(src: Any, dst: Any) -> bool:
+    """Arrow 类型间是否允许"安全强制"（coerce 策略的白名单）。
+
+    允许：任意 → string（数值/bool 的字符串化）；整型 ↔ 浮点（浮点 → 整型
+    会截断，不安全 → 拒绝）；整型/浮点 ↔ bool；string → 数值（逐值可解析性
+    由 cast 决定，失败仍报 drift）。
+    """
+    import pyarrow as pa
+
+    if pa.types.is_null(src):
+        return True
+    if pa.types.is_string(dst) or pa.types.is_large_string(dst):
+        return True
+    src_num = pa.types.is_integer(src) or pa.types.is_floating(src) or pa.types.is_boolean(src)
+    dst_num = pa.types.is_integer(dst) or pa.types.is_floating(dst) or pa.types.is_boolean(dst)
+    if src_num and dst_num:
+        if pa.types.is_integer(dst) and pa.types.is_floating(src):
+            return False  # 1.5 → 1 是截断：不安全，诚实拒绝
+        return True
+    if (pa.types.is_string(src) or pa.types.is_large_string(src)) and dst_num:
+        return True
+    return False
+
+
+def iter_features_to_arrow_batches(
+    feature_batches: Iterable[List[Dict[str, Any]]],
+    *,
+    chunk_size: int = 4096,
+    schema: Optional[Any] = None,
+    on_schema_conflict: str = "strict",
+    crs: Optional[Union[str, Dict[str, Any]]] = None,
+) -> Iterator[Any]:
+    """批式载体输入：``Iterable[List[feature]]`` → RecordBatch 迭代。
+
+    - **批式不整存**：输入按批消费（生成器惰性），绝不为冻结 schema 而
+      物化整个输入 —— 修复 ``iter_arrow_chunks`` 必须先持有全量 list 的缺口；
+    - **schema 冻结**：批次 1（或显式 ``schema``）冻结列集合与列类型；
+      后续批次逐列对齐冻结 schema（``pa.RecordBatch.from_arrays`` 批次级
+      构建；空批次被容忍，不产出空批）；
+    - **漂移策略** ``on_schema_conflict``：
+      ``"strict"``（缺省）类型/结构不一致 → typed
+      ``VectorCarrierSchemaDriftError``；
+      ``"coerce"`` 先尝试安全强制（数值↔数值、任意→string、可解析 string→
+      数值；浮点→整型截断不安全仍拒绝），失败同样 typed 拒绝 ——
+      绝不静默错位；
+    - 每batch 的 schema 元数据附该批 ``bbox`` / ``geometry_types``；
+      汇总视图用 :func:`arrow_batches_geo_metadata` 折叠。
+    """
+    if on_schema_conflict not in ("strict", "coerce"):
+        raise ValueError(
+            f"on_schema_conflict must be 'strict' or 'coerce', got {on_schema_conflict!r}")
+    if not arrow_available():
+        raise VectorCarrierUnavailable(
+            "GeoArrow carrier requires the optional 'pyarrow' dependency; "
+            "fall back to feature payloads or enable the carrier",
+        )
+    pa, _ = _require_pa()
+
+    frozen_types: Optional[Dict[str, Any]] = None
+    frozen_base_schema: Any = None
+    run_bbox: Optional[List[float]] = None
+    run_types: set = set()
+
+    for batch_idx, features in enumerate(feature_batches):
+        if not features:
+            continue  # 空批次容忍（无行 → 无输出批）
+        if frozen_types is None:
+            if schema is not None:
+                pa_schema = schema if isinstance(schema, pa.Schema) else pa.schema(schema)
+                frozen_types = {f.name: f.type for f in pa_schema if f.name != "geometry"}
+            else:
+                order, columns, _ = _features_to_columns(features)
+                frozen_types = {}
+                for k in order:
+                    try:
+                        arr = pa.array(
+                            columns[k],
+                            type=pa.string() if _mostly_str(columns[k]) else None)
+                    except Exception as exc:
+                        raise VectorCarrierEncodeError(
+                            f"column '{k}' has mixed/unencodable value types "
+                            f"(batch {batch_idx}): {_safe_exc_text(exc)}") from exc
+                    frozen_types[k] = arr.type
+            frozen_base_schema = pa.schema(
+                [pa.field(k, t) for k, t in frozen_types.items()]
+                + [pa.field("geometry", pa.binary())],
+                metadata={"geo": json.dumps(_geo_metadata(crs))},
+            )
+
+        order, columns, wkb_list = _features_to_columns(features)
+        unknown = [k for k in order if k not in frozen_types]
+        if unknown:
+            raise VectorCarrierSchemaDriftError(
+                f"batch {batch_idx} introduces column(s) {unknown} not in the "
+                "schema frozen at batch 0; structural drift cannot be coerced")
+
+        arrays: List[Any] = []
+        for k, frozen in frozen_types.items():
+            if k not in columns:
+                # round-1 review MAJOR：后续批次**缺失**冻结列 ≠ 全 null 列。
+                # strict 直接 typed 拒绝（静默 null 填充会伪造数据丢失）；
+                # coerce 显式 null 填充（声明过的宽松策略）。
+                if on_schema_conflict == "strict":
+                    raise VectorCarrierSchemaDriftError(
+                        f"column '{k}' frozen at batch 0 vanished in batch "
+                        f"{batch_idx}; vanishing columns are structural drift "
+                        f"(policy=strict)")
+                arrays.append(pa.array([None] * len(features), type=frozen))
+                continue
+            values = columns[k]
+            try:
+                arr = pa.array(values)
+            except Exception as exc:
+                raise VectorCarrierEncodeError(
+                    f"column '{k}' has mixed/unencodable value types "
+                    f"(batch {batch_idx}): {_safe_exc_text(exc)}") from exc
+            if pa.types.is_null(arr.type) and not arr.type.equals(frozen):
+                arr = arr.cast(frozen)  # 全 null 列适配任意冻结类型（稀疏 null 保留）
+            elif not arr.type.equals(frozen):
+                if on_schema_conflict == "coerce" and _coercible(arr.type, frozen):
+                    try:
+                        arr = arr.cast(frozen)
+                    except Exception as exc:
+                        raise VectorCarrierSchemaDriftError(
+                            f"column '{k}' (batch {batch_idx}) drifted to "
+                            f"{arr.type}; safe coercion to frozen {frozen} "
+                            f"failed: {_safe_exc_text(exc)}") from exc
+                else:
+                    raise VectorCarrierSchemaDriftError(
+                        f"column '{k}' (batch {batch_idx}) drifted: frozen "
+                        f"{frozen}, got {arr.type} (policy={on_schema_conflict})")
+            arrays.append(arr)
+        arrays.append(pa.array(wkb_list, type=pa.binary()))
+
+        batch_bbox, batch_types = _features_geo_stats(features)
+        if batch_bbox is not None:
+            if run_bbox is None:
+                run_bbox = list(batch_bbox)
+            else:
+                run_bbox[0] = min(run_bbox[0], batch_bbox[0])
+                run_bbox[1] = min(run_bbox[1], batch_bbox[1])
+                run_bbox[2] = max(run_bbox[2], batch_bbox[2])
+                run_bbox[3] = max(run_bbox[3], batch_bbox[3])
+        run_types.update(batch_types)
+
+        batch_schema = frozen_base_schema.with_metadata({
+            b"geo": json.dumps(_geo_metadata(
+                crs, bbox=batch_bbox, geometry_types=batch_types)),
+        })
+        step = max(1, chunk_size)
+        for start in range(0, len(features), step):
+            yield pa.RecordBatch.from_arrays(
+                [a.slice(start, step) for a in arrays],
+                schema=batch_schema,
+            )
+
+
+def arrow_batches_geo_metadata(batches: Iterable[Any]) -> Dict[str, Any]:
+    """折叠批序列的 per-batch ``geo`` 元数据 → 汇总 bbox / geometry_types / crs。
+
+    纯批次流没有"表级"挂载点 —— 本助手给调用方一个汇总视图（等价于整表
+    编码时附在 schema 上的元数据）。无任何批携带元数据 → bbox 为 None。
+    """
+    if not arrow_available():
+        raise VectorCarrierUnavailable(
+            "GeoArrow carrier requires the optional 'pyarrow' dependency; "
+            "fall back to feature payloads or enable the carrier",
+        )
+    combined_bbox: Optional[List[float]] = None
+    types: set = set()
+    crs: Optional[Union[str, Dict[str, Any]]] = None
+    for batch in batches:
+        raw = (batch.schema.metadata or {}).get(b"geo")
+        if not raw:
+            continue
+        try:
+            geo = json.loads(raw)
+        except Exception:  # noqa: BLE001 - 外来元数据容错：跳过不可解析批
+            continue
+        col = (geo.get("columns") or {}).get("geometry", {})
+        if crs is None and col.get("crs"):
+            crs = col.get("crs")
+        bbox = col.get("bbox")
+        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            if combined_bbox is None:
+                combined_bbox = [float(c) for c in bbox]
+            else:
+                combined_bbox[0] = min(combined_bbox[0], float(bbox[0]))
+                combined_bbox[1] = min(combined_bbox[1], float(bbox[1]))
+                combined_bbox[2] = max(combined_bbox[2], float(bbox[2]))
+                combined_bbox[3] = max(combined_bbox[3], float(bbox[3]))
+        for t in col.get("geometry_types") or []:
+            types.add(t)
+    return _geo_metadata(crs, bbox=combined_bbox, geometry_types=sorted(types))
 
 
 def table_to_geoparquet(table: Any, path: str, *, compression: str = "zstd") -> None:
@@ -228,8 +511,11 @@ def geoparquet_to_features(path: str) -> List[Dict[str, Any]]:
     return arrow_to_features(table)
 
 
-def table_crs(table: Any) -> Optional[str]:
-    """从 schema geo 元数据读回 CRS（round-trip 保留证据）。"""
+def table_crs(table: Any) -> Optional[Union[str, Dict[str, Any]]]:
+    """从 schema geo 元数据读回 CRS（round-trip 保留证据）。
+
+    返回形态与写入侧契约一致：PROJJSON dict 或名称字符串（未知 → None）。
+    """
     import pyarrow  # noqa: F401
 
     meta = table.schema.metadata or {}

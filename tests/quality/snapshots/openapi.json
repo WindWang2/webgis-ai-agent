@@ -55,6 +55,132 @@
     "title": "ApiResponse",
     "type": "object"
    },
+   "ArtifactCloneResponse": {
+    "description": "Clone-as-pointer：新行指向同一 content_location（零字节复制）。",
+    "properties": {
+     "artifact_id": {
+      "description": "the NEW clone artifact id",
+      "title": "Artifact Id",
+      "type": "string"
+     },
+     "content_location": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content Location"
+     },
+     "content_sha256": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content Sha256"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "source_artifact_id": {
+      "title": "Source Artifact Id",
+      "type": "string"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "status",
+     "artifact_id",
+     "source_artifact_id"
+    ],
+    "title": "ArtifactCloneResponse",
+    "type": "object"
+   },
+   "ArtifactPinRequest": {
+    "description": "POST pin body（缺省 body = pin；DELETE 路由 = unpin）。",
+    "properties": {
+     "pinned": {
+      "default": true,
+      "title": "Pinned",
+      "type": "boolean"
+     }
+    },
+    "title": "ArtifactPinRequest",
+    "type": "object"
+   },
+   "ArtifactPinResponse": {
+    "properties": {
+     "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+     },
+     "content_sha256": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content Sha256"
+     },
+     "pinned": {
+      "default": false,
+      "title": "Pinned",
+      "type": "boolean"
+     },
+     "pinned_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pinned At"
+     },
+     "revision_no": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Revision No"
+     },
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "status",
+     "artifact_id"
+    ],
+    "title": "ArtifactPinResponse",
+    "type": "object"
+   },
    "ArtifactSummary": {
     "description": "Slim artifact row — storage_ref / metadata_json live on detail.",
     "properties": {
@@ -174,6 +300,24 @@
    },
    "Body_upload_files_api_v1_upload_post": {
     "properties": {
+     "crs": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "声明坐标系（如 EPSG:4326）。CSV 无 CRS 元数据：声明则可信转换，缺省则如实按 unknown 披露",
+      "title": "Crs"
+     },
+     "dedup": {
+      "default": true,
+      "description": "同会话同内容（sha256）幂等复用既有上传记录",
+      "title": "Dedup",
+      "type": "boolean"
+     },
      "files": {
       "description": "GIS 数据文件（支持多文件上传）",
       "items": {
@@ -182,6 +326,12 @@
       },
       "title": "Files",
       "type": "array"
+     },
+     "register_ref": {
+      "default": false,
+      "description": "注册到会话产物台账（V3 摄入管线增值车道，仅矢量；失败不阻断上传）",
+      "title": "Register Ref",
+      "type": "boolean"
      },
      "session_id": {
       "anyOf": [
@@ -637,6 +787,18 @@
     "title": "CreateTemplateRequest",
     "type": "object"
    },
+   "DataGcExecuteRequest": {
+    "description": "POST data-gc/execute body：显式 confirm 才执行破坏性清理（缺省 false\n→ 400，dry-run parity 纪律 —— 计划先行，执行必须显式表态）。",
+    "properties": {
+     "confirm": {
+      "default": false,
+      "title": "Confirm",
+      "type": "boolean"
+     }
+    },
+    "title": "DataGcExecuteRequest",
+    "type": "object"
+   },
    "DatasetAttach": {
     "properties": {
      "crs": {
@@ -819,6 +981,16 @@
        "type": "string"
       },
       "title": "Inputs",
+      "type": "array"
+     },
+     "lineage_inputs": {
+      "items": {
+       "additionalProperties": {
+        "type": "string"
+       },
+       "type": "object"
+      },
+      "title": "Lineage Inputs",
       "type": "array"
      },
      "locality_hint": {
@@ -3025,7 +3197,7 @@
       "title": "Content Location"
      },
      "status": {
-      "description": "promoted | already_promoted | no_session_context | session_expired | store_unavailable",
+      "description": "promoted | already_promoted | no_session_context | session_expired | store_unavailable | quota_exceeded (W12: over-quota; row survives metadata-only, no bytes written)",
       "title": "Status",
       "type": "string"
      }
@@ -4066,7 +4238,7 @@
     "type": "object"
    },
    "UploadResponse": {
-    "description": "单文件上传响应",
+    "description": "单文件上传响应\n\nV4 增量字段（全部带默认值 —— 既有契约不变）：\n- ``crs`` 放宽为可空：解析器未确认 CRS（CSV 未声明）时如实为 null，\n  不再谎称 confirmed EPSG:4326（``crs_source`` 披露证据来源）；\n- ``deduplicated``：同会话同内容幂等导入命中，返回既有 upload_id；\n- ``warnings`` / ``ignored_files`` / ``meta``：诚实披露（多文件丢弃、\n  CRS 假设、栅格 nodata/overviews 等）；\n- ``session_ref`` / ``profile_summary`` / ``quality``：V3 摄入管线\n  增值车道（opt-in）的有界产物；失败不阻断上传（``ref_registration_error``）。",
     "properties": {
      "bbox": {
       "anyOf": [
@@ -4083,8 +4255,31 @@
       "title": "Bbox"
      },
      "crs": {
-      "title": "Crs",
-      "type": "string"
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Crs"
+     },
+     "crs_source": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Crs Source"
+     },
+     "deduplicated": {
+      "default": false,
+      "title": "Deduplicated",
+      "type": "boolean"
      },
      "feature_count": {
       "title": "Feature Count",
@@ -4117,14 +4312,88 @@
       "title": "Id",
       "type": "integer"
      },
+     "ignored_files": {
+      "default": [],
+      "items": {
+       "type": "string"
+      },
+      "title": "Ignored Files",
+      "type": "array"
+     },
      "message": {
       "default": "上传成功",
       "title": "Message",
       "type": "string"
      },
+     "meta": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Meta"
+     },
      "original_name": {
       "title": "Original Name",
       "type": "string"
+     },
+     "profile_summary": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Profile Summary"
+     },
+     "quality": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Quality"
+     },
+     "ref_registration_error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ref Registration Error"
+     },
+     "session_ref": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Ref"
+     },
+     "warnings": {
+      "default": [],
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
      }
     },
     "required": [
@@ -4865,6 +5134,237 @@
      "updated_at"
     ],
     "title": "WorkflowSummary",
+    "type": "object"
+   },
+   "WorkspaceSnapshotCloneRequest": {
+    "properties": {
+     "source_session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Source Session Id",
+      "type": "string"
+     },
+     "target_session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Target Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "source_session_id",
+     "target_session_id"
+    ],
+    "title": "WorkspaceSnapshotCloneRequest",
+    "type": "object"
+   },
+   "WorkspaceSnapshotDeleteResponse": {
+    "properties": {
+     "home": {
+      "default": "project",
+      "title": "Home",
+      "type": "string"
+     },
+     "snapshot_id": {
+      "title": "Snapshot Id",
+      "type": "string"
+     },
+     "status": {
+      "default": "deleted",
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "snapshot_id"
+    ],
+    "title": "WorkspaceSnapshotDeleteResponse",
+    "type": "object"
+   },
+   "WorkspaceSnapshotListResponse": {
+    "properties": {
+     "bounded": {
+      "default": 50,
+      "description": "list 输出硬上限",
+      "title": "Bounded",
+      "type": "integer"
+     },
+     "count": {
+      "default": 0,
+      "title": "Count",
+      "type": "integer"
+     },
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/WorkspaceSnapshotSummary"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "project_id"
+    ],
+    "title": "WorkspaceSnapshotListResponse",
+    "type": "object"
+   },
+   "WorkspaceSnapshotRestoreRequest": {
+    "properties": {
+     "mode": {
+      "default": "verify",
+      "enum": [
+       "verify",
+       "register"
+      ],
+      "title": "Mode",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "WorkspaceSnapshotRestoreRequest",
+    "type": "object"
+   },
+   "WorkspaceSnapshotSaveRequest": {
+    "properties": {
+     "label": {
+      "default": "",
+      "maxLength": 96,
+      "title": "Label",
+      "type": "string"
+     },
+     "materialize": {
+      "default": "none",
+      "enum": [
+       "none",
+       "claimed",
+       "all"
+      ],
+      "title": "Materialize",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "WorkspaceSnapshotSaveRequest",
+    "type": "object"
+   },
+   "WorkspaceSnapshotSaveResponse": {
+    "properties": {
+     "durable_pointers": {
+      "default": 0,
+      "title": "Durable Pointers",
+      "type": "integer"
+     },
+     "home": {
+      "default": "project",
+      "title": "Home",
+      "type": "string"
+     },
+     "label": {
+      "default": "",
+      "title": "Label",
+      "type": "string"
+     },
+     "materialize_skipped": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Materialize Skipped",
+      "type": "array"
+     },
+     "project_id": {
+      "title": "Project Id",
+      "type": "string"
+     },
+     "snapshot": {
+      "additionalProperties": true,
+      "title": "Snapshot",
+      "type": "object"
+     },
+     "snapshot_id": {
+      "title": "Snapshot Id",
+      "type": "string"
+     },
+     "status": {
+      "default": "ok",
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "project_id",
+     "snapshot_id"
+    ],
+    "title": "WorkspaceSnapshotSaveResponse",
+    "type": "object"
+   },
+   "WorkspaceSnapshotSummary": {
+    "description": "Slim snapshot row — list endpoints use this to slim payloads.",
+    "properties": {
+     "artifacts": {
+      "default": 0,
+      "title": "Artifacts",
+      "type": "integer"
+     },
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "home": {
+      "default": "project",
+      "title": "Home",
+      "type": "string"
+     },
+     "label": {
+      "default": "",
+      "title": "Label",
+      "type": "string"
+     },
+     "layers": {
+      "default": 0,
+      "title": "Layers",
+      "type": "integer"
+     },
+     "project_id": {
+      "default": "",
+      "title": "Project Id",
+      "type": "string"
+     },
+     "snapshot_id": {
+      "title": "Snapshot Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "snapshot_id"
+    ],
+    "title": "WorkspaceSnapshotSummary",
     "type": "object"
    }
   },
@@ -7741,7 +8241,7 @@
   },
   "/api/v1/geocompute/plans/execute": {
    "post": {
-    "description": "执行执行图（同步卸载到工作线程；预算/取消/deadline 全程生效）。\n\n强制认证（无/坏 Bearer → 401）。``session_id`` 归属校验与执行同一\n工作线程顺序执行（校验先于任何节点运行）。",
+    "description": "执行执行图（同步卸载到工作线程；预算/取消/deadline 全程生效）。\n\n强制认证（无/坏 Bearer → 401）。``session_id`` 归属校验与执行同一\n工作线程顺序执行（校验先于任何节点运行）。\n\nDIST（round1）：REST 执行与工具路径共用 ``run_plan_sync`` —— 服务端\n``GOVERNOR`` 层级准入（tenant/session 作用域 + 全局上限）对两条入口\n一视同仁；此前本路由直连 ``engine.execute_plan`` 完全绕过治理。",
     "operationId": "execute_execution_plan_api_v1_geocompute_plans_execute_post",
     "parameters": [
      {
@@ -7804,6 +8304,54 @@
     ]
    }
   },
+  "/api/v1/geocompute/plans/runs/{run_id}/cancel": {
+   "post": {
+    "description": "请求取消一个 in-process run（V5，audit 06 §6.1 step 2）。\n\n与 run 读端点同一 authz 纪律：强制认证 + owner 域读隔离（未知 run 与\n他人 run 一律 404，不泄漏存在性）。取消经 ``engine.cancel_run``（run 级\nCancellationToken）：未启动节点立即收敛；在飞节点经各自协作 checkpoint\n收敛；durable 分支级联写 job 行取消（既有机制，无新状态机）。\n\n进程可见性（DIST round1 如实声明）：在飞 run 注册表是**本进程内存态**\n（``engine.get_run`` 只见本进程启动的 run）—— 多 worker / 多副本部署\n下，cancel 请求须落在**正在执行该 run 的进程**才能点燃在飞取消；\ndurable 分支的取消事实落库（AnalysisTask 行），由执行侧探针跨进程\n收敛，不受此限制。幂等：已终态 / 快照回放的 run 返回 200 且\n``cancelled=false`` 并附当前终态 —— 与 durable job 取消的幂等语义一致。",
+    "operationId": "cancel_execution_run_api_v1_geocompute_plans_runs__run_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel Execution Run",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面"
+    ]
+   }
+  },
   "/api/v1/geocompute/plans/validate": {
    "post": {
     "description": "校验执行图并返回确定性指纹（不执行）。\n\n安全说明（SEC 评审）：保持**可选认证** —— 纯 CPU 校验，无目录/数据\n访问，响应只含指纹、波次与已接线类别等派生信息；未认证调用不构成\n信息泄漏面。",
@@ -7853,7 +8401,7 @@
   },
   "/api/v1/geocompute/runs/{run_id}": {
    "get": {
-    "description": "查询 run（强制认证 + 读隔离：他人 run 一律 404，避免存在性预言机）。",
+    "description": "查询 run（强制认证 + 读隔离：他人 run 一律 404，避免存在性预言机）。\n\nV5：内存未命中时回读终态证据快照（owner 域校验在引擎读取侧）——\n进程重启后读取不再 404（快照来源以 ``source=\"snapshot\"`` 诚实标注）。\nWave-11：应答附加 ``lineage``（无载荷投影）与 ``reproducibility`` 判定\n（快照回放路径同样携带 —— 读自快照 folded JSON）。",
     "operationId": "get_execution_run_api_v1_geocompute_runs__run_id__get",
     "parameters": [
      {
@@ -9239,6 +9787,55 @@
     ]
    }
   },
+  "/api/v1/projects/artifacts/{artifact_id}/clone": {
+   "post": {
+    "description": "Clone-as-pointer: a NEW artifact row referencing the SAME content\nlocation (no bytes copied — content-addressed BlobStore dedup makes the\nclone free) plus a revision row reusing the same content_sha256.",
+    "operationId": "clone_artifact_endpoint_api_v1_projects_artifacts__artifact_id__clone_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "artifact_id",
+      "required": true,
+      "schema": {
+       "title": "Artifact Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ArtifactCloneResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Clone Artifact Endpoint",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   }
+  },
   "/api/v1/projects/artifacts/{artifact_id}/lineage": {
    "get": {
     "operationId": "get_artifact_lineage_api_v1_projects_artifacts__artifact_id__lineage_get",
@@ -9279,6 +9876,119 @@
      }
     ],
     "summary": "Get Artifact Lineage",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/artifacts/{artifact_id}/pin": {
+   "delete": {
+    "description": "Unpin (clears pinned_at on the head revision).",
+    "operationId": "unpin_artifact_endpoint_api_v1_projects_artifacts__artifact_id__pin_delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "artifact_id",
+      "required": true,
+      "schema": {
+       "title": "Artifact Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ArtifactPinResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Unpin Artifact Endpoint",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   },
+   "post": {
+    "description": "Pin the artifact's head revision (exempt from promotion-store GC).",
+    "operationId": "pin_artifact_endpoint_api_v1_projects_artifacts__artifact_id__pin_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "artifact_id",
+      "required": true,
+      "schema": {
+       "title": "Artifact Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/ArtifactPinRequest"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Data"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ArtifactPinResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Pin Artifact Endpoint",
     "tags": [
      "项目工作区",
      "Project Workspace"
@@ -9619,6 +10329,157 @@
      }
     ],
     "summary": "Activate Carto Fact",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-gc/execute": {
+   "post": {
+    "description": "Execute a GC round：必须显式 confirm=true（缺省 400）。\n\n执行的是**当前新鲜状态**的 plan → execute（复检在同一谓词下进行，\n绝不盲执行调用方缓存的计划）；范围 = **本项目**保留清理 + 孤儿修订行\n清理（quota.py 的项目过滤 plan/execute pair）。GLOBAL promotion-store\nGC 不在这里跑（review round-1 SEC CRITICAL-2：项目路由触发全局清扫\n会放大爆炸半径并删除其他项目的无主 blob）—— 它只属于周期 sweep\n（``artifact_lifecycle.sweep_aged_artifacts``）。结果有界（≤64 items +\ncounts）。",
+    "operationId": "execute_project_data_gc_api_v1_projects__project_id__data_gc_execute_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DataGcExecuteRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Execute Project Data Gc",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-gc/plan": {
+   "post": {
+    "description": "Dry-run GC plan（只读）：**项目域**保留候选 + 项目过滤后的可删 blob\n投影（仅 sha 前缀 + 字节）。\n\nreview round-1 SEC CRITICAL-2：per-project 端点绝不运行/披露 GLOBAL\npromotion-store GC —— 全局清扫只属于周期 sweep\n（artifact_lifecycle.sweep_aged_artifacts）。这里的「可删 blob」是本项目\n保留候选中已通过单一保护谓词（``_promotion_blob_protection``，含宽限期）\n的物理 blob，即本轮保留清扫实际可释放的 promotion-store 字节。\n\nreview round-2 SEC MAJOR-F3（脱敏投影落在路由层，与计划内部结构解耦）：\n- ``candidate_revisions`` 只披露 {artifact_id, revision_no, age_days,\n  byte_size} —— 绝不携带 revision_id / content_sha256 / content_location；\n- ``candidate_blobs`` 只披露 {sha_prefix(12), byte_size} —— 绝不携带\n  完整 sha / location；\n- 快照保护面截断（``protection_scan_truncated``）时本轮跳过 blob 删除，\n  计划如实带出该标志。\nkey/location 字符串一律不出网（sha 前缀 + 字节足够运维决策）。",
+    "operationId": "plan_project_data_gc_api_v1_projects__project_id__data_gc_plan_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Plan Project Data Gc",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/data-usage": {
+   "get": {
+    "description": "Per-project durable data usage + limits + upcoming retention candidates.",
+    "operationId": "get_project_data_usage_api_v1_projects__project_id__data_usage_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Project Data Usage",
     "tags": [
      "项目工作区",
      "Project Workspace"
@@ -10494,6 +11355,22 @@
        "title": "Project Id",
        "type": "string"
       }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
      }
     ],
     "requestBody": {
@@ -11366,6 +12243,569 @@
      }
     ],
     "summary": "Run Workflow",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/workspace": {
+   "get": {
+    "description": "Workspace inventory (§十五): snapshot count, artifact summary by\nlifecycle state, layer refs, durable coverage %.",
+    "operationId": "describe_workspace_api_v1_projects__project_id__workspace_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Session Id"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Describe Workspace",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/workspace/snapshots": {
+   "get": {
+    "description": "Bounded snapshot list (≤50) for the project (plus the optional\nsession's legacy session-scoped snapshots, honestly labeled ``home``).",
+    "operationId": "list_workspace_snapshots_api_v1_projects__project_id__workspace_snapshots_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Session Id"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WorkspaceSnapshotListResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Workspace Snapshots",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   },
+   "post": {
+    "description": "Save a durable workspace snapshot for a live session.\n\n``materialize=\"claimed\"|\"all\"`` additionally writes live payloads through\nthe durable BlobStore and stamps them ``persistence_tier=\"workspace\"``\n(GC interlock). Session ownership is verified first (404 without\nexistence leak); the snapshot lives under the project root and survives\nsession purge/TTL sweeps.",
+    "operationId": "save_workspace_snapshot_api_v1_projects__project_id__workspace_snapshots_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WorkspaceSnapshotSaveRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WorkspaceSnapshotSaveResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Save Workspace Snapshot",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}": {
+   "delete": {
+    "description": "Delete exactly one snapshot file (bounded unlink; never a directory\nsweep). Snapshots created by another user within the project are\nrefused at the service layer.",
+    "operationId": "delete_workspace_snapshot_api_v1_projects__project_id__workspace_snapshots__snapshot_id__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "snapshot_id",
+      "required": true,
+      "schema": {
+       "title": "Snapshot Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "maxLength": 128,
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WorkspaceSnapshotDeleteResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Delete Workspace Snapshot",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   },
+   "get": {
+    "description": "Inspect = the verify report (liveness + pointer digest integrity).\n\nProbes run against the caller's own session — the session gate doubles\nas the ref-id leak guard (audit §4.3).",
+    "operationId": "inspect_workspace_snapshot_api_v1_projects__project_id__workspace_snapshots__snapshot_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "snapshot_id",
+      "required": true,
+      "schema": {
+       "title": "Snapshot Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "maxLength": 128,
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Inspect Workspace Snapshot",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}/clone": {
+   "post": {
+    "description": "Clone a snapshot (manifest copy; cross-session ref semantics are\ndisclosed by verify, never fabricated). BOTH sessions must belong to\nthe caller — the source gate is 404 without existence leak.",
+    "operationId": "clone_workspace_snapshot_api_v1_projects__project_id__workspace_snapshots__snapshot_id__clone_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "snapshot_id",
+      "required": true,
+      "schema": {
+       "title": "Snapshot Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WorkspaceSnapshotCloneRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Clone Workspace Snapshot",
+    "tags": [
+     "项目工作区",
+     "Project Workspace"
+    ]
+   }
+  },
+  "/api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}/restore": {
+   "post": {
+    "description": "Restore a snapshot into a live session.\n\n``verify`` reports only; ``register`` rebinds the artifact ledger AND\nre-materializes payloads for contracts with durable pointers\n(digest-verified read before write; failures degrade honestly to\n``expired`` + ``degraded`` — dead refs are never marked valid).",
+    "operationId": "restore_workspace_snapshot_api_v1_projects__project_id__workspace_snapshots__snapshot_id__restore_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "snapshot_id",
+      "required": true,
+      "schema": {
+       "title": "Snapshot Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WorkspaceSnapshotRestoreRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Restore Workspace Snapshot",
     "tags": [
      "项目工作区",
      "Project Workspace"
@@ -12918,6 +14358,24 @@
         }
        ],
        "title": "X-Session-Token"
+      }
+     },
+     {
+      "description": "存在即视为请求 register_ref（值不作为会话来源——归属一律以已校验的 session_id 表单为准）",
+      "in": "header",
+      "name": "X-Session-Id",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "存在即视为请求 register_ref（值不作为会话来源——归属一律以已校验的 session_id 表单为准）",
+       "title": "X-Session-Id"
       }
      }
     ],

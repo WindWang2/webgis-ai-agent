@@ -8,6 +8,12 @@ This module centralizes that contract so callers cannot forget the scope.
 Used today for ``describe()`` metadata; the query-result cache + HTTP
 conditional requests (ETag / If-None-Match) are a documented follow-up — they
 need adapter response-header plumbing that this PR does not introduce.
+
+失效语义（audit 07 §2）：**TTL 30s only**（+ 4096 条 LRU-ish 收敛）；生产
+scope 形如 ``source:<id>|org:<org_id>|owner:<owner_id>``（manager.sync_catalog
+从 source 行的租户/归属字段派生，与 fabric 路由 _tenant_filter 同一权威），
+租户换源/源行删建即天然 miss；无主动失效通道，靠短 TTL 兜底。describe
+重建经线程上下文 SingleFlight per-key 去重（builder 异常原样传播）。
 """
 import hashlib
 import json

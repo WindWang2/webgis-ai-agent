@@ -1,7 +1,13 @@
 """工具结果缓存层 — Redis-backed, opt-in per tool.
 
-入口：make_cache_key(name, args)、cached_tool(...) 装饰器（后续 Task 加入）。
-键命名空间 tool_cache:v1:<sha256[:16]>，全量失效一条 SCAN | DEL 即可。
+入口：make_cache_key(name, args, owner_scope=None)、cached_tool(...) 装饰器。
+键命名空间 tool_cache:v2:<sha256[:16]>，全量失效一条 SCAN | DEL 即可。
+（v1→v2：R3 owner 域进键 —— 旧条目按 TTL 自然过期，键形状变更即全量 miss。）
+
+失效语义（audit 07 §2）：**TTL only**（per-tool，1h~24h；错误形态结果从不
+写缓存）+ 键含 **owner 域**（R3：sha256(owner || tool || args)，会话身份
+哈希进键，跨用户不共享条目）；无主动失效通道 —— 这正是 ref: 参数一律
+拒绝缓存、由 analysis_reuse/ref 血缘补位的原因。
 
 singleflight：cache miss 时先尝试 SET NX 锁（带 token + TTL）；拿到锁的
 caller 计算并写回，其余 caller 轮询等待结果。锁丢失/过期/Redis 故障时
@@ -33,8 +39,35 @@ _POLL_MIN_S = 0.05
 _POLL_MAX_S = 1.0
 
 
-def make_cache_key(tool_name: str, args: dict) -> Optional[str]:
+def _owner_scope_for_cache(session_id: Optional[str]) -> str:
+    """R3（audit 07 §6.1）：从 harness 注入的会话身份派生缓存 owner 域。
+
+    与 geocompute 的 ``owner_scope_for``（app/services/geocompute/executor.py:99-124，
+    复用键/ run 归属共用）同一纪律：身份**哈希**（sha1 前 16 位）而非明文，
+    无可派生身份 → "anonymous" 哨兵。此处复制而非 import：app/lib 不反向
+    依赖 app/services（import 方向），且 geocompute/executor 归 Wave 8 所有
+    —— 两处以本注释互链，改动哈希纪律时必须同步。
+
+    注意 executor 版优先 user id（caller dict 在 dispatch 装饰器缝合处不
+    可得）；工具签名带 ``session_id`` 时由 registry.dispatch 注入真实会话
+    （registry.py:1479-1482），进入 args 后即为本函数的身份来源。
+    """
+    if not session_id:
+        return "anonymous"
+    return "s:" + hashlib.sha1(
+        str(session_id).encode(), usedforsecurity=False
+    ).hexdigest()[:16]
+
+
+def make_cache_key(tool_name: str, args: dict, owner_scope: Optional[str] = None) -> Optional[str]:
     """构造确定性缓存键。
+
+    R3（audit 07 §6.1）：owner 域参与键 —— sha256(owner_domain || tool_name
+    || args)。带会话身份的工具调用（args 含注入的 ``session_id``）跨用户/
+    跨会话不再共享条目（此前相同 ref-free args 全局共享 = 跨用户时序侧信
+    道）。显式 ``owner_scope`` 供拥有更强身份（user id）的调用方传入；
+    不可得时按 args 内 session 派生，再退 "anonymous"。旧 v1 条目按 TTL
+    自然过期（键形状变更即全量 miss，可接受）。
 
     args 内任一叶子值是 'ref:' 开头的字符串时返回 None — 调用方据此跳过缓存。
     （ref:xxx 是会话内可变数据引用，同一引用不同时刻解析结果不同。）
@@ -62,8 +95,12 @@ def make_cache_key(tool_name: str, args: dict) -> Optional[str]:
     if _contains_ref(args, ref_budget) or ref_budget[0] <= 0:
         return None
     canonical = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
-    digest = hashlib.sha256(f"{tool_name}::{canonical}".encode()).hexdigest()[:16]
-    return f"tool_cache:v1:{digest}"
+    if owner_scope is None:
+        owner_scope = _owner_scope_for_cache(
+            args.get("session_id") if isinstance(args, dict) else None
+        )
+    digest = hashlib.sha256(f"{owner_scope}::{tool_name}::{canonical}".encode()).hexdigest()[:16]
+    return f"tool_cache:v2:{digest}"
 
 
 def _contains_ref(value, _budget: list[int] | None = None) -> bool:
@@ -329,6 +366,11 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
         singleflight: cache miss 时抑制并发重复计算（SET NX 锁 + 等待者轮询）。
             默认开启；锁过期/丢失/Redis 故障时退化为直接计算，无死锁。
         lock_ttl: 单飞锁 TTL（秒）。默认 120s；计算可能超过该时长时按需调大。
+
+    R3 键隔离：kwargs 含 ``session_id``（registry.dispatch 注入）时 owner
+    域派生自该会话 —— 跨用户不共享缓存条目；否则 "anonymous"。更高强度
+    身份（user id）可经 ``make_cache_key(..., owner_scope=...)`` 显式传入
+    （当前 dispatch 缝合处无 caller dict，见 _owner_scope_for_cache 注释）。
 
     内层函数可以是 sync 也可以是 async；通过 inspect.iscoroutinefunction 分支。
     """

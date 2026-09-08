@@ -125,7 +125,17 @@ services:
       - uploads:/app/data
     env_file:
       - .env
-    command: celery -A app.services.task_queue worker -l info
+    # GeoCompute V5 异构队列（audit 06 §6.1 step 1）：task_queue.py 声明了
+    # 每 profile 一个具名队列（light_cpu/heavy_cpu/high_memory/raster/
+    # network/external_io，命名 {profile}_queue）+ 默认队列 celery。
+    # 单 worker 部署语义不变（CRITICAL）：本 worker 用 -Q 显式消费**全部**
+    # 队列 —— 路由真相就位但物理放置不变。要按 profile 拆 worker 时，复制
+    # 本服务并把 -Q 收窄为对应子集即可（例如 raster worker 只取
+    # `-Q celery,raster_queue`，并按需调大其内存/cpus 预留）。
+    # Redis 缺席（task_always_eager）时队列不参与路由，行为与单机模式一致。
+    command: >
+      celery -A app.services.task_queue worker -l info
+      -Q celery,light_cpu_queue,heavy_cpu_queue,high_memory_queue,raster_queue,network_queue,external_io_queue
     healthcheck:
       # 审计 INF-003：celery-worker 缺少 healthcheck，depends_on 无法等待就绪。
       test: ["CMD-SHELL", "celery -A app.services.task_queue inspect ping || exit 1"]

@@ -201,8 +201,9 @@ def test_multiband_read_uses_indexes_not_all_bands(monkeypatch, tmp_path):
         assert kwargs["indexes"] == (1, 2, 3)
 
     # Stats cache holds exactly the 3 rendered bands (keyed by band subset, C5).
+    # R6: entries are (stats, expire_at) — the stats tuple itself is [0].
     assert (path, (1, 2, 3)) in svc._STATS_CACHE
-    assert len(svc._STATS_CACHE[(path, (1, 2, 3))]) == 3
+    assert len(svc._STATS_CACHE[(path, (1, 2, 3))][0]) == 3
 
 
 def test_normalize_channel_explicit_stretch():
@@ -379,3 +380,66 @@ def test_nodata_less_three_band_zero_bands_not_holes(tmp_path):
     assert (px[:, :, 3] > 0).any()          # something renders at all
     opaque = px[px[:, :, 3] > 0]
     assert (opaque[:, :3] == 0).all()       # zero-valued RGB renders black
+
+
+def test_invalidate_raster_ref_races_band_stats_without_exception(tmp_path):
+    """CONC MAJOR-2（round1）：``invalidate_raster_ref`` 的 stats 扫描/删除
+    与并发 ``_get_band_stats`` 的插入/过期弹出竞态 —— 修复前在
+    ``_RASTER_CACHE_LOCK`` 内裸改 ``_STATS_CACHE``，触发
+    "dictionary changed size during iteration"。修复后 stats 操作持
+    ``_STATS_CACHE_LOCK``（锁序 raster→stats），并发下无异常且失效清干净。
+    """
+    import threading
+    import time as _time
+
+    from app.services import raster_tile_service as svc
+
+    path = str(tmp_path / "race.tif")
+    _write_dual_region_tiff(path)
+    sid, ref = "sess-stats-race", "ref:race"
+    svc.register_raster_ref(sid, ref, path)
+
+    stop = _time.monotonic() + 2.0
+    errors: list[BaseException] = []
+    srcs: list = []
+
+    def statser():
+        # rasterio dataset 句柄不是线程安全的 —— 每个线程独立打开。
+        src = rasterio.open(path)
+        srcs.append(src)
+        try:
+            while _time.monotonic() < stop:
+                svc._get_band_stats(path, src, (1,))
+        except BaseException as exc:  # noqa: BLE001 - race observability
+            errors.append(exc)
+        finally:
+            src.close()
+
+    def invalidator():
+        try:
+            while _time.monotonic() < stop:
+                svc.register_raster_ref(sid, ref, path)
+                svc.invalidate_raster_ref(sid, ref)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    try:
+        threads = [threading.Thread(target=statser) for _ in range(4)] + [
+            threading.Thread(target=invalidator) for _ in range(2)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+        assert not any(t.is_alive() for t in threads)
+        assert not errors, f"race surfaced: {errors!r}"
+
+        # 收尾：最后一次 invalidate 后该路径的 stats 条目必须清干净。
+        svc._STATS_CACHE[(path, (1,))] = (((0.0, 1.0),), _time.monotonic() + 600)
+        svc.register_raster_ref(sid, ref, path)
+        cleared = svc.invalidate_raster_ref(sid, ref)
+        assert cleared >= 1
+        assert not [k for k in svc._STATS_CACHE if k[0] == path], "stats 必须被清除"
+    finally:
+        for src in srcs:
+            src.close()

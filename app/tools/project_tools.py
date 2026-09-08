@@ -10,7 +10,6 @@ from app.core.database import SessionLocal
 from app.services.project_service import ProjectService
 from app.services.workflow_engine import WorkflowEngine
 from app.services.spatial_quality_service import SpatialQualityEngine
-from app.services.spatial_repair_pipeline import SpatialRepairPipeline
 from app.schemas.project_schema import WorkflowCreate, WorkflowGraphSpec, WorkflowStepSpec
 
 logger = logging.getLogger(__name__)
@@ -331,9 +330,16 @@ def register_project_tools(registry: ToolRegistry) -> None:
         )
         return report.to_dict()
 
-    @tool(registry, 
+    @tool(registry,
         name="repair_spatial_dataset",
-        description="Perform non-destructive safe remediation on a spatial dataset and create a clean derived output.",
+        description=(
+            "Perform non-destructive safe remediation on a spatial dataset. The "
+            "repaired FeatureCollection is registered as a NEW session ref (the "
+            "source is never overwritten) and bounded repair evidence (ops, "
+            "affected-feature counts, content digests) is recorded; pass "
+            "project_id (+ optional dataset_id/source_ref/issue_codes) to also "
+            "persist the evidence onto the project lineage edge."
+        ),
         parameters={
             "type": "object",
             "properties": {
@@ -342,6 +348,23 @@ def register_project_tools(registry: ToolRegistry) -> None:
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "List of repair operations: make_valid, remove_empty, normalize_geometry_type, deduplicate, snap_within_tolerance",
+                },
+                "source_ref": {
+                    "type": "string",
+                    "description": "Optional source dataset ref (ref:...) the input came from; recorded as the repair lineage input",
+                },
+                "issue_codes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional quality issue codes this repair addresses (recorded in repair evidence)",
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "Optional Project ID: when given, the repaired output is also registered as a project artifact with a repair_evidence lineage edge",
+                },
+                "dataset_id": {
+                    "type": "string",
+                    "description": "Optional ProjectDataset ID (requires project_id) attributed as the source dataset",
                 },
             },
             "required": ["geojson"],
@@ -362,21 +385,90 @@ def register_project_tools(registry: ToolRegistry) -> None:
     async def repair_spatial_dataset(
         geojson: Dict[str, Any],
         operations: Optional[List[str]] = None,
+        source_ref: Optional[str] = None,
+        issue_codes: Optional[List[str]] = None,
+        project_id: Optional[str] = None,
+        dataset_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         # repair_dataset is a synchronous, non-destructive CPU op; run it off the
         # event loop. Earlier this awaited a sync function, which raised TypeError.
         ops = operations or ["make_valid", "remove_empty", "deduplicate"]
-        import asyncio
-        repaired, logs = await asyncio.to_thread(
-            SpatialRepairPipeline.repair_dataset, geojson, ops
+        user_id, org_id, ctx_session = _caller_identity()
+        from app.services.data_quality.repair_execution import (
+            execute_repair,
+            persist_repair_lineage,
         )
-        feature_count = len(repaired.get("features", []) if isinstance(repaired, dict) else [])
+
+        execution = await execute_repair(
+            geojson=geojson,
+            operations=ops,
+            session_id=ctx_session,
+            source_ref=source_ref,
+            issue_codes=issue_codes,
+        )
         # Fetch-on-Demand: never inline a full repaired FeatureCollection into the
         # tool_result (persisted to DB + fed to the LLM). Trim heavy geometry.
-        return {
+        response: Dict[str, Any] = {
             "status": "success",
-            "operations_applied": ops,
-            "logs_count": len(logs),
-            "feature_count": feature_count,
-            "repaired_geojson_preview": trim_features(repaired, max_features=50),
+            "operations_applied": execution["operations_applied"],
+            "ops_evidence": execution["ops_evidence"],
+            "logs_count": execution["logs_count"],
+            "feature_count": execution["feature_count"],
+            "feature_count_before": execution["feature_count_before"],
+            # Wave-4: new ref registration (source payload never overwritten) +
+            # bounded digest-only evidence — disclosure, not silent success.
+            "repaired_ref": execution["repaired_ref"],
+            "ref_registration_error": execution["ref_registration_error"],
+            "repair_evidence": execution["repair_evidence"],
+            "repaired_geojson_preview": trim_features(
+                execution["repaired_geojson"], max_features=50
+            ),
         }
+        # Project-side evidence: repaired output becomes a project artifact whose
+        # root lineage edge carries repair_evidence (record_lineage). Tenant
+        # checked; failures disclosed honestly and never fail the repair itself.
+        if project_id:
+            try:
+                with SessionLocal() as db:
+                    project = ProjectService.get_project_with_auth(
+                        db=db, project_id=project_id, user_id=user_id, org_id=org_id
+                    )
+                    if not project:
+                        response["lineage_status"] = "unauthorized"
+                    else:
+                        src_ds_id = src_ds_fp = None
+                        if dataset_id:
+                            from app.models.project import ProjectDataset
+                            from sqlalchemy import select as _select
+
+                            row = db.execute(
+                                _select(ProjectDataset).where(
+                                    ProjectDataset.id == dataset_id,
+                                    ProjectDataset.project_id == project.id,
+                                )
+                            ).scalar_one_or_none()
+                            if row is not None:
+                                src_ds_id = row.id
+                                src_ds_fp = row.version_fingerprint
+                            else:
+                                response["dataset_attribution"] = "dataset_not_found"
+                        artifact_id = persist_repair_lineage(
+                            db,
+                            project.id,
+                            repair_evidence=execution["repair_evidence"],
+                            content_fingerprint=execution["content_digest_after"],
+                            crs=execution["output_crs"],
+                            storage_ref=execution["repaired_ref"]
+                            or execution["content_digest_after"],
+                            source_dataset_id=src_ds_id,
+                            source_dataset_fingerprint=src_ds_fp,
+                        )
+                        response["lineage_status"] = "recorded"
+                        response["lineage_artifact_id"] = artifact_id
+            except Exception as exc:  # noqa: BLE001 — 证据落地失败如实披露
+                logger.warning(
+                    "[repair_spatial_dataset] lineage persistence failed: %s", exc
+                )
+                response["lineage_status"] = "error"
+                response["lineage_error"] = str(exc)[:200]
+        return response
