@@ -37,6 +37,7 @@ async def test_corpus_size_and_determinism():
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(180)
 async def test_corpus_full_run_green():
     """全量语义一致性（20,088 案例实测 ≈20s，离线零 LLM）。
 
