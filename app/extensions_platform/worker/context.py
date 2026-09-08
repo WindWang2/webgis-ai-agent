@@ -172,6 +172,72 @@ class WorkerContext:
         self._tool_funcs[spec.name] = spec.wrap_with_permissions(self.grants)
         return self.manifest.namespaced_tool_name(spec.name)
 
+    # ── model providers（V2 Wave 10：worker 模式 = 单帧工具调用）──────
+    def register_model_provider(self, spec: Any) -> str:
+        """worker 模式 model provider：投影为 worker 内的 invoke 工具。
+
+        streaming 能力在 manifest 层已被拒绝（单帧 RPC）；这里的调用走
+        通用 call 往返（聚合结果单帧返回）。本地名 `<pid>_invoke`
+        与宿主投影名的前缀剥离形态精确一致。
+        """
+        from ..sdk.model import ModelProviderSpec, aggregate_stream_events
+        from ..sdk.tool import ToolExtensionSpec
+
+        if not isinstance(spec, ModelProviderSpec):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    "register_model_provider expects a ModelProviderSpec",
+                    extension_id=self.extension_id,
+                )
+            )
+        self._require_declared("model_providers", spec.provider_id)
+        diagnostics = spec.validate(
+            [
+                m.model_dump() if hasattr(m, "model_dump") else dict(m)
+                for m in self.manifest.model_providers
+            ],
+            frozenset(self.manifest.permissions),
+        )
+        if any(d.severity.value == "error" for d in diagnostics):
+            raise ExtensionPlatformError(diagnostics[0])
+        local_name = f"{spec.provider_id}_invoke"
+        if local_name in self._declared_tools:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.REGISTRY_PROJECTION_COLLISION,
+                    f"model provider invoke tool {local_name!r} collides with a "
+                    "declared tool (choose a distinct provider id)",
+                    extension_id=self.extension_id,
+                )
+            )
+        owner_ctx = self
+        invoke_fn = spec.invoke_fn
+
+        def _invoke(request: dict | None = None) -> Any:
+            return aggregate_stream_events(invoke_fn(dict(request or {}), owner_ctx))
+
+        tool_spec = ToolExtensionSpec(
+            name=local_name,
+            description=spec.description or f"model provider {spec.provider_id}",
+            func=_invoke,
+            side_effect="external_side_effect",
+            deterministic=False,
+            parameters=spec.parameters
+            or {
+                "type": "object",
+                "properties": {"request": {"type": "object"}},
+            },
+            tags=[f"model_provider:{self.extension_id}"],
+        )
+        self._declared_tools[local_name] = DeclaredWorkerTool(
+            name=local_name,
+            description=tool_spec.description,
+            kwargs=tool_spec.register_kwargs(),
+        )
+        self._tool_funcs[local_name] = tool_spec.wrap_with_permissions(self.grants)
+        return self.manifest.namespaced_model_provider_tool(spec.provider_id)
+
     def resolve_tool(self, namespaced_name: str) -> Optional[Callable[..., Any]]:
         """按命名空间化投影名解析工具函数（未注册返回 None）。"""
         local = namespaced_name
@@ -184,6 +250,8 @@ class WorkerContext:
 
     def _require_declared(self, section: str, key: str) -> None:
         declared = {t.name for t in self.manifest.tools}
+        if section == "model_providers":
+            declared = {m.id for m in self.manifest.model_providers}
         if key not in declared:
             raise ExtensionPlatformError(
                 ExtensionDiagnostic.error(

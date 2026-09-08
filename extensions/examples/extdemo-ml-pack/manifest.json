@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "extdemoml.model",
+  "name": "model",
+  "namespace": "extdemoml",
+  "version": "1.0.0",
+  "api_version": "1.1.0",
+  "minimum_core_version": "0.1.0",
+  "title": "ExtDemo ML Model Provider Pack",
+  "description": "V2 model_provider 示例包（活文档 + 集成测试夹具）：1 个确定性离线『词频模型』provider，演示流式事件、凭据引用与类型化调用工具投影。全部离线、无网络调用。",
+  "vendor": "webgis-ai-agent examples",
+  "trust": "trusted_builtin",
+  "permissions": [
+    "model_provider"
+  ],
+  "extension_types": [
+    "model_provider"
+  ],
+  "entry_point": "main",
+  "diagnostics_entry": "health:check",
+  "model_providers": [
+    {
+      "id": "wordfreq",
+      "description": "Deterministic offline word-frequency model; streams per-token events then a final aggregate (demo).",
+      "capabilities": [
+        "streaming",
+        "cancellation"
+      ],
+      "credentials_ref": "demo_key"
+    }
+  ]
+}

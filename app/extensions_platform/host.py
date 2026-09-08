@@ -645,6 +645,7 @@ class ExtensionHost:
             settings=dict(self._policy.extension_settings.get(extension_id, {})),
             tool_registry=self._tool_registry,
             ledger=ledger,
+            secrets=dict(self._policy.secrets.get(extension_id, {})),
         )
         context._module_dir = record.path
         try:
@@ -787,6 +788,20 @@ class ExtensionHost:
         # workflow pack 级对账：recipe 以命名空间为前缀（pack 名不进
         # recipe id），故按命名空间核对——声明了 pack 却零 recipe 投影
         # 才是「声明未注册」。
+        # V2：model provider 工具投影对账（声明了却零投影 → warning）。
+        declared_mp_tools = {
+            record.manifest.namespaced_model_provider_tool(m.id)
+            for m in record.manifest.model_providers
+        }
+        for projected in sorted(declared_mp_tools - registered.get("tool", set())):
+            diagnostics.append(
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                    f"declared model provider tool {projected!r} was not registered "
+                    "(flag-gated?)",
+                    extension_id=record.extension_id,
+                )
+            )
         declared_packs = {record.manifest.namespaced_tool_name(w.pack_id) for w in record.manifest.workflow_packs}
         registered_recipes = registered.get("workflow_recipe", set())
         ns_recipe_prefix = record.manifest.namespace + "_"
@@ -867,6 +882,7 @@ class ExtensionHost:
             )
         # 声明对账：worker 握手申报 vs manifest 声明（undeclared = error）。
         declared = {manifest.namespaced_tool_name(t.name) for t in manifest.tools}
+        declared |= {manifest.namespaced_model_provider_tool(m.id) for m in manifest.model_providers}
         offered = {str(t.get("name")) for t in worker.tools}
         undeclared = sorted(offered - declared)
         if undeclared:
@@ -965,6 +981,101 @@ class ExtensionHost:
         )
         self._notify_projection_change(record.extension_id, "failed")
         return list(record.diagnostics)
+
+    # ── V2：model provider 调用面（流式仅 in-process；worker 单帧）────
+    def invoke_model_provider(
+        self,
+        projected_tool: str,
+        request: dict[str, Any] | None = None,
+        *,
+        stream: bool = False,
+    ) -> Any:
+        """直接调用已投影的扩展 model provider。
+
+        in-process：``stream=True`` 返回原始事件迭代器（协作式取消 =
+        提前 close）；``stream=False`` 返回聚合结果。
+        worker：仅聚合单帧；``stream=True`` → typed 拒绝。
+        """
+        for eid in sorted(self._records):
+            record = self._records[eid]
+            if record.state not in (
+                ExtensionState.ACTIVE, ExtensionState.DEGRADED
+            ):
+                continue
+            # worker 模式：spec 不在宿主进程（record.context is None）；
+            # 经 worker call 单帧往返。
+            if record.worker is not None:
+                for provider in record.manifest.model_providers:
+                    if record.manifest.namespaced_model_provider_tool(provider.id) != projected_tool:
+                        continue
+                    if stream:
+                        raise ExtensionPlatformError(
+                            ExtensionDiagnostic.error(
+                                DiagnosticCode.WORKER_MODE_INVALID,
+                                f"model provider {projected_tool!r} runs in a "
+                                "worker; streaming is unavailable (single-frame RPC)",
+                                extension_id=eid,
+                            )
+                        )
+                    return record.worker.call(
+                        projected_tool, {"request": dict(request or {})},
+                        timeout=record.manifest.execution.call_timeout_s
+                        if record.manifest.execution else 30.0,
+                    )
+            ctx = record.context
+            if ctx is None:
+                continue
+            specs = ctx.model_provider_specs()
+            for provider_id, spec in specs.items():
+                if record.manifest.namespaced_model_provider_tool(provider_id) != projected_tool:
+                    continue
+                if stream:
+                    if record.worker is not None:
+                        raise ExtensionPlatformError(
+                            ExtensionDiagnostic.error(
+                                DiagnosticCode.WORKER_MODE_INVALID,
+                                f"model provider {projected_tool!r} runs in a "
+                                "worker; streaming is unavailable (single-frame RPC)",
+                                extension_id=eid,
+                            )
+                        )
+                    return spec.invoke_fn(dict(request or {}), ctx)
+                from .sdk.model import aggregate_stream_events
+
+                return aggregate_stream_events(
+                    spec.invoke_fn(dict(request or {}), ctx)
+                )
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                f"no active model provider projects {projected_tool!r}",
+            )
+        )
+
+    def model_provider_inventory(self) -> list[dict[str, Any]]:
+        """声明级清单（status/CLI 消费；派生自 manifest，无第二事实源）。"""
+        inventory: list[dict[str, Any]] = []
+        for eid in sorted(self._records):
+            record = self._records[eid]
+            for provider in record.manifest.model_providers:
+                projected = record.manifest.namespaced_model_provider_tool(provider.id)
+                inventory.append(
+                    {
+                        "extension_id": eid,
+                        "provider_id": provider.id,
+                        "tool": projected,
+                        "capabilities": sorted(provider.capabilities),
+                        "credentials_ref": provider.credentials_ref,
+                        "state": record.state.value,
+                        "registered": self._tool_registry.has(projected),
+                        "execution": (
+                            record.manifest.execution.mode
+                            if record.manifest.execution
+                            else "in_process"
+                        ),
+                    }
+                )
+        return inventory
 
     def _make_broker_handler(self, extension_id: str) -> Any:
         """为一次 worker 激活构造 broker 分派器（默认 deny；审计入环）。"""

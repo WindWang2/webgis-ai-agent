@@ -458,6 +458,16 @@ class GisExtensionManifest(BaseModel):
                     f"execution.mode=worker forbids permissions {forbidden} "
                     "(no subprocess surface inside an isolated worker)"
                 )
+            # 单帧 RPC 传输无法投递事件流：worker 模式的 model provider
+            # 不得声明 streaming 能力（typed、确定性，握手前即拒绝）。
+            streaming_providers = sorted(
+                m.id for m in self.model_providers if "streaming" in m.capabilities
+            )
+            if streaming_providers:
+                raise ValueError(
+                    f"execution.mode=worker model providers {streaming_providers} "
+                    "cannot declare the 'streaming' capability (single-frame RPC)"
+                )
 
     def declared_type_set(self) -> frozenset[str]:
         """由声明节推导的扩展类型（extension_types 允许缺省时兜底）。"""

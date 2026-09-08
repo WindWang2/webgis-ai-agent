@@ -14,16 +14,30 @@ import 契约（Round-1 审计 M7 修订）：
 
 from .algorithm import AlgorithmExtensionSpec, NumericalSmokeCase, run_authoring_checks
 from .declarations import CartographyItemSpec, WorkflowPackSpec
-from .provider import ProviderExtensionSpec
+from .model import ModelProviderSpec
+from .provider import (
+    ProviderExtensionSpec,
+    RasterWindowProvider,
+    StreamingVectorProvider,
+    TilePayload,
+    TileProvider,
+    extended_provider_capabilities,
+)
 from .tool import ToolExtensionSpec, extension_tool
 
 __all__ = [
     "AlgorithmExtensionSpec",
     "CartographyItemSpec",
+    "ModelProviderSpec",
     "NumericalSmokeCase",
     "ProviderExtensionSpec",
+    "RasterWindowProvider",
+    "StreamingVectorProvider",
+    "TilePayload",
+    "TileProvider",
     "ToolExtensionSpec",
     "WorkflowPackSpec",
     "extension_tool",
+    "extended_provider_capabilities",
     "run_authoring_checks",
 ]
