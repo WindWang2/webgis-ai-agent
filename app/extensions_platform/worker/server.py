@@ -65,6 +65,8 @@ class WorkerServer:
         self._broker_wait_id: Optional[str] = None
         self._broker_seq = 0
         self._broker_response: Optional[dict[str, Any]] = None
+        # 资源强制报告（main() 入口施加；握手应答回传宿主）。
+        self.resource_report: dict[str, Any] = {"applied": [], "warnings": []}
 
     # ── 握手 ─────────────────────────────────────────────────────────
     def handshake(self) -> bool:
@@ -182,6 +184,7 @@ class WorkerServer:
                     }
                     for tool in ctx.declared_tools()
                 ],
+                "resource_limits": dict(self.resource_report),
             },
         )
         return True
@@ -297,6 +300,7 @@ class WorkerServer:
                     )
                 )
             value = func(**args)
+            self._check_output_size(value)
             write_frame(self._outfile, {"type": "result", "id": call_id, "ok": True, "value": value})
         except ExtensionPlatformError as exc:
             self._safe_result_error(
@@ -309,6 +313,26 @@ class WorkerServer:
                 call_id,
                 DiagnosticCode.ENTRY_POINT_FAILED.value,
                 f"tool raised {type(exc).__name__}: {exc}",
+            )
+
+    def _check_output_size(self, value: Any) -> None:
+        """输出上限：序列化字节数超过 manifest execution.max_output_bytes →
+        typed 错误（协议帧本身另有硬上限兜底）。"""
+        from .protocol import encode_frame
+
+        execution = self._ctx.manifest.execution if self._ctx is not None else None
+        cap = execution.max_output_bytes if execution is not None else None
+        if cap is None:
+            return
+        size = len(encode_frame({"type": "result", "value": value}))
+        if size > cap:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.OUTPUT_LIMIT_EXCEEDED,
+                    f"tool result serialized to {size} bytes, exceeding "
+                    f"execution.max_output_bytes={cap}",
+                    extension_id=self._ctx.extension_id,
+                )
             )
 
     def _safe_result_error(self, call_id: Any, code: str, message: str) -> None:
@@ -348,12 +372,28 @@ def main(argv: Optional[list[str]] = None) -> int:
         description="GIS extension isolated worker (ADR-0105)",
     )
     parser.add_argument("--pack-dir", required=True, help="extension pack directory")
+    parser.add_argument(
+        "--max-memory-mb",
+        type=int,
+        default=None,
+        help="RLIMIT_AS in MiB (applied in-process before loading the pack)",
+    )
+    parser.add_argument(
+        "--max-cpu-seconds",
+        type=int,
+        default=None,
+        help="RLIMIT_CPU seconds (applied in-process before loading the pack)",
+    )
     args = parser.parse_args(argv)
     pack_dir = Path(args.pack_dir)
     if not pack_dir.is_dir():
         print(f"pack dir not found: {pack_dir}", file=sys.stderr)
         return EXIT_USAGE
+    from .spawn import apply_resource_limits
+
+    applied, resource_warnings = apply_resource_limits(args.max_memory_mb, args.max_cpu_seconds)
     server = WorkerServer(pack_dir, sys.stdin.buffer, sys.stdout.buffer)
+    server.resource_report = {"applied": applied, "warnings": resource_warnings}
     try:
         if not server.handshake():
             return EXIT_ACTIVATION_FAILED

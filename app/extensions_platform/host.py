@@ -712,6 +712,8 @@ class ExtensionHost:
             settings=dict(self._policy.extension_settings.get(manifest.id, {})),
             startup_timeout_s=execution.startup_timeout_s,
             call_timeout_s=execution.call_timeout_s,
+            max_memory_mb=execution.max_memory_mb,
+            max_cpu_seconds=execution.max_cpu_seconds,
             broker_handler=self._make_broker_handler(record.extension_id),
         )
         try:
@@ -719,6 +721,15 @@ class ExtensionHost:
         except ExtensionPlatformError as exc:
             record.worker_crash_count += 1
             return self._fail_worker_activation(record, warnings, exc.diagnostic)
+        # 平台不支持的资源强制 → typed 降级告警（不虚假承诺沙箱能力）。
+        for message in worker.resource_warnings:
+            warnings.append(
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.RESOURCE_LIMIT_UNAVAILABLE,
+                    message,
+                    extension_id=record.extension_id,
+                )
+            )
         # 声明对账：worker 握手申报 vs manifest 声明（undeclared = error）。
         declared = {manifest.namespaced_tool_name(t.name) for t in manifest.tools}
         offered = {str(t.get("name")) for t in worker.tools}

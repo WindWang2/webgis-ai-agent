@@ -66,6 +66,8 @@ class WorkerProcess:
         settings: dict[str, Any],
         startup_timeout_s: float,
         call_timeout_s: float,
+        max_memory_mb: Optional[int] = None,
+        max_cpu_seconds: Optional[int] = None,
         broker_handler: Optional[BrokerHandler] = None,
     ) -> None:
         self._pack_dir = Path(pack_dir)
@@ -77,6 +79,8 @@ class WorkerProcess:
         self._settings = dict(settings)
         self._startup_timeout_s = float(startup_timeout_s)
         self._call_timeout_s = float(call_timeout_s)
+        self._max_memory_mb = max_memory_mb
+        self._max_cpu_seconds = max_cpu_seconds
         self._broker_handler = broker_handler
         self._proc: Optional[subprocess.Popen] = None
         self._frames: "queue.Queue[Any]" = queue.Queue()
@@ -84,6 +88,7 @@ class WorkerProcess:
         self._lock = threading.RLock()
         self.in_flight = False
         self.tools: list[dict[str, Any]] = []
+        self.resource_warnings: list[str] = []
         self.pid: Optional[int] = None
 
     # ── 启动 / 握手 ──────────────────────────────────────────────────
@@ -92,14 +97,21 @@ class WorkerProcess:
             if self._proc is not None and self._proc.poll() is None:
                 return
             self._frames = queue.Queue()
+            command = [
+                sys.executable,
+                "-m",
+                "app.extensions_platform.worker.server",
+                "--pack-dir",
+                str(self._pack_dir),
+            ]
+            # limits 由 worker 子进程入口自施（信任边界内先 limit 后加载；
+            # 规避 preexec_fn 在多线程宿主中的 fork 不安全性）。
+            if self._max_memory_mb:
+                command += ["--max-memory-mb", str(self._max_memory_mb)]
+            if self._max_cpu_seconds:
+                command += ["--max-cpu-seconds", str(self._max_cpu_seconds)]
             self._proc = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "app.extensions_platform.worker.server",
-                    "--pack-dir",
-                    str(self._pack_dir),
-                ],
+                command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -136,6 +148,10 @@ class WorkerProcess:
                                 self._extension_id,
                             )
                         self.tools = list(frame.get("tools") or [])
+                        limits = frame.get("resource_limits") or {}
+                        self.resource_warnings = [
+                            str(w) for w in (limits.get("warnings") or [])
+                        ]
                         return
                     if ftype == "handshake_failed":
                         err = frame.get("error") or {}
