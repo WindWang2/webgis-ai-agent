@@ -99,12 +99,18 @@ export interface ComposeLayoutOptions {
   /** Layout template style overrides (colors, fonts, margins, graticule, watermark). */
   style?: LayoutStyle;
   /**
-   * ADR-0081 Export Parity：spec 驱动的 chrome 模型（placement/anchor 语义
+   * ADR-0081：spec 驱动的 chrome 模型（placement/anchor 语义
    * 来自 resolveMapComponents —— live/export 共用解析层）。在场且 fromSpec
    * 时，title/subtitle/罗盘/比例尺/图例/色条/署名/浮动面板全部按模型槽位
    * 绘制；缺席时保持 legacy 固定槽（旧会话行为不变）。
    */
   chrome?: ExportChromeModel;
+  /**
+   * W6（ADR-0118）：PDF 矢量文本层专用 —— 标题/副标题改由 PDF doc.text 承载
+   * （单一事实源）时，画布两侧（chrome/legacy 路径）都不再画 title/subtitle
+   *（连带顶部渐变带），消除双重标题。缺省 false（PNG/SVG 行为不变）。
+   */
+  skipTitle?: boolean;
 }
 
 /**
@@ -233,28 +239,32 @@ export function composeLayout(
     const stackOffset = (el: ExportChromeElement | undefined, base: number): number =>
       (el?.slotSize ?? 0) > 1 ? base + (el?.stackIndex ?? 0) * scalePx(DEFAULT_STACK_STEP_PX) : base;
 
+    // W6：PDF 矢量文本层时画布不画标题（单一事实源）—— chrome 路径的
+    // 标题来自 chromeModel（非入参），必须连同顶部渐变带一起跳过。
     // 1. Header gradient（无浮动 title 时保持顶部渐变；浮动 title 自带面板底）
-    const headerText = chrome.title && !chrome.title.rect;
-    if (headerText) {
-      const headerH = chrome.subtitle?.text ? scalePx(130) : scalePx(100);
-      const headerGrad = ctx.createLinearGradient(0, 0, 0, headerH);
-      headerGrad.addColorStop(0, dark_mode ? "rgba(0,10,20,0.88)" : "rgba(255,255,255,0.96)");
-      headerGrad.addColorStop(0.65, dark_mode ? "rgba(0,10,20,0.45)" : "rgba(255,255,255,0.55)");
-      headerGrad.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = headerGrad;
-      ctx.fillRect(0, 0, targetW, headerH);
-    }
+    if (!options.skipTitle) {
+      const headerText = chrome.title && !chrome.title.rect;
+      if (headerText) {
+        const headerH = chrome.subtitle?.text ? scalePx(130) : scalePx(100);
+        const headerGrad = ctx.createLinearGradient(0, 0, 0, headerH);
+        headerGrad.addColorStop(0, dark_mode ? "rgba(0,10,20,0.88)" : "rgba(255,255,255,0.96)");
+        headerGrad.addColorStop(0.65, dark_mode ? "rgba(0,10,20,0.45)" : "rgba(255,255,255,0.55)");
+        headerGrad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = headerGrad;
+        ctx.fillRect(0, 0, targetW, headerH);
+      }
 
-    // 2. Title / subtitle（anchor 对齐 —— top-center 居中，与 live 一致）
-    if (chrome.title?.text) {
-      drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: stackOffset(chrome.title, mTopTitle) });
-    }
-    if (chrome.subtitle?.text) {
-      drawChromeText(
-        d, chrome.subtitle, 20,
-        dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)",
-        { marginX, marginY: stackOffset(chrome.subtitle, mTopSub) },
-      );
+      // 2. Title / subtitle（anchor 对齐 —— top-center 居中，与 live 一致）
+      if (chrome.title?.text) {
+        drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: stackOffset(chrome.title, mTopTitle) });
+      }
+      if (chrome.subtitle?.text) {
+        drawChromeText(
+          d, chrome.subtitle, 20,
+          dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)",
+          { marginX, marginY: stackOffset(chrome.subtitle, mTopSub) },
+        );
+      }
     }
 
     // 3. Scale bar（anchor 槽位 —— bottom-right 缺省，与 live 一致）
@@ -356,24 +366,28 @@ export function composeLayout(
     return;
   }
 
+  // W6：PDF 矢量文本层时画布不画标题（与 chrome 路径同一开关）——
+  // 标题/副标题/顶部渐变带整体跳过，避免双重标题。
   // 1. Header gradient
-  const headerH = subtitle ? scalePx(130) : scalePx(100);
-  const headerGrad = ctx.createLinearGradient(0, 0, 0, headerH);
-  headerGrad.addColorStop(0, dark_mode ? "rgba(0,10,20,0.88)" : "rgba(255,255,255,0.96)");
-  headerGrad.addColorStop(0.65, dark_mode ? "rgba(0,10,20,0.45)" : "rgba(255,255,255,0.55)");
-  headerGrad.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = headerGrad;
-  ctx.fillRect(0, 0, targetW, headerH);
+  if (!options.skipTitle) {
+    const headerH = subtitle ? scalePx(130) : scalePx(100);
+    const headerGrad = ctx.createLinearGradient(0, 0, 0, headerH);
+    headerGrad.addColorStop(0, dark_mode ? "rgba(0,10,20,0.88)" : "rgba(255,255,255,0.96)");
+    headerGrad.addColorStop(0.65, dark_mode ? "rgba(0,10,20,0.45)" : "rgba(255,255,255,0.55)");
+    headerGrad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = headerGrad;
+    ctx.fillRect(0, 0, targetW, headerH);
 
-  // 2. Title
-  ctx.fillStyle = layoutStyle.titleColor;
-  ctx.font = layoutStyle.titleFont.includes('px') ? layoutStyle.titleFont : `bold ${scalePx(32)}px ${layoutStyle.fontFamily}`;
-  ctx.fillText(title || "WebGIS AI Agent", marginX, scalePx(52));
+    // 2. Title
+    ctx.fillStyle = layoutStyle.titleColor;
+    ctx.font = layoutStyle.titleFont.includes('px') ? layoutStyle.titleFont : `bold ${scalePx(32)}px ${layoutStyle.fontFamily}`;
+    ctx.fillText(title || "WebGIS AI Agent", marginX, scalePx(52));
 
-  if (subtitle) {
-    ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)";
-    ctx.font = `${scalePx(20)}px ${layoutStyle.fontFamily}`;
-    ctx.fillText(subtitle, marginX, scalePx(82));
+    if (subtitle) {
+      ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)";
+      ctx.font = `${scalePx(20)}px ${layoutStyle.fontFamily}`;
+      ctx.fillText(subtitle, marginX, scalePx(82));
+    }
   }
 
   // 3. Scale bar
@@ -836,12 +850,21 @@ function _drawLegend(
 }
 
 /**
- * Export the composed canvas as a PDF using jsPDF (client-side, vector text).
- * @param canvas The composed export canvas (with map + layout elements already drawn)
- * @param title Map title
- * @param subtitle Optional subtitle
- * @param options Export options
- * @returns A Blob containing the PDF
+ * W6：非 WinAnsi 字符检测（code point > U+00FF，含 CJK/emoji 等）——
+ * jsPDF 标准 14 字体只编码 WinAnsi，越界字符在 PDF 文本层必然乱码。
+ */
+export function hasNonWinAnsiChars(s: string): boolean {
+  return /[^ -ÿ]/.test(s);
+}
+
+/**
+ * Export the composed canvas as a PDF using jsPDF.
+ *
+ * W6（ADR-0118）如实语义：地图永远是位图画布嵌入；文本层两种状态 ——
+ * 'vector'（缺省）：title/subtitle 以 doc.text 矢量书写（仅 WinAnsi 可编码
+ * 字符安全，非 ASCII 会乱码 —— 由调用方先做 pdf_text_rasterized_cjk 判定）；
+ * 'skip'：title/subtitle 不进 PDF 文本层（已随画布栅格化）。页脚固定 ASCII
+ * 标签（jsPDF 标准字体无法编码 CJK，此前「日期:/作者:」必然乱码）。
  */
 export async function exportToPDF(
   canvas: HTMLCanvasElement,
@@ -852,6 +875,8 @@ export async function exportToPDF(
     orientation?: 'landscape' | 'portrait';
     author?: string;
     dataSource?: string;
+    /** W6：'vector'（缺省）画 title/subtitle；'skip' 跳过（画布已栅格化）。 */
+    textLayer?: 'vector' | 'skip';
   } = {}
 ): Promise<Blob> {
   const { default: jsPDF } = await import('jspdf');
@@ -898,23 +923,28 @@ export async function exportToPDF(
   doc.setLineWidth(0.3);
   doc.rect(placedX, placedY, placedW, placedH);
 
-  // Title
-  doc.setFontSize(16);
-  doc.setTextColor(30, 41, 59);
-  doc.text(title || 'WebGIS AI Agent', pageW / 2, 15, { align: 'center' });
+  // Title（W6：textLayer='skip' 时已随画布栅格化 —— 文本层不重复书写）
+  const textVector = (options.textLayer ?? 'vector') === 'vector';
+  if (textVector) {
+    doc.setFontSize(16);
+    doc.setTextColor(30, 41, 59);
+    doc.text(title || 'WebGIS AI Agent', pageW / 2, 15, { align: 'center' });
 
-  // Subtitle
-  if (subtitle) {
-    doc.setFontSize(10);
-    doc.setTextColor(100, 116, 139);
-    doc.text(subtitle, pageW / 2, 21, { align: 'center' });
+    // Subtitle
+    if (subtitle) {
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text(subtitle, pageW / 2, 21, { align: 'center' });
+    }
   }
 
-  // Footer
+  // Footer（W6：标签改 ASCII —— jsPDF 标准字体编码不了 CJK，此前「日期:」
+  // 等前缀在 PDF 里必然乱码。非 WinAnsi 的 author/dataSource 值从页脚剔除
+  //（乱码比缺席更糟；PDF 元数据仍保留原文）。
   const dateStr = new Date().toISOString().slice(0, 10);
-  const footerParts = [`日期: ${dateStr}`];
-  if (author) footerParts.push(`作者: ${author}`);
-  if (dataSource) footerParts.push(`数据: ${dataSource}`);
+  const footerParts = [`Date: ${dateStr}`];
+  if (author && !hasNonWinAnsiChars(author)) footerParts.push(`Author: ${author}`);
+  if (dataSource && !hasNonWinAnsiChars(dataSource)) footerParts.push(`Data: ${dataSource}`);
   footerParts.push('Generated by WebGIS AI Agent');
 
   doc.setFontSize(7);
@@ -1279,6 +1309,16 @@ export async function runExport(
       /* spec 面缺席 → 走请求/内置默认 */
     }
 
+    // W6（ADR-0118）：PDF 单一标题事实源 —— 标题/副标题全部 WinAnsi 可编码
+    // → 画布不画（skipTitle），doc.text 矢量书写一次；含非 WinAnsi（CJK 等）
+    // → 反向：画布栅格化承载，PDF 文本层跳过 + pdf_text_rasterized_cjk 诊断
+    //（jsPDF 标准字体写不了 CJK，此前双标题 + 中文乱码并存）。
+    const effTitle = title || specTitle || '';
+    const effSubtitle = subtitle || specSubtitle || '';
+    const pdfVectorText =
+      !hasNonWinAnsiChars(effTitle) && !hasNonWinAnsiChars(effSubtitle);
+    const pdfSkipCanvasTitle = fmtEarly === 'pdf' && pdfVectorText;
+
     // ADR-0081 Export Parity：spec 组件在场时构建 chrome 模型 —— placement
     // （anchor 七槽 + floating 像素坐标）、图例/色条 enabled、统计卡/图表
     // 面板全部从 MapSpec 组件出发（与 live 共用 resolveMapComponents）。
@@ -1380,11 +1420,13 @@ export async function runExport(
 
     // #614：经 MapExporterEngine 调 composeLayout（与 exportToPDF 同款路由），
     // 便于测试 spyOn 断言 theme 选项（模块内直接绑定无法被 mock 拦截）。
-    MapExporterEngine.composeLayout(exportCanvas, title || specTitle || '', subtitle || specSubtitle || '', {
+    MapExporterEngine.composeLayout(exportCanvas, effTitle, effSubtitle, {
       dpi,
       theme,
       // #802: 按真实画布设备像素比换算（dpi 参数仍驱动布局字号/边距缩放）
       pixelsPerLogicalPx: canvasDpr,
+      // W6：PDF 矢量文本层时画布不画标题（单一事实源 —— PDF 头部 doc.text）
+      skipTitle: pdfSkipCanvasTitle,
       showScale: req.showScale ?? req.include_scale ?? specShowScale ?? true,
       showCompass: req.showCompass ?? req.include_compass ?? specShowCompass ?? true,
       showWatermark,
@@ -1403,7 +1445,7 @@ export async function runExport(
     });
 
     const dataUrl = exportCanvas.toDataURL('image/png');
-    const fmt = (format ?? 'png').toLowerCase();
+    const fmt = fmtEarly;
 
     // Wave 9：显式降级汇入导出后系统消息（此前 chart/table 面板拉取失败
     // 静默缺席 —— 用户不知道导出件里少了东西）。
@@ -1459,27 +1501,41 @@ export async function runExport(
       );
       return { ok: true, format: 'svg', url: upload.url, filename: upload.filename };
     } else if (fmt === 'pdf') {
+      // W6（ADR-0118）：文本层状态判定 —— CJK 等非 WinAnsi 字符已在画布
+      // 栅格化承载（composeLayout 正常画），PDF 文本层跳过 title/subtitle；
+      // ASCII 文本走 doc.text 真矢量。地图本体恒为位图画布嵌入（如实披露）。
+      const pdfDegradations: ExportDegradation[] = pdfVectorText
+        ? []
+        : [
+            {
+              code: 'pdf_text_rasterized_cjk',
+              detail: '标题/副标题含非 WinAnsi 字符，已随画布栅格化（PDF 文本层跳过，避免乱码）',
+            },
+          ];
       // ADR-0081：PDF 文本层 subtitle 与 canvas 同一事实源链（请求参数 >
       // spec 组件 > 空串）—— 此前 PDF 只读请求参数，spec 副标题在 PDF
       // 文本层静默丢失。
       const pdfBlob = await MapExporterEngine.exportToPDF(
         exportCanvas,
-        title || specTitle || '',
-        subtitle || specSubtitle || '',
+        effTitle,
+        effSubtitle,
         {
           paperSize: (paperSize === 'A3' ? 'A3' : 'A4') as 'A4' | 'A3',
           orientation: orientation as 'landscape' | 'portrait',
           author,
           dataSource,
+          textLayer: pdfVectorText ? 'vector' : 'skip',
         },
       );
       const upload = await uploadExport(pdfBlob, 'export.pdf', title);
       recordExport(getHudState, title, upload.filename, 'pdf', pdfBlob.size);
       getHudState().setPendingSystemMessage(
-        `[系统通知] 专题底图 PDF \`${title || '未命名'}\` 已成功生成 (jsPDF 向量版)，` +
+        `[系统通知] 专题底图 PDF \`${title || '未命名'}\` 已成功生成` +
+          `（地图为位图画布 + 文本层${pdfVectorText ? '矢量（标题/副标题为 PDF 矢量文本）' : '栅格化（标题/副标题随画布位图，避免 CJK 乱码）'}），` +
           `文件已落盘并分配URL：${upload.url}。` +
           `请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${upload.url})。` +
-          formatDegradationNote(chromeDegradations) + `注意展示完链接后直接结束。`,
+          formatDegradationNote([...chromeDegradations, ...pdfDegradations]) +
+          `注意展示完链接后直接结束。`,
       );
       return { ok: true, format: 'pdf', url: upload.url, filename: upload.filename };
     } else {
