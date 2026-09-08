@@ -84,6 +84,7 @@ def register_nature_resource_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="list_analysis_assets",
+    capabilities=['workspace_state_inspection'],
           tier=2, domains=["raster"],
           description='获取当前系统中保存的所有遥感分析产物（如 NDVI、NDWI 结果文件）列表。用于回答用户"我之前生成了什么"或进行资产回顾。',
           side_effect="pure",

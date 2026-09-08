@@ -88,7 +88,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             capabilities=["spectral_index"],
             input_artifact_types=["raster_surface"],
             output_artifact_type="raster_surface",
-            tool_candidates=["compute_spectral_index"],
+            tool_candidates=["compute_spectral_index", "analyze_vegetation_index"],
             cpu_cost="medium", memory_cost="medium", io_cost="low",
             preferred_execution_policy="INLINE", priority=15,
             algorithm_family="spectral_index",

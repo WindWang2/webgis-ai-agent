@@ -1546,6 +1546,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["report"], name="webgis_component_catalog",
+        capabilities=['workspace_state_inspection'],
         description=(
             "读取当前地图的制图组件目录与状态（只读）。一次返回："
             "(1) 当前 MapSpec 的全部组件（id/type/enabled/位置/placement/variant/"
@@ -1665,6 +1666,7 @@ def register_gis_harness_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["mapspec"], name="webgis_world_state",
+        capabilities=['workspace_state_inspection'],
         description=(
             "读取当前会话的 GIS 世界状态快照（只读、有界、无数据负载）。"
             "一次返回：revision、视口、底图、图层列表（id/类型/可见性/不透明度/"

@@ -461,6 +461,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["dataset"], name="materialize_dataset",
+        capabilities=['dataset_ingest'],
         description=(
             "执行下推查询并将远程数据物理物化（Materialize）到本地 Session 存储，生成 unique ref_id 游标供后续 GIS 工具分析。"
             "\n返回：{status, ref_id, dataset_id, layer_name, feature_count, fingerprint}"
@@ -756,6 +757,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["dataset"], name="query_federated_data",
+        capabilities=['federated_dataset_query'],
         description=(
             "受控两源联邦查询（有硬预算）：属性等值连接 / 点面空间连接 / 聚合+连接。"
             "同源 PostGIS 自动优先 server-side join；跨源用 STRtree 本地连接。"

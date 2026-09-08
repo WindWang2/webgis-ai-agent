@@ -330,6 +330,7 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="inventory_layers",
+    capabilities=['workspace_state_inspection'],
            description="展示当前会话中所有的地理数据图层（包含系统生成的引用 ID 和您设置的别名）。",
            side_effect="pure",
            deterministic=False,

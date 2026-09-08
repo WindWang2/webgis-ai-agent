@@ -43,6 +43,9 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         tier=2,
         domains=["dataset"],
         name="list_datasets",
+        side_effect="pure",
+        tags=('数据资产', '清单', '目录', '只读'),
+        capabilities=['workspace_state_inspection'],
         description=(
             "列出当前会话可用的全部数据资产（分析产物、上传文件、远程数据集），"
             "返回类型/角色/状态/范围/要素数的紧凑清单。✅ 用于：分析前了解手头有哪些数据。"
@@ -71,6 +74,9 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         tier=2,
         domains=["dataset"],
         name="search_datasets",
+        side_effect="pure",
+        tags=('数据资产', '检索', '过滤', '只读'),
+        capabilities=['workspace_state_inspection'],
         description=(
             "按条件搜索数据资产：关键词/类型（vector、raster、table、chart_data…）/"
             "角色（source、observation、boundary、result…）/CRS/字段名/标签。"
@@ -105,6 +111,8 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         tier=2,
         domains=["dataset"],
         name="profile_dataset",
+        side_effect="pure",
+        tags=('数据画像', '质量诊断', '统计', '只读'),
         description=(
             "剖析一个数据集：行数/几何类型/范围/字段类型与统计（min/max/均值）/缺失率/"
             "时间字段/坐标问题，并给出质量诊断（missing CRS、null-heavy 字段、出界坐标等）。"
@@ -189,6 +197,9 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         tier=2,
         domains=["dataset"],
         name="describe_artifact",
+        side_effect="pure",
+        tags=('产物', '契约视图', '血缘', '只读'),
+        capabilities=['workspace_state_inspection'],
         description=(
             "描述一个分析产物：V3 契约视图（类型/角色/生命周期/持久层/指纹/血缘父母/"
             "生产者/诊断）。✅ 用于：确认某个产物是什么、是否过期、能否复用。"
@@ -222,6 +233,9 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         tier=2,
         domains=["dataset"],
         name="find_artifacts_by_role",
+        side_effect="pure",
+        tags=('数据资产', '角色', '检索', '只读'),
+        capabilities=['workspace_state_inspection'],
         description=(
             "按逻辑角色查找数据资产：source（来源）/ observation（观测）/"
             "boundary（边界）/ mask（掩膜）/ intermediate（中间）/ result（结果）/"
@@ -252,6 +266,9 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         tier=2,
         domains=["dataset"],
         name="get_lineage",
+        side_effect="pure",
+        tags=('血缘', '溯源', '数据资产', '只读'),
+        capabilities=['workspace_state_inspection'],
         description=(
             "查询数据血缘：某个产物的上游来源、下游依赖与替换链（谁生成了它、"
             "它被谁使用、它替换了谁）。✅ 用于：解释数据从哪来、评估上游变化影响。"

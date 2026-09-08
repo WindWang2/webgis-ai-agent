@@ -36,6 +36,7 @@ def register_change_detection_tools(registry: ToolRegistry):
     """注册变化检测相关工具"""
 
     @tool(registry, name="detect_vegetation_change",
+    capabilities=['raster_change_detection'],
           tier=2, domains=["raster"],
           description=(
               "执行双时相植被变化检测分析。自动获取两个时期的 Sentinel-2 卫星影像，"

@@ -576,6 +576,8 @@ def register_cartography_tools(registry: ToolRegistry):
         }
 
     @tool(registry, tier=2, domains=["report"], name="control_floating_chart",
+    side_effect="state_mutation",
+    tags=('浮动图表', '图表控制', 'chart_panel', '面板'),
            args_model=ControlFloatingChartArgs,
            description=(
                "控制地图上已存在的浮动统计图表面板（chart_panel）：移动/缩放/折叠/关闭/"

@@ -3,13 +3,13 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**2**
-- 内容指纹：`080db5eeb63f1c20…`
+- 内容指纹：`9c549e361389f9bc…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 291 | 261 | 182 |
+| tools | 291 | 261 | 122 |
 | algorithms | 181 | 146 | 43 |
 | capabilities | 121 | 69 | 16 |
 | artifact_types | 21 | 21 | 0 |
@@ -19,11 +19,11 @@
 
 | field | coverage | threshold | status |
 |---|---|---|---|
-| side_effect | 84% | 83% | PASS（缺 47） |
-| tags | 84% | 83% | PASS（缺 47） |
+| side_effect | 100% | 83% | PASS（缺 0） |
+| tags | 100% | 83% | PASS（缺 0） |
 | latency_class | 100% | 95% | PASS（缺 0） |
 | memory_class | 100% | 95% | PASS（缺 0） |
-| capabilities | 62% | 60% | PASS（缺 112） |
+| capabilities | 68% | 60% | PASS（缺 92） |
 
 **gate: PASS**（`total=291`）
 
@@ -73,59 +73,59 @@
 
 （无）
 
-### TOOL_DESCRIPTOR_INCOMPLETE（152）
+### TOOL_DESCRIPTOR_INCOMPLETE（92）
 
 - `add_marker`（low）— missing descriptor fields: capabilities
 - `aggregate_dataset`（low）— missing descriptor fields: capabilities
 - `alias_layer`（low）— missing descriptor fields: capabilities
-- `analyze_vegetation_index`（low）— missing descriptor fields: capabilities
 - `apply_layer_filter`（low）— missing descriptor fields: capabilities
 - `apply_layer_style`（low）— missing descriptor fields: capabilities
 - `apply_template`（low）— missing descriptor fields: capabilities
 - `attribute_filter`（low）— missing descriptor fields: capabilities
 - `audit_spatial_quality`（low）— missing descriptor fields: capabilities
-- `band_correlation_table`（low）— missing descriptor fields: side_effect,tags
 - `batch_geocode_cn`（low）— missing descriptor fields: capabilities
-- `bivariate_join_count`（low）— missing descriptor fields: side_effect,tags
-- `bivariate_local_moran`（low）— missing descriptor fields: side_effect,tags
-- `block_kriging_surface`（low）— missing descriptor fields: side_effect,tags
 - `cancel_execution_run`（low）— missing descriptor fields: capabilities
 - `clear_annotations`（low）— missing descriptor fields: capabilities
-- `cloud_qc_basic`（low）— missing descriptor fields: side_effect,tags
-- `cokriging_surface`（low）— missing descriptor fields: side_effect,tags
 - `combine_map_theme`（low）— missing descriptor fields: capabilities
 - `connect_data_source`（low）— missing descriptor fields: capabilities
-- `control_floating_chart`（low）— missing descriptor fields: side_effect,tags,capabilities
+- `control_floating_chart`（low）— missing descriptor fields: capabilities
 - `create_3d_extrusion_map`（low）— missing descriptor fields: capabilities
 - `create_new_skill`（low）— missing descriptor fields: capabilities
 - `create_thematic_map`（low）— missing descriptor fields: capabilities
 - `deep_explore`（low）— missing descriptor fields: capabilities
-- `describe_artifact`（low）— missing descriptor fields: side_effect,tags,capabilities
 - `describe_dataset`（low）— missing descriptor fields: capabilities
-- `detect_vegetation_change`（low）— missing descriptor fields: capabilities
-- `directional_variogram_analysis`（low）— missing descriptor fields: side_effect,tags
 - `display_layer`（low）— missing descriptor fields: capabilities
 - `execute_execution_plan`（low）— missing descriptor fields: capabilities
 - `execute_plan`（low）— missing descriptor fields: capabilities
 - `export_batch_maps`（low）— missing descriptor fields: capabilities
 - `export_thematic_map`（low）— missing descriptor fields: capabilities
-- `extract_endmembers_vca`（low）— missing descriptor fields: side_effect,tags
-- `fetch_sentinel`（low）— missing descriptor fields: capabilities
 - `finalize_display`（low）— missing descriptor fields: capabilities
-- `find_artifacts_by_role`（low）— missing descriptor fields: side_effect,tags,capabilities
 - `fly_to_location`（low）— missing descriptor fields: capabilities
 - `generate_analysis_report`（low）— missing descriptor fields: capabilities
 - `generate_chart`（low）— missing descriptor fields: capabilities
 - `generate_monitoring_report`（low）— missing descriptor fields: capabilities
 - `geocode`（low）— missing descriptor fields: capabilities
 - `geocode_cn`（low）— missing descriptor fields: capabilities
-- `geodetector_ecological`（low）— missing descriptor fields: side_effect,tags
-- `geodetector_risk`（low）— missing descriptor fields: side_effect,tags
 - `get_execution_run`（low）— missing descriptor fields: capabilities
-- `get_lineage`（low）— missing descriptor fields: side_effect,tags,capabilities
 - `get_local_osm_catalog`（low）— missing descriptor fields: capabilities
 - `get_local_stats_catalog`（low）— missing descriptor fields: capabilities
-- …另有 102 条，见 quality-manifest.json
+- `get_plan_status`（low）— missing descriptor fields: capabilities
+- `inspect_data_source`（low）— missing descriptor fields: capabilities
+- `list_available_tools`（low）— missing descriptor fields: capabilities
+- `list_templates`（low）— missing descriptor fields: capabilities
+- `manage_analysis_asset`（low）— missing descriptor fields: capabilities
+- `measure_area`（low）— missing descriptor fields: capabilities
+- `measure_distance`（low）— missing descriptor fields: capabilities
+- `plan_data_query`（low）— missing descriptor fields: capabilities
+- `profile_dataset`（low）— missing descriptor fields: capabilities
+- `profile_dataset_semantics`（low）— missing descriptor fields: capabilities
+- `propose_plan`（low）— missing descriptor fields: capabilities
+- `query_dataset`（low）— missing descriptor fields: capabilities
+- `query_local_osm`（low）— missing descriptor fields: capabilities
+- `query_local_yearbook`（low）— missing descriptor fields: capabilities
+- `query_map_features`（low）— missing descriptor fields: capabilities
+- `query_osm_buildings`（low）— missing descriptor fields: capabilities
+- …另有 42 条，见 quality-manifest.json
 
 ### CAPABILITY_NO_PRODUCER（0）
 

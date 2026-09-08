@@ -6218,7 +6218,7 @@
   "algorithms": 181,
   "artifact_types": 21,
   "capabilities": 121,
-  "findings": 241,
+  "findings": 181,
   "recipes": 164,
   "tools": 291
  },
@@ -6724,14 +6724,6 @@
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
-   "subject": "analyze_vegetation_index",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
    "subject": "apply_layer_filter",
    "surface": "tools"
   },
@@ -6769,42 +6761,10 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "band_correlation_table",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
    "subject": "batch_geocode_cn",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "bivariate_join_count",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "bivariate_local_moran",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "block_kriging_surface",
    "surface": "tools"
   },
   {
@@ -6825,22 +6785,6 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "cloud_qc_basic",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "cokriging_surface",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
@@ -6857,7 +6801,7 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
+   "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
    "subject": "control_floating_chart",
@@ -6897,34 +6841,10 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "describe_artifact",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
    "subject": "describe_dataset",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "detect_vegetation_change",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "directional_variogram_analysis",
    "surface": "tools"
   },
   {
@@ -6969,34 +6889,10 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "extract_endmembers_vca",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "fetch_sentinel",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
    "subject": "finalize_display",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "find_artifacts_by_role",
    "surface": "tools"
   },
   {
@@ -7049,34 +6945,10 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "geodetector_ecological",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "geodetector_risk",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
    "subject": "get_execution_run",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "get_lineage",
    "surface": "tools"
   },
   {
@@ -7108,38 +6980,6 @@
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
-   "subject": "get_upload_info",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "horizon_angle_analysis",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "ica_transform",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "indicator_kriging_surface",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
    "subject": "inspect_data_source",
    "surface": "tools"
   },
@@ -7148,39 +6988,7 @@
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
-   "subject": "inventory_layers",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "linear_unmixing",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "list_analysis_assets",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
    "subject": "list_available_tools",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "list_datasets",
    "surface": "tools"
   },
   {
@@ -7196,47 +7004,7 @@
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
-   "subject": "list_uploaded_data",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "local_join_count",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "mad_change",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
    "subject": "manage_analysis_asset",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "matched_filter",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "materialize_dataset",
    "surface": "tools"
   },
   {
@@ -7257,46 +7025,6 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "medoid_composite",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "mgwr_regression",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "mnf_transform",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "natural_neighbor_surface",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "nearest_neighbor_surface",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
@@ -7305,7 +7033,7 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
+   "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
    "subject": "profile_dataset",
@@ -7333,14 +7061,6 @@
    "domain": "tools",
    "severity": "low",
    "subject": "query_dataset",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "query_federated_data",
    "surface": "tools"
   },
   {
@@ -7381,14 +7101,6 @@
    "domain": "tools",
    "severity": "low",
    "subject": "query_osm_roads",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "rate_smoothing",
    "surface": "tools"
   },
   {
@@ -7473,78 +7185,6 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "robust_normalize",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "rx_anomaly",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "sar_coherence_estimate",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "sar_enl_map",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "sar_layover_shadow_mask",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "sar_log_scale",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "sar_multitemporal_speckle",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "sar_radiometric_terrain_correction",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "sar_remove_thermal_noise",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
@@ -7556,31 +7196,7 @@
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
-   "subject": "scenario_compare",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "search_datasets",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
    "subject": "search_spatial_catalog",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "segment_image",
    "surface": "tools"
   },
   {
@@ -7597,14 +7213,6 @@
    "domain": "tools",
    "severity": "low",
    "subject": "set_map_view",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "sky_view_factor_analysis",
    "surface": "tools"
   },
   {
@@ -7633,22 +7241,6 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "spectral_angle_mapper",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "spectral_information_divergence",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
@@ -7673,26 +7265,10 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "temporal_features",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
    "subject": "temporal_filter",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "temporal_seasonal_decompose",
    "surface": "tools"
   },
   {
@@ -7721,14 +7297,6 @@
   },
   {
    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "variogram_model_selection",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
@@ -7748,23 +7316,7 @@
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
-   "subject": "webgis_checkpoint",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
    "subject": "webgis_compile_maplibre",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_component_catalog",
    "surface": "tools"
   },
   {
@@ -7836,23 +7388,7 @@
    "detail": "missing descriptor fields: capabilities",
    "domain": "tools",
    "severity": "low",
-   "subject": "webgis_rollback",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
    "subject": "webgis_runtime_validate",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_state_get",
    "surface": "tools"
   },
   {
@@ -7869,22 +7405,6 @@
    "domain": "tools",
    "severity": "low",
    "subject": "webgis_view_set",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "webgis_world_state",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "weights_diagnostics",
    "surface": "tools"
   },
   {
@@ -8161,16 +7681,15 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "080db5eeb63f1c20853f29bb7e62a866e5758a99c53bd9074f202ac40bd8734c",
+ "fingerprint": "9c549e361389f9bcc8bffb14a9de972e372169e66d145e188ab0943ca8f89bd1",
  "gate": {
   "fields": {
    "capabilities": {
-    "coverage": 62,
+    "coverage": 68,
     "missing": [
      "add_marker",
      "aggregate_dataset",
      "alias_layer",
-     "analyze_vegetation_index",
      "apply_layer_filter",
      "apply_layer_style",
      "apply_template",
@@ -8186,9 +7705,10 @@
      "create_new_skill",
      "create_thematic_map",
      "deep_explore",
-     "describe_artifact"
+     "describe_dataset",
+     "display_layer"
     ],
-    "missing_count": 112,
+    "missing_count": 92,
     "pass": true,
     "threshold": 60
    },
@@ -8207,58 +7727,16 @@
     "threshold": 95
    },
    "side_effect": {
-    "coverage": 84,
-    "missing": [
-     "band_correlation_table",
-     "bivariate_join_count",
-     "bivariate_local_moran",
-     "block_kriging_surface",
-     "cloud_qc_basic",
-     "cokriging_surface",
-     "control_floating_chart",
-     "describe_artifact",
-     "directional_variogram_analysis",
-     "extract_endmembers_vca",
-     "find_artifacts_by_role",
-     "geodetector_ecological",
-     "geodetector_risk",
-     "get_lineage",
-     "horizon_angle_analysis",
-     "ica_transform",
-     "indicator_kriging_surface",
-     "linear_unmixing",
-     "list_datasets",
-     "local_join_count"
-    ],
-    "missing_count": 47,
+    "coverage": 100,
+    "missing": [],
+    "missing_count": 0,
     "pass": true,
     "threshold": 83
    },
    "tags": {
-    "coverage": 84,
-    "missing": [
-     "band_correlation_table",
-     "bivariate_join_count",
-     "bivariate_local_moran",
-     "block_kriging_surface",
-     "cloud_qc_basic",
-     "cokriging_surface",
-     "control_floating_chart",
-     "describe_artifact",
-     "directional_variogram_analysis",
-     "extract_endmembers_vca",
-     "find_artifacts_by_role",
-     "geodetector_ecological",
-     "geodetector_risk",
-     "get_lineage",
-     "horizon_angle_analysis",
-     "ica_transform",
-     "indicator_kriging_surface",
-     "linear_unmixing",
-     "list_datasets",
-     "local_join_count"
-    ],
-    "missing_count": 47,
+    "coverage": 100,
+    "missing": [],
+    "missing_count": 0,
     "pass": true,
     "threshold": 83
    }
@@ -8384,12 +7862,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "spectral_index"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "slow",
    "memory_class": "heavy",
    "name": "analyze_vegetation_index",
@@ -8565,17 +8042,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "band_correlation_table",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "波段相关",
+    "相关矩阵",
+    "波段统计",
+    "遥感"
+   ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
    ],
@@ -8615,17 +8094,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "bivariate_join_count",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "join_count",
+    "空间自相关",
+    "二值场",
+    "类别检验"
+   ],
    "tests": [
     "tests/unit/lib/test_completeness_v3.py"
    ],
@@ -8638,17 +8119,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "bivariate_local_moran",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "lisa",
+    "双变量",
+    "局部莫兰",
+    "空间自相关"
+   ],
    "tests": [
     "tests/unit/lib/test_spatial_stats_v3.py"
    ],
@@ -8687,17 +8170,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "block_kriging_surface",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "克里金",
+    "块克里金",
+    "地统计",
+    "插值"
+   ],
    "tests": [
     "tests/unit/lib/test_geostat_v3.py"
    ],
@@ -8886,17 +8371,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "cloud_qc_basic",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "云检测",
+    "质量掩膜",
+    "cloud_mask",
+    "遥感"
+   ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
    ],
@@ -8909,17 +8396,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "cokriging_surface",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "协同克里金",
+    "地统计",
+    "插值",
+    "协变量"
+   ],
    "tests": [
     "tests/unit/lib/test_geostat_v3.py"
    ],
@@ -9126,9 +8615,14 @@
    "name": "control_floating_chart",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "state_mutation",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "浮动图表",
+    "图表控制",
+    "chart_panel",
+    "面板"
+   ],
    "tests": [],
    "tier": 2
   },
@@ -9422,21 +8916,27 @@
   },
   {
    "behavior": "none",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
    "deterministic": null,
    "execution_policy": "async",
    "flags": [
-    "untested",
-    "descriptor_incomplete"
+    "untested"
    ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "describe_artifact",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "产物",
+    "契约视图",
+    "血缘",
+    "只读"
+   ],
    "tests": [],
    "tier": 2
   },
@@ -9579,12 +9079,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "raster_change_detection"
+   ],
    "deterministic": false,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "slow",
    "memory_class": "heavy",
    "name": "detect_vegetation_change",
@@ -9640,17 +9139,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "directional_variogram_analysis",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "变异函数",
+    "各向异性",
+    "地统计",
+    "方向半方差"
+   ],
    "tests": [
     "tests/unit/lib/test_geostat_v3.py"
    ],
@@ -9940,17 +9441,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "extract_endmembers_vca",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "端元提取",
+    "高光谱",
+    "vca",
+    "遥感"
+   ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
    ],
@@ -9986,12 +9489,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "raster_source"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "slow",
    "memory_class": "medium",
    "name": "fetch_sentinel",
@@ -10051,21 +9553,27 @@
   },
   {
    "behavior": "none",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
    "deterministic": null,
    "execution_policy": "async",
    "flags": [
-    "untested",
-    "descriptor_incomplete"
+    "untested"
    ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "find_artifacts_by_role",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "数据资产",
+    "角色",
+    "检索",
+    "只读"
+   ],
    "tests": [],
    "tier": 2
   },
@@ -10481,17 +9989,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "geodetector_ecological",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "地理探测器",
+    "生态探测",
+    "分层比较",
+    "解释力"
+   ],
    "tests": [
     "tests/unit/lib/test_spatial_stats_v3.py"
    ],
@@ -10504,17 +10014,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "geodetector_risk",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "地理探测器",
+    "风险探测",
+    "均值差异",
+    "分层"
+   ],
    "tests": [
     "tests/unit/lib/test_spatial_stats_v3.py"
    ],
@@ -10657,21 +10169,27 @@
   },
   {
    "behavior": "none",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
    "deterministic": null,
    "execution_policy": "async",
    "flags": [
-    "untested",
-    "descriptor_incomplete"
+    "untested"
    ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "get_lineage",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "血缘",
+    "溯源",
+    "数据资产",
+    "只读"
+   ],
    "tests": [],
    "tier": 2
   },
@@ -10903,12 +10421,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "get_upload_info",
@@ -11101,17 +10618,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "horizon_angle_analysis",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "cacheable_read",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "地平线角",
+    "天际线",
+    "dem",
+    "地形"
+   ],
    "tests": [
     "tests/unit/lib/test_terrain_v3.py"
    ],
@@ -11169,17 +10688,21 @@
    "deterministic": null,
    "execution_policy": "async",
    "flags": [
-    "untested",
-    "descriptor_incomplete"
+    "untested"
    ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "ica_transform",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "ica",
+    "独立成分",
+    "降维",
+    "遥感"
+   ],
    "tests": [],
    "tier": 2
   },
@@ -11220,17 +10743,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "indicator_kriging_surface",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "指示克里金",
+    "概率面",
+    "地统计",
+    "插值"
+   ],
    "tests": [
     "tests/unit/lib/test_geostat_v3.py"
    ],
@@ -11344,12 +10869,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "inventory_layers",
@@ -11622,17 +11146,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "linear_unmixing",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "光谱解混",
+    "丰度反演",
+    "fcls",
+    "高光谱"
+   ],
    "tests": [
     "tests/unit/lib/test_linear_unmixing.py"
    ],
@@ -11640,12 +11166,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
    "deterministic": false,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "list_analysis_assets",
@@ -11705,20 +11230,24 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "list_datasets",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "数据资产",
+    "清单",
+    "目录",
+    "只读"
+   ],
    "tests": [
     "tests/test_event_loop_offload_425.py",
     "tests/unit/extensions_platform/test_ogc_stac_hardening.py",
@@ -11770,12 +11299,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
    "deterministic": false,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "list_uploaded_data",
@@ -11856,17 +11384,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "local_join_count",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "join_count",
+    "共位簇",
+    "二值场",
+    "空间自相关"
+   ],
    "tests": [
     "tests/unit/lib/test_spatial_stats_v3.py"
    ],
@@ -11943,17 +11473,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "mad_change",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "变化检测",
+    "mad",
+    "多时相",
+    "遥感"
+   ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
    ],
@@ -12022,17 +11554,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "matched_filter",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "目标检测",
+    "匹配滤波",
+    "高光谱",
+    "遥感"
+   ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
    ],
@@ -12040,12 +11574,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "dataset_ingest"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "medium",
    "memory_class": "medium",
    "name": "materialize_dataset",
@@ -12133,17 +11666,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "medoid_composite",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "时序合成",
+    "medoid",
+    "多时相",
+    "遥感"
+   ],
    "tests": [
     "tests/unit/lib/test_medoid_composite.py"
    ],
@@ -12157,17 +11692,21 @@
    "deterministic": null,
    "execution_policy": "thread",
    "flags": [
-    "untested",
-    "descriptor_incomplete"
+    "untested"
    ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "mgwr_regression",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "gwr",
+    "mgwr",
+    "空间回归",
+    "地理加权"
+   ],
    "tests": [],
    "tier": 2
   },
@@ -12179,17 +11718,21 @@
    "deterministic": null,
    "execution_policy": "async",
    "flags": [
-    "untested",
-    "descriptor_incomplete"
+    "untested"
    ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "mnf_transform",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "mnf",
+    "降噪",
+    "降维",
+    "遥感"
+   ],
    "tests": [],
    "tier": 2
   },
@@ -12292,17 +11835,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "natural_neighbor_surface",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "自然邻域",
+    "插值",
+    "sibson",
+    "voronoi"
+   ],
    "tests": [
     "tests/unit/lib/test_geostat_v3.py"
    ],
@@ -12372,17 +11917,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "nearest_neighbor_surface",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "最近邻",
+    "泰森多边形",
+    "插值",
+    "分段常值"
+   ],
    "tests": [
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
     "tests/unit/lib/test_geostat_v3.py"
@@ -12892,9 +12439,14 @@
    "name": "profile_dataset",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "数据画像",
+    "质量诊断",
+    "统计",
+    "只读"
+   ],
    "tests": [
     "tests/test_network_temporal_harness.py",
     "tests/unit/test_temporal_gis_runtime.py"
@@ -13049,12 +12601,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "federated_dataset_query"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "slow",
    "memory_class": "heavy",
    "name": "query_federated_data",
@@ -13477,17 +13028,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "rate_smoothing",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "经验贝叶斯",
+    "率平滑",
+    "收缩估计",
+    "疾病制图"
+   ],
    "tests": [
     "tests/unit/lib/test_completeness_v3.py"
    ],
@@ -13923,17 +13476,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "robust_normalize",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "辐射归一化",
+    "分位拉伸",
+    "预处理",
+    "遥感"
+   ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
    ],
@@ -13946,17 +13501,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "rx_anomaly",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "异常检测",
+    "rx",
+    "高光谱",
+    "遥感"
+   ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
    ],
@@ -13997,17 +13554,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "sar_coherence_estimate",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "sar",
+    "相干性",
+    "insar",
+    "遥感"
+   ],
    "tests": [
     "tests/unit/lib/test_sar_v3.py"
    ],
@@ -14020,17 +13579,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "sar_enl_map",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "sar",
+    "enl",
+    "斑点噪声",
+    "质检"
+   ],
    "tests": [
     "tests/unit/lib/test_sar_v3.py"
    ],
@@ -14070,17 +13631,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "sar_layover_shadow_mask",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "sar",
+    "叠掩",
+    "阴影",
+    "地形几何"
+   ],
    "tests": [
     "tests/unit/lib/test_sar_v3.py"
    ],
@@ -14093,17 +13656,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "sar_log_scale",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "sar",
+    "定标",
+    "db换算",
+    "振幅强度"
+   ],
    "tests": [
     "tests/unit/lib/test_sar_v3.py"
    ],
@@ -14142,17 +13707,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "sar_multitemporal_speckle",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "sar",
+    "斑点滤波",
+    "多时相",
+    "去噪"
+   ],
    "tests": [
     "tests/unit/lib/test_sar_v3.py"
    ],
@@ -14165,17 +13732,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "sar_radiometric_terrain_correction",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "sar",
+    "地形校正",
+    "rtc",
+    "辐射定标"
+   ],
    "tests": [
     "tests/unit/lib/test_sar_v3.py"
    ],
@@ -14188,17 +13757,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "sar_remove_thermal_noise",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "sar",
+    "热噪声",
+    "定标",
+    "sentinel"
+   ],
    "tests": [
     "tests/unit/lib/test_sar_science_fixes_v3.py",
     "tests/unit/lib/test_sar_v3.py"
@@ -14370,12 +13941,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "mcda_evaluation"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "slow",
    "memory_class": "medium",
    "name": "scenario_compare",
@@ -14426,21 +13996,27 @@
   },
   {
    "behavior": "none",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
    "deterministic": null,
    "execution_policy": "async",
    "flags": [
-    "untested",
-    "descriptor_incomplete"
+    "untested"
    ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "search_datasets",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "数据资产",
+    "检索",
+    "过滤",
+    "只读"
+   ],
    "tests": [],
    "tier": 2
   },
@@ -14615,17 +14191,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "segment_image",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "图像分割",
+    "kmeans",
+    "无监督分类",
+    "遥感"
+   ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
    ],
@@ -14751,17 +14329,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "sky_view_factor_analysis",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "cacheable_read",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "天空可视因子",
+    "svf",
+    "dem",
+    "城市气候"
+   ],
    "tests": [
     "tests/unit/lib/test_terrain_v3.py"
    ],
@@ -15126,17 +14706,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "spectral_angle_mapper",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "光谱匹配",
+    "sam",
+    "目标检测",
+    "高光谱"
+   ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
    ],
@@ -15149,17 +14731,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "spectral_information_divergence",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "光谱匹配",
+    "sid",
+    "目标检测",
+    "高光谱"
+   ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
    ],
@@ -15427,17 +15011,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "temporal_features",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "时序特征",
+    "物候",
+    "谐波",
+    "遥感"
+   ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
    ],
@@ -15534,17 +15120,19 @@
    ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "temporal_seasonal_decompose",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "季节分解",
+    "时间序列",
+    "趋势",
+    "周期"
+   ],
    "tests": [
     "tests/unit/lib/test_completeness_v3.py"
    ],
@@ -15806,17 +15394,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "variogram_model_selection",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "变异函数",
+    "模型选型",
+    "地统计",
+    "aicc"
+   ],
    "tests": [
     "tests/unit/lib/test_geostat_v3.py"
    ],
@@ -15999,12 +15589,13 @@
   },
   {
    "behavior": "none",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_snapshot"
+   ],
    "deterministic": false,
    "execution_policy": "async",
    "flags": [
-    "untested",
-    "descriptor_incomplete"
+    "untested"
    ],
    "latency_class": "medium",
    "memory_class": "medium",
@@ -16052,12 +15643,11 @@
   },
   {
    "behavior": "dispatch",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "webgis_component_catalog",
@@ -16386,12 +15976,13 @@
   },
   {
    "behavior": "none",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_snapshot"
+   ],
    "deterministic": false,
    "execution_policy": "async",
    "flags": [
-    "untested",
-    "descriptor_incomplete"
+    "untested"
    ],
    "latency_class": "medium",
    "memory_class": "medium",
@@ -16468,12 +16059,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
    "deterministic": false,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "webgis_state_get",
@@ -16560,12 +16150,13 @@
   },
   {
    "behavior": "none",
-   "capabilities": [],
+   "capabilities": [
+    "workspace_state_inspection"
+   ],
    "deterministic": false,
    "execution_policy": "async",
    "flags": [
-    "untested",
-    "descriptor_incomplete"
+    "untested"
    ],
    "latency_class": "fast",
    "memory_class": "light",
@@ -16593,17 +16184,19 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "weights_diagnostics",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "空间权重",
+    "诊断",
+    "邻接结构",
+    "孤岛"
+   ],
    "tests": [
     "tests/unit/lib/test_spatial_stats_v3.py"
    ],

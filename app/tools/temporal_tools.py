@@ -677,6 +677,8 @@ def register_temporal_science_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="temporal_seasonal_decompose",
+        side_effect="deterministic_compute",
+        tags=('季节分解', '时间序列', '趋势', '周期'),
         description=(
             "经典季节分解（classical decomposition，Makridakis 1998）："
             "奇数窗口中心滑动平均趋势 + 相位组均值季节指数（additive 归一化"

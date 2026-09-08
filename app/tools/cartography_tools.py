@@ -239,6 +239,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       name="webgis_state_get",
+      capabilities=['workspace_state_inspection'],
       description="读取当前会话的 MapSpec 制图 Intent 文档与 MapMeta Profile。",
       args_model=WebgisStateGetArgs,
       tier=1,
@@ -754,6 +755,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       tier=2, domains=["report"], name="webgis_checkpoint",
+      capabilities=['workspace_snapshot'],
       description="创建 MapSpec 快照并具象化落地所引用的全部 ref_id 数据载荷。",
       args_model=WebgisCheckpointArgs,
       side_effect="state_mutation",
@@ -778,6 +780,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       tier=2, domains=["report"], name="webgis_rollback",
+      capabilities=['workspace_snapshot'],
       description="回滚 MapSpec 与 runtime map_state 到指定的快照点。",
       args_model=WebgisRollbackArgs,
       side_effect="state_mutation",
