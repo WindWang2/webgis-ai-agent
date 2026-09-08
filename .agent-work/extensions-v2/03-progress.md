@@ -17,6 +17,6 @@
 - [x] Phase D 本地验证：扩展域 2373 绿；全仓 ruff 绿；契约层 39 绿；
       OpenAPI snapshot byte-identical；broader unit 6107 绿；
       worker 冷启动 209ms / 调用 p95 0.19ms
-- [x] Phase E 两轮 review（SHW-FIXES 全修复，见 05）
-- [ ] Phase F rebase+复测
-- [ ] Phase G PR
+- [x] Phase E 两轮 review（SHIP-WITH-FIXES 全修复，见 05）
+- [x] Phase F rebase（origin/master 无新提交，no-op）+ 复测全绿
+- [x] Phase G PR：https://github.com/WindWang2/webgis-ai-agent/pull/1171（不自动 merge）
