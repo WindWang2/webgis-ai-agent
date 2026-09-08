@@ -126,14 +126,29 @@ class TestReadySetScheduler:
                      if e["event"] == "node_completed"]
         assert completed == [f"n{i}" for i in range(5)]
 
-    def test_bytes_charged_on_governor(self, scan_stub):
+    def test_bytes_charged_on_governor(self, scan_stub, monkeypatch):
+        """D10「bytes 记账」+ Wave 8 R1 gauge 语义：charge 在 run 内沿链
+        发生（rows/bytes 有值），run 收尾全额归还（基线回归 pin 在
+        test_geocompute_governance_wave8.py）。"""
         gov = ResourceGovernor()
         eng = GeoExecutionEngine(max_workers=1)
+        charged: list[dict] = []
+        real_charge = gov.charge
+
+        def spy_charge(path, **kw):
+            charged.append(kw)
+            return real_charge(path, **kw)
+
+        monkeypatch.setattr(gov, "charge", spy_charge)
         node = _node("n", NodeCategory.SOURCE_SCAN, parameters={"features": _fc(6)})
         eng.execute_plan(ExecutionPlan(plan_id="p", nodes=[node]), governor=gov)
+        assert any(
+            c.get("rows") == 6 and c.get("bytes", 0) > 0 and c.get("nodes") == 1
+            for c in charged
+        ), charged
+        # R1：run 收尾归还 → 长寿命作用域回到基本线（不再是终生计数）。
         usage = gov.usage_full("global:root")
-        assert usage.rows == 6
-        assert usage.bytes > 0
+        assert (usage.rows, usage.bytes, usage.nodes) == (0, 0, 0)
 
 
 # ----------------------------------------------------- D4 checkpoint/rerun

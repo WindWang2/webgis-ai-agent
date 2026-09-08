@@ -19,8 +19,12 @@
 """
 import asyncio
 import logging
+import re
+import secrets
+from pathlib import Path
 from typing import Any, Dict, Optional
 
+from app.core.config import settings
 from app.schemas.data_fabric_schema import QueryResult, QuerySpec
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import (
@@ -34,6 +38,14 @@ from app.services.session_data import session_data_manager
 from app.services.session_data_protocol import is_unavailable_ref
 
 logger = logging.getLogger(__name__)
+
+#: GeoParquet 磁盘工件 ref 前缀（对齐 raster 的 ``ref:raster/<id>`` 磁盘
+#: cursor 先例；文件路径是实现细节，不进 LLM/前端）。
+GEOPARQUET_REF_PREFIX = "ref:fabric-parquet/"
+
+#: 会话/工件 id 白名单（路径段边界即拒绝 traversal/分隔符 —— 与 raster ref
+#: 的 charset 纪律一致）。
+_ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 
 
 def _is_demo_source_type(source_type: Any) -> bool:
@@ -85,8 +97,17 @@ class MaterializationService:
         query_result: QueryResult,
         session_id: str = "default",
         layer_name: Optional[str] = None,
+        *,
+        output_format: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """按 ResultMode 物化/直返（见模块 docstring）。"""
+        """按 ResultMode 物化/直返（见模块 docstring）。
+
+        ``output_format="geoparquet"`` 是显式 opt-in（Wave 5）：FEATURES/
+        MATERIALIZE/SAMPLE 走 GeoParquet 磁盘工件 lane（``ref:fabric-parquet/
+        <id>``）；缺省 None 时行为与此前完全一致（GeoJSON session ref）。
+        轻量结果模式（statistics/descriptor/vector_tile）保持零物化直返，
+        不受 format 影响。
+        """
         layer_title = layer_name or f"Materialized Layer {dataset_id}"
         is_demo = _is_demo_adapter_source(query_result)
         evidence = (query_result.metadata or {}).get("query_evidence") or {}
@@ -110,6 +131,12 @@ class MaterializationService:
                 "metadata": query_result.metadata,
                 "query_evidence": evidence,
             }
+
+        if output_format == "geoparquet":
+            return await self._materialize_geoparquet_result(
+                dataset_id, query_result, session_id, layer_title,
+                is_demo, evidence, mode,
+            )
 
         # ---- FEATURES / MATERIALIZE / SAMPLE：payload → ref（SAMPLE 有界直返
         # 特征 + ref 由调用方决定；这里统一物化以便地图/分析消费）----
@@ -191,6 +218,138 @@ class MaterializationService:
             "is_demo": is_demo,
             "schema_info": query_result.schema_info,
             "metadata": query_result.metadata,
+            "query_evidence": evidence,
+        }
+
+    async def materialize_geoparquet(
+        self,
+        session_id: str,
+        table: Any,
+        title: str,
+    ) -> Dict[str, Any]:
+        """Arrow Table → GeoParquet 磁盘工件（Wave 5 写入 lane）。
+
+        落盘 ``<DATA_DIR>/<session>/fabric-geoparquet/<16hex>.parquet``
+        （zstd，经 ``vector_carrier.table_to_geoparquet``），返回 ``ref
+        = ref:fabric-parquet/<id>`` 与磁盘 ``path`` —— 对齐 raster PNG 磁盘
+        ref 先例的最小诚实语义（路径不透明，ref 即 cursor）。
+
+        - pyarrow 缺失 → typed ``VectorCarrierUnavailable``（诚实降级：
+          dict-lane ``materialize`` 缺省路径不受任何影响）；
+        - 会话台账（artifact_registry）注册是刻意的最小接缝：注册 API 归
+          raster/promotion 模块所有，此处不为其引入反向耦合 ——
+          TODO(fabric-artifact-ledger): 若后续需要 GC/存活探测，把
+          ``ref:fabric-parquet/<id>`` 按 ``artifact_registry`` 的 raster
+          disk-cursor 形状（ref 解析 + O(1) stat）接入台账；
+        - session_id 过白名单校验（路径段边界拒绝 traversal）。
+        """
+        from app.services.data_fabric.vector_carrier import (
+            VectorCarrierUnavailable,
+            arrow_available,
+            table_to_geoparquet,
+        )
+
+        if not arrow_available():
+            raise VectorCarrierUnavailable(
+                "GeoParquet materialization requires the optional 'pyarrow' "
+                "dependency; fall back to the GeoJSON dict-lane materialize "
+                "or install pyarrow",
+            )
+        if not isinstance(session_id, str) or not _ID_RE.match(session_id):
+            raise ValueError(f"invalid session id for disk artifact: {session_id!r}")
+        artifact_id = secrets.token_hex(8)  # 16 hex
+        base = Path(settings.DATA_DIR) / session_id / "fabric-geoparquet"
+        path = base / f"{artifact_id}.parquet"
+        ref = f"{GEOPARQUET_REF_PREFIX}{artifact_id}"
+
+        def _write() -> int:
+            base.mkdir(parents=True, exist_ok=True)
+            table_to_geoparquet(table, str(path), compression="zstd")
+            return path.stat().st_size
+
+        size = await asyncio.to_thread(_write)
+        logger.info(
+            "[MaterializationService] geoparquet artifact '%s' -> %s (%d bytes)",
+            title, path, size,
+        )
+        return {
+            "status": "success",
+            "success": True,
+            "ref": ref,
+            "path": str(path),
+            "title": title,
+            "format": "geoparquet",
+            "feature_count": int(table.num_rows),
+            "bytes": int(size),
+        }
+
+    async def _materialize_geoparquet_result(
+        self,
+        dataset_id: str,
+        query_result: QueryResult,
+        session_id: str,
+        layer_title: str,
+        is_demo: bool,
+        evidence: Dict[str, Any],
+        mode: str,
+    ) -> Dict[str, Any]:
+        """``materialize(output_format="geoparquet")`` 分支：features → 载体
+        表 → 磁盘工件（一次 Arrow 编码，杜绝 GeoJSON 再序列化）。"""
+        from app.services.data_fabric.vector_carrier import (
+            features_to_arrow,
+        )
+
+        features = query_result.features
+        feature_count = len(features)
+        total_count = query_result.total_count or feature_count
+
+        # 资源守卫与 dict lane 同一红线（Section 22 / #425）。
+        enforce_result_bounds(features)
+
+        fingerprint = await asyncio.to_thread(
+            dataset_fingerprint_service.calculate_data_fingerprint,
+            features,
+        )
+        schema_info = query_result.schema_info if isinstance(query_result.schema_info, dict) else {}
+        crs = schema_info.get("crs") or None
+        try:
+            table = await asyncio.to_thread(features_to_arrow, features, crs=crs)
+        except DataFabricError:
+            raise  # VectorCarrierUnavailable / EncodeError 原样（typed）
+        except Exception as e:
+            raise MaterializationFailedError(f"GeoParquet encode failed: {e}") from e
+        try:
+            written = await self.materialize_geoparquet(session_id, table, layer_title)
+        except DataFabricError:
+            raise
+        except Exception as e:
+            return self._failure(
+                dataset_id, layer_title, feature_count, total_count,
+                fingerprint, query_result,
+                MaterializationFailedError(f"GeoParquet write failed: {e}"),
+            )
+        metadata = dict(query_result.metadata or {})
+        metadata["materialization_format"] = "geoparquet"
+        return {
+            "status": "success",
+            "success": True,
+            "ref": written["ref"],
+            "ref_id": None,  # session-store ref 不产生（磁盘工件 lane）
+            "artifact_ref": written["ref"],
+            "path": written["path"],
+            "format": "geoparquet",
+            "result_mode": mode,
+            "dataset_id": dataset_id,
+            "layer_name": layer_title,
+            "feature_count": feature_count,
+            "total_count": total_count,
+            "total_matching": query_result.total_matching,
+            "truncated": query_result.truncated,
+            "has_more": query_result.has_more,
+            "fingerprint": fingerprint,
+            "is_demo": is_demo,
+            "schema_info": query_result.schema_info,
+            "metadata": metadata,
             "query_evidence": evidence,
         }
 

@@ -325,4 +325,15 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             compatible_map_models=["raster_surface"],
             purpose_template="SAR 地形几何/辐射校正",
         ),
+        CapabilityDescriptor(
+            id="raster_cog_conversion", name="COG 栅格转换", category="raster",
+            domain="raster",
+            description="单文件 GeoTIFF → Cloud Optimized GeoTIFF：分块重排 + "
+                        "多级概视图（金字塔重采样）+ footer 索引，产出可流式"
+                        "范围读取的云原生栅格。",
+            input_artifact_types=["raster_surface"],
+            output_artifact_types=["raster_surface"],
+            compatible_map_models=["raster_surface"],
+            purpose_template="{subject} COG 转换",
+        ),
     ]

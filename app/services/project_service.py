@@ -395,6 +395,69 @@ class ProjectService:
         return dataset
 
     @staticmethod
+    def record_dataset_quality(
+        db: Session,
+        project_id: str,
+        dataset_id: str,
+        report: Any,
+        user_id: Optional[str] = None,
+        org_id: Optional[int] = None,
+    ) -> Optional[str]:
+        """Wave-4 质量状态回写（audit 08 §6.2 建议 3）：把质量报告的结论
+        ``compose_status`` 写回 ``ProjectDataset.quality_status`` —— 该列此前
+        冻结在创建默认值 "unchecked"（孤儿状态，§6.1.1d）。
+
+        Tenant-checked：项目级 auth（``get_project_with_auth``）+ 数据集行
+        必须属于该项目。返回写入的状态值；``None`` = 诚实跳过（无权限 /
+        无该数据集行 / 报告无可用结论）—— 绝不虚构结论。
+
+        报告状态取自 ``report.status``（run_quality_checks 已经是
+        ``compose_status`` 的输出）；鸭子类型兜底：缺 ``status`` 时按
+        ``compose_status(report.issues)`` 现算。仅接受封闭词表
+        （unchecked/valid/warning/repairable/blocked）内的值。
+        """
+        from app.lib.data.vocabulary import QualityStatus
+
+        project = ProjectService.get_project_with_auth(
+            db, project_id, user_id=user_id, org_id=org_id
+        )
+        if not project:
+            return None
+        row = db.execute(
+            select(ProjectDataset).where(
+                and_(
+                    ProjectDataset.id == dataset_id,
+                    ProjectDataset.project_id == project_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+
+        status = getattr(report, "status", None)
+        value = getattr(status, "value", None) if status is not None else None
+        if value is None:
+            from app.lib.data.quality import compose_status
+
+            value = getattr(
+                compose_status(list(getattr(report, "issues", None) or [])),
+                "value",
+                None,
+            )
+        writable = {
+            QualityStatus.UNCHECKED.value,
+            QualityStatus.VALID.value,
+            QualityStatus.WARNING.value,
+            QualityStatus.REPAIRABLE.value,
+            QualityStatus.BLOCKED.value,
+        }
+        if value not in writable:
+            return None
+        row.quality_status = value
+        db.commit()
+        return value
+
+    @staticmethod
     def detach_dataset(
         db: Session,
         project_id: str,

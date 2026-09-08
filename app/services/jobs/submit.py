@@ -51,6 +51,7 @@ def submit_durable_job(
     session_id: Optional[str] = None,
     idempotent: bool = True,
     max_retries: int = 3,
+    queue: Optional[str] = None,
 ) -> dict[str, Any]:
     """创建 durable job 并入队 Celery 任务。
 
@@ -61,6 +62,10 @@ def submit_durable_job(
         params: 用于幂等键与参数摘要的业务参数（会脱敏后落库）。
         task_args / task_kwargs: 传给 Celery 任务的参数。
         idempotent: 是否启用幂等键。不可逆且可能被重复触发的操作应保持 True。
+        queue: V5（audit 06 §6.1 step 1）可选目标队列名（如 geocompute
+            profile 队列）。非空时以 ``apply_async(queue=...)`` 显式路由
+            （优先于 task_routes），并记入 dispatch_spec 供 retry 亲和使用；
+            eager 模式（无 Redis）下 Celery 忽略队列，行为不变。
 
     Returns:
         工具可直接返回给 LLM 的 dict：``{status, job_id, task_id, message, idempotent_reuse}``。
@@ -76,6 +81,10 @@ def submit_durable_job(
         "args": list(task_args),
         "kwargs": dict(task_kwargs or {}),
     }
+    if queue:
+        # 队列是调度事实，不是业务参数：只进 dispatch_spec（retry 亲和），
+        # 绝不进 params（幂等键必须与队列无关 —— 换路由不换节点身份）。
+        dispatch_spec["queue"] = str(queue)[:100]
 
     with db_session() as db:
         job = DurableJobStore.create_sync(
@@ -150,7 +159,10 @@ def submit_durable_job(
         }
 
     try:
-        async_result = celery_task.apply_async(args=list(task_args), kwargs=kwargs)
+        send_options = {"queue": queue} if queue else {}
+        async_result = celery_task.apply_async(
+            args=list(task_args), kwargs=kwargs, **send_options
+        )
     except Exception as exc:
         # 入队失败：把 job 落成 failed，否则它会永远停在 queued 且没有执行体
         # （stale 清扫只覆盖 running/cancelling）。

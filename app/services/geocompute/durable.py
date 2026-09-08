@@ -29,6 +29,98 @@ logger = logging.getLogger(__name__)
 #: job 终态轮询间隔（秒）。eager/本地模式下任务体同步完成，首轮即命中。
 _POLL_INTERVAL_S = 0.05
 
+# ── V5 异构 worker profile（audit 06 §6.1 step 1 / ADR-0101 Deferred 落地）──
+#: profile 词表：light_cpu | heavy_cpu | high_memory | raster | network |
+#: external_io。队列名 = f"{profile}_queue"，在 task_queue.task_queues 声明；
+#: **默认兜底队列仍是 "celery"**。单 worker 部署语义不变：compose 里的
+#: worker 以 ``-Q`` 显式消费全部队列（见 docker-compose.yml 注释）——
+#: profile 只是「路由真相就位」，等运维真的按 profile 拆 worker 才产生
+#: 物理放置差异。Redis 缺席（task_always_eager）时队列完全不参与路由，
+#: 行为与 V4 逐字节一致。
+EXECUTION_QUEUE_PROFILES: tuple[str, ...] = (
+    "light_cpu",
+    "heavy_cpu",
+    "high_memory",
+    "raster",
+    "network",
+    "external_io",
+)
+
+#: 默认兜底队列（Celery 约定的缺省队列名）。
+DEFAULT_QUEUE = "celery"
+
+
+def queue_name_for_profile(profile: str) -> str:
+    """profile → 队列名（确定性；非法 profile 一律落回默认队列）。"""
+    return f"{profile}_queue" if profile in EXECUTION_QUEUE_PROFILES else DEFAULT_QUEUE
+
+
+#: 类别 → profile（把既有 ``_CATEGORY_CAPABILITIES`` 提示提升为路由真值；
+#: network/external_io 类别按名称语义归属）。
+_CATEGORY_PROFILE: dict[str, str] = {
+    "raster_operation": "raster",
+    "raster_window_operation": "raster",
+    "interpolation": "heavy_cpu",
+    "spatial_join": "heavy_cpu",
+    "network_operation": "network",
+    # 物化/导出/登记是外部 I/O 重（写产物/落存）类别。
+    "materialize": "external_io",
+    "export": "external_io",
+    "artifact_register": "external_io",
+}
+
+#: 轻量向量类别（无重型信号时 → light_cpu 队列）。
+_LIGHT_VECTOR_CATEGORIES = frozenset({
+    "source_discovery", "source_scan", "query", "filter", "project",
+    "reproject", "attribute_join", "aggregate", "vector_operation",
+})
+
+#: ResourceClass 阈值（plan.py:99-104，1..5）：≥4 视为对应 profile 的强信号。
+_RESOURCE_PROFILE_THRESHOLD = 4
+
+#: locality_hint 允许的取值（含 ``{profile}_queue`` 拼写容错）。
+_VALID_HINTS = set(EXECUTION_QUEUE_PROFILES) | {
+    queue_name_for_profile(p) for p in EXECUTION_QUEUE_PROFILES
+}
+
+
+def queue_for_node(node: ExecutionNode) -> str:
+    """节点 → 主队列名（**确定性纯函数**；retry affinity 的根基）。
+
+    优先级（高 → 低，全部确定性）：
+      1. ``locality_hint``（plan.py:166）：命中 profile 词表 → 直接钉到该
+         队列（显式提示覆盖类别/资源类推导）；
+      2. 类别能力 profile（raster/gdal/heavy_cpu/network/external_io）；
+      3. ``ResourceClass``：memory≥4 → high_memory、io≥4 → external_io、
+         cpu≥4 → heavy_cpu；
+      4. 已知轻量向量类别 → light_cpu；
+      5. 其余 → 默认队列 "celery"。
+
+    这些字段全部**不参与语义指纹**（plan.py:185-205）——改路由提示不改
+    节点身份，幂等键稳定。WORKER_LOSS 重派复用同一 dispatch 路径，同一
+    节点必然落同一 profile 队列（retry affinity，无需新状态机）。
+    """
+    hint = (node.locality_hint or "").strip().lower()
+    if hint in _VALID_HINTS:
+        return hint if hint.endswith("_queue") else queue_name_for_profile(hint)
+
+    profile = _CATEGORY_PROFILE.get(node.category.value)
+    if profile is not None:
+        return queue_name_for_profile(profile)
+
+    rc = node.resource_class
+    threshold = _RESOURCE_PROFILE_THRESHOLD
+    if rc.memory >= threshold:
+        return queue_name_for_profile("high_memory")
+    if rc.io >= threshold:
+        return queue_name_for_profile("external_io")
+    if rc.cpu >= threshold:
+        return queue_name_for_profile("heavy_cpu")
+
+    if node.category.value in _LIGHT_VECTOR_CATEGORIES:
+        return queue_name_for_profile("light_cpu")
+    return DEFAULT_QUEUE
+
 
 def _default_session_factory():
     from app.services.jobs.worker import _default_session_factory
@@ -41,8 +133,9 @@ session_factory: Callable[[], Any] = _default_session_factory
 
 
 #: 节点类别 → worker 能力提示（ADR-0101 D10，V4 §25）。
-#: 单一默认队列部署下这些提示是**声明性**的（routing 真值仍是既有
-#: 队列机制，ADR-0101 Deferred：异构 worker 池化后才产生实际路由差异）。
+#: V5 起（audit 06 §6.1 step 1）这些提示被 ``queue_for_node`` 提升为
+#: 路由真值（profile 队列在 task_queue.task_queues 声明）；单 worker 部署
+#: 消费全部队列，语义与 V4 不变。
 _CATEGORY_CAPABILITIES: dict[str, list[str]] = {
     "raster_operation": ["raster", "gdal", "high_memory"],
     "raster_window_operation": ["raster", "gdal"],
@@ -66,7 +159,14 @@ def dispatch_node(
     plan_fingerprint: str,
     deadline_s: Optional[float],
 ) -> dict[str, Any]:
-    """把节点提交为 durable job（幂等键 = 节点语义指纹 + 会话）。"""
+    """把节点提交为 durable job（幂等键 = 节点语义指纹 + 会话）。
+
+    V5（audit 06 §6.1 step 1）：按 ``queue_for_node`` 路由到 profile 队列
+    （``apply_async(queue=...)``，显式选项优先于 task_routes）。Redis 缺席
+    （eager）时 Celery 忽略队列，任务同步执行 —— 返回 dict 追加
+    ``backend_variant="in_process_eager"``，证据侧据此诚实标注（V5 step 5：
+    durable 语义在 eager 下静默降级为进程内执行，必须可见）。
+    """
     from app.services.geocompute.tasks import run_geocompute_node
     from app.services.jobs.submit import submit_durable_job
 
@@ -76,7 +176,8 @@ def dispatch_node(
         "plan_fingerprint": plan_fingerprint,
         "capabilities": required_capabilities(node),
     }
-    return submit_durable_job(
+    queue = queue_for_node(node)
+    ret = submit_durable_job(
         celery_task=run_geocompute_node,
         task_type="geocompute_node",
         display_name=f"GeoCompute 节点 {node.node_id}",
@@ -87,7 +188,18 @@ def dispatch_node(
             "deadline_s": deadline_s,
         },
         session_id=session_id,
+        queue=queue,
     )
+    ret["queue"] = queue
+    try:
+        from app.services.task_queue import celery_app
+
+        eager = bool(celery_app.conf.task_always_eager)
+    except Exception:  # noqa: BLE001 - Celery conf 不可读时按真实 broker 模式
+        eager = False
+    if eager:
+        ret["backend_variant"] = "in_process_eager"
+    return ret
 
 
 def await_node_job(

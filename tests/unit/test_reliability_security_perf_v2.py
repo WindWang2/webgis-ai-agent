@@ -242,8 +242,10 @@ def test_large_registry_scalability(size):
     assert fingerprint_s < fp_budget, f"fingerprint {fingerprint_s:.3f}s"
     assert retrieval_s < ret_budget, f"retrieval {retrieval_s:.3f}s"
     assert audit_s < audit_budget, f"audit {audit_s:.3f}s"
-    # 缓存索引后的第二次检索有绝对预算（review R1：防止 ~1000x 回归漏检）
-    assert retrieval_cached_s < 0.05, f"cached retrieval {retrieval_cached_s:.3f}s"
+    # 缓存索引后的第二次检索有绝对预算（review R1：防止 ~1000x 回归漏检）。
+    # 0.05→0.2：CI 2 核 + coverage 下实测多次压线（0.050/0.052s）——预算
+    # 防的是「缓存失效退化为全量扫描」（~1.6s 量级），0.2s 仍有 8× 裕量。
+    assert retrieval_cached_s < 0.2, f"cached retrieval {retrieval_cached_s:.3f}s"
 
 
 def test_surface_augment_hot_path_bounded():

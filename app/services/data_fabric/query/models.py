@@ -214,6 +214,10 @@ class AdapterCapabilitiesV2(BaseModel):
     streaming: bool = False
     max_page_size: int = 10_000
     server_side_spatial_join: bool = False    # 同源 server-side join 可用
+    # ── V5 additive（Wave 9 逐子句拆分）：部分下推契约 ──
+    # 尽管 filter_pushdown=True，这些 AST op 仍必须本地求值（源诚实声明
+    # "我只推一部分 op"）。空表 = 全有或全无（历史语义，逐位不变）。
+    filter_ops_local: List[str] = Field(default_factory=list)
 
     def supports_spatial_op(self, op: str) -> bool:
         return op in self.spatial_predicates
@@ -272,6 +276,12 @@ class QueryPlan(BaseModel):
     # family → exact | equivalent | coarse | local | unsupported | violation
     #（violation = planner 推送了 unsupported 族：契约缺陷，parity 测试捕获）。
     pushdown_classes: Dict[str, str] = Field(default_factory=dict)
+
+    # ── V5 additive（Wave 9）：AND 边分解的过滤下推拆分（计划即执行）──
+    # {"pushed": predicate-dict | None, "local": predicate-dict | None}。
+    # None = 未拆分（历史整过滤语义，adapter 行为逐位不变）。执行侧以
+    # 本字段为单一真相（resolve_plan_filter_split），不做第二次能力决策。
+    filter_split: Optional[Dict[str, Any]] = None
 
     def summary_lines(self) -> List[str]:
         """explain 输出（不含 secret/连接信息）。"""

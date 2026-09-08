@@ -107,6 +107,38 @@ def statistics_from_descriptor(descriptor: Any) -> Optional[DatasetStatistics]:
     return stats
 
 
+def observe_row_count(
+    source_type: str, dataset_fingerprint: str, count: Any
+) -> bool:
+    """V5（Wave 9）：把响应里**已收到**的诚实总量计数收割为行级统计。
+
+    供 ArcGIS returnCountOnly / OGC-API·WFS·STAC numberMatched 等"查询
+    响应本来就带着的计数"使用 —— 绝不发起新端点请求（plumb, not scrape）。
+    调用方契约：**只对无过滤请求调用**（过滤后的命中数不是数据集总量，
+    绝不冒充 row_count）。
+
+    只写进程 TTL 缓存（advisory，60s）：观测计数是弱新鲜度事实，不进
+    durable store —— 查询热路径不做 DB 写。任何失败静默降级（统计绝不
+    阻断查询）。
+    """
+    try:
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            return False
+        fp = str(dataset_fingerprint or "")
+        if not fp:
+            return False
+        _store.put(DatasetStatistics(
+            dataset_fingerprint=fp,
+            source_type=source_type,
+            row_count=count,
+            revision_strength="weak",
+            collector="observed_count",
+        ))
+        return True
+    except Exception:  # noqa: BLE001 - 统计收割绝不阻断查询路径
+        return False
+
+
 def _coerce_int(v: Any) -> Optional[int]:
     return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
 

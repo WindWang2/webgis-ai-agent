@@ -31,7 +31,11 @@ from app.schemas.data_fabric_schema import (
     QuerySpec,
 )
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.errors import DataFabricError, InvalidQueryError
+from app.services.data_fabric.errors import (
+    DataFabricError,
+    InvalidQueryError,
+    QueryUnsupportedError,
+)
 from app.services.data_fabric.query.capabilities import default_capabilities
 from app.services.data_fabric.query.compilers import (
     compile_predicate_sql,
@@ -58,6 +62,11 @@ MAX_QUERY_LIMIT = 10_000
 MVT_MAX_FEATURES_PER_TILE = 20_000
 MVT_MIN_ZOOM = 0
 MVT_MAX_ZOOM = 22
+
+# C1：``_compile_where`` 的 filter_override 缺省哨兵 —— 区分"调用方未给
+# override（历史路径：编译 v2.filter）"与"显式 None（split 守卫路径：整体
+# 本地，不编译任何过滤子句）"。
+_FILTER_OVERRIDE_UNSET = object()
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -696,7 +705,27 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             )
             budget = v2.execution
 
-            where_sql, params, spatial_pushed = self._compile_where(v2, meta, descriptor)
+            # V5（Wave 9）：AND 边拆分的执行真相（计划即执行）。
+            # C1：历史/拆分/守卫三态统一 —— filter_split 在场时只编译计划
+            # 的下推半（守卫路径 pushed=None → 不编译任何过滤子句，整体
+            # 本地求值）；缺席（历史）时 resolve 原样返回 v2.filter，逐位不变。
+            from app.services.data_fabric.query.pushdown import (
+                local_predicates_present,
+                resolve_plan_filter_split,
+            )
+
+            remote_filter, local_filter = resolve_plan_filter_split(v2.filter, plan)
+            split_active = local_predicates_present(plan)
+            if split_active and (plan.result_mode == ResultMode.STATISTICS or v2.aggregate):
+                raise InvalidQueryError(
+                    "source declared partial filter pushdown and this query has a "
+                    "local filter remainder; server-side aggregation cannot apply it. "
+                    "Use a fully pushable filter, or materialize + local aggregation.",
+                    details={"hint": "avoid ops declared in filter_ops_local for aggregates"},
+                )
+            where_sql, params, spatial_pushed = self._compile_where(
+                v2, meta, descriptor, filter_override=remote_filter,
+            )
             if not spatial_pushed and v2.spatial is not None:
                 # plan 如实降级：spatial 未下推 → 本地过滤（hybrid）
                 plan = plan.model_copy(update={
@@ -859,6 +888,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             columns = [d[0] for d in cur.description]
             rows = cur.fetchall()
             db_queries = 2  # meta + main
+            # F1（round2）：远端页窗口在一切本地过滤**前**定格（行数 = SQL
+            # LIMIT 窗口实收行数）——它是 has_more 回落口径的唯一真相。
+            remote_window = len(rows)
 
             features = []
             for r in rows:
@@ -880,15 +912,28 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             if not spatial_pushed and v2.spatial is not None and v2.spatial.op == "bbox":
                 local_bbox = v2.spatial.bbox
                 features = _filter_features_by_bbox(features, local_bbox)
-                # 本地过滤后 has_more/next_cursor 基于过滤前 fetch（保守）
-                next_cursor = None
+                # 本地过滤只收缩返回行；has_more 回落口径用过滤前的
+                # remote_window（见下），页不因过滤误判耗尽。
 
-            # total_matching：仅第一页计算（count 复用同一 WHERE）
+            # V5（Wave 9）：拆分计划的本地余项在取回后精确求值（与 bbox
+            # 本地过滤同一保守口径 —— has_more 的 >=limit 回落以本地过滤
+            # 前的远端窗口行数（remote_window）为准）。
+            if local_filter is not None:
+                from app.services.data_fabric.query.predicates import evaluate_predicate
+
+                features = [
+                    f for f in features if evaluate_predicate(local_filter, f["properties"])
+                ]
+
+            # total_matching：仅第一页计算（count 复用同一 WHERE）。
+            # m1（审计 round1）：拆分活跃（存在本地余项，含守卫的整本地方案）
+            # 时 WHERE 只含下推半 —— count 是下推半命中数，冒充 total_matching
+            # 不诚实 → 如实置 None（has_more 回落到 remote_window >= limit）。
             total_matching: Optional[int] = None
             first_page = (isinstance(page, OffsetPage) and page.offset == 0) or (
                 isinstance(page, CursorPage) and not page.cursor
             )
-            if first_page:
+            if first_page and local_filter is None:
                 count_sql = (
                     f'SELECT COUNT(*) FROM "{meta.schema}"."{meta.table}"'
                     f"{(' WHERE ' + where_sql) if where_sql else ''}"
@@ -905,7 +950,12 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 position = page.offset if isinstance(page, OffsetPage) else 0
                 has_more = total_matching > position + fetched
             else:
-                has_more = fetched >= limit
+                # F1（round2）：回落口径 = 本地过滤**前**的远端窗口行数。
+                # 此前用过滤后剩余数（fetched >= limit）：远端满页被本地
+                # 余项/bbox 过滤丢掉哪怕 1 行 → has_more 误判 False，游标
+                # 停摆、后续页静默丢失。matched 上界分支保持原样（本就是
+                # 保守上界，只会多取一页，绝不丢行）。
+                has_more = remote_window >= limit
             next_cursor: Optional[str] = None
             if has_more and rows and keyset_ok and cursor_key_aliases:
                 last_row = dict(zip(columns, rows[-1]))
@@ -961,12 +1011,21 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             },
         )
 
-    def _compile_where(self, v2: QuerySpecV2, meta: _TableMeta, descriptor: DatasetDescriptor):
+    def _compile_where(
+        self, v2: QuerySpecV2, meta: _TableMeta, descriptor: DatasetDescriptor,
+        filter_override=_FILTER_OVERRIDE_UNSET,
+    ):
         """谓词 → WHERE。返回 (where_sql, params, spatial_pushed)。
 
         P2-1 语义保留：dataset SRID 未知（geometry_columns srid=0/NULL）时，
         空间谓词不能下推（没有源 CRS 可表达 envelope）——返回
         ``spatial_pushed=False``，调用方对有界结果做本地 bbox 过滤并如实记录。
+
+        V5（Wave 9）：``filter_override`` 显式给出时编译它而非 ``v2.filter``
+        （AND 边拆分的下推半 —— 计划即执行）。C1：显式 ``None``（split 在场
+        但 pushed=None 的守卫路径）= 拆分守卫的"整体本地"，where 不含任何
+        过滤子句，调用方在取回后本地求值整棵 AST；哨兵缺省（不传）= 历史路径
+        （count_rows 等内部调用），仍编译 ``v2.filter`` 逐位不变。
         """
         clauses: List[str] = []
         params: List[Any] = []
@@ -996,8 +1055,11 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 clauses.append(sql_s)
                 params.extend(p)
                 spatial_pushed = True
-        if v2.filter is not None:
-            sql_f, p = compile_predicate_sql(v2.filter, allowed_fields=meta.field_names)
+        filter_to_compile = (
+            v2.filter if filter_override is _FILTER_OVERRIDE_UNSET else filter_override
+        )
+        if filter_to_compile is not None:
+            sql_f, p = compile_predicate_sql(filter_to_compile, allowed_fields=meta.field_names)
             clauses.append(sql_f)
             params.extend(p)
         if v2.temporal is not None:
@@ -1193,13 +1255,21 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             # zoom 感泛化：低 zoom 提高容差（Web Mercator 米）
             tolerance = max(0.0, 40_075_016.6 / (2 ** z) / 256.0 * 4.0) if z < 13 else 0.0
 
-            # 额外属性过滤（typed AST 编译）
+            # F6（round2）：本路径**无计划解析**（不经过 plan_query /
+            # filter_split），传入属性过滤时其可推性未经理划声明 —— 若在此
+            # 静默编译为远端 SQL，就是 C1 类隐患（本地语义谓词被当远端过滤
+            # 执行，结果面无任何计划/证据披露）。当前无任何调用方传过滤
+            # （grep 验证：唯一调用点 app/api/routes/data_fabric.py 只传
+            # z/x/y/timeout）→ 过滤在场即 typed 拒绝；无过滤调用行为逐位
+            # 不变。若未来需要瓦片级过滤，必须先走计划解析并确认整棵可推。
             extra_where = ""
             extra_params: List[Any] = []
             if where_v2 is not None and where_v2.filter is not None:
-                sql_f, p = compile_predicate_sql(where_v2.filter, allowed_fields=meta.field_names)
-                extra_where = " AND " + sql_f
-                extra_params = list(p)
+                raise QueryUnsupportedError(
+                    "serve_mvt_tile does not accept attribute filters: the tile "
+                    "path performs no filter pushdown planning (C1 hazard); use "
+                    "the query path or narrow the dataset instead"
+                )
 
             simplify = (
                 f"ST_SimplifyPreserveTopology(ST_Transform({gcol}, 3857), {tolerance!r})"

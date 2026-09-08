@@ -113,6 +113,61 @@ def test_index_build_after_invalidation_uses_new_epoch():
     assert entry is not None and sic.get(key) is entry
 
 
+def test_epoch_prune_keeps_recent_bump_stale_build_still_discarded():
+    """CONC MINOR-1（round1）：prune 不得删除 60s 内 bump 的 epoch 行。
+
+    交错（小规模确定性复现）：在飞构建捕获 epoch 0 → 失效把行 bump 到 1 →
+    表超过 4×cap 触发 prune。旧行为把无 entry 的行整行删除 → insert 检查
+    ``get(key, 0)`` 重新读到 0 == 捕获值 → 幽灵构建被接受。修复后行存活，
+    构建如常被拒；超龄行（>60s）仍被回收，表保持有界。"""
+    import time as _time
+
+    sic = SpatialIndexCache(max_refs=1)  # prune 阈值 = 4 行（小规模）
+    key = ("s-prune", "r-prune")
+    started = threading.Event()
+    release = threading.Event()
+    outcome = {}
+
+    def build():
+        started.set()
+        release.wait(timeout=5)
+        return _make_entry(_FC)
+
+    def runner():
+        try:
+            sic.get_or_build(key, build)
+            outcome["r"] = "inserted"
+        except RefDataUnavailableError:
+            outcome["r"] = "staled"
+
+    t = threading.Thread(target=runner)
+    t.start()
+    started.wait(timeout=5)
+    sic.invalidate_ref(*key)  # 拦截 bump：行 (1, now)，绝不可被 prune
+    # 填满其余无 entry 行（同样新鲜）→ 表超过 4×cap，prune 有理由扫描。
+    for i in range(6):
+        sic.invalidate_ref("s-prune", f"other-{i}")
+    with sic._lock:
+        sic._prune_epochs_locked()
+    assert key in sic._epochs, "刚 bump 的 epoch 行绝不 prune（幽灵复活窗口）"
+    assert all(k in sic._epochs for k in
+               [("s-prune", f"other-{i}") for i in range(6)]), "60s 宽限期内一律保留"
+
+    release.set()
+    t.join(timeout=5)
+    assert outcome["r"] == "staled", "拦截 bump 的行存活 → 陈旧构建仍被拒"
+
+    # 超龄行（>60s）在后续 prune 中回收 —— 表有界（key 自身的行保持最新）。
+    with sic._lock:
+        now = _time.monotonic()
+        for k in list(sic._epochs):
+            if k != key:
+                gen = sic._epochs[k][0]
+                sic._epochs[k] = (gen, now - 3600.0)
+        sic._prune_epochs_locked()
+    assert [k for k in sic._epochs if k != key] == [], "超龄行必须被回收"
+
+
 def test_index_invalidate_session_bumps_epochs_for_all_keys():
     sic = SpatialIndexCache()
     k1, k2 = ("s1", "r1"), ("s1", "r2")

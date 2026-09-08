@@ -9,10 +9,10 @@ import base64
 import binascii
 import hashlib
 import json
-import math
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from app.services.data_fabric.errors import InvalidQueryError, QueryBudgetExceededError
+from app.services.data_fabric.query.accumulators import AggregateDriver
 from app.services.data_fabric.query.models import AggSpec, SampleSpec
 
 
@@ -153,66 +153,15 @@ def compute_aggregates(
 
     stddev 为样本标准差（n-1），与 Postgres STDDEV（= stddev_samp）及联邦
     Welford 实现一致（R2-M1 统一口径；差分测试可比）。
+    值语义委托 ``query.accumulators.AggregateDriver``（Wave 5 统一真相，
+    与 stream_aggregate / Arrow lane 同一累加器；峰值内存 O(组数)）；
+    本调用点的对外契约由此保持：行形状（``func``/``func_field`` 命名）
+    与空输入的**无分组**聚合仍输出一行（与 SQL SELECT count(*) 一致）。
     """
-    groups: Dict[Tuple, Dict[str, Any]] = {}
+    driver = AggregateDriver(aggs, group_by, emit_empty_global_row=True)
     for row in rows:
-        key = tuple(row.get(g) for g in group_by) if group_by else ()
-        acc = groups.get(key)
-        if acc is None:
-            acc = {"__rows__": []}
-            groups[key] = acc
-        acc["__rows__"].append(row)
-
-    out: List[Dict[str, Any]] = []
-    for key, acc in groups.items():
-        result: Dict[str, Any] = {}
-        if group_by:
-            for g, v in zip(group_by, key):
-                result[g] = v
-        rows_n = acc["__rows__"]
-        for a in aggs:
-            name = a.func if a.field is None else f"{a.func}_{a.field}"
-            if a.func == "count" and a.field is None:
-                result[name] = len(rows_n)
-                continue
-            vals = [r.get(a.field) for r in rows_n if r.get(a.field) is not None]
-            nums = [float(v) for v in vals if isinstance(v, (int, float)) and not isinstance(v, bool)]
-            if a.func == "count":
-                result[name] = len(vals)
-            elif a.func == "distinct_count":
-                result[name] = len(set(map(_hashable, vals)))
-            elif a.func == "sum":
-                result[name] = sum(nums) if nums else None
-            elif a.func == "avg":
-                result[name] = (sum(nums) / len(nums)) if nums else None
-            elif a.func == "min":
-                result[name] = min(vals) if vals else None
-            elif a.func == "max":
-                result[name] = max(vals) if vals else None
-            elif a.func == "stddev":
-                # 样本口径（n-1），与 Postgres STDDEV / 联邦 Welford 一致
-                # （R2-M1：此前本地为总体口径，与下推结果分歧）。
-                if len(nums) < 2:
-                    result[name] = None
-                else:
-                    mean = sum(nums) / len(nums)
-                    var = sum((x - mean) ** 2 for x in nums) / (len(nums) - 1)
-                    result[name] = math.sqrt(var)
-        out.append(result)
-    if not group_by and out == [] and not groups:
-        # 空输入的全局聚合仍输出一行（与 SQL SELECT count(*) 一致）
-        result = {}
-        for a in aggs:
-            name = a.func if a.field is None else f"{a.func}_{a.field}"
-            result[name] = 0 if a.func in ("count",) else None
-        out.append(result)
-    return out
-
-
-def _hashable(v: Any) -> Any:
-    if isinstance(v, list):
-        return tuple(v)
-    return v
+        driver.update(row)
+    return driver.finalize_rows(style="compute")
 
 
 __all__ = [

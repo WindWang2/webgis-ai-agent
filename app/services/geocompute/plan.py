@@ -266,6 +266,16 @@ class NodeEvidence(BaseModel):
     failure_codes: list[str] = Field(default_factory=list, max_length=4)
     #: 复用命中时：缓存条目的上游指纹是否与当前计划一致（stale 拒绝证据）。
     checkpoint_verified: Optional[bool] = None
+    # ---- V5 additive（audit 06 §6.1）：异构调度与跨进程复用证据 ----
+    #: 执行后端变体（诚实披露）：durable 节点在 eager（无 Redis）下为
+    #: "in_process_eager"（durable 语义降级为进程内同步执行，必须可见）；
+    #: 正常 broker 派发为 None。
+    backend_variant: Optional[str] = None
+    #: 复用来源（命中时）：in_process | cross_process_index。
+    reuse_source: Optional[str] = None
+    #: 复用被拒时的类型化原因（upstream_changed:<nodes> /
+    #: result_ref_unresolvable）；未尝试复用或命中时为 None。
+    reuse_skipped_reason: Optional[str] = None
 
 
 class ExecutionRunStatus(str, Enum):
@@ -287,6 +297,10 @@ class ExecutionRun(BaseModel):
     wall_time_s: Optional[float] = None
     error_code: Optional[str] = None
     error_message: Optional[str] = None
+    # ---- V5 additive（audit 06 §6.1 step 2）----
+    #: 读取来源：None = 进程内活注册表；"snapshot" = 终态证据快照回放
+    #: （进程重启后的持久化读取路径）。
+    source: Optional[str] = None
 
     def summary_lines(self) -> list[str]:
         """人读摘要（类似 QueryPlan.summary_lines；无秘密）。"""

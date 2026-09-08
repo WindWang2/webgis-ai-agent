@@ -145,20 +145,39 @@ def start_listener() -> bool:
         if client is None:
             return False
 
-        def _loop() -> None:
-            while True:
-                try:
-                    pubsub = client.pubsub(ignore_subscribe_messages=True)
-                    pubsub.subscribe(CHANNEL)
-                    for message in pubsub.listen():
-                        if message and message.get("type") == "message":
-                            _apply_event(str(message.get("data") or ""))
-                except Exception as exc:  # noqa: BLE001 - 断连重试
-                    logger.debug("[cache-broadcast] listener reconnect: %s", exc)
-                    threading.Event().wait(5.0)
-
-        thread = threading.Thread(target=_loop, daemon=True,
+        thread = threading.Thread(target=_listen_loop, args=(client,), daemon=True,
                                   name="cache-invalidation-listener")
         thread.start()
         _started = True
         return True
+
+
+#: 断连后的重连退避（秒）。生产路径默认；测试可注入更小值有界等待。
+_LISTENER_RECONNECT_S = 5.0
+
+
+def _listen_once(client: Any) -> None:
+    """一个 subscribe/listen 纪元：断连/出错时以异常退出，由 _listen_loop 重试。"""
+    pubsub = client.pubsub(ignore_subscribe_messages=True)
+    pubsub.subscribe(CHANNEL)
+    for message in pubsub.listen():
+        if message and message.get("type") == "message":
+            _apply_event(str(message.get("data") or ""))
+
+
+def _listen_loop(client: Any, *, reconnect_wait_s: float = _LISTENER_RECONNECT_S,
+                 stop: Optional[threading.Event] = None) -> None:
+    """监听主循环：任何异常 → 等待 ``reconnect_wait_s`` → 重新订阅（自愈）。
+
+    Redis 断连期间错过的事件不补投 —— 安全（正确性由 ref_lifecycle 权威 +
+    TTL/epoch 语义兜底，广播只是提前失效的增值通知）。``stop`` 置位后于
+    下一次异常/纪元边界退出（仅供测试注入；生产线程随进程存活）。
+    """
+    while stop is None or not stop.is_set():
+        try:
+            _listen_once(client)
+        except Exception as exc:  # noqa: BLE001 - 断连重试
+            logger.debug("[cache-broadcast] listener reconnect: %s", exc)
+            if stop is not None and stop.is_set():
+                break
+            threading.Event().wait(reconnect_wait_s)

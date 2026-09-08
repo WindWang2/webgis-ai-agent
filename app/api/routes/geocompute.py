@@ -51,6 +51,10 @@ class ExecutionNodeIn(BaseModel):
     cancellable: bool = True
     locality_hint: Optional[str] = None
     description: Optional[str] = None
+    # Wave-11（audit 08 §6.2.4）：到既有 Artifact/DatasetVersion 身份的
+    # lineage 边（{ref_id, kind}，≤16）—— 与 api.build_plan_from_json 同一
+    # 契约；缺省时构建侧从参数里的可证源身份诚实派生（或为空）。
+    lineage_inputs: list[Dict[str, str]] = Field(default_factory=list)
 
 
 class ExecutionPlanIn(BaseModel):
@@ -97,6 +101,7 @@ def _plan_from_request(data: ExecutionPlanIn):
                 cancellable=n.cancellable,
                 locality_hint=n.locality_hint,
                 description=n.description,
+                lineage_inputs=n.lineage_inputs[:16],
             )
         )
     return ExecutionPlan(
@@ -109,6 +114,28 @@ def _plan_from_request(data: ExecutionPlanIn):
 
 def _plan_fingerprint(data: ExecutionPlanIn) -> str:
     return _plan_from_request(data).graph_fingerprint()
+
+
+def _run_response(run: Any, owner_scope: Optional[str]) -> Dict[str, Any]:
+    """run 摘要 + Wave-11 附加证据（additive）。
+
+    ``lineage``：无载荷 lineage 投影（节点身份/指纹/摘要，绝无
+    features/geojson/geometry）；``reproducibility``：可复现判定块。两者
+    fail-open：内存注册表与终态证据快照都缺席时省略（诚实缺省）。
+    """
+    payload = run.model_dump()
+    try:
+        from app.services.geocompute.executor import engine
+
+        extras = engine.get_run_extras(run.run_id, owner_scope=owner_scope)
+    except Exception:  # noqa: BLE001 - 附加证据读取绝不影响主应答
+        extras = {}
+    if extras:
+        if isinstance(extras.get("lineage"), list):
+            payload["lineage"] = extras["lineage"]
+        if isinstance(extras.get("reproducibility"), dict):
+            payload["reproducibility"] = extras["reproducibility"]
+    return payload
 
 
 def _authorize_session_write_sync(
@@ -173,9 +200,13 @@ async def execute_execution_plan(
 
     强制认证（无/坏 Bearer → 401）。``session_id`` 归属校验与执行同一
     工作线程顺序执行（校验先于任何节点运行）。
+
+    DIST（round1）：REST 执行与工具路径共用 ``run_plan_sync`` —— 服务端
+    ``GOVERNOR`` 层级准入（tenant/session 作用域 + 全局上限）对两条入口
+    一视同仁；此前本路由直连 ``engine.execute_plan`` 完全绕过治理。
     """
-    from app.services.geocompute.executor import engine
     from app.services.geocompute import graph
+    from app.services.geocompute.api import run_plan_sync
 
     plan = _plan_from_request(body.plan)
     try:
@@ -186,7 +217,7 @@ async def execute_execution_plan(
     def _run():
         if body.session_id:
             _authorize_session_write_sync(body.session_id, user, owner_token)
-        return engine.execute_plan(
+        return run_plan_sync(
             plan, session_id=body.session_id, caller=dict(user)
         )
 
@@ -196,7 +227,9 @@ async def execute_execution_plan(
         raise HTTPException(status_code=422, detail=exc.to_dict())
     except GeoComputeError as exc:
         raise HTTPException(status_code=500, detail=exc.to_dict())
-    return run.model_dump()
+    from app.services.geocompute.executor import owner_scope_for
+
+    return _run_response(run, owner_scope_for(dict(user)))
 
 
 @router.get("/runs/{run_id}", tags=["GeoCompute / 执行平面"])
@@ -204,13 +237,54 @@ async def get_execution_run(
     run_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """查询 run（强制认证 + 读隔离：他人 run 一律 404，避免存在性预言机）。"""
+    """查询 run（强制认证 + 读隔离：他人 run 一律 404，避免存在性预言机）。
+
+    V5：内存未命中时回读终态证据快照（owner 域校验在引擎读取侧）——
+    进程重启后读取不再 404（快照来源以 ``source="snapshot"`` 诚实标注）。
+    Wave-11：应答附加 ``lineage``（无载荷投影）与 ``reproducibility`` 判定
+    （快照回放路径同样携带 —— 读自快照 folded JSON）。
+    """
     from app.services.geocompute.executor import engine, owner_scope_for
 
-    run = engine.get_run(run_id, owner_scope=owner_scope_for(user))
+    owner_scope = owner_scope_for(user)
+    run = engine.get_run(run_id, owner_scope=owner_scope)
     if run is None:
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
-    return run.model_dump()
+    return _run_response(run, owner_scope)
+
+
+@router.post("/plans/runs/{run_id}/cancel", tags=["GeoCompute / 执行平面"])
+async def cancel_execution_run(
+    run_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """请求取消一个 in-process run（V5，audit 06 §6.1 step 2）。
+
+    与 run 读端点同一 authz 纪律：强制认证 + owner 域读隔离（未知 run 与
+    他人 run 一律 404，不泄漏存在性）。取消经 ``engine.cancel_run``（run 级
+    CancellationToken）：未启动节点立即收敛；在飞节点经各自协作 checkpoint
+    收敛；durable 分支级联写 job 行取消（既有机制，无新状态机）。
+
+    进程可见性（DIST round1 如实声明）：在飞 run 注册表是**本进程内存态**
+    （``engine.get_run`` 只见本进程启动的 run）—— 多 worker / 多副本部署
+    下，cancel 请求须落在**正在执行该 run 的进程**才能点燃在飞取消；
+    durable 分支的取消事实落库（AnalysisTask 行），由执行侧探针跨进程
+    收敛，不受此限制。幂等：已终态 / 快照回放的 run 返回 200 且
+    ``cancelled=false`` 并附当前终态 —— 与 durable job 取消的幂等语义一致。
+    """
+    from app.services.geocompute.executor import engine, owner_scope_for
+
+    owner_scope = owner_scope_for(user)
+    run = engine.get_run(run_id, owner_scope=owner_scope)
+    if run is None:
+        raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
+    cancelled = engine.cancel_run(run_id, reason="cancelled via API")
+    return {
+        "run_id": run_id,
+        "cancelled": bool(cancelled),
+        "status": run.status.value,
+        "source": run.source,
+    }
 
 
 @router.get("/runs/{run_id}/summary", tags=["GeoCompute / 执行平面"])

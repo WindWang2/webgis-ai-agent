@@ -201,6 +201,7 @@ class WindowedRasterWriter:
         grid: RasterGridProfile,
         overview_resampling: str = "average",
         window_side: Optional[int] = None,
+        on_chunk_done: Optional[Any] = None,
     ) -> None:
         self.out_path = out_path
         self.profile = profile
@@ -219,6 +220,12 @@ class WindowedRasterWriter:
         self.overviews_built = False
         self._tmp_ctx = None
         self._dst: Optional[rasterio.io.DatasetWriter] = None
+        # Wave 6（audit 05 §7.2）：可选 per-chunk 回调 —— 每窗口
+        # on_chunk_done(descriptor, digest, byte_size)。digest 是 V3 流式
+        # 摘要的按块泛化（同一网格身份种子 + 本窗口字节）；descriptor 由
+        # chunk.py 的网格身份工厂构造（identity_extra=out_path 防同网格
+        # 碰撞）。默认 None = 零行为变化。
+        self._on_chunk_done = on_chunk_done
 
     # – 生命周期 –
     def __enter__(self) -> "WindowedRasterWriter":
@@ -293,6 +300,33 @@ class WindowedRasterWriter:
             )
             self._seeded = True
         self._digest.update(np.ascontiguousarray(arr).tobytes())
+        if self._on_chunk_done is not None:
+            # Wave 6：按块摘要（V3 流式摘要种子的单窗口泛化）+ 可序列化
+            # 块描述子。纯观察回调 —— 观察者故障记 warning 后继续，绝不
+            # 毁掉已写入的合法产物窗口。
+            try:
+                from app.lib.geo_raster.chunk import (
+                    build_chunk_descriptor_from_grid,
+                    chunk_digest,
+                )
+
+                descriptor = build_chunk_descriptor_from_grid(
+                    self.grid,
+                    (int(win.col_off), int(win.row_off), int(win.width), int(win.height)),
+                    dtype=str(arr.dtype),
+                    band_indexes=(int(band),),
+                    source_fingerprint="",
+                    identity_extra=f"writer:{self.out_path}",
+                )
+                self._on_chunk_done(
+                    descriptor,
+                    chunk_digest(self.grid, arr),
+                    int(np.ascontiguousarray(arr).nbytes),
+                )
+            except Exception:  # noqa: BLE001 — 观察者不阻断产物写入
+                logger.warning(
+                    "[raster_windowed] on_chunk_done callback failed", exc_info=True
+                )
         stats_arr_used = stats_arr if stats_arr is not None else arr
         self.stats.update(stats_arr_used, self.profile.get("nodata"))
         # 逐波段累计（V6 §19）：count>1 时每波段真实的 min/max/mean。

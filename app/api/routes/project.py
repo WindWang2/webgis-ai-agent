@@ -17,7 +17,6 @@ from app.services.project_service import ProjectService
 from app.services.workflow_engine import WorkflowEngine
 from app.services.lineage_service import LineageService
 from app.services.spatial_quality_service import SpatialQualityEngine
-from app.services.spatial_repair_pipeline import SpatialRepairPipeline
 from app.agent_pi_bridge import get_tool_registry
 from app.schemas.project_schema import (
     ProjectCreate, ProjectUpdate, ProjectResponse,
@@ -31,6 +30,10 @@ from app.schemas.project_schema import (
     RunReplayRequest, RunResumeRequest,
     WorkflowRerunRequest, MapProductVersionCreate, MapProductVersionResponse,
     MapProductVersionSummary, PromoteArtifactsResponse,
+    ArtifactPinRequest, ArtifactPinResponse, ArtifactCloneResponse,
+    DataGcExecuteRequest,
+    WorkspaceSnapshotSummary, WorkspaceSnapshotListResponse,
+    WorkspaceSnapshotSaveResponse, WorkspaceSnapshotDeleteResponse,
 )
 from app.schemas.pagination import Page, clamp_pagination
 
@@ -1036,7 +1039,13 @@ def repair_spatial_dataset(
     project_id: str,
     payload: Dict[str, Any],
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    # review round-1 SEC CRITICAL-1: the caller-supplied session_id flows into
+    # execute_repair → session_data_manager.store — an unauthenticated write
+    # into ANY session. Write path ⇒ authenticated (same rule as the other
+    # session-writing routes in this file); anonymous callers get 401.
+    user: Dict[str, Any] = Depends(get_current_user),
+    # SEC-08 匿名会话所有权同款凭据：X-Session-Token 请求头（owner_token）。
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
     user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
@@ -1048,19 +1057,104 @@ def repair_spatial_dataset(
     if not geojson_data:
         raise HTTPException(status_code=400, detail="Missing 'geojson' in payload")
 
-    repaired_geojson, logs = SpatialRepairPipeline.repair_dataset(geojson_data, operations)
-    feature_count = (
-        len(repaired_geojson.get("features", []))
-        if isinstance(repaired_geojson, dict) else 0
+    # Wave-4 (audit 08 §6.2.2): the repaired FC is registered as a NEW session
+    # ref (never an overwrite of the source payload) and bounded digest-only
+    # repair evidence is built for the project lineage edge. Tool-context is
+    # unavailable in this route → session registration only happens when the
+    # caller explicitly supplies session_id/source_ref (register_artifact with
+    # honest inputs; absent session → skipped honestly, not fabricated).
+    import asyncio
+
+    from app.services.data_quality.repair_execution import (
+        execute_repair,
+        persist_repair_lineage,
     )
+
+    session_id = str(payload.get("session_id") or "")[:80] or None
+    source_ref = str(payload.get("source_ref") or "")[:80] or None
+    dataset_id = str(payload.get("dataset_id") or "")[:80] or None
+    issue_codes = [str(c)[:64] for c in (payload.get("issue_codes") or [])][:16]
+
+    # review round-1 SEC CRITICAL-1: 会话所有权守卫（SEC-08 同款，本文件
+    # record_map_product_version / run 等会话写路径同一纪律）—— 外来
+    # session_id 一律 404（不泄露存在性）；缺失/无权都到不了 execute_repair。
+    # 本路由是 sync（threadpool，无运行中事件循环）→ asyncio.run 与上方
+    # 既有用法一致。
+    if session_id:
+        asyncio.run(_verify_session_access(session_id, user, owner_token))
+
+    execution = asyncio.run(
+        execute_repair(
+            geojson=geojson_data,
+            operations=operations,
+            session_id=session_id,
+            source_ref=source_ref,
+            issue_codes=issue_codes,
+        )
+    )
+
+    # Project-side evidence: repaired output becomes a project artifact whose
+    # root lineage edge carries repair_evidence (record_lineage). The route is
+    # sync (threadpool) so the DB writes stay off the event loop. Failures are
+    # disclosed honestly and never fail the repair itself.
+    lineage_status = "skipped"
+    lineage_artifact_id = None
+    lineage_error = None
+    try:
+        src_ds_id = src_ds_fp = None
+        if dataset_id:
+            from app.models.project import ProjectDataset
+            from sqlalchemy import select as _select
+
+            row = db.execute(
+                _select(ProjectDataset).where(
+                    ProjectDataset.id == dataset_id,
+                    ProjectDataset.project_id == project.id,
+                )
+            ).scalar_one_or_none()
+            if row is not None:
+                src_ds_id = row.id
+                src_ds_fp = row.version_fingerprint
+            else:
+                lineage_status = "dataset_not_found"
+        if not dataset_id or src_ds_id is not None:
+            lineage_artifact_id = persist_repair_lineage(
+                db,
+                project.id,
+                repair_evidence=execution["repair_evidence"],
+                content_fingerprint=execution["content_digest_after"],
+                crs=execution["output_crs"],
+                storage_ref=execution["repaired_ref"]
+                or execution["content_digest_after"],
+                source_dataset_id=src_ds_id,
+                source_dataset_fingerprint=src_ds_fp,
+            )
+            lineage_status = "recorded"
+    except Exception as exc:  # noqa: BLE001 — 证据落地失败如实披露
+        db.rollback()
+        logger.warning("[repair route] lineage persistence failed: %s", exc)
+        lineage_status = "error"
+        lineage_error = str(exc)[:200]
+
     # Fetch-on-Demand: trim the repaired geometry out of the inline response.
     from app.tools._utils import trim_features
     return {
         "project_id": project_id,
-        "operations_applied": operations,
-        "repair_logs": logs,
-        "feature_count": feature_count,
-        "repaired_geojson_preview": trim_features(repaired_geojson, max_features=50),
+        "operations_applied": execution["operations_applied"],
+        "ops_evidence": execution["ops_evidence"],
+        "repair_logs": execution["logs"],
+        "logs_count": execution["logs_count"],
+        "feature_count": execution["feature_count"],
+        "feature_count_before": execution["feature_count_before"],
+        "repaired_ref": execution["repaired_ref"],
+        "ref_registration_error": execution["ref_registration_error"],
+        "repair_evidence": execution["repair_evidence"],
+        "lineage_status": lineage_status,
+        "lineage_artifact_id": lineage_artifact_id,
+        "lineage_error": lineage_error,
+        "repaired_geojson_preview": trim_features(
+            execution["repaired_geojson"], max_features=50
+        ),
     }
 
 
@@ -1084,6 +1178,341 @@ def get_artifact_lineage(
     # DATA-01: pass project.id so the traversal filters cross-tenant neighbors.
     graph = LineageService.get_lineage_graph(db=db, artifact_id=artifact_id, project_id=project.id)
     return graph
+
+
+# ── Artifact pin / clone（Wave 1 durable artifact store）──────────────────
+# pin：置 head 修订的 pinned_at —— 被任何修订引用的 blob 本就绝不参与
+# promotion-store GC（引用计数保护）；pin 是用户对"这个内容不许动"的显式
+# 表态，独立于引用计数成立。clone：Clone-as-pointer —— 新 Artifact 行指向
+# 同一 content_location，内容寻址下零字节复制（绝不经 BlobStore 拷贝）。
+# 两者都经 get_project_with_auth 做 tenant/owner 鉴权（与 lineage 路由同款：
+# 先按 id 取行拿 project_id，再做项目级 IDOR 校验，失败一律 404 不泄露存在性）。
+
+
+def _load_artifact_or_404(db: Session, artifact_id: str):
+    from app.models.project import Artifact
+
+    artifact = db.execute(
+        select(Artifact).where(Artifact.id == artifact_id)
+    ).scalar_one_or_none()
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return artifact
+
+
+@router.post("/artifacts/{artifact_id}/pin", response_model=ArtifactPinResponse)
+def pin_artifact_endpoint(
+    artifact_id: str,
+    data: Optional[ArtifactPinRequest] = None,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Pin the artifact's head revision (exempt from promotion-store GC)."""
+    user_id, org_id = actor_ids(user)
+    artifact = _load_artifact_or_404(db, artifact_id)
+    from app.services.artifact_revisions import pin_artifact
+
+    result = pin_artifact(
+        db,
+        project_id=artifact.project_id,
+        artifact_id=artifact_id,
+        pinned=bool(data.pinned) if data is not None else True,
+        user_id=user_id,
+        org_id=org_id,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact, project permission, or promotable revision not found",
+        )
+    return {"status": "ok", **result}
+
+
+@router.delete("/artifacts/{artifact_id}/pin", response_model=ArtifactPinResponse)
+def unpin_artifact_endpoint(
+    artifact_id: str,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Unpin (clears pinned_at on the head revision)."""
+    user_id, org_id = actor_ids(user)
+    artifact = _load_artifact_or_404(db, artifact_id)
+    from app.services.artifact_revisions import pin_artifact
+
+    result = pin_artifact(
+        db,
+        project_id=artifact.project_id,
+        artifact_id=artifact_id,
+        pinned=False,
+        user_id=user_id,
+        org_id=org_id,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact, project permission, or promotable revision not found",
+        )
+    return {"status": "ok", **result}
+
+
+@router.post("/artifacts/{artifact_id}/clone", response_model=ArtifactCloneResponse)
+def clone_artifact_endpoint(
+    artifact_id: str,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Clone-as-pointer: a NEW artifact row referencing the SAME content
+    location (no bytes copied — content-addressed BlobStore dedup makes the
+    clone free) plus a revision row reusing the same content_sha256."""
+    user_id, org_id = actor_ids(user)
+    artifact = _load_artifact_or_404(db, artifact_id)
+    from app.services.artifact_revisions import clone_artifact
+
+    clone = clone_artifact(
+        db,
+        project_id=artifact.project_id,
+        artifact_id=artifact_id,
+        user_id=user_id,
+        org_id=org_id,
+    )
+    if clone is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact, project permission, or durable content to clone not found",
+        )
+    clone_meta = clone.metadata_json if isinstance(clone.metadata_json, dict) else {}
+    return ArtifactCloneResponse(
+        status="ok",
+        artifact_id=clone.id,
+        source_artifact_id=artifact_id,
+        name=clone.name,
+        content_location=clone_meta.get("content_location"),
+        content_sha256=clone_meta.get("content_payload_sha256"),
+    )
+
+
+# ── Data usage / GC dry-run surface（Wave 12 quota·retention·GC）──────────
+# 运维面：真实使用量 + 限额 + 保留候选的只读披露（data-usage），以及
+# plan → execute 双端点（dry-run parity 纪律：execute 必须显式 confirm=true，
+# 且对计划逐项以新鲜状态 + 同一保护谓词复检 —— 绝不盲执行计划）。
+# 鉴权与 pin/clone 同款：get_project_with_auth，失败一律 404 不泄露存在性。
+# 结果有界（≤64 items + counts）；服务逻辑全部委托 data_lifecycle.quota。
+
+
+def _bounded_items(items: List[Any], bound: int = 64) -> List[Any]:
+    return list(items)[:bound]
+
+
+@router.get("/{project_id}/data-usage")
+def get_project_data_usage(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """Per-project durable data usage + limits + upcoming retention candidates."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(
+        db=db, project_id=project_id, user_id=user_id, org_id=org_id
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    from app.services.artifact_revisions import project_quota_usage
+    from app.services.data_lifecycle.quota import (
+        ProjectQuotaPolicy,
+        RetentionPolicy,
+        check_quota,
+        plan_retention_cleanup,
+    )
+
+    usage = project_quota_usage(db, project_id)
+    policy = ProjectQuotaPolicy.from_env()
+    retention_policy = RetentionPolicy.from_env()
+    decision = check_quota(db, project_id, 0, policy=policy)
+    retention_plan = plan_retention_cleanup(
+        db, project_id, policy=retention_policy
+    )
+    return {
+        "project_id": project_id,
+        "usage": {
+            "bytes": int(usage.get("bytes", 0)),
+            "artifact_count": int(usage.get("artifact_count", 0)),
+            "revision_bytes": int(usage.get("revision_bytes", 0)),
+        },
+        "limits": {
+            "max_bytes": policy.max_bytes,
+            "max_artifact_count": policy.max_artifact_count,
+            "max_revision_bytes_per_artifact": policy.max_revision_bytes_per_artifact,
+        },
+        "quota": {
+            "allowed": decision.allowed,
+            "reason": decision.reason,
+        },
+        "retention": {
+            "policy": retention_policy.model_dump(),
+            "upcoming_candidates": int(retention_plan.get(
+                "candidate_revision_count", 0)),
+            "upcoming_candidate_blobs": int(retention_plan.get(
+                "candidate_blob_count", 0)),
+        },
+    }
+
+
+@router.post("/{project_id}/data-gc/plan")
+def plan_project_data_gc(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """Dry-run GC plan（只读）：**项目域**保留候选 + 项目过滤后的可删 blob
+    投影（仅 sha 前缀 + 字节）。
+
+    review round-1 SEC CRITICAL-2：per-project 端点绝不运行/披露 GLOBAL
+    promotion-store GC —— 全局清扫只属于周期 sweep
+    （artifact_lifecycle.sweep_aged_artifacts）。这里的「可删 blob」是本项目
+    保留候选中已通过单一保护谓词（``_promotion_blob_protection``，含宽限期）
+    的物理 blob，即本轮保留清扫实际可释放的 promotion-store 字节。
+
+    review round-2 SEC MAJOR-F3（脱敏投影落在路由层，与计划内部结构解耦）：
+    - ``candidate_revisions`` 只披露 {artifact_id, revision_no, age_days,
+      byte_size} —— 绝不携带 revision_id / content_sha256 / content_location；
+    - ``candidate_blobs`` 只披露 {sha_prefix(12), byte_size} —— 绝不携带
+      完整 sha / location；
+    - 快照保护面截断（``protection_scan_truncated``）时本轮跳过 blob 删除，
+      计划如实带出该标志。
+    key/location 字符串一律不出网（sha 前缀 + 字节足够运维决策）。
+    """
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(
+        db=db, project_id=project_id, user_id=user_id, org_id=org_id
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    from app.services.data_lifecycle.quota import plan_retention_cleanup
+
+    retention_plan = plan_retention_cleanup(db, project_id)
+    scoped_deletable = [
+        {
+            "sha_prefix": str(b.get("key") or "")[:16],
+            "bytes": int(b.get("bytes") or 0),
+        }
+        for b in (retention_plan.get("candidate_blobs") or [])
+    ]
+    candidate_revisions = [
+        {
+            "artifact_id": str(c.get("artifact_id") or ""),
+            "revision_no": int(c.get("revision_no") or 0),
+            "age_days": int(c.get("age_days") or 0),
+            "byte_size": int(c.get("byte_size") or 0),
+        }
+        for c in (retention_plan.get("candidate_revisions") or [])
+    ]
+    candidate_blobs = [
+        {
+            "sha_prefix": str(b.get("key") or "")[:12],
+            "byte_size": int(b.get("bytes") or 0),
+        }
+        for b in (retention_plan.get("candidate_blobs") or [])
+    ]
+    return {
+        "project_id": project_id,
+        "scoped_to_project": True,
+        "retention": {
+            "policy": retention_plan.get("policy"),
+            "disabled": bool(retention_plan.get("disabled")),
+            "candidate_revision_count": int(retention_plan.get(
+                "candidate_revision_count", 0)),
+            "candidate_blob_count": int(retention_plan.get(
+                "candidate_blob_count", 0)),
+            "candidate_blob_bytes": int(retention_plan.get(
+                "candidate_blob_bytes", 0)),
+            "protected_counts": retention_plan.get("protected_counts") or {},
+            "protection_scan_truncated": bool(retention_plan.get(
+                "protection_scan_truncated")),
+            "candidate_revisions": _bounded_items(candidate_revisions),
+            "candidate_blobs": _bounded_items(candidate_blobs),
+        },
+        "promotion_store_gc": {
+            "scoped_to_project": True,
+            "grace_hours": (retention_plan.get("policy") or {}).get(
+                "grace_hours"),
+            "deletable_count": len(scoped_deletable),
+            "deletable_bytes": sum(
+                int(b["bytes"]) for b in scoped_deletable),
+            "deletable": _bounded_items(scoped_deletable),
+        },
+    }
+
+
+@router.post("/{project_id}/data-gc/execute")
+def execute_project_data_gc(
+    project_id: str,
+    data: DataGcExecuteRequest,
+    db: Session = Depends(get_db),
+    # review round-1 SEC CRITICAL-2(a)：破坏性路径必须认证（匿名不可触发
+    # 任何删除）。
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Execute a GC round：必须显式 confirm=true（缺省 400）。
+
+    执行的是**当前新鲜状态**的 plan → execute（复检在同一谓词下进行，
+    绝不盲执行调用方缓存的计划）；范围 = **本项目**保留清理 + 孤儿修订行
+    清理（quota.py 的项目过滤 plan/execute pair）。GLOBAL promotion-store
+    GC 不在这里跑（review round-1 SEC CRITICAL-2：项目路由触发全局清扫
+    会放大爆炸半径并删除其他项目的无主 blob）—— 它只属于周期 sweep
+    （``artifact_lifecycle.sweep_aged_artifacts``）。结果有界（≤64 items +
+    counts）。
+    """
+    if not data or not data.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="confirm=true is required to execute data GC (dry-run first)",
+        )
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(
+        db=db, project_id=project_id, user_id=user_id, org_id=org_id
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    from app.services.data_lifecycle.quota import (
+        execute_orphan_revision_cleanup,
+        execute_retention_cleanup,
+        plan_orphan_revision_cleanup,
+        plan_retention_cleanup,
+    )
+
+    retention_plan = plan_retention_cleanup(db, project_id)
+    retention = execute_retention_cleanup(retention_plan, db=db)
+    orphans = execute_orphan_revision_cleanup(
+        plan_orphan_revision_cleanup(db), db=db
+    )
+    skipped = _bounded_items(
+        [
+            {"key": str(s.get("key") or s.get("revision_id") or ""),
+             "reason": str(s.get("reason") or "")[:96]}
+            for s in (retention.get("skipped_protected") or [])
+        ]
+    )
+    return {
+        "project_id": project_id,
+        "retention": {
+            "deleted_revisions": _bounded_items(
+                retention.get("deleted_revisions") or []),
+            "deleted_revision_count": len(retention.get("deleted_revisions") or []),
+            "deleted_blobs": _bounded_items(retention.get("deleted_blobs") or []),
+            "deleted_blob_count": len(retention.get("deleted_blobs") or []),
+            "bytes_freed": int(retention.get("bytes_freed") or 0),
+            "skipped_protected_count": len(
+                retention.get("skipped_protected") or []),
+            "skipped_protected": _bounded_items(
+                retention.get("skipped_protected") or []),
+        },
+        "orphan_revisions": {
+            "deleted_count": int(orphans.get("deleted_count") or 0),
+            "deleted_revision_ids": _bounded_items(
+                orphans.get("deleted_revision_ids") or []),
+        },
+        "skipped_protected": skipped,
+    }
 
 
 # ── 项目制图记忆管理（ADR-0069 / spec 开放问题 2）─────────────────────────
@@ -1182,3 +1611,243 @@ def activate_carto_fact(
         raise HTTPException(status_code=404, detail="Fact not found in this project")
     db.commit()
     return {"status": "active", "fact": _carto_fact_row(fact)}
+
+
+# ── Workspace V4 — durable workspace snapshots (Wave 2, audit 02 §6) ──────
+# 快照是 manifest + 持久指针；载荷字节只在 Wave-1 BlobStore 一份。全部
+# 路由强制认证（写路径 401 / 越权一律 404 不泄露存在性）+ 项目鉴权
+# （get_project_with_auth）+ 会话所有权（SEC-08 同款 _verify_session_access
+# —— session_id 是跨租户读写原语，照 map-product lifecycle 先例守卫）。
+
+
+class WorkspaceSnapshotSaveRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    label: str = Field(default="", max_length=96)
+    materialize: Literal["none", "claimed", "all"] = "none"
+
+
+class WorkspaceSnapshotRestoreRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    mode: Literal["verify", "register"] = "verify"
+
+
+class WorkspaceSnapshotCloneRequest(BaseModel):
+    source_session_id: str = Field(min_length=1, max_length=128)
+    target_session_id: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/{project_id}/workspace/snapshots", response_model=WorkspaceSnapshotSaveResponse)
+async def save_workspace_snapshot(
+    project_id: str,
+    req: WorkspaceSnapshotSaveRequest,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Save a durable workspace snapshot for a live session.
+
+    ``materialize="claimed"|"all"`` additionally writes live payloads through
+    the durable BlobStore and stamps them ``persistence_tier="workspace"``
+    (GC interlock). Session ownership is verified first (404 without
+    existence leak); the snapshot lives under the project root and survives
+    session purge/TTL sweeps.
+    """
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _verify_session_access(req.session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    snapshot = await get_workspace_snapshot_service().save_snapshot(
+        req.session_id,
+        label=req.label,
+        project_id=project_id,
+        materialize=req.materialize,
+        owner_id=user_id or "",
+    )
+    if snapshot is None:
+        raise HTTPException(status_code=500, detail="Workspace snapshot persistence failed")
+    return WorkspaceSnapshotSaveResponse(
+        project_id=project_id,
+        home="project" if snapshot.project_id else "session",
+        snapshot_id=snapshot.snapshot_id,
+        label=snapshot.label,
+        durable_pointers=len(snapshot.durable_pointers),
+        materialize_skipped=snapshot.materialize_skipped,
+        snapshot=snapshot.model_dump(mode="json"),
+    )
+
+
+@router.get("/{project_id}/workspace/snapshots", response_model=WorkspaceSnapshotListResponse)
+async def list_workspace_snapshots(
+    project_id: str,
+    session_id: Optional[str] = Query(None, max_length=128),
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Bounded snapshot list (≤50) for the project (plus the optional
+    session's legacy session-scoped snapshots, honestly labeled ``home``)."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if session_id:
+        # 会话域快照携带 ref 归属信息 —— 跨租户 session_id 一律 404。
+        await _verify_session_access(session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    items = await get_workspace_snapshot_service().list_snapshots(
+        session_id or "", project_id=project_id
+    )
+    return WorkspaceSnapshotListResponse(
+        project_id=project_id,
+        count=len(items),
+        items=[WorkspaceSnapshotSummary(**item) for item in items],
+    )
+
+
+@router.get("/{project_id}/workspace/snapshots/{snapshot_id}")
+async def inspect_workspace_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    session_id: str = Query(..., max_length=128),
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Inspect = the verify report (liveness + pointer digest integrity).
+
+    Probes run against the caller's own session — the session gate doubles
+    as the ref-id leak guard (audit §4.3)."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _verify_session_access(session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    report = await get_workspace_snapshot_service().verify_snapshot(
+        session_id, snapshot_id, project_id=project_id
+    )
+    if not report.exists:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return report.to_dict()
+
+
+@router.post("/{project_id}/workspace/snapshots/{snapshot_id}/restore")
+async def restore_workspace_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    req: WorkspaceSnapshotRestoreRequest,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Restore a snapshot into a live session.
+
+    ``verify`` reports only; ``register`` rebinds the artifact ledger AND
+    re-materializes payloads for contracts with durable pointers
+    (digest-verified read before write; failures degrade honestly to
+    ``expired`` + ``degraded`` — dead refs are never marked valid)."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _verify_session_access(req.session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    result = await get_workspace_snapshot_service().restore_snapshot(
+        req.session_id, snapshot_id, mode=req.mode, project_id=project_id
+    )
+    error = str(result.get("error") or "")
+    if "not found" in error:
+        raise HTTPException(status_code=404, detail=error)
+    if "unknown mode" in error:
+        raise HTTPException(status_code=400, detail=error)
+    return result
+
+
+@router.post("/{project_id}/workspace/snapshots/{snapshot_id}/clone")
+async def clone_workspace_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    req: WorkspaceSnapshotCloneRequest,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Clone a snapshot (manifest copy; cross-session ref semantics are
+    disclosed by verify, never fabricated). BOTH sessions must belong to
+    the caller — the source gate is 404 without existence leak."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _verify_session_access(req.source_session_id, user, owner_token)
+    await _verify_session_access(req.target_session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    clone = await get_workspace_snapshot_service().clone_snapshot(
+        req.source_session_id,
+        snapshot_id,
+        req.target_session_id,
+        project_id=project_id,
+        owner_id=user_id or "",
+    )
+    if clone is None:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return clone
+
+
+@router.delete("/{project_id}/workspace/snapshots/{snapshot_id}", response_model=WorkspaceSnapshotDeleteResponse)
+async def delete_workspace_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    session_id: str = Query(..., max_length=128),
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Delete exactly one snapshot file (bounded unlink; never a directory
+    sweep). Snapshots created by another user within the project are
+    refused at the service layer."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await _verify_session_access(session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    deleted = await get_workspace_snapshot_service().delete_snapshot(
+        session_id, snapshot_id, project_id=project_id, owner_id=user_id or ""
+    )
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return WorkspaceSnapshotDeleteResponse(
+        snapshot_id=deleted["snapshot_id"], home=deleted["home"]
+    )
+
+
+@router.get("/{project_id}/workspace")
+async def describe_workspace(
+    project_id: str,
+    session_id: Optional[str] = Query(None, max_length=128),
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """Workspace inventory (§十五): snapshot count, artifact summary by
+    lifecycle state, layer refs, durable coverage %."""
+    user_id, org_id = actor_ids(user)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if session_id:
+        await _verify_session_access(session_id, user, owner_token)
+    from app.services.workspace.snapshot import get_workspace_snapshot_service
+
+    return await get_workspace_snapshot_service().describe_workspace(
+        session_id or "", project_id=project_id
+    )

@@ -25,6 +25,7 @@ PR_LANE_PERF_FILES = (
     "test_perf_mapspec_mutation_cost.py",
     "test_dispatch_stall_perf.py",
     "test_perf_large_workspace.py",
+    "test_data_control_plane_v5.py",
     # ADR-0104 Wave 11：墙钟断言统一 perf 车道（原散落在 --cov 主车道，
     # 与 #664 隔离策略冲突；接线见 production.yml test-perf 与 ci-local.sh）
     "test_gis_registry_perf.py",

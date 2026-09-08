@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, BigInteger, ForeignKey, Index, JSON,
-    CheckConstraint, UniqueConstraint
+    CheckConstraint, UniqueConstraint, text
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -68,7 +68,10 @@ class ProjectDataset(Base):
         # Cheap "active datasets for a project" lookup that skips tombstones.
         Index("idx_project_dataset_pid_detached", "project_id", "detached_at"),
         CheckConstraint(
-            "quality_status IN ('unchecked', 'valid', 'invalid', 'warning', 'unknown', 'pending', 'verified')",
+            # Wave-4（审计 08 §6.2.3）：quality_status 不再冻结在 "unchecked"
+            # —— 摄入/剖析后的 compose_status 四态（valid/warning/repairable/
+            # blocked）会回写；'repairable'/'blocked' 是 0028 追加值。
+            "quality_status IN ('unchecked', 'valid', 'invalid', 'warning', 'unknown', 'pending', 'verified', 'repairable', 'blocked')",
             name="ck_project_dataset_quality_status",
         ),
     )
@@ -270,6 +273,12 @@ class ArtifactLineage(Base):
     # Denormalized content fingerprint of the child artifact for cheap duplicate
     # detection along the lineage edge.
     content_fingerprint = Column(String(64), nullable=True)
+    # Wave-4 bounded repair evidence (audit 08 §6.2.2): digest-only facts about
+    # an executed repair — {plan_id, ops_applied[], op_evidence[],
+    # issue_codes_addressed[], before/after feature_count + content digest}.
+    # Links stay links: NO feature payloads ever land here. NULL = edge was
+    # not produced by a repair execution.
+    repair_evidence = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
@@ -282,6 +291,74 @@ class ArtifactLineage(Base):
     artifact = relationship("Artifact", foreign_keys=[artifact_id], back_populates="lineages", lazy="selectin")
     parent_artifact = relationship("Artifact", foreign_keys=[parent_artifact_id], back_populates="parent_lineages", lazy="selectin")
     workflow_run = relationship("WorkflowRun", foreign_keys=[workflow_run_id], back_populates="lineages", lazy="selectin")
+
+
+class ArtifactRevision(Base):
+    """产物内容版本账本（Wave 1 durable artifact store，append-only）。
+
+    每次晋升物化的内容记为一行不可变修订：content_sha256 是**载荷摘要**
+    （payload digest，主键语义），content_location 指向 BlobStore（唯一
+    内容持久后端）中的 blob。同 (artifact_id, content_sha256) 幂等复用
+    同一行 —— 重晋升不产生重复修订。``Artifact.metadata_json`` 里的
+    content_status/content_location 仍是 head 指针（向后兼容），本表是
+    append-only 的完整历史与 GC 引用计数真相。
+    """
+    __tablename__ = "artifact_revisions"
+
+    id = Column(String(255), primary_key=True, default=lambda: str(uuid.uuid4()))
+    artifact_id = Column(String(255), ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False)
+    # 同 artifact 内单调递增（1 起）；新修订 = head_revision().revision_no + 1
+    revision_no = Column(Integer, nullable=False, default=1)
+    # 载荷 sha256（= BlobStore 键）；同内容跨 artifact 共享同一 blob
+    content_sha256 = Column(String(64), nullable=False)
+    # BlobStore 内相对位置（如 <shard4>/<sha256>.json / <shard4>/<sha256>.bin）
+    content_location = Column(String(500), nullable=False)
+    # json | binary（有界集合，见 CheckConstraint）
+    content_type = Column(String(20), nullable=False, default="json")
+    byte_size = Column(Integer, nullable=False, default=0)
+    # 产生该内容的 run（可空：REST 重晋升等无 run 上下文路径）。无 FK ——
+    # 修订是持久证据，run 行删除不连带销毁内容历史。
+    workflow_run_id = Column(String(255), nullable=True)
+    # 用户 pin（置为 UTC now；unpin 清空）。pinned 的修订所引用的 blob
+    # 绝不参与 GC（无论引用计数）。
+    pinned_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # 有界投影（≤16 键约定）：content_fingerprint 等次级索引证据。
+    # DB 列名 "metadata"；属性名 revision_metadata —— `metadata` 是
+    # SQLAlchemy Declarative 保留字（与 Artifact.metadata_json 同款处理）。
+    revision_metadata = Column("metadata", JSON, nullable=True)
+
+    @property
+    def pinned(self) -> bool:
+        return self.pinned_at is not None
+
+    __table_args__ = (
+        # 内容身份幂等：同 artifact 同内容只有一行（重晋升复用，不 bump）。
+        # 唯一组合索引同时服务 artifact 前缀扫描（0020 约定：不建冗余
+        # 左前缀单列索引）。
+        Index("uq_artifact_revision_content", "artifact_id", "content_sha256", unique=True),
+        # 修订号单调唯一（0030）：并发不同内容修订读到同一 head 时不得产生
+        # 重复 revision_no —— record_revision 撞此约束重读 head 重试一次。
+        Index("uq_artifact_revision_no", "artifact_id", "revision_no", unique=True),
+        Index("idx_artifact_revision_sha", "content_sha256"),
+        Index("idx_artifact_revision_run", "workflow_run_id"),
+        # round-1 review PERF MAJOR-2：GC / 保留扫描的三条覆盖索引（0031 同步
+        # 建，存在性守卫）—— content_location = 引用计数 IN 扫描；
+        # created_at = 保留策略超龄 cutoff 谓词（裸列，无函数包裹）；
+        # pinned_at = pin 保护扫描（PG 部分索引只含未 pin 为 NULL 的行；
+        # SQLite 退化普通索引 —— 列元组一致，漂移守卫按列元组比对）。
+        Index("idx_artifact_revision_content_location", "content_location"),
+        Index("idx_artifact_revision_created_at", "created_at"),
+        Index(
+            "idx_artifact_revision_pinned_at",
+            "pinned_at",
+            postgresql_where=text("pinned_at IS NOT NULL"),
+        ),
+        CheckConstraint("revision_no >= 1", name="ck_artifact_revision_no_pos"),
+        CheckConstraint(
+            "content_type IN ('json', 'binary')", name="ck_artifact_revision_content_type"
+        ),
+    )
 
 
 class CartoProjectFact(Base):
@@ -413,6 +490,7 @@ __all__ = [
     "WorkflowRevision",
     "WorkflowRun",
     "Artifact",
+    "ArtifactRevision",
     "ArtifactLineage",
     "CartoProjectFact",
     "MapProductVersion",

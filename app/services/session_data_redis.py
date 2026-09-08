@@ -37,6 +37,56 @@ L1_TTL_SECONDS = 2.0
 L1_MAX_SESSIONS = 512  # bound memory; evict oldest entries beyond this
 
 
+# ─── R4b（audit 07 §6.1）：ref payload GET+parse 的 per-key singleflight ────
+# get_shared 的 miss 路径（11MB 级 Redis GET + json.loads ≈ 171ms/50k 要素）
+# 此前无去重：同一 (session, ref) 的并发解引用各自全量拉取+解析。此处的
+# asyncio singleflight（复用 mvt.SingleFlightManager，mvt 已在 ref 路径的
+# import 图内，无新依赖）让并发 miss 共享一次 GET+parse。纯优化：
+# - 等待者超过 waiter 预算/过载 → 直接自行计算（诚实降级，绝不排队卡死）；
+# - leader 崩溃（异常共享给等待者）→ 各自降级为直接重取一次；
+# - 正确性仍由 ref_payload_cache 的 epoch guard（put_if_current）保证 ——
+#   共享结果只是少算一次，绝不复活被失效的 payload（TTL 5s + epoch 不变）。
+
+
+_ref_fetch_flight = None
+
+
+def _get_ref_fetch_flight():
+    """惰性单例：ref payload GET+parse 的 per-key 去重管理器。"""
+    global _ref_fetch_flight
+    if _ref_fetch_flight is None:
+        from app.services.mvt import SingleFlightManager
+
+        _ref_fetch_flight = SingleFlightManager(max_inflight=128)
+    return _ref_fetch_flight
+
+
+def _reset_ref_fetch_flight_for_tests() -> None:
+    """仅供测试使用：清空 singleflight 单例。"""
+    global _ref_fetch_flight
+    _ref_fetch_flight = None
+
+
+async def ref_fetch_shared(store: "RedisSessionStore", session_id: str,
+                           ref_id: str, data_key: str):
+    """一次 (session, ref) 的 Redis GET + parse，per-key singleflight 去重。
+
+    返回 ``(parsed, raw_len, fetch_epoch)``（epoch 在飞行体内捕获，见
+    ``_fetch_shared_payload``）；非 JSON payload 返回 ``(raw_str, None,
+    fetch_epoch)``（照原样返回、不入缓存，与既有语义一致）；键不存在返回
+    ``None``。共享构建失败（leader 异常传播给等待者）时降级为直接重取一次
+    —— 崩溃不传染，重复计算有界。
+    """
+    flight = _get_ref_fetch_flight()
+    key = ("ref_payload", session_id, ref_id)
+    try:
+        return await flight.run(
+            key, lambda: store._fetch_shared_payload(session_id, ref_id, data_key)
+        )
+    except Exception:  # noqa: BLE001 - leader 崩溃/共享失败 → 诚实降级直接重取
+        return await store._fetch_shared_payload(session_id, ref_id, data_key)
+
+
 class RedisSessionStore(BaseSessionStore):
 
     """Session-level data store backed by Redis with cursor support (LRU)."""
@@ -531,6 +581,34 @@ class RedisSessionStore(BaseSessionStore):
                 out[s] = ref.decode() if isinstance(ref, bytes) else ref
         return out
 
+    async def _fetch_shared_payload(self, session_id: str, ref_id: str, data_key: str):
+        """R4b 单飞共享单元：一次 Redis GET + json.loads。
+
+        返回 ``(parsed, raw_len, fetch_epoch)``；非 JSON payload 返回
+        ``(raw_str, None, fetch_epoch)``（照原样返回、不入缓存）；键不存在
+        返回 ``None``。Redis 异常原样抛出（由 get_shared 的既有兜底转
+        cache-miss 语义）。
+
+        CONC MAJOR-1（audit round1）：``fetch_epoch`` 在**飞行体内、读源前**
+        捕获。等待者共享的是 leader 的取回结果，但 leader 的 GET 可能早于
+        一次 overwrite/invalidate —— 等待者自己的（较新）epoch 若直接用于
+        入缓存，会把 leader 的**前覆写 payload** 复活到新 epoch 下。调用方
+        以 ``min(own_epoch, fetch_epoch)`` 入缓存：取回早于本线程 epoch 的
+        结果必然对不上当前 epoch → put_if_current 拒收。
+        """
+        from app.services.ref_payload_cache import ref_payload_cache
+
+        fetch_epoch = ref_payload_cache.current_epoch(session_id, ref_id)
+        raw = await self._r.get(data_key)
+        if raw is None:
+            return None
+        raw_str = raw.decode() if isinstance(raw, bytes) else raw
+        try:
+            data = await asyncio.to_thread(json.loads, raw_str)
+        except Exception:  # noqa: BLE001 非 JSON payload 原样返回（与 get() 同语义），不入缓存
+            return (raw_str, None, fetch_epoch)
+        return (data, len(raw_str), fetch_epoch)
+
     async def get_shared(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
         """P-1（#874）：共享只读读取 —— 进程内已解析 payload 缓存。
 
@@ -539,6 +617,11 @@ class RedisSessionStore(BaseSessionStore):
         命中返回同一对象（只读约定）；miss 时读取一次并按原始字节长度入
         缓存（TTL 5s 兜底跨副本写入）。TTL/recency 刷新 pipeline 只在 miss
         路径执行（命中路径零 Redis 往返）。
+
+        R4b（audit 07 §6.1）：miss 路径的 GET+parse 经 per-(session, ref)
+        singleflight 去重（``ref_fetch_shared``）—— 并发 miss 共享一次拉取。
+        纯优化：epoch 捕获仍在读源之前、put_if_current 仍在同一调用方收尾，
+        失效语义与单飞接入前完全一致。
         """
         from app.services.ref_payload_cache import ref_payload_cache
         try:
@@ -555,15 +638,19 @@ class RedisSessionStore(BaseSessionStore):
             # M7：读取源前捕获失效 epoch；解析耗时窗口内若发生
             # overwrite/delete（invalidate 递增 epoch），旧 payload 不再入缓存。
             epoch = ref_payload_cache.current_epoch(session_id, ref_id)
-            raw = await self._r.get(data_key)
-            if raw is None:
+            fetched = await ref_fetch_shared(self, session_id, ref_id, data_key)
+            if fetched is None:
                 return None
-            raw_str = raw.decode() if isinstance(raw, bytes) else raw
-            try:
-                data = await asyncio.to_thread(json.loads, raw_str)
-            except Exception:  # noqa: BLE001 非 JSON payload 原样返回（与 get() 同语义），不入缓存
-                return raw_str
-            ref_payload_cache.put_if_current(session_id, ref_id, data, len(raw_str), epoch)
+            data, raw_len, fetch_epoch = fetched
+            if raw_len is None:
+                return data  # 非 JSON：原样返回，不入缓存
+            # CONC MAJOR-1（audit round1）：等待者可能共享到 leader 在更早
+            # epoch 发起的取回（leader GET 阻塞期间发生 overwrite）—— 用
+            # min(own, fetch) 入缓存，旧取回必然对不上当前 epoch 被拒收，
+            # 绝不复活前覆写 payload。
+            ref_payload_cache.put_if_current(
+                session_id, ref_id, data, raw_len, min(epoch, fetch_epoch)
+            )
 
             # Best-effort TTL/recency 刷新（仅 miss 路径；失败不转为 miss）。
             try:

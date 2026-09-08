@@ -42,6 +42,11 @@ BASE_STORAGE_DIR = (
 
 LABEL_LAYER_SUFFIX = "-label"
 
+# Wave 2（Workspace V4）：项目级快照根目录名（DATA_DIR/workspaces）——
+# sweep 白名单条目（见 _session_storage_entries）。单一命名真相：与
+# app/services/workspace/snapshot.py 的 _WORKSPACES_DIRNAME 一致。
+_WORKSPACES_DIR_NAME = "workspaces"
+
 # Revision 保留上限：每次 save 都会生成一份完整快照 mapspec_rev_<ms>.json。
 # 无上限时磁盘随会话生命周期无界增长（审计 Phase 8 发现）。裁剪到最近 N 份。
 MAPSPEC_REV_RETENTION = 20
@@ -493,6 +498,11 @@ def _session_storage_entries(base: Path):
 
     安全边界：只处理名字形如常规会话 id（[A-Za-z0-9._-]+ 且非 . / .. 开头）
     的目录。名字异常的条目不属于会话布局，不猜语义、不碰。
+
+    Wave 2（Workspace V4）sweep 白名单：``workspaces`` 是项目级快照根
+    （DATA_DIR/workspaces）。常规部署下它在 BASE_STORAGE_DIR 之外；当
+    MAPSPEC_STORAGE_DIR 被配置成 DATA_DIR 时它会出现在 base 之下 ——
+    名字像会话 id 但不是会话目录，永不过期、永不参与会话清扫。
     """
     import re
 
@@ -506,6 +516,8 @@ def _session_storage_entries(base: Path):
             continue
         name = entry.name
         if name.startswith(".") or not valid.match(name):
+            continue
+        if name == _WORKSPACES_DIR_NAME:
             continue
         yield Path(entry.path)
 

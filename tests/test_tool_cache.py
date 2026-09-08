@@ -8,7 +8,7 @@ def test_make_cache_key_deterministic():
     k1 = make_cache_key("heatmap_data", {"a": 1, "b": 2})
     k2 = make_cache_key("heatmap_data", {"a": 1, "b": 2})
     assert k1 == k2
-    assert k1.startswith("tool_cache:v1:")
+    assert k1.startswith("tool_cache:v2:")
     # 16 hex chars after the prefix
     assert len(k1.split(":")[-1]) == 16
 
@@ -30,7 +30,7 @@ def test_make_cache_key_nonjson_falls_back_to_str():
     from datetime import datetime
     # Should NOT raise — default=str handles datetime, set, etc.
     k = make_cache_key("x", {"t": datetime(2026, 5, 27)})
-    assert k.startswith("tool_cache:v1:")
+    assert k.startswith("tool_cache:v2:")
 
 
 def test_make_cache_key_skips_ref_string():

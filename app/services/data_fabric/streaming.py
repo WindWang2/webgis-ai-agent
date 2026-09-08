@@ -6,7 +6,8 @@
 
 - 谓词过滤复用 data_fabric 的类型化谓 AST（SQL 三值逻辑对齐）——
   本模块绝不自造第二套语义；
-- 聚合使用标量累加器（O(组数) 峰值内存，与 V2 本地聚合同口径）；
+- 聚合使用统一标量累加器（``query.accumulators``，O(组数) 峰值内存 ——
+  与 compute_aggregates / Arrow lane 共用同一语义真相）；
 - ``batch_size_for`` 按 ResourceGovernor 用量余弦折半（有下界），
   无 governor 时用常数缺省 —— 压力感知但不虚构精度；
 - 协作点：每个批次边界调用可选 ``on_batch``（取消/deadline checkpoint
@@ -17,21 +18,45 @@ from __future__ import annotations
 import math
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
+from app.services.data_fabric.query.accumulators import AggregateDriver
+
 #: 缺省与下界批大小（压力感知折半的下限）。
 DEFAULT_BATCH_SIZE = 1024
 MIN_BATCH_SIZE = 64
 
 
+def batch_checkpoint_hook(token: Any) -> Callable[[int], None]:
+    """取消 token → ``on_batch`` 批边界钩子。
+
+    ``token`` 为 ``app.lib.cancellation.CancellationToken``（鸭子类型：仅需
+    ``raise_if_cancelled()``）。每个批次边界调用一次；已取消 → 抛
+    ``OperationCancelled`` 中止流（不产出部分批次）。本模块保持与具体取消
+    原语解耦 —— 只约定这一方法。
+    """
+
+    def _on_batch(_count: int) -> None:
+        token.raise_if_cancelled()
+
+    return _on_batch
+
+
 def batch_size_for(governor: Optional[Any] = None,
                    governor_path: Optional[str] = None) -> int:
-    """压力感知批大小：bytes 用量逼近限额 → 批大小折半（下界 64）。"""
+    """压力感知批大小：bytes 用量逼近限额 → 批大小折半（下界 64）。
+
+    限额读取走公开的 ``governor.limits_for(path)``（Wave 5）；
+    仅有私有 ``_find`` 的旧形状（测试 fake / 旧 governor）向后兼容回退。
+    """
     if governor is None or governor_path is None:
         return DEFAULT_BATCH_SIZE
     try:
         usage = governor.usage_full(governor_path)
         limits = None
-        scope = governor._find(governor_path) if hasattr(governor, "_find") else None
-        limits = getattr(scope, "limits", None)
+        limits_for = getattr(governor, "limits_for", None)
+        if callable(limits_for):
+            limits = limits_for(governor_path)
+        elif hasattr(governor, "_find"):
+            limits = getattr(governor._find(governor_path), "limits", None)
         if usage is None or limits is None or limits.max_bytes is None:
             return DEFAULT_BATCH_SIZE
         ratio = usage.bytes / float(limits.max_bytes)
@@ -167,84 +192,20 @@ def stream_aggregate(
     batch_size: int = DEFAULT_BATCH_SIZE,
     on_batch: Optional[Callable[[int], None]] = None,
 ) -> Iterator[Dict[str, Any]]:
-    """流式分组聚合（标量累加器；峰值内存 O(组数)，非 O(行数)）。
+    """流式分组聚合（统一标量累加器；峰值内存 O(组数)，非 O(行数)）。
 
     逐批产出**当前**分组快照会破坏语义 —— 聚合是终结操作：本函数在
     输入耗尽后一次性产出分组行（iter_batches 仅作为批边界协作点）。
+    值语义委托 ``query.accumulators.AggregateDriver``（与 compute_aggregates /
+    Arrow lane 的唯一真相）；stream 行形状（恒带 ``count``、``func_*`` 命名、
+    空输入零行）由此处保持。
     """
 
-    groups: Dict[Tuple, Dict[str, Any]] = {}
+    driver = AggregateDriver(aggregates, group_by, emit_empty_global_row=False)
     for batch in iter_batches(rows, batch_size, on_batch=on_batch):
         for row in batch:
-            props = row.get("properties") or row
-            key = tuple(props.get(g) for g in group_by)
-            acc = groups.get(key)
-            if acc is None:
-                acc = {"__key__": key, "__count__": 0}
-                groups[key] = acc
-            acc["__count__"] += 1
-            for agg in aggregates:
-                name = f"__agg_{agg.get('func')}_{agg.get('field')}"
-                _accumulate(acc, name, agg, props)
-    for acc in groups.values():
-        out: Dict[str, Any] = {g: acc["__key__"][i] for i, g in enumerate(group_by)}
-        out["count"] = acc["__count__"]
-        for agg in aggregates:
-            name = f"__agg_{agg.get('func')}_{agg.get('field')}"
-            out[f"{agg.get('func')}_{agg.get('field') or '*'}"] = _finalize(acc.get(name), agg.get("func"))
-        yield out
-
-
-def _accumulate(acc: Dict[str, Any], name: str, agg: Dict[str, Any], props: Dict[str, Any]) -> None:
-    func = agg.get("func")
-    field = agg.get("field")
-    v = props.get(field)
-    if func == "count":
-        # count(field) 与本地聚合器同语义：非 null 计数（评审 MINOR F6）。
-        if field is not None and v is not None:
-            acc[name] = acc.get(name, 0) + 1
-        return
-    if func == "distinct_count":
-        seen = acc.setdefault(name, set())
-        if v is not None:
-            seen.add(v)
-        return
-    if v is None or isinstance(v, bool):
-        # bool 不参与数值聚合（与本地聚合器同一排除口径）。
-        return
-    state = acc.setdefault(name, {"n": 0, "sum": 0.0, "sumsq": 0.0, "min": None, "max": None})
-    try:
-        fv = float(v)
-    except (TypeError, ValueError):
-        return
-    state["n"] += 1
-    state["sum"] += fv
-    state["sumsq"] += fv * fv
-    state["min"] = fv if state["min"] is None else min(state["min"], fv)
-    state["max"] = fv if state["max"] is None else max(state["max"], fv)
-
-
-def _finalize(state: Any, func: Optional[str]) -> Any:
-    if func == "distinct_count":
-        return len(state) if isinstance(state, set) else 0
-    if not isinstance(state, dict) or state.get("n", 0) == 0:
-        return None
-    n, s = state["n"], state["sum"]
-    if func == "sum":
-        return s
-    if func == "avg":
-        return s / n
-    if func == "min":
-        return state["min"]
-    if func == "max":
-        return state["max"]
-    if func == "stddev":
-        if n < 2:
-            return None  # 样本口径与 PG STDDEV_SAMP 对齐：n<2 → None
-        mean = s / n
-        var = max(0.0, state["sumsq"] / n - mean * mean)
-        return math.sqrt(var * n / (n - 1))  # 样本口径
-    return None
+            driver.update(row.get("properties") or row)
+    yield from driver.finalize_rows(style="stream")
 
 
 def stream_partition(

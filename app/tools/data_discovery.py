@@ -22,6 +22,19 @@ from app.tools.upload_tools import _resolve_session_id
 logger = logging.getLogger(__name__)
 
 
+def _caller_identity() -> tuple[Optional[str], Optional[int]]:
+    """(user_id, org_id) from the tool execution context（project_tools 同款）。"""
+    try:
+        from app.services.provenance.context import get_tool_execution_context
+
+        ctx = get_tool_execution_context()
+        if ctx is not None:
+            return ctx.user_id, ctx.org_id
+    except Exception:  # noqa: BLE001 — context unavailable → anonymous
+        pass
+    return None, None
+
+
 def register_data_discovery_tools(registry: ToolRegistry) -> None:
     """注册数据发现工具集。"""
 
@@ -100,12 +113,18 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         param_descriptions={
             "ref_id": "数据引用（list_datasets 返回的 id，形如 ref:geojson-…）",
             "deep": "是否深扫（默认 false 用轻量描述符；true 才有均值/唯一值统计）",
+            "propose_repairs": "是否附修复提案（plan-only：只映射诊断码 → 修复操作词表，绝不执行）",
+            "project_id": "可选：项目 ID（配合 dataset_id 把质量结论回写到 ProjectDataset.quality_status）",
+            "dataset_id": "可选：项目数据集 ID（ProjectDataset 行；会话路径无数据集行时诚实跳过）",
         },
     )
     async def profile_dataset(
         ref_id: str,
         deep: bool = False,
+        propose_repairs: bool = False,
         session_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        dataset_id: Optional[str] = None,
     ) -> dict:
         from app.lib.data.quality import run_quality_checks
         from app.services.data_profile.profiler import get_dataset_profiler
@@ -124,13 +143,46 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
         from app.lib.data.large_data import access_policy, classify_features
 
         size_class = classify_features(profile.vector.row_count if profile.vector else None)
-        return {
+        out = {
             "success": True,
             "profile": profile.summary(),
             "quality": report.summary(),
             "size_class": size_class.value,
             "access_policy": access_policy(size_class).value,
         }
+        if propose_repairs:
+            # Wave-4 缝（审计 R5）：质量诊断 → 修复提案（plan-only，不执行）
+            from app.services.data_ingest.repair_planning import propose_repairs
+
+            out["repair_proposals"] = [
+                p.to_bounded_dict() for p in propose_repairs(report)
+            ]
+        if project_id and dataset_id:
+            # Wave-4 质量状态回写（audit 08 §6.2 建议 3）：项目数据集身份在场
+            # 时把 compose_status 结论落到 ProjectDataset.quality_status；纯
+            # 会话路径无数据集行 → 诚实跳过（不虚构）。失败披露，不阻断剖析。
+            try:
+                from app.core.database import SessionLocal
+                from app.services.project_service import ProjectService
+
+                user_id, org_id = _caller_identity()
+                with SessionLocal() as db:
+                    written = ProjectService.record_dataset_quality(
+                        db,
+                        project_id,
+                        dataset_id,
+                        report,
+                        user_id=user_id,
+                        org_id=org_id,
+                    )
+                out["quality_status_recorded"] = written
+                if written is None:
+                    out["quality_status_note"] = "skipped (unauthorized or dataset row not found)"
+            except Exception as exc:  # noqa: BLE001 — 回写是增值，不阻断剖析
+                logger.warning("quality_status write-back failed: %s", exc)
+                out["quality_status_recorded"] = None
+                out["quality_status_error"] = str(exc)[:200]
+        return out
 
     @tool(
         registry,

@@ -90,4 +90,20 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/test_raster_runtime_v3.py::test_unaligned_b_resamples_onto_a_grid",
             ]
         ),
-]
+
+        AlgorithmDescriptor(
+            id="raster.cog.convert", name="Cloud Optimized GeoTIFF 转换",
+            capabilities=["raster_cog_conversion"],
+            input_artifact_types=["raster_surface"],
+            output_artifact_type="raster_surface",
+            tool_candidates=["convert_raster_to_cog"],
+            cpu_cost="medium", memory_cost="medium", io_cost="high",
+            preferred_execution_policy="CELERY",
+            algorithm_family="raster_io",
+            assumptions=["概视图金字塔重采样（nearest），footer 索引按 COG 规范"],
+            limitations=["单文件 GeoTIFF 输入；已有 COG 结构则直接通过"],
+            crs_class="CRS_AGNOSTIC",
+            random_seed_policy="deterministic",
+            priority=10,
+        ),
+    ]

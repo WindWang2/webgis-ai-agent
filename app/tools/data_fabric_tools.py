@@ -5,6 +5,7 @@ and health-monitoring Data Fabric geospatial data sources.
 """
 import asyncio
 import logging
+import math
 from typing import Optional
 from app.tools.registry import ToolRegistry, tool, ToolExecutionPolicy
 from app.schemas.data_fabric_schema import (
@@ -845,5 +846,172 @@ def register_data_fabric_tools(registry: ToolRegistry):
             except DataFabricError as e:
                 return {"status": "error", "error_type": e.code, "error": str(e),
                         "details": e.details}
+
+        return await asyncio.to_thread(_sync_run)
+
+    @tool(
+        registry,
+        tier=2, domains=["dataset"], name="query_federated_chain",
+        capabilities=["federated_dataset_query"],
+        description=(
+            "N 源（2..4）有界左深链式联邦查询：属性连接 / 点面空间连接 / 聚合+连接逐跳串联。"
+            "成本排序（estimated_rows 提示，可选 stats 提示的有界枚举）、最小投影自动派生、"
+            "半连接右表约减、逐跳预算 fail-fast——绝不拉全量大表。"
+            "\n返回：{status, rows(有界内联), row_count, order, strategy, explain(lines), plans, "
+            "per_source_rows, semi_join_reduction}"
+        ),
+        param_descriptions={
+            "sources": (
+                "链上数据集列表（2..4 个），每项 {dataset_id(必填), source_id(可选,默认 s{i}), "
+                "profile_id(可选), where(可选属性过滤), fields(可选投影), "
+                "estimated_rows(可选行数提示,驱动成本排序), srs(可选,混用 CRS 会计划期拒绝)}"
+            ),
+            "joins": (
+                "连接列表（恰好 len(sources)-1 个），每项 {kind: attribute_join|spatial_join|"
+                "aggregate_join, join_field_left, join_field_right, spatial_op: within|intersects, "
+                "group_by_right, aggregates: [{func, field}], left_source_id, right_source_id "
+                "(可选 id 寻址,建议声明以启用成本枚举)}"
+            ),
+            "bbox": "可选空间裁剪（应用到所有源）",
+            "limit": "最终行数上限，默认 10000（超预算返回 QUERY_BUDGET_EXCEEDED）",
+            "order_strategy": "链序策略：cost(默认,按 estimated_rows 提示) | given | cost_stats(需统计提示)",
+            "derive_projection": (
+                "是否自动派生每源最小投影（默认 true；空间跳端点永不被裁剪；"
+                "where 为不可解析的自由字符串的源被排除在派生外 —— 该源按"
+                "全列取数，只是多取，安全）"
+            ),
+            "session_id": "用户会话 ID",
+        },
+        execution_policy=ToolExecutionPolicy.ASYNC,
+        side_effect="cacheable_read",
+        network=True,
+        deterministic=False,
+        latency_class="slow",
+        memory_class="heavy",
+        scale_class="large",
+        tags=["联邦查询", "链式", "多源", "join", "连接", "federated", "chain"],
+        output_semantic_type="table",
+        result_size_policy="bounded",
+        required_context=["data_profile"],
+        failure_modes=["network_error", "timeout", "partial_coverage"],
+    )
+    async def query_federated_chain(
+        sources: list[dict],
+        joins: list[dict],
+        bbox: Optional[list[float]] = None,
+        limit: int = 10_000,
+        order_strategy: str = "cost",
+        derive_projection: bool = True,
+        session_id: Optional[str] = None,
+    ) -> dict:
+        """N 源有界链式联邦查询（V5：链式联邦的 agent 表面）。"""
+        from app.services.data_fabric.query.federation import (
+            ChainJoin,
+            ChainSource,
+            FederatedChainRequest,
+            FederatedExecutor,
+            chain_explain_lines,
+        )
+
+        #: 工具内联行上限（上下文载荷保护；row_count 仍报告真实总量）。
+        CHAIN_TOOL_ROW_CAP = 200
+
+        def _adapter_of(dataset_id: str, profile_id: Optional[str]):
+            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
+            return (pid, connection_manager.get_adapter(pid, owner=session_id)) if pid else (pid, None)
+
+        def _sync_run():
+            if not isinstance(sources, list) or not isinstance(joins, list):
+                return {"status": "error", "error_type": "INVALID_QUERY",
+                        "error": "sources and joins must be lists of objects"}
+            chain_sources = []
+            adapters_by_id: dict = {}
+            for i, s in enumerate(sources):
+                if not isinstance(s, dict) or not s.get("dataset_id"):
+                    return {"status": "error", "error_type": "INVALID_QUERY",
+                            "error": f"sources[{i}] must be an object with dataset_id"}
+                sid = str(s.get("source_id") or f"s{i}")
+                if sid in adapters_by_id:
+                    return {"status": "error", "error_type": "INVALID_QUERY",
+                            "error": f"duplicate source_id {sid!r} in chain"}
+                pid, adapter = _adapter_of(str(s["dataset_id"]), s.get("profile_id"))
+                if adapter is None:
+                    return {
+                        "status": "error",
+                        "error_type": UNSUPPORTED_SOURCE,
+                        "error": f"No connected data source adapter for dataset '{s['dataset_id']}'.",
+                    }
+                est = s.get("estimated_rows")
+                # m3（审计 round1）：NaN/inf 估算不是合法的成本提示 ——
+                # int(nan) raises ValueError / int(inf) raises OverflowError
+                # 会令整个工具崩溃 → 如实降级为 None（无提示，排序回退）。
+                est_ok = (
+                    isinstance(est, (int, float))
+                    and float(est) == float(est)  # NaN 检验
+                    and math.isfinite(float(est))
+                )
+                chain_sources.append(ChainSource(
+                    source_id=sid,
+                    dataset_id=str(s["dataset_id"]),
+                    where=s.get("where"),
+                    fields=list(s["fields"]) if s.get("fields") else None,
+                    estimated_rows=int(est) if est_ok else None,
+                    srs=s.get("srs"),
+                ))
+                adapters_by_id[sid] = adapter
+            chain_joins = []
+            for i, j in enumerate(joins):
+                if not isinstance(j, dict):
+                    return {"status": "error", "error_type": "INVALID_QUERY",
+                            "error": f"joins[{i}] must be an object"}
+                try:
+                    chain_joins.append(ChainJoin(
+                        kind=str(j.get("kind", "attribute_join")),
+                        join_field_left=j.get("join_field_left"),
+                        join_field_right=j.get("join_field_right"),
+                        spatial_op=j.get("spatial_op"),
+                        group_by_right=list(j["group_by_right"]) if j.get("group_by_right") else None,
+                        aggregates=list(j["aggregates"]) if j.get("aggregates") else None,
+                        left_source_id=j.get("left_source_id"),
+                        right_source_id=j.get("right_source_id"),
+                    ))
+                except (TypeError, ValueError) as e:
+                    return {"status": "error", "error_type": "INVALID_QUERY",
+                            "error": f"joins[{i}] invalid: {e}"}
+
+            req = FederatedChainRequest(
+                sources=chain_sources,
+                joins=chain_joins,
+                bbox=bbox,
+                limit=limit,
+                order_strategy=order_strategy,
+                derive_projection=derive_projection,
+            )
+            executor = FederatedExecutor(lambda src: adapters_by_id.get(src))
+            try:
+                result = executor.execute_chain(req)
+            except DataFabricError as e:
+                return {"status": "error", "error_type": e.code, "error": str(e),
+                        "details": e.details}
+            rows = result.get("rows") or []
+            out = {
+                "status": result.get("status"),
+                "row_count": result.get("row_count"),
+                "rows": rows[:CHAIN_TOOL_ROW_CAP],
+                "order": result.get("order"),
+                "strategy": result.get("strategy"),
+                "explain": chain_explain_lines(result),
+                "plans": result.get("plans"),
+                "per_source_rows": result.get("per_source_rows"),
+                "warnings": result.get("warnings"),
+            }
+            if result.get("semi_join_reduction"):
+                out["semi_join_reduction"] = result["semi_join_reduction"]
+            if len(rows) > CHAIN_TOOL_ROW_CAP:
+                out["_payload_notice"] = (
+                    f"rows capped for context safety ({len(rows)} total; use row_count / "
+                    "aggregate / narrower filters for the rest)."
+                )
+            return out
 
         return await asyncio.to_thread(_sync_run)

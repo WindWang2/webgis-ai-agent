@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,24 @@ class RasterBandInfo(BaseModel):
     vmin: Optional[float] = None
     vmax: Optional[float] = None
     description: str = ""
+
+
+# 时间轴有界上限（Wave 6）：描述子是进 LLM 上下文的有界元数据，时间
+# 刻度必须封顶（1024 期 ≈ 日尺度 3 年，远超当前时序引擎的使用形态）。
+_MAX_TIMES_ENTRIES = 1024
+
+
+def _is_iso8601(value: str) -> bool:
+    """ISO-8601 判定（容 Z 后缀；拒绝空串/非时间戳字符串）。"""
+    from datetime import datetime
+
+    if not value:
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return True
+    except ValueError:
+        return False
 
 
 class RasterArtifactDescriptor(BaseModel):
@@ -58,6 +76,29 @@ class RasterArtifactDescriptor(BaseModel):
     resolution_y: Optional[float] = None
     driver: str = ""
     block_size: Optional[List[int]] = None  # [blockxsize, blockysize]（tiled 时）
+    # ── 时间轴（Wave 6，audit 05 §7.6，additive）：时序立方体描述 ──
+    # times：ISO-8601 时间戳（≤1024 个）；stack_ref：物化立方体
+    # （如 zarr store）的引用。两者都是可缺席元数据 —— 单期产物两者
+    # 皆 None，序列化形状与既有登记完全兼容。
+    times: Optional[List[str]] = None
+    stack_ref: Optional[str] = None
+
+    @field_validator("times")
+    @classmethod
+    def _validate_times(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return None
+        if len(v) > _MAX_TIMES_ENTRIES:
+            raise ValueError(
+                f"times carries {len(v)} entries; the bounded descriptor "
+                f"caps at {_MAX_TIMES_ENTRIES}"
+            )
+        for raw in v:
+            if not _is_iso8601(str(raw)):
+                raise ValueError(
+                    f"times entries must be ISO-8601 timestamps, got {raw!r}"
+                )
+        return list(v)
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump()

@@ -274,4 +274,70 @@ class CartographyTemplate(Base):
     creator = relationship("User", backref="templates", lazy="selectin")
 
 
-__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "get_init_sql"]
+class GeoComputeNodeResult(Base):
+    """GeoCompute V5 跨进程 checkpoint 复用索引（audit 06 §6.1 step 3）。
+
+    durable 节点完成后把 ``{owner_scope, node_semantic_fingerprint,
+    result_ref, session_id, upstream_fingerprints, created_at}`` 记入本表：
+    下一次同 owner 同语义指纹的 durable 节点派发**之前**，执行器先查本表
+    （上游输出指纹一致 + result_ref 仍可解析才复用），命中即跳过派发。
+
+    边界（诚实声明）：
+    - 这是**缓存索引**，不是第二任务状态机 —— 只在节点完成后 upsert 一次、
+      无状态迁移；job 真相仍在 analysis_tasks（单一任务真相不变）。
+    - ``result_ref`` 是 session ref；``session_id`` 随行存储（解析 ref 必需）。
+    - owner 域沿用 ``executor.owner_scope_for`` 的哈希域（绝不明文身份，
+      绝不跨 owner 共享）。
+    - 有界：每 owner 仅保留最近 64 条（写入时按 created_at LRU 剪枝）；
+      (owner_scope, node_fingerprint) 唯一 —— 重写即刷新。
+    - 读取方 fail-open：表缺失/DB 不可用 → 视为未命中，重算（诚实但变慢）。
+    """
+    __tablename__ = "geocompute_node_results"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    #: executor.owner_scope_for 输出（"u:<hash>" / "s:<hash>" / "anonymous"）
+    owner_scope = Column(String(40), nullable=False)
+    #: 节点语义指纹（plan.ExecutionNode.semantic_fingerprint，16 hex）
+    node_fingerprint = Column(String(32), nullable=False)
+    #: session ref 指针（解析会话存储里的特征载荷）
+    result_ref = Column(String(512), nullable=False)
+    #: ref 所属会话（session_data_manager.get(session_id, ref) 必需）
+    session_id = Column(String(255), nullable=False)
+    #: 完成时的上游输出指纹 {node_id: fp} —— 复用前的陈旧校验依据
+    upstream_fingerprints = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        Index("uq_gc_node_result_owner_fp", "owner_scope", "node_fingerprint", unique=True),
+        Index("idx_gc_node_result_owner_created", "owner_scope", "created_at"),
+    )
+
+
+class GeoComputeRunEvidence(Base):
+    """GeoCompute V5 run 终态证据快照（audit 06 §6.1 step 2）。
+
+    run 进入终态时把**有界（≤16KB）**的 ExecutionRun 摘要（status/evidence，
+    绝无载荷）以 run_id 为主键写入一行；进程重启后 ``get_run`` 内存未命中
+    时按 owner 域校验读本表回放，REST 读取不再 404。
+
+    边界：append-once/upsert-on-terminal 的只读证据表 —— 没有状态迁移、
+    不参与调度决策，绝不是第二 run 注册表（进程内注册表仍是运行期真相）。
+    """
+    __tablename__ = "geocompute_run_evidence"
+
+    #: run id（"gexec-<hex12>"）
+    run_id = Column(String(64), primary_key=True)
+    #: owner 域（owner_scope_for）；读取侧按它做隔离，他人一律 404
+    owner_scope = Column(String(40), nullable=False)
+    #: 终态：completed | failed | cancelled
+    status = Column(String(20), nullable=False)
+    #: 有界快照 JSON（≤16KB；{run, evidence, truncated?}）
+    snapshot = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        Index("idx_gc_run_evidence_owner", "owner_scope"),
+    )
+
+
+__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "get_init_sql"]

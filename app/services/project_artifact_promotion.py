@@ -10,12 +10,22 @@ explainable or re-runnable. Promotion closes that gap:
         ↓ promote (content-addressed materialization)
     Project Artifact (durable content + full semantic metadata)
 
-Promotion writes the artifact payload to a content-addressed store keyed by
-the artifact's ``content_fingerprint`` and records on the DB row:
+Promotion writes the artifact payload through the **durable BlobStore** (the
+single durable content backend — no second store) keyed by the payload's
+sha256 digest (content identity, audit §7.1: descriptor fingerprints are
+recorded as a secondary index only, so two different payloads with equal
+descriptors can no longer collide on one key) and records on the DB row:
 content location, CRS, bbox, schema/feature summary, the producing
 capability/algorithm/tool triple, parents (via existing lineage), and the
-run identity. Re-opening the project weeks later therefore never depends on
-the original SessionStore.
+run identity — plus an append-only ``artifact_revisions`` row per
+materialized content. Re-opening the project weeks later therefore never
+depends on the original SessionStore.
+
+Binary lane: raster disk cursors (``ref:raster/<id>`` → session PNG) never
+appear in the session store payload path, so promotion resolves the
+underlying file and materializes its bytes as a binary blob — raster
+artifacts now reach ``content_status="promoted"`` instead of a permanent
+``session_expired``. Unresolvable payloads keep today's honest statuses.
 
 Truthfulness rules (INV-ART1, unchanged): metadata comes only from the real
 payload/descriptor; when the session has already expired the promotion is
@@ -25,11 +35,11 @@ fabricating a summary.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
-import os
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from app.models.project import Artifact, WorkflowRun
 from app.services.provenance.fingerprint import canonical_dumps
@@ -48,12 +58,16 @@ _MAX_SCHEMA_FIELDS = 32
 #: no_session_context— caller had no session to probe (content may be alive)
 #: session_expired   — probed the session; payload gone
 #: store_unavailable — content write failed (disk full / IO error), disclosed
+#: quota_exceeded    — per-project quota refuses the put (W12): row survives
+#:                     metadata-only with bounded details in metadata_json.quota;
+#:                     NO payload bytes are written (honest, not an error)
 ContentStatus = Literal[
     "promoted",
     "already_promoted",
     "no_session_context",
     "session_expired",
     "store_unavailable",
+    "quota_exceeded",
 ]
 
 _ROOT_CACHE: "Optional[Path]" = None
@@ -82,17 +96,20 @@ def reset_content_store_root_cache() -> None:
 
 
 def _content_path(content_fingerprint: str) -> Optional[Path]:
-    """Content-addressed file path for a fingerprint (sha2-4 prefix shards)."""
-    fp = str(content_fingerprint or "").strip()
-    if not fp or any(c in fp for c in ("/", chr(92), "..")):
+    """Content-addressed file path for a fingerprint (sha2-4 prefix shards).
+
+    Delegates to the BlobStore's layout (same sharding + ``.json`` suffix as
+    the historical promotion layout, so existing blobs stay readable).
+    """
+    from app.services.durable_blob_store import BlobKeyError, get_filesystem_blob_store
+
+    try:
+        return get_filesystem_blob_store().primary_path(str(content_fingerprint or ""), "json")
+    except BlobKeyError:
         return None
-    shard = fp[:4]
-    return content_store_root() / shard / f"{fp}.json"
 
 
 def _sha256_of_blob(blob: str) -> str:
-    import hashlib
-
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
@@ -155,24 +172,28 @@ def _bbox_of(features: List[Any]) -> Optional[List[float]]:
 
 
 def materialize_blob(content_fingerprint: str, blob: str) -> Optional[str]:
-    """Write a pre-serialized canonical blob to the content-addressed store.
+    """Write a pre-serialized canonical blob through the durable BlobStore.
 
     Single-serialization contract: the caller serializes the payload once and
     reuses the same blob for the sha256 digest and the write, so stored bytes
-    always match the recorded digest. Returns the relative location, or None
-    when persistence failed (caller discloses).
+    always match the recorded digest. The write goes through the BlobStore
+    (唯一持久内容后端 — idempotent put-if-absent, atomic tmp+``os.replace``,
+    digest-verified reads). Returns the relative location, or None when
+    persistence failed (caller discloses).
     """
-    path = _content_path(content_fingerprint)
-    if path is None:
-        return None
-    if path.exists():
-        return str(path.relative_to(content_store_root()))
+    from app.services.durable_blob_store import (
+        BlobKeyError,
+        get_filesystem_blob_store,
+    )
+
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(blob, encoding="utf-8")
-        os.replace(tmp, path)
-        return str(path.relative_to(content_store_root()))
+        data = blob.encode("utf-8")
+        store = get_filesystem_blob_store()
+        result = store.put_blob(content_fingerprint, data, "json")
+        return result.location
+    except BlobKeyError as e:  # unsafe key → disclose, never write
+        logger.warning("[artifact_promotion] unsafe content key %r: %s", content_fingerprint, e)
+        return None
     except Exception as e:  # noqa: BLE001 — promotion must never break a run
         logger.warning("[artifact_promotion] content write failed for %s: %s", content_fingerprint, e)
         return None
@@ -223,6 +244,129 @@ def read_content(content_location: str, expected_sha256: str = "") -> Optional[A
         return None
 
 
+def _materialize_binary_bytes(data: bytes) -> Tuple[str, str, int]:
+    """Materialize in-memory bytes as a binary blob (CAS).
+
+    Sync body（caller 经 asyncio.to_thread 卸载，同 _sha256_of_blob 纪律）。
+    Returns (sha256, location, byte_size); raises on write failure —
+    the caller discloses honestly (store_unavailable).
+    """
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
+    digest = hashlib.sha256(data).hexdigest()
+    store = get_filesystem_blob_store()
+    result = store.put_blob(digest, data, "binary")
+    return digest, result.location, len(data)
+
+
+def _materialize_binary_file(path: Path) -> Tuple[str, str, int]:
+    """Read a disk file and materialize its bytes as a binary blob (CAS)."""
+    return _materialize_binary_bytes(path.read_bytes())
+
+
+async def _promote_raster_artifact(
+    db,
+    art: Artifact,
+    run: WorkflowRun,
+    session_id: str,
+    meta: Dict[str, Any],
+    entry: Dict[str, Any],
+    *,
+    project_id: str = "",
+) -> None:
+    """Binary lane: raster disk cursors (``ref:raster/<id>`` → session PNG).
+
+    The session store ``get()`` returns None for raster cursors (the payload
+    is a disk PNG, artifact_registry.py) — before this lane such artifacts
+    ended as a permanent ``session_expired``. Here promotion resolves the
+    underlying file, hashes its bytes, and materializes a binary blob; an
+    unresolvable file keeps today's honest ``session_expired``. W12: the
+    per-project quota gates the put (dedup hits are free — no new bytes).
+    """
+    from app.services.artifact_registry import raster_png_path
+    from app.services.data_lifecycle.quota import check_quota
+    from app.services.durable_blob_store import get_filesystem_blob_store
+
+    path = raster_png_path(session_id, str(art.storage_ref or ""))
+    if path is None or not path.is_file():
+        # Probed and gone (or unresolvable path) — truthful status, no
+        # fabricated content pointer.
+        meta["content_status"] = "session_expired"
+        art.metadata_json = meta
+        entry["status"] = meta["content_status"]
+        return
+    try:
+        data = await asyncio.to_thread(path.read_bytes)
+    except Exception as e:  # noqa: BLE001 — IO failure is disclosed, not fatal
+        logger.warning(
+            "[artifact_promotion] binary read failed for %s: %s", art.id, e
+        )
+        data = b""
+    if not data:
+        meta["content_status"] = "session_expired"
+        art.metadata_json = meta
+        entry["status"] = meta["content_status"]
+        return
+    digest = hashlib.sha256(data).hexdigest()
+    # Quota gate BEFORE the put: CAS dedup hit (content already in the store)
+    # writes no new bytes and is never charged; a fresh put over an exhausted
+    # quota is refused honestly — the artifact row survives metadata-only.
+    incoming = 0 if get_filesystem_blob_store().exists(digest) else len(data)
+    # round-1 review PERF MAJOR-1: check_quota 是 sync DB 聚合 —— 与本函数
+    # 其余 DB/IO 步骤同纪律卸载到 worker 线程，不占事件循环。
+    decision = await asyncio.to_thread(
+        check_quota, db, project_id or run.project_id, incoming,
+        artifact_id=art.id,
+    )
+    if not decision.allowed:
+        quota_meta = decision.to_exception().to_metadata()
+        meta["content_status"] = "quota_exceeded"
+        meta["quota"] = quota_meta
+        art.metadata_json = meta
+        entry["status"] = meta["content_status"]
+        entry["quota"] = quota_meta
+        return
+    try:
+        digest, location, byte_size = await asyncio.to_thread(
+            _materialize_binary_bytes, data
+        )
+    except Exception as e:  # noqa: BLE001 — IO failure is disclosed, not fatal
+        logger.warning(
+            "[artifact_promotion] binary materialization failed for %s: %s", art.id, e
+        )
+        digest, location, byte_size = "", None, 0
+    if not digest or not location:
+        meta["content_status"] = "store_unavailable"
+        art.metadata_json = meta
+        entry["status"] = meta["content_status"]
+        return
+    meta["content_payload_sha256"] = digest
+    meta["content_status"] = "promoted"
+    meta["content_location"] = location
+    meta["content_summary"] = {
+        "payload_kind": "binary",
+        "content_type": "image/png",
+        "payload_bytes": byte_size,
+    }
+    if art.content_fingerprint:
+        meta["content_fingerprint"] = art.content_fingerprint  # secondary index
+    from app.services.artifact_revisions import record_revision
+
+    record_revision(
+        db,
+        artifact_id=art.id,
+        content_sha256=digest,
+        content_location=location,
+        content_type="binary",
+        byte_size=byte_size,
+        workflow_run_id=run.id,
+        metadata={"payload_kind": "raster_png"},
+    )
+    art.metadata_json = meta
+    entry["status"] = "promoted"
+    entry["content_location"] = location
+
+
 async def promote_run_artifacts(
     db,
     run: WorkflowRun,
@@ -234,10 +378,18 @@ async def promote_run_artifacts(
 
     Updates the existing ``artifacts`` rows in place (created by the engine
     during execution) — promotion does NOT mint a parallel artifact identity.
+    Every materialized artifact also gets an append-only ``artifact_revisions``
+    row (the content-history + GC refcount truth); the row's
+    ``metadata_json.content_status/content_location/content_payload_sha256``
+    stays the backward-compatible head pointer.
     Returns a bounded report list, one entry per artifact.
     """
     from sqlalchemy import select
 
+    from app.services.artifact_registry import is_raster_ref
+    from app.services.artifact_revisions import record_revision
+    from app.services.data_lifecycle.quota import check_quota
+    from app.services.durable_blob_store import get_filesystem_blob_store
     from app.services.session_data import session_data_manager
 
     # Authoritative binding: this run's manifest artifact ids (O(1) lookups).
@@ -283,6 +435,14 @@ async def promote_run_artifacts(
             report.append({"artifact_id": art.id, "status": "already_promoted"})
             continue
         entry: Dict[str, Any] = {"artifact_id": art.id}
+        # Binary lane first: raster disk cursors never appear in the session
+        # store payload path (store.get() → None) — resolve the disk file.
+        if session_id and art.storage_ref and is_raster_ref(str(art.storage_ref)):
+            await _promote_raster_artifact(
+                db, art, run, session_id, meta, entry, project_id=project_id
+            )
+            report.append(entry)
+            continue
         payload: Optional[Any] = None
         if session_id and art.storage_ref:
             try:
@@ -329,18 +489,65 @@ async def promote_run_artifacts(
                 logger.warning(
                     "[artifact_promotion] digest failed for %s: %s", art.id, e
                 )
-        # Content-addressed key: run-time fingerprint when present, else the
-        # durable payload digest (an artifact with no descriptor evidence still
-        # materializes under its own content identity).
-        location = (
-            await asyncio.to_thread(
-                materialize_blob, art.content_fingerprint or payload_digest, blob
+        # Content-addressed key: the PAYLOAD DIGEST is primary (audit §7.1 —
+        # two payloads with equal descriptors must never share one key);
+        # a payload-digest-less artifact still materializes under its
+        # descriptor fingerprint, and the descriptor fingerprint is recorded
+        # in metadata as a secondary index (column and its uses stay).
+        location = None
+        if blob:
+            content_key = str(payload_digest or art.content_fingerprint or "")
+            # W12 quota gate BEFORE the put. A CAS dedup hit (content already
+            # in the store) writes no new bytes and is never charged; a fresh
+            # put over an exhausted quota is refused honestly: honest
+            # content_status="quota_exceeded" + bounded typed details in
+            # metadata, artifact row survives (metadata-only), NO payload
+            # bytes are written, promotion never breaks the run.
+            incoming = (
+                0
+                if content_key and get_filesystem_blob_store().exists(content_key)
+                else len(blob.encode("utf-8"))
             )
-            if blob
-            else None
-        )
+            # round-1 review PERF MAJOR-1: sync DB 聚合 → worker 线程（同上）。
+            decision = await asyncio.to_thread(
+                check_quota, db, project_id, incoming, artifact_id=art.id
+            )
+            if not decision.allowed:
+                quota_meta = decision.to_exception().to_metadata()
+                meta["content_status"] = "quota_exceeded"
+                meta["quota"] = quota_meta
+                meta["content_summary"] = await asyncio.to_thread(
+                    _schema_summary, payload
+                )
+                art.metadata_json = meta
+                entry["status"] = meta["content_status"]
+                entry["quota"] = quota_meta
+                report.append(entry)
+                continue
+            location = await asyncio.to_thread(materialize_blob, content_key, blob)
         summary = await asyncio.to_thread(_schema_summary, payload)
-        if location:
+        if location and payload_digest:
+            meta["content_status"] = "promoted"
+            meta["content_location"] = location
+            if art.content_fingerprint:
+                meta["content_fingerprint"] = art.content_fingerprint
+            # Append-only revision row: content history + GC refcount truth.
+            # Idempotent per (artifact_id, content_sha256) — re-materializing
+            # identical content reuses the row.
+            record_revision(
+                db,
+                artifact_id=art.id,
+                content_sha256=payload_digest,
+                content_location=location,
+                content_type="json",
+                byte_size=len(blob.encode("utf-8")),
+                workflow_run_id=run.id,
+                metadata={"content_fingerprint": art.content_fingerprint or ""},
+            )
+        elif location:
+            # Digest failed but bytes landed: head pointer only, no revision
+            # row (a revision without its verified digest would be a claim we
+            # cannot prove).
             meta["content_status"] = "promoted"
             meta["content_location"] = location
         else:

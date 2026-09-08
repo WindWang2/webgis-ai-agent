@@ -130,6 +130,54 @@ def test_wfs_numbermatched_honest_total(wfs):
     assert res.truncated is True and res.has_more is True
 
 
+def test_wfs_has_more_survives_local_remainder_on_full_page(monkeypatch):
+    """F1（round2）回归：numberMatched 缺省 + 本地余项过滤丢行 → has_more
+    以本地过滤**前**的远端窗口判定（满页丢 1 行不得误判无下一页）。
+
+    回归锚点：修复前 returned(过滤后)=1 >= limit(2) → truncated False →
+    分页静默停摆。"""
+    from unittest.mock import MagicMock
+
+    from app.services.data_fabric.adapters import wfs_adapter as _wfs_mod
+
+    orig_caps = _wfs_mod.get_capabilities
+
+    def _caps(source_type, overrides=None):
+        c = orig_caps(source_type, overrides)
+        if source_type == "wfs":
+            c = c.model_copy(update={"filter_ops_local": ["like"]})
+        return c
+
+    monkeypatch.setattr(_wfs_mod, "get_capabilities", _caps)
+
+    profile = ConnectionProfile(provider_type="wfs", endpoint="")
+    profile.url = "https://example.com/wfs"
+    adapter = WFSAdapter(profile)
+    s = MagicMock()
+    features_doc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"name": "alpha"}, "geometry": None},
+            {"type": "Feature", "properties": {"name": "beta"}, "geometry": None},
+        ],
+    }
+
+    def route(url, params=None, timeout=None, **kwargs):
+        s.calls.append({"url": url, "params": dict(params or {})})
+        if "capabilities" in url.lower():
+            return FakeResponse(content=WFS_CAPABILITIES)
+        return FakeResponse(json_data=features_doc)
+
+    s.get = route
+    s.calls = []
+    adapter.session = s
+    res = adapter.query("roads", QuerySpec(
+        limit=2, filter_expr={"op": "like", "field": "name", "pattern": "a%"}))
+    assert [f["properties"]["name"] for f in res.features] == ["alpha"]
+    assert res.total_matching is None, "本地余项在场 → numberMatched 不冒充 total_matching"
+    assert res.has_more is True and res.truncated is True
+
+
 # ── OGC API ─────────────────────────────────────────────────────────────────
 
 
@@ -161,12 +209,26 @@ def ogc():
     return adapter
 
 
-def test_ogc_filter_without_conformance_is_typed_error(ogc):
-    """capability 门控：未声明 CQL2 → filter 是 typed error，不是静默丢弃/透传。"""
+def test_ogc_filter_without_conformance_never_sent_remotely(ogc):
+    """capability 门控（round-1 C1 守卫路径后的契约）：未声明 CQL2 → 过滤
+    绝不透传远端（无 filter 参数），也不是静默丢弃 —— 守卫路径取回后
+    本地求值，只返回匹配行。（本用例前身断言 typed error；C1 守卫路径
+    落地后整体本地求值取代了远端拒绝，语义更诚实。）"""
     ogc.session.conformance = []
-    spec = QuerySpec(limit=5, filter_expr={"op": "eq", "field": "owner", "value": "a"})
-    with pytest.raises(InvalidQueryError, match="CQL2"):
-        ogc.query("parcels", spec)
+    ogc.session.items_response = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"owner": "alpha"}, "geometry": None},
+            {"type": "Feature", "properties": {"owner": "beta"}, "geometry": None},
+        ],
+    }
+    spec = QuerySpec(limit=5, filter_expr={"op": "eq", "field": "owner", "value": "alpha"})
+    res = ogc.query("parcels", spec)
+    call = [c for c in ogc.session.calls if c["url"].endswith("/items")][-1]
+    assert "filter" not in call["params"] and "filter-lang" not in call["params"], \
+        "未声明 CQL2 时过滤绝不进入远端请求"
+    assert [f["properties"]["owner"] for f in res.features] == ["alpha"], \
+        "过滤必须本地精确求值（不静默丢弃）"
 
 
 def test_ogc_filter_with_conformance_compiled_cql2(ogc):
@@ -203,6 +265,30 @@ def test_ogc_bbox_crs_explicit(ogc):
     call = [c for c in ogc.session.calls if c["url"].endswith("/items")][-1]
     assert call["params"]["bbox"] == "100.0,20.0,110.0,30.0"
     assert "CRS84" in call["params"]["bbox-crs"], "bbox-crs must be explicit (no 4326 assumption)"
+
+
+def test_ogc_has_more_survives_local_remainder_on_full_page(ogc):
+    """F1（round2）回归：numberMatched 缺省（服务器不下发）+ 本地余项过滤
+    丢行 → has_more 以本地过滤**前**的远端窗口判定（满页丢 1 行不得误判
+    无下一页），links.next 游标保持可得。
+
+    回归锚点：修复前 returned(过滤后)=1 >= limit(2) → truncated False →
+    游标停摆、后续页静默丢失。"""
+    ogc.session.conformance = []
+    ogc.session.items_response = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"owner": "alpha"}, "geometry": None},
+            {"type": "Feature", "properties": {"owner": "beta"}, "geometry": None},
+        ],
+        "links": [{"rel": "next", "href": "https://example.com/ogc/collections/parcels/items?token=abc"}],
+    }
+    res = ogc.query("parcels", QuerySpec(
+        limit=2, filter_expr={"op": "like", "field": "owner", "pattern": "a%"}))
+    assert [f["properties"]["owner"] for f in res.features] == ["alpha"]
+    assert res.total_matching is None, "本地余项在场 → numberMatched 不冒充 total_matching"
+    assert res.has_more is True and res.truncated is True
+    assert res.next_cursor, "满页被本地过滤收缩仍必须产出 links.next 游标"
 
 
 # ── ArcGIS ──────────────────────────────────────────────────────────────────

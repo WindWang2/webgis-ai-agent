@@ -18,6 +18,9 @@ class UploadRecord(Base):
     feature_count = Column(BigInteger, default=0)
     bbox = Column(JSON)                                   # [west, south, east, north]
     file_size = Column(BigInteger, nullable=False)        # 字节
+    # V4 内容身份（审计 03 R2）：上传字节 sha256 —— 同会话幂等再导入的去重键。
+    # 可空：历史行与 dedup 关闭的上传没有指纹（不虚构）。探测索引见下。
+    content_sha256 = Column(String(64), nullable=True)
     upload_time = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     session_id = Column(String(255), nullable=True)       # 关联的会话 ID
 
@@ -29,6 +32,9 @@ class UploadRecord(Base):
         # uploads 行数（而非单会话行数）线性增长。复合索引让按会话过滤 + 排序
         # 都走索引扫描。迁移 0015 为存量库补建同名索引。
         Index("ix_uploads_session_time", "session_id", "upload_time"),
+        # V4 dedup 探测：WHERE session_id = ? AND content_sha256 = ?（非唯一：
+        # 历史行可为 NULL，且跨会话不共享 —— 内容身份是会话内幂等，不是全局键）。
+        Index("ix_uploads_session_content", "session_id", "content_sha256"),
     )
 
 

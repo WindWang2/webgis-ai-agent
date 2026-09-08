@@ -240,15 +240,32 @@ def test_write_validate_probe_cog_roundtrip(tmp_path, tiled_raster):
 
 
 def test_validate_cog_flags_untiled(tmp_path):
+    # 1024²: ladder rule (short_side/2 >= 256) yields [2], so a big untiled
+    # raster is flagged for BOTH issues; a 64² raster would legitimately
+    # have no overviews (round-1 review MINOR ladder rule).
     p = tmp_path / "plain.tif"
     with rasterio.open(
-        p, "w", driver="GTiff", width=64, height=64, count=1, dtype="uint8",
+        p, "w", driver="GTiff", width=1024, height=1024, count=1, dtype="uint8",
         crs="EPSG:3857", transform=from_origin(0, 0, 1, 1),
     ) as dst:
-        dst.write(np.zeros((64, 64), dtype="uint8"), 1)
+        dst.write(np.zeros((1024, 1024), dtype="uint8"), 1)
     report = validate_cog(str(p))
     assert not report["ok"]
     assert "not_tiled" in report["issues"] and "no_overviews" in report["issues"]
+
+
+def test_validate_cog_small_raster_passes_without_overviews(tmp_path):
+    # round-1 review MINOR: a 128² raster's overview ladder is empty —
+    # missing overviews are NOT a defect for it (only untiled still flags).
+    p = tmp_path / "tiny.tif"
+    with rasterio.open(
+        p, "w", driver="GTiff", width=128, height=128, count=1, dtype="uint8",
+        crs="EPSG:3857", transform=from_origin(0, 0, 1, 1), tiled=True,
+        blockxsize=64, blockysize=64,
+    ) as dst:
+        dst.write(np.zeros((128, 128), dtype="uint8"), 1)
+    report = validate_cog(str(p))
+    assert report["issues"] == [] and report["ok"], report["issues"]
 
 
 # ── review regressions: disjoint zones, std, overview, remote, env-hold ─────

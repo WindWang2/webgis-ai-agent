@@ -18,6 +18,7 @@ project workflow 路由同一模式），绝不阻塞事件循环。
 from __future__ import annotations
 
 import hashlib
+import logging
 import random
 import re
 import threading
@@ -27,6 +28,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from collections import OrderedDict
 from typing import Any, Optional
 
+logger = logging.getLogger(__name__)
 from app.lib.cancellation import CancellationToken, OperationCancelled, use_token
 from app.services.geocompute import graph, ops, tracing
 from app.services.geocompute.errors import (
@@ -67,6 +69,58 @@ _UPSTREAM_KEY = "__upstream_fps__"
 #: checkpoint 指纹采样参数（输出指纹：count + 首尾样本；有界且确定性）。
 _FP_SAMPLE_HEAD = 16
 _FP_SAMPLE_TAIL = 4
+
+
+# ── Wave 8（audit 07-resource-governance-gaps.md §6.2 steps 1/6）──────────
+
+#: R7（ResourceClass 接线）：并发槽位按资源类别加权 —— memory ≥ 4 或
+#: cpu ≥ 5 的重节点占 2 个槽位单位，其余 1。权重经由**祖先作用域**的
+#: 并发预算产生可观察的调度效果（session/tenant 槽位被重节点按 2×
+#: 消耗 → 跨 run 加权背压：一个原先容纳 4 个并发 run 的 session 只能
+#: 容纳 2 个重节点 run）。EXECUTION 作用域自身的并发上界因此以「单位」
+#: 计 = ``_HEAVY_SLOT_UNITS × max_workers``（``execute_plan``）—— 这保证
+#: 单个重节点永不因自身权重被永久拒绝（max_workers=1 时 2 ≤ 2）。确定性
+#: 映射、无随机；同 run 内池上限（max_workers 线程）仍是不变的第一约束。
+_HEAVY_SLOT_MEMORY = 4
+_HEAVY_SLOT_CPU = 5
+_HEAVY_SLOT_UNITS = 2
+
+#: R9（槽位租约看门狗）：节点超过其 deadline + 该宽限仍占着并发槽位
+#: （线程不可强杀的非协作节点）→ 强制归还槽位，后续 run 不再被饿死；
+#: 节点真正落定时按 ``lease_reclaimed`` 跳过二次释放（钳零语义仍是兜底）。
+DEFAULT_SLOT_LEASE_GRACE_S = 60.0
+
+#: R9：看门狗巡检间隔 —— ``wait()`` 以它为上界周期性唤醒。否则长 plan
+#: deadline 的 run 会在唯一僵尸节点上一直阻塞到 run deadline 才巡检，
+#: 节点级租约过期形同虚设。代价：每 run 至多 1 次/秒的空轮询。
+_LEASE_SWEEP_INTERVAL_S = 1.0
+
+
+class _RunChargeLedger:
+    """单 run 的 governor 实际记账累计（线程安全；R1 gauge 归还的依据）。
+
+    节点线程并发完成 → ``_governor_charge`` 沿链 charge 的同时在此累计
+    本 run 的贡献（小锁保护的标量三元组 —— 确定性与竞免兼备）；
+    ``execute_plan`` 收尾把它与计划级预留估计合并，一次性
+    ``governor.release`` 全额归还 —— 长寿命祖先作用域（global/tenant/
+    project/session）精确回到 run 前基本线。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._rows = 0
+        self._bytes = 0
+        self._nodes = 0
+
+    def add(self, rows: int, bytes_: int, nodes: int) -> None:
+        with self._lock:
+            self._rows += rows
+            self._bytes += bytes_
+            self._nodes += nodes
+
+    def snapshot(self) -> tuple[int, int, int]:
+        with self._lock:
+            return (self._rows, self._bytes, self._nodes)
 
 
 def _output_fingerprint(payload: dict[str, Any]) -> str:
@@ -199,17 +253,23 @@ class GeoExecutionEngine:
         max_workers: int = DEFAULT_MAX_WORKERS,
         run_cache_size: int = 128,
         retain_outputs: bool = False,
+        slot_lease_grace_s: float = DEFAULT_SLOT_LEASE_GRACE_S,
     ):
         self._store = result_store or NodeResultStore()
         self._max_workers = max(1, min(int(max_workers), 8))
         # 评审 M3 的逃生门：基准/测试需要在 run 终态后读取载荷做确定性
         # 断言。生产路径保持默认 False（终态即清除，证据/摘要为准）。
         self._retain_outputs = bool(retain_outputs)
+        # R9：槽位租约宽限（节点 deadline 之后多久可强制回收其并发槽位）。
+        self._slot_lease_grace_s = max(0.0, float(slot_lease_grace_s))
         self._runs: OrderedDict[str, ExecutionRun] = OrderedDict()
         self._run_outputs: dict[str, dict[str, dict[str, Any]]] = {}
         # SEC：run 归属域（owner_scope_for 派生）；REST 读路径按它做
         # 读隔离（他人 run 一律 404，避免存在性预言机）。
         self._run_owners: dict[str, str] = {}
+        # Wave-11（audit 08 §6.2.1）：run 终态附加证据（reproducibility 判定
+        # + 无载荷 lineage 投影）。有界：随 run 注册表同一容量上界逐出。
+        self._run_extras: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._run_tokens: dict[str, CancellationToken] = {}
         self._run_lock = threading.Lock()
         self._run_cache_size = run_cache_size
@@ -238,6 +298,9 @@ class GeoExecutionEngine:
         graph.validate_plan(plan)
         self._admission_check(plan)
         gov_path: Optional[str] = None
+        # R1：计划级预留值（收尾与实际记账合并后全额归还 —— gauge 语义）。
+        reserved = {"rows": 0, "bytes": 0, "nodes": 0}
+        charge_ledger = _RunChargeLedger()
         if governor is not None:
             from app.services.geocompute.budgets import BudgetLimits, ScopeKind
 
@@ -246,9 +309,10 @@ class GeoExecutionEngine:
                 max_rows=plan.budget.max_rows,
                 max_bytes=plan.budget.max_bytes,
                 max_nodes=plan.budget.max_nodes,
-                # ADR-0101 D3：本 run 的并发槽位上界 = 引擎并行度；
-                # 上层作用域的并发限额沿链照常生效（跨 run 背压）。
-                max_concurrency=self._max_workers,
+                # ADR-0101 D3 + Wave 8 R7：并发上界以「槽位单位」计
+                # （轻节点 1 / 重节点 2，见 _HEAVY_SLOT_* 注释）；上层
+                # 作用域的并发限额沿链照常生效（跨 run 加权背压）。
+                max_concurrency=self._max_workers * _HEAVY_SLOT_UNITS,
             )
             gov_path = governor.create_scope(
                 parent, ScopeKind.EXECUTION, f"gexec-{uuid.uuid4().hex[:8]}",
@@ -261,6 +325,7 @@ class GeoExecutionEngine:
                 # 原子预留（评审 M2：admit→charge TOCTOU 修复）；估计值先行
                 # 预配，节点完成后的实际记账叠加 —— 保守方向（宁可多记）。
                 governor.reserve(gov_path, rows=total_rows, nodes=1)
+                reserved = {"rows": total_rows, "bytes": 0, "nodes": 1}
             except Exception:
                 # 评审 MINOR：计划级预留被祖先链拒绝时，必须摘除刚建的
                 # execution 作用域（否则每次被拒 run 永久泄漏一个树节点）。
@@ -295,6 +360,7 @@ class GeoExecutionEngine:
                 self._runs.pop(old)
                 self._run_outputs.pop(old, None)
                 self._run_owners.pop(old, None)
+                self._run_extras.pop(old, None)
         # run 级取消令牌注册（REST/工具凭 run_id 请求取消；M1）
         if cancel_token is None:
             cancel_token = CancellationToken(job_id=run_id)
@@ -309,10 +375,29 @@ class GeoExecutionEngine:
                                 session_id=session_id,
                                 caller=caller, owner_scope=owner_scope,
                                 cancel_token=cancel_token, deadline_ts=deadline_ts,
-                                governor=governor, gov_path=gov_path)
+                                governor=governor, gov_path=gov_path,
+                                charge_ledger=charge_ledger)
         finally:
             if governor is not None and gov_path:
-                # 摘除 execution 作用域（已发生用量保留在祖先链上）
+                # Wave 8 R1：本 run 在祖先链上的全部占用（预留估计 + 实际
+                # 记账）一次性归还 —— rows/bytes/nodes 由此是**并发在飞
+                # 量衡**而非终生计数（审计 07 R1 Critical：原先只增不减，
+                # ~25 个估计偏大的 run 即可永久打满 global 预算 → 自我
+                # DoS）。钳零语义（budgets.release）是重复归还的兜底。
+                try:
+                    charged_rows, charged_bytes, charged_nodes = (
+                        charge_ledger.snapshot()
+                    )
+                    governor.release(
+                        gov_path,
+                        rows=reserved["rows"] + charged_rows,
+                        bytes_=reserved["bytes"] + charged_bytes,
+                        nodes=reserved["nodes"] + charged_nodes,
+                    )
+                except Exception:  # noqa: BLE001 - 归还失败不阻断作用域摘除
+                    tracing.emit("budget_release_failed", run_id=run_id,
+                                 status=run.status.value)
+                # 摘除 execution 作用域（归还后祖先链已回到基本线）
                 governor.teardown_scope(gov_path)
             run.wall_time_s = round(time.monotonic() - started, 6)
 
@@ -328,9 +413,52 @@ class GeoExecutionEngine:
             run.error_message = first.error_message
         else:
             run.status = ExecutionRunStatus.COMPLETED
+        # V5（audit 06 §6.1 step 2）：终态证据快照（有界 ≤16KB，owner 域隔离）
+        # 尽力落库 —— 进程重启后 get_run 内存未命中时回放，读取不再 404。
+        # fail-open：快照失败绝不倒灌执行结果。
+        # Wave-11（audit 08 §6.2.1）：built-but-orphaned 的执行包在此接线 ——
+        # run 终态即构建有界、无载荷的可复现清单：判定块 + 无载荷 lineage
+        # 投影进内存附加层与终态证据快照（folded JSON key，无迁移）。
+        # fail-open：清单构建失败绝不阻断执行路径（诚实日志披露）。
+        # 注意：run_bundled 必须在 run_finished 之前发射 —— replay 校验器视
+        # run_finished 为终态，其后任何 trace 事件都判违规
+        # （test_replay_security_v4::test_happy_path_trace_is_valid）。
+        run_extras: dict[str, Any] = {}
+        try:
+            from app.lib.gis.runtime_manifest import get_runtime_manifest
+            from app.services.geocompute import reproducibility as _rb
+
+            bundle = _rb.build_execution_bundle(
+                plan, run,
+                runtime_manifest_fingerprint=get_runtime_manifest().fingerprint,
+            )
+            run_extras = {
+                "reproducibility": _rb.bundle_verdict_block(bundle),
+                "lineage": _rb.lineage_projection(plan, run)[:32],
+            }
+            tracing.emit("run_bundled", run_id=run_id, status=run.status.value,
+                         classification=str(bundle.get("reproducibility")))
+        except Exception:  # noqa: BLE001 - 附加证据，绝不阻断执行路径
+            tracing.emit("run_bundle_skipped", run_id=run_id,
+                         status=run.status.value, reason="bundle_unavailable")
         tracing.emit("run_finished", run_id=run_id, plan_fingerprint=plan_fp,
                      status=run.status.value, duration_s=run.wall_time_s,
                      error_code=run.error_code)
+        if run_extras:
+            with self._run_lock:
+                self._run_extras[run_id] = run_extras
+                while len(self._run_extras) > self._run_cache_size:
+                    self._run_extras.popitem(last=False)
+        try:
+            from app.services.geocompute import run_evidence
+
+            run_evidence.save_snapshot(run, owner_scope, extras=run_extras or None)
+        except Exception:  # noqa: BLE001 - 快照是尽力而为的持久化证据；
+            # 终态后不得再发 trace 事件（replay 终态不变量），降级为日志。
+            logger.warning(
+                "[geocompute] run evidence snapshot unavailable: run_id=%s status=%s",
+                run_id, run.status.value,
+            )
         # 载荷保留上限（并发评审 M3）：run 终态后立即丢弃原始节点输出 ——
         # 证据/摘要已在 run.evidence；复用走字节预算化的 NodeResultStore。
         if not self._retain_outputs:
@@ -356,15 +484,52 @@ class GeoExecutionEngine:
         None（调用方 404，不区分「不存在」与「他人 run」，避免存在性预言机）。
 
         不传 ``owner_scope``（进程内工具/executor 自身路径）保持原有语义。
+
+        V5（audit 06 §6.1 step 2）：内存未命中时回读**终态证据快照**
+        （``run_evidence.load_snapshot``，owner 域校验在读取侧）—— 进程重启
+        后 REST/工具读取不再 404；快照回放以 ``run.source == "snapshot"``
+        诚实标注（只读证据，非活注册表条目）。
         """
         with self._run_lock:
-            if owner_scope is not None and self._run_owners.get(run_id) != owner_scope:
-                return None
-            return self._runs.get(run_id)
+            run = self._runs.get(run_id)
+            if run is not None:
+                if owner_scope is not None and self._run_owners.get(run_id) != owner_scope:
+                    return None
+                return run
+        # 内存未命中 → 快照回放（owner 域校验在 load 侧：他人/未知一样 None）。
+        try:
+            from app.services.geocompute import run_evidence
+
+            return run_evidence.load_snapshot(run_id, owner_scope=owner_scope)
+        except Exception:  # noqa: BLE001 - 回放失败按未命中处理（诚实 404）
+            return None
 
     def get_node_output(self, run_id: str, node_id: str) -> Optional[dict[str, Any]]:
         with self._run_lock:
             return (self._run_outputs.get(run_id) or {}).get(node_id)
+
+    def get_run_extras(
+        self, run_id: str, *, owner_scope: Optional[str] = None
+    ) -> dict[str, Any]:
+        """读取 run 的 Wave-11 附加证据（reproducibility 判定 + 无载荷
+        lineage 投影）。
+
+        内存未命中 → 终态证据快照回读。owner 域隔离与 ``get_run`` 同一纪律：
+        归属不符一律 ``{}``（不区分「不存在」与「他人 run」）。返回值绝无
+        节点载荷。
+        """
+        with self._run_lock:
+            extras = self._run_extras.get(run_id)
+            if extras is not None:
+                if owner_scope is not None and self._run_owners.get(run_id) != owner_scope:
+                    return {}
+                return extras
+        try:
+            from app.services.geocompute import run_evidence
+
+            return run_evidence.load_snapshot_extras(run_id, owner_scope=owner_scope)
+        except Exception:  # noqa: BLE001 - 附加证据读取 fail-open
+            return {}
 
     # ------------------------------------------------------------ internal
 
@@ -416,14 +581,18 @@ class GeoExecutionEngine:
         deadline_ts: float,
         governor: Optional[Any] = None,
         gov_path: Optional[str] = None,
+        charge_ledger: Optional[Any] = None,
     ) -> None:
         """就绪集调度（ADR-0101 D3）：indegree 驱动，无硬波次屏障。
 
         - 就绪节点按字典序稳定派发（与波次序兼容的确定性）；
         - 派发前做 governor weighted admission（concurrency 槽位预留，
-          沿层级链生效）；拒绝 → 背压（本轮回填队首，等槽位释放）；
+          沿层级链生效；Wave 8 R7：单位数按 ResourceClass 加权）；
+          拒绝 → 背压（本轮回填队首，等槽位释放）；
         - 启动前检查祖先终态：failed/cancelled/skipped → 后代 skipped；
-        - 取消/deadline 对「未启动」节点统一收敛，绝不产生僵尸任务。
+        - 取消/deadline 对「未启动」节点统一收敛，绝不产生僵尸任务；
+        - Wave 8 R9：超过 deadline+宽限仍占槽的非协作在飞节点，其并发
+          槽位由租约看门狗强制归还（线程本身不可杀）。
         """
         node_map = plan.node_map()
         indegree = {nid: len(n.inputs) for nid, n in node_map.items()}
@@ -433,6 +602,10 @@ class GeoExecutionEngine:
                 dependents[src].append(node.node_id)
         ready = sorted(nid for nid, deg in indegree.items() if deg == 0)
         inflight: dict[Any, str] = {}
+        # R7/R9 的 per-run 账簿（有界：键随 settle 移除，run 收尾清空）。
+        inflight_units: dict[Any, int] = {}
+        leases: dict[str, dict[str, Any]] = {}
+        lease_reclaimed: set[str] = set()
         launched = 0
 
         def _settle(nid: str) -> None:
@@ -455,8 +628,35 @@ class GeoExecutionEngine:
             if escalate and cancel_token is not None:
                 # 评审 MAJOR 修正：deadline 触发时升级为 run 级取消 —— 在飞
                 # 的协作节点（raster 窗口/时间块循环）经由各自 checkpoint
-                # 观察 token 收敛，而不是跑完整个自然生命周期。
+                # 观察收敛，而不是跑完整个自然生命周期。
                 cancel_token.cancel(reason)
+
+        def _reclaim_expired_slot_leases() -> None:
+            """R9：租约看门狗 —— 节点超过其 deadline+宽限仍在跑（线程
+            不可强杀的非协作节点）→ 强制归还它占用的并发槽位，祖先
+            作用域（session/tenant）的槽位预算不再被永久占用。
+
+            正确性：``lease_reclaimed`` 让节点真正落定时的 settle 路径
+            跳过二次释放（无重复归还）；线程仍在跑 → 它继续消耗真实
+            CPU/内存但不占治理槽位（诚实取舍：治理槽位是调度资源，
+            不是线程存活探针）。
+            """
+            now = time.monotonic()
+            for fut, nid in list(inflight.items()):
+                lease = leases.get(nid)
+                if lease is None or nid in lease_reclaimed:
+                    continue
+                if not fut.running():
+                    continue  # 已落定/尚未开跑 → 交给正常 settle 路径
+                if now <= lease["deadline"] + self._slot_lease_grace_s:
+                    continue
+                lease_reclaimed.add(nid)
+                leases.pop(nid, None)
+                if governor is not None and gov_path:
+                    governor.release(gov_path, concurrency=lease["units"])
+                tracing.emit("slot_lease_reclaimed", run_id=run.run_id,
+                             node_id=nid, reason="lease_expired",
+                             concurrency=lease["units"])
 
         with ThreadPoolExecutor(
             max_workers=self._max_workers, thread_name_prefix="geocompute-node",
@@ -470,6 +670,7 @@ class GeoExecutionEngine:
                     _sweep_remaining("deadline exceeded", escalate=True)
                 if not ready and not inflight:
                     break
+                _reclaim_expired_slot_leases()
 
                 # 填满并行槽位（背压：governor 拒绝时停在本轮回填队首）。
                 while ready and len(inflight) < self._max_workers:
@@ -485,25 +686,38 @@ class GeoExecutionEngine:
                                      status="skipped", reason="ancestor_not_completed")
                         _settle(nid)
                         continue
+                    # R7：ResourceClass → 槽位单位（重节点 2，其余 1）。
+                    units = self.slot_units_for(node)
                     if governor is not None and gov_path:
                         try:
-                            governor.reserve(gov_path, concurrency=1)
+                            governor.reserve(gov_path, concurrency=units)
                         except BudgetExceededError:
                             # weighted admission 背压（ADR-0101 D3）：槽位
                             # 紧张时不再制造新任务；等一个在飞节点落定。
                             break
                     ready.pop(0)
                     tracing.emit("node_admitted", run_id=run.run_id, node_id=nid,
-                                 status="running", policy=node.policy.value)
+                                 status="running", policy=node.policy.value,
+                                 concurrency=units)
                     run.evidence[nid].status = "running"
-                    inflight[pool.submit(
+                    fut = pool.submit(
                         self._execute_one, run, node, outputs, outputs_fp,
                         session_id=session_id, caller=caller,
                         owner_scope=owner_scope,
                         cancel_token=cancel_token,
                         deadline_ts=deadline_ts, budget=plan.budget,
                         governor=governor, gov_path=gov_path,
-                    )] = nid
+                        charge_ledger=charge_ledger,
+                    )
+                    inflight[fut] = nid
+                    inflight_units[fut] = units
+                    # R9 租约：节点自身 deadline（≤ run deadline）为租期基准。
+                    lease_deadline = deadline_ts
+                    if node.deadline_s is not None:
+                        lease_deadline = min(
+                            lease_deadline, time.monotonic() + node.deadline_s
+                        )
+                    leases[nid] = {"units": units, "deadline": lease_deadline}
                     launched += 1
 
                 if not inflight:
@@ -514,14 +728,25 @@ class GeoExecutionEngine:
                         continue
                     break
 
+                # R9：wait 以巡检间隔为上界周期性返回 —— 看门狗在节点级
+                # deadline+宽限（而非 run deadline）就能巡检到僵尸槽位。
                 done, _ = wait(
                     set(inflight), return_when=FIRST_COMPLETED,
-                    timeout=max(0.05, deadline_ts - time.monotonic()),
+                    timeout=max(0.05, min(
+                        deadline_ts - time.monotonic(), _LEASE_SWEEP_INTERVAL_S,
+                    )),
                 )
                 for fut in done:
                     nid = inflight.pop(fut)
-                    if governor is not None and gov_path:
-                        governor.release(gov_path, concurrency=1)
+                    units = inflight_units.pop(fut, 1)
+                    leases.pop(nid, None)
+                    if (
+                        governor is not None and gov_path
+                        and nid not in lease_reclaimed
+                    ):
+                        # R9：被看门狗强制回收过的槽位不再二次释放
+                        #（clamp-at-zero 本也兜底，这里直接精确配对）。
+                        governor.release(gov_path, concurrency=units)
                     exc = fut.exception()
                     if exc is not None:  # noqa: BLE001 - _execute_one 已类型化收编
                         ev = run.evidence[nid]
@@ -530,6 +755,10 @@ class GeoExecutionEngine:
                             ev.error_code = "NODE_FAILED"
                             ev.error_message = _scrub_error_message(str(exc))
                     _settle(nid)
+        # R7/R9 账簿随 run 收尾清空（有界 per-run dict；异常路径随栈帧丢弃）。
+        inflight_units.clear()
+        leases.clear()
+        lease_reclaimed.clear()
 
     def _execute_one(
         self,
@@ -546,6 +775,7 @@ class GeoExecutionEngine:
         budget: Any = None,
         governor: Optional[Any] = None,
         gov_path: Optional[str] = None,
+        charge_ledger: Optional[Any] = None,
     ) -> None:
         ev = run.evidence[node.node_id]
         node_deadline = deadline_ts
@@ -554,9 +784,11 @@ class GeoExecutionEngine:
 
         if node.policy.value == "durable_job":
             self._execute_durable(
-                run, node, outputs, ev, session_id=session_id,
+                run, node, outputs, outputs_fp, ev, session_id=session_id,
+                owner_scope=owner_scope,
                 cancel_token=cancel_token, node_deadline=node_deadline,
                 governor=governor, gov_path=gov_path,
+                charge_ledger=charge_ledger,
             )
             if ev.status in {"completed", "reused"} and node.node_id in outputs:
                 outputs_fp[node.node_id] = _output_fingerprint(outputs[node.node_id])
@@ -586,7 +818,9 @@ class GeoExecutionEngine:
                     outputs[node.node_id] = payload
                     out_fp = cached.get(_OUT_FP_KEY) or _output_fingerprint(payload)
                     outputs_fp[node.node_id] = out_fp
-                    self._governor_charge(governor, gov_path, node, payload)
+                    self._governor_charge(
+                    governor, gov_path, node, payload, charge_ledger
+                )
                     ev.status = "reused"
                     ev.checkpoint_verified = True
                     ev.rows_emitted = self._count_rows(payload)
@@ -630,7 +864,9 @@ class GeoExecutionEngine:
                     },
                     **payload,
                 })
-                self._governor_charge(governor, gov_path, node, payload)
+                self._governor_charge(
+                    governor, gov_path, node, payload, charge_ledger
+                )
                 ev.status = "completed"
                 ev.rows_emitted = self._count_rows(payload)
                 ev.duration_s = round(time.monotonic() - started, 6)
@@ -746,20 +982,37 @@ class GeoExecutionEngine:
         run: ExecutionRun,
         node: ExecutionNode,
         outputs: dict[str, dict[str, Any]],
+        outputs_fp: dict[str, str],
         ev: NodeEvidence,
         *,
         session_id: Optional[str],
+        owner_scope: str,
         cancel_token: Optional[CancellationToken],
         node_deadline: float,
         governor: Optional[Any],
         gov_path: Optional[str],
+        charge_ledger: Optional[Any] = None,
     ) -> None:
         """durable_job 分支：穿透既有 AnalysisTask 运行时（无第二真相）。
 
         WORKER_LOSS 类失败按节点 RetryPolicy 有界重派（幂等键保证不产生
         第二 job 行 —— 终态行释放键后重派才建新行，语义即重跑）。
+
+        V5（audit 06 §6.1 step 1/3/5）：
+        - 派发按 ``durable.queue_for_node`` 落 profile 队列（重派同节点 →
+          同队列，retry affinity 无需新状态机）；
+        - **派发前**先查 checkpoint 复用（进程内 store → 跨进程 DB 索引，
+          上游指纹一致 + result_ref 存活才命中）—— 最贵的 durable 节点
+          终于进入复用；
+        - eager（无 Redis）时诚实标注 ``backend_variant="in_process_eager"``。
         """
         started_dj = time.monotonic()
+        if node.reuse == NodeReusePolicy.ALLOW and self._durable_reuse_hit(
+            run, node, outputs, outputs_fp, ev, owner_scope,
+            governor=governor, gov_path=gov_path, charge_ledger=charge_ledger,
+        ):
+            ev.duration_s = round(time.monotonic() - started_dj, 6)
+            return
         attempts_allowed = node.retry.max_attempts
         last_err: Optional[GeoComputeError] = None
         for attempt in range(1, attempts_allowed + 1):
@@ -783,10 +1036,15 @@ class GeoExecutionEngine:
                     deadline_s=(node_deadline - time.monotonic())
                     if node.deadline_s is not None else None,
                 )
+                if ret.get("backend_variant"):
+                    # V5 step 5：eager 降级诚实披露（reproducibility honesty）。
+                    ev.backend_variant = str(ret["backend_variant"])
                 tracing.emit("node_dispatched", run_id=run.run_id,
                              node_id=node.node_id, status="running",
                              job_id=str(ret.get("job_id", "")), policy="durable_job",
-                             category=node.category.value)
+                             category=node.category.value,
+                             queue=ret.get("queue"),
+                             backend=ret.get("backend_variant"))
                 done = durable.await_node_job(
                     ret["job_id"],
                     session_id=session_id,
@@ -809,7 +1067,14 @@ class GeoExecutionEngine:
                              status="completed", rows=ev.rows_emitted,
                              duration_s=ev.duration_s, job_id=done["job_id"],
                              policy="durable_job")
-                self._governor_charge(governor, gov_path, node, payload)
+                self._governor_charge(
+                    governor, gov_path, node, payload, charge_ledger
+                )
+                # V5 step 3：完成即记录复用事实（进程内 store + 跨进程索引）。
+                self._record_durable_result(
+                    run, node, outputs, outputs_fp, owner_scope,
+                    session_id=session_id, payload=payload,
+                )
                 return
             except OperationCancelled:
                 ev.status = "cancelled"
@@ -843,19 +1108,252 @@ class GeoExecutionEngine:
                      policy="durable_job",
                      failure_class=(classify_failure(last_err).value if last_err else "invalid_data"))
 
+    # ------------------------------------------- V5 durable reuse helpers
+
+    def _durable_reuse_hit(
+        self,
+        run: ExecutionRun,
+        node: ExecutionNode,
+        outputs: dict[str, dict[str, Any]],
+        outputs_fp: dict[str, str],
+        ev: NodeEvidence,
+        owner_scope: str,
+        *,
+        governor: Optional[Any] = None,
+        gov_path: Optional[str] = None,
+        charge_ledger: Optional[Any] = None,
+    ) -> bool:
+        """durable 节点派发前的跨进程 checkpoint 复用（audit 06 §6.1 step 3）。
+
+        两级查找，同一套上游一致性校验：
+          (a) 进程内 NodeResultStore（与 in_process 节点同键空间）；
+          (b) DB 复用索引（geocompute_node_results；fail-open）—— 命中还需
+              ``result_ref`` 经会话存储**存活探测**通过才复用。
+
+        复用被拒时记录类型化原因（``ev.reuse_skipped_reason`` + trace）：
+        ``upstream_changed:<nodes>`` / ``result_ref_unresolvable``。无条目
+        不是「跳过」（没有可复用物），不打证据。
+        """
+        node_fp = node.semantic_fingerprint()
+        reuse_key = graph.checkpoint_reuse_key(node, owner_scope)
+        cached = self._store.get(reuse_key)
+        if cached is not None and _SIZE_KEY in cached:
+            stale = self._checkpoint_stale(node, cached, outputs_fp)
+            if stale is None:
+                payload = {k: v for k, v in cached.items() if not k.startswith("__")}
+                self._accept_durable_reuse(
+                    run, node, outputs, outputs_fp, ev, payload,
+                    source="in_process", out_fp=cached.get(_OUT_FP_KEY),
+                    governor=governor, gov_path=gov_path, charge_ledger=charge_ledger,
+                )
+                return True
+            self._note_reuse_skip(
+                ev, f"upstream_changed:{','.join(sorted(stale))}", run, node,
+            )
+
+        try:
+            from app.services.geocompute import reuse_index
+
+            entry = reuse_index.find_result(owner_scope, node_fp)
+        except Exception:  # noqa: BLE001 - 索引不可用 → 未命中（诚实重算）
+            entry = None
+            tracing.emit("node_reuse_skipped", run_id=run.run_id,
+                         node_id=node.node_id, reason="index_unavailable")
+        if entry is None:
+            return False
+
+        recorded = entry.get("upstream_fingerprints") or {}
+        changed = [
+            src for src, fp in recorded.items()
+            if src in outputs_fp and outputs_fp[src] != fp
+        ]
+        if changed:
+            self._note_reuse_skip(
+                ev, f"upstream_changed:{','.join(sorted(changed))}", run, node,
+            )
+            return False
+
+        payload = self._resolve_session_ref(
+            entry.get("session_id"), entry.get("result_ref")
+        )
+        if payload is None:
+            # ref 已被会话回收/失效：移除死条目（有界索引保持诚实），重算。
+            self._note_reuse_skip(ev, "result_ref_unresolvable", run, node)
+            try:
+                from app.services.geocompute import reuse_index
+
+                reuse_index.delete_result(owner_scope, node_fp)
+            except Exception:  # noqa: BLE001 - 卫生删除是尽力而为
+                pass
+            return False
+
+        out_fp = _output_fingerprint(payload)
+        # 回填进程内 store（后续同进程命中走 fast path，带完整校验元数据）。
+        upstream = {
+            **{s: fp for s, fp in recorded.items()},
+            **{s: outputs_fp[s] for s in node.inputs if s in outputs_fp},
+        }
+        self._store.put(reuse_key, {
+            _NODE_FP_KEY: node_fp,
+            _OUT_FP_KEY: out_fp,
+            _UPSTREAM_KEY: upstream,
+            **payload,
+        })
+        self._accept_durable_reuse(
+            run, node, outputs, outputs_fp, ev, payload,
+            source="cross_process_index", out_fp=out_fp,
+            governor=governor, gov_path=gov_path, charge_ledger=charge_ledger,
+        )
+        return True
+
+    def _accept_durable_reuse(
+        self,
+        run: ExecutionRun,
+        node: ExecutionNode,
+        outputs: dict[str, dict[str, Any]],
+        outputs_fp: dict[str, str],
+        ev: NodeEvidence,
+        payload: dict[str, Any],
+        *,
+        source: str,
+        out_fp: Optional[str],
+        governor: Optional[Any] = None,
+        gov_path: Optional[str] = None,
+        charge_ledger: Optional[Any] = None,
+    ) -> None:
+        """接受复用：写载荷/指纹/证据（浅拷贝防缓存别名腐蚀，同 in_process 路径）。
+
+        DIST（round1）：复用也是资源消费 —— 与执行完成路径同一口径沿层级链
+        记账（gauge 语义下漏记会让长寿命作用域的基线被复用流量无偿侵占）。
+        """
+        outputs[node.node_id] = payload
+        outputs_fp[node.node_id] = out_fp or _output_fingerprint(payload)
+        ev.status = "reused"
+        ev.checkpoint_verified = True
+        ev.reuse_source = source
+        ev.rows_emitted = self._count_rows(payload)
+        ev.output_ref = payload.get("ref_id")
+        self._governor_charge(governor, gov_path, node, payload, charge_ledger)
+        tracing.emit("node_reused", run_id=run.run_id, node_id=node.node_id,
+                     status="reused", rows=ev.rows_emitted, checkpoint="verified",
+                     reuse_source=source)
+
+    def _record_durable_result(
+        self,
+        run: ExecutionRun,
+        node: ExecutionNode,
+        outputs: dict[str, dict[str, Any]],
+        outputs_fp: dict[str, str],
+        owner_scope: str,
+        *,
+        session_id: Optional[str],
+        payload: dict[str, Any],
+    ) -> None:
+        """durable 节点完成 → 写两级复用事实（进程内 store + DB 索引）。
+
+        V4 的 durable 分支从不写 NodeResultStore（audit：最贵的节点没有
+        复用）—— 现在与 in_process 节点同键空间同校验；DB 索引让复用跨
+        worker / 跨 restart 成立。ref 缺失（无会话交接）时只写进程内。
+        """
+        node_fp = node.semantic_fingerprint()
+        out_fp = outputs_fp.get(node.node_id) or _output_fingerprint(payload)
+        outputs_fp[node.node_id] = out_fp
+        upstream = {s: outputs_fp[s] for s in node.inputs if s in outputs_fp}
+        try:
+            self._store.put(
+                graph.checkpoint_reuse_key(node, owner_scope),
+                {
+                    _NODE_FP_KEY: node_fp,
+                    _OUT_FP_KEY: out_fp,
+                    _UPSTREAM_KEY: upstream,
+                    **payload,
+                },
+            )
+        except Exception:  # noqa: BLE001 - 复用记录是尽力而为
+            pass
+        ref = payload.get("ref_id")
+        if not ref or not session_id:
+            return
+        try:
+            from app.services.geocompute import reuse_index
+
+            ok = reuse_index.record_result(
+                owner_scope=owner_scope,
+                node_fingerprint=node_fp,
+                result_ref=str(ref),
+                session_id=str(session_id),
+                upstream_fingerprints=upstream,
+            )
+        except Exception:  # noqa: BLE001
+            ok = False
+        if not ok:
+            tracing.emit("node_reuse_record_skipped", run_id=run.run_id,
+                         node_id=node.node_id, reason="index_unavailable")
+
+    def _note_reuse_skip(
+        self, ev: NodeEvidence, reason: str, run: ExecutionRun, node: ExecutionNode,
+    ) -> None:
+        """复用被拒的类型化证据（诚实：原因进 evidence + trace）。"""
+        ev.reuse_skipped_reason = reason
+        ev.checkpoint_verified = False
+        tracing.emit("node_reuse_skipped", run_id=run.run_id,
+                     node_id=node.node_id, reason=reason)
+
+    @staticmethod
+    def _resolve_session_ref(
+        session_id: Optional[str], ref: Optional[str]
+    ) -> Optional[dict[str, Any]]:
+        """把 session ref 解析回节点载荷（与 await_node_job 同一形状）。
+
+        会话存储不可用 / ref 失效 → None（调用方诚实重算）。
+        """
+        if not session_id or not ref:
+            return None
+        try:
+            from app.services.geocompute._async_bridge import run_coro_sync
+            from app.services.session_data import session_data_manager
+
+            stored = run_coro_sync(session_data_manager.get(session_id, ref))
+        except Exception:  # noqa: BLE001 - 会话存储故障 → 探测未命中
+            return None
+        if stored is None:
+            return None
+        return {"ref_id": ref, "features": stored, "metadata": {"via": "durable_reuse"}}
+
+    @staticmethod
+    def slot_units_for(node: ExecutionNode) -> int:
+        """ResourceClass → 并发槽位单位（Wave 8 R7 接线；确定性、无随机）。
+
+        memory ≥ 4 或 cpu ≥ 5 → 2 单位，其余 1。效果经由**祖先作用域**的
+        并发预算产生（session/tenant 槽位被重节点按 2× 消耗 → 跨 run
+        加权背压）；EXECUTION 自身上界以单位计（2×max_workers，见
+        ``execute_plan``）保证单重节点绝不自锁。此前该声明维度
+        （``plan.ResourceClass``）已解析但从未被任何调度/治理路径消费
+        （audit 07 R7）。
+        """
+        rc = node.resource_class
+        if rc.memory >= _HEAVY_SLOT_MEMORY or rc.cpu >= _HEAVY_SLOT_CPU:
+            return _HEAVY_SLOT_UNITS
+        return 1
+
     @staticmethod
     def _governor_charge(governor: Any, gov_path: Optional[str],
-                         node: ExecutionNode, payload: dict[str, Any]) -> None:
+                         node: ExecutionNode, payload: dict[str, Any],
+                         charge_ledger: Optional[Any] = None) -> None:
         """节点完成 → 沿层级链记账（行数 + 字节，ADR-0101 D10）。
 
         字节用与 NodeResultStore 相同的采样近似 —— 有界 O(1)，只在有
         bytes 限额的作用域上有意义；行数始终记账。
+        Wave 8 R1：同步累计到本 run 的 charge ledger，供收尾全额归还
+        （gauge 语义：长寿命作用域回到基本线）。
         """
         if governor is None or gov_path is None:
             return
         rows_payload = payload.get("features") or payload.get("rows") or []
         bytes_est = NodeResultStore._measure(payload)
         governor.charge(gov_path, rows=len(rows_payload), bytes=bytes_est, nodes=1)
+        if charge_ledger is not None:
+            charge_ledger.add(len(rows_payload), bytes_est, 1)
 
     @staticmethod
     def _count_rows(payload: dict[str, Any]) -> Optional[int]:

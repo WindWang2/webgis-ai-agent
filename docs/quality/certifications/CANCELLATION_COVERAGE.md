@@ -5,7 +5,7 @@
 > cancellable）；行为认证：tests/quality/
 > test_cancellation_resource_certification.py。
 
-- 覆盖：**14/49** 个重计算文件含取消检查点。
+- 覆盖：**14/52** 个重计算文件含取消检查点。
 
 | file | cancellation sites | loop sites（粗计） | status |
 |---|---|---|---|
@@ -47,15 +47,18 @@
 | app/lib/geo_analysis/tin_interpolation.py | 0 | 21 | no-checkpoints |
 | app/lib/geo_analysis/trend_surface.py | 0 | 11 | no-checkpoints |
 | app/lib/geo_raster/__init__.py | 0 | 1 | no-checkpoints |
-| app/lib/geo_raster/cog.py | 0 | 1 | no-checkpoints |
+| app/lib/geo_raster/chunk.py | 0 | 23 | no-checkpoints |
+| app/lib/geo_raster/cog.py | 0 | 5 | no-checkpoints |
 | app/lib/geo_raster/env.py | 0 | 3 | no-checkpoints |
 | app/lib/geo_raster/fingerprint.py | 0 | 4 | no-checkpoints |
 | app/lib/geo_raster/reader.py | 0 | 10 | no-checkpoints |
 | app/lib/geo_raster/remote.py | 0 | 3 | no-checkpoints |
 | app/lib/geo_raster/source.py | 0 | 2 | no-checkpoints |
-| app/lib/geo_raster/windowed.py | 1 | 7 | certified |
+| app/lib/geo_raster/windowed.py | 1 | 11 | certified |
+| app/lib/geo_raster/zarr.py | 0 | 26 | no-checkpoints |
 | app/services/data_ingest/__init__.py | 0 | 0 | no-checkpoints |
 | app/services/data_ingest/pipeline.py | 0 | 1 | no-checkpoints |
+| app/services/data_ingest/repair_planning.py | 0 | 6 | no-checkpoints |
 | app/services/mapspec_layer_pipeline.py | 0 | 0 | no-checkpoints |
 | app/services/mapspec_to_svg.py | 0 | 27 | no-checkpoints |
 

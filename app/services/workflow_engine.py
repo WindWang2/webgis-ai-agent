@@ -38,6 +38,7 @@ from app.services.provenance import (
     compute_run_fingerprint,
     extract_artifact_metadata,
 )
+from app.services.provenance.manifest import redact_provenance_args
 from app.services.provenance.context import (
     ToolExecutionContext,
     reset_tool_execution_context,
@@ -491,6 +492,15 @@ class WorkflowEngine:
 
         step_dispatch_service = None  # #694: lazily built ToolDispatchService
         step_executed_tools: set = set()
+        # Wave-4 (audit 08 §6.2.4): the mapspec_fingerprint lineage column has
+        # existed since migration 0022 but was never populated by the engine.
+        # Resolve it ONCE per run when a session map context exists (same
+        # helper as _attach_outcome_context) and pass it at the record_lineage
+        # call below. Best-effort: absent session/mapspec → None → column
+        # untouched (INV-LIN guards preserved; evidence never load-bearing).
+        session_mapspec_fingerprint = await WorkflowEngine._session_mapspec_fingerprint(
+            session_id
+        )
         try:
             for step_id in execution_order:
                 step_spec = step_map[step_id]
@@ -540,13 +550,19 @@ class WorkflowEngine:
                 step_output = {"result": tool_result}
                 step_outputs[step_id] = step_output
 
+                # Wave-11 (audit 08 §2.4/§6.2.5): the trace used to persist raw
+                # tool_args — a fabric tool's `password` arg and inline GeoJSON
+                # landed verbatim in workflow_runs.execution_trace. Persist the
+                # redacted projection; the in-memory raw args stay available for
+                # dataset attribution below (short scalar ids are unaffected).
+                persisted_args = redact_provenance_args(tool_args)
                 trace_entry = {
                     "step_id": step_id,
                     "tool_name": tool_name,
                     "tool_version": tool_version,
                     "status": "success",
                     "duration_seconds": step_duration,
-                    "args": tool_args,
+                    "args": persisted_args,
                     "result_summary": str(tool_result)[:200],
                 }
                 if step_capability:
@@ -560,7 +576,7 @@ class WorkflowEngine:
                     tool_name=tool_name,
                     tool_version=tool_version,
                     status="success",
-                    args=tool_args,
+                    args=persisted_args,  # builder re-redacts (idempotent) + trims
                     capability=step_capability,
                     algorithm=step_algorithm,
                 )
@@ -607,9 +623,13 @@ class WorkflowEngine:
                     tool_version=tool_version,
                     producing_capability=step_capability,
                     producing_algorithm=step_algorithm,
+                    mapspec_fingerprint=session_mapspec_fingerprint,
                     parent_artifact_ids=parent_artifact_ids,
                     workflow_run_id=run_id,
-                    parameters=tool_args,
+                    # Wave-11 (audit 08 §6.2.5): lineage edges stay links —
+                    # parameters persist redacted (secrets → "[REDACTED]",
+                    # payloads dropped, oversized values → digest), never raw.
+                    parameters=redact_provenance_args(tool_args),
                     source_dataset_id=src_ds_id,
                     source_dataset_fingerprint=src_ds_fp,
                     content_fingerprint=meta["content_fingerprint"],
@@ -674,10 +694,25 @@ class WorkflowEngine:
             # executed inside a session/map-product context. Every field is
             # best-effort — an absent session or map state simply omits the
             # block and keeps the legacy manifest shape.
-            await WorkflowEngine._attach_outcome_context(
+            runtime_fp = await WorkflowEngine._attach_outcome_context(
                 manifest_builder,
                 run=run,
                 session_id=session_id,
+            )
+            # Wave-11 (audit 08 §6.2.1): an honest reproducibility verdict per
+            # run, using the same taxonomy as the geocompute execution bundle.
+            # Outcome evidence only — it lives OUTSIDE the run fingerprint
+            # projection (manifest._stable_projection), so adding it never
+            # churns run_fingerprint.
+            manifest_builder.set_outcome_context(
+                reproducibility=WorkflowEngine._reproducibility_verdict(
+                    run,
+                    runtime_manifest_fingerprint=runtime_fp,
+                    tool_versions={
+                        t.get("tool_name"): t.get("tool_version")
+                        for t in execution_trace if isinstance(t, dict)
+                    },
+                )
             )
             manifest = manifest_builder.build()
             run.run_manifest = manifest
@@ -1044,12 +1079,35 @@ class WorkflowEngine:
         )
 
     @staticmethod
+    async def _session_mapspec_fingerprint(session_id: Optional[str]) -> Optional[str]:
+        """Session map context → cartographic MapSpec fingerprint (best-effort).
+
+        Wave-4 (audit 08 §6.2.4): value fed to the record_lineage call so the
+        plumbed ``mapspec_fingerprint`` column stops being test-only. Same
+        derivation as ``_attach_outcome_context`` (cartographic_fingerprint
+        over the session MapSpec); any absence/failure → None → the column
+        stays untouched rather than fabricated.
+        """
+        if not session_id:
+            return None
+        try:
+            from app.lib.cartography.quality_loop import cartographic_fingerprint
+            from app.services.mapspec.store import mapspec_store_instance
+
+            mapspec = await mapspec_store_instance.get_mapspec(session_id)
+            if isinstance(mapspec, dict) and mapspec:
+                return cartographic_fingerprint(mapspec)
+        except Exception:  # noqa: BLE001 — 增值证据，绝不阻塞执行
+            return None
+        return None
+
+    @staticmethod
     async def _attach_outcome_context(
         manifest_builder: RunManifestBuilder,
         *,
         run: WorkflowRun,
         session_id: Optional[str],
-    ) -> None:
+    ) -> Optional[str]:
         """Best-effort product-outcome evidence for the run manifest (A2).
 
         Attaches: the runtime manifest fingerprint (registry generation this run
@@ -1057,17 +1115,22 @@ class WorkflowEngine:
         MapSpec fingerprint, product facet status, QA and finalization
         summaries. Any failure simply omits the block: outcome evidence is
         additive, never load-bearing for the fingerprint.
+
+        Returns the runtime manifest fingerprint (Wave-11: consumed by
+        ``_reproducibility_verdict``) or None when unavailable.
         """
+        runtime_fp: Optional[str] = None
         try:
             from app.lib.gis.runtime_manifest import get_runtime_manifest
 
+            runtime_fp = get_runtime_manifest().fingerprint
             manifest_builder.set_outcome_context(
-                runtime_manifest_fingerprint=get_runtime_manifest().fingerprint
+                runtime_manifest_fingerprint=runtime_fp
             )
         except Exception:  # noqa: BLE001
-            pass
+            runtime_fp = None
         if not session_id:
-            return
+            return runtime_fp
         mapspec: Optional[Dict[str, Any]] = None
         try:
             from app.lib.cartography.quality_loop import cartographic_fingerprint
@@ -1117,6 +1180,68 @@ class WorkflowEngine:
                 "unavailable for run %s (session %s): %s",
                 getattr(run, "id", "?"), session_id, e,
             )
+        return runtime_fp
+
+    @staticmethod
+    def _reproducibility_verdict(
+        run: WorkflowRun,
+        *,
+        runtime_manifest_fingerprint: Optional[str],
+        tool_versions: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Honest per-run reproducibility classification (Wave-11, audit 08
+        §5.2/§6.2.1) using the geocompute bundle taxonomy (reproducible /
+        conditionally_reproducible / stale / source_unavailable /
+        non_deterministic). Derived ONLY from facts the run actually recorded —
+        never fabricated:
+
+        - incomplete run → ``source_unavailable`` (outputs/pipeline incomplete);
+        - registry generation unpinned or input dataset content unpinned
+          (external/undated sources) or tool versions missing →
+          ``conditionally_reproducible`` (honest disclosure, mirrors the
+          bundle's external-source semantics);
+        - otherwise: frozen graph + pinned versions + pinned input content →
+          ``reproducible``.
+
+        Bounded: ≤8 basis lines of ≤160 chars. Written into the manifest
+        OUTCOME block (outside the run fingerprint projection by design), so
+        the verdict never churns ``run_fingerprint``.
+        """
+        basis: List[str] = []
+        if (run.status or "") != "completed":
+            basis.append(f"run_status={run.status}: outputs incomplete")
+            return {"classification": "source_unavailable", "basis": basis}
+        classification = "reproducible"
+        if runtime_manifest_fingerprint:
+            basis.append("registry generation pinned (runtime_manifest_fingerprint)")
+        else:
+            classification = "conditionally_reproducible"
+            basis.append(
+                "registry generation unknown: algorithm resolution unverifiable"
+            )
+        ds_fps = run.input_dataset_fingerprints or {}
+        if ds_fps:
+            basis.append(f"input dataset content pinned ({len(ds_fps)} fingerprints)")
+        else:
+            classification = "conditionally_reproducible"
+            basis.append(
+                "input dataset content unpinned (external/undated sources)"
+            )
+        versions = tool_versions or {}
+        if versions:
+            basis.append(f"tool versions pinned ({len(versions)})")
+        else:
+            classification = "conditionally_reproducible"
+            basis.append("no tool versions recorded")
+        if run.graph_snapshot:
+            basis.append("frozen graph snapshot (INV-SNAP1)")
+        else:
+            classification = "conditionally_reproducible"
+            basis.append("no frozen graph snapshot")
+        return {
+            "classification": classification,
+            "basis": [str(line)[:160] for line in basis[:8]],
+        }
 
     @staticmethod
     def _descendants_of(

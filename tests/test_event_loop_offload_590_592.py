@@ -281,7 +281,11 @@ async def test_upload_temp_write_off_loop(monkeypatch, tmp_path):
     try:
         res = await _assert_loop_responsive_while(
             lambda: upload_mod.upload_files(
-                files=[file], session_id=None, owner_token=None, _user={"user_id": "u1"}
+                # 直接函数调用不经过 FastAPI 依赖注入：Form 默认值是 truthy 的
+                # Form 对象 —— V4 新增参数必须显式传（crs/dedup/register_ref）。
+                files=[file], session_id=None, crs=None, dedup=True,
+                register_ref=False, x_session_id=None,
+                owner_token=None, _user={"user_id": "u1"},
             )
         )
         assert observed["thread"] != _main_thread, "file write ran on the event loop thread"

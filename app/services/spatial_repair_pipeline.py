@@ -19,6 +19,21 @@ import shapely
 
 logger = logging.getLogger(__name__)
 
+#: Wave-4（审计 08 §4.2）：per-op 证据上限 —— 修复证据是有界事实（哪些操作
+#: 影响了多少要素、失败多少），不是日志转储。
+_MAX_EVIDENCE_OPS = 16
+
+#: 证据输出的规范操作顺序（确定性：同执行 ⇒ 同证据序）。
+_EVIDENCE_OP_ORDER = (
+    "remove_empty",
+    "make_valid",
+    "normalize_geometry_type",
+    "crs_transform",
+    "snap_within_tolerance",
+    "deduplicate",
+    "attribute_type_normalization",
+)
+
 
 class SpatialRepairPipeline:
     @staticmethod
@@ -39,6 +54,32 @@ class SpatialRepairPipeline:
         TARGET CRS units (e.g. meters for a projected CRS, degrees for
         EPSG:4326) — not in the source CRS units.
         """
+        repaired, logs, _evidence = SpatialRepairPipeline.repair_dataset_detailed(
+            geojson_data,
+            ops=ops,
+            tolerance=tolerance,
+            operations=operations,
+            source_crs=source_crs,
+            target_crs=target_crs,
+        )
+        return repaired, logs
+
+    @staticmethod
+    def repair_dataset_detailed(
+        geojson_data: Dict[str, Any],
+        ops: Optional[List[str]] = None,
+        tolerance: float = 1e-5,
+        operations: Optional[List[str]] = None,
+        source_crs: str = "EPSG:4326",
+        target_crs: str = "EPSG:4326",
+    ) -> Tuple[Dict[str, Any], List[str], List[Dict[str, Any]]]:
+        """
+        Same remediation as :meth:`repair_dataset`, additionally returning
+        bounded per-operation evidence: ``[{op, features_affected,
+        failed_count}, ...]`` (≤16 ops). Wave-4 repair evidence consumers
+        (``repair_evidence`` lineage column) use this — the op-level audit
+        log list itself remains ephemeral/return-only.
+        """
         active_ops = ops if ops is not None else (operations or ["make_valid", "remove_empty"])
 
         # NON-DESTRUCTIVE: Deep copy input GeoJSON
@@ -46,6 +87,15 @@ class SpatialRepairPipeline:
         features = repaired_geojson.get("features", [])
         if not isinstance(features, list) and repaired_geojson.get("type") == "Feature":
             features = [repaired_geojson]
+
+        # Wave-4: per-op counters — evidence must reflect what actually ran,
+        # including zero-effect and failed executions (honest, never silent).
+        op_stats: Dict[str, Dict[str, int]] = {}
+
+        def _bump(op: str, affected: int = 0, failed: int = 0) -> None:
+            stat = op_stats.setdefault(op, {"features_affected": 0, "failed_count": 0})
+            stat["features_affected"] += affected
+            stat["failed_count"] += failed
 
         logs: List[str] = []
         cleaned_features = []
@@ -61,6 +111,7 @@ class SpatialRepairPipeline:
                 transformer = Transformer.from_crs(source_crs, target_crs, always_xy=True)
             except Exception as e:
                 logs.append(f"crs_transform: Failed to initialize transformer from {source_crs} to {target_crs}: {e}")
+                _bump("crs_transform", failed=1)
 
         for idx, feat in enumerate(features):
             if not isinstance(feat, dict):
@@ -75,6 +126,7 @@ class SpatialRepairPipeline:
             if geom_raw is None:
                 if "remove_empty" in active_ops:
                     logs.append(f"remove_empty: Removed feature at index {idx} with null geometry")
+                    _bump("remove_empty", affected=1)
                     continue
                 else:
                     cleaned_features.append(feat)
@@ -89,6 +141,7 @@ class SpatialRepairPipeline:
             if geom.is_empty:
                 if "remove_empty" in active_ops:
                     logs.append(f"remove_empty: Removed feature at index {idx} with empty geometry")
+                    _bump("remove_empty", affected=1)
                     continue
                 else:
                     cleaned_features.append(feat)
@@ -101,8 +154,10 @@ class SpatialRepairPipeline:
                 try:
                     geom = make_valid(geom)
                     logs.append(f"make_valid: Repaired invalid geometry at feature index {idx}")
+                    _bump("make_valid", affected=1)
                 except Exception as e:
                     logs.append(f"make_valid: Failed to repair feature index {idx}: {e}")
+                    _bump("make_valid", failed=1)
 
             # ----------------------------------------------------
             # Operation: normalize_geometry_type
@@ -112,12 +167,15 @@ class SpatialRepairPipeline:
                 if old_type == "Polygon":
                     geom = MultiPolygon([geom])
                     logs.append(f"normalize_geometry_type: Converted Polygon to MultiPolygon at feature index {idx}")
+                    _bump("normalize_geometry_type", affected=1)
                 elif old_type == "LineString":
                     geom = MultiLineString([geom])
                     logs.append(f"normalize_geometry_type: Converted LineString to MultiLineString at feature index {idx}")
+                    _bump("normalize_geometry_type", affected=1)
                 elif old_type == "Point":
                     geom = MultiPoint([geom])
                     logs.append(f"normalize_geometry_type: Converted Point to MultiPoint at feature index {idx}")
+                    _bump("normalize_geometry_type", affected=1)
 
             # ----------------------------------------------------
             # Operation: crs_transform (Coordinate Reprojection)
@@ -132,9 +190,11 @@ class SpatialRepairPipeline:
                     from shapely.ops import transform
                     geom = transform(transformer.transform, geom)
                     logs.append(f"crs_transform: Reprojected geometry at feature index {idx}")
+                    _bump("crs_transform", affected=1)
                 except Exception as e:
                     crs_transform_failures += 1
                     logs.append(f"crs_transform: Failed to reproject feature index {idx}: {e}")
+                    _bump("crs_transform", failed=1)
 
             # ----------------------------------------------------
             # Operation: snap_within_tolerance
@@ -145,8 +205,10 @@ class SpatialRepairPipeline:
                     logs.append(
                         f"snap_within_tolerance: Snapped vertices of feature index {idx} with grid precision {tolerance} (target CRS units)"
                     )
+                    _bump("snap_within_tolerance", affected=1)
                 except Exception as e:
                     logs.append(f"snap_within_tolerance: Snapping failed for feature index {idx}: {e}")
+                    _bump("snap_within_tolerance", failed=1)
 
             feat["geometry"] = mapping(geom)
             cleaned_features.append(feat)
@@ -191,6 +253,9 @@ class SpatialRepairPipeline:
                     unique_features.append(f)
                 else:
                     logs.append(f"deduplicate: Removed duplicate feature at index {f_idx}")
+            removed_duplicates = len(cleaned_features) - len(unique_features)
+            if removed_duplicates > 0:
+                _bump("deduplicate", affected=removed_duplicates)
             cleaned_features = unique_features
 
         # ----------------------------------------------------
@@ -231,7 +296,24 @@ class SpatialRepairPipeline:
             logs.append(
                 f"attribute_type_normalization: Standardized property schemas and normalized attribute values across {len(cleaned_features)} features"
             )
+            _bump("attribute_type_normalization", affected=len(cleaned_features))
 
         repaired_geojson["features"] = cleaned_features
+
+        # Wave-4: bounded per-op evidence in canonical op order (≤16 entries).
+        ops_evidence: List[Dict[str, Any]] = []
+        for op in _EVIDENCE_OP_ORDER:
+            if op in op_stats:
+                stat = op_stats[op]
+                ops_evidence.append(
+                    {
+                        "op": op[:32],
+                        "features_affected": int(stat["features_affected"]),
+                        "failed_count": int(stat["failed_count"]),
+                    }
+                )
+            if len(ops_evidence) >= _MAX_EVIDENCE_OPS:
+                break
+
         logger.info(f"[SpatialRepairPipeline] Applied {len(active_ops)} operations; generated {len(logs)} audit log entries.")
-        return repaired_geojson, logs
+        return repaired_geojson, logs, ops_evidence
