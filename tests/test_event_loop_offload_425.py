@@ -33,15 +33,28 @@ from app.schemas.data_fabric_schema import DataFabricHealth, QueryResult
 _main_thread = threading.get_ident()
 
 
-async def _assert_loop_responsive_while(awaitable_factory, delay: float = 0.8):
+async def _assert_loop_responsive_while(awaitable_factory, started=None):
     """Run awaitable_factory() and assert a 0.05s timer fires mid-flight.
 
     Deterministic: with the work offloaded the task is still running when the
     timer completes; with the work on the loop the task finishes before the
     test's own sleep resumes, so ``assert not task.done()`` fails.
+
+    ``started``（threading.Event）由慢工作在入睡前置位 —— 观察窗口从
+    「盲等 0.15s」改为「确认工作已开始」，消除 CI 高负载下主线程被
+    调度延迟超过假睡眠时长导致的假阳性（实录两次：work finished
+    before the test could observe it）。假睡眠 1.5s 留 10× 余量。
     """
     task = asyncio.create_task(awaitable_factory())
-    await asyncio.sleep(0.15)          # let it enter the slow work
+    if started is not None:
+        import time as _time
+
+        deadline = _time.monotonic() + 10.0
+        while not started.is_set():
+            assert _time.monotonic() < deadline, "work never started"
+            await asyncio.sleep(0.01)
+    else:
+        await asyncio.sleep(0.15)      # legacy path: let it enter the slow work
     assert not task.done(), "work finished before the test could observe it"
 
     ticks = []
@@ -140,10 +153,12 @@ async def test_create_data_source_off_loop(monkeypatch):
     from app.services.data_fabric.manager import DataFabricManager
 
     observed = {}
+    started = threading.Event()
 
     def _slow_create(**kwargs):
         observed["thread"] = threading.get_ident()
-        time.sleep(0.8)
+        started.set()
+        time.sleep(1.5)
         return _fake_source_row()
 
     monkeypatch.setattr(DataFabricManager, "create_data_source", staticmethod(_slow_create))
@@ -155,7 +170,8 @@ async def test_create_data_source_off_loop(monkeypatch):
         options={},
     )
     res = await _assert_loop_responsive_while(
-        lambda: route_mod.create_data_source(req, user=dict(_USER))
+        lambda: route_mod.create_data_source(req, user=dict(_USER)),
+        started=started,
     )
     assert observed["thread"] != _main_thread, "create_data_source ran on the event loop thread"
     assert res["success"] is True
@@ -174,7 +190,7 @@ async def test_probe_data_source_off_loop(monkeypatch):
 
     def _slow_probe(profile):
         observed["thread"] = threading.get_ident()
-        time.sleep(0.8)
+        time.sleep(1.5)
         return DataFabricHealth(status="healthy", message="OK", latency_ms=10.0)
 
     monkeypatch.setattr(DataFabricManager, "probe_profile", staticmethod(_slow_probe))
@@ -201,7 +217,7 @@ async def test_sync_data_source_catalog_off_loop(monkeypatch):
 
     def _slow_sync(db, source_id):
         observed["thread"] = threading.get_ident()
-        time.sleep(0.8)
+        time.sleep(1.5)
         return []
 
     monkeypatch.setattr(DataFabricManager, "sync_catalog", staticmethod(_slow_sync))
@@ -225,7 +241,7 @@ def _patch_query_paths(monkeypatch, observed):
 
     def _slow_query(db, item_id, spec):
         observed["thread"] = threading.get_ident()
-        time.sleep(0.8)
+        time.sleep(1.5)
         return _tiny_query_result(2)
 
     async def _async_query(cls, db, item_id, spec, cancel_token=None):
