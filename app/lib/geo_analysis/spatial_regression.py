@@ -1651,7 +1651,10 @@ def _mgwr_backfitting(
     - 每次扫掠：对每项 j，r_j = y − Σ_{k≠j} ŷ_k，在候选网格上以 LOO-CV
       选带宽（fixed_bandwidths 给定时跳过搜索），再做单项局地 WLS 更新
       ŷ_j。逐项就地更新（Gauss-Seidel 式）。
-    - 收敛：相对 RSS 变化 ≤ tolerance；返回 rss_trajectory 供诚实披露
+    - 收敛：相对 RSS 变化 ≤ tolerance，或 RSS 衰减到机器噪声底
+      （精确拟合：|y|~ε 尺度残差的能量和，此时 RSS 只剩浮点舍入噪声、
+      逐轮几何衰减但相对变化不趋于零，相对判据永无法满足——numpy 2.5
+      LAPACK 路径下即此形态）；返回 rss_trajectory 供诚实披露
       （max 迭代内未达标 → converged=False，绝不静默宣称收敛）。
     """
     n, m = x_mat.shape
@@ -1680,6 +1683,11 @@ def _mgwr_backfitting(
     bandwidths = np.array(fixed if fixed is not None else [k_init] * m,
                           dtype=int)
     rss_trajectory: List[float] = []
+    # 机器噪声底：n 个 ε·|y| 尺度残差的能量和。RSS 低于它即为精确拟合
+    # 的浮点噪声区（相对判据在几何衰减下永不满足，见 docstring）。
+    noise_floor = float(
+        (np.finfo(y.dtype).eps * max(1.0, float(np.max(np.abs(y))))) ** 2 * n
+    )
     converged = False
     iterations = 0
     for it in range(1, int(max_iterations) + 1):
@@ -1699,7 +1707,8 @@ def _mgwr_backfitting(
         rss_trajectory.append(rss)
         if len(rss_trajectory) > 1:
             prev = rss_trajectory[-2]
-            if abs(prev - rss) <= tolerance * max(prev, 1e-30):
+            if (abs(prev - rss) <= tolerance * max(prev, 1e-30)
+                    or rss <= noise_floor):
                 converged = True
                 break
 
