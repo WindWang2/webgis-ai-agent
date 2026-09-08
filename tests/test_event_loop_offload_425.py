@@ -162,6 +162,11 @@ async def test_create_data_source_off_loop(monkeypatch):
         return _fake_source_row()
 
     monkeypatch.setattr(DataFabricManager, "create_data_source", staticmethod(_slow_create))
+    # 会话工厂同样隔离：_run_sync_orm 的 worker 先开 SessionLocal()——
+    # 真连接在 CI 全量套件下可能撞上被先前测试耗尽的连接池（阻塞等待
+    # → 慢工作迟迟不启动 → "work never started" 假阳性）。本测试锁的是
+    # offload 语义，不需要真 DB。
+    _patch_route_session(monkeypatch, _fake_db_for_source)
 
     req = route_mod.CreateDataSourceRequest(
         name="Test OGC API Source",
