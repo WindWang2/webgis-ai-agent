@@ -32,6 +32,41 @@ params_fp 与指纹同源；边界绑定仅 `data:*`；父取消入口传播（�
 - m3 全异步取消传播（子实例在飞中断）：与父 run 同步驱动的架构下，入口检查 + 波次边界取消已覆盖诚实语义；真异步取消传播随集群派发 follow-up。
 - 「重驱不复位 started_at」：started_at 语义 = 首次执行；重驱不重置（保留原点证据）。
 
-## Round 2（Subagent-B）
+## Round 2（Subagent-B，agent_986bc8ce，commit 1a2e4801 diff）
 
-（待填）
+### BLOCKER（修复，94aad380）
+
+- B-1 包注册全局 `(package_id, version)` 唯一 × 按 owner 解析 = attach
+  一次性失效 + 跨租户注册投毒 + 409 指纹前缀 oracle → 唯一约束改
+  `(owner_scope, package_id, version)`（db_model + migration 0034 原地
+  同步，未合入无下游）、register 存在性检查同域、409 detail 脱敏、
+  跨 owner 注册回归测试。
+
+### MAJOR（同批修复）
+
+- M-1 async 路径同步 DB 直呼（hooks owner 解析/ChangeApplier/chat 完成
+  链/attach/STALE requeue/cancel sweep/subworkflow expand）→ 全部
+  to_thread（CAS 退避 sleep 不再冻结事件循环）；
+- M-2 chat 完成 TOCTOU：完成 CAS 后复查上游 STALE → 补标（不洗白）；
+- M-3 defer CAS 被租约续期 revision 写手打成必败 → 重读重试 ≤3；
+- M-4 load_ref_features 全载荷 deepcopy → descriptor feature_count 预检
+  超界短路；
+- M-5 泄漏 RUNNING 子实例永久占用 SUBWORKFLOW_CAP → 上限只计租约未过期者
+  （行级清扫披露为 follow-up）。
+
+### MINOR（收口）
+
+get_instance OperationalError 上抛 StoreUnavailable（driver 退避重试，
+不再与 not_found 混同返回 200）；profile 形状界（32KB/深度 8 → 422，
+编译预算 ValueError → 422）；reuse 命中 output_fingerprint 探测用产物
+所属会话；registry resolve SQL 侧排序截断。
+
+### 未采纳 / follow-up（记录理由）
+
+- m-5 inspector 组件未挂载宿主面板：挂载点均在并发 Epic 共享的 sidebar
+  文件（project-tab/tasks-tab），冲突面 > 收益；组件+vitest 就绪，宿主
+  接线列为 PR follow-up。
+- m-2 终态实例的二次 drain 点：终态后 pending 仅在显式 rerun 时生效，
+  语义可接受（rerun 即 drain），已由 C3 回归覆盖。
+- m-3 rate limit 独立预算：编译实测 ~3ms，全局 240/min 足够；列观测点。
+- m-1 每 owner LRU 剪枝写放大/决策环整写：量级有界（≤128/≤16），观测点。
