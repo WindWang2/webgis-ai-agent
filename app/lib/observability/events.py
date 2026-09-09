@@ -194,6 +194,8 @@ def emit_event(
         "turn": getattr(ctx, "turn_id", None),
         "run": getattr(ctx, "run_id", None),
         "proj": getattr(ctx, "project_id", None),
+        # Quality V3 W10（additive envelope 键，词表外）：W3C trace 关联
+        "trace": getattr(ctx, "trace_id", None),
         "status": status,
         "duration_s": round(duration_s, 6) if duration_s is not None else None,
         "error_code": error_code,

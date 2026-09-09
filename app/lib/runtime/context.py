@@ -43,6 +43,11 @@ class RuntimeContext:
     # （如 recipe 推荐）据此读取项目制图记忆——session 域与 project 域的
     # 唯一桥接点，避免到处传参或另建全局映射。
     project_id: Optional[str] = None
+    # W3C trace 关联（Quality V3 W10，additive）：由
+    # app/lib/observability/trace_context.TraceContextMiddleware 从
+    # traceparent 头绑定（http + websocket）；无入站头时中间件生成新值。
+    trace_id: Optional[str] = None
+    span_id: Optional[str] = None
 
     def merged(self, **overrides: Optional[str]) -> "RuntimeContext":
         """返回一个用非 None 覆盖项更新后的新上下文（frozen，不修改自身）。"""
@@ -59,6 +64,7 @@ class RuntimeContext:
             "turn_id": self.turn_id,
             "run_id": self.run_id,
             "project_id": self.project_id,
+            "trace_id": self.trace_id,
         }
 
 
@@ -103,6 +109,8 @@ def bind_runtime_context(
     turn_id: Optional[str] = None,
     run_id: Optional[str] = None,
     project_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    span_id: Optional[str] = None,
 ) -> Iterator[RuntimeContext]:
     """绑定运行时关联上下文（与外层合并），离开作用域时恢复。
 
@@ -117,6 +125,8 @@ def bind_runtime_context(
         turn_id=turn_id,
         run_id=run_id,
         project_id=project_id,
+        trace_id=trace_id,
+        span_id=span_id,
     )
     token = _CURRENT.set(ctx)
     try:
