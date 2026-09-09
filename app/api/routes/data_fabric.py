@@ -476,14 +476,9 @@ async def probe_data_source(
         s = session.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
         _require_tenant_owned(s, user)
 
-        profile = ConnectionProfile(
-            id=s.id,
-            name=s.name,
-            source_type=s.source_type,
-            url=s.endpoint_url,
-            options=s.connection_profile.get("options", {}),
-            allow_private=s.connection_profile.get("allow_private", False),
-        )
+        from app.services.data_fabric.manager import _profile_from_model
+
+        profile = _profile_from_model(s)
 
         health_res = data_fabric_manager.probe_profile(profile)
         s.status = health_res.status
@@ -827,14 +822,9 @@ async def get_catalog_mvt_tile(
                 status_code=422,
                 detail="server-side tiles 仅支持 PostGIS 数据源（该数据集类型不支持）",
             )
-        conn_profile = ConnectionProfile(
-            id=ds_model.id,
-            name=ds_model.name,
-            source_type=ds_model.source_type,
-            url=ds_model.endpoint_url,
-            options=ds_model.connection_profile.get("options", {}),
-            allow_private=ds_model.connection_profile.get("allow_private", False),
-        )
+        from app.services.data_fabric.manager import _profile_from_model
+
+        conn_profile = _profile_from_model(ds_model)
         from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
 
         adapter = PostGISAdapter(conn_profile)

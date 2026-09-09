@@ -251,6 +251,16 @@ class Settings(BaseSettings):
     # serializes ~5000 remote round-trips.
     DATA_FABRIC_SYNC_CONCURRENCY: int = 4
 
+    # ── Data Fabric V7 联邦数据面（ADR-0119）────────────────────────────
+    # 全部有界：连接注册表 / capability 探测缓存 / 结果缓存 / 反馈持久层。
+    DATA_FABRIC_V7_CONNECTION_MAX_ENTRIES: int = 1024
+    DATA_FABRIC_V7_CONNECTION_IDLE_TTL_S: float = 1800.0
+    DATA_FABRIC_V7_PROBE_TTL_S: float = 300.0
+    DATA_FABRIC_V7_RESULT_CACHE_MAX_ENTRIES: int = 256
+    DATA_FABRIC_V7_RESULT_CACHE_MAX_BYTES: int = 64 * 1024 * 1024  # 64 MiB
+    DATA_FABRIC_V7_RESULT_CACHE_TTL_S: float = 300.0
+    DATA_FABRIC_V7_FEEDBACK_MAX_ROWS: int = 20_000
+
     # #690：原生热力图确定性守卫阈值（点数 < 阈值或非点几何 → 拦截 native heatmap）
     # 对齐 skill 正文 "<10 点热力图无统计意义"，移至配置层恒生效；settings/env 可覆盖，
     # 复用仓内 config 惯例。max(1,) 防零在读取侧 clamp，字段层仅定义默认值。
