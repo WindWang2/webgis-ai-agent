@@ -320,14 +320,15 @@ def rank_family_methods(
             disclosures=list(report.disclosures),
         ))
 
+    ranked = _partition_sort(scored, methodology_registry)
+    all_rejected = bool(scored) and all(
+        s.qualification_status == "rejected" for s in scored)
+    # selected 必须与 ranked[0] 一致（rejected 不入选——Round1 #2）
     return RankResult(
-        selected=scored[0] if scored else None,
-        abstained=bool(scored)
-        and all(s.qualification_status == "rejected" for s in scored),
-        abstain_reason=ABSTAIN_ALL_REJECTED
-        if scored and all(s.qualification_status == "rejected"
-                          for s in scored) else "",
-        ranked=_partition_sort(scored, methodology_registry),
+        selected=ranked[0] if ranked and not all_rejected else None,
+        abstained=all_rejected,
+        abstain_reason=ABSTAIN_ALL_REJECTED if all_rejected else "",
+        ranked=ranked,
         evidence={"family": family_id, "category": category_id,
                   "candidates": len(scored)},
     )
@@ -464,6 +465,20 @@ def rank_methods(
                       "candidates": len(scored)},
         )
 
+    # 类目歧义 + 方法平分 → 弃权（Round1 #8：第三弃权语义落地）
+    if query and len(scored) >= 2:
+        cat_matches = taxonomy.match_query(query, limit=2)
+        if (len(cat_matches) == 2
+                and cat_matches[0][1] - cat_matches[1][1] < _TIE_EPSILON
+                and scored[0].score - scored[1].score < _TIE_EPSILON
+                and scored[0].family_id != scored[1].family_id):
+            return RankResult(
+                ranked=scored,
+                abstained=True, abstain_reason=ABSTAIN_AMBIGUOUS_TIE,
+                evidence={"category_tie": [cat_matches[0][0],
+                                           cat_matches[1][0]]},
+            )
+
     return RankResult(
         selected=scored[0],
         abstained=False,
@@ -568,6 +583,8 @@ def evaluate_corpus(
             if top1 in valid:
                 abstain_ok += 1
                 mrr.append(1.0)
+            else:
+                mrr.append(0.0)  # Round1 #4：未命中也计入 MRR 分母（防虚高）
             for k in k_values:
                 topk = [s.method_id for s in result.ranked[:k]]
                 recalls[k].append(1.0 if any(g in topk for g in valid)

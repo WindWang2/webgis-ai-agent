@@ -23,7 +23,32 @@
 
 ## Round 1 — 最终正确性 review（Subagent-A）
 
-（待填）
+结论：**APPROVE-WITH-FIXES**。R1-F1..F13 采纳全部验证落地；
+gold 无漂移（仅 m.admin.parks_zh 输入事实补齐，期望未动）；
+110 新测试 + 106 既有相邻测试全绿；validate_gis_library() 0 issues。
+
+Must-fix（3，已全部修复）：
+1. MAJOR viz_bridge 披露键错配（disclosures_text→disclosures）——修复 +
+   扁平化为有界文本进 CompositionPlan.disclosures
+2. MAJOR rank_family_methods selected 与 ranked 分歧（rejected 可当
+   selected）——selected=ranked[0]（全拒时 None+abstain）
+3. MAJOR invalidGeometryRatio 对无 geometry_kinds 方法不可达——独立
+   裁决分支 + repair_geometry 预处理/披露
+
+Should-fix（同步修复）：
+4. MRR 分母（ambiguous 未命中记 0）
+6. method_corpus trap 语义披露（direct 案例 trap=排序优劣提示）
+7. precondition 路径 transform → reproject+披露（local_metric_crs_required）
+8. ABSTAIN_AMBIGUOUS_TIE 落地（类目 tie + 跨族方法 tie）
+9. 模板选择输出目标软罚落地（-0.3，替 pass 死分支）
+10. 图缓存键补全（+capabilities/algorithms/artifacts/map_models/components
+    失效键）；EDGE_RELATIONS 移除死 consumes_artifact；NODE_KINDS 构建
+    期强制；docstring 修正
+11. mixed_crs 注释/测试名更新为 R1-F1 语义
+12. ADR-0120 §3.1 R1-F6 边界注记（_METHOD_KEYWORDS 只进排序面）
+13. QUAL_METHOD_STATUSES 收编 unknown
+
+INFO 命名漂移（实现自洽，文档已对齐）：ADR/CHANGELOG 列真实六工具。
 
 ## Round 2 — 性能/安全/可维护性 review（Subagent-B）
 

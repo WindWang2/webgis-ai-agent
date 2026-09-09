@@ -475,22 +475,25 @@ def plan_composition(
 
     compositions, models, comp_reg, _arts = _default_registries()
     cat = taxonomy.get(category_id)
-    disclosures: List[str] = list(viz_bridge_plan.get("disclosures_text", []))
+    # bridge 披露（R1-F5）：结构化条目 → 有界文本（artifact: resolution）
+    disclosures: List[str] = []
+    for d in viz_bridge_plan.get("disclosures", [])[:6]:
+        text = f"{d.get('artifact_type', '')}: {d.get('resolution', '')}"
+        if text.strip(": "):
+            disclosures.append(text[:160])
 
     # ── 1. 基底模板选择（确定性评分）────────────────────────────────
     candidates = spec_registry.specs_for_category(category_id)
     scored: List[Tuple[float, str, TemplateSpecV2]] = []
     for spec in candidates:
-        if output_target not in spec.output_targets and \
-                output_target in ("interactive", "png", "pdf"):
-            # 输出目标不匹配 → 软罚不排除（spec 可含多目标）
-            pass
         base_tpl = compositions.get(spec.base_composition_template_id)
         if base_tpl is None:
             continue
         if output_target not in base_tpl.output_targets:
             continue  # 基底不支持该输出 → 排除（硬约束）
         score = 1.0
+        if output_target not in spec.output_targets:
+            score -= 0.3  # spec 未声明该输出目标 → 软罚（不排除）
         if spec.requires_uncertainty != uncertainty_required:
             score -= 0.4
         if spec.requires_comparison != comparison_required:

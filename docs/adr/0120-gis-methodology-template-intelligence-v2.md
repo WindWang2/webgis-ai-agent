@@ -125,6 +125,14 @@ gis_component_query），全部以 KnowledgeService 为界、bounded 投影；
 - 中央校验纳入 5 个新前缀；BENCHMARK_MANIFEST 因 registry 投影变化
   需由权威 generator 再生成。
 
+## 3.1 R1-F6 边界注记（Round 1）
+
+方法级检索词（`_METHOD_KEYWORDS`，37 方法）是 descriptors 审定表的
+lexical 字段，仅喂给 ranking 的 0.10 权重 lexical 分量，**不进入** V4
+族路由（`resolve_methodology_family_for_query` 的事实源仍是 ontology/
+family 词表）——R1-F6「不新建第四张路由词表」的红线在路由面成立；
+方法级 lexical 是排序证据面（同 ontology 任务 keywords 的角色定位）。
+
 ## 4. 本地验证
 
 `tests/unit/gis/methodology/`（taxonomy/graph/descriptors/qualification/

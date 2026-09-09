@@ -5,8 +5,7 @@
 component 用 typed relations 连成一张可校验、可指纹、可 diff 的图：
 
     task --requires_data_role--> role
-    task --serves_category----> category
-    category --serves_family--> family（透镜引用，反向 task 侧展开）
+    task --serves_category----> category / family（双投影视图边）
     family --supports_method-> method
     method --alternative_method-> method
     method --produces_artifact-> artifact_type
@@ -57,7 +56,6 @@ EDGE_RELATIONS = (
     "typical_visualization",
     "compatible_artifact",
     "forbids_method",
-    "consumes_artifact",
 )
 
 #: 节点 kind 词表（封闭）。
@@ -211,6 +209,8 @@ def build_graph(sources: GraphSources) -> MethodologyGraph:
     raw_edges: List[GraphEdge] = []
 
     def _node(kind: str, id_: str) -> str:
+        if kind not in NODE_KINDS:
+            raise GraphBuildError(f"unknown node kind: {kind}")
         key = f"{kind}:{id_}"
         if key not in nodes:
             nodes[key] = GraphNode(kind=kind, id=id_)
@@ -410,6 +410,13 @@ def get_knowledge_graph(
         "descriptors": _fp(sources.descriptors),
         "ontology": _fp(sources.ontology),
         "methodology": _fp(sources.methodology),
+        # 边还派生自这五个 registry（Round1 #10：缓存键完整化）——
+        # 无内容指纹的 registry 用 (count, version) 失效键
+        "capabilities": sources.capabilities.count,
+        "algorithms": sources.algorithms.count,
+        "artifacts": sources.artifacts.count,
+        "map_models": sources.map_models.count,
+        "components": sources.components.registry_version(),
     }, sort_keys=True)
     if not refresh and _cache is not None and _cache[0] == key:
         return _cache[1]

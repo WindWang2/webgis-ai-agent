@@ -12,7 +12,11 @@
   "缓冲"≠路网可达……）—— lexical-only 基线会选错、结构化信号救回；
 - ``ambiguous``：天然多解（valid 集 ≥2）—— 不当错误也不当满分对。
 
-invalid-method gold **锚定既有 oracle**（V4 ``qualify_method_candidates``
+trap 语义披露：``trap_methods`` 的硬约束（top-k 不得命中）只对
+``hard_negative`` 案例强制；``direct`` 案例的 trap 是**排序优劣提示**
+（gold 仍须 rank-1，trap 因资格未知而合法在场时不计 invalid——如
+m.dens.rate_denom 的 KDE 无几何事实时诚实 unknown）。invalid-method
+gold **锚定既有 oracle**（V4 ``qualify_method_candidates``
 拒绝集 / ``scientific_preconditions`` / ontology fallback tiers），
 不新造 V2 表 gold —— 案例的 profile 事实使拒绝可由既有 oracle 复算
 （``expected_rejected_oracle=True`` 的案例必须与 V4 拒绝集一致，测试锁定）。

@@ -90,8 +90,6 @@ def test_graph_builds_with_all_relations(graph) -> None:
     assert graph.node_count > 300
     assert graph.edge_count > 500
     for relation in EDGE_RELATIONS:
-        if relation == "consumes_artifact":
-            continue  # 预留给 viz bridge 消费侧边
         assert graph.edges_of(relation=relation), relation
 
 

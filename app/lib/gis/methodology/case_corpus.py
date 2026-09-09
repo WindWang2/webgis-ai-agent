@@ -279,7 +279,9 @@ GIS_CASE_CORPUS: Tuple[GISCase, ...] = (
         correct_family="proximity",
         expected_methods=("proximity.euclidean_buffer",
                           "proximity.multi_ring_buffer"),
-        # 混合 CRS：地理坐标系 → transform（重投影链显式化），非静默
+        # 混合 CRS（R1-F1 语义）：欧氏缓冲 GEOGRAPHIC_OK → viable
+        #（实现内建投影）；克里金族等 PROJECTED_REQUIRED 方法 →
+        # transform 修复链显式化，非静默
         profiles=({"featureCount": 60, "geometryTypes": ["Point"],
                    "crs": "EPSG:4326"},),
         expected_artifacts=("proximity_zone",),

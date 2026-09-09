@@ -117,8 +117,9 @@ def test_no_geometry_blocks_inference(service) -> None:
     assert report2.status in ("rejected", "unknown")
 
 
-def test_mixed_crs_buffer_discloses_reprojection(service) -> None:
-    """WGS84 缓冲：可运行（GEOGRAPHIC_OK）但混合 CRS 案例要求披露链。"""
+def test_mixed_crs_buffer_semantics(service) -> None:
+    """WGS84 缓冲（R1-F1）：欧氏缓冲可运行（GEOGRAPHIC_OK，实现内建
+    投影）；PROJECTED_REQUIRED 方法在此数据下 transform 显式化。"""
     case = next(c for c in GIS_CASE_CORPUS
                 if c.case_id == "case.mixed_crs_buffer")
     facts = _facts(case)

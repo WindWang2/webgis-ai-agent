@@ -40,8 +40,9 @@ from app.lib.gis.methodology.descriptors import (
     get_method_descriptor_registry,
 )
 
-#: 资格状态（报告级；rejected 对齐 V4 rejected 语义）。
-QUAL_METHOD_STATUSES = ("viable", "degraded", "rejected")
+#: 资格状态（报告级；rejected 对齐 V4 rejected 语义；unknown = 零事实
+#: 支撑的诚实态——不虚标 viable，Round1 #13 收编词表）。
+QUAL_METHOD_STATUSES = ("viable", "degraded", "rejected", "unknown")
 
 #: 维度四态（与 V4 PRECONDITION_STATES 同构；unknown ≠ 不满足）。
 DIMENSION_STATES = ("pass", "unknown", "transform", "fail")
@@ -197,6 +198,10 @@ def _measure_kind_fact(facts: QualificationFacts) -> str:
     return "unknown"
 
 
+#: 无效几何占比软闸：超过则 geometry 维 transform（repair_geometry 修复链）。
+_INVALID_GEOMETRY_RATIO = 0.3
+
+
 def _adjudicate_geometry(candidate: Any, profile: Dict[str, Any]) -> DimensionState:
     geometry = _geometry_fact(profile)
     evidence: Dict[str, Any] = {}
@@ -214,7 +219,8 @@ def _adjudicate_geometry(candidate: Any, profile: Dict[str, Any]) -> DimensionSt
                 evidence={**evidence,
                           "required": list(candidate.geometry_kinds[:4])})
         invalid_ratio = _profile_fact(profile, "invalidGeometryRatio")
-        if isinstance(invalid_ratio, (int, float)) and invalid_ratio > 0.3:
+        if isinstance(invalid_ratio, (int, float)) and \
+                invalid_ratio > _INVALID_GEOMETRY_RATIO:
             # 无效几何占比过高：可修复（repair_geometry 修复链显式化）
             return DimensionState(
                 dimension="geometry", state="transform",
@@ -222,6 +228,15 @@ def _adjudicate_geometry(candidate: Any, profile: Dict[str, Any]) -> DimensionSt
         return DimensionState(dimension="geometry", state="pass",
                               evidence=evidence)
     if not candidate.geometry_kinds:
+        # 无几何类声明的聚合/统计方法：几何维度结构满足，但**无效几何
+        # 事实仍需裁决**（Round1 #3：聚合面对自相交数据同样要修复链）。
+        invalid_ratio = _profile_fact(profile, "invalidGeometryRatio")
+        if geometry != "unknown" and isinstance(invalid_ratio, (int, float)) \
+                and invalid_ratio > _INVALID_GEOMETRY_RATIO:
+            return DimensionState(
+                dimension="geometry", state="transform",
+                evidence={"geometry": geometry,
+                          "invalid_ratio": round(invalid_ratio, 2)})
         return DimensionState(dimension="geometry", state="pass",
                               structural=True)
     return DimensionState(dimension="geometry", state="unknown",
@@ -507,6 +522,11 @@ def qualify_method(
         disclosures.append(
             "地理坐标系下需局部度量投影：修复链已显式化（reproject），"
             "非静默换算。")
+    if any(d.state == "transform" and d.dimension == "geometry"
+           for d in dims):
+        preprocessing.append("repair_geometry")
+        disclosures.append("无效几何占比过高：先 make_valid 修复再统计"
+                           "（repair_geometry 修复链显式化）。")
     if any(d.state == "transform" and d.dimension == "nodata_quality"
            for d in dims):
         preprocessing.append("filter_null")
@@ -514,6 +534,18 @@ def qualify_method(
     if any(d.state == "transform" and d.dimension == "data_roles"
            for d in dims):
         disclosures.append("部分必需数据角色降级：结论语义弱化并披露。")
+    # precondition 路径的 transform（Round1 #7）：CRS 类前置条件
+    # （local_metric_crs_required 等）同样映射 reproject + 披露。
+    precondition_crs = any(
+        d.state == "transform" and d.dimension == "scientific_precondition"
+        and any("crs" in str(pid).lower() or "metric" in str(pid).lower()
+                for pid in d.evidence)
+        for d in dims)
+    if precondition_crs:
+        preprocessing.append("reproject")
+        disclosures.append(
+            "CRS 类前置条件要求变换：修复链已显式化（reproject），"
+            "非静默换算。")
 
     # 报告级状态收敛（确定性）：fail → rejected；transform → degraded
     # （可修复/降级并披露）；无任何事实支撑的 pass（全部 unknown 或仅
