@@ -170,6 +170,8 @@ def test_aggregate_pushdown_unique_key_equivalence():
     R-C1 等价性的行为锁定：同一数据 × 同一链，唯一键声明只改变执行
     位置，绝不改变结果（含未匹配组 R3 的丢弃语义与组内聚合值）。
     """
+    # 左侧行**不含** pop 列（R1-M5：聚合字段不得存在于左侧 —— 内核左优先
+    # 解析会让本地/下推读不同值）；左侧声明投影证明字段集已知。
     left = [_pt(1, 1, region="R1"), _pt(2, 2, region="R2")]
     right = [
         _pt(10, 10, region="R1", pop=5),
@@ -190,7 +192,7 @@ def test_aggregate_pushdown_unique_key_equivalence():
         }
         sources = [
             ChainSource(source_id="a", dataset_id="cities", estimated_rows=2,
-                        source_type="postgis"),
+                        source_type="postgis", fields=["region", "city"]),
             ChainSource(source_id="b", dataset_id="totals", estimated_rows=3,
                         source_type="postgis"),
         ]
@@ -323,3 +325,85 @@ class _BudgetLike:
     max_rows = 100_000
     max_bytes = 10**9
     max_vertices = 10**9
+
+
+def test_aggregate_pushdown_rejected_when_left_unprojected():
+    """R1-C3/M5 回归：左侧未投影（字段集未知）→ 无法证明 → 不下推。"""
+    adapters = {
+        "a": _Fake({"cities": [_pt(1, 1, region="R1")]}),
+        "b": _Fake(
+            {"totals": [_pt(10, 10, region="R1", pop=5)]},
+            aggregate_fn=lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("must not push down")
+            ),
+        ),
+    }
+    sources = [
+        ChainSource(source_id="a", dataset_id="cities", source_type="postgis"),
+        ChainSource(source_id="b", dataset_id="totals", source_type="postgis"),
+    ]
+    joins = [ChainJoin(
+        kind="aggregate_join", join_field_left="region", join_field_right="region",
+        group_by_right=["region"], aggregates=[{"func": "sum", "field": "pop"}],
+        left_source_id="a", right_source_id="b",
+    )]
+    from app.services.data_fabric.query.federation import ChainSourceStats
+
+    req = FederatedChainRequest(
+        sources=sources, joins=joins, limit=100, engine="v6",
+        stats_hints={"a": ChainSourceStats(unique_keys=["region"])},
+    )
+    result = FederatedExecutor(lambda sid: adapters.get(sid)).execute_chain(req)
+    hops = result.get("semi_join_reduction") or []
+    assert hops and not hops[0].get("aggregate_pushdown")
+
+
+def test_aggregate_pushdown_not_applied_for_nested_left_subtree():
+    """R1-C3 回归：左子树非单扫描（嵌套 join）→ 改写守卫拒绝。"""
+    from app.services.data_fabric.query.federated.logical import (
+        LogicalJoin,
+        LogicalScan,
+    )
+    from app.services.data_fabric.query.federated.planner import (
+        apply_safe_aggregate_pushdown,
+        build_enumeration_context,
+    )
+    from app.services.data_fabric.query.federation import ChainSourceStats
+
+    sources = [
+        ChainSource(source_id="a", dataset_id="da", source_type="postgis",
+                    fields=["k"]),
+        ChainSource(source_id="b", dataset_id="db", source_type="postgis"),
+        ChainSource(source_id="c", dataset_id="dc", source_type="postgis"),
+    ]
+    joins = [
+        ChainJoin(kind="attribute_join", join_field_left="k",
+                  join_field_right="k", left_source_id="a", right_source_id="b"),
+        ChainJoin(kind="aggregate_join", join_field_left="k",
+                  join_field_right="k", group_by_right=["k"],
+                  aggregates=[{"func": "count"}],
+                  left_source_id="a", right_source_id="c"),
+    ]
+    req = FederatedChainRequest(
+        sources=sources, joins=joins, limit=100, engine="v6",
+        stats_hints={"a": ChainSourceStats(unique_keys=["k"])},
+    )
+    ctx = build_enumeration_context(req)
+    from app.services.data_fabric.query.federated.planner import enumerate_federation
+
+    plan = enumerate_federation(ctx)
+    inner = LogicalJoin(
+        join_kind="attribute_join",
+        left=LogicalScan(source_id="a", dataset_id="da", fields=["k"]),
+        right=LogicalScan(source_id="b", dataset_id="db"),
+        join_field_left="k", join_field_right="k",
+    )
+    tree = LogicalJoin(
+        join_kind="aggregate_join",
+        left=inner,  # 嵌套左子树（非单扫描）
+        right=LogicalScan(source_id="c", dataset_id="dc"),
+        join_field_left="k", join_field_right="k",
+        group_by_right=["k"], aggregates=[{"func": "count"}],
+    )
+    out = apply_safe_aggregate_pushdown(tree, ctx)
+    assert out.aggregate_pushdown is False

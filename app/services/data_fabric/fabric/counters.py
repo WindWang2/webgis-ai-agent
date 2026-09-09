@@ -50,15 +50,6 @@ class FabricCounters:
         if current_bytes > self.peak_streaming_bytes:
             self.peak_streaming_bytes = current_bytes
 
-    def pushdown_ratio(self) -> Optional[float]:
-        """下推百分比：执行的下推放置数 / 可下推放置点数（简单口径：
-        server placement + aggregate pushdown 占 join+scan 节点的比例）。"""
-        total = self.crs_server_placements + self.aggregate_pushdowns
-        if total == 0:
-            return None
-        applied = self.crs_server_placements + self.aggregate_pushdowns
-        return round(applied / total, 4) if total else None
-
     def to_dict(self) -> Dict[str, Any]:
         return {
             "remote_requests": self.remote_requests,
@@ -87,6 +78,7 @@ def collect_from_exec_result(
     )
     counters.replans = int(exec_result.get("replans_used") or 0)
     counters.crs_fallbacks = len(exec_result.get("crs_fallbacks") or [])
+    counters.crs_server_placements = int(exec_result.get("server_placements") or 0)
     for hop in exec_result.get("hop_stats") or []:
         if hop.get("aggregate_pushdown"):
             counters.aggregate_pushdowns += 1

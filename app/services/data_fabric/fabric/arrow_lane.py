@@ -73,6 +73,10 @@ def iter_scan_pages_arrow(
             except Exception:  # noqa: BLE001 - 计数回调绝不阻断扫描
                 pass
         for feat in rows:
+            if bbox is not None and not _bbox_passes(feat.get("geometry"), bbox):
+                # V7 R1-C1 修复：bbox 行级精确过滤（行组剪枝只是粗粒度
+                # 性能优化）—— 与 dict lane 的包围盒相交语义逐位一致。
+                continue
             if where is not None and not evaluate_predicate(
                 where, feat.get("properties") or {}
             ):
@@ -86,6 +90,19 @@ def iter_scan_pages_arrow(
             return
     if page:
         yield page
+
+
+def _bbox_passes(geometry: Any, query_bbox: "List[float]") -> bool:
+    """精确 bbox 相交（dict lane ``_row_passes`` 同语义；无几何行不保留）。"""
+    if not isinstance(geometry, dict):
+        return False
+    from app.services.data_fabric.query.federated.costing import geojson_bbox
+
+    b = geojson_bbox(geometry)
+    if b is None:
+        return False
+    minx, miny, maxx, maxy = query_bbox
+    return b[0] <= maxx and b[2] >= minx and b[1] <= maxy and b[3] >= miny
 
 
 def _to_table(batch: Any) -> Any:

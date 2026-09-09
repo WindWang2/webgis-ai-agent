@@ -234,9 +234,12 @@ def apply_safe_aggregate_pushdown(plan_tree: LogicalNode, ctx: EnumerationContex
             if (
                 node.join_kind == "aggregate_join"
                 and isinstance(new_right, LS)
+                and isinstance(new_left, LS)
                 and not node.aggregate_pushdown
             ):
-                edge = _matching_edge(node, new_right, ctx.joins, sources_in)
+                # R1-C3/M4：左子树必须是**单扫描**（嵌套 join 的扇出会破坏
+                # 唯一键证明）；边匹配必须逐字段一致（防同右源多边选错）。
+                edge = _matching_edge(node, new_left, new_right, ctx.joins)
                 if edge is not None:
                     proof = aggregate_pushdown_proof(edge, sources_in, by_id)
                     if proof is not None:
@@ -259,28 +262,31 @@ def apply_safe_aggregate_pushdown(plan_tree: LogicalNode, ctx: EnumerationContex
     return _rewrite(plan_tree)
 
 
-def _matching_edge(node: LogicalNode, right_scan: LogicalNode, joins, sources_in):
-    """join 节点 → 匹配的 aggregate_join 边（右 scan source_id + 左子树包含左源）。"""
+def _matching_edge(node: LogicalNode, left_scan: LogicalNode, right_scan: LogicalNode, joins):
+    """join 节点 → 唯一匹配的 aggregate_join 边（R1-M4：join 语义逐项相等）。
 
-    right_sid = right_scan.source_id
-    left_sids = _collect_source_ids(node.left)
+    匹配条件：左右 source_id 一致 ∧ join 字段一致 ∧ group_by（排序后）一致
+    ∧ aggregates（规范 JSON 排序后）一致 —— 同右源多条边绝不猜。
+    """
+    import json as _json
+
     for e in joins:
         if e.kind != "aggregate_join":
             continue
-        if e.right_source_id == right_sid and e.left_source_id in left_sids:
-            return e
+        if e.left_source_id != left_scan.source_id:
+            continue
+        if e.right_source_id != right_scan.source_id:
+            continue
+        if e.join_field_left != node.join_field_left or e.join_field_right != node.join_field_right:
+            continue
+        if sorted(e.group_by_right or []) != sorted(node.group_by_right or []):
+            continue
+        ea = sorted(e.aggregates or [], key=lambda a: _json.dumps(a, sort_keys=True))
+        na = sorted(node.aggregates or [], key=lambda a: _json.dumps(a, sort_keys=True))
+        if ea != na:
+            continue
+        return e
     return None
-
-
-def _collect_source_ids(node: LogicalNode) -> set:
-    if hasattr(node, "source_id"):
-        return {node.source_id}
-    out: set = set()
-    for attr in ("input", "left", "right"):
-        child = getattr(node, attr, None)
-        if child is not None and hasattr(child, "canonical_dict"):
-            out |= _collect_source_ids(child)
-    return out
 
 
 def pushdown_boundary_lines(ctx: EnumerationContext) -> List[str]:

@@ -71,6 +71,11 @@ class ExecutionTrace:
     per_source_delivered_srid: Dict[str, int] = field(default_factory=dict)
     #: server placement 交付校验失败并已本地回退的披露。
     crs_fallbacks: List[Dict[str, Any]] = field(default_factory=list)
+    #: V7 R1-C2：每源「无过滤且取回完整（未触及窗口）」事实 —— 仅这类源
+    #: 允许 feedback 回写 SourceFacts 行数（observe_unfiltered_count 契约）。
+    per_source_scan_complete_unfiltered: Dict[str, bool] = field(default_factory=dict)
+    #: server placement 成功（output_crs 请求且交付一致）计数。
+    server_placements: int = 0
     per_source_rows: Dict[str, int] = field(default_factory=dict)
     pages_fetched: int = 0
     hop_stats: List[Dict[str, Any]] = field(default_factory=list)
@@ -165,6 +170,10 @@ class PhysicalExecutor:
                 k: v for k, v in self.trace.per_source_delivered_srid.items()
             },
             "crs_fallbacks": list(self.trace.crs_fallbacks),
+            "per_source_scan_complete_unfiltered": dict(
+                self.trace.per_source_scan_complete_unfiltered
+            ),
+            "server_placements": self.trace.server_placements,
             "execution_duration_s": round(time.monotonic() - started, 4),
             "pages_fetched": self.trace.pages_fetched,
             "hop_stats": self.trace.hop_stats,
@@ -245,9 +254,15 @@ class PhysicalExecutor:
             + ", ".join(
                 f"{sid} actual={a} est={e}" for sid, (a, e) in sorted(deviated.items())
             )
-            + f"; new cost {new_cost:.0f} < old cost {old_cost:.0f}"
+            + f"; new cost {new_cost:.0f} < old cost {old_cost:.0f} (pinned basis)"
         )
-        return self._eval(new_tree, lift_key=None)
+        try:
+            return self._eval(new_tree, lift_key=None)
+        except Exception as exc:  # noqa: BLE001 - R1-M7：重执行失败保留首次合法结果
+            self.adaptive.notes.append(
+                f"bushy replan re-execution failed ({exc}); keeping first result"
+            )
+            return rows, joined_total
 
     def _eval(
         self, node: LogicalNode, *, lift_key: Optional[str]
@@ -332,12 +347,14 @@ class PhysicalExecutor:
             where = predicate_to_canonical_dict(node.where)
         elif node.where_raw:
             where = node.where_raw
-        rows, delivered = self._fetch_scan_rows(
+        rows, delivered, complete_unfiltered = self._fetch_scan_rows(
             adapter, node, where=where, fetch_limit=fetch_window,
             output_crs=node.output_crs,
         )
         if delivered is not None:
             self.trace.per_source_delivered_srid[node.source_id] = delivered
+        if complete_unfiltered:
+            self.trace.per_source_scan_complete_unfiltered[node.source_id] = True
         self.trace.per_source_rows[node.source_id] = len(rows)
         if lift_key:
             self._lift(rows, lift_key)
@@ -351,7 +368,7 @@ class PhysicalExecutor:
         where: Any,
         fetch_limit: int,
         output_crs: Optional[str],
-    ) -> "Tuple[List[Dict[str, Any]], Optional[int]]":
+    ) -> "Tuple[List[Dict[str, Any]], Optional[int], bool]":
         """扫描取行 + 交付 CRS 事实（V7 W8，ADR-0119）。
 
         - 每页结果经 ``on_result`` 消费 ``metadata.delivered_crs``（adapter
@@ -392,8 +409,15 @@ class PhysicalExecutor:
                 self.trace.pages_fetched += 1
             return rws
 
+        unfiltered = (
+            where is None
+            and (node.bbox or self._bbox) is None
+            and not getattr(node, "aggregate_request", None)
+        )
         rows = _scan_once(output_crs)
         delivered = delivered_holder["srid"]
+        # R1-C2：取回数触及窗口 = 可能截断 → 不视为完整（宁可漏记事实）。
+        complete_unfiltered = bool(unfiltered and len(rows) < fetch_limit)
         if output_crs is not None:
             requested = _parse_crs_srid(output_crs)
             effective = delivered if delivered is not None else declared
@@ -416,7 +440,8 @@ class PhysicalExecutor:
                 )
             elif requested is not None:
                 delivered = requested
-        return rows, delivered
+                self.trace.server_placements += 1
+        return rows, delivered, complete_unfiltered
 
     def _reproject(
         self, node: LogicalReproject, *, lift_key: Optional[str]
@@ -872,11 +897,12 @@ def _project_pushed_groups(
     组行至多出现一次。输出键 = group_by 字段 + ``func_field``（count 无字段
     时 = "count"）—— 与 ``_AggregateState.finalize`` 逐位一致。
     """
-    agg_names = []
+    agg_funcs: Dict[str, str] = {}
     for a in aggregates:
         func = str(a.get("func")) if isinstance(a, dict) else str(getattr(a, "func"))
         field = a.get("field") if isinstance(a, dict) else getattr(a, "field")
-        agg_names.append(func if field is None else f"{func}_{field}")
+        name = func if field is None else f"{func}_{field}"
+        agg_funcs[name] = func
     out: List[Dict[str, Any]] = []
     seen: set = set()
     for row in joined_rows:
@@ -888,8 +914,17 @@ def _project_pushed_groups(
         result: Dict[str, Any] = {}
         for g in group_by:
             result[g] = right.get(g)
-        for name in agg_names:
-            result[name] = right.get(name)
+        for name, func in agg_funcs.items():
+            v = right.get(name)
+            # R1-M6：与 _AggregateState.finalize 数值口径对齐 —— sum 累加器
+            # 从 0.0 起（float）、avg 是除法（float）。源侧 Decimal/int 原样
+            # 透传会破坏「逐位一致」与上层 JSON 序列化。
+            if func in ("sum", "avg") and v is not None:
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    pass
+            result[name] = v
         out.append(result)
     return out
 

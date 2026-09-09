@@ -140,3 +140,27 @@ def test_arrow_lane_falls_back_to_dict_lane(parquet_source):
         fetch_limit=10, budget=_Budget(), token=_Token(),
     ))
     assert len(pages) == 1 and calls  # dict lane 路径未变
+
+
+def test_arrow_lane_bbox_row_level_filter(parquet_source):
+    """R1-C1 回归：bbox 行级精确过滤（行组剪枝只是粗粒度优化）。"""
+    adapter = _adapter(parquet_source)
+    pages = list(iter_scan_pages_arrow(
+        adapter, "ds_arrow", where=None, fields=None,
+        bbox=[100.0, 29.0, 101.5, 31.0],  # 只含 x=100.0 与 101.0 两点
+        fetch_limit=100, budget=_Budget(), token=_Token(), page_size=10,
+    ))
+    rows = [r for page in pages for r in page]
+    xs = [r["geometry"]["coordinates"][0] for r in rows]
+    assert all(100.0 <= x <= 101.5 for x in xs)
+    assert len(rows) == 2
+
+
+def test_arrow_lane_bbox_outside_no_false_inclusion(parquet_source):
+    adapter = _adapter(parquet_source)
+    pages = list(iter_scan_pages_arrow(
+        adapter, "ds_arrow", where=None, fields=None,
+        bbox=[200.0, 200.0, 201.0, 201.0],  # 完全在外
+        fetch_limit=100, budget=_Budget(), token=_Token(), page_size=10,
+    ))
+    assert pages == []

@@ -1707,19 +1707,25 @@ def _make_bushy_replan_fn(req, original_plan):
     """V7（ADR-0119 W10）：bushy 整树重排回调（观测行数 pinned 后重枚举）。
 
     - 以观测行数覆盖各源 ``estimated_rows`` → 同一 planner 纯函数重枚举；
-    - 新计划必须 hash 不同**且成本严格低于原计划**（previous_cost 携带原
-      成本供 executor 判定）；否则返回 None（保留原结果）；
+    - R1-M7 **同基准比较**：previous_cost = 原序在 **pinned 估计下**的链形
+      重估成本（_enumerate_fixed_chain）—— 绝不用未 pinned 的旧成本跨基准
+      比较；
+    - 新计划必须 hash 不同**且 pinned 成本严格更低**才切换；
     - ``order_strategy="given"`` 上游已禁用 adaptive（双保险）。
     """
     from copy import replace as _dataclass_replace
 
-    from app.services.data_fabric.query.federated.planner import plan_federation_v6
+    from app.services.data_fabric.query.federated.planner import (
+        build_enumeration_context,
+        plan_federation_v6,
+    )
+    from app.services.data_fabric.query.federated.enumerator import (
+        _enumerate_fixed_chain,
+    )
 
-    original_cost = original_plan.cost
-
-    def _replan(actual_rows):
+    def _pinned_req(actual_rows):
         pinned = dict(actual_rows or {})
-        new_req = _dataclass_replace(
+        return _dataclass_replace(
             req,
             sources=[
                 _dataclass_replace(
@@ -1733,10 +1739,22 @@ def _make_bushy_replan_fn(req, original_plan):
                 for s in req.sources
             ],
         )
-        new_plan = plan_federation_v6(new_req)
+
+    def _replan(actual_rows):
+        pinned_req = _pinned_req(actual_rows)
+        new_plan = plan_federation_v6(pinned_req)
+        # 同基准基线：原序（planned order）在 pinned 估计下的成本。
         try:
-            new_plan.previous_cost = original_cost
-        except Exception:  # noqa: BLE001 - dataclass frozen 情况下挂属性失败
+            ctx_pinned = build_enumeration_context(pinned_req)
+            baseline = _enumerate_fixed_chain(
+                ctx_pinned, list(original_plan.order), positional=False
+            )
+            previous_cost = baseline.cost
+        except Exception:  # noqa: BLE001 - 基线不可估 → 不切换（保守）
+            return None
+        try:
+            new_plan.previous_cost = previous_cost
+        except Exception:  # noqa: BLE001
             pass
         return new_plan
 
@@ -1855,7 +1873,26 @@ def execute_chain_v6(
                 if j.left_source_id and j.right_source_id
             },
         )
-    except DataFabricError:
+    except DataFabricError as e:
+        # V7 R1-M8：typed 错误契约不变（原样上抛），但错误面反馈与负缓存
+        # 在上抛前落账（均 fail-open）。
+        if cache_ctx is not None:
+            try:
+                from app.services.data_fabric.fabric.result_cache import (
+                    get_result_cache,
+                )
+
+                get_result_cache().put_negative(cache_ctx[1], e.code)
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            _v7_record_feedback(
+                req, plan, {"per_source_rows": {}}, "error",
+                scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
+                error_code=e.code,
+            )
+        except Exception:  # noqa: BLE001
+            pass
         raise  # typed 错误契约与 V5 一致（预算/构造错误绝不静默回退）
     except Exception as e:  # noqa: BLE001 - V6 非 typed 异常 → 诚实回退 V5
         logger.warning("[Federation] V6 engine failed (%s); falling back to V5", e)
@@ -2071,8 +2108,12 @@ def _v7_new_counters(cache_ctx) -> Any:
     return FabricCounters()
 
 
-def _v7_record_feedback(req, plan, exec_result, outcome, *, scope_key):
-    """把执行观测提交反馈存储（fail-open；返回 store 供计数披露）。"""
+def _v7_record_feedback(req, plan, exec_result, outcome, *, scope_key, error_code=None):
+    """把执行观测提交反馈存储（fail-open；返回 store 供计数披露）。
+
+    R1-C2：``unfiltered`` 消费执行器 trace 事实（无过滤 ∧ 取回完整未触及
+    窗口）—— trace 缺席（错误路径）时保守 False。
+    """
     from app.services.data_fabric.fabric.feedback import (
         ExecutionFeedback,
         SourceObservation,
@@ -2095,8 +2136,12 @@ def _v7_record_feedback(req, plan, exec_result, outcome, *, scope_key):
         if fp:
             fingerprints[s.source_id] = fp
         actual = (exec_result.get("per_source_rows") or {}).get(s.source_id)
-        unfiltered = (
-            s.where is None and not getattr(req, "bbox", None)
+        # R1-C2：unfiltered 消费执行器 trace 事实（无过滤 ∧ 取回完整未触及
+        # 窗口）；trace 缺席（错误路径）→ 保守 False。
+        unfiltered = bool(
+            (exec_result.get("per_source_scan_complete_unfiltered") or {}).get(
+                s.source_id
+            )
         )
         obs.append(
             SourceObservation(
@@ -2104,7 +2149,8 @@ def _v7_record_feedback(req, plan, exec_result, outcome, *, scope_key):
                 dataset_fingerprint=fp,
                 estimated_rows=s.estimated_rows,
                 actual_rows=actual,
-                unfiltered=bool(unfiltered),
+                error=error_code if outcome == "error" else None,
+                unfiltered=unfiltered,
             )
         )
     try:

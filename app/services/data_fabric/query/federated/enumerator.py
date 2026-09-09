@@ -907,7 +907,9 @@ def aggregate_pushdown_proof(
     3. 左 join 键唯一性为 **measured 级证明**（``SourceFacts.unique_keys``：
        stats_hints 显式声明或 pg_index 探测）—— 每右行至多匹配一左行，
        杜绝 join-后聚合的右行重复计数；
-    4. 聚合函数 ⊆ {count, sum, min, max, avg}（可合并内核，组值可直接迁移）；
+    4. 聚合函数 ⊆ {count, sum, min, max, avg}（可合并内核，组值可直接迁移）
+       且聚合字段**不出现在左侧顶层字段**（R1-M5：内核左优先解析 —— 左侧
+       未投影（字段集未知）或含同名列 → 无法证明，不下推）；
     5. 右源 caps.aggregation=True（源真的能做 GROUP BY）。
 
     等价性论证：条件 2+3 ⇒ 存活组与命中组一致且组内聚合不重复；条件 4 ⇒
@@ -934,6 +936,15 @@ def aggregate_pushdown_proof(
         func = str(a.get("func") if isinstance(a, dict) else getattr(a, "func", ""))
         if func not in _SAFE_PUSH_AGG_FUNCS:
             return None
+        # R1-M5：内核聚合字段解析是**左优先右回退**（_AggregateState.update）
+        # —— 左侧顶层存在同名列时本地读左值、下推算右值，不等价。左字段集
+        # 未知（未投影）→ 无法证明 → 不下推（保守诚实）。
+        field = a.get("field") if isinstance(a, dict) else getattr(a, "field")
+        if field is not None:
+            if left_src.fields is None:
+                return None
+            if field in left_src.fields:
+                return None
     return {
         "left_source_id": edge.left_source_id,
         "right_source_id": edge.right_source_id,

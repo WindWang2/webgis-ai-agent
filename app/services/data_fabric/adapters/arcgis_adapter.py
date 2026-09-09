@@ -55,6 +55,14 @@ _FALLBACK_MAX_RECORD_COUNT = 2_000
 _LAYER_ID_RE = re.compile(r"^[0-9]+$|^_?[A-Za-z0-9_]{1,60}$")
 
 
+def _arcgis_out_sr(v2) -> int:
+    """实际随请求发送的 outSR（单一真相：_base_params 与 delivered_crs 共用）。"""
+    from app.services.data_fabric.query.planner import parse_epsg
+
+    requested = parse_epsg(v2.output.crs) if v2 is not None else None
+    return requested if requested else 4326
+
+
 def _safe_layer_id(dataset_id: str) -> str:
     """图层 ID 只允许数字或简单标识符（防 URL 路径遍历）。"""
     if not dataset_id or not _LAYER_ID_RE.match(dataset_id):
@@ -497,10 +505,14 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
                 "pushdown_sort": True,
                 "exceeded_transfer_limit": exceeded,
                 "max_record_count": max_record_count,
-                # V7（ADR-0119 W8）：交付 CRS 事实 —— f=geojson 固定 outSR=4326
-                # （GeoJSON 口径），即使声明原生 SRID 交付恒为 4326。执行期
-                # CRS 账本据此修正本地变换（修复 V6 双重变换缺陷）。
-                "delivered_crs": "EPSG:4326",
+                # V7（ADR-0119 W8 + R1-MINOR 12）：交付 CRS 自报 = 实际随请求
+                # 发送的 outSR（_base_params 依 output.crs 归一；f=geojson 无
+                # 响应端 SR 校验通道，故 output_crs_pushdown 恒 False ——
+                # 联邦执行期 CRS 账本据此修正本地变换基准）。
+                "delivered_crs": "EPSG:%d"
+                % (
+                    _arcgis_out_sr(v2),
+                ),
                 "query_plan": plan.model_dump(),
                 "query_evidence": evidence.model_dump(),
                 "is_demo": False,
@@ -508,15 +520,11 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         )
 
     def _base_params(self, v2) -> Dict[str, Any]:
-        from app.services.data_fabric.query.planner import parse_epsg
-
         # V7（ADR-0119 W8）：显式 output_crs（联邦交付归一化）时随 outSR
         # 请求；缺省维持 4326（f=geojson 历史行为，位级不变）。
-        requested = parse_epsg(v2.output.crs) if v2 is not None else None
-        out_sr = str(requested) if requested else "4326"
         params: Dict[str, Any] = {
             "f": "geojson",
-            "outSR": out_sr,
+            "outSR": str(_arcgis_out_sr(v2)),
         }
         if self._token:
             params["token"] = self._token

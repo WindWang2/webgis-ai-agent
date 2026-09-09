@@ -151,7 +151,9 @@ class InMemorySecretStore:
         with self._lock:
             existing = self._by_content.get(ckey)
             if existing is not None and existing in self._entries:
-                # 刷新 TTL 位置（LRU 语义），ref 稳定。
+                # 刷新 TTL 时刻 + LRU 位置（ref 稳定）—— 长活连接的幂等
+                # attach 不会让 secret 惰性过期（R1-MINOR 10）。
+                self._entries[existing] = (now, self._entries[existing][1])
                 self._entries.move_to_end(existing)
                 return existing
             ref = "sec_" + self._secrets.token_hex(12)
@@ -323,9 +325,12 @@ class ConnectionRegistry:
             try:
                 adapter = create_adapter_for_profile(profile)
             except Exception:
-                # 构建失败不留半条目（record 回滚 + secret 逐出）。
+                # 构建失败不留半条目（仅回滚**本次**写入 —— revision 变化
+                # 说明并发方已替换，绝不误删他人条目，R1-MINOR 9）。
                 with self._lock:
-                    self._entries.pop(key, None)
+                    current = self._entries.get(key)
+                    if current is not None and current[0].revision == rev:
+                        self._entries.pop(key, None)
                 if secret_ref:
                     self._secret_store.evict(secret_ref)
                 raise
