@@ -135,10 +135,21 @@ def _canonical_hash(payload):
     return canonical_fingerprint(payload)
 
 
-def test_content_hash_default_off_is_none():
-    """默认关：行为与历史逐字节一致（content_hash 恒 None）。"""
+def test_content_hash_default_on(monkeypatch):
+    """V6（ADR-0118）：默认开启 —— 内容摘要默认参与 ref 身份。"""
     from app.schemas.ref_descriptor import compute_descriptor
 
+    monkeypatch.delenv("WEBGIS_REF_CONTENT_HASH", raising=False)
+    d = compute_descriptor("ref:x", _fc())
+    assert d.content_hash is not None
+    assert d.content_hash == _canonical_hash(_fc())
+
+
+def test_content_hash_opt_out_restores_legacy_none(monkeypatch):
+    """显式 0/false/no/off 回退历史行为（恒 None）。"""
+    from app.schemas.ref_descriptor import compute_descriptor
+
+    monkeypatch.setenv("WEBGIS_REF_CONTENT_HASH", "0")
     d = compute_descriptor("ref:x", _fc())
     assert d.content_hash is None
     assert d.to_dict()["content_hash"] is None

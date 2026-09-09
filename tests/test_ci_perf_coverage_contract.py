@@ -47,6 +47,12 @@ NIGHTLY_ONLY_PERF_FILES = {
     "test_perf_mapspec_e2e.py": (
         "1k/10k/50k MapSpec upsert + lag monitor exceeds the PR 180s budget"
     ),
+    "test_lakehouse_v6.py": (
+        "ADR-0118: depends on the optional geo stack (zarr is not a "
+        "requirements.txt dependency — PR lane would skip or red at import) "
+        "and carries wall-clock ratio bands; structural evidence stays "
+        "deterministic for nightly"
+    ),
 }
 
 _STDLIB = set(sys.stdlib_module_names)
