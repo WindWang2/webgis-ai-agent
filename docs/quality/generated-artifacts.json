@@ -22,7 +22,7 @@
   },
   "docs/quality/QUALITY_REPORT.md": {
    "generator": "scripts/gen_quality_report.py",
-   "input_fingerprint": "7afb1afb07193484a159c47e45078a912f300624d489633520a4779c9368db88",
+   "input_fingerprint": "56f91774079d789fbded72a6ac32eb7c4a005866dbaa29b2a004e2fe87600290",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -88,7 +88,7 @@
   },
   "docs/quality/quality-report.json": {
    "generator": "scripts/gen_quality_report.py",
-   "input_fingerprint": "7afb1afb07193484a159c47e45078a912f300624d489633520a4779c9368db88",
+   "input_fingerprint": "56f91774079d789fbded72a6ac32eb7c4a005866dbaa29b2a004e2fe87600290",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",

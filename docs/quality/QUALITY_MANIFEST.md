@@ -3,13 +3,13 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**2**
-- 内容指纹：`fa457b14aa9e8613…`
+- 内容指纹：`3f796c56b393292c…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 299 | 298 | 1 |
+| tools | 299 | 299 | 0 |
 | algorithms | 213 | 165 | 0 |
 | capabilities | 139 | 88 | 0 |
 | artifact_types | 21 | 21 | 0 |
@@ -29,17 +29,16 @@
 
 ## 行为化覆盖与 findings 棘轮（Quality V2）
 
-- 工具行为证据：dispatch **154** / mention 144 / none 1（dispatch 覆盖率 52%）
-- findings 棘轮：**FAIL**（dispatch 下限 151，当前 154；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
-  - 违规：`TOOL_UNTESTED` 当前 1 > 基线 0
+- 工具行为证据：dispatch **157** / mention 142 / none 0（dispatch 覆盖率 53%）
+- findings 棘轮：**PASS**（dispatch 下限 151，当前 157；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
 
 ## Findings（派生线索，非缺陷判定）
 
 > 静态引用 ≠ 行为覆盖。findings 只回答"哪里没有任何测试证据"，修复优先级需结合 02-coverage-risk-map 的风险分级。
 
-### TOOL_UNTESTED（1）
+### TOOL_UNTESTED（0）
 
-- `temporal_cube_stats`（medium）— registered tool without any static test reference
+（无）
 
 ### TOOL_DESTRUCTIVE_UNTESTED（0）
 

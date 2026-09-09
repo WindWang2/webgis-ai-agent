@@ -4955,9 +4955,9 @@
   }
  ],
  "behavioral": {
-  "dispatch": 154,
-  "mention": 144,
-  "none": 1
+  "dispatch": 157,
+  "mention": 142,
+  "none": 0
  },
  "capabilities": [
   {
@@ -7255,36 +7255,21 @@
   "algorithms": 213,
   "artifact_types": 21,
   "capabilities": 139,
-  "findings": 1,
+  "findings": 0,
   "recipes": 164,
   "tools": 299
  },
- "findings": [
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "temporal_cube_stats",
-   "surface": "tools"
-  }
- ],
+ "findings": [],
  "findings_ratchet": {
-  "behavioral_dispatch": 154,
+  "behavioral_dispatch": 157,
   "expired_waivers": [],
   "min_behavioral_dispatch": 151,
-  "pass": false,
-  "violations": [
-   {
-    "baseline": 0,
-    "code": "TOOL_UNTESTED",
-    "current": 1
-   }
-  ],
+  "pass": true,
+  "violations": [],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "fa457b14aa9e8613c7a278dc51b4f7041f8ff523e7af745cc46767c46588b394",
+ "fingerprint": "3f796c56b393292c9b37c12d70935313e05f2c5aea59b6b11c44bfe5d9693935",
  "gate": {
   "fields": {
    "capabilities": {
@@ -12033,7 +12018,7 @@
    "tier": 2
   },
   {
-   "behavior": "mention",
+   "behavior": "dispatch",
    "capabilities": [
     "temporal_trend"
    ],
@@ -12055,7 +12040,8 @@
     "science-v5"
    ],
    "tests": [
-    "tests/unit/lib/test_phenology_v5.py"
+    "tests/unit/lib/test_phenology_v5.py",
+    "tests/unit/lib/test_science_temporal_tools.py"
    ],
    "tier": 2
   },
@@ -14716,7 +14702,7 @@
    "tier": 2
   },
   {
-   "behavior": "mention",
+   "behavior": "dispatch",
    "capabilities": [
     "temporal_trend"
    ],
@@ -14737,7 +14723,8 @@
     "science-v5"
    ],
    "tests": [
-    "tests/unit/lib/test_phenology_v5.py"
+    "tests/unit/lib/test_phenology_v5.py",
+    "tests/unit/lib/test_science_temporal_tools.py"
    ],
    "tier": 2
   },
@@ -14797,15 +14784,12 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "dispatch",
    "capabilities": [
     "temporal_trend"
    ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "untested"
-   ],
    "latency_class": "medium",
    "memory_class": "heavy",
    "name": "temporal_cube_stats",
@@ -14821,7 +14805,9 @@
     "cube",
     "science-v5"
    ],
-   "tests": [],
+   "tests": [
+    "tests/unit/lib/test_science_temporal_tools.py"
+   ],
    "tier": 2
   },
   {
