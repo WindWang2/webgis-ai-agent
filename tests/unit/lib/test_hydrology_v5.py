@@ -132,8 +132,7 @@ class TestFlowTopology:
 
     def test_topology_cycle_detection(self):
         # 人工 D8：两像元互指 → 环
-        n = 4
-        receiver = np.full(n, -1, dtype=int)
+        receiver = np.full(4, -1, dtype=int)
         receiver[0] = 1
         receiver[1] = 0                           # 环
         receiver[2] = 3
@@ -150,7 +149,6 @@ class TestFlowTopology:
 
     def test_topology_dangling_and_monotonicity(self):
         # receiver 指向无效像元 + 汇流不增
-        n = 4
         valid = np.array([True, True, True, True])
         receiver = np.array([1, 2, 3, -1])
         acc = np.array([[5.0, 4.0], [3.0, 3.0]])  # 5→4 违例；3→3 平台

@@ -1171,7 +1171,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             complexity="O(N)（receiver 链染色法环检测，步进有界 2N）",
             approximation_class="exact",
             algorithm_family="terrain_hydrology_d8",
-            method_references=["o_callaghan_mark1984"],
+            method_references=["ocallaghan_mark1984"],
             assumptions=[
                 "D8 receiver 图应无环；汇流沿 receiver 严格单调增（正 acc）",
                 "校验是结构事实报告——不 raise（is_consistent 汇总位）",
