@@ -190,8 +190,9 @@ class Settings(BaseSettings):
     EXTENSION_VERSION_PIN: str = ""
     # EXTENSIONS_KEEP_VERSIONS: versions/ 每扩展保留的历史版本数（含回滚余量）。
     EXTENSIONS_KEEP_VERSIONS: int = 3
-    # EXTENSION_STREAM_WINDOW: V3 流式初始 credit 窗口（宿主内存上界 =
-    # window × execution.max_output_bytes）。
+    # EXTENSION_STREAM_WINDOW: V3 流式初始 credit 窗口。守序 worker 的
+    # 宿主内存上界 ≈ window × execution.max_output_bytes；敌意 worker 由
+    # 独立防线约束（reader 帧队列 maxsize=64 × 68MiB 帧硬顶 + 管道背压）。
     EXTENSION_STREAM_WINDOW: int = 16
     # EXTENSION_MAX_STREAM_EVENTS: V3 单次流事件数上界（结构性防无界流）。
     EXTENSION_MAX_STREAM_EVENTS: int = 10000

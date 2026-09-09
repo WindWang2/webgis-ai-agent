@@ -35,6 +35,45 @@ except ImportError:  # pragma: no cover - 旧版 execution_engine 没有该函�
 logger = logging.getLogger(__name__)
 
 
+_lifespan_state: dict = {}
+
+
+def _start_extension_revocation_tick(ext_host):
+    """ADR-0120：吊销传播/刷新信号的运行时接线（低频后台 tick）。
+
+    - trust store mtime 变化 → refresh_revocations()（已激活且被吊销 →
+      停用+隔离）；
+    - `.refresh` 信号 mtime 变化 → host.discover()（新装/升级包生效）。
+    两者都是纯 mtime 快路径，通常零 I/O。返回 task 或 None（未配置
+    trust store 且未配置 install root → 不启动）。
+    """
+    import asyncio
+
+    from app.core.config import settings as _settings
+
+    install_root = (_settings.EXTENSIONS_INSTALL_ROOT or "").strip()
+    if not (getattr(ext_host._policy, "trust_store", None) or install_root):
+        return None
+
+    async def _tick() -> None:
+        while True:
+            try:
+                quarantined = ext_host.refresh_revocations()
+                if quarantined:
+                    logger.warning(
+                        "[lifespan] extensions quarantined by revocation: %s",
+                        quarantined,
+                    )
+                if install_root and ext_host.refresh_signal_changed(install_root):
+                    ext_host.discover()
+                    logger.info("[lifespan] extensions refreshed by signal")
+            except Exception as exc:  # noqa: BLE001 - tick 失败绝不拖垮宿主
+                logger.warning("[lifespan] extension revocation tick failed: %s", exc)
+            await asyncio.sleep(300.0)
+
+    return asyncio.create_task(_tick())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化工具注册中心 + DB schema 守卫迁移。"""
@@ -102,6 +141,21 @@ async def lifespan(app: FastAPI):
                     logger.warning("[lifespan] extensions failed activation: %s", _failed)
                 else:
                     logger.info("[lifespan] extension platform activated")
+                # Round-2 Mi-4：marketplace 配置非法 → 启动期 fail-fast
+                # （惰性首请求才发现 = 每请求 500 的最差体验）。
+                try:
+                    from app.extensions_platform.marketplace.bootstrap import (
+                        registry_service_from_settings,
+                    )
+
+                    registry_service_from_settings()
+                except Exception as _mk_err:
+                    logger.warning("[lifespan] marketplace bootstrap failed: %s", _mk_err)
+                # ADR-0120（Round-2 M-1）：吊销传播/刷新信号的运行时接线。
+                # 低频后台 tick（300s；纯 mtime 快路径，通常零 I/O）。
+                _ext_tick = _start_extension_revocation_tick(_ext_host)
+                if _ext_tick is not None:
+                    _lifespan_state["extension_revocation_tick"] = _ext_tick
         except Exception as e:
             logger.warning(f"[lifespan] extension platform bootstrap skipped: {e}")
     # v2(Phase 3, audit R1)：启动即编译 Compiled GIS Runtime Manifest 并做
@@ -193,6 +247,11 @@ async def lifespan(app: FastAPI):
         logger.warning(f"[lifespan] geocompute cluster coordinator skipped: {e}")
 
     yield
+
+    # ADR-0120：停掉扩展吊销/刷新 tick（best-effort）。
+    _ext_tick = _lifespan_state.pop("extension_revocation_tick", None)
+    if _ext_tick is not None:
+        _ext_tick.cancel()
 
     # 关闭后台清理任务
     for bg_task in (cleanup_task, stale_sweep_task):

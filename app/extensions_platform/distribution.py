@@ -83,12 +83,43 @@ def safe_extract_package(blob: bytes, target_dir: Path) -> None:
     entries = 0
     try:
         with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
-            members = tar.getmembers()
-            if len(members) > MAX_PACKAGE_FILES:
-                raise _dist_error(
-                    DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
-                    f"package has {len(members)} entries; limit {MAX_PACKAGE_FILES}",
-                )
+            # Round-2 M-5：**增量**解析（禁用 getmembers() 一次性全解——
+            # gzip 炸弹可在头部解析阶段膨胀数十 GB）。预算在逐成员读取
+            # 前强制：成员数上界、单成员尺寸上界、累计解压字节上界。
+            members: list[tarfile.TarInfo] = []
+            while True:
+                member = tar.next()
+                if member is None:
+                    break
+                if len(members) + 1 > MAX_PACKAGE_FILES:
+                    raise _dist_error(
+                        DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
+                        f"package exceeds {MAX_PACKAGE_FILES} entries; "
+                        f"limit {MAX_PACKAGE_FILES}",
+                    )
+                if member.isdir():
+                    members.append(member)
+                    continue
+                if not member.isreg():
+                    raise _dist_error(
+                        DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
+                        f"package entry {member.name!r} is not a regular file "
+                        f"(type {member.type!r} rejected)",
+                    )
+                if member.size > MAX_PACKAGE_TOTAL_BYTES:
+                    raise _dist_error(
+                        DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
+                        f"package entry {member.name!r} declares {member.size} "
+                        f"bytes; over budget",
+                    )
+                total_bytes += member.size
+                entries += 1
+                if total_bytes > MAX_PACKAGE_TOTAL_BYTES:
+                    raise _dist_error(
+                        DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
+                        f"package exceeds {MAX_PACKAGE_TOTAL_BYTES} unpacked bytes",
+                    )
+                members.append(member)
             for member in members:
                 name = member.name
                 if member.isdir():
@@ -434,10 +465,11 @@ class ExtensionInstaller:
         if self._host is not None:
             from . import resolver
 
-            views = {
-                eid: _record_view(rec)
-                for eid, rec in getattr(self._host, "_records", {}).items()
-            }
+            views = (
+                self._host.record_views()
+                if hasattr(self._host, "record_views")
+                else {}
+            )
             conflicts = resolver.check_upgrade_conflicts(
                 package_id, target_version, views
             )
@@ -460,6 +492,7 @@ class ExtensionInstaller:
         versions_dir = self._install_root / VERSIONS_DIRNAME / _safe_name(package_id)
         versions_dir.mkdir(parents=True, exist_ok=True)
         current_version = self._installed_version(package_id)
+        archived_path: Optional[Path] = None
         # 1) active → versions/<old>（目标已存在 → digest 唯一名，防撞名）。
         if active.is_dir():
             archive_name = _safe_name(current_version or "unknown")
@@ -470,6 +503,7 @@ class ExtensionInstaller:
             if archive.exists():
                 _rmtree_quiet(archive)
             os.rename(str(active), str(archive))
+            archived_path = archive
             # Mi-8：rename 不更新被归档目录自身 mtime——刷新入位时间，
             # 防 prune 按目录 mtime 把刚归档的上一版判「最旧」先删。
             try:
@@ -514,12 +548,22 @@ class ExtensionInstaller:
                 # Round-1 MAJ-1：升级失败绝不静默成功——把刚归档的旧版
                 # 原子换回 active 位并 typed 失败（坏版本不留在 active 位）。
                 if not ok:
-                    self._restore_archived(package_id, current_version)
-                    host2.discover()
-                    host2.activate(package_id)
+                    restored = self._restore_archived(package_id, archived_path)
+                    if restored:
+                        host2.discover()
+                        host2.activate(package_id)
+                    # Round-2 M-2：还原失败必须诚实报告（坏版本在 active 位，
+                    # 需人工介入），绝不谎报 "previous version restored"。
+                    detail = (
+                        "upgrade activation failed; previous version restored"
+                        if restored
+                        else "upgrade activation failed AND automatic restore "
+                        "FAILED: the failing version remains at the active slot; "
+                        "manual intervention required (see versions/ archive)"
+                    )
                     raise _dist_error(
-                        DiagnosticCode.INSTALL_PREFLIGHT_FAILED,
-                        "upgrade activation failed; previous version restored: "
+                        DiagnosticCode.INSTALL_SWAP_FAILED if not restored else DiagnosticCode.INSTALL_PREFLIGHT_FAILED,
+                        detail + ": "
                         + "; ".join(d.message for d in diags if d.severity.value == "error"),
                     )
             elif record is not None:
@@ -551,19 +595,20 @@ class ExtensionInstaller:
             "install_root": str(self._install_root),
         }
 
-    def _restore_archived(self, package_id: str, version: Optional[str]) -> bool:
-        """升级激活失败时把 versions/ 中的旧版换回 active 位（尽力而为）。"""
-        if version is None:
-            return False
-        archive = self._install_root / VERSIONS_DIRNAME / _safe_name(package_id) / _safe_name(version)
-        if not archive.is_dir():
+    def _restore_archived(self, package_id: str, archived_path: Optional[Path]) -> bool:
+        """升级激活失败时把刚归档的旧版换回 active 位（尽力而为）。
+
+        Round-2 M-2：接收**实际归档路径**（重名归档会带指纹后缀，
+        按版本名裸找会静默落空并谎报已还原）。
+        """
+        if archived_path is None or not archived_path.is_dir():
             return False
         active = _active_root(self._install_root, package_id)
         try:
             if active.exists():
                 _rmtree_quiet(active)
             active.parent.mkdir(parents=True, exist_ok=True)
-            os.rename(str(archive), str(active))
+            os.rename(str(archived_path), str(active))
             return True
         except OSError:
             return False

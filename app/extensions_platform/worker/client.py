@@ -89,7 +89,11 @@ class WorkerProcess:
         self._isolation_backend = isolation_backend
         self._stream_window = max(1, int(stream_window))
         self._proc: Optional[subprocess.Popen] = None
-        self._frames: "queue.Queue[Any]" = queue.Queue()
+        # Round-2 M-6：**有界**帧队列（64 帧 ≈ 信用窗口的 4 倍余量）。
+        # 恶意/被击穿 worker 无视信用洪泛时，reader 线程在满队列上阻塞 →
+        # 管道背压 → worker 写入阻塞：宿主内存上界 = 64 × max_frame_bytes，
+        # 而非无界 OOM 面。守序 worker 不受影响（消费节奏 >> 生产节奏）。
+        self._frames: "queue.Queue[Any]" = queue.Queue(maxsize=64)
         self._reader: Optional[threading.Thread] = None
         self._lock = threading.RLock()
         self.in_flight = False
@@ -109,7 +113,7 @@ class WorkerProcess:
         with self._lock:
             if self._proc is not None and self._proc.poll() is None:
                 return
-            self._frames = queue.Queue()
+            self._frames = queue.Queue(maxsize=64)
             server_argv = [
                 "-m",
                 "app.extensions_platform.worker.server",
@@ -237,11 +241,12 @@ class WorkerProcess:
         try:
             for line in stdout:
                 try:
-                    self._frames.put(decode_frame(line))
+                    frame = decode_frame(line)
                 except ProtocolError:
-                    self._frames.put(
-                        {"type": "__protocol_error__", "message": "undecodable frame"}
-                    )
+                    frame = {"type": "__protocol_error__", "message": "undecodable frame"}
+                # 阻塞 put：满队列 = 宿主消费不过来（或恶意洪泛）→ reader
+                # 停读 → 管道背压反压 worker（结构性内存上界的一部分）。
+                self._frames.put(frame)
         finally:
             self._frames.put({"type": "__eof__"})
 
@@ -476,7 +481,6 @@ class WorkerProcess:
                 return None
 
             deadline = time.monotonic() + max(idle_timeout_s, 0.01)
-            started = False
             events = 0
             try:
                 while True:
@@ -498,10 +502,6 @@ class WorkerProcess:
                                 )
                             yield payload
                         return
-                    if not started:
-                        # 首个 stream_frame 隐含 stream_start（server 先发
-                        # start；此处兜底处理 start 帧被合并消费的次序）。
-                        started = True
                     events += 1
                     if events > max_events:
                         raise _diagnostic(

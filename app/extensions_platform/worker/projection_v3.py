@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Any
+from typing import Any, Optional
 
 from ..diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
 
@@ -107,7 +107,12 @@ def project_worker_algorithms(
     return projected
 
 
-def make_worker_provider_class(worker: Any, entry: dict[str, Any]) -> type:
+def make_worker_provider_class(
+    worker: Any,
+    entry: dict[str, Any],
+    *,
+    stream_budget: Optional[dict[str, Any]] = None,
+) -> type:
     """为握手申报的 worker provider 构造动态代理适配器类。
 
     - 继承 ``GeospatialDataSourceAdapter``（七方法契约）；
@@ -237,6 +242,7 @@ def make_worker_provider_class(worker: Any, entry: dict[str, Any]) -> type:
                 events = worker_ref.call_stream(
                     f"provider:{source_type}:stream_features",
                     kwargs,
+                    **(stream_budget or {}),
                 )
                 for event in events:
                     yield event
@@ -297,7 +303,15 @@ def project_worker_providers(
                     extension_id=manifest.id,
                 )
             )
-        adapter_cls = make_worker_provider_class(worker, entry)
+        execution = getattr(manifest, "execution", None)
+        stream_budget: dict[str, Any] = {}
+        if execution is not None:
+            stream_budget = {
+                "idle_timeout_s": execution.call_timeout_s,
+                "max_events": 10000,
+                "per_frame_max_bytes": execution.max_output_bytes,
+            }
+        adapter_cls = make_worker_provider_class(worker, entry, stream_budget=stream_budget)
         spec = AdapterSpec(
             canonical=canonical,
             adapter_cls=adapter_cls,

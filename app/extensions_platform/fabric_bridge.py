@@ -153,19 +153,41 @@ async def stream_catalog_item_features(
     iterator = iter_stream_features(adapter, item.name, query_spec, page_size)
 
     async def _gen() -> AsyncIterator[dict[str, Any]]:
+        import concurrent.futures
         import contextlib
+        import threading
 
         loop = asyncio.get_running_loop()
-        # 无界队列 + 线程泵：adapter 的阻塞翻页在专用线程执行（Round-1
-        # BLK-1：此前 _pump 协程内同步阻塞等待自身 loop → 首用即死锁）。
-        # 背压由消费方侧的 cancel/close 语义承担（迭代器提前 close）。
-        queue: "asyncio.Queue[Any]" = asyncio.Queue()
+        # Round-2 C-1 修复（三合一）：
+        # 1) **有界队列**（maxsize=64）+ 泵线程阻塞等 put 完成 → 真背压，
+        #    宿主内存上界 = 64 条 feature（不再整体物化数据集）；
+        # 2) 泵线程 try/finally 兜底入队哨兵/异常 → 消费方绝不悬挂；
+        # 3) 收尾先 iterator.close()（触发上游 stream_cancel），pump_task
+        #    用 stop 事件 + 有界等待收束（线程不泄漏、不无限等）。
+        queue: "asyncio.Queue[Any]" = asyncio.Queue(maxsize=64)
+        stop = threading.Event()
         _DONE = object()
+        pump_error: list[BaseException] = []
 
         def _drain() -> None:
-            for feature in iterator:
-                loop.call_soon_threadsafe(queue.put_nowait, feature)
-            loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+            try:
+                for feature in iterator:
+                    if stop.is_set():
+                        return
+                    fut = asyncio.run_coroutine_threadsafe(queue.put(feature), loop)
+                    while not fut.done():
+                        if stop.is_set():
+                            fut.cancel()
+                            return
+                        try:
+                            fut.result(timeout=0.25)
+                        except concurrent.futures.TimeoutError:
+                            continue
+            except BaseException as exc:  # noqa: BLE001 - 异常转交消费方
+                pump_error.append(exc)
+            finally:
+                with contextlib.suppress(Exception):
+                    loop.call_soon_threadsafe(queue.put_nowait, _DONE)
 
         pump_task = asyncio.create_task(asyncio.to_thread(_drain))
         try:
@@ -174,16 +196,20 @@ async def stream_catalog_item_features(
                     cancel_token.raise_if_cancelled()
                 value = await queue.get()
                 if value is _DONE:
+                    if pump_error:
+                        raise pump_error[0]
                     break
                 yield value
         finally:
-            pump_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await pump_task
+            # 先关迭代器（触发上游 close/cancel），再停泵、有界等待。
+            stop.set()
             close = getattr(iterator, "close", None)
             if callable(close):
                 with contextlib.suppress(Exception):
                     close()
+            pump_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await asyncio.wait_for(asyncio.shield(pump_task), timeout=5)
 
     async for feature in _gen():
         yield feature

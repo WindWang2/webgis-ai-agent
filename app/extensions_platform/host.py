@@ -199,6 +199,21 @@ class ExtensionHost:
 
     # ── discover / validate ──────────────────────────────────────────
     def discover(self) -> list[ExtensionDiagnostic]:
+        # V3（Round-2 M-1）：discover 前重读 trust store（文件加载实例），
+        # 运行中的服务器对发布后的吊销/rotation 即时生效，而非只在
+        # refresh_revocations 的周期面。
+        source = getattr(self._policy.trust_store, "source_path", None)
+        if source is not None:
+            from .trust_store import TrustStore
+
+            try:
+                # HostPolicy 为 frozen dataclass：内部刷新走 object.__setattr__
+                # （唯一写点；宿主代码之外信任根不可变）。
+                object.__setattr__(
+                    self._policy, "trust_store", TrustStore.load(Path(source))
+                )
+            except ExtensionPlatformError as exc:
+                logger.warning("trust store reload failed at discover: %s", exc)
         result: DiscoveryResult = discover_extensions(list(self._policy.roots))
         diagnostics: list[ExtensionDiagnostic] = list(result.diagnostics)
         for failure in result.failures:
@@ -1173,7 +1188,9 @@ class ExtensionHost:
                     if stream:
                         # V3（ADR-0119）：worker 流式在协商协议 >= 3.0 时可用
                         # （运行期门控，非仅 manifest api_version）。
-                        if getattr(record.worker, "protocol_version", "1.0") < "3.0":
+                        _pv = str(getattr(record.worker, "protocol_version", "1.0")).split(".")
+                        _pv_tuple = tuple(int(x) if x.isdigit() else 0 for x in _pv)
+                        if _pv_tuple < (3, 0):
                             raise ExtensionPlatformError(
                                 ExtensionDiagnostic.error(
                                     DiagnosticCode.WORKER_MODE_INVALID,
@@ -1923,6 +1940,10 @@ class ExtensionHost:
 
     def get_record(self, extension_id: str) -> Optional[ExtensionRecord]:
         return self._records.get(extension_id)
+
+    def record_views(self) -> dict[str, "resolver.RecordView"]:
+        """全部记录的解析层只读视图（分发的依赖冲突预检消费）。"""
+        return {eid: _record_view(r) for eid, r in self._records.items()}
 
     def extension_ids(self) -> list[str]:
         return sorted(self._records)

@@ -122,6 +122,15 @@ class RegistryService:
             signature_doc = json.loads(
                 (staging / "signature.json").read_text(encoding="utf-8")
             )
+        # Mi-2：allowlist 拒绝发生在任何 blob 落盘之前（不产孤儿 blob）。
+        if (
+            status.publisher
+            and self._policy.allowed_publishers
+            and status.publisher not in self._policy.allowed_publishers
+        ):
+            raise _store_error(
+                f"publisher {status.publisher!r} is not in the registry allowlist"
+            )
         with self._store.locked():
             self._store.publish_blob(package_blob)
             digest = hashlib.sha256(package_blob).hexdigest()
@@ -147,12 +156,6 @@ class RegistryService:
                 publisher=status.publisher or "",
                 versions={},
             )
-            if status.publisher and self._policy.allowed_publishers and (
-                status.publisher not in self._policy.allowed_publishers
-            ):
-                raise _store_error(
-                    f"publisher {status.publisher!r} is not in the registry allowlist"
-                )
             state = self._store.commit_package(package, version)
         return {
             "package_id": manifest.id,

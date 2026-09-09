@@ -366,7 +366,7 @@ def test_safe_extract_rejects_oversize_budget(tmp_path):
         info.size = len(payload)
         tar.addfile(info, io.BytesIO(payload))
 
-    with pytest.raises(ExtensionPlatformError, match="exceeds"):
+    with pytest.raises(ExtensionPlatformError, match="over budget"):
         safe_extract_package(_tar_bytes(build), tmp_path / "out")
 
 

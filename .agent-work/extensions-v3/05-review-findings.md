@@ -60,3 +60,25 @@
 
 未采纳/留档（MINOR，属既有 V2 面或取舍，记 limitations/PR 说明）：
 Mi-1（流中 health 误报 unhealthy——V2 继承语义）、Mi-2（恢复例程 preflight 窗口——激活期重验签兜底）、Mi-4（installer 锁——单机运维序列操作，PR follow-up）、Mi-7（capabilities_v2 代理——explain 退化路径已记录）、流首帧预算/TOCTOU 微窗口。
+
+## Round 2 — Subagent-B 审查（2026-09-10）
+
+结论（审查者）：Round 1 修复无回退；新发现 1 CRITICAL + 6 MAJOR，「需修复后合并」。
+
+### 修复
+
+| 级别 | ID | 修复 |
+|---|---|---|
+| CRITICAL | C-1 | fabric 泵三合一：有界队列（maxsize=64）+ 泵线程阻塞 put（真背压）；try/finally 兜底哨兵/异常（消费方不悬挂）；收尾先 iterator.close() + stop 事件 + 有界等待（线程不泄漏） |
+| MAJOR | M-1 | 吊销传播接线：lifespan 低频 tick（300s，mtime 快路径）→ refresh_revocations + refresh 信号 → discover；discover 前重读 trust store（frozen HostPolicy 内部单点刷新）；marketplace 启动预热 fail-fast（Mi-4） |
+| MAJOR | M-2 | _restore_archived 接收实际归档路径（指纹后缀名场景）；还原失败诚实报「restore FAILED, manual intervention」绝不谎报 |
+| MAJOR | M-3 | provider 流传宿主侧预算（idle_timeout/max_events/per_frame_max_bytes，与 model provider 路径对齐） |
+| MAJOR | M-4 | registry state 读路径 mtime 代际缓存（写路径 use_cache=False 强制重读） |
+| MAJOR | M-5 | tar 增量解析（tar.next()）——成员数/尺寸/累计字节预算在读取前强制（gzip 炸弹零膨胀面） |
+| MAJOR | M-6 | worker reader 帧队列 maxsize=64 + 阻塞 put（恶意洪泛 → 管道背压）；config/manifest 虚假内存声明修正；perf 测试改为断言双防线 |
+| MINOR | Mi-2 | allowlist 拒绝前置到 blob 落盘之前（不产孤儿） |
+| MINOR | Mi-5 | 协议版本元组比较（字典序 <"3.0" 死门控/误判修复） |
+| MINOR | Mi-6 | perf wall-clock 断言放宽至数量级（CI 不假红） |
+| NIT | — | started 死代码移除；_preflight 私有访问改 host.record_views() 公开方法 |
+
+未采纳/留档（PR 说明）：Mi-1（registry 锁心跳——单机运维串行发布，30s 陈旧锁阈值已有接管语义）、Mi-3（EXTENSION_REGISTRY_URLS 保留为远端下载通道的已文档配置面，分发通道见 marketplace.md；实现为 follow-up）。

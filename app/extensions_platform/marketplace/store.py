@@ -46,14 +46,40 @@ class RegistryStore:
         self._state_path = self._root / STATE_FILENAME
         self._lock_path = self._root / LOCK_FILENAME
         self._objects = self._root / OBJECTS_DIRNAME
+        # Round-2 M-4：读路径 mtime 代际缓存（state.json 全量解析成本高，
+        # 读多写少；写 = temp+rename，stat 变化即失效；写路径持锁后仍
+        # 强制重读，缓存只服务读面）。
+        self._cache_stamp: Optional[tuple[float, int]] = None
+        self._cache_state: Optional[RegistryState] = None
 
     # ── 读路径 ───────────────────────────────────────────────────────
     @property
     def root(self) -> Path:
         return self._root
 
-    def load_state(self) -> RegistryState:
+    def load_state(self, use_cache: bool = True) -> RegistryState:
+        try:
+            stat = self._state_path.stat()
+            stamp = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            stat = None
+            stamp = None
+        if (
+            use_cache
+            and stat is None
+            and self._cache_stamp == "missing"
+        ):
+            return RegistryState(generation=0, packages={})
+        if (
+            use_cache
+            and stat is not None
+            and self._cache_stamp == stamp
+            and self._cache_state is not None
+        ):
+            return self._cache_state
         if not self._state_path.is_file():
+            self._cache_stamp = "missing"
+            self._cache_state = None
             return RegistryState(generation=0, packages={})
         try:
             raw = self._state_path.read_bytes()
@@ -66,6 +92,8 @@ class RegistryStore:
             state = RegistryState.model_validate(data)
         except Exception as exc:  # noqa: BLE001 - 索引损坏 = 服务不可用（fail closed）
             raise _store_error(f"registry index invalid: {type(exc).__name__}: {exc}")
+        self._cache_stamp = stamp
+        self._cache_state = state
         return state
 
     def blob_path(self, digest: str) -> Path:
@@ -161,7 +189,7 @@ class RegistryStore:
         self._atomic_write_state(
             RegistryState(generation=state.generation + 1, packages=new_packages)
         )
-        return self.load_state()
+        return self.load_state(use_cache=False)
 
     def mutate_package(self, package_id: str, mutate) -> RegistryState:
         """锁内包级变更（deprecate/revoke/yank）；mutate: PackageRecord→PackageRecord。"""
@@ -175,7 +203,7 @@ class RegistryStore:
         self._atomic_write_state(
             RegistryState(generation=state.generation + 1, packages=new_packages)
         )
-        return self.load_state()
+        return self.load_state(use_cache=False)
 
     def _atomic_write_state(self, state: RegistryState) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
