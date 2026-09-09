@@ -185,10 +185,21 @@ def evaluate_completion_contract(
     ]
 
     # ── 七维推导（缺证据的维度诚实置 False）──────────────────────────
+    # V6 Wave 7：workflow runtime 的 stale 节点是 analysis 维硬输入 ——
+    # 「工具执行成功」不再充分：证据漂移/reuse unsafe 的节点必须重算
+    # （统一 findings 投影单点读取；无运行态块的旧章节零漂移）。
+    from app.services.gis_harness.completion.unified_findings import (
+        stale_runtime_nodes,
+    )
+    from app.services.gis_harness.runtime_bridge import WORKFLOW_RUNTIME_KEY
+
+    runtime_stale = stale_runtime_nodes(chapter.get(WORKFLOW_RUNTIME_KEY))
+
     data_ok = not data_blockers and not any(
         f.code in _DATA_BLOCK_CODES for f in errors)
     analysis_ok = not any(f.code == F_NEEDS_EXECUTION for f in errors) \
-        and result.status != STATUS_PENDING
+        and result.status != STATUS_PENDING \
+        and not runtime_stale
     science_ok = (
         not method_blockers
         and not blocking_fallbacks
@@ -264,6 +275,7 @@ def evaluate_completion_contract(
         "workflow_present": bool(wf_contract),
         "uncertainty_owed": len(uncertainty_owed),
         "uncertainty_disclosed": int(uncertainty_evidence),
+        "runtime_stale_nodes": runtime_stale,
     }
 
 
@@ -323,6 +335,14 @@ def derive_product_verdict(
                 set(contract["method_blockers"]) | set(contract["blocking_fallbacks"])
             )[:6]
 
+    # V6 Wave 7 追加裁决：workflow runtime 存在 stale 节点时不得 READY ——
+    # 「工具执行成功」不足以为据：证据漂移/reuse unsafe 的节点必须先重算
+    # （统一 findings 投影：runtime_node_stale → blocks_completion）。
+    runtime_stale = list(contract.get("runtime_stale_nodes") or [])
+    if runtime_stale and verdict in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS):
+        verdict = VERDICT_NEEDS_REPAIR
+        reasons = sorted(set(reasons) | {"runtime_node_stale"})[:6]
+
     return {
         "verdict": verdict,
         "reasons": reasons,
@@ -336,6 +356,7 @@ def derive_product_verdict(
         },
         "completion_dimensions": contract["dimensions"],
         "workflow_contract_present": contract["workflow_present"],
+        "runtime_stale_nodes": runtime_stale,
     }
 
 

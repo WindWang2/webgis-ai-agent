@@ -15,6 +15,8 @@
 - [x] W3 Artifact/MapSpec/Node lineage 双向索引（runtime 块 `artifact_index`：ref → producer_node/consumer_nodes/layer_ids/component_ids；节点 `inputs` 输入血缘；`_cap_all_refs` 全行登记防过渡态失明；查询 API `artifact_lineage`/`node_lineage`；服务入口接 `mapspec_store.get_mapspec`）
 - [x] W4 Semantic Diff→Affected Subgraph 接线（字段级变更分类 algorithm/parameter/data → `compute_affected_subgraph` 成唯一闭包引擎；`changes`+`recompute_plan` 进运行态块；`[GIS Recompute]` 行进 SessionPlan 投影=调度面；修复 bounded 边 port 后缀断链缺陷 + 回归锁）
 - [x] W5 Partial Recompute + Reuse Validation（`records` 快照进 derive；artifact health/package 稳定/evidence 三校验 → safe/unknown/unsafe；unsafe 翻 stale 强制重算 `reuse_unsafe:*`；style-only/revision 推进结构性免疫科学重算专测）
+- [x] W6 Unified Findings adapter（`completion/unified_findings.py`：UnifiedFinding 12 字段投影；domain=harness_finalizer/render_diagnostic/workflow_runtime；blocks_completion 单点推导 `_blocks` + stale 显式例外；`collect_unified_findings` 确定性序 + 有界）
+- [x] W7 Completion Verdict 单一化（`evaluate_completion_contract` analysis 维纳入 runtime stale 硬输入；`derive_product_verdict` READY* 遇 stale 压 NEEDS_REPAIR；无运行态块旧章节 parity 零漂移专测）
 - [ ] W3 Artifact/MapSpec/Node lineage 双向索引
 - [ ] W4 Semantic Diff→Affected Subgraph 接线
 - [ ] W5 Partial Recompute + Reuse Validation
