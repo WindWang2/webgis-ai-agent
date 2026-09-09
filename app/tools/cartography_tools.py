@@ -204,6 +204,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       name="webgis_project_init",
+      capabilities=['map_export_publishing'],
       description="初始化当前会话的 MapSpec 制图 Intent 文档与基线配置。",
       args_model=WebgisProjectInitArgs,
       # #993: tier-2 — a once-per-session MapSpec bootstrap is clearly
@@ -239,6 +240,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       name="webgis_state_get",
+      capabilities=['workspace_state_inspection'],
       description="读取当前会话的 MapSpec 制图 Intent 文档与 MapMeta Profile。",
       args_model=WebgisStateGetArgs,
       tier=1,
@@ -279,6 +281,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       name="webgis_view_set",
+      capabilities=['map_viewport_control'],
       description="设置或覆盖地图视图参数 (center, zoom, pitch, bearing)，并同步重新编译 runtime map_state。",
       args_model=WebgisViewSetArgs,
       tier=1,
@@ -391,6 +394,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       name="webgis_layer_upsert",
+      capabilities=['thematic_cartography'],
       description="创建或更新 MapSpec 图层规范，自动剖析数据源并设置建议视角，且同步编译发布到 runtime map_state。",
       args_model=WebgisLayerUpsertArgs,
       tier=1,
@@ -621,6 +625,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       # with only the runtime-only legacy remove_layer, so the desired MapSpec
       # kept the layer and the harness failed RUNTIME_RESULT_PRESENCE forever.
       tier=2, domains=["mapspec"], name="webgis_layer_remove",
+      capabilities=['thematic_cartography'],
       description="从 MapSpec 中移除指定图层并同步从 runtime map_state 擦除。",
       args_model=WebgisLayerRemoveArgs,
       side_effect="state_mutation",
@@ -662,6 +667,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       # #713: mapspec-intent domain (was report-gated, same rationale as
       # webgis_layer_remove).
       tier=2, domains=["mapspec"], name="webgis_layout_set",
+      capabilities=['thematic_cartography'],
       description="设置 MapSpec 版面配置 (图例位置、控件、边距、制图组件列表)。",
       args_model=WebgisLayoutSetArgs,
       side_effect="state_mutation",
@@ -713,6 +719,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       tier=2, domains=["report"], name="webgis_validate",
+      capabilities=['map_export_publishing'],
       description="在编译前检验 MapSpec 规范性 (CRS, 字段存在性, stops 严格单调性, view 合理性)。",
       args_model=WebgisValidateArgs,
       side_effect="pure",
@@ -732,6 +739,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       tier=2, domains=["report"], name="webgis_compile_maplibre",
+      capabilities=['map_export_publishing'],
       description="执行 MapSpec 编译，产出 style.json, index.html 与 compile-report.json。",
       args_model=WebgisCompileMaplibreArgs,
       side_effect="artifact_creation",
@@ -754,6 +762,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       tier=2, domains=["report"], name="webgis_checkpoint",
+      capabilities=['workspace_snapshot'],
       description="创建 MapSpec 快照并具象化落地所引用的全部 ref_id 数据载荷。",
       args_model=WebgisCheckpointArgs,
       side_effect="state_mutation",
@@ -778,6 +787,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       tier=2, domains=["report"], name="webgis_rollback",
+      capabilities=['workspace_snapshot'],
       description="回滚 MapSpec 与 runtime map_state 到指定的快照点。",
       args_model=WebgisRollbackArgs,
       side_effect="state_mutation",
@@ -804,6 +814,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       tier=2, domains=["report"], name="webgis_runtime_validate",
+      capabilities=['map_export_publishing'],
       description="重新编译当前 MapSpec 并在 Headless 环境下进行运行时验收与 5-维度评分 (80% max)。",
       args_model=WebgisRuntimeValidateArgs,
       side_effect="artifact_creation",
@@ -827,6 +838,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       tier=2, domains=["report", "mapspec"], name="webgis_cartography_status",
+      capabilities=['map_export_publishing'],
       description=(
           "查询制图 harness 对当前地图状态的服务端验证结论（desired↔runtime "
           "收敛判定、失败检查项与修复进度）。只读，不触发重评估或修复。"

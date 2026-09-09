@@ -19,21 +19,15 @@
   },
   "quality_manifest": {
    "counts": {
-    "algorithms": 181,
+    "algorithms": 197,
     "artifact_types": 21,
-    "capabilities": 121,
-    "findings": 241,
+    "capabilities": 137,
+    "findings": 0,
     "recipes": 164,
     "tools": 291
    },
-   "findings_by_code": {
-    "ALGO_HEAVY_NO_VARIANTS": 23,
-    "ALGO_NO_CONFORMANCE": 20,
-    "CAPABILITY_NO_CONFORMANCE": 16,
-    "TOOL_DESCRIPTOR_INCOMPLETE": 152,
-    "TOOL_UNTESTED": 30
-   },
-   "fingerprint": "938b5bf1bd1c25845ce518cfa2ac973300f5671fd374e8fd9a3907b32918e107",
+   "findings_by_code": {},
+   "fingerprint": "5b0d9d70245ed1333856e5fbfc259e8f2cc821b1e384665fcb47c60831855e9d",
    "gate": {
     "pass": true,
     "total": 291

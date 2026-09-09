@@ -128,6 +128,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="standard_deviational_ellipse",
+           capabilities=["directional_distribution_analysis"],
            description="计算标准离差椭圆（SDE），用于分析地理要素的空间分布趋势和方向性。",
            tier=2, domains=["statistics"],
            param_descriptions={
@@ -438,20 +439,22 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             grid_rows=int(params["grid_rows"]),
             grid_cols=int(params["grid_cols"]),
         )
-        payload = {"success": True, "summary": result["summary"], "data": result}
+        # spatial_operator 统一包装成 GeoAnalysisResult：数据体在 .data、
+        # 摘要在 .summary（与同文件 moran/geary/general_g 的消费惯例一致）。
+        payload = {"success": True, "summary": result.summary, "data": result.data}
         _attach_scientific_evidence(
             payload, "point_pattern.quadrat_test", tool="quadrat_analysis",
             parameters_applied={
                 "grid_rows": int(params["grid_rows"]),
                 "grid_cols": int(params["grid_cols"]),
             },
-            feature_count=result.get("n"),
+            feature_count=result.data.get("n"),
             crs=extract_declared_crs(data) or "EPSG:4326",
             uncertainty=[StatisticalSignificance(
                 target="quadrat_chi2",
-                statistic_name=f"quadrat chi2 (df={result.get('df')})",
-                statistic_value=result.get("chi2"),
-                p_value=result.get("p_value"),
+                statistic_name=f"quadrat chi2 (df={result.data.get('df')})",
+                statistic_value=result.data.get("chi2"),
+                p_value=result.data.get("p_value"),
             )],
         )
         return payload
@@ -952,6 +955,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return payload
 
     @tool(registry, name="bivariate_join_count",
+    side_effect="deterministic_compute",
+    tags=('join_count', '空间自相关', '二值场', '类别检验'),
            description="双色 Join Count（two-color join count，Cliff-Ord 1973）："
                        "恰好取两个值的类别字段（按排序映射 B/W）的邻接同/异类连接检验；"
                        "n_BB/n_BW/n_WW + free-sampling 解析 z 检验，可选置换复核。"
@@ -1003,6 +1008,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return payload
 
     @tool(registry, name="rate_smoothing",
+    side_effect="deterministic_compute",
+    tags=('经验贝叶斯', '率平滑', '收缩估计', '疾病制图'),
            description="经验贝叶斯率平滑（Marshall 1991 矩估计先验）：观测计数/风险人口的"
                        "原始率做先验收缩（weights_scheme 缺省=全局先验；给定权重方案=邻居先验）；"
                        "输出平滑率/原始率/先验参数/收缩权重。零人口区不产率值（显式披露）",
@@ -1539,6 +1546,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
     # to_llm_response → _attach_scientific_evidence。
 
     @tool(registry, name="mgwr_regression",
+    side_effect="deterministic_compute",
+    tags=('gwr', 'mgwr', '空间回归', '地理加权'),
            description="多尺度地理加权回归 MGWR（Fotheringham 2017）：每个解释变量"
                        "（含截距项）独立带宽的 bisquare 反向拟合；输出逐项带宽、"
                        "逐观测系数面、逐项 ENP、AICc。n≤2000；反向拟合收敛到"
@@ -1582,6 +1591,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return payload
 
     @tool(registry, name="geodetector_ecological",
+    side_effect="deterministic_compute",
+    tags=('地理探测器', '生态探测', '分层比较', '解释力'),
            description="生态探测器（Wang 2010）：比较两个分层字段对同一数值字段的"
                        "解释力（SSW 比较 t 检验）；SSW 显著更小的一侧解释力显著占优"
                        "（df=n-2 保守选择，双侧 p）",
@@ -1628,6 +1639,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return payload
 
     @tool(registry, name="geodetector_risk",
+    side_effect="deterministic_compute",
+    tags=('地理探测器', '风险探测', '均值差异', '分层'),
            description="风险探测器（Wang 2010）：逐分层对的均值差显著性"
                        "（Welch t + 可选固定种子42的标签置换复核）；"
                        "输出对列表与方向矩阵，p<0.05 才判 higher/lower",
@@ -1673,6 +1686,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return payload
 
     @tool(registry, name="local_join_count",
+    side_effect="deterministic_compute",
+    tags=('join_count', '共位簇', '二值场', '空间自相关'),
            description="局部 Join Count（Anselin & Li 2019）：二值(0/1)场的逐位置"
                        "共位簇检测（LJC_i=邻域同类连接数）；条件置换 p（固定种子42）"
                        "+ BH 多重校正；y=0 位置恒中性。非二值字段会被拒绝",
@@ -1728,6 +1743,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return payload
 
     @tool(registry, name="bivariate_local_moran",
+    side_effect="deterministic_compute",
+    tags=('lisa', '双变量', '局部莫兰', '空间自相关'),
            description="双变量局部 Moran（esda 委托，固定种子42）：x 与 y 空间滞后"
                        "的逐位置共位/互斥检测（HH/LH/LL/HL 标签 + BH q 值）；"
                        "共位相关不能解释为因果/超前-滞后关系",
@@ -1783,6 +1800,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return payload
 
     @tool(registry, name="weights_diagnostics",
+    side_effect="deterministic_compute",
+    tags=('空间权重', '诊断', '邻接结构', '孤岛'),
            description="空间权重诊断：给定权重方案（knn/queen/rook/distance_band）"
                        "的结构体检——稀疏度/对称性/行标准化/邻居分布/孤岛/连通分量，"
                        "并给结构警告（孤岛、不对称、多分量）。确定性、零随机",

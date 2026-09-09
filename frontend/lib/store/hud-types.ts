@@ -24,10 +24,26 @@ export type AiStatus = 'idle' | 'thinking' | 'acting' | 'done' | 'error';
 // 新增 v2 类型
 export interface OpLogEntry {
   id: string;
-  type: 'add' | 'remove' | 'toggle' | 'flyto' | 'style';
+  /** V5 journal 词表（封闭）：组织/图层操作 + undo/redo + typed 冲突审计。 */
+  type:
+    | 'add'
+    | 'remove'
+    | 'toggle'
+    | 'flyto'
+    | 'style'
+    | 'undo'
+    | 'redo'
+    | 'lock'
+    | 'group'
+    | 'reorder'
+    | 'lock_conflict';
   label: string;
   time: string;
   detail?: string;
+  /** 操作来源（who：user=用户面板/键盘，agent=工具/收口通道）。 */
+  actor?: 'user' | 'agent';
+  /** V5 可逆性元数据：reversible=false 的操作不进 undo 栈（如删除落账）。 */
+  reversible?: boolean;
 }
 
 export interface RagResult {

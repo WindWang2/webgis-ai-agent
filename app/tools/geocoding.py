@@ -23,6 +23,7 @@ def register_geocoding_tools(registry: ToolRegistry):
     """注册地理编码工具到 registry"""
 
     @tool(registry, name="geocode",
+    capabilities=['geocoding'],
            description=(
                "地名 → WGS84 经纬度坐标 (使用 OpenStreetMap Nominatim，国际通用、无 key 限制)。"
                "\n何时用：用户给的是英文地名、海外地址、或不确定 provider 时的兜底；"
@@ -85,6 +86,7 @@ def register_geocoding_tools(registry: ToolRegistry):
         return {"results": geocoded, "count": len(geocoded)}
 
     @tool(registry, name="reverse_geocode",
+    capabilities=['geocoding'],
            description=(
                "WGS84 经纬度 → 地名 / 行政归属 (Nominatim 反查)。"
                "\n何时用：用户点击地图后想知道『这是哪里』；分析结果点位需要地名标注；"

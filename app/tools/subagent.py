@@ -38,6 +38,7 @@ def register_subagent_tools(registry: ToolRegistry):
 
     @registry.tool(
         name="spawn_subagent",
+        capabilities=['meta_tool_surface'],
         tier=2,
         domains=["meta", "what_if"],
         description=(

@@ -75,6 +75,7 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
 
     @tool(registry,
         name="profile_dataset_semantics",
+        capabilities=['dataset_profiling_quality'],
         description=(
             "Derive field-level semantic roles for a dataset (admin dimension, "
             "population/area/count measures, temporal field, normalization "
@@ -171,6 +172,7 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
 
     @tool(registry,
         name="suggest_analysis_patterns",
+        capabilities=['dataset_profiling_quality'],
         description=(
             "Match the query against the GIS analysis pattern library and "
             "report: recommended capabilities, required output facets, "

@@ -22,6 +22,7 @@ def register_geocompute_tools(registry: ToolRegistry):
         registry,
         tier=2, domains=["dataset"],
         name="validate_execution_plan",
+        capabilities=['plan_workflow_orchestration'],
         description=(
             "校验统一 Geo 执行计划（ExecutionPlan DAG）并返回确定性指纹与波次。"
             "不执行。类别需为已接线执行器（query/filter/aggregate/spatial_join/"
@@ -69,6 +70,7 @@ def register_geocompute_tools(registry: ToolRegistry):
         registry,
         tier=2, domains=["dataset"],
         name="execute_execution_plan",
+        capabilities=['plan_workflow_orchestration'],
         description=(
             "执行统一 Geo 执行计划（波次并行、预算准入、取消/deadline、节点结果复用）。"
             "大输出必须以 materialize 节点显式落存为 session ref —— 工具应答只含"
@@ -137,6 +139,7 @@ def register_geocompute_tools(registry: ToolRegistry):
         registry,
         tier=2, domains=["dataset"],
         name="get_execution_run",
+        capabilities=['plan_workflow_orchestration'],
         description=(
             "查询执行 run 的当前状态与有界证据（不返回载荷）。"
             "\n返回：{status, evidence, summary_lines}"
@@ -171,6 +174,7 @@ def register_geocompute_tools(registry: ToolRegistry):
         registry,
         tier=2, domains=["dataset"],
         name="cancel_execution_run",
+        capabilities=['plan_workflow_orchestration'],
         description=(
             "请求取消一个正在执行的 run（V5）。未启动节点立即收敛，在飞节点经"
             "协作 checkpoint 收敛；durable 节点级联取消其后台 job。幂等：已终态"

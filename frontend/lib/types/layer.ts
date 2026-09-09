@@ -55,6 +55,14 @@ export interface Layer {
    *  map.setFilter is rolled back by the next reconcile). null/absent = no filter. */
   filter?: unknown[] | null;
   _refId?: string;
+  /** W10 artifact linkage：后端 dispatch 写入的分析产物溯源（tool_call_id +
+   *  result_ref；raster 通道另有 imageRef）—— 图层面板据此渲染可检视徽标，
+   *  不建第二 lineage store（血缘真相在 backend ArtifactLineage）。 */
+  provenance?: {
+    tool_call_id?: string;
+    result_ref?: string;
+    [key: string]: unknown;
+  };
   /** Data Plane: MVT tile URL template ({z}/{x}/{y}) for large ref layers. */
   _tileUrl?: string;
   /** V3 Performance: Pre-computed descriptor; allows MVT decision without downloading full FC. */

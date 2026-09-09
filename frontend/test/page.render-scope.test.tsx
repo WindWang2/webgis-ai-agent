@@ -77,6 +77,8 @@ vi.mock('@/lib/hooks/use-workspace-session', () => ({
     sessions: [],
     selectSession: stream.handleSend,
     startNewSession: stream.handleSend,
+    // W11：刷新自动恢复 —— mock 提供空实现（page mount effect 调用一次）。
+    autoRestoreFromAnchor: () => {},
   }),
 }));
 
