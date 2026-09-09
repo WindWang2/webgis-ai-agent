@@ -108,3 +108,22 @@ async def test_session_persistence(registry):
                 assert r1["session_id"] == "s1"
                 assert r2["session_id"] == "s1"
                 assert len(engine._sessions["s1"]) >= 4
+
+
+@pytest.mark.asyncio
+async def test_fire_and_forget_forwards_kwargs_to_sync_func(registry):
+    """CORE-07: Verify kwargs are preserved when dispatching sync functions via _fire_and_forget."""
+    import asyncio
+    engine = ChatEngine(registry)
+    result = {}
+    done_event = asyncio.Event()
+
+    def sync_worker(pos, *, key1, key2="default"):
+        result["pos"] = pos
+        result["key1"] = key1
+        result["key2"] = key2
+        done_event.set()
+
+    engine._fire_and_forget(sync_worker, "val_pos", key1="val_key1", key2="val_key2")
+    await asyncio.wait_for(done_event.wait(), timeout=2.0)
+    assert result == {"pos": "val_pos", "key1": "val_key1", "key2": "val_key2"}

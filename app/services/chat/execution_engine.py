@@ -635,8 +635,10 @@ class ChatExecutionEngine:
                 if not t.cancelled() and t.exception() else None
             ))
         else:
+            import functools
             loop = asyncio.get_running_loop()
-            future = loop.run_in_executor(None, func, *args)
+            target_func = functools.partial(func, *args, **kwargs) if kwargs else func
+            future = loop.run_in_executor(None, target_func, *(() if kwargs else args))
             future.add_done_callback(lambda f: (
                 logger.error(f"Background sync task failed: {f.exception()}")
                 if f.exception() else None
