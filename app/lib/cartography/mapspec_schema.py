@@ -354,6 +354,11 @@ class FieldDisclosure:
         return {"path": self.path, "kind": self.kind, "got": self.got}
 
 
+#: 披露清单上限（R2-M4：50MB 载荷全未知键可产出百万级 disclosure ——
+#: 内存/响应双放大；封顶 + truncated 标志，与 DiagnosticSink 同词汇）。
+MAX_DISCLOSURES_PER_KIND = 200
+
+
 @dataclass
 class MapSpecParseResult:
     """parse_mapspec 产物。document 恒为输入的保序深拷贝（canonical）。"""
@@ -366,6 +371,7 @@ class MapSpecParseResult:
     forward_version: bool
     unknown_fields: List[FieldDisclosure] = _dc_field(default_factory=list)
     invalid_fields: List[FieldDisclosure] = _dc_field(default_factory=list)
+    disclosures_truncated: bool = False
 
     @property
     def disclosures(self) -> List[FieldDisclosure]:
@@ -555,6 +561,9 @@ def parse_mapspec(payload: Any, *, target_version: str = LATEST_VERSION) -> MapS
     unknown: List[FieldDisclosure] = []
     _walk_model(MapSpecDocument, doc, "", unknown)
     invalid = _collect_invalid(doc)
+    truncated = len(unknown) > MAX_DISCLOSURES_PER_KIND or len(invalid) > MAX_DISCLOSURES_PER_KIND
+    unknown = unknown[:MAX_DISCLOSURES_PER_KIND]
+    invalid = invalid[:MAX_DISCLOSURES_PER_KIND]
 
     return MapSpecParseResult(
         document=doc,
@@ -565,6 +574,7 @@ def parse_mapspec(payload: Any, *, target_version: str = LATEST_VERSION) -> MapS
         forward_version=forward,
         unknown_fields=unknown,
         invalid_fields=invalid,
+        disclosures_truncated=truncated,
     )
 
 

@@ -197,9 +197,11 @@ def render_attribution(x: float, y: float, text: str) -> str:
 # ── 经纬网（bounds + projector 注入）────────────────────────────────────
 
 def _nice_step(span: float, target_lines: int = 6) -> float:
-    if span <= 0:
+    if span <= 0 or not math.isfinite(span):
         return 1.0
     raw = span / max(target_lines, 1)
+    if raw <= 0 or not math.isfinite(raw):
+        return 1.0
     exp = int(math.floor(math.log10(raw)))
     base = 10.0 ** exp
     for mult in (1.0, 2.0, 5.0, 10.0):
@@ -225,8 +227,14 @@ def render_graticule(bounds: List[float], project: Callable[[Tuple[float, float]
     lng_step = _nice_step(e - w, lines)
     lat_step = _nice_step(n - s, lines)
     parts: List[str] = ['<g class="chrome-graticule">']
-    lng = math.ceil(w / lng_step) * lng_step
-    while lng < e:
+    # R2-C1 修复：定长循环（索引 × 步长），杜绝浮点累积不前进的永续挂死
+    # （1e16 + 0.5 ties-to-even 回到自身 → while 永真）；条数上界 2*lines+1。
+    lng_start = math.ceil(w / lng_step) * lng_step
+    lng_count = max(0, min(int((e - lng_start) / lng_step) + 1, 2 * lines + 2))
+    for i in range(lng_count):
+        lng = lng_start + i * lng_step
+        if not (w < lng < e):
+            continue
         p1 = project((lng, s))
         p2 = project((lng, n))
         parts.append(
@@ -237,9 +245,12 @@ def render_graticule(bounds: List[float], project: Callable[[Tuple[float, float]
             f'<text x="{p2[0]}" y="{_fmt(float(p2[1]) - 4)}" font-family="sans-serif" font-size="9" '
             f'fill="{escape_svg_text(color)}" text-anchor="middle">{escape_svg_text(_fmt_degree(lng, "lng"))}</text>'
         )
-        lng += lng_step
-    lat = math.ceil(s / lat_step) * lat_step
-    while lat < n:
+    lat_start = math.ceil(s / lat_step) * lat_step
+    lat_count = max(0, min(int((n - lat_start) / lat_step) + 1, 2 * lines + 2))
+    for j in range(lat_count):
+        lat = lat_start + j * lat_step
+        if not (s < lat < n):
+            continue
         p1 = project((w, lat))
         p2 = project((e, lat))
         parts.append(
@@ -250,7 +261,6 @@ def render_graticule(bounds: List[float], project: Callable[[Tuple[float, float]
             f'<text x="{_fmt(float(p1[0]) + 4)}" y="{p1[1]}" font-family="sans-serif" font-size="9" '
             f'fill="{escape_svg_text(color)}" text-anchor="start">{escape_svg_text(_fmt_degree(lat, "lat"))}</text>'
         )
-        lat += lat_step
     parts.append("</g>")
     return "".join(parts)
 

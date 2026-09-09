@@ -288,8 +288,8 @@ class VectorPdfRequest(BaseModel):
     mapspec: dict
     title: Optional[str] = None
     """PDF 文档元数据标题（图面标题由 spec 标题组件驱动 —— user-wins）。"""
-    sessionId: Optional[str] = None
-    """提供时内联 ref: 载体源（与 live 同数据）；缺失且存在未物化矢量源 → 400。"""
+    # 安全决策（R2-M3/M8）：不提供 sessionId 水合 —— ref 载体源由调用方
+    # 内联后提交（前端 exporter 内存中已持有数据）；未内联 → 400 typed 拒绝。
 
 
 @router.post("/export/vector-pdf", tags=["地图制图"])
@@ -307,11 +307,11 @@ async def export_map_as_vector_pdf(
     - CPU/IO 在工作线程执行；调用方返回时效由 wait_for 保护（编译本身
       受孪生协作式超时约束 —— 不用 wait_for 当预算，R1-C1）。
     """
+    # R2-M6：载荷体积检查在事件循环外（线程）执行，避免主循环全量序列化
     import json as _json
 
-    raw = _json.dumps(body.mapspec, ensure_ascii=False)
-    if len(raw.encode("utf-8")) > MAX_EXPORT_SIZE:
-        raise HTTPException(status_code=413, detail="MapSpec 载荷过大，上限 50MB")
+    def _payload_too_large() -> bool:
+        return len(_json.dumps(body.mapspec, ensure_ascii=False).encode("utf-8")) > MAX_EXPORT_SIZE
 
     from app.services.publication_export import (
         PublicationBusyError,
@@ -321,6 +321,8 @@ async def export_map_as_vector_pdf(
     from app.lib.cartography.mapspec_schema import MapSpecSchemaError
 
     loop = asyncio.get_running_loop()
+    if await loop.run_in_executor(None, _payload_too_large):
+        raise HTTPException(status_code=413, detail="MapSpec 载荷过大，上限 50MB")
     try:
         result = await asyncio.wait_for(
             loop.run_in_executor(
@@ -328,7 +330,6 @@ async def export_map_as_vector_pdf(
                 lambda: render_publication_pdf(
                     body.mapspec,
                     title=body.title or "WebGIS AI Agent 专题地图",
-                    session_id=body.sessionId,
                 ),
             ),
             timeout=120.0,
@@ -351,9 +352,10 @@ async def export_map_as_vector_pdf(
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail={"code": "export_timeout_partial", "message": "导出超时"})
 
+    # R2-M6：同步落盘在工作线程（#592 不变式，与既有导出路由同模式）
     pdf_filename = f"map_vector_{int(time.time())}_{uuid.uuid4().hex[:12]}.pdf"
-    with open(os.path.join(EXPORT_DIR, pdf_filename), "wb") as f:
-        f.write(result.pdf)
+    _target = os.path.join(EXPORT_DIR, pdf_filename)
+    await loop.run_in_executor(None, lambda: open(_target, "wb").write(result.pdf))
     _set_export_owner(pdf_filename, _user.get("user_id", "unknown"))
 
     return {

@@ -177,7 +177,9 @@ def solve_export_labels(
 
     prepared: List[Tuple[CollisionLabel, float, float]] = []
     for f in gated:
-        if not f.text.strip():
+        if not f.text.strip() or f.font_size <= 0:
+            # R2-M11：font_size<=0 → 负/零尺寸盒使格网失效（互叠压）——同
+            # empty_text 抑制；TS 孪生同口径
             placements.append(CollisionPlacement(
                 id=f.id, x=f.x, y=f.y, angle=0.0, status="suppressed", reason="empty_text",
             ))
@@ -186,7 +188,7 @@ def solve_export_labels(
         prepared.append((f, w, h))
 
     cell = (2.0 * max(max(w, h) for _, w, h in prepared)) if prepared else 48.0
-    grid = _Grid(cell)
+    grid = _Grid(max(cell, 1.0))
 
     placed_n = 0
     collision_n = 0

@@ -173,7 +173,8 @@ export function solveExportLabels(
 
   const prepared: Array<{ f: CollisionLabel; w: number; h: number }> = [];
   for (const f of gated) {
-    if (!f.text.trim()) {
+    // R2-M11：font_size<=0 → 格网失效（与 Python 孪生同口径抑制）
+    if (!f.text.trim() || f.fontSize <= 0) {
       placements.push({ id: f.id, x: f.x, y: f.y, angle: 0, status: 'suppressed', reason: 'empty_text' });
       continue;
     }
@@ -187,7 +188,7 @@ export function solveExportLabels(
     for (const p of prepared) m = Math.max(m, p.w, p.h);
     cell = 2 * m;
   }
-  const grid = new Grid(cell);
+  const grid = new Grid(Math.max(cell, 1));
 
   let placed = 0;
   let collisions = 0;

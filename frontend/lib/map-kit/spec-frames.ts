@@ -46,6 +46,8 @@ function extentOf(frame: SpecFrameLike): [number, number, number, number] | unde
   const zoom = Number(view.zoom ?? 10);
   if (!Number.isFinite(lng) || !Number.isFinite(lat) || !Number.isFinite(zoom)) return undefined;
   const span = 360 / 2 ** zoom;
+  // R2-M12：下溢/巨幅 zoom 的结果复检（span 非 finite 或 0 → unmappable）
+  if (!Number.isFinite(span) || span <= 0) return undefined;
   const latSpan = span / 2;
   const clamp = (v: number) => Math.max(Math.min(v, 85), -85);
   return [lng - span / 2, clamp(lat - latSpan / 2), lng + span / 2, clamp(lat + latSpan / 2)];

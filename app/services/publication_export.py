@@ -38,7 +38,10 @@ from app.lib.cartography.render_diagnostics import (
     DiagnosticSink,
     diagnostic,
 )
-from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
+from app.services.mapspec_to_svg import (
+    compile_mapspec_to_svg_detailed,
+    resolve_spec_timeout_ms,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,8 @@ except ImportError:  # pragma: no cover - 环境相关
 
 #: 页面尺寸上限（A0 = 841×1189mm 的毫米值以内）；超限帧拒绝。
 MAX_PAGE_MM = 1200.0
+#: 多帧累积 SVG 字节预算（R2-M5：解析 DOM 前的内存上界锚点）。
+_MAX_TOTAL_SVG_BYTES = 96 * 1024 * 1024
 #: 系统字体栈（fontconfig 探测 + CSS 双保险；无内嵌字体资产）。
 CSS_FONT_STACK = (
     '"Noto Sans CJK SC", "Noto Sans CJK", "Source Han Sans SC", '
@@ -102,6 +107,22 @@ def _probe_cjk_font() -> bool:
     return found
 
 
+def _effective_max_features(frame_doc: Dict[str, Any]) -> int:
+    """spec.thresholds.maxFeatures（合法时）否则 50000 —— 调用方再做绝对封顶。"""
+    import math as _math
+
+    thr = frame_doc.get("thresholds")
+    if isinstance(thr, dict):
+        val = thr.get("maxFeatures")
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            try:
+                if _math.isfinite(float(val)) and val > 0:
+                    return int(val)
+            except (ValueError, TypeError, OverflowError):
+                pass
+    return 50000
+
+
 def _frame_geometry(frame: Optional[Dict[str, Any]]) -> Tuple[float, float, Optional[List[float]]]:
     """帧 → (页宽mm, 页高mm, bounds)。缺省 A4 landscape 297×210。"""
     page_w, page_h = 297.0, 210.0
@@ -130,12 +151,14 @@ def _frame_geometry(frame: Optional[Dict[str, Any]]) -> Tuple[float, float, Opti
             try:
                 center = view.get("center")
                 zoom = float(view.get("zoom", 10.0))
+                # R2-M2：zoom 夹取（-1075 下溢除零 / 巨幅 zoom 病态范围）
+                zoom = max(-2.0, min(zoom, 22.0))
                 if isinstance(center, list) and len(center) >= 2:
                     lng, lat = float(center[0]), float(center[1])
                     span = 360.0 / (2.0 ** zoom)
                     bounds = [lng - span / 2, max(min(lat - span / 4, 85.0), -85.0),
                               lng + span / 2, max(min(lat + span / 4, 85.0), -85.0)]
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, ZeroDivisionError, OverflowError):
                 bounds = None
     return (page_w, page_h, bounds)
 
@@ -263,7 +286,6 @@ def render_publication_pdf(
     title: str = "",
     max_frames: int = MAX_SPEC_FRAMES,
     max_labels: int = MAX_LABELS_PER_EXPORT,
-    session_id: Optional[str] = None,
 ) -> PublicationPdfResult:
     """publication PDF 主入口（同步；CPU/IO 由调用方置于工作线程）。
 
@@ -277,13 +299,10 @@ def render_publication_pdf(
     parsed = require_parseable_mapspec(payload)
     doc = parsed.document
 
-    # R1-M5：ref 载体源水合（提供 session_id 时）；仍无法物化的
-    # geojson/vector 源 → typed 拒绝（不渲染只剩 chrome 的空白出版页）。
-    if session_id:
-        try:
-            doc = hydrate_ref_sources_sync(doc, session_id)
-        except Exception as ex:
-            logger.warning("publication pdf: hydration failed: %s", ex)
+    # R1-M5 / R2-M3+M8：水合**不在本服务发生**（工作线程触碰会话数据面
+    # 非线程安全 + sessionId 属主校验面收窄）—— 调用方（路由/报告链）负责
+    # 内联 ref 载体源；仍无法物化的 geojson/vector 源 → typed 拒绝
+    # （不渲染只剩 chrome 的空白出版页）。
     _empty_sources = _unhydrated_geojson_keys(doc)
     if _empty_sources:
         raise MapSpecSchemaError(
@@ -334,11 +353,23 @@ def render_publication_pdf(
                 include_chrome=True,
                 bounds=bounds,
                 max_labels=max_labels,
+                # R2-M5/M7：服务端绝对封顶（spec 可声明更小预算，不得放大包络）
+                max_features=min(_effective_max_features(frame_doc), 50000),
+                timeout_ms=min(resolve_spec_timeout_ms(frame_doc), 30000.0),
             )
         except Exception as ex:  # 单帧失败不中断 atlas（frame skip 政策）
             logger.warning("publication pdf: frame %s compile failed: %s", i, ex)
             skipped += 1
             sink.add(diagnostic("atlas_page_skipped", detail=f"frame {i}: {type(ex).__name__}"))
+            continue
+        # R2-M5：累积 SVG 预算 —— 超限停止加帧（诚实披露），防 OOM 放大
+        _accumulated = sum(len(s) for _n, s, _w, _h in page_specs)
+        if _accumulated + len(comp.svg) > _MAX_TOTAL_SVG_BYTES:
+            skipped += 1
+            sink.add(diagnostic(
+                "atlas_page_limit_truncated",
+                detail=f"svg budget {_MAX_TOTAL_SVG_BYTES} bytes at frame {i}",
+            ))
             continue
         page_specs.append((f"p{i}", comp.svg, page_w, page_h))
         # R1-M3：帧级诊断经 extend_frame（子配额 + 溢出显式元披露）
