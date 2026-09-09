@@ -95,7 +95,7 @@ async def _make_running_job(session_factory) -> int:
 async def test_worker_loss_sweeps_and_allows_retry(session_factory):
     job_id = await _make_running_job(session_factory)
     fired_events = []
-    with chaos("WORKER_LOSS") as fault:
+    with chaos("JOBS_WORKER_LOSS") as fault:
         async with session_factory() as db:
             swept = await DurableJobStore.sweep_stale(db, limit=10)
             await db.commit()  # sweep 由调用方提交（store 契约）
@@ -114,7 +114,7 @@ async def test_worker_loss_sweeps_and_allows_retry(session_factory):
             assert ok, f"stale 后必须可重试（reason={reason}）"
             await db.commit()
     fired_events = [e for e in journal_snapshot()
-                    if e.fault_id == "WORKER_LOSS" and e.action == "fired"]
+                    if e.fault_id == "JOBS_WORKER_LOSS" and e.action == "fired"]
     assert fired_events, "故障必须真的开火（journal 证据）"
     assert fault.fired
 
@@ -176,7 +176,7 @@ async def test_stale_revision_cas_rejects_loser(session_factory):
     job_id = await _make_running_job(session_factory)
     outcomes: dict[str, object] = {}
 
-    with chaos("STALE_REVISION_CAS"):
+    with chaos("JOBS_STALE_REVISION_CAS"):
         # 确定性交错：胜者先完整提交，败者再携带已被作废的 expected ——
         # 纯并发编排由 CANCEL_STORM 覆盖；这里锁定 CAS 拒绝语义本身。
         async def transition(tag: str, target, expected):
@@ -262,6 +262,6 @@ async def test_db_transient_zero_is_passthrough(session_factory):
 
 
 def test_v3_faults_registered():
-    for fault_id in ("WORKER_LOSS", "CANCEL_STORM",
-                     "STALE_REVISION_CAS", "DB_TRANSIENT_SEQUENCE"):
+    for fault_id in ("JOBS_WORKER_LOSS", "CANCEL_STORM",
+                     "JOBS_STALE_REVISION_CAS", "DB_TRANSIENT_SEQUENCE"):
         assert fault_id in FAULTS, f"{fault_id} 未注册"

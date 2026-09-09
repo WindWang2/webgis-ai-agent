@@ -824,7 +824,7 @@ _FAULT_LIST = [
         factory=_storage_transient_fail,
     ),
     FaultSpec(
-        fault_id="WORKER_LOSS",
+        fault_id="JOBS_WORKER_LOSS",
         subsystem="JOBS",
         description="worker 心跳丢失：running/cancelling job 心跳超时后无人续约",
         attack="包装 DurableJobStore.find_stale 强制 stale_after_s=0（monkeypatch 接缝；等价心跳停更），随后 sweep_stale 真实运行",
@@ -842,7 +842,7 @@ _FAULT_LIST = [
         factory=_cancel_storm,
     ),
     FaultSpec(
-        fault_id="STALE_REVISION_CAS",
+        fault_id="JOBS_STALE_REVISION_CAS",
         subsystem="JOBS",
         description="stale revision CAS：并发状态转移中失败方携带过期 expected",
         attack="asyncio.Barrier 编排同 job 两路 transition，败者 expected 已被胜者作废（纯编排注入）",
