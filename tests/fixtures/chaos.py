@@ -659,7 +659,7 @@ def _cancel_storm(handle: ChaosFault) -> Iterator[None]:
     barrier = asyncio.Barrier(int(handle.params.get("concurrency", 8)))
     handle.barrier = barrier
     handle.results = []
-    handle.record("fired", f"cancel storm armed: {barrier.parties} 路并发 cancel")
+    handle.record("armed", f"cancel storm: {barrier.parties} 路并发 cancel 待屏障放行")
     yield
 
 
@@ -672,7 +672,7 @@ def _stale_revision_cas(handle: ChaosFault) -> Iterator[None]:
     import asyncio
 
     handle.results = []
-    handle.record("fired", "stale revision CAS armed: 确定性交错两路 transition")
+    handle.record("armed", "stale revision CAS: 确定性交错两路 transition")
     yield
 
 

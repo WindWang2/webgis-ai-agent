@@ -135,7 +135,8 @@ class TraceContextMiddleware:
 def _send_with_trace_header(send, trace_id: str):
     async def wrapped(message):
         if message["type"] == "http.response.start":
-            headers = list(message.get("headers") or [])
+            headers = [(k, v) for k, v in message.get("headers") or []
+                       if k.lower() != RESPONSE_HEADER.encode()]
             headers.append((RESPONSE_HEADER.encode(), trace_id.encode()))
             message = {**message, "headers": headers}
         await send(message)

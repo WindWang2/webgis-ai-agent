@@ -67,8 +67,9 @@ LANES: dict[str, dict] = {
         "commands": [
             PYTEST + ["tests/quality/", "--no-cov", "-q", "--timeout=60",
                       "--timeout-method=thread", "-p", "no:cacheprovider"],
-            [sys.executable, "scripts/gen_quality_manifest.py", "--check"],
-            [sys.executable, "scripts/gen_drift_report.py", "--check"],
+            # R2-M2 去重：manifest/drift 字节闸由 readiness --check 内部
+            # 执行（LIVE_GATES），不再直接挂载（省 ~9s 双跑）；readiness
+            # 渲染含各闸状态，任一闸漂移即 --check 红，强制力等价。
             [sys.executable, "scripts/gen_trace_certification.py", "--check"],
             [sys.executable, "scripts/gen_resource_certification.py", "--check"],
             [sys.executable, "scripts/gen_determinism_certification.py", "--check"],
@@ -80,7 +81,8 @@ LANES: dict[str, dict] = {
             # Quality V3 W14：前端行为证据索引字节闸（@behavior 标签漂移即红）
             [sys.executable, "scripts/gen_frontend_behavior.py", "--check"],
             # Quality V3 W15/R1-C1：release readiness 字节闸（内容性状态
-            # 锁定；commit 身份字段归一）
+            # 锁定；commit 身份字段归一；内含 manifest/drift/preflight/
+            # frontend-behavior 四闸执行）
             [sys.executable, "scripts/gen_release_readiness.py", "--check"],
         ],
     },

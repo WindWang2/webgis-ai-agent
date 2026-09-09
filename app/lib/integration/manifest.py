@@ -126,6 +126,10 @@ def changed_files(branch: str, base: str, repo_root: Path,
     if include_worktree:
         files |= set(_git(["diff", "--name-only", "HEAD"],
                           repo_root).splitlines())
+        # R2-m4：git diff 不含未跟踪新文件 —— 未 add 的新 app 文件曾完全
+        # 绕过 manifest 与 impact 完备性护栏
+        files |= set(_git(["ls-files", "--others", "--exclude-standard"],
+                          repo_root).splitlines())
     return sorted(f for f in files if f)
 
 

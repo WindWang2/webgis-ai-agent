@@ -224,6 +224,9 @@ def _probe_component(name: str) -> tuple:
         elif name == "redis":
             ok = _check_redis()
         elif name == "llm":
+            # R2-m6：_check_llm 自带 30s TTL —— latency 在缓存窗口内
+            # 近似 0，降级判据只在缓存过期那次刷新生效（窗口 ≤30s，
+            # 可接受；绕开缓存会放大对 LLM 的探测流量）
             ok = _check_llm()
         elif name == "worker":
             ok = _check_celery()
@@ -266,9 +269,10 @@ def _probe_object_store() -> tuple:
             # 但健康探针缺席，报 degraded（不得假阳性 ok）
             return ("degraded", latency,
                     "no /minio/health/live (non-MinIO S3?)")
-        ok = resp.status_code < 500
-        return (("ok", latency, None) if ok
-                else ("down", latency, f"health probe {resp.status_code}"))
+        if resp.status_code < 300:
+            return ("ok", latency, None)
+        # R2-m5：3xx（http→https 误配等）与 4xx/5xx 都不是健康
+        return ("down", latency, f"health probe {resp.status_code}")
     except Exception as exc:  # noqa: BLE001
         return ("down", round((_time.monotonic() - t0) * 1000, 1),
                 f"probe error: {type(exc).__name__}")

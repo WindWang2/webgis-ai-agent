@@ -152,7 +152,10 @@ def test_real_branch_guard_v2_mapping_subset_of_selector():
     """
 
     changed = [f for f in _branch_changed_files() if f.startswith("app/")]
-    assert changed, "本分支应有 app 改动"
+    if not changed:
+        # R2-M1：合并进 master 后 origin/master...HEAD 为空；纯 docs/前端
+        # PR 也不涉 app —— 护栏只对"有 app 改动"的分支有意义
+        pytest.skip("本分支无 app/ 改动（护栏语义仅覆盖 app 变更）")
     # 单一来源（R1-m6）：从 impact.py import，不再手工拷贝第三份
     v2_map = dict(_V2_DOMAIN_MAP)
     v2_targets: set[str] = set()

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -109,7 +110,7 @@ def test_completion_proof_end_to_end():
     import subprocess
 
     proc = subprocess.run(
-        ["python3", "scripts/integration_completion_proof.py"],
+        [sys.executable, "scripts/integration_completion_proof.py"],
         cwd=REPO, capture_output=True, text=True, timeout=300)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "verdict: PASS" in proc.stdout

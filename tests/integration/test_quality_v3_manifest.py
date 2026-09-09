@@ -139,7 +139,8 @@ def test_changed_files_missing_branch_raises(synthetic_repo: Path):
 def test_manifest_real_repo_self_check():
     """真实仓库本分支 manifest 可生成（base=origin/master）。"""
     m = build_manifest("HEAD", "origin/master")
-    assert m.files_changed, "本分支应有改动"
+    if not m.files_changed:
+        pytest.skip("HEAD 与 origin/master 无差异（已合并态）——语义面测试仅对有改动的分支有意义")
     assert "quick" in m.required_suites
     d = m.as_dict()
     assert d["risk"]["level"] in ("none", "medium", "high")

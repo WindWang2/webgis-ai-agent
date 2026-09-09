@@ -130,7 +130,12 @@ def _walk_py(root: Path, subdirs: Tuple[str, ...]) -> List[Path]:
         base = root / sub
         if base.is_dir():
             out.extend(sorted(base.rglob("*.py")))
-    return out[:_MAX_FILES]
+    if len(out) > _MAX_FILES:
+        # R2-m2：与 artifact_graph._expand 同纪律 —— 静默截断 = 闭包盲区
+        raise ValueError(
+            f"import 图扫描命中 {len(out)} 个 .py，超过有界上限 "
+            f"{_MAX_FILES}；请显式上调上限（需评审资源影响）")
+    return out
 
 
 def build_graph(repo_root: Optional[Path] = None,
@@ -187,7 +192,23 @@ def _write_cache(root: Path, graph: ImportGraph) -> None:
             if rel in graph.app or rel in graph.tests
         },
     }
-    cache_path.write_text(json.dumps(payload), encoding="utf-8")
+    # R2-m1：tmp + os.replace 原子换入（并发 runner/本地同时跑 impact
+    # 不互相撕裂；读侧 JSONDecodeError 兜底保留为最后防线）
+    import os
+    import tempfile
+
+    fd, tmp_path = tempfile.mkstemp(dir=str(cache_path.parent),
+                                    suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload))
+        os.replace(tmp_path, cache_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _app_modules_for_file(rel: str) -> str:

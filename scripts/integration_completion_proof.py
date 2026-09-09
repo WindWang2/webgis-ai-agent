@@ -137,7 +137,7 @@ def main() -> int:
     print(f"  checked 轴: {len(report['checked'])}, "
           f"unknown: {len(report['unknown'])}, "
           f"not_checked: {len(report['not_checked'])}")
-    print(f"  诚实边界: unknown/not_checked 段声明了语义级冲突的检测边界")
+    print("  诚实边界: unknown/not_checked 段声明了语义级冲突的检测边界")
     print(f"  verdict: {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 

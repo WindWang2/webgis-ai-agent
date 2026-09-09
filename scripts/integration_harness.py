@@ -94,13 +94,16 @@ class Harness:
         self.proc = None
 
     def stop(self) -> None:
-        if self.proc is None:
-            return
-        try:
-            os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
-            self.proc.wait(timeout=10)
-        except Exception:  # noqa: BLE001
-            self.kill_workers()
+        if self.proc is not None:
+            try:
+                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+                self.proc.wait(timeout=10)
+            except Exception:  # noqa: BLE001
+                self.kill_workers()
+        # R2-NIT：tmpdir 清理（harness.db/WAL 不残留）
+        import shutil
+
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
 
 
 def run_checks(h: Harness, requests: int) -> list[str]:

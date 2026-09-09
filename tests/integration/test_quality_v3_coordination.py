@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 
 import pytest
 
@@ -141,8 +142,8 @@ def test_walk_repo_bounded_excludes_vendored_trees():
 
 def test_real_migration_graph_single_head():
     graph = mig_mod.scan(REPO)
-    assert graph.heads == ["0033_geocompute_v6_cluster"], (
-        f"master 应单头，实际 {graph.heads}")
+    # R2-M1：不硬编码 head 名 —— 并发分支合法追加 0034+ 后本闸不得误红
+    assert len(graph.heads) == 1, f"master 必须单头，实际 {graph.heads}"
     assert len(graph.revisions) >= 30
     # 文件名 ≠ revision id 的已知反例必须被 ScriptDirectory 正确解析
     assert any(i.revision == "g1109_legacy_owner" and
@@ -151,9 +152,14 @@ def test_real_migration_graph_single_head():
 
 
 def test_real_migration_watermark_current():
+    # R2-M1：水位从 ownership 权威读取（allocator 合法推进后不得误红）
+    from app.lib.integration.ownership import load_document
+
+    doc = load_document(REPO)
     graph = mig_mod.scan(REPO)
-    assert graph.revisions_over_watermark(33) == []
-    assert "0033_geocompute_v6_cluster" in graph.revisions_over_watermark(32)
+    assert graph.revisions_over_watermark(doc.migration_watermark) == []
+    under = graph.revisions_over_watermark(doc.migration_watermark - 1)
+    assert under, "最高序号 revision 应恰好等于水位"
 
 
 def _fake_graph(monkeypatch: pytest.MonkeyPatch, infos: list[mig_mod.MigrationInfo]):
@@ -307,11 +313,16 @@ def test_allocate_migration_cli_dry_run(capsys):
     import subprocess
 
     proc = subprocess.run(
-        ["python3", "scripts/allocate_migration.py", "quality_v3_probe",
+        [sys.executable, "scripts/allocate_migration.py", "quality_v3_probe",
          "--dry-run"], cwd=REPO, capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "0034_quality_v3_probe" in proc.stdout
-    assert "0033_geocompute_v6_cluster" in proc.stdout
+    # R2-M1：期望序号从当前 graph 推导（0034 被并发占用后 allocator
+    # 合法输出 0035，闸不得惩罚协调流程本身）
+    graph = mig_mod.scan(REPO)
+    seqs = [i.seq for i in graph.revisions if i.seq is not None]
+    expected_next = max(seqs) + 1
+    assert f"{expected_next:04d}_quality_v3_probe" in proc.stdout
+    assert graph.heads[0] in proc.stdout
     assert "migration_watermark" in proc.stdout
 
 
@@ -319,7 +330,7 @@ def test_allocate_migration_cli_rejects_bad_slug():
     import subprocess
 
     proc = subprocess.run(
-        ["python3", "scripts/allocate_migration.py", "Bad Slug!"],
+        [sys.executable, "scripts/allocate_migration.py", "Bad Slug!"],
         cwd=REPO, capture_output=True, text=True, timeout=60)
     assert proc.returncode == 2
 
@@ -328,7 +339,7 @@ def test_allocate_adr_cli_dry_run():
     import subprocess
 
     proc = subprocess.run(
-        ["python3", "scripts/allocate_adr.py", "quality-v3-probe", "--dry-run"],
+        [sys.executable, "scripts/allocate_adr.py", "quality-v3-probe", "--dry-run"],
         cwd=REPO, capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "adr_watermark" in proc.stdout or "watermark" in proc.stdout

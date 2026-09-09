@@ -17,6 +17,8 @@ regenerate-dont-edit 双输入变更（合并后统一再生成即可）。
 """
 from __future__ import annotations
 
+import re as _re
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -33,6 +35,9 @@ from app.lib.integration.ownership import (
     load_document,
     paths_with_policy,
 )
+
+_ALLOC_NUM_RE = _re.compile(r"^.*?(\d{4})[-_]")
+
 
 @dataclass
 class AxisResult:
@@ -99,16 +104,13 @@ def _branch_reader(branch: str, repo_root: Path):
     import subprocess
 
     def read(path: str) -> Optional[str]:
+        # R2-m3：严格模式 —— git show 失败（分支内不存在/被删除）返回
+        # None 走"不判定"降级；绝不回退工作树（工作树在别的分支上，
+        # 磁盘读会拿到**错误分支**的内容污染 fork 判定）
         proc = subprocess.run(
             ["git", "show", f"{branch}:{path}"], cwd=repo_root,
             capture_output=True, text=True, timeout=30)
-        if proc.returncode == 0:
-            return proc.stdout
-        try:
-            return (repo_root / path).read_text(encoding="utf-8",
-                                                errors="ignore")
-        except OSError:
-            return None
+        return proc.stdout if proc.returncode == 0 else None
     return read
 
 
@@ -199,10 +201,8 @@ def compare_pair(
                                        sorted(set(a.files_changed))))
     other_alloc = set(paths_with_policy(doc, POLICY_ALLOCATOR,
                                         sorted(set(b.files_changed))))
-    import re as _re
-
     def _alloc_num(path: str) -> str:
-        m = _re.match(r"^.*?(\d{4})[-_]", Path(path).name)
+        m = _ALLOC_NUM_RE.match(Path(path).name)
         return m.group(1) if m else path
 
     base_nums: dict = {}

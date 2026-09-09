@@ -438,13 +438,6 @@ def build_statistics_global() -> List[Dict[str, Any]]:
     cases: List[Dict[str, Any]] = []
     from scipy.spatial import cKDTree
 
-    from app.lib.geo_analysis.spatial_weights import (
-        auto_band_8nn,
-        build_distance_band_weights,
-        build_inverse_distance_weights,
-        build_knn_weights,
-    )
-    from app.lib.geo_analysis.statistics import _validate_permutations
 
     # --- E-7 auto-band 规则：mean k-NN 距离（cKDTree 独立复算）----------
     band_fixtures = {
@@ -601,10 +594,6 @@ def build_statistics_global() -> List[Dict[str, Any]]:
 
 def build_statistics_local() -> List[Dict[str, Any]]:
     cases: List[Dict[str, Any]] = []
-    from app.lib.geo_analysis.spatial_regression import (
-        multiple_testing_correction as mtc,
-    )
-    from app.lib.geo_analysis.statistics import _bh_qvalues
 
     # --- BH q 值：单调已知序 fixtures + NaN 免疫 ------------------------
     rng = np.random.default_rng(91)
@@ -743,11 +732,7 @@ def build_geodetector() -> List[Dict[str, Any]]:
     from scipy import stats as sps
 
     from app.lib.geo_analysis.statistics import (
-        _classify_interaction,
-        _geodetector_q,
-        _ssw,
         geodetector_ecological,
-        geodetector_risk,
     )
 
     # --- q 统计量：q = 1 − Σ N_h σ_h² / (N σ²)（总体方差独立复算）------
@@ -1120,17 +1105,11 @@ def build_regression() -> List[Dict[str, Any]]:
         _bisquare,
         _bisquare_rows,
         _breusch_pagan,
-        _check_min_samples,
         _coef_table,
         _gwr_local_r2,
-        _gwr_summarize,
-        _jarque_bera,
         _log_jacobian,
-        _lr_test,
         _ols_core,
-        _spatial_model_suggestion,
         _vif,
-        _validate_permutation_count,
     )
 
     reg_mod = "app.lib.geo_analysis.spatial_regression"
