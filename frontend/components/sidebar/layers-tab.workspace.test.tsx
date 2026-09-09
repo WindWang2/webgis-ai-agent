@@ -47,6 +47,12 @@ const store: Record<string, any> = {
     }
     store.layerGroupMembership = membership;
   }),
+  moveLayerGroup: vi.fn((gid: string, newParentId: string | null) => {
+    store.layerGroups = store.layerGroups.map((g: any) =>
+      g.id === gid ? { ...g, parentId: newParentId } : g,
+    );
+    return true;
+  }),
   toggleGroupCollapsed: vi.fn((gid: string) => {
     store.layerGroups = store.layerGroups.map((g: any) =>
       g.id === gid ? { ...g, collapsed: !g.collapsed } : g,
@@ -89,6 +95,7 @@ vi.mock('@/lib/mapspec/user-mutation', () => mutationMocks);
 vi.mock('@/lib/layers/layer-ops', () => opsMocks);
 
 import { LayersTab } from './layers-tab';
+import { collabMarkStaleRefs, collabSetSessionIdentity, collabSetStatus, collabApplyPresenceAction, resetCollabStoreForTests } from '@/lib/collab/store';
 
 function makeLayer(overrides: Partial<Layer> = {}): Layer {
   return {
@@ -263,5 +270,45 @@ describe('Layer Workspace · 拖拽换组', () => {
     // a 投到 b（b ∈ g1）→ a 换入 g1；重排走既有通道
     expect(store.assignLayersToGroup).toHaveBeenCalledWith(['a'], 'g1');
     expect(mutationMocks.reorderLayersAndCommit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Layer Workspace · V6 协作（reparent 键盘 / stale 徽标 / CollabBar）', () => {
+  beforeEach(() => {
+    resetCollabStoreForTests();
+  });
+
+  it('组头 Shift+← 键盘等价 reparent：提升到顶级（§15 键盘操作）', () => {
+    store.layerGroups = [
+      { id: 'g-par', name: '父组', collapsed: false, parentId: null },
+      { id: 'g-child', name: '子组', collapsed: false, parentId: 'g-par' },
+    ];
+    setLayers([makeLayer()]);
+    render(<LayersTab />);
+    const childHeader = screen.getByTestId('group-header-g-child');
+    fireEvent.keyDown(childHeader.querySelector('button[draggable="true"]')!, {
+      key: 'ArrowLeft', shiftKey: true,
+    });
+    expect(store.moveLayerGroup).toHaveBeenCalledWith('g-child', null);
+  });
+
+  it('ref stale 的行渲染「已过期」徽标（_refId join）', () => {
+    const layer = makeLayer({ id: 'LX', _refId: 'ref:stale-x' });
+    setLayers([layer]);
+    collabMarkStaleRefs(['ref:stale-x'], true);
+    render(<LayersTab />);
+    expect(screen.getByTestId('stale-badge-LX')).toHaveTextContent('已过期');
+  });
+
+  it('CollabBar：离线时诚实披露单用户；参与者出现后渲染头像', () => {
+    setLayers([]);
+    const { rerender } = render(<LayersTab />);
+    expect(screen.getByText('单用户')).toBeInTheDocument();
+    collabSetSessionIdentity('me-1', false);
+    collabSetStatus('online');
+    collabApplyPresenceAction('join', { client: { clientId: 'peer-9', label: '同' } });
+    rerender(<LayersTab />);
+    expect(screen.getByText('协作')).toBeInTheDocument();
+    expect(screen.getByTitle('同')).toBeInTheDocument();
   });
 });

@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased] - 2026-09-10
+
+### Added (workbench-v6: Server-Side Multi-User Collaboration)
+- Server collaboration notification plane: per-session CollabEventBus
+  (Redis pub/sub + in-process degraded fan-out), authenticated WebSocket
+  channel `/ws/collab/{session_id}` (bearer JWT or anonymous owner_token),
+  presence (TTL 30s, cap 32), and advisory edit leases (Lua token-checked,
+  TTL 60s). Correctness never depends on the bus: revision-mismatch
+  reconciliation refetches the authoritative workbench state.
+- `patch_workbench_delta` intent (absolute-value semantics, replay-idempotent)
+  with server-side ordered application + result-level validation, and
+  `base_workbench_revision` workbench-level CAS on full-doc commits (engine
+  stamps `mapspec.workbench._rev`) closing the stale-full-doc clobber window.
+- Server-enforced layer lock guard built into the MapSpec engine (single +
+  presentation-batch paths, family semantics, `error_code="layer_locked"`),
+  closing the agent-tool bypass of user locks.
+- Collaborative undo: field-scoped inverse-delta replay replaces whole-table
+  snapshot restore; bounded single rebase on 409 superseded.
+- Artifact awareness projection `GET .../workbench/artifact-status` + ref
+  invalidation `artifact` events; frontend stale badges and lineage inspector.
+- Frontend: collab client (reconnect/jitter/heartbeat reconciliation), delta
+  persistence channel, CollabBar (presence/degraded/conflict disclosure),
+  group reparent drag & keyboard parity, O(n) tree traversal helpers.
+
 ## [Unreleased] - 2026-09-09
 
 ### Added (science-v4: Spatial Science & GeoAI Platform V4)
