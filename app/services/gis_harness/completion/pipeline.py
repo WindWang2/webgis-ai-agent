@@ -407,6 +407,7 @@ def map_product_block(
     render_observation_seq: int = 0,
     methodology_warnings: Optional[List[Dict[str, Any]]] = None,
     chapter: Optional[Dict[str, Any]] = None,
+    repair_plan: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -446,6 +447,9 @@ def map_product_block(
             result, methodology_warnings, chapter=chapter)
     except Exception:  # noqa: BLE001 — 裁决是增值投影，绝不阻断 finalization
         pass
+    # V6 W10/W11：修复计划快照（additive；finding→分类→护栏→计划的证据面）。
+    if repair_plan:
+        block["repair_plan"] = repair_plan
     return block
 
 
@@ -584,6 +588,24 @@ async def maybe_finalize_map_product(
     validated_goal = goal_key(chapter, plan.user_goal)
     revision_after_run = await _current_mapspec_revision(session_id)
 
+    # V6 W10/W11：修复计划（findings 统一投影 → 护栏 → 计划 → 账本落账）。
+    # 增值披露：任何失败不影响块写入；锁集读自 mapspec workbench doc。
+    repair_plan_dict: Optional[Dict[str, Any]] = None
+    try:
+        from app.services.gis_harness.repair_planner import plan_repairs_for_chapter
+        from app.services.mapspec_store import mapspec_store
+
+        mapspec_now: Optional[Dict[str, Any]] = None
+        try:
+            mapspec_now = await mapspec_store.get_mapspec(session_id) or None
+        except Exception:  # noqa: BLE001 — spec 读失败按无锁集处理
+            mapspec_now = None
+        repair_plan_dict = await plan_repairs_for_chapter(
+            session_id, chapter, result, mapspec=mapspec_now)
+    except Exception:  # noqa: BLE001 — 修复计划是增值披露，绝不阻断终验
+        logger.debug("[MapFinalizer] repair plan failed session=%s", session_id,
+                     exc_info=True)
+
     # 持久化（锁内重读——终验本身的 repair 突变可能已推进 revision）
     try:
         async with session_lock_registry.lock(session_id, fail_on_degraded=True) as lock:
@@ -648,6 +670,7 @@ async def maybe_finalize_map_product(
                     methodology_warnings=list(
                         fresh.gis_chapter.get("methodology_warnings") or []),
                     chapter=fresh.gis_chapter,
+                    repair_plan=repair_plan_dict,
                 )
                 await save_session_plan(fresh)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试

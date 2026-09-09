@@ -19,6 +19,8 @@
 - [x] W7 Completion Verdict 单一化（`evaluate_completion_contract` analysis 维纳入 runtime stale 硬输入；`derive_product_verdict` READY* 遇 stale 压 NEEDS_REPAIR；无运行态块旧章节 parity 零漂移专测）
 - [x] W8 Deterministic Cartographic Observation（floating 组件实测 rect 重叠/完全越出画布 → layout_conflict warning 进主校验链；`derive_component_lifecycle` 统一组件生命周期投影 requested→…→diagnostics；前端 observation 增 `canvas` 容器像素遥测 + DTO 白名单；旧客户端门控零误伤）
 - [x] W9 Visual Observation seam（`visual_evaluator.py`：触发白名单 §40；`GIS_VISUAL_EVALUATOR` hook 默认关闭；输出白名单校验——mutation 意图/非形状条目结构性判废，强制 domain=visual + degradation_only + 不硬阻断；评估器不接触 MapSpec）
+- [x] W10 Repair Planner（`repair_planner.py`：UnifiedFinding → 16 修复类 × 5 安全级表驱动分类；code 精确→scope 兜底；锁/override → not_allowed（user-wins 硬约束）；visual 软发现一律 requires_user_approval；degradation 面不产生自动动作；executor 只列既有通道——不建第三修复通道；`plan_repairs_for_chapter` 接入 maybe_finalize_map_product，repair_plan 进 map_product 块）
+- [x] W11 Repair Loop 防循环（finding 指纹 + state epoch（runtime_rev:mapspec_rev）+ 尝试计数账本 map_state[_repair_loop_v6]；同 finding 同 epoch → no_progress；≥3 次 → repair_exhausted → abort_with_disclosure 披露）
 - [ ] W3 Artifact/MapSpec/Node lineage 双向索引
 - [ ] W4 Semantic Diff→Affected Subgraph 接线
 - [ ] W5 Partial Recompute + Reuse Validation
