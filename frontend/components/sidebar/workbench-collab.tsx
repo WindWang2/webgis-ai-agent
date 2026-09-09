@@ -13,6 +13,7 @@ import { Users, Wifi, WifiOff, AlertTriangle, Pencil } from 'lucide-react';
 import {
   subscribeCollab,
   getCollabState,
+  getCollabSnapshot,
   collabSetConflict,
   type CollabState,
 } from '@/lib/collab/store';
@@ -20,7 +21,10 @@ import { participantColor, COLLAB_MAX_PARTICIPANTS } from '@/lib/collab/protocol
 import { sendCollabLease } from '@/lib/collab/client';
 
 export function useCollabState(): CollabState {
-  return useSyncExternalStore(subscribeCollab, getCollabState, getCollabState);
+  // R2-C1：snapshot 必须是 version 号 —— store 对象就地变异、引用恒定，
+  // 用它做 getSnapshot 会让 React 永不重渲染（协作 UI 整体失明）。
+  useSyncExternalStore(subscribeCollab, getCollabSnapshot, getCollabSnapshot);
+  return getCollabState();
 }
 
 function StatusPill({ status, degraded }: { status: CollabState['status']; degraded: boolean }) {
@@ -160,26 +164,38 @@ export function CollabBar(): React.ReactElement | null {
   );
 }
 
-/** 编辑租约操作（图层行「编辑」入口：acquire / 释放）。 */
-export function useLayerLease(): {
-  acquire: (layerId: string) => void;
-  release: (layerId: string) => void;
-} {
+/**
+ * 编辑租约随图层选择走（R2-M-7：真实接线）——「选中 = 正在编辑」这一
+ * 用户可直接理解的语义：选中图层 → acquire（他人可见「正在编辑」徽标）；
+ * 取消选择 → release。有界：同时至多跟踪 8 个（服务端 per-client 上限 16
+ * 的一半，留余量给多面板）。advisory 语义：拒绝/过期均不影响编辑本身。
+ */
+export function useEditingLeasesForSelection(selectedLayerIds: readonly string[]): void {
   const state = useCollabState();
   const clientId = state.clientId;
-  const acquire = useCallback(
-    (layerId: string) => {
-      if (clientId == null) return;
-      sendCollabLease('lease_acquire', `layer:${layerId}`);
+  const tracked = React.useRef(new Set<string>());
+  React.useEffect(() => {
+    if (clientId == null) return; // 未连接（离线/匿名无通道）→ 无租约语义
+    const wanted = new Set(selectedLayerIds.slice(0, 8));
+    for (const id of [...tracked.current]) {
+      if (!wanted.has(id)) {
+        sendCollabLease('lease_release', `layer:${id}`);
+        tracked.current.delete(id);
+      }
+    }
+    for (const id of wanted) {
+      if (!tracked.current.has(id)) {
+        sendCollabLease('lease_acquire', `layer:${id}`);
+        tracked.current.add(id);
+      }
+    }
+  }, [selectedLayerIds, clientId]);
+  // 卸载：释放全部跟踪中的租约。
+  React.useEffect(
+    () => () => {
+      for (const id of tracked.current) sendCollabLease('lease_release', `layer:${id}`);
+      tracked.current.clear();
     },
-    [clientId],
+    [],
   );
-  const release = useCallback(
-    (layerId: string) => {
-      if (clientId == null) return;
-      sendCollabLease('lease_release', `layer:${layerId}`);
-    },
-    [clientId],
-  );
-  return { acquire, release };
 }

@@ -49,17 +49,16 @@ _WS_RATE_LIMIT_WINDOW = 60
 _MSG_BUDGET_CAPACITY = 20
 _MSG_BUDGET_REFILL_PER_S = 20.0
 _MAX_INBOUND_BYTES = 16 * 1024
-#: 参与者记录中每字段的服务端上限（与 presence 白名单同向）。
-_MAX_EVENT_DATA_BYTES = 4 * 1024
 
 
 async def _fresh_revision(session_id: str) -> int:
-    """新鲜 revision 读：失效本进程 L1 后定向读单字段（不经 2s 陈旧缓存）。"""
+    """新鲜 revision 读：定向单字段 HGET（不经 L1 → 天然新鲜）。
+
+    R2-M-5：不调用 invalidate_local_cache —— 那会打穿整会话 L1（含热路径
+    map_state），N 连接 × 10s 心跳的失效风暴会把 chat/agent 路径拖回全量读。
+    """
     from app.services.session_data import session_data_manager
 
-    invalidate = getattr(session_data_manager, "invalidate_local_cache", None)
-    if callable(invalidate):
-        invalidate(session_id)
     get_field = getattr(session_data_manager, "get_state_field", None)
     raw = (
         await get_field(session_id, "_cartographic_mutation_revision")
@@ -124,6 +123,8 @@ class _CollabConnection:
         """总线扇出入口（同步、绝不抛出）。队列满 = 慢消费者 → 断开。
 
         None 哨兵在 closed 后仍入队（finally 依赖它结束 send_loop）。
+        R2-M-2：满员必须真正 close WebSocket 并结束 send_loop —— 只标记
+        closed 会留下僵尸连接（收包继续、永远不再发帧）。
         """
         if self.closed and envelope is not None:
             return
@@ -132,6 +133,24 @@ class _CollabConnection:
         except asyncio.QueueFull:
             logger.info("[ws-collab] slow consumer %s dropped", self.client_id)
             self.closed = True
+            try:
+                self.queue.put_nowait(None)  # 结束 send_loop
+            except asyncio.QueueFull:
+                pass
+            self._schedule_close()
+
+    def _schedule_close(self) -> None:
+        """异步关闭 WS（enqueue 是同步上下文）。失败静默 —— finally 兜底。"""
+        try:
+            asyncio.get_running_loop().create_task(self._close_ws())
+        except RuntimeError:
+            pass
+
+    async def _close_ws(self) -> None:
+        try:
+            await self.ws.close()
+        except Exception:  # noqa: BLE001
+            pass
 
     async def send_loop(self) -> None:
         try:
@@ -140,8 +159,9 @@ class _CollabConnection:
                 if envelope is None:
                     break
                 await self.ws.send_text(json.dumps(envelope, ensure_ascii=False, default=str))
-        except Exception:  # noqa: BLE001 — 发送失败由主循环 finally 收尾
-            pass
+        except Exception:  # noqa: BLE001 — 发送失败 → 关闭触发重连（不静默留僵尸）
+            self.closed = True
+            self._schedule_close()
 
 
 def _make_listener(connection: _CollabConnection):
@@ -230,7 +250,8 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
         await websocket.close(code=4500, reason="Internal error during session validation")
         return
     if conv is None:
-        await websocket.close(code=4003, reason="Session not found")
+        # R2-m-6：与「非本人」同一措辞 —— 防借 close reason 区分會话存在性。
+        await websocket.close(code=4003, reason="Session not found or not owned by caller")
         return
     conv_uid = conv.user_id
     conv_owner_token = conv.owner_token
@@ -297,6 +318,10 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
     budget = _MSG_BUDGET_CAPACITY
     last_budget_refill = time.monotonic()
     last_presence_relay = 0.0
+    # R2-M-6：sync 触发全量 doc 读（HGETALL+解析+可能磁盘复活）—— 独立的
+    # 更严格预算（2/s，突发 4），与 presence/lease 的一般预算分桶。
+    sync_budget = 4.0
+    last_sync_refill = time.monotonic()
     presence_pending: dict | None = None
     presence_flush_task: asyncio.Task | None = None
 
@@ -305,6 +330,7 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
         await asyncio.sleep(0.2)
         data_deferred = presence_pending
         presence_pending = None
+        presence_flush_task = None
         if data_deferred is None:
             return
         from app.services.collab.presence import _sanitize_patch as _sp
@@ -345,6 +371,12 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
             if event == "ping":
                 connection.enqueue({"event": "pong", "data": {"revision": await _fresh_revision(session_id)}})
             elif event == "sync":
+                now2 = time.monotonic()
+                sync_budget = min(4.0, sync_budget + (now2 - last_sync_refill) * 2.0)
+                last_sync_refill = now2
+                if sync_budget < 1:
+                    continue  # 超额 sync：静默丢弃（重连风暴下的读放大防护）
+                sync_budget -= 1
                 known = data.get("knownRevision")
                 try:
                     known_int = int(known) if known is not None else None
@@ -360,35 +392,37 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
                     connection.enqueue({"event": "sync_ok", "data": {"revision": current}})
             elif event == "presence":
                 # 服务端合并节流（200ms）：节流窗口内只保留最后态（评审 m-4
-                # —— 直接丢弃会让最终状态永不下发）。
-                pending_presence = dict(data)
+                # —— 直接丢弃会让最终状态永不下发；R2-M-1：必须写入
+                # presence_pending 供 flush task 取走）。
+                presence_pending = dict(data)
                 remaining = 0.2 - (now - last_presence_relay)
                 if remaining > 0:
                     if presence_flush_task is None:
                         presence_flush_task = asyncio.get_running_loop().create_task(
                             _flush_presence()
                         )
-                    continue  # flush task 稍后带走最后态（合并最后态，评审 m-4）
+                    continue  # flush task 稍后带走最后态
+                presence_pending = None
                 last_presence_relay = now
-                sanitized = dict(pending_presence)
-                pending_presence = None
-                await presence_registry.heartbeat(session_id, client_id, sanitized)
-                # M-1：广播路径同样白名单裁剪 —— clientId 服务端权威，
+                await presence_registry.heartbeat(session_id, client_id, data)
+                # R2-M-1：广播路径同样白名单裁剪 —— clientId 服务端权威，
                 # 客户端字段不得覆盖/冒充他人身份。
                 from app.services.collab.presence import _sanitize_patch
 
                 await bus.publish(session_id, "presence", {
                     "action": "update",
-                    "client": {"clientId": client_id, **_sanitize_patch(sanitized)},
+                    "client": {"clientId": client_id, **_sanitize_patch(data)},
                 })
             elif event == "lease_acquire":
                 lock_key = str(data.get("lockKey") or "")
                 result = await lease_registry.acquire(session_id, lock_key, client_id, label)
-                await bus.publish(session_id, "lock", {
-                    "action": "acquire", "lockKey": lock_key,
-                    "granted": bool(result.get("granted")),
-                    "holder": result.get("holder"), "clientId": client_id,
-                })
+                # R2-m-5：非法 lockKey 只回本连接（客户端可控字符串不进全房间广播）。
+                if result.get("granted") or result.get("reason") == "held":
+                    await bus.publish(session_id, "lock", {
+                        "action": "acquire", "lockKey": lock_key,
+                        "granted": bool(result.get("granted")),
+                        "holder": result.get("holder"), "clientId": client_id,
+                    })
                 connection.enqueue({"event": "lease_result", "data": {
                     "lockKey": lock_key, "requestId": data.get("requestId"), **result,
                 }})
@@ -420,6 +454,12 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.error(f"[ws-collab] error for {session_id}: {exc}")
     finally:
+        # R2-m-1：先取消挂起的 presence flush（防其在 leave 后重建 presence
+        # 记录 → ≤30s 幽灵参与者 + 为已离开者广播）。
+        if presence_flush_task is not None:
+            presence_flush_task.cancel()
+            presence_flush_task = None
+        presence_pending = None
         connection.closed = True
         connection.enqueue(None)  # 哨兵：结束 send_loop
         remove_listener()

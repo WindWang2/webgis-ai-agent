@@ -22,6 +22,7 @@ import {
   collabSetSessionIdentity,
   collabSetStatus,
   collabResetForSession,
+  getCollabState,
 } from './store';
 import {
   parseLeaseInfo,
@@ -155,8 +156,8 @@ function handleVisibility(): void {
     if (ws != null && ws.readyState === WebSocket.OPEN) {
       startPoll();
       onReconcileNeeded?.(); // 恢复可见 → 立即对账（架构 §8）
-    } else {
-      scheduleReconnect(); // 页面回前台：尽快重连
+    } else if (ws == null) {
+      scheduleReconnect(); // 页面回前台且无连接：尽快重连（CONNECTING 时不动作）
     }
   }
 }
@@ -170,13 +171,13 @@ function connect(): void {
   }
   if (stopped || boundSessionId == null) return;
   const protocols = buildSubprotocols();
-  let socket: WebSocket;
   collabSetStatus(protocols.length > 0 ? 'connecting' : 'offline');
   if (protocols.length === 0) {
-    // 无凭据：不发匿名连接（服务端必拒），诚实离线（单用户工作台完全可用）。
-    scheduleReconnect();
+    // 无凭据：不发匿名连接（服务端必拒），诚实离线且不重连空转
+    // （凭据随会话选择出现时 startCollabClient 会再次触发连接）。
     return;
   }
+  let socket: WebSocket;
   try {
     socket = new WebSocket(`${WS_BASE}/api/v1/ws/collab/${boundSessionId}`, protocols);
   } catch (err) {
@@ -187,6 +188,7 @@ function connect(): void {
   ws = socket;
 
   socket.onopen = () => {
+    if (ws !== socket) return; // 旧 socket 迟到回调：忽略（R2-M-4）
     reconnectAttempt = 0;
     collabSetStatus('online');
     startHeartbeat(socket);
@@ -196,9 +198,12 @@ function connect(): void {
     }
     // R1-M2：连接即对账（knownRevision 不一致 → 服务端回放权威 doc）。
     sendNow({ event: 'sync', data: { knownRevision: lastKnownRevision } });
+    // R2-M-7：连接成功 → 初始对账（doc revision + artifact stale 基线）。
+    onReconcileNeeded?.();
   };
 
   socket.onmessage = (msg: MessageEvent) => {
+    if (ws !== socket) return; // 旧 socket 的迟到帧：忽略（R2-M-4）
     let parsed: unknown;
     try {
       parsed = JSON.parse(String(msg.data));
@@ -220,12 +225,21 @@ function connect(): void {
   };
 
   socket.onclose = (event: CloseEvent) => {
-    if (ws === socket) ws = null;
+    const wasCurrent = ws === socket;
+    if (wasCurrent) ws = null;
+    // 旧 socket 的迟到 close：不得触碰状态/重连调度（R2-M-4）。
+    if (!wasCurrent) return;
     clearTimers();
-    collabSetStatus('connecting');
-    if (event && event.code === RATE_LIMITED_CLOSE_CODE) {
+    const code = event ? event.code : 0;
+    // R2-m-7：永久性拒绝（认证失效/无所有权）→ 诚实离线，不再无限重连。
+    if (code === 4001 || code === 4003) {
+      collabSetStatus('offline');
+      return;
+    }
+    if (code === RATE_LIMITED_CLOSE_CODE) {
       rateLimitedUntil = Date.now() + RATE_LIMITED_BACKOFF_MS;
     }
+    collabSetStatus('connecting', getCollabState().degraded); // R2-m-8：connecting 不抹 degraded
     scheduleReconnect();
   };
   socket.onerror = () => {

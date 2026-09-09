@@ -125,6 +125,14 @@ export function collabPushRemoteOp(entry: CollabOpEntry): void {
   patch({ remoteOps });
 }
 
+/** 投影对账（R2-M-7）：以服务端权威 stale 集合整体替换（双向对齐）。 */
+export function collabSetStaleRefs(ids: string[]): void {
+  const next = new Set(ids);
+  const prev = store.staleRefIds;
+  if (prev.size === next.size && [...prev].every((id) => next.has(id))) return;
+  patch({ staleRefIds: next });
+}
+
 export function collabMarkStaleRefs(ids: string[], invalidate: boolean): void {
   const next = new Set(store.staleRefIds);
   for (const id of ids) {

@@ -67,6 +67,7 @@ describe('100k 投影 work-count（§16：O(n) 或更好）', () => {
     // 双口径锁定：输出 sections/rows 必须精确等于输入规模（无 O(n²) 的
     // 重复行/丢行），且 100k 投影在预算内完成（软性 wall-clock 只作冒烟
     // —— 权威口径是输出结构守恒）。
+    const timings = new Map<number, number>();
     for (const n of [10_000, 100_000]) {
       const layers = makeLayers(n);
       const groups = Array.from({ length: Math.floor(n / 10) }, (_, i) => ({
@@ -85,15 +86,16 @@ describe('100k 投影 work-count（§16：O(n) 或更好）', () => {
         lockedLayerIds: [],
         selectedLayerIds: [],
       });
-      const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+      const ms = Math.max(Number(process.hrtime.bigint() - t0) / 1e6, 1);
       // 结构守恒：每层恰一行（无重复/丢失 —— O(n²) 实现常见的坏味道）。
       const totalRows = projection.sections.reduce((acc, s) => acc + s.rows.length, 0);
       expect(totalRows).toBe(n);
-      // 冒烟预算（结构性预算优先 —— 宽松上界仅捕捉 O(n²) 退化）：
-      // 10k < 200ms；100k < 2000ms（线性外推 ≈ 20×；二次外推会是 100×）。
-      const budget = n === 10_000 ? 200 : 2000;
-      expect(ms, `${n} 行投影 ${ms.toFixed(1)}ms 超预算`).toBeLessThan(budget);
+      timings.set(n, ms);
     }
+    // R2-m-3：wall-clock 比值外推（共享 CI 上绝对毫秒是 flaky 源）——
+    // 线性外推 ≈ 10×；O(n²) 会是 ~100×。比值 < 40× 锁定线性族。
+    const ratio = timings.get(100_000)! / timings.get(10_000)!;
+    expect(ratio, `100k/10k 投影耗时比 ${ratio.toFixed(1)}× 超线性退化线`).toBeLessThan(40);
   });
 });
 

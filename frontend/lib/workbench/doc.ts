@@ -214,15 +214,50 @@ export function normalizeWorkbenchDoc(raw: unknown): WorkbenchDocV5 | null {
       parentId: null, // 先全部落根，第二轮再恢复合法父子
     });
   }
-  // 第二轮：恢复 parentId（仅当父已存在、不成环、不超深）。
-  const declared = candidate.groups as Array<Partial<WorkbenchGroupNode>>;
+  // 第二轮：恢复 parentId（R2-m-4：O(n) —— 原实现对每组做 trial 树 +
+  // canReparentGroup（内部多次建表），2000 组上限下为百毫秒级主线程阻塞）。
+  // 策略：先按声明挂父（父存在且非自身），再用 ≤深度闸+2 轮的松弛收敛
+  // 计算深度；环（深度永不定）与超深链切断为根。语义与原实现一致：
+  // 非法挂载最终落为根组。
+  const declaredById = new Map<string, Partial<WorkbenchGroupNode>>();
+  for (const r of candidate.groups as Array<Partial<WorkbenchGroupNode>>) {
+    if (r != null && typeof r.id === 'string' && !declaredById.has(r.id)) {
+      declaredById.set(r.id, r);
+    }
+  }
+  const depthById = new Map<string, number>();
+  for (const g of groups) depthById.set(g.id, 1); // 先全部视作根
   for (const g of groups) {
-    const rawParent = declared.find((r) => r?.id === g.id)?.parentId;
-    if (typeof rawParent !== 'string' || rawParent === g.id) continue;
-    if (!groups.some((p) => p.id === rawParent)) continue;
-    // 临时把 g 挂到 rawParent 后校验整树深度（防止恢复超深链）。
-    const trial = groups.map((x) => (x.id === g.id ? { ...x, parentId: rawParent } : x));
-    if (canReparentGroup(trial, g.id, rawParent)) g.parentId = rawParent;
+    const rawParent = declaredById.get(g.id)?.parentId;
+    if (typeof rawParent === 'string' && rawParent !== g.id && depthById.has(rawParent)) {
+      g.parentId = rawParent;
+    }
+  }
+  for (let round = 0; round <= WORKBENCH_GROUP_MAX_DEPTH + 1; round += 1) {
+    let changed = false;
+    depthById.clear();
+    for (const g of groups) {
+      if (g.parentId == null) {
+        depthById.set(g.id, 1);
+        continue;
+      }
+      const parentDepth = depthById.get(g.parentId);
+      if (parentDepth == null) continue; // 本轮尚无定深（链更长/成环）
+      const depth = parentDepth + 1;
+      if (depth > WORKBENCH_GROUP_MAX_DEPTH) {
+        g.parentId = null; // 超深：提升为根（与原「拒绝挂载」同终态）
+        depthById.set(g.id, 1);
+        changed = true;
+      } else {
+        depthById.set(g.id, depth);
+      }
+    }
+    // 全部有定深且无修正 → 收敛
+    if (!changed && depthById.size === groups.length) break;
+  }
+  // 环成员深度永不定（松弛不收敛）→ 切断为根。
+  for (const g of groups) {
+    if (!depthById.has(g.id)) g.parentId = null;
   }
 
   const membership: Record<string, string> = {};

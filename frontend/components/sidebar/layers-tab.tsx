@@ -38,7 +38,7 @@ import {
 } from '@/lib/layers/filter-evidence';
 import { LAYER_STATUS_LABELS, type LayerStatus } from '@/lib/layers/layer-status';
 import { projectWorkspace, semanticGroupLabel, type WorkspaceRow, type WorkspaceSection } from '@/lib/layers/workspace-projection';
-import { CollabBar, useCollabState } from './workbench-collab';
+import { CollabBar, useCollabState, useEditingLeasesForSelection } from './workbench-collab';
 import {
   isolateLayerAndCommit,
   clearIsolateAndCommit,
@@ -970,6 +970,9 @@ export function LayersTab() {
       setOverId(null);
     }
   }, [layers, dragId]);
+
+  // V6（R2-M-7）：编辑租约随选择走（选中 = 正在编辑；advisory 语义）。
+  useEditingLeasesForSelection(selectedLayerIds);
 
   // Review R1（MINOR-7）：组成员清理接线 —— 图层删除后 membership 里的
   // stale id 由投影兜底丢弃，但显式 prune 防止长会话内无界积累。

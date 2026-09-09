@@ -187,12 +187,16 @@ class PresenceRegistry:
 
     def _join_local(self, session_id: str, client_id: str, info: Dict[str, Any], now: float) -> Optional[List[Dict[str, Any]]]:
         bucket = self._local.get(session_id)
+        if bucket is not None:
+            self._sweep_local(bucket, now)
+            if not bucket:
+                self._local.pop(session_id, None)  # 空桶回收后复用名额
+                bucket = None
         if bucket is None:
             if len(self._local) >= _FALLBACK_MAX_SESSIONS:
                 return None
             bucket = {}
             self._local[session_id] = bucket
-        self._sweep_local(bucket, now)
         if client_id not in bucket and len(bucket) >= MAX_PARTICIPANTS:
             return None
         bucket[client_id] = json.loads(self._record(client_id, info, now))
@@ -241,6 +245,8 @@ class PresenceRegistry:
         if bucket is None:
             return False
         existed = bucket.pop(client_id, None) is not None
+        if not bucket:
+            self._local.pop(session_id, None)  # R2-M-3：空桶回收（有界容量不虚耗）
         return existed
 
     async def snapshot(self, session_id: str) -> List[Dict[str, Any]]:

@@ -27,6 +27,7 @@ import {
   collabApplyPresenceAction,
   collabMarkStaleRefs,
   collabPushRemoteOp,
+  collabSetStaleRefs,
 } from './store';
 import {
   bindCollabPoll,
@@ -199,7 +200,8 @@ export async function reconcileArtifactStatus(): Promise<void> {
     const stale = (data.artifacts ?? [])
       .filter((a) => a.status != null && a.status !== 'valid' && typeof a.artifactId === 'string')
       .map((a) => a.artifactId as string);
-    collabMarkStaleRefs(stale, true);
+    // R2-M-7：以投影结果整体替换（re-composed/ref 刷新后的 un-stale 也收敛）。
+    collabSetStaleRefs(stale);
   } catch (err) {
     devOnly.warn('[collab-adopt] artifact reconcile failed:', err);
   }
@@ -214,7 +216,9 @@ export function startWorkbenchCollabV6(sessionId: string): void {
   // C-2：降级/页面可见恢复时的对账兜底（正确性不依赖总线，但必须有探测路径）。
   bindCollabPoll(() => {
     void reconcileWorkbenchState();
+    void reconcileArtifactStatus(); // R2-M-7：stale 集合对账兜底
   });
+  // 初始基线由 client onopen 触发（无凭据/离线不发 fetch）。
   startCollabClient(sessionId, (event, data) => {
     if (event === 'doc') {
       // sync 回放应答（服务端发现 knownRevision 缺口时回放权威 doc）。

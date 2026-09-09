@@ -382,9 +382,8 @@ async def get_workbench_state(
     """
     from app.services.session_data import session_data_manager
 
-    invalidate = getattr(session_data_manager, "invalidate_local_cache", None)
-    if callable(invalidate):
-        invalidate(session_id)
+    # R2-M-5：meta 分支不做 L1 失效 —— get_state_field 直连 HGET 天然新鲜；
+    # 失效会把热路径 map_state 一并打穿（对账轮询的读放大防护）。
     if meta:
         get_field = getattr(session_data_manager, "get_state_field", None)
         raw_rev = (

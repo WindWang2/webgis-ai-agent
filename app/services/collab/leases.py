@@ -264,6 +264,8 @@ class LeaseRegistry:
         if record is None or record.get("client") != client_id:
             return False
         bucket.pop(key, None)
+        if not bucket:
+            self._local.pop(session_id, None)  # R2-M-3：空桶回收
         return True
 
     async def release_all(self, session_id: str, client_id: str) -> int:
@@ -273,6 +275,8 @@ class LeaseRegistry:
             if record.get("client") == client_id and record.get("lockKey"):
                 if await self.release(session_id, str(record["lockKey"]), client_id):
                     released += 1
+        if released > 0 and not self._local.get(session_id):
+            self._local.pop(session_id, None)  # R2-M-3：空桶回收
         return released
 
     async def snapshot(self, session_id: str) -> List[Dict[str, Any]]:

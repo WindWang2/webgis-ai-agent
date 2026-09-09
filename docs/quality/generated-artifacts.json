@@ -2,7 +2,7 @@
  "artifacts": {
   "docs/quality/CONTRACT_DRIFT_REPORT.md": {
    "generator": "scripts/gen_drift_report.py",
-   "input_fingerprint": "38472855e031e767c757b9171652d4c6ddcc19d4f20afaca7db67ddbe9d579cd",
+   "input_fingerprint": "e11e441d2ccbd97e479a8e9470d9ee33a249b74e9af631699ab48a3eeaf940e1",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -68,7 +68,7 @@
   },
   "docs/quality/contract-drift-report.json": {
    "generator": "scripts/gen_drift_report.py",
-   "input_fingerprint": "38472855e031e767c757b9171652d4c6ddcc19d4f20afaca7db67ddbe9d579cd",
+   "input_fingerprint": "e11e441d2ccbd97e479a8e9470d9ee33a249b74e9af631699ab48a3eeaf940e1",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
