@@ -59,6 +59,10 @@ class SubagentRole:
     # 声明式的：注入子代理任务头（[期望输出]），不改变 SubagentResult 形状。
     expected_outputs: Tuple[str, ...] = ()
     failure_behavior: str = "honest_failure_disclosed"
+    # V6（ADR-0119 D8）：预算档位 —— 可审计的预算 class（light/standard/
+    # heavy/research），token 上限由 BUDGET_CLASSES 承载；既有 tool/heavy/
+    # wall 数字仍是 role 级权威（class 上限取交集，绝不放宽既有数字）。
+    budget_class: str = "standard"
 
     #: expected_outputs 有界（V4「bounded everything」）
     _MAX_EXPECTED_OUTPUTS = 8
@@ -130,7 +134,9 @@ SUBAGENT_ROLES: Dict[str, SubagentRole] = {
         name="scientific_reviewer",
         title="科学评审：审查方法论与结果合理性",
         model_role="subagent_reviewer",
+        budget_class="light",
         max_rounds=4,
+        max_wall_time_s=120.0,
         max_tool_calls=8,
         max_heavy_tool_calls=0,
         allow_mutation=False,
@@ -355,6 +361,29 @@ def get_subagent_role(name: str) -> SubagentRole:
 # 层级预算（§32）
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# V6（ADR-0119 D8）：预算档位词表。数字是**上限交集** —— role 既有数字
+# 与 class 上限同时生效（取 min），class 只能收紧不能放宽；token 上限为
+# class 独有维度（0 = 不限）。审计面：usage() 携带 budget_class。
+# ---------------------------------------------------------------------------
+BUDGET_CLASSES: Dict[str, Dict[str, float]] = {
+    "light": {"max_tool_calls": 12, "max_heavy_tool_calls": 1,
+              "max_wall_time_s": 120.0, "max_total_tokens": 30_000},
+    "standard": {"max_tool_calls": 40, "max_heavy_tool_calls": 8,
+                 "max_wall_time_s": 300.0, "max_total_tokens": 100_000},
+    "heavy": {"max_tool_calls": 60, "max_heavy_tool_calls": 12,
+              "max_wall_time_s": 600.0, "max_total_tokens": 200_000},
+    "research": {"max_tool_calls": 40, "max_heavy_tool_calls": 4,
+                 "max_wall_time_s": 480.0, "max_total_tokens": 150_000},
+}
+
+
+def resolve_budget_class(name: str) -> Dict[str, float]:
+    """档位名 → 上限表（未知档位按 standard，诚实降级不虚构）。"""
+    return BUDGET_CLASSES.get(
+        (name or "").strip().lower(), BUDGET_CLASSES["standard"])
+
+
 @dataclass
 class SubagentBudget:
     """单次子代理运行的预算计数器（线程内使用；asyncio 单线程模型）。
@@ -369,6 +398,8 @@ class SubagentBudget:
     max_tool_calls: int
     max_heavy_tool_calls: int
     max_wall_time_s: float
+    max_total_tokens: int = 0          # 0 = 不限（V6 class 上限交集）
+    budget_class: str = "standard"
     _tool_calls: int = 0
     _heavy_calls: int = 0
     _started_at: float = field(default_factory=time.monotonic)
@@ -423,6 +454,16 @@ class SubagentBudget:
                 f"wall_time > {self.max_wall_time_s}s"
             )
 
+    def check_tokens(self) -> None:
+        """V6：token 预算闸（class 上限；usage 缺席 → 不误伤，诚实为 0）。
+        在 add_llm_usage 后由调用方检查（与 check_wall_time 同节奏）。"""
+        if self.max_total_tokens <= 0:
+            return
+        if self._total_tokens > self.max_total_tokens:
+            raise BudgetExceeded(
+                f"total_tokens {self._total_tokens} > {self.max_total_tokens}"
+            )
+
     def remaining_wall_time_s(self) -> float:
         """剩余墙钟预算（V4 §32 roll-up 用：子代理墙钟 = min(自身, 父剩余)）。"""
         return max(0.0, self.max_wall_time_s - (time.monotonic() - self._started_at))
@@ -432,6 +473,7 @@ class SubagentBudget:
             "tool_calls": self._tool_calls,
             "heavy_tool_calls": self._heavy_calls,
             "wall_time_s": round(time.monotonic() - self._started_at, 1),
+            "budget_class": self.budget_class,
             "llm_usage": {
                 "prompt_tokens": self._prompt_tokens,
                 "completion_tokens": self._completion_tokens,

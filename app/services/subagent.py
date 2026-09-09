@@ -352,10 +352,30 @@ class SubagentDispatcher:
         # review R1 minor：adhoc（无角色）子代理不再静默吃固定 40 次硬预算 ——
         # 按轮次推导（每轮多工具波余量），行为对齐既有「只有 max_rounds 约束」
         # 的基线，同时保留失控保护。
+        # V6（ADR-0119 D8）：预算档位交集 —— class 上限与 role 数字同时
+        # 生效（取 min），class 只能收紧不能放宽；token 上限为 class 独有。
+        from app.services.subagent_roles import resolve_budget_class
+
+        _bc = resolve_budget_class(
+            getattr(role_obj, "budget_class", "standard") if role_obj
+            else "standard"
+        )
         budget = SubagentBudget(
-            max_tool_calls=role_obj.max_tool_calls if role_obj else max(40, max_rounds * 6),
-            max_heavy_tool_calls=role_obj.max_heavy_tool_calls if role_obj else max(8, max_rounds * 2),
-            max_wall_time_s=role_obj.max_wall_time_s if role_obj else 300.0,
+            max_tool_calls=min(
+                role_obj.max_tool_calls if role_obj else max(40, max_rounds * 6),
+                int(_bc["max_tool_calls"]),
+            ),
+            max_heavy_tool_calls=min(
+                role_obj.max_heavy_tool_calls if role_obj else max(8, max_rounds * 2),
+                int(_bc["max_heavy_tool_calls"]),
+            ),
+            max_wall_time_s=min(
+                role_obj.max_wall_time_s if role_obj else 300.0,
+                float(_bc["max_wall_time_s"]),
+            ),
+            max_total_tokens=int(_bc["max_total_tokens"]),
+            budget_class=str(getattr(role_obj, "budget_class", "standard")
+                             if role_obj else "standard"),
         )
         _dispatch_service = getattr(sub_engine, "dispatch_service", None)
         if _dispatch_service is not None and hasattr(_dispatch_service, "dispatch"):
