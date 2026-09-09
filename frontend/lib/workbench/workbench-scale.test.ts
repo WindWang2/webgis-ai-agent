@@ -15,7 +15,7 @@ import {
   subtreeMaxDepth,
   type GroupNodeLike,
 } from './doc';
-import { diffWorkbenchDocs, type WorkbenchDelta } from './delta';
+import { diffWorkbenchDocs } from './delta';
 import type { WorkbenchDocV5 } from './doc';
 import type { Layer } from '@/lib/types/layer';
 

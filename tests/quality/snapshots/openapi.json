@@ -6904,7 +6904,7 @@
   },
   "/api/v1/chat/sessions/{session_id}/workbench/artifact-status": {
    "get": {
-    "description": "工作台 artifact/workflow 感知投影（V6 Must-have H；派生投影，零新真相）。\n\n来源（既有权威）：\n- artifact_registry（会话产物台账）：status（valid/stale/superseded/…）、\n  producer_capability/producer_node（工作流节点）、inputs（血缘边）、replaces；\n- 有界：artifacts ≤200（stale 优先，其后按 updated_at 倒序）；metadata 不透出。\n\n前端以 layer._refId == artifact_id 直接 join —— stale/updated 徽标与\n「为何变化」（inputs 血缘 + producer 节点）入口。跨浏览器刷新由总线\n``artifact`` 事件（ref_lifecycle 失效路径发布）驱动。",
+    "description": "工作台 artifact/workflow 感知投影（V6 Must-have H；派生投影，零新真相）。\n\nSEC-KG-01：经 collab service 缝（artifact_status）只读投影 —— 路由不直调\n产物注册表。字段与有界性见 ``collab/artifact_status.py``。",
     "operationId": "get_workbench_artifact_status_api_v1_chat_sessions__session_id__workbench_artifact_status_get",
     "parameters": [
      {
