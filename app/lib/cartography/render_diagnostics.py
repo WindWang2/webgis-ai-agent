@@ -307,7 +307,11 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     ),
     "raster_layer_unavailable_vector_pdf": ("app.services.publication_export",),
     "pdf_font_fallback": ("app.services.publication_export",),
-    "vector_pdf_unavailable": ("app.services.publication_export",),
+    # vector_pdf_unavailable 的发射器是导出路由（503 结构化错误回退提示）
+    "vector_pdf_unavailable": (
+        "app.services.publication_export",
+        "app.api.routes.map",
+    ),
 }
 
 

@@ -1493,9 +1493,19 @@
       "message": "图例条目较多：live 界面仅显示前 8 条，导出件绘制全部条目"
     },
     {
+      "code": "pdf_font_fallback",
+      "severity": "info",
+      "message": "PDF 文本使用回退字体渲染（未找到首选 CJK 字体）"
+    },
+    {
       "code": "pdf_text_rasterized_cjk",
       "severity": "info",
       "message": "PDF 含中文文本，以位图形式嵌入（未内嵌 CJK 字体）"
+    },
+    {
+      "code": "raster_layer_unavailable_vector_pdf",
+      "severity": "warning",
+      "message": "栅格/瓦片图层无法以矢量形式进入 PDF，已在导出件中省略（layer: {detail}）"
     },
     {
       "code": "small_multiple_panel_skipped",
@@ -1511,6 +1521,11 @@
       "code": "terrain_3d_scale_caveat",
       "severity": "info",
       "message": "3D 地形/倾斜视角下比例尺按平面口径计算，可能与视觉距离不符"
+    },
+    {
+      "code": "vector_pdf_unavailable",
+      "severity": "warning",
+      "message": "服务端矢量 PDF 引擎不可用，已回退栅格导出"
     },
     {
       "code": "vector_svg_fallback_raster",
