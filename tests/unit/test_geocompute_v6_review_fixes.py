@@ -149,10 +149,15 @@ class TestB1LifespanWiring:
 
         from app.core.auth import create_access_token
         from app.core.database import SessionLocal as _GlobalSession
-        from app.models.db_model import User
+        from app.models.db_model import Organization, User
 
         gdb = _GlobalSession()
         try:
+            # Postgres（CI）强制 users.org_id → organizations.id 外键；
+            # sqlite（本地）不强制 —— 先落 org 1，两个环境判定一致
+            # （与 routes 测试 / test_zero_review_authz 的 org seed 惯例相同）。
+            if gdb.get(Organization, 1) is None:
+                gdb.add(Organization(id=1, name="gc-v6", slug="gc-v6-org"))
             if gdb.get(User, "gc-v6-user") is None:
                 gdb.add(User(
                     id="gc-v6-user", username="gc-v6-user",

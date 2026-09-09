@@ -57,10 +57,16 @@ def v6_env(tmp_path, monkeypatch):
     from datetime import datetime, timezone
 
     from app.core.database import SessionLocal
-    from app.models.db_model import User
+    from app.models.db_model import Organization, User
 
     db = SessionLocal()
     try:
+        # Postgres（CI）强制 users.org_id → organizations.id 外键；sqlite
+        # （本地）不强制 —— 先落 org 1 让两个环境判定一致（与
+        # test_zero_review_authz / test_reproducible_gis_runtime 的 org
+        # seed 惯例相同）。slug 用专属词表避免与全局库其他 org 行撞唯一键。
+        if db.get(Organization, 1) is None:
+            db.add(Organization(id=1, name="gc-v6", slug="gc-v6-org"))
         for uid, uname, role in (
             ("gc-v6-user", "gc-v6-user", "editor"),
             ("gc-v6-admin", "gc-v6-admin", "admin"),
