@@ -17,10 +17,10 @@
 | `density.analytical.mixed` | — | approximate | — | — | — | — | high/medium | CELERY |
 | `interpolation.block_kriging` | 块离散化 2×2 + OK 系统（−γ̄(B,B) 修正） | approximate | 24B/feat pairs≤200000 feat≤500000 | numpy_block_discretized(numpy,[8,500000]) | chunk_boundary | rtol=0.001,atol=1e-09 | high/high | CELERY |
 | `interpolation.cokriging` | 协同定位系统 O(m·(k+2)³)（MM1 近似） | approximate | 24B/feat pairs≤200000 feat≤500000 | numpy_mm1_collocated(numpy,[8,500000]) | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
-| `interpolation.cokriging_lmc` | 逐目标 (k1+k2+2)³ 系统求解 + LMC 拟合 O(N_fit²) | exact | 32B/feat feat≤500000 | — | chunk_boundary | rtol=1e-09,atol=0 | high/high | CELERY |
+| `interpolation.cokriging_lmc` | 逐目标 (k1+k2+2)³ 系统求解 + LMC 拟合 O(N_fit²) | exact | 32B/feat feat≤500000 | numpy_lmc_exact(numpy,[8,500000],exact) | chunk_boundary | rtol=1e-09,atol=0 | high/high | CELERY |
 | `interpolation.dasymetric` | — | — | 128B/feat | — | none | rtol=1e-06,atol=1e-06 | medium/medium | THREAD |
 | `interpolation.directional_variogram` | O(pair_budget)（入口确定性分层抽稀 ≤2000 + 行步幅 20 万对上限） | — | pairs≤200000 feat≤2000 | — | chunk_boundary | rtol=1e-09,atol=0 | medium/low | INLINE |
-| `interpolation.external_drift_kriging` | 同 UK：拟合 O(N_fit²) + 预测 O(m·(k+3)³)（漂移约束 ×2 乘子） | exact | 32B/feat pairs≤200000 feat≤500000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
+| `interpolation.external_drift_kriging` | 同 UK：拟合 O(N_fit²) + 预测 O(m·(k+3)³)（漂移约束 ×2 乘子） | exact | 32B/feat pairs≤200000 feat≤500000 | numpy_batched_drift(numpy,[8,500000],exact) | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
 | `interpolation.idw` | O(n log n + m·k)（cKDTree 邻域 k=5） | — | 24B/feat cells≤1500000 | numpy_full_samples(numpy,[1,200000]) | coarse | rtol=1e-06,atol=1e-09 | high/high | CELERY |
 | `interpolation.indicator_kriging` | T × OK（T=阈值数 ≤20；概率面 T×H×W 内存线性放大） | exact | 24B/feat pairs≤200000 feat≤500000 | numpy_per_threshold_ok(numpy,[8,500000]) | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
 | `interpolation.kriging` | 拟合 O(N_fit²)（N_fit≤2000）+ 预测 O(m·(k+1)³)（k≤24, chunk 1024） | exact | 24B/feat pairs≤200000 feat≤500000 | numpy_batched(numpy,[8,100000],exact);scipy_linalg(scipy,[100001,500000],exact) | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
@@ -29,9 +29,9 @@
 | `interpolation.nearest_neighbor` | O(n log n + m)（cKDTree k=1 分段常值场） | exact | 8B/cell feat≤200000 cells≤4000000 | — | coarse | rtol=1e-12,atol=0 | low/medium | CELERY |
 | `interpolation.rbf` | O(n³) 系统分解 + O(m·n) 求值（RBF_HARD_CAP 类型化拒绝） | exact | 8B/feat feat≤100000 | numpy_dense_exact_solve(numpy,[3,100000]) | none | rtol=1e-06,atol=1e-09 | high/high | CELERY |
 | `interpolation.regression_kriging` | OLS 趋势 + 残差 OK + 协变量 IDW 近似（目标栅格通道） | approximate | 24B/feat pairs≤200000 feat≤500000 | numpy_reg_kriging(numpy,[8,500000]) | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
-| `interpolation.sgs` | O(R·N·k³)（R=实现数、N=格点、k≤24；R×N 预算硬顶 2000 万） | sampling | 8B/cell feat≤200000 cells≤20000000 | — | chunk_boundary | rtol=1e-09,atol=0 | high/high | CELERY |
-| `interpolation.simple_kriging` | 同 OK：拟合 O(N_fit²) + 预测 O(m·(k+1)³)（协方差形式，无约束行） | exact | 24B/feat pairs≤200000 feat≤500000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
-| `interpolation.st_kriging` | 逐目标 (k+1)³ 时空系统 + 空间 cKDTree × 时间窗邻域 | exact | 40B/feat feat≤300000 | — | chunk_boundary | rtol=1e-09,atol=0 | high/high | CELERY |
+| `interpolation.sgs` | O(R·N·k³)（R=实现数、N=格点、k≤24；R×N 预算硬顶 2000 万） | sampling | 8B/cell feat≤200000 cells≤20000000 | numpy_sequential(numpy,[8,200000],approximate) | chunk_boundary | rtol=1e-09,atol=0 | high/high | CELERY |
+| `interpolation.simple_kriging` | 同 OK：拟合 O(N_fit²) + 预测 O(m·(k+1)³)（协方差形式，无约束行） | exact | 24B/feat pairs≤200000 feat≤500000 | numpy_batched(numpy,[8,500000],exact) | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
+| `interpolation.st_kriging` | 逐目标 (k+1)³ 时空系统 + 空间 cKDTree × 时间窗邻域 | exact | 40B/feat feat≤300000 | numpy_st_windowed(numpy,[12,300000],exact) | chunk_boundary | rtol=1e-09,atol=0 | high/high | CELERY |
 | `interpolation.tin` | Delaunay O(n log n) + 逐格重心定位（>20 万样本类型化拒绝） | exact | 32B/feat feat≤200000 | — | none | rtol=1e-09,atol=0 | medium/medium | CELERY |
 | `interpolation.trend_surface` | O(n·d²)（单位盒缩放 OLS，d=多项式项数） | exact | 64B/feat | — | none | rtol=1e-09,atol=1e-12 | low/low | INLINE |
 | `interpolation.universal_kriging` | OLS 趋势 O(n·d²) + 残差 OK（同 kriging 窗口） | exact | 24B/feat pairs≤200000 feat≤500000 | numpy_kriging_with_trend(numpy,[12,500000]) | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
@@ -79,14 +79,14 @@
 | `stats.st_dbscan` | — | — | — | — | — | — | high/medium | THREAD |
 | `temporal.hotspot` | — | — | — | — | — | — | high/medium | THREAD |
 | `terrain.aspect` | — | — | 40B/cell | numpy_horn_gradient(numpy,[1,25000000]) | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
-| `terrain.breach` | O(N log N)（priority-flood ×2 + 逐洼地路径切沟） | approximate | 32B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-09,atol=0 | medium/high | — |
+| `terrain.breach` | O(N log N)（priority-flood ×2 + 逐洼地路径切沟） | approximate | 32B/cell cells≤50000000 | numpy_priority_flood(numpy,[1,50000000],approximate) | chunk_boundary | rtol=1e-09,atol=0 | medium/high | — |
 | `terrain.contours` | — | — | 16B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
 | `terrain.curvature` | — | — | 48B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.dinf_flow` | O(N log N) | — | 40B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.flow` | — | — | 48B/cell | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
 | `terrain.flow_length` | O(N log N) | — | 32B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.geomorphons` | — | — | 24B/cell cells≤50000000 | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
-| `terrain.hand` | O(N log N)（fill + d8 + accum + 单遍逆拓扑） | exact | 40B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-12,atol=0 | medium/high | — |
+| `terrain.hand` | O(N log N)（fill + d8 + accum + 单遍逆拓扑） | exact | 40B/cell cells≤50000000 | numpy_d8_accum(numpy,[1,50000000],approximate) | chunk_boundary | rtol=1e-12,atol=0 | medium/high | — |
 | `terrain.hillshade` | — | — | 40B/cell | numpy_hillshade(numpy,[1,25000000]) | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
 | `terrain.hillshade_multi` | — | — | 56B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.horizon_angle` | — | — | 24B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
