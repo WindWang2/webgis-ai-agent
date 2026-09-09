@@ -119,6 +119,11 @@ def upgrade() -> None:
             op.create_index(
                 _GIN_INDEX, _TABLE, ["tags_json"], postgresql_using="gin",
             )
+    elif not _index_exists(_TABLE, _GIN_INDEX):
+        # SQLite 等方言：普通索引占位同名（JSON 列 B-tree 无 GIN 语义，
+        # 仅满足模型↔迁移漂移守卫的列元组比对 —— 查询侧 tags 过滤本就
+        # 退化为有界行集内存过滤）。
+        op.create_index(_GIN_INDEX, _TABLE, ["tags_json"])
 
 
 def downgrade() -> None:
