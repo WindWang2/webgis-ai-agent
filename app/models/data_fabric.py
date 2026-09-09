@@ -126,6 +126,54 @@ class DatasetStatisticsRecord(Base):
     )
 
 
+class SourceFactsRecordModel(Base):
+    """V7 SourceFacts 持久行（advisory，ADR-0119 W4）。
+
+    与 ``dataset_statistics`` 的差异：**scope 进行**（scope_key + profile_id）
+    —— 跨租户事实互不可见互不混写；payload 是完整 SourceFactsRecord
+    （含 provenance/采样标注）。仍是性能提示不是正确性真相，fail-open。
+    """
+
+    __tablename__ = "data_fabric_source_facts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scope_key = Column(String(128), nullable=False)
+    dataset_fingerprint = Column(String(64), nullable=False)
+    profile_id = Column(String(64), nullable=True)
+    collector = Column(String(32), nullable=False, default="descriptor")
+    facts_json = Column(JSON, nullable=False, default=dict)
+    collected_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_df_source_facts_scope_fp", "scope_key", "dataset_fingerprint", "collected_at"),
+    )
+
+
+class FederatedFeedbackModel(Base):
+    """V7 分布式执行反馈持久行（advisory，ADR-0119 W11）。
+
+    每行 = 一次链执行的 per-source 观测（行数/字节/时延/错误类/限流），
+    scope 进行；进程内衰减中位数 + durable 样本双读。绝不含 secret。
+    """
+
+    __tablename__ = "data_fabric_federated_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    plan_hash = Column(String(64), nullable=False)
+    scope_key = Column(String(128), nullable=False)
+    engine = Column(String(8), nullable=False, default="v6")
+    outcome = Column(String(16), nullable=False, default="ok")
+    payload_json = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_df_feedback_scope_plan", "scope_key", "plan_hash", "created_at"),
+        Index("idx_df_feedback_created", "created_at"),
+    )
+
+
 # Aliases for backwards compatibility
 DataSourceModel = DataSource
 CatalogItemModel = DataFabricDataset
@@ -141,4 +189,6 @@ __all__ = [
     "CatalogItemModel",
     "MaterializationModel",
     "DatasetStatisticsRecord",
+    "SourceFactsRecordModel",
+    "FederatedFeedbackModel",
 ]
