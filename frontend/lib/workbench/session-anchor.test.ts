@@ -123,7 +123,8 @@ describe('flushWorkbenchDoc（W11 pagehide 冲刷）', () => {
       expect(commitSpy).toHaveBeenCalledTimes(1);
     });
     const body = commitSpy.mock.calls[0][0] as { intent: string };
-    expect(body.intent).toBe('patch_workbench_state');
+    // V6：冲刷同样走 delta 优先通道（flush 只是不等防抖窗口，不改提交语义）
+    expect(body.intent).toBe('patch_workbench_delta');
   });
 
   it('R4b: 无脏变更时 flush 不提交', () => {

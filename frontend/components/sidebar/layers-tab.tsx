@@ -38,6 +38,7 @@ import {
 } from '@/lib/layers/filter-evidence';
 import { LAYER_STATUS_LABELS, type LayerStatus } from '@/lib/layers/layer-status';
 import { projectWorkspace, semanticGroupLabel, type WorkspaceRow, type WorkspaceSection } from '@/lib/layers/workspace-projection';
+import { CollabBar, useCollabState } from './workbench-collab';
 import {
   isolateLayerAndCommit,
   clearIsolateAndCommit,
@@ -164,6 +165,7 @@ const LayerRowMemo = React.memo(
     && prev.isolated === next.isolated
     && prev.status === next.status
     && prev.filterBadge === next.filterBadge
+    && prev.stale === next.stale
     && prev.styleClipboard === next.styleClipboard,
 );
 
@@ -176,6 +178,11 @@ function GroupHeader({
   onDropOnGroup,
   onDragOverGroup,
   isDropTarget,
+  onGroupDragStart,
+  onGroupDrop,
+  onGroupIndent,
+  isGroupDragActive,
+  draggedGroupId,
 }: {
   section: WorkspaceSection;
   isUserGroup: boolean;
@@ -183,6 +190,12 @@ function GroupHeader({
   onDropOnGroup: (groupId: string | null) => void;
   onDragOverGroup: (groupId: string | null) => void;
   isDropTarget: boolean;
+  /** V6（W15）：组 reparent —— 拖组头到另一组（或根区）+ 键盘等价操作。 */
+  onGroupDragStart: (groupId: string) => void;
+  onGroupDrop: (targetGroupId: string | null) => void;
+  onGroupIndent: (groupId: string, indent: boolean) => void;
+  isGroupDragActive: boolean;
+  draggedGroupId: string | null;
 }) {
   const toggleGroupCollapsed = useHudStore((s) => s.toggleGroupCollapsed);
   const renameLayerGroup = useHudStore((s) => s.renameLayerGroup);
@@ -224,11 +237,13 @@ function GroupHeader({
       className={clsx(
         'flex items-center gap-1 px-panel py-1',
         isDropTarget && 'bg-surface-selected outline outline-1 outline-dashed outline-status-accent-border',
+        draggedGroupId != null && draggedGroupId !== section.id && isUserGroup
+          && 'outline outline-1 outline-dashed outline-status-accent-border',
       )}
       style={section.depth > 0 ? { paddingLeft: `${12 + section.depth * 14}px` } : undefined}
       data-testid={`group-header-${section.id ?? section.name}`}
       onDragOver={(e) => {
-        if (isUserGroup || section.id === null) {
+        if (isUserGroup || section.id === null || isGroupDragActive) {
           e.preventDefault();
           onDragOverGroup(section.id);
         }
@@ -237,6 +252,11 @@ function GroupHeader({
         if (!isUserGroup && section.id !== null) return;
         e.preventDefault();
         e.stopPropagation();
+        // V6：组拖到组头 = reparent；否则按图层移组处理。
+        if (isGroupDragActive) {
+          onGroupDrop(section.id);
+          return;
+        }
         onDropOnGroup(section.id);
       }}
     >
@@ -245,6 +265,24 @@ function GroupHeader({
           type="button"
           aria-label={`${section.collapsed ? '展开' : '折叠'}分组 ${section.name}`}
           aria-expanded={!section.collapsed}
+          draggable
+          onDragStart={(e) => {
+            if (!section.id) return;
+            e.dataTransfer.setData('application/x-wb-group', section.id);
+            onGroupDragStart(section.id);
+          }}
+          onKeyDown={(e) => {
+            if (!section.id) return;
+            // V6（W15）：键盘 reparent 等价 —— Shift+← 提升一级（根 = 顶级），
+            // Shift+→ 降级到上一个同级组之下（守卫由 canReparentGroup 执行）。
+            if (e.shiftKey && e.key === 'ArrowLeft') {
+              e.preventDefault();
+              onGroupIndent(section.id, false);
+            } else if (e.shiftKey && e.key === 'ArrowRight') {
+              e.preventDefault();
+              onGroupIndent(section.id, true);
+            }
+          }}
           className="flex h-control-sm w-control-sm items-center justify-center rounded-xs text-ink-muted hover:bg-surface-hover hover:text-ink"
           onClick={() => {
             // R2-M6：折叠/展开是轻量展示态切换且高频 —— 只入 journal，
@@ -361,6 +399,7 @@ function LayerRow({
   isolated,
   status,
   filterBadge,
+  stale,
   onDragStart,
   onDragOverRow,
   onDropOnRow,
@@ -377,6 +416,8 @@ function LayerRow({
   isolated: boolean;
   status?: LayerStatus;
   filterBadge?: FilterBadgeView;
+  /** V6：ref 已 stale（上游变更）—— 显式徽标 + 为何变化 title。 */
+  stale?: boolean;
   onDragStart: (id: string) => void;
   onDragOverRow: (e: React.DragEvent, id: string) => void;
   onDropOnRow: (e: React.DragEvent, id: string) => void;
@@ -508,6 +549,17 @@ function LayerRow({
         {/* 状态徽标：ready 是健康常态，不占行宽；其余六态一望即知。 */}
         {status && status !== 'ready' && (
           <StatusBadge status={status} label={LAYER_STATUS_LABELS[status]} />
+        )}
+
+        {/* V6：stale 徽标（上游数据变更 → 产物过期；点击 title 说明为何）。 */}
+        {stale && (
+          <span
+            className="shrink-0 rounded-xs bg-status-warn-soft px-1 text-micro text-status-warn"
+            title="上游数据已变更，此图层的产物已过期 —— 重新运行分析可刷新"
+            data-testid={`stale-badge-${layer.id}`}
+          >
+            已过期
+          </span>
         )}
 
         {/* Runtime V4（§14）：过滤命中证据徽标。 */}
@@ -878,6 +930,9 @@ export function LayersTab() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [overGroupId, setOverGroupId] = useState<string | 'semantic' | null>(null);
+  // V6（W15）：组 reparent 拖拽状态。
+  const [dragGroupId, setDragGroupId] = useState<string | null>(null);
+  const moveLayerGroup = useHudStore((s) => s.moveLayerGroup);
 
   const projection = useMemo(
     () => projectWorkspace({
@@ -897,6 +952,16 @@ export function LayersTab() {
   );
   const statusMap = useLayerStatuses(layers);
   const filterBadgeMap = useFilterEvidenceBadges(layers);
+  // Workbench V6：stale 徽标（artifact 投影 + 总线事件合并；_refId join）。
+  const collab = useCollabState();
+  const staleRefIds = collab.staleRefIds;
+  const staleMap = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    for (const l of layers) {
+      if (l._refId && staleRefIds.has(l._refId)) map[l.id] = true;
+    }
+    return map;
+  }, [layers, staleRefIds]);
 
   // B10 边角：图层删除后清理残留的拖拽/搜索无关状态（锁定选择由调用方语义决定）。
   useEffect(() => {
@@ -916,6 +981,54 @@ export function LayersTab() {
   const visibleCount = useMemo(() => layers.filter((l) => l.visible).length, [layers]);
 
   const handleDragStart = useCallback((id: string) => setDragId(id), []);
+
+  // ── V6（W15）：组 reparent（拖拽 + 键盘等价；守卫 = canReparentGroup）──
+  const handleGroupDragStart = useCallback((groupId: string) => setDragGroupId(groupId), []);
+  const handleGroupDrop = useCallback(
+    (targetGroupId: string | null) => {
+      setOverGroupId(null);
+      const gid = dragGroupId;
+      setDragGroupId(null);
+      if (gid == null || gid === targetGroupId) return;
+      const target = useHudStore.getState().layerGroups.find((g) => g.id === gid);
+      if (target != null && target.parentId === targetGroupId) return; // 无变化 no-op
+      withDocUndo(
+        targetGroupId == null
+          ? `提升分组 ${target?.name ?? gid} 为顶级`
+          : `移动分组 ${target?.name ?? gid} 到 ${useHudStore.getState().layerGroups.find((g) => g.id === targetGroupId)?.name ?? '目标'} 之下`,
+        'user',
+        () => {
+          moveLayerGroup(gid, targetGroupId);
+        },
+      );
+    },
+    [dragGroupId, moveLayerGroup],
+  );
+  const handleGroupIndent = useCallback(
+    (groupId: string, indent: boolean) => {
+      const groups = useHudStore.getState().layerGroups;
+      const current = groups.find((g) => g.id === groupId);
+      if (current == null) return;
+      if (!indent) {
+        // 提升一级：父的父（null = 顶级）。
+        const grandparentId = current.parentId
+          ? groups.find((g) => g.id === current.parentId)?.parentId ?? null
+          : null;
+        if (current.parentId === grandparentId) return;
+        withDocUndo(`提升分组 ${current.name}`, 'user', () => moveLayerGroup(groupId, grandparentId));
+        return;
+      }
+      // 降级：挂到同父列表中前一个同级组之下。
+      const siblings = groups.filter((g) => g.parentId === current.parentId);
+      const idx = siblings.findIndex((g) => g.id === groupId);
+      if (idx <= 0) return; // 无前一个同级 → no-op（不静默：title 已说明）
+      const prevSibling = siblings[idx - 1];
+      withDocUndo(`嵌套分组 ${current.name} 到 ${prevSibling.name}`, 'user', () =>
+        moveLayerGroup(groupId, prevSibling.id),
+      );
+    },
+    [moveLayerGroup],
+  );
 
   const handleDragOverRow = useCallback((e: React.DragEvent, id: string) => {
     e.preventDefault();
@@ -1038,9 +1151,14 @@ export function LayersTab() {
           section={tr.section}
           isUserGroup={tr.isUserGroup}
           layerCount={tr.section.rows.length}
-          isDropTarget={overGroupId === (tr.section.id ?? 'semantic') && dragId != null}
+          isDropTarget={(overGroupId === (tr.section.id ?? 'semantic')) && (dragId != null || dragGroupId != null)}
           onDropOnGroup={handleDropOnGroup}
           onDragOverGroup={handleDragOverGroup}
+          onGroupDragStart={handleGroupDragStart}
+          onGroupDrop={handleGroupDrop}
+          onGroupIndent={handleGroupIndent}
+          isGroupDragActive={dragGroupId != null}
+          draggedGroupId={dragGroupId}
         />
       );
     }
@@ -1055,6 +1173,7 @@ export function LayersTab() {
           isolated={isolatedLayerId === tr.row.layer.id}
           status={statusMap[tr.row.layer.id]}
           filterBadge={filterBadgeMap[tr.row.layer.id]}
+          stale={staleMap[tr.row.layer.id] === true}
           onDragStart={handleDragStart}
           onDragOverRow={handleDragOverRow}
           onDropOnRow={handleDropOnRow}
@@ -1070,7 +1189,7 @@ export function LayersTab() {
         {tr.emptyBySearch ? '无匹配图层' : '空分组 —— 拖入或选择图层移入'}
       </div>
     );
-  }, [overGroupId, dragId, handleDropOnGroup, handleDragOverGroup, indexById, layers.length, overId, isolatedLayerId, statusMap, filterBadgeMap, handleDragStart, handleDragOverRow, handleDropOnRow, handleDragEnd, moveLayer, styleClipboard]);
+  }, [overGroupId, dragId, dragGroupId, handleDropOnGroup, handleDragOverGroup, handleGroupDragStart, handleGroupDrop, handleGroupIndent, indexById, layers.length, overId, isolatedLayerId, statusMap, filterBadgeMap, staleMap, handleDragStart, handleDragOverRow, handleDropOnRow, handleDragEnd, moveLayer, styleClipboard]);
 
   return (
     <div className="flex flex-col h-full">
@@ -1122,6 +1241,9 @@ export function LayersTab() {
           onClick={undoRedo.redo}
         />
       </div>
+
+      {/* Workbench V6：协作状态条（presence/降级/冲突显式披露） */}
+      <CollabBar />
 
       {/* 批量操作条（有选择时出现） */}
       {selectedLayerIds.length > 0 && <BatchActionBar scopeIds={selectedLayerIds} />}

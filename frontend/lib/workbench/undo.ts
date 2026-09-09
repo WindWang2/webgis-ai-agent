@@ -16,6 +16,12 @@ import type { OpLogEntry } from '@/lib/store/hud-types';
 import { getMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 import { buildWorkbenchDoc } from '@/lib/store/slices/workbenchSlice';
 import type { WorkbenchDocV5 } from './doc';
+import {
+  applyWorkbenchDelta,
+  diffWorkbenchDocs,
+  invertWorkbenchDelta,
+  type WorkbenchDelta,
+} from './delta';
 import { devOnly } from '@/lib/utils/logger';
 
 export const UNDO_MAX_HISTORY = 50;
@@ -166,10 +172,11 @@ export function clearUndoHistory(): void {
 /* ─── 命令构造器（capture-before-execute）─────────────────────────────── */
 
 /**
- * 组织态命令（分组树/成员/锁）：inverse = 水合先前切片。
- * R1-M2：不含 mode —— 模式切换有自己的协调入口（setWorkbenchMode 联动
- * activeLeftTab）且不应被组织态撤销静默回退；mode 的持久化随下一次
- * 组织态提交的 doc 快照自然收敛。
+ * 组织态命令（分组树/成员/锁）：undo/redo = **inverse/forward delta 重放**
+ * （V6 / R1-M3+M5）。V5 的整表快照回写在并发下会覆盖他人在窗口期的编辑
+ * （no whole-table rollback 违例）；delta 反演只回退本命令触碰的字段，
+ * 与远端提交经同一 CAS 串行链收敛。
+ * R1-M2：不含 mode —— 模式切换有自己的协调入口且不应被组织态撤销静默回退。
  */
 export function docCommand(
   label: string,
@@ -177,22 +184,40 @@ export function docCommand(
   before: WorkbenchDocV5,
   after: WorkbenchDocV5,
 ): void {
+  const forwardDelta = diffWorkbenchDocs(before, after);
+  if (forwardDelta == null) return; // 无组织态差异（mode-only）→ 不入栈
+  let inverseDelta: WorkbenchDelta;
+  try {
+    inverseDelta = invertWorkbenchDelta(forwardDelta, before);
+  } catch {
+    // 反演不可构造（理论不应发生：delta 域闭包）→ journal-only 并披露。
+    journalOnly({ type: 'group', label, actor, detail: 'irreversible (invert failed)' });
+    return;
+  }
   recordCommand({
     label,
     kind: 'group',
     actor,
     layerIds: [],
-    undo: () => applyDocSlices(before),
-    redo: () => applyDocSlices(after),
+    undo: () => void replayWorkbenchDelta(inverseDelta, label),
+    redo: () => void replayWorkbenchDelta(forwardDelta, label),
   });
 }
 
-function applyDocSlices(doc: WorkbenchDocV5): void {
-  useHudStore.setState({
-    layerGroups: doc.groups.map((g) => ({ ...g })),
-    layerGroupMembership: { ...doc.membership },
-    lockedLayerIds: [...doc.lockedLayerIds],
-  });
+/** delta 重放：应用到当前 store 组织态 → 既有持久化订阅自动经 CAS 通道提交。 */
+function replayWorkbenchDelta(delta: WorkbenchDelta, label: string): void {
+  try {
+    const current = buildWorkbenchDoc(useHudStore.getState());
+    const next = applyWorkbenchDelta(current, delta);
+    useHudStore.setState({
+      layerGroups: next.groups.map((g) => ({ ...g })),
+      layerGroupMembership: { ...next.membership },
+      lockedLayerIds: [...next.lockedLayerIds],
+    });
+  } catch (err) {
+    // 重放非法（并发下引用漂移）：journal 留痕，不产生半更新。
+    devOnly.warn('[undo] delta replay skipped:', label, err);
+  }
 }
 
 function currentDoc(): WorkbenchDocV5 {
