@@ -212,3 +212,28 @@ def test_stale_plan_rejected_when_state_changed(gc_env):
     assert orphan not in plan2["candidates"]
     assert publish_virtual_result["data_object_id"] not in plan2["candidates"]
     execute_gc(plan2)
+
+
+def test_gc_plan_works_on_s3_backend(gc_env, monkeypatch):
+    """R1-1 回归：S3 后端（epoch 归一化 LastModified）的 GC plan 不崩。"""
+    import app.services.lakehouse.lakehouse_gc as gc_mod
+    from app.services.lakehouse.data_object import (
+        normalize_owner_scope,
+        publish_data_object,
+    )
+    from app.services.lakehouse.lakehouse_gc import plan_gc
+    from app.services.s3_blob_store import S3BlobStore
+    from tests.data.test_s3_streaming_v7 import FakeS3V7
+
+    fake = FakeS3V7()
+    store = S3BlobStore("gc-bucket", lambda: fake)
+    monkeypatch.setattr(gc_mod, "_object_store", lambda: store)
+    publish_data_object(
+        {"data.bin": b"x"}, kind="cog_raster",
+        owner_scope=normalize_owner_scope(session_id="sess-gc"),
+        store=store,
+    )
+    plan = plan_gc(grace_hours=0.0)
+    assert "candidates" in plan
+    assert isinstance(plan["watermark"], float)
+    assert plan["scanned_manifests"] == 1

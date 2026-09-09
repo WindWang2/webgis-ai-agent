@@ -210,8 +210,8 @@ def test_upload_part_permanent_failure_aborts_cleanly():
 
 def test_put_blob_from_path_streams_with_metadata_digest(tmp_path):
     store, fake = _store()
-    key = "e" * 64
     payload = b"z" * (8 * 1024 * 1024) + b"tail"
+    key = hashlib.sha256(payload).hexdigest()  # 内容寻址键（R1-16 守卫））
     src = tmp_path / "big.bin"
     src.write_bytes(payload)
     result = store.put_blob_from_path(key, src)

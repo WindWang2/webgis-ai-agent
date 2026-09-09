@@ -84,6 +84,15 @@ def _require_session_id(session_id: Optional[str]) -> str:
     return session_id
 
 
+def _require_admin(user: Optional[dict]) -> None:
+    """admin 角色门禁（GC 等全局破坏性面专用；未认证/非 admin → 403，
+    不区分"未登录"与"权限不足"以外的细节）。"""
+    if not user or str(user.get("role") or "") != "admin":
+        raise HTTPException(
+            status_code=403, detail="operator admin role required",
+        )
+
+
 def _reject_project_scope(project_id: Optional[str]) -> None:
     if project_id:
         raise HTTPException(
@@ -271,7 +280,18 @@ async def verify_lakehouse_object(
     manifest = await asyncio.to_thread(resolve_data_object, data_object_id)
     if manifest is None or not owner_scope_allows(manifest, session_id=session_id):
         raise HTTPException(status_code=404, detail="data object not found")
-    state = await asyncio.to_thread(verify_data_object, data_object_id)
+    # virtual 对象走深度校验（递归 children —— R1-7：普通校验对零 blob
+    # 的 virtual 恒 verified 假绿）。
+    if manifest.get("kind") == "virtual":
+        from app.services.lakehouse.virtual_object import (
+            verify_data_object_deep,
+        )
+
+        state = await asyncio.to_thread(
+            verify_data_object_deep, data_object_id
+        )
+    else:
+        state = await asyncio.to_thread(verify_data_object, data_object_id)
     return {"success": True, "data_object_id": data_object_id, "state": state}
 
 # ── V7（ADR-0119）：遥感 cube / labeled 窗口 / 发布 / catalog / GC ──────
@@ -592,7 +612,13 @@ async def plan_lakehouse_gc(
     owner_token: Optional[str] = Depends(get_owner_token),
     db=Depends(get_async_db),
 ) -> Dict[str, Any]:
-    """GC dry-run 计划（只读；plan token + 确定性候选清单）。"""
+    """GC dry-run 计划（只读；plan token + 确定性候选清单）。
+
+    **admin 专用**（评审 R1-2）：GC 作用于全局对象存储与全局 DB 根，
+    会话所有权不足以授权 —— 任何租户可借此删除宽限外的他人对象、
+    plan 响应也会枚举全局孤儿 id（跨租户泄漏）。
+    """
+    _require_admin(_user)
     _ = await verify_session_owner(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
@@ -617,7 +643,11 @@ async def execute_lakehouse_gc(
     owner_token: Optional[str] = Depends(get_owner_token),
     db=Depends(get_async_db),
 ) -> Dict[str, Any]:
-    """执行 GC 计划（token 重验；漂移 → 409 语义 typed 拒绝）。"""
+    """执行 GC 计划（admin 专用 —— 同 plan 的跨租户理由；R1-2）。
+
+    token 重验；漂移 → 409 语义 typed 拒绝。
+    """
+    _require_admin(_user)
     _ = await verify_session_owner(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
@@ -666,3 +696,39 @@ async def get_lakehouse_object_lineage(
     view = await asyncio.to_thread(object_lineage, data_object_id)
     view["success"] = True
     return view
+
+@router.get("/lakehouse/projects/{project_id}/objects/{object_id}")
+async def get_project_lakehouse_object(
+    project_id: str,
+    object_id: str,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db=Depends(get_async_db),
+) -> Dict[str, Any]:
+    """项目域 DataObject 解析（R1-8/R0-9）：catalog ``status=active`` 行
+    授权读取 session 出身的 manifest；无授权行 → 404（不泄漏存在性）。
+    project owner 校验与 publish 同族。"""
+    from sqlalchemy import select
+
+    from app.models.project import Project
+
+    actor = _user.get("user_id")
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
+    if project is None or (
+        actor is not None and str(project.owner_id) != str(actor)
+    ):
+        raise HTTPException(status_code=404, detail="project not found")
+    from app.services.lakehouse.project_publish import resolve_project_object
+
+    resolved = await resolve_project_object(
+        db, project_id=project_id, object_id=object_id,
+    )
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="data object not found")
+    if resolved.get("manifest") is None:
+        raise HTTPException(
+            status_code=410, detail="data object manifest no longer resolvable",
+        )
+    return {"success": True, **resolved}

@@ -246,3 +246,39 @@ async def test_project_scoped_resolve_and_revoke(owned_object):
         ) is None
         # 字节仍在（撤销 ≠ 删除 —— 内容真相只在 BlobStore）。
         assert resolve_data_object(oid) is not None
+
+
+@pytest.mark.asyncio
+async def test_revision_location_roundtrips_through_blobstore(owned_object):
+    """R1-5 回归：revision 行指向真实 manifest blob（键=位置=digest 自洽，
+    经 BlobStore 读回校验通过 —— 恢复/GC 引用计数因此有效）。"""
+    from app.core.database import AsyncSessionLocal, SessionLocal
+    from app.models.project import ArtifactRevision
+    from app.services.durable_blob_store import reset_filesystem_blob_store
+    from app.services.lakehouse.project_publish import publish_to_project
+
+    project_id = owned_object["db_env"]["project_id"]
+    oid = owned_object["object_id"]
+    async with AsyncSessionLocal() as db:
+        await publish_to_project(
+            db, session_id=OWNED_SESSION, project_id=project_id,
+            object_ids=[oid], actor_id=ACTOR,
+        )
+    reset_filesystem_blob_store()
+    try:
+        with SessionLocal() as s:
+            revision = s.execute(
+                select(ArtifactRevision).where(
+                    ArtifactRevision.content_sha256 == oid
+                )
+            ).scalar_one()
+            assert revision.content_location == f"{oid[:4]}/{oid}.json"
+    finally:
+        reset_filesystem_blob_store()
+        from app.services.s3_blob_store import get_object_store
+
+        raw = get_object_store().get_blob(
+            revision.content_sha256,
+            expected_sha256=revision.content_sha256,
+        )
+        assert raw is not None  # location 键 digest 三点自洽

@@ -208,6 +208,17 @@ def scrub_object(
     manifest = resolve_data_object(data_object_id, store=object_store)
     if manifest is None:
         raise DRVerifyError(f"manifest not found: {data_object_id[:16]}")
+    if (manifest.get("payload") or {}).get("durable") == "manifest_only":
+        # 超预算诚实降级层（publish_cube 预算外语义）：blob 缺席是
+        # by-design，不是损坏 —— 只验 manifest 自身（评审 R1-11）。
+        return {
+            "state": "manifest_only",
+            "chunks_total": len(manifest.get("content_blobs") or []),
+            "chunks_checked": 0,
+            "missing": [], "corrupt": [], "etag_mismatch": [],
+            "etag_checked": False,
+            "mode": mode,
+        }
     if manifest.get("kind") == "virtual":
         from app.services.lakehouse.virtual_object import (
             verify_data_object_deep,
@@ -244,10 +255,11 @@ def scrub_object(
         if raw is None:
             corrupt.append(digest)
     if etag_check and recorded_etag:
+        # 比对**执行**即 etag_checked=True（成功/失配都要披露 —— R1-21）。
+        etag_checked = True
         remote = object_store.remote_etag(data_object_id)
         if remote is not None and remote != recorded_etag:
             etag_mismatch.append(data_object_id)
-            etag_checked = True
     state = "verified"
     if missing or corrupt:
         state = "corrupt"

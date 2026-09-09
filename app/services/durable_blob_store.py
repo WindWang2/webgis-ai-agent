@@ -337,6 +337,12 @@ class FilesystemBlobStore(BlobStore):
                     hasher.update(chunk)
                     size += len(chunk)
                     dst_fh.write(chunk)
+            # 内容寻址键守卫（评审 R1-16）：发布两遍之间源被改写 →
+            # 键不符 = typed 拒绝（绝不存错键字节）。
+            if len(key) == 64 and all(c in "0123456789abcdef" for c in key) \
+                    and hasher.hexdigest() != key:
+                tmp.unlink(missing_ok=True)
+                raise BlobDigestMismatch(key)
             os.replace(tmp, path_final)
         except Exception:
             try:

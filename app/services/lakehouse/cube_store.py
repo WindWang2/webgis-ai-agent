@@ -610,6 +610,9 @@ def publish_cube(
             "deduped": identity.deduped,
             "entry_count": len(entries),
         }
+    # 诚实降级标记进 payload（身份的一部分）：scrub/DR 侧据此把
+    # "blob 缺席" 判为 manifest_only 而非 corrupt（评审 R1-11）。
+    payload = {**payload, "durable": "manifest_only"}
     identity = publish_manifest_only(
         entries,
         kind="zarr_cube",

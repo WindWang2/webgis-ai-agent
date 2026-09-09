@@ -75,6 +75,12 @@ def _validate_source_entry(entry: Mapping[str, Any], index: int) -> Dict[str, An
     if role not in RS_ROLES:
         raise RSCubeError(f"{where}: role {role!r} not in {RS_ROLES}")
     out: Dict[str, Any] = {"time": time_label, "source": source, "role": role}
+    band_index = entry.get("band_index")
+    if band_index is not None:
+        idx = int(band_index)
+        if idx < 1:
+            raise RSCubeError(f"{where}: band_index is 1-based (got {idx})")
+        out["band_index"] = idx
     if role == "optical":
         band = str(entry.get("band") or "").strip()
         if not band:
@@ -223,9 +229,25 @@ async def build_rs_cube(
         def _read(entry=e) -> np.ndarray:
             reader = RasterReader.open(str(entry["path"]))
             try:
+                # 多波段源必须显式声明 band_index（评审 R1-12：静默读
+                # band 1 = 任意标签挂错数据）。
+                count = int(getattr(reader.metadata(), "count", 1) or 1)
+                band_index = entry.get("band_index")
+                if band_index is None and count > 1:
+                    raise RSCubeError(
+                        f"source {str(entry['source'])[:64]!r} has "
+                        f"{count} bands — declare band_index explicitly "
+                        "(no silent band-1 ingestion)"
+                    )
+                chosen = int(band_index or 1)
+                if chosen > count:
+                    raise RSCubeError(
+                        f"band_index {chosen} out of range (source has "
+                        f"{count} bands)"
+                    )
                 return np.asarray(reader.read_window(
                     (0, 0, int(entry["grid"].width), int(entry["grid"].height)),
-                    band=1,
+                    band=chosen,
                 ))
             finally:
                 reader.close()

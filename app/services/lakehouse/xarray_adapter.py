@@ -4,10 +4,11 @@ labeled cube 与 xarray 的双向桥（probe-gated：xarray 缺席 = typed 诚�
 降级，同 ``ZarrUnavailable`` 族；xarray 与 zarr 一样**不是** requirements
 声明依赖 —— ADR-0096 可选依赖纪律不变）。
 
-存储形态（``write`` 侧）遵循 xarray zarr 约定：每个数组（数据变量与
-坐标）携带 ``_ARRAY_DIMENSIONS`` attr —— 这是 xarray ``open_zarr`` 的
-互认协议；网格契约（crs/transform/nodata）仍在 group attrs（与 V6
-foundation 同位，``open_zarr_array`` 的 chunk descriptor 往返不受影响）。
+存储形态（``write`` 侧）遵循 zarr v3 协议：数组经元数据
+``dimension_names`` 绑定维度 —— xarray ``open_zarr`` 的 v3 互认机制
+（评审 R0-1；``_ARRAY_DIMENSIONS`` attr 仅作 v2 习惯工具的镜像）；
+网格契约（crs/transform/nodata）仍在 group attrs（与 V6 foundation
+同位，``open_zarr_array`` 的 chunk descriptor 往返不受影响）。
 
 V6 兼容：V6 cube（per-band 数组 + attrs.bands/times，无
 ``_ARRAY_DIMENSIONS``）经 :func:`open_cube_to_xarray` 合成 Dataset
@@ -161,8 +162,16 @@ def dataset_to_cube_store(
         transform = derived
     check_crs(crs)
 
+    # 坐标取**全部变量维度并集**（评审 R1-19：多变量不同维度组合时
+    # 锚变量维度不足以覆盖 cube 维度并集）。
+    all_dims: List[str] = []
+    for vd in data_vars.values():
+        for d in vd:
+            if d not in all_dims:
+                all_dims.append(d)
+    all_dims += [d for d in ("y", "x") if d not in all_dims]
     coords: Dict[str, Any] = {}
-    for dim in dims:
+    for dim in all_dims:
         if dim not in ds.coords:
             raise CubeSchemaError(f"dim {dim!r} has no coordinate array")
         vals = ds.coords[dim].values

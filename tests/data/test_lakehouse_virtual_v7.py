@@ -117,10 +117,10 @@ def test_resolution_budget_bounded_on_diamond(tmp_path):
     # 结构性证据：visited 数 == 实际不同节点数（非路径数 2^7）。
     assert report["visited"] <= 2 ** 7 + 2
     assert report["visited"] < MAX_VIRTUAL_NODES
-    # 9 层嵌套 = 超出深度契约 → typed corrupt 状态（有界纪律）。
+    # 9 层嵌套 = 超出深度契约 → 独立预算状态（结构预算 ≠ 损坏 —— R1-22）。
     deep = _diamond(9)
     deep_report = resolve_virtual_object(deep, store=store)
-    assert deep_report["state"] == "child_corrupt"
+    assert deep_report["state"] == "budget_exceeded"
 
 
 def test_materialization_lazy_and_inline_and_owner(tmp_path):
@@ -189,3 +189,22 @@ def test_invalid_child_ids_rejected(tmp_path):
             owner_scope=normalize_owner_scope(session_id="sess-v"),
             store=store,
         )
+
+
+def test_cross_owner_child_is_owner_mismatch(tmp_path):
+    """R1-4 回归：跨 owner child 一票否决组合（owner_mismatch 可达）。"""
+    from app.services.durable_blob_store import FilesystemBlobStore
+
+    store = FilesystemBlobStore(tmp_path)
+    foreign_leaf = _leaf(store, session="sess-foreign", tag=b"foreign")
+    v = publish_virtual_object(
+        [foreign_leaf], kind_label="cross-owner",
+        owner_scope=normalize_owner_scope(session_id="sess-v"),
+        store=store,
+    )
+    report = resolve_virtual_object(v["data_object_id"], store=store)
+    assert report["state"] == "owner_mismatch"
+    assert report["owner_mismatch"] == [foreign_leaf]
+    assert verify_data_object_deep(
+        v["data_object_id"], store=store
+    ) == "virtual_owner_mismatch"

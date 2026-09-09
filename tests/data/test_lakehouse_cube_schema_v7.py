@@ -285,3 +285,59 @@ def test_labeled_cube_publish_carries_projection(tmp_path):
     assert manifest is not None
     assert manifest["payload"]["labeled"]["dims"] == proj["dims"]
     assert manifest["payload"]["labeled"]["variables"] == proj["variables"]
+
+def test_xarray_open_zarr_acceptance(tmp_path):
+    """R0-1/R1-6 验收：v2 store 直接经 xr.open_zarr 读取 —— 维度由 v3
+    dimension_names 绑定，坐标自动识别，数据变量齐备。"""
+    xr = pytest.importorskip("xarray")
+    _write_multi(tmp_path)
+    store = tmp_path / "cube.zarr"
+    ds = xr.open_zarr(str(store), consolidated=False)
+    assert dict(ds.sizes) == {
+        "time": 2, "band": 2, "polarization": 2, "y": 4, "x": 4,
+    }
+    assert set(ds.data_vars) == {"reflectance", "sigma0"}
+    for dim in ("time", "y", "x"):
+        assert dim in ds.coords
+    # 坐标值正确性（绝对地理坐标含平移 —— R1-3 回归）。
+    assert float(ds.coords["y"].values[0]) == 3.5
+    assert float(ds.coords["y"].values[-1]) == 0.5
+    assert float(ds.coords["x"].values[0]) == 0.5
+
+def test_coords_include_affine_translation_and_align_discrimination():
+    """R1-3 回归：坐标含仿射平移（绝对地理坐标）；跨原点对齐可判别。"""
+    from app.services.lakehouse.cube_schema import (
+        coords_from_transform_list,
+        require_aligned,
+    )
+
+    # from_origin(x0=10, y0=20, a=1, e=-1) → GDAL [1,0,10,0,-1,20]。
+    grid = coords_from_transform_list(
+        [1.0, 0.0, 10.0, 0.0, -1.0, 20.0], 2, 2
+    )
+    assert grid["y"] == [19.5, 18.5]  # f=20 参与平移（绝对坐标）
+    assert grid["x"] == [10.5, 11.5]  # c=10 参与平移
+    proj_a = validate_labeled_schema(
+        dims=["y", "x"], shape=(2, 2),
+        coordinates={"y": grid["y"], "x": grid["x"]},
+        crs="EPSG:4326", dtype="float32",
+    )
+    # 同形状同分辨率、不同地理位置的源 → 对齐判定必须拒绝。
+    grid_b = coords_from_transform_list(
+        [1.0, 0.0, 50.0, 0.0, -1.0, 60.0], 2, 2
+    )
+    reference = {
+        "crs": "EPSG:4326", "dtype": "float32",
+        "coords_summary": proj_a["coords_summary"],
+    }
+    candidate = {
+        "crs": "EPSG:4326", "dtype": "float32",
+        "coords_summary": {
+            "y": {"kind": "grid", "n": 2, "start": grid_b["y"][0],
+                  "end": grid_b["y"][-1]},
+            "x": {"kind": "grid", "n": 2, "start": grid_b["x"][0],
+                  "end": grid_b["x"][-1]},
+        },
+    }
+    with pytest.raises(CubeSchemaError, match="grid differs"):
+        require_aligned(reference, candidate, what="shifted-source")

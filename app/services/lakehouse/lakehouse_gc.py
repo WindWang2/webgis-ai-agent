@@ -43,6 +43,16 @@ class GCStalePlan(GCError):
     code = "LAKEHOUSE_GC_PLAN_STALE"
 
 
+def _as_epoch(value: Any) -> float:
+    """last_modified 归一化（datetime/数值 → epoch 秒；None → 0.0）。"""
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(value.timestamp())
+
+
 def _object_store() -> Any:
     from app.services.s3_blob_store import get_object_store
 
@@ -68,7 +78,9 @@ def _scan_manifests(*, now: float, grace_hours: float) -> Dict[str, Dict[str, An
         if len(name) != 64 or not all(c in "0123456789abcdef" for c in name):
             continue
         manifests[name] = {
-            "mtime": float(item.get("last_modified") or 0.0),
+            # 消费侧同样归一化（S3 后端 yield epoch float，但防御性兼容
+            # datetime —— 评审 R1-1）。
+            "mtime": _as_epoch(item.get("last_modified")),
         }
         if len(manifests) >= MAX_SCAN_OBJECTS:
             break
@@ -204,10 +216,11 @@ def plan_gc(
     changed = True
     while changed:
         changed = False
+        protected_snapshot = set(protected)  # 迭代中不变集合（R1-14）
         for mid, meta in manifests.items():
             if mid in protected:
                 continue
-            for pid in protected:
+            for pid in protected_snapshot:
                 pid_meta = manifests.get(pid)
                 if pid_meta is not None and mid in pid_meta.get(
                     "children", []

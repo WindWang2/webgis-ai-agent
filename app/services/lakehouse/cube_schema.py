@@ -347,10 +347,12 @@ def grid_coords_equal(
 def coords_from_transform_list(
     transform: Sequence[float], height: int, width: int
 ) -> Dict[str, List[float]]:
-    """affine transform → y/x 像元中心坐标列表（北-up 约定）。"""
-    a, _b, _c, _d, e, f = (float(v) for v in transform[:6])
-    xs = [(j + 0.5) * a for j in range(int(width))]
-    ys = [(i + 0.5) * e for i in range(int(height))]
+    """affine transform → y/x 像元中心坐标列表（北-up 约定，绝对地理
+    坐标：仿射平移 c/f 必须参与 —— 评审 R1-3，丢失平移 = 所有 cube
+    相对原点、catalog/STAC 地理位置全错、跨原点对齐失明）。"""
+    a, _b, c, _d, e, f = (float(v) for v in transform[:6])
+    xs = [c + (j + 0.5) * a for j in range(int(width))]
+    ys = [f + (i + 0.5) * e for i in range(int(height))]
     return {"x": xs, "y": ys}
 
 

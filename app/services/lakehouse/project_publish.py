@@ -59,6 +59,7 @@ async def publish_to_project(
     ``{"published": [...], "unknown": [...], "forbidden": [...]}``。
     """
     from app.core.auth import verify_session_owner
+    from app.services.artifact_registry import get_artifact
 
     if not object_ids or len(object_ids) > 200:
         raise PublishError("object_ids must be 1..200 entries")
@@ -66,6 +67,21 @@ async def publish_to_project(
     await verify_session_owner(
         db, session_id, user_id=actor_id, owner_token=owner_token,
     )
+    # ref:cube 的台账解析在 **async 阶段**完成（评审 R1-17：worker 线程
+    # 内 asyncio.run 会新建事件循环 —— 与主 loop 绑定的 async 客户端
+    # （session store/Redis）可能失效）。
+    ref_manifest_ids: Dict[str, Optional[str]] = {}
+    for oid in list(object_ids)[:200]:
+        oid = str(oid)
+        if oid.startswith("ref:cube/"):
+            record = await get_artifact(session_id, oid)
+            ref_manifest_ids[oid] = (
+                str((record.metadata or {}).get("data_object_id"))
+                if record is not None and (record.metadata or {}).get(
+                    "data_object_id"
+                )
+                else None
+            )
     return await asyncio.to_thread(
         _publish_sync,
         session_id=session_id,
@@ -74,6 +90,7 @@ async def publish_to_project(
         actor_id=actor_id,
         tags=list(tags) if tags else None,
         store=store,
+        ref_manifest_ids=ref_manifest_ids,
     )
 
 
@@ -85,6 +102,7 @@ def _publish_sync(
     actor_id: Optional[str],
     tags: Optional[List[str]],
     store: Optional[Any],
+    ref_manifest_ids: Optional[Dict[str, Optional[str]]] = None,
 ) -> Dict[str, Any]:
     from sqlalchemy import select
 
@@ -126,8 +144,12 @@ def _publish_sync(
             if is_data_object_id(oid):
                 manifest = resolve_data_object(oid, store=store)
             elif oid.startswith("ref:cube/"):
-                manifest = _manifest_for_cube_ref_sync(
-                    session_id, oid, db, store
+                # 台账预解析结果（async 阶段注入 —— R1-17）。
+                did = (ref_manifest_ids or {}).get(oid)
+                manifest = (
+                    resolve_data_object(str(did), store=store)
+                    if did
+                    else None
                 )
             else:
                 unknown.append(oid)
@@ -148,18 +170,24 @@ def _publish_sync(
             artifact_id = _find_or_create_artifact(
                 db, project_id=project_id, oid=oid, manifest=manifest,
             )
+            # 修订行指向**真实 manifest blob**（评审 R1-5：manifest 的
+            # BlobStore 键 = manifest 自身 sha256 = data_object_id，绝不
+            # 与内容根 content_sha256 混同 —— 幻影 location 会让恢复与
+            # GC 引用计数双双失效）。
+            manifest_blob_id = (
+                oid if is_data_object_id(oid) else content_sha256
+            )
             revision, created = record_revision(
                 db,
                 artifact_id=artifact_id,
-                content_sha256=content_sha256,
-                content_location=(
-                    f"manifests/{content_sha256[:4]}/{content_sha256}.json"
-                ),
+                content_sha256=manifest_blob_id,
+                content_location=manifest_blob_location(manifest_blob_id),
                 content_type="json",
                 byte_size=int(manifest.get("byte_size") or 0),
                 metadata={
                     "lakehouse": True,
                     "data_object_id": oid,
+                    "manifest_content_root": content_sha256,
                     "kind": manifest.get("kind"),
                     "published_from_session": session_id,
                 },
@@ -195,24 +223,10 @@ def _publish_sync(
         }
 
 
-def _manifest_for_cube_ref_sync(session_id: str, ref: str, db: Any,
-                                store: Optional[Any]) -> Optional[Dict[str, Any]]:
-    """ref:cube → manifest（台账 metadata 的 data_object_id 优先）。
-
-    ``get_artifact`` 是 async（session store 通道）；publish 的同步核
-    运行在 to_thread 工作线程（无外层 loop）—— 独立 loop 等价执行。"""
-    import asyncio as _asyncio
-
-    from app.services.artifact_registry import get_artifact
-    from app.services.lakehouse.data_object import resolve_data_object
-
-    record = _asyncio.run(get_artifact(session_id, ref))
-    if record is None:
-        return None
-    did = (record.metadata or {}).get("data_object_id")
-    if did:
-        return resolve_data_object(str(did), store=store)
-    return None
+def manifest_blob_location(manifest_blob_id: str) -> str:
+    """manifest blob 的后端无关 location（与 BlobStore.location 同布局）。"""
+    digest = str(manifest_blob_id)
+    return f"{digest[:4]}/{digest}.json"
 
 
 def _find_or_create_artifact(
@@ -245,8 +259,26 @@ def _find_or_create_artifact(
             "kind": manifest.get("kind"),
         },
     )
+    # 并发 find-or-create（评审 R1-10）：savepoint 内插入，撞唯一/冲突
+    # 即回退 savepoint 重查（既有行胜出 —— 幂等语义）。
+    nested = db.begin_nested()
     db.add(artifact)
-    db.flush()
+    try:
+        db.flush()
+        nested.commit()
+    except Exception:
+        nested.rollback()
+        existing = (
+            db.execute(
+                select(Artifact).where(
+                    Artifact.project_id == project_id,
+                    Artifact.storage_ref == oid,
+                )
+            )
+        ).scalars().first()
+        if existing is None:
+            raise
+        return existing.id
     return artifact.id
 
 

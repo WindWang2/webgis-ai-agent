@@ -56,6 +56,14 @@ def _resolve_labels(
             )
         positions.append(index[key])
     lo, hi = min(positions), max(positions)
+    if len(positions) > 1 and len(positions) != hi - lo + 1:
+        # 非连续选择静默扩展为包络区间 = 返回超集数据（评审 R1-18）
+        # —— typed 拒绝（调用方拆多次连续选择或用 index_slices）。
+        raise CubeSchemaError(
+            f"non-contiguous {dim} selection spans "
+            f"{hi - lo + 1} positions for {len(positions)} labels — "
+            "split into contiguous selections (never silently expand)"
+        )
     return slice(lo, hi + 1)
 
 

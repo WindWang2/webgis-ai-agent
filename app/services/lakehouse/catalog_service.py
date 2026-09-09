@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from sqlalchemy import func, select, or_, and_, not_
+from sqlalchemy.exc import IntegrityError
 
 from app.models.lakehouse_catalog import LakehouseCatalogItem
 
@@ -149,7 +150,28 @@ def upsert_catalog_entry(db, fields: Mapping[str, Any]) -> Dict[str, Any]:
                 "object_id": existing.object_id}
     row = LakehouseCatalogItem(id=str(_uuid.uuid4()), **dict(fields))
     db.add(row)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # 并发同键插入（评审 R1-10）：唯一约束拦截 → 回退为更新既有行。
+        db.rollback()
+        existing = (
+            db.execute(
+                select(LakehouseCatalogItem).where(
+                    LakehouseCatalogItem.owner_type == owner_type,
+                    LakehouseCatalogItem.owner_id == owner_id,
+                    LakehouseCatalogItem.content_sha256 == content_sha256,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            raise
+        for key, value in fields.items():
+            if key in ("id", "created_at"):
+                continue
+            setattr(existing, key, value)
+        return {"status": "updated", "id": existing.id,
+                "object_id": existing.object_id}
     return {"status": "created", "id": row.id, "object_id": row.object_id}
 
 
@@ -242,10 +264,16 @@ def search_catalog(
     wanted = [str(t) for t in (tags or [])]
     if wanted:
         # 行集级 tags 过滤（方言退化诚实化：SQL 已命中 ≤ limit 行）。
+        # 分页语义（评审 R1-9）：过滤后页可能不满，但只要**原始页**满
+        # 就继续给 next_offset —— 宁可空页也不提前终止；响应披露
+        # tags_filtered 供调用方区分"没有更多"与"本页被过滤为空"。
         items = [
             it for it in items
             if all(t in set(it["tags"]) for t in wanted)
         ]
+        raw_page_full = len(rows) == limit
+    else:
+        raw_page_full = len(items) == limit
     return {
         "items": items,
         "count": len(items),
@@ -254,8 +282,11 @@ def search_catalog(
         "limit": limit,
         "offset": offset,
         "next_offset": (
-            offset + limit if len(items) == limit and not total_bounded else None
+            offset + limit
+            if raw_page_full and not total_bounded
+            else None
         ),
+        **({"tags_filtered": True} if wanted else {}),
     }
 
 

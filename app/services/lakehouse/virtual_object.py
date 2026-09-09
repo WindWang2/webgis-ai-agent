@@ -118,22 +118,27 @@ def resolve_virtual_object(
     owner_mismatch: List[str] = []
     expanded: List[str] = []
 
-    def _walk(oid: str, depth: int, *, check_owner: bool) -> None:
+    root_manifest_ref: Dict[str, Any] = {}
+
+    budget_exceeded: List[str] = []
+
+    def _walk(oid: str, depth: int) -> None:
         if oid in visited:
             return
         if len(visited) >= MAX_VIRTUAL_NODES or depth > MAX_VIRTUAL_DEPTH:
-            corrupt.append(oid)
+            # 结构预算 ≠ 数据损坏（R1-22）：独立状态披露。
+            budget_exceeded.append(oid)
             return
         visited.add(oid)
         manifest = resolve_data_object(oid, store=store)
         if manifest is None:
             missing.append(oid)
             return
-        if check_owner and not owner_scope_allows(
-            manifest,
-            session_id=owner_session_id,
-            project_id=owner_project_id,
-        ):
+        # owner 一致性（评审 R1-4：对照根 manifest 的 owner_scope 字典
+        # —— 无需会话上下文；跨 owner child 一票否决组合合法性）。
+        if oid != data_object_id and dict(
+            manifest.get("owner_scope") or {}
+        ) != root_manifest_ref["scope"]:
             owner_mismatch.append(oid)
             return
         if manifest.get("kind") != "virtual":
@@ -147,22 +152,25 @@ def resolve_virtual_object(
             corrupt.append(oid)
             return
         for child in children:
-            _walk(str(child), depth + 1, check_owner=check_owner)
+            _walk(str(child), depth + 1)
 
     root_manifest = resolve_data_object(data_object_id, store=store)
     if root_manifest is None:
         return {"state": "children_missing", "root_missing": True,
                 "children": [], "expanded": [], "missing": [data_object_id],
                 "corrupt": [], "owner_mismatch": []}
-    # 根对象自身的 owner 校验由调用方（REST/服务层）完成 —— 解析以根为
-    # 信任锚，只对嵌套 children 做 owner 一致性检查（发布是唯一跨域机制）。
-    _walk(data_object_id, 0, check_owner=False)
+    root_manifest_ref["scope"] = dict(
+        root_manifest.get("owner_scope") or {}
+    )
+    _walk(data_object_id, 0)
     if missing:
         state = "children_missing"
     elif corrupt:
         state = "child_corrupt"
     elif owner_mismatch:
         state = "owner_mismatch"
+    elif budget_exceeded:
+        state = "budget_exceeded"
     else:
         state = "ok"
     return {
@@ -176,6 +184,7 @@ def resolve_virtual_object(
         "missing": sorted(set(missing)),
         "corrupt": sorted(set(corrupt)),
         "owner_mismatch": sorted(set(owner_mismatch)),
+        "budget_exceeded": sorted(set(budget_exceeded)),
         "visited": len(visited),
     }
 

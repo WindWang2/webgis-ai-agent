@@ -55,6 +55,20 @@ DEFAULT_ATTEMPTS = 3
 _RETRY_BASE_DELAY = 0.05  # 秒（测试友好；生产 0.2s 级由调用方覆写）
 
 
+def _to_epoch(value: Any) -> float:
+    """LastModified 归一化（datetime → epoch 秒；None/数值透传为 float）。"""
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return float(value.timestamp())
+    except AttributeError as e:
+        raise ValueError(f"cannot normalize last_modified: {value!r}") from e
+
+
 def _with_retries(fn, *, attempts: int = DEFAULT_ATTEMPTS,
                   base_delay: float = _RETRY_BASE_DELAY):
     """幂等操作重试（指数退避 + 固定 cap；非幂等操作不得走此包装）。
@@ -410,6 +424,17 @@ class S3BlobStore(BlobStore):
                 return PutResult(put_new=False, location=location)
         if total <= part_size:
             return self.put_blob(key, src.read_bytes(), content_type)
+        # 内容寻址键守卫（评审 R1-16）：digest pass 与数据 pass 之间源
+        # 被改写 → 键不符 = typed 拒绝。
+        hasher2 = _hashlib.sha256()
+        with src.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(part_size), b""):
+                hasher2.update(chunk)
+        if len(key) == 64 and all(c in "0123456789abcdef" for c in key) \
+                and hasher2.hexdigest() != key:
+            from app.services.durable_blob_store import BlobDigestMismatch
+
+            raise BlobDigestMismatch(key)
 
         def _parts():
             with src.open("rb") as fh:
@@ -613,7 +638,10 @@ class S3BlobStore(BlobStore):
                     "key": rel,
                     "size": int(item.get("Size", 0)),
                     "etag": str(item.get("ETag", "")),
-                    "last_modified": item.get("LastModified"),
+                    # 归一化为 epoch 秒（boto3 LastModified 是 aware
+                    # datetime —— 消费方（GC 宽限判定）需要可比 float，
+                    # 评审 R1-1：float(datetime) 直接 TypeError）。
+                    "last_modified": _to_epoch(item.get("LastModified")),
                 }
                 yielded += 1
                 if yielded >= limit:
@@ -687,9 +715,13 @@ class S3BlobStore(BlobStore):
             modified = item.get("last_modified")
             if modified is None:
                 continue
-            if getattr(modified, "tzinfo", None) is None:
-                modified = modified.replace(tzinfo=_dt.timezone.utc)
-            if modified >= cutoff:
+            # iter_objects 已归一化为 epoch float（datetime 兼容防御）。
+            modified_s = (
+                float(modified)
+                if not hasattr(modified, "timestamp")
+                else modified.timestamp()
+            )
+            if modified_s >= cutoff.timestamp():
                 continue
             full_key = "/".join(
                 p for p in (self._prefix, rel_key) if p

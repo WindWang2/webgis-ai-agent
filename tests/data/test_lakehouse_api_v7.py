@@ -165,13 +165,26 @@ def test_catalog_dual_scope_fail_closed(client, monkeypatch):
     assert resp.status_code == 400
 
 
-def test_gc_plan_and_execute_owner_gated(client):
+def test_gc_plan_and_execute_owner_gated(client, monkeypatch):
+    # 非 admin（默认 fake user 无 role）→ 403（R1-2：GC 是全局破坏性面）。
+    resp = client.post(
+        "/api/v1/lakehouse/gc/plan",
+        json={"session_id": "sess-attacker"},
+    )
+    assert resp.status_code == 403
+    # 授予 admin 角色后：非 owner session 仍 404（所有权守卫独立生效）。
+    from app.core.auth import get_current_user_optional
+
+    async def admin_user():
+        return {"user_id": "operator", "role": "admin"}
+
+    client.app.dependency_overrides[get_current_user_optional] = admin_user
     resp = client.post(
         "/api/v1/lakehouse/gc/plan",
         json={"session_id": "sess-attacker"},
     )
     assert resp.status_code == 404
-    # owner 通过 → plan 只读（本会话 blob store 可能空）。
+    # admin + owner 通过 → plan 只读（本会话 blob store 可能空）。
     resp = client.post(
         "/api/v1/lakehouse/gc/plan",
         json={"session_id": "sess-v7", "grace_hours": 0},
