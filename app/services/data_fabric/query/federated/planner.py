@@ -261,7 +261,6 @@ def apply_safe_aggregate_pushdown(plan_tree: LogicalNode, ctx: EnumerationContex
 
 def _matching_edge(node: LogicalNode, right_scan: LogicalNode, joins, sources_in):
     """join 节点 → 匹配的 aggregate_join 边（右 scan source_id + 左子树包含左源）。"""
-    from app.services.data_fabric.query.federated.logical import LogicalScan as LS
 
     right_sid = right_scan.source_id
     left_sids = _collect_source_ids(node.left)

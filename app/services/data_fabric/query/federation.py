@@ -2029,6 +2029,7 @@ def _v7_cache_context(executor, req):
         canonical_request_payload,
         result_cache_key,
     )
+    from app.services.data_fabric.fingerprint import dataset_fingerprint_service
     from app.services.data_fabric.spatial_catalog import spatial_catalog_service
 
     try:
@@ -2066,15 +2067,8 @@ def _v7_cache_context(executor, req):
 def _v7_new_counters(cache_ctx) -> Any:
     from app.services.data_fabric.fabric.counters import FabricCounters
 
-    c = FabricCounters()
-    if cache_ctx is not None:
-        from app.services.data_fabric.fabric.probing import get_capability_probe_service
-
-        c.probe_requests = sum(
-            rec.probe_cost.requests
-            for rec in ()
-        )  # 探测计数在 probing 服务记账；此处占位聚合点
-    return c
+    # 探测请求代价在 probing 服务侧记账（ProbeCost）；此处是执行期聚合起点。
+    return FabricCounters()
 
 
 def _v7_record_feedback(req, plan, exec_result, outcome, *, scope_key):
@@ -2084,6 +2078,7 @@ def _v7_record_feedback(req, plan, exec_result, outcome, *, scope_key):
         SourceObservation,
         get_feedback_store,
     )
+    from app.services.data_fabric.fingerprint import dataset_fingerprint_service
     from app.services.data_fabric.spatial_catalog import spatial_catalog_service
 
     store = get_feedback_store()

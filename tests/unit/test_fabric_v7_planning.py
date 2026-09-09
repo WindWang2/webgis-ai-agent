@@ -7,7 +7,6 @@
 - W10：bushy 自适应重排（偏差触发、严格更优护栏、given 禁用）。
 """
 
-import pytest
 
 from app.services.data_fabric.query.federation import (
     ChainJoin,
@@ -215,7 +214,8 @@ def test_aggregate_pushdown_unique_key_equivalence():
     local = _make(hint_unique=False)
     pushed = _make(hint_unique=True)
     assert local["status"] == "success" and pushed["status"] == "success"
-    key = lambda r: (r.get("region") is None, str(r.get("region")))
+    def key(r):
+        return (r.get("region") is None, str(r.get("region")))
     assert sorted(local["rows"], key=key) == sorted(pushed["rows"], key=key), (
         "下推与本地路径必须逐位一致（含未匹配组丢弃）"
     )

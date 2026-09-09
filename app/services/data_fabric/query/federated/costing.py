@@ -309,11 +309,11 @@ def decide_crs_transform(
     )
     if cost_right <= cost_left:
         side, src_srid, dst_srid = "right", right_crs_srid, left_crs_srid
-        caps, rows = caps_right, est_right_rows
+        rows = est_right_rows
         side_server = server_right
     else:
         side, src_srid, dst_srid = "left", left_crs_srid, right_crs_srid
-        caps, rows = caps_left, est_left_rows
+        rows = est_left_rows
         side_server = server_left
 
     note = None

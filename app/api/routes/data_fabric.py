@@ -15,7 +15,6 @@ from app.core.database import SessionLocal
 from app.core.auth import get_current_user, get_current_user_optional
 from app.models.data_fabric import DataSourceModel, CatalogItemModel
 from app.schemas.data_fabric_schema import (
-    ConnectionProfile,
     QuerySpec,
 )
 from app.services.data_fabric.manager import data_fabric_manager

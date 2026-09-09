@@ -61,7 +61,6 @@ def iter_scan_pages_arrow(
     if bbox:
         extras["bbox"] = list(bbox)
 
-    pending: List[Dict[str, Any]] = []
     emitted = 0
     page: List[Dict[str, Any]] = []
     for batch in adapter.iter_query_arrow_batches(dataset_id, QuerySpec(**extras)):

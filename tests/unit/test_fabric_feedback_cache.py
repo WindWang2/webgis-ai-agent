@@ -1,6 +1,5 @@
 """V7 反馈 / 结果缓存 / 计数器测试（ADR-0119 W11-W13）。"""
 
-import pytest
 
 from app.services.data_fabric.fabric.feedback import (
     ExecutionFeedback,

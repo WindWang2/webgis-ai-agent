@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 import math
-import statistics
 import threading
 import time
 from collections import OrderedDict

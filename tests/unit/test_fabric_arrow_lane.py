@@ -7,13 +7,11 @@
 - ``physical.iter_scan_pages`` 委托与回落（不支持通道的 adapter 原路径）。
 """
 
-import json
 
 import pytest
 
 pa = pytest.importorskip("pyarrow")
 
-from app.schemas.data_fabric_schema import QuerySpec  # noqa: E402
 from app.services.data_fabric.adapters.geoparquet_adapter import (  # noqa: E402
     GeoParquetAdapter,
 )
