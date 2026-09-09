@@ -119,6 +119,15 @@ _ENV_BASELINE = {
         "EXTENSIONS_ALLOW_UNSIGNED_DEV": "false",
         "EXTENSIONS_MAX_WORKER_CRASHES": "2",
         "STAC_API_URL": "https://earth-search.aws.element84.com/v1",
+        # Spatial Lakehouse V6（ADR-0118）：对象存储后端选择（默认 filesystem
+        # = 行为零变化）。s3 凭据钉空串 —— 测试进程绝不持有真实 secret。
+        "WEBGIS_OBJECT_STORE_BACKEND": "filesystem",
+        "WEBGIS_S3_ENDPOINT_URL": "",
+        "WEBGIS_S3_BUCKET": "",
+        "WEBGIS_S3_REGION": "",
+        "WEBGIS_S3_ACCESS_KEY_ID": "",
+        "WEBGIS_S3_SECRET_ACCESS_KEY": "",
+        "WEBGIS_S3_PREFIX": "",
 }
 for _key, _value in _ENV_BASELINE.items():
     os.environ.setdefault(_key, _value)

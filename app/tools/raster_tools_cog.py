@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from app.tools._utils import std_error_response
 from app.tools.registry import ToolRegistry, tool
@@ -52,7 +53,9 @@ def register_raster_cog_tools(registry: ToolRegistry):
           tags=("cog", "栅格转换", "云优化", "金字塔", "geotiff", "瓦片"),
           failure_modes=("file_not_found", "invalid_format", "conversion_failed"),
           )
-    async def convert_raster_to_cog(raster_path: str, out_dir: str = "data/cog") -> dict:
+    async def convert_raster_to_cog(
+        raster_path: str, out_dir: str = "data/cog", session_id: str = "",
+    ) -> dict:
         try:
             src = validate_data_path(raster_path)
             dst = validate_data_path(out_dir)
@@ -80,7 +83,7 @@ def register_raster_cog_tools(registry: ToolRegistry):
 
         already = str(out) == str(src)
         report = await asyncio.to_thread(validate_cog, str(out))
-        return {
+        result = {
             "success": True,
             "output_path": str(out),
             "already_cog": already,
@@ -95,3 +98,36 @@ def register_raster_cog_tools(registry: ToolRegistry):
                 "bands": report.get("bands"),
             },
         }
+        # V6（ADR-0118）：COG → durable DataObject（内容寻址身份 + grid
+        # identity + 有界 chunk checksums）。session 上下文缺席时诚实跳过
+        # （owner scope 不可虚构）；发布失败不阻断转换结果。
+        if session_id:
+            from app.services.lakehouse.raster_object import publish_cog_data_object
+
+            publication = await asyncio.to_thread(
+                publish_cog_data_object,
+                out,
+                session_id=session_id,
+                source_refs=[f"ref:raster-source/{Path(raster_path).name}"],
+                producer={"capability": "raster_cog_conversion", "tool": "convert_raster_to_cog"},
+            )
+            if publication.get("published"):
+                result["data_object"] = {
+                    "published": True,
+                    "data_object_id": publication["data_object_id"],
+                    "content_sha256": publication["content_sha256"],
+                    "deduped": publication.get("deduped", False),
+                    "chunk_checksums": publication.get("chunk_checksums", False),
+                }
+            else:
+                result["data_object"] = {
+                    "published": False,
+                    "reason": publication.get("reason", "failed"),
+                }
+        else:
+            result["data_object"] = {
+                "published": False,
+                "reason": "owner_missing",
+                "correction_hint": "durable publication requires a session context",
+            }
+        return result
