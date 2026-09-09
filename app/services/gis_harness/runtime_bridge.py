@@ -1,4 +1,4 @@
-"""Compiler V4 → Harness Runtime bridge（V6 Wave 1–2）。
+"""Compiler V4 → Harness Runtime bridge（V6 Wave 1–3）。
 
 现状（V6 Phase-0 审计 00-baseline §A/B）：Workflow Compiler V4 的 typed DAG
 只被证据面消费（plan_orchestrator 摘要 / semantic_tools advisory），执行侧
@@ -113,6 +113,7 @@ def _edge_endpoints(edge: Dict[str, Any]) -> Tuple[str, str]:
 def derive_runtime_block(
     chapter: Dict[str, Any],
     *,
+    mapspec: Optional[Dict[str, Any]] = None,
     mapspec_revision: int = 0,
     render_seq: int = 0,
     stored: Optional[Dict[str, Any]] = None,
@@ -124,6 +125,11 @@ def derive_runtime_block(
     原块或不写）。``stored`` 是已持久化的旧块：提供时对**已满足**节点做
     证据失配检测（行签名漂移 → stale），并沿 typed 边向下游传播
     （只污染受影响子图，无关分支零触碰）；revision 内容变化才 +1。
+
+    ``mapspec``（可选）提供时构建 artifact ↔ node ↔ layer/component
+    双向 lineage 索引（W3：正查节点产物/消费，反查 artifact 的
+    生产/消费节点与依赖它的图层/组件）；全部为既有引用的投影
+    （bound_ref / spec source ref / chartRef），不发明第二血缘。
     """
     from app.services.gis_harness.plan_graph import build_plan_graph
     from app.services.gis_harness.workflow_instance import (
@@ -163,10 +169,12 @@ def derive_runtime_block(
     # 求值、_NODE_TO_STAGE 同一映射）——状态语义单一事实源。
     graph = build_plan_graph(chapter, evaluate=True)
     status_by_cap: Dict[str, str] = {}
+    deps_by_cap: Dict[str, List[str]] = {}
     for node in graph.nodes:
         mapped = _NODE_TO_STAGE.get(
             getattr(node.status, "value", node.status))
         status_by_cap[node.capability] = mapped.value if mapped else "pending"
+        deps_by_cap[node.capability] = list(node.depends_on or [])[:8]
     rows_fp = rows_fingerprint(chapter)
 
     # 行签名（证据指纹）：row_signature 同一实现，但覆盖该 capability 的
@@ -208,6 +216,17 @@ def derive_runtime_block(
                 return ref[:_MAX_BOUND_REF]
         return ""
 
+    def _cap_all_refs(cap: str) -> List[str]:
+        """该 capability 全部行的绑定 ref（有序去重）——展示取首（合并
+        规则），lineage 索引登记全部（过渡态行 ref 可能短暂分叉，索引
+        不得对任一 ref 失明）。"""
+        refs: List[str] = []
+        for row in rows_by_cap.get(cap) or []:
+            ref = str(row.get("bound_ref") or "")[:_MAX_BOUND_REF]
+            if ref and ref not in refs:
+                refs.append(ref)
+        return refs
+
     # 第一遍：结构节点 → 状态/证据（output 节点第二遍按产出者回填）。
     typed_by_id: Dict[str, Dict[str, Any]] = {}
     for n in dag_nodes[:_MAX_NODES]:
@@ -237,6 +256,14 @@ def derive_runtime_block(
             evidence = _cap_evidence(mapped_cap)
         if state is None and kind != "output":
             unmapped.append(node_id)
+        # W3 输入血缘：该节点消费的 artifact ref（depends_on 上游行的
+        # 绑定 ref；与 plan_graph 依赖同一来源，不另行推断）。
+        input_refs: List[str] = []
+        if mapped_cap:
+            for dep in deps_by_cap.get(mapped_cap, []):
+                for ref in _cap_all_refs(dep):
+                    if ref not in input_refs:
+                        input_refs.append(ref)
         nodes_out.append({
             "node_id": node_id[:64],
             "kind": kind,
@@ -244,6 +271,7 @@ def derive_runtime_block(
             "role": role[:32],
             "state": state or "pending",
             "bound_ref": _cap_bound_ref(mapped_cap) if mapped_cap else "",
+            "inputs": input_refs[:8],
             "evidence": evidence[:32],
             "stale_reason": "",
             "failure_class": "",
@@ -313,6 +341,67 @@ def derive_runtime_block(
             if not item["stale_reason"]:
                 item["stale_reason"] = "upstream_stale"
 
+    # ── W3：artifact ↔ node ↔ layer/component 双向 lineage 索引 ────────
+    # 正向：节点 bound_ref（产物）/ inputs（消费）；反向：ref → 生产节点 /
+    # 消费节点 / 依赖图层 / 依赖组件。全部投影既有引用（行 bound_ref、
+    # spec source ref、组件 chartRef），不发明第二血缘；liveness 不在此处
+    # 裁决（ reuse validation 由消费方带快照评估 —— W5）。
+    artifact_index: Dict[str, Dict[str, Any]] = {}
+
+    def _idx(ref: str) -> Optional[Dict[str, Any]]:
+        key = ref[:64]
+        entry = artifact_index.get(key)
+        if entry is None:
+            if len(artifact_index) >= 96:
+                return None
+            entry = artifact_index.setdefault(key, {
+                "producer_node": "",
+                "consumer_nodes": [],
+                "layer_ids": [],
+                "component_ids": [],
+            })
+        return entry
+
+    for item in nodes_out:
+        mapped_cap = str(item.get("capability") or "")
+        if mapped_cap and item["kind"] != "output":
+            for ref in _cap_all_refs(mapped_cap):
+                entry = _idx(ref)
+                if entry is not None and not entry["producer_node"]:
+                    entry["producer_node"] = item["node_id"]
+        for inp in item.get("inputs") or []:
+            entry = _idx(inp)
+            if entry is not None and item["node_id"] not in entry["consumer_nodes"]:
+                entry["consumer_nodes"].append(item["node_id"])
+    if isinstance(mapspec, dict):
+        from app.services.gis_harness.product_graph import _spec_source_ref
+
+        for layer in (mapspec.get("layers") or [])[:64]:
+            if not isinstance(layer, dict):
+                continue
+            ref = _spec_source_ref(mapspec, str(layer.get("source") or ""))
+            if ref:
+                entry = _idx(ref)
+                lid = str(layer.get("id") or "")[:64]
+                if entry is not None and lid and lid not in entry["layer_ids"]:
+                    entry["layer_ids"].append(lid)
+        components = ((mapspec.get("layout") or {}).get("components") or [])[:64]
+        for comp in components:
+            if not isinstance(comp, dict):
+                continue
+            options = comp.get("options") or {}
+            ref = options.get("chartRef")
+            if isinstance(ref, str) and ref:
+                entry = _idx(ref)
+                cid = str(comp.get("id") or comp.get("type") or "")[:64]
+                if entry is not None and cid and cid not in entry["component_ids"]:
+                    entry["component_ids"].append(cid)
+        # 有界截断（防大 spec 膨胀块体）
+        for entry in artifact_index.values():
+            entry["consumer_nodes"] = entry["consumer_nodes"][:8]
+            entry["layer_ids"] = entry["layer_ids"][:8]
+            entry["component_ids"] = entry["component_ids"][:8]
+
     package_fp = str(getattr(compilation, "package_fingerprint", "") or "")
     block: Dict[str, Any] = {
         "schema": "workflow_runtime.v1",
@@ -328,10 +417,12 @@ def derive_runtime_block(
         "checked_revision": int(mapspec_revision or 0),
         "render_observation_seq": int(render_seq or 0),
         "nodes": nodes_out,
+        "artifact_index": artifact_index,
         "unmapped": sorted(set(unmapped))[:_MAX_UNMAPPED],
     }
     block["state_fingerprint"] = canonical_fingerprint({
         "nodes": block["nodes"],
+        "artifact_index": block["artifact_index"],
         "unmapped": block["unmapped"],
         "package_fingerprint": block["package_fingerprint"],
         "rows_fingerprint": block["rows_fingerprint"],
@@ -408,6 +499,14 @@ async def maybe_update_runtime_projection(
         revision = 0
     render_seq = observation_sequence(await load_render_observation(session_id, map_state))
 
+    mapspec: Optional[Dict[str, Any]] = None
+    try:
+        from app.services.mapspec_store import mapspec_store
+
+        mapspec = await mapspec_store.get_mapspec(session_id) or None
+    except Exception:  # noqa: BLE001 — spec 读失败按无 spec 处理（lineage 降级）
+        mapspec = None
+
     stored = chapter.get(WORKFLOW_RUNTIME_KEY)
     package_fp = str((stored or {}).get("package_fingerprint") or "") \
         if isinstance(stored, dict) else ""
@@ -428,6 +527,7 @@ async def maybe_update_runtime_projection(
 
     block = derive_runtime_block(
         chapter,
+        mapspec=mapspec,
         mapspec_revision=revision,
         render_seq=render_seq,
         stored=stored if isinstance(stored, dict) else None,
@@ -468,10 +568,62 @@ async def maybe_update_runtime_projection(
         return None
 
 
+# ── 查询辅助（W3 双向 lineage 的消费 API；纯读块，零派生）─────────────────
+
+def artifact_lineage(
+    block: Optional[Dict[str, Any]], ref: str,
+) -> Optional[Dict[str, Any]]:
+    """artifact ref 的反向血缘：生产节点 / 消费节点 / 依赖图层 / 依赖组件。
+
+    反查链 rendered layer → MapSpec source → artifact → workflow node 的
+    块内落地（ref 缺席 → None，调用方按无证据处理）。
+    """
+    if not isinstance(block, dict) or not ref:
+        return None
+    entry = (block.get("artifact_index") or {}).get(ref[:64])
+    if not isinstance(entry, dict):
+        return None
+    return {
+        "ref": ref[:64],
+        "producer_node": str(entry.get("producer_node") or ""),
+        "consumer_nodes": list(entry.get("consumer_nodes") or []),
+        "layer_ids": list(entry.get("layer_ids") or []),
+        "component_ids": list(entry.get("component_ids") or []),
+    }
+
+
+def node_lineage(block: Optional[Dict[str, Any]], node_id: str) -> Optional[Dict[str, Any]]:
+    """节点的正向血缘：消费了什么（inputs）、生成了什么（bound_ref）、
+    哪些图层/组件依赖它的产物（经 artifact_index 反查）。"""
+    if not isinstance(block, dict) or not node_id:
+        return None
+    node = next(
+        (n for n in (block.get("nodes") or [])
+         if isinstance(n, dict) and n.get("node_id") == node_id),
+        None,
+    )
+    if node is None:
+        return None
+    out_ref = str(node.get("bound_ref") or "")
+    dependents = artifact_lineage(block, out_ref) if out_ref else None
+    return {
+        "node_id": node_id,
+        "state": str(node.get("state") or ""),
+        "stale_reason": str(node.get("stale_reason") or ""),
+        "inputs": list(node.get("inputs") or []),
+        "output_ref": out_ref,
+        "layer_ids": list((dependents or {}).get("layer_ids") or []),
+        "component_ids": list((dependents or {}).get("component_ids") or []),
+        "consumer_nodes": list((dependents or {}).get("consumer_nodes") or []),
+    }
+
+
 __all__ = [
     "WORKFLOW_RUNTIME_KEY",
     "capability_node_id",
     "role_node_id",
+    "artifact_lineage",
+    "node_lineage",
     "derive_runtime_block",
     "maybe_update_runtime_projection",
 ]

@@ -12,6 +12,7 @@
 ## Waves
 - [x] W1 Canonical Workflow Runtime Projection（`app/services/gis_harness/runtime_bridge.py`：`derive_runtime_block` 纯投影 + `workflow_runtime_v6` 单键；StageState 词汇复用；证据漂移→typed 边下游闭包 stale）
 - [x] W2 Compiler→Runtime bridge（服务入口 `maybe_update_runtime_projection` 接入 3 触发点：agent_pi_bridge 成功/失败、chat observation 路由；LLM make_plan 路径补齐 V4 证据消灭不对称；kill switch `GIS_WORKFLOW_RUNTIME_V6`）
+- [x] W3 Artifact/MapSpec/Node lineage 双向索引（runtime 块 `artifact_index`：ref → producer_node/consumer_nodes/layer_ids/component_ids；节点 `inputs` 输入血缘；`_cap_all_refs` 全行登记防过渡态失明；查询 API `artifact_lineage`/`node_lineage`；服务入口接 `mapspec_store.get_mapspec`）
 - [ ] W3 Artifact/MapSpec/Node lineage 双向索引
 - [ ] W4 Semantic Diff→Affected Subgraph 接线
 - [ ] W5 Partial Recompute + Reuse Validation

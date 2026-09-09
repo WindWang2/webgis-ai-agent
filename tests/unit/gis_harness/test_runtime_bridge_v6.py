@@ -78,22 +78,24 @@ def _chapter(
     step_params: Any = None,
     extra_rows: bool = False,
 ) -> Dict[str, Any]:
+    # 生产形状（planner + _mark_progress 语义）：数据能力与分析能力是两行
+    # 独立 capability；分析步骤经 depends_on 消费数据能力的产出。
     chapter: Dict[str, Any] = {
         "plan_id": plan_id,
         "recipe_id": "",
         "query": query,
         "status": "finalized",
         "data_requirements": [
-            {"capability": "density_mapping", "purpose": "schools",
+            {"capability": "schools_data", "purpose": "schools",
              "status": req_status, "bound_ref": req_ref,
-             "resolved_algorithm": "kernel_density", "resolved_tool": "",
+             "resolved_algorithm": "", "resolved_tool": "",
              "depends_on": [], "params": {}},
         ],
         "analysis_steps": [
             {"capability": "density_mapping", "purpose": "密度图",
              "status": step_status, "bound_ref": step_ref,
              "resolved_algorithm": "kernel_density", "resolved_tool": "",
-             "depends_on": [], "optional": False,
+             "depends_on": ["schools_data"], "optional": False,
              "params": step_params if step_params is not None else {}},
         ],
         "map_layers": [],
@@ -126,14 +128,15 @@ def test_analysis_node_state_from_plan_rows() -> None:
     assert block is not None
     cap = _node(block, "cap:density_mapping")
     assert cap["state"] == "satisfied"
-    # bound_ref 合并规则与 plan_graph 同源：requirement 行优先（生产中
-    # _mark_progress 对同一 capability 的两类行写同一 ref，规则等价）。
-    assert cap["bound_ref"] == "ref:schools-1"
+    # 该 capability 唯一行的绑定 ref（分析产出）。
+    assert cap["bound_ref"] == "ref:density-1"
+    # 输入血缘：depends_on 上游（schools_data）的绑定 ref。
+    assert cap["inputs"] == ["ref:schools-1"]
     assert cap["evidence"]
     # output 节点跟随产出者状态（artifact 存在性 = 产出者 bound_ref 事实）
     out = _node(block, "output:density_surface")
     assert out["state"] == "satisfied"
-    assert out["bound_ref"] == "ref:schools-1"
+    assert out["bound_ref"] == "ref:density-1"
     assert block["schema"] == "workflow_runtime.v1"
     assert block["runtime_revision"] == 1
 
@@ -143,9 +146,11 @@ def test_pending_rows_project_pending_state() -> None:
                   step_status="pending", step_ref="")
     block = derive_runtime_block(ch, compile_fn=_compile_for(_dag()))
     assert block is not None
-    assert _node(block, "cap:density_mapping")["state"] == "ready"
+    # 上游 schools_data 未满足 → 依赖它的 density_mapping 停留 pending
+    # （plan_graph ready 派生同一语义：deps satisfied 才 ready）。
+    assert _node(block, "cap:density_mapping")["state"] == "pending"
     # output 跟随产出者（非 satisfied）
-    assert _node(block, "output:density_surface")["state"] == "ready"
+    assert _node(block, "output:density_surface")["state"] == "pending"
 
 
 def test_unmapped_role_disclosed_honestly() -> None:
@@ -198,6 +203,88 @@ def test_unrelated_change_does_not_stale() -> None:
     assert block is not None
     assert _node(block, "cap:chart_render")["state"] == "stale"
     assert _node(block, "cap:density_mapping")["state"] == "satisfied"
+
+
+# ── 2b. W3 双向 lineage ──────────────────────────────────────────────────
+
+def _mapspec() -> Dict[str, Any]:
+    return {
+        "sources": {
+            "src-density": {"ref": "ref:density-1"},
+            "src-chart": {"ref": "ref:chart-1"},
+        },
+        "layers": [
+            {"id": "layer-density", "source": "src-density"},
+            {"id": "layer-base", "source": "src-basemap"},
+        ],
+        "layout": {
+            "components": [
+                {"id": "chart-1", "type": "chart_panel",
+                 "options": {"chartRef": "ref:chart-1"}},
+                {"id": "legend-1", "type": "legend", "options": {}},
+            ],
+        },
+    }
+
+
+def test_artifact_index_forward_and_reverse() -> None:
+    ch = _chapter(extra_rows=True)
+    dag = _dag(with_second_branch=True)
+    block = derive_runtime_block(
+        ch, mapspec=_mapspec(), compile_fn=_compile_for(dag))
+    assert block is not None
+    idx = block["artifact_index"]
+    # 正向：chart 节点消费 density 产物（depends_on 行的 bound_ref）
+    chart = _node(block, "cap:chart_render")
+    assert chart["inputs"] == ["ref:density-1"]
+    # 反向：ref:density-1 的生产节点 / 消费节点 / 依赖图层
+    entry = idx["ref:density-1"]
+    assert entry["producer_node"] == "cap:density_mapping"
+    assert "cap:chart_render" in entry["consumer_nodes"]
+    assert entry["layer_ids"] == ["layer-density"]
+    # chartRef → 组件反查
+    assert idx["ref:chart-1"]["component_ids"] == ["chart-1"]
+    # 无 spec 引用（basemap）不进索引
+    assert "layer-base" not in str(idx.get("src-basemap", ""))
+
+
+def test_lineage_query_helpers() -> None:
+    from app.services.gis_harness.runtime_bridge import (
+        artifact_lineage,
+        node_lineage,
+    )
+
+    ch = _chapter(extra_rows=True)
+    dag = _dag(with_second_branch=True)
+    block = derive_runtime_block(
+        ch, mapspec=_mapspec(), compile_fn=_compile_for(dag))
+    assert block is not None
+    # 节点正查：消费/产出/依赖图层
+    lin = node_lineage(block, "cap:density_mapping")
+    assert lin is not None
+    assert lin["output_ref"] == "ref:density-1"
+    assert lin["layer_ids"] == ["layer-density"]
+    assert "cap:chart_render" in lin["consumer_nodes"]
+    # artifact 反查
+    back = artifact_lineage(block, "ref:chart-1")
+    assert back is not None
+    assert back["producer_node"] == "cap:chart_render"
+    assert back["component_ids"] == ["chart-1"]
+    # 缺席 → None（不虚构）
+    assert artifact_lineage(block, "ref:missing") is None
+    assert node_lineage(block, "cap:missing") is None
+
+
+def test_no_mapspec_lineage_degrades_honestly() -> None:
+    block = derive_runtime_block(
+        _chapter(extra_rows=True),
+        compile_fn=_compile_for(_dag(with_second_branch=True)))
+    assert block is not None
+    # 无 spec：节点血缘仍在（行 bound_ref），图层/组件映射为空
+    entry = block["artifact_index"]["ref:density-1"]
+    assert entry["producer_node"] == "cap:density_mapping"
+    assert entry["layer_ids"] == []
+    assert entry["component_ids"] == []
 
 
 # ── 3. 确定性 ────────────────────────────────────────────────────────────
