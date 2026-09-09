@@ -25,8 +25,10 @@ from app.lib.gis.scientific_errors import (
 )
 
 CUBE_MAX_SLICES = 512                    # 时间片硬顶（先拒绝不 OOM）
-# 栈总元素硬顶（T·H·W；64MB float64 工作集量级）——Review R1-#3：
-# 只有 T 上限挡不住大格网（512×4096² ≈ 34GB），先类型化拒绝不 OOM。
+# 栈总元素硬顶（T·H·W）——Review R1-#3：只有 T 上限挡不住大格网
+# （512×4096² ≈ 34GB），先类型化拒绝不 OOM。注意：单数组 64 MiB 量级，
+# 下游向量化路径（如 phenology 缺口填充）峰值瞬态约为单数组的 ~10-15×
+# （多份 (T,N) 中间量）——合法最大调用约 0.8-1 GB 峰值，如实披露。
 CUBE_MAX_ELEMENTS = 8 * 1024 * 1024
 
 

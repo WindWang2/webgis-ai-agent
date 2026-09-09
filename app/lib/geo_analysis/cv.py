@@ -12,8 +12,9 @@
     块边界只落在**唯一时间值边界**（同一时刻的样本永不跨折拆分），
     unique 时间值数 < folds → 类型化诚实拒绝。
 - **编排**：``run_cross_validation`` 方法无关——调用方提供 fit/predict
-  回调（fit_fn(train_idx) → model，predict_fn(model, test_idx) →
-  (pred, var|None)），框架负责折分配、泄漏守卫、指标聚合与校准统计。
+  回调（fit_fn(train_idx, train_values) → model，
+  predict_fn(model, train_idx, test_idx) → (pred, var|None)），框架负责
+  折分配、泄漏守卫、指标聚合与校准统计。
 - **泄漏守卫**（构造保证 + report 逐折证据）：
   - spatial_block：train/test 块 id 不相交（网格构造保证，测试钉死）；
   - temporal_forward：逐折 ``max(train_t) < min(test_t)``；
@@ -175,7 +176,7 @@ def run_cross_validation(
     coords_metric: np.ndarray,
     values: np.ndarray,
     fit_fn: Callable[[np.ndarray, np.ndarray], Any],
-    predict_fn: Callable[[Any, np.ndarray], tuple],
+    predict_fn: Callable[[Any, np.ndarray, np.ndarray], tuple],
     *,
     scheme: str = "spatial_block",
     folds: int = 5,

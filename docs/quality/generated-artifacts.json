@@ -10,7 +10,7 @@
   },
   "docs/quality/QUALITY_MANIFEST.md": {
    "generator": "scripts/gen_quality_manifest.py",
-   "input_fingerprint": "9eaf66438ff13cc10c6e9c46a2c87fba5e6d0b4ed0255df8e9abc4fd0d8134c5",
+   "input_fingerprint": "2e5f0f3f529031e34763ef516bb3eb52cb4378efa2053e14280c4b74290978be",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -31,7 +31,7 @@
   },
   "docs/quality/certifications/CANCELLATION_COVERAGE.md": {
    "generator": "scripts/gen_resource_certification.py",
-   "input_fingerprint": "614c41ab61d2d6f7a00e4676c04957d84877e6fe914fb30f54a8844e018349d3",
+   "input_fingerprint": "6adb10a9cbbdea31b7d066dc7f8767efefc7860d98727591a2ebeae508b82140",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -46,14 +46,14 @@
   },
   "docs/quality/certifications/DETERMINISM.md": {
    "generator": "scripts/gen_determinism_certification.py",
-   "input_fingerprint": "7b22d3eed17623020eda5cd1a7ec6049c0ff33604a69e837f3ad72d7ae5a54a8",
+   "input_fingerprint": "8e1e0e23d891ff404395c7d863eb7e82802163f325e414ed41aa8941b9f8d127",
    "inputs": [
     "app/lib/gis/algorithms"
    ]
   },
   "docs/quality/certifications/RESOURCE_SAFETY.md": {
    "generator": "scripts/gen_resource_certification.py",
-   "input_fingerprint": "614c41ab61d2d6f7a00e4676c04957d84877e6fe914fb30f54a8844e018349d3",
+   "input_fingerprint": "6adb10a9cbbdea31b7d066dc7f8767efefc7860d98727591a2ebeae508b82140",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -76,7 +76,7 @@
   },
   "docs/quality/quality-manifest.json": {
    "generator": "scripts/gen_quality_manifest.py",
-   "input_fingerprint": "9eaf66438ff13cc10c6e9c46a2c87fba5e6d0b4ed0255df8e9abc4fd0d8134c5",
+   "input_fingerprint": "2e5f0f3f529031e34763ef516bb3eb52cb4378efa2053e14280c4b74290978be",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",

@@ -40,5 +40,24 @@ dispatch）验证正确且诚实测试；必修项如下，均已修复。
 | 8 | MINOR | cv usable 措辞 overclaim；topology docstring "不混计"与 ≥ 实现矛盾 | 两处措辞修正 |
 | 9 | MINOR | SGS differential 阈值放宽（已在测试 docstring 披露）；anomaly nanstd n=1 RuntimeWarning | warning 抑制；阈值放宽保留（披露） |
 
-## Round 2 — Subagent-B 最终 diff 审查
-（待 Round 1 修复后填写）
+## Round 2 — Subagent-B 最终 diff 审查（性能/安全/并发/兼容）
+
+结论：无 BLOCKER/CRITICAL；3 MAJOR 全部修复，MINOR 全部收口。
+
+| # | 严重度 | 发现 | 处置 |
+|---|---|---|---|
+| 1 | MAJOR | validate_flow_topology O(N) 纯 Python 扫描无取消点，descriptor 声明 coarse 未兑现；50M 格网上不可取消 | 链头种子化（bincount 入度 0）+ flatnonzero 拾取环链 + 每链 checkpoint；cpu_cost medium→high 诚实化 |
+| 2 | MAJOR | st_kriging_surface 执行计划传 feature_count+raster_cells——feature 优先使 raster_cells 窗口声明失效（R0-#6 回潮） | 驱动只传 raster_cells（镜像 SGS） |
+| 3 | MAJOR | phenology gap-fill 峰值瞬态 ~15× 单数组（cap 处 ~0.8-1GB）与"64MB"注释不符 | 削减冗余临时数组（复用 v、去掉多余 astype/中间量）+ CUBE_MAX_ELEMENTS 注释如实披露 ~10-15× 倍数 |
+| 4 | MINOR（正确性） | SGS batched chunk<k 时 sim 块对角写错位置（k_sim+sdiag 应为 k+sdiag） | 索引修正 + **chunk ≥ k 钳制**（k_sim<k 病态区制实测锚定跌至 ~0.6 且不随 R 收敛——直接消灭该区制）+ 回归测试 |
+| 5 | MINOR | LMC/ST 批量 happy-path 仍有逐行 numpy 微调用 | 有限性掩膜一次向量化（逐行 matmul 保留——逐位 differential 锚依赖同一 BLAS 求和次序，如实注释） |
+| 6 | MINOR | ST 邻域解析从 chunk 局部升为全量 O(n_t·k_query) 常驻；d_all 死变量 | tau/窗口/argsort 移回 512-chunk 循环；d_all 不落盘 |
+| 7 | MINOR | 工具 JSON 先拷贝后守卫 | _precheck_json_size（shape/len 预检，零拷贝）前置到三个工具入口 |
+| 8 | MINOR | cv.py 模块 docstring + 类型注解残留 2-arg 旧契约 | 同步 3-arg（防消费者按旧 docstring 重引入泄漏） |
+| 9 | MINOR | test_sgs_window_unit_is_raster_cells 判别力为零（两解释下都过） | 改判别性断言（rationale 含「像元数」+ 纯 raster profile deferred 语义） |
+| 10 | NIT | 工具测试格式、未用 logger、sim_values 瞬态披露、phenology 冗余 astype | 均已处理（重复 W9 commit 标题为历史不可改，PR 描述说明） |
+
+## 验证（R2 修复后）
+- tests/unit/lib + tests/science_oracles + tests/quality 合并车道：
+  **2405 passed, 0 failed**（含新对抗/钳制/判别性回归）
+- 生成物链再生成（manifest/report/certifications/drift/ledger）

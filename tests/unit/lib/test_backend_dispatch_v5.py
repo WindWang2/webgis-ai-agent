@@ -31,11 +31,13 @@ class TestPlanExecution:
         assert plan.variant_id == "numpy_batched"
         assert plan.mode == "vectorized"
         assert plan.matched is True
-        # 样本数不再是决策单位：60 样本/50 万格点仍选 batched
-        plan2 = plan_execution(
-            "interpolation.sgs",
-            ScaleProfile(feature_count=60, raster_cells=500_000))
-        assert plan2.variant_id == "numpy_batched"
+        # 判别性锚（R2-#9）：raster_cells 单独驱动时 rationale 以「像元数」
+        # 记账——若实现退回 feature_count 优先（R2 发现的 ST 单位错配类），
+        # 此断言即红
+        assert "像元数" in plan.rationale
+        # feature_count 缺省 → deferred（matched=False）
+        plan2 = plan_execution("interpolation.sgs", ScaleProfile())
+        assert plan2.matched is False
 
     def test_reference_variant_for_small_grids_when_forced(self):
         # 显式后端参数（工具层透传）→ 绕过窗口解析（驱动直测）

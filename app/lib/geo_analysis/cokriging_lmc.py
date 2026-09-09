@@ -328,9 +328,13 @@ def cokriging_lmc(
                 C, rhs[:, :, None])[:, :, 0]
         except np.linalg.LinAlgError:
             sol_all = None
+        # 有限性掩膜一次向量化（R2-#5）；逐行 matmul 保留——与 reference
+        # 的逐位 differential 锚依赖同一 BLAS 求和次序
+        ok_mask = (np.isfinite(sol_all).all(axis=1)
+                   if sol_all is not None else None)
         for r_i in range(c):
             sol: Optional[np.ndarray] = None
-            if sol_all is not None and np.isfinite(sol_all[r_i]).all():
+            if ok_mask is not None and ok_mask[r_i]:
                 sol = sol_all[r_i]
             else:
                 try:

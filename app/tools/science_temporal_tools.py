@@ -14,12 +14,9 @@ phenology.py（唯一事实源，本模块只做参数校验 + 薄包装 + 有�
 """
 from __future__ import annotations
 
-import logging
 from typing import Any, Optional
 
 from app.tools.registry import ToolRegistry, tool
-
-logger = logging.getLogger(__name__)
 
 
 def _as_array(x: Any, name: str):

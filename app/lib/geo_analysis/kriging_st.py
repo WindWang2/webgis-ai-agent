@@ -186,11 +186,12 @@ def st_kriging(
     pts_t = apply_anisotropy(pts_metric, anisotropy_angle, anisotropy_ratio)
     targets_t = apply_anisotropy(targets_metric, anisotropy_angle, anisotropy_ratio)
 
-    # 时空邻域：空间 k* 候选 × 时间窗过滤（k 不足时逐步放宽空间候选）
+    # 时空邻域：空间 k* 候选 × 时间窗过滤（k 不足时逐步放宽空间候选）。
+    # Review R2-#6：邻域解析按 512-chunk 进行（避免 (n_t, k_query) 全量
+    # tau/argsort 中间量常驻）；距离数组不消费不落盘。
     tree = cKDTree(pts_t)
     k_query = min(MAX_NEIGHBORS * 4, n)
-    d_all, i_all = tree.query(targets_t, k=k_query)
-    d_all = np.asarray(d_all, float).reshape(len(targets_t), k_query)
+    _d_all, i_all = tree.query(targets_t, k=k_query)
     i_all = np.asarray(i_all, int).reshape(len(targets_t), k_query)
 
     C00 = float(st_covariance(st, np.array([0.0]), np.array([0.0]))[0])
@@ -200,39 +201,42 @@ def st_kriging(
     # 邻域按逐目标 relaxed 列表定长化（架构挑战 C1）：窗口内候选 ≥2 →
     # 取窗口内前 k 个（V4 语义：relax 后仍解克里金系统）；<2 → 放宽为
     # 纯空间前 k 个 + degraded 计数（V4 同义）。不足 k 的槽位哨兵填充。
-    tau_all = times_sec[i_all] - target_times_sec[:, None]
-    in_window = (
-        np.abs(tau_all) <= (time_window_sec if time_window_sec is not None
-                            else np.inf))
-    win_counts = in_window.sum(axis=1)
-    relaxed = win_counts < 2
-
     nb_idx = np.empty((n_t, k), dtype=int)
     valid = np.empty((n_t, k), dtype=bool)
-    if relaxed.any():
-        r_idx = np.nonzero(relaxed)[0]
-        # relax（V4 语义）：纯空间前 k 近邻，全部有效（k ≤ k_query 恒成立）
-        nb_idx[r_idx] = i_all[r_idx][:, :k]
-        valid[r_idx] = True
-    if (~relaxed).any():
-        w_idx = np.nonzero(~relaxed)[0]
-        # 窗口内候选保序前移（stable argsort：False=0 排前、True=1 排后）
-        w_order = np.argsort(~in_window[w_idx], axis=1, kind="stable")
-        w_sorted = i_all[w_idx][np.arange(len(w_idx))[:, None], w_order][:, :k]
-        win_k = np.minimum(in_window[w_idx].sum(axis=1), k)
-        v = np.arange(k)[None, :] < win_k[:, None]
-        nb_idx[w_idx] = np.where(v, w_sorted, w_sorted[:, :1])  # 哨兵=首候选
-        valid[w_idx] = v
+    relaxed_total = 0
+    m = k + 1
 
     preds = np.empty(n_t, dtype=float)
     varis = np.empty(n_t, dtype=float)
-    degraded = int(relaxed.sum())
-    n_used = valid.sum(axis=1).astype(int)
-    m = k + 1
+    degraded = 0
+    n_used = np.empty(n_t, dtype=int)
 
     for start in cancellable(range(0, n_t, 512), every=1):
         end = min(start + 512, n_t)
         c = end - start
+        # ── 邻域解析（chunk 局部；窗口过滤 + 稳定保序）────────────────
+        i_c = i_all[start:end]
+        tau_c = times_sec[i_c] - target_times_sec[start:end, None]
+        in_window = (
+            np.abs(tau_c) <= (time_window_sec if time_window_sec is not None
+                              else np.inf))
+        win_counts = in_window.sum(axis=1)
+        relaxed = win_counts < 2
+        relaxed_total += int(relaxed.sum())
+        if relaxed.any():
+            r_idx = np.nonzero(relaxed)[0]
+            nb_idx[start:end][r_idx] = i_c[r_idx][:, :k]
+            valid[start:end][r_idx] = True
+        if (~relaxed).any():
+            w_idx = np.nonzero(~relaxed)[0]
+            w_order = np.argsort(~in_window[w_idx], axis=1, kind="stable")
+            w_sorted = i_c[w_idx][np.arange(len(w_idx))[:, None],
+                                  w_order][:, :k]
+            win_k = np.minimum(in_window[w_idx].sum(axis=1), k)
+            v = np.arange(k)[None, :] < win_k[:, None]
+            nb_idx[start:end][w_idx] = np.where(v, w_sorted, w_sorted[:, :1])
+            valid[start:end][w_idx] = v
+
         idx = nb_idx[start:end]                   # (c, k)
         vmask = valid[start:end]                  # (c, k)
         nb_xy = pts_t[idx]                        # (c, k, 2)
@@ -269,9 +273,11 @@ def st_kriging(
             sol_all = np.linalg.solve(C, rhs[:, :, None])[:, :, 0]
         except np.linalg.LinAlgError:
             sol_all = None
+        ok_mask = (np.isfinite(sol_all).all(axis=1)
+                   if sol_all is not None else None)
         for r_i in range(c):
             sol = None
-            if sol_all is not None and np.isfinite(sol_all[r_i]).all():
+            if ok_mask is not None and ok_mask[r_i]:
                 sol = sol_all[r_i]
             else:
                 try:
@@ -297,11 +303,13 @@ def st_kriging(
                 degraded += 1
             varis[gi] = var
 
+    n_used = valid.sum(axis=1).astype(int)
+
     return {
         "predictions": preds,
         "variances": varis,
         "n_neighbors": n_used,
-        "degraded_cells": int(degraded),
+        "degraded_cells": int(degraded + relaxed_total),
         "model": st,
     }
 
@@ -508,8 +516,7 @@ def st_kriging_surface(
 
     metadata["execution_plan"] = plan_execution(
         "interpolation.st_kriging",
-        ScaleProfile(raster_cells=len(target_cells),
-                     feature_count=int(len(values)))).to_dict()
+        ScaleProfile(raster_cells=len(target_cells))).to_dict()
     records = [
         {
             "h3_index": cell,

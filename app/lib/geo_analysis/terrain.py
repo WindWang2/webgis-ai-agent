@@ -2076,29 +2076,56 @@ def validate_flow_topology(
     known = (rec_flat >= 0) & ~bad_receiver
     dangling[known] = ~valid_flat[rec_flat[known]]
 
-    # 环检测：染色法（有界；总步数上限 2N 防御异常输入）
+    # 环检测：染色法。外层只从「链头」（入度 0）起步——dem D8 的链头数
+    # 通常远小于格元数；残留未访像元 = 环成员/环挂链，用向量化
+    # flatnonzero 逐链拾取（Review R2-#1：消除对全部 N 像元的纯 Python
+    # 扫描 + 每 checkpoint 尊重 coarse 取消画像）。
     color = np.zeros(n, dtype=np.uint8)
     cycle_cells = 0
     steps_total = 0
-    for start in range(n):
-        if color[start] != 0:
+    indeg = np.bincount(
+        rec_flat[(rec_flat >= 0) & (rec_flat < n)].astype(np.int64),
+        minlength=n)
+    frontier = [int(x) for x in np.flatnonzero((indeg == 0) & valid_flat)]
+    pos = 0
+
+    def _next_start() -> Optional[int]:
+        """取下一个未访链起点：先链头，耗尽后向量化拾取环成员。"""
+        nonlocal pos
+        while pos < len(frontier):
+            cand = frontier[pos]
+            pos += 1
+            if color[cand] == 0:
+                return cand
+        remaining = np.flatnonzero(color == 0)
+        if remaining.size == 0:
+            return None
+        cand = int(remaining[0])              # 环成员/环挂链入口
+        frontier.append(cand)
+        pos += 1
+        return cand
+
+    while True:
+        start = _next_start()
+        if start is None:
+            break
+        checkpoint()                              # coarse 取消点（R2-#1）
+        if rec_flat[start] < 0:
+            color[start] = 2                      # 出口：非环成员
             continue
         path: list = []
         cur = start
-        while 0 <= cur < n:
-            if color[cur] == 1:
-                cycle_cells += 1          # 回到在栈节点 → 环
-                break
-            if color[cur] == 2 or rec_flat[cur] < 0:
-                break
+        while 0 <= cur < n and color[cur] == 0 and rec_flat[cur] >= 0:
             color[cur] = 1
             path.append(cur)
             cur = int(rec_flat[cur])
             steps_total += 1
             if steps_total > 2 * n:
                 break
-        for p in path:
-            color[p] = 2
+        if 0 <= cur < n and color[cur] == 1:
+            cycle_cells += 1              # 回到在栈节点 → 环
+        for q in path:
+            color[q] = 2
 
     safe_rec = np.clip(rec_flat, 0, n - 1)
     has_rec = (rec_flat >= 0) & ~bad_receiver

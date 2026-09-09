@@ -43,7 +43,7 @@ def _fill_short_gaps(
     """
     t_len, n = values.shape
     idx = np.arange(t_len, dtype=float)[:, None]
-    v = np.where(valid, values, np.nan)
+    v = np.where(valid, values, np.nan)          # 与调用方共享语义的单一副本
     # 前向/后向最近有效索引（列向 cummax / 反向 cummax）
     with np.errstate(invalid="ignore"):
         prev_idx = np.where(valid, idx, -np.inf)
@@ -52,19 +52,17 @@ def _fill_short_gaps(
         next_idx = np.minimum.accumulate(next_idx[::-1], axis=0)[::-1]
     has_prev = np.isfinite(prev_idx)
     has_next = np.isfinite(next_idx)
-    interpolable = (~valid) & has_prev & has_next
-    # run 长度：无效位到前/后有效位的距离和
-    run_len = (next_idx - prev_idx - 1.0)
-    fillable = interpolable & (run_len <= float(max_gap))
-    p = prev_idx.astype(float)
-    span = np.maximum(next_idx - p, 1.0)
-    w = (idx - p) / span
-    p_i = np.where(has_prev, prev_idx, 0).astype(int)
-    n_i = np.where(has_next, next_idx, t_len - 1).astype(int)
-    prev_v = np.take_along_axis(np.where(valid, values, np.nan), p_i, axis=0)
-    next_v = np.take_along_axis(np.where(valid, values, np.nan), n_i, axis=0)
-    filled_vals = prev_v * (1.0 - w) + next_v * w
-    filled = np.where(fillable, filled_vals, v)
+    fillable = (~valid) & has_prev & has_next
+    # run 长度：无效位到前/后有效位的距离和（>max_gap 不外推）
+    fillable &= (next_idx - prev_idx - 1.0) <= float(max_gap)
+    span = np.maximum(next_idx - prev_idx, 1.0)
+    w = (idx - prev_idx) / span
+    p_i = np.where(has_prev, prev_idx, 0).astype(np.int64)
+    n_i = np.where(has_next, next_idx, t_len - 1).astype(np.int64)
+    valid_vals = np.where(valid, values, np.nan)
+    prev_v = np.take_along_axis(valid_vals, p_i, axis=0)
+    next_v = np.take_along_axis(valid_vals, n_i, axis=0)
+    filled = np.where(fillable, prev_v * (1.0 - w) + next_v * w, v)
     return filled, fillable
 
 

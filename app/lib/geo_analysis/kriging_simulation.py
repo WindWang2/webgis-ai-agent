@@ -379,8 +379,12 @@ def sequential_gaussian_simulation_batched(
             f"SGS 至少需要 8 个样本（与克里金同底），got {len(values)}")
 
     n_groups = int(max(1, min(n_path_groups, n_realizations)))
-    chunk_size = int(max(8, min(chunk_size, n_t if n_t else 8)))
     k = int(max(2, min(k, MAX_NEIGHBORS, len(values))))
+    # chunk ≥ k 钳制（R2-#4）：chunk < k 会让前几个 chunk 落入
+    # k_sim < k 的病态区制（近邻条件集结构劣化，ensemble 对 OK 的锚定
+    # 实测跌至 ~0.6 且随 R 不收敛——reference 的 1024-chunk 恒 ≥ k，
+    # 该区制在两路径语义一致前提之外，直接消灭）。
+    chunk_size = int(max(k, min(chunk_size, n_t if n_t else k)))
 
     z_scores, ns_state = normal_score_transform(values)
     if variogram is None:
@@ -470,7 +474,7 @@ def sequential_gaussian_simulation_batched(
                     .sum(-1))                     # (B, k_sim, k_sim)
                 C[:, k:, k:] = cov(d_ss)
                 sdiag = np.arange(k_sim)
-                C[:, k_sim + sdiag, k_sim + sdiag] = total_sill - ridge
+                C[:, k + sdiag, k + sdiag] = total_sill - ridge
                 rhs[:, k:] = cov(d_sim)
             try:
                 sol = np.linalg.solve(C, rhs[:, :, None])[:, :, 0]

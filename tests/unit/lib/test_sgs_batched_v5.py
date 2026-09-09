@@ -138,6 +138,30 @@ class TestSGSBatched:
         finally:
             CURRENT_TOKEN.reset(token_context)
 
+    def test_chunk_smaller_than_k_is_clamped(self):
+        # R2-#4 回归：chunk < k 被钳到 ≥ k（k_sim<k 病态区制直接消灭——
+        # 实测该区制 ensemble 对 OK 锚定跌至 ~0.6 且随 R 不收敛）；
+        # 另修 sim 块对角索引（k_sim<k 时原写错位置）。
+        from app.lib.geo_analysis.kriging import fit_variogram, ordinary_kriging
+
+        xy, z, targets = _fixture(n=48, n_t=200, seed=13)
+        vfit = fit_variogram(xy, z)
+        ok = ordinary_kriging(xy, z, targets, vfit, k=12)
+        bat_small = sequential_gaussian_simulation_batched(
+            xy, z, targets, n_realizations=64, seed=42, k=12,
+            n_path_groups=8, chunk_size=8)          # 触发钳制 → chunk=12
+        bat_large = sequential_gaussian_simulation_batched(
+            xy, z, targets, n_realizations=64, seed=42, k=12,
+            n_path_groups=8, chunk_size=64)
+        # 序贯区制 E-type 均值的 MC 噪声高于单 chunk 区制（路径依赖），
+        # 阈值按该区制校准（R=64、P=8）
+        corr_ok = float(np.corrcoef(bat_small.mean, ok.predictions)[0, 1])
+        assert corr_ok >= 0.75, f"data-anchor corr {corr_ok}"
+        # 注：不 pin chunk 12 vs 64 的互相关——序贯近似对 chunk 粒度的
+        # 敏感度是近似语义的一部分（R=64 下实测 ~0.78），非正确性断言。
+        assert np.isfinite(bat_small.mean).all()
+        assert float(bat_small.std.max()) < 10.0   # 无 var 爆炸
+
     def test_single_chunk_matches_reference_statistics(self):
         # n_t < chunk（单 chunk）→ 无模拟条件 → 两路径统计应高度一致
         xy, z, targets = _fixture(n_t=60)
