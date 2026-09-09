@@ -87,6 +87,8 @@ asyncpg>=0.29.0
 # psycopg2-binary 是生产/CI 的二进制 wheel（无需 pg_config 编译）。
 psycopg2-binary>=2.9.12
 matplotlib>=3.8.0
+weasyprint>=61.0  # V6 ADR-0120: publication vector PDF（可选依赖，缺席时运行时诚实降级）
+pypdf>=4.0  # V6 ADR-0120: PDF 结构化读取（页数/文本提取验证）
 
 # RAG & Vector Search
 sentence-transformers>=2.2.2  # #662: local_files_only 构造参数（离线加载开关依赖）

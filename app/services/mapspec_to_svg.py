@@ -1204,11 +1204,25 @@ def compile_mapspec_to_svg_detailed(
                 )
 
         chrome_group = ""
+        a11y_role_attr = ""
+        a11y_title_elems = ""
         if include_chrome:
             chrome_group = _render_chrome_groups(mapspec, geo_bounds, scaled_width, scaled_height, project)
+            # W11 可访问性：publication 产物 role="img" + <title>/<desc>。
+            # legacy 路径不注入（byte-stable）。
+            _title_text = ""
+            for _c in _resolve_components(mapspec):
+                if _c.type == "title" and _c.enabled and _c.text:
+                    _title_text = _c.text
+                    break
+            a11y_role_attr = ' role="img"'
+            _t = _escape_svg_attr(_title_text or "WebGIS 专题地图导出")
+            a11y_title_elems = (
+                f"<title>{_t}</title><desc>WebGIS AI Agent 专题地图导出（矢量）</desc>"
+            )
 
         return SvgCompilation(
-            svg=f"""<svg width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">
+            svg=f"""<svg{a11y_role_attr} width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">{a11y_title_elems}
   <rect width="100%" height="100%" fill="#ffffff" />
   <g class="mapspec-vector-layers">
     {elements_svg}
