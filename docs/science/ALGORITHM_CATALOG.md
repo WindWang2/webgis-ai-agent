@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：139 能力 · 208 算法 · 112 参数契约。
+统计：139 能力 · 213 算法 · 113 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -328,7 +328,7 @@ GEOS 拓扑叠加（intersection/union/difference 等），纯拓扑不量度。
 条件高斯多实现模拟（SGS）：P10/P50/P90/std ensemble，风险制图与不确定性传播；caller_seeded 可复现。
 
 - **`interpolation.sgs`** SGS 条件高斯模拟（`native`·成熟度 已验证，契约: `sgs_analysis`，出处: `goovaerts1997`，精度: sampling）
-  - 假设：Goovaerts 1997 标准流程：normal-score 域沿随机路径逐节点条件 SK，条件集 = k 近邻原始样本 + k 近邻已模拟节点；caller_seeded：单一 PCG64 流（路径+噪声同源），同 seed 逐位复现；ensemble 统计（P10/P50/P90/std）来自真实多实现——非解析方差面
+  - 假设：Goovaerts 1997 标准流程：normal-score 域沿随机路径逐节点条件 SK，条件集 = k 近邻原始样本 + k 近邻已模拟节点（节点间取真实互协方差）；caller_seeded：单一 PCG64 流（路径+噪声同源），同 seed 逐位复现；ensemble 统计（P10/P50/P90/std）来自真实多实现——非解析方差面
   - 局限：蒙特卡洛近似：实现数有限时分位数有采样误差（R≥100 推荐用于分位数）；高斯性假设经 normal-score 秩变换近似成立——非高斯依赖结构未建模；病态邻域回退条件值经验抽样（与 OK 邻域均值回退同口径）
   - 回退：`interpolation.kriging`→approximation
   - 资源包络：8B/像元，要素硬上限 200000，像元硬上限 20000000
@@ -1154,6 +1154,24 @@ CUSUM 单均值漂移定位 + 固定种子 bootstrap 显著性（多变点不在
 - **`temporal.raster_ts`** 时序栅格（`native`·成熟度 已验证）
   - 假设：时序栅格切片统计（逐期描述性统计）
   - 局限：栈深与格网规模守卫在实现层（ResourceScaleMismatch）
+- **`temporal.cube_stats`** 时空立方体统计（`native`·成熟度 已验证，契约: `science_temporal_analysis`，精度: exact）
+  - 假设：统一时间轴：栈 (T,H,W) + 秒制时间戳（升序）；SAR/光学共用容器；缺口诚实：无效像元-切片计数披露，不静默插值
+  - 局限：单位一致性（SAR 强度/分贝、光学反射率）由调用方保证；疑似缺失切片判据 = 间距 > 中位距 1.5×（启发式，已披露）
+  - 资源包络：8B/像元，像元硬上限 2097152
+  - 取消：coarse
+  - 数值容差：rtol=1e-12，atol=1e-12
+- **`temporal.phenology`** 物候特征（`native`·成熟度 已验证，契约: `science_temporal_analysis`，精度: approximate）
+  - 假设：双谐波联合 LS [1, t, sin/cos ωt, sin/cos 2ωt]（趋势与谐波联合估计）；阈值法物候期：thr = min + frac·(max−min)，切片索引制；短缺口（run ≤ max_gap）线性插值；长缺口保持 NaN（不外推）
+  - 局限：物候期为切片索引制——非真实日期反演（诚实边界）；SG 平滑只作用于填充后完整序列；被排除像元计数披露；高斯谐波近似——非正弦物候轨迹的 SOS/EOS 有系统偏差
+  - 资源包络：8B/像元，像元硬上限 2147483647
+  - 取消：coarse
+  - 数值容差：rtol=1e-09，atol=1e-09
+- **`temporal.anomaly`** 时间异常/变化（`native`·成熟度 已验证，契约: `science_temporal_analysis`，精度: approximate）
+  - 假设：异常 = 最后切片 z-score（全期气候态，std ddof=1）；变化 = 后半段均值 − 前半段均值；z 为 Welch 近似
+  - 局限：change_z 是效应量近似——非正式显著性检验（无自由度校正）；z 分母为零/样本 <2 的像元 → NaN（诚实缺省）
+  - 资源包络：8B/像元，像元硬上限 2147483647
+  - 取消：coarse
+  - 数值容差：rtol=1e-09，atol=1e-09
 
 ## `terrain_aspect` — 坡向分析
 
@@ -1280,6 +1298,12 @@ D8 单向流流向（ESRI 2 的幂编码）、拓扑序汇流累积与逆 D8 上
   - 资源包络：32B/像元，像元硬上限 50000000
   - 取消：chunk_boundary
   - 数值容差：rtol=1e-09，atol=0
+- **`terrain.flow_topology_validate`** 流网拓扑校验（`native`·成熟度 已验证，契约: `hydrology_v4_analysis`，出处: `ocallaghan_mark1984`，精度: exact）
+  - 假设：D8 receiver 图应无环；汇流沿 receiver 严格单调增（正 acc）；校验是结构事实报告——不 raise（is_consistent 汇总位）
+  - 局限：equal-acc 平台单列计数（epsilon 填洼残留线索），不与违例混计；多出口是披露事实（边界 DEM 常态），非错误
+  - 资源包络：24B/像元，像元硬上限 50000000
+  - 取消：coarse
+  - 数值容差：rtol=1e-12，atol=0
 - **`terrain.hand`** 最近排水高程（HAND）（`native`·成熟度 已验证，契约: `hydrology_v4_analysis`，出处: `renno2008`，精度: exact）
   - 假设：HAND = z(cell) − z(D8 下游链第一个河网像元)；望远镜求和单遍；河网 = 填后 D8 汇流累积 ≥ threshold；边界排出且未遇河网 → NaN（诚实缺省，计数披露）
   - 局限：河网阈值敏感性：阈值决定『最近排水』的定义；洪泛区语义为地形近似（非水动力淹没模型）
@@ -1288,7 +1312,13 @@ D8 单向流流向（ESRI 2 的幂编码）、拓扑序汇流累积与逆 D8 上
   - 数值容差：rtol=1e-12，atol=0
 - **`terrain.pfafstetter`** Pfafstetter 编码（单级）（`native`·成熟度 已验证，契约: `hydrology_v4_analysis`，出处: `pfafstetter1989`，精度: exact）
   - 假设：干流 = 出口上溯每步取汇流最大的上游河网像元；偶数码 2,4,… 沿干流等分；4 大支流（junction 汇流降序）取奇数 1,3,5,7；支流子流域 = junction 上游河网像元（下游-first 归属）
-  - 局限：单级层级（多级递归子盆地编码未实现——hierarchy_note 披露）；出口必须在河网上（否则类型化拒绝）
+  - 局限：单级层级（levels=1 语义——多级用 terrain.pfafstetter_multilevel）；出口必须在河网上（否则类型化拒绝）
+  - 资源包络：24B/像元，像元硬上限 50000000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-12，atol=0
+- **`terrain.pfafstetter_multilevel`** Pfafstetter 编码（多级）（`native`·成熟度 已验证，契约: `hydrology_v4_analysis`，出处: `pfafstetter1989`，精度: exact）
+  - 假设：level k≥2：偶数码段（inter-basin）以其下游端为出口、在父码掩膜内重跑同一主干走法，子码 = 父码×10 + 位码（经典逐位拼接）；奇数码（支流盆地）为叶子不细分（经典约定）；主干走法与单级共享同一 helper（零第二事实源）
+  - 局限：子段河网像元 < 8 → 停止细分（计数披露，skipped_segments）；levels ≤ 4（码位预算）；出口必须在河网上
   - 资源包络：24B/像元，像元硬上限 50000000
   - 取消：chunk_boundary
   - 数值容差：rtol=1e-12，atol=0

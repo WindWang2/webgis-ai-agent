@@ -14,9 +14,9 @@ app/lib/geo_analysis/cv.py            ● NEW  CV 框架唯一事实源（splitt
     ├── spatial_block_folds           （从 kriging._spatial_block_folds 上收；kriging 改为 re-import 同一实现）
     ├── temporal_forward_folds        ● 时间前向链（fold k: train=过去块, test=块 k；零 future leakage）
     └── run_cross_validation          方法无关编排（fit/predict 回调；泄漏守卫断言进 report）
-app/lib/geo_analysis/kriging.py       ○ _spatial_block_folds → cv.spatial_block_folds（兼容别名保留）；
-                                        fit_variogram 失败路径加确定性 multi-start polish；
-                                        + compare_variogram_models（逐模型 RSS/AICc/合理性旗标）
+app/lib/geo_analysis/kriging.py       ○ _spatial_block_folds = cv.spatial_block_folds（别名 re-import 同一对象）；
+                                        _fit_model 失败路径确定性 multi-start polish（成功路径逐位不变）；
+                                        select_variogram_model + 逐模型 diagnostics 旗标（不新增第二比较入口）
 app/lib/geo_analysis/cokriging_lmc.py ○ 逐目标 solve → 批量 np.linalg.solve((c,m,m),(c,m))；
                                         LinAlgError 时逐行隔离退化（计数语义不变）
 app/lib/geo_analysis/kriging_st.py    ○ 逐目标循环 → 定长 k 填充批量系统（(c,k+1,k+1)）；窗口不足
@@ -31,8 +31,10 @@ app/lib/geo_analysis/kriging_simulation.py ○ SGS 双实现：
 app/lib/geo_analysis/uncertainty.py   ● NEW UncertaintyArtifact（统一不确定性契约）
 app/lib/geo_analysis/temporal_cube.py ● NEW 时空立方体适配（SAR/光学统一时间轴/质量掩膜/缺口披露）
 app/lib/geo_analysis/phenology.py     ● NEW 物候特征引擎（SG 平滑 + 双谐波 + SOS/EOS/LOS/峰值）
-app/lib/geo_analysis/terrain.py       ○ + pfafstetter_codes_multilevel（≤4 级递归）+
-                                        validate_flow_topology（环/悬挂/越界/多出口报告）
+app/lib/geo_analysis/terrain.py       ○ + pfafstetter_codes_multilevel（≤4 级；主干走法上收为共享
+                                        helper，levels=1 与单级逐位一致）+
+                                        validate_flow_topology（环/悬挂/越界/汇流违例/平台报告）；
+                                        单级函数 meta 契约保留（V4 测试锚定）
 app/lib/gis/backend_selection.py      ○ + plan_execution（纯函数；native/vectorized/chunked 词表 +
                                         chunk_shape 建议；distributed 明示 planned 不存在）
 app/lib/gis/algorithms/interpolation.py ○ sgs/cokriging_lmc/st_kriging descriptor + numpy_batched 变体窗口
