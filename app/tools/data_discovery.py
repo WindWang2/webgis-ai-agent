@@ -143,7 +143,14 @@ def register_data_discovery_tools(registry: ToolRegistry) -> None:
             return {"success": False, "code": "NOT_FOUND",
                     "error": "缺少有效的会话或数据引用"}
         profiler = get_dataset_profiler()
-        profile = await profiler.profile_session_ref(sid, ref_id, deep=bool(deep))
+        # V5 W4（review R1 #8 接线）：deep 请求走渐进加深入口 —— 既有
+        # cheap 剖析保留 provenance（progressive_deepened），deep 失败回退
+        # cheap（浅事实不丢）。
+        profile = (
+            await profiler.deepen_profile(sid, ref_id)
+            if deep
+            else await profiler.profile_session_ref(sid, ref_id, deep=False)
+        )
         if profile is None:
             return {"success": False, "code": "NOT_FOUND",
                     "error": f"未找到数据引用 {ref_id}（可能已过期）"}

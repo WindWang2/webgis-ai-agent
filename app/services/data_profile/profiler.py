@@ -277,6 +277,43 @@ class DatasetProfiler:
         self._cache_put(key, profile)
         return profile
 
+    async def deepen_profile(
+        self,
+        session_id: str,
+        ref: str,
+        *,
+        max_scan_rows: int = DEFAULT_MAX_SCAN_ROWS,
+    ) -> Optional[DatasetProfileV3]:
+        """渐进式剖析（V5 W4）：cheap → deep 的显式加深入口。
+
+        已有同修订 cheap/partial 剖析时保留其 provenance（diagnostics
+        标注 ``progressive_deepened``），deep 失败时**回退返回既有
+        cheap 剖析**（绝不因加深把浅事实也弄丢）。ref 缺席 → None。
+        """
+        from app.services.session_data import session_data_manager
+
+        descriptor = None
+        try:
+            descriptor = await session_data_manager.get_ref_descriptor(
+                session_id, ref)
+        except Exception:  # noqa: BLE001 — 与 profile_session_ref 同口径
+            descriptor = None
+        revision = int(descriptor.get("content_revision") or 0) \
+            if isinstance(descriptor, dict) else 0
+        shallow_key = ("ref", session_id, ref, revision, False, max_scan_rows)
+        had_shallow = self._cache_get(shallow_key) is not None
+
+        deep = await self.profile_session_ref(
+            session_id, ref, deep=True, max_scan_rows=max_scan_rows)
+        if deep is None:
+            return self._cache_get(shallow_key)
+        if had_shallow:
+            deep.diagnostics = list(deep.diagnostics) + ["progressive_deepened"]
+        # 注解后回写 deep 缓存槽（profile_session_ref 已缓存的是无注解版）。
+        self._cache_put(
+            ("ref", session_id, ref, revision, True, max_scan_rows), deep)
+        return deep
+
     def _shallow_profile_ref(self, ref: str, descriptor: Dict[str, Any]) -> DatasetProfileV3:
         return shallow_profile_from_descriptor(ref, descriptor)
 
@@ -317,6 +354,16 @@ class DatasetProfiler:
                 diagnostics=[f"profile_error: {e}"],
             )
         category = _category_from_geometry_types(vp.geometry_types)
+        # V5 W4：经度约定/AM 语义 —— bbox + 有界几何采样的真实证据。
+        from app.lib.gis.longitude import describe_longitude_semantics
+
+        sample_geom: Any = None
+        for f in features[:8]:
+            if isinstance(f, dict) and isinstance(f.get("geometry"), dict):
+                sample_geom = f["geometry"]
+                break
+        lon_facts = describe_longitude_semantics(
+            bbox=vp.extent, geometry=sample_geom)
         return DatasetProfileV3(
             target_ref=ref,
             category=category,
@@ -325,6 +372,7 @@ class DatasetProfiler:
             vector=vp,
             profile_quality=quality,
             source_revision=int(descriptor.get("content_revision") or 0),
+            longitude_facts=lon_facts,
         )
 
     @staticmethod

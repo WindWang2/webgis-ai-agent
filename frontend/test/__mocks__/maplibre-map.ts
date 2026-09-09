@@ -304,6 +304,13 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
 
     // ─── Rendering / style-state surface (issue #404) ──────────────────────
     isStyleLoaded: vi.fn(() => styleLoaded),
+    // V5 rendered-state telemetry：源加载完成判定（isSourceLoaded，MapLibre
+    // 契约：源仍在加载/重载中 → false）。Mock 默认全就绪 —— 需要演练
+    // pending/error 的测试按源覆写。
+    isSourceLoaded: vi.fn((_sourceId?: string) => true),
+    // V5 rendered-state telemetry：源内当前可查要素（矢量=全量，瓦片=视口
+    // 内）。默认空集 —— 测试按需覆写。
+    querySourceFeatures: vi.fn((_sourceId?: string) => [] as Array<unknown>),
     // P9 render observation：`loaded()` = 全部瓦片/渲染落定（MapLibre 契约）。
     // Mock 默认完全就绪（与 isStyleLoaded 默认 true 同理）—— settle 探测
     // 立即通过；需要演练渲染未落定的测试可 loaded.mockReturnValue(false)。
