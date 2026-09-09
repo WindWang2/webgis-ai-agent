@@ -140,9 +140,9 @@ def to_workflow_health(state: str) -> str:
     """阶梯态 → workflow 统一消费词汇（blocked/degraded/partial/ok）。
 
     - unknown → blocked（无证据不得放行 —— finalizer 纪律）；
-    - pending/mounted/loaded → blocked 或 degraded（有硬错误迹象 →
-      blocked；仅未到位 → degraded 由调用方按 findings 决策，此处按
-      态强度保守映射 rendered 以下一律 degraded）；
+    - pending/mounted/loaded → degraded（未到位即降级；源错误停在
+      pending → degraded —— 硬错误的 error 级披露由 finalizer findings
+      承担，本词汇只表达状态强度）；
     - rendered → partial（画出来了但数据在场未证）；
     - data_present / semantically_correct → ok。
     """

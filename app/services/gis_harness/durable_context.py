@@ -52,13 +52,14 @@ FORBIDDEN_KEYS: Tuple[str, ...] = (
 
 #: recovery_state 循环历史上限（bounded everything）。
 MAX_LOOP_HISTORY = 16
-#: 循环预算（每种 long-horizon 回路的有界重入数）。
+#: 循环预算（**实际有生产驱动点**的 long-horizon 回路；有界重入数）。
+#: 「replan」回路目前无生产驱动点（remediation replan 走 REMEDIATION_POLICY
+#: 既有预算）—— 不入账本（入而无驱动 = 预算耗尽永不可达，审查 R1 M4）。
 LOOP_BUDGETS: Dict[str, int] = {
     "deepen": 2,      # 数据资格不足 → deepen_profile
     "requalify": 2,   # 重资格裁决
     "repair": 2,      # 渲染/运行时修复回路（runtime_repair 另有自己的
                       # per-fingerprint 预算 —— 本账本是跨回路的总量）
-    "replan": 1,
 }
 _MAX_STATE_BYTES = 2048
 
@@ -116,7 +117,11 @@ async def update_recovery_state(
 
     - ``loop``：该回路计数 +1 并记历史；
     - ``reset_loop``：计数清零（如 spec 内容变化 → 修复预算重置语义）；
-    - ``position``：merge 更新 workflow 位置摘要（浅合并，值截断）。"""
+    - ``position``：merge 更新 workflow 位置摘要（浅合并，值截断）。
+
+    并发纪律：读改写非原子 —— 当前由调用方 session lock 兜底（
+    runtime_repair 契约「调用方持 session lock」）；跨锁并发写入者会
+    后写覆盖（计数可能少记一次，预算偏松不偏紧 —— 失败开路）。"""
     state = await load_recovery_state(session_id)
     if position:
         pos = state.setdefault("position", {})

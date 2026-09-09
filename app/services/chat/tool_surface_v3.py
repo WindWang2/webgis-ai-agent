@@ -671,6 +671,12 @@ class DynamicToolSurface:
             if drop:
                 selection.dropped[name] = drop
                 continue
+            if score <= 0.0:
+                # V6 负分地板（审查 R1 M-minor-4）：否定扣减可把仅有微量
+                # 扩展融合分的候选打成负分 —— V5 数学不存在负分入选路径，
+                # V6 保持同一不变式
+                selection.dropped.setdefault(name, "non_positive_score")
+                continue
             candidates.append((name, score))
         candidates.sort(key=lambda t: (-t[1], t[0]))  # 分数降序，tie 按名（确定性）
 

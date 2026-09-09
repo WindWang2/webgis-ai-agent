@@ -298,12 +298,15 @@ async def _attach_continuation(
     try:
         from app.services.gis_harness.continuation import decide_continuation
         from app.services.gis_harness.durable_context import (
-            load_recovery_state,
             update_recovery_state,
         )
 
         if exhausted:
-            state = await load_recovery_state(session_id)
+            # 耗尽也必须计入 repair 回路使用 —— 否则 recovery_state 看不
+            # 到预算消耗，裁决与 exhausted 披露打架（审查 R1 M-minor-5）
+            state = await update_recovery_state(
+                session_id, loop="repair",
+                detail=f"repair exhausted passes={outcome.passes_used}")
         else:
             state = await update_recovery_state(
                 session_id, loop="repair",

@@ -493,6 +493,7 @@ def wrap_dispatch_with_budget(dispatch_fn, budget: SubagentBudget, registry):
 
     async def _budgeted(tc, session_id, executed_tools=None):
         budget.check_wall_time()
+        budget.check_tokens()  # V6 D8：token 上限闸（usage 由引擎通道累计）
         func_info = tc.get("function", {}) if isinstance(tc, dict) else {}
         name = func_info.get("name") or ""
         try:

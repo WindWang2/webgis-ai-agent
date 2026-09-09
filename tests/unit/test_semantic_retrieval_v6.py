@@ -56,7 +56,7 @@ def test_capability_aliases_all_exist():
 
 def test_alias_hits_boost_correct_tools():
     sig = hybrid_signals(None, "给门店图层生成5公里直线服务范围圈")
-    assert "geometry_buffer" in sig.capability_alias_hits or sig.boosts
+    assert sig.boosts, "直线服务范围别名必须命中 geometry_buffer 通道"
     sig2 = hybrid_signals(None, "按行政区统计每个区的平均海拔")
     assert "zonal_statistics" in sig2.capability_alias_hits
     assert "zonal_stats" in sig2.boosts
@@ -80,7 +80,8 @@ def test_negation_anti_terms():
     terms = negation_anti_terms("只要空间分布的密度聚类，没有时间信息")
     assert any("时间" in t or t in ("time", "temporal", "时空",
                                     "spatiotemporal") for t in terms)
-    assert negation_anti_terms("普通查询没有") == () or True  # 线索后无短语
+    # 线索后无短语 → 空（「没有」句尾）
+    assert negation_anti_terms("普通查询没有") == ()
     assert negation_anti_terms("") == ()
 
 
@@ -126,3 +127,41 @@ def test_kill_switch_off_disables_v6(registry, monkeypatch):
     assert sel.confidence == 1.0
     assert sel.abstained is False
     assert "v6" not in sel.selection_trace
+
+
+def test_v6_switch_gates_scoring_fix(registry, monkeypatch):
+    """M1 回归：GIS_TOOL_RETRIEVAL_V6=0 → V5 打分数学逐位一致。
+
+    停用单字（的）在 V5 数学中贡献 desc 权重；V6 开启时零权重。
+    """
+    from app.services.chat import tool_retrieval as tr
+
+    q = "的"  # 纯停用字查询：V5 数学给含「的」描述的工具加分；V6 = 零
+    monkeypatch.setenv("GIS_TOOL_RETRIEVAL_V6", "0")
+    hits_v5 = tr.rank_tools(registry, q, min_score=1.0, enriched=False)
+    monkeypatch.setenv("GIS_TOOL_RETRIEVAL_V6", "1")
+    hits_v6 = tr.rank_tools(registry, q, min_score=1.0, enriched=False)
+    assert hits_v5, "V5 数学下停用字命中描述应产生命中"
+    assert hits_v6 == [], "V6 判别力修复下停用字不得产生命中"
+
+
+def test_embedding_retriever_bounded_failure(registry, monkeypatch):
+    """C1 回归：embedding 检索器真实调用路径有界失败（不毒化、不悬挂）。"""
+    import pytest as _pytest
+
+    from app.services.chat import semantic_retrieval as sr
+
+    # 无 faiss/模型环境 → RuntimeError（有界）；指纹面故障不得毒化模型态
+    sr._embed_state["model_failed"] = False
+    monkeypatch.setitem(sr._embed_state, "model_failed", False)
+    try:
+        hits = sr.embedding_retriever(registry, "缓冲区分析", top_k=5)
+    except RuntimeError:
+        # 有界失败（模型缺席部署）→ 记忆化后再次调用立即失败且形态一致
+        with _pytest.raises(RuntimeError):
+            sr.embedding_retriever(registry, "缓冲区分析", top_k=5)
+        return
+    # 模型可得环境：返回归一化 RetrievalHit
+    assert len(hits) <= 5
+    for h in hits:
+        assert h.score > 0.0

@@ -35,8 +35,8 @@ rendered observation 无统一状态阶梯；chaos 场景无常设语料。
    工具（isochrone_analysis/multi_ring_buffer 等，must_not 语义不变）；
    修正 2 个语义错位查询；撤 3 个 CORE 结构性不可达案例。
    **词法判别力修复**（tool_retrieval.py）：单字 CJK 停用字零权重 + 其余单字
-   ×0.25 + anti 仅多字 —— V3==V4off 契约不变。22 条 `anti_examples` 声明式
-   负证据覆盖易混淆兄弟工具对。**同语料对照：p@1 0.4944→0.5587（+6.4pp）、
+   ×0.25 + anti 仅多字 —— V3==V4off 契约不变。20 条 `anti_examples` 声明式
+   负证据覆盖易混淆兄弟工具对（11 个 descriptor 文件）。**同语料对照：p@1 0.4944→0.5587（+6.4pp）、
    r@5 0.6731→0.7523、r@10 0.7289→0.8059、invalid 持平 0.25；oos 弃权
    21.4%、误弃权 0%、ECE 0.31。**
 4. **D4 Durable Context 三分层**：`durable_context.py` 封闭词表

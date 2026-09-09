@@ -635,11 +635,12 @@ async def maybe_finalize_map_product(
                 # 盖章 —— 留给下一触发点（含 POST 触发本身）按新观察重验。
                 try:
                     fresh_state = await session_data_manager.get_map_state(session_id)
-                    current_observation = await load_render_observation(
-                        session_id, fresh_state)
                 except Exception:  # noqa: BLE001 — 读失败按无漂移处理
                     fresh_state = None
-                    current_observation = None
+                # 与原实现同语义：state 读失败 → load_render_observation(sid, None)
+                # 内部再读一次（瞬态失败不误判「观察已推进」，审查 R1 M-minor-8）
+                current_observation = await load_render_observation(
+                    session_id, fresh_state)
                 if observation_sequence(
                     current_observation
                 ) != render_seq:

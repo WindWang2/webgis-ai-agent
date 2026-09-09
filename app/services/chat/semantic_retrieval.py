@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Sequence, Tuple
 
@@ -505,7 +506,6 @@ _CAPABILITY_ALIASES: Tuple[Tuple[str, str], ...] = (
     ("面向对象分类", "image_segmentation"),
     ("切成同质对象", "image_segmentation"),
     ("分割成对象", "image_segmentation"),
-    ("影像分割", "image_segmentation"),
     ("辐射定标", "sar_radiometric_calibration"),
     ("斑点滤波", "sar_speckle_filtering"),
     ("多视处理", "sar_speckle_filtering"),
@@ -733,7 +733,7 @@ def hybrid_signals(registry: Any, query: str) -> HybridSignals:
 _CONF_LEVEL_W = 0.5
 _CONF_MARGIN_W = 0.35
 _CONF_CHANNEL_W = 0.15
-#: 分数水平归一参考（词法分有界 ~[0,30]；4.0 ≈ 「有实质词面证据」下限）。
+#: 分数水平归一参考（词法分有界 ~[0,30]；8.0 ≈ 「多通道实质证据」水平）。
 _CONF_LEVEL_REF = 8.0
 #: 钉死弃权阈值：低于此置信度 → abstained（评测门验证误弃率上界）。
 ABSTAIN_THRESHOLD = 0.35
@@ -756,7 +756,9 @@ def compute_confidence(
     if not ranked:
         return 0.0, True, "no_candidates"
     s1 = ranked[0][1]
-    s2 = ranked[1][1] if len(ranked) > 1 else 0.0
+    # 单候选时 margin=0（唯一低分命中正是应弃权形态 —— 审查 R1 M-minor-2：
+    # 缺省 s2=0 会把 margin 膨胀到 1.0 使 lone 弱候选永不弃权）
+    s2 = ranked[1][1] if len(ranked) > 1 else s1
     level = max(0.0, min(1.0, s1 / _CONF_LEVEL_REF))
     margin = max(0.0, min(1.0, abs(s1 - s2) / max(abs(s1), 1e-6)))
     coverage = max(0.0, min(1.0, channels_for_top / _MAX_CONF_CHANNELS))
@@ -844,10 +846,17 @@ def embedding_retriever(
         from app.tools.descriptor import manifest_fingerprint
         from app.services.rag.faiss_store import FaissVectorStore
 
-        fingerprint = manifest_fingerprint(registry)
+        # registry → [(name, descriptor_fingerprint)] 全量指纹
+        # （ToolRegistry 非 iterable —— 与 ToolRetrievalIndex._index_key 同款）
+        try:
+            fps = registry.fingerprints()
+            fingerprint = manifest_fingerprint(
+                [(n, fp[1]) for n, fp in fps.items()])
+        except Exception:  # noqa: BLE001 — 指纹面故障按时间戳退化（不毒化模型）
+            fingerprint = f"ts:{time.time()}"
         store = FaissVectorStore()
         model = store._get_embedding_model()  # noqa: SLF001 — 单进程内复用
-    except Exception:  # noqa: BLE001 — 一次性失败记忆化
+    except Exception:  # noqa: BLE001 — 模型加载失败记忆化（指纹失败不毒化）
         _embed_state["model_failed"] = True
         raise RuntimeError("embedding model load failed") from None
 

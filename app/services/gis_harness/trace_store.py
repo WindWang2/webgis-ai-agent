@@ -304,6 +304,15 @@ def _trim_segments(v6_dir: Path, manifest: Dict[str, Any]) -> None:
     if overflow <= 0:
         return
 
+    def _pop_seg(index: int) -> None:
+        """弹段必删文件（审查 R1 回归：孤儿段文件会触发误 heal → manifest
+        重复条目 → 窗口失真）。"""
+        seg = segs[index]
+        p = _segment_display(v6_dir, str(seg.get("file") or ""))
+        if p is not None:
+            p.unlink(missing_ok=True)
+        segs.pop(index)
+
     for pass_protected in (False, True):
         while overflow > 0 and segs:
             seg = segs[0]
@@ -311,7 +320,7 @@ def _trim_segments(v6_dir: Path, manifest: Dict[str, Any]) -> None:
             if count == 0:
                 # 空段（fresh roll）：绝不弹掉 append 目标（最后一段）
                 if len(segs) > 1:
-                    segs.pop(0)
+                    _pop_seg(0)
                     continue
                 break
             seg_protected = int(seg.get("protected") or 0)
@@ -322,10 +331,7 @@ def _trim_segments(v6_dir: Path, manifest: Dict[str, Any]) -> None:
                 # 整段淘汰（零解析）；append 目标（最后一段）不可整删
                 if len(segs) == 1:
                     break
-                p = _segment_display(v6_dir, str(seg.get("file") or ""))
-                if p is not None:
-                    p.unlink(missing_ok=True)
-                segs.pop(0)
+                _pop_seg(0)
                 overflow -= count
                 continue
             take = min(droppable_in_seg, overflow)
@@ -335,7 +341,7 @@ def _trim_segments(v6_dir: Path, manifest: Dict[str, Any]) -> None:
             if dropped == 0:
                 break  # 该段无可丢（防御：防死循环）
             if int(seg.get("count") or 0) == 0 and len(segs) > 1:
-                segs.pop(0)
+                _pop_seg(0)
         if overflow <= 0:
             break
     # 空段过滤只针对非 append 目标（最后一段必须保留 —— 后续 append 写它）
@@ -363,15 +369,71 @@ def _roll_segment(v6_dir: Path, manifest: Dict[str, Any]) -> None:
             current["file"] = plain_name + ".gz"
         except OSError:
             logger.debug("[TraceStore] compress roll failed", exc_info=True)
-    existing = {str(s.get("file") or "").replace(".gz", "") for s in segs}
-    next_index = 1
-    while _segment_name(next_index) in existing:
-        next_index += 1
-    new_name = _segment_name(next_index)
+    # 段号单调递增（不复用已淘汰段名）：heal 按名重建时保持时序，
+    # 防「新数据进低号段 → 名序 ≠ 时序」的乱序重建。
+    max_index = 0
+    for s in segs:
+        stem = str(s.get("file") or "").replace(".gz", "")
+        try:
+            max_index = max(max_index, int(stem.split("_")[1].split(".")[0]))
+        except (IndexError, ValueError):
+            continue
+    new_name = _segment_name(max_index + 1)
     (v6_dir / new_name).touch(exist_ok=True)
     segs.append({"file": new_name, "count": 0, "min_seq": 0, "protected": 0,
                  "max_seq": 0})
     manifest["segments"] = segs
+
+
+def _heal_manifest(v6_dir: Path, manifest: Dict[str, Any],
+                   sid: str) -> Dict[str, Any]:
+    """manifest 丢失/半写自愈（审查 R1 M5）：段文件在而账目缺失时，扫描
+    v6 段（数量有界）重建 entries 与 last_seq —— 防 seq 重复与窗口失真。"""
+    segs = list(manifest.get("segments") or [])
+    disk_names = sorted(
+        p.name for p in v6_dir.glob("seg_*.jsonl*")
+        if p.is_file() and not p.name.endswith(".tmp")
+    )
+    known = {str(s.get("file") or "") for s in segs}
+    orphans = [n for n in disk_names
+               if n not in known and n.replace(".gz", "") not in known]
+    # 同名双形态（plain + .gz）→ gz 是归档真相，plain 是孤儿（重写期
+    # 崩溃残留）→ 删除 plain 孤儿，不计入重建
+    for n in list(orphans):
+        if n.endswith(".jsonl") and (n + ".gz") in disk_names:
+            (v6_dir / n).unlink(missing_ok=True)
+            orphans.remove(n)
+    if not orphans and int(manifest.get("last_seq") or 0) > 0:
+        return manifest
+    # 全量重扫（段数有界 ≤ 若干；每段 ≤ SEGMENT_SIZE 行）
+    rebuilt: List[Dict[str, Any]] = []
+    max_seq = 0
+    for name in disk_names:
+        seg = {"file": name, "count": 0, "min_seq": 0, "protected": 0,
+               "max_seq": 0}
+        recs = _parse_segment_records(v6_dir, seg)
+        seg["count"] = len(recs)
+        segs_seqs = [int(r["seq"]) for r in recs
+                     if isinstance(r.get("seq"), int)]
+        seg["protected"] = sum(1 for r in recs if _is_protected_record(r))
+        seg["min_seq"] = min(segs_seqs) if segs_seqs else 0
+        seg["max_seq"] = max(segs_seqs) if segs_seqs else 0
+        max_seq = max([max_seq] + segs_seqs)
+        rebuilt.append(seg)
+    if not rebuilt:
+        return manifest
+    # legacy 最大 seq 吸收
+    legacy_path = _chains_path(sid)
+    if legacy_path is not None and legacy_path.exists():
+        for s, _, _ in _parse_lines(legacy_path):
+            if s is not None and s > max_seq:
+                max_seq = s
+    healed = {"version": 1, "last_seq": max_seq, "segments": rebuilt}
+    try:
+        _save_manifest(v6_dir, healed)
+    except Exception:  # noqa: BLE001 — 自愈写失败按内存态继续
+        pass
+    return healed
 
 
 def persist_chain(chain_dict: Dict[str, Any], session_id: str = "") -> bool:
@@ -390,6 +452,7 @@ def persist_chain(chain_dict: Dict[str, Any], session_id: str = "") -> bool:
     try:
         with _WRITE_LOCK, _FileLock(v6_dir / "trace_v6.lock"):
             manifest = _load_manifest(v6_dir)
+            manifest = _heal_manifest(v6_dir, manifest, sid)
             segs = list(manifest.get("segments") or [])
             if not segs:
                 name = _segment_name(1)
@@ -416,6 +479,18 @@ def persist_chain(chain_dict: Dict[str, Any], session_id: str = "") -> bool:
                         if s is not None and s > legacy_last:
                             legacy_last = s
                 last_seq_val = legacy_last
+            # 半写窗口兜底（append 后 save 前崩溃 → manifest 落后）：以当前
+            # 段尾 seq 为准（段 ≤ SEGMENT_SIZE 行，解析 O(段)）
+            try:
+                cur_path = v6_dir / str(segs[-1].get("file") or "")
+                cur_recs = _parse_segment_records(v6_dir, segs[-1]) if (
+                    cur_path.exists()) else []
+                for r in cur_recs:
+                    s = r.get("seq")
+                    if isinstance(s, int) and s > last_seq_val:
+                        last_seq_val = s
+            except Exception:  # noqa: BLE001 — 兜底失败按 manifest 值
+                pass
             chain_dict = dict(chain_dict)
             chain_dict["seq"] = last_seq_val + 1
 
@@ -516,11 +591,12 @@ def read_chains(session_id: str) -> List[Dict[str, Any]]:
         out.extend(rec for _, _, rec in _parse_lines(path) if rec)
     v6_dir = _v6_dir(session_id)
     if v6_dir is not None:
+        # 段解析在锁内完成（审查 R1 M-minor-7）：锁外解析与并发 trim 的
+        # 整段删除竞争 → 静默丢段。段 ≤5×16 行，锁内有界。
         with _WRITE_LOCK, _FileLock(v6_dir / "trace_v6.lock"):
             manifest = _load_manifest(v6_dir)
-            segs = list(manifest.get("segments") or [])
-        for seg in segs:
-            out.extend(_parse_segment_records(v6_dir, seg))
+            for seg in list(manifest.get("segments") or []):
+                out.extend(_parse_segment_records(v6_dir, seg))
     return out
 
 
@@ -538,15 +614,14 @@ def read_chains_since(session_id: str, after_seq: int) -> List[Dict[str, Any]]:
     if v6_dir is not None:
         with _WRITE_LOCK, _FileLock(v6_dir / "trace_v6.lock"):
             manifest = _load_manifest(v6_dir)
-            segs = list(manifest.get("segments") or [])
-        for seg in segs:
-            max_seq = int(seg.get("max_seq") or 0)
-            if max_seq and max_seq <= after_seq:
-                continue  # 整段在游标之前
-            for rec in _parse_segment_records(v6_dir, seg):
-                seq = rec.get("seq")
-                if isinstance(seq, int) and seq > after_seq:
-                    out.append(rec)
+            for seg in list(manifest.get("segments") or []):
+                max_seq = int(seg.get("max_seq") or 0)
+                if max_seq and max_seq <= after_seq:
+                    continue  # 整段在游标之前
+                for rec in _parse_segment_records(v6_dir, seg):
+                    seq = rec.get("seq")
+                    if isinstance(seq, int) and seq > after_seq:
+                        out.append(rec)
     return out
 
 

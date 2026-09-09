@@ -872,10 +872,14 @@ def retrieval_eval_report(
             oos_total += 1
             if abstained:
                 oos_abstained += 1
-        elif hit1:
-            over_abstain_denom += 1
-            if abstained:
-                over_abstained += 1
+        else:
+            if hit1:
+                over_abstain_denom += 1
+                if abstained:
+                    over_abstained += 1
+            # 校准分桶覆盖**全部**非 oos 案例（含 miss）—— 桶内准确率 =
+            # top1 命中率；只对命中分桶会把 ECE 退化为 1-平均置信度且
+            # 检测不到「高置信度选错」（审查 R1 M2）
             b = min(9, int(conf * 10))
             bucket = cal_buckets.setdefault(b, [0, 0])
             bucket[0] += 1 if hit1 else 0
@@ -914,7 +918,8 @@ def retrieval_eval_report(
             "invalid_selection_rate": round(
                 sum(x["invalid"] for x in stats) / m, 4),
         }
-    # 10 桶 ECE：Σ |桶内命中率 - 桶中心置信度| × 桶占比
+    # 10 桶 ECE：Σ |桶内 top1 命中率 - 桶平均置信度| × 桶占比
+    # （全非 oos 案例入桶 —— 高置信度 miss 必须推高 ECE）
     ece = 0.0
     total_bucketed = sum(b[1] for b in cal_buckets.values())
     for b, (hits_, cnt) in sorted(cal_buckets.items()):

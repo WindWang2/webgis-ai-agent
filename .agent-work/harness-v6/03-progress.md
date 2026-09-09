@@ -40,7 +40,7 @@
   ×0.25；anti 负证据只认多字 token。V3/V4-off/V4-on 同一循环 →
   一致性契约不变；金标门是 ≥ 阈值 → 改善方向天然兼容。
 
-### 声明式负证据（13 个 descriptor 文件 +22 条 anti_examples）
+### 声明式负证据（11 个 descriptor 文件 +20 条 anti_examples）
 - 易混淆兄弟工具对（fetch_sentinel↔cloud_qc_basic、buffer↔
   service_area、geocode 单/批量、resample↔reclassify、ripley↔
   cluster、快照↔检查点等）按 descriptor.anti_examples 既有机制声明
