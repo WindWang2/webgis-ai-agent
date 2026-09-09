@@ -403,6 +403,30 @@
    ]
   },
   {
+   "backend_variants": 1,
+   "capabilities": [
+    "cokriging"
+   ],
+   "category": "interpolation",
+   "conformance_tests": [
+    "tests/unit/lib/test_cokriging_lmc_v4.py::test_lmc_structures_psd_by_construction",
+    "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_beats_ok_with_correlated_secondary",
+    "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_weak_correlation_typed_reject",
+    "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_strong_secondary_reduces_variance",
+    "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_deterministic"
+   ],
+   "deterministic": true,
+   "id": "interpolation.cokriging_lmc",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": [
+    "raster_uncertainty"
+   ]
+  },
+  {
    "backend_variants": 0,
    "capabilities": [
     "areal_interpolation"
@@ -453,6 +477,31 @@
     "tests/unit/lib/test_geostat_v3.py"
    ],
    "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 1,
+   "capabilities": [
+    "spatial_interpolation"
+   ],
+   "category": "interpolation",
+   "conformance_tests": [
+    "tests/unit/lib/test_kriging_v4.py::test_ked_recovers_drift_dominated_field_and_beats_ok",
+    "tests/unit/lib/test_kriging_v4.py::test_ked_constant_drift_typed_reject",
+    "tests/unit/lib/test_kriging_v4.py::test_driver_method_external_drift_end_to_end",
+    "tests/unit/lib/test_kriging_v4.py::test_driver_ked_requires_drift_field"
+   ],
+   "deterministic": true,
+   "id": "interpolation.external_drift_kriging",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [
+    "tests/unit/lib/test_kriging_v4.py"
+   ],
+   "uncertainty_outputs": [
+    "raster_uncertainty"
+   ]
   },
   {
    "backend_variants": 1,
@@ -664,6 +713,83 @@
    "uncertainty_outputs": [
     "raster_uncertainty",
     "validation_metrics"
+   ]
+  },
+  {
+   "backend_variants": 1,
+   "capabilities": [
+    "geostatistical_simulation"
+   ],
+   "category": "interpolation",
+   "conformance_tests": [
+    "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_same_seed_bitwise_reproducible",
+    "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_ensemble_quantiles_ordered",
+    "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_budget_typed_reject",
+    "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_driver_end_to_end"
+   ],
+   "deterministic": true,
+   "id": "interpolation.sgs",
+   "memory_cost": "high",
+   "random_seed_policy": "caller_seeded",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [
+    "tests/unit/lib/test_kriging_simulation_v4.py"
+   ],
+   "uncertainty_outputs": [
+    "monte_carlo_summary",
+    "raster_uncertainty"
+   ]
+  },
+  {
+   "backend_variants": 1,
+   "capabilities": [
+    "spatial_interpolation"
+   ],
+   "category": "interpolation",
+   "conformance_tests": [
+    "tests/unit/lib/test_kriging_v4.py::test_simple_kriging_exact_at_samples_nugget_zero",
+    "tests/unit/lib/test_kriging_v4.py::test_simple_kriging_known_mean_beats_ok_near_boundary",
+    "tests/unit/lib/test_kriging_v4.py::test_driver_method_simple_end_to_end",
+    "tests/unit/lib/test_kriging_v4.py::test_simple_kriging_variance_grows_away_from_samples"
+   ],
+   "deterministic": true,
+   "id": "interpolation.simple_kriging",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [
+    "tests/unit/lib/test_kriging_v4.py"
+   ],
+   "uncertainty_outputs": [
+    "raster_uncertainty"
+   ]
+  },
+  {
+   "backend_variants": 1,
+   "capabilities": [
+    "spatiotemporal_interpolation"
+   ],
+   "category": "interpolation",
+   "conformance_tests": [
+    "tests/unit/lib/test_kriging_st_v4.py::test_product_sum_covariance_psd_and_origin",
+    "tests/unit/lib/test_kriging_st_v4.py::test_separable_tau_zero_reduces_to_spatial",
+    "tests/unit/lib/test_kriging_st_v4.py::test_st_kriging_deterministic_and_valid",
+    "tests/unit/lib/test_kriging_st_v4.py::test_st_degenerate_time_typed_reject",
+    "tests/unit/lib/test_kriging_st_v4.py::test_st_driver_end_to_end"
+   ],
+   "deterministic": true,
+   "id": "interpolation.st_kriging",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [
+    "tests/unit/lib/test_kriging_st_v4.py"
+   ],
+   "uncertainty_outputs": [
+    "raster_uncertainty"
    ]
   },
   {
@@ -3817,6 +3943,25 @@
    "uncertainty_outputs": []
   },
   {
+   "backend_variants": 1,
+   "capabilities": [
+    "terrain_hydrology"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_breach_removes_internal_sinks_with_less_work_than_fill",
+    "tests/unit/lib/test_hydrology_v4.py::test_breach_max_depth_fallback_to_fill"
+   ],
+   "deterministic": true,
+   "id": "terrain.breach",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
    "backend_variants": 0,
    "capabilities": [
     "terrain_contours"
@@ -3939,6 +4084,24 @@
   {
    "backend_variants": 1,
    "capabilities": [
+    "terrain_hydrology"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_hand_zero_on_streams_and_finite_offstream"
+   ],
+   "deterministic": true,
+   "id": "terrain.hand",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 1,
+   "capabilities": [
     "terrain_hillshade"
    ],
    "category": "terrain_analysis",
@@ -3998,6 +4161,24 @@
    "tests": [
     "tests/unit/lib/test_terrain_v3.py"
    ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "terrain_geomorphometry"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_hypsometry_rectangle_and_monotone"
+   ],
+   "deterministic": true,
+   "id": "terrain.hypsometry",
+   "memory_cost": "low",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
    "uncertainty_outputs": []
   },
   {
@@ -4084,6 +4265,24 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "terrain_hydrology"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_pfafstetter_odd_even_convention"
+   ],
+   "deterministic": true,
+   "id": "terrain.pfafstetter",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "terrain_derivatives"
    ],
    "category": "terrain_analysis",
@@ -4100,12 +4299,32 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 1,
+   "backend_variants": 0,
+   "capabilities": [
+    "terrain_hydrology"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_shreve_sums_upstream_magnitudes"
+   ],
+   "deterministic": true,
+   "id": "terrain.shreve",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 2,
    "capabilities": [
     "terrain_hydrology_advanced"
    ],
    "category": "terrain_analysis",
    "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_chunked_pf_never_underfills_and_bounded_overfill",
+    "tests/unit/lib/test_hydrology_v4.py::test_chunked_pf_deterministic",
     "tests/unit/lib/test_terrain_hydrology_v2.py::test_fill_depressions_single_pit_spill_elevation_exact",
     "tests/unit/lib/test_terrain_hydrology_v2.py::test_fill_depressions_volume_and_epsilon_monotone",
     "tests/unit/lib/test_terrain_hydrology_v2.py::test_hydrology_nodata_adversarial_and_guards"
@@ -4163,6 +4382,24 @@
    "tests": [
     "tests/unit/gis_harness/test_component_composition.py"
    ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "terrain_derivatives"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v4.py::test_solar_radiation_analytic_anchor_and_bounds"
+   ],
+   "deterministic": true,
+   "id": "terrain.solar_radiation",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
    "uncertainty_outputs": []
   },
   {
@@ -4591,8 +4828,8 @@
   }
  ],
  "behavioral": {
-  "dispatch": 152,
-  "mention": 139,
+  "dispatch": 153,
+  "mention": 142,
   "none": 0
  },
  "capabilities": [
@@ -4875,11 +5112,13 @@
    "domain": "general",
    "id": "cokriging",
    "producer_algorithms": [
-    "interpolation.cokriging"
+    "interpolation.cokriging",
+    "interpolation.cokriging_lmc"
    ],
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/lib/test_cokriging_lmc_v4.py",
     "tests/unit/lib/test_geostat_v3.py"
    ]
   },
@@ -5181,6 +5420,18 @@
    "id": "geometry_overlay",
    "producer_algorithms": [
     "geometry.overlay"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "general",
+   "id": "geostatistical_simulation",
+   "producer_algorithms": [
+    "interpolation.sgs"
    ],
    "status": "native",
    "supports_large_data": true,
@@ -6285,10 +6536,12 @@
    "domain": "general",
    "id": "spatial_interpolation",
    "producer_algorithms": [
+    "interpolation.external_drift_kriging",
     "interpolation.idw",
     "interpolation.kriging",
     "interpolation.nearest_neighbor",
     "interpolation.rbf",
+    "interpolation.simple_kriging",
     "interpolation.universal_kriging"
    ],
    "status": "native",
@@ -6322,6 +6575,13 @@
     "tests/unit/test_be_audit_fixes.py",
     "tests/unit/test_data_fabric_federation_v4.py",
     "tests/unit/test_data_fabric_optimizer_v3.py",
+    "tests/unit/test_federated_costing.py",
+    "tests/unit/test_federated_engine_wiring.py",
+    "tests/unit/test_federated_enumerator.py",
+    "tests/unit/test_federated_explain.py",
+    "tests/unit/test_federated_logical_plan.py",
+    "tests/unit/test_federated_physical_executor.py",
+    "tests/unit/test_federated_v6_differential.py",
     "tests/unit/test_geocompute_execution.py",
     "tests/unit/test_spatial_analyzer_deepening.py"
    ]
@@ -6373,6 +6633,18 @@
    "tests": [
     "tests/unit/gis/test_algorithm_registry_phase2.py"
    ]
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "general",
+   "id": "spatiotemporal_interpolation",
+   "producer_algorithms": [
+    "interpolation.st_kriging"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
   },
   {
    "category": "raster",
@@ -6562,6 +6834,7 @@
    "producer_algorithms": [
     "terrain.curvature",
     "terrain.roughness",
+    "terrain.solar_radiation",
     "terrain.tpi",
     "terrain.tri"
    ],
@@ -6579,6 +6852,7 @@
    "producer_algorithms": [
     "terrain.geomorphons",
     "terrain.hillshade_multi",
+    "terrain.hypsometry",
     "terrain.landform",
     "terrain.openness"
    ],
@@ -6604,7 +6878,11 @@
    "domain": "raster",
    "id": "terrain_hydrology",
    "producer_algorithms": [
+    "terrain.breach",
     "terrain.flow",
+    "terrain.hand",
+    "terrain.pfafstetter",
+    "terrain.shreve",
     "terrain.watershed"
    ],
    "status": "native",
@@ -6822,6 +7100,7 @@
     "tests/unit/gis/test_algorithm_registry_phase2.py",
     "tests/unit/lib/test_geo_analysis_pro.py",
     "tests/unit/lib/test_geo_raster_v4.py",
+    "tests/unit/lib/test_geometry_repair_v4.py",
     "tests/unit/test_crs_correctness_round3.py",
     "tests/unit/test_domain_c_raster.py",
     "tests/unit/test_raster_runtime_v3.py",
@@ -6830,16 +7109,16 @@
   }
  ],
  "counts": {
-  "algorithms": 197,
+  "algorithms": 208,
   "artifact_types": 21,
-  "capabilities": 137,
+  "capabilities": 139,
   "findings": 0,
   "recipes": 164,
-  "tools": 291
+  "tools": 295
  },
  "findings": [],
  "findings_ratchet": {
-  "behavioral_dispatch": 152,
+  "behavioral_dispatch": 153,
   "expired_waivers": [],
   "min_behavioral_dispatch": 151,
   "pass": true,
@@ -6847,7 +7126,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "1ef491af60c6a091ac1e63f916a164552d0115adff69999b443429d73d753ded",
+ "fingerprint": "4cb7ad2bbb16cb5e23226770ff4e5df7edcb502d5143d5ddb7b4c350f26f608f",
  "gate": {
   "fields": {
    "capabilities": {
@@ -6887,7 +7166,7 @@
    }
   },
   "pass": true,
-  "total": 291
+  "total": 295
  },
  "manifest_version": 2,
  "recipes": {
@@ -7534,6 +7813,32 @@
    ],
    "tests": [
     "tests/unit/lib/test_rs_v3.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "cokriging"
+   ],
+   "deterministic": null,
+   "execution_policy": "thread",
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "cokriging_lmc_surface",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "插值",
+    "cokriging",
+    "共克里金",
+    "多变量",
+    "表面"
+   ],
+   "tests": [
+    "tests/unit/lib/test_cokriging_lmc_v4.py"
    ],
    "tier": 2
   },
@@ -9834,6 +10139,34 @@
   {
    "behavior": "dispatch",
    "capabilities": [
+    "terrain_hydrology"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "hydrology_v4_analysis",
+   "requires_confirmation": false,
+   "scale_class": "large",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "水文",
+    "breaching",
+    "HAND",
+    "shreve",
+    "pfafstetter",
+    "hypsometry",
+    "solar"
+   ],
+   "tests": [
+    "tests/unit/lib/test_hydrology_v4.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
     "ica_transform"
    ],
    "deterministic": null,
@@ -10260,7 +10593,8 @@
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
     "tests/unit/lib/test_interpolation_science_vnext.py",
-    "tests/unit/lib/test_kriging_interpolation.py"
+    "tests/unit/lib/test_kriging_interpolation.py",
+    "tests/unit/lib/test_kriging_v4.py"
    ],
    "tier": 2
   },
@@ -13481,6 +13815,32 @@
   {
    "behavior": "mention",
    "capabilities": [
+    "geostatistical_simulation"
+   ],
+   "deterministic": null,
+   "execution_policy": "thread",
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "sgs_simulation",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "插值",
+    "sgs",
+    "条件模拟",
+    "不确定性",
+    "表面"
+   ],
+   "tests": [
+    "tests/unit/lib/test_kriging_simulation_v4.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
     "terrain_sky_view"
    ],
    "deterministic": null,
@@ -13713,6 +14073,13 @@
     "tests/unit/test_be_audit_fixes.py",
     "tests/unit/test_data_fabric_federation_v4.py",
     "tests/unit/test_data_fabric_optimizer_v3.py",
+    "tests/unit/test_federated_costing.py",
+    "tests/unit/test_federated_engine_wiring.py",
+    "tests/unit/test_federated_enumerator.py",
+    "tests/unit/test_federated_explain.py",
+    "tests/unit/test_federated_logical_plan.py",
+    "tests/unit/test_federated_physical_executor.py",
+    "tests/unit/test_federated_v6_differential.py",
     "tests/unit/test_geocompute_execution.py",
     "tests/unit/test_spatial_analyzer_deepening.py"
    ],
@@ -13786,6 +14153,8 @@
     "tests/unit/lib/test_density.py",
     "tests/unit/lib/test_spatial_stats_tool_evidence.py",
     "tests/unit/test_argument_normalization.py",
+    "tests/unit/test_federated_costing.py",
+    "tests/unit/test_federated_spatial_stats.py",
     "tests/unit/test_spatial.py",
     "tests/unit/test_spatial_analyzer_module.py",
     "tests/unit/test_spatial_stats.py",
@@ -13937,6 +14306,32 @@
     "tests/unit/test_pi_harness.py",
     "tests/unit/test_spatial_analyzer_cache.py",
     "tests/unit/test_st_dbscan.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "mention",
+   "capabilities": [
+    "spatiotemporal_interpolation"
+   ],
+   "deterministic": null,
+   "execution_policy": "thread",
+   "latency_class": "unknown",
+   "memory_class": "unknown",
+   "name": "st_kriging_surface",
+   "requires_confirmation": false,
+   "scale_class": "unknown",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "插值",
+    "kriging",
+    "时空",
+    "表面",
+    "时序"
+   ],
+   "tests": [
+    "tests/unit/lib/test_kriging_st_v4.py"
    ],
    "tier": 2
   },
@@ -14210,6 +14605,7 @@
    "tests": [
     "tests/test_tool_registry_async_policy.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/test_federated_pushdown.py",
     "tests/unit/test_temporal_gis_runtime.py"
    ],
    "tier": 2

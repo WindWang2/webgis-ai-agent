@@ -10,7 +10,7 @@
   },
   "docs/quality/QUALITY_MANIFEST.md": {
    "generator": "scripts/gen_quality_manifest.py",
-   "input_fingerprint": "86a66646bfce4a3d7c704e6a5dba2abeaa8edc5a7e4e6a463aa50bf11df51394",
+   "input_fingerprint": "cb8c03fabf3e1c228f3a7989529b303f34675a4465a9f91b02e98e93083de65e",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -22,7 +22,7 @@
   },
   "docs/quality/QUALITY_REPORT.md": {
    "generator": "scripts/gen_quality_report.py",
-   "input_fingerprint": "f62f0c7fce28e3b74437c45aa6a3f7855affe164a354c28e289f3064d339603c",
+   "input_fingerprint": "bccff24387c198e959f428d60eca988cf92089349d97bfc936cb3c331761cd70",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -31,7 +31,7 @@
   },
   "docs/quality/certifications/CANCELLATION_COVERAGE.md": {
    "generator": "scripts/gen_resource_certification.py",
-   "input_fingerprint": "abd175dc78d92b725b14fe937567abbe970938559b7a15fdb62e4a07a0e9c9a6",
+   "input_fingerprint": "41529fd4aae37fdf1031eb0cbbc983fb32cd444f932b44a0212f8a9bb747ca3d",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -46,14 +46,14 @@
   },
   "docs/quality/certifications/DETERMINISM.md": {
    "generator": "scripts/gen_determinism_certification.py",
-   "input_fingerprint": "53430e3effdcf34ce2dcca349fbc958e8c3808ab151abf33fada9104ce773552",
+   "input_fingerprint": "34558e197489966ea5ba18edfc3e2fc06778e37eed088bc9b6fe407c80a843f7",
    "inputs": [
     "app/lib/gis/algorithms"
    ]
   },
   "docs/quality/certifications/RESOURCE_SAFETY.md": {
    "generator": "scripts/gen_resource_certification.py",
-   "input_fingerprint": "abd175dc78d92b725b14fe937567abbe970938559b7a15fdb62e4a07a0e9c9a6",
+   "input_fingerprint": "41529fd4aae37fdf1031eb0cbbc983fb32cd444f932b44a0212f8a9bb747ca3d",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -76,7 +76,7 @@
   },
   "docs/quality/quality-manifest.json": {
    "generator": "scripts/gen_quality_manifest.py",
-   "input_fingerprint": "86a66646bfce4a3d7c704e6a5dba2abeaa8edc5a7e4e6a463aa50bf11df51394",
+   "input_fingerprint": "cb8c03fabf3e1c228f3a7989529b303f34675a4465a9f91b02e98e93083de65e",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -88,7 +88,7 @@
   },
   "docs/quality/quality-report.json": {
    "generator": "scripts/gen_quality_report.py",
-   "input_fingerprint": "f62f0c7fce28e3b74437c45aa6a3f7855affe164a354c28e289f3064d339603c",
+   "input_fingerprint": "bccff24387c198e959f428d60eca988cf92089349d97bfc936cb3c331761cd70",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
