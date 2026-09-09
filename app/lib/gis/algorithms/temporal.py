@@ -19,7 +19,11 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor
+from app.lib.gis.algorithm_registry import (
+    AlgorithmDescriptor,
+    NumericalTolerance,
+    ResourceEnvelope,
+)
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
@@ -294,6 +298,117 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/test_temporal_gis_runtime.py::test_temporal_raster_engine_mock",
             ]
         ),
+
+        # ── science-v5（W8）：时空立方体 / 物候 / 时间异常 ──────────────
+
+        AlgorithmDescriptor(
+            id="temporal.cube_stats", name="时空立方体统计", category="temporal_analysis",
+            capabilities=["temporal_trend"],
+            input_artifact_types=["raster_surface"],
+            output_artifact_type="stats_table", runtime_status="native",
+            parameter_contract_ref="science_temporal_analysis",
+            tool_candidates=["temporal_cube_stats"],
+            cpu_cost="medium", memory_cost="medium", io_cost="high",
+            preferred_execution_policy="THREAD", priority=31,
+            algorithm_family="temporal_descriptive",
+            complexity="O(T·H·W)（nan-aware 逐切片统计；T≤512 硬顶）",
+            approximation_class="exact",
+            assumptions=[
+                "统一时间轴：栈 (T,H,W) + 秒制时间戳（升序）；SAR/光学共用容器",
+                "缺口诚实：无效像元-切片计数披露，不静默插值",
+            ],
+            limitations=[
+                "单位一致性（SAR 强度/分贝、光学反射率）由调用方保证",
+                "疑似缺失切片判据 = 间距 > 中位距 1.5×（启发式，已披露）",
+            ],
+            crs_class="RASTER_GRID",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            resource_envelope=ResourceEnvelope(
+                hard_max_cells=512 * 4096, bytes_per_cell=8,
+                notes="T≤512 切片硬顶（CUBE_MAX_SLICES）；逐切片 nan-aware 统计"),
+            cancellation_profile="coarse",
+            tolerance=NumericalTolerance(rtol=1e-12, atol=1e-12, policy="conformance"),
+            conformance_tests=[
+                "tests/unit/lib/test_temporal_cube_v5.py::TestTemporalCube::test_slice_spacing_report_missing_slices",
+                "tests/unit/lib/test_temporal_cube_v5.py::TestBuildCube::test_nodata_and_quality_masking",
+            ],
+        ),
+
+        AlgorithmDescriptor(
+            id="temporal.phenology", name="物候特征", category="temporal_analysis",
+            capabilities=["temporal_trend"],
+            input_artifact_types=["raster_surface"],
+            output_artifact_type="raster_surface", runtime_status="native",
+            parameter_contract_ref="science_temporal_analysis",
+            tool_candidates=["phenology_features"],
+            cpu_cost="high", memory_cost="medium", io_cost="high",
+            preferred_execution_policy="THREAD", priority=32,
+            algorithm_family="phenology_descriptors",
+            complexity="O(T·N) 填充/平滑 + O(T·N_ok·6) 联合 LS（N=像元，n_ok=完整序列）",
+            approximation_class="approximate",
+            approximate=True,
+            assumptions=[
+                "双谐波联合 LS [1, t, sin/cos ωt, sin/cos 2ωt]（趋势与谐波联合估计）",
+                "阈值法物候期：thr = min + frac·(max−min)，切片索引制",
+                "短缺口（run ≤ max_gap）线性插值；长缺口保持 NaN（不外推）",
+            ],
+            limitations=[
+                "物候期为切片索引制——非真实日期反演（诚实边界）",
+                "SG 平滑只作用于填充后完整序列；被排除像元计数披露",
+                "高斯谐波近似——非正弦物候轨迹的 SOS/EOS 有系统偏差",
+            ],
+            crs_class="RASTER_GRID",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            uncertainty_outputs=["raster_uncertainty"],
+            resource_envelope=ResourceEnvelope(
+                hard_max_cells=2_147_483_647, bytes_per_cell=8,
+                notes="工作数组 O(3T·N)；T≤512（CUBE_MAX_SLICES）；格网规模守卫在实现层"),
+            cancellation_profile="coarse",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=1e-9, policy="conformance"),
+            conformance_tests=[
+                "tests/unit/lib/test_phenology_v5.py::TestPhenology::test_synthetic_sine_sos_eos_anchor",
+                "tests/unit/lib/test_phenology_v5.py::TestPhenology::test_long_gap_excluded_not_extrapolated",
+                "tests/unit/lib/test_phenology_v5.py::TestPhenology::test_gap_filled_count_disclosed",
+            ],
+        ),
+
+        AlgorithmDescriptor(
+            id="temporal.anomaly", name="时间异常/变化", category="temporal_analysis",
+            capabilities=["temporal_trend"],
+            input_artifact_types=["raster_surface"],
+            output_artifact_type="raster_surface", runtime_status="native",
+            parameter_contract_ref="science_temporal_analysis",
+            tool_candidates=["temporal_anomaly"],
+            cpu_cost="medium", memory_cost="medium", io_cost="high",
+            preferred_execution_policy="THREAD", priority=33,
+            algorithm_family="temporal_change",
+            complexity="O(T·H·W)（气候态 + 分段 Welch 近似）",
+            approximation_class="approximate",
+            approximate=True,
+            assumptions=[
+                "异常 = 最后切片 z-score（全期气候态，std ddof=1）",
+                "变化 = 后半段均值 − 前半段均值；z 为 Welch 近似",
+            ],
+            limitations=[
+                "change_z 是效应量近似——非正式显著性检验（无自由度校正）",
+                "z 分母为零/样本 <2 的像元 → NaN（诚实缺省）",
+            ],
+            crs_class="RASTER_GRID",
+            random_seed_policy="deterministic",
+            scientific_status="VALIDATED",
+            uncertainty_outputs=["raster_uncertainty"],
+            resource_envelope=ResourceEnvelope(
+                hard_max_cells=2_147_483_647, bytes_per_cell=8,
+                notes="工作数组 O(4T·N)；T≤512；格网规模守卫在实现层"),
+            cancellation_profile="coarse",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=1e-9, policy="conformance"),
+            conformance_tests=[
+                "tests/unit/lib/test_phenology_v5.py::TestAnomaly::test_anomaly_z_hand_anchor",
+                "tests/unit/lib/test_phenology_v5.py::TestAnomaly::test_change_direction_and_nan_guard",
+            ],
+        ),
 ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
@@ -341,6 +456,39 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 enum_values=["additive", "multiplicative"],
                 description="additive=加法（默认）；multiplicative=乘法"
                             "（要求序列严格为正）",
+            ),
+        ],
+    ),
+    # science-v5 W8：物候/立方体/异常共用契约（工具签名与参数名一致——
+    # parity 门校验）。
+    ParameterContract(
+        id="science_temporal_analysis", version=1,
+        description="science-v5 时空立方体族：平滑/缺口/基线参数。",
+        parameters=[
+            ParameterSpec(
+                name="window", type="integer", default=5,
+                minimum=3, maximum=31, unit="count",
+                description="Savitzky-Golay 窗口（奇数；偶数自动 +1 并披露）",
+            ),
+            ParameterSpec(
+                name="polyorder", type="integer", default=2,
+                minimum=1, maximum=3, unit="count",
+                description="SG 多项式阶（须 < 窗口）",
+            ),
+            ParameterSpec(
+                name="max_gap", type="integer", default=2,
+                minimum=0, maximum=8, unit="count",
+                description="线性插值填补的最大连续缺口（更长缺口保持 NaN）",
+            ),
+            ParameterSpec(
+                name="threshold_frac", type="number", default=0.5,
+                minimum=0.01, maximum=0.99,
+                description="SOS/EOS 阈值分数（thr = min + frac·amplitude）",
+            ),
+            ParameterSpec(
+                name="baseline_slices", type="integer", default=0,
+                minimum=0, maximum=511, unit="count",
+                description="时间异常基线段长（0 = 默认对半分）",
             ),
         ],
     ),
