@@ -1278,7 +1278,7 @@ DEM 山体阴影。
 
 ## `terrain_hydrology` — D8 水文分析
 
-D8 单向流流向（ESRI 2 的幂编码）、拓扑序汇流累积与逆 D8 上游流域圈定（平地/洼地为汇，不填洼）。
+D8 单向流流向（ESRI 2 的幂编码）、拓扑序汇流累积与逆 D8 上游流域圈定（平地/洼地为汇，不填洼）；science-v5 增流网拓扑结构报告（stats_table）。
 
 - **`terrain.flow`** D8 流向与汇流累积（`native`·成熟度 已验证，契约: `flow_analysis`，出处: `ocallaghan_mark1984`）
   - 假设：D8 单向流（ESRI 2 的幂编码 1=E…128=NE；0=sink/outlet）；最陡下降按米制像元距离（地理栅格 x 向 cos(lat)）；并列最陡取最低索引邻域；汇流累积 = 上游贡献像元数（不含自身；全流域出口 = N−1）

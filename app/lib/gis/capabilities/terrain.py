@@ -43,9 +43,10 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             domain="raster",
             description=(
                 "D8 单向流流向（ESRI 2 的幂编码）、拓扑序汇流累积与逆 D8 "
-                "上游流域圈定（平地/洼地为汇，不填洼）。"),
+                "上游流域圈定（平地/洼地为汇，不填洼）；science-v5 增流网"
+                "拓扑结构报告（stats_table）。"),
             input_artifact_types=["terrain_surface"],
-            output_artifact_types=["raster_surface"],
+            output_artifact_types=["raster_surface", "stats_table"],
             compatible_map_models=["raster_surface"],
             purpose_template="D8 水文分析",
         ),
