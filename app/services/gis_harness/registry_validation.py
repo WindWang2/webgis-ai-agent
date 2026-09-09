@@ -276,7 +276,6 @@ def _validate_methodology_intelligence(
     component_registry: Any,
 ) -> List[str]:
     """知识层对账（deferred imports；悬空/违例以 methodology_intel: 前缀上报）。"""
-    from typing import get_args as _get_args
 
     from app.lib.gis.methodology.descriptors import (
         get_method_descriptor_registry,

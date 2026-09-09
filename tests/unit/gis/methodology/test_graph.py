@@ -6,7 +6,6 @@ import pytest
 from app.lib.gis.methodology.descriptors import (
     QUALIFICATION_DIMENSIONS,
     get_method_descriptor_registry,
-    reset_method_descriptor_registry,
 )
 from app.lib.gis.methodology.graph import (
     EDGE_RELATIONS,

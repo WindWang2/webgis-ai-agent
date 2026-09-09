@@ -33,7 +33,7 @@ import hashlib
 import json
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 #: descriptor schema 版本（进指纹）。
 DESCRIPTOR_SCHEMA_VERSION = 2

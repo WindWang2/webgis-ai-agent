@@ -33,7 +33,7 @@ import json
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 
 #: 分类学 schema 版本（进指纹）。
 TAXONOMY_SCHEMA_VERSION = 2
