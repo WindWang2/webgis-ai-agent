@@ -2,6 +2,34 @@
 
 ## [Unreleased] - 2026-09-09
 
+### Added (science-v4: Spatial Science & GeoAI Platform V4)
+- Geostatistics V4: simple kriging, external-drift kriging (KED), normal-score
+  transform, nested-variogram fitting (honest ConvergenceFailure when not
+  beneficial), sequential Gaussian simulation (caller-seeded, bitwise
+  reproducible, P10/P50/P90 ensemble), full co-kriging under an LMC
+  (per-structure PSD by construction), and spatiotemporal kriging
+  (separable / product-sum with second-scale mixture, PSD by construction).
+- Hydrology & terrain V4: depression breaching, HAND, Shreve magnitude,
+  single-level Pfafstetter coding, hypsometric analysis (Strahler 1952
+  integral), clear-sky solar radiation (FAO-56 anchor), and a chunked
+  priority-flood backend variant (banded, low heap footprint) registered
+  against the full-path reference with a pinned parity bound.
+- Scientific contract ratchet: heavy algorithms must declare
+  resource_envelope / cancellation_profile / NumericalTolerance (frozen
+  44-entry baseline, shrink-only); interpolation + terrain domains fully
+  declared. Cancellation checkpoints sunk into terrain hot loops
+  (fill heap / D-infinity topology / viewshed sectors).
+- Typed scientific errors: pyproj.CRSError folded into InvalidCRS at the
+  UTM boundary (KNOWN-GAP #1 xfail promoted), NumericalInstability and
+  ConvergenceFailure with real producers; geometry repair disclosure
+  (never-silent make_valid) with strict typed rejection in zonal
+  statistics (KNOWN-GAP #2 xfail promoted).
+
+### Fixed (science-v4)
+- raw pyproj.CRSError no longer escapes as TOOL_ERROR (loses correction_hint);
+- zonal statistics no longer silently accepts self-intersecting polygons;
+- terrain tool layer wraps RasterioIOError into typed RasterReaderError.
+
 ### Added
 - GIS Extension Platform V2 (ADR-0105): worker-isolated execution
   (`execution.mode=worker` — extension code runs in a subprocess the host
@@ -28,6 +56,28 @@
   rollback (including worker-crash auto-deactivation) now recompiles the
   runtime manifest and refreshes tool args, removing the V1 known
   limitation that left the manifest stale after deactivation.
+- Professional Cartographic Rendering V5 (ADR-0118): authoritative render
+  diagnostics vocabulary (`app/lib/cartography/render_diagnostics.py`, 18
+  codes) exported via component catalog schemaVersion 5 and locked as a
+  frontend subset by registry-parity tests; diagnostics now travel with the
+  exported artifact (`render_diagnostics` form field on `POST /api/v1/export`)
+  and persist as `{filename}.diagnostics.json` sidecars, readable via
+  `GET /api/v1/export/diagnostics/{filename}` with download-equivalent
+  fail-closed ownership.
+- True vector SVG export: the orphaned MapSpec→SVG compiler and SVG
+  marginalia generators are wired into the exporter (`vector-svg-export.ts`)
+  with honest degradation (`basemap_omitted_vector_svg`, raster fallback via
+  `vector_svg_fallback_raster`); atlas/multi-frame export runtime
+  (`frames` + `frameLayout`, pdf pages / png grid) with deterministic frame
+  restore, page caps and per-frame skip disclosures; swipe comparison exports
+  compose the second view explicitly instead of silently dropping it.
+- Label text fitting contract: `fit_label_text` / `wrap_label_text` in the
+  label engine (60 code points, ellipsis), wired into the Python twin SVG
+  renderer and the vector SVG export path; a shared 220-char fixture locks
+  cross-twin truncation parity.
+- Semantic render-scene oracle (`describeRenderScene`) with golden corpus and
+  live-composition semantics checks — live ↔ export parity assertions on
+  meaning (presence/visibility/disclosure), not pixels.
 - Spatial Data Lakehouse & Cube V6 (ADR-0118): durable DataObject identity —
   manifests are content-addressed (id = canonical sha256, deterministic,
   owner-scoped, with input reuse fingerprints and an environment
@@ -87,6 +137,23 @@
   (worker-side row caps no longer rely on the hard node cap alone).
 
 ### Fixed
+- `SetLayoutIntent` with explicit `legend={"visible": false}` no longer gets
+  silently flipped back by the pre-commit AUTO_SAFE repair loop
+  (user-wins suppression channel + honest `carto.legend.completeness`
+  finding); legend/margins intents now merge field-wise instead of dropping
+  pre-existing keys.
+- Twin SVG compiler respects layer visibility and actually enforces
+  `thresholds.maxFeatures` / `thresholds.timeoutMs` (previously declared but
+  never consumed), emitting `features_truncated` / `export_timeout_partial`.
+- PDF exports no longer draw the title twice, no longer garble CJK text
+  (rasterized with `pdf_text_rasterized_cjk` disclosure), and the success
+  message no longer claims a fully vector artifact; report-chain SVG
+  compilation is bounded by `asyncio.wait_for`.
+- Export chrome truth now composes pending presentation/removals exactly like
+  live; legend titles use `legend.title`; dead degradation codes gained real
+  emitters; nodata legend entries render on live and export sides; a
+  prior-blocking-cache eviction TypeError in `apply_presentation_batch`
+  (batch transactions rolled back once the cache filled) is fixed.
 - GeoCompute default session factories (`run_evidence`, `reuse_index`,
   `durable`) handed back a `sessionmaker`/function object instead of a
   `Session`, which is not a context manager on SQLAlchemy 2.0 — production

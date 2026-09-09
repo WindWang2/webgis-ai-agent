@@ -121,8 +121,8 @@ describe('V4 component variants — live rendering contract', () => {
     expect(el?.textContent).toContain('分级A');
   });
 
-  it('catalog schemaVersion 4 携带 chart kinds 词表（violin 诚实 unsupported）', () => {
-    expect(catalog.schemaVersion).toBe(4);
+  it('catalog schemaVersion 5 携带 chart kinds 词表（violin 诚实 unsupported）', () => {
+    expect(catalog.schemaVersion).toBe(5);
     const kinds = (catalog as unknown as { chartKinds: { id: string; exportLevel: string }[] }).chartKinds;
     expect(kinds.length).toBeGreaterThanOrEqual(18);
     const violin = kinds.find((k) => k.id === 'violin');

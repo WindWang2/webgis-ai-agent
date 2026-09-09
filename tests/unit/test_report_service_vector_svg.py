@@ -285,3 +285,68 @@ async def test_report_export_hydrates_ref_carried_sources(tmp_path):
         d = BASE_STORAGE_DIR / sid
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# W4：SVG 编译有界化 —— wall-clock 超时诚实降级（占位图 + 既有 warning 通道）
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_report_svg_compile_wall_clock_timeout_degrades_to_placeholder(tmp_path):
+    """编译超过 spec 同口径预算 → wait_for 到点返回，报告嵌入诚实占位图，
+    不再无界阻塞（WeasyPrint 内联路径原无超时保护）。"""
+    import json as _json
+    import time as _time
+
+    from app.services import report_service as svc_mod
+    from app.services.mapspec_to_svg import compile_mapspec_to_svg_detailed
+
+    service = ReportService()
+    slow_spec = _json.loads(_json.dumps(_MAPSPEC))  # 深拷贝
+    slow_spec["thresholds"] = {"timeoutMs": 50}
+
+    real_compile = compile_mapspec_to_svg_detailed
+
+    def _slow_compile(*args, **kwargs):
+        _time.sleep(1.0)  # 远超 50ms 预算；wait_for 到点即放弃等待
+        return real_compile(*args, **kwargs)
+
+    output_path = str(tmp_path / "timeout_report.html")
+    with patch.object(svc_mod, "compile_mapspec_to_svg_detailed",
+                      side_effect=_slow_compile):
+        success = await service.generate_report(
+            session_id="timeout-degrade",
+            session_title="超时降级",
+            messages=[{"role": "user", "content": "画图"}],
+            output_path=output_path,
+            format="html",
+            mapspec=slow_spec,
+        )
+
+    assert success is True
+    html = open(output_path, encoding="utf-8").read()
+    # 占位图进入产物，且以权威词表词汇披露降级
+    assert "export_timeout_partial" in html
+    assert "地图导出超时" in html
+    # 真实地图没有渲染进这份报告
+    assert "mapspec-vector-layers" not in html
+
+
+@pytest.mark.asyncio
+async def test_report_svg_compile_normal_path_still_embeds_real_svg(tmp_path):
+    """有界化不改变正常路径：预算内编译仍嵌入真实矢量图层。"""
+    service = ReportService()
+    output_path = str(tmp_path / "ok_report.html")
+    success = await service.generate_report(
+        session_id="bounded-ok",
+        session_title="正常路径",
+        messages=[{"role": "user", "content": "画图"}],
+        output_path=output_path,
+        format="html",
+        mapspec=_MAPSPEC,
+    )
+    assert success is True
+    html = open(output_path, encoding="utf-8").read()
+    assert "mapspec-vector-layers" in html
+    assert 'r="25"' in html

@@ -284,8 +284,23 @@ _SEED_CONTRACTS: List[ParameterContract] = [
             ),
             ParameterSpec(
                 name="method", type="enum", default="ordinary",
-                enum_values=["ordinary", "universal"],
-                description="ordinary=常均值 OK；universal=线性坐标漂移 UK（残差变异函数）",
+                enum_values=["ordinary", "universal", "simple", "external_drift"],
+                description=(
+                    "ordinary=常均值 OK；universal=线性坐标漂移 UK（残差变异函数）；"
+                    "simple=SK（已知/估计先验均值，配合 mean 参数）；"
+                    "external_drift=KED（辅助变量漂移，配合 drift_field 参数）"
+                ),
+            ),
+            ParameterSpec(
+                name="mean", type="number", required=False,
+                description="SK 先验均值（method=simple 时使用；缺省以样本均值估计并披露）",
+            ),
+            ParameterSpec(
+                name="drift_field", type="string", required=False,
+                description=(
+                    "KED 辅助漂移变量字段名（method=external_drift 时必需；"
+                    "目标处漂移经 IDW 近似，approximate 语义披露）"
+                ),
             ),
             ParameterSpec(
                 name="matern_smoothness", type="number", default=0.5,
@@ -314,6 +329,158 @@ _SEED_CONTRACTS: List[ParameterContract] = [
             ),
         ],
     ),
+
+        ParameterContract(
+            id="hydrology_v4_analysis", version=1,
+            description="水文/地形 V4 合并入口（breach/hand/shreve/pfafstetter/hypsometry/solar）",
+            parameters=[
+                ParameterSpec(
+                    name="raster_path", type="string", required=True,
+                    description="DEM GeoTIFF 路径（data_dir 内）",
+                ),
+                ParameterSpec(
+                    name="analysis", type="enum", required=True,
+                    enum_values=["breach", "hand", "shreve", "pfafstetter",
+                                 "hypsometry", "solar_radiation"],
+                    description="分析类型",
+                ),
+                ParameterSpec(
+                    name="outlet_row", type="integer", default=-1,
+                    description="pfafstetter 出口行（数组坐标；-1=未提供）",
+                ),
+                ParameterSpec(
+                    name="outlet_col", type="integer", default=-1,
+                    description="pfafstetter 出口列",
+                ),
+                ParameterSpec(
+                    name="nodata", type="number", required=False,
+                    description="可选 nodata 覆盖值",
+                ),
+                ParameterSpec(
+                    name="stream_threshold", type="number", default=1000.0,
+                    minimum=1.0,
+                    description="河网阈值（上游像元数；hand/shreve/pfafstetter）",
+                ),
+                ParameterSpec(
+                    name="latitude_deg", type="number", default=30.0,
+                    minimum=-90.0, maximum=90.0, unit="degrees",
+                    description="solar 纬度",
+                ),
+                ParameterSpec(
+                    name="day_of_year", type="integer", default=172,
+                    minimum=1, maximum=366,
+                    description="solar 年积日",
+                ),
+                ParameterSpec(
+                    name="transmissivity", type="number", default=0.75,
+                    minimum=0.1, maximum=1.0,
+                    description="solar 晴空透射率",
+                ),
+            ],
+        ),
+
+        ParameterContract(
+            id="st_kriging_analysis", version=1,
+            description="时空克里金（separable/product-sum 时空协方差，秒制时间）",
+            parameters=[
+                ParameterSpec(
+                    name="value_field", type="string", required=True,
+                    description="数值字段名",
+                ),
+                ParameterSpec(
+                    name="time_field", type="string", required=True,
+                    description="时间字段名（epoch/相对秒）",
+                ),
+                ParameterSpec(
+                    name="target_time_sec", type="number", required=True,
+                    description="目标时刻（秒，与 time_field 同基准）",
+                ),
+                ParameterSpec(
+                    name="resolution", type="integer", default=7,
+                    minimum=5, maximum=9,
+                    description="H3 分辨率",
+                ),
+                ParameterSpec(
+                    name="model", type="enum", default="product_sum",
+                    enum_values=["product_sum", "separable"],
+                    description="时空协方差模型",
+                ),
+                ParameterSpec(
+                    name="temporal_range_sec", type="number", default=2592000.0,
+                    minimum=1.0,
+                    description="时间相关变程（秒，指数形状）",
+                ),
+                ParameterSpec(
+                    name="time_window_sec", type="number", required=False,
+                    description="邻域时间窗（秒；缺省 30 天；窗外样本不进入邻域）",
+                ),
+                ParameterSpec(
+                    name="neighbors", type="integer", default=16,
+                    minimum=2, maximum=24,
+                    description="时空邻域样本数上限",
+                ),
+            ],
+        ),
+
+        ParameterContract(
+            id="cokriging_lmc_analysis", version=1,
+            description="LMC 全共克里金（线性共区域化模型，逐结构 PSD）",
+            parameters=[
+                ParameterSpec(
+                    name="primary_field", type="string", required=True,
+                    description="主变量数值字段名",
+                ),
+                ParameterSpec(
+                    name="secondary_field", type="string", required=True,
+                    description="次变量数值字段名（须携带独立信息，|ρ|≥0.2）",
+                ),
+                ParameterSpec(
+                    name="resolution", type="integer", default=7,
+                    minimum=5, maximum=9,
+                    description="H3 分辨率",
+                ),
+                ParameterSpec(
+                    name="neighbors1", type="integer", default=12,
+                    minimum=2, maximum=24,
+                    description="主变量邻域样本数上限",
+                ),
+                ParameterSpec(
+                    name="neighbors2", type="integer", default=8,
+                    minimum=2, maximum=24,
+                    description="次变量邻域样本数上限",
+                ),
+            ],
+        ),
+
+        ParameterContract(
+            id="sgs_analysis", version=1,
+            description="SGS 条件高斯模拟（多实现 ensemble：P10/P50/P90/std）",
+            parameters=[
+                ParameterSpec(
+                    name="value_field", type="string", required=True,
+                    description="模拟数值字段名",
+                ),
+                ParameterSpec(
+                    name="resolution", type="integer", default=7,
+                    minimum=5, maximum=9,
+                    description="H3 分辨率",
+                ),
+                ParameterSpec(
+                    name="n_realizations", type="integer", default=100,
+                    minimum=1, maximum=2000,
+                    description="模拟实现数（ensemble 预算 R×N 有硬顶）",
+                ),
+                ParameterSpec(
+                    name="seed", type="integer", default=42,
+                    description="随机种子（caller_seeded：同 seed 逐位复现）",
+                ),
+                ParameterSpec(
+                    name="neighbors", type="integer", default=16,
+                    minimum=2, maximum=24,
+                    description="条件 SK 邻域样本数上限",
+                ),
+            ],
+        ),
 ]
 
 

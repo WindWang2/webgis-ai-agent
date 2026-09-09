@@ -56,6 +56,10 @@ import {
 import type { MapSpec, MapSpecSource } from '@/lib/mapspec-compiler/types';
 import { LegendStack, type LegendStackEntry } from '@/components/map/legend-stack';
 import {
+  clearComparisonExport,
+  setComparisonExport,
+} from '@/lib/map/comparison-export-registry';
+import {
   applyCameraPatch,
   clampSwipePosition,
   comparisonFamilyId,
@@ -333,6 +337,24 @@ export function ComparisonView({
       isSyncingRef.current = false;
     }
   }, [primaryMapRef]);
+
+  // ── W8（ADR-0118）：对比态注册到导出组合 registry（module 级 get/set/clear，
+  // 关闭/卸载即清 —— 只持 canvas 访问器闭包，不持 Map 实例，防泄漏）。
+  // exporter 导出时据此组合副图视图（或显式披露副图未进导出件）。
+  useEffect(() => {
+    if (!active || !secondaryReady) {
+      clearComparisonExport();
+      return;
+    }
+    setComparisonExport({
+      getSecondCanvas: () => secondaryMapRef.current?.getMap()?.getCanvas() ?? null,
+      kind,
+      position,
+    });
+    return () => {
+      clearComparisonExport();
+    };
+  }, [active, secondaryReady, kind, position]);
 
   // ── swipe 分割把手：指针拖拽 + 键盘（role=slider 契约）。──
   const setPosition = useCallback(

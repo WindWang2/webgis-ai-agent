@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "exportedFrom": "app/lib/cartography/component_registry.py",
   "componentTypes": [
     {
@@ -1410,5 +1410,97 @@
     ],
     "switch_chart_type": [],
     "switch_field": []
-  }
+  },
+  "renderDiagnostics": [
+    {
+      "code": "atlas_page_limit_truncated",
+      "severity": "warning",
+      "message": "atlas 页数超出上限（{detail}），仅保留上限内页面"
+    },
+    {
+      "code": "atlas_page_skipped",
+      "severity": "warning",
+      "message": "atlas 页面渲染失败，已跳过（{detail}）"
+    },
+    {
+      "code": "basemap_omitted_vector_svg",
+      "severity": "info",
+      "message": "矢量 SVG 不含栅格底图瓦片（仅数据层与图面要素）"
+    },
+    {
+      "code": "cartogram_unsupported",
+      "severity": "warning",
+      "message": "cartogram（变形地图）渲染运行时未实现，按未变形几何导出"
+    },
+    {
+      "code": "chart_kind_unsupported_export",
+      "severity": "warning",
+      "message": "该图表类型暂不支持导出，已以占位披露"
+    },
+    {
+      "code": "chart_ref_unavailable",
+      "severity": "warning",
+      "message": "图表组件引用的数据在导出时不可用，图表未进入导出件"
+    },
+    {
+      "code": "comparison_export_composed",
+      "severity": "info",
+      "message": "对比模式导出为显式左右组合（分界位于 {detail}）"
+    },
+    {
+      "code": "comparison_second_view_not_exported",
+      "severity": "warning",
+      "message": "对比模式第二视图未进入导出件（静态导出为单幅主图）"
+    },
+    {
+      "code": "component_skipped_invalid",
+      "severity": "warning",
+      "message": "组件配置无效，已跳过渲染"
+    },
+    {
+      "code": "export_timeout_partial",
+      "severity": "error",
+      "message": "导出超时，产物可能不完整（{detail}）"
+    },
+    {
+      "code": "features_truncated",
+      "severity": "warning",
+      "message": "要素数量超出导出预算，已截断至 {detail} 条"
+    },
+    {
+      "code": "label_truncated",
+      "severity": "warning",
+      "message": "标注文本过长，已截断显示（{detail}）"
+    },
+    {
+      "code": "legend_entries_truncated",
+      "severity": "info",
+      "message": "图例条目较多：live 界面仅显示前 8 条，导出件绘制全部条目"
+    },
+    {
+      "code": "pdf_text_rasterized_cjk",
+      "severity": "info",
+      "message": "PDF 含中文文本，以位图形式嵌入（未内嵌 CJK 字体）"
+    },
+    {
+      "code": "small_multiple_panel_skipped",
+      "severity": "warning",
+      "message": "小倍数面板帧渲染失败，已跳过（{detail}）"
+    },
+    {
+      "code": "table_ref_unavailable",
+      "severity": "warning",
+      "message": "表格组件引用的数据在导出时不可用，表格未进入导出件"
+    },
+    {
+      "code": "terrain_3d_scale_caveat",
+      "severity": "info",
+      "message": "3D 地形/倾斜视角下比例尺按平面口径计算，可能与视觉距离不符"
+    },
+    {
+      "code": "vector_svg_fallback_raster",
+      "severity": "warning",
+      "message": "矢量 SVG 合成失败，已回退位图包装（{detail}）"
+    }
+  ]
 }

@@ -152,6 +152,12 @@ def _sanitize_svg(content: bytes) -> bytes:
 async def upload_map_export(
     file: UploadFile = File(...),
     title: Optional[str] = Form(default=None),
+    # V5（ADR-0118 D6）：前端 exporter 发射的渲染/导出降级诊断
+    # （ExportDegradation[] 的 JSON 序列化）。服务端按权威词表
+    # （app/lib/cartography/render_diagnostics.py）校验后持久化为
+    # `{filename}.diagnostics.json` sidecar —— 导出证据的服务端锚点，
+    # 不再只存在于一次对话系统消息里。
+    render_diagnostics: Optional[str] = Form(default=None),
     _user: dict = Depends(get_current_user),
 ):
     """接收来自前端的 Canvas 合成结果并持久化，返回可供下载访问的链接。"""
@@ -163,6 +169,20 @@ async def upload_map_export(
         ext = ".png"
 
     filename = f"map_export_{int(time.time())}_{uuid.uuid4().hex[:12]}{ext}"
+
+    # V5：诊断载荷先行校验（权威词表外码一律拒绝并如实回报，不静默改写）。
+    accepted_diagnostics: list = []
+    rejected_diagnostics: list = []
+    if render_diagnostics is not None:
+        from app.lib.cartography.render_diagnostics import (
+            normalize_render_diagnostics,
+        )
+
+        try:
+            payload = json.loads(render_diagnostics)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="render_diagnostics 不是合法 JSON")
+        accepted_diagnostics, rejected_diagnostics = normalize_render_diagnostics(payload)
 
     try:
         content = await file.read(MAX_EXPORT_SIZE + 1)
@@ -179,22 +199,66 @@ async def upload_map_export(
         # 写入临时文件再原子移动，防止进程崩溃留下残缺文件 —— 同步写盘移出
         # 事件循环（#592：≤50MB 写入内联在 async def 会冻结全部并发流）。
         await asyncio.to_thread(_persist_export_file, filename, content, ext)
+        if accepted_diagnostics:
+            sidecar_bytes = json.dumps(
+                {"filename": filename, "diagnostics": accepted_diagnostics},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            await asyncio.to_thread(
+                _persist_export_file,
+                f"{filename}.diagnostics.json",
+                sidecar_bytes,
+                ".json",
+            )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Export failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="保存导出图失败")
 
-    # 审计 P0：记录文件所有权，防止 IDOR
+    # 审计 P0：记录文件所有权，防止 IDOR（sidecar 与成品同名前缀，
+    # 所有权以成品为准，读取端继承同一校验）。
     _set_export_owner(filename, _user.get("user_id", "unknown"))
 
     download_url = f"/api/v1/export/download/{filename}"
-    return {
+    out = {
         "success": True,
         "filename": filename,
         "url": download_url,
         "message": "地图制品已成功保存",
     }
+    if render_diagnostics is not None:
+        out["render_diagnostics"] = {
+            "accepted": len(accepted_diagnostics),
+            "rejected": rejected_diagnostics,
+        }
+    return out
+
+
+@router.get("/export/diagnostics/{filename}", tags=["地图制图"])
+def get_export_diagnostics(filename: str, _user: dict = Depends(get_current_user)):
+    """读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。
+
+    所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从
+    成品名派生（basename + 固定后缀），无路径注入面。
+    """
+    safe_filename = os.path.basename(filename)
+    sidecar_path = os.path.join(EXPORT_DIR, f"{safe_filename}.diagnostics.json")
+    if not os.path.exists(sidecar_path):
+        raise HTTPException(status_code=404, detail="该导出件没有诊断记录")
+
+    owner = _get_export_owner(safe_filename)
+    if owner is None:
+        raise HTTPException(status_code=404, detail="地图文件存在性无法验证，拒绝读取")
+    if owner != _user.get("user_id"):
+        raise HTTPException(status_code=403, detail="无权读取此文件的诊断")
+
+    try:
+        with open(sidecar_path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except (OSError, ValueError):
+        raise HTTPException(status_code=500, detail="诊断记录读取失败")
+    return {"success": True, "filename": safe_filename, **payload}
 
 
 def _render_pdf_to_file(

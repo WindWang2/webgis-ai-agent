@@ -54,12 +54,19 @@ def zonal_statistics(
     polygons_geojson: Union[dict, str],
     raster_path: str,
     stats: Optional[list[str]] = None,
+    *,
+    strict: bool = True,
 ) -> list[dict]:
     """Compute zonal statistics for polygons against a raster.
 
     Raises ValueError when polygon reprojection to the raster CRS fails — the
     previous behavior silently fed source-CRS polygons to a projected raster,
     producing plausible-looking zero statistics (GIS-23, deep-audit round 3).
+
+    science-v4 W3（geometry repair disclosure）：自交等无效几何默认
+    ``strict=True`` 类型化拒绝（InvalidGeometry）；``strict=False`` 走
+    make_valid 修复并在对应统计行携带 ``geometry_repair`` 披露记录
+    （方法/无效原因/面积变化）—— 修复永不静默。
     """
     if stats is None:
         stats = ['mean', 'sum', 'max', 'min']
@@ -115,11 +122,12 @@ def zonal_statistics(
     else:
         polygons_input = polygons_geojson
 
-    return _windowed_zonal_stats(polygons_input, raster_path, stats=stats)
+    return _windowed_zonal_stats(polygons_input, raster_path, stats=stats, strict=strict)
 
 
 def _windowed_zonal_stats(
-    polygons_geojson: dict, raster_path: str, *, stats: list[str]
+    polygons_geojson: dict, raster_path: str, *, stats: list[str],
+    strict: bool = True,
 ) -> list[dict]:
     """Zonal statistics through the V4 raster runtime (bounded memory).
 
@@ -173,6 +181,16 @@ def _windowed_zonal_stats(
                 logger.warning("zonal: unparseable zone geometry skipped: %s", e)
                 out.append({k: None for k in stats})
                 continue
+            # science-v4 W3：无效几何门（strict 拒绝 / 修复+披露，永不静默）。
+            from app.lib.geo_analysis.geometry_repair import ensure_valid_geometry
+
+            poly, repair_rec = ensure_valid_geometry(
+                poly, index=len(out), strict=strict, context="zonal_statistics")
+            if repair_rec is not None:
+                logger.warning(
+                    "zonal: zone %d geometry repaired (%s), area delta %s",
+                    len(out), repair_rec.reason[:80], repair_rec.area_delta,
+                )
             minx, miny, maxx, maxy = poly.bounds
             # Disjoint zones: rasterio's Window.intersection RAISES on empty
             # overlap — clamp explicitly so an off-raster zone is a per-zone
@@ -198,6 +216,8 @@ def _windowed_zonal_stats(
                 vals = vals[vals != meta.nodata]
             vals = vals[np.isfinite(vals)]
             row: dict = {}
+            if repair_rec is not None:
+                row["geometry_repair"] = repair_rec.to_dict()
             for key in stats:
                 if key == "count":
                     row["count"] = int(vals.size)

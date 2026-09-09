@@ -200,7 +200,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "拟合变异函数(spherical/exponential/gaussian)后在 H3 网格上同时产出预测面与克里金方差(不确定性)面，"
                "附 K 折交叉验证指标(RMSE/MAE/bias/R²)。适用于需要不确定性量化的连续变量建模(地统计)。"
                "\n何时用：『用克里金插值』/ 需要置信度或误差棒的表面 / 样本≥8 且空间相关；"
-               "趋势明显(如沿海拔线性变化)时选 method=universal（样本≥12）。"
+               "趋势明显(如沿海拔线性变化)时选 method=universal（样本≥12）或有辅助变量时 method=external_drift（KED，漂移字段目标处经 IDW 近似）；已知先验均值时 method=simple（SK）。"
                "\n何时不用：样本<8 或只求快速表面 — 用 idw_interpolation。"
                "\n失败语义：变异函数拟合失败时抛结构化错误(建议改用 IDW)，不静默降级。"
                "\nV2 可选项：anisotropy_angle/ratio(几何各向异性,默认各向同性)、cv_scheme="
@@ -223,6 +223,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "anisotropy_ratio": "各向异性长短轴变程比（≥1，默认 1=各向同性）",
                "cv_scheme": "CV 分折方案: index(默认,索引取模)/spatial_block(确定性网格分块)",
                "solve_backend": "线性求解后端: auto(默认,批式numpy+逐行回退)/numpy_batched/scipy_linalg",
+               "mean": "SK 先验均值（method=simple；缺省=样本均值估计并披露）",
+               "drift_field": "KED 辅助漂移变量字段名（method=external_drift 必需；目标处 IDW 近似）",
            },
            side_effect="deterministic_compute",
            network=False,
@@ -249,6 +251,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         anisotropy_ratio: float = 1.0,
         cv_scheme: str = "index",
         solve_backend: str = "auto",
+        mean: Optional[float] = None,
+        drift_field: Optional[str] = None,
     ) -> dict:
         from app.lib.gis.algorithm_registry import get_algorithm_registry
         from app.lib.gis.backend_selection import ScaleProfile, select_backend
@@ -313,6 +317,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             anisotropy_ratio=anisotropy_ratio,
             cv_scheme=cv_scheme,
             solve_backend=effective_backend,
+            mean=mean,
+            drift_field=drift_field,
         )
         meta = driver["metadata"]
         meta["backend_selection"] = {
@@ -1837,6 +1843,379 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                         method="max block kriging variance",
                     )],
                 )],
+            )
+        return prediction_fc
+
+    @tool(registry, name="sgs_simulation",
+           description=(
+               "SGS 条件高斯模拟：序贯高斯多实现采样，输出逐格 P10/P50/P90 与"
+               "实现间标准差（风险制图 / 不确定性带，而非单一面）。normal-score "
+               "域条件 SK + 随机路径；同 seed 逐位复现（caller_seeded）。"
+               "\n何时用：需要『区间/概率/风险』而非单值——污染超标概率、储量区间、"
+               "不确定性制图；克里金方差面不够时（方差≠分布）。"
+               "\n何时不用：只要最优估计面 — 用 kriging_interpolation；样本<8 — 用 idw。"
+               "\n关键约束：实现数×格点数有预算硬顶（先拒绝不 OOM）；"
+               "ensemble 统计是蒙特卡洛近似（k 邻域条件近似，已披露）。"
+           ),
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
+               "value_field": "数值字段名",
+               "resolution": "H3 分辨率（5-9），默认 7",
+               "n_realizations": "模拟实现数（默认 100；越大 ensemble 越稳、耗时线性增）",
+               "seed": "随机种子（默认 42；同 seed 逐位复现）",
+               "neighbors": "条件 SK 邻域样本数(2-24)，默认 16",
+           })
+    def sgs_simulation(
+        geojson: Any,
+        value_field: str,
+        resolution: int = 7,
+        n_realizations: int = 100,
+        seed: int = 42,
+        neighbors: int = 16,
+    ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.gis.uncertainty import (
+            MonteCarloSummary,
+            UncertaintyMeasure,
+        )
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+        from app.lib.geo_analysis.kriging_simulation import (
+            sgs_simulation_surface as _sgs_surface,
+        )
+
+        params = apply_contract("sgs_analysis", {
+            "value_field": value_field,
+            "resolution": resolution,
+            "n_realizations": n_realizations,
+            "seed": seed,
+            "neighbors": neighbors,
+        })
+        data = safe_parse_geojson(geojson)
+        driver = _sgs_surface(
+            data, params["value_field"],
+            resolution=int(params["resolution"]),
+            n_realizations=int(params["n_realizations"]),
+            seed=int(params["seed"]),
+            neighbors=int(params["neighbors"]),
+        )
+        meta = driver["metadata"]
+        if not driver["records"]:
+            return {
+                "summary": "SGS：0 个目标单元（极地/范围退化）——诚实空结果。",
+                "features": [],
+                "sgs_metadata": meta,
+            }
+
+        pred_records = [
+            {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
+        ]
+        prediction_fc = h3_to_geojson(pred_records, params["value_field"])
+        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+            feat["properties"]["sgs_std"] = round(rec["sgs_std"], 6)
+            feat["properties"]["p10"] = round(rec["p10"], 6)
+            feat["properties"]["p90"] = round(rec["p90"], 6)
+        # P90−P10 宽度面：逐格不确定性带（map/export 披露消费）
+        width_records = [
+            {"h3_index": r["h3_index"], "value": r["p90"] - r["p10"]}
+            for r in driver["records"]
+        ]
+        uncertainty_fc = h3_to_geojson(width_records, "p90_minus_p10")
+
+        prediction_fc.update({
+            "summary": (
+                f"SGS 模拟完成：{len(prediction_fc['features'])} 个 H3 单元 × "
+                f"{meta['n_realizations']} 实现（seed={meta['seed']}，同 seed 逐位复现）；"
+                f"主值=P50，P90−P10 不确定带面已随结果输出。"
+            ),
+            "uncertainty": uncertainty_fc,
+            "sgs_metadata": meta,
+        })
+        descriptor = get_algorithm_registry().get("interpolation.sgs")
+        if descriptor is not None:
+            prediction_fc["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="sgs_simulation",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "resolution": int(params["resolution"]),
+                    "n_realizations": int(params["n_realizations"]),
+                    "seed": int(params["seed"]),
+                    "neighbors": int(params["neighbors"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "degrees (input); metric working frame internally",
+                },
+                transformations=[
+                    "normal-score transform -> conditional SK on random path -> back-transform",
+                ],
+                uncertainty=[
+                    MonteCarloSummary(
+                        target="sgs_ensemble",
+                        interpretation=(
+                            "多实现 ensemble 统计（P10/P50/P90/实现间 std）——"
+                            "来自真实多实现采样，非解析方差面"),
+                        summary=[
+                            UncertaintyMeasure(
+                                measure="std", value=float(meta["ensemble_std_range"][1]),
+                                method="max inter-realization std (ddof=1)"),
+                            UncertaintyMeasure(
+                                measure="p10", value=float(meta["p10_range"][0]),
+                                method="ensemble min p10"),
+                            UncertaintyMeasure(
+                                measure="p90", value=float(meta["p90_range"][1]),
+                                method="ensemble max p90"),
+                        ],
+                    ),
+                ],
+            )
+        return prediction_fc
+
+    @tool(registry, name="cokriging_lmc_surface",
+           description=(
+               "LMC 全共克里金：线性共区域化模型（逐结构半正定）下主/次变量"
+               "联合建模，次变量样本全部进入邻域系统（非仅目标协同定位——"
+               "区别于 MM1 近似的 cokriging_surface）。"
+               "\n何时用：次变量密集且与主变量强相关(|ρ|≥0.2)、需要真实全共克里金；"
+               "次变量在目标处有独立观测信息。"
+               "\n何时不用：|ρ|<0.2（弱相关不如 OK）；次变量与主变量完全复制"
+               "（系统近奇异，方差不可信）。"
+           ),
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "主变量点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
+               "secondary_geojson": "次变量点要素集 GeoJSON（Point 几何，≥4 点；>2 万点自动确定性抽稀）",
+               "primary_field": "主变量数值字段名",
+               "secondary_field": "次变量数值字段名",
+               "resolution": "H3 分辨率（5-9），默认 7",
+               "neighbors1": "主变量邻域样本数(2-24)，默认 12",
+               "neighbors2": "次变量邻域样本数(2-24)，默认 8",
+           })
+    def cokriging_lmc_surface(
+        geojson: Any,
+        secondary_geojson: Any,
+        primary_field: str,
+        secondary_field: str,
+        resolution: int = 7,
+        neighbors1: int = 12,
+        neighbors2: int = 8,
+    ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.gis.uncertainty import (
+            RasterUncertainty,
+            UncertaintyMeasure,
+        )
+        from app.lib.geo_analysis.cokriging_lmc import (
+            cokriging_lmc_surface as _ck_surface,
+        )
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+
+        params = apply_contract("cokriging_lmc_analysis", {
+            "primary_field": primary_field,
+            "secondary_field": secondary_field,
+            "resolution": resolution,
+            "neighbors1": neighbors1,
+            "neighbors2": neighbors2,
+        })
+        data = safe_parse_geojson(geojson)
+        data_sec = safe_parse_geojson(secondary_geojson)
+        driver = _ck_surface(
+            data, params["primary_field"], data_sec, params["secondary_field"],
+            resolution=int(params["resolution"]),
+            neighbors1=int(params["neighbors1"]),
+            neighbors2=int(params["neighbors2"]),
+        )
+        meta = driver["metadata"]
+        if not driver["records"]:
+            return {
+                "summary": "LMC 共克里金：0 个目标单元（极地/范围退化）——诚实空结果。",
+                "features": [],
+                "lmc_metadata": meta,
+            }
+        pred_records = [
+            {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
+        ]
+        prediction_fc = h3_to_geojson(pred_records, params["primary_field"])
+        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+            feat["properties"]["ck_variance"] = round(rec["ck_variance"], 6)
+            feat["properties"]["ck_stddev"] = round(rec["ck_stddev"], 6)
+        prediction_fc.update({
+            "summary": (
+                f"LMC 全共克里金完成：{len(prediction_fc['features'])} 个 H3 单元；"
+                f"主/次相关 ρ={meta['lmc']['rho']}，次变量 {meta['n_secondary']} 点"
+                f"（k1={meta['neighbors']['primary']}, k2={meta['neighbors']['secondary']}）；"
+                "方差面已随结果输出。"
+            ),
+            "lmc_metadata": meta,
+        })
+        descriptor = get_algorithm_registry().get("interpolation.cokriging_lmc")
+        if descriptor is not None:
+            prediction_fc["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="cokriging_lmc_surface",
+                parameters_applied={
+                    "primary_field": params["primary_field"],
+                    "secondary_field": params["secondary_field"],
+                    "resolution": int(params["resolution"]),
+                    "neighbors1": int(params["neighbors1"]),
+                    "neighbors2": int(params["neighbors2"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "LMC: two shared structures, B matrices PSD by construction",
+                    "full cokriging system with both variables in the neighborhood",
+                ],
+                uncertainty=[RasterUncertainty(
+                    target="ck_variance",
+                    interpretation="full cokriging variance under the fitted LMC",
+                    summary=[UncertaintyMeasure(
+                        measure="value", value=float(meta["variance_range"][1]),
+                        method="max cokriging variance"),
+                    ]),
+                ],
+            )
+        return prediction_fc
+
+    @tool(registry, name="st_kriging_surface",
+           description=(
+               "时空克里金：在 (x,y,t) 时空协方差下预测指定时刻的表面。"
+               "product_sum（双时间尺度可分离正混合，按构造半正定）或 "
+               "separable（可分离）模型；时间单位秒（epoch/相对秒）。"
+               "\n何时用：多时相观测（站点时序、传感器网络），需要『某时刻』"
+               "的连续面且时间相关性真实存在。"
+               "\n何时不用：单一时刻观测（用 kriging_interpolation）；"
+               "时间维退化（全部同时刻→结构化拒绝）。"
+           ),
+           tier=2, domains=["statistics"], cost="heavy",
+           param_descriptions={
+               "geojson": "点要素集 GeoJSON（Point 几何，≥12 点、跨多时相）",
+               "value_field": "数值字段名",
+               "time_field": "时间字段名（epoch/相对秒）",
+               "target_time_sec": "目标时刻（秒）",
+               "resolution": "H3 分辨率（5-9），默认 7",
+               "model": "时空协方差: product_sum(默认)/separable",
+               "temporal_range_sec": "时间相关变程（秒，默认 30 天）",
+               "time_window_sec": "邻域时间窗（秒，默认 30 天）",
+               "neighbors": "时空邻域样本数(2-24)，默认 16",
+           })
+    def st_kriging_surface(
+        geojson: Any,
+        value_field: str,
+        time_field: str,
+        target_time_sec: float,
+        resolution: int = 7,
+        model: str = "product_sum",
+        temporal_range_sec: float = 2592000.0,
+        time_window_sec: Optional[float] = None,
+        neighbors: int = 16,
+    ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.gis.uncertainty import (
+            RasterUncertainty,
+            UncertaintyMeasure,
+        )
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
+        from app.lib.geo_analysis.kriging_st import (
+            st_kriging_surface as _st_surface,
+        )
+
+        params = apply_contract("st_kriging_analysis", {
+            "value_field": value_field,
+            "time_field": time_field,
+            "target_time_sec": float(target_time_sec),
+            "resolution": resolution,
+            "model": model,
+            "temporal_range_sec": float(temporal_range_sec),
+            "time_window_sec": (
+                float(time_window_sec) if time_window_sec is not None else None),
+            "neighbors": neighbors,
+        })
+        data = safe_parse_geojson(geojson)
+        # review R2-M1：工具缺省 None 会绕过 lib 的 30 天默认窗（显式 None
+        # = 无窗）—— 此处落地缺省并把生效窗写进 metadata。
+        effective_window = (
+            float(params["time_window_sec"])
+            if params["time_window_sec"] is not None
+            else 2592000.0)
+        driver = _st_surface(
+            data, params["value_field"], params["time_field"],
+            target_time_sec=params["target_time_sec"],
+            resolution=int(params["resolution"]),
+            model=params["model"],
+            temporal_range_sec=float(params["temporal_range_sec"]),
+            time_window_sec=effective_window,
+            neighbors=int(params["neighbors"]),
+        )
+        meta = driver["metadata"]
+        if not driver["records"]:
+            return {
+                "summary": "时空克里金：0 个目标单元（极地/范围退化）——诚实空结果。",
+                "features": [],
+                "st_metadata": meta,
+            }
+        pred_records = [
+            {"h3_index": r["h3_index"], "value": r["value"]} for r in driver["records"]
+        ]
+        prediction_fc = h3_to_geojson(pred_records, params["value_field"])
+        for feat, rec in zip(prediction_fc["features"], driver["records"]):
+            feat["properties"]["st_variance"] = round(rec["st_variance"], 6)
+            feat["properties"]["st_stddev"] = round(rec["st_stddev"], 6)
+        prediction_fc.update({
+            "summary": (
+                f"时空克里金完成：{len(prediction_fc['features'])} 个 H3 单元 @ "
+                f"t={meta['target_time_sec']:.0f}s（{meta['st_model']['model']} 模型，"
+                f"时间变程 {meta['st_model']['temporal_range_seconds']:.0f}s）；"
+                "方差面已随结果输出。"
+            ),
+            "st_metadata": meta,
+        })
+        descriptor = get_algorithm_registry().get("interpolation.st_kriging")
+        if descriptor is not None:
+            prediction_fc["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="st_kriging_surface",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "time_field": params["time_field"],
+                    "target_time_sec": params["target_time_sec"],
+                    "model": params["model"],
+                    "temporal_range_sec": params["temporal_range_sec"],
+                    "time_window_sec": params["time_window_sec"],
+                    "neighbors": int(params["neighbors"]),
+                    "resolution": int(params["resolution"]),
+                },
+                input_facts={
+                    "artifact_type": "point_feature_set",
+                    "feature_count": meta.get("n_samples"),
+                    "crs": "EPSG:4326",
+                    "units": "m",
+                },
+                transformations=[
+                    "space-time covariance (separable/product-sum, PSD by construction)",
+                    "time-bounded neighborhoods (windowed samples only)",
+                ],
+                uncertainty=[RasterUncertainty(
+                    target="st_variance",
+                    interpretation="space-time kriging variance at target_time_sec",
+                    summary=[UncertaintyMeasure(
+                        measure="value", value=float(meta["variance_range"][1]),
+                        method="max ST kriging variance"),
+                    ]),
+                ],
             )
         return prediction_fc
 

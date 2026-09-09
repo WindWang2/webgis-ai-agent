@@ -122,13 +122,35 @@ export interface ExportChromeElement {
 }
 
 /** Wave 9：显式降级诊断（degradation matrix 的最小闭环）—— 替代静默
- * continue。code 词表封闭；detail 有界（≤120 字符）。 */
+ * continue。V5（ADR-0118 D1）：code 词表升为后端权威词表的子集
+ * （component-catalog.generated.json `renderDiagnostics` 段，唯一权威
+ * app/lib/cartography/render_diagnostics.py）；detail 有界（≤200 字符）。
+ * 后端专属码（label_truncated / features_truncated 等）由孪生编译侧发射，
+ * 前端不发射但类型保持同词表以便 sidecar 透传。 */
+export type ExportDegradationCode =
+  | 'chart_ref_unavailable'
+  | 'chart_kind_unsupported_export'
+  | 'table_ref_unavailable'
+  | 'component_skipped_invalid'
+  | 'label_truncated'
+  /* review-r1：label_suppressed_too_long 移除 —— 词表唯一无发射器死码，
+   * 后端权威词表同步删除（待放置求解器接入导出链再回归）。 */
+  | 'legend_entries_truncated'
+  | 'features_truncated'
+  | 'export_timeout_partial'
+  | 'vector_svg_fallback_raster'
+  | 'basemap_omitted_vector_svg'
+  | 'pdf_text_rasterized_cjk'
+  | 'comparison_second_view_not_exported'
+  | 'comparison_export_composed'
+  | 'cartogram_unsupported'
+  | 'small_multiple_panel_skipped'
+  | 'atlas_page_skipped'
+  | 'atlas_page_limit_truncated'
+  | 'terrain_3d_scale_caveat';
+
 export interface ExportDegradation {
-  code:
-    | 'chart_ref_unavailable'
-    | 'chart_kind_unsupported_export'
-    | 'table_ref_unavailable'
-    | 'component_skipped_invalid';
+  code: ExportDegradationCode;
   componentId?: string;
   detail?: string;
 }
@@ -663,11 +685,42 @@ export async function buildExportChrome(
           : s.type === 'graduated' || s.type === 'categorical' || s.type === 'bivariate',
       ) ||
       (!isColorbar ? opts.fallbackLegendSpec : undefined);
-    if (!spec) continue;
+    if (!spec) {
+      // W7（ADR-0118）：绑定缺失不再静默 —— live 同场景图例缺席，导出侧
+      // 补披露诊断（用户知道图例没进导出件及其原因）。
+      model.degradations.push({
+        code: 'component_skipped_invalid',
+        componentId: comp.id,
+        detail: `图例组件绑定层无 legend_spec（layerId: ${comp.layerId || '未绑定'}）`,
+      });
+      continue;
+    }
     if (comp.layerId === '' ) {
       // 未绑定实例共用一次兜底发现，避免 N 个未绑定实例画 N 份相同图例
       if (usedFallbackLegend) continue;
       usedFallbackLegend = true;
+    }
+    // W7：与 live 的内容差异披露 —— live 图例仅示前 8 条（legends.tsx
+    // entries.slice(0, 8) + 「…+N」指示），导出件画全集；条目超限时显式披露
+    // 该差异。entryCount 口径与 live legendEntries 一致：nodata 条目计入
+    // （legendEntries 在 entries 末尾追加 nodata 后再做 >8 判断）。
+    // review-r2：categorical 此前漏计 nodata（graduated 已计）—— 与 live
+    // 及 render-scene legendEntryCount 对齐。
+    const entryCount =
+      spec.type === 'categorical'
+        ? (spec.categories?.length ?? 0) + (spec.nodata?.color ? 1 : 0)
+        : spec.type === 'graduated'
+          ? Math.min(
+              Math.max((spec.breaks?.length ?? 0) - 1, 0),
+              (spec.palette_colors?.length ?? 0),
+            ) + (spec.nodata?.color ? 1 : 0)
+          : 0;
+    if (entryCount > 8) {
+      model.degradations.push({
+        code: 'legend_entries_truncated',
+        componentId: comp.id,
+        detail: '8',
+      });
     }
     const el: ExportChromeElement = {
       kind: isColorbar ? 'colorbar' : 'legend',
@@ -767,7 +820,15 @@ export async function buildExportChrome(
   for (const c of resolved) {
     if (c.type !== 'inset_map' || !c.enabled) continue;
     const insetBbox = parseBbox4(c.options['bbox']);
-    if (!insetBbox) continue;
+    if (!insetBbox) {
+      // W7：bbox 缺失/非法（live 同场景自弃）→ 导出缺席 + 显式披露。
+      model.degradations.push({
+        code: 'component_skipped_invalid',
+        componentId: c.id,
+        detail: 'inset_map 缺有效 bbox',
+      });
+      continue;
+    }
     const mainBbox = parseBbox4(c.options['mainBbox']) ?? opts.viewportBounds ?? undefined;
     const labelOpt = c.options['label'];
     const boundary = parseBoundary(c.options['boundary']);
@@ -822,6 +883,15 @@ export async function buildExportChrome(
           code: 'chart_ref_unavailable',
           componentId: c.id,
           detail: typeof chartRef === 'string' ? `ref ${chartRef} 不可用` : 'inline 载荷非法',
+        });
+      }
+      if (chart && !DRAWN_CHART_KINDS.has(chart.type)) {
+        // W7（ADR-0118）：死词表激活 —— 未知 kind 此前只在绘制端画占位文案，
+        // 词表码无人发射；现在模型侧显式披露（detail=kind 内码）。
+        model.degradations.push({
+          code: 'chart_kind_unsupported_export',
+          componentId: c.id,
+          detail: chart.type,
         });
       }
       if (chart) {
@@ -1126,7 +1196,7 @@ export function drawChromeColorbar(
   opts: { marginX: number; marginY?: number },
 ) {
   const spec = el.legendSpec as
-    | { min?: number; max?: number; palette_colors?: string[]; unit?: string; field?: string }
+    | { min?: number; max?: number; palette_colors?: string[]; unit?: string; field?: string; nodata?: { color?: string; label?: string } }
     | undefined;
   // E-5：与 live 同款退化语义 —— 无 palette 不绘制（不伪造默认 ramp）；
   // 缺 min/max 只画裸条不带数值标签（live colorbar.tsx 同款），不再整体丢弃。
@@ -1185,6 +1255,23 @@ export function drawChromeColorbar(
     ctx.fillRect(x, y2, w, h);
     strokeRampBorder(x, y2, w, h);
   };
+  // W7 nodata parity：色条尾部 nodata 色块条目（与 drawChromeLegend/live
+  // legendEntries 同源 —— nodata.color 来自 withNoDataGuard 同一规则）。
+  const nodata = spec.nodata?.color
+    ? { color: spec.nodata.color, label: spec.nodata.label || '无数据' }
+    : undefined;
+  const nodataH = nodata ? d.scalePx(16) : 0;
+  const drawNodataRow = (nx: number, ny: number) => {
+    if (!nodata) return;
+    ctx.fillStyle = nodata.color;
+    ctx.fillRect(nx, ny, d.scalePx(14), d.scalePx(10));
+    ctx.strokeStyle = 'rgba(128,128,128,0.4)';
+    ctx.lineWidth = d.scalePx(0.5);
+    ctx.strokeRect(nx, ny, d.scalePx(14), d.scalePx(10));
+    ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.7)' : 'rgba(100,116,139,0.9)';
+    ctx.font = `${d.scalePx(10)}px sans-serif`;
+    _text(d, nodata.label || '无数据', nx + d.scalePx(20), ny + d.scalePx(9), 'left');
+  };
 
   if (vertical) {
     // 纵向：窄高条 + 右侧 min/max（live 竖排同构）；条内首色=顶部（min 在顶，
@@ -1194,7 +1281,7 @@ export function drawChromeColorbar(
     const titleH = spec.field ? d.scalePx(18) : 0;
     const labelsW = hasRange ? d.scalePx(56) : 0;
     const boxW = padding * 2 + barW + (labelsW ? d.scalePx(6) + labelsW : 0);
-    const boxH = padding * 2 + titleH + barH;
+    const boxH = padding * 2 + titleH + barH + nodataH;
     const lx = origin.align === 'right' ? origin.x - boxW : origin.align === 'center' ? origin.x - boxW / 2 : origin.x;
     const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - boxH : origin.y;
     _chromePanel(d, lx, ly, boxW, boxH);
@@ -1213,6 +1300,7 @@ export function drawChromeColorbar(
       _text(d, `${fmt(spec.max!)}${suffix}`, tx, y + d.scalePx(8), 'left');
       _text(d, `${fmt(spec.min!)}${suffix}`, tx, y + barH, 'left');
     }
+    drawNodataRow(lx + padding, y + barH + d.scalePx(6));
     return;
   }
 
@@ -1224,7 +1312,7 @@ export function drawChromeColorbar(
   // 终审 F6：无量化范围 = 裸条 —— 不预留数值标签带（此前空占 ~16px）
   const labelsH = hasRange ? d.scalePx(16) : 0;
   const boxW = padding * 2 + barW;
-  const boxH = padding * 2 + titleH + barH + ticksH + labelsH;
+  const boxH = padding * 2 + titleH + barH + ticksH + labelsH + nodataH;
   const lx = origin.align === 'right' ? origin.x - boxW : origin.align === 'center' ? origin.x - boxW / 2 : origin.x;
   const ly = origin.vAlign === 'bottom' ? d.targetH - origin.y - boxH : origin.y;
 
@@ -1260,6 +1348,7 @@ export function drawChromeColorbar(
     );
     _text(d, `${fmt(spec.max!)}${suffix}`, lx + padding + barW, y + d.scalePx(10), 'right');
   }
+  drawNodataRow(lx + padding, y + labelsH);
 }
 
 /** 离散/分级图例（anchor 槽位版 _drawDiscreteLegend）。 */
@@ -1279,6 +1368,10 @@ export function drawChromeLegend(
         min?: number;
         max?: number;
         unit?: string;
+        /** W7 parity：live 图例标题源（legends.tsx 同款）。 */
+        title?: string;
+        /** W7 parity：nodata 规则（与 withNoDataGuard 的 nodata.color 同源）。 */
+        nodata?: { color?: string; label?: string };
       }
     | undefined;
   if (!spec) return;
@@ -1308,6 +1401,12 @@ export function drawChromeLegend(
       while (labels.length < colors.length) labels.push('');
     }
   }
+  // W7 nodata parity：与 live legendEntries 同源 —— nodata 色块条目追加在
+  // 末尾（色与 paint 侧 withNoDataGuard 同一 nodata.color，不另造）。
+  if (spec.nodata?.color) {
+    colors.push(spec.nodata.color);
+    labels.push(spec.nodata.label || '无数据');
+  }
   const classes = Math.min(colors.length, labels.length);
   if (classes === 0) return;
 
@@ -1331,7 +1430,8 @@ export function drawChromeLegend(
   _chromePanel(d, lx, ly, legendW, legendH);
   ctx.fillStyle = d.darkMode ? '#00f2ff' : '#1e293b';
   ctx.font = `bold ${d.scalePx(12)}px sans-serif`;
-  _text(d, `字段: ${spec.field || '未知字段'}`, lx + padding, ly + padding + d.scalePx(12), 'left');
+  // W7 parity：live 图例标题源 = legend.title（缺失回退既有字段格式）。
+  _text(d, spec.title || `字段: ${spec.field || '未知字段'}`, lx + padding, ly + padding + d.scalePx(12), 'left');
   for (let i = 0; i < classes; i++) {
     const iy = ly + padding + d.scalePx(24) + i * itemH;
     ctx.fillStyle = colors[i];
