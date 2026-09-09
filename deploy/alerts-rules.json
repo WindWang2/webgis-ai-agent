@@ -136,6 +136,71 @@
           }
         }
       ]
+    },
+    {
+      "name": "webgis-sre-alerts",
+      "rules": [
+        {
+          "alert": "SRE_Component_Down",
+          "expr": "sre_health_component_status == 0",
+          "for": "3m",
+          "labels": {
+            "severity": "critical"
+          },
+          "annotations": {
+            "summary": "SRE 组件宕机",
+            "description": "组件（{{ $labels.component }}）健康探测为 down 超过 3 分钟。数据源：/api/v1/status/detailed 刷新的 sre_health_component_status（1=ok 0.5=degraded 0=down）。"
+          }
+        },
+        {
+          "alert": "SRE_Component_Degraded",
+          "expr": "sre_health_component_status == 0.5",
+          "for": "10m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "SRE 组件降级",
+            "description": "组件（{{ $labels.component }}）持续降级 10 分钟。"
+          }
+        },
+        {
+          "alert": "SRE_Health_Stale",
+          "expr": "time() - sre_health_refresh_timestamp_seconds > 120",
+          "for": "2m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "SRE 健康面停止刷新",
+            "description": "组件健康指标已超 120 秒未刷新 —— 健康管线（status 端点轮询）未运行。组件 gauges 上的临时值不可作为健康事实；先恢复刷新再解读组件状态（M-4 / #473 变种防护）。"
+          }
+        },
+        {
+          "alert": "SRE_Health_Pipeline_Absent",
+          "expr": "absent(sre_health_refresh_timestamp_seconds)",
+          "for": "10m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "SRE 健康指标缺席",
+            "description": "/metrics 上完全没有 sre_health_refresh_timestamp_seconds 序列 —— 应用未装配 SRE 指标或抓取失效。"
+          }
+        },
+        {
+          "alert": "SRE_Stuck_Jobs_High",
+          "expr": "sre_stuck_jobs > 10",
+          "for": "10m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "卡死任务过多",
+            "description": "心跳超时的 running/cancelling job 数（有界计数，上限 100）超过 10 持续 10 分钟 —— worker 失联或任务假死。"
+          }
+        }
+      ]
     }
   ]
 }

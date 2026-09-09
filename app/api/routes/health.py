@@ -161,3 +161,180 @@ def readiness_check():
         status_code=200 if all_ready else 503,
         content={"ready": all_ready},
     )
+
+
+# ── SRE 组件健康分类学（Quality V3 W11，Epic 10）──────────────────────────
+#
+# 安全边界（Subagent-A B-1 修订）：
+# - 路径 /api/v1/status/detailed 不在 RATE_LIMIT_EXEMPT_PREFIXES（那里只豁免
+#   /api/v1/health 前缀）→ 继承全局限流，不可被无限抓取；
+# - get_current_user 鉴权依赖（JWT bearer）→ 未鉴权 401，拓扑细节不外泄
+#   （SEC-11 同款关切；/ready 的教训）；
+# - 探测是同步阻塞 IO → asyncio.to_thread 下放线程池，不阻塞事件循环；
+# - 缓存 = 不可变快照 + 锁原子换入（m-1：不照抄 _llm 裸全局的混合纪元）。
+
+import asyncio as _asyncio
+import threading as _threading
+import time as _time
+
+from fastapi import Depends as _Depends
+from pydantic import BaseModel as _BaseModel
+
+from app.core.auth import get_current_user as _get_current_user
+
+
+class SreComponentStatus(_BaseModel):
+    status: str                 # ok | degraded | down | not_configured
+    latency_ms: Optional[float] = None
+    detail: Optional[str] = None
+
+
+class SreStatusReport(_BaseModel):
+    status: str                 # ok | degraded | down
+    components: dict
+    stuck_jobs: Optional[int] = None
+    refresh_age_s: float = 0.0
+
+
+_SRE_COMPONENTS = ("db", "redis", "llm", "worker", "object_store")
+
+_CACHE_TTL_S = 10.0
+_cache_lock = _threading.Lock()
+_cache_snapshot: Optional[dict] = None
+_cache_written_at: float = 0.0
+_refresh_guard = _asyncio.Lock()
+
+
+def _probe_component(name: str) -> tuple:
+    """单组件探测（同步阻塞；调用方保证在 to_thread 中执行）。
+
+    返回 (status_str, latency_ms, detail)。词表封闭：ok|degraded|down|
+    not_configured。
+    """
+    t0 = _time.monotonic()
+    try:
+        if name == "db":
+            ok = _check_db()
+        elif name == "redis":
+            ok = _check_redis()
+        elif name == "llm":
+            ok = _check_llm()
+        elif name == "worker":
+            ok = _check_celery()
+        elif name == "object_store":
+            return _probe_object_store()
+        else:  # pragma: no cover — 词表封闭，防御性分支
+            return ("down", None, f"unknown component {name}")
+    except Exception as exc:  # noqa: BLE001 — 探测故障按 down 诚实上报
+        return ("down", None, f"probe error: {type(exc).__name__}")
+    latency = round((_time.monotonic() - t0) * 1000, 1)
+    return (("ok", latency, None) if ok else ("down", latency, None))
+
+
+def _probe_object_store() -> tuple:
+    """对象存储探测：未配置 → not_configured；配置了但不可达 → down。
+
+    配置面 = s3_blob_store.s3_config_from_env()（WEBGIS_S3_* env，与
+    生产消费方同一事实源）。
+    """
+    from app.services.s3_blob_store import s3_config_from_env
+
+    cfg = s3_config_from_env()
+    base = cfg.get("endpoint_url") or ""
+    if not base or not cfg.get("bucket"):
+        return ("not_configured", None, "WEBGIS_S3_ENDPOINT_URL/BUCKET 未配置")
+    t0 = _time.monotonic()
+    try:
+        import httpx
+
+        resp = httpx.head(base.rstrip("/") + "/minio/health/live", timeout=2.0)
+        latency = round((_time.monotonic() - t0) * 1000, 1)
+        ok = resp.status_code < 500
+        return (("ok", latency, None) if ok
+                else ("down", latency, f"health probe {resp.status_code}"))
+    except Exception as exc:  # noqa: BLE001
+        return ("down", round((_time.monotonic() - t0) * 1000, 1),
+                f"probe error: {type(exc).__name__}")
+
+
+def _collect_sre_snapshot() -> dict:
+    """全组件探测 → 快照 dict + 指标刷新（线程内执行；M-4 刷新点）。"""
+    from app.core import sre_metrics
+
+    components: dict[str, SreComponentStatus] = {}
+    for name in _SRE_COMPONENTS:
+        status_str, latency, detail = _probe_component(name)
+        components[name] = SreComponentStatus(
+            status=status_str, latency_ms=latency, detail=detail)
+        value = {"ok": sre_metrics.STATUS_OK,
+                 "degraded": sre_metrics.STATUS_DEGRADED,
+                 "down": sre_metrics.STATUS_DOWN,
+                 "not_configured": None}.get(status_str)
+        if value is not None:
+            sre_metrics.set_component_status(name, value)
+    values = [c.status for c in components.values()]
+    if "down" in values:
+        overall = "down"
+    elif "degraded" in values:
+        overall = "degraded"
+    else:
+        overall = "ok"
+    # stuck_jobs 由端点的 async 侧补齐（find_stale 是 AsyncSession API）
+    return {"components": components, "stuck_jobs": None,
+            "overall": overall}
+
+
+async def _count_stuck_jobs() -> Optional[int]:
+    """stuck job 有界计数（find_stale limit=100 上限；探测不到 = None
+    —— 诚实缺失，不伪造 0）。"""
+    try:
+        from app.core.database import AsyncSessionLocal
+        from app.services.jobs.store import DurableJobStore
+
+        if AsyncSessionLocal is None:
+            return None
+        async with AsyncSessionLocal() as db:
+            rows = await DurableJobStore.find_stale(db, limit=100)
+            return len(rows)
+    except Exception:  # noqa: BLE001 — jobs store 不可用时不阻塞组件面
+        logger.warning("stuck job count unavailable", exc_info=True)
+        return None
+
+
+@router.get("/status/detailed")
+async def sre_status_detailed(
+    _current_user: dict = _Depends(_get_current_user),
+) -> JSONResponse:
+    """鉴权 SRE 组件健康分类学（Epic 10 W11）。
+
+    安全模型见文件头注释：不在限流豁免前缀内 + JWT 鉴权 + 组件拓扑
+    细节只在鉴权面暴露（B-1）。TTL 10s 缓存，快照原子换入；k8s probe
+    不得指向本端点（/health/live、/ready 语义不变）。整体 down → 503
+    （与 /ready 的探测语义对齐，M-3），degraded 保持 200。
+    """
+    global _cache_snapshot, _cache_written_at
+    now = _time.monotonic()
+    if _cache_snapshot is None or now - _cache_written_at >= _CACHE_TTL_S:
+        async with _refresh_guard:
+            if _cache_snapshot is None or \
+                    _time.monotonic() - _cache_written_at >= _CACHE_TTL_S:
+                fresh = await _asyncio.to_thread(_collect_sre_snapshot)
+                stuck = await _count_stuck_jobs()
+                fresh["stuck_jobs"] = stuck
+                from app.core import sre_metrics as _sm
+                _sm.set_stuck_jobs(stuck or 0)
+                _sm.set_refresh_timestamp()
+                with _cache_lock:
+                    _cache_snapshot = fresh
+                    _cache_written_at = _time.monotonic()
+    with _cache_lock:
+        snap = _cache_snapshot
+        written = _cache_written_at
+    report = SreStatusReport(
+        status=snap["overall"],
+        components={k: v.model_dump() for k, v in snap["components"].items()},
+        stuck_jobs=snap["stuck_jobs"],
+        refresh_age_s=round(_time.monotonic() - written, 3),
+    )
+    status_code = 503 if report.status == "down" else 200
+    return JSONResponse(status_code=status_code, content=report.model_dump())

@@ -141,6 +141,9 @@ def _drive_fixture_app() -> str:
     # Register the app's custom counter into the default REGISTRY (the same
     # registry the instrumentator exposes) so it appears in the inventory.
     import app.core.auth_metrics  # noqa: F401
+    # Quality V3 W11：SRE 指标（sre_* gauges/histogram）同在默认 REGISTRY，
+    # alerts 的 SRE_* 规则引用它们 —— 缺 import 则 inventory 闸误报。
+    import app.core.sre_metrics  # noqa: F401
     from prometheus_fastapi_instrumentator import Instrumentator
 
     app = FastAPI()
