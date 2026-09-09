@@ -7665,7 +7665,7 @@
    "subject": "webgis_world_state"
   }
  ],
- "fingerprint": "938b5bf1bd1c25845ce518cfa2ac973300f5671fd374e8fd9a3907b32918e107",
+ "fingerprint": "e40b24245f62f7d14a0fd1916b6d561f7c87bb6d0258ca800b83ea569f8851ac",
  "gate": {
   "fields": {
    "capabilities": {
@@ -9350,6 +9350,7 @@
    ],
    "tests": [
     "tests/test_context_builder_round2.py",
+    "tests/test_export_frames_v5.py",
     "tests/test_export_phase3.py",
     "tests/test_session_overview.py"
    ],
@@ -15450,7 +15451,8 @@
     "layout"
    ],
    "tests": [
-    "tests/unit/test_cartography_tools_evidence.py"
+    "tests/unit/test_cartography_tools_evidence.py",
+    "tests/unit/test_mapspec_layout_intent_v5.py"
    ],
    "tier": 2
   },

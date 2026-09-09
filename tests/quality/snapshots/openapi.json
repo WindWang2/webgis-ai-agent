@@ -359,6 +359,17 @@
       "title": "File",
       "type": "string"
      },
+     "render_diagnostics": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Render Diagnostics"
+     },
      "title": {
       "anyOf": [
        {
@@ -8045,6 +8056,53 @@
      }
     ],
     "summary": "Upload Map Export",
+    "tags": [
+     "地图管理",
+     "地图制图"
+    ]
+   }
+  },
+  "/api/v1/export/diagnostics/{filename}": {
+   "get": {
+    "description": "读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。\n\n所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从\n成品名派生（basename + 固定后缀），无路径注入面。",
+    "operationId": "get_export_diagnostics_api_v1_export_diagnostics__filename__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "filename",
+      "required": true,
+      "schema": {
+       "title": "Filename",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Export Diagnostics",
     "tags": [
      "地图管理",
      "地图制图"
