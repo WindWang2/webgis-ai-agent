@@ -17,6 +17,13 @@ V5 契约：
   披露清单 —— 绝不伪造数据在场。
 - **授权**：写锚点走 require_owned_session；恢复要求当前用户 ==
   锚点 user_id（匿名锚点不可恢复，与 chat_resume 匿名拒绝同门）。
+
+V6 W14（Resume VNext — verify-not-assume）：建锚时快照逐 ref 修订证据
+（content_revision / content_hash / data_fingerprint）与工作流指纹（行指纹 + 实例修订
++ package 指纹）；恢复后经 ``resume_verify.verify_resume`` 验证存活性/
+修订/在场/图面依赖/指纹 —— satisfied-but-unverified 的 stage 翻 stale
+并进 W5 ``compute_affected_subgraph`` 闭包；无证据只判 stale/unknown。
+授权语义不变（本模块仍是唯一鉴权点）。
 """
 from __future__ import annotations
 
@@ -29,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 #: 锚点内 ref 清单上限（bounded everything）。
 MAX_ANCHOR_REFS = 128
+#: 锚点内证据快照上限（与 ref 清单同界）。
+MAX_ANCHOR_EVIDENCE = 128
 #: gis_chapter 中可跨 session 恢复的关键块键。
 RESTORABLE_CHAPTER_KEYS = (
     "workflow_instance",
@@ -37,7 +46,7 @@ RESTORABLE_CHAPTER_KEYS = (
     "query",
     "goal",
 )
-_ANCHOR_SCHEMA_VERSION = 1
+_ANCHOR_SCHEMA_VERSION = 2
 
 
 async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
@@ -57,6 +66,12 @@ async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
         ref_ids = list((await session_data_manager.list_refs(session_id)).keys())
     except Exception:  # noqa: BLE001 — ref 清单缺席照常建锚（恢复时披露）
         ref_ids = []
+    refs_truncated = len(ref_ids) > MAX_ANCHOR_REFS
+    ref_ids = ref_ids[:MAX_ANCHOR_REFS]
+    # V6 W14：逐 ref 证据快照（恢复后验证的比对基准；快照失败的 ref 在
+    # 恢复时判 unknown 并披露，绝不假设存活）。
+    ref_evidence = await _snapshot_ref_evidence(session_id, ref_ids)
+    workflow_fingerprint = _snapshot_workflow_fingerprint(chapter)
     return {
         "schema_version": _ANCHOR_SCHEMA_VERSION,
         "created_at": time.time(),
@@ -66,9 +81,72 @@ async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
         "progress": [p.model_dump() for p in (plan.progress or [])][:32],
         "gis_chapter": restored_chapter,
         "trace_last_seq": last_seq(session_id),
-        "ref_ids": ref_ids[:MAX_ANCHOR_REFS],
-        "refs_truncated": len(ref_ids) > MAX_ANCHOR_REFS,
+        "ref_ids": ref_ids,
+        "refs_truncated": refs_truncated,
+        "ref_evidence": ref_evidence,
+        "workflow_fingerprint": workflow_fingerprint,
     }
+
+
+async def _snapshot_ref_evidence(
+    session_id: str, ref_ids: List[str],
+) -> Dict[str, Dict[str, Any]]:
+    """逐 ref 快照修订证据（有界；单个失败跳过，恢复时判 unknown）。"""
+    from app.services.session_data import session_data_manager
+
+    evidence: Dict[str, Dict[str, Any]] = {}
+    for ref_id in ref_ids[:MAX_ANCHOR_EVIDENCE]:
+        try:
+            descriptor = await session_data_manager.get_ref_descriptor(
+                session_id, ref_id)
+        except Exception:  # noqa: BLE001 — 描述符读失败按无证据
+            descriptor = None
+        if not isinstance(descriptor, dict):
+            continue
+        entry: Dict[str, Any] = {}
+        try:
+            entry["content_revision"] = int(descriptor.get("content_revision") or 0)
+        except (TypeError, ValueError):
+            entry["content_revision"] = 0
+        # 内容身份（跨 session 稳定）：恢复后验证的主比对键。
+        content_hash = descriptor.get("content_hash")
+        if isinstance(content_hash, str) and content_hash:
+            entry["content_hash"] = content_hash[:64]
+        fingerprint = descriptor.get("data_fingerprint")
+        if isinstance(fingerprint, str) and fingerprint:
+            entry["data_fingerprint"] = fingerprint[:64]
+        evidence[ref_id] = entry
+    return evidence
+
+
+def _snapshot_workflow_fingerprint(chapter: Dict[str, Any]) -> Dict[str, Any]:
+    """工作流指纹快照（行指纹 + 实例修订 + package 指纹；缺席不断言）。"""
+    snapshot: Dict[str, Any] = {}
+    try:
+        from app.services.gis_harness.workflow_instance import rows_fingerprint
+        from app.services.gis_harness.runtime_bridge import WORKFLOW_RUNTIME_KEY
+
+        rows_fp = rows_fingerprint(chapter) if isinstance(chapter, dict) else ""
+        if not rows_fp and isinstance(chapter, dict):
+            instance = chapter.get("workflow_instance")
+            if isinstance(instance, dict):
+                rows_fp = str(instance.get("rows_fingerprint") or "")
+                try:
+                    snapshot["state_revision"] = int(
+                        instance.get("state_revision") or 0)
+                except (TypeError, ValueError):
+                    pass
+        if rows_fp:
+            snapshot["rows_fingerprint"] = str(rows_fp)[:2048]
+        if isinstance(chapter, dict):
+            block = chapter.get(WORKFLOW_RUNTIME_KEY)
+            if isinstance(block, dict) and block.get("package_fingerprint"):
+                snapshot["package_fingerprint"] = str(
+                    block.get("package_fingerprint"))[:64]
+    except Exception:  # noqa: BLE001 — 指纹快照失败按无证据（恢复时 unknown）
+        logger.warning("[ResumeAnchor] workflow fingerprint snapshot failed",
+                       exc_info=True)
+    return snapshot
 
 
 async def save_anchor(
@@ -218,6 +296,46 @@ async def resume_from_anchor(
         # 未重水合成功的旧 ref id（已置空；此处披露供 agent 重新获取）
         "dangling_refs": sorted(set(dangling))[:32],
     }
+    # V6 W14：恢复后验证（verify-not-assume）—— 对重水合 refs 做存活性/
+    # 修订/在场/图面/指纹验证；satisfied-but-unverified 的 stage 就地翻
+    # stale 并求 W5 recompute 闭包；验证结论并入 resumed_from 披露。
+    # 无证据只判 stale/unknown，绝不标 live。
+    try:
+        from app.services.gis_harness.resume_verify import verify_resume
+
+        verify_report = await verify_resume(
+            new_sid, anchor, ref_map,
+            plan.gis_chapter if isinstance(plan.gis_chapter, dict) else {},
+        )
+    except Exception:  # noqa: BLE001 — 验证编排永不阻断恢复（降级披露）
+        logger.warning("[ResumeAnchor] post-resume verify failed sid=%s",
+                       new_sid, exc_info=True)
+        verify_report = {
+            "ref_verdicts": {},
+            "workflow": {"verdict": "unknown",
+                         "reason": "验证执行失败，无结论"},
+            "mapspec": {"verdict": "unknown",
+                       "reason": "验证执行失败，无结论", "layers": []},
+            "stale_nodes": [],
+            "recompute_plan": {},
+            "disclosures": ["恢复后验证执行失败：全部结论 unknown"],
+        }
+    plan.gis_chapter["resumed_from"]["verify"] = {
+        "workflow_verdict": str(verify_report.get("workflow", {}).get("verdict") or "unknown"),
+        "workflow_reason": str(verify_report.get("workflow", {}).get("reason") or "")[:200],
+        "mapspec_verdict": str(verify_report.get("mapspec", {}).get("verdict") or "unknown"),
+        "stale_nodes": list(verify_report.get("stale_nodes") or [])[:32],
+        "recompute_plan": verify_report.get("recompute_plan") or {},
+        "disclosures": list(verify_report.get("disclosures") or [])[:32],
+        "ref_verdicts": {
+            str(k)[:64]: {
+                "verdict": str(v.get("verdict") or "unknown"),
+                "reasons": list(v.get("reasons") or [])[:4],
+            }
+            for k, v in list((verify_report.get("ref_verdicts") or {}).items())[:128]
+            if isinstance(v, dict)
+        },
+    }
     await save_session_plan(plan)
     await session_data_manager.set_map_state(
         new_sid, "_resumed_from", {"anchor_id": anchor_id, "source_session_id": old_sid}
@@ -255,6 +373,13 @@ async def resume_from_anchor(
         "ref_map": ref_map,
         "missing_refs": missing_refs,
         "trace_last_seq": int(anchor.get("trace_last_seq") or 0),
+        # V6 W14：恢复后验证结论（verify-not-assume；无证据不断言存活）。
+        "ref_verdicts": verify_report.get("ref_verdicts") or {},
+        "workflow_verify": verify_report.get("workflow") or {},
+        "mapspec_verify": verify_report.get("mapspec") or {},
+        "stale_nodes": verify_report.get("stale_nodes") or [],
+        "recompute_plan": verify_report.get("recompute_plan") or {},
+        "verify_disclosures": verify_report.get("disclosures") or [],
     }
 
 
