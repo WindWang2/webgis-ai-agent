@@ -2476,6 +2476,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, tier=2, domains=["statistics"], name="fishnet_grid",
+    anti_examples=("六边形蜂窝网格（用 h3_binning）",),
            description=(
                "鱼网格网生成：在 bbox 内生成正方形或六边形覆盖网格 (空 cell，无属性)。"
                "\n何时用：作为 spatial_aggregate / spatial_join 的底图做空间统计；"
@@ -2529,6 +2530,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="service_area_simple",
+    anti_examples=("直线半径圈（欧氏缓冲用 buffer_analysis）",),
            description=(
                "简单服务区分析：按出行模式和时间生成可达范围。"
                "✅ 用于：沿出行速度估算的行程时间/距离可达范围（等时圈），"
@@ -2565,6 +2567,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="h3_binning",
+    anti_examples=("方形公里渔网（用 fishnet_grid）",),
            description=(
                "H3 六边形网格聚合：把点数据聚合到指定分辨率的 H3 网格（代替传统鱼网）。"
                "✅ 用于：需要每个网格的统计值（计数/求和/均值）做数据驱动渲染，"
@@ -2705,6 +2708,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="raster_reclassify",
+    anti_examples=("改变像元分辨率（用 raster_resample）",),
            description=(
                "栅格重分类：将连续栅格值按方案映射为离散类别。"
                "\n何时用：『把 NDVI 连续值分成低/中/高植被覆盖等级』；"
@@ -2788,6 +2792,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="raster_resample",
+    anti_examples=("重分类分级（用 raster_reclassify）",),
            description=(
                "栅格重采样：改变像元大小和/或 CRS。"
                "\n何时用：『把 30m DEM 重采样到 90m 做概览』『把 WGS84 栅格转到 UTM 做面积计算』；"

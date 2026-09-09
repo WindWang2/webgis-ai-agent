@@ -67,6 +67,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         registry,
         tier=2, domains=["dataset"],
         name="connect_data_source",
+        anti_examples=("上传新文件注册数据（用 ingest_dataset）",),
         capabilities=['data_source_pipeline'],
         description=(
             "连接与注册地理空间数据源（PostGIS, OGC API, WFS, WMS, WMTS, ArcGIS, STAC, GeoParquet, PMTiles, S3 等；"

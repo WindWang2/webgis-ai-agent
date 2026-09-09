@@ -392,6 +392,7 @@ def register_network_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="network_shortest_path",
+        anti_examples=("沿水流累计径流路径长（用 flow_length_analysis）",),
         description="计算沿真实拓扑路网的最短路径（支持步行、驾车、骑行模式，容错捕捉与障碍物避让）。",
         tier=2,
         domains=["network"],

@@ -355,6 +355,7 @@ def register_temporal_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="temporal_trend",
+        anti_examples=("唯一突变发生点（用 temporal_changepoint）",),
         description=(
             "时间序列趋势分析：移动平均、Sen 斜率/OLS 回归与异常点检测；"
             "method 可选 mann_kendall / seasonal_mann_kendall（非参数检验，"
@@ -589,6 +590,7 @@ def register_temporal_science_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="temporal_changepoint",
+        anti_examples=("长期斜率方向显著性（用 temporal_trend）",),
         description=(
             "CUSUM 均值变点检测：标准化累积和定位单一均值漂移位置，"
             "固定种子 bootstrap 评估显著性（无变化零假设下重排 max-CUSUM 分布）。"

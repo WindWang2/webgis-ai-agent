@@ -58,6 +58,21 @@ _ANTI_CAP = 3.0
 _MATCH_CAP = 3  # 单词最多计 3 次命中（防长描述刷分）
 _ANTI_MATCH_CAP = 4  # 负证据匹配记录上限（可解释面有界）
 
+# ---------------------------------------------------------------------------
+# V6（ADR-0119 D1）打分判别力修复：单字 CJK token 命中是口语句的主要
+# 噪声源（「给/图/层/生/成」几乎命中一切描述 → 16+ 分噪声地板，把真
+# 区分信号淹没）。纪律：
+# - 封闭停用字表 → 零权重（只收功能字，绝不收领域字如 河/桥/山）；
+# - 其余单字 token 命中按 _SINGLE_CHAR_SCALE 折算（保召回、降话语权）；
+# - anti 负证据只认多字 token（单字负证据纯噪声）。
+# V3/V4-off 与 V4-on 走同一打分循环 → 「V3 数学 == V4 关闭」契约不变。
+# ---------------------------------------------------------------------------
+_SINGLE_CHAR_SCALE = 0.25
+_CJK_STOPCHARS = frozenset(
+    "的了在是和与或把给个这那有也就都被对为不没很之等每们吧呢啊嘛呀"
+    "又再才只更最太非常想看下上中里外前后左右上下说请问帮我想需要"
+)
+
 
 def v4_retrieval_enabled() -> bool:
     """Kill switch：``GIS_TOOL_RETRIEVAL_V4=0`` 精确恢复 V3 行为（默认开）。
@@ -257,6 +272,13 @@ class ToolRetrievalIndex:
             matched: List[str] = []
             anti_matched: List[str] = []
             for t in terms:
+                # V6 判别力修复：停用单字零权重、其余单字降权（见权重表注）
+                if len(t) == 1:
+                    if t in _CJK_STOPCHARS:
+                        continue
+                    w_scale = _SINGLE_CHAR_SCALE
+                else:
+                    w_scale = 1.0
                 local = 0.0
                 if t in lex.name_token_set:
                     local = max(local, _W_NAME_EXACT if len(t) > 3 else _W_NAME_PREFIX)
@@ -282,8 +304,8 @@ class ToolRetrievalIndex:
                 if local > 0.0:
                     if matched.count(t) < _MATCH_CAP:
                         matched.append(t)
-                    score += local
-                if v4 and t in lex.anti_tokens and t not in anti_matched:
+                    score += local * w_scale
+                if v4 and len(t) > 1 and t in lex.anti_tokens and t not in anti_matched:
                     # V4 负证据：anti_example 命中有界扣减（永只降序，不剔除）
                     if len(anti_matched) < _ANTI_MATCH_CAP:
                         anti_matched.append(t)

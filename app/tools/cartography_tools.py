@@ -789,6 +789,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   @tool(
       registry,
       tier=2, domains=["report"], name="webgis_rollback",
+      anti_examples=("恢复工作区快照版本（用 restore_workspace_snapshot）",),
       capabilities=['workspace_snapshot'],
       description="回滚 MapSpec 与 runtime map_state 到指定的快照点。",
       args_model=WebgisRollbackArgs,

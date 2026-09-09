@@ -50,6 +50,7 @@ def register_ingest_tools(registry: ToolRegistry) -> None:
         tier=2,
         domains=["dataset"],
         name="ingest_dataset",
+        anti_examples=("连接已有数据库服务（用 connect_data_source）",),
         side_effect="artifact_creation",
         tags=["摄入", "ingest", "会话数据资产"],
         capabilities=["dataset_ingest"],
