@@ -10,8 +10,8 @@
 - [x] 12 份审计/设计文档建立
 
 ## Waves
-- [ ] W1 Canonical Workflow Runtime Projection
-- [ ] W2 Compiler→Runtime bridge
+- [x] W1 Canonical Workflow Runtime Projection（`app/services/gis_harness/runtime_bridge.py`：`derive_runtime_block` 纯投影 + `workflow_runtime_v6` 单键；StageState 词汇复用；证据漂移→typed 边下游闭包 stale）
+- [x] W2 Compiler→Runtime bridge（服务入口 `maybe_update_runtime_projection` 接入 3 触发点：agent_pi_bridge 成功/失败、chat observation 路由；LLM make_plan 路径补齐 V4 证据消灭不对称；kill switch `GIS_WORKFLOW_RUNTIME_V6`）
 - [ ] W3 Artifact/MapSpec/Node lineage 双向索引
 - [ ] W4 Semantic Diff→Affected Subgraph 接线
 - [ ] W5 Partial Recompute + Reuse Validation
@@ -41,3 +41,4 @@
 
 ## 日志
 - 2026-09-09：Goal 启动；worktree 就绪；Phase 0 完成；顺带修复 kimi-code subagent 通道（opencode-zen provider 补 x-opencode-session/User-Agent 头 + muse-spark support_efforts/default_effort=high + secondary_model.default_effort=high）。
+- 2026-09-09：W1+W2 完成。`runtime_bridge.py`（初置于 workflow_v4/ 后因该包「零 I/O」红线迁至 gis_harness/ 根）：typed node_id 成共享命名空间，节点状态 = plan_graph 同一派生源在 typed DAG 上的投影；证据指纹覆盖 capability 全部行（修首行失明）；output 节点证据继承产出者（仅 upstream_stale）。12 单测 + gis_harness 域 998 全绿；plan_orchestrator 相关 48 全绿；ruff 净。

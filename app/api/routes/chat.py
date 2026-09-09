@@ -1654,6 +1654,19 @@ async def push_cartographic_runtime_observation(
                 "Post-observation workflow instance update failed for %s",
                 session_id, exc_info=True,
             )
+        # V6 Wave 2：typed DAG 运行态投影同步推进（增值披露，可关停）。
+        try:
+            from app.services.gis_harness.runtime_bridge import (
+                maybe_update_runtime_projection,
+            )
+            await maybe_update_runtime_projection(
+                session_id, reason="render_observation",
+            )
+        except Exception:  # noqa: BLE001 — 运行态投影是增值披露
+            logger.debug(
+                "Post-observation runtime projection update failed for %s",
+                session_id, exc_info=True,
+            )
     except Exception:  # noqa: BLE001 — 终验是增值披露，不阻断观察响应
         logger.warning(
             "Post-observation map finalization failed for %s", session_id, exc_info=True

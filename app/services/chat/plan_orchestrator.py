@@ -739,6 +739,7 @@ class AgentPlanOrchestrator:
 
         # GIS Harness（additive）：确定性 intent + 推荐 recipe 附着到计划。
         # LLM 规划不变；结构化意图供 plan_ready 事件/审计/产品组装消费。
+        gis_intent = None
         try:
             from app.services.gis_harness import (
                 resolve_map_request_intent,
@@ -750,6 +751,24 @@ class AgentPlanOrchestrator:
             plan.recipe_id = candidates[0].id if candidates else ""
         except Exception as e:  # noqa: BLE001 - harness 附着失败不阻断规划
             logger.warning(f"[plan_orchestrator] gis intent attach failed: {e}")
+
+        # V6 Wave 2：LLM 规划路径补齐 Workflow Compiler V4 证据（此前仅
+        # harness 合成路径附着 —— 审计缺口⑦；证据失败绝不阻塞规划）。
+        if getattr(plan, "recipe_id", ""):
+            try:
+                import asyncio as _asyncio
+                plan.workflow_v4 = await _asyncio.to_thread(
+                    self._compile_v4_evidence,
+                    user_message[:400],
+                    gis_intent,
+                    plan.recipe_id,
+                    None,
+                    False,
+                )
+            except Exception as e:  # noqa: BLE001 — 证据失败绝不阻塞规划
+                logger.info(
+                    f"[plan_orchestrator] make_plan workflow_v4 证据编译失败（忽略）: {e}")
+                plan.workflow_v4 = None
 
         await self._persist_new_plan(session_id, plan)
         logger.info(

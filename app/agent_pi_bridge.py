@@ -781,6 +781,19 @@ async def _dispatch_tool_bound(
                     "[PiBridge] workflow instance update failed session=%s tool=%s",
                     session_id, tool_name, exc_info=True,
                 )
+            # V6 Wave 2：typed DAG 运行态投影同步推进（增值披露，可关停）。
+            try:
+                from app.services.gis_harness.runtime_bridge import (
+                    maybe_update_runtime_projection,
+                )
+                await maybe_update_runtime_projection(
+                    session_id, reason=f"tool_result:{tool_name}",
+                )
+            except Exception:  # noqa: BLE001 — 运行态投影是增值披露
+                logger.debug(
+                    "[PiBridge] runtime projection update failed session=%s tool=%s",
+                    session_id, tool_name, exc_info=True,
+                )
             # pending 不披露（DAG 未终态是 turn 中段常态，[GIS Plan] 行投影
             # 已表达；每个工具结果一条 pending SSE 是纯噪声 + 前端空转）。
             # repair 改写 desired state 时附带 mapspec + revision —— 前端
@@ -870,6 +883,19 @@ async def _dispatch_tool_bound(
         except Exception:  # noqa: BLE001 — 实例态是增值披露
             logger.debug(
                 "[PiBridge] workflow instance update (error) failed session=%s tool=%s",
+                session_id, tool_name, exc_info=True,
+            )
+        # V6 Wave 2：失败同样推进 typed DAG 运行态投影（增值披露，可关停）。
+        try:
+            from app.services.gis_harness.runtime_bridge import (
+                maybe_update_runtime_projection,
+            )
+            await maybe_update_runtime_projection(
+                session_id, reason=f"tool_error:{tool_name}",
+            )
+        except Exception:  # noqa: BLE001 — 运行态投影是增值披露
+            logger.debug(
+                "[PiBridge] runtime projection update (error) failed session=%s tool=%s",
                 session_id, tool_name, exc_info=True,
             )
 
