@@ -129,6 +129,8 @@ class DataFabricMapSpecSource(_SpecModel):
     ref_id: Optional[StrictStr] = None
     url: Optional[StrictStr] = None
     dataPath: Optional[StrictStr] = None
+    # profiler 载荷（mapspec_source.profile_data 对 fabric 源读 inlineData）
+    inlineData: Optional[Any] = None
     profile: Optional[Dict[str, Any]] = None
     profile_fingerprint: Optional[StrictStr] = None
     data_fingerprint: Optional[StrictStr] = None
