@@ -159,9 +159,12 @@ def build_state(runner_report: str | None, waiver_path: str | None) -> tuple[dic
         violations.append(
             f"lane {lane} 状态 {status}（需 pass 证据或显式 waiver）")
 
+    # git_commit = 生成时 HEAD（pre-commit）。身份以包含本文件的 commit
+    # 为准 —— 内嵌"最终 commit"存在自指回归（文件进 commit 后 HEAD 必然
+    # 改变，字节闸将永不自洽）。
     state = {
         "policy_version": 1,
-        "git_commit": _git_commit(),
+        "git_commit_generation_time": _git_commit(),
         "gates": gates,
         "lanes": evidence_block["lanes"],
         "lane_evidence_reason": evidence_block["reason"],
@@ -181,7 +184,8 @@ def build_state(runner_report: str | None, waiver_path: str | None) -> tuple[dic
 def _render_md(state: dict) -> str:
     lines = ["# Release Readiness（生成物 · 确定性）", ""]
     lines.append(f"- verdict: **{state['verdict']}**")
-    lines.append(f"- git commit: `{state['git_commit'][:12]}`")
+    lines.append(f"- git commit（生成时）: `{state['git_commit_generation_time'][:12]}`"
+                 "（身份以包含本文件的 commit 为准）")
     lines.append("")
     lines.append("## 现场闸（生成时真实执行）")
     lines.append("")

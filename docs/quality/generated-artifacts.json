@@ -1,20 +1,20 @@
 {
  "artifacts": {
   "docs/integration/RELEASE_READINESS.json": {
-   "content_fingerprint": "4c06c4d3598153b870408b053c03ccd75809d056e9cf5be7bc55b1e1e304c96a",
+   "content_fingerprint": "ec9b71970ed14b1e3e98f399cb9e6a767f9f6f5dec71767ab0abe68011796d2f",
    "generator": "scripts/gen_release_readiness.py",
    "generator_version": 1,
-   "input_fingerprint": "f85254c977e71061e534bd5ddbcd885c73c1c31b41c5e2bf5de6187e3d141d38",
+   "input_fingerprint": "6ee85dd6fd8aa2df3534a5bd96bf4fee075e12c2139eaddecd81ac19f767413d",
    "inputs": [
     "scripts/gen_release_readiness.py"
    ],
    "scope": "global"
   },
   "docs/integration/RELEASE_READINESS.md": {
-   "content_fingerprint": "6edf1d165b1756fa04e28b0e48645ec34445ff116b76d6b18bd66d2b31d1047f",
+   "content_fingerprint": "70ad0f7fc189de880dc910037c4dc65ac5a2121f448d92de4dca5478d5c98c7a",
    "generator": "scripts/gen_release_readiness.py",
    "generator_version": 1,
-   "input_fingerprint": "f85254c977e71061e534bd5ddbcd885c73c1c31b41c5e2bf5de6187e3d141d38",
+   "input_fingerprint": "6ee85dd6fd8aa2df3534a5bd96bf4fee075e12c2139eaddecd81ac19f767413d",
    "inputs": [
     "scripts/gen_release_readiness.py"
    ],

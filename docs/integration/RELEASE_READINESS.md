@@ -1,7 +1,7 @@
 # Release Readiness（生成物 · 确定性）
 
 - verdict: **NOT-READY**
-- git commit: `fd61f8560f44`
+- git commit（生成时）: `c5b93a660008`（身份以包含本文件的 commit 为准）
 
 ## 现场闸（生成时真实执行）
 
