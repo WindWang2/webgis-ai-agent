@@ -267,13 +267,57 @@ def _render_md(report: dict) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lane", choices=[*LANES.keys(), "full",
-                                         "changed", "full-local"])
+                                         "changed", "full-local",
+                                         "impact", "integration"])
     parser.add_argument("--retry-failed", action="store_true",
                         help="失败车道用 pytest --lf 重试")
     parser.add_argument("--json", action="store_true", help="只打印 JSON 摘要")
     args = parser.parse_args()
 
-    if args.lane == "changed":
+    if args.lane == "impact":
+        # Quality V3 W7/W9：import 图驱动的最小可靠测试面（完备性护栏；
+        # 不替代 domain full tests —— 只用于高效集成复测）
+        sys.path.insert(0, str(REPO))
+        from app.lib.integration.impact import build_graph, select_tests
+        from app.lib.integration.manifest import changed_files
+
+        files = changed_files("HEAD", "origin/master", REPO,
+                              include_worktree=True)
+        app_files = [f for f in files if f.startswith("app/")]
+        graph = build_graph(REPO, use_cache=True)
+        result = select_tests(app_files, repo_root=REPO, graph=graph,
+                              max_targets=80)
+        if not result.complete:
+            print("UNCOVERED（完备性护栏触发，--allow-uncovered 可豁免）:",
+                  file=sys.stderr)
+            for f in result.uncovered:
+                print(f"  - {f}", file=sys.stderr)
+            if not os.environ.get("ALLOW_UNCOVERED"):
+                return 2
+        targets = result.targets or ["tests/quality/"]
+        LANES["impact"] = {
+            "title": f"impact（import 闭包选择面 {len(targets)} 目标；"
+                     f"映射兜底 {len(result.via_mapping)}）",
+            "commands": [
+                PYTEST + targets + ["--no-cov", "-q", "--timeout=120",
+                                    "--timeout-method=thread",
+                                    "-p", "no:cacheprovider"],
+            ],
+        }
+        lanes = ["impact"]
+    elif args.lane == "integration":
+        # Quality V3 W9：协调闸一条龙（preflight 已含在 quick；此 lane
+        # 额外生成本分支 manifest，供 merge-sim / release readiness 消费）
+        LANES["integration"] = {
+            "title": "integration（协调闸 + 分支 manifest）",
+            "commands": [
+                [sys.executable, "scripts/check_integration_preflight.py"],
+                [sys.executable, "scripts/gen_integration_manifest.py",
+                 "--branch", "HEAD", "--include-worktree"],
+            ],
+        }
+        lanes = ["integration"]
+    elif args.lane == "changed":
         # changed profile：受影响面 pytest + 红线再生成检查（顺序轮换已在
         # _changed_py_targets 内启用）
         targets = _changed_py_targets()
