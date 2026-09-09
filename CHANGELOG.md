@@ -2,6 +2,51 @@
 
 ## [Unreleased] - 2026-09-09
 
+### Added (data-fabric-v7: Federated Data Fabric V7, ADR-0119)
+- Connection Registry V7: tenant-scoped (org/owner/project) connection
+  governance with content-addressed revisions, secret separation seam
+  (opaque refs + bounded in-memory store), health state machine, idle-TTL
+  and capacity-bounded lifecycle eviction; P1 fix — DB-backed profile
+  rebuild now restores username/password/credentials top-level fields.
+- Provider capability probing service: scoped cache keyed by profile
+  revision, probe-cost accounting (requests/bytes/latency), passive
+  rate-limit header observation, honest fallback to the static matrix
+  (caps_basis: default|probed|stale).
+- SourceFacts: scoped, provenance-annotated dataset facts (row-count basis,
+  extent, CRS, NDV, null fraction, spatial histogram, temporal extent,
+  freshness) with plumb-not-scrape collection and advisory durable store
+  (migration 0034: data_fabric_source_facts + data_fabric_federated_feedback).
+- Server-side CRS transform placement: output_crs scan channel (PostGIS
+  ST_Transform verified plumbing), delivered-CRS execution ledger from
+  adapter metadata, one-shot refetch + local transform fallback on delivery
+  mismatch — fixes the V6 latent double-transform for sources whose native
+  SRID differs from the 4326 delivery default.
+- Safe aggregate pushdown: five-condition semantic-equivalence proof
+  (attribute equality join, group keys cover join field, measured unique
+  left key, decomposable aggregates, source aggregation cap); unproven
+  joins stay local with honest EXPLAIN disclosure.
+- Bushy adaptive replan: one-shot whole-tree re-enumeration with pinned
+  observed cardinalities on >=4x deviation, strictly-better guard, disabled
+  under order_strategy="given".
+- Distributed execution feedback: decayed (30-min half-life) weighted
+  median correction factors, outcome=ok-only learning, unfiltered-scan-only
+  SourceFacts write-back guard, advisory durable persistence.
+- Federated query result cache: scope+fingerprint+request keyed, TTL +
+  entry/byte bounded LRU, mandatory hit disclosure (age/basis), negative
+  caching limited to unreachable/auth failures, global-scope connections
+  excluded.
+- CQL2-JSON compiler (structure-encoded, no string concatenation surface)
+  with OGC API Features filter-lang negotiation and STAC filter-extension
+  conformance probing for /search filter pushdown.
+- Federated Arrow batch lane: GeoParquet iter_query_arrow_batches +
+  bounded batch scanning with identical row shape/predicate semantics and
+  honest typed fallback when pyarrow is unavailable.
+- Fabric counters per execution (remote requests, bytes, rows, peak
+  streaming bytes, server placements, fallbacks, pushdowns, cache hits,
+  replans, probe cost) surfaced in the additive `fabric` result section.
+
+
+
 ### Added (science-v4: Spatial Science & GeoAI Platform V4)
 - Geostatistics V4: simple kriging, external-drift kriging (KED), normal-score
   transform, nested-variogram fitting (honest ConvergenceFailure when not
