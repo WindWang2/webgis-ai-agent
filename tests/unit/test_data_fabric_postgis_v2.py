@@ -45,6 +45,9 @@ class _RoutingCursor:
             self._result = (100.0, 30.0, 105.0, 32.0)
         elif "st_asmvt" in sql_l:
             self._result = (b"\x1a\x02tile",)
+        elif "reltuples" in sql_l:
+            self.description = [("reltuples",)]
+            self._result = [(self._count,)]
         elif "count(*)" in sql_l and "group by" not in sql_l:
             # 同时服务 describe-count（fetchone）与聚合 count-only（fetchall）
             self.description = [("count",)]
@@ -300,6 +303,18 @@ def test_descriptor_mode_zero_data_transfer():
     ]
     assert not feature_sqls, "descriptor mode must not run a feature query"
 
+
+
+def test_describe_table_queries_pg_class_reltuples():
+    executed: list = []
+    a = _adapter(executed, count=500_000, rows=[(1, "s", None)])
+    spec = QuerySpec(limit=10, result_mode="sample", sample_size=100)
+    a.query("public.schools", spec)
+    reltuple_calls = [sql for sql, _ in executed if "pg_class WHERE oid = %s::regclass" in sql]
+    assert len(reltuple_calls) >= 1
+    sample_sqls = [sql for sql, _ in executed if "TABLESAMPLE SYSTEM" in sql]
+    assert sample_sqls, "TABLESAMPLE clause must be generated"
+    assert "TABLESAMPLE SYSTEM (100.0)" not in sample_sqls[0]
 
 def test_sample_mode_tablesample_deterministic():
     executed: list = []
