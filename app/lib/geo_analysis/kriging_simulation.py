@@ -50,9 +50,13 @@ logger = logging.getLogger(__name__)
 SGS_MAX_REALIZATIONS = 2_000            # 实现数上限
 # review R2-M7：逐节点 Python 条件循环（O(k³)/节点 + chunk 树重建）的
 # 可操作规模上限 —— 4M 格点在纯 Python 下不可完成，收紧到 20 万。
-SGS_MAX_TARGETS = 200_000               # 目标格点上限
+SGS_MAX_TARGETS = 200_000               # reference 路径目标格点上限
 SGS_MAX_ENSEMBLE_CELLS = 20_000_000     # n_realizations × n_targets 硬顶
-SGS_SIM_CHUNK = 1_024                   # 模拟节点分块（条件树重建节奏）
+SGS_SIM_CHUNK = 1_024                   # reference 模拟节点分块（条件树重建节奏）
+# ── science-v5 W5：batched 变体 ──────────────────────────────────────────
+SGS_BATCHED_MAX_TARGETS = 2_000_000     # batched 路径绝对上限（O(R·T) 输出矩阵外的工作集有界）
+SGS_BATCHED_CHUNK = 256                 # batched chunk（(B,2k,2k) 协方差栈 @k=24 ≈ 4.7MB）
+SGS_BATCHED_DEFAULT_GROUPS = 8          # 默认路径组数（组间路径方差回入 ensemble）
 
 
 @dataclass
@@ -76,6 +80,7 @@ class SGSEnsemble:
     disclosures: list[str]
     realizations: Optional[np.ndarray] = None  # (R, N) 原始值域
     n_degenerate_nodes: int = 0             # 病态邻域回退计数（review R2-M3）
+    backend: str = "numpy_reference"        # 实现变体 id（science-v5 W5）
 
     def to_dict(self) -> dict:
         def rng(a: np.ndarray) -> list[float]:
@@ -84,6 +89,7 @@ class SGSEnsemble:
         return {
             "n_realizations": int(self.n_realizations),
             "seed": int(self.seed),
+            "backend": self.backend,
             "n_targets": int(len(self.mean)),
             "ensemble_mean_range": rng(self.mean),
             "ensemble_std_range": rng(self.std),
@@ -235,8 +241,19 @@ def sequential_gaussian_simulation(
                         cross[:, j] = cov(np.sqrt(((nb_xy - p) ** 2).sum(axis=1)))
                     C[:k, k:] = cross
                     C[k:, :k] = cross.T
-                    C[k:, k:] = total_sill - ridge
-                    cond_vals = np.concatenate([nb_z, sim_values[sim_k_i]])
+                    # science-v5 W5 修复（本域 P1）：模拟节点间互相关取真实
+                    # 协方差——原对角近似把空间相近的已模拟点当互不相关，
+                    # 协方差模型不一致 → 系统非正定 → 序贯区制（>1 chunk）
+                    # 权重/方差爆炸（var ≫ sill）。≤1 chunk 时 sim 条件集为
+                    # 空、行为不变（既有 oracle/测试锚定该区制）。
+                    d_ss = np.sqrt(((sim_xy[:, None, :] - sim_xy[None, :, :])
+                                    ** 2).sum(-1))
+                    C[k:, k:] = cov(d_ss)
+                    np.fill_diagonal(C[k:, k:], total_sill - ridge)
+                    # W5 修复（条件值索引）：sim_k_i 是条件树**位置**索引，
+                    # 取模拟值必须经 path 映射回目标序号。
+                    cond_sim_vals = sim_values[path[sim_k_i]]
+                    cond_vals = np.concatenate([nb_z, cond_sim_vals])
                     rhs = np.concatenate([c0_data, cov(sim_k_d)])
                 try:
                     sol = np.linalg.solve(C, rhs)
@@ -285,6 +302,268 @@ def sequential_gaussian_simulation(
         disclosures=disclosures,
         n_degenerate_nodes=int(n_degenerate_nodes),
         realizations=(realizations if return_realizations else None),
+        backend="numpy_reference",
+    )
+
+
+def sequential_gaussian_simulation_batched(
+    pts_metric: np.ndarray,
+    values: np.ndarray,
+    target_pts: np.ndarray,
+    n_realizations: int = 100,
+    seed: int = 42,
+    variogram: Optional[VariogramFit] = None,
+    k: int = 16,
+    anisotropy_angle: float = 0.0,
+    anisotropy_ratio: float = 1.0,
+    return_realizations: bool = False,
+    n_path_groups: int = SGS_BATCHED_DEFAULT_GROUPS,
+    chunk_size: int = SGS_BATCHED_CHUNK,
+) -> SGSEnsemble:
+    """批量 SGS（science-v5 W5，variant ``numpy_batched``）。
+
+    与 :func:`sequential_gaussian_simulation`（reference，逐节点逐实现
+    路径）同一科学目标与同一条件语义（chunk 开始时重建条件树 = chunk 内
+    条件独立近似），但把 chunk 内逐节点 Python 循环推到批量结论：
+
+    1. **P 组共享路径**（``n_path_groups``，默认 8）：R 个实现分 P 组，
+       组内实现共享同一随机路径、组间路径不同——组间路径方差重新进入
+       ensemble（单一路径会系统性低估 std：E[Z|path] 丢掉 between-path
+       分量，架构挑战 R0-#4）。solve 数从 O(R·T) 降到 O(P·T/B)。
+    2. 协方差矩阵只依赖几何 → 每 (组, chunk) 一次 ``(B, m, m)`` 堆叠
+       solve，权重/方差组内跨实现复用；
+    3. 逐实现条件值不同（已模拟节点）→ ``pred_r = w·cond_r``（einsum），
+       ``draw_r = pred_r + √var·ε_r``（ε 逐实现独立）。
+
+    数值契约：同 seed 双跑**逐位一致**（自身确定性）；与 reference 的
+    一致性是**统计 differential**（RNG 消费序列不同，逐位一致不可达也
+    不可伪装——披露于 disclosures）。隔离条件 = LinAlgError ∨ 非有限
+    （同 LMC/ST：逐节点回退到条件值经验抽样，counted）。
+
+    资源契约：n_t 动态上限 = min(SGS_BATCHED_MAX_TARGETS,
+    SGS_MAX_ENSEMBLE_CELLS // R)（ensemble 预算是真约束——挑战 R0-#5；
+    realizations 工作矩阵 O(R·T) 是必然内存，如实进预算）。
+    """
+    pts_metric = np.asarray(pts_metric, dtype=float)
+    values = np.asarray(values, dtype=float)
+    target_pts = np.asarray(target_pts, dtype=float)
+    n_realizations = int(n_realizations)
+    if not 1 <= n_realizations <= SGS_MAX_REALIZATIONS:
+        raise ResourceScaleMismatch(
+            f"n_realizations 必须在 [1, {SGS_MAX_REALIZATIONS}]，got {n_realizations}",
+            estimated=f"{n_realizations} realizations",
+            limit=f"≤{SGS_MAX_REALIZATIONS}",
+            correction_hint="降低实现数或分批调用（不同 seed 合并 ensemble）",
+        )
+    n_t = len(target_pts)
+    dynamic_cap = max(
+        1, min(SGS_BATCHED_MAX_TARGETS,
+               SGS_MAX_ENSEMBLE_CELLS // max(n_realizations, 1)))
+    if n_t > dynamic_cap:
+        raise ResourceScaleMismatch(
+            f"目标格点 {n_t:,} 超过 batched SGS 动态上限 {dynamic_cap:,}"
+            f"（= min(绝对上限 {SGS_BATCHED_MAX_TARGETS:,}, ensemble 预算 "
+            f"{SGS_MAX_ENSEMBLE_CELLS:,}/{n_realizations}）",
+            estimated=f"{n_t} targets", limit=f"≤{dynamic_cap}",
+            correction_hint="降低实现数或目标格点数（分辨率/范围）")
+    ensemble_cells = n_realizations * n_t
+    if ensemble_cells > SGS_MAX_ENSEMBLE_CELLS:
+        raise ResourceScaleMismatch(
+            f"ensemble 预算 {n_realizations}×{n_t}={ensemble_cells:,} 单元"
+            f"超过上限 {SGS_MAX_ENSEMBLE_CELLS:,}",
+            estimated=f"{ensemble_cells} cells",
+            limit=f"≤{SGS_MAX_ENSEMBLE_CELLS}",
+            correction_hint="降低实现数或目标格点数（分辨率/范围）")
+    if len(values) < 8:
+        raise InsufficientSamples(
+            f"SGS 至少需要 8 个样本（与克里金同底），got {len(values)}")
+
+    n_groups = int(max(1, min(n_path_groups, n_realizations)))
+    chunk_size = int(max(8, min(chunk_size, n_t if n_t else 8)))
+    k = int(max(2, min(k, MAX_NEIGHBORS, len(values))))
+
+    z_scores, ns_state = normal_score_transform(values)
+    if variogram is None:
+        variogram = fit_variogram(
+            pts_metric, z_scores, model="auto",
+            anisotropy_angle=anisotropy_angle,
+            anisotropy_ratio=anisotropy_ratio)
+
+    rng = np.random.default_rng(seed)  # 单流：组路径 + 组内噪声（caller_seeded）
+    pts_t = apply_anisotropy(pts_metric, anisotropy_angle, anisotropy_ratio)
+    targets_t = apply_anisotropy(target_pts, anisotropy_angle, anisotropy_ratio)
+    data_tree = cKDTree(pts_t)
+    d0, i0 = data_tree.query(targets_t, k=k)
+    d0 = np.asarray(d0, dtype=float).reshape(n_t, k)
+    i0 = np.asarray(i0, dtype=int).reshape(n_t, k)
+
+    g = variogram
+    structures = getattr(g, "structures", None)
+    ridge = 1e-6 * max(abs(g.sill), abs(g.nugget), 1e-12)
+    if g.model == "gaussian" or (g.model == "matern" and g.nu >= 2.0):
+        ridge = max(ridge, 0.01 * abs(g.sill))
+    total_sill = abs(float(g.sill)) + abs(float(g.nugget))
+
+    def cov(h: np.ndarray) -> np.ndarray:
+        return total_sill - _gamma(g.model, h, g.sill, g.range_m, g.nugget,
+                                   nu=g.nu, structures=structures)
+
+    realizations = np.empty((n_realizations, n_t), dtype=float)
+    n_degenerate_nodes = 0
+
+    # 组大小尽量均匀（前 r_extra 组各 +1）
+    base, r_extra = divmod(n_realizations, n_groups)
+    row_cursor = 0
+    for g_i in range(n_groups):
+        r_g = base + (1 if g_i < r_extra else 0)
+        rows = np.arange(row_cursor, row_cursor + r_g)
+        row_cursor += r_g
+
+        path = rng.permutation(n_t)              # 组共享路径
+        sim_values = np.empty((r_g, n_t), dtype=float)   # normal-score 域
+        sim_coords = np.empty((n_t, 2), dtype=float)
+        n_sim = 0
+
+        for start in cancellable(range(0, n_t, chunk_size), every=1):
+            chunk = path[start:start + chunk_size]
+            b = len(chunk)
+            chunk_xy = targets_t[chunk]           # (B, 2)
+
+            # 条件树（chunk 开始时重建——与 reference 同一近似语义）：
+            # 批量查询 chunk 全部节点的 k_sim 最近已模拟节点
+            if n_sim:
+                sim_tree = cKDTree(sim_coords[:n_sim])
+                k_sim = int(min(k, n_sim))
+                d_sim, i_sim = sim_tree.query(chunk_xy, k=k_sim)
+                d_sim = np.atleast_2d(np.asarray(d_sim, dtype=float))
+                i_sim = np.atleast_2d(np.asarray(i_sim, dtype=int))
+                if d_sim.shape[0] == 1 and b > 1:   # numpy 2.x 单查询形状防御
+                    d_sim = np.broadcast_to(d_sim, (b, k_sim)).copy()
+                    i_sim = np.broadcast_to(i_sim, (b, k_sim)).copy()
+            else:
+                k_sim = 0
+                d_sim = np.empty((b, 0), dtype=float)
+                i_sim = np.empty((b, 0), dtype=int)
+            m = k + k_sim
+
+            # ── 几何量（组内跨实现复用；与实现值无关）─────────────────
+            nb_xy = pts_t[i0[chunk]]              # (B, k, 2)
+            diff = nb_xy[:, :, None, :] - nb_xy[:, None, :, :]
+            C = np.empty((b, m, m), dtype=float)
+            C[:, :k, :k] = cov(np.sqrt((diff ** 2).sum(-1)))
+            diag = np.arange(k)
+            C[:, diag, diag] = total_sill - ridge
+            rhs = np.empty((b, m), dtype=float)
+            rhs[:, :k] = cov(d0[chunk])
+            if k_sim:
+                sim_xy = sim_coords[i_sim]        # (B, k_sim, 2)
+                cross_d = np.sqrt(
+                    ((nb_xy[:, :, None, :] - sim_xy[:, None, :, :]) ** 2)
+                    .sum(-1))                     # (B, k, k_sim)
+                cross = cov(cross_d)
+                C[:, :k, k:] = cross
+                C[:, k:, :k] = np.transpose(cross, (0, 2, 1))
+                # 模拟节点间真实互协方差（同 reference 的 W5 修复——对角
+                # 近似在序贯区制产生非正定系统）
+                d_ss = np.sqrt(
+                    ((sim_xy[:, :, None, :] - sim_xy[:, None, :, :]) ** 2)
+                    .sum(-1))                     # (B, k_sim, k_sim)
+                C[:, k:, k:] = cov(d_ss)
+                sdiag = np.arange(k_sim)
+                C[:, k_sim + sdiag, k_sim + sdiag] = total_sill - ridge
+                rhs[:, k:] = cov(d_sim)
+            try:
+                sol = np.linalg.solve(C, rhs[:, :, None])[:, :, 0]
+                if not np.isfinite(sol).all():
+                    raise np.linalg.LinAlgError("non-finite")
+                var = np.maximum(total_sill - np.sum(sol * rhs, axis=1), 0.0)
+                sol_ok = np.isfinite(sol).all(axis=1) & np.isfinite(var)
+                if not sol_ok.all():
+                    raise np.linalg.LinAlgError("row-non-finite")
+                w = sol                            # (B, m)
+            except np.linalg.LinAlgError:
+                # 整批异常 → 逐节点隔离重解（counted 回退同 reference 语义）
+                w = np.empty((b, m), dtype=float)
+                var = np.empty(b, dtype=float)
+                for j in range(b):
+                    try:
+                        cand = np.linalg.solve(C[j], rhs[j])
+                        if not np.isfinite(cand).all():
+                            raise np.linalg.LinAlgError("non-finite")
+                        w[j] = cand
+                        var[j] = max(
+                            total_sill - float(cand @ rhs[j]), 0.0)
+                    except np.linalg.LinAlgError:
+                        w[j] = 0.0
+                        var[j] = -1.0              # 哨兵 → 经验回退
+                # 行级回退在下方逐实现处理（var<0 标记）
+
+            # ── 逐实现：条件值不同，权重共享 ─────────────────────────
+            nb_z = z_scores[i0[chunk]]             # (B, k)
+            if k_sim:
+                # i_sim 是条件树位置索引（path 位置）→ 经 path 映射回目标
+                # 序号再取已模拟值（同 reference 路径的 W5 修复语义）
+                sim_vals_nb = sim_values[:, path[i_sim]]  # (r_g, B, k_sim)
+                cond = np.concatenate(
+                    (np.broadcast_to(nb_z, (r_g, b, k)), sim_vals_nb),
+                    axis=2)                        # (r_g, B, m)
+            else:
+                cond = np.broadcast_to(nb_z, (r_g, b, k))
+            preds = np.einsum("bm,rbm->rb", w, cond)   # (r_g, B)
+            noise = rng.standard_normal((r_g, b))
+            draws = preds + np.sqrt(np.maximum(var, 0.0))[None, :] * noise
+            bad = np.nonzero(var < 0)[0]
+            if bad.size:
+                # 病态节点：条件值经验分布近似抽样（counted，同 reference）
+                n_degenerate_nodes += int(bad.size * r_g)
+                for j in bad:
+                    emp_std = float(np.std(cond[:, j, :])
+                                    + 1e-9) if cond.shape[2] else 1.0
+                    draws[:, j] = (np.mean(cond[:, j, :], axis=1)
+                                   + emp_std * noise[:, j])
+            sim_values[:, chunk] = draws
+            sim_coords[start:start + b] = chunk_xy
+            n_sim = start + b
+
+        realizations[rows] = ns_state.backward(sim_values)
+
+    disclosures = [
+        "SGS batched k-neighbourhood approximation: conditioning set = k "
+        "nearest data + k nearest simulated (tree rebuilt every "
+        f"{chunk_size} nodes) — ensemble statistics are Monte Carlo "
+        "estimates, not exact distributions",
+        f"path sharing: {n_groups} group(s) share paths within group "
+        f"({n_realizations} realizations total); between-path variance "
+        "re-enters the ensemble via groups",
+        "RNG consumption differs from the reference path — same-seed "
+        "results are bitwise-reproducible per backend and statistically "
+        "equivalent (differential oracle), not bitwise-identical across "
+        "backends",
+    ]
+    if n_degenerate_nodes:
+        disclosures.append(
+            f"{n_degenerate_nodes} node draws fell back to empirical "
+            "sampling of the conditioning values (ill-conditioned systems, "
+            "counted)")
+
+    mean = realizations.mean(axis=0)
+    std = (realizations.std(axis=0, ddof=1) if n_realizations > 1
+           else np.zeros(n_t))
+    p10, p50, p90 = np.percentile(realizations, [10, 50, 90], axis=0)
+    return SGSEnsemble(
+        targets=target_pts,
+        mean=mean, std=std, p10=p10, p50=p50, p90=p90,
+        n_realizations=n_realizations,
+        seed=int(seed),
+        variogram=variogram,
+        transform_info={
+            **ns_state.to_dict(),
+            "domain": "normal_score (rank-gaussian)",
+        },
+        disclosures=disclosures,
+        n_degenerate_nodes=int(n_degenerate_nodes),
+        realizations=(realizations if return_realizations else None),
+        backend="numpy_batched",
     )
 
 
