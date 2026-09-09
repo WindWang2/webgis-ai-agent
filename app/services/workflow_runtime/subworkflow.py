@@ -112,15 +112,14 @@ class SubworkflowExecutor:
             return {"ok": False, "error_code": "SUBWORKFLOW_CYCLE",
                     "detail": child_pkg}
         # 每 owner 活跃子实例硬界
-        import asyncio as _aio2
-
-        active = await _aio2.to_thread(
+        active = await _aio.to_thread(
             self.service.store.count_active_subworkflows, self.owner_scope)
         if active >= MAX_ACTIVE_SUBINSTANCES:
             return {"ok": False, "error_code": "SUBWORKFLOW_CAP",
                     "detail": f"{active} active subinstances"}
         try:
-            child = self.service.instantiate(
+            child = await _aio.to_thread(
+                self.service.instantiate,
                 child_pkg, owner_scope=self.owner_scope,
                 session_id=session_id,
                 parent_instance_id=parent["instance_id"],

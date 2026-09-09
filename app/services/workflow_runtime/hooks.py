@@ -27,7 +27,9 @@ async def owner_scope_for_session(session_id: str) -> str:
     authorize_session_write）之后的路径调用 —— 会话 id 即已授权身份。
     匿名会话（user_id NULL）落 "anonymous" 域。
     """
-    try:
+    import asyncio
+
+    def _query():
         from sqlalchemy import select
 
         from app.core.database import SessionLocal
@@ -38,7 +40,11 @@ async def owner_scope_for_session(session_id: str) -> str:
                 select(Conversation.user_id).where(
                     Conversation.id == session_id)
             ).first()
-        uid = row[0] if row else None
+        return row[0] if row else None
+
+    try:
+        # to_thread（R2-M1）：该挂钩挂在高频路径（MapSpec slider tick）
+        uid = await asyncio.to_thread(_query)
     except Exception:  # noqa: BLE001 — 身份解析失败降级 anonymous 域
         # （域内自隔离；真实 owner 实例对其不可见 = 假 miss，不越权）
         uid = None

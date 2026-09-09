@@ -71,11 +71,15 @@ class ChangeApplier:
         - style-only → 科学零触碰，决策记 style_only（呈现态归渲染层）；
         - 其余 → plan.recompute ∩ {SUCCEEDED,READY,STALE} → STALE CAS。
         """
-        inst = self.store.get_instance(instance_id, self.owner_scope)
+        import asyncio
+
+        inst = await asyncio.to_thread(
+            self.store.get_instance, instance_id, self.owner_scope)
         if inst is None:
             return {"applied": False, "deferred": False,
                     "reason": "not_found"}
-        states = self.store.get_node_states(instance_id)
+        states = await asyncio.to_thread(self.store.get_node_states,
+                                         instance_id)
         running = [n for n, s in states.items() if s == C.NodeState.RUNNING]
         if running:
             return await self._defer(instance_id, inst, changes, source)
@@ -94,7 +98,8 @@ class ChangeApplier:
                 cur = states.get(nid)
                 if cur not in terminal_ok:
                     continue
-                r = self.store.transition_node(
+                r = await asyncio.to_thread(
+                    self.store.transition_node,
                     instance_id, nid, C.NodeState.STALE,
                     reason=f"RECOMPUTE_SEED:{plan.changed_dimensions[0][:24]}",
                     event="apply_changes")
@@ -111,7 +116,7 @@ class ChangeApplier:
             style_only=style_only,
             explanations=_explanations(plan, marked, style_only),
         )
-        self._append_decision(instance_id, inst, decision)
+        await self._append_decision(instance_id, inst, decision)
         # STALE 节点立即做复用裁决的入口由 driver.run 的 STALE 重入队处理。
         return {"applied": True, "deferred": False,
                 "decision": decision.to_bounded_dict(),
@@ -122,31 +127,45 @@ class ChangeApplier:
         self, instance_id: str, inst: Dict[str, Any],
         changes: Sequence[C.PendingChange], source: str,
     ) -> Dict[str, Any]:
-        pending = list(inst.get("pending_changes") or [])
-        if len(pending) + len(changes) > C.MAX_PENDING_CHANGES:
-            return {"applied": False, "deferred": False,
-                    "reason": "pending_full"}
-        pending.extend(
-            ch.to_bounded_dict() | {"source": source} for ch in changes)
-        updated = self.store.update_instance(
-            instance_id, owner_scope=self.owner_scope,
-            expected_revision=inst["revision"],
-            fields={"pending_changes": pending})
-        if updated is None:
-            return {"applied": False, "deferred": False,
-                    "reason": "cas_conflict"}
-        return {"applied": False, "deferred": True,
-                "pending_count": len(pending)}
+        # R2-M3：defer CAS 失败后重读重试（≤3）—— 租约续期等高频
+        # revision 写手会把单次 CAS 打成必败，变更「既未应用也未排队」
+        # 违背 quiescence 设计目标。
+        import asyncio
 
-    def _append_decision(
+        for _attempt in range(3):
+            pending = list(inst.get("pending_changes") or [])
+            if len(pending) + len(changes) > C.MAX_PENDING_CHANGES:
+                return {"applied": False, "deferred": False,
+                        "reason": "pending_full"}
+            pending.extend(
+                ch.to_bounded_dict() | {"source": source} for ch in changes)
+            updated = await asyncio.to_thread(
+                self.store.update_instance,
+                instance_id, owner_scope=self.owner_scope,
+                expected_revision=inst["revision"],
+                fields={"pending_changes": pending})
+            if updated is not None:
+                return {"applied": False, "deferred": True,
+                        "pending_count": len(pending)}
+            inst = await asyncio.to_thread(
+                self.store.get_instance, instance_id, self.owner_scope)
+            if inst is None:
+                return {"applied": False, "deferred": False,
+                        "reason": "not_found"}
+        return {"applied": False, "deferred": False, "reason": "cas_conflict"}
+
+    async def _append_decision(
         self, instance_id: str, inst: Dict[str, Any],
         decision: C.RecomputeDecision,
     ) -> None:
         """决策环追加（CAS：实例 revision 冲突即放弃本条 —— 有界观测
         记录的 lost update 可接受，绝不覆盖并发写入的变更标记）。"""
+        import asyncio
+
         decisions = list(inst.get("decisions") or [])
         decisions.append(decision.to_bounded_dict())
-        self.store.update_instance(
+        await asyncio.to_thread(
+            self.store.update_instance,
             instance_id, owner_scope=self.owner_scope,
             expected_revision=inst["revision"],
             fields={"decisions": decisions[-C.MAX_INSTANCE_DECISIONS:]})
@@ -155,15 +174,20 @@ class ChangeApplier:
         self, instance_id: str, dag: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
         """完成边界 drain（quiescence 时应用挂起变更；[R1-C1]）。"""
-        inst = self.store.get_instance(instance_id, self.owner_scope)
+        import asyncio
+
+        inst = await asyncio.to_thread(
+            self.store.get_instance, instance_id, self.owner_scope)
         if inst is None:
             return None
         pending = list(inst.get("pending_changes") or [])
-        states = self.store.get_node_states(instance_id)
+        states = await asyncio.to_thread(self.store.get_node_states,
+                                         instance_id)
         if not pending or any(
                 s == C.NodeState.RUNNING for s in states.values()):
             return None
-        cleared = self.store.update_instance(
+        cleared = await asyncio.to_thread(
+            self.store.update_instance,
             instance_id, owner_scope=self.owner_scope,
             expected_revision=inst["revision"],
             fields={"pending_changes": []})

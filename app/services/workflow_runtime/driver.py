@@ -36,6 +36,7 @@ from app.services.workflow_runtime.adapters_geocompute import (
     node_executable_op,
 )
 from app.services.workflow_runtime.store import InstanceStore
+from app.services.workflow_runtime.store import StoreUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -126,8 +127,13 @@ class Driver:
         cancel_token: Any,
     ) -> Dict[str, Any]:
         while time.monotonic() < deadline:
-            inst = await asyncio.to_thread(
-                self.store.get_instance, instance_id, self.owner_scope)
+            try:
+                inst = await asyncio.to_thread(
+                    self.store.get_instance, instance_id, self.owner_scope)
+            except StoreUnavailable:
+                # DB busy：退避后重试（deadline 兜底；不与 not_found 混同）
+                await asyncio.sleep(0.1)
+                continue
             if inst is None:
                 return {"status": "not_found", "states": {}}
             states = await asyncio.to_thread(
@@ -171,7 +177,8 @@ class Driver:
                         effective_params=stale_params):
                     states[nid] = C.NodeState.SUCCEEDED
                 else:
-                    r = self.store.transition_node(
+                    r = await asyncio.to_thread(
+                        self.store.transition_node,
                         instance_id, nid, C.NodeState.READY,
                         expected_from=C.NodeState.STALE,
                         reason="STALE_RECOMPUTE", event="recompute")
@@ -633,7 +640,8 @@ class Driver:
                        fingerprint_level=rec.fingerprint_level,
                    ).to_bounded_dict(),
                    "output_fingerprint": await self._ref_fingerprint(
-                       session_id, rec.artifact_ref),
+                       rec.artifact_session_id or session_id,
+                       rec.artifact_ref),
                    "attempt_log": {
                        "attempt": (node_row or {}).get("attempts", 0),
                        "status": "reused",
@@ -751,11 +759,13 @@ class Driver:
             if st in (C.NodeState.SUCCEEDED, C.NodeState.FAILED,
                       C.NodeState.SKIPPED, C.NodeState.CANCELLED):
                 continue
-            self.store.transition_node(
+            await asyncio.to_thread(
+                self.store.transition_node,
                 instance_id, nid, C.NodeState.CANCELLED,
                 reason="INSTANCE_CANCELLED", event="cancel")
-        self.store.update_instance(
-            instance_id, owner_scope=self.owner_scope,
+        await asyncio.to_thread(
+            self.store.update_instance, instance_id,
+            owner_scope=self.owner_scope,
             fields={"status": C.InstanceStatus.CANCELLED,
                     "terminal_at": _utcnow()})
 

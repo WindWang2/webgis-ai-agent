@@ -66,6 +66,34 @@ class RunRequest(BaseModel):
     deadline_s: float = Field(default=60.0, gt=0, le=300.0)
 
 
+_MAX_PROFILE_BYTES = 32_768
+_MAX_PROFILE_DEPTH = 8
+
+
+def _check_profile(profile: Optional[Dict[str, Any]]) -> None:
+    """profile 输入形状界（R2-m-4）：深嵌套/超界 → 422 而非 500。"""
+    if not profile:
+        return
+    try:
+        text = __import__("json").dumps(profile, default=str)
+    except (TypeError, ValueError, RecursionError):
+        raise HTTPException(status_code=422, detail="invalid profile")
+    if len(text) > _MAX_PROFILE_BYTES:
+        raise HTTPException(status_code=422, detail="profile too large")
+
+    def _depth(x: Any, d: int = 0) -> int:
+        if d > _MAX_PROFILE_DEPTH:
+            return d
+        if isinstance(x, dict):
+            return max([_depth(v, d + 1) for v in x.values()] or [d])
+        if isinstance(x, list):
+            return max([_depth(v, d + 1) for v in x] or [d])
+        return d
+
+    if _depth(profile) > _MAX_PROFILE_DEPTH:
+        raise HTTPException(status_code=422, detail="profile too deep")
+
+
 def _owner(user: Dict[str, Any], session_id: str = "") -> str:
     return SV.owner_scope_for(user, session_id or None)
 
@@ -91,6 +119,7 @@ async def register_package(
 ):
     svc = _svc()
     owner = _owner(user)
+    _check_profile(body.profile)
     try:
         result = await asyncio.to_thread(
             svc.compile_and_register, body.query, owner_scope=owner,
@@ -98,8 +127,15 @@ async def register_package(
             project_id=body.project_id)
     except SV.WorkflowRuntimeError as e:
         raise _http(e.code, 422, e.detail)
+    except (ValueError, RecursionError) as e:
+        # 编译器预算守卫（包体积等）→ 422 输入界（R2-m-4）
+        raise _http("COMPILE_INPUT_REJECTED", 422, str(e)[:200])
     except PackageConflict as e:
-        raise _http("PACKAGE_CONFLICT", 409, str(e))
+        # 脱敏（R2-B1）：不回指纹前缀 —— 48bit 指纹确认 oracle 可被用于
+        # 猜测受害者 query 文本。
+        raise _http("PACKAGE_CONFLICT", 409,
+                    f"{e.package_id}@{e.version} already registered "
+                    "with different content")
     return {"success": True, **result}
 
 

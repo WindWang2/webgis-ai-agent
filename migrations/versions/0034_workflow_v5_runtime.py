@@ -128,7 +128,8 @@ def upgrade() -> None:
         sa.Column("project_id", sa.String(length=255), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("published_at", sa.DateTime(), nullable=True),
-        sa.UniqueConstraint("package_id", "version", name="uq_wf_pkg_id_ver"),
+        sa.UniqueConstraint("owner_scope", "package_id", "version",
+                            name="uq_wf_pkg_owner_id_ver"),
         checks=_PKG_CHECKS,
         indexes=_PKG_INDEXES,
     )

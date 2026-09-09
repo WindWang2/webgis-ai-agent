@@ -192,13 +192,22 @@ def test_c2_load_ref_features_reports_truncation():
     async def scenario():
         session = "s-trunc"
         big = [{"i": i} for i in range(11)]
-        ref = await session_data_manager.store(session, big, prefix="trunc")
-        feats, truncated = await load_ref_features(session, [ref], max_rows=10)
-        return feats, truncated
+        small = [{"i": i} for i in range(5)]
+        big_ref = await session_data_manager.store(session, big,
+                                                   prefix="trunc")
+        small_ref = await session_data_manager.store(session, small,
+                                                     prefix="trunc-ok")
+        # 超界：descriptor 预检短路（不复制载荷）→ truncated 即知
+        feats, truncated = await load_ref_features(session, [big_ref],
+                                                   max_rows=10)
+        under, under_trunc = await load_ref_features(session, [small_ref],
+                                                     max_rows=10)
+        return feats, truncated, under, under_trunc
 
-    feats, truncated = asyncio.run(scenario())
-    assert truncated is True
-    assert len(feats) == 10  # 截断被显式报告，绝不静默
+    feats, truncated, under, under_trunc = asyncio.run(scenario())
+    assert truncated is True  # 截断被显式报告，绝不静默
+    assert len(feats) <= 10
+    assert under_trunc is False and len(under) == 5
 
 
 def test_c2_driver_fails_node_on_truncated_input():

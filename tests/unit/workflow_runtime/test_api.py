@@ -98,6 +98,29 @@ def test_changes_input_bound(client):
     assert r.status_code == 422
 
 
+def test_cross_owner_register_same_package_id_succeeds(client):
+    """B-1 回归：同 (package_id, version) 不同 owner 各自注册成功
+    （全局唯一曾使第二条消息永久 409 = attach 自失效 + 跨租户投毒）。"""
+    from app.core.auth import get_current_user
+
+    r1 = client.post("/api/v1/workflow-runtime/packages/register", json={
+        "query": "对工厂污染源周边做缓冲区分析并评估影响范围",
+    }, headers=_AUTH)
+    assert r1.status_code == 200
+    client.app.dependency_overrides[get_current_user] = lambda: {
+        "user_id": "bob"}
+    r2 = client.post("/api/v1/workflow-runtime/packages/register", json={
+        "query": "对工厂污染源周边做缓冲区分析并评估影响范围",
+    }, headers=_AUTH)
+    assert r2.status_code == 200, r2.text
+    # bob 解析到自己的包（而非 404/409）
+    pkg = r2.json()["package"]
+    r3 = client.get(
+        f"/api/v1/workflow-runtime/packages/{pkg['package_id']}/versions",
+        headers=_AUTH)
+    assert r3.status_code == 200
+
+
 def test_owner_isolation_between_users(client, monkeypatch):
     """alice 的包对 bob 不可见（owner 隔离，404 不泄漏存在性）。"""
     from app.core.auth import get_current_user

@@ -520,7 +520,11 @@ class WorkflowPackageRow(Base):
     published_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("package_id", "version", name="uq_wf_pkg_id_ver"),
+        # (owner, package_id, version) 唯一 [R2-B1]：package_id 是全局
+        # recipe 常量且指纹含用户 query —— 全局唯一会让第二条消息永久
+        # 409（attach 自失效）并构成跨租户注册投毒。
+        UniqueConstraint("owner_scope", "package_id", "version",
+                         name="uq_wf_pkg_owner_id_ver"),
         CheckConstraint("status IN ('draft','published','deprecated')", name="ck_wf_pkg_status"),
         Index("idx_wf_pkg_owner", "owner_scope", "package_id"),
     )

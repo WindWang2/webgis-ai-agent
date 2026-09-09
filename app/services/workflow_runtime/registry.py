@@ -22,13 +22,17 @@ PKG_DEPRECATED = "deprecated"
 
 
 class PackageConflict(Exception):
-    """同 (package_id, version) 指纹不一致（防包漂移红线）。"""
+    """同 (owner, package_id, version) 指纹不一致（防包漂移红线）。
+
+    消息不含指纹片段（指纹前缀 = 对猜测 query 文本的确认 oracle，
+    R2-B1）。
+    """
 
     def __init__(self, package_id: str, version: str,
                  fingerprint: str, existing: str):
         super().__init__(
-            f"package {package_id}@{version} fingerprint mismatch: "
-            f"new={fingerprint[:12]} existing={existing[:12]}")
+            f"package {package_id}@{version} already registered with "
+            "different content")
         self.package_id = package_id
         self.version = version
 
@@ -80,6 +84,7 @@ class PackageRegistry:
 
         with self._factory() as db:
             existing = db.query(WorkflowPackageRow).filter(
+                WorkflowPackageRow.owner_scope == owner_scope[:40],
                 WorkflowPackageRow.package_id == package.package_id,
                 WorkflowPackageRow.version == package.version,
             ).first()
@@ -111,6 +116,7 @@ class PackageRegistry:
             except IntegrityError:
                 db.rollback()
                 existing = db.query(WorkflowPackageRow).filter(
+                    WorkflowPackageRow.owner_scope == owner_scope[:40],
                     WorkflowPackageRow.package_id == package.package_id,
                     WorkflowPackageRow.version == package.version,
                 ).first()
@@ -167,7 +173,8 @@ class PackageRegistry:
                 q = q.filter(WorkflowPackageRow.version == version[:16])
             elif require_published:
                 q = q.filter(WorkflowPackageRow.status == PKG_PUBLISHED)
-            rows: List[Any] = q.all()
+            rows: List[Any] = q.order_by(
+                WorkflowPackageRow.created_at.desc()).limit(64).all()
             if not rows:
                 return None
             if version:

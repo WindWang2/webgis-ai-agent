@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
@@ -54,6 +55,10 @@ def new_run_token() -> str:
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class StoreUnavailable(RuntimeError):
+    """存储暂不可用（SQLite busy / 连接池耗尽）—— 与 not_found 分道。"""
 
 
 class TransitionResult:
@@ -189,7 +194,11 @@ class InstanceStore:
     def get_instance(
         self, instance_id: str, owner_scope: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """读实例（owner 过滤：他人实例 → None，防存在性预言机）。"""
+        """读实例（owner 过滤：他人实例 → None，防存在性预言机）。
+
+        DB busy（OperationalError）上抛 StoreUnavailable —— 与「不存在」
+        是两种语义，混同会让 API 以成功形态返回 not_found（R2-m-3）。
+        """
         try:
             with self._factory() as db:
                 q = db.query(WorkflowInstanceRow).filter(
@@ -198,10 +207,8 @@ class InstanceStore:
                     q = q.filter(WorkflowInstanceRow.owner_scope == owner_scope)
                 row = q.first()
                 return _row_to_instance(row) if row is not None else None
-        except OperationalError:
-            logger.warning("[WorkflowRuntime] get_instance db busy",
-                           exc_info=True)
-            return None
+        except OperationalError as exc:
+            raise StoreUnavailable(str(exc)[:120]) from exc
 
     def get_node_states(self, instance_id: str) -> Dict[str, str]:
         """{node_id: state} 轻投影（调度热路径；单查询）。"""
@@ -268,8 +275,6 @@ class InstanceStore:
                     state_revision=fresh0["state_revision"])
         for attempt_idx, backoff in enumerate((0.0,) + _BACKOFF_S):
             if backoff:
-                import time
-
                 time.sleep(backoff)
             try:
                 result = self._try_transition(
@@ -543,14 +548,24 @@ class InstanceStore:
     def count_active_subworkflows(
         self, owner_scope: str,
     ) -> int:
-        """每 owner 活跃子实例计数（≤32 上界的判定输入 [R1-M7]）。"""
+        """每 owner 活跃子实例计数（≤32 上界的判定输入 [R1-M7]）。
+
+        只计**租约未过期**的 running 子实例 —— 父进程崩溃遗留的泄漏
+        RUNNING 行不永久占用上限（租约过期即让位；行本身的清扫为
+        follow-up，R2-M5 披露）。
+        """
         with self._factory() as db:
-            return db.query(WorkflowInstanceRow).filter(
+            rows = db.query(WorkflowInstanceRow).filter(
                 WorkflowInstanceRow.owner_scope == owner_scope,
                 WorkflowInstanceRow.status == C.InstanceStatus.RUNNING,
                 WorkflowInstanceRow.parent_instance_id.isnot(None),
                 WorkflowInstanceRow.parent_instance_id != "",
-            ).count()
+            ).all()
+            now = _utcnow()
+            return sum(
+                1 for r in rows
+                if r.run_lease_expires_at is not None
+                and r.run_lease_expires_at > now)
 
     def instance_content_fingerprint(self, instance_id: str) -> str:
         """实例证据内容指纹（确定性测试 oracle；不含时间戳/revision）。"""

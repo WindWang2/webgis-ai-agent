@@ -237,6 +237,17 @@ async def load_ref_features(
     for ref in refs[:8]:
         if len(feats) > max_rows:
             break
+        # descriptor 预检（R2-M4）：超界先知 → 免整载荷 deepcopy
+        # （session get 是全量深拷贝；大 ref 场景瞬时 2× 载荷内存）
+        try:
+            desc = await session_data_manager.get_ref_descriptor(
+                session_id, ref)
+            fc = (desc or {}).get("feature_count")
+            if isinstance(fc, int) and fc > 0 \
+                    and len(feats) + fc > max_rows:
+                return feats[:max_rows], True
+        except Exception:  # noqa: BLE001 — 预检失败回退全量读取
+            pass
         payload = await session_data_manager.get(session_id, ref)
         items: List[Dict[str, Any]] = []
         if isinstance(payload, dict) and isinstance(

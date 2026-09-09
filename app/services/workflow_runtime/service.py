@@ -306,12 +306,12 @@ class WorkflowRuntimeService:
     ) -> Optional[Dict[str, Any]]:
         """计划合成时：注册包 + 实例化 + 预绑数据角色（fail-open）。"""
         try:
-            reg = self.compile_and_register(
-                query, owner_scope=owner_scope, recipe_id=recipe_id,
-                profile=profile)
-            inst = self.instantiate(
-                reg["package"]["package_id"], owner_scope=owner_scope,
-                session_id=session_id)
+            reg = await asyncio.to_thread(
+                self.compile_and_register, query, owner_scope=owner_scope,
+                recipe_id=recipe_id, profile=profile)
+            inst = await asyncio.to_thread(
+                self.instantiate, reg["package"]["package_id"],
+                owner_scope=owner_scope, session_id=session_id)
             await self._prefill_role_bindings(inst, owner_scope)
             return inst
         except Exception:  # noqa: BLE001 — 附加事实失败绝不阻断会话
@@ -367,29 +367,43 @@ class WorkflowRuntimeService:
                    for u in upstream):
             return {"node": node_id, "ok": False, "code": "UPSTREAM_PENDING"}
         claim = f"chat:{node_id[:48]}"
-        r = store.transition_node(
+        r = await asyncio.to_thread(
+            store.transition_node,
             instance_id, node_id, C.NodeState.READY,
             expected_from=C.NodeState.PENDING, reason="CHAT_BOUND",
             event="chat", patch={"bound_ref": ref[:96]})
         if not r.ok and r.code not in ("OK_IDEMPOTENT",):
             # 可能已在 READY/BLOCKED：BLOCKED→READY（绑定补齐解除）
-            r = store.transition_node(
+            r = await asyncio.to_thread(
+                store.transition_node,
                 instance_id, node_id, C.NodeState.READY,
                 expected_from=C.NodeState.BLOCKED, reason="CHAT_UNBLOCK",
                 event="chat", patch={"bound_ref": ref[:96]})
             if not r.ok:
                 return {"node": node_id, "ok": False, "code": r.code}
-        r2 = store.transition_node(
+        r2 = await asyncio.to_thread(
+            store.transition_node,
             instance_id, node_id, C.NodeState.RUNNING,
             expected_from=C.NodeState.READY, claim=True, claimed_by=claim,
             reason="CHAT_DISPATCH", event="chat")
         if not r2.ok:
             return {"node": node_id, "ok": False, "code": r2.code}
-        r3 = store.transition_node(
+        r3 = await asyncio.to_thread(
+            store.transition_node,
             instance_id, node_id, C.NodeState.SUCCEEDED,
             require_claim=True, claimed_by=claim, complete=True,
             reason="CHAT_DONE", event="chat",
             patch={"output_ref": ref[:96], "bound_ref": ref[:96]})
+        if r3.ok:
+            # R2-M2：完成 CAS 后复查上游 —— 窗口内被并发 apply 标 STALE
+            # 的上游意味着本节点产出基于旧输入 → 补标 STALE（不洗白）
+            states2 = await asyncio.to_thread(store.get_node_states,
+                                              instance_id)
+            if any(states2.get(u) == C.NodeState.STALE for u in upstream):
+                await asyncio.to_thread(
+                    store.transition_node,
+                    instance_id, node_id, C.NodeState.STALE,
+                    reason="UPSTREAM_STALE_WINDOW", event="chat")
         return {"node": node_id, "ok": r3.ok, "code": r3.code}
 
     async def record_style_change(
@@ -462,7 +476,8 @@ class WorkflowRuntimeService:
             ref = bound.get(role)
             if not ref:
                 continue
-            self.store.transition_node(
+            await asyncio.to_thread(
+                self.store.transition_node,
                 inst["instance_id"], str(nid["node_id"]),
                 C.NodeState.READY, expected_from=C.NodeState.PENDING,
                 reason="ROLE_BOUND", event="attach",
