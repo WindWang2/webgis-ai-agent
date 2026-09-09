@@ -89,7 +89,7 @@ def iter_scan_pages(
         iter_scan_pages_arrow,
     )
 
-    if adapter_supports_arrow_lane(adapter):
+    if adapter_supports_arrow_lane(adapter) and not output_crs:
         fetched_arrow = 0
         for page in iter_scan_pages_arrow(
             adapter, dataset_id,

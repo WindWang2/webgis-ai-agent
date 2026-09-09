@@ -116,6 +116,14 @@ V7 **不是第三套查询引擎** —— 是 V6 之下的联邦数据面治理�
   `ChainSourceStats.unique_keys` 可选（聚合下推证明）。
 - V5 回退路径原样保留；未删除任何旧引擎代码。
 - 已知限制 / Deferred：
+  - **接线缺口（R2-M2 披露，follow-up 单）**：ConnectionRegistry /
+    CapabilityProbeService / SourceFactsService 治理面在本 Epic 交付为
+    库 + 测试，工具路径的 adapter 解析仍走既有 connection_manager（12 处
+    调用点切换属独立 PR）；feedback 衰减修正因子暂无 costing 消费者
+    （捕获/持久/披露回路完整）；counters 的 bytes/peak/probe 维度为
+    预留 seam（未接线恒 0，fabric 段如实为零值）；
+  - V6 非 typed 异常回退 V5 的双执行无进程级熔断计数（R2-Mi-4，
+    warnings 已披露）——持续故障源每请求付 V6+V5 两次成本；
   - ArcGIS outSR 无响应端校验通道（f=geojson）→ 不声明 output_crs_pushdown；
   - 结果缓存 TTL 窗口内远端变化不可见（fingerprint 只在 catalog 同步时
     更新）—— 由命中披露段如实标注 basis；

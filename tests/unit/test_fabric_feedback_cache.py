@@ -242,3 +242,35 @@ def test_v6_chain_emits_fabric_section():
     assert fabric["remote_requests"] >= 0
     assert fabric["cache"]["enabled"] is False  # catalog 无条目 → 诚实禁用
     assert "result_cache" not in result
+
+
+def test_cache_key_distinguishes_dict_where():
+    """R2-C1 回归：dict 形式 where 必须进缓存键（同键不同过滤=串结果）。"""
+    from types import SimpleNamespace
+
+    def _key_for(where):
+        src = SimpleNamespace(source_id="s1", dataset_id="d1", where=where,
+                              fields=None, srs=None)
+        req = canonical_request_payload(
+            sources=[src], joins=[], bbox=None, limit=10,
+            order_strategy="cost", derive_projection=True,
+        )
+        return result_cache_key(
+            scope_key="org:_|owner:alice|proj:_",
+            fingerprints={"s1": "fp1"}, engine="v6", request=req,
+        )
+
+    k_a = _key_for({"op": "eq", "field": "type", "value": "A"})
+    k_b = _key_for({"op": "eq", "field": "type", "value": "B"})
+    k_str = _key_for("type = 'A'")
+    assert k_a != k_b, "不同 dict where 绝不共享缓存键"
+    assert k_a != k_str
+
+
+def test_cache_oversize_rows_never_stored():
+    """R2-M3 回归：超大载荷直接不缓存（单条超界不驻留）。"""
+    cache = FederatedResultCache(max_entries=8, max_bytes=1000, ttl_s=60.0)
+    key = _key()
+    cache.put(key, {"status": "success", "rows": [{"x": "y" * 500}] * 3},
+              fingerprints={"s1": "fp1"}, scope_key="org:_|owner:alice|proj:_")
+    assert cache.get(key) is None  # 超界不驻留

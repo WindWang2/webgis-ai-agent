@@ -1828,6 +1828,7 @@ def execute_chain_v6(
             }
             return cached
     counters = _v7_new_counters(cache_ctx)
+    plan = None  # R2-Mi-1：plan 期 typed 错误路径的反馈回调需要安全判空
     try:
         from app.services.data_fabric.query.federated.executor import (
             PhysicalExecutor,
@@ -1885,14 +1886,15 @@ def execute_chain_v6(
                 get_result_cache().put_negative(cache_ctx[1], e.code)
             except Exception:  # noqa: BLE001
                 pass
-        try:
-            _v7_record_feedback(
-                req, plan, {"per_source_rows": {}}, "error",
-                scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
-                error_code=e.code,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        if plan is not None:
+            try:
+                _v7_record_feedback(
+                    req, plan, {"per_source_rows": {}}, "error",
+                    scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
+                    error_code=e.code,
+                )
+            except Exception:  # noqa: BLE001
+                pass
         raise  # typed 错误契约与 V5 一致（预算/构造错误绝不静默回退）
     except Exception as e:  # noqa: BLE001 - V6 非 typed 异常 → 诚实回退 V5
         logger.warning("[Federation] V6 engine failed (%s); falling back to V5", e)

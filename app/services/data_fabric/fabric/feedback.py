@@ -76,6 +76,9 @@ class FabricFeedbackStore:
         self._lock = threading.Lock()
         self._failure_count = 0
         self._warned = False
+        self._pool = None
+        self._pool_lock = threading.Lock()
+        self._save_count = 0
         if durable_max_rows is None:
             from app.services.data_fabric.fabric.probing import _setting
 
@@ -201,6 +204,7 @@ class FabricFeedbackStore:
                 self._obs.popitem(last=False)
 
     def _durable_save(self, feedback: ExecutionFeedback) -> None:
+        """append-only 持久化（R2-M1：常驻旁路池 + 硬超时；机会式 prune）。"""
         try:
             from datetime import datetime, timedelta, timezone
 
@@ -224,18 +228,64 @@ class FabricFeedbackStore:
                     )
                     db.commit()
 
-            from concurrent.futures import ThreadPoolExecutor
-
-            def _run():
-                _insert()
-
-            ex = ThreadPoolExecutor(max_workers=1, thread_name_prefix="feedback-db")
-            try:
-                ex.submit(_insert).result(timeout=3.0)
-            finally:
-                ex.shutdown(wait=False)
+            self._executor().submit(_insert).result(timeout=3.0)
+            self._save_count += 1
+            if self._save_count % 50 == 0:
+                try:
+                    self._prune()
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception as exc:  # noqa: BLE001 - advisory fail-open
             self._on_failure(exc, "durable_save")
+
+    def _executor(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        with self._pool_lock:
+            if self._pool is None:
+                self._pool = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="feedback-db"
+                )
+            return self._pool
+
+    def _prune(self) -> int:
+        """过期行 + 超限旧行的有界清理（best-effort；R2-M1 无界增长修复）。"""
+        from datetime import datetime, timezone
+
+        from sqlalchemy import delete
+
+        from app.core.database import SessionLocal
+        from app.models.data_fabric import FederatedFeedbackModel
+
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None)
+        removed = 0
+        with SessionLocal() as db:
+            expired = [
+                r[0]
+                for r in db.query(FederatedFeedbackModel.id)
+                .filter(FederatedFeedbackModel.expires_at.isnot(None),
+                        FederatedFeedbackModel.expires_at < cutoff)
+                .limit(500)
+                .all()
+            ]
+            if expired:
+                db.execute(delete(FederatedFeedbackModel).where(
+                    FederatedFeedbackModel.id.in_(expired)))
+                removed += len(expired)
+            extra = [
+                r[0]
+                for r in db.query(FederatedFeedbackModel.id)
+                .order_by(FederatedFeedbackModel.created_at.desc())
+                .offset(self._durable_max_rows)
+                .limit(500)
+                .all()
+            ]
+            if extra:
+                db.execute(delete(FederatedFeedbackModel).where(
+                    FederatedFeedbackModel.id.in_(extra)))
+                removed += len(extra)
+            db.commit()
+        return removed
 
     def _on_failure(self, exc: Exception, op: str) -> None:
         self._failure_count += 1

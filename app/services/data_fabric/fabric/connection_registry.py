@@ -80,10 +80,15 @@ class TenantScope:
         )
 
     def scope_key(self) -> str:
+        # R2-Mi-2：分量 percent-encode（含 "|" 与 "%"）—— 防止 owner/project
+        # 值伪造分隔符构造越权 scope 键（cache/registry/feedback 共用此键）。
+        from urllib.parse import quote
+
+        def _enc(v) -> str:
+            return "_" if v in (None, "") else quote(str(v), safe="")
+
         org = str(self.org_id) if self.org_id is not None else "_"
-        owner = self.owner if self.owner else "_"
-        proj = self.project_id if self.project_id else "_"
-        return f"org:{org}|owner:{owner}|proj:{proj}"
+        return f"org:{org}|owner:{_enc(self.owner)}|proj:{_enc(self.project_id)}"
 
 
 class SecretStore(Protocol):

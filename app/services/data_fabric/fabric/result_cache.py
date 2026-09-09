@@ -39,12 +39,24 @@ def canonical_request_payload(
 ) -> Dict[str, Any]:
     """请求的确定性规范化（sort_keys 全程；engine 由调用方附入键）。"""
     def _src(s: Any) -> Any:
+        # R2-C1：where 的**全部受支持形态**都必须进键 —— str 原样、dict/AST
+        # 取规范化谓词 JSON。只认 str 会让同键不同过滤条件静默串结果。
+        where = getattr(s, "where", None)
+        where_canonical: Any = None
+        if isinstance(where, str):
+            where_canonical = {"raw": where}
+        elif isinstance(where, dict):
+            where_canonical = where
+        elif where is not None and hasattr(where, "op"):
+            from app.services.data_fabric.query.predicates import (
+                predicate_to_canonical_dict,
+            )
+
+            where_canonical = predicate_to_canonical_dict(where)
         return {
             "source_id": getattr(s, "source_id", None),
             "dataset_id": getattr(s, "dataset_id", None),
-            "where_raw": getattr(s, "where", None)
-            if isinstance(getattr(s, "where", None), str)
-            else None,
+            "where": where_canonical,
             "fields": sorted(getattr(s, "fields", None) or []),
             "srs": getattr(s, "srs", None),
         }
@@ -182,6 +194,9 @@ class FederatedResultCache:
             return disclosed
         return payload
 
+    #: 单条载荷行数预检上限（超大结果不缓存 —— 计量即序列化的成本保护）。
+    MAX_CACHED_ROWS = 2_000
+
     def put(
         self,
         key: str,
@@ -194,10 +209,15 @@ class FederatedResultCache:
             return  # 全局域禁入（R-M2）
         if not isinstance(payload, dict) or payload.get("status") != "success":
             return
+        rows = payload.get("rows")
+        if isinstance(rows, list) and len(rows) > self.MAX_CACHED_ROWS:
+            return  # R2-M3：超大结果直接不缓存（宁可 miss 不可驻留巨条目）
         try:
             entry = ResultCacheEntry(payload, self._ttl_s, fingerprints, scope_key)
         except Exception:  # noqa: BLE001 - 不可序列化载荷不缓存
             return
+        if entry.bytes_len > self._max_bytes:
+            return  # R2-M3：单条超界不驻留（旧逻辑永不逐出是泄漏面）
         with self._lock:
             old = self._entries.pop(key, None)
             if old is not None:

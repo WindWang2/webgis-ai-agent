@@ -391,7 +391,6 @@ def test_aggregate_pushdown_not_applied_for_nested_left_subtree():
     ctx = build_enumeration_context(req)
     from app.services.data_fabric.query.federated.planner import enumerate_federation
 
-    plan = enumerate_federation(ctx)
     inner = LogicalJoin(
         join_kind="attribute_join",
         left=LogicalScan(source_id="a", dataset_id="da", fields=["k"]),
