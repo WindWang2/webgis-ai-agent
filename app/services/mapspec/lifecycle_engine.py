@@ -79,6 +79,9 @@ class MapSpecResult:
     origin: Optional[MutationOrigin] = None
     # Stale expected_revision: not a validation error and not a commit.
     superseded: bool = False
+    # Workbench V6: typed machine-readable error vocabulary（layer_locked）。
+    # 自由文本 error_msg/correction_hint 保持不变 —— 该字段纯增量。
+    error_code: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         if self.superseded:
@@ -93,6 +96,8 @@ class MapSpecResult:
                 res["origin"] = self.origin
             if self.correction_hint:
                 res["correction_hint"] = self.correction_hint
+            if self.error_code:
+                res["error_code"] = self.error_code
             return res
         if self.is_error:
             res = {"success": False, "message": self.error_msg}
@@ -100,6 +105,8 @@ class MapSpecResult:
                 res["origin"] = self.origin
             if self.correction_hint:
                 res["correction_hint"] = self.correction_hint
+            if self.error_code:
+                res["error_code"] = self.error_code
             return res
         res = {
             "success": True,
@@ -363,9 +370,30 @@ class SetWorkbenchStateIntent:
     （前端持有完整投影，CAS 串行链保证无丢更新）。结构合法性（version==5、
     组 id 唯一、父子无环、深度 ≤4、成员/锁为字符串键值、mode 封闭词表）
     与体积（64KB）在引擎内确定性校验 —— 非法输入 4xx，不留半更新状态。
+
+    V6（base_workbench_revision）：可选 workbench 级 CAS —— 引擎在每次
+    workbench 落盘时盖 ``_rev = mutation_revision``；提供本字段且与存储
+    ``_rev`` 不一致 → superseded（409 回灌当前 doc）。这堵住「游标 revision
+    被无关 mutation 推进后，陈旧全量 doc 借新鲜 CAS 静默整表覆盖他人组织态」
+    的丢更新窗口（R1-C2）。缺省 = V5 语义（旧客户端兼容，风险在 ADR 披露）。
     """
 
     doc: Dict[str, Any]
+    base_workbench_revision: Optional[int] = None
+
+
+@dataclass
+class PatchWorkbenchDeltaIntent:
+    """Workbench V6 组织态**增量**补丁（部分更新；绝对值语义，重放幂等）。
+
+    应用管线与引用检查见 ``app/services/collab/delta.py``（纯函数共享语义）：
+    setGroups（部分字段 create/patch）→ removeGroupIds（级联）→
+    membershipSet（目标必须存在）→ membershipClear → locks。应用结果经
+    ``_workbench_doc_error`` 全量校验后整体替换分支并盖 ``_rev``。
+    mode 不在 delta 域（V5 R1-M2：mode 不参与组织态增量/撤销）。
+    """
+
+    delta: Dict[str, Any]
 
 
 # workbench doc 载荷上限（组织态不携带数据 —— 大载荷属 layers/sources/ref）。
@@ -446,6 +474,74 @@ def _workbench_doc_error(doc: Any) -> Optional[str]:
         return "workbench doc.lockedLayerIds must be a list of strings."
     if doc.get("mode") not in _WORKBENCH_MODES:
         return "workbench doc.mode must be one of explore|analyze|compose."
+    return None
+
+
+def _locked_family_hit(target_id: str, locked_ids: List[str]) -> Optional[str]:
+    """family 语义命中检测（与 user-wins 守卫的层族谓词同向、双向保守）。
+
+    命中规则：locked == target，或一方为另一方的前缀族（``X-``/``X__``）。
+    返回命中的 locked id（供错误消息）；未命中 None。
+    """
+    for locked in locked_ids:
+        if locked == target_id:
+            return locked
+        if target_id.startswith(f"{locked}-") or target_id.startswith(f"{locked}__"):
+            return locked
+        if locked.startswith(f"{target_id}-") or locked.startswith(f"{target_id}__"):
+            return locked
+    return None
+
+
+def _agent_locked_layer_guard(
+    intent: "MutationIntent", prior_mapspec: Optional[Dict[str, Any]]
+) -> Optional[MapSpecResult]:
+    """服务端 lock 守卫：agent 目标层命中持久意图锁 → typed 拒绝。
+
+    覆盖 intent：RemoveLayer / UpsertLayer / PatchLayerPresentation /
+    PatchLayerStyle（目标均为 layer family）。RestoreStyle 是整 spec 制图
+    恢复操作，不走逐层锁语义（ADR 披露）。workbench 组织态 intent 不针对
+    层，不受此守卫限制（组锁由租约 advisory 协调）。
+    """
+    if prior_mapspec is None or not isinstance(prior_mapspec, dict):
+        return None
+    workbench = prior_mapspec.get("workbench")
+    if not isinstance(workbench, dict):
+        return None
+    locked = workbench.get("lockedLayerIds")
+    if not isinstance(locked, list) or not locked:
+        return None
+    locked_strs = [x for x in locked if isinstance(x, str) and x]
+    if not locked_strs:
+        return None
+
+    targets: List[str] = []
+    if isinstance(intent, RemoveLayerIntent):
+        targets = [intent.layer_id]
+    elif isinstance(intent, PatchLayerPresentationIntent):
+        targets = [intent.layer_id]
+    elif isinstance(intent, PatchLayerStyleIntent):
+        targets = [intent.layer_id]
+    elif isinstance(intent, UpsertLayerIntent):
+        layer = intent.layer if isinstance(intent.layer, dict) else {}
+        layer_id = layer.get("id")
+        targets = [str(layer_id)] if isinstance(layer_id, str) and layer_id else []
+    for target in targets:
+        hit = _locked_family_hit(target, locked_strs)
+        if hit is not None:
+            return MapSpecResult(
+                is_error=True,
+                origin="agent",
+                error_code="layer_locked",
+                error_msg=(
+                    f"图层 {target} 被用户锁定（locked by {hit}），"
+                    "Agent 不得修改或删除。"
+                ),
+                correction_hint=(
+                    "该图层已被用户显式锁定。请保留其现状继续成图；"
+                    "如确需变更，请向用户说明并由用户解锁（图层面板）后重试。"
+                ),
+            )
     return None
 
 
@@ -805,6 +901,17 @@ class MapSpecLifecycleEngine:
                     )
                     if guard_result is not None:
                         return guard_result
+                # Workbench V6（R1-C1）：服务端 lock 守卫 —— 内建于引擎而非
+                # mutation 门面。agent 工具（cartography_tools →
+                # mapspec_store → engine.apply_mutation）直连引擎、不经过
+                # 门面，守卫放门面会被结构性绕过。origin=agent 且目标层
+                # （family 语义）命中持久意图锁 lockedLayerIds → 拒绝。
+                # 用户路径不受限；无 workbench 分支 = 空 locked 集 = 零行为
+                # 变化。apply_presentation_batch 同型守卫见该方法内。
+                if origin == "agent":
+                    locked_guard = _agent_locked_layer_guard(intent, prior_mapspec)
+                    if locked_guard is not None:
+                        return locked_guard
                 # CORR-2 companion: whether the session had a persisted spec
                 # BEFORE the auto-init skeleton below. Rollback of a first
                 # mutation must DISCARD the candidate, not "restore" the
@@ -1410,9 +1517,90 @@ class MapSpecLifecycleEngine:
                                 "retry with the full doc."
                             ),
                         )
+                    # V6（R1-C2）：workbench 级 CAS。提供 base_workbench_revision
+                    # 且与存储 `_rev` 不一致 → superseded（回灌当前 doc）。堵住
+                    # 「游标 revision 被无关 mutation 推进后陈旧全量 doc 静默
+                    # 覆盖他人组织态」的窗口。缺省 = V5 语义（旧客户端兼容）。
+                    if intent.base_workbench_revision is not None:
+                        stored_rev = (
+                            loaded.get("workbench", {}).get("_rev", 0)
+                            if isinstance(loaded, dict) and isinstance(loaded.get("workbench"), dict)
+                            else 0
+                        )
+                        try:
+                            stored_rev_int = int(stored_rev)
+                        except (TypeError, ValueError):
+                            stored_rev_int = 0
+                        if intent.base_workbench_revision != stored_rev_int:
+                            return MapSpecResult(
+                                superseded=True,
+                                is_error=False,
+                                origin=origin,
+                                mapspec=loaded,
+                                mutation_revision=prior_mutation_revision,
+                                error_msg="Workbench document has changed.",
+                                correction_hint=(
+                                    "Re-read mapspec.workbench and re-apply your "
+                                    "organization edits on the server document."
+                                ),
+                            )
                     old_mapspec_snapshot = loaded
                     mapspec = {**loaded} if loaded else {}
-                    mapspec["workbench"] = intent.doc
+                    # `_rev` = 本次 mutation_revision（commit 阶段落盘后与
+                    # revision 一致）。None 占位由 commit 路径统一盖章。
+                    mapspec["workbench"] = {**intent.doc, "_rev": None}
+
+                elif isinstance(intent, PatchWorkbenchDeltaIntent):
+                    # V6：组织态增量补丁。管线/引用检查在 collab/delta 纯函数
+                    # （与前端 TS 镜像共享语义）；结果经全量校验后整体替换。
+                    from app.services.collab.delta import DeltaError, validate_delta, apply_delta
+
+                    try:
+                        norm_delta = validate_delta(intent.delta)
+                    except DeltaError as exc:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_code="workbench_delta_invalid",
+                            error_msg=str(exc),
+                            correction_hint=(
+                                "Re-read mapspec.workbench, rebuild the delta "
+                                "against the server document, and retry."
+                            ),
+                        )
+                    current_doc = (
+                        loaded.get("workbench")
+                        if isinstance(loaded, dict) and isinstance(loaded.get("workbench"), dict)
+                        else None
+                    )
+                    try:
+                        new_doc = apply_delta(current_doc, norm_delta)
+                    except DeltaError as exc:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_code="workbench_delta_conflict",
+                            error_msg=str(exc),
+                            correction_hint=(
+                                "The referenced group does not exist server-side; "
+                                "re-read mapspec.workbench and rebuild the delta."
+                            ),
+                        )
+                    doc_error = _workbench_doc_error(new_doc)
+                    if doc_error is not None:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_code="workbench_delta_invalid",
+                            error_msg=doc_error,
+                            correction_hint=(
+                                "The patch would produce an invalid document "
+                                "(cycle/depth/size); re-read and rebuild."
+                            ),
+                        )
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    mapspec["workbench"] = {**new_doc, "_rev": None}
 
                 elif isinstance(intent, CheckpointIntent):
                     # V3 COW: checkpoint reads but doesn't mutate the spec
@@ -1671,6 +1859,12 @@ class MapSpecLifecycleEngine:
                     ckpt_ref_count = ckpt_res.get("ref_count", 0)
 
                 mutation_revision = prior_mutation_revision + 1
+                # Workbench V6：workbench 分支在落盘前盖 `_rev = 本次
+                # mutation_revision`（apply 阶段以 None 占位）—— base_
+                # workbench_revision CAS 与前端对账的锚点。
+                if isinstance(mapspec, dict) and isinstance(mapspec.get("workbench"), dict) \
+                        and mapspec["workbench"].get("_rev", 0) is None:
+                    mapspec["workbench"]["_rev"] = mutation_revision
                 # #1073: spec 与 CAS 令牌单事务原子落地（crash 窗口不再产生
                 # spec=世代 N+1 而令牌=N 的错配）。save 返回未携带时（后端缺
                 # set_map_state_fields 的测试替身）退回旧的双写。
@@ -1875,6 +2069,17 @@ class MapSpecLifecycleEngine:
             try:
                 # 1. 逐 intent：锁内守卫 → family 命中 → patch。
                 for intent in intents:
+                    # V6（R1-C1）：batch 路径同样内建 lock 守卫（agent 批量
+                    # finalize 不得触碰用户锁定层）。
+                    if origin == "agent":
+                        locked_guard = _agent_locked_layer_guard(intent, loaded)
+                        if locked_guard is not None:
+                            outcomes.append(BatchIntentOutcome(
+                                layer_id=intent.layer_id, status="refused",
+                                visible=intent.visible,
+                                error_msg=str(locked_guard.error_msg or ""),
+                            ))
+                            continue
                     if pre_commit_check is not None:
                         guard_result = await pre_commit_check(
                             session_id, intent, origin, loaded

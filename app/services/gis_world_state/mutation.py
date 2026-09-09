@@ -189,6 +189,94 @@ def _intent_summary(intent: MutationIntent) -> str:
     return type(intent).__name__
 
 
+# Workbench V6：op 事件的人类可读标签词表（≤80 字符；不做意图逐类展开 ——
+# 详细证据在 provenance，journal 只需要「谁对什么做了哪类操作」）。
+_OP_LABELS: dict[type, str] = {}
+
+
+def _op_label(intent: MutationIntent) -> str:
+    return _OP_LABELS.get(type(intent), type(intent).__name__)
+
+
+async def _publish_collab_events(
+    session_id: str,
+    intent: MutationIntent,
+    origin: MutationOrigin,
+    actor: str,
+    result: Any,
+) -> None:
+    """成功 mutation 后向协作总线发布事件（best-effort，绝不外溢）。
+
+    - workbench 全量/delta → doc/delta 事件（携带新 workbench doc 供其他
+      浏览器采纳；>64KB 由 bus 预算闸降级为 truncated 提示 → 接收方 refetch）；
+    - presentation → 单层 presentation 事件（其他浏览器免全量 refetch 的
+      轻量同步）；
+    - 全部成功 mutation → op journal 事件（跨浏览器操作留痕）。
+    """
+    try:
+        from app.services.collab.bus import bus
+
+        revision = int(result.mutation_revision or 0)
+        from app.services.mapspec.lifecycle_engine import (
+            PatchLayerPresentationIntent,
+            PatchWorkbenchDeltaIntent,
+            SetWorkbenchStateIntent,
+        )
+
+        if isinstance(intent, SetWorkbenchStateIntent):
+            doc = None
+            if isinstance(result.mapspec, dict) and isinstance(result.mapspec.get("workbench"), dict):
+                doc = result.mapspec["workbench"]
+            await bus.publish(
+                session_id, "doc",
+                {"revision": revision, "actor": actor, "origin": str(origin), "doc": doc},
+                seq=revision,
+            )
+        elif isinstance(intent, PatchWorkbenchDeltaIntent):
+            doc = None
+            if isinstance(result.mapspec, dict) and isinstance(result.mapspec.get("workbench"), dict):
+                doc = result.mapspec["workbench"]
+            await bus.publish(
+                session_id, "delta",
+                {
+                    "revision": revision,
+                    "actor": actor,
+                    "origin": str(origin),
+                    "delta": intent.delta,
+                    "doc": doc,
+                },
+                seq=revision,
+            )
+        elif isinstance(intent, PatchLayerPresentationIntent):
+            await bus.publish(
+                session_id, "presentation",
+                {
+                    "revision": revision,
+                    "actor": actor,
+                    "origin": str(origin),
+                    "layerId": intent.layer_id,
+                    "visible": intent.visible,
+                    "opacity": intent.opacity,
+                },
+                seq=revision,
+            )
+        await bus.publish(
+            session_id, "op",
+            {
+                "revision": revision,
+                "actor": actor,
+                "origin": str(origin),
+                "kind": type(intent).__name__,
+                "target": _intent_target(intent),
+                "label": _op_label(intent),
+                "summary": _intent_summary(intent),
+            },
+            seq=revision,
+        )
+    except Exception:  # noqa: BLE001 — 通知平面绝不影响 mutation 主路径
+        logger.debug("[gis_world_state] collab publish skipped", exc_info=True)
+
+
 async def apply_gis_mutation(
     session_id: str,
     intent: MutationIntent,
@@ -291,6 +379,10 @@ async def apply_gis_mutation(
                 detail=detail,
             ),
         )
+        # Workbench V6：协作总线挂钩（通知平面，绝不影响正确性 —— 失败
+        # 静默，接收方由 revision 对账兜底）。mutation 派生事件 seq =
+        # mutation_revision（与 CAS 同源，天然 replay cursor）。
+        await _publish_collab_events(session_id, intent, origin, actor, result)
     return result
 
 
@@ -399,5 +491,44 @@ async def apply_gis_mutation_batch(
                 detail={"shown": shown, "hidden": hidden},
             ),
         )
+        # V6 协作总线：batch 的净效果以逐层 presentation 事件发布（applied
+        # 项），journal 以单条 batch op 收口 —— 与 provenance 的批语义一致。
+        try:
+            from app.services.collab.bus import bus
+
+            revision = int(result.mutation_revision or 0)
+            for outcome in result.outcomes:
+                if getattr(outcome, "status", "") != "applied":
+                    continue
+                await bus.publish(
+                    session_id, "presentation",
+                    {
+                        "revision": revision,
+                        "actor": actor,
+                        "origin": str(origin),
+                        "layerId": outcome.layer_id,
+                        "visible": getattr(outcome, "visible", None),
+                        "opacity": None,
+                    },
+                    seq=revision,
+                )
+            await bus.publish(
+                session_id, "op",
+                {
+                    "revision": revision,
+                    "actor": actor,
+                    "origin": str(origin),
+                    "kind": "GISMutationBatch",
+                    "target": f"batch:{len(result.outcomes)}",
+                    "label": "批量显隐",
+                    "summary": (
+                        f"batch applied={result.applied_count} "
+                        f"refused={result.refused_count} not_found={result.not_found_count}"
+                    ),
+                },
+                seq=revision,
+            )
+        except Exception:  # noqa: BLE001 — 通知平面绝不影响主路径
+            logger.debug("[gis_world_state] collab batch publish skipped", exc_info=True)
     return result
 
