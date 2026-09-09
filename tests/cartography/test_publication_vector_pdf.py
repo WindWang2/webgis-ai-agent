@@ -90,7 +90,11 @@ class TestVectorPdfPublication:
 
     @pytest.mark.skipif(not HAS_PYPDF, reason="pypdf not installed")
     def test_text_is_extractable(self):
-        """Epic 完成证明核心：矢量 PDF 的文字必须可选可检索。"""
+        """Epic 完成证明核心：矢量 PDF 的文字必须可选可检索。
+
+        R1-B1 真闸：源码文本墙同样包含标题串 —— 额外断言 SVG 结构类名
+        不出现在提取文本中（被 escape 成正文时会原样出现）。
+        """
         import pypdf
 
         result = render_publication_pdf(_spec())
@@ -98,6 +102,16 @@ class TestVectorPdfPublication:
         text = "".join(page.extract_text() or "" for page in reader.pages)
         assert "城市专题图" in text, "标题文本应可提取（真矢量，非栅格）"
         assert "功能区" in text, "图例标题应可提取"
+        assert "mapspec-vector-layers" not in text, "SVG 源码被当正文排版（escape 泄漏）"
+        assert "&lt;" not in text, "HTML 实体泄漏（SVG 被二次转义）"
+
+    def test_page_html_embeds_svg_unescaped(self):
+        """单测级真闸：页文档包含未转义的 <svg 标签（矢量渲染前提）。"""
+        from app.services.publication_export import _svg_to_page_html
+
+        html_doc = _svg_to_page_html('<svg width="10"><g class="x">&amp;</g></svg>', 297, 210)
+        assert "<body><svg" in html_doc
+        assert "&lt;svg" not in html_doc
 
     @pytest.mark.skipif(not HAS_PYPDF, reason="pypdf not installed")
     def test_spec_frames_produce_multi_page(self):
@@ -114,6 +128,10 @@ class TestVectorPdfPublication:
         reader = pypdf.PdfReader(io.BytesIO(result.pdf))
         text = "".join(page.extract_text() or "" for page in reader.pages)
         assert "城市专题图" in text  # 每帧都带 chrome
+        # R1-M2 真闸：named pages 保留每帧页面尺寸（f1=A4 横 297×210mm，
+        # f2=210×297mm 纵向）—— 页对象 mediabox 尺寸必须互异
+        boxes = {tuple(round(float(v), 0) for v in page.mediabox) for page in reader.pages}
+        assert len(boxes) == 2, f"两帧页面尺寸应不同，实际 {boxes}"
 
     def test_raster_sources_disclosed_and_omitted(self):
         spec = _spec()

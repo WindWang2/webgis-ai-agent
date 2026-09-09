@@ -75,6 +75,17 @@ def test_vector_pdf_route_requires_auth(client, tmp_path, monkeypatch):
     assert resp.status_code in (401, 403)
 
 
+def test_vector_pdf_route_rejects_unhydrated_ref_sources(client, tmp_path, monkeypatch):
+    """R1-M5：ref 载体矢量源未水合 → 400 typed 拒绝（不渲染空白出版页）。"""
+    monkeypatch.setattr("app.api.routes.map.EXPORT_DIR", str(tmp_path))
+    payload = _payload()
+    payload["mapspec"]["sources"]["g"] = {"type": "geojson", "ref": "ref:session/abc"}
+    resp = client.post("/api/v1/export/vector-pdf", json=payload)
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "mapspec_ref_sources_unhydrated"
+    assert "g" in resp.json()["detail"]["message"]
+
+
 def test_vector_pdf_route_rejects_forward_version(client, tmp_path, monkeypatch):
     monkeypatch.setattr("app.api.routes.map.EXPORT_DIR", str(tmp_path))
     payload = _payload()

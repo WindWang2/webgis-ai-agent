@@ -287,6 +287,9 @@ class VectorPdfRequest(BaseModel):
 
     mapspec: dict
     title: Optional[str] = None
+    """PDF 文档元数据标题（图面标题由 spec 标题组件驱动 —— user-wins）。"""
+    sessionId: Optional[str] = None
+    """提供时内联 ref: 载体源（与 live 同数据）；缺失且存在未物化矢量源 → 400。"""
 
 
 @router.post("/export/vector-pdf", tags=["地图制图"])
@@ -325,6 +328,7 @@ async def export_map_as_vector_pdf(
                 lambda: render_publication_pdf(
                     body.mapspec,
                     title=body.title or "WebGIS AI Agent 专题地图",
+                    session_id=body.sessionId,
                 ),
             ),
             timeout=120.0,

@@ -554,7 +554,20 @@ class ReportService:
             raise ImportError(
                 "WeasyPrint is not installed. Install with: pip install weasyprint"
             )
-        weasyprint.HTML(string=html_content).write_pdf(output_path)
+        # V6 R1-M6：write_pdf 进程级互斥（官方无线程安全承诺）——
+        # 与 publication 矢量 PDF 端点共用同一串行槽位。
+        from app.services.publication_export import PublicationBusyError, render_pdf_exclusive
+
+        try:
+            render_pdf_exclusive(
+                lambda: weasyprint.HTML(string=html_content).write_pdf(output_path)
+            )
+        except PublicationBusyError:
+            # 报告链是排队型业务：忙时阻塞等待而非拒绝（与导出端点 429 语义区分）
+            from app.services.publication_export import _WEASYPRINT_LOCK
+
+            with _WEASYPRINT_LOCK:
+                weasyprint.HTML(string=html_content).write_pdf(output_path)
 
     # ------------------------------------------------------------------
     # Helpers

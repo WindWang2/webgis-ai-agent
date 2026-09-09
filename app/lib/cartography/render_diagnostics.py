@@ -295,7 +295,7 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "frontend/lib/map-kit/export-chrome.ts",
     ),
     # diagnostics_truncated 的发射器是本模块 DiagnosticSink（publication
-    # 多帧聚合路径的真实消费方，见 compile_publication_svg / vector-pdf 链）。
+    # 多帧聚合路径的真实消费方，见 render_publication_pdf / vector-pdf 链）。
     "diagnostics_truncated": ("app.lib.cartography.render_diagnostics",),
     "label_collision_relaxed": (
         "app.services.mapspec_to_svg",
@@ -325,7 +325,8 @@ class DiagnosticSink:
     - ``add``：超全局封顶后停止接收，置 ``truncated`` 并（首次溢出时）
       追加一条 ``diagnostics_truncated`` 元诊断；不静默吞。
     - ``extend_frame``：单帧子配额入口（``MAX_DIAGNOSTICS_PER_FRAME``），
-      帧级溢出同样计入 truncation 披露。
+      帧级溢出同样计入 truncation 披露（publication render_publication_pdf
+      逐帧消费 —— R1-M3 接线）。
     """
 
     def __init__(self, max_total: int = MAX_DIAGNOSTICS_PER_EXPORT) -> None:

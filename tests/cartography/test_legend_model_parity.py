@@ -60,7 +60,7 @@ def test_format_legend_value_mirrors_ts():
     assert format_legend_value(0) == "0"
     assert format_legend_value(10000) == "10k"
     assert format_legend_value(1500000) == "1.5M"
-    assert format_legend_value(12345) == "1.2万" or format_legend_value(12345) == "12.3k"
+    assert format_legend_value(12345) == "12.3k"  # ≥1e4 → k 口径
     assert format_legend_value(0.5) == "0.5"
     assert format_legend_value(1234) == "1,234"
     assert format_legend_value(float("nan")) == "—"

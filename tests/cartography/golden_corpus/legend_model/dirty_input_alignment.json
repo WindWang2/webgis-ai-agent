@@ -1,0 +1,56 @@
+{
+  "name": "dirty_input_alignment",
+  "legendSpec": {
+    "type": "categorical",
+    "field": "zone",
+    "categories": [
+      {
+        "key": "res",
+        "color": "#fca5a5",
+        "label": "居住"
+      },
+      "not-an-object",
+      {
+        "key": null
+      },
+      {
+        "key": true
+      },
+      {
+        "key": false
+      }
+    ]
+  },
+  "expected": {
+    "kind": "categorical",
+    "title": "字段: zone",
+    "entries": [
+      {
+        "label": "居住",
+        "color": "#fca5a5",
+        "kind": "class"
+      },
+      {
+        "label": "",
+        "color": "#888",
+        "kind": "class"
+      },
+      {
+        "label": "",
+        "color": "#888",
+        "kind": "class"
+      },
+      {
+        "label": "true",
+        "color": "#888",
+        "kind": "class"
+      },
+      {
+        "label": "false",
+        "color": "#888",
+        "kind": "class"
+      }
+    ],
+    "hasNodata": false
+  }
+}

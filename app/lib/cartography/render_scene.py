@@ -171,18 +171,29 @@ def _significant(n: float) -> str:
     decimals = 0 if abs_n >= 100 else 1 if abs_n >= 10 else 2 if abs_n >= 1 else 3
     out = float(f"{n:.{decimals}f}")
     if out == 0 and n != 0:
-        return f"{n:.1e}"
+        exp_str = f"{n:.1e}"
+        return exp_str.replace("e-0", "e-").replace("e+0", "e+")
     if out == int(out):
         return str(int(out))
     return str(out)
 
 
-def format_legend_value(n: float) -> str:
-    """legend-card.ts formatLegendValue() 的 Python 镜像（zh-CN 分组）。"""
+def format_legend_value(n: Any) -> str:
+    """legend-card.ts formatLegendValue() 的 Python 镜像（zh-CN 分组）。
+
+    数值字符串按 TS ``Number()`` 口径 coerce（"5" → 5）；不可 coerce → "—"
+    （TS NaN → '—' 同语义，R1-Min6 脏输入对齐）。指数格式去前导零
+    （4.0e-04 → 4.0e-4，与 JS toExponential 同形）。
+    """
     import math
 
-    if not math.isfinite(n):
+    try:
+        n_val = float(n)
+    except (TypeError, ValueError):
         return "—"
+    if not math.isfinite(n_val):
+        return "—"
+    n = n_val
     abs_n = abs(n)
     if abs_n >= 1_000_000:
         return f"{_significant(n / 1_000_000)}M"
@@ -258,21 +269,30 @@ def derive_legend_items(legend_spec: Any) -> Optional[Dict[str, Any]]:
 
     if spec_type == "categorical":
         for c in spec.get("categories") or []:
-            if not isinstance(c, dict):
-                continue
+            # 非 dict 条目不跳过（R1-Min6：与 TS 同口径 —— #888 + 空标签）
+            c = c if isinstance(c, dict) else {}
             label = c.get("label")
             color = c.get("color")
+            key = c.get("key", "")
+            if key is None:
+                key_str = ""
+            elif key is True:
+                key_str = "true"
+            elif key is False:
+                key_str = "false"
+            else:
+                key_str = str(key)
             entries.append({
-                "label": str(label) if label is not None and str(label).strip() != "" else str(c.get("key", "")),
+                "label": str(label) if label is not None and str(label).strip() != "" else key_str,
                 "color": color if isinstance(color, str) and color else "#888",
                 "kind": "class",
             })
         return _finish("categorical")
 
     if spec_type == "graduated":
-        breaks_raw = spec.get("breaks") or []
+        breaks = spec.get("breaks") or []
         colors = spec.get("palette_colors") or []
-        breaks = [b for b in breaks_raw if isinstance(b, (int, float)) and not isinstance(b, bool)]
+        # breaks 不预过滤（R1-Min6：与 TS 同口径 —— 非数值在标签层折为 "—"）
         n = min(max(len(breaks) - 1, 0), len(colors))
         labels = spec.get("labels")
         for i in range(n):

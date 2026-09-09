@@ -238,6 +238,13 @@ export function compileMapSpecToSvg(
 
   // W6：确定性标签碰撞模式（v1.1 additive；缺省关闭 —— legacy 输出不变）。
   const collisionMode = mapspec?.layout?.labels?.collision === "deterministic";
+  // MINOR-8：spec labels.maxLabels 生效（显式入参语义归后端 publication 链；
+  // 本孪生按 spec 值收敛预算，≤ MAX_LABELS_PER_EXPORT 封顶）。
+  const specMaxLabels = Number(mapspec?.layout?.labels?.maxLabels);
+  const labelBudget =
+    Number.isFinite(specMaxLabels) && specMaxLabels > 0
+      ? Math.min(Math.floor(specMaxLabels), MAX_LABELS_PER_EXPORT)
+      : MAX_LABELS_PER_EXPORT;
   const labelRequests: Array<any> = [];
 
   const scaledWidth = width * dpiScale;
@@ -583,6 +590,11 @@ export function compileMapSpecToSvg(
         if (collisionMode) {
           // W6：确定性碰撞模式 —— 收集请求供全图求解（与 Python 孪生同构）。
           // 注意 project() 返回 fmtNum 字符串：数值用途须 Number() 还原。
+          // MINOR-7：截断诊断与 Python 孪生同发射（label_truncated）。
+          const [fittedText, textTruncated] = fitLabel(String(rawText));
+          if (textTruncated) {
+            options.onDiagnostic?.("label_truncated", `layer=${layer.id} len=${String(rawText).length}`);
+          }
           let lkind: "point" | "line" | "polygon" = "point";
           let lang = 0;
           if (geom.type === "LineString" && Array.isArray(geom.coordinates) && geom.coordinates.length >= 2) {
@@ -597,7 +609,7 @@ export function compileMapSpecToSvg(
           labelRequests.push({
             id: `lbl${labelRequests.length}-${layer.id}-${fmtNum((coord as [number, number])[0])}-${fmtNum((coord as [number, number])[1])}`,
             // 与 Python 孪生 fitted_text 同口径（>60 code points 截断）
-            text: fitLabel(String(rawText))[0],
+            text: fittedText,
             kind: lkind,
             x: Number(x),
             y: Number(y),
@@ -640,6 +652,7 @@ export function compileMapSpecToSvg(
         priority: i,
       })),
       [0, 0, scaledWidth, scaledHeight],
+      labelBudget,
     );
     const byId = new Map(labelRequests.map((r) => [r.id, r]));
     const parts: string[] = [];

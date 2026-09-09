@@ -550,9 +550,25 @@ def compile_mapspec_to_svg_detailed(
     timeout_ms: Any = None,
     include_chrome: bool = False,
     bounds: Any = None,
+    max_labels: Any = None,
 ) -> SvgCompilation:
     cap, timeout_ms_val = _resolve_export_thresholds(
         mapspec, max_features, timeout_ms)
+    # W6/MINOR-8：标签预算解析——显式入参 > spec labels.maxLabels > 默认；
+    # 均被 MAX_LABELS_PER_EXPORT 封顶（防 spec 放大预算）。
+    try:
+        _labels_budget = int(max_labels)
+    except (ValueError, TypeError):
+        _labels_budget = 0
+    _layout_for_labels = mapspec.get("layout") if isinstance(mapspec, dict) else None
+    if _labels_budget <= 0 and isinstance(_layout_for_labels, dict):
+        _lc = _layout_for_labels.get("labels")
+        if isinstance(_lc, dict):
+            try:
+                _labels_budget = int(_lc.get("maxLabels"))
+            except (ValueError, TypeError):
+                _labels_budget = 0
+    _labels_budget = min(_labels_budget if _labels_budget > 0 else _MAX_LABELS_PER_EXPORT, _MAX_LABELS_PER_EXPORT)
     timeout_s = timeout_ms_val / 1000.0
     start_mono = _time.monotonic()
     diagnostics: List[Dict[str, Any]] = []
@@ -1150,6 +1166,7 @@ def compile_mapspec_to_svg_detailed(
                     for i, r in enumerate(label_requests)
                 ],
                 [0.0, 0.0, float(scaled_width), float(scaled_height)],
+                max_labels=_labels_budget,
             )
             by_id = {r["id"]: r for r in label_requests}
             parts: List[str] = []

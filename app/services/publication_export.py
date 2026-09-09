@@ -27,12 +27,14 @@ import threading
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.lib.cartography.label_collision import MAX_LABELS_PER_EXPORT
 from app.lib.cartography.mapspec_schema import (
     MAX_SPEC_FRAMES,
     MapSpecSchemaError,
     require_parseable_mapspec,
 )
 from app.lib.cartography.render_diagnostics import (
+    RENDER_DIAGNOSTICS,
     DiagnosticSink,
     diagnostic,
 )
@@ -100,7 +102,7 @@ def _probe_cjk_font() -> bool:
     return found
 
 
-def _frame_geometry(frame: Optional[Dict[str, Any]], doc: Dict[str, Any]) -> Tuple[float, float, Optional[List[float]]]:
+def _frame_geometry(frame: Optional[Dict[str, Any]]) -> Tuple[float, float, Optional[List[float]]]:
     """帧 → (页宽mm, 页高mm, bounds)。缺省 A4 landscape 297×210。"""
     page_w, page_h = 297.0, 210.0
     bounds: Optional[List[float]] = None
@@ -166,10 +168,13 @@ def _apply_frame_overrides(doc: Dict[str, Any], frame: Optional[Dict[str, Any]])
     return out
 
 
-def _svg_to_page_html(svg: str, page_w_mm: float, page_h_mm: float) -> str:
-    body = _html.escape(svg, quote=False)  # 不转义引号不必要；svg 自身已转义
+def _svg_to_page_html(svg: str, page_w_mm: float, page_h_mm: float, title: str = "") -> str:
+    """单帧页文档。R1-B1 修复：SVG **原样嵌入**（此前误加 html.escape，
+    SVG 源码被当正文文本排版 —— 矢量地图根本没有进入 PDF）。"""
+    body = svg
+    title_tag = f"<title>{_html.escape(title)}</title>" if title else ""
     return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8">
+<html><head><meta charset="utf-8">{title_tag}
 <style>
 @page {{ size: {page_w_mm}mm {page_h_mm}mm; margin: 0; }}
 html, body {{ margin: 0; padding: 0; font-family: {CSS_FONT_STACK}; }}
@@ -178,19 +183,115 @@ svg {{ width: 100%; height: 100%; }}
 <body>{body}</body></html>"""
 
 
+def render_pdf_exclusive(render_fn):
+    """R1-M6：WeasyPrint write_pdf 进程级互斥的公共入口。
+
+    官方不保证线程安全（fontconfig/pango 全局态）；本仓库**所有**
+    write_pdf 调用（publication 端点 + report_service）必须经此串行。
+    非阻塞抢锁 → 忙则 PublicationBusyError（调用方映射 429），饱和不排队。
+    """
+    if not _WEASYPRINT_LOCK.acquire(blocking=False):
+        raise PublicationBusyError("vector pdf renderer is busy; retry later")
+    try:
+        return render_fn()
+    finally:
+        _WEASYPRINT_LOCK.release()
+
+
+
+def hydrate_ref_sources_sync(payload: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+    """R1-M5：内联 ``ref:`` 载体矢量源（会话数据面），使导出渲染与 live
+    同一份数据。同步包装（工作线程内 asyncio.run）；best-effort per source
+    （水合失败的 ref 保持原样，由 unhydrated 检测诚实拒绝）。"""
+    import asyncio as _asyncio
+    import copy as _copy
+
+    sources = payload.get("sources")
+    if not isinstance(sources, dict):
+        return payload
+    spec = _copy.deepcopy(payload)
+    out_sources = spec.get("sources", {})
+    refs: List[Tuple[str, str]] = []
+    for src in out_sources.values():
+        if not isinstance(src, dict):
+            continue
+        if isinstance(src.get("inlineData"), dict) or isinstance(src.get("data"), dict):
+            continue
+        ref = src.get("ref") or src.get("ref_id")
+        if isinstance(ref, str) and ref.startswith("ref:"):
+            refs.append((id(src), ref))
+    if not refs:
+        return spec
+
+    async def _hydrate() -> None:
+        from app.services.session_data import session_data_manager
+
+        for src, ref in refs:
+            try:
+                payload_data = await session_data_manager.get(session_id, ref)
+            except Exception as ex:  # noqa: BLE001 - per-source best-effort
+                logger.warning("publication pdf: ref %s hydration failed: %s", ref, ex)
+                payload_data = None
+            if isinstance(payload_data, dict):
+                src["inlineData"] = payload_data
+
+    _asyncio.run(_hydrate())
+    return spec
+
+
+def _unhydrated_geojson_keys(doc: Dict[str, Any]) -> List[str]:
+    """无 inlineData/data 的 geojson/vector 源键（将静默渲染为空 → 拒绝）。"""
+    sources = doc.get("sources")
+    if not isinstance(sources, dict):
+        return []
+    out: List[str] = []
+    for key, src in sources.items():
+        if not isinstance(src, dict):
+            continue
+        stype = src.get("type")
+        if stype not in ("geojson", "vector"):
+            continue
+        if isinstance(src.get("inlineData"), dict) or isinstance(src.get("data"), dict):
+            continue
+        out.append(str(key))
+    return out
+
+
 def render_publication_pdf(
     payload: Dict[str, Any],
     *,
     title: str = "",
     max_frames: int = MAX_SPEC_FRAMES,
+    max_labels: int = MAX_LABELS_PER_EXPORT,
+    session_id: Optional[str] = None,
 ) -> PublicationPdfResult:
-    """publication PDF 主入口（同步；CPU/IO 由调用方置于工作线程）。"""
+    """publication PDF 主入口（同步；CPU/IO 由调用方置于工作线程）。
+
+    ``title``：PDF 文档元数据标题（<title>）；图面标题仍由 spec 标题组件
+    驱动（user-wins，不虚构）。``max_labels``：每帧标签预算上界（≤400）。
+    """
     if weasyprint is None:
         raise PublicationUnavailableError(
             "weasyprint is not installed; vector PDF unavailable"
         )
     parsed = require_parseable_mapspec(payload)
     doc = parsed.document
+
+    # R1-M5：ref 载体源水合（提供 session_id 时）；仍无法物化的
+    # geojson/vector 源 → typed 拒绝（不渲染只剩 chrome 的空白出版页）。
+    if session_id:
+        try:
+            doc = hydrate_ref_sources_sync(doc, session_id)
+        except Exception as ex:
+            logger.warning("publication pdf: hydration failed: %s", ex)
+    _empty_sources = _unhydrated_geojson_keys(doc)
+    if _empty_sources:
+        raise MapSpecSchemaError(
+            "mapspec_ref_sources_unhydrated",
+            "geojson/vector sources carry no inline data: "
+            + ",".join(_empty_sources)
+            + " — provide sessionId for hydration or inline the data",
+        )
 
     layout = doc.get("layout") if isinstance(doc.get("layout"), dict) else {}
     frames_raw = layout.get("frames")
@@ -202,22 +303,26 @@ def render_publication_pdf(
     else:
         frames = [None]  # 单帧 = 整幅
 
-    # 栅格/瓦片源披露（deny-all fetcher → 省略；R1-M9）
+    # 栅格/瓦片源披露（deny-all fetcher → 省略；R1-M9：detail 指名源键）
     sink = DiagnosticSink()
-    for src in (doc.get("sources") or {}).values():
+    _sources = doc.get("sources")
+    _src_keys: List[str] = []
+    for key, src in (_sources.items() if isinstance(_sources, dict) else []):
         stype = src.get("type") if isinstance(src, dict) else None
         if stype in ("raster", "data_fabric", "wms", "wmts", "pmtiles"):
-            sink.add(diagnostic("raster_layer_unavailable_vector_pdf", detail=stype))
+            _src_keys.append(str(key))
+    for key in _src_keys:
+        sink.add(diagnostic("raster_layer_unavailable_vector_pdf", detail=key))
     if not _probe_cjk_font():
         sink.add(diagnostic("pdf_font_fallback"))
 
     from weasyprint import HTML
 
-    page_htmls: List[str] = []
+    page_specs: List[Tuple[str, str, float, float]] = []  # (page_name, svg, w_mm, h_mm)
     rendered = 0
     skipped = 0
     for i, frame in enumerate(frames):
-        page_w, page_h, bounds = _frame_geometry(frame, doc)
+        page_w, page_h, bounds = _frame_geometry(frame)
         frame_doc = _apply_frame_overrides(doc, frame)
         try:
             comp = compile_mapspec_to_svg_detailed(
@@ -228,49 +333,71 @@ def render_publication_pdf(
                 padding=24,
                 include_chrome=True,
                 bounds=bounds,
+                max_labels=max_labels,
             )
         except Exception as ex:  # 单帧失败不中断 atlas（frame skip 政策）
             logger.warning("publication pdf: frame %s compile failed: %s", i, ex)
             skipped += 1
             sink.add(diagnostic("atlas_page_skipped", detail=f"frame {i}: {type(ex).__name__}"))
             continue
-        page_htmls.append(_svg_to_page_html(comp.svg, page_w, page_h))
-        for d in comp.diagnostics[:8]:
-            from app.lib.cartography.render_diagnostics import RenderDiagnostic
+        page_specs.append((f"p{i}", comp.svg, page_w, page_h))
+        # R1-M3：帧级诊断经 extend_frame（子配额 + 溢出显式元披露）
+        from app.lib.cartography.render_diagnostics import RenderDiagnostic
 
-            sink.add(RenderDiagnostic(
+        frame_items = [
+            RenderDiagnostic(
                 code=d.get("code", ""), severity=d.get("severity", "info"),
                 message=d.get("message", ""), detail=d.get("detail", ""),
                 layer_id=d.get("layer_id"), component_id=d.get("component_id"),
-            ))
+            )
+            for d in comp.diagnostics
+            if d.get("code") in RENDER_DIAGNOSTICS
+        ]
+        sink.extend_frame(frame_items)
         rendered += 1
 
-    if not page_htmls:
+    if not page_specs:
         raise MapSpecSchemaError("publication_no_pages", "no frames compiled to pages")
 
-    if rendered > 1:
+    if len(page_specs) > 1:
+        # R1-M2 修复：named pages（每帧独立 @page size）—— 此前多帧被压成
+        # size:auto，帧页面尺寸静默丢失。
+        rules = [
+            f"@page {name} {{ size: {w_mm}mm {h_mm}mm; margin: 0; }}\n"
+            f".page-{name} {{ page: {name}; }}"
+            for (name, _svg, w_mm, h_mm) in page_specs
+        ]
         html_doc = (
             '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
-            f"@page {{ size: auto; margin: 0; }} html, body {{ margin: 0; font-family: {CSS_FONT_STACK}; }}"
-            ".page { page-break-after: always; }"
-            "</style></head><body>"
-            + "".join(f'<div class="page">{h.split("<body>", 1)[1].split("</body>", 1)[0]}</div>' for h in page_htmls)
+            f"html, body {{ margin: 0; font-family: {CSS_FONT_STACK}; }}\n"
+            "svg { width: 100%; height: 100%; }\n"
+            ".page { page-break-after: always; }\n"
+            + "\n".join(rules)
+            + "</style></head><body>"
+            + "".join(
+                f'<div class="page page-{name}">{svg}</div>'
+                for (name, svg, _w, _h) in page_specs
+            )
             + "</body></html>"
         )
     else:
-        html_doc = page_htmls[0]
+        _name, svg0, w0, h0 = page_specs[0]
+        html_doc = _svg_to_page_html(svg0, w0, h0, title=title)
 
-    # WeasyPrint 串行化：非阻塞抢锁，忙则结构化拒绝（不排队不阻塞事件循环）
-    if not _WEASYPRINT_LOCK.acquire(blocking=False):
-        raise PublicationBusyError("vector pdf renderer is busy; retry later")
+    # WeasyPrint 串行化（R1-M6）：非阻塞抢锁，忙则结构化拒绝
     try:
-        pdf_bytes = HTML(
-            string=html_doc,
-            url_fetcher=_deny_url_fetcher,  # SSRF/外联全拒（R1-M9）
-            base_url=None,
-        ).write_pdf()
-    finally:
-        _WEASYPRINT_LOCK.release()
+        pdf_bytes = render_pdf_exclusive(
+            lambda: HTML(
+                string=html_doc,
+                url_fetcher=_deny_url_fetcher,  # SSRF/外联全拒（R1-M9）
+                base_url=None,
+            ).write_pdf()
+        )
+    except PublicationBusyError:
+        raise
+    except Exception as ex:
+        logger.error("publication pdf: weasyprint render failed: %s", ex)
+        raise
 
     try:
         import pypdf
