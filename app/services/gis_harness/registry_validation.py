@@ -260,6 +260,7 @@ def validate_gis_library(
             artifacts=artifacts,
             models=models,
             component_registry=component_registry,
+            compositions=compositions,
         )
     )
 
@@ -274,6 +275,7 @@ def _validate_methodology_intelligence(
     artifacts: Any,
     models: Any,
     component_registry: Any,
+    compositions: Any,
 ) -> List[str]:
     """知识层对账（deferred imports；悬空/违例以 methodology_intel: 前缀上报）。"""
 
@@ -329,6 +331,32 @@ def _validate_methodology_intelligence(
                 issues.append(
                     f"method_descriptors: 缺少 V4 候选方法的增强条目 "
                     f"{m.method_id}")
+    # viz bridge + template spec 对账（悬空 fatal；R1-F5 分歧走披露）
+    from app.lib.cartography.template_intelligence import (
+        get_template_spec_registry,
+    )
+    from app.lib.gis.methodology.viz_bridge import validate_bridge
+    issues.extend(
+        f"viz_bridge: {v}"
+        for v in validate_bridge(
+            artifact_type_exists=artifacts.has,
+            map_model_exists=_model_exists,
+            component_exists=_comp_exists,
+        )
+    )
+    from app.services.gis_harness.workflow_schema import DATA_ROLES as _ROLES
+    issues.extend(
+        f"template_spec: {v}"
+        for v in get_template_spec_registry().validate(
+            composition_exists=compositions.has,
+            category_exists=get_task_taxonomy().has,
+            family_exists=lambda f: methods_reg.family(f) is not None,
+            artifact_type_exists=artifacts.has,
+            component_exists=_comp_exists,
+            capability_exists=capabilities.has,
+            data_role_vocabulary=tuple(_ROLES),
+        )
+    )
     try:
         graph = get_knowledge_graph()
         if graph.node_count == 0 or graph.edge_count == 0:
