@@ -210,6 +210,23 @@ METHODOLOGY_CORPUS: Tuple[MethodologyCase, ...] = (
         expected_roles=("measure", "boundary"),
         profile=({"featureCount": 250},),
     ),
+    # ── proximity（Epic 11 纯加法族）─────────────────────────────────
+    MethodologyCase(
+        case_id="prox.buffer_zh",
+        family="proximity",
+        utterance_zh="分析学校周边500米缓冲范围内的便利店",
+        utterance_en="find convenience stores within a 500m buffer of schools",
+        expected_roles=("subject",),
+        profile=({"featureCount": 60, "geometryTypes": ["Point"]},),
+    ),
+    MethodologyCase(
+        case_id="prox.rings_en",
+        family="proximity",
+        utterance_zh="做地铁站 1/2/3 公里的多环缓冲覆盖范围分析",
+        utterance_en="multi-ring buffer analysis (1/2/3 km) around metro stations",
+        expected_roles=("subject",),
+        profile=({"featureCount": 150, "geometryTypes": ["Point"]},),
+    ),
 )
 
 
