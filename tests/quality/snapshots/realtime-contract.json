@@ -1,0 +1,122 @@
+{
+ "artifact": "realtime-contract",
+ "contract_version": 1,
+ "sse": {
+  "endpoint": "/api/v1/chat/stream",
+  "events": [
+   "content",
+   "done",
+   "error",
+   "explorer_progress",
+   "heartbeat",
+   "keep_alive",
+   "map_finalization",
+   "plan_finalized",
+   "plan_ready",
+   "plan_step_done",
+   "session",
+   "step_cancelled",
+   "step_error",
+   "step_result",
+   "step_start",
+   "task_cancelled",
+   "task_complete",
+   "task_error",
+   "task_start",
+   "token",
+   "tool_call",
+   "tool_result"
+  ],
+  "primitives": [
+   "sse_event",
+   "sse_event_id",
+   "sse_event_type",
+   "sse_event_id_scope"
+  ],
+  "resume": {
+   "keepalive_comments": true,
+   "last_event_id_replay": true
+  },
+  "wire_format": [
+   "event: <type>",
+   "id: <per-turn monotonic int>",
+   "data: <json>"
+  ]
+ },
+ "websocket": {
+  "auth": {
+   "per_ip_rate_limited": true,
+   "session_ownership_fail_closed": true,
+   "subprotocol_preferred": true,
+   "token_verified": true,
+   "token_version_checked": true
+  },
+  "endpoint": "/api/v1/ws/{session_id}",
+  "inbound_envelope": {
+   "data": "object",
+   "event": "str"
+  },
+  "inbound_events": {
+   "base_layer_changed": {
+    "handler": "app.services.ws_service.handle_base_layer_changed",
+    "required_fields": [
+     "name"
+    ]
+   },
+   "layer_opacity_changed": {
+    "handler": "app.services.ws_service.handle_layer_opacity",
+    "required_fields": [
+     "layer_id",
+     "opacity"
+    ]
+   },
+   "layer_removed": {
+    "handler": "app.services.ws_service.handle_layer_removed",
+    "required_fields": [
+     "layer_id"
+    ]
+   },
+   "layer_toggled": {
+    "handler": "app.services.ws_service.handle_layer_toggled",
+    "required_fields": [
+     "layer_id"
+    ]
+   },
+   "layers_changed": {
+    "handler": "app.services.ws_service.handle_layers_changed",
+    "required_fields": []
+   },
+   "layers_reordered": {
+    "handler": "app.services.ws_service.handle_layers_reordered",
+    "required_fields": [
+     "order"
+    ]
+   },
+   "mode_changed": {
+    "handler": "app.services.ws_service.handle_mode_changed",
+    "required_fields": [
+     "is_3d"
+    ]
+   },
+   "state_snapshot": {
+    "handler": "app.services.ws_service.handle_state_snapshot",
+    "required_fields": []
+   },
+   "upload_completed": {
+    "handler": "app.services.ws_service.handle_upload",
+    "required_fields": []
+   },
+   "viewport_change": {
+    "handler": "app.services.ws_service.handle_viewport_change",
+    "required_fields": []
+   }
+  },
+  "outbound_envelope": {
+   "data": "any",
+   "event": "str"
+  },
+  "outbound_events": [
+   "geojson_update"
+  ]
+ }
+}

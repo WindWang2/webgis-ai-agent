@@ -373,6 +373,10 @@ def compile_runtime_manifest(tool_registry: Optional[Any] = None) -> CompiledRun
                 _warn("algorithm_dangling_fallback", f"{aid} → fallback 算法 {fb} 不存在")
 
     # 反查图（capability_to_tools 按算法 priority 升序 = 解析优先序）
+    # R1 review（Quality V2）披露：本反查图是**描述性视图**（informational
+    # /guard），不按 capability status 过滤 —— 与 AlgorithmRegistry 的
+    # tool_to_capability（planned 过滤，dispatch 复用判定专用）语义不同，
+    # 禁止把本视图用于复用/回填判定。
     for aid, proj in sorted(manifest.algorithms.items(), key=lambda kv: kv[1]["priority"]):
         for cap in proj["capabilities"]:
             manifest.capability_to_algorithms.setdefault(cap, []).append(aid)
