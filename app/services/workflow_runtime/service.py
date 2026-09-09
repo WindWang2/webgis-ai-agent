@@ -109,6 +109,8 @@ class WorkflowRuntimeService:
     def instantiate(
         self, package_id: str, *, owner_scope: str, session_id: str = "",
         version: str = "", project_id: str = "",
+        parent_instance_id: str = "", parent_node_id: str = "",
+        visited_packages: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """包 → 运行实例（全节点 PENDING；data 节点绑定由 attach/record 补齐）。"""
         from app.services.gis_harness.workflow_v4.package import (
@@ -158,7 +160,13 @@ class WorkflowRuntimeService:
             package_version=row["version"],
             package_fingerprint=row["fingerprint"],
             owner_scope=owner_scope, session_id=session_id,
-            project_id=project_id, node_specs=nodes)
+            project_id=project_id, node_specs=nodes,
+            parent_instance_id=parent_instance_id,
+            parent_node_id=parent_node_id)
+        if visited_packages:
+            self.store.update_instance(
+                inst["instance_id"], owner_scope=owner_scope,
+                fields={"visited_packages": list(visited_packages)[:8]})
         return inst
 
     # ── 驱动 / 取消 / 变更 ───────────────────────────────────────────
@@ -191,10 +199,16 @@ class WorkflowRuntimeService:
                 raise InstanceBusy(instance_id, "concurrent rerun")
         dag = await self._instance_dag(inst)
         from app.services.workflow_runtime.driver import Driver
+        from app.services.workflow_runtime.subworkflow import (
+            SubworkflowExecutor,
+        )
 
         driver = Driver(
             self.store, reuse_index=self.reuse_index,
-            deadline_s=deadline_s, owner_scope=owner_scope, caller=caller)
+            deadline_s=deadline_s, owner_scope=owner_scope, caller=caller,
+            subworkflow_executor=SubworkflowExecutor(
+                self, owner_scope=owner_scope, caller=caller,
+                deadline_s=deadline_s))
         run_token = new_run_token()
         effective = node_params if node_params is not None \
             else await self._node_params(inst, dag)
@@ -202,7 +216,8 @@ class WorkflowRuntimeService:
             instance_id, dag,
             node_params=effective,
             session_id=inst["session_id"], run_token=run_token,
-            package_fingerprint=inst["package_fingerprint"])
+            package_fingerprint=inst["package_fingerprint"],
+            package_id=inst["package_id"])
         # 完成边界：drain pending changes（quiescence 已由 run 保证）；
         # 实例终态由 driver._finalize_instance 落库（run 生命周期单写者）。
         if summary.get("status") == C.InstanceStatus.RUNNING:

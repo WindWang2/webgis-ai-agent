@@ -72,6 +72,8 @@ class Driver:
         engine: Any = None,
         plan_executor: Optional[Any] = None,
         descriptor_probe: Optional[Any] = None,
+        subworkflow_executor: Optional[Any] = None,
+        parent_visited: Optional[List[str]] = None,
     ):
         self.store = store
         self.reuse_index = reuse_index
@@ -83,6 +85,8 @@ class Driver:
         #: 可注入 hooks（测试假件；None = 生产真实路径）。
         self.plan_executor = plan_executor
         self.descriptor_probe = descriptor_probe
+        self.subworkflow_executor = subworkflow_executor
+        self.parent_visited = list(parent_visited or [])
 
     # ── 主循环 ────────────────────────────────────────────────────────
 
@@ -90,7 +94,7 @@ class Driver:
         self, instance_id: str, dag: Dict[str, Any], *,
         node_params: Dict[str, Dict[str, Any]],
         session_id: str, run_token: str,
-        package_fingerprint: str = "",
+        package_fingerprint: str = "", package_id: str = "",
     ) -> Dict[str, Any]:
         """驱动实例至终态或 deadline。返回 {status, states}。"""
         optional_map = {
@@ -98,6 +102,7 @@ class Driver:
             for n in dag.get("nodes") or []
         }
         self._package_fp = package_fingerprint
+        self._package_id = package_id
         if not await asyncio.to_thread(
                 self.store.acquire_run_lease, instance_id,
                 owner_scope=self.owner_scope, token=run_token):
@@ -241,6 +246,24 @@ class Driver:
                 event="driver", patch={"binding": verdict})
             states[node_id] = C.NodeState.BLOCKED
             return
+        if str(node.get("kind") or "") == "data_input":
+            node_row0 = await asyncio.to_thread(
+                store.get_node, instance_id, node_id)
+            if not (node_row0 or {}).get("bound_ref"):
+                # 未绑定 = 无产物在场（诚实阻断；record_tool_result /
+                # attach 绑定后经 BLOCKED→READY 解除）
+                store.transition_node(
+                    instance_id, node_id, C.NodeState.BLOCKED,
+                    reason="MISSING_BINDING", event="driver",
+                    patch={"error_code": "MISSING_BINDING",
+                           "binding": {"node_id": node_id, "ok": False,
+                                       "action": "blocked",
+                                       "violations": [{"port": "data",
+                                                       "code": "MISSING_BINDING",
+                                                       "detail": "数据角色无绑定 ref"}],
+                                       "disclosures": []}})
+                states[node_id] = C.NodeState.BLOCKED
+                return
         if states.get(node_id, C.NodeState.PENDING) == C.NodeState.PENDING:
             r = store.transition_node(
                 instance_id, node_id, C.NodeState.READY,
@@ -274,6 +297,44 @@ class Driver:
                 patch={"output_ref": ref[:96],
                        "output_fingerprint": out_fp})
             states[node_id] = C.NodeState.SUCCEEDED
+            return
+
+        # 子工作流：展开子实例并驱动（取消/失败映射父节点状态）
+        if kind == "subworkflow":
+            if self.subworkflow_executor is None:
+                store.transition_node(
+                    instance_id, node_id, C.NodeState.FAILED,
+                    require_claim=True, claimed_by=run_token, complete=True,
+                    reason="SUBWORKFLOW_UNSUPPORTED", event="driver",
+                    patch={"error_code": "SUBWORKFLOW_UNSUPPORTED"})
+                states[node_id] = C.NodeState.FAILED
+                return
+            sw = await self.subworkflow_executor(
+                node, parent={"instance_id": instance_id,
+                              "package_id": getattr(self, "_package_id", "")},
+                parent_visited=self.parent_visited, session_id=session_id,
+                input_refs=input_refs)
+            if sw.get("ok"):
+                store.transition_node(
+                    instance_id, node_id, C.NodeState.SUCCEEDED,
+                    require_claim=True, claimed_by=run_token, complete=True,
+                    reason="SUBWORKFLOW_OK", event="driver",
+                    patch={"output_ref":
+                           f"wi:{sw.get('child_instance_id', '')}"[:96],
+                           "binding": {"obligation_chain":
+                                       sw.get("obligation_chain") or {}}})
+                states[node_id] = C.NodeState.SUCCEEDED
+            else:
+                code = str(sw.get("error_code", "SUBWORKFLOW_FAIL"))
+                store.transition_node(
+                    instance_id, node_id, C.NodeState.FAILED,
+                    require_claim=True, claimed_by=run_token, complete=True,
+                    reason=code[:48], event="driver",
+                    patch={"error_code": code[:64],
+                           "binding": {"obligation_chain":
+                                       sw.get("obligation_chain") or {},
+                                       "detail": str(sw.get("detail", ""))[:200]}})
+                states[node_id] = C.NodeState.FAILED
             return
 
         # 复用裁决（先于执行；命中零重算 + reuse 证据）。
@@ -376,9 +437,14 @@ class Driver:
             if not ref:
                 continue
             refs.append(ref)
-            desc = await self.h_descriptor(session_id, ref)
             port = port_names[idx] if idx < len(port_names) else \
                 f"input{idx + 1}"
+            if ref.startswith("wi:"):
+                # 子工作流实例引用：无会话载荷身份（诚实 unknown，
+                # 不虚构 descriptor 事实）
+                desc = {"ref_id": ref}
+            else:
+                desc = await self.h_descriptor(session_id, ref)
             port_descs[port] = desc
             port_idents[port] = F.input_content_identity(
                 desc if isinstance(desc, dict) else {})
