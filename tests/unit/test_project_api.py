@@ -189,3 +189,22 @@ def test_repair_session_ownership_guard():
         headers=_auth_headers())
     assert own.status_code == 200
     assert own.json()["lineage_status"] in ("recorded", "skipped", "dataset_not_found")
+
+
+def test_snapshot_routes_offload_db_to_thread(monkeypatch):
+    import threading
+    from app.services.project_service import ProjectService
+    main_thread_id = threading.get_ident()
+    observed_threads = []
+    orig_get = ProjectService.get_project_with_auth
+
+    def fake_get(*args, **kwargs):
+        observed_threads.append(threading.get_ident())
+        return orig_get(*args, **kwargs)
+
+    monkeypatch.setattr(ProjectService, "get_project_with_auth", fake_get)
+    res = client.get("/api/v1/projects/non-existent/workspace/snapshots", headers=_auth_headers())
+    assert res.status_code == 404
+    assert len(observed_threads) >= 1
+    # CORE-02: Ensure db call was offloaded via asyncio.to_thread, not blocking main event loop thread
+    assert observed_threads[0] != main_thread_id

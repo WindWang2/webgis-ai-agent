@@ -1653,7 +1653,7 @@ async def save_workspace_snapshot(
     session purge/TTL sweeps.
     """
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(req.session_id, user, owner_token)
@@ -1690,7 +1690,7 @@ async def list_workspace_snapshots(
     """Bounded snapshot list (≤50) for the project (plus the optional
     session's legacy session-scoped snapshots, honestly labeled ``home``)."""
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if session_id:
@@ -1722,7 +1722,7 @@ async def inspect_workspace_snapshot(
     Probes run against the caller's own session — the session gate doubles
     as the ref-id leak guard (audit §4.3)."""
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(session_id, user, owner_token)
@@ -1752,7 +1752,7 @@ async def restore_workspace_snapshot(
     (digest-verified read before write; failures degrade honestly to
     ``expired`` + ``degraded`` — dead refs are never marked valid)."""
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(req.session_id, user, owner_token)
@@ -1782,7 +1782,7 @@ async def clone_workspace_snapshot(
     disclosed by verify, never fabricated). BOTH sessions must belong to
     the caller — the source gate is 404 without existence leak."""
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(req.source_session_id, user, owner_token)
@@ -1814,7 +1814,7 @@ async def delete_workspace_snapshot(
     sweep). Snapshots created by another user within the project are
     refused at the service layer."""
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     await _verify_session_access(session_id, user, owner_token)
@@ -1841,7 +1841,7 @@ async def describe_workspace(
     """Workspace inventory (§十五): snapshot count, artifact summary by
     lifecycle state, layer refs, durable coverage %."""
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    project = await asyncio.to_thread(ProjectService.get_project_with_auth, db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if session_id:
