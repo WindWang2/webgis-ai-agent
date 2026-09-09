@@ -178,6 +178,52 @@ class STACAdapter(GeospatialDataSourceAdapter):
         self.allow_private = getattr(self.profile, "allow_private", False)
         # SSRF-safe session: every request (incl. redirects) is revalidated.
         self.session = make_safe_session(allow_private=self.allow_private)
+        self._conformance_cache: Optional[tuple] = None
+
+    def _filter_extension_declared(self) -> bool:
+        """V7（ADR-0119 W5）：STAC filter extension conformance 探测（60s 缓存）。
+
+        conformance URI 形如 ``https://api.stacspec.org/.../item-search#filter``；
+        探测失败 = 不声明（诚实保守，filter 保持本地求值）。
+        """
+        if self._conformance_cache and (
+            time.monotonic() - self._conformance_cache[0]
+        ) < 60:
+            return self._conformance_cache[1]
+        declared = False
+        try:
+            if self.endpoint:
+                data = safe_json_get(
+                    self.session,
+                    DataFabricSecurity.validate_url(
+                        self.endpoint, allow_private=self.allow_private
+                    ).rstrip("/")
+                    + "/conformance",
+                    timeout=5,
+                    max_bytes=1 << 20,
+                )
+                conforms = [str(c) for c in (data.get("conformsTo") or [])] if isinstance(data, dict) else []
+                declared = any(
+                    c.endswith("#filter") and "stacspec.org" in c for c in conforms
+                )
+        except Exception as exc:  # noqa: BLE001 - 探测失败回落保守
+            logger.debug("STAC conformance probe failed: %s", exc)
+            declared = False
+        self._conformance_cache = (time.monotonic(), declared)
+        return declared
+
+    def capabilities_v2(self):
+        """探测后 capability：filter extension 声明才升级 filter 下推。
+
+        编码固定 cql2-json（POST body 结构化，无字符串拼接面）。仅声明
+        cql2-text 的服务会以 typed 错误显式失败 —— 绝不静默给错结果。
+        """
+        caps = get_capabilities("stac")
+        if self._filter_extension_declared():
+            return caps.model_copy(
+                update={"filter_pushdown": True, "filter_encoding": "cql2-json"}
+            )
+        return caps
 
     def probe(self) -> bool:
         """Reachability probe for STAC endpoint (bounded GET via safe_json_get)."""
@@ -405,7 +451,9 @@ class STACAdapter(GeospatialDataSourceAdapter):
         from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 
         fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
-        caps = get_capabilities("stac")
+        # V7（ADR-0119 W5）：探测后 capability（filter extension conformance
+        # 才升级 filter 下推；失败回落静态矩阵 = 历史行为）。
+        caps = self.capabilities_v2()
         # V5（Wave 9）：统计收割进计划（item_count 等 → DatasetStatistics；
         # 无统计时逐位回落历史行为）。
         from app.services.data_fabric.query.statistics import statistics_for_request
@@ -469,6 +517,29 @@ class STACAdapter(GeospatialDataSourceAdapter):
             else:
                 payload["datetime"] = f"{v2.temporal.value}/.."
 
+        # V7（ADR-0119 W5）：filter extension 声明且计划判定可下推时，把
+        # 下推半编译为 CQL2-JSON 随 POST 发送（结构化，无字符串拼接面）。
+        # 本地余项仍逐行求值（pushed 时余项通常为空；未声明扩展时整谓词
+        # 走历史本地求值路径，行为逐位不变）。
+        from app.services.data_fabric.query.pushdown import resolve_plan_filter_split
+
+        stac_remote, stac_local = resolve_plan_filter_split(v2.filter, plan)
+        pushed = False
+        fs = getattr(plan, "filter_split", None)
+        if (
+            v2.filter is not None
+            and stac_remote is not None
+            and isinstance(fs, dict)
+            and isinstance(fs.get("pushed"), dict)
+        ):
+            from app.services.data_fabric.query.compilers import (
+                compile_predicate_cql2_json,
+            )
+
+            payload["filter"] = compile_predicate_cql2_json(stac_remote)
+            payload["filter-lang"] = "cql2-json"
+            pushed = True
+
         # POST /search 保持原状（不引入新参数）；timeout 取自 ExecutionBudget
         resp = self.session.post(
             search_url, json=payload, timeout=min(v2.execution.deadline_s, 30.0),
@@ -506,12 +577,12 @@ class STACAdapter(GeospatialDataSourceAdapter):
             truncated = matched > offset + returned
         next_cursor = encode_cursor([next_token or next_url]) if (truncated and (next_token or next_url)) else None
 
-        # 属性谓词本地求值（caps.filter_pushdown=False；页内有界）。
-        # V5：拆分计划时只求值本地余项（历史路径 = 整个 v2.filter，逐位一致）。
-        from app.services.data_fabric.query.pushdown import resolve_plan_filter_split
-
-        stac_remote, stac_local = resolve_plan_filter_split(v2.filter, plan)
-        stac_predicate = stac_local if stac_local is not None else stac_remote
+        # 属性谓词本地求值（V7 前恒本地；现在仅本地余项 —— pushed 时余项
+        # 通常为空）。V5：拆分计划时只求值本地余项（历史路径 = 整个
+        # v2.filter，逐位一致）。
+        stac_predicate = stac_local if stac_local is not None else (
+            None if pushed else stac_remote
+        )
         # F2（round2）：远端口径命中数（bbox/datetime/分页窗口内的
         # numberMatched），仅在属性谓词本地求值时留存并如实命名。
         remote_scoped_matched: Optional[int] = None
