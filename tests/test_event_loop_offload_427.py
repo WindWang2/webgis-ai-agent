@@ -261,7 +261,12 @@ async def test_svg_sanitize_off_loop(monkeypatch, tmp_path):
     file = UploadFile(file=io.BytesIO(b"<svg/>"), filename="map.svg")
     try:
         res = await _assert_loop_responsive_while(
-            lambda: map_mod.upload_map_export(file, title="t", _user={"user_id": "u1"})
+            # 直调不经 FastAPI 依赖注入：Form 默认值是 truthy 的 Form 对象，
+            # V5 新增参数必须显式传（否则 json.loads(Form) → 400 抢先返回，
+            # offload 观测窗口直接失效，见 test_upload_temp_write_off_loop 同款注释）。
+            lambda: map_mod.upload_map_export(
+                file, title="t", render_diagnostics=None, _user={"user_id": "u1"}
+            )
         )
         assert res["success"] is True
         assert observed["thread"] != _main_thread, "_sanitize_svg ran on the event loop thread"
@@ -287,7 +292,10 @@ async def test_svg_sanitize_http_error_propagates(monkeypatch, tmp_path):
     file = UploadFile(file=io.BytesIO(b"not-svg"), filename="map.svg")
     try:
         with pytest.raises(HTTPException) as exc_info:
-            await map_mod.upload_map_export(file, _user={"user_id": "u1"})
+            # render_diagnostics 必须显式传 None（直调时 Form 默认值 truthy，
+            # 否则 400 来自诊断载荷校验而非 sanitizer —— 见上方同款注释）。
+            await map_mod.upload_map_export(
+                file, render_diagnostics=None, _user={"user_id": "u1"})
         assert exc_info.value.status_code == 400
     finally:
         await file.close()

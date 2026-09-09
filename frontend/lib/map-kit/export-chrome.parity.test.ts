@@ -12,10 +12,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import { resolveMapComponents } from '@/lib/map-components/resolve-components';
+import catalog from '@/lib/map-components/component-catalog.generated.json';
 import {
   buildExportChrome,
   VISUAL_TYPES,
   type BuildExportChromeOptions,
+  type ExportDegradationCode,
 } from '@/lib/map-kit/export-chrome';
 import { CHROME_RENDERABLE_TYPES as LIVE_CHROME_TYPES } from '@/lib/map-components/chrome-types';
 
@@ -267,5 +269,245 @@ describe('Wave 9 · 显式降级诊断', () => {
       { width: 800, height: 600 },
     );
     expect(model.degradations).toEqual([]);
+  });
+});
+
+describe('V5 · 渲染诊断词表对齐（ADR-0118 D1）', () => {
+  // 唯一权威：app/lib/cartography/render_diagnostics.py，经目录导出。
+  const authoritative = new Set(
+    (catalog as unknown as { renderDiagnostics: { code: string }[] })
+      .renderDiagnostics.map((d) => d.code),
+  );
+
+  it('前端 ExportDegradation 码必须是后端权威词表的子集', () => {
+    // review-r1：label_suppressed_too_long 移除（无发射器死码），词表 19→18。
+    expect(authoritative.size).toBeGreaterThanOrEqual(18);
+    const frontendCodes: ExportDegradationCode[] = [
+      'chart_ref_unavailable',
+      'chart_kind_unsupported_export',
+      'table_ref_unavailable',
+      'component_skipped_invalid',
+      'label_truncated',
+      'legend_entries_truncated',
+      'features_truncated',
+      'export_timeout_partial',
+      'vector_svg_fallback_raster',
+      'basemap_omitted_vector_svg',
+      'pdf_text_rasterized_cjk',
+      'comparison_second_view_not_exported',
+      'comparison_export_composed',
+      'cartogram_unsupported',
+      'small_multiple_panel_skipped',
+      'atlas_page_skipped',
+      'atlas_page_limit_truncated',
+      'terrain_3d_scale_caveat',
+    ];
+    for (const code of frontendCodes) {
+      expect(authoritative.has(code), `code ${code} 不在后端权威词表`).toBe(true);
+    }
+  });
+});
+
+// ── W7（ADR-0118）：导出真相与 live 合成对齐 ────────────────────────────
+import { vi } from 'vitest';
+import { composeExportSpec } from './exporter';
+import { drawChromeLegend, drawChromeColorbar } from './export-chrome';
+import { legendEntries } from '@/components/map/map-components/legends';
+
+/** 画布绘制捕获（drawChrome* 纯绘制函数的断言面）。 */
+function makeDrawCtx() {
+  const calls = { text: [] as string[], fills: [] as unknown[] };
+  const ctx = {
+    fillText: vi.fn((s: string) => calls.text.push(String(s))),
+    measureText: vi.fn(() => ({ width: 40 })),
+    fillRect: vi.fn(),
+    strokeRect: vi.fn(),
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    closePath: vi.fn(),
+    arcTo: vi.fn(),
+    arc: vi.fn(),
+    fill: vi.fn(),
+    stroke: vi.fn(),
+    save: vi.fn(),
+    restore: vi.fn(),
+    translate: vi.fn(),
+    rotate: vi.fn(),
+    createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+    set fillStyle(v: unknown) { calls.fills.push(v); },
+    get fillStyle() { return ''; },
+    set font(_v: string) {},
+    get font() { return ''; },
+    set strokeStyle(_v: string) {},
+    set lineWidth(_v: number) {},
+    set textAlign(_v: string) {},
+    set shadowColor(_v: string) {},
+    set shadowBlur(_v: number) {},
+  } as unknown as CanvasRenderingContext2D;
+  const d = {
+    ctx,
+    darkMode: false,
+    scalePx: (v: number) => v,
+    targetW: 1200,
+    targetH: 800,
+    style: { fontFamily: 'sans-serif', accentColor: '#3182bd' },
+  } as unknown as Parameters<typeof drawChromeLegend>[0];
+  return { d, calls };
+}
+
+describe('W7 · 导出真相 parity（ADR-0118）', () => {
+  it('① pending 合并：composeExportSpec 与 live composeLiveMapSpec 同源（可见性翻转/移除进导出）', async () => {
+    const committed = {
+      layout: { components: [] },
+      sources: {},
+      layers: [
+        { id: 'lyr-a', type: 'fill', source: 'lyr-a', layout: { visibility: 'visible' }, paint: {} },
+        { id: 'lyr-b', type: 'fill', source: 'lyr-b', layout: { visibility: 'visible' }, paint: {} },
+      ],
+    };
+    const hud = { layers: [], processLayers: {}, activeFilters: {}, selectionFilters: {}, is3D: false };
+    const plain = await composeExportSpec(committed as never, hud as never, {}, []);
+    expect((plain as { layers?: unknown[] }).layers).toHaveLength(2);
+
+    const merged = (await composeExportSpec(
+      committed as never,
+      hud as never,
+      { 'lyr-a': { visible: false } },
+      ['lyr-b'],
+    )) as { layers?: Array<{ id: string; layout?: { visibility?: string } }> };
+    expect(merged.layers?.find((l: { id: string }) => l.id === 'lyr-a')?.layout?.visibility).toBe('none');
+    expect(merged.layers?.some((l: { id: string }) => l.id === 'lyr-b')).toBe(false);
+  });
+
+  it('② 图例标题 parity：导出画 legend.title（live 同源），缺失回退字段格式', async () => {
+    const opts = buildOpts();
+    opts.legendSpecsByLayer = {
+      'district-1': {
+        type: 'graduated',
+        field: '学校数',
+        breaks: [0, 10],
+        palette_colors: ['#edf8e9'],
+        title: '学校密度图例',
+      } as never,
+    };
+    const model = await buildExportChrome(opts, CANVAS);
+    expect((model.legends[0].legendSpec as { title?: string }).title).toBe('学校密度图例');
+
+    const { d, calls } = makeDrawCtx();
+    drawChromeLegend(d, model.legends[0], { marginX: 10 });
+    expect(calls.text).toContain('学校密度图例');
+    expect(calls.text.some((s) => s.startsWith('字段: '))).toBe(false);
+  });
+
+  it('②b 图例标题缺省回退「字段: xxx」（旧 spec 不回归）', () => {
+    const { d, calls } = makeDrawCtx();
+    drawChromeLegend(
+      d,
+      {
+        kind: 'legend',
+        anchor: 'bottom-left',
+        legendSpec: {
+          type: 'graduated',
+          field: '学校数',
+          breaks: [0, 10],
+          palette_colors: ['#edf8e9'],
+        },
+      } as never,
+      { marginX: 10 },
+    );
+    expect(calls.text).toContain('字段: 学校数');
+  });
+
+  it('③ 死词表发射：未知 chart kind 补发 chart_kind_unsupported_export', async () => {
+    const spec = {
+      layout: {
+        components: [{
+          id: 'chart-v', type: 'chart_panel', enabled: true, position: 'top-left',
+          options: { chart: { type: 'violin', title: '分布', data: [{ name: 'a', value: 1 }] } },
+        }],
+      },
+    };
+    const model = await buildExportChrome(
+      { spec, viewport: { width: 800, height: 600 }, legendSpecsByLayer: {} } as BuildExportChromeOptions,
+      { width: 800, height: 600 },
+    );
+    expect(model.degradations).toContainEqual(
+      expect.objectContaining({ code: 'chart_kind_unsupported_export', componentId: 'chart-v', detail: 'violin' }),
+    );
+  });
+
+  it('③b 绑定缺失：legend 组件找不到 legend_spec 补发 component_skipped_invalid', async () => {
+    const spec = {
+      layout: {
+        components: [{
+          id: 'lg-x', type: 'legend', enabled: true, position: 'bottom-left',
+          options: { layerId: 'missing-layer' },
+        }],
+      },
+    };
+    const model = await buildExportChrome(
+      { spec, viewport: { width: 800, height: 600 }, legendSpecsByLayer: {} } as BuildExportChromeOptions,
+      { width: 800, height: 600 },
+    );
+    expect(model.degradations).toContainEqual(
+      expect.objectContaining({ code: 'component_skipped_invalid', componentId: 'lg-x' }),
+    );
+  });
+
+  it('③c 图例条目 >8：live 仅示前 8 的差异以 legend_entries_truncated 披露', async () => {
+    const categories = Array.from({ length: 10 }, (_, i) => ({ key: `k${i}`, color: '#888', label: `类${i}` }));
+    const opts = buildOpts();
+    opts.legendSpecsByLayer = {
+      'district-1': { type: 'categorical', field: '类型', categories } as never,
+    };
+    const model = await buildExportChrome(opts, CANVAS);
+    expect(model.degradations).toContainEqual(
+      expect.objectContaining({ code: 'legend_entries_truncated', detail: '8' }),
+    );
+  });
+
+  it('④ nodata parity：live legendEntries 与 export drawChromeLegend 同源渲染 nodata', () => {
+    const spec = {
+      type: 'graduated',
+      field: '学校数',
+      breaks: [0, 10],
+      palette_colors: ['#edf8e9'],
+      nodata: { color: '#e2e8f0', label: '缺失数据' },
+    } as never;
+
+    // live 侧（legends.tsx legendEntries）
+    const entries = legendEntries(spec);
+    expect(entries.at(-1)).toEqual({ color: '#e2e8f0', label: '缺失数据' });
+
+    // export 侧（drawChromeLegend）
+    const { d, calls } = makeDrawCtx();
+    drawChromeLegend(
+      d,
+      { kind: 'legend', anchor: 'bottom-left', legendSpec: spec } as never,
+      { marginX: 10 },
+    );
+    expect(calls.text).toContain('缺失数据');
+  });
+
+  it('④b nodata：export drawChromeColorbar 渲染 nodata 色块条目', () => {
+    const { d, calls } = makeDrawCtx();
+    drawChromeColorbar(
+      d,
+      {
+        kind: 'colorbar',
+        anchor: 'bottom-right',
+        legendSpec: {
+          type: 'continuous',
+          field: '密度',
+          min: 0,
+          max: 10,
+          palette_colors: ['#111', '#222'],
+          nodata: { color: '#e2e8f0', label: '无数据' },
+        },
+      } as never,
+      { marginX: 10 },
+    );
+    expect(calls.text).toContain('无数据');
   });
 });

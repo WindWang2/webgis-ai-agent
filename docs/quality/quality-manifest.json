@@ -6847,7 +6847,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "491ac0e53ddef3784ac686585977b57aa3dbb7efe9e99bc0d9490b626a54a212",
+ "fingerprint": "1ef491af60c6a091ac1e63f916a164552d0115adff69999b443429d73d753ded",
  "gate": {
   "fields": {
    "capabilities": {
@@ -8551,6 +8551,7 @@
    ],
    "tests": [
     "tests/test_context_builder_round2.py",
+    "tests/test_export_frames_v5.py",
     "tests/test_export_phase3.py",
     "tests/test_session_overview.py",
     "tests/unit/gis/test_platform_capabilities.py"
@@ -14965,7 +14966,8 @@
    ],
    "tests": [
     "tests/unit/gis/test_platform_capabilities.py",
-    "tests/unit/test_cartography_tools_evidence.py"
+    "tests/unit/test_cartography_tools_evidence.py",
+    "tests/unit/test_mapspec_layout_intent_v5.py"
    ],
    "tier": 2
   },

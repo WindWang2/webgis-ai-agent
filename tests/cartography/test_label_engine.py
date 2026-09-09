@@ -21,10 +21,13 @@ from shapely.geometry import Point, Polygon
 
 from app.lib.cartography.label_engine import (
     DECLUTTER_CANDIDATE_OFFSETS,
+    MAX_SVG_LABEL_CHARS,
     LabelEngineInput,
     LabelFeature,
     estimate_label_box,
+    fit_label_text,
     solve_labels,
+    wrap_label_text,
 )
 
 pytestmark = pytest.mark.cartography
@@ -250,3 +253,102 @@ def test_scale_regression_300_points_within_2s() -> None:
     again = solve_labels(LabelEngineInput(features=feats,
                                           viewport=[0.0, 0.0, 800.0, 600.0]))
     assert sol.model_dump() == again.model_dump()
+
+
+# ── 11. 文本适配契约（W3）：fit / wrap / label_too_long ──────────────────
+class TestLabelTextFittingContract:
+    """W3 文本适配契约：截断/换行纯函数 + solve 的 label_too_long 抑制理由。
+
+    fit/wrap 是纯函数（无随机、无 locale 依赖），确定性 = 同输入两次调用
+    完全相等。截断按 Unicode code point（与 TS 侧 string slice 在 BMP 内
+    语义一致，跨孪生 parity 用 W10 corpus 锁定）。
+    """
+
+    def test_max_svg_label_chars_constant_shared(self) -> None:
+        # W4（SVG 编译器）/W5（前端）共享口径：60 字符
+        assert MAX_SVG_LABEL_CHARS == 60
+
+    def test_fit_short_text_passthrough(self) -> None:
+        fitted, truncated = fit_label_text("北京市", max_chars=60)
+        assert (fitted, truncated) == ("北京市", False)
+        # 确定性：两次调用完全相等
+        assert fit_label_text("北京市") == ("北京市", False)
+
+    def test_fit_exact_boundary_no_truncation(self) -> None:
+        text = "A" * 60
+        assert fit_label_text(text, max_chars=60) == (text, False)
+
+    def test_fit_truncates_to_max_chars_with_ellipsis(self) -> None:
+        text = "A" * 100
+        fitted, truncated = fit_label_text(text, max_chars=60)
+        assert truncated is True
+        assert fitted == "A" * 59 + "…"
+        assert len(fitted) == 60
+        # 确定性
+        assert fit_label_text(text, max_chars=60) == (fitted, True)
+
+    def test_fit_cjk_counts_code_points(self) -> None:
+        # 截断按 Unicode code point：每个 CJK 字符计 1，与 len()/切片语义一致
+        text = "城" * 70
+        fitted, truncated = fit_label_text(text, max_chars=60)
+        assert truncated is True
+        assert fitted == "城" * 59 + "…"
+        assert len(fitted) == 60
+
+    def test_wrap_fits_single_line(self) -> None:
+        assert wrap_label_text("hello", max_chars=60) == ["hello"]
+        assert wrap_label_text("", max_chars=60) == [""]
+
+    def test_wrap_is_width_aware_for_cjk(self) -> None:
+        # 宽度口径沿用 estimate_label_box：CJK 1.0em / 其他 0.6em。
+        # max_chars=60 → 每行 36em 预算 = 60 个窄字符位 → 36 个 CJK 字符。
+        lines = wrap_label_text("城" * 37, max_chars=60, max_lines=2)
+        assert lines == ["城" * 36, "城"]
+
+    def test_wrap_latin_line_capacity(self) -> None:
+        lines = wrap_label_text("A" * 200, max_chars=60, max_lines=2)
+        assert len(lines) == 2
+        # 每行至多 60 个窄字符（36em 预算）；放不下 → 最后行截断
+        assert lines[0] == "A" * 60
+        assert lines[1] == "A" * 60
+        assert len("".join(lines)) < 200
+
+    def test_wrap_max_lines_one_truncates(self) -> None:
+        lines = wrap_label_text("AB" * 50, max_chars=10, max_lines=1)
+        assert len(lines) == 1
+        assert lines[0] == "AB" * 5  # 6em 预算 = 10 个窄字符位
+
+    def test_wrap_deterministic(self) -> None:
+        text = "混合text文本" * 30
+        assert wrap_label_text(text, max_chars=60, max_lines=2) == \
+            wrap_label_text(text, max_chars=60, max_lines=2)
+
+    def test_solve_suppressed_overlong_label_gets_label_too_long(self) -> None:
+        # 90 字符长文本 → 巨型标签框必然出界/碰撞；抑制理由诚实标注
+        # label_too_long（而非笼统的 collision）
+        feats = [
+            _point("corner", 98.0, 98.0, "X" * 90, allow_callout=False),
+        ]
+        sol = solve_labels(LabelEngineInput(features=feats,
+                                            viewport=[0.0, 0.0, 100.0, 100.0]))
+        sup = _sup(sol, "corner")
+        assert sup is not None and sup.status == "suppressed"
+        assert sup.reason == "label_too_long"
+
+    def test_solve_short_label_collision_reason_unchanged(self) -> None:
+        # 对照组：同几何、短文本 → 维持既有 collision 词表
+        feats = [
+            _point("corner", 98.0, 98.0, "XM", allow_callout=False),
+        ]
+        sol = solve_labels(LabelEngineInput(features=feats,
+                                            viewport=[0.0, 0.0, 100.0, 100.0]))
+        sup = _sup(sol, "corner")
+        assert sup is not None and sup.reason == "collision"
+
+    def test_solve_gate_reasons_take_precedence_over_label_too_long(self) -> None:
+        # 门控（empty_text / below_min_zoom）先于放置循环，长文本不覆盖其理由
+        feat = _point("gated", 100.0, 100.0, "X" * 90, min_zoom=12.0)
+        sol = solve_labels(LabelEngineInput(features=[feat],
+                                            viewport=[0, 0, 400, 400], zoom=10.0))
+        sup = _sup(sol, "gated")
+        assert sup is not None and sup.reason == "below_min_zoom"

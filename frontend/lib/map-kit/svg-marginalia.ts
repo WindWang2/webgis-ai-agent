@@ -6,6 +6,40 @@
  * and backend WeasyPrint PDF reports.
  */
 
+// ── W5（ADR-0118）：真矢量导出对接增量 ─────────────────────────────────
+// 既有导出（renderSvgNorthArrow 等）保持原样；以下为 vector-svg-export 的
+// 组装层准备的增量 API —— 纯片段（不自带 <svg> 根）与共享转义。
+
+/**
+ * 转义进 SVG 文本/属性的字符串（html.escape(s, quote=True) 同链 —— 与孪生
+ * 编译器 mapspec-to-svg.escapeSvgAttr 同一最小转义集，防属性逃逸/注入）。
+ */
+export function escapeSvgText(value: unknown): string {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+export interface FrameBorderOptions {
+  width: number;
+  height: number;
+  margin?: number;
+  color?: string;
+}
+
+/** 图框（纯 <rect> 片段 —— 调用方组合进外层画布坐标系，与 academic 外框同形态）。 */
+export function renderSvgFrameBorder(options: FrameBorderOptions): string {
+  const margin = options.margin ?? 24;
+  const color = options.color ?? "#1e3a8a";
+  const x = margin;
+  const y = margin;
+  const w = Math.max(options.width - margin * 2, 0);
+  const h = Math.max(options.height - margin * 2, 0);
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${color}" stroke-width="2" rx="4" />`;
+}
+
 export interface NorthArrowOptions {
   width?: number;
   height?: number;

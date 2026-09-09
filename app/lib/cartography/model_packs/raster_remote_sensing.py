@@ -267,6 +267,9 @@ RASTER_REMOTE_SENSING_PACK: List[MapModel] = [
         accepted_artifact_types=["raster_surface"],
         pitfalls_zh=[
             "planned：runtime 无 swipe 交互语义与导出双帧契约，本分支未实现",
+            "V5（ADR-0118 D7）部分落地：live swipe 对比的静态导出现已显式"
+            "组合（comparison_export_composed）或诚实披露"
+            "（comparison_second_view_not_exported），不再静默丢第二视图",
             "导出侧等价物是双帧并排（before/after 双面板），swipe 仅限交互面",
         ],
         sources=[],

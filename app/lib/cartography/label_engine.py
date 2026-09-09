@@ -40,8 +40,16 @@
 
 抑制理由枚举：``empty_text`` / ``below_min_zoom`` / ``collision`` /
 ``repeat_distance``（同文本候选全部被 repeat_distance 跳过）/
-``no_candidates``（几何退化无候选）。标签框锚定约定：point 标注 (x, y) 为
-标签框**左下角**（位移方向语义自然），line/polygon 为标签框**中心**。
+``no_candidates``（几何退化无候选）/ ``label_too_long``（放置失败且文本
+超过 ``LABEL_TOO_LONG_THRESHOLD`` 字符 —— 长文本的抑制根因是框过大，
+如实标注而不是笼统报 collision；门控理由 empty_text/below_min_zoom 优先，
+不被覆盖）。标签框锚定约定：point 标注 (x, y) 为标签框**左下角**（位移
+方向语义自然），line/polygon 为标签框**中心**。
+
+文本适配契约（W3，纯函数增量，不改变求解语义）：``fit_label_text`` 按
+max_chars 截断加省略号、``wrap_label_text`` 按 CJK 宽度口径贪心断行，
+``MAX_SVG_LABEL_CHARS`` 是导出孪生（Python SVG 编译器 / 前端 exporter）
+共享的单标签字符上限。
 """
 from __future__ import annotations
 
@@ -73,6 +81,13 @@ _CJK_RANGES: Tuple[Tuple[int, int], ...] = (
 )
 
 Box = Tuple[float, float, float, float]  # AABB (x1, y1, x2, y2)
+
+# ── 文本适配契约常量（W4 SVG 编译器 / W5 前端 exporter 共享口径）──────────
+#: 单标签进入导出产物的最大字符数（Unicode code point 口径）。超过即由
+#: ``fit_label_text`` 截断并发出 ``label_truncated`` 诊断。
+MAX_SVG_LABEL_CHARS = 60
+#: solve_labels 判定 ``label_too_long`` 抑制理由的文本长度阈值（code point）。
+LABEL_TOO_LONG_THRESHOLD = 80
 
 
 class LabelCandidate(BaseModel):
@@ -152,6 +167,71 @@ def estimate_label_box(text: str, font_size: float = 12.0) -> Tuple[float, float
         return (0.0, font_size * 1.2)
     em_sum = sum(1.0 if _is_cjk_char(ch) else 0.6 for ch in text)
     return (em_sum * font_size, font_size * 1.2)
+
+
+# ── 文本适配契约（W3：fit / wrap，纯函数，无随机无 locale）────────────────
+def fit_label_text(
+    text: str,
+    *,
+    max_chars: int = MAX_SVG_LABEL_CHARS,
+    ellipsis: str = "…",
+) -> Tuple[str, bool]:
+    """把标签文本截到 ``max_chars`` 内，返回 ``(fitted, was_truncated)``。
+
+    超 ``max_chars`` 时取前 ``max_chars - 1`` 个字符追加 ``ellipsis``（总长
+    恰为 ``max_chars``）；未超则原样返回、不附加省略号。确定性：无随机、
+    无 locale 依赖，同输入永远同输出。
+
+    截断按 **Unicode code point** 计（Python ``len()``/切片语义，与 TS 侧
+    ``String.prototype.slice`` 在 BMP 内一致；astral 代理对字符在 JS UTF-16
+    下口径不同，属已知边界 —— 跨孪生 parity 用 W10 corpus 锁定）。
+    """
+    s = text if isinstance(text, str) else str(text)
+    if max_chars < 1:
+        max_chars = 1
+    if len(s) <= max_chars:
+        return s, False
+    return s[: max_chars - 1] + ellipsis, True
+
+
+def wrap_label_text(
+    text: str,
+    *,
+    max_chars: int = MAX_SVG_LABEL_CHARS,
+    max_lines: int = 2,
+) -> List[str]:
+    """按 CJK 宽度口径把标签文本贪心断行，返回行列表（1..max_lines 行）。
+
+    行宽预算 = ``max_chars × 0.6em``（即 max_chars 个"窄字符"位的 em 总量，
+    与 ``estimate_label_box`` 的 CJK 1.0em / 其他 0.6em 加权同口径）：一行
+    恰容纳 max_chars 个窄字符，CJK 字符按 1/0.6 ≈ 1.67 个窄字符位计。
+    贪心：逐字符累加，下一个字符越界即换行；已达 ``max_lines`` 仍放不下时
+    最后行按宽度截断（无省略号 —— 需要省略号语义的调用方对末行自行接
+    ``fit_label_text``）。宽度以 0.1em 整数单位累加（窄字符 6、CJK 10），
+    避免浮点累加漂移破坏确定性边界。确定性：纯字符循环，同输入永远同输出。
+    """
+    s = text if isinstance(text, str) else str(text)
+    if max_lines < 1:
+        max_lines = 1
+    if max_chars < 1:
+        max_chars = 1
+    budget = max_chars * 6  # 0.1em 单位：max_chars 个窄字符位
+
+    lines: List[str] = []
+    cur: List[str] = []
+    cur_w = 0
+    for ch in s:
+        w = 10 if _is_cjk_char(ch) else 6
+        if cur and cur_w + w > budget:
+            if len(lines) == max_lines - 1:
+                break  # 最后一行已就位：剩余内容按宽度截断
+            lines.append("".join(cur))
+            cur = []
+            cur_w = 0.0
+        cur.append(ch)
+        cur_w += w
+    lines.append("".join(cur))
+    return lines
 
 
 # ── 角度工具（确定性；keep-upright 结果落在 [-90, 90]）──────────────────
@@ -416,6 +496,11 @@ def solve_labels(payload: LabelEngineInput) -> LabelSolution:
                 reason = "repeat_distance"
             else:
                 reason = "collision"
+            # W3：放置失败且文本超长者，抑制根因是标签框过大 —— 如实标注
+            # label_too_long（门控理由 empty_text/below_min_zoom 在更早的
+            # gate 分支已落地，不受此覆盖影响）。
+            if len(f.text) > LABEL_TOO_LONG_THRESHOLD:
+                reason = "label_too_long"
             suppressed.append(LabelPlacement(
                 feature_id=f.id, x=px, y=py, angle=0.0,
                 status="suppressed", reason=reason,
@@ -472,5 +557,9 @@ __all__ = [
     "LabelEngineInput",
     "solve_labels",
     "estimate_label_box",
+    "fit_label_text",
+    "wrap_label_text",
     "DECLUTTER_CANDIDATE_OFFSETS",
+    "MAX_SVG_LABEL_CHARS",
+    "LABEL_TOO_LONG_THRESHOLD",
 ]

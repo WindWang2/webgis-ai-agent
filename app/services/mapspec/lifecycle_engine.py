@@ -1317,12 +1317,24 @@ class MapSpecLifecycleEngine:
                     old_mapspec_snapshot = loaded
                     mapspec = {**loaded} if loaded else {}
                     layout = dict(mapspec.get("layout", {}))  # copy layout branch
+                    # V5（ADR-0118 D2）：legend/margins 是 dict 形态的局部意图，
+                    # 做字段级 merge —— 整值替换会静默丢弃既有 position 等键。
                     if intent.legend is not None:
-                        layout["legend"] = intent.legend
+                        prev_legend = layout.get("legend")
+                        layout["legend"] = (
+                            {**prev_legend, **intent.legend}
+                            if isinstance(prev_legend, dict)
+                            else dict(intent.legend)
+                        )
                     if intent.controls is not None:
                         layout["controls"] = intent.controls
                     if intent.margins is not None:
-                        layout["margins"] = intent.margins
+                        prev_margins = layout.get("margins")
+                        layout["margins"] = (
+                            {**prev_margins, **intent.margins}
+                            if isinstance(prev_margins, dict)
+                            else dict(intent.margins)
+                        )
                     if intent.components is not None:
                         # 组件整体替换（webgis_component_update 先读后写实现
                         # 局部突变）；条目要求唯一 string id + string type，
@@ -1555,10 +1567,20 @@ class MapSpecLifecycleEngine:
                 # before structural validation/commit so the persisted MapSpec
                 # and runtime layer projection share one fingerprint. Rollback
                 # restores an exact historical snapshot and is review-only.
+                # V5（ADR-0118 D2）user-wins：legend 显式关闭是用户的 durable
+                # 决策（与 ST-P2-2 层可见性 user-wins 同类）—— 只要 merge 后
+                # 的 committed 状态 visible=False（无论本次还是先前变异显式
+                # 声明），AUTO_SAFE 一律不得翻回；finding 照常进入 review
+                # 证据（诚实披露）。agent 要图例必须显式 visible=True。
+                suppressed_repairs: set = set()
+                merged_legend = (mapspec.get("layout") or {}).get("legend")
+                if isinstance(merged_legend, dict) and merged_legend.get("visible") is False:
+                    suppressed_repairs.add("set_map_legend_visibility")
                 try:
                     cartographic_loop = review_and_repair_cartography(
                         mapspec,
                         max_iterations=0 if is_rollback else 2,
+                        suppressed_repairs=suppressed_repairs or None,
                     )
                     mapspec = cartographic_loop.mapspec
                     cartographic_review = cartographic_loop.to_dict()
@@ -1946,7 +1968,12 @@ class MapSpecLifecycleEngine:
                     if prior_fp is not None:
                         self._prior_blocking_cache[prior_fp] = prior_blocking
                         while len(self._prior_blocking_cache) > 256:
-                            self._prior_blocking_cache.popitem(next(iter(self._prior_blocking_cache)))
+                            # FIFO 驱逐：dict.popitem() 是 LIFO 且不接受参数
+                            # （曾误写 popitem(next(iter(...))) → 缓存满即
+                            # TypeError，整个 batch 事务回滚）。
+                            self._prior_blocking_cache.pop(
+                                next(iter(self._prior_blocking_cache))
+                            )
                 new_blocking = self._blocking_error_codes(validation) - prior_blocking
                 if new_blocking:
                     msg = "; ".join(

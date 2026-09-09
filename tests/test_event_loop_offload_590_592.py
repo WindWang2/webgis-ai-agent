@@ -316,7 +316,12 @@ async def test_map_export_upload_persist_off_loop(monkeypatch, tmp_path):
     file = UploadFile(file=io.BytesIO(b"pngbytes"), filename="map.png")
     try:
         res = await _assert_loop_responsive_while(
-            lambda: map_mod.upload_map_export(file, title="t", _user={"user_id": "u1"})
+            # 直调不经 FastAPI 依赖注入：Form 默认值是 truthy 的 Form 对象，
+            # V5 新增参数必须显式传（否则 json.loads(Form) → 400 抢先返回，
+            # offload 观测窗口直接失效，见 test_upload_temp_write_off_loop 同款注释）。
+            lambda: map_mod.upload_map_export(
+                file, title="t", render_diagnostics=None, _user={"user_id": "u1"}
+            )
         )
         assert observed["thread"] != _main_thread, "export write ran on the event loop thread"
         assert res["success"] is True

@@ -20,7 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.api_response import ErrCode
 from app.models.report import REPORT_STATUS_IN_PROGRESS, Report
 from app.models.db_model import Conversation, Message
-from app.services.mapspec_to_svg import compile_mapspec_to_svg
+from app.services.mapspec_to_svg import (
+    compile_mapspec_to_svg_detailed,
+    resolve_spec_timeout_ms,
+)
 
 try:
     import weasyprint
@@ -30,6 +33,19 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 REPORT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "reports")
+
+# W4：SVG 编译超时的诚实降级占位 —— 编译超过 spec 同口径预算时，报告不再
+# 无界阻塞（WeasyPrint 内联路径原本无任何超时保护），也不伪成功：占位图以
+# data-export-degraded="true" + export_timeout_partial 词汇如实披露。
+_SVG_TIMEOUT_PLACEHOLDER_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" '
+    'data-export-degraded="true" data-export-degraded-reason="export_timeout_partial" '
+    'role="img" aria-label="地图导出超时">'
+    '<rect width="100%" height="100%" fill="#f8fafc" />'
+    '<text x="50%" y="50%" text-anchor="middle" font-size="28" fill="#b91c1c" '
+    'font-family="sans-serif">地图导出超时，本图未完整渲染</text>'
+    '</svg>'
+)
 
 
 def file_ext(fmt: str) -> str:
@@ -375,10 +391,7 @@ class ReportService:
 
         vector_svg = None
         if mapspec:
-            try:
-                vector_svg = compile_mapspec_to_svg(mapspec, target_dpi=300)
-            except Exception as ex:
-                logger.warning(f"Failed to compile MapSpec to SVG for report: {ex}")
+            vector_svg = self._compile_vector_svg_for_report(mapspec)
 
         return {
             "title": f"分析报告: {session_title}",
@@ -393,6 +406,65 @@ class ReportService:
             "tool_results": tool_results,
             "vector_svg": vector_svg,
         }
+
+    # ------------------------------------------------------------------
+    # Vector SVG compile (bounded)
+    # ------------------------------------------------------------------
+
+    async def _compile_vector_svg_bounded(
+        self, mapspec: dict[str, Any], timeout_s: float
+    ) -> Any:
+        """在可被取消的任务里跑同步编译：``asyncio.wait_for`` 到点即返回，
+        不再让 WeasyPrint 报告链路被无界编译阻塞（W4）。"""
+        return await asyncio.wait_for(
+            asyncio.to_thread(compile_mapspec_to_svg_detailed, mapspec, 300),
+            timeout=timeout_s,
+        )
+
+    def _compile_vector_svg_for_report(self, mapspec: dict[str, Any]) -> str:
+        """同步侧入口（worker 线程内无运行中的事件循环，``asyncio.run`` 建
+        临时循环）。超时预算与编译器同口径（``resolve_spec_timeout_ms``：
+        spec.thresholds.timeoutMs > 30000）。两条降级路径都走**既有 warning
+        通道**（logger.warning）并诚实降级：wall-clock 超时嵌占位图；
+        编译器协作式超时（timed_out）产物可能不完整，同样披露。"""
+        timeout_ms = resolve_spec_timeout_ms(mapspec)
+        try:
+            comp = asyncio.run(
+                self._compile_vector_svg_bounded(mapspec, timeout_ms / 1000.0)
+            )
+            if comp.timed_out:
+                logger.warning(
+                    "report export: vector SVG compile hit cooperative "
+                    "timeout budget %.0f ms — artifact may be partial",
+                    timeout_ms,
+                )
+                # 部分产物同样带 artifact 内降级标记（与占位图同词汇），
+                # 读者不依赖日志也能识别本图不完整。
+                comp_svg = comp.svg
+                root_idx = comp_svg.find("<svg")
+                if root_idx >= 0 and 'data-export-degraded' not in comp_svg[:comp_svg.find('>', root_idx) + 1]:
+                    comp_svg = (
+                        comp_svg[:root_idx + 4]
+                        + ' data-export-degraded="true" '
+                        + 'data-export-degraded-reason="export_timeout_partial"'
+                        + comp_svg[root_idx + 4:]
+                    )
+                    return comp_svg
+            if comp.diagnostics:
+                logger.info(
+                    "report export: %d render diagnostics emitted", len(comp.diagnostics)
+                )
+            return comp.svg
+        except asyncio.TimeoutError:
+            logger.warning(
+                "report export: vector SVG compile exceeded %.0f ms wall-clock "
+                "budget — embedding degraded placeholder (export_timeout_partial)",
+                timeout_ms,
+            )
+            return _SVG_TIMEOUT_PLACEHOLDER_SVG
+        except Exception as ex:
+            logger.warning(f"Failed to compile MapSpec to SVG for report: {ex}")
+            return None
 
     # ------------------------------------------------------------------
     # HTML rendering
