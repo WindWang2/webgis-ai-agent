@@ -513,7 +513,6 @@ def qualify_method(
     known = [d for d in dims if d.state != "unknown"]
     confidence = (sum(1 for d in known) / len(dims)) if dims else 0.0
 
-    fam = methodology_registry.family(candidate.family_id)
     return MethodQualificationReport(
         method_id=method_id,
         family_id=candidate.family_id,

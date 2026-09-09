@@ -69,7 +69,7 @@ def test_tiny_sample_hotspot_rejected() -> None:
     assert "QUAL_SAMPLE_SIZE_REJECTED" in report.reason_codes
     # 与 V4 资格引擎同判（oracle 对齐）
     from app.services.gis_harness.workflow_v4.methodology import (
-        get_methodology_registry, qualify_method_candidates,
+        qualify_method_candidates,
     )
     v4 = qualify_method_candidates(
         "spatial_statistics",
