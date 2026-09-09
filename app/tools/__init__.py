@@ -46,6 +46,8 @@ _TOOL_MODULES = [
     ("app.tools.cartography_tools", "register_mapspec_cartography_tools"),
     ("app.tools.templates", "register_template_tools"),
     ("app.services.gis_harness.tools", "register_gis_harness_tools"),
+    # Epic 11：方法知识只读工具面（classify/qualify/rank/explain/plan/query）
+    ("app.services.gis_harness.knowledge_tools", "register_knowledge_tools"),
     ("app.tools.project_tools", "register_project_tools"),
     ("app.tools.network_tools", "register_network_tools"),
     ("app.tools.temporal_tools", "register_temporal_tools"),
