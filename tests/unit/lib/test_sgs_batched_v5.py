@@ -150,9 +150,6 @@ class TestSGSBatched:
         bat_small = sequential_gaussian_simulation_batched(
             xy, z, targets, n_realizations=64, seed=42, k=12,
             n_path_groups=8, chunk_size=8)          # 触发钳制 → chunk=12
-        bat_large = sequential_gaussian_simulation_batched(
-            xy, z, targets, n_realizations=64, seed=42, k=12,
-            n_path_groups=8, chunk_size=64)
         # 序贯区制 E-type 均值的 MC 噪声高于单 chunk 区制（路径依赖），
         # 阈值按该区制校准（R=64、P=8）
         corr_ok = float(np.corrcoef(bat_small.mean, ok.predictions)[0, 1])

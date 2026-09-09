@@ -177,5 +177,3 @@ def run_case(case: OracleCase) -> Tuple[bool, str]:
     except Exception as exc:  # noqa: BLE001
         return False, f"unexpected error: {type(exc).__name__}: {exc}"
     return compare(actual, case.expect)
-
-    return x
