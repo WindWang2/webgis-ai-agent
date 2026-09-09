@@ -1458,6 +1458,11 @@
       "message": "组件配置无效，已跳过渲染"
     },
     {
+      "code": "diagnostics_truncated",
+      "severity": "warning",
+      "message": "诊断条目超出导出预算，超出部分未进入产物披露（上限 {detail} 条）"
+    },
+    {
       "code": "export_timeout_partial",
       "severity": "error",
       "message": "导出超时，产物可能不完整（{detail}）"
