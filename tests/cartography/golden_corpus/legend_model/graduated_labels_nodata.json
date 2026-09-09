@@ -1,0 +1,23 @@
+{
+  "name": "graduated_with_labels_and_nodata",
+  "legendSpec": {
+    "type": "graduated",
+    "field": "pop",
+    "title": "人口分级",
+    "breaks": [0, 5000, 20000, 100000],
+    "palette_colors": ["#eff6ff", "#93c5fd", "#1d4ed8"],
+    "labels": ["稀疏", "中等", "密集"],
+    "nodata": { "color": "#e5e7eb", "label": "缺测" }
+  },
+  "expected": {
+    "kind": "graduated",
+    "title": "人口分级",
+    "entries": [
+      { "label": "稀疏", "color": "#eff6ff", "kind": "class" },
+      { "label": "中等", "color": "#93c5fd", "kind": "class" },
+      { "label": "密集", "color": "#1d4ed8", "kind": "class" },
+      { "label": "缺测", "color": "#e5e7eb", "kind": "nodata" }
+    ],
+    "hasNodata": true
+  }
+}

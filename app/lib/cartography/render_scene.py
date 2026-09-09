@@ -161,38 +161,169 @@ def resolve_components(spec: Optional[Dict[str, Any]]) -> List[ResolvedComponent
     return [r for r in resolved if r is not None]
 
 
-# ── 图例 oracle 推导（render-scene.ts legendEntryCount 同口径）────────────
-# W5 起完整条目模型由 derive_legend_items 提供；本函数保留 oracle 数量口径
-# 与前端 describeRenderScene parity（golden fixtures 锁定）。
+# ── 图例条目单源（frontend/lib/map-kit/legend-model.ts 的 Python 镜像）───
+# W5 收敛：数量/标题/条目推导唯一权威；跨语言 parity 由共享 fixtures 锁定。
+
+
+def _significant(n: float) -> str:
+    """legend-card.ts significant() 同口径。"""
+    abs_n = abs(n)
+    decimals = 0 if abs_n >= 100 else 1 if abs_n >= 10 else 2 if abs_n >= 1 else 3
+    out = float(f"{n:.{decimals}f}")
+    if out == 0 and n != 0:
+        return f"{n:.1e}"
+    if out == int(out):
+        return str(int(out))
+    return str(out)
+
+
+def format_legend_value(n: float) -> str:
+    """legend-card.ts formatLegendValue() 的 Python 镜像（zh-CN 分组）。"""
+    import math
+
+    if not math.isfinite(n):
+        return "—"
+    abs_n = abs(n)
+    if abs_n >= 1_000_000:
+        return f"{_significant(n / 1_000_000)}M"
+    if abs_n >= 10_000:
+        return f"{_significant(n / 1_000)}k"
+    if float(n).is_integer():
+        return f"{int(n):,}"
+    return _significant(n)
+
+
+def _pick_continuous_color(colors: List[Any], t: float) -> str:
+    if not colors:
+        return "#888"
+    idx = min(len(colors) - 1, round(t * (len(colors) - 1)))
+    val = colors[idx]
+    return val if isinstance(val, str) and val else "#888"
+
+
+def derive_legend_items(legend_spec: Any) -> Optional[Dict[str, Any]]:
+    """legend_spec → 图例条目模型（前端 deriveLegendModel 同语义）。
+
+    返回 None = 无可呈现条目（消费端不画空卡）；bivariate kind 只承载
+    nodata 语义（专用色阵渲染器消费）。
+    """
+    if not isinstance(legend_spec, dict):
+        return None
+    spec = legend_spec
+    entries: List[Dict[str, str]] = []
+    nodata = spec.get("nodata")
+    nodata_entry: Optional[Dict[str, str]] = None
+    if isinstance(nodata, dict) and nodata.get("color"):
+        label = nodata.get("label")
+        nodata_entry = {
+            "label": label if isinstance(label, str) and label else "无数据",
+            "color": nodata["color"],
+            "kind": "nodata",
+        }
+
+    def _title() -> str:
+        title = spec.get("title")
+        if isinstance(title, str) and title:
+            return title
+        fld = spec.get("field")
+        return f"字段: {fld}" if isinstance(fld, str) and fld else "图例"
+
+    def _finish(kind: str, allow_empty: bool = False) -> Optional[Dict[str, Any]]:
+        if nodata_entry:
+            entries.append(nodata_entry)
+        if not entries and not allow_empty:
+            return None  # 无可呈现条目（前端同规则：不画空卡）
+        return {
+            "kind": kind,
+            "title": _title(),
+            "entries": entries,
+            "hasNodata": nodata_entry is not None,
+        }
+
+    legacy = spec.get("entries")
+    if isinstance(legacy, list):
+        for e in legacy:
+            if isinstance(e, dict) and isinstance(e.get("color"), str) and e.get("color"):
+                label = e.get("label")
+                entries.append({
+                    "color": e["color"],
+                    "label": str(label) if label is not None and str(label).strip() != "" else "",
+                    "kind": "class",
+                })
+        return _finish(str(spec.get("type", "categorical")))
+
+    spec_type = spec.get("type")
+    if spec_type == "bivariate":
+        return _finish("bivariate", allow_empty=True)
+
+    if spec_type == "categorical":
+        for c in spec.get("categories") or []:
+            if not isinstance(c, dict):
+                continue
+            label = c.get("label")
+            color = c.get("color")
+            entries.append({
+                "label": str(label) if label is not None and str(label).strip() != "" else str(c.get("key", "")),
+                "color": color if isinstance(color, str) and color else "#888",
+                "kind": "class",
+            })
+        return _finish("categorical")
+
+    if spec_type == "graduated":
+        breaks_raw = spec.get("breaks") or []
+        colors = spec.get("palette_colors") or []
+        breaks = [b for b in breaks_raw if isinstance(b, (int, float)) and not isinstance(b, bool)]
+        n = min(max(len(breaks) - 1, 0), len(colors))
+        labels = spec.get("labels")
+        for i in range(n):
+            override = labels[i] if isinstance(labels, list) and i < len(labels) else None
+            entries.append({
+                "label": str(override) if override is not None and str(override).strip() != ""
+                else f"{format_legend_value(breaks[i])} – {format_legend_value(breaks[i + 1])}",
+                "color": colors[i] if isinstance(colors[i], str) and colors[i] else "#888",
+                "kind": "class",
+            })
+        return _finish("graduated")
+
+    # continuous / divergent：min/mid/max 三读数（min/max 缺失 → 仅 nodata）
+    mn, mx = spec.get("min"), spec.get("max")
+    mn_num = isinstance(mn, (int, float)) and not isinstance(mn, bool)
+    mx_num = isinstance(mx, (int, float)) and not isinstance(mx, bool)
+    if mn_num and mx_num:
+        colors = spec.get("palette_colors") or []
+        mid = (mn + mx) / 2
+        entries.append({"label": format_legend_value(mn), "color": _pick_continuous_color(colors, 0), "kind": "class"})
+        entries.append({"label": format_legend_value(mid), "color": _pick_continuous_color(colors, 0.5), "kind": "class"})
+        entries.append({"label": format_legend_value(mx), "color": _pick_continuous_color(colors, 1), "kind": "class"})
+    return _finish("continuous")
+
+
+def derive_legend_title(legend_spec: Any) -> str:
+    """标题兜底单源（模型 None 时 oracle/快照仍需标题语义）。"""
+    if not isinstance(legend_spec, dict):
+        return "图例"
+    title = legend_spec.get("title")
+    if isinstance(title, str) and title:
+        return title
+    fld = legend_spec.get("field")
+    return f"字段: {fld}" if isinstance(fld, str) and fld else "图例"
 
 
 def legend_oracle(legend_spec: Any) -> Dict[str, Any]:
-    """(entryCount, hasNodata, title) —— 前端 oracle 同口径。"""
-    if not isinstance(legend_spec, dict):
-        return {"entryCount": 0, "hasNodata": False, "title": ""}
-    count = 0
-    if legend_spec.get("type") == "categorical":
-        categories = legend_spec.get("categories")
-        count = len(categories) if isinstance(categories, list) else 0
-    elif legend_spec.get("type") == "graduated":
-        breaks = legend_spec.get("breaks")
-        palette = legend_spec.get("palette_colors")
-        breaks_len = len(breaks) if isinstance(breaks, list) else 0
-        palette_len = len(palette) if isinstance(palette, list) else 0
-        count = min(max(breaks_len - 1, 0), palette_len)
-    elif isinstance(legend_spec.get("min"), (int, float)) and isinstance(
-        legend_spec.get("max"), (int, float)
-    ):
-        count = 3
-    nodata = legend_spec.get("nodata")
-    has_nodata = isinstance(nodata, dict) and bool(nodata.get("color"))
-    if has_nodata:
-        count += 1
-    title = legend_spec.get("title")
-    if not isinstance(title, str) or not title:
-        fld = legend_spec.get("field")
-        title = f"字段: {fld}" if isinstance(fld, str) and fld else "图例"
-    return {"entryCount": count, "hasNodata": has_nodata, "title": title}
+    """(entryCount, hasNodata, title) —— 前端 oracle 同口径（W5 起由
+    derive_legend_items 单源派生）。"""
+    model = derive_legend_items(legend_spec)
+    if model is None:
+        return {
+            "entryCount": 0,
+            "hasNodata": False,
+            "title": derive_legend_title(legend_spec),
+        }
+    return {
+        "entryCount": len(model["entries"]),
+        "hasNodata": model["hasNodata"],
+        "title": model["title"],
+    }
 
 
 # ── scene 快照（describeRenderScene 镜像）────────────────────────────────

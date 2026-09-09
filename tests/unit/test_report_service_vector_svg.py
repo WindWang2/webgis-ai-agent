@@ -218,12 +218,21 @@ async def test_generate_report_renders_real_pdf_with_magic_bytes():
             head = f.read(5)
         assert head == b"%PDF-"
 
-        # Page count: WeasyPrint emits at least one /Type /Page object. Read the
-        # whole file and require >= 1 page entry so a zero-page PDF fails.
+        # Page count: >= 1 real page so a zero-page PDF fails.
+        # V6 修复：WeasyPrint 70 将页对象写入压缩对象流（/ObjStm），裸字节
+        # 正则 /Type /Page 不再命中 —— 用 pypdf 结构化读取（并回退正则）。
         with open(output_path, "rb") as f:
             content = f.read()
-        page_obj_matches = __import__("re").findall(rb"/Type\s*/Page(?!s)\b", content)
-        assert len(page_obj_matches) >= 1
+        page_count = 0
+        try:
+            import io as _io
+
+            import pypdf
+
+            page_count = len(pypdf.PdfReader(_io.BytesIO(content)).pages)
+        except ImportError:
+            page_count = len(__import__("re").findall(rb"/Type\s*/Page(?!s)\b", content))
+        assert page_count >= 1
 
 
 @pytest.mark.asyncio

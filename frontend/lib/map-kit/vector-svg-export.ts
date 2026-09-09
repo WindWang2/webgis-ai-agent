@@ -23,6 +23,7 @@ import {
   renderSvgScalebar,
 } from './svg-marginalia';
 import { computeNiceScale, formatScaleLabel } from './scale-math';
+import { deriveLegendModel } from './legend-model';
 import type { ExportChromeModel, ExportDegradation } from './export-chrome';
 import type { LegendSpec } from './types';
 
@@ -109,58 +110,20 @@ function truncateCompiledLabels(svg: string, degradations: ExportDegradation[]):
   });
 }
 
-const _fmtNum = (n: number): string =>
-  n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : n.toFixed(1);
-
 /**
- * LegendSpec → marginalia 图例条目（与 live legends.tsx legendEntries /
- * export drawChromeLegend 同一派生语义；nodata 规则在场时追加无数据条目
- * —— 与 withNoDataGuard 的 nodata.color 同源）。无条目 → null（不画空卡）。
+ * W5：条目推导收敛至 legend-model 单源（原私有推导删除 —— 语义差异表见
+ * ADR-0120 收敛文档）。bivariate 无通用条目卡（专用色阵渲染器语义）→ null。
  */
 function legendItemsOf(spec: LegendSpec | undefined): {
   title: string;
   items: Array<{ label: string; color: string; type: 'rect' }>;
 } | null {
-  if (!spec || spec.type === 'bivariate') return null;
-  const items: Array<{ label: string; color: string; type: 'rect' }> = [];
-  if (spec.type === 'categorical') {
-    for (const c of spec.categories ?? []) {
-      items.push({ label: c.label || String(c.key ?? ''), color: c.color || '#888', type: 'rect' });
-    }
-  } else if (spec.type === 'graduated') {
-    const colors = spec.palette_colors ?? [];
-    const n = Math.min(Math.max(spec.breaks.length - 1, 0), colors.length);
-    for (let i = 0; i < n; i++) {
-      const label = spec.labels?.[i];
-      items.push({
-        label:
-          label != null && String(label).trim() !== ''
-            ? String(label)
-            : `${_fmtNum(spec.breaks[i])} – ${_fmtNum(spec.breaks[i + 1])}`,
-        color: colors[i],
-        type: 'rect',
-      });
-    }
-  } else {
-    // continuous / divergent：min/mid/max 三读数（与 drawChromeColorbar 同口径）
-    if (typeof spec.min !== 'number' || typeof spec.max !== 'number') return null;
-    const colors = spec.palette_colors ?? [];
-    const mid = (spec.min + spec.max) / 2;
-    const pick = (t: number) => colors[Math.min(colors.length - 1, Math.round(t * (colors.length - 1)))] || '#888';
-    items.push({ label: _fmtNum(spec.min), color: pick(0), type: 'rect' });
-    items.push({ label: _fmtNum(mid), color: pick(0.5), type: 'rect' });
-    items.push({ label: _fmtNum(spec.max), color: pick(1), type: 'rect' });
-  }
-  const nodata = (spec as { nodata?: { color?: string; label?: string } }).nodata;
-  if (nodata?.color) {
-    items.push({ label: nodata.label || '无数据', color: nodata.color, type: 'rect' });
-  }
-  if (items.length === 0) return null;
-  // W7 同语义：legend.title 优先（live 图例标题源），缺失回退既有字段格式。
-  const title =
-    (spec as { title?: string }).title ||
-    (spec.field ? `字段: ${spec.field}` : '图例');
-  return { title, items };
+  const model = deriveLegendModel(spec);
+  if (!model || model.kind === 'bivariate') return null;
+  return {
+    title: model.title,
+    items: model.entries.map((e) => ({ label: e.label, color: e.color, type: 'rect' as const })),
+  };
 }
 
 /**

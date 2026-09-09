@@ -9,6 +9,7 @@
  */
 import { resolveMapComponents } from '@/lib/map-components/resolve-components';
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
+import { deriveLegendModel, deriveLegendTitle } from './legend-model';
 import type { ExportDegradation } from './export-chrome';
 
 export interface RenderSceneLayer {
@@ -43,31 +44,7 @@ export interface RenderSceneSnapshot {
   degradationCodes: string[];
 }
 
-/** LegendSpec 条目数口径（与 legends.tsx legendEntries / vector-svg legendItemsOf 同语义）。 */
-function legendEntryCount(legendSpec: unknown): number {
-  const ls = legendSpec as {
-    type?: string;
-    categories?: unknown[];
-    breaks?: number[];
-    palette_colors?: string[];
-    min?: number;
-    max?: number;
-    nodata?: { color?: string };
-  } | null;
-  if (!ls || typeof ls !== 'object') return 0;
-  let count = 0;
-  if (ls.type === 'categorical') count = (ls.categories ?? []).length;
-  else if (ls.type === 'graduated') {
-    count = Math.min(Math.max((ls.breaks?.length ?? 0) - 1, 0), (ls.palette_colors ?? []).length);
-  } else if (typeof ls.min === 'number' && typeof ls.max === 'number') count = 3;
-  if (ls.nodata?.color) count += 1;
-  return count;
-}
-
-function legendTitle(legendSpec: unknown): string {
-  const ls = (legendSpec ?? {}) as { title?: string; field?: string };
-  return ls.title || (ls.field ? `字段: ${ls.field}` : '图例');
-}
+/** W5：数量/标题口径统一由 legend-model 单源提供（原 legendEntryCount 私有推导删除）。 */
 
 /**
  * MapSpec → 语义快照。组件经 resolveMapComponents（与 live/export 共享的
@@ -113,12 +90,16 @@ export function describeRenderScene(
         !!l && typeof (l as { id?: unknown }).id === 'string' &&
         !!(l as { legend_spec?: unknown }).legend_spec,
     )
-    .map((l) => ({
-      layerId: l.id,
-      title: legendTitle(l.legend_spec),
-      entryCount: legendEntryCount(l.legend_spec),
-      hasNodata: !!(l.legend_spec as { nodata?: { color?: string } }).nodata?.color,
-    }))
+    .map((l) => {
+      const ls = l.legend_spec as { title?: string; field?: string };
+      const model = deriveLegendModel(l.legend_spec as never);
+      return {
+        layerId: l.id,
+        title: model?.title ?? deriveLegendTitle(ls),
+        entryCount: model?.entries.length ?? 0,
+        hasNodata: model?.hasNodata ?? false,
+      };
+    })
     .sort((a, b) => a.layerId.localeCompare(b.layerId));
 
   const degradationCodes = Array.from(

@@ -5,7 +5,7 @@ import { registerComponentRenderer } from './registry';
 import { positionClass, resolveVariant, stackedBottomStyle } from './helpers';
 import type { RendererContext } from './types';
 import type { LegendSpec } from '@/lib/map-kit/types';
-import { formatLegendValue } from '../legends/legend-card';
+import { deriveLegendModel } from '@/lib/map-kit/legend-model';
 
 function legendForComponent(component: MapSpecComponent, spec: RendererContext['spec']): LegendSpec | undefined {
   const layerId = (component as unknown as { options?: Record<string, unknown> }).options?.['layerId'];
@@ -29,37 +29,19 @@ function legendForComponent(component: MapSpecComponent, spec: RendererContext['
   return found?.legend_spec;
 }
 
-// W7（ADR-0118）：导出侧 drawChromeLegend 与本函数同源派生（导出为测试与
-// parity 断言导出）—— nodata 规则在场时追加无数据条目（色与 paint 侧
-// withNoDataGuard 同一 nodata.color，不另造）。
+// W5（ADR-0120）：条目推导收敛至 legend-model 单源 —— 本函数保持签名作为
+// live 呈现层薄壳（slice(0,8) 呈现语义仍在调用点）。行为 delta（收敛表）：
+// categorical 无色条目由"丢弃"改为 #888 兜底（不静默丢数据）；
+// graduated cap 由 min() 改为 min(max(,0),) 防负数。
+// 注：continuous/bivariate 无通用条目分支（专用组件承接，模型 kind 分派）。
 export function legendEntries(legend: LegendSpec | undefined): { color: string; label: string }[] {
-  if (!legend) return [];
-  const nodata = (legend as unknown as { nodata?: { color?: string; label?: string } }).nodata;
-  const nodataEntry = nodata?.color ? { color: nodata.color, label: nodata.label || '无数据' } : null;
-  const legacy = (legend as unknown as { entries?: unknown }).entries;
-  if (Array.isArray(legacy)) {
-    const arr = legacy as { color: string; label: string }[];
-    return nodataEntry ? [...arr, nodataEntry] : arr;
+  const model = deriveLegendModel(legend);
+  if (!model) return [];
+  if (legend?.type === 'bivariate' || legend?.type === 'continuous' || legend?.type === 'divergent') {
+    // 专用渲染器语义：通用条目卡不消费这些 kind（保留原 [] 行为）
+    return [];
   }
-  if (legend.type === 'graduated') {
-    const breaks = legend.breaks ?? [];
-    const colors = (legend as unknown as { palette_colors?: string[] }).palette_colors ?? [];
-    const labels = (legend as unknown as { labels?: unknown[] }).labels;
-    const n = Math.min(breaks.length - 1, colors.length);
-    if (n < 1) return nodataEntry ? [nodataEntry] : [];
-    const arr = Array.from({ length: n }, (_, i) => ({
-      color: colors[i],
-      label: labels && labels[i] != null && String(labels[i]).trim() !== '' ? String(labels[i]) : `${formatLegendValue(breaks[i])} – ${formatLegendValue(breaks[i + 1])}`,
-    }));
-    return nodataEntry ? [...arr, nodataEntry] : arr;
-  }
-  if (legend.type === 'categorical') {
-    const arr = ((legend as unknown as { categories?: { color: string; label?: string; key?: string }[] }).categories ?? [])
-      .filter((c) => c != null && typeof c.color === 'string' && c.color)
-      .map((c) => ({ color: c.color, label: c.label != null && String(c.label).trim() !== '' ? String(c.label) : String(c.key ?? '') }));
-    return nodataEntry ? [...arr, nodataEntry] : arr;
-  }
-  return [];
+  return model.entries.map((e) => ({ color: e.color, label: e.label }));
 }
 
 // D7：legend 族 variant —— compact（紧凑内边距/行距）| academic（缺省现状）
