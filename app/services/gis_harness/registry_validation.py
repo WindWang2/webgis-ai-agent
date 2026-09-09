@@ -70,6 +70,23 @@ def validate_gis_library(
             family_vocabulary=_typing_get_args(_TaskType),
         )
     )
+
+    # ── V4：Methodology Registry 引用完整性（Epic workflow-v4）─────────
+    #   方法族/候选方法的 capability/algorithm/artifact/task 引用全部
+    #   对账单一事实源；悬空 fatal（与 ontology 同级）。
+    from app.services.gis_harness.workflow_v4.methodology import (
+        get_methodology_registry,
+    )
+
+    issues.extend(
+        f"methodology: {violation}"
+        for violation in get_methodology_registry().validate(
+            ontology_task_exists=get_task_ontology().has,
+            capability_exists=capabilities.has,
+            algorithm_exists=algorithms.has,
+            artifact_type_exists=artifacts.has,
+        )
+    )
     # 参数一致性门（§43 parity）：显式传 tool_registry 才做 schema 级
     # 对账（构建注册表是校验专用成本；默认轻量）。
     if tool_registry is not None:

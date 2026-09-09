@@ -24,13 +24,13 @@
     "capabilities": 139,
     "findings": 0,
     "recipes": 164,
-    "tools": 295
+    "tools": 296
    },
    "findings_by_code": {},
-   "fingerprint": "4cb7ad2bbb16cb5e23226770ff4e5df7edcb502d5143d5ddb7b4c350f26f608f",
+   "fingerprint": "64c2c261d3d0e080aadb2f1de1773665ba33a8ad5fdfde77fe805dc09d2aac76",
    "gate": {
     "pass": true,
-    "total": 295
+    "total": 296
    }
   },
   "scenario_corpus": {

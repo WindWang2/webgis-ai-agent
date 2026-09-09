@@ -193,6 +193,10 @@ class Plan:
     # 确定性 resolver 产物，供渲染/审计/后续产品组装消费；LLM 意图不变。
     gis_intent: Optional[dict] = None
     recipe_id: str = ""
+    # Workflow Compiler V4 有界语义证据（compile_workflow_v4.to_bounded_dict
+    # 的摘要投影，additive）：方法论族/选中方法/义务链/制图义务/包指纹。
+    # 编译失败时为 None —— 证据可选，绝不阻塞规划（零漂移）。
+    workflow_v4: Optional[dict] = None
 
 
 def _coerce_step_n(raw: object, fallback: int) -> int:
@@ -617,12 +621,93 @@ class AgentPlanOrchestrator:
         plan.gis_intent = intent.model_dump()
         plan.recipe_id = recipe.id
         self._apply_capability_validation(plan, registry)
+        try:
+            import asyncio as _asyncio
+            # CPU-bound 编译卸载线程（review R2 MAJOR-1）；输入界与
+            # semantic tool 对齐（R2 MINOR-6）。
+            plan.workflow_v4 = await _asyncio.to_thread(
+                self._compile_v4_evidence,
+                user_message[:400], intent, recipe.id, available,
+                False)
+        except Exception as e:  # noqa: BLE001 — 证据失败绝不阻塞规划
+            logger.info(
+                f"[plan_orchestrator] workflow_v4 证据编译失败（忽略）: {e}")
+            plan.workflow_v4 = None
         await self._persist_new_plan(session_id, plan)
         logger.info(
             f"[plan_orchestrator] session={session_id} harness 确定性合成计划"
             f"（规划 0 次 LLM 调用）: recipe={recipe.id} steps={len(steps)}"
         )
         return plan
+
+    @staticmethod
+    def _compile_v4_evidence(
+        user_message: str,
+        intent: object,
+        recipe_id: str,
+        available_tools: Optional[set],
+        available_profile: bool = False,
+    ) -> Optional[dict]:
+        """Workflow Compiler V4 有界证据（确定性、可选、失败即 None）。
+
+        编译器是既有 planner/registry/资格评估器的编排（单一事实源）；
+        planner memo 让重复编译近似零成本。产物只取语义摘要（不含证据
+        倾倒），供渲染/审计面展示「应该做什么、为什么、义务是什么」。
+
+        成本注记（MINOR-4）：memo 冷启动时编译含完整 15 阶段重放，
+        实测 ~300ms/次；memo 命中后为纯 V4 阶段（毫秒级）。同步执行
+        是有意取舍：证据失败已隔离（except → None），量级远低于其
+        包裹的 LLM 规划调用。
+        """
+        try:
+            from app.services.gis_harness.workflow_v4.compiler_v4 import (
+                compile_workflow_v4,
+            )
+
+            c = compile_workflow_v4(
+                user_message,
+                intent=intent,
+                recipe_id=recipe_id,
+                available_tools=(
+                    sorted(available_tools) if available_tools else None),
+            )
+            if not c.methodology_family:
+                return None  # 未映射任务族 → 无 V4 语义（诚实留白）
+            mq = c.method_qualification or {}
+            return {
+                "compiler_version": c.compiler_version,
+                "methodology_family": c.methodology_family,
+                "methodology_family_zh": c.methodology_family_zh,
+                "selected_method": str(mq.get("selected_id", "")),
+                "rejected_methods": [
+                    {"method": q.get("method_id"),
+                     "reasons": q.get("reason_codes", [])[:3]}
+                    for q in mq.get("qualifications", [])
+                    if q.get("status") == "rejected"
+                ][:6],
+                "obligations": c.obligation_chain.get("obligations", [])[:6],
+                "cartographic_obligations": c.cartographic_obligations[:6],
+                "typed_dag_summary": {
+                    "nodes": len((c.typed_dag or {}).get("nodes") or []),
+                    "edges": len((c.typed_dag or {}).get("edges") or []),
+                    "primary_output": (c.typed_dag or {}).get(
+                        "primary_output", ""),
+                    "violations": (c.typed_dag or {}).get(
+                        "validation_violations", []),
+                },
+                "package_fingerprint": c.package_fingerprint,
+                "reason_codes": c.reason_codes[:10],
+                # 审计披露（MINOR-5）：合成路径无数据画像 → 资格裁决全在
+                # unknown 中性态，selected 实由方法质量+优先序决定；数据
+                # 到位后 finalize/profile 通道重评为事实驱动裁决。
+                "qualification_basis": (
+                    "profile_grounded" if available_profile else
+                    "profile_absent_neutral"),
+            }
+        except Exception as e:  # noqa: BLE001 — 证据失败绝不阻塞规划
+            logger.info(
+                f"[plan_orchestrator] workflow_v4 证据编译失败（忽略）: {e}")
+            return None
 
     async def make_plan(
         self,

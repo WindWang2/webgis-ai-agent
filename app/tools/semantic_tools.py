@@ -71,6 +71,18 @@ class SuggestAnalysisPatternsArgs(BaseModel):
     semantic_profile: Optional[Dict[str, Any]] = None
 
 
+class CompileWorkflowSemanticsArgs(BaseModel):
+    """compile_workflow_semantics 参数（query 必填；其余可选）。"""
+
+    query: str = Field(..., min_length=1, max_length=400,
+                       description="用户的 GIS 分析请求（zh/en）")
+    recipe_id: Optional[str] = Field(
+        None, max_length=96,
+        description="显式 recipe 覆盖（缺省走语义路由）")
+    profile: Optional[Dict[str, Any]] = Field(
+        None, description="数据画像事实（featureCount/geometryTypes/fields/crs）")
+
+
 def register_semantic_tools(registry: ToolRegistry) -> None:
 
     @tool(registry,
@@ -242,4 +254,115 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
             }
         except Exception as e:  # noqa: BLE001
             logger.warning("[semantic_tools] suggest_analysis_patterns failed: %s", e)
+            return {"success": False, "error": str(e)[:300]}
+
+    @tool(registry,
+        name="compile_workflow_semantics",
+        capabilities=['dataset_profiling_quality'],
+        description=(
+            "Deterministically compile a GIS request into a professional "
+            "methodology plan: methodology family, qualification-ranked "
+            "candidate methods (invalid methods REJECTED with reason codes), "
+            "scientific obligation chain, cartographic expression "
+            "obligations, data acquisition alternatives, and an immutable "
+            "workflow package fingerprint. Advisory/audit only — this tool "
+            "NEVER executes analysis; it explains WHAT should be done, WHY, "
+            "and WHICH obligations the runtime must satisfy."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The user's GIS analysis request (zh/en)"},
+                "recipe_id": {
+                    "type": "string",
+                    "description": "Optional explicit recipe override (default: semantic routing)",
+                },
+                "profile": {
+                    "type": "object",
+                    "description": "Optional dataset profile facts (featureCount/geometryTypes/fields/crs) to ground qualification",
+                },
+            },
+            "required": ["query"],
+        },
+        args_model=CompileWorkflowSemanticsArgs,
+        tier=2, domains=["statistics"],
+        tags=["semantic", "workflow", "compiler", "方法论", "工作流编译", "义务"],
+        side_effect="pure",
+        network=False,
+        deterministic=True,
+        latency_class="fast",
+        memory_class="light",
+        scale_class="small",
+        output_semantic_type="text",
+        result_size_policy="bounded",
+        failure_modes=["ambiguous_intent"],
+    )
+    def compile_workflow_semantics(
+        query: str,
+        recipe_id: Optional[str] = None,
+        profile: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        # sync def：registry 自动路由 THREAD 策略（CPU-bound 全链编译
+        # 不上事件循环 —— review R2 MAJOR-1）。
+        try:
+            from app.services.gis_harness.workflow_v4.compiler_v4 import (
+                compile_workflow_v4,
+            )
+
+            c = compile_workflow_v4(
+                query, recipe_id=recipe_id or "", profile=profile)
+            mq = c.method_qualification or {}
+            rejected = [
+                {"method": q.get("method_id"),
+                 "reasons": q.get("reason_codes", [])}
+                for q in mq.get("qualifications", [])
+                if q.get("status") == "rejected"
+            ]
+            return {
+                "success": True,
+                "compiler_version": c.compiler_version,
+                "recipe_id": c.base.recipe_id,
+                "methodology_family": c.methodology_family,
+                "methodology_family_zh": c.methodology_family_zh,
+                "selected_method": mq.get("selected_id", ""),
+                "rejected_methods": rejected[:8],
+                "obligations": c.obligation_chain.get("obligations", [])[:8],
+                "cartographic_obligations": c.cartographic_obligations[:6],
+                "acquisition_plan": {
+                    "roles": [
+                        {"role": r.get("role"),
+                         "feasible_channels": r.get("feasible_channels")}
+                        for r in (c.acquisition_plan.get("roles") or [])[:8]
+                    ],
+                    "synthetic_demo_allowed": c.acquisition_plan.get(
+                        "synthetic_demo_allowed", False),
+                },
+                "typed_dag_summary": {
+                    "nodes": len((c.typed_dag or {}).get("nodes") or []),
+                    "edges": len((c.typed_dag or {}).get("edges") or []),
+                    "primary_output": (c.typed_dag or {}).get(
+                        "primary_output", ""),
+                    "violations": (c.typed_dag or {}).get(
+                        "validation_violations", []),
+                },
+                "package_fingerprint": c.package_fingerprint,
+                "reason_codes": c.reason_codes[:10],
+                # 与 orchestrator 证据同源披露（review R2 MINOR-1）
+                "qualification_basis": (
+                    "profile_grounded" if profile
+                    else "profile_absent_neutral"),
+                "note": (
+                    "确定性编译产物（advisory/audit）：rejected 方法不得绕过；"
+                    + (
+                        "方法选择由数据画像事实驱动。"
+                        if profile
+                        else "未提供数据画像：资格裁决为 unknown 中性态，"
+                             "选择由方法质量与专业优先序决定，数据到位后重评。"
+                    )
+                    + "执行仍经 planner/runtime。"
+                ),
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[semantic_tools] compile_workflow_semantics failed: %s", e)
             return {"success": False, "error": str(e)[:300]}
