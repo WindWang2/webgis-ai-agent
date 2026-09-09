@@ -2,6 +2,39 @@
 
 ## [Unreleased] - 2026-09-09
 
+### Added (lakehouse-v7: Spatial Lakehouse V7 — Cloud-Native N-D Geospatial Lakehouse)
+- N-D labeled cube (schema v2): zarr v3 `dimension_names` binding, dim
+  whitelist {time,band,polarization,vertical,y,x} with y/x anchored last,
+  explicit monotonic coordinates, per-variable dtypes, CRS validation
+  (rasterio with regex-fallback disclosure), xarray adapter (typed degrade,
+  V6 synthesized projection). V6 read/fork entries version-gate v2 stores.
+- Deterministic chunk planner + labeled selection (chunk-touch ∝ window,
+  50k block cap, 8M cell budget, rechunk metadata planning with time-axis=1).
+- Remote-sensing cube builder: optical/SAR/mask role composition, geometry-
+  identity alignment (no silent resample), complete time axis enforcement,
+  64M-cell assembly budget.
+- S3 productionization: streaming multipart put (8MiB parts, abort-clean
+  failures, per-part retry), digest-in-Metadata put path, streaming get with
+  tail digest verification, ETag sidecar recording, paginated object
+  enumeration, stale multipart/staging sweeps.
+- Virtual DataObjects: zero-copy child-reference identity, recursive verify
+  (missing children ≠ verified), global resolution budget, lazy/inline
+  materialization, sharded composition for 10k+ chunk metadata.
+- Lakehouse catalog projection (+ migration 0034, additive): surrogate PK,
+  multi-owner uniqueness, bbox/time indexes, PG-only tags GIN, bounded
+  pagination search, revoke tombstones, manifest-driven reconciliation,
+  STAC 1.0.0 projection (typed required-field gates).
+- Zero-byte project publishing: find-or-create artifact → immutable content
+  revision → catalog row, owner-chain enforcement, idempotent republication,
+  project-scoped resolve via catalog authorization.
+- Dereference-based GC: union blob protection (fork-shared blobs survive),
+  downward reachability propagation, plan token + watermark + execute-time
+  reference recheck (stale plans rejected), running-run protected roots,
+  72h grace (≥ registry TTL), deterministic deletion evidence.
+- DR scrub: deterministic sample/full digest verification, ETag
+  record-vs-head comparison, virtual deep states.
+
+
 ### Added (science-v4: Spatial Science & GeoAI Platform V4)
 - Geostatistics V4: simple kriging, external-drift kriging (KED), normal-score
   transform, nested-variogram fitting (honest ConvergenceFailure when not
