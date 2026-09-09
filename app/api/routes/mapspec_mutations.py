@@ -410,3 +410,52 @@ async def get_workbench_state(
         "revision": revision,
         "doc": workbench if isinstance(workbench, dict) else None,
     }
+
+
+@router.get("/sessions/{session_id}/workbench/artifact-status")
+async def get_workbench_artifact_status(
+    session_id: str,
+    _conv: Conversation = Depends(require_owned_session),
+) -> dict[str, Any]:
+    """工作台 artifact/workflow 感知投影（V6 Must-have H；派生投影，零新真相）。
+
+    来源（既有权威）：
+    - artifact_registry（会话产物台账）：status（valid/stale/superseded/…）、
+      producer_capability/producer_node（工作流节点）、inputs（血缘边）、replaces；
+    - 有界：artifacts ≤200（stale 优先，其后按 updated_at 倒序）；metadata 不透出。
+
+    前端以 layer._refId == artifact_id 直接 join —— stale/updated 徽标与
+    「为何变化」（inputs 血缘 + producer 节点）入口。跨浏览器刷新由总线
+    ``artifact`` 事件（ref_lifecycle 失效路径发布）驱动。
+    """
+    from app.services.artifact_registry import list_artifacts
+
+    records = await list_artifacts(session_id)
+    items = [
+        {
+            "artifactId": r.artifact_id,
+            "type": r.artifact_type,
+            "status": r.status,
+            "producerCapability": r.producer_capability,
+            "producerNode": r.producer_node,
+            "producerTool": r.producer_tool,
+            "inputs": list(r.inputs)[:8],
+            "replaces": r.replaces,
+            "revision": r.revision,
+            "updatedAt": r.updated_at,
+        }
+        for r in records
+    ]
+    stale_first = sorted(
+        items,
+        key=lambda it: (
+            0 if it["status"] not in ("valid",) else 1,
+            -(it["updatedAt"] or 0.0),
+        ),
+    )[:200]
+    return {
+        "session_id": session_id,
+        "artifacts": stale_first,
+        "staleCount": sum(1 for it in items if it["status"] not in ("valid",)),
+        "total": len(items),
+    }

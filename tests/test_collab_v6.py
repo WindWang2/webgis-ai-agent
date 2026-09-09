@@ -687,3 +687,73 @@ def test_collab_ws_send_loop_drains_queue_to_socket():
     assert [f["data"]["revision"] for f in frames2] == [7, 8]
     # 单扇出无双计：每连接各恰一份
     assert len(frames1) == 1 and len(frames2) == 2
+
+
+# ─── artifact 感知（W8）：投影端点 + 失效事件 ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_artifact_status_endpoint_projects_registry():
+    """投影端点：登记 stale+valid 产物 → stale 优先、有界、零新真相。"""
+    from fastapi import FastAPI as _FA
+    from fastapi.testclient import TestClient as _TC
+    from app.api.routes import mapspec_mutations as mm
+
+    from app.services.artifact_registry import (
+        mark_status,
+        register_artifact,
+    )
+
+    sid = _sid("v6_art_1")
+
+    await register_artifact(
+        sid, artifact_id="ref:stale-1",
+        producer_capability="buffer_analyst", producer_node="buffer_1",
+        inputs=["ref:up-1"],
+    )
+    await mark_status(sid, "ref:stale-1", "stale")
+    await register_artifact(sid, artifact_id="ref:valid-1")
+
+    # ownership 依赖打桩（端点薄投影，所有权语义由既有依赖测试覆盖）
+    class _Conv:
+        id = sid
+    app = _FA()
+    app.include_router(mm.router, prefix="/api/v1")
+    app.dependency_overrides[mm.require_owned_session] = lambda: _Conv()
+    client = _TC(app)
+    try:
+        resp = client.get(f"/api/v1/chat/sessions/{sid}/workbench/artifact-status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["staleCount"] == 1
+        assert body["artifacts"][0]["artifactId"] == "ref:stale-1"  # stale 优先
+        a = body["artifacts"][0]
+        assert a["producerCapability"] == "buffer_analyst"
+        assert a["inputs"] == ["ref:up-1"]
+        assert "metadata" not in a  # 载荷有界
+    finally:
+        from app.services.session_data import session_data_manager as _sdm
+
+        await _sdm.clear_session(sid)
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_ref_invalidation_publishes_artifact_event():
+    """ref_lifecycle 失效 → bus artifact 事件（跨浏览器 stale 徽标）。"""
+    from app.services.collab.bus import bus
+    from app.services.ref_lifecycle import RefInvalidationReason, invalidate_ref_caches
+
+    sid = _sid("v6_art_2")
+    received = []
+    rm = await bus.add_local_listener(sid, received.append)
+    try:
+        invalidate_ref_caches(sid, ["ref:zz-1"], RefInvalidationReason.OVERWRITE)
+        # fire-and-forget task：让出事件循环一次
+        import asyncio as _asyncio
+        await _asyncio.sleep(0.05)
+    finally:
+        rm()
+    artifact_events = [e for e in received if e["kind"] == "artifact"]
+    assert len(artifact_events) == 1
+    assert artifact_events[0]["data"]["refId"] == "ref:zz-1"
+    assert artifact_events[0]["data"]["reason"] == "OVERWRITE"
