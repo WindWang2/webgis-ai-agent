@@ -223,6 +223,22 @@ async def resume_from_anchor(
         new_sid, "_resumed_from", {"anchor_id": anchor_id, "source_session_id": old_sid}
     )
 
+    # V6（ADR-0119 D5）：恢复预算续接 —— 旧 session 的 durable 恢复账本
+    # （有界截取）拷进新 session。恢复后的会话**不**重新获得完整重试
+    # 预算（防「重启/恢复 → 预算复活 → 无限重试」）。失败不阻断恢复
+    # （恢复本身成功，账本缺席 = 诚实降级，recovery_state 披露）。
+    carried_entries = 0
+    try:
+        from app.services.gis_harness.recovery_ledger import (
+            get_recovery_ledger,
+        )
+
+        carried_entries = get_recovery_ledger().copy_between_sessions(
+            old_sid, new_sid)
+    except Exception:  # noqa: BLE001 — 预算续接失败不阻断恢复
+        logger.warning("[ResumeAnchor] recovery ledger carry-over failed",
+                       exc_info=True)
+
     # review R2 #2：立即创建归属当前用户的 Conversation 行 —— 否则所有
     # require_owned_session 路径（observation 上报/map mutation）对新
     # session 404，且首个发言者可「认领」该 session（所有权泄漏窗口）。
@@ -255,6 +271,7 @@ async def resume_from_anchor(
         "ref_map": ref_map,
         "missing_refs": missing_refs,
         "trace_last_seq": int(anchor.get("trace_last_seq") or 0),
+        "recovery_budget_carried": carried_entries,
     }
 
 

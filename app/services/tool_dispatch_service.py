@@ -906,6 +906,19 @@ class ToolDispatchService:
         # P2-9：成功完成 → 标记 completed（后续同参重复走 post-success 文案）。
         self._mark_completed(tool_key, session_id or "")
 
+        # V6（ADR-0119 D5）：成功回写 durable 恢复预算 —— 清零该工具的
+        # 失败计数（「工具修好了」必须反映到预算，否则历史失败永久压制
+        # 重试资格）。记录面绝不阻断。
+        if session_id:
+            try:
+                from app.services.gis_harness.recovery_ledger import (
+                    get_recovery_ledger,
+                )
+
+                get_recovery_ledger().record_success(session_id, tool_name)
+            except Exception:  # noqa: BLE001 — 记录面绝不阻断
+                pass
+
         # V4 Wave 8：证据链阶段 11（TOOL_RESULTS）—— 引擎无关发射。
         try:
             from app.lib.runtime.chain_emitters import emit_chain_once
