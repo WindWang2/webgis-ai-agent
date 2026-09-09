@@ -1,7 +1,7 @@
 """GeoCompute V6 cluster runtime: runs / workers / resource usage
 
-Revision ID: 0032_geocompute_v6_cluster
-Revises: 0031_revision_indexes
+Revision ID: 0033_geocompute_v6_cluster
+Revises: 0032_harness_v5_resume_anchors
 Create Date: 2026-09-08
 
 Wave 2（.agent-work/geocompute-v6/02-plan.md）：cluster 控制面的三个
@@ -31,8 +31,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = "0032_geocompute_v6_cluster"
-down_revision: Union[str, Sequence[str], None] = "0031_revision_indexes"
+revision: str = "0033_geocompute_v6_cluster"
+down_revision: Union[str, Sequence[str], None] = "0032_harness_v5_resume_anchors"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
