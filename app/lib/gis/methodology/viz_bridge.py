@@ -302,7 +302,6 @@ def validate_bridge(
     component_exists: Any = None,
 ) -> List[str]:
     """桥接表对账（悬空 id → fatal issue；R1-F5 分歧语义）。"""
-    registry = _default_artifacts()
     issues: List[str] = []
     seen: set = set()
     for entry in _VIZ_BRIDGE:
