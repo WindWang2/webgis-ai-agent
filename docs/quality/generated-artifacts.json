@@ -1,5 +1,15 @@
 {
  "artifacts": {
+  "docs/integration/frontend-behavior.json": {
+   "content_fingerprint": "e98b39f593f4d4f09eeebc9f59a5b98f75bf931007828598bc894592727c0de1",
+   "generator": "scripts/gen_frontend_behavior.py",
+   "generator_version": 1,
+   "input_fingerprint": "2c05c82377c12ccacabfc9f91b43ff8a00cbdb75759b7c254767bb9da8713822",
+   "inputs": [
+    "frontend/tests/behavioral"
+   ],
+   "scope": "global"
+  },
   "docs/quality/CONTRACT_DRIFT_REPORT.md": {
    "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",

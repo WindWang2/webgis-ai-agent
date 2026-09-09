@@ -26,6 +26,7 @@ V3_SCRIPTS = (
     "scripts/simulate_merge.py",
     "scripts/gen_release_readiness.py",
     "scripts/integration_harness.py",
+    "scripts/gen_frontend_behavior.py",
 )
 
 _IMPORT_RE = re.compile(

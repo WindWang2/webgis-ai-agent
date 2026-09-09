@@ -180,6 +180,12 @@ DECLARED: Tuple[GeneratedEntry, ...] = (
         generator="scripts/gen_science_benchmark_manifest.py",
         inputs=("app/lib/gis/algorithm_registry.py",),
     ),
+    # Quality V3（Epic 10 W14）：前端行为证据索引（@behavior 标签聚合）
+    GeneratedEntry(
+        artifact="docs/integration/frontend-behavior.json",
+        generator="scripts/gen_frontend_behavior.py",
+        inputs=("frontend/tests/behavioral",),
+    ),
 )
 
 

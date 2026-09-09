@@ -41,6 +41,7 @@ scripts/
 !/scripts/simulate_merge.py
 !/scripts/gen_release_readiness.py
 !/scripts/integration_harness.py
+!/scripts/gen_frontend_behavior.py
 # Quality V3：per-branch 工作产物（manifests / merge-sim / import-graph
 # 缓存）与 runner 本地状态不入库（审计文档 .md 仍按惯例入库）
 .agent-work/integration/

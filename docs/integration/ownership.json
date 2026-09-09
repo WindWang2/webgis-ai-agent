@@ -33,6 +33,7 @@
   {"pattern": "frontend/package.json", "owner": "frontend", "policy": "coordinated", "suites": ["frontend"]},
   {"pattern": "frontend/pnpm-lock.yaml", "owner": "frontend", "policy": "coordinated", "suites": ["frontend"]},
   {"pattern": "skills-lock.json", "owner": "core", "policy": "coordinated"},
-  {"pattern": "docs/integration/ownership.json", "owner": "integration", "policy": "single-writer"}
+  {"pattern": "docs/integration/ownership.json", "owner": "integration", "policy": "single-writer"},
+  {"pattern": "docs/integration/frontend-behavior.json", "owner": "frontend", "policy": "regenerate-dont-edit", "suites": ["frontend"]}
  ]
 }
