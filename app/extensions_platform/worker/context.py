@@ -187,7 +187,7 @@ class WorkerContext:
         通用 call 往返（聚合结果单帧返回）。本地名 `<pid>_invoke`
         与宿主投影名的前缀剥离形态精确一致。
         """
-        from ..sdk.model import ModelProviderSpec, aggregate_stream_events
+        from ..sdk.model import ModelProviderSpec
         from ..sdk.tool import ToolExtensionSpec
 
         if not isinstance(spec, ModelProviderSpec):
@@ -223,11 +223,13 @@ class WorkerContext:
 
         def _invoke(**kwargs: Any) -> Any:
             # 与 in-process 相同的扁平/包膜双形态规约（Round-1 CRITICAL-2）。
+            # V3：不再在此聚合——迭代器原样返回，server 按调用形态分流
+            # （stream=true → 流帧协议；stream=false → server 侧聚合单帧）。
             if set(kwargs) == {"request"} and isinstance(kwargs["request"], dict):
                 req = dict(kwargs["request"])
             else:
                 req = dict(kwargs)
-            return aggregate_stream_events(invoke_fn(req, owner_ctx))
+            return invoke_fn(req, owner_ctx)
 
         tool_spec = ToolExtensionSpec(
             name=local_name,
