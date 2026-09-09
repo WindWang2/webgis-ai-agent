@@ -282,6 +282,91 @@ def _render_pdf_to_file(
         f.write(pdf_bytes)
 
 
+class VectorPdfRequest(BaseModel):
+    """V6（ADR-0120 W8）：publication 矢量 PDF 请求体。"""
+
+    mapspec: dict
+    title: Optional[str] = None
+
+
+@router.post("/export/vector-pdf", tags=["地图制图"])
+async def export_map_as_vector_pdf(
+    body: VectorPdfRequest,
+    _user: dict = Depends(get_current_user),
+):
+    """MapSpec → 真矢量 PDF（publication 链：可选文本 + 出版整饰 + spec 级帧）。
+
+    - 引擎不可用（weasyprint 缺席）→ 503 + vector_pdf_unavailable 结构化
+      错误（前端回退既有栅格导出并披露，不静默伪矢量）。
+    - 渲染槽位占用（WeasyPrint 进程级串行，R1-M6）→ 429 vector_pdf_busy。
+    - forward version / 非对象 spec → 400 mapspec_forward_version /
+      mapspec_not_an_object（typed 拒绝，不静默）。
+    - CPU/IO 在工作线程执行；调用方返回时效由 wait_for 保护（编译本身
+      受孪生协作式超时约束 —— 不用 wait_for 当预算，R1-C1）。
+    """
+    import json as _json
+
+    raw = _json.dumps(body.mapspec, ensure_ascii=False)
+    if len(raw.encode("utf-8")) > MAX_EXPORT_SIZE:
+        raise HTTPException(status_code=413, detail="MapSpec 载荷过大，上限 50MB")
+
+    from app.services.publication_export import (
+        PublicationBusyError,
+        PublicationUnavailableError,
+        render_publication_pdf,
+    )
+    from app.lib.cartography.mapspec_schema import MapSpecSchemaError
+
+    loop = asyncio.get_running_loop()
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(
+                None,
+                lambda: render_publication_pdf(
+                    body.mapspec,
+                    title=body.title or "WebGIS AI Agent 专题地图",
+                ),
+            ),
+            timeout=120.0,
+        )
+    except PublicationUnavailableError:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "vector_pdf_unavailable", "message": "矢量 PDF 引擎不可用，请回退栅格导出"},
+        )
+    except PublicationBusyError:
+        raise HTTPException(
+            status_code=429,
+            detail={"code": "vector_pdf_busy", "message": "矢量 PDF 渲染器占用中，请稍后重试"},
+        )
+    except MapSpecSchemaError as schema_err:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": schema_err.code, "message": str(schema_err)},
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail={"code": "export_timeout_partial", "message": "导出超时"})
+
+    pdf_filename = f"map_vector_{int(time.time())}_{uuid.uuid4().hex[:12]}.pdf"
+    with open(os.path.join(EXPORT_DIR, pdf_filename), "wb") as f:
+        f.write(result.pdf)
+    _set_export_owner(pdf_filename, _user.get("user_id", "unknown"))
+
+    return {
+        "success": True,
+        "filename": pdf_filename,
+        "url": f"/api/v1/export/download/{pdf_filename}",
+        "format": "pdf",
+        "vector": True,
+        "pages": result.page_count,
+        "frames_rendered": result.frames_rendered,
+        "frames_skipped": result.frames_skipped,
+        "render_diagnostics": result.diagnostics,
+        "schema_disclosures": result.disclosures,
+        "message": "矢量 PDF 已生成（文本可选中检索）",
+    }
+
+
 @router.post("/export/pdf", tags=["地图制图"])
 async def export_map_as_pdf(
     file: UploadFile = File(...),

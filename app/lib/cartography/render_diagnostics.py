@@ -149,6 +149,19 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "label_budget_exceeded", "warning",
             "标签数量超出导出预算（{detail}），超出部分未渲染",
         ),
+        # —— V6（ADR-0120 W8）矢量 PDF publication ——
+        RenderDiagnosticSpec(
+            "raster_layer_unavailable_vector_pdf", "warning",
+            "栅格/瓦片图层无法以矢量形式进入 PDF，已在导出件中省略（layer: {detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "pdf_font_fallback", "info",
+            "PDF 文本使用回退字体渲染（未找到首选 CJK 字体）",
+        ),
+        RenderDiagnosticSpec(
+            "vector_pdf_unavailable", "warning",
+            "服务端矢量 PDF 引擎不可用，已回退栅格导出",
+        ),
     )
 }
 
@@ -292,6 +305,9 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "app.services.mapspec_to_svg",
         "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
     ),
+    "raster_layer_unavailable_vector_pdf": ("app.services.publication_export",),
+    "pdf_font_fallback": ("app.services.publication_export",),
+    "vector_pdf_unavailable": ("app.services.publication_export",),
 }
 
 
