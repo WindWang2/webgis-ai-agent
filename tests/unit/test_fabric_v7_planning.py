@@ -389,7 +389,6 @@ def test_aggregate_pushdown_not_applied_for_nested_left_subtree():
         stats_hints={"a": ChainSourceStats(unique_keys=["k"])},
     )
     ctx = build_enumeration_context(req)
-    from app.services.data_fabric.query.federated.planner import enumerate_federation
 
     inner = LogicalJoin(
         join_kind="attribute_join",
