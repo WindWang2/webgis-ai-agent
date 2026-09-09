@@ -66,7 +66,9 @@ describe('workbenchSlice · layer groups', () => {
   it('create/rename/remove 生命周期；remove 释放成员关系', () => {
     const store = makeStore();
     const gid = store.getState().createLayerGroup('东部城市群');
-    expect(store.getState().layerGroups).toEqual([{ id: gid, name: '东部城市群', collapsed: false }]);
+    expect(store.getState().layerGroups).toEqual([
+      { id: gid, name: '东部城市群', collapsed: false, parentId: null },
+    ]);
     store.getState().assignLayersToGroup(['l1', 'l2'], gid);
     expect(store.getState().layerGroupMembership).toEqual({ l1: gid, l2: gid });
 
@@ -76,6 +78,60 @@ describe('workbenchSlice · layer groups', () => {
     store.getState().removeLayerGroup(gid);
     expect(store.getState().layerGroups).toEqual([]);
     expect(store.getState().layerGroupMembership).toEqual({});
+  });
+
+  it('create 支持嵌套父；未知父落根', () => {
+    const store = makeStore();
+    const parent = store.getState().createLayerGroup('父组');
+    const child = store.getState().createLayerGroup('子组', parent);
+    expect(store.getState().layerGroups.find((g) => g.id === child)?.parentId).toBe(parent);
+    const orphan = store.getState().createLayerGroup('孤儿', 'wg-ghost');
+    expect(store.getState().layerGroups.find((g) => g.id === orphan)?.parentId).toBeNull();
+  });
+
+  it('moveLayerGroup：合法嵌套生效；环/未知父被拒绝并保持原状', () => {
+    const store = makeStore();
+    const a = store.getState().createLayerGroup('A');
+    const b = store.getState().createLayerGroup('B');
+    // B 移到 A 下
+    expect(store.getState().moveLayerGroup(b, a)).toBe(true);
+    expect(store.getState().layerGroups.find((g) => g.id === b)?.parentId).toBe(a);
+    // A 移到自己的子孙 B 下 → 成环，拒绝
+    expect(store.getState().moveLayerGroup(a, b)).toBe(false);
+    expect(store.getState().layerGroups.find((g) => g.id === a)?.parentId).toBeNull();
+    // 未知父 → 拒绝
+    expect(store.getState().moveLayerGroup(a, 'wg-ghost')).toBe(false);
+    // 提为根
+    expect(store.getState().moveLayerGroup(b, null)).toBe(true);
+    expect(store.getState().layerGroups.find((g) => g.id === b)?.parentId).toBeNull();
+  });
+
+  it('removeLayerGroup 嵌套语义：子组提升到被删组的父（不孤儿）', () => {
+    const store = makeStore();
+    const root = store.getState().createLayerGroup('根');
+    const mid = store.getState().createLayerGroup('中', root);
+    const leaf = store.getState().createLayerGroup('叶', mid);
+    store.getState().removeLayerGroup(mid);
+    expect(store.getState().layerGroups.find((g) => g.id === leaf)?.parentId).toBe(root);
+    expect(store.getState().layerGroups.some((g) => g.id === mid)).toBe(false);
+  });
+
+  it('hydrateWorkbenchDoc：合法 doc 全量水合；非法拒绝', () => {
+    const store = makeStore();
+    const ok = store.getState().hydrateWorkbenchDoc({
+      version: 5,
+      groups: [{ id: 'g1', name: '恢复组', collapsed: true, parentId: null }],
+      membership: { l1: 'g1' },
+      lockedLayerIds: ['l2'],
+      mode: 'explore',
+    });
+    expect(ok).toBe(true);
+    const s = store.getState();
+    expect(s.layerGroups).toEqual([{ id: 'g1', name: '恢复组', collapsed: true, parentId: null }]);
+    expect(s.layerGroupMembership).toEqual({ l1: 'g1' });
+    expect(s.lockedLayerIds).toEqual(['l2']);
+    // null / 非 V5 → false 且状态不变
+    expect(store.getState().hydrateWorkbenchDoc(null)).toBe(false);
   });
 
   it('assignLayersToGroup 拒绝未知组（no-op）；null 移出组', () => {

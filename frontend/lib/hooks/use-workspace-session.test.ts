@@ -29,12 +29,21 @@ const hudState = vi.hoisted(() => ({
   resetDockState: vi.fn(),
   // Workbench V4：会话切换清理分组树/多选/锁定/隔离。
   resetLayerGroups: vi.fn(),
+  // Workbench V5（W3）：恢复路径把 spec.workbench 水合进 store。
+  hydrateWorkbenchDoc: vi.fn(() => true),
+  lockedLayerIds: [],
+  layerGroups: [],
+  layerGroupMembership: {},
 }));
 
 vi.mock('@/lib/store/useHudStore', () => ({
   useHudStore: Object.assign(
     (selector: (s: typeof hudState) => unknown) => selector(hudState),
-    { getState: () => hudState }
+    {
+      getState: () => hudState,
+      // W5/W3：workbench persistence 订阅（startWorkbenchPersistence）。
+      subscribe: vi.fn(() => () => {}),
+    }
   ),
 }));
 

@@ -3998,6 +3998,33 @@
     "title": "SetViewBody",
     "type": "object"
    },
+   "SetWorkbenchStateBody": {
+    "description": "Workbench V5 组织态持久化（分组树/成员/锁/模式；引擎内结构+64KB 校验）。",
+    "properties": {
+     "doc": {
+      "additionalProperties": true,
+      "title": "Doc",
+      "type": "object"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "patch_workbench_state",
+      "title": "Intent",
+      "type": "string"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision",
+     "doc"
+    ],
+    "title": "SetWorkbenchStateBody",
+    "type": "object"
+   },
    "ShareRequest": {
     "properties": {
      "ttl_days": {
@@ -6267,6 +6294,7 @@
           "patch_component": "#/components/schemas/PatchComponentBody",
           "patch_layer_presentation": "#/components/schemas/PatchLayerPresentationBody",
           "patch_layer_style": "#/components/schemas/PatchLayerStyleBody",
+          "patch_workbench_state": "#/components/schemas/SetWorkbenchStateBody",
           "rebind_component": "#/components/schemas/RebindComponentBody",
           "remove_component": "#/components/schemas/RemoveComponentBody",
           "remove_layer": "#/components/schemas/RemoveLayerBody",
@@ -6313,6 +6341,9 @@
          },
          {
           "$ref": "#/components/schemas/InitProjectBody"
+         },
+         {
+          "$ref": "#/components/schemas/SetWorkbenchStateBody"
          }
         ],
         "title": "Req"
