@@ -296,10 +296,15 @@ def _read_window_bounded(
     path, time: Optional[Any], y: Optional[Any], x: Optional[Any],
 ) -> Dict[str, Any]:
     """窗口读 + 形状钳制 + 单元预算（切片越界 = 钳制，负号已在上游拒绝）。"""
-    from app.services.lakehouse.cube_store import open_cube, read_cube_window
+    from app.services.lakehouse.cube_store import (
+        _require_v1_cube,
+        open_cube,
+        read_cube_window,
+    )
 
     root = open_cube(path)
-    bands = list(root.attrs.get("bands") or [])
+    # 版本闸（R0-2）：labeled v2 store 不满足本入口的 (time,y,x) 假设。
+    bands = _require_v1_cube(root, what="session cube window read")
     if not bands:
         raise CubeServiceError("cube declares no bands")
     n_t, n_y, n_x = (int(v) for v in root[bands[0]].shape)
