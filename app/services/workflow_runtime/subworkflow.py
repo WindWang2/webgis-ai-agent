@@ -91,6 +91,15 @@ class SubworkflowExecutor:
         child_pkg = str(node.get("subworkflow_package_id", "") or "")
         if not child_pkg:
             return {"ok": False, "error_code": "SUBWORKFLOW_NO_PACKAGE_REF"}
+        # 父取消传播（入口检查；子实例与父 run 同步在飞 —— 父取消旗标
+        # 置位即不再展开。全异步取消传播为 follow-up，docstring 已披露）。
+        import asyncio as _aio
+
+        parent_row = await _aio.to_thread(
+            self.service.store.get_instance, parent["instance_id"],
+            self.owner_scope)
+        if parent_row is not None and parent_row.get("cancel_requested"):
+            return {"ok": False, "error_code": "SUBWORKFLOW_CANCELLED"}
         # 深度 + 环守卫（visited = 祖先链上的包指纹/包 id 集）
         visited = list(parent_visited or [])
         if parent.get("package_id") not in visited:
@@ -103,7 +112,9 @@ class SubworkflowExecutor:
             return {"ok": False, "error_code": "SUBWORKFLOW_CYCLE",
                     "detail": child_pkg}
         # 每 owner 活跃子实例硬界
-        active = await __import__("asyncio").to_thread(
+        import asyncio as _aio2
+
+        active = await _aio2.to_thread(
             self.service.store.count_active_subworkflows, self.owner_scope)
         if active >= MAX_ACTIVE_SUBINSTANCES:
             return {"ok": False, "error_code": "SUBWORKFLOW_CAP",
@@ -126,10 +137,8 @@ class SubworkflowExecutor:
             self.service.store.get_nodes, child["instance_id"])
         data_nodes = sorted(
             (n["node_id"] for n in child_nodes
-             if n["state"] == C.NodeState.PENDING
-             and not n["bound_ref"]),
-            # 仅绑 data_input 角色（node_id 词表 data:<role>）
-            key=lambda nid: (not nid.startswith("data:"), nid))
+             if n["state"] == C.NodeState.PENDING and not n["bound_ref"]
+             and n["node_id"].startswith("data:")))
         for nid, ref in zip(data_nodes, list(input_refs or [])[:4]):
             if not ref or ref.startswith("wi:"):
                 continue

@@ -258,6 +258,11 @@ class InstanceStore:
         if complete:
             fresh0 = self.get_node(instance_id, node_id)
             if fresh0 is not None and fresh0["state"] == to_state:
+                if require_claim and (fresh0.get("claimed_by") or "") \
+                        != (claimed_by or ""):
+                    return TransitionResult(
+                        False, "CLAIM_MISMATCH", state=to_state,
+                        state_revision=fresh0["state_revision"])
                 return TransitionResult(
                     True, "OK_IDEMPOTENT", state=to_state,
                     state_revision=fresh0["state_revision"])

@@ -142,10 +142,13 @@ class ChangeApplier:
         self, instance_id: str, inst: Dict[str, Any],
         decision: C.RecomputeDecision,
     ) -> None:
+        """决策环追加（CAS：实例 revision 冲突即放弃本条 —— 有界观测
+        记录的 lost update 可接受，绝不覆盖并发写入的变更标记）。"""
         decisions = list(inst.get("decisions") or [])
         decisions.append(decision.to_bounded_dict())
         self.store.update_instance(
             instance_id, owner_scope=self.owner_scope,
+            expected_revision=inst["revision"],
             fields={"decisions": decisions[-C.MAX_INSTANCE_DECISIONS:]})
 
     async def drain_pending(
@@ -160,9 +163,12 @@ class ChangeApplier:
         if not pending or any(
                 s == C.NodeState.RUNNING for s in states.values()):
             return None
-        self.store.update_instance(
+        cleared = self.store.update_instance(
             instance_id, owner_scope=self.owner_scope,
+            expected_revision=inst["revision"],
             fields={"pending_changes": []})
+        if cleared is None:
+            return None  # 并发 defer 写入 —— 本轮放弃，下轮重drain
         changes = [C.PendingChange(**p) for p in pending
                    if isinstance(p, dict)]
         seq = len(inst.get("decisions") or []) + 1

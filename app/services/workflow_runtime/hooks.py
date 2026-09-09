@@ -39,7 +39,8 @@ async def owner_scope_for_session(session_id: str) -> str:
                     Conversation.id == session_id)
             ).first()
         uid = row[0] if row else None
-    except Exception:  # noqa: BLE001 — 身份解析失败按匿名（fail closed）
+    except Exception:  # noqa: BLE001 — 身份解析失败降级 anonymous 域
+        # （域内自隔离；真实 owner 实例对其不可见 = 假 miss，不越权）
         uid = None
     from app.services.geocompute.executor import owner_scope_for as _osf
 

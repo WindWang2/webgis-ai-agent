@@ -47,6 +47,27 @@ def upstream_of(dag: Dict[str, Any]) -> Dict[str, List[str]]:
     return upstream
 
 
+def upstream_ports(dag: Dict[str, Any]) -> Dict[str, List]:
+    """{node_id: [(src, to_port)]}（按边序；to_port 剥节点前缀）。
+
+    bounded 边形态 ``"to": "node.port"`` → port 取 rsplit；与节点声明
+    的输入端口名对齐 —— fan-in ≥2 时按位置对齐会错配（R1-m6）。
+    """
+    node_ids = {str(n.get("node_id", "")) for n in dag.get("nodes") or []}
+    node_ids.discard("")
+    out: Dict[str, List] = {}
+    for e in dag.get("edges") or []:
+        dst_raw = str(e.get("to", ""))
+        head, sep, port = dst_raw.rpartition(".")
+        dst = head if sep and head in node_ids else dst_raw
+        src_raw = str(e.get("from", ""))
+        shead, ssep, _sport = src_raw.rpartition(".")
+        src = shead if ssep and shead in node_ids else src_raw
+        if dst and src:
+            out.setdefault(dst, []).append((src, port if sep else ""))
+    return out
+
+
 def ready_set(
     dag: Dict[str, Any],
     node_states: Dict[str, str],
@@ -71,11 +92,10 @@ def ready_set(
         if not nid or nid in excluded:
             continue
         st = node_states.get(nid, NodeState.PENDING)
-        if st == NodeState.READY:
-            out.append(nid)
+        if st not in (NodeState.READY, NodeState.PENDING):
             continue
-        if st != NodeState.PENDING:
-            continue
+        # READY 与 PENDING 同规：全部直接上游结算（SUCCEEDED/SKIPPED）
+        # 才可派发 —— 否则会与上游重算同波并发，读取旧产物（R1-C1）。
         deps = upstream.get(nid, ())
         if all(node_states.get(d) in ok for d in deps):
             out.append(nid)

@@ -28,6 +28,7 @@ from app.services.workflow_runtime import contracts as C
 from app.services.workflow_runtime import fingerprints as F
 from app.services.workflow_runtime import machine as M
 from app.services.workflow_runtime.adapters_geocompute import (
+    ADAPTER_INLINE_ROW_CAP,
     GeoComputeNodeOutcome,
     build_node_plan,
     execute_node_plan,
@@ -144,12 +145,20 @@ class Driver:
                     reason="ORPHAN_LEASE_EXPIRED", event="recovery")
                 if r.ok:
                     states[orphan] = C.NodeState.READY
-            # STALE 重入队：先复用裁决（命中零重算），未命中 → READY 重算
+            # STALE 重入队（拓扑安全，R1-C1）：上游未**结算**（非
+            # SUCCEEDED/SKIPPED —— 含 READY/RUNNING/STALE）的节点本轮
+            # 跳过 —— 否则会用「重算前的旧上游产物」做复用解除/派发，
+            # 旧结果被洗成 SUCCEEDED。每波重读 states，上游重算完成后
+            # 下游在后续波以新输入指纹自然结算。
             stale_nodes = [n for n, st in states.items()
                            if st == C.NodeState.STALE][: self.max_concurrency]
             for nid in stale_nodes:
                 node = _dag_node(dag, nid)
                 if node is None:
+                    continue
+                if any(states.get(u) not in (C.NodeState.SUCCEEDED,
+                                             C.NodeState.SKIPPED)
+                       for u in M.upstream_of(dag).get(nid, ())):
                     continue
                 input_refs, port_descs, port_idents = await self._gather_inputs(
                     instance_id, dag, nid, session_id)
@@ -184,7 +193,8 @@ class Driver:
                 if isinstance(res, Exception):
                     logger.warning("[WorkflowRuntime] node %s raised: %s",
                                    nid, res)
-                    self.store.transition_node(
+                    await asyncio.to_thread(
+                        self.store.transition_node,
                         instance_id, nid, C.NodeState.FAILED,
                         require_claim=True, claimed_by=run_token,
                         complete=True, reason="NODE_EXCEPTION",
@@ -240,10 +250,14 @@ class Driver:
         verdict = await asyncio.to_thread(
             _verify_node, node, port_descs)
         if not verdict["ok"]:
-            store.transition_node(
+            # expected_from 不限定（PENDING/READY→BLOCKED 均合法，转移表
+            # 裁决）—— READY 态（重算/恢复路径）阻断曾被 CAS 卡死空转到
+            # deadline（R1-M1）。
+            await asyncio.to_thread(
+                store.transition_node,
                 instance_id, node_id, C.NodeState.BLOCKED,
-                expected_from=C.NodeState.PENDING, reason="BINDING_BLOCKED",
-                event="driver", patch={"binding": verdict})
+                reason="BINDING_BLOCKED", event="driver",
+                patch={"binding": verdict})
             states[node_id] = C.NodeState.BLOCKED
             return
         if str(node.get("kind") or "") == "data_input":
@@ -252,7 +266,8 @@ class Driver:
             if not (node_row0 or {}).get("bound_ref"):
                 # 未绑定 = 无产物在场（诚实阻断；record_tool_result /
                 # attach 绑定后经 BLOCKED→READY 解除）
-                store.transition_node(
+                await asyncio.to_thread(
+                    store.transition_node,
                     instance_id, node_id, C.NodeState.BLOCKED,
                     reason="MISSING_BINDING", event="driver",
                     patch={"error_code": "MISSING_BINDING",
@@ -265,7 +280,8 @@ class Driver:
                 states[node_id] = C.NodeState.BLOCKED
                 return
         if states.get(node_id, C.NodeState.PENDING) == C.NodeState.PENDING:
-            r = store.transition_node(
+            r = await asyncio.to_thread(
+                store.transition_node,
                 instance_id, node_id, C.NodeState.READY,
                 expected_from=C.NodeState.PENDING, reason="DEPS_OK",
                 event="driver", patch={"binding": verdict})
@@ -273,15 +289,21 @@ class Driver:
                 return
             states[node_id] = C.NodeState.READY
         # 派发权仲裁（唯一）；输家直接退出（他认领他完成）
-        r = store.transition_node(
+        r = await asyncio.to_thread(
+            store.transition_node,
             instance_id, node_id, C.NodeState.RUNNING,
             expected_from=C.NodeState.READY, claim=True,
             claimed_by=run_token, reason="DISPATCH", event="driver")
         if not r.ok:
-            states[node_id] = (store.get_node(instance_id, node_id)
-                               or {}).get("state", C.NodeState.READY)
+            states[node_id] = (await asyncio.to_thread(
+                store.get_node, instance_id, node_id)
+                or {}).get("state", C.NodeState.READY)
             return
         states[node_id] = C.NodeState.RUNNING
+        # 派发即续租（R1-m8：单波可超 120s TTL，波界续租不够密）
+        await asyncio.to_thread(
+            store.acquire_run_lease, instance_id,
+            owner_scope=self.owner_scope, token=run_token)
 
         # 绑定态节点：data_input/output 的「执行」= 绑定传递（产物已存在）。
         kind = str(node.get("kind") or "")
@@ -290,7 +312,8 @@ class Driver:
                 store.get_node, instance_id, node_id)).get("bound_ref") \
                 or (input_refs[0] if input_refs else "")
             out_fp = await self._ref_fingerprint(session_id, ref)
-            store.transition_node(
+            await asyncio.to_thread(
+                store.transition_node,
                 instance_id, node_id, C.NodeState.SUCCEEDED,
                 require_claim=True, claimed_by=run_token, complete=True,
                 reason="BINDING_PASS_THROUGH", event="driver",
@@ -302,7 +325,8 @@ class Driver:
         # 子工作流：展开子实例并驱动（取消/失败映射父节点状态）
         if kind == "subworkflow":
             if self.subworkflow_executor is None:
-                store.transition_node(
+                await asyncio.to_thread(
+                    store.transition_node,
                     instance_id, node_id, C.NodeState.FAILED,
                     require_claim=True, claimed_by=run_token, complete=True,
                     reason="SUBWORKFLOW_UNSUPPORTED", event="driver",
@@ -315,7 +339,8 @@ class Driver:
                 parent_visited=self.parent_visited, session_id=session_id,
                 input_refs=input_refs)
             if sw.get("ok"):
-                store.transition_node(
+                await asyncio.to_thread(
+                    store.transition_node,
                     instance_id, node_id, C.NodeState.SUCCEEDED,
                     require_claim=True, claimed_by=run_token, complete=True,
                     reason="SUBWORKFLOW_OK", event="driver",
@@ -326,7 +351,8 @@ class Driver:
                 states[node_id] = C.NodeState.SUCCEEDED
             else:
                 code = str(sw.get("error_code", "SUBWORKFLOW_FAIL"))
-                store.transition_node(
+                await asyncio.to_thread(
+                    store.transition_node,
                     instance_id, node_id, C.NodeState.FAILED,
                     require_claim=True, claimed_by=run_token, complete=True,
                     reason=code[:48], event="driver",
@@ -358,7 +384,8 @@ class Driver:
                 "disclosures": [], "disclosure": "NODE_NOT_EXECUTABLE"}
             # 已派发（RUNNING）后的不可执行 = 执行失败语义（RUNNING→BLOCKED
             # 非法 —— 在飞工作不能"变回"阻断态，只能失败并留证据）。
-            store.transition_node(
+            await asyncio.to_thread(
+                store.transition_node,
                 instance_id, node_id, C.NodeState.FAILED,
                 require_claim=True, claimed_by=run_token, complete=True,
                 reason="NODE_NOT_EXECUTABLE", event="driver",
@@ -381,7 +408,8 @@ class Driver:
             out_fp = await self._ref_fingerprint(session_id, outcome.output_ref)
             node_row = await asyncio.to_thread(
                 store.get_node, instance_id, node_id)
-            store.transition_node(
+            await asyncio.to_thread(
+                store.transition_node,
                 instance_id, node_id, C.NodeState.SUCCEEDED,
                 require_claim=True, claimed_by=run_token, complete=True,
                 reason="EXEC_OK", event="driver",
@@ -398,12 +426,27 @@ class Driver:
             await self._record_reuse(
                 instance_id, dag, node, node_id, port_idents, session_id,
                 outcome.output_ref, out_fp,
-                effective_params=effective_params)
+                effective_params=effective_params)  # 同指纹源（R1-m1）
         else:
             node_row = await asyncio.to_thread(
                 store.get_node, instance_id, node_id)
             attempts = (node_row or {}).get("attempts", 0) + 1
-            store.transition_node(
+            if outcome.error_code == "CANCELLED":
+                # 在飞取消：RUNNING→CANCELLED（落 FAILED 会与 cancelled
+                # 实例语义混杂，R1-m7）
+                await asyncio.to_thread(
+                    store.transition_node,
+                    instance_id, node_id, C.NodeState.CANCELLED,
+                    require_claim=True, claimed_by=run_token,
+                    reason="EXEC_CANCELLED", event="driver",
+                    patch={"attempts_increment": True,
+                           "attempt_log": {
+                               "attempt": attempts, "status": "cancelled",
+                               "backend": "geocompute_inprocess"}})
+                states[node_id] = C.NodeState.CANCELLED
+                return
+            await asyncio.to_thread(
+                store.transition_node,
                 instance_id, node_id, C.NodeState.FAILED,
                 require_claim=True, claimed_by=run_token, complete=True,
                 reason=f"EXEC_FAIL:{outcome.error_code[:48]}",
@@ -424,21 +467,26 @@ class Driver:
         session_id: str,
     ) -> Tuple[List[str], Dict[str, Any], Dict[str, Dict[str, str]]]:
         """上游 refs + 逐端口 descriptor + 内容身份（绑定门/复用指纹输入）。"""
-        upstream = M.upstream_of(dag).get(node_id, ())[:4]
+        # 端口对齐按边 to_port（fan-in ≥2 位置对齐会错配，R1-m6）；
+        # 无端口信息的边退化为声明序。
+        edge_ports = M.upstream_ports(dag).get(node_id, [])
         node = _dag_node(dag, node_id) or {}
         port_names = [str(p.get("name") or f"input{i + 1}")
                       for i, p in enumerate(node.get("inputs") or [])]
         refs: List[str] = []
         port_descs: Dict[str, Any] = {}
         port_idents: Dict[str, Dict[str, str]] = {}
-        for idx, up in enumerate(upstream):
+        for idx, (up, to_port) in enumerate(
+                [(u, "") for u in M.upstream_of(dag).get(node_id, ())][:4]
+                if not edge_ports else edge_ports[:4]):
             row = await asyncio.to_thread(self.store.get_node, instance_id, up)
             ref = (row or {}).get("output_ref") or (row or {}).get("bound_ref") or ""
             if not ref:
                 continue
             refs.append(ref)
-            port = port_names[idx] if idx < len(port_names) else \
-                f"input{idx + 1}"
+            port = to_port if to_port in port_names else (
+                port_names[idx] if idx < len(port_names)
+                else f"input{idx + 1}")
             if ref.startswith("wi:"):
                 # 子工作流实例引用：无会话载荷身份（诚实 unknown，
                 # 不虚构 descriptor 事实）
@@ -532,8 +580,14 @@ class Driver:
         fp, _env = self._reuse_fp(dag, node, node_id, port_idents,
                                   self._package_fp,
                                   effective_params=effective_params)
+        from app.services.workflow_runtime.reuse import (
+            anonymous_session_scope,
+        )
+
         rec = await asyncio.to_thread(
-            self.reuse_index.find, self.owner_scope, fp)
+            self.reuse_index.find, self.owner_scope, fp,
+            session_scope=anonymous_session_scope(self.owner_scope,
+                                                  session_id))
         if rec is None:
             return False
         ok, why = evaluate_eligibility(
@@ -544,14 +598,19 @@ class Driver:
             descriptor_probe=None,  # 存活探测走下方异步 h_descriptor
         )
         if ok:
-            probe = await self.h_descriptor(session_id, rec.artifact_ref)
+            # 存活探测在**产物所属会话**内进行（session 存储是隔离域；
+            # 用当前会话探测他处产物必失败 → 曾误删他处活缓存 [R1-M2]）
+            probe = await self.h_descriptor(
+                rec.artifact_session_id or session_id, rec.artifact_ref)
             if not isinstance(probe, dict):
                 ok, why = False, "artifact_unresolvable"
         if not ok:
-            # 索引自愈：拒绝即删除（fail-open，绝不倒灌执行路径）；
-            # 拒绝 → 走真执行路径（调用方继续），RUNNING 态保持。
-            await asyncio.to_thread(
-                self.reuse_index.invalidate, self.owner_scope, fp)
+            # 索引自愈：输入/包/存活失配即删除（fail-open，绝不倒灌执行
+            # 路径）；level 级拒绝（shape 只记录不复用）是**策略而非失配**
+            # —— 条目保留，不空转删除重写（R1 NIT）。
+            if not why.startswith("level_"):
+                await asyncio.to_thread(
+                    self.reuse_index.invalidate, self.owner_scope, fp)
             logger.info("[WorkflowRuntime] reuse denied %s/%s: %s",
                         instance_id, node_id, why)
             return False
@@ -598,11 +657,17 @@ class Driver:
         fp, env_fp = self._reuse_fp(dag, node, node_id, port_idents,
                                     self._package_fp,
                                     effective_params=effective_params)
-        level = min(
-            (i.get("level", "") for i in port_idents.values()),
-            key=lambda lv: (lv != "content", lv != "profile_digest"),
-            default="shape",
-        ) if port_idents else "shape"
+        # 级别聚合（R1-M4）：任一端口身份缺席或不可复用级 → 整条降级
+        # shape（只记录不复用）—— 最低水位，绝不掩盖空身份端口。
+        levels = [i.get("level", "") for i in port_idents.values()]
+        if not port_idents or any(lv not in F.REUSABLE_LEVELS
+                                  for lv in levels):
+            level = "shape"
+        else:
+            level = min(
+                levels,
+                key=lambda lv: (lv != "content", lv != "profile_digest"),
+            )
         await asyncio.to_thread(
             self.reuse_index.record,
             ReuseRecord(
@@ -624,7 +689,10 @@ class Driver:
                 algorithm_id=str(node.get("algorithm_id")
                                  or node.get("capability") or ""),
                 params_fp=F.canonical_fingerprint(
-                    F.canonicalize_parameters(node.get("parameters") or {})),
+                    F.canonicalize_parameters(
+                        effective_params
+                        if effective_params is not None
+                        else node.get("parameters") or {})),
                 env_fp=env_fp,
                 source_instance_id=instance_id,
             ))
@@ -647,9 +715,18 @@ class Driver:
         """构建 [op, MATERIALIZE] 计划并同步执行（to_thread 卸载）。"""
         from types import SimpleNamespace
 
-        input_features = await load_ref_features(
-            session_id, input_refs,
-            max_rows=2_000)  # 适配器内联上界（诚实小步；更大走物化/裁剪）
+        # 适配器内联上界（与 build_node_plan 的 ADAPTER_INLINE_ROW_CAP
+        # 同一常数；超界 = typed 失败 INPUT_TRUNCATED，绝不静默裁剪
+        # [R1-C2]——更大数据通道 = 先物化/裁剪上游，属 follow-up）。
+        max_inline = ADAPTER_INLINE_ROW_CAP
+        input_features, truncated = await load_ref_features(
+            session_id, input_refs, max_rows=max_inline)
+        if truncated:
+            return GeoComputeNodeOutcome(
+                ok=False, error_code="INPUT_TRUNCATED",
+                error_message=(
+                    f"inline input exceeds adapter cap {max_inline} rows; "
+                    "materialize/narrow upstream first"))
         ns = SimpleNamespace(node_id=node.get("node_id", ""),
                              kind=node.get("kind", ""),
                              role=node.get("role", ""))

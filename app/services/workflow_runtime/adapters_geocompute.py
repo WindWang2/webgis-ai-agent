@@ -224,18 +224,26 @@ def execute_node_plan(
 
 async def load_ref_features(
     session_id: str, refs: List[str], *, max_rows: int,
-) -> List[Dict[str, Any]]:
-    """session refs → 内联 features（有界；超界诚实截断由调用方拦截）。"""
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """session refs → (内联 features, 是否被截断)。
+
+    加载 ``max_rows + 1`` 条探测截断 —— 超界必须由调用方升级为 typed
+    失败（INPUT_TRUNCATED），**绝不静默裁剪**（R1-C2：截断后照常执行
+    成功 = 科学结果错误而不自知）。
+    """
     from app.services.session_data import session_data_manager
 
     feats: List[Dict[str, Any]] = []
     for ref in refs[:8]:
-        if len(feats) >= max_rows:
+        if len(feats) > max_rows:
             break
         payload = await session_data_manager.get(session_id, ref)
+        items: List[Dict[str, Any]] = []
         if isinstance(payload, dict) and isinstance(
                 payload.get("features"), list):
-            feats.extend(payload["features"][:max(0, max_rows - len(feats))])
+            items = payload["features"]
         elif isinstance(payload, list):
-            feats.extend(payload[:max(0, max_rows - len(feats))])
-    return feats
+            items = payload
+        feats.extend(items[:max(0, max_rows + 1 - len(feats))])
+    truncated = len(feats) > max_rows
+    return feats[:max_rows], truncated

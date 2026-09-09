@@ -130,20 +130,29 @@ class ReuseIndex:
                          exc_info=True)
             return False
 
-    def find(self, owner_scope: str,
-             reuse_fingerprint: str) -> Optional[ReuseRecord]:
-        """寻址（不裁 eligibility —— 调用方做输入一致性/存活校验）。"""
+    def find(self, owner_scope: str, reuse_fingerprint: str,
+             *, session_scope: str = "") -> Optional[ReuseRecord]:
+        """寻址（不裁 eligibility —— 调用方做输入一致性/存活校验）。
+
+        ``session_scope``：anonymous 域内的同域约束 [R1-M2]——命中必须
+        session_scope 为空（真实用户域，跨会话共享）或与当前作用域相等；
+        绝不命中其他匿名会话的条目。
+        """
         if not owner_scope or not reuse_fingerprint:
             return None
         try:
             with self._factory() as db:
                 from app.models.db_model import WorkflowNodeReuseRow
 
-                row = db.query(WorkflowNodeReuseRow).filter(
+                q = db.query(WorkflowNodeReuseRow).filter(
                     WorkflowNodeReuseRow.owner_scope == owner_scope,
                     WorkflowNodeReuseRow.reuse_fingerprint
                     == reuse_fingerprint[:32],
-                ).first()
+                )
+                if session_scope:
+                    q = q.filter(WorkflowNodeReuseRow.session_scope.in_(
+                        ("", session_scope[:40])))
+                row = q.first()
                 if row is None:
                     return None
                 return ReuseRecord(
@@ -206,6 +215,10 @@ def evaluate_eligibility(
         return False, "package_changed"
     for port, cur in current_inputs.items():
         stored = rec.input_fingerprints.get(port) or {}
+        if not str(cur.get("fp") or ""):
+            # 身份缺席（descriptor 缺席/shape 不可判定）→ 复用必 miss
+            # [R1-M4]：descriptor 缺席 = 复用必 miss 的红线守卫。
+            return False, f"input_identity_absent:{port}"
         if str(stored.get("fp") or "") != str(cur.get("fp") or ""):
             return False, f"input_changed:{port}"
         stored_rev = str(stored.get("rev")

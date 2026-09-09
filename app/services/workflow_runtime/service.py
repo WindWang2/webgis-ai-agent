@@ -146,13 +146,15 @@ class WorkflowRuntimeService:
         ]
         if not nodes:
             raise WorkflowRuntimeError("EMPTY_DAG", package_id)
-        # 同 plan 活实例 → superseded（防幽灵 RUNNING [R1-M6]）
+        # 同 plan 活实例 → superseded（防幽灵 RUNNING [R1-M6]；CAS：
+        # revision 冲突 = 他写手已动，留待其终态语义，不覆盖）
         if session_id:
             for old in self.store.list_session_instances(
                     session_id, owner_scope=owner_scope, active_only=True):
                 if old["package_id"] == package_id:
                     self.store.update_instance(
                         old["instance_id"], owner_scope=owner_scope,
+                        expected_revision=old["revision"],
                         fields={"status": C.InstanceStatus.SUPERSEDED,
                                 "error_code": "SUPERSEDED_BY_NEW_INSTANCE"})
         inst = self.store.create_instance(
@@ -194,7 +196,10 @@ class WorkflowRuntimeService:
                 owner_scope=owner_scope,
                 expected_revision=inst["revision"],
                 fields={"status": C.InstanceStatus.RUNNING,
-                        "error_code": "", "error_detail": ""})
+                        "error_code": "", "error_detail": "",
+                        # 残留取消旗标会把重驱立即打成 cancelled（R1-M3）
+                        "cancel_requested": False,
+                        "terminal_at": None})
             if reset is None:
                 raise InstanceBusy(instance_id, "concurrent rerun")
         dag = await self._instance_dag(inst)
@@ -218,9 +223,10 @@ class WorkflowRuntimeService:
             session_id=inst["session_id"], run_token=run_token,
             package_fingerprint=inst["package_fingerprint"],
             package_id=inst["package_id"])
-        # 完成边界：drain pending changes（quiescence 已由 run 保证）；
-        # 实例终态由 driver._finalize_instance 落库（run 生命周期单写者）。
-        if summary.get("status") == C.InstanceStatus.RUNNING:
+        # 完成边界：drain pending changes（[R1-C3 修复] 门控为「非
+        # RUNNING」—— drain 自身在仍有 RUNNING 节点时 no-op，唯一能生效
+        # 的静止场景必须放行；实例终态由 driver 落库，run 单写者）。
+        if summary.get("status") != C.InstanceStatus.RUNNING:
             applier = ChangeApplier(self.store, owner_scope=owner_scope)
             await applier.drain_pending(instance_id, dag)
         final = await asyncio.to_thread(
