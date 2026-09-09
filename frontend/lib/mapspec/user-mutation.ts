@@ -13,6 +13,7 @@ import {
 } from '@/lib/mapspec/session-cursor';
 import { useToastStore } from '@/components/ui/toast';
 import { tagUserDisplayed, untagUserPinned } from '@/lib/chat/turn-focus';
+import { journalOnly, presentationCommand, reorderCommand } from '@/lib/workbench/undo';
 import { devOnly } from '@/lib/utils/logger';
 
 export interface LayerPresentationPatch {
@@ -250,6 +251,14 @@ export async function toggleLayerAndCommit(layerId: string): Promise<void> {
   // visible:false mutation —— 对服务端未知层发写、且乐观翻转无目标。
   if (!layer) return;
   const previous = layer.visible !== false;
+  // V5/W4：undo 命令载荷在变更前捕获（forward=after，inverse=before）。
+  presentationCommand(
+    previous ? `隐藏 ${layer.name || layerId}` : `显示 ${layer.name || layerId}`,
+    layerId,
+    'user',
+    { visible: previous },
+    { visible: !previous },
+  );
   useHudStore.getState().toggleLayer(layerId);
   // 「地图随对话」：用户手动点开的层标记为当前轮 —— 后续同轮 agent 展示
   // 不会把它当旧轮收起（不与用户对抗）。只处理"点开"方向（previous 为
@@ -440,6 +449,13 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
   const previous = useHudStore.getState().layers;
   const specLayerId = mapspecLayerId(layerId);
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
+  // V5/W4：remove 落账不可逆（服务端 spec 已删、重挂需 source 数据重取）
+  // —— 仅入 journal，不进 undo 栈（诚实可逆性元数据）。
+  journalOnly({
+    type: 'remove',
+    label: `删除图层 ${layerId}`,
+    actor: 'user',
+  });
   markPendingRemoved(specLayerId);
   if (specLayerId !== layerId) markPendingRemoved(layerId);
   useHudStore.getState().removeLayer(layerId);
@@ -493,6 +509,13 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
 
 export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayerId?: string }[]): Promise<void> {
   const previous = useHudStore.getState().layers;
+  // V5/W4：z 序可逆命令（inverse=先前序重放同通道）。
+  reorderCommand(
+    '调整图层顺序',
+    'user',
+    previous.map((layer) => ({ id: layer.id, _mapspecLayerId: layer._mapspecLayerId })),
+    layers.map((layer) => ({ ...layer })),
+  );
   useHudStore.getState().reorderLayers(layers as any);
   try {
     await commitMapSpecMutation({
@@ -518,6 +541,15 @@ export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayer
 export async function setLayerOpacityAndCommit(layerId: string, opacity: number): Promise<void> {
   const layer = useHudStore.getState().layers.find((item) => item.id === layerId);
   const previous = layer?.opacity ?? 1;
+  if (previous === opacity) return;
+  // V5/W4：不透明度可逆命令（inverse=先前值，同通道反向提交）。
+  presentationCommand(
+    `调整不透明度 ${layer?.name || layerId}`,
+    layerId,
+    'user',
+    { opacity: previous },
+    { opacity },
+  );
   useHudStore.getState().updateLayer(layerId, { opacity });
   try {
     await commitLayerPresentation({ layerId, opacity });

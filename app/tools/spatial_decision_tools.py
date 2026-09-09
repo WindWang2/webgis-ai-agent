@@ -78,6 +78,7 @@ def register_spatial_decision_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="spatial_decision_v2",
+        capabilities=['scenario_simulation'],
         description="Data-Grounded Spatial Decision Intelligence V2: 基于真实空间数据、RAG 证据链与工程规则，进行情景推演、指标计算、MapSpec 地图生成与报告产出。",
         tier=3,
         domains=["what_if"],
@@ -171,6 +172,7 @@ def register_spatial_decision_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="scenario_compare",
+        capabilities=['mcda_evaluation'],
         description="多方案情景对比决策分析：评估与对比多个空间方案（如方案 A vs 方案 B vs 方案 C），输出指标矩阵、Pareto 优越面、地图图层与推荐方案。",
         tier=3,
         domains=["what_if"],

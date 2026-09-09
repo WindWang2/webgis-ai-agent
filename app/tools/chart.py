@@ -480,6 +480,7 @@ def register_chart_tools(registry: ToolRegistry):
     """注册图表工具"""
     registry.register(
         tier=2, domains=["report"], name="generate_chart",
+        capabilities=['report_charting'],
         description="【核心可视化工具】生成统计图表。所有数值统计结果【必须】通过此工具展示。data 可传 JSON 数组，也可直接传 GeoJSON/ref 引用并配合 x_field/y_field 取字段。attach_to_map=true（+session_id）可同时把图表作为地图浮动面板显示（组件突变，不重查数据）。**严禁**在回复中使用任何图片 Markdown (如 `![已通过图表工具渲染](...)`) 作为占位符或展示标记，这会导致前端由于无法找到图片而报错。只需调用工具并直接进行文字总结即可。",
         func=generate_chart_tool,
         field_extras={

@@ -23,5 +23,6 @@
 | `CANCEL_MID_WRITE` | CANCEL | 制品分块写入中途到达取消信号 | CURRENT_TOKEN contextvar 绑定 CancellationToken，写入循环 chunk 边界触发 cancel()（生产 checkpoint 接缝） | 下一个 checkpoint 抛 OperationCancelled；无部分制品被晋升（缓存 miss、临时件被丢弃） | `app/lib/cancellation.py:163 checkpoint + cancellable（审计 05 §3.7）` |
 | `LLM_TIMEOUT` | LLM | LLM 读取相位超时（provider 挂起不响应） | httpx.MockTransport handler 抛 ReadTimeout（transport 接缝，test_provider_contract_v2 同款） | 诚实抛错（不假成功）；读取超时不在连接相位重试白名单内，单次尝试即失败 | `app/services/chat/llm_client.py:358-407 重试边界（审计 05 §3.1）` |
 | `LLM_MALFORMED_STREAM` | LLM | 流式响应在 finish_reason/[DONE] 之前被截断 | MockTransport 返回只有内容帧的截断 SSE（transport 接缝） | ProviderStreamTruncated 显式抛出，绝不把断流包装成 done 帧（防假成功） | `app/services/chat/llm_client.py:601-609 截断判定（审计 05 §3.1）` |
+| `STORAGE_TRANSIENT_FAIL` | STORAGE | 制品账本存储后端瞬时写失败（Redis/磁盘抖动）后恢复 | 计数包装 session_data_manager.store/overwrite：前 fail_times 次抛 OSError（monkeypatch 接缝） | 调用方拿到类型化异常（不静默丢数据）；账本 alias 不前进（无半截提交）；恢复后重试成功 | `app/services/artifact_registry.py:227-240 _save_records（Quality V2 W9）` |
 
-共 12 个注册故障点；子系统：`CACHE`、`CANCEL`、`INGEST`、`LLM`、`LOCK`、`REGISTRY`。
+共 13 个注册故障点；子系统：`CACHE`、`CANCEL`、`INGEST`、`LLM`、`LOCK`、`REGISTRY`、`STORAGE`。

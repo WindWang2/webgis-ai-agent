@@ -205,6 +205,18 @@ def _interpolation_fact_signals(
             suitable = False
             ev["reject"] = ev.get("reject") or "zero_value_variance"
 
+    # 2c) V5 W4：经度约定/AM 语义证据（profile 证据进 planner）——
+    # e360 或跨 AM 数据在度量投影前需要归一/拆分，先记事实供
+    # fact_hint 与硬门之外的 remediation 提示；absent 缺席不放言。
+    lon_conv = p.get("longitudeConvention")
+    if lon_conv in ("pm180", "e360"):
+        ev["longitudeConvention"] = lon_conv
+    crosses = p.get("crossesAntimeridian")
+    if isinstance(crosses, bool):
+        ev["crossesAntimeridian"] = crosses
+        if crosses or lon_conv == "e360":
+            ev["longitudeNormalizationRequired"] = True
+
     # 3) CRS 类（geographic = PROJECTED_REQUIRED 硬门必拒 → 事实先行不 hint；
     #    projected/local/unknown 放行，硬门兜底）
     crs_class = p.get("crsClass")

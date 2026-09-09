@@ -19,6 +19,7 @@ def register_plan_mode_tools(registry: ToolRegistry):
 
     @registry.tool(
         name="propose_plan",
+        capabilities=['plan_workflow_orchestration'],
         tier=1,
         description=(
             "Plan Mode：提交一个结构化多步分析计划，**不立即执行**，仅返回 plan_id 与可读摘要。\n"
@@ -116,6 +117,7 @@ def register_plan_mode_tools(registry: ToolRegistry):
 
     @registry.tool(
         name="execute_plan",
+        capabilities=['plan_workflow_orchestration'],
         tier=1,
         description=(
             "执行由 propose_plan 创建的、**用户已明确确认**的计划。\n"
@@ -162,6 +164,7 @@ def register_plan_mode_tools(registry: ToolRegistry):
 
     @registry.tool(
         name="get_plan_status",
+        capabilities=['plan_workflow_orchestration'],
         tier=1,
         description=(
             "查询一个已提交计划的当前状态。状态词表：pending(待审) / running(执行中) / "

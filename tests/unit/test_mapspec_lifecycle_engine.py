@@ -316,3 +316,91 @@ class _CountingSDM:
     async def get_map_state(self, sid):
         self._counter["n"] += 1
         return await self._inner.get_map_state(sid)
+
+
+# ─── Workbench V5：SetWorkbenchStateIntent（W3 组织态持久化）─────────────────
+from app.services.mapspec.lifecycle_engine import SetWorkbenchStateIntent
+
+
+def _valid_workbench_doc():
+    return {
+        "version": 5,
+        "groups": [
+            {"id": "wg-1", "name": "东部", "collapsed": False, "parentId": None},
+            {"id": "wg-2", "name": "子组", "collapsed": False, "parentId": "wg-1"},
+        ],
+        "membership": {"layer-a": "wg-2"},
+        "lockedLayerIds": ["layer-b"],
+        "mode": "analyze",
+    }
+
+
+@pytest.mark.asyncio
+async def test_workbench_state_commit_and_persist():
+    engine = MapSpecLifecycleEngine()
+    session_id = "test_session_wb_1"
+    res = await engine.apply_mutation(
+        session_id, SetWorkbenchStateIntent(doc=_valid_workbench_doc()),
+        origin="user", expected_revision=0,
+    )
+    assert res.is_error is False
+    assert res.mapspec["workbench"]["version"] == 5
+    assert res.mapspec["workbench"]["membership"] == {"layer-a": "wg-2"}
+    # 磁盘域可恢复（store.get_mapspec 含 workbench 分支）
+    restored = await engine.store.get_mapspec(session_id)
+    assert restored is not None and restored["workbench"]["mode"] == "analyze"
+
+
+@pytest.mark.asyncio
+async def test_workbench_state_requires_matching_revision():
+    engine = MapSpecLifecycleEngine()
+    session_id = "test_session_wb_2"
+    first = await engine.apply_mutation(
+        session_id, SetWorkbenchStateIntent(doc=_valid_workbench_doc()),
+        origin="user", expected_revision=0,
+    )
+    assert first.is_error is False
+    stale = await engine.apply_mutation(
+        session_id, SetWorkbenchStateIntent(doc=_valid_workbench_doc()),
+        origin="user", expected_revision=0,
+    )
+    assert stale.superseded is True
+    assert stale.mutation_revision == 1
+
+
+@pytest.mark.asyncio
+async def test_workbench_state_rejects_invalid_docs():
+    engine = MapSpecLifecycleEngine()
+    session_id = "test_session_wb_3"
+    bad_docs = [
+        {"version": 4},
+        {"version": 5, "groups": [{"id": "a"}, {"id": "a"}], "mode": "explore"},
+        # 环：a→b→a
+        {"version": 5, "groups": [
+            {"id": "a", "parentId": "b"}, {"id": "b", "parentId": "a"}], "mode": "explore"},
+        # 超深：5 层链
+        {"version": 5, "groups": [
+            {"id": "n1", "parentId": None}, {"id": "n2", "parentId": "n1"},
+            {"id": "n3", "parentId": "n2"}, {"id": "n4", "parentId": "n3"},
+            {"id": "n5", "parentId": "n4"}], "mode": "explore"},
+        {"version": 5, "groups": [], "membership": {"l": 1}, "mode": "explore"},
+        {"version": 5, "groups": [], "lockedLayerIds": [1], "mode": "explore"},
+        {"version": 5, "groups": [], "mode": "hacker"},
+    ]
+    for doc in bad_docs:
+        res = await engine.apply_mutation(
+            session_id, SetWorkbenchStateIntent(doc=doc),
+            origin="user", expected_revision=0,
+        )
+        assert res.is_error is True, f"doc should be rejected: {doc}"
+        assert res.error_msg
+
+
+def test_workbench_doc_validator_messages():
+    from app.services.mapspec.lifecycle_engine import _workbench_doc_error
+
+    assert _workbench_doc_error(_valid_workbench_doc()) is None
+    assert "version" in _workbench_doc_error({"version": 3})
+    assert "object" in _workbench_doc_error([1, 2, 3])
+    assert "unique" in _workbench_doc_error({
+        "version": 5, "groups": [{"id": "a"}, {"id": "a"}], "mode": "explore"})

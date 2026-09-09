@@ -123,9 +123,12 @@ def queue_for_node(node: ExecutionNode) -> str:
 
 
 def _default_session_factory():
-    from app.services.jobs.worker import _default_session_factory
+    # 必须**调用** jobs 层工厂（返回 Session 实例）—— 返回函数对象本身时
+    # ``with session_factory() as db`` 拿到的是函数，TypeError（V5 既有
+    # 生产缺陷，eager 测试因注入工厂而未暴露；V6 round2 review C3 修复）。
+    from app.services.jobs.worker import _default_session_factory as _jobs_factory
 
-    return _default_session_factory
+    return _jobs_factory()
 
 
 #: 可注入的会话工厂（测试替换为临时 SQLite 工厂）。
@@ -158,6 +161,7 @@ def dispatch_node(
     session_id: str,
     plan_fingerprint: str,
     deadline_s: Optional[float],
+    budget: Optional[Any] = None,
 ) -> dict[str, Any]:
     """把节点提交为 durable job（幂等键 = 节点语义指纹 + 会话）。
 
@@ -186,6 +190,13 @@ def dispatch_node(
             "node": node_dict,
             "session_id": session_id,
             "deadline_s": deadline_s,
+            # V6（P0-3）：plan budget 穿透到 worker 任务体；只进 task_kwargs
+            # 不进 params —— 幂等键（params 摘要）不含治理元数据。
+            "budget": (
+                budget.model_dump(mode="json")
+                if budget is not None and hasattr(budget, "model_dump")
+                else budget
+            ),
         },
         session_id=session_id,
         queue=queue,

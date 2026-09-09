@@ -33,6 +33,7 @@ def register_local_stats_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["statistics"], name="query_local_yearbook",
+        capabilities=['local_data_query'],
         description=(
             "本地统计年鉴查询：中国县域统计年鉴（乡镇卷 2014-2025，乡镇级指标）"
             "与县域面板（2000-2024，75+ 县级指标，含 GDP/人口/财政/教育/医疗）。"
@@ -243,6 +244,7 @@ def register_local_stats_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["statistics"], name="get_local_stats_catalog",
+        capabilities=['local_data_query'],
         description=(
             "本地统计数据目录：年鉴库（年份/行数/行政区连接率/指标词表）与"
             "高德 POI 库（省份/行数）的可用性总览。"

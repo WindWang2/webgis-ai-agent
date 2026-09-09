@@ -5,7 +5,7 @@
 > cancellable）；行为认证：tests/quality/
 > test_cancellation_resource_certification.py。
 
-- 覆盖：**14/52** 个重计算文件含取消检查点。
+- 覆盖：**17/52** 个重计算文件含取消检查点。
 
 | file | cancellation sites | loop sites（粗计） | status |
 |---|---|---|---|
@@ -13,7 +13,7 @@
 | app/lib/geo_analysis/_vector.py | 0 | 6 | no-checkpoints |
 | app/lib/geo_analysis/aggregation.py | 2 | 26 | certified |
 | app/lib/geo_analysis/dasymetric.py | 0 | 11 | no-checkpoints |
-| app/lib/geo_analysis/density.py | 0 | 23 | no-checkpoints |
+| app/lib/geo_analysis/density.py | 2 | 23 | certified |
 | app/lib/geo_analysis/evidence.py | 0 | 1 | no-checkpoints |
 | app/lib/geo_analysis/geometry_ops.py | 2 | 11 | certified |
 | app/lib/geo_analysis/glcm.py | 0 | 14 | no-checkpoints |
@@ -32,7 +32,7 @@
 | app/lib/geo_analysis/raster_windowed.py | 2 | 16 | certified |
 | app/lib/geo_analysis/rbf_interpolation.py | 1 | 5 | certified |
 | app/lib/geo_analysis/regression_kriging.py | 0 | 17 | no-checkpoints |
-| app/lib/geo_analysis/rs_v3.py | 0 | 33 | no-checkpoints |
+| app/lib/geo_analysis/rs_v3.py | 2 | 33 | certified |
 | app/lib/geo_analysis/sar_calibration.py | 0 | 3 | no-checkpoints |
 | app/lib/geo_analysis/sar_filter.py | 0 | 6 | no-checkpoints |
 | app/lib/geo_analysis/sar_temporal.py | 0 | 9 | no-checkpoints |
@@ -43,7 +43,7 @@
 | app/lib/geo_analysis/spectral.py | 0 | 8 | no-checkpoints |
 | app/lib/geo_analysis/statistics.py | 8 | 117 | certified |
 | app/lib/geo_analysis/tasseled_cap.py | 0 | 10 | no-checkpoints |
-| app/lib/geo_analysis/terrain.py | 0 | 63 | no-checkpoints |
+| app/lib/geo_analysis/terrain.py | 2 | 63 | certified |
 | app/lib/geo_analysis/tin_interpolation.py | 0 | 21 | no-checkpoints |
 | app/lib/geo_analysis/trend_surface.py | 0 | 11 | no-checkpoints |
 | app/lib/geo_raster/__init__.py | 0 | 1 | no-checkpoints |

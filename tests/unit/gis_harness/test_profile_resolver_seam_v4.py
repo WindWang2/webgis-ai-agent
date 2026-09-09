@@ -487,8 +487,9 @@ class TestBackendEvidence:
             "spatial_interpolation", profile=profile, available_tools=None,
         )
         assert resolution.algorithm == "interpolation.idw"
-        # IDW 未声明变体 → 默认工具路径（variant 空，tier 仍记录）
-        assert resolution.backend_variant == ""
+        # W4 后 idw 声明了 numpy_full_samples 变体（1..20 万样本窗口）；
+        # 100 点落在窗口内 → 默认路径证据如实记录命中的默认变体。
+        assert resolution.backend_variant == "numpy_full_samples"
         assert resolution.scale_tier
 
     def test_planner_record_carries_backend_fields(self):

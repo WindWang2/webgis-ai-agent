@@ -35,6 +35,7 @@ def register_skill_surface_refresh(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="refresh_skill_surface",
+        capabilities=['meta_tool_surface'],
         description=(
             "重新扫描技能目录并刷新注册表工具面（注册表层）。新技能立即可经 "
             "webgis_execute 调用；原生 schema 面在 Pi worker spawn 时冻结，"

@@ -105,6 +105,7 @@ def register_annotation_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="measure_distance",
+        capabilities=['map_annotation_measurement'],
         description=(
             "在地图上量两点或多点折线的距离 (Haversine 球面距离，米/公里精度)。"
             "\n何时用：用户说『量一下这两个点多远』『沿这条路线走多少公里』。"
@@ -152,6 +153,7 @@ def register_annotation_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="measure_area",
+        capabilities=['map_annotation_measurement'],
         description=(
             "在地图上量多边形面积 (球面公式，km² 精度)。"
             "\n何时用：用户说『这块地多大』『画个圈量个面积』『统计该区域覆盖了多少平方公里』。"
@@ -198,6 +200,7 @@ def register_annotation_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="add_marker",
+        capabilities=['map_annotation_measurement'],
         description=(
             "在地图上撒一个 pin 标注。常用于：『把这个点钉一下』『标记一下我说的位置』。"
             "\n何时用：要在地图上长期可见某个坐标 (分析结果点、检索命中点、用户提到的地标)。"
@@ -242,6 +245,7 @@ def register_annotation_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="clear_annotations",
+        capabilities=['map_annotation_measurement'],
         description=(
             "清空地图上所有由 add_marker / measure_distance / measure_area 留下的标注。"
             "\n何时用：用户说『清掉刚才的标记』『把测量线擦了』『重新开始』。"

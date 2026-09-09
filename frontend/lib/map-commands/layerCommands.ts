@@ -19,6 +19,8 @@ import {
   applyLayerVisibilityTransaction,
   boundedVisibilityRepair,
 } from './visibility-transaction';
+import { LOCK_CONFLICT_ERROR, partitionByLock } from '@/lib/workbench/layer-lock';
+import { journalOnly } from '@/lib/workbench/undo';
 
 // 身份解析已集中到 layer-identity.ts（LayerIdentityResolver 单一深接口）；
 // 此处 re-export 保持既有导入路径（tests / 兄弟命令）兼容。
@@ -301,7 +303,27 @@ export const layerCommands: Record<string, CommandEntry> = {
       // 身份解析与 visibility 对称（此前 remove 不做 ref 展开：恢复会话里
       // ref 目标假 target_not_found；一个 ref 背的多层只删一层留下残件）。
       const targetIds = resolveLayerTargetsByRef(target, getHudState);
-      const effectiveTargets = targetIds.length > 0 ? targetIds : [target];
+      // V5/W2 lock 门：锁定层是用户意图护栏 —— agent 删除被锁目标 → typed
+      // layer_locked 冲突（用户解锁是唯一 override）；部分被锁只删未锁目标
+      // 并在 result 披露 locked_layer_ids（不静默）。
+      const lockPartition = partitionByLock(
+        targetIds.length > 0 ? targetIds : [target],
+      );
+      if (lockPartition.locked.length > 0 && lockPartition.allowed.length === 0) {
+        // W2/W9：typed 冲突入 journal（agent 删除被用户锁拦截的审计痕迹）。
+        journalOnly({
+          type: 'lock_conflict',
+          label: `Agent 删除被用户锁拦截：${lockPartition.locked.join(', ')}`,
+          actor: 'agent',
+        });
+        return {
+          status: 'failed',
+          error: LOCK_CONFLICT_ERROR,
+          result: { locked_layer_ids: [...lockPartition.locked] },
+        };
+      }
+      const effectiveTargets = lockPartition.allowed;
+      const lockedLayerIds = lockPartition.locked;
 
       const specLayerIds = new Set(
         ((getCommittedMapSpec()?.layers || []) as any[]).map((l) => String(l.id)),
@@ -430,23 +452,29 @@ export const layerCommands: Record<string, CommandEntry> = {
 
       // 5. V3 round-2 FIX-B: post-mutation verification — the resolved stack
       //    must be gone from the map. (#462: registry read.)
+      // V5/W2：部分 lock 冲突在各出口披露 locked_layer_ids（不静默）。
+      const withLocked = (result: Record<string, unknown> | undefined) =>
+        lockedLayerIds.length > 0 ? { ...result, locked_layer_ids: [...lockedLayerIds] } : result;
       const layersAfter = renderer.getStyleLayerIds(map);
       const stillPresent = matchedAll.some(
         (id) => !!map.getLayer?.(id) || !!map.getSource?.(id) || layersAfter.includes(id),
       );
       if (sawFailure) {
         return storeMatchedAll.length > 0
-          ? { status: 'succeeded', result: { store_updated: true } }
+          ? { status: 'succeeded', result: withLocked({ store_updated: true }) }
           : { status: 'failed', error: 'mutation_failed' };
       }
       if (!runtimeRemovedAny) {
         // 全部目标是 store-only（reconcile 拥有 map 子层）→ 无同步可验证的
         // map 状态，诚实 store_updated（后端视作未收敛）。
-        return { status: 'succeeded', result: { store_updated: true } };
+        return { status: 'succeeded', result: withLocked({ store_updated: true }) };
       }
-      if (stillPresent) return nonConfirmableAck(storeMatchedAll);
+      if (stillPresent) {
+        const ack = nonConfirmableAck(storeMatchedAll);
+        return { ...ack, result: withLocked(ack.result as Record<string, unknown> | undefined) };
+      }
       // V3: verifiable marker (layer remove — harness convergence evidence).
-      return { status: 'succeeded', result: { confirmed: true } };
+      return { status: 'succeeded', result: withLocked({ confirmed: true }) };
     },
   },
 
@@ -513,8 +541,13 @@ export const layerCommands: Record<string, CommandEntry> = {
 
       // 「地图随对话」：agent 显式展示 → 先标记当前轮再收起旧轮（同 ref
       // 的多层同属当前轮展示集，互不收起）——与事务解耦，事务内不重复。
+      // W2/R1-m3：锁定目标不标记 —— ack 报 layer_locked 时旧轮不得被收起
+      // （标记副作用与 typed 冲突结果保持一致）。
       if (visible === true) {
-        for (const id of resolveLayerTargetsByRef(layer_id, ctx.getHudState)) {
+        const { allowed } = partitionByLock(
+          resolveLayerTargetsByRef(layer_id, ctx.getHudState),
+        );
+        for (const id of allowed) {
           noteAgentDisplayed(id);
         }
       }
@@ -602,13 +635,17 @@ export const layerCommands: Record<string, CommandEntry> = {
       const visibleLayerIds: string[] = [];
       const hiddenLayerIds: string[] = [];
       const unresolvedLayerIds: string[] = [];
+      const lockConflictIds: string[] = [];
       const storePendingRepair: { layerId: string; visible: boolean }[] = [];
 
       for (const id of show) {
         if (respect.has(id)) continue; // 用户手动隐藏的展示目标：保留用户决策
         const res = applyLayerVisibilityTransaction(ctx, { layerId: id, visible: true, durable: false });
         if (res.status === 'failed') {
-          unresolvedLayerIds.push(id);
+          // R1-m4：lock 冲突与 target miss 分开归因 —— 把被用户锁拦截的层
+          // 报成 target_not_found 会误导 agent 修正回路。
+          if (res.error === 'layer_locked') lockConflictIds.push(id);
+          else unresolvedLayerIds.push(id);
         } else {
           visibleLayerIds.push(id);
           if (res.result?.store_updated) storePendingRepair.push({ layerId: id, visible: true });
@@ -643,13 +680,15 @@ export const layerCommands: Record<string, CommandEntry> = {
         });
       }
 
+      const allShowFailed = visibleLayerIds.length === 0
+        && unresolvedLayerIds.length + lockConflictIds.length > 0;
       return {
-        status: unresolvedLayerIds.length > 0 && visibleLayerIds.length === 0
-          ? 'failed'
-          : 'succeeded',
-        error: unresolvedLayerIds.length > 0 && visibleLayerIds.length === 0
-          ? 'target_not_found'
-          : undefined,
+        status: allShowFailed ? 'failed' : 'succeeded',
+        error: !allShowFailed
+          ? undefined
+          : lockConflictIds.length > 0 && unresolvedLayerIds.length === 0
+            ? 'layer_locked'
+            : 'target_not_found',
         result: {
           shown: visibleLayerIds.length,
           hidden: hiddenLayerIds.length,
@@ -658,6 +697,7 @@ export const layerCommands: Record<string, CommandEntry> = {
           visible_layer_ids: visibleLayerIds,
           hidden_layer_ids: hiddenLayerIds,
           unresolved_layer_ids: unresolvedLayerIds,
+          ...(lockConflictIds.length > 0 ? { locked_layer_ids: lockConflictIds } : {}),
         },
       };
     },

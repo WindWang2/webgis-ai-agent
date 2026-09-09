@@ -180,6 +180,9 @@ def run_plan_sync(
     governor: Optional[ResourceGovernor] = None,
     caller: Optional[dict[str, Any]] = None,
     project_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+    yield_check: Optional[Any] = None,
+    owner_scope_override: Optional[str] = None,
 ):
     """同步执行入口（工具/线程上下文用；REST 走 to_thread 同一函数）。
 
@@ -191,6 +194,9 @@ def run_plan_sync(
     ``caller``（auth user dict 或 None）原样穿透到执行器：目录项准入、
     复用键 owner 域与 run 归属都以它为准（SEC：数据平面内 authz 与
     跨用户复用隔离的身份来源）。
+
+    V6（additive）：``run_id``/``yield_check`` 供 cluster coordinator 路径
+    注入持久 run 身份与安全点探针；直跑路径不传，行为不变。
     """
     import hashlib
 
@@ -222,4 +228,6 @@ def run_plan_sync(
     return engine.execute_plan(
         plan, session_id=session_id, caller=caller, cancel_token=cancel_token,
         governor=gov, governor_parent_path=parent,
+        run_id=run_id, yield_check=yield_check,
+        owner_scope_override=owner_scope_override,
     )
