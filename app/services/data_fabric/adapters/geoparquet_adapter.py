@@ -1088,6 +1088,67 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
 
     # ── 行过滤 / 投影辅助 ──────────────────────────────────────────────
 
+    def iter_query_arrow_batches(self, dataset_id: str, query_spec: QuerySpec):
+        """V7 联邦 Arrow 通道（ADR-0119 W6）：RecordBatch 级有界流式扫描。
+
+        与 dict lane（``query``）的语义边界（诚实声明）：
+        - 行组剪枝（bbox covering/statistics）+ 列投影在**本通道**生效；
+        - 属性谓词/offset/limit **不在此编译** —— 由 fabric arrow_lane 用
+          同一谓词 AST 在解码行上求值（与 dict lane 同一 Kleene 语义）；
+        - pyarrow 缺失 → typed ``VectorCarrierUnavailable``（调用方回落
+          dict lane，绝不假装）；
+        - 生成器逐批 yield，调用方侧取消/预算检查；读异常包装为 typed
+          SourceBadResponseError。
+        """
+        from app.services.data_fabric.errors import SourceBadResponseError
+        from app.services.data_fabric.vector_carrier import VectorCarrierUnavailable
+
+        try:
+            import pyarrow.parquet as pq
+        except ImportError:
+            raise VectorCarrierUnavailable(
+                "iter_query_arrow_batches requires the optional 'pyarrow' "
+                "dependency; fall back to the dict-lane query()"
+            )
+
+        v2 = normalize_query_spec(query_spec)
+        if not self.endpoint:
+            raise VectorCarrierUnavailable(
+                "demo-mode GeoParquet sources do not expose an arrow lane"
+            )
+        query_bbox = self._require_bbox(v2)
+        src, closer = self._open_source()
+        try:
+            pf = pq.ParquetFile(src)
+            schema_names = list(pf.schema_arrow.names)
+            geo_meta = self._read_geo_meta(pf)
+            primary_geom = (
+                (geo_meta.get("primary_column") or "geometry") if geo_meta else "geometry"
+            )
+            row_groups, _pruned = self._row_group_plan(pf, geo_meta, primary_geom, query_bbox)
+            needed = self._needed_columns(v2, schema_names)
+            has_geom = primary_geom in schema_names
+            columns: Optional[List[str]] = None
+            if needed:
+                # 有投影/谓词引用列才裁剪；无投影 = 全列读（谓词字段自然包含）。
+                columns = list(needed)
+                if has_geom and primary_geom not in columns:
+                    columns.append(primary_geom)
+            for batch in pf.iter_batches(
+                batch_size=BATCH_SIZE, columns=columns, row_groups=row_groups or None
+            ):
+                yield batch
+        except (VectorCarrierUnavailable, DataFabricError):
+            raise
+        except Exception as e:
+            raise SourceBadResponseError(f"GeoParquet arrow lane read failed: {e}") from e
+        finally:
+            if closer is not None:
+                try:
+                    closer.close()
+                except Exception:
+                    pass
+
     @staticmethod
     def _require_bbox(v2: QuerySpecV2) -> Optional[List[float]]:
         """空间谓词 → 查询 bbox；本 wave 仅支持 bbox（capably 诚实声明）。"""

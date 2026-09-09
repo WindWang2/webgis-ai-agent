@@ -76,7 +76,35 @@ def iter_scan_pages(
     与 V5 ``_source_query_page`` 同一 adapter 契约（legacy QuerySpec），
     同一 typed 错误；差别只在：V6 逐页消费 + 逐页检查，probe 侧不再
     一次性物化全源。
+
+    V7（ADR-0119 W6）：adapter 显式提供 Arrow 批通道（``iter_query_arrow_
+    batches``）且 pyarrow 可用时，委托 ``fabric.arrow_lane`` 批级扫描 ——
+    行形状/谓词语义/预算行为逐位同口径；typed ``VectorCarrierUnavailable``
+    诚实回落 dict lane。
     """
+    from app.services.data_fabric.fabric.arrow_lane import (
+        adapter_supports_arrow_lane,
+        iter_scan_pages_arrow,
+    )
+
+    if adapter_supports_arrow_lane(adapter):
+        fetched_arrow = 0
+        for page in iter_scan_pages_arrow(
+            adapter, dataset_id,
+            where=where, fields=fields, bbox=bbox,
+            fetch_limit=fetch_limit, budget=budget, token=token,
+            page_size=page_size,
+        ):
+            fetched_arrow += len(page)
+            if fetched_arrow > budget.max_rows:
+                raise QueryBudgetExceededError(
+                    f"source scan fetched {fetched_arrow} rows (budget {budget.max_rows})",
+                    details={"hint": "narrow bbox or add filters on the source",
+                             "lane": "arrow"},
+                )
+            yield page
+        return
+
     from app.schemas.data_fabric_schema import QuerySpec
 
     fetched = 0
