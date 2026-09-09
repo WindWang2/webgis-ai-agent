@@ -324,10 +324,10 @@ def labeled_projection_from_store(store) -> Dict[str, Any]:
         raise CubeError("labeled cube is missing coordinate arrays")
     # 每维度尺寸 = 坐标数组长度（写入器保证坐标长度 == 维度尺寸）。
     shape = [int(np.asarray(coords[d]).shape[0]) for d in dims]
-    dtypes = set()
+    var_specs: Dict[str, Dict[str, Any]] = {}
+    anchor_dtype = ""
     for name, adims in var_dims.items():
         arr = root[name]
-        dtypes.add(str(arr.dtype))
         if [int(v) for v in arr.shape] != [
             shape[list(dims).index(d)] for d in adims
         ]:
@@ -335,14 +335,15 @@ def labeled_projection_from_store(store) -> Dict[str, Any]:
                 f"variable {name!r} shape {arr.shape} inconsistent with "
                 f"per-dim sizes {shape}"
             )
-    if len(dtypes) > 1:
-        raise CubeError(f"variables share mixed dtypes: {sorted(dtypes)}")
+        var_specs[name] = {"dims": adims, "dtype": str(arr.dtype)}
+        if not anchor_dtype:
+            anchor_dtype = str(arr.dtype)
     return validate_labeled_schema(
         dims=dims,
         shape=shape,
         coordinates=coords,
         crs=str(attrs.get("crs") or ""),
-        dtype=next(iter(dtypes)),
-        variables=var_dims,
+        dtype=anchor_dtype,
+        variables=var_specs,
         nodata=attrs.get("nodata"),
     )

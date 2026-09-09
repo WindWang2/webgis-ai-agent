@@ -168,9 +168,9 @@ def validate_labeled_schema(
     coordinates: Mapping[str, Sequence[Any]],
     crs: str,
     dtype: str,
-    variables: Optional[Mapping[str, Sequence[str]]] = None,
+    variables: Optional[Mapping[str, Any]] = None,
     nodata: Optional[float] = None,
-    chunks: Optional[Sequence[int]] = None,
+    chunks: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """labeled cube 契约总校验（纯函数；违规 → :class:`CubeSchemaError`）。
 
@@ -251,23 +251,34 @@ def validate_labeled_schema(
             coords[dim] = labels
 
     # 变量→维度映射：每个变量的维度必须是 dims 的子序且以 (y, x) 结尾。
-    vars_out: Dict[str, List[str]] = {}
-    for name, var_dims in (variables or {"data": list(dims)}).items():
+    # 变量值兼容两种形态：[dims...]（dtype 继承顶层）或
+    # {"dims": [...], "dtype": "..."}（逐变量 dtype —— 如 uint8 mask 与
+    # float32 reflectance 同 cube）。
+    vars_out: Dict[str, Dict[str, Any]] = {}
+    for name, var_spec in (variables or {"data": list(dims)}).items():
         if not str(name):
             raise CubeSchemaError("variable names must be non-empty")
-        vd = [str(d) for d in var_dims]
+        if isinstance(var_spec, Mapping):
+            var_dims_raw = var_spec.get("dims") or []
+            var_dtype = str(var_spec.get("dtype") or dtype)
+        else:
+            var_dims_raw = var_spec
+            var_dtype = dtype
+        vd = [str(d) for d in var_dims_raw]
         if not vd or len(vd) != len(set(vd)):
             raise CubeSchemaError(f"variable {name!r}: dims {vd} empty/duplicated")
         if tuple(vd[-2:]) != SPATIAL_DIMS:
             raise CubeSchemaError(
                 f"variable {name!r}: dims {vd} must end with (y, x)"
             )
+        if not var_dtype:
+            raise CubeSchemaError(f"variable {name!r}: dtype required")
         for d in vd:
             if d not in dims:
                 raise CubeSchemaError(
                     f"variable {name!r} references dim {d!r} not in cube dims"
                 )
-        vars_out[str(name)] = vd
+        vars_out[str(name)] = {"dims": vd, "dtype": var_dtype}
 
     crs_info = check_crs(crs)
 

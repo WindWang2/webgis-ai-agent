@@ -168,17 +168,21 @@ def plan_selection(
         slices[dim] = slice(start, stop)
 
     # 单元预算：所选变量单元总数（每变量 = 其维度切片长度的积）。
+    # 变量值兼容 list（dims）与 {"dims": ..., "dtype": ...} 两种投影形态。
     variables = projection.get("variables") or {}
     cells = 0
     per_var: Dict[str, int] = {}
-    for name, vd in variables.items():
+    for name, var_spec in variables.items():
+        vd = (
+            var_spec.get("dims") if isinstance(var_spec, Mapping) else var_spec
+        ) or []
         n = 1
         for d in vd:
             sl = slices.get(d, slice(None))
             start = 0 if sl.start is None else int(sl.start)
             stop = size_of.get(d, 0) if sl.stop is None else int(sl.stop)
             n *= max(0, stop - start)
-        per_var[name] = n
+        per_var[str(name)] = n
         cells += n
     if cells > max_cells:
         raise CubeSchemaError(

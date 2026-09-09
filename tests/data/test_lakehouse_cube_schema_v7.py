@@ -70,8 +70,8 @@ def test_schema_accepts_multi_variable_projection(tmp_path):
     assert proj["shape"] == [2, 2, 2, 4, 4]
     assert proj["crs_checked"] == "rasterio"
     assert proj["variables"] == {
-        "reflectance": ["time", "band", "y", "x"],
-        "sigma0": ["time", "polarization", "y", "x"],
+        "reflectance": {"dims": ["time", "band", "y", "x"], "dtype": "float32"},
+        "sigma0": {"dims": ["time", "polarization", "y", "x"], "dtype": "float32"},
     }
     # 投影确定性（同输入同投影 → manifest 身份稳定）。
     proj2 = _write_multi(tmp_path)
@@ -231,7 +231,9 @@ def test_v6_cube_synthesized_projection_and_xarray(tmp_path):
     store = _write_v6_cube(tmp_path)
     proj = labeled_projection_from_store(store)
     assert proj["dims"] == ["time", "band", "y", "x"]
-    assert proj["variables"] == {"data": ["time", "band", "y", "x"]}
+    assert proj["variables"] == {
+        "data": {"dims": ["time", "band", "y", "x"], "dtype": "float32"}
+    }
     ds, meta = open_cube_to_xarray(store)
     assert dict(ds.sizes)["time"] == 2
     assert list(ds.data_vars) == ["b1"]

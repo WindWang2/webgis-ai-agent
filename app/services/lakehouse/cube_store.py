@@ -307,11 +307,12 @@ def write_labeled_cube(
     )
 
     var_dims: Dict[str, List[str]] = {}
+    var_dtypes: Dict[str, str] = {}
     arrays: Dict[str, np.ndarray] = {}
     non_spatial: List[str] = []
     has_y = has_x = False
     size_of: Dict[str, int] = {}
-    dtype = ""
+    anchor_dtype = ""
     for name, (vd, arr) in variables.items():
         data = np.asarray(arr)
         vd = [str(d) for d in vd]
@@ -339,17 +340,17 @@ def write_labeled_cube(
             elif d not in non_spatial:
                 non_spatial.append(d)
         var_dims[str(name)] = vd
+        var_dtypes[str(name)] = str(data.dtype)
         arrays[str(name)] = data
-        dtype = dtype or str(data.dtype)
+        if not anchor_dtype:
+            anchor_dtype = str(data.dtype)
     if not arrays:
         raise CubeSchemaError("labeled cube needs at least one data variable")
-    dtypes = {str(a.dtype) for a in arrays.values()}
-    if len(dtypes) > 1:
-        raise CubeSchemaError(
-            f"labeled cube variables must share one dtype, got {sorted(dtypes)}"
-        )
     dims = non_spatial + (["y"] if has_y else []) + (["x"] if has_x else [])
     shape = [size_of[d] for d in dims]
+    # 逐变量 dtype（如 uint8 mask 与 float32 reflectance 同 cube）；
+    # 锚 dtype = 首个变量（manifest 投影的顶层 dtype）。
+    dtype = anchor_dtype
     if transform is None:
         y_vals = np.asarray(coordinates.get("y") or [])
         x_vals = np.asarray(coordinates.get("x") or [])
@@ -390,7 +391,10 @@ def write_labeled_cube(
         coordinates=coords,
         crs=crs,
         dtype=dtype,
-        variables=var_dims,
+        variables={
+            name: {"dims": vd, "dtype": var_dtypes[name]}
+            for name, vd in var_dims.items()
+        },
         nodata=nodata,
         chunks=chunks_by_dim,
     )
@@ -426,7 +430,7 @@ def write_labeled_cube(
                 name,
                 shape=data.shape,
                 chunks=var_chunks,
-                dtype=str(data.dtype),
+                dtype=var_dtypes[name],
                 dimension_names=tuple(var_dims[name]),
             )
             arr[:] = data
