@@ -37,6 +37,7 @@ from app.services.geocompute.cluster.contracts import (
     ClusterRunStatus,
 )
 from app.services.geocompute.cluster.fairness import fair_pick
+from app.services.geocompute.cluster.metrics import record_queue_wait_s
 from app.services.geocompute.cluster.store import ClusterLedger, ClusterRunStore
 from app.services.geocompute.errors import GeoComputeError
 
@@ -62,6 +63,16 @@ def _parse_naive(value: Any):
         )
     except ValueError:
         return None
+
+
+def _created_ts(row: dict[str, Any]) -> float:
+    """扫描投影的 created_at → time.time() 域（解析失败 → now，计 0 等待）。"""
+    from datetime import timezone
+
+    parsed = _parse_naive(row.get("created_at"))
+    if parsed is None:
+        return time.time()
+    return parsed.replace(tzinfo=timezone.utc).timestamp()
 
 #: 默认心跳间隔（取消/抢占延迟的下界 ≈ 该间隔 + checkpoint 粒度）。
 DEFAULT_HEARTBEAT_INTERVAL_S = 0.5
@@ -342,6 +353,9 @@ class ClusterCoordinator:
                                 worker_id=self._coordinator_id,
                                 attempt=epoch)
             self._waiting_noted.discard(run_id)
+            record_queue_wait_s(
+                max(0.0, time.time() - _created_ts(row))
+            )
             exec_state = _RunExecution(run_id=run_id, epoch=epoch,
                                        token=CancellationToken(job_id=run_id))
             with self._lock:

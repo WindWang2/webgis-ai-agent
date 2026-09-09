@@ -26,6 +26,7 @@ _MAX_LEDGER_SCOPES = 20
 
 _lock = threading.Lock()
 _cancel_latencies: deque[float] = deque(maxlen=_MAX_LATENCY_SAMPLES)
+_queue_waits: deque[float] = deque(maxlen=_MAX_LATENCY_SAMPLES)
 
 
 def record_cancellation_latency(seconds: float) -> None:
@@ -34,6 +35,14 @@ def record_cancellation_latency(seconds: float) -> None:
         return
     with _lock:
         _cancel_latencies.append(float(seconds))
+
+
+def record_queue_wait_s(seconds: float) -> None:
+    """submit → 首次认领 的排队延迟（V7；有界采样，分位数暴露）。"""
+    if seconds < 0:
+        return
+    with _lock:
+        _queue_waits.append(float(seconds))
 
 
 def _percentile(samples: list[float], q: float) -> Optional[float]:
@@ -61,11 +70,19 @@ class ClusterMetrics:
         )
         with _lock:
             samples = list(_cancel_latencies)
+            waits = list(_queue_waits)
         cancel_latency = {
             "p50_s": _percentile(samples, 0.5),
             "p95_s": _percentile(samples, 0.95),
             "samples": len(samples),
         }
+        queue_wait = {
+            "p50_s": _percentile(waits, 0.5),
+            "p95_s": _percentile(waits, 0.95),
+            "samples": len(waits),
+        }
+        from app.services.geocompute.cluster.events import counters_snapshot
+
         return {
             "runs_by_status": runs_by_status,
             "queue_depth": waiting,
@@ -76,6 +93,9 @@ class ClusterMetrics:
             "preempted_total": self._store.sum_preempts(),
             "lease_loss_total": self._store.sum_attempts(),
             "cancel_latency": cancel_latency,
+            "queue_wait": queue_wait,
+            "waiting_by_profile": self._store.waiting_profiles(),
+            "events_counters": counters_snapshot(),
             "workers": self._worker_summary(),
             "leader": self._leader_summary(),
             "ledger": self._store.ledger_snapshot(limit=_MAX_LEDGER_SCOPES),
@@ -85,13 +105,17 @@ class ClusterMetrics:
         workers = self._store.live_workers()
         by_role: dict[str, int] = {}
         profiles: dict[str, int] = {}
+        gpu_workers = 0
         for w in workers:
             by_role[w["role"]] = by_role.get(w["role"], 0) + 1
             for profile, slots in (w.get("profiles") or {}).items():
                 if slots > 0:
                     profiles[profile] = profiles.get(profile, 0) + int(slots)
+            cap = w.get("capability") or {}
+            if isinstance(cap, dict) and int(cap.get("gpu_count") or 0) > 0:
+                gpu_workers += 1
         return {"live": len(workers), "by_role": by_role,
-                "profile_slots": profiles}
+                "profile_slots": profiles, "gpu_workers": gpu_workers}
 
     def _leader_summary(self) -> Optional[dict[str, Any]]:
         leaders = [

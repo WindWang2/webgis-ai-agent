@@ -847,6 +847,101 @@ class ClusterRunStore:
                 for w in rows
             ]
 
+    # ------------------------------------------------- V7 admin / waves
+
+    def waiting_profiles(self) -> dict[str, int]:
+        """留队 run 的必需 profile 计数（封闭词表维度；metrics 用）。
+
+        扫描上界 256（与 dispatch batch 同级 —— 热路径常数上界）。
+        """
+        counts: dict[str, int] = {}
+        with self._factory() as db:
+            rows = db.execute(
+                select(_Run.required_profiles)
+                .where(_Run.status.in_([s.value for s in DISPATCHABLE_STATUSES]))
+                .limit(256)
+            ).scalars().all()
+        for profiles in rows:
+            for p in profiles or []:
+                counts[p] = counts.get(p, 0) + 1
+        return counts
+
+    def stuck_runs(self, *, grace_s: float = 5.0, limit: int = 50
+                   ) -> list[dict[str, Any]]:
+        """stuck 视图：占用 lease 且 lease 已过期但 reclaim 尚未收敛的 run
+        （admin 排障用；有界 ≤50 行，绝无载荷）。"""
+        now = _utcnow()
+        cutoff = now - timedelta(seconds=max(0.0, float(grace_s)))
+        with self._factory() as db:
+            rows = db.execute(
+                select(_Run)
+                .where(
+                    _Run.status.in_([s.value for s in LEASED_STATUSES]),
+                    _Run.lease_expires_at.is_not(None),
+                    _Run.lease_expires_at < cutoff,
+                )
+                .order_by(_Run.lease_expires_at.asc())
+                .limit(max(1, int(limit)))
+            ).scalars().all()
+            return [_scan_projection(r) for r in rows]
+
+    def force_requeue(
+        self,
+        run_id: str,
+        *,
+        max_attempts: int = DEFAULT_MAX_RUN_ATTEMPTS,
+        ledger: Optional["ClusterLedger"] = None,
+    ) -> Optional[str]:
+        """admin 强制回队（stuck run 复位）：语义与 ``reclaim_expired`` 的
+        单行版本完全一致 —— attempt 预算内 → queued（attempt++）；
+        耗尽 → failed[WORKER_LOSS]；同事务精确归还账本。
+
+        返回 "requeued" | "failed" | None（无 CAS 命中 = run 已被并发转移/
+        不存在/不在占用态 —— 幂等安全）。
+        """
+        with self._factory() as db:
+            row = db.execute(
+                select(_Run).where(_Run.run_id == run_id)
+            ).scalar_one_or_none()
+            if row is None or row.status not in {
+                s.value for s in LEASED_STATUSES
+            }:
+                return None
+            new_attempts = row.attempts + 1
+            error_code = run_error_for_reclaim(new_attempts, max_attempts)
+            to_status = (
+                ClusterRunStatus.FAILED if error_code else ClusterRunStatus.QUEUED
+            )
+            now = _utcnow()
+            rowcount = db.execute(
+                update(_Run)
+                .where(
+                    _Run.id == row.id,
+                    _Run.status.in_([s.value for s in LEASED_STATUSES]),
+                    _Run.lease_epoch == row.lease_epoch,
+                )
+                .values(
+                    status=to_status.value,
+                    attempts=new_attempts,
+                    error_code=error_code,
+                    coordinator_id=None,
+                    lease_expires_at=None,
+                    updated_at=now,
+                    terminal_at=now if error_code else None,
+                )
+            ).rowcount
+            if not rowcount:
+                return None
+            if ledger is not None:
+                ledger.release_claims(db, _reserved_claims_from_row(row))
+                db.execute(
+                    update(_Run)
+                    .where(_Run.id == row.id)
+                    .values(reserved_rows=0, reserved_bytes=0, reserved_units=0)
+                )
+            db.commit()
+            return "failed" if error_code else "requeued"
+
     # ------------------------------------------------------ leadership
 
     def acquire_leadership(self, coordinator_id: str, *, ttl_s: float) -> Optional[int]:
@@ -991,6 +1086,50 @@ class ClusterLedger:
     @property
     def enforcing(self) -> bool:
         return self._enforcing
+
+    def set_scope_limits(
+        self,
+        scope_key: str,
+        *,
+        limit_rows: Optional[int],
+        limit_bytes: Optional[int],
+        limit_units: Optional[int],
+    ) -> bool:
+        """admin：设置 scope 限额（None = 解除该维限制）。
+
+        幂等 upsert：scope 行缺席时以给定限额预建（与 ensure_scopes 同一
+        竞争纪律 —— INSERT 冲突回滚复检）。enforcing/advisory 模式不变。
+        """
+        if not scope_key or len(scope_key) > 80:
+            return False
+        with self._factory() as db:
+            try:
+                existing = db.execute(
+                    select(_Usage.scope_key).where(_Usage.scope_key == scope_key)
+                ).scalar_one_or_none()
+                if existing is None:
+                    db.add(_Usage(
+                        scope_key=scope_key,
+                        usage_rows=0, usage_bytes=0, usage_units=0,
+                        limit_rows=limit_rows, limit_bytes=limit_bytes,
+                        limit_units=limit_units,
+                    ))
+                    try:
+                        db.commit()
+                    except Exception:  # noqa: BLE001 - 并发首用 → 复检后更新
+                        db.rollback()
+                db.execute(
+                    update(_Usage)
+                    .where(_Usage.scope_key == scope_key)
+                    .values(
+                        limit_rows=limit_rows, limit_bytes=limit_bytes,
+                        limit_units=limit_units, updated_at=_utcnow(),
+                    )
+                )
+                db.commit()
+                return True
+            except Exception:  # noqa: BLE001 - admin 操作失败如实返回
+                return False
 
     def ensure_scopes(self, scope_keys: Iterable[str],
                       *, factory: Optional[Callable[[], Any]] = None) -> None:
