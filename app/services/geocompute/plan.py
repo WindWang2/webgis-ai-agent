@@ -284,6 +284,9 @@ class ExecutionRunStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    #: V6（cluster runtime）：在安全点（节点边界）被 coordinator 抢占。
+    #: additive 成员 —— 消费方均按具体值等值匹配，无穷举切换依赖。
+    PREEMPTED = "preempted"
 
 
 class ExecutionRun(BaseModel):

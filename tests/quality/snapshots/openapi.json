@@ -604,6 +604,46 @@
     "title": "ChatResponse",
     "type": "object"
    },
+   "ClusterSubmitRequest": {
+    "description": "cluster submit 专属字段（不进入同步 /plans/execute 契约 —— round1 m4：\n共享模型会让同步端点静默接受并忽略 submit 语义的字段）。",
+    "properties": {
+     "plan": {
+      "$ref": "#/components/schemas/ExecutionPlanIn"
+     },
+     "priority": {
+      "default": 5,
+      "title": "Priority",
+      "type": "integer"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     }
+    },
+    "required": [
+     "plan"
+    ],
+    "title": "ClusterSubmitRequest",
+    "type": "object"
+   },
    "ComponentPlacement": {
     "description": "自由布局放置（可选增强，向后兼容）。\n\n旧组件只有 ``position`` 六槽锚点；``placement`` 引入显式 typed 布局：\n- anchor 模式：等价旧语义（anchor = 七槽字面量），与 ``position`` 双写\n  保持一致，不新增第二种真相；\n- floating 模式：x/y 像素自由定位 + 可选 width/height/zIndex/collapsed，\n  服务拖拽/缩放后的持久化。缺省字段由渲染端兜底。",
     "properties": {
@@ -8345,6 +8385,33 @@
     ]
    }
   },
+  "/api/v1/geocompute/cluster/metrics": {
+   "get": {
+    "description": "V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。\n\n有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；\n取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。",
+    "operationId": "cluster_metrics_api_v1_geocompute_cluster_metrics_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cluster Metrics",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V6"
+    ]
+   }
+  },
   "/api/v1/geocompute/plans/drift-check": {
    "post": {
     "description": "对持久化计划记录做语义漂移判定（ADR-0096 D7）。\n\nbody: {\"stored\": {...持久记录...}, \"plan\": {ExecutionPlanIn（可选）}}\n返回 DriftVerdict（current/stale_runtime/degraded_plan/unknown）。\n强制认证：stored 记录可能携带计划元数据，不向匿名暴露。",
@@ -8459,9 +8526,74 @@
     ]
    }
   },
+  "/api/v1/geocompute/plans/runs": {
+   "post": {
+    "description": "V6 cluster 提交：plan → 持久 run 行（queued）→ 202 立即返回。\n\n与同步 ``/plans/execute`` 同一 authz 纪律（强制认证 + session 写归属\n校验）；plan 快照落 ``geocompute_runs``（≤256KB，超限 413），由\ncluster coordinator 持久调度执行（lease/心跳/抢占/恢复）。priority ∈\n{0,5,10}（可选）；project_id（可选）参与租户/项目级公平与账本。\n\n立即返回 202 + run_id；后续经 ``GET /runs/{id}`` 轮询（活投影来自\n持久行，任意进程可读）。背压：租户/全局 queued 超限 → 429。",
+    "operationId": "submit_execution_plan_api_v1_geocompute_plans_runs_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ClusterSubmitRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Submit Execution Plan",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V6"
+    ]
+   }
+  },
   "/api/v1/geocompute/plans/runs/{run_id}/cancel": {
    "post": {
-    "description": "请求取消一个 in-process run（V5，audit 06 §6.1 step 2）。\n\n与 run 读端点同一 authz 纪律：强制认证 + owner 域读隔离（未知 run 与\n他人 run 一律 404，不泄漏存在性）。取消经 ``engine.cancel_run``（run 级\nCancellationToken）：未启动节点立即收敛；在飞节点经各自协作 checkpoint\n收敛；durable 分支级联写 job 行取消（既有机制，无新状态机）。\n\n进程可见性（DIST round1 如实声明）：在飞 run 注册表是**本进程内存态**\n（``engine.get_run`` 只见本进程启动的 run）—— 多 worker / 多副本部署\n下，cancel 请求须落在**正在执行该 run 的进程**才能点燃在飞取消；\ndurable 分支的取消事实落库（AnalysisTask 行），由执行侧探针跨进程\n收敛，不受此限制。幂等：已终态 / 快照回放的 run 返回 200 且\n``cancelled=false`` 并附当前终态 —— 与 durable job 取消的幂等语义一致。",
+    "description": "请求取消一个 run（V6 起跨进程生效）。\n\n与 run 读端点同一 authz 纪律：强制认证 + owner 域读隔离（未知 run 与\n他人 run 一律 404，不泄漏存在性）。\n\n取消链路（两级，幂等）：\n1. 本进程内存 token（``engine.cancel_run``）：在飞节点经协作 checkpoint\n   收敛；durable 分支级联写 job 行取消（既有机制）。\n2. 持久取消旗标（``geocompute_runs.cancel_requested_at``）：V6 新增 ——\n   任意进程可写；执行侧 coordinator 心跳（≤0.5s）点燃本地 token；\n   排队中的 run 由 coordinator cancel sweep 直接收敛终态。\n\n幂等：已终态 / 快照回放的 run 返回 200 且 ``cancelled=false`` 并附当前\n终态 —— 与 durable job 取消的幂等语义一致。",
     "operationId": "cancel_execution_run_api_v1_geocompute_plans_runs__run_id__cancel_post",
     "parameters": [
      {
@@ -8554,9 +8686,84 @@
     ]
    }
   },
+  "/api/v1/geocompute/runs": {
+   "get": {
+    "description": "V6：列出**我的** runs（强制认证 + owner 域隔离）。\n\n合并两个真相域：cluster run 行（任意状态）∪ 终态证据快照（进程内\n同步执行的持久痕迹）—— 每域独立有界（各 ≤100 条），不复制载荷。",
+    "operationId": "list_execution_runs_api_v1_geocompute_runs_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "status",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Execution Runs",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V6"
+    ]
+   }
+  },
   "/api/v1/geocompute/runs/{run_id}": {
    "get": {
-    "description": "查询 run（强制认证 + 读隔离：他人 run 一律 404，避免存在性预言机）。\n\nV5：内存未命中时回读终态证据快照（owner 域校验在引擎读取侧）——\n进程重启后读取不再 404（快照来源以 ``source=\"snapshot\"`` 诚实标注）。\nWave-11：应答附加 ``lineage``（无载荷投影）与 ``reproducibility`` 判定\n（快照回放路径同样携带 —— 读自快照 folded JSON）。",
+    "description": "查询 run（强制认证 + 读隔离：他人 run 一律 404，避免存在性预言机）。\n\nV5：内存未命中时回读终态证据快照（owner 域校验在引擎读取侧）——\n进程重启后读取不再 404（快照来源以 ``source=\"snapshot\"`` 诚实标注）。\nWave-11：应答附加 ``lineage``（无载荷投影）与 ``reproducibility`` 判定\n（快照回放路径同样携带 —— 读自快照 folded JSON）。\nV6：快照也未命中时回读 cluster run 行的**活投影**（queued/leased/\nrunning 等执行中状态跨进程可见 —— ``source=\"cluster\"`` 诚实标注）。",
     "operationId": "get_execution_run_api_v1_geocompute_runs__run_id__get",
     "parameters": [
      {

@@ -285,6 +285,9 @@ class GeoExecutionEngine:
         cancel_token: Optional[CancellationToken] = None,
         governor: Optional[Any] = None,
         governor_parent_path: Optional[str] = None,
+        run_id: Optional[str] = None,
+        yield_check: Optional[Any] = None,
+        owner_scope_override: Optional[str] = None,
     ) -> ExecutionRun:
         """执行整个计划（同步；调用方负责卸载到线程）。
 
@@ -294,6 +297,16 @@ class GeoExecutionEngine:
 
         ``caller``（可选，auth user dict）：贯穿到算子上下文 —— 目录项
         准入、复用键 owner 域、run 归属都以它为准；缺省按匿名隔离。
+
+        V6（cluster runtime，additive）：
+        - ``run_id``：外部持久 run 行的 id（cluster coordinator 路径）——
+          本地内存注册表与持久控制面共用同一身份；缺省行为不变（自生成）。
+        - ``yield_check``：每轮调度循环调用的安全点探针（返回 True = 请求
+          在节点边界让出）。触发后在飞节点经 checkpoint 协作收敛，run 终态
+          为 ``preempted``。进程内直跑路径不传 → 零行为差异。
+        - ``owner_scope_override``：cluster coordinator 路径注入**提交时**
+          的 owner 域（执行进程的 caller/session 与提交进程不同 —— 本地
+          注册表与证据快照必须延续提交者身份，读隔离才跨进程一致）。
         """
         graph.validate_plan(plan)
         self._admission_check(plan)
@@ -333,7 +346,7 @@ class GeoExecutionEngine:
                 gov_path = None
                 raise
 
-        run_id = f"gexec-{uuid.uuid4().hex[:12]}"
+        run_id = run_id or f"gexec-{uuid.uuid4().hex[:12]}"
         plan_fp = plan.graph_fingerprint()
         run = ExecutionRun(
             run_id=run_id, plan_id=plan.plan_id, plan_fingerprint=plan_fp,
@@ -349,7 +362,7 @@ class GeoExecutionEngine:
         outputs_fp: dict[str, str] = {}
         # 评审 MINOR：deadline 从**调度开始**计时 —— 身份解析/首次导入等
         # 一次性准备成本（可达数百毫秒）不再侵蚀执行预算。
-        owner_scope = owner_scope_for(caller, session_id)
+        owner_scope = owner_scope_override or owner_scope_for(caller, session_id)
         deadline_ts = time.monotonic() + plan.budget.deadline_s
         with self._run_lock:
             self._runs[run_id] = run
@@ -370,13 +383,16 @@ class GeoExecutionEngine:
                      nodes=len(plan.nodes), status="running",
                      budget_scope=gov_path)
         started = time.monotonic()
+        preempt_requested = {"flag": False}
         try:
             self._run_ready_set(run, plan, outputs, outputs_fp,
                                 session_id=session_id,
                                 caller=caller, owner_scope=owner_scope,
                                 cancel_token=cancel_token, deadline_ts=deadline_ts,
                                 governor=governor, gov_path=gov_path,
-                                charge_ledger=charge_ledger)
+                                charge_ledger=charge_ledger,
+                                yield_check=yield_check,
+                                preempt_flag=preempt_requested)
         finally:
             if governor is not None and gov_path:
                 # Wave 8 R1：本 run 在祖先链上的全部占用（预留估计 + 实际
@@ -402,7 +418,10 @@ class GeoExecutionEngine:
             run.wall_time_s = round(time.monotonic() - started, 6)
 
         failed = [nid for nid, ev in run.evidence.items() if ev.status == "failed"]
-        if any(ev.status == "cancelled" for ev in run.evidence.values()):
+        if preempt_requested["flag"]:
+            # V6：安全点抢占优先于 cancelled 判定 —— 让出是治理行为不是取消。
+            run.status = ExecutionRunStatus.PREEMPTED
+        elif any(ev.status == "cancelled" for ev in run.evidence.values()):
             run.status = ExecutionRunStatus.CANCELLED
         elif failed:
             run.status = ExecutionRunStatus.FAILED
@@ -582,6 +601,8 @@ class GeoExecutionEngine:
         governor: Optional[Any] = None,
         gov_path: Optional[str] = None,
         charge_ledger: Optional[Any] = None,
+        yield_check: Optional[Any] = None,
+        preempt_flag: Optional[dict[str, bool]] = None,
     ) -> None:
         """就绪集调度（ADR-0101 D3）：indegree 驱动，无硬波次屏障。
 
@@ -662,6 +683,18 @@ class GeoExecutionEngine:
             max_workers=self._max_workers, thread_name_prefix="geocompute-node",
         ) as pool:
             while ready or inflight:
+                # V6 抢占安全点：每轮循环探测 coordinator 的让出请求 ——
+                # 只在节点边界生效（在飞节点经 checkpoint 协作收敛，绝不
+                # 强杀线程）。触发后行为与取消相同的收敛路径，但 run 终态
+                # 由调用方（execute_plan）判为 preempted。
+                if (
+                    yield_check is not None
+                    and preempt_flag is not None
+                    and not preempt_flag["flag"]
+                    and yield_check()
+                ):
+                    preempt_flag["flag"] = True
+                    _sweep_remaining("preempted at safe point", escalate=True)
                 # 取消 / deadline：只收敛「未启动」节点；在飞的由节点自身
                 # 的协作 checkpoint 收敛（repo 约束：线程不可强杀）。
                 if cancel_token is not None and cancel_token.cancelled:
@@ -789,6 +822,7 @@ class GeoExecutionEngine:
                 cancel_token=cancel_token, node_deadline=node_deadline,
                 governor=governor, gov_path=gov_path,
                 charge_ledger=charge_ledger,
+                budget=budget,
             )
             if ev.status in {"completed", "reused"} and node.node_id in outputs:
                 outputs_fp[node.node_id] = _output_fingerprint(outputs[node.node_id])
@@ -992,6 +1026,7 @@ class GeoExecutionEngine:
         governor: Optional[Any],
         gov_path: Optional[str],
         charge_ledger: Optional[Any] = None,
+        budget: Any = None,
     ) -> None:
         """durable_job 分支：穿透既有 AnalysisTask 运行时（无第二真相）。
 
@@ -1005,6 +1040,11 @@ class GeoExecutionEngine:
           上游指纹一致 + result_ref 存活才命中）—— 最贵的 durable 节点
           终于进入复用；
         - eager（无 Redis）时诚实标注 ``backend_variant="in_process_eager"``。
+
+        V6（P0-3 修复）：plan budget 随派发穿透到 worker 任务体 —— 此前
+        worker 侧 ``OperatorContext`` 无 budget，行数红线只剩
+        HARD_NODE_ROW_CAP，plan 级预算在 durable 路径形同虚设。budget 走
+        task_kwargs（不进 params）—— 不改幂等键（治理元数据≠节点身份）。
         """
         started_dj = time.monotonic()
         if node.reuse == NodeReusePolicy.ALLOW and self._durable_reuse_hit(
@@ -1035,6 +1075,7 @@ class GeoExecutionEngine:
                     plan_fingerprint=run.plan_fingerprint,
                     deadline_s=(node_deadline - time.monotonic())
                     if node.deadline_s is not None else None,
+                    budget=budget,
                 )
                 if ret.get("backend_variant"):
                     # V5 step 5：eager 降级诚实披露（reproducibility honesty）。
