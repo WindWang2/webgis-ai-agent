@@ -32,6 +32,7 @@
   {"pattern": ".github/workflows/*", "owner": "infra", "policy": "coordinated"},
   {"pattern": "frontend/package.json", "owner": "frontend", "policy": "coordinated", "suites": ["frontend"]},
   {"pattern": "frontend/pnpm-lock.yaml", "owner": "frontend", "policy": "coordinated", "suites": ["frontend"]},
-  {"pattern": "skills-lock.json", "owner": "core", "policy": "coordinated"}
+  {"pattern": "skills-lock.json", "owner": "core", "policy": "coordinated"},
+  {"pattern": "docs/integration/ownership.json", "owner": "integration", "policy": "single-writer"}
  ]
 }
