@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import pathlib
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -158,6 +159,11 @@ def merge_detections(
                     box=(x + origin_col, y + origin_row, bw, bh),
                 )
             )
+    # R2-M5：NMS 是 O(n²) —— 先按分数预截断（上限 = 最终上限的 4 倍余量），
+    # 保证输入面积有界。
+    if len(mapped) > max_detections * 4:
+        mapped.sort(key=lambda d: (-d.score, d.box, d.label))
+        mapped = mapped[: max_detections * 4]
     mapped = _classwise_nms(mapped, iou_threshold=iou_threshold)
     mapped.sort(key=lambda d: (-d.score, d.box, d.label))
     return mapped[:max_detections]
@@ -207,9 +213,28 @@ def merge_instances(
     input_nodata: Optional[np.ndarray] = None,
     polygonize: bool = False,
 ) -> InstanceMergeResult:
-    """mask 合并 + 确定性全局实例 id（tile 序优先；重叠区 tile 序小的赢）。"""
+    """mask 合并 + 确定性全局实例 id（tile 序优先；重叠区 tile 序小的赢）。
+
+    R2-M5：画布超 RAM 预算时落 memmap（磁盘有界），超硬上限 typed 拒绝
+    ——与 segmentation 融合同级的两级资源策略，绝不 MemoryError。
+    """
     h, w = plan.raster_height, plan.raster_width
-    canvas = np.zeros((h, w), dtype=np.int32)
+    need = h * w * 4
+    import tempfile as _tempfile
+
+    _mm_dir: Optional[pathlib.Path] = None
+    if need <= 256 * 1024 * 1024:
+        canvas = np.zeros((h, w), dtype=np.int32)
+    elif need <= 16 * 1024**3:
+        _mm_dir = pathlib.Path(_tempfile.mkdtemp(prefix="modelops-inst-"))
+        canvas = np.memmap(_mm_dir / "canvas.npy", dtype=np.int32, mode="w+", shape=(h, w))
+        canvas[:] = 0
+    else:
+        from app.lib.modelops.errors import ResourceUnavailable
+
+        raise ResourceUnavailable(
+            f"instance canvas needs {need} bytes > disk cap (use smaller raster)"
+        )
     global_classes: Dict[int, int] = {}
     next_id = 1
     for tile, inst_mask, cls_map in zip(plan.tiles, outputs, instance_classes):
@@ -236,7 +261,15 @@ def merge_instances(
             global_classes[new_id] = gcls
     if input_nodata is not None:
         canvas[input_nodata] = 0
-    result = InstanceMergeResult(instance_ids=canvas, instance_labels=global_classes)
+    if _mm_dir is not None:
+        result_arr = np.asarray(canvas)
+        del canvas
+        import shutil as _shutil
+
+        _shutil.rmtree(_mm_dir, ignore_errors=True)
+    else:
+        result_arr = canvas
+    result = InstanceMergeResult(instance_ids=result_arr, instance_labels=global_classes)
     if polygonize:
         result.polygon_geojson = _polygonize(canvas)
     return result

@@ -81,16 +81,26 @@ class RemoteEndpointPolicy:
 
     @classmethod
     def from_env(cls) -> "RemoteEndpointPolicy":
-        return cls(allowlist=tuple(remote_allowlist_from_env()))
+        # R2 m-1：allowlist 条目与查询走同一归一（IPv6 方括号形态对齐）。
+        return cls(
+            allowlist=tuple(
+                e for e in (cls._entry_of(a.strip()) for a in remote_allowlist_from_env())
+                if e
+            )
+        )
 
-    def _entry_of(self, url: str) -> Optional[str]:
+    @staticmethod
+    def _entry_of(url: str) -> Optional[str]:
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             return None
         port = parts.port
         if port is None:
             port = 443 if parts.scheme == "https" else 80
-        return f"{parts.scheme}://{parts.hostname.lower()}:{port}"
+        host = parts.hostname.lower()
+        if ":" in host:  # IPv6 字面量：保留方括号形态参与比较
+            host = f"[{host}]"
+        return f"{parts.scheme}://{host}:{port}"
 
     def check(self, url: str) -> str:
         """策略裁决：返回规范化 endpoint；拒绝 → RemoteEndpointPolicyError。"""
@@ -159,11 +169,15 @@ class RemoteInferenceProvider:
         endpoint = self._policy.check(self._endpoint)
         if descriptor.task_types and TASK_SEMANTIC_SEGMENTATION not in descriptor.task_types:
             raise ProviderLoadFailed("remote JSON provider serves semantic_segmentation only")
-        h, w = descriptor.spatial.chip_size
-        if h > REMOTE_MAX_CHIP_SIDE or w > REMOTE_MAX_CHIP_SIDE:
+        # R2-M4：engine 实际发送的是 **context 窗口**（pad 后）——load 与
+        # infer 必须同一维度校验，否则 chip≤128/context>128 的 descriptor
+        # 注册成功、每次 run 必失败。
+        ch, cw = descriptor.spatial.context_size
+        if ch > REMOTE_MAX_CHIP_SIDE or cw > REMOTE_MAX_CHIP_SIDE:
             raise ProviderLoadFailed(
-                f"remote JSON protocol caps chip at {REMOTE_MAX_CHIP_SIDE}px "
-                f"(descriptor declares {h}x{w})"
+                f"remote JSON protocol caps the context window at "
+                f"{REMOTE_MAX_CHIP_SIDE}px (descriptor declares context "
+                f"{ch}x{cw}); set context_size == chip_size for remote models"
             )
         return LoadedModel(
             descriptor=descriptor,
@@ -186,7 +200,7 @@ class RemoteInferenceProvider:
         per_chip = descriptor.input_bands * h * w * 4
         return ResourceEstimate(
             vram_bytes=0,
-            host_ram_bytes=per_chip * max(1, batch) * 2,
+            host_ram_bytes=per_chip * 2,  # R2-M1：单 chip 口径
             recommended_batch=min(REMOTE_MAX_BATCH, max(1, batch)),
             externally_enforced=True,  # 远端内存不可观测——如实标注
         )
@@ -238,8 +252,13 @@ class RemoteInferenceProvider:
                                 f"remote response exceeds {REMOTE_MAX_RESPONSE_BYTES} "
                                 "bytes mid-stream"
                             )
-                    resp._content = bytes(content)
-                    return resp
+                    # R2 m-7：公开 API 重建 Response（不碰 httpx 私有属性）。
+                    return httpx.Response(
+                        resp.status_code,
+                        content=bytes(content),
+                        headers=resp.headers,
+                        extensions=resp.extensions,
+                    )
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise RemoteInferenceError(f"remote transport failure: {type(exc).__name__}") from exc
         finally:

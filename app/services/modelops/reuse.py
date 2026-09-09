@@ -16,6 +16,7 @@ import re
 import shutil
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -103,7 +104,9 @@ class ReuseStore:
         if any(a.get("file") is None for a in artifacts):
             return False
         entry_dir = self._entry_dir(owner_scope, key)
-        staging = entry_dir.with_name(entry_dir.name + ".tmp")
+        staging = entry_dir.with_name(
+            f"{entry_dir.name}.tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}"
+        )
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
         staging.mkdir(parents=True, exist_ok=True)

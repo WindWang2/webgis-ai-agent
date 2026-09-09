@@ -243,6 +243,18 @@ class ModelOpsService:
             if self._cancel_tokens.get(run_key) is token:
                 self._cancel_tokens.pop(run_key, None)
 
+    async def check_compatibility_async(self, model_id: str, source_uri: str, **kw: Any) -> Dict[str, Any]:
+        """R2-M10：GDAL IO 不上事件循环。"""
+        return await asyncio.to_thread(
+            self.check_compatibility, model_id, source_uri, **kw
+        )
+
+    async def estimate_resources_async(self, model_id: str, source_uri: str, **kw: Any) -> Dict[str, Any]:
+        """R2-M10：plan_tiles/reader 不上事件循环（C-1 同源守门）。"""
+        return await asyncio.to_thread(
+            self.estimate_resources, model_id, source_uri, **kw
+        )
+
     # ── 评估 / 复用 / provenance ────────────────────────────────────
     def evaluate(self, request: EvaluationRequest) -> Dict[str, Any]:
         return self._evaluation.evaluate(request)

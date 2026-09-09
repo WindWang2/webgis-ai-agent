@@ -84,7 +84,10 @@ class EvaluationService:
                 refs.shape[0], refs.shape[1],
                 block_size_px=request.block_size_px, num_folds=request.num_folds,
             )
-            samples = [(int(r), int(c)) for r, c in zip(*np.where(refs != request.ignore_index))]
+            # R2-M5：泄漏审计样本按行采样上界（block 级判定不需要全点集）。
+            rr_idx, cc_idx = np.where(refs != request.ignore_index)
+            step = max(1, len(rr_idx) // 10_000)
+            samples = [(int(r), int(c)) for r, c in zip(rr_idx[::step], cc_idx[::step])]
             report["leakage_guard"] = leakage_guard(
                 train_rows=[], eval_rows=samples, split=split,
             ).as_dict()
@@ -109,9 +112,9 @@ class EvaluationService:
             pred, refs = self._read_pair(request.predictions_path, request.references_path)
             from app.lib.modelops.evaluation import classification_metrics
 
+            # R2-M5：numpy 直算（.tolist() 的 Python list 物化无必要）。
             report["metrics"] = classification_metrics(
-                refs.ravel().tolist(), pred.ravel().tolist(),
-                num_classes=request.num_classes,
+                refs.ravel(), pred.ravel(), num_classes=request.num_classes,
             )
         else:
             raise ModelOpsError(f"unsupported evaluation task {request.task_type!r}")
@@ -141,11 +144,12 @@ class EvaluationService:
     @staticmethod
     def _read_pair(pred_path: Path, ref_path: Path) -> tuple:
         """读预测/参考栅格（有界：同形状校验 + 预算护栏由 RasterReader 兜底）。"""
+        # R2-M5：不绕过 reader 预算（budget_ok=True 是审计眼里的后门）。
         with RasterReader.open(str(pred_path)) as pr:
-            pred = pr.read_full(budget_ok=True)
+            pred = pr.read_full()
             pred_meta = pr.metadata()
         with RasterReader.open(str(ref_path)) as rr:
-            refs = rr.read_full(budget_ok=True)
+            refs = rr.read_full()
             ref_meta = rr.metadata()
         if pred_meta.width != ref_meta.width or pred_meta.height != ref_meta.height:
             raise ModelOpsError(

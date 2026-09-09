@@ -15,6 +15,7 @@ from app.lib.modelops.errors import (
     ProviderOOM,
 )
 from app.lib.modelops.metrics import PerfCounters
+from app.lib.modelops.errors import PreprocessError
 from app.lib.modelops.preprocess import build_plan, preprocess_batch, preprocess_window
 from app.services.modelops.config import ModelOpsSettings
 from app.services.modelops.loaded_cache import LoadedModelCache, load_key
@@ -251,8 +252,10 @@ def test_preprocess_batch_memory_guard():
         spatial=SpatialRequirements(chip_size=(4, 4), context_size=(4, 4)),
     )
     plan = build_plan(desc, source_band_count=1)
-    big = np.zeros((1, 20000, 20000), dtype=np.float32)
-    with pytest.raises(Exception):
+    big = np.zeros((1, 9000, 9000), dtype=np.float32)  # 81M 元素/窗
+    with pytest.raises(PreprocessError):
+        # 4 窗共 324M 元素 > MAX_BATCH_ELEMENTS；守卫在 stack 之前触发
+        # （峰值 ≈ 4×324MB 而非历史版本的 ~14GB，M-9 修复验收）。
         preprocess_batch(plan, desc, [(big, None), (big, None), (big, None), (big, None)])
 
 

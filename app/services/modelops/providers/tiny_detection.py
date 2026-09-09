@@ -90,9 +90,10 @@ class TinyDetectionProvider:
         self, descriptor: GeoModelDescriptor, *, batch: int, device: str
     ) -> ResourceEstimate:
         h, w = descriptor.spatial.chip_size
+        per_chip = descriptor.input_bands * h * w * 4
         return ResourceEstimate(
-            vram_bytes=descriptor.input_bands * h * w * 4 * max(1, batch),
-            host_ram_bytes=descriptor.input_bands * h * w * 4 * max(1, batch) * 2,
+            vram_bytes=per_chip,  # R2-M1：单 chip 口径
+            host_ram_bytes=per_chip * 2,
             recommended_batch=min(4, max(1, batch)),
         )
 

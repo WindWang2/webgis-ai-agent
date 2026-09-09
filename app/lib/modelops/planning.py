@@ -21,7 +21,7 @@ TileSpec 语义（R1-C3）::
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterator, List, Tuple
+from typing import Any, Iterator, List, Tuple
 
 from app.lib.modelops.descriptor import GeoModelDescriptor
 from app.lib.modelops.errors import PlanningError
@@ -75,14 +75,20 @@ class TilePlan:
         }
 
     def fingerprint_payload(self) -> dict:
-        return {
+        # C-1：计划由网格参数确定性决定；origins 只在小计划时逐条展开
+        # （大计划的逐条物化进指纹既是 O(n) 又无信息增量）。
+        payload = {
             "raster": [self.raster_height, self.raster_width],
             "chip": [self.chip_h, self.chip_w],
             "stride": [self.stride_y, self.stride_x],
             "context": [self.context_h, self.context_w],
             "tile_count": len(self.tiles),
-            "core_origins": [[t.core_window[0], t.core_window[1]] for t in self.tiles],
         }
+        if len(self.tiles) <= 256:
+            payload["core_origins"] = [
+                [t.core_window[0], t.core_window[1]] for t in self.tiles
+            ]
+        return payload
 
     def __len__(self) -> int:
         return len(self.tiles)
@@ -174,6 +180,15 @@ def _grid_axis(total: int, size: int, stride: int) -> List[int]:
     elif last + size > total and (not starts or starts[-1] != total - size):
         starts[-1] = total - size
     return starts
+
+
+def estimated_tile_count(descriptor: Any, *, raster_height: int, raster_width: int) -> int:
+    """纯算术 tile 数估算（不物化 TileSpec；C-1 守门的唯一合法入口）。"""
+    chip_w, chip_h = descriptor.spatial.chip_size
+    stride_y, stride_x = descriptor.spatial.stride or (chip_h, chip_w)
+    rows = _grid_axis(raster_height, chip_h, stride_y)
+    cols = _grid_axis(raster_width, chip_w, stride_x)
+    return len(rows) * len(cols)
 
 
 def core_coverage(plan: TilePlan) -> int:

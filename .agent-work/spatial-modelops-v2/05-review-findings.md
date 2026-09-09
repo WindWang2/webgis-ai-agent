@@ -48,3 +48,27 @@
 ## Round 2 — Subagent-B perf/GPU/security review（待 Round 1 修复后）
 
 （占位）
+
+## Round 2 — Subagent-B perf/GPU/security/并发 review（2026-09-10，HEAD 2b193d89 → 修复于本提交，verdict=revise，全部修复）
+
+| 级别 | ID | 摘要 | 处置 |
+|---|---|---|---|
+| CRITICAL | C-1 | TileSpec 无上限物化 + estimate 工具阻塞事件循环 | `estimated_tile_count` 纯算术守门（MAX_TILES_PER_RUN=65536，物化前 typed 拒绝）；指纹 origins 仅小计划展开；compat/estimate 工具 to_thread |
+| CRITICAL | C-2 | memmap finalize 全量 (K,H,W) RAM 再物化（64GiB 档可达数十 GB OOM）+ 异常路径 mkdtemp 泄漏 | finalize 行带处理（4096 行/带）；概率导出 RAM 预算门 typed；accumulator 经 _RUN_LOCAL 在 finally close |
+| MAJOR | M-1 | estimate 与 engine 双重乘 batch → manifest 资源账目虚高 ×batch | 冻结单 chip 口径（5 provider 全改 + 一致性单测），乘法只在 engine |
+| MAJOR | M-2 | extension 超时僵尸 call + 信号量提前释放级联假超时 | 信号量随 future 完成释放（done-callback）；超时 future.cancel + abandoned 计数入 health |
+| MAJOR | M-3 | extension JSON 线格式膨胀未计预算；adapter 无 chip 门 | load 门 context ≤128×128px typed；engine 预算按 //8 折算 |
+| MAJOR | M-4 | remote load 校验 chip 而 infer 收 context → 注册成功必失败 | load/infer 同维度（context）校验 |
+| MAJOR | M-5 | instance 画布/检测 NMS/evaluation 无界 + read_full 绕预算 | instance 画布 RAM→memmap→typed 三级；NMS 前分数预截断；evaluation 去掉 budget_ok、numpy 直算、采样上界 |
+| MAJOR | M-6 | registry/reuse 跨进程固定 tmp 名互踩 + seq 分叉 | tmp 名 pid+uuid 唯一化；register 跨进程 O_EXCL 锁（stale 30s 接管）；reuse staging 唯一名 |
+| MAJOR | M-7 | extension 静默丢 prompt；engine 缺 prompt⊆caps 复核 | engine 二道门 typed；extension 对 prompt 任务显式 ProviderError |
+| MAJOR | M-8 | observed_vram/cancel_latency/peak_host_mem 恒 0；provider.cancel 零调用 | 取消路径真实记延迟 + provider.cancel 钩子；ru_maxrss/GetProcessMemoryInfo 峰值 RSS；provider state 观测 VRAM 回传 |
+| MAJOR | M-9 | 内存守卫在 stack 之后（测试自证 13GB 峰值） | 守卫前移到 stack 之前；测试改 9000² 构造（峰值 ~1.3GB） |
+| MAJOR | M-10 | compat/estimate 工具同步 GDAL IO 上事件循环 | service *_async + asyncio.to_thread |
+| MINOR | m-1 | IPv6 allowlist 永不匹配 | 归一函数双侧共用 |
+| MINOR | m-2 | manifest >4KB 时 redaction 整体跳过 | 分节 redaction |
+| MINOR | m-3 | package_security 零生产调用方 | register 增 package_bytes 参数走 inspect_archive 全门（真实包路径强制） |
+| MINOR | m-4 | 重投影清理依赖目录名耦合 | 精确登记 finally unlink |
+| MINOR | m-5 | cancel 工具描述陈旧（误导 agent） | 描述更新为 run_id 键 |
+| MINOR | m-6 | cache invalidate/load 竞争窗口 + miss 计数口径 | 回插前同临界区复查负缓存/poisoned |
+| MINOR | m-7 | httpx 私有 _content 赋值 | 公开 httpx.Response 构造重建 |

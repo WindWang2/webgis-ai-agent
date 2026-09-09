@@ -45,6 +45,15 @@ _ADAPTER_POOL = ThreadPoolExecutor(
     max_workers=4, thread_name_prefix="modelops-ext-adapter"
 )
 _ADAPTER_SEMAPHORE = threading.BoundedSemaphore(4)
+#: JSON 线格式的上下文窗口上限（pixels；R2-M3）。
+_MAX_CONTEXT_PIXELS = 128 * 128
+
+
+def _release_adapter_slot(adapter: "ExtensionProviderAdapter") -> None:
+    """future 真正完成（含被弃置的僵尸 call 结束）时归还配额（R2-M2）。"""
+    with adapter._lock:
+        adapter._in_flight = max(0, adapter._in_flight - 1)
+    _ADAPTER_SEMAPHORE.release()
 
 
 class ExtensionProviderAdapter:
@@ -70,6 +79,7 @@ class ExtensionProviderAdapter:
         self._call_timeout_s = call_timeout_s
         self._lock = threading.Lock()
         self._in_flight = 0
+        self._abandoned = 0
 
     def capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(
@@ -89,6 +99,15 @@ class ExtensionProviderAdapter:
     def load(self, descriptor: GeoModelDescriptor, *, device: str) -> LoadedModel:
         if device != "cpu":
             raise ProviderLoadFailed(f"extension adapter serves cpu only (got {device!r})")
+        # R2-M3：JSON 线格式（tolist 膨胀 ~8×）+ worker 帧上限 → 上下文
+        # 窗口必须有界；load 时 typed 拒绝而非首个 batch 才爆。
+        h, w = descriptor.spatial.context_size
+        if h * w > _MAX_CONTEXT_PIXELS:
+            raise ProviderLoadFailed(
+                f"extension channel caps context window at {_MAX_CONTEXT_PIXELS} "
+                f"pixels (descriptor declares {h}x{w}={h * w}); JSON encoding "
+                "inflates ~8x against the 64MiB frame budget"
+            )
         return LoadedModel(
             descriptor=descriptor,
             provider_id=self._provider_id,
@@ -107,7 +126,7 @@ class ExtensionProviderAdapter:
         per_chip = descriptor.input_bands * h * w * 4
         return ResourceEstimate(
             vram_bytes=0,
-            host_ram_bytes=per_chip * max(1, batch),
+            host_ram_bytes=per_chip,  # R2-M1：单 chip 口径
             recommended_batch=min(4, max(1, batch)),
             externally_enforced=True,  # 子进程 RLIMIT 强制——host 侧不可观测
         )
@@ -116,6 +135,13 @@ class ExtensionProviderAdapter:
         self, model: LoadedModel, batch: TileBatch, ctx: InferenceContext
     ) -> TileOutput:
         ensure_not_cancelled(ctx)
+        # R2-M7：本通道协议不含 prompt——promptable 任务在此显式失败，
+        # 绝不静默产出"无 prompt 的分割"冒充成功。
+        if ctx.extras.get("prompt") is not None:
+            raise ProviderError(
+                "prompt not supported by the extension channel "
+                "(register a promptable provider on a channel that carries prompts)"
+            )
         n, c, h, w = batch.pixels.shape
         request = {
             "task": model.descriptor.task_types[0],
@@ -131,19 +157,31 @@ class ExtensionProviderAdapter:
             raise ProviderError("extension adapter in-flight cap exhausted")
         with self._lock:
             self._in_flight += 1
+        # R2-M2：信号量随 **future 完成**释放（而非调用方放弃时）——
+        # 超时被放弃的僵尸 call 继续占用配额，后续调用排队等待真实完成，
+        # 不再出现"释放后立即假超时"的级联。
         try:
-            # 独立池 offload（同步阻塞 host call 不占引擎线程）。
             future = _ADAPTER_POOL.submit(self._invoke, request)
+        except Exception:
+            with self._lock:
+                self._in_flight -= 1
+            _ADAPTER_SEMAPHORE.release()
+            raise
+        future.add_done_callback(lambda _f: _release_adapter_slot(self))
+        try:
             result = future.result(timeout=self._call_timeout_s)
         except FutureTimeoutError as exc:
+            future.cancel()  # 排队中的可真取消；运行中的如实标记弃置
+            with self._lock:
+                self._abandoned += 1
             raise ProviderError(
-                f"extension call exceeded {self._call_timeout_s}s (cancel latency "
-                "upper bound = call_timeout, R1-M5)"
+                f"extension call exceeded {self._call_timeout}s (cancel latency "
+                "upper bound = call_timeout, R1-M5; slot released when the "
+                "abandoned call actually finishes)"
             ) from exc
         finally:
             with self._lock:
                 self._in_flight -= 1
-            _ADAPTER_SEMAPHORE.release()
         return self._parse(model, result, batch)
 
     def _parse(self, model: LoadedModel, result: Any, batch: TileBatch) -> TileOutput:
@@ -178,7 +216,11 @@ class ExtensionProviderAdapter:
 
     def health(self) -> ProviderHealth:
         with self._lock:
-            return ProviderHealth(healthy=True, in_flight=self._in_flight)
+            return ProviderHealth(
+                healthy=True,
+                in_flight=self._in_flight,
+                detail=f"abandoned_calls={self._abandoned}",
+            )
 
     def unload(self, model: LoadedModel) -> None:
         return None

@@ -34,3 +34,15 @@
 - win32：extension worker RLIMIT 缺失 → 相关资源语义仅在 in-process mock 验证；
 - remote JSON 协议 chip ≤128px（协议上限，如实声明）；
 - temporal reference 为单窗口路径（tile-by-time 超出 typed PlanningError）。
+
+
+## Review 进展
+- **Round 0（架构挑战，Subagent-A）**：17 findings 全采纳 → 01-architecture §7 R1。
+- **Round 1（correctness，Subagent-A 续跑，HEAD 599dc144）**：verdict=revise；6C/7M/5m 全部修复（2b193d89），处置表见 05-review-findings.md。修复后 150 用例全绿 + ruff clean。
+- **Round 2（perf/GPU/security/并发，Subagent-B）**：进行中。
+
+## 测试（Round 1 修复后）
+- tests/unit/modelops: 98+（含新增 pad/band_order 用例）
+- tests/integration/modelops: 52（含 R1 修复回归 test_r1_fixes.py 15 用例 + instance/promptable/detection 端到端）
+
+- **Round 2（perf/GPU/security/并发，Subagent-B，HEAD 2b193d89）**：verdict=revise；2C/10M/7m 全部修复。修复后 **157 用例全绿**（unit+integration）+ ruff clean。

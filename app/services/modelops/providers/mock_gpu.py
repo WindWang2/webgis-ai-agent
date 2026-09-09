@@ -117,8 +117,8 @@ class MockGPUProvider:
         self, descriptor: GeoModelDescriptor, *, batch: int, device: str
     ) -> ResourceEstimate:
         return ResourceEstimate(
-            vram_bytes=self._batch_bytes(descriptor, batch),
-            host_ram_bytes=self._batch_bytes(descriptor, batch),
+            vram_bytes=self._batch_bytes(descriptor, 1),  # R2-M1：单 chip 口径
+            host_ram_bytes=self._batch_bytes(descriptor, 1),
             recommended_batch=min(self._max_batch, max(1, batch)),
             externally_enforced=False,
         )

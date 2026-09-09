@@ -26,6 +26,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -97,6 +98,49 @@ class ModelRecord:
         )
 
 
+class _cross_process_lock:
+    """best-effort 跨进程注册锁（O_EXCL lockfile + 30s stale 接管，R2-M6）。
+
+    单进程部署零竞争；多副本部署下并发 register 由本锁串行（锁失效的
+    最坏后果 = ModelVersionCollision 误报/漏报，不产生文档损坏——tmp 名
+    已唯一化）。
+    """
+
+    def __init__(self, path: Path, *, timeout_s: float = 30.0) -> None:
+        self._path = path
+        self._timeout_s = timeout_s
+
+    def __enter__(self) -> "_cross_process_lock":
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.time() + self._timeout_s
+        while True:
+            try:
+                self._fd = os.open(self._path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(self._fd, str(os.getpid()).encode())
+                return self
+            except FileExistsError:
+                try:
+                    age = time.time() - self._path.stat().st_mtime
+                    if age > 30.0:  # stale：接管
+                        self._path.unlink(missing_ok=True)
+                        continue
+                except OSError:
+                    pass
+                if time.time() > deadline:
+                    logger.warning("register lock wait timeout at %s; proceeding", self._path)
+                    self._fd = None
+                    return self
+                time.sleep(0.05)
+
+    def __exit__(self, *exc: Any) -> None:
+        if getattr(self, "_fd", None) is not None:
+            os.close(self._fd)
+            try:
+                self._path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def _validate_owner_scope(owner_scope: Dict[str, str]) -> None:
     if not owner_scope or set(owner_scope) - _ALLOWED_SCOPE_KEYS or len(owner_scope) != 1:
         raise DescriptorError(
@@ -138,7 +182,9 @@ class ModelRegistryStore:
     def _persist(self, record: ModelRecord) -> None:
         path = self._record_path(record.descriptor.identity, record.owner_scope)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
+        # R2-M6：tmp 名含 pid+uuid —— 并发写不互踩（固定名会让 A 的
+        # os.replace 搬走 B 半写的 tmp → 文档损坏 → parity 永久拒绝）。
+        tmp = path.with_suffix(f".json.tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
         tmp.write_text(json.dumps(record.as_dict(), ensure_ascii=False, indent=1), encoding="utf-8")
         os.replace(tmp, path)
         self._write_index()
@@ -155,7 +201,7 @@ class ModelRegistryStore:
         payload = {"schema_version": REGISTRY_SCHEMA_VERSION, "entries": entries}
         path = self._index_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
+        tmp = path.with_suffix(f".json.tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
         os.replace(tmp, path)
 
@@ -247,8 +293,27 @@ class ModelRegistryStore:
         registered_by: str = "",
         package_report: Optional[Dict[str, Any]] = None,
         known_provider_refs: Optional[Callable[[str], bool]] = None,
+        package_bytes: Optional[bytes] = None,
     ) -> ModelRecord:
-        """注册一个模型版本（scope 内不可变；碰撞 typed 拒绝；跨 scope 隔离）。"""
+        """注册一个模型版本（scope 内不可变；碰撞 typed 拒绝；跨 scope 隔离）。
+
+        R2 m-3：真实包路径必须传 ``package_bytes`` —— 走
+        ``package_security.inspect_archive`` 全门（checksum/结构/成员黑
+        名单）后以报告入册；synthetic 种子（无实体包）显式提供报告并
+        标注 ``synthetic: true``，两条路径都不可绕过校验叙事。
+        """
+        if package_bytes is not None:
+            from app.lib.modelops.package_security import inspect_archive
+
+            report = inspect_archive(package_bytes, expected_checksum=descriptor.checksum)
+            if report.checksum != descriptor.checksum:
+                from app.lib.modelops.errors import ModelChecksumError
+
+                raise ModelChecksumError(
+                    f"package checksum {report.checksum[:12]}… != descriptor "
+                    f"{descriptor.checksum[:12]}…"
+                )
+            package_report = report.as_dict()
         _validate_owner_scope(owner_scope)
         if known_provider_refs is not None and not known_provider_refs(descriptor.provider_ref):
             from app.lib.modelops.errors import ProviderError
@@ -258,6 +323,19 @@ class ModelRegistryStore:
                 "registered provider instance; dynamic code loading is forbidden (ADR-0119 R1-C1)",
                 correction_hint="register the provider implementation first, then reference its id",
             )
+        lock_path = self._scope_dir(owner_scope) / ".register.lock"
+        with _cross_process_lock(lock_path):
+            return self._register_locked(descriptor, owner_scope, registered_by,
+                                         package_report, known_provider_refs)
+
+    def _register_locked(
+        self,
+        descriptor: GeoModelDescriptor,
+        owner_scope: Dict[str, str],
+        registered_by: str,
+        package_report: Optional[Dict[str, Any]],
+        known_provider_refs: Optional[Callable[[str], bool]],
+    ) -> ModelRecord:
         with self._lock:
             self.load()
             skey = scope_key(owner_scope)

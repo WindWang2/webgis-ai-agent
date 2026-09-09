@@ -123,10 +123,12 @@ class TinyReferenceProvider:
     ) -> ResourceEstimate:
         h, w = descriptor.spatial.chip_size
         channels = descriptor.input_bands
+        # R2-M1：estimate 一律返回**单 chip** 值；batch 因子只在 engine
+        # 一处相乘（跨 provider 口径一致，manifest 账目不虚高）。
         per_chip_bytes = channels * h * w * 4
         return ResourceEstimate(
-            vram_bytes=per_chip_bytes * max(1, batch),
-            host_ram_bytes=per_chip_bytes * max(1, batch) * 2,
+            vram_bytes=per_chip_bytes,
+            host_ram_bytes=per_chip_bytes * 2,
             recommended_batch=min(8, max(1, batch)),
         )
 

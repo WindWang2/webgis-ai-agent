@@ -100,7 +100,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         from app.services.modelops.service import get_modelops_service, normalize_scope
 
         scope = normalize_scope(session_id=session_id, project_id=project_id)
-        return get_modelops_service().check_compatibility(
+        return await get_modelops_service().check_compatibility_async(
             model_id, source_uri[:MAX_SOURCE_URI_LEN],
             session_id=scope.get("session_id"), project_id=scope.get("project_id"),
         )
@@ -127,7 +127,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         from app.services.modelops.service import get_modelops_service, normalize_scope
 
         scope = normalize_scope(session_id=session_id, project_id=project_id)
-        return get_modelops_service().estimate_resources(
+        return await get_modelops_service().estimate_resources_async(
             model_id, source_uri[:MAX_SOURCE_URI_LEN],
             session_id=scope.get("session_id"), project_id=scope.get("project_id"),
         )
@@ -294,8 +294,8 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="modelops_cancel_inference",
-        description="取消一次进行中的推理（按 model_id 或推理 run 键）",
-        param_descriptions={"cancel_key": "取消键（推理提交时使用 model_id）"},
+        description="取消一次进行中的推理（取消键 = 提交返回的 run_id）",
+        param_descriptions={"cancel_key": "取消键（modelops_run_inference 返回的 run_id）"},
         domains=["modelops"],
         cost="light",
     )

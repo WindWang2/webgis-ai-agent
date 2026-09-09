@@ -70,11 +70,14 @@ def build_inference_manifest(
         "reused": reused,
         "error": error,
     }
-    # 指纹先于 redaction（redaction 有 4KB 全局界，超界返回 str 形态）。
+    # 指纹先于 redaction（对未脱敏全量做指纹）。
     fingerprint = sha256_hex(canonical_dumps(manifest))
-    redacted = redact_provenance_args(manifest)
-    if isinstance(redacted, dict):
-        redacted["manifest_fingerprint"] = fingerprint
-        return redacted
-    manifest["manifest_fingerprint"] = fingerprint
-    return manifest
+    # R2 m-2：分节 redaction —— 整体 redact 超 4KB 会退化为 str 形态
+    # （redaction 被整体跳过）；按节处理后每节都远小于全局界。
+    redacted: Dict[str, Any] = {
+        key: redacted_section
+        for key, value in manifest.items()
+        if isinstance(redacted_section := redact_provenance_args(value), (dict, list, str, int, float, bool)) or redacted_section is None
+    }
+    redacted["manifest_fingerprint"] = fingerprint
+    return redacted

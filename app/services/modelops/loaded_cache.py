@@ -142,6 +142,14 @@ class LoadedModelCache:
                 raise
             latency = time.perf_counter() - started
             with self._lock:
+                # R2 m-6：load 期间若发生 invalidate（poisoned 回插）或负缓存
+                # 写入，则本次 load 结果不回插（与失效语义同一临界区裁决）。
+                if key in self._negative or (
+                    key in self._entries and self._entries[key].poisoned
+                ):
+                    self._key_locks.pop(key, None)
+                    # 等待者按 miss 处理（统计口径：真正触发 load 的进程计数）
+                    return model, latency
                 self._entries[key] = _Entry(model=model, refcount=1, unload_cb=unload_fn)
                 self._key_locks.pop(key, None)
                 self._evict_locked(keep=key)

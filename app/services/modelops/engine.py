@@ -95,6 +95,10 @@ MERGE_DISK_HARD_CAP_BYTES = 64 * 1024**3
 #: extension worker 单帧输出上限（R1-M5：FRAME_MAX_BYTES 68MiB 留余量）。
 EXTENSION_BATCH_BYTES_CAP = 64 * 1024 * 1024
 MAX_OOM_DOWNSHIFTS = 2
+#: C-2：accumulator 的 finally 可达通道（一次一个 run，引擎串行于线程）。
+_RUN_LOCAL: Dict[str, Any] = {}
+#: 单次 run 的 tile 数硬上限（C-1：TileSpec 物化 + 指纹都是有界的）。
+MAX_TILES_PER_RUN = 65536
 
 
 @dataclass(frozen=True)
@@ -168,6 +172,7 @@ class InferenceEngine:
             raise ModelOpsError("owner_scope must be exactly one of session_id/project_id")
         run_id = request.run_key or uuid.uuid4().hex[:16]
         perf = PerfCounters()
+        run_started = time.perf_counter()
         queued_from = time.perf_counter()
         if not self._slots.acquire(timeout=30.0):
             raise ResourceUnavailable("concurrent inference slots exhausted (30s wait)")
@@ -175,6 +180,16 @@ class InferenceEngine:
         try:
             return self._run_guarded(request, run_id=run_id, perf=perf,
                                      cancel_token=cancel_token, progress=progress)
+        except InferenceCancelled:
+            # R2-M8：取消延迟真实入账 + 协议 cancel 钩子（引擎串行化通知）。
+            perf.note_latency(cancel=time.perf_counter() - run_started)
+            try:
+                provider_ref = getattr(self, "_last_provider", None)
+                if provider_ref is not None:
+                    provider_ref.cancel(None, run_id)  # best-effort 通知
+            except Exception:  # noqa: BLE001 — 通知失败不改变取消语义
+                pass
+            raise
         finally:
             self._slots.release()
 
@@ -188,6 +203,7 @@ class InferenceEngine:
         cancel_token: Optional[CancellationToken],
         progress: Optional[Callable[[Dict[str, Any]], None]],
     ) -> InferenceResult:
+        reproject_source: Optional[Path] = None  # R2 m-4：精确临时文件登记
         deadline = time.monotonic() + (
             request.deadline_s if request.deadline_s else self._settings.inference_deadline_s
         )
@@ -212,6 +228,7 @@ class InferenceEngine:
         )
         descriptor = record.descriptor
         provider = self._providers.get(descriptor.provider_ref)  # R1-C1 门
+        self._last_provider = provider  # R2-M8：取消通知通道
         caps = provider.capabilities()
         task = self._resolve_task(descriptor, request)
 
@@ -247,6 +264,20 @@ class InferenceEngine:
         report = qualify(descriptor, profile, prompt=request.prompt, temporal=request.temporal)
         if not report.compatible:
             raise report_to_error(report)
+        # R2-M7：prompt 模式必须 ⊆ provider caps（qualifier 只看 descriptor
+        # 任务语义；provider 能力是第二道门——否则静默丢弃 prompt 出错结果）。
+        if request.prompt is not None:
+            missing = request.prompt.required_prompt_modes() - caps.prompt_modes
+            if missing:
+                from app.lib.modelops.errors import CompatibilityError
+
+                raise CompatibilityError(
+                    f"provider {caps.provider_id!r} does not declare prompt "
+                    f"modes {sorted(missing)}",
+                    failures=[{"code": "PROMPT_MODE",
+                               "detail": "provider capability gate",
+                               "fix_hint": "choose a provider declaring these prompt modes"}],
+                )
 
         # ── ReprojectStage（R1-C2：显式、有界、进指纹）──────────────
         reproject_payload: Optional[Dict[str, Any]] = None
@@ -256,6 +287,7 @@ class InferenceEngine:
             source_path, input_content_sha, reproject_payload = self._reproject(
                 source_path, report.reproject, run_id=run_id
             )
+            reproject_source = source_path
             with RasterReader.open(str(source_path)) as rr:
                 meta = rr.metadata()
             profile = InputProfile(
@@ -267,6 +299,18 @@ class InferenceEngine:
             )
 
         # ── 计划 ────────────────────────────────────────────────────
+        # C-1：tile 数守门在物化之前（纯算术）——超限 typed 拒绝，
+        # 绝不先构造 GB 级 TileSpec 列表。
+        from app.lib.modelops.planning import estimated_tile_count
+
+        est_tiles = estimated_tile_count(
+            descriptor, raster_height=meta.height, raster_width=meta.width
+        )
+        if est_tiles > MAX_TILES_PER_RUN:
+            raise ResourceUnavailable(
+                f"tile plan needs {est_tiles} tiles > per-run cap {MAX_TILES_PER_RUN}; "
+                "increase chip size / stride or tile the request externally"
+            )
         preprocess_plan = build_preprocess_plan(
             descriptor,
             source_band_count=profile.band_count,
@@ -343,7 +387,8 @@ class InferenceEngine:
         estimate = provider.estimate_resources(descriptor, batch=caps.max_batch, device=device_plan.device)
         budget = self._settings.vram_budget_bytes
         if caps.provider_type == "extension_worker":
-            budget = min(budget, EXTENSION_BATCH_BYTES_CAP)  # R1-M5 帧上限约束
+            # R1-M5 帧上限 + R2-M3 JSON 线格式膨胀（~8×）：预算按折算值。
+            budget = min(budget, EXTENSION_BATCH_BYTES_CAP // 8)
         batch = batch_for_budget(
             chip_hw=(tile_plan.context_h, tile_plan.context_w),
             input_channels=descriptor.input_bands,
@@ -364,6 +409,9 @@ class InferenceEngine:
         perf.note_resources(
             estimated_vram_bytes=device_plan.vram_bytes, device=device_plan.device
         )
+        # R2-M8：host 峰值内存观测（POSIX ru_maxrss / win32 GetProcessMemoryInfo；
+        # 不可得 = 0，manifest 如实呈现，不虚标）。
+        perf.note_resources(peak_host_memory_bytes=_process_peak_rss_bytes())
 
         # ── loaded model（single-flight cache）──────────────────────
         _emit(progress, stage="load", run_id=run_id)
@@ -417,15 +465,25 @@ class InferenceEngine:
                     tile_plan, batch, device_plan, preprocess_plan, output_dir,
                     perf, _checkpoint, progress,
                 )
+        except BaseException:
+            # C-2：accumulator 的 memmap/临时目录在任何异常路径都释放。
+            seg_acc = _RUN_LOCAL.get("accumulator")
+            if seg_acc is not None:
+                seg_acc.close()
+            raise
         finally:
             self._loaded_cache.release(cache_key)
+            # R2-M8：provider 侧观测 VRAM（如 mock_gpu 的 vram_observed_peak）
+            # 如实回传；协议成员 provider.cancel 在取消路径被调用（此前零调用方）。
+            state = getattr(model, "state", None)
+            if isinstance(state, dict) and state.get("vram_observed_peak"):
+                perf.note_resources(observed_vram_bytes=int(state["vram_observed_peak"]))
             # R1 m-4：重投影中间产物不进 reuse（reuse 只存 outputs）——
             # run 结束即清理，防磁盘无界增长。
-            if reproject_payload and source_path.exists() and "reprojected" in str(
-                source_path.parent
-            ):
+            if reproject_payload and reproject_source is not None and reproject_source.exists():
+                # R2 m-4：精确登记的临时文件清理（不依赖目录名耦合）。
                 try:
-                    source_path.unlink()
+                    reproject_source.unlink()
                 except OSError:
                     pass
         perf.finish()
@@ -518,6 +576,7 @@ class InferenceEngine:
                 num_classes,
                 policy=merge_policy,
             )
+            _RUN_LOCAL["accumulator"] = accumulator
         detections_by_tile: Dict[int, List[Dict[str, Any]]] = {}
         instance_by_tile: List[np.ndarray] = []
         instance_classes_by_tile: List[Dict[int, int]] = []
@@ -589,6 +648,12 @@ class InferenceEngine:
                         instance_by_tile.append(masks_out[i])
                         instance_classes_by_tile.append({1: 1})
                 elif task in (TASK_EMBEDDING, TASK_CLASSIFICATION):
+                    if len(embeddings) + len(label_outputs) + len(group) > MAX_TILES_PER_RUN:
+                        from app.lib.modelops.errors import ResourceUnavailable
+
+                        raise ResourceUnavailable(
+                            "per-chip output collection exceeds tile budget"
+                        )
                     if output.embeddings is not None:
                         for i in range(output.embeddings.shape[0]):
                             embeddings.append(output.embeddings[i])
@@ -1050,6 +1115,39 @@ class InferenceEngine:
         return result
 
 
+def _process_peak_rss_bytes() -> int:
+    """进程峰值 RSS（R2-M8）：POSIX resource / win32 ctypes；失败 = 0。"""
+    try:
+        import resource
+
+        return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * 1024
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import ctypes
+
+        class _PMC(ctypes.Structure):
+            _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong),
+                        ("PeakWorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                        ("PagefileUsage", ctypes.c_size_t),
+                        ("PeakPagefileUsage", ctypes.c_size_t)]
+
+        pmc = _PMC()
+        pmc.cb = ctypes.sizeof(_PMC)
+        if ctypes.windll.kernel32.GetProcessMemoryInfo(
+            ctypes.windll.kernel32.GetCurrentProcess(),
+            ctypes.byref(pmc), pmc.cb
+        ):
+            return int(pmc.PeakWorkingSetSize)
+    except Exception:  # noqa: BLE001
+        pass
+    return 0
+
+
 def _emit(
     progress: Optional[Callable[[Dict[str, Any]], None]],
     **payload: Any,
@@ -1137,13 +1235,40 @@ class _SegmentationAccumulator:
         input_nodata: Optional[np.ndarray],
         confidence_floor: float,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
-        covered = np.asarray(self._weight) > 0
-        safe = np.where(covered, np.asarray(self._weight), 1.0).astype(np.float32)
-        mean = np.asarray(self._acc) / safe[None]
-        classes = mean.argmax(axis=0).astype(np.uint8)
-        classes[~covered] = 255  # 未覆盖（含 nodata/pad）不是类别 0
-        confidence = mean.max(axis=0).astype(np.float32)
-        valid = covered.copy()
+        want_probs = bool(getattr(self._policy, "output_probabilities", False))
+        if want_probs:
+            need = self._k * self._h * self._w * 4
+            if need > MERGE_RAM_BUDGET_BYTES:
+                raise ResourceUnavailable(
+                    f"probabilities export needs {need} bytes > merge RAM budget; "
+                    "retry without output_probabilities"
+                )
+            probs_out: Optional[np.ndarray] = np.zeros(
+                (self._k, self._h, self._w), dtype=np.float32
+            )
+        else:
+            probs_out = None
+        # C-2：行带处理——全尺寸 (K,H,W) 中间量永不物化（memmap 路径
+        # 的 finalize 峰值 RAM 与带宽成正比，而非 K×H×W）。
+        classes = np.empty((self._h, self._w), dtype=np.uint8)
+        confidence = np.empty((self._h, self._w), dtype=np.float32)
+        valid = np.empty((self._h, self._w), dtype=bool)
+        acc_arr = np.asarray(self._acc)
+        weight_arr = np.asarray(self._weight)
+        band = 4096
+        for y0 in range(0, self._h, band):
+            y1 = min(y0 + band, self._h)
+            w_band = weight_arr[y0:y1]
+            cov_band = w_band > 0
+            safe = np.where(cov_band, w_band, 1.0).astype(np.float32)
+            mean_band = acc_arr[:, y0:y1] / safe[None]
+            cls_band = mean_band.argmax(axis=0).astype(np.uint8)
+            cls_band[~cov_band] = 255  # 未覆盖（含 nodata/pad）不是类别 0
+            classes[y0:y1] = cls_band
+            confidence[y0:y1] = mean_band.max(axis=0).astype(np.float32)
+            valid[y0:y1] = cov_band
+            if probs_out is not None:
+                probs_out[:, y0:y1] = mean_band.astype(np.float32)
         if confidence_floor > 0:
             low = confidence < confidence_floor
             classes[low] = 255
@@ -1151,9 +1276,6 @@ class _SegmentationAccumulator:
         if input_nodata is not None:
             valid &= ~input_nodata
             classes[input_nodata] = 255
-        probs_out: Optional[np.ndarray] = None
-        if getattr(self._policy, "output_probabilities", False):
-            probs_out = mean.astype(np.float32)
         self.close()
         return classes, confidence, valid, probs_out
 

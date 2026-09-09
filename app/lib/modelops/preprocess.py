@@ -174,11 +174,14 @@ def preprocess_batch(
             all_valid = False
         chips.append(chip)
         masks.append(valid)
-    batch = np.stack(chips).astype(np.float32, copy=False)
-    if batch.size > MAX_BATCH_ELEMENTS:
+    # M-9：守卫必须在 stack 之前——stack 先分配再检查等于先炸内存。
+    total_elements = sum(int(c.size) for c in chips)
+    if total_elements > MAX_BATCH_ELEMENTS:
         raise PreprocessError(
-            f"preprocessed batch exceeds {MAX_BATCH_ELEMENTS} elements (memory guard)"
+            f"preprocessed batch would exceed {MAX_BATCH_ELEMENTS} elements "
+            f"(got {total_elements}; memory guard fired before allocation)"
         )
+    batch = np.stack(chips).astype(np.float32, copy=False)
     if all_valid:
         return batch, None
     mask_stack = np.stack(masks)[:, None].astype(bool)  # (N,1,H,W)
