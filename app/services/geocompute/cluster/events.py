@@ -29,8 +29,10 @@ from app.models.db_model import GeoComputeRunEvent as _Event
 from app.services.geocompute.cluster.store import _utcnow
 
 #: 节点级事件 per-run 上界（append 前 COUNT；超限丢弃 + metric ——
-#: 证据只丢可观测性，不丢终态）。
-MAX_NODE_EVENTS_PER_RUN = 512
+#: 证据只丢可观测性，不丢终态）。量级 = plan 节点上限 256 × 每节点
+#: 至多 3 条非终局事件（dispatched/started/output_ready）+ 终局余量
+#: （round1 m7：512 会在 128+ 节点的 DAG 上提前触顶，令终局事件被丢）。
+MAX_NODE_EVENTS_PER_RUN = 1024
 
 #: 读窗口上界（单页）；断点续读由 after_id 游标承担。
 MAX_EVENTS_PAGE = 200
@@ -109,6 +111,10 @@ class RunEventStore:
         try:
             with self._factory() as db:
                 if event not in _BUDGET_EXEMPT:
+                    # round1 n6：COUNT→INSERT 非串行，并发下真实上界 =
+                    # 1024 + 在飞 appenders 数（有界：调用线程数）。正确性
+                    # 依赖词表封闭 —— like "node\_%" 的 _ 是通配符，词表
+                    # 外不存在 node 前缀事件。
                     used = db.execute(
                         select(func.count())
                         .select_from(_Event)
@@ -137,13 +143,17 @@ class RunEventStore:
 
     def exists(self, run_id: str, event: str, *,
                node_id: Optional[str] = None) -> bool:
-        """存在性检查（waiting_resource 一次性去重；失败按不存在处理）。"""
+        """存在性检查（waiting_resource / straggler 一次性去重；失败按
+        不存在处理）。``node_id=None`` 只匹配 NULL 行 —— coordinator 侧
+        事件与 worker 侧（带 node_id）同名事件互不干扰（round1 n5）。"""
         try:
             with self._factory() as db:
                 q = select(_Event.id).where(
                     _Event.run_id == run_id, _Event.event == event
                 )
-                if node_id is not None:
+                if node_id is None:
+                    q = q.where(_Event.node_id.is_(None))
+                else:
                     q = q.where(_Event.node_id == node_id)
                 return db.execute(q.limit(1)).scalar_one_or_none() is not None
         except Exception:  # noqa: BLE001
@@ -208,13 +218,31 @@ class RunEventStore:
             return {"settled": 0, "done": 0, "failed": 0}
 
     def purge_older_than(self, *, older_than_s: float, limit: int = 256) -> int:
-        """独立 TTL 清理（孤儿事件兜底 —— 不依赖 run 行存活；每 tick 有界批）。"""
+        """独立 TTL 清理（孤儿事件兜底 —— 不依赖 run 行存活；每 tick 有界批）。
+
+        round1 m4：排除仍非终态 run 的事件 —— 否则存活超过 TTL 的活跃
+        run 会被清掉进度/去重依据（done 回退、waiting_resource 重发）。
+        """
+        from app.models.db_model import GeoComputeClusterRun as _Run
+        from app.services.geocompute.cluster.contracts import (
+            TERMINAL_STATUSES,
+        )
+
         cutoff = _utcnow() - timedelta(seconds=max(60.0, float(older_than_s)))
         try:
             with self._factory() as db:
+                active = (
+                    select(_Run.run_id).where(
+                        _Run.status.notin_(
+                            [s.value for s in TERMINAL_STATUSES])
+                    )
+                )
                 ids = db.execute(
                     select(_Event.id)
-                    .where(_Event.created_at < cutoff)
+                    .where(
+                        _Event.created_at < cutoff,
+                        _Event.run_id.not_in(active),
+                    )
                     .order_by(_Event.created_at.asc())
                     .limit(max(1, int(limit)))
                 ).scalars().all()

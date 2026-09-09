@@ -350,8 +350,7 @@ class ClusterCoordinator:
             if epoch is None:
                 continue  # 竞争失败/账本拒绝（enforcing）→ 留队下轮再试
             self._events.append(run_id, "run_started",
-                                worker_id=self._coordinator_id,
-                                attempt=epoch)
+                                worker_id=self._coordinator_id)
             self._waiting_noted.discard(run_id)
             record_queue_wait_s(
                 max(0.0, time.time() - _created_ts(row))
@@ -387,28 +386,30 @@ class ClusterCoordinator:
             self._waiting_noted.clear()
         if self._events.exists(run_id, "waiting_resource"):
             return
-        reason = "no_eligible_worker"
+        # status 列 ≤20 字符（round1 n2）：reason 用短词表
+        reason = "no_worker"
         if req is not None and getattr(req, "gpu", 0):
-            reason = f"no_eligible_worker:gpu>={int(req.gpu)}"
+            reason = "no_worker_gpu"
         elif req is not None and getattr(req, "required_profiles", None):
-            reason = "no_eligible_worker:profiles"
+            reason = "no_worker_profiles"
         self._events.append(run_id, "waiting_resource", status=reason[:20])
 
     def _detect_stragglers(self) -> int:
-        """run 级 straggler：心跳滞后 > 3× 心跳间隔的在跑 run（一次性事件）。
-
-        处置仍交给 lease TTL reclaim（不发明新状态机）；事件只做可见性。
+        """run 级 straggler：**真实心跳**滞后 > 3× 心跳间隔的在跑 run
+        （一次性事件；round1 M4 —— 此前误用永不更新的 started_at，任何
+        健康运行超过阈值都会被误报）。处置仍交给 lease TTL reclaim
+        （不发明新状态机）；事件只做可见性。
         """
         from datetime import timedelta
 
-        threshold = self._heartbeat_interval_s * 3
+        threshold = max(self._heartbeat_interval_s * 3, 1.0)
         cutoff = _utcnow_naive() - timedelta(seconds=threshold)
         lagging = self._store.scan_running(limit=self._batch_size)
         detected = 0
         for row in lagging:
-            hb = row.get("started_at")
+            hb = row.get("heartbeat_at")
             if not hb:
-                continue
+                continue  # claim 后必写心跳；NULL 只在理论窗口出现
             if _parse_naive(hb) > cutoff:
                 continue
             run_id = row["run_id"]

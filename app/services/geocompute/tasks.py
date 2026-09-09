@@ -125,10 +125,17 @@ def run_geocompute_node(
     worker_id = _worker_identity()
 
     # ── worker 侧准入守卫（placement 第 2 层；eager/无 envelope 跳过）──
+    # 终局失败经 _finalize_placement_failure 落 job 行 failed（round1 M2：
+    # 在 durable_job 认领前抛错会让 job 行永久滞留 queued、类型化证据
+    # 全丢 —— stale sweep 只扫 running 行，收不敛它）。
     if job_id is not None and resource_envelope:
         guard = _placement_guard(self, exec_node, resource_envelope, worker_id)
         if guard == "retry":
             return  # celery self.retry 已抛 Retry（有界：max_retries=3）
+        _finalize_placement_failure(job_id, exec_node.node_id, run_id,
+                                    node_attempt, worker_id)
+        return {"rows": 0, "ref_id": None, "metadata": {
+            "error_code": "PLACEMENT_MISMATCH", "node_id": exec_node.node_id}}
 
     if job_id is None:
         # 直调（无 durable 语义）只允许 eager 测试路径存在；生产派发必经
@@ -176,14 +183,9 @@ def run_geocompute_node(
                 ref_id = _store_payload(session_id, payload, exec_node)
             payload = dict(payload)
             payload["ref_id"] = ref_id
-        except Exception as exc:
-            _emit_event(
-                run_id,
-                "node_cancelled" if _is_cancel(exc) else "node_failed",
-                node_id=exec_node.node_id, worker_id=worker_id,
-                attempt=node_attempt,
-                error_code=getattr(exc, "code", None) or type(exc).__name__,
-            )
+        except Exception:
+            # 节点终局事件由 coordinator 统一发射（单一来源契约，round1
+            # m6）—— worker 侧只发 started/output_ready/cache_hit。
             raise
 
         # 本地载荷缓存 + 位置声明（成功之后；fail-open）
@@ -259,7 +261,40 @@ def _placement_guard(
             )
         except Retry:
             return "retry"
-    raise NodePlacementMismatch(node.node_id)
+    return "failed"  # 重投耗尽 → 调用方落 job 行 failed（round1 M2）
+
+
+def _finalize_placement_failure(
+    job_id: int,
+    node_id: str,
+    run_id: Optional[str],
+    attempt: Optional[int],
+    worker_id: str,
+) -> None:
+    """placement 守卫终局失败：job 行经生产 mark_failed 路径落 failed。
+
+    必须在 durable_job 认领**之前**把行推进终态 —— 否则行永久滞留
+    queued（stale sweep 只扫 running），类型化证据全丢（round1 M2）。
+    节点终局事件仍由 coordinator 统一发射（单一来源契约）—— coordinator
+    的 await 读到 failed 行后以 error_message 携带 PLACEMENT_MISMATCH。
+    """
+    from app.services.jobs.store import DurableJobStore
+
+    exc = NodePlacementMismatch(node_id)
+    try:
+        from app.tools._utils import db_session
+
+        with db_session() as db:
+            DurableJobStore.mark_failed_sync(
+                db, int(job_id), error=exc,
+                message="PLACEMENT_MISMATCH: worker does not satisfy the "
+                        "node resource envelope",
+            )
+            db.commit()
+    except Exception:  # noqa: BLE001 - 收敛失败 → 行由 stale sweep 兜底
+        logger.warning(
+            "[geocompute-v7] placement failure finalize failed job=%s",
+            job_id, exc_info=True)
 
 
 class NodePlacementMismatch(Exception):
@@ -292,6 +327,15 @@ def _resolve_inputs(
     payloads: dict[str, dict[str, Any]] = {}
     if not input_refs:
         return payloads
+    if not session_id:
+        # 有上游 ref 却无会话 → 输入不可达；静默跳过会让节点以缺输入
+        # 执行（部分/错误结果），必须 typed 失败（round1 m2）。
+        from app.services.geocompute.errors import NodeExecutionError
+
+        raise NodeExecutionError(
+            "input handoff requires a session context",
+            retry_safe=False, details={"missing": "session_id"},
+        )
     from app.services.geocompute._async_bridge import run_coro_sync
     from app.services.session_data import session_data_manager
 

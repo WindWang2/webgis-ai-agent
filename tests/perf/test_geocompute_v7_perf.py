@@ -55,13 +55,19 @@ def env(tmp_path, monkeypatch):
 class _QueryCounter:
     def __init__(self, eng):
         self.count = 0
+        self.statements: list[str] = []
         event.listen(eng, "before_cursor_execute", self._on)
 
-    def _on(self, *a, **k):
+    def _on(self, conn, cursor, statement, parameters, *a, **k):
         self.count += 1
+        self.statements.append(str(statement))
+
+    def statements_touching(self, table: str) -> int:
+        return sum(1 for s in self.statements if table in s)
 
     def __enter__(self):
         self.count = 0
+        self.statements.clear()
         return self
 
     def __exit__(self, *a):
@@ -238,6 +244,8 @@ class TestV7StructuralBudgets:
                 ExecutionPlan.model_validate(_plan(2)),
                 session_id="perf-sess")
         assert run.status.value == "completed"
-        # 同步路径全程零事件表查询（events opt-in；runs/evidence 表的
-        # 既有写入不属于本断言 —— 计数器只测 execute_plan 内事件路径）
-        assert counter.count >= 0
+        # 同步路径（emit_events opt-in 默认关闭）全程**零事件表访问**
+        #（round1 M5：恒真断言无约束力 —— 必须精确到表名）
+        assert counter.statements_touching("geocompute_run_events") == 0, (
+            "同步执行路径出现了 events 表查询 —— emit_events opt-in 契约破坏"
+        )

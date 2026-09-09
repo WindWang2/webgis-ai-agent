@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 from sqlalchemy import create_engine
@@ -42,7 +43,6 @@ from app.services.geocompute.cluster.placement import (
 from app.services.geocompute.plan import (
     ExecutionNode,
     NodeCategory,
-    ResourceClass,
 )
 
 
@@ -86,10 +86,22 @@ class TestCapabilities:
         cap = probe_capability()
         assert cap.cpu_cores >= 0 and cap.mem_mb >= 0
         assert cap.gpu_count >= 0
-        assert set(cap.capabilities) <= set(
-            __import__("app.services.geocompute.cluster.capabilities",
-                       fromlist=["CAPABILITY_VOCABULARY"]).CAPABILITY_VOCABULARY
-        )
+        vocab = __import__(
+            "app.services.geocompute.cluster.capabilities",
+            fromlist=["CAPABILITY_VOCABULARY"]).CAPABILITY_VOCABULARY
+        assert set(cap.capabilities) <= set(vocab)
+        # 诚实性（round1 M3）：能力词由可证事实推导
+        caps = set(cap.capabilities)
+        if cap.gpu_count == 0:
+            assert "gpu" not in caps
+        else:
+            assert "gpu" in caps
+        if "rasterio" in sys.modules:
+            assert "raster" in caps  # 已安装的后端必须申报
+        if cap.cpu_cores >= 4:
+            assert "heavy_cpu" in caps
+        if cap.cpu_cores > 0:
+            assert "light_cpu" in caps
         assert cap.zone
         assert cap.version.startswith("v")
 
@@ -160,6 +172,17 @@ class TestPlacement:
             ResourceRequest(required_profiles=["raster"], gpu=8),
             [_worker(profiles={"raster": 1}, capability=None)],
         )) == 1
+        # round1 C2 回归锚：capability.capabilities **不**放宽队列覆盖 ——
+        # 声明 raster 后端但不消费 raster_queue 的 worker 不合格
+        assert eligible_workers(
+            ResourceRequest(required_profiles=["raster"]),
+            [_worker(profiles={"celery": 1},
+                     capability={"cpu_cores": 8, "mem_mb": 32768,
+                                 "gpu_count": 0, "gpu_mem_mb": 0,
+                                 "backends": {"raster": "1.0"},
+                                 "capabilities": ["raster"],
+                                 "zone": "default", "version": "v"})],
+        ) == []
 
     def test_rank_locality_then_overprovision(self, registry):
         keys = frozenset({"fp-a"})
@@ -221,10 +244,11 @@ class TestEvents:
         assert events.append("r2", "straggler_detected")
 
     def test_orphan_append_fail_open(self, events):
-        # run 行不存在（retention 后孤儿 append）→ 仍落 events（trace 域
-        # 独立 TTL 清理）；但绝不抛出
-        assert events.append("ghost-run", "node_started", node_id="n") in (
-            True, False)
+        # run 行不存在（retention 后孤儿 append）→ 行为化断言：append
+        # 成功落表、窗口可读、全程不抛（trace 域独立 TTL 兜底清理）
+        assert events.append("ghost-run", "node_started", node_id="n") is True
+        window = events.window("ghost-run")
+        assert [e["event"] for e in window] == ["node_started"]
 
     def test_progress_projection_dedup_across_attempts(self, events):
         events.append("r3", "node_started", node_id="a")

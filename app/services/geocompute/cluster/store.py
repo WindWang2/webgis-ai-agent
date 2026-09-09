@@ -800,16 +800,29 @@ class ClusterRunStore:
                     _Worker.role == "worker",
                 )
             ).scalars().all()
-            if not doomed:
+            # round1 m1：失联 coordinator 行一并清理（lease 过期远超 TTL
+            # 的 coordinator 已不可能仍是 leader；standby 行无心跳同样
+            # 清理，下次 acquire 重建）—— 否则注册表随部署重启无界增长。
+            doomed_coordinators = db.execute(
+                select(_Worker.worker_id)
+                .where(
+                    _Worker.heartbeat_at < cutoff,
+                    _Worker.role == "coordinator",
+                )
+            ).scalars().all()
+            doomed_all = [str(w) for w in doomed] + [
+                str(w) for w in doomed_coordinators
+            ]
+            if not doomed_all:
                 return []
             deleted = db.execute(
                 _Worker.__table__.delete().where(
-                    _Worker.worker_id.in_(doomed),
+                    _Worker.worker_id.in_(doomed_all),
                     _Worker.heartbeat_at < cutoff,
                 )
             ).rowcount
             db.commit()
-            return [str(w) for w in doomed] if deleted else []
+            return doomed_all if deleted else []
 
     def live_workers(
         self, *, role: Optional[str] = None, within_s: Optional[float] = None
@@ -1356,6 +1369,9 @@ def _scan_projection(row: Any) -> dict[str, Any]:
         # 内部拓扑键：仅控制面调度/leader 视图消费，绝不进用户 REST 投影
         "coordinator_id": row.coordinator_id,
         "dispatch_seq": row.dispatch_seq,
+        "heartbeat_at": (
+            row.heartbeat_at.isoformat() + "Z" if row.heartbeat_at else None
+        ),
         "started_at": row.started_at.isoformat() + "Z" if row.started_at else None,
         "lease_expires_at": (
             row.lease_expires_at.isoformat() + "Z" if row.lease_expires_at else None

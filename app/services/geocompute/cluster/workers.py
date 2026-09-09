@@ -76,9 +76,11 @@ class WorkerHeartbeatThread(threading.Thread):
         backoff = self._interval_s
         while not self._stop.wait(self._interval_s):
             try:
-                self._store.upsert_worker(
-                    self._worker_id, role="worker", profiles=self._profiles,
-                    ttl_s=_WORKER_TTL_S,
+                # V7 round1 C1：心跳只续期（单列 UPDATE），**不得**走
+                # upsert_worker —— 那会把 worker_ready 写入的 capability
+                # 覆写回 NULL，能力放置在首个心跳后静默失效。
+                self._store.worker_heartbeat(
+                    self._worker_id, ttl_s=_WORKER_TTL_S,
                 )
                 backoff = self._interval_s
             except Exception:  # noqa: BLE001 - DB 抖动不 crash worker

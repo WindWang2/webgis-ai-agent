@@ -148,6 +148,29 @@ class WorkerCacheRegistry:
                                     _Cache.cache_key == oldest[1],
                                 )
                             )
+                    # round1 m5：字节总闸（4GiB）—— 逐出最久未命中直到
+                    # 新条目能放下（SUM 查询 O(entries≤64)，写入非热路径）
+                    while True:
+                        total = int(db.execute(
+                            select(func.coalesce(func.sum(_Cache.size_bytes), 0))
+                            .where(_Cache.worker_id == worker_id)
+                        ).scalar_one())
+                        if total + size <= MAX_CACHE_BYTES_PER_WORKER:
+                            break
+                        victim = db.execute(
+                            select(_Cache.worker_id, _Cache.cache_key)
+                            .where(_Cache.worker_id == worker_id)
+                            .order_by(_Cache.last_hit_at.asc())
+                            .limit(1)
+                        ).first()
+                        if victim is None:
+                            break
+                        db.execute(
+                            delete(_Cache).where(
+                                _Cache.worker_id == victim[0],
+                                _Cache.cache_key == victim[1],
+                            )
+                        )
                     db.add(_Cache(
                         worker_id=worker_id, cache_key=key,
                         owner_scope=scope_hash, size_bytes=size,

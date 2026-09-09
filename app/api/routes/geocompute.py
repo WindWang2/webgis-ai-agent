@@ -718,8 +718,14 @@ async def cluster_reset_run(
     from app.services.geocompute.cluster.store import ClusterRunStore
 
     def _reset():
+        from app.services.geocompute.cluster.store import ClusterLedger
+
         store = ClusterRunStore()
-        outcome = store.force_requeue(run_id)
+        # round1 M1：必须传与 run 行同库的 ledger —— 否则 reset 回队时
+        # 账本预留不归还，每次 reset 永久泄漏一份 reserve（enforcing 下
+        # 数次即持续性 admission 拒绝）。
+        outcome = store.force_requeue(
+            run_id, ledger=ClusterLedger(factory=store._factory))
         return store.get_run(run_id), outcome
 
     try:

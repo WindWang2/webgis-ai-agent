@@ -49,7 +49,7 @@ class WorkerCapabilityProfile(BaseModel):
     """
 
     cpu_cores: int = Field(default=0, ge=0, le=4096)
-    mem_mb: int = Field(default=0, ge=0)
+    mem_mb: int = Field(default=0, ge=0, le=4_194_304)
     gpu_count: int = Field(default=0, ge=0, le=64)
     gpu_mem_mb: int = Field(default=0, ge=0)
     #: backend → 版本（缺席 = ""；≤16 项防词表膨胀）
@@ -112,14 +112,25 @@ def _version_fingerprint(versions: Dict[str, str]) -> str:
 
 
 def probe_capability() -> WorkerCapabilityProfile:
-    """执行环境 → 能力剖面（worker_ready 一次；诚实降级，绝不抛出）。"""
+    """执行环境 → 能力剖面（worker_ready 一次；诚实降级，绝不抛出）。
+
+    capabilities 全部由**可证事实**推导（round1 M3：不得把全部词表词
+    无条件写进每个 worker —— 无 rasterio 报 raster、2GB 报 high_memory
+    都会让能力列失去信息量）：
+    - backend import 成功 → 对应能力词；
+    - gpu_count > 0 → ``gpu``；
+    - cpu_cores ≥ 4 → ``heavy_cpu``；> 0 → ``light_cpu``；
+    - mem_mb ≥ 8192 → ``high_memory``；
+    - network / external_io 无本机可证事实 → 不声明。
+    """
     backends: Dict[str, str] = {}
     capabilities: list[str] = []
     for name, module in _BACKEND_PROBES:
         try:
             mod = __import__(module)
             backends[name] = str(getattr(mod, "__version__", "") or "")
-            capabilities.append(name)
+            if backends[name]:
+                capabilities.append(name)
         except Exception:  # noqa: BLE001 - 未安装是事实不是错误
             backends[name] = ""
     gpu_count, gpu_mem_mb = _probe_gpu()
@@ -127,11 +138,15 @@ def probe_capability() -> WorkerCapabilityProfile:
         capabilities.append("gpu")
     mem_mb = _probe_mem_mb()
     cpu = os.cpu_count() or 0
-    for extra in ("heavy_cpu", "high_memory", "raster", "vector", "science",
-                  "network", "external_io", "light_cpu"):
-        if extra not in capabilities:
-            capabilities.append(extra)
-    capabilities = [c for c in capabilities if c in CAPABILITY_VOCABULARY][:16]
+    if cpu >= 4:
+        capabilities.append("heavy_cpu")
+    if cpu > 0:
+        capabilities.append("light_cpu")
+    if mem_mb >= 8192:
+        capabilities.append("high_memory")
+    capabilities = sorted({
+        c for c in capabilities if c in CAPABILITY_VOCABULARY
+    })[:16]
     versions = {k: v for k, v in backends.items() if v}
     zone = (os.environ.get("WEBGIS_WORKER_ZONE", "") or "default").strip()[:64]
     return WorkerCapabilityProfile(
@@ -140,7 +155,7 @@ def probe_capability() -> WorkerCapabilityProfile:
         gpu_count=gpu_count,
         gpu_mem_mb=gpu_mem_mb,
         backends=backends,
-        capabilities=sorted(set(capabilities)),
+        capabilities=capabilities,
         zone=zone or "default",
         version=_version_fingerprint(versions),
     )

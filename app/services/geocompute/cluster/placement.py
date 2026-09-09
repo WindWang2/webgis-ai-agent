@@ -51,17 +51,17 @@ def eligible_workers(
 ) -> list[dict[str, Any]]:
     """run 级准入 gating（强制层）。
 
-    合格 = profiles 覆盖 ∧ capability 满足 envelope。capability 缺席
+    合格 = **队列消费真相（profiles）覆盖** ∧ capability 满足 envelope。
+    覆盖判断绝不用 capability.capabilities 放宽 —— 那是「软件可用性」
+    （round1 C2：raster 后端存在但不消费 raster_queue 的 worker 会通过
+    检查 → 消息进无人消费的队列 → 必然 WORKER_LOSS）。capability 缺席
     （旧 worker / 损坏行）→ 只按 profiles 匹配（V6 兼容语义，fail-open）。
     """
     covered = set(request.required_profiles)
     eligible: list[dict[str, Any]] = []
     for w in workers[:MAX_PLACEMENT_WORKERS]:
         profiles = set((w.get("profiles") or {}).keys())
-        if covered and not covered.issubset(
-            profiles | set((w.get("capability") or {}).get("capabilities") or [])
-            if isinstance(w.get("capability"), dict) else profiles
-        ):
+        if covered and not covered.issubset(profiles):
             continue
         profile = capability_from_row(w.get("capability"))
         if profile is not None and not profile.satisfies(
@@ -83,18 +83,24 @@ def rank_workers(
     locality_lookup: Optional[Any] = None,
     last_dispatch: Optional[dict[str, int]] = None,
 ) -> list[dict[str, Any]]:
-    """advisory 排序（局部性 > 资源过配小 > 公平垫底）。
+    """advisory 排序（局部性 > zone 契合 > 资源过配小 > 公平垫底）。
 
     ``locality_lookup(worker_id, owner_scope, keys) -> int``：由调用方注入
     （WorkerCacheRegistry.worker_holds 的绑定）—— 本模块不做 IO 依赖，
-    缺席 = 局部性项为 0（纯 capability/公平排序）。
+    缺席 = 局部性项为 0（纯 capability/公平排序）。zone（round1 m3）：
+    request.zone 声明时偏好同 zone worker（advisory，不是过滤）。
     """
     keys = node_locality_keys or frozenset()
 
-    def _score(w: dict[str, Any]) -> tuple[int, int, int, str]:
+    def _score(w: dict[str, Any]) -> tuple[int, int, int, int, str]:
         locality = 0
         if keys and owner_scope and locality_lookup is not None:
             locality = locality_lookup(w.get("worker_id", ""), owner_scope, keys)
+        zone_match = 0
+        if request.zone:
+            profile = capability_from_row(w.get("capability"))
+            if profile is not None and profile.zone == request.zone:
+                zone_match = 1
         profile = capability_from_row(w.get("capability"))
         if profile is None:
             overprovision = 0
@@ -106,7 +112,8 @@ def rank_workers(
                 + max(0, profile.gpu_count - request.gpu) * 8
             )
         fairness = int((last_dispatch or {}).get(w.get("worker_id", ""), 0))
-        return (-locality, overprovision, fairness, str(w.get("worker_id", "")))
+        return (-locality, -zone_match, overprovision, fairness,
+                str(w.get("worker_id", "")))
 
     return sorted(eligible[:MAX_PLACEMENT_WORKERS], key=_score)
 
