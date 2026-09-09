@@ -164,7 +164,9 @@ def build_object_manifest(
     - ``payload`` canonical 尺寸受 64KiB 闸（consolidated metadata 等大块
       结构必须放 blob，不进 manifest）。
     """
-    if kind not in ("vector_parquet", "cog_raster", "zarr_cube"):
+    # "modelops_artifact"（ADR-0119 R1-M2，显式跨文件契约改动）：ModelOps
+    # 推理/评估 JSON 产物（detections/instance GeoJSON/评估 manifest）。
+    if kind not in ("vector_parquet", "cog_raster", "zarr_cube", "modelops_artifact"):
         raise DataObjectError(f"unknown data object kind: {kind!r}")
     scope = dict(owner_scope)
     if not scope or set(scope) - {"session_id", "project_id"}:

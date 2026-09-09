@@ -58,6 +58,7 @@ _TOOL_MODULES = [
     ("app.tools.flow_tools", "register_flow_tools"),
     ("app.tools.dasymetric_tools", "register_dasymetric_tools"),
     ("app.tools.geocompute_tools", "register_geocompute_tools"),
+    ("app.tools.modelops_tools", "register_modelops_tools"),
 ]
 
 
