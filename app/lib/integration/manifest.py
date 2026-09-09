@@ -91,6 +91,22 @@ class IntegrationManifest:
                           indent=1) + "\n"
 
 
+def read_branch_file(branch: str, path: str, repo_root: Path) -> Optional[str]:
+    """分支 commit 中的文件内容（git blob 优先，工作树回退）。
+
+    分支文件只存在于各自 commit；工作树通常在别的分支上，磁盘读会拿到
+    错误分支的内容（或不存在）。
+    """
+    proc = subprocess.run(["git", "show", f"{branch}:{path}"], cwd=repo_root,
+                          capture_output=True, text=True, timeout=30)
+    if proc.returncode == 0:
+        return proc.stdout
+    try:
+        return (repo_root / path).read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+
+
 def _git(args: List[str], repo_root: Path, timeout: int = 60) -> str:
     proc = subprocess.run(["git"] + args, cwd=repo_root, capture_output=True,
                           text=True, timeout=timeout)
@@ -146,17 +162,19 @@ def build_manifest(
                 risk_hits.append(path)
             elif risk == "medium":
                 medium_hits += 1
-        # 语义面
+        # 语义面（内容一律从分支 commit 读，工作树无关）
         semantic_path = False
-        if path.startswith("app/tools/"):
+        if path.startswith(("app/tools/", "app/lib/gis/algorithms/",
+                            "app/lib/gis/capabilities/")):
             semantic_path = True
-            m.tools.extend(_extract_names(root / path))
-        elif path.startswith("app/lib/gis/algorithms/"):
-            semantic_path = True
-            m.algorithms.extend(_extract_names(root / path))
-        elif path.startswith("app/lib/gis/capabilities/"):
-            semantic_path = True
-            m.capabilities.extend(_extract_names(root / path))
+            names = _extract_names(
+                read_branch_file(branch, path, root) or "")
+            if path.startswith("app/tools/"):
+                m.tools.extend(names)
+            elif path.startswith("app/lib/gis/algorithms/"):
+                m.algorithms.extend(names)
+            else:
+                m.capabilities.extend(names)
         elif path.startswith("app/api/routes/"):
             m.api_routes.append(path)
         elif path.startswith("migrations/versions/"):
@@ -165,11 +183,9 @@ def build_manifest(
                 _FRONTEND_CONTRACT_HINT_RE.search(path):
             m.frontend_contracts.append(path)
         elif path == "app/lib/observability/events.py":
-            m.events.extend(_event_categories(root / path))
-        if semantic_path:
-            extracted = _extract_names(root / path)
-            if not extracted:
-                extraction_failures += 1
+            m.events.extend(_event_categories())
+        if semantic_path and not names:
+            extraction_failures += 1
 
         if rule is not None:
             suites.update(rule.suites)
@@ -203,20 +219,13 @@ def build_manifest(
     return m
 
 
-def _extract_names(path: Path) -> List[str]:
+def _extract_names(text: str) -> List[str]:
     """尽力而为的语义 ID 提取（`name="..."` 描述符形态）。"""
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return []
-    return _TOOL_NAME_RE.findall(text)
+    return _TOOL_NAME_RE.findall(text) if text else []
 
 
-def _event_categories(path: Path) -> List[str]:
-    """EVENT_CATALOG 的 category 集合（events.py 被改 = 词表可能漂移）。"""
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return []
+def _event_categories() -> List[str]:
+    """EVENT_CATALOG 的 category 集合（events.py 被改 = 词表可能漂移；
+    当前词表即权威，历史 blob 不参与判定）。"""
     from app.lib.observability.events import EVENT_CATALOG
-    return sorted(EVENT_CATALOG.keys()) if "EVENT_CATALOG" in text else []
+    return sorted(EVENT_CATALOG.keys())

@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Callable, Dict, FrozenSet, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -115,6 +115,8 @@ def scan(repo_root: Optional[Path] = None) -> MigrationGraph:
 def branch_collisions(
     base_files: List[str], other_files: List[str],
     repo_root: Optional[Path] = None,
+    base_content: Optional[Callable[[str], Optional[str]]] = None,
+    other_content: Optional[Callable[[str], Optional[str]]] = None,
 ) -> Dict[str, List[Dict[str, str]]]:
     """两个分支的 changed-migration 文件集碰撞检测（merge sim 的 migration 轴）。
 
@@ -124,11 +126,17 @@ def branch_collisions(
     - sequence_collision：文件名 NNNN 序号相同（双分支 allocator 各自
       max+1 的典型产物）；
     - forked_down_revision：双方各有一个**新增** revision 挂在同一
-      down_revision 上（合并后多 head）。分支新增文件不在 master 图中，
-      其 (revision, down_revision) 从文件 AST 提取（m-4：注解式/
-      元组式赋值都能正确处理；解析失败的文件降级 unknown，不谎报）。
+      down_revision 上（合并后多 head）。
+
+    fork 判定需要读分支新增文件的内容——但分支文件只存在于各自 commit，
+    不在工作树。``base_content``/``other_content`` 是 path → 源码文本的
+    解析器（merge_sim 传 ``git show <branch>:<path>``）；缺省回退工作树
+    磁盘读（仅适用于"在任一分支上"的单元测试场景）。解析失败降级为
+    不判定该文件的 fork（诚实缺失，不谎报）。
     """
     root = (repo_root or REPO_ROOT)
+    base_read = base_content or (lambda p: _read_disk(root / p))
+    other_read = other_content or (lambda p: _read_disk(root / p))
     base_set, other_set = set(base_files), set(other_files)
     out: Dict[str, List[Dict[str, str]]] = {
         "same_revision": [], "sequence_collision": [], "forked_down_revision": [],
@@ -150,11 +158,11 @@ def branch_collisions(
 
     base_downs: Dict[str, List[str]] = {}
     for f in sorted(base_set - other_set):
-        parsed = _parse_revision_fields(root / f)
+        parsed = _parse_revision_text(base_read(f))
         if parsed and parsed[1]:
             base_downs.setdefault(parsed[1], []).append(f)
     for f in sorted(other_set - base_set):
-        parsed = _parse_revision_fields(root / f)
+        parsed = _parse_revision_text(other_read(f))
         if parsed and parsed[1] and parsed[1] in base_downs:
             out["forked_down_revision"].append({
                 "base": ",".join(base_downs[parsed[1]]), "other": f,
@@ -163,10 +171,25 @@ def branch_collisions(
     return {k: v for k, v in out.items() if v}
 
 
+def _read_disk(path: Path) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+
+
 _REVISION_KEYS = ("revision", "down_revision")
 
 
 def _parse_revision_fields(path: Path) -> Optional[Tuple[str, Optional[str]]]:
+    """AST 提取模块级 revision / down_revision 赋值（磁盘文件入口）。"""
+    try:
+        return _parse_revision_text(_read_disk(path))
+    except OSError:
+        return None
+
+
+def _parse_revision_text(src: Optional[str]) -> Optional[Tuple[str, Optional[str]]]:
     """AST 提取模块级 revision / down_revision 赋值。
 
     覆盖实测写法：``revision: str = "..."``（AnnAssign）、
@@ -175,9 +198,11 @@ def _parse_revision_fields(path: Path) -> Optional[Tuple[str, Optional[str]]]:
     """
     import ast
 
+    if src is None:
+        return None
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
-    except (OSError, SyntaxError):
+        tree = ast.parse(src)
+    except SyntaxError:
         return None
     values: Dict[str, Optional[str]] = {}
     for node in tree.body:
