@@ -107,7 +107,7 @@ class CollabBus:
         self._lock = asyncio.Lock()
         self._listener_task: Optional[asyncio.Task] = None
         self._client: Optional[Any] = None
-        self._client_failed_at: Optional[float] = 0.0  # 首次即懒探
+        self._client_failed_at: Optional[float] = -_CLIENT_RETRY_S  # 首探立即放行
         self._stopping = False
 
     # ── 本地扇出注册 ────────────────────────────────────────────────────

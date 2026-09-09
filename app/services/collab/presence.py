@@ -117,7 +117,7 @@ class PresenceRegistry:
         self._ttl_s = ttl_s
         self._local: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._client: Optional[Any] = None
-        self._client_failed_at: float = 0.0
+        self._client_failed_at: float = -30.0  # 首探立即放行（评审 m-7 同型）
         self._scripts: Dict[str, Any] = {}
 
     # ── Redis 客户端（懒探 + 退避）─────────────────────────────────────

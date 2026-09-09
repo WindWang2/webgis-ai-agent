@@ -204,11 +204,41 @@ export function docCommand(
   });
 }
 
-/** delta 重放：应用到当前 store 组织态 → 既有持久化订阅自动经 CAS 通道提交。 */
+/**
+ * delta 重放：应用到当前 store 组织态 → 既有持久化订阅自动经 CAS 通道提交。
+ * 级联安全（R1-M6）：inverse 中「删除本命令创建的组」在并发下可能已有他人
+ * 挂入的子组 —— 重放前把这些现存子组提升为根（reparent 语义），使级联删除
+ * 只删除本命令创建的组本身，不吞他人数据。
+ */
 function replayWorkbenchDelta(delta: WorkbenchDelta, label: string): void {
   try {
     const current = buildWorkbenchDoc(useHudStore.getState());
-    const next = applyWorkbenchDelta(current, delta);
+    let safeDelta = delta;
+    if (delta.removeGroupIds?.length) {
+      const removeIds = new Set(delta.removeGroupIds);
+      // 并发安全（R1-M6）：删除闭包内**非直接删除目标**的现存子组（可能是
+      // 他人撤销窗口期挂入的）先提升为根，使级联删除只吞掉本命令创建的组。
+      const liftPatches: Array<{ id: string; parentId: string | null }> = [];
+      for (const g of current.groups) {
+        if (removeIds.has(g.id)) continue; // 直接删除目标本身：随删除走
+        let parentId = g.parentId;
+        let inClosure = false;
+        const seen = new Set<string>();
+        while (parentId != null && !seen.has(parentId)) {
+          seen.add(parentId);
+          if (removeIds.has(parentId)) {
+            inClosure = true;
+            break;
+          }
+          parentId = current.groups.find((x) => x.id === parentId)?.parentId ?? null;
+        }
+        if (inClosure) liftPatches.push({ id: g.id, parentId: null });
+      }
+      if (liftPatches.length > 0) {
+        safeDelta = { ...delta, setGroups: [...(delta.setGroups ?? []), ...liftPatches] };
+      }
+    }
+    const next = applyWorkbenchDelta(current, safeDelta);
     useHudStore.setState({
       layerGroups: next.groups.map((g) => ({ ...g })),
       layerGroupMembership: { ...next.membership },

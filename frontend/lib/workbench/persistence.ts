@@ -124,6 +124,9 @@ export function hydrateWorkbenchFromSpec(
 export function hydrateRemoteWorkbenchDoc(doc: WorkbenchDocV5, revision: number): boolean {
   const { sessionId } = getMapSpecSessionCursor();
   if (sessionId == null) return false;
+  // R1-m5：会话恢复（restore）尚未完成时不得受理远端 doc —— 否则远端水合
+  // 的 armed=true 会让恢复流程随后套用更旧 spec 快照时触发提交/409 抖动。
+  if (!armed || targetSessionId !== sessionId) return false;
   // 服务端 mutation revision（事件 seq/revision 语义）与本地游标对齐：
   // 旧事件不得把游标拉回（ST-P3-1 同向）。
   if (Number.isFinite(revision) && revision >= 0) setMapSpecRevision(revision);
@@ -136,9 +139,31 @@ export function hydrateRemoteWorkbenchDoc(doc: WorkbenchDocV5, revision: number)
   const hydrated = useHudStore.getState().hydrateWorkbenchDoc(normalized);
   lastCommittedJson = currentDocJson();
   lastWorkbenchRevision = nextWorkbenchRev;
-  rebaseAttempts = 0;
+  // R1-M5：不在此重置 rebaseAttempts —— 造成我方 409 的他人提交，其回声
+  // 会在两次提交之间到达并清零计数器，使「单次 rebase」限定失效。重置点
+  // 只保留：提交成功（handleCommitResult）与会话切换（notify）。
   armed = true;
   return hydrated;
+}
+
+/**
+ * V6 协作通道落地口（delta 变体，adopt 调用）：远端 delta 在当前 store doc
+ * 上应用 → hydrate。绝对值语义保证重放幂等；引用漂移（delta 引用本地没有
+ * 的组）返回 false（调用方回退权威对账）。armed 门与 hydrateRemote 一致。
+ */
+export function applyRemoteWorkbenchDelta(
+  delta: WorkbenchDelta,
+  revision: number,
+): boolean {
+  const { sessionId } = getMapSpecSessionCursor();
+  if (sessionId == null || !armed || targetSessionId !== sessionId) return false;
+  try {
+    const current = buildWorkbenchDoc(useHudStore.getState());
+    const next = applyWorkbenchDelta(current, delta);
+    return hydrateRemoteWorkbenchDoc(next, revision);
+  } catch {
+    return false; // 引用漂移等 → 调用方 refetch
+  }
 }
 
 function scheduleCommit(precomputedJson?: string): void {
@@ -243,6 +268,14 @@ function handleCommitResult(
     if (typeof asRecord.mutation_revision === 'number') {
       setMapSpecRevision(asRecord.mutation_revision);
     }
+    // R1-M4：先捕获本地脏态（hydrate 会覆盖 store）—— 全量路径的 409
+    // 同样可 rebase：本地 doc 对服务端 doc 的 diff 即在飞编辑集。
+    let localDirty: WorkbenchDocV5 | null = null;
+    try {
+      localDirty = buildWorkbenchDoc(useHudStore.getState());
+    } catch {
+      localDirty = null;
+    }
     const serverDoc = normalizeWorkbenchDoc(asRecord.mapspec?.workbench);
     if (serverDoc != null) {
       const serverRev = readWorkbenchRev(asRecord.mapspec?.workbench)
@@ -250,14 +283,24 @@ function handleCommitResult(
       useHudStore.getState().hydrateWorkbenchDoc(serverDoc);
       lastCommittedJson = currentDocJson();
       lastWorkbenchRevision = serverRev;
-      // bounded 单次 rebase：在飞 delta 在服务端 doc 上重放 → 重新提交。
-      if (inflightDelta != null && rebaseAttempts < 1) {
+      // bounded 单次 rebase：在飞编辑集在服务端 doc 上重放 → 重新提交。
+      // delta 通道用其自身在飞 delta；全量通道用「本地脏态 vs 服务端 doc」
+      // 的结构化 diff（R1-M4 —— 全量 409 不再静默丢弃本地编辑）。
+      let rebaseCandidate = inflightDelta;
+      if (rebaseCandidate == null && localDirty != null) {
+        try {
+          rebaseCandidate = diffWorkbenchDocs(serverDoc, localDirty);
+        } catch {
+          rebaseCandidate = null;
+        }
+      }
+      if (rebaseCandidate != null && rebaseAttempts < 1) {
         rebaseAttempts += 1;
         try {
           // 基线 = 服务端真相（此刻 store 就是服务端 doc）—— 必须在写回
           // rebased 之前捕获，否则重提交会 diff 出空集（静默丢本地编辑）。
           lastCommittedJson = currentDocJson();
-          const rebased = applyWorkbenchDelta(serverDoc, inflightDelta);
+          const rebased = applyWorkbenchDelta(serverDoc, rebaseCandidate);
           useHudStore.getState().hydrateWorkbenchDoc(rebased);
           scheduleCommit();
           return true;
@@ -265,7 +308,7 @@ function handleCommitResult(
           // 重放非法（引用漂移）→ 放弃本地在飞编辑，进入显式冲突态。
         }
       }
-      if (inflightDelta != null) {
+      if (rebaseCandidate != null) {
         void collabSetConflictAsync(
           '组织状态与他人修改冲突，已同步服务器最新状态；你刚才的调整未自动应用，请重试。',
         );

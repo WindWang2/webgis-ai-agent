@@ -121,7 +121,7 @@ class LeaseRegistry:
         self._ttl_s = ttl_s
         self._local: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._client: Optional[Any] = None
-        self._client_failed_at: float = 0.0
+        self._client_failed_at: float = -30.0  # 首探立即放行
         self._scripts: Dict[str, Any] = {}
 
     def _redis(self) -> Optional[Any]:

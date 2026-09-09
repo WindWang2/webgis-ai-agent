@@ -93,6 +93,11 @@ def _run_invalidation_hooks(
             )
 
 
+#: fire-and-forget artifact 事件的强引用集（asyncio 文档：丢弃引用会被 GC，
+#: 任务可能在完成前被取消）；上限 64 个未完成任务，超过则丢弃最旧完成项。
+_artifact_event_tasks: set = set()
+
+
 def invalidate_ref_caches(
     session_id: str,
     ref_ids: list[str],
@@ -152,7 +157,14 @@ def invalidate_ref_caches(
                     {"refId": rid, "reason": rsn, "status": "invalidated"},
                 )
 
-            loop.create_task(_publish_artifact_event())
+            _artifact_event_tasks.add(
+                loop.create_task(_publish_artifact_event())
+            )
+            # 有界自清：完成的任务移出集合（防集合无界增长）。
+            if len(_artifact_event_tasks) > 64:
+                for _t in list(_artifact_event_tasks):
+                    if _t.done():
+                        _artifact_event_tasks.discard(_t)
         count += 1
     return count
 

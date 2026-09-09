@@ -17,7 +17,10 @@ import {
 } from '@/lib/mapspec/session-cursor';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { normalizeWorkbenchDoc } from '@/lib/workbench/doc';
-import { hydrateRemoteWorkbenchDoc } from '@/lib/workbench/persistence';
+import {
+  applyRemoteWorkbenchDelta,
+  hydrateRemoteWorkbenchDoc,
+} from '@/lib/workbench/persistence';
 import { devOnly } from '@/lib/utils/logger';
 import { parseEnvelope, parseOpEntry } from './protocol';
 import {
@@ -26,6 +29,7 @@ import {
   collabPushRemoteOp,
 } from './store';
 import {
+  bindCollabPoll,
   bindCollabRefetch,
   setCollabKnownRevision,
   startCollabClient,
@@ -96,6 +100,14 @@ function patchCommittedSpecLayer(
   commitMapSpecDocument({ ...(spec as object), layers } as unknown);
 }
 
+/** 远端 delta 本地应用：当前 store doc + delta → hydrate（revision 门控内）。 */
+function applyRemoteDelta(rawDelta: unknown, revision: number): boolean {
+  if (rawDelta == null || typeof rawDelta !== 'object') return false;
+  const applied = applyRemoteWorkbenchDelta(rawDelta as never, revision);
+  if (applied) return true;
+  return false;
+}
+
 /** 总线事件主入口（client 的 onEvent 回调；event='bus'）。 */
 export function handleBusEnvelope(raw: unknown): void {
   const envelope = parseEnvelope(raw);
@@ -118,19 +130,19 @@ export function handleBusEnvelope(raw: unknown): void {
     }
     case 'delta': {
       if (revision != null) setCollabKnownRevision(revision);
-      // 事件自带应用后 doc（服务端附回）→ 直接采纳；缺失则 refetch。
-      if (envelope.data.doc != null) {
-        if (revision == null) return;
-        adoptRemoteDoc(envelope.data.doc, revision);
-      } else {
-        void reconcileWorkbenchState();
-      }
+      // R1-M3：delta 事件只带 delta —— 在当前 store doc 上本地应用
+      // （绝对值语义 → 重放幂等），免全量 refetch。引用漂移（delta 引用
+      // 本地没有的组）才回退权威对账。
+      if (revision == null) return;
+      if (applyRemoteDelta(envelope.data.delta, revision)) return;
+      void reconcileWorkbenchState();
       break;
     }
     case 'presentation': {
       if (revision == null) return;
-      // 迟到旧事件保护（与 session-cursor 的单调语义一致）。
-      if (revision < getMapSpecSessionCursor().revision) return;
+      // R1-M7：不做全局 revision 门 —— 本端在途提交的 HTTP 响应可先把
+      // cursor 推到 N+1，随后到达的他人 rev N presentation 事件是合法的
+      // 单层绝对值事实（幂等），门控会丢事件。
       adoptRemotePresentation(envelope.data, revision);
       break;
     }
@@ -198,6 +210,10 @@ export async function reconcileArtifactStatus(): Promise<void> {
 export function startWorkbenchCollabV6(sessionId: string): void {
   bindCollabRefetch(async () => {
     await reconcileWorkbenchState();
+  });
+  // C-2：降级/页面可见恢复时的对账兜底（正确性不依赖总线，但必须有探测路径）。
+  bindCollabPoll(() => {
+    void reconcileWorkbenchState();
   });
   startCollabClient(sessionId, (event, data) => {
     if (event === 'doc') {

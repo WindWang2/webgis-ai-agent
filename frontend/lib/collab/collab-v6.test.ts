@@ -24,7 +24,11 @@ import {
 import { setCollabKnownRevision, bindCollabRefetch } from './client';
 import { resetUndoForTests } from '@/lib/workbench/undo';
 import { resetLiveState, setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
-import { stopWorkbenchPersistence } from '@/lib/workbench/persistence';
+import {
+  markWorkbenchHydrated,
+  notifyWorkbenchSessionChanged,
+  stopWorkbenchPersistence,
+} from '@/lib/workbench/persistence';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 function envelope(partial: Partial<CollabEnvelope>): CollabEnvelope {
@@ -161,6 +165,9 @@ describe('collab client + adopt（mock WS）', () => {
     stopWorkbenchPersistence();
     setMapSpecSessionCursor('sess-x', 5, 'owner-tok');
     useHudStore.setState({ layerGroups: [], layerGroupMembership: {}, lockedLayerIds: [] });
+    // 生产语义：远端水合只在「恢复完成（armed）」后受理（R1-m5 守卫）。
+    notifyWorkbenchSessionChanged('sess-x');
+    markWorkbenchHydrated();
     bindCollabRefetch(async () => {
       reconcileCalls += 1;
     });

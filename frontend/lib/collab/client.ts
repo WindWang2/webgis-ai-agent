@@ -46,6 +46,35 @@ let stopped = true;
 let handler: InboundHandler | null = null;
 let lastKnownRevision = 0;
 
+/** 对账轮询（C-2）：degraded 或页面恢复可见时轻量 revision 探测。 */
+const RECONCILE_POLL_MS = 15_000;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+let lastPollAt = 0;
+let onReconcileNeeded: (() => void) | null = null;
+
+/** adopt 注册对账回调（client 不做状态语义）。 */
+export function bindCollabPoll(fn: () => void): void {
+  onReconcileNeeded = fn;
+}
+
+function startPoll(): void {
+  if (pollTimer != null) return;
+  pollTimer = setInterval(() => {
+    if (stopped || ws == null || ws.readyState !== WebSocket.OPEN) return;
+    const now = Date.now();
+    if (now - lastPollAt < RECONCILE_POLL_MS) return;
+    lastPollAt = now;
+    if (document.visibilityState === 'visible') onReconcileNeeded?.();
+  }, RECONCILE_POLL_MS);
+}
+
+function stopPoll(): void {
+  if (pollTimer != null) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
 /** presence outbound 合并（250ms 窗口内的更新只发最后一帧）。 */
 let presenceTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingPresence: Record<string, unknown> | null = null;
@@ -63,9 +92,19 @@ export function setCollabKnownRevision(revision: number): void {
   if (Number.isFinite(revision) && revision >= 0) lastKnownRevision = revision;
 }
 
+/** 服务端限流关闭码（ws_collab 4029）：短退避只会与 per-IP 桶互相打死。 */
+const RATE_LIMITED_CLOSE_CODE = 4029;
+const RATE_LIMITED_BACKOFF_MS = 60_000;
+let rateLimitedUntil = 0;
+
 function backoffMs(): number {
-  const exp = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** reconnectAttempt);
-  return exp / 2 + Math.random() * (exp / 2); // 抖动对称
+  const base = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** reconnectAttempt);
+  const jittered = base / 2 + Math.random() * (base / 2); // 抖动对称
+  if (rateLimitedUntil > Date.now()) {
+    // 限流冷却：至少再等剩余冷却 + 常规退避。
+    return Math.max(jittered, rateLimitedUntil - Date.now() + jittered);
+  }
+  return jittered;
 }
 
 function scheduleReconnect(): void {
@@ -109,7 +148,26 @@ function startHeartbeat(socket: WebSocket): void {
   }, HEARTBEAT_MS);
 }
 
+function handleVisibility(): void {
+  if (stopped) return;
+  if (typeof document === 'undefined') return;
+  if (document.visibilityState === 'visible') {
+    if (ws != null && ws.readyState === WebSocket.OPEN) {
+      startPoll();
+      onReconcileNeeded?.(); // 恢复可见 → 立即对账（架构 §8）
+    } else {
+      scheduleReconnect(); // 页面回前台：尽快重连
+    }
+  }
+}
+
+let visibilityBound = false;
+
 function connect(): void {
+  if (!visibilityBound && typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibility);
+    visibilityBound = true;
+  }
   if (stopped || boundSessionId == null) return;
   const protocols = buildSubprotocols();
   let socket: WebSocket;
@@ -132,6 +190,10 @@ function connect(): void {
     reconnectAttempt = 0;
     collabSetStatus('online');
     startHeartbeat(socket);
+    // C-2：降级模式下启动低频对账轮询（visible 时才探测）。
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      startPoll();
+    }
     // R1-M2：连接即对账（knownRevision 不一致 → 服务端回放权威 doc）。
     sendNow({ event: 'sync', data: { knownRevision: lastKnownRevision } });
   };
@@ -157,10 +219,13 @@ function connect(): void {
     handleInbound(event, data);
   };
 
-  socket.onclose = () => {
+  socket.onclose = (event: CloseEvent) => {
     if (ws === socket) ws = null;
     clearTimers();
     collabSetStatus('connecting');
+    if (event && event.code === RATE_LIMITED_CLOSE_CODE) {
+      rateLimitedUntil = Date.now() + RATE_LIMITED_BACKOFF_MS;
+    }
     scheduleReconnect();
   };
   socket.onerror = () => {
@@ -283,6 +348,10 @@ export function stopCollabClient(): void {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+  stopPoll();
+  rateLimitedUntil = 0;
+  lastKnownRevision = 0; // m-3：跨会话陈旧游标不带入（防 pong 空转循环）
+  reconnectAttempt = 0;
   clearTimers();
   if (ws != null) {
     const socket = ws;

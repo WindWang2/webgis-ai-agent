@@ -101,17 +101,17 @@ export function applyWorkbenchDelta(doc: WorkbenchDocV5, delta: WorkbenchDelta):
       throw new WorkbenchDeltaError(`setGroups and removeGroupIds collide on ${patch.id}.`);
     }
   }
+  let removedGroups: Set<string> = new Set();
   if (removeIds.size > 0) {
-    const cascade = descendantsOf(groupsById, removeIds);
-    for (const gid of cascade) delete groupsById[gid];
+    removedGroups = descendantsOf(groupsById, removeIds);
+    for (const gid of removedGroups) delete groupsById[gid];
   }
 
   // 3. membershipSet（目标组必须此刻存在）→ membershipClear（Set 优先）。
-  // 先按级联删除结果过滤悬空键（与后端管线一致：被移除组的成员清空）。
+  // 只清指向**本次被移除组**的键（与后端管线一致 —— 既有悬空键透传容忍）。
   const membership: Record<string, string> = {};
-  const removed = removeIds.size > 0;
   for (const [layerId, groupId] of Object.entries(doc.membership)) {
-    if (removed && !groupsById[groupId]) continue; // 指向被移除组 → 清空
+    if (removedGroups.has(groupId)) continue;
     membership[layerId] = groupId;
   }
   for (const { layerId, groupId } of delta.membershipSet ?? []) {

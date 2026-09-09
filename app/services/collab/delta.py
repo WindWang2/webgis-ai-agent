@@ -116,7 +116,7 @@ def validate_delta(delta: Any) -> Dict[str, Any]:
     if len(locks_add) > MAX_LOCKS or len(locks_remove) > MAX_LOCKS:
         raise DeltaError(f"workbench delta locks ≤ {MAX_LOCKS}.")
 
-    return {
+    norm = {
         "setGroups": norm_groups,
         "removeGroupIds": remove_ids,
         "membershipSet": norm_ms,
@@ -124,6 +124,16 @@ def validate_delta(delta: Any) -> Dict[str, Any]:
         "locksAdd": locks_add,
         "locksRemove": locks_remove,
     }
+    # R1-M4 预算兑现：patch 自身 ≤64KB（防请求体放大；全量 doc 由 256KB 闸管）。
+    import json as _json
+
+    try:
+        encoded = len(_json.dumps(norm, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        raise DeltaError("workbench delta is not JSON-serializable.") from None
+    if encoded > MAX_DELTA_BYTES:
+        raise DeltaError(f"workbench delta exceeds {MAX_DELTA_BYTES // 1024}KB; split the patch.")
+    return norm
 
 
 def _descendants(groups_by_id: Dict[str, Dict[str, Any]], root_ids: set[str]) -> set[str]:
@@ -169,7 +179,13 @@ def apply_delta(doc: Optional[Dict[str, Any]], delta: Dict[str, Any]) -> Dict[st
         if existing is None:
             if "name" not in patch:
                 raise DeltaError(f"workbench delta: group {gid!r} does not exist; create requires name.")
-            node = {"id": gid, "name": patch.get("name", gid), "collapsed": False, "parentId": patch.get("parentId")}
+            collapsed = patch.get("collapsed")
+            node = {
+                "id": gid,
+                "name": patch.get("name", gid),
+                "collapsed": bool(collapsed) if collapsed is not None else False,
+                "parentId": patch.get("parentId"),
+            }
             groups.append(node)
             groups_by_id[gid] = node
         else:

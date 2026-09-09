@@ -259,7 +259,9 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
     connection = _CollabConnection(websocket, session_id, client_id, label)
 
     # accept 先于任何 send_text（presence_full/hello 均经队列由 send_loop 发）。
-    await websocket.accept()
+    # RFC 6455：必须从客户端提供的列表中回显选中的 subprotocol，否则浏览器
+    # 直接握手失败（ws.py 同款语义）。
+    await websocket.accept(subprotocol=mode)
 
     # 时序纪律（R1-M2）：先订阅本地扇出，再读权威状态，再发 hello。
     remove_listener = await bus.add_local_listener(session_id, _make_listener(connection))
@@ -295,6 +297,25 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
     budget = _MSG_BUDGET_CAPACITY
     last_budget_refill = time.monotonic()
     last_presence_relay = 0.0
+    presence_pending: dict | None = None
+    presence_flush_task: asyncio.Task | None = None
+
+    async def _flush_presence() -> None:
+        nonlocal presence_pending, last_presence_relay, presence_flush_task
+        await asyncio.sleep(0.2)
+        data_deferred = presence_pending
+        presence_pending = None
+        if data_deferred is None:
+            return
+        from app.services.collab.presence import _sanitize_patch as _sp
+
+        await presence_registry.heartbeat(session_id, client_id, data_deferred)
+        await bus.publish(session_id, "presence", {
+            "action": "update",
+            "client": {"clientId": client_id, **_sp(data_deferred)},
+        })
+        last_presence_relay = time.monotonic()
+        presence_flush_task = None
 
     try:
         while True:
@@ -338,13 +359,27 @@ async def collab_websocket(websocket: WebSocket, session_id: str) -> None:
                 else:
                     connection.enqueue({"event": "sync_ok", "data": {"revision": current}})
             elif event == "presence":
-                # 服务端合并节流（200ms）：cursor 级高频更新不放大总线。
-                if now - last_presence_relay < 0.2:
-                    continue
+                # 服务端合并节流（200ms）：节流窗口内只保留最后态（评审 m-4
+                # —— 直接丢弃会让最终状态永不下发）。
+                pending_presence = dict(data)
+                remaining = 0.2 - (now - last_presence_relay)
+                if remaining > 0:
+                    if presence_flush_task is None:
+                        presence_flush_task = asyncio.get_running_loop().create_task(
+                            _flush_presence()
+                        )
+                    continue  # flush task 稍后带走最后态（合并最后态，评审 m-4）
                 last_presence_relay = now
-                await presence_registry.heartbeat(session_id, client_id, data)
+                sanitized = dict(pending_presence)
+                pending_presence = None
+                await presence_registry.heartbeat(session_id, client_id, sanitized)
+                # M-1：广播路径同样白名单裁剪 —— clientId 服务端权威，
+                # 客户端字段不得覆盖/冒充他人身份。
+                from app.services.collab.presence import _sanitize_patch
+
                 await bus.publish(session_id, "presence", {
-                    "action": "update", "client": {"clientId": client_id, **data},
+                    "action": "update",
+                    "client": {"clientId": client_id, **_sanitize_patch(sanitized)},
                 })
             elif event == "lease_acquire":
                 lock_key = str(data.get("lockKey") or "")
