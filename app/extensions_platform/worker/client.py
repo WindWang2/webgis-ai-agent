@@ -401,6 +401,7 @@ class WorkerProcess:
             self.in_flight = True
         stream_id = f"s{time.monotonic_ns()}"
         cancelled_sent = False
+        ended_normally = False
         consumed = 0
         credits_to_replenish = 0
         try:
@@ -485,6 +486,7 @@ class WorkerProcess:
                         deadline = time.monotonic() + max(idle_timeout_s, 0.01)
                         continue
                     if "__stream_end__" in parsed:
+                        ended_normally = True
                         payload = parsed.get("__payload__")
                         if payload is not None:
                             events += 1
@@ -529,7 +531,14 @@ class WorkerProcess:
                     pass
                 raise
         finally:
-            if not cancelled_sent and self._proc is not None and self._proc.poll() is None:
+            # Mi-3：正常结束不发冗余 cancel（worker 侧取消集对已结束流 id
+            # 不膨胀）；仅消费方提前关闭/异常路径发 cancel。
+            if (
+                not cancelled_sent
+                and not ended_normally
+                and self._proc is not None
+                and self._proc.poll() is None
+            ):
                 try:
                     write_frame(
                         self._proc.stdin,

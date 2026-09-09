@@ -1268,6 +1268,14 @@ class ExtensionHost:
         from .broker import BrokerAuditLog, CapabilityBroker
 
         audit = self._broker_audit.setdefault(extension_id, BrokerAuditLog())
+        # V3（M-8）：api>=1.2 的 worker 扩展 artifact 相对路径自动限定到
+        # 本扩展子命名空间（跨扩展隔离）；旧 manifest 平铺语义不变。
+        record = self._records.get(extension_id)
+        from .api_version import meets_api_floor
+
+        namespaced = record is not None and meets_api_floor(
+            record.manifest.api_version, (1, 2, 0)
+        )
         broker = CapabilityBroker(
             extension_id=extension_id,
             grants=grants_for(extension_id, self._policy.grants),
@@ -1275,6 +1283,7 @@ class ExtensionHost:
             secrets=self._policy.secrets.get(extension_id, {}),
             artifact_roots=self._policy.artifact_roots,
             audit=audit,
+            artifact_namespace=namespaced,
         )
         return broker.handle
 
@@ -1734,23 +1743,33 @@ class ExtensionHost:
         trust = self._policy.trust_store
         if trust is None:
             return []
+        quarantined: list[str] = []
         # 惰性重读（与 installer 同语义）：任何复查都拿最新吊销面。
         source = getattr(trust, "source_path", None)
         if source is not None:
             try:
                 mtime = Path(source).stat().st_mtime
             except OSError:
-                mtime = None
-            if mtime is not None and mtime == self._revocation_mtime:
-                return []  # 信任根未变：零成本快路径
-            self._revocation_mtime = mtime
+                return []
+            if mtime == self._revocation_mtime:
+                return []  # 信任根未变：零成本快路径（quarantined 必为空）
+            # Round-1 MAJ-8：load **成功后**才更新 mtime 基线——加载失败
+            # 不缓存，下一次复查自动重试（否则新吊销被永久短路）。
             from .trust_store import TrustStore
 
             try:
                 trust = TrustStore.load(Path(source))
             except ExtensionPlatformError:
-                return []  # 信任根暂不可读：保留现有状态（typed 在 discover 面）
-        quarantined: list[str] = []
+                return []  # 信任根暂不可读：保留现有状态，下次复查重试
+            self._revocation_mtime = mtime
+        # Round-1 MAJ-5：key 集变化（密钥吊销/rotation 的主要响应手段）
+        # → 对全部激活扩展重验签，命中 revoked/invalid/tampered 即隔离。
+        if (
+            getattr(trust, "revoked_key_ids", frozenset())
+            and trust.revoked_key_ids != getattr(self, "_revoked_keys_seen", frozenset())
+        ):
+            self._revoked_keys_seen = trust.revoked_key_ids
+            quarantined.extend(self._quarantine_active_if_signature_revoked(trust))
         for extension_id in sorted(self._records):
             record = self._records[extension_id]
             if record.state not in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
@@ -1777,6 +1796,39 @@ class ExtensionHost:
                 logger.warning(
                     "extension %s revoked by trust store; quarantined", extension_id
                 )
+        return quarantined
+
+    def _quarantine_active_if_signature_revoked(self, trust: Any) -> list[str]:
+        """对激活扩展重验签；签名密钥被吊销/失效 → 停用 + 隔离。"""
+        from .signing import verify_pack_signature
+
+        quarantined: list[str] = []
+        for extension_id in sorted(self._records):
+            record = self._records[extension_id]
+            if record.state not in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
+                continue
+            status = verify_pack_signature(
+                record.path,
+                self._policy.trusted_publishers,
+                trust_store=trust,
+                package_id=record.manifest.id,
+                version=record.manifest.version,
+            )
+            if status.status in (STATUS_REVOKED, STATUS_INVALID, STATUS_TAMPERED):
+                if record.worker is not None:
+                    record.worker.shutdown()
+                    record.worker = None
+                    self.deactivate(extension_id)
+                record.state = ExtensionState.QUARANTINED
+                record.diagnostics.append(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.PACKAGE_REVOKED,
+                        f"signature re-check after key revocation: {status.status} "
+                        f"({status.detail}); deactivated and quarantined",
+                        extension_id=extension_id,
+                    )
+                )
+                quarantined.append(extension_id)
         return quarantined
 
     def refresh_signal_changed(self, install_root: Any) -> bool:

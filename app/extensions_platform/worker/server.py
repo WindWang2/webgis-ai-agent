@@ -482,6 +482,7 @@ class WorkerServer:
         if len(parts) != 3:
             raise ProtocolError(f"malformed provider call {tool_name!r}")
         _, source_type, method = parts
+        profile = args.pop("_profile", None) if isinstance(args, dict) else None
         if method not in self._PROVIDER_METHODS:
             raise ExtensionPlatformError(
                 ExtensionDiagnostic.error(
@@ -490,7 +491,7 @@ class WorkerServer:
                     extension_id=self._ctx.extension_id if self._ctx else None,
                 )
             )
-        instance = self._ctx.get_provider_instance(source_type)
+        instance = self._ctx.get_provider_instance(source_type, profile)
         if not hasattr(instance, method):
             raise ExtensionPlatformError(
                 ExtensionDiagnostic.error(

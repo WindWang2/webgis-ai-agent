@@ -54,28 +54,37 @@ def probe_bubblewrap(force: bool = False) -> Optional[str]:
     if path:
         import subprocess
 
+        smoke_argv = [
+            path,
+            "--unshare-all",
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--tmpfs",
+            "/tmp",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+        ]
+        # 动态链接器（Arch 风格 /lib64 -> usr/lib 符号链接按解析源绑定）。
+        lib64 = Path("/lib64")
+        if lib64.exists():
+            try:
+                smoke_argv += ["--ro-bind", str(lib64.resolve()), "/lib64"]
+            except OSError:
+                pass
+        smoke_argv += ["/usr/bin/true"]
         try:
             smoke = subprocess.run(
-                [
-                    path,
-                    "--unshare-all",
-                    "--dev",
-                    "/dev",
-                    "--proc",
-                    "/proc",
-                    "--tmpfs",
-                    "/tmp",
-                    "/bin/sh",
-                    "-c",
-                    "exit 0",
-                ],
+                smoke_argv,
                 capture_output=True,
                 timeout=10,
             )
-            # 部分 smoke 环境（容器内无 /bin/sh）会失败但 bwrap 本体可用：
-            # 退出码 125 是 bwrap 自身报错，其余非零也可能是沙箱内命令失败；
-            # 只把「bwrap 不存在/不可执行」判为不可用。
-            if smoke.returncode != 126 and smoke.returncode != 127:
+            # Round-1 MAJ-6：smoke 必须 rc==0 才判可用——硬化容器
+            # （unshare 被禁）里 bwrap 会以非零退出，探测报「不可用」并交
+            # 运维显式决策，绝不让 status 显示可用而每次激活 typed 失败。
+            if smoke.returncode == 0:
                 ok = path
         except (OSError, subprocess.TimeoutExpired):
             ok = None

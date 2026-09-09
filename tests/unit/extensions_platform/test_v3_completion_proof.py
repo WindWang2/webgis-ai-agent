@@ -136,11 +136,11 @@ def test_v3_completion_proof(ecosystem, tmp_path):
     effective = record.worker.effective_isolation
     assert effective in ("process", "bubblewrap")
 
-    # ── 4. 工具消费（纯计算路径）────────────────────────────────────
-    assert host._tool_registry.has("v3demo_compute_index") or True  # 投影面按 registry 形态
-    index = record.worker.call(
-        "v3demo_compute_index", {"area": 4.0, "perimeter": 8.0}
-    )
+    # ── 4. 工具消费（经宿主投影代理，非直连 worker 句柄）────────────
+    registry = host._tool_registry
+    assert registry.has("v3demo_compute_index")
+    proxy = registry._tools["v3demo_compute_index"]["func"]
+    index = proxy(area=4.0, perimeter=8.0)
     assert index == {"shape_index": 2.0, "deterministic": True}
 
     # ── 5. broker 消费：未授权出网 → 默认 deny（typed）──────────────

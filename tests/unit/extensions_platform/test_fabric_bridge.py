@@ -92,6 +92,7 @@ def test_worker_proxy_adapter_reaches_tile_dispatch():
 
         def call(self, tool, args):
             assert tool == "provider:demo_src:get_tile"
+            assert "_profile" in args  # CR-1：profile 必须随 RPC 传递
 
             return {"data_hex": b"X".hex(), "content_type": "image/png", "metadata": {}}
 

@@ -142,24 +142,6 @@ def make_worker_provider_class(worker: Any, entry: dict[str, Any]) -> type:
     serial = threading.Lock()
     acquire_timeout = max(worker_ref._call_timeout_s, 1.0)
 
-    def _rpc(method: str, **kwargs: Any) -> Any:
-        acquired = serial.acquire(timeout=acquire_timeout)
-        if not acquired:
-            # C-6：排队超时 = 端点饱和 → 语义正确的 fabric 错误（熔断可
-            # 消费），而非协议层 operation_in_flight。
-            from app.services.data_fabric.errors import SourceUnreachableError
-
-            raise SourceUnreachableError(
-                f"extension provider endpoint {source_type!r} is saturated "
-                f"(queued > {acquire_timeout}s)"
-            )
-        try:
-            return worker_ref.call(f"provider:{source_type}:{method}", kwargs)
-        except ExtensionPlatformError as exc:
-            raise _fabric_error_from(exc) from exc
-        finally:
-            serial.release()
-
     def _revalidate(value: Any, model_name: str) -> Any:
         if value is None:
             return value
@@ -179,54 +161,100 @@ def make_worker_provider_class(worker: Any, entry: dict[str, Any]) -> type:
             ) from exc
 
     class WorkerDataProviderAdapter(*bases):  # type: ignore[misc, valid-type]
-        """宿主侧 worker provider 代理（七方法 RPC + mixin 动态继承）。"""
+        """宿主侧 worker provider 代理（七方法 RPC + mixin 动态继承）。
+
+        Round-1 CR-1：每个 RPC 携带 ``_profile``（宿主 ConnectionProfile
+        的 JSON 形态）——worker 按 (source_type, profile) 缓存实例，保证
+        同 source_type 多连接各自命中正确数据源。
+        """
 
         def __init__(self, connection_profile: Any):
             super().__init__(connection_profile)
             self._serial = serial
+            dump = getattr(connection_profile, "model_dump", None)
+            self._profile_payload = (
+                dump(mode="json") if callable(dump) else None
+            )
+
+        def _rpc(self, method: str, **kwargs: Any) -> Any:
+            if self._profile_payload is not None:
+                kwargs["_profile"] = self._profile_payload
+            acquired = serial.acquire(timeout=acquire_timeout)
+            if not acquired:
+                from app.services.data_fabric.errors import SourceUnreachableError
+
+                raise SourceUnreachableError(
+                    f"extension provider endpoint {source_type!r} is saturated "
+                    f"(queued > {acquire_timeout}s)"
+                )
+            try:
+                return worker_ref.call(f"provider:{source_type}:{method}", kwargs)
+            except ExtensionPlatformError as exc:
+                raise _fabric_error_from(exc) from exc
+            finally:
+                serial.release()
 
         def probe(self) -> bool:
-            return bool(_rpc("probe"))
+            return bool(self._rpc("probe"))
 
         def capabilities(self) -> list[str]:
-            return [str(c) for c in (_rpc("capabilities") or [])]
+            return [str(c) for c in (self._rpc("capabilities") or [])]
 
         def list_datasets(self) -> list[dict[str, Any]]:
-            return [dict(d) for d in (_rpc("list_datasets") or [])]
+            return [dict(d) for d in (self._rpc("list_datasets") or [])]
 
         def describe(self, dataset_id: str):
-            return _revalidate(_rpc("describe", dataset_id=dataset_id), "DatasetDescriptor")
+            return _revalidate(self._rpc("describe", dataset_id=dataset_id), "DatasetDescriptor")
 
         def preview(self, dataset_id: str, limit: int = 10) -> dict[str, Any]:
-            return dict(_rpc("preview", dataset_id=dataset_id, limit=limit) or {})
+            return dict(self._rpc("preview", dataset_id=dataset_id, limit=limit) or {})
 
         def query(self, dataset_id: str, query_spec: Any):
             spec = query_spec.model_dump(mode="json") if hasattr(query_spec, "model_dump") else query_spec
-            return _revalidate(_rpc("query", dataset_id=dataset_id, query_spec=spec), "QueryResult")
+            return _revalidate(self._rpc("query", dataset_id=dataset_id, query_spec=spec), "QueryResult")
 
         def health(self):
-            return _revalidate(_rpc("health"), "DataFabricHealth")
+            return _revalidate(self._rpc("health"), "DataFabricHealth")
 
         # ── V3 mixin 方法（经流式/单帧 RPC 代理）────────────────────
         def stream_features(self, query: dict[str, Any], page_size: int = 500):
             if "streaming_vector" not in mixins:
                 raise NotImplementedError
-            events = worker_ref.call_stream(
-                f"provider:{source_type}:stream_features",
-                {"query": dict(query or {}), "page_size": page_size},
-            )
-            for event in events:
-                yield event
+            # MAJ-3：流生命周期内持串行锁（与单帧方法互斥，防
+            # operation_in_flight 相撞）；错误经映射表转 DataFabricError。
+            acquired = serial.acquire(timeout=acquire_timeout)
+            if not acquired:
+                from app.services.data_fabric.errors import SourceUnreachableError
+
+                raise SourceUnreachableError(
+                    f"extension provider endpoint {source_type!r} is saturated "
+                    f"(queued > {acquire_timeout}s)"
+                )
+            kwargs: dict[str, Any] = {"query": dict(query or {}), "page_size": page_size}
+            if self._profile_payload is not None:
+                kwargs["_profile"] = self._profile_payload
+            try:
+                events = worker_ref.call_stream(
+                    f"provider:{source_type}:stream_features",
+                    kwargs,
+                )
+                for event in events:
+                    yield event
+            except ExtensionPlatformError as exc:
+                raise _fabric_error_from(exc) from exc
+            finally:
+                serial.release()
 
         def get_tile(self, z: int, x: int, y: int, **params: Any):
             if "tiles" not in mixins:
                 raise NotImplementedError
             from app.extensions_platform.sdk.provider import TilePayload
 
-            payload = _rpc("get_tile", z=z, x=x, y=y, **params)
+            payload = self._rpc("get_tile", z=z, x=x, y=y, **params)
             return TilePayload(
                 data=bytes.fromhex(payload.get("data_hex", "")),
                 content_type=str(payload.get("content_type", "image/png")),
+                extent=payload.get("extent"),
                 metadata=payload.get("metadata"),
             )
 
@@ -236,7 +264,9 @@ def make_worker_provider_class(worker: Any, entry: dict[str, Any]) -> type:
             if "raster_window" not in mixins:
                 raise NotImplementedError
             return dict(
-                _rpc("get_raster_window", bbox=list(bbox), crs=crs, width=width, height=height)
+                self._rpc(
+                    "get_raster_window", bbox=list(bbox), crs=crs, width=width, height=height
+                )
                 or {}
             )
 

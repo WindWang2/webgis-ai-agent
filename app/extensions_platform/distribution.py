@@ -148,8 +148,7 @@ def safe_extract_package(blob: bytes, target_dir: Path) -> None:
             DiagnosticCode.PACKAGE_UNSAFE_ENTRY,
             "package lacks a top-level manifest.json",
         )
-    # 兜底：filter="data"（再拒绝一次链接/设备/绝对路径；正常路径零效果）。
-    del resolved_root
+
 
 
 def recover_pending_swaps(install_root: Path) -> list[str]:
@@ -207,14 +206,26 @@ def sweep_staging(install_root: Path, ttl_s: float = STAGING_TTL_S, now: Optiona
 
 
 def write_refresh_signal(install_root: Path, reason: str) -> None:
-    """刷新通知信号（纯通知：host 各自 discover 为准；N-1 不做对账）。"""
+    """刷新通知信号（纯通知：host 各自 discover 为准；N-1 不做对账）。
+
+    原子写（temp+rename）：读取端只会看到完整 JSON 或旧文件。
+    """
+    import tempfile
+
     install_root = Path(install_root)
     install_root.mkdir(parents=True, exist_ok=True)
     signal = install_root / REFRESH_FILENAME
-    signal.write_text(
-        json_dumps({"reason": reason, "at": time.time(), "pid": os.getpid()}) + "\n",
-        encoding="utf-8",
-    )
+    fd, tmp = tempfile.mkstemp(dir=str(install_root), prefix=".refresh", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json_dumps({"reason": reason, "at": time.time(), "pid": os.getpid()}) + "\n")
+        os.replace(tmp, signal)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def read_refresh_signal(install_root: Path) -> Optional[dict[str, Any]]:
@@ -459,6 +470,12 @@ class ExtensionInstaller:
             if archive.exists():
                 _rmtree_quiet(archive)
             os.rename(str(active), str(archive))
+            # Mi-8：rename 不更新被归档目录自身 mtime——刷新入位时间，
+            # 防 prune 按目录 mtime 把刚归档的上一版判「最旧」先删。
+            try:
+                os.utime(archive, None)
+            except OSError:
+                pass
         # 2) staging → active（窗口内崩溃 = active 缺失，恢复例程可完成）。
         active.parent.mkdir(parents=True, exist_ok=True)
         os.rename(str(staging), str(active))
@@ -469,8 +486,42 @@ class ExtensionInstaller:
             self._host.discover()
             record = self._host.get_record(package_id)
             if record is not None and record.state.value in ("active", "degraded"):
-                diags = self._host.upgrade(package_id, allow_downgrade=allow_downgrade)
-                activation = {"mode": "upgrade", "diagnostics": _diag_dump(diags)}
+                # 升级路径：deactivate（drain）→ discover（fresh 记录取新
+                # 指纹 + 重跑信任/签名裁决）→ activate。不直接调
+                # host.upgrade()：其 reload 对「受信扩展内容变更」要求显式
+                # re-discover（V2 保护），而本函数的换装恰好换血了磁盘内容。
+                # 预检等价性由本 installer 的 _preflight 保证（resolver
+                # 冲突/pin/降级闸都在换装前执行）。
+                host2 = self._host
+                drain_diags = []
+                if hasattr(host2, "deactivate"):
+                    try:
+                        drain_diags = host2.deactivate(package_id, drain=True)
+                    except TypeError:  # 旧 host 签名兜底
+                        drain_diags = host2.deactivate(package_id)
+                if any(d.severity.value == "error" for d in drain_diags):
+                    raise _dist_error(
+                        DiagnosticCode.OPERATION_IN_FLIGHT,
+                        "cannot upgrade: deactivate of running version failed: "
+                        + "; ".join(d.message for d in drain_diags if d.severity.value == "error"),
+                    )
+                host2.unload(package_id)
+                host2.discover()
+                diags = host2.activate(package_id)
+                after = host2.get_record(package_id)
+                ok = after is not None and after.state.value in ("active", "degraded")
+                activation = {"mode": "upgrade", "ok": ok, "diagnostics": _diag_dump(diags)}
+                # Round-1 MAJ-1：升级失败绝不静默成功——把刚归档的旧版
+                # 原子换回 active 位并 typed 失败（坏版本不留在 active 位）。
+                if not ok:
+                    self._restore_archived(package_id, current_version)
+                    host2.discover()
+                    host2.activate(package_id)
+                    raise _dist_error(
+                        DiagnosticCode.INSTALL_PREFLIGHT_FAILED,
+                        "upgrade activation failed; previous version restored: "
+                        + "; ".join(d.message for d in diags if d.severity.value == "error"),
+                    )
             elif record is not None:
                 diags = self._host.activate(package_id)
                 after = self._host.get_record(package_id)
@@ -499,6 +550,23 @@ class ExtensionInstaller:
             "activation": activation,
             "install_root": str(self._install_root),
         }
+
+    def _restore_archived(self, package_id: str, version: Optional[str]) -> bool:
+        """升级激活失败时把 versions/ 中的旧版换回 active 位（尽力而为）。"""
+        if version is None:
+            return False
+        archive = self._install_root / VERSIONS_DIRNAME / _safe_name(package_id) / _safe_name(version)
+        if not archive.is_dir():
+            return False
+        active = _active_root(self._install_root, package_id)
+        try:
+            if active.exists():
+                _rmtree_quiet(active)
+            active.parent.mkdir(parents=True, exist_ok=True)
+            os.rename(str(archive), str(active))
+            return True
+        except OSError:
+            return False
 
     def _prune_versions(self, versions_dir: Path) -> None:
         """有界保留（按 mtime 最旧先删；数量上界 = keep_versions）。"""

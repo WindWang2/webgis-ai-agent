@@ -239,8 +239,10 @@ class RegistryService:
         级条目 + yank；包状态降为 deprecated——其余版本仍可安装，精确
         拦截发生在 preflight 的 is_package_revoked(id, version)）。
         """
-        if version is None:
-            with self._store.locked():
+        # trust store 写与 registry 索引写同锁串行（Round-1 CR-2）：
+        # 吊销是安全控制，杜绝「registry 已标记、trust store 未落」窗口。
+        with self._store.locked():
+            if version is None:
                 state = self._store.mutate_package(
                     package_id,
                     lambda rec: rec.model_copy(
@@ -250,8 +252,7 @@ class RegistryService:
                         }
                     ),
                 )
-        else:
-            with self._store.locked():
+            else:
                 state = self._store.mutate_package(
                     package_id,
                     lambda rec: rec.model_copy(
@@ -274,8 +275,8 @@ class RegistryService:
                         }
                     ),
                 )
-        if self._trust_store is not None:
-            self._trust_store.revoke_package(package_id, version)
+            if self._trust_store is not None:
+                self._trust_store.revoke_package(package_id, version)
         return state
 
     def yank(self, package_id: str, version: str) -> RegistryState:

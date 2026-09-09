@@ -27,8 +27,9 @@ MAIN_V3 = textwrap.dedent(
     class DemoProvider(StreamingVectorProvider):
         \"\"\"worker 内的活适配器实例（永不离开 worker 进程）。\"\"\"
 
-        def __init__(self, ctx=None):
+        def __init__(self, ctx=None, profile=None):
             self._ctx = ctx
+            self._profile = profile
 
         def probe(self):
             return True

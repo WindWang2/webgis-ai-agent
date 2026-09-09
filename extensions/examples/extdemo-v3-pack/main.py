@@ -71,8 +71,9 @@ def activate(ctx):
     class SyntheticStreams(StreamingVectorProvider):
         """内存合成矢量流：确定性网格点（100 个），零外部依赖。"""
 
-        def __init__(self, ctx=None):
+        def __init__(self, ctx=None, profile=None):
             self._ctx = ctx
+            self._profile = profile
 
         def stream_features(self, query: dict, page_size: int = 25):
             n = 100

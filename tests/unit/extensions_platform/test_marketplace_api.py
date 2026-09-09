@@ -92,8 +92,10 @@ def _publish_demo_pack(env: dict, ext_id: str = "acme.demo", version: str = "1.0
 
 
 def _client() -> TestClient:
+    from app.core.auth import get_current_user
     from app.main import app
 
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "tester"}
     return TestClient(app)
 
 

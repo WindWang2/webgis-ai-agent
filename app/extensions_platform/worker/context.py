@@ -26,6 +26,26 @@ from ..permissions import PermissionGrantSet
 from ..trust import TrustLevel
 
 
+def _profile_cache_key(source_type: str, profile: Any) -> str:
+    """(source_type, profile) → 实例缓存键。"""
+    import json as _json
+
+    if profile is None:
+        return source_type
+    if isinstance(profile, dict):
+        pid = profile.get("id") or ""
+        canonical = _json.dumps(profile, ensure_ascii=False, sort_keys=True, default=str)
+    else:
+        pid = getattr(profile, "id", "") or ""
+        dump = getattr(profile, "model_dump", None)
+        canonical = (
+            _json.dumps(dump(mode="json"), ensure_ascii=False, sort_keys=True)
+            if callable(dump)
+            else repr(profile)
+        )
+    return f"{source_type}::{pid or canonical[:64]}::{hash(canonical) & 0xFFFF}"
+
+
 @dataclass(frozen=True)
 class DeclaredWorkerTool:
     """一个 worker 工具的完整可序列化声明（宿主投影的依据）。"""
@@ -362,8 +382,10 @@ class WorkerContext:
     ) -> str:
         """V3：worker 数据 provider = 工厂 + 串行 RPC 代理。
 
-        ``factory(ctx) -> GeospatialDataSourceAdapter 实例``：实例**留在
-        worker**（首用懒创建、随 worker 存活）；宿主侧经 7 方法 RPC 代理
+        ``factory(ctx, profile) -> GeospatialDataSourceAdapter 实例``：
+        实例**留在 worker**（按 (source_type, profile) 维度懒创建缓存，
+        随 worker 存活；``profile`` 为宿主 ConnectionProfile 的 JSON
+        形态，含连接信息，绝不入日志/状态面）；宿主侧经 7 方法 RPC 代理
         访问。``mixins`` ∈ {"streaming_vector","tiles","raster_window"} —
         宿主代理类据此动态继承，保证 extended_provider_capabilities 可探测。
         """
@@ -406,9 +428,17 @@ class WorkerContext:
         )
         return self.manifest.namespaced_source_type(source_type)
 
-    def get_provider_instance(self, source_type: str) -> Any:
-        """懒创建 provider 实例（每 source_type 单例，随 worker 存活）。"""
-        if source_type not in self._provider_instances:
+    def get_provider_instance(self, source_type: str, profile: Any = None) -> Any:
+        """懒创建 provider 实例（按 (source_type, profile) 维度缓存）。
+
+        Round-1 CR-1：data_fabric 语义 = 每 ConnectionProfile 一个 adapter
+        （同一 source_type 可注册多个不同 endpoint 的连接）。profile 首次
+        出现时跨 RPC 传入 worker，按 ``profile.id``（无 id 用规范化 JSON）
+        缓存——宿主代理每方法调用都携带 profile 引用键，杜绝「多连接同
+        source_type 全部命中同一无 profile 实例」的取错源静默错误。
+        """
+        cache_key = _profile_cache_key(source_type, profile)
+        if cache_key not in self._provider_instances:
             factory = self._provider_factories.get(source_type)
             if factory is None:
                 raise ExtensionPlatformError(
@@ -418,8 +448,10 @@ class WorkerContext:
                         extension_id=self.extension_id,
                     )
                 )
-            self._provider_instances[source_type] = factory(self)
-        return self._provider_instances[source_type]
+            self._provider_instances[cache_key] = (
+                factory(self, profile) if profile is not None else factory(self)
+            )
+        return self._provider_instances[cache_key]
 
     def register_cartography_item(self, spec: Any = None) -> str:
         """V3：cartography 声明即 JSON payload —— worker 只收集。

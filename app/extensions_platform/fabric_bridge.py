@@ -156,19 +156,18 @@ async def stream_catalog_item_features(
         import contextlib
 
         loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=64)
+        # 无界队列 + 线程泵：adapter 的阻塞翻页在专用线程执行（Round-1
+        # BLK-1：此前 _pump 协程内同步阻塞等待自身 loop → 首用即死锁）。
+        # 背压由消费方侧的 cancel/close 语义承担（迭代器提前 close）。
+        queue: "asyncio.Queue[Any]" = asyncio.Queue()
         _DONE = object()
 
-        async def _pump() -> None:
-            def _drain() -> None:
-                for feature in iterator:
-                    asyncio.run_coroutine_threadsafe(queue.put(feature), loop).result()
+        def _drain() -> None:
+            for feature in iterator:
+                loop.call_soon_threadsafe(queue.put_nowait, feature)
+            loop.call_soon_threadsafe(queue.put_nowait, _DONE)
 
-            with contextlib.suppress(Exception):
-                _drain()
-            await queue.put(_DONE)
-
-        pump_task = asyncio.create_task(_pump())
+        pump_task = asyncio.create_task(asyncio.to_thread(_drain))
         try:
             while True:
                 if cancel_token is not None:

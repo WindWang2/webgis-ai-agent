@@ -405,6 +405,16 @@ class _StubHost:
         self.states[ext_id] = "active"
         return []
 
+    def deactivate(self, ext_id: str, drain: bool = False, drain_timeout_s: float = 10.0) -> list:
+        self.calls.append(("deactivate", ext_id))
+        self.states[ext_id] = "compatible"
+        return []
+
+    def unload(self, ext_id: str) -> list:
+        self.calls.append(("unload", ext_id))
+        self.states[ext_id] = "discovered"
+        return []
+
     def upgrade(self, ext_id: str, allow_downgrade: bool = False) -> list:
         self.calls.append(("upgrade", ext_id))
         return []

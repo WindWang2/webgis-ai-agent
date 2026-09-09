@@ -234,24 +234,29 @@ class TrustStore:
         entry = (package_id, version)
         if entry in self.revoked_packages:
             return
-        updated = TrustStore(
-            publishers=self.publishers,
-            revoked_key_ids=self.revoked_key_ids,
-            revoked_fingerprints=self.revoked_fingerprints,
-            revoked_packages=self.revoked_packages + (entry,),
-            source_path=self.source_path,
-        )
+        # Round-1 CR-2：以**磁盘最新状态**为基底合并（内存视图可能陈旧，
+        # 直接覆盖会丢失并发写者的吊销条目——安全控制的 silent loss）。
+        try:
+            latest = TrustStore.load(self.source_path)
+        except ExtensionPlatformError:
+            latest = self
+        if entry in latest.revoked_packages:
+            object.__setattr__(self, "revoked_packages", latest.revoked_packages)
+            object.__setattr__(self, "publishers", latest.publishers)
+            object.__setattr__(self, "revoked_key_ids", latest.revoked_key_ids)
+            object.__setattr__(self, "revoked_fingerprints", latest.revoked_fingerprints)
+            return
         payload = json.dumps(
             {
                 "publishers": {
-                    name: {"keys": keys} for name, keys in self.publishers.items()
+                    name: {"keys": keys} for name, keys in latest.publishers.items()
                 },
                 "revoked": {
-                    "key_ids": sorted(self.revoked_key_ids),
-                    "fingerprints": sorted(self.revoked_fingerprints),
+                    "key_ids": sorted(latest.revoked_key_ids),
+                    "fingerprints": sorted(latest.revoked_fingerprints),
                     "packages": [
                         {"id": pid, "version": ver}
-                        for pid, ver in updated.revoked_packages
+                        for pid, ver in latest.revoked_packages + (entry,)
                     ],
                 },
             },

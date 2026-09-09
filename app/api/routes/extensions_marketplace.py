@@ -15,8 +15,12 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from typing import Dict, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+
+from app.core.auth import get_current_user
 
 from app.extensions_platform.diagnostics import ExtensionPlatformError
 from app.extensions_platform.marketplace.models import DIGEST_RE
@@ -26,6 +30,12 @@ from app.extensions_platform.marketplace.store import BLOB_MAX_BYTES
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _semver_sort(version: str):
+    from app.extensions_platform.api_version import parse_version
+
+    return parse_version(version) or (-1, -1, -1)
 
 _SEARCH_LIMIT_MAX = 100
 
@@ -55,6 +65,7 @@ def search_packages(
     include_revoked: bool = Query(False),
     offset: int = Query(0, ge=0, le=1_000_000),
     limit: int = Query(20, ge=1, le=_SEARCH_LIMIT_MAX),
+    _user: Dict[str, Any] = Depends(get_current_user),
 ) -> dict:
     service = _service_or_404()
     result = service.search(
@@ -74,7 +85,7 @@ def search_packages(
 
 
 @router.get("/extensions/marketplace/packages/{package_id}")
-def get_package(package_id: str) -> dict:
+def get_package(package_id: str, _user: Dict[str, Any] = Depends(get_current_user)) -> dict:
     service = _service_or_404()
     record = service.get_package(package_id)
     if record is None:
@@ -88,13 +99,15 @@ def get_package(package_id: str) -> dict:
         "status": record.status,
         "deprecation_note": record.deprecation_note,
         "latest_version": latest,
-        "versions": sorted(record.versions, reverse=True),
+        "versions": sorted(record.versions, key=_semver_sort, reverse=True),
         "tags": list(record.tags),
     }
 
 
 @router.get("/extensions/marketplace/packages/{package_id}/versions/{version}")
-def get_package_version(package_id: str, version: str) -> dict:
+def get_package_version(
+    package_id: str, version: str, _user: Dict[str, Any] = Depends(get_current_user)
+) -> dict:
     service = _service_or_404()
     record = service.get_package(package_id)
     if record is None:
@@ -113,7 +126,9 @@ def get_package_version(package_id: str, version: str) -> dict:
 @router.get(
     "/extensions/marketplace/packages/{package_id}/versions/{version}/download"
 )
-def download_package(package_id: str, version: str) -> StreamingResponse:
+def download_package(
+    package_id: str, version: str, _user: Dict[str, Any] = Depends(get_current_user)
+) -> StreamingResponse:
     service = _service_or_404()
     record = service.get_package(package_id)
     if record is None:

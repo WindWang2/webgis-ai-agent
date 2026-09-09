@@ -33,3 +33,30 @@
 ## Round 2 — Subagent-B 最终 diff 审查
 
 （待填）
+
+## Round 1 — Subagent-A 最终 diff 审查（2026-09-10）
+
+结论（审查者）：Round 0 的 15 条中 13 条真实落地；新发现 1 BLOCKER + 2 CRITICAL + 8 MAJOR，「不可按现状合并」。
+
+### 修复（全部 BLOCKER/CRITICAL/MAJOR + 相关 MINOR/NIT）
+
+| 级别 | ID | 修复 |
+|---|---|---|
+| BLOCKER | BLK-1 | fabric_bridge async 死锁：泵改为 `asyncio.to_thread` + `call_soon_threadsafe` 无界队列；新增 3 条真 loop 集成测试（消费/取消/缺失条目） |
+| CRITICAL | CR-1 | ConnectionProfile 传递：代理每 RPC 携带 `_profile`；worker 按 (source_type, profile) 缓存实例；factory 契约 = `factory(ctx, profile)`；测试断言 `_profile` 必在 |
+| CRITICAL | CR-2 | revoke_package 先从磁盘重读合并再写（防覆盖并发吊销）；trust store 写纳入 registry 同一把锁 |
+| MAJOR | MAJ-1 | 升级失败：deactivate(drain)→unload→discover→activate；失败时从 versions/ 还原旧版 + typed 失败（坏版本不留 active 位） |
+| MAJOR | MAJ-2 | marketplace 四端点挂 `Depends(get_current_user)`（对齐 data_fabric 路由模式） |
+| MAJOR | MAJ-3 | 流生命周期持串行锁 + 流错误经 `_fabric_error_from` 映射（Mi-5 同修） |
+| MAJOR | MAJ-4 | artifact 子命名空间**实现交付**（api>=1.2 相对路径限定 `<root>/<ext_id>/`；1.1 平铺语义保留 + 语料测试钉死） |
+| MAJOR | MAJ-5 | 密钥吊销传播：revoked_key_ids 集变化 → 激活扩展全部重验签，revoked/invalid/tampered → 停用+隔离 |
+| MAJ | MAJ-6 | probe 要求 rc==0；smoke 改为真实 bind 面 + /usr/bin/true（本机实测 0） |
+| MAJOR | MAJ-7 | 完成证明恒真断言移除；改经 `host._tool_registry` 投影代理调用（非直连 worker 句柄） |
+| MAJOR | MAJ-8 | `_revocation_mtime` 仅在 load 成功后更新（失败不缓存，下次重试） |
+| MINOR | Mi-3 | 正常结束不发冗余 stream_cancel（worker 取消集不膨胀） |
+| MINOR | Mi-6 | get_tile marshal 补 extent |
+| MINOR | Mi-8 | 归档目录 os.utime 刷新（防 prune 误判最旧） |
+| NIT | — | filter=data 死注释/dead code 移除；.refresh 原子写；marketplace 版本 semver 排序 |
+
+未采纳/留档（MINOR，属既有 V2 面或取舍，记 limitations/PR 说明）：
+Mi-1（流中 health 误报 unhealthy——V2 继承语义）、Mi-2（恢复例程 preflight 窗口——激活期重验签兜底）、Mi-4（installer 锁——单机运维序列操作，PR follow-up）、Mi-7（capabilities_v2 代理——explain 退化路径已记录）、流首帧预算/TOCTOU 微窗口。
