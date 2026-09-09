@@ -941,18 +941,50 @@ class ExtensionHost:
                 )
             )
         # 声明对账：worker 握手申报 vs manifest 声明（undeclared = error）。
+        # V3（M-2 checklist）：对账集合扩展到全部 worker-capable 声明节。
         declared = {manifest.namespaced_tool_name(t.name) for t in manifest.tools}
         declared |= {manifest.namespaced_model_provider_tool(m.id) for m in manifest.model_providers}
         offered = {str(t.get("name")) for t in worker.tools}
+        # V3 声明节：算法/数据提供者/cartography/recipe 按各自投影名对账。
+        declared_algos = {manifest.namespaced_algorithm_id(a.id) for a in manifest.algorithms}
+        offered_algos = {
+            manifest.namespaced_algorithm_id(str(a.get("id")))
+            for a in (getattr(worker, "algorithms", None) or [])
+        }
+        declared_sts = {manifest.namespaced_source_type(p.source_type) for p in manifest.data_providers}
+        offered_sts = {
+            manifest.namespaced_source_type(str(p.get("source_type")))
+            for p in (getattr(worker, "data_providers", None) or [])
+        }
+        declared_carto = {(c.kind, c.id) for c in manifest.cartography_items}
+        offered_carto = {
+            (str(c.get("kind")), str(c.get("id")))
+            for c in (getattr(worker, "cartography_items", None) or [])
+        }
+        declared_packs = {w.pack_id for w in manifest.workflow_packs}
+        offered_packs = {
+            str(p.get("pack_id")) for p in (getattr(worker, "workflow_packs", None) or [])
+        }
+        undeclared_sections = []
+        if offered_algos - declared_algos:
+            undeclared_sections.append(f"algorithms {sorted(offered_algos - declared_algos)}")
+        if offered_sts - declared_sts:
+            undeclared_sections.append(f"data_providers {sorted(offered_sts - declared_sts)}")
+        if offered_carto - declared_carto:
+            undeclared_sections.append(f"cartography {sorted(offered_carto - declared_carto)}")
+        if offered_packs - declared_packs:
+            undeclared_sections.append(f"workflow_packs {sorted(offered_packs - declared_packs)}")
         undeclared = sorted(offered - declared)
         if undeclared:
+            undeclared_sections.append(f"tools {undeclared}")
+        if undeclared_sections:
             worker.shutdown()
             return self._fail_worker_activation(
                 record,
                 warnings,
                 ExtensionDiagnostic.error(
                     DiagnosticCode.UNDECLARED_REGISTRATION,
-                    f"worker offered undeclared tools {undeclared} "
+                    f"worker offered undeclared registrations {'; '.join(undeclared_sections)} "
                     "(declaration and handshake must match; fail closed)",
                     extension_id=record.extension_id,
                 ),
@@ -988,6 +1020,58 @@ class ExtensionHost:
                 )
             ledger.record("tool", projected, lambda n=projected: self._tool_registry.unregister(n))
             logger.info("extension %s projected worker tool %s", record.extension_id, projected)
+        # V3（ADR-0119）：worker 化声明节投影（经同一台账，失败逆序回滚）。
+        try:
+            from .worker import projection_v3
+
+            for namespaced in projection_v3.project_worker_algorithms(
+                manifest, ledger, worker, self
+            ):
+                logger.info(
+                    "extension %s projected worker algorithm %s",
+                    record.extension_id, namespaced,
+                )
+            for canonical in projection_v3.project_worker_providers(
+                manifest, ledger, worker, self
+            ):
+                logger.info(
+                    "extension %s projected worker provider %s",
+                    record.extension_id, canonical,
+                )
+            carto_ids, pack_ids = projection_v3.project_worker_cartography_and_recipes(
+                manifest,
+                ledger,
+                worker,
+                self,
+                grants=grants_for(manifest.id, self._policy.grants),
+                settings=dict(self._policy.extension_settings.get(manifest.id, {})),
+            )
+            for item_id in carto_ids:
+                logger.info(
+                    "extension %s projected worker cartography %s",
+                    record.extension_id, item_id,
+                )
+            for pack_id in pack_ids:
+                logger.info(
+                    "extension %s projected worker workflow pack %s",
+                    record.extension_id, pack_id,
+                )
+        except ExtensionPlatformError as exc:
+            worker.shutdown()
+            return self._fail_worker_activation(
+                record, warnings + ledger.rollback(), exc.diagnostic
+            )
+        except Exception as exc:  # noqa: BLE001 - 投影失败归一 typed
+            worker.shutdown()
+            return self._fail_worker_activation(
+                record,
+                warnings + ledger.rollback(),
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.REGISTRY_PROJECTION_FAILED,
+                    f"worker projection failed: {type(exc).__name__}: {exc}",
+                    extension_id=record.extension_id,
+                ),
+            )
         # 健康门：带超时 RPC（worker 模式不再有 unbounded sync health）。
         try:
             health_report = worker.health()

@@ -94,6 +94,11 @@ class WorkerProcess:
         self._lock = threading.RLock()
         self.in_flight = False
         self.tools: list[dict[str, Any]] = []
+        # V3（ADR-0119）：握手申报的 worker 化投影声明。
+        self.algorithms: list[dict[str, Any]] = []
+        self.data_providers: list[dict[str, Any]] = []
+        self.cartography_items: list[dict[str, Any]] = []
+        self.workflow_packs: list[dict[str, Any]] = []
         self.resource_warnings: list[str] = []
         self.pid: Optional[int] = None
         self.protocol_version: str = WORKER_PROTOCOL_VERSION
@@ -185,6 +190,10 @@ class WorkerProcess:
                                 self._extension_id,
                             )
                         self.tools = list(frame.get("tools") or [])
+                        self.algorithms = list(frame.get("algorithms") or [])
+                        self.data_providers = list(frame.get("data_providers") or [])
+                        self.cartography_items = list(frame.get("cartography_items") or [])
+                        self.workflow_packs = list(frame.get("workflow_packs") or [])
                         self.protocol_version = str(frame.get("protocol"))
                         limits = frame.get("resource_limits") or {}
                         self.resource_warnings = [

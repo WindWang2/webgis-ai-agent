@@ -209,6 +209,11 @@ class WorkerServer:
                     }
                     for tool in ctx.declared_tools()
                 ],
+                # V3（ADR-0119）：worker 化投影的可序列化声明。
+                "algorithms": ctx.declared_algorithms(),
+                "data_providers": ctx.declared_data_providers(),
+                "cartography_items": ctx.declared_cartography(),
+                "workflow_packs": ctx.declared_workflow_packs(),
                 "resource_limits": dict(self.resource_report),
             },
         )
@@ -324,6 +329,18 @@ class WorkerServer:
                 args = {}
             if not isinstance(args, dict):
                 raise ProtocolError("call frame 'args' must be an object")
+            # V3：worker 数据 provider 的 RPC 面（`provider:<st>:<method>`）。
+            if tool_name.startswith("provider:"):
+                value = self._handle_provider_call(tool_name, args)
+                if want_stream and value is not None and hasattr(value, "__next__"):
+                    # provider mixin 流（如 stream_features）→ 流帧协议。
+                    self._handle_stream_call(call_id, value)
+                    return
+                write_frame(
+                    self._outfile,
+                    {"type": "result", "id": call_id, "ok": True, "value": value},
+                )
+                return
             func = self._ctx.resolve_tool(tool_name)
             if func is None:
                 raise ExtensionPlatformError(
@@ -443,6 +460,55 @@ class WorkerServer:
         except ProtocolError:
             raise SystemExit(EXIT_INTERNAL_ERROR)
 
+    # ── V3：worker 数据 provider 的 RPC 分派（C-6：实例单例随 worker）──
+    _PROVIDER_METHODS = frozenset(
+        {
+            "probe",
+            "capabilities",
+            "list_datasets",
+            "describe",
+            "preview",
+            "query",
+            "health",
+            # V3 mixin 面（streaming_vector / tiles / raster_window）。
+            "stream_features",
+            "get_tile",
+            "get_raster_window",
+        }
+    )
+
+    def _handle_provider_call(self, tool_name: str, args: dict[str, Any]) -> Any:
+        parts = tool_name.split(":")
+        if len(parts) != 3:
+            raise ProtocolError(f"malformed provider call {tool_name!r}")
+        _, source_type, method = parts
+        if method not in self._PROVIDER_METHODS:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                    f"provider method {method!r} is not part of the adapter contract",
+                    extension_id=self._ctx.extension_id if self._ctx else None,
+                )
+            )
+        instance = self._ctx.get_provider_instance(source_type)
+        if not hasattr(instance, method):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                    f"provider {source_type!r} does not implement {method!r}",
+                    extension_id=self._ctx.extension_id,
+                )
+            )
+        result = getattr(instance, method)(**dict(args or {}))
+        # TilePayload（bytes）→ data_hex 传输形态（bytes 不可 JSON 帧）。
+        if method == "get_tile" and result is not None and hasattr(result, "data"):
+            return {
+                "data_hex": result.data.hex(),
+                "content_type": getattr(result, "content_type", "image/png"),
+                "metadata": _jsonable(getattr(result, "metadata", None)),
+            }
+        return _jsonable(result)
+
     def _check_output_size(self, value: Any) -> None:
         """输出上限：序列化字节数超过 manifest execution.max_output_bytes →
         typed 错误（协议帧本身另有硬上限兜底）。"""
@@ -500,6 +566,23 @@ class WorkerServer:
             )
         except ProtocolError:
             raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+def _jsonable(value: Any) -> Any:
+    """provider 方法结果 → JSON-able（pydantic 模型 model_dump；其余原样）。"""
+    if hasattr(value, "model_dump"):
+        try:
+            return value.model_dump(mode="json")
+        except Exception:  # noqa: BLE001 - 序列化失败归一为 typed
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.WORKER_RESULT_INVALID,
+                    f"provider result {type(value).__name__} is not serializable",
+                )
+            )
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
 
 
 def main(argv: Optional[list[str]] = None) -> int:
