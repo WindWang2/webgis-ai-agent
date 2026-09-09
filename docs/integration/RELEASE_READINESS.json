@@ -1,0 +1,109 @@
+{
+ "gates": {
+  "contract_drift": {
+   "command": "/usr/sbin/python3 scripts/gen_drift_report.py --check",
+   "detail": [
+    "drift report up to date"
+   ],
+   "status": "pass"
+  },
+  "frontend_behavior": {
+   "command": "/usr/sbin/python3 scripts/gen_frontend_behavior.py --check",
+   "detail": [
+    "ok: 2 behaviors"
+   ],
+   "status": "pass"
+  },
+  "integration_preflight": {
+   "command": "/usr/sbin/python3 scripts/check_integration_preflight.py --report",
+   "detail": [
+    "   \"check\": \"generated_hand_edits\",",
+    "   \"ok\": true,",
+    "   \"errors\": []",
+    "  }",
+    " ]",
+    "}"
+   ],
+   "status": "pass"
+  },
+  "quality_manifest": {
+   "command": "/usr/sbin/python3 scripts/gen_quality_manifest.py --check",
+   "detail": [
+    "quality manifest up to date"
+   ],
+   "status": "pass"
+  }
+ },
+ "git_commit": "1ac40019c033fbb0ed3661c21c40b4e057ebc6bf",
+ "known_gaps": [
+  {
+   "detail": "存量 ADR 0077 撞号（watermark 下 known limitation）: ['docs/adr/0077-multi-pod-topology-turn-ownership.md', 'docs/adr/0077-wrap-vendored-pi.md']",
+   "id": "adr-duplicate-77"
+  },
+  {
+   "detail": "存量 ADR 0088 撞号（watermark 下 known limitation）: ['docs/adr/0088-autonomous-gis-product-runtime.md', 'docs/adr/0088-cartographic-component-library-v2.md', 'docs/adr/0088-gis-data-analysis-runtime-v2.md']",
+   "id": "adr-duplicate-88"
+  },
+  {
+   "detail": "存量 ADR 0094 撞号（watermark 下 known limitation）: ['docs/adr/0094-enterprise-geospatial-data-fabric-v2.md', 'docs/adr/0094-spatial-decision-intelligence-v3.md']",
+   "id": "adr-duplicate-94"
+  },
+  {
+   "detail": "存量 ADR 0096 撞号（watermark 下 known limitation）: ['docs/adr/0096-agent-product-plane-vnext.md', 'docs/adr/0096-geocompute-data-plane-v3.md']",
+   "id": "adr-duplicate-96"
+  },
+  {
+   "detail": "存量 ADR 0099 撞号（watermark 下 known limitation）: ['docs/adr/0099-map-product-lifecycle-v2.md', 'docs/adr/0099-spatial-science-geoai-platform-vnext.md']",
+   "id": "adr-duplicate-99"
+  },
+  {
+   "detail": "存量 ADR 0101 撞号（watermark 下 known limitation）: ['docs/adr/0101-agent-tool-model-runtime-v2.md', 'docs/adr/0101-cartographic-template-library-v3.md', 'docs/adr/0101-geocompute-data-fabric-v4.md', 'docs/adr/0101-geoworkflow-recipe-conformance-foundation.md']",
+   "id": "adr-duplicate-101"
+  },
+  {
+   "detail": "存量 ADR 0103 撞号（watermark 下 known limitation）: ['docs/adr/0103-cartographic-design-system-v4.md', 'docs/adr/0103-data-artifact-workspace-foundation-v3.md', 'docs/adr/0103-pi-gis-runtime-v3.md']",
+   "id": "adr-duplicate-103"
+  },
+  {
+   "detail": "存量 ADR 0104 撞号（watermark 下 known limitation）: ['docs/adr/0104-data-control-geocompute-platform-v5.md', 'docs/adr/0104-gis-extension-platform-v1.md', 'docs/adr/0104-gis-harness-autonomous-runtime-v4.md', 'docs/adr/0104-professional-cartography-workbench-v4.md', 'docs/adr/0104-quality-reliability-platform-v1.md']",
+   "id": "adr-duplicate-104"
+  },
+  {
+   "detail": "存量 ADR 0105 撞号（watermark 下 known limitation）: ['docs/adr/0105-gis-extension-platform-v2.md', 'docs/adr/0105-workbench-v5-collaboration.md']",
+   "id": "adr-duplicate-105"
+  },
+  {
+   "detail": "存量 ADR 0118 撞号（watermark 下 known limitation）: ['docs/adr/0118-cartographic-rendering-v5.md', 'docs/adr/0118-federated-spatial-query-optimizer-v6.md', 'docs/adr/0118-gis-harness-autonomous-runtime-v5.md', 'docs/adr/0118-quality-reliability-security-platform-v2.md', 'docs/adr/0118-semantic-workflow-compiler-v4.md', 'docs/adr/0118-spatial-data-lakehouse-cube-v6.md']",
+   "id": "adr-duplicate-118"
+  },
+  {
+   "detail": "real-services 车道为 opt-in 资源纪律；未运行时本报告以 not-run 显式标注，不构成 pass",
+   "id": "real-lane-opt-in"
+  },
+  {
+   "detail": "Playwright 浏览器级 E2E 沿用既有 nightly REQUIRE_BROWSER 机制；本 Epic 的前端证据为 vitest 组件/模块行为级",
+   "id": "browser-e2e"
+  }
+ ],
+ "lane_evidence_reason": "未提供 --runner-report（车道证据 opt-in）",
+ "lanes": {
+  "backend": "not-run",
+  "cartography": "not-run",
+  "data": "not-run",
+  "frontend": "not-run",
+  "perf": "not-run",
+  "quality": "not-run",
+  "quick": "not-run",
+  "real": "not-run",
+  "science": "not-run",
+  "security": "not-run"
+ },
+ "policy_version": 1,
+ "runner_evidence": null,
+ "verdict": "NOT-READY",
+ "violations": [
+  "lane backend 状态 not-run（需 pass 证据或显式 waiver）",
+  "lane quick 状态 not-run（需 pass 证据或显式 waiver）"
+ ],
+ "waivers": []
+}

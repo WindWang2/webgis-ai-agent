@@ -186,6 +186,18 @@ DECLARED: Tuple[GeneratedEntry, ...] = (
         generator="scripts/gen_frontend_behavior.py",
         inputs=("frontend/tests/behavioral",),
     ),
+    # Quality V3（Epic 10 W15）：release readiness 证据（无车道证据的
+    # 机器无关快照；VERDICT 政策断言在 gen 脚本内）
+    GeneratedEntry(
+        artifact="docs/integration/RELEASE_READINESS.json",
+        generator="scripts/gen_release_readiness.py",
+        inputs=("scripts/gen_release_readiness.py",),
+    ),
+    GeneratedEntry(
+        artifact="docs/integration/RELEASE_READINESS.md",
+        generator="scripts/gen_release_readiness.py",
+        inputs=("scripts/gen_release_readiness.py",),
+    ),
 )
 
 
