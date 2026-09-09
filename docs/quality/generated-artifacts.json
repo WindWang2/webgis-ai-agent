@@ -50,10 +50,10 @@
    "scope": "global"
   },
   "docs/quality/certifications/CHAOS_FAULT_REGISTRY.md": {
-   "content_fingerprint": "fe25b5cbce479044b09ad1da5e1a8c297ed604c3454cb7797e043493d29f89b4",
+   "content_fingerprint": "97141a531344826fcd4e014abbc2c90e7c97d0ae10c51db4a75d34567c4bc796",
    "generator": "scripts/gen_chaos_registry.py",
    "generator_version": 1,
-   "input_fingerprint": "b6f73c09152fcda1a705e26294fa77ff45bcd79e8796e600b678ef3d04a83e57",
+   "input_fingerprint": "0cc948394e5d36eb90b2beb3d2cbd6d167c98c2efaa1dea773902880c7857713",
    "inputs": [
     "tests/fixtures/chaos.py"
    ],

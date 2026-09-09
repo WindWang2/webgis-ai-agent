@@ -43,6 +43,19 @@
 - 并发重复摄入（INGEST_DUP_RACE）：竞态被**钉死现状**（两个 ref 都
   成功 = 文档化残余风险，审计 #6）；管线的修复受本波次只读约束，
   不在生产代码里做。
+
+Quality V3（Epic 10 W13）跨系统场景归属（诚实披露，避免重复注册伪装
+成新增覆盖）：
+
+- SSE 断线重连 / Last-Event-ID 重放 / 重复投递语义：由
+  ``tests/test_runtime_chaos_resume.py``（28 项专项行为套件）覆盖，
+  不另注册注入型 fault；
+- API / coordinator 进程重启、worker 进程损失（真实 OS 进程级）：
+  ``scripts/integration_harness.py``（--chaos，kill -9 → 重启 → 恢复）；
+- Redis 瞬时故障：锁域由 LOCK_RENEW_ERROR / LOCK_ACQUIRE_DEGRADE 覆盖；
+  真实服务瞬时断连由 ``tests/integration/test_real_services_lane.py``
+  （REAL_SERVICES opt-in）覆盖。health 端点的内联 redis 连接无接缝，
+  不谎报可注入。
 """
 from __future__ import annotations
 
@@ -612,6 +625,86 @@ def _storage_transient_fail(handle: ChaosFault) -> Iterator[None]:
         yield
 
 
+# ── Quality V3（Epic 10 W13）跨系统 fault ──────────────────────────────
+
+@contextlib.contextmanager
+
+def _worker_loss(handle: ChaosFault) -> Iterator[None]:
+    """worker 心跳丢失：find_stale 被强制以 stale_after_s=0 运行（等价于
+    worker 心跳已停更久），sweep 把 running/cancelling 收敛到终态。"""
+    from app.services.jobs.store import DurableJobStore
+
+    real_find_stale = DurableJobStore.find_stale
+
+    async def _hyper_stale_find(db, *, stale_after_s=None, limit=100):
+        handle.record("fired", "find_stale forced stale_after_s=0")
+        return await real_find_stale(db, stale_after_s=0, limit=limit)
+
+    DurableJobStore.find_stale = staticmethod(_hyper_stale_find)
+    try:
+        yield
+    finally:
+        DurableJobStore.find_stale = staticmethod(real_find_stale)
+
+
+@contextlib.contextmanager
+
+def _cancel_storm(handle: ChaosFault) -> Iterator[None]:
+    """取消风暴：编排 N 个并发 cancel()（Event 屏障同步），句柄暴露
+    token 与 task 列表；测试断言恰好一次胜出转移 + 状态机无污染。
+    纯编排注入（不 patch 生产）——接缝是 CancellationToken.cancel 的
+    幂等/CAS 语义本身。"""
+    import asyncio
+
+    barrier = asyncio.Barrier(int(handle.params.get("concurrency", 8)))
+    handle.barrier = barrier
+    handle.results = []
+    yield
+
+
+@contextlib.contextmanager
+
+def _stale_revision_cas(handle: ChaosFault) -> Iterator[None]:
+    """stale revision CAS：编排同一 job 的两次并发转移，后者携带已被
+    胜出转移作废的 expected 状态集——store.transition 必须诚实拒绝。
+    纯编排注入（接缝 = transition 的 expected CAS 语义）。"""
+    import asyncio
+
+    handle.barrier = asyncio.Barrier(2)
+    handle.results = []
+    yield
+
+
+@contextlib.contextmanager
+
+def _db_transient_sequence(handle: ChaosFault) -> Iterator[None]:
+    """DB 瞬时故障序列：前 fail_times 次 DurableJobStore.create 抛
+    SQLAlchemy 类型化异常（DB 连接抖动），之后透传恢复。"""
+    from sqlalchemy import exc as sa_exc
+
+    from app.services.jobs.store import DurableJobStore
+
+    fail_times = int(handle.params.get("fail_times", 1))
+    state = {"calls": 0}
+    handle.state = state
+    real_create = DurableJobStore.create
+
+    async def _flaky_create(db, **kwargs):
+        state["calls"] += 1
+        n = state["calls"]
+        if n <= fail_times:
+            handle.record("fired", f"create call #{n} transient DB failure")
+            raise sa_exc.OperationalError(
+                "CREATE", {}, Exception("[chaos] transient db failure"))
+        return await real_create(db, **kwargs)
+
+    DurableJobStore.create = staticmethod(_flaky_create)
+    try:
+        yield
+    finally:
+        DurableJobStore.create = staticmethod(real_create)
+
+
 _FAULT_LIST = [
     FaultSpec(
         fault_id="CACHE_CAP_SHRINK",
@@ -729,6 +822,42 @@ _FAULT_LIST = [
         expected="调用方拿到类型化异常（不静默丢数据）；账本 alias 不前进（无半截提交）；恢复后重试成功",
         injection_point="app/services/artifact_registry.py:227-240 _save_records（Quality V2 W9）",
         factory=_storage_transient_fail,
+    ),
+    FaultSpec(
+        fault_id="WORKER_LOSS",
+        subsystem="JOBS",
+        description="worker 心跳丢失：running/cancelling job 心跳超时后无人续约",
+        attack="包装 DurableJobStore.find_stale 强制 stale_after_s=0（monkeypatch 接缝；等价心跳停更），随后 sweep_stale 真实运行",
+        expected="running → failed(stale)（可重试终态）；cancelling → cancelled（不给被取消任务开重跑后门）；重试转移 failed → queued 合法",
+        injection_point="app/services/jobs/store.py:805-937 stale 清扫（Quality V3 W13）",
+        factory=_worker_loss,
+    ),
+    FaultSpec(
+        fault_id="CANCEL_STORM",
+        subsystem="CANCEL",
+        description="取消风暴：N 个并发请求同时取消同一 token",
+        attack="asyncio.Barrier 编排 N 路并发 cancel()（纯编排注入；接缝 = CancellationToken.cancel 的幂等/CAS 语义）",
+        expected="恰好一次返回 True（其余 False）；cancelled 状态与 cancelled_at 单调稳定；无异常泄漏",
+        injection_point="app/lib/cancellation.py:71 cancel（Quality V3 W13）",
+        factory=_cancel_storm,
+    ),
+    FaultSpec(
+        fault_id="STALE_REVISION_CAS",
+        subsystem="JOBS",
+        description="stale revision CAS：并发状态转移中失败方携带过期 expected",
+        attack="asyncio.Barrier 编排同 job 两路 transition，败者 expected 已被胜者作废（纯编排注入）",
+        expected="恰好一路成功；败者返回 False（诚实拒绝，不覆盖、不部分写）；终态 == 胜者目标",
+        injection_point="app/services/jobs/store.py:384-445 transition CAS（Quality V3 W13）",
+        factory=_stale_revision_cas,
+    ),
+    FaultSpec(
+        fault_id="DB_TRANSIENT_SEQUENCE",
+        subsystem="DB",
+        description="DB 瞬时故障序列：job 创建路径前 N 次连接级失败",
+        attack="包装 DurableJobStore.create，前 fail_times 次抛 sqlalchemy OperationalError（monkeypatch 接缝）",
+        expected="类型化异常透传调用方（不静默吞）；无半截行落库；恢复后重试创建成功",
+        injection_point="app/services/jobs/store.py:188-255 create（Quality V3 W13）",
+        factory=_db_transient_sequence,
     ),
 ]
 
