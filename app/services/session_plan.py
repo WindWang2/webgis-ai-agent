@@ -516,7 +516,7 @@ async def apply_tool_result(
     # append），降级锁下两 pod last-write-wins —— fail-closed（lost 检查
     # 已由 _apply_tool_result_unlocked 的 lock.lost 守卫覆盖）。
     async with session_lock_registry.lock(session_id, fail_on_degraded=True) as lock:
-        return await _apply_tool_result_unlocked(
+        events = await _apply_tool_result_unlocked(
             session_id,
             tool_name,
             raw_result,
@@ -525,6 +525,20 @@ async def apply_tool_result(
             store=store,
             lock=lock,
         )
+    # Workflow Runtime V5（fail-open；会话锁外 —— 绝不延长持锁时间，
+    # 失败只记日志零回归；Epic workflow-v5 架构 §8）。owner 域由会话
+    # 推导（信任缝 = 既有会话所有权门，与 SessionPlan 写路径同模型）。
+    if success:
+        try:
+            from app.services.workflow_runtime.hooks import (
+                record_tool_result_safe,
+            )
+
+            await record_tool_result_safe(
+                session_id, tool_name=tool_name, geojson_ref=geojson_ref)
+        except Exception:  # noqa: BLE001 — 附加事实通道
+            pass
+    return events
 
 
 def merge_map_product_result(chapter: Dict[str, Any], raw: Dict[str, Any]) -> None:

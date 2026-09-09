@@ -138,7 +138,7 @@ def build_node_plan(
     mat_node = ExecutionNode(
         node_id=f"wf:{wf_node_id}:out",
         category=NodeCategory.MATERIALIZE,
-        parameters={"prefix": f"wfv5-{wf_node_id[:48]}"},
+        parameters={"prefix": f"wfv5-{wf_node_id[:48]}".replace(":", "-")},
         produces=PayloadKind.REF,
         accepts=[PayloadKind.FEATURES],
         inputs=[op_node.node_id],

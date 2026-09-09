@@ -634,6 +634,15 @@ class AgentPlanOrchestrator:
                 f"[plan_orchestrator] workflow_v4 证据编译失败（忽略）: {e}")
             plan.workflow_v4 = None
         await self._persist_new_plan(session_id, plan)
+        # Workflow Runtime V5（fail-open；Epic workflow-v5）：包注册 +
+        # 运行实例化 + 数据角色预绑。附加事实通道，失败绝不阻断规划。
+        try:
+            from app.services.workflow_runtime.hooks import attach_plan_safe
+
+            await attach_plan_safe(
+                session_id, query=user_message[:400], recipe_id=recipe.id)
+        except Exception:  # noqa: BLE001 — 附加事实通道
+            pass
         logger.info(
             f"[plan_orchestrator] session={session_id} harness 确定性合成计划"
             f"（规划 0 次 LLM 调用）: recipe={recipe.id} steps={len(steps)}"

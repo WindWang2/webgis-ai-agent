@@ -17,7 +17,6 @@ from app.core.database import Base
 from app.models.db_model import WorkflowNodeReuseRow  # noqa: F401 — 注册模型
 from app.services.workflow_runtime import contracts as C
 from app.services.workflow_runtime import fingerprints as F
-from app.services.workflow_runtime import machine as M
 from app.services.workflow_runtime import recompute as RC
 from app.services.workflow_runtime import service as SV
 from app.services.workflow_runtime.reuse import ReuseIndex

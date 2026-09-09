@@ -338,4 +338,14 @@ async def apply_user_mapspec_mutation(
         raise HTTPException(status_code=409, detail=payload)
     if result.is_error:
         raise HTTPException(status_code=400, detail=payload)
+    # Workflow Runtime V5（fail-open；Epic workflow-v5）：呈现态突变 →
+    # style 维变更（科学子图零触碰）。附加事实通道，失败不影响本响应。
+    try:
+        from app.services.workflow_runtime.hooks import record_style_change_safe
+
+        target = getattr(intent, "layer_id", "") or getattr(
+            intent, "component_id", "")
+        await record_style_change_safe(session_id, target=str(target)[:64])
+    except Exception:  # noqa: BLE001 — 附加事实通道
+        pass
     return payload

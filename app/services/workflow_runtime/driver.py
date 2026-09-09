@@ -148,8 +148,13 @@ class Driver:
                     continue
                 input_refs, port_descs, port_idents = await self._gather_inputs(
                     instance_id, dag, nid, session_id)
-                if await self._try_reuse_stale(instance_id, dag, node, nid,
-                                               port_idents, session_id):
+                stale_params = {
+                    **(node.get("params") or {}),
+                    **(node_params.get(nid) or {}),
+                }
+                if await self._try_reuse_stale(
+                        instance_id, dag, node, nid, port_idents, session_id,
+                        effective_params=stale_params):
                     states[nid] = C.NodeState.SUCCEEDED
                 else:
                     r = self.store.transition_node(
@@ -271,9 +276,15 @@ class Driver:
             states[node_id] = C.NodeState.SUCCEEDED
             return
 
-        # 复用裁决（先于执行；命中零重算 + reuse 证据）
+        # 复用裁决（先于执行；命中零重算 + reuse 证据）。
+        # 生效参数 = 运行时覆盖 ∪ DAG 声明（参数值进指纹 [R1-M8]）。
+        effective_params = {
+            **(node.get("params") or {}),
+            **(node_params.get(node_id) or {}),
+        }
         if await self._try_reuse(instance_id, dag, node, node_id,
-                                 port_idents, session_id, run_token):
+                                 port_idents, session_id, run_token,
+                                 effective_params=effective_params):
             return
 
         op = node_executable_op(node)
@@ -325,7 +336,8 @@ class Driver:
             states[node_id] = C.NodeState.SUCCEEDED
             await self._record_reuse(
                 instance_id, dag, node, node_id, port_idents, session_id,
-                outcome.output_ref, out_fp)
+                outcome.output_ref, out_fp,
+                effective_params=effective_params)
         else:
             node_row = await asyncio.to_thread(
                 store.get_node, instance_id, node_id)
@@ -386,10 +398,16 @@ class Driver:
 
     # ── 复用闭环 ──────────────────────────────────────────────────────
 
-    def _reuse_fp(self, dag: Dict[str, Any], node: Dict[str, Any],
-                  node_id: str, port_idents: Dict[str, Dict[str, str]],
-                  package_fingerprint: str) -> Tuple[str, str]:
-        """（reuse_fingerprint, env_fp）。"""
+    def _reuse_fp(
+        self, dag: Dict[str, Any], node: Dict[str, Any], node_id: str,
+        port_idents: Dict[str, Dict[str, str]], package_fingerprint: str,
+        effective_params: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, str]:
+        """（reuse_fingerprint, env_fp）。
+
+        ``effective_params`` 是**生效参数值**（运行时覆盖 ∪ DAG 默认）——
+        参数值变化必须使复用失效（Epic §16 参数 canonicalization）。
+        """
         env_fp = F.environment_fingerprint(
             compiler_version=str(dag.get("compiler_version", "") or "4.0.0"),
             execution_plan_version=_plan_version(),
@@ -400,7 +418,8 @@ class Driver:
             package_fingerprint=package_fingerprint,
             node_id=node_id,
             algorithm_id=algo,
-            params=node.get("parameters") or {},
+            params=effective_params if effective_params is not None
+            else node.get("parameters") or {},
             inputs=port_idents,
             env_fp=env_fp,
         )
@@ -410,28 +429,33 @@ class Driver:
         self, instance_id: str, dag: Dict[str, Any], node: Dict[str, Any],
         node_id: str, port_idents: Dict[str, Dict[str, str]],
         session_id: str, run_token: str,
+        effective_params: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """RUNNING 态复用裁决（claim 持有者路径）。"""
         return await self._reuse_resolve(
             instance_id, dag, node, node_id, port_idents, session_id,
-            run_token, require_claim=True, expected_from=C.NodeState.RUNNING)
+            run_token, require_claim=True, expected_from=C.NodeState.RUNNING,
+            effective_params=effective_params)
 
     async def _try_reuse_stale(
         self, instance_id: str, dag: Dict[str, Any], node: Dict[str, Any],
         node_id: str, port_idents: Dict[str, Dict[str, str]],
         session_id: str,
+        effective_params: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """STALE 态复用裁决（无执行在飞，无需 claim）。"""
         return await self._reuse_resolve(
             instance_id, dag, node, node_id, port_idents, session_id,
             run_token="", require_claim=False,
-            expected_from=C.NodeState.STALE)
+            expected_from=C.NodeState.STALE,
+            effective_params=effective_params)
 
     async def _reuse_resolve(
         self, instance_id: str, dag: Dict[str, Any], node: Dict[str, Any],
         node_id: str, port_idents: Dict[str, Dict[str, str]],
         session_id: str, run_token: str, *, require_claim: bool,
         expected_from: str,
+        effective_params: Optional[Dict[str, Any]] = None,
     ) -> bool:
         from app.services.workflow_runtime.reuse import (
             evaluate_eligibility,
@@ -440,7 +464,8 @@ class Driver:
         if self.reuse_index is None or not self._package_fp:
             return False
         fp, _env = self._reuse_fp(dag, node, node_id, port_idents,
-                                  self._package_fp)
+                                  self._package_fp,
+                                  effective_params=effective_params)
         rec = await asyncio.to_thread(
             self.reuse_index.find, self.owner_scope, fp)
         if rec is None:
@@ -495,6 +520,7 @@ class Driver:
         self, instance_id: str, dag: Dict[str, Any], node: Dict[str, Any],
         node_id: str, port_idents: Dict[str, Dict[str, str]],
         session_id: str, output_ref: str, output_fp: str,
+        effective_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         from app.services.workflow_runtime.reuse import (
             ReuseRecord,
@@ -504,7 +530,8 @@ class Driver:
         if self.reuse_index is None or not self._package_fp or not output_ref:
             return
         fp, env_fp = self._reuse_fp(dag, node, node_id, port_idents,
-                                    self._package_fp)
+                                    self._package_fp,
+                                    effective_params=effective_params)
         level = min(
             (i.get("level", "") for i in port_idents.values()),
             key=lambda lv: (lv != "content", lv != "profile_digest"),

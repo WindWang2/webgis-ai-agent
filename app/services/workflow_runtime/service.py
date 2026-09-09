@@ -167,6 +167,7 @@ class WorkflowRuntimeService:
         self, instance_id: str, *, owner_scope: str,
         caller: Optional[Dict[str, Any]] = None,
         deadline_s: float = 60.0,
+        node_params: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """显式执行入口（chat 路径绝不自动调用 —— AUTORUN 默认关）。"""
         inst = await asyncio.to_thread(
@@ -195,9 +196,11 @@ class WorkflowRuntimeService:
             self.store, reuse_index=self.reuse_index,
             deadline_s=deadline_s, owner_scope=owner_scope, caller=caller)
         run_token = new_run_token()
+        effective = node_params if node_params is not None \
+            else await self._node_params(inst, dag)
         summary = await driver.run(
             instance_id, dag,
-            node_params=await self._node_params(inst, dag),
+            node_params=effective,
             session_id=inst["session_id"], run_token=run_token,
             package_fingerprint=inst["package_fingerprint"])
         # 完成边界：drain pending changes（quiescence 已由 run 保证）；
@@ -238,13 +241,8 @@ class WorkflowRuntimeService:
         seq = len(inst.get("decisions") or []) + 1
         result = await applier.apply(
             instance_id, dag, changes, seq=seq, source=source)
-        # 应用产生 STALE → 自动增量重算（running 在飞Deferred；终态
-        # succeeded/failed 是「完成后修改参数」的主路径，同闭环）
-        if result.get("applied") and inst["status"] in (
-                C.InstanceStatus.RUNNING, C.InstanceStatus.SUCCEEDED,
-                C.InstanceStatus.FAILED):
-            result["incremental"] = await self.run_instance(
-                instance_id, owner_scope=owner_scope)
+        # 重算调度显式分离：apply 只标 STALE；执行由调用方带**生效参数**
+        # 调 run_instance（参数值是执行输入，门面不虚构默认语义）。
         return result
 
     async def recompute_plan(
@@ -376,11 +374,19 @@ class WorkflowRuntimeService:
     async def record_style_change(
         self, session_id: str, *, owner_scope: str, target: str = "",
     ) -> Optional[Dict[str, Any]]:
-        """样式突变 → style 维变更（fail-open；科学零触碰）。"""
+        """样式突变 → style 维变更（fail-open；科学零触碰）。
+
+        目标实例 = 该会话最近的非终态实例；无则在**最近 succeeded** 实例
+        上记录呈现态决策（完成后改样式是主场景；cancelled/superseded
+        不记录 —— 已终止的执行序不再接受任何变更）。
+        """
         try:
-            actives = await asyncio.to_thread(
+            rows = await asyncio.to_thread(
                 self.store.list_session_instances, session_id,
-                owner_scope=owner_scope, active_only=True)
+                owner_scope=owner_scope, active_only=False)
+            actives = [r for r in rows
+                       if r["status"] == C.InstanceStatus.RUNNING] or [
+                r for r in rows if r["status"] == C.InstanceStatus.SUCCEEDED]
             if not actives:
                 return None
             change = C.PendingChange(
