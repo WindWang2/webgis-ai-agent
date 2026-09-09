@@ -346,7 +346,8 @@ _CURATED_CANDIDATES: Tuple[MethodCandidate, ...] = (
     _c("terrain.stream_network", "terrain_hydrology", "河网提取",
        capabilities=("terrain_hydrology_advanced",),
        algorithm_ids=("terrain.streams", "terrain.strahler"),
-       geometry_kinds=(_GEO_RASTER,), requires_roles=("elevation",), priority=25,
+       geometry_kinds=(_GEO_RASTER,), requires_roles=("elevation",),
+       preconditions=("local_metric_crs_required",), priority=25,
        output_artifacts=("line_feature_set",)),
     _c("terrain.indices", "terrain_hydrology", "地形指数（TWI/LS）",
        capabilities=("terrain_wetness_indices",),
@@ -415,7 +416,8 @@ _CURATED_CANDIDATES: Tuple[MethodCandidate, ...] = (
     _c("stats.weights_diagnostics", "spatial_statistics", "空间权重诊断",
        capabilities=("spatial_weights_diagnostics",),
        algorithm_ids=("stats.weights_diagnostics",),
-       requires_roles=("subject", "measure"), priority=30,
+       requires_roles=("subject", "measure"), min_sample_size=8,
+       preconditions=("numeric_field_required",), priority=30,
        output_artifacts=("stats_table",)),
     _c("stats.point_cluster_dbscan", "spatial_statistics", "点密度聚类（DBSCAN）",
        capabilities=("point_pattern_analysis",),
@@ -460,7 +462,7 @@ _CURATED_CANDIDATES: Tuple[MethodCandidate, ...] = (
        output_artifacts=("stats_table", "chart_spec")),
     _c("compose.report_map", "compositional_mapping", "报告主图",
        capabilities=("poi_query",), requires_roles=("subject",), priority=20,
-       output_artifacts=("point_feature_set",)),
+       output_artifacts=("point_feature_set", "feature_collection")),
 )
 
 

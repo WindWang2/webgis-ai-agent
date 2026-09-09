@@ -101,6 +101,7 @@ METHOD_CORPUS: Tuple[MethodRetrievalCase, ...] = (
         expected_category="administrative_aggregation",
         expected_family="zonal_statistics",
         expected_methods=("zonal.admin_stats",),
+        role_states=(("subject", "eligible"), ("boundary", "eligible")),
         profile=({"featureCount": 400, "geometryTypes": ["Point"]},),
     ),
     # ── proximity（hard negative：欧氏缓冲 ≠ 路网可达）─────────────

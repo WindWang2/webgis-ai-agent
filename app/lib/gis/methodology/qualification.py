@@ -373,7 +373,8 @@ def _adjudicate_data_roles(
     from app.services.gis_harness.plan_candidates import DATA_FIT_SCORE
     from app.services.gis_harness.workflow_schema import role_reason_code
     if not candidate.requires_roles:
-        return (DimensionState(dimension="data_roles", state="pass"), 0.5)
+        return (DimensionState(dimension="data_roles", state="pass",
+                               structural=True), 0.5)
     states_seen: List[str] = []
     scores: List[float] = []
     fails: List[str] = []
@@ -510,8 +511,16 @@ def qualify_method(
     else:
         status = "viable"
 
-    known = [d for d in dims if d.state != "unknown"]
-    confidence = (sum(1 for d in known) / len(dims)) if dims else 0.0
+    # 置信度 = 「可具事实维」中有事实维的占比。排除两类：
+    # - structural（本方法无此类要求——N/A，不进分母也不虚增分子）；
+    # - scientific_precondition（unknown 是 facts-pending、运行期复评的
+    #   deferred-PASS 语义，不惩罚声明严谨性；fail/transform 已走状态路径）。
+    ranked_dims = [d for d in dims
+                   if not d.structural
+                   and d.dimension != "scientific_precondition"]
+    known = [d for d in ranked_dims if d.state != "unknown"]
+    confidence = (sum(1 for d in known) / len(ranked_dims)
+                  if ranked_dims else 0.0)
 
     return MethodQualificationReport(
         method_id=method_id,

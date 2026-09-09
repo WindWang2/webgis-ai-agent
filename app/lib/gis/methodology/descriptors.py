@@ -123,7 +123,16 @@ class MethodologyDescriptorV2(BaseModel):
     invalid_when: Tuple[InvalidationCondition, ...] = ()
     degraded_when: Tuple[InvalidationCondition, ...] = ()
     visualization_guidance: Tuple[str, ...] = ()   # ⊆ viz family 词表（桥接层对账）
+    #: 方法级检索词（与 ontology/family keywords 同策略：紧词表防过匹配；
+    #: ranking lexical 分量消费——方法标签之外的口语表述）
+    keywords_zh: Tuple[str, ...] = ()
+    keywords_en: Tuple[str, ...] = ()
     provenance_id: str = "prov.method_enrichment.curated"
+
+    @field_validator("keywords_zh", "keywords_en")
+    @classmethod
+    def _bounded_keywords(cls, v: Tuple[str, ...]) -> Tuple[str, ...]:
+        return tuple(str(x)[:24] for x in tuple(v)[:8])
 
     @field_validator("assumptions", "input_constraints")
     @classmethod
@@ -256,11 +265,101 @@ def _default_method_exists() -> Callable[[str], bool]:
 
 def _d(**kw: Any) -> MethodologyDescriptorV2:
     kw.setdefault("provenance_id", "prov.method_enrichment.curated")
+    mid = str(kw.get("method_id", ""))
+    zh, en = _METHOD_KEYWORDS.get(mid, ((), ()))
+    if zh:
+        kw.setdefault("keywords_zh", zh)
+    if en:
+        kw.setdefault("keywords_en", en)
     return MethodologyDescriptorV2(**kw)
 
 
 def _ic(dim: str, cond: str, severity: str = "reject") -> InvalidationCondition:
     return InvalidationCondition(dimension=dim, condition=cond, severity=severity)
+
+
+#: 方法级检索词（审定；与 ontology/family keywords 同红线：紧词表。
+#: 只为「方法标签之外的真实口语表述」补词，不复制族级关键词。）
+_METHOD_KEYWORDS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
+    "descriptive.simple_display": (
+        ("展示", "画出来", "看看", "点位", "标出来"), ("show", "display")),
+    "descriptive.category_breakdown": (
+        ("占比", "构成", "各类"), ("share", "breakdown")),
+    "density.kernel_surface": (
+        ("核密度", "密度面", "密度图"), ("kde", "kernel density")),
+    "density.admin_rate": (
+        ("每平方公里", "单位面积", "人均"), ("per square kilometer", "per capita")),
+    "density.grid_binning": (
+        ("格网", "渔网", "网格"), ("grid", "fishnet")),
+    "density.visual_heatmap": (
+        ("热力图", "热力"), ("heatmap",)),
+    "zonal.admin_stats": (
+        ("各区", "各区县", "统计", "汇总", "制表"), ("per district", "count")),
+    "zonal.areal_crosswalk": (
+        ("面插值", "跨线"), ("areal interpolation",)),
+    "suit.weighted_overlay": (
+        ("适宜性", "选址", "加权", "因子"), ("suitability", "weighted")),
+    "suit.constraint_filter": (
+        ("约束", "筛选"), ("constraint",)),
+    "suit.overlay_composite": (
+        ("叠加", "相交", "裁剪", "交集"), ("overlay", "intersect", "clip")),
+    "network.shortest_path": (
+        ("最短路径", "路径", "导航"), ("shortest path", "route")),
+    "network.service_area": (
+        ("服务区", "可达", "等时", "车程", "步行"),
+        ("service area", "isochrone", "reachable")),
+    "network.od_flow": (
+        ("通勤", "流动", "出行"), ("od flow", "commute")),
+    "terrain.slope_aspect": (
+        ("坡度", "坡向"), ("slope", "aspect")),
+    "terrain.watershed": (
+        ("流域", "汇水", "汇流"), ("watershed", "catchment")),
+    "terrain.stream_network": (
+        ("河网", "水系"), ("stream network", "river")),
+    "terrain.indices": (
+        ("地形指数", "twi"), ("twi", "topographic index")),
+    "rs.spectral_index": (
+        ("ndvi", "植被指数", "光谱"), ("ndvi", "spectral index")),
+    "rs.classification": (
+        ("分类", "解译", "地物"), ("classification", "land cover")),
+    "change.bi_temporal_raster": (
+        ("变化", "两期"), ("change", "bi-temporal")),
+    "change.post_classification": (
+        ("用地变化", "分类后"), ("land change", "post classification")),
+    "change.temporal_trend": (
+        ("趋势", "逐年", "时序"), ("trend", "temporal")),
+    "stats.global_autocorrelation": (
+        ("自相关", "莫兰", "全局"), ("autocorrelation", "moran", "global")),
+    "stats.local_cluster": (
+        ("lisa", "局部", "热点", "显著"), ("lisa", "local", "hotspot")),
+    "stats.spatial_regression": (
+        ("回归", "gwr"), ("regression", "gwr")),
+    "stats.point_cluster_dbscan": (
+        ("聚类", "聚成", "分簇", "簇", "集中", "密集"),
+        ("cluster", "dbscan", "group", "concentrated")),
+    "stats.space_time_pattern": (
+        ("时空", "时空聚集"), ("spatiotemporal", "space-time")),
+    "mcda.wsm": (
+        ("多准则", "加权评价"), ("multi-criteria", "topsis")),
+    "mcda.risk_exposure": (
+        ("风险", "暴露", "危险"), ("risk", "exposure", "hazard")),
+    "mcda.vulnerability": (
+        ("脆弱性",), ("vulnerability",)),
+    "mcda.spatial_equity": (
+        ("公平", "均衡"), ("equity", "fairness")),
+    "compose.comparison_map": (
+        ("对比图", "前后对比", "卷帘"), ("comparison", "before after", "swipe")),
+    "compose.statistical_map": (
+        ("专题图", "统计图", "分级图"), ("thematic map", "statistical map")),
+    "compose.report_map": (
+        ("图集", "成图", "报告", "多主题"), ("atlas", "report", "map series")),
+    "proximity.multi_ring_buffer": (
+        ("多环", "缓冲区", "覆盖范围"), ("multi-ring", "buffer")),
+    "proximity.euclidean_buffer": (
+        ("缓冲", "周边", "范围内", "半径"), ("buffer", "within", "radius")),
+    "proximity.closest_facility": (
+        ("最近设施", "最近的"), ("nearest facility", "closest")),
+}
 
 
 #: 审定增强表（51 方法全覆盖；纯加法演进——新方法必须补条目，validate 报缺）。
