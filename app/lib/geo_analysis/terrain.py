@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from app.lib.cancellation import cancellable, checkpoint
 from app.lib.gis.scientific_errors import (
     DegenerateData,
     NoValidObservations,
@@ -514,6 +515,7 @@ def viewshed(
         # 可见性 —— 峰值内存 O(chunk x k_eff)，不物化全扇区矩阵。
         js = np.arange(1, k_eff + 1, dtype=np.float64) * step
         for s0 in range(0, n_sectors, _VIEWSHED_SECTOR_CHUNK):
+            checkpoint()  # ADR-0052 + science-v4 W10：扇区分块边界协作式取消点
             s1 = min(s0 + _VIEWSHED_SECTOR_CHUNK, n_sectors)
             thetas = -math.pi + (np.arange(s0, s1, dtype=np.float64) + 0.5) * d_theta
             sx = np.cos(thetas)[:, None] * js[None, :]
@@ -723,7 +725,8 @@ def flow_accumulation(
     contrib = cells[order]
     recv_flat = receiver[contrib]
     acc_flat = acc.ravel()
-    for src, dst in zip(contrib.tolist(), recv_flat.tolist()):
+    for src, dst in cancellable(zip(contrib.tolist(), recv_flat.tolist()),
+                                every=4096):
         if dst >= 0:
             acc_flat[dst] += acc_flat[src] + 1
     meta = {
@@ -1031,7 +1034,12 @@ def fill_depressions(
         counter += 1
 
     n_cells = h * w
+    _pop_count = 0
     while heap:
+        # science-v4 W10：堆循环取消检查点（8192 弹出粒度，>10M 像元可中断）
+        _pop_count += 1
+        if _pop_count % 8192 == 0:
+            checkpoint()
         elev, _, cur = heapq.heappop(heap)
         cur_r, cur_c = divmod(cur, w)
         for _, _, dr, dc in _D8_NEIGHBORS:
@@ -1257,6 +1265,9 @@ def dinf_flow_accumulation(
     fa = frac_a[contrib]
     fb = frac_b[contrib]
     for i, src in enumerate(contrib.tolist()):
+        # science-v4 W10：拓扑循环取消检查点（64K 像元粒度）
+        if i % 65536 == 65535:
+            checkpoint()
         unit = acc_flat[src] + 1.0
         if ra[i] >= 0 and fa[i] > 0.0:
             acc_flat[ra[i]] += unit * fa[i]
@@ -1438,6 +1449,397 @@ def stream_order(
         order_distribution={str(int(o)): int(n) for o, n in zip(unique, counts)},
     )
     return order, meta
+
+
+# ── Science V4（W8）：breaching / HAND / Shreve / Pfafstetter ─────────────
+
+def breach_depressions(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    nodata: Optional[float] = None,
+    max_breach_depth: Optional[float] = None,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Depression breaching（最小代价切沟）：切穿洼地出口而非整体填平。
+
+    算法（确定性）：
+    1. Priority-Flood 填洼（复用 :func:`fill_depressions`）识别洼地像元
+       （filled > z）与其溢流出口；
+    2. 逐洼地：从 pit 沿**填后表面**的 D8 接收者链走到出口（填后表面
+       天然经溢流口排水）；沿路径切沟 —— 每个路径像元取
+       ``min(原高程, 上游切沟高程 − epsilon)``，形成 pit→出口 的严格
+       下降通道；
+    3. 洼地非路径像元保持原高程（对比 fill：长浅洼地不被整体抬升）。
+
+    ``max_breach_depth`` 限制单像元最大下切深度（超过的洼地回退为填洼，
+    诚实计数披露）。返回 ``(breached, meta)``（breached_cells /
+    carved_volume / n_depressions / fallback_filled_cells）。
+    """
+    z, valid = _prepare(dem, nodata)
+    h, w = z.shape
+    _guard_cells((h, w), "terrain.breach")
+    filled, fill_meta = fill_depressions(z, cell_size, cell_size_x, nodata=nodata)
+    relief = float(np.nanmax(z[valid]) - np.nanmin(z[valid])) if valid.any() else 1.0
+    eps = max(1e-9, 1e-6 * relief)
+    breached = z.copy()
+    # 洼地像元（被填洼抬升者）
+    depressed = valid & (filled > z + 1e-12)
+    if not depressed.any():
+        meta = _meta_base(
+            "terrain.breach", valid,
+            method="priority-flood identified no depressions; identity copy",
+            breached_cells=0, carved_volume=0.0, n_depressions=0,
+            fallback_filled_cells=0,
+        )
+        return breached, meta
+    # 路由面用 **epsilon 填洼**（严格可排）——纯填洼的平地无法给 pit→出口
+    # 接收者链（D8 flat_routing=none 语义），路径走不到出口。
+    routing, _ = fill_depressions(z, cell_size, cell_size_x, epsilon=eps, nodata=nodata)
+    d8, _ = d8_flow(routing, cell_size, cell_size_x, nodata=nodata)
+    receiver = d8["receiver"]
+    receiver_valid = d8["valid"]
+    flat = receiver.ravel()
+    rvalid = receiver_valid.ravel()
+    zflat = z.ravel()
+    fflat = filled.ravel()
+    bflat = breached.ravel()
+    dep_flat = depressed.ravel()
+
+    # pit = 洼地内的原始高程局部极小（8 邻域；洼地水位抬升的原点）
+    from scipy.ndimage import minimum_filter
+
+    z_pad = np.where(valid, z, np.inf)
+    z_min_nb = minimum_filter(z_pad, size=3, mode="nearest")
+    pit_mask = depressed & (z <= z_min_nb + 1e-12)
+    n_depressions = int(pit_mask.sum())
+    breached_cells = 0
+    carved_volume = 0.0
+    fallback_filled_cells = 0
+    max_depth_hit = 0.0
+    for pit in np.nonzero(pit_mask.ravel())[0]:
+        checkpoint()  # science-v4 review R1-M3：逐洼地取消点
+        # epsilon 填面上接收者链 pit → 出口（离开洼地即出口）
+        path = [int(pit)]
+        cur = int(pit)
+        seen = {cur}
+        while rvalid[cur]:
+            nxt = int(flat[cur])
+            if nxt == cur or nxt in seen:
+                break
+            path.append(nxt)
+            seen.add(nxt)
+            cur = nxt
+            if not dep_flat[cur]:
+                break
+        # 路径切沟：pit→出口方向严格**下降**（切沟低于 pit 高程 − k·eps），
+        # 使 pit 及沿途洼地获得通往边界的下降链；近 pit 像元原高程已低于
+        # 切沟线则保持原高程（min 语义 → 最小开挖量）。
+        # review R1-M2：出口后继续延伸切沟直至**接到低于沟线的地形**（或
+        # 步数上限）—— 否则沟口可成为新局部最小（「汇搬移」）。
+        chain = zflat[path[0]]
+        depths = []
+        too_deep = False
+        # 延伸段：从出口向下游（沿接收者链）逐格 −eps，直到地形低于沟线
+        ext_cells = []
+        cc = int(path[-1])
+        ext_chain = chain
+        ext_guard = 4 * (h + w)
+        while rvalid[cc] and ext_guard > 0:
+            nxt = int(flat[cc])
+            if nxt == cc or nxt in seen:
+                break
+            ext_chain = ext_chain - eps
+            ext_guard -= 1
+            if zflat[nxt] <= ext_chain:
+                break
+            ext_cells.append((nxt, min(zflat[nxt], ext_chain), zflat[nxt]))
+            cc = nxt
+        for k_i in range(1, len(path)):
+            chain_k = zflat[path[0]] - k_i * eps
+            orig = zflat[path[k_i]]
+            new_z = min(orig, chain_k)
+            if max_breach_depth is not None and (orig - new_z) > max_breach_depth:
+                too_deep = True
+                break
+            depths.append((path[k_i], new_z, orig))
+        if not too_deep:
+            for cell_i, new_z, orig_z in ext_cells:
+                if max_breach_depth is not None and (orig_z - new_z) > max_breach_depth:
+                    too_deep = True
+                    break
+                depths.append((cell_i, new_z, orig_z))
+        if too_deep:
+            # 超深回退填洼（诚实计数）：该洼地用填后表面
+            for cell_i in path:
+                if dep_flat[cell_i]:
+                    bflat[cell_i] = fflat[cell_i]
+                    fallback_filled_cells += 1
+            continue
+        for cell_i, new_z, orig_z in depths:
+            if new_z < bflat[cell_i]:
+                bflat[cell_i] = new_z
+            if dep_flat[cell_i] and new_z < orig_z:
+                breached_cells += 1
+                carved_volume += max(orig_z - new_z, 0.0)
+                max_depth_hit = max(max_depth_hit, orig_z - new_z)
+    meta = _meta_base(
+        "terrain.breach", valid,
+        method=(
+            "priority-flood identifies depressions; carve a strictly "
+            "descending channel from pit to spill point along the filled-"
+            "surface D8 path (Lindsay 2016 selective breaching, simplified)"),
+        epsilon=eps,
+        breached_cells=int(breached_cells),
+        carved_volume=round(float(carved_volume), 6),
+        n_depressions=n_depressions,
+        fallback_filled_cells=int(fallback_filled_cells),
+        max_breach_depth_applied=max_depth_hit,
+        fill_meta_volume=fill_meta.get("filled_volume"),
+    )
+    return breached, meta
+
+
+def hand(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    stream_threshold: float = 1000.0,
+    nodata: Optional[float] = None,
+    d8: Optional[Dict[str, np.ndarray]] = None,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """HAND（Height Above Nearest Drainage，最近排水高程）。
+
+    定义：像元高程减去其 D8 下游链上**第一个河网像元**的高程。
+    单遍逆拓扑（降序高程）：hand[cell] = 0（河网）或
+    hand[recv] + (z[cell] − z[recv])（望远镜求和至河网）。
+    边界排出但未遇河网的像元 → NaN（诚实缺省，计数披露）。
+    """
+    z, valid = _prepare(dem, nodata)
+    h, w = z.shape
+    _guard_cells((h, w), "terrain.hand")
+    if d8 is None:
+        filled, _ = fill_depressions(z, cell_size, cell_size_x, nodata=nodata)
+        d8, _ = d8_flow(filled, cell_size, cell_size_x, nodata=nodata)
+    acc, _ = flow_accumulation(d8)
+    streams_mask, _ = extract_streams(acc, threshold=stream_threshold)
+    streams_mask &= valid
+    receiver = d8["receiver"]
+    rvalid = d8["valid"]
+    hand_out = np.full((h, w), np.nan, dtype=np.float64)
+    zflat = z.ravel()
+    flat_recv = receiver.ravel()
+    flat_valid = rvalid.ravel()
+    sm = streams_mask.ravel()
+    hd = hand_out.ravel()
+    vflat = valid.ravel()
+    # 升序高程处理（接收者严格更低 → **先**结算，望远镜求和成立）
+    _n = 0
+    for parent in _topology_order(z, valid, descending=False).tolist():
+        # science-v4 review R1：O(N) 主循环取消检查点（64K 粒度）
+        _n += 1
+        if _n % 65536 == 0:
+            checkpoint()
+        if not vflat[parent]:
+            continue
+        if sm[parent]:
+            hd[parent] = 0.0
+            continue
+        # receiver 哨兵 −1（边界排出/无路由）必须显式守卫 —— Python 负索引
+        # 会静默读到格尾像元（review R1-C1）。
+        recv = int(flat_recv[parent]) if flat_valid[parent] else -1
+        if recv >= 0 and np.isfinite(hd[recv]):
+            hd[parent] = hd[recv] + (zflat[parent] - zflat[recv])
+            continue
+        # 边界排出且未遇河网（或上游未解析）：NaN（诚实缺省）
+    unresolvable = int((vflat & ~sm & ~np.isfinite(hd)).sum())
+    meta = _meta_base(
+        "terrain.hand", valid,
+        method=(
+            "HAND = z(cell) − z(first stream cell along the D8 downstream "
+            "chain); single reverse-topological pass (Rennó et al. 2008)"),
+        stream_threshold=float(stream_threshold),
+        stream_cells=int(streams_mask.sum()),
+        unresolvable_cells=unresolvable,
+        hand_range=[
+            round(float(np.nanmin(hand_out[valid])), 4) if valid.any() else None,
+            round(float(np.nanmax(hand_out[valid])), 4) if valid.any() else None,
+        ],
+    )
+    return hand_out, meta
+
+
+def shreve_magnitude(
+    d8: Dict[str, np.ndarray], flow_accum: np.ndarray, threshold: float,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Shreve 河流量级（Shreve 1966）：量级 = 上游量级之和（源头 = 1）。
+
+    与 Strahler（并列最高级才升级）互补：Shreve 量级线性计上游链接数，
+    是排水强度的一阶代理。复用 stream_order 的拓扑序机器（升序改降序
+    语义一致：接收者严格更低）。
+    """
+    acc = np.asarray(flow_accum, dtype=np.float64)
+    direction = d8["direction"]
+    receiver = d8["receiver"]
+    valid = d8["valid"]
+    z = np.asarray(d8["dem"], dtype=np.float64)
+    h, w = direction.shape
+    if acc.shape != (h, w):
+        raise ValueError(
+            f"flow_accum shape {acc.shape} does not match d8 grid {(h, w)}")
+    if not (threshold >= 1):
+        raise ValueError(f"threshold must be >= 1 upstream cell (got {threshold!r})")
+    _guard_cells((h, w), "terrain.shreve")
+
+    streams = np.isfinite(acc) & (acc >= float(threshold)) & valid
+    magnitude = np.zeros((h, w), dtype=np.int32)
+    children, parents = _child_table(receiver)
+    _n = 0
+    for parent in _topology_order(z, valid & streams, descending=True).tolist():
+        # science-v4 review R1-M3：主循环取消检查点
+        _n += 1
+        if _n % 65536 == 0:
+            checkpoint()
+        lo = np.searchsorted(parents, parent, side="left")
+        hi = np.searchsorted(parents, parent, side="right")
+        child_mags = magnitude.ravel()[children[lo:hi]]
+        child_mags = child_mags[child_mags > 0]
+        magnitude.ravel()[parent] = int(child_mags.sum()) if child_mags.size else 1
+    codes = magnitude[streams]
+    unique, counts = np.unique(codes, return_counts=True)
+    meta = _meta_base(
+        "terrain.shreve", valid,
+        threshold=float(threshold),
+        method=(
+            "Shreve magnitude: cell magnitude = sum of upstream magnitudes "
+            "(headwater = 1) on cells with accumulation >= threshold"),
+        stream_cells=int(streams.sum()),
+        max_magnitude=int(codes.max()) if codes.size else 0,
+        magnitude_distribution_top={
+            str(int(o)): int(n) for o, n in sorted(zip(unique, counts))[-8:]
+        },
+    )
+    return magnitude, meta
+
+
+def pfafstetter_codes(
+    d8: Dict[str, np.ndarray], flow_accum: np.ndarray, threshold: float,
+    outlet: Tuple[float, float],
+    *,
+    transform: Optional[Sequence[float]] = None,
+    max_tributaries: int = 4,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """单级 Pfafstetter 编码（干流 + 4 大支流，奇偶交错约定）。
+
+    从出口沿干流上溯（每步取上游**汇流最大**的河网像元 = 干流规则）；
+    干流按里程等分 5 段：偶数段 2,4,6,8,10；沿线 4 大支流（按 junction
+    汇流降序）取奇数 1,3,5,7 —— 支流子流域 = 其 junction 控制的上游
+    河网像元（下游-first 归属）。非河网像元 = 0。
+
+    级别披露：本实现为**单级** Pfafstetter（多级递归子盆地编码未实现，
+    属 descriptor limitation）；max_tributaries ∈ [2, 6]。
+    """
+    if not (2 <= int(max_tributaries) <= 6):
+        raise ValueError(f"max_tributaries must be in [2, 6] (got {max_tributaries!r})")
+    acc = np.asarray(flow_accum, dtype=np.float64)
+    direction = d8["direction"]
+    receiver = d8["receiver"]
+    valid = d8["valid"]
+    h, w = direction.shape
+    if acc.shape != (h, w):
+        raise ValueError(
+            f"flow_accum shape {acc.shape} does not match d8 grid {(h, w)}")
+    _guard_cells((h, w), "terrain.pfafstetter")
+    # outlet：(row, col) 数组坐标；或（给 transform 时）(x, y) 世界坐标
+    # —— 与 watershed 同一约定（_world_to_cell 像元中心索引空间）。
+    if transform is not None:
+        ocol, orow = _world_to_cell(transform, float(outlet[0]), float(outlet[1]))
+        row, col = int(round(float(orow))), int(round(float(ocol)))
+    else:
+        row, col = int(outlet[0]), int(outlet[1])
+    out_flat = row * w + col
+    if not (0 <= out_flat < h * w):
+        raise DegenerateData(
+            f"pfafstetter outlet ({row}, {col}) outside grid {(h, w)}",
+            correction_hint="pour point 必须落在栅格范围内")
+
+    streams = np.isfinite(acc) & (acc >= float(threshold)) & valid
+    flat_streams = streams.ravel()
+    if not flat_streams[out_flat]:
+        raise DegenerateData(
+            "出口像元不在河网上（accumulation < threshold）",
+            correction_hint="降低 stream_threshold 或移动出口到主河道")
+    # 上游河网邻接表（逆 D8）
+    children, parents = _child_table(receiver)
+    acc_flat = acc.ravel()
+
+    def upstream_stream_cells(cell: int) -> list:
+        lo = np.searchsorted(parents, cell, side="left")
+        hi = np.searchsorted(parents, cell, side="right")
+        return [int(c) for c in children[lo:hi] if flat_streams[int(c)]]
+
+    # 干流：出口上溯，每步取汇流最大的上游
+    mainstem = [out_flat]
+    cur = out_flat
+    seen = {cur}
+    while True:
+        checkpoint()  # science-v4 review R1-M3：干流上溯取消点
+        ups = [c for c in upstream_stream_cells(cur) if c not in seen]
+        if not ups:
+            break
+        cur = max(ups, key=lambda c: (acc_flat[c], -c))
+        mainstem.append(cur)
+        seen.add(cur)
+    # 干流上的支流 junction（沿途非干流上游）
+    tributaries = []
+    for pos, cell in enumerate(mainstem):
+        for c in upstream_stream_cells(cell):
+            if c not in seen:
+                tributaries.append((acc_flat[c], -pos, c, pos))
+    tributaries.sort(reverse=True)
+    chosen = tributaries[:int(max_tributaries)]
+
+    codes = np.zeros((h, w), dtype=np.int16)
+    flat_codes = codes.ravel()
+
+    def assign_basin(junction: int, code: int) -> None:
+        """junction 控制的上游河网子流域（下游-first，BFS 防环）。"""
+        stack = [junction]
+        local_seen = {junction}
+        while stack:
+            cell = stack.pop()
+            if flat_codes[cell] == 0:
+                flat_codes[cell] = code
+            for c in upstream_stream_cells(cell):
+                if c not in local_seen and flat_codes[c] == 0:
+                    local_seen.add(c)
+                    stack.append(c)
+
+    n_seg = int(max_tributaries) + 1
+    # 干流偶数编码（按位置等分：段 k → 2(k+1)）
+    for pos, cell in enumerate(mainstem):
+        if flat_codes[cell] == 0:
+            seg = min(int(pos * n_seg / len(mainstem)), n_seg - 1)
+            flat_codes[cell] = 2 * (seg + 1)
+    # 支流奇数编码（按汇流降序：1,3,5,…）
+    for rank, (_acc_v, _negpos, c, pos) in enumerate(chosen):
+        assign_basin(c, 2 * rank + 1)
+    coded = codes[streams]
+    unique, counts = np.unique(coded, return_counts=True)
+    meta = _meta_base(
+        "terrain.pfafstetter", valid,
+        threshold=float(threshold),
+        method=(
+            "single-level Pfafstetter: mainstem = largest-accumulation "
+            "upstream walk from outlet; even codes 2..2n along the mainstem, "
+            "odd codes 1..(n−1) for the largest tributaries at junctions"),
+        outlet=[int(row), int(col)],
+        mainstem_cells=len(mainstem),
+        tributary_codes={str(2 * i + 1): int(acc_flat[c]) for i, (_a, _p, c, _pos) in enumerate(chosen)},
+        max_tributaries=int(max_tributaries),
+        hierarchy_note="single-level (multi-level recursive sub-basin coding not implemented)",
+        code_distribution={str(int(c0)): int(n) for c0, n in zip(unique, counts)},
+    )
+    return codes, meta
 
 
 # ── V2-5. 流域形态量测（Strahler 1957 水文地貌）──────────────────────
@@ -2476,3 +2878,266 @@ def hillshade_multiazimuth(
         edge_policy="3x3 Horn stencil edge-replicated (same as band_math slope/hillshade)",
     )
     return shade, meta
+
+
+# ── Science V4（W9）：hypsometry / solar radiation ─────────────────────────
+
+def hypsometry(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    n_levels: int = 100,
+    nodata: Optional[float] = None,
+) -> Tuple[Tuple[np.ndarray, np.ndarray], Dict[str, Any]]:
+    """高程面积曲线（hypsometric curve）与高程积分（Strahler 1952）。
+
+    曲线 = (归一化高程 e, 高于 e 的面积占比 a(e))，n_levels 级确定性直方；
+    高程积分 HI = ∫a de（矩形 = 1，值域 [0,1]；Strahler 1952 侵蚀循环
+    阶段代理）。返回 ``(curve, meta)``。
+    """
+    z, valid = _prepare(dem, nodata)
+    h, w = z.shape
+    _guard_cells((h, w), "terrain.hypsometry")
+    if not (2 <= int(n_levels) <= 1000):
+        raise ValueError(f"n_levels must be in [2, 1000] (got {n_levels!r})")
+    zv = z[valid]
+    if zv.size == 0:
+        raise NoValidObservations("hypsometry: no valid cells")
+    zmin, zmax = float(zv.min()), float(zv.max())
+    if zmax <= zmin:
+        curve = (np.array([0.0, 1.0]), np.array([1.0, 0.0]))
+        meta = _meta_base(
+            "terrain.hypsometry", valid,
+            method="constant surface (degenerate): integral undefined → 0.0",
+            hypsometric_integral=0.0, n_levels=2,
+            elevation_range=[zmin, zmax], degenerate=True,
+        )
+        return curve, meta
+    # 高于 e 的面积占比（确定性直方；每级中点）
+    counts, edges = np.histogram(zv, bins=int(n_levels), range=(zmin, zmax))
+    total = float(counts.sum())
+    mids = (edges[:-1] + edges[1:]) / 2.0
+    above = np.cumsum(counts[::-1])[::-1] / total  # a(e_mid)：e 以上占比
+    elev_norm = (mids - zmin) / (zmax - zmin)
+    # HI = ∫₀¹ a(e) de（梯形；a 已随 e 增单调降至 ~0）；numpy 1.x 无
+    # trapezoid（2.0 改名）—— 兼容回退
+    _trapz = getattr(np, "trapezoid", None) or np.trapz
+    hi = float(_trapz(above, elev_norm))
+    curve = (elev_norm, above)
+    meta = _meta_base(
+        "terrain.hypsometry", valid,
+        method=(
+            "hypsometric curve a(e) = area fraction above normalized "
+            "elevation e; integral = ∫a de (rectangle = 1; Strahler 1952)"),
+        hypsometric_integral=round(hi, 6),
+        n_levels=int(n_levels),
+        elevation_range=[round(zmin, 4), round(zmax, 4)],
+    )
+    return curve, meta
+
+
+def solar_radiation(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    latitude_deg: float = 30.0,
+    day_of_year: int = 172,
+    transmissivity: float = 0.75,
+    nodata: Optional[float] = None,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """晴空日总辐照量近似（FAO-56 大气顶辐射 × 地形入射修正）。
+
+    - 大气顶日辐射 Ra（FAO-56 eq. 21：dr / δ / ωs 解析式，Gsc=0.0820）；
+    - 晴空透射 Rso = transmissivity · Ra（缺省 0.75，海拔修正未含——披露）；
+    - 地形入射修正：坡度/坡向（np.gradient 米制）上的近似投影因子
+      f = cos(β) + sin(β)·cos(az_sun − aspect)，钳 ≥ 0.15（散射底——
+      近似语义，approximation_class=heuristic，披露：无地平线遮蔽积分）。
+    返回 ``(insolation (MJ m⁻² day⁻¹), meta)``。
+    """
+    z, valid = _prepare(dem, nodata)
+    h, w = z.shape
+    _guard_cells((h, w), "terrain.solar_radiation")
+    if not (-90.0 <= float(latitude_deg) <= 90.0):
+        raise ValueError(f"latitude_deg out of range: {latitude_deg!r}")
+    if not (1 <= int(day_of_year) <= 366):
+        raise ValueError(f"day_of_year out of range: {day_of_year!r}")
+    if not (0.1 <= float(transmissivity) <= 1.0):
+        raise ValueError(f"transmissivity out of range: {transmissivity!r}")
+
+    doy = float(int(day_of_year))
+    phi = math.radians(float(latitude_deg))
+    dr = 1.0 + 0.033 * math.cos(2.0 * math.pi * doy / 365.0)
+    delta = 0.409 * math.sin(2.0 * math.pi * doy / 365.0 - 1.39)
+    x = -math.tan(phi) * math.tan(delta)
+    omega_s = math.acos(max(-1.0, min(1.0, x)))
+    Gsc = 0.0820
+    ra = (24.0 * 60.0 / math.pi) * Gsc * dr * (
+        omega_s * math.sin(phi) * math.sin(delta)
+        + math.cos(phi) * math.cos(delta) * math.sin(omega_s))
+    clear_sky = float(transmissivity) * ra  # MJ m⁻² day⁻¹
+
+    cy, cx = _validate_cell_sizes(cell_size, cell_size_x)
+    gy, gx = np.gradient(z, cy, cx)
+    slope = np.arctan(np.sqrt(gx ** 2 + gy ** 2))
+    aspect = np.arctan2(-gx, -gy)  # 下坡向（数学方位角；0=北 → 转 0=东约定）
+    # 太阳方位近似：正午太阳方位 = 赤纬决定（北半球夏偏南）；取
+    # az_sun = π + delta（弧度，0=北顺时针）作为日积分代表方位（近似披露）。
+    az_sun = math.pi + delta
+    aspect_from_south = aspect + math.pi / 2.0 - az_sun
+    incidence = np.cos(slope) + np.sin(slope) * np.cos(aspect_from_south)
+    factor = np.clip(incidence, 0.15, None)
+    insolation = np.where(valid, clear_sky * factor, np.nan)
+
+    meta = _meta_base(
+        "terrain.solar_radiation", valid,
+        method=(
+            "clear-sky daily insolation: FAO-56 extraterrestrial Ra × "
+            "transmissivity × terrain incidence factor "
+            "(cos β + sin β·cos(az_sun − aspect), clipped ≥ 0.15 diffuse floor)"),
+        model="FAO-56 Ra + heuristic incidence (no horizon/shadow integration)",
+        latitude_deg=float(latitude_deg),
+        day_of_year=int(day_of_year),
+        transmissivity=float(transmissivity),
+        extraterrestrial_ra=round(float(ra), 4),
+        insolation_range=[
+            round(float(np.nanmin(insolation[valid])), 4),
+            round(float(np.nanmax(insolation[valid])), 4),
+        ],
+        mean_insolation=round(float(np.nanmean(insolation[valid])), 4),
+    )
+    return insolation, meta
+
+
+# ── Science V4（W10）：分块 Priority-Flood（大栅格通道）─────────────────────
+
+PF_CHUNK_BANDS = 8            # 缺省列带数
+_PF_CHUNK_MIN_COLS = 64       # 低于此列数不分块（全量路径更高效）
+
+
+def fill_depressions_chunked(
+    dem: np.ndarray, cell_size: float,
+    cell_size_x: Optional[float] = None,
+    *,
+    epsilon: float = 0.0,
+    nodata: Optional[float] = None,
+    n_bands: int = PF_CHUNK_BANDS,
+    max_sweeps: int = 8,
+    cancellable_check: bool = True,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """列带（band）分块 Priority-Flood + 交替方向迭代到收敛。
+
+    语义：每带用与 :func:`fill_depressions` 完全同一 heapq 泛洪机器
+    （单一事实源）；排水种子 = 网格真边界 + nodata 邻接 + 邻带裁决缘
+    （带内竖直边缘不是排水口——seam correctness 关键）。带缘以邻带当前
+    填充列做排水裁决。**近似语义（approximate）**：带固定点 ≠ 全局
+    最小-最大路径解——seam 处可欠填或过填，偏差以参考解的最大填深为界
+    （conformance 钉死 |chunked − full| ≤ reference max_fill_depth）；
+    需要精确解时使用全量路径（reference variant）。heap 峰值内存
+    O(带宽×H)——大栅格低堆占用通道。
+    """
+    z, valid = _prepare(dem, nodata)
+    h, w = z.shape
+    _guard_cells((h, w), "terrain.sink_fill_chunked")
+    if not (1 <= int(n_bands) <= 64):
+        raise ValueError(f"n_bands must be in [1, 64] (got {n_bands!r})")
+    if w < _PF_CHUNK_MIN_COLS:
+        n_bands = 1
+    band_w = int(math.ceil(w / int(n_bands)))
+    filled = z.copy()
+    sweeps = 0
+    changed = 0
+    for sweep in range(int(max_sweeps)):
+        if cancellable_check:
+            checkpoint()
+        sweeps += 1
+        changed = 0
+        order = (range(int(n_bands)) if sweep % 2 == 0
+                 else range(int(n_bands) - 1, -1, -1))
+        for b in order:
+            c0 = b * band_w
+            c1 = min(c0 + band_w, w)
+            # Jacobi 迭代：每带从**原始 z** 重新泛洪（只升不降的泛洪不能
+            # 从上一轮的过填值收敛回真实解——过填必须允许被修正）。
+            band_z = z[:, c0:c1].copy()
+            band_valid = valid[:, c0:c1]
+            bh, bw = band_z.shape
+            invalid = ~band_valid
+            near_invalid = np.zeros((bh, bw), dtype=bool)
+            for _, _, dr, dc in _D8_NEIGHBORS:
+                r0, r1 = max(0, -dr), min(bh, bh - dr)
+                cc0, cc1 = max(0, -dc), min(bw, bw - dc)
+                shifted = np.zeros((bh, bw), dtype=bool)
+                shifted[r0:r1, cc0:cc1] = invalid[r0 + dr:r1 + dr, cc0 + dc:cc1 + dc]
+                near_invalid |= shifted
+            seed = band_valid & near_invalid
+            seed[0, :] |= band_valid[0, :]
+            seed[-1, :] |= band_valid[-1, :]
+            if b == 0:
+                seed[:, 0] |= band_valid[:, 0]
+            if b == int(n_bands) - 1:
+                seed[:, -1] |= band_valid[:, -1]
+            for edge, outside in ((0, c0 - 1), (bw - 1, c1)):
+                if 0 <= outside < w:
+                    # 邻带裁决 = 邻带**当前累计**填充值（收敛解的下界估计，
+                    # 单调升 → 整体单调收敛到全量 flood 不动点）
+                    nb_col = filled[:, outside]
+                    verdict = np.maximum(band_z[:, edge], nb_col)
+                    changed += int(np.count_nonzero(
+                        band_valid[:, edge] & (np.abs(verdict - filled[:, c0:c1][:, edge]) > 1e-12)))
+                    band_z[:, edge] = verdict
+                    seed[:, edge] |= band_valid[:, edge]
+            known = seed.copy()
+            heap: List[Tuple[float, int, int]] = []
+            counter = 0
+            for flat_i in np.flatnonzero(seed.ravel()).tolist():
+                heapq.heappush(heap, (float(band_z.ravel()[flat_i]), counter, flat_i))
+                counter += 1
+            pops = 0
+            while heap:
+                pops += 1
+                if cancellable_check and pops % 65536 == 0:
+                    checkpoint()
+                elev, _, cur = heapq.heappop(heap)
+                cur_r, cur_c = divmod(cur, bw)
+                for _, _, dr, dc in _D8_NEIGHBORS:
+                    nb_r, nb_c = cur_r + dr, cur_c + dc
+                    if not (0 <= nb_r < bh and 0 <= nb_c < bw):
+                        continue
+                    nb = nb_r * bw + nb_c
+                    if not band_valid.ravel()[nb] or known.ravel()[nb]:
+                        continue
+                    known.ravel()[nb] = True
+                    target = elev + epsilon
+                    z_nb = float(band_z.ravel()[nb])
+                    new_v = z_nb if z_nb > target else target
+                    band_z.ravel()[nb] = new_v
+                    heapq.heappush(heap, (band_z.ravel()[nb], counter, nb))
+                    counter += 1
+            diff_cells = int(np.count_nonzero(
+                band_valid & (np.abs(band_z - filled[:, c0:c1]) > 1e-12)))
+            changed += diff_cells
+            filled[:, c0:c1] = band_z
+        if changed == 0:
+            break
+    lift = filled - z
+    meta = _meta_base(
+        "terrain.sink_fill_chunked", valid,
+        cell_size=cell_size,
+        epsilon=float(epsilon),
+        method=(
+            "banded priority-flood (approximate): per-band heapq flood, "
+            "neighbour-band verdicts on band edges; over-fill possible at "
+            "seams (verdict = neighbour water level) — use full "
+            "fill_depressions for the exact reference"),
+        n_bands=int(n_bands),
+        max_sweeps=int(max_sweeps),
+        sweeps_executed=int(sweeps),
+        converged=bool(changed == 0),
+        approximation=(
+            "band fixed-point ≠ global min-max path: seams may under/over-fill "
+            "(bounded by reference max_fill_depth; exact = fill_depressions)"),
+        filled_volume=round(float(lift.sum()), 9),
+        filled_cell_count=int(np.count_nonzero(lift > 0.0)),
+        max_fill_depth=round(float(lift.max()) if valid.any() else 0.0, 9),
+    )
+    return filled, meta

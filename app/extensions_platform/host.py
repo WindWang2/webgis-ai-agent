@@ -5,7 +5,7 @@
     discover → discovered ──(validate)──→ compatible ──(activate)──→ active
                   │            │                │   ↘ degraded（警告级诊断）
                   │            └→ incompatible  └→ failed（回滚后）
-                  └→ quarantined（信任封锁 / id 碰撞）
+                  └→ quarantined（信任封锁 / id 碰撞 / 签名无效或篡改）
     active/degraded ──(deactivate)──→ compatible ──(unload)──→ discovered
     reload = deactivate? → unload → 重读 manifest → activate?
 
@@ -24,9 +24,7 @@
 
 from __future__ import annotations
 
-import importlib.util
 import logging
-import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -36,6 +34,7 @@ from .api_version import (
     CORE_API_VERSION,
     check_core_version_window,
     check_extension_api_compatibility,
+    parse_version,
 )
 from .context import ExtensionContext
 from .diagnostics import (
@@ -47,17 +46,27 @@ from .diagnostics import (
 )
 from .discovery import DiscoveryResult, discover_extensions
 from .ledger import ProjectionLedger
+# MODULE_PREFIX 由 loader.py 单一维护；此处保留 re-export 兼容旧引用。
+from .loader import MODULE_PREFIX  # noqa: F401
 from .manifest import GisExtensionManifest
 from .permissions import (
     HIGH_RISK_PERMISSIONS,
     grants_for,
     validate_declared_permissions,
 )
+from . import resolver
+from .signing import (
+    STATUS_INVALID,
+    STATUS_MISSING,
+    STATUS_SIGNED_UNTRUSTED,
+    STATUS_SIGNED_VERIFIED,
+    STATUS_TAMPERED,
+    SignatureStatus,
+    verify_pack_signature,
+)
 from .trust import TrustLevel, resolve_trust
 
 logger = logging.getLogger(__name__)
-
-MODULE_PREFIX = "webgis_ext_"
 
 
 class ExtensionState(str, Enum):
@@ -90,6 +99,10 @@ class ExtensionRecord:
     # Round-1 审计 minor14：发现期诊断基线。validate_extension 由此重算，
     # 保证重复校验幂等、失败后的重试不被陈旧 error 永久锁死。
     baseline_diagnostics: tuple[ExtensionDiagnostic, ...] = ()
+    # ── V2（ADR-0105）：worker 隔离执行 ──────────────────────────────
+    # worker 模式下非 None；in-process 模式恒为 None。
+    worker: Any = None
+    worker_crash_count: int = 0
 
     @property
     def extension_id(self) -> str:
@@ -112,6 +125,21 @@ class HostPolicy:
     # 打开 EXTENSIONS_ACTIVATE_UNTRUSTED；进程内直构 HostPolicy 的测试
     # 缺省 True（本地开发语义）。
     allow_local_untrusted_activation: bool = True
+    # ── V2（ADR-0105）────────────────────────────────────────────────
+    # 按扩展 id 供给的凭据（供给即授权；值不进入任何状态/日志面）。
+    secrets: dict[str, dict[str, str]] = field(default_factory=dict)
+    # worker broker 出网 allowlist：ext_id → host 集合（"*" = 全部放行）。
+    network_allow: dict[str, frozenset[str]] = field(default_factory=dict)
+    # worker broker artifact 根目录（空 = 拒绝全部 artifact 操作）。
+    artifact_roots: tuple[Path, ...] = ()
+    # 受信发布者：key_id → HMAC 密钥文件路径。
+    trusted_publishers: dict[str, Path] = field(default_factory=dict)
+    # 验签通过且发布者受信 → 提权 trusted_extension。
+    trust_signed: bool = False
+    # 未签名包显式开发模式（大声告警；不改变权限语义）。
+    allow_unsigned_dev: bool = False
+    # worker 连续崩溃达到该值 → quarantine。
+    max_worker_crashes: int = 2
 
 
 class ExtensionHost:
@@ -119,6 +147,10 @@ class ExtensionHost:
         self._tool_registry = tool_registry
         self._policy = policy
         self._records: dict[str, ExtensionRecord] = {}
+        # V2：按扩展 id 的 broker 审计环（bounded；CLI/status 消费）。
+        self._broker_audit: dict[str, Any] = {}
+        # V2（Wave 9）：投影变化钩子（main lifespan 接权威视图刷新器）。
+        self._projection_hook: Any = None
 
     # ── 构造 ─────────────────────────────────────────────────────────
     @classmethod
@@ -126,6 +158,25 @@ class ExtensionHost:
         from .settings_bridge import host_policy_from_settings
 
         return cls(tool_registry=tool_registry, policy=host_policy_from_settings())
+
+    def set_projection_change_hook(self, hook: Any) -> None:
+        """V2：注册投影变化回调（extension_id, event）。
+
+        event ∈ {"activate", "deactivate", "rollback", "failed"}；回调异常
+        被吞并告警——刷新失败绝不把生命周期操作变成宿主故障。
+        """
+        self._projection_hook = hook
+
+    def _notify_projection_change(self, extension_id: str, event: str) -> None:
+        if self._projection_hook is None:
+            return
+        try:
+            self._projection_hook(extension_id, event)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "projection-change hook failed after %s.%s: %s",
+                extension_id, event, exc,
+            )
 
     # ── discover / validate ──────────────────────────────────────────
     def discover(self) -> list[ExtensionDiagnostic]:
@@ -180,9 +231,103 @@ class ExtensionHost:
                 )
             else:
                 record.state = ExtensionState.DISCOVERED
+                # Wave 6：验签信任流（BLOCKED 路径不验签——隔离语义已定，
+                # 签名无从改变生死）。签名裁决属发现期事实，并入基线，
+                # 否则末尾 validate_extension 重算诊断时会把它抹掉。
+                record.diagnostics.extend(
+                    self._apply_signature_verdict(
+                        record,
+                        verify_pack_signature(
+                            discovered.path, self._policy.trusted_publishers
+                        ),
+                    )
+                )
+                record.baseline_diagnostics = tuple(record.diagnostics)
             self._records[record.extension_id] = record
         for record in self._records.values():
             self.validate_extension(record.extension_id)
+        return diagnostics
+
+    def _apply_signature_verdict(
+        self, record: ExtensionRecord, status: SignatureStatus
+    ) -> list[ExtensionDiagnostic]:
+        """Wave 6：按验签裁决执行信任流（BLOCKED 路径不进入本方法）。
+
+        - tampered / invalid → QUARANTINED（即使 allowlist 点名也不放行：
+          内容被篡改或签名损坏的包必须重签后重新发现；既有 QUARANTINED
+          状态机保证永不 import、永不激活）；
+        - signed_verified + trust_signed → local_untrusted 提权
+          trusted_extension（已有信任级别保持不变，只升不降），info 留痕；
+        - signed_untrusted / missing → 依 trust_signed / allow_unsigned_dev
+          大声告警；缺省策略下 missing 不产出任何诊断（V1 行为逐字节保持）。
+        """
+        extension_id = record.extension_id
+        if status.status == STATUS_TAMPERED:
+            record.state = ExtensionState.QUARANTINED
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.PACKAGE_TAMPERED,
+                    "pack content changed after signing (fingerprint mismatch vs "
+                    f"signature.json, publisher {status.publisher!r}); quarantined "
+                    "even if allowlisted — re-sign and re-discover",
+                    extension_id=extension_id,
+                )
+            ]
+        if status.status == STATUS_INVALID:
+            record.state = ExtensionState.QUARANTINED
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.SIGNATURE_INVALID,
+                    f"signature.json is invalid ({status.detail}); quarantined — "
+                    "fix or remove the signature and re-discover",
+                    extension_id=extension_id,
+                )
+            ]
+        diagnostics: list[ExtensionDiagnostic] = []
+        if status.status == STATUS_SIGNED_VERIFIED:
+            if self._policy.trust_signed:
+                if record.trust is TrustLevel.LOCAL_UNTRUSTED:
+                    record.trust = TrustLevel.TRUSTED_EXTENSION
+                diagnostics.append(
+                    ExtensionDiagnostic.info(
+                        DiagnosticCode.SIGNATURE_VERIFIED,
+                        f"signature verified for publisher {status.publisher!r}; "
+                        "trust elevated by EXTENSIONS_TRUST_SIGNED",
+                        extension_id=extension_id,
+                    )
+                )
+        elif status.status == STATUS_SIGNED_UNTRUSTED:
+            if self._policy.trust_signed:
+                diagnostics.append(
+                    ExtensionDiagnostic.warning(
+                        DiagnosticCode.PUBLISHER_UNTRUSTED,
+                        "signature present but publisher key unknown; falls back "
+                        "to operator trust config",
+                        extension_id=extension_id,
+                    )
+                )
+        elif status.status == STATUS_MISSING:
+            if self._policy.trust_signed:
+                diagnostics.append(
+                    ExtensionDiagnostic.warning(
+                        DiagnosticCode.SIGNATURE_INVALID,
+                        "unsigned pack under EXTENSIONS_TRUST_SIGNED policy; stays "
+                        "local_untrusted unless explicitly allowed",
+                        extension_id=extension_id,
+                    )
+                )
+            elif (
+                self._policy.allow_unsigned_dev
+                and record.trust is TrustLevel.LOCAL_UNTRUSTED
+            ):
+                diagnostics.append(
+                    ExtensionDiagnostic.warning(
+                        DiagnosticCode.SIGNATURE_INVALID,
+                        "unsigned dev mode (EXTENSIONS_ALLOW_UNSIGNED_DEV=true); "
+                        "pack stays local_untrusted",
+                        extension_id=extension_id,
+                    )
+                )
         return diagnostics
 
     def validate_extension(self, extension_id: str) -> list[ExtensionDiagnostic]:
@@ -235,6 +380,13 @@ class ExtensionHost:
                 )
         # 依赖可解析 + 环检测（在 discovered 集合内）。
         diagnostics.extend(self._check_dependencies(record))
+        # V2（ADR-0105 Wave 8）：依赖版本约束校验（required 不满足 → error）。
+        diagnostics.extend(
+            resolver.constraint_diagnostics_for(
+                _record_view(record),
+                {eid: _record_view(rec) for eid, rec in self._records.items()},
+            )
+        )
         # 入口文件存在（不 import——import 只发生在 activate）。
         if self._resolve_entry_path(record) is None:
             diagnostics.append(
@@ -345,82 +497,43 @@ class ExtensionHost:
         flags.update(self._policy.feature_flags.get(manifest.id, {}))
         return flags
 
-    # ── entry point 解析 ─────────────────────────────────────────────
+    # ── entry point 解析（共享实现见 loader.py；in-process 与 worker 同规则）──
     def _resolve_entry_path(self, record: ExtensionRecord) -> Optional[Path]:
-        entry = record.manifest.entry_point.strip()
-        if not entry or entry == "__init__":
-            if (record.path / "__init__.py").is_file():
-                return record.path / "__init__.py"
-            return None
-        candidate = record.path / f"{entry}.py"
-        package_init = record.path / entry / "__init__.py"
-        resolved: Optional[Path] = None
-        if candidate.is_file():
-            resolved = candidate.resolve()
-        elif package_init.is_file():
-            resolved = package_init.resolve()
-        if resolved is None:
-            return None
-        # Round-1 审计 F1：入口必须落在包目录内（指纹覆盖范围）。
-        if not resolved.is_relative_to(record.path.resolve()):
-            return None
-        return candidate if resolved == candidate.resolve() else package_init
+        from .loader import resolve_entry_path
+
+        return resolve_entry_path(record.path, record.manifest.entry_point)
 
     def _module_name(self, record: ExtensionRecord) -> str:
         # 指纹参与模块名：内容变化必然获得全新命名空间，杜绝「文件已改、
         # sys.modules 还挂着旧代码」的陈旧模块风险（unload/reload 按公共
         # 前缀清理所有代次）。
-        fingerprint = record.fingerprint or "unknown"
-        return f"{MODULE_PREFIX}{record.manifest.namespace}_{record.manifest.name}_{fingerprint[:12]}"
+        from .loader import module_name_for
+
+        return module_name_for(
+            record.manifest.namespace, record.manifest.name, record.fingerprint
+        )
 
     def _load_entry_module(self, record: ExtensionRecord) -> Any:
-        module_name = self._module_name(record)
-        if module_name in sys.modules:
-            return sys.modules[module_name]
-        entry_path = self._resolve_entry_path(record)
-        if entry_path is None:
-            raise ExtensionPlatformError(
-                ExtensionDiagnostic.error(
-                    DiagnosticCode.ENTRY_POINT_MISSING,
-                    f"entry_point {record.manifest.entry_point!r} not found",
-                    extension_id=record.extension_id,
-                )
-            )
-        is_package = entry_path.name == "__init__.py"
-        spec = importlib.util.spec_from_file_location(
-            module_name,
-            entry_path,
-            submodule_search_locations=[str(record.path)] if is_package else None,
+        from .loader import load_entry_module
+
+        return load_entry_module(
+            record.path,
+            record.manifest.namespace,
+            record.manifest.name,
+            record.manifest.entry_point,
+            record.fingerprint,
+            extension_id=record.extension_id,
         )
-        if spec is None or spec.loader is None:
-            raise ExtensionPlatformError(
-                ExtensionDiagnostic.error(
-                    DiagnosticCode.ENTRY_POINT_FAILED,
-                    f"cannot build import spec for {str(entry_path)!r}",
-                    extension_id=record.extension_id,
-                )
-            )
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        try:
-            spec.loader.exec_module(module)
-        except Exception:
-            sys.modules.pop(module_name, None)
-            raise
-        return module
 
     def _purge_modules(self, record: ExtensionRecord) -> None:
-        # Round-1 审计 M4：只清理当前记录实际加载过的模块（精确名 + 其
-        # 子模块）。此前的宽前缀匹配（prefix + "_"）会把兄弟扩展
-        # （foo.bar vs foo.bar_baz）的活模块一并清掉。
-        base = f"{MODULE_PREFIX}{record.manifest.namespace}_{record.manifest.name}"
-        fingerprint = record.fingerprint_at_activation or record.fingerprint
-        prefixes = {f"{base}_{fingerprint[:12]}"} if fingerprint else set()
-        prefixes.add(f"{base}.")
-        for prefix in prefixes:
-            for name in list(sys.modules):
-                if name == prefix or name.startswith(prefix + "."):
-                    sys.modules.pop(name, None)
+        from .loader import purge_modules
+
+        purge_modules(
+            record.manifest.namespace,
+            record.manifest.name,
+            record.fingerprint_at_activation,
+            record.fingerprint,
+        )
         record.module = None
 
     # ── activate ─────────────────────────────────────────────────────
@@ -521,6 +634,21 @@ class ExtensionHost:
                 )
 
         record.state = ExtensionState.LOADING
+        if record.manifest.is_worker_mode:
+            try:
+                return self._activate_worker(record, warnings)
+            except ExtensionPlatformError as exc:
+                return self._fail_worker_activation(record, warnings, exc.diagnostic)
+            except Exception as exc:  # noqa: BLE001 - spawn/pipe OSError 等兜底
+                return self._fail_worker_activation(
+                    record,
+                    warnings,
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.ENTRY_POINT_FAILED,
+                        f"worker startup failed: {type(exc).__name__}: {exc}",
+                        extension_id=extension_id,
+                    ),
+                )
         ledger = ProjectionLedger(extension_id=extension_id)
         grants = grants_for(extension_id, self._policy.grants)
         context = ExtensionContext(
@@ -530,6 +658,7 @@ class ExtensionHost:
             settings=dict(self._policy.extension_settings.get(extension_id, {})),
             tool_registry=self._tool_registry,
             ledger=ledger,
+            secrets=dict(self._policy.secrets.get(extension_id, {})),
         )
         context._module_dir = record.path
         try:
@@ -635,6 +764,7 @@ class ExtensionHost:
             else ExtensionState.ACTIVE
         )
         logger.info("extension %s activated (state=%s)", extension_id, record.state.value)
+        self._notify_projection_change(extension_id, "activate")
         return list(record.diagnostics)
 
     def _reconcile_declarations(
@@ -671,6 +801,20 @@ class ExtensionHost:
         # workflow pack 级对账：recipe 以命名空间为前缀（pack 名不进
         # recipe id），故按命名空间核对——声明了 pack 却零 recipe 投影
         # 才是「声明未注册」。
+        # V2：model provider 工具投影对账（声明了却零投影 → warning）。
+        declared_mp_tools = {
+            record.manifest.namespaced_model_provider_tool(m.id)
+            for m in record.manifest.model_providers
+        }
+        for projected in sorted(declared_mp_tools - registered.get("tool", set())):
+            diagnostics.append(
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                    f"declared model provider tool {projected!r} was not registered "
+                    "(flag-gated?)",
+                    extension_id=record.extension_id,
+                )
+            )
         declared_packs = {record.manifest.namespaced_tool_name(w.pack_id) for w in record.manifest.workflow_packs}
         registered_recipes = registered.get("workflow_recipe", set())
         ns_recipe_prefix = record.manifest.namespace + "_"
@@ -701,7 +845,329 @@ class ExtensionHost:
             record.extension_id,
             [e.message for e in errors],
         )
+        self._notify_projection_change(record.extension_id, "rollback")
         return list(record.diagnostics)
+
+    # ── V2：worker 隔离执行（ADR-0105）────────────────────────────────
+    def _activate_worker(
+        self, record: ExtensionRecord, warnings: list[ExtensionDiagnostic]
+    ) -> list[ExtensionDiagnostic]:
+        """worker 模式激活：spawn 隔离进程，宿主只投影 proxy 工具。
+
+        与 in-process 同样的原子性：任何失败 → 已注册 proxy 逆序回滚 →
+        FAILED；worker 进程保证被回收。声明对账沿用同一规则（undeclared
+        = error；declared but missing = warning）。
+        """
+        from .ledger import ProjectionLedger
+        from .worker.client import WorkerProcess
+
+        manifest = record.manifest
+        execution = manifest.execution
+        assert execution is not None
+        ledger = ProjectionLedger(extension_id=record.extension_id)
+        worker = WorkerProcess(
+            pack_dir=record.path,
+            extension_id=manifest.id,
+            namespace=manifest.namespace,
+            name=manifest.name,
+            fingerprint=record.fingerprint or "",
+            grants=sorted(self._policy.grants.get(manifest.id, frozenset())),
+            settings=dict(self._policy.extension_settings.get(manifest.id, {})),
+            startup_timeout_s=execution.startup_timeout_s,
+            call_timeout_s=execution.call_timeout_s,
+            max_memory_mb=execution.max_memory_mb,
+            max_cpu_seconds=execution.max_cpu_seconds,
+            broker_handler=self._make_broker_handler(record.extension_id),
+        )
+        try:
+            worker.start()
+        except ExtensionPlatformError as exc:
+            record.worker_crash_count += 1
+            return self._fail_worker_activation(record, warnings, exc.diagnostic)
+        # 平台不支持的资源强制 → typed 降级告警（不虚假承诺沙箱能力）。
+        for message in worker.resource_warnings:
+            warnings.append(
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.RESOURCE_LIMIT_UNAVAILABLE,
+                    message,
+                    extension_id=record.extension_id,
+                )
+            )
+        # 声明对账：worker 握手申报 vs manifest 声明（undeclared = error）。
+        declared = {manifest.namespaced_tool_name(t.name) for t in manifest.tools}
+        declared |= {manifest.namespaced_model_provider_tool(m.id) for m in manifest.model_providers}
+        offered = {str(t.get("name")) for t in worker.tools}
+        undeclared = sorted(offered - declared)
+        if undeclared:
+            worker.shutdown()
+            return self._fail_worker_activation(
+                record,
+                warnings,
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.UNDECLARED_REGISTRATION,
+                    f"worker offered undeclared tools {undeclared} "
+                    "(declaration and handshake must match; fail closed)",
+                    extension_id=record.extension_id,
+                ),
+            )
+        missing = sorted(declared - offered)
+        if missing:
+            warnings.append(
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                    f"declared tools {missing} were not offered by the worker "
+                    "(flag-gated?)",
+                    extension_id=record.extension_id,
+                )
+            )
+        # proxy 投影（经台账，保证失败逆序回滚）。
+        for tool in worker.tools:
+            projected = str(tool.get("name"))
+            kwargs = dict(tool.get("kwargs") or {})
+            description = str(tool.get("description") or "")
+            proxy = self._make_worker_proxy(record, worker, projected, execution.call_timeout_s)
+            try:
+                self._tool_registry.register(projected, description, proxy, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - 归一为投影失败
+                worker.shutdown()
+                return self._fail_worker_activation(
+                    record,
+                    warnings + ledger.rollback(),
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.REGISTRY_PROJECTION_FAILED,
+                        f"worker tool {projected!r} rejected by ToolRegistry: {exc}",
+                        extension_id=record.extension_id,
+                    ),
+                )
+            ledger.record("tool", projected, lambda n=projected: self._tool_registry.unregister(n))
+            logger.info("extension %s projected worker tool %s", record.extension_id, projected)
+        # 健康门：带超时 RPC（worker 模式不再有 unbounded sync health）。
+        try:
+            health_report = worker.health()
+        except ExtensionPlatformError as exc:
+            worker.shutdown()
+            return self._fail_worker_activation(
+                record, warnings + ledger.rollback(), exc.diagnostic
+            )
+        if health_report.get("status") == "unhealthy":
+            worker.shutdown()
+            return self._fail_worker_activation(
+                record,
+                warnings + ledger.rollback(),
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.HEALTH_UNHEALTHY,
+                    f"post-activation worker health unhealthy: {health_report.get('messages')}",
+                    extension_id=record.extension_id,
+                ),
+            )
+        if health_report.get("status") == "degraded":
+            warnings.append(
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.HEALTH_CHECK_FAILED,
+                    f"worker health degraded: {health_report.get('messages')}",
+                    extension_id=record.extension_id,
+                )
+            )
+        record.worker = worker
+        record.ledger = ledger
+        effective_flags = self._effective_flags(manifest)
+        record.satisfied_dependencies = frozenset(
+            dep.id
+            for dep in manifest.dependencies
+            if not (
+                dep.feature_flag and not effective_flags.get(dep.feature_flag, False)
+            )
+        )
+        record.fingerprint_at_activation = record.fingerprint
+        record.diagnostics = warnings
+        record.state = ExtensionState.DEGRADED if warnings else ExtensionState.ACTIVE
+        logger.info(
+            "extension %s activated in worker mode (state=%s, pid=%s)",
+            record.extension_id, record.state.value, worker.pid,
+        )
+        self._notify_projection_change(record.extension_id, "activate")
+        return list(record.diagnostics)
+
+    def _fail_worker_activation(
+        self,
+        record: ExtensionRecord,
+        diagnostics: list[ExtensionDiagnostic],
+        error: ExtensionDiagnostic,
+    ) -> list[ExtensionDiagnostic]:
+        """worker 激活失败：无台账可回（proxy 注册前失败或已回滚）。"""
+        record.state = ExtensionState.FAILED
+        record.diagnostics = list(diagnostics) + [error]
+        logger.warning(
+            "extension %s worker activation failed: %s", record.extension_id, error.message
+        )
+        self._notify_projection_change(record.extension_id, "failed")
+        return list(record.diagnostics)
+
+    # ── V2：model provider 调用面（流式仅 in-process；worker 单帧）────
+    def invoke_model_provider(
+        self,
+        projected_tool: str,
+        request: dict[str, Any] | None = None,
+        *,
+        stream: bool = False,
+    ) -> Any:
+        """直接调用已投影的扩展 model provider。
+
+        in-process：``stream=True`` 返回原始事件迭代器（协作式取消 =
+        提前 close）；``stream=False`` 返回聚合结果。
+        worker：仅聚合单帧；``stream=True`` → typed 拒绝。
+        """
+        for eid in sorted(self._records):
+            record = self._records[eid]
+            if record.state not in (
+                ExtensionState.ACTIVE, ExtensionState.DEGRADED
+            ):
+                continue
+            # worker 模式：spec 不在宿主进程（record.context is None）；
+            # 经 worker call 单帧往返。
+            if record.worker is not None:
+                for provider in record.manifest.model_providers:
+                    if record.manifest.namespaced_model_provider_tool(provider.id) != projected_tool:
+                        continue
+                    if stream:
+                        raise ExtensionPlatformError(
+                            ExtensionDiagnostic.error(
+                                DiagnosticCode.WORKER_MODE_INVALID,
+                                f"model provider {projected_tool!r} runs in a "
+                                "worker; streaming is unavailable (single-frame RPC)",
+                                extension_id=eid,
+                            )
+                        )
+                    try:
+                        return record.worker.call(
+                            projected_tool, {"request": dict(request or {})},
+                            timeout=record.manifest.execution.call_timeout_s
+                            if record.manifest.execution else 30.0,
+                        )
+                    except ExtensionPlatformError as exc:
+                        if exc.diagnostic.code in (
+                            DiagnosticCode.WORKER_CRASHED,
+                            DiagnosticCode.WORKER_CALL_TIMEOUT,
+                        ):
+                            self._on_worker_death(record, exc.diagnostic)
+                        raise
+            ctx = record.context
+            if ctx is None:
+                continue
+            specs = ctx.model_provider_specs()
+            for provider_id, spec in specs.items():
+                if record.manifest.namespaced_model_provider_tool(provider_id) != projected_tool:
+                    continue
+                if stream:
+                    # worker 分支在上方已提前处理并 continue；此处必为 in-process。
+                    return spec.invoke_fn(dict(request or {}), ctx)
+                from .sdk.model import aggregate_stream_events
+
+                return aggregate_stream_events(
+                    spec.invoke_fn(dict(request or {}), ctx)
+                )
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                f"no active model provider projects {projected_tool!r}",
+            )
+        )
+
+    def model_provider_inventory(self) -> list[dict[str, Any]]:
+        """声明级清单（status/CLI 消费；派生自 manifest，无第二事实源）。"""
+        inventory: list[dict[str, Any]] = []
+        for eid in sorted(self._records):
+            record = self._records[eid]
+            for provider in record.manifest.model_providers:
+                projected = record.manifest.namespaced_model_provider_tool(provider.id)
+                inventory.append(
+                    {
+                        "extension_id": eid,
+                        "provider_id": provider.id,
+                        "tool": projected,
+                        "capabilities": sorted(provider.capabilities),
+                        "credentials_ref": provider.credentials_ref,
+                        "state": record.state.value,
+                        "registered": self._tool_registry.has(projected),
+                        "execution": (
+                            record.manifest.execution.mode
+                            if record.manifest.execution
+                            else "in_process"
+                        ),
+                    }
+                )
+        return inventory
+
+    def _make_broker_handler(self, extension_id: str) -> Any:
+        """为一次 worker 激活构造 broker 分派器（默认 deny；审计入环）。"""
+        from .broker import BrokerAuditLog, CapabilityBroker
+
+        audit = self._broker_audit.setdefault(extension_id, BrokerAuditLog())
+        broker = CapabilityBroker(
+            extension_id=extension_id,
+            grants=grants_for(extension_id, self._policy.grants),
+            network_allow=self._policy.network_allow.get(extension_id, frozenset()),
+            secrets=self._policy.secrets.get(extension_id, {}),
+            artifact_roots=self._policy.artifact_roots,
+            audit=audit,
+        )
+        return broker.handle
+
+    def broker_audit(self, extension_id: str) -> list[dict[str, Any]]:
+        audit = self._broker_audit.get(extension_id)
+        if audit is None:
+            return []
+        return audit.snapshot()
+
+    def _make_worker_proxy(
+        self, record: ExtensionRecord, worker: Any, projected: str, call_timeout_s: float
+    ) -> Any:
+        """生成宿主侧工具代理：转发到 worker，崩溃/超时触发隔离语义。"""
+        host = self
+
+        def _worker_proxy(**kwargs: Any) -> Any:
+            try:
+                return worker.call(projected, kwargs, timeout=call_timeout_s)
+            except ExtensionPlatformError as exc:
+                if exc.diagnostic.code in (
+                    DiagnosticCode.WORKER_CRASHED,
+                    DiagnosticCode.WORKER_CALL_TIMEOUT,
+                ):
+                    host._on_worker_death(record, exc.diagnostic)
+                raise
+
+        _worker_proxy.__name__ = projected
+        _worker_proxy.__qualname__ = projected
+        return _worker_proxy
+
+    def _on_worker_death(
+        self, record: ExtensionRecord, diagnostic: ExtensionDiagnostic
+    ) -> None:
+        """worker 崩溃/超时：回滚投影 → COMPATIBLE（可重新激活）；
+        连续崩溃达到上限 → QUARANTINED（运维介入）。"""
+        if record.worker is not None:
+            record.worker.kill()
+            record.worker = None
+        record.worker_crash_count += 1
+        logger.warning(
+            "extension %s worker died: %s (crashes=%d/%d)",
+            record.extension_id,
+            diagnostic.message,
+            record.worker_crash_count,
+            self._policy.max_worker_crashes,
+        )
+        if record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
+            self.deactivate(record.extension_id)
+        if record.worker_crash_count >= self._policy.max_worker_crashes:
+            record.state = ExtensionState.QUARANTINED
+            record.diagnostics.append(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.WORKER_RESTART_QUARANTINED,
+                    f"worker crashed {record.worker_crash_count} times; quarantined "
+                    "(re-discover or reset the extension to retry)",
+                    extension_id=record.extension_id,
+                )
+            )
 
     # ── disable / enable（ADR-0104 Wave 2：运维开关，非失败态）────────
     def disable(self, extension_id: str) -> list[ExtensionDiagnostic]:
@@ -716,6 +1182,10 @@ class ExtensionHost:
         diagnostics: list[ExtensionDiagnostic] = []
         if record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
             diagnostics.extend(self.deactivate(extension_id))
+            # Round-1 MINOR-2：deactivate 被拒（in-flight/依赖者活跃）时
+            # 不得带病置 DISABLED（投影仍在，DISABLED 语义失真）。
+            if any(d.severity is DiagnosticSeverity.ERROR for d in diagnostics):
+                return diagnostics
         if record.state in (ExtensionState.QUARANTINED,):
             return [
                 ExtensionDiagnostic.warning(
@@ -782,6 +1252,23 @@ class ExtensionHost:
                     extension_id=extension_id,
                 )
             ]
+        # V2：worker 模式 —— 调用进行中拒绝停用（in-flight 语义），否则
+        # 优雅关停 worker 进程（投影回滚仍在下方台账路径执行）。
+        if record.worker is not None:
+            if record.worker.in_flight:
+                return [
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.OPERATION_IN_FLIGHT,
+                        f"cannot deactivate {extension_id!r}: a worker call is "
+                        "in flight (retry after it completes)",
+                        extension_id=extension_id,
+                    )
+                ]
+            record.worker.shutdown()
+            record.worker = None
+            # Round-1 MINOR-1：优雅停用清零崩溃计数（「连续」= 跨越一次
+            # 干净关停才中断；崩溃路径 worker 已死、不清零，quarantine 可达）。
+            record.worker_crash_count = 0
         if record.module is not None:
             deactivate_fn = getattr(record.module, "deactivate", None)
             if callable(deactivate_fn):
@@ -801,6 +1288,7 @@ class ExtensionHost:
         record.ledger = None
         record.state = ExtensionState.COMPATIBLE
         logger.info("extension %s deactivated", extension_id)
+        self._notify_projection_change(extension_id, "deactivate")
         return diagnostics
 
     def unload(self, extension_id: str) -> list[ExtensionDiagnostic]:
@@ -819,11 +1307,20 @@ class ExtensionHost:
                     extension_id=extension_id,
                 )
             ]
+        if record.worker is not None:
+            # 双保险：deactivate 正常路径已关停；异常路径兜底 kill。
+            record.worker.kill()
+            record.worker = None
         self._purge_modules(record)
         record.state = ExtensionState.DISCOVERED
         return []
 
-    def reload(self, extension_id: str, activate: bool = True) -> list[ExtensionDiagnostic]:
+    def reload(
+        self,
+        extension_id: str,
+        activate: bool = True,
+        allow_downgrade: bool = False,
+    ) -> list[ExtensionDiagnostic]:
         record = self._records.get(extension_id)
         if record is None:
             return [
@@ -876,6 +1373,21 @@ class ExtensionHost:
                 )
             )
             return list(record.diagnostics)
+        # V2（Wave 8）：降级闸 —— 磁盘版本低于当前记录版本时拒绝，
+        # 除非 allow_downgrade=True（回滚 = 运维恢复旧 pack + 显式降级）。
+        new_v = parse_version(manifest.version)
+        cur_v = parse_version(record.manifest.version)
+        if new_v is not None and cur_v is not None and new_v < cur_v and not allow_downgrade:
+            record.state = ExtensionState.FAILED
+            record.diagnostics.append(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"reload refused: version downgrade {record.manifest.version!r} -> "
+                    f"{manifest.version!r} requires allow_downgrade=True",
+                    extension_id=extension_id,
+                )
+            )
+            return diagnostics + list(record.diagnostics)
         # Round-1 审计 M1：reload 必须重跑发现期信任门（blocklist 新增、
         # allowlist 撤销都可能发生在两次操作之间）。
         trust = resolve_trust(
@@ -931,32 +1443,89 @@ class ExtensionHost:
             diagnostics.extend(self.activate(extension_id))
         return diagnostics
 
+    def upgrade(
+        self, extension_id: str, allow_downgrade: bool = False
+    ) -> list[ExtensionDiagnostic]:
+        """升级（V2 Wave 8）：磁盘 pack 已被替换为新版本后的安全换血。
+
+        预检（不触碰当前运行状态）：
+        - manifest 可重读且 id 不漂移；
+        - 版本回归必须显式 ``allow_downgrade=True``（回滚语义）；
+        - ``resolver.check_upgrade_conflicts``：任何依赖者的版本约束被
+          新版本破坏 → DEPENDENCY_CONFLICT，升级被拒，旧版继续运行。
+        通过后委托 reload（deactivate → unload → 重读 → activate）。
+        """
+        record = self._records.get(extension_id)
+        if record is None:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID, f"unknown extension {extension_id!r}"
+                )
+            ]
+        if record.state is ExtensionState.DISABLED:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.EXTENSION_DISABLED,
+                    f"extension {extension_id!r} is disabled; enable() before upgrade()",
+                    extension_id=extension_id,
+                )
+            ]
+        if record.state is ExtensionState.QUARANTINED:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.TRUST_BLOCKED,
+                    f"extension {extension_id!r} is quarantined; re-discover instead",
+                    extension_id=extension_id,
+                )
+            ]
+        manifest, parse_diags = _reread_manifest(record.path)
+        if manifest is None:
+            detail = "; ".join(d.message for d in parse_diags) or "manifest re-read failed"
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"upgrade preflight failed: {detail}",
+                    extension_id=extension_id,
+                )
+            ]
+        if manifest.id != extension_id:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"upgrade refused: manifest id changed {extension_id!r} -> "
+                    f"{manifest.id!r} (re-discover instead)",
+                    extension_id=extension_id,
+                )
+            ]
+        new_v = parse_version(manifest.version)
+        cur_v = parse_version(record.manifest.version)
+        if new_v is not None and cur_v is not None and new_v < cur_v and not allow_downgrade:
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"upgrade refused: {manifest.version!r} is older than active "
+                    f"{record.manifest.version!r}; use allow_downgrade=True to roll back",
+                    extension_id=extension_id,
+                )
+            ]
+        views = {eid: _record_view(r) for eid, r in self._records.items()}
+        conflicts = resolver.check_upgrade_conflicts(extension_id, manifest.version, views)
+        if conflicts:
+            return conflicts
+        return self.reload(extension_id, activate=True, allow_downgrade=allow_downgrade)
+
     # ── 批量激活（topo 序）────────────────────────────────────────────
     def activate_all(self) -> dict[str, list[ExtensionDiagnostic]]:
         results: dict[str, list[ExtensionDiagnostic]] = {}
-        # Kahn 拓扑：节点 = compatible 扩展，边 = required 依赖。
-        candidates = sorted(
+        # V2 Wave 8：激活序收敛到 resolver（Kahn 拓扑 + id tie-break，
+        # 与 resolver.resolve_activation_plan 同一事实源）。
+        views = {eid: _record_view(r) for eid, r in self._records.items()}
+        eligible = {
             eid for eid, r in self._records.items() if r.state is ExtensionState.COMPATIBLE
-        )
-        indegree = {eid: 0 for eid in candidates}
-        dependents: dict[str, list[str]] = {eid: [] for eid in candidates}
-        for eid in candidates:
-            for dep in self._required_dep_ids(eid):
-                if dep in indegree:
-                    indegree[eid] += 1
-                    dependents[dep].append(eid)
-        ready = sorted(eid for eid, d in indegree.items() if d == 0)
-        ordered: list[str] = []
-        while ready:
-            eid = ready.pop(0)
-            ordered.append(eid)
-            for dependent in sorted(dependents[eid]):
-                indegree[dependent] -= 1
-                if indegree[dependent] == 0:
-                    ready.append(dependent)
-            ready.sort()
-        # 环内成员不在 ordered 中（validate 阶段已诊断），跳过即可。
-        for eid in ordered:
+        }
+        plan = resolver.resolve_activation_plan(views, eligible)
+        # 环内/无序成员不在 ordered 中（validate 阶段已诊断），跳过即可。
+        for eid in plan.ordered:
             results[eid] = self.activate(eid)
         return results
 
@@ -970,42 +1539,23 @@ class ExtensionHost:
                 "status": "unhealthy",
                 "messages": [f"extension is {record.state.value}"],
             }
+        if record.worker is not None:
+            # V2：worker 模式健康检查走带超时 RPC（无界 sync 健康检查的
+            # limitation 在 worker 路径被消除；in-process 语义保持不变）。
+            try:
+                report = record.worker.health()
+            except ExtensionPlatformError as exc:
+                report = {"status": "unhealthy", "messages": [exc.diagnostic.message]}
+            report["state"] = record.state.value
+            return report
         report = self._run_health(record, record.module)
         report["state"] = record.state.value
         return report
 
     def _run_health(self, record: ExtensionRecord, module: Any) -> dict[str, Any]:
-        entry = record.manifest.diagnostics_entry
-        if not entry:
-            return {"status": "healthy", "messages": []}
-        module_name, _, fn_name = entry.partition(":")
-        if not fn_name:
-            fn_name = module_name
-            owner = module
-        else:
-            owner = getattr(module, module_name, None)
-        health_fn = getattr(owner, fn_name, None) if owner is not None else None
-        if not callable(health_fn):
-            return {
-                "status": "degraded",
-                "messages": [f"diagnostics entry {entry!r} not resolvable"],
-            }
-        try:
-            result = health_fn()
-        except Exception as exc:  # noqa: BLE001 - 健康检查失败 ≠ 宿主失败
-            return {
-                "status": "degraded",
-                "messages": [f"health check raised {type(exc).__name__}: {exc}"],
-            }
-        if isinstance(result, dict) and "status" in result:
-            return result
-        status = getattr(result, "status", None)
-        if status:
-            return {
-                "status": str(status),
-                "messages": list(getattr(result, "messages", []) or []),
-            }
-        return {"status": "healthy", "messages": []}
+        from .loader import resolve_health_report
+
+        return resolve_health_report(module, record.manifest.diagnostics_entry)
 
     # ── 内省（CLI / 诊断）─────────────────────────────────────────────
     def status_report(self) -> dict[str, Any]:
@@ -1027,6 +1577,11 @@ class ExtensionHost:
                     ),
                     "entry_point": record.manifest.entry_point,
                     "host_api_version": CORE_API_VERSION,
+                    "execution": (
+                        record.manifest.execution.mode if record.manifest.execution else "in_process"
+                    ),
+                    "worker_pid": record.worker.pid if record.worker is not None else None,
+                    "worker_crash_count": record.worker_crash_count,
                     "diagnostics": [d.to_dict() for d in record.diagnostics],
                 }
             )
@@ -1045,6 +1600,9 @@ class ExtensionHost:
         """测试专用：回滚一切并清空索引（不做 sys.modules 清理之外的事）。"""
         for eid in list(self._records):
             record = self._records[eid]
+            if record.worker is not None:
+                record.worker.kill()
+                record.worker = None
             if record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
                 self.deactivate(eid)
             self._purge_modules(record)
@@ -1063,6 +1621,32 @@ def configure_extension_host(host: ExtensionHost) -> ExtensionHost:
 
 def get_extension_host() -> Optional[ExtensionHost]:
     return _host
+
+
+def _record_view(record: ExtensionRecord) -> "resolver.RecordView":
+    """ExtensionRecord → resolver.RecordView（解析层与 host 类型解耦）。"""
+    from .manifest import DependencyDeclaration
+
+    def _deps(deps: list[DependencyDeclaration], required: bool) -> tuple:
+        return tuple(
+            resolver.DepView(
+                id=d.id,
+                # optional_dependencies 节整体按 optional 语义处理（与
+                # host._check_dependencies 的既有判定一致）。
+                required=d.required and required,
+                version_constraint=d.version,
+                feature_flag=d.feature_flag,
+            )
+            for d in deps
+        )
+
+    return resolver.RecordView(
+        id=record.extension_id,
+        version=record.manifest.version,
+        state=record.state.value,
+        deps=_deps(record.manifest.dependencies, True)
+        + _deps(record.manifest.optional_dependencies, False),
+    )
 
 
 def _refingerprint(record: ExtensionRecord) -> tuple[Optional[str], Optional[ExtensionDiagnostic]]:

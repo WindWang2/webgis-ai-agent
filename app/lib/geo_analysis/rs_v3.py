@@ -37,6 +37,8 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+from app.lib.cancellation import checkpoint
+
 from app.lib.gis.scientific_errors import (
     DegenerateData,
     InsufficientSamples,
@@ -281,9 +283,11 @@ def mnf(
     scores = u_s * s_vals                               # (n, n_comps)
 
     k_out = min(k, int(vt.shape[0]))
-    component_rasters = [
-        _backfill(scores[:, c], common, height, width) for c in range(k_out)
-    ]
+    component_rasters = []
+    for c in range(k_out):
+        checkpoint()  # ADR-0052: 逐分量全幅物化边界协作式取消
+        component_rasters.append(
+            _backfill(scores[:, c], common, height, width))
 
     meta: Dict[str, object] = {
         "n_bands": n_bands,
@@ -406,9 +410,10 @@ def ica(
             "未静默）")
 
     mixing = np.asarray(model.mixing_, dtype=float)   # (k, k)
-    comp_rasters = [
-        _backfill(sources[:, c], common, height, width) for c in range(k)
-    ]
+    comp_rasters = []
+    for c in range(k):
+        checkpoint()  # ADR-0052: 逐分量全幅物化边界协作式取消
+        comp_rasters.append(_backfill(sources[:, c], common, height, width))
     meta: Dict[str, object] = {
         "n_bands": n_bands,
         "band_order": band_names,

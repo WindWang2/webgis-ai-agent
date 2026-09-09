@@ -20,7 +20,12 @@ from typing import Optional, Tuple
 
 # 宿主当前版本。破坏性变更（字段删除 / 语义改变）必须提升主版本，
 # 并同步 docs/extension-platform/compatibility.md 的迁移矩阵。
-CORE_API_VERSION = "1.0.0"
+# 1.1.0（ADR-0105 V2）：additive —— worker 执行模式、model_provider 扩展
+# 类型、依赖版本约束、签名/SBOM 配置面。1.0.x 扩展全部继续兼容。
+CORE_API_VERSION = "1.1.0"
+# 使用 V2 特性（worker 模式 / model_provider 类型 / 依赖版本约束）的
+# manifest 必须声明的最低 api_version。
+V2_FEATURE_API_FLOOR: Tuple[int, int, int] = (1, 1, 0)
 # 宿主整体发行版本（核心版本窗口判定的基准）。
 CORE_RELEASE_VERSION = "0.1.3"
 MANIFEST_SCHEMA_VERSION = 1
@@ -47,6 +52,14 @@ def parse_version(value: str) -> Optional[Tuple[int, int, int]]:
 
 def is_version(value: str) -> bool:
     return parse_version(value) is not None
+
+
+def meets_api_floor(api_version: str, floor: Tuple[int, int, int] = V2_FEATURE_API_FLOOR) -> bool:
+    """api_version 是否达到特性下界（V2 特性要求 >= 1.1.0）。"""
+    v = parse_version(api_version)
+    if v is None:
+        return False
+    return v >= floor
 
 
 @dataclass(frozen=True)

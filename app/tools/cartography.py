@@ -48,10 +48,22 @@ class ExportMapArgs(BaseModel):
     include_compass: bool = Field(default=True, description="是否在导出图中绘制指北针")
     include_scale: bool = Field(default=True, description="是否在导出图中绘制比例尺")
     dark_mode: bool = Field(default=True, description="强制使用暗色现代高斯模糊底纹")
-    format: str = Field(default="png", description="导出格式: png (位图) / pdf (A4/A3 排版) / svg (位图嵌入 SVG 容器，可在 Illustrator/Inkscape 打开)")
+    format: str = Field(default="png", description="导出格式: png (位图) / pdf (位图画布 + 矢量/栅格化文本层) / svg (真矢量：数据层矢量要素 + 整饰层，不含栅格底图)")
     paper_size: str = Field(default="screen", description="纸张尺寸: screen (按当前屏幕宽高比) / A4 / A3")
     orientation: str = Field(default="landscape", description="方向: landscape (横向) / portrait (纵向)，仅 paper_size=A4/A3 时生效")
     dpi: int = Field(default=96, ge=72, le=600, description="导出 DPI，96 为屏幕级，300 为印刷级；>300 文件会很大")
+    # V5（ADR-0118 D8）：多帧导出（atlas 分页 / small-multiple 拼板）。
+    frames: list[dict] | None = Field(
+        default=None,
+        description=(
+            "多帧导出帧序列（≤50 帧；提供时走 atlas/small-multiple 运行时）。"
+            "每帧 {title?: str, where?: {layerId, field, equal: str|number}, "
+            "extent?: [w,s,e,n]}：where 对图层做等值过滤（含 label 子层），"
+            "extent 做视野定位；两者都省略则用当前相机。"
+            "format=pdf 时逐帧分页（首页封面嵌第 1 帧），png 时单画布网格拼板。"
+            "例如『按地市分区的小倍数图』传 10 个 where 帧。"
+        ),
+    )
 
 
 class ExportBatchMapsArgs(BaseModel):
@@ -97,6 +109,7 @@ def register_cartography_tools(registry: ToolRegistry):
     """注册制图工具"""
 
     @tool(registry, name="apply_layer_style",
+    capabilities=['thematic_cartography'],
            description=(
                "为图层注入统一显示样式 (单色 / 描边 / 透明度) 并返回带样式 hint 的 GeoJSON。"
                "\n何时用：分析输出后给图层定型 (一次性单色覆盖整个图层)；"
@@ -146,6 +159,7 @@ def register_cartography_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, name="create_thematic_map",
+    capabilities=['thematic_cartography'],
            description="根据指定字段制作分层设色专题图 (Choropleth Map)，自动计算颜色级别。",
            args_model=ThematicMapArgs,
            side_effect="state_mutation",
@@ -238,6 +252,7 @@ def register_cartography_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, name="create_3d_extrusion_map",
+    capabilities=['thematic_cartography'],
            description=(
                "制作 3D 挤出立体多边形专题图（extrusion_3d）。"
                "\n✅ 用于：以高度（米）直观表达要素的数值大小（如各区人口总量、GDP总量、建筑高度等），"
@@ -412,6 +427,7 @@ def register_cartography_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, tier=2, domains=["report"], name="export_thematic_map",
+    capabilities=['map_export_publishing'],
            description=(
                "当用户请求导出精美地图、制图排版、保存当前地图视图为图片或 PDF 时调用。"
                "该工具会指挥前端抽取当前地图画面，叠加指北针、比例尺、图例，并合成带标题的高质量图件。"
@@ -444,10 +460,44 @@ def register_cartography_tools(registry: ToolRegistry):
         paper_size: str = "screen",
         orientation: str = "landscape",
         dpi: int = 96,
+        frames: list[dict] | None = None,
     ) -> dict:
         fmt = (format or "png").lower().strip()
         if fmt not in ("png", "pdf", "svg"):
             fmt = "png"
+        # V5（ADR-0118 D8）：frames 归一/确定性拒绝 —— 非法帧 fail-loud，
+        # 不静默丢帧；上限 50 与前端 frame-composer 对齐。
+        norm_frames: list[dict] | None = None
+        if frames:
+            if not isinstance(frames, list) or len(frames) > 50:
+                return {"success": False, "error": "frames 必须是 ≤50 的列表",
+                        "correction_hint": "每帧 {title?, where?: {layerId, field, equal}, extent?: [w,s,e,n]}"}
+            norm_frames = []
+            for i, fr in enumerate(frames):
+                if not isinstance(fr, dict):
+                    return {"success": False, "error": f"frames[{i}] 不是对象"}
+                allowed = {"title", "where", "extent", "projection"}
+                unknown = set(fr) - allowed
+                if unknown:
+                    return {"success": False,
+                            "error": f"frames[{i}] 含未支持字段: {sorted(unknown)}",
+                            "correction_hint": f"允许字段: {sorted(allowed)}；projection=cartogram 将诚实降级（未实现变形）"}
+                where = fr.get("where")
+                if where is not None and not (
+                    isinstance(where, dict)
+                    and isinstance(where.get("layerId"), str)
+                    and isinstance(where.get("field"), str)
+                ):
+                    return {"success": False,
+                            "error": f"frames[{i}].where 需要 {{layerId, field, equal}}"}
+                extent = fr.get("extent")
+                if extent is not None and not (
+                    isinstance(extent, list) and len(extent) == 4
+                    and all(isinstance(v, (int, float)) for v in extent)
+                ):
+                    return {"success": False,
+                            "error": f"frames[{i}].extent 需要 [w,s,e,n] 四数"}
+                norm_frames.append({k: v for k, v in fr.items() if v is not None})
         ps = (paper_size or "screen").lower().strip()
         if ps not in ("screen", "a4", "a3"):
             ps = "screen"
@@ -471,9 +521,11 @@ def register_cartography_tools(registry: ToolRegistry):
                 "paperSize": ps_frontend,
                 "orientation": ori,
                 "dpi": dpi,
+                **({"frames": norm_frames} if norm_frames else {}),
             },
             "system_message": (
-                f"已将 {fmt.upper()} 导出任务发送至前端 (paper={ps_frontend}, orientation={ori}, dpi={dpi})！"
+                f"已将 {fmt.upper()} 导出任务发送至前端 (paper={ps_frontend}, orientation={ori}, dpi={dpi}"
+                + (f", {len(norm_frames)} 帧" if norm_frames else "") + ")！"
                 "前端合成排版（含指北针、比例尺、图例）需要两到三秒时间，"
                 "合成完成后将自动通过 `[系统通知]` 回传带有下载安全链接的高清成果。"
                 "请直接告知用户你正在制图排版合成..."
@@ -481,6 +533,7 @@ def register_cartography_tools(registry: ToolRegistry):
         }
 
     @tool(registry, tier=2, domains=["report"], name="export_batch_maps",
+    capabilities=['map_export_publishing'],
            description=(
                "批量导出多张地图：按 titles 顺序依次触发导出，每张都用同样的排版/纸张/DPI 设置。"
                "\n何时用：『把当前结果做成 3 张图：总览、北部、南部』『按图层各导一张』。"
@@ -576,6 +629,9 @@ def register_cartography_tools(registry: ToolRegistry):
         }
 
     @tool(registry, tier=2, domains=["report"], name="control_floating_chart",
+    capabilities=['thematic_cartography'],
+    side_effect="state_mutation",
+    tags=('浮动图表', '图表控制', 'chart_panel', '面板'),
            args_model=ControlFloatingChartArgs,
            description=(
                "控制地图上已存在的浮动统计图表面板（chart_panel）：移动/缩放/折叠/关闭/"

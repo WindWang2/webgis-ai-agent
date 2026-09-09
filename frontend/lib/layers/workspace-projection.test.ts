@@ -120,3 +120,48 @@ describe('semanticGroupLabel', () => {
     expect(semanticGroupLabel('custom')).toBe('custom');
   });
 });
+
+describe('projectWorkspace · V5 嵌套树（W1）', () => {
+  it('子组按 DFS 嵌在父后并带 depth；成员保持 store 序', () => {
+    const layers = [mkLayer('a'), mkLayer('b'), mkLayer('c')];
+    const groups = [
+      { id: 'root', name: '根', collapsed: false, parentId: null },
+      { id: 'child', name: '子', collapsed: false, parentId: 'root' },
+      { id: 'other', name: '旁', collapsed: false, parentId: null },
+    ];
+    const result = projectWorkspace({
+      ...baseInput,
+      layers,
+      groups,
+      membership: { a: 'root', b: 'child' },
+    });
+    expect(result.sections.map((s) => s.id)).toEqual(['root', 'child', 'other', null]);
+    expect(result.sections.map((s) => s.depth)).toEqual([0, 1, 0, 0]);
+    expect(result.sections[1].rows.map((r) => r.layer.id)).toEqual(['b']);
+  });
+
+  it('折叠传播：父折叠时子孙组行不计入 visibleRowCount（区仍投影）', () => {
+    const layers = [mkLayer('a'), mkLayer('b')];
+    const groups = [
+      { id: 'root', name: '根', collapsed: true, parentId: null },
+      { id: 'child', name: '子', collapsed: false, parentId: 'root' },
+    ];
+    const result = projectWorkspace({
+      ...baseInput,
+      layers,
+      groups,
+      membership: { a: 'root', b: 'child' },
+    });
+    expect(result.sections).toHaveLength(2);
+    expect(result.visibleRowCount).toBe(0);
+  });
+
+  it('孤儿组（父缺失）提升为根，行不丢', () => {
+    const layers = [mkLayer('a')];
+    const groups = [{ id: 'orphan', name: '孤', collapsed: false, parentId: 'ghost' }];
+    const result = projectWorkspace({ ...baseInput, layers, groups, membership: { a: 'orphan' } });
+    expect(result.sections[0].id).toBe('orphan');
+    expect(result.sections[0].depth).toBe(0);
+    expect(result.sections[0].rows).toHaveLength(1);
+  });
+});

@@ -18,6 +18,7 @@ import {
   drawChromeText,
   type ExportChromeElement,
   type ExportChromeModel,
+  type ExportDegradation,
 } from './export-chrome';
 import { DEFAULT_STACK_STEP_PX } from '@/lib/map-components/resolve-layout';
 export type { ExportChromeModel } from './export-chrome';
@@ -25,7 +26,10 @@ import { API_BASE } from '@/lib/api/config';
 import { apiFetch, isApiError } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
 import { hydrateMvtLayers } from '@/lib/store/layer-data';
+import { getComparisonExport } from '@/lib/map/comparison-export-registry';
 import { metersPerPixelAt } from './meters-per-pixel';
+import type { ExportFrame, FrameLayout } from './frame-composer';
+export type { ExportFrame, ExportFrameWhere, FrameLayout } from './frame-composer';
 import {
   graticuleIntervalForZoom,
   graticuleLngLines,
@@ -98,12 +102,18 @@ export interface ComposeLayoutOptions {
   /** Layout template style overrides (colors, fonts, margins, graticule, watermark). */
   style?: LayoutStyle;
   /**
-   * ADR-0081 Export Parity：spec 驱动的 chrome 模型（placement/anchor 语义
+   * ADR-0081：spec 驱动的 chrome 模型（placement/anchor 语义
    * 来自 resolveMapComponents —— live/export 共用解析层）。在场且 fromSpec
    * 时，title/subtitle/罗盘/比例尺/图例/色条/署名/浮动面板全部按模型槽位
    * 绘制；缺席时保持 legacy 固定槽（旧会话行为不变）。
    */
   chrome?: ExportChromeModel;
+  /**
+   * W6（ADR-0118）：PDF 矢量文本层专用 —— 标题/副标题改由 PDF doc.text 承载
+   * （单一事实源）时，画布两侧（chrome/legacy 路径）都不再画 title/subtitle
+   *（连带顶部渐变带），消除双重标题。缺省 false（PNG/SVG 行为不变）。
+   */
+  skipTitle?: boolean;
 }
 
 /**
@@ -232,28 +242,32 @@ export function composeLayout(
     const stackOffset = (el: ExportChromeElement | undefined, base: number): number =>
       (el?.slotSize ?? 0) > 1 ? base + (el?.stackIndex ?? 0) * scalePx(DEFAULT_STACK_STEP_PX) : base;
 
+    // W6：PDF 矢量文本层时画布不画标题（单一事实源）—— chrome 路径的
+    // 标题来自 chromeModel（非入参），必须连同顶部渐变带一起跳过。
     // 1. Header gradient（无浮动 title 时保持顶部渐变；浮动 title 自带面板底）
-    const headerText = chrome.title && !chrome.title.rect;
-    if (headerText) {
-      const headerH = chrome.subtitle?.text ? scalePx(130) : scalePx(100);
-      const headerGrad = ctx.createLinearGradient(0, 0, 0, headerH);
-      headerGrad.addColorStop(0, dark_mode ? "rgba(0,10,20,0.88)" : "rgba(255,255,255,0.96)");
-      headerGrad.addColorStop(0.65, dark_mode ? "rgba(0,10,20,0.45)" : "rgba(255,255,255,0.55)");
-      headerGrad.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = headerGrad;
-      ctx.fillRect(0, 0, targetW, headerH);
-    }
+    if (!options.skipTitle) {
+      const headerText = chrome.title && !chrome.title.rect;
+      if (headerText) {
+        const headerH = chrome.subtitle?.text ? scalePx(130) : scalePx(100);
+        const headerGrad = ctx.createLinearGradient(0, 0, 0, headerH);
+        headerGrad.addColorStop(0, dark_mode ? "rgba(0,10,20,0.88)" : "rgba(255,255,255,0.96)");
+        headerGrad.addColorStop(0.65, dark_mode ? "rgba(0,10,20,0.45)" : "rgba(255,255,255,0.55)");
+        headerGrad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = headerGrad;
+        ctx.fillRect(0, 0, targetW, headerH);
+      }
 
-    // 2. Title / subtitle（anchor 对齐 —— top-center 居中，与 live 一致）
-    if (chrome.title?.text) {
-      drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: stackOffset(chrome.title, mTopTitle) });
-    }
-    if (chrome.subtitle?.text) {
-      drawChromeText(
-        d, chrome.subtitle, 20,
-        dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)",
-        { marginX, marginY: stackOffset(chrome.subtitle, mTopSub) },
-      );
+      // 2. Title / subtitle（anchor 对齐 —— top-center 居中，与 live 一致）
+      if (chrome.title?.text) {
+        drawChromeText(d, chrome.title, 32, layoutStyle.titleColor, { marginX, marginY: stackOffset(chrome.title, mTopTitle) });
+      }
+      if (chrome.subtitle?.text) {
+        drawChromeText(
+          d, chrome.subtitle, 20,
+          dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)",
+          { marginX, marginY: stackOffset(chrome.subtitle, mTopSub) },
+        );
+      }
     }
 
     // 3. Scale bar（anchor 槽位 —— bottom-right 缺省，与 live 一致）
@@ -355,24 +369,28 @@ export function composeLayout(
     return;
   }
 
+  // W6：PDF 矢量文本层时画布不画标题（与 chrome 路径同一开关）——
+  // 标题/副标题/顶部渐变带整体跳过，避免双重标题。
   // 1. Header gradient
-  const headerH = subtitle ? scalePx(130) : scalePx(100);
-  const headerGrad = ctx.createLinearGradient(0, 0, 0, headerH);
-  headerGrad.addColorStop(0, dark_mode ? "rgba(0,10,20,0.88)" : "rgba(255,255,255,0.96)");
-  headerGrad.addColorStop(0.65, dark_mode ? "rgba(0,10,20,0.45)" : "rgba(255,255,255,0.55)");
-  headerGrad.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = headerGrad;
-  ctx.fillRect(0, 0, targetW, headerH);
+  if (!options.skipTitle) {
+    const headerH = subtitle ? scalePx(130) : scalePx(100);
+    const headerGrad = ctx.createLinearGradient(0, 0, 0, headerH);
+    headerGrad.addColorStop(0, dark_mode ? "rgba(0,10,20,0.88)" : "rgba(255,255,255,0.96)");
+    headerGrad.addColorStop(0.65, dark_mode ? "rgba(0,10,20,0.45)" : "rgba(255,255,255,0.55)");
+    headerGrad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = headerGrad;
+    ctx.fillRect(0, 0, targetW, headerH);
 
-  // 2. Title
-  ctx.fillStyle = layoutStyle.titleColor;
-  ctx.font = layoutStyle.titleFont.includes('px') ? layoutStyle.titleFont : `bold ${scalePx(32)}px ${layoutStyle.fontFamily}`;
-  ctx.fillText(title || "WebGIS AI Agent", marginX, scalePx(52));
+    // 2. Title
+    ctx.fillStyle = layoutStyle.titleColor;
+    ctx.font = layoutStyle.titleFont.includes('px') ? layoutStyle.titleFont : `bold ${scalePx(32)}px ${layoutStyle.fontFamily}`;
+    ctx.fillText(title || "WebGIS AI Agent", marginX, scalePx(52));
 
-  if (subtitle) {
-    ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)";
-    ctx.font = `${scalePx(20)}px ${layoutStyle.fontFamily}`;
-    ctx.fillText(subtitle, marginX, scalePx(82));
+    if (subtitle) {
+      ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)";
+      ctx.font = `${scalePx(20)}px ${layoutStyle.fontFamily}`;
+      ctx.fillText(subtitle, marginX, scalePx(82));
+    }
   }
 
   // 3. Scale bar
@@ -835,12 +853,45 @@ function _drawLegend(
 }
 
 /**
- * Export the composed canvas as a PDF using jsPDF (client-side, vector text).
- * @param canvas The composed export canvas (with map + layout elements already drawn)
- * @param title Map title
- * @param subtitle Optional subtitle
- * @param options Export options
- * @returns A Blob containing the PDF
+ * W6：非 WinAnsi 字符检测（code point > U+00FF，含 CJK/emoji 等）——
+ * jsPDF 标准 14 字体只编码 WinAnsi，越界字符在 PDF 文本层必然乱码。
+ */
+export function hasNonWinAnsiChars(s: string): boolean {
+  return /[^ -ÿ]/.test(s);
+}
+
+/**
+ * 页标题随画布栅格化（W9：帧标题含非 WinAnsi 字符时，doc.text 会乱码 ——
+ * 复制画布后把标题画上去，诚实降级不伪造矢量）。
+ */
+function rasterizeTitleOnCanvas(canvas: HTMLCanvasElement, title: string): HTMLCanvasElement {
+  const out = document.createElement('canvas');
+  out.width = canvas.width;
+  out.height = canvas.height;
+  const ctx = out.getContext('2d');
+  if (!ctx) return out;
+  ctx.drawImage(canvas, 0, 0);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillRect(0, 0, out.width, 44);
+  ctx.fillStyle = '#1e293b';
+  ctx.font = 'bold 24px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(title.slice(0, 60), 16, 30);
+  return out;
+}
+
+/**
+ * Export the composed canvas as a PDF using jsPDF.
+ *
+ * W6（ADR-0118）如实语义：地图永远是位图画布嵌入；文本层两种状态 ——
+ * 'vector'（缺省）：title/subtitle 以 doc.text 矢量书写（仅 WinAnsi 可编码
+ * 字符安全，非 ASCII 会乱码 —— 由调用方先做 pdf_text_rasterized_cjk 判定）；
+ * 'skip'：title/subtitle 不进 PDF 文本层（已随画布栅格化）。页脚固定 ASCII
+ * 标签（jsPDF 标准字体无法编码 CJK，此前「日期:/作者:」必然乱码）。
+ *
+ * W9：pages 非空时走多帧图集 —— 首页嵌入 pages[0].canvas（封面，标题带
+ * 主标题），其余帧逐页 addPage；页标题 WinAnsi 可编码走 doc.text 矢量，
+ * 否则随画布栅格化（onDegradation 回传 pdf_text_rasterized_cjk）。
  */
 export async function exportToPDF(
   canvas: HTMLCanvasElement,
@@ -851,6 +902,12 @@ export async function exportToPDF(
     orientation?: 'landscape' | 'portrait';
     author?: string;
     dataSource?: string;
+    /** W6：'vector'（缺省）画 title/subtitle；'skip' 跳过（画布已栅格化）。 */
+    textLayer?: 'vector' | 'skip';
+    /** W9：多帧图集页（canvas + 每帧标题）。 */
+    pages?: Array<{ canvas: HTMLCanvasElement; title?: string }>;
+    /** W9：PDF 内部诊断回传（页标题栅格化）。 */
+    onDegradation?: (d: ExportDegradation) => void;
   } = {}
 ): Promise<Blob> {
   const { default: jsPDF } = await import('jspdf');
@@ -874,12 +931,14 @@ export async function exportToPDF(
   const mapX = margin;
   const mapY = mapTop;
 
-  // Add map image
-  const imgData = canvas.toDataURL('image/png');
+  // Add map image（W9：pages 在场时首页嵌入 pages[0].canvas —— 封面页）
+  const pages = options.pages ?? [];
+  const mainCanvas = pages.length > 0 ? pages[0].canvas : canvas;
+  const imgData = mainCanvas.toDataURL('image/png');
   // #803: 帧内等比适配 —— 固定帧直接拉伸会畸变地理形状（A4 横版帧 1.63:1
   // 对 1.414 裁剪画布横向拉伸 ×1.15；screen 默认无裁剪时窄画布拉伸可达
   // ×1.86，圆形要素变椭圆）。取帧内最大等比矩形并居中。
-  const imgRatio = canvas.width / canvas.height;
+  const imgRatio = mainCanvas.width / mainCanvas.height;
   const frameRatio = mapW / mapH;
   let placedW = mapW;
   let placedH = mapH;
@@ -897,28 +956,70 @@ export async function exportToPDF(
   doc.setLineWidth(0.3);
   doc.rect(placedX, placedY, placedW, placedH);
 
-  // Title
-  doc.setFontSize(16);
-  doc.setTextColor(30, 41, 59);
-  doc.text(title || 'WebGIS AI Agent', pageW / 2, 15, { align: 'center' });
+  // Title（W6：textLayer='skip' 时已随画布栅格化 —— 文本层不重复书写）
+  const textVector = (options.textLayer ?? 'vector') === 'vector';
+  if (textVector) {
+    doc.setFontSize(16);
+    doc.setTextColor(30, 41, 59);
+    doc.text(title || 'WebGIS AI Agent', pageW / 2, 15, { align: 'center' });
 
-  // Subtitle
-  if (subtitle) {
-    doc.setFontSize(10);
-    doc.setTextColor(100, 116, 139);
-    doc.text(subtitle, pageW / 2, 21, { align: 'center' });
+    // Subtitle
+    if (subtitle) {
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text(subtitle, pageW / 2, 21, { align: 'center' });
+    }
   }
 
-  // Footer
+  // Footer（W6：标签改 ASCII —— jsPDF 标准字体编码不了 CJK，此前「日期:」
+  // 等前缀在 PDF 里必然乱码。非 WinAnsi 的 author/dataSource 值从页脚剔除
+  //（乱码比缺席更糟；PDF 元数据仍保留原文）。
   const dateStr = new Date().toISOString().slice(0, 10);
-  const footerParts = [`日期: ${dateStr}`];
-  if (author) footerParts.push(`作者: ${author}`);
-  if (dataSource) footerParts.push(`数据: ${dataSource}`);
+  const footerParts = [`Date: ${dateStr}`];
+  if (author && !hasNonWinAnsiChars(author)) footerParts.push(`Author: ${author}`);
+  if (dataSource && !hasNonWinAnsiChars(dataSource)) footerParts.push(`Data: ${dataSource}`);
   footerParts.push('Generated by WebGIS AI Agent');
 
   doc.setFontSize(7);
   doc.setTextColor(148, 163, 184);
   doc.text(footerParts.join('  |  '), pageW / 2, pageH - 5, { align: 'center' });
+
+  // W9：附加帧页（atlas）—— 同版式 addPage；页标题 WinAnsi 可编码走
+  // doc.text 矢量，否则随画布栅格化（诚实降级 + 显式诊断）。
+  for (let i = 1; i < pages.length; i++) {
+    const page = pages[i];
+    doc.addPage(paperSize === 'A3' ? 'a3' : 'a4', orientation);
+    let pageCanvas = page.canvas;
+    const pageTitle = page.title || '';
+    const pageTitleVector = !pageTitle || !hasNonWinAnsiChars(pageTitle);
+    if (pageTitle && !pageTitleVector) {
+      pageCanvas = rasterizeTitleOnCanvas(page.canvas, pageTitle);
+      options.onDegradation?.({
+        code: 'pdf_text_rasterized_cjk',
+        detail: `页标题「${pageTitle.slice(0, 20)}」含非 WinAnsi 字符，随画布栅格化`,
+      });
+    }
+    const pImgData = pageCanvas.toDataURL('image/png');
+    const pRatio = pageCanvas.width / pageCanvas.height;
+    let pW = mapW;
+    let pH = mapH;
+    if (pRatio > frameRatio) {
+      pH = mapW / pRatio;
+    } else {
+      pW = mapH * pRatio;
+    }
+    const pX = mapX + (mapW - pW) / 2;
+    const pY = mapY + (mapH - pH) / 2;
+    doc.addImage(pImgData, 'PNG', pX, pY, pW, pH);
+    doc.setDrawColor(200);
+    doc.setLineWidth(0.3);
+    doc.rect(pX, pY, pW, pH);
+    if (pageTitle && pageTitleVector) {
+      doc.setFontSize(12);
+      doc.setTextColor(30, 41, 59);
+      doc.text(pageTitle, pageW / 2, 15, { align: 'center' });
+    }
+  }
 
   // PDF metadata
   doc.setProperties({
@@ -971,6 +1072,14 @@ export interface ExportRequest {
   include_compass?: boolean;
   include_scale?: boolean;
   dark_mode?: boolean;
+  /**
+   * W9（ADR-0118）：多帧导出 —— 非空时走 frame-composer（atlas pages /
+   * small-multiple grid）。布局裁决：format pdf → pages（多页）；
+   * png/svg → grid（单画布拼板）。frameLayout 与 format 冲突时以 format
+   * 为准（容器语义）。
+   */
+  frames?: ExportFrame[];
+  frameLayout?: FrameLayout;
 }
 
 export interface ExportDeps {
@@ -978,6 +1087,12 @@ export interface ExportDeps {
   getHudState: () => any;
   /** #527：高 DPI 分支的 idle 等待截止毫秒（测试注入用），默认 EXPORT_IDLE_TIMEOUT_MS。 */
   idleTimeoutMs?: number;
+}
+
+/** committed/live-composed MapSpec 的最小形状（layout 组件 + layers）。 */
+interface ExportCommittedSpec {
+  layout?: { components?: any[] };
+  layers?: any[];
 }
 
 export interface ExportOutcome {
@@ -1044,14 +1159,21 @@ export function discoverLegendData(layers: any[]): LegendData {
   };
 }
 
-async function uploadExport(
+export async function uploadExport(
   blob: Blob,
   filename: string,
   title?: string,
+  degradations?: ExportDegradation[],
 ): Promise<{ url: string; filename: string }> {
   const form = new FormData();
   form.append('file', blob, filename);
   if (title) form.append('title', title);
+  // V5（ADR-0118 D6）：诊断随成品上传 —— 服务端按权威词表校验后持久化
+  // sidecar（POST /api/v1/export 的 render_diagnostics Form 字段），
+  // 导出降级证据获得服务端锚点，不再只存在于一次对话系统消息里。
+  if (degradations && degradations.length > 0) {
+    form.append('render_diagnostics', JSON.stringify(degradations));
+  }
 
   // 走统一 transport：rawBody 走 FormData，transport 不会 set Content-Type
   // (由浏览器自动加 multipart boundary)；typed ApiError 携带 FastAPI detail。
@@ -1080,22 +1202,52 @@ function recordExport(
   });
 }
 
-function buildSvgWrapper(
+/** SVG 位图包装文本（W5：vector-svg-export 的 fallbackRaster 通道复用）。 */
+function buildSvgText(
   canvas: HTMLCanvasElement,
   title: string,
   dataUrl: string,
-): Blob {
+): string {
   const w = canvas.width;
   const h = canvas.height;
   const safeTitle = (title || 'map').replace(/[<>&]/g, '');
-  const svg =
+  return (
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
     `width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
     `<title>${safeTitle}</title>` +
     `<image width="${w}" height="${h}" xlink:href="${dataUrl}"/>` +
-    `</svg>`;
-  return new Blob([svg], { type: 'image/svg+xml' });
+    `</svg>`
+  );
+}
+
+function buildSvgWrapper(
+  canvas: HTMLCanvasElement,
+  title: string,
+  dataUrl: string,
+): Blob {
+  return new Blob([buildSvgText(canvas, title, dataUrl)], { type: 'image/svg+xml' });
+}
+
+/**
+ * Wave 9 / W5：显式降级 → 导出后系统消息片段（有界披露：≤8 条，code+detail）。
+ * 语义 = 「用户应知道导出件里少了/改了什么」，不静默。
+ * review-r2：清单超 8 条时此前静默丢弃余量（如 50 帧 atlas 跳过 20 帧 →
+ * 只列 8 条且无总数）—— 现在注明总数与截断，与「不静默」的自身语义一致。
+ */
+function formatDegradationNote(degradations: ExportDegradation[]): string {
+  if (!degradations.length) return '';
+  const listed = degradations.slice(0, 8);
+  const omitted = degradations.length - listed.length;
+  return (
+    ` 注意：本次导出存在降级（共 ${degradations.length} 条` +
+    (omitted > 0 ? `，此处仅列前 ${listed.length} 条` : '') +
+    '）：' +
+    listed
+      .map((d) => `${d.code}${d.detail ? `（${d.detail}）` : ''}`)
+      .join('、') +
+    '。请如实告知用户。'
+  );
 }
 
 /**
@@ -1120,7 +1272,7 @@ export class MapIdleTimeoutError extends Error {
 }
 
 /** 有界等待 `map.once('idle')`：idle 触发即 resolve，截止前未触发即 reject。 */
-async function waitForMapIdle(map: Map, timeoutMs: number): Promise<void> {
+export async function waitForMapIdle(map: Map, timeoutMs: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new MapIdleTimeoutError(timeoutMs)), timeoutMs);
     map.once('idle', () => {
@@ -1128,6 +1280,225 @@ async function waitForMapIdle(map: Map, timeoutMs: number): Promise<void> {
       resolve();
     });
   });
+}
+
+/**
+ * W7（ADR-0118）：导出侧 spec 事实源 = live 同一合成器（composeLiveMapSpec）
+ * —— committed MapSpec 叠加 pendingPresentation/pendingRemoved。乐观可见性
+ * 翻转/图层移除期间，导出与 live 读同一时刻的可见状态（此前导出只读
+ * committed spec，两侧不同源）。hudState 形状与 map-panel reconcile effect
+ * 的 HudToSpecInput 同一（layers/processLayers/activeFilters/selectionFilters/is3D）。
+ */
+export async function composeExportSpec(
+  committed: unknown,
+  hudState: {
+    layers?: unknown[];
+    processLayers?: Record<string, unknown>;
+    activeFilters?: Record<string, unknown>;
+    selectionFilters?: Record<string, unknown>;
+    is3D?: boolean;
+  },
+  pending: Record<string, { visible?: boolean; opacity?: number }> = {},
+  removed: string[] = [],
+): Promise<unknown> {
+  const { composeLiveMapSpec } = await import('@/lib/mapspec/live-spec');
+  return composeLiveMapSpec(
+    committed as Parameters<typeof composeLiveMapSpec>[0],
+    {
+      layers: (hudState.layers ?? []) as Parameters<typeof composeLiveMapSpec>[1]['layers'],
+      processLayers: (hudState.processLayers ?? {}) as Parameters<typeof composeLiveMapSpec>[1]['processLayers'],
+      activeFilters: (hudState.activeFilters ?? {}) as Parameters<typeof composeLiveMapSpec>[1]['activeFilters'],
+      selectionFilters: (hudState.selectionFilters ?? {}) as Parameters<typeof composeLiveMapSpec>[1]['selectionFilters'],
+      is3D: hudState.is3D ?? false,
+    },
+    pending,
+    removed,
+  );
+}
+
+/**
+ * W8（ADR-0118）：swipe 对比导出组合 —— 副图 canvas 按 position 裁剪画在
+ * 右侧（与 live clip-path inset(0 0 0 position*100%) 同侧同几何），并画
+ * 分界线。主图/副图裁剪分数对齐（A4 裁剪下两图同一视口分数区域）。
+ * @returns false = 副图 canvas 不可用（未渲染/跨域污染）—— 调用方回退
+ *          主图单图导出并发 comparison_second_view_not_exported 诊断。
+ */
+export function composeComparisonOnExportCanvas(
+  exportCanvas: HTMLCanvasElement,
+  comparison: {
+    getSecondCanvas: () => HTMLCanvasElement | null;
+    kind: string;
+    position: number;
+  },
+  crop: { srcX: number; srcY: number; srcW: number; srcH: number },
+  base: { width: number; height: number },
+): boolean {
+  const second = comparison.getSecondCanvas();
+  const ctx = exportCanvas.getContext('2d');
+  if (!second || second.width === 0 || second.height === 0 || !ctx) return false;
+  // 退化位置防御（与 clampSwipePosition 同方向的兜底，导出件至少 2% 可见）
+  const pos = Math.min(0.98, Math.max(0.02, comparison.position || 0));
+  // 主图裁剪分数（A4 居中裁剪）→ 同一分数应用到副图，保持地理对齐
+  const fx = crop.srcX / base.width;
+  const fy = crop.srcY / base.height;
+  const fw = crop.srcW / base.width;
+  const fh = crop.srcH / base.height;
+  ctx.drawImage(
+    second,
+    second.width * (fx + fw * pos),
+    second.height * fy,
+    second.width * fw * (1 - pos),
+    second.height * fh,
+    exportCanvas.width * pos,
+    0,
+    exportCanvas.width * (1 - pos),
+    exportCanvas.height,
+  );
+  // 分界线（白描边 + 深色芯 —— 亮暗主题都可辨）
+  const dividerX = Math.round(exportCanvas.width * pos);
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.fillRect(dividerX - 1, 0, 2, exportCanvas.height);
+  ctx.fillStyle = 'rgba(15,23,42,0.6)';
+  ctx.fillRect(dividerX, 0, 1, exportCanvas.height);
+  ctx.restore();
+  return true;
+}
+
+/**
+ * W9（ADR-0118）：多帧导出（atlas pages / small-multiple grid）。
+ * 逐帧确定性执行（composeFrames）→ 容器裁决：format pdf → pages（多页，
+ * 首页为封面嵌入第 1 帧）；png/svg → grid 单画布拼板（composeLayout 叠加
+ * chrome —— 无地图相机输入，比例尺/罗盘自然缺席，不虚构比例）。
+ * svg 无多帧矢量语义 → 位图包装 + vector_svg_fallback_raster（不静默）。
+ */
+async function runFrameExport(
+  deps: ExportDeps,
+  req: ExportRequest,
+  frames: ExportFrame[],
+  ctx: {
+    title: string;
+    subtitle?: string;
+    author: string;
+    dataSource: string;
+    theme: 'light' | 'dark';
+    paperSize: 'screen' | 'A4' | 'A3';
+    orientation: 'landscape' | 'portrait';
+    dpi: number;
+    showWatermark: boolean;
+    showMetadata: boolean;
+  },
+): Promise<ExportOutcome> {
+  const { map, getHudState } = deps;
+  const { composeFrames, composeGridCanvas } = await import('./frame-composer');
+  // review-r1（死码修复）：容器语义决定单帧跳过码 —— pdf→pages（atlas）发
+  // atlas_page_skipped；png/svg→grid（small-multiple）发
+  // small_multiple_panel_skipped。词表两码各有真实发射路径（ADR-0118 D1）。
+  const fmtEarlyFrame = (req.format ?? 'png').toLowerCase();
+  const composed = await composeFrames(
+    { map, waitForIdle: waitForMapIdle, idleTimeoutMs: deps.idleTimeoutMs },
+    frames,
+    {
+      skippedCode:
+        fmtEarlyFrame === 'pdf'
+          ? 'atlas_page_skipped'
+          : 'small_multiple_panel_skipped',
+    },
+  );
+  if (composed.canvases.length === 0) {
+    // 全帧失败 → 如实失败（skipped 码语义已在诊断中披露）
+    throw new Error('多帧导出失败：所有帧均未完成（地图在预算内未就绪）');
+  }
+  const fmt = fmtEarlyFrame;
+  const degradationNote = formatDegradationNote(composed.degradations);
+  // review-r2：成功消息必须注明跳过帧数（此前「N 帧成功」不提跳过 —— 跳过
+  // 信息只藏在降级清单里，清单超 8 条时还会被截断）。review-r1：两种容器
+  // 跳过码都计入。
+  const skippedFrames = composed.degradations.filter(
+    (d) =>
+      d.code === 'atlas_page_skipped' ||
+      d.code === 'small_multiple_panel_skipped',
+  ).length;
+  const frameStat =
+    skippedFrames > 0
+      ? `成功 ${composed.canvases.length}/${composed.canvases.length + skippedFrames} 帧（${skippedFrames} 帧渲染失败已跳过）`
+      : `${composed.canvases.length} 帧`;
+
+  if (fmt === 'pdf') {
+    const pdfDegradations: ExportDegradation[] = [];
+    const pdfBlob = await MapExporterEngine.exportToPDF(
+      composed.canvases[0],
+      ctx.title,
+      ctx.subtitle,
+      {
+        paperSize: (ctx.paperSize === 'A3' ? 'A3' : 'A4') as 'A4' | 'A3',
+        orientation: ctx.orientation as 'landscape' | 'portrait',
+        author: ctx.author,
+        dataSource: ctx.dataSource,
+        pages: composed.canvases.map((canvas, i) => ({ canvas, title: composed.titles[i] })),
+        onDegradation: (d) => pdfDegradations.push(d),
+      },
+    );
+    const upload = await uploadExport(
+      pdfBlob, 'export-atlas.pdf', ctx.title,
+      [...composed.degradations, ...pdfDegradations],
+    );
+    recordExport(getHudState, ctx.title, upload.filename, 'pdf', pdfBlob.size);
+    getHudState().setPendingSystemMessage(
+      `[系统通知] 图集 PDF \`${ctx.title || '未命名'}\` 已成功生成` +
+        `（${frameStat}，首页为封面·嵌入第 1 帧；地图为位图画布 + 页标题矢量/栅格化混合文本层），` +
+        `文件已落盘并分配URL：${upload.url}。请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${upload.url})。` +
+        degradationNote + formatDegradationNote(pdfDegradations) +
+        `注意展示完链接后直接结束。`,
+    );
+    return { ok: true, format: 'pdf', url: upload.url, filename: upload.filename };
+  }
+
+  // grid 拼板（png / svg 容器）
+  const grid = composeGridCanvas(composed.canvases, composed.titles);
+  MapExporterEngine.composeLayout(grid, ctx.title, ctx.subtitle, {
+    dpi: ctx.dpi,
+    theme: ctx.theme,
+    showScale: false,
+    showCompass: false,
+    showWatermark: ctx.showWatermark,
+    showLegend: false,
+    showMetadata: ctx.showMetadata,
+    author: ctx.author,
+    dataSource: ctx.dataSource,
+  });
+  const dataUrl = grid.toDataURL('image/png');
+
+  if (fmt === 'svg') {
+    const svgBlob = buildSvgWrapper(grid, ctx.title, dataUrl);
+    const upload = await uploadExport(
+      svgBlob, 'export-atlas.svg', ctx.title,
+      [...composed.degradations,
+       { code: 'vector_svg_fallback_raster', detail: '多帧拼板为位图合成' }],
+    );
+    recordExport(getHudState, ctx.title, upload.filename, 'svg', svgBlob.size);
+    getHudState().setPendingSystemMessage(
+      `[系统通知] 多帧拼板 SVG \`${ctx.title || '未命名'}\` 已成功生成` +
+        `（${frameStat}，位图回退：多帧拼板为位图合成，不含矢量要素），` +
+        `文件已落盘并分配URL：${upload.url}。可通过以下链接下载：[下载SVG](${API_BASE}${upload.url})。` +
+        degradationNote +
+        formatDegradationNote([{ code: 'vector_svg_fallback_raster', detail: '多帧拼板为位图合成' }]) +
+        `注意展示完链接后直接结束。`,
+    );
+    return { ok: true, format: 'svg', url: upload.url, filename: upload.filename };
+  }
+
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  const upload = await uploadExport(blob, 'export-atlas.png', ctx.title, composed.degradations);
+  recordExport(getHudState, ctx.title, upload.filename, 'png', blob.size);
+  getHudState().setPendingSystemMessage(
+    `[系统通知] 多帧拼板图 \`${ctx.title || '未命名'}\` 已成功生成` +
+      `（${frameStat} grid 拼板，行优先 + 每帧小标题），` +
+      `文件已落盘并分配URL：${upload.url}。 请利用Markdown的图片语法 \`![地图](${API_BASE}${upload.url})\` 将该成品展示给用户。` +
+      degradationNote + `注意展示完图片后直接结束。`,
+  );
+  return { ok: true, format: 'png', url: upload.url, filename: upload.filename };
 }
 
 export async function runExport(
@@ -1214,11 +1585,39 @@ export async function runExport(
         : targetPixelRatio > 1
           ? targetPixelRatio
           : 1;
-    const { canvas: exportCanvas } = prepareExportCanvas(baseCanvas, {
+    const prepare = prepareExportCanvas(baseCanvas, {
       paperSize: paperSize as any,
       orientation: orientation as any,
       dpi: 96,
     });
+    const exportCanvas = prepare.canvas;
+
+    // W8（ADR-0118）：swipe 对比导出组合 —— 副图视图按 position 裁剪进
+    // 导出件 + 分界线（此前对比态导出静默只截主图）。chrome 绘制在前，
+    // 整饰（标题/图例）不受副图覆盖影响。SVG 真矢量件的数据层来自 MapSpec
+    // 全幅编译（不含副图位图视图）→ 如实披露副图未进导出件，不假装组合。
+    const comparisonDegradations: ExportDegradation[] = [];
+    const comparison = getComparisonExport();
+    if (comparison) {
+      if (fmtEarly === 'svg') {
+        comparisonDegradations.push({
+          code: 'comparison_second_view_not_exported',
+          detail: '矢量 SVG 不含对比副图视图（数据层来自 MapSpec）',
+        });
+      } else {
+        const composed = composeComparisonOnExportCanvas(
+          exportCanvas,
+          comparison,
+          { srcX: prepare.srcX, srcY: prepare.srcY, srcW: prepare.srcW, srcH: prepare.srcH },
+          { width: baseCanvas.width, height: baseCanvas.height },
+        );
+        comparisonDegradations.push(
+          composed
+            ? { code: 'comparison_export_composed', detail: `${Math.round(comparison.position * 100)}%` }
+            : { code: 'comparison_second_view_not_exported', detail: '副图画布未渲染或不可读，仅导出主图视图' },
+        );
+      }
+    }
 
     const storeState = getHudState();
     const { legendSpec, thematicLayer, heatmapLegend } = discoverLegendData(
@@ -1235,10 +1634,21 @@ export async function runExport(
     let specSubtitle = '';
     let specShowCompass: boolean | undefined;
     let specShowScale: boolean | undefined;
-    let committedSpec: { layout?: { components?: any[] }; layers?: any[] } | null = null;
+    let committedSpec: ExportCommittedSpec | null = null;
     try {
-      const { getCommittedMapSpec } = await import('@/lib/mapspec/session-cursor');
-      committedSpec = getCommittedMapSpec() ?? null;
+      // W7：导出 spec 经 live 同一合成器（composeLiveMapSpec）—— 叠加
+      // pendingPresentation/pendingRemoved，与 live 同一时刻的可见状态。
+      const {
+        getCommittedMapSpec,
+        getPendingPresentation,
+        getPendingRemoved,
+      } = await import('@/lib/mapspec/session-cursor');
+      committedSpec = (await composeExportSpec(
+        getCommittedMapSpec() ?? null,
+        storeState,
+        getPendingPresentation(),
+        getPendingRemoved(),
+      )) as ExportCommittedSpec;
       const specComps = committedSpec?.layout?.components ?? [];
       if (specComps.length) {
         const isEnabled = (t: string) =>
@@ -1260,6 +1670,34 @@ export async function runExport(
       }
     } catch {
       /* spec 面缺席 → 走请求/内置默认 */
+    }
+
+    // W6（ADR-0118）：PDF 单一标题事实源 —— 标题/副标题全部 WinAnsi 可编码
+    // → 画布不画（skipTitle），doc.text 矢量书写一次；含非 WinAnsi（CJK 等）
+    // → 反向：画布栅格化承载，PDF 文本层跳过 + pdf_text_rasterized_cjk 诊断
+    //（jsPDF 标准字体写不了 CJK，此前双标题 + 中文乱码并存）。
+    const effTitle = title || specTitle || '';
+    const effSubtitle = subtitle || specSubtitle || '';
+    const pdfVectorText =
+      !hasNonWinAnsiChars(effTitle) && !hasNonWinAnsiChars(effSubtitle);
+    const pdfSkipCanvasTitle = fmtEarly === 'pdf' && pdfVectorText;
+
+    // W9（ADR-0118）：多帧导出分支 —— frames 非空时走 frame-composer
+    // （逐帧 filter/viewport 变换 + 有界 idle + 抓帧 + 恢复）；pixelRatio
+    // 增益由上方统一设置、finally 统一恢复，帧抓取同享 dpi 增益。
+    if (Array.isArray(req.frames) && req.frames.length > 0) {
+      return await runFrameExport(deps, req, req.frames, {
+        title: effTitle,
+        subtitle: effSubtitle,
+        author,
+        dataSource,
+        theme,
+        paperSize,
+        orientation,
+        dpi,
+        showWatermark,
+        showMetadata,
+      });
     }
 
     // ADR-0081 Export Parity：spec 组件在场时构建 chrome 模型 —— placement
@@ -1363,12 +1801,17 @@ export async function runExport(
 
     // #614：经 MapExporterEngine 调 composeLayout（与 exportToPDF 同款路由），
     // 便于测试 spyOn 断言 theme 选项（模块内直接绑定无法被 mock 拦截）。
-    MapExporterEngine.composeLayout(exportCanvas, title || specTitle || '', subtitle || specSubtitle || '', {
+    // review-r1：提取为局部变量 —— 3D 比例尺 caveat 与 composeLayout 同一口径。
+    const showScaleEffective =
+      req.showScale ?? req.include_scale ?? specShowScale ?? true;
+    MapExporterEngine.composeLayout(exportCanvas, effTitle, effSubtitle, {
       dpi,
       theme,
       // #802: 按真实画布设备像素比换算（dpi 参数仍驱动布局字号/边距缩放）
       pixelsPerLogicalPx: canvasDpr,
-      showScale: req.showScale ?? req.include_scale ?? specShowScale ?? true,
+      // W6：PDF 矢量文本层时画布不画标题（单一事实源 —— PDF 头部 doc.text）
+      skipTitle: pdfSkipCanvasTitle,
+      showScale: showScaleEffective,
       showCompass: req.showCompass ?? req.include_compass ?? specShowCompass ?? true,
       showWatermark,
       showLegend,
@@ -1386,62 +1829,120 @@ export async function runExport(
     });
 
     const dataUrl = exportCanvas.toDataURL('image/png');
-    const fmt = (format ?? 'png').toLowerCase();
+    const fmt = fmtEarly;
 
     // Wave 9：显式降级汇入导出后系统消息（此前 chart/table 面板拉取失败
-    // 静默缺席 —— 用户不知道导出件里少了东西）。
-    const degradationNote = chromeModel?.degradations?.length
-      ? ' 注意：以下组件未能进入导出件：' +
-        chromeModel.degradations
-          .map((d) => `${d.componentId ?? '组件'}（${d.detail ?? d.code}）`)
-          .slice(0, 5)
-          .join('、') +
-        '。请如实告知用户。'
-      : '';
+    // 静默缺席 —— 用户不知道导出件里少了东西）。W8：对比组合/回退诊断并入。
+    // review-r1（死码激活）：3D/倾斜视角 + 比例尺在场 → terrain_3d_scale_caveat
+    //（比例尺换算 metersPerPixelAt 是平面口径，此前该码词表内零发射器）。
+    const chromeDegradations = [
+      ...(chromeModel?.degradations ?? []),
+      ...comparisonDegradations,
+    ];
+    if (storeState.is3D && showScaleEffective) {
+      chromeDegradations.push({ code: 'terrain_3d_scale_caveat' });
+    }
 
     if (fmt === 'svg') {
-      const svgBlob = buildSvgWrapper(exportCanvas, title, dataUrl);
-      const upload = await uploadExport(svgBlob, 'export.svg', title);
+      // V5（ADR-0118 W5）：真矢量优先 —— 孪生编译器产出数据层矢量要素 +
+      // svg-marginalia 整饰（图框/指北针/比例尺/图例）；编译/合成异常回退
+      // 既有位图包装（<image> 嵌 PNG）并显式发 vector_svg_fallback_raster。
+      let svgText: string;
+      let svgDegradations: ExportDegradation[];
+      try {
+        const { buildVectorSvgExport } = await import('./vector-svg-export');
+        const vector = buildVectorSvgExport({
+          spec: committedSpec,
+          viewport: { width: exportCanvas.width, height: exportCanvas.height },
+          paperSize,
+          orientation,
+          dpi,
+          title: title || specTitle || '',
+          subtitle: subtitle || specSubtitle || '',
+          chromeModel,
+          metersPerPixel: (() => {
+            try {
+              return metersPerPixelAt(map.getZoom(), map.getCenter().lat);
+            } catch {
+              return undefined;
+            }
+          })(),
+          fallbackRaster: () => buildSvgText(exportCanvas, title, dataUrl),
+        });
+        svgText = vector.svg;
+        svgDegradations = vector.degradations;
+      } catch (e) {
+        // fallbackRaster 未注入/自身抛错的双保险位图回退（不静默）。
+        devOnly.warn('[MapExporter] vector svg build failed — raster fallback', e);
+        const wrapper = buildSvgWrapper(exportCanvas, title, dataUrl);
+        svgText = await wrapper.text();
+        svgDegradations = [
+          { code: 'vector_svg_fallback_raster', detail: e instanceof Error ? e.message : String(e) },
+        ];
+      }
+      const rasterFallback = svgDegradations.some((d) => d.code === 'vector_svg_fallback_raster');
+      const svgBlob = new Blob([svgText], { type: 'image/svg+xml' });
+      const upload = await uploadExport(
+        svgBlob, 'export.svg', title, [...chromeDegradations, ...svgDegradations],
+      );
       recordExport(getHudState, title, upload.filename, 'svg', svgBlob.size);
       getHudState().setPendingSystemMessage(
-        `[系统通知] 专题地图 SVG \`${title || '未命名'}\` 已成功生成 (含嵌入位图)，` +
+        `[系统通知] 专题地图 SVG \`${title || '未命名'}\` 已成功生成` +
+          `（${rasterFallback ? '位图回退：数据层矢量编译失败，含嵌入位图' : '真矢量：数据层矢量要素，不含栅格底图'}），` +
           `文件已落盘并分配URL：${upload.url}。可通过以下链接下载：[下载SVG](${API_BASE}${upload.url})。` +
-          degradationNote + `注意展示完链接后直接结束。`,
+          formatDegradationNote([...chromeDegradations, ...svgDegradations]) +
+          `注意展示完链接后直接结束。`,
       );
       return { ok: true, format: 'svg', url: upload.url, filename: upload.filename };
     } else if (fmt === 'pdf') {
+      // W6（ADR-0118）：文本层状态判定 —— CJK 等非 WinAnsi 字符已在画布
+      // 栅格化承载（composeLayout 正常画），PDF 文本层跳过 title/subtitle；
+      // ASCII 文本走 doc.text 真矢量。地图本体恒为位图画布嵌入（如实披露）。
+      const pdfDegradations: ExportDegradation[] = pdfVectorText
+        ? []
+        : [
+            {
+              code: 'pdf_text_rasterized_cjk',
+              detail: '标题/副标题含非 WinAnsi 字符，已随画布栅格化（PDF 文本层跳过，避免乱码）',
+            },
+          ];
       // ADR-0081：PDF 文本层 subtitle 与 canvas 同一事实源链（请求参数 >
       // spec 组件 > 空串）—— 此前 PDF 只读请求参数，spec 副标题在 PDF
       // 文本层静默丢失。
       const pdfBlob = await MapExporterEngine.exportToPDF(
         exportCanvas,
-        title || specTitle || '',
-        subtitle || specSubtitle || '',
+        effTitle,
+        effSubtitle,
         {
           paperSize: (paperSize === 'A3' ? 'A3' : 'A4') as 'A4' | 'A3',
           orientation: orientation as 'landscape' | 'portrait',
           author,
           dataSource,
+          textLayer: pdfVectorText ? 'vector' : 'skip',
         },
       );
-      const upload = await uploadExport(pdfBlob, 'export.pdf', title);
+      const upload = await uploadExport(
+        pdfBlob, 'export.pdf', title, [...chromeDegradations, ...pdfDegradations],
+      );
       recordExport(getHudState, title, upload.filename, 'pdf', pdfBlob.size);
       getHudState().setPendingSystemMessage(
-        `[系统通知] 专题底图 PDF \`${title || '未命名'}\` 已成功生成 (jsPDF 向量版)，` +
+        `[系统通知] 专题底图 PDF \`${title || '未命名'}\` 已成功生成` +
+          `（地图为位图画布 + 文本层${pdfVectorText ? '矢量（标题/副标题为 PDF 矢量文本）' : '栅格化（标题/副标题随画布位图，避免 CJK 乱码）'}），` +
           `文件已落盘并分配URL：${upload.url}。` +
           `请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${upload.url})。` +
-          degradationNote + `注意展示完链接后直接结束。`,
+          formatDegradationNote([...chromeDegradations, ...pdfDegradations]) +
+          `注意展示完链接后直接结束。`,
       );
       return { ok: true, format: 'pdf', url: upload.url, filename: upload.filename };
     } else {
       const res = await fetch(dataUrl);
       const blob = await res.blob();
-      const upload = await uploadExport(blob, 'export.png', title);
+      const upload = await uploadExport(blob, 'export.png', title, chromeDegradations);
       recordExport(getHudState, title, upload.filename, 'png', blob.size);
       getHudState().setPendingSystemMessage(
         `[系统通知] 专题地图 \`${title || '未命名'}\` 已成功排版合成，` +
           `文件已落盘并分配URL：${upload.url}。 请利用Markdown的图片语法 \`![地图](${API_BASE}${upload.url})\` 将该成品展示给用户，并祝其研究顺利！` +
-          degradationNote + `注意展示完图片后直接结束。`,
+          formatDegradationNote(chromeDegradations) + `注意展示完图片后直接结束。`,
       );
       return { ok: true, format: 'png', url: upload.url, filename: upload.filename };
     }

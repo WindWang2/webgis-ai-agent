@@ -10,10 +10,15 @@ project_artifact_read, project_artifact_write,
 external_process, database, model_provider, destructive_action
 ```
 
-The vocabulary is closed in V1. Adding a word requires raising the extension
-API major version. Unknown words are rejected (fail closed), never ignored.
-`filesystem_*` and `external_process` are high-risk words with an honest
-caveat — see [the boundary statement](#the-trusted-code-boundary-honest-statement).
+The vocabulary is closed in V1 **and stays frozen in V2**. Adding a word
+requires raising the extension API major version. Unknown words are
+rejected (fail closed), never ignored. V2's new capabilities deliberately
+did *not* grow the vocabulary: worker secrets are provisioning-gated (see
+below), not a `secret` permission word — so no major version bump was
+needed. `filesystem_*` and `external_process` are high-risk words with an
+honest caveat — see [the boundary statement](#the-trusted-code-boundary-honest-statement).
+Note: worker-mode manifests cannot declare `external_process` at all
+(isolated workers have no subprocess surface; parse-time rejection).
 
 ## Declaration ≠ grant
 
@@ -99,6 +104,71 @@ declare `trusted_builtin`, `trusted_extension`, or `local_untrusted`
 imported** (pinned by `test_quarantined_extension_never_imports`). The same
 diagnostic code also carries a warning when a `local_untrusted` extension
 declares high-risk permissions.
+
+### Signature-based trust elevation (V2)
+
+Discovery verifies pack signatures against the operator's publisher table
+`EXTENSION_TRUSTED_PUBLISHERS` (`"key_id:keyfile,..."`) and applies the
+verdict deterministically:
+
+- `tampered` or `invalid` ⇒ **QUARANTINED even if the id is allowlisted**.
+  A broken or forged signature is a supply-chain failure, not a trust
+  footnote; the pack must be re-signed and re-discovered.
+- `signed_verified` with `EXTENSIONS_TRUST_SIGNED=true` ⇒ a
+  `local_untrusted` extension elevates to `trusted_extension`
+  (`signature_verified`, info). Elevation is never a downgrade of an
+  existing level.
+- `signed_untrusted` ⇒ warning (`publisher_untrusted`) under the
+  trust-signed policy; without the policy the operator's allow/builtin
+  config decides exactly as in V1.
+- `missing` ⇒ default policy is silent (V1 behavior preserved);
+  `EXTENSIONS_ALLOW_UNSIGNED_DEV=true` turns it into a loud warning
+  without changing any permission semantics.
+
+Honest reading: HMAC signatures authenticate *content* ("the operator
+approved exactly these bytes"), not publisher identity — publisher ≈
+operator. See [security-boundary.md](security-boundary.md).
+
+## Secrets: provisioning as authorization (V2)
+
+Extension secrets are not a permission — they are an **operator-provisioned
+resource**:
+
+```json
+// EXTENSION_SECRETS_JSON = {extension_id: {ref: value}}
+{"acme.pack": {"demo_key": "sk-..."}}
+```
+
+- `activate(ctx)` injects the per-id map; `ctx.get_secret(ref)` (in-process)
+  or `ctx.broker.get_secret(ref)` (worker, via the broker) returns the
+  value only for refs the operator provisioned for *this* extension id.
+  An unprovisioned ref is a typed denial — there is no wildcard and no
+  fallback.
+- The permission vocabulary stays frozen at 9 words precisely because
+  provisioning *is* the authorization decision.
+- Values never appear in audit records, status reports, logs, or tool
+  results (pinned by `test_broker.py::test_audit_never_contains_secret_value`
+  and `test_model_provider.py::test_secret_provisioned_and_never_echoed`).
+- This is config-based provisioning, not a vault: no rotation, leases, or
+  audit sink. Documented as a V2 limitation in
+  [limitations.md](limitations.md).
+
+## The capability broker (worker extensions only)
+
+Extensions running with `execution.mode=worker` have no direct host
+capability access: network requests, artifact reads/writes, and secret
+lookups all cross an RPC into the host-side **default-deny capability
+broker**, which re-checks grants plus per-op gates (network allowlist +
+authoritative SSRF gate; artifact-root confinement; provisioning) and
+audits every attempt into a bounded ring.
+
+The full op → permission → gates → limits matrix lives in
+[security-boundary.md](security-boundary.md). Two honest notes:
+
+- **In-process extensions do not pass through the broker** — their
+  boundary is the trusted-code statement below, unchanged from V1.
+- The broker gates the SDK/broker channels of a worker; it does not
+  firewall the process (see the threat model for what that means).
 
 ### Activation gate for `local_untrusted`
 

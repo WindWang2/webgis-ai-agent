@@ -323,6 +323,86 @@ def raster_ref_exists(session_id: str, ref: str) -> bool:
         return False
 
 
+# ── Fabric GeoParquet 磁盘工件 V6（ADR-0118 Wave 3）───────────────────────
+# ref:fabric-parquet/<id> → DATA_DIR/<sid>/fabric-geoparquet/<id>.parquet 的
+# 一等生存期：与 raster disk-cursor 完全同形（注册 + O(1) stat 探测 + GC
+# unlink）。此前该 ref 只写不读（无 resolver、无台账、GC 盲区）—— V6 起是
+# ledger 一等公民。路径派生单点：``fabric_parquet_path`` 是唯一路径真相，
+# 写入侧（materialization_service）必须复用同一派生，绝不另起目录约定。
+
+_FABRIC_PARQUET_REF_PREFIX = "ref:fabric-parquet/"
+
+
+def is_fabric_parquet_ref(ref: str) -> bool:
+    """GeoParquet 磁盘工件 ref（路径不透明 cursor；文件路径是实现细节）。"""
+    return isinstance(ref, str) and ref.startswith(_FABRIC_PARQUET_REF_PREFIX)
+
+
+def fabric_parquet_path(session_id: str, ref: str) -> Optional["Path"]:
+    """ref:fabric-parquet/<id> → 会话 fabric-geoparquet 目录下的路径。
+
+    与 raster_png_path 同款：session/ref id 双 charset 白名单（`..` 与分隔符
+    在边界即拒绝），DATA_DIR 调用时实时取值（monkeypatch/配置变更即刻生效）。
+    """
+    artifact_id = ref[len(_FABRIC_PARQUET_REF_PREFIX):]
+    if not artifact_id or not _RASTER_ID_RE.match(artifact_id):
+        return None
+    if not _RASTER_ID_RE.match(session_id or ""):
+        return None
+    from app.core.config import settings
+
+    return Path(settings.DATA_DIR) / session_id / "fabric-geoparquet" / (
+        f"{artifact_id}.parquet"
+    )
+
+
+def fabric_parquet_ref_exists(session_id: str, ref: str) -> bool:
+    """GeoParquet 工件活性（O(1) stat；路径非法 → False）。"""
+    path = fabric_parquet_path(session_id, ref)
+    if path is None:
+        return False
+    try:
+        return path.is_file()
+    except OSError:  # noqa: BLE001 — stat 失败按不存活（诚实保守）
+        return False
+
+
+# ── Lakehouse Cube 磁盘工件 V6（ADR-0118 Wave 7）─────────────────────────
+# ref:cube/<id> → DATA_DIR/<sid>/lakehouse-cubes/<id>.zarr（**目录**形态
+# 的 disk-cursor —— zarr store 是目录树）。与 raster/fabric-parquet 完全
+# 同形（注册 + O(1) 探测 + GC 清除），仅"文件 → 目录"语义差。
+
+_CUBE_REF_PREFIX = "ref:cube/"
+
+
+def is_cube_ref(ref: str) -> bool:
+    """lakehouse cube ref（路径不透明 cursor；目录路径是实现细节）。"""
+    return isinstance(ref, str) and ref.startswith(_CUBE_REF_PREFIX)
+
+
+def cube_store_path(session_id: str, ref: str) -> Optional["Path"]:
+    """ref:cube/<id> → 会话 lakehouse-cubes 目录下的 zarr store 路径。"""
+    cube_id = ref[len(_CUBE_REF_PREFIX):]
+    if not cube_id or not _RASTER_ID_RE.match(cube_id):
+        return None
+    if not _RASTER_ID_RE.match(session_id or ""):
+        return None
+    from app.core.config import settings
+
+    return Path(settings.DATA_DIR) / session_id / "lakehouse-cubes" / cube_id
+
+
+def cube_ref_exists(session_id: str, ref: str) -> bool:
+    """cube 活性（O(1) is_dir；路径非法 → False）。"""
+    path = cube_store_path(session_id, ref)
+    if path is None:
+        return False
+    try:
+        return path.is_dir()
+    except OSError:  # noqa: BLE001 — stat 失败按不存活（诚实保守）
+        return False
+
+
 async def probe_ref(
     session_id: str,
     ref: str,
@@ -341,6 +421,16 @@ async def probe_ref(
 
         exists = await _asyncio.to_thread(raster_ref_exists, session_id, ref)
         return {"kind": "raster_png", "exists": exists} if exists else None
+    if is_fabric_parquet_ref(ref):
+        import asyncio as _asyncio
+
+        exists = await _asyncio.to_thread(fabric_parquet_ref_exists, session_id, ref)
+        return {"kind": "fabric_geoparquet", "exists": exists} if exists else None
+    if is_cube_ref(ref):
+        import asyncio as _asyncio
+
+        exists = await _asyncio.to_thread(cube_ref_exists, session_id, ref)
+        return {"kind": "lakehouse_cube", "exists": exists} if exists else None
     if session_data_manager is None:
         from app.services.session_data import session_data_manager
 
@@ -921,6 +1011,46 @@ async def collect_orphan_refs(
                                 return False
 
                         if await _asyncio.to_thread(_unlink):
+                            deleted.append(aid)
+                            records[aid].status = A_EXPIRED
+                            records[aid].updated_at = time.time()
+                    elif is_fabric_parquet_ref(aid):
+                        # V6（ADR-0118）：GeoParquet 磁盘工件孤儿 —— unlink
+                        # parquet（与 raster PNG 同款活引用复检纪律；注册已使其
+                        # 对 sweep 可见，不再是 GC 盲区）。
+                        import asyncio as _asyncio
+
+                        def _unlink_parquet(ref: str = aid) -> bool:
+                            path = fabric_parquet_path(session_id, ref)
+                            if path is None or not path.is_file():
+                                return False
+                            try:
+                                path.unlink()
+                                return True
+                            except OSError:
+                                return False
+
+                        if await _asyncio.to_thread(_unlink_parquet):
+                            deleted.append(aid)
+                            records[aid].status = A_EXPIRED
+                            records[aid].updated_at = time.time()
+                    elif is_cube_ref(aid):
+                        # V6：lakehouse cube 孤儿 —— rmtree zarr store（目录
+                        # 形态 disk-cursor；同一活引用复检纪律）。
+                        import asyncio as _asyncio
+                        import shutil as _shutil
+
+                        def _rmtree_cube(ref: str = aid) -> bool:
+                            path = cube_store_path(session_id, ref)
+                            if path is None or not path.is_dir():
+                                return False
+                            try:
+                                _shutil.rmtree(path)
+                                return True
+                            except OSError:
+                                return False
+
+                        if await _asyncio.to_thread(_rmtree_cube):
                             deleted.append(aid)
                             records[aid].status = A_EXPIRED
                             records[aid].updated_at = time.time()

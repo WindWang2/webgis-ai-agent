@@ -35,6 +35,11 @@ MANIFEST_MAX_BYTES = 256 * 1024
 FINGERPRINT_MAX_FILES = 512
 FINGERPRINT_MAX_TOTAL_BYTES = 8 * 1024 * 1024
 DEFAULT_MAX_EXTENSIONS = 64
+# 签名文件（ADR-0105 / Wave 6，常量正体在 signing.py 语境中使用）。签名
+# 覆盖的是包内容，而内容指纹不得覆盖签名本身（循环依赖 → 指纹永不收敛），
+# 故指纹计算必须排除它。常量定义在本模块（discovery 是更底层），signing.py
+# 从此处导入，避免 signing → discovery → signing 循环导入。
+SIGNATURE_FILENAME = "signature.json"
 
 
 @dataclass(frozen=True)
@@ -68,7 +73,9 @@ def compute_fingerprint(ext_dir: Path) -> tuple[Optional[str], Optional[Extensio
     """目录内容确定性指纹；超界返回 (None, diagnostic)。
 
     ``__pycache__``/``*.pyc`` 是解释器导入的副产物而非扩展内容，必须
-    排除——否则首次激活生成字节码后指纹必然漂移。
+    排除——否则首次激活生成字节码后指纹必然漂移。``signature.json``
+    （Wave 6 内容签名）同理排除：签名覆盖的是包内容，内容指纹若覆盖
+    签名自身则循环依赖、永不收敛。
     """
     ext_dir = Path(ext_dir)
     files: list[Path] = []
@@ -77,7 +84,7 @@ def compute_fingerprint(ext_dir: Path) -> tuple[Optional[str], Optional[Extensio
         dirs[:] = [d for d in dirs if d != "__pycache__"]
         # 确定性：os.walk 顺序依赖文件系统，这里收集后统一排序。
         for n in names:
-            if n.endswith(".pyc"):
+            if n.endswith(".pyc") or n == SIGNATURE_FILENAME:
                 continue
             p = Path(root) / n
             if not p.is_file():

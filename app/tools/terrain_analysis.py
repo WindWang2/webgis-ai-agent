@@ -145,22 +145,31 @@ def _read_terrain_window(
     """validate → 有界读取（RasterResourceGuard 护栏）→ (数组, transform, crs, nodata, bounds)。"""
     path = validate_data_path(raster_path)
     import rasterio
+    from rasterio.errors import RasterioIOError
 
-    with rasterio_env():
-        with rasterio.open(path) as src:
-            RasterResourceGuard.check_grid(src.width, src.height, num_bands=src.count)
-            _check_full_read_budget(src)
-            arr = src.read(1).astype("float64")
-            transform = tuple(float(v) for v in src.transform)[:6]
-            crs = str(src.crs) if src.crs is not None else ""
-            nodata = (
-                float(nodata_override) if nodata_override is not None
-                else (float(src.nodata) if src.nodata is not None else None)
-            )
-            bounds = (
-                float(src.bounds.left), float(src.bounds.bottom),
-                float(src.bounds.right), float(src.bounds.top),
-            )
+    # science-v4 W2：裸 RasterioIOError 经 dispatch 变 TOOL_ERROR 丢修正
+    # 提示 —— 与 lib reader（geo_raster/reader.py RasterReaderError）同款
+    # ValueError 包装，保住科学错误通道。
+    from app.lib.geo_raster.reader import RasterReaderError
+
+    try:
+        with rasterio_env():
+            with rasterio.open(path) as src:
+                RasterResourceGuard.check_grid(src.width, src.height, num_bands=src.count)
+                _check_full_read_budget(src)
+                arr = src.read(1).astype("float64")
+                transform = tuple(float(v) for v in src.transform)[:6]
+                crs = str(src.crs) if src.crs is not None else ""
+                nodata = (
+                    float(nodata_override) if nodata_override is not None
+                    else (float(src.nodata) if src.nodata is not None else None)
+                )
+                bounds = (
+                    float(src.bounds.left), float(src.bounds.bottom),
+                    float(src.bounds.right), float(src.bounds.top),
+                )
+    except RasterioIOError as exc:
+        raise RasterReaderError(f"cannot open raster {path!r}: {exc}") from exc
     return arr, transform, crs, nodata, bounds
 
 
@@ -256,9 +265,16 @@ def _persist_filled_dem(
     }
     if crs:
         profile["crs"] = crs
-    with rasterio_env():
-        with rasterio.open(target, "w", **profile) as dst:
-            dst.write(filled, 1)
+    from rasterio.errors import RasterioIOError
+
+    from app.lib.geo_raster.reader import RasterReaderError
+
+    try:
+        with rasterio_env():
+            with rasterio.open(target, "w", **profile) as dst:
+                dst.write(filled, 1)
+    except RasterioIOError as exc:
+        raise RasterReaderError(f"cannot write filled raster {target!r}: {exc}") from exc
     # 绝对路径：validate_data_path 对 data_dir 内绝对路径放行，
     # 下游工具可直接把该返回值作为 raster_path 消费。
     return target
@@ -1552,6 +1568,8 @@ def register_terrain_tools(registry: ToolRegistry):
         return az_list
 
     @tool(registry, name="horizon_angle_analysis",
+    side_effect="cacheable_read",
+    tags=('地平线角', '天际线', 'dem', '地形'),
            description=(
                "DEM 地平线角：逐方位（罗盘度）射线行走取最大正仰角（度）与跨方位 max，"
                "天空可视因子（Steyn 1980）的输入量，也可单独做天际线/遮挡诊断。"
@@ -1616,6 +1634,8 @@ def register_terrain_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="sky_view_factor_analysis",
+    side_effect="cacheable_read",
+    tags=('天空可视因子', 'svf', 'dem', '城市气候'),
            description=(
                "DEM 天空可视因子 SVF（Steyn 1980）：SVF = (1/N)Σcos²ψ，ψ 为共用射线"
                "行走得到的地平线角；平地 = 1、深洼/峡谷 → 0。"
@@ -1670,3 +1690,197 @@ def register_terrain_tools(registry: ToolRegistry):
             transformations=transformations or None,
             warnings=_non_metric_warning(crs) or None,
         )
+
+    # Science V4（W8/W9）：水文与地形分析 V4 合并入口
+    _register_hydrology_v4_tool(registry, _load_dem=_load_dem)
+
+
+def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
+    """Science V4（W8/W9）：水文与地形分析 V4 合并入口（单工具分派）。"""
+    import numpy as np
+
+    from app.lib.gis.scientific_evidence import build_evidence
+
+    @tool(registry, name="hydrology_v4_analysis",
+           description=(
+               "水文/地形分析 V4：depression breaching（切沟排洼）、HAND"
+               "（最近排水高程）、Shreve 量级、Pfafstetter 编码、hypsometry"
+               "（高程面积曲线/积分）、solar radiation（晴空直散辐射）。"
+               "\n何时用：需要比填洼更保真的排洼（breach）、洪水易损性图层"
+               "（HAND）、河网层级（shreve/pfafstetter）、库容曲线"
+               "（hypsometry）、光伏/日照潜力（solar）。"
+               "\n何时不用：基础填洼 — 用 depression_fill；D8 流向 — 用 flow_analysis。"
+           ),
+           tier=2, domains=["raster"], cost="heavy",
+           param_descriptions={
+               "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
+               "analysis": "breach|hand|shreve|pfafstetter|hypsometry|solar_radiation",
+               "stream_threshold": "河网阈值（上游像元数；hand/shreve/pfafstetter 用）",
+               "outlet_row": "pfafstetter 出口行（数组坐标）",
+               "outlet_col": "pfafstetter 出口列",
+               "latitude_deg": "solar 纬度（度）",
+               "day_of_year": "solar 年积日（1-366）",
+               "nodata": "可选 nodata 覆盖值",
+           },
+           network=False,
+           deterministic=True,
+           latency_class="slow",
+           memory_class="heavy",
+           scale_class="large",
+           tags=("水文", "breaching", "HAND", "shreve", "pfafstetter",
+                 "hypsometry", "solar"),
+           output_semantic_type="stats",
+           result_size_policy="ref_offload",
+           crs_semantics="crs_agnostic",
+           side_effect="deterministic_compute",
+           failure_modes=("invalid_args", "missing_data", "memory"))
+    def hydrology_v4_analysis(
+        raster_path: str,
+        analysis: str,
+        stream_threshold: float = 1000.0,
+        outlet_row: int = -1,
+        outlet_col: int = -1,
+        latitude_deg: float = 30.0,
+        day_of_year: int = 172,
+        transmissivity: float = 0.75,
+        persist_output: bool = False,
+        nodata: float | None = None,
+    ) -> dict:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.gis.scientific_errors import DegenerateData
+
+        params = apply_contract("hydrology_v4_analysis", {
+            "raster_path": raster_path,
+            "analysis": analysis,
+            "stream_threshold": float(stream_threshold),
+            "outlet_row": int(outlet_row),
+            "outlet_col": int(outlet_col),
+            "latitude_deg": float(latitude_deg),
+            "day_of_year": int(day_of_year),
+            "transmissivity": float(transmissivity),
+        })
+        params.setdefault("nodata", None)
+        analysis = params["analysis"]
+        stream_threshold = float(params["stream_threshold"])
+        latitude_deg = float(params["latitude_deg"])
+        day_of_year = int(params["day_of_year"])
+        transmissivity = float(params["transmissivity"])
+
+        algo_map = {
+            "breach": "terrain.breach",
+            "hand": "terrain.hand",
+            "shreve": "terrain.shreve",
+            "pfafstetter": "terrain.pfafstetter",
+            "hypsometry": "terrain.hypsometry",
+            "solar_radiation": "terrain.solar_radiation",
+        }
+        if analysis not in algo_map:
+            raise ValueError(
+                f"analysis 必须是 {'|'.join(algo_map)} 之一，got {analysis!r}")
+        arr, transform, crs, eff_nodata, bounds, cy, cx, transformations = _load_dem(
+            raster_path, nodata)
+
+        if analysis == "breach":
+            breached, meta = terrain_lib.breach_depressions(
+                arr, cy, cell_size_x=cx, nodata=eff_nodata)
+            result = {
+                "summary": (
+                    f"Breaching 完成：{meta['n_depressions']} 个洼地，切沟像元 "
+                    f"{meta['breached_cells']}，开挖量 {meta['carved_volume']}；"
+                    f"回退填洼像元 {meta['fallback_filled_cells']}。"),
+                "breach_metadata": meta,
+            }
+            # review R2-M4：切沟 DEM 是本分析的产出物 —— persist 供下游消费
+            if persist_output:
+                result["output_raster"] = _persist_filled_dem(
+                    raster_path, breached, transform, crs, eff_nodata)
+        elif analysis == "hand":
+            hand_arr, meta = terrain_lib.hand(
+                arr, cy, cell_size_x=cx,
+                stream_threshold=float(stream_threshold), nodata=eff_nodata)
+            result = {
+                "summary": (
+                    f"HAND 完成：{meta['stream_cells']} 河网像元（阈值 "
+                    f"{stream_threshold}）；HAND 范围 {meta['hand_range']}；"
+                    f"未解析（无河网下排）像元 {meta['unresolvable_cells']}。"),
+                "hand_stats": meta,
+                "hand_preview": np.nanpercentile(hand_arr, [5, 25, 50, 75, 95]).round(4).tolist(),
+            }
+            if persist_output:
+                result["output_raster"] = _persist_filled_dem(
+                    raster_path, hand_arr, transform, crs, eff_nodata)
+        elif analysis == "shreve":
+            filled, _ = terrain_lib.fill_depressions(arr, cy, cell_size_x=cx, nodata=eff_nodata)
+            d8, _ = terrain_lib.d8_flow(filled, cy, cell_size_x=cx, nodata=eff_nodata)
+            acc, _ = terrain_lib.flow_accumulation(d8)
+            mag, meta = terrain_lib.shreve_magnitude(d8, acc, float(stream_threshold))
+            result = {
+                "summary": (
+                    f"Shreve 量级完成：{meta['stream_cells']} 河网像元，"
+                    f"最大量级 {meta['max_magnitude']}。"),
+                "shreve_metadata": meta,
+            }
+        elif analysis == "pfafstetter":
+            if outlet_row < 0 or outlet_col < 0:
+                raise DegenerateData(
+                    "analysis=pfafstetter 需要 outlet_row/outlet_col（出口像元）",
+                    correction_hint="用 flow_analysis 的最大汇流像元作为出口")
+            filled, _ = terrain_lib.fill_depressions(arr, cy, cell_size_x=cx, nodata=eff_nodata)
+            d8, _ = terrain_lib.d8_flow(filled, cy, cell_size_x=cx, nodata=eff_nodata)
+            acc, _ = terrain_lib.flow_accumulation(d8)
+            codes, meta = terrain_lib.pfafstetter_codes(
+                d8, acc, float(stream_threshold), (int(outlet_row), int(outlet_col)))
+            result = {
+                "summary": (
+                    f"Pfafstetter 编码完成：干流 {meta['mainstem_cells']} 像元，"
+                    f"编码分布 {meta['code_distribution']}（单级层级，已披露）。"),
+                "pfafstetter_metadata": meta,
+            }
+        elif analysis == "hypsometry":
+            hyp, meta = terrain_lib.hypsometry(arr, cy, cell_size_x=cx, nodata=eff_nodata)
+            # review R1-C2：meta["n_levels"] 是 int（非容器）；curve 在返回
+            # 值 hyp（元组）而非 meta —— 此前双重 bug 工具路径必崩。
+            n_levels = int(meta.get("n_levels", 0) or 0)
+            result = {
+                "summary": (
+                    f"Hypsometry 完成：高程面积曲线 {n_levels} 级，"
+                    f"高程积分 {meta['hypsometric_integral']}（矩形=1）。"),
+                "hypsometry": dict(meta),
+                "curve_preview": {
+                    "elevation_norm": [round(float(v), 4) for v in hyp[0][:24]],
+                    "area_above_norm": [round(float(v), 4) for v in hyp[1][:24]],
+                },
+            }
+        else:  # solar_radiation
+            sol, meta = terrain_lib.solar_radiation(
+                arr, cy, cell_size_x=cx, latitude_deg=latitude_deg,
+                day_of_year=day_of_year, transmissivity=transmissivity,
+                nodata=eff_nodata)
+            result = {
+                "summary": (
+                    f"Solar radiation 完成（lat={latitude_deg}°, DOY={day_of_year}，"
+                    "晴空模型）：日辐照量范围 "
+                    f"{meta['insolation_range']} MJ/m²。"),
+                "solar_metadata": meta,
+            }
+
+        descriptor = get_algorithm_registry().get(algo_map[analysis])
+        if descriptor is not None:
+            result["scientific_evidence"] = build_evidence(
+                descriptor,
+                tool="hydrology_v4_analysis",
+                parameters_applied={
+                    "analysis": analysis,
+                    "stream_threshold": float(stream_threshold),
+                    "latitude_deg": float(latitude_deg),
+                    "day_of_year": int(day_of_year),
+                },
+                input_facts={
+                    "artifact_type": "raster_grid",
+                    "crs": crs or "",
+                    "units": "m",
+                },
+                transformations=transformations or None,
+            )
+        return result

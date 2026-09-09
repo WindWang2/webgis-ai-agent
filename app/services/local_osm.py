@@ -53,7 +53,10 @@ _MAX_TAGS_JSON_CHARS = 512
 _RESULT_COLUMNS = ["osm_id", "name", "category", "tags"]
 # Layer names are THEME_SPECS keys (identifiers, not bindable). Static map
 # keeps bandit B608 off execute() while still refusing unknown themes.
-_THEME_COUNT_SQL = {name: 'SELECT COUNT(*) FROM "' + name + '"' for name in THEME_SPECS}
+# B608 的豁免理由：name 仅取自模块级 THEME_SPECS 的静态键（字面量
+# 标识符，非用户输入），构建结果为进程内只读查表；execute 侧只按白名单
+# 主题名取用，不接收运行时拼接。
+_THEME_COUNT_SQL = {name: 'SELECT COUNT(*) FROM "' + name + '"' for name in THEME_SPECS}  # nosec B608 # 理由见上方注释
 
 
 def osm_gpkg_dir() -> Path:

@@ -799,10 +799,17 @@ class WorkspaceSnapshotService:
         if snapshot is None:
             result["error"] = "snapshot not found or unreadable"
             return result
-        from app.services.artifact_registry import mark_status, register_artifact
+        from app.services.artifact_registry import (
+            is_cube_ref,
+            is_fabric_parquet_ref,
+            mark_status,
+            register_artifact,
+        )
         from app.services.workspace.durability import (
             RestoredBinary,
             read_back_payload,
+            restore_cube_store,
+            restore_fabric_parquet_file,
             restore_raster_png,
             write_back_session_payload,
         )
@@ -842,8 +849,25 @@ class WorkspaceSnapshotService:
                 )
                 if payload is not None:
                     if isinstance(payload, RestoredBinary):
-                        restored = await restore_raster_png(
-                            session_id, contract.artifact_id, payload.data
+                        if is_fabric_parquet_ref(contract.artifact_id):
+                            # V6：GeoParquet 磁盘工件（binary lane）。
+                            restored = await restore_fabric_parquet_file(
+                                session_id, contract.artifact_id, payload.data
+                            )
+                        else:
+                            restored = await restore_raster_png(
+                                session_id, contract.artifact_id, payload.data
+                            )
+                    elif is_cube_ref(contract.artifact_id):
+                        # V6：cube manifest lane（blob 在场才可物化 ——
+                        # manifest-only 指针如实 degraded）。
+                        restored = await restore_cube_store(
+                            session_id,
+                            contract.artifact_id,
+                            payload,
+                            data_object_id=str(
+                                pointer.content_payload_sha256 or ""
+                            ),
                         )
                     else:
                         restored, _write_mode = await write_back_session_payload(

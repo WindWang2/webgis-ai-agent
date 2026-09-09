@@ -1,21 +1,24 @@
 'use client';
 
 /**
- * ComparisonView — Wave 8 对比工作区覆盖层（swipe；side-by-side 已诚实下线）。
+ * ComparisonView — Workbench V4 Wave 8 对比工作区 → V5/W6 真双面板 + parity。
  *
  * 实现边界（评审约定）：
- * - 主地图本体不动：本组件只挂载**第二张** react-map-gl MaplibreMap 覆盖层，
- *   镜像主地图的底图样式（同 mapStyle / transformRequest），业务图层来自
- *   同一份 committed MapSpec（session-cursor.getCommittedMapSpec）经
- *   composeLiveMapSpec + MapSpecRuntime reconcile，**只保留副图层族**
- *   （`${family}__${sub}` 的 family 过滤，与 map-panel 的子层 id 约定一致）。
+ * - 副图本体：第二张 react-map-gl MaplibreMap，镜像主地图的底图样式（同
+ *   mapStyle / transformRequest），业务图层来自同一份 committed MapSpec
+ *   （session-cursor.getCommittedMapSpec）经 composeLiveMapSpec +
+ *   MapSpecRuntime reconcile，**只保留副图层族**（`${family}__${sub}` 的
+ *   family 过滤，与 map-panel 的子层 id 约定一致）。
  * - swipe：覆盖层用 CSS clip-path inset 按 comparison.position 裁剪
  *   （clip-path 同时裁剪命中测试——裁剪区外的指针事件穿透到主地图）；
  *   分割把手 role=slider + 方向键 ±0.02（键盘可达）。
- * - side-by-side（已下线）：主图不动约束下双半屏永不共地理 —— 词表保留，UI 无入口。
- *   主地图保持全幅未动，因此每个窗格各显示相机中央的一侧 —— 相机全同步
- *   下两窗格严格对齐（主地图不可动的约束下的等价实现，与「两幅半宽视口」
- *   的观感差异已记录为已知取舍）。
+ * - side-by-side（V5/W6 真双面板）：主地图画布收缩为左半幅（map-panel 的
+ *   容器随 comparison 状态收窄 —— 主图视口真实变为半宽），副图占右半幅，
+ *   双方相机同步 → 两窗格覆盖同一地理范围，构成有效对比。V4「主图零改动」
+ *   约束下双半屏永不共地理的问题由此解除（ADR-0104 已知取舍的收敛）。
+ * - parity（W6）：副图与主图共享同一 compose 通道 —— is3D/terrain、
+ *   activeFilters、selectionFilters 全部透传主图同款状态；副图层族的
+ *   legend_spec 经同一 LegendStack 组件渲染（pane 内缩放排版）。
  * - 相机同步：双向 move → resolveSyncPair（纯函数）→ jumpTo，isSyncing ref
  *   在写相机期间吞掉同步引发的事件（防反馈环），syncPan/syncZoom 由
  *   ComparisonState 决定补丁维度。
@@ -51,6 +54,11 @@ import {
   subscribeMapSpecLive,
 } from '@/lib/mapspec/session-cursor';
 import type { MapSpec, MapSpecSource } from '@/lib/mapspec-compiler/types';
+import { LegendStack, type LegendStackEntry } from '@/components/map/legend-stack';
+import {
+  clearComparisonExport,
+  setComparisonExport,
+} from '@/lib/map/comparison-export-registry';
 import {
   applyCameraPatch,
   clampSwipePosition,
@@ -76,6 +84,13 @@ function layerNameOf(layers: Layer[], familyId: string | null): string | null {
   return layers.find((l) => comparisonFamilyId(l) === familyId)?.name ?? familyId;
 }
 
+/** 对比模式切换按钮的激活态样式（封闭两态）。 */
+function clsxPill(activePill: boolean): string {
+  return activePill
+    ? 'rounded-pill bg-status-accent-soft px-2 py-0.5 text-micro font-medium text-status-accent'
+    : 'rounded-pill px-2 py-0.5 text-micro text-ink-secondary hover:bg-surface-hover hover:text-ink';
+}
+
 interface ComparisonViewProps {
   /** 主地图的 react-map-gl ref（读相机 + 接收同步相机写入；主地图零改动）。 */
   primaryMapRef: React.MutableRefObject<MapRef | null>;
@@ -90,6 +105,10 @@ interface ComparisonViewProps {
   ownerToken?: string | null;
   /** SEC-08：owner_token 经 SSE 迟到，读取必须走稳定 ref 的当前值。 */
   sessionTokenRef?: React.MutableRefObject<string | null>;
+  /** W6 parity：主图同款图例过滤（legend onFilterChange 的 compose 通道）。 */
+  activeFilters?: Record<string, number[][]>;
+  /** W6 parity：主图同款选择过滤（map→chart/table 联动通道）。 */
+  selectionFilters?: Record<string, unknown[]>;
 }
 
 export function ComparisonView({
@@ -99,6 +118,8 @@ export function ComparisonView({
   sessionId,
   ownerToken,
   sessionTokenRef,
+  activeFilters,
+  selectionFilters,
 }: ComparisonViewProps) {
   // ── ComparisonState（原子选择器；比较状态缺席时按未激活收敛 —— HUD mock
   //    的最小状态形状不得炸渲染）。──
@@ -119,6 +140,8 @@ export function ComparisonView({
   const layers = layersRef ?? EMPTY_LAYERS;
   // 主地图 onLoad 后才置 true —— 主图 MapLibre 实例的可用信号（同步监听挂载门）。
   const mapLoaded = useHudStore((s: HudState) => s.mapLoaded ?? false);
+  // W6 parity：副图 terrain/3D 跟随主图同款状态（V4 恒 false 的 parity 缺口）。
+  const is3D = useHudStore((s: HudState) => s.is3D ?? false);
 
   const secondaryMapRef = useRef<MapRef | null>(null);
   const runtimeRef = useRef<MapSpecRuntime | null>(null);
@@ -160,14 +183,16 @@ export function ComparisonView({
   // 支付共享 diff worker 的全量 diff。
   const filteredSpec = useMemo(() => {
     if (!active || !secondaryLayerId) return null;
+    // W6 parity：is3D/terrain、图例过滤、选择过滤与主图同款状态透传 ——
+    // 副视图不再是不带 filter/terrain 的简化镜像。
     const spec0 = composeLiveMapSpec(
       getCommittedMapSpec(),
       {
         layers,
         processLayers: {},
-        activeFilters: {},
-        selectionFilters: {},
-        is3D: false,
+        activeFilters: activeFilters ?? {},
+        selectionFilters: selectionFilters ?? {},
+        is3D: is3D,
       },
       getPendingPresentation(),
       getPendingRemoved(),
@@ -197,7 +222,7 @@ export function ComparisonView({
     return { ...resolved, sources, layers: familyLayers } as MapSpec;
     // styleEpoch 是 style 恢复后的刻意重算信号。
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refSourcesGeneration/liveGeneration 驱动重读
-  }, [active, secondaryLayerId, layers, liveGeneration, refSourcesGeneration, styleEpoch, sessionId, ownerToken]);
+  }, [active, secondaryLayerId, layers, liveGeneration, refSourcesGeneration, styleEpoch, sessionId, ownerToken, activeFilters, selectionFilters, is3D]);
 
   useEffect(() => {
     if (!active || !secondaryReady || !secondaryLayerId) return;
@@ -284,6 +309,16 @@ export function ComparisonView({
     };
   }, [active, mapLoaded, primaryMapRef, syncPan, syncZoom, secondaryReady]);
 
+  // W12 a11y：Escape 退出对比（键盘路径与可见关闭按钮等价 —— WCAG 2.1.1）。
+  useEffect(() => {
+    if (!active) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') exitComparison?.();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [active, exitComparison]);
+
   // 副图就绪即对齐主图当前相机（进入对比 / 切层重挂不跳回默认视野）。
   const handleSecondaryLoad = useCallback(() => {
     setSecondaryReady(true);
@@ -302,6 +337,24 @@ export function ComparisonView({
       isSyncingRef.current = false;
     }
   }, [primaryMapRef]);
+
+  // ── W8（ADR-0118）：对比态注册到导出组合 registry（module 级 get/set/clear，
+  // 关闭/卸载即清 —— 只持 canvas 访问器闭包，不持 Map 实例，防泄漏）。
+  // exporter 导出时据此组合副图视图（或显式披露副图未进导出件）。
+  useEffect(() => {
+    if (!active || !secondaryReady) {
+      clearComparisonExport();
+      return;
+    }
+    setComparisonExport({
+      getSecondCanvas: () => secondaryMapRef.current?.getMap()?.getCanvas() ?? null,
+      kind,
+      position,
+    });
+    return () => {
+      clearComparisonExport();
+    };
+  }, [active, secondaryReady, kind, position]);
 
   // ── swipe 分割把手：指针拖拽 + 键盘（role=slider 契约）。──
   const setPosition = useCallback(
@@ -350,8 +403,24 @@ export function ComparisonView({
 
   if (!active) return null;
 
-  // side-by-side = 固定对半的 swipe（无把手，静态分割缝）；swipe = position 驱动。
-  const clipLeft = kind === 'swipe' ? position : 0.5;
+  // W6：side-by-side = 真双面板（主图画布收缩左半幅由 map-panel 承担，副图
+  // 占右半幅、无裁剪）；swipe = position 驱动的覆盖层裁剪。
+  const sideBySide = kind === 'side-by-side';
+  const clipLeft = sideBySide ? 0.5 : position;
+
+  // W6 legend parity：副图层族中带 legend_spec 的可见层经同一 LegendStack
+  // 组件渲染（pane 内左下角缩放排版 —— 与主图同一图例真相，不建第二实现）。
+  const secondaryLegendEntries: LegendStackEntry[] = sideBySide
+    ? layers
+        .filter(
+          (l) =>
+            comparisonFamilyId(l) === secondaryLayerId
+            && l.visible
+            && !!l.legend_spec
+            && l.type !== 'heatmap',
+        )
+        .map((l) => ({ id: l.id, name: l.name, legendSpec: l.legend_spec! }))
+    : [];
 
   return (
     <div
@@ -363,20 +432,29 @@ export function ComparisonView({
       // Review R1（architecture MAJOR-5）：主视图是未改造的主地图（全部
       // 可见图层在場），「A 与 B 对比」的措辞会误导 —— 如实声明右侧仅显示
       // 副图层族。
-      aria-label={`图层对比视图：左为主视图（全部可见图层），右侧仅显示 ${secondaryName ?? '副视图'}（swipe 拖动分割线查看）`}
-      className="pointer-events-none absolute inset-0 z-40"
+      aria-label={
+        sideBySide
+          ? `双面板对比视图：左侧主视图显示全部可见图层，右侧仅显示 ${secondaryName ?? '副视图'}`
+          : `图层对比视图：左为主视图（全部可见图层），右侧仅显示 ${secondaryName ?? '副视图'}（swipe 拖动分割线查看）`
+      }
+      className={
+        sideBySide
+          ? 'absolute inset-y-0 right-0 left-1/2 z-40'
+          : 'pointer-events-none absolute inset-0 z-40'
+      }
     >
       {/* Review R1（GIS F5）：覆盖层 z-40 会盖住主图 attribution —— 副视图
           渲染的 basemap 瓦片必须在 pane 内自带署名（OSM/厂商红线）。
           副图自身的 attributionControl 仍是唯一署名源；这里只做主图被遮挡
           情况下的可发现性提示。 */}
-      {/* 副图覆盖层：clip-path 裁剪渲染与命中测试（裁剪区外指针穿透到主地图）。
-          容器 pointer-events-none + 地图容器 pointer-events-auto：只有可见区域
-          接收手势。 */}
+      {/* 副图覆盖层：swipe 模式 clip-path 裁剪渲染与命中测试（裁剪区外指针
+          穿透到主地图）；side-by-side 模式占满右半幅 pane（无裁剪）。
+          swipe：容器 pointer-events-none + 地图容器 pointer-events-auto：只有
+          可见区域接收手势。side-by-side：容器即 pane，整体可交互。 */}
       <div
         data-testid="comparison-secondary-map"
         className="pointer-events-auto absolute inset-0"
-        style={{ clipPath: `inset(0 0 0 ${clipLeft * 100}%)` }}
+        style={sideBySide ? undefined : { clipPath: `inset(0 0 0 ${clipLeft * 100}%)` }}
       >
         <Map
           ref={secondaryMapRef}
@@ -389,6 +467,12 @@ export function ComparisonView({
           attributionControl={false}
           transformRequest={transformRequest}
         />
+        {/* W6 legend parity：副图层族图例（同一 LegendStack 组件，不建第二实现）。 */}
+        {sideBySide && secondaryLegendEntries.length > 0 && (
+          <div className="pointer-events-none absolute bottom-6 left-2 z-[5] max-h-[40%] max-w-[45%] overflow-hidden rounded-agent-sm border border-map-chrome-border bg-surface-raised/90 p-1 text-[11px]">
+            <LegendStack entries={secondaryLegendEntries} />
+          </div>
+        )}
         {/* Review R1（GIS F5 MAJOR）：副视图瓦片署名 —— attributionControl
             关闭（避免 MapLibre 缺省控件与裁剪碰撞）不等于免署名；OSM/厂商
             条款要求可见 attribution。pane 内自带一行极简署名。 */}
@@ -426,13 +510,13 @@ export function ComparisonView({
             <Columns2 aria-hidden size={14} />
           </div>
         </div>
-      ) : (
+      ) : sideBySide ? (
+        // W6：真双面板的窗格边界（pane 左缘 = 全图 50% 分界）
         <div
           aria-hidden
-          className="absolute inset-y-0 z-10 w-0.5 bg-white/90 shadow-agent-md"
-          style={{ left: '50%' }}
+          className="absolute inset-y-0 left-0 z-10 w-0.5 bg-white/90 shadow-agent-md"
         />
-      )}
+      ) : null}
 
       {/* 窗格标签 + 对比控制条 */}
       <div className="absolute left-1/2 top-14 z-20 -translate-x-1/2">
@@ -445,19 +529,29 @@ export function ComparisonView({
             {secondaryName ?? '副视图'}
           </span>
           <span aria-hidden className="mx-0.5 h-4 w-px bg-edge-subtle" />
-          {/* Review R1（a11y MINOR-11）：side-by-side 下线后滑动是唯一模式
-              —— 恒按 toggle 对 AT 是「永远解不开的开关」，改为当前态展示。 */}
-          <span
+          {/* W6：双面板重新启用 —— kind 切换为真实 toggle（当前态 aria-current）。 */}
+          <button
+            type="button"
             data-testid="comparison-kind-swipe"
-            aria-current="true"
-            className="rounded-pill bg-status-accent-soft px-2 py-0.5 text-micro font-medium text-status-accent"
+            aria-pressed={kind === 'swipe'}
+            aria-current={kind === 'swipe' || undefined}
+            title="滑动对比（拖动分割线）"
+            className={clsxPill(kind === 'swipe')}
+            onClick={() => updateComparison?.({ kind: 'swipe' })}
           >
             滑动
-          </span>
-          {/* Review R1（GIS F2 CRITICAL）：side-by-side 诚实下线 —— 主图
-              不动的约束下，双半屏相机使两图层永不覆盖同一地理（左=主图的
-              左半、右=副图的右半），无法构成有效对比。词表保留（未来真
-              双面板实现），UI 只暴露滑动模式。 */}
+          </button>
+          <button
+            type="button"
+            data-testid="comparison-kind-side-by-side"
+            aria-pressed={sideBySide}
+            aria-current={sideBySide || undefined}
+            title="双面板对比（主图收窄为左半幅）"
+            className={clsxPill(sideBySide)}
+            onClick={() => updateComparison?.({ kind: 'side-by-side' })}
+          >
+            双面板
+          </button>
           <button
             type="button"
             data-testid="comparison-exit"

@@ -21,7 +21,7 @@ Workbench V3 的 UI 状态散布在多个自由度上：面板可见性布尔群
 
 新增 `workbenchSlice` 并入 `useHudStore`（`frontend/lib/store/slices/workbenchSlice.ts`）：mode、每模式 tab 记忆、图层多选、用户分组树、锁定、隔离、产物选择、对比状态。边界契约：
 
-- **绝不承载地图语义真相**。权威仍是 MapSpec / backend contract（session-cursor 镜像 + user-mutation CAS 串行链）。分组/选择/锁定/隔离是会话级 UI projection，不持久化、不进 MapSpec、不进 LLM context；
+- **绝不承载地图语义真相**。权威仍是 MapSpec / backend contract（session-cursor 镜像 + user-mutation CAS 串行链）。分组/选择/锁定/隔离是 UI projection；V4 时其中分组/锁定/模式不持久化 —— **V5（ADR-0105）已把组织态经 `patch_workbench_state` 持久化进 `mapspec["workbench"]`（同一 CAS 链），选择/隔离仍为会话级 transient**；
 - 分组树是 `Layer.group` 语义组之上的用户组织结构；z-order 唯一真相仍是 store 数组序（= committed spec 序），分组只切分视图不改顺序；
 - 会话切换与 dock 同语义清空（`resetLayerGroups`）。
 

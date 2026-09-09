@@ -35,13 +35,28 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
+from app.lib.gis.algorithm_registry import (
+    AlgorithmDescriptor,
+    BackendVariant,
+    NumericalTolerance,
+    ResourceEnvelope,
+)
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_feature=24, hard_max_cells=1500000, notes="H3 单元硬顶（预估计+polyfill 双闸）+ 样本三元组字节"),
+            cancellation_profile="coarse",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.idw", name="IDW 插值", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_full_samples", backend="numpy", deterministic=True,
+                    min_features=1, max_features=200000,
+                    notes="20 万样本 / 400 万目标格点类型化拒绝（无抽样降级路径，超限诚实拒绝）；H3 目标格网 ≤150 万格"),
+            ],
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", unit_requirements="meters",
@@ -84,6 +99,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=500000, bytes_per_feature=24, notes="拟合抽稀 ≤2000 点、对预算 20 万；solve chunk 1024"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance_dual_run"),
             id="interpolation.kriging", name="普通克里金插值", category="interpolation",
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -147,7 +166,17 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # ── VNext 插值科学新算法 ─────────────────────────────────────────
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_features=100000, bytes_per_feature=8, notes="核矩阵 O(n²)：8·n² 字节主导（RBF_HARD_CAP 类型化拒绝）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.rbf", name="RBF 径向基插值", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_dense_exact_solve", backend="numpy", deterministic=True,
+                    min_features=3, max_features=100000,
+                    notes="RBF_HARD_CAP=10 万（稠密 O(N²) 系统类型化拒绝）；LOOCV 预算 500 点"),
+            ],
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", runtime_status="native",
@@ -189,7 +218,17 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=500000, bytes_per_feature=24, notes="与 OK 同底预算；趋势 OLS + 残差 solve chunk 1024"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance_dual_run"),
             id="interpolation.universal_kriging", name="泛克里金插值", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_kriging_with_trend", backend="numpy", deterministic=True,
+                    min_features=12, max_features=500000,
+                    notes="趋势项 + OK；MAX_FIT_POINTS=2000 分层抽稀拟合、MAX_PAIRS=20 万半变异对、邻域 k≤24"),
+            ],
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", runtime_status="native",
@@ -232,6 +271,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # ── Foundation V2 · A2（插值 V2 新算法）──────────────────────────
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_features=200000, bytes_per_feature=32, notes="Qhull 单形内存有界（TIN_HARD_CAP 类型化拒绝）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
             id="interpolation.tin", name="TIN 三角网插值", category="interpolation",
             capabilities=["triangulation_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -275,6 +318,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_feature=64, notes="单位盒 OLS 设计矩阵（n×d float64）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=1e-12, policy="conformance"),
             id="interpolation.trend_surface", name="趋势面分析", category="interpolation",
             capabilities=["trend_surface"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -317,7 +364,17 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=500000, bytes_per_feature=24, notes="残差 OK 与 kriging 同底预算；LOOCV ≤200 点"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.regression_kriging", name="回归克里金", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_reg_kriging", backend="numpy", deterministic=True,
+                    min_features=8, max_features=500000,
+                    notes="全管线 LOOCV 预算 RK_LOOCV_MAX_POINTS=200（逐点重拟合变异函数）；预测邻域 k≤24"),
+            ],
             capabilities=["regression_kriging"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", runtime_status="native",
@@ -362,6 +419,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_feature=32, notes="CV 预算走查：有界方法数 × 样本数"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
             id="interpolation.model_compare", name="插值模型比较", category="interpolation",
             capabilities=["interpolation_model_selection"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -405,6 +466,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # ── Foundation V3（Geostatistics/Interpolation 批次）────────────
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=2000, notes="入口分层抽稀 ≤2000 + 行步幅对预算 20 万"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
             id="interpolation.directional_variogram", name="方向变异函数", category="interpolation",
             capabilities=["variogram_analysis"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -449,6 +514,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=2000, notes="6 家族 × 有界网格拟合（样本 ≤2000）"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
             id="interpolation.variogram_selection", name="变异函数模型选择", category="interpolation",
             capabilities=["variogram_analysis"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -488,7 +557,17 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=500000, bytes_per_feature=24, notes="概率面 T×H×W 线性放大（T≤20 类型化拒绝）"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.indicator_kriging", name="指示克里金", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_per_threshold_ok", backend="numpy", deterministic=True,
+                    min_features=8, max_features=500000,
+                    notes="逐阈值普通克里金；目标 ≤_MAX_H3_CELLS=150 万格；概率面钳制 [0,1]（钳制计数披露）"),
+            ],
             capabilities=["indicator_kriging"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", runtime_status="native",
@@ -529,7 +608,17 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=500000, bytes_per_feature=24, notes="MM1 协同定位系统；solve chunk 1024"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.cokriging", name="协同克里金", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_mm1_collocated", backend="numpy", deterministic=True,
+                    min_features=8, max_features=500000,
+                    notes="MM1 核化近似（次变量仅协同定位进入）；|ρ|<0.2 类型化拒绝；输入 ≤MAX_INPUT_POINTS=50 万"),
+            ],
             capabilities=["cokriging"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", runtime_status="native",
@@ -570,6 +659,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_features=200000, hard_max_cells=4000000, bytes_per_cell=8, notes="NN_MAX_SAMPLES / NN_MAX_GRID_CELLS 类型化拒绝"),
+            cancellation_profile="coarse",
+            tolerance=NumericalTolerance(rtol=1e-12, atol=0.0, policy="conformance"),
             id="interpolation.nearest_neighbor", name="最近邻插值", category="interpolation",
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -607,6 +700,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_features=200000, hard_max_cells=4000000, bytes_per_cell=8, notes="SIBSON_MAX_SAMPLES / SIBSON_MAX_GRID_CELLS 类型化拒绝"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.natural_neighbor", name="自然邻域插值", category="interpolation",
             capabilities=["triangulation_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
@@ -648,7 +745,17 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(max_pairs=200000, hard_max_features=500000, bytes_per_feature=24, notes="2×2 块离散化 ×4 子点系统（BLOCK_DISCRETIZATION）"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-3, atol=1e-9, policy="conformance"),
             id="interpolation.block_kriging", name="块克里金", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_block_discretized", backend="numpy", deterministic=True,
+                    min_features=8, max_features=500000,
+                    notes="MAX_INPUT_POINTS=50 万硬闸；2×2 子点离散化 + MAX_PAIRS=20 万半变异对 + MAX_FIT_POINTS=2000 抽稀拟合"),
+            ],
             capabilities=["block_kriging"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", runtime_status="native",
@@ -688,9 +795,253 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ],
             ),
 
+        # ── Science V4（W4）：SK / KED ─────────────────────────────────
+
+        AlgorithmDescriptor(
+            id="interpolation.simple_kriging", name="简单克里金", category="interpolation",
+            capabilities=["spatial_interpolation"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            min_features=8,
+            parameter_contract_ref="kriging_interpolation",
+            tool_candidates=["kriging_interpolation"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.kriging"], priority=26,
+            fallback_semantics={"interpolation.kriging": "approximation"},
+            complexity="同 OK：拟合 O(N_fit²) + 预测 O(m·(k+1)³)（协方差形式，无约束行）",
+            approximation_class="exact",
+            algorithm_family="geostatistical_interpolation",
+            method_references=["matheron1963"],
+            assumptions=[
+                "SK 协方差形式 C(h)=(nugget+sill)−γ(h)：pred=m+wᵗ(z−m)，var=C(0)−wᵗc₀",
+                "先验均值是模型输入：mean 参数缺省时以样本均值估计并在 disclosures 披露",
+                "nugget>0 时 SK 不是精确插值器（C(0)≠C(0⁺)，理论语义，非数值缺陷）",
+                "批式求解/ridge/钳制/退化记账与 OK 同一机器；CV 不支持（诚实省略）",
+            ],
+            limitations=[
+                "先验均值的可信度决定 SK 的优势——均值未知且样本均值有偏时改用 OK",
+                "EPSG:3857 工作 CRS 的 Web Mercator 尺度畸变（与 OK 同）",
+                "样本 <8 拒绝（与 OK 同底）",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=["min_numeric_samples:8"],
+            uncertainty_outputs=["raster_uncertainty"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="与 OK 同稳定化策略；同输入预测面逐位一致（conformance 固定）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_kriging_v4.py::test_simple_kriging_exact_at_samples_nugget_zero",
+                "tests/unit/lib/test_kriging_v4.py::test_simple_kriging_known_mean_beats_ok_near_boundary",
+                "tests/unit/lib/test_kriging_v4.py::test_driver_method_simple_end_to_end",
+                "tests/unit/lib/test_kriging_v4.py::test_simple_kriging_variance_grows_away_from_samples",
+            ],
+            uncertainty_producer_tests={
+                "raster_uncertainty": "tests/unit/lib/test_kriging_v4.py::test_simple_kriging_variance_grows_away_from_samples",
+            },
+            resource_envelope=ResourceEnvelope(max_pairs=200_000, hard_max_features=500_000, bytes_per_feature=24, notes="与 kriging 同底预算；solve chunk 1024"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
+            ),
+
+        AlgorithmDescriptor(
+            id="interpolation.external_drift_kriging", name="外部漂移克里金", category="interpolation",
+            capabilities=["spatial_interpolation"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            min_features=8,
+            parameter_contract_ref="kriging_interpolation",
+            tool_candidates=["kriging_interpolation"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.universal_kriging"], priority=27,
+            fallback_semantics={"interpolation.universal_kriging": "approximation"},
+            complexity="同 UK：拟合 O(N_fit²) + 预测 O(m·(k+3)³)（漂移约束 ×2 乘子）",
+            approximation_class="exact",
+            algorithm_family="geostatistical_interpolation",
+            method_references=["matheron1963"],
+            assumptions=[
+                "KED：漂移场 d(x) 在样本与目标处都已知；系统带 [1, d] 两个约束乘子",
+                "驱动层目标处漂移经 IDW(k=5,power=2) 近似——approximate 分量已披露",
+                "漂移场常量（零方差）结构化拒绝（外部漂移不可识别）",
+                "方差 = wᵗγ₀ + μ₁ + μ₂·d_t（钳 ≥0，负值计数披露）",
+            ],
+            limitations=[
+                "目标处漂移的 IDW 近似误差进入趋势项（与 regression_kriging 同款近似语义）",
+                "EPSG:3857 工作 CRS 的 Web Mercator 尺度畸变（与 OK 同）",
+                "CV 不支持（诚实省略，不伪造 CV 指标）",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=["min_numeric_samples:8"],
+            uncertainty_outputs=["raster_uncertainty"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="与 OK 同稳定化策略；同输入预测面逐位一致（conformance 固定）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_kriging_v4.py::test_ked_recovers_drift_dominated_field_and_beats_ok",
+                "tests/unit/lib/test_kriging_v4.py::test_ked_constant_drift_typed_reject",
+                "tests/unit/lib/test_kriging_v4.py::test_driver_method_external_drift_end_to_end",
+                "tests/unit/lib/test_kriging_v4.py::test_driver_ked_requires_drift_field",
+            ],
+            resource_envelope=ResourceEnvelope(max_pairs=200_000, hard_max_features=500_000, bytes_per_feature=32, notes="与 kriging 同底预算 + 漂移数组；solve chunk 1024"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
+            ),
+
+        # ── Science V4（W5）：SGS 条件高斯模拟 ─────────────────────
+
+        AlgorithmDescriptor(
+            id="interpolation.sgs", name="SGS 条件高斯模拟", category="interpolation",
+            capabilities=["geostatistical_simulation"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            min_features=8,
+            parameter_contract_ref="sgs_analysis",
+            tool_candidates=["sgs_simulation"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.kriging"], priority=28,
+            fallback_semantics={"interpolation.kriging": "approximation"},
+            complexity="O(R·N·k³)（R=实现数、N=格点、k≤24；R×N 预算硬顶 2000 万）",
+            approximation_class="sampling",
+            approximate=True,
+            algorithm_family="geostatistical_simulation",
+            method_references=["goovaerts1997"],
+            assumptions=[
+                "Goovaerts 1997 标准流程：normal-score 域沿随机路径逐节点条件 SK，"
+                "条件集 = k 近邻原始样本 + k 近邻已模拟节点",
+                "caller_seeded：单一 PCG64 流（路径+噪声同源），同 seed 逐位复现",
+                "ensemble 统计（P10/P50/P90/std）来自真实多实现——非解析方差面",
+                "条件树每 1024 节点增量重建——模拟值可见性滞后 ≤1 chunk（近似语义）",
+            ],
+            limitations=[
+                "蒙特卡洛近似：实现数有限时分位数有采样误差（R≥100 推荐用于分位数）",
+                "高斯性假设经 normal-score 秩变换近似成立——非高斯依赖结构未建模",
+                "病态邻域回退条件值经验抽样（与 OK 邻域均值回退同口径）",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:8"],
+            uncertainty_outputs=["monte_carlo_summary", "raster_uncertainty"],
+            random_seed_policy="caller_seeded",
+            numerical_tolerance="同 seed 双跑实现矩阵逐位一致（conformance 固定）；不同 seed 统计收敛随 R 增长",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_same_seed_bitwise_reproducible",
+                "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_ensemble_quantiles_ordered",
+                "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_budget_typed_reject",
+                "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_driver_end_to_end",
+            ],
+            uncertainty_producer_tests={
+                "monte_carlo_summary": "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_ensemble_quantiles_ordered",
+            },
+            resource_envelope=ResourceEnvelope(hard_max_cells=20_000_000, hard_max_features=200_000, bytes_per_cell=8, notes="R×N ensemble 单元硬顶 2000 万；R≤2000、N≤20 万（逐节点条件循环的可操作规模）"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="seed_reproducibility"),
+            ),
+
+        # ── Science V4（W6）：LMC 全共克里金 ─────────────────────
+
+        AlgorithmDescriptor(
+            id="interpolation.cokriging_lmc", name="LMC 全共克里金", category="interpolation",
+            capabilities=["cokriging"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            min_features=8,
+            parameter_contract_ref="cokriging_lmc_analysis",
+            tool_candidates=["cokriging_lmc_surface"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.kriging"], priority=29,
+            fallback_semantics={"interpolation.kriging": "approximation"},
+            complexity="逐目标 (k1+k2+2)³ 系统求解 + LMC 拟合 O(N_fit²)",
+            approximation_class="exact",
+            algorithm_family="geostatistical_interpolation",
+            method_references=["journel_huijbregts1978", "goovaerts1997"],
+            assumptions=[
+                "LMC：γ_ij(h)=Σ_u b_ij^u·g_u(h)，共享 2 结构（球状短程/指数长程）",
+                "B^u = [[s1u, ρ√(s1u·s2u)],[…, s2u]] —— |ρ|≤1 ⇒ 逐结构半正定（按构造）",
+                "全共克里金：主/次变量样本全部进入邻域（非仅目标协同定位）",
+                "无偏条件 Σw1=1、Σw2=0；经验 |ρ|>1+1e-9 → NumericalInstability",
+            ],
+            limitations=[
+                "结构 sill 按 35/65 固定比例分解（非完整 Goulard–Voltz 迭代拟合，近似已披露）",
+                "完全复制的次变量（同点位同值）使系统近奇异，方差不可信——次变量须携带独立信息",
+                "|ρ|<0.2 类型化拒绝（弱相关不会优于单变量克里金）",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:8"],
+            uncertainty_outputs=["raster_uncertainty"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="同输入预测/方差逐位一致（确定性求解，conformance 固定）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_cokriging_lmc_v4.py::test_lmc_structures_psd_by_construction",
+                "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_beats_ok_with_correlated_secondary",
+                "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_weak_correlation_typed_reject",
+                "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_strong_secondary_reduces_variance",
+                "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_deterministic",
+            ],
+            resource_envelope=ResourceEnvelope(hard_max_features=500_000, bytes_per_feature=32, notes="次变量 >2 万点确定性抽稀；LMC_MAX_SECONDARY=50 万硬顶"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
+            ),
+
+        # ── Science V4（W7）：时空克里金 ──────────────────────────
+
+        AlgorithmDescriptor(
+            id="interpolation.st_kriging", name="时空克里金", category="interpolation",
+            capabilities=["spatiotemporal_interpolation"],
+            input_artifact_types=["poi_feature_set", "point_feature_set"],
+            output_artifact_type="terrain_surface", runtime_status="native",
+            min_features=12,
+            parameter_contract_ref="st_kriging_analysis",
+            tool_candidates=["st_kriging_surface"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="CELERY", compatible_map_models=["raster_surface"],
+            fallback_algorithms=["interpolation.kriging"], priority=30,
+            fallback_semantics={"interpolation.kriging": "approximation"},
+            complexity="逐目标 (k+1)³ 时空系统 + 空间 cKDTree × 时间窗邻域",
+            approximation_class="exact",
+            algorithm_family="spatiotemporal_geostatistics",
+            method_references=["goovaerts1997", "cressie1999"],
+            assumptions=[
+                "时间单位秒（epoch/相对秒由调用方声明）；空间米制（自动投影）",
+                "product_sum：双时间尺度可分离混合 s·ρ_s·[w·ρ_t(τ/r)+(1−w)·ρ_t(τ/3r)]"
+                "——正组合按构造半正定（De Iaco product-sum 类）；"
+                "separable：C=s·ρ_s·ρ_t 严格有效；τ=0 两模型都精确退化为空间协方差",
+                "邻域 = 空间 k 近邻 × 时间窗过滤；窗内不足时放宽为纯空间 k 近邻（计数披露）",
+                "时间维退化（全部同时刻）结构化拒绝（改用空间克里金）",
+            ],
+            limitations=[
+                "时间相关为单参数指数形状（非参数时间变异函数未实现）",
+                "时空交叉结构不可识别时 product-sum 退化为可分离的加权和（已披露）",
+                "EPSG:3857 工作 CRS 的 Web Mercator 尺度畸变（与 OK 同）",
+            ],
+            crs_class="GEOGRAPHIC_OK",
+            scientific_preconditions=["min_numeric_samples:12"],
+            uncertainty_outputs=["raster_uncertainty"],
+            random_seed_policy="deterministic",
+            numerical_tolerance="同输入预测/方差逐位一致；τ=0 可分离模型退化为纯空间协方差（conformance 锚）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_kriging_st_v4.py::test_product_sum_covariance_psd_and_origin",
+                "tests/unit/lib/test_kriging_st_v4.py::test_separable_tau_zero_reduces_to_spatial",
+                "tests/unit/lib/test_kriging_st_v4.py::test_st_kriging_deterministic_and_valid",
+                "tests/unit/lib/test_kriging_st_v4.py::test_st_degenerate_time_typed_reject",
+                "tests/unit/lib/test_kriging_st_v4.py::test_st_driver_end_to_end",
+            ],
+            resource_envelope=ResourceEnvelope(hard_max_features=300_000, bytes_per_feature=40, notes="时空三元组 + 时间窗邻域矩阵；ST_MAX_SAMPLES=30 万"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
+            ),
+
         # ── dasymetric 原生化（Wave 6）：面插值（areal interpolation）────
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_feature=128, notes="源∩控制碎片多边形坐标数组"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-6, policy="conformance"),
             id="interpolation.dasymetric", name="分区密度重分配", category="interpolation",
             capabilities=["areal_interpolation"],
             input_artifact_types=["admin_aggregate_table", "admin_boundary_set",

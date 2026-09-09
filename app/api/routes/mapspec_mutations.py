@@ -26,6 +26,7 @@ from app.services.mapspec.lifecycle_engine import (
     SetLayoutIntent,
     SetTimeIntent,
     SetViewIntent,
+    SetWorkbenchStateIntent,
 )
 
 router = APIRouter(prefix="/chat", tags=["对话"])
@@ -154,6 +155,14 @@ class InitProjectBody(BaseModel):
     view: Optional[dict[str, Any]] = None
 
 
+class SetWorkbenchStateBody(BaseModel):
+    """Workbench V5 组织态持久化（分组树/成员/锁/模式；引擎内结构+64KB 校验）。"""
+
+    intent: Literal["patch_workbench_state"]
+    expected_revision: int = Field(ge=0)
+    doc: dict[str, Any]
+
+
 UserMapSpecMutationRequest = Annotated[
     Union[
         PatchLayerPresentationBody,
@@ -168,6 +177,7 @@ UserMapSpecMutationRequest = Annotated[
         SetLayoutBody,
         SetTimeBody,
         InitProjectBody,
+        SetWorkbenchStateBody,
     ],
     Field(discriminator="intent"),
 ]
@@ -276,6 +286,8 @@ async def apply_user_mapspec_mutation(
         )
     elif isinstance(req, InitProjectBody):
         intent = InitProjectIntent(view=req.view)
+    elif isinstance(req, SetWorkbenchStateBody):
+        intent = SetWorkbenchStateIntent(doc=req.doc)
     else:
         raise HTTPException(status_code=400, detail="unsupported mapspec mutation intent")
     # GISWorldState 门面（C2）：语义与 engine.apply_mutation 一致，额外记录

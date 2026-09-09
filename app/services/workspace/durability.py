@@ -83,13 +83,18 @@ async def materialize_ref_payload(
     - ``(None, None)`` —— 载荷不存活 / 不可序列化 / 写盘失败（调用方
       如实缺指针，verify 报告真相，绝不伪造）。
     """
-    from app.services.artifact_registry import is_raster_ref, raster_png_path
-    from app.services.durable_blob_store import (
-        get_filesystem_blob_store,
-        sha256_of_bytes,
+    from app.services.artifact_registry import (
+        cube_store_path,
+        fabric_parquet_path,
+        is_cube_ref,
+        is_fabric_parquet_ref,
+        is_raster_ref,
+        raster_png_path,
     )
+    from app.services.durable_blob_store import sha256_of_bytes
+    from app.services.s3_blob_store import get_object_store
 
-    store = get_filesystem_blob_store()
+    store = get_object_store()
     if is_raster_ref(ref):
         path = raster_png_path(session_id, ref)
         if path is None:
@@ -131,6 +136,80 @@ async def materialize_ref_payload(
             "content_payload_sha256": digest,
             "content_type": "binary",
             "byte_size": len(data),
+        }, None
+    if is_fabric_parquet_ref(ref):
+        # V6（ADR-0118）：GeoParquet 磁盘工件 —— binary lane 与 raster PNG
+        # 同款（stat 预检 → 读字节 → sha256 → CAS put）。
+        path = fabric_parquet_path(session_id, ref)
+        if path is None:
+            return None, None
+        if budget_bytes is not None:
+            try:
+                pre_size = path.stat().st_size
+            except OSError:
+                pre_size = None
+            if pre_size is not None and pre_size > int(budget_bytes):
+                return None, "budget"
+
+        def _read_parquet() -> Optional[bytes]:
+            try:
+                return path.read_bytes()
+            except OSError:
+                return None
+
+        data = await asyncio.to_thread(_read_parquet)
+        if not data:
+            return None, None
+        if budget_bytes is not None and len(data) > int(budget_bytes):
+            return None, "budget"
+        digest = await asyncio.to_thread(sha256_of_bytes, data)
+        try:
+            result = await asyncio.to_thread(store.put_blob, digest, data, "binary")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[workspace.durability] parquet put failed for %s: %s", ref, e)
+            return None, None
+        return {
+            "content_location": result.location,
+            "content_payload_sha256": digest,
+            "content_type": "binary",
+            "byte_size": len(data),
+        }, None
+    if is_cube_ref(ref):
+        # V6（ADR-0118）：lakehouse cube —— **manifest lane**。cube 是目录树，
+        # 快照指针携带其内容寻址 manifest（零字节拷贝的 manifest-only 发布；
+        # 预统计超预算直接诚实跳过）。深层 chunk 校验/物化归 DR
+        # （lakehouse.verify_data_object / materialize_data_object）。
+        store_dir = cube_store_path(session_id, ref)
+        if store_dir is None or not store_dir.is_dir():
+            return None, None
+        if budget_bytes is not None:
+            total = 0
+            try:
+                for p in store_dir.rglob("*"):
+                    if p.is_file():
+                        total += p.stat().st_size
+            except OSError:
+                return None, None
+            if total > int(budget_bytes):
+                return None, "budget"
+        try:
+            from app.services.lakehouse.cube_store import publish_cube
+
+            publication = await asyncio.to_thread(
+                publish_cube, store_dir, session_id=session_id,
+                blob_budget_bytes=0,  # manifest-only：快照保存不做字节拷贝
+            )
+        except Exception as e:  # noqa: BLE001 — 发布失败 = 诚实缺指针
+            logger.warning("[workspace.durability] cube manifest failed for %s: %s",
+                           ref, e)
+            return None, None
+        if not publication.get("published"):
+            return None, None
+        return {
+            "content_location": str(publication.get("manifest") or ""),
+            "content_payload_sha256": str(publication.get("data_object_id") or ""),
+            "content_type": "lakehouse_manifest",
+            "byte_size": int(publication.get("byte_size") or 0),
         }, None
     # JSON lane：canonical 序列化一次 → 同一批字节回填摘要与写盘
     # （与 promotion 的 single-serialization 契约一致）。
@@ -200,14 +279,24 @@ def verify_durable_pointer(pointer: Dict[str, Any]) -> str:
     - ``digest_mismatch``—— 内容在场但字节被篡改/损坏；
     - ``pointer_missing``—— 指针记录了但内容缺失 / 越界 / 不可读。
     """
-    from app.services.durable_blob_store import (
-        get_filesystem_blob_store,
-        sha256_of_bytes,
-    )
+    from app.services.durable_blob_store import sha256_of_bytes
+    from app.services.s3_blob_store import get_object_store
 
+    store = get_object_store()
     digest = str(pointer.get("content_payload_sha256") or "")
     content_type = str(pointer.get("content_type") or "json")
-    store = get_filesystem_blob_store()
+    if content_type == "lakehouse_manifest":
+        # V6：cube 指针 —— manifest blob 在场且 digest 相符 = verified。
+        # 深层 chunk 校验归 DR（lakehouse.verify_data_object），快照 verify
+        # 只回答"指针是否可读"（O(1) blob 读，不做 O(payload) chunk 扫）。
+        if not digest or not store.exists(digest):
+            return INTEGRITY_POINTER_MISSING
+        raw = store.get_blob(digest)
+        if raw is None:
+            return INTEGRITY_POINTER_MISSING
+        return INTEGRITY_VERIFIED if sha256_of_bytes(raw) == digest else (
+            INTEGRITY_DIGEST_MISMATCH
+        )
     if content_type == "binary":
         if not digest or not store.exists(digest):
             return INTEGRITY_POINTER_MISSING
@@ -239,14 +328,25 @@ def read_back_payload(pointer: Dict[str, Any]) -> Optional[Any]:
     """
     import json
 
-    from app.services.durable_blob_store import get_filesystem_blob_store
+    from app.services.s3_blob_store import get_object_store
 
     digest = str(pointer.get("content_payload_sha256") or "")
     content_type = str(pointer.get("content_type") or "json")
+    if content_type == "lakehouse_manifest":
+        # V6：cube 指针读回 = manifest dict（调用方据其走 DR 物化/校验）。
+        if not digest:
+            return None
+        raw = get_object_store().get_blob(digest, expected_sha256=digest)
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return None
     if content_type == "binary":
         if not digest:
             return None
-        raw = get_filesystem_blob_store().get_blob(digest, expected_sha256=digest)
+        raw = get_object_store().get_blob(digest, expected_sha256=digest)
         if raw is None:
             return None
         return RestoredBinary(data=raw, content_type="binary")
@@ -303,6 +403,77 @@ async def restore_raster_png(session_id: str, ref: str, data: bytes) -> bool:
             return False
 
     return await asyncio.to_thread(_write)
+
+
+async def restore_fabric_parquet_file(session_id: str, ref: str, data: bytes) -> bool:
+    """binary 指针 → 会话 GeoParquet 磁盘位（原子写回同一 parquet 路径）。"""
+    from app.services.artifact_registry import fabric_parquet_path, is_fabric_parquet_ref
+
+    if not is_fabric_parquet_ref(ref):
+        return False
+    path = fabric_parquet_path(session_id, ref)
+    if path is None:
+        return False
+
+    def _write() -> bool:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex[:8]}")
+            try:
+                tmp.write_bytes(data)
+                tmp.replace(path)
+            except Exception:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
+            return True
+        except OSError:
+            return False
+
+    return await asyncio.to_thread(_write)
+
+
+async def restore_cube_store(
+    session_id: str,
+    ref: str,
+    manifest: Dict[str, Any],
+    *,
+    data_object_id: str = "",
+    max_bytes: int = 2 * 1024 ** 3,
+) -> bool:
+    """manifest 指针 → 会话 cube store 目录（从 BlobStore 逐 blob 校验物化）。
+
+    ``data_object_id`` 来自指针的 content_payload_sha256（manifest 字节
+    即身份，manifest dict 本身无法携带自身 id）。manifest-only 指针
+    （blob 未进 BlobStore）→ False（诚实降级：调用方披露 degraded，
+    绝不留半截 store）。物化 owner 校验按 session 域强制。
+    """
+    from app.services.artifact_registry import cube_store_path, is_cube_ref
+    from app.services.lakehouse.data_object import (
+        DataObjectError,
+        is_data_object_id,
+        materialize_data_object,
+    )
+
+    if not is_cube_ref(ref) or not isinstance(manifest, dict):
+        return False
+    if not is_data_object_id(data_object_id):
+        return False
+    store_dir = cube_store_path(session_id, ref)
+    if store_dir is None:
+        return False
+    if int(manifest.get("byte_size") or 0) > max_bytes:
+        return False
+    try:
+        written = await asyncio.to_thread(
+            materialize_data_object, data_object_id, store_dir,
+            owner_session_id=session_id,
+        )
+    except DataObjectError:
+        return False
+    return bool(written)
 
 
 async def write_back_session_payload(

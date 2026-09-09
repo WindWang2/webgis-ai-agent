@@ -66,6 +66,19 @@ def sha256_hex(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def sha256_of_file(path) -> str:
+    """文件流式 sha256（1MiB 分块；O(bytes) IO，无大内存驻留）。
+
+    V6 起是仓库唯一的文件摘要口径（此前 materialization_service /
+    raster_object / cube_store 各持一份等价实现）。
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def canonical_fingerprint(obj: Any) -> str:
     """任意可 JSON 化对象 → 确定性 sha256 hex。不可序列化/含非有限数 → ValueError。"""
     return sha256_hex(canonical_dumps(obj))

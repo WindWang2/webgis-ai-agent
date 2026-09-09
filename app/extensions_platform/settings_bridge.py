@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
+from .diagnostics import DiagnosticCode, ExtensionDiagnostic, ExtensionPlatformError
 from .host import HostPolicy
 from .permissions import parse_grants_config
 
@@ -66,7 +68,140 @@ def host_policy_from_settings() -> HostPolicy:
         feature_flags=dict(feature_flags),
         extension_settings={str(k): dict(v) for k, v in extension_settings.items()},
         allow_local_untrusted_activation=settings.EXTENSIONS_ACTIVATE_UNTRUSTED,
+        secrets=_parse_secrets(settings.EXTENSION_SECRETS_JSON),
+        network_allow=parse_network_allow(settings.EXTENSION_NETWORK_ALLOW),
+        artifact_roots=tuple(
+            Path(p.strip()).resolve()
+            for p in settings.EXTENSION_ARTIFACT_ROOTS.split(os.pathsep)
+            if p.strip()
+        ),
+        trusted_publishers=parse_trusted_publishers(settings.EXTENSION_TRUSTED_PUBLISHERS),
+        trust_signed=settings.EXTENSIONS_TRUST_SIGNED,
+        allow_unsigned_dev=settings.EXTENSIONS_ALLOW_UNSIGNED_DEV,
+        max_worker_crashes=_parse_max_worker_crashes(settings.EXTENSIONS_MAX_WORKER_CRASHES),
     )
+
+
+def _parse_secrets(raw: str) -> dict[str, dict[str, str]]:
+    """EXTENSION_SECRETS_JSON：{ext_id: {ref: value}}；形状 fail closed。"""
+    data = _parse_json_dict(raw, "EXTENSION_SECRETS_JSON")
+    secrets: dict[str, dict[str, str]] = {}
+    for ext_id, refs in data.items():
+        if not isinstance(refs, dict):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"EXTENSION_SECRETS_JSON[{ext_id!r}] must be a JSON object of ref->value",
+                )
+            )
+        cleaned: dict[str, str] = {}
+        for ref, value in refs.items():
+            if not isinstance(value, str):
+                raise ExtensionPlatformError(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.MANIFEST_PARSE_FAILED,
+                        f"EXTENSION_SECRETS_JSON[{ext_id!r}][{ref!r}] must be a string",
+                    )
+                )
+            cleaned[str(ref)] = value
+        secrets[str(ext_id)] = cleaned
+    return secrets
+
+
+def parse_network_allow(raw: str) -> dict[str, frozenset[str]]:
+    """EXTENSION_NETWORK_ALLOW："id:host1,host2;id2:*" → {id: frozenset(hosts)}。
+
+    host 形状：小写 host / host:port 的 host 部分 / "*"（全部放行）。
+    空条目 = 该扩展无任何出网允许（broker 默认 deny 不受影响）。
+    """
+    allowed: dict[str, frozenset[str]] = {}
+    for chunk in (raw or "").split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        ext_id, _, hosts_csv = chunk.partition(":")
+        ext_id = ext_id.strip()
+        if not ext_id:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"EXTENSION_NETWORK_ALLOW entry {chunk!r} lacks extension id",
+                )
+            )
+        # 先按原始形态拒绝非法条目（path/space/前导冒号），再把 host:port
+        # 规约为 host 部分（broker 按 URL hostname 匹配，端口维度无法强制；
+        # 静默保留 :port 会让条目永不命中——Round-1 MINOR-5 footgun）。
+        hosts = set()
+        for raw in hosts_csv.split(","):
+            entry = raw.strip().lower()
+            if not entry:
+                continue
+            if "/" in entry or " " in entry or entry.startswith(":"):
+                raise ExtensionPlatformError(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.MANIFEST_PARSE_FAILED,
+                        f"EXTENSION_NETWORK_ALLOW host {entry!r} is not a plain host "
+                        "(use host or host:port, or '*' for all)",
+                    )
+                )
+            hosts.add(entry.partition(":")[0] or entry)
+        hosts = frozenset(hosts)
+        if not hosts:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"EXTENSION_NETWORK_ALLOW entry {chunk!r} lists no hosts",
+                )
+            )
+        existing = allowed.get(ext_id, frozenset())
+        allowed[ext_id] = existing | hosts
+    return allowed
+
+
+def parse_trusted_publishers(raw: str) -> dict[str, Path]:
+    """EXTENSION_TRUSTED_PUBLISERS："key_id:path,..." → {key_id: Path}。"""
+    publishers: dict[str, Path] = {}
+    for chunk in (raw or "").split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        key_id, sep, path = chunk.partition(":")
+        if not sep or not key_id.strip() or not path.strip():
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"EXTENSION_TRUSTED_PUBLISHERS entry {chunk!r} must be key_id:path",
+                )
+            )
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", key_id.strip()):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"publisher key_id {key_id!r} must be a lowercase identifier",
+                )
+            )
+        publishers[key_id.strip()] = Path(path.strip())
+    return publishers
+
+
+def _parse_max_worker_crashes(raw: Any) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_PARSE_FAILED,
+                f"EXTENSIONS_MAX_WORKER_CRASHES must be an integer, got {raw!r}",
+            )
+        ) from exc
+    if value < 1 or value > 10:
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_PARSE_FAILED,
+                f"EXTENSIONS_MAX_WORKER_CRASHES must be in [1, 10], got {value}",
+            )
+        )
+    return value
 
 
 def _parse_json_dict(raw: str, field_name: str) -> dict[str, Any]:

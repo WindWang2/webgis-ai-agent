@@ -1,5 +1,247 @@
 # Changelog
 
+## [Unreleased] - 2026-09-09
+
+### Added (science-v4: Spatial Science & GeoAI Platform V4)
+- Geostatistics V4: simple kriging, external-drift kriging (KED), normal-score
+  transform, nested-variogram fitting (honest ConvergenceFailure when not
+  beneficial), sequential Gaussian simulation (caller-seeded, bitwise
+  reproducible, P10/P50/P90 ensemble), full co-kriging under an LMC
+  (per-structure PSD by construction), and spatiotemporal kriging
+  (separable / product-sum with second-scale mixture, PSD by construction).
+- Hydrology & terrain V4: depression breaching, HAND, Shreve magnitude,
+  single-level Pfafstetter coding, hypsometric analysis (Strahler 1952
+  integral), clear-sky solar radiation (FAO-56 anchor), and a chunked
+  priority-flood backend variant (banded, low heap footprint) registered
+  against the full-path reference with a pinned parity bound.
+- Scientific contract ratchet: heavy algorithms must declare
+  resource_envelope / cancellation_profile / NumericalTolerance (frozen
+  44-entry baseline, shrink-only); interpolation + terrain domains fully
+  declared. Cancellation checkpoints sunk into terrain hot loops
+  (fill heap / D-infinity topology / viewshed sectors).
+- Typed scientific errors: pyproj.CRSError folded into InvalidCRS at the
+  UTM boundary (KNOWN-GAP #1 xfail promoted), NumericalInstability and
+  ConvergenceFailure with real producers; geometry repair disclosure
+  (never-silent make_valid) with strict typed rejection in zonal
+  statistics (KNOWN-GAP #2 xfail promoted).
+
+### Fixed (science-v4)
+- raw pyproj.CRSError no longer escapes as TOOL_ERROR (loses correction_hint);
+- zonal statistics no longer silently accepts self-intersecting polygons;
+- terrain tool layer wraps RasterioIOError into typed RasterReaderError.
+
+### Added
+- GIS Extension Platform V2 (ADR-0105): worker-isolated execution
+  (`execution.mode=worker` — extension code runs in a subprocess the host
+  never imports, with a sanitized environment, RLIMIT memory/CPU budgets,
+  output caps, and crash → rollback → quarantine) plus a default-deny
+  capability broker for worker host access (network allowlist + the
+  authoritative SSRF gate, confined artifact roots, provisioning-gated
+  secrets with an audited ring).
+- Supply chain for extension packs: HMAC content signing (`package` /
+  `verify` — tampered or invalid signatures quarantine a pack even if
+  allowlisted, and verified signatures can elevate trust under
+  `EXTENSIONS_TRUST_SIGNED`), a deterministic SBOM with secret-shape
+  scanning (`sbom`), and a certification suite (`certify`).
+- `model_provider` extension type for GIS domain inference models: each
+  provider projects to a typed invoke tool on the real dispatch path
+  (in-process streaming via event iterators with cooperative
+  cancellation; worker mode = single-frame aggregate, streaming
+  typed-refused). Example pack: `extensions/examples/extdemo-ml-pack`.
+- Dependency version constraints (`">=1.2,<2.0"` syntax) checked at
+  validate time, deterministic topological activation order,
+  upgrade-conflict refusal (`dependency_conflict`), and explicit
+  `allow_downgrade=True` rollback semantics.
+- A host projection-change hook: every post-startup activate / deactivate /
+  rollback (including worker-crash auto-deactivation) now recompiles the
+  runtime manifest and refreshes tool args, removing the V1 known
+  limitation that left the manifest stale after deactivation.
+- Professional Cartographic Rendering V5 (ADR-0118): authoritative render
+  diagnostics vocabulary (`app/lib/cartography/render_diagnostics.py`, 18
+  codes) exported via component catalog schemaVersion 5 and locked as a
+  frontend subset by registry-parity tests; diagnostics now travel with the
+  exported artifact (`render_diagnostics` form field on `POST /api/v1/export`)
+  and persist as `{filename}.diagnostics.json` sidecars, readable via
+  `GET /api/v1/export/diagnostics/{filename}` with download-equivalent
+  fail-closed ownership.
+- True vector SVG export: the orphaned MapSpec→SVG compiler and SVG
+  marginalia generators are wired into the exporter (`vector-svg-export.ts`)
+  with honest degradation (`basemap_omitted_vector_svg`, raster fallback via
+  `vector_svg_fallback_raster`); atlas/multi-frame export runtime
+  (`frames` + `frameLayout`, pdf pages / png grid) with deterministic frame
+  restore, page caps and per-frame skip disclosures; swipe comparison exports
+  compose the second view explicitly instead of silently dropping it.
+- Label text fitting contract: `fit_label_text` / `wrap_label_text` in the
+  label engine (60 code points, ellipsis), wired into the Python twin SVG
+  renderer and the vector SVG export path; a shared 220-char fixture locks
+  cross-twin truncation parity.
+- Semantic render-scene oracle (`describeRenderScene`) with golden corpus and
+  live-composition semantics checks — live ↔ export parity assertions on
+  meaning (presence/visibility/disclosure), not pixels.
+- Spatial Data Lakehouse & Cube V6 (ADR-0118): durable DataObject identity —
+  manifests are content-addressed (id = canonical sha256, deterministic,
+  owner-scoped, with input reuse fingerprints and an environment
+  fingerprint), published through the existing BlobStore CAS with free
+  byte-level dedup.
+- S3-compatible BlobStore backend (same interface, optional boto3 with
+  typed degrade): staging->copy atomic publish, verify-before-trust
+  put-if-absent, digest-verified reads; endpoint gated by the existing
+  SSRF guard before any runtime dependency imports. Selected via
+  WEBGIS_OBJECT_STORE_BACKEND (default filesystem — zero behavior change).
+- `ref:fabric-parquet/<id>` is now a first-class ledger citizen: the
+  previously write-only dangling ref gained a resolver, session-ledger
+  registration, probe/GC visibility, durable content identity, and a
+  row-group-pruned window scan (`POST /api/v1/lakehouse/vector/scan`)
+  with honest structural evidence (row_groups_read/total, truncation).
+- Zarr V6 cube runtime: group cubes (one (time,y,x) array per band) with
+  consolidated metadata, chunk-granular window reads, and immutable
+  revisions via hardlink copy-on-write forks (source store stays
+  byte-identical). Session production path: `POST /api/v1/lakehouse/cubes`
+  + `/cubes/window`; refs (`ref:cube/<id>`) are ledger-visible with GC
+  protection. Grid mismatches are typed refusals — never silent resamples.
+- Lakehouse REST surface (`/api/v1/lakehouse/*`): owner-guarded object
+  manifest reads, vector window scan, cube build/window, and DR verify;
+  foreign-owner access returns 404 without leaking existence.
+- Workspace durability for lakehouse refs: snapshots can materialize
+  fabric-parquet (binary lane) and cube (manifest lane) pointers; restore
+  re-materializes from the BlobStore with per-blob digest verification
+  (session-death reopen). DR helpers: working-copy verify/repair, CAS
+  chunk backup, read-only missing/orphan scans.
+- `WEBGIS_REF_CONTENT_HASH` now defaults ON — session ref descriptors carry
+  a canonical payload sha256 (<=1MiB) by default; set the env to
+  0/false/no/off for the legacy always-None behavior.
+
+### Fixed
+- `raster_store.save_png` now publishes atomically (tmp + os.replace) —
+  the last non-atomic durable write in the repo; crashes can no longer
+  leave half-written PNGs.
+- Lakehouse tests sandbox the BlobStore root: the process-wide
+  content-store cache is reset per test, so tests monkeypatching DATA_DIR
+  no longer leak blobs into the repo's ./data.
+
+- GeoCompute Cluster Runtime V6: runs gain a durable control plane
+  (`geocompute_runs`/`geocompute_workers`/`geocompute_resource_usage`) with
+  lease/epoch fencing, coordinator leadership arbitration, stale-lease
+  reclamation, distributed cancellation (any process can request; queued runs
+  converge directly, running runs via 0.5s heartbeat watchdog), priority
+  preemption at node boundaries, tenant weighted-fair dispatch with
+  starvation-free round-robin, profile channel matching, and a cluster
+  resource ledger (advisory by default, `WEBGIS_CLUSTER_LEDGER_ENFORCING=1`
+  for enforced admission). New REST: `POST /geocompute/plans/runs` (202 async
+  submit with 413/429 bounds), `GET /geocompute/runs` (owner-scoped merge of
+  cluster rows and terminal snapshots), upgraded `GET /runs/{id}` /
+  `POST /plans/runs/{id}/cancel` (cross-process), `GET /geocompute/cluster/
+  metrics` (admin, bounded cardinality). Coordinator is opt-in via
+  `WEBGIS_CLUSTER_COORDINATOR=1`; sync `/plans/execute` behavior is unchanged.
+  Durable node dispatch now carries the plan budget into the worker task body
+  (worker-side row caps no longer rely on the hard node cap alone).
+
+### Fixed
+- `SetLayoutIntent` with explicit `legend={"visible": false}` no longer gets
+  silently flipped back by the pre-commit AUTO_SAFE repair loop
+  (user-wins suppression channel + honest `carto.legend.completeness`
+  finding); legend/margins intents now merge field-wise instead of dropping
+  pre-existing keys.
+- Twin SVG compiler respects layer visibility and actually enforces
+  `thresholds.maxFeatures` / `thresholds.timeoutMs` (previously declared but
+  never consumed), emitting `features_truncated` / `export_timeout_partial`.
+- PDF exports no longer draw the title twice, no longer garble CJK text
+  (rasterized with `pdf_text_rasterized_cjk` disclosure), and the success
+  message no longer claims a fully vector artifact; report-chain SVG
+  compilation is bounded by `asyncio.wait_for`.
+- Export chrome truth now composes pending presentation/removals exactly like
+  live; legend titles use `legend.title`; dead degradation codes gained real
+  emitters; nodata legend entries render on live and export sides; a
+  prior-blocking-cache eviction TypeError in `apply_presentation_batch`
+  (batch transactions rolled back once the cache filled) is fixed.
+- GeoCompute default session factories (`run_evidence`, `reuse_index`,
+  `durable`) handed back a `sessionmaker`/function object instead of a
+  `Session`, which is not a context manager on SQLAlchemy 2.0 — production
+  default-path run evidence snapshots, cross-process reuse records, and
+  durable-node await polling silently failed (fail-open). They now return a
+  session instance (same discipline as the jobs subsystem).
+
+### Added (Workbench V5 & Collaboration — ADR-0105)
+- Workbench organization state (nested group tree / membership / layer locks /
+  workbench mode) is now durable: new `patch_workbench_state` MapSpec mutation
+  intent persists a `WorkbenchDocV5` into the session's `mapspec["workbench"]`
+  branch over the existing lock + CAS + provenance chain (256KB real-UTF-8
+  gate, deterministic structural validation). Selection/isolate remain
+  session-transient per ADR-0104; no second truth store.
+- Agent layer-lock enforcement: `set_layer_visibility` and `remove_layer`
+  transactions partition targets by the user lock set - fully locked targets
+  fail with a typed `layer_locked` ack error; partially locked targets apply
+  to unlocked ones and disclose `locked_layer_ids`. User unlock is the only
+  override.
+- Undo/redo (bounded 50, session-scoped) via a capture-before-execute command
+  model that replays inverse mutations through the same CAS channels; removal
+  is journaled as irreversible. Ops journal (opsLog) now receives live writes
+  with who/what/reversible metadata; panel header undo/redo buttons + global
+  Ctrl/Command+Z / Shift+Z / Ctrl+Y.
+- Same-session multi-tab foundation: committed workbench docs broadcast over
+  BroadcastChannel (`wb5:{sessionId}`) with revision-gated adoption;
+  deterministic conflict resolution stays server-side CAS last-writer-wins.
+- Refresh resume: authenticated sessions auto-restore via a localStorage
+  session anchor (pointer only, 7-day TTL, no tokens persisted); pagehide
+  best-effort flush of pending doc edits.
+- True side-by-side comparison: the primary canvas shrinks to the left half
+  while the secondary pane owns the right half with synced cameras; secondary
+  parity for terrain (is3D), legend filters, selection filters, and the
+  secondary layer family legend (same LegendStack). Escape exits comparison.
+- 10k-layer panel virtualization (windowed rendering above 200 rows, stable
+  row keys, collapsed-subtree pruning) and deterministic viewport grid
+  thinning for large inline GeoJSON (8x8 cells, area-first, 5000-feature
+  budget) with stale-viewport apply cancellation (generation token + idle).
+- Layer provenance badge (backend `provenance.result_ref`/`tool_call_id`)
+  linking to the results workbench - reads existing lineage facts only.
+
+### Changed (Workbench V5)
+- Nested user groups replace the flat V4 group list (`parentId` on
+  `LayerGroupEntity`, depth <= 4, cycle-safe projection with visited guard);
+  rename/remove/assign/lock/drop mutations are undoable doc commands;
+  group removal promotes children.
+
+### Added (Harness V5 — ADR-0118)
+- Durable trace V5: session trace-chain JSONL is now multi-worker safe
+  (cross-process flock + per-session monotonic `seq` + settle idempotency);
+  FINAL_VERDICT records are never dropped by the rolling window; chains survive
+  in-registry LRU eviction via a bounded pinned area (multi-process zero-loss
+  contract test: 8 processes × 6 records).
+- Unified failure taxonomy + typed remediation: 11-class `HarnessFailureClass`
+  (CRS/renderer/stale-ref/timeout/partial/... ) adapters over the existing
+  planning/geocompute enums; the dispatch error seam now attaches a
+  `harness_failure` verdict with bounded retry budget (max 3 per class,
+  exhaustion → `abort_with_disclosure`); pyproj CRS failures no longer escape
+  as generic TOOL_ERROR (KNOWN-GAP #1 fixed, xfail promoted).
+- Longitude-convention hardening: new pure `app/lib/gis/longitude.py`
+  (pm180/e360 detection that never guesses, antimeridian geometry splitting,
+  0–360 normalization) + profile facts feeding the planner.
+- Progressive DatasetProfile: explicit cheap→deep `deepen_profile` (cheap
+  provenance kept, deep-failure falls back to cheap); longitude facts flow into
+  the resolver contract additively (emitted only with real evidence).
+- Rendered-state observation: per-layer telemetry (`source_status`,
+  `render_complete`, `feature_count`) and chart render telemetry
+  (`charts[].rendered/data_points`) — all optional, old clients keep the V4
+  gate; finalization now detects requested-vs-actual mismatches including
+  "chart mounted but rendered without data".
+- Subagent accounting: child runs bind a dedicated TurnEvidence so provider
+  token usage rolls up into `SubagentBudget.llm_usage` and the parent turn
+  evidence (once, idempotent); results carry `budget_usage` + lineage
+  (parent_turn_id/depth/role).
+- Open-loop query→tool retrieval evaluation: 66 hand-gold cases (direct/
+  near-duplicate/hard-negative/ambiguous, zh+en) with precision@1 over the
+  ranked (non-core) segment; measured pins p@1 0.65 / invalid-selection 0.33
+  recorded as the honest V5 baseline.
+- Project-level workflow resume: `workflow_resume_anchors` table (migration
+  0032) + `POST /chat/sessions/{id}/workflow-resume-anchor` and
+  `POST /chat/workflow-resume/{anchor_id}` — resume creates a fresh session
+  with the plan/goal/instance blocks restored, ref payloads rehydrated
+  best-effort, `missing_refs` disclosed, anonymous resume refused.
+- Live-failure corpus (8 categories) with deterministic typed expectations and
+  a budget-ladder termination proof, plus an end-to-end mid-failure recovery
+  scenario (CRS fault → typed diagnose → remediation retry → verified
+  finalization with render telemetry → durable trace).
+
 ## [Unreleased] - 2026-09-07
 
 ### Added

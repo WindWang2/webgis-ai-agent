@@ -84,6 +84,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="geometry.clip", name="几何裁剪", category="geometry_processing",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_clip_layer_area_oracle",
+            ],
             capabilities=["geometry_clip"],
             input_artifact_types=["poi_feature_set", "polygon_feature_set"],
             output_artifact_type="polygon_feature_set", tool_candidates=["clip_layer"],
@@ -100,6 +103,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="geometry.dissolve", name="融合溶解", category="geometry_processing",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_dissolve_layer_adjacent_merge_oracle",
+            ],
             capabilities=["geometry_dissolve"],
             input_artifact_types=["polygon_feature_set", "admin_boundary_set"],
             output_artifact_type="polygon_feature_set", tool_candidates=["dissolve_layer"],
@@ -114,6 +120,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="geometry.spatial_join", name="空间连接", category="spatial_relationship",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_spatial_join_counts_oracle",
+            ],
             capabilities=["spatial_join"],
             input_artifact_types=["poi_feature_set", "polygon_feature_set"],
             output_artifact_type="polygon_feature_set", tool_candidates=["spatial_join"],
@@ -257,6 +266,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="geometry.center_statistics", name="几何中心统计", category="geometry_processing",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_center_statistics_mean_center_oracle",
+            ],
             capabilities=["geometry_centroid"],
             input_artifact_types=["poi_feature_set", "point_feature_set",
                                   "line_feature_set", "polygon_feature_set"],
@@ -279,6 +291,5 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             uncertainty_outputs=[],
             random_seed_policy="deterministic",
             scientific_status="EXPERIMENTAL",
-            conformance_tests=[],
         ),
 ]

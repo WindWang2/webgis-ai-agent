@@ -109,7 +109,7 @@ def test_zonal_statistics_passes_through_when_no_crs(monkeypatch):
     input flows through unchanged."""
     from app.lib.geo_analysis import raster_ops
 
-    called = {"input": None}
+    called = {"input": None, "strict": None}
 
     class _FakeSrc:
         crs = None
@@ -122,8 +122,11 @@ def test_zonal_statistics_passes_through_when_no_crs(monkeypatch):
 
     monkeypatch.setattr(raster_ops.rasterio, "open", lambda *a, **k: _FakeSrc())
 
-    def _fake_zonal(input, raster_path, stats):
+    # science-v4 W3: zonal_statistics now forwards strict (geometry validity
+    # gate) through this seam — the fake must mirror the real signature.
+    def _fake_zonal(input, raster_path, stats, strict=True):
         called["input"] = input
+        called["strict"] = strict
         return [{"mean": 1.0}]
 
     # V4: rasterstats 依赖已移除，zonal_statistics 经 _windowed_zonal_stats 取数。
@@ -131,6 +134,7 @@ def test_zonal_statistics_passes_through_when_no_crs(monkeypatch):
     res = raster_ops.zonal_statistics({"type": "FeatureCollection", "features": []}, "/x.tif")
     assert res == [{"mean": 1.0}]
     assert called["input"] == {"type": "FeatureCollection", "features": []}
+    assert called["strict"] is True  # 默认 strict 门透传（W3 契约）
 
 
 # ---------------------------------------------------------------------------

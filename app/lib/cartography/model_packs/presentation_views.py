@@ -25,7 +25,9 @@ PRESENTATION_VIEWS_PACK: List[MapModel] = [
         pitfalls_zh=[
             "planned：需要多画幅组合运行时（多个 MapSpec 画面的并置/联动"
             "布局），当前单画布 MapSpec 无法承载 —— 诚实保留 planned",
-            "落地前替代：temporal_comparison_map（双期）或导出侧多次出图",
+            "V5（ADR-0118 D8）导出侧最小真实闭环：ExportRequest.frames 多帧"
+            "运行时（逐帧 filter/extent 确定性执行 → pdf pages / png grid "
+            "拼板）可作为小倍数导出承载面；spec 级多画幅模型仍待后续 Epic",
         ],
         sources=[_QGIS_URL],
     ),
@@ -43,6 +45,8 @@ PRESENTATION_VIEWS_PACK: List[MapModel] = [
             "变形后几何的渲染契约，本分支未实现",
             "变形图必须同时披露原始地理轮廓参照（inset），否则读者失去"
             "地理定位",
+            "V5（ADR-0118 D8）：导出请求携带 cartogram 意图时诚实降级"
+            "（cartogram_unsupported，按未变形几何渲染）—— 不伪造变形支持",
         ],
         sources=[_QGIS_URL],
     ),

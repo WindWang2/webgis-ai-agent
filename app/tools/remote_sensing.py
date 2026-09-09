@@ -112,6 +112,7 @@ def register_rs_tools(registry: ToolRegistry):
     """注册遥感数据工具"""
 
     @tool(registry, name="fetch_sentinel",
+    capabilities=['raster_source'],
            description=(
                "Sentinel-2 卫星影像快视图获取：从 AWS STAC 拉取指定 bbox + 日期窗内最少云覆盖的一景影像缩略图。"
                "\n何时用：用户想『看下某区域近期的卫星影像』；为后续 compute_ndvi / detect_vegetation_change 选片；"
@@ -1156,6 +1157,8 @@ def register_rs_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="mnf_transform",
+    side_effect="deterministic_compute",
+    tags=('mnf', '降噪', '降维', '遥感'),
           description=(
               "最小噪声分数变换 MNF（Green 1988）：局部差分估计噪声协方差 → 噪声白化 → "
               "白化空间 PCA，分量按 SNR 排序（SNR=λ−1），含载荷与逆变换语义。"
@@ -1226,6 +1229,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="ica_transform",
+    side_effect="deterministic_compute",
+    tags=('ica', '独立成分', '降维', '遥感'),
           description=(
               "FastICA 独立成分分析（Hyvärinen 1999）：random_state=42 固定、"
               "unit-variance 白化，输出分量栅格 + 混合矩阵；收敛性显式披露。"
@@ -1291,6 +1296,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="spectral_angle_mapper",
+    side_effect="deterministic_compute",
+    tags=('光谱匹配', 'sam', '目标检测', '高光谱'),
           description=(
               "光谱角制图 SAM（Kruse 1993）：逐像元光谱角 θ=arccos(⟨x,e⟩/(‖x‖‖e‖))，"
               "输出逐端元角度栅格 + argmin 类别栅格；零范数像元 → NaN（不产伪 0 角）。"
@@ -1354,6 +1361,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="spectral_information_divergence",
+    side_effect="deterministic_compute",
+    tags=('光谱匹配', 'sid', '目标检测', '高光谱'),
           description=(
               "光谱信息散度 SID（Chang 2000 对称形式）：p=x/Σx、q=e/Σe，"
               "D=Σp·ln(p/q)+Σq·ln(q/p)；比 SAM 对光谱分布差异更敏感。"
@@ -1417,6 +1426,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="matched_filter",
+    side_effect="deterministic_compute",
+    tags=('目标检测', '匹配滤波', '高光谱', '遥感'),
           description=(
               "匹配滤波目标检测（Boardman 1995）：全局协方差白化下的目标投影，"
               "score=tᵀΣ⁻¹(x−μ)/(tᵀΣ⁻¹t)——纯目标像元≈1、背景≈0（丰度式）。"
@@ -1469,6 +1480,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="rx_anomaly",
+    side_effect="deterministic_compute",
+    tags=('异常检测', 'rx', '高光谱', '遥感'),
           description=(
               "RX 全局异常检测（Reed & Xiaoli 1990）：逐像元 Mahalanobis 距离 δ(x)，"
               "尺度不变岭正则 + mean(δ)+k·σ(δ) 启发式阈值建议。"
@@ -1526,6 +1539,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="mad_change",
+    side_effect="deterministic_compute",
+    tags=('变化检测', 'mad', '多时相', '遥感'),
           description=(
               "MAD / IR-MAD 变化检测（Nielsen 1998）：两期栈标准化 → SVD-CCA → "
               "MAD 变分量（按规范相关升序，noisiest first）+ χ² 栅格"
@@ -1592,6 +1607,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="linear_unmixing",
+    side_effect="deterministic_compute",
+    tags=('光谱解混', '丰度反演', 'fcls', '高光谱'),
           description=(
               "线性光谱解混 FCLS（Heinz & Chang 2001）：逐像元 "
               "min‖Ex−f‖² s.t. x≥0, Σx=1，输出 m 个丰度面（[0,1]）+ RMS 残差面"
@@ -1657,6 +1674,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="medoid_composite",
+    side_effect="deterministic_compute",
+    tags=('时序合成', 'medoid', '多时相', '遥感'),
           description=(
               "medoid 时序合成（Flood 2013 多维中位数）：多时相波段栈逐像元选"
               "到其余观测波段欧氏距离和最小的**真实切片**——跨波段光谱一致性保持"
@@ -1719,6 +1738,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="segment_image",
+    side_effect="deterministic_compute",
+    tags=('图像分割', 'kmeans', '无监督分类', '遥感'),
           description=(
               "图像分割（Lloyd 1982 k-means 基座）：标准化光谱特征 + 加权空间坐标特征，"
               "random_state=42 + n_init=10 确定性；输出标签栅格 + 逐段均值光谱。"
@@ -1787,6 +1808,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="extract_endmembers_vca",
+    side_effect="deterministic_compute",
+    tags=('端元提取', '高光谱', 'vca', '遥感'),
           description=(
               "端元提取 VCA（Nascimento & Dias 2005 简化确定性变体，EXPERIMENTAL）："
               "SVD 降维 + 随机投影逐顶点选择；输出端元光谱 + 像元位置。"
@@ -1841,6 +1864,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="band_correlation_table",
+    side_effect="deterministic_compute",
+    tags=('波段相关', '相关矩阵', '波段统计', '遥感'),
           description=(
               "波段×波段 Pearson 相关矩阵 + 逐对样本数（stats_table 形）。"
               "公共有效掩膜（任一波段无效 → 整像元剔除，非 pairwise-complete，披露）。"
@@ -1890,6 +1915,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="temporal_features",
+    side_effect="deterministic_compute",
+    tags=('时序特征', '物候', '谐波', '遥感'),
           description=(
               "逐像元时序特征（栈第 0 轴=时间序）：min/max/mean/std/amplitude/"
               "first−last + 单周期谐波（幅值/相位，联合线性趋势 LS）。"
@@ -1957,6 +1984,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="robust_normalize",
+    side_effect="deterministic_compute",
+    tags=('辐射归一化', '分位拉伸', '预处理', '遥感'),
           description=(
               "稳健波段/场景归一化：逐波段 2-98 分位（可调）拉伸到 [0,1]，"
               "或匹配到参考栈同序波段的分位区间（NaN-aware，逐波段分位披露）。"
@@ -2029,6 +2058,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="cloud_qc_basic",
+    side_effect="deterministic_compute",
+    tags=('云检测', '质量掩膜', 'cloud_mask', '遥感'),
           description=(
               "云 QC 基础咨询掩膜（EXPERIMENTAL）：brightness=(red+nir)/2 亮度阈值"
               "（缺省场景 97.5 分位）+ 可选 |NDVI| 近零条件；qc_mask=True=疑似云。"
@@ -2129,6 +2160,8 @@ def register_rs_tools(registry: ToolRegistry):
         return plane
 
     @tool(registry, name="sar_remove_thermal_noise",
+    side_effect="deterministic_compute",
+    tags=('sar', '热噪声', '定标', 'sentinel'),
           description=(
               "SAR 热噪声去除：I_dn = max(I − N, 0)（标量噪声底或逐像元噪声 "
               "LUT 相减，二者互斥）；钳 0 像元数披露。"
@@ -2207,6 +2240,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="sar_log_scale",
+    side_effect="deterministic_compute",
+    tags=('sar', '定标', 'db换算', '振幅强度'),
           description=(
               "SAR 量纲换算（纯代数恒等式）：amplitude_to_intensity（A²）、"
               "intensity_to_amplitude（√I）、linear_to_db（10·log₁₀）、"
@@ -2257,6 +2292,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="sar_multitemporal_speckle",
+    side_effect="deterministic_compute",
+    tags=('sar', '斑点滤波', '多时相', '去噪'),
           description=(
               "多时相 SAR 斑点抑制（强度域 MT-Lee）：时序均值与空域 Lee 估计的"
               "逐像元逆方差加权（确定性、无随机成分）。"
@@ -2327,6 +2364,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="sar_coherence_estimate",
+    side_effect="deterministic_compute",
+    tags=('sar', '相干性', 'insar', '遥感'),
           description=(
               "复数相干性估计（EXPERIMENTAL）：γ = |Σ a·b*|/√(Σ|a|²Σ|b|²)"
               "（窗口化，nodata 感知），输出 γ 栅格 + 窗口有效对数。"
@@ -2395,6 +2434,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="sar_radiometric_terrain_correction",
+    side_effect="deterministic_compute",
+    tags=('sar', '地形校正', 'rtc', '辐射定标'),
           description=(
               "SAR 地形辐射校正 RTC（Small 2011）：γ_flat = σ⁰·cosθi/cosθl；"
               "本地入射角由 DEM Horn 梯度导出（坡度/坡向 + 雷达视线方位角）。"
@@ -2487,6 +2528,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="sar_layover_shadow_mask",
+    side_effect="deterministic_compute",
+    tags=('sar', '叠掩', '阴影', '地形几何'),
           description=(
               "SAR 叠掩/阴影几何分类：{0=normal,1=layover,2=shadow,3=nodata}"
               " + 占比。layover = 面坡且坡度陡于入射角（α > θi）；"
@@ -2563,6 +2606,8 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="sar_enl_map",
+    side_effect="deterministic_compute",
+    tags=('sar', 'enl', '斑点噪声', '质检'),
           description=(
               "滑窗 ENL（等效视数）估计图：ENL = mean²/var（nan 感知）+ "
               "全局 ENL（附 95% 置信区间 enl_ci95，delta 法、均匀场景）。"

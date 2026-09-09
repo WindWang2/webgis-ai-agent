@@ -484,3 +484,228 @@ def test_mapspec_08_fallback_rendering():
     assert 'fill-opacity="0.9"' in svg
 
 
+
+
+# ────────────────────────────────────────────────────────────────────────
+# W4：孪生 SVG 编译器正确性 —— 可见性 / 阈值执行 / label 截断 / 结构化诊断
+# ────────────────────────────────────────────────────────────────────────
+from app.lib.cartography.render_diagnostics import MAX_DIAGNOSTICS_PER_EXPORT
+from app.services.mapspec_to_svg import (
+    DEFAULT_MAX_FEATURES,
+    DEFAULT_EXPORT_TIMEOUT_MS,
+    MAX_SVG_LABEL_CHARS,
+    SvgCompilation,
+    compile_mapspec_to_svg_detailed,
+    resolve_spec_timeout_ms,
+)
+
+
+def _points_mapspec(n: int, **layer_extra) -> dict:
+    """n 个确定性经纬度点位的单圆层 mapspec。"""
+    return {
+        "sources": {
+            "s1": {
+                "type": "geojson",
+                "inlineData": {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": "Point",
+                                "coordinates": [116.0 + (i % 50) * 0.01,
+                                                39.0 + (i // 50) * 0.01],
+                            },
+                            "properties": {"name": f"P{i}"},
+                        }
+                        for i in range(n)
+                    ],
+                },
+            }
+        },
+        "layers": [
+            {"id": "pts", "type": "circle", "source": "s1",
+             "paint": {"circle-color": "#123456", "circle-radius": 4},
+             **layer_extra},
+        ],
+    }
+
+
+def test_w4_layout_visibility_none_layer_skipped():
+    """MapLibre 语义：layout.visibility == "none" 的图层不进导出产物。"""
+    mapspec = _points_mapspec(3)
+    mapspec["layers"].append(
+        {"id": "ghost", "type": "circle", "source": "s1",
+         "layout": {"visibility": "none"},
+         "paint": {"circle-color": "#ff0000", "circle-radius": 9}}
+    )
+    comp = compile_mapspec_to_svg_detailed(mapspec, target_dpi=72)
+    assert isinstance(comp, SvgCompilation)
+    assert comp.svg.count("<circle") == 3  # ghost 层的 3 个 r=9 圆不出现
+    assert 'r="9"' not in comp.svg
+    assert comp.feature_count == 3
+
+
+def test_w4_top_level_visible_false_layer_skipped():
+    """顶层 visible: False 与 layout.visibility=="none" 同语义。"""
+    mapspec = _points_mapspec(2, visible=False)
+    comp = compile_mapspec_to_svg_detailed(mapspec, target_dpi=72)
+    assert comp.svg.count("<circle") == 0
+    assert comp.feature_count == 0
+    # 控制组：visible=True 照常渲染
+    comp_on = compile_mapspec_to_svg_detailed(_points_mapspec(2, visible=True),
+                                              target_dpi=72)
+    assert comp_on.feature_count == 2
+
+
+def test_w4_max_features_cap_truncates_in_order_with_diagnostic():
+    """超限确定性截断（保持原顺序取前 N）+ features_truncated 诊断。"""
+    mapspec = _points_mapspec(5)
+    comp = compile_mapspec_to_svg_detailed(mapspec, target_dpi=72,
+                                           max_features=2)
+    assert comp.svg.count("<circle") == 2
+    assert comp.feature_count == 2
+    assert comp.truncated_features is True
+    codes = [d["code"] for d in comp.diagnostics]
+    assert "features_truncated" in codes
+    diag = next(d for d in comp.diagnostics if d["code"] == "features_truncated")
+    assert diag["detail"] == "2"
+    assert diag["layer_id"] == "pts"
+    # 确定性：保留的是原顺序的前 2 个要素（坐标可复验）
+    assert 'cx=' in comp.svg
+
+
+def test_w4_spec_thresholds_max_features_honored():
+    """显式入参缺省时取 spec.thresholds.maxFeatures。"""
+    mapspec = _points_mapspec(5)
+    mapspec["thresholds"] = {"maxFeatures": 3}
+    comp = compile_mapspec_to_svg_detailed(mapspec, target_dpi=72)
+    assert comp.feature_count == 3
+    assert comp.truncated_features is True
+
+
+def test_w4_no_cap_feature_count_full():
+    """无 cap（默认 50000）时全量渲染。"""
+    comp = compile_mapspec_to_svg_detailed(_points_mapspec(5), target_dpi=72)
+    assert comp.feature_count == 5
+    assert comp.truncated_features is False
+    assert comp.timed_out is False
+    assert comp.diagnostics == []
+
+
+def test_w4_timeout_zero_cooperative_abort_with_diagnostic():
+    """timeout 预算耗尽 → 协作中止 + export_timeout_partial，产物仍合法。"""
+    comp = compile_mapspec_to_svg_detailed(_points_mapspec(5), target_dpi=72,
+                                           timeout_ms=0)
+    assert comp.timed_out is True
+    assert comp.feature_count == 0
+    codes = [d["code"] for d in comp.diagnostics]
+    assert "export_timeout_partial" in codes
+    assert comp.svg.startswith("<svg")
+
+
+def test_w4_spec_thresholds_timeout_honored():
+    mapspec = _points_mapspec(5)
+    mapspec["thresholds"] = {"timeoutMs": 0}
+    comp = compile_mapspec_to_svg_detailed(mapspec, target_dpi=72)
+    assert comp.timed_out is True
+    assert comp.feature_count == 0
+
+
+def test_w4_resolve_spec_timeout_ms_default_and_spec():
+    assert resolve_spec_timeout_ms({}) == DEFAULT_EXPORT_TIMEOUT_MS
+    assert resolve_spec_timeout_ms({"thresholds": {"timeoutMs": 1234}}) == 1234.0
+    # 非法值回默认
+    assert resolve_spec_timeout_ms({"thresholds": {"timeoutMs": "garbage"}}) \
+        == DEFAULT_EXPORT_TIMEOUT_MS
+    assert DEFAULT_MAX_FEATURES == 50000
+    assert DEFAULT_EXPORT_TIMEOUT_MS == 30000
+
+
+def test_w4_long_symbol_text_truncated_with_diagnostic():
+    """symbol 文本接入 fit_label_text：>60 字符截断 + label_truncated 诊断。"""
+    long_name = "X" * 100
+    mapspec = {
+        "sources": {
+            "s1": {
+                "type": "geojson",
+                "inlineData": {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point",
+                                         "coordinates": [116.4, 39.9]},
+                            "properties": {"name": long_name},
+                        }
+                    ],
+                },
+            }
+        },
+        "layers": [
+            {"id": "lbl", "type": "symbol", "source": "s1",
+             "layout": {"text-field": "{name}"}},
+        ],
+    }
+    comp = compile_mapspec_to_svg_detailed(mapspec, target_dpi=72)
+    assert long_name not in comp.svg  # 完整长文本绝不入产物
+    assert ("X" * (MAX_SVG_LABEL_CHARS - 1) + "…") in comp.svg
+    diag = next(d for d in comp.diagnostics if d["code"] == "label_truncated")
+    assert diag["layer_id"] == "lbl"
+    assert diag["detail"] == "layer=lbl len=100"
+
+
+def test_w4_short_symbol_text_untouched_no_diagnostic():
+    """对照组：短标签原样嵌入、零诊断。"""
+    mapspec = {
+        "sources": {
+            "s1": {
+                "type": "geojson",
+                "inlineData": {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point",
+                                         "coordinates": [116.4, 39.9]},
+                            "properties": {"name": "北京站"},
+                        }
+                    ],
+                },
+            }
+        },
+        "layers": [
+            {"id": "lbl", "type": "symbol", "source": "s1",
+             "layout": {"text-field": "{name}"}},
+        ],
+    }
+    comp = compile_mapspec_to_svg_detailed(mapspec, target_dpi=72)
+    assert "北京站" in comp.svg
+    assert comp.diagnostics == []
+
+
+def test_w4_diagnostics_capped_and_payload_shape():
+    """诊断条目数受词表上限约束（防诊断本身成为 DoS 载荷），载荷形状固定。"""
+    mapspec = _points_mapspec(200)
+    mapspec["layers"] = [
+        {"id": "lbl", "type": "symbol", "source": "s1",
+         "layout": {"text-field": "{name}"}},
+    ]
+    # 200 个 90 字符标签 → 理论 200 条 label_truncated，被上限截住
+    for feat in mapspec["sources"]["s1"]["inlineData"]["features"]:
+        feat["properties"]["name"] = "Y" * 90
+    comp = compile_mapspec_to_svg_detailed(mapspec, target_dpi=72)
+    assert len(comp.diagnostics) <= MAX_DIAGNOSTICS_PER_EXPORT
+    for d in comp.diagnostics:
+        assert set(d) <= {"code", "severity", "message", "detail", "layer_id"}
+        assert d["code"] == "label_truncated"
+        assert d["severity"] == "warning"
+
+
+def test_w4_compat_wrapper_returns_str_matching_detailed():
+    """原 compile_mapspec_to_svg 签名与 str 返回保持兼容，且与 detailed 一致。"""
+    mapspec = _points_mapspec(3)
+    svg = compile_mapspec_to_svg(mapspec, target_dpi=72)
+    assert isinstance(svg, str)
+    detailed = compile_mapspec_to_svg_detailed(mapspec, target_dpi=72)
+    assert svg == detailed.svg
