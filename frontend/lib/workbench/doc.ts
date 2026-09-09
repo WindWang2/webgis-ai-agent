@@ -99,19 +99,29 @@ export function groupDepth(groups: readonly GroupNodeLike[], id: string): number
   return depth;
 }
 
-/** 子孙组 id 集合（不含自身）。 */
+/** 子孙组 id 集合（不含自身）。V6：children 索引一次建表 —— O(n)（原
+ * frontier.includes 为 O(n×f)，大树下 reparent 校验放大，G11）。 */
 export function descendantGroupIds(
   groups: readonly GroupNodeLike[],
   id: string,
 ): Set<string> {
   const out = new Set<string>();
+  const childrenOf = new Map<string, string[]>();
+  for (const g of groups) {
+    if (g.parentId == null) continue;
+    const bucket = childrenOf.get(g.parentId);
+    if (bucket != null) bucket.push(g.id);
+    else childrenOf.set(g.parentId, [g.id]);
+  }
   let frontier = [id];
   while (frontier.length > 0) {
     const next: string[] = [];
-    for (const g of groups) {
-      if (g.parentId != null && frontier.includes(g.parentId) && !out.has(g.id)) {
-        out.add(g.id);
-        next.push(g.id);
+    for (const fid of frontier) {
+      for (const child of childrenOf.get(fid) ?? []) {
+        if (!out.has(child)) {
+          out.add(child);
+          next.push(child);
+        }
       }
     }
     frontier = next;
@@ -137,14 +147,33 @@ export function canReparentGroup(
   return newParentDepth + subtreeHeight <= WORKBENCH_GROUP_MAX_DEPTH;
 }
 
-/** 子树高度（自身为 1；叶子 = 1）。 */
+/** 子树高度（自身为 1；叶子 = 1）。V6：children 索引层序提升 —— O(n)。 */
 export function subtreeMaxDepth(groups: readonly GroupNodeLike[], id: string): number {
-  const children = descendantGroupIds(groups, id);
-  let max = 1;
-  for (const cid of children) {
-    max = Math.max(max, groupDepth(groups, cid));
+  const childrenOf = new Map<string, string[]>();
+  for (const g of groups) {
+    if (g.parentId == null) continue;
+    const bucket = childrenOf.get(g.parentId);
+    if (bucket != null) bucket.push(g.id);
+    else childrenOf.set(g.parentId, [g.id]);
   }
-  return max - groupDepth(groups, id) + 1;
+  // 层序：起点为第 1 层；环由 visited 防护（与投影层同款防御）。
+  const visited = new Set<string>([id]);
+  let frontier = [id];
+  let depth = 1;
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (const fid of frontier) {
+      for (const child of childrenOf.get(fid) ?? []) {
+        if (!visited.has(child)) {
+          visited.add(child);
+          next.push(child);
+        }
+      }
+    }
+    if (next.length > 0) depth += 1;
+    frontier = next;
+  }
+  return depth;
 }
 
 /** 根组按创建序展开（组实体在 doc.groups 的数组序 = 各层内展示序）。 */
