@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -117,23 +117,25 @@ def derive_runtime_block(
     mapspec_revision: int = 0,
     render_seq: int = 0,
     stored: Optional[Dict[str, Any]] = None,
+    records: Optional[Dict[str, Any]] = None,
     compile_fn: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """从章节纯派生运行态块（确定性、零 I/O 于派生本体；编译经 memo）。
 
     返回 None = 无 plan / 方法族未映射 / 编译失败（诚实留白，调用方保持
     原块或不写）。``stored`` 是已持久化的旧块：提供时对**已满足**节点做
-    证据失配检测（行签名漂移 → stale），并沿 typed 边向下游传播
-    （只污染受影响子图，无关分支零触碰）；revision 内容变化才 +1。
+    证据失配检测（行签名漂移 → 变更分类 → compute_affected_subgraph 闭
+    包 → stale），revision 内容变化才 +1。
 
     ``mapspec``（可选）提供时构建 artifact ↔ node ↔ layer/component
-    双向 lineage 索引（W3：正查节点产物/消费，反查 artifact 的
-    生产/消费节点与依赖它的图层/组件）；全部为既有引用的投影
-    （bound_ref / spec source ref / chartRef），不发明第二血缘。
+    双向 lineage 索引（W3）；``records``（可选，artifact_id →
+    ArtifactRecord/dict 快照）提供时做 reuse validation（W5：证据不足
+    → unknown/unsafe，绝不假设复用安全）；两者缺席时相应面诚实降级。
     """
     from app.services.gis_harness.plan_graph import build_plan_graph
     from app.services.gis_harness.workflow_instance import (
         _NODE_TO_STAGE,
+        _row_params_hash,
         canonical_fingerprint,
         gate_fingerprint,
         row_signature,
@@ -239,6 +241,20 @@ def derive_runtime_block(
         if dst.startswith("output:"):
             producer_of_output.setdefault(dst, src)
 
+    def _cap_algorithm(cap: str) -> str:
+        for row in rows_by_cap.get(cap) or []:
+            alg = str(row.get("resolved_algorithm") or "")
+            if alg:
+                return alg[:64]
+        return ""
+
+    def _cap_params_hash(cap: str) -> str:
+        for row in rows_by_cap.get(cap) or []:
+            h = _row_params_hash(row)
+            if h:
+                return h
+        return ""
+
     for n in dag_nodes[:_MAX_NODES]:
         node_id = str(n.get("node_id") or "")
         kind = str(n.get("kind") or "")
@@ -273,6 +289,9 @@ def derive_runtime_block(
             "bound_ref": _cap_bound_ref(mapped_cap) if mapped_cap else "",
             "inputs": input_refs[:8],
             "evidence": evidence[:32],
+            # W4 变更分类原料：算法/参数指纹（行签名分量的字段级投影）。
+            "algorithm": _cap_algorithm(mapped_cap) if mapped_cap else "",
+            "params_hash": _cap_params_hash(mapped_cap) if mapped_cap else "",
             "stale_reason": "",
             "failure_class": "",
             "repair_state": "",
@@ -289,19 +308,29 @@ def derive_runtime_block(
         if producer and producer in state_by_node:
             item["state"] = state_by_node[producer]
             item["evidence"] = evidence_by_node.get(producer, "")
-            item["bound_ref"] = next(
-                (x["bound_ref"] for x in nodes_out if x["node_id"] == producer),
-                "",
+            producer_item = next(
+                (x for x in nodes_out if x["node_id"] == producer), None,
             )
+            item["bound_ref"] = str((producer_item or {}).get("bound_ref") or "")
+            item["algorithm"] = str((producer_item or {}).get("algorithm") or "")
+            item["params_hash"] = str((producer_item or {}).get("params_hash") or "")
             state_by_node[item["node_id"]] = item["state"]
             evidence_by_node[item["node_id"]] = item["evidence"]
         else:
             unmapped.append(item["node_id"])
 
-    # stale 检测：仅对已满足节点（satisfied/skipped 视为满足投影——
-    # 与 instance「只对 satisfied 旧阶段判 stale」规则对齐，这里对
-    # satisfied 判；skipped 无可漂移证据）。
-    stale_seeds: Set[str] = set()
+    # ── W4：变更分类 → compute_affected_subgraph（唯一受影响子图引擎）────
+    # 运行态可观测变更（satisfied 节点的行签名漂移）按字段级对比分类：
+    # 算法变 → algorithm；参数指纹变 → parameter；绑定 ref 变 → data
+    # （数据修订）；其余 → data（画像/证据漂移）。Prompt §9 的 12 类在此
+    # 词表上的映射见 05-recompute-model.md——RECOMPUTE_DIMENSIONS +
+    # CHANGE_TARGETS 是单一事实源，不新增平行枚举。
+    from app.services.gis_harness.workflow_v4.recompute import (
+        WorkflowChange,
+        compute_affected_subgraph,
+    )
+
+    changes: List[WorkflowChange] = []
     for item in nodes_out:
         node_id = item["node_id"]
         old = stored_nodes.get(node_id)
@@ -314,26 +343,43 @@ def derive_runtime_block(
         if item["kind"] == "output":
             continue
         old_fp = str(old.get("evidence") or "")
-        if old_fp and item["evidence"] and old_fp != item["evidence"]:
-            stale_seeds.add(node_id)
-            item["stale_reason"] = "evidence_drift"
+        if not (old_fp and item["evidence"] and old_fp != item["evidence"]):
+            continue
+        item["stale_reason"] = "evidence_drift"
+        old_alg = str(old.get("algorithm") or "")
+        new_alg = str(item.get("algorithm") or "")
+        old_ph = str(old.get("params_hash") or "")
+        new_ph = str(item.get("params_hash") or "")
+        old_ref = str(old.get("bound_ref") or "")
+        new_ref = str(item.get("bound_ref") or "")
+        # 字段级对比：新值在场且与旧值不同即该类变更（旧值允许为空 ——
+        # 空→有 同样是变更；首代块缺字段时退化为后续分支的保守分类）。
+        if new_alg and old_alg != new_alg:
+            changes.append(WorkflowChange(
+                dimension="algorithm", target_kind="algorithm",
+                target=node_id, detail=f"{old_alg}→{new_alg}"[:200]))
+        elif new_ph and old_ph != new_ph:
+            changes.append(WorkflowChange(
+                dimension="parameter", target_kind="node",
+                target=node_id, detail="params fingerprint changed"))
+        elif old_ref != new_ref:
+            changes.append(WorkflowChange(
+                dimension="data", target_kind="node",
+                target=node_id, detail="bound ref revision changed"))
+        else:
+            # 证据漂移但字段级不可辨（首代块无 algorithm/params_hash 等）
+            # —— 保守按数据维处理（宁可多算）。
+            changes.append(WorkflowChange(
+                dimension="data", target_kind="node",
+                target=node_id, detail="evidence drift"))
 
-    # typed 边下游闭包：证据漂移只污染受影响子图。
-    if stale_seeds:
-        downstream: Dict[str, List[str]] = {}
-        for e in (dag.get("edges") or [])[:128]:
-            src, dst = _edge_endpoints(e)
-            downstream.setdefault(src, []).append(dst)
-        seen: Set[str] = set(stale_seeds)
-        stack = list(stale_seeds)
-        while stack:
-            cur = stack.pop()
-            for nxt in downstream.get(cur, []):
-                if nxt not in seen:
-                    seen.add(nxt)
-                    stack.append(nxt)
+    recompute_plan = compute_affected_subgraph(dag, changes) if changes else None
+
+    # typed 边下游闭包（由 recompute 引擎给出）：证据漂移只污染受影响子图。
+    if recompute_plan is not None:
+        dirty = set(recompute_plan.recompute)
         by_id = {item["node_id"]: item for item in nodes_out}
-        for node_id in seen:
+        for node_id in dirty:
             item = by_id.get(node_id)
             if item is None or item["state"] != "satisfied":
                 continue
@@ -402,7 +448,83 @@ def derive_runtime_block(
             entry["layer_ids"] = entry["layer_ids"][:8]
             entry["component_ids"] = entry["component_ids"][:8]
 
+    # ── W5：Artifact Reuse Validation（证据不足 → unknown/unsafe，不假设）──
+    # 校验项：evidence 指纹（构造保证 current）/ artifact health（records
+    # 快照；无快照或记录缺席 → unknown）/ workflow package 稳定性。
+    # unsafe 节点翻 stale 并强制进 recompute —— 复用安全由证据说话。
     package_fp = str(getattr(compilation, "package_fingerprint", "") or "")
+    stored_package_fp = str(
+        (stored or {}).get("package_fingerprint") or "") if isinstance(stored, dict) else ""
+    dirty_set = set(recompute_plan.recompute) if recompute_plan is not None else set()
+    reuse_validation: Dict[str, Dict[str, Any]] = {}
+    forced_recompute: List[str] = []
+    for item in nodes_out:
+        if item["kind"] == "output" or item["state"] != "satisfied":
+            continue
+        node_id = item["node_id"]
+        if node_id in dirty_set:
+            continue
+        cap = str(item.get("capability") or "")
+        checks: Dict[str, str] = {"evidence_fingerprint": "current"}
+        refs = _cap_all_refs(cap) if cap else []
+        if records is None:
+            checks["artifact_health"] = "unknown"
+        elif not refs:
+            checks["artifact_health"] = "unknown"
+        else:
+            statuses: List[str] = []
+            for ref in refs:
+                rec = records.get(ref)
+                if rec is None:
+                    statuses.append("missing")
+                    continue
+                status = str(
+                    getattr(rec, "status", "")
+                    or (rec.get("status") if isinstance(rec, dict) else "")
+                    or "unknown")
+                statuses.append(status)
+            if all(s == "valid" for s in statuses):
+                checks["artifact_health"] = "healthy"
+            elif any(s in ("expired", "stale", "superseded", "failed")
+                     for s in statuses):
+                checks["artifact_health"] = "unhealthy"
+            else:
+                checks["artifact_health"] = "unknown"
+        if not stored_package_fp:
+            checks["workflow_package"] = "unknown"
+        elif stored_package_fp == package_fp:
+            checks["workflow_package"] = "stable"
+        else:
+            checks["workflow_package"] = "changed"
+        if checks["artifact_health"] == "unhealthy" \
+                or checks["workflow_package"] == "changed":
+            verdict = "unsafe"
+        elif "unknown" in checks.values():
+            verdict = "unknown"
+        else:
+            verdict = "safe"
+        reuse_validation[node_id] = {"verdict": verdict, "checks": checks}
+        if verdict == "unsafe":
+            item["state"] = "stale"
+            item["stale_reason"] = (
+                "reuse_unsafe:artifact_health"
+                if checks["artifact_health"] == "unhealthy"
+                else "reuse_unsafe:workflow_package")
+            forced_recompute.append(node_id)
+    if forced_recompute:
+        if recompute_plan is None:
+            from app.services.gis_harness.workflow_v4.recompute import (
+                RecomputePlan,
+            )
+            recompute_plan = RecomputePlan()
+        merged = sorted(set(recompute_plan.recompute) | set(forced_recompute))
+        recompute_plan.recompute = merged[:32]
+        recompute_plan.reuse = sorted(
+            n for n in recompute_plan.reuse if n not in forced_recompute)
+        recompute_plan.explanations = list(recompute_plan.explanations) + [
+            f"reuse=unsafe → 保守重算: {','.join(forced_recompute[:4])}",
+        ]
+
     block: Dict[str, Any] = {
         "schema": "workflow_runtime.v1",
         "plan_id": str(chapter.get("plan_id") or "")[:64],
@@ -418,11 +540,19 @@ def derive_runtime_block(
         "render_observation_seq": int(render_seq or 0),
         "nodes": nodes_out,
         "artifact_index": artifact_index,
+        "changes": [c.to_bounded_dict() for c in changes][:16],
+        "recompute_plan": (
+            recompute_plan.to_bounded_dict() if recompute_plan is not None else {}
+        ),
+        "reuse_validation": dict(list(reuse_validation.items())[:64]),
         "unmapped": sorted(set(unmapped))[:_MAX_UNMAPPED],
     }
     block["state_fingerprint"] = canonical_fingerprint({
         "nodes": block["nodes"],
         "artifact_index": block["artifact_index"],
+        "changes": block["changes"],
+        "recompute_plan": block["recompute_plan"],
+        "reuse_validation": block["reuse_validation"],
         "unmapped": block["unmapped"],
         "package_fingerprint": block["package_fingerprint"],
         "rows_fingerprint": block["rows_fingerprint"],
@@ -507,6 +637,19 @@ async def maybe_update_runtime_projection(
     except Exception:  # noqa: BLE001 — spec 读失败按无 spec 处理（lineage 降级）
         mapspec = None
 
+    # W5 reuse validation 的 artifact 健康快照（有界账本 ≤128；读失败 →
+    # None → 全部 unknown —— 证据不足不假设复用安全）。
+    records: Optional[Dict[str, Any]] = None
+    try:
+        from app.services.artifact_registry import list_artifacts
+
+        recs = await list_artifacts(session_id)
+        records = {
+            str(getattr(r, "artifact_id", "") or ""): r for r in recs
+        } if recs else {}
+    except Exception:  # noqa: BLE001 — 快照读失败降级 unknown
+        records = None
+
     stored = chapter.get(WORKFLOW_RUNTIME_KEY)
     package_fp = str((stored or {}).get("package_fingerprint") or "") \
         if isinstance(stored, dict) else ""
@@ -531,6 +674,7 @@ async def maybe_update_runtime_projection(
         mapspec_revision=revision,
         render_seq=render_seq,
         stored=stored if isinstance(stored, dict) else None,
+        records=records,
     )
     if block is None:
         return None
@@ -618,6 +762,44 @@ def node_lineage(block: Optional[Dict[str, Any]], node_id: str) -> Optional[Dict
     }
 
 
+def format_recompute_line(chapter: Optional[Dict[str, Any]]) -> str:
+    """[GIS Recompute] 单行投影（SessionPlan projection 的 additive 行）。
+
+    把运行态块里的 recompute 债（stale 节点 + 变更维 + reuse 裁决）暴露
+    给 Pi —— 「RecomputePlan 真正调度 affected subgraph」在本架构的落
+    地形态：Harness 出状态与建议，执行仍归 Pi（状态红线：行状态只由
+    _mark_progress 写，bridge 不翻行）。无债 → 空串（零噪声）。
+    """
+    if not isinstance(chapter, dict):
+        return ""
+    block = chapter.get(WORKFLOW_RUNTIME_KEY)
+    if not isinstance(block, dict):
+        return ""
+    stale = [
+        str(n.get("node_id") or "")
+        for n in (block.get("nodes") or [])
+        if isinstance(n, dict) and n.get("state") == "stale"
+    ][:4]
+    plan = block.get("recompute_plan") or {}
+    recompute = [str(n) for n in (plan.get("recompute") or [])][:4]
+    if not stale and not recompute:
+        return ""
+    parts = [f"[GIS Recompute] stale={','.join(stale) or 'none'}"]
+    if recompute:
+        parts.append(f"recompute={','.join(recompute)}")
+    dims = [str(d) for d in (plan.get("changed_dimensions") or [])][:3]
+    if dims:
+        parts.append(f"dims={','.join(dims)}")
+    reuse = block.get("reuse_validation") or {}
+    unsafe = sorted(
+        k for k, v in reuse.items()
+        if isinstance(v, dict) and v.get("verdict") == "unsafe"
+    )[:3]
+    if unsafe:
+        parts.append(f"reuse_unsafe={','.join(unsafe)}")
+    return " ".join(parts)[:480]
+
+
 __all__ = [
     "WORKFLOW_RUNTIME_KEY",
     "capability_node_id",
@@ -625,5 +807,6 @@ __all__ = [
     "artifact_lineage",
     "node_lineage",
     "derive_runtime_block",
+    "format_recompute_line",
     "maybe_update_runtime_projection",
 ]

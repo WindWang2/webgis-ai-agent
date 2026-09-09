@@ -18,6 +18,15 @@
    - 用户 override → USER_OVERRIDE + 子类（semantic/presentation/transient，见 07）
 3. 分类后统一走：`change → diff → affected roots → downstream closure → reuse validation → RecomputePlan`，由 `maybe_update_workflow_instance` 消费并把 STALE 传播写回 node_states（W1 投影）。
 
+### 落地记录（W4/W5 已实现形态，2026-09-09）
+
+- **词表裁决**：`RECOMPUTE_DIMENSIONS`（data/algorithm/parameter/style/output）+ `CHANGE_TARGETS`（+ 新增 `node` 目标类）保持单一事实源；§9 十二类映射——DATA_CHANGE/DATA_PROFILE_CHANGE/CRS_CHANGE→`data` 维（CRS 语义变化经画像/重投影行漂移体现，detail 记录）；PARAMETER_CHANGE→`parameter`；ALGORITHM_CHANGE/METHOD_CHANGE→`algorithm`；STYLE/LAYOUT/COMPONENT/VIEWPORT 变更不进科学重算（结构性免疫：mapspec 突变不触碰行签名 → 零种子零闭包）；OUTPUT_CHANGE→`output`；USER_OVERRIDE 三分类在 W15 落地。
+- **生产接线**：`runtime_bridge.derive_runtime_block` 在每次触发做字段级变更分类（算法/参数指纹/bound ref）→ `WorkflowChange` → `compute_affected_subgraph`（**唯一闭包引擎**，替换桥内手擀闭包）→ `recompute_plan` + `changes` 持久化在运行态块。
+- **调度面**：`[GIS Recompute]` 单行进 `format_session_plan_projection`（stale/recompute/dims/reuse_unsafe 有界）——Pi 看见 recompute 债并执行（行状态红线不变：bridge 不翻行）。
+- **缺陷修复（§61）**：`compute_affected_subgraph` 对真实 `to_bounded_dict` 形状（边端点 `node.port`）闭包静默断链 —— 已修（port 后缀归一）+ 回归锁。
+- **W5 reuse validation**：`records` 快照（`list_artifacts` ≤128）进 derive；校验 evidence 指纹（构造保证）/ artifact health（valid→healthy，expired/stale/superseded/failed→unhealthy，缺席→missing/unknown）/ workflow package 稳定性；`unknown` 不假设、`unsafe` 翻 stale 并强制进 recompute（`reuse_unsafe:*` reason）。
+- 一次性说明：二代块起 `reuse_validation` 进 state_fingerprint（gen1→gen2 revision 一次性 +1，之后同输入稳定）。
+
 ## W5：Partial Recompute 执行 + Reuse Validation
 
 1. **不变量（必须全部成立并有专测）**：

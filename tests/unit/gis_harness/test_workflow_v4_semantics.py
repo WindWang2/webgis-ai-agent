@@ -90,6 +90,33 @@ def test_input_role_change_propagates_downstream_only() -> None:
     assert plan.reuse == []
 
 
+def test_bounded_port_edges_propagate_closure() -> None:
+    """回归：真实 to_bounded_dict 形状（边端点带 port 后缀 "node.port"）。
+
+    修复前：邻接直接用原始端点，闭包在 live bounded 形状下静默断链
+    （下游永不污染，reuse 被错误判安全）—— V6 Phase-0 后审计发现。
+    """
+    dag = {
+        "nodes": [
+            {"node_id": "data:subject", "kind": "data_input", "depends_on": []},
+            {"node_id": "cap:density", "kind": "analysis", "depends_on": []},
+            {"node_id": "output:density_surface", "kind": "output",
+             "depends_on": []},
+        ],
+        "edges": [
+            {"from": "data:subject.data", "to": "cap:density.input"},
+            {"from": "cap:density.output",
+             "to": "output:density_surface.product"},
+        ],
+    }
+    plan = compute_affected_subgraph(dag, [
+        WorkflowChange(dimension="data", target_kind="data_role",
+                       target="subject")])
+    assert set(plan.recompute) == {"data:subject", "cap:density",
+                                   "output:density_surface"}
+    assert plan.reuse == []
+
+
 def test_upstream_change_keeps_unaffected_nodes_reusable() -> None:
     dag = dict(_DAG)
     dag["nodes"] = _DAG["nodes"] + [

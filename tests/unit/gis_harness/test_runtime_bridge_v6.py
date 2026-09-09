@@ -287,6 +287,116 @@ def test_no_mapspec_lineage_degrades_honestly() -> None:
     assert entry["component_ids"] == []
 
 
+# ── 2c. W4 变更分类 + RecomputePlan / W5 reuse validation ────────────────
+
+def _drift_block(ch: Dict[str, Any], dag: Dict[str, Any], **kw: Any) -> Dict[str, Any]:
+    first = derive_runtime_block(ch, compile_fn=_compile_for(dag))
+    assert first is not None
+    block = derive_runtime_block(
+        kw.get("drifted", ch), stored=first,
+        records=kw.get("records"),
+        compile_fn=_compile_for(dag))
+    assert block is not None
+    return block
+
+
+def test_change_classification_algorithm() -> None:
+    ch = _chapter()
+    drifted = _chapter()
+    drifted["analysis_steps"][0]["resolved_algorithm"] = "natural_breaks"
+    block = _drift_block(ch, _dag(), drifted=drifted)
+    changes = block["changes"]
+    assert len(changes) == 1
+    assert changes[0]["dimension"] == "algorithm"
+    assert changes[0]["target"] == "cap:density_mapping"
+    plan = block["recompute_plan"]
+    assert "cap:density_mapping" in plan["recompute"]
+    assert "output:density_surface" in plan["recompute"]
+    assert "algorithm" in plan["changed_dimensions"]
+
+
+def test_change_classification_parameter() -> None:
+    ch = _chapter()
+    drifted = _chapter(step_params={"radius": 500})
+    block = _drift_block(ch, _dag(), drifted=drifted)
+    assert block["changes"][0]["dimension"] == "parameter"
+    assert _node(block, "cap:density_mapping")["state"] == "stale"
+
+
+def test_change_classification_data_revision() -> None:
+    ch = _chapter()
+    # 绑定 ref 修订（换 ref、算法/参数不变）→ data 维 + 节点翻 stale。
+    drifted_block = _drift_block(ch, _dag(), drifted=_chapter(step_ref="ref:density-2"))
+    assert drifted_block["changes"][0]["dimension"] == "data"
+    assert drifted_block["changes"][0]["target"] == "cap:density_mapping"
+    assert _node(drifted_block, "cap:density_mapping")["state"] == "stale"
+
+
+def test_style_inert_revision_bump_no_recompute() -> None:
+    # style-only 变化（mapspec revision 推进、行零变化）不得触发科学重算。
+    first = derive_runtime_block(_chapter(), compile_fn=_compile_for(_dag()))
+    assert first is not None
+    block = derive_runtime_block(
+        _chapter(), stored=first, mapspec_revision=7, render_seq=3,
+        compile_fn=_compile_for(_dag()))
+    assert block is not None
+    assert block["changes"] == []
+    assert block["recompute_plan"] == {}
+    assert all(n["state"] == "satisfied" for n in block["nodes"]
+               if n["kind"] != "data_input")
+
+
+def test_reuse_validation_safe_unknown_unsafe() -> None:
+    class _Rec:
+        def __init__(self, status: str) -> None:
+            self.status = status
+
+    ch = _chapter()
+    # 无 records 快照 → unknown（证据不足不假设）
+    block = derive_runtime_block(ch, compile_fn=_compile_for(_dag()))
+    assert block is not None
+    rv = block["reuse_validation"]["cap:density_mapping"]
+    assert rv["verdict"] == "unknown"
+    assert rv["checks"]["artifact_health"] == "unknown"
+    # 健康记录 → safe（package 首代 unknown 兜底不影响——unknown 非 unsafe）
+    records = {"ref:density-1": _Rec("valid")}
+    block2 = derive_runtime_block(
+        ch, stored=block, records=records, compile_fn=_compile_for(_dag()))
+    assert block2 is not None
+    rv2 = block2["reuse_validation"]["cap:density_mapping"]
+    assert rv2["checks"]["artifact_health"] == "healthy"
+    assert rv2["checks"]["workflow_package"] == "stable"
+    assert rv2["verdict"] == "safe"
+    # 终态坏记录 → unsafe：节点翻 stale + 强制进 recompute
+    bad = {"ref:density-1": _Rec("superseded")}
+    block3 = derive_runtime_block(
+        ch, stored=block2, records=bad, compile_fn=_compile_for(_dag()))
+    assert block3 is not None
+    node3 = _node(block3, "cap:density_mapping")
+    assert node3["state"] == "stale"
+    assert node3["stale_reason"] == "reuse_unsafe:artifact_health"
+    assert "cap:density_mapping" in block3["recompute_plan"]["recompute"]
+
+
+def test_format_recompute_line() -> None:
+    from app.services.gis_harness.runtime_bridge import format_recompute_line
+
+    ch = _chapter()
+    block = derive_runtime_block(ch, compile_fn=_compile_for(_dag()))
+    assert block is not None
+    ch[WORKFLOW_RUNTIME_KEY] = block
+    assert format_recompute_line(ch) == ""  # 无债零噪声
+    drifted = derive_runtime_block(
+        _chapter(step_ref="ref:density-2"), stored=block,
+        compile_fn=_compile_for(_dag()))
+    assert drifted is not None
+    ch[WORKFLOW_RUNTIME_KEY] = drifted
+    line = format_recompute_line(ch)
+    assert "[GIS Recompute]" in line
+    assert "cap:density_mapping" in line
+    assert "dims=data" in line
+
+
 # ── 3. 确定性 ────────────────────────────────────────────────────────────
 
 def test_deterministic_same_input_same_block() -> None:
@@ -296,8 +406,13 @@ def test_deterministic_same_input_same_block() -> None:
     again = derive_runtime_block(
         _chapter(), stored=a, compile_fn=_compile_for(_dag()))
     assert again is not None
-    assert again["runtime_revision"] == a["runtime_revision"]
-    assert again["state_fingerprint"] == a["state_fingerprint"]
+    # 二代块多一条 package 稳定裁决（stored 在场才可知）→ 内容指纹真实
+    # 变化，一次性 revision 推进；此后同输入必须稳定（不再涨）。
+    third = derive_runtime_block(
+        _chapter(), stored=again, compile_fn=_compile_for(_dag()))
+    assert third is not None
+    assert third["runtime_revision"] == again["runtime_revision"]
+    assert third["state_fingerprint"] == again["state_fingerprint"]
 
 
 # ── 4. 诚实缺席 ──────────────────────────────────────────────────────────

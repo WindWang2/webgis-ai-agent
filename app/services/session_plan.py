@@ -228,8 +228,19 @@ def format_session_plan_projection(
             instance_line = "\n" + instance_line
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         instance_line = ""
+    # V6 Wave 5：recompute 债单行投影（stale/recompute/reuse_unsafe 有界；
+    # 运行态块缺席时零漂移）。
+    recompute_line = ""
+    try:
+        from app.services.gis_harness.runtime_bridge import format_recompute_line
+
+        recompute_line = format_recompute_line(plan.gis_chapter)
+        if recompute_line:
+            recompute_line = "\n" + recompute_line
+    except Exception:  # noqa: BLE001 — 投影失败只少一行
+        recompute_line = ""
     if not plan.gis_chapter.get("data_requirements"):
-        return head + instance_line + product_line
+        return head + instance_line + recompute_line + product_line
     try:
         from app.services.gis_harness.plan_graph import (
             build_plan_graph,
@@ -238,9 +249,9 @@ def format_session_plan_projection(
         graph = build_plan_graph(plan.gis_chapter)
         block = project_graph_block(graph)
     except Exception:  # noqa: BLE001 — 图投影是增值信号，绝不阻断 turn 上下文
-        return head + instance_line + product_line
+        return head + instance_line + recompute_line + product_line
     if not block:
-        return head + instance_line + product_line
+        return head + instance_line + recompute_line + product_line
     # ADR-0085：目标→产品 facets 投影行（纯派生、单行有界；章节/MapSpec
     # 之外零新状态 —— 让 Pi 看见"产品 = facets 集合"而非单个 heatmap）。
     products_line = ""
@@ -276,8 +287,8 @@ def format_session_plan_projection(
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         next_action_line = ""
     if not products_line.strip():
-        return head + instance_line + "\n" + block + product_line
-    return head + instance_line + "\n" + block + products_line + next_action_line + product_line
+        return head + instance_line + recompute_line + "\n" + block + product_line
+    return head + instance_line + recompute_line + "\n" + block + products_line + next_action_line + product_line
 
 
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:

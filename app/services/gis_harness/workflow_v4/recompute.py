@@ -29,6 +29,8 @@ CHANGE_TARGETS = (
     "data_role",      # target = 角色名 → data:<role> 节点
     "parameter",      # target = 参数名 → 拥有该参数的节点（param_owner）
     "algorithm",      # target = node_id（算法替换）
+    "node",           # target = node_id（节点级变更：参数漂移/数据修订等
+                      # 运行态可观测变化 —— 桥接层分类产物，见 runtime_bridge）
     "style",          # target = node_id 或空 → 只影响呈现，不触发科学重算
     "output",         # target = output node_id
     "recipe",         # target 空 → recipe 级变化 = 全图失效（保守正确）
@@ -85,7 +87,7 @@ def _seed_nodes(
         # recipe 级变化：数据需求与方法面整体更换 —— 全图失效（保守正确：
         # 宁可多算，不错误复用旧 recipe 的产物）。
         return list(node_ids)
-    if change.target_kind in ("algorithm", "style", "output"):
+    if change.target_kind in ("algorithm", "node", "style", "output"):
         return [change.target] if change.target in node_ids else []
     return []
 
@@ -109,8 +111,18 @@ def compute_affected_subgraph(
 
     adjacency: Dict[str, List[str]] = {}
     for e in dag.get("edges") or []:
-        adjacency.setdefault(str(e.get("from", "")), []).append(
-            str(e.get("to", "")))
+        src = str(e.get("from", ""))
+        dst = str(e.get("to", ""))
+        # bounded 边端点是 "node.port" 形态（TypedWorkflowEdge.to_bounded_dict：
+        # "cap:x.output"）。node_id 词表（data:/cap:/transform:/output: 前
+        # 缀 + 角色/能力名）不含 "."——端点不是已知节点 id 时剥离 port 后
+        # 缀归一到节点。此前直接用原始端点建邻接：live to_bounded_dict 形
+        # 状下闭包静默断链（下游永不污染，reuse 被错误判安全）。
+        if src not in node_set and "." in src:
+            src = src.rsplit(".", 1)[0]
+        if dst not in node_set and "." in dst:
+            dst = dst.rsplit(".", 1)[0]
+        adjacency.setdefault(src, []).append(dst)
     for n in dag.get("nodes") or []:
         for dep in n.get("depends_on", ()) or []:
             adjacency.setdefault(str(dep), []).append(str(n.get("node_id", "")))
