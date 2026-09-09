@@ -165,7 +165,8 @@ def _html_to_pdf(html_content: str, output_path: str) -> None:
     """HTML 转 PDF"""
     try:
         import weasyprint
-        weasyprint.HTML(string=html_content).write_pdf(output_path)
+        from app.services.report_service import safe_url_fetcher
+        weasyprint.HTML(string=html_content, url_fetcher=safe_url_fetcher).write_pdf(output_path)
     except ImportError:
         raise ImportError("WeasyPrint 未安装，无法生成 PDF。请运行: pip install weasyprint")
 
