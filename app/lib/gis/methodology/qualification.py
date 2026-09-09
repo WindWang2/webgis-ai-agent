@@ -148,14 +148,21 @@ def _profile_fact(profile: Dict[str, Any], key: str) -> Any:
     return profile.get(key)
 
 
+_GEOMETRY_NONE = "none"     # 显式无几何（键在场且为空 = 权威空，非 unknown）
+
+
 def _geometry_fact(profile: Dict[str, Any]) -> str:
     kinds = _profile_fact(profile, "geometryKinds")
-    if isinstance(kinds, list) and kinds:
-        return str(kinds[0])
+    if isinstance(kinds, list):
+        if kinds:
+            return str(kinds[0])
+        return _GEOMETRY_NONE
     gts = _profile_fact(profile, "geometryTypes")
-    if isinstance(gts, list) and gts:
-        from app.services.gis_harness.data_qualification import geometry_category
-        return geometry_category([str(g) for g in gts])
+    if isinstance(gts, list):
+        if gts:
+            from app.services.gis_harness.data_qualification import geometry_category
+            return geometry_category([str(g) for g in gts])
+        return _GEOMETRY_NONE
     return "unknown"
 
 
@@ -195,11 +202,23 @@ def _adjudicate_geometry(candidate: Any, profile: Dict[str, Any]) -> DimensionSt
     evidence: Dict[str, Any] = {}
     if candidate.geometry_kinds and geometry != "unknown":
         evidence["geometry"] = geometry
+        if geometry == _GEOMETRY_NONE:
+            # 显式无几何（权威空）：任何空间方法不可行（unknown ≠ 事实）
+            return DimensionState(
+                dimension="geometry", state="fail",
+                evidence={**evidence, "reason": "no_geometry",
+                          "required": list(candidate.geometry_kinds[:4])})
         if geometry not in candidate.geometry_kinds:
             return DimensionState(
                 dimension="geometry", state="fail",
                 evidence={**evidence,
                           "required": list(candidate.geometry_kinds[:4])})
+        invalid_ratio = _profile_fact(profile, "invalidGeometryRatio")
+        if isinstance(invalid_ratio, (int, float)) and invalid_ratio > 0.3:
+            # 无效几何占比过高：可修复（repair_geometry 修复链显式化）
+            return DimensionState(
+                dimension="geometry", state="transform",
+                evidence={**evidence, "invalid_ratio": round(invalid_ratio, 2)})
         return DimensionState(dimension="geometry", state="pass",
                               evidence=evidence)
     if not candidate.geometry_kinds:

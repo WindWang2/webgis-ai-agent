@@ -30,7 +30,7 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 
 #: viz bridge schema 版本（进指纹）。
 VIZ_BRIDGE_SCHEMA_VERSION = 1

@@ -321,7 +321,7 @@ _METHOD_KEYWORDS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "rs.spectral_index": (
         ("ndvi", "植被指数", "光谱"), ("ndvi", "spectral index")),
     "rs.classification": (
-        ("分类", "解译", "地物"), ("classification", "land cover")),
+        ("分类", "解译", "地物", "土地覆盖"), ("classification", "land cover")),
     "change.bi_temporal_raster": (
         ("变化", "两期"), ("change", "bi-temporal")),
     "change.post_classification": (

@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, field_validator
@@ -499,27 +498,36 @@ class TaskTaxonomy:
         scored: List[Tuple[str, float]] = []
         for cid in self.all_ids:
             cat = self._by_id[cid]
-            hits = 0.0
-            for kw in cat.lexical_terms_zh:
-                if kw and kw in lowered:
-                    hits += len(kw)
-            for kw in cat.lexical_terms_en:
-                k = kw.lower()
-                if not k:
-                    continue
-                if k.isascii() and k.replace(" ", "").isalnum() and " " in k:
-                    # 多词英文短语：子串命中（与 V4 keywords_en 同策略）
-                    if k in lowered:
-                        hits += len(k)
-                elif k.isascii() and k.isalnum():
-                    if re.search(rf"(?<![a-z]){re.escape(k)}(?![a-z])", lowered):
-                        hits += len(k)
-                elif k in lowered:
-                    hits += len(k)
+            hits = self._overlap_hits(lowered, cat.lexical_terms_zh)
+            hits += self._overlap_hits(lowered, cat.lexical_terms_en)
             if hits > 0:
                 scored.append((cid, min(1.0, hits / 40.0)))
         scored.sort(key=lambda t: (-t[1], self.all_ids.index(t[0])))
         return scored[:limit]
+
+    @staticmethod
+    def _overlap_hits(lowered: str, terms: Tuple[str, ...]) -> float:
+        """最长优先非重叠命中：命中过的 query 区间不再被子串重复计分
+        （「对比图」命中后其子串「对比」不重复计数，防双重计分）。"""
+        if not lowered:
+            return 0.0
+        covered: List[Tuple[int, int]] = []
+        hits = 0.0
+        for kw in sorted((t for t in terms if t), key=len, reverse=True):
+            k = kw.lower()
+            start = 0
+            while True:
+                pos = lowered.find(k, start)
+                if pos < 0:
+                    break
+                span = (pos, pos + len(k))
+                if not any(span[0] < c_end and span[1] > c_start
+                           for c_start, c_end in covered):
+                    covered.append(span)
+                    hits += len(k)
+                    break
+                start = pos + 1
+        return hits
 
     # ── 校验与指纹 ───────────────────────────────────────────────────
     def validate(

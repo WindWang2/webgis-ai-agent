@@ -73,6 +73,63 @@ class MapComponentDescriptor(BaseModel):
     interactions: List[str] = Field(default_factory=list)
     accessibility: ComponentAccessibility = Field(
         default_factory=ComponentAccessibility)
+    # ── V5（Epic 11 Component Registry V2）：语义角色 + 示例（纯增量）──
+    # semantic_role 回答「该组件在地图语义里承担什么角色」（组合规划器
+    # 的查询键；与 category 的目录学定位正交）。空 = 未声明（存量零迁移，
+    # 语义角色表见 template_intelligence_component_roles.COMPONENT_ROLES
+    # 的单一事实源——本字段是目录侧投影）。
+    semantic_role: str = ""
+    examples: List[str] = Field(default_factory=list)
+
+
+# 组件语义角色词表（Epic 11 §5.G 冻结；组合规划器按角色查询）。
+SEMANTIC_ROLES = (
+    "map_frame",           # 地图主体/图框
+    "orientation",         # 指北/坐标参考
+    "measure",             # 比例/度量
+    "legend",              # 图例（分级/类别/连续）
+    "title_block",         # 标题/副标题
+    "statistics",          # 统计面板/图表/表格
+    "annotation",          # 注记/文本
+    "inset",               # 插图
+    "disclosure",          # 方法论/不确定性/决策披露
+    "export",              # 输出版式
+    "reference",           # 参考层（经纬网/版权）
+)
+
+#: 组件 → 语义角色投影（单一事实源；descriptor.semantic_role 的来源）。
+COMPONENT_SEMANTIC_ROLES: dict = {
+    "north_arrow": "orientation",
+    "scale_bar": "measure",
+    "legend": "legend",
+    "continuous_colorbar": "legend",
+    "categorical_legend": "legend",
+    "title": "title_block",
+    "subtitle": "title_block",
+    "attribution": "reference",
+    "graticule": "reference",
+    "map_border": "map_frame",
+    "statistics_panel": "statistics",
+    "chart_panel": "statistics",
+    "table_panel": "statistics",
+    "export_layout": "export",
+    "annotation": "annotation",
+    "inset_map": "inset",
+    "methodology_note": "disclosure",
+    "uncertainty_panel": "disclosure",
+    "decision_panel": "disclosure",
+}
+
+
+def components_for_role(semantic_role: str) -> List[str]:
+    """按语义角色查组件 id（词表序，稳定）。"""
+    if semantic_role not in SEMANTIC_ROLES:
+        return []
+    comp_reg = get_component_registry()
+    return sorted(
+        cid for cid in comp_reg.all_ids
+        if COMPONENT_SEMANTIC_ROLES.get(cid) == semantic_role
+    )
 
 
 _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
@@ -422,6 +479,16 @@ class ComponentRegistry:
         self._by_category.clear()
         for desc in _SEED_DESCRIPTORS:
             self.register(desc)
+        self._apply_semantic_roles()
+
+    def _apply_semantic_roles(self) -> None:
+        """Epic 11：语义角色/示例回填（投影自 COMPONENT_SEMANTIC_ROLES
+        单一事实源；register/load 后调用，扩展组件缺省空 = 未声明）。"""
+        for cid, role in COMPONENT_SEMANTIC_ROLES.items():
+            desc = self._by_id.get(cid)
+            if desc is None or desc.semantic_role == role:
+                continue
+            self._by_id[cid] = desc.model_copy(update={"semantic_role": role})
 
     def register(self, desc: MapComponentDescriptor) -> None:
         if desc.id in self._by_id:
