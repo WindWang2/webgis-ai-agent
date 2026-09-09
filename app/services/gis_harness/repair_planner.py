@@ -49,6 +49,10 @@ REPAIR_CLASSES = (
     "abort_with_disclosure", # 预算耗尽/不可自动 → 诚实披露
 )
 
+#: 输出侧词表断言用集合（review A/MAJOR-3：planner 输出的 repair_class
+#: 只许是本表 16 类，外来词一律在分类侧归一化）。
+_REPAIR_CLASS_SET = frozenset(REPAIR_CLASSES)
+
 #: 修复安全分级（§18）。
 SAFETY_CLASSES = (
     "safe_automatic",         # 可自动（幂等呈现/重观测/重试）
@@ -181,18 +185,32 @@ def classify_repair(
         LOCK_CONFLICT_CODE,
         is_entity_locked,
     )
-    repair_class, safety, executor = _CODE_MAP.get(
-        uf.code, _SCOPE_FALLBACK.get(uf.scope, ("reobserve", "safe_automatic", "none")))
+    code_hit = uf.code in _CODE_MAP
+    scope_hit = uf.scope in _SCOPE_FALLBACK
+    if code_hit:
+        repair_class, safety, executor = _CODE_MAP[uf.code]
+    elif scope_hit:
+        repair_class, safety, executor = _SCOPE_FALLBACK[uf.scope]
+    else:
+        # 双缺席保守缺省（review B/Q2）：未知码＋未知域不猜执行语义 ——
+        # not_allowed 进 refused 披露，绝不静默丢弃。
+        repair_class, safety, executor = ("reobserve", "not_allowed", "none")
     # 软视觉发现：一律需用户裁决（§13/§18——评估器只产 finding，确定性
-    # 层之外的语义/呈现改动不自动执行）。
-    if uf.domain == "visual":
+    # 层之外的语义/呈现改动不自动执行）。仅已知码/域才软化 —— 双缺席
+    # 保守缺省不降级（未知视觉码不断言可裁决执行）。
+    if uf.domain == "visual" and (code_hit or scope_hit):
         safety = "requires_user_approval"
         executor = "user"
+    detail_note = ""
     if uf.degradation_only and uf.severity != "error":
-        # 降级披露面（导出诊断/info）不产生自动动作。
+        # 降级披露面（导出诊断/info）不产生自动动作。repair_class 槽只装
+        # 本表词表（review A/MAJOR-3：视觉评估器等外来 repair_class 如
+        # retry/replan 是 RemediationAction 词 —— 此处归一化丢弃，原文留
+        # detail 备查，不跨词表混装）。
         executor = "none"
-        repair_class = uf.repair_class or "reobserve"
         safety = "safe_automatic"
+        if uf.repair_class and uf.repair_class not in _REPAIR_CLASS_SET:
+            detail_note = f" | orig_repair={uf.repair_class[:32]}"
     action = RepairAction(
         repair_class=repair_class,
         safety=safety,
@@ -200,7 +218,7 @@ def classify_repair(
         domain=uf.domain,
         code=uf.code,
         executor=executor,
-        detail=uf.evidence,
+        detail=(uf.evidence + detail_note)[:160],
     )
     entity = uf.affected_entity
     if entity and (
@@ -268,6 +286,9 @@ def plan_repairs(
     - not_allowed → refused（user-wins 披露）；
     - loop exhausted → 改写 abort_with_disclosure（executor none）并记
       exhausted；no_progress → 保留动作但如实标注（披露面可见）。
+    - 动作槽满（actions ≥ 6）仅停 actions 追加 —— deferred / refused /
+      exhausted 继续分类（review A/MAJOR-1：break 整循环会吞掉槽满之后
+      的 refused/deferred，锁披露丢失）。
     """
     plan = RepairPlan()
     seen: set = set()
@@ -278,6 +299,8 @@ def plan_repairs(
         seen.add(key)
         action = classify_repair(
             uf, locked_entities=locked_entities, user_overridden=user_overridden)
+        # 输出侧词表断言（review A/MAJOR-3）：planner 输出只许是 16 类词表。
+        assert action.repair_class in _REPAIR_CLASS_SET, action.repair_class
         fp = finding_fingerprint(uf)
         verdict = (loop_verdicts or {}).get(fp, LOOP_OK)
         action.loop_status = verdict
@@ -294,9 +317,8 @@ def plan_repairs(
         elif action.safety == "requires_user_approval":
             plan.deferred.append(action)
         elif action.executor != "none":
-            plan.actions.append(action)
-        if len(plan.actions) >= _MAX_PLAN_ACTIONS:
-            break
+            if len(plan.actions) < _MAX_PLAN_ACTIONS:
+                plan.actions.append(action)
     return plan
 
 

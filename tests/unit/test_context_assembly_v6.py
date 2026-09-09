@@ -375,3 +375,44 @@ async def test_assemble_v6_deterministic_across_turns():
                     or "[Node-local Context]" in m.get("content", "")
                     or "[Workflow-global Context]" in m.get("content", ""))]
     assert _pick(first) == _pick(second)
+
+
+@pytest.mark.asyncio
+async def test_assemble_warns_on_v6_block_truncation_without_behavior_change(
+    monkeypatch, caplog,
+):
+    """B/M4：budget_report truncated 非空 → 可观测警告，零行为变化。"""
+    import logging
+
+    async def _fake_blocks(self, session_id, map_state):
+        return [], {"total_byte_cost": 1, "truncated": ["map_situation"]}
+
+    async def _fake_blocks_clean(self, session_id, map_state):
+        return [], {"total_byte_cost": 1, "truncated": []}
+
+    def _run(truncated: bool):
+        store = _MetadataStore({
+            "map_state": {"_cartographic_mutation_revision": 5},
+            "list_refs": {}, "event_log": [], "started_at": None,
+        })
+        assembler = ChatContextAssembler(store=store)
+        monkeypatch.setattr(
+            ChatContextAssembler, "_build_v6_context_blocks",
+            _fake_blocks if truncated else _fake_blocks_clean)
+        messages = [
+            {"role": "system", "content": "You are a WebGIS AI agent."},
+            {"role": "user", "content": "Hello!"},
+        ]
+        return assembler.assemble("v6-trunc-warn", messages)
+
+    with caplog.at_level(logging.WARNING):
+        warned = await _run(True)
+    assert warned.v6_blocks["truncated"] == ["map_situation"]
+    assert any("V6-CONTEXT-BLOCKS" in r.message and "map_situation" in r.message
+               for r in caplog.records)
+    with caplog.at_level(logging.WARNING):
+        caplog.clear()
+        clean = await _run(False)
+    assert not [r for r in caplog.records if "V6-CONTEXT-BLOCKS" in r.message]
+    # 零行为变化：除度量外组装产物逐位一致。
+    assert warned.messages == clean.messages

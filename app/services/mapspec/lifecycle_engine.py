@@ -73,6 +73,13 @@ class MapSpecResult:
     # Latest frontend observation already present when this mutation began.
     # A runtime snapshot must carry a strictly newer sequence to certify it.
     runtime_observation_seq: int = 0
+    # 机器可读精确错误码（ack/HTTP/tool 结果透出 error 精确值，不归一化）。
+    # 锁拒绝填 LOCK_CONFLICT_CODE（单码契约：组件锁亦复用 layer_locked，
+    # 载荷 locked_component_ids 区分）；非错误时为空。
+    error_code: str = ""
+    # 锁拒绝载荷（单码契约的区分面：码唯一，id 列表指明被锁目标）。
+    locked_layer_ids: List[str] = field(default_factory=list)
+    locked_component_ids: List[str] = field(default_factory=list)
     # Monotonic session revision assigned while holding the distributed
     # lifecycle lock. Durable harness context uses it to reject late writes.
     mutation_revision: int = 0
@@ -96,6 +103,12 @@ class MapSpecResult:
             return res
         if self.is_error:
             res = {"success": False, "message": self.error_msg}
+            if self.error_code:
+                res["error_code"] = self.error_code
+            if self.locked_layer_ids:
+                res["locked_layer_ids"] = list(self.locked_layer_ids)
+            if self.locked_component_ids:
+                res["locked_component_ids"] = list(self.locked_component_ids)
             if self.origin is not None:
                 res["origin"] = self.origin
             if self.correction_hint:
@@ -493,8 +506,10 @@ OVERRIDE_SOURCES = ("user", "agent", "system")
 
 # 锁冲突披露词：对齐前端 failed/layer_locked（前端 LOCK_CONFLICT_ERROR =
 # 'layer_locked'，ack.error 机器可读；后端权威拒绝必须携带同一 token）。
+# 单码契约（B/Q1 结论）：前端无 component_locked 消费端（仅识别
+# layer_locked），组件锁拒绝复用 LOCK_CONFLICT_CODE，载荷
+# locked_component_ids 指明被锁组件 —— 不引入前端无法识别的第二码。
 LOCK_CONFLICT_CODE = "layer_locked"
-COMPONENT_LOCK_CONFLICT_CODE = "component_locked"
 # 锁集读取上界（与 repair_planner 既有 [:64] 口径一致，有界披露）。
 _MAX_LOCK_IDS = 64
 
@@ -564,7 +579,11 @@ class LockGuardResult:
         return bool(self.locked_layer_ids or self.locked_component_ids)
 
     def disclosure(self) -> Dict[str, Any]:
-        """机器可读锁披露（含 layer_locked token，对齐前端 failed 词）。"""
+        """机器可读锁披露（单码契约：图层/组件拒绝码均为 layer_locked）。
+
+        码唯一（前端只识别 layer_locked），被锁目标由 locked_layer_ids /
+        locked_component_ids 载荷区分 —— 组件拒绝不再使用第二码。
+        """
         if self.locked_layer_ids:
             code = LOCK_CONFLICT_CODE
             message = (
@@ -572,11 +591,11 @@ class LockGuardResult:
                 "被用户锁定，agent 突变已拒绝（用户解锁是唯一 override）。"
             )
         elif self.locked_component_ids:
-            code = COMPONENT_LOCK_CONFLICT_CODE
+            code = LOCK_CONFLICT_CODE
             message = (
-                f"[{COMPONENT_LOCK_CONFLICT_CODE}] 组件 "
+                f"[{LOCK_CONFLICT_CODE}] 组件 "
                 f"{sorted(set(self.locked_component_ids))} 被用户锁定，"
-                f"agent 突变已拒绝（与 {LOCK_CONFLICT_CODE} 同门锁披露，"
+                "agent 突变已拒绝（单码契约：与图层锁同码，载荷区分，"
                 "用户解锁是唯一 override）。"
             )
         else:
@@ -706,6 +725,11 @@ def guard_intent_locks(
         origin=origin,
         error_msg=disclosure["message"],
         correction_hint=disclosure["correction_hint"],
+        # 精确码 + 被锁载荷随结果透出（ack/HTTP/tool 组装经 to_dict 原样
+        # 携带；单码契约下组件拒绝亦为 layer_locked）。
+        error_code=str(disclosure.get("code") or ""),
+        locked_layer_ids=list(disclosure.get("locked_layer_ids") or []),
+        locked_component_ids=list(disclosure.get("locked_component_ids") or []),
     )
 
 

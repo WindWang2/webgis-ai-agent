@@ -17,6 +17,7 @@ from app.services.gis_harness.completion.contracts import (
     MapCompletionFinding,
     MapCompletionResult,
     derive_product_verdict,
+    evaluate_completion_contract,
 )
 
 
@@ -100,3 +101,80 @@ class TestVerdictInChapterBlock:
 
         block = map_product_block(_result(), 3)
         assert block["product_verdict"]["verdict"] == "READY"
+
+
+class TestResumedVerifyStaleNodes:
+    """review A/MAJOR-2(b)：resumed_from.verify.stale_nodes（非 unknown）是
+    analysis 维硬输入；unknown 结论不断言重算。"""
+
+    def _chapter(self, verdict, stale):
+        return {"resumed_from": {"verify": {
+            "workflow_verdict": verdict, "stale_nodes": list(stale)}}}
+
+    def test_resumed_stale_blocks_ready(self):
+        v = derive_product_verdict(
+            _result(), chapter=self._chapter("stale", ["interpolate"]))
+        assert v["verdict"] == "NEEDS_REPAIR"
+        assert "runtime_node_stale" in v["reasons"]
+        assert v["resumed_stale_nodes"] == ["interpolate"]
+
+    def test_resumed_unknown_verdict_ignored(self):
+        v = derive_product_verdict(
+            _result(), chapter=self._chapter("unknown", ["interpolate"]))
+        assert v["verdict"] == "READY"
+        assert v["resumed_stale_nodes"] == []
+
+    def test_resumed_live_no_stale_ready(self):
+        v = derive_product_verdict(
+            _result(), chapter=self._chapter("live", []))
+        assert v["verdict"] == "READY"
+
+    def test_contract_analysis_dimension_includes_resumed(self):
+        c = evaluate_completion_contract(
+            _result(), [], chapter=self._chapter("stale", ["interpolate"]))
+        assert c["dimensions"]["analysis"] is False
+        assert c["resumed_stale_nodes"] == ["interpolate"]
+        c = evaluate_completion_contract(
+            _result(), [], chapter=self._chapter("unknown", ["interpolate"]))
+        assert c["dimensions"]["analysis"] is True
+
+
+class TestPipelineReusesAuthoritativeVerdictTokens:
+    """m4 互锁：pipeline 不得手写 READY/verified 字面量（contracts 是唯一
+    事实源；字面量漂移会导致门与载荷各说各话）。"""
+
+    def test_ready_verdicts_alias_contracts_tokens(self):
+        from app.services.gis_harness.completion import pipeline
+        from app.services.gis_harness.completion.contracts import (
+            VERDICT_READY,
+            VERDICT_READY_WITH_WARNINGS,
+        )
+        assert pipeline._READY_VERDICTS == (
+            VERDICT_READY, VERDICT_READY_WITH_WARNINGS)
+
+    def test_task_complete_fold_matches_is_task_complete(self):
+        from app.services.gis_harness.completion.contracts import (
+            FINAL_MAP_DEGRADED,
+            FINAL_MAP_VERIFIED,
+            MapCompletionResult,
+            VERDICT_READY,
+            VERDICT_READY_WITH_WARNINGS,
+        )
+        from app.services.gis_harness.completion.pipeline import (
+            _is_task_complete,
+            finalization_sse_payload,
+        )
+        for verdict, final_status, expected in [
+            (VERDICT_READY, FINAL_MAP_VERIFIED, True),
+            (VERDICT_READY_WITH_WARNINGS, FINAL_MAP_DEGRADED, True),
+            ("NEEDS_REPAIR", FINAL_MAP_VERIFIED, False),
+            (VERDICT_READY, "unknown", False),
+        ]:
+            result = MapCompletionResult(status="complete")
+            result.product_verdict = verdict
+            result.final_map_status = final_status
+            assert finalization_sse_payload(result)["task_complete"] is expected
+            assert _is_task_complete({
+                "product_verdict": verdict,
+                "final_map_status": final_status,
+            }) is expected

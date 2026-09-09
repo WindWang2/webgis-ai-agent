@@ -146,6 +146,23 @@ COMPLETION_DIMENSION_VOCAB = (
 )
 
 
+def _resumed_verify_stale_nodes(chapter: Dict[str, Any]) -> List[str]:
+    """恢复后验证的 stale 节点（review A/MAJOR-2(b) 首选硬输入）。
+
+    仅 ``resumed_from.verify`` 结论非 unknown 时采纳其 ``stale_nodes``；
+    unknown = 验证无证据（旧版锚点/快照失败），不断言重算 —— 该面由
+    终验入口的行缺席 pending 披露覆盖（review A/MAJOR-2(c)）。
+    """
+    resumed = chapter.get("resumed_from")
+    verify = (resumed or {}).get("verify") if isinstance(resumed, dict) else None
+    if not isinstance(verify, dict):
+        return []
+    if str(verify.get("workflow_verdict") or "unknown") == "unknown":
+        return []
+    return [str(n)[:64] for n in (verify.get("stale_nodes") or [])
+            if str(n or "")][:8]
+
+
 def evaluate_completion_contract(
     result: "MapCompletionResult",
     methodology_warnings: Optional[List[Dict[str, Any]]] = None,
@@ -194,12 +211,17 @@ def evaluate_completion_contract(
     from app.services.gis_harness.runtime_bridge import WORKFLOW_RUNTIME_KEY
 
     runtime_stale = stale_runtime_nodes(chapter.get(WORKFLOW_RUNTIME_KEY))
+    # V6 W14 Resume VNext（review A/MAJOR-2）：恢复后验证的 stale 节点是
+    # analysis 维硬输入 —— 跨 session 恢复后行证据缺席时运行态块为空，
+    # 统一 findings 投影看不见漂移，首选 resumed_from.verify.stale_nodes；
+    # 仅 verify 结论非 unknown 时采纳（unknown = 无证据，不断言重算）。
+    resumed_stale = _resumed_verify_stale_nodes(chapter)
 
     data_ok = not data_blockers and not any(
         f.code in _DATA_BLOCK_CODES for f in errors)
     analysis_ok = not any(f.code == F_NEEDS_EXECUTION for f in errors) \
         and result.status != STATUS_PENDING \
-        and not runtime_stale
+        and not runtime_stale and not resumed_stale
     science_ok = (
         not method_blockers
         and not blocking_fallbacks
@@ -276,6 +298,7 @@ def evaluate_completion_contract(
         "uncertainty_owed": len(uncertainty_owed),
         "uncertainty_disclosed": int(uncertainty_evidence),
         "runtime_stale_nodes": runtime_stale,
+        "resumed_stale_nodes": resumed_stale,
     }
 
 
@@ -343,6 +366,15 @@ def derive_product_verdict(
         verdict = VERDICT_NEEDS_REPAIR
         reasons = sorted(set(reasons) | {"runtime_node_stale"})[:6]
 
+    # V6 W14 Resume VNext 追加裁决（review A/MAJOR-2(b)）：恢复后验证判
+    # stale 的节点同样不得 READY —— 恢复后行证据缺席时运行态块为空，
+    # 上一分支看不见漂移，此处以 resumed_from.verify 为准（同码披露，
+    # 不新增产品级理由码）。
+    resumed_stale = list(contract.get("resumed_stale_nodes") or [])
+    if resumed_stale and verdict in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS):
+        verdict = VERDICT_NEEDS_REPAIR
+        reasons = sorted(set(reasons) | {"runtime_node_stale"})[:6]
+
     return {
         "verdict": verdict,
         "reasons": reasons,
@@ -357,6 +389,7 @@ def derive_product_verdict(
         "completion_dimensions": contract["dimensions"],
         "workflow_contract_present": contract["workflow_present"],
         "runtime_stale_nodes": runtime_stale,
+        "resumed_stale_nodes": resumed_stale,
     }
 
 

@@ -30,7 +30,6 @@ from app.services.gis_world_state.mutation import (
 )
 from app.services.gis_world_state.provenance import get_provenance
 from app.services.mapspec.lifecycle_engine import (
-    COMPONENT_LOCK_CONFLICT_CODE,
     LOCK_CONFLICT_CODE,
     OVERRIDE_PRESENTATION,
     OVERRIDE_SEMANTIC,
@@ -141,8 +140,13 @@ def test_component_lock_partition_and_disclosure():
     assert part.locked_component_ids == ["legend-main"]
     assert part.allowed_component_ids == ["title-main"]
     d = part.disclosure()
-    assert d["code"] == COMPONENT_LOCK_CONFLICT_CODE
-    assert "layer_locked" in d["message"]  # 同门锁披露词
+    # 单码契约（B/Q1）：前端无 component_locked 消费端，组件拒绝复用
+    # layer_locked，载荷 locked_component_ids 指明被锁组件。
+    assert d["code"] == LOCK_CONFLICT_CODE == "layer_locked"
+    assert d["locked_component_ids"] == ["legend-main"]
+    assert d["locked_layer_ids"] == []
+    assert "layer_locked" in d["message"]
+    assert "legend-main" in d["message"]
     # 缺席=空：无 lockedComponentIds 键 → 无组件锁。
     assert not guard_locked_partitions(
         {"workbench": {"version": 5}}, component_ids=["legend-main"]).has_locked
@@ -247,7 +251,7 @@ async def test_scenario8_batch_partition_locked_refused_rest_applied():
 
 @pytest.mark.asyncio
 async def test_scenario8_component_lock_refused():
-    """component 锁：agent 改被锁组件 → 拒绝 + component_locked 披露。"""
+    """component 锁：agent 改被锁组件 → 拒绝 + layer_locked 单码披露."""
     engine = MapSpecLifecycleEngine()
     sid = _sid("comp")
     await _seed_locked_session(
@@ -256,8 +260,40 @@ async def test_scenario8_component_lock_refused():
         sid, PatchComponentIntent(component_id="legend-main", enabled=False),
     )
     assert refused.is_error is True
-    assert COMPONENT_LOCK_CONFLICT_CODE in refused.error_msg
+    # 单码契约：组件拒绝亦为 layer_locked，载荷 locked_component_ids 区分。
+    assert refused.error_code == LOCK_CONFLICT_CODE == "layer_locked"
+    assert LOCK_CONFLICT_CODE in refused.error_msg
+    assert refused.locked_component_ids == ["legend-main"]
+    assert refused.locked_layer_ids == []
+    payload = refused.to_dict()
+    assert payload["success"] is False
+    assert payload["error_code"] == "layer_locked"
+    assert payload["locked_component_ids"] == ["legend-main"]
+    assert "locked_layer_ids" not in payload  # 空载荷不透出
     await session_data_manager.clear_session(sid)
+
+
+def test_lock_refusal_error_code_contract():
+    """B/M1 契约：拒绝结果的精确码经 error_code + to_dict 原样透出."""
+    from app.services.mapspec.lifecycle_engine import guard_intent_locks
+    layer_refusal = guard_intent_locks(
+        {"workbench": _wb_doc(["locked-lyr"])},
+        PatchLayerPresentationIntent(layer_id="locked-lyr", visible=False),
+        origin="agent",
+    )
+    assert layer_refusal is not None and layer_refusal.is_error is True
+    assert layer_refusal.error_code == "layer_locked"
+    assert layer_refusal.locked_layer_ids == ["locked-lyr"]
+    wire = layer_refusal.to_dict()
+    assert wire["success"] is False
+    assert wire["error_code"] == "layer_locked"
+    assert wire["locked_layer_ids"] == ["locked-lyr"]
+    # user 意图不受自有锁约束 → 放行（无拒绝结果）。
+    assert guard_intent_locks(
+        {"workbench": _wb_doc(["locked-lyr"])},
+        PatchLayerPresentationIntent(layer_id="locked-lyr", visible=False),
+        origin="user",
+    ) is None
 
 
 @pytest.mark.asyncio
@@ -453,3 +489,94 @@ def test_quality_loop_locked_repair_suppressed():
     free = review_and_repair_cartography(dict(base), max_iterations=2)
     assert free.locked_suppressed == []
     assert free.mapspec["layers"][0]["layout"]["visibility"] == "visible"
+
+
+def _family_quality_base(logical_id: str, physical_id: str):
+    """B/C1 族变体夹具：物理层 id 挂逻辑层后缀，锁只记逻辑层。"""
+    base_layer = {"id": physical_id, "type": "fill", "source": "s",
+                  "layout": {"visibility": "none"},
+                  "paint": {"fill-color": "#ff0000"},
+                  "cartographic_intent": {"expected_visible": True}}
+    base = {"version": "1.0", "view": {}, "sources": {"s": {"type": "geojson"}},
+            "layers": [dict(base_layer)],
+            "layout": {"legend": {"visible": True, "position": "top-right"},
+                       "controls": []},
+            "thresholds": {"maxFeatures": 50000, "timeoutMs": 30000}}
+    locked = dict(base)
+    locked["workbench"] = _wb_doc([logical_id])
+    return locked
+
+
+def test_quality_loop_locked_repair_suppressed_family_variant():
+    """B/C1：锁逻辑层拦住物理层修复（精确匹配旁路已堵死）。"""
+    from app.lib.cartography.quality_loop import review_and_repair_cartography
+    res = review_and_repair_cartography(
+        _family_quality_base("locked-lyr", "locked-lyr__fill"),
+        max_iterations=2)
+    assert [e["layer_id"] for e in res.locked_suppressed] == ["locked-lyr__fill"]
+    assert res.mapspec["layers"][0]["layout"]["visibility"] == "none"
+
+
+def test_quality_loop_locked_repair_suppressed_family_reverse():
+    """B/C1 反向：锁物理层同样拦住逻辑层修复（双向语义）。"""
+    from app.lib.cartography.quality_loop import review_and_repair_cartography
+    base_layer = {"id": "locked-lyr", "type": "circle", "source": "s",
+                  "layout": {"visibility": "none"},
+                  "paint": {"circle-color": "#ff0000"},
+                  "cartographic_intent": {"expected_visible": True}}
+    base = {"version": "1.0", "view": {}, "sources": {"s": {"type": "geojson"}},
+            "layers": [dict(base_layer)],
+            "layout": {"legend": {"visible": True, "position": "top-right"},
+                       "controls": []},
+            "thresholds": {"maxFeatures": 50000, "timeoutMs": 30000}}
+    locked = dict(base)
+    locked["workbench"] = _wb_doc(["locked-lyr__fill"])
+    res = review_and_repair_cartography(dict(locked), max_iterations=2)
+    assert [e["layer_id"] for e in res.locked_suppressed] == ["locked-lyr"]
+    assert res.mapspec["layers"][0]["layout"]["visibility"] == "none"
+
+
+def test_lib_runtime_repair_locked_patch_suppressed_family_variant():
+    """B/C1：lib runtime repair 族变体 —— 锁逻辑层拦物理层 patch。"""
+    from app.lib.cartography.runtime_repair import plan_runtime_repairs
+    mapspec = _rr_mapspec("locked-lyr__fill", locked=["locked-lyr"])
+    observation = {"layers": [{"id": "rt-1", "intent_generation": 1,
+                               "visible": False}],
+                   "mapspec_fingerprint": "fp-w15"}
+    cartography = {"checks": [{"status": "fail",
+                               "rule": "RUNTIME_RESULT_VISIBILITY",
+                               "evidence": {"layer_id": "locked-lyr__fill",
+                                            "runtime_layer_id": "rt-1"}}]}
+    plan = plan_runtime_repairs(mapspec, observation, cartography)
+    assert plan is not None
+    assert plan["patches"] == []
+    assert plan["locked_refused"][0]["layer_id"] == "locked-lyr__fill"
+    assert plan["locked_refused"][0]["code"] == "layer_locked"
+
+
+@pytest.mark.asyncio
+async def test_batch_provenance_records_per_intent_overrides():
+    """B/Q4：batch provenance 逐 intent 记录 override（批级单 kind 仅兼容）。"""
+    engine = MapSpecLifecycleEngine()
+    sid = _sid("batchprov")
+    await _seed_locked_session(engine, sid, ["free-a", "free-b"])
+    batch = await apply_gis_mutation_batch(
+        sid,
+        [PatchLayerPresentationIntent(layer_id="free-a", visible=False),
+         PatchLayerPresentationIntent(layer_id="free-b", visible=False)],
+        origin="agent", actor="test",
+    )
+    assert batch.committed is True
+    entries = await get_provenance(sid)
+    mine = [e for e in entries if e.get("kind") == "GISMutationBatch"]
+    assert mine, "batch 提交必须进 provenance"
+    detail = mine[-1].get("detail", {})
+    assert detail.get("override_kind") == OVERRIDE_PRESENTATION  # 批级兼容
+    per_intent = detail.get("intent_overrides")
+    assert per_intent == [
+        {"target": "free-a", "override_kind": OVERRIDE_PRESENTATION,
+         "source": "agent"},
+        {"target": "free-b", "override_kind": OVERRIDE_PRESENTATION,
+         "source": "agent"},
+    ]
+    await session_data_manager.clear_session(sid)

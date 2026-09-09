@@ -570,6 +570,7 @@ def review_and_repair_cartography(
     # 导入，lifecycle_engine 顶层依赖本模块，顶层导入会循环）。
     from app.services.mapspec.lifecycle_engine import (
         LOCK_CONFLICT_CODE,
+        is_entity_locked,
         locked_layer_ids_of,
     )
     guard_locked_layers = frozenset(
@@ -614,7 +615,10 @@ def review_and_repair_cartography(
             kept = []
             for r in repairs:
                 lid = r.get("layer_id")
-                if isinstance(lid, str) and lid in guard_locked_layers:
+                # 统一 guard 复用 is_entity_locked（含层族双向语义，与 gis
+                # 侧一致）—— 精确匹配会让锁逻辑层拦不住物理层修复（反之亦
+                # 然），留下换 id 拼法绕过用户锁的缺口。
+                if isinstance(lid, str) and is_entity_locked(lid, guard_locked_layers):
                     if lid not in locked_suppressed:
                         locked_suppressed[lid] = {
                             "code": LOCK_CONFLICT_CODE,

@@ -386,6 +386,16 @@ async def apply_gis_mutation_batch(
             o.layer_id for o in result.outcomes
             if o.status == "applied" and o.visible is False
         )
+        # B/Q4：逐 intent 记录 override（批摘要的单 kind 只保留兼容，
+        # per-intent 条目为准 —— 回答"该层以何种 override 落盘"）。
+        intent_overrides = []
+        for intent in intents:
+            kind_source = classify_override(intent, origin)
+            intent_overrides.append({
+                "target": intent.layer_id,
+                "override_kind": kind_source.get("kind"),
+                "source": kind_source.get("source"),
+            })
         await append_provenance(
             session_id,
             ProvenanceEntry(
@@ -401,11 +411,13 @@ async def apply_gis_mutation_batch(
                     f"refused={result.refused_count} not_found={result.not_found_count}"
                 ),
                 detail={"shown": shown, "hidden": hidden,
-                        # W15：override 分类 + 来源记录（batch 均为呈现类）。
+                        # W15：override 分类 + 来源记录（batch 均为呈现类；
+                        # 批级单 kind 仅兼容保留，逐条见 intent_overrides）。
                         "override_kind": (
                             classify_override(intents[0], origin).get("kind")
                             if intents else "presentation"
-                        )},
+                        ),
+                        "intent_overrides": intent_overrides},
             ),
         )
     return result

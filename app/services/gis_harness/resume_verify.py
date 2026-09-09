@@ -105,11 +105,11 @@ async def verify_resumed_refs(
             checks["content_identity"] = "unknown"
             reasons.append("新 session 无描述符证据")
         expected = evidence.get(old_ref)
-        if not isinstance(expected, dict):
+        if not _snapshot_usable(expected):
             if checks.get("content_identity") != "unknown":
                 checks["content_identity"] = "unknown"
             checks["revision_counter"] = "unknown"
-            reasons.append("锚点无该 ref 证据快照（旧版锚点或快照失败）")
+            reasons.append("锚点无该 ref 可用证据快照（旧版锚点或快照失败）")
         elif descriptor is not None:
             drift = _identity_drift(descriptor, old_descriptor, expected)
             if drift is None:
@@ -164,6 +164,24 @@ def _payload_nonempty(payload: Any) -> bool:
     if isinstance(payload, (dict, list, str, bytes)):
         return len(payload) > 0
     return True
+
+
+def _snapshot_usable(expected: Any) -> bool:
+    """锚点快照有无可用修订字段（review Q3：零证据快照一律 unknown）。
+
+    只有比对出不一致（哈希/指纹/修订漂移）才判 stale；空字典、缺快照、
+    或仅有 ``content_revision: 0``（未知）等零证据形态一律走 unknown，
+    绝不以「快照无可用字段」为由断言漂移。
+    """
+    if not isinstance(expected, dict):
+        return False
+    try:
+        rev = int(expected.get("content_revision") or 0)
+    except (TypeError, ValueError):
+        rev = 0
+    return bool(
+        expected.get("content_hash") or rev or expected.get("data_fingerprint")
+    )
 
 
 def _identity_drift(
@@ -236,6 +254,17 @@ def verify_workflow_fingerprint(
     ``anchor_fingerprint``：锚点快照 ``{rows_fingerprint, state_revision,
     package_fingerprint?}``；``restored_instance``：恢复后章节内
     ``workflow_instance``（ref 已重写）。
+
+    review Q2 书面结论（package 是否为 (query,recipe,rows) 确定性产物）：
+    不是 —— package 指纹是 canonical compiled form 的 sha256（见
+    workflow_v4.package.emit_workflow_package），其推导输入为 query[:400]
+    ＋ recipe 内容＋方法论注册表＋编译器版本；行状态（rows 的 bound_ref /
+    params / status）不参与编译（compile_workflow_v4 仅消费 query 与
+    recipe_id）。同 (query,recipe,rows) 在注册表/编译器升级后可得不同
+    package，故 package/recipe 版**不**纳入驻留块去重门输入（门输入保持
+    revision＋行指纹＋render 代次）；package 变更仍在此处比对披露
+    （changed），行指纹一致但 package 变更 → stale（方法包已更新，产物
+    不可直接复用）。
     """
     if not isinstance(anchor_fingerprint, dict) or not anchor_fingerprint:
         return {

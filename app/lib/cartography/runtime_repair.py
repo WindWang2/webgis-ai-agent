@@ -157,6 +157,7 @@ def plan_runtime_repairs(
     # 按 failed_unrepairable 诚实终止（不发空修复动作）。
     from app.services.mapspec.lifecycle_engine import (  # 懒导入，防循环
         LOCK_CONFLICT_CODE,
+        is_entity_locked,
         locked_layer_ids_of,
     )
     locked_refused: List[Dict[str, Any]] = []
@@ -167,7 +168,9 @@ def plan_runtime_repairs(
         kept = []
         for p in patches:
             lid = p.get("mapspec_layer_id")
-            if isinstance(lid, str) and lid in guard_locked:
+            # 统一 guard 复用 is_entity_locked（含层族双向语义，与 gis 侧
+            # 一致）—— 精确匹配旁路同 quality_loop。
+            if isinstance(lid, str) and is_entity_locked(lid, guard_locked):
                 locked_refused.append({
                     "code": LOCK_CONFLICT_CODE,
                     "layer_id": lid,

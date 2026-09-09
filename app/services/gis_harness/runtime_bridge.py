@@ -155,6 +155,11 @@ def derive_runtime_block(
         )
         compile_fn = compile_workflow_v4
     try:
+        # 有意设计（review QUESTION-1）：query 截断 400 且只传 recipe_id、
+        # 省略 intent/hint/profile 等 kwargs —— 编译的方法族/typed-DAG 由
+        # recipe 结构主导，query 只提供方法族映射信号，超长 query 的尾部
+        # 细节不改变编译结论；运行态派生须廉价确定，不 threading 全量
+        # 上下文（kwargs 留给 planner 主编译路径）。
         compilation = compile_fn(query[:400], recipe_id=recipe_id)
     except Exception:  # noqa: BLE001 — 编译失败诚实留白（不阻断 runtime）
         logger.info("[RuntimeBridge] V4 compile failed (session plan unchanged)",

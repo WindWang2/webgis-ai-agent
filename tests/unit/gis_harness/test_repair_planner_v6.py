@@ -18,6 +18,7 @@ from app.services.gis_harness.repair_planner import (
     LOOP_NO_PROGRESS,
     LOOP_OK,
     MAX_REPAIR_ATTEMPTS_PER_FINDING,
+    REPAIR_CLASSES,
     RepairPlan,
     classify_repair,
     evaluate_repair_loop,
@@ -27,11 +28,13 @@ from app.services.gis_harness.repair_planner import (
 
 
 def _uf(code: str, *, domain: str = "harness_finalizer", severity: str = "error",
-        entity: str = "", scope: str = "map", degradation: bool = False) -> UnifiedFinding:
+        entity: str = "", scope: str = "map", degradation: bool = False,
+        repair_class: str = "") -> UnifiedFinding:
     return UnifiedFinding(
         domain=domain, code=code, severity=severity, source="test",
         scope=scope, affected_entity=entity, evidence="ev",
         blocks_completion=(severity == "error"), degradation_only=degradation,
+        repair_class=repair_class,
     )
 
 
@@ -137,3 +140,101 @@ def test_plan_partitions_and_dedup() -> None:
     assert plan.refused[0].safety == "not_allowed"
     d = plan.to_dict()
     assert len(d["actions"]) == 1 and len(d["deferred"]) == 1
+
+
+# ── 5. review A/MAJOR-1：槽满不吞 refused/deferred ─────────────────────────
+
+def test_full_actions_still_classifies_refused() -> None:
+    """6 actions 槽满后，第 7 条 locked finding 仍进 refused（复现）。"""
+    findings = [
+        _uf("runtime_node_stale", domain="workflow_runtime", severity="warning",
+            entity=f"cap:{i}", scope="node")
+        for i in range(6)
+    ]
+    findings.append(
+        _uf("layer_hidden", scope="layer", entity="locked-tail",
+            severity="warning"))
+    plan = plan_repairs(findings, locked_entities=frozenset({"locked-tail"}))
+    assert len(plan.actions) == 6
+    assert len(plan.refused) == 1
+    assert plan.refused[0].target == "locked-tail"
+    assert plan.refused[0].safety == "not_allowed"
+
+
+def test_full_actions_still_classifies_deferred() -> None:
+    """槽满后的 requires_user_approval 仍进 deferred。"""
+    findings = [
+        _uf("runtime_node_stale", domain="workflow_runtime", severity="warning",
+            entity=f"cap:{i}", scope="node")
+        for i in range(6)
+    ]
+    findings.append(_uf("empty_result", scope="data", entity="cap:tail"))
+    plan = plan_repairs(findings)
+    assert len(plan.actions) == 6
+    assert len(plan.deferred) == 1
+    assert plan.deferred[0].repair_class == "reselect_method"
+
+
+# ── 6. review A/MAJOR-3：降级分支不跨词表混装 ─────────────────────────────
+
+def test_degradation_foreign_repair_class_normalized() -> None:
+    """外来 repair_class（retry/replan）归一化到 16 类，原文留 detail。"""
+    for foreign in ("retry", "replan"):
+        a = classify_repair(_uf(
+            "V_SOFT_CONTRAST", domain="visual", severity="warning",
+            entity="c1", scope="component", degradation=True,
+            repair_class=foreign))
+        assert a.repair_class in REPAIR_CLASSES, a.repair_class
+        assert a.repair_class != foreign
+        assert f"orig_repair={foreign}" in a.detail
+        assert a.executor == "none"
+
+
+def test_plan_outputs_all_in_repair_vocab() -> None:
+    """planner 输出侧词表锁：actions/deferred/refused 全员 16 类。"""
+    findings = [
+        _uf("V_SOFT_CONTRAST", domain="visual", severity="warning",
+            entity="c1", scope="component", degradation=True,
+            repair_class="retry"),
+        _uf("V_SOFT_LAYOUT", domain="visual", severity="info",
+            entity="c2", scope="map", degradation=True,
+            repair_class="replan"),
+        _uf("runtime_node_stale", domain="workflow_runtime", severity="warning",
+            entity="cap:x", scope="node"),
+        _uf("empty_result", scope="data", entity="cap:y"),
+        _uf("layer_hidden", scope="layer", entity="l1", severity="warning"),
+    ]
+    plan = plan_repairs(findings, locked_entities=frozenset({"l1"}))
+    for a in plan.actions + plan.deferred + plan.refused:
+        assert a.repair_class in REPAIR_CLASSES, a.repair_class
+
+
+# ── 7. review B/Q2：双缺席保守缺省＋白名单 ─────────────────────────────────
+
+def test_unknown_code_and_scope_conservative_default() -> None:
+    """未知码＋未知域 → not_allowed/none（进 refused 披露，不静默丢弃）。"""
+    a = classify_repair(_uf("unknown_code_xyz", scope="nope_scope", entity="e1"))
+    assert (a.repair_class, a.safety, a.executor) == (
+        "reobserve", "not_allowed", "none")
+    plan = plan_repairs([_uf("unknown_code_xyz", scope="nope_scope", entity="e1")])
+    assert len(plan.refused) == 1
+    assert not plan.actions
+
+
+def test_unknown_visual_code_not_softened() -> None:
+    """未知视觉码（双缺席）不软化为 requires_user_approval。"""
+    a = classify_repair(_uf("V_UNKNOWN_XYZ", domain="visual",
+                            severity="warning", scope="nope_scope"))
+    assert a.safety == "not_allowed"
+    assert a.executor == "none"
+
+
+def test_known_scope_whitelist_unchanged() -> None:
+    """白名单：已知码/域行为不变（视觉软化只发生在已知域上）。"""
+    a = classify_repair(_uf("unknown_code_xyz", scope="layer", entity="l1"))
+    assert (a.repair_class, a.safety, a.executor) == (
+        "rerender", "safe_automatic", "runtime_repair")
+    a = classify_repair(_uf("V_WEAK_VISUAL_HIERARCHY", domain="visual",
+                            severity="warning", scope="map"))
+    assert a.safety == "requires_user_approval"
+    assert a.executor == "user"

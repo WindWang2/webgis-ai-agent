@@ -1,14 +1,16 @@
 """Deterministic Cartographic Observation（V6 Wave 8）回归锁。
 
 不变式（对应 03-visual-observation.md W8）：
-1. floating 组件实测 rect 重叠 → layout_conflict warning（disclosure，不判
-   error —— 组件可被用户拖动，transient 不阻完成）；
+1. floating 组件提交态 placement 投影重叠 → 每对两条对称
+   layout_conflict warning（各指一方互指；disclosure，不判 error ——
+   组件可被用户拖动，transient 不阻完成）；
 2. canvas 在场且组件完全越出 → layout_conflict warning；canvas 缺席 →
    像素级判定整体缺席（旧客户端零新 finding，诚实降级）；
 3. 组件生命周期统一投影：requested/mounted/rendered/visible/layout_valid/
    data_bound/diagnostics，非 chart 族 rendered/data_bound 为 None（不虚构）；
+   重叠对双方 diagnostics 均含 layout_conflict（对称）；
 4. 布局 findings 进入 validate_render_observation 主链且受
-   MAX_RENDER_FINDINGS 有界。
+   MAX_RENDER_FINDINGS 有界；_MAX_LAYOUT_FINDINGS 按对原子截断。
 """
 from __future__ import annotations
 
@@ -51,9 +53,9 @@ def _observation(components: List[Dict[str, Any]], *, canvas=None,
     return obs
 
 
-# ── 1. 重叠检测 ──────────────────────────────────────────────────────────
+# ── 1. 重叠检测（对称 finding）───────────────────────────────────────────
 
-def test_overlap_detection_measured_rects() -> None:
+def test_overlap_detection_placement_projection() -> None:
     obs = _observation([
         _comp("chart-1", rect={"x": 10, "y": 10, "width": 100, "height": 80}),
         _comp("stats-1", "statistics_panel",
@@ -63,13 +65,66 @@ def test_overlap_detection_measured_rects() -> None:
     ])
     findings = derive_component_layout_findings(obs)
     overlaps = [f for f in findings if "∩" in f.detail]
-    assert len(overlaps) == 1
-    assert overlaps[0].code == F_LAYOUT_CONFLICT
-    assert overlaps[0].severity == "warning"  # disclosure，不判 error
-    assert overlaps[0].target == "chart-1"
-    assert "chart-1" in overlaps[0].detail and "stats-1" in overlaps[0].detail
+    # B/M3 对称：每对两条 finding，各指一方互指。
+    assert len(overlaps) == 2
+    by_target = {f.target: f for f in overlaps}
+    assert set(by_target) == {"chart-1", "stats-1"}
+    for f in overlaps:
+        assert f.code == F_LAYOUT_CONFLICT
+        assert f.severity == "warning"  # disclosure，不判 error
+    assert "stats-1" in by_target["chart-1"].detail
+    assert "chart-1" in by_target["stats-1"].detail
     # 不相交的 legend 不产生 finding
     assert all("legend-1" not in f.detail for f in findings)
+
+
+def test_overlap_pair_is_atomic_under_layout_cap() -> None:
+    """B/M3 截断语义：剩余额度不足一对时整对跳过，不断对。"""
+    from app.services.gis_harness.render_observation import (
+        _MAX_LAYOUT_FINDINGS,
+    )
+    assert _MAX_LAYOUT_FINDINGS == 4
+    many = [
+        _comp(f"c{i}", rect={"x": 10 + i, "y": 10 + i,
+                             "width": 100, "height": 80})
+        for i in range(6)
+    ]
+    findings = derive_component_layout_findings(_observation(many))
+    assert len(findings) == _MAX_LAYOUT_FINDINGS
+    targets = sorted(f.target for f in findings)
+    # 前两对完整（c0∩c1、c0∩c2 按观测序枚举），无半对。
+    assert targets == ["c0", "c0", "c1", "c2"]
+
+
+def test_non_positive_rect_rejected() -> None:
+    """m6：非正尺寸 rect 不参与判定（零面积恒无交集，负尺寸方向不定）。"""
+    obs = _observation([
+        _comp("flat-1", rect={"x": 10, "y": 10, "width": 0, "height": 80}),
+        _comp("neg-1", rect={"x": 10, "y": 10, "width": -5, "height": 80}),
+        _comp("ok-1", rect={"x": 10, "y": 10, "width": 100, "height": 80}),
+    ])
+    assert derive_component_layout_findings(obs) == []
+
+
+def test_floats_sliced_at_dto_cap() -> None:
+    """m5：超限输入只看前 32（与 DTO max_length=32/前端采集同口径）。"""
+    from app.services.gis_harness.render_observation import (
+        _MAX_OBSERVED_COMPONENTS,
+    )
+    assert _MAX_OBSERVED_COMPONENTS == 32
+    # 前 32 个互不重叠，第 33 个与首个重叠 → 超限部分不参与判定。
+    comps = [
+        _comp(f"c{i}", rect={"x": 1000 + i * 200, "y": 10,
+                             "width": 100, "height": 80})
+        for i in range(32)
+    ]
+    comps.append(
+        _comp("late-1", rect={"x": 1010, "y": 20, "width": 100, "height": 80}))
+    assert derive_component_layout_findings(_observation(comps)) == []
+    lifecycle = {c["id"]: c for c in derive_component_lifecycle(
+        _observation(comps))}
+    assert "late-1" not in lifecycle
+    assert len(lifecycle) == 32
 
 
 def test_touching_edges_not_overlap() -> None:
@@ -123,6 +178,8 @@ def test_component_lifecycle_projection() -> None:
     assert stats["layout_valid"] is False
     assert stats["rendered"] is None      # 非 chart 族不虚构
     assert stats["data_bound"] is None
+    # B/M3：对称 finding 使互指另一边同样有诊断（不再只有首端有诊断）。
+    assert F_LAYOUT_CONFLICT in stats["diagnostics"]
     legend = lifecycle["legend-1"]
     assert legend["layout_valid"] is True
     assert legend["visible"] is True      # anchored 且 mounted 未 collapsed

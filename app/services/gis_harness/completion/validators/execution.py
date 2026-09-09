@@ -24,6 +24,18 @@ def validate_execution(chapter: Dict[str, Any]) -> List[MapCompletionFinding]:
         if isinstance(r, dict)
     ]
     if not rows:
+        # V6 W14 Resume VNext（review A/MAJOR-2(c)）：恢复后章节行缺席
+        # （锚点只恢复 workflow_instance 等关键块，行证据不跨 session 携带）
+        # —— 不得静默过执行门，显式 pending needs_execution＋披露，等重算/
+        # 重新获取后再终验。非恢复章节保持旧行为（无行无门）。
+        if isinstance(chapter.get("resumed_from"), dict):
+            return [MapCompletionFinding(
+                code=F_NEEDS_EXECUTION,
+                severity="error",
+                target="resumed-rows",
+                detail="恢复后章节缺行证据（resumed_from 在场）：行未恢复，"
+                       "需重算/重新获取后再终验",
+            )]
         return []
     try:
         from app.services.gis_harness.plan_graph import build_plan_graph

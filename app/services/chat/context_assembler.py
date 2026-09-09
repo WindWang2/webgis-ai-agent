@@ -430,6 +430,12 @@ class ChatContextAssembler:
         # Gated by include_plan_block like the plan block: the verdict is the
         # main agent's session-level corrective context, not a subagent's
         # (#436 isolation rationale applies identically).
+        # B/Q3 互斥结论：turn 侧（Pi：chat.py _build_cartography_turn_context
+        # → bridge prompt/stream_prompt 的 cartography_context）与组装侧（本
+        # 处 legacy assembler 注入）按 use_pi 路由二选一 —— 同一 turn 只走一
+        # 条（Pi 失败直接 502/500，不回落 legacy 同 turn 重注；legacy 不经过
+        # bridge）。两侧同受 should_inject_verdict 门控（同 review、同指纹），
+        # 故双注不可能，缺注（指纹失配）两侧一致降级为空。
         v6_metric: dict = {"total_byte_cost": 0, "truncated": []}
         if include_plan_block:
             verdict_block = await self._build_cartography_verdict_block(
@@ -465,6 +471,15 @@ class ChatContextAssembler:
             v6_results, v6_metric = await self._build_v6_context_blocks(
                 session_id, map_state
             )
+            # B/M4：块预算截断只做可观测警告 —— 截断行为本身不变（零行为
+            # 变化），truncated 非空说明模型看到的是有界投影，下游排障可据
+            # 此判断"缺块是预算所致而非上游缺席"。
+            _v6_truncated = v6_metric.get("truncated") or []
+            if _v6_truncated:
+                logger.warning(
+                    "[V6-CONTEXT-BLOCKS] session=%s blocks truncated: %s",
+                    session_id, sorted(_v6_truncated),
+                )
             _v6_meta = {
                 "node_local": ("v6_node_local", "ALGORITHM_METADATA"),
                 "workflow_global": ("v6_workflow_global", "SESSION_PLAN"),

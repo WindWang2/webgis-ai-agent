@@ -27,6 +27,7 @@ from app.services.gis_harness.resume_verify import (
     VERDICT_LIVE,
     VERDICT_STALE,
     VERDICT_UNKNOWN,
+    verify_resumed_refs,
 )
 from app.services.session_data import session_data_manager
 from app.services.session_plan import (
@@ -341,8 +342,28 @@ async def test_resume_authz_owner_isolation_unchanged():
     await session_data_manager.clear_session(ok["session_id"])
 
 
-# ── E2E Scenario 9：中断恢复全链路 ────────────────────────────────────────
+# ── review Q3：零证据快照一律 unknown ─────────────────────────────────────
 
+
+@pytest.mark.asyncio
+async def test_zero_evidence_snapshot_is_unknown_not_stale():
+    """零证据快照（{} / 仅 revision 0）→ unknown，绝不以「无可用字段」
+    为由判漂移 stale；仅比对出不一致才 stale。"""
+    sid = f"v6-q3-zero-{uuid.uuid4().hex[:6]}"
+    await session_data_manager.clear_session(sid)
+    ref = await session_data_manager.store(sid, _payload("q3"))
+    try:
+        for snap in ({}, {"content_revision": 0}):
+            verdicts = await verify_resumed_refs(
+                sid, {ref: ref}, {ref: dict(snap)})
+            v = verdicts[ref]
+            assert v["verdict"] == VERDICT_UNKNOWN, (snap, v)
+            assert not any("漂移" in r for r in v["reasons"]), (snap, v)
+    finally:
+        await session_data_manager.clear_session(sid)
+
+
+# ── E2E Scenario 9：中断恢复全链路 ────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_scenario9_interrupt_resume_continue_full_green():

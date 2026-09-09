@@ -15,6 +15,8 @@ from .contracts import (
     F_NO_RESULT_LAYER,
     F_SOURCE_MISSING,
     F_VIEWPORT_NO_BBOX,
+    FINAL_MAP_DEGRADED,
+    FINAL_MAP_VERIFIED,
     MAX_DISCLOSED_REPAIRS,
     MAX_FINALIZATION_PASSES,
     MAX_FINDINGS,
@@ -24,6 +26,8 @@ from .contracts import (
     STATUS_FAILED,
     STATUS_NEEDS_REPAIR,
     STATUS_PENDING,
+    VERDICT_READY,
+    VERDICT_READY_WITH_WARNINGS,
     MapCompletionFinding,
     MapCompletionResult,
     _spec_layers,
@@ -346,8 +350,9 @@ def _planned_layers_v3(chapter: Dict[str, Any]) -> List[Dict[str, Any]]:
             if isinstance(ly, dict) and ly.get("layer_id")]
 
 
-#: READY 裁决集合：final_gate 只对非 READY 会话强制重验。
-_READY_VERDICTS = ("READY", "READY_WITH_WARNINGS")
+#: READY 裁决集合：final_gate 只对非 READY 会话强制重验（复用 contracts
+#: 权威 token，不手写字面量 —— 互锁见 test_product_verdict.py）。
+_READY_VERDICTS = (VERDICT_READY, VERDICT_READY_WITH_WARNINGS)
 
 
 def _dedup_gate_blocks(
@@ -788,10 +793,11 @@ def finalization_sse_payload(
     }
     # V4 Wave 7：任务级完成布尔 = 裁决 ∈ READY* 且最终地图状态 ∈ verified*
     # （与 read_stored_map_product 的 task_complete 同一折叠；verdict 来自
-    # finalize 管线的推导快照，载荷侧零重复推导）。
+    # finalize 管线的推导快照，载荷侧零重复推导；字面量复用 contracts 权威
+    # token，见 test_product_verdict.py 互锁）。
     payload["task_complete"] = (
-        str(result.product_verdict) in ("READY", "READY_WITH_WARNINGS")
-        and result.final_map_status in ("verified", "verified_with_degradation")
+        str(result.product_verdict) in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS)
+        and result.final_map_status in (FINAL_MAP_VERIFIED, FINAL_MAP_DEGRADED)
     )
     if session_id:
         payload["session_id"] = session_id

@@ -34,8 +34,16 @@ from app.services.gis_harness.completion.unified_findings import (
 
 logger = logging.getLogger(__name__)
 
-#: 评估器注入点（与 TOOL_RETRIEVAL_SEMANTIC 同一 hook 模式）。
-_EVALUATOR_SPEC = os.getenv("GIS_VISUAL_EVALUATOR", "").strip()
+#: 评估器注入点（与 TOOL_RETRIEVAL_SEMANTIC 同一 hook 模式；实时读 env ——
+#: 导入时快照会让测试/运维改变量后必须重载进程才生效）。
+def _evaluator_spec() -> str:
+    return os.getenv("GIS_VISUAL_EVALUATOR", "").strip()
+
+
+# m1 标注：本 seam 当前无生产调用方（finalizer/终验管线尚未接线 —— 有意为
+# 之：W9 只交付"可控扩展点 + 白名单校验"，deterministic observation 独立
+# 工作；接线是独立 roadmap 项，不得在本 seam 内隐式实现）。
+# 验证：grep get_visual_evaluator/run_visual_evaluation 仅命中本模块与测试。
 
 #: 允许触发视觉评估的事件白名单（§40：不默认每轮截图）。
 VISUAL_EVALUATION_TRIGGERS = frozenset({
@@ -58,15 +66,16 @@ def should_run_visual_evaluation(trigger: str) -> bool:
 
 def get_visual_evaluator() -> Optional[Callable[..., Any]]:
     """加载 ``GIS_VISUAL_EVALUATOR="module:callable"``；未配置/加载失败 → None。"""
-    if not _EVALUATOR_SPEC or ":" not in _EVALUATOR_SPEC:
+    spec = _evaluator_spec()
+    if not spec or ":" not in spec:
         return None
-    module_name, func_name = _EVALUATOR_SPEC.split(":", 1)
+    module_name, func_name = spec.split(":", 1)
     try:
         module = importlib.import_module(module_name)
         fn = getattr(module, func_name, None)
         return fn if callable(fn) else None
     except Exception:  # noqa: BLE001 — 加载失败 = 特性缺席（诚实降级）
-        logger.warning("[VisualEvaluator] load failed for %r", _EVALUATOR_SPEC,
+        logger.warning("[VisualEvaluator] load failed for %r", spec,
                        exc_info=True)
         return None
 

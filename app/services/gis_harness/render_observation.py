@@ -54,14 +54,22 @@ OBSERVATION_STATE_KEY = "_cartographic_observation"
 MAX_RENDER_FINDINGS = 8
 _MAX_ERROR_DETAIL = 160
 
-# V6 W8 确定性布局检查预算：floating 组件 ≤32（DTO 上限），pairwise O(n²)
-# 有界；overlap/offscreen finding ≤4 条（总 finding 仍受 MAX_RENDER_FINDINGS）。
+# V6 W8 确定性布局检查预算：floating 组件 ≤32（DTO 上限 —— 前端
+# MAX_OBSERVED_COMPONENTS 与服务端 DTO max_length=32 同值；超限输入按观测
+# 序取前 32，零静默语义分叉）。
+_MAX_OBSERVED_COMPONENTS = 32
 _MAX_LAYOUT_FINDINGS = 4
 _OVERLAP_MIN_AREA_PX = 1.0
 
 
+# 坐标系钉死（B/M2 诚实化）：
+# - rect：提交态 placement 投影（视口 px 语义）—— 前端 observeComponents 是
+#   已提交 spec 经共享 resolver 的纯投影（非 DOM 实测 getBoundingClientRect）；
+#   后端只做投影间的几何相交判定，不宣称"实测渲染像素"。
+# - canvas：地图容器 CSS 像素尺寸（clientWidth×clientHeight），floating rect
+#   的同一参照系；缺席 → offscreen 检查整体缺席（诚实降级，不猜）。
 def _component_rect(comp: Dict[str, Any]) -> Optional[tuple]:
-    """ObservedComponent.rect → (x, y, w, h)；缺尺寸分量 → None（不判定）。"""
+    """ObservedComponent.rect → (x, y, w, h)；缺尺寸分量/非正尺寸 → None（不判定）。"""
     rect = comp.get("rect")
     if not isinstance(rect, dict):
         return None
@@ -72,7 +80,12 @@ def _component_rect(comp: Dict[str, Any]) -> Optional[tuple]:
         h = rect.get("height")
         if w is None or h is None:
             return None
-        return (x, y, float(w), float(h))
+        w, h = float(w), float(h)
+        if not (w > 0 and h > 0):
+            # 非正尺寸无几何意义（零面积交集恒为零，负尺寸方向不定）——
+            # 拒绝而非 clamp，保证判定全序输入干净。
+            return None
+        return (x, y, w, h)
     except (TypeError, ValueError):
         return None
 
@@ -88,21 +101,28 @@ def _intersection_area(a: tuple, b: tuple) -> float:
 def derive_component_layout_findings(
     observation: Dict[str, Any],
 ) -> List[MapCompletionFinding]:
-    """floating 组件的确定性布局检查（实测像素 rect，非 spec placement）。
+    """floating 组件的确定性布局检查（提交态 placement 投影，非 DOM 实测）。
 
-    - 两两重叠（交集 > 1px²）→ layout_conflict warning（disclosure：组件
-      位置可被用户拖动 —— transient interaction 不判 error，user-wins）；
+    - 两两重叠（交集 > 1px²）→ 每对两条 layout_conflict warning（对称：
+      各指一方、detail 互指 —— 单边 target 会让另一边在 lifecycle
+      diagnostics 与锁分区里失语；union target 则绕过 is_entity_locked
+      的层族分隔符匹配，锁语义失真）；
     - 容器像素尺寸在场时：完全越出画布 → layout_conflict warning
       （mounted 但不可见的事实披露；仍不判 error —— offscreen 可能是
       用户拖离的瞬态）；部分越界不finding（边缘停靠是合法布局）。
     全部 optional-telemetry 门控：无 rect / 无 canvas → 相应检查缺席
     （旧客户端零新 finding，诚实降级）。
+
+    截断语义：overlap 对按观测序枚举、finding 对原子追加 —— 剩余额度不足
+    一对（+2）时整对跳过（不断对，保证对称）；offscreen 逐条追加。重叠与
+    越界共享 _MAX_LAYOUT_FINDINGS 上限，总 finding 仍受 MAX_RENDER_FINDINGS。
     """
     from app.services.gis_harness.map_completion import F_LAYOUT_CONFLICT
 
     findings: List[MapCompletionFinding] = []
     floats: List[tuple] = []
-    for comp in observation.get("components") or []:
+    # DTO 上限切片（与 lifecycle 投影/前端采集同口径：超限输入只看前 32）。
+    for comp in (observation.get("components") or [])[:_MAX_OBSERVED_COMPONENTS]:
         if not isinstance(comp, dict):
             continue
         rect = _component_rect(comp)
@@ -111,21 +131,24 @@ def derive_component_layout_findings(
         floats.append((str(comp.get("id") or comp.get("type") or ""), rect))
     for i in range(len(floats)):
         for j in range(i + 1, len(floats)):
-            if len(findings) >= _MAX_LAYOUT_FINDINGS:
+            if len(findings) + 2 > _MAX_LAYOUT_FINDINGS:
                 return findings
             id_a, ra = floats[i]
             id_b, rb = floats[j]
             area = _intersection_area(ra, rb)
             if area > _OVERLAP_MIN_AREA_PX:
-                findings.append(MapCompletionFinding(
-                    code=F_LAYOUT_CONFLICT,
-                    severity="warning",
-                    target=id_a[:64],
-                    detail=(
-                        f"floating components overlap: {id_a[:32]} ∩ {id_b[:32]} "
-                        f"({area:.0f}px² measured)"
-                    ),
-                ))
+                # 全序 tie-break：同一对的排列与 target 典范序无关 ——
+                # 两条 finding 各执一端，枚举序 (i<j) 决定追加序。
+                for self_id, other_id in ((id_a, id_b), (id_b, id_a)):
+                    findings.append(MapCompletionFinding(
+                        code=F_LAYOUT_CONFLICT,
+                        severity="warning",
+                        target=self_id[:64],
+                        detail=(
+                            f"floating components overlap: {self_id[:32]} ∩ "
+                            f"{other_id[:32]} ({area:.0f}px² placement projection)"
+                        ),
+                    ))
     canvas = observation.get("canvas")
     if isinstance(canvas, dict):
         try:
@@ -165,19 +188,21 @@ def derive_component_lifecycle(
     - requested = spec enabled（ObservedComponent.enabled）；
     - mounted = chrome 挂载（含 fallback 注入镜像）；
     - rendered = chart telemetry rendered（非 chart 族 None —— 无证据不虚构）；
-    - visible = mounted 且未 collapsed（floating 需有实测 rect）；
+    - visible = mounted 且未 collapsed（floating 需有投影 rect）；
     - layout_valid = 该组件不参与 overlap/offscreen finding；
     - data_bound = chart data_points > 0（非 chart 族 None）；
-    - diagnostics = 该组件关联的 finding code 列表（有界）。
+    - diagnostics = 该组件关联的 finding code 列表（有界；重叠对的两条
+      对称 finding 使互指双方各有一份，不再只有首端有诊断）。
     """
     layout_findings = derive_component_layout_findings(observation)
     by_target: Dict[str, List[str]] = {}
     for f in layout_findings:
         by_target.setdefault(str(f.target), []).append(f.code)
     # layout_invalid 集合：与 derive_component_layout_findings 同一几何
-    # 判据就地重算（有界；避免从 finding 文本回解析 id）。
+    # 判据就地重算（有界；避免从 finding 文本回解析 id）。DTO 上限切片与
+    # findings 侧同口径（超限输入只看前 32）。
     floats: List[tuple] = []
-    for comp in observation.get("components") or []:
+    for comp in (observation.get("components") or [])[:_MAX_OBSERVED_COMPONENTS]:
         if not isinstance(comp, dict):
             continue
         rect = _component_rect(comp)
@@ -195,7 +220,7 @@ def derive_component_lifecycle(
         if isinstance(ch, dict) and ch.get("id"):
             charts_by_id[str(ch["id"])] = ch
     out: List[Dict[str, Any]] = []
-    for comp in (observation.get("components") or [])[:32]:
+    for comp in (observation.get("components") or [])[:_MAX_OBSERVED_COMPONENTS]:
         if not isinstance(comp, dict):
             continue
         cid = str(comp.get("id") or comp.get("type") or "")
@@ -250,7 +275,8 @@ async def load_render_observation(
             from app.services.session_data import session_data_manager
 
             map_state = await session_data_manager.get_map_state(session_id)
-        except Exception:  # noqa: BLE001 — 读失败按无观察处理（unknown 降级）
+        except Exception:  # noqa: BLE001 — 读失败按无观察处理（unknown 降级；
+            # 有意设计：观察缺席永远只是降级，见 validate_render_observation）
             return None
     if not isinstance(map_state, dict):
         return None
@@ -349,6 +375,10 @@ def validate_render_observation(
         return RENDER_NOT_APPLICABLE, []
 
     if observation is None:
+        # 有意设计（B/Q5 确认）：观察缺席即降级为 unknown + render_unverified
+        # warning —— 旧客户端/前端离线/读失败都走这条路。观察是"有则加严"的
+        # 增值证据，不是完成门槛；缺席不得误伤兼容性（不判失败），也不得假
+        # 通过（render 状态只能是 unknown，不能是 verified）。
         return RENDER_UNKNOWN, [
             MapCompletionFinding(
                 code=F_RENDER_UNVERIFIED,
@@ -557,8 +587,9 @@ def validate_render_observation(
             detail=f"{len(errors)} runtime error(s) observed; latest: {detail}",
         ))
 
-    # V6 W8：floating 组件确定性布局检查（实测像素 rect；overlap/offscreen
-    # 仅 warning 披露 —— 组件位置可被用户拖动，transient 不判 error）。
+    # V6 W8：floating 组件确定性布局检查（提交态 placement 投影；
+    # overlap/offscreen 仅 warning 披露 —— 组件位置可被用户拖动，
+    # transient 不判 error）。
     for f in derive_component_layout_findings(observation):
         if len(findings) >= MAX_RENDER_FINDINGS:
             break

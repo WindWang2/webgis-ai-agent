@@ -436,6 +436,30 @@ def test_compile_failure_returns_none() -> None:
     assert derive_runtime_block(_chapter(), compile_fn=_boom) is None
 
 
+# ── review QUESTION-1：截断 400 有意设计，长 query 同族 ────────────────────
+
+def test_long_query_same_family_as_truncated() -> None:
+    """长 query 只喂前 400 字给编译（recipe 结构为主），同族同包。"""
+    seen: List[str] = []
+
+    def _recording(query: str, *, recipe_id: str = "", **_: Any):
+        seen.append(query)
+        return _FakeCompilation(_dag())
+
+    base = "成都小学的分布情况"
+    long_query = base + "补充细节" * 300
+    assert len(long_query) > 400
+    block_long = derive_runtime_block(
+        _chapter(query=long_query), compile_fn=_recording)
+    block_short = derive_runtime_block(
+        _chapter(query=base), compile_fn=_compile_for(_dag()))
+    assert block_long is not None and block_short is not None
+    assert seen and seen[0] == long_query[:400]
+    assert len(seen[0]) <= 400
+    assert block_long["methodology_family"] == block_short["methodology_family"]
+    assert block_long["package_fingerprint"] == block_short["package_fingerprint"]
+
+
 # ── 5/6. 服务入口（真 in-process store）─────────────────────────────────
 
 @pytest.fixture

@@ -532,6 +532,45 @@ async def test_pending_dag_returns_pending_without_validation(clean_session):
     assert all(f.code == F_NEEDS_EXECUTION for f in result.findings)
 
 
+# ── review A/MAJOR-2(c)：行缺席 resumed 章节终验入口显式 pending＋披露 ──
+
+
+def test_validate_execution_non_resumed_without_rows_passes():
+    """非恢复章节无行 → 旧行为（无门），零漂移。"""
+    assert validate_execution({}) == []
+
+
+def test_validate_execution_resumed_without_rows_pending():
+    """恢复后章节行缺席 → needs_execution 显式 pending＋中文披露。"""
+    findings = validate_execution({"resumed_from": {
+        "anchor_id": "a1", "source_session_id": "old-sid"}})
+    assert len(findings) == 1
+    assert findings[0].code == F_NEEDS_EXECUTION
+    assert findings[0].severity == "error"
+    assert "缺行证据" in findings[0].detail
+
+
+def test_validate_execution_resumed_with_rows_untouched():
+    """行在场（终态）的 resumed 章节不误伤 —— 行/终验联动只补缺席面。"""
+    chapter = _chapter()
+    chapter["resumed_from"] = {"anchor_id": "a1"}
+    assert validate_execution(chapter) == []
+
+
+@pytest.mark.asyncio
+async def test_resumed_chapter_without_rows_finalization_pending(clean_session):
+    """行缺席 resumed 章节进终验入口 → pending needs_execution＋披露。"""
+    chapter = {
+        "plan_id": "plan-resumed-norows",
+        "query": "恢复查询",
+        "resumed_from": {"anchor_id": "a1", "source_session_id": "old-sid"},
+    }
+    result = await run_map_finalization(clean_session, chapter=chapter)
+    assert result.status == STATUS_PENDING
+    assert any(f.code == F_NEEDS_EXECUTION and "缺行证据" in f.detail
+               for f in result.findings)
+
+
 @pytest.mark.asyncio
 async def test_failed_capability_does_not_finalize_then_retry_completes(clean_session):
     chapter = _chapter(step_status="failed")

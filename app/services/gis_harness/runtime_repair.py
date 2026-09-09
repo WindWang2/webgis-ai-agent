@@ -90,20 +90,19 @@ class RuntimeRepairPlan:
         )
 
     def locked_disclosures(self) -> List[Dict[str, str]]:
-        """被锁拒绝的机器可读披露（含 layer_locked token，对齐前端）。"""
+        """被锁拒绝的机器可读披露（含 layer_locked token，对齐前端）。
+
+        单码契约（B/Q1）：组件拒绝（"component:" 前缀记录）亦用
+        layer_locked，target 前缀保留区分面 —— 前端无第二码消费端。
+        """
         # W15 锁下沉：披露词统一走 guard 的 code 常量（函数内懒导入，
         # 避免循环依赖）。组件拒绝以 "component:" 前缀记录，图层为裸 id。
         from app.services.mapspec.lifecycle_engine import (
-            COMPONENT_LOCK_CONFLICT_CODE,
             LOCK_CONFLICT_CODE,
         )
         out: List[Dict[str, str]] = []
         for target in self.locked_refused:
-            code = (
-                COMPONENT_LOCK_CONFLICT_CODE
-                if target.startswith("component:")
-                else LOCK_CONFLICT_CODE
-            )
+            code = LOCK_CONFLICT_CODE
             out.append({
                 "code": code,
                 "target": target[:64],
