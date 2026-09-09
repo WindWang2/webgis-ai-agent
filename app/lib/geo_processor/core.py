@@ -462,14 +462,33 @@ def to_utm_gdf_with_note(
         )
 
     original_crs_explicit = source_crs
+    # science-v4 W2（KNOWN-GAP #1 收口）：不可解析的声明 CRS 此前从
+    # GeoDataFrame 构造器以裸 pyproj.CRSError（RuntimeError 系）逃逸，
+    # dispatch 的 ValueError 映射接不住 → 丢 scientific_code/correction_hint。
+    # 在边界折叠成 typed InvalidCRS（ValueError 系，走科学错误通道）。
+    if source_crs:
+        from pyproj import CRS
+        from pyproj.exceptions import CRSError
+
+        from app.lib.gis.scientific_errors import InvalidCRS
+
+        try:
+            CRS.from_user_input(source_crs)
+        except CRSError as exc:
+            raise InvalidCRS(
+                f"declared CRS {source_crs!r} cannot be parsed by pyproj",
+                correction_hint=(
+                    "use a resolvable CRS identifier (EPSG:xxxx, WKT or "
+                    "PROJJSON); omit the crs member only when coordinates "
+                    "truly are WGS84"
+                ),
+            ) from exc
     try:
         gdf = gpd.GeoDataFrame(rows, crs=source_crs or "EPSG:4326")
     except Exception as exc:
-        # KNOWN-GAP #1 修复（V5 W3）：不可解析 CRS（如 EPSG:99999999）此前以
-        # 裸 pyproj.CRSError 逃逸 → dispatch 层泛化 TOOL_ERROR，丢失科学
-        # correction_hint 通道。收口为 typed InvalidCRS（subclass ValueError，
-        # dispatch 错误映射逐位兼容）。review R1 #9：按**类型名**判定 CRS
-        # 语义（消息子串会误折叠无关异常）；非 CRS 异常原样上抛。
+        # V5 W3 同题纵深防御：若预检漏网（如构造期版本差异抛出的
+        # ProjError/CRSException），按类型名判定折叠为 InvalidCRS；
+        # 非 CRS 异常原样上抛。
         from app.lib.gis.scientific_errors import InvalidCRS
 
         if type(exc).__name__ in ("CRSError", "ProjError", "CRSException"):
@@ -477,6 +496,9 @@ def to_utm_gdf_with_note(
                 f"unparseable declared CRS: {source_crs!r} ({exc})",
             ) from exc
         raise
+    # science-v4 W3：make_valid 修复计数（披露进 note.geometry_repaired）——
+    # 修复动作不再静默。
+    _invalid_before = int((~gdf.geometry.is_valid).sum())
     gdf["geometry"] = gdf.geometry.make_valid()
     gdf._original_crs = original_crs_explicit or (str(gdf.crs) if gdf.crs else "EPSG:4326")
 
@@ -596,6 +618,7 @@ def to_utm_gdf_with_note(
         "target_crs": result[1],
         "source_crs": gdf._original_crs,
         "gcj02_normalized": chinese_crs in ("gcj02", "bd09"),
+        "geometry_repaired": _invalid_before,
     }
 
     # Cache the canonical result. Callers get copies; the cached gdf itself is

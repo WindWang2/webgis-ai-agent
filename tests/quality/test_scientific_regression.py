@@ -122,9 +122,12 @@ def test_crs_mismatch_metric_second_order_statistics_reject_degrees(declared_crs
 def test_crs_mismatch_unparseable_crs_is_typed_scientific_reject():
     """不可解析 CRS 必须落在科学词表内（InvalidCRS），而不是裸三方异常。
 
-    V5 W3 修复 KNOWN-GAP #1：``to_utm_gdf_with_note`` 在 GeoDataFrame
-    构造处把 pyproj CRS 语义异常收口为 InvalidCRS（app/lib/gis/longitude
-    同批交付的 antimeridian/0-360 硬化，ADR-0118 D3）。
+    science-v4 W2 收口（原 KNOWN-GAP #1，xfail 已转正）：to_utm_gdf_with_note
+    在 GeoDataFrame 构造前校验声明 CRS 可解析性，pyproj.CRSError 在边界
+    折叠成 InvalidCRS（ValueError 系）—— dispatch 保留 scientific_code 与
+    correction_hint 科学通道。V5 W3 同题纵深防御：在 GeoDataFrame 构造处
+    把 pyproj CRS 语义异常（按类型名判定）收口为 InvalidCRS（app/lib/gis/
+    longitude 同批交付的 antimeridian/0-360 硬化，ADR-0118 D3）。
     """
     from app.lib.gis.scientific_errors import InvalidCRS
     from app.lib.geo_analysis.statistics import moran_i_narrated
@@ -190,17 +193,14 @@ def test_invalid_geometry_explicit_repair_discloses_audit_log():
     assert shape(fc["features"][0]["geometry"]).is_valid is False
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "KNOWN-GAP #2（坏几何类）：zonal_statistics 对自交 bowtie 静默产出"
-        "貌似合理的统计（GEOS 歧义解释），既无 InvalidGeometry 类型化拒绝、"
-        "也无告警；to_utm_gdf_with_note 的 make_valid() 同样无修复披露。"
-        "修复（统计入口加几何有效性门/告警）后本测试自动转绿。"
-    ),
-)
 def test_invalid_geometry_analysis_path_typed_reject(tmp_path):
-    """分析入口对 semantically-invalid 几何必须类型化拒绝（科学词表）。"""
+    """分析入口对 semantically-invalid 几何必须类型化拒绝（科学词表）。
+
+    science-v4 W3 收口（原 KNOWN-GAP #2，xfail 已转正）：zonal_statistics
+    默认 strict=True，自交 bowtie → InvalidGeometry（科学词表 +
+    correction_hint）；strict=False 时修复带 geometry_repair 披露（见
+    test_geometry_repair_v4）。
+    """
     import rasterio
     from rasterio.transform import from_origin
 

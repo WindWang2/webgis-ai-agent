@@ -2,6 +2,34 @@
 
 ## [Unreleased] - 2026-09-09
 
+### Added (science-v4: Spatial Science & GeoAI Platform V4)
+- Geostatistics V4: simple kriging, external-drift kriging (KED), normal-score
+  transform, nested-variogram fitting (honest ConvergenceFailure when not
+  beneficial), sequential Gaussian simulation (caller-seeded, bitwise
+  reproducible, P10/P50/P90 ensemble), full co-kriging under an LMC
+  (per-structure PSD by construction), and spatiotemporal kriging
+  (separable / product-sum with second-scale mixture, PSD by construction).
+- Hydrology & terrain V4: depression breaching, HAND, Shreve magnitude,
+  single-level Pfafstetter coding, hypsometric analysis (Strahler 1952
+  integral), clear-sky solar radiation (FAO-56 anchor), and a chunked
+  priority-flood backend variant (banded, low heap footprint) registered
+  against the full-path reference with a pinned parity bound.
+- Scientific contract ratchet: heavy algorithms must declare
+  resource_envelope / cancellation_profile / NumericalTolerance (frozen
+  44-entry baseline, shrink-only); interpolation + terrain domains fully
+  declared. Cancellation checkpoints sunk into terrain hot loops
+  (fill heap / D-infinity topology / viewshed sectors).
+- Typed scientific errors: pyproj.CRSError folded into InvalidCRS at the
+  UTM boundary (KNOWN-GAP #1 xfail promoted), NumericalInstability and
+  ConvergenceFailure with real producers; geometry repair disclosure
+  (never-silent make_valid) with strict typed rejection in zonal
+  statistics (KNOWN-GAP #2 xfail promoted).
+
+### Fixed (science-v4)
+- raw pyproj.CRSError no longer escapes as TOOL_ERROR (loses correction_hint);
+- zonal statistics no longer silently accepts self-intersecting polygons;
+- terrain tool layer wraps RasterioIOError into typed RasterReaderError.
+
 ### Added
 - Spatial Data Lakehouse & Cube V6 (ADR-0118): durable DataObject identity —
   manifests are content-addressed (id = canonical sha256, deterministic,

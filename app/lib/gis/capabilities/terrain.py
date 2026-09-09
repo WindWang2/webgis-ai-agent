@@ -96,7 +96,7 @@ CAPABILITIES: List[CapabilityDescriptor] = [
                 "地形开放度（Yokoyama 2002）、geomorphons 地貌分类（Jasiewicz "
                 "& Stepinski 2013）、Weiss 双尺度 TPI 地类分级与多方位山体阴影。"),
             input_artifact_types=["terrain_surface"],
-            output_artifact_types=["raster_surface"],
+            output_artifact_types=["raster_surface", "stats_table"],
             compatible_map_models=["raster_surface"],
             purpose_template="地貌形态分类",
         ),

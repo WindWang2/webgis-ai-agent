@@ -25,12 +25,21 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
+from app.lib.gis.algorithm_registry import (
+    AlgorithmDescriptor,
+    BackendVariant,
+    NumericalTolerance,
+    ResourceEnvelope,
+)
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=40, notes="float64 主数组+梯度副本系数；无实现层硬上限（输入侧栅格守卫）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.slope", name="坡度", category="terrain_analysis",
             backend_variants=[
                 BackendVariant(
@@ -66,6 +75,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=40, notes="float64 主数组+法向量副本；无实现层硬上限"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.hillshade", name="山体阴影", category="terrain_analysis",
             backend_variants=[
                 BackendVariant(
@@ -100,6 +113,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=40, notes="float64 主数组+梯度副本；无实现层硬上限"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.aspect", name="坡向", category="terrain_analysis",
             backend_variants=[
                 BackendVariant(
@@ -136,6 +153,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # ── VNext 地形科学新算法（实现：app/lib/geo_analysis/terrain.py）──
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=32, notes="圆形窗口均值副本（MAX_WINDOW=101）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.tpi", name="地形位置指数 TPI", category="terrain_analysis",
             capabilities=["terrain_derivatives"],
             input_artifact_types=["terrain_surface"],
@@ -167,6 +188,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=32, notes="3×3 邻域极值副本"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.tri", name="地形崎岖度指数 TRI", category="terrain_analysis",
             capabilities=["terrain_derivatives"],
             input_artifact_types=["terrain_surface"],
@@ -195,6 +220,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=32, notes="3×3 邻域极值副本"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.roughness", name="地形粗糙度", category="terrain_analysis",
             capabilities=["terrain_derivatives"],
             input_artifact_types=["terrain_surface"],
@@ -224,6 +253,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=48, notes="Zevenbergen-Thorne 二阶导数多副本"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.curvature", name="平面/剖面曲率", category="terrain_analysis",
             capabilities=["terrain_derivatives"],
             input_artifact_types=["terrain_surface"],
@@ -255,6 +288,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=16, notes="R3 扇区化（chunk 256）+ _guard_cells 闸"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.viewshed", name="视域分析", category="terrain_analysis",
             capabilities=["terrain_viewshed"],
             input_artifact_types=["terrain_surface"],
@@ -287,6 +324,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=48, notes="D8 拓扑排序保持多个 N 数组存活"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-12, atol=0.0, policy="conformance"),
             id="terrain.flow", name="D8 流向与汇流累积", category="terrain_analysis",
             capabilities=["terrain_hydrology"],
             input_artifact_types=["terrain_surface"],
@@ -325,6 +366,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=32, notes="逆拓扑划拨；label 数组整型"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-12, atol=0.0, policy="conformance"),
             id="terrain.watershed", name="流域圈定", category="terrain_analysis",
             capabilities=["terrain_hydrology"],
             input_artifact_types=["terrain_surface"],
@@ -353,6 +398,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=16, notes="marching-squares 行扫描；折线输出"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.contours", name="等值线提取", category="terrain_analysis",
             capabilities=["terrain_contours"],
             input_artifact_types=["terrain_surface"],
@@ -383,13 +432,20 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # ── Foundation V2（A5）：水文与地貌量测扩展（实现同 geo_analysis/terrain.py）──
 
         AlgorithmDescriptor(
-            id="terrain.sink_fill", name="Priority-Flood 填洼", category="terrain_analysis",
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=32, notes="heapq O(N log N)（MAX_HYDRO_CELLS 闸）"),
+            cancellation_profile="chunk_boundary",
             backend_variants=[
-                BackendVariant(
-                    id="numpy_priority_flood", backend="numpy", deterministic=True,
-                    min_features=1, max_features=50000000,
-                    notes="MAX_HYDRO_CELLS=5000 万像元（_guard_cells 分配前类型化拒绝）"),
+                BackendVariant(id="full_heap", backend="numpy", deterministic=True,
+                               min_features=1, max_features=50000000,
+                               approximation_class="exact",
+                               notes="全量 heapq Priority-Flood（Barnes 2014）——reference 变体"),
+                BackendVariant(id="chunked_band", backend="numpy", deterministic=True,
+                               approximation_class="approximate",
+                               notes="列带分块 + 邻带裁决（heap 峰值 O(带宽×H)）；seam 可欠/过填（以参考最大填深为界，parity conformance 钉死）；lib API opt-in（fill_depressions_chunked），非 runtime dispatch"),
             ],
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
+            id="terrain.sink_fill", name="Priority-Flood 填洼", category="terrain_analysis",
             capabilities=["terrain_hydrology_advanced"],
             input_artifact_types=["terrain_surface"],
             output_artifact_type="raster_surface", tool_candidates=["depression_fill"],
@@ -414,6 +470,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             numerical_tolerance="5×7 单洼地 fixture：洼底恰填至溢流高程（浮点精确）",
             scientific_status="VALIDATED",
             conformance_tests=[
+                "tests/unit/lib/test_hydrology_v4.py::test_chunked_pf_never_underfills_and_bounded_overfill",
+                "tests/unit/lib/test_hydrology_v4.py::test_chunked_pf_deterministic",
                 "tests/unit/lib/test_terrain_hydrology_v2.py::test_fill_depressions_single_pit_spill_elevation_exact",
                 "tests/unit/lib/test_terrain_hydrology_v2.py::test_fill_depressions_volume_and_epsilon_monotone",
                 "tests/unit/lib/test_terrain_hydrology_v2.py::test_hydrology_nodata_adversarial_and_guards",
@@ -422,6 +480,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=40, notes="D∞ 角度分配多副本（_guard_cells 闸）"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.dinf_flow", name="D∞ 多向流", category="terrain_analysis",
             capabilities=["terrain_hydrology_advanced"],
             input_artifact_types=["terrain_surface"],
@@ -454,6 +516,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=32, notes="顺/逆拓扑累计（_guard_cells 闸）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.flow_length", name="流程长度", category="terrain_analysis",
             capabilities=["terrain_hydrology_advanced"],
             input_artifact_types=["terrain_surface"],
@@ -484,6 +550,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=16, notes="累积阈值掩膜；无独立 cells 闸"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.streams", name="河网提取", category="terrain_analysis",
             capabilities=["terrain_hydrology_advanced"],
             input_artifact_types=["terrain_surface"],
@@ -512,6 +582,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=32, notes="河网级序拓扑（_guard_cells 闸）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-12, atol=0.0, policy="conformance"),
             id="terrain.strahler", name="Strahler 河流分级", category="terrain_analysis",
             capabilities=["terrain_hydrology_advanced"],
             input_artifact_types=["terrain_surface"],
@@ -542,6 +616,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=40, notes="流域形态多指标副本（_guard_cells 闸）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.morphometry", name="流域形态量测", category="terrain_analysis",
             capabilities=["terrain_hydrology_advanced"],
             input_artifact_types=["terrain_surface"],
@@ -574,6 +652,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=24, notes="ln(a/tanβ)；比汇面积副本"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.twi", name="地形湿润指数 TWI", category="terrain_analysis",
             capabilities=["terrain_wetness_indices"],
             input_artifact_types=["terrain_surface"],
@@ -604,6 +686,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=24, notes="a·tanβ；比汇面积副本"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.spi", name="水流功率指数 SPI", category="terrain_analysis",
             capabilities=["terrain_wetness_indices"],
             input_artifact_types=["terrain_surface"],
@@ -633,6 +719,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(bytes_per_cell=24, notes="USLE LS 坡长-坡度积分副本"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.ls_factor", name="USLE LS 因子", category="terrain_analysis",
             capabilities=["terrain_wetness_indices"],
             input_artifact_types=["terrain_surface"],
@@ -664,6 +754,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=32, notes="多方位射线扫描（半径≤100 cells，_guard_cells 闸）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.openness", name="地形开放度", category="terrain_analysis",
             capabilities=["terrain_geomorphometry"],
             input_artifact_types=["terrain_surface"],
@@ -696,6 +790,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=24, notes="LTP 全方位比较（半径≤128 cells，_guard_cells 闸）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-12, atol=0.0, policy="conformance"),
             id="terrain.geomorphons", name="Geomorphons 地貌分类", category="terrain_analysis",
             capabilities=["terrain_geomorphometry"],
             input_artifact_types=["terrain_surface"],
@@ -728,6 +826,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=32, notes="双尺度 TPI 分类（_guard_cells 闸）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-12, atol=0.0, policy="conformance"),
             id="terrain.landform", name="双尺度 TPI 地类分级", category="terrain_analysis",
             capabilities=["terrain_geomorphometry"],
             input_artifact_types=["terrain_surface"],
@@ -758,6 +860,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=56, notes="逐方位角山体阴影栈（_guard_cells 闸）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.hillshade_multi", name="多方位山体阴影", category="terrain_analysis",
             capabilities=["terrain_geomorphometry"],
             input_artifact_types=["terrain_surface"],
@@ -791,6 +897,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         # ── Terrain V3：地平线角与天空可视因子（Steyn 1980）────────────
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=24, notes="逐方位角地平线扫描（方位角≤64/半径≤100，_guard_cells 闸）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.horizon_angle", name="地平线角", category="terrain_analysis",
             capabilities=["terrain_sky_view"],
             input_artifact_types=["terrain_surface"],
@@ -825,6 +935,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
         ),
 
         AlgorithmDescriptor(
+            # ── Science V4（契约 ratchet W1）：声明式资源/取消/容差 ──
+            resource_envelope=ResourceEnvelope(hard_max_cells=50000000, bytes_per_cell=24, notes="全方位地平线积分（_guard_cells 闸）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.sky_view_factor", name="天空可视因子 SVF", category="terrain_analysis",
             capabilities=["terrain_sky_view"],
             input_artifact_types=["terrain_surface"],
@@ -858,6 +972,211 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ],
             parameter_contract_ref="terrain_svf_analysis",
         ),
+
+        # ── Science V4（W8/W9）：水文与地形 V4 ─────────────────────
+
+        AlgorithmDescriptor(
+            id="terrain.breach", name="洼地切沟（Breaching）", category="terrain_analysis",
+            capabilities=["terrain_hydrology"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", runtime_status="native",
+            parameter_contract_ref="hydrology_v4_analysis",
+            tool_candidates=["hydrology_v4_analysis"],
+            cpu_cost="medium", memory_cost="high", io_cost="low",
+            complexity="O(N log N)（priority-flood ×2 + 逐洼地路径切沟）",
+            approximation_class="approximate", approximate=True,
+            algorithm_family="terrain_hydrology_d8",
+            method_references=["lindsay2016"],
+            assumptions=[
+                "Lindsay 2016 选择性切沟简化：填洼识别洼地 → epsilon 填面 D8 "
+                "接收者链定位 pit→出口路径 → 沿路径下切（min 语义 = 最小开挖）",
+                "切沟线 = pit 高程 − k·epsilon（pit→出口方向严格下降）",
+                "只降不升：非洼地像元永不改高",
+            ],
+            limitations=[
+                "路径为填面最陡下降链（非全局最小代价路径 LCP）",
+                "超深回退填洼（max_breach_depth 限制；计数披露）",
+            ],
+            crs_class="RASTER_GRID",
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="同输入逐位一致（确定性堆 + 确定性路径）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_hydrology_v4.py::test_breach_removes_internal_sinks_with_less_work_than_fill",
+                "tests/unit/lib/test_hydrology_v4.py::test_breach_max_depth_fallback_to_fill",
+            ],
+            resource_envelope=ResourceEnvelope(hard_max_cells=50_000_000, bytes_per_cell=32, notes="3×float64 全网格（MAX_HYDRO_CELLS 闸）"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
+            ),
+
+        AlgorithmDescriptor(
+            id="terrain.hand", name="最近排水高程（HAND）", category="terrain_analysis",
+            capabilities=["terrain_hydrology"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", runtime_status="native",
+            parameter_contract_ref="hydrology_v4_analysis",
+            tool_candidates=["hydrology_v4_analysis"],
+            cpu_cost="medium", memory_cost="high", io_cost="low",
+            complexity="O(N log N)（fill + d8 + accum + 单遍逆拓扑）",
+            approximation_class="exact",
+            algorithm_family="terrain_hydrology_d8",
+            method_references=["renno2008"],
+            assumptions=[
+                "HAND = z(cell) − z(D8 下游链第一个河网像元)；望远镜求和单遍",
+                "河网 = 填后 D8 汇流累积 ≥ threshold",
+                "边界排出且未遇河网 → NaN（诚实缺省，计数披露）",
+            ],
+            limitations=[
+                "河网阈值敏感性：阈值决定『最近排水』的定义",
+                "洪泛区语义为地形近似（非水动力淹没模型）",
+            ],
+            crs_class="RASTER_GRID",
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="同输入逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_hydrology_v4.py::test_hand_zero_on_streams_and_finite_offstream",
+            ],
+            resource_envelope=ResourceEnvelope(hard_max_cells=50_000_000, bytes_per_cell=40, notes="填面+D8+累积+HAND 多数组（MAX_HYDRO_CELLS 闸）"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-12, atol=0.0, policy="conformance"),
+            ),
+
+        AlgorithmDescriptor(
+            id="terrain.shreve", name="Shreve 河流量级", category="terrain_analysis",
+            capabilities=["terrain_hydrology"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", runtime_status="native",
+            parameter_contract_ref="hydrology_v4_analysis",
+            tool_candidates=["hydrology_v4_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            complexity="O(N log N)（与 Strahler 同拓扑机器）",
+            approximation_class="exact",
+            algorithm_family="terrain_hydrology_d8",
+            method_references=["shreve1966"],
+            assumptions=[
+                "量级 = 上游量级之和（源头 = 1）；拓扑序 = 降序高程",
+                "河网 = 汇流累积 ≥ threshold（与 streams/strahler 同口径）",
+            ],
+            limitations=[
+                "单线程长河量级线性增长（对排水强度敏感、对形态不敏感——与 Strahler 互补）",
+            ],
+            crs_class="RASTER_GRID",
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="同输入逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_hydrology_v4.py::test_shreve_sums_upstream_magnitudes",
+            ],
+            resource_envelope=ResourceEnvelope(hard_max_cells=50_000_000, bytes_per_cell=24, notes="MAX_HYDRO_CELLS 闸"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-12, atol=0.0, policy="conformance"),
+            ),
+
+        AlgorithmDescriptor(
+            id="terrain.pfafstetter", name="Pfafstetter 编码（单级）", category="terrain_analysis",
+            capabilities=["terrain_hydrology"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", runtime_status="native",
+            parameter_contract_ref="hydrology_v4_analysis",
+            tool_candidates=["hydrology_v4_analysis"],
+            cpu_cost="medium", memory_cost="medium", io_cost="low",
+            complexity="O(S log S)（干流上溯 + 支流归属 BFS，S=河网像元）",
+            approximation_class="exact",
+            algorithm_family="terrain_hydrology_d8",
+            method_references=["pfafstetter1989"],
+            assumptions=[
+                "干流 = 出口上溯每步取汇流最大的上游河网像元",
+                "偶数码 2,4,… 沿干流等分；4 大支流（junction 汇流降序）取奇数 1,3,5,7",
+                "支流子流域 = junction 上游河网像元（下游-first 归属）",
+            ],
+            limitations=[
+                "单级层级（多级递归子盆地编码未实现——hierarchy_note 披露）",
+                "出口必须在河网上（否则类型化拒绝）",
+            ],
+            crs_class="RASTER_GRID",
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="同输入逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_hydrology_v4.py::test_pfafstetter_odd_even_convention",
+            ],
+            resource_envelope=ResourceEnvelope(hard_max_cells=50_000_000, bytes_per_cell=24, notes="MAX_HYDRO_CELLS 闸"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-12, atol=0.0, policy="conformance"),
+            ),
+
+        AlgorithmDescriptor(
+            id="terrain.hypsometry", name="高程面积分析", category="terrain_analysis",
+            capabilities=["terrain_geomorphometry"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="stats_table", runtime_status="native",
+            parameter_contract_ref="hydrology_v4_analysis",
+            tool_candidates=["hydrology_v4_analysis"],
+            cpu_cost="low", memory_cost="low", io_cost="low",
+            complexity="O(N)（确定性直方）",
+            approximation_class="approximate", approximate=True,
+            algorithm_family="terrain_morphometry",
+            method_references=["strahler1952"],
+            assumptions=[
+                "曲线 a(e) = 高于归一化高程 e 的面积占比（n_levels 级直方）",
+                "HI = ∫a de（矩形 = 1；Strahler 1952 侵蚀循环代理）",
+            ],
+            limitations=[
+                "直方分级离散化（连续曲线的级别近似）",
+                "常数面退化 HI=0（诚实披露，不伪造曲线）",
+            ],
+            crs_class="RASTER_GRID",
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="同输入逐位一致（直方确定性）",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_hydrology_v4.py::test_hypsometry_rectangle_and_monotone",
+            ],
+            resource_envelope=ResourceEnvelope(bytes_per_cell=8, notes="单 float64 主数组 + 直方"),
+            cancellation_profile="coarse",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=0.0, policy="conformance"),
+            ),
+
+        AlgorithmDescriptor(
+            id="terrain.solar_radiation", name="晴空太阳辐射", category="terrain_analysis",
+            capabilities=["terrain_derivatives"],
+            input_artifact_types=["terrain_surface"],
+            output_artifact_type="raster_surface", runtime_status="native",
+            parameter_contract_ref="hydrology_v4_analysis",
+            tool_candidates=["hydrology_v4_analysis"],
+            cpu_cost="low", memory_cost="medium", io_cost="low",
+            complexity="O(N)（解析 Ra + gradient 坡面因子）",
+            approximation_class="heuristic", approximate=True,
+            algorithm_family="terrain_morphometry",
+            method_references=["fao56"],
+            assumptions=[
+                "FAO-56 大气顶日辐射 Ra（dr/δ/ωs 解析）× 晴空透射（0.75）",
+                "地形入射因子 f = cos β + sin β·cos(az_sun − aspect)，钳 ≥0.15（散射底）",
+                "日积分代表方位 az_sun = π + δ（单方位近似）",
+            ],
+            limitations=[
+                "heuristic：无地平线遮蔽积分/多时步太阳轨迹（horizon_angle 工具可做后处理）",
+                "海拔-大气修正未含（Rso 常数透射）",
+            ],
+            crs_class="RASTER_GRID",
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="Ra 解析锚（赤道春秋分 37.6 ±2%）；同输入逐位一致",
+            scientific_status="VALIDATED",
+            conformance_tests=[
+                "tests/unit/lib/test_hydrology_v4.py::test_solar_radiation_analytic_anchor_and_bounds",
+            ],
+            resource_envelope=ResourceEnvelope(bytes_per_cell=48, notes="z+梯度+坡度+坡向+辐照 5×float64"),
+            cancellation_profile="coarse",
+            tolerance=NumericalTolerance(rtol=0.02, atol=0.5, policy="analytic_anchor"),
+            ),
 ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
@@ -1176,4 +1495,5 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ),
         ],
     ),
+
 ]

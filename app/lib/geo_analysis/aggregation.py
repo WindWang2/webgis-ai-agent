@@ -375,7 +375,13 @@ def aggregate_with_denominator(
             f"{zones_gdf.crs}: {exc}") from exc
 
     zones = zones_gdf.copy()
-    zones["geometry"] = zones.geometry.make_valid()
+    # science-v4 W3：make_valid 修复不再静默 —— 计数/方法/面积变化进
+    # evidence.geometry_repair（修复语义与 zonal_statistics 同一实现）。
+    from app.lib.geo_analysis.geometry_repair import repair_geometry_sequence
+
+    fixed_zone_geoms, _zone_repair = repair_geometry_sequence(
+        zones.geometry, strict=False, context="aggregate_with_denominator")
+    zones["geometry"] = fixed_zone_geoms
 
     # Aggregate convention (same as spatial_aggregate): intersects, so a
     # boundary point is counted for the zone it lies on the edge of.
@@ -466,6 +472,8 @@ def aggregate_with_denominator(
         "area_crs_class": area_crs_class,
         "zones_total": int(len(out)),
     }
+    if _zone_repair.invalid:
+        evidence["geometry_repair"] = _zone_repair.to_dict()
     return out, evidence
 
 def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: str | None = None, stat_method: str = 'count') -> GeoAnalysisResult:
