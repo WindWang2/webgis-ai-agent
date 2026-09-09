@@ -249,6 +249,93 @@ def validate_gis_library(
     # ── Style templates / composite（catalog 汇总 template registry 校验）──
     issues.extend(catalog.validate())
 
+    # ── Epic 11：方法知识层（taxonomy / descriptors / provenance / graph）
+    #    全部审定表对账 canonical 词表；graph 悬空引用在 build 期 fail-closed。
+    issues.extend(
+        f"methodology_intel: {violation}"
+        for violation in _validate_methodology_intelligence(
+            ontology=get_task_ontology(),
+            capabilities=capabilities,
+            algorithms=algorithms,
+            artifacts=artifacts,
+            models=models,
+            component_registry=component_registry,
+        )
+    )
+
+    return issues
+
+
+def _validate_methodology_intelligence(
+    *,
+    ontology: Any,
+    capabilities: Any,
+    algorithms: Any,
+    artifacts: Any,
+    models: Any,
+    component_registry: Any,
+) -> List[str]:
+    """知识层对账（deferred imports；悬空/违例以 methodology_intel: 前缀上报）。"""
+    from typing import get_args as _get_args
+
+    from app.lib.gis.methodology.descriptors import (
+        get_method_descriptor_registry,
+    )
+    from app.lib.gis.methodology.graph import (
+        GraphBuildError,
+        get_knowledge_graph,
+    )
+    from app.lib.gis.methodology.provenance import (
+        provenance_exists,
+        validate_ledger,
+    )
+    from app.lib.gis.methodology.taxonomy import get_task_taxonomy
+    from app.services.gis_harness.workflow_schema import DATA_ROLES
+    from app.services.gis_harness.workflow_v4.methodology import (
+        get_methodology_registry,
+    )
+
+    issues: List[str] = list(validate_ledger())
+
+    def _comp_exists(c: str) -> bool:
+        return component_registry.has(c) or component_registry.get_by_type(c) is not None
+
+    def _model_exists(m: str) -> bool:
+        return models.resolve(m) is not None
+
+    methods_reg = get_methodology_registry()
+    issues.extend(
+        f"taxonomy: {v}"
+        for v in get_task_taxonomy().validate(
+            task_exists=ontology.has,
+            family_exists=lambda f: methods_reg.family(f) is not None,
+            method_exists=lambda m: methods_reg.method(m) is not None,
+            artifact_type_exists=artifacts.has,
+            map_model_exists=_model_exists,
+            component_exists=_comp_exists,
+            provenance_exists=provenance_exists,
+            data_role_vocabulary=tuple(DATA_ROLES),
+        )
+    )
+    issues.extend(
+        f"method_descriptors: {v}"
+        for v in get_method_descriptor_registry().validate()
+    )
+    # 方法增强层覆盖完整性：V4 每个候选方法必须有 descriptor（纯加法演进
+    # 的伴随义务——新增方法不补条目在这里红）。
+    desc_reg = get_method_descriptor_registry()
+    for fam in methods_reg.families():
+        for m in fam.candidate_methods:
+            if not desc_reg.has(m.method_id):
+                issues.append(
+                    f"method_descriptors: 缺少 V4 候选方法的增强条目 "
+                    f"{m.method_id}")
+    try:
+        graph = get_knowledge_graph()
+        if graph.node_count == 0 or graph.edge_count == 0:
+            issues.append("knowledge_graph: 空图（投影断裂）")
+    except GraphBuildError as exc:
+        issues.append(f"knowledge_graph: build failed: {exc}")
     return issues
 
 
