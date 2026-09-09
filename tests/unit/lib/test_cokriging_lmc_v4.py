@@ -95,3 +95,15 @@ def test_cokriging_deterministic():
     b = cokriging_lmc(xy1, z1, xy2, z2, targets)
     assert np.array_equal(a.predictions, b.predictions)
     assert np.array_equal(a.variances, b.variances)
+
+
+def test_cokriging_lmc_surface_tool_registered_with_complete_descriptor():
+    """工具 cokriging_lmc_surface 注册存在且描述符完整（quality 棘轮闸静态引用）。"""
+    from app.tools.advanced_spatial import register_advanced_spatial_tools
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    register_advanced_spatial_tools(reg)
+    d = reg.descriptors()["cokriging_lmc_surface"]
+    assert d.side_effect.value == "deterministic_compute"
+    assert "cokriging" in d.tags

@@ -890,6 +890,11 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 "where 为不可解析的自由字符串的源被排除在派生外 —— 该源按"
                 "全列取数，只是多取，安全）"
             ),
+            "engine": (
+                "执行引擎：v6（默认，cost-based join 树枚举/流式批执行/Bloom 预滤/"
+                "执行期基数观测，非 typed 异常自动回退 v5）| v5（左深链基线）。"
+                "自适应尾重排仅在 join graph 存在替代有向链时触发"
+            ),
             "session_id": "用户会话 ID",
         },
         execution_policy=ToolExecutionPolicy.ASYNC,
@@ -912,9 +917,11 @@ def register_data_fabric_tools(registry: ToolRegistry):
         limit: int = 10_000,
         order_strategy: str = "cost",
         derive_projection: bool = True,
+        engine: str = "v6",
         session_id: Optional[str] = None,
     ) -> dict:
-        """N 源有界链式联邦查询（V5：链式联邦的 agent 表面）。"""
+        """N 源有界链式联邦查询（V6：cost-based 枚举 + 流式批执行；
+        V5 路径保留为回退/对照）。"""
         from app.services.data_fabric.query.federation import (
             ChainJoin,
             ChainSource,
@@ -989,6 +996,10 @@ def register_data_fabric_tools(registry: ToolRegistry):
                     return {"status": "error", "error_type": "INVALID_QUERY",
                             "error": f"joins[{i}] invalid: {e}"}
 
+            engine_norm = str(engine or "").strip().lower()
+            if engine_norm not in ("v5", "v6"):
+                return {"status": "error", "error_type": "INVALID_QUERY",
+                        "error": f"engine must be 'v5' or 'v6' (got {engine!r})"}
             req = FederatedChainRequest(
                 sources=chain_sources,
                 joins=chain_joins,
@@ -996,6 +1007,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 limit=limit,
                 order_strategy=order_strategy,
                 derive_projection=derive_projection,
+                engine=engine_norm,
             )
             executor = FederatedExecutor(lambda src: adapters_by_id.get(src))
             try:
@@ -1017,6 +1029,13 @@ def register_data_fabric_tools(registry: ToolRegistry):
             }
             if result.get("semi_join_reduction"):
                 out["semi_join_reduction"] = result["semi_join_reduction"]
+            out["engine"] = result.get("engine", "v5")
+            if result.get("explain_v6"):
+                out["explain_v6"] = result["explain_v6"]
+            if result.get("bloom_reduction"):
+                out["bloom_reduction"] = result["bloom_reduction"]
+            if result.get("replans_used") is not None:
+                out["replans_used"] = result["replans_used"]
             if len(rows) > CHAIN_TOOL_ROW_CAP:
                 out["_payload_notice"] = (
                     f"rows capped for context safety ({len(rows)} total; use row_count / "

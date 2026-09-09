@@ -1055,8 +1055,35 @@ class TestChainTool:
                                  "join_field_right": "key",
                                  "left_source_id": "s0", "right_source_id": "s2"},
                             ],
-                            order_strategy="cost")
+                            order_strategy="cost", engine="v5")
         assert res["status"] == "error"
+
+    def test_non_chainable_id_joins_v6_tree_executes(self, chain_env):
+        """V6（ADR-0118）：同一星形 join graph 是合法**树** —— 成功执行。
+
+        V5 左深链契约（不成链 typed 失败）由上一测试以 engine="v5" 锁定；
+        V6 cost-based 枚举接受树形 join graph（链是特例），这是 V6 的
+        行为改进而非契约破坏。
+        """
+        reg = _registered_tools()
+        adapters = chain_env
+        with patch("app.tools.data_fabric_tools.connection_manager") as cm:
+            cm.get_adapter.side_effect = lambda pid, owner=None: adapters.get(pid)
+            res = _run_tool(reg, "query_federated_chain",
+                            sources=[{"dataset_id": "d0", "source_id": "s0", "profile_id": "p0"},
+                                     {"dataset_id": "d1", "source_id": "s1", "profile_id": "p1"},
+                                     {"dataset_id": "d2", "source_id": "s2", "profile_id": "p2"}],
+                            joins=[
+                                {"kind": "attribute_join", "join_field_left": "key",
+                                 "join_field_right": "key",
+                                 "left_source_id": "s0", "right_source_id": "s1"},
+                                {"kind": "attribute_join", "join_field_left": "key",
+                                 "join_field_right": "key",
+                                 "left_source_id": "s0", "right_source_id": "s2"},
+                            ],
+                            order_strategy="cost", engine="v6")
+        assert res["status"] == "success"
+        assert res.get("engine") == "v6"
 
     def test_duplicate_source_id_invalid(self, chain_env):
         reg = _registered_tools()
