@@ -30,11 +30,11 @@
 - [x] W18 Docs/ADR/CHANGELOG（本 wave 只写文档：docs/adr/0119-contextual-cartographic-harness-v6.md＋CHANGELOG harness-v6 条目＋11-pr-summary DoD 34 项＋本文件 Waves 行；不 commit）
 
 ## Review / 收尾
-- [ ] Review Round 1（Lens A/B，BLOCKER/CRITICAL/MAJOR 清零）
-- [ ] Review Round 2（perf/concurrency/security/seam）
-- [ ] Claim Honesty Review
-- [ ] rebase origin/master + 关键测试复跑
-- [ ] 推送 + PR（按 §64 模板）
+- [x] Review Round 1（Lens A/B，BLOCKER/CRITICAL/MAJOR 清零→`0cdbaaf5`）
+- [x] Review Round 2（perf/concurrency/security/seam→`80fe7402`）
+- [x] Claim Honesty Review（`8a5eb2e8`：wired/opt-in/planned/limitation 四态）
+- [x] rebase origin/master（8a33e3a5 无漂移）+ 关键测试复跑（1201＋7 全绿）
+- [x] 推送 + PR（#1173，§64 体例）
 
 ## Definition of Done 对照（§60，逐项核对见最终 11-pr-summary.md）
 W1–W18 ✅（W18 只写文档）；待办 6 项：两轮 review / honesty / rebase+复跑 / 推送 / PR。
