@@ -24,7 +24,7 @@
     " ]",
     "}"
    ],
-   "status": "pass"
+   "status": "fail"
   },
   "quality_manifest": {
    "command": "/usr/sbin/python3 scripts/gen_quality_manifest.py --check",
@@ -34,7 +34,7 @@
    "status": "pass"
   }
  },
- "git_commit": "1ac40019c033fbb0ed3661c21c40b4e057ebc6bf",
+ "git_commit": "fd61f8560f4448259badde0108e030c0c50e24a1",
  "known_gaps": [
   {
    "detail": "存量 ADR 0077 撞号（watermark 下 known limitation）: ['docs/adr/0077-multi-pod-topology-turn-ownership.md', 'docs/adr/0077-wrap-vendored-pi.md']",
@@ -102,6 +102,7 @@
  "runner_evidence": null,
  "verdict": "NOT-READY",
  "violations": [
+  "gate integration_preflight 未通过",
   "lane backend 状态 not-run（需 pass 证据或显式 waiver）",
   "lane quick 状态 not-run（需 pass 证据或显式 waiver）"
  ],

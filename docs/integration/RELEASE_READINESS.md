@@ -1,13 +1,13 @@
 # Release Readiness（生成物 · 确定性）
 
 - verdict: **NOT-READY**
-- git commit: `1ac40019c033`
+- git commit: `fd61f8560f44`
 
 ## 现场闸（生成时真实执行）
 
 - [pass] quality_manifest
 - [pass] contract_drift
-- [pass] integration_preflight
+- [fail] integration_preflight
 - [pass] frontend_behavior
 
 ## 车道证据
@@ -26,6 +26,7 @@
 
 ## 政策缺口
 
+- gate integration_preflight 未通过
 - lane backend 状态 not-run（需 pass 证据或显式 waiver）
 - lane quick 状态 not-run（需 pass 证据或显式 waiver）
 
