@@ -178,7 +178,10 @@ DECLARED: Tuple[GeneratedEntry, ...] = (
     GeneratedEntry(
         artifact="docs/science/BENCHMARK_MANIFEST.md",
         generator="scripts/gen_science_benchmark_manifest.py",
-        inputs=("app/lib/gis/algorithm_registry.py",),
+        # R1-M3：语义源是 registry + algorithm packs（_load_seed_algorithms
+        # 经 iter_domain_packs 消费 app/lib/gis/algorithms 全目录）——
+        # 漏记则 complexity/backend_variants 变更对 staleness 闸失明
+        inputs=("app/lib/gis/algorithm_registry.py", "app/lib/gis/algorithms"),
     ),
     # Quality V3（Epic 10 W14）：前端行为证据索引（@behavior 标签聚合）
     GeneratedEntry(

@@ -49,6 +49,7 @@ class IntegrationManifest:
     branch: str
     base: str
     git_commit: str
+    base_sha: str = ""
     files_changed: List[str] = field(default_factory=list)
     domains: Dict[str, List[str]] = field(default_factory=dict)
     unclassified: List[str] = field(default_factory=list)
@@ -69,6 +70,7 @@ class IntegrationManifest:
         return {
             "branch": self.branch,
             "base": self.base,
+            "base_sha": self.base_sha,
             "git_commit": self.git_commit,
             "files_changed": self.files_changed,
             "domains": {k: sorted(v) for k, v in sorted(self.domains.items())},
@@ -139,9 +141,12 @@ def build_manifest(
     doc = doc or load_document(root)
     files = changed_files(branch, base, root, include_worktree)
     commit = _git(["rev-parse", branch], root).strip()
+    # m-7（R1）：base 记录 merge-base SHA —— ref 名是移动引用，跨分支
+    # 对比时 SHA 不一致 = base 漂移，须显式告警
+    base_sha = _git(["merge-base", base, branch], root).strip()
 
     m = IntegrationManifest(branch=branch, base=base, git_commit=commit,
-                            files_changed=files)
+                            base_sha=base_sha, files_changed=files)
     risk_reasons: List[str] = []
     risk_hits: List[str] = []   # 命中 high 的文件（结构化风险信号）
     medium_hits = 0

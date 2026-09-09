@@ -16,6 +16,7 @@ import pytest
 
 from app.lib.integration.impact import (
     ImportGraph,
+    _V2_DOMAIN_MAP,
     build_graph,
     map_directory_target,
     module_name_for,
@@ -152,14 +153,8 @@ def test_real_branch_guard_v2_mapping_subset_of_selector():
 
     changed = [f for f in _branch_changed_files() if f.startswith("app/")]
     assert changed, "本分支应有 app 改动"
-    v2_map = {
-        "app/lib/gis": "tests/unit/gis",
-        "app/lib/quality": "tests/quality",
-        "app/tools": "tests/unit/tools",
-        "app/services": "tests/unit",
-        "app/api": "tests",
-        "app/core": "tests",
-    }
+    # 单一来源（R1-m6）：从 impact.py import，不再手工拷贝第三份
+    v2_map = dict(_V2_DOMAIN_MAP)
     v2_targets: set[str] = set()
     for f in changed:
         for prefix, target in v2_map.items():

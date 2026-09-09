@@ -24,23 +24,15 @@ from typing import Dict, List, Optional
 from app.lib.integration import migrations_coord
 from app.lib.integration.manifest import IntegrationManifest
 from app.lib.integration.ownership import (
+    POLICY_ALLOCATOR,
     POLICY_APPEND_ONLY,
+    POLICY_COORDINATED,
     POLICY_REGENERATE,
     POLICY_SINGLE_WRITER,
     OwnershipDocument,
     load_document,
+    paths_with_policy,
 )
-
-BLOCKING_AXES = (
-    "migration_same_file", "migration_sequence_collision",
-    "migration_forked_down", "registry_id_collision",
-    "shared_single_writer", "events_vocabulary",
-)
-ADVISORY_AXES = (
-    "api_route_cochange", "frontend_contract_cochange",
-    "shared_regenerate", "cross_dependency_hotspot",
-)
-
 
 @dataclass
 class AxisResult:
@@ -199,6 +191,47 @@ def compare_pair(
         _add("shared_regenerate", "advisory", regen_items)
     else:
         _add("shared_regenerate", "clear")
+
+    # 3b. allocator 撞号轴（M-1）：ADR 等 allocator 面的 NNNN 撞号 ——
+    # 本 Epic 创始事故（6×ADR-0118）的合并前检出轴
+    all_paths = sorted(set(a.files_changed) | set(b.files_changed))
+    base_alloc = set(paths_with_policy(doc, POLICY_ALLOCATOR,
+                                       sorted(set(a.files_changed))))
+    other_alloc = set(paths_with_policy(doc, POLICY_ALLOCATOR,
+                                        sorted(set(b.files_changed))))
+    import re as _re
+
+    def _alloc_num(path: str) -> str:
+        m = _re.match(r"^.*?(\d{4})[-_]", Path(path).name)
+        return m.group(1) if m else path
+
+    base_nums: dict = {}
+    for f in sorted(base_alloc - other_alloc):
+        base_nums.setdefault(_alloc_num(f), []).append(f)
+    alloc_items = []
+    for f in sorted(other_alloc - base_alloc):
+        num = _alloc_num(f)
+        if num in base_nums:
+            alloc_items.append({
+                "base": ",".join(base_nums[num]), "other": f,
+                "detail": f"allocator 面 NNNN/编号 {num} 被双方占用",
+            })
+    if alloc_items:
+        _add("allocator_collision", "blocking", alloc_items)
+    else:
+        _add("allocator_collision", "clear")
+
+    # 3c. coordinated 共改轴（M-1）：依赖/配置文件双改至少给 advisory 信号
+    co_coordinated = sorted(
+        set(paths_with_policy(doc, POLICY_COORDINATED, a.files_changed))
+        & set(paths_with_policy(doc, POLICY_COORDINATED, b.files_changed)))
+    if co_coordinated:
+        _add("coordinated_cochange", "advisory",
+             [{"file": f, "detail": "coordinated 配置面共改（依赖/main.py/"
+                                  "workflow 等），合并时人工确认语义"}
+              for f in co_coordinated])
+    else:
+        _add("coordinated_cochange", "clear")
 
     # 4. events 词表轴
     if a.events and b.events:

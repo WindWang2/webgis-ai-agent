@@ -79,6 +79,9 @@ LANES: dict[str, dict] = {
             [sys.executable, "scripts/check_integration_preflight.py"],
             # Quality V3 W14：前端行为证据索引字节闸（@behavior 标签漂移即红）
             [sys.executable, "scripts/gen_frontend_behavior.py", "--check"],
+            # Quality V3 W15/R1-C1：release readiness 字节闸（内容性状态
+            # 锁定；commit 身份字段归一）
+            [sys.executable, "scripts/gen_release_readiness.py", "--check"],
         ],
     },
     "backend": {
@@ -299,7 +302,9 @@ def main() -> int:
         targets = result.targets or ["tests/quality/"]
         LANES["impact"] = {
             "title": f"impact（import 闭包选择面 {len(targets)} 目标；"
-                     f"映射兜底 {len(result.via_mapping)}）",
+                     f"映射兜底 {len(result.via_mapping)}；"
+                     "改动的 tests/** 文件不在本选择面 —— 由 V2 changed/"
+                     "full lane 兜底）",
             "commands": [
                 PYTEST + targets + ["--no-cov", "-q", "--timeout=120",
                                     "--timeout-method=thread",

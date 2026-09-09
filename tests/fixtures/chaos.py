@@ -659,6 +659,7 @@ def _cancel_storm(handle: ChaosFault) -> Iterator[None]:
     barrier = asyncio.Barrier(int(handle.params.get("concurrency", 8)))
     handle.barrier = barrier
     handle.results = []
+    handle.record("fired", f"cancel storm armed: {barrier.parties} 路并发 cancel")
     yield
 
 
@@ -670,8 +671,8 @@ def _stale_revision_cas(handle: ChaosFault) -> Iterator[None]:
     纯编排注入（接缝 = transition 的 expected CAS 语义）。"""
     import asyncio
 
-    handle.barrier = asyncio.Barrier(2)
     handle.results = []
+    handle.record("fired", "stale revision CAS armed: 确定性交错两路 transition")
     yield
 
 
@@ -845,7 +846,7 @@ _FAULT_LIST = [
         fault_id="JOBS_STALE_REVISION_CAS",
         subsystem="JOBS",
         description="stale revision CAS：并发状态转移中失败方携带过期 expected",
-        attack="asyncio.Barrier 编排同 job 两路 transition，败者 expected 已被胜者作废（纯编排注入）",
+        attack="确定性交错：胜者 transition 提交后，败者携带已作废的 expected 再 transition（纯编排注入）",
         expected="恰好一路成功；败者返回 False（诚实拒绝，不覆盖、不部分写）；终态 == 胜者目标",
         injection_point="app/services/jobs/store.py:384-445 transition CAS（Quality V3 W13）",
         factory=_stale_revision_cas,

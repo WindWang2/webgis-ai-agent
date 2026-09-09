@@ -64,9 +64,15 @@ def _run_gate(cmd: list) -> dict:
     proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
                           timeout=120)
     ok = proc.returncode == 0
-    detail = (proc.stdout or "").strip().splitlines()
+    # detail 剥离易变字段（elapsed/耗时）—— 产物必须字节确定，
+    # 否则 --check 在同 commit 上都不自洽（C-1）
+    import re as _re
+
+    volatile = _re.compile(r"elapsed_s|\d+\.\d+s|\d+\.\d+ ms")
+    detail = [ln for ln in (proc.stdout or "").strip().splitlines()
+              if not volatile.search(ln)][-6:]
     return {"command": " ".join(str(c) for c in cmd), "status":
-            "pass" if ok else "fail", "detail": detail[-6:]}
+            "pass" if ok else "fail", "detail": detail}
 
 
 def _load_runner_evidence(path: str | None) -> dict:
@@ -230,9 +236,34 @@ def main() -> int:
     rendered_md = _render_md(state)
 
     if args.check:
-        for out, rendered in ((OUT_JSON, rendered_json), (OUT_MD, rendered_md)):
-            if not out.exists() or out.read_text(encoding="utf-8") != rendered:
-                print(f"FAIL: {out.relative_to(REPO)} 过期或缺失 —— "
+        # C-1（R1）：commit 身份字段做归一比对 —— 产物内嵌"生成时 HEAD"
+        # 会在每次 commit 后必然过期（自指回归），把该字段从闸中剥离
+        # （结构/政策内容由其余字段锁定）；闸锁定的是 gates/lanes/waivers/
+        # known_gaps/verdict 这些**内容性**状态。
+        def _normalize(text: str, as_json: bool) -> str:
+            if not as_json:
+                import re as _re
+
+                pattern = r"- git commit（生成时）: `[0-9a-f]+`[^\n]*"
+                return _re.sub(
+                    pattern, "- git commit（生成时）: <normalized>", text)
+            data = json.loads(text)
+            data.pop("git_commit_generation_time", None)
+            return json.dumps(data, ensure_ascii=False, sort_keys=True,
+                              indent=1) + "\n"
+
+        checks = (
+            (OUT_JSON, rendered_json, True),
+            (OUT_MD, rendered_md, False),
+        )
+        for out, rendered, is_json in checks:
+            if not out.exists():
+                print(f"FAIL: {out.relative_to(REPO)} 缺失 —— "
+                      "重跑 scripts/gen_release_readiness.py")
+                return 1
+            if _normalize(out.read_text(encoding="utf-8"), is_json) != \
+                    _normalize(rendered, is_json):
+                print(f"FAIL: {out.relative_to(REPO)} 过期 —— "
                       "重跑 scripts/gen_release_readiness.py")
                 return 1
         print(f"ok: verdict={state['verdict']}")

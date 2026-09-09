@@ -26,7 +26,7 @@
 | `STORAGE_TRANSIENT_FAIL` | STORAGE | 制品账本存储后端瞬时写失败（Redis/磁盘抖动）后恢复 | 计数包装 session_data_manager.store/overwrite：前 fail_times 次抛 OSError（monkeypatch 接缝） | 调用方拿到类型化异常（不静默丢数据）；账本 alias 不前进（无半截提交）；恢复后重试成功 | `app/services/artifact_registry.py:227-240 _save_records（Quality V2 W9）` |
 | `JOBS_WORKER_LOSS` | JOBS | worker 心跳丢失：running/cancelling job 心跳超时后无人续约 | 包装 DurableJobStore.find_stale 强制 stale_after_s=0（monkeypatch 接缝；等价心跳停更），随后 sweep_stale 真实运行 | running → failed(stale)（可重试终态）；cancelling → cancelled（不给被取消任务开重跑后门）；重试转移 failed → queued 合法 | `app/services/jobs/store.py:805-937 stale 清扫（Quality V3 W13）` |
 | `CANCEL_STORM` | CANCEL | 取消风暴：N 个并发请求同时取消同一 token | asyncio.Barrier 编排 N 路并发 cancel()（纯编排注入；接缝 = CancellationToken.cancel 的幂等/CAS 语义） | 恰好一次返回 True（其余 False）；cancelled 状态与 cancelled_at 单调稳定；无异常泄漏 | `app/lib/cancellation.py:71 cancel（Quality V3 W13）` |
-| `JOBS_STALE_REVISION_CAS` | JOBS | stale revision CAS：并发状态转移中失败方携带过期 expected | asyncio.Barrier 编排同 job 两路 transition，败者 expected 已被胜者作废（纯编排注入） | 恰好一路成功；败者返回 False（诚实拒绝，不覆盖、不部分写）；终态 == 胜者目标 | `app/services/jobs/store.py:384-445 transition CAS（Quality V3 W13）` |
+| `JOBS_STALE_REVISION_CAS` | JOBS | stale revision CAS：并发状态转移中失败方携带过期 expected | 确定性交错：胜者 transition 提交后，败者携带已作废的 expected 再 transition（纯编排注入） | 恰好一路成功；败者返回 False（诚实拒绝，不覆盖、不部分写）；终态 == 胜者目标 | `app/services/jobs/store.py:384-445 transition CAS（Quality V3 W13）` |
 | `DB_TRANSIENT_SEQUENCE` | DB | DB 瞬时故障序列：job 创建路径前 N 次连接级失败 | 包装 DurableJobStore.create，前 fail_times 次抛 sqlalchemy OperationalError（monkeypatch 接缝） | 类型化异常透传调用方（不静默吞）；无半截行落库；恢复后重试创建成功 | `app/services/jobs/store.py:188-255 create（Quality V3 W13）` |
 
 共 17 个注册故障点；子系统：`CACHE`、`CANCEL`、`DB`、`INGEST`、`JOBS`、`LLM`、`LOCK`、`REGISTRY`、`STORAGE`。

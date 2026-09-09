@@ -209,3 +209,10 @@ def _walk_repo_bounded(root: Path) -> List[str]:
             else:
                 out.append(child.relative_to(root).as_posix())
     return out
+
+
+def paths_with_policy(doc: OwnershipDocument, policy: str,
+                      paths: List[str]) -> List[str]:
+    """paths 中命中指定 policy 的文件（谓词式判定，merge_sim 用）。"""
+    rules = doc.rules_by_policy(policy)
+    return [pt for pt in paths if any(r.matches(pt) for r in rules)]

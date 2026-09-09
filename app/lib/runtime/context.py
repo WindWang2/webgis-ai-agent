@@ -65,6 +65,7 @@ class RuntimeContext:
             "run_id": self.run_id,
             "project_id": self.project_id,
             "trace_id": self.trace_id,
+            "span_id": self.span_id,
         }
 
 

@@ -10,26 +10,11 @@
 from __future__ import annotations
 
 import os
-from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-
-
-@contextmanager
-def _pin_env(url: str):
-    """PG lane 的 env 钉住（真实 PG url 必须覆盖 .env 的本地 sqlite）。"""
-    old_url = os.environ.get("DATABASE_URL")
-    os.environ["DATABASE_URL"] = url
-    try:
-        yield
-    finally:
-        if old_url is None:
-            os.environ.pop("DATABASE_URL", None)
-        else:
-            os.environ["DATABASE_URL"] = old_url
 
 
 def _make_config(db_url: str):
@@ -99,13 +84,15 @@ def test_every_migration_has_real_downgrade():
 
 
 @pytest.mark.real_services()
-def test_postgres_full_chain_and_postgis():
+def test_postgres_full_chain_and_postgis(monkeypatch):
     """Postgres lane（opt-in，REAL_SERVICES/TEST_POSTGRES_URL）：
     up/down/up + PostGIS 探测 + 行为差异（§15 Postgres/SQLite delta）。"""
     url = os.environ.get("TEST_POSTGRES_URL", "")
     if not url:
         pytest.skip("TEST_POSTGRES_URL 未设置（real-services lane 专属）")
-    _up_down_up(url, _pin_env(url))
+    # R1-M2：env 钉住与 SQLite lane 同一 monkeypatch 机制（真 PG url
+    # 必须覆盖 .env 泄露的本地 DATABASE_URL，否则 env.py 劫持运行）
+    _up_down_up(url, monkeypatch)
 
     # PostGIS 探测（可用性是 honest disclose 项，不是硬前提）
     import sqlalchemy

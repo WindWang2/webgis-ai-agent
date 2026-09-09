@@ -78,6 +78,23 @@ def test_preflight_wired_into_quick_lane():
         for cmd in quick_cmds), "preflight 未挂进 quick lane"
 
 
+def test_readiness_and_frontend_behavior_wired_into_quick_lane():
+    """R1-C1：release readiness / frontend behavior 字节闸必须有强制点
+    （装饰性闸 = 过期无人知晓）。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "quality_runner_module", REPO / "scripts/quality_runner.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    quick_cmds = [" ".join(str(c) for c in cmd)
+                  for cmd in mod.LANES["quick"]["commands"]]
+    assert any("gen_release_readiness.py --check" in c for c in quick_cmds), \
+        "readiness --check 未挂进 quick lane"
+    assert any("gen_frontend_behavior.py --check" in c for c in quick_cmds), \
+        "frontend behavior --check 未挂进 quick lane"
+
+
 def test_v3_scripts_exist_on_disk():
     for s in V3_SCRIPTS:
         # gen_integration_manifest 等 W6+ 交付；允许尚未实现，

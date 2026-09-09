@@ -205,11 +205,17 @@ _cache_written_at: float = 0.0
 _refresh_guard = _asyncio.Lock()
 
 
+#: R1-m2：延迟降级阈值（ms）——超过即 degraded（探测成功但逼近不可用）
+_DEGRADED_LATENCY_MS = {"llm": 1500.0, "worker": 1500.0, "db": 500.0,
+                        "redis": 500.0}
+
+
 def _probe_component(name: str) -> tuple:
     """单组件探测（同步阻塞；调用方保证在 to_thread 中执行）。
 
     返回 (status_str, latency_ms, detail)。词表封闭：ok|degraded|down|
-    not_configured。
+    not_configured。degraded = 可达但延迟超阈值（R1-m2：否则 0.5 是
+    死词表、SRE_Component_Degraded 告警永不着火）。
     """
     t0 = _time.monotonic()
     try:
@@ -228,7 +234,13 @@ def _probe_component(name: str) -> tuple:
     except Exception as exc:  # noqa: BLE001 — 探测故障按 down 诚实上报
         return ("down", None, f"probe error: {type(exc).__name__}")
     latency = round((_time.monotonic() - t0) * 1000, 1)
-    return (("ok", latency, None) if ok else ("down", latency, None))
+    if not ok:
+        return ("down", latency, None)
+    threshold = _DEGRADED_LATENCY_MS.get(name)
+    if threshold is not None and latency > threshold:
+        return ("degraded", latency,
+                f"latency {latency}ms > {threshold}ms threshold")
+    return ("ok", latency, None)
 
 
 def _probe_object_store() -> tuple:
@@ -249,6 +261,11 @@ def _probe_object_store() -> tuple:
 
         resp = httpx.head(base.rstrip("/") + "/minio/health/live", timeout=2.0)
         latency = round((_time.monotonic() - t0) * 1000, 1)
+        if resp.status_code == 404:
+            # R1-m3：非 MinIO 的 S3 兼容端点没有该健康路径 —— 端点可达
+            # 但健康探针缺席，报 degraded（不得假阳性 ok）
+            return ("degraded", latency,
+                    "no /minio/health/live (non-MinIO S3?)")
         ok = resp.status_code < 500
         return (("ok", latency, None) if ok
                 else ("down", latency, f"health probe {resp.status_code}"))
@@ -322,7 +339,10 @@ async def sre_status_detailed(
                 stuck = await _count_stuck_jobs()
                 fresh["stuck_jobs"] = stuck
                 from app.core import sre_metrics as _sm
-                _sm.set_stuck_jobs(stuck or 0)
+                if stuck is not None:
+                    # m-1（R1）：探测不可用 = None，保持序列缺席 +
+                    # staleness 告警讲真话，不伪造 0
+                    _sm.set_stuck_jobs(stuck)
                 _sm.set_refresh_timestamp()
                 with _cache_lock:
                     _cache_snapshot = fresh

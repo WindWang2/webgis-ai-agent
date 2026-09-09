@@ -494,11 +494,9 @@ app.add_middleware(RequestCorrelationMiddleware)
 # http + websocket 全 scope 覆盖（chat WS 主链路的 trace 绑定点）；
 # add_middleware 反序 → 最后注册 = 最外层，先于 X-Request-ID 绑定执行，
 # 后续 bind_runtime_context 合并保留 trace 字段。
-try:
-    from app.lib.observability.trace_context import TraceContextMiddleware
-    app.add_middleware(TraceContextMiddleware)
-except Exception as _exc:  # noqa: BLE001 — 关联面故障不阻断应用装配
-    logger.warning("TraceContextMiddleware not installed: %s", _exc)
+# R1-NIT：fail-fast（模块存在性由结构闸锁定，静默禁用 = 关联链路静默断裂）
+from app.lib.observability.trace_context import TraceContextMiddleware
+app.add_middleware(TraceContextMiddleware)
 
 app.include_router(auth_routes.router, prefix="/api/v1", tags=["认证"])
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])

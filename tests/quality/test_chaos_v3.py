@@ -1,8 +1,9 @@
 """Chaos V3 行为测试（Quality V3 W13，Epic 10 §L）。
 
-四个跨系统 fault：WORKER_LOSS / CANCEL_STORM / STALE_REVISION_CAS /
-DB_TRANSIENT_SEQUENCE。每个测试同时断言：(a) 故障真的开火（journal /
-state 证据），(b) 系统的恢复 / 诚实失败行为（V2 chaos 纪律）。
+四个跨系统 fault：JOBS_WORKER_LOSS / CANCEL_STORM /
+JOBS_STALE_REVISION_CAS / DB_TRANSIENT_SEQUENCE。注入型 fault 断言
+journal 开火证据 + 恢复语义；纯编排型（CANCEL_STORM/CAS）断言编排
+后的不变量（单胜出/CAS 拒绝），factory 记录 armed/fired 生命周期。
 
 跨系统场景的诚实归属（模块 docstring 缺口段同步）：
 - API/coordinator 重启 → scripts/integration_harness.py（真实进程 kill -9）；
@@ -138,12 +139,6 @@ async def test_cancel_storm_single_winner_and_stable_state():
     concurrency = 8
     results: list[bool] = []
     errors: list[BaseException] = []
-
-    async def storm():
-        try:
-            await token.spec_barrier if False else asyncio.sleep(0)
-        except Exception as exc:  # noqa: BLE001
-            errors.append(exc)
 
     with chaos("CANCEL_STORM", concurrency=concurrency) as fault:
         barrier = fault.barrier

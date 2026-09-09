@@ -73,6 +73,8 @@ def parse_traceparent(header: Optional[str]) -> Optional[TraceContext]:
     version, trace_id, span_id, flags = m.groups()
     if version == "ff":
         return None
+    if flags == "ff":  # W3C 保留值：all-f flags 与 version ff 同判非法
+        return None
     if set(trace_id) in ({"0"}, {"f"}):
         return None
     if set(span_id) in ({"0"}, {"f"}):

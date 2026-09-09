@@ -50,6 +50,7 @@ def test_parse_uppercase_and_whitespace():
     "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",  # span 全 0
     "00-4bf92f3577b34da6a3ce929d0e0e473g-00f067aa0ba902b7-01",  # 非 hex
     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-zz",  # flags 非法
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-ff",  # flags ff 保留
 ])
 def test_parse_invalid_explicit_reject(bad):
     assert parse_traceparent(bad) is None
