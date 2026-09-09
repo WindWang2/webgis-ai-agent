@@ -8826,6 +8826,11 @@
       "description": "Validation Error"
      }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
     "summary": "Search Packages",
     "tags": [
      "Extension Marketplace / 扩展市场（只读）"
@@ -8870,6 +8875,11 @@
       "description": "Validation Error"
      }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
     "summary": "Get Package",
     "tags": [
      "Extension Marketplace / 扩展市场（只读）"
@@ -8923,6 +8933,11 @@
       "description": "Validation Error"
      }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
     "summary": "Get Package Version",
     "tags": [
      "Extension Marketplace / 扩展市场（只读）"
@@ -8972,6 +8987,11 @@
       "description": "Validation Error"
      }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
     "summary": "Download Package",
     "tags": [
      "Extension Marketplace / 扩展市场（只读）"
