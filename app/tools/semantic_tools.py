@@ -258,6 +258,7 @@ def register_semantic_tools(registry: ToolRegistry) -> None:
 
     @tool(registry,
         name="compile_workflow_semantics",
+        capabilities=['dataset_profiling_quality'],
         description=(
             "Deterministically compile a GIS request into a professional "
             "methodology plan: methodology family, qualification-ranked "

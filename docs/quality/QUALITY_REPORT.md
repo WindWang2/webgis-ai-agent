@@ -6,8 +6,8 @@
 
 ## Capability Coverage（QualityManifest）
 
-- tools 295 · algorithms 208 · capabilities 139 · artifact_types 21 · recipes 164
-- 描述符富化闸：**PASS**（可执行工具 295）
+- tools 296 · algorithms 208 · capabilities 139 · artifact_types 21 · recipes 164
+- 描述符富化闸：**PASS**（可执行工具 296）
 
 | finding code | count |
 |---|---|

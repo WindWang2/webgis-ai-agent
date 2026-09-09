@@ -584,6 +584,7 @@
     "tests/unit/gis/test_scientific_contracts_vnext.py",
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
+    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/lib/test_interpolation_science_vnext.py",
     "tests/unit/lib/test_kriging_interpolation.py"
    ],
@@ -3120,6 +3121,7 @@
    "scientific_status": "VALIDATED",
    "tests": [
     "tests/unit/gis/test_gis_lib_registries.py",
+    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/lib/test_completeness_v3.py"
    ],
    "uncertainty_outputs": []
@@ -4380,7 +4382,8 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
-    "tests/unit/gis_harness/test_component_composition.py"
+    "tests/unit/gis_harness/test_component_composition.py",
+    "tests/unit/gis_harness/test_methodology_v4.py"
    ],
    "uncertainty_outputs": []
   },
@@ -4651,6 +4654,8 @@
     "tests/unit/gis_harness/test_plan_graph.py",
     "tests/unit/gis_harness/test_product_action.py",
     "tests/unit/gis_harness/test_product_graph.py",
+    "tests/unit/gis_harness/test_typed_dag_v4.py",
+    "tests/unit/gis_harness/test_workflow_v4_semantics.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
     "tests/unit/test_map_product_finalization_scenarios.py",
@@ -4664,6 +4669,7 @@
     "tests/data/test_performance_smoke.py",
     "tests/data/test_vocabulary.py",
     "tests/unit/gis/test_data_contracts_v2.py",
+    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/test_adversarial_v4_stress.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_tool_dispatch_service.py"
@@ -4746,7 +4752,8 @@
     "tests/benchmarks/test_data_runtime_v2_perf.py",
     "tests/unit/gis/test_backend_sdk_v3.py",
     "tests/unit/gis/test_data_contracts_v2.py",
-    "tests/unit/gis/test_gis_lib_registries.py"
+    "tests/unit/gis/test_gis_lib_registries.py",
+    "tests/unit/gis_harness/test_typed_dag_v4.py"
    ]
   },
   {
@@ -4814,6 +4821,7 @@
     "tests/data/test_lineage_query.py",
     "tests/data/test_vocabulary.py",
     "tests/unit/gis/test_data_contracts_v2.py",
+    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/lib/test_rs_v3.py"
    ]
   },
@@ -4823,12 +4831,13 @@
     "tests/data/test_vocabulary.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_kriging_vertical_slice.py",
+    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/lib/test_terrain_science_vnext.py"
    ]
   }
  ],
  "behavioral": {
-  "dispatch": 153,
+  "dispatch": 154,
   "mention": 142,
   "none": 0
  },
@@ -4888,6 +4897,7 @@
     "tests/unit/gis_harness/test_product_facets.py",
     "tests/unit/gis_harness/test_product_graph.py",
     "tests/unit/gis_harness/test_semantic_v2_families.py",
+    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/test_capability_registry_parity.py",
     "tests/unit/test_map_product_finalization_scenarios.py",
     "tests/unit/test_reproducible_gis_runtime.py",
@@ -4933,6 +4943,7 @@
     "tests/unit/gis_harness/test_intent.py",
     "tests/unit/gis_harness/test_model_injection.py",
     "tests/unit/gis_harness/test_planner.py",
+    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/test_semantic_gis_intelligence.py"
    ]
   },
@@ -5030,6 +5041,8 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/gis_harness/test_typed_dag_v4.py",
+    "tests/unit/gis_harness/test_workflow_v4_semantics.py",
     "tests/unit/lib/test_geostat_v3.py"
    ]
   },
@@ -5244,6 +5257,8 @@
     "tests/unit/gis_harness/test_plan_graph.py",
     "tests/unit/gis_harness/test_product_action.py",
     "tests/unit/gis_harness/test_product_graph.py",
+    "tests/unit/gis_harness/test_typed_dag_v4.py",
+    "tests/unit/gis_harness/test_workflow_v4_semantics.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
     "tests/unit/test_map_product_finalization_scenarios.py",
@@ -5661,6 +5676,7 @@
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_plan_graph.py",
     "tests/unit/gis_harness/test_planner.py",
+    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/test_analysis_cartography_converter.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_capability_registry_parity.py"
@@ -6289,6 +6305,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/gis_harness/test_compiler_v4.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
     "tests/unit/lib/test_regression_kriging.py"
    ]
@@ -6887,7 +6904,9 @@
    ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/unit/gis_harness/test_methodology_v4.py"
+   ]
   },
   {
    "category": "raster",
@@ -7006,6 +7025,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/gis_harness/test_compiler_v4.py",
     "tests/unit/lib/test_trend_surface.py"
    ]
   },
@@ -7114,11 +7134,11 @@
   "capabilities": 139,
   "findings": 0,
   "recipes": 164,
-  "tools": 295
+  "tools": 296
  },
  "findings": [],
  "findings_ratchet": {
-  "behavioral_dispatch": 153,
+  "behavioral_dispatch": 154,
   "expired_waivers": [],
   "min_behavioral_dispatch": 151,
   "pass": true,
@@ -7126,7 +7146,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "4cb7ad2bbb16cb5e23226770ff4e5df7edcb502d5143d5ddb7b4c350f26f608f",
+ "fingerprint": "64c2c261d3d0e080aadb2f1de1773665ba33a8ad5fdfde77fe805dc09d2aac76",
  "gate": {
   "fields": {
    "capabilities": {
@@ -7166,7 +7186,7 @@
    }
   },
   "pass": true,
-  "total": 295
+  "total": 296
  },
  "manifest_version": 2,
  "recipes": {
@@ -7894,6 +7914,33 @@
     "tests/unit/test_676_flip_red.py",
     "tests/unit/test_composite_builder.py",
     "tests/unit/test_parallel_tool_dispatch.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "dataset_profiling_quality"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "fast",
+   "memory_class": "light",
+   "name": "compile_workflow_semantics",
+   "requires_confirmation": false,
+   "scale_class": "small",
+   "side_effect": "pure",
+   "status": "stable",
+   "tags": [
+    "semantic",
+    "workflow",
+    "compiler",
+    "方法论",
+    "工作流编译",
+    "义务"
+   ],
+   "tests": [
+    "tests/unit/gis_harness/test_workflow_v4_production.py"
    ],
    "tier": 2
   },
@@ -12639,6 +12686,7 @@
     "插值"
    ],
    "tests": [
+    "tests/unit/gis_harness/test_compiler_v4.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
     "tests/unit/lib/test_regression_kriging.py"
    ],
@@ -14878,6 +14926,7 @@
     "trend"
    ],
    "tests": [
+    "tests/unit/gis_harness/test_compiler_v4.py",
     "tests/unit/lib/test_trend_surface.py"
    ],
    "tier": 2
