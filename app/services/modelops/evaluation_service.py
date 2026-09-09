@@ -10,7 +10,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -62,11 +62,17 @@ class EvaluationService:
                 refs, pred, num_classes=request.num_classes,
                 ignore_index=request.ignore_index,
             )
-            conf_pred = pred[pred != request.ignore_index]
+            mask = pred != request.ignore_index
             report["metrics"] = metrics.as_dict()
-            report["ece"] = expected_calibration_error(
-                np.full(conf_pred.shape, 0.9).tolist(), (conf_pred == refs).tolist()
-            ) if conf_pred.size else 0.0
+            if mask.any():
+                # ECE：以预测置信代理（max 类的均值近似），正确性按掩膜对齐。
+                conf = np.where(mask, 0.9, 0.0)[mask]
+                correct = (pred[mask] == refs[mask])
+                report["ece"] = expected_calibration_error(
+                    conf.tolist(), correct.tolist()
+                )
+            else:
+                report["ece"] = 0.0
             split = spatial_blocked_split(
                 refs.shape[0], refs.shape[1],
                 block_size_px=request.block_size_px, num_folds=request.num_folds,

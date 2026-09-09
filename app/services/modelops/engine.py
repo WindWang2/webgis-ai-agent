@@ -18,7 +18,7 @@ import logging
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -27,8 +27,6 @@ import numpy as np
 from app.lib.cancellation import CancellationToken
 from app.lib.data.fingerprints import sha256_of_file
 from app.lib.modelops.capabilities import (
-    OUTPUT_CLASS_RASTER,
-    OUTPUT_CONFIDENCE_RASTER,
     TASK_CLASSIFICATION,
     TASK_EMBEDDING,
     TASK_INSTANCE_SEGMENTATION,
@@ -63,7 +61,6 @@ from app.lib.modelops.preprocess import preprocess_batch
 from app.lib.modelops.promptable import PromptSpec
 from app.lib.modelops.resources import DevicePlan, batch_for_budget
 from app.lib.modelops.stitching import (
-    SegmentationMergePolicy,
     collect_embeddings,
     merge_detections,
     merge_instances,
@@ -259,6 +256,7 @@ class InferenceEngine:
         # ── 计划 ────────────────────────────────────────────────────
         preprocess_plan = build_preprocess_plan(descriptor, source_band_count=profile.band_count)
         tile_plan = plan_tiles(descriptor, raster_height=meta.height, raster_width=meta.width)
+        perf.chips_total = len(tile_plan.tiles)
         provider_payload = {
             "provider_ref": descriptor.provider_ref,
             "provider_id": caps.provider_id,
@@ -319,7 +317,7 @@ class InferenceEngine:
 
         # ── 设备与资源计划 ──────────────────────────────────────────
         device_plan = resolve_device_plan(descriptor, caps, device_override=request.device_override)
-        estimate = provider.estimate_resources(descriptor, batch=1, device=device_plan.device)
+        estimate = provider.estimate_resources(descriptor, batch=caps.max_batch, device=device_plan.device)
         budget = self._settings.vram_budget_bytes
         if caps.provider_type == "extension_worker":
             budget = min(budget, EXTENSION_BATCH_BYTES_CAP)  # R1-M5 帧上限约束
@@ -363,7 +361,10 @@ class InferenceEngine:
         perf.note_latency(load=load_latency)
         provider.warmup(model)
 
-        ctx.extras["missing_policy"] = request.temporal.missing_policy if request.temporal else None
+        if request.temporal is not None:
+            ctx.extras["missing_policy"] = request.temporal.missing_policy
+            ctx.extras["stack_length"] = len(request.temporal.times)
+            ctx.extras["output_time_semantics"] = request.temporal.output_time_semantics
         if request.prompt is not None:
             ctx.extras["prompt"] = request.prompt.to_payload()
             ctx.extras["prompt_mask_arrays"] = request.prompt.prior_masks
@@ -371,6 +372,7 @@ class InferenceEngine:
         # ── 任务执行 ────────────────────────────────────────────────
         _emit(progress, stage="infer", run_id=run_id, tiles_total=len(tile_plan))
         output_dir = Path(request.output_dir or (self._settings.registry_dir / "outputs" / run_id))
+        output_dir.mkdir(parents=True, exist_ok=True)
         try:
             if task == TASK_PROMPTABLE_SEGMENTATION:
                 outputs = self._run_promptable(
@@ -485,11 +487,11 @@ class InferenceEngine:
 
         with RasterReader.open(str(source_path)) as reader:
             band_ids = [i + 1 for i in preprocess_plan.band_indices]
-            for start in range(0, len(tile_plan.tiles), current_batch):
+            start = 0
+            while start < len(tile_plan.tiles):
                 group = tile_plan.tiles[start: start + current_batch]
                 checkpoint()
                 windows = []
-                masks = []
                 for tile in group:
                     col, row, w, h = (tile.read_window[1], tile.read_window[0],
                                       tile.read_window[3], tile.read_window[2])
@@ -515,7 +517,7 @@ class InferenceEngine:
                     oom_downshifts += 1
                     current_batch = max(1, current_batch // 2)
                     perf.note_oom_downshift()
-                    continue  # 当前批降批重跑（有界重试）
+                    continue  # 不推进 start：当前批降批重跑（有界重试）
                 latency = time.perf_counter() - infer_started
                 warm_latency = (
                     latency if warm_latency is None
@@ -543,8 +545,9 @@ class InferenceEngine:
                     if output.label_probabilities is not None:
                         for i in range(output.label_probabilities.shape[0]):
                             label_outputs.append(output.label_probabilities[i])
+                start += len(group)
                 _emit(progress, stage="infer", run_id=ctx.run_id,
-                      tiles_done=min(start + len(group), len(tile_plan.tiles)),
+                      tiles_done=min(start, len(tile_plan.tiles)),
                       tiles_total=len(tile_plan.tiles))
             checkpoint()
 
@@ -563,7 +566,7 @@ class InferenceEngine:
             outputs["confidence"] = self._publish_raster(
                 confidence_path, request, role="confidence", descriptor=descriptor
             )
-            perf.note_merge(merge_work_px=int(classes.size))
+            perf.note_merge(int(classes.size))
         elif task == TASK_OBJECT_DETECTION:
             records = merge_detections(
                 tile_plan, detections_by_tile,
@@ -574,7 +577,7 @@ class InferenceEngine:
                 geojson = build_geojson_from_detections(
                     [r.as_dict() for r in records],
                     crs=reader.metadata().crs,
-                    transform=reader.dataset().transform,
+                    transform=reader.dataset.transform,
                     class_names=class_names,
                 )
             det_path = write_geojson_output(output_dir / "detections.geojson", geojson)
@@ -787,7 +790,7 @@ class InferenceEngine:
             band_names=[f"band_{i + 1}" for i in range(forecast.shape[0])],
             template=RasterReader.open(str(source_path)),
             dtype="float32",
-            nodata=float("nan"),
+            nodata=-9999.0,  # 有限 nodata（NaN 不可指纹化，publish 会拒）
         )
         perf.record_batch(1)
         return {
@@ -844,7 +847,6 @@ class InferenceEngine:
             meta = reader.metadata()
             step_x = max(1, meta.width // max_side)
             step_y = max(1, meta.height // max_side)
-            from rasterio.windows import Window
 
             col = 0
             row = 0
@@ -1013,7 +1015,6 @@ class _SegmentationAccumulator:
             self._weight[:] = 0
 
     def add_tiles(self, tiles: Any, probabilities: np.ndarray) -> None:
-        from app.lib.modelops.planning import TileSpec
 
         for i, tile in enumerate(tiles):
             probs = probabilities[i]

@@ -13,12 +13,11 @@ import numpy as np
 
 from app.lib.modelops.capabilities import (
     DEVICE_CPU,
-    OUTPUT_DETECTIONS,
     TASK_OBJECT_DETECTION,
     ProviderCapabilities,
 )
 from app.lib.modelops.descriptor import GeoModelDescriptor
-from app.lib.modelops.errors import ProviderError, ProviderLoadFailed
+from app.lib.modelops.errors import ProviderLoadFailed
 from app.lib.modelops.resources import ResourceEstimate
 from app.services.modelops.providers.base import (
     InferenceContext,
@@ -40,7 +39,7 @@ class TinyDetectionProvider:
         *,
         cell: int = 16,
         box_hw: tuple = (12, 12),
-        score_threshold: float = 0.75,
+        score_threshold: float = 0.6,
         load_latency_s: float = 0.0,
     ) -> None:
         self._provider_id = provider_id

@@ -76,18 +76,22 @@ class FakeRemoteInferenceServer:
                 h = int(payload.get("height", 0))
                 w = int(payload.get("width", 0))
                 n = int(payload.get("batch", 1))
-                cls = 3
-                probs = [
-                    [
-                        [[0.2, 0.5, 0.3] for _ in range(w)] for _ in range(h)
-                    ]
-                    for _ in range(n)
-                ]
-                # 行波纹（确定性，可断言行序），数值合法（和=1）。
-                for i in range(n):
-                    for y in range(h):
-                        a = 0.5 + 0.1 * math.sin(y)
-                        probs[i][y] = [[1 - a, a, 0.0] for _ in range(w)]
+                # 显式 (N,K,H,W) 构造（确定性行波纹；本 fixture 验证协议与
+                # 安全，不验证精度）。
+                probs = []
+                for _i in range(n):
+                    chip = []
+                    for c_i in range(3):
+                        band = []
+                        for y in range(h):
+                            a = 0.4 + 0.2 * math.sin(y) * (1 if c_i == 0 else -1)
+                            row = []
+                            for _x in range(w):
+                                v = max(0.0, min(1.0, a if c_i < 2 else 0.0))
+                                row.append(round(float(v), 4))
+                            band.append(row)
+                        chip.append(band)
+                    probs.append(chip)
                 self._send(200, {"class_probabilities": probs})
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

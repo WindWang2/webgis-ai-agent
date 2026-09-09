@@ -21,7 +21,7 @@ TileSpec 语义（R1-C3）::
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterator, List, Sequence, Tuple
+from typing import Iterator, List, Tuple
 
 from app.lib.modelops.descriptor import GeoModelDescriptor
 from app.lib.modelops.errors import PlanningError
@@ -132,9 +132,9 @@ def plan_tiles(
             req_h = min(ctx_h, raster_height - req_row)
             req_w = min(ctx_w, raster_width - req_col)
             read: Window = (req_row, req_col, req_h, req_w)
-            # pad = 请求 context 相对 read 的缺失（上下边）。
-            pad_top = row - half_ctx_y - req_row
-            pad_left = col - half_ctx_x - req_col
+            # pad = 请求 context 相对 read 的缺失（上下边；clamp 到 ≥0）。
+            pad_top = max(0, row - half_ctx_y - req_row)
+            pad_left = max(0, col - half_ctx_x - req_col)
             chip_total_h = pad_top + read[2]
             chip_total_w = pad_left + read[3]
             pad_bottom = max(0, ctx_h - chip_total_h)
@@ -144,7 +144,7 @@ def plan_tiles(
                     index=index,
                     core_window=core,
                     read_window=read,
-                    pad=(max(0, pad_left), max(0, pad_top), pad_right, pad_bottom),
+                    pad=(pad_left, pad_top, pad_right, pad_bottom),
                     chip_hw=(pad_top + read[2] + pad_bottom,
                              pad_left + read[3] + pad_right),
                 )

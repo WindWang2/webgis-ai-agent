@@ -70,6 +70,11 @@ def build_inference_manifest(
         "reused": reused,
         "error": error,
     }
+    # 指纹先于 redaction（redaction 有 4KB 全局界，超界返回 str 形态）。
+    fingerprint = sha256_hex(canonical_dumps(manifest))
     redacted = redact_provenance_args(manifest)
-    redacted["manifest_fingerprint"] = sha256_hex(canonical_dumps(redacted))
-    return redacted
+    if isinstance(redacted, dict):
+        redacted["manifest_fingerprint"] = fingerprint
+        return redacted
+    manifest["manifest_fingerprint"] = fingerprint
+    return manifest

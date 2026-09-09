@@ -19,7 +19,7 @@ from app.lib.modelops.capabilities import (
     ProviderCapabilities,
 )
 from app.lib.modelops.descriptor import GeoModelDescriptor
-from app.lib.modelops.errors import ProviderError, ProviderLoadFailed, ProviderOOM
+from app.lib.modelops.errors import ProviderLoadFailed, ProviderOOM
 from app.lib.modelops.resources import ResourceEstimate
 from app.services.modelops.providers.base import (
     InferenceContext,
@@ -160,6 +160,7 @@ class MockGPUProvider:
             logits -= logits.max(axis=-1, keepdims=True)
             probs = np.exp(logits)
             probs /= probs.sum(axis=-1, keepdims=True)
+            probs = np.transpose(probs, (0, 3, 1, 2))  # → (N,K,H,W) 契约轴序
             peak = int(batch_bytes + probs.nbytes)
             model.state["vram_observed_peak"] = max(
                 int(model.state["vram_observed_peak"]), peak

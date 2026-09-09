@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import FrozenSet, Optional, Tuple
+from typing import FrozenSet
 
 # ── 任务类型（模型做什么）────────────────────────────────────────────
 TASK_SEMANTIC_SEGMENTATION = "semantic_segmentation"

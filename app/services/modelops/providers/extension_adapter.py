@@ -19,7 +19,8 @@ from __future__ import annotations
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, Optional
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from typing import Any, Dict
 
 import numpy as np
 
@@ -134,6 +135,11 @@ class ExtensionProviderAdapter:
             # 独立池 offload（同步阻塞 host call 不占引擎线程）。
             future = _ADAPTER_POOL.submit(self._invoke, request)
             result = future.result(timeout=self._call_timeout_s)
+        except FutureTimeoutError as exc:
+            raise ProviderError(
+                f"extension call exceeded {self._call_timeout_s}s (cancel latency "
+                "upper bound = call_timeout, R1-M5)"
+            ) from exc
         finally:
             with self._lock:
                 self._in_flight -= 1

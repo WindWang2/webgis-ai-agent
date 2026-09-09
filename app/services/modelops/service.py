@@ -9,17 +9,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from app.lib.cancellation import CancellationToken
 from app.lib.modelops.compatibility import InputProfile, qualify
-from app.lib.modelops.descriptor import GeoModelDescriptor
-from app.lib.modelops.errors import ModelNotFoundError, ModelOpsError
-from app.lib.modelops.metrics import PerfCounters
-from app.lib.modelops.promptable import PromptSpec
+from app.lib.modelops.errors import ModelOpsError
 from app.lib.modelops.resources import batch_for_budget
-from app.lib.modelops.temporal import TemporalStackSpec
 from app.lib.geo_raster.reader import RasterReader
 from app.services.modelops.config import ModelOpsSettings
 from app.services.modelops.engine import InferenceEngine, InferenceRequest, InferenceResult
@@ -48,6 +43,7 @@ class ModelOpsService:
         self._registry = ModelRegistryStore(self._settings)
         self._providers = ProviderRegistry()
         seed_providers(self._providers)
+        self._wire_remote_providers()
         seed_registry(self._registry, self._providers)
         self._reuse = ReuseStore(
             self._settings.registry_dir / "reuse",
@@ -63,6 +59,26 @@ class ModelOpsService:
         self._evaluation = EvaluationService()
         self._cancel_lock = threading.Lock()
         self._cancel_tokens: Dict[str, CancellationToken] = {}
+
+    def _wire_remote_providers(self) -> None:
+        """operator allowlist 中的 endpoint → 每个注册一个 remote 实例。
+
+        实例 id = ``remote@<endpoint>``；descriptor.provider_type 必须
+        = remote_endpoint 且 provider_ref 指向本实例（C1 门照常生效）。
+        """
+        from app.services.modelops.providers.remote_client import (
+            RemoteEndpointPolicy,
+            RemoteInferenceProvider,
+        )
+
+        policy = RemoteEndpointPolicy(allowlist=tuple(self._settings.remote_allowlist))
+        for endpoint in self._settings.remote_allowlist:
+            try:
+                self._providers.register(
+                    RemoteInferenceProvider(endpoint, provider_id=f"remote@{endpoint}", policy=policy)
+                )
+            except Exception as exc:  # noqa: BLE001 — 非法 allowlist 条目不阻断启动
+                logger.warning("remote provider for %s not registered: %s", endpoint, exc)
 
     # ── 查询面（Epic §N：list/inspect/estimate）─────────────────────
     def list_models(

@@ -15,13 +15,13 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from app.lib.modelops.errors import PreprocessError
-from app.lib.modelops.planning import TilePlan, TileSpec
+from app.lib.modelops.planning import TilePlan
 
 # blend 权重模式（进 fingerprint.postprocess）
 BLEND_CROP = "crop"            # core 内 uniform 权重（context 裁剪语义）

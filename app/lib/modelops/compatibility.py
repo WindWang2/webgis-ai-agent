@@ -7,8 +7,8 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.lib.modelops.capabilities import (
     MODALITY_OPTICAL_RGB,
@@ -131,7 +131,22 @@ def qualify(
     needs_reproject: Optional[Dict[str, Any]] = None
 
     # ── 波段 ────────────────────────────────────────────────────────
-    if profile.band_count != descriptor.input_bands:
+    is_temporal_task = "temporal_forecast" in descriptor.task_types
+    if is_temporal_task:
+        # 时序源栅格 = C*T 波段（time-major 布局）；按整除关系判定。
+        if (
+            profile.band_count < descriptor.input_bands
+            or profile.band_count % descriptor.input_bands != 0
+        ):
+            failures.append(
+                CompatibilityFailure(
+                    FAILURE_BAND_COUNT,
+                    f"temporal source has {profile.band_count} bands; expected a "
+                    f"multiple of per-slice bands ({descriptor.input_bands})",
+                    fix_hint="stack observations time-major (C*T bands)",
+                )
+            )
+    elif profile.band_count != descriptor.input_bands:
         failures.append(
             CompatibilityFailure(
                 FAILURE_BAND_COUNT,
@@ -185,10 +200,13 @@ def qualify(
         )
 
     # ── 分辨率 ──────────────────────────────────────────────────────
+    allow_reproject = descriptor.spatial.allow_reproject and bool(
+        descriptor.spatial.resampling_policy
+    )
     rng = descriptor.spatial.resolution_range
     if rng is not None and profile.m_per_px > 0:
         if not rng.contains(profile.m_per_px):
-            if descriptor.spatial.resampling_policy and profile.m_per_px > 0:
+            if allow_reproject:
                 # 显式允许重采样：目标 = 区间中点（声明式、可进指纹）。
                 target = round((rng.min_m_per_px + rng.max_m_per_px) / 2, 6)
                 needs_reproject = needs_reproject or {}
@@ -218,7 +236,7 @@ def qualify(
         wanted = {_crs_family(c) for c in descriptor.spatial.crs_requirements}
         have = _crs_family(profile.crs)
         if have not in wanted:
-            if descriptor.spatial.resampling_policy:
+            if allow_reproject:
                 target_crs = descriptor.spatial.crs_requirements[0]
                 needs_reproject = needs_reproject or {}
                 needs_reproject["target_crs"] = target_crs

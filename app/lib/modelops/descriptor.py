@@ -13,7 +13,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, Literal, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -107,6 +107,9 @@ class ResolutionRange(BaseModel):
     def contains(self, m_per_px: float) -> bool:
         return self.min_m_per_px <= m_per_px <= self.max_m_per_px
 
+    def as_dict(self) -> Dict[str, Any]:
+        return self.model_dump(mode="json")
+
 
 class DeviceRequirements(BaseModel):
     """设备需求：required 设备族 + 是否允许 CPU 回退。"""
@@ -116,6 +119,9 @@ class DeviceRequirements(BaseModel):
     required: Literal["cpu", "cuda"] = DEVICE_CPU
     allow_cpu_fallback: bool = True
     min_vram_mb: int = Field(default=0, ge=0)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return self.model_dump(mode="json")
 
 
 class SpatialRequirements(BaseModel):
@@ -131,7 +137,13 @@ class SpatialRequirements(BaseModel):
     crs_requirements: Tuple[str, ...] = ()  # 空 = 接受已声明 CRS；成员形如 "EPSG:32650"
     resolution_range: Optional[ResolutionRange] = None
     resampling_policy: str = RESAMPLING_NEAREST
+    #: 显式重投影许可（R1-C2）：CRS/分辨率失配时，只有本开关 + 声明的
+    #: resampling_policy 同时存在才执行 ReprojectStage；否则 typed 失败。
+    allow_reproject: bool = False
     min_valid_data_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return self.model_dump(mode="json")
 
 
 class TemporalRequirements(BaseModel):
@@ -168,6 +180,9 @@ class ClassSchema(BaseModel):
             if not (0 <= self.nodata_class < len(self.classes) + 1):
                 raise DescriptorError("nodata_class outside class index space")
         return self
+
+    def as_dict(self) -> Dict[str, Any]:
+        return self.model_dump(mode="json")
 
 
 class MemoryEstimate(BaseModel):
@@ -304,7 +319,7 @@ class GeoModelDescriptor(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _cross_field(self) -> "ModelDescriptor":
+    def _cross_field(self) -> "GeoModelDescriptor":
         if len(self.band_order) not in (0, self.input_bands):
             raise DescriptorError(
                 f"band_order length {len(self.band_order)} != input_bands {self.input_bands}"

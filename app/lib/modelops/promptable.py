@@ -10,8 +10,8 @@ qualifier 校验 PromptSpec ⊆ capability。
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple
 
 from app.lib.modelops.capabilities import PROMPT_BOX, PROMPT_MASK, PROMPT_POINT, PROMPT_TEXT
 from app.lib.modelops.errors import DescriptorError
@@ -96,7 +96,7 @@ class PromptSpec:
             boxes=tuple(tuple(map(float, b)) for b in payload.get("boxes", [])),
             text=payload.get("text") or None,
             combine=payload.get("combine", "union"),
-            labels=tuple(int(l) for l in payload.get("labels", [])),
+            labels=tuple(int(lab) for lab in payload.get("labels", [])),
         )
 
     def geometry_payload(self) -> Dict[str, Any]:

@@ -13,7 +13,6 @@ import numpy as np
 
 from app.lib.modelops.capabilities import (
     DEVICE_CPU,
-    OUTPUT_TEMPORAL_STACK,
     TASK_TEMPORAL_FORECAST,
     ProviderCapabilities,
 )
@@ -95,8 +94,14 @@ class TemporalReferenceProvider:
             # flags 通道（missing_policy=flag）在最后 T 个"通道"（0/1）。
             pixels = batch.pixels  # (1, C*T(+T), H, W)
             descriptor = model.descriptor
-            t = descriptor.temporal.max_length
             c = descriptor.input_bands
+            # T 来自本次请求的栈长（≤ descriptor.temporal.max_length）。
+            t = int(ctx.extras.get("stack_length") or descriptor.temporal.max_length)
+            if t > descriptor.temporal.max_length:
+                raise ProviderError(
+                    f"stack length {t} exceeds model max_length "
+                    f"{descriptor.temporal.max_length}"
+                )
             has_flags = ctx.extras.get("missing_policy") == "flag"
             if has_flags:
                 data, flags = pixels[:, : c * t], pixels[:, c * t:]
@@ -107,7 +112,9 @@ class TemporalReferenceProvider:
                 raise ProviderError(
                     f"temporal batch has {ct} channels; expected C*T={c * t}"
                 )
-            series = data.reshape(n, c, t, h, w)
+            # 源通道布局 time-major（channel = t*C + c，engine/_run_temporal
+            # 约定一致）：reshape 为 (n,t,c,h,w) 再换轴到 (n,c,t,h,w)。
+            series = data.reshape(n, t, c, h, w).transpose(0, 2, 1, 3, 4)
             if flags is not None:
                 flag_stack = flags.reshape(n, t, h, w)
                 # 缺失时相线性插值（确定性；全缺失 → 时间均值）。
@@ -120,7 +127,7 @@ class TemporalReferenceProvider:
             slope = ((series - series.mean(axis=2, keepdims=True)) * (time_axis - t_mean)[None, None, :, None, None]).sum(axis=2)
             slope /= max(1e-6, float(((time_axis - t_mean) ** 2).sum()))
             forecast = series.mean(axis=2) + slope * (time_axis[-1] + 1 - t_mean)
-            if descriptor.temporal.output_time_semantics == "mean":
+            if ctx.extras.get("output_time_semantics") == "mean":
                 forecast = series.mean(axis=2)
             # 输出复用 class_probabilities 通道（temporal 任务专用语义：
             # (1,C,H,W) 预测栈；engine 写 COG 时按波段展开）。

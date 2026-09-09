@@ -32,11 +32,10 @@ def write_raster_output(
 ) -> Path:
     """栅格产物写盘（GTiff，平铺块结构；CRS/transform 继承源）。"""
     import rasterio
-    from rasterio.transform import Transform
 
     if len(arrays) != len(band_names):
         raise ValueError("arrays/band_names length mismatch")
-    src = template.dataset() if hasattr(template, "dataset") else template
+    src = template.dataset if hasattr(template, "dataset") else template
     height, width = arrays[0].shape
     path.parent.mkdir(parents=True, exist_ok=True)
     profile = {

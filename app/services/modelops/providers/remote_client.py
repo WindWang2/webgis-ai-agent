@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
 import httpx
@@ -110,17 +110,24 @@ class RemoteEndpointPolicy:
 
 
 class RemoteInferenceProvider:
-    """remote endpoint provider（httpx；JSON 嵌套列表协议）。"""
+    """remote endpoint provider（httpx；JSON 嵌套列表协议）。
+
+    实例 id 形如 ``remote@<scheme://host:port>``（每个 endpoint 一个实例，
+    经 ProviderRegistry 注册——``descriptor.provider_ref`` 仍然只解析
+    registry 实例 id，R1-C1 语义不破）。
+    """
 
     def __init__(
         self,
-        provider_id: str = "remote-inference",
+        endpoint: str,
         *,
+        provider_id: Optional[str] = None,
         policy: Optional[RemoteEndpointPolicy] = None,
         client: Optional[httpx.Client] = None,
         read_timeout_s: float = REMOTE_READ_TIMEOUT_S,
     ) -> None:
-        self._provider_id = provider_id
+        self._endpoint = policy.check(endpoint) if policy else endpoint
+        self._provider_id = provider_id or f"remote@{self._endpoint}"
         self._policy = policy or RemoteEndpointPolicy.from_env()
         self._client = client
         self._read_timeout_s = read_timeout_s
@@ -149,7 +156,7 @@ class RemoteInferenceProvider:
                 f"remote provider requires provider_type=remote_endpoint "
                 f"(descriptor declares {descriptor.provider_type!r})"
             )
-        endpoint = self._policy.check(descriptor.provider_ref)
+        endpoint = self._policy.check(self._endpoint)
         if descriptor.task_types and TASK_SEMANTIC_SEGMENTATION not in descriptor.task_types:
             raise ProviderLoadFailed("remote JSON provider serves semantic_segmentation only")
         h, w = descriptor.spatial.chip_size
@@ -167,9 +174,9 @@ class RemoteInferenceProvider:
         )
 
     def warmup(self, model: LoadedModel) -> Dict[str, Any]:
-        status = self._request(model.state["endpoint"], method="GET", path="/health")
-        if status != 200:
-            raise RemoteInferenceError(f"remote health returned {status}")
+        resp = self._request(self._endpoint, method="GET", path="/health")
+        if resp.status_code != 200:
+            raise RemoteInferenceError(f"remote health returned {resp.status_code}")
         return {"warmed": True}
 
     def estimate_resources(
@@ -247,7 +254,7 @@ class RemoteInferenceProvider:
                 "bands": c,
                 "batch": n,
             }
-            resp = self._request(model.state["endpoint"], method="POST", path="/infer",
+            resp = self._request(self._endpoint, method="POST", path="/infer",
                                  json_body=payload)
             if len(resp.content) > REMOTE_MAX_RESPONSE_BYTES:
                 raise OutputBudgetExceeded(

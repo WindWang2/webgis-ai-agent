@@ -26,13 +26,13 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
 
 import numpy as np
 
 from app.lib.modelops.capabilities import ProviderCapabilities
 from app.lib.modelops.descriptor import GeoModelDescriptor
-from app.lib.modelops.errors import ProviderError, ProviderOOM
+from app.lib.modelops.errors import ProviderError
 from app.lib.modelops.resources import DevicePlan, ResourceEstimate
 
 #: 单批张量的最大元素数（防 provider 声明异常导致的无界内存）。
@@ -246,7 +246,7 @@ def resolve_device_plan(
     device_override: Optional[str] = None,
 ) -> DevicePlan:
     """设备解析：descriptor 要求 × provider 能力 → DevicePlan（typed 拒绝）。"""
-    from app.lib.modelops.capabilities import DEVICE_CPU, DEVICE_CUDA
+    from app.lib.modelops.capabilities import DEVICES, DEVICE_CPU, DEVICE_CUDA
 
     required = device_override or descriptor.device_requirements.required
     if required not in DEVICES:

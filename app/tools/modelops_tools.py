@@ -9,7 +9,6 @@ capability id 复用既有词表（R1-m1：``image_segmentation`` 已存在于
 """
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional

@@ -17,17 +17,12 @@ from __future__ import annotations
 import hashlib
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict
 
 import numpy as np
 
 from app.lib.modelops.capabilities import (
     DEVICE_CPU,
-    OUTPUT_CLASS_RASTER,
-    OUTPUT_CONFIDENCE_RASTER,
-    OUTPUT_EMBEDDINGS,
-    OUTPUT_LABELS,
-    OUTPUT_PROBABILITY_STACK,
     TASK_CLASSIFICATION,
     TASK_EMBEDDING,
     TASK_SEMANTIC_SEGMENTATION,
@@ -53,11 +48,11 @@ def derive_anchors(checksum: str, num_classes: int = NUM_CLASSES) -> np.ndarray:
     digest = bytes.fromhex(checksum)
     raw = b""
     counter = 0
-    while len(raw) < num_classes * 8:
+    while len(raw) < num_classes * 4:
         raw += hashlib.sha256(digest + counter.to_bytes(4, "big")).digest()
         counter += 1
-    vals = np.frombuffer(raw[: num_classes * 8], dtype=np.uint32).astype(np.float64)
-    return (vals / float(np.iinfo(np.uint32).max)) * 2.0  # [0, 2]
+    vals = np.frombuffer(raw[: num_classes * 4], dtype=np.uint32).astype(np.float64)
+    return (vals / float(np.iinfo(np.uint32).max)) * 2.0  # [0, 2]，shape (K,)
 
 
 class TinyReferenceProvider:
@@ -191,7 +186,7 @@ class TinyReferenceProvider:
         logits -= logits.max(axis=-1, keepdims=True)
         probs = np.exp(logits)
         probs /= probs.sum(axis=-1, keepdims=True)
-        return probs
+        return np.transpose(probs, (0, 3, 1, 2))  # → (N,K,H,W) 契约轴序
 
     def _embed(self, model: LoadedModel, batch: TileBatch, ctx: InferenceContext) -> np.ndarray:
         ensure_not_cancelled(ctx)
