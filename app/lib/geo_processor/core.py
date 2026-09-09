@@ -462,7 +462,21 @@ def to_utm_gdf_with_note(
         )
 
     original_crs_explicit = source_crs
-    gdf = gpd.GeoDataFrame(rows, crs=source_crs or "EPSG:4326")
+    try:
+        gdf = gpd.GeoDataFrame(rows, crs=source_crs or "EPSG:4326")
+    except Exception as exc:
+        # KNOWN-GAP #1 修复（V5 W3）：不可解析 CRS（如 EPSG:99999999）此前以
+        # 裸 pyproj.CRSError 逃逸 → dispatch 层泛化 TOOL_ERROR，丢失科学
+        # correction_hint 通道。收口为 typed InvalidCRS（subclass ValueError，
+        # dispatch 错误映射逐位兼容）。review R1 #9：按**类型名**判定 CRS
+        # 语义（消息子串会误折叠无关异常）；非 CRS 异常原样上抛。
+        from app.lib.gis.scientific_errors import InvalidCRS
+
+        if type(exc).__name__ in ("CRSError", "ProjError", "CRSException"):
+            raise InvalidCRS(
+                f"unparseable declared CRS: {source_crs!r} ({exc})",
+            ) from exc
+        raise
     gdf["geometry"] = gdf.geometry.make_valid()
     gdf._original_crs = original_crs_explicit or (str(gdf.crs) if gdf.crs else "EPSG:4326")
 
