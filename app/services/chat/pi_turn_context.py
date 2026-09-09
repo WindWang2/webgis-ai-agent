@@ -116,6 +116,7 @@ def attach_turn_context(
     surface_block: str = "",
     active_tools_block: str = "",
     evicted_refs_block: str = "",
+    v6_blocks: str = "",
 ) -> str:
     """Attach the capability to the turn for the extension's local session view.
 
@@ -128,6 +129,9 @@ def attach_turn_context(
     per-turn setActiveTools。
     ``evicted_refs_block``（可选，ADR-0104 #6）：用户消息引用的 ref 已被逐出时
     的有界诚实 tombstone（可重载 vs 已失效）——与 legacy 组装路径同一策略。
+    ``v6_blocks``（可选，V6 Wave 13）：三层上下文块（node-local /
+    workflow-global / map situation）的 turn 侧投影文本（同一 builder，
+    非第二通道）。
     全部插在用户消息与 turn marker 之间；marker 必须保持最后——扩展的
     ``currentTurnToken`` 取最新 entry 的最后一个匹配。
     """
@@ -144,9 +148,63 @@ def attach_turn_context(
         parts.append(active_tools_block)
     if evicted_refs_block:
         parts.append(evicted_refs_block)
+    if v6_blocks:
+        parts.append(v6_blocks)
     parts.append(f"[{TURN_CONTEXT_MARKER}:{token}]")
     parts.append("(Internal routing context; do not quote or modify this marker.)")
     return "\n\n".join(parts)
+
+
+async def _v6_turn_blocks(
+    session_id: str,
+    plan: Any,
+    spec: Any,
+) -> str:
+    """V6 Wave 13 三块的 turn 侧投影（只读、best-effort，绝不阻断 turn）。
+
+    与 legacy 组装路径同一 builder（``v6_context_blocks``，非第二通道）；
+    任何失败 → 空串（turn 退化为无 V6 块）。
+    """
+    try:
+        from app.services.chat import v6_context_blocks as v6
+        from app.services.session_data import session_data_manager
+
+        chapter = getattr(plan, "gis_chapter", None)
+        chapter = chapter if isinstance(chapter, dict) else {}
+        try:
+            map_state = await session_data_manager.get_map_state(session_id)
+        except Exception:  # noqa: BLE001 — map_state 缺席按空投影
+            map_state = {}
+        if not isinstance(map_state, dict):
+            map_state = {}
+        fingerprint = None
+        try:
+            from app.lib.cartography.quality_loop import cartographic_fingerprint
+
+            fingerprint = (
+                cartographic_fingerprint(spec) if isinstance(spec, dict) else None
+            )
+        except Exception:  # noqa: BLE001 — 指纹不可得按不可验证处理
+            fingerprint = None
+        texts: list[str] = []
+        if chapter:
+            node_block = v6.build_node_local_block(v6.active_node_view(chapter))
+            if node_block is not None:
+                texts.append(node_block.text)
+            wf_block = v6.build_workflow_global_block(plan, spec)
+            if wf_block is not None:
+                texts.append(wf_block.text)
+        review = map_state.get("_cartographic_review")
+        texts.append(v6.build_map_situation_block(
+            map_state=map_state,
+            mapspec=spec if isinstance(spec, dict) else None,
+            review=review if isinstance(review, dict) else None,
+            current_fingerprint=fingerprint,
+            chapter=chapter,
+        ).text)
+        return "\n\n".join(t for t in texts if t)
+    except Exception:  # noqa: BLE001 — V6 块整体缺席，绝不阻断 turn
+        return ""
 
 
 async def bind_turn_prompt(
@@ -169,6 +227,7 @@ async def bind_turn_prompt(
     surface_block = ""
     active_tools_block = ""
     evicted_refs_block = ""
+    v6_turn_blocks = ""
     if session_id:
         try:
             from app.services.session_plan import (
@@ -192,6 +251,12 @@ async def bind_turn_prompt(
             if surface is not None:
                 surface_block = _render_surface_block(surface)
                 active_tools_block = _active_tools_block_for(message, surface, plan)
+            # V6 Wave 13：同一份 plan/spec/map_state 的三层块投影（同一
+            # builder，非第二通道；失败即空串，不影响既有块）。
+            try:
+                v6_turn_blocks = await _v6_turn_blocks(session_id, plan, spec)
+            except Exception:  # noqa: BLE001 — V6 块是增值上下文
+                v6_turn_blocks = ""
         except Exception:
             logger.exception("[PiTurn] SessionPlan projection failed session=%s", session_id)
         # ADR-0104 #6：逐出 ref 的诚实 tombstone（有界、廉价、绝不阻断）。
@@ -216,6 +281,7 @@ async def bind_turn_prompt(
         env_block=env_block, surface_block=surface_block,
         active_tools_block=active_tools_block,
         evicted_refs_block=evicted_refs_block,
+        v6_blocks=v6_turn_blocks,
     )
 
 

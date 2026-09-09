@@ -153,6 +153,8 @@ class ContextAssemblyResult:
     # ADR-0101 Wave 5：模型感知预算度量（可观测；不改变组装/截断行为）。
     # None = 调用方未提供 context_window（无法规划）；dict = BudgetReport.as_dict()。
     budget_report: Optional[dict] = None
+    # V6 Wave 13：三层上下文块字节度量（blocks_metric；无块时空 dict）。
+    v6_blocks: Optional[dict] = None
 
     def to_messages(self) -> List[dict]:
         """Return the raw OpenAI-compatible message dict list."""
@@ -202,6 +204,79 @@ class ChatContextAssembler:
                 "Cartography verdict block unavailable for %s: %s", session_id, ex
             )
             return ""
+
+    @staticmethod
+    async def _build_v6_context_blocks(
+        session_id: str, map_state: dict,
+    ) -> list:
+        """V6 Wave 13 三层上下文块（只读投影；失败即缺席，绝不阻断组装）。
+
+        取数口全是既有唯一事实源：SessionPlan store（``load_session_plan``）、
+        plan_graph / runtime_bridge 派生、mapspec store、map_state。LLM 不碰
+        状态；无 active node 时 node-local 块缺席（不编造空块）。
+        """
+        try:
+            from app.services.chat.v6_context_blocks import (
+                active_node_view,
+                blocks_metric,
+                build_map_situation_block,
+                build_node_local_block,
+                build_workflow_global_block,
+            )
+            from app.services.session_plan import load_session_plan
+
+            plan = await load_session_plan(session_id)
+            if plan is None or getattr(plan, "gis_chapter", None) is None:
+                chapter: dict = {}
+            else:
+                chapter = plan.gis_chapter
+            # PERF-08 纪律：mapspec 拉取内部会读 map_state —— 无 review 时
+            # verdict 注定 none、revision 主取数口（map_state）已在手，不多
+            # 花一次 store IO（与 verdict 块“无 review 不取数”同纪律）。
+            review = map_state.get("_cartographic_review") if isinstance(map_state, dict) else None
+            mapspec = None
+            if isinstance(review, dict):
+                try:
+                    from app.services.mapspec.store import mapspec_store_instance
+
+                    mapspec = await mapspec_store_instance.get_mapspec(session_id)
+                except Exception:  # noqa: BLE001 — mapspec 缺席按无披露
+                    mapspec = None
+            current_fingerprint = None
+            try:
+                from app.lib.cartography.quality_loop import cartographic_fingerprint
+
+                current_fingerprint = (
+                    cartographic_fingerprint(mapspec) if isinstance(mapspec, dict) else None
+                )
+            except Exception:  # noqa: BLE001 — 指纹不可得按不可验证处理
+                current_fingerprint = None
+
+            results = []
+            global_block = build_workflow_global_block(plan, mapspec)
+            if global_block is not None:
+                results.append(global_block)
+            if chapter:
+                node_block = build_node_local_block(active_node_view(chapter))
+                if node_block is not None:
+                    results.append(node_block)
+            results.append(build_map_situation_block(
+                map_state=map_state if isinstance(map_state, dict) else {},
+                mapspec=mapspec,
+                review=review if isinstance(review, dict) else None,
+                current_fingerprint=current_fingerprint,
+                chapter=chapter,
+            ))
+            # 确定性块序：node-local → workflow-global → map situation 与
+            # head 注入序一致（与构建序无关，同输入同输出）。
+            order = {"node_local": 0, "workflow_global": 1, "map_situation": 2}
+            results.sort(key=lambda r: order.get(r.name, 9))
+            return results, blocks_metric(results)
+        except Exception:  # noqa: BLE001 — V6 块整体缺席，绝不阻断组装
+            logger.debug(
+                "V6 context blocks unavailable for %s", session_id, exc_info=True,
+            )
+            return [], {"total_byte_cost": 0, "truncated": []}
 
     async def assemble(
         self,
@@ -355,6 +430,7 @@ class ChatContextAssembler:
         # Gated by include_plan_block like the plan block: the verdict is the
         # main agent's session-level corrective context, not a subagent's
         # (#436 isolation rationale applies identically).
+        v6_metric: dict = {"total_byte_cost": 0, "truncated": []}
         if include_plan_block:
             verdict_block = await self._build_cartography_verdict_block(
                 session_id, map_state
@@ -383,6 +459,23 @@ class ChatContextAssembler:
                         )
                 except Exception as ex:  # noqa: BLE001
                     logger.warning(f"Failed to assemble project memory block: {ex}")
+
+            # V6 Wave 13：三层上下文块（node-local 缺席规则内聚在 builder；
+            # 与 verdict/memory 同门控：主代理会话级上下文，不继承给子代理）。
+            v6_results, v6_metric = await self._build_v6_context_blocks(
+                session_id, map_state
+            )
+            _v6_meta = {
+                "node_local": ("v6_node_local", "ALGORITHM_METADATA"),
+                "workflow_global": ("v6_workflow_global", "SESSION_PLAN"),
+                "map_situation": ("v6_map_situation", "MAP_STATE"),
+            }
+            for _block in v6_results:
+                head.append({"role": "system", "content": _block.text})
+                _mname, _mcat = _v6_meta.get(
+                    _block.name, (f"v6_{_block.name}", "SYSTEM_INSTRUCTIONS")
+                )
+                head_meta.append({"name": _mname, "category": _mcat})
 
         last_ctx = build_last_analysis_context(messages)
         if last_ctx:
@@ -539,6 +632,8 @@ class ChatContextAssembler:
             budget_report = _report.as_dict()
             if _policy_report is not None:
                 budget_report["context_policy"] = _policy_report
+            # V6 Wave 13：三块字节度量进 trace/结果（只读观测，不改变截断行为）。
+            budget_report["v6_context_blocks"] = dict(v6_metric)
             # ADR-0103 V2：GIS-aware 处置建议（执行后的余量 —— 已执行的动作见
             # budget_report["context_policy"]；策略关闭时保持 V2 原语义）。
             try:
@@ -594,6 +689,7 @@ class ChatContextAssembler:
             history_turns_included=len(history),
             layer_count=layer_count,
             budget_report=budget_report,
+            v6_blocks=dict(v6_metric),
         )
 
 
