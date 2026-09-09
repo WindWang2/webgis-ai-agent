@@ -167,6 +167,9 @@ class ExtensionHost:
         self._broker_audit: dict[str, Any] = {}
         # V2（Wave 9）：投影变化钩子（main lifespan 接权威视图刷新器）。
         self._projection_hook: Any = None
+        # V3：吊销惰性复查的信任根 mtime 基线（None = 首查强制执行）。
+        self._revocation_mtime: Any = None
+        self._refresh_mtime: Any = None
 
     # ── 构造 ─────────────────────────────────────────────────────────
     @classmethod
@@ -626,6 +629,13 @@ class ExtensionHost:
             if record.state is ExtensionState.INCOMPATIBLE:
                 return list(record.diagnostics)
         assert record.state is ExtensionState.COMPATIBLE, record.state
+
+        # V3：版本钉（运维配置；activate/upgrade/install/rollback 统一消费）。
+        pin_error = self._version_pin_error(record.extension_id, record.manifest.version)
+        if pin_error is not None:
+            record.diagnostics.append(pin_error)
+            record.state = ExtensionState.INCOMPATIBLE
+            return [pin_error]
 
         flags = self._effective_flags(record.manifest)
         host_overridden = set(self._policy.feature_flags.get(extension_id, {}))
@@ -1374,7 +1384,20 @@ class ExtensionHost:
         return self.validate_extension(extension_id)
 
     # ── deactivate / unload / reload ─────────────────────────────────
-    def deactivate(self, extension_id: str) -> list[ExtensionDiagnostic]:
+    def deactivate(
+        self,
+        extension_id: str,
+        drain: bool = False,
+        drain_timeout_s: float = 10.0,
+    ) -> list[ExtensionDiagnostic]:
+        """停用；``drain=True`` 先有界等待 in-flight 调用清零（升级前置）。
+
+        - worker 模式：in-flight 中直接停用仍被拒绝（V2 语义）；drain=
+          True 时以 50ms 间隔轮询，超时 → typed ``DRAIN_TIMEOUT``（拒绝，
+          绝不悬挂）；
+        - in-process 模式无 in-flight 概念：drain 是显式 no-op（本平台
+          的 in-process 语义为 trusted-code，不做调用追踪——文档明示）。
+        """
         record = self._records.get(extension_id)
         if record is None:
             return [
@@ -1411,14 +1434,31 @@ class ExtensionHost:
         # 优雅关停 worker 进程（投影回滚仍在下方台账路径执行）。
         if record.worker is not None:
             if record.worker.in_flight:
-                return [
-                    ExtensionDiagnostic.error(
-                        DiagnosticCode.OPERATION_IN_FLIGHT,
-                        f"cannot deactivate {extension_id!r}: a worker call is "
-                        "in flight (retry after it completes)",
-                        extension_id=extension_id,
+                if drain:
+                    import time as _time
+
+                    deadline = _time.monotonic() + max(drain_timeout_s, 0.05)
+                    while record.worker.in_flight and _time.monotonic() < deadline:
+                        _time.sleep(0.05)
+                if record.worker.in_flight:
+                    code = (
+                        DiagnosticCode.DRAIN_TIMEOUT
+                        if drain
+                        else DiagnosticCode.OPERATION_IN_FLIGHT
                     )
-                ]
+                    reason = (
+                        f"drain timeout after {drain_timeout_s}s: a worker call "
+                        "is still in flight"
+                        if drain
+                        else "a worker call is in flight (retry after it completes)"
+                    )
+                    return [
+                        ExtensionDiagnostic.error(
+                            code,
+                            f"cannot deactivate {extension_id!r}: {reason}",
+                            extension_id=extension_id,
+                        )
+                    ]
             record.worker.shutdown()
             record.worker = None
             # Round-1 MINOR-1：优雅停用清零崩溃计数（「连续」= 跨越一次
@@ -1667,7 +1707,91 @@ class ExtensionHost:
         conflicts = resolver.check_upgrade_conflicts(extension_id, manifest.version, views)
         if conflicts:
             return conflicts
+        pin_error = self._version_pin_error(extension_id, manifest.version)
+        if pin_error is not None:
+            return [pin_error]
         return self.reload(extension_id, activate=True, allow_downgrade=allow_downgrade)
+
+    # ── V3：版本 pin / revocation 传播 ────────────────────────────────
+    def _version_pin_error(self, extension_id: str, version: str):
+        pinned = self._policy.version_pins.get(extension_id)
+        if pinned is not None and pinned != version:
+            return ExtensionDiagnostic.error(
+                DiagnosticCode.VERSION_PINNED,
+                f"extension {extension_id!r} is pinned to {pinned!r}; refusing "
+                f"activation of {version!r}",
+                extension_id=extension_id,
+            )
+        return None
+
+    def refresh_revocations(self) -> list[str]:
+        """惰性吊销复查：trust store 内已吊销的**激活**扩展 → 停用+隔离。
+
+        由宿主周期面（health tick / install / refresh 信号 mtime 变化）
+        调用；返回被隔离的扩展 id 列表。poll-on-operation 的最坏暴露窗
+        口如实在 limitations 文档化。
+        """
+        trust = self._policy.trust_store
+        if trust is None:
+            return []
+        # 惰性重读（与 installer 同语义）：任何复查都拿最新吊销面。
+        source = getattr(trust, "source_path", None)
+        if source is not None:
+            try:
+                mtime = Path(source).stat().st_mtime
+            except OSError:
+                mtime = None
+            if mtime is not None and mtime == self._revocation_mtime:
+                return []  # 信任根未变：零成本快路径
+            self._revocation_mtime = mtime
+            from .trust_store import TrustStore
+
+            try:
+                trust = TrustStore.load(Path(source))
+            except ExtensionPlatformError:
+                return []  # 信任根暂不可读：保留现有状态（typed 在 discover 面）
+        quarantined: list[str] = []
+        for extension_id in sorted(self._records):
+            record = self._records[extension_id]
+            if record.state not in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
+                continue
+            revoked = trust.is_package_revoked(extension_id, record.manifest.version)
+            if not revoked and record.fingerprint is not None:
+                revoked = trust.is_fingerprint_revoked(record.fingerprint)
+            if revoked:
+                if record.worker is not None:
+                    record.worker.shutdown()
+                    record.worker = None
+                    if record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
+                        self.deactivate(extension_id)
+                record.state = ExtensionState.QUARANTINED
+                record.diagnostics.append(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.PACKAGE_REVOKED,
+                        f"active extension {extension_id!r} is revoked in the "
+                        "trust store; deactivated and quarantined",
+                        extension_id=extension_id,
+                    )
+                )
+                quarantined.append(extension_id)
+                logger.warning(
+                    "extension %s revoked by trust store; quarantined", extension_id
+                )
+        return quarantined
+
+    def refresh_signal_changed(self, install_root: Any) -> bool:
+        """.refresh 信号 mtime 是否晚于上次记录（纯通知；N-1 不做对账）。"""
+        from .distribution import REFRESH_FILENAME
+
+        signal = Path(install_root) / REFRESH_FILENAME
+        try:
+            mtime = signal.stat().st_mtime
+        except OSError:
+            return False
+        if mtime != getattr(self, "_refresh_mtime", None):
+            self._refresh_mtime = mtime
+            return True
+        return False
 
     # ── 批量激活（topo 序）────────────────────────────────────────────
     def activate_all(self) -> dict[str, list[ExtensionDiagnostic]]:
