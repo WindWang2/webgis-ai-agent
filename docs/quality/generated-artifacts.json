@@ -95,6 +95,13 @@
     "docs/quality/contract-drift-report.json"
    ]
   },
+  "docs/science/BENCHMARK_MANIFEST.md": {
+   "generator": "scripts/gen_science_benchmark_manifest.py",
+   "input_fingerprint": "150bf6f2762a4270b1f74aa08a729f1f5dde7dff1aee32861bf56e1bb842df12",
+   "inputs": [
+    "app/lib/gis/algorithm_registry.py"
+   ]
+  },
   "tests/quality/snapshots/realtime-contract.json": {
    "generator": "app/lib/quality/api_compat.py",
    "input_fingerprint": "9a83df59ab5de60ff87133bfaf99651f43d1be40c72415963f5cb4180be8ce1b",

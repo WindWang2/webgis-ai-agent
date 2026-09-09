@@ -162,6 +162,14 @@ DECLARED: Tuple[GeneratedEntry, ...] = (
             "app/lib/quality/api_compat.py",
         ),
     ),
+    # Quality V3（Epic 10 / ownership parity）：science 声明面投影此前在
+    # artifact_graph 之外自管，导致 ownership 规则无法与之对齐（生成物
+    # 权威必须是单一账本）。登记后由同一 staleness 闸保护。
+    GeneratedEntry(
+        artifact="docs/science/BENCHMARK_MANIFEST.md",
+        generator="scripts/gen_science_benchmark_manifest.py",
+        inputs=("app/lib/gis/algorithm_registry.py",),
+    ),
 )
 
 

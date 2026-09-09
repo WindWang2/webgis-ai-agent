@@ -1,0 +1,11 @@
+{
+ "dangling": [
+  "docs/adr/0006-unified-tool-dispatch.md: 引用不存在 app/services/chat/dispatcher.py",
+  "docs/adr/0021-retire-orphaned-data-fetcher-package.md: 引用不存在 app/api/routes/data_fetcher.py",
+  "docs/adr/0021-retire-orphaned-data-fetcher-package.md: 引用不存在 tests/unit/test_postgis_adapter_sql_safety.py",
+  "docs/adr/0022-do-not-extract-shared-sse-event-seam.md: 引用不存在 frontend/components/chat/task-progress.ts",
+  "docs/adr/0036-mapspec-runtime.md: 引用不存在 frontend/components/map/map-panel.ts",
+  "docs/adr/0078-unified-thematic-style-contract.md: 引用不存在 frontend/components/map/thematic-legend.ts",
+  "docs/adr/0104-professional-cartography-workbench-v4.md: 引用不存在 frontend/test/visual/workbench-layout-corpus.test.ts"
+ ]
+}

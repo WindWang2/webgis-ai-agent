@@ -74,6 +74,9 @@ LANES: dict[str, dict] = {
             [sys.executable, "scripts/gen_determinism_certification.py", "--check"],
             [sys.executable, "scripts/gen_quality_report.py", "--check"],
             [sys.executable, "scripts/check_generated_staleness.py"],
+            # Quality V3（Epic 10）：协调闸强制点（ADR watermark / migration
+            # 多头 / ownership parity / 生成物 staleness 聚合报告）
+            [sys.executable, "scripts/check_integration_preflight.py"],
         ],
     },
     "backend": {
