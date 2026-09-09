@@ -22,19 +22,15 @@
     "algorithms": 208,
     "artifact_types": 21,
     "capabilities": 139,
-    "findings": 13,
+    "findings": 0,
     "recipes": 164,
-    "tools": 296
+    "tools": 295
    },
-   "findings_by_code": {
-    "ALGO_HEAVY_NO_VARIANTS": 7,
-    "TOOL_DESCRIPTOR_INCOMPLETE": 4,
-    "TOOL_UNTESTED": 2
-   },
-   "fingerprint": "028ef31dfce1a63a5ac56058188a4e538865a708ace062d41fea36bbccccdd23",
+   "findings_by_code": {},
+   "fingerprint": "4cb7ad2bbb16cb5e23226770ff4e5df7edcb502d5143d5ddb7b4c350f26f608f",
    "gate": {
     "pass": true,
-    "total": 296
+    "total": 295
    }
   },
   "scenario_corpus": {

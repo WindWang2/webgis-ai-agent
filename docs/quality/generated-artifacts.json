@@ -10,7 +10,7 @@
   },
   "docs/quality/QUALITY_MANIFEST.md": {
    "generator": "scripts/gen_quality_manifest.py",
-   "input_fingerprint": "cb7cb92180f9ada05536b9357e12e526441ce1921b5c6cccb6810a071905d99b",
+   "input_fingerprint": "cb8c03fabf3e1c228f3a7989529b303f34675a4465a9f91b02e98e93083de65e",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -22,7 +22,7 @@
   },
   "docs/quality/QUALITY_REPORT.md": {
    "generator": "scripts/gen_quality_report.py",
-   "input_fingerprint": "3556b7c534933f14a740369b601c1ade5e4d58f8f99185e7dbdd6b76add47c82",
+   "input_fingerprint": "bccff24387c198e959f428d60eca988cf92089349d97bfc936cb3c331761cd70",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -46,7 +46,7 @@
   },
   "docs/quality/certifications/DETERMINISM.md": {
    "generator": "scripts/gen_determinism_certification.py",
-   "input_fingerprint": "144417cdac35b1d08c39558111e36b85d6a1ab1a319d8721777b7bbced55b802",
+   "input_fingerprint": "34558e197489966ea5ba18edfc3e2fc06778e37eed088bc9b6fe407c80a843f7",
    "inputs": [
     "app/lib/gis/algorithms"
    ]
@@ -76,7 +76,7 @@
   },
   "docs/quality/quality-manifest.json": {
    "generator": "scripts/gen_quality_manifest.py",
-   "input_fingerprint": "cb7cb92180f9ada05536b9357e12e526441ce1921b5c6cccb6810a071905d99b",
+   "input_fingerprint": "cb8c03fabf3e1c228f3a7989529b303f34675a4465a9f91b02e98e93083de65e",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -88,7 +88,7 @@
   },
   "docs/quality/quality-report.json": {
    "generator": "scripts/gen_quality_report.py",
-   "input_fingerprint": "3556b7c534933f14a740369b601c1ade5e4d58f8f99185e7dbdd6b76add47c82",
+   "input_fingerprint": "bccff24387c198e959f428d60eca988cf92089349d97bfc936cb3c331761cd70",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",

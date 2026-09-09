@@ -116,3 +116,15 @@ def test_sgs_driver_end_to_end():
     # 的条件分布会退化，那是 SGS 的正确语义而非缺陷）
     assert max(rr["sgs_std"] for rr in r["records"]) > 0
     assert r["metadata"]["seed"] == 7
+
+
+def test_sgs_simulation_tool_registered_with_complete_descriptor():
+    """工具 sgs_simulation 注册存在且描述符完整（quality 棘轮闸静态引用）。"""
+    from app.tools.advanced_spatial import register_advanced_spatial_tools
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    register_advanced_spatial_tools(reg)
+    d = reg.descriptors()["sgs_simulation"]
+    assert d.side_effect.value == "deterministic_compute"
+    assert "sgs" in d.tags

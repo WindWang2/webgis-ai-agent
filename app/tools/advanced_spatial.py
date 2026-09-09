@@ -1858,6 +1858,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "ensemble 统计是蒙特卡洛近似（k 邻域条件近似，已披露）。"
            ),
            tier=2, domains=["statistics"], cost="heavy",
+           side_effect="deterministic_compute",
+           tags=("插值", "sgs", "条件模拟", "不确定性", "表面"),
            param_descriptions={
                "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
                "value_field": "数值字段名",
@@ -1987,6 +1989,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "（系统近奇异，方差不可信）。"
            ),
            tier=2, domains=["statistics"], cost="heavy",
+           side_effect="deterministic_compute",
+           tags=("插值", "cokriging", "共克里金", "多变量", "表面"),
            param_descriptions={
                "geojson": "主变量点要素集 GeoJSON 或引用(ref:xxx)（Point 几何，≥8 点）",
                "secondary_geojson": "次变量点要素集 GeoJSON（Point 几何，≥4 点；>2 万点自动确定性抽稀）",
@@ -2099,6 +2103,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "时间维退化（全部同时刻→结构化拒绝）。"
            ),
            tier=2, domains=["statistics"], cost="heavy",
+           side_effect="deterministic_compute",
+           tags=("插值", "kriging", "时空", "表面", "时序"),
            param_descriptions={
                "geojson": "点要素集 GeoJSON（Point 几何，≥12 点、跨多时相）",
                "value_field": "数值字段名",

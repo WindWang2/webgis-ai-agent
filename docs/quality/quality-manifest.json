@@ -403,7 +403,7 @@
    ]
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "cokriging"
    ],
@@ -479,7 +479,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "spatial_interpolation"
    ],
@@ -584,7 +584,6 @@
     "tests/unit/gis/test_scientific_contracts_vnext.py",
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
-    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/lib/test_interpolation_science_vnext.py",
     "tests/unit/lib/test_kriging_interpolation.py"
    ],
@@ -717,7 +716,7 @@
    ]
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "geostatistical_simulation"
    ],
@@ -743,7 +742,7 @@
    ]
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "spatial_interpolation"
    ],
@@ -768,7 +767,7 @@
    ]
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "spatiotemporal_interpolation"
    ],
@@ -3121,7 +3120,6 @@
    "scientific_status": "VALIDATED",
    "tests": [
     "tests/unit/gis/test_gis_lib_registries.py",
-    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/lib/test_completeness_v3.py"
    ],
    "uncertainty_outputs": []
@@ -3945,7 +3943,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "terrain_hydrology"
    ],
@@ -4084,7 +4082,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "terrain_hydrology"
    ],
@@ -4382,8 +4380,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
-    "tests/unit/gis_harness/test_component_composition.py",
-    "tests/unit/gis_harness/test_methodology_v4.py"
+    "tests/unit/gis_harness/test_component_composition.py"
    ],
    "uncertainty_outputs": []
   },
@@ -4654,8 +4651,6 @@
     "tests/unit/gis_harness/test_plan_graph.py",
     "tests/unit/gis_harness/test_product_action.py",
     "tests/unit/gis_harness/test_product_graph.py",
-    "tests/unit/gis_harness/test_typed_dag_v4.py",
-    "tests/unit/gis_harness/test_workflow_v4_semantics.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
     "tests/unit/test_map_product_finalization_scenarios.py",
@@ -4669,7 +4664,6 @@
     "tests/data/test_performance_smoke.py",
     "tests/data/test_vocabulary.py",
     "tests/unit/gis/test_data_contracts_v2.py",
-    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/test_adversarial_v4_stress.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_tool_dispatch_service.py"
@@ -4752,8 +4746,7 @@
     "tests/benchmarks/test_data_runtime_v2_perf.py",
     "tests/unit/gis/test_backend_sdk_v3.py",
     "tests/unit/gis/test_data_contracts_v2.py",
-    "tests/unit/gis/test_gis_lib_registries.py",
-    "tests/unit/gis_harness/test_typed_dag_v4.py"
+    "tests/unit/gis/test_gis_lib_registries.py"
    ]
   },
   {
@@ -4821,7 +4814,6 @@
     "tests/data/test_lineage_query.py",
     "tests/data/test_vocabulary.py",
     "tests/unit/gis/test_data_contracts_v2.py",
-    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/lib/test_rs_v3.py"
    ]
   },
@@ -4831,15 +4823,14 @@
     "tests/data/test_vocabulary.py",
     "tests/unit/gis/test_gis_lib_registries.py",
     "tests/unit/gis_harness/test_kriging_vertical_slice.py",
-    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/lib/test_terrain_science_vnext.py"
    ]
   }
  ],
  "behavioral": {
-  "dispatch": 154,
-  "mention": 140,
-  "none": 2
+  "dispatch": 153,
+  "mention": 142,
+  "none": 0
  },
  "capabilities": [
   {
@@ -4897,7 +4888,6 @@
     "tests/unit/gis_harness/test_product_facets.py",
     "tests/unit/gis_harness/test_product_graph.py",
     "tests/unit/gis_harness/test_semantic_v2_families.py",
-    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/test_capability_registry_parity.py",
     "tests/unit/test_map_product_finalization_scenarios.py",
     "tests/unit/test_reproducible_gis_runtime.py",
@@ -4943,7 +4933,6 @@
     "tests/unit/gis_harness/test_intent.py",
     "tests/unit/gis_harness/test_model_injection.py",
     "tests/unit/gis_harness/test_planner.py",
-    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/test_semantic_gis_intelligence.py"
    ]
   },
@@ -5041,8 +5030,6 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
-    "tests/unit/gis_harness/test_typed_dag_v4.py",
-    "tests/unit/gis_harness/test_workflow_v4_semantics.py",
     "tests/unit/lib/test_geostat_v3.py"
    ]
   },
@@ -5131,6 +5118,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "tests/unit/lib/test_cokriging_lmc_v4.py",
     "tests/unit/lib/test_geostat_v3.py"
    ]
   },
@@ -5256,8 +5244,6 @@
     "tests/unit/gis_harness/test_plan_graph.py",
     "tests/unit/gis_harness/test_product_action.py",
     "tests/unit/gis_harness/test_product_graph.py",
-    "tests/unit/gis_harness/test_typed_dag_v4.py",
-    "tests/unit/gis_harness/test_workflow_v4_semantics.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
     "tests/unit/test_map_product_finalization_scenarios.py",
@@ -5675,7 +5661,6 @@
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
     "tests/unit/gis_harness/test_plan_graph.py",
     "tests/unit/gis_harness/test_planner.py",
-    "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/test_analysis_cartography_converter.py",
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_capability_registry_parity.py"
@@ -6304,7 +6289,6 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
-    "tests/unit/gis_harness/test_compiler_v4.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
     "tests/unit/lib/test_regression_kriging.py"
    ]
@@ -6591,6 +6575,13 @@
     "tests/unit/test_be_audit_fixes.py",
     "tests/unit/test_data_fabric_federation_v4.py",
     "tests/unit/test_data_fabric_optimizer_v3.py",
+    "tests/unit/test_federated_costing.py",
+    "tests/unit/test_federated_engine_wiring.py",
+    "tests/unit/test_federated_enumerator.py",
+    "tests/unit/test_federated_explain.py",
+    "tests/unit/test_federated_logical_plan.py",
+    "tests/unit/test_federated_physical_executor.py",
+    "tests/unit/test_federated_v6_differential.py",
     "tests/unit/test_geocompute_execution.py",
     "tests/unit/test_spatial_analyzer_deepening.py"
    ]
@@ -6896,9 +6887,7 @@
    ],
    "status": "native",
    "supports_large_data": true,
-   "tests": [
-    "tests/unit/gis_harness/test_methodology_v4.py"
-   ]
+   "tests": []
   },
   {
    "category": "raster",
@@ -7017,7 +7006,6 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
-    "tests/unit/gis_harness/test_compiler_v4.py",
     "tests/unit/lib/test_trend_surface.py"
    ]
   },
@@ -7124,150 +7112,27 @@
   "algorithms": 208,
   "artifact_types": 21,
   "capabilities": 139,
-  "findings": 13,
+  "findings": 0,
   "recipes": 164,
-  "tools": 296
+  "tools": 295
  },
- "findings": [
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "interpolation",
-   "severity": "medium",
-   "subject": "interpolation.cokriging_lmc",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "interpolation",
-   "severity": "medium",
-   "subject": "interpolation.external_drift_kriging",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "interpolation",
-   "severity": "medium",
-   "subject": "interpolation.sgs",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "interpolation",
-   "severity": "medium",
-   "subject": "interpolation.simple_kriging",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "interpolation",
-   "severity": "medium",
-   "subject": "interpolation.st_kriging",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "terrain",
-   "severity": "medium",
-   "subject": "terrain.breach",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "terrain",
-   "severity": "medium",
-   "subject": "terrain.hand",
-   "surface": "algorithms"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "cokriging_lmc_surface",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "compile_workflow_semantics",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "sgs_simulation",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "st_kriging_surface",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "cokriging_lmc_surface",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_UNTESTED",
-   "detail": "registered tool without any static test reference",
-   "domain": "tools",
-   "severity": "medium",
-   "subject": "sgs_simulation",
-   "surface": "tools"
-  }
- ],
+ "findings": [],
  "findings_ratchet": {
-  "behavioral_dispatch": 154,
+  "behavioral_dispatch": 153,
   "expired_waivers": [],
   "min_behavioral_dispatch": 151,
-  "pass": false,
-  "violations": [
-   {
-    "baseline": 0,
-    "code": "ALGO_HEAVY_NO_VARIANTS",
-    "current": 7
-   },
-   {
-    "baseline": 0,
-    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-    "current": 4
-   },
-   {
-    "baseline": 0,
-    "code": "TOOL_UNTESTED",
-    "current": 2
-   }
-  ],
+  "pass": true,
+  "violations": [],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "028ef31dfce1a63a5ac56058188a4e538865a708ace062d41fea36bbccccdd23",
+ "fingerprint": "4cb7ad2bbb16cb5e23226770ff4e5df7edcb502d5143d5ddb7b4c350f26f608f",
  "gate": {
   "fields": {
    "capabilities": {
     "coverage": 100,
-    "missing": [
-     "compile_workflow_semantics"
-    ],
-    "missing_count": 1,
+    "missing": [],
+    "missing_count": 0,
     "pass": true,
     "threshold": 95
    },
@@ -7286,30 +7151,22 @@
     "threshold": 95
    },
    "side_effect": {
-    "coverage": 99,
-    "missing": [
-     "cokriging_lmc_surface",
-     "sgs_simulation",
-     "st_kriging_surface"
-    ],
-    "missing_count": 3,
+    "coverage": 100,
+    "missing": [],
+    "missing_count": 0,
     "pass": true,
     "threshold": 95
    },
    "tags": {
-    "coverage": 99,
-    "missing": [
-     "cokriging_lmc_surface",
-     "sgs_simulation",
-     "st_kriging_surface"
-    ],
-    "missing_count": 3,
+    "coverage": 100,
+    "missing": [],
+    "missing_count": 0,
     "pass": true,
     "threshold": 95
    }
   },
   "pass": true,
-  "total": 296
+  "total": 295
  },
  "manifest_version": 2,
  "recipes": {
@@ -7960,25 +7817,29 @@
    "tier": 2
   },
   {
-   "behavior": "none",
+   "behavior": "mention",
    "capabilities": [
     "cokriging"
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "untested",
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "cokriging_lmc_surface",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
-   "tests": [],
+   "tags": [
+    "插值",
+    "cokriging",
+    "共克里金",
+    "多变量",
+    "表面"
+   ],
+   "tests": [
+    "tests/unit/lib/test_cokriging_lmc_v4.py"
+   ],
    "tier": 2
   },
   {
@@ -8033,34 +7894,6 @@
     "tests/unit/test_676_flip_red.py",
     "tests/unit/test_composite_builder.py",
     "tests/unit/test_parallel_tool_dispatch.py"
-   ],
-   "tier": 2
-  },
-  {
-   "behavior": "dispatch",
-   "capabilities": [],
-   "deterministic": true,
-   "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
-   "latency_class": "fast",
-   "memory_class": "light",
-   "name": "compile_workflow_semantics",
-   "requires_confirmation": false,
-   "scale_class": "small",
-   "side_effect": "pure",
-   "status": "stable",
-   "tags": [
-    "semantic",
-    "workflow",
-    "compiler",
-    "方法论",
-    "工作流编译",
-    "义务"
-   ],
-   "tests": [
-    "tests/unit/gis_harness/test_workflow_v4_production.py"
    ],
    "tier": 2
   },
@@ -12806,7 +12639,6 @@
     "插值"
    ],
    "tests": [
-    "tests/unit/gis_harness/test_compiler_v4.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
     "tests/unit/lib/test_regression_kriging.py"
    ],
@@ -13981,25 +13813,29 @@
    "tier": 1
   },
   {
-   "behavior": "none",
+   "behavior": "mention",
    "capabilities": [
     "geostatistical_simulation"
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "untested",
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "sgs_simulation",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
-   "tests": [],
+   "tags": [
+    "插值",
+    "sgs",
+    "条件模拟",
+    "不确定性",
+    "表面"
+   ],
+   "tests": [
+    "tests/unit/lib/test_kriging_simulation_v4.py"
+   ],
    "tier": 2
   },
   {
@@ -14237,6 +14073,13 @@
     "tests/unit/test_be_audit_fixes.py",
     "tests/unit/test_data_fabric_federation_v4.py",
     "tests/unit/test_data_fabric_optimizer_v3.py",
+    "tests/unit/test_federated_costing.py",
+    "tests/unit/test_federated_engine_wiring.py",
+    "tests/unit/test_federated_enumerator.py",
+    "tests/unit/test_federated_explain.py",
+    "tests/unit/test_federated_logical_plan.py",
+    "tests/unit/test_federated_physical_executor.py",
+    "tests/unit/test_federated_v6_differential.py",
     "tests/unit/test_geocompute_execution.py",
     "tests/unit/test_spatial_analyzer_deepening.py"
    ],
@@ -14310,6 +14153,8 @@
     "tests/unit/lib/test_density.py",
     "tests/unit/lib/test_spatial_stats_tool_evidence.py",
     "tests/unit/test_argument_normalization.py",
+    "tests/unit/test_federated_costing.py",
+    "tests/unit/test_federated_spatial_stats.py",
     "tests/unit/test_spatial.py",
     "tests/unit/test_spatial_analyzer_module.py",
     "tests/unit/test_spatial_stats.py",
@@ -14471,17 +14316,20 @@
    ],
    "deterministic": null,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "unknown",
    "memory_class": "unknown",
    "name": "st_kriging_surface",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "deterministic_compute",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "插值",
+    "kriging",
+    "时空",
+    "表面",
+    "时序"
+   ],
    "tests": [
     "tests/unit/lib/test_kriging_st_v4.py"
    ],
@@ -14757,6 +14605,7 @@
    "tests": [
     "tests/test_tool_registry_async_policy.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/test_federated_pushdown.py",
     "tests/unit/test_temporal_gis_runtime.py"
    ],
    "tier": 2
@@ -15029,7 +14878,6 @@
     "trend"
    ],
    "tests": [
-    "tests/unit/gis_harness/test_compiler_v4.py",
     "tests/unit/lib/test_trend_surface.py"
    ],
    "tier": 2
