@@ -298,3 +298,59 @@ def _store() -> Any:
     from app.services.s3_blob_store import get_object_store
 
     return get_object_store()
+
+
+# ── 大对象分片组合（10k+ chunks 的诚实生产路径）────────────────────────
+
+
+#: 单 shard 的条目数默认值（manifest JSON ≤64KiB 闸的保守投影：
+#: ~130B/条 × 400 ≈ 52KiB < 64KiB）。
+SHARD_ENTRY_TARGET = 400
+
+
+def publish_sharded_object(
+    source_files: Mapping[str, Any],
+    *,
+    owner_scope: Mapping[str, Any],
+    shard_entry_target: int = SHARD_ENTRY_TARGET,
+    producer: Optional[Mapping[str, Any]] = None,
+    store: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """超大对象（如 10k+ chunk cube）的**分片组合发布**：
+
+    - 文件按路径排序切 shard，每 shard ≤``shard_entry_target`` 条
+      （单 shard manifest 尺寸守住 64KiB 身份闸）；
+    - shard 作为普通 DataObject 发布（字节进 CAS，内容寻址去重）；
+    - 组合体 = virtual 对象（零字节复制 —— 引用身份）。
+
+    返回 ``{"shards": [ids], "composite": {...}}``。条目数为 0 → typed
+    拒绝。这是 10k+ chunks 元数据处理的**生产路径**（单 manifest 拒绝
+    超界是诚实边界，不是能力缺口 —— ADR-0119 §5/§13）。
+    """
+    from app.services.lakehouse.data_object import publish_data_object
+
+    if not source_files:
+        raise VirtualObjectError("refusing to shard an empty object")
+    target = max(1, min(int(shard_entry_target), 2_000))
+    ordered = sorted(str(p) for p in source_files)
+    shards: List[str] = []
+    for start in range(0, len(ordered), target):
+        window = ordered[start:start + target]
+        identity = publish_data_object(
+            {rel: source_files[rel] for rel in window},
+            kind="zarr_cube",
+            owner_scope=owner_scope,
+            producer=producer,
+            store=store,
+        )
+        shards.append(identity.data_object_id)
+    composite = publish_virtual_object(
+        shards,
+        kind_label="sharded_object",
+        owner_scope=owner_scope,
+        selection={"shard_entry_target": target,
+                   "total_entries": len(ordered)},
+        producer=producer,
+        store=store,
+    )
+    return {"shards": shards, "composite": composite}

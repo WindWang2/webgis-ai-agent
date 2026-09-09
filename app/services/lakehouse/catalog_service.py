@@ -60,7 +60,16 @@ def derive_entry_from_manifest(
         raise CatalogError(f"invalid owner_type {owner_type!r}")
     payload = manifest.get("payload") or {}
     producer = manifest.get("producer") or {}
-    bbox = payload.get("bbox") or payload.get("labeled", {}).get("bbox")
+    labeled = payload.get("labeled") or {}
+    bbox = payload.get("bbox")
+    if not bbox and labeled:
+        # labeled 投影 → bbox（y 降序 ⇒ miny=ys.end/maxy=ys.start；
+        # x 升序 ⇒ minx=xs.start/maxx=xs.end —— 坐标契约见 cube_schema）。
+        summary = labeled.get("coords_summary") or {}
+        ys, xs = summary.get("y"), summary.get("x")
+        if ys and xs:
+            bbox = [xs.get("start"), ys.get("end"),
+                    xs.get("end"), ys.get("start")]
     minx = miny = maxx = maxy = None
     if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
         try:
@@ -69,7 +78,12 @@ def derive_entry_from_manifest(
             minx = miny = maxx = maxy = None
     time_start = _parse_dt(payload.get("time_start") or payload.get("start_datetime"))
     time_end = _parse_dt(payload.get("time_end") or payload.get("end_datetime"))
-    labeled = payload.get("labeled") or {}
+    if (time_start is None or time_end is None) and payload.get("times"):
+        # RS/时序 cube：times[0]..times[-1] 即时间范围（ISO-8601 标签）。
+        times = [str(v) for v in payload["times"] if str(v)]
+        if times:
+            time_start = time_start or _parse_dt(times[0])
+            time_end = time_end or _parse_dt(times[-1])
     descriptor: Dict[str, Any] = {}
     if labeled:
         descriptor["dims"] = labeled.get("dims")

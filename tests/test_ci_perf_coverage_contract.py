@@ -57,6 +57,11 @@ NIGHTLY_ONLY_PERF_FILES = {
         "and carries wall-clock ratio bands; structural evidence stays "
         "deterministic for nightly"
     ),
+    "test_lakehouse_v7.py": (
+        "ADR-0119: optional geo stack (zarr/xarray) + nightly isolation; "
+        "structural evidence (sharded composition, GC metadata-only "
+        "touch counting) stays deterministic for nightly"
+    ),
 }
 
 _STDLIB = set(sys.stdlib_module_names)
