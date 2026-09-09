@@ -25,13 +25,19 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor
+from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="terrain.slope", name="坡度", category="terrain_analysis",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_horn_gradient", backend="numpy", deterministic=True,
+                    min_features=1, max_features=25000000,
+                    notes="Horn 梯度数组运算；实现无显式闸，按 float32 多数组 ~1GiB 预算保守取 2500 万像元"),
+            ],
             capabilities=["terrain_slope"],
             input_artifact_types=["terrain_surface"],
             output_artifact_type="terrain_surface", tool_candidates=["compute_terrain"],
@@ -61,6 +67,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="terrain.hillshade", name="山体阴影", category="terrain_analysis",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_hillshade", backend="numpy", deterministic=True,
+                    min_features=1, max_features=25000000,
+                    notes="曝光角数组运算（多方位 hillshade 窗口 ≤101）；保守窗口 2500 万像元（内存推导，无显式闸）"),
+            ],
             capabilities=["terrain_hillshade"],
             input_artifact_types=["terrain_surface"],
             output_artifact_type="terrain_surface", tool_candidates=["compute_terrain"],
@@ -89,6 +101,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="terrain.aspect", name="坡向", category="terrain_analysis",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_horn_gradient", backend="numpy", deterministic=True,
+                    min_features=1, max_features=25000000,
+                    notes="Horn 梯度数组运算；实现无显式闸，按 float32 多数组 ~1GiB 预算保守取 2500 万像元"),
+            ],
             capabilities=["terrain_aspect"],
             input_artifact_types=["terrain_surface"],
             output_artifact_type="terrain_surface", tool_candidates=["compute_terrain"],
@@ -366,6 +384,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="terrain.sink_fill", name="Priority-Flood 填洼", category="terrain_analysis",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_priority_flood", backend="numpy", deterministic=True,
+                    min_features=1, max_features=50000000,
+                    notes="MAX_HYDRO_CELLS=5000 万像元（_guard_cells 分配前类型化拒绝）"),
+            ],
             capabilities=["terrain_hydrology_advanced"],
             input_artifact_types=["terrain_surface"],
             output_artifact_type="raster_surface", tool_candidates=["depression_fill"],

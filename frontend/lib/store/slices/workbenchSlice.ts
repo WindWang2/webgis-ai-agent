@@ -1,25 +1,28 @@
 'use client';
 import type { StateCreator } from 'zustand';
 import type { HudState } from '../hud-types';
+import { canReparentGroup, type WorkbenchDocV5 } from '@/lib/workbench/doc';
 
 /**
- * Workbench slice — Workbench V4 统一工作区投影（Goal C / Wave 1）。
+ * Workbench slice — Workbench V4 统一工作区投影（Goal C / Wave 1）→
+ * V5 组织态运行时载体（W1/W3）。
  *
- * 设计边界（ADR-0104）：
+ * 设计边界（ADR-0104 + V5 修订）：
  * - 本 slice 是 **UI projection / transient state**，绝不承载地图语义真相：
  *   权威地图内容仍以 MapSpec / backend contract 为准（session-cursor 镜像 +
  *   user-mutation CAS 串行链），图层语义分组仍在 `Layer.group`。这里只放
  *   「工作台怎么摆、当前在操作什么」这类会话级 UI 状态。
  * - 单一 store：本 slice 并入 useHudStore（不建第二 store、不建第二 truth）。
- * - 不持久化（partialize 不含本 slice）：分组/选择/模式都是会话工作台状态，
- *   持久化会引入 stale layer id 垃圾与跨会话误恢复。
+ * - V5：分组树/成员/锁/模式升级为 WorkbenchDocV5（嵌套树），经
+ *   patch_workbench_state 意图持久化到 MapSpec `workbench` 分支。本 slice
+ *   仍是运行时投影（setWorkbenchDoc 水合 / buildWorkbenchDoc 提交），
+ *   持久化真相在 backend —— 不在这里建 localStorage 影子真相。
  *
  * 子域：
  * - mode：Explore / Analyze / Compose 三模式（Wave 3）。模式只改变面板组合
  *   / 工具栏 / 上下文控件，不复制地图状态；每个模式记忆自己的 active tab。
  * - layer selection：多选（批量操作 / Wave 2 Layer Workspace 的选择真相）。
- * - layer groups：用户分组树（UI projection —— 语义组 `Layer.group` 之上的
- *   可折叠/可命名组织结构，不进 MapSpec）。
+ * - layer groups：用户分组树（V5 起支持嵌套，深度上限见 doc.ts）。
  * - artifact selection：当前关注的产物（results/chart）。
  * - comparison：对比工作区状态（Wave 8；两视图同步策略可配置）。
  */
@@ -43,6 +46,8 @@ export interface LayerGroupEntity {
   id: string;
   name: string;
   collapsed: boolean;
+  /** V5 嵌套树：null/缺省 = 根组（V4 迁移期兼容：实体可缺字段）。 */
+  parentId?: string | null;
 }
 
 /** 对比视图词表（封闭）。 */
@@ -93,18 +98,23 @@ export interface WorkbenchSlice {
   beginIsolate: (layerId: string, snapshot: Record<string, boolean>) => void;
   clearIsolate: () => void;
 
-  /* ─── Layer Groups（UI projection 组织树）─── */
+  /* ─── Layer Groups（V5 嵌套组织树，doc 持久化见 lib/workbench/doc.ts）─── */
   layerGroups: LayerGroupEntity[];
   layerGroupMembership: Record<string, string>;
-  createLayerGroup: (name: string) => string;
+  createLayerGroup: (name: string, parentId?: string | null) => string;
   renameLayerGroup: (groupId: string, name: string) => void;
   removeLayerGroup: (groupId: string) => void;
   toggleGroupCollapsed: (groupId: string) => void;
+  /** 嵌套：把组移动到新父下（null = 提为根）；环/超深被拒绝并保持原状。 */
+  moveLayerGroup: (groupId: string, newParentId: string | null) => boolean;
   /** 把图层指派到组（groupId = null → 移出组）。 */
   assignLayersToGroup: (layerIds: string[], groupId: string | null) => void;
   /** 会话切换 / 图层删除后的组成员清理（防 stale id 垃圾）。 */
   pruneLayerGroups: (validLayerIds: ReadonlySet<string>) => void;
   resetLayerGroups: () => void;
+  /* ─── Workbench Doc V5（W3 持久化水合）─── */
+  /** 从恢复的 doc 一次性水合组织态（组/成员/锁/模式）；非法 doc 被拒绝。 */
+  hydrateWorkbenchDoc: (doc: WorkbenchDocV5 | null) => boolean;
 
   /* ─── Artifact Selection ─── */
   selectedArtifactId: string | null;
@@ -130,7 +140,6 @@ const EMPTY_COMPARISON: ComparisonState = {
 let groupSeq = 0;
 
 export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set, get) => {
-  void get;
   return {
     /* ─── Mode ─── */
     mode: 'explore',
@@ -204,10 +213,17 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
     /* ─── Layer Groups ─── */
     layerGroups: [],
     layerGroupMembership: {},
-    createLayerGroup: (name) => {
+    createLayerGroup: (name, parentId = null) => {
       groupSeq += 1;
       const id = `wg-${groupSeq}`;
-      set((s) => ({ layerGroups: [...s.layerGroups, { id, name, collapsed: false }] }));
+      set((s) => {
+        // 父不存在 → 落根（与投影孤儿兜底语义一致）。
+        const validParent =
+          parentId != null && s.layerGroups.some((g) => g.id === parentId) ? parentId : null;
+        return {
+          layerGroups: [...s.layerGroups, { id, name, collapsed: false, parentId: validParent }],
+        };
+      });
       return id;
     },
     renameLayerGroup: (groupId, name) =>
@@ -216,12 +232,18 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
       })),
     removeLayerGroup: (groupId) =>
       set((s) => {
+        const removed = s.layerGroups.find((g) => g.id === groupId);
+        if (!removed) return s;
+        // 嵌套语义：被删组的子组提升到被删组的父（不孤儿、不级联删除）。
+        const promoted = s.layerGroups.map((g) =>
+          g.parentId === groupId ? { ...g, parentId: removed.parentId } : g,
+        );
         const membership = { ...s.layerGroupMembership };
         for (const [layerId, gid] of Object.entries(membership)) {
           if (gid === groupId) delete membership[layerId];
         }
         return {
-          layerGroups: s.layerGroups.filter((g) => g.id !== groupId),
+          layerGroups: promoted.filter((g) => g.id !== groupId),
           layerGroupMembership: membership,
         };
       }),
@@ -231,6 +253,27 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
           g.id === groupId ? { ...g, collapsed: !g.collapsed } : g,
         ),
       })),
+    moveLayerGroup: (groupId, newParentId) => {
+      let allowed = false;
+      set((s) => {
+        if (!s.layerGroups.some((g) => g.id === groupId)) return s;
+        if (
+          newParentId != null
+          && !s.layerGroups.some((g) => g.id === newParentId)
+        ) {
+          return s;
+        }
+        // canReparentGroup 覆盖自环/子孙环/深度上限；非法保持原状并返回 false。
+        if (!canReparentGroup(s.layerGroups, groupId, newParentId)) return s;
+        allowed = true;
+        return {
+          layerGroups: s.layerGroups.map((g) =>
+            g.id === groupId ? { ...g, parentId: newParentId } : g,
+          ),
+        };
+      });
+      return allowed;
+    },
     assignLayersToGroup: (layerIds, groupId) =>
       set((s) => {
         if (groupId && !s.layerGroups.some((g) => g.id === groupId)) return s;
@@ -274,6 +317,20 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
         selectedArtifactId: null,
       })),
 
+    /* ─── Workbench Doc V5（W3）─── */
+    hydrateWorkbenchDoc: (doc) => {
+      if (!doc) return false;
+      set({
+        layerGroups: doc.groups.map((g) => ({ ...g })),
+        layerGroupMembership: { ...doc.membership },
+        lockedLayerIds: [...doc.lockedLayerIds],
+      });
+      // 模式经既有 setWorkbenchMode 协调 activeLeftTab（doc.mode 与用户当前
+      // 模式一致时为 no-op，不打断用户上下文）。
+      if (doc.mode !== get().mode) get().setWorkbenchMode(doc.mode, 'user');
+      return true;
+    },
+
     /* ─── Artifact Selection ─── */
     selectedArtifactId: null,
     setSelectedArtifactId: (id) => set({ selectedArtifactId: id }),
@@ -296,5 +353,29 @@ export const createWorkbenchSlice: StateCreator<HudState, [], [], Partial<HudSta
       set((s) => (s.comparison.active ? { comparison: { ...s.comparison, ...patch } } : s)),
     exitComparison: () =>
       set((s) => ({ comparison: { ...EMPTY_COMPARISON, position: s.comparison.position } })),
+  };
+}
+
+/**
+ * 从 store 投影出可持久化的 WorkbenchDocV5（W3 提交通道的载荷）。
+ * 纯函数：只读入参，不触 store。
+ */
+export function buildWorkbenchDoc(state: {
+  layerGroups?: LayerGroupEntity[];
+  layerGroupMembership?: Record<string, string>;
+  lockedLayerIds?: string[];
+  mode?: WorkbenchMode;
+}): WorkbenchDocV5 {
+  return {
+    version: 5,
+    groups: (state.layerGroups ?? []).map((g) => ({
+      id: g.id,
+      name: g.name,
+      collapsed: g.collapsed,
+      parentId: g.parentId ?? null,
+    })),
+    membership: { ...(state.layerGroupMembership ?? {}) },
+    lockedLayerIds: [...(state.lockedLayerIds ?? [])],
+    mode: state.mode ?? 'explore',
   };
 }

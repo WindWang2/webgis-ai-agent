@@ -30,6 +30,7 @@ import type { Map as MaplibreMap } from 'maplibre-gl';
 import type { MapSpec } from '@/lib/mapspec-compiler/types';
 import { collectCartographicRuntimeObservation } from './runtime-evidence';
 import { resolveMapComponents } from '@/lib/map-components/resolve-components';
+import { snapshotChartRenderStates } from '@/lib/map-components/chart-render-registry';
 
 /** Map 'idle' may never fire (raster churn / animation) — settle is bounded.
  * 400ms：短有界窗口 —— 合并 reconcile 突发、贴近渲染落定，同时不显著
@@ -75,6 +76,8 @@ export interface RenderObservation {
   map_idle: boolean;
   components: ObservedComponent[];
   runtime_errors: ObservedRuntimeError[];
+  /** V5 W5：chart_panel 渲染事实（id/rendered/data_points；缺席 = 旧构建）。 */
+  charts: Array<{ id: string; rendered: boolean; data_points: number }>;
   // ── 既有 runtime evidence（collectCartographicRuntimeObservation）──
   mapspec_fingerprint: string;
   style_loaded: boolean;
@@ -305,5 +308,6 @@ export function collectRenderObservation({
     map_idle: mapIdle,
     components: observeComponents(spec),
     runtime_errors: errorRing.drain(),
+    charts: snapshotChartRenderStates().slice(0, MAX_OBSERVED_COMPONENTS),
   };
 }

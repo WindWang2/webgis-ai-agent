@@ -371,6 +371,7 @@ def register_what_if_simulate(registry: ToolRegistry):
     @tool(
         registry,
         name="what_if_simulate",
+        capabilities=['scenario_simulation'],
         description="What-if 场景模拟 V2：基于真实 GIS 空间数据、工程规则与 RAG 证据链，开展动态情景影响推演与指标变化计算。",
         tier=3,
         domains=["what_if"],

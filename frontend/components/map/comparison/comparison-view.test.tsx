@@ -133,10 +133,10 @@ describe('ComparisonView · 退出', () => {
   });
 });
 
-describe('ComparisonView · kind 切换', () => {
-  it('side-by-side 已诚实下线：UI 无切换按钮，进入后仍按 50% 裁剪渲染', () => {
-    // Review R1（GIS F2 CRITICAL）：双半屏在「主图不动」约束下两图层永不
-    // 共地理 —— 不构成对比。词表保留（状态机/裁剪语义不变），UI 只暴露滑动。
+describe('ComparisonView · kind 切换（W6 真双面板）', () => {
+  it('side-by-side：真双面板 —— 副图 pane 占右半幅（无裁剪），控制条可切回滑动', () => {
+    // W6：主图画布收缩左半幅（map-panel 承担），副图占右半幅、相机同步，
+    // 双窗格覆盖同一地理范围 —— V4「主图不动→永不共地理」的取舍解除。
     const { primaryRef } = harness();
     useHudStore.getState().enterComparison({
       primaryLayerId: 'A',
@@ -145,12 +145,31 @@ describe('ComparisonView · kind 切换', () => {
     });
     render(<ComparisonView primaryMapRef={primaryRef} mapStyle={STUB_STYLE} />);
 
+    // 无 swipe 分割把手；副图 pane 无 clip-path（整幅可交互）
     expect(screen.queryByTestId('comparison-divider')).not.toBeInTheDocument();
+    expect(screen.getByTestId('comparison-secondary-map').style.clipPath).toBe('');
+    // 控制条提供双模式切换（当前态 side-by-side）
+    expect(screen.getByTestId('comparison-kind-side-by-side').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('comparison-kind-swipe').getAttribute('aria-pressed')).toBe('false');
+    // 切回滑动 → 裁剪语义恢复
+    fireEvent.click(screen.getByTestId('comparison-kind-swipe'));
+    expect(useHudStore.getState().comparison.kind).toBe('swipe');
+  });
+
+  it('swipe：分割线在场且按 position 裁剪（V4 语义不变）', () => {
+    const { primaryRef } = harness();
+    useHudStore.getState().enterComparison({
+      primaryLayerId: 'A',
+      secondaryLayerId: 'B',
+      kind: 'swipe',
+      position: 0.4,
+    });
+    render(<ComparisonView primaryMapRef={primaryRef} mapStyle={STUB_STYLE} />);
+
+    expect(screen.getByTestId('comparison-divider')).toBeInTheDocument();
     expect(screen.getByTestId('comparison-secondary-map').style.clipPath).toBe(
-      'inset(0 0 0 50%)',
+      'inset(0 0 0 40%)',
     );
-    // UI 不提供 side-by-side 入口（诚实 UI）。
-    expect(screen.queryByRole('button', { name: '并排' })).toBeNull();
   });
 });
 

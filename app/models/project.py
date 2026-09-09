@@ -200,6 +200,32 @@ class WorkflowRun(Base):
     lineages = relationship("ArtifactLineage", back_populates="workflow_run")
 
 
+class WorkflowResumeAnchor(Base):
+    """Harness V5 项目级 resume 锚点（ADR-0118 决策 D8）。
+
+    chat turn 证据链此前只有 session TTL 半边的持久性（session store +
+    24h ref spill）—— session 过期即无法继续。本表把「从哪里继续」的
+    最小事实（plan 摘要 + workflow_instance/map_product 关键块 + trace
+    游标）落 DB，项目/用户权限下可在新 session 中安全恢复。
+
+    边界：锚点是**恢复指针**，不是第二 session 真相 —— 恢复后的新
+    session 由既有 session store 承载，旧 session 过期不影响锚点有效性
+    （ref 载荷不可恢复时在恢复结果中诚实披露 missing_refs）。
+    """
+
+    __tablename__ = "workflow_resume_anchors"
+
+    id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String(255), nullable=False, index=True)
+    # 所有权/恢复授权：V5 严格 user 一致（匿名锚点不可恢复 —— 与
+    # chat_resume 匿名拒绝同门）；project_id 记录项目归属供审计。
+    user_id = Column(String(255), nullable=True, index=True)
+    project_id = Column(String(255), nullable=True, index=True)
+    # 有界锚点载荷（plan 摘要 + 关键 chapter 块 + trace 游标 + ref 清单）。
+    anchor = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class Artifact(Base):
     """项目产物记录表"""
     __tablename__ = "artifacts"

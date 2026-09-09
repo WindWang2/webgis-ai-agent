@@ -243,10 +243,12 @@ SECURITY_CONTROLS: Tuple[SecurityControl, ...] = (
     ),
     SecurityControl(
         control_id="SEC-KG-01",
-        area="artifact ownership（KNOWN-GAP）",
+        area="artifact ownership（路由直调禁令 + session 作用域签名钉扎）",
         description=(
-            "产物注册表按 session_id 键控；无 owner/身份概念 —— 隔离依赖调用方"
-            "先过会话守卫的隐形调用顺序。"
+            "产物注册表按 session_id 键控；owner 语义 = 『已过会话守卫的 "
+            "session_id』。Quality V2 把这条隐形调用顺序升级为受检契约："
+            "路由层直调注册表被 AST 扫描禁止，公共 API 的 session 首参被"
+            "签名钉扎，行为隔离由跨会话回归保护。"
         ),
         impl=(
             ImplAnchor(
@@ -255,18 +257,21 @@ SECURITY_CONTROLS: Tuple[SecurityControl, ...] = (
             ),
         ),
         test_nodes=(
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_no_route_module_calls_artifact_registry_directly",
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_artifact_registry_public_api_is_session_scoped",
             "tests/quality/test_security_regression.py"
             "::test_artifact_session_scope_isolates_foreign_sessions",
         ),
-        status=STATUS_KNOWN_GAP,
+        status=STATUS_TESTED,
         gap_note=(
-            "artifact_registry.get_artifact/list_artifacts 没有 owner 参数：隔离"
-            "完全依赖调用方以『已过 verify_session_owner 的 session_id』调用，"
-            "新增 /artifacts/{id} 类便捷路由或跳过会话守卫的 ref 解析会直接打开"
-            "跨会话产物读取（audit 风险 #6）。已落地的回归只钉住最近的真实边界"
-            "（session 作用域互不可见/不可改、同名 ref 不串写）。修复方向：给"
-            "注册表加 owner 列并在 get/list/mark 校验，或静态契约扫描强制全部"
-            "调用点先过会话守卫。"
+            "已于 Quality V2 收口：按 gap 原修复方向之二（『静态契约扫描强制"
+            "全部调用点先过会话守卫』）落地——app/api/routes/** 直调 "
+            "artifact_registry 即红；register/get/list/mark 的 session_id "
+            "首参签名被钉扎；跨会话读/列/改行为回归保留。残余边界（诚实"
+            "披露）：owner 仍是 session 级而非 user 级，跨 session 的用户级"
+            "归属由会话守卫的 token_version 语义承担。"
         ),
     ),
     # R1 review 残差披露（MINOR-1/MINOR-2，后续硬化项，不在本分支扩大战线）：
@@ -277,10 +282,13 @@ SECURITY_CONTROLS: Tuple[SecurityControl, ...] = (
 #   再打开）；硬化方向 = dirfd 相对打开 + O_NOFOLLOW + fstat 比对。
     SecurityControl(
         control_id="SEC-KG-02",
-        area="templates / knowledge delete authZ（KNOWN-GAP）",
+        area="templates / knowledge delete authZ（owner 矩阵回归）",
         description=(
-            "DELETE /templates/{id} 与 DELETE /knowledge/document/{id} 仅有 authN"
-            "（AST 扫描覆盖），无属主矩阵回归（audit 风险 #5，#1109 同类）。"
+            "DELETE /templates/{id} 与 DELETE /knowledge/document/{id} 的"
+            "creator-only 语义由 #1109 同款 owner 矩阵回归钉扎：owner 放行、"
+            "他人拒绝且行原样保留、admin 显式白名单、匿名被 authN 依赖拒绝、"
+            "内置只读、缺失 404、NULL creator fail-closed；knowledge 侧"
+            "org 成员不得放宽 SQL guard、无身份 fail-closed 不触存储。"
         ),
         impl=(
             ImplAnchor(
@@ -292,13 +300,37 @@ SECURITY_CONTROLS: Tuple[SecurityControl, ...] = (
                 anchor="async def delete_document(",
             ),
         ),
-        test_nodes=(),
-        status=STATUS_KNOWN_GAP,
+        test_nodes=(
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_template_delete_owner_allowed",
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_template_delete_other_user_denied_row_intact",
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_template_delete_admin_may_delete_foreign",
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_template_delete_anonymous_denied",
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_template_builtin_readonly_even_for_admin",
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_template_missing_404",
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_template_null_creator_fail_closed_for_viewer",
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_knowledge_delete_creator_allowed",
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_knowledge_delete_other_user_denied_row_intact",
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_knowledge_delete_same_org_member_denied",
+            "tests/quality/test_delete_ownership_matrix.py"
+            "::test_knowledge_service_no_identity_fail_closed",
+        ),
+        status=STATUS_TESTED,
         gap_note=(
-            "两个 delete 路由的 authZ 无显式回归：若实现不带 owner 校验（或未来"
-            "重构丢失），同形于 #1109 的可枚举 IDOR 删除不会被抓到。修复方向：按"
-            "tests/test_upload_ownership_matrix_1109.py 的 7 案矩阵补 route 级"
-            "owner/token 矩阵后再翻 status=tested。"
+            "已于 Quality V2 收口：两路由的实现本带 owner 校验（此前无回归"
+            "保护，重构丢失不会被抓）；现由 11 案 route/service 级矩阵保护。"
+            "发现并钉扎的语义细节：templates 的 creator_id IS NULL 自定义"
+            "模板对 viewer fail-closed（仅 admin 可删）；knowledge 删除是 "
+            "creator-only（org 成员身份不放宽），拒绝路径不触向量清理。"
         ),
     ),
 )

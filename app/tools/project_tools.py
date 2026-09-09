@@ -37,6 +37,7 @@ def register_project_tools(registry: ToolRegistry) -> None:
 
     @tool(registry,
         name="save_plan_as_workflow",
+        capabilities=['plan_workflow_orchestration'],
         description=(
             "Save the current successful GIS SessionPlan as a persistent, reusable "
             "Project Workflow. Prefers automatic promotion from the session plan "
@@ -196,6 +197,7 @@ def register_project_tools(registry: ToolRegistry) -> None:
 
     @tool(registry,
         name="rerun_workflow",
+        capabilities=['plan_workflow_orchestration'],
         description=(
             "Re-run a persistent workflow with updated inputs, AOI, or parameters. "
             "With from_run_id + from_step, only that step and its descendants "
@@ -294,6 +296,7 @@ def register_project_tools(registry: ToolRegistry) -> None:
 
     @tool(registry, 
         name="audit_spatial_quality",
+        capabilities=['dataset_profiling_quality'],
         description="Audit spatial dataset quality across Geometry, Topology, CRS, Attributes, and Sanity dimensions.",
         parameters={
             "type": "object",
@@ -332,6 +335,7 @@ def register_project_tools(registry: ToolRegistry) -> None:
 
     @tool(registry,
         name="repair_spatial_dataset",
+        capabilities=['dataset_profiling_quality'],
         description=(
             "Perform non-destructive safe remediation on a spatial dataset. The "
             "repaired FeatureCollection is registered as a NEW session ref (the "

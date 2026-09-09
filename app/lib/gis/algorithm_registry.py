@@ -9,7 +9,7 @@ ToolDispatchService —— 本注册表只持 metadata，不持数据、不执�
 
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -461,6 +461,11 @@ class AlgorithmRegistry:
         把它列为第三候选的 analytical_density），再按 (priority, id) 稳定
         序补齐其余候选。
 
+        只派发**分析语义成立**的算法：主 capability 非 native（planned /
+        unavailable —— 如平台工具面绑定 platform.*）的算法不进入本索引，
+        其候选工具因此不被 dispatch 复用层当作可复用分析（非分析工具
+        恒真实执行，见 test_non_analysis_tool_never_reused 契约）。
+
         #1076(D-8): 注册表载入后静态 —— 结果按内容缓存，register 失效。
         此前 webgis_map_product 每调用、session_plan 每工具结果都全量
         重建（每算法两遍排序扫描）。
@@ -468,20 +473,27 @@ class AlgorithmRegistry:
         cached = self._tool_to_capability_cache
         if cached is not None:
             return cached
+        capabilities = get_capability_registry()
         ordered = sorted(self._by_id.values(), key=lambda a: (a.priority, a.id))
         mapping: Dict[str, str] = {}
         for algo in ordered:
             cap = algo.capabilities[0] if algo.capabilities else ""
-            if cap and algo.tool_candidates:
+            if cap and algo.tool_candidates and self._is_analysis_capability(cap, capabilities):
                 mapping.setdefault(algo.tool_candidates[0], cap)
         for algo in ordered:
             cap = algo.capabilities[0] if algo.capabilities else ""
-            if not cap:
+            if not cap or not self._is_analysis_capability(cap, capabilities):
                 continue
             for tool in algo.tool_candidates:
                 mapping.setdefault(tool, cap)
         self._tool_to_capability_cache = mapping
         return mapping
+
+    @staticmethod
+    def _is_analysis_capability(cap: str, capabilities: Any) -> bool:
+        """capability 缺席（未注册，容错）或 native 才算分析语义派生源。"""
+        descriptor = capabilities.get(cap)
+        return descriptor is None or descriptor.status == "native"
 
     def tool_to_algorithms(self) -> Dict[str, List[str]]:
         """派生的 tool → 关联算法 id 列表反查索引（ADR-0103 descriptor 回填用）。
@@ -492,9 +504,20 @@ class AlgorithmRegistry:
         cached = self._tool_to_algorithms_cache
         if cached is not None:
             return cached
+        # R1 review：与 tool_to_capability 同 filter（非 native/planned
+        # 绑定算法不进派生视图）—— 防止 caps=() 而 algorithms=("platform.*",)
+        # 的半截派生态把平台工具带进复用/回填语义。
+        from app.lib.gis.capability_registry import get_capability_registry
+
+        capabilities = get_capability_registry().descriptors() \
+            if hasattr(get_capability_registry(), "descriptors") \
+            else {}
         ordered = sorted(self._by_id.values(), key=lambda a: (a.priority, a.id))
         mapping: Dict[str, List[str]] = {}
         for algo in ordered:
+            cap = algo.capabilities[0] if algo.capabilities else ""
+            if not cap or not self._is_analysis_capability(cap, capabilities):
+                continue
             for tool in algo.tool_candidates:
                 bucket = mapping.setdefault(tool, [])
                 if algo.id not in bucket:

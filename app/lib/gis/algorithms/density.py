@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor
+from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
@@ -45,6 +45,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="spatial.kde.contours", name="核密度等值线",
+            backend_variants=[
+                BackendVariant(
+                    id="scipy_gaussian_kde_grid", backend="scipy", deterministic=True,
+                    min_features=1, max_features=100000,
+                    notes="scipy.stats.gaussian_kde 评估 ≤_MAX_GRID_CELLS=10 万规则格网（类型化拒绝）；等值线经 matplotlib 提取"),
+            ],
             capabilities=["kde_density"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="density_surface",
@@ -71,6 +77,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="spatial.kde.surface", name="核密度全格网表面",
+            backend_variants=[
+                BackendVariant(
+                    id="scipy_gaussian_kde_grid", backend="scipy", deterministic=True,
+                    min_features=1, max_features=100000,
+                    notes="scipy.stats.gaussian_kde 评估 ≤_MAX_GRID_CELLS=10 万规则格网（类型化拒绝）"),
+            ],
             capabilities=["kde_density"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="density_surface",

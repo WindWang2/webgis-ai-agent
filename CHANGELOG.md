@@ -44,6 +44,111 @@
   content-store cache is reset per test, so tests monkeypatching DATA_DIR
   no longer leak blobs into the repo's ./data.
 
+- GeoCompute Cluster Runtime V6: runs gain a durable control plane
+  (`geocompute_runs`/`geocompute_workers`/`geocompute_resource_usage`) with
+  lease/epoch fencing, coordinator leadership arbitration, stale-lease
+  reclamation, distributed cancellation (any process can request; queued runs
+  converge directly, running runs via 0.5s heartbeat watchdog), priority
+  preemption at node boundaries, tenant weighted-fair dispatch with
+  starvation-free round-robin, profile channel matching, and a cluster
+  resource ledger (advisory by default, `WEBGIS_CLUSTER_LEDGER_ENFORCING=1`
+  for enforced admission). New REST: `POST /geocompute/plans/runs` (202 async
+  submit with 413/429 bounds), `GET /geocompute/runs` (owner-scoped merge of
+  cluster rows and terminal snapshots), upgraded `GET /runs/{id}` /
+  `POST /plans/runs/{id}/cancel` (cross-process), `GET /geocompute/cluster/
+  metrics` (admin, bounded cardinality). Coordinator is opt-in via
+  `WEBGIS_CLUSTER_COORDINATOR=1`; sync `/plans/execute` behavior is unchanged.
+  Durable node dispatch now carries the plan budget into the worker task body
+  (worker-side row caps no longer rely on the hard node cap alone).
+
+### Fixed
+- GeoCompute default session factories (`run_evidence`, `reuse_index`,
+  `durable`) handed back a `sessionmaker`/function object instead of a
+  `Session`, which is not a context manager on SQLAlchemy 2.0 — production
+  default-path run evidence snapshots, cross-process reuse records, and
+  durable-node await polling silently failed (fail-open). They now return a
+  session instance (same discipline as the jobs subsystem).
+
+### Added (Workbench V5 & Collaboration — ADR-0105)
+- Workbench organization state (nested group tree / membership / layer locks /
+  workbench mode) is now durable: new `patch_workbench_state` MapSpec mutation
+  intent persists a `WorkbenchDocV5` into the session's `mapspec["workbench"]`
+  branch over the existing lock + CAS + provenance chain (256KB real-UTF-8
+  gate, deterministic structural validation). Selection/isolate remain
+  session-transient per ADR-0104; no second truth store.
+- Agent layer-lock enforcement: `set_layer_visibility` and `remove_layer`
+  transactions partition targets by the user lock set - fully locked targets
+  fail with a typed `layer_locked` ack error; partially locked targets apply
+  to unlocked ones and disclose `locked_layer_ids`. User unlock is the only
+  override.
+- Undo/redo (bounded 50, session-scoped) via a capture-before-execute command
+  model that replays inverse mutations through the same CAS channels; removal
+  is journaled as irreversible. Ops journal (opsLog) now receives live writes
+  with who/what/reversible metadata; panel header undo/redo buttons + global
+  Ctrl/Command+Z / Shift+Z / Ctrl+Y.
+- Same-session multi-tab foundation: committed workbench docs broadcast over
+  BroadcastChannel (`wb5:{sessionId}`) with revision-gated adoption;
+  deterministic conflict resolution stays server-side CAS last-writer-wins.
+- Refresh resume: authenticated sessions auto-restore via a localStorage
+  session anchor (pointer only, 7-day TTL, no tokens persisted); pagehide
+  best-effort flush of pending doc edits.
+- True side-by-side comparison: the primary canvas shrinks to the left half
+  while the secondary pane owns the right half with synced cameras; secondary
+  parity for terrain (is3D), legend filters, selection filters, and the
+  secondary layer family legend (same LegendStack). Escape exits comparison.
+- 10k-layer panel virtualization (windowed rendering above 200 rows, stable
+  row keys, collapsed-subtree pruning) and deterministic viewport grid
+  thinning for large inline GeoJSON (8x8 cells, area-first, 5000-feature
+  budget) with stale-viewport apply cancellation (generation token + idle).
+- Layer provenance badge (backend `provenance.result_ref`/`tool_call_id`)
+  linking to the results workbench - reads existing lineage facts only.
+
+### Changed (Workbench V5)
+- Nested user groups replace the flat V4 group list (`parentId` on
+  `LayerGroupEntity`, depth <= 4, cycle-safe projection with visited guard);
+  rename/remove/assign/lock/drop mutations are undoable doc commands;
+  group removal promotes children.
+
+### Added (Harness V5 — ADR-0118)
+- Durable trace V5: session trace-chain JSONL is now multi-worker safe
+  (cross-process flock + per-session monotonic `seq` + settle idempotency);
+  FINAL_VERDICT records are never dropped by the rolling window; chains survive
+  in-registry LRU eviction via a bounded pinned area (multi-process zero-loss
+  contract test: 8 processes × 6 records).
+- Unified failure taxonomy + typed remediation: 11-class `HarnessFailureClass`
+  (CRS/renderer/stale-ref/timeout/partial/... ) adapters over the existing
+  planning/geocompute enums; the dispatch error seam now attaches a
+  `harness_failure` verdict with bounded retry budget (max 3 per class,
+  exhaustion → `abort_with_disclosure`); pyproj CRS failures no longer escape
+  as generic TOOL_ERROR (KNOWN-GAP #1 fixed, xfail promoted).
+- Longitude-convention hardening: new pure `app/lib/gis/longitude.py`
+  (pm180/e360 detection that never guesses, antimeridian geometry splitting,
+  0–360 normalization) + profile facts feeding the planner.
+- Progressive DatasetProfile: explicit cheap→deep `deepen_profile` (cheap
+  provenance kept, deep-failure falls back to cheap); longitude facts flow into
+  the resolver contract additively (emitted only with real evidence).
+- Rendered-state observation: per-layer telemetry (`source_status`,
+  `render_complete`, `feature_count`) and chart render telemetry
+  (`charts[].rendered/data_points`) — all optional, old clients keep the V4
+  gate; finalization now detects requested-vs-actual mismatches including
+  "chart mounted but rendered without data".
+- Subagent accounting: child runs bind a dedicated TurnEvidence so provider
+  token usage rolls up into `SubagentBudget.llm_usage` and the parent turn
+  evidence (once, idempotent); results carry `budget_usage` + lineage
+  (parent_turn_id/depth/role).
+- Open-loop query→tool retrieval evaluation: 66 hand-gold cases (direct/
+  near-duplicate/hard-negative/ambiguous, zh+en) with precision@1 over the
+  ranked (non-core) segment; measured pins p@1 0.65 / invalid-selection 0.33
+  recorded as the honest V5 baseline.
+- Project-level workflow resume: `workflow_resume_anchors` table (migration
+  0032) + `POST /chat/sessions/{id}/workflow-resume-anchor` and
+  `POST /chat/workflow-resume/{anchor_id}` — resume creates a fresh session
+  with the plan/goal/instance blocks restored, ref payloads rehydrated
+  best-effort, `missing_refs` disclosed, anonymous resume refused.
+- Live-failure corpus (8 categories) with deterministic typed expectations and
+  a budget-ladder termination proof, plus an end-to-end mid-failure recovery
+  scenario (CRS fault → typed diagnose → remediation retry → verified
+  finalization with render telemetry → durable trace).
 
 ## [Unreleased] - 2026-09-07
 
