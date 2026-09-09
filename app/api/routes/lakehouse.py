@@ -38,7 +38,14 @@ from app.schemas.lakehouse_schema import (
     CubeBuildRequest,
     CubeRevisionRequest,
     CubeWindowRequest,
+    GCExecuteRequest,
+    GCPlanRequest,
+    LabeledWindowRequest,
+    ObjectScrubRequest,
     ObjectVerifyRequest,
+    PublishRequest,
+    RevokeRequest,
+    RSCubeBuildRequest,
     VectorScanRequest,
 )
 
@@ -266,3 +273,396 @@ async def verify_lakehouse_object(
         raise HTTPException(status_code=404, detail="data object not found")
     state = await asyncio.to_thread(verify_data_object, data_object_id)
     return {"success": True, "data_object_id": data_object_id, "state": state}
+
+# ── V7（ADR-0119）：遥感 cube / labeled 窗口 / 发布 / catalog / GC ──────
+
+
+@router.post("/lakehouse/cubes/rs")
+async def build_rs_lakehouse_cube(
+    req: RSCubeBuildRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db=Depends(get_async_db),
+) -> Dict[str, Any]:
+    """光学/SAR/掩膜多源 → 对齐 labeled cube（不重采样；typed 网格闸）。"""
+    conv = await verify_session_owner(
+        db, _require_session_id(req.session_id),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    session_id = str(conv.session_id)
+    from app.services.lakehouse.rs_cube import RSCubeError, build_rs_cube
+
+    try:
+        return await build_rs_cube(
+            session_id,
+            sources=[s.model_dump() for s in req.sources],
+            title=req.title,
+        )
+    except RSCubeError as e:
+        # 网格不一致 = 契约违例 → 400（绝不与"不存在"混淆）。
+        raise _http_from(e, not_found_codes=("CUBE_SOURCE_MISSING",))
+
+
+@router.post("/lakehouse/cubes/labeled/window")
+async def read_lakehouse_labeled_window(
+    req: LabeledWindowRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db=Depends(get_async_db),
+) -> Dict[str, Any]:
+    """labeled cube 标签级窗口读（计划触达块证据随响应披露）。"""
+    conv = await verify_session_owner(
+        db, _require_session_id(req.session_id),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    session_id = str(conv.session_id)
+    selection: Dict[str, Any] = {}
+    for dim in ("time", "band", "polarization", "vertical"):
+        value = getattr(req, dim)
+        if value:
+            selection[dim] = list(value)
+    if req.bbox:
+        selection["bbox"] = list(req.bbox)
+    if req.index_slices:
+        selection["index_slices"] = {
+            str(k): list(v) for k, v in req.index_slices.items()
+        }
+    if not selection:
+        raise HTTPException(
+            status_code=422,
+            detail="labeled window read requires at least one label/bbox/"
+                   "index-slice selection",
+        )
+    from app.services.lakehouse.cube_service import (
+        CubeServiceError,
+        read_session_labeled_window,
+    )
+
+    try:
+        result = await read_session_labeled_window(
+            session_id, req.ref, selection=selection, max_cells=req.max_cells,
+        )
+    except CubeServiceError as e:
+        raise _http_from(e, not_found_codes=("CUBE_REF_MISSING",))
+    result["variables"] = {
+        name: (data.tolist() if hasattr(data, "tolist") else data)
+        for name, data in result.get("variables", {}).items()
+    }
+    return result
+
+
+@router.post("/lakehouse/publish")
+async def publish_lakehouse_objects(
+    req: PublishRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db=Depends(get_async_db),
+) -> Dict[str, Any]:
+    """session → project 零字节发布（owner 链校验；幂等）。"""
+    conv = await verify_session_owner(
+        db, _require_session_id(req.session_id),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    from app.services.lakehouse.project_publish import (
+        PublishError,
+        publish_to_project,
+    )
+
+    try:
+        result = await publish_to_project(
+            db,
+            session_id=str(conv.session_id),
+            project_id=req.project_id,
+            object_ids=list(req.object_ids),
+            actor_id=_user.get("user_id"),
+            owner_token=owner_token,
+            tags=list(req.tags) if req.tags else None,
+        )
+    except PublishError as e:
+        raise _http_from(
+            e, not_found_codes=("LAKEHOUSE_PUBLISH_PROJECT_MISSING",)
+        )
+    return {"success": True, **result}
+
+
+@router.post("/lakehouse/revoke")
+async def revoke_lakehouse_objects(
+    req: RevokeRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db=Depends(get_async_db),
+) -> Dict[str, Any]:
+    """撤销项目内发布（tombstone；既有引用仍可解析）。"""
+    from app.services.lakehouse.project_publish import (
+        PublishError,
+        revoke_project_objects,
+    )
+
+    try:
+        result = await revoke_project_objects(
+            db,
+            project_id=req.project_id,
+            object_ids=list(req.object_ids),
+            actor_id=_user.get("user_id"),
+        )
+    except PublishError as e:
+        raise _http_from(
+            e, not_found_codes=("LAKEHOUSE_PUBLISH_PROJECT_MISSING",)
+        )
+    return {"success": True, **result}
+
+
+@router.get("/lakehouse/catalog")
+async def search_lakehouse_catalog(
+    owner_type: str,
+    owner_id: str,
+    session_id: str = "",
+    kind: str = "",
+    time_from: str = "",
+    time_to: str = "",
+    producer: str = "",
+    include_revoked: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db=Depends(get_async_db),
+) -> Dict[str, Any]:
+    """域内检索（双域显式分支 —— 评审 R0-24：session 域走所有权守卫，
+    project 域走 publish 同族 owner 校验；均 fail-closed 404）。"""
+    import asyncio
+
+    from app.models.project import Project
+    from app.services.lakehouse.catalog_service import CatalogError
+
+    if owner_type == "session":
+        _ = await verify_session_owner(
+            db, _require_session_id(session_id or owner_id),
+            user_id=_user.get("user_id"), owner_token=owner_token,
+        )
+        effective_owner = _require_session_id(session_id or owner_id)
+    elif owner_type == "project":
+        from sqlalchemy import select
+
+        project = (
+            await db.execute(
+                select(Project).where(Project.id == owner_id)
+            )
+        ).scalar_one_or_none()
+        actor = _user.get("user_id")
+        if project is None or (
+            actor is not None and str(project.owner_id) != str(actor)
+        ):
+            raise HTTPException(status_code=404, detail="project not found")
+        effective_owner = owner_id
+    else:
+        raise HTTPException(status_code=400, detail="owner_type must be session|project")
+
+    def _search_sync():
+        from app.core.database import SessionLocal
+        from app.services.lakehouse.catalog_service import search_catalog
+
+        with SessionLocal() as sync_db:
+            return search_catalog(
+                sync_db,
+                owner_type=owner_type,
+                owner_id=effective_owner,
+                kind=kind or None,
+                time_from=time_from or None,
+                time_to=time_to or None,
+                producer=producer or None,
+                include_revoked=include_revoked,
+                limit=limit,
+                offset=offset,
+            )
+
+    try:
+        return await asyncio.to_thread(_search_sync)
+    except CatalogError as e:
+        raise _http_from(e)
+
+
+@router.get("/lakehouse/catalog/stac")
+async def lakehouse_catalog_stac(
+    owner_type: str,
+    owner_id: str,
+    session_id: str = "",
+    limit: int = 20,
+    offset: int = 0,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db=Depends(get_async_db),
+) -> Dict[str, Any]:
+    """STAC 1.0.0 投影（只读；分页 links 有界）。"""
+    import asyncio
+
+    from app.models.project import Project
+
+    if owner_type == "session":
+        _ = await verify_session_owner(
+            db, _require_session_id(session_id or owner_id),
+            user_id=_user.get("user_id"), owner_token=owner_token,
+        )
+        effective_owner = _require_session_id(session_id or owner_id)
+    elif owner_type == "project":
+        from sqlalchemy import select
+
+        project = (
+            await db.execute(select(Project).where(Project.id == owner_id))
+        ).scalar_one_or_none()
+        actor = _user.get("user_id")
+        if project is None or (
+            actor is not None and str(project.owner_id) != str(actor)
+        ):
+            raise HTTPException(status_code=404, detail="project not found")
+        effective_owner = owner_id
+    else:
+        raise HTTPException(status_code=400, detail="owner_type must be session|project")
+
+    def _stac_sync():
+        from app.core.database import SessionLocal
+        from app.services.lakehouse.catalog_service import search_catalog
+        from app.services.lakehouse.catalog_stac import (
+            entries_to_stac_collection,
+        )
+
+        with SessionLocal() as sync_db:
+            page = search_catalog(
+                sync_db, owner_type=owner_type, owner_id=effective_owner,
+                limit=min(max(int(limit), 1), 100),
+                offset=max(int(offset), 0),
+            )
+            return entries_to_stac_collection(
+                page["items"],
+                owner_type=owner_type,
+                owner_id=effective_owner,
+                next_offset=page.get("next_offset"),
+                prev_offset=max(0, offset - limit) if offset else None,
+            )
+
+    return await asyncio.to_thread(_stac_sync)
+
+
+@router.post("/lakehouse/objects/{data_object_id}/scrub")
+async def scrub_lakehouse_object(
+    data_object_id: str,
+    req: ObjectScrubRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db=Depends(get_async_db),
+) -> Dict[str, Any]:
+    """DR scrub（采样/全量 digest 校验 + ETag 记录值比对）。"""
+    _reject_project_scope(req.project_id or None)
+    conv = await verify_session_owner(
+        db, _require_session_id(req.session_id or ""),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    session_id = str(conv.session_id)
+    import asyncio
+
+    from app.services.lakehouse.data_object import (
+        owner_scope_allows,
+        resolve_data_object,
+    )
+    from app.services.lakehouse.dr import DRVerifyError, scrub_object
+
+    manifest = await asyncio.to_thread(resolve_data_object, data_object_id)
+    if manifest is None or not owner_scope_allows(
+        manifest, session_id=session_id
+    ):
+        raise HTTPException(status_code=404, detail="data object not found")
+
+    def _scrub():
+        return scrub_object(
+            data_object_id, mode=req.mode,
+            sample_k=req.sample_k, etag_check=req.etag_check,
+        )
+
+    try:
+        report = await asyncio.to_thread(_scrub)
+    except DRVerifyError as e:
+        raise _http_from(e)
+    return {"success": True, "data_object_id": data_object_id, **report}
+
+
+@router.post("/lakehouse/gc/plan")
+async def plan_lakehouse_gc(
+    req: GCPlanRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db=Depends(get_async_db),
+) -> Dict[str, Any]:
+    """GC dry-run 计划（只读；plan token + 确定性候选清单）。"""
+    _ = await verify_session_owner(
+        db, _require_session_id(req.session_id),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    import asyncio
+
+    from app.services.lakehouse.lakehouse_gc import GCError, plan_gc
+
+    try:
+        plan = await asyncio.to_thread(
+            plan_gc, grace_hours=req.grace_hours,
+        )
+    except GCError as e:
+        raise _http_from(e)
+    return {"success": True, **plan}
+
+
+@router.post("/lakehouse/gc/execute")
+async def execute_lakehouse_gc(
+    req: GCExecuteRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db=Depends(get_async_db),
+) -> Dict[str, Any]:
+    """执行 GC 计划（token 重验；漂移 → 409 语义 typed 拒绝）。"""
+    _ = await verify_session_owner(
+        db, _require_session_id(req.session_id),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    import asyncio
+
+    from app.services.lakehouse.lakehouse_gc import (
+        GCStalePlan,
+        execute_gc,
+    )
+
+    try:
+        result = await asyncio.to_thread(execute_gc, req.plan)
+    except GCStalePlan as e:
+        raise HTTPException(status_code=409, detail=_client_message(e))
+    return {"success": True, **result}
+
+@router.get("/lakehouse/objects/{data_object_id}/lineage")
+async def get_lakehouse_object_lineage(
+    data_object_id: str,
+    session_id: str = "",
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db=Depends(get_async_db),
+) -> Dict[str, Any]:
+    """DataObject 血缘祖先视图（manifest source_refs / virtual children；
+    深度/节点双闸）。owner 校验同对象读取。"""
+    conv = await verify_session_owner(
+        db, _require_session_id(session_id),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    session_id = str(conv.session_id)
+    import asyncio
+
+    from app.services.lakehouse.data_object import (
+        owner_scope_allows,
+        resolve_data_object,
+    )
+    from app.services.lakehouse.lineage import object_lineage
+
+    manifest = await asyncio.to_thread(resolve_data_object, data_object_id)
+    if manifest is None or not owner_scope_allows(
+        manifest, session_id=session_id
+    ):
+        raise HTTPException(status_code=404, detail="data object not found")
+    view = await asyncio.to_thread(object_lineage, data_object_id)
+    view["success"] = True
+    return view
