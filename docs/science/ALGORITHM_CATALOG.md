@@ -1157,19 +1157,19 @@ CUSUM 单均值漂移定位 + 固定种子 bootstrap 显著性（多变点不在
 - **`temporal.cube_stats`** 时空立方体统计（`native`·成熟度 已验证，契约: `science_temporal_analysis`，精度: exact）
   - 假设：统一时间轴：栈 (T,H,W) + 秒制时间戳（升序）；SAR/光学共用容器；缺口诚实：无效像元-切片计数披露，不静默插值
   - 局限：单位一致性（SAR 强度/分贝、光学反射率）由调用方保证；疑似缺失切片判据 = 间距 > 中位距 1.5×（启发式，已披露）
-  - 资源包络：8B/像元，像元硬上限 2097152
+  - 资源包络：8B/像元，像元硬上限 8388608
   - 取消：coarse
   - 数值容差：rtol=1e-12，atol=1e-12
 - **`temporal.phenology`** 物候特征（`native`·成熟度 已验证，契约: `science_temporal_analysis`，精度: approximate）
   - 假设：双谐波联合 LS [1, t, sin/cos ωt, sin/cos 2ωt]（趋势与谐波联合估计）；阈值法物候期：thr = min + frac·(max−min)，切片索引制；短缺口（run ≤ max_gap）线性插值；长缺口保持 NaN（不外推）
   - 局限：物候期为切片索引制——非真实日期反演（诚实边界）；SG 平滑只作用于填充后完整序列；被排除像元计数披露；高斯谐波近似——非正弦物候轨迹的 SOS/EOS 有系统偏差
-  - 资源包络：8B/像元，像元硬上限 2147483647
+  - 资源包络：8B/像元，像元硬上限 8388608
   - 取消：coarse
   - 数值容差：rtol=1e-09，atol=1e-09
 - **`temporal.anomaly`** 时间异常/变化（`native`·成熟度 已验证，契约: `science_temporal_analysis`，精度: approximate）
   - 假设：异常 = 最后切片 z-score（全期气候态，std ddof=1）；变化 = 后半段均值 − 前半段均值；z 为 Welch 近似
   - 局限：change_z 是效应量近似——非正式显著性检验（无自由度校正）；z 分母为零/样本 <2 的像元 → NaN（诚实缺省）
-  - 资源包络：8B/像元，像元硬上限 2147483647
+  - 资源包络：8B/像元，像元硬上限 8388608
   - 取消：coarse
   - 数值容差：rtol=1e-09，atol=1e-09
 

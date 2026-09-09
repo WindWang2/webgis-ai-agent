@@ -188,8 +188,10 @@ def run_cross_validation(
     Args:
         coords_metric: (n, 2) 米制坐标（spatial_block 需要；index/
             temporal_forward 亦接受但仅用于重复坐标披露）。
-        fit_fn(train_idx) → model：在全量数组的训练子集上拟合。
-        predict_fn(model, test_idx) → (pred, var|None)：预测测试子集；
+        fit_fn(train_idx, train_values) → model：在全量数组的训练子集上拟合。
+        predict_fn(model, train_idx, test_idx) → (pred, var|None)：**只在
+            训练子集条件上**预测测试子集（train_idx 是本折训练掩膜——
+            防自条件泄漏的契约关键：测试样本绝不能进入自己的条件集）；
             var 非 None 时启用 z-score 校准统计（非有限 z 过滤——与
             kriging 既有行为一致）。
         on_fold_error: "skip"（计数后继续，默认）| "raise"（首个失败即抛）。
@@ -222,8 +224,9 @@ def run_cross_validation(
         times_sec = np.asarray(times_sec, dtype=float)
         if len(times_sec) != n:
             raise DegenerateData("时间数组与样本数量不一致")
-        # folds 收缩：每折至少 CV_MIN_TEST_BLOCK 个测试样本且保证头部
-        # 有训练余量；unique 值约束由 temporal_forward_folds 校验。
+        # folds 收缩：目标每测试块 ≥ CV_MIN_TEST_BLOCK 样本（同值时间组
+        # 偏斜时可能个别块更小——统计弱但诚实）；unique 值约束由
+        # temporal_forward_folds 校验。
         usable = min(folds, max(2, n // (CV_MIN_TEST_BLOCK + 1)))
         fold_id, block_id = temporal_forward_folds(times_sec, usable)
     elif scheme == "spatial_block":
@@ -271,7 +274,7 @@ def run_cross_validation(
                 np.intersect1d(block_id[train], block_id[test]).size == 0)
         try:
             model = fit_fn(train, values[train])
-            pred, var = predict_fn(model, test)
+            pred, var = predict_fn(model, train, test)
         except Exception:
             fold_failures += 1
             if on_fold_error == "raise":

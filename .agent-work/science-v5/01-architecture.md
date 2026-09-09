@@ -140,8 +140,9 @@ app/tools/__init__.py                 ○ +1 行注册 science_temporal_tools
   `select_backend(algo, ScaleProfile(feature_count=None, raster_cells=N))`
   的变体选择。
 - descriptor 更新（additive）：`interpolation.sgs` 增 `numpy_batched` 变体
-  （raster_cells 窗口 [20_001, ensemble 预算/R 动态上限声明]）+ reference
-  变体（[8, 20_000]）；`interpolation.cokriging_lmc` / `interpolation.st_kriging`
+  + reference 变体；**窗口交叠、声明序偏好生效**——`numpy_batched` 声明
+  在前 → auto 在全部规模选 batched，reference 经显式 backend 参数 opt-in
+  （实现期决策，R1-#4 修订）；`interpolation.cokriging_lmc` / `interpolation.st_kriging`
   增批量变体；numerical_tolerance 措辞 variant-scoped（reference = 同 seed
   逐位；batched = 同 seed 逐位（自身）+ 对 reference 统计 differential）；
   新增算法全量声明 envelope/cancellation/tolerance（ratchet 自动约束）。

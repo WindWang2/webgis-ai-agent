@@ -263,11 +263,15 @@ def temporal_anomaly(
 
         raise InsufficientSamples(
             f"时间异常至少需要 4 个时间切片，got {t_len}")
+    import warnings
+
     v = np.where(cube.valid_mask(), cube.stack, np.nan)
     clim = cube.climatology()
     mean, std = clim["mean"], clim["std"]
-    with np.errstate(invalid="ignore", divide="ignore"):
-        anomaly = (v[-1] - mean) / std
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            anomaly = (v[-1] - mean) / std
     anomaly = np.where(np.isfinite(std) & (std > 0), anomaly, np.nan)
 
     split = int(baseline_slices) if baseline_slices is not None \
@@ -308,3 +312,34 @@ def temporal_anomaly(
         "back_mean": back,
     }
     return {"features": features, "meta": meta}
+
+
+def phenology_features_from_arrays(
+    stack, times, *, nodata=None, cloud_mask=None,
+    window: int = 5, polyorder: int = 2, max_gap: int = 2,
+    threshold_frac: float = 0.5,
+) -> dict:
+    """:func:`phenology_features` 的原始数组入口（JSON 原生参数——
+
+    oracle 回放与无栅格会话的消费面；构造/校验仍走 build_cube 唯一咽喉）。
+    """
+    from app.lib.geo_analysis.temporal_cube import from_optical_stack
+
+    cube = from_optical_stack(stack, times, nodata=nodata,
+                              cloud_mask=cloud_mask)
+    return phenology_features(
+        cube, window=window, polyorder=polyorder, max_gap=max_gap,
+        threshold_frac=threshold_frac)
+
+
+def temporal_anomaly_from_arrays(
+    stack, times, *, nodata=None, cloud_mask=None,
+    baseline_slices: int = 0,
+) -> dict:
+    """:func:`temporal_anomaly` 的原始数组入口（同上——JSON 原生）。"""
+    from app.lib.geo_analysis.temporal_cube import from_optical_stack
+
+    cube = from_optical_stack(stack, times, nodata=nodata,
+                              cloud_mask=cloud_mask)
+    return temporal_anomaly(
+        cube, baseline_slices=(baseline_slices or None))

@@ -1897,9 +1897,9 @@ def pfafstetter_codes_multilevel(
         raise ValueError(
             f"max_tributaries must be in [2, 6] (got {max_tributaries!r})")
     acc = np.asarray(flow_accum, dtype=np.float64)
-    direction = d8["direction"]
-    receiver = d8["receiver"]
-    valid = d8["valid"]
+    direction = np.asarray(d8["direction"])
+    receiver = np.asarray(d8["receiver"])
+    valid = np.asarray(d8["valid"])
     h, w = direction.shape
     if acc.shape != (h, w):
         raise ValueError(
@@ -2049,16 +2049,17 @@ def validate_flow_topology(
       2N 防御）；D8 图应无环——非零计数即拓扑破损；
     - ``dangling``：receiver 指向无效/越界像元计数；
     - ``accumulation_violations``：汇流非严格单调增（receiver 存在且
-      acc[cell] ≥ acc[receiver] > 0）；平台 equal-acc 单列（epsilon 填洼
-      残留/未破平台的线索，不与违例混计）。
+      acc[cell] ≥ acc[receiver] > 0——相等即计违例：合规积流下等值是
+      病理信号）；``equal_accumulation_plateaus`` 另列同一批次的平台
+      像元计数（epsilon 填洼残留/未破平台的线索，供归因区分）。
 
     返回 ``(report, meta)``；report 是结构化事实（采样坐标 ≤16 条），
     工具层诚实披露——不是异常通道。
     """
     acc = np.asarray(flow_accum, dtype=np.float64)
-    receiver = d8["receiver"]
-    valid = d8["valid"]
-    direction = d8["direction"]
+    receiver = np.asarray(d8["receiver"])
+    valid = np.asarray(d8["valid"])
+    direction = np.asarray(d8["direction"])
     h, w = direction.shape
     if acc.shape != (h, w):
         raise ValueError(

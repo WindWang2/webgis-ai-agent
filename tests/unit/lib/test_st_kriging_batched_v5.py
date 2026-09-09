@@ -16,6 +16,7 @@ import pytest
 from scipy.spatial import cKDTree
 
 from app.lib.geo_analysis.kriging_st import (
+    ST_MIN_SAMPLES,
     fit_st_model,
     st_cross_validate,
     st_kriging,
@@ -219,6 +220,60 @@ class TestSTCrossValidation:
         xy, z, t = self._fixture()
         with pytest.raises(ValueError, match="scheme 必须是"):
             st_cross_validate(xy, z, t, scheme="random")
+
+    def test_no_self_conditioning_adversarial(self):
+        # R1-B1 对抗锚：只扰动**最后一个测试折**的样本值（前向链下无任何
+        # 折的训练子集包含它们）→ 若预测自条件（泄漏），预测必变。
+        # spy predict_fn 直接捕获预测数组逐位比较——RMSE 本身含测试值
+        # （定义如此），不是泄漏证据；预测值才是。
+        xy, z, t = self._fixture(seed=9)
+        from app.lib.geo_analysis import cv
+        from app.lib.geo_analysis.kriging import fit_variogram
+
+        def make_fit():
+            def fit_fn(train, train_vals):
+                vfit = fit_variogram(xy[train], train_vals, model="auto")
+                return fit_st_model(spatial_variogram=vfit,
+                                    model="product_sum")
+            return fit_fn
+
+        preds_a, preds_b = [], []
+
+        def spy_a(st_m, train, test):
+            res = st_kriging(xy[train], z[train], t[train],
+                             xy[test], t[test], st_m,
+                             k=8, time_window_sec=None)
+            preds_a.append((tuple(np.flatnonzero(test).tolist()),
+                            res["predictions"].copy()))
+            return res["predictions"], res["variances"]
+
+        z_perturbed = z.copy()
+        from app.lib.geo_analysis.cv import temporal_forward_folds
+
+        fold_id, _ = temporal_forward_folds(t, 3)
+        last_fold = int(fold_id.max())
+        z_perturbed[fold_id == last_fold] += 1000.0
+
+        def spy_b(st_m, train, test):
+            res = st_kriging(xy[train], z_perturbed[train], t[train],
+                             xy[test], t[test], st_m,
+                             k=8, time_window_sec=None)
+            preds_b.append((tuple(np.flatnonzero(test).tolist()),
+                            res["predictions"].copy()))
+            return res["predictions"], res["variances"]
+
+        cv.run_cross_validation(xy, z, make_fit(), spy_a,
+                                scheme="temporal_forward", folds=3,
+                                times_sec=t, min_samples=ST_MIN_SAMPLES)
+        cv.run_cross_validation(xy, z_perturbed, make_fit(), spy_b,
+                                scheme="temporal_forward", folds=3,
+                                times_sec=t, min_samples=ST_MIN_SAMPLES)
+        assert preds_a and preds_b, "无成功折——fixture 失效"
+        for (idx_a, pred_a), (idx_b, pred_b) in zip(preds_a, preds_b):
+            assert idx_a == idx_b
+            # 扰动只落在该折自身的测试值上（不在任何训练子集）→
+            # 预测必须逐位不变（自条件 = 泄漏）
+            np.testing.assert_array_equal(pred_a, pred_b)
 
     def test_report_json_shape(self):
         xy, z, t = self._fixture()

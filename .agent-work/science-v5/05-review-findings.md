@@ -23,8 +23,22 @@
 | 13 | MINOR | R<2 时 SGSEnsemble.std=0 是伪精确；跨估计器字段易混读 | 架构 D5 修订：estimator 必填；std None+披露；data_quality 不合成 |
 | 14 | NIT | savgol 对含 NaN 窗口整体投毒；架构内存算式勘误 | 架构修订（4.7MB@k=24）；phenology 先 gap-fill 再平滑 + >max_gap 负例 |
 
-## Round 1 — Subagent-A 最终 diff 审查
-（待实现完成后填写）
+## Round 1 — Subagent-A 最终 diff 审查（Subagent-A resume；R0 14 项全部验证关闭）
+
+结论：核心数值（三批量求解器/两 P1 修复/CV splitter/水文/不确定性/
+dispatch）验证正确且诚实测试；必修项如下，均已修复。
+
+| # | 严重度 | 发现 | 处置 |
+|---|---|---|---|
+| 1 | BLOCKER | st_cross_validate 自条件泄漏：predict_fn 用全量样本做条件集，测试样本以 τ=0 进入自身条件集（时间守卫不可见） | cv.run_cross_validation 契约改为 predict_fn(model, train_idx, test_idx)；st_cross_validate 闭合改为仅训练子集条件；对抗测试（扰动最后折测试值 → spy 捕获预测逐位不变） |
+| 2 | MAJOR | oracle corpus 94% 哑弹（33/35 case 以 _identity 探针自比，永不失败） | builder 全部重写为生产目标绑定（cv/lmc surface/sgs surface/st surface/phenology/anomaly 适配器/pfafstetter/topology + select 路径），_identity 探针删除；23 case |
+| 3 | MAJOR | cube/phenology/anomaly 无 H×W 守卫（T≤512 单独挡不住 34GB 栈），descriptor 声明与实现不符 | build_cube 单一咽喉加 CUBE_MAX_ELEMENTS=8,388,608 类型化拒绝；descriptor envelope/notes 诚实化 |
+| 4 | MINOR | SGS auto 恒选 batched（声明序偏好），架构文档窗口分档表述过时 | 架构文档 D4 修订为声明序偏好语义（本表下方） |
+| 5 | MINOR | ST 变体注记"逐位一致"过claim（仅无填充行成立） | 注记收敛："无填充行逐位一致、填充行数学等价" |
+| 6 | MINOR | temporal.phenology/anomaly 声明 uncertainty_outputs 无产出（死元数据） | 声明移除（声明即产出纪律） |
+| 7 | MINOR | 多级 Pfafstetter 父码 ≥10 时拼接不可十进制解读 | descriptor limitation 披露（唯一性/层级语义保持） |
+| 8 | MINOR | cv usable 措辞 overclaim；topology docstring "不混计"与 ≥ 实现矛盾 | 两处措辞修正 |
+| 9 | MINOR | SGS differential 阈值放宽（已在测试 docstring 披露）；anomaly nanstd n=1 RuntimeWarning | warning 抑制；阈值放宽保留（披露） |
 
 ## Round 2 — Subagent-B 最终 diff 审查
 （待 Round 1 修复后填写）

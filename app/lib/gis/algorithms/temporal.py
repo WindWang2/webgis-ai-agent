@@ -325,8 +325,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             random_seed_policy="deterministic",
             scientific_status="VALIDATED",
             resource_envelope=ResourceEnvelope(
-                hard_max_cells=512 * 4096, bytes_per_cell=8,
-                notes="T≤512 切片硬顶（CUBE_MAX_SLICES）；逐切片 nan-aware 统计"),
+                hard_max_cells=8 * 1024 * 1024, bytes_per_cell=8,
+                notes="T≤512 切片 + T·H·W≤8,388,608 元素（CUBE_MAX_ELEMENTS 类型化守卫）"),
             cancellation_profile="coarse",
             tolerance=NumericalTolerance(rtol=1e-12, atol=1e-12, policy="conformance"),
             conformance_tests=[
@@ -361,10 +361,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             crs_class="RASTER_GRID",
             random_seed_policy="deterministic",
             scientific_status="VALIDATED",
-            uncertainty_outputs=["raster_uncertainty"],
             resource_envelope=ResourceEnvelope(
-                hard_max_cells=2_147_483_647, bytes_per_cell=8,
-                notes="工作数组 O(3T·N)；T≤512（CUBE_MAX_SLICES）；格网规模守卫在实现层"),
+                hard_max_cells=8 * 1024 * 1024, bytes_per_cell=8,
+                notes="工作数组 O(3T·N)；入参经 build_cube 的 T≤512 与 T·H·W≤8M 元素守卫"),
             cancellation_profile="coarse",
             tolerance=NumericalTolerance(rtol=1e-9, atol=1e-9, policy="conformance"),
             conformance_tests=[
@@ -398,10 +397,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             crs_class="RASTER_GRID",
             random_seed_policy="deterministic",
             scientific_status="VALIDATED",
-            uncertainty_outputs=["raster_uncertainty"],
             resource_envelope=ResourceEnvelope(
-                hard_max_cells=2_147_483_647, bytes_per_cell=8,
-                notes="工作数组 O(4T·N)；T≤512；格网规模守卫在实现层"),
+                hard_max_cells=8 * 1024 * 1024, bytes_per_cell=8,
+                notes="工作数组 O(4T·N)；入参经 build_cube 的 T≤512 与 T·H·W≤8M 元素守卫"),
             cancellation_profile="coarse",
             tolerance=NumericalTolerance(rtol=1e-9, atol=1e-9, policy="conformance"),
             conformance_tests=[

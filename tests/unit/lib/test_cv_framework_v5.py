@@ -136,12 +136,16 @@ class TestTemporalForwardFolds:
 # ── run_cross_validation ──────────────────────────────────────────────────
 
 def _make_fold_predictor(xy: np.ndarray, values: np.ndarray):
-    """手算锚预测器：训练集均值常数模型（var=样本方差/训练数）。"""
+    """手算锚预测器：训练集均值常数模型（var=训练均值×1%）。
+
+    R1-B1 契约：predict_fn 接收 (model, train_idx, test_idx)——训练掩膜
+    必须暴露给预测方（自条件防线）。
+    """
 
     def fit(train, train_vals):
         return float(np.mean(train_vals))
 
-    def predict(model, test):
+    def predict(model, train, test):
         n = int(test.sum())
         return np.full(n, model), np.full(n, max(model * 0.01, 1e-9))
 
@@ -230,7 +234,7 @@ class TestRunCrossValidation:
         def fit(train, train_vals):
             raise RuntimeError("boom")
 
-        def predict(model, test):  # pragma: no cover
+        def predict(model, train, test):  # pragma: no cover
             return np.zeros(int(test.sum())), None
 
         report = run_cross_validation(xy, v, fit, predict,
@@ -248,7 +252,8 @@ class TestRunCrossValidation:
 
         with pytest.raises(RuntimeError, match="boom"):
             run_cross_validation(
-                xy, v, fit, lambda m, t: (np.zeros(int(t.sum())), None),
+                xy, v, fit,
+                lambda m, tr, t: (np.zeros(int(t.sum())), None),
                 scheme="index", folds=3, on_fold_error="raise")
 
     def test_calibration_z_scores_from_variance(self):
@@ -259,7 +264,7 @@ class TestRunCrossValidation:
         def fit(train, train_vals):
             return float(np.mean(train_vals))
 
-        def predict(model, test):
+        def predict(model, train, test):
             n = int(test.sum())
             # var 给常数大值 → z 很小 → 覆盖率 1
             return np.full(n, model), np.full(n, 1e6)
@@ -279,7 +284,7 @@ class TestRunCrossValidation:
 
         calls = {"n": 0}
 
-        def predict(model, test):
+        def predict(model, train, test):
             calls["n"] += 1
             n = int(test.sum())
             if calls["n"] == 1:

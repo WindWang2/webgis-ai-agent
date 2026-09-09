@@ -77,10 +77,10 @@
 | `stats.h3_lisa` | — | — | — | — | — | — | high/medium | THREAD |
 | `stats.local_geary` | — | — | — | — | — | — | high/medium | THREAD |
 | `stats.st_dbscan` | — | — | — | — | — | — | high/medium | THREAD |
-| `temporal.anomaly` | O(T·H·W)（气候态 + 分段 Welch 近似） | approximate | 8B/cell cells≤2147483647 | — | coarse | rtol=1e-09,atol=1e-09 | medium/medium | THREAD |
-| `temporal.cube_stats` | O(T·H·W)（nan-aware 逐切片统计；T≤512 硬顶） | exact | 8B/cell cells≤2097152 | — | coarse | rtol=1e-12,atol=1e-12 | medium/medium | THREAD |
+| `temporal.anomaly` | O(T·H·W)（气候态 + 分段 Welch 近似） | approximate | 8B/cell cells≤8388608 | — | coarse | rtol=1e-09,atol=1e-09 | medium/medium | THREAD |
+| `temporal.cube_stats` | O(T·H·W)（nan-aware 逐切片统计；T≤512 硬顶） | exact | 8B/cell cells≤8388608 | — | coarse | rtol=1e-12,atol=1e-12 | medium/medium | THREAD |
 | `temporal.hotspot` | — | — | — | — | — | — | high/medium | THREAD |
-| `temporal.phenology` | O(T·N) 填充/平滑 + O(T·N_ok·6) 联合 LS（N=像元，n_ok=完整序列） | approximate | 8B/cell cells≤2147483647 | — | coarse | rtol=1e-09,atol=1e-09 | high/medium | THREAD |
+| `temporal.phenology` | O(T·N) 填充/平滑 + O(T·N_ok·6) 联合 LS（N=像元，n_ok=完整序列） | approximate | 8B/cell cells≤8388608 | — | coarse | rtol=1e-09,atol=1e-09 | high/medium | THREAD |
 | `terrain.aspect` | — | — | 40B/cell | numpy_horn_gradient(numpy,[1,25000000]) | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
 | `terrain.breach` | O(N log N)（priority-flood ×2 + 逐洼地路径切沟） | approximate | 32B/cell cells≤50000000 | numpy_priority_flood(numpy,[1,50000000],approximate) | chunk_boundary | rtol=1e-09,atol=0 | medium/high | — |
 | `terrain.contours` | — | — | 16B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |

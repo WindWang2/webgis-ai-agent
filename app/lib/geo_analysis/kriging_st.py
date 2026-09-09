@@ -348,9 +348,11 @@ def st_cross_validate(
             spatial_variogram=vfit, temporal_range_sec=temporal_range_sec,
             model=model)
 
-    def predict_fn(st_m, test):
+    def predict_fn(st_m, train, test):
+        # 条件集 = **仅训练子集**（Review R1-B1：全量条件会让测试样本
+        # 自条件——τ=0 邻居权重 ≈1，CV 指标无意义且时间守卫不可见）。
         res = st_kriging(
-            pts_metric, values, times_sec,
+            pts_metric[train], values[train], times_sec[train],
             pts_metric[test], times_sec[test], st_m,
             k=k, time_window_sec=time_window_sec,
         )

@@ -1078,7 +1078,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 BackendVariant(id="numpy_batched", backend="numpy", deterministic=True,
                                min_features=12, max_features=300_000,
                                approximation_class="exact",
-                               notes="窗口单位 = 目标格点（ScaleProfile.raster_cells）；定长 k 填充批量系统（哨兵行/列清零含约束行列）；与逐目标解逐位一致（differential oracle 钉死）"),
+                               notes="窗口单位 = 目标格点（ScaleProfile.raster_cells）；定长 k 填充批量系统（哨兵行/列清零含约束行列）；无填充行与逐目标解逐位一致、填充行数学等价（differential oracle 钉死）"),
                 BackendVariant(id="numpy_st_windowed", backend="numpy", deterministic=True,
                                min_features=12, max_features=300_000,
                                approximation_class="exact",

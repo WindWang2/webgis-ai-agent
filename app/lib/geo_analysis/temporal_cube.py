@@ -25,6 +25,9 @@ from app.lib.gis.scientific_errors import (
 )
 
 CUBE_MAX_SLICES = 512                    # 时间片硬顶（先拒绝不 OOM）
+# 栈总元素硬顶（T·H·W；64MB float64 工作集量级）——Review R1-#3：
+# 只有 T 上限挡不住大格网（512×4096² ≈ 34GB），先类型化拒绝不 OOM。
+CUBE_MAX_ELEMENTS = 8 * 1024 * 1024
 
 
 @dataclass
@@ -121,6 +124,13 @@ def build_cube(
             f"时间片 {len(t)} 超过上限 {CUBE_MAX_SLICES}",
             estimated=f"{len(t)} slices", limit=f"≤{CUBE_MAX_SLICES}",
             correction_hint="按时间窗切片或降采样时间轴")
+    if arr.size > CUBE_MAX_ELEMENTS:
+        raise ResourceScaleMismatch(
+            f"栈总元素 {arr.size:,}（T·H·W）超过上限 "
+            f"{CUBE_MAX_ELEMENTS:,}",
+            estimated=f"{arr.size} elements (~{arr.size * 8 / 1024**2:.0f} MiB)",
+            limit=f"≤{CUBE_MAX_ELEMENTS}",
+            correction_hint="缩小格网窗口或降低空间分辨率后重试")
     if arr.shape[0] > 1 and np.any(np.diff(t) < 0):
         raise DegenerateData(
             "时间轴非升序——请先排序（不静默重排：时间序即数据语义）")
