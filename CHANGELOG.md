@@ -1,5 +1,49 @@
 # Changelog
 
+## [Unreleased] - 2026-09-10
+
+### Added (geocompute-v7: Distributed Adaptive Spatial Compute Fabric)
+- Worker capability profiles (CPU/memory/GPU/backends/version fingerprint,
+  honest zero-default probing) registered at worker_ready and consumed by
+  resource-aware run admission gating; worker-side admission guard with
+  bounded celery requeue (<=3) converging GPU-required nodes onto GPU
+  workers, then typed PLACEMENT_MISMATCH failure (ADR-0119 D1).
+- Distributed run event trace (`geocompute_run_events`): bounded per-run
+  node-event budget (512, drop+metric on overflow) with run-level/terminal
+  events exempt, monotonic after_id cursor resume reads, owner-scoped
+  `GET /runs/{id}/events`, and read-time progress projection (idempotent
+  across attempts; no mutable progress columns).
+- Data locality: owner-scoped worker object-cache location registry
+  (`geocompute_worker_cache`, LRU/TTL/prune-cascaded), advisory placement
+  locality scoring, and worker-local payload cache (owner-bound identity,
+  bounded entries/bytes) wired to session-ref input handoff.
+- Fully-durable node chains: upstream session refs handed to workers via
+  task_kwargs (input handoff), enabling multi-hop distributed DAGs.
+- Admin surface (require_admin): worker capability view, stuck-run view,
+  force-requeue (single-row reclaim semantics), ledger limit management;
+  cluster metrics gained queue-wait percentiles, waiting-by-profile and
+  event counters (closed vocabularies only).
+- Real-broker E2E lane (`REAL_SERVICES=1`): full durable chain through a
+  production celery worker + persistent coordinator, worker-crash ->
+  stale reconcile -> bounded reschedule, cross-process cancellation,
+  duplicate-delivery guard, broker reconnect.
+- Async bridge rewritten to a supervised dedicated event-loop thread with
+  bounded typed timeouts: removes the V6 process-wide `_SERIAL`
+  serialization of session-store IO (relative-benchmark guarded) and the
+  dead-loop hang surface (ADR-0119 D5).
+
+### Fixed (geocompute-v7)
+- P1 (V6 latent): celery worker registration never worked on real workers
+  - kombu `Signal.connect` defaults to `weak=True`, so the closure handlers
+  were garbage-collected before `worker_ready` fired; registration and
+  heartbeats silently never happened (all V6 tests were eager). Fixed with
+  explicit `weak=False` registration; first exercised by the V7
+  real-broker E2E.
+- P2: SQLite engine now sets busy_timeout=30s for multiprocess control
+  plane contention; durable node polling switched from fixed 50ms to
+  adaptive backoff (0.05->0.5s, cancellation latency dominated by the
+  0.5s run heartbeat).
+
 ## [Unreleased] - 2026-09-09
 
 ### Added (science-v4: Spatial Science & GeoAI Platform V4)

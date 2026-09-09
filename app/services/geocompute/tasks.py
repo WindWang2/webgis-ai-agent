@@ -192,12 +192,13 @@ def run_geocompute_node(
             payload=payload, locality_key=exec_node.semantic_fingerprint(),
         )
         rows = len(payload.get("features") or payload.get("rows") or [])
+        # node_output_ready = worker 侧唯一的输出信号；节点终局事件
+        # （node_completed 等）由 coordinator 统一发射（契约：终局事实
+        # 单一来源，双写会让无重复输出断言失真）。
         _emit_event(run_id, "node_output_ready", node_id=exec_node.node_id,
                     worker_id=worker_id, attempt=node_attempt, rows=rows)
 
         result = _bounded_summary(payload)
-        _emit_event(run_id, "node_completed", node_id=exec_node.node_id,
-                    worker_id=worker_id, attempt=node_attempt, rows=rows)
         finish_job(job_id, result=result, result_ref=ref_id)
         return result
 

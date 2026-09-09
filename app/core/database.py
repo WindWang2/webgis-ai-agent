@@ -16,6 +16,10 @@ def get_engine():
 
     if is_sqlite:
         connect_args["check_same_thread"] = False
+        # V7（cluster E2E / 多进程控制面）：busy timeout —— 跨进程并发写
+        # （coordinator + worker 心跳/事件）下默认 0 等待会立即抛
+        # 「database is locked」；30s 让短事务排队而非失败。
+        connect_args["timeout"] = 30
 
     engine_kwargs = {
         "url": settings.DATABASE_URL,

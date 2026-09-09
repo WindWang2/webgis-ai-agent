@@ -891,13 +891,16 @@ class ClusterRunStore:
         *,
         max_attempts: int = DEFAULT_MAX_RUN_ATTEMPTS,
         ledger: Optional["ClusterLedger"] = None,
+        require_expired: bool = True,
     ) -> Optional[str]:
         """admin 强制回队（stuck run 复位）：语义与 ``reclaim_expired`` 的
         单行版本完全一致 —— attempt 预算内 → queued（attempt++）；
         耗尽 → failed[WORKER_LOSS]；同事务精确归还账本。
 
+        ``require_expired=True``（默认）：只允许复位 lease 已过期的占用态
+        run（与 stuck 视图同口径 —— 防止误杀健康在跑 run）。
         返回 "requeued" | "failed" | None（无 CAS 命中 = run 已被并发转移/
-        不存在/不在占用态 —— 幂等安全）。
+        不存在/不在占用态/lease 未过期 —— 幂等安全）。
         """
         with self._factory() as db:
             row = db.execute(
@@ -907,6 +910,11 @@ class ClusterRunStore:
                 s.value for s in LEASED_STATUSES
             }:
                 return None
+            if require_expired:
+                if row.lease_expires_at is None:
+                    return None
+                if row.lease_expires_at >= _utcnow():
+                    return None  # 健康在跑 → 不可复位（stuck 语义）
             new_attempts = row.attempts + 1
             error_code = run_error_for_reclaim(new_attempts, max_attempts)
             to_status = (

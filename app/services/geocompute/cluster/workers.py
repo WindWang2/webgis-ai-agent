@@ -105,7 +105,6 @@ def connect_celery_signals() -> bool:
     except Exception:  # noqa: BLE001 - celery 不可用 → 不接入
         return False
 
-    @worker_ready.connect
     def _on_ready(**_):
         global _thread
         worker_id = celery_worker_id()
@@ -129,7 +128,6 @@ def connect_celery_signals() -> bool:
         logger.info("[geocompute-v6] worker registered: %s profiles=%s",
                     worker_id, sorted(profiles))
 
-    @worker_shutdown.connect
     def _on_shutdown(**_):
         global _thread
         with _thread_lock:
@@ -151,6 +149,14 @@ def connect_celery_signals() -> bool:
         except Exception:  # noqa: BLE001 - 尽力注销；失联 prune 兜底
             pass
 
+    # V7 P1 修复（V6 潜伏缺陷）：kombu Signal.connect 默认 ``weak=True``，
+    # 闭包 handler 的唯一引用是弱引用 —— connect_celery_signals 返回后
+    # handler 即被 GC，``worker_ready`` 永不触发。后果：真实 worker 的
+    # 注册/心跳从未生效（集群容量恒为空视图），而 V6 全部测试都是 eager，
+    # real-services lane 也从未跑过 geocompute worker —— 直到 V7
+    # real-broker E2E 才暴露。必须显式 ``weak=False`` 强引用注册。
+    worker_ready.connect(_on_ready, weak=False)
+    worker_shutdown.connect(_on_shutdown, weak=False)
     _signals_connected = True
     return True
 
