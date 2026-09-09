@@ -35,3 +35,14 @@
   （流式往返/中途取消/超限/隔离后端）；2449 passed
 - 行为变更（有意图）：worker+streaming 1.1 拒绝 → 1.2+ 允许（版本门控）；
   协议版本 1.0 → 3.0（lockstep，同仓 spawn 无偏差面）
+
+## Wave 10-16（2026-09-10）：worker 化投影/fabric/lifecycle/认证/语料/证明 ✅
+- Wave 10-11（5be122b9）：worker 四类投影 + 对账扩展 + 动态代理类
+- Wave 12（3d955c3b）：fabric bridge 能力感知分发（additive 委托）
+- Wave 13（189565d3）：drain/pin/revoke 传播/refresh 信号
+- Wave 14-15（55c67399）：certification V3 + 恶意语料 20 场景
+- Wave 16（989c4280 + 本提交）：extdemo-v3-pack 完成证明 + 性能基准 + ADR-0120/docs
+- 生成物再生成：CONTRACT_DRIFT_REPORT/QUALITY_MANIFEST/QUALITY_REPORT/
+  generated-artifacts.json（输入变化 → 按仓库流程 gen_* + --update）
+- quality gates：334 passed, 7 skipped（含 OpenAPI 快照一致性）
+- 扩展域：2492 passed（基线 2388 → +104 V3 用例）

@@ -12,7 +12,7 @@
 
 from app.extensions_platform.sdk import ToolExtensionSpec
 from app.extensions_platform.sdk.model import ModelProviderSpec
-from app.extensions_platform.sdk.provider import ProviderExtensionSpec, StreamingVectorProvider
+from app.extensions_platform.sdk.provider import StreamingVectorProvider
 
 
 def activate(ctx):

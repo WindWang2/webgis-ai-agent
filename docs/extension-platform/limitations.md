@@ -183,3 +183,67 @@ limitations. If you find a deviation, it is a bug, not a policy; see
   An extension that crashes twice, gets re-discovered, and crashes twice
   again has not yet reached the default quarantine threshold — quarantine
   is a state-machine event, not a rate limit.
+
+## V3 additions (ADR-0120) — what is now real, and what still is not
+
+Resolved in V3 (previously listed here):
+
+- ~~Signing is shared-key HMAC, not asymmetric~~ — Ed25519 via
+  `cryptography` with a file-backed trust store (rotation, retired, and
+  revocation semantics). HMAC v1 verification is preserved byte-for-byte
+  for existing packs. `retired` keys produce `signed_retired`: signature
+  mathematically valid, **never** eligible for trust elevation.
+- ~~No marketplace or distribution service~~ — a server-side registry
+  (content-addressed blobs, file-locked publish, read-only HTTP API) and a
+  distribution installer with a shared preflight, crash-safe two-rename
+  swap with startup recovery, and versioned rollback. See
+  [marketplace.md](marketplace.md).
+- ~~Class-instance projections must be in-process~~ — worker mode now
+  supports algorithms (serializable descriptors; execution stays in worker
+  tools), data providers (7-method RPC proxy with dynamically inherited
+  mixins), cartography and workflow packs (declarative payloads). Requires
+  `api_version >= 1.2.0`; 1.1 manifests keep the V2 rejection.
+- ~~Worker model providers cannot stream~~ — streaming rides protocol
+  v3 (credit flow control, cooperative cancel, per-frame idle timeout that
+  does **not** count as worker crashes). Runtime-gated on the negotiated
+  protocol, not just the manifest version.
+- ~~data_fabric does not dispatch the provider mixins~~ —
+  `fabric_bridge` + `DataFabricManager.stream_catalog_item_features`
+  dispatch to `StreamingVectorProvider`/`TileProvider`/`RasterWindowProvider`
+  when present; without the mixin the behavior is an honest typed refusal
+  (tiles/raster) or a logged degrade-to-sync-query (streaming). Existing
+  query paths are byte-identical.
+- ~~Single-process host, no cross-process coordination~~ — partially:
+  hosts now share an install root + registry with a file-lock publish
+  protocol and a `.refresh` notification signal. There is still **no
+  distributed activation/registry consensus**; each host discovers
+  independently and the signal is advisory.
+
+Still true in V3 (unchanged or newly precise):
+
+- **Worker isolation with bubblewrap is namespace-level OS confinement,
+  not a kernel sandbox.** `--unshare-all` makes direct socket use
+  unreachable (the broker becomes the only egress channel — enforced, not
+  advisory) and the bind set is minimal (the repo root, `.env`, and local
+  data are not visible). But seccomp/LSM syscall filtering is still out of
+  scope; `EXTENSIONS_ISOLATION_BACKEND` defaults to `process`, and a
+  per-spawn bwrap failure is a typed activation failure — the platform
+  never silently falls back.
+- **Rollback is operator-driven** — but now versioned: the installer keeps
+  `versions/` archives and rollback runs the same preflight (a revoked
+  version cannot be rolled back to).
+- **Revocation propagation is lazy.** Revocations take effect at
+  discover/verify/install/rollback/refresh checks. A long-running host
+  that never performs these operations and never calls
+  `refresh_revocations()` keeps serving a revoked extension; the `.refresh`
+  signal and trust-store mtime checks are advisory polling, not push.
+- **In-process health checks remain synchronous and unbounded**, and
+  in-process `deactivate` still keeps modules in `sys.modules`. Drain is a
+  worker-mode concept (in-process drain is an explicit no-op).
+- **The conformance corpus does not spawn workers** (unchanged lane split);
+  V3 adds real-subprocess suites for streaming, projection, isolation and
+  the end-to-end completion proof (`test_v3_completion_proof.py`).
+- **Fingerprint blind spots unchanged**: `__pycache__`/`.pyc` exclusion,
+  no permission-bit/symlink-attribute coverage in the fingerprint itself;
+  `package_layout` certification now *detects* symlinks but the signature
+  still does not cover metadata.

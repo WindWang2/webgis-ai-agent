@@ -232,3 +232,32 @@ python -m app.extensions_platform sbom extdemo.pack --json
 Publishing checklist: run `sbom`, resolve `secret_scan` findings, then
 `package` (sign) — a leaked key found by the scan should never make it
 into a signed artifact. `certify` runs the scan as part of its suite.
+
+## V3: asymmetric signing and the registry
+
+Signing now supports Ed25519 alongside (and preferred over) the V2
+shared-key HMAC. The v2 `signature.json` binds the content fingerprint to
+`(publisher, key_id)`; the trust store decides whether that key is active
+(elevatable), retired (verifiable but never elevated) or revoked
+(quarantine).
+
+```bash
+# keys (operator machine; private key never leaves it)
+python -m app.extensions_platform keygen --publisher acme --key-id acme-2026 --out-dir keys/
+
+# sign
+python -m app.extensions_platform sign ./my-pack --publisher acme \
+  --key-id acme-2026 --private-key keys/acme-2026.private.pem
+
+# publish (registry enforces digest, signature, SBOM scan, allowlist)
+python -m app.extensions_platform publish ./my-pack \
+  --registry-dir /srv/ext-registry --trust-store /srv/ext-trust.json \
+  --allow-publisher acme
+```
+
+Registry layout, HTTP read API, installation, upgrade/rollback and
+revocation propagation are documented in
+[marketplace.md](marketplace.md). Worker-capable packs should declare
+`api_version >= 1.2.0` and may stream (`execution.max_stream_events`,
+`execution.stream_window`) — see
+[security-boundary.md](security-boundary.md) for the isolation model.

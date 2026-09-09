@@ -144,7 +144,6 @@ def test_v3_completion_proof(ecosystem, tmp_path):
     assert index == {"shape_index": 2.0, "deterministic": True}
 
     # ── 5. broker 消费：未授权出网 → 默认 deny（typed）──────────────
-    from app.extensions_platform.diagnostics import DiagnosticCode
 
     with pytest.raises(Exception):
         record.worker.call("v3demo_fetch_title", {"url": "http://example.com"}, timeout=10.0)
