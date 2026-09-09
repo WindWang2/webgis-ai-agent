@@ -171,6 +171,41 @@ class ResourceClaim(BaseModel):
     units: int = Field(default=0, ge=0, description="并发槽位单位（重节点 2，复用 slot_units_for 语义）")
 
 
+class ResourceRequest(BaseModel):
+    """run 级资源 envelope（V7 cluster submit 可选字段；placement 准入依据）。
+
+    语义（01-architecture.md §2.2，round1 #3 修订后的三层放置）：
+    - 全部字段有服务端上界 —— 客户端不得自授无界 GPU/内存（非目标声明）；
+    - ``gpu > 0`` → 只有 GPU worker 合格（run 级准入 gating 是硬约束；
+      节点级由 worker 侧准入守卫有界收敛，placement 承诺分层声明）；
+    - ``required_profiles`` 在 submit 端与 durable 节点自动派生集做 **union**
+      （用户只能加宽不能收窄 —— 收窄会把「安全留队」劣化为必然 WORKER_LOSS）。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    min_mem_mb: int = Field(default=0, ge=0, le=2_097_152)
+    min_cpu: int = Field(default=0, ge=0, le=1024)
+    gpu: int = Field(default=0, ge=0, le=8)
+    zone: Optional[str] = Field(default=None, max_length=64)
+    required_profiles: list[str] = Field(default_factory=list, max_length=8)
+
+    def normalized(self) -> "ResourceRequest":
+        """词表过滤后的规范投影（非法 profile 词在 submit 端 422，这里兜底）。"""
+        from app.services.geocompute.durable import EXECUTION_QUEUE_PROFILES
+
+        return ResourceRequest(
+            min_mem_mb=self.min_mem_mb,
+            min_cpu=self.min_cpu,
+            gpu=self.gpu,
+            zone=(self.zone or None),
+            required_profiles=sorted(
+                {p for p in self.required_profiles
+                 if p in EXECUTION_QUEUE_PROFILES}
+            ),
+        )
+
+
 #: plan 快照落库上界（防止 DB 行膨胀 DoS；typed 413 拒绝）。
 MAX_PLAN_SNAPSHOT_BYTES = 256 * 1024
 

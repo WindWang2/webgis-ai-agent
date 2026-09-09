@@ -409,6 +409,9 @@ class GeoComputeClusterRun(Base):
     reserved_units = Column(Integer, nullable=False, default=0)
     #: 必需 profile 通道（["raster","heavy_cpu"]）；能力匹配的依据
     required_profiles = Column(JSON, nullable=True)
+    #: V7：run 级资源 envelope（cluster.contracts.ResourceRequest 投影；
+    #: ≤1KB 写入侧钳制）。可空 = V6 行为：只按 required_profiles 匹配。
+    resource_request = Column(JSON, nullable=True)
     error_code = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
@@ -444,6 +447,9 @@ class GeoComputeClusterWorker(Base):
     role = Column(String(20), nullable=False, default="worker")
     #: {profile: slots}（coordinator 为空 dict）
     profiles = Column(JSON, nullable=True)
+    #: V7：能力剖面（cluster.capabilities.WorkerCapabilityProfile 投影；
+    #: ≤4KB 写入侧钳制。可空 = V6 语义：placement 只按 profiles 匹配）。
+    capability = Column(JSON, nullable=True)
     heartbeat_at = Column(DateTime, nullable=False)
     lease_epoch = Column(Integer, nullable=False, default=0)
     lease_expires_at = Column(DateTime, nullable=True)
@@ -453,6 +459,70 @@ class GeoComputeClusterWorker(Base):
     __table_args__ = (
         CheckConstraint("role IN ('coordinator','worker')", name="ck_gc_worker_role"),
         Index("idx_gc_worker_role_heartbeat", "role", "heartbeat_at"),
+    )
+
+
+class GeoComputeRunEvent(Base):
+    """GeoCompute V7 分布式执行事件（有界 observability trace）。
+
+    单一事实源边界（01-architecture.md §2.5）：
+    - **终态证据 of record 仍是 ``geocompute_run_evidence``**（append-once，
+      全文件无 delete）—— 本表是尽力而为的执行过程 trace，随 run 行
+      retention 级联删除 + 独立 TTL 清理；
+    - 写入方 = coordinator + worker 进程（run_id 经 task_kwargs 显式穿透，
+      Celery 边界丢 contextvars）；append 独立短事务，任何失败 fail-open
+      （丢弃 + metric），绝不抛进节点执行路径；
+    - 有界：节点级事件 per-run ≤512（append 前 COUNT，超限丢弃 + metric）；
+      run 级/终态/治理事件豁免预算（终态可见性不因节点事件洪泛丢失）；
+    - per-run 单调序 = 全局自增 id（弃稠密 per-run seq，消除分配竞争面）；
+      断点续读游标 = after_id。
+    """
+    __tablename__ = "geocompute_run_events"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    run_id = Column(String(64), nullable=False)
+    #: 封闭词表（cluster.events.EVENT_VOCABULARY；≤32 字符）
+    event = Column(String(32), nullable=False)
+    node_id = Column(String(128), nullable=True)
+    worker_id = Column(String(128), nullable=True)
+    attempt = Column(Integer, nullable=True)
+    status = Column(String(20), nullable=True)
+    rows = Column(Integer, nullable=True)
+    bytes_ = Column("bytes", BigInteger().with_variant(Integer, "sqlite"), nullable=True)
+    error_code = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        Index("idx_gc_event_run_id", "run_id", "id"),
+        Index("idx_gc_event_created", "created_at"),
+    )
+
+
+class GeoComputeWorkerCache(Base):
+    """GeoCompute V7 worker 对象缓存的位置**声明**注册表（非缓存本体）。
+
+    - worker 本地盘是缓存本体；本表只回答「某 worker 是否声明持有某 owner
+      域的某内容键」—— 一切不一致（TTL 竞态/prune 后复活/登记失败）的失败
+      方向都是 miss → 走 session/BlobStore 重物化（性能损失非正确性损失）；
+    - 跨 owner 不泄漏：cache_key = sha256(owner_scope + ":" + locality_key)，
+      查找/登记/打分全部按 owner 派生键精确匹配；worker 本地缓存键同样绑定
+      owner 域，每次复用均过 owner/digest 校验；
+    - 有界：per-worker entries ≤64 / bytes ≤4GiB（写入侧 LRU 逐出）；TTL 由
+      coordinator tick 批量清理；worker 注销/prune 同批删除其行。
+    """
+    __tablename__ = "geocompute_worker_cache"
+
+    worker_id = Column(String(128), primary_key=True)
+    cache_key = Column(String(64), primary_key=True)
+    #: owner 域哈希（与 cache_key 一致来源；审计投影用，不参与寻址）
+    owner_scope = Column(String(40), nullable=False)
+    size_bytes = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
+    cached_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    last_hit_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        Index("idx_gc_wcache_worker_hit", "worker_id", "last_hit_at"),
+        Index("idx_gc_wcache_cached_at", "cached_at"),
     )
 
 
@@ -480,4 +550,4 @@ class GeoComputeResourceUsage(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
-__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeResourceUsage", "get_init_sql"]
+__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeRunEvent", "GeoComputeWorkerCache", "GeoComputeResourceUsage", "get_init_sql"]
