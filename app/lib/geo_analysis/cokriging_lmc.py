@@ -315,23 +315,44 @@ def cokriging_lmc(
 
         z1_nb = z1[i1[start:end]]
         z2_nb = z2[i2[start:end]]
+
+        # science-v5 W3：批量求解（numpy 对堆叠矩阵逐片调同一 LAPACK 例程
+        # ——well-conditioned 行与逐行解同环境逐位一致，differential oracle
+        # 钉死）。隔离条件 = LinAlgError ∨ 非有限：整批恰奇异时 numpy 对
+        # 全栈 raise（不指认行）→ 逐行重解隔离；近奇异片可能静默解出
+        # 非有限值 → 逐行回退（V4 同语义，不静默吞）。
+        try:
+            # numpy ≥2.x 对堆叠矩阵 + 向量右端项不再自动按向量情形广播
+            # ——显式 (c, m, 1) 形状，解后去列轴（逐片仍是同一 LAPACK 例程）。
+            sol_all: Optional[np.ndarray] = np.linalg.solve(
+                C, rhs[:, :, None])[:, :, 0]
+        except np.linalg.LinAlgError:
+            sol_all = None
         for r_i in range(c):
-            try:
-                sol = np.linalg.solve(C[r_i], rhs[r_i])
-                if not np.isfinite(sol).all():
-                    raise np.linalg.LinAlgError("non-finite")
-                w1 = sol[:k1]
-                w2 = sol[k1:k1 + k2]
-                preds[start + r_i] = float(w1 @ z1_nb[r_i] + w2 @ z2_nb[r_i])
-                var = C00 - float(sol[:k1 + k2] @ rhs[r_i, :k1 + k2]) \
-                    - float(sol[m - 2])
-                varis[start + r_i] = max(var, 0.0)
-                if var < 0:
-                    degraded += 1
-            except np.linalg.LinAlgError:
+            sol: Optional[np.ndarray] = None
+            if sol_all is not None and np.isfinite(sol_all[r_i]).all():
+                sol = sol_all[r_i]
+            else:
+                try:
+                    cand = np.linalg.solve(C[r_i], rhs[r_i])
+                    if not np.isfinite(cand).all():
+                        raise np.linalg.LinAlgError("non-finite")
+                    sol = cand
+                except np.linalg.LinAlgError:
+                    sol = None
+            if sol is None:
                 # 病态系统：主变量邻域均值回退（counted，从不静默）
                 preds[start + r_i] = float(np.mean(z1_nb[r_i]))
                 varis[start + r_i] = float(np.var(z1_nb[r_i]))
+                degraded += 1
+                continue
+            w1 = sol[:k1]
+            w2 = sol[k1:k1 + k2]
+            preds[start + r_i] = float(w1 @ z1_nb[r_i] + w2 @ z2_nb[r_i])
+            var = C00 - float(sol[:k1 + k2] @ rhs[r_i, :k1 + k2]) \
+                - float(sol[m - 2])
+            varis[start + r_i] = max(var, 0.0)
+            if var < 0:
                 degraded += 1
 
     return CokrigingResult(
