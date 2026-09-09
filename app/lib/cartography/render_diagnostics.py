@@ -140,6 +140,15 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "diagnostics_truncated", "warning",
             "诊断条目超出导出预算，超出部分未进入产物披露（上限 {detail} 条）",
         ),
+        # —— V6（ADR-0120 W6）确定性标签碰撞 ——
+        RenderDiagnosticSpec(
+            "label_collision_relaxed", "info",
+            "标签碰撞求解：部分标签位移或省略（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "label_budget_exceeded", "warning",
+            "标签数量超出导出预算（{detail}），超出部分未渲染",
+        ),
     )
 }
 
@@ -275,6 +284,14 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     # diagnostics_truncated 的发射器是本模块 DiagnosticSink（publication
     # 多帧聚合路径的真实消费方，见 compile_publication_svg / vector-pdf 链）。
     "diagnostics_truncated": ("app.lib.cartography.render_diagnostics",),
+    "label_collision_relaxed": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
+    "label_budget_exceeded": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
 }
 
 

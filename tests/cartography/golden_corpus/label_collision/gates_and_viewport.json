@@ -1,0 +1,59 @@
+{
+  "name": "gates_and_viewport",
+  "viewport": [
+    0,
+    0,
+    40,
+    40
+  ],
+  "labels": [
+    {
+      "id": "E1",
+      "text": "   ",
+      "kind": "point",
+      "x": 20,
+      "y": 20,
+      "angle": 0,
+      "font_size": 10,
+      "priority": 0
+    },
+    {
+      "id": "O1",
+      "text": "edge",
+      "kind": "point",
+      "x": 39,
+      "y": 39,
+      "angle": 0,
+      "font_size": 12,
+      "priority": 1
+    }
+  ],
+  "maxLabels": 400,
+  "expected": {
+    "placements": [
+      {
+        "id": "E1",
+        "x": 20,
+        "y": 20,
+        "angle": 0.0,
+        "status": "suppressed",
+        "reason": "empty_text"
+      },
+      {
+        "id": "O1",
+        "x": 39,
+        "y": 39,
+        "angle": 0.0,
+        "status": "suppressed",
+        "reason": "collision"
+      }
+    ],
+    "stats": {
+      "total": 2,
+      "placed": 0,
+      "suppressed": 2,
+      "collisions": 1
+    },
+    "budgetExceeded": false
+  }
+}

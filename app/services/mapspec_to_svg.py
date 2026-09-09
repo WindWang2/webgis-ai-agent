@@ -24,6 +24,18 @@ from app.lib.cartography.label_engine import (
 from app.lib.cartography.label_engine import (
     fit_label_text as _fit_label_text,
 )
+from app.lib.cartography.label_collision import (
+    MAX_LABELS_PER_EXPORT as _MAX_LABELS_PER_EXPORT,
+)
+from app.lib.cartography.label_collision import (
+    CollisionLabel as _CollisionLabel,
+)
+from app.lib.cartography.label_collision import (
+    estimate_label_box as _estimate_collision_box,
+)
+from app.lib.cartography.label_collision import (
+    solve_export_labels as _solve_export_labels,
+)
 from app.lib.cartography.render_diagnostics import (
     MAX_DIAGNOSTICS_PER_EXPORT as _MAX_DIAGNOSTICS_PER_EXPORT,
 )
@@ -408,6 +420,13 @@ def compile_mapspec_to_svg_detailed(
     feature_count = 0
     truncated_features = False
     timed_out = False
+
+    # W6：确定性标签碰撞模式（spec.layout.labels.collision == "deterministic"，
+    # v1.1 additive）。缺省关闭 —— legacy 路径 byte-stable。
+    _layout_cfg = mapspec.get("layout") if isinstance(mapspec, dict) else None
+    _labels_cfg = _layout_cfg.get("labels") if isinstance(_layout_cfg, dict) else None
+    collision_mode = isinstance(_labels_cfg, dict) and _labels_cfg.get("collision") == "deterministic"
+    label_requests: List[Dict[str, Any]] = []
 
     def _emit_diag(code: str, detail: str = "", layer_id: Any = None) -> None:
         """按权威词表发射诊断（封顶防 DoS；未知码由工厂拒绝为 None）。"""
@@ -898,11 +917,61 @@ def compile_mapspec_to_svg_detailed(
                             text_escaped = _escape_svg_attr(fitted_text)
 
                             base_halo_w = _safe_float(_resolve_paint_value(paint.get("text-halo-width") or layout.get("text-halo-width") or paint.get("haloWidth") or layout.get("haloWidth") or paint.get("textHaloWidth"), props, 0.0), 0.0)
+                            halo_w = None
+                            halo_color = None
+                            halo_opacity = None
                             if base_halo_w > 0:
                                 halo_w = _fmt_num(base_halo_w * dpi_scale * 2.0)
                                 halo_color = _escape_svg_attr(_resolve_paint_value(paint.get("text-halo-color") or layout.get("text-halo-color") or paint.get("haloColor") or layout.get("haloColor") or paint.get("textHaloColor"), props, "#ffffff"))
                                 halo_opacity_val = _resolve_paint_value(paint.get("text-halo-opacity") or layout.get("text-halo-opacity") or paint.get("haloOpacity") or layout.get("haloOpacity"), props, 1.0)
                                 halo_opacity = _escape_svg_attr(_fmt_num(_safe_float(halo_opacity_val, 1.0)))
+
+                            if collision_mode:
+                                # W6：确定性碰撞模式 —— 不内联发射，收集
+                                # 请求供全图求解（标签组置顶，制图惯例）。
+                                # feature_count 按收集计数（求解抑制的要素
+                                # 在诊断 label_collision_relaxed 中披露）。
+                                _gtype_c = geom.get("type")
+                                _coords_c = geom.get("coordinates")
+                                _lkind = "point"
+                                _lang = 0.0
+                                if (
+                                    _gtype_c == "LineString"
+                                    and isinstance(_coords_c, list)
+                                    and len(_coords_c) >= 2
+                                ):
+                                    _lkind = "line"
+                                    _mi = len(_coords_c) // 2
+                                    _pa = project(_coords_c[_mi - 1] if _mi >= 1 else _coords_c[0])
+                                    _pb = project(_coords_c[_mi] if _mi >= 1 else _coords_c[1])
+                                    # project() 返回 fmt_num 字符串 —— 角度计算前转 float
+                                    _lang = _math.degrees(_math.atan2(
+                                        float(_pb[1]) - float(_pa[1]),
+                                        float(_pb[0]) - float(_pa[0]),
+                                    ))
+                                elif _gtype_c in ("Polygon", "MultiPolygon"):
+                                    _lkind = "polygon"
+                                label_requests.append({
+                                    "id": f"lbl{len(label_requests)}-{_lid}-{_fmt_num(coord[0])}-{_fmt_num(coord[1])}",
+                                    "text": fitted_text,
+                                    "kind": _lkind,
+                                    "x": float(x),
+                                    "y": float(y),
+                                    "angle": _lang,
+                                    "font_px": base_size * dpi_scale,
+                                    "font_size_attr": font_size,
+                                    "color": color,
+                                    "opacity": opacity,
+                                    "font_family": font_family,
+                                    "halo_w": halo_w,
+                                    "halo_color": halo_color,
+                                    "halo_opacity": halo_opacity,
+                                    "layer_id": _lid,
+                                })
+                                feature_count += 1
+                                continue
+
+                            if halo_w is not None:
                                 elements_svg += f'<text x="{x}" y="{y}" font-size="{font_size}" font-family="{font_family}" fill="none" stroke="{halo_color}" stroke-width="{halo_w}" stroke-opacity="{halo_opacity}" stroke-linejoin="round" stroke-linecap="round" text-anchor="{svg_text_anchor}" dominant-baseline="{svg_dominant_baseline}">{text_escaped}</text>\n'
 
                             elements_svg += f'<text x="{x}" y="{y}" font-size="{font_size}" font-family="{font_family}" fill="{color}" fill-opacity="{opacity}" text-anchor="{svg_text_anchor}" dominant-baseline="{svg_dominant_baseline}">{text_escaped}</text>\n'
@@ -918,13 +987,78 @@ def compile_mapspec_to_svg_detailed(
         viewbox_w = _fmt_num(scaled_width)
         viewbox_h = _fmt_num(scaled_height)
 
+        labels_group = ""
+        if collision_mode and label_requests:
+            solution = _solve_export_labels(
+                [
+                    _CollisionLabel(
+                        id=r["id"], text=r["text"], kind=r["kind"],
+                        x=r["x"], y=r["y"], angle=r["angle"],
+                        font_size=r["font_px"], priority=i,
+                    )
+                    for i, r in enumerate(label_requests)
+                ],
+                [0.0, 0.0, float(scaled_width), float(scaled_height)],
+            )
+            by_id = {r["id"]: r for r in label_requests}
+            parts: List[str] = []
+            for p in solution.placements:
+                if p.status != "placed":
+                    continue
+                r = by_id[p.id]
+                _fs = r["font_px"]
+                if r["kind"] == "point":
+                    # 渲染映射：求解盒左下角 → 基线 y（上升部补偿），文本
+                    # 起排 —— 盒与可见字形对齐；TS 侧同式（差分 fixtures 锁定）。
+                    _h = _estimate_collision_box(r["text"], _fs)[1]
+                    _tx, _ty = p.x, p.y + _h - 0.25 * _fs
+                    _anchor, _baseline, _transform = "start", "auto", ""
+                else:
+                    _tx, _ty = p.x, p.y
+                    _anchor, _baseline = "middle", "central"
+                    _transform = (
+                        f' transform="rotate({_fmt_num(p.angle)} {_fmt_num(p.x)} {_fmt_num(p.y)})"'
+                        if p.angle != 0.0 else ""
+                    )
+                _halo_main = ""
+                if r["halo_w"] is not None:
+                    _halo_main = (
+                        f'<text x="{_fmt_num(_tx)}" y="{_fmt_num(_ty)}" font-size="{r["font_size_attr"]}" '
+                        f'font-family="{r["font_family"]}" fill="none" stroke="{r["halo_color"]}" '
+                        f'stroke-width="{r["halo_w"]}" stroke-opacity="{r["halo_opacity"]}" '
+                        f'stroke-linejoin="round" stroke-linecap="round" '
+                        f'text-anchor="{_anchor}" dominant-baseline="{_baseline}"{_transform}>'
+                        f'{_escape_svg_attr(r["text"])}</text>\n'
+                    )
+                parts.append(
+                    _halo_main
+                    + f'<text x="{_fmt_num(_tx)}" y="{_fmt_num(_ty)}" font-size="{r["font_size_attr"]}" '
+                    f'font-family="{r["font_family"]}" fill="{r["color"]}" fill-opacity="{r["opacity"]}" '
+                    f'text-anchor="{_anchor}" dominant-baseline="{_baseline}"{_transform}>'
+                    f'{_escape_svg_attr(r["text"])}</text>'
+                )
+            _sup_n = solution.suppressed_count
+            if _sup_n:
+                _emit_diag(
+                    "label_collision_relaxed",
+                    detail=f"placed={solution.stats['placed']} suppressed={_sup_n}",
+                )
+            if solution.budget_exceeded:
+                _emit_diag("label_budget_exceeded", detail=str(_MAX_LABELS_PER_EXPORT))
+            if parts:
+                labels_group = (
+                    '  <g class="mapspec-labels">\n    '
+                    + "\n    ".join(parts)
+                    + "\n  </g>\n"
+                )
+
         return SvgCompilation(
             svg=f"""<svg width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">
   <rect width="100%" height="100%" fill="#ffffff" />
   <g class="mapspec-vector-layers">
     {elements_svg}
   </g>
-</svg>""",
+{labels_group}</svg>""",
             diagnostics=diagnostics,
             feature_count=feature_count,
             truncated_features=truncated_features,

@@ -12,9 +12,21 @@ export interface MapSpecToSvgOptions {
   height?: number;
   padding?: number;
   includeMarginalia?: boolean;
+  /**
+   * V6（W6）：诊断 sink —— 确定性标签碰撞模式（spec.layout.labels.collision
+   * === "deterministic"）的 label_collision_relaxed / label_budget_exceeded
+   * 经此上报（与后端孪生 diagnostics 数组同码表）。
+   */
+  onDiagnostic?: (code: string, detail: string) => void;
 }
 
 import { computeOversampleBoost, resolveOversampledTileGrid, mercY } from "../map-kit/oversample";
+import {
+  estimateLabelBox,
+  fitLabel,
+  MAX_LABELS_PER_EXPORT,
+  solveExportLabels,
+} from "./label-solver";
 
 /**
  * Escapes a string for safe interpolation into an SVG attribute value.
@@ -223,6 +235,10 @@ export function compileMapSpecToSvg(
   const height = options.height ?? 800;
   const padding = options.padding ?? 40;
   const dpiScale = targetDpi / 72;
+
+  // W6：确定性标签碰撞模式（v1.1 additive；缺省关闭 —— legacy 输出不变）。
+  const collisionMode = mapspec?.layout?.labels?.collision === "deterministic";
+  const labelRequests: Array<any> = [];
 
   const scaledWidth = width * dpiScale;
   const scaledHeight = height * dpiScale;
@@ -554,11 +570,51 @@ export function compileMapSpecToSvg(
         const textEscaped = escapeSvgAttr(rawText);
 
         const baseHaloWidth = Number(resolvePaintValue(paint["text-halo-width"] ?? layout["text-halo-width"] ?? paint["haloWidth"] ?? layout["haloWidth"] ?? paint["textHaloWidth"], props, 0));
+        let haloWidth: string | null = null;
+        let haloColor: string | null = null;
+        let haloOpacity: string | null = null;
         if (baseHaloWidth > 0) {
-          const haloWidth = fmtNum(baseHaloWidth * dpiScale * 2);
-          const haloColor = escapeSvgAttr(resolvePaintValue(paint["text-halo-color"] ?? layout["text-halo-color"] ?? paint["haloColor"] ?? layout["haloColor"] ?? paint["textHaloColor"], props, "#ffffff"));
+          haloWidth = fmtNum(baseHaloWidth * dpiScale * 2);
+          haloColor = escapeSvgAttr(resolvePaintValue(paint["text-halo-color"] ?? layout["text-halo-color"] ?? paint["haloColor"] ?? layout["haloColor"] ?? paint["textHaloColor"], props, "#ffffff"));
           const haloOpacityVal = resolvePaintValue(paint["text-halo-opacity"] ?? layout["text-halo-opacity"] ?? paint["haloOpacity"] ?? layout["haloOpacity"], props, 1);
-          const haloOpacity = escapeSvgAttr(fmtNum(Number(haloOpacityVal)));
+          haloOpacity = escapeSvgAttr(fmtNum(Number(haloOpacityVal)));
+        }
+
+        if (collisionMode) {
+          // W6：确定性碰撞模式 —— 收集请求供全图求解（与 Python 孪生同构）。
+          // 注意 project() 返回 fmtNum 字符串：数值用途须 Number() 还原。
+          let lkind: "point" | "line" | "polygon" = "point";
+          let lang = 0;
+          if (geom.type === "LineString" && Array.isArray(geom.coordinates) && geom.coordinates.length >= 2) {
+            lkind = "line";
+            const mi = Math.floor(geom.coordinates.length / 2);
+            const pa = project(geom.coordinates[mi - 1] ?? geom.coordinates[0]);
+            const pb = project(geom.coordinates[mi] ?? geom.coordinates[1]);
+            lang = (Math.atan2(Number(pb[1]) - Number(pa[1]), Number(pb[0]) - Number(pa[0])) * 180) / Math.PI;
+          } else if (geom.type === "Polygon" || geom.type === "MultiPolygon") {
+            lkind = "polygon";
+          }
+          labelRequests.push({
+            id: `lbl${labelRequests.length}-${layer.id}-${fmtNum((coord as [number, number])[0])}-${fmtNum((coord as [number, number])[1])}`,
+            // 与 Python 孪生 fitted_text 同口径（>60 code points 截断）
+            text: fitLabel(String(rawText))[0],
+            kind: lkind,
+            x: Number(x),
+            y: Number(y),
+            angle: lang,
+            fontPx: baseSize * dpiScale,
+            fontSizeAttr: fontSize,
+            color,
+            opacity,
+            fontFamily,
+            haloWidth,
+            haloColor,
+            haloOpacity,
+          });
+          return;
+        }
+
+        if (haloWidth !== null) {
           elementsSvg += `<text x="${x}" y="${y}" font-size="${fontSize}" font-family="${fontFamily}" fill="none" stroke="${haloColor}" stroke-width="${haloWidth}" stroke-opacity="${haloOpacity}" stroke-linejoin="round" stroke-linecap="round" text-anchor="${svgTextAnchor}" dominant-baseline="${svgDominantBaseline}">${textEscaped}</text>\n`;
         }
 
@@ -570,11 +626,70 @@ export function compileMapSpecToSvg(
   const viewBoxW = fmtNum(scaledWidth);
   const viewBoxH = fmtNum(scaledHeight);
 
+  let labelsGroup = "";
+  if (collisionMode && labelRequests.length > 0) {
+    const solution = solveExportLabels(
+      labelRequests.map((r, i) => ({
+        id: r.id,
+        text: r.text,
+        kind: r.kind,
+        x: r.x,
+        y: r.y,
+        angle: r.angle,
+        fontSize: r.fontPx,
+        priority: i,
+      })),
+      [0, 0, scaledWidth, scaledHeight],
+    );
+    const byId = new Map(labelRequests.map((r) => [r.id, r]));
+    const parts: string[] = [];
+    for (const p of solution.placements) {
+      if (p.status !== "placed") continue;
+      const r = byId.get(p.id)!;
+      const fs = r.fontPx;
+      let tx: number, ty: number, anchor: string, baseline: string, transform = "";
+      if (r.kind === "point") {
+        // 渲染映射：求解盒左下角 → 基线 y（上升部补偿）—— Python 孪生同式。
+        const h = estimateLabelBox(r.text, fs)[1];
+        tx = p.x;
+        ty = p.y + h - 0.25 * fs;
+        anchor = "start";
+        baseline = "auto";
+      } else {
+        tx = p.x;
+        ty = p.y;
+        anchor = "middle";
+        baseline = "central";
+        transform = p.angle !== 0 ? ` transform="rotate(${fmtNum(p.angle)} ${fmtNum(p.x)} ${fmtNum(p.y)})"` : "";
+      }
+      let haloMain = "";
+      if (r.haloWidth !== null) {
+        haloMain += `<text x="${fmtNum(tx)}" y="${fmtNum(ty)}" font-size="${r.fontSizeAttr}" font-family="${r.fontFamily}" fill="none" stroke="${r.haloColor}" stroke-width="${r.haloWidth}" stroke-opacity="${r.haloOpacity}" stroke-linejoin="round" stroke-linecap="round" text-anchor="${anchor}" dominant-baseline="${baseline}"${transform}>${escapeSvgAttr(r.text)}</text>\n`;
+      }
+      parts.push(
+        haloMain +
+          `<text x="${fmtNum(tx)}" y="${fmtNum(ty)}" font-size="${r.fontSizeAttr}" font-family="${r.fontFamily}" fill="${r.color}" fill-opacity="${r.opacity}" text-anchor="${anchor}" dominant-baseline="${baseline}"${transform}>${escapeSvgAttr(r.text)}</text>`,
+      );
+    }
+    if (solution.stats.suppressed > 0) {
+      options.onDiagnostic?.(
+        "label_collision_relaxed",
+        `placed=${solution.stats.placed} suppressed=${solution.stats.suppressed}`,
+      );
+    }
+    if (solution.budgetExceeded) {
+      options.onDiagnostic?.("label_budget_exceeded", String(MAX_LABELS_PER_EXPORT));
+    }
+    if (parts.length > 0) {
+      labelsGroup = `  <g class="mapspec-labels">\n    ${parts.join("\n    ")}\n  </g>\n`;
+    }
+  }
+
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${viewBoxW} ${viewBoxH}" xmlns="http://www.w3.org/2000/svg">
   <rect width="100%" height="100%" fill="#ffffff" />
   <g class="mapspec-vector-layers">
     ${elementsSvg}
   </g>
-</svg>`;
+${labelsGroup}</svg>`;
 }
 
