@@ -219,6 +219,13 @@ def _promotion_blob_protection(
     —— 它是保护面完整性信号，由 plan/execute 调用方在**整轮**粒度上消费
     （截断 ⇒ 跳过 blob 删除阶段）；谓词只接受它以保持与保护快照字典的
     同形（``**snap`` 直传）。
+
+    Lakehouse V6（ADR-0118）语义：lakehouse 发布的内容/manifest blob 与
+    晋升内容共库，按同一引用纪律参与本判定 —— 会话期 blob 受宽限期保护；
+    长生命周期必须落到受保护引用面（workspace 快照指针 / promotion
+    revision 行 / Artifact head 指针），否则宽限期后按未引用内容回收
+    （与 raster 磁盘工件的会话生存期语义一致，"durable" 披露以响应的
+    ``durable`` 字段为准）。
     """
     if key in pinned_shas:
         return "pinned"

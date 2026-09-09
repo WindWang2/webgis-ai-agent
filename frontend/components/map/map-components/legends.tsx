@@ -29,25 +29,35 @@ function legendForComponent(component: MapSpecComponent, spec: RendererContext['
   return found?.legend_spec;
 }
 
-function legendEntries(legend: LegendSpec | undefined): { color: string; label: string }[] {
+// W7（ADR-0118）：导出侧 drawChromeLegend 与本函数同源派生（导出为测试与
+// parity 断言导出）—— nodata 规则在场时追加无数据条目（色与 paint 侧
+// withNoDataGuard 同一 nodata.color，不另造）。
+export function legendEntries(legend: LegendSpec | undefined): { color: string; label: string }[] {
   if (!legend) return [];
+  const nodata = (legend as unknown as { nodata?: { color?: string; label?: string } }).nodata;
+  const nodataEntry = nodata?.color ? { color: nodata.color, label: nodata.label || '无数据' } : null;
   const legacy = (legend as unknown as { entries?: unknown }).entries;
-  if (Array.isArray(legacy)) return legacy as { color: string; label: string }[];
+  if (Array.isArray(legacy)) {
+    const arr = legacy as { color: string; label: string }[];
+    return nodataEntry ? [...arr, nodataEntry] : arr;
+  }
   if (legend.type === 'graduated') {
     const breaks = legend.breaks ?? [];
     const colors = (legend as unknown as { palette_colors?: string[] }).palette_colors ?? [];
     const labels = (legend as unknown as { labels?: unknown[] }).labels;
     const n = Math.min(breaks.length - 1, colors.length);
-    if (n < 1) return [];
-    return Array.from({ length: n }, (_, i) => ({
+    if (n < 1) return nodataEntry ? [nodataEntry] : [];
+    const arr = Array.from({ length: n }, (_, i) => ({
       color: colors[i],
       label: labels && labels[i] != null && String(labels[i]).trim() !== '' ? String(labels[i]) : `${formatLegendValue(breaks[i])} – ${formatLegendValue(breaks[i + 1])}`,
     }));
+    return nodataEntry ? [...arr, nodataEntry] : arr;
   }
   if (legend.type === 'categorical') {
-    return ((legend as unknown as { categories?: { color: string; label?: string; key?: string }[] }).categories ?? [])
+    const arr = ((legend as unknown as { categories?: { color: string; label?: string; key?: string }[] }).categories ?? [])
       .filter((c) => c != null && typeof c.color === 'string' && c.color)
       .map((c) => ({ color: c.color, label: c.label != null && String(c.label).trim() !== '' ? String(c.label) : String(c.key ?? '') }));
+    return nodataEntry ? [...arr, nodataEntry] : arr;
   }
   return [];
 }
@@ -157,6 +167,11 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
             <span className="text-micro tabular-nums text-map-chrome-ink-muted">{e.label}</span>
           </div>
         ))}
+        {entries.length > 8 && (
+          // W7：溢出指示（导出件为全集 —— 差异由导出侧 legend_entries_truncated
+          // 诊断披露，live 侧如实告知还有 N 条未示）。
+          <div className="text-micro text-map-chrome-ink-muted" aria-label={`还有 ${entries.length - 8} 条图例未显示`}>…+{entries.length - 8}</div>
+        )}
       </div>
       {variant === 'uncertainty' && (
         <div className="mt-1 border-t border-map-chrome-border pt-0.5 text-micro text-map-chrome-ink-muted">越透明 = 不确定性越高</div>

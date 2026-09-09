@@ -106,6 +106,7 @@ def register_report_tools(registry: ToolRegistry):
 
     @registry.tool(
         tier=2, domains=["report"], name="generate_analysis_report",
+        capabilities=['report_charting'],
         description=(
             "为当前会话生成一份专业的分析报告（PDF/HTML/Markdown）。"
             "报告将包含完整的对话记录、工具调用结果和空间分析过程。"

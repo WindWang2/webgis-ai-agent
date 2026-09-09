@@ -20,7 +20,12 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .api_version import MANIFEST_SCHEMA_VERSION, is_version
+from .api_version import (
+    MANIFEST_SCHEMA_VERSION,
+    is_version,
+    meets_api_floor,
+    parse_version,
+)
 from .trust import DECLARABLE_TRUST_LEVELS
 
 # namespace / name 词表：小写字母开头的 snake 片段，防止与既有工具命名
@@ -36,11 +41,28 @@ RESERVED_NAMESPACES = frozenset(
 )
 
 EXTENSION_TYPES = frozenset(
-    {"tools", "algorithms", "data_providers", "cartography", "workflow"}
+    {"tools", "algorithms", "data_providers", "cartography", "workflow", "model_provider"}
 )
-# V1 明确不支持、但词表保留以产出精准诊断（EXTENSION_TYPE_UNSUPPORTED）
-# 的类型；见 docs/extension-platform/limitations.md。
-RESERVED_FUTURE_TYPES = frozenset({"model_provider"})
+# V1 不支持、词表保留以产出精准诊断（EXTENSION_TYPE_UNSUPPORTED）的类型；
+# 见 docs/extension-platform/limitations.md。
+RESERVED_FUTURE_TYPES = frozenset({"marketplace", "wallet", "theme_engine", "secret_store"})
+
+# ── V2（ADR-0105）─────────────────────────────────────────────────────
+EXECUTION_MODES = frozenset({"in_process", "worker"})
+# worker 模式仅支持工具型投影（tools + model_providers 的工具投影）与
+# health；类实例型投影（algorithm/provider/cartography/recipe）必须
+# in-process——它们向宿主权威 registry 注册对象，无法跨进程。
+WORKER_SUPPORTED_DECLARED_SECTIONS = frozenset({"tools", "model_providers"})
+# worker 内无子进程面（进程生成属宿主 OS 权限，worker 隔离语义下拒绝）。
+WORKER_FORBIDDEN_PERMISSIONS = frozenset({"external_process"})
+MODEL_PROVIDER_CAPABILITIES = frozenset({"streaming", "cancellation", "batch"})
+
+# 执行预算硬上界（防御 manifest 声明病态预算拖垮宿主策略）。
+MAX_STARTUP_TIMEOUT_S = 120.0
+MAX_CALL_TIMEOUT_S = 3600.0
+MAX_WORKER_MEMORY_MB = 8192
+MAX_WORKER_CPU_SECONDS = 86400
+MAX_WORKER_OUTPUT_BYTES = 64 * 1024 * 1024
 
 # 声明体量的硬上界（防御畸形 manifest 拖垮解析/投影）。
 MAX_DECLARED_ITEMS = 128
@@ -53,11 +75,17 @@ class _StrictModel(BaseModel):
 
 
 class DependencyDeclaration(_StrictModel):
-    """对其它扩展的依赖。required 缺失 → 激活失败；optional 缺失 → degraded。"""
+    """对其它扩展的依赖。required 缺失 → 激活失败；optional 缺失 → degraded。
+
+    V2：``version`` 可选约束串（如 ``">=1.2,<2.0"``），语法由
+    ``resolver.v2.parse_constraint`` 定义；声明非法在 manifest 解析期
+    fail closed。
+    """
 
     id: str
     required: bool = True
     feature_flag: Optional[str] = None
+    version: Optional[str] = None
 
     @field_validator("id")
     @classmethod
@@ -66,6 +94,18 @@ class DependencyDeclaration(_StrictModel):
         # 符合标识符形状，避免怪异键流入依赖图/对账逻辑。
         if not re.fullmatch(r"[a-z][a-z0-9_]{1,31}\.[a-z][a-z0-9_]{0,63}", v):
             raise ValueError(f"dependency id {v!r} must be a namespaced extension id")
+        return v
+
+    @field_validator("version")
+    @classmethod
+    def _version_constraint_shape(cls, v: Optional[str]) -> Optional[str]:
+        from .version_constraints import validate_constraint_syntax
+
+        if v is None:
+            return v
+        err = validate_constraint_syntax(v)
+        if err is not None:
+            raise ValueError(f"dependency version constraint {v!r}: {err}")
         return v
 
 
@@ -163,6 +203,71 @@ class WorkflowPackDeclaration(_StrictModel):
         return v
 
 
+class ExecutionDeclaration(_StrictModel):
+    """V2 执行策略（ADR-0105）。
+
+    ``mode="worker"``：扩展代码在独立子进程中执行，主进程不 import 它；
+    所有宿主能力经 capability broker。``in_process``（缺省）保持 V1 语义。
+    预算字段是宿主强制执行的上界（尽力而为：POSIX rlimit + 墙钟超时；
+    OS 不支持时 typed 降级告警，不虚假承诺）。
+    """
+
+    mode: str = "in_process"
+    startup_timeout_s: float = Field(default=10.0, ge=0.5, le=MAX_STARTUP_TIMEOUT_S)
+    call_timeout_s: float = Field(default=30.0, ge=0.1, le=MAX_CALL_TIMEOUT_S)
+    max_memory_mb: int = Field(default=512, ge=32, le=MAX_WORKER_MEMORY_MB)
+    max_cpu_seconds: int = Field(default=60, ge=1, le=MAX_WORKER_CPU_SECONDS)
+    max_output_bytes: int = Field(default=1024 * 1024, ge=1024, le=MAX_WORKER_OUTPUT_BYTES)
+
+    @field_validator("mode")
+    @classmethod
+    def _mode_vocab(cls, v: str) -> str:
+        if v not in EXECUTION_MODES:
+            raise ValueError(f"execution.mode must be one of {sorted(EXECUTION_MODES)}, got {v!r}")
+        return v
+
+
+class ModelProviderDeclaration(_StrictModel):
+    """V2 model_provider 声明（每个 provider 投影为一个带类型的调用工具）。
+
+    这里是 GIS 推理模型 provider（域模型：分割/检测/分类等服务），不是
+    LLM chat transport——后者由 ADR-0102 配置驱动封闭面管理，扩展不得
+    接入（typed 拒绝在投影层）。
+    """
+
+    id: str = Field(..., description="provider id（不含前缀；投影为 <ns>_<id>_invoke 工具）")
+    description: str = ""
+    capabilities: list[str] = Field(default_factory=list)
+    credentials_ref: Optional[str] = Field(
+        default=None,
+        description="凭据引用名（值由运维按扩展 id 供给；永不进入状态/日志/LLM）",
+    )
+
+    @field_validator("id")
+    @classmethod
+    def _id_shape(cls, v: str) -> str:
+        if not _NAME_RE.match(v):
+            raise ValueError(f"model provider id {v!r} must match {_NAME_RE.pattern}")
+        return v
+
+    @field_validator("credentials_ref")
+    @classmethod
+    def _cred_ref_shape(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _TOKEN_RE.match(v):
+            raise ValueError(f"credentials_ref {v!r} must match {_TOKEN_RE.pattern}")
+        return v
+
+    @model_validator(mode="after")
+    def _capability_vocab(self) -> "ModelProviderDeclaration":
+        unknown = sorted(set(self.capabilities) - MODEL_PROVIDER_CAPABILITIES)
+        if unknown:
+            raise ValueError(
+                f"model provider {self.id!r}: unknown capabilities {unknown}; "
+                f"valid: {sorted(MODEL_PROVIDER_CAPABILITIES)}"
+            )
+        return self
+
+
 class GisExtensionManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -193,6 +298,11 @@ class GisExtensionManifest(BaseModel):
     data_providers: list[DataProviderDeclaration] = Field(default_factory=list)
     cartography_items: list[CartographyItemDeclaration] = Field(default_factory=list)
     workflow_packs: list[WorkflowPackDeclaration] = Field(default_factory=list)
+    model_providers: list[ModelProviderDeclaration] = Field(default_factory=list)
+    execution: Optional[ExecutionDeclaration] = Field(
+        default=None,
+        description="V2 执行策略；缺省 = in_process（V1 语义）",
+    )
     entry_point: str = Field(..., description="扩展目录内入口模块名（不含 .py），须提供 activate()")
     diagnostics_entry: Optional[str] = Field(
         default=None, description="扩展目录内健康检查函数 'module:function'"
@@ -259,15 +369,13 @@ class GisExtensionManifest(BaseModel):
         if self.schema_version < 1:
             raise ValueError("manifest schema_version must be >= 1")
         # 上界窗口必须高于下界。
-        from .api_version import parse_version
-
+        lo, hi = parse_version(self.minimum_core_version), parse_version(self.maximum_core_version)
         if self.maximum_core_version is not None:
-            lo, hi = parse_version(self.minimum_core_version), parse_version(self.maximum_core_version)
             if lo is None or hi is None:
                 raise ValueError("invalid core version window bounds")
             if lo >= hi:
                 raise ValueError("maximum_core_version must exceed minimum_core_version")
-        # 扩展类型词表。
+        # 扩展类型词表。model_provider 在 1.1.0 起受支持（ADR-0105）。
         for ext_type in self.extension_types:
             if ext_type in RESERVED_FUTURE_TYPES:
                 raise ValueError(f"extension type {ext_type!r} not supported in api_version 1.x")
@@ -278,7 +386,7 @@ class GisExtensionManifest(BaseModel):
         # 声明条目上界。
         total = len(self.tools) + len(self.algorithms) + len(self.data_providers) + len(
             self.cartography_items
-        ) + len(self.workflow_packs)
+        ) + len(self.workflow_packs) + len(self.model_providers)
         if total > MAX_DECLARED_ITEMS:
             raise ValueError(f"manifest declares {total} items; limit is {MAX_DECLARED_ITEMS}")
         if len(self.description) > MAX_DESCRIPTION_CHARS:
@@ -296,6 +404,7 @@ class GisExtensionManifest(BaseModel):
             ("algorithms", [a.id for a in self.algorithms]),
             ("data_providers", [p.source_type for p in self.data_providers]),
             ("workflow_packs", [w.pack_id for w in self.workflow_packs]),
+            ("model_providers", [m.id for m in self.model_providers]),
         ):
             dupes = {x for x in items if items.count(x) > 1}
             if dupes:
@@ -303,7 +412,73 @@ class GisExtensionManifest(BaseModel):
         carto_keys = [(c.kind, c.id) for c in self.cartography_items]
         if len(carto_keys) != len(set(carto_keys)):
             raise ValueError("duplicate (kind, id) in cartography_items")
+        self._validate_v2_features()
         return self
+
+    # ── V2 特性门控（ADR-0105）─────────────────────────────────────────
+    def _validate_v2_features(self) -> None:
+        """V2 特性（worker 模式 / model_provider / 依赖版本约束）要求
+        api_version >= 1.1.0。fail closed：旧 api_version 的 manifest 携带
+        V2 字段 → 结构性拒绝（precise message，不是 unknown field）。"""
+        uses_v2 = (
+            self.execution is not None
+            or bool(self.model_providers)
+            or "model_provider" in self.extension_types
+            or any(d.version is not None for d in self.dependencies)
+            or any(d.version is not None for d in self.optional_dependencies)
+        )
+        if not uses_v2:
+            return
+        if not meets_api_floor(self.api_version):
+            raise ValueError(
+                "manifest uses V2 features (execution/model_providers/dependency "
+                f"version constraints) which require api_version >= 1.1.0, "
+                f"got {self.api_version!r}"
+            )
+        if self.execution is not None and self.execution.mode == "worker":
+            # worker 仅支持工具型投影；类实例型投影必须 in-process。
+            unsupported = sorted(
+                section
+                for section, count in (
+                    ("algorithms", len(self.algorithms)),
+                    ("data_providers", len(self.data_providers)),
+                    ("cartography_items", len(self.cartography_items)),
+                    ("workflow_packs", len(self.workflow_packs)),
+                )
+                if count
+            )
+            if unsupported:
+                raise ValueError(
+                    f"execution.mode=worker does not support declared sections "
+                    f"{unsupported} (class-instance projections must be in_process)"
+                )
+            forbidden = sorted(set(self.permissions) & WORKER_FORBIDDEN_PERMISSIONS)
+            if forbidden:
+                raise ValueError(
+                    f"execution.mode=worker forbids permissions {forbidden} "
+                    "(no subprocess surface inside an isolated worker)"
+                )
+            # 单帧 RPC 传输无法投递事件流：worker 模式的 model provider
+            # 不得声明 streaming 能力（typed、确定性，握手前即拒绝）。
+            streaming_providers = sorted(
+                m.id for m in self.model_providers if "streaming" in m.capabilities
+            )
+            if streaming_providers:
+                raise ValueError(
+                    f"execution.mode=worker model providers {streaming_providers} "
+                    "cannot declare the 'streaming' capability (single-frame RPC)"
+                )
+        # Round-1 MINOR-6（不限 worker）：工具 <pid>_invoke 与 provider <pid>
+        # 都投影为 <ns>_<pid>_invoke —— 跨节投影名碰撞在解析期拒绝。
+        invoke_tools = {t.name for t in self.tools}
+        colliding = sorted(
+            m.id for m in self.model_providers if f"{m.id}_invoke" in invoke_tools
+        )
+        if colliding:
+            raise ValueError(
+                f"model providers {colliding} project to invoke tools whose names "
+                "collide with declared tools (<pid>_invoke); rename the tool or provider"
+            )
 
     def declared_type_set(self) -> frozenset[str]:
         """由声明节推导的扩展类型（extension_types 允许缺省时兜底）。"""
@@ -318,7 +493,17 @@ class GisExtensionManifest(BaseModel):
             inferred.add("cartography")
         if self.workflow_packs:
             inferred.add("workflow")
+        if self.model_providers:
+            inferred.add("model_provider")
         return frozenset(inferred)
+
+    @property
+    def is_worker_mode(self) -> bool:
+        return self.execution is not None and self.execution.mode == "worker"
+
+    def namespaced_model_provider_tool(self, provider_id: str) -> str:
+        """model provider 的工具投影名（<ns>_<pid>_invoke）。"""
+        return f"{self.namespace}_{provider_id}_invoke"
 
     def namespaced_tool_name(self, tool_name: str) -> str:
         return f"{self.namespace}_{tool_name}"

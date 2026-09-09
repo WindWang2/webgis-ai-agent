@@ -174,7 +174,7 @@ describe('renderer', () => {
       expect(added.data).toBe(data); // same reference — no copy
     });
 
-    it('re-filters an existing source on viewport change (setData with trimmed data)', () => {
+    it('re-filters an existing source on viewport change (setData with trimmed data)', async () => {
       const sourceMock = { setData: vi.fn() };
       mapMock.getSource.mockReturnValue(sourceMock);
       mapMock.getStyle.mockReturnValue({
@@ -188,9 +188,31 @@ describe('renderer', () => {
       expect(sourceMock.setData.mock.calls[0][0].features.length).toBe(11); // 0..10
 
       // Viewport moves elsewhere → setData re-runs with the new subset.
+      // W7：refresh 延迟到 idle/timeout 回调（陈旧视口取消）—— 等待落地。
       refreshGeoJsonSourcesByViewport(mapMock, [1000, 1000, 1005, 1005]);
+      await new Promise((resolve) => setTimeout(resolve, 40));
       expect(sourceMock.setData).toHaveBeenCalledTimes(2);
       expect(sourceMock.setData.mock.calls[1][0].features.length).toBe(6); // 1000..1005
+    });
+
+    it('W7: 陈旧视口 refresh 被取消 —— 只有最新一代落地', async () => {
+      const sourceMock = { setData: vi.fn() };
+      mapMock.getSource.mockReturnValue(sourceMock);
+      mapMock.getStyle.mockReturnValue({
+        sources: { big: { type: 'geojson' } },
+        layers: [],
+      });
+      const data = bigFC(2000);
+      addGeoJsonSource(mapMock, 'big', data, { viewport: [0, 0, 10, 10] });
+      sourceMock.setData.mockClear();
+
+      // 连续两个视口：第一个的 idle 回调在第二个发起后到达 → 必须被取消
+      refreshGeoJsonSourcesByViewport(mapMock, [100, 100, 105, 105]);
+      refreshGeoJsonSourcesByViewport(mapMock, [1000, 1000, 1005, 1005]);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      // 只有最新视口的一次 setData（旧视口 0 次）
+      expect(sourceMock.setData).toHaveBeenCalledTimes(1);
+      expect(sourceMock.setData.mock.calls[0][0].features.length).toBe(6); // 1000..1005
     });
 
     it('does NOT re-setData when the viewport is unchanged (cached result)', () => {

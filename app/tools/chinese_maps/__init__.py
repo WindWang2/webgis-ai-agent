@@ -337,6 +337,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         return await _search_poi_online(keyword=keyword, city=city, provider=provider, limit=limit)
 
     tool(registry, tier=2, domains=["chinese"], name="geocode_cn",
+    capabilities=['geocoding'],
          description="中文地址转坐标，比 Nominatim 中文地址准确率更高，可选高德/百度/天地图",
          param_descriptions={
              "address": "中文地址，如'北京市海淀区中关村'",
@@ -356,6 +357,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
          failure_modes=("empty_result", "network_error", "rate_limit"))(geocode_cn)
 
     @tool(registry, tier=2, domains=["chinese"], name="reverse_geocode_cn",
+    capabilities=['geocoding'],
            description="坐标转中文地址，返回详细地址和附近 POI，可选高德/百度/天地图",
            param_descriptions={
                "location": "WGS84 坐标 [经度, 纬度]",
@@ -473,6 +475,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         )
 
     tool(registry, tier=2, domains=["chinese"], name="batch_geocode_cn",
+    capabilities=['geocoding'],
          description="批量中文地址转坐标，支持高德/百度/天地图。一次处理多条地址，带并发控制。返回每个地址的 WGS84 坐标、成功/失败状态和标准化地址。",
          param_descriptions={
              "addresses": "地址列表，最多100条，例如 ['北京市朝阳区','上海市浦东新区']",

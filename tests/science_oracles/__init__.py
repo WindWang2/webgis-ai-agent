@@ -99,7 +99,8 @@ def _select(actual: Any, path: str) -> Any:
     for part in path.split("."):
         if isinstance(cur, np.ndarray):
             cur = cur[int(part)]
-        elif isinstance(cur, list):
+        elif isinstance(cur, (list, tuple)):
+            # science-v4：新 API（nscore/SK 等）返回 tuple —— 与 list 同下标语义
             cur = cur[int(part)]
         elif isinstance(cur, dict):
             cur = cur[part]

@@ -575,6 +575,43 @@ def _llm_malformed_stream(handle: ChaosFault) -> Iterator[None]:
 
 # ── 故障注册表（稳定 ID；增删必须同步再生注册表文档）──────────────────────
 
+@contextlib.contextmanager
+def _storage_transient_fail(handle: ChaosFault) -> Iterator[None]:
+    """制品账本存储后端瞬时写失败：前 fail_times 次 store/overwrite 抛
+    OSError（模拟 Redis/磁盘抖动），之后透传恢复。"""
+    import asyncio
+
+    from app.services.session_data import session_data_manager as sdm
+
+    fail_times = int(handle.params.get("fail_times", 1))
+    state = {"calls": 0}
+    handle.state = state
+    real_store = sdm.store
+    real_overwrite = sdm.overwrite
+    lock = asyncio.Lock()
+
+    async def _flaky_store(session_id, data, prefix="data"):
+        async with lock:
+            state["calls"] += 1
+            n = state["calls"]
+        if n <= fail_times:
+            handle.record("fired", f"store call #{n} transient OSError")
+            raise OSError(f"[chaos] transient storage failure #{n}")
+        return await real_store(session_id, data, prefix=prefix)
+
+    async def _flaky_overwrite(session_id, ref_id, data):
+        async with lock:
+            state["calls"] += 1
+            n = state["calls"]
+        if n <= fail_times:
+            handle.record("fired", f"overwrite call #{n} transient OSError")
+            raise OSError(f"[chaos] transient storage failure #{n}")
+        return await real_overwrite(session_id, ref_id, data)
+
+    with unittest.mock.patch.object(sdm, "store", _flaky_store),             unittest.mock.patch.object(sdm, "overwrite", _flaky_overwrite):
+        yield
+
+
 _FAULT_LIST = [
     FaultSpec(
         fault_id="CACHE_CAP_SHRINK",
@@ -683,6 +720,15 @@ _FAULT_LIST = [
         expected="ProviderStreamTruncated 显式抛出，绝不把断流包装成 done 帧（防假成功）",
         injection_point="app/services/chat/llm_client.py:601-609 截断判定（审计 05 §3.1）",
         factory=_llm_malformed_stream,
+    ),
+    FaultSpec(
+        fault_id="STORAGE_TRANSIENT_FAIL",
+        subsystem="STORAGE",
+        description="制品账本存储后端瞬时写失败（Redis/磁盘抖动）后恢复",
+        attack="计数包装 session_data_manager.store/overwrite：前 fail_times 次抛 OSError（monkeypatch 接缝）",
+        expected="调用方拿到类型化异常（不静默丢数据）；账本 alias 不前进（无半截提交）；恢复后重试成功",
+        injection_point="app/services/artifact_registry.py:227-240 _save_records（Quality V2 W9）",
+        factory=_storage_transient_fail,
     ),
 ]
 

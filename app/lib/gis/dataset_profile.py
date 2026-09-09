@@ -88,6 +88,9 @@ class DatasetProfile(BaseModel):
     # 重复坐标证据（仅深扫口径；scanned_rows==0 时不得虚构）。
     duplicate_coordinate_count: Optional[int] = None
     unique_coordinate_count: Optional[int] = None
+    # V5 W4：经度约定/AM 语义事实（app.lib.gis.longitude.describe_longitude_
+    # semantics 形状）。None/缺席 = 无证据（绝不虚构）。
+    longitude_facts: Optional[Dict[str, Any]] = None
 
     @field_validator("geometry_types")
     @classmethod
@@ -161,7 +164,9 @@ class DatasetProfile(BaseModel):
         fields（含 null_ratio 逐字段证据）/ fields_status / numericFields /
         categoricalFields / binaryFields / hasTimeField /
         temporalObservationCount / valueVariance / bandCount /
-        numericSampleCount / duplicateCoordinateCount / uniqueCoordinateCount。
+        numericSampleCount / duplicateCoordinateCount / uniqueCoordinateCount；
+        V5 增补：longitudeConvention / crossesAntimeridian（仅真实证据
+        在场时发射，absent 证据照常缺席）。
 
         清单型键的权威规则（模块 docstring）：explicit → 空也发；否则仅
         非空发。其余键只在证据存在时出现 —— 缺席键消费方按 unknown 处理
@@ -210,6 +215,11 @@ class DatasetProfile(BaseModel):
             profile["uniqueCoordinateCount"] = int(self.unique_coordinate_count)
         if self.duplicate_coordinate_count is not None:
             profile["duplicateCoordinateCount"] = int(self.duplicate_coordinate_count)
+        lf = self.longitude_facts if isinstance(self.longitude_facts, dict) else None
+        if lf and str(lf.get("convention") or "") in ("pm180", "e360"):
+            profile["longitudeConvention"] = str(lf["convention"])
+        if lf and isinstance(lf.get("crosses_antimeridian"), bool):
+            profile["crossesAntimeridian"] = bool(lf["crosses_antimeridian"])
         return profile
 
     def _resolver_fields(self) -> Dict[str, Any]:
@@ -378,6 +388,8 @@ class DatasetProfile(BaseModel):
         """
         if profile is None:
             return cls(source="profile_v3")
+        lon_facts = getattr(profile, "longitude_facts", None)
+        lon_facts = dict(lon_facts) if isinstance(lon_facts, dict) else None
         vector = getattr(profile, "vector", None)
         raster = getattr(profile, "raster", None)
         table = getattr(profile, "table", None)
@@ -510,6 +522,7 @@ class DatasetProfile(BaseModel):
             value_variance=max_variance,
             duplicate_coordinate_count=duplicates,
             unique_coordinate_count=uniques,
+            longitude_facts=lon_facts,
         )
 
     @classmethod

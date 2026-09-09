@@ -1,3 +1,4 @@
+import json
 """MapSpecLifecycleEngine - 核心 MapSpec 意图声明与生命周期引擎。
 
 深入封装 MapSpec 意图变迁 (InitProject, SetView, UpsertLayer, RemoveLayer, SetLayout)、
@@ -354,6 +355,100 @@ class SetTimeIntent:
     speed: Optional[float] = None
 
 
+@dataclass
+class SetWorkbenchStateIntent:
+    """Workbench V5 组织态持久化（分组树/成员归属/图层锁/工作台模式）。
+
+    doc 整体替换 ``mapspec['workbench']`` 分支 —— 全量文档语义，无部分合并
+    （前端持有完整投影，CAS 串行链保证无丢更新）。结构合法性（version==5、
+    组 id 唯一、父子无环、深度 ≤4、成员/锁为字符串键值、mode 封闭词表）
+    与体积（64KB）在引擎内确定性校验 —— 非法输入 4xx，不留半更新状态。
+    """
+
+    doc: Dict[str, Any]
+
+
+# workbench doc 载荷上限（组织态不携带数据 —— 大载荷属 layers/sources/ref）。
+# 256KB 与前端预检同值（R2-C1：10k 图层全量 membership ~250-300KB，64KB
+# 会让旗舰场景持久化停摆）。口径为真实 UTF-8 字节 —— 前端 TextEncoder 同
+# 款精确口径（M-1：estimate_json_bytes 是码点近似、按其自述仅用于 metrics，
+# 不作正确性闸）。
+_MAX_WORKBENCH_DOC_BYTES = 256 * 1024
+_WORKBENCH_GROUP_MAX_DEPTH = 4
+_WORKBENCH_MODES = {"explore", "analyze", "compose"}
+
+
+def _workbench_doc_error(doc: Any) -> Optional[str]:
+    """校验 workbench doc；非法返回错误消息，合法返回 None。"""
+    if not isinstance(doc, dict):
+        return "workbench doc must be an object."
+    if doc.get("version") != 5:
+        return "workbench doc requires version == 5."
+    # 真实字节口径（与前端 TextEncoder 一致）；doc 小，全量序列化成本可忽略。
+    try:
+        actual_bytes = len(json.dumps(doc, ensure_ascii=False).encode("utf-8"))
+    except Exception:  # noqa: BLE001 — 不可序列化载荷直接拒绝
+        return "workbench doc is not JSON-serializable."
+    if actual_bytes > _MAX_WORKBENCH_DOC_BYTES:
+        return (
+            "workbench doc exceeds "
+            f"{_MAX_WORKBENCH_DOC_BYTES // 1024}KB — organization state "
+            "does not carry data payloads."
+        )
+
+    groups = doc.get("groups")
+    if not isinstance(groups, list):
+        return "workbench doc.groups must be a list."
+    ids: List[str] = []
+    for g in groups:
+        if not isinstance(g, dict) or not isinstance(g.get("id"), str) or not g.get("id"):
+            return "workbench doc.groups entries require non-empty string id."
+        ids.append(str(g["id"]))
+    if len(ids) != len(set(ids)):
+        return "workbench doc.groups ids must be unique."
+    id_set = set(ids)
+    for g in groups:
+        parent = g.get("parentId")
+        if parent is None:
+            continue
+        if not isinstance(parent, str) or parent not in id_set:
+            return (
+                f"workbench group {g.get('id')!r} parentId must reference "
+                "an existing group (null for root)."
+            )
+    # 环与深度：逐组上溯；步数超组数即有环，深度超上限即拒绝。
+    by_id = {str(g["id"]): g for g in groups}
+    for gid in ids:
+        depth = 1
+        cur: Optional[dict] = by_id[gid]
+        steps = 0
+        while cur is not None and cur.get("parentId") is not None:
+            parent = by_id.get(str(cur["parentId"]))
+            if parent is None:
+                break
+            depth += 1
+            steps += 1
+            if steps > len(ids):
+                return f"workbench group tree has a cycle at {gid!r}."
+            cur = parent
+        if depth > _WORKBENCH_GROUP_MAX_DEPTH:
+            return (
+                f"workbench group {gid!r} depth {depth} exceeds "
+                f"{_WORKBENCH_GROUP_MAX_DEPTH}."
+            )
+    membership = doc.get("membership", {})
+    if not isinstance(membership, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in membership.items()
+    ):
+        return "workbench doc.membership must map layerId (str) -> groupId (str)."
+    locked = doc.get("lockedLayerIds", [])
+    if not isinstance(locked, list) or not all(isinstance(x, str) for x in locked):
+        return "workbench doc.lockedLayerIds must be a list of strings."
+    if doc.get("mode") not in _WORKBENCH_MODES:
+        return "workbench doc.mode must be one of explore|analyze|compose."
+    return None
+
+
 _OPACITY_PAINT_KEYS = {
     "circle": "circle-opacity",
     "fill": "fill-opacity",
@@ -516,6 +611,7 @@ MutationIntent = Union[
     SetBasemapIntent,
     SetTimeIntent,
     PatchLayerStyleIntent,
+    SetWorkbenchStateIntent,
 ]
 
 
@@ -1221,12 +1317,24 @@ class MapSpecLifecycleEngine:
                     old_mapspec_snapshot = loaded
                     mapspec = {**loaded} if loaded else {}
                     layout = dict(mapspec.get("layout", {}))  # copy layout branch
+                    # V5（ADR-0118 D2）：legend/margins 是 dict 形态的局部意图，
+                    # 做字段级 merge —— 整值替换会静默丢弃既有 position 等键。
                     if intent.legend is not None:
-                        layout["legend"] = intent.legend
+                        prev_legend = layout.get("legend")
+                        layout["legend"] = (
+                            {**prev_legend, **intent.legend}
+                            if isinstance(prev_legend, dict)
+                            else dict(intent.legend)
+                        )
                     if intent.controls is not None:
                         layout["controls"] = intent.controls
                     if intent.margins is not None:
-                        layout["margins"] = intent.margins
+                        prev_margins = layout.get("margins")
+                        layout["margins"] = (
+                            {**prev_margins, **intent.margins}
+                            if isinstance(prev_margins, dict)
+                            else dict(intent.margins)
+                        )
                     if intent.components is not None:
                         # 组件整体替换（webgis_component_update 先读后写实现
                         # 局部突变）；条目要求唯一 string id + string type，
@@ -1286,6 +1394,25 @@ class MapSpecLifecycleEngine:
                             key=lambda c: (c.get("priority", 0), c.get("id", "")),
                         )
                     mapspec["layout"] = layout
+
+                elif isinstance(intent, SetWorkbenchStateIntent):
+                    # V5：组织态整体替换（COW 顶层分支 copy，与 SetLayout 同款）。
+                    # 校验先行 —— 非法 doc 4xx，不进入 commit/checkpoint。
+                    doc_error = _workbench_doc_error(intent.doc)
+                    if doc_error is not None:
+                        return MapSpecResult(
+                            is_error=True,
+                            origin=origin,
+                            error_msg=doc_error,
+                            correction_hint=(
+                                "Re-read the workbench document (mapspec."
+                                "workbench), apply the mutation locally, and "
+                                "retry with the full doc."
+                            ),
+                        )
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    mapspec["workbench"] = intent.doc
 
                 elif isinstance(intent, CheckpointIntent):
                     # V3 COW: checkpoint reads but doesn't mutate the spec
@@ -1440,10 +1567,20 @@ class MapSpecLifecycleEngine:
                 # before structural validation/commit so the persisted MapSpec
                 # and runtime layer projection share one fingerprint. Rollback
                 # restores an exact historical snapshot and is review-only.
+                # V5（ADR-0118 D2）user-wins：legend 显式关闭是用户的 durable
+                # 决策（与 ST-P2-2 层可见性 user-wins 同类）—— 只要 merge 后
+                # 的 committed 状态 visible=False（无论本次还是先前变异显式
+                # 声明），AUTO_SAFE 一律不得翻回；finding 照常进入 review
+                # 证据（诚实披露）。agent 要图例必须显式 visible=True。
+                suppressed_repairs: set = set()
+                merged_legend = (mapspec.get("layout") or {}).get("legend")
+                if isinstance(merged_legend, dict) and merged_legend.get("visible") is False:
+                    suppressed_repairs.add("set_map_legend_visibility")
                 try:
                     cartographic_loop = review_and_repair_cartography(
                         mapspec,
                         max_iterations=0 if is_rollback else 2,
+                        suppressed_repairs=suppressed_repairs or None,
                     )
                     mapspec = cartographic_loop.mapspec
                     cartographic_review = cartographic_loop.to_dict()
@@ -1831,7 +1968,12 @@ class MapSpecLifecycleEngine:
                     if prior_fp is not None:
                         self._prior_blocking_cache[prior_fp] = prior_blocking
                         while len(self._prior_blocking_cache) > 256:
-                            self._prior_blocking_cache.popitem(next(iter(self._prior_blocking_cache)))
+                            # FIFO 驱逐：dict.popitem() 是 LIFO 且不接受参数
+                            # （曾误写 popitem(next(iter(...))) → 缓存满即
+                            # TypeError，整个 batch 事务回滚）。
+                            self._prior_blocking_cache.pop(
+                                next(iter(self._prior_blocking_cache))
+                            )
                 new_blocking = self._blocking_error_codes(validation) - prior_blocking
                 if new_blocking:
                     msg = "; ".join(

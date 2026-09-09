@@ -65,6 +65,10 @@ class SubagentResult:
     refs: list[str] = field(default_factory=list)
     reasoning: str = ""
     error: Optional[str] = None
+    # V5 W6：预算快照（tool/heavy/wall + llm_usage token 记账）与
+    # parent/child lineage（审计与父 turn 关联）。
+    budget_usage: Dict[str, Any] = field(default_factory=dict)
+    lineage: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -73,6 +77,8 @@ class SubagentResult:
             "refs": self.refs,
             "reasoning": self.reasoning,
             "error": self.error,
+            "budget_usage": dict(self.budget_usage),
+            "lineage": dict(self.lineage),
         }
 
 
@@ -277,6 +283,7 @@ class SubagentDispatcher:
                 success=False,
                 summary="",
                 error="subagent recursion depth limit exceeded (max=2); nested spawn is not allowed",
+                lineage={"depth": _depth},
             )
         # ADR-0101 Wave 7：角色档（显式策略，无未约束子代理）。角色提供的
         # 域/预算与调用方显式参数取**交集/更严者** —— 角色收紧，调用方不能
@@ -382,6 +389,45 @@ class SubagentDispatcher:
         if parent_token is not None:
             parent_token.link(sub_token)
 
+        # V5 W6：token/usage 记账 —— 子代理运行绑定专属（不注册的）
+        # TurnEvidence，引擎既有 usage 通道（add_llm_usage）经 ContextVar
+        # 继承落进子累加器；运行结束汇入预算并在有父 evidence 时 roll-up。
+        from app.lib.runtime.evidence import (
+            TurnEvidence as _TurnEvidence,
+            bind_turn_evidence as _bind_ev,
+            current_turn_evidence as _current_ev,
+        )
+        import uuid as _uuid
+
+        parent_ev = _current_ev()
+        sub_ev = _TurnEvidence(
+            request_id=None,
+            session_id=self.parent_session_id,
+            turn_id=f"sub-{_uuid.uuid4().hex[:12]}",
+            run_id=getattr(parent_ev, "run_id", None),
+        )
+        _lineage = {
+            "parent_turn_id": getattr(parent_ev, "turn_id", "") or "",
+            "parent_session_id": self.parent_session_id,
+            "depth": _subagent_depth.get(0),
+            "role": role if isinstance(role, str) else getattr(role, "name", ""),
+        }
+
+        def _sub_result(**kw) -> SubagentResult:
+            """统一出口：预算快照 + lineage + 父 evidence usage roll-up。"""
+            budget.join_turn_evidence(sub_ev)
+            if parent_ev is not None and getattr(sub_ev, "_v5_joined", False):
+                parent_ev.add_llm_usage({
+                    "prompt_tokens": int(getattr(sub_ev, "prompt_tokens", 0) or 0),
+                    "completion_tokens": int(getattr(sub_ev, "completion_tokens", 0) or 0),
+                    "total_tokens": int(getattr(sub_ev, "total_tokens", 0) or 0),
+                })
+            if "refs" not in kw:
+                kw["refs"] = []
+            kw.setdefault("budget_usage", budget.usage())
+            kw.setdefault("lineage", dict(_lineage))
+            return SubagentResult(**kw)
+
         wrapped_task_text = f"{self.SUB_SYSTEM_PROMPT}\n\n# 子任务\n{task}"
         if role_obj is not None:
             # ADR-0104：expected_outputs 结构化输出契约注入任务头（声明式；
@@ -401,12 +447,13 @@ class SubagentDispatcher:
             )
         try:
             with use_token(sub_token), _raise_subagent_depth():
-                chat_task = asyncio.create_task(
-                    sub_engine.chat(
-                        message=wrapped_task_text,
-                        session_id=self.parent_session_id,
+                with _bind_ev(sub_ev):
+                    chat_task = asyncio.create_task(
+                        sub_engine.chat(
+                            message=wrapped_task_text,
+                            session_id=self.parent_session_id,
+                        )
                     )
-                )
                 cancel_task = asyncio.create_task(sub_token.wait())
                 try:
                     # review R1 MAJOR：墙钟预算真实执行 —— asyncio.wait 带
@@ -441,7 +488,7 @@ class SubagentDispatcher:
                         "[Subagent] parent=%s wall-time budget exceeded: %s",
                         self.parent_session_id, budget_used,
                     )
-                    return SubagentResult(
+                    return _sub_result(
                         success=False,
                         summary=f"子代理超过墙钟预算（{budget.max_wall_time_s:.0f}s）被终止",
                         refs=[],
@@ -462,7 +509,7 @@ class SubagentDispatcher:
                     "[Subagent] parent=%s cancelled mid-run: %s",
                     self.parent_session_id, reason,
                 )
-                return SubagentResult(
+                return _sub_result(
                     success=False,
                     summary=f"子代理已取消: {reason}",
                     refs=[],
@@ -471,7 +518,7 @@ class SubagentDispatcher:
             if sub_token.cancelled and chat_task in done:
                 # chat_task 可能已因工具层取消而异常/失败完成 —— 取其结果按取消语义
                 reason = sub_token.reason or "parent turn cancelled"
-                return SubagentResult(
+                return _sub_result(
                     success=False,
                     summary=f"子代理已取消: {reason}",
                     refs=[],
@@ -479,7 +526,7 @@ class SubagentDispatcher:
                 )
             result = chat_task.result()
         except OperationCancelled:
-            return SubagentResult(
+            return _sub_result(
                 success=False,
                 summary="子代理已取消",
                 refs=[],
@@ -491,7 +538,7 @@ class SubagentDispatcher:
                 "[Subagent] parent=%s wall-time budget exceeded: %s",
                 self.parent_session_id, budget_used,
             )
-            return SubagentResult(
+            return _sub_result(
                 success=False,
                 summary=f"子代理超过墙钟预算（{budget.max_wall_time_s:.0f}s）被终止",
                 refs=[],
@@ -506,7 +553,7 @@ class SubagentDispatcher:
                 "[Subagent] parent=%s tool budget exceeded: %s",
                 self.parent_session_id, e,
             )
-            return SubagentResult(
+            return _sub_result(
                 success=False,
                 summary=f"子代理超过工具预算被终止: {e}",
                 refs=[],
@@ -517,7 +564,7 @@ class SubagentDispatcher:
             # 这里统一判失败，不再假成功；summary 保留失败原因以便父循环决策。
             # refs=None（无法可靠计算 after-set）；父循环按无新增 refs 处理。
             logger.exception("[Subagent] sub-engine failed")
-            return SubagentResult(
+            return _sub_result(
                 success=False,
                 error=str(e),
                 summary=f"子代理执行失败: {e}",
@@ -543,7 +590,7 @@ class SubagentDispatcher:
         new_refs = sorted(refs_after - refs_before)
 
         if not _honest_success:
-            return SubagentResult(
+            return _sub_result(
                 success=False,
                 summary=summary or "子代理未返回有效内容（empty completion / no_progress / max_rounds）",
                 reasoning=reasoning,
@@ -551,7 +598,7 @@ class SubagentDispatcher:
                 error="subagent empty or failed turn",
             )
 
-        return SubagentResult(
+        return _sub_result(
             success=True,
             summary=summary,
             reasoning=reasoning,

@@ -136,15 +136,16 @@ cartography ids resolvable in the map model registry (see
 
 ## The conformance corpus as contract reference
 
-`app/extensions_platform/conformance.py` generates **2014 deterministic
-cases** (executed by `test_conformance_corpus.py`). If your question is "what
-happens when …", find the case family and read the case — it is the
+`app/extensions_platform/conformance.py` generates **2032 deterministic
+cases** (executed by `test_conformance_corpus.py`, which runs 2034 tests:
+the parametrized cases plus 2 structural meta tests). If your question is
+"what happens when …", find the case family and read the case — it is the
 contract:
 
 | Family | Covers |
 | --- | --- |
 | `manifest_valid` / `manifest_invalid` | manifest field matrix (names, versions, sizes, duplicates) |
-| `compatibility` | api/core version windows |
+| `compatibility` | api/core version windows (api `1.1.0` is compatible since V2) |
 | `lifecycle_activate` / `lifecycle_rollback` / `lifecycle_reload` | activation, atomic rollback, idempotent reload |
 | `lifecycle_dependency` | required/optional deps, cycles |
 | `lifecycle_trust` / `lifecycle_disabled` | quarantine, operator disable |
@@ -154,22 +155,52 @@ contract:
 | `provider_sdk` | provider rules (subclassing, network permission) |
 | `cartography_honesty` | planned/native honesty rules |
 | `policy_matrix` | allow/block/builtin/grant policy combinations |
+| `v2_contract` (20 cases, ADR-0105) | execution accept/reject matrix, budget bounds, model_provider api-floor gating, worker+streaming rejection, dependency version-constraint gating |
 
 Case expectations use the syntax `pass`, `fail:manifest_invalid`,
 `fail:<DiagnosticCode>`, `state:<ExtensionState>`,
-`diagnostic:<DiagnosticCode>`.
+`diagnostic:<DiagnosticCode>`. Case ids are byte-stable across runs.
+
+## V2 lanes (ADR-0105)
+
+The V2 surface is pinned by two complementary lanes, both offline and
+deterministic: the corpus above for manifest-layer contracts, and dedicated
+suites below for behavior the corpus deliberately does not exercise
+(**the corpus never spawns worker processes** — real subprocess behavior
+lives in the integration files):
+
+| Test file | Layer | Pins |
+| --- | --- | --- |
+| `test_v2_contract.py` | unit | `CORE_API_VERSION` 1.1.0, `ExecutionDeclaration` budgets/bounds, `ModelProviderDeclaration` vocabulary, constraint syntax, settings-bridge V2 parsing |
+| `test_worker_server.py` | unit (in-process pipes) | frame codec, handshake verification matrix, call/health/shutdown loop, output-size gate |
+| `test_worker_integration.py` | **real subprocess** | activate→call→deactivate roundtrip, crash → rollback → quarantine, call-timeout kill, sanitized env, undeclared-tool refusal, class-instance rejection |
+| `test_resource_limits.py` | **real subprocess** | RLIMIT_AS MemoryError survival, RLIMIT_CPU busy-loop kill, output-limit typed error, setrlimit-failure degradation warnings |
+| `test_broker.py` | unit + **real subprocess e2e** | default-deny matrix, allowlist + SSRF (private IP denied even with `"*"`), method/header policy, artifact confinement, secret provisioning, audit ring, RPC roundtrips |
+| `test_signing.py` | unit | sign/verify verdicts, fingerprint exclusion of `signature.json`, host trust flow (tampered → quarantined even if allowlisted), CLI package/verify |
+| `test_sbom.py` | unit | determinism, inventory, secret scan, bounds, CLI |
+| `test_resolver.py` | unit | topo order, constraint validation, upgrade conflicts, downgrade guard |
+| `test_lifecycle_refresh.py` | unit | projection hook recompiles manifest on activate/deactivate/rollback, worker-crash refresh, hook-exception isolation |
+| `test_model_provider.py` | unit + **real subprocess** | invoke-tool projection + dispatch, streaming with cancellation, secret never echoed, worker single-frame invoke, worker streaming refusal, capability mixins |
+| `test_certification.py` | unit | certification checks incl. real lifecycle smoke, CLI certify, example pack green |
 
 ## Exact commands
 
 ```bash
-# The whole extension-platform lane (2100+ tests, incl. the 2014-case corpus)
+# The whole extension-platform lane (2372 tests, incl. the corpus and the
+# real-subprocess V2 suites)
 pytest tests/unit/extensions_platform/ -q --no-cov
 
 # Just the example-pack end-to-end tests
 pytest tests/unit/extensions_platform/test_example_pack.py -q --no-cov
 
-# Just the conformance corpus
+# Just the conformance corpus (2034 tests = 2032 cases + 2 meta tests)
 pytest tests/unit/extensions_platform/test_conformance_corpus.py -q --no-cov
+
+# V2 worker isolation / broker / supply chain
+pytest tests/unit/extensions_platform/test_worker_integration.py \
+       tests/unit/extensions_platform/test_resource_limits.py \
+       tests/unit/extensions_platform/test_broker.py \
+       tests/unit/extensions_platform/test_signing.py -q --no-cov
 
 # OGC/STAC hardening (data fabric)
 pytest tests/unit/extensions_platform/test_ogc_stac_hardening.py -q --no-cov
@@ -178,4 +209,7 @@ pytest tests/unit/extensions_platform/test_ogc_stac_hardening.py -q --no-cov
 ruff check app/ tests/
 ```
 
-Everything in the lane is offline, deterministic, and LLM-free.
+Everything in the lane is offline, deterministic, and LLM-free. The
+real-subprocess suites spawn `python -m
+app.extensions_platform.worker.server` children (sanitized env, bounded
+budgets) but never touch the network.

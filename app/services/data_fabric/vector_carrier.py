@@ -498,10 +498,94 @@ def arrow_batches_geo_metadata(batches: Iterable[Any]) -> Dict[str, Any]:
     return _geo_metadata(crs, bbox=combined_bbox, geometry_types=sorted(types))
 
 
-def table_to_geoparquet(table: Any, path: str, *, compression: str = "zstd") -> None:
-    """Arrow Table → GeoParquet（geo 元数据随 schema 落盘）。"""
+#: row-group bbox 元数据的 schema metadata 键（namespaced，GeoParquet geo
+#: 契约不受影响 —— 读者忽略未知键）。值 = JSON
+#: ``{"geometry_column": "...", "row_groups": [{"rows": n, "bbox": [..4..]}]}``，
+#: 与物理 row-group 划分一一对应；供窗口扫描做 row-group 剪枝（lazy 读）。
+_ROW_GROUP_BBOX_META_KEY = b"webgis:row_groups"
+#: 默认 row-group 行数（空间聚簇文件的上界粒度；0/None = pyarrow 默认）。
+DEFAULT_ROW_GROUP_SIZE = 50_000
+
+
+def _row_group_bboxes(table: Any, row_group_size: int) -> Optional[dict]:
+    """按 row-group 划分计算 bbox 地图（shapely 向量化；诚实降级 None）。
+
+    bbox 从**真实几何**计算（shapely.bounds C 路径，O(coords) 一次）——
+    绝不虚构。shapely 缺失 / 无几何列 / 非二进制几何列 → None（扫描侧退化
+    为有界顺序读，正确性不受影响）。
+    """
+    try:
+        import numpy as np
+        import shapely
+    except Exception:  # noqa: BLE001 — 环境缺 shapely → 诚实跳过
+        return None
+    import pyarrow as pa
+
+    geom_name = None
+    meta = table.schema.metadata or {}
+    raw = meta.get(b"geo")
+    if raw:
+        try:
+            geo = json.loads(raw)
+            geom_name = next(iter((geo.get("columns") or {})), None)
+        except Exception:  # noqa: BLE001 — 外来元数据容错
+            geom_name = None
+    if not geom_name and table.schema.get_field_index("geometry") >= 0:
+        geom_name = "geometry"
+    if not geom_name or table.schema.get_field_index(geom_name) < 0:
+        return None
+    column = table.column(geom_name)
+    if not (pa.types.is_binary(column.type)
+            or pa.types.is_large_binary(column.type)):
+        return None
+
+    step = max(1, int(row_group_size))
+    groups: List[Dict[str, Any]] = []
+    for start in range(0, table.num_rows, step):
+        chunk = column.slice(start, step)
+        wkbs = np.asarray(chunk.to_pylist(), dtype=object)
+        geoms = shapely.from_wkb(wkbs)
+        mask = np.array([g is not None for g in geoms], dtype=bool)
+        if not mask.any():
+            groups.append({"rows": int(len(wkbs)), "bbox": None})
+            continue
+        bounds = shapely.bounds(geoms[mask])  # (N, 4) [minx, miny, maxx, maxy]
+        bbox = [
+            float(bounds[:, 0].min()), float(bounds[:, 1].min()),
+            float(bounds[:, 2].max()), float(bounds[:, 3].max()),
+        ]
+        groups.append({"rows": int(len(wkbs)), "bbox": bbox})
+    return {"geometry_column": geom_name, "row_groups": groups}
+
+
+def table_to_geoparquet(
+    table: Any,
+    path: str,
+    *,
+    compression: str = "zstd",
+    row_group_size: Optional[int] = None,
+) -> None:
+    """Arrow Table → GeoParquet（geo 元数据随 schema 落盘）。
+
+    V6（ADR-0118）新增：row-group 粒度控制 + 显式列统计 + row-group bbox
+    地图（schema metadata ``webgis:row_groups``，从真实几何算得）—— 窗口
+    扫描据此做 row-group 剪枝（lazy 读路径的结构性基础）。计算失败/依赖
+    缺失 → 不写该键（诚实缺省，绝不虚构剪枝证据）。
+    """
     _, pq = _require_pa()
-    pq.write_table(table, path, compression=compression)
+    metadata = dict(table.schema.metadata or {})
+    rg_size = int(row_group_size or DEFAULT_ROW_GROUP_SIZE)
+    bbox_map = _row_group_bboxes(table, rg_size)
+    if bbox_map is not None:
+        metadata[_ROW_GROUP_BBOX_META_KEY] = json.dumps(bbox_map)
+    table = table.replace_schema_metadata(metadata)
+    pq.write_table(
+        table,
+        path,
+        compression=compression,
+        row_group_size=rg_size,
+        write_statistics=True,
+    )
 
 
 def geoparquet_to_features(path: str) -> List[Dict[str, Any]]:
@@ -527,3 +611,34 @@ def table_crs(table: Any) -> Optional[Union[str, Dict[str, Any]]]:
         return geo.get("columns", {}).get("geometry", {}).get("crs")
     except Exception:  # noqa: BLE001
         return None
+
+
+def table_geo_summary(table: Any) -> Dict[str, Any]:
+    """整表 schema geo 元数据的汇总投影（crs/bbox/geometry_types）。
+
+    features_to_arrow 在编码时已把**从数据算得**的 bbox/geometry_types 写进
+    schema ``geo`` 元数据 —— 本助手零额外几何扫描读回它，供台账 descriptor
+    与 DataObject payload 使用（真实证据，绝不虚构）。无 geo 元数据 → 空
+    dict（诚实缺省）。
+    """
+    meta = getattr(table.schema, "metadata", None) or {}
+    raw = meta.get(b"geo")
+    if not raw:
+        return {}
+    try:
+        geo = json.loads(raw)
+    except Exception:  # noqa: BLE001 — 外来元数据容错
+        return {}
+    col = (geo.get("columns") or {}).get("geometry") or {}
+    out: Dict[str, Any] = {}
+    if col.get("crs"):
+        out["crs"] = col["crs"] if isinstance(col["crs"], str) else col["crs"]
+    bbox = col.get("bbox")
+    if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+        try:
+            out["bbox"] = [float(v) for v in bbox]
+        except (TypeError, ValueError):
+            pass
+    if col.get("geometry_types"):
+        out["geometry_types"] = sorted(str(t) for t in col["geometry_types"])
+    return out

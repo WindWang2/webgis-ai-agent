@@ -17,6 +17,7 @@ import { buildMvtTileUrl } from '@/lib/map-kit/tile-url';
 import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
 import { getPendingRemoved } from '@/lib/mapspec/session-cursor';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { hydrateWorkbenchFromSpec } from '@/lib/workbench/persistence';
 import { useToastStore } from '@/components/ui/toast';
 import { devOnly } from '@/lib/utils/logger';
 import { commitMapSpecDocument } from '@/lib/mapspec/session-cursor';
@@ -293,6 +294,10 @@ export async function restoreSessionMapLayers(
   opts: RestoreMapLayersOptions,
 ): Promise<void> {
   commitMapSpecDocument(state.mapspec, state._cartographic_mutation_revision);
+  // Workbench V5（W3）：组织态（分组树/成员/锁/模式）随同一 spec 恢复并
+  // 武装持久化基线 —— 旧会话无 workbench 分支时空基线起跑（用户此后编辑
+  // 开始持久化）。
+  hydrateWorkbenchFromSpec(state.mapspec);
   // 持久化 layers/observation 只记 HUD 行——product-* 等直写层只在
   // state.mapspec.layers 里，恢复时同样要镜像成行（与会话 live 路径
   // syncSpecLayersToStore 的调用点互补）。

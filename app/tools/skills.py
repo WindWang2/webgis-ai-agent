@@ -273,6 +273,7 @@ def register_skill_tools(registry: ToolRegistry):
     
     registry.register(
         name="create_new_skill",
+        capabilities=['meta_tool_surface'],
         description="【核心进化】为 Agent 开发并部署一个新的技能脚本。你可以根据需要编写 Python 代码来实现复杂的地理分析逻辑。代码将自动部署并立即生效。",
         func=create_new_skill,
         # 破坏性工具，仅在用户明确请求时由 catalog 注入

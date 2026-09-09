@@ -37,6 +37,7 @@ class ExtensionContext:
         settings: dict[str, Any],
         tool_registry: Any,
         ledger: ProjectionLedger,
+        secrets: Optional[dict[str, str]] = None,
     ) -> None:
         self.manifest = manifest
         self.extension_id = manifest.id
@@ -47,6 +48,10 @@ class ExtensionContext:
         self._tool_registry = tool_registry
         self._ledger = ledger
         self._registered: dict[str, set[str]] = {}
+        # V2：已投影的 model provider specs（host invoke API 消费）。
+        self._model_provider_specs: dict[str, Any] = {}
+        # host 注入的按 id 供给凭据（get_secret 的值源；供给即授权）。
+        self._secrets: dict[str, str] = dict(secrets or {})
         # 扩展目录与入口模块名（host 注入，load_sibling 用）；可能为 None。
         self._module_dir: Any = None
         self._entry_module_name: Optional[str] = None
@@ -59,6 +64,7 @@ class ExtensionContext:
             "data_providers": {p.source_type for p in self.manifest.data_providers},
             "cartography": {(c.kind, c.id) for c in self.manifest.cartography_items},
             "workflow_packs": {w.pack_id for w in self.manifest.workflow_packs},
+            "model_providers": {m.id for m in self.manifest.model_providers},
         }.get(section, set())
         if key not in declared:
             raise ExtensionPlatformError(
@@ -519,6 +525,111 @@ class ExtensionContext:
             self.extension_id, pack_projected, len(projected_ids),
         )
         return pack_projected
+
+    # ── model providers（V2 Wave 10）──────────────────────────────────
+    def register_model_provider(self, spec: Any) -> str:
+        """投影一个 ModelProviderSpec：类型化调用工具（真实 agent 派发面）。
+
+        invoke_fn 本体留在本进程（in-process 语义）；流式事件聚合为单个
+        工具结果。声明核对 / 权限核对 fail closed。
+        """
+        from .sdk.model import ModelProviderSpec, aggregate_stream_events
+
+        if not isinstance(spec, ModelProviderSpec):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    "register_model_provider expects a ModelProviderSpec",
+                    extension_id=self.extension_id,
+                )
+            )
+        self._require_declared("model_providers", spec.provider_id)
+        diagnostics = spec.validate(
+            [
+                m.model_dump() if hasattr(m, "model_dump") else dict(m)
+                for m in self.manifest.model_providers
+            ],
+            frozenset(self.manifest.permissions),
+        )
+        if any(d.severity.value == "error" for d in diagnostics):
+            raise ExtensionPlatformError(diagnostics[0])
+        projected = self.manifest.namespaced_model_provider_tool(spec.provider_id)
+        if self._tool_registry.has(projected):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.REGISTRY_PROJECTION_COLLISION,
+                    f"tool {projected!r} already registered",
+                    extension_id=self.extension_id,
+                )
+            )
+        invoke_fn = spec.invoke_fn
+        owner_ctx = self
+
+        def _model_invoke(**kwargs: Any) -> Any:
+            # 真实 agent 派发约定是 tool_func(**arguments)（扁平 kwargs）。
+            # 兼容两种形态：显式 ``request={...}`` 单参，或全部扁平 kwargs
+            # 即请求本身（Round-1 审查 CRITICAL-2：此前扁平 kwargs 被静默
+            # 丢弃，provider 拿到空请求返回似是而非的结果）。
+            if set(kwargs) == {"request"} and isinstance(kwargs["request"], dict):
+                req = dict(kwargs["request"])
+            else:
+                req = dict(kwargs)
+            result = invoke_fn(req, owner_ctx)
+            return aggregate_stream_events(result)
+
+        _model_invoke.__name__ = projected
+        parameters = spec.parameters or {
+            "type": "object",
+            "properties": {"request": {"type": "object"}},
+        }
+        try:
+            self._tool_registry.register(
+                projected,
+                spec.description or f"model provider {spec.provider_id}",
+                _model_invoke,
+                tier=1,
+                side_effect="external_side_effect",
+                deterministic=False,
+                parameters=parameters,
+                tags=[f"model_provider:{self.extension_id}"],
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.REGISTRY_PROJECTION_FAILED,
+                    f"model provider tool {projected!r} rejected by ToolRegistry: {exc}",
+                    extension_id=self.extension_id,
+                )
+            ) from exc
+        self._record("tool", projected, lambda: self._tool_registry.unregister(projected))
+        self._model_provider_specs[spec.provider_id] = spec
+        logger.info(
+            "extension %s projected model provider %s (tool %s)",
+            self.extension_id, spec.provider_id, projected,
+        )
+        return projected
+
+    def model_provider_specs(self) -> dict[str, Any]:
+        """已投影的 model provider specs（host invoke API 消费）。"""
+        return dict(self._model_provider_specs)
+
+    # ── secrets（V2：供给即授权；in-process 与 worker 语义对齐）────────
+    def get_secret(self, ref: str) -> str:
+        """读取本扩展被供给的凭据 ref（未供给 → typed 拒绝）。
+
+        值由 host 在激活期注入（``HostPolicy.secrets``）；不进入任何
+        状态/日志/工具结果面。
+        """
+        if not self._secrets or ref not in self._secrets:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.BROKER_DENIED,
+                    f"secret ref {ref!r} is not provisioned for {self.extension_id!r} "
+                    "(supply via EXTENSION_SECRETS_JSON; default deny)",
+                    extension_id=self.extension_id,
+                )
+            )
+        return self._secrets[ref]
 
     # ── 供宿主核对声明 ↔ 实际 ────────────────────────────────────────
     def registered_ids(self) -> dict[str, set[str]]:

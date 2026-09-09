@@ -42,6 +42,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="stats.category.breakdown", name="类别构成统计",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_spatial_stats_geometry_summary_oracle",
+            ],
             capabilities=["category_breakdown"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="stats_table",

@@ -357,7 +357,14 @@ def get_subagent_role(name: str) -> SubagentRole:
 
 @dataclass
 class SubagentBudget:
-    """单次子代理运行的预算计数器（线程内使用；asyncio 单线程模型）。"""
+    """单次子代理运行的预算计数器（线程内使用；asyncio 单线程模型）。
+
+    V5 W6（ADR-0118 D6）：新增 LLM usage 记账（prompt/completion/total
+    tokens + provider 上报次数）。来源是子代理运行的专属 TurnEvidence
+    （bind_turn_evidence 让引擎既有的 usage 通道落到子累加器），运行
+    结束经 ``join_turn_evidence`` 汇入本预算 —— token/成本不再不可观测。
+    Provider 不回报 usage 时诚实为 0（``reports=0`` 即无证据）。
+    """
 
     max_tool_calls: int
     max_heavy_tool_calls: int
@@ -365,6 +372,39 @@ class SubagentBudget:
     _tool_calls: int = 0
     _heavy_calls: int = 0
     _started_at: float = field(default_factory=time.monotonic)
+    _prompt_tokens: int = 0
+    _completion_tokens: int = 0
+    _total_tokens: int = 0
+    _usage_reports: int = 0
+
+    def add_llm_usage(self, usage: dict | None) -> None:
+        """累计一次 provider usage（None/缺字段安全跳过 —— 与 TurnEvidence 同门）。"""
+        if not isinstance(usage, dict):
+            return
+        try:
+            p = int(usage.get("prompt_tokens") or 0)
+            c = int(usage.get("completion_tokens") or 0)
+            t = int(usage.get("total_tokens") or (p + c))
+        except (TypeError, ValueError):
+            return
+        self._prompt_tokens += max(0, p)
+        self._completion_tokens += max(0, c)
+        self._total_tokens += max(0, t)
+        self._usage_reports += 1
+
+    def join_turn_evidence(self, evidence: Any) -> bool:
+        """把子代理运行的 TurnEvidence usage 汇入预算（一次性；幂等守卫）。"""
+        if evidence is None or getattr(evidence, "_v5_joined", False):
+            return False
+        try:
+            self._prompt_tokens += int(getattr(evidence, "prompt_tokens", 0) or 0)
+            self._completion_tokens += int(getattr(evidence, "completion_tokens", 0) or 0)
+            self._total_tokens += int(getattr(evidence, "total_tokens", 0) or 0)
+            self._usage_reports += int(getattr(evidence, "llm_usage_reports", 0) or 0)
+            evidence._v5_joined = True
+            return True
+        except Exception:  # noqa: BLE001 — 记账面绝不阻断
+            return False
 
     def check_tool(self, *, is_heavy: bool) -> None:
         self._tool_calls += 1
@@ -392,6 +432,12 @@ class SubagentBudget:
             "tool_calls": self._tool_calls,
             "heavy_tool_calls": self._heavy_calls,
             "wall_time_s": round(time.monotonic() - self._started_at, 1),
+            "llm_usage": {
+                "prompt_tokens": self._prompt_tokens,
+                "completion_tokens": self._completion_tokens,
+                "total_tokens": self._total_tokens,
+                "reports": self._usage_reports,
+            },
         }
 
 

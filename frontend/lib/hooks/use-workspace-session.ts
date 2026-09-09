@@ -11,6 +11,19 @@ import { setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
 
 import { devOnly } from "@/lib/utils/logger";
 import { resetViewportSeq } from "@/lib/utils/viewport-seq";
+import {
+  flushWorkbenchDoc,
+  markWorkbenchHydrated,
+  notifyWorkbenchSessionChanged,
+  startWorkbenchPersistence,
+  workbenchPersistenceArmed,
+} from '@/lib/workbench/persistence';
+import { clearUndoHistory } from '@/lib/workbench/undo';
+import {
+  clearSessionAnchor,
+  restorableSessionAnchor,
+  writeSessionAnchor,
+} from '@/lib/workbench/session-anchor';
 
 const MAX_SESSION_OWNER_TOKENS = 128;
 
@@ -127,6 +140,15 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     if (historyOpen) refreshSessions();
   }, [historyOpen, refreshSessions]);
 
+  // Workbench V5（W3）：组织态持久化订阅（workspace 挂载一次；幂等）。
+  useEffect(() => {
+    startWorkbenchPersistence();
+    // W11：页面卸载前尽力冲刷未落盘的 doc 变更（防抖窗口丢失防护）。
+    const onPageHide = () => flushWorkbenchDoc();
+    window.addEventListener('pagehide', onPageHide);
+    return () => window.removeEventListener('pagehide', onPageHide);
+  }, []);
+
   const selectSession = useCallback(
     async (sid: string, onRestoreMessages: (messages: any[], notice?: string) => void) => {
       // Cancel previous session restoration requests to avoid stale layer insertions
@@ -151,8 +173,14 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // Workspace V2：dock 归属描述的是旧会话的组件实例 —— 新会话的
       // MapSpec 没有这些 id，停靠区随之清空（避免空 dock/幽灵面板）。
       useHudStore.getState().resetDockState();
+      // Workbench V5（W3/R1-m15）：**先**解除持久化武装再清 store ——
+      // resetLayerGroups 触发的组织态订阅不得以旧会话身份提交空 doc
+      // （顺序敏感：disarm 与清 store 之间不得插入 await）。
+      notifyWorkbenchSessionChanged(sid);
       // Workbench V4：分组树/多选引用旧会话图层 id —— 同 dock 语义，随会话清空。
       useHudStore.getState().resetLayerGroups();
+      // V5/W4：undo 栈随会话清空（跨会话命令不可撤销 —— 图层 id 语义已变）。
+      clearUndoHistory();
       // #548: explorer task cards are session-scoped — a session switch must not
       // leak the previous session's cards into the new session's task tab.
       clearExplorerTasks();
@@ -212,6 +240,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         }
         onRestoreMessages(restored);
         messagesRestored = true;
+        // W11：恢复成功 → 写会话锚（刷新自动恢复指针；仅指针不存内容）。
+        writeSessionAnchor(sid);
 
         // setSessionId 已在函数开头同步调用（审计 F38），这里不再重复
 
@@ -239,6 +269,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
           // #552: 图层还原逻辑抽到 lib/session/map-state-restore（观察态优先 +
           // ref 数据回填），会话切换与 /story 分享页共用同一份实现。
           await restoreSessionMapLayers(state, { sessionId: sid, token, signal });
+        } else {
+          // 无 map_state（空会话）：武装空基线 —— 用户编辑从此开始持久化。
+          markWorkbenchHydrated();
         }
 
         // 审计 F39：切换会话后必须刷新分析资产列表，否则 session A 的资产
@@ -255,6 +288,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         // session-switch cancellation.
         if (err?.name === 'AbortError') return;
         devOnly.error('Load session failed:', err);
+        // W3/R1-m8：恢复失败也武装空基线 —— 该会话此后的组织态编辑仍可
+        // 持久化（不因一次恢复失败永久断供）。
+        markWorkbenchHydrated();
         // #392: 消息 GET 失败 -> 无条件重置 transcript（否则上一会话的
         // 聊天残留屏幕、下一条消息延续旧 transcript），并附错误提示，
         // 不再静默吞掉失败。
@@ -308,6 +344,12 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       useHudStore.getState().resetDockState();
       // Workbench V4：分组树/多选引用旧会话图层 id —— 同 dock 语义，随会话清空。
       useHudStore.getState().resetLayerGroups();
+      // Workbench V5（W3）：新会话（尚无 sid）——解除组织态持久化武装。
+      notifyWorkbenchSessionChanged(null);
+      // V5/W4：undo 栈随会话清空。
+      clearUndoHistory();
+      // W11：新会话语义 → 清刷新恢复锚。
+      clearSessionAnchor();
       // #548: new session = fresh explorer task tab (same session-scope rule as
       // selectSession, this path had no clear at all before).
       clearExplorerTasks();
@@ -327,6 +369,15 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
 
   const rememberSessionToken = useCallback((sid: string, token: string) => {
     if (!sid || !token) return;
+    // Workbench V5（W3）：新会话（首发消息后 SSE 签发 sid/token）没有
+    // selectSession 恢复路径 —— 以空基线武装组织态持久化（已在恢复流程中
+    // 武装时为 no-op，不打断正确基线）。
+    if (!workbenchPersistenceArmed()) {
+      notifyWorkbenchSessionChanged(sid);
+      markWorkbenchHydrated();
+    }
+    // W11：新会话建立 → 写刷新恢复锚（认证会话可自动恢复）。
+    writeSessionAnchor(sid);
     // Cap capability retention: long-lived tabs may visit many anonymous
     // sessions, but ACK routing only needs a bounded recent working set.
     if (!sessionTokensRef.current.has(sid)) {
@@ -349,6 +400,21 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     );
   }, []);
 
+  /**
+   * W11：刷新自动恢复 —— mount 时若锚指向可恢复的认证会话且当前无会话，
+   * 走既有 selectSession 管线（消息 + map-state + 图层 + workbench doc
+   * 全量恢复；ghost 防御复用 restore 的 allowedIds/pendingRemoved 机制）。
+   */
+  const autoRestoreFromAnchor = useCallback(
+    (onRestoreMessages: (messages: any[], notice?: string) => void) => {
+      if (sessionIdRef.current) return;
+      const anchor = restorableSessionAnchor();
+      if (!anchor) return;
+      void selectSession(anchor.sessionId, onRestoreMessages);
+    },
+    [selectSession],
+  );
+
   return {
     sessionId,
     setSessionId,
@@ -366,5 +432,6 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     refreshSessions,
     selectSession,
     startNewSession,
+    autoRestoreFromAnchor,
   };
 }

@@ -19,6 +19,7 @@ from typing import get_args
 
 from app.lib.cartography.component_registry import get_component_registry
 from app.lib.cartography.component_renderers import get_component_renderer_registry
+from app.lib.cartography.render_diagnostics import catalog_section
 from app.lib.cartography.themes import get_cartographic_theme_registry
 from app.services.gis_harness.components import ComponentType
 
@@ -119,7 +120,7 @@ def build_catalog() -> dict:
         for k in sorted(CHART_KINDS, key=lambda k: k.id)
     ]
     return {
-        "schemaVersion": 4,
+        "schemaVersion": 5,
         "exportedFrom": "app/lib/cartography/component_registry.py",
         "componentTypes": components,
         "palettes": palettes,
@@ -128,6 +129,9 @@ def build_catalog() -> dict:
         "chartStates": chart_states,
         "chartStateTransitions": chart_state_transitions,
         "agentChartOperations": agent_chart_operations,
+        # V5（ADR-0118 D1）：渲染/导出降级诊断权威词表随目录导出 ——
+        # 前端 ExportDegradation 码必须是其子集（registry-parity 锁定）。
+        "renderDiagnostics": catalog_section(),
     }
 
 

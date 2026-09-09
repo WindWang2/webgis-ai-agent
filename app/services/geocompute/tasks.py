@@ -19,6 +19,12 @@ from app.services.task_queue import celery_app
 
 logger = logging.getLogger(__name__)
 
+# V6（wave 7）：worker 生命周期接入集群注册表（幂等；eager 下信号不触发，
+# 零副作用；真实 worker 上线即注册 + 心跳，容量对 coordinator 可见）。
+from app.services.geocompute.cluster.workers import connect_celery_signals  # noqa: E402
+
+connect_celery_signals()
+
 
 @celery_app.task(name="app.services.geocompute.tasks.run_geocompute_node", bind=True)
 def run_geocompute_node(
@@ -27,12 +33,19 @@ def run_geocompute_node(
     session_id: Optional[str] = None,
     job_id: Optional[int] = None,
     deadline_s: Optional[float] = None,
+    budget: Optional[dict] = None,
 ) -> dict[str, Any]:
-    """执行单个 ExecutionNode（经 ops 注册表），结果落 session ref。"""
+    """执行单个 ExecutionNode（经 ops 注册表），结果落 session ref。
+
+    V6（P0-3 修复）：``budget`` 是 plan 级预算的持久投影（dispatch 侧经
+    task_kwargs 穿透）—— worker 侧 ``OperatorContext`` 据此恢复行数红线，
+    durable 路径不再只剩 HARD_NODE_ROW_CAP 一道防线。
+    """
     from app.services.geocompute import ops
-    from app.services.geocompute.plan import ExecutionNode
+    from app.services.geocompute.plan import ExecutionNode, ResourceBudget
 
     exec_node = ExecutionNode(**node)
+    ctx_budget = ResourceBudget(**budget) if budget else None
     if job_id is None:
         # 直调（无 durable 语义）只允许 eager 测试路径存在；生产派发必经
         # submit_durable_job。这里仍诚实执行，但无状态机保护。
@@ -41,6 +54,7 @@ def run_geocompute_node(
         )
         ctx = ops.OperatorContext(
             run_id="direct", node_id=exec_node.node_id, session_id=session_id,
+            budget=ctx_budget,
         )
         payload = ops.execute_node(ctx, exec_node, {})
         return _bounded_summary(payload)
@@ -57,6 +71,7 @@ def run_geocompute_node(
             session_id=session_id,
             deadline_ts=deadline_ts,
             cancel_token=job.token,  # durable_job 已 use_token；此处显式传入
+            budget=ctx_budget,
         )
         payload = ops.execute_node(ctx, exec_node, {})
         job.ensure_not_cancelled()  # 不可逆副作用（落存/登记）前的强制检查
