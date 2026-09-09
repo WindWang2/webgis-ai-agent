@@ -22,14 +22,12 @@
     "algorithms": 213,
     "artifact_types": 21,
     "capabilities": 139,
-    "findings": 1,
+    "findings": 0,
     "recipes": 164,
     "tools": 299
    },
-   "findings_by_code": {
-    "TOOL_UNTESTED": 1
-   },
-   "fingerprint": "fa457b14aa9e8613c7a278dc51b4f7041f8ff523e7af745cc46767c46588b394",
+   "findings_by_code": {},
+   "fingerprint": "3f796c56b393292c9b37c12d70935313e05f2c5aea59b6b11c44bfe5d9693935",
    "gate": {
     "pass": true,
     "total": 299
