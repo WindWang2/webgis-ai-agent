@@ -428,7 +428,11 @@ class InstanceStore:
                     WorkflowInstanceRow.instance_id == instance_id,
                     WorkflowInstanceRow.owner_scope == owner_scope,
                 ).first()
-                if row is None or row.status != C.InstanceStatus.RUNNING:
+                # 终态 cancelled/superseded 不可再驱动；
+                # succeeded/failed 允许再入（增量重算驱动的合法路径）。
+                if row is None or row.status in (
+                        C.InstanceStatus.CANCELLED,
+                        C.InstanceStatus.SUPERSEDED):
                     return False
                 held = row.run_lease_expires_at or datetime.min
                 same_owner = (row.run_lease_owner or "") == token
@@ -448,26 +452,58 @@ class InstanceStore:
         except OperationalError:
             return False
 
-    def find_orphan_running_nodes(self, instance_id: str) -> List[str]:
-        """实例 RUNNING 且租约过期/无主 → 孤儿节点清单（恢复复位）。"""
+    def release_run_lease(
+        self, instance_id: str, *, owner_scope: str, token: str,
+    ) -> bool:
+        """释放租约（仅持有人可释；run 正常收尾调用）。"""
+        try:
+            with self._factory() as db:
+                updated = db.execute(
+                    sa.update(WorkflowInstanceRow)
+                    .where(
+                        WorkflowInstanceRow.instance_id == instance_id,
+                        WorkflowInstanceRow.owner_scope == owner_scope,
+                        WorkflowInstanceRow.run_lease_owner == token[:64],
+                    )
+                    .values(run_lease_owner=None, run_lease_expires_at=None,
+                            updated_at=_utcnow())
+                )
+                db.commit()
+                return bool(updated.rowcount)
+        except OperationalError:
+            return False
+
+    def find_orphan_running_nodes(
+        self, instance_id: str, *, current_token: str = "",
+    ) -> List[str]:
+        """孤儿 RUNNING 节点清单（恢复复位）。
+
+        liveness 以实例租约为准：租约被**其他** token 活持 → 有主不扫；
+        租约过期/无主/由当前 token 持有（本 driver 刚接管）→ RUNNING 且
+        claimed_by ≠ 当前 token 的节点即孤儿（claimed_by == 当前 token 的
+        在飞节点由本 driver 自己的 cancel/deadline 管辖）。
+        """
         inst = self.get_instance(instance_id)
         if inst is None or inst["status"] != C.InstanceStatus.RUNNING:
             return []
-        lease_ok = False
         try:
             expires = datetime.fromisoformat(inst["run_lease_expires_at"]) \
                 if inst["run_lease_expires_at"] else None
-            lease_ok = expires is not None and expires > _utcnow()
         except (TypeError, ValueError):
-            lease_ok = False
-        if lease_ok:
+            expires = None
+        lease_held_elsewhere = (
+            expires is not None and expires > _utcnow()
+            and (inst["run_lease_owner"] or "")
+            and inst["run_lease_owner"] != current_token)
+        if lease_held_elsewhere:
             return []
         with self._factory() as db:
             rows = db.query(WorkflowInstanceNodeRow).filter(
                 WorkflowInstanceNodeRow.instance_id == instance_id,
                 WorkflowInstanceNodeRow.state == C.NodeState.RUNNING,
             ).all()
-            return [r.node_id for r in rows]
+            return [r.node_id for r in rows
+                    if (r.claimed_by or "") != current_token]
 
     def list_session_instances(
         self, session_id: str, *, owner_scope: Optional[str] = None,

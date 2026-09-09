@@ -59,6 +59,9 @@ LEGAL_TRANSITIONS: Dict[str, frozenset] = {
     }),
     NodeState.RUNNING: frozenset({
         NodeState.SUCCEEDED, NodeState.FAILED, NodeState.CANCELLED,
+        # 恢复专用：孤儿 RUNNING（claim 者租约已死）复位 READY。
+        # 仅 driver 恢复清扫（实例租约门控）调用，绝非通用旁路。
+        NodeState.READY,
     }),
     NodeState.FAILED: frozenset({NodeState.READY, NodeState.SKIPPED}),
     NodeState.BLOCKED: frozenset({NodeState.READY, NodeState.SKIPPED}),
@@ -328,10 +331,13 @@ def instance_status_from_nodes(
     """
     if not statuses:
         return InstanceStatus.RUNNING
-    if all(
-        s in (NodeState.SUCCEEDED, NodeState.SKIPPED, NodeState.CANCELLED)
-        for s in statuses.values()
-    ):
+    if any(s == NodeState.RUNNING for s in statuses.values()):
+        return InstanceStatus.RUNNING
+    # 取消优先于成功：任一节点被取消 → 实例 cancelled（不洗成 succeeded）
+    if any(s == NodeState.CANCELLED for s in statuses.values()):
+        return InstanceStatus.CANCELLED
+    if all(s in (NodeState.SUCCEEDED, NodeState.SKIPPED)
+           for s in statuses.values()):
         return InstanceStatus.SUCCEEDED
     for node_id, s in statuses.items():
         required = not optional_nodes.get(node_id, False)

@@ -23,6 +23,7 @@ from app.services.workflow_runtime import machine as M
     (C.NodeState.STALE, C.NodeState.READY),
     (C.NodeState.STALE, C.NodeState.SUCCEEDED),   # 复用证明解除
     (C.NodeState.SKIPPED, C.NodeState.READY),      # 重新资格化
+    (C.NodeState.RUNNING, C.NodeState.READY),      # 孤儿恢复专用（租约门控）
 ])
 def test_legal_transitions(from_state, to_state):
     assert C.validate_transition(from_state, to_state) is None
@@ -32,7 +33,6 @@ def test_legal_transitions(from_state, to_state):
     (C.NodeState.PENDING, C.NodeState.SUCCEEDED),   # 跳级
     (C.NodeState.PENDING, C.NodeState.STALE),
     (C.NodeState.RUNNING, C.NodeState.STALE),        # quiescence 门保证不发生
-    (C.NodeState.RUNNING, C.NodeState.READY),
     (C.NodeState.SUCCEEDED, C.NodeState.RUNNING),
     (C.NodeState.SUCCEEDED, C.NodeState.FAILED),
     (C.NodeState.SUCCEEDED, C.NodeState.CANCELLED),  # 终态不可取消

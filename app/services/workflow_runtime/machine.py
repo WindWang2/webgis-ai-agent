@@ -53,8 +53,10 @@ def ready_set(
     *,
     skip_decided: Optional[Set[str]] = None,
 ) -> List[str]:
-    """就绪集：PENDING 且全部直接上游 ∈ {SUCCEEDED, SKIPPED}。
+    """可派发集：READY 节点 ∪（PENDING 且全部直接上游 ∈ {SUCCEEDED, SKIPPED}）。
 
+    READY 语义 = 「已可派发但尚未 RUNNING」（含绑定预置位），一律可派发；
+    RUNNING 转移 CAS 互斥保证不重复派发。
     ``skip_decided``：显式不参与调度的节点（如已被取消分支遮蔽）。
     返回按 dag 声明序稳定排序（确定性；同输入同序）。
     """
@@ -68,7 +70,11 @@ def ready_set(
     for nid in declared:
         if not nid or nid in excluded:
             continue
-        if node_states.get(nid, NodeState.PENDING) != NodeState.PENDING:
+        st = node_states.get(nid, NodeState.PENDING)
+        if st == NodeState.READY:
+            out.append(nid)
+            continue
+        if st != NodeState.PENDING:
             continue
         deps = upstream.get(nid, ())
         if all(node_states.get(d) in ok for d in deps):
