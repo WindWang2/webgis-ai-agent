@@ -331,8 +331,10 @@ _SEED_CONTRACTS: List[ParameterContract] = [
     ),
 
         ParameterContract(
-            id="hydrology_v4_analysis", version=1,
-            description="水文/地形 V4 合并入口（breach/hand/shreve/pfafstetter/hypsometry/solar）",
+            id="hydrology_v4_analysis", version=2,
+            description="水文/地形 V4 合并入口（breach/hand/shreve/pfafstetter/"
+                        "pfafstetter_multilevel/flow_topology/hypsometry/solar；"
+                        "science-v5 additive：levels 参数）",
             parameters=[
                 ParameterSpec(
                     name="raster_path", type="string", required=True,
@@ -341,8 +343,14 @@ _SEED_CONTRACTS: List[ParameterContract] = [
                 ParameterSpec(
                     name="analysis", type="enum", required=True,
                     enum_values=["breach", "hand", "shreve", "pfafstetter",
+                                 "pfafstetter_multilevel", "flow_topology",
                                  "hypsometry", "solar_radiation"],
                     description="分析类型",
+                ),
+                ParameterSpec(
+                    name="levels", type="integer", default=2,
+                    minimum=1, maximum=4, unit="count",
+                    description="pfafstetter_multilevel 层级（1 = 单级切面）",
                 ),
                 ParameterSpec(
                     name="outlet_row", type="integer", default=-1,

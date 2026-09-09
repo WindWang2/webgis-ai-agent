@@ -1707,14 +1707,17 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
                "（最近排水高程）、Shreve 量级、Pfafstetter 编码、hypsometry"
                "（高程面积曲线/积分）、solar radiation（晴空直散辐射）。"
                "\n何时用：需要比填洼更保真的排洼（breach）、洪水易损性图层"
-               "（HAND）、河网层级（shreve/pfafstetter）、库容曲线"
+               "（HAND）、河网层级（shreve/pfafstetter/pfafstetter_multilevel）、"
+               "流网拓扑校验（flow_topology）、库容曲线"
                "（hypsometry）、光伏/日照潜力（solar）。"
                "\n何时不用：基础填洼 — 用 depression_fill；D8 流向 — 用 flow_analysis。"
            ),
            tier=2, domains=["raster"], cost="heavy",
            param_descriptions={
                "raster_path": "DEM GeoTIFF 路径（data_dir 内）",
-               "analysis": "breach|hand|shreve|pfafstetter|hypsometry|solar_radiation",
+               "analysis": ("breach|hand|shreve|pfafstetter|"
+                            "pfafstetter_multilevel|flow_topology|hypsometry|solar_radiation"),
+               "levels": "pfafstetter_multilevel 层级（1-4，默认 2）",
                "stream_threshold": "河网阈值（上游像元数；hand/shreve/pfafstetter 用）",
                "outlet_row": "pfafstetter 出口行（数组坐标）",
                "outlet_col": "pfafstetter 出口列",
@@ -1740,6 +1743,7 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
         stream_threshold: float = 1000.0,
         outlet_row: int = -1,
         outlet_col: int = -1,
+        levels: int = 2,
         latitude_deg: float = 30.0,
         day_of_year: int = 172,
         transmissivity: float = 0.75,
@@ -1756,6 +1760,7 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
             "stream_threshold": float(stream_threshold),
             "outlet_row": int(outlet_row),
             "outlet_col": int(outlet_col),
+            "levels": int(levels),
             "latitude_deg": float(latitude_deg),
             "day_of_year": int(day_of_year),
             "transmissivity": float(transmissivity),
@@ -1772,6 +1777,8 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
             "hand": "terrain.hand",
             "shreve": "terrain.shreve",
             "pfafstetter": "terrain.pfafstetter",
+            "pfafstetter_multilevel": "terrain.pfafstetter_multilevel",
+            "flow_topology": "terrain.flow_topology_validate",
             "hypsometry": "terrain.hypsometry",
             "solar_radiation": "terrain.solar_radiation",
         }
@@ -1836,6 +1843,41 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
                     f"Pfafstetter 编码完成：干流 {meta['mainstem_cells']} 像元，"
                     f"编码分布 {meta['code_distribution']}（单级层级，已披露）。"),
                 "pfafstetter_metadata": meta,
+            }
+        elif analysis == "pfafstetter_multilevel":
+            if outlet_row < 0 or outlet_col < 0:
+                raise DegenerateData(
+                    "analysis=pfafstetter_multilevel 需要 outlet_row/outlet_col",
+                    correction_hint="用 flow_analysis 的最大汇流像元作为出口")
+            filled, _ = terrain_lib.fill_depressions(arr, cy, cell_size_x=cx, nodata=eff_nodata)
+            d8, _ = terrain_lib.d8_flow(filled, cy, cell_size_x=cx, nodata=eff_nodata)
+            acc, _ = terrain_lib.flow_accumulation(d8)
+            codes, meta = terrain_lib.pfafstetter_codes_multilevel(
+                d8, acc, float(stream_threshold),
+                (int(outlet_row), int(outlet_col)),
+                levels=int(params.get("levels", 2)))
+            result = {
+                "summary": (
+                    f"多级 Pfafstetter 完成：{meta['levels']} 层、"
+                    f"{meta['distinct_codes']} 个不同码、"
+                    f"跳过细分段 {meta['skipped_segments']}（子段过小，已披露）。"),
+                "pfafstetter_metadata": meta,
+            }
+        elif analysis == "flow_topology":
+            filled, _ = terrain_lib.fill_depressions(arr, cy, cell_size_x=cx, nodata=eff_nodata)
+            d8, _ = terrain_lib.d8_flow(filled, cy, cell_size_x=cx, nodata=eff_nodata)
+            acc, _ = terrain_lib.flow_accumulation(d8)
+            report, meta = terrain_lib.validate_flow_topology(d8, acc)
+            verdict = "一致" if report["is_consistent"] else "存在破损（见报告）"
+            result = {
+                "summary": (
+                    f"流网拓扑校验：{verdict}——出口 {report['outlets']}、环 "
+                    f"{report['cycles']}、悬挂 receiver "
+                    f"{report['dangling_receivers']}、汇流违例 "
+                    f"{report['accumulation_violations']}、等汇流平台 "
+                    f"{report['equal_accumulation_plateaus']}。"),
+                "topology_report": report,
+                "topology_metadata": meta,
             }
         elif analysis == "hypsometry":
             hyp, meta = terrain_lib.hypsometry(arr, cy, cell_size_x=cx, nodata=eff_nodata)
