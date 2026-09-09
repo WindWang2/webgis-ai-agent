@@ -25,6 +25,18 @@
   少数 explorer/spatial_decision 工具在 Windows 环境因 Unix-only `fcntl`
   无法收集——环境限制，与本次改动无关（基线同样失败）
 
+## 全量回归对比（基线对齐证据）
+
+- 本分支：`tests/unit/gis/ + tests/unit/gis_harness/ + tests/cartography/`
+  → 2252 passed / 15 failed / 4 collection errors
+- master 基线（同一命令，主仓库 @ 8a33e3a5）→ 2251 passed / 15 failed /
+  4 collection errors
+- **FAILED 集合逐字节一致**（diff 为空）：全部为基线环境问题
+  （Windows fcntl 顶层 import、缺 h3/deep_explore 依赖、固定 sid 会话污染），
+  零本 Epic 回归。
+- 生成物对齐：`docs/workflows/workflow-catalog.md` 经权威 generator
+  再生成（词表加法后分层指纹变化），`test_catalog_matches_registry` 绿。
+
 ## 中央校验
 
 `validate_gis_library()` 零 issue；新前缀全部收编：
