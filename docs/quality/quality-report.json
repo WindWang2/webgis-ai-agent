@@ -19,18 +19,22 @@
   },
   "quality_manifest": {
    "counts": {
-    "algorithms": 197,
+    "algorithms": 208,
     "artifact_types": 21,
-    "capabilities": 137,
-    "findings": 0,
+    "capabilities": 139,
+    "findings": 13,
     "recipes": 164,
-    "tools": 291
+    "tools": 296
    },
-   "findings_by_code": {},
-   "fingerprint": "1ef491af60c6a091ac1e63f916a164552d0115adff69999b443429d73d753ded",
+   "findings_by_code": {
+    "ALGO_HEAVY_NO_VARIANTS": 7,
+    "TOOL_DESCRIPTOR_INCOMPLETE": 4,
+    "TOOL_UNTESTED": 2
+   },
+   "fingerprint": "028ef31dfce1a63a5ac56058188a4e538865a708ace062d41fea36bbccccdd23",
    "gate": {
     "pass": true,
-    "total": 291
+    "total": 296
    }
   },
   "scenario_corpus": {
