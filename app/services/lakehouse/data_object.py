@@ -292,10 +292,17 @@ def publish_data_object(
     )
 
     # 第二遍：blob 落盘（CAS；路径内容确定性 ⇒ 中断重试自然续齐）。
+    # 文件源走流式通道（put_blob_from_path，峰值 O(chunk) —— 评审 R0-27：
+    # 大对象发布绝不 read_bytes 全量驻留）；字节源保持原语义。
+    from pathlib import Path as _Path
+
+    streamed = getattr(store, "put_blob_from_path", None)
     for rel_path, digest, _size in entries:
         src = source_files[rel_path]
         if isinstance(src, bytes):
             store.put_blob(digest, src, "binary")
+        elif streamed is not None:
+            streamed(digest, _Path(src), "binary")
         else:
             store.put_blob(digest, Path(src).read_bytes(), "binary")
 
