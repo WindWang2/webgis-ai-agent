@@ -7,7 +7,6 @@ import textwrap
 import time
 from pathlib import Path
 
-import pytest
 
 from app.extensions_platform.diagnostics import DiagnosticCode, has_errors
 from app.extensions_platform.distribution import write_refresh_signal

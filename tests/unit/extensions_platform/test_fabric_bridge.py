@@ -92,7 +92,6 @@ def test_worker_proxy_adapter_reaches_tile_dispatch():
 
         def call(self, tool, args):
             assert tool == "provider:demo_src:get_tile"
-            from app.extensions_platform.sdk.provider import TilePayload
 
             return {"data_hex": b"X".hex(), "content_type": "image/png", "metadata": {}}
 
