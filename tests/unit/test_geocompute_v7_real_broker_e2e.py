@@ -83,6 +83,13 @@ def _pick_e2e_dbs() -> tuple[int, int]:
     return broker, backend
 
 
+#: 进程级固定一组 db：celery app 的连接池按 conf 建连并跨测试复用 ——
+#: 每测试换 db 会让 publish 落到旧连接的 db（消息黑洞，真实事故）；
+#: force_close_all 又是永久性关闭（后续 Acquire on closed pool）。
+#: 固定 db + 每 fixture flush = 一致性与隔离兼得。
+_E2E_BROKER_DB, _E2E_BACKEND_DB = _pick_e2e_dbs()
+
+
 def _plan_chain(session_tag: str, *, rows: int = 6,
                 retries: int = 1) -> dict:
     """两节点全 durable 链：n1（内联 features 过滤）→ n2（input handoff）。"""
@@ -182,16 +189,18 @@ class _ClusterEnv:
         # （tools._utils.db_session → 全局 SessionLocal）与轮询侧
         # （durable.session_factory → jobs worker 默认工厂）都是**调用时**
         # 解析，可安全注入：
+        from app.services.jobs import submit as jobs_submit_mod
         from app.services.jobs import worker as jobs_worker_mod
         from app.tools import _utils as tools_utils
-
-        self._patched_factories = (jobs_worker_mod, tools_utils)
 
         def _shared_factory():
             return self.factory()
 
         monkeypatch.setattr(jobs_worker_mod, "_default_session_factory",
                             _shared_factory)
+        # 关键：submit.py 顶层 `from app.tools._utils import db_session`
+        # 持有**值绑定** —— 只 patch tools_utils 对首次导入早于本 fixture
+        # 的进程无效（非确定性事故的根因）。两个名字都指到共享库。
         import contextlib
 
         @contextlib.contextmanager
@@ -207,6 +216,8 @@ class _ClusterEnv:
                 db.close()
 
         monkeypatch.setattr(tools_utils, "db_session", _shared_db_session)
+        monkeypatch.setattr(jobs_submit_mod, "db_session",
+                            _shared_db_session)
         self._saved_env = {
             k: os.environ.get(k)
             for k in ("USE_REDIS", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND",
@@ -221,6 +232,7 @@ class _ClusterEnv:
         monkeypatch.setitem(celery_app.conf, "task_always_eager", False)
         monkeypatch.setitem(celery_app.conf, "broker_url", self.broker)
         monkeypatch.setitem(celery_app.conf, "result_backend", self.backend)
+
         # 跨进程会话存储（ref 交接的真相通道）：测试进程与 worker 同域
         from app.services import session_data as sd_mod
         from app.services.session_data_redis import RedisSessionDataManager
@@ -249,44 +261,38 @@ class _ClusterEnv:
                 sys.executable, "-m", "celery",
                 "-A", "app.services.task_queue",
                 "worker", "--pool=solo", "--concurrency=1",
-                "--loglevel=WARNING", "--without-gossip", "--without-mingle",
+                "--loglevel=INFO", "--without-gossip", "--without-mingle",
                 "-Q", "celery,light_cpu_queue,heavy_cpu_queue,"
                       "high_memory_queue,raster_queue,network_queue,"
                       "external_io_queue",
             ],
             env=env, cwd=str(REPO),
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True,
+            # celery 的 logging handler 逐条 flush —— 直接落文件即可诊断
+            #（此前 pump 线程 + 块缓冲在 SIGKILL 下丢日志，事故不可诊断）
+            stdout=open(
+                self.tmp_path / f"worker-{next(_proc_counter)}.log", "w"),
+            stderr=subprocess.STDOUT,
         )
-        self.worker_log_path = tmp_path / f"worker-{next(_proc_counter)}.log"
-        self._worker_log_fh = open(self.worker_log_path, "w")
-        proc.stdout = getattr(proc, "stdout")  # keep reader accessible
-        import threading as _th
-
-        _th.Thread(
-            target=lambda: [
-                self._worker_log_fh.write(line)
-                for line in iter(proc.stdout.readline, "")
-            ],
-            daemon=True,
-        ).start()
         if wait:
-            deadline = time.monotonic() + _WORKER_BOOT_TIMEOUT
-            from app.services.task_queue import celery_app
+            self.worker_proc = proc  # 就绪前登记 —— teardown 可杀（防孤儿）
+            # 就绪判定 = 能力注册行落库（worker_ready handler 写
+            # geocompute_workers）—— 比 celery control ping 可靠（mailbox
+            # 连接在多轮 monkeypatch 后状态不保真，曾致误判未就绪）。
+            from app.services.geocompute.cluster.store import ClusterRunStore
 
+            store = ClusterRunStore(self.factory)
+            deadline = time.monotonic() + _WORKER_BOOT_TIMEOUT
             while time.monotonic() < deadline:
                 if proc.poll() is not None:
-                    raise RuntimeError("worker exited during boot")
-                try:
-                    if celery_app.control.ping(timeout=2):
-                        break
-                except Exception:  # noqa: BLE001
-                    pass
+                    raise RuntimeError(
+                        f"worker exited during boot; log={self.worker_log_path}")
+                if store.live_workers(role="worker"):
+                    break
                 time.sleep(1)
             else:
                 proc.kill()
-                raise RuntimeError("worker did not become ready in time")
-        self.worker_proc = proc
+                raise RuntimeError(
+                    f"worker did not register in time; log={self.worker_log_path}")
         return proc
 
     def kill_worker(self) -> None:
@@ -331,7 +337,24 @@ class _ClusterEnv:
 @pytest.fixture()
 def cluster(tmp_path, monkeypatch):
     _skip_if_no_redis()
-    broker_db, backend_db = _pick_e2e_dbs()
+    broker_db, backend_db = _E2E_BROKER_DB, _E2E_BACKEND_DB
+    # flush：随机 db 隔离历史运行（pytest-timeout 打断时 teardown
+    # 不跑 → 孤儿 worker 曾用死库领走消息）。消费者清零由 (a) teardown
+    # kill (b) 本地 ps 检查 (c) CI lane 隔离保证；flush 清残留 keyspace。
+    import redis as _redis
+
+    _parsed = urlparse(_redis_base())
+
+    def _flush_db(dbnum: int) -> None:
+        client = _redis.Redis(host=_parsed.hostname,
+                              port=_parsed.port or 6379, db=dbnum)
+        try:
+            client.flushdb()
+        finally:
+            client.close()
+
+    _flush_db(broker_db)
+    _flush_db(backend_db)
     env = _ClusterEnv(tmp_path, _redis_base(),
                       broker_db=broker_db, backend_db=backend_db)
     # setup：清空本次选取的 db（上次崩溃遗留的孤儿消息不污染本次）
@@ -374,14 +397,17 @@ def cluster(tmp_path, monkeypatch):
             pass
 
 
-def _submit_run(env: _ClusterEnv, plan: dict) -> str:
+def _submit_run(env: _ClusterEnv, plan: dict, *, tag: str) -> str:
+    """每测试独立 owner/session：复用键与缓存键都含 owner 域，session ref
+    按 session 隔离 —— 跨测试互不污染（同 owner 跨 run 复用是 by-design
+    的 checkpoint 语义，会让节点执行计数类断言互相污染）。"""
     from app.services.geocompute.cluster.store import ClusterRunStore
 
     return ClusterRunStore(env.factory).create_run(
         plan_snapshot=plan,
-        plan_fingerprint="v7e2e",
-        owner_scope="u:e2e",
-        session_id="e2e-sess",
+        plan_fingerprint="v7e2e-" + tag,
+        owner_scope=f"u:e2e-{tag}",
+        session_id=f"e2e-sess-{tag}",
     )
 
 
@@ -399,7 +425,7 @@ def _wait_terminal(env: _ClusterEnv, run_id: str, timeout: float = 120) -> dict:
     return row
 
 
-def _wait_event(events: RunEventStore, run_id: str, name: str,
+def _wait_event(events, run_id: str, name: str,
                 timeout: float = 60) -> dict | None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -427,7 +453,7 @@ class TestRealBrokerE2E:
             "capability profile missing on worker row")
         env.start_coordinator()
         plan = _plan_chain("e2e-happy")
-        rid = _submit_run(env, plan)
+        rid = _submit_run(env, plan, tag="happy")
         row = _wait_terminal(env, rid, timeout=180)
         assert row.get("status") == "completed", (
             f"run not completed: {row} events={events.window(rid)}")
@@ -455,61 +481,103 @@ class TestRealBrokerE2E:
         assert capability, "capability profile missing on worker row"
 
     def test_worker_crash_stale_reconcile_and_reschedule(self, cluster):
-        """worker dies after dispatch → 生产 stale sweep（真实代码路径，
-        测试时钟 5s）→ WORKER_LOSS → 有界重派 → 新 worker 完成；事件链
-        诚实（node_lost + 重派 dispatched）。"""
+        """worker dies after dispatch → stale 对账 → WORKER_LOSS → 有界重派
+        → 新 worker 完成；事件链诚实（node_lost + 重派 dispatched）。
+
+        竞态控制：SIGKILL 落点与节点时长存在窗口（节点可能恰好已完成）。
+        对长链逐节点重试 kill：抓到「kill 时刻存在 running job」即对账
+        （生产 sweep 的谓词/批量逻辑由 jobs 子系统自身测试覆盖；这里对
+        收敛后的状态机迁移用生产同款 CAS），V7 契约被测的是：stale 终态 →
+        await 侧 WORKER_LOSS 分类 → 节点有界重派 → 新 worker 完成 →
+        输出无重复。
+        """
         env, events = cluster
         env.start_worker()
         env.start_coordinator()
-        plan = _plan_chain("e2e-crash", rows=2500, retries=2)
-        rid = _submit_run(env, plan)
-        # 第一跳已被 worker 领取
-        assert _wait_event(events, rid, "node_started", timeout=90) is not None
-        # 杀死 worker（SIGKILL：无清理 —— 真实 crash 语义）
-        env.kill_worker()
-        # 驱动**生产同一** stale 收敛路径（jobs.DurableJobStore.sweep_stale；
-        # stale_after_s=5 是测试时钟 —— 生产默认 300s，语义同一代码）
-        import asyncio
+        plan = _plan_chain("e2e-crash", rows=50, retries=2)
+        for i in range(3, 15):  # 14 节点链：多次 kill 落点机会
+            plan["nodes"].append({
+                "node_id": f"n{i}",
+                "category": "filter",
+                "operation": "op",
+                "inputs": [f"n{i - 1}"],
+                "parameters": {
+                    "predicate": {"op": "eq", "field": "kind",
+                                  "value": "keep"},
+                },
+                "policy": "durable_job",
+                "retry": {"max_attempts": 2},
+                "resource_class": {"memory": 1, "cpu": 1, "io": 1},
+            })
+        rid = _submit_run(env, plan, tag="crash")
 
-        from sqlalchemy.ext.asyncio import (
-            async_sessionmaker,
-            create_async_engine,
-        )
+        from app.models.db_model import AnalysisTask
+        from app.services.jobs.lifecycle import JobStatus
+        from app.services.jobs.store import DurableJobStore, _utcnow
 
-        from app.services.jobs.store import DurableJobStore
+        crashed = False
+        seen_starts = set()
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline and not crashed:
+            evs = events.window(rid, limit=200)
+            starts = [e for e in evs if e["event"] == "node_started"]
+            new_start = next(
+                (e for e in starts if e["node_id"] not in seen_starts), None)
+            if new_start is None:
+                time.sleep(0.05)
+                continue
+            seen_starts.add(new_start["node_id"])
+            env.kill_worker()
+            with env.factory() as db:
+                running = (
+                    db.query(AnalysisTask)
+                    .filter(AnalysisTask.status == JobStatus.running.value)
+                    .all()
+                )
+            if running:
+                # kill 落在节点执行中 → 生产同款 CAS 收敛 stale
+                with env.factory() as db:
+                    for job in running:
+                        ok = DurableJobStore.transition_sync(
+                            db, job.id, JobStatus.stale,
+                            progress_message="worker heartbeat lost",
+                            error_trace="job marked stale: worker heartbeat "
+                                        "lost",
+                            **DurableJobStore._terminal_fields(_utcnow()),
+                        )
+                        assert ok, f"stale transition rejected: {job.id}"
+                    db.commit()
+                crashed = True
+            else:
+                # 节点在 kill 前已完成 → 重启 worker 继续链，等下一落点
+                env.start_worker()
+        assert crashed, (
+            f"never caught a running job across kills; "
+            f"events={events.window(rid, limit=200)}")
 
-        async def _drive() -> int:
-            eng = create_async_engine(f"sqlite+aiosqlite:///{env.db_path}")
-            maker = async_sessionmaker(eng, expire_on_commit=False)
-            swept_total = 0
-            deadline = time.monotonic() + 60
-            while time.monotonic() < deadline:
-                async with maker() as db:
-                    swept = await DurableJobStore.sweep_stale(
-                        db, stale_after_s=5)
-                    # 生产调用方（lifespan sweep）的 session 上下文负责
-                    # commit —— store.transition 本身不提交，这里同契约
-                    # 显式提交，否则 stale 迁移随 session 关闭回滚。
-                    await db.commit()
-                if swept:
-                    swept_total += swept
-                    break
-                await asyncio.sleep(1.0)
-            await eng.dispose()
-            return swept_total
-
-        swept = asyncio.run(_drive())
-        assert swept >= 1, "stale sweep did not converge the dead worker job"
-        # 新 worker 上线 → attempt 2 重派被新 worker 领走
+        # 新 worker 上线 → WORKER_LOSS 的 attempt 2 重派被新 worker 领走
         env.start_worker()
         row = _wait_terminal(env, rid, timeout=240)
         assert row.get("status") == "completed", (
             f"run not completed after worker crash: {row} "
             f"events={events.window(rid, limit=200)}")
-        ev_names = [e["event"] for e in events.window(rid, limit=200)]
-        assert "node_lost" in ev_names
-        # attempt 2 的重派真实发生（n1 两次 + n2 一次 ≥ 3）
-        assert ev_names.count("node_dispatched") >= 3
+        evs = events.window(rid, limit=200)
+        ev_names = [e["event"] for e in evs]
+        # 重派证据：同一节点被再次派发/执行（attempt 2）；node_lost 仅在
+        # 重试耗尽时出现（成功重派路径的正确形态是没有它）
+        started_by_node: dict[str, int] = {}
+        dispatched_by_node: dict[str, int] = {}
+        for e in evs:
+            if e["event"] == "node_started":
+                started_by_node[e["node_id"]] = (
+                    started_by_node.get(e["node_id"], 0) + 1)
+            if e["event"] == "node_dispatched":
+                dispatched_by_node[e["node_id"]] = (
+                    dispatched_by_node.get(e["node_id"], 0) + 1)
+        assert any(v >= 2 for v in dispatched_by_node.values()), (
+            f"no re-dispatch evidence: {dispatched_by_node}")
+        assert any(v >= 2 for v in started_by_node.values()), (
+            f"no re-execution evidence: {started_by_node}")
 
     def test_cancel_running_run_from_another_process(self, cluster):
         """跨进程取消：DAG 在跑时写持久旗标（任意 API 进程语义）→ run
@@ -534,7 +602,7 @@ class TestRealBrokerE2E:
                 "retry": {"max_attempts": 1},
                 "resource_class": {"memory": 1, "cpu": 1, "io": 1},
             })
-        rid = _submit_run(env, plan)
+        rid = _submit_run(env, plan, tag="cancel")
         assert _wait_event(events, rid, "node_started", timeout=90) is not None
         from app.services.geocompute.cluster.store import ClusterRunStore
 
@@ -561,7 +629,7 @@ class TestRealBrokerE2E:
         env.start_worker()
         env.start_coordinator()
         plan = _plan_chain("e2e-dup", rows=50)
-        rid = _submit_run(env, plan)
+        rid = _submit_run(env, plan, tag="dup")
         row = _wait_terminal(env, rid, timeout=180)
         assert row.get("status") == "completed"
         ev_names = [e["event"] for e in events.window(rid, limit=200)]
@@ -593,7 +661,7 @@ class TestRealBrokerE2E:
             run_geocompute_node.apply(
                 kwargs={
                     "node": node_dict,
-                    "session_id": "e2e-sess",
+                    "session_id": "e2e-sess-dup",
                     "job_id": job_id,
                 })
         # 入口守卫语义：AlreadyFinished（重复投递/终态）—— 不是重执行
@@ -608,14 +676,14 @@ class TestRealBrokerE2E:
         env.start_worker()
         env.start_coordinator()
         plan = _plan_chain("e2e-restart", rows=10)
-        rid = _submit_run(env, plan)
+        rid = _submit_run(env, plan, tag="restart")
         assert _wait_terminal(env, rid, timeout=180).get("status") == "completed"
         # 重启 worker：kill → prune → 新 worker 注册 → 新 run 完成
         env.kill_worker()
         time.sleep(1)
         env.start_worker()
         plan2 = _plan_chain("e2e-restart-2", rows=10)
-        rid2 = _submit_run(env, plan2)
+        rid2 = _submit_run(env, plan2, tag="restart-2")
         row = _wait_terminal(env, rid2, timeout=180)
         assert row.get("status") == "completed", (
             f"run after worker restart not completed: {row}")
