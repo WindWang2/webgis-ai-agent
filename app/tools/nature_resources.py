@@ -28,6 +28,7 @@ def register_nature_resource_tools(registry: ToolRegistry):
     """注册自然资源监测相关工具"""
 
     @tool(registry, name="analyze_vegetation_index",
+    capabilities=['spectral_index'],
           tier=2, domains=["raster"],
           description=(
               "本地 TIFF 的光谱指数计算 (Celery 异步)：用户上传遥感影像后调用，"
@@ -84,6 +85,7 @@ def register_nature_resource_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="list_analysis_assets",
+    capabilities=['workspace_state_inspection'],
           tier=2, domains=["raster"],
           description='获取当前系统中保存的所有遥感分析产物（如 NDVI、NDWI 结果文件）列表。用于回答用户"我之前生成了什么"或进行资产回顾。',
           side_effect="pure",
@@ -137,6 +139,7 @@ def register_nature_resource_tools(registry: ToolRegistry):
             }
 
     @tool(registry, name="manage_analysis_asset",
+    capabilities=['data_source_pipeline'],
           tier=3, domains=["raster"],
           description=(
               "维护遥感分析资产：重命名或永久删除 NDVI/NDWI 等分析产物（含物理文件）。"

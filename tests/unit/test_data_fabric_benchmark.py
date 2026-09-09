@@ -1,9 +1,9 @@
 """
 Performance Benchmarks & Memory Boundary Harness for Data Fabric V1
 """
-import time
 from app.schemas.data_fabric_schema import QuerySpec, DatasetDescriptor
 from app.services.data_fabric.spatial_catalog import SpatialCatalogService
+from tests.fixtures.perf_budget import assert_within_budget
 
 
 def test_10k_catalog_items_search_benchmark():
@@ -27,12 +27,19 @@ def test_10k_catalog_items_search_benchmark():
             tags=["gis", "china", f"tag_{i % 10}"],
         )
 
-    start_t = time.time()
-    res = service.search(query="spatial_layer_500", limit=10)
-    elapsed = time.time() - start_t
+    # W11 迁移（原固定断言 ``elapsed < 0.1``，且用 time.time() 计时）：
+    # 语义不变——10k 索引目录的单次检索必须有界（防退化为全量扫描）——
+    # 单次采样 → median-of-5，time.time() → helper 内 perf_counter。
+    holder: dict = {}
 
+    def _search():
+        holder["res"] = service.search(query="spatial_layer_500", limit=10)
+
+    assert_within_budget(
+        "fabric.catalog_search_10k", _search, iterations=5, floor_s=0.1)
+
+    res = holder["res"]
     assert res["total"] >= 1
-    assert elapsed < 0.1, f"10k search took {elapsed:.4f}s; expected < 0.1s"
 
 
 def test_pushdown_bounded_payload():

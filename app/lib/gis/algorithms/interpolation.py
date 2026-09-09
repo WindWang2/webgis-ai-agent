@@ -51,6 +51,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cancellation_profile="coarse",
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.idw", name="IDW 插值", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_full_samples", backend="numpy", deterministic=True,
+                    min_features=1, max_features=200000,
+                    notes="20 万样本 / 400 万目标格点类型化拒绝（无抽样降级路径，超限诚实拒绝）；H3 目标格网 ≤150 万格"),
+            ],
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", unit_requirements="meters",
@@ -165,6 +171,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cancellation_profile="none",
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.rbf", name="RBF 径向基插值", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_dense_exact_solve", backend="numpy", deterministic=True,
+                    min_features=3, max_features=100000,
+                    notes="RBF_HARD_CAP=10 万（稠密 O(N²) 系统类型化拒绝）；LOOCV 预算 500 点"),
+            ],
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", runtime_status="native",
@@ -211,6 +223,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cancellation_profile="chunk_boundary",
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance_dual_run"),
             id="interpolation.universal_kriging", name="泛克里金插值", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_kriging_with_trend", backend="numpy", deterministic=True,
+                    min_features=12, max_features=500000,
+                    notes="趋势项 + OK；MAX_FIT_POINTS=2000 分层抽稀拟合、MAX_PAIRS=20 万半变异对、邻域 k≤24"),
+            ],
             capabilities=["spatial_interpolation"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", runtime_status="native",
@@ -351,6 +369,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cancellation_profile="chunk_boundary",
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.regression_kriging", name="回归克里金", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_reg_kriging", backend="numpy", deterministic=True,
+                    min_features=8, max_features=500000,
+                    notes="全管线 LOOCV 预算 RK_LOOCV_MAX_POINTS=200（逐点重拟合变异函数）；预测邻域 k≤24"),
+            ],
             capabilities=["regression_kriging"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", runtime_status="native",
@@ -538,6 +562,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cancellation_profile="chunk_boundary",
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.indicator_kriging", name="指示克里金", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_per_threshold_ok", backend="numpy", deterministic=True,
+                    min_features=8, max_features=500000,
+                    notes="逐阈值普通克里金；目标 ≤_MAX_H3_CELLS=150 万格；概率面钳制 [0,1]（钳制计数披露）"),
+            ],
             capabilities=["indicator_kriging"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", runtime_status="native",
@@ -583,6 +613,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cancellation_profile="chunk_boundary",
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="interpolation.cokriging", name="协同克里金", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_mm1_collocated", backend="numpy", deterministic=True,
+                    min_features=8, max_features=500000,
+                    notes="MM1 核化近似（次变量仅协同定位进入）；|ρ|<0.2 类型化拒绝；输入 ≤MAX_INPUT_POINTS=50 万"),
+            ],
             capabilities=["cokriging"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", runtime_status="native",
@@ -714,6 +750,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cancellation_profile="chunk_boundary",
             tolerance=NumericalTolerance(rtol=1e-3, atol=1e-9, policy="conformance"),
             id="interpolation.block_kriging", name="块克里金", category="interpolation",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_block_discretized", backend="numpy", deterministic=True,
+                    min_features=8, max_features=500000,
+                    notes="MAX_INPUT_POINTS=50 万硬闸；2×2 子点离散化 + MAX_PAIRS=20 万半变异对 + MAX_FIT_POINTS=2000 抽稀拟合"),
+            ],
             capabilities=["block_kriging"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],
             output_artifact_type="terrain_surface", runtime_status="native",

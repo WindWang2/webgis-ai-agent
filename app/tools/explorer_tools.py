@@ -49,6 +49,7 @@ def register_explorer_tools(registry: ToolRegistry):
     orchestrator = ExplorerOrchestrator()
 
     @tool(registry, tier=2, domains=["osm"], name="deep_explore",
+    capabilities=['meta_tool_surface'],
           description="深度空间数据探索：当标准API无法获取足够数据时，自动发现、下载、解析外部数据源（政府开放数据等）并转化为地图图层。",
           args_model=DeepExploreArgs,
           side_effect="state_mutation",

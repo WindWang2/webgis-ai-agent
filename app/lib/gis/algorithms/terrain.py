@@ -41,6 +41,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cancellation_profile="none",
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.slope", name="坡度", category="terrain_analysis",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_horn_gradient", backend="numpy", deterministic=True,
+                    min_features=1, max_features=25000000,
+                    notes="Horn 梯度数组运算；实现无显式闸，按 float32 多数组 ~1GiB 预算保守取 2500 万像元"),
+            ],
             capabilities=["terrain_slope"],
             input_artifact_types=["terrain_surface"],
             output_artifact_type="terrain_surface", tool_candidates=["compute_terrain"],
@@ -74,6 +80,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cancellation_profile="none",
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.hillshade", name="山体阴影", category="terrain_analysis",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_hillshade", backend="numpy", deterministic=True,
+                    min_features=1, max_features=25000000,
+                    notes="曝光角数组运算（多方位 hillshade 窗口 ≤101）；保守窗口 2500 万像元（内存推导，无显式闸）"),
+            ],
             capabilities=["terrain_hillshade"],
             input_artifact_types=["terrain_surface"],
             output_artifact_type="terrain_surface", tool_candidates=["compute_terrain"],
@@ -106,6 +118,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cancellation_profile="none",
             tolerance=NumericalTolerance(rtol=1e-6, atol=1e-9, policy="conformance"),
             id="terrain.aspect", name="坡向", category="terrain_analysis",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_horn_gradient", backend="numpy", deterministic=True,
+                    min_features=1, max_features=25000000,
+                    notes="Horn 梯度数组运算；实现无显式闸，按 float32 多数组 ~1GiB 预算保守取 2500 万像元"),
+            ],
             capabilities=["terrain_aspect"],
             input_artifact_types=["terrain_surface"],
             output_artifact_type="terrain_surface", tool_candidates=["compute_terrain"],
@@ -419,6 +437,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cancellation_profile="chunk_boundary",
             backend_variants=[
                 BackendVariant(id="full_heap", backend="numpy", deterministic=True,
+                               min_features=1, max_features=50000000,
                                approximation_class="exact",
                                notes="全量 heapq Priority-Flood（Barnes 2014）——reference 变体"),
                 BackendVariant(id="chunked_band", backend="numpy", deterministic=True,

@@ -1568,6 +1568,8 @@ def register_terrain_tools(registry: ToolRegistry):
         return az_list
 
     @tool(registry, name="horizon_angle_analysis",
+    side_effect="cacheable_read",
+    tags=('地平线角', '天际线', 'dem', '地形'),
            description=(
                "DEM 地平线角：逐方位（罗盘度）射线行走取最大正仰角（度）与跨方位 max，"
                "天空可视因子（Steyn 1980）的输入量，也可单独做天际线/遮挡诊断。"
@@ -1632,6 +1634,8 @@ def register_terrain_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="sky_view_factor_analysis",
+    side_effect="cacheable_read",
+    tags=('天空可视因子', 'svf', 'dem', '城市气候'),
            description=(
                "DEM 天空可视因子 SVF（Steyn 1980）：SVF = (1/N)Σcos²ψ，ψ 为共用射线"
                "行走得到的地平线角；平地 = 1、深洼/峡谷 → 0。"

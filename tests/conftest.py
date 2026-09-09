@@ -150,7 +150,28 @@ def pytest_collection_modifyitems(config, items):
     `-m "not perf ..."` 也含 perf token，但那些项本就被 marker 过滤剔除，
     双保险无害；无 `-m`（本地全量）→ skip。行为由
     tests/unit/test_perf_isolation_wiring.py 以子进程两态锁定。
+
+    Quality V2 W10：seeded 测试顺序轮换（默认关闭）。``QUALITY_ORDER_SEED``
+    为非零整数时以该 seed 确定性 shuffle 收集顺序 —— runner 的
+    changed/full-local profile 用它暴露顺序污染（隐藏的全局/registry
+    泄漏在随机序下以 flake 显形）。未设/0 保持目录序：既有套件与 CI
+    契约不受影响；同 seed 顺序可复现（失败可精确重放）。
     """
+    seed_raw = (os.environ.get("QUALITY_ORDER_SEED") or "").strip()
+    if seed_raw and seed_raw != "0":
+        import random as _random
+        import warnings as _warnings
+
+        try:
+            seed = int(seed_raw)
+        except ValueError:
+            seed = 0
+            _warnings.warn(
+                f"QUALITY_ORDER_SEED={seed_raw!r} 不是整数，顺序轮换未启用"
+                "（R2 review：静默退化会掩盖 runner 侧笔误）")
+        if seed:
+            _random.Random(seed).shuffle(items)
+
     markexpr = (getattr(config.option, "markexpr", "") or "").strip()
     if "perf" in markexpr.split():
         return

@@ -217,6 +217,7 @@ def register_crawler_tools(registry: ToolRegistry):
     """注册网络爬虫探测工具"""
 
     @tool(registry, tier=2, domains=["osm"], name="web_search",
+    capabilities=['meta_tool_surface'],
            description=(
                "通用网络搜索：从公网拉取最新中文网页/新闻/百科等非结构化信息，返回 "
                "title/snippet/link/date 列表。适合 POI 现状、活动、新闻、政策、最新统计数字等"

@@ -40,6 +40,7 @@ def register_upload_tools(registry: ToolRegistry):
 
     @tool(registry,
           tier=2, domains=["dataset"], name="list_uploaded_data",
+          capabilities=['workspace_state_inspection'],
           description="列出当前会话中用户上传的 GIS 数据文件列表。返回文件名、类型、格式、要素数量等摘要信息。",
           side_effect="pure",
           network=False,
@@ -98,6 +99,7 @@ def register_upload_tools(registry: ToolRegistry):
 
     @tool(registry,
           tier=2, domains=["dataset"], name="get_upload_info",
+          capabilities=['workspace_state_inspection'],
           description="获取某个上传数据文件的详细信息，包括坐标范围、属性字段等。可用于分析用户上传的数据概况。",
           param_descriptions={
               "upload_id": "上传记录的 ID（从 list_uploaded_data 获取）"

@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：123 能力 · 192 算法 · 112 参数契约。
+统计：139 能力 · 208 算法 · 112 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -173,6 +173,22 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
   - 假设：g12(r)=K12′(r)/(2πr)：交叉 K12（各向同性校正）的离散导数 + Epanechnikov 平滑（与单变量 pcf 同款后处理）；random-labelling 参考 g12≡1；g12>1 两类吸引/共现，g12<1 相斥；bandwidth（米）缺省 0=一个 r 步宽（自动值在输出披露）
   - 局限：g12 由 K12 的离散导数间接估计，r 网格粒度限制分辨率；每类 ≥5 点（否则诚实拒绝）；O(n²) 成对统计上限 2 万点；p 值来自 sup|g12−1| 秩检验（+1 校正），上限 499
 
+## `crs_transformation` — 坐标系转换
+
+几何坐标系转换：通用 EPSG 重投影（GeoJSON 图层）与中国坐标偏移互转（WGS84↔GCJ-02↔BD-09）。
+
+- **`platform.crs_transformation`** 坐标系转换（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
+## `data_source_pipeline` — 数据源管道
+
+外部数据源连接与查询管道：连接注册（SSRF 防护）、健康诊断、目录检索、下推查询/聚合、查询计划 explain、物化入会话、元数据刷新与分析资产维护。
+
+- **`platform.data_source_pipeline`** 数据源管道（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
 ## `dataset_ingest` — 数据集摄入
 
 内联 GeoJSON FeatureCollection 摄入会话：指纹去重、有界画像、质量诊断、产物登记（有界返回，不含数据本体）。
@@ -181,6 +197,14 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
   - 假设：内容指纹去重可重复触发（同载荷幂等返回既有 ref）
   - 局限：内联载荷 ≤8MB；更大文件走 POST /upload 通道
 
+## `dataset_profiling_quality` — 数据画像与质量
+
+会话数据的画像与质量面：行数/几何/字段画像、字段语义角色推断、质量审计与安全修复（非破坏、新 ref 落账）、分析模式匹配与前置条件建议。
+
+- **`platform.dataset_profiling_quality`** 数据画像与质量（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
 ## `density_surface` — 视觉密度面
 
 视觉热力（回答『大概哪儿密』，非定量）。
@@ -188,6 +212,14 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
 - **`density.visual.heatmap`** 视觉热力（渲染态密度）（`native`·成熟度 已验证）
   - 假设：渲染态密度（栅格化加核）——与解析 KDE 语义分离；（§10 硬规则：不以视觉热力冒充解析 KDE）
   - 局限：带宽/半径为渲染参数（非统计带宽选择器）
+
+## `directional_distribution_analysis` — 方向分布分析
+
+探索性空间统计的方向分布度量：标准离差椭圆（SDE）刻画要素集合的中心趋势、离散度与方向性（旋转角/长短轴/扁率）。
+
+- **`platform.directional_distribution_analysis`** 方向分布分析（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
 
 ## `emerging_hotspot_analysis` — 时空热点演化（EHA）
 
@@ -228,6 +260,14 @@ N 源（2..4）有界左深链式联邦查询：属性/空间连接与聚合逐�
 - **`stats.general_g`** Getis-Ord General G（全局高值聚集）（`native`·成熟度 已验证，契约: `general_g_analysis`，出处: `ord_getis1995`）
   - 假设：G=Σ_{i≠j} w_ij·x_i·x_j / Σ_{i≠j} x_i·x_j，二值距离阈值权重；值必须非负（计数/强度语义）；负值拒绝；距离阈值缺省按 8 近邻平均距离自动（E-7 规则）
   - 局限：G 显著偏低=低值聚集（clustered-low），不是『高值聚集』的镜像陈述；G 只检验高值聚集，不能定位热点（定位用 hotspot_analysis/h3_lisa）；非负约束使 General G 不适用于中心化/标准化变量
+
+## `geocoding` — 地理编码
+
+地址/地名 ↔ 坐标互转：在线地理编码与逆地理编码（Nominatim / 高德 / 百度 / 天地图），单点与批量形态。
+
+- **`platform.geocoding`** 地理编码（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）；外部 provider 的可用性由各工具的类型化降级契约保证（未配置 key → 结构化错误，见 conformance）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
 
 ## `geographical_detector` — 地理探测器
 
@@ -423,6 +463,22 @@ KDE 连续密度面/等值线（定量密度表达）。
   - 局限：高斯核假设；大规模点集走聚合通道（fallback 已声明）；adaptive 为一步先导近似（非迭代变带宽）；先导带宽与λ 范围随结果披露；自适应评估与固定路径同阶 O(n·grid)，点数上限同 #384
   - 回退：`spatial.kde.contours`→equivalent
 
+## `layer_display_control` — 图层显示控制
+
+会话图层的显示生命周期：显隐/置顶排序/别名/清单盘点、基础图切换、外观样式提示、按属性条件动态过滤与收尾显示收口。
+
+- **`platform.layer_display_control`** 图层显示控制（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
+## `local_data_query` — 本地数据目录与查询
+
+本地化数据资产的目录检视与要素/统计查询：本地 OSM 主题要素（道路/建筑/水系等）、统计年鉴与县域面板指标、高德 POI 库可用性总览。
+
+- **`platform.local_data_query`** 本地数据目录与查询（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
 ## `local_gearys_c` — 局部 Geary's C
 
 局部相似性/相异性检测（Local Geary's C_i，Anselin 1995；与 LISA 的方向配对互补）。
@@ -475,6 +531,30 @@ Mantel 检验（1967）——空间距离矩阵与时间距离矩阵的相关（
   - 假设：标准化 Mantel r = Pearson(上三角空间距离, 上三角时间距离)；时间标签置换（固定种子 42）构成零假设分布；alternative=greater（聚集方向，缺省）/ two-sided
   - 局限：Mantel 把全部点对当独立样本（距离矩阵非独立），对空间自相关敏感——meta 中 disclosure 披露；密集 n×n 距离矩阵：n ≤ 2000 诚实上限（超限结构化拒绝）；p 值分辨率 1/(permutations+1)，上限 999
 
+## `map_annotation_measurement` — 地图标注与量测
+
+地图交互标注与量测：pin 标注增删、球面距离/面积量算（Haversine/球面多边形公式）、坐标位置要素探查。
+
+- **`platform.map_annotation_measurement`** 地图标注与量测（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
+## `map_export_publishing` — 地图导出发布
+
+制图产出：PNG/PDF/SVG 单张与批量导出、MapSpec 编译为 style.json/index.html、编译前规范校验、headless 运行时验收与 desired↔runtime 收敛状态查询。
+
+- **`platform.map_export_publishing`** 地图导出发布（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
+## `map_viewport_control` — 地图视口控制
+
+地图相机/视口控制：坐标飞行定位、bbox/图层缩放适配、zoom/pitch/bearing 调整与全国视图复位（含 MapSpec 视图参数）。
+
+- **`platform.map_viewport_control`** 地图视口控制（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
 ## `mcda_evaluation` — 多准则决策评价
 
 候选方案×准则×约束的 MCDA 评价（WSM/TOPSIS + Pareto + 敏感性）。
@@ -482,6 +562,14 @@ Mantel 检验（1967）——空间距离矩阵与时间距离矩阵的相关（
 - **`decision.mcda.wsm`** MCDA 决策评价（WSM/TOPSIS）（`native`·成熟度 已验证，出处: `hwang_yoon1981`）
   - 假设：权重/准则方向由声明给定；蒙特卡洛不确定性仅在声明不确定参数时激活
   - 局限：不合成证据：无不确定参数时不注入伪噪声分布
+
+## `meta_tool_surface` — 元工具面
+
+Agent 自省与扩展面：工具清单查询、子代理委派、技能脚本开发部署与注册表刷新、外部数据深度探索、公网检索。
+
+- **`platform.meta_tool_surface`** 元工具面（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
 
 ## `mnf_transform` — MNF 变换
 
@@ -549,6 +637,14 @@ G/F/J 距离函数（Diggle 1983 / van Lieshout–Baddeley 1996）——最近�
 - **`point_pattern.pcf`** 成对相关函数 g(r)（`native`·成熟度 已验证，契约: `pcf_analysis`，出处: `illian2008`, `ripley1976`）
   - 假设：g(r)=K′(r)/(2πr)：由各向同性校正 K 的离散导数 + Epanechnikov 平滑；bandwidth（米）缺省 0=一个 r 步宽（自动值在输出披露）；CSR 参考 g≡1；g>1 聚集 / g<1 规则
   - 局限：g 由 K 的离散导数间接估计，r 网格粒度限制分辨率；Epanechnikov 平滑带宽敏感：小带宽噪声大、大带宽抹平峰值（< 半个 r 步宽类型化拒绝 DegenerateData——R10-guard，杜绝 NaN 进输出）；O(n²) 成对统计，上限 2 万点（超出诚实拒绝）
+
+## `plan_workflow_orchestration` — 计划与工作流编排
+
+多步分析计划与持久工作流的编排面：计划提议/执行/状态查询、执行计划校验与波次执行 run 管理（取消/证据查询）、计划固化与工作流重跑。
+
+- **`platform.plan_workflow_orchestration`** 计划与工作流编排（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
 
 ## `poi_query` — POI 要素获取
 
@@ -690,6 +786,14 @@ OLS 趋势（协变量）+ 残差克里金的混合插值（Odeh 1995）。
   - 取消：chunk_boundary
   - 数值容差：rtol=1e-06，atol=1e-09
 
+## `report_charting` — 报告与图表
+
+会话产出的报告与可视化：统计图表生成（可附着地图浮动面板）、PDF/HTML/Markdown 分析报告、自然资源监测标准化报告。
+
+- **`platform.report_charting`** 报告与图表（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
 ## `route_optimization` — 路线优化
 
 多站点访问顺序优化（VRP，tier-3 门控）。
@@ -780,6 +884,14 @@ SAR 地形效应校正：RTC gamma 平坦化（Small 2011，γ_flat=σ⁰·cosθ
 - **`sar.glcm_texture`** GLCM 纹理特征（Haralick 窗口化）（`native`·成熟度 已验证，契约: `sar_glcm_texture_analysis`，出处: `haralick1973`）
   - 假设：量化：有效像元 2-98 分位线性拉伸到 levels 档（越界钳端点）；对称约定 P+Pᵀ（±d 同线）；d=1；多方向=逐方向属性 NaN 感知均值；entropy 为自然对数；纯 numpy 手工实现（scikit-image 非声明依赖）
   - 局限：零方差/无有效对窗口 → NaN（correlation 不伪造）；操作规模 H·W·window²·n_dir ≤ 64M 估算上界，超限先拒绝
+
+## `scenario_simulation` — 情景推演
+
+基于真实空间数据与规则库的情景推演面：what-if 指标影响模拟、数据驱动的空间决策评估与多方案对比、规划规则的可解释推理。
+
+- **`platform.scenario_simulation`** 情景推演（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
 
 ## `service_area` — 网络服务区
 
@@ -1012,6 +1124,14 @@ CUSUM 单均值漂移定位 + 固定种子 bootstrap 显著性（多变点不在
 - **`remote.temporal_features`** 时序特征提取（`native`·成熟度 已验证，契约: `temporal_features_analysis`）
   - 假设：栈第 0 轴 = 时间序；std 为总体标准差（ddof=0，披露）；谐波 = [1, t, sin(2πt), cos(2πt)] 联合 LS（单周期 = 栈跨度）；谐波要求完整序列 + 满秩设计（T≥4），否则 NaN（披露）
   - 局限：无物候模型拟合（无双谐波/SG 滤波/物候期提取）——诚实边界；first−last 对首尾无效像元 → NaN；min/max/mean 对有限切片 nan-aware
+
+## `temporal_filtering` — 时间筛选
+
+按时间点/区间/相对窗口（如『最近 7 天』）对 GIS 数据做精准时间筛选（过滤，非聚合/趋势）。
+
+- **`platform.temporal_filtering`** 时间筛选（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
 
 ## `temporal_profile` — 时间画像
 
@@ -1281,6 +1401,14 @@ DEM 视域：观察点视线遮挡布尔掩膜、可见比例与可见面积（�
   - 资源包络：24B/像元
   - 取消：none
   - 数值容差：rtol=1e-06，atol=1e-09
+
+## `thematic_cartography` — 专题制图与样式
+
+专题制图工具面：分层设色/3D 挤出专题图、单色样式注入、制图模板套用与组合、MapSpec 图层/版面/组件的编写与局部突变、浮动图表控制。
+
+- **`platform.thematic_cartography`** 专题制图与样式（工具面绑定契约）（`native`·成熟度 —）
+  - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
+  - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
 
 ## `traffic_status` — 实时路况
 

@@ -483,7 +483,19 @@ def to_utm_gdf_with_note(
                     "truly are WGS84"
                 ),
             ) from exc
-    gdf = gpd.GeoDataFrame(rows, crs=source_crs or "EPSG:4326")
+    try:
+        gdf = gpd.GeoDataFrame(rows, crs=source_crs or "EPSG:4326")
+    except Exception as exc:
+        # V5 W3 同题纵深防御：若预检漏网（如构造期版本差异抛出的
+        # ProjError/CRSException），按类型名判定折叠为 InvalidCRS；
+        # 非 CRS 异常原样上抛。
+        from app.lib.gis.scientific_errors import InvalidCRS
+
+        if type(exc).__name__ in ("CRSError", "ProjError", "CRSException"):
+            raise InvalidCRS(
+                f"unparseable declared CRS: {source_crs!r} ({exc})",
+            ) from exc
+        raise
     # science-v4 W3：make_valid 修复计数（披露进 note.geometry_repaired）——
     # 修复动作不再静默。
     _invalid_before = int((~gdf.geometry.is_valid).sum())

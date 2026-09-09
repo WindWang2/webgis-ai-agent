@@ -60,6 +60,12 @@ F_RENDER_LAYER_MISSING = "render_layer_missing"
 F_RENDER_SOURCE_MISSING = "render_source_missing"
 F_RENDER_COMPONENT_MISSING = "render_component_missing"
 F_RENDER_ERROR = "render_error"
+# V5 W5（ADR-0118 D5）：rendered-state telemetry 深化 —— requested intent ↔
+# actual rendered state 的逐层核对照 面。全部 optional-telemetry 门控：
+# 旧客户端不带新字段 → 不产生新 finding（向后兼容，诚实缺席披露）。
+F_RENDER_INCOMPLETE = "render_incomplete"
+F_RENDER_STYLE_NOT_APPLIED = "render_style_not_applied"
+F_CHART_DATA_MISSING = "chart_data_missing"
 
 # 语义级 QA（desired-state 语义，非槽位在场性）：组合路径被绕过
 # （webgis_component_update 手工增删组件）时，槽位校验看不见
@@ -90,6 +96,9 @@ RUNTIME_RENDER_CODES = frozenset({
     F_RENDER_SOURCE_MISSING,
     F_RENDER_COMPONENT_MISSING,
     F_RENDER_ERROR,
+    F_RENDER_INCOMPLETE,
+    F_RENDER_STYLE_NOT_APPLIED,
+    F_CHART_DATA_MISSING,
 })
 
 # render_status 词表（P9；validator 在 render_observation.py，词表同址定义）

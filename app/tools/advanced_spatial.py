@@ -1092,6 +1092,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
     # ── Foundation V3（Geostatistics/Interpolation 批次）────────────────
 
     @tool(registry, name="directional_variogram_analysis",
+    side_effect="deterministic_compute",
+    tags=('变异函数', '各向异性', '地统计', '方向半方差'),
            description=(
                "方向变异函数：沿单一方位角轴向（双向）计算经验半方差曲线，"
                "带角度容差与可选带宽（GSLIB band 语义），用于各向异性诊断与变异函数建模。"
@@ -1205,6 +1207,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return payload
 
     @tool(registry, name="variogram_model_selection",
+    side_effect="deterministic_compute",
+    tags=('变异函数', '模型选型', '地统计', 'aicc'),
            description=(
                "变异函数模型选择：spherical/exponential/gaussian/matern/wave/cubic 6 家族"
                "在同一经验变异函数上同台拟合，按加权 RSS 排名并附 AICc"
@@ -1311,6 +1315,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return payload
 
     @tool(registry, name="indicator_kriging_surface",
+    side_effect="deterministic_compute",
+    tags=('指示克里金', '概率面', '地统计', '插值'),
            description=(
                "指示克里金：逐阈值把数值转为指示变量（I=1[z≤t]），各自拟合指示变异函数后做"
                "普通克里金，输出每个 H3 单元 P(Z≤t) 概率、p50 阈值面（首个 p≥0.5 的阈值）"
@@ -1469,6 +1475,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return pred_fc
 
     @tool(registry, name="cokriging_surface",
+    side_effect="deterministic_compute",
+    tags=('协同克里金', '地统计', '插值', '协变量'),
            description=(
                "协同定位协同克里金（Markov Model 1 近似）：主/次两个点要素集联合建模，"
                "交叉结构=ρ×主变量结构，次变量仅在目标格点协同定位进入系统，"
@@ -1595,6 +1603,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return prediction_fc
 
     @tool(registry, name="nearest_neighbor_surface",
+    side_effect="deterministic_compute",
+    tags=('最近邻', '泰森多边形', '插值', '分段常值'),
            description=(
                "最近邻插值：每个 H3 单元取最近样本值，输出 Voronoi（泰森）分段常值场。"
                "无平滑、单元边界不连续（跳变是方法语义）；全域有值——凸包外为最近样本外推（已披露）。"
@@ -1657,6 +1667,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return geojson_result
 
     @tool(registry, name="natural_neighbor_surface",
+    side_effect="deterministic_compute",
+    tags=('自然邻域', '插值', 'sibson', 'voronoi'),
            description=(
                "自然邻域插值（Sibson 坐标）：权重=插入点从各自然邻域 Voronoi 单元"
                "窃取的面积比例（精确面积，Watson 阶梯算法收集自然邻域）。"
@@ -1721,6 +1733,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return geojson_result
 
     @tool(registry, name="block_kriging_surface",
+    side_effect="deterministic_compute",
+    tags=('克里金', '块克里金', '地统计', '插值'),
            description=(
                "块克里金：以块支撑（默认自动=H3 单元尺度）估计块均值与块方差，"
                "2×2 子点离散化近似块均值协方差（Isaaks & Srivastava 1989，已披露）。"
@@ -2233,6 +2247,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="attribute_filter",
+    capabilities=['data_source_pipeline'],
            description=(
                "属性筛选：按 Pandas 风格查询表达式从要素集中筛出新的要素集。"
                "✅ 用于：要把筛选结果作为新图层用于后续分析 / 导出。"

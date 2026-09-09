@@ -8,12 +8,16 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor
+from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="poi.query.local", name="POI 查询（本地优先）",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_query_local_poi_db_missing_typed_contract",
+                "tests/unit/gis/test_algo_conformance_v2.py::test_query_local_poi_polygon_format_typed_contract",
+            ],
             capabilities=["poi_query"],
             input_artifact_types=[],
             output_artifact_type="poi_feature_set",
@@ -31,6 +35,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="admin.boundary.local", name="行政区边界获取（本地 SHP）",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_admin_boundary_local_level_and_identifier_contract",
+            ],
             capabilities=["admin_boundary_query"],
             output_artifact_type="admin_boundary_set",
             geometry_requirements=["polygon"],
@@ -47,6 +54,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="raster.source.dem", name="DEM 栅格获取",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_fetch_dem_bbox_typed",
+                "tests/unit/gis/test_algo_conformance_v2.py::test_fetch_dem_item_mapping_oracle",
+            ],
             capabilities=["raster_source"],
             output_artifact_type="terrain_surface",
             geometry_requirements=["raster"],
@@ -65,6 +76,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="admin.boundary_lookup", name="行政区边界获取", category="data_access",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_admin_boundary_lookup_local_first_hit",
+                "tests/unit/gis/test_algo_conformance_v2.py::test_admin_boundary_lookup_typed_token_error_when_unconfigured",
+            ],
             deterministic=False,
             capabilities=["admin_boundary_query"],
             output_artifact_type="polygon_feature_set",
@@ -81,6 +96,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="poi.area_search", name="区域 POI 检索", category="data_access",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_poi_around_typed_geometry_contract",
+                "tests/unit/gis/test_algo_conformance_v2.py::test_poi_polygon_extraction_typed_contract",
+            ],
             deterministic=False,
             capabilities=["poi_query"],
             output_artifact_type="poi_feature_set",
@@ -101,6 +120,16 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="data.ingest.pipeline", name="会话数据摄入管线",
+            backend_variants=[
+                BackendVariant(
+                    id="pure_python_inline", backend="pure_python", deterministic=True,
+                    min_features=1, max_features=50000,
+                    notes="内联工具路径 ≤8MB 载荷（_MAX_PAYLOAD_BYTES，约数万要素，保守取 5 万）；更大走 /upload 文件通道"),
+            ],
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_ingest_pipeline_fingerprint_dedup_and_bounded_profile",
+                "tests/unit/gis/test_algo_conformance_v2.py::test_ingest_pipeline_tool_typed_payload_rejection",
+            ],
             capabilities=["dataset_ingest"],
             output_artifact_type="feature_collection",
             tool_candidates=["ingest_dataset"],
@@ -116,6 +145,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="data.federated.chain", name="多源链式联邦查询",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_federated_chain_two_source_attribute_join_oracle",
+                "tests/unit/gis/test_algo_conformance_v2.py::test_federated_chain_typed_errors",
+            ],
             capabilities=["federated_dataset_query"],
             output_artifact_type="stats_table",
             tool_candidates=["query_federated_chain"],
@@ -131,6 +164,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="workspace.snapshot.durable", name="工作空间快照（保存/恢复）",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_workspace_snapshot_durable_roundtrip",
+            ],
             capabilities=["workspace_snapshot"],
             tool_candidates=["save_workspace_snapshot", "restore_workspace_snapshot"],
             cpu_cost="low", memory_cost="medium", io_cost="medium",
@@ -145,6 +181,9 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="workspace.inspection.readonly", name="工作空间状态检视（只读）",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_workspace_inspection_readonly_contract",
+            ],
             capabilities=["workspace_state_inspection"],
             tool_candidates=["describe_workspace", "list_workspace_snapshots"],
             cpu_cost="low", memory_cost="low", io_cost="low",

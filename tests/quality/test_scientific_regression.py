@@ -16,11 +16,9 @@ ToolRegistry.dispatch 的守卫面）后，系统必须给出四种诚实结局�
 并登记进 KNOWN-GAP —— 修复后自动转绿，而不是放宽断言。
 
 KNOWN-GAP（截至 2026-09，逐条带证据）：
-1. 【CRS 类】不可解析的 CRS 字符串（如 "EPSG:99999999"）穿透消费管线时，
-   ``to_utm_gdf_with_note``（app/lib/geo_processor/core.py:465，geopandas
-   构造器内部调 pyproj）以**裸 pyproj.CRSError** 逃逸，而不是
-   scientific_errors.InvalidCRS —— dispatch 层会落入通用 ``except
-   Exception`` 变成 TOOL_ERROR，丢失 correction_hint 科学通道。
+1. 【CRS 类】已修复（Harness V5 W3，ADR-0118 D3）：不可解析 CRS 在
+   ``to_utm_gdf_with_note`` 构造处收口为 typed ``InvalidCRS``，correction_hint
+   通道保留 —— 对应测试已由 xfail 转正。
 2. 【坏几何类】自交多边形（bowtie）在分析管线里静默通过：
    ``zonal_statistics``（app/lib/geo_analysis/raster_ops.py）对 invalid
    几何既不拒绝也不告警，GEOS 按歧义规则解释出貌似合理的统计值；
@@ -127,7 +125,9 @@ def test_crs_mismatch_unparseable_crs_is_typed_scientific_reject():
     science-v4 W2 收口（原 KNOWN-GAP #1，xfail 已转正）：to_utm_gdf_with_note
     在 GeoDataFrame 构造前校验声明 CRS 可解析性，pyproj.CRSError 在边界
     折叠成 InvalidCRS（ValueError 系）—— dispatch 保留 scientific_code 与
-    correction_hint 科学通道。
+    correction_hint 科学通道。V5 W3 同题纵深防御：在 GeoDataFrame 构造处
+    把 pyproj CRS 语义异常（按类型名判定）收口为 InvalidCRS（app/lib/gis/
+    longitude 同批交付的 antimeridian/0-360 硬化，ADR-0118 D3）。
     """
     from app.lib.gis.scientific_errors import InvalidCRS
     from app.lib.geo_analysis.statistics import moran_i_narrated

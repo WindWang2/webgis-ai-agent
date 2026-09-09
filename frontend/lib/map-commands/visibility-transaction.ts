@@ -10,6 +10,8 @@ import {
 } from '@/lib/mapspec/session-cursor';
 import { ApiError, apiFetch } from '@/lib/api/transport';
 import { presentationFromMapSpec } from '@/lib/session/map-state-restore';
+import { LOCK_CONFLICT_ERROR, partitionByLock } from '@/lib/workbench/layer-lock';
+import { journalOnly, presentationCommand } from '@/lib/workbench/undo';
 import type { MapCommandContext, MapCommandResult } from './types';
 import {
   matchMapLayers,
@@ -22,7 +24,8 @@ import {
  * LayerVisibilityTransaction —— 可见性突变的单一事务（Goal C/D）。
  *
  * 每次可见性变更走同一深接口，杜绝「UI 一套 / Agent 一套 / finalize 一套」：
- *   resolve identity → desired（HUD store + pending presentation）
+ *   resolve identity → lock gate（V5/W2：锁定层从目标集中剔除，全部被锁
+ *   → typed layer_locked 冲突）→ desired（HUD store + pending presentation）
  *   → runtime（MapLibre setLayoutProperty 即时生效）
  *   → durability（后端 MapSpec patch_layer_presentation 提交，CAS）
  *   → postcondition（getLayoutProperty 读回验证）
@@ -44,6 +47,11 @@ export interface VisibilityTransactionInput {
   color?: string;
   /** false = 跳过后端持久化（restore 内部路径已持真相时）。 */
   durable?: boolean;
+  /**
+   * false = 豁免 lock 门（仅限用户自身路径 —— 手动面板与批量操作先于本
+   * 事务自查 lock；agent 通道缺省 true，锁定即 typed 冲突）。
+   */
+  respectLock?: boolean;
 }
 
 export interface VisibilityTransactionResult extends MapCommandResult {
@@ -51,6 +59,8 @@ export interface VisibilityTransactionResult extends MapCommandResult {
     confirmed?: boolean;
     store_updated?: boolean;
     target_ids?: string[];
+    /** 被 lock 门剔除的目标（部分冲突时非空 —— 不静默吞目标）。 */
+    locked_layer_ids?: string[];
   };
 }
 
@@ -206,9 +216,54 @@ export function applyLayerVisibilityTransaction(
   const { layerId, visible, opacity, name, color } = input;
 
   // 1. 身份解析（ref → 多 spec 层目标，group 语义）
-  const targetIds = resolveLayerTargetsByRef(layerId, getHudState);
-  if (targetIds.length === 0) {
+  const resolvedIds = resolveLayerTargetsByRef(layerId, getHudState);
+  if (resolvedIds.length === 0) {
     return { status: 'failed', error: 'target_not_found' };
+  }
+
+  // 1.5 lock 门（V5/W2）：agent 通道（缺省）锁定目标即剔除；全部被锁 →
+  // typed layer_locked 冲突（ack.error 机器可读，用户解锁是唯一 override）。
+  const lockPartition = input.respectLock === false
+    ? { allowed: [...resolvedIds], locked: [] as string[] }
+    : partitionByLock(resolvedIds);
+  const lockedTargets = lockPartition.locked;
+  if (lockPartition.allowed.length === 0) {
+    // W2/W9：typed 冲突入 journal（who/what 审计 —— agent 被用户锁拦截）。
+    journalOnly({
+      type: 'lock_conflict',
+      label: `Agent 显隐操作被用户锁拦截：${lockedTargets.join(', ')}`,
+      actor: 'agent',
+    });
+    return {
+      status: 'failed',
+      error: LOCK_CONFLICT_ERROR,
+      result: { locked_layer_ids: lockedTargets, target_ids: resolvedIds },
+    };
+  }
+  const targetIds = lockPartition.allowed;
+  // 部分冲突时各出口 result 附加 locked_layer_ids（不静默）。
+  const withLocked = (
+    result: VisibilityTransactionResult['result'],
+  ): VisibilityTransactionResult['result'] =>
+    lockedTargets.length > 0 ? { ...result, locked_layer_ids: lockedTargets } : result;
+
+  // V5/W4：agent 突变的 undo 载荷必须在 store 更新前捕获（步骤 3 会改写
+  // visible/opacity）。用户路径（respectLock=false）不在此记录 —— 已由
+  // toggle/opacity 提交函数记录，避免双重入栈。
+  const undoBefore: { visible?: boolean; opacity?: number } = {};
+  if (input.respectLock !== false && input.durable !== false) {
+    if (visible != null) {
+      const cur = (getHudState().layers ?? []).find(
+        (l: HudLayerLike) => l.id === targetIds[0],
+      ) as { visible?: boolean } | undefined;
+      undoBefore.visible = cur?.visible !== false;
+    }
+    if (opacity != null) {
+      const cur = (getHudState().layers ?? []).find(
+        (l: HudLayerLike) => l.id === targetIds[0],
+      ) as { opacity?: number } | undefined;
+      undoBefore.opacity = cur?.opacity ?? 1;
+    }
   }
 
   // 2. MapLibre 命中（双方案；目标在地图与 store 都不存在 → 真未命中）
@@ -258,6 +313,31 @@ export function applyLayerVisibilityTransaction(
   //    重试；agent 路径此前缺失——reload 后 Agent 可见性决策丢失的根因）。
   if (input.durable !== false && (visible != null || opacity != null)) {
     enqueueDurability(targetSpecPairs, visible, opacity);
+    // V5/W4 + R1-M3：agent 突变入 undo 栈。undoBefore 只对单目标层捕获
+    // （一 ref 多层的多目标事务只覆盖首层会造成"半撤销"）—— 多目标走
+    // journalOnly（诚实可逆性元数据：不可整单撤销就不入 undo 栈）。
+    if (input.respectLock !== false) {
+      const after = {
+        ...(visible != null ? { visible: Boolean(visible) } : {}),
+        ...(opacity != null ? { opacity: Number(opacity) } : {}),
+      };
+      if (targetIds.length === 1) {
+        presentationCommand(
+          `Agent 调整 ${targetIds[0]} 显示状态`,
+          targetIds[0],
+          'agent',
+          undoBefore,
+          after,
+        );
+      } else {
+        journalOnly({
+          type: 'toggle',
+          label: `Agent 批量调整 ${targetIds.length} 层显示状态`,
+          detail: `图层: ${targetIds.slice(0, 3).join(', ')}${targetIds.length > 3 ? ' …' : ''}`,
+          actor: 'agent',
+        });
+      }
+    }
   }
 
   // 6. postcondition：读回验证（只对本次请求要改的属性比对）
@@ -266,7 +346,7 @@ export function applyLayerVisibilityTransaction(
     // 未收敛，observation 循环续证）。
     return {
       status: 'succeeded',
-      result: { store_updated: true, target_ids: targetIds },
+      result: withLocked({ store_updated: true, target_ids: targetIds }),
     };
   }
   const want = wantVisibility(visible);
@@ -275,7 +355,9 @@ export function applyLayerVisibilityTransaction(
       return {
         status: storeMatched.length > 0 ? 'succeeded' : 'failed',
         error: storeMatched.length > 0 ? undefined : 'mutation_failed',
-        result: storeMatched.length > 0 ? { store_updated: true, target_ids: targetIds } : undefined,
+        result: withLocked(
+          storeMatched.length > 0 ? { store_updated: true, target_ids: targetIds } : undefined,
+        ),
       };
     }
     if (
@@ -285,13 +367,15 @@ export function applyLayerVisibilityTransaction(
       return {
         status: storeMatched.length > 0 ? 'succeeded' : 'failed',
         error: storeMatched.length > 0 ? undefined : 'mutation_failed',
-        result: storeMatched.length > 0 ? { store_updated: true, target_ids: targetIds } : undefined,
+        result: withLocked(
+          storeMatched.length > 0 ? { store_updated: true, target_ids: targetIds } : undefined,
+        ),
       };
     }
   }
   return {
     status: 'succeeded',
-    result: { confirmed: true, target_ids: targetIds },
+    result: withLocked({ confirmed: true, target_ids: targetIds }),
   };
 }
 
