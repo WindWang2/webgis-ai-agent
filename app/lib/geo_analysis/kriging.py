@@ -126,6 +126,10 @@ from app.lib.gis.scientific_errors import (
     ScientificPreconditionFailed,
 )
 
+# science-v5 W1：折分配唯一事实源在 cv.py（本模块 re-import；cv 不反向
+# 依赖 kriging，无循环）。
+from app.lib.geo_analysis.cv import spatial_block_folds
+
 logger = logging.getLogger(__name__)
 
 VariogramModelNames = ("spherical", "exponential", "gaussian")
@@ -1095,24 +1099,9 @@ class CrossValidationReport:
         return out
 
 
-def _spatial_block_folds(xy: np.ndarray, folds: int) -> tuple[np.ndarray, np.ndarray]:
-    """Deterministic grid-stratified fold assignment (NO RNG).
-
-    Samples are ranked by x and by y (dense ranks via double argsort —
-    stable under input reordering), snapped to a ⌈√folds⌉ × ⌈√folds⌉ block
-    grid, and each block maps to fold ``block_id % folds``. Clustered
-    samples therefore share one fold and are validated against spatially
-    distant blocks — the honest error of an extrapolative design.
-    Returns ``(fold_id, block_id)``.
-    """
-    n = len(xy)
-    n_grid = max(1, int(math.ceil(math.sqrt(folds))))
-    rx = np.argsort(np.argsort(xy[:, 0], kind="stable"), kind="stable")
-    ry = np.argsort(np.argsort(xy[:, 1], kind="stable"), kind="stable")
-    gx = (rx * n_grid) // max(n, 1)
-    gy = (ry * n_grid) // max(n, 1)
-    block = gy * n_grid + gx
-    return block % folds, block
+# science-v5 W1：折分配唯一事实源在 cv.py；本别名 = 同一对象（非包装、
+# 非复制），V2 兼容（cross_validate_kriging 与既有测试的调用点不变）。
+_spatial_block_folds = spatial_block_folds
 
 
 def cross_validate_kriging(
