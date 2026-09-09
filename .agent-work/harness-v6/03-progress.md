@@ -6,11 +6,14 @@
 |------|------|------|
 | W1 | 只读审计 + baseline/架构文档 | ✅ commit 8c70a453 |
 | W2-W4 | Semantic Retrieval V6（hybrid + 语料 358 + confidence/abstention + 生产接线） | ✅ 本提交 |
-| W5 | Durable Context & Project Memory | ⏳ |
-| W6 | Persistent Recovery Ledger | ⏳ |
-| W7 | Trace Store V6 | ⏳ |
-| W8 | Long-horizon continuation | ⏳ |
-| W9-W14 | | ⏳ |
+| W5 | Durable Context 三分层 + recovery_state + 锚点 additive | ✅ a2374b5a |
+| W6 | Persistent Recovery Ledger（flock/write-through/成功回写/resume 续接） | ✅ a425136c |
+| W7 | Trace Store V6（分段/gzip/增量读/汇聚接口/torn-tail 自愈） | ✅ ee53b02d |
+| W8 | Long-horizon continuation 裁决点 + runtime_repair 接线 | ✅ a2374b5a |
+| W9 | Subagent budget class（交集 + token 闸） | ✅ ce93cb37 |
+| W10 | Observation 状态阶梯 + map_product.observation_health | ✅ 50618c2f |
+| W11-W12 | chaos corpus 16 条 + kill -9 锁释放等不变量 | ✅ 38aff03f |
+| W13-W14 | perf 结构预算 + ADR-0119 + CHANGELOG | ✅ 本提交 |
 
 ## W2-W4 实施记录（关键决策与测量）
 
