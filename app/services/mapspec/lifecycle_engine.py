@@ -16,7 +16,7 @@ import asyncio
 import copy
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Literal, Optional, Tuple, Union
 
 MutationOrigin = Literal["agent", "user", "system"]
 
@@ -444,9 +444,311 @@ def _workbench_doc_error(doc: Any) -> Optional[str]:
     locked = doc.get("lockedLayerIds", [])
     if not isinstance(locked, list) or not all(isinstance(x, str) for x in locked):
         return "workbench doc.lockedLayerIds must be a list of strings."
+    # W15：component 级锁（version 兼容：缺席=空；非法类型与 lockedLayerIds
+    # 同门校验并披露）。
+    locked_components = doc.get("lockedComponentIds", [])
+    if not isinstance(locked_components, list) or not all(
+        isinstance(x, str) for x in locked_components
+    ):
+        return "workbench doc.lockedComponentIds must be a list of strings."
     if doc.get("mode") not in _WORKBENCH_MODES:
         return "workbench doc.mode must be one of explore|analyze|compose."
     return None
+
+
+# ─── W15：Human-Agent 状态收敛 —— 锁下沉 + 状态三分类 + override 分类 ───
+#（Contextual Cartographic Harness V6，见 07-context-state.md W15 节）
+#
+# 状态三分类边界（§32）：
+# - semantic（语义态）：进 MapSpec/workflow 持久 —— 数据源、图层数据与
+#   分类、提交姿态（view/basemap/time/组织态）。改语义走正常变更分类。
+# - presentation（呈现态）：可见性/透明度/色板/图例位置 —— durable 呈现
+#   决策持久（_preserve_durable_presentation / presentation_owner 印记），
+#   但不污染科学语义。
+# - transient（瞬态交互态）：pan/zoom 过程增量、hover、selection —— 只活
+#   在前端，后端权威状态绝不持久化（strip_transient_state 在提交边界剥离，
+#   锁内单事务、幂等、无行为变化）。已提交的 framed view（SetView 落账的
+#   center/zoom）是 semantic 姿态，不是瞬态增量 —— 两者以「是否进持久化」
+#   为界，不以字段名为界。
+
+STATE_SEMANTIC = "semantic"
+STATE_PRESENTATION = "presentation"
+STATE_TRANSIENT = "transient"
+
+# 瞬态交互键（顶层）：即使随载荷到达也绝不进持久化。
+TRANSIENT_INTERACTION_KEYS = frozenset({"pan", "zoom", "hover", "selection"})
+
+# override 三分类（§33/User override）：
+# - semantic override：改 spec 语义 → 走正常变更分类与校验；
+# - presentation override：仅呈现 → 不污染科学语义；
+# - temporary UI override：纯前端瞬态（pan/zoom/hover/selection）→ 不构造
+#   意图、不进引擎、不进 provenance（strip_transient_state 兜底）。
+# override 记录来源 user/agent（provenance 的 origin/actor 既有模式 +
+# detail.override_kind），支撑 user-wins 判定。最小可用：只分类 + 记录，
+# 不扩展 planner 语义。
+OVERRIDE_SEMANTIC = "semantic"
+OVERRIDE_PRESENTATION = "presentation"
+OVERRIDE_TEMPORARY_UI = "temporary_ui"
+OVERRIDE_SOURCES = ("user", "agent", "system")
+
+# 锁冲突披露词：对齐前端 failed/layer_locked（前端 LOCK_CONFLICT_ERROR =
+# 'layer_locked'，ack.error 机器可读；后端权威拒绝必须携带同一 token）。
+LOCK_CONFLICT_CODE = "layer_locked"
+COMPONENT_LOCK_CONFLICT_CODE = "component_locked"
+# 锁集读取上界（与 repair_planner 既有 [:64] 口径一致，有界披露）。
+_MAX_LOCK_IDS = 64
+
+
+def locked_layer_ids_of(mapspec: Optional[Dict[str, Any]]) -> List[str]:
+    """workbench doc lockedLayerIds 读取（缺席/非法 → 空，不过度承诺）。"""
+    if not isinstance(mapspec, dict):
+        return []
+    wb = mapspec.get("workbench")
+    if not isinstance(wb, dict):
+        return []
+    locked = wb.get("lockedLayerIds", [])
+    if not isinstance(locked, list):
+        return []
+    return [x for x in locked[:_MAX_LOCK_IDS] if isinstance(x, str) and x]
+
+
+def locked_component_ids_of(mapspec: Optional[Dict[str, Any]]) -> List[str]:
+    """workbench doc lockedComponentIds 读取（缺席=空，版本兼容）。"""
+    if not isinstance(mapspec, dict):
+        return []
+    wb = mapspec.get("workbench")
+    if not isinstance(wb, dict):
+        return []
+    locked = wb.get("lockedComponentIds", [])
+    if not isinstance(locked, list):
+        return []
+    return [x for x in locked[:_MAX_LOCK_IDS] if isinstance(x, str) and x]
+
+
+def _lock_matches(locked_id: str, target_id: str) -> bool:
+    """锁命中判定（含层族语义，与 _should_remove_layer 谓词一致）。
+
+    精确命中 + 双向族前缀（locked 存逻辑层、目标是物理层，或反之）——
+    任一方向命中即拒绝，不留「换个 id 拼法绕过用户锁」的缺口。
+    """
+    if not isinstance(locked_id, str) or not target_id:
+        return False
+    if locked_id == target_id:
+        return True
+    for sep in ("-", "__"):
+        if target_id.startswith(f"{locked_id}{sep}"):
+            return True
+        if locked_id.startswith(f"{target_id}{sep}"):
+            return True
+    return False
+
+
+def is_entity_locked(entity: str, locked_entities: FrozenSet[str]) -> bool:
+    """共享锁命中谓词（repair planner 复用，不各自手写锁判断）。"""
+    if not entity:
+        return False
+    return any(_lock_matches(locked, entity) for locked in locked_entities)
+
+
+@dataclass
+class LockGuardResult:
+    """guard_locked_partitions 的分区结果（locked/unlocked + 机器可读披露）。"""
+
+    allowed_layer_ids: List[str] = field(default_factory=list)
+    locked_layer_ids: List[str] = field(default_factory=list)
+    allowed_component_ids: List[str] = field(default_factory=list)
+    locked_component_ids: List[str] = field(default_factory=list)
+
+    @property
+    def has_locked(self) -> bool:
+        return bool(self.locked_layer_ids or self.locked_component_ids)
+
+    def disclosure(self) -> Dict[str, Any]:
+        """机器可读锁披露（含 layer_locked token，对齐前端 failed 词）。"""
+        if self.locked_layer_ids:
+            code = LOCK_CONFLICT_CODE
+            message = (
+                f"[{LOCK_CONFLICT_CODE}] 图层 {sorted(set(self.locked_layer_ids))} "
+                "被用户锁定，agent 突变已拒绝（用户解锁是唯一 override）。"
+            )
+        elif self.locked_component_ids:
+            code = COMPONENT_LOCK_CONFLICT_CODE
+            message = (
+                f"[{COMPONENT_LOCK_CONFLICT_CODE}] 组件 "
+                f"{sorted(set(self.locked_component_ids))} 被用户锁定，"
+                f"agent 突变已拒绝（与 {LOCK_CONFLICT_CODE} 同门锁披露，"
+                "用户解锁是唯一 override）。"
+            )
+        else:
+            code = "unlocked"
+            message = "无锁冲突。"
+        return {
+            "code": code,
+            "locked_layer_ids": sorted(set(self.locked_layer_ids)),
+            "locked_component_ids": sorted(set(self.locked_component_ids)),
+            "message": message,
+            "correction_hint": (
+                "保留被锁目标的用户状态继续成图；如确需修改，请先由用户"
+                "在工作台解锁后重试。"
+            ),
+        }
+
+
+def guard_locked_partitions(
+    mapspec: Optional[Dict[str, Any]],
+    layer_ids: Iterable[str] = (),
+    component_ids: Iterable[str] = (),
+) -> LockGuardResult:
+    """W15 统一锁 guard（§33 锁下沉的唯一事实源）。
+
+    任何来源的 mutation（tool 直调 / command / mapspec mutation / batch /
+    repair planner / quality_loop）经它把目标分区为 locked/unlocked：
+    locked 部分拒绝 + 机器可读披露，unlocked 部分照常执行。确定性：
+    同输入同分区（输入序去重，披露排序）。
+    """
+    locked_layers = locked_layer_ids_of(mapspec)
+    locked_components = locked_component_ids_of(mapspec)
+    result = LockGuardResult()
+    for target in dict.fromkeys(layer_ids):
+        if not isinstance(target, str) or not target:
+            continue
+        hits = [lid for lid in locked_layers if _lock_matches(lid, target)]
+        if hits:
+            for h in hits:
+                if h not in result.locked_layer_ids:
+                    result.locked_layer_ids.append(h)
+        elif target not in result.allowed_layer_ids:
+            result.allowed_layer_ids.append(target)
+    for target in dict.fromkeys(component_ids):
+        if not isinstance(target, str) or not target:
+            continue
+        hits = [c for c in locked_components if _lock_matches(c, target)]
+        if hits:
+            for h in hits:
+                if h not in result.locked_component_ids:
+                    result.locked_component_ids.append(h)
+        elif target not in result.allowed_component_ids:
+            result.allowed_component_ids.append(target)
+    return result
+
+
+def intent_lock_targets(intent: "MutationIntent") -> Tuple[List[str], List[str]]:
+    """mutation 意图 → （目标图层 ids，目标组件 ids）。"""
+    if isinstance(intent, (PatchLayerPresentationIntent, PatchLayerStyleIntent)):
+        return ([intent.layer_id], [])
+    if isinstance(intent, UpsertLayerIntent):
+        layer = intent.layer if isinstance(intent.layer, dict) else {}
+        lid = layer.get("id")
+        return ([str(lid)] if isinstance(lid, str) and lid else [], [])
+    if isinstance(intent, RemoveLayerIntent):
+        return ([intent.layer_id], [])
+    if isinstance(intent, ReorderLayersIntent):
+        return ([lid for lid in intent.layer_ids if isinstance(lid, str)], [])
+    if isinstance(
+        intent,
+        (
+            PatchComponentIntent,
+            RemoveComponentIntent,
+            DuplicateComponentIntent,
+            RebindComponentIntent,
+        ),
+    ):
+        return ([], [intent.component_id])
+    if isinstance(intent, SetLayoutIntent):
+        ids = [
+            str(c.get("id"))
+            for c in (intent.components or [])
+            if isinstance(c, dict) and isinstance(c.get("id"), str)
+        ]
+        return ([], ids)
+    if isinstance(intent, RestoreStyleIntent):
+        snap = intent.snapshot if isinstance(intent.snapshot, dict) else {}
+        layer_ids = [
+            str(lay.get("id"))
+            for lay in (snap.get("layers") or [])
+            if isinstance(lay, dict) and isinstance(lay.get("id"), str)
+        ]
+        layout = snap.get("layout") if isinstance(snap.get("layout"), dict) else {}
+        comp_ids = [
+            str(c.get("id"))
+            for c in (layout.get("components") or [])
+            if isinstance(c, dict) and isinstance(c.get("id"), str)
+        ]
+        return (layer_ids, comp_ids)
+    return ([], [])
+
+
+def guard_intent_locks(
+    mapspec: Optional[Dict[str, Any]],
+    intent: "MutationIntent",
+    *,
+    origin: MutationOrigin = "agent",
+) -> Optional[MapSpecResult]:
+    """单意图锁裁决：命中被锁目标 → 拒绝结果，否则 None（放行）。
+
+    单意图 mutation 是原子事务（不可部分提交）→ 整笔拒绝；batch 逐
+    intent 分区（见 apply_presentation_batch）。user 意图不受自有锁约束
+    （用户解锁/操作是唯一 override）；agent/system 一律受 guard。
+    """
+    if origin == "user":
+        return None
+    layer_ids, component_ids = intent_lock_targets(intent)
+    if not layer_ids and not component_ids:
+        return None
+    partition = guard_locked_partitions(
+        mapspec, layer_ids=layer_ids, component_ids=component_ids
+    )
+    if not partition.has_locked:
+        return None
+    disclosure = partition.disclosure()
+    return MapSpecResult(
+        is_error=True,
+        origin=origin,
+        error_msg=disclosure["message"],
+        correction_hint=disclosure["correction_hint"],
+    )
+
+
+# 呈现态意图类型（仅呈现，不污染科学语义；其余持久意图默认语义类）。
+_PRESENTATION_INTENT_TYPES = (
+    PatchLayerPresentationIntent,
+    PatchLayerStyleIntent,
+    SetLayoutIntent,
+    PatchComponentIntent,
+    RemoveComponentIntent,
+    DuplicateComponentIntent,
+    RebindComponentIntent,
+)
+
+
+def classify_override(
+    intent: "MutationIntent", origin: MutationOrigin = "agent"
+) -> Dict[str, str]:
+    """User override 最小可用分类 + 来源记录（不扩展 planner 语义）。
+
+    kind ∈ {semantic, presentation}；temporary_ui 意图永不构造（纯前端
+    瞬态，不进引擎 —— 见 strip_transient_state）。source ∈ user/agent/
+    system，原样记录（provenance origin/actor 既有模式）。
+    """
+    kind = (
+        OVERRIDE_PRESENTATION
+        if isinstance(intent, _PRESENTATION_INTENT_TYPES)
+        else OVERRIDE_SEMANTIC
+    )
+    source = origin if origin in OVERRIDE_SOURCES else "agent"
+    return {"kind": kind, "source": source}
+
+
+def strip_transient_state(mapspec: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """提交边界剥离瞬态交互态（transient 永不持久）。
+
+    纯函数、幂等：无瞬态键时返回同一对象（零拷贝）；命中时顶层浅拷贝去键。
+    """
+    if not isinstance(mapspec, dict):
+        return mapspec
+    if not any(k in mapspec for k in TRANSIENT_INTERACTION_KEYS):
+        return mapspec
+    return {k: v for k, v in mapspec.items() if k not in TRANSIENT_INTERACTION_KEYS}
 
 
 _OPACITY_PAINT_KEYS = {
@@ -796,6 +1098,16 @@ class MapSpecLifecycleEngine:
             ckpt_ref_count = 0
             try:
                 prior_mapspec = loaded
+                # W15 锁下沉（§33）：统一 guard —— 任何来源的 mutation 先按
+                # 目标分区 locked/unlocked；agent/system 意图命中被锁图层/
+                # 组件即整笔拒绝（原子意图不可部分提交）+ 机器可读披露
+                # （[layer_locked] token 对齐前端 failed/layer_locked）。
+                # user 意图不受自有锁约束（用户解锁/操作是唯一 override）。
+                lock_refusal = guard_intent_locks(
+                    prior_mapspec, intent, origin=origin
+                )
+                if lock_refusal is not None:
+                    return lock_refusal
                 # #1070(F-1): 锁内守卫复检 seam —— apply_gis_mutation 的
                 # user-wins 检查此前在锁外求值，等锁窗口内落地的用户决策
                 # 不可见（TOCTOU）。回调返回非 None 即拒绝（不提交）。
@@ -1562,6 +1874,9 @@ class MapSpecLifecycleEngine:
                         time_cfg["speed"] = intent.speed
                     mapspec["time"] = time_cfg
 
+                # W15 状态三分类（§32）：transient 瞬态交互态永不持久 ——
+                # 提交边界剥离（无瞬态键时零拷贝原样返回）。
+                mapspec = strip_transient_state(mapspec)
                 # 3. Review the immutable desired state and apply only bounded,
                 # presentation-only AUTO_SAFE repairs. This is deliberately
                 # before structural validation/commit so the persisted MapSpec
@@ -1873,8 +2188,22 @@ class MapSpecLifecycleEngine:
             outcomes: List[BatchIntentOutcome] = []
             candidate: Optional[Dict[str, Any]] = None
             try:
-                # 1. 逐 intent：锁内守卫 → family 命中 → patch。
+                # 1. 逐 intent：统一锁 guard 分区 → 锁内守卫 → family 命中 → patch。
                 for intent in intents:
+                    # W15 锁下沉：被锁 intent refused（披露精确到被锁 id，
+                    # 含 layer_locked token），未锁 intent 照常执行。
+                    if origin != "user":
+                        partition = guard_locked_partitions(
+                            loaded, layer_ids=[intent.layer_id]
+                        )
+                        if partition.has_locked:
+                            disclosure = partition.disclosure()
+                            outcomes.append(BatchIntentOutcome(
+                                layer_id=intent.layer_id, status="refused",
+                                visible=intent.visible,
+                                error_msg=disclosure["message"],
+                            ))
+                            continue
                     if pre_commit_check is not None:
                         guard_result = await pre_commit_check(
                             session_id, intent, origin, loaded
@@ -1930,7 +2259,7 @@ class MapSpecLifecycleEngine:
                         origin=origin,
                     )
 
-                mapspec = candidate
+                mapspec = strip_transient_state(candidate)
 
                 # 2. review（AUTO_SAFE ≤2 iter）—— 整批一次。
                 cartographic_review: Dict[str, Any] = {}

@@ -712,6 +712,17 @@ async def _advance_runtime_cartographic_repair(
         repair_state["termination_reason"] = "no_safe_runtime_repair"
         await persist_repair_state(repair_state)
         return result
+    if not plan.get("patches"):
+        # W15 锁下沉：全部命中用户锁 → 无可下发修复，诚实终止并披露
+        # （不发空修复动作；用户解锁后新观察重进回路）。
+        cartography["status"] = "failed_unrepairable"
+        cartography["passed"] = False
+        cartography["termination_reason"] = "locked_layer_repair_refused"
+        cartography["locked_refused"] = list(plan.get("locked_refused") or [])
+        result["overall_passed"] = False
+        repair_state["termination_reason"] = "locked_layer_repair_refused"
+        await persist_repair_state(repair_state)
+        return result
 
     patch_fingerprint = str(plan["patch_fingerprint"])
     prior = next(

@@ -173,8 +173,14 @@ def classify_repair(
     """单条 finding → 修复动作（表驱动；锁/override 硬约束优先于一切）。
 
     user-wins：受影响实体被用户锁定或已有用户 override → not_allowed，
-    无论分类表怎么说（§18/§33）。
+    无论分类表怎么说（§18/§33）。锁命中走统一 guard
+    （lifecycle_engine.is_entity_locked），not_allowed 语义不变。
     """
+    # W15 锁下沉：锁判断复用统一 guard（函数内懒导入，避免循环依赖）。
+    from app.services.mapspec.lifecycle_engine import (
+        LOCK_CONFLICT_CODE,
+        is_entity_locked,
+    )
     repair_class, safety, executor = _CODE_MAP.get(
         uf.code, _SCOPE_FALLBACK.get(uf.scope, ("reobserve", "safe_automatic", "none")))
     # 软视觉发现：一律需用户裁决（§13/§18——评估器只产 finding，确定性
@@ -197,10 +203,14 @@ def classify_repair(
         detail=uf.evidence,
     )
     entity = uf.affected_entity
-    if entity and (entity in locked_entities or entity in user_overridden):
+    if entity and (
+        is_entity_locked(entity, locked_entities) or entity in user_overridden
+    ):
         action.safety = "not_allowed"
         action.executor = "none"
-        action.detail = (action.detail + " | user-locked/overridden — user-wins")[:160]
+        action.detail = (
+            action.detail + f" | user-locked/overridden [{LOCK_CONFLICT_CODE}] — user-wins"
+        )[:160]
     return action
 
 
@@ -316,15 +326,17 @@ async def plan_repairs_for_chapter(
     if not blocking:
         return None
 
-    # 锁集：workbench doc lockedLayerIds（§33 硬约束输入）。
+    # W15 锁下沉：锁集走统一 guard（lockedLayerIds + lockedComponentIds，
+    # 缺席=空；§33 硬约束输入）。
+    from app.services.mapspec.lifecycle_engine import (
+        locked_component_ids_of,
+        locked_layer_ids_of,
+    )
     locked: FrozenSet[str] = frozenset()
     if isinstance(mapspec, dict):
-        wb = mapspec.get("workbench")
-        if isinstance(wb, dict):
-            locked = frozenset(
-                str(x) for x in (wb.get("lockedLayerIds") or [])[:64]
-                if isinstance(x, str) and x
-            )
+        locked = frozenset(
+            locked_layer_ids_of(mapspec) + locked_component_ids_of(mapspec)
+        )
 
     # 状态 epoch：runtime 块 revision + mapspec mutation revision。
     runtime_rev = 0

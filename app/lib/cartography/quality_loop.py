@@ -471,6 +471,9 @@ class CartographicLoopResult:
     # V5（ADR-0118 D2）：被调用方声明抑制、未执行的 repair operations
     # （user-wins —— 显式 intent 不被 AUTO_SAFE 静默覆盖）。
     suppressed_repairs: List[str] = field(default_factory=list)
+    # W15 锁下沉：命中被锁图层的 repair（未执行 + 机器可读披露，
+    # 含 layer_locked token；统一 guard 判定）。
+    locked_suppressed: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def repair_count(self) -> int:
@@ -488,6 +491,7 @@ class CartographicLoopResult:
             "termination_reason": self.termination_reason,
             "counters": self.counters,
             "suppressed_repairs": self.suppressed_repairs,
+            "locked_suppressed": self.locked_suppressed,
         }
 
 
@@ -562,6 +566,16 @@ def review_and_repair_cartography(
     review_invocations = 0
     rule_invocations = 0
     applied_suppressions: List[str] = []
+    # W15 锁下沉：统一 guard —— 候选 mapspec 的 workbench 锁集（函数内懒
+    # 导入，lifecycle_engine 顶层依赖本模块，顶层导入会循环）。
+    from app.services.mapspec.lifecycle_engine import (
+        LOCK_CONFLICT_CODE,
+        locked_layer_ids_of,
+    )
+    guard_locked_layers = frozenset(
+        locked_layer_ids_of(current) if isinstance(current, dict) else []
+    )
+    locked_suppressed: Dict[str, Dict[str, Any]] = {}
 
     while True:
         report = evaluate_cartography_semantics(current, source_profiles)
@@ -595,6 +609,24 @@ def review_and_repair_cartography(
                 op = r.get("operation")
                 if op in suppressed_repairs and op not in applied_suppressions:
                     applied_suppressions.append(op)
+            repairs = kept
+        if guard_locked_layers:
+            kept = []
+            for r in repairs:
+                lid = r.get("layer_id")
+                if isinstance(lid, str) and lid in guard_locked_layers:
+                    if lid not in locked_suppressed:
+                        locked_suppressed[lid] = {
+                            "code": LOCK_CONFLICT_CODE,
+                            "layer_id": lid,
+                            "operation": r.get("operation"),
+                            "message": (
+                                f"[{LOCK_CONFLICT_CODE}] 图层 {lid} 被用户锁定，"
+                                "AUTO_SAFE 修复已拒绝（用户解锁是唯一 override）。"
+                            ),
+                        }
+                else:
+                    kept.append(r)
             repairs = kept
         if not repairs:
             has_semantic_risk = any(
@@ -652,6 +684,9 @@ def review_and_repair_cartography(
             "repair_attempts": len(attempts),
         },
         suppressed_repairs=sorted(applied_suppressions),
+        locked_suppressed=[
+            locked_suppressed[k] for k in sorted(locked_suppressed)
+        ],
     )
 
 

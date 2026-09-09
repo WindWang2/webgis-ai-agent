@@ -78,6 +78,8 @@ class RuntimeRepairPlan:
     execution_debts: List[Dict[str, str]] = field(default_factory=list)
     # user-wins no-op 披露（不动作）
     user_owned: List[str] = field(default_factory=list)
+    # W15 锁下沉：被用户锁命中的修复目标（不动作 + 机器可读披露）。
+    locked_refused: List[str] = field(default_factory=list)
 
     @property
     def has_actions(self) -> bool:
@@ -86,6 +88,31 @@ class RuntimeRepairPlan:
             or self.visibility_restores
             or self.reassert_components
         )
+
+    def locked_disclosures(self) -> List[Dict[str, str]]:
+        """被锁拒绝的机器可读披露（含 layer_locked token，对齐前端）。"""
+        # W15 锁下沉：披露词统一走 guard 的 code 常量（函数内懒导入，
+        # 避免循环依赖）。组件拒绝以 "component:" 前缀记录，图层为裸 id。
+        from app.services.mapspec.lifecycle_engine import (
+            COMPONENT_LOCK_CONFLICT_CODE,
+            LOCK_CONFLICT_CODE,
+        )
+        out: List[Dict[str, str]] = []
+        for target in self.locked_refused:
+            code = (
+                COMPONENT_LOCK_CONFLICT_CODE
+                if target.startswith("component:")
+                else LOCK_CONFLICT_CODE
+            )
+            out.append({
+                "code": code,
+                "target": target[:64],
+                "message": (
+                    f"[{code}] {target[:64]} 被用户锁定，修复已拒绝"
+                    "（用户解锁是唯一 override）。"
+                ),
+            })
+        return out
 
     def action_fingerprint(self) -> str:
         """动作集指纹（ledger 去重：同一发散的重复计划识别为同一次尝试）。"""
@@ -108,6 +135,8 @@ class RuntimeRepairOutcome:
     passes_used: int = 0
     execution_debts: List[Dict[str, str]] = field(default_factory=list)
     user_owned: List[str] = field(default_factory=list)
+    # W15 锁下沉：被锁拒绝的目标（不执行 + 披露）。
+    locked_refused: List[str] = field(default_factory=list)
     # applied 非空时携带修复后的 spec 快照与 revision（响应侧带前端提交）。
     mapspec: Optional[Dict[str, Any]] = None
     mutation_revision: Optional[int] = None
@@ -122,6 +151,8 @@ class RuntimeRepairOutcome:
             out["execution_debts"] = self.execution_debts[:4]
         if self.user_owned:
             out["user_owned"] = [u[:64] for u in self.user_owned[:4]]
+        if self.locked_refused:
+            out["locked_refused"] = [u[:64] for u in self.locked_refused[:8]]
         if self.mapspec is not None:
             out["mapspec"] = self.mapspec
             out["mutation_revision"] = self.mutation_revision
@@ -250,6 +281,45 @@ def classify_runtime_repairs(
                 continue  # 期望态缺失 → finalizer add_component 通道，不越界
             else:
                 continue  # 全族禁用 → 用户/one-shot 语义归 finalizer，不对抗
+    # W15 锁下沉：统一 guard —— 被锁图层/组件不进修复动作（locked_refused
+    # 披露 + machine-readable locked_disclosures），执行层另有引擎 guard
+    # 兜底（run_runtime_repair 经 apply_gis_mutation）。执行债
+    # （execution_debts）不是直接突变，保持披露（下游重算经引擎 guard）。
+    from app.services.mapspec.lifecycle_engine import (
+        is_entity_locked,
+        locked_component_ids_of,
+        locked_layer_ids_of,
+    )
+    _locked_layers = frozenset(locked_layer_ids_of(mapspec))
+    _locked_components = frozenset(locked_component_ids_of(mapspec))
+    if _locked_layers or _locked_components:
+        kept_reassert = []
+        for lid in plan.reassert_layers:
+            if is_entity_locked(lid, _locked_layers):
+                if lid not in plan.locked_refused:
+                    plan.locked_refused.append(lid)
+            else:
+                kept_reassert.append(lid)
+        plan.reassert_layers = kept_reassert
+        kept_visibility = []
+        for lid in plan.visibility_restores:
+            if is_entity_locked(lid, _locked_layers):
+                if lid not in plan.locked_refused:
+                    plan.locked_refused.append(lid)
+            else:
+                kept_visibility.append(lid)
+        plan.visibility_restores = kept_visibility
+        kept_components = []
+        for repair_type in plan.reassert_components:
+            default_id = _COMPONENT_DEFAULT_IDS.get(
+                repair_type, f"{repair_type}-main")
+            if is_entity_locked(default_id, _locked_components):
+                refused = f"component:{default_id}"
+                if refused not in plan.locked_refused:
+                    plan.locked_refused.append(refused)
+            else:
+                kept_components.append(repair_type)
+        plan.reassert_components = kept_components
     return plan
 
 
@@ -327,6 +397,8 @@ async def run_runtime_repair(
     )
     outcome.execution_debts = plan.execution_debts[:4]
     outcome.user_owned = list(plan.user_owned[:4])
+    # W15 锁下沉：被锁拒绝随 outcome 披露（不执行、不耗预算）。
+    outcome.locked_refused = list(plan.locked_refused[:8])
     if not plan.has_actions:
         # 收敛（新鲜观察 + 无可修复发散）：清 ledger（下次新发散有满预算）
         if isinstance(map_state, dict) and isinstance(

@@ -152,8 +152,37 @@ def plan_runtime_repairs(
     if not patches:
         return None
     patches.sort(key=lambda item: (item["mapspec_layer_id"], item["layer_id"]))
+    # W15 锁下沉：统一 guard —— 命中被锁图层的 patch 不下发（locked_refused
+    # 披露，含 layer_locked token）；全部被锁 → 空 patches + 披露，由调用方
+    # 按 failed_unrepairable 诚实终止（不发空修复动作）。
+    from app.services.mapspec.lifecycle_engine import (  # 懒导入，防循环
+        LOCK_CONFLICT_CODE,
+        locked_layer_ids_of,
+    )
+    locked_refused: List[Dict[str, Any]] = []
+    guard_locked = frozenset(
+        locked_layer_ids_of(mapspec) if isinstance(mapspec, dict) else []
+    )
+    if guard_locked:
+        kept = []
+        for p in patches:
+            lid = p.get("mapspec_layer_id")
+            if isinstance(lid, str) and lid in guard_locked:
+                locked_refused.append({
+                    "code": LOCK_CONFLICT_CODE,
+                    "layer_id": lid,
+                    "runtime_layer_id": p.get("layer_id"),
+                    "message": (
+                        f"[{LOCK_CONFLICT_CODE}] 图层 {lid} 被用户锁定，"
+                        "runtime 修复已拒绝（用户解锁是唯一 override）。"
+                    ),
+                })
+            else:
+                kept.append(p)
+        patches = kept
     return {
         "repairability": "auto_safe",
         "patches": patches,
         "patch_fingerprint": repair_patch_fingerprint(patches),
+        "locked_refused": locked_refused,
     }

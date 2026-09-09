@@ -28,6 +28,7 @@ from app.services.mapspec.lifecycle_engine import (
     PatchLayerPresentationIntent,
     RemoveComponentIntent,
     UpsertLayerIntent,
+    classify_override,
 )
 from app.services.gis_world_state.provenance import (
     ProvenanceEntry,
@@ -277,6 +278,9 @@ async def apply_gis_mutation(
         elif isinstance(intent, RemoveComponentIntent):
             # V4：用户真删除的组件族（finalizer 的 user-wins 修复依据）。
             detail["removed_component_id"] = str(intent.component_id)
+        # W15：override 分类 + 来源记录（origin/actor 既有模式 + override_kind，
+        # 支撑 user-wins 判定；只记录，不扩展语义）。
+        detail["override_kind"] = classify_override(intent, origin).get("kind")
         await append_provenance(
             session_id,
             ProvenanceEntry(
@@ -396,7 +400,12 @@ async def apply_gis_mutation_batch(
                     f"batch applied={result.applied_count} "
                     f"refused={result.refused_count} not_found={result.not_found_count}"
                 ),
-                detail={"shown": shown, "hidden": hidden},
+                detail={"shown": shown, "hidden": hidden,
+                        # W15：override 分类 + 来源记录（batch 均为呈现类）。
+                        "override_kind": (
+                            classify_override(intents[0], origin).get("kind")
+                            if intents else "presentation"
+                        )},
             ),
         )
     return result
