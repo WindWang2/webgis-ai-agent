@@ -57,10 +57,16 @@ async def test_search_datasets_behavioral(registry):
     assert bad.get("code") == "VALIDATION_ERROR"
     assert "bbox" in (bad.get("message") or "")
 
-    # error path（空会话语义）：无数据 → 诚实空结果
+    # error path（空会话语义）：无数据 → 诚实空结果。
+    # 注意（W10 顺序卫生暴露）：data_catalog 会列出**全局** fabric 连接
+    # （其他测试文件注册且不清理），空断言不能假设全局注册表为空 ——
+    # 只断言无会话私有条目泄漏 + 若有条目必为全局 fabric 作用域。
     empty = await registry.dispatch("search_datasets", {"session_id": "bdds-none"})
     assert empty.get("success") is True
-    assert empty.get("count") == 0 and empty.get("datasets") == []
+    entries = empty.get("datasets") or []
+    assert all(e.get("scope") == "fabric" for e in entries), (
+        f"空会话不得泄漏非全局条目: {entries}")
+    assert (empty.get("count") or 0) == len(entries)
 
     # happy path：按角色检索种子目录 → 命中 observation 条目
     await _seed(sid)
