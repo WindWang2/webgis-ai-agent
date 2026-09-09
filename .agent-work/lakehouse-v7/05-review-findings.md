@@ -45,3 +45,34 @@ NIT 24 并入 9/23。**Verdict: conditional proceed → 条款已全部折入实
 - §8 Publishing：find-or-create Artifact → record_revision；project-scoped resolve；
 - §9 GC：blob 保护集 = 活 manifest 引用并集；execute 重验；watermark；in-flight runs 根；GRACE≥registry TTL；
 - §4 S3：multipart Metadata 携带 digest；`put_blob_from_path` 流式发布。
+
+## R1 — Round 1 代码审查（Subagent-A 复用；实现后 diff）
+
+5 CRITICAL + 3 gate MAJOR + 12 MINOR/NIT。全部 CRITICAL/gate-MAJOR 已修
+（commit 82eae9f0）：
+
+| # | 级别 | 发现 | 处置 |
+|---|---|---|---|
+| 1 | CRITICAL | GC 在 S3 后端崩（float(datetime)） | 修：iter_objects epoch 归一化 + 消费侧防御 + S3-fake GC plan 测试 |
+| 2 | CRITICAL | GC 端点仅 session 门禁（跨租户破坏 + 孤儿 id 泄漏） | 修：admin 角色门禁 + 测试 |
+| 3 | CRITICAL | coords_from_transform_list 丢 c/f 平移（地理全错） | 修：c/f 参与 + 绝对坐标/跨原点拒绝回归 |
+| 4 | CRITICAL | virtual owner 检查死代码 | 修：对照根 owner_scope 字典 + owner_mismatch 回归 |
+| 5 | CRITICAL | publish 幻影 revision location | 修：键=位置=digest 自洽 + BlobStore 往返回归 |
+| 6 | MAJOR | xarray 验收未测 | 修：open_zarr(v2) dims/coords/值断言 |
+| 7 | MAJOR | REST verify 未分派深度校验 | 修：kind==virtual → deep |
+| 8 | MAJOR | 项目域解析无 REST | 修：GET projects/{id}/objects/{id} |
+| 9 | MAJOR | tags 过滤破坏分页 | 修：原始页满即续页 + tags_filtered 披露 |
+| 10 | MAJOR | select-then-insert 竞态 | 修：IntegrityError→重查（savepoint）|
+| 11 | MAJOR | manifest_only 被 scrub 报 corrupt | 修：payload durable 标记 + 独立状态 |
+| 12 | MAJOR | RS 多波段静默读 band1 | 修：显式 band_index 强制 |
+| 13 | MINOR | GC 删除残余竞态 | 记录为 bounded-residual（ADR §9） |
+| 14 | MINOR | fixpoint 迭代中变异集合 | 修：快照迭代 |
+| 15 | MINOR | ref 行不对账 | follow-up（记录 PR body） |
+| 16 | MINOR | put_blob_from_path 键守卫缺失 | 修：64-hex 键 digest==key 强制 |
+| 17 | MINOR | worker 线程 asyncio.run | 修：ref 解析移 async 阶段 |
+| 18 | MINOR | 非连续标签静默包络扩展 | 修：typed 拒绝 |
+| 19 | MINOR | docstring 过时 + coords 锚维度不足 | 修：v3 协议表述 + 全维并集 |
+| 20 | NIT | STAC href 死分支 | follow-up |
+| 21 | NIT | etag_checked 语义 | 修：执行即 True |
+| 22 | NIT | 预算超限报 corrupt | 修：独立 budget_exceeded 状态 |
+| 23 | NIT | eval-corpus 混入 | 修：revert（属并行 epic） |
