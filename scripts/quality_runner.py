@@ -268,7 +268,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lane", choices=[*LANES.keys(), "full",
                                          "changed", "full-local",
-                                         "impact", "integration"])
+                                         "impact", "integration", "real"])
     parser.add_argument("--retry-failed", action="store_true",
                         help="失败车道用 pytest --lf 重试")
     parser.add_argument("--json", action="store_true", help="只打印 JSON 摘要")
@@ -317,6 +317,33 @@ def main() -> int:
             ],
         }
         lanes = ["integration"]
+    elif args.lane == "real":
+        # Quality V3 W12：real-services lane（opt-in）。REAL_SERVICES=1
+        # 才武装 pytest 的 real_services marker；migration 生命周期
+        # （SQLite 恒跑 + PG opt-in）+ 真实 Redis/PG 探测 + 多进程
+        # harness（含 API 重启 chaos）。**不会**替你启动 docker 服务 ——
+        # 服务由 compose/本机预先起好，本 lane 只做可达性探测后运行。
+        if not os.environ.get("REAL_SERVICES") and \
+                not os.environ.get("TEST_POSTGRES_URL"):
+            print("real lane 需要 REAL_SERVICES=1 或 TEST_POSTGRES_URL "
+                  "（opt-in 资源纪律）；默认 quick lane 不受影响。")
+            return 2
+        real_targets = ["tests/integration/test_migration_lifecycle.py",
+                        "tests/integration/test_real_services_lane.py",
+                        "tests/quality/test_storage_differential.py"]
+        harness_cmd = [sys.executable, "scripts/integration_harness.py",
+                       "--port", os.environ.get("HARNESS_PORT", "8901"),
+                       "--workers", "2", "--chaos"]
+        LANES["real"] = {
+            "title": "real（opt-in：真实服务 + migration 生命周期 + 多进程 harness chaos）",
+            "commands": [
+                PYTEST + real_targets + ["--no-cov", "-q", "--timeout=300",
+                                         "--timeout-method=thread",
+                                         "-p", "no:cacheprovider"],
+                harness_cmd,
+            ],
+        }
+        lanes = ["real"]
     elif args.lane == "changed":
         # changed profile：受影响面 pytest + 红线再生成检查（顺序轮换已在
         # _changed_py_targets 内启用）
