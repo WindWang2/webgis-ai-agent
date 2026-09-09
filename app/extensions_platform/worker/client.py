@@ -180,7 +180,8 @@ class WorkerProcess:
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "PYTHONPATH": str(_REPO_ROOT),
             "LANG": "C.UTF-8",
-            "HOME": os.environ.get("HOME", "/tmp"),
+            # HOME 缺失时回退系统临时目录（尊重 TMPDIR），不硬编码 /tmp。
+            "HOME": os.environ.get("HOME") or tempfile.gettempdir(),
             "PYTHONHASHSEED": "0",
             "WEBGIS_EXTENSION_WORKER": "1",
         }

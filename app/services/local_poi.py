@@ -930,7 +930,11 @@ def query_gd_poi(
                     )
                     bbox_params = [maxx, minx, maxy, miny]
                     base_join = _bound_sql(
-                        f"SELECT p.fid FROM {rtree_table} r ",
+                        # B608 的豁免理由：rtree_table 仅可能是
+                        # _gpkg_rtree_table 返回的字面量 'rtree_pois_geom'
+                        # （sqlite_master 存在性探测）或 None（已在外层判空），
+                        # 非用户输入；bbox 条件经下方 ? 占位符参数绑定。
+                        f"SELECT p.fid FROM {rtree_table} r ",  # nosec B608 # 理由见上方注释
                         "CROSS JOIN pois p ON p.fid = r.id ",
                         "WHERE ", bbox_clause,
                     )
@@ -957,7 +961,11 @@ def query_gd_poi(
                     else:
                         bbox_rows = int(conn.execute(
                             _bound_sql(
-                                f"SELECT COUNT(*) FROM {rtree_table} r WHERE ",
+                                # B608 的豁免理由：同上，rtree_table 是
+                                # _gpkg_rtree_table 探测得的字面量虚表名
+                                # 'rtree_pois_geom'，非用户输入；bbox 条件经
+                                # ? 占位符 + bbox_params 参数绑定。
+                                f"SELECT COUNT(*) FROM {rtree_table} r WHERE ",  # nosec B608 # 理由见上方注释
                                 bbox_clause,
                             ),
                             bbox_params,
