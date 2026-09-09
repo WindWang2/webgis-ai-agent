@@ -920,6 +920,11 @@ class ExtensionHost:
             max_memory_mb=execution.max_memory_mb,
             max_cpu_seconds=execution.max_cpu_seconds,
             broker_handler=self._make_broker_handler(record.extension_id),
+            isolation_backend=self._policy.isolation_backend,
+            stream_window=min(
+                self._policy.stream_window,
+                getattr(execution, "stream_window", self._policy.stream_window),
+            ),
         )
         try:
             worker.start()
@@ -1072,19 +1077,43 @@ class ExtensionHost:
                     if record.manifest.namespaced_model_provider_tool(provider.id) != projected_tool:
                         continue
                     if stream:
-                        raise ExtensionPlatformError(
-                            ExtensionDiagnostic.error(
-                                DiagnosticCode.WORKER_MODE_INVALID,
-                                f"model provider {projected_tool!r} runs in a "
-                                "worker; streaming is unavailable (single-frame RPC)",
-                                extension_id=eid,
+                        # V3（ADR-0119）：worker 流式在协商协议 >= 3.0 时可用
+                        # （运行期门控，非仅 manifest api_version）。
+                        if getattr(record.worker, "protocol_version", "1.0") < "3.0":
+                            raise ExtensionPlatformError(
+                                ExtensionDiagnostic.error(
+                                    DiagnosticCode.WORKER_MODE_INVALID,
+                                    f"model provider {projected_tool!r} runs in a "
+                                    "worker with protocol "
+                                    f"{record.worker.protocol_version!r}; streaming "
+                                    "requires protocol 3.0",
+                                    extension_id=eid,
+                                )
                             )
+                        execution = record.manifest.execution
+                        return record.worker.call_stream(
+                            projected_tool,
+                            {"request": dict(request or {})},
+                            idle_timeout_s=(
+                                execution.call_timeout_s if execution else 30.0
+                            ),
+                            max_events=(
+                                self._policy.max_stream_events
+                            ),
+                            window=self._policy.stream_window,
+                            per_frame_max_bytes=(
+                                execution.max_output_bytes if execution else None
+                            ),
                         )
                     try:
                         return record.worker.call(
                             projected_tool, {"request": dict(request or {})},
                             timeout=record.manifest.execution.call_timeout_s
                             if record.manifest.execution else 30.0,
+                            max_output_bytes=(
+                                record.manifest.execution.max_output_bytes
+                                if record.manifest.execution else None
+                            ),
                         )
                     except ExtensionPlatformError as exc:
                         if exc.diagnostic.code in (

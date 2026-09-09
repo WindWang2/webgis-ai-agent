@@ -176,7 +176,7 @@ class TestProtocol:
         assert error_payload("a", "b") == {"code": "a", "message": "b"}
 
     def test_protocol_version_pinned(self):
-        assert WORKER_PROTOCOL_VERSION == "1.0"
+        assert WORKER_PROTOCOL_VERSION == "3.0"  # ADR-0119 V3 流式协议
         assert FRAME_MAX_BYTES >= 64 * 1024 * 1024
 
 

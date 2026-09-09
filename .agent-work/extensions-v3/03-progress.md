@@ -15,3 +15,23 @@
   retired → warning 不提权；diagnostics 追加 12 个 V3 码（append-only）
 - 测试：test_signing_v3.py 17 用例（rotation/retired/revoked/forged/tampered/
   HMAC 兼容/fail-closed）；扩展域 2405 passed（基线 2388 + 17 新）；ruff clean
+
+## Wave 7-9（2026-09-10）：bubblewrap 隔离 + 流式协议 V3 ✅
+- worker/isolation.py：bwrap `--unshare-all`（netns = socket 直连 OS 层不可达）
+  + 最小 bind 面（app 子目录→/opt/webgis/app + 解析后真实解释器 + PYTHONHOME
+  + venv site-packages 进 PYTHONPATH + 系统 lib64/bin symlink 按解析源绑定）；
+  per-spawn 失败 = typed ISOLATION_UNAVAILABLE，绝不静默回退（M-9）
+- B-1 验收测试：沙箱内读 repo 根 marker 文件失败（本机真跑通过）；
+  结构断言 bind 面不含 repo 根
+- 协议 3.0：stream_start/frame/end/cancel/credit；信用流控（worker 无信用
+  阻塞至 credit/EOF，M-6）；逐帧 idle timeout（C-3，不入崩溃计数）；
+  host 收帧 per-frame 字节检查 + stream=False 总字节预算（M-5）；
+  broker 等待循环白名单 += credit/cancel + 迟到 credit 幂等入账（C-7）
+- manifest：execution.max_stream_events/stream_window；CORE_API_VERSION
+  1.2.0；worker+streaming 与 worker+类实例节的门控改按 api>=1.2 判定
+- host：invoke_model_provider worker 流式（运行期协商协议门控）；
+  call 结果 host 侧尺寸强制
+- 测试：脚本化确定性帧序列（fake pipe + fake worker）+ 真实子进程冒烟
+  （流式往返/中途取消/超限/隔离后端）；2449 passed
+- 行为变更（有意图）：worker+streaming 1.1 拒绝 → 1.2+ 允许（版本门控）；
+  协议版本 1.0 → 3.0（lockstep，同仓 spawn 无偏差面）
