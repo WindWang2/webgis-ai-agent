@@ -576,16 +576,29 @@ def sgs_simulation_surface(
     n_realizations: int = 100,
     seed: int = 42,
     neighbors: int = 16,
+    backend: str = "auto",
 ) -> dict:
     """SGS 多实现表面：H3 网格逐格 P10/P50/P90/std（E-type 中值为主值）。
 
     ``records`` 主值 = P50（后向变换后）；每条另带 ``sgs_std``/``p10``/
-    ``p90``。``metadata`` 携带 ensemble 摘要与近似语义披露。
+    ``p90``。``metadata`` 携带 ensemble 摘要、近似语义披露、backend 变体
+    证据与 uncertainty artifact 摘要（W6/W7）。
+
+    ``backend``：``"auto"``（默认——按 descriptor 变体窗口经
+    plan_execution 纯函数解析，决策证据写入 metadata.execution_plan）|
+    ``"numpy_reference"``（逐节点路径）| ``"numpy_batched"``（W5 批量）。
     Raises 与 :func:`sequential_gaussian_simulation` 相同 + IDW 契约的
     资源守卫。
     """
     from app.lib.geo_analysis.interpolation import _metric_samples_and_target_grid
+    from app.lib.geo_analysis.uncertainty import (
+        data_quality_summary,
+        from_sgs as _artifact_from_sgs,
+    )
 
+    if backend not in ("numpy_reference", "numpy_batched", "auto"):
+        raise ValueError(
+            f"backend 必须是 numpy_reference|numpy_batched|auto，got {backend!r}")
     (
         lonlat, values, pts_metric, cell_metric, target_cells,
         working_crs, bbox,
@@ -605,12 +618,35 @@ def sgs_simulation_surface(
         metadata["cell_count"] = 0
         return {"records": [], "metadata": metadata}
 
-    ens = sequential_gaussian_simulation(
+    if backend == "auto":
+        # 变体窗口单位 = 目标格点（挑战 R0-#6）：n_t 已知处做纯函数规划
+        from app.lib.gis.backend_selection import ScaleProfile, plan_execution
+
+        plan = plan_execution(
+            "interpolation.sgs", ScaleProfile(raster_cells=len(target_cells)))
+        backend = (plan.variant_id
+                   if plan.variant_id in ("numpy_batched", "numpy_sequential")
+                   else "numpy_reference")
+        metadata["execution_plan"] = plan.to_dict()
+    sgs_fn = (sequential_gaussian_simulation_batched
+              if backend == "numpy_batched"
+              else sequential_gaussian_simulation)
+    ens = sgs_fn(
         pts_metric, values, cell_metric,
         n_realizations=n_realizations, seed=seed, k=neighbors,
     )
     metadata["value_semantics"] = "P50（逐格 ensemble 中值，后向变换后）"
     metadata.update(ens.to_dict())
+    # W6：uncertainty artifact 摘要（estimator=sgs_ensemble；模型不确定
+    # 性与数据质量分离；渲染断点建议）
+    artifact = _artifact_from_sgs(
+        ens,
+        data_quality=data_quality_summary(
+            n_samples=int(len(values)), n_targets=len(target_cells),
+            value_field=value_field, working_crs=working_crs),
+    )
+    metadata["uncertainty"] = artifact.to_dict()
+    metadata["renderer"] = artifact.to_renderer_metadata()
     records = [
         {
             "h3_index": cell,

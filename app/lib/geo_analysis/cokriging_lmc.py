@@ -482,6 +482,29 @@ def cokriging_lmc_surface(
     ]
     if result.disclosures:
         metadata["disclosures"] = list(result.disclosures)
+    # science-v5 W6/W7：uncertainty artifact + 执行方式规划（纯函数证据）
+    from app.lib.geo_analysis.uncertainty import (
+        data_quality_summary,
+        from_variance as _artifact_from_variance,
+    )
+
+    artifact = _artifact_from_variance(
+        "cokriging_variance", result.predictions, result.variances,
+        provenance={"lmc": result.lmc.params(),
+                    "neighbors": metadata["neighbors"]},
+        data_quality=data_quality_summary(
+            n_samples=int(len(values)), n_targets=len(target_cells),
+            value_field=primary_field, working_crs=working_crs),
+        disclosures=list(result.disclosures),
+    )
+    metadata["uncertainty"] = artifact.to_dict()
+    metadata["renderer"] = artifact.to_renderer_metadata()
+    from app.lib.gis.backend_selection import ScaleProfile, plan_execution
+
+    metadata["execution_plan"] = plan_execution(
+        "interpolation.cokriging_lmc",
+        ScaleProfile(raster_cells=len(target_cells),
+                     feature_count=int(len(values)))).to_dict()
     records = [
         {
             "h3_index": cell,

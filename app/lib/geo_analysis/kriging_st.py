@@ -486,6 +486,28 @@ def st_kriging_surface(
         round(float(result["variances"].min()), 6),
         round(float(result["variances"].max()), 6),
     ]
+    # science-v5 W6/W7：uncertainty artifact + 执行方式规划（纯函数证据）
+    from app.lib.geo_analysis.uncertainty import (
+        data_quality_summary,
+        from_variance as _artifact_from_variance,
+    )
+
+    artifact = _artifact_from_variance(
+        "st_kriging_variance", result["predictions"], result["variances"],
+        provenance={"st_model": st.params(),
+                    "target_time_sec": float(target_time_sec)},
+        data_quality=data_quality_summary(
+            n_samples=int(len(values)), n_targets=len(target_cells),
+            value_field=value_field, working_crs=working_crs),
+    )
+    metadata["uncertainty"] = artifact.to_dict()
+    metadata["renderer"] = artifact.to_renderer_metadata()
+    from app.lib.gis.backend_selection import ScaleProfile, plan_execution
+
+    metadata["execution_plan"] = plan_execution(
+        "interpolation.st_kriging",
+        ScaleProfile(raster_cells=len(target_cells),
+                     feature_count=int(len(values)))).to_dict()
     records = [
         {
             "h3_index": cell,

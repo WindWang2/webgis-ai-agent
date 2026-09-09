@@ -328,3 +328,113 @@ def _estimate_resource_bytes(
     if total <= 0:
         return None
     return int(math.ceil(total))
+
+
+# ── science-v5 W7：ExecutionPlan（规模→执行方式的纯函数投影）──────────
+
+# 执行方式封闭词表。**distributed 不存在**（planned）——不进词表、
+# 不虚构路径；分发执行的真实引入须同时更新本词表与 descriptor。
+EXECUTION_MODE_VOCABULARY = ("native", "vectorized", "chunked")
+
+
+@dataclass(frozen=True)
+class ExecutionPlan:
+    """一次执行方式规划（select_backend 决策之上的薄投影；纯函数可测）。
+
+    ``mode``：
+    - ``vectorized``：批量/堆叠实现变体（variant id 含 "batched"）；
+    - ``chunked``：估算内存超预算 → 建议分块形状（建议性，硬闸在实现层）；
+    - ``native``：默认工具路径或非批量变体。
+    """
+
+    algorithm_id: str
+    variant_id: str
+    backend: str
+    mode: str                    # EXECUTION_MODE_VOCABULARY 成员
+    matched: bool                # 规模窗口命中（透传 select_backend）
+    chunk_shape: Optional[Dict[str, int]] = None   # mode=chunked 时的建议形状
+    memory_note: str = ""        # 内存估算/预算注记（≤160）
+    approximation_disclosure: str = ""
+    rationale: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "algorithm_id": self.algorithm_id,
+            "variant_id": self.variant_id or "default",
+            "backend": self.backend or "default",
+            "mode": self.mode,
+            "matched": self.matched,
+            "chunk_shape": (
+                dict(self.chunk_shape) if self.chunk_shape else None),
+            "memory_note": self.memory_note,
+            "approximation_disclosure": self.approximation_disclosure,
+            "rationale": self.rationale,
+        }
+
+
+def plan_execution(
+    algorithm_id: str,
+    scale: ScaleProfile,
+    *,
+    memory_budget_bytes: Optional[int] = None,
+    algorithm_registry: Any = None,
+) -> ExecutionPlan:
+    """规模画像 → 执行方式规划（纯函数；select_backend 之上的投影）。
+
+    - 变体选择完全复用 :func:`select_backend`（单一事实源，不重判）；
+    - ``mode``：批量变体 → ``vectorized``；内存估算超
+      ``memory_budget_bytes``（缺省 2 GiB，与 _MEMORY_NOTE_BYTES 同底）
+      → ``chunked`` + 建议分块形状（envelope 线性系数反解）；
+    - 建议不执行——真实分块由实现层承担（cancellation/chunk 语义不变）。
+    """
+    decision = select_backend(
+        algorithm_id, scale, algorithm_registry=algorithm_registry)
+    budget = memory_budget_bytes if memory_budget_bytes is not None \
+        else _MEMORY_NOTE_BYTES
+    mode = "native"
+    if "batched" in str(decision.variant_id):
+        mode = "vectorized"
+
+    chunk_shape: Optional[Dict[str, int]] = None
+    memory_note = ""
+    est = decision.estimated_bytes if decision.estimated_bytes is not None \
+        else scale.estimated_bytes
+    if est is not None and est > budget:
+        mode = "chunked"
+        memory_note = (
+            f"内存估算 {est / 1024**3:.2f} GiB > 预算 "
+            f"{budget / 1024**3:.0f} GiB——建议分块（实现层硬闸不变）")
+        registry = algorithm_registry if algorithm_registry is not None \
+            else _registry()
+        descriptor = registry.get(algorithm_id)
+        envelope = getattr(descriptor, "resource_envelope", None)
+        if envelope is not None:
+            n = scale.feature_count
+            cells = scale.raster_cells
+            if cells and envelope.bytes_per_cell:
+                chunk_shape = {"chunk_cells": max(
+                    1, int(budget // max(envelope.bytes_per_cell, 1.0)))}
+            elif n and envelope.bytes_per_feature:
+                chunk_shape = {"chunk_features": max(
+                    1, int(budget // max(envelope.bytes_per_feature, 1.0)))}
+
+    rationale = decision.rationale
+    if memory_note:
+        rationale = f"{rationale}; {memory_note}"[:_RATIONALE_MAX]
+    return ExecutionPlan(
+        algorithm_id=algorithm_id,
+        variant_id=decision.variant_id,
+        backend=decision.backend,
+        mode=mode,
+        matched=decision.matched,
+        chunk_shape=chunk_shape,
+        memory_note=memory_note,
+        approximation_disclosure=decision.approximation_disclosure,
+        rationale=rationale,
+    )
+
+
+def _registry() -> Any:
+    from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+    return get_algorithm_registry()
