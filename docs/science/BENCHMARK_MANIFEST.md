@@ -88,7 +88,7 @@
 | `terrain.dinf_flow` | O(N log N) | — | 40B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.flow` | — | — | 48B/cell | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
 | `terrain.flow_length` | O(N log N) | — | 32B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
-| `terrain.flow_topology_validate` | O(N)（receiver 链染色法环检测，步进有界 2N） | exact | 24B/cell cells≤50000000 | — | coarse | rtol=1e-12,atol=0 | medium/medium | — |
+| `terrain.flow_topology_validate` | O(N)（receiver 链染色法环检测；链头种子化 + 每 checkpoint） | exact | 24B/cell cells≤50000000 | — | coarse | rtol=1e-12,atol=0 | high/medium | — |
 | `terrain.geomorphons` | — | — | 24B/cell cells≤50000000 | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
 | `terrain.hand` | O(N log N)（fill + d8 + accum + 单遍逆拓扑） | exact | 40B/cell cells≤50000000 | numpy_d8_accum(numpy,[1,50000000],approximate) | chunk_boundary | rtol=1e-12,atol=0 | medium/high | — |
 | `terrain.hillshade` | — | — | 40B/cell | numpy_hillshade(numpy,[1,25000000]) | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
