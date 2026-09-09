@@ -17,9 +17,13 @@ Lens B（制图/观测/前端）：CRITICAL 1 —— quality_loop 与 lib runtim
 
 下半（安全/隔离/隐私/seam）：MAJOR 2 已修 —— canvas 持久化丢失（observation 落库加有界 canvas＋DTO 归一＋键集合测试，offscreen 生产复活）；error_code 三条 egress 只通一条（store adapter 转发＋BatchIntentOutcome 加码进 to_dict）。QUESTION 4（跨 user 共享 anchor 不在 roadmap／恢复无行不变式钉死／匿名可建不可恢复既定语义／顺序 IO 有界）全部注释＋测试锁定。MINOR 2（canvas DTO 无界、anchor 无 TTL）随 MAJOR-1 修其一、其一另起任务。
 
-## Claim Honesty（§54）
+## Claim Honesty（§54，2026-09-10，逐项 production-wired 核查）
 
-（待填：凡未完全实现的能力必须标 planned/degraded/limitation，不得宣传 native）
+- production wired：runtime bridge 三触发点、lineage 索引、recompute 闭包、UnifiedFindings/终验、repair planner＋防循环、lock guard 全路径、resume verify、V6 三块、canvas 持久化＋offscreen、error_code 透出。
+- opt-in（默认关闭，显式 env 开启）：语义检索（TOOL_RETRIEVAL_SEMANTIC 注入，无静态引用是设计）、visual evaluator hook（GIS_VISUAL_EVALUATOR）。
+- planned：visual evaluator 生产接线（seam 无调用方，m1 已标注，独立 roadmap）。
+- limitation：观测 rect 系提交态 placement 投影（非 DOM 实测，M2 已诚实化）；anchor 无 TTL/GC（MINOR-2 另起任务）；lockedComponentIds 前端未持久化（后端兼容缺席=空）；匿名锚可建不可恢复（既定语义已注释）。
+- degraded：无（未达标的能力均标 planned/limitation，未宣传 native）。
 
 ## 开发期已发现并已处理
 
