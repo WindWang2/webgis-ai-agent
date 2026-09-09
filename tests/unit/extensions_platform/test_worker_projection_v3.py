@@ -13,10 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from app.extensions_platform.discovery import compute_fingerprint
 from app.extensions_platform.diagnostics import has_errors
 from app.extensions_platform.host import ExtensionHost, HostPolicy
-from app.extensions_platform.worker.client import WorkerProcess
 
 
 MAIN_V3 = textwrap.dedent(
