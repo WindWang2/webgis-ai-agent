@@ -32,9 +32,10 @@
 - [ ] W11 Repair Loop 防循环
 - [x] W12 Tool Retrieval V6 + 语料 ≥300（`7a94c4e3`：ToolSemanticIndex 生产实现＋kill-switch＋paraphrase 240 条→306 条，PINNED_* 未动全绿，33 passed）
 - [x] W13 Contextual Context Assembly（`0f31a466`：v6_context_blocks 三层投影＋字节 hard cap＋度量进 budget_report，既有块通道注入，19 新＋相关 142＋上下游 159 passed）
-- [ ] W14 Resume VNext
+- [x] W14 Resume VNext（`1e25a308`：resume_verify 三裁决＋anchor schema v2＋Scenario 9 五节点链中断恢复全绿）
+- [x] W15 Human-Agent 状态收敛（`8f567075`：guard_locked_partitions 统一 guard＋lockedComponentIds＋override 三分类＋transient 剥离，Scenario 8 三路径全绿）
 - [ ] W15 Human-Agent 状态收敛（锁下沉）
-- [ ] W16 Closed-loop Corpus ≥100 + 10 E2E
+- [x] W16 Closed-loop Corpus ≥100 + 10 E2E（corpus 17×12=204 条，六段式期望零自创词汇；§57 S1-S10 一文件十测全绿）
 - [ ] W17 Performance/Security
 - [ ] W18 Docs/ADR/CHANGELOG
 
