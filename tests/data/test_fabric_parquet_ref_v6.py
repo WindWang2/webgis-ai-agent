@@ -45,6 +45,10 @@ def data_dir(tmp_path, monkeypatch):
 
 
 async def _materialize(data_dir, n=4):
+    # GeoArrow carrier 依赖可选的 pyarrow：缺失时跳过（与
+    # test_lakehouse_api_v6 的模块级 importorskip 同族；只圈定真正需要
+    # pyarrow 的物化类用例，路径派生等纯逻辑用例照常运行）。
+    pytest.importorskip("pyarrow")
     from app.services.data_fabric.materialization_service import materialization_service
     from app.services.data_fabric.vector_carrier import features_to_arrow
 

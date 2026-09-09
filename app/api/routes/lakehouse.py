@@ -5,11 +5,14 @@ cube 修订 / 对象完整性校验。安全边界：
 
 - **所有权**：session 域端点对**请求中实际生效的 session_id**（POST 的
   body 字段 / GET 的 query 字段）做 ``verify_session_owner`` 校验
-  （SEC-08 / S31 跨租户隔离守卫）。POST 端点**不**使用
-  ``require_owned_session`` 依赖 —— 它解析的是 query 参数，会与 body 的
-  session_id 脱钩（review B1 跨租户访问）；守卫与业务操作必须绑定同一
-  session 标识。``project_id`` 在 REST 面显式拒绝（项目域发布通道尚不
-  存在，见 ADR-0118 non-goals）。
+  （SEC-08 / S31 跨租户隔离守卫）。调用方身份经依赖注入显式传入守卫
+  （``get_current_user_optional`` 的 JWT 身份 + ``get_owner_token`` 的
+  ``X-Session-Token``）—— 守卫没有身份时对所有 owned 会话 fail-closed
+  （404），路由不匿名可用（同 ``require_owned_session`` 的接线语义）。
+  POST 端点**不**使用 ``require_owned_session`` 依赖 —— 它解析的是 query
+  参数，会与 body 的 session_id 脱钩（review B1 跨租户访问）；守卫与
+  业务操作必须绑定同一 session 标识。``project_id`` 在 REST 面显式拒绝
+  （项目域发布通道尚不存在，见 ADR-0118 non-goals）。
 - **资源边界**：scan max_rows 硬预算（≤200k）；cube 时间步 ≤512；cube
   窗口读必须至少给出一个有限切片且元素非负（防全 cube OOM）；错误
   消息对客户端脱敏（不含服务器路径）。
@@ -25,7 +28,12 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.core.auth import get_async_db, verify_session_owner
+from app.core.auth import (
+    get_async_db,
+    get_current_user_optional,
+    get_owner_token,
+    verify_session_owner,
+)
 from app.schemas.lakehouse_schema import (
     CubeBuildRequest,
     CubeRevisionRequest,
@@ -62,12 +70,11 @@ def _http_from(exc: Exception, *, not_found_codes: tuple = ()) -> HTTPException:
     return HTTPException(status_code=status, detail=_client_message(exc))
 
 
-async def _owned_session(session_id: str, db: Any) -> str:
-    """session 域操作的实际 session_id 必须属于当前调用方（返回规范 id）。"""
+def _require_session_id(session_id: Optional[str]) -> str:
+    """空 session_id 的显式 400（GET query 默认空串 / 可选 body 字段的兜底）。"""
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
-    conv = await verify_session_owner(db, session_id)
-    return str(conv.session_id)
+    return session_id
 
 
 def _reject_project_scope(project_id: Optional[str]) -> None:
@@ -83,11 +90,17 @@ async def get_lakehouse_object(
     data_object_id: str,
     session_id: str = "",
     project_id: str = "",
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
     db=Depends(get_async_db),
 ) -> Dict[str, Any]:
     """DataObject manifest（owner 校验后只读）。"""
     _reject_project_scope(project_id or None)
-    session_id = await _owned_session(session_id, db)
+    conv = await verify_session_owner(
+        db, _require_session_id(session_id),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    session_id = str(conv.session_id)
     from app.services.lakehouse.data_object import (
         owner_scope_allows,
         resolve_data_object,
@@ -102,10 +115,16 @@ async def get_lakehouse_object(
 @router.post("/lakehouse/vector/scan")
 async def scan_lakehouse_vector(
     req: VectorScanRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
     db=Depends(get_async_db),
 ) -> Dict[str, Any]:
     """``ref:fabric-parquet/<id>`` 的 bbox 窗口扫描（row-group 剪枝）。"""
-    session_id = await _owned_session(req.session_id, db)
+    conv = await verify_session_owner(
+        db, _require_session_id(req.session_id),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    session_id = str(conv.session_id)
     from app.services.lakehouse.vector_scan import LakehouseScanError, scan_fabric_parquet_ref
 
     try:
@@ -121,10 +140,16 @@ async def scan_lakehouse_vector(
 @router.post("/lakehouse/cubes")
 async def build_lakehouse_cube(
     req: CubeBuildRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
     db=Depends(get_async_db),
 ) -> Dict[str, Any]:
     """时间片栅格 → 会话 cube（``ref:cube/<id>`` + durable 身份）。"""
-    session_id = await _owned_session(req.session_id, db)
+    conv = await verify_session_owner(
+        db, _require_session_id(req.session_id),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    session_id = str(conv.session_id)
     from app.services.lakehouse.cube_service import (
         CubeServiceError,
         build_session_cube,
@@ -144,10 +169,16 @@ async def build_lakehouse_cube(
 @router.post("/lakehouse/cubes/window")
 async def read_lakehouse_cube_window(
     req: CubeWindowRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
     db=Depends(get_async_db),
 ) -> Dict[str, Any]:
     """cube 窗口读（zarr chunk 粒度；至少一个有限切片，防全 cube 读取）。"""
-    session_id = await _owned_session(req.session_id, db)
+    conv = await verify_session_owner(
+        db, _require_session_id(req.session_id),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    session_id = str(conv.session_id)
     if req.time is None and req.y is None and req.x is None:
         raise HTTPException(
             status_code=422,
@@ -184,10 +215,16 @@ async def read_lakehouse_cube_window(
 @router.post("/lakehouse/cubes/revise")
 async def revise_lakehouse_cube(
     req: CubeRevisionRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
     db=Depends(get_async_db),
 ) -> Dict[str, Any]:
     """cube 修订（硬链接 CoW fork：源 store 逐字节不动，新不可变修订）。"""
-    session_id = await _owned_session(req.session_id, db)
+    conv = await verify_session_owner(
+        db, _require_session_id(req.session_id),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    session_id = str(conv.session_id)
     from app.services.lakehouse.cube_service import (
         CubeServiceError,
         revise_session_cube,
@@ -207,11 +244,17 @@ async def revise_lakehouse_cube(
 async def verify_lakehouse_object(
     data_object_id: str,
     req: ObjectVerifyRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
     db=Depends(get_async_db),
 ) -> Dict[str, Any]:
     """DR 完整性校验（manifest + 全部 content blob 的 digest 校验）。"""
     _reject_project_scope(req.project_id or None)
-    session_id = await _owned_session(req.session_id or "", db)
+    conv = await verify_session_owner(
+        db, _require_session_id(req.session_id or ""),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    session_id = str(conv.session_id)
     from app.services.lakehouse.data_object import (
         owner_scope_allows,
         resolve_data_object,

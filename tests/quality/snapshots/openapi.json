@@ -9111,6 +9111,24 @@
    "post": {
     "description": "时间片栅格 → 会话 cube（``ref:cube/<id>`` + durable 身份）。",
     "operationId": "build_lakehouse_cube_api_v1_lakehouse_cubes_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -9145,6 +9163,11 @@
       "description": "Validation Error"
      }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
     "summary": "Build Lakehouse Cube",
     "tags": [
      "Lakehouse / 空间数据湖仓"
@@ -9155,6 +9178,24 @@
    "post": {
     "description": "cube 修订（硬链接 CoW fork：源 store 逐字节不动，新不可变修订）。",
     "operationId": "revise_lakehouse_cube_api_v1_lakehouse_cubes_revise_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -9189,6 +9230,11 @@
       "description": "Validation Error"
      }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
     "summary": "Revise Lakehouse Cube",
     "tags": [
      "Lakehouse / 空间数据湖仓"
@@ -9199,6 +9245,24 @@
    "post": {
     "description": "cube 窗口读（zarr chunk 粒度；至少一个有限切片，防全 cube 读取）。",
     "operationId": "read_lakehouse_cube_window_api_v1_lakehouse_cubes_window_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -9233,6 +9297,11 @@
       "description": "Validation Error"
      }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
     "summary": "Read Lakehouse Cube Window",
     "tags": [
      "Lakehouse / 空间数据湖仓"
@@ -9272,6 +9341,22 @@
        "title": "Project Id",
        "type": "string"
       }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
      }
     ],
     "responses": {
@@ -9298,6 +9383,11 @@
       "description": "Validation Error"
      }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
     "summary": "Get Lakehouse Object",
     "tags": [
      "Lakehouse / 空间数据湖仓"
@@ -9316,6 +9406,22 @@
       "schema": {
        "title": "Data Object Id",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],
@@ -9353,6 +9459,11 @@
       "description": "Validation Error"
      }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
     "summary": "Verify Lakehouse Object",
     "tags": [
      "Lakehouse / 空间数据湖仓"
@@ -9363,6 +9474,24 @@
    "post": {
     "description": "``ref:fabric-parquet/<id>`` 的 bbox 窗口扫描（row-group 剪枝）。",
     "operationId": "scan_lakehouse_vector_api_v1_lakehouse_vector_scan_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -9397,6 +9526,11 @@
       "description": "Validation Error"
      }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
     "summary": "Scan Lakehouse Vector",
     "tags": [
      "Lakehouse / 空间数据湖仓"
