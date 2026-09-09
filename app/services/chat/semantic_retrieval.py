@@ -35,7 +35,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Sequence, Tuple
 
@@ -852,10 +851,17 @@ def embedding_retriever(
             fps = registry.fingerprints()
             fingerprint = manifest_fingerprint(
                 [(n, fp[1]) for n, fp in fps.items()])
-        except Exception:  # noqa: BLE001 — 指纹面故障按时间戳退化（不毒化模型）
-            fingerprint = f"ts:{time.time()}"
-        store = FaissVectorStore()
-        model = store._get_embedding_model()  # noqa: SLF001 — 单进程内复用
+        except Exception:  # noqa: BLE001 — 指纹面故障按稳定哨兵退化（审查
+            # R2 m-1：时间戳哨兵会让索引每查询全量重编码）
+            fingerprint = "degraded"
+        model = _embed_state.get("model")
+        if model is None:
+            store = FaissVectorStore()
+            model = store._get_embedding_model()  # noqa: SLF001 — 复用其
+            # 懒加载/offline 有界失败配置；模型本体进程级缓存（审查 R2 M-1：
+            # 实例级缓存会每查询重载 SentenceTransformer，成为 turn 延迟
+            # 主导项）
+            _embed_state["model"] = model
     except Exception:  # noqa: BLE001 — 模型加载失败记忆化（指纹失败不毒化）
         _embed_state["model_failed"] = True
         raise RuntimeError("embedding model load failed") from None

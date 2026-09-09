@@ -24,6 +24,28 @@
 | m12 | MINOR | workflow health docstring 与实现偏差 | docstring 对齐（pending→degraded；硬错误 error 级披露由 finalizer findings 承担） | — |
 | 回归追加 | — | trim 边界重写清空段后 pop 不删文件 → 孤儿 .gz 触发误 heal → manifest 重复条目/窗口 66≠64（审查修复过程发现的真实回归） | _pop_seg 统一「弹段必删文件」；heal 同名双形态以 gz 为真相删 plain 孤儿；段号单调递增（名序=时序） | V5 flood 精确 64 窗口 + 全 trace 套件 14 passed |
 
-## Round 2（性能/安全/并发/资源/UX/可维护性）
+## Round 2（性能/安全/并发/资源/UX/可维护性）— verdict: APPROVE-WITH-FIXES
 
-（见下方 Round 2 记录）
+| # | 级别 | 发现 | 修复 | 回归 |
+|---|------|------|------|------|
+| M-1 | MAJOR | embedding_retriever 每次 select 新建 FaissVectorStore → SentenceTransformer 每查询重载（模型可得部署的 turn 延迟主导项；「单进程内复用」注释与实现不符） | 模型本体入 _embed_state["model"] 进程级缓存（懒加载一次）；ADR 措辞同步 | embedding 双形态测试路径覆盖 |
+| m-1 | MINOR | 指纹退化哨兵 ts:time.time() → 每查询全量重编码 | 稳定哨兵 "degraded" | — |
+| m-2 | MINOR | 全局 _WRITE_LOCK 串行所有 session 读写且临界区变大（heal/gzip 在锁内；V5 读者锁外 vs V6 锁内） | 接受为已知取舍（正确性换吞吐；锁持有 ms 级、窗口有界），known limitations 记录；按 session 分锁列为后续演进 | — |
+| m-3 | MINOR | manifest 引用段文件丢失（unlink 与 save 崩溃窗口）不被 heal 检出 → 窗口软失效 | heal 增加 missing-known 检测触发重建 | trace 套件 |
+| m-4 | MINOR | abstain 无模型/用户面披露（只有 logger + 链事件） | compute_turn_active_tools 增加 additive disclosure 出参；_active_tools_block_for 注入模型可读提示（list_available_tools 两跳指引） | pi_turn_context/pi_native_surface 回归 |
+| m-5 | MINOR | _channels 字符串前缀塌缩 v6:* 为同通道 → 覆盖度少计；reason 文本成隐性协议 | 通道名取 reason 头部到 "("（v6:capability_alias / v6:methodology 分立） | 置信度套件 |
+| m-6 | MINOR | dispatch 路径同步文件 IO + flock 落事件循环 | 接受并文档化上界（≤256 条 JSON、ms 级锁；kill -9 契约排除持锁卡死） | 代码注释 |
+| m-7 | MINOR | anti_examples 无数量/长度上限（负证据可静默挤掉正确工具） | descriptor 校验：≤8 条、单条 ≤200 字符（errors 面与非空/去重同门） | tools init 296 + descriptor 套件 |
+| m-8 | MINOR | 文档漂移（16→17 场景；direct/ambiguous 计数；skipif 措辞） | ADR + 门 docstring 修正 | — |
+| INFO | — | chaos marker 等待 5s 冷缓存风险；测试冗余赋值泄漏 memoized 态；heal 按名重建需段号单调 | marker 等待 300×0.05s；冗余赋值删除（段号单调已在 R1 回归修复） | — |
+
+### Known limitations（诚实记录，不修的具体理由）
+1. 全局 trace 写锁（m-2）：按 session 分锁需重排 manifest 生命周期，收益
+   （多 session 并发写吞吐）在本部署形态（单 uvicorn worker + Celery 隔离）
+   下有限；窗口有界 + 锁持有 ms 级，风险可控。列为 follow-up。
+2. dispatch 路径同步 IO（m-6）：asyncio.to_thread 包裹会引入线程池调度
+   开销且改变异常传播时序；文件小、flock 快路径无竞争，接受。
+3. oos 弃权为部分信号（21.4%）：置信度分布 hit/miss/oos 重叠大，全局阈值
+   防乱选主力在 dispatch 校验 + finalizer evidence（W8/W10），弃权是披露面。
+4. hard_negative top-5 陷阱命中（invalid 0.25）为暴露线：兄弟工具同族
+   语义使 top-5 全避让不现实；指标已钉线防回归。

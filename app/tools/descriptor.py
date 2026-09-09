@@ -501,6 +501,13 @@ def validate_descriptor_fields(
                         f"工具 {name} 的 {label} 含未知值: {', '.join(unknown)}，"
                         f"合法值: {', '.join(vocab)}"
                     )
+    # V6（审查 R2 m-7）：anti_examples 是负检索证据 —— 无上限的条目会
+    # 静默把正确工具挤出动态面，与 summary 同纪律收口（数量 + 单条长度）。
+    if anti_examples is not None:
+        if len(anti_examples) > 8:
+            errors.append(f"工具 {name} 的 anti_examples 超过 8 条上限")
+        elif any(len(str(x)) > 200 for x in anti_examples):
+            errors.append(f"工具 {name} 的 anti_examples 含超长条目（>200 字符）")
     for label in ("input_artifacts", "examples", "anti_examples", "failure_modes"):
         seq = locals()[label]
         if seq is not None:

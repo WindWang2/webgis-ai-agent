@@ -705,12 +705,18 @@ class DynamicToolSurface:
                 ]
 
                 def _channels(tool: str) -> int:
+                    # 结构化通道计数（审查 R2 m-5）：reason 头部到 "(" 为
+                    # 止即通道名 —— v6:capability_alias 与 v6:methodology
+                    # 是不同通道（塌缩为 "v6" 会系统性少计覆盖度）
                     ev = set()
                     for r in selection.reasons.get(tool, ()):
-                        if r.startswith(("lexical(", "semantic(", "semantic_expand(",
-                                         "v6:", "capability:", "capability_alias",
-                                         "data_profile:")):
-                            ev.add(r.split("(", 1)[0].split(":", 1)[0])
+                        head = r.split("(", 1)[0]
+                        if head.startswith((
+                            "lexical", "semantic", "semantic_expand",
+                            "v6:", "capability:", "capability_alias",
+                            "data_profile",
+                        )):
+                            ev.add(head.rstrip(":"))
                     return len(ev)
 
                 conf, abstain, reason = compute_confidence(

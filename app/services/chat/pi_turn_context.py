@@ -258,14 +258,26 @@ def _active_tools_block_for(message: str, surface: Any, plan: Any) -> str:
             for row in (getattr(plan, "progress", None) or ())
             if getattr(row, "capability", "")
         )
+        disclosure: dict = {}
         names = compute_turn_active_tools(
             message or "",
             active_capabilities=capabilities,
             workflow_stage=str(getattr(surface, "phase", "") or ""),
+            disclosure=disclosure,
         )
         if not names:
             return ""
-        return f"[{ACTIVE_TOOLS_MARKER}:{json.dumps(names, ensure_ascii=False, separators=(',', ':'))}]"
+        marker = (f"[{ACTIVE_TOOLS_MARKER}:"
+                  f"{json.dumps(names, ensure_ascii=False, separators=(',', ':'))}]")
+        # V6（ADR-0119 D2）：弃权的模型面披露 —— 模型必须知道动态面被
+        # 收缩及原因（否则用户可感知的只是「工具变少」）
+        if disclosure.get("abstained"):
+            marker += (
+                "[工具面提示] 本轮工具检索置信度不足"
+                f"（confidence={disclosure.get('confidence')}），未注入动态"
+                "工具面；如需完整工具清单请调用 list_available_tools。"
+            )
+        return marker
     except Exception:  # noqa: BLE001 — 动态面绝不阻断 turn
         return ""
 

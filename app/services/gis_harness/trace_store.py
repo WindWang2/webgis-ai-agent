@@ -403,7 +403,16 @@ def _heal_manifest(v6_dir: Path, manifest: Dict[str, Any],
         if n.endswith(".jsonl") and (n + ".gz") in disk_names:
             (v6_dir / n).unlink(missing_ok=True)
             orphans.remove(n)
-    if not orphans and int(manifest.get("last_seq") or 0) > 0:
+    # known 段文件缺失（unlink 与 save_manifest 之间的崩溃窗口，审查 R2
+    # m-3）→ 也触发重建：幽灵段让 trim 永久软失效（窗口失真）
+    missing_known = [
+        str(s.get("file") or "") for s in segs
+        if int(s.get("count") or 0) > 0
+        and _segment_display(v6_dir, str(s.get("file") or "")) is None
+    ]
+    if not orphans and not missing_known and int(
+        manifest.get("last_seq") or 0
+    ) > 0:
         return manifest
     # 全量重扫（段数有界 ≤ 若干；每段 ≤ SEGMENT_SIZE 行）
     rebuilt: List[Dict[str, Any]] = []

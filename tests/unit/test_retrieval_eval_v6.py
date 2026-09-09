@@ -1,7 +1,7 @@
 """Retrieval V6 open-loop query→tool 评测门（ADR-0119 决策 D1/D2/D3）。
 
 语料：``app/evaluation/retrieval_eval_corpus.py`` —— 358 条人工金标
-（direct 208 / near_duplicate 26 对 / hard_negative 52 / ambiguous 32 /
+（direct 209 / near_duplicate 26 对 / hard_negative 52 / ambiguous 31 /
 out_of_scope 14；zh+en+中英混排），与 lexical 索引、capability 反查
 **不同源**，查询为口语措辞。
 

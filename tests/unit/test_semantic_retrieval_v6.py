@@ -152,7 +152,6 @@ def test_embedding_retriever_bounded_failure(registry, monkeypatch):
     from app.services.chat import semantic_retrieval as sr
 
     # 无 faiss/模型环境 → RuntimeError（有界）；指纹面故障不得毒化模型态
-    sr._embed_state["model_failed"] = False
     monkeypatch.setitem(sr._embed_state, "model_failed", False)
     try:
         hits = sr.embedding_retriever(registry, "缓冲区分析", top_k=5)

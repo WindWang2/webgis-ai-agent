@@ -16,7 +16,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Dict, Literal, Mapping, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -418,6 +418,7 @@ def compute_turn_active_tools(
     workflow_stage: str = "",
     k_max: int = 30,
     role: str = "execution",
+    disclosure: Optional[Dict[str, Any]] = None,
 ) -> list[str]:
     """per-turn 动态工具面（Phase 3）：SelectionContext → 激活名单。
 
@@ -493,7 +494,18 @@ def compute_turn_active_tools(
                 )
             except Exception:  # noqa: BLE001 — 记录面绝不阻断 turn
                 pass
+            if disclosure is not None:
+                disclosure.update({
+                    "abstained": True,
+                    "confidence": float(selection.confidence),
+                    "reason": str(selection.abstain_reason)[:96],
+                })
             return list(NATIVE_TOOL_NAMES)
+        if disclosure is not None:
+            disclosure.update({
+                "abstained": False,
+                "confidence": float(getattr(selection, "confidence", 1.0) or 1.0),
+            })
         names = list(dict.fromkeys([*NATIVE_TOOL_NAMES, *selection.names]))
         # V4 Wave 8（ADR-0104）：证据链阶段 7（TOOL_SURFACE）——per-turn
         # 动态面裁决入链（emit-once：每 turn 一条；上下文缺席静默跳过）。

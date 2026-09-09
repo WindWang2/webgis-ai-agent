@@ -23,7 +23,7 @@ rendered observation 无统一状态阶梯；chaos 场景无常设语料。
    方法 priority 加权 → 工具加成，只作检索信号不建第二 planner）+ 否定反证
    （「没有X」→ X 域词扣减）。embedding 检索器为可选第 5 路（默认 spec 指向
    内置实现，懒加载 + 失败 memoization + `TOOL_RETRIEVAL_EMBEDDING=0` 关停）；
-   评测钉死纯确定性通道。`GIS_TOOL_RETRIEVAL_V6=0` → 与 V5 逐位一致。
+   评测钉死纯确定性通道（模型本体进程级缓存，懒加载一次）。`GIS_TOOL_RETRIEVAL_V6=0` → 与 V5 逐位一致。
 2. **D2 Confidence / Abstention**：`confidence = 0.5·level + 0.35·margin +
    0.15·coverage`；`ABSTAIN_THRESHOLD=0.35`。弃权不改变投影内容，只暴露
    「不确定」；生产 seam（`compute_turn_active_tools`）弃权时**不注入**动态面
@@ -78,7 +78,7 @@ rendered observation 无统一状态阶梯；chaos 场景无常设语料。
    （ok/degraded/partial/blocked）为 workflow runtime 统一消费词汇；
    `map_product_block` additive 键 `observation_health`（恒发射：缺席
    observation → blocked）。
-10. **D10 Chaos Corpus**：`chaos_corpus.py` 16 条确定性场景（故障 → 不变量 →
+10. **D10 Chaos Corpus**：`chaos_corpus.py` 17 条确定性场景（故障 → 不变量 →
     真实 pytest 节点），覆盖 Epic 目标 8 八类；元门测试断言语料行指向的测试
     真实存在。真实 `kill -9` 锁释放、跨 session 隔离、resume 预算续接等
     不变量测试钉死。

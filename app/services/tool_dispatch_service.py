@@ -909,6 +909,10 @@ class ToolDispatchService:
         # V6（ADR-0119 D5）：成功回写 durable 恢复预算 —— 清零该工具的
         # 失败计数（「工具修好了」必须反映到预算，否则历史失败永久压制
         # 重试资格）。记录面绝不阻断。
+        # 并发/延迟纪律（审查 R2 m-6）：下方同步文件 IO（读改写 ≤256 条
+        # JSON + flock，锁持有 ms 级）有意落在事件循环上 —— 接受的上界
+        # 换取每 dispatch 恰好一次回写语义；跨进程持锁者卡死场景由
+        # chaos kill -9 契约排除。
         if session_id:
             try:
                 from app.services.gis_harness.recovery_ledger import (

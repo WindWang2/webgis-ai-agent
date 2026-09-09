@@ -67,7 +67,7 @@ def test_lock_released_after_kill(store_dir, kind, tmp_path):
     marker = os.path.join(store, "hold_marker")
     proc = _spawn_lock_holder(os.getcwd(), store, kind)
     try:
-        for _ in range(100):  # 等子进程拿到锁
+        for _ in range(300):  # 等子进程拿到锁（冷缓存 import 链可 >5s）
             if os.path.exists(marker):
                 break
             time.sleep(0.05)
