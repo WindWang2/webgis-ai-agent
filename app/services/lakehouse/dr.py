@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Union
 
 from app.services.lakehouse.data_object import (
+    DATA_OBJECT_KINDS,
     DataObjectError,
     is_data_object_id,
     materialize_data_object,
@@ -186,9 +187,12 @@ def scan_orphan_manifests(*, referenced_ids: Iterable[str]) -> List[str]:
             continue
         if not isinstance(candidate, dict):
             continue
-        if candidate.get("schema_version") == 1 and candidate.get("kind") in (
-            "vector_parquet", "cog_raster", "zarr_cube",
-        ) and isinstance(candidate.get("content_blobs"), list):
+        # kind 白名单复用单点常量（R0-5）；版本容忍（1/2 均为已知形态）。
+        if candidate.get("schema_version") in (1, 2) and candidate.get(
+            "kind"
+        ) in DATA_OBJECT_KINDS and isinstance(
+            candidate.get("content_blobs"), list
+        ):
             if is_data_object_id(key):
                 orphans.append(key)
     return sorted(orphans)
