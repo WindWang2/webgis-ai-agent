@@ -841,7 +841,13 @@ class ClusterRunStore:
                 within_s = 30.0
         cutoff = _utcnow() - timedelta(seconds=max(1.0, float(within_s)))
         with self._factory() as db:
-            q = select(_Worker).where(_Worker.heartbeat_at >= cutoff)
+            q = (
+                select(_Worker)
+                .where(_Worker.heartbeat_at >= cutoff)
+                # round2 RM2：SQL 级限界（防注册表被刷爆后全量物化 4KB/行
+                # 的 capability JSON）；截断计数随投影返回供 admin 可见。
+                .limit(256)
+            )
             if role is not None:
                 q = q.where(_Worker.role == role)
             rows = db.execute(q).scalars().all()
@@ -987,7 +993,15 @@ class ClusterRunStore:
                     worker_id=coordinator_id, role="coordinator", profiles={},
                     heartbeat_at=now, lease_expires_at=None,
                 ))
-                db.commit()
+            else:
+                # round2 Rn2：standby 行也要续心跳 —— 否则 prune 会每
+                # TTL 删行、下 tick 重建（永久 churn）。
+                db.execute(
+                    update(_Worker)
+                    .where(_Worker.worker_id == coordinator_id)
+                    .values(heartbeat_at=now)
+                )
+            db.commit()
         with self._factory() as db:
             now = _utcnow()
             other_leader = (

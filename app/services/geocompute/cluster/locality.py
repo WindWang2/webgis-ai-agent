@@ -262,14 +262,17 @@ class WorkerCacheRegistry:
                 ).all()
                 if not keys:
                     return 0
-                deleted = 0
-                for worker_id, key in keys:
-                    deleted += db.execute(
-                        delete(_Cache).where(
-                            _Cache.worker_id == worker_id,
-                            _Cache.cache_key == key,
-                        )
-                    ).rowcount
+                # round2 Rn3：合并为单条 tuple-IN 删除（PG 每语句往返省
+                # ≤64 次/tick）
+                from sqlalchemy import or_, and_ as _and
+
+                conds = [
+                    _and(_Cache.worker_id == wid, _Cache.cache_key == key)
+                    for wid, key in keys
+                ]
+                deleted = db.execute(
+                    delete(_Cache).where(or_(*conds))
+                ).rowcount
                 db.commit()
                 return int(deleted)
         except Exception:  # noqa: BLE001

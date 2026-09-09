@@ -187,7 +187,10 @@ class ResourceRequest(BaseModel):
     min_mem_mb: int = Field(default=0, ge=0, le=2_097_152)
     min_cpu: int = Field(default=0, ge=0, le=1024)
     gpu: int = Field(default=0, ge=0, le=8)
-    zone: Optional[str] = Field(default=None, max_length=64)
+    #: charset 白名单（round2 Rn5：与架构 §5 词表声明一致；当前仅等值
+    #: 比较，无注入面，白名单是纵深防御）
+    zone: Optional[str] = Field(
+        default=None, max_length=64, pattern=r"^[A-Za-z0-9_.-]{1,64}$")
     required_profiles: list[str] = Field(default_factory=list, max_length=8)
 
     def normalized(self) -> "ResourceRequest":

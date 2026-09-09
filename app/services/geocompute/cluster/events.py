@@ -260,12 +260,23 @@ class RunEventStore:
 
 
 def _projection(row: Any) -> dict[str, Any]:
+    # round2 Rm2：worker_id 是内部拓扑（hostname:pid）—— 与 store 投影
+    # 同一纪律，用户面读投影伪名化（DB 保留原文供 admin/对账）。
+    raw_worker = row.worker_id
+    if raw_worker:
+        import hashlib
+
+        worker_id = "w-" + hashlib.sha1(
+            str(raw_worker).encode(), usedforsecurity=False
+        ).hexdigest()[:12]
+    else:
+        worker_id = None
     return {
         "id": int(row.id),
         "run_id": row.run_id,
         "event": row.event,
         "node_id": row.node_id,
-        "worker_id": row.worker_id,
+        "worker_id": worker_id,
         "attempt": row.attempt,
         "status": row.status,
         "rows": row.rows,

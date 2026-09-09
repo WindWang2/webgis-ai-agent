@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from app.services.geocompute.cluster.capabilities import (
+    WorkerCapabilityProfile,
     capability_from_row,
 )
 from app.services.geocompute.cluster.contracts import ResourceRequest
@@ -63,7 +64,7 @@ def eligible_workers(
         profiles = set((w.get("profiles") or {}).keys())
         if covered and not covered.issubset(profiles):
             continue
-        profile = capability_from_row(w.get("capability"))
+        profile = _parsed_capability(w)
         if profile is not None and not profile.satisfies(
             min_cpu=request.min_cpu,
             min_mem_mb=request.min_mem_mb,
@@ -72,6 +73,17 @@ def eligible_workers(
             continue
         eligible.append(w)
     return eligible
+
+
+def _parsed_capability(w: dict[str, Any]) -> Optional[WorkerCapabilityProfile]:
+    """per-call 解析缓存：同一 worker dict 在 gating+rank 各阶段只解析一次
+    （round2 Rm1 —— 最坏 32×256 次重复 pydantic 校验/tick）。"""
+    cached = w.get("_parsed_cap")
+    if cached is not None or "_cap_parsed" in w:
+        return cached
+    w["_cap_parsed"] = True
+    w["_parsed_cap"] = cached = capability_from_row(w.get("capability"))
+    return cached
 
 
 def rank_workers(
@@ -84,6 +96,10 @@ def rank_workers(
     last_dispatch: Optional[dict[str, int]] = None,
 ) -> list[dict[str, Any]]:
     """advisory 排序（局部性 > zone 契合 > 资源过配小 > 公平垫底）。
+
+    诚实边界（round2 RM2）：共享队列模型下生产 dispatch 不消费本排序
+    （无绑定语义）—— 供放置策略扩展与统计投影使用；ADR-0119 D1 的
+    强制层只有 run 级 gating 与 worker 侧守卫。
 
     ``locality_lookup(worker_id, owner_scope, keys) -> int``：由调用方注入
     （WorkerCacheRegistry.worker_holds 的绑定）—— 本模块不做 IO 依赖，
@@ -98,10 +114,10 @@ def rank_workers(
             locality = locality_lookup(w.get("worker_id", ""), owner_scope, keys)
         zone_match = 0
         if request.zone:
-            profile = capability_from_row(w.get("capability"))
+            profile = _parsed_capability(w)
             if profile is not None and profile.zone == request.zone:
                 zone_match = 1
-        profile = capability_from_row(w.get("capability"))
+        profile = _parsed_capability(w)
         if profile is None:
             overprovision = 0
         else:

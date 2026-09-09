@@ -670,7 +670,20 @@ async def cluster_workers(user: Dict[str, Any] = Depends(require_admin)):
     from app.services.geocompute.cluster.store import ClusterRunStore
 
     def _workers():
-        return ClusterRunStore().live_workers()
+        from app.services.geocompute.cluster.locality import (
+            WorkerCacheRegistry,
+        )
+
+        store = ClusterRunStore()
+        workers = store.live_workers()
+        registry = WorkerCacheRegistry()
+        for w in workers:
+            # round2 RM2：注册表的生产读取方 —— 缓存占用对 admin 可见
+            #（只写不读的表会误导运维）
+            w["cache_entries"] = registry.worker_entries(w.get("worker_id", ""))
+            w["cache_bytes"] = registry.worker_cached_bytes(
+                w.get("worker_id", ""))
+        return workers
 
     try:
         workers = await asyncio.to_thread(_workers)

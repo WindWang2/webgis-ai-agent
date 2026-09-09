@@ -36,7 +36,11 @@ from urllib.parse import urlparse
 
 import pytest
 
-pytestmark = pytest.mark.real_services
+# timeout(560)：本模块最坏路径（多次生产 worker boot + 长等待）真实需要
+# 数分钟；marker 覆盖 CI real-services 泳道的 --timeout=180（pytest-timeout
+# 语义：item 级 marker 优先于 CLI），避免负载下被 thread 打断、teardown
+# 跳过再生孤儿 worker（round2 RM1）。
+pytestmark = [pytest.mark.real_services, pytest.mark.timeout(560)]
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -46,7 +50,7 @@ REPO = Path(__file__).resolve().parents[2]
 #: 消息（本地 10 上的孤儿 worker 用死库领走消息的事故 = 随机化的动机）。
 _DB_POOL = (10, 11, 12, 13, 14, 15)
 
-_WORKER_BOOT_TIMEOUT = 90
+_WORKER_BOOT_TIMEOUT = 75
 
 
 def _explicit_lane_enabled() -> bool:
@@ -454,7 +458,7 @@ class TestRealBrokerE2E:
         env.start_coordinator()
         plan = _plan_chain("e2e-happy")
         rid = _submit_run(env, plan, tag="happy")
-        row = _wait_terminal(env, rid, timeout=180)
+        row = _wait_terminal(env, rid, timeout=150)
         assert row.get("status") == "completed", (
             f"run not completed: {row} events={events.window(rid)}")
         # 双侧分布式事件齐备（coordinator：run_started/dispatched/completed；
@@ -517,7 +521,7 @@ class TestRealBrokerE2E:
 
         crashed = False
         seen_starts = set()
-        deadline = time.monotonic() + 120
+        deadline = time.monotonic() + 75
         while time.monotonic() < deadline and not crashed:
             evs = events.window(rid, limit=200)
             starts = [e for e in evs if e["event"] == "node_started"]
@@ -557,7 +561,7 @@ class TestRealBrokerE2E:
 
         # 新 worker 上线 → WORKER_LOSS 的 attempt 2 重派被新 worker 领走
         env.start_worker()
-        row = _wait_terminal(env, rid, timeout=240)
+        row = _wait_terminal(env, rid, timeout=150)
         assert row.get("status") == "completed", (
             f"run not completed after worker crash: {row} "
             f"events={events.window(rid, limit=200)}")
@@ -603,13 +607,13 @@ class TestRealBrokerE2E:
                 "resource_class": {"memory": 1, "cpu": 1, "io": 1},
             })
         rid = _submit_run(env, plan, tag="cancel")
-        assert _wait_event(events, rid, "node_started", timeout=90) is not None
+        assert _wait_event(events, rid, "node_started", timeout=75) is not None
         from app.services.geocompute.cluster.store import ClusterRunStore
 
         store = ClusterRunStore(env.factory)
         changed, observed = store.request_cancel(rid)
         assert changed, "cancel flag not accepted"
-        deadline = time.monotonic() + 90
+        deadline = time.monotonic() + 75
         row = store.get_run(rid) or {}
         while time.monotonic() < deadline:
             row = store.get_run(rid) or {}
@@ -630,7 +634,7 @@ class TestRealBrokerE2E:
         env.start_coordinator()
         plan = _plan_chain("e2e-dup", rows=50)
         rid = _submit_run(env, plan, tag="dup")
-        row = _wait_terminal(env, rid, timeout=180)
+        row = _wait_terminal(env, rid, timeout=150)
         assert row.get("status") == "completed"
         ev_names = [e["event"] for e in events.window(rid, limit=200)]
         assert ev_names.count("node_completed") == 2

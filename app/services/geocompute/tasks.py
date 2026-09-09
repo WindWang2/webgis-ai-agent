@@ -281,20 +281,23 @@ def _finalize_placement_failure(
     from app.services.jobs.store import DurableJobStore
 
     exc = NodePlacementMismatch(node_id)
-    try:
-        from app.tools._utils import db_session
+    # 会话经 jobs 层工厂（durable.py 同款模式）—— 数据面不得依赖
+    # app.tools（ADR-0096 D1 边界，boundary 测试守卫）。
+    from app.services.jobs.worker import _default_session_factory
 
-        with db_session() as db:
-            DurableJobStore.mark_failed_sync(
-                db, int(job_id), error=exc,
-                message="PLACEMENT_MISMATCH: worker does not satisfy the "
-                        "node resource envelope",
-            )
-            db.commit()
-    except Exception:  # noqa: BLE001 - 收敛失败 → 行由 stale sweep 兜底
-        logger.warning(
-            "[geocompute-v7] placement failure finalize failed job=%s",
-            job_id, exc_info=True)
+    with _default_session_factory() as db:
+        ok = DurableJobStore.mark_failed_sync(
+            db, int(job_id), error=exc,
+            message="PLACEMENT_MISMATCH: worker does not satisfy the "
+                    "node resource envelope",
+        )
+        db.commit()
+    if not ok:
+        # round2 Rm3：False = 行已被并发转移/缺席 —— 不能伪装成功；
+        # raise 让 celery 任务可见失败（行若滞留 queued，属 DB 故障残留，
+        # admin stuck/reset 面可诊断）。
+        raise NodePlacementMismatch(
+            f"finalize failed for job {job_id} (row not transitionable)")
 
 
 class NodePlacementMismatch(Exception):
@@ -312,7 +315,7 @@ def _resolve_inputs(
     *,
     session_id: Optional[str],
     input_refs: dict[str, str],
-    input_keys: list[str],
+    input_keys: dict[str, str],
     owner_scope: Optional[str],
     run_id: Optional[str],
     node_id: str,

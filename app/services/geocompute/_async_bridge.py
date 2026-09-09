@@ -35,6 +35,15 @@ from typing import Any, Coroutine, Optional
 #: 绝不永久占用节点线程槽位）。
 DEFAULT_BRIDGE_TIMEOUT_S = 30.0
 
+#: 在飞协程上限（round2 Rm4：无背压的悬挂协程会在 loop 拥塞时级联超时；
+#: 上界 = 调用线程数 × 富余，env 可调）。0 = 不限（测试用）。
+import os as _os
+
+_MAX_INFLIGHT = max(0, int(_os.environ.get(
+    "WEBGIS_BRIDGE_MAX_INFLIGHT", "128") or 0))
+_inflight_sem: Optional[threading.BoundedSemaphore] = (
+    threading.BoundedSemaphore(_MAX_INFLIGHT) if _MAX_INFLIGHT else None)
+
 
 class BridgeTimeoutError(TimeoutError):
     """桥调用超时（loop 拥塞或协程悬挂；调用方按类型化失败处理）。"""
@@ -110,11 +119,24 @@ def run_coro_sync(
             "run_coro_sync called from within a running event loop; "
             "await the coroutine directly instead"
         )
+    if _inflight_sem is not None:
+        if not _inflight_sem.acquire(timeout=timeout_s):
+            coro.close()
+            raise BridgeTimeoutError(
+                "geocompute bridge overloaded: in-flight cap "
+                f"{_MAX_INFLIGHT} reached"
+            )
     loop = _bridge._ensure()
     fut = asyncio.run_coroutine_threadsafe(coro, loop)
     try:
         return fut.result(timeout=max(0.1, float(timeout_s)))
     except concurrent.futures.TimeoutError as exc:
+        # 超时即取消（round2 Rm4）：未启动的协程干净出队；已启动的在
+        # 下一个 await 点收 —— 不再无限占用 loop。
+        fut.cancel()
         raise BridgeTimeoutError(
             f"geocompute bridge call exceeded {timeout_s}s"
         ) from exc
+    finally:
+        if _inflight_sem is not None:
+            _inflight_sem.release()
