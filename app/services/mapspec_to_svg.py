@@ -36,6 +36,39 @@ from app.lib.cartography.label_collision import (
 from app.lib.cartography.label_collision import (
     solve_export_labels as _solve_export_labels,
 )
+from app.lib.cartography.render_scene import (
+    derive_legend_items as _derive_legend_items,
+)
+from app.lib.cartography.render_scene import (
+    resolve_components as _resolve_components,
+)
+from app.lib.cartography.svg_marginalia import (
+    CHROME_MARGIN as _CHROME_MARGIN,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_attribution as _render_attribution,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_frame_border as _render_frame_border,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_graticule as _render_graticule,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_inset_locator as _render_inset_locator,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_legend_box as _render_legend_box,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_north_arrow as _render_north_arrow,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_scale_bar as _render_scale_bar,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_title_block as _render_title_block,
+)
 from app.lib.cartography.render_diagnostics import (
     MAX_DIAGNOSTICS_PER_EXPORT as _MAX_DIAGNOSTICS_PER_EXPORT,
 )
@@ -389,6 +422,110 @@ def _source_geojson(src: Dict[str, Any]) -> Any:
     return src.get("data")
 
 
+def _render_chrome_groups(
+    mapspec: Dict[str, Any],
+    geo_bounds: List[float],
+    canvas_w: float,
+    canvas_h: float,
+    project: Any,
+) -> str:
+    """W7：canonical scene 组件 → publication 整饰 SVG 组（include_chrome）。
+
+    版面 = academic print 布局：title/subtitle 顶部（top-center 居中），
+    north_arrow 右上、scale_bar 右下、legend 左下（图例单源条目）、
+    attribution 左下角、map_border 全幅框、graticule 数据区经纬网、
+    inset_map = locator（上下文 = geo_bounds 4 倍外扩）。
+    组件 disabled / 缺席 → 对应整饰不画（user-wins，无 HUD 兜底 fabricated）。
+    """
+    resolved = _resolve_components(mapspec)
+    enabled = [c for c in resolved if c.enabled]
+    parts: List[str] = []
+    m = _CHROME_MARGIN
+
+    def _first_of_type(t: str):
+        return next((c for c in enabled if c.type == t), None)
+
+    # 全幅帧框
+    border = _first_of_type("map_border")
+    if border is not None:
+        variant = border.variant or ""
+        parts.append(_render_frame_border(canvas_w, canvas_h, academic=variant != "minimal"))
+
+    # 经纬网（数据区）
+    grat = _first_of_type("graticule")
+    if grat is not None:
+        parts.append(_render_graticule(geo_bounds, project, lines=6))
+
+    # 标题 / 副标题（top-center 居中；文本来自组件 options.text）
+    title = _first_of_type("title")
+    subtitle = _first_of_type("subtitle")
+    if title is not None or subtitle is not None:
+        t_text = title.text if title else ""
+        s_text = subtitle.text if subtitle else ""
+        tx = canvas_w / 2.0
+        if t_text and s_text:
+            parts.append(
+                f'<g class="chrome-title" text-anchor="middle">'
+                f'<text x="{_fmt_num(tx)}" y="{_fmt_num(m + 18.0)}" font-family="sans-serif" font-size="22" font-weight="bold" fill="#0f172a">{_escape_svg_attr(t_text)}</text>'
+                f'<text x="{_fmt_num(tx)}" y="{_fmt_num(m + 38.0)}" font-family="sans-serif" font-size="12" fill="#0f172a" opacity="0.75">{_escape_svg_attr(s_text)}</text>'
+                f"</g>"
+            )
+        elif t_text or s_text:
+            parts.append(_render_title_block(canvas_w / 2.0 - 150.0, m, t_text or "", "" if t_text else s_text))
+
+    # 指北针（右上）
+    if _first_of_type("north_arrow") is not None:
+        parts.append(_render_north_arrow(canvas_w - m - 30.0, m + 30.0))
+
+    # 比例尺（右下，投影感知）
+    if _first_of_type("scale_bar") is not None:
+        parts.append(
+            _render_scale_bar(canvas_w - m - 150.0, canvas_h - m - 8.0, geo_bounds, canvas_w)
+        )
+
+    # 图例族（图例单源：derive_legend_items；绑定 layerId 优先，未绑定取首解）
+    legend_specs_by_layer = {}
+    for layer in mapspec.get("layers", []) or []:
+        if isinstance(layer, dict) and isinstance(layer.get("legend_spec"), dict):
+            legend_specs_by_layer[layer.get("id")] = layer["legend_spec"]
+    legend_components = [c for c in enabled if c.type in ("legend", "categorical_legend")]
+    drawn_unbound = False
+    for comp in legend_components:
+        spec_d = None
+        if comp.layer_id and comp.layer_id in legend_specs_by_layer:
+            spec_d = legend_specs_by_layer[comp.layer_id]
+        elif not comp.layer_id and not drawn_unbound and legend_specs_by_layer:
+            spec_d = next(iter(legend_specs_by_layer.values()))
+            drawn_unbound = True
+        if not isinstance(spec_d, dict):
+            continue
+        legend_model = _derive_legend_items(spec_d)
+        if legend_model is None:
+            continue
+        parts.append(_render_legend_box(m, canvas_h - m - (24.0 * min(len(legend_model["entries"]), 12) + 42.0), legend_model))
+
+    # 区位插图（locator）
+    inset = _first_of_type("inset_map")
+    if inset is not None:
+        try:
+            w0, s0, e0, n0 = (float(v) for v in geo_bounds)
+            lng_pad = max((e0 - w0) * 1.5, 0.5)
+            lat_pad = max((n0 - s0) * 1.5, 0.5)
+            context = [w0 - lng_pad, s0 - lat_pad, e0 + lng_pad, n0 + lat_pad]
+            parts.append(_render_inset_locator(canvas_w - m - 150.0, m + 60.0, (150.0, 110.0), context, geo_bounds))
+        except (ValueError, TypeError):
+            pass
+
+    # 署名（左下）
+    attr = _first_of_type("attribution")
+    if attr is not None and attr.text:
+        parts.append(_render_attribution(m + 4.0, canvas_h - m - 14.0, attr.text))
+
+    if not parts:
+        return ""
+    return '  <g class="mapspec-chrome">\n    ' + "\n    ".join(parts) + "\n  </g>\n"
+
+
 def compile_mapspec_to_svg(
     mapspec: Dict[str, Any],
     target_dpi: int = 300,
@@ -411,6 +548,8 @@ def compile_mapspec_to_svg_detailed(
     padding: int = 40,
     max_features: Any = None,
     timeout_ms: Any = None,
+    include_chrome: bool = False,
+    bounds: Any = None,
 ) -> SvgCompilation:
     cap, timeout_ms_val = _resolve_export_thresholds(
         mapspec, max_features, timeout_ms)
@@ -530,6 +669,18 @@ def compile_mapspec_to_svg_detailed(
         ):
             min_x, max_x = -180.0, 180.0
             min_y, max_y = -80.0, 80.0
+
+        # W9：显式 bounds（frame extent/view 覆写；publication 帧几何）。
+        # additive —— 缺省 None 保持自动范围语义不变。
+        if isinstance(bounds, (list, tuple)) and len(bounds) == 4:
+            try:
+                _b = [float(v) for v in bounds]
+                if all(_math.isfinite(v) for v in _b) and _b[2] > _b[0] and _b[3] > _b[1]:
+                    min_x, min_y, max_x, max_y = _b[0], _b[1], _b[2], _b[3]
+            except (ValueError, TypeError):
+                pass
+
+        geo_bounds = [min_x, min_y, max_x, max_y]
 
         range_x = (max_x - min_x) if (_math.isfinite(max_x - min_x) and (max_x - min_x) > 0) else 1.0
         range_y = (max_y - min_y) if (_math.isfinite(max_y - min_y) and (max_y - min_y) > 0) else 1.0
@@ -1052,13 +1203,17 @@ def compile_mapspec_to_svg_detailed(
                     + "\n  </g>\n"
                 )
 
+        chrome_group = ""
+        if include_chrome:
+            chrome_group = _render_chrome_groups(mapspec, geo_bounds, scaled_width, scaled_height, project)
+
         return SvgCompilation(
             svg=f"""<svg width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">
   <rect width="100%" height="100%" fill="#ffffff" />
   <g class="mapspec-vector-layers">
     {elements_svg}
   </g>
-{labels_group}</svg>""",
+{labels_group}{chrome_group}</svg>""",
             diagnostics=diagnostics,
             feature_count=feature_count,
             truncated_features=truncated_features,

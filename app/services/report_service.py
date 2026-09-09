@@ -416,8 +416,14 @@ class ReportService:
     ) -> Any:
         """在可被取消的任务里跑同步编译：``asyncio.wait_for`` 到点即返回，
         不再让 WeasyPrint 报告链路被无界编译阻塞（W4）。"""
+        # V6（ADR-0120 W7）：报告图面升级为 publication 链 —— 携带
+        # canonical scene 整饰（标题/图例/指北针/比例尺/图框），元数据
+        # publication_chrome 标志披露（行为 delta 见 CHANGELOG）。
         return await asyncio.wait_for(
-            asyncio.to_thread(compile_mapspec_to_svg_detailed, mapspec, 300),
+            asyncio.to_thread(
+                compile_mapspec_to_svg_detailed, mapspec, 300,
+                include_chrome=True,
+            ),
             timeout=timeout_s,
         )
 
