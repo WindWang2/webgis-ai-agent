@@ -22,9 +22,28 @@
 | MINOR | m4 | .npy object array = pickle 执行；嵌套 archive | load_weights_array 唯一消费口 + 嵌套 archive 拒绝（已实现） |
 | MINOR | m5 | blend/nodata/context 语义契约缺失 | 概率空间累加 + nodata 权重置零 + context 裁剪 + nodata 接缝 oracle |
 
-## Round 1 — Subagent-A correctness review（待实现完成后）
+## Round 1 — Subagent-A correctness review（2026-09-10，HEAD 599dc144，verdict=revise，全部修复）
 
-（占位）
+| 级别 | ID | 摘要 | 处置 |
+|---|---|---|---|
+| CRITICAL | C-1 | MODELOPS_* env 未钉 conftest → 全量套件 parity 红 | conftest `_ENV_BASELINE` +8 键（parity 测试绿） |
+| CRITICAL | C-2 | prompt/temporal 不进 reuse key → 异 prompt 命中同缓存 | postprocess_payload 增 prompt_geometry/temporal 具名字段 + 失效单测 |
+| CRITICAL | C-3 | 重投影用源 CRS bounds ÷ 目标米分辨率 → 1px 产物；地理 CRS 度当米 | default-transform 先行 + 目标 bounds 重算；`_meters_per_pixel` 地理 CRS → 0 |
+| CRITICAL | C-4 | 检测全局坐标用 core 原点（错 half_ctx）+ 批粒度错配 | merge 用 read_window 原点；engine 按 batch_index 展开 per-tile；多 tile 手算 oracle |
+| CRITICAL | C-5 | acquire 后 warmup/mkdir 在 try 外 → refcount 泄漏 | try 上移覆盖全部后置路径 + monkeypatch 回归 |
+| CRITICAL | C-6 | scope 值无白名单（穿越）+ 跨 owner 同身份碰撞使 registry DoS | 值 charset 正则（registry+reuse）；身份键 = (scope,id,version)；parity/重载用例 |
+| MAJOR | M-1 | instance 批粒度丢 chip + 零覆盖 | per-chip 展开 + TinyInstanceProvider + seeds + 端到端 |
+| MAJOR | M-2 | promptable 窗口产物 georef 错位 | write_raster_output window_origin + georef oracle（122/40） |
+| MAJOR | M-3 | mask prompt 静默忽略 | provider 读 extras["prompt_mask_arrays"]（窗口切片数组）+ 全 False prior 测试 |
+| MAJOR | M-4 | 生产 accumulator 与 oracle 两套语义（m5 未兑现） | 共享 _core_weights + nodata 权重置零 + 概率导出 + uncovered=255 |
+| MAJOR | M-5 | 默认取消键=model_id 并发串台 | run_key 注入 request（run_id=取消键），冲突 typed；工具层去 model_id 键 |
+| MAJOR | M-6 | remote 先缓冲后查字节上限 | client.stream 逐块累计 + 中途超限即断 |
+| MAJOR | M-7 | M6/M7 声明的静态验证缺失 | adapter 隔离源码扫描 + 经典迭代器零耦合断言 |
+| MINOR | m-1 | padding_mode 声明被忽略 | np.pad 三模式实装（reflect 超 dim-1 typed 降级 constant） |
+| MINOR | m-2 | band_order 有声明无解析 | build_plan 按源波段名解析索引；engine 读 descriptions |
+| MINOR | m-3 | "最新版本"按字典序 | seq 全局单调，resolve 按 seq |
+| MINOR | m-4 | 重投影中间产物无清理 | run finally best-effort unlink |
+| MINOR | m-5 | 测试卫生/键锁驻留/概率抽验缺失/伪 ECE | 全项修复（ECE 仅 confidence_path 提供时计算）
 
 ## Round 2 — Subagent-B perf/GPU/security review（待 Round 1 修复后）
 

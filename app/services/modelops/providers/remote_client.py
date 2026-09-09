@@ -212,17 +212,34 @@ class RemoteInferenceProvider:
             hops = 0
             while True:
                 self._policy.check(current)  # 每跳重过策略（redirect 防护）
-                resp = client.request(method, current, json=json_body)
-                if resp.is_redirect:
-                    hops += 1
-                    if hops > REMOTE_MAX_REDIRECTS:
-                        raise RemoteInferenceError(f"remote redirect chain > {REMOTE_MAX_REDIRECTS}")
-                    location = resp.headers.get("location", "")
-                    if not location:
-                        raise RemoteInferenceError("remote redirect without Location header")
-                    current = str(httpx.URL(current).join(location))
-                    continue
-                return resp
+                # R1-M6：流式读取 + 逐块字节上限 —— 恶意端点不能先打爆
+                # 内存再被拒（对齐 data_fabric bounded_get 语义）。
+                with client.stream(
+                    method, current, json=json_body, follow_redirects=False
+                ) as resp:
+                    if resp.is_redirect:
+                        hops += 1
+                        if hops > REMOTE_MAX_REDIRECTS:
+                            raise RemoteInferenceError(
+                                f"remote redirect chain > {REMOTE_MAX_REDIRECTS}"
+                            )
+                        location = resp.headers.get("location", "")
+                        if not location:
+                            raise RemoteInferenceError(
+                                "remote redirect without Location header"
+                            )
+                        current = str(httpx.URL(current).join(location))
+                        continue
+                    content = bytearray()
+                    for chunk in resp.iter_bytes(1024 * 1024):
+                        content.extend(chunk)
+                        if len(content) > REMOTE_MAX_RESPONSE_BYTES:
+                            raise OutputBudgetExceeded(
+                                f"remote response exceeds {REMOTE_MAX_RESPONSE_BYTES} "
+                                "bytes mid-stream"
+                            )
+                    resp._content = bytes(content)
+                    return resp
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise RemoteInferenceError(f"remote transport failure: {type(exc).__name__}") from exc
         finally:

@@ -66,7 +66,7 @@ def test_nodata_pixels_excluded_and_masked():
     nodata[2, 2] = True
     result = merge_segmentation(plan, probs, input_nodata=nodata,
                                 policy=SegmentationMergePolicy(), num_classes=2)
-    assert result.valid_mask[2, 2] is False or result.valid_mask[2, 2] == False  # noqa: E712
+    assert not result.valid_mask[2, 2]
     assert result.classes[2, 2] == 255
     assert result.classes[0, 0] == 0
 

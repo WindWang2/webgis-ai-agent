@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -43,7 +44,15 @@ class ReuseStore:
         self._lock = threading.RLock()
 
     # ── 路径 ────────────────────────────────────────────────────────
+    _SCOPE_VALUE_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
+
     def _owner_dir(self, owner_scope: Dict[str, str]) -> Path:
+        """R1-C6：scope 值白名单（防注册表路径穿越；对齐 data_object 口径）。"""
+        for key, value in owner_scope.items():
+            if not isinstance(value, str) or not self._SCOPE_VALUE_RE.match(value):
+                from app.lib.modelops.errors import ModelOpsError
+
+                raise ModelOpsError(f"invalid owner scope value for {key!r}")
         scope_key = "_".join(f"{k}-{v}" for k, v in sorted(owner_scope.items()))
         return self._root / scope_key
 

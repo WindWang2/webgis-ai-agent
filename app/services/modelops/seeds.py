@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 from app.lib.data.fingerprints import canonical_dumps, sha256_hex
 from app.lib.modelops.capabilities import (
     MODALITY_OPTICAL_MULTISPECTRAL,
+    OUTPUT_INSTANCE_MASKS,
     MODALITY_OPTICAL_RGB,
     MODALITY_SAR,
     OUTPUT_CLASS_RASTER,
@@ -22,6 +23,7 @@ from app.lib.modelops.capabilities import (
     OUTPUT_TEMPORAL_STACK,
     TASK_CLASSIFICATION,
     TASK_EMBEDDING,
+    TASK_INSTANCE_SEGMENTATION,
     TASK_OBJECT_DETECTION,
     TASK_PROMPTABLE_SEGMENTATION,
     TASK_SEMANTIC_SEGMENTATION,
@@ -163,6 +165,24 @@ def seed_descriptors() -> List[GeoModelDescriptor]:
             random_seed_policy="deterministic",
         ),
         make(
+            model_id="tiny-instance-seg",
+            model_version="1.0.0",
+            provider_type="local_reference",
+            provider_ref="tiny-instance",
+            provider_semantic_version="tiny-instance/1.0.0",
+            task_types=(TASK_INSTANCE_SEGMENTATION,),
+            input_modalities=(MODALITY_OPTICAL_RGB,),
+            input_bands=1,
+            normalization=NormalizationSpec(kind="none"),
+            output_types=(OUTPUT_INSTANCE_MASKS,),
+            class_schema=ClassSchema(classes=("background", "target")),
+            spatial=SpatialRequirements(**common_spatial),
+            device_requirements=common_device,
+            memory_estimate=MemoryEstimate(weights_bytes=1024),
+            license="CC0-1.0 (synthetic fixture)",
+            random_seed_policy="deterministic",
+        ),
+        make(
             model_id="tiny-chip-embedder",
             model_version="1.0.0",
             provider_type="local_reference",
@@ -195,6 +215,7 @@ def seed_providers(registry: ProviderRegistry) -> None:
         TemporalReferenceProvider,
     )
     from app.services.modelops.providers.tiny_detection import TinyDetectionProvider
+    from app.services.modelops.providers.tiny_instance import TinyInstanceProvider
     from app.services.modelops.providers.tiny_reference import TinyReferenceProvider
 
     for provider in (
@@ -202,6 +223,7 @@ def seed_providers(registry: ProviderRegistry) -> None:
         TinyDetectionProvider(),
         PromptableReferenceProvider(),
         TemporalReferenceProvider(),
+        TinyInstanceProvider(),
     ):
         if not registry.has(provider.capabilities().provider_id):
             registry.register(provider)

@@ -192,23 +192,33 @@ class ModelOpsService:
         progress: Optional[Callable[[Dict[str, Any]], None]] = None,
         cancel_key: Optional[str] = None,
     ) -> InferenceResult:
-        token = self._register_cancel(run_key=cancel_key or request.model_id)
+        # R1-M5：取消键 = 本次 run 的唯一键（run_id），绝不默认 model_id
+        # （同模型并发跑会互相覆盖取消令牌）。
+        import uuid as _uuid
+
+        key = cancel_key or _uuid.uuid4().hex[:16]
+        request = _replace_request(request, run_key=key)
+        token = self._register_cancel(run_key=key)
         try:
             return self._engine.run(request, cancel_token=token, progress=progress)
         finally:
-            self._unregister_cancel(cancel_key or request.model_id, token)
+            self._unregister_cancel(key, token)
 
     async def run_inference_async(
         self, request: InferenceRequest, *, progress: Optional[Callable[[Dict[str, Any]], None]] = None,
         cancel_key: Optional[str] = None,
     ) -> InferenceResult:
-        token = self._register_cancel(run_key=cancel_key or request.model_id)
+        import uuid as _uuid
+
+        key = cancel_key or _uuid.uuid4().hex[:16]
+        request = _replace_request(request, run_key=key)
+        token = self._register_cancel(run_key=key)
         try:
             return await asyncio.to_thread(
                 self._engine.run, request, cancel_token=token, progress=progress
             )
         finally:
-            self._unregister_cancel(cancel_key or request.model_id, token)
+            self._unregister_cancel(key, token)
 
     def cancel(self, key: str, *, reason: str = "cancelled by caller") -> bool:
         with self._cancel_lock:
@@ -220,6 +230,11 @@ class ModelOpsService:
     def _register_cancel(self, *, run_key: str) -> CancellationToken:
         token = CancellationToken(job_id=run_key)
         with self._cancel_lock:
+            if run_key in self._cancel_tokens:
+                raise ModelOpsError(
+                    f"cancel key {run_key!r} already in flight "
+                    "(pass a distinct cancel_key or omit it)"
+                )
             self._cancel_tokens[run_key] = token
         return token
 
@@ -305,6 +320,13 @@ class ModelOpsService:
             nodata=meta.nodata,
             nodata_ratio=nodata_ratio,
         )
+
+
+def _replace_request(request: InferenceRequest, *, run_key: str) -> InferenceRequest:
+    """frozen dataclass 的 run_key 注入（取消键 = run_id 的唯一通道）。"""
+    from dataclasses import replace
+
+    return replace(request, run_key=run_key)
 
 
 _SERVICE: Optional[ModelOpsService] = None

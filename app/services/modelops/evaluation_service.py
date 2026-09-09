@@ -34,6 +34,7 @@ class EvaluationRequest:
     task_type: str                                    # segmentation|object_detection|classification
     predictions_path: Path
     references_path: Optional[Path] = None            # segmentation/classification 用
+    confidence_path: Optional[Path] = None            # ECE 校准（可选）
     reference_detections: Optional[List[Dict[str, Any]]] = None
     prediction_detections: Optional[List[Dict[str, Any]]] = None
     num_classes: int = 2
@@ -62,17 +63,23 @@ class EvaluationService:
                 refs, pred, num_classes=request.num_classes,
                 ignore_index=request.ignore_index,
             )
-            mask = pred != request.ignore_index
             report["metrics"] = metrics.as_dict()
-            if mask.any():
-                # ECE：以预测置信代理（max 类的均值近似），正确性按掩膜对齐。
-                conf = np.where(mask, 0.9, 0.0)[mask]
-                correct = (pred[mask] == refs[mask])
+            # m-5：置信度校准需要 confidence 栅格输入（类代理无信息量）——
+            # 不再伪造 ECE 数值；输入齐备时才计算。
+            if request.confidence_path is not None:
+                from app.lib.geo_raster.reader import RasterReader as _RR
+
+                with _RR.open(str(request.confidence_path)) as cr:
+                    conf = cr.read_full(budget_ok=True)
+                    if conf.ndim == 3:
+                        conf = conf[0]
+                mask = pred != request.ignore_index
                 report["ece"] = expected_calibration_error(
-                    conf.tolist(), correct.tolist()
+                    conf[mask].tolist(), (pred[mask] == refs[mask]).tolist()
                 )
             else:
-                report["ece"] = 0.0
+                report["ece"] = None
+                report["ece_note"] = "requires confidence_path (class proxy is uninformative)"
             split = spatial_blocked_split(
                 refs.shape[0], refs.shape[1],
                 block_size_px=request.block_size_px, num_folds=request.num_folds,

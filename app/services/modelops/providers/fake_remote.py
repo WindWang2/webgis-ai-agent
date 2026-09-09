@@ -84,11 +84,11 @@ class FakeRemoteInferenceServer:
                     for c_i in range(3):
                         band = []
                         for y in range(h):
-                            a = 0.4 + 0.2 * math.sin(y) * (1 if c_i == 0 else -1)
+                            s = 0.2 * math.sin(y)
+                            base = (0.5 + s, 0.5 - s, 0.0)[c_i]
                             row = []
                             for _x in range(w):
-                                v = max(0.0, min(1.0, a if c_i < 2 else 0.0))
-                                row.append(round(float(v), 4))
+                                row.append(round(float(max(0.0, min(1.0, base))), 4))
                             band.append(row)
                         chip.append(band)
                     probs.append(chip)

@@ -26,6 +26,7 @@ class PreprocessPlan:
     pad_fill_value: float                # R1-C3 fill（preprocess 参数）
     nodata_fill: str                     # "zero" | "mean"（nodata 像元填充）
     context_pad: bool                    # 是否启用 descriptor context pad
+    pad_mode: str = "constant"           # descriptor.spatial.padding_mode（m-1）
 
     def fingerprint_payload(self) -> Dict[str, Any]:
         return {
@@ -34,18 +35,25 @@ class PreprocessPlan:
             "pad_fill_value": self.pad_fill_value,
             "nodata_fill": self.nodata_fill,
             "context_pad": self.context_pad,
+            "pad_mode": self.pad_mode,
         }
 
     def as_dict(self) -> Dict[str, Any]:
         return self.fingerprint_payload()
 
 
-def build_plan(descriptor: GeoModelDescriptor, *, source_band_count: int) -> PreprocessPlan:
-    """从 descriptor 构造预处理计划（band 语义→索引解析在此）。
+def build_plan(
+    descriptor: GeoModelDescriptor,
+    *,
+    source_band_count: int,
+    source_band_names: Optional[Sequence[str]] = None,
+) -> PreprocessPlan:
+    """从 descriptor 构造预处理计划（band 语义→索引解析在此，R1-m2）。
 
-    ``descriptor.band_order`` 为空 ⇒ 顺序取前 N 波段。R1-M3-5：归一化
-    统计必须 descriptor 固定声明（``normalization`` 字段）；逐景采样
-    统计是隐藏参数——本层没有也不允许有采样路径。
+    ``descriptor.band_order`` 为空 ⇒ 顺序取前 N 波段；非空且源提供波段
+    语义名（COG descriptions/STAC）⇒ 按名解析索引。R1-M3-5：归一化
+    统计必须 descriptor 固定声明；逐景采样统计是隐藏参数——本层没有
+    也不允许有采样路径。
     """
     n = descriptor.input_bands
     if source_band_count < n:
@@ -53,12 +61,19 @@ def build_plan(descriptor: GeoModelDescriptor, *, source_band_count: int) -> Pre
             f"source has {source_band_count} bands; model needs {n} "
             "(qualifier should have rejected this)"
         )
+    band_indices: Tuple[int, ...] = tuple(range(n))
+    band_order = getattr(descriptor, "band_order", ())
+    if band_order and source_band_names:
+        name_to_idx = {name: i for i, name in enumerate(source_band_names)}
+        if all(b in name_to_idx for b in band_order):
+            band_indices = tuple(name_to_idx[b] for b in band_order)
     return PreprocessPlan(
-        band_indices=tuple(range(n)),
+        band_indices=band_indices,
         normalization=descriptor.normalization.as_dict(),
         pad_fill_value=0.0,
         nodata_fill="zero",
         context_pad=descriptor.spatial.context_size != descriptor.spatial.chip_size,
+        pad_mode=descriptor.spatial.padding_mode,
     )
 
 
@@ -93,15 +108,32 @@ def preprocess_window(
     if tile is not None and plan.context_pad:
         left, top, right, bottom = tile.pad
         if any((left, top, right, bottom)):
-            chips = np.pad(
-                chips,
-                ((0, 0), (top, bottom), (left, right)),
-                mode="constant",
-                constant_values=plan.pad_fill_value,
-            )
+            chips = _pad_chips(chips, (top, bottom, left, right), plan)
             valid = np.pad(valid, ((top, bottom), (left, right)), mode="constant",
                            constant_values=False)
     return chips, valid
+
+
+def _pad_chips(
+    chips: np.ndarray,
+    pad_width: Tuple[int, int, int, int],
+    plan: PreprocessPlan,
+) -> np.ndarray:
+    """R1 m-1：兑现 descriptor.spatial.padding_mode（reflect/replicate/
+    constant）。reflect 在 pad 超过维度-1 时 typed 降级为 constant
+    （numpy 语义限制），降级进入 plan 可审计（pad_mode 字段不变）。"""
+    top, bottom, left, right = pad_width
+    mode = plan.pad_mode if plan.pad_mode in ("reflect", "replicate", "constant") else "constant"
+    np_mode = {"reflect": "reflect", "replicate": "edge", "constant": "constant"}[mode]
+    h, w = chips.shape[1], chips.shape[2]
+    if np_mode == "reflect" and (top > h - 1 or bottom > h - 1 or left > w - 1 or right > w - 1):
+        np_mode = "constant"
+    if np_mode == "constant":
+        return np.pad(
+            chips, ((0, 0), (top, bottom), (left, right)),
+            mode="constant", constant_values=plan.pad_fill_value,
+        )
+    return np.pad(chips, ((0, 0), (top, bottom), (left, right)), mode=np_mode)
 
 
 def _masked_mean(chips: np.ndarray, mask: np.ndarray) -> float:

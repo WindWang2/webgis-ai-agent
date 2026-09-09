@@ -168,9 +168,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
             task_type=task_type,
             score_threshold=float(score_threshold),
         )
-        result = await service.run_inference_async(
-            request, cancel_key=f"inference:{model_id}"
-        )
+        result = await service.run_inference_async(request)
         return _result_payload(result)
 
     @tool(

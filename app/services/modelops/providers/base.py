@@ -116,6 +116,16 @@ class TileOutput:
             raise ProviderError("embedding output requires embeddings")
         if self.task_type == "classification" and self.label_probabilities is None:
             raise ProviderError("classification output requires label_probabilities")
+        if self.class_probabilities is not None and self.task_type != "temporal_forecast":
+            # 概率语义抽验（docstring 承诺的实现点，m-5）：每像素和 ≈ 1。
+            # temporal_forecast 的 class_probabilities 通道承载预测栈
+            # （非概率），不参与此检查。
+            sums = self.class_probabilities.sum(axis=1)
+            if not np.allclose(sums, 1.0, atol=1e-2):
+                raise ProviderError(
+                    "class_probabilities do not sum to 1 per pixel "
+                    "(provider must return normalized probabilities)"
+                )
 
 
 @dataclass

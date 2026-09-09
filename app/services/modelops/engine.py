@@ -61,6 +61,7 @@ from app.lib.modelops.preprocess import preprocess_batch
 from app.lib.modelops.promptable import PromptSpec
 from app.lib.modelops.resources import DevicePlan, batch_for_budget
 from app.lib.modelops.stitching import (
+    SegmentationMergePolicy,
     collect_embeddings,
     merge_detections,
     merge_instances,
@@ -116,6 +117,9 @@ class InferenceRequest:
     polygonize_instances: bool = False
     output_probabilities: bool = False
     output_dir: Optional[Path] = None
+    #: 调用方生成的 run 键（取消键 = run_id；R1-M5：禁用 model_id 默认键，
+    #  避免同模型并发跑互相覆盖取消令牌）。
+    run_key: Optional[str] = None
 
 
 @dataclass
@@ -162,7 +166,7 @@ class InferenceEngine:
     ) -> InferenceResult:
         if set(request.owner_scope) - {"session_id", "project_id"} or len(request.owner_scope) != 1:
             raise ModelOpsError("owner_scope must be exactly one of session_id/project_id")
-        run_id = uuid.uuid4().hex[:16]
+        run_id = request.run_key or uuid.uuid4().hex[:16]
         perf = PerfCounters()
         queued_from = time.perf_counter()
         if not self._slots.acquire(timeout=30.0):
@@ -218,6 +222,12 @@ class InferenceEngine:
             meta = reader.metadata()
             m_per_px = self._meters_per_pixel(meta)
             nodata_ratio = self._sampled_nodata_ratio(reader)
+            try:
+                descriptions = tuple(
+                    d for d in (reader.dataset.descriptions or ()) if d
+                )
+            except Exception:  # noqa: BLE001 — 波段名缺失按无名处理
+                descriptions = ()
             profile = InputProfile(
                 width=meta.width,
                 height=meta.height,
@@ -229,6 +239,9 @@ class InferenceEngine:
                 nodata_ratio=nodata_ratio,
                 temporal_length=request.temporal and len(request.temporal.times) or 1,
             )
+            profile = InputProfile(
+                **{**profile.__dict__, "band_names": descriptions}
+            ) if descriptions else profile
 
         # ── 兼容性资格 ──────────────────────────────────────────────
         report = qualify(descriptor, profile, prompt=request.prompt, temporal=request.temporal)
@@ -254,7 +267,11 @@ class InferenceEngine:
             )
 
         # ── 计划 ────────────────────────────────────────────────────
-        preprocess_plan = build_preprocess_plan(descriptor, source_band_count=profile.band_count)
+        preprocess_plan = build_preprocess_plan(
+            descriptor,
+            source_band_count=profile.band_count,
+            source_band_names=profile.band_names,
+        )
         tile_plan = plan_tiles(descriptor, raster_height=meta.height, raster_width=meta.width)
         perf.chips_total = len(tile_plan.tiles)
         provider_payload = {
@@ -264,14 +281,20 @@ class InferenceEngine:
             "semantic_version": caps.semantic_version,
             "capabilities": caps.as_dict(),
         }
+        prompt_payload = request.prompt.to_payload() if request.prompt else None
+        temporal_payload = request.temporal.to_payload() if request.temporal else None
         postprocess_payload = {
             "score_threshold": request.score_threshold,
             "confidence_floor": request.confidence_floor,
             "output_probabilities": request.output_probabilities,
             "polygonize_instances": request.polygonize_instances,
+            # R1-C2：prompt 几何 / 时序声明是有效输入参数 —— 不进 key 会
+            # 造成「同 key 不同结果」（不同 prompt 命中同一缓存）。
+            "prompt_geometry": (
+                request.prompt.geometry_payload() if request.prompt else None
+            ),
+            "temporal": temporal_payload,
         }
-        prompt_payload = request.prompt.to_payload() if request.prompt else None
-        temporal_payload = request.temporal.to_payload() if request.temporal else None
         input_payload = {
             "source_uri": str(source_path),
             "content_sha256": input_content_sha,
@@ -358,22 +381,26 @@ class InferenceEngine:
             load_fn=lambda: provider.load(descriptor, device=device_plan.device),
             unload_fn=provider.unload,
         )
-        perf.note_latency(load=load_latency)
-        provider.warmup(model)
-
-        if request.temporal is not None:
-            ctx.extras["missing_policy"] = request.temporal.missing_policy
-            ctx.extras["stack_length"] = len(request.temporal.times)
-            ctx.extras["output_time_semantics"] = request.temporal.output_time_semantics
-        if request.prompt is not None:
-            ctx.extras["prompt"] = request.prompt.to_payload()
-            ctx.extras["prompt_mask_arrays"] = request.prompt.prior_masks
-
-        # ── 任务执行 ────────────────────────────────────────────────
-        _emit(progress, stage="infer", run_id=run_id, tiles_total=len(tile_plan))
-        output_dir = Path(request.output_dir or (self._settings.registry_dir / "outputs" / run_id))
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # R1-C5：acquire 之后的一切都纳入 finally —— warmup/mkdir 抛错
+        # 不得泄漏 refcount（否则该 key 永久不可驱逐）。
         try:
+            perf.note_latency(load=load_latency)
+            provider.warmup(model)
+
+            if request.temporal is not None:
+                ctx.extras["missing_policy"] = request.temporal.missing_policy
+                ctx.extras["stack_length"] = len(request.temporal.times)
+                ctx.extras["output_time_semantics"] = request.temporal.output_time_semantics
+            if request.prompt is not None:
+                ctx.extras["prompt"] = request.prompt.to_payload()
+                ctx.extras["prompt_mask_arrays"] = request.prompt.prior_masks
+
+            # ── 任务执行 ────────────────────────────────────────────
+            _emit(progress, stage="infer", run_id=run_id, tiles_total=len(tile_plan))
+            output_dir = Path(
+                request.output_dir or (self._settings.registry_dir / "outputs" / run_id)
+            )
+            output_dir.mkdir(parents=True, exist_ok=True)
             if task == TASK_PROMPTABLE_SEGMENTATION:
                 outputs = self._run_promptable(
                     request, descriptor, provider, model, ctx, source_path,
@@ -392,6 +419,15 @@ class InferenceEngine:
                 )
         finally:
             self._loaded_cache.release(cache_key)
+            # R1 m-4：重投影中间产物不进 reuse（reuse 只存 outputs）——
+            # run 结束即清理，防磁盘无界增长。
+            if reproject_payload and source_path.exists() and "reprojected" in str(
+                source_path.parent
+            ):
+                try:
+                    source_path.unlink()
+                except OSError:
+                    pass
         perf.finish()
 
         # ── manifest + reuse 发布 ───────────────────────────────────
@@ -471,12 +507,18 @@ class InferenceEngine:
         progress: Optional[Callable[[Dict[str, Any]], None]],
     ) -> Dict[str, Dict[str, Any]]:
         num_classes = len(descriptor.class_schema.classes) if descriptor.class_schema else 2
+        merge_policy = SegmentationMergePolicy(
+            output_probabilities=request.output_probabilities
+        )
         accumulator: Optional["_SegmentationAccumulator"] = None
         if task == TASK_SEMANTIC_SEGMENTATION:
             accumulator = _SegmentationAccumulator(
-                tile_plan.raster_height, tile_plan.raster_width, num_classes
+                tile_plan.raster_height,
+                tile_plan.raster_width,
+                num_classes,
+                policy=merge_policy,
             )
-        detections_by_tile: List[List[Dict[str, Any]]] = []
+        detections_by_tile: Dict[int, List[Dict[str, Any]]] = {}
         instance_by_tile: List[np.ndarray] = []
         instance_classes_by_tile: List[Dict[int, int]] = []
         embeddings: List[np.ndarray] = []
@@ -529,15 +571,23 @@ class InferenceEngine:
                 output.validate_for(batch_obj)
 
                 if accumulator is not None:
-                    accumulator.add_tiles(tile_plan.tiles[start: start + len(group)],
-                                          output.class_probabilities)
+                    accumulator.add_tiles(
+                        tile_plan.tiles[start: start + len(group)],
+                        output.class_probabilities,
+                        valid_masks=valid_mask,
+                    )
                 elif task == TASK_OBJECT_DETECTION:
-                    detections_by_tile.append(list(output.detections or []))
+                    # R1-C4：按 provider 报告的 batch_index 展开到全局 tile 槽。
+                    for det in output.detections or []:
+                        tile_idx = start + int(det.get("batch_index", 0))
+                        detections_by_tile.setdefault(tile_idx, []).append(det)
                 elif task == TASK_INSTANCE_SEGMENTATION:
-                    instance_by_tile.append(output.instance_masks[0]
-                                            if output.instance_masks.ndim == 3
-                                            else output.instance_masks)
-                    instance_classes_by_tile.append({1: 1})
+                    masks_out = output.instance_masks
+                    if masks_out.ndim == 2:
+                        masks_out = masks_out[None]
+                    for i in range(masks_out.shape[0]):
+                        instance_by_tile.append(masks_out[i])
+                        instance_classes_by_tile.append({1: 1})
                 elif task in (TASK_EMBEDDING, TASK_CLASSIFICATION):
                     if output.embeddings is not None:
                         for i in range(output.embeddings.shape[0]):
@@ -553,7 +603,7 @@ class InferenceEngine:
 
         outputs: Dict[str, Dict[str, Any]] = {}
         if accumulator is not None:
-            classes, confidence, valid = accumulator.finalize(
+            classes, confidence, valid, probs = accumulator.finalize(
                 input_nodata=None,
                 confidence_floor=request.confidence_floor,
             )
@@ -566,10 +616,23 @@ class InferenceEngine:
             outputs["confidence"] = self._publish_raster(
                 confidence_path, request, role="confidence", descriptor=descriptor
             )
+            if probs is not None:
+                prob_path = write_raster_output(
+                    output_dir / "probabilities.tif",
+                    arrays=[probs[k] for k in range(probs.shape[0])],
+                    band_names=[f"class_{k}" for k in range(probs.shape[0])],
+                    template=RasterReader.open(str(source_path)),
+                    dtype="float32",
+                    nodata=0.0,
+                )
+                outputs["probabilities"] = self._publish_raster(
+                    prob_path, request, role="probabilities", descriptor=descriptor
+                )
             perf.note_merge(int(classes.size))
         elif task == TASK_OBJECT_DETECTION:
+            per_tile = [detections_by_tile.get(tile.index, []) for tile in tile_plan.tiles]
             records = merge_detections(
-                tile_plan, detections_by_tile,
+                tile_plan, per_tile,
                 score_threshold=request.score_threshold,
             )
             class_names = list(descriptor.class_schema.classes) if descriptor.class_schema else None
@@ -707,6 +770,7 @@ class InferenceEngine:
             band_names=["object"],
             template=RasterReader.open(str(source_path)),
             nodata=255.0,
+            window_origin=(x0, y0),  # R1-M2：窗口产物 georef 平移
         )
         perf.note_window(0, bytes_read=0)
         perf.record_batch(1)
@@ -833,8 +897,18 @@ class InferenceEngine:
 
     @staticmethod
     def _meters_per_pixel(meta: Any) -> float:
+        """米/像素；地理 CRS（度）返回 0 = 未知（R1-C3：不得把度当米，
+        否则会误触发分辨率重采样路径）。"""
         if meta.transform is None:
             return 0.0
+        if meta.crs:
+            try:
+                from rasterio.crs import CRS
+
+                if CRS.from_string(meta.crs).is_geographic:
+                    return 0.0
+            except Exception:  # noqa: BLE001 — 无法解析的 CRS 按未知处理
+                return 0.0
         px = float(meta.transform[0])
         py = float(meta.transform[4])
         if px == 0 or py == 0:
@@ -874,15 +948,20 @@ class InferenceEngine:
                 raise ResourceUnavailable("cannot reproject without a resolvable target CRS")
             target_res = spec.get("target_m_per_px")
             left, bottom, right, top = src.bounds
+            # R1-C3：目标几何必须先在**目标 CRS** 中求解（源 bounds 单位 =
+            # 源 CRS；地理→投影时直接用源 bounds 除以米分辨率会得到 ≈1 像素）。
+            transform, out_w, out_h = calculate_default_transform(
+                src.crs, target_crs, src.width, src.height, left, bottom, right, top
+            )
             if target_res:
-                out_w = max(1, int(round((right - left) / target_res)))
-                out_h = max(1, int(round((top - bottom) / target_res)))
-                transform = rasterio.transform.from_origin(
-                    left, top, target_res, target_res
+                # 在目标 CRS 的 bounds 上按目标分辨率重算网格。
+                tleft, tbottom, tright, ttop = rasterio.transform.array_bounds(
+                    out_h, out_w, transform
                 )
-            else:
-                transform, out_w, out_h = calculate_default_transform(
-                    src.crs, target_crs, src.width, src.height, left, bottom, right, top
+                out_w = max(1, int(round((tright - tleft) / target_res)))
+                out_h = max(1, int(round((ttop - tbottom) / target_res)))
+                transform = rasterio.transform.from_origin(
+                    tleft, ttop, target_res, target_res
                 )
             if out_w * out_h > 512 * 1024 * 1024:
                 raise ResourceUnavailable(
@@ -986,7 +1065,15 @@ def _emit(
 class _SegmentationAccumulator:
     """流式概率融合（小栅格 RAM；大栅格 memmap 兜底——均有界）。"""
 
-    def __init__(self, height: int, width: int, num_classes: int) -> None:
+    def __init__(
+        self,
+        height: int,
+        width: int,
+        num_classes: int,
+        *,
+        policy: Optional[Any] = None,
+    ) -> None:
+        self._policy = policy or SegmentationMergePolicy()
         self._h = height
         self._w = width
         self._k = num_classes
@@ -1014,7 +1101,19 @@ class _SegmentationAccumulator:
             self._acc[:] = 0
             self._weight[:] = 0
 
-    def add_tiles(self, tiles: Any, probabilities: np.ndarray) -> None:
+    def add_tiles(
+        self,
+        tiles: Any,
+        probabilities: np.ndarray,
+        *,
+        valid_masks: Optional[np.ndarray] = None,
+    ) -> None:
+        """累加一批 tile 的概率；无效像元（nodata/pad）权重置零（R1-m5）。
+
+        ``valid_masks``: (N,1,H,W) bool，None=全有效。权重实现与
+        stitching.merge_segmentation 共享（``_core_weights``，R1-M4）。
+        """
+        from app.lib.modelops.stitching import _core_weights
 
         for i, tile in enumerate(tiles):
             probs = probabilities[i]
@@ -1022,7 +1121,13 @@ class _SegmentationAccumulator:
             off_y = row - tile.read_window[0] + tile.pad[1]
             off_x = col - tile.read_window[1] + tile.pad[0]
             core_probs = probs[:, off_y: off_y + core_h, off_x: off_x + core_w]
-            weights = np.ones((core_h, core_w), dtype=np.float32)
+            weights = _core_weights(self._policy, core_h, core_w)
+            if valid_masks is not None:
+                vm = valid_masks[i]
+                if vm.ndim == 3:
+                    vm = vm[0]
+                vm_core = vm[off_y: off_y + core_h, off_x: off_x + core_w]
+                weights = weights * vm_core.astype(np.float32)
             self._acc[:, row: row + core_h, col: col + core_w] += core_probs * weights[None]
             self._weight[row: row + core_h, col: col + core_w] += weights
 
@@ -1031,11 +1136,12 @@ class _SegmentationAccumulator:
         *,
         input_nodata: Optional[np.ndarray],
         confidence_floor: float,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
         covered = np.asarray(self._weight) > 0
         safe = np.where(covered, np.asarray(self._weight), 1.0).astype(np.float32)
         mean = np.asarray(self._acc) / safe[None]
         classes = mean.argmax(axis=0).astype(np.uint8)
+        classes[~covered] = 255  # 未覆盖（含 nodata/pad）不是类别 0
         confidence = mean.max(axis=0).astype(np.float32)
         valid = covered.copy()
         if confidence_floor > 0:
@@ -1045,8 +1151,11 @@ class _SegmentationAccumulator:
         if input_nodata is not None:
             valid &= ~input_nodata
             classes[input_nodata] = 255
+        probs_out: Optional[np.ndarray] = None
+        if getattr(self._policy, "output_probabilities", False):
+            probs_out = mean.astype(np.float32)
         self.close()
-        return classes, confidence, valid
+        return classes, confidence, valid, probs_out
 
     def close(self) -> None:
         if self._memmap_dir is not None:

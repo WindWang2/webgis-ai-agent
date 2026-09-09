@@ -115,6 +115,18 @@ class PromptableReferenceProvider:
                 raise ProviderError(
                     "promptable inference requires a prompt in ctx.extras['prompt']"
                 )
+            # R1-M3：prior mask 数组不经 JSON 往返 —— engine 以窗口切片
+            # 数组直接放入 extras（to_payload 只承载几何）。
+            prior_arrays = ctx.extras.get("prompt_mask_arrays") or ()
+            if prior_arrays:
+                prompt = PromptSpec(
+                    points=prompt.points,
+                    boxes=prompt.boxes,
+                    prior_masks=tuple(prior_arrays),
+                    text=prompt.text,
+                    combine=prompt.combine,
+                    labels=prompt.labels,
+                )
             if prompt.text and not self._support_text:
                 raise ProviderError(
                     "provider does not declare text_prompt capability "

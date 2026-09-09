@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -29,8 +29,13 @@ def write_raster_output(
     template: Any,           # rasterio dataset / RasterReader（取 crs/transform/shape）
     nodata: float = 255.0,
     dtype: str = "uint8",
+    window_origin: Optional[Tuple[int, int]] = None,  # (x0, y0) 窗口原点（R1-M2）
 ) -> Path:
-    """栅格产物写盘（GTiff，平铺块结构；CRS/transform 继承源）。"""
+    """栅格产物写盘（GTiff，平铺块结构；CRS/transform 继承源）。
+
+    ``window_origin``：数组是源栅格的子窗口时，transform 平移到窗口原点
+    ——否则产物 georef 错位（renderable 产物放错地理位置）。
+    """
     import rasterio
 
     if len(arrays) != len(band_names):
@@ -45,7 +50,12 @@ def write_raster_output(
         "count": len(arrays),
         "dtype": dtype,
         "crs": src.crs,
-        "transform": src.transform,
+        # R1-M2：子窗口产物 transform 平移到窗口原点（否则 georef 错位）。
+        "transform": (
+            src.transform * __import__("affine").Affine.translation(*window_origin)
+            if window_origin is not None
+            else src.transform
+        ),
         "nodata": nodata,
         "tiled": True,
         "blockxsize": 256,

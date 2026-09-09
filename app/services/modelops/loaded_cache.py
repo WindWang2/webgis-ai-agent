@@ -130,12 +130,15 @@ class LoadedModelCache:
                 model = load_fn()
             except _TRANSIENT_ERRORS:
                 # transient：不进负缓存（驱逐/降批后可重试）。
+                with self._lock:
+                    self._key_locks.pop(key, None)  # m-5：失败键锁不驻留
                 raise
             except _PERMANENT_ERRORS as exc:
                 with self._lock:
                     self._negative[key] = _Negative(
                         error=exc, expires_at=self._clock() + NEGATIVE_CACHE_TTL_S
                     )
+                    self._key_locks.pop(key, None)  # m-5：失败键锁不驻留
                 raise
             latency = time.perf_counter() - started
             with self._lock:
