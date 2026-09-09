@@ -228,6 +228,47 @@ export function collectCartographicRuntimeObservation(
       generation_attested: attested,
       runtime_layer_count: live.length,
       runtime_layer_ids: expected.map((candidate) => candidate.id).slice(0, 16),
+      // V5 W5 rendered-state telemetry（optional，服务端逐层核对用）：
+      // render_complete = 样式收敛 ∧ 全部源已加载完（无 pending 瓦片请求）；
+      // source_status 三态 —— 'error' 仅当期望源在 live style 里整体缺席
+      // （真实源失败；review R1 #3：spec 未收敛只是 pending，不是 error，
+      // 否则与 source_converged warning 双报且互相矛盾）；
+      // feature_count 仅对 geojson/vector 源发布（review R1 #4：栅格/
+      // 图片源 querySourceFeatures 恒空，零值不是证据）。
+      render_complete: styleConverged
+        && expected.every((candidate) => map.isSourceLoaded?.(candidate.source) !== false),
+      source_status: (() => {
+        const missingSource = expected.some(
+          (candidate) => !map.getSource?.(candidate.source));
+        if (missingSource && expected.length > 0) return 'error';
+        const allLoaded = expected.every(
+          (candidate) => map.isSourceLoaded?.(candidate.source) !== false);
+        return allLoaded ? 'loaded' : 'pending';
+      })(),
+      feature_count: (() => {
+        // review R2 #5：仅对 queryable（geojson/vector）源求和 —— 栅格/
+        // 图片源无要素语义；混合族不因一个栅格源丢掉整个计数。
+        const sourceTypes = new Map<string, string>();
+        for (const candidate of expected) {
+          const sid = String(candidate.source ?? '');
+          if (sid && !sourceTypes.has(sid)) {
+            sourceTypes.set(
+              sid, String(desired.sources[candidate.source]?.type ?? ''));
+          }
+        }
+        const queryable = [...sourceTypes.entries()]
+          .filter(([, t]) => t !== 'raster' && t !== 'image')
+          .map(([sid]) => sid);
+        if (!queryable.length) return undefined;
+        let total = 0;
+        for (const sourceId of queryable) {
+          try {
+            const feats = map.querySourceFeatures?.(sourceId);
+            if (Array.isArray(feats)) total += feats.length;
+          } catch { /* 源缺席/类型不支持 → 按未计数处理 */ }
+        }
+        return total;
+      })(),
     };
   });
   return {
