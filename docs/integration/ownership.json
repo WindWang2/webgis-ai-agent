@@ -36,6 +36,7 @@
   {"pattern": "docs/integration/ownership.json", "owner": "integration", "policy": "single-writer"},
   {"pattern": "docs/integration/frontend-behavior.json", "owner": "frontend", "policy": "regenerate-dont-edit", "suites": ["frontend"]},
   {"pattern": "docs/integration/RELEASE_READINESS.json", "owner": "integration", "policy": "regenerate-dont-edit"},
-  {"pattern": "docs/integration/RELEASE_READINESS.md", "owner": "integration", "policy": "regenerate-dont-edit"}
+  {"pattern": "docs/integration/RELEASE_READINESS.md", "owner": "integration", "policy": "regenerate-dont-edit"},
+  {"pattern": "docs/integration/README.md", "owner": "integration", "policy": "coordinated"}
  ]
 }

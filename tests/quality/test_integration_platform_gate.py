@@ -27,6 +27,7 @@ V3_SCRIPTS = (
     "scripts/gen_release_readiness.py",
     "scripts/integration_harness.py",
     "scripts/gen_frontend_behavior.py",
+    "scripts/integration_completion_proof.py",
 )
 
 _IMPORT_RE = re.compile(
@@ -84,3 +85,14 @@ def test_v3_scripts_exist_on_disk():
         # W16 完成时收紧为全存在（在 test_quality_v3_completion_proof 中锁）。
         if (REPO / s).exists():
             assert (REPO / s).is_file()
+
+
+def test_completion_proof_end_to_end():
+    """Epic §17 完成证明：两模拟分支、真实工具链、全冲突类别合并前检出。"""
+    import subprocess
+
+    proc = subprocess.run(
+        ["python3", "scripts/integration_completion_proof.py"],
+        cwd=REPO, capture_output=True, text=True, timeout=300)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "verdict: PASS" in proc.stdout
