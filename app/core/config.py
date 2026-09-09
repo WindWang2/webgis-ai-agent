@@ -167,6 +167,35 @@ class Settings(BaseSettings):
     # EXTENSIONS_MAX_WORKER_CRASHES: worker 连续崩溃达到该值 → quarantine。
     EXTENSIONS_MAX_WORKER_CRASHES: int = 2
 
+    # ── V3（ADR-0119）：非对称签名 / marketplace / 分发 / 强隔离。默认 ──
+    # 全部关闭/为空 = V2 行为逐字节不变。
+    # EXTENSION_TRUST_STORE_PATH: trust store JSON（发布者公钥/rotation/
+    #   retired/revocation）。空 = 不启用 trust store（V2 HMAC 语义不变）。
+    EXTENSION_TRUST_STORE_PATH: str = ""
+    # EXTENSION_REGISTRY_DIR: 本地 registry 根（marketplace store；publish/
+    # search/download 的服务端存储）。空 = marketplace 关闭。
+    EXTENSION_REGISTRY_DIR: str = ""
+    # EXTENSION_REGISTRY_URLS: 逗号分隔的远端 registry base URL（installer
+    # 下载通道；每个 URL 都过核心 SSRF gate + allowlist）。
+    EXTENSION_REGISTRY_URLS: str = ""
+    # EXTENSIONS_INSTALL_ROOT: 分发安装根（active pack 目录 + versions/ +
+    # .staging + .refresh 信号）。空 = 分发关闭。
+    EXTENSIONS_INSTALL_ROOT: str = ""
+    # EXTENSIONS_ISOLATION_BACKEND: worker 隔离后端（process = V2 语义；
+    # bubblewrap = netns+ro-bind+tmpfs 的 namespace 级 OS 隔离；bwrap 不可用
+    # 时 per-spawn typed 激活失败，绝不静默回退）。
+    EXTENSIONS_ISOLATION_BACKEND: str = "process"
+    # EXTENSION_VERSION_PIN: "id==1.2.0;id2==0.3.1" 版本钉（activate/upgrade/
+    # install/rollback 预检统一消费；非 pin 版本 typed 拒绝）。
+    EXTENSION_VERSION_PIN: str = ""
+    # EXTENSIONS_KEEP_VERSIONS: versions/ 每扩展保留的历史版本数（含回滚余量）。
+    EXTENSIONS_KEEP_VERSIONS: int = 3
+    # EXTENSION_STREAM_WINDOW: V3 流式初始 credit 窗口（宿主内存上界 =
+    # window × execution.max_output_bytes）。
+    EXTENSION_STREAM_WINDOW: int = 16
+    # EXTENSION_MAX_STREAM_EVENTS: V3 单次流事件数上界（结构性防无界流）。
+    EXTENSION_MAX_STREAM_EVENTS: int = 10000
+
     # 仓内 vendor/pi 是默认 agent 宿主：API 启动即拉起 bundled RPC 子进程。
     # 测试套件在 conftest 钉 false，避免每个 TestClient 起 Node。
     # 紧急回退 ChatEngine：USE_NEW_AGENT=false。

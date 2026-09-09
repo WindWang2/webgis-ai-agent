@@ -58,6 +58,8 @@ from . import resolver
 from .signing import (
     STATUS_INVALID,
     STATUS_MISSING,
+    STATUS_REVOKED,
+    STATUS_SIGNED_RETIRED,
     STATUS_SIGNED_UNTRUSTED,
     STATUS_SIGNED_VERIFIED,
     STATUS_TAMPERED,
@@ -140,6 +142,20 @@ class HostPolicy:
     allow_unsigned_dev: bool = False
     # worker 连续崩溃达到该值 → quarantine。
     max_worker_crashes: int = 2
+    # ── V3（ADR-0119）：trust store / 隔离后端 / 流式 / pin ────────────
+    # trust store（发布者公钥 + rotation/retired/revocation）；None = 不启用
+    # （V2 HMAC 语义不变）。
+    trust_store: Optional[Any] = None
+    # worker 隔离后端："process"（V2 语义）| "bubblewrap"（namespace 级 OS
+    # 隔离；per-spawn 失败 = typed 激活失败，不静默回退）。
+    isolation_backend: str = "process"
+    # V3 流式初始 credit 窗口（宿主内存上界 ≈ window × max_output_bytes）。
+    stream_window: int = 16
+    # V3 单次流事件数上界。
+    max_stream_events: int = 10000
+    # 版本钉：{extension_id: version}；activate/upgrade/install/rollback 统一
+    # 预检。空 = 不钉。
+    version_pins: dict[str, str] = field(default_factory=dict)
 
 
 class ExtensionHost:
@@ -238,7 +254,11 @@ class ExtensionHost:
                     self._apply_signature_verdict(
                         record,
                         verify_pack_signature(
-                            discovered.path, self._policy.trusted_publishers
+                            discovered.path,
+                            self._policy.trusted_publishers,
+                            trust_store=self._policy.trust_store,
+                            package_id=discovered.extension_id,
+                            version=discovered.manifest.version,
                         ),
                     )
                 )
@@ -283,6 +303,17 @@ class ExtensionHost:
                     extension_id=extension_id,
                 )
             ]
+        # V3（ADR-0119）：吊销 = 生死语义（吊销是运维意志，先于验签成立）。
+        if status.status == STATUS_REVOKED:
+            record.state = ExtensionState.QUARANTINED
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.PACKAGE_REVOKED,
+                    f"package is revoked ({status.detail}); quarantined even if "
+                    "allowlisted — remove and reinstall an approved version",
+                    extension_id=extension_id,
+                )
+            ]
         diagnostics: list[ExtensionDiagnostic] = []
         if status.status == STATUS_SIGNED_VERIFIED:
             if self._policy.trust_signed:
@@ -296,6 +327,17 @@ class ExtensionHost:
                         extension_id=extension_id,
                     )
                 )
+        elif status.status == STATUS_SIGNED_RETIRED:
+            # V3：retired 密钥的签名数学有效但**绝不提权**（防 retire 绕过
+            # revoke 的降级攻击）；信任决策回落运维 allowlist。
+            diagnostics.append(
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.PUBLISHER_UNTRUSTED,
+                    f"signature from retired key {status.publisher!r}; valid but "
+                    "NOT eligible for trust elevation (re-sign with an active key)",
+                    extension_id=extension_id,
+                )
+            )
         elif status.status == STATUS_SIGNED_UNTRUSTED:
             if self._policy.trust_signed:
                 diagnostics.append(

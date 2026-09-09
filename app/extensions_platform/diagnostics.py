@@ -79,6 +79,20 @@ class DiagnosticCode(str, Enum):
     OPERATION_IN_FLIGHT = "operation_in_flight"
     # wave-6 追加（append-only）：签名验签通过且发布者受信（info 级留痕）。
     SIGNATURE_VERIFIED = "signature_verified"
+    # ── V3（ADR-0119）：信任根 / marketplace / 分发 / 流式 ──────────────
+    PACKAGE_REVOKED = "package_revoked"
+    REGISTRY_INVALID = "registry_invalid"
+    REGISTRY_CONFLICT = "registry_conflict"
+    PACKAGE_DIGEST_MISMATCH = "package_digest_mismatch"
+    PACKAGE_UNSAFE_ENTRY = "package_unsafe_entry"
+    INSTALL_PREFLIGHT_FAILED = "install_preflight_failed"
+    INSTALL_SWAP_FAILED = "install_swap_failed"
+    VERSION_PINNED = "version_pinned"
+    DRAIN_TIMEOUT = "drain_timeout"
+    STREAM_FLOW_CONTROL = "stream_flow_control"
+    STREAM_CANCELLED = "stream_cancelled"
+    STREAM_LIMIT_EXCEEDED = "stream_limit_exceeded"
+    ISOLATION_UNAVAILABLE = "isolation_unavailable"
 
 
 @dataclass(frozen=True)

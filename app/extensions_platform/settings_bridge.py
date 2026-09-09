@@ -79,6 +79,16 @@ def host_policy_from_settings() -> HostPolicy:
         trust_signed=settings.EXTENSIONS_TRUST_SIGNED,
         allow_unsigned_dev=settings.EXTENSIONS_ALLOW_UNSIGNED_DEV,
         max_worker_crashes=_parse_max_worker_crashes(settings.EXTENSIONS_MAX_WORKER_CRASHES),
+        # ── V3（ADR-0119）────────────────────────────────────────────
+        trust_store=_load_trust_store(settings.EXTENSION_TRUST_STORE_PATH),
+        isolation_backend=_parse_isolation_backend(settings.EXTENSIONS_ISOLATION_BACKEND),
+        stream_window=_parse_bounded_int(
+            settings.EXTENSION_STREAM_WINDOW, "EXTENSION_STREAM_WINDOW", 1, 1024
+        ),
+        max_stream_events=_parse_bounded_int(
+            settings.EXTENSION_MAX_STREAM_EVENTS, "EXTENSION_MAX_STREAM_EVENTS", 1, 1_000_000
+        ),
+        version_pins=parse_version_pins(settings.EXTENSION_VERSION_PIN),
     )
 
 
@@ -199,6 +209,93 @@ def _parse_max_worker_crashes(raw: Any) -> int:
             ExtensionDiagnostic.error(
                 DiagnosticCode.MANIFEST_PARSE_FAILED,
                 f"EXTENSIONS_MAX_WORKER_CRASHES must be in [1, 10], got {value}",
+            )
+        )
+    return value
+
+
+def _load_trust_store(raw: str) -> Any:
+    """EXTENSION_TRUST_STORE_PATH → TrustStore；空 = None（V2 语义不变）。
+
+    解析 fail closed：文件不可读 / 形状非法 → typed（宁可宿主起不来，
+    不可带着半份信任根运行）。
+    """
+    path = (raw or "").strip()
+    if not path:
+        return None
+    from .trust_store import TrustStore
+
+    return TrustStore.load(Path(path))
+
+
+_ISOLATION_BACKENDS = frozenset({"process", "bubblewrap"})
+
+
+def _parse_isolation_backend(raw: str) -> str:
+    value = (raw or "process").strip().lower()
+    if value not in _ISOLATION_BACKENDS:
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_PARSE_FAILED,
+                f"EXTENSIONS_ISOLATION_BACKEND must be one of "
+                f"{sorted(_ISOLATION_BACKENDS)}, got {raw!r}",
+            )
+        )
+    return value
+
+
+def parse_version_pins(raw: str) -> dict[str, str]:
+    """EXTENSION_VERSION_PIN："id==1.2.0;id2==0.3.1" → {id: version}。"""
+    from .api_version import is_version
+
+    pins: dict[str, str] = {}
+    for chunk in (raw or "").split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        ext_id, sep, version = chunk.partition("==")
+        ext_id = ext_id.strip()
+        version = version.strip()
+        if not sep or not ext_id or not version:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"EXTENSION_VERSION_PIN entry {chunk!r} must be id==version",
+                )
+            )
+        if not is_version(version):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"EXTENSION_VERSION_PIN version {version!r} is not X.Y[.Z] semver",
+                )
+            )
+        if ext_id in pins and pins[ext_id] != version:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    f"EXTENSION_VERSION_PIN has conflicting entries for {ext_id!r}",
+                )
+            )
+        pins[ext_id] = version
+    return pins
+
+
+def _parse_bounded_int(raw: Any, field_name: str, lo: int, hi: int) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_PARSE_FAILED,
+                f"{field_name} must be an integer, got {raw!r}",
+            )
+        ) from exc
+    if value < lo or value > hi:
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_PARSE_FAILED,
+                f"{field_name} must be in [{lo}, {hi}], got {value}",
             )
         )
     return value
