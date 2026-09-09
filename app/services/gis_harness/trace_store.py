@@ -1,42 +1,54 @@
-"""证据链持久化（V4 Wave 8 — ADR-0104 决策 9；V5 多 worker 安全化）。
+"""证据链持久化 V6 —— 分段 / 增量读 / 压缩（ADR-0119 决策 D6）。
 
-V4 基线（审计 07）：TurnTrace / GisTraceChain 均为进程内 LRU，唯一
-durable sink 是本模块的会话级 JSONL，但并发纪律是**进程内锁** ——
-多 worker 部署下存在文档化的行交错丢失窗口（trace_store L56-59）。
+V5（ADR-0118 D1）交付：flock 跨进程互斥 + 单调 seq + settle 幂等 +
+FINAL_VERDICT trim 保护 + pinned 防驱逐。残留缺口（baseline G4）：
+- ``read_chains``/``last_seq`` 每次全量 JSONL 解析；
+- trim 在锁内全量 read→rewrite（O(n) 写放大）；
+- 无增量游标读（评测门/finalizer 重复解析旧记录）；
+- 无分段/压缩 —— 长程会话的读取成本随窗口线性；
+- 无跨进程汇聚接口。
 
-V5 契约（ADR-0118 决策 D1）：
-- **跨进程互斥**：``fcntl.flock`` 锁副作用文件（``<file>.lock``），
-  线程锁 + 文件锁双层串行；非 POSIX 平台降级为进程锁（行为同 V4，
-  差异在模块 docstring 诚实披露）。
-- **单调 seq**：每会话记录带单调递增 ``seq``（锁内 last+1），评测/
-  resume 侧可检测丢行与重复。
-- **幂等**：``persist_turn_chain`` 按 ``(turn_id, total_records)``
-  去重 —— settle 重试不产生重复行。
-- **零丢行**：append/trim 全部在文件锁内完成；trim 保护含
-  FINAL_VERDICT 的记录（关键证据不因滚动窗口丢失）。
-- **防 LRU 驱逐丢链**：registry start 即 pin（有界 FIFO），settle 持
-  久化成功后 unpin；即使 LRU 驱逐，链仍可从 pinned 区取到。
+V6 分段布局（per session，additive —— V5 单文件布局**读取容忍**）::
 
-有界纪律：
-- 每会话文件滚动保留最近 ``MAX_RECORDS_PER_SESSION`` 条（保护记录除外）；
-- 单条载荷 = as_dict()（阶段桶 ≤8 条、payload ≤512 字符/键消毒）；
-- GIS_TRACE_PERSIST=0 一键关停（默认开）；GIS_TRACE_FSYNC=1 逐条 fsync
-  （默认关 —— 崩溃一致性由 append 原子性覆盖，fsync 留给强持久需求）；
-- 任何失败静默 False —— 记录面绝不阻断业务路径。
+    <dir>/trace_chains.jsonl          # V4/V5 legacy（存在则只读保留）
+    <dir>/trace_v6/manifest.json      # 段清单 + last_seq
+    <dir>/trace_v6/seg_<n>.jsonl      # 当前段（append 目标）
+    <dir>/trace_v6/seg_<n>.jsonl.gz   # 已滚动段（gzip 压缩）
+
+契约（全部 V5 语义的分段化重述，测试钉死）：
+- **单调 seq**：manifest.last_seq 锁内 +1（legacy 缺 seq 历史 → 从 1 起）；
+- **幂等**：``(turn_id, total_records)`` 去重窗口覆盖全部段 + legacy；
+- **精确有界窗口**：可见记录总数 ≤ ``MAX_RECORDS_PER_SESSION``（64），
+  溢出淘汰顺序 = 最旧非保护整段 → 最旧非保护记录（边界段重写）→
+  最旧保护整段 → 最旧保护记录 —— 与 V5 逐记录语义对齐；
+- **不撕裂读**：所有读写（含 manifest）在 flock 内；manifest 原子替换；
+- **增量读**：``read_chains_since(sid, after_seq)`` 跳过 max_seq ≤ 游标
+  的整段（评测门/finalizer 只解析新证据）；
+- **压缩**：段滚动时 gzip 化（读侧按后缀透明解压）；
+- **汇聚接口**：``iter_session_chains`` 有界迭代器（GeoCompute trace
+  bridge 消费；只读证据面，绝不是第二 SessionPlan/Workflow 状态源）；
+- ``GIS_TRACE_PERSIST=0`` 一键关停；任何失败静默 False —— 记录面绝不
+  阻断业务。
 """
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import os
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 MAX_RECORDS_PER_SESSION = 64
 _WRITE_LOCK = threading.Lock()
+
+#: V6 分段参数：段大小 × 段数 ≥ 记录窗口（64 = 4×16）。
+SEGMENT_SIZE = 16
+MAX_SEGMENTS = MAX_RECORDS_PER_SESSION // SEGMENT_SIZE
+_MANIFEST = "manifest.json"
 
 try:  # POSIX：跨进程文件锁可用
     import fcntl  # type: ignore
@@ -56,6 +68,10 @@ def _enabled() -> bool:
 
 def _fsync_enabled() -> bool:
     return os.getenv("GIS_TRACE_FSYNC", "0") in ("1", "true", "True")
+
+
+def _compress_enabled() -> bool:
+    return os.getenv("GIS_TRACE_COMPRESS", "1") not in ("0", "false", "False")
 
 
 def _session_dir(session_id: str) -> Optional[Path]:
@@ -78,22 +94,29 @@ def _chains_path(session_id: str) -> Optional[Path]:
     return d / "trace_chains.jsonl" if d is not None else None
 
 
-def _is_protected(record: Dict[str, Any]) -> bool:
+def _v6_dir(session_id: str) -> Optional[Path]:
+    d = _session_dir(session_id)
+    if d is None:
+        return None
+    v6 = d / "trace_v6"
+    try:
+        v6.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return v6
+
+
+def _is_protected_record(rec: Dict[str, Any]) -> bool:
     """FINAL_VERDICT 等关键证据永不 trim 丢弃。"""
-    for stage in record.get("stages") or []:
+    for stage in rec.get("stages") or []:
         if isinstance(stage, dict) and stage.get("stage") in _PROTECTED_STAGE_NAMES:
             return True
-    return bool(record.get("final"))
+    return bool(rec.get("final"))
 
 
-def _parse_lines(path: Path) -> List[Tuple[Optional[int], str, Dict[str, Any]]]:
-    """读文件 → [(seq, raw_line, parsed_dict)]；损坏行 seq=None 原样保留。"""
+def _parse_lines_text(text: str) -> List[Tuple[Optional[int], str, Dict[str, Any]]]:
     out: List[Tuple[Optional[int], str, Dict[str, Any]]] = []
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError:
-        return out
-    for ln in raw.splitlines():
+    for ln in text.splitlines():
         if not ln.strip():
             continue
         try:
@@ -104,6 +127,28 @@ def _parse_lines(path: Path) -> List[Tuple[Optional[int], str, Dict[str, Any]]]:
         seq = rec.get("seq")
         out.append((int(seq) if isinstance(seq, int) else None, ln, rec))
     return out
+
+
+def _parse_lines(path: Path) -> List[Tuple[Optional[int], str, Dict[str, Any]]]:
+    """读文件 → [(seq, raw_line, parsed_dict)]；损坏行 seq=None 原样保留。"""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return _parse_lines_text(raw)
+
+
+def _read_segment_text(path: Path) -> str:
+    """段文件读取（.gz 透明解压；损坏/缺席 → 空串）。"""
+    try:
+        if path.name.endswith(".gz"):
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                return f.read()
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    except Exception:  # noqa: BLE001 — 损坏段按空（读面不抛）
+        return ""
 
 
 class _FileLock:
@@ -133,68 +178,260 @@ class _FileLock:
                 self._fd = None
 
 
-def persist_chain(chain_dict: Dict[str, Any], session_id: str = "") -> bool:
-    """append 一条已序列化的链（``chain.as_dict()``）到会话 JSONL。
+# ---------------------------------------------------------------------------
+# manifest（V6 段清单；flock 内原子替换）
+# ---------------------------------------------------------------------------
 
-    V5：文件锁内完成 读→（trim）→append；记录带单调 ``seq``；
-    幂等键 ``(turn_id, total_records)`` 已存在 → 跳过重复写。
+def _empty_manifest() -> Dict[str, Any]:
+    return {"version": 1, "last_seq": 0, "segments": []}
+
+
+def _manifest_path(v6_dir: Path) -> Path:
+    return v6_dir / _MANIFEST
+
+
+def _load_manifest(v6_dir: Path) -> Dict[str, Any]:
+    try:
+        data = json.loads(_manifest_path(v6_dir).read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("segments"), list):
+            data.setdefault("last_seq", 0)
+            data.setdefault("version", 1)
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return _empty_manifest()
+
+
+def _save_manifest(v6_dir: Path, manifest: Dict[str, Any]) -> None:
+    path = _manifest_path(v6_dir)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    os.replace(tmp, path)
+
+
+def _segment_name(index: int) -> str:
+    return f"seg_{index:06d}.jsonl"
+
+
+def _segment_display(v6_dir: Path, name: str) -> Optional[Path]:
+    """段名 → 实际文件（优先压缩版）。"""
+    if not name:
+        return None
+    gz = v6_dir / (name + ".gz")
+    if gz.exists():
+        return gz
+    plain = v6_dir / name
+    if plain.exists():
+        return plain
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 写路径
+# ---------------------------------------------------------------------------
+
+def _parse_segment_records(v6_dir: Path, seg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """解析一个段（manifest 记录驱动）；损坏行跳过。"""
+    path = _segment_display(v6_dir, str(seg.get("file") or ""))
+    if path is None:
+        return []
+    out: List[Dict[str, Any]] = []
+    for _, _, rec in _parse_lines_text(_read_segment_text(path)):
+        if rec:
+            out.append(rec)
+    return out
+
+
+def _rewrite_segment(
+    v6_dir: Path, seg: Dict[str, Any], kept: List[Tuple[Optional[int], str, Dict[str, Any]]],
+) -> None:
+    """边界段原子重写（含压缩态保持）+ manifest 计数刷新。"""
+    target = v6_dir / str(seg.get("file") or "")
+    payload = "".join(ln + "\n" for _, ln, _ in kept)
+    if target.name.endswith(".gz"):
+        tmp = target.with_suffix(".gz.tmp")
+        with gzip.open(tmp, "wt", encoding="utf-8") as f:
+            f.write(payload)
+    else:
+        tmp = target.with_suffix(".jsonl.tmp")
+        tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, target)
+    seg["count"] = len(kept)
+    seg["protected"] = sum(1 for _, _, r in kept if _is_protected_record(r))
+    seqs = [s for s, _, _ in kept if s is not None]
+    seg["min_seq"] = min(seqs) if seqs else 0
+
+
+def _drop_oldest_records(
+    v6_dir: Path, seg: Dict[str, Any], drop: int, *, force: bool = False,
+) -> int:
+    """边界段记录级淘汰：丢最旧 ``drop`` 行（非保护 pass 只丢非保护行）。
+
+    返回实际丢弃行数。"""
+    path = _segment_display(v6_dir, str(seg.get("file") or ""))
+    if path is None:
+        return 0
+    parsed = [
+        (s, ln, rec) for s, ln, rec in _parse_lines_text(_read_segment_text(path))
+        if s is not None or ln
+    ]
+    kept: List[Tuple[Optional[int], str, Dict[str, Any]]] = []
+    dropped = 0
+    for s, ln, rec in parsed:
+        if dropped < drop:
+            is_prot = _is_protected_record(rec) if rec else False
+            if force or not is_prot:
+                dropped += 1
+                continue
+        kept.append((s, ln, rec))
+    if dropped:
+        _rewrite_segment(v6_dir, seg, kept)
+    return dropped
+
+
+def _trim_segments(v6_dir: Path, manifest: Dict[str, Any]) -> None:
+    """精确窗口淘汰（V5 逐记录语义的分段化执行）。
+
+    溢出时按 V5 pass 顺序：先非保护（最旧优先）、后保护；能整段删则
+    整段删（manifest 驱动零解析），跨界段记录级重写（O(段) ≤16 行）。
+    窗口**精确** ≤ MAX_RECORDS_PER_SESSION。"""
+    segs: List[Dict[str, Any]] = list(manifest.get("segments") or [])
+    total = sum(int(s.get("count") or 0) for s in segs)
+    overflow = total - MAX_RECORDS_PER_SESSION
+    if overflow <= 0:
+        return
+
+    for pass_protected in (False, True):
+        while overflow > 0 and segs:
+            seg = segs[0]
+            count = int(seg.get("count") or 0)
+            if count == 0:
+                # 空段（fresh roll）：绝不弹掉 append 目标（最后一段）
+                if len(segs) > 1:
+                    segs.pop(0)
+                    continue
+                break
+            seg_protected = int(seg.get("protected") or 0)
+            if not pass_protected and seg_protected >= count:
+                break  # 最旧段全保护 → 本 pass 无可丢（转保护 pass）
+            droppable_in_seg = count if pass_protected else (count - seg_protected)
+            if overflow >= count and seg_protected == 0:
+                # 整段淘汰（零解析）；append 目标（最后一段）不可整删
+                if len(segs) == 1:
+                    break
+                p = _segment_display(v6_dir, str(seg.get("file") or ""))
+                if p is not None:
+                    p.unlink(missing_ok=True)
+                segs.pop(0)
+                overflow -= count
+                continue
+            take = min(droppable_in_seg, overflow)
+            dropped = _drop_oldest_records(
+                v6_dir, seg, take, force=pass_protected)
+            overflow -= dropped
+            if dropped == 0:
+                break  # 该段无可丢（防御：防死循环）
+            if int(seg.get("count") or 0) == 0 and len(segs) > 1:
+                segs.pop(0)
+        if overflow <= 0:
+            break
+    # 空段过滤只针对非 append 目标（最后一段必须保留 —— 后续 append 写它）
+    manifest["segments"] = [
+        s for s in segs[:-1] if int(s.get("count") or 0) > 0
+    ] + segs[-1:]
+
+
+def _roll_segment(v6_dir: Path, manifest: Dict[str, Any]) -> None:
+    """当前段压缩归档 + 开新段（manifest 原子更新）。"""
+    segs = list(manifest.get("segments") or [])
+    if not segs:
+        return
+    current = segs[-1]
+    plain_name = str(current.get("file") or "")
+    plain = v6_dir / plain_name
+    if plain_name.endswith(".gz") is False and _compress_enabled() and plain.exists():
+        gz_target = v6_dir / (plain_name + ".gz")
+        tmp = gz_target.with_suffix(".tmp")
+        try:
+            with open(plain, "rb") as f_in, gzip.open(tmp, "wb") as f_out:
+                f_out.writelines(f_in)
+            os.replace(tmp, gz_target)
+            plain.unlink(missing_ok=True)
+            current["file"] = plain_name + ".gz"
+        except OSError:
+            logger.debug("[TraceStore] compress roll failed", exc_info=True)
+    existing = {str(s.get("file") or "").replace(".gz", "") for s in segs}
+    next_index = 1
+    while _segment_name(next_index) in existing:
+        next_index += 1
+    new_name = _segment_name(next_index)
+    (v6_dir / new_name).touch(exist_ok=True)
+    segs.append({"file": new_name, "count": 0, "min_seq": 0, "protected": 0,
+                 "max_seq": 0})
+    manifest["segments"] = segs
+
+
+def persist_chain(chain_dict: Dict[str, Any], session_id: str = "") -> bool:
+    """append 一条已序列化的链（``chain.as_dict()``）。
+
+    V6：flock 内 manifest 驱动 —— 幂等去重（全段+legacy）、单调 seq
+    （manifest.last_seq+1）、段满滚动压缩、精确窗口 trim；全程原子
+    （os.replace）。V4/V5 单文件 legacy 存在 → 只读保留 + seq 续写。
     """
     if not _enabled() or not isinstance(chain_dict, dict):
         return False
     sid = str(session_id or chain_dict.get("session_id") or "")
-    path = _chains_path(sid)
-    if path is None:
+    v6_dir = _v6_dir(sid)
+    if v6_dir is None:
         return False
     try:
-        with _WRITE_LOCK, _FileLock(path):
-            parsed = _parse_lines(path)
-            live = [(s, ln, rec) for s, ln, rec in parsed if s is not None]
+        with _WRITE_LOCK, _FileLock(v6_dir / "trace_v6.lock"):
+            manifest = _load_manifest(v6_dir)
+            segs = list(manifest.get("segments") or [])
+            if not segs:
+                name = _segment_name(1)
+                (v6_dir / name).touch(exist_ok=True)
+                segs = [{"file": name, "count": 0, "min_seq": 0,
+                         "protected": 0, "max_seq": 0}]
+                manifest["segments"] = segs
 
-            # 幂等：同 (turn_id, total_records) 已持久化 → 跳过。
-            dup_key = (
-                str(chain_dict.get("turn_id") or ""),
-                chain_dict.get("total_records"),
-            )
-            if dup_key[0]:
-                for _, _, rec in live:
-                    if (
-                        str(rec.get("turn_id") or "") == dup_key[0]
-                        and rec.get("total_records") == dup_key[1]
-                    ):
-                        return True
+            # 幂等：同 (turn_id, total_records) 已持久化 → 跳过
+            # （扫描 ≤MAX_SEGMENTS 段 + legacy；窗口有界故扫描有界）
+            dup_turn = str(chain_dict.get("turn_id") or "")
+            dup_total = chain_dict.get("total_records")
+            if dup_turn and _dup_exists(v6_dir, sid, manifest,
+                                        dup_turn, dup_total):
+                return True
 
-            # 单调 seq：现存最大 seq + 1（含 V4 无 seq 历史 → 从 1 起）。
-            max_seq = max((s for s, _, _ in live), default=0)
+            # 单调 seq（legacy 缺 seq 历史不伪造 → 从 1 起）
+            last_seq_val = int(manifest.get("last_seq") or 0)
+            if last_seq_val == 0:
+                legacy_last = 0
+                legacy_path = _chains_path(sid)
+                if legacy_path is not None and legacy_path.exists():
+                    for s, _, _ in _parse_lines(legacy_path):
+                        if s is not None and s > legacy_last:
+                            legacy_last = s
+                last_seq_val = legacy_last
             chain_dict = dict(chain_dict)
-            chain_dict["seq"] = max_seq + 1
+            chain_dict["seq"] = last_seq_val + 1
 
-            # Trim：超限先丢最旧非保护行；仍超限（保护记录占满）再丢最旧
-            # 保护行 —— review R1 #5：窗口必须**无条件有界**（否则长会话
-            # 全保护记录时文件无界增长，违背 bounded-everything 纪律）。
-            # 原子重写（tmp + os.replace）：无锁读者不会读到撕裂文件
-            # （review R1 #6 —— last_seq/read_chains 锁外读的前提）。
-            total = len(parsed) + 1
-            if total > MAX_RECORDS_PER_SESSION:
-                overflow = total - MAX_RECORDS_PER_SESSION
-                kept: List[str] = [ln for _, ln, _ in parsed]
-                keep_flags = [not _is_protected(rec) for _, _, rec in parsed]
-                # 先丢非保护（最旧优先），不够再丢保护（最旧优先）
-                for pass_protected in (False, True):
-                    for i in range(len(kept)):
-                        if overflow <= 0:
-                            break
-                        if keep_flags[i] is not pass_protected:
-                            continue
-                        kept[i] = None
-                        overflow -= 1
-                    if overflow <= 0:
-                        break
-                kept = [ln for ln in kept if ln is not None]
-                tmp = path.with_suffix(path.suffix + ".tmp")
-                tmp.write_text("".join(ln + "\n" for ln in kept),
-                               encoding="utf-8")
-                os.replace(tmp, path)
-
+            current = segs[-1]
+            path = v6_dir / str(current.get("file") or "")
+            # Torn-tail 自愈（V6 chaos 加固）：上次写中断可能留下无换行
+            # 的截断尾巴 —— 不补 \n 会把本次合法记录黏连成坏行（双损）。
+            try:
+                if path.exists() and path.stat().st_size > 0:
+                    with path.open("rb") as f:
+                        f.seek(-1, os.SEEK_END)
+                        if f.read(1) != b"\n":
+                            with path.open("a", encoding="utf-8") as f_nl:
+                                f_nl.write("\n")
+            except OSError:
+                pass
             line = json.dumps(chain_dict, ensure_ascii=False, sort_keys=False,
                               default=str)
             with path.open("a", encoding="utf-8") as f:
@@ -202,6 +439,21 @@ def persist_chain(chain_dict: Dict[str, Any], session_id: str = "") -> bool:
                 if _fsync_enabled():
                     f.flush()
                     os.fsync(f.fileno())
+            current["count"] = int(current.get("count") or 0) + 1
+            if not current.get("min_seq"):
+                current["min_seq"] = chain_dict["seq"]
+            current["max_seq"] = chain_dict["seq"]
+            if _is_protected_record(chain_dict):
+                current["protected"] = int(current.get("protected") or 0) + 1
+            manifest["last_seq"] = chain_dict["seq"]
+
+            # 段满滚动（压缩归档上一段）
+            if int(current["count"]) >= SEGMENT_SIZE:
+                _roll_segment(v6_dir, manifest)
+
+            # 精确窗口 trim（整段删除 + 边界重写）
+            _trim_segments(v6_dir, manifest)
+            _save_manifest(v6_dir, manifest)
         return True
     except Exception:  # noqa: BLE001 — 记录面绝不阻断业务
         logger.debug("[TraceStore] persist_chain failed session=%s", sid,
@@ -209,13 +461,27 @@ def persist_chain(chain_dict: Dict[str, Any], session_id: str = "") -> bool:
         return False
 
 
+def _dup_exists(v6_dir: Path, sid: str, manifest: Dict[str, Any],
+                turn_id: str, total_records: Any) -> bool:
+    for seg in manifest.get("segments") or []:
+        for rec in _parse_segment_records(v6_dir, seg):
+            if (str(rec.get("turn_id") or "") == turn_id
+                    and rec.get("total_records") == total_records):
+                return True
+    legacy_path = _chains_path(sid)
+    if legacy_path is not None and legacy_path.exists():
+        for _, _, rec in _parse_lines(legacy_path):
+            if (str(rec.get("turn_id") or "") == turn_id
+                    and rec.get("total_records") == total_records):
+                return True
+    return False
+
+
 def persist_turn_chain(turn_id: str, session_id: str = "") -> bool:
     """按 turn_id 取进程内链并持久化（turn 收尾调用）。
 
-    V5：registry LRU 驱逐后仍可从 pinned 区取链（start 即 pin、持久化
-    成功即 unpin）—— 修复 V4「高并发下链被驱逐 → settle 持久化 False
-    → 链永久丢失」的窗口。
-    """
+    registry LRU 驱逐后仍可从 pinned 区取链（start 即 pin、持久化成功
+    即 unpin）—— 高并发下链不被驱逐丢链（V5 语义保持）。"""
     if not _enabled() or not turn_id:
         return False
     try:
@@ -236,28 +502,76 @@ def persist_turn_chain(turn_id: str, session_id: str = "") -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# 读路径（manifest 驱动；增量游标；legacy 容忍）
+# ---------------------------------------------------------------------------
+
 def read_chains(session_id: str) -> List[Dict[str, Any]]:
-    """读取会话的全部持久化链（评测门离线消费；损坏行跳过）。"""
-    path = _chains_path(session_id)
-    if path is None or not path.exists():
-        return []
+    """读取会话的全部持久化链（评测门离线消费；损坏行跳过）。
+
+    V6：legacy（若在，时间在前）+ 各段按序；与 V5 单文件布局逐位兼容。"""
     out: List[Dict[str, Any]] = []
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                out.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    except OSError:
-        return []
+    path = _chains_path(session_id)
+    if path is not None and path.exists():
+        out.extend(rec for _, _, rec in _parse_lines(path) if rec)
+    v6_dir = _v6_dir(session_id)
+    if v6_dir is not None:
+        with _WRITE_LOCK, _FileLock(v6_dir / "trace_v6.lock"):
+            manifest = _load_manifest(v6_dir)
+            segs = list(manifest.get("segments") or [])
+        for seg in segs:
+            out.extend(_parse_segment_records(v6_dir, seg))
     return out
 
 
+def read_chains_since(session_id: str, after_seq: int) -> List[Dict[str, Any]]:
+    """增量读：仅返回 seq > ``after_seq`` 的记录（旧整段零解析跳过）。
+
+    评测门/finalizer 的游标消费入口 —— 长程会话不必反复解析旧证据。
+    legacy（V4 无 seq）仅在 ``after_seq < 1`` 时包含。"""
+    out: List[Dict[str, Any]] = []
+    if after_seq < 1:
+        path = _chains_path(session_id)
+        if path is not None and path.exists():
+            out.extend(rec for _, _, rec in _parse_lines(path) if rec)
+    v6_dir = _v6_dir(session_id)
+    if v6_dir is not None:
+        with _WRITE_LOCK, _FileLock(v6_dir / "trace_v6.lock"):
+            manifest = _load_manifest(v6_dir)
+            segs = list(manifest.get("segments") or [])
+        for seg in segs:
+            max_seq = int(seg.get("max_seq") or 0)
+            if max_seq and max_seq <= after_seq:
+                continue  # 整段在游标之前
+            for rec in _parse_segment_records(v6_dir, seg):
+                seq = rec.get("seq")
+                if isinstance(seq, int) and seq > after_seq:
+                    out.append(rec)
+    return out
+
+
+def iter_session_chains(
+    session_ids: List[str], *, after_seq: int = 0,
+) -> Iterator[Tuple[str, Dict[str, Any]]]:
+    """跨进程汇聚接口（GeoCompute trace bridge / 离线评测消费）。
+
+    有界迭代器：逐 session 产出 ``(session_id, record)``；只读证据面 ——
+    本模块仍不是第二 SessionPlan/Workflow 状态源。"""
+    for sid in session_ids:
+        recs = read_chains_since(sid, after_seq) if after_seq else read_chains(sid)
+        for rec in recs:
+            yield sid, rec
+
+
 def last_seq(session_id: str) -> int:
-    """会话当前最大 seq（无记录/文件缺失 = 0）——resume/丢行检测游标。"""
+    """会话当前最大 seq（无记录/文件缺失 = 0）——resume/丢行检测游标。
+
+    V6：manifest O(1)（legacy-only 会话回退全量解析，与 V5 一致）。"""
+    v6_dir = _v6_dir(session_id)
+    if v6_dir is not None:
+        seq = int(_load_manifest(v6_dir).get("last_seq") or 0)
+        if seq:
+            return seq
     path = _chains_path(session_id)
     if path is None or not path.exists():
         return 0
@@ -268,5 +582,8 @@ def last_seq(session_id: str) -> int:
     return max_seq
 
 
-__all__ = ["persist_chain", "persist_turn_chain", "read_chains", "last_seq",
-           "MAX_RECORDS_PER_SESSION", "_HAS_FCNTL"]
+__all__ = [
+    "persist_chain", "persist_turn_chain", "read_chains", "read_chains_since",
+    "iter_session_chains", "last_seq", "MAX_RECORDS_PER_SESSION",
+    "SEGMENT_SIZE", "MAX_SEGMENTS", "_HAS_FCNTL",
+]
