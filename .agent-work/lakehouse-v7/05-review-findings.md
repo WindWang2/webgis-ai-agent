@@ -76,3 +76,35 @@ NIT 24 并入 9/23。**Verdict: conditional proceed → 条款已全部折入实
 | 21 | NIT | etag_checked 语义 | 修：执行即 True |
 | 22 | NIT | 预算超限报 corrupt | 修：独立 budget_exceeded 状态 |
 | 23 | NIT | eval-corpus 混入 | 修：revert（属并行 epic） |
+
+## R2 — Round 2 审查（Subagent-B；perf/memory/IO/concurrency/security）
+
+6 must-fix + 4 strongly-recommended + 13 minor/NIT。处置（本 commit）：
+
+| # | 级别 | 发现 | 处置 |
+|---|---|---|---|
+| 1 | CRITICAL | GC 枚举按对象总数截断 → 活引用漏保护（静默数据丢失）| 修：`_iter_bounded` 超限 typed abort（绝不部分视图）+ manifest 上限分离 |
+| 2 | CRITICAL | ref:cube 发布修订指向内容根（幻影） | 修：manifest_blob_id 贯通（台账 data_object_id）+ catalog content_sha256 = manifest id（GC 对账可匹配 ref 行）|
+| 3 | CRITICAL | labeled 窗口 REST 必 500（numpy coords）| 修：服务层坐标切片 + tolist + slices 序列化 + REST e2e 测试 |
+| 4 | MAJOR | GC manifest ~7× 重读放大 | 修：`_scan_manifests` 单次解析缓存（blobs/children/kind），plan/execute 全复用 |
+| 5 | MAJOR | 可达性定点 O(p×P×M×C) | 修：向下 BFS O(V+E)（引用受保护对象的孤儿父仍回收 —— union blob 保护另行生效）|
+| 6 | MAJOR | upsert 冲突 db.rollback() 丢弃同事务 Artifact/Revision | 修：savepoint（begin_nested）内插入，回退仅限本插入 |
+| 7 | MAJOR | GC admin 门信任未验证 JWT claim | 修：改用 SEC-05 `require_admin` 依赖（DB 实时角色 + token_version）|
+| 8 | MAJOR | R0-19 宽限/TTL 耦合未强制 | 修：`_registry_ttl_floor()`（同源 `_default_ttl`），grace 自动抬到 ≥ TTL；plan 响应披露 effective/requested/floor |
+| 9 | MAJOR | 测试夹具操作共享 ./data DB | 与 test_artifact_revisions.py 既有惯例一致；per-test DB 隔离记 follow-up |
+| 10 | MAJOR | xarray 适配全量物化 | 修：投影/合成路径元数据级（shape/dtype 直读）；DataArray 直传 zarr 数组 |
+| 11 | MINOR | verify/scrub 每 blob 2-3 RTT | follow-up（单 get 化）|
+| 12 | MINOR | reconcile N+1 | 修：单 IN 查询（object_id ∪ content_sha256）|
+| 13 | MINOR | 流式路径 2-3× 源重读 | follow-up |
+| 14 | MINOR | labeled 路径 event-loop 内同步 IO | 部分修（服务层 to_thread）；route tolist 留 follow-up |
+| 15 | MINOR | put_blob_stream 无 put-if-absent | follow-up（head+sidecar 预检）|
+| 16 | MINOR | sweep/reconcile 无生产调度方 | PR body 记 operator runbook |
+| 17 | MINOR | 死参数 | 部分修（_scan_manifests 签名收敛）|
+| 18 | MINOR | lineage pop(0) + 无界响应 | 修：deque（截断披露已有 truncated 字段）|
+| 19 | MINOR | 单例无锁 | follow-up（记录单线程假设）|
+| 20 | NIT | STAC href 未编码 + prev_offset 用未钳 limit | 修 |
+| 21 | NIT | _is_absent 子串匹配 | follow-up（ClientError code 匹配）|
+| 22 | NIT | execute_gc plan 形状裸 float() | 修：typed GCError |
+| 23 | NIT | delete_blob 6 RTT/键 | follow-up（S3 批量 delete_objects）|
+
+全套：563 passed / 12 skipped（含 perf nightly 4 passed 单跑）。

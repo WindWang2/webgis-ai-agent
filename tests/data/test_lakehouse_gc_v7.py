@@ -93,7 +93,7 @@ def test_plan_candidates_and_union_blob_protection(gc_env):
     orphan = _publish(tag=b"orphan-1")
     protected = _publish(tag=b"protected-1")
     _register_revision(protected)
-    plan = plan_gc(grace_hours=0.0)
+    plan = plan_gc(grace_hours=0.0, ttl_floor=0.0)
     assert orphan in plan["candidates"]
     assert protected not in plan["candidates"]
     # union 规则：protected 的 blob 绝不进 deletable（孤儿虽在候选）。
@@ -104,7 +104,7 @@ def test_plan_candidates_and_union_blob_protection(gc_env):
 
     assert hashlib.sha256(b"orphan-1").hexdigest() in plan["deletable_blobs"]
     # 确定性：同状态重规划同 token。
-    plan2 = plan_gc(grace_hours=0.0)
+    plan2 = plan_gc(grace_hours=0.0, ttl_floor=0.0)
     assert plan2["token"] == plan["token"]
     assert plan2["candidates"] == plan["candidates"]
 
@@ -137,7 +137,7 @@ def test_fork_shared_blob_survives_orphan_parent(gc_env):
         [leaf.data_object_id], kind_label="orphan-parent",
         owner_scope=scope,
     )
-    plan = plan_gc(grace_hours=0.0)
+    plan = plan_gc(grace_hours=0.0, ttl_floor=0.0)
     assert parent["data_object_id"] in plan["candidates"]
     assert child["data_object_id"] not in plan["candidates"]
     # 共享 blob（leaf 的 manifest id 与内容 blob digest）都不在 deletable。
@@ -164,7 +164,7 @@ def test_execute_deletes_orphans_and_keeps_roots(gc_env):
     orphan_b = _publish(tag=b"b")
     root = _publish(tag=b"root")
     _register_revision(root)
-    plan = plan_gc(grace_hours=0.0)
+    plan = plan_gc(grace_hours=0.0, ttl_floor=0.0)
     assert set(plan["candidates"]) == {orphan_a, orphan_b}
     result = execute_gc(plan)
     assert result["deleted_manifests"] == [orphan_a, orphan_b]
@@ -189,7 +189,7 @@ def test_stale_plan_rejected_when_state_changed(gc_env):
     )
 
     orphan = _publish(tag=b"victim-bytes")
-    plan = plan_gc(grace_hours=0.0)
+    plan = plan_gc(grace_hours=0.0, ttl_floor=0.0)
     assert orphan in plan["candidates"]
     # 计划后：新 virtual 引用候选 manifest（CAS 复用其 blob —— token 捕捉）。
     new_child = publish_data_object(
@@ -233,7 +233,7 @@ def test_gc_plan_works_on_s3_backend(gc_env, monkeypatch):
         owner_scope=normalize_owner_scope(session_id="sess-gc"),
         store=store,
     )
-    plan = plan_gc(grace_hours=0.0)
+    plan = plan_gc(grace_hours=0.0, ttl_floor=0.0)
     assert "candidates" in plan
     assert isinstance(plan["watermark"], float)
     assert plan["scanned_manifests"] == 1

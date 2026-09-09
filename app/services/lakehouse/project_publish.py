@@ -141,16 +141,21 @@ def _publish_sync(
         forbidden: List[str] = []
         for oid in object_ids:
             oid = str(oid)
+            manifest_blob_id: Optional[str] = None
             if is_data_object_id(oid):
                 manifest = resolve_data_object(oid, store=store)
+                manifest_blob_id = oid
             elif oid.startswith("ref:cube/"):
-                # 台账预解析结果（async 阶段注入 —— R1-17）。
+                # 台账预解析结果（async 阶段注入 —— R1-17）。manifest
+                # blob 键 = 台账登记的 data_object_id（R2-2：绝不以内容
+                # 根冒充 —— 幻影 location 使恢复与 GC 保护双双失效）。
                 did = (ref_manifest_ids or {}).get(oid)
                 manifest = (
                     resolve_data_object(str(did), store=store)
                     if did
                     else None
                 )
+                manifest_blob_id = str(did) if did else None
             else:
                 unknown.append(oid)
                 continue
@@ -170,13 +175,9 @@ def _publish_sync(
             artifact_id = _find_or_create_artifact(
                 db, project_id=project_id, oid=oid, manifest=manifest,
             )
-            # 修订行指向**真实 manifest blob**（评审 R1-5：manifest 的
-            # BlobStore 键 = manifest 自身 sha256 = data_object_id，绝不
-            # 与内容根 content_sha256 混同 —— 幻影 location 会让恢复与
-            # GC 引用计数双双失效）。
-            manifest_blob_id = (
-                oid if is_data_object_id(oid) else content_sha256
-            )
+            if not manifest_blob_id:
+                unknown.append(oid)
+                continue
             revision, created = record_revision(
                 db,
                 artifact_id=artifact_id,
@@ -196,7 +197,7 @@ def _publish_sync(
                 manifest,
                 owner_type="project",
                 owner_id=project_id,
-                content_sha256=content_sha256,
+                content_sha256=manifest_blob_id,
                 byte_size=int(manifest.get("byte_size") or 0),
                 ref=oid,
                 tags=tags,

@@ -148,13 +148,17 @@ def upsert_catalog_entry(db, fields: Mapping[str, Any]) -> Dict[str, Any]:
             setattr(existing, key, value)
         return {"status": "updated", "id": existing.id,
                 "object_id": existing.object_id}
+    # 并发同键插入（评审 R1-10/R2-6）：savepoint 内插入 —— 唯一约束
+    # 拦截时只回退**本插入**（savepoint），绝不 db.rollback() 丢弃调用方
+    # 同事务里的 Artifact/Revision 写入；随后回退为更新既有行。
+    nested = db.begin_nested()
     row = LakehouseCatalogItem(id=str(_uuid.uuid4()), **dict(fields))
     db.add(row)
     try:
         db.flush()
+        nested.commit()
     except IntegrityError:
-        # 并发同键插入（评审 R1-10）：唯一约束拦截 → 回退为更新既有行。
-        db.rollback()
+        nested.rollback()
         existing = (
             db.execute(
                 select(LakehouseCatalogItem).where(

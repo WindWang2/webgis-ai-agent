@@ -17,6 +17,7 @@ catalog 投影行 → **STAC 1.0.0** Item / Collection JSON（纯函数；只读
 from __future__ import annotations
 
 import json
+from urllib.parse import quote
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -175,27 +176,22 @@ def _extent_of(entries: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
 
 def _links(owner_type: str, owner_id: str,
            next_offset: Optional[int], prev_offset: Optional[int]) -> List[Dict[str, Any]]:
+    owner = quote(str(owner_id), safe="")
+    base = (
+        f"/api/v1/lakehouse/catalog/stac?owner_type={owner_type}"
+        f"&owner_id={owner}"
+    )
     links: List[Dict[str, Any]] = [{
-        "rel": "root",
-        "href": f"/api/v1/lakehouse/catalog/stac?owner_type={owner_type}&owner_id={owner_id}",
-        "type": "application/json",
+        "rel": "root", "href": base, "type": "application/json",
     }]
     if next_offset is not None:
         links.append({
-            "rel": "next",
-            "href": (
-                f"/api/v1/lakehouse/catalog/stac?owner_type={owner_type}"
-                f"&owner_id={owner_id}&offset={next_offset}"
-            ),
+            "rel": "next", "href": f"{base}&offset={next_offset}",
             "type": "application/json",
         })
     if prev_offset is not None:
         links.append({
-            "rel": "prev",
-            "href": (
-                f"/api/v1/lakehouse/catalog/stac?owner_type={owner_type}"
-                f"&owner_id={owner_id}&offset={prev_offset}"
-            ),
+            "rel": "prev", "href": f"{base}&offset={prev_offset}",
             "type": "application/json",
         })
     return links

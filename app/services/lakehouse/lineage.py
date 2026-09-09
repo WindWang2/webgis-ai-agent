@@ -10,6 +10,7 @@ manifest 层的血缘祖先遍历（元数据级、有界）：`source_refs` 的
 """
 from __future__ import annotations
 
+from collections import deque
 from typing import Any, Dict, List, Optional
 
 from app.services.lakehouse.data_object import resolve_data_object
@@ -44,12 +45,12 @@ def object_lineage(
     """祖先视图（BFS；节点/深度双闸）。返回
     ``{"root", "ancestors": [{id, kind, depth}], "edges", "truncated"}``。"""
     visited: set = set()
-    queue: List[tuple] = [(data_object_id, 0)]
+    queue: deque = deque([(data_object_id, 0)])
     ancestors: List[Dict[str, Any]] = []
     edges: List[Dict[str, str]] = []
     truncated = False
     while queue:
-        oid, depth = queue.pop(0)
+        oid, depth = queue.popleft()
         if oid in visited:
             continue
         if len(visited) >= MAX_LINEAGE_NODES or depth > MAX_LINEAGE_DEPTH:

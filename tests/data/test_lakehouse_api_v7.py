@@ -165,20 +165,20 @@ def test_catalog_dual_scope_fail_closed(client, monkeypatch):
     assert resp.status_code == 400
 
 
-def test_gc_plan_and_execute_owner_gated(client, monkeypatch):
-    # 非 admin（默认 fake user 无 role）→ 403（R1-2：GC 是全局破坏性面）。
+def test_gc_plan_and_execute_owner_gated(client):
+    # 未认证 → 401（require_admin：SEC-05，DB 实时角色 + token_version）。
     resp = client.post(
         "/api/v1/lakehouse/gc/plan",
         json={"session_id": "sess-attacker"},
     )
-    assert resp.status_code == 403
-    # 授予 admin 角色后：非 owner session 仍 404（所有权守卫独立生效）。
-    from app.core.auth import get_current_user_optional
+    assert resp.status_code == 401
+    # admin 通过后：非 owner session 仍 404（所有权守卫独立生效）。
+    from app.core.auth import require_admin
 
-    async def admin_user():
+    async def fake_admin():
         return {"user_id": "operator", "role": "admin"}
 
-    client.app.dependency_overrides[get_current_user_optional] = admin_user
+    client.app.dependency_overrides[require_admin] = fake_admin
     resp = client.post(
         "/api/v1/lakehouse/gc/plan",
         json={"session_id": "sess-attacker"},
@@ -214,3 +214,51 @@ def test_publish_endpoint_requires_owned_session(client):
         },
     )
     assert resp.status_code == 404
+
+
+def test_labeled_window_happy_path(client, tmp_path):
+    """R2-3 回归：labeled 窗口读端到端 200（坐标已 JSON 安全化 + 随切片
+    裁剪）—— 此前 numpy coords 直接进响应必 500。"""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    src = tmp_path / "data" / "src"
+    src.mkdir(parents=True, exist_ok=True)
+    sources = []
+    for i, t_label in enumerate(("2024-01-01T00:00:00Z",
+                                 "2024-02-01T00:00:00Z")):
+        path = src / f"b_{i}.tif"
+        with rasterio.open(
+            path, "w", driver="GTiff", width=8, height=8, count=1,
+            dtype="float32", crs="EPSG:4326",
+            transform=from_origin(0, 8, 1, 1), nodata=-9999.0,
+        ) as ds:
+            ds.write(np.full((8, 8), 1.0 + i, dtype="float32"), 1)
+        sources.append({
+            "time": t_label, "source": str(path),
+            "role": "optical", "band": "B02",
+        })
+    built = client.post(
+        "/api/v1/lakehouse/cubes/rs",
+        json={"session_id": "sess-v7", "title": "w",
+              "sources": sources},
+    )
+    assert built.status_code == 200, built.text
+    ref = built.json()["ref"]
+
+    resp = client.post(
+        "/api/v1/lakehouse/cubes/labeled/window",
+        json={
+            "session_id": "sess-v7", "ref": ref,
+            "time": ["2024-02-01T00:00:00Z"],
+            "bbox": [0.0, 0.0, 4.0, 4.0],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["variables"]["reflectance"]
+    # 坐标随切片裁剪（8×8 网格 bbox 4×4 → 4 值），且为 JSON list。
+    assert len(body["coords"]["y"]) == 4
+    assert len(body["coords"]["x"]) == 4
+    assert body["selection_plan"]["cells"] == 16

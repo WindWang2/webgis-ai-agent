@@ -32,6 +32,7 @@ from app.core.auth import (
     get_async_db,
     get_current_user_optional,
     get_owner_token,
+    require_admin,
     verify_session_owner,
 )
 from app.schemas.lakehouse_schema import (
@@ -82,15 +83,6 @@ def _require_session_id(session_id: Optional[str]) -> str:
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
     return session_id
-
-
-def _require_admin(user: Optional[dict]) -> None:
-    """admin 角色门禁（GC 等全局破坏性面专用；未认证/非 admin → 403，
-    不区分"未登录"与"权限不足"以外的细节）。"""
-    if not user or str(user.get("role") or "") != "admin":
-        raise HTTPException(
-            status_code=403, detail="operator admin role required",
-        )
 
 
 def _reject_project_scope(project_id: Optional[str]) -> None:
@@ -546,18 +538,23 @@ async def lakehouse_catalog_stac(
             entries_to_stac_collection,
         )
 
+        clamped_limit = min(max(int(limit), 1), 100)
+        clamped_offset = max(int(offset), 0)
         with SessionLocal() as sync_db:
             page = search_catalog(
                 sync_db, owner_type=owner_type, owner_id=effective_owner,
-                limit=min(max(int(limit), 1), 100),
-                offset=max(int(offset), 0),
+                limit=clamped_limit, offset=clamped_offset,
             )
             return entries_to_stac_collection(
                 page["items"],
                 owner_type=owner_type,
                 owner_id=effective_owner,
                 next_offset=page.get("next_offset"),
-                prev_offset=max(0, offset - limit) if offset else None,
+                prev_offset=(
+                    max(0, clamped_offset - clamped_limit)
+                    if clamped_offset
+                    else None
+                ),
             )
 
     return await asyncio.to_thread(_stac_sync)
@@ -608,6 +605,7 @@ async def scrub_lakehouse_object(
 @router.post("/lakehouse/gc/plan")
 async def plan_lakehouse_gc(
     req: GCPlanRequest,
+    _admin: dict = Depends(require_admin),
     _user: dict = Depends(get_current_user_optional),
     owner_token: Optional[str] = Depends(get_owner_token),
     db=Depends(get_async_db),
@@ -618,7 +616,6 @@ async def plan_lakehouse_gc(
     会话所有权不足以授权 —— 任何租户可借此删除宽限外的他人对象、
     plan 响应也会枚举全局孤儿 id（跨租户泄漏）。
     """
-    _require_admin(_user)
     _ = await verify_session_owner(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
@@ -639,6 +636,7 @@ async def plan_lakehouse_gc(
 @router.post("/lakehouse/gc/execute")
 async def execute_lakehouse_gc(
     req: GCExecuteRequest,
+    _admin: dict = Depends(require_admin),
     _user: dict = Depends(get_current_user_optional),
     owner_token: Optional[str] = Depends(get_owner_token),
     db=Depends(get_async_db),
@@ -647,7 +645,6 @@ async def execute_lakehouse_gc(
 
     token 重验；漂移 → 409 语义 typed 拒绝。
     """
-    _require_admin(_user)
     _ = await verify_session_owner(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,

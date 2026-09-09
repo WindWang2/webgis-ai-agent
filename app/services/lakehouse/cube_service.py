@@ -497,6 +497,8 @@ async def read_session_labeled_window(
         labeled_projection_from_store,
     )
 
+    import numpy as np_
+
     if not is_cube_ref(ref):
         raise CubeServiceError(f"not a cube ref: {str(ref)[:64]!r}")
     path = cube_store_path(session_id, ref)
@@ -504,8 +506,6 @@ async def read_session_labeled_window(
         raise CubeServiceError(
             f"cube not alive: {ref}", code="CUBE_REF_MISSING"
         )
-    import numpy as np_
-
     root = open_cube(path)
     if not (root.attrs or {}).get("labeled"):
         raise CubeServiceError(
@@ -527,7 +527,7 @@ async def read_session_labeled_window(
     plan = await asyncio.to_thread(
         plan_selection,
         projection=projection,
-        coordinates=coords,
+        coordinates={d: np_.asarray(v) for d, v in coords.items()},
         selection=selection,
         max_cells=max_cells,
     )
@@ -537,6 +537,20 @@ async def read_session_labeled_window(
     result = await asyncio.to_thread(
         read_labeled_window, path, index_slices=slices,
     )
+    # 坐标随切片裁剪 + JSON 安全化（评审 R2-3：numpy 数组既不能编码为
+    # JSON，全轴返回也是无界载荷）。
+    sliced_coords: Dict[str, Any] = {}
+    for dim, values in (result.get("coords") or {}).items():
+        sl = slices.get(dim, slice(None))
+        sliced_coords[dim] = [
+            v if not hasattr(v, "item") else v.item()
+            for v in np_.asarray(values)[sl].tolist()
+        ]
+    result["coords"] = sliced_coords
+    # slices 键里的 slice 对象 JSON 不可序列化 —— 统一为 [start, stop]。
+    result["slices"] = {
+        d: [s.start, s.stop] for d, s in (result.get("slices") or {}).items()
+    }
     result["selection_plan"] = {
         "cells": plan["cells"],
         "touched_chunks": plan["plan"]["touched_chunks"],

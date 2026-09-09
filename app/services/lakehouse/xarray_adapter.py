@@ -238,21 +238,26 @@ def open_cube_to_xarray(store) -> Any:
     if not bands:
         raise CubeError("cube declares no bands")
     times = [str(t) for t in (attrs.get("times") or [])]
-    first = np.asarray(root[bands[0]])
-    if first.ndim != 3:
+    first_arr = root[bands[0]]
+    first_shape = tuple(int(v) for v in first_arr.shape)  # 元数据级
+    if len(first_shape) != 3:
         raise CubeError(
-            f"V6 band array must be (time,y,x), got shape {first.shape}"
+            f"V6 band array must be (time,y,x), got shape {first_shape}"
         )
     band_attrs = dict(root[bands[0]].attrs or {})
     crs = attrs.get("crs") or band_attrs.get("crs")
     transform = attrs.get("transform") or band_attrs.get("transform")
     if not crs or not transform:
         raise CubeError("V6 cube attrs lack georeferencing")
-    grid = coords_from_transform_list(transform, int(first.shape[1]), int(first.shape[2]))
+    grid = coords_from_transform_list(
+        transform, int(first_shape[1]), int(first_shape[2])
+    )
     data_vars: Dict[str, Any] = {}
     for band in bands:
+        # zarr 数组经数组协议直传（惰性 —— 读取发生在 xarray 侧按需；
+        # 评审 R2-10：绝不在此 np.asarray 全量物化）。
         data_vars[band] = xr.DataArray(
-            np.asarray(root[band]),
+            root[band],
             dims=("time", "y", "x"),
             coords={"time": times, "y": grid["y"], "x": grid["x"]},
         )
@@ -271,8 +276,6 @@ def open_cube_to_xarray(store) -> Any:
 
 def labeled_projection_from_store(store) -> Dict[str, Any]:
     """store → labeled schema 投影（不打开 xarray —— 元数据级，供 manifest）。"""
-    import numpy as _np
-
     from app.services.lakehouse.cube_schema import (
         coords_from_transform_list,
         validate_labeled_schema,
@@ -288,9 +291,11 @@ def labeled_projection_from_store(store) -> Dict[str, Any]:
         times = [str(t) for t in (attrs.get("times") or [])]
         if not bands:
             raise CubeError("cube declares no bands")
-        first = _np.asarray(root[bands[0]])
-        if first.ndim != 3:
-            raise CubeError(f"V6 band array must be (time,y,x), got {first.shape}")
+        first_shape = tuple(int(v) for v in root[bands[0]].shape)  # 元数据级
+        if len(first_shape) != 3:
+            raise CubeError(
+                f"V6 band array must be (time,y,x), got {first_shape}"
+            )
         band_attrs = dict(root[bands[0]].attrs or {})
         transform = attrs.get("transform") or band_attrs.get("transform")
         crs = attrs.get("crs") or band_attrs.get("crs")
@@ -298,11 +303,11 @@ def labeled_projection_from_store(store) -> Dict[str, Any]:
         if not transform or not crs:
             raise CubeError("V6 cube attrs lack georeferencing")
         grid = coords_from_transform_list(
-            transform, int(first.shape[1]), int(first.shape[2])
+            transform, int(first_shape[1]), int(first_shape[2])
         )
         return validate_labeled_schema(
             dims=["time", "band", "y", "x"],
-            shape=(len(times), len(bands), int(first.shape[1]), int(first.shape[2])),
+            shape=(len(times), len(bands), int(first_shape[1]), int(first_shape[2])),
             coordinates={
                 "time": times,
                 "band": bands,
@@ -310,7 +315,7 @@ def labeled_projection_from_store(store) -> Dict[str, Any]:
                 "x": grid["x"],
             },
             crs=str(crs),
-            dtype=str(first.dtype),
+            dtype=str(root[bands[0]].dtype),
             nodata=nodata,
         )
     dims = [str(d) for d in (attrs.get("dims") or [])]
