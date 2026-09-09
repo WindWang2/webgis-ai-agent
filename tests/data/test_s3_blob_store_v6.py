@@ -144,6 +144,18 @@ def test_meta_sidecar_readable():
 # ── 原子发布：失败注入 ────────────────────────────────────────────────────
 
 
+
+def test_success_path_cleans_staging_object():
+    store, fake = _store()
+    key = "5" * 64
+    r = store.put_blob(key, b"hello payload", "json")
+    assert r.put_new is True
+    # staging object MUST be deleted on success path too (SEC-03)
+    staging_keys = [k for k in fake.deleted if k.startswith("staging/")]
+    assert len(staging_keys) >= 1
+    assert not [k for k in fake.objects if k.startswith("staging/")]
+    assert f"{key[:4]}/{key}.json" in fake.objects
+
 def test_copy_failure_leaves_no_final_and_cleans_staging():
     store, fake = _store(fail_on="copy_object")
     key = "7" * 64
