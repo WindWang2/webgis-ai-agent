@@ -184,6 +184,7 @@ def run_plan_sync(
     yield_check: Optional[Any] = None,
     owner_scope_override: Optional[str] = None,
     resource_envelope: Optional[dict[str, Any]] = None,
+    emit_events: bool = False,
 ):
     """同步执行入口（工具/线程上下文用；REST 走 to_thread 同一函数）。
 
@@ -232,4 +233,5 @@ def run_plan_sync(
         run_id=run_id, yield_check=yield_check,
         owner_scope_override=owner_scope_override,
         resource_envelope=resource_envelope,
+        emit_events=emit_events,
     )

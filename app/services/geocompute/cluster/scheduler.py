@@ -36,11 +36,32 @@ from app.services.geocompute.cluster.contracts import (
     MAX_PREEMPTS,
     ClusterRunStatus,
 )
-from app.services.geocompute.cluster.fairness import fair_pick, matches_profiles
+from app.services.geocompute.cluster.fairness import fair_pick
 from app.services.geocompute.cluster.store import ClusterLedger, ClusterRunStore
 from app.services.geocompute.errors import GeoComputeError
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow_naive():
+    """repo 约定的 naive UTC now（store 同款；绝不吃服务器本地时区）。"""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _parse_naive(value: Any):
+    """DB 时刻字符串/对象 → naive datetime（解析失败 → None）。"""
+    from datetime import datetime
+
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo else value
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(
+            tzinfo=None
+        )
+    except ValueError:
+        return None
 
 #: 默认心跳间隔（取消/抢占延迟的下界 ≈ 该间隔 + checkpoint 粒度）。
 DEFAULT_HEARTBEAT_INTERVAL_S = 0.5
@@ -116,6 +137,17 @@ class ClusterCoordinator:
         self._retention_s = float(retention_s)
         self._governor = governor
         self._engine = engine
+        # V7：分布式事件（fail-open）+ 对象缓存注册表（placement 局部性）
+        from app.services.geocompute.cluster.events import RunEventStore
+        from app.services.geocompute.cluster.locality import WorkerCacheRegistry
+
+        self._events = RunEventStore()
+        self._cache_registry = WorkerCacheRegistry()
+        #: worker 缓存位置声明 TTL（默认 24h；env 可调）。
+        self._cache_ttl_s = _env_float("WEBGIS_WORKER_CACHE_TTL_S", 24 * 3600.0)
+        #: waiting_resource 事件存在性去重的进程内缓存（有界：≤ batch；
+        #: 跨进程由 events.exists 兜底）。
+        self._waiting_noted: set[str] = set()
         self._pool = ThreadPoolExecutor(
             max_workers=self._local_slots, thread_name_prefix="geocompute-cluster"
         )
@@ -165,9 +197,21 @@ class ClusterCoordinator:
         stats["cancel_swept"] = len(cancelled)
         for run_id in cancelled:
             record_cancellation_latency(run_id, self._store)
-        self._store.prune_workers()
-        # M1：终态行 retention（分帧删除，每 tick 有界批）
+            self._emit_run_event(run_id, "run_cancelled", status="swept")
+        # V7：straggler 探测（run 级心跳滞后；一次性事件）
+        stats["stragglers"] = self._detect_stragglers()
+        pruned = self._store.prune_workers(ttl_s=self._worker_ttl_s())
+        if pruned:
+            stats["pruned_workers"] = len(pruned)
+            self._drop_worker_caches(pruned)
+        # M1：终态行 retention（分帧删除，每 tick 有界批）+ V7 级联 events
         self._store.purge_terminal(older_than_s=self._retention_s, limit=64)
+        # V7：孤儿事件 TTL 兜底（不依赖 run 行存活）+ 缓存位置声明 TTL
+        self._events.purge_older_than(older_than_s=self._retention_s, limit=256)
+        if self._cache_registry is not None:
+            self._cache_registry.purge_older_than(
+                older_than_s=self._cache_ttl_s, limit=64
+            )
 
         self._dispatch(stats)
         stats["preempt_requests"] = self._maybe_preempt()
@@ -228,8 +272,17 @@ class ClusterCoordinator:
 
     # --------------------------------------------------------- dispatch
 
-    def _available_profiles(self) -> Optional[frozenset[str]]:
-        """存活 worker 覆盖的 profile 并集；eager 模式 → None（本地全可执行）。"""
+    def _worker_ttl_s(self) -> float:
+        """worker 容量单一 TTL 来源（与心跳线程同一真相，审计 M1）。"""
+        try:
+            from app.services.geocompute.cluster import workers as _w
+
+            return _w._WORKER_TTL_S
+        except Exception:  # noqa: BLE001
+            return 30.0
+
+    def _eligible_workers(self) -> Optional[list[dict[str, Any]]]:
+        """存活 worker 投影；eager 模式 → None（本地全可执行，免放置）。"""
         try:
             from app.services.task_queue import celery_app
 
@@ -237,27 +290,43 @@ class ClusterCoordinator:
                 return None
         except Exception:  # noqa: BLE001 - conf 不可读按真实 broker 处理
             pass
-        covered: set[str] = set()
-        for w in self._store.live_workers(role="worker"):
-            covered |= set(w.get("profiles") or {})
-        return frozenset(covered)
+        return self._store.live_workers(role="worker")
 
     def _dispatch(self, stats: dict[str, Any]) -> None:
         free = self._local_slots - len(self._inflight)
         if free <= 0:
             return
         candidates = self._store.scan_dispatchable(limit=self._batch_size)
-        available = self._available_profiles()
-        # 通道能力匹配：必需 profile 无存活通道的 run 留队（消除队头阻塞
-        # —— 其余 run 不被单个无通道 run 卡住）。
-        candidates = [
-            c for c in candidates
-            if matches_profiles(c.get("required_profiles"), available)
-        ]
-        picked = fair_pick(
-            candidates, slots=free,
-            last_dispatch=self._store.tenant_last_dispatch(),
-        )
+        workers = self._eligible_workers()
+        picked: list[dict[str, Any]] = []
+        if workers is None:
+            # eager：本地全可执行（V6 语义 —— 逐字节兼容）
+            picked = fair_pick(
+                candidates, slots=free,
+                last_dispatch=self._store.tenant_last_dispatch(),
+            )
+        else:
+            from app.services.geocompute.cluster.contracts import ResourceRequest
+            from app.services.geocompute.cluster.placement import (
+                eligible_workers,
+                request_from_run_row,
+            )
+
+            gated: list[dict[str, Any]] = []
+            for c in candidates:
+                req = request_from_run_row(c)
+                if req == ResourceRequest():
+                    # V6 语义保留：无 profile、无 envelope 要求的 run 恒可
+                    # 派发（本地直跑路径不依赖 worker 存活 —— 逐字节兼容）
+                    gated.append(c)
+                elif eligible_workers(req, workers):
+                    gated.append(c)
+                else:
+                    self._note_waiting_resource(c["run_id"], req)
+            picked = fair_pick(
+                gated, slots=free,
+                last_dispatch=self._store.tenant_last_dispatch(),
+            )
         for row in picked:
             run_id = row["run_id"]
             epoch = self._store.claim_lease(
@@ -269,6 +338,10 @@ class ClusterCoordinator:
             )
             if epoch is None:
                 continue  # 竞争失败/账本拒绝（enforcing）→ 留队下轮再试
+            self._events.append(run_id, "run_started",
+                                worker_id=self._coordinator_id,
+                                attempt=epoch)
+            self._waiting_noted.discard(run_id)
             exec_state = _RunExecution(run_id=run_id, epoch=epoch,
                                        token=CancellationToken(job_id=run_id))
             with self._lock:
@@ -280,12 +353,70 @@ class ClusterCoordinator:
                     run_id, epoch=epoch, status=ClusterRunStatus.FAILED,
                     error_code="CLAIM_RACE", ledger=self._ledger,
                 )
+                self._events.append(run_id, "run_failed",
+                                    error_code="CLAIM_RACE")
                 with self._lock:
                     self._inflight.pop(run_id, None)
                 continue
             self._start_heartbeat(exec_state)
             self._pool.submit(self._execute_run, exec_state)
             stats["dispatched"] += 1
+
+    def _note_waiting_resource(self, run_id: str, req: Any) -> None:
+        """无合格 worker → waiting_resource 事件（一次性；有界去重）。"""
+        if run_id in self._waiting_noted:
+            return
+        self._waiting_noted.add(run_id)
+        # 有界防御：进程内集合异常膨胀时清空重来（词表外路径不存在，
+        # 集合规模上界 = 累计留队 run 数）
+        if len(self._waiting_noted) > 4096:
+            self._waiting_noted.clear()
+        if self._events.exists(run_id, "waiting_resource"):
+            return
+        reason = "no_eligible_worker"
+        if req is not None and getattr(req, "gpu", 0):
+            reason = f"no_eligible_worker:gpu>={int(req.gpu)}"
+        elif req is not None and getattr(req, "required_profiles", None):
+            reason = "no_eligible_worker:profiles"
+        self._events.append(run_id, "waiting_resource", status=reason[:20])
+
+    def _detect_stragglers(self) -> int:
+        """run 级 straggler：心跳滞后 > 3× 心跳间隔的在跑 run（一次性事件）。
+
+        处置仍交给 lease TTL reclaim（不发明新状态机）；事件只做可见性。
+        """
+        from datetime import timedelta
+
+        threshold = self._heartbeat_interval_s * 3
+        cutoff = _utcnow_naive() - timedelta(seconds=threshold)
+        lagging = self._store.scan_running(limit=self._batch_size)
+        detected = 0
+        for row in lagging:
+            hb = row.get("started_at")
+            if not hb:
+                continue
+            if _parse_naive(hb) > cutoff:
+                continue
+            run_id = row["run_id"]
+            if self._events.exists(run_id, "straggler_detected"):
+                continue
+            if self._events.append(run_id, "straggler_detected",
+                                   status="heartbeat_lag"):
+                detected += 1
+        return detected
+
+    def _emit_run_event(self, run_id: str, event: str, **kw: Any) -> None:
+        self._events.append(run_id, event, worker_id=self._coordinator_id, **kw)
+
+    def _drop_worker_caches(self, worker_ids: list[str]) -> None:
+        """prune 级联：删除失联 worker 的缓存位置声明（防幽灵位置）。"""
+        if self._cache_registry is None:
+            return
+        for worker_id in worker_ids[:64]:
+            try:
+                self._cache_registry.drop_worker(worker_id)
+            except Exception:  # noqa: BLE001 - 级联失败 = 幽灵声明（miss 方向安全）
+                pass
 
     # -------------------------------------------------------- execution
 
@@ -359,6 +490,8 @@ class ClusterCoordinator:
                 run_id=run_id,
                 yield_check=exec_state.yield_event.is_set,
                 owner_scope_override=internal.get("owner_scope"),
+                resource_envelope=internal.get("resource_request"),
+                emit_events=True,
             )
             status_map = {
                 ExecutionRunStatus.COMPLETED: ClusterRunStatus.COMPLETED,
@@ -418,6 +551,16 @@ class ClusterCoordinator:
         if ok and status == ClusterRunStatus.PREEMPTED:
             # 两段：PREEMPTED 可驻留（客户端可见）→ 立即回队尾重排。
             self._store.requeue_preempted(run_id, epoch=epoch)
+        if ok:
+            # V7：run 级终态事件（豁免节点级预算 —— 终态可见性不因洪泛丢失）
+            event = {
+                ClusterRunStatus.COMPLETED: "run_completed",
+                ClusterRunStatus.FAILED: "run_failed",
+                ClusterRunStatus.CANCELLED: "run_cancelled",
+                ClusterRunStatus.PREEMPTED: "run_preempted",
+            }.get(status)
+            if event:
+                self._emit_run_event(run_id, event, error_code=error_code)
         if not ok:
             # lease 已易主：本地结果诚实丢弃（fencing 生效的证据）。
             logger.warning(

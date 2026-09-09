@@ -364,7 +364,8 @@ class TestWorkers:
         assert live[0]["profiles"] == {"raster": 3}
         assert a.worker_heartbeat("w-raster")
         assert not a.worker_heartbeat("w-missing")
-        # 失联清理
+        # 失联清理（V7：返回被清理的 worker_id 列表 —— 调用方据此级联
+        # 删除对象缓存位置声明）
         with a._factory() as db:
             from app.models.db_model import GeoComputeClusterWorker as W
 
@@ -374,7 +375,7 @@ class TestWorkers:
                 )
             )
             db.commit()
-        assert a.prune_workers() == 1
+        assert a.prune_workers() == ["w-raster"]
         assert a.live_workers() == []
 
     def test_preempted_requeue_and_counts(self, env):

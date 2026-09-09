@@ -342,7 +342,7 @@ def test_executor_marks_node_failed_when_durable_job_dies_stale(monkeypatch):
     from app.services.geocompute import durable as durable_mod
 
     def fake_dispatch(node, *, session_id, plan_fingerprint, deadline_s,
-                      budget=None):  # budget: V6 穿透参数（跟随真实签名）
+                      budget=None, **_v7):  # budget: V6 穿透；**_v7: V7 观测/交接参数
         return {"job_id": 4242}
 
     def stale_await(job_id, *, session_id, deadline_ts, cancel_token=None):

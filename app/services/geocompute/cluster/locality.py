@@ -28,7 +28,6 @@ from app.models.db_model import GeoComputeWorkerCache as _Cache
 from app.services.geocompute.cluster.store import (
     _utcnow,
     hash_scope_key,
-    session_factory as _store_session_factory,
 )
 
 logger = logging.getLogger(__name__)
@@ -90,11 +89,19 @@ def cache_key_for(owner_scope: str, locality_key: str) -> str:
     ).hexdigest()
 
 
+def _default_factory():
+    # 调用时动态解析（与 events 同纪律：缓存注册表必须与 run 行同库；
+    # 静态绑定会让测试 monkeypatch / 多库部署失效）。
+    from app.services.geocompute.cluster import store as _store_mod
+
+    return _store_mod.session_factory()
+
+
 class WorkerCacheRegistry:
     """``geocompute_worker_cache`` 门面（登记/命中/打分投影；全部有界）。"""
 
     def __init__(self, factory: Optional[Callable[[], Any]] = None):
-        self._factory = factory or _store_session_factory
+        self._factory = factory or _default_factory
 
     # ------------------------------------------------------------ write
 

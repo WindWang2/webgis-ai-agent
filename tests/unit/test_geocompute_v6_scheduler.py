@@ -95,11 +95,15 @@ def env(tmp_path, monkeypatch):
 
     Base.metadata.create_all(eng)
     factory = sessionmaker(bind=eng, expire_on_commit=False)
-    # 证据快照/复用索引指向同一临时库（与 v5_env 同惯例）
+    # 证据快照/复用索引/集群事件与缓存注册表（V7 动态解析 csm.session_factory）
+    # 指向同一临时库（与 v5_env 同惯例）
     from app.services.geocompute import reuse_index, run_evidence
 
     monkeypatch.setattr(run_evidence, "session_factory", factory)
     monkeypatch.setattr(reuse_index, "session_factory", factory)
+    from app.services.geocompute.cluster import store as _csm
+
+    monkeypatch.setattr(_csm, "session_factory", factory)
 
     def make_coordinator(name: str, **kw) -> ClusterCoordinator:
         return ClusterCoordinator(

@@ -110,6 +110,7 @@ class ClusterRunStore:
         project_raw: Optional[str] = None,
         priority: int = RunPriority.NORMAL,
         required_profiles: Optional[list[str]] = None,
+        resource_request: Optional[dict[str, Any]] = None,
         max_queued_per_tenant: int = 32,
         max_queued_total: int = 256,
     ) -> str:
@@ -117,7 +118,8 @@ class ClusterRunStore:
 
         有界背压：租户/全局 queued 计数超限 → ``ClusterBackpressureError``
         （防队列无界增长的自 DoS）。plan 快照超预算 →
-        ``PlanSnapshotTooLargeError``。
+        ``PlanSnapshotTooLargeError``。``resource_request`` ≤1KB（V7 资源
+        envelope 投影；超界截断为 None —— envelope 缺席退回 V6 语义）。
         """
         encoded = json.dumps(plan_snapshot, ensure_ascii=False, default=str)
         if len(encoded.encode("utf-8")) > MAX_PLAN_SNAPSHOT_BYTES:
@@ -127,6 +129,15 @@ class ClusterRunStore:
             )
         tenant_key = hash_scope_key(tenant_raw, "t:")
         project_key = hash_scope_key(project_raw, "p:")
+        # V7：资源 envelope 写入侧钳制（≤1KB；超界截断为 None = V6 语义）
+        if resource_request is not None:
+            try:
+                if len(json.dumps(
+                    resource_request, ensure_ascii=False, default=str
+                ).encode("utf-8")) > 1024:
+                    resource_request = None
+            except (TypeError, ValueError):
+                resource_request = None
         run_id = new_run_id()
         with self._factory() as db:
             tenant_count = 0
@@ -170,6 +181,7 @@ class ClusterRunStore:
                 project_key=project_key,
                 priority=RunPriority.coerce(priority),
                 required_profiles=sorted(set(required_profiles or [])),
+                resource_request=resource_request,
             ))
             db.commit()
         return run_id
@@ -605,6 +617,9 @@ class ClusterRunStore:
                 "project_id": row.project_id,
                 "project_key": row.project_key,
                 "coordinator_id": row.coordinator_id,
+                "resource_request": row.resource_request if isinstance(
+                    row.resource_request, dict
+                ) else None,
             })
             return proj
 
@@ -673,7 +688,11 @@ class ClusterRunStore:
 
     def purge_terminal(self, *, older_than_s: float, limit: int = 256) -> int:
         """终态行 retention（round2 M1）：run 生命周期真相有界，历史证据
-        仍在 geocompute_run_evidence（append-once）—— 这里只清控制面行。"""
+        仍在 geocompute_run_evidence（append-once）—— 这里清控制面行。
+
+        V7：同事务级联删除本批 run 的 run_events（V7 round1 #8 —— 终态
+        证据 of record 是 evidence 表，events 是有界 trace，随 run 消失）。
+        """
         cutoff = _utcnow() - timedelta(seconds=max(60.0, float(older_than_s)))
         with self._factory() as db:
             # PG 无 DELETE ... LIMIT —— 先选 id 再按 id 删（可移植、有界）
@@ -689,9 +708,20 @@ class ClusterRunStore:
             ).scalars().all()
             if not ids:
                 return 0
+            run_ids = db.execute(
+                select(_Run.run_id).where(_Run.id.in_(ids))
+            ).scalars().all()
             deleted = db.execute(
                 delete(_Run).where(_Run.id.in_(ids))
             ).rowcount
+            if run_ids:
+                # 同事务级联（V7 round1 #8 MINOR：部分失败 = trace 丢而行在，
+                # 终态行本就等下次 purge —— 单事务把窗口压到零）
+                from app.models.db_model import GeoComputeRunEvent as _Event
+
+                db.execute(
+                    delete(_Event).where(_Event.run_id.in_([str(r) for r in run_ids]))
+                )
             db.commit()
             return int(deleted or 0)
 
@@ -704,6 +734,7 @@ class ClusterRunStore:
         role: str = "worker",
         profiles: Optional[dict[str, int]] = None,
         info: Optional[dict[str, str]] = None,
+        capability: Optional[dict[str, Any]] = None,
         ttl_s: float = 60.0,
     ) -> None:
         with self._factory() as db:
@@ -714,6 +745,7 @@ class ClusterRunStore:
             if existing is None:
                 db.add(_Worker(
                     worker_id=worker_id, role=role, profiles=profiles or {},
+                    capability=capability,
                     heartbeat_at=now, lease_expires_at=now + timedelta(seconds=ttl_s),
                     info=info or {},
                 ))
@@ -721,7 +753,9 @@ class ClusterRunStore:
                 db.execute(
                     update(_Worker)
                     .where(_Worker.worker_id == worker_id)
-                    .values(profiles=profiles or {}, heartbeat_at=now,
+                    .values(profiles=profiles or {},
+                            capability=capability,
+                            heartbeat_at=now,
                             lease_expires_at=now + timedelta(seconds=ttl_s),
                             info=info or existing.info or {})
                 )
@@ -746,20 +780,53 @@ class ClusterRunStore:
             db.commit()
             return bool(rowcount)
 
-    def prune_workers(self, *, cutoff: Optional[datetime] = None) -> int:
-        """清理失联 worker（心跳过期即视为离开 —— 集群容量随之收缩）。"""
-        cutoff = cutoff or (_utcnow() - timedelta(seconds=180))
+    def prune_workers(self, *, cutoff: Optional[datetime] = None,
+                      ttl_s: Optional[float] = None) -> list[str]:
+        """清理失联 worker（心跳过期即视为离开 —— 集群容量随之收缩）。
+
+        返回被清理的 worker_id 列表（V7：调用方据此级联删除其对象缓存
+        位置声明，防幽灵位置）。``ttl_s``：V7 起单一 TTL 来源（worker 心跳
+        TTL）—— 缺省保留旧 180s 行为（兼容显式调用方）。
+        """
+        if ttl_s is not None:
+            cutoff = _utcnow() - timedelta(seconds=max(5.0, float(ttl_s)))
+        else:
+            cutoff = cutoff or (_utcnow() - timedelta(seconds=180))
         with self._factory() as db:
+            doomed = db.execute(
+                select(_Worker.worker_id)
+                .where(
+                    _Worker.heartbeat_at < cutoff,
+                    _Worker.role == "worker",
+                )
+            ).scalars().all()
+            if not doomed:
+                return []
             deleted = db.execute(
-                _Worker.__table__.delete().where(_Worker.heartbeat_at < cutoff)
+                _Worker.__table__.delete().where(
+                    _Worker.worker_id.in_(doomed),
+                    _Worker.heartbeat_at < cutoff,
+                )
             ).rowcount
             db.commit()
-            return int(deleted or 0)
+            return [str(w) for w in doomed] if deleted else []
 
     def live_workers(
-        self, *, role: Optional[str] = None, within_s: float = 90.0
+        self, *, role: Optional[str] = None, within_s: Optional[float] = None
     ) -> list[dict[str, Any]]:
-        cutoff = _utcnow() - timedelta(seconds=within_s)
+        """存活 worker 投影（含 V7 capability）。
+
+        ``within_s`` 缺省 = worker 心跳 TTL（单一容量真相来源；V6 的 90s
+        硬编码会造成「心跳已死、容量仍在」的假窗口 —— 审计 M1）。
+        """
+        if within_s is None:
+            try:
+                from app.services.geocompute.cluster.workers import _WORKER_TTL_S
+
+                within_s = _WORKER_TTL_S
+            except Exception:  # noqa: BLE001 - 循环 import 防御（理论不触发）
+                within_s = 30.0
+        cutoff = _utcnow() - timedelta(seconds=max(1.0, float(within_s)))
         with self._factory() as db:
             q = select(_Worker).where(_Worker.heartbeat_at >= cutoff)
             if role is not None:
@@ -770,6 +837,9 @@ class ClusterRunStore:
                     "worker_id": w.worker_id,
                     "role": w.role,
                     "profiles": dict(w.profiles or {}),
+                    "capability": w.capability if isinstance(
+                        w.capability, dict
+                    ) else None,
                     "heartbeat_age_s": max(
                         0.0, (_utcnow() - w.heartbeat_at).total_seconds()
                     ),
@@ -1121,6 +1191,9 @@ def _run_projection(row: Any) -> dict[str, Any]:
         if row.yield_requested_at else None,
         "error_code": row.error_code,
         "required_profiles": list(row.required_profiles or []),
+        "resource_request": row.resource_request if isinstance(
+            row.resource_request, dict
+        ) else None,
         "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
         "started_at": row.started_at.isoformat() + "Z" if row.started_at else None,
         "terminal_at": row.terminal_at.isoformat() + "Z" if row.terminal_at else None,

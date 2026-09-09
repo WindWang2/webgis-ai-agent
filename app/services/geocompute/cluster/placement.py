@@ -19,7 +19,6 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from app.services.geocompute.cluster.capabilities import (
-    WorkerCapabilityProfile,
     capability_from_row,
 )
 from app.services.geocompute.cluster.contracts import ResourceRequest

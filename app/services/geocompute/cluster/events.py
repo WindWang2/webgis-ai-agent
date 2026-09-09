@@ -26,10 +26,7 @@ from sqlalchemy import func, select
 logger = logging.getLogger(__name__)
 
 from app.models.db_model import GeoComputeRunEvent as _Event
-from app.services.geocompute.cluster.store import (
-    _utcnow,
-    session_factory as _store_session_factory,
-)
+from app.services.geocompute.cluster.store import _utcnow
 
 #: 节点级事件 per-run 上界（append 前 COUNT；超限丢弃 + metric ——
 #: 证据只丢可观测性，不丢终态）。
@@ -70,7 +67,12 @@ def counters_snapshot() -> dict[str, int]:
 
 
 def _default_factory():
-    return _store_session_factory()
+    # **调用时**动态解析 cluster.store.session_factory —— events 必须与 run 行
+    # 同库（同 store 的事实源纪律）；静态绑定会让测试的 monkeypatch 与
+    # 多库部署各自失效（round1 修复）。
+    from app.services.geocompute.cluster import store as _store_mod
+
+    return _store_mod.session_factory()
 
 
 #: 可注入会话工厂（测试指向临时库）。

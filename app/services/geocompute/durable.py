@@ -168,6 +168,10 @@ def dispatch_node(
     budget: Optional[Any] = None,
     run_id: Optional[str] = None,
     node_attempt: Optional[int] = None,
+    input_refs: Optional[dict[str, str]] = None,
+    input_keys: Optional[dict[str, str]] = None,
+    resource_envelope: Optional[dict[str, Any]] = None,
+    owner_scope: Optional[str] = None,
 ) -> dict[str, Any]:
     """把节点提交为 durable job（幂等键 = 节点语义指纹 + 会话）。
 
@@ -211,6 +215,11 @@ def dispatch_node(
             # V7：分布式事件关联（观测元数据，不进幂等键）。
             "run_id": run_id,
             "node_attempt": node_attempt,
+            # V7 input handoff / 准入守卫 / 缓存身份（同上：全不进幂等键）
+            "input_refs": input_refs,
+            "input_keys": input_keys,
+            "resource_envelope": resource_envelope,
+            "owner_scope": owner_scope,
         },
         session_id=session_id,
         queue=queue,
