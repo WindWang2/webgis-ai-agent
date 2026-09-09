@@ -95,11 +95,20 @@ CRITICAL×5（GC/S3 datetime、GC admin 门禁、坐标平移、virtual owner
 
 ## Review Round 2 findings/fixes
 
-（Round 2 完成后填写）
+23 项（6 must-fix CRITICAL/MAJOR + 4 强烈建议 + 13 minor/NIT）。
+must-fix 全部修复：GC 枚举截断 typed abort（数据丢失面）、ref:cube
+manifest id 贯通、labeled REST 500、GC upsert savepoint、SEC-05
+require_admin、R0-19 TTL 下限强制；强烈建议 4 项（读放大/可达性
+BLOB 测试夹具 DB/惰性 xarray）已修 3 项 + 测试 DB 记 follow-up。
+详见 05-review-findings.md R2 节（commit 2a9bab94）。
 
 ## Rebase/integration verification
 
-（push 前填写：origin/master 位置 + 复测结果）
+- push 前 `git fetch` 复核：origin/master 仍在 8a33e3a5（与分支 base
+  一致）→ 无需 rebase、无双 migration head 风险（0034 down_revision
+  = 0033，`alembic heads` 单 head 实测）。
+- 全量复测：563 passed / 12 skipped（tests/data + benchmarks + CI 契约
+  + 漂移守卫）。
 
 ## Backward compatibility
 
