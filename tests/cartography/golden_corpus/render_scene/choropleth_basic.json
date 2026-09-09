@@ -1,0 +1,52 @@
+{
+  "name": "choropleth_basic",
+  "spec": {
+    "version": "1.0",
+    "view": { "center": [116.4, 39.9], "zoom": 9 },
+    "sources": {
+      "districts": { "type": "geojson", "inlineData": { "features": [] } }
+    },
+    "layers": [
+      {
+        "id": "districts_fill",
+        "source": "districts",
+        "type": "fill",
+        "paint": { "circle-color": "#3b82f6" },
+        "legend_spec": {
+          "type": "graduated",
+          "field": "pop_density",
+          "title": "人口密度",
+          "breaks": [0, 100, 500, 2000, 10000],
+          "palette_colors": ["#eff6ff", "#bfdbfe", "#60a5fa", "#1d4ed8"],
+          "nodata": { "color": "#e5e7eb", "label": "无数据" }
+        }
+      }
+    ],
+    "layout": {
+      "legend": { "visible": true, "position": "bottom-left" },
+      "components": [
+        { "id": "c_title", "type": "title", "position": "top-center", "options": { "text": "人口密度图" } },
+        { "id": "c_legend", "type": "legend", "position": "bottom-left" },
+        { "id": "c_north", "type": "north_arrow" },
+        { "id": "c_scale", "type": "scale_bar" }
+      ]
+    },
+    "thresholds": { "maxFeatures": 2000 }
+  },
+  "degradations": [],
+  "expected": {
+    "layers": [
+      { "id": "districts_fill", "visible": true, "hasLegendSpec": true, "hasLabel": false }
+    ],
+    "components": [
+      { "id": "c_legend", "type": "legend", "position": "bottom-left", "variant": "", "enabled": true, "collapsed": false },
+      { "id": "c_north", "type": "north_arrow", "position": "top-right", "variant": "", "enabled": true, "collapsed": false },
+      { "id": "c_scale", "type": "scale_bar", "position": "bottom-right", "variant": "", "enabled": true, "collapsed": false },
+      { "id": "c_title", "type": "title", "position": "top-center", "variant": "", "enabled": true, "collapsed": false }
+    ],
+    "legends": [
+      { "layerId": "districts_fill", "title": "人口密度", "entryCount": 5, "hasNodata": true }
+    ],
+    "degradationCodes": []
+  }
+}
