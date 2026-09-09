@@ -21,23 +21,13 @@
 - [x] W9 Visual Observation seam（`visual_evaluator.py`：触发白名单 §40；`GIS_VISUAL_EVALUATOR` hook 默认关闭；输出白名单校验——mutation 意图/非形状条目结构性判废，强制 domain=visual + degradation_only + 不硬阻断；评估器不接触 MapSpec）
 - [x] W10 Repair Planner（`repair_planner.py`：UnifiedFinding → 16 修复类 × 5 安全级表驱动分类；code 精确→scope 兜底；锁/override → not_allowed（user-wins 硬约束）；visual 软发现一律 requires_user_approval；degradation 面不产生自动动作；executor 只列既有通道——不建第三修复通道；`plan_repairs_for_chapter` 接入 maybe_finalize_map_product，repair_plan 进 map_product 块）
 - [x] W11 Repair Loop 防循环（finding 指纹 + state epoch（runtime_rev:mapspec_rev）+ 尝试计数账本 map_state[_repair_loop_v6]；同 finding 同 epoch → no_progress；≥3 次 → repair_exhausted → abort_with_disclosure 披露）
-- [ ] W3 Artifact/MapSpec/Node lineage 双向索引
-- [ ] W4 Semantic Diff→Affected Subgraph 接线
-- [ ] W5 Partial Recompute + Reuse Validation
-- [ ] W6 Unified Findings adapter
-- [ ] W7 Completion Verdict 单一化
-- [ ] W8 Deterministic Cartographic Observation
-- [ ] W9 Visual Observation seam
-- [ ] W10 Repair Planner
-- [ ] W11 Repair Loop 防循环
 - [x] W12 Tool Retrieval V6 + 语料 ≥300（`7a94c4e3`：ToolSemanticIndex 生产实现＋kill-switch＋paraphrase 240 条→306 条，PINNED_* 未动全绿，33 passed）
 - [x] W13 Contextual Context Assembly（`0f31a466`：v6_context_blocks 三层投影＋字节 hard cap＋度量进 budget_report，既有块通道注入，19 新＋相关 142＋上下游 159 passed）
 - [x] W14 Resume VNext（`1e25a308`：resume_verify 三裁决＋anchor schema v2＋Scenario 9 五节点链中断恢复全绿）
 - [x] W15 Human-Agent 状态收敛（`8f567075`：guard_locked_partitions 统一 guard＋lockedComponentIds＋override 三分类＋transient 剥离，Scenario 8 三路径全绿）
-- [ ] W15 Human-Agent 状态收敛（锁下沉）
-- [x] W16 Closed-loop Corpus ≥100 + 10 E2E（corpus 17×12=204 条，六段式期望零自创词汇；§57 S1-S10 一文件十测全绿）
-- [ ] W17 Performance/Security
-- [ ] W18 Docs/ADR/CHANGELOG
+- [x] W16 Closed-loop Corpus ≥100 + 10 E2E（`3a8bfa6f`：corpus 17×12=204 条，六段式期望零自创词汇；§57 S1-S10 一文件十测全绿，17 新＋关联 82 passed）
+- [x] W17 Performance/Security（`a8da6d6e`：perf 结构契约 7 项零 wall-clock＋安全门 5 项，12 项全绿，未动生产代码）
+- [x] W18 Docs/ADR/CHANGELOG（本 wave 只写文档：docs/adr/0119-contextual-cartographic-harness-v6.md＋CHANGELOG harness-v6 条目＋11-pr-summary DoD 34 项＋本文件 Waves 行；不 commit）
 
 ## Review / 收尾
 - [ ] Review Round 1（Lens A/B，BLOCKER/CRITICAL/MAJOR 清零）
@@ -47,7 +37,7 @@
 - [ ] 推送 + PR（按 §64 模板）
 
 ## Definition of Done 对照（§60，逐项核对见最终 11-pr-summary.md）
-最新 master 审计 ✅（2026-09-09）；其余 33 项随 waves 推进更新。
+W1–W18 ✅（W18 只写文档）；待办 6 项：两轮 review / honesty / rebase+复跑 / 推送 / PR。
 
 ## 日志
 - 2026-09-09：Goal 启动；worktree 就绪；Phase 0 完成；顺带修复 kimi-code subagent 通道（opencode-zen provider 补 x-opencode-session/User-Agent 头 + muse-spark support_efforts/default_effort=high + secondary_model.default_effort=high）。

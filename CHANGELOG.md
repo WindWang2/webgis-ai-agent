@@ -2,6 +2,46 @@
 
 ## [Unreleased] - 2026-09-09
 
+### Added (harness-v6: Contextual Cartographic Harness V6)
+
+- Canonical Workflow Runtime Projection: `derive_runtime_block` pure
+  projection into the single `gis_chapter[workflow_runtime_v6]` key; typed
+  node ids become the shared namespace (StageState vocabulary reused, no
+  parallel enums); evidence drift marks the typed-edge downstream closure
+  stale; wired into 3 triggers with kill switch `GIS_WORKFLOW_RUNTIME_V6`.
+- Artifact lineage: bidirectional `artifact_index` (ref → producer /
+  consumers / layers / components, capped at 96) plus node `inputs`
+  bloodline; `artifact_lineage` / `node_lineage` query APIs (absent → None).
+- Partial recompute: field-level change classification
+  (algorithm/parameter/data) feeding `compute_affected_subgraph` as the
+  sole closure engine; `changes` + `recompute_plan` persisted into the
+  runtime block; reuse validation snapshot (`list_artifacts` ≤ 128) with
+  safe/unknown/unsafe verdicts (`reuse_unsafe:*` forces recompute).
+- Unified findings + single verdict: 12-field `UnifiedFinding` projection
+  (34 finalizer + 18 render-diagnostic codes, bounded ≤ 24); runtime stale
+  is a hard input to the completion contract (READY* pressed to NEEDS_REPAIR).
+- Observation & repair loop: deterministic layout findings
+  (floating-component overlap/off-canvas → warning) plus a 7-phase
+  component lifecycle; visual evaluator seam (default off via
+  `GIS_VISUAL_EVALUATOR`); table-driven repair planner (16 classes ×
+  5 safety levels, locks → not_allowed) with fingerprint + epoch ledger
+  (≤ 32 entries, ≥ 3 attempts → repair_exhausted disclosure).
+- Tool Retrieval V6: production `ToolSemanticIndex` (cosine floor 0.15,
+  6.0 magnitude, top-512 cap) behind `TOOL_RETRIEVAL_SEMANTIC` with
+  lexical fallback; paraphrase corpus 66 → 306 entries
+  (p@1 0.6242 / r@5 0.8282 / r@10 0.8775 / invalid 0.2917).
+- Contextual assembly: three-tier projections with byte hard caps
+  (node-local 2048B / workflow-global 4096B / map-situation 2048B).
+- Resume VNext: live/stale/unknown revalidation (anchor schema v2)
+  instead of assume-valid resume.
+- Human-agent convergence: unified `guard_locked_partitions`
+  (code=layer_locked), `lockedComponentIds`, three-way override
+  classification, transient-key stripping at commit boundary.
+- Closed-loop corpus: 17 chart types × 12 fault injections = 204 cases;
+  ten deterministic §57 E2E scenarios (S1–S10) green.
+- Perf/security gates: 7 structural perf contracts (zero wall-clock) +
+  5 security gates, all green, no production code touched.
+
 ### Added (science-v4: Spatial Science & GeoAI Platform V4)
 - Geostatistics V4: simple kriging, external-drift kriging (KED), normal-score
   transform, nested-variogram fitting (honest ConvergenceFailure when not
