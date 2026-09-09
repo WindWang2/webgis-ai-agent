@@ -37,7 +37,13 @@ logger = logging.getLogger(__name__)
 #: 语义检索注入点：``TOOL_RETRIEVAL_SEMANTIC="module:callable"``。
 #: callable 签名 ``(registry, query: str, top_k: int) -> Sequence[RetrievalHit]``。
 #: 未设置 / 加载失败 / 调用异常 → 词法 baseline（绝不让投影失败）。
+#: kill-switch（W12a）：spec 取 off/0/disabled/none（大小写/空白不敏感）
+#: 或 ``GIS_TOOL_SEMANTIC=0`` → 语义路径整体缺席，静默返回 None（不打
+#: warning —— 关掉就是关掉，不算故障），选择逐位回退词法。
 _SEMANTIC_RETRIEVER_SPEC = os.getenv("TOOL_RETRIEVAL_SEMANTIC", "").strip()
+
+#: kill-switch 的 spec 取值（调用期 strip + lower 后命中）。
+_SEMANTIC_OFF_SPECS = frozenset({"off", "0", "disabled", "none"})
 
 #: 投影规模（goal §三：10-30 个）
 DEFAULT_K_MIN = 10
@@ -234,7 +240,10 @@ class SurfaceSelection:
 
 
 def _load_semantic_retriever():
-    if not _SEMANTIC_RETRIEVER_SPEC:
+    spec = (_SEMANTIC_RETRIEVER_SPEC or "").strip()
+    if not spec or spec.lower() in _SEMANTIC_OFF_SPECS:
+        return None
+    if os.getenv("GIS_TOOL_SEMANTIC", "").strip() == "0":
         return None
     try:
         module_name, _, attr = _SEMANTIC_RETRIEVER_SPEC.partition(":")

@@ -1,8 +1,9 @@
 """Retrieval V5 open-loop query→tool 评测门（ADR-0118 决策 D7）。
 
-语料：``app/evaluation/retrieval_eval_corpus.py`` —— 66 条人工金标
-（direct 30 / near_duplicate 6 对 / hard_negative 12 / ambiguous 12，
-zh+en），与 lexical 索引、capability 反查**不同源**，查询为口语措辞。
+语料：``app/evaluation/retrieval_eval_corpus.py`` —— 306 条人工金标
+（direct 30 / near_duplicate 6 对 / hard_negative 12 / ambiguous 12 /
+paraphrase 240，zh+en），与 lexical 索引、capability 反查**不同源**，
+查询为口语措辞。
 
 口径：开环（只给 user_message，剥离 planner 的 active_capabilities
 提示）；precision@1 在去 CORE 常驻工具的检索排序段上计算。
@@ -47,7 +48,8 @@ def test_corpus_size_and_kinds():
     cases = get_retrieval_eval_corpus()
     assert len(cases) >= MIN_EVAL_CORPUS_SIZE
     kinds = {c.kind for c in cases}
-    assert kinds == {"direct", "near_duplicate", "hard_negative", "ambiguous"}
+    assert kinds == {"direct", "near_duplicate", "hard_negative", "ambiguous",
+                     "paraphrase"}
     # 歧义类合法集 ≥2；hard_negative 必带禁选集
     for c in cases:
         if c.kind == "ambiguous":
