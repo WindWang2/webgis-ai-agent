@@ -47,6 +47,10 @@ NIGHTLY_ONLY_PERF_FILES = {
     "test_perf_mapspec_e2e.py": (
         "1k/10k/50k MapSpec upsert + lag monitor exceeds the PR 180s budget"
     ),
+    "test_perf_mapspec_svg_compile.py": (
+        "20k-feature SVG compile wall-clock (15s structural budget); "
+        "flaky under PR load / --cov"
+    ),
 }
 
 _STDLIB = set(sys.stdlib_module_names)
