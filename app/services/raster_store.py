@@ -42,10 +42,26 @@ def save_png(session_dir: Path, raster_id: str, png_bytes: bytes) -> str:
   `ref:raster/<id>` form (not a raw path) so the ref is opaque and the
   serving route owns path resolution — mirroring how geojson `ref:` cursors
   hide their storage location.
+
+  V6 (ADR-0118): 原子发布（tmp + os.replace）—— 全仓持久写统一纪律；
+  此前的裸 `open(..., "wb")` 是唯一例外，崩溃可留下半截 PNG（快照
+  restore 侧早已原子写，主写路径反而不是）。
   """
+  import os
+  import uuid
+
   path = raster_dir(session_dir) / f"{raster_id}.png"
-  with open(path, "wb") as f:
-    f.write(png_bytes)
+  tmp = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex[:8]}")
+  try:
+    with open(tmp, "wb") as f:
+      f.write(png_bytes)
+    os.replace(tmp, path)
+  except Exception:
+    try:
+      os.unlink(tmp)
+    except OSError:
+      pass
+    raise
   return f"ref:raster/{raster_id}"
 
 

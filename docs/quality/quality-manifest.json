@@ -4591,8 +4591,8 @@
   }
  ],
  "behavioral": {
-  "dispatch": 151,
-  "mention": 140,
+  "dispatch": 152,
+  "mention": 139,
   "none": 0
  },
  "capabilities": [
@@ -6839,7 +6839,7 @@
  },
  "findings": [],
  "findings_ratchet": {
-  "behavioral_dispatch": 151,
+  "behavioral_dispatch": 152,
   "expired_waivers": [],
   "min_behavioral_dispatch": 151,
   "pass": true,
@@ -6847,7 +6847,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "4da817f26bf46429a6a94cadc20afd6bfd8bcd830a8b2d41511ea60eb15f949a",
+ "fingerprint": "1ef491af60c6a091ac1e63f916a164552d0115adff69999b443429d73d753ded",
  "gate": {
   "fields": {
    "capabilities": {
@@ -7776,7 +7776,7 @@
    "tier": 2
   },
   {
-   "behavior": "mention",
+   "behavior": "dispatch",
    "capabilities": [
     "raster_cog_conversion"
    ],
@@ -7798,6 +7798,7 @@
     "瓦片"
    ],
    "tests": [
+    "tests/data/test_raster_lakehouse_v6.py",
     "tests/unit/gis/test_algo_conformance_v2.py",
     "tests/unit/lib/test_geo_raster_chunks_v6.py"
    ],

@@ -51,6 +51,12 @@ NIGHTLY_ONLY_PERF_FILES = {
         "20k-feature SVG compile wall-clock (15s structural budget); "
         "flaky under PR load / --cov"
     ),
+    "test_lakehouse_v6.py": (
+        "ADR-0118: depends on the optional geo stack (zarr is not a "
+        "requirements.txt dependency — PR lane would skip or red at import) "
+        "and carries wall-clock ratio bands; structural evidence stays "
+        "deterministic for nightly"
+    ),
 }
 
 _STDLIB = set(sys.stdlib_module_names)
