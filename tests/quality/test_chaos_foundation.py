@@ -37,7 +37,9 @@ CHAOS_MODULE = REPO / "tests" / "fixtures" / "chaos.py"
 
 _FAULT_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 _SUBSYSTEMS = {"CACHE", "LOCK", "REGISTRY", "INGEST", "CANCEL", "LLM",
-                "STORAGE"}
+                "STORAGE",
+                # Quality V3 W13：跨系统 job/DB 域
+                "JOBS", "DB"}
 
 
 @pytest.fixture(autouse=True)
