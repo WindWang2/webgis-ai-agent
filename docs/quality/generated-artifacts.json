@@ -2,7 +2,7 @@
  "artifacts": {
   "docs/quality/CONTRACT_DRIFT_REPORT.md": {
    "generator": "scripts/gen_drift_report.py",
-   "input_fingerprint": "eaab38827bd8fb26a30d332d1d370c633e6e39e549b5b19c6c48647fe1f46316",
+   "input_fingerprint": "9cf5b0080dd7779c596a49ec22ce7102c56789d05537b357a64c16af3dc334ce",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -22,7 +22,7 @@
   },
   "docs/quality/QUALITY_REPORT.md": {
    "generator": "scripts/gen_quality_report.py",
-   "input_fingerprint": "08b854079796270d43cc0b65a7fea55d7de5096f38d93de2ca6a39f7ecc42c62",
+   "input_fingerprint": "1a825a82baf7f4aebd26217055193a4e71e26bdc043982eda9ad52946457cb48",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -68,7 +68,7 @@
   },
   "docs/quality/contract-drift-report.json": {
    "generator": "scripts/gen_drift_report.py",
-   "input_fingerprint": "eaab38827bd8fb26a30d332d1d370c633e6e39e549b5b19c6c48647fe1f46316",
+   "input_fingerprint": "9cf5b0080dd7779c596a49ec22ce7102c56789d05537b357a64c16af3dc334ce",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -88,7 +88,7 @@
   },
   "docs/quality/quality-report.json": {
    "generator": "scripts/gen_quality_report.py",
-   "input_fingerprint": "08b854079796270d43cc0b65a7fea55d7de5096f38d93de2ca6a39f7ecc42c62",
+   "input_fingerprint": "1a825a82baf7f4aebd26217055193a4e71e26bdc043982eda9ad52946457cb48",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
