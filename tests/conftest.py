@@ -110,6 +110,14 @@ _ENV_BASELINE = {
         "EXTENSIONS_ACTIVATE_UNTRUSTED": "false",
         "EXTENSION_FEATURE_FLAGS": "{}",
         "EXTENSION_SETTINGS_JSON": "{}",
+        # ADR-0105 V2：与 Settings 默认等价（供应链/隔离配置全部关闭/空）。
+        "EXTENSION_SECRETS_JSON": "{}",
+        "EXTENSION_NETWORK_ALLOW": "",
+        "EXTENSION_ARTIFACT_ROOTS": "",
+        "EXTENSION_TRUSTED_PUBLISHERS": "",
+        "EXTENSIONS_TRUST_SIGNED": "false",
+        "EXTENSIONS_ALLOW_UNSIGNED_DEV": "false",
+        "EXTENSIONS_MAX_WORKER_CRASHES": "2",
         "STAC_API_URL": "https://earth-search.aws.element84.com/v1",
         # Spatial Lakehouse V6（ADR-0118）：对象存储后端选择（默认 filesystem
         # = 行为零变化）。s3 凭据钉空串 —— 测试进程绝不持有真实 secret。

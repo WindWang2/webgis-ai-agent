@@ -19,7 +19,7 @@ V1 不新增流式/瓦片方法——见 limitations）。
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from ..diagnostics import DiagnosticCode, ExtensionDiagnostic
 from ..permissions import Permission
@@ -81,3 +81,70 @@ class ProviderExtensionSpec:
                 )
             )
         return diagnostics
+
+
+# ── V2（ADR-0105 / Wave 10）：扩展能力协议（可选 mixin）──────────────────
+#
+# 核心 ``GeospatialDataSourceAdapter`` ABC 保持 7 个 sync 方法不变（核心
+# 契约，归 Data Control Plane 所有）。这些协议是**扩展作者的可选 mixin**：
+# 适配器额外实现即获得对应扩展能力；是否消费由调用方（data fabric 分发、
+# 认证 harness、worker 通道）按探测结果决定。V2 内 data_fabric 对这些
+# mixin 的分发接入是明确的 follow-up（接口边界见 ADR-0105）。
+
+
+@dataclass(frozen=True)
+class TilePayload:
+    """一个栅格瓦片的传输形态（bytes + content type + 元信息）。"""
+
+    data: bytes
+    content_type: str = "image/png"
+    extent: Optional[tuple[float, float, float, float]] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
+class StreamingVectorProvider:
+    """矢量流式分页协议：``stream_features(query, page_size) -> Iterator[dict]``。
+
+    事件为 GeoJSON Feature dict；由实现方内部翻页，调用方按迭代消费
+    （天然支持提前 close 的协作式取消）。
+    """
+
+    def stream_features(self, query: dict[str, Any], page_size: int = 500):  # pragma: no cover - 协议
+        raise NotImplementedError
+
+
+class TileProvider:
+    """栅格瓦片协议：``get_tile(z, x, y, **params) -> TilePayload``。"""
+
+    def get_tile(self, z: int, x: int, y: int, **params: Any) -> TilePayload:  # pragma: no cover - 协议
+        raise NotImplementedError
+
+
+class RasterWindowProvider:
+    """栅格窗口协议：``get_raster_window(bbox, crs, width, height) -> dict``。
+
+    返回 dict：``{"data_b64": str, "dtype": str, "shape": [h, w],
+    "crs": str, "bbox": [...], "nodata": ...}``（小窗口分析取数用）。
+    """
+
+    def get_raster_window(
+        self,
+        bbox: tuple[float, float, float, float],
+        crs: str,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:  # pragma: no cover - 协议
+        raise NotImplementedError
+
+
+_EXTENDED_PROTOCOLS: tuple[tuple[str, type], ...] = (
+    ("streaming_vector", StreamingVectorProvider),
+    ("tiles", TileProvider),
+    ("raster_window", RasterWindowProvider),
+)
+
+
+def extended_provider_capabilities(adapter: Any) -> list[str]:
+    """探测适配器实现的扩展能力（确定性排序；供认证/审计/状态展示）。"""
+    cls = adapter if isinstance(adapter, type) else type(adapter)
+    return [name for name, protocol in _EXTENDED_PROTOCOLS if issubclass(cls, protocol)]

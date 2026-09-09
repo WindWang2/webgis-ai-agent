@@ -81,6 +81,12 @@ async def lifespan(app: FastAPI):
             configure_extension_host(ExtensionHost.from_settings(tool_registry=registry))
             _ext_host = get_extension_host()
             if _ext_host is not None:
+                # ADR-0105 V2：post-startup 投影变化（activate/deactivate/回滚）
+                # 立即刷新 tools args 枚举 + 重编译权威 runtime manifest，
+                # 消除 V1「deactivate 后 manifest 悬挂旧值」的 known limitation。
+                from app.extensions_platform.refresh import make_projection_refresher
+
+                _ext_host.set_projection_change_hook(make_projection_refresher(registry))
                 _ext_host.discover()
                 _results = _ext_host.activate_all()
                 # Round-1 审计 A-1：扩展域词表进入 list_available_tools 的

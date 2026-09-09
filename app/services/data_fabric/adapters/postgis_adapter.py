@@ -869,7 +869,11 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 sample_sql = ""
 
             sql = (
-                f"SELECT {', '.join(select_list)} FROM "
+                # B608 的豁免理由：标识符全走白名单 —— schema/table
+                # 出自 _sanitize_identifier（^[A-Za-z0-9_]+$），列名经
+                # quote_ident（_check_field_name + field_names 校验）；
+                # 值（cursor 键、谓词）全部 %s 占位符参数绑定，无拼接注入面。
+                f"SELECT {', '.join(select_list)} FROM "  # nosec B608 # 理由见上方注释
                 f'"{meta.schema}"."{meta.table}"'
                 f"{sample_sql}"
                 f"{(' WHERE ' + ' AND '.join(where_fragments)) if where_fragments else ''}"
@@ -935,7 +939,10 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             )
             if first_page and local_filter is None:
                 count_sql = (
-                    f'SELECT COUNT(*) FROM "{meta.schema}"."{meta.table}"'
+                    # B608 的豁免理由：schema/table 经 _sanitize_identifier
+                    # 白名单校验（^[A-Za-z0-9_]+$）；where_sql 由
+                    # compile_predicate_sql 编译，值经 %s 参数绑定传入 execute。
+                    f'SELECT COUNT(*) FROM "{meta.schema}"."{meta.table}"'  # nosec B608 # 理由见上方注释
                     f"{(' WHERE ' + where_sql) if where_sql else ''}"
                 )
                 cur.execute(count_sql, tuple(params))
@@ -1159,7 +1166,10 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             }[a.func]
             select_parts.append(f"{fn} AS {quote_ident(name)}")
         sql = (
-            f"SELECT {', '.join(select_parts)} FROM "
+            # B608 的豁免理由：聚合列先经 field_names 成员校验再
+            # quote_ident 包裹，schema/table 经 _sanitize_identifier 白名单；
+            # where_sql 编译后的值全部 %s 参数绑定，无用户输入拼接。
+            f"SELECT {', '.join(select_parts)} FROM "  # nosec B608 # 理由见上方注释
             f'"{meta.schema}"."{meta.table}"'
             f"{(' WHERE ' + where_sql) if where_sql else ''}"
         )
@@ -1289,7 +1299,10 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                   {extra_where}
                 LIMIT %s
             ) AS tile WHERE tile.geom IS NOT NULL;
-            """
+            """  # nosec B608 # gcol 经 _sanitize_geom_col 校验（二阶注入防御）、
+            # tolerance 为 zoom 派生浮点、col_srid 为 geometry_columns 的 int、
+            # schema/table 经 _sanitize_identifier 白名单；z/x/y 及全部过滤值
+            # 经 %s 占位符 + params 元组参数绑定（见下一行），无用户输入拼接。
             params = [z, x, y, z, x, y, z, x, y] + extra_params + [MVT_MAX_FEATURES_PER_TILE]
             cur = conn.cursor()
             cur.execute(sql, tuple(params))
@@ -1339,7 +1352,10 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 raise InvalidQueryError(f"group field '{group_field}' not in schema")
             q_group = quote_ident(group_field)
             sql = (
-                f'SELECT g.{q_group} AS group_key, COUNT(*) AS cnt '
+                # B608 的豁免理由：group_field 先经 gm.field_names 成员
+                # 校验（上行 raise）再 quote_ident 包裹；clauses 由
+                # compile_predicate_sql 编译、值经 %s 参数绑定；LIMIT %s。
+                f'SELECT g.{q_group} AS group_key, COUNT(*) AS cnt '  # nosec B608 # 理由见上方注释
                 f'FROM "{pm.schema}"."{pm.table}" AS p, "{gm.schema}"."{gm.table}" AS g '
                 f"WHERE {' AND '.join(clauses)} "
                 f"GROUP BY g.{q_group} LIMIT %s;"
@@ -1361,7 +1377,10 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                 descriptor = self._descriptor_from_meta(dataset_id, meta)
                 where_sql, params, _ = self._compile_where(v2, meta, descriptor)
             sql = (
-                f'SELECT COUNT(*) FROM "{meta.schema}"."{meta.table}"'
+                # B608 的豁免理由：schema/table 经 _sanitize_identifier
+                # 白名单校验（^[A-Za-z0-9_]+$）；where_sql 由
+                # compile_predicate_sql 编译，值经 %s 参数绑定传入 execute。
+                f'SELECT COUNT(*) FROM "{meta.schema}"."{meta.table}"'  # nosec B608 # 理由见上方注释
                 f"{(' WHERE ' + where_sql) if where_sql else ''}"
             )
             cur = conn.cursor()

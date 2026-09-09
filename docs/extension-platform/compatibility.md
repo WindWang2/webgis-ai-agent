@@ -10,7 +10,7 @@ There is no "compatible by default" fallback.
 
 | Axis | Constant / field | Current value | What it covers |
 | --- | --- | --- | --- |
-| Extension API | `CORE_API_VERSION` (host) vs manifest `api_version` | `1.0.0` | The host's extension-facing interface: `ExtensionContext` methods and the projection registrar shapes |
+| Extension API | `CORE_API_VERSION` (host) vs manifest `api_version` | `1.1.0` | The host's extension-facing interface: `ExtensionContext` methods and the projection registrar shapes |
 | Manifest schema | `MANIFEST_SCHEMA_VERSION` (host) vs manifest `schema_version` | `1` | The `manifest.json` document format itself |
 | Core release | `CORE_RELEASE_VERSION` (host) vs manifest `minimum_core_version` / `maximum_core_version` | `0.1.3` | The overall host release an extension was written against |
 
@@ -23,16 +23,65 @@ There is no "compatible by default" fallback.
   a major; an extension may not require features newer than the host).
 - Patch level is ignored.
 
-With host `1.0.0`:
+With host `1.1.0`:
 
 | Manifest `api_version` | Verdict | Reason |
 | --- | --- | --- |
-| `1.0.0` | compatible | exact match |
+| `1.1.0` | compatible | exact match |
+| `1.0.0` | compatible | older minor — the host is backward compatible (all 1.0.x extensions keep working) |
 | `1.0` | compatible | patch defaults to 0 |
-| `1.1.0` | incompatible | minor 1 newer than host minor 0 |
+| `1.2.0` | incompatible | minor 2 newer than host minor 1 |
 | `2.0.0` | incompatible | major 2 ≠ host major 1 |
 | `0.9.0` | incompatible | major 0 ≠ host major 1 |
 | `"1.2.3.4"` | incompatible | not parseable semver |
+
+## The 1.1.0 release (V2, additive)
+
+`CORE_API_VERSION` 1.0.0 → 1.1.0 ships the ADR-0105 feature set. The bump
+is **purely additive** — the minor compatibility rule is unchanged, so
+every extension built for `1.0.x` keeps validating and activating exactly
+as before:
+
+- **New optional manifest sections** (a 1.0.x manifest without them is
+  byte-identical in meaning): `execution` (worker isolation budgets),
+  `model_providers` (GIS inference-model providers), and
+  `dependencies[].version` constraint strings (`">=1.2,<2.0"` syntax).
+  `MANIFEST_SCHEMA_VERSION` stays `1`.
+- **`model_provider` is a supported extension type** — it moved out of
+  `RESERVED_FUTURE_TYPES` into `EXTENSION_TYPES`. Manifests declaring it
+  under `api_version 1.0.0` are now rejected for a different, precise
+  reason: the V2 feature floor.
+- **V2 feature floor (`V2_FEATURE_API_FLOOR = (1, 1, 0)`).** A manifest
+  that uses any V2 feature (`execution`, `model_providers`, the
+  `model_provider` type, or dependency version constraints) must declare
+  `api_version >= 1.1.0`. The gate is a fail-closed cross-field check at
+  parse time: an old-api manifest carrying V2 fields gets a structural
+  rejection naming the rule, never a silent "unknown field".
+- **New diagnostics are append-only** (`worker_*`, `broker_denied`,
+  `signature_*`, `package_tampered`, `dependency_constraint_invalid`,
+  `dependency_conflict`, `operation_in_flight`, `output_limit_exceeded`,
+  `resource_limit_unavailable`, `signature_verified`) — existing codes are
+  never renumbered.
+- **Conformance corpus updates:** the compatibility family now treats
+  `1.1.0` as a *compatible* api_version (it was in the incompatible
+  examples under host 1.0.0), and the type-vocabulary family treats
+  `model_provider` as supported. The `v2_contract` family (20 cases) pins
+  the floor gating and the worker structural rules.
+
+### Upgrade and rollback semantics (V2)
+
+- `host.upgrade(extension_id)` is the safe hot-swap after the operator
+  replaces the pack directory on disk: preflight (manifest re-read, id
+  stability, version-regression check, dependency-conflict check) runs
+  *without touching the running extension*, then delegates to
+  `reload()`.
+- **Version regressions are refused** (`reload` / `upgrade`) unless the
+  operator passes `allow_downgrade=True` — rollback is an explicit,
+  operator-driven act: restore the old pack directory, then
+  `reload(id, allow_downgrade=True)`. The host keeps no version copies.
+- **Dependency conflicts refuse the upgrade** (`dependency_conflict`,
+  error): if any other extension declares a version constraint on this id
+  that the new version violates, the old version keeps running.
 
 ## Rule 2: core version window
 
