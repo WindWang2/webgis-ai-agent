@@ -57,6 +57,23 @@ async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
         ref_ids = list((await session_data_manager.list_refs(session_id)).keys())
     except Exception:  # noqa: BLE001 — ref 清单缺席照常建锚（恢复时披露）
         ref_ids = []
+    # V6（ADR-0119 D4）：durable context —— recovery 状态 + reasoning 摘要
+    # 入锚（分层词表内的 durable facts；不含 LLM raw context / 密钥）。
+    from app.services.gis_harness.durable_context import (
+        RECOVERY_STATE_KEY,
+        reasoning_digest,
+        recovery_state_for_anchor,
+    )
+
+    recovery_state: Dict[str, Any] = {}
+    try:
+        map_state = await session_data_manager.get_map_state(session_id)
+        if isinstance(map_state, dict):
+            raw = map_state.get(RECOVERY_STATE_KEY)
+            if isinstance(raw, dict):
+                recovery_state = recovery_state_for_anchor(raw)
+    except Exception:  # noqa: BLE001 — recovery 态缺席照常建锚
+        recovery_state = {}
     return {
         "schema_version": _ANCHOR_SCHEMA_VERSION,
         "created_at": time.time(),
@@ -68,6 +85,8 @@ async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
         "trace_last_seq": last_seq(session_id),
         "ref_ids": ref_ids[:MAX_ANCHOR_REFS],
         "refs_truncated": len(ref_ids) > MAX_ANCHOR_REFS,
+        "recovery_state": recovery_state,
+        "reasoning_digest": reasoning_digest(chapter, recovery_state),
     }
 
 
@@ -222,6 +241,28 @@ async def resume_from_anchor(
     await session_data_manager.set_map_state(
         new_sid, "_resumed_from", {"anchor_id": anchor_id, "source_session_id": old_sid}
     )
+
+    # V6（ADR-0119 D4）：锚点内 recovery_state 重注入新 session —— 恢复后
+    # 的 continuation 裁决从 durable 证据（循环预算余量）出发，不机械
+    # replay 也不凭空重置预算。同时续接 durable 恢复账本（D5）。
+    try:
+        from app.services.gis_harness.durable_context import (
+            RECOVERY_STATE_KEY,
+            new_recovery_state,
+            recovery_state_for_anchor,
+        )
+
+        carried_state = recovery_state_for_anchor(
+            anchor.get("recovery_state") or {})
+        if carried_state:
+            await session_data_manager.set_map_state(
+                new_sid, RECOVERY_STATE_KEY, carried_state)
+        else:
+            await session_data_manager.set_map_state(
+                new_sid, RECOVERY_STATE_KEY, new_recovery_state())
+    except Exception:  # noqa: BLE001 — 注入失败不阻断恢复
+        logger.warning("[ResumeAnchor] recovery_state re-inject failed",
+                       exc_info=True)
 
     # V6（ADR-0119 D5）：恢复预算续接 —— 旧 session 的 durable 恢复账本
     # （有界截取）拷进新 session。恢复后的会话**不**重新获得完整重试
