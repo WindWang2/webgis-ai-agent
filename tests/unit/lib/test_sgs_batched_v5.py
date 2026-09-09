@@ -155,7 +155,6 @@ class TestReferenceConditioningFix:
         # path = identity 时位置索引 == 目标序号 → 修复不改变该情形结果
         import app.lib.geo_analysis.kriging_simulation as ks
 
-        rng = np.random.default_rng(7)
         xy, z, targets = _fixture(n=40, n_t=250, seed=7)
 
         real_default_rng = ks.np.random.default_rng
