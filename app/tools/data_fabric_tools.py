@@ -895,6 +895,10 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 "执行期基数观测，非 typed 异常自动回退 v5）| v5（左深链基线）。"
                 "自适应尾重排仅在 join graph 存在替代有向链时触发"
             ),
+            "use_cache": (
+                "V7 结果缓存开关（默认开）：命中时结果带 result_cache 披露段"
+                "（age/basis）；按源数据指纹 + TTL 失效；全局源不缓存"
+            ),
             "session_id": "用户会话 ID",
         },
         execution_policy=ToolExecutionPolicy.ASYNC,
@@ -918,6 +922,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         order_strategy: str = "cost",
         derive_projection: bool = True,
         engine: str = "v6",
+        use_cache: bool = True,
         session_id: Optional[str] = None,
     ) -> dict:
         """N 源有界链式联邦查询（V6：cost-based 枚举 + 流式批执行；
@@ -1008,6 +1013,8 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 order_strategy=order_strategy,
                 derive_projection=derive_projection,
                 engine=engine_norm,
+                session_owner=session_id,
+                use_cache=bool(use_cache),
             )
             executor = FederatedExecutor(lambda src: adapters_by_id.get(src))
             try:
@@ -1032,6 +1039,11 @@ def register_data_fabric_tools(registry: ToolRegistry):
             out["engine"] = result.get("engine", "v5")
             if result.get("explain_v6"):
                 out["explain_v6"] = result["explain_v6"]
+            # V7（ADR-0119）fabric 证据 additive
+            if result.get("fabric"):
+                out["fabric"] = result["fabric"]
+            if result.get("result_cache"):
+                out["result_cache"] = result["result_cache"]
             if result.get("bloom_reduction"):
                 out["bloom_reduction"] = result["bloom_reduction"]
             if result.get("replans_used") is not None:
