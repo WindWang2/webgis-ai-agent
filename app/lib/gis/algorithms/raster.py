@@ -93,6 +93,10 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="raster.cog.convert", name="Cloud Optimized GeoTIFF 转换",
+            conformance_tests=[
+                "tests/unit/gis/test_algo_conformance_v2.py::test_cog_convert_roundtrip_and_idempotent",
+                "tests/unit/gis/test_algo_conformance_v2.py::test_cog_convert_invalid_path_typed",
+            ],
             capabilities=["raster_cog_conversion"],
             input_artifact_types=["raster_surface"],
             output_artifact_type="raster_surface",

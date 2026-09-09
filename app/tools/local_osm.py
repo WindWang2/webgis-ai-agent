@@ -83,6 +83,7 @@ def register_local_osm_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="query_local_osm",
+        capabilities=['local_data_query'],
         description=(
             f"本地 OSM 数据查询：按主题（{_THEMES_HELP}）在 bbox 范围内查询要素，"
             "支持名称与标签过滤。数据来自本地预处理 GPKG（离线、秒级响应）。"
@@ -147,6 +148,7 @@ def register_local_osm_tools(registry: ToolRegistry):
     @tool(
         registry,
         tier=2, domains=["osm"], name="get_local_osm_catalog",
+        capabilities=['local_data_query'],
         description=(
             "本地 OSM 数据目录：查看已预处理的主题、行数与覆盖说明。"
             "✅ 用于：query_local_osm 之前确认主题可用性。"

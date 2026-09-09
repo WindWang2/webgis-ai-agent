@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor
+from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
@@ -315,6 +315,12 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
 
         AlgorithmDescriptor(
             id="point_pattern.ripley_k_env", name="Ripley's K + CSR 模拟包络",
+            backend_variants=[
+                BackendVariant(
+                    id="numpy_permutation_envelopes", backend="numpy", deterministic=True,
+                    min_features=1, max_features=20000,
+                    notes="_MAX_RIPLEY_OBSERVATIONS=2 万点；对预算 ≤5000 万（estimate-before-allocate）；包络次数 ≤499 固定种子"),
+            ],
             category="point_pattern",
             capabilities=["point_pattern_analysis"],
             input_artifact_types=["poi_feature_set", "point_feature_set"],

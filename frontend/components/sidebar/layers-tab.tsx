@@ -21,7 +21,7 @@ import {
   Eye, EyeOff, GripVertical, Layers as LayersIcon, LocateFixed, Palette,
   Lock, LockOpen, Crosshair, Copy, ClipboardPaste, RotateCw, FolderPlus,
   ChevronDown, ChevronRight, CheckSquare, Square, Trash2, MoreHorizontal, Group,
-  Columns2,
+  Columns2, Workflow, Undo2, Redo2,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { Layer, LayerStyle } from '@/lib/types/layer';
@@ -53,6 +53,22 @@ import {
   toggleLayerAndCommit,
 } from '@/lib/mapspec/user-mutation';
 import { comparisonFamilyId } from '@/components/map/comparison/comparison-sync';
+import { useVirtualRows } from '@/lib/hooks/use-virtual-rows';
+import { journalOnly, withDocUndo } from '@/lib/workbench/undo';
+import { useUndoRedo } from '@/lib/workbench/use-undo';
+
+/* ─── W8：树行扁平化与窗口虚拟化 ───
+ * 10k 图层不 O(N) 渲染：投影后扁平行描述符数组 + 固定行高窗口（自研
+ * useVirtualRows，不引依赖）。≤VIRTUAL_THRESHOLD 行按普通路径全量渲染
+ * （DOM 结构与 V4 一致）。渲染统一走 renderTreeRow —— 两条路径共享同一
+ * 行实现，折叠传播（hiddenSectionIds）在扁平化时统一生效。 */
+const TREE_ROW_HEIGHT = 34; // px（行/组头 min 高 + 边距折算）
+const VIRTUAL_THRESHOLD = 200;
+
+type TreeRow =
+  | { kind: 'group'; key: string; section: WorkspaceSection; isUserGroup: boolean }
+  | { kind: 'layer'; key: string; row: WorkspaceRow }
+  | { kind: 'note'; key: string; section: WorkspaceSection; emptyBySearch: boolean };
 
 function getFeatureCount(layer: Layer): number {
   // #692：MVT 挂载的大图层 source 是 ref/瓦片形态（无内联 features），
@@ -172,6 +188,7 @@ function GroupHeader({
   const renameLayerGroup = useHudStore((s) => s.renameLayerGroup);
   const removeLayerGroup = useHudStore((s) => s.removeLayerGroup);
   const assignLayersToGroup = useHudStore((s) => s.assignLayersToGroup);
+  const createLayerGroup = useHudStore((s) => s.createLayerGroup);
   const selectedLayerIds = useHudStore((s) => s.selectedLayerIds);
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(section.name);
@@ -192,7 +209,13 @@ function GroupHeader({
 
   const commitRename = () => {
     const name = draftName.trim();
-    if (name && name !== section.name && section.id) renameLayerGroup(section.id, name);
+    // W9：组织态突变入 undo 栈（反向 = 水合先前 doc 切片，持久化由
+    // persistence 订阅随动 —— 同一通道无第二真相）。
+    if (name && name !== section.name && section.id) {
+      withDocUndo(`重命名分组 ${section.name} → ${name}`, 'user', () =>
+        renameLayerGroup(section.id!, name),
+      );
+    }
     setRenaming(false);
   };
 
@@ -202,6 +225,7 @@ function GroupHeader({
         'flex items-center gap-1 px-panel py-1',
         isDropTarget && 'bg-surface-selected outline outline-1 outline-dashed outline-status-accent-border',
       )}
+      style={section.depth > 0 ? { paddingLeft: `${12 + section.depth * 14}px` } : undefined}
       data-testid={`group-header-${section.id ?? section.name}`}
       onDragOver={(e) => {
         if (isUserGroup || section.id === null) {
@@ -222,7 +246,17 @@ function GroupHeader({
           aria-label={`${section.collapsed ? '展开' : '折叠'}分组 ${section.name}`}
           aria-expanded={!section.collapsed}
           className="flex h-control-sm w-control-sm items-center justify-center rounded-xs text-ink-muted hover:bg-surface-hover hover:text-ink"
-          onClick={() => section.id && toggleGroupCollapsed(section.id)}
+          onClick={() => {
+            // R2-M6：折叠/展开是轻量展示态切换且高频 —— 只入 journal，
+            // 不产生两份全量 doc 快照进 undo 栈（撤销折叠价值低、内存代价高）。
+            if (!section.id) return;
+            journalOnly({
+              type: 'group',
+              label: section.collapsed ? `展开分组 ${section.name}` : `折叠分组 ${section.name}`,
+              actor: 'user',
+            });
+            toggleGroupCollapsed(section.id);
+          }}
         >
           {section.collapsed ? <ChevronRight aria-hidden size={12} /> : <ChevronDown aria-hidden size={12} />}
         </button>
@@ -273,12 +307,32 @@ function GroupHeader({
               label={`将选中图层移入分组 ${section.name}`}
               icon={Group}
               disabled={selectedLayerIds.length === 0}
-              onClick={() => assignLayersToGroup(selectedLayerIds, section.id)}
+              onClick={() =>
+                withDocUndo(`移入分组 ${section.name}`, 'user', () =>
+                  assignLayersToGroup(selectedLayerIds, section.id),
+                )
+              }
+            />
+            {/* W9：嵌套组 —— 在任意用户组下创建子组（深度守卫由 store/doc 层执行）。 */}
+            <IconButton
+              size="sm"
+              label={`在分组 ${section.name} 下新建子组`}
+              icon={FolderPlus}
+              onClick={() =>
+                withDocUndo(`新建子组（${section.name} 下）`, 'user', () =>
+                  createLayerGroup('新分组', section.id),
+                )
+              }
             />
             <ConfirmAction
               label={`删除分组 ${section.name}（图层保留）`}
               confirmLabel="确认删除分组？"
-              onConfirm={() => section.id && removeLayerGroup(section.id)}
+              onConfirm={() => {
+                if (!section.id) return;
+                withDocUndo(`删除分组 ${section.name}`, 'user', () =>
+                  removeLayerGroup(section.id!),
+                );
+              }}
             />
           </>
         )}
@@ -431,6 +485,26 @@ function LayerRow({
           {layer.name}
         </span>
 
+        {/* W10 artifact linkage：分析产物溯源徽标 —— 点击前往结果工作台检视
+            （血缘真相在 backend ArtifactLineage，此处只读 provenance 投影，
+            不建第二 lineage store）。 */}
+        {layer.provenance?.result_ref && (
+          <button
+            type="button"
+            data-testid={`provenance-badge-${layer.id}`}
+            title={`分析产物：${layer.provenance.result_ref}${layer.provenance.tool_call_id ? `\n工具调用: ${layer.provenance.tool_call_id}` : ''}\n点击前往结果工作台检视`}
+            aria-label={`查看 ${layer.name} 的产物溯源`}
+            className="flex h-control-sm w-control-sm shrink-0 items-center justify-center rounded-xs text-ink-muted hover:bg-surface-hover hover:text-ink"
+            onClick={() => {
+              const hud = useHudStore.getState();
+              if (layer._refId) hud.setSelectedArtifactId(layer._refId);
+              hud.setActiveLeftTab('results');
+            }}
+          >
+            <Workflow aria-hidden size={12} />
+          </button>
+        )}
+
         {/* 状态徽标：ready 是健康常态，不占行宽；其余六态一望即知。 */}
         {status && status !== 'ready' && (
           <StatusBadge status={status} label={LAYER_STATUS_LABELS[status]} />
@@ -488,15 +562,20 @@ function LayerRow({
           />
           <IconButton
             size="sm"
-            // Review R1（MINOR-9）：lock 覆盖面如实声明 —— 护 UI/批量/隔离/
-            // turn-focus 收起与 agent set_mode 外壳；agent remove_layer/
-            // set_layer_visibility 事务通道未接 lock（后续接线）。
+            // W2/W9：lock 覆盖面已含 agent 通道（visibility 事务 + remove_layer
+            // typed lock_conflict），label 如实更新。
             label={locked
-              ? `解锁图层 ${layer.name}（当前防护：面板操作/批量/隔离/轮次收起）`
-              : `锁定图层 ${layer.name}（防护面板操作/批量/隔离/轮次收起）`}
+              ? `解锁图层 ${layer.name}（防护：面板/批量/隔离/轮次收起/agent 显隐与删除）`
+              : `锁定图层 ${layer.name}（防护：面板/批量/隔离/轮次收起/agent 显隐与删除）`}
             icon={locked ? Lock : LockOpen}
             active={locked}
-            onClick={() => toggleLayerLocked(layer.id)}
+            onClick={() =>
+              withDocUndo(
+                locked ? `解锁 ${layer.name}` : `锁定 ${layer.name}`,
+                'user',
+                () => toggleLayerLocked(layer.id),
+              )
+            }
           />
           <IconButton
             size="sm"
@@ -792,6 +871,8 @@ export function LayersTab() {
 
   const [search, setSearch] = useState('');
   const [styleClipboard, setStyleClipboard] = useState<LayerStyle | null>(null);
+  // R2-m-5：撤销/重做可用态（useSyncExternalStore 驱动按钮 disabled）。
+  const undoRedo = useUndoRedo();
 
   // 拖拽状态：行重排（跨组 = 重排 + 换组）与组头投放（换组）。
   const [dragId, setDragId] = useState<string | null>(null);
@@ -878,7 +959,10 @@ export function LayersTab() {
       setOverGroupId(null);
       setOverId(null);
       if (!dragId) return;
-      useHudStore.getState().assignLayersToGroup([dragId], groupId);
+      // W9：换组是可逆组织态突变（undo 反向水合先前 doc）。
+      withDocUndo(`移动 ${dragId} 到${groupId ? '分组' : '未分组'}`, 'user', () =>
+        useHudStore.getState().assignLayersToGroup([dragId], groupId),
+      );
       setDragId(null);
     },
     [dragId],
@@ -917,6 +1001,77 @@ export function LayersTab() {
     [layerGroups],
   );
 
+  // W8：投影 → 扁平行描述符（组头 + 行 + 空组提示），折叠传播统一生效
+  //（hiddenSectionIds 的区与其子孙整棵跳过 —— 折叠 ≠ 删除）。
+  const flatRows = useMemo(() => {
+    const out: TreeRow[] = [];
+    for (const section of projection.sections) {
+      const isUserGroup = section.id != null && userGroupIds.has(section.id);
+      out.push({
+        kind: 'group',
+        key: `g-${section.id ?? section.name}`,
+        section,
+        isUserGroup,
+      });
+      if (section.collapsed || (section.id != null && projection.hiddenSectionIds.has(section.id))) continue;
+      for (const row of section.rows) {
+        out.push({ kind: 'layer', key: `l-${row.layer.id}`, row });
+      }
+      if (section.rows.length === 0) {
+        out.push({
+          kind: 'note',
+          key: `n-${section.id ?? section.name}`,
+          section,
+          emptyBySearch: Boolean(search),
+        });
+      }
+    }
+    return out;
+  }, [projection, userGroupIds, search]);
+
+  const virtual = useVirtualRows(flatRows.length, TREE_ROW_HEIGHT);
+
+  const renderTreeRow = useCallback((tr: TreeRow) => {
+    if (tr.kind === 'group') {
+      return (
+        <GroupHeader
+          section={tr.section}
+          isUserGroup={tr.isUserGroup}
+          layerCount={tr.section.rows.length}
+          isDropTarget={overGroupId === (tr.section.id ?? 'semantic') && dragId != null}
+          onDropOnGroup={handleDropOnGroup}
+          onDragOverGroup={handleDragOverGroup}
+        />
+      );
+    }
+    if (tr.kind === 'layer') {
+      return (
+        <LayerRowMemo
+          row={tr.row}
+          globalIdx={indexById.get(tr.row.layer.id) ?? 0}
+          totalCount={layers.length}
+          isDragging={dragId === tr.row.layer.id}
+          isDragOver={overId === tr.row.layer.id}
+          isolated={isolatedLayerId === tr.row.layer.id}
+          status={statusMap[tr.row.layer.id]}
+          filterBadge={filterBadgeMap[tr.row.layer.id]}
+          onDragStart={handleDragStart}
+          onDragOverRow={handleDragOverRow}
+          onDropOnRow={handleDropOnRow}
+          onDragEnd={handleDragEnd}
+          onMove={moveLayer}
+          styleClipboard={styleClipboard}
+          setStyleClipboard={setStyleClipboard}
+        />
+      );
+    }
+    return (
+      <div className="px-panel py-1 text-micro text-ink-disabled">
+        {tr.emptyBySearch ? '无匹配图层' : '空分组 —— 拖入或选择图层移入'}
+      </div>
+    );
+  }, [overGroupId, dragId, handleDropOnGroup, handleDragOverGroup, indexById, layers.length, overId, isolatedLayerId, statusMap, filterBadgeMap, handleDragStart, handleDragOverRow, handleDropOnRow, handleDragEnd, moveLayer, styleClipboard]);
+
   return (
     <div className="flex flex-col h-full">
       {/* Stats header + 搜索 + 新建分组 */}
@@ -945,7 +1100,26 @@ export function LayersTab() {
           size="sm"
           label="新建分组"
           icon={FolderPlus}
-          onClick={() => createLayerGroup(`分组 ${layerGroups.length + 1}`)}
+          onClick={() =>
+            withDocUndo('新建分组', 'user', () =>
+              createLayerGroup(`分组 ${layerGroups.length + 1}`),
+            )
+          }
+        />
+        {/* W9/R2-m-5：undo/redo 可见面板入口（快捷键之外的发现性 + 触屏路径）。 */}
+        <IconButton
+          size="sm"
+          label="撤销上一步工作台操作（Ctrl+Z）"
+          icon={Undo2}
+          disabled={!undoRedo.canUndo}
+          onClick={undoRedo.undo}
+        />
+        <IconButton
+          size="sm"
+          label="重做（Ctrl+Shift+Z）"
+          icon={Redo2}
+          disabled={!undoRedo.canRedo}
+          onClick={undoRedo.redo}
         />
       </div>
 
@@ -978,52 +1152,29 @@ export function LayersTab() {
               action={{ label: '前往数据源', onClick: () => setActiveLeftTab('data_sources') }}
             />
           </div>
+        ) : flatRows.length > VIRTUAL_THRESHOLD ? (
+          /* W8：>200 行窗口渲染 —— 只挂可见窗 + overscan，10k 行仍恒定 DOM 量 */
+          <div
+            ref={virtual.scrollRef}
+            onScroll={virtual.onScroll}
+            data-testid="layer-tree-virtual"
+            className="h-full overflow-y-auto"
+          >
+            <div style={{ height: virtual.totalHeight, position: 'relative' }}>
+              <div style={{ transform: `translateY(${virtual.offsetY}px)` }}>
+                {flatRows.slice(virtual.start, virtual.end).map((tr) => (
+                  <div key={tr.key} style={{ height: TREE_ROW_HEIGHT }} className="overflow-hidden">
+                    {renderTreeRow(tr)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         ) : (
           <div className="py-1">
-            {projection.sections.map((section) => {
-              const isUserGroup = section.id != null && userGroupIds.has(section.id);
-              return (
-                <div key={section.id ?? `semantic-${section.name}`} className="mb-1">
-                  <GroupHeader
-                    section={section}
-                    isUserGroup={isUserGroup}
-                    layerCount={section.rows.length}
-                    isDropTarget={overGroupId === (section.id ?? 'semantic') && dragId != null}
-                    onDropOnGroup={handleDropOnGroup}
-                    onDragOverGroup={handleDragOverGroup}
-                  />
-                  {!section.collapsed && (
-                    <div>
-                      {section.rows.map((row) => (
-                        <LayerRowMemo
-                          key={row.layer.id}
-                          row={row}
-                          globalIdx={indexById.get(row.layer.id) ?? 0}
-                          totalCount={layers.length}
-                          isDragging={dragId === row.layer.id}
-                          isDragOver={overId === row.layer.id}
-                          isolated={isolatedLayerId === row.layer.id}
-                          status={statusMap[row.layer.id]}
-                          filterBadge={filterBadgeMap[row.layer.id]}
-                          onDragStart={handleDragStart}
-                          onDragOverRow={handleDragOverRow}
-                          onDropOnRow={handleDropOnRow}
-                          onDragEnd={handleDragEnd}
-                          onMove={moveLayer}
-                          styleClipboard={styleClipboard}
-                          setStyleClipboard={setStyleClipboard}
-                        />
-                      ))}
-                      {section.rows.length === 0 && (
-                        <div className="px-panel py-1 text-micro text-ink-disabled">
-                          {search ? '无匹配图层' : '空分组 —— 拖入或选择图层移入'}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {flatRows.map((tr) => (
+              <React.Fragment key={tr.key}>{renderTreeRow(tr)}</React.Fragment>
+            ))}
           </div>
         )}
       </div>

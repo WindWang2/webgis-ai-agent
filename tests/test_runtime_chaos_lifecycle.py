@@ -16,6 +16,8 @@ import asyncio
 
 import pytest
 
+from tests.fixtures.perf_budget import aassert_within_budget
+
 
 # ─── F14: async_db_session close guarantees ─────────────────────────────────
 
@@ -235,25 +237,28 @@ async def test_broadcast_round_bounded_by_single_timeout_with_stuck_sockets(fast
 async def test_broadcast_round_bounded_by_single_timeout_concurrency_perf(fast_ws_timeout):
     """计时面（#703 挂 perf marker，#664 契约）：P2 (round-2 review) — sends
     are CONCURRENT, N stalled sockets cost ~one WS_SEND_TIMEOUT per round, not
-    N× (sequential would be >= 0.3s at timeout=0.1). 只在 -m perf 隔离执行时判定。"""
+    N× (sequential would be >= 0.3s at timeout=0.1). 只在 -m perf 隔离执行时判定。
+
+    W11 迁移（原固定断言 ``elapsed < 0.25``）：并发结构语义不变，单次采样
+    → median-of-3（每轮全新 ConnectionManager，互不污染），上界仍 0.25s
+    （= 2.5 × WS_SEND_TIMEOUT，串行退化 ≥ 0.3s 时必红）。"""
     ws_module = fast_ws_timeout
     ws_module.WS_SEND_TIMEOUT = 0.1
-    mgr = ws_module.ConnectionManager()
-    stuck = [_StuckWS() for _ in range(3)]
-    healthy = _HealthyWS()
-    for ws in stuck:
-        await mgr.connect(ws, "s1")
-    await mgr.connect(healthy, "s1")
 
-    loop = asyncio.get_running_loop()
-    start = loop.time()
-    await mgr.broadcast("s1", {"event": "x"})
-    elapsed = loop.time() - start
+    async def _round() -> float:
+        mgr = ws_module.ConnectionManager()
+        for _ in range(3):
+            await mgr.connect(_StuckWS(), "s1")
+        healthy = _HealthyWS()
+        await mgr.connect(healthy, "s1")
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        await mgr.broadcast("s1", {"event": "x"})
+        assert healthy.sent == [{"event": "x"}]
+        return loop.time() - start
 
-    assert healthy.sent == [{"event": "x"}]
-    assert elapsed < 0.25, (
-        f"concurrent round must complete within ~one timeout, took {elapsed:.3f}s"
-    )
+    await aassert_within_budget(
+        "ws.broadcast.concurrent_round", _round, iterations=3, floor_s=0.25)
 
 
 @pytest.mark.asyncio

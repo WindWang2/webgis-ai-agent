@@ -36,7 +36,8 @@ from tests.fixtures.chaos import (  # noqa: E402
 CHAOS_MODULE = REPO / "tests" / "fixtures" / "chaos.py"
 
 _FAULT_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
-_SUBSYSTEMS = {"CACHE", "LOCK", "REGISTRY", "INGEST", "CANCEL", "LLM"}
+_SUBSYSTEMS = {"CACHE", "LOCK", "REGISTRY", "INGEST", "CANCEL", "LLM",
+                "STORAGE"}
 
 
 @pytest.fixture(autouse=True)

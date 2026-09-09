@@ -394,6 +394,22 @@
    "CartographicRuntimeObservationRequest": {
     "description": "Bounded actual MapLibre evidence for one MapSpec generation.",
     "properties": {
+     "charts": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "maxItems": 32,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Charts"
+     },
      "client_generation": {
       "maximum": 9007199254740991.0,
       "minimum": 1.0,
@@ -4022,6 +4038,33 @@
     "title": "SetViewBody",
     "type": "object"
    },
+   "SetWorkbenchStateBody": {
+    "description": "Workbench V5 组织态持久化（分组树/成员/锁/模式；引擎内结构+64KB 校验）。",
+    "properties": {
+     "doc": {
+      "additionalProperties": true,
+      "title": "Doc",
+      "type": "object"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "patch_workbench_state",
+      "title": "Intent",
+      "type": "string"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision",
+     "doc"
+    ],
+    "title": "SetWorkbenchStateBody",
+    "type": "object"
+   },
    "ShareRequest": {
     "properties": {
      "ttl_days": {
@@ -6291,6 +6334,7 @@
           "patch_component": "#/components/schemas/PatchComponentBody",
           "patch_layer_presentation": "#/components/schemas/PatchLayerPresentationBody",
           "patch_layer_style": "#/components/schemas/PatchLayerStyleBody",
+          "patch_workbench_state": "#/components/schemas/SetWorkbenchStateBody",
           "rebind_component": "#/components/schemas/RebindComponentBody",
           "remove_component": "#/components/schemas/RemoveComponentBody",
           "remove_layer": "#/components/schemas/RemoveLayerBody",
@@ -6337,6 +6381,9 @@
          },
          {
           "$ref": "#/components/schemas/InitProjectBody"
+         },
+         {
+          "$ref": "#/components/schemas/SetWorkbenchStateBody"
          }
         ],
         "title": "Req"
@@ -6513,6 +6560,68 @@
     "tags": [
      "AI对话",
      "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/workflow-resume-anchor": {
+   "post": {
+    "description": "把当前 session 的可恢复事实存为项目级锚点（DB 持久）。",
+    "operationId": "create_workflow_resume_anchor_api_v1_chat_sessions__session_id__workflow_resume_anchor_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Workflow Resume Anchor",
+    "tags": [
+     "AI对话"
     ]
    }
   },
@@ -6707,6 +6816,52 @@
     "tags": [
      "AI对话",
      "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/workflow-resume/{anchor_id}": {
+   "post": {
+    "description": "从锚点恢复新 session（旧 session 过期不影响锚点有效性）。",
+    "operationId": "resume_workflow_from_anchor_api_v1_chat_workflow_resume__anchor_id__post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "anchor_id",
+      "required": true,
+      "schema": {
+       "title": "Anchor Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Resume Workflow From Anchor",
+    "tags": [
+     "AI对话"
     ]
    }
   },

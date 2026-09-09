@@ -224,6 +224,7 @@ def register_temporal_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="temporal_filter",
+        capabilities=['temporal_filtering'],
         description="基于时间点、时间段区间或相对时间窗口（如'最近 7 天'、'过去 3 个月'）对 GIS 数据进行精准筛选。",
         tier=2,
         domains=["temporal"],
@@ -677,6 +678,8 @@ def register_temporal_science_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="temporal_seasonal_decompose",
+        side_effect="deterministic_compute",
+        tags=('季节分解', '时间序列', '趋势', '周期'),
         description=(
             "经典季节分解（classical decomposition，Makridakis 1998）："
             "奇数窗口中心滑动平均趋势 + 相位组均值季节指数（additive 归一化"

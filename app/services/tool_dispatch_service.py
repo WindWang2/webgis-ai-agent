@@ -552,6 +552,23 @@ class ToolDispatchService:
             if "correction_hint" in result and result["correction_hint"]:
                 result["correction_hint"] = sanitize_error_msg(result["correction_hint"])
             correction_hint = result.get("correction_hint")
+            # V5：typed diagnose —— 泛化错误码之上的统一失败分类 +
+            # 有界 remediation 裁决（ADR-0118 D2）。记录面绝不阻断。
+            try:
+                from app.services.gis_harness.failure_taxonomy import (
+                    classify_and_remediate,
+                )
+
+                result["harness_failure"] = classify_and_remediate(
+                    status=result.get("status"),
+                    code=result.get("code"),
+                    error_type=result.get("error_type"),
+                    message=error_msg,
+                    tool_name=tool_name,
+                    session_id=session_id or "",
+                )
+            except Exception:  # noqa: BLE001 — 记录面绝不阻断
+                pass
             llm_payload = correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)
             await session_data_manager.append_event(
                 session_id,

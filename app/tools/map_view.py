@@ -89,6 +89,7 @@ def register_map_view_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="fly_to_location",
+        capabilities=['map_viewport_control'],
         description=(
             "把地图相机平滑飞行到指定经纬度。"
             "\n何时用：用户说『把地图移到 XX』『定位到 XX』『看一下 XX 周边』，已经知道目标坐标。"
@@ -142,6 +143,7 @@ def register_map_view_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="zoom_to_bbox",
+        capabilities=['map_viewport_control'],
         description=(
             "把地图缩放到给定包围盒，让该区域完整出现在视口里。"
             "\n何时用：拿到了一个明确的 [west, south, east, north] bbox（来自分析结果、行政边界等），"
@@ -183,6 +185,7 @@ def register_map_view_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="zoom_to_layer",
+        capabilities=['map_viewport_control'],
         description=(
             "把地图视图自适应到指定图层的覆盖范围。"
             "\n何时用：用户说『放大到 XX 图层』『定位到核心保护区』『看一下分析结果的全貌』。"
@@ -249,6 +252,7 @@ def register_map_view_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="reset_map_view",
+        capabilities=['map_viewport_control'],
         description=(
             "把地图视图复位到全国默认视角（中心约 (104, 35)，zoom 4，俯仰/方位归零）。"
             "\n何时用：用户说『回到初始视图』『重置地图』『缩到全国』。"
@@ -278,6 +282,7 @@ def register_map_view_tools(registry: ToolRegistry):
     @tool(
         registry,
         name="set_map_view",
+        capabilities=['map_viewport_control'],
         description=(
             "在不移动地图中心的前提下，只调整 zoom / pitch / bearing。"
             "\n何时用：用户说『放大一点』『倾斜看 3D』『把北朝上』『顺时针转 30 度』。三个参数都是可选的，"

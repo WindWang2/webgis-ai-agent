@@ -26,8 +26,14 @@ scripts/
 !/scripts/gen_quality_report.py
 !/scripts/quality_runner.py
 !/scripts/quality
-# runner 本地运行状态不入库
+# Quality V2（ADR-0118）：staleness 前置检查脚本（generated-artifacts 账本
+# 的闸测试引用其退出码语义，必须入库 —— history: check_tool_descriptor_
+# coverage.py 漏入库曾使 master 全量收集红）
+!/scripts/check_generated_staleness.py
+# runner 本地运行状态不入库（V1 历史 + V2 当前）
 .agent-work/quality-v1/runner-report.json
+.agent-work/quality-v2/runner-report.json
+.agent-work/quality-v2/runner-report.md
 .agent-work/quality-v1/runner-report.md
 # Security manifest 生成器（Wave 15：SECURITY_CONTROLS.md 字节一致性闸依赖）
 !/scripts/gen_security_manifest.py

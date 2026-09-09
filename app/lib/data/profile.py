@@ -300,6 +300,9 @@ class DatasetProfileV3(BaseModel):
     source_revision: int = 0                  # 绑定的 content_revision
     created_at: datetime = Field(default_factory=_utcnow)
     diagnostics: List[str] = Field(default_factory=list)
+    # V5 W4：经度约定/AM 语义（describe_longitude_semantics 形状；
+    # 缺席/ambiguous = 证据不足，绝不虚构约定）。
+    longitude_facts: Optional[Dict[str, Any]] = None
 
     @field_validator("extent")
     @classmethod

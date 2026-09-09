@@ -19,6 +19,7 @@ import math
 from typing import Any, Optional
 
 import numpy as np
+from app.lib.cancellation import checkpoint
 import geopandas as gpd
 from shapely import box as sbox
 from shapely.geometry import box, mapping
@@ -168,6 +169,7 @@ def _evaluate_kde(kde, points):
         return kde(points)
     out = np.empty(n_pts, dtype=float)
     for start in range(0, n_pts, _KDE_EVAL_CHUNK):
+        checkpoint()  # ADR-0052: 评估分块边界协作式取消
         stop = min(start + _KDE_EVAL_CHUNK, n_pts)
         out[start:stop] = kde(points[:, start:stop])
     return out
@@ -196,6 +198,7 @@ def _evaluate_adaptive_kde(data, h_is, weights, points):
     total = points.shape[1]
     out = np.empty(total, dtype=float)
     for cs in range(0, total, _ADAPTIVE_EVAL_CHUNK):
+        checkpoint()  # ADR-0052: 自适应评估分块边界协作式取消
         ce = min(cs + _ADAPTIVE_EVAL_CHUNK, total)
         qx = points[0, cs:ce][None, :]
         qy = points[1, cs:ce][None, :]

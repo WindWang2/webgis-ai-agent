@@ -54,6 +54,7 @@ def register_meta_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="list_available_tools",
+        capabilities=['meta_tool_surface'],
         description=(
             "列出某个领域下当前所有可用工具的名称与描述。"
             "✅ 用于：当你判断需要某类能力、但本轮工具列表里没有合适工具时，"

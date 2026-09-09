@@ -16,6 +16,7 @@ import pytest
 
 from app.services.ref_payload_cache import RefPayloadCache
 from app.services.session_data import MemorySessionStore
+from tests.fixtures.perf_budget import aassert_within_budget
 
 
 # ─── P-1（#874）: RefPayloadCache 单元 ────────────────────────────────────
@@ -139,19 +140,27 @@ async def test_p4_scenario_compare_gathers_in_parallel(monkeypatch):
     reg = ToolRegistry()
     register_spatial_decision_tools(reg)
 
-    started = time.monotonic()
-    res = await reg.dispatch(
-        "scenario_compare",
-        {"scenarios": [
-            {"scenario": "方案A", "target_area": "成都", "parameters": {}},
-            {"scenario": "方案B", "target_area": "成都", "parameters": {}},
-            {"scenario": "方案C", "target_area": "成都", "parameters": {}},
-        ], "session_id": ""},
-        session_id="",
-    )
-    elapsed = time.monotonic() - started
+    # W11 迁移（原固定断言 ``elapsed < 0.75``）：并发结构语义不变——
+    # 3 × 0.3s 方案 gather 并行（串行 ≥ 0.9s）——单次采样 → median-of-3，
+    # 上界 0.75 不变（串行退化时 0.9s > 0.75s 必红）。
+    holder: dict = {}
+
+    async def _run():
+        holder["res"] = await reg.dispatch(
+            "scenario_compare",
+            {"scenarios": [
+                {"scenario": "方案A", "target_area": "成都", "parameters": {}},
+                {"scenario": "方案B", "target_area": "成都", "parameters": {}},
+                {"scenario": "方案C", "target_area": "成都", "parameters": {}},
+            ], "session_id": ""},
+            session_id="",
+        )
+
+    await aassert_within_budget(
+        "scenario_compare.parallel_3x0.3s", _run, iterations=3, floor_s=0.75)
+
+    res = holder["res"]
     assert res.get("type") != "error", res
-    assert elapsed < 0.75, f"3×0.3s 方案应并行（<0.75s），实际 {elapsed:.2f}s"
 
 
 # ─── P-5（#878）: 栅格瓦片 ETag/304 ───────────────────────────────────────

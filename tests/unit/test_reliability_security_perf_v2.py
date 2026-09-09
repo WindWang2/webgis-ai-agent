@@ -15,6 +15,7 @@ from app.evaluation.replay import simulate_agent_loop
 from app.tools.argument_normalization import TOOL_NAME_ALIASES
 from app.tools.descriptor import SideEffectClass
 from app.tools.registry import ToolRegistry
+from tests.fixtures.perf_budget import assert_within_budget
 
 
 # ---------------------------------------------------------------------------
@@ -218,10 +219,7 @@ def test_large_registry_scalability(size):
     t0 = time.perf_counter()
     hits = rank_tools(reg, "合成工具 关键词 检索 负载", top_k=8)
     retrieval_s = time.perf_counter() - t0
-    assert hits  # 命中非空
-    t1 = time.perf_counter()
-    rank_tools(reg, "第二次 检索 走缓存索引", top_k=8)
-    retrieval_cached_s = time.perf_counter() - t1
+    assert hits  # 命中非空（首次检索，含索引构建 —— 下方比值断言的基准）
 
     t0 = time.perf_counter()
     assert error_findings(audit_registry_policies(reg)) == []
@@ -242,10 +240,24 @@ def test_large_registry_scalability(size):
     assert fingerprint_s < fp_budget, f"fingerprint {fingerprint_s:.3f}s"
     assert retrieval_s < ret_budget, f"retrieval {retrieval_s:.3f}s"
     assert audit_s < audit_budget, f"audit {audit_s:.3f}s"
-    # 缓存索引后的第二次检索有绝对预算（review R1：防止 ~1000x 回归漏检）。
-    # 0.05→0.2：CI 2 核 + coverage 下实测多次压线（0.050/0.052s）——预算
-    # 防的是「缓存失效退化为全量扫描」（~1.6s 量级），0.2s 仍有 8× 裕量。
-    assert retrieval_cached_s < 0.2, f"cached retrieval {retrieval_cached_s:.3f}s"
+    # 缓存索引后的第二次检索（review R1：防止 ~1000x 回归漏检）。
+    # W11 迁移（原固定断言 ``retrieval_cached_s < 0.2``，f2124e68 曾把
+    # 0.05→0.2）：单次采样墙钟在 2 核 + coverage 下反复压线
+    # （0.050/0.052s 实录）。语义是结构性的——「缓存命中不得退化为全量
+    # 扫描（~1.6s）」——改为双重断言：
+    #   a) median-of-3 ≤ max(0.2s, baseline*4)（绝对上界兜意外）；
+    #   b) 比值：缓存命中必须显著快于首次检索（首次含索引构建）。缓存
+    #      退化成全量扫描时 cached ≈ retrieval → ratio ≈ 1，(b) 必红。
+    cached_median = assert_within_budget(
+        "registry.cached_retrieval",
+        lambda: rank_tools(reg, "第二次 检索 走缓存索引", top_k=8),
+        iterations=3,
+        floor_s=0.2,
+    )
+    assert cached_median < retrieval_s / 4, (
+        f"cached retrieval {cached_median:.4f}s vs first {retrieval_s:.4f}s "
+        "(ratio >= 1/4 — retrieval cache may have degraded to a full scan)"
+    )
 
 
 def test_surface_augment_hot_path_bounded():
@@ -267,12 +279,22 @@ def test_surface_augment_hot_path_bounded():
             return set()
 
     proj = ToolSurfaceProjector(reg, FullCatalog(reg))
-    t0 = time.perf_counter()
-    r = proj.project(SurfaceRequest(user_message="负载 关键词", retrieval=False))
-    elapsed = time.perf_counter() - t0
+
+    # W11 迁移（原固定断言 ``elapsed < 0.15``）：单次采样 → median-of-5。
+    # 语义不变：compress=none 的 augment 热路径有界（字节缓存命中，绝不
+    # 重新序列化 200 份 schema）；median 抗 CI 负载抖动。
+    holder: dict = {}
+
+    def _project():
+        holder["r"] = proj.project(
+            SurfaceRequest(user_message="负载 关键词", retrieval=False))
+
+    assert_within_budget(
+        "surface.augment.200", _project, iterations=5, floor_s=0.15)
+
+    r = holder["r"]
     assert len(r.schemas) == 200
     assert r.bytes_used > 0
-    assert elapsed < 0.15, f"augment at 200 tools took {elapsed:.3f}s"
 
 
 def test_large_registry_fingerprint_invalidation_correct():
