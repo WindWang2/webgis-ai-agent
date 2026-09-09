@@ -125,7 +125,7 @@ def test_full_run_executes_ready_chain(env):
 
 def test_double_execution_produces_reuse_hit(env):
     """同输入第二次 run：先重置为重算态 → 复用命中，零真执行（Wave 8）。"""
-    store, reuse, driver, inst = env["store"], env["reuse"], env["driver"], env["inst"]
+    store, driver, inst = env["store"], env["driver"], env["inst"]
     asyncio.run(driver.run(inst["instance_id"], _DAG, node_params={},
                            session_id="s1", run_token="rt-1",
                            package_fingerprint="pf" * 16))
@@ -344,8 +344,7 @@ def test_service_compile_register_instantiate(factory, monkeypatch):
                            session_id="s1")
     assert inst["instance_id"].startswith("wi-")
     # 同 plan 同包重建 → 旧实例 superseded
-    inst2 = svc.instantiate(pkg["package_id"], owner_scope="u:abc",
-                            session_id="s1")
+    svc.instantiate(pkg["package_id"], owner_scope="u:abc", session_id="s1")
     old = svc.store.get_instance(inst["instance_id"], "u:abc")
     assert old["status"] == C.InstanceStatus.SUPERSEDED
     # 重复注册同指纹幂等；不同指纹冲突

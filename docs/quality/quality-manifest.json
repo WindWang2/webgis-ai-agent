@@ -4659,7 +4659,8 @@
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
     "tests/unit/test_map_product_finalization_scenarios.py",
-    "tests/unit/tools/test_behavioral_data_discovery.py"
+    "tests/unit/tools/test_behavioral_data_discovery.py",
+    "tests/unit/workflow_runtime/test_fingerprints_binding.py"
    ]
   },
   {
@@ -4672,7 +4673,8 @@
     "tests/unit/gis_harness/test_typed_dag_v4.py",
     "tests/unit/test_adversarial_v4_stress.py",
     "tests/unit/test_artifact_registry.py",
-    "tests/unit/test_tool_dispatch_service.py"
+    "tests/unit/test_tool_dispatch_service.py",
+    "tests/unit/workflow_runtime/test_fingerprints_binding.py"
    ]
   },
   {
@@ -4753,7 +4755,8 @@
     "tests/unit/gis/test_backend_sdk_v3.py",
     "tests/unit/gis/test_data_contracts_v2.py",
     "tests/unit/gis/test_gis_lib_registries.py",
-    "tests/unit/gis_harness/test_typed_dag_v4.py"
+    "tests/unit/gis_harness/test_typed_dag_v4.py",
+    "tests/unit/workflow_runtime/test_fingerprints_binding.py"
    ]
   },
   {
@@ -5262,7 +5265,8 @@
     "tests/unit/test_artifact_registry.py",
     "tests/unit/test_audit4_catalog_and_discovery.py",
     "tests/unit/test_map_product_finalization_scenarios.py",
-    "tests/unit/tools/test_behavioral_data_discovery.py"
+    "tests/unit/tools/test_behavioral_data_discovery.py",
+    "tests/unit/workflow_runtime/test_fingerprints_binding.py"
    ]
   },
   {
@@ -7146,7 +7150,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "64c2c261d3d0e080aadb2f1de1773665ba33a8ad5fdfde77fe805dc09d2aac76",
+ "fingerprint": "3a26ac62d9f02715367812a418287940801d7da173af24ca85debdd5b73ce56a",
  "gate": {
   "fields": {
    "capabilities": {

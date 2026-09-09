@@ -42,7 +42,7 @@ def _dag(child_pkg: str = "") -> dict:
         edges.append({"from": "data:subject.data", "to": "sub:child.input"})
     nodes.append({"node_id": "output:final", "kind": "output",
                   "optional": False, "inputs": [{"name": "product"}]})
-    edges.append({"from": (f"sub:child.output" if child_pkg
+    edges.append({"from": ("sub:child.output" if child_pkg
                            else "data:subject.data"),
                   "to": "output:final.product"})
     return {"nodes": nodes, "edges": edges, "primary_output": "output:final"}
