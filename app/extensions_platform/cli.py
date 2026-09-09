@@ -985,6 +985,199 @@ def _cmd_sbom(args: argparse.Namespace) -> int:
 
 
 # ── 参数解析 ─────────────────────────────────────────────────────────────
+
+
+# ── V3（ADR-0119）：非对称签名 / marketplace / 分发 ──────────────────────
+
+def _cmd_keygen(args: argparse.Namespace) -> int:
+    from .signing import generate_signing_keypair
+
+    private_path, public_path = generate_signing_keypair(Path(args.out_dir), args.key_id)
+    payload = {
+        "key_id": args.key_id,
+        "private_key": str(private_path),
+        "public_key": str(public_path),
+        "note": "private key never leaves the operator; register public_key_pem "
+        "in the trust store",
+    }
+    if args.json:
+        _print_json(payload)
+        return 0
+    print(f"private_key: {private_path}")
+    print(f"public_key: {public_path}")
+    print("note: register the public key in the trust store; never ship the private key")
+    return 0
+
+
+def _cmd_sign_asymmetric(args: argparse.Namespace) -> int:
+    from .signing import SIGNATURE_FILENAME, sign_pack_asymmetric
+
+    pack_dir = Path(args.pack_dir)
+    summary = sign_pack_asymmetric(
+        pack_dir, args.publisher, args.key_id, Path(args.private_key)
+    )
+    payload = {
+        "pack": str(pack_dir),
+        "publisher": summary["publisher"],
+        "key_id": summary["key_id"],
+        "algorithm": summary["algorithm"],
+        "fingerprint": summary["fingerprint"],
+        "signature_file": str(pack_dir / SIGNATURE_FILENAME),
+    }
+    if args.json:
+        _print_json(payload)
+        return 0
+    for key, value in payload.items():
+        print(f"{key}: {value}")
+    return 0
+
+
+def _registry_service(args: argparse.Namespace):
+    from .marketplace.service import PublishPolicy, RegistryService
+    from .marketplace.store import RegistryStore
+    from .trust_store import TrustStore
+
+    root = Path(args.registry_dir)
+    trust = TrustStore.load(Path(args.trust_store)) if args.trust_store else None
+    policy = PublishPolicy(allowed_publishers=frozenset())
+    if args.allow_publisher:
+        policy = PublishPolicy(
+            allowed_publishers=frozenset(
+                p.strip() for p in args.allow_publisher.split(",") if p.strip()
+            )
+        )
+    return RegistryService(RegistryStore(root), trust_store=trust, policy=policy)
+
+
+def _pack_blob_bytes(pack_dir: Path) -> bytes:
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for path in sorted(pack_dir.rglob("*")):
+            if path.is_file() and "__pycache__" not in path.parts and not path.name.endswith(".pyc"):
+                tar.add(str(path), arcname=str(path.relative_to(pack_dir)))
+    return buf.getvalue()
+
+
+def _cmd_publish(args: argparse.Namespace) -> int:
+    service = _registry_service(args)
+    summary = service.publish(_pack_blob_bytes(Path(args.pack_dir)))
+    if args.json:
+        _print_json(summary)
+        return 0
+    for key, value in summary.items():
+        print(f"{key}: {value}")
+    return 0
+
+
+def _cmd_search(args: argparse.Namespace) -> int:
+    service = _registry_service(args)
+    result = service.search(
+        query=args.query,
+        publisher=args.publisher,
+        offset=args.offset,
+        limit=args.limit,
+    )
+    payload = {
+        "total": result.total,
+        "offset": args.offset,
+        "items": list(result.items),
+    }
+    if args.json:
+        _print_json(payload)
+        return 0
+    print(f"total: {result.total}")
+    for item in result.items:
+        print(
+            f"- {item['id']} @{item['latest_version']} "
+            f"[{item['status']}] by {item['publisher']}"
+        )
+    return 0
+
+
+def _cmd_deprecate(args: argparse.Namespace) -> int:
+    service = _registry_service(args)
+    state = service.deprecate(args.package_id, args.note)
+    payload = {"package_id": args.package_id, "note": args.note, "generation": state.generation}
+    if args.json:
+        _print_json(payload)
+        return 0
+    print(f"deprecated {args.package_id} (generation {state.generation})")
+    return 0
+
+
+def _cmd_revoke(args: argparse.Namespace) -> int:
+    service = _registry_service(args)
+    state = service.revoke(args.package_id, args.version)
+    payload = {
+        "package_id": args.package_id,
+        "version": args.version,
+        "generation": state.generation,
+        "propagated": "trust store updated; hosts quarantine on next discover/refresh",
+    }
+    if args.json:
+        _print_json(payload)
+        return 0
+    for key, value in payload.items():
+        print(f"{key}: {value}")
+    return 0
+
+
+def _installer_from_args(args: argparse.Namespace):
+    from .diagnostics import DiagnosticCode
+    from .distribution import ExtensionInstaller
+    from .marketplace.store import RegistryStore
+    from .trust_store import TrustStore
+
+    if not args.install_root:
+        raise ExtensionPlatformError(
+            ExtensionDiagnostic.error(
+                DiagnosticCode.MANIFEST_PARSE_FAILED,
+                "install/rollback requires --install-root (EXTENSIONS_INSTALL_ROOT)",
+            )
+        )
+    trust = TrustStore.load(Path(args.trust_store)) if args.trust_store else None
+    return ExtensionInstaller(
+        install_root=Path(args.install_root),
+        registry=RegistryStore(Path(args.registry_dir)),
+        trust_store=trust,
+        keep_versions=args.keep_versions,
+        version_pins=_parse_pins(args.pin),
+    )
+
+
+def _parse_pins(raw: str) -> dict[str, str]:
+    from .settings_bridge import parse_version_pins
+
+    return parse_version_pins(raw or "")
+
+
+def _cmd_install(args: argparse.Namespace) -> int:
+    installer = _installer_from_args(args)
+    bootstrap = installer.bootstrap()
+    summary = installer.install(args.package_id, args.version)
+    summary["bootstrap"] = bootstrap
+    if args.json:
+        _print_json(summary)
+        return 0
+    for key, value in summary.items():
+        print(f"{key}: {value}")
+    return 0
+
+
+def _cmd_rollback(args: argparse.Namespace) -> int:
+    installer = _installer_from_args(args)
+    summary = installer.rollback(args.package_id, args.version)
+    if args.json:
+        _print_json(summary)
+        return 0
+    for key, value in summary.items():
+        print(f"{key}: {value}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m app.extensions_platform",
@@ -1093,6 +1286,74 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_certify.add_argument("extension_id", help="扩展 id（<namespace>.<name>）")
     p_certify.set_defaults(handler=_cmd_certify)
+
+    # ── V3（ADR-0119）子命令 ────────────────────────────────────────
+    common_v3 = argparse.ArgumentParser(add_help=False)
+    common_v3.add_argument("--registry-dir", required=True, metavar="DIR",
+                           help="registry 根目录（EXTENSION_REGISTRY_DIR 语义）")
+    common_v3.add_argument("--trust-store", default="", metavar="PATH",
+                           help="trust store JSON（publish/revoke 必需）")
+    common_v3.add_argument("--json", action="store_true", help="stdout 输出纯 JSON")
+
+    p_keygen = sub.add_parser("keygen", help="生成 Ed25519 签名密钥对（0600；拒覆盖）")
+    p_keygen.add_argument("--publisher", required=True)
+    p_keygen.add_argument("--key-id", required=True)
+    p_keygen.add_argument("--out-dir", required=True, metavar="DIR")
+    p_keygen.add_argument("--json", action="store_true")
+    p_keygen.set_defaults(handler=_cmd_keygen)
+
+    p_sign = sub.add_parser("sign", help="Ed25519 内容签名（signature.json v2）")
+    p_sign.add_argument("pack_dir")
+    p_sign.add_argument("--publisher", required=True)
+    p_sign.add_argument("--key-id", required=True)
+    p_sign.add_argument("--private-key", required=True, metavar="PATH")
+    p_sign.add_argument("--json", action="store_true")
+    p_sign.set_defaults(handler=_cmd_sign_asymmetric)
+
+    p_publish = sub.add_parser("publish", parents=[common_v3],
+                               help="签名包发布到 registry（验签+SBOM+allowlist 全前置）")
+    p_publish.add_argument("pack_dir")
+    p_publish.add_argument("--allow-publisher", default="", metavar="A,B",
+                           help="registry 发布者 allowlist（逗号分隔；空=拒绝发布）")
+    p_publish.set_defaults(handler=_cmd_publish)
+
+    p_search = sub.add_parser("search", parents=[common_v3], help="registry 搜索（确定性分页）")
+    p_search.add_argument("--query", default="")
+    p_search.add_argument("--publisher", default="")
+    p_search.add_argument("--offset", type=int, default=0)
+    p_search.add_argument("--limit", type=int, default=20)
+    p_search.set_defaults(handler=_cmd_search)
+
+    p_deprecate = sub.add_parser("deprecate", parents=[common_v3], help="包弃用声明")
+    p_deprecate.add_argument("package_id")
+    p_deprecate.add_argument("--note", default="")
+    p_deprecate.set_defaults(handler=_cmd_deprecate)
+
+    p_revoke = sub.add_parser("revoke", parents=[common_v3],
+                              help="吊销包/版本（写 trust store，传播全部宿主）")
+    p_revoke.add_argument("package_id")
+    p_revoke.add_argument("--version", default=None)
+    p_revoke.set_defaults(handler=_cmd_revoke)
+
+    common_install = argparse.ArgumentParser(add_help=False)
+    common_install.add_argument("--registry-dir", required=True, metavar="DIR")
+    common_install.add_argument("--trust-store", default="", metavar="PATH")
+    common_install.add_argument("--install-root", default="", metavar="DIR")
+    common_install.add_argument("--keep-versions", type=int, default=3)
+    common_install.add_argument("--pin", default="", metavar="id==ver;...")
+    common_install.add_argument("--json", action="store_true")
+
+    p_install = sub.add_parser("install", parents=[common_install],
+                               help="从 registry 安装/升级包（preflight+原子换装）")
+    p_install.add_argument("package_id")
+    p_install.add_argument("version", nargs="?", default=None)
+    p_install.set_defaults(handler=_cmd_install)
+
+    p_rollback = sub.add_parser("rollback", parents=[common_install],
+                                help="回滚到 versions/ 存档（同走 preflight；缺省 semver 最大）")
+    p_rollback.add_argument("package_id")
+    p_rollback.add_argument("--version", default=None)
+    p_rollback.set_defaults(handler=_cmd_rollback)
     return parser
 
 

@@ -8728,6 +8728,256 @@
     ]
    }
   },
+  "/api/v1/extensions/marketplace/packages": {
+   "get": {
+    "operationId": "search_packages_api_v1_extensions_marketplace_packages_get",
+    "parameters": [
+     {
+      "description": "搜索词（id/title/description 子串）",
+      "in": "query",
+      "name": "q",
+      "required": false,
+      "schema": {
+       "default": "",
+       "description": "搜索词（id/title/description 子串）",
+       "maxLength": 200,
+       "title": "Q",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "tag",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 64,
+       "title": "Tag",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "publisher",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 64,
+       "title": "Publisher",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "include_revoked",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Include Revoked",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "maximum": 1000000,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Search Packages Api V1 Extensions Marketplace Packages Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Search Packages",
+    "tags": [
+     "Extension Marketplace / 扩展市场（只读）"
+    ]
+   }
+  },
+  "/api/v1/extensions/marketplace/packages/{package_id}": {
+   "get": {
+    "operationId": "get_package_api_v1_extensions_marketplace_packages__package_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "package_id",
+      "required": true,
+      "schema": {
+       "title": "Package Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Package Api V1 Extensions Marketplace Packages  Package Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Package",
+    "tags": [
+     "Extension Marketplace / 扩展市场（只读）"
+    ]
+   }
+  },
+  "/api/v1/extensions/marketplace/packages/{package_id}/versions/{version}": {
+   "get": {
+    "operationId": "get_package_version_api_v1_extensions_marketplace_packages__package_id__versions__version__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "package_id",
+      "required": true,
+      "schema": {
+       "title": "Package Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "version",
+      "required": true,
+      "schema": {
+       "title": "Version",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Package Version Api V1 Extensions Marketplace Packages  Package Id  Versions  Version  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Get Package Version",
+    "tags": [
+     "Extension Marketplace / 扩展市场（只读）"
+    ]
+   }
+  },
+  "/api/v1/extensions/marketplace/packages/{package_id}/versions/{version}/download": {
+   "get": {
+    "operationId": "download_package_api_v1_extensions_marketplace_packages__package_id__versions__version__download_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "package_id",
+      "required": true,
+      "schema": {
+       "title": "Package Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "version",
+      "required": true,
+      "schema": {
+       "title": "Version",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Download Package",
+    "tags": [
+     "Extension Marketplace / 扩展市场（只读）"
+    ]
+   }
+  },
   "/api/v1/geocompute/cluster/metrics": {
    "get": {
     "description": "V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。\n\n有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；\n取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。",

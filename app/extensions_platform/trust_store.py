@@ -62,7 +62,11 @@ _PEM_BEGIN = "-----BEGIN PUBLIC KEY-----"
 
 @dataclass(frozen=True)
 class TrustStore:
-    """不可变信任根（加载期一次性校验；运行期零 I/O）。"""
+    """不可变信任根（加载期一次性校验；运行期零 I/O）。
+
+    ``source_path`` 为 None 的实例（测试直构）不支持吊销写回；
+    `revoke_package` 只在文件加载的实例上可用（运维面）。
+    """
 
     publishers: dict[str, dict[str, str]] = field(default_factory=dict)
     # publisher -> key_id -> {"public_key_pem": str, "state": str}
@@ -70,6 +74,7 @@ class TrustStore:
     revoked_fingerprints: frozenset[str] = frozenset()
     # (package_id, version|None)；version=None = 整包吊销。
     revoked_packages: tuple[tuple[str, Optional[str]], ...] = ()
+    source_path: Optional[Path] = None
 
     # ── 加载 ─────────────────────────────────────────────────────────
     @classmethod
@@ -177,6 +182,7 @@ class TrustStore:
             revoked_key_ids=frozenset(key_ids),
             revoked_fingerprints=frozenset(fingerprints),
             revoked_packages=tuple(packages),
+            source_path=path,
         )
 
     # ── 吊销判定（包级，先于验签）────────────────────────────────────
@@ -207,6 +213,74 @@ class TrustStore:
     def public_key_pem(self, publisher: str, key_id: str) -> Optional[str]:
         key = self.publishers.get(publisher, {}).get(key_id)
         return key["public_key_pem"] if key is not None else None
+
+    # ── 运维面：吊销写回（registry revoke 的传播通道）─────────────────
+    def revoke_package(self, package_id: str, version: Optional[str] = None) -> None:
+        """把 (package_id, version) 写入信任根吊销表并原子持久化。
+
+        幂等：重复吊销同一 (id, version) 是 no-op。只对文件加载的实例
+        可用（无 source_path → typed 拒绝，不静默丢吊销）。
+        """
+        import os
+        import tempfile
+
+        if self.source_path is None:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_PARSE_FAILED,
+                    "trust store revocation requires a file-backed store",
+                )
+            )
+        entry = (package_id, version)
+        if entry in self.revoked_packages:
+            return
+        updated = TrustStore(
+            publishers=self.publishers,
+            revoked_key_ids=self.revoked_key_ids,
+            revoked_fingerprints=self.revoked_fingerprints,
+            revoked_packages=self.revoked_packages + (entry,),
+            source_path=self.source_path,
+        )
+        payload = json.dumps(
+            {
+                "publishers": {
+                    name: {"keys": keys} for name, keys in self.publishers.items()
+                },
+                "revoked": {
+                    "key_ids": sorted(self.revoked_key_ids),
+                    "fingerprints": sorted(self.revoked_fingerprints),
+                    "packages": [
+                        {"id": pid, "version": ver}
+                        for pid, ver in updated.revoked_packages
+                    ],
+                },
+            },
+            ensure_ascii=False,
+            indent=1,
+        )
+        fd, tmp = tempfile.mkstemp(
+            dir=str(self.source_path.parent), prefix=".trust", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(payload)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, self.source_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        # 原子换名后以落盘事实为准刷新本实例视图（并发吊销可能已并入
+        # 其它条目——重读保证不回退别人的吊销）。frozen dataclass →
+        # object.__setattr__ 是唯一的就地刷新通道。
+        refreshed = TrustStore.load(self.source_path)
+        object.__setattr__(self, "publishers", refreshed.publishers)
+        object.__setattr__(self, "revoked_key_ids", refreshed.revoked_key_ids)
+        object.__setattr__(self, "revoked_fingerprints", refreshed.revoked_fingerprints)
+        object.__setattr__(self, "revoked_packages", refreshed.revoked_packages)
 
 
 def _is_sha256_hex(value: str) -> bool:
