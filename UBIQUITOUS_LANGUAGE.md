@@ -58,6 +58,19 @@ opinionated glossary; where it disagrees with older docs, this file wins.
 | **Real-services lane** | The CI smoke subset (PostGIS + Redis + real Celery worker) armed only by explicit `REAL_SERVICES=1`. | smoke tests, integration lane |
 | **Perf lane** | The isolated `pytest -m perf` baseline run; unfiltered full-suite runs self-skip perf items. | benchmarks, perf harness |
 
+## Lakehouse (V6)
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **DataObject** | A durable, immutable lakehouse data object whose id is the sha256 of its canonical manifest (content-addressed, no opt-in). Kinds: `vector_parquet`, `cog_raster`, `zarr_cube`. | file, dataset (weaker), blob |
+| **DataObject manifest** | The deterministic canonical JSON record (kind, owner_scope, content_blobs, payload, input_fingerprint, environment_fingerprint); no wall-clock — same inputs+params ⇒ same id. | metadata, descriptor |
+| **Logical alias** | A readable pointer (session alias / Artifact name) to a DataObject revision; carries no content and never changes identity. | handle (vague) |
+| **content root** | The sha256 over the sorted (path, digest, size) blob list of an object — the merkle identity of its bytes. | checksum (weaker) |
+| **Owner scope** | Exactly one of `session_id`/`project_id` participating in identity and enforced on every use; byte blobs may dedupe across owners, judgments never do. | tenant (reserved for cross-tenant isolation) |
+| **Row-group bbox map** | Per-row-group bboxes computed from real geometry at GeoParquet write time (`webgis:row_groups` schema metadata); the pruning evidence for window scans. | spatial index |
+| **Cube revision** | An immutable cube state identified by a manifest; produced either by publication or a hardlink copy-on-write fork (the source store stays byte-identical). | version (weaker), snapshot (reserved) |
+| **Lazy materialization** | ref-only until a bounded window/chunk read; proven structurally (row-group prune counts, chunk-touch counts), never by wall-clock alone. | streaming |
+
 ## Relationships
 
 - A **Cartography Verdict** belongs to exactly one **MapSpec generation**, joined by **MapSpec fingerprint**.

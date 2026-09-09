@@ -2,7 +2,7 @@
  "artifacts": {
   "docs/quality/CONTRACT_DRIFT_REPORT.md": {
    "generator": "scripts/gen_drift_report.py",
-   "input_fingerprint": "cfb4713c086ca98c5a404a6db5865d9292a01ab22b9a1d345bbfd14d298eb16a",
+   "input_fingerprint": "bb6db82b6438bdb1a2cb60205dc32484c064707d5473f1ec99d9fcae1e020dd7",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -10,7 +10,7 @@
   },
   "docs/quality/QUALITY_MANIFEST.md": {
    "generator": "scripts/gen_quality_manifest.py",
-   "input_fingerprint": "44156f872290eaeb92a2cbdd9cf2f715e081843059c0883b72c784b53bf05f86",
+   "input_fingerprint": "044c4e91a15092071252c2c1e04d41cfc80b2de749f458e704f3851b8cf2dd17",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -22,7 +22,7 @@
   },
   "docs/quality/QUALITY_REPORT.md": {
    "generator": "scripts/gen_quality_report.py",
-   "input_fingerprint": "95b4e49b261168a64f2321f1994f872dd8460ca0fd432d2daaebe888012bc2ca",
+   "input_fingerprint": "3ca2e661390d546d0477fc3e92003a5504005742a52d1b5fd06acd659bae9b2c",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -68,7 +68,7 @@
   },
   "docs/quality/contract-drift-report.json": {
    "generator": "scripts/gen_drift_report.py",
-   "input_fingerprint": "cfb4713c086ca98c5a404a6db5865d9292a01ab22b9a1d345bbfd14d298eb16a",
+   "input_fingerprint": "bb6db82b6438bdb1a2cb60205dc32484c064707d5473f1ec99d9fcae1e020dd7",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -76,7 +76,7 @@
   },
   "docs/quality/quality-manifest.json": {
    "generator": "scripts/gen_quality_manifest.py",
-   "input_fingerprint": "44156f872290eaeb92a2cbdd9cf2f715e081843059c0883b72c784b53bf05f86",
+   "input_fingerprint": "044c4e91a15092071252c2c1e04d41cfc80b2de749f458e704f3851b8cf2dd17",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -88,7 +88,7 @@
   },
   "docs/quality/quality-report.json": {
    "generator": "scripts/gen_quality_report.py",
-   "input_fingerprint": "95b4e49b261168a64f2321f1994f872dd8460ca0fd432d2daaebe888012bc2ca",
+   "input_fingerprint": "3ca2e661390d546d0477fc3e92003a5504005742a52d1b5fd06acd659bae9b2c",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",

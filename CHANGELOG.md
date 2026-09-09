@@ -3,6 +3,47 @@
 ## [Unreleased] - 2026-09-09
 
 ### Added
+- Spatial Data Lakehouse & Cube V6 (ADR-0118): durable DataObject identity —
+  manifests are content-addressed (id = canonical sha256, deterministic,
+  owner-scoped, with input reuse fingerprints and an environment
+  fingerprint), published through the existing BlobStore CAS with free
+  byte-level dedup.
+- S3-compatible BlobStore backend (same interface, optional boto3 with
+  typed degrade): staging->copy atomic publish, verify-before-trust
+  put-if-absent, digest-verified reads; endpoint gated by the existing
+  SSRF guard before any runtime dependency imports. Selected via
+  WEBGIS_OBJECT_STORE_BACKEND (default filesystem — zero behavior change).
+- `ref:fabric-parquet/<id>` is now a first-class ledger citizen: the
+  previously write-only dangling ref gained a resolver, session-ledger
+  registration, probe/GC visibility, durable content identity, and a
+  row-group-pruned window scan (`POST /api/v1/lakehouse/vector/scan`)
+  with honest structural evidence (row_groups_read/total, truncation).
+- Zarr V6 cube runtime: group cubes (one (time,y,x) array per band) with
+  consolidated metadata, chunk-granular window reads, and immutable
+  revisions via hardlink copy-on-write forks (source store stays
+  byte-identical). Session production path: `POST /api/v1/lakehouse/cubes`
+  + `/cubes/window`; refs (`ref:cube/<id>`) are ledger-visible with GC
+  protection. Grid mismatches are typed refusals — never silent resamples.
+- Lakehouse REST surface (`/api/v1/lakehouse/*`): owner-guarded object
+  manifest reads, vector window scan, cube build/window, and DR verify;
+  foreign-owner access returns 404 without leaking existence.
+- Workspace durability for lakehouse refs: snapshots can materialize
+  fabric-parquet (binary lane) and cube (manifest lane) pointers; restore
+  re-materializes from the BlobStore with per-blob digest verification
+  (session-death reopen). DR helpers: working-copy verify/repair, CAS
+  chunk backup, read-only missing/orphan scans.
+- `WEBGIS_REF_CONTENT_HASH` now defaults ON — session ref descriptors carry
+  a canonical payload sha256 (<=1MiB) by default; set the env to
+  0/false/no/off for the legacy always-None behavior.
+
+### Fixed
+- `raster_store.save_png` now publishes atomically (tmp + os.replace) —
+  the last non-atomic durable write in the repo; crashes can no longer
+  leave half-written PNGs.
+- Lakehouse tests sandbox the BlobStore root: the process-wide
+  content-store cache is reset per test, so tests monkeypatching DATA_DIR
+  no longer leak blobs into the repo's ./data.
+
 - GeoCompute Cluster Runtime V6: runs gain a durable control plane
   (`geocompute_runs`/`geocompute_workers`/`geocompute_resource_usage`) with
   lease/epoch fencing, coordinator leadership arbitration, stale-lease

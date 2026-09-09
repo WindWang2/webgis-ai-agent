@@ -24,7 +24,6 @@ import secrets
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from app.core.config import settings
 from app.schemas.data_fabric_schema import QueryResult, QuerySpec
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import (
@@ -46,6 +45,50 @@ GEOPARQUET_REF_PREFIX = "ref:fabric-parquet/"
 #: 会话/工件 id 白名单（路径段边界即拒绝 traversal/分隔符 —— 与 raster ref
 #: 的 charset 纪律一致）。
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
+
+#: Durable DataObject 发布的字节预算（与 workspace snapshot 的 materialize
+#: 默认预算同量级）：超预算文件仍落盘+登记台账，只是不做 BlobStore 复制，
+#: durable="oversized" 诚实披露（绝不假装持久）。
+_FABRIC_PARQUET_BLOB_PUBLISH_BUDGET_BYTES = 256 * 1024 * 1024
+
+
+def _file_sha256(path: Path) -> str:
+    """流式 sha256（仓库唯一口径 app/lib/data/fingerprints.sha256_of_file）。"""
+    from app.lib.data.fingerprints import sha256_of_file
+
+    return sha256_of_file(path)
+
+
+def _publish_parquet_object(
+    path: Path,
+    session_id: str,
+    title: str,
+    content_sha256: str,
+    geo_summary: Dict[str, Any],
+    feature_count: int,
+):
+    """GeoParquet 文件 → DataObject（blob + manifest，BlobStore CAS）。"""
+    from app.services.lakehouse.data_object import (
+        normalize_owner_scope,
+        publish_data_object,
+    )
+
+    return publish_data_object(
+        {"data.parquet": path},
+        kind="vector_parquet",
+        owner_scope=normalize_owner_scope(session_id=session_id),
+        payload={
+            "feature_count": int(feature_count),
+            **({"bbox": geo_summary["bbox"]} if "bbox" in geo_summary else {}),
+            **({"crs": geo_summary["crs"]} if geo_summary.get("crs") is not None else {}),
+            **({"geometry_types": geo_summary["geometry_types"]}
+               if "geometry_types" in geo_summary else {}),
+            "content_sha256": content_sha256,
+            "title": title,
+        },
+        producer={"capability": "fabric.materialize", "tool": "materialize_geoparquet"},
+        input_fingerprint=content_sha256,
+    )
 
 
 def _is_demo_source_type(source_type: Any) -> bool:
@@ -226,26 +269,37 @@ class MaterializationService:
         session_id: str,
         table: Any,
         title: str,
+        *,
+        row_group_size: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Arrow Table → GeoParquet 磁盘工件（Wave 5 写入 lane）。
+        """Arrow Table → GeoParquet 磁盘工件（V6：一等台账公民 + 内容身份）。
 
         落盘 ``<DATA_DIR>/<session>/fabric-geoparquet/<16hex>.parquet``
         （zstd，经 ``vector_carrier.table_to_geoparquet``），返回 ``ref
         = ref:fabric-parquet/<id>`` 与磁盘 ``path`` —— 对齐 raster PNG 磁盘
         ref 先例的最小诚实语义（路径不透明，ref 即 cursor）。
 
+        V6（ADR-0118）闭合此前的 write-only 悬空引用：
+
+        - **路径单点**：``artifact_registry.fabric_parquet_path`` 是唯一路径
+          派生（本函数不再自带目录约定）；
+        - **台账注册**：写后 ``register_artifact``（type=fabric_geoparquet，
+          descriptor=真实 bbox/count/crs/digest）—— ref 进 ledger，GC/probe
+          由此可见（注册失败降级日志，绝不阻断工具路径）；
+        - **内容身份**：文件流式 sha256 恒计算；预算内（256MiB，与 workspace
+          materialize 预算同量级）额外发布 DataObject（blobs+manifest 经
+          BlobStore CAS —— durable identity，同内容重发布免费去重）；
+          超预算诚实跳过（durable="oversized"），绝不假装。
+
         - pyarrow 缺失 → typed ``VectorCarrierUnavailable``（诚实降级：
           dict-lane ``materialize`` 缺省路径不受任何影响）；
-        - 会话台账（artifact_registry）注册是刻意的最小接缝：注册 API 归
-          raster/promotion 模块所有，此处不为其引入反向耦合 ——
-          TODO(fabric-artifact-ledger): 若后续需要 GC/存活探测，把
-          ``ref:fabric-parquet/<id>`` 按 ``artifact_registry`` 的 raster
-          disk-cursor 形状（ref 解析 + O(1) stat）接入台账；
         - session_id 过白名单校验（路径段边界拒绝 traversal）。
         """
+        from app.services.artifact_registry import fabric_parquet_path
         from app.services.data_fabric.vector_carrier import (
             VectorCarrierUnavailable,
             arrow_available,
+            table_geo_summary,
             table_to_geoparquet,
         )
 
@@ -258,19 +312,79 @@ class MaterializationService:
         if not isinstance(session_id, str) or not _ID_RE.match(session_id):
             raise ValueError(f"invalid session id for disk artifact: {session_id!r}")
         artifact_id = secrets.token_hex(8)  # 16 hex
-        base = Path(settings.DATA_DIR) / session_id / "fabric-geoparquet"
-        path = base / f"{artifact_id}.parquet"
         ref = f"{GEOPARQUET_REF_PREFIX}{artifact_id}"
+        path = fabric_parquet_path(session_id, ref)
+        if path is None:  # 防御性（id 由本函数铸造，恒合法）
+            raise ValueError(f"unresolvable fabric-parquet ref: {ref}")
 
         def _write() -> int:
-            base.mkdir(parents=True, exist_ok=True)
-            table_to_geoparquet(table, str(path), compression="zstd")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            table_to_geoparquet(
+                table, str(path), compression="zstd", row_group_size=row_group_size,
+            )
             return path.stat().st_size
 
         size = await asyncio.to_thread(_write)
+
+        # 内容身份：流式 sha256（O(payload) IO，恒算 —— 内容寻址默认参与
+        # DataObject 身份）；geo 摘要零额外几何扫描（schema 元数据读回）。
+        content_sha256 = await asyncio.to_thread(_file_sha256, path)
+        geo_summary = table_geo_summary(table)
+
+        # Durable 发布（预算内）：blobs+manifest → BlobStore（CAS 去重）。
+        data_object_id: Optional[str] = None
+        manifest_location: Optional[str] = None
+        durable_state = "published"
+        if size <= _FABRIC_PARQUET_BLOB_PUBLISH_BUDGET_BYTES:
+            try:
+                identity = await asyncio.to_thread(
+                    _publish_parquet_object,
+                    path, session_id, title, content_sha256, geo_summary,
+                    int(table.num_rows),
+                )
+                data_object_id = identity.data_object_id
+                manifest_location = identity.manifest_location
+            except Exception as e:  # noqa: BLE001 — durable 发布失败诚实降级
+                durable_state = "failed"
+                logger.warning(
+                    "[MaterializationService] data object publish failed for "
+                    "%s: %s", ref, e,
+                )
+        else:
+            durable_state = "oversized"
+
+        # 台账注册（best-effort；ref 成为 ledger 一等公民 —— GC/probe 可见）。
+        try:
+            from app.services.artifact_registry import register_artifact
+
+            await register_artifact(
+                session_id,
+                artifact_id=ref,
+                artifact_type="fabric_geoparquet",
+                producer_capability="fabric.materialize",
+                producer_tool="materialize_geoparquet",
+                descriptor={
+                    "feature_count": int(table.num_rows),
+                    **({"bbox": geo_summary["bbox"]} if "bbox" in geo_summary else {}),
+                    **({"crs": geo_summary["crs"]} if isinstance(geo_summary.get("crs"), str) else {}),
+                },
+                metadata={
+                    "content_sha256": content_sha256,
+                    "byte_size": int(size),
+                    **({"data_object_id": data_object_id} if data_object_id else {}),
+                    "storage": "disk-cursor",
+                },
+            )
+        except Exception as e:  # noqa: BLE001 — 注册是增值记录，绝不阻断
+            logger.warning(
+                "[MaterializationService] ledger registration skipped for %s: %s",
+                ref, e,
+            )
+
         logger.info(
-            "[MaterializationService] geoparquet artifact '%s' -> %s (%d bytes)",
-            title, path, size,
+            "[MaterializationService] geoparquet artifact '%s' -> %s (%d bytes, "
+            "durable=%s)",
+            title, path, size, durable_state,
         )
         return {
             "status": "success",
@@ -281,6 +395,10 @@ class MaterializationService:
             "format": "geoparquet",
             "feature_count": int(table.num_rows),
             "bytes": int(size),
+            "content_sha256": content_sha256,
+            **({"data_object_id": data_object_id} if data_object_id else {}),
+            "durable": durable_state,
+            **({"manifest": manifest_location} if manifest_location else {}),
         }
 
     async def _materialize_geoparquet_result(
