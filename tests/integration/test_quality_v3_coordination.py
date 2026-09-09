@@ -349,7 +349,47 @@ def test_preflight_full_pass_on_master():
     assert report["elapsed_s"] < 10, "quick preflight 必须秒级"
     assert {c["check"] for c in report["checks"]} == {
         "ownership_structure", "ownership_artifact_parity",
-        "migration_heads", "adr_watermark", "generated_staleness"}
+        "migration_heads", "adr_watermark", "generated_staleness",
+        "generated_hand_edits"}
+
+
+def test_find_hand_edits_detects_content_change_without_input_change():
+    """手改检测正/负例：输入未变+内容变 = 手改；输入变 = 正常 stale，不算。"""
+    from app.lib.quality.artifact_graph import (
+        build_graph_state, content_fingerprint, find_hand_edits,
+    )
+
+    current = build_graph_state()
+    target = "docs/quality/QUALITY_MANIFEST.md"
+    assert content_fingerprint(target) is not None
+
+    # 负例：账本与现状一致 → 无手改
+    assert find_hand_edits(current) == []
+
+    # 正例：输入指纹一致，content 指纹篡改 → 检出
+    tampered = json.loads(json.dumps(current))
+    tampered[target]["content_fingerprint"] = "0" * 64
+    assert find_hand_edits(tampered) == [target]
+
+    # 正常 stale 不算手改：输入指纹 + 内容指纹都变（再生成漂移）
+    drifted = json.loads(json.dumps(current))
+    drifted[target]["input_fingerprint"] = "1" * 64
+    drifted[target]["content_fingerprint"] = "2" * 64
+    assert find_hand_edits(drifted) == []
+
+    # 缺失账本条目（新登记生成物）→ 不误报
+    assert find_hand_edits({}) == []
+
+
+def test_generated_entry_scope_and_version_defaults_additive():
+    from app.lib.quality.artifact_graph import DECLARED
+
+    for entry in DECLARED:
+        assert entry.scope in ("global", "branch-local")
+        assert isinstance(entry.generator_version, int) and entry.generator_version >= 1
+        d = entry.as_dict()
+        assert d["scope"] == entry.scope
+        assert d["generator_version"] == entry.generator_version
 
 
 def test_preflight_detects_watermark_violation(tmp_path):

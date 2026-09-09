@@ -84,6 +84,13 @@ def run_preflight(repo_root: Path) -> dict:
          [f"{a} 输入指纹已变，需再生成" for a in stale],
          {"artifacts": len(load_recorded())})
 
+    # 6. 手改检测（W5）：输入未变而产物被编辑 → regenerate-dont-edit 违反
+    from app.lib.quality.artifact_graph import find_hand_edits
+    edited = find_hand_edits(load_recorded())
+    _add("generated_hand_edits",
+         [f"{a} 输入未变但内容被改（手改将在下次再生成时静默丢失）"
+          for a in edited])
+
     ok = all(c["ok"] for c in checks)
     return {
         "preflight_version": 1,

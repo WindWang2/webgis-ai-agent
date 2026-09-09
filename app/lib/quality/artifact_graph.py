@@ -18,7 +18,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 #: 生成物账本自身（也是本图的派生物之一）
 ARTIFACT_GRAPH_PATH = "docs/quality/generated-artifacts.json"
@@ -61,9 +61,19 @@ class GeneratedEntry:
     artifact: str                      # repo 相对路径（生成物本体）
     generator: str                     # 生成脚本（repo 相对）
     inputs: Tuple[str, ...]            # 语义输入（文件或目录，repo 相对）
+    # Quality V3（Epic 10 W5，additive）：作用域与生成器版本。
+    # scope=global：全分支共享，rebase/merge 后必须重验再生成；
+    # scope=branch-local：单分支工作产物，不参与跨分支冲突。
+    scope: str = "global"
+    generator_version: int = 1
 
     def as_dict(self) -> Dict[str, Any]:
-        return {"generator": self.generator, "inputs": list(self.inputs)}
+        return {
+            "generator": self.generator,
+            "inputs": list(self.inputs),
+            "scope": self.scope,
+            "generator_version": self.generator_version,
+        }
 
     def input_fingerprint(self) -> str:
         entries: List[Tuple[str, Path]] = [(self.generator,
@@ -173,15 +183,54 @@ DECLARED: Tuple[GeneratedEntry, ...] = (
 )
 
 
+def content_fingerprint(artifact: str) -> Optional[str]:
+    """生成物本体 sha256（确定性；产物不存在 = None，未生成是合法状态）。"""
+    path = REPO_ROOT / artifact
+    if not path.is_file():
+        return None
+    return _file_hash(path)
+
+
 def build_graph_state() -> Dict[str, Any]:
-    """{artifact: {generator, inputs, input_fingerprint}}（确定性）。"""
+    """{artifact: {generator, inputs, scope, generator_version,
+    input_fingerprint, content_fingerprint}}（确定性）。
+
+    Quality V3 W5：content_fingerprint 使再生成 diff 可归因——
+    输入指纹变 = 正常再生成；输入不变而内容变 = 手改（regenerate-dont-edit
+    被违反）或生成器非确定（由 DETERMINISM 认证另行覆盖）。
+    """
     out: Dict[str, Any] = {}
     for entry in DECLARED:
         out[entry.artifact] = {
             **entry.as_dict(),
             "input_fingerprint": entry.input_fingerprint(),
+            "content_fingerprint": content_fingerprint(entry.artifact),
         }
     return out
+
+
+def find_hand_edits(recorded: Dict[str, Any]) -> List[str]:
+    """手改检测（Quality V3 W5）：输入指纹未变而生成物内容已变的产物。
+
+    与 find_stale 正交：stale = 输入变（须再生成）；hand-edit = 输入没变
+    但产物被直接编辑（regenerate-dont-edit 违反，改动会随下次再生成静默
+    丢失，必须显式 waiver 或改为修改生成器输入）。
+    """
+    current = build_graph_state()
+    edited: List[str] = []
+    for artifact, state in sorted(current.items()):
+        rec = recorded.get(artifact)
+        if not rec:
+            continue
+        inputs_match = rec.get("input_fingerprint") == state["input_fingerprint"]
+        content_changed = (
+            state.get("content_fingerprint") is not None
+            and rec.get("content_fingerprint") is not None
+            and rec.get("content_fingerprint") != state["content_fingerprint"]
+        )
+        if inputs_match and content_changed:
+            edited.append(artifact)
+    return edited
 
 
 def find_stale(recorded: Dict[str, Any]) -> List[str]:
