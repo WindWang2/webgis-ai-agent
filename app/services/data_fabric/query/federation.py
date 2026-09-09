@@ -777,6 +777,10 @@ class ChainSource:
     fields: Optional[List[str]] = None
     estimated_rows: Optional[int] = None
     srs: Optional[str] = None
+    # ── V7（ADR-0119 additive）──
+    #: 源类型（如 "postgis"）：驱动静态 capability 注入（聚合下推证明、
+    #: 下推边界披露）。可选；缺省 = 能力未知（保守，不下推）。
+    source_type: Optional[str] = None
 
 
 @dataclass
@@ -788,6 +792,9 @@ class ChainSourceStats:
 
     estimated_rows: Optional[int] = None
     column_ndv: Optional[Dict[str, int]] = None  # 列名 → 近似基数
+    # ── V7（ADR-0119 W9）：measured 级唯一键声明（启用安全聚合下推证明；
+    # 调用方对声明真实性负责 —— 估计 NDV 不作数）。──
+    unique_keys: Optional[List[str]] = None
 
     def ndv(self, column: Optional[str]) -> Optional[int]:
         if column is None or not self.column_ndv:
@@ -1691,6 +1698,46 @@ __all__ = [
 # ── V6 引擎（ADR-0118 W10）：cost-based 枚举 + 流式批执行 ──────────────────
 
 
+def _make_bushy_replan_fn(req, original_plan):
+    """V7（ADR-0119 W10）：bushy 整树重排回调（观测行数 pinned 后重枚举）。
+
+    - 以观测行数覆盖各源 ``estimated_rows`` → 同一 planner 纯函数重枚举；
+    - 新计划必须 hash 不同**且成本严格低于原计划**（previous_cost 携带原
+      成本供 executor 判定）；否则返回 None（保留原结果）；
+    - ``order_strategy="given"`` 上游已禁用 adaptive（双保险）。
+    """
+    from copy import replace as _dataclass_replace
+
+    from app.services.data_fabric.query.federated.planner import plan_federation_v6
+
+    original_cost = original_plan.cost
+
+    def _replan(actual_rows):
+        pinned = dict(actual_rows or {})
+        new_req = _dataclass_replace(
+            req,
+            sources=[
+                _dataclass_replace(
+                    s,
+                    estimated_rows=(
+                        int(pinned[s.source_id])
+                        if s.source_id in pinned and pinned[s.source_id]
+                        else s.estimated_rows
+                    ),
+                )
+                for s in req.sources
+            ],
+        )
+        new_plan = plan_federation_v6(new_req)
+        try:
+            new_plan.previous_cost = original_cost
+        except Exception:  # noqa: BLE001 - dataclass frozen 情况下挂属性失败
+            pass
+        return new_plan
+
+    return _replan
+
+
 def execute_chain_v6(
     executor: "FederatedExecutor", req: FederatedChainRequest
 ) -> Dict[str, Any]:
@@ -1755,6 +1802,7 @@ def execute_chain_v6(
             bbox=req.bbox,
             adaptive=True,
             order_strategy=getattr(req, "order_strategy", "cost"),
+            replan_fn=_make_bushy_replan_fn(req, plan),
         )
         exec_result = px.execute(
             tree,
@@ -1805,6 +1853,11 @@ def execute_chain_v6(
         "semi_join_reduction": exec_result.get("hop_stats"),
         "bloom_reduction": exec_result.get("bloom_stats"),
         "replans_used": exec_result.get("replans_used", 0),
+        # ── V7（ADR-0119 W8/W10）执行证据 additive ──
+        "per_source_delivered_srid": exec_result.get(
+            "per_source_delivered_srid", {}
+        ),
+        "crs_fallbacks": exec_result.get("crs_fallbacks", []),
     }
 
 

@@ -34,6 +34,19 @@ def build_enumeration_context(req: Any) -> EnumerationContext:
         hint = hints.get(s.source_id)
         if hint is not None and getattr(hint, "column_ndv", None):
             ndv = dict(hint.column_ndv)
+        unique_keys: List[str] = (
+            list(hint.unique_keys)
+            if hint is not None and getattr(hint, "unique_keys", None)
+            else []
+        )
+        # V7：声明了 source_type → 注入静态默认能力矩阵（纯函数、无 IO；
+        # 聚合下推证明与下推边界披露消费）。缺省 = 能力未知（保守不下推）。
+        caps = None
+        st = getattr(s, "source_type", None)
+        if st:
+            from app.services.data_fabric.query.capabilities import get_capabilities
+
+            caps = get_capabilities(st)
         sources.append(
             SourceFacts(
                 source_id=s.source_id,
@@ -45,6 +58,8 @@ def build_enumeration_context(req: Any) -> EnumerationContext:
                 where=where,
                 where_raw=where_raw,
                 fields=list(s.fields) if s.fields else None,
+                unique_keys=unique_keys,
+                caps=caps,
             )
         )
     joins = []
@@ -77,13 +92,16 @@ def plan_federation_v6(req: Any) -> EnumeratedPlan:
     """V6 计划入口：request → 成本最优连通树 + 下推决策（纯函数）。
 
     - fetch 窗口按角色写回 scan 节点（build 侧放宽，probe 侧 V5 链语义）；
-    - 聚合下推裁决（rejected alternative）附入 EXPLAIN 披露。
+    - 聚合下推裁决（rejected alternative）附入 EXPLAIN 披露；
+    - V7（ADR-0119 W9）：R-C1 证明通过的 aggregate_join 改写为安全下推
+      形态（右 scan 携带 aggregate_request；输出与本地内核逐位一致）。
     """
     ctx = build_enumeration_context(req)
     plan = enumerate_federation(ctx)
     budget = getattr(req, "budget", None)
     if budget is not None:
         plan.tree = apply_fetch_windows(plan.tree, derive_fetch_windows(ctx, budget))
+    plan.tree = apply_safe_aggregate_pushdown(plan.tree, ctx)
     verdict = aggregate_pushdown_verdict(ctx)
     if verdict is not None and len(plan.alternatives) < MAX_ALTS:
         plan.alternatives.append(verdict)
@@ -136,16 +154,44 @@ def apply_fetch_windows(plan_tree: LogicalNode, windows: Dict[str, int]) -> Logi
 
 
 def aggregate_pushdown_verdict(ctx: EnumerationContext) -> Optional[Dict[str, Any]]:
-    """聚合下推的语义安全裁决（EXPLAIN 诚实披露「为何不下推」）。
+    """聚合下推的语义安全裁决（EXPLAIN 诚实披露「为何不下推/为何安全」）。
 
     V5/V6 的 aggregate_join 语义 = **先连接后聚合**：聚合值按「左（事实表）
     优先、右回退」解析，分组键来自右行 —— 把 GROUP BY 下推到右源会统计
-    **未被连接命中的右行**，语义不等价。因此通用聚合下推被拒绝；只有
-    「聚合字段全部来自右侧且右侧行先按组去重不影响连接」的受限形态才可能
-    安全（当前不存在该契约）—— 如实披露为 rejected alternative。
+    **未被连接命中的右行**，语义不等价。
+
+    V7（ADR-0119 W9）：R-C1 五条件证明通过（``aggregate_pushdown_proof``）
+    的边允许安全下推 —— 右源 GROUP BY 的组值与 join-后聚合**逐位等价**
+    （唯一左键 ⇒ 每右行至多一匹配；组含 join 键 ⇒ 存活组=命中组）。
+    未证明的 aggregate join 维持诚实拒绝。
     """
     if not any(e.kind == "aggregate_join" for e in ctx.joins):
         return None
+    from app.services.data_fabric.query.federated.enumerator import (
+        aggregate_pushdown_proof,
+    )
+
+    sources_in = tuple(s.source_id for s in ctx.sources)
+    proven: list = []
+    for e in ctx.joins:
+        if e.kind != "aggregate_join":
+            continue
+        proof = aggregate_pushdown_proof(e, sources_in, {s.source_id: s for s in ctx.sources})
+        if proof is not None:
+            proven.append(proof)
+    if proven:
+        return {
+            "name": "aggregate_pushdown_to_source",
+            "description": (
+                "push GROUP BY/aggregates into the right source "
+                "(safe: unique left key + group key covers join field"
+                " + decomposable aggregates + source aggregation cap)"
+            ),
+            "feasible": True,
+            "applied": True,
+            "proof": proven,
+            "rejected_reason": None,
+        }
     return {
         "name": "aggregate_pushdown_to_source",
         "description": (
@@ -155,9 +201,87 @@ def aggregate_pushdown_verdict(ctx: EnumerationContext) -> Optional[Dict[str, An
         "rejected_reason": (
             "aggregate_join aggregates over JOINED rows (left-priority field "
             "resolution); source-side GROUP BY would count unmatched right "
-            "rows — semantically unsafe, stays local (bounded by budget)"
+            "rows — semantically unsafe (no measured unique-key proof), "
+            "stays local (bounded by budget)"
         ),
     }
+
+
+def apply_safe_aggregate_pushdown(plan_tree: LogicalNode, ctx: EnumerationContext) -> LogicalNode:
+    """把证明通过的 aggregate_join 改写为下推形态（返回新树；计划即执行）。
+
+    改写内容：``LogicalJoin.aggregate_pushdown=True``；右 scan（scan-like
+    守卫）携带 ``aggregate_request={"group_by", "aggregates"}`` —— 执行器
+    拉组行后精确投影，输出形状与本地内核逐位一致。守卫失败（右非
+    scan-like 等）→ 保持原节点（本地路径，诚实回退）。
+    """
+    from app.services.data_fabric.query.federated.enumerator import (
+        aggregate_pushdown_proof,
+    )
+    from app.services.data_fabric.query.federated.logical import (
+        LogicalJoin as LJ,
+        LogicalScan as LS,
+    )
+
+    by_id = {s.source_id: s for s in ctx.sources}
+    sources_in = tuple(s.source_id for s in ctx.sources)
+
+    def _rewrite(node: LogicalNode) -> LogicalNode:
+        if isinstance(node, LJ):
+            new_left = _rewrite(node.left)
+            new_right = _rewrite(node.right)
+            updates: Dict[str, Any] = {"left": new_left, "right": new_right}
+            if (
+                node.join_kind == "aggregate_join"
+                and isinstance(new_right, LS)
+                and not node.aggregate_pushdown
+            ):
+                edge = _matching_edge(node, new_right, ctx.joins, sources_in)
+                if edge is not None:
+                    proof = aggregate_pushdown_proof(edge, sources_in, by_id)
+                    if proof is not None:
+                        updates["aggregate_pushdown"] = True
+                        updates["right"] = new_right.model_copy(
+                            update={
+                                "aggregate_request": {
+                                    "group_by": list(edge.group_by_right or []),
+                                    "aggregates": list(edge.aggregates or []),
+                                }
+                            }
+                        )
+            return node.model_copy(update=updates)
+        for attr in ("input",):
+            child = getattr(node, attr, None)
+            if child is not None and hasattr(child, "canonical_dict"):
+                return node.model_copy(update={attr: _rewrite(child)})
+        return node
+
+    return _rewrite(plan_tree)
+
+
+def _matching_edge(node: LogicalNode, right_scan: LogicalNode, joins, sources_in):
+    """join 节点 → 匹配的 aggregate_join 边（右 scan source_id + 左子树包含左源）。"""
+    from app.services.data_fabric.query.federated.logical import LogicalScan as LS
+
+    right_sid = right_scan.source_id
+    left_sids = _collect_source_ids(node.left)
+    for e in joins:
+        if e.kind != "aggregate_join":
+            continue
+        if e.right_source_id == right_sid and e.left_source_id in left_sids:
+            return e
+    return None
+
+
+def _collect_source_ids(node: LogicalNode) -> set:
+    if hasattr(node, "source_id"):
+        return {node.source_id}
+    out: set = set()
+    for attr in ("input", "left", "right"):
+        child = getattr(node, attr, None)
+        if child is not None and hasattr(child, "canonical_dict"):
+            out |= _collect_source_ids(child)
+    return out
 
 
 def pushdown_boundary_lines(ctx: EnumerationContext) -> List[str]:

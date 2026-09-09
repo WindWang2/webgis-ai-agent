@@ -497,6 +497,10 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
                 "pushdown_sort": True,
                 "exceeded_transfer_limit": exceeded,
                 "max_record_count": max_record_count,
+                # V7（ADR-0119 W8）：交付 CRS 事实 —— f=geojson 固定 outSR=4326
+                # （GeoJSON 口径），即使声明原生 SRID 交付恒为 4326。执行期
+                # CRS 账本据此修正本地变换（修复 V6 双重变换缺陷）。
+                "delivered_crs": "EPSG:4326",
                 "query_plan": plan.model_dump(),
                 "query_evidence": evidence.model_dump(),
                 "is_demo": False,
@@ -504,9 +508,15 @@ class ArcGISAdapter(GeospatialDataSourceAdapter):
         )
 
     def _base_params(self, v2) -> Dict[str, Any]:
+        from app.services.data_fabric.query.planner import parse_epsg
+
+        # V7（ADR-0119 W8）：显式 output_crs（联邦交付归一化）时随 outSR
+        # 请求；缺省维持 4326（f=geojson 历史行为，位级不变）。
+        requested = parse_epsg(v2.output.crs) if v2 is not None else None
+        out_sr = str(requested) if requested else "4326"
         params: Dict[str, Any] = {
             "f": "geojson",
-            "outSR": "4326",
+            "outSR": out_sr,
         }
         if self._token:
             params["token"] = self._token

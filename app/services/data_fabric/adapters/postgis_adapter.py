@@ -991,6 +991,10 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     "query_plan": plan.model_dump(),
                     "query_evidence": evidence.model_dump(),
                     "exec_time_ms": round((time.monotonic() - started) * 1000, 2),
+                    # V7（ADR-0119 W8）：交付几何 CRS 事实（SQL 内省 ——
+                    # _geojson_expr 的确定性输出；联邦 server placement 的
+                    # delivered==declared 不变量与回退判定都消费它）。
+                    "delivered_crs": f"EPSG:{parse_epsg(v2.output.crs) or 4326}",
                     "pushdown_bbox": plan.pushed_spatial,
                     "pushdown_filter": bool(plan.pushed_filters),
                     "pushdown_projection": plan.pushed_projection,

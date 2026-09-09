@@ -70,6 +70,8 @@ def iter_scan_pages(
     budget: Any,
     token: CancelToken,
     page_size: int = DEFAULT_PAGE_SIZE,
+    output_crs: Optional[str] = None,
+    on_result: Optional[Any] = None,
 ) -> Iterator[List[Dict[str, Any]]]:
     """分页拉取一个源（每页一个 yield；页间检查取消/超时/预算）。
 
@@ -124,7 +126,16 @@ def iter_scan_pages(
             extras["where"] = where
         if bbox:
             extras["bbox"] = list(bbox)
+        if output_crs:
+            # V7（ADR-0119 W8）：server-side 交付 CRS（adapter normalize
+            # 映射 v2.output.crs；PostGIS ST_Transform / ArcGIS outSR）。
+            extras["output_crs"] = output_crs
         result = adapter.query(dataset_id, QuerySpec(**extras))
+        if on_result is not None:
+            try:
+                on_result(result)
+            except Exception:  # noqa: BLE001 - 证据回调绝不阻断扫描
+                pass
         rows = result.features or []
         fetched += len(rows)
         if fetched > budget.max_rows:

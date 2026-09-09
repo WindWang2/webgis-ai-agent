@@ -122,9 +122,11 @@ def test_null_spatial_is_default_one():
 
 
 class _Caps:
-    def __init__(self, server_reprojection=False, source_type="postgis"):
+    def __init__(self, server_reprojection=False, source_type="postgis",
+                 output_crs_pushdown=False):
         self.server_reprojection = server_reprojection
         self.source_type = source_type
+        self.output_crs_pushdown = output_crs_pushdown
 
 
 def test_same_crs_no_transform():
@@ -172,18 +174,52 @@ def test_server_placement_opt_in_only():
 
 def test_server_placement_when_allowed():
     # allow_server=True：server 每行成本 ≈ 本地 1/15 → 大侧 server 胜过小侧本地
+    # V7（ADR-0119 W8）：placement 还要求该侧声明 output_crs_pushdown 通道。
     d = decide_crs_transform(
         left_crs_srid=4326,
         right_crs_srid=3857,
         join_kind="spatial_join",
         caps_left=_Caps(),
-        caps_right=_Caps(server_reprojection=True),
+        caps_right=_Caps(server_reprojection=True, output_crs_pushdown=True),
         est_left_rows=1000,
         est_right_rows=10,
         allow_server=True,
     )
     assert d.placement == "server"
     assert d.transform_side == "right"
+
+
+def test_server_placement_requires_verified_channel():
+    # V7 语义：仅 server_reprojection（服务器能变换）而无已验证扫描通道
+    # （output_crs_pushdown）→ 本地变换（绝不声称执行不了的 placement）。
+    d = decide_crs_transform(
+        left_crs_srid=4326,
+        right_crs_srid=3857,
+        join_kind="spatial_join",
+        caps_left=_Caps(),
+        caps_right=_Caps(server_reprojection=True, output_crs_pushdown=False),
+        est_left_rows=1000,
+        est_right_rows=10,
+        allow_server=True,
+    )
+    assert d.placement == "local"
+    assert d.transform_side == "right"
+
+
+def test_server_placement_side_feasibility_gate():
+    # 右侧通道完整但非 scan-like（server_feasible[1]=False）→ 落左（本地）。
+    d = decide_crs_transform(
+        left_crs_srid=4326,
+        right_crs_srid=3857,
+        join_kind="spatial_join",
+        caps_left=_Caps(server_reprojection=True, output_crs_pushdown=True),
+        caps_right=_Caps(server_reprojection=True, output_crs_pushdown=True),
+        est_left_rows=1000,
+        est_right_rows=10,
+        allow_server=True,
+        server_feasible=(True, False),
+    )
+    assert d.placement == "local"
 
 
 def test_local_transform_cheaper_side_wins():
