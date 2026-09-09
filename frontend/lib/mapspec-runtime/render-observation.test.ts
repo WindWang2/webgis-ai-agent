@@ -180,6 +180,37 @@ describe('collectRenderObservation', () => {
     expect(observation.mapspec).toBeUndefined();
   });
 
+  it('attaches container pixel size when readable (V6 W8 canvas telemetry)', () => {
+    const withContainer = {
+      ...mockMap(),
+      getContainer: () => ({ clientWidth: 1024, clientHeight: 768 }),
+    };
+    const observation = collectRenderObservation({
+      map: withContainer as any,
+      spec: specWithComponents([]),
+      layers: baseLayers as any,
+      mapspecFingerprint: 'fp-test-1234567890',
+      mapspecRevision: 5,
+      errorRing: new RuntimeErrorRing(),
+      mapIdle: true,
+    });
+    expect(observation.canvas).toEqual({ width: 1024, height: 768 });
+  });
+
+  it('omits canvas when container is unreadable (old-build honest absence)', () => {
+    const observation = collectRenderObservation({
+      map: mockMap() as any,
+      spec: specWithComponents([]),
+      layers: baseLayers as any,
+      mapspecFingerprint: 'fp-test-1234567890',
+      mapspecRevision: 5,
+      errorRing: new RuntimeErrorRing(),
+      mapIdle: true,
+    });
+    expect(observation.canvas).toBeUndefined();
+    expect('canvas' in observation).toBe(false);
+  });
+
   it('drains the error ring into the observation (one-shot)', () => {
     const ring = new RuntimeErrorRing();
     ring.push({ message: 'tile 404' });

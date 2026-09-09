@@ -78,6 +78,11 @@ export interface RenderObservation {
   runtime_errors: ObservedRuntimeError[];
   /** V5 W5：chart_panel 渲染事实（id/rendered/data_points；缺席 = 旧构建）。 */
   charts: Array<{ id: string; rendered: boolean; data_points: number }>;
+  /**
+   * V6 W8：地图容器像素尺寸（floating 组件 rect 的参照系）。
+   * 缺席 = 旧构建/容器不可读 —— 后端按证据缺席降级，不做像素级判定。
+   */
+  canvas?: { width: number; height: number };
   // ── 既有 runtime evidence（collectCartographicRuntimeObservation）──
   mapspec_fingerprint: string;
   style_loaded: boolean;
@@ -288,6 +293,17 @@ export function collectRenderObservation({
     reconcileError,
     applied,
   );
+  // V6 W8：容器像素尺寸（floating rect 的 offscreen 判定参照系；读取失败
+  // 静默缺席 —— 后端对证据缺席降级，不虚构）。
+  let canvas: { width: number; height: number } | undefined;
+  try {
+    const el = typeof map.getContainer === 'function' ? map.getContainer() : null;
+    if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+      canvas = { width: el.clientWidth, height: el.clientHeight };
+    }
+  } catch {
+    canvas = undefined;
+  }
   // 显式构造：既有证据字段逐项定型后落位（spread 仅携带额外证据字段，
   // 随后不被覆盖）。
   return {
@@ -309,5 +325,6 @@ export function collectRenderObservation({
     components: observeComponents(spec),
     runtime_errors: errorRing.drain(),
     charts: snapshotChartRenderStates().slice(0, MAX_OBSERVED_COMPONENTS),
+    ...(canvas ? { canvas } : {}),
   };
 }

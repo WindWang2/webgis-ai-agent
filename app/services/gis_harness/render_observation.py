@@ -54,6 +54,187 @@ OBSERVATION_STATE_KEY = "_cartographic_observation"
 MAX_RENDER_FINDINGS = 8
 _MAX_ERROR_DETAIL = 160
 
+# V6 W8 确定性布局检查预算：floating 组件 ≤32（DTO 上限），pairwise O(n²)
+# 有界；overlap/offscreen finding ≤4 条（总 finding 仍受 MAX_RENDER_FINDINGS）。
+_MAX_LAYOUT_FINDINGS = 4
+_OVERLAP_MIN_AREA_PX = 1.0
+
+
+def _component_rect(comp: Dict[str, Any]) -> Optional[tuple]:
+    """ObservedComponent.rect → (x, y, w, h)；缺尺寸分量 → None（不判定）。"""
+    rect = comp.get("rect")
+    if not isinstance(rect, dict):
+        return None
+    try:
+        x = float(rect.get("x"))
+        y = float(rect.get("y"))
+        w = rect.get("width")
+        h = rect.get("height")
+        if w is None or h is None:
+            return None
+        return (x, y, float(w), float(h))
+    except (TypeError, ValueError):
+        return None
+
+
+def _intersection_area(a: tuple, b: tuple) -> float:
+    dx = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+    dy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+    if dx <= 0 or dy <= 0:
+        return 0.0
+    return dx * dy
+
+
+def derive_component_layout_findings(
+    observation: Dict[str, Any],
+) -> List[MapCompletionFinding]:
+    """floating 组件的确定性布局检查（实测像素 rect，非 spec placement）。
+
+    - 两两重叠（交集 > 1px²）→ layout_conflict warning（disclosure：组件
+      位置可被用户拖动 —— transient interaction 不判 error，user-wins）；
+    - 容器像素尺寸在场时：完全越出画布 → layout_conflict warning
+      （mounted 但不可见的事实披露；仍不判 error —— offscreen 可能是
+      用户拖离的瞬态）；部分越界不finding（边缘停靠是合法布局）。
+    全部 optional-telemetry 门控：无 rect / 无 canvas → 相应检查缺席
+    （旧客户端零新 finding，诚实降级）。
+    """
+    from app.services.gis_harness.map_completion import F_LAYOUT_CONFLICT
+
+    findings: List[MapCompletionFinding] = []
+    floats: List[tuple] = []
+    for comp in observation.get("components") or []:
+        if not isinstance(comp, dict):
+            continue
+        rect = _component_rect(comp)
+        if rect is None or comp.get("mounted") is False:
+            continue
+        floats.append((str(comp.get("id") or comp.get("type") or ""), rect))
+    for i in range(len(floats)):
+        for j in range(i + 1, len(floats)):
+            if len(findings) >= _MAX_LAYOUT_FINDINGS:
+                return findings
+            id_a, ra = floats[i]
+            id_b, rb = floats[j]
+            area = _intersection_area(ra, rb)
+            if area > _OVERLAP_MIN_AREA_PX:
+                findings.append(MapCompletionFinding(
+                    code=F_LAYOUT_CONFLICT,
+                    severity="warning",
+                    target=id_a[:64],
+                    detail=(
+                        f"floating components overlap: {id_a[:32]} ∩ {id_b[:32]} "
+                        f"({area:.0f}px² measured)"
+                    ),
+                ))
+    canvas = observation.get("canvas")
+    if isinstance(canvas, dict):
+        try:
+            cw = float(canvas.get("width"))
+            ch = float(canvas.get("height"))
+        except (TypeError, ValueError):
+            cw = ch = 0.0
+        if cw > 0 and ch > 0:
+            for cid, rect in floats:
+                if len(findings) >= _MAX_LAYOUT_FINDINGS:
+                    break
+                x, y, w, h = rect
+                fully_outside = (
+                    x + w <= 0 or y + h <= 0 or x >= cw or y >= ch
+                )
+                if fully_outside:
+                    findings.append(MapCompletionFinding(
+                        code=F_LAYOUT_CONFLICT,
+                        severity="warning",
+                        target=cid[:64],
+                        detail=(
+                            f"floating component fully offscreen at "
+                            f"({x:.0f},{y:.0f}) in {cw:.0f}×{ch:.0f} canvas"
+                        ),
+                    ))
+    return findings
+
+
+def derive_component_lifecycle(
+    observation: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """组件生命周期统一投影（V6 W8；纯派生，零状态）。
+
+    requested → mounted(materialized) → rendered → visible → layout_valid →
+    data_bound → diagnostics：
+
+    - requested = spec enabled（ObservedComponent.enabled）；
+    - mounted = chrome 挂载（含 fallback 注入镜像）；
+    - rendered = chart telemetry rendered（非 chart 族 None —— 无证据不虚构）；
+    - visible = mounted 且未 collapsed（floating 需有实测 rect）；
+    - layout_valid = 该组件不参与 overlap/offscreen finding；
+    - data_bound = chart data_points > 0（非 chart 族 None）；
+    - diagnostics = 该组件关联的 finding code 列表（有界）。
+    """
+    layout_findings = derive_component_layout_findings(observation)
+    by_target: Dict[str, List[str]] = {}
+    for f in layout_findings:
+        by_target.setdefault(str(f.target), []).append(f.code)
+    # layout_invalid 集合：与 derive_component_layout_findings 同一几何
+    # 判据就地重算（有界；避免从 finding 文本回解析 id）。
+    floats: List[tuple] = []
+    for comp in observation.get("components") or []:
+        if not isinstance(comp, dict):
+            continue
+        rect = _component_rect(comp)
+        if rect is None or comp.get("mounted") is False:
+            continue
+        floats.append((str(comp.get("id") or comp.get("type") or ""), rect))
+    invalid_ids = set(by_target.keys())
+    for i in range(len(floats)):
+        for j in range(i + 1, len(floats)):
+            if _intersection_area(floats[i][1], floats[j][1]) > _OVERLAP_MIN_AREA_PX:
+                invalid_ids.add(floats[i][0])
+                invalid_ids.add(floats[j][0])
+    charts_by_id: Dict[str, Dict[str, Any]] = {}
+    for ch in observation.get("charts") or []:
+        if isinstance(ch, dict) and ch.get("id"):
+            charts_by_id[str(ch["id"])] = ch
+    out: List[Dict[str, Any]] = []
+    for comp in (observation.get("components") or [])[:32]:
+        if not isinstance(comp, dict):
+            continue
+        cid = str(comp.get("id") or comp.get("type") or "")
+        ctype = str(comp.get("type") or "")
+        chart = charts_by_id.get(cid)
+        is_chart = "chart" in ctype
+        mounted = bool(comp.get("mounted"))
+        rect = _component_rect(comp)
+        floating = bool(comp.get("floating"))
+        collapsed = bool(comp.get("collapsed"))
+        visible = mounted and not collapsed and (not floating or rect is not None)
+        layout_valid = cid not in invalid_ids
+        diags = list(by_target.get(cid, []))[:4]
+        points = 0
+        rendered: Optional[bool] = None
+        data_bound: Optional[bool] = None
+        if is_chart:
+            if chart is not None:
+                rendered = bool(chart.get("rendered"))
+                raw = chart.get("data_points")
+                points = int(raw) if isinstance(raw, (int, float)) \
+                    and not isinstance(raw, bool) else 0
+                data_bound = points > 0
+            else:
+                rendered = None
+                data_bound = None
+        out.append({
+            "id": cid[:64],
+            "type": ctype[:48],
+            "requested": bool(comp.get("enabled")),
+            "mounted": mounted,
+            "rendered": rendered,
+            "visible": visible,
+            "layout_valid": layout_valid,
+            "data_bound": data_bound,
+            "diagnostics": diags,
+        })
+    return out
+
 
 async def load_render_observation(
     session_id: str,
@@ -375,6 +556,13 @@ def validate_render_observation(
             target=str(first.get("target") or "runtime")[:64],
             detail=f"{len(errors)} runtime error(s) observed; latest: {detail}",
         ))
+
+    # V6 W8：floating 组件确定性布局检查（实测像素 rect；overlap/offscreen
+    # 仅 warning 披露 —— 组件位置可被用户拖动，transient 不判 error）。
+    for f in derive_component_layout_findings(observation):
+        if len(findings) >= MAX_RENDER_FINDINGS:
+            break
+        findings.append(f)
 
     # 层断言在场的会话：任一 render error（层缺席）→ issues；否则 verified。
     render_errors = [f for f in findings if f.severity == "error"]

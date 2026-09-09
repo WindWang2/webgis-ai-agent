@@ -17,6 +17,8 @@
 - [x] W5 Partial Recompute + Reuse Validation（`records` 快照进 derive；artifact health/package 稳定/evidence 三校验 → safe/unknown/unsafe；unsafe 翻 stale 强制重算 `reuse_unsafe:*`；style-only/revision 推进结构性免疫科学重算专测）
 - [x] W6 Unified Findings adapter（`completion/unified_findings.py`：UnifiedFinding 12 字段投影；domain=harness_finalizer/render_diagnostic/workflow_runtime；blocks_completion 单点推导 `_blocks` + stale 显式例外；`collect_unified_findings` 确定性序 + 有界）
 - [x] W7 Completion Verdict 单一化（`evaluate_completion_contract` analysis 维纳入 runtime stale 硬输入；`derive_product_verdict` READY* 遇 stale 压 NEEDS_REPAIR；无运行态块旧章节 parity 零漂移专测）
+- [x] W8 Deterministic Cartographic Observation（floating 组件实测 rect 重叠/完全越出画布 → layout_conflict warning 进主校验链；`derive_component_lifecycle` 统一组件生命周期投影 requested→…→diagnostics；前端 observation 增 `canvas` 容器像素遥测 + DTO 白名单；旧客户端门控零误伤）
+- [x] W9 Visual Observation seam（`visual_evaluator.py`：触发白名单 §40；`GIS_VISUAL_EVALUATOR` hook 默认关闭；输出白名单校验——mutation 意图/非形状条目结构性判废，强制 domain=visual + degradation_only + 不硬阻断；评估器不接触 MapSpec）
 - [ ] W3 Artifact/MapSpec/Node lineage 双向索引
 - [ ] W4 Semantic Diff→Affected Subgraph 接线
 - [ ] W5 Partial Recompute + Reuse Validation

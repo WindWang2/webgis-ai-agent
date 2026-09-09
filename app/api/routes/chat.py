@@ -1439,6 +1439,10 @@ class CartographicRuntimeObservationRequest(BaseModel):
     # bounded settle 结果（map 'idle' race 超时）。
     map_idle: Optional[bool] = None
     observed_at: Optional[int] = Field(default=None, ge=0, le=9_007_199_254_740_991)
+    # V6 W8：地图容器像素尺寸（floating 组件 rect 的参照系 —— 确定性
+    # offscreen/重叠检查的坐标基准）。None = 客户端未上报（旧构建），
+    # 服务端按「证据缺席」降级：不做像素级判定，不产生误伤 finding。
+    canvas: Optional[dict[str, Any]] = None
 
     @model_validator(mode="after")
     def _cap_serialized_size(self):
