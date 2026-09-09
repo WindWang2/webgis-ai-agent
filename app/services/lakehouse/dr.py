@@ -1,4 +1,4 @@
-"""Lakehouse disaster recovery — Spatial Lakehouse V6 (Wave 11, ADR-0118).
+"""Lakehouse disaster recovery — V6 (ADR-0118) + V7 scrub (ADR-0119).
 
 数据对象级 DR 组合层（不建第二存储）：
 
@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Union
@@ -153,6 +154,114 @@ def scan_missing_objects(data_object_ids: Iterable[str]) -> Dict[str, Any]:
         "checked": len(report),
         "missing": sorted(k for k, v in report.items() if v != "verified"),
         "states": report,
+    }
+
+
+# ── V7 scrub（Scope I）：采样/全量 + ETag 比对 ─────────────────────────
+
+
+def _sample_chunk_ids(manifest_id: str, chunk_ids: List[str], k: int) -> List[str]:
+    """确定性子样（sha256(manifest_id + chunk_id) 排序取前 K —— 可复现，
+    绝不依赖随机）。"""
+    if k >= len(chunk_ids):
+        return list(chunk_ids)
+    ranked = sorted(
+        chunk_ids,
+        key=lambda cid: hashlib.sha256(
+            f"{manifest_id}:{cid}".encode()
+        ).hexdigest(),
+    )
+    return ranked[:k]
+
+
+def scrub_object(
+    data_object_id: str,
+    *,
+    mode: str = "sample",
+    sample_k: int = 8,
+    etag_check: bool = True,
+    store: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """对象 scrub：manifest checksum（恒查）→ chunk digest（sample/full）
+    → 远端 ETag 比对（sidecar 记录值 vs head —— multipart ETag 非
+    digest，绝不与 sha256 比较，评审 R0-14）。
+
+    返回
+    ``{"state", "chunks_total", "chunks_checked", "missing", "corrupt",
+    "etag_mismatch", "etag_checked", "mode"}``。virtual 对象 → 深度校验
+    状态（递归 children）。
+    """
+    from app.services.lakehouse.data_object import (
+        is_data_object_id,
+        resolve_data_object,
+    )
+
+    if mode not in ("sample", "full"):
+        raise DRVerifyError(f"unknown scrub mode: {mode!r}")
+    if not is_data_object_id(data_object_id):
+        raise DRVerifyError(f"invalid data object id: {data_object_id[:16]}")
+    if store is None:
+        from app.services.s3_blob_store import get_object_store
+
+        store = get_object_store()
+    object_store = store
+    manifest = resolve_data_object(data_object_id, store=object_store)
+    if manifest is None:
+        raise DRVerifyError(f"manifest not found: {data_object_id[:16]}")
+    if manifest.get("kind") == "virtual":
+        from app.services.lakehouse.virtual_object import (
+            verify_data_object_deep,
+        )
+
+        return {
+            "state": verify_data_object_deep(
+                data_object_id, store=object_store
+            ),
+            "chunks_total": 0, "chunks_checked": 0,
+            "missing": [], "corrupt": [], "etag_mismatch": [],
+            "etag_checked": False,
+            "mode": mode,
+        }
+    blobs = manifest.get("content_blobs") or []
+    blob_ids = [str(b.get("sha256") or "") for b in blobs]
+    if mode == "sample":
+        selected = _sample_chunk_ids(
+            data_object_id, [b for b in blob_ids if b], max(1, int(sample_k)),
+        )
+    else:
+        selected = [b for b in blob_ids if b]
+    missing: List[str] = []
+    corrupt: List[str] = []
+    etag_mismatch: List[str] = []
+    etag_checked = False
+    recorded_meta = object_store.read_meta(data_object_id) or {}
+    recorded_etag = str(recorded_meta.get("etag") or "")
+    for digest in selected:
+        if not object_store.exists(digest):
+            missing.append(digest)
+            continue
+        raw = object_store.get_blob(digest, expected_sha256=digest)
+        if raw is None:
+            corrupt.append(digest)
+    if etag_check and recorded_etag:
+        remote = object_store.remote_etag(data_object_id)
+        if remote is not None and remote != recorded_etag:
+            etag_mismatch.append(data_object_id)
+            etag_checked = True
+    state = "verified"
+    if missing or corrupt:
+        state = "corrupt"
+    elif etag_mismatch:
+        state = "etag_mismatch"
+    return {
+        "state": state,
+        "chunks_total": len(blob_ids),
+        "chunks_checked": len(selected),
+        "missing": sorted(missing),
+        "corrupt": sorted(corrupt),
+        "etag_mismatch": sorted(set(etag_mismatch)),
+        "etag_checked": etag_checked,
+        "mode": mode,
     }
 
 

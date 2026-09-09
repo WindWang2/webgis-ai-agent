@@ -5,6 +5,8 @@
 
 契约：
 
+- **同步 DAO**（``artifact_revisions`` 同款：只写不 commit，事务边界
+  归调用方；REST 层经 ``asyncio.to_thread`` 包装）；
 - **upsert 幂等**：唯一键 ``(owner_type, owner_id, content_sha256)``
   —— 同内容重复投影 = 更新不新增；
 - **查询有界**：``limit`` ≤200、``total`` 计数扫描 ≤``MAX_TOTAL_SCAN``
@@ -22,7 +24,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from sqlalchemy import select, func, or_, and_, not_
+from sqlalchemy import func, select, or_, and_, not_
 
 from app.models.lakehouse_catalog import LakehouseCatalogItem
 
@@ -107,18 +109,17 @@ def _parse_dt(value: Any) -> Optional[datetime]:
         return None
 
 
-async def upsert_catalog_entry(db, fields: Mapping[str, Any]) -> Dict[str, Any]:
-    """幂等投影（唯一键冲突 = 更新既有行）。"""
+def upsert_catalog_entry(db, fields: Mapping[str, Any]) -> Dict[str, Any]:
+    """幂等投影（唯一键冲突 = 更新既有行；同步 DAO —— 只写不 commit，
+    事务边界归调用方）。"""
     import uuid as _uuid
-
-    from sqlalchemy import select as _select
 
     owner_type = str(fields["owner_type"])
     owner_id = str(fields["owner_id"])
     content_sha256 = str(fields["content_sha256"])
     existing = (
-        await db.execute(
-            _select(LakehouseCatalogItem).where(
+        db.execute(
+            select(LakehouseCatalogItem).where(
                 LakehouseCatalogItem.owner_type == owner_type,
                 LakehouseCatalogItem.owner_id == owner_id,
                 LakehouseCatalogItem.content_sha256 == content_sha256,
@@ -130,16 +131,15 @@ async def upsert_catalog_entry(db, fields: Mapping[str, Any]) -> Dict[str, Any]:
             if key in ("id", "created_at"):
                 continue
             setattr(existing, key, value)
-        await db.commit()
         return {"status": "updated", "id": existing.id,
                 "object_id": existing.object_id}
     row = LakehouseCatalogItem(id=str(_uuid.uuid4()), **dict(fields))
     db.add(row)
-    await db.commit()
+    db.flush()
     return {"status": "created", "id": row.id, "object_id": row.object_id}
 
 
-async def search_catalog(
+def search_catalog(
     db,
     *,
     owner_type: str,
@@ -209,14 +209,13 @@ async def search_catalog(
             ))
     base = select(LakehouseCatalogItem).where(*conds)
     rows = (
-        (await db.execute(
+        db.execute(
             base.order_by(LakehouseCatalogItem.created_at.desc())
             .limit(limit).offset(offset)
-        ))
-        .scalars().all()
-    )
+        )
+    ).scalars().all()
     # 有界计数（超出 MAX_TOTAL_SCAN 报下界 —— 绝不全表 COUNT）。
-    total_rows = (await db.execute(
+    total_rows = (db.execute(
         select(func.count())
         .select_from(
             select(LakehouseCatalogItem.id)
@@ -246,14 +245,14 @@ async def search_catalog(
     }
 
 
-async def revoke_catalog_entries(
+def revoke_catalog_entries(
     db, *, owner_type: str, owner_id: str, object_ids: Sequence[str]
 ) -> Dict[str, Any]:
     """撤销（tombstone；既有引用仍可解析，检索默认不可见）。"""
     if not object_ids:
         return {"revoked": [], "unknown": []}
     rows = (
-        await db.execute(
+        db.execute(
             select(LakehouseCatalogItem).where(
                 LakehouseCatalogItem.owner_type == owner_type,
                 LakehouseCatalogItem.owner_id == owner_id,
@@ -267,7 +266,7 @@ async def revoke_catalog_entries(
     for row in rows:
         row.status = "revoked"
         revoked.append(row.object_id)
-    await db.commit()
+    db.flush()
     wanted = {str(o) for o in object_ids}
     return {
         "revoked": sorted(set(revoked)),
@@ -275,7 +274,7 @@ async def revoke_catalog_entries(
     }
 
 
-async def reconcile_catalog(
+def reconcile_catalog(
     db, *, owner_type: str, owner_id: str, cap: int = 500
 ) -> Dict[str, Any]:
     """投影对账（R0-10）：manifest 不可解析的 active 行 → revoked。
@@ -287,7 +286,7 @@ async def reconcile_catalog(
     )
 
     rows = (
-        await db.execute(
+        db.execute(
             select(LakehouseCatalogItem).where(
                 LakehouseCatalogItem.owner_type == owner_type,
                 LakehouseCatalogItem.owner_id == owner_id,
@@ -305,6 +304,4 @@ async def reconcile_catalog(
         if resolve_data_object(oid) is None:
             row.status = "revoked"
             reaped.append(oid)
-    if reaped:
-        await db.commit()
     return {"checked": checked, "reaped": sorted(set(reaped))}

@@ -76,71 +76,68 @@ def _entry(owner="sess-cat", owner_type="session", sha=None, **kw):
     return base
 
 
-@pytest.mark.asyncio
-async def test_upsert_idempotent_and_multi_owner(db_tables):
-    from app.core.database import AsyncSessionLocal
+def test_upsert_idempotent_and_multi_owner(db_tables):
+    from app.core.database import SessionLocal
 
     sha = uuid.uuid4().hex * 2
     fields = _entry(sha=sha)
-    async with AsyncSessionLocal() as db:
-        r1 = await upsert_catalog_entry(db, fields)
-        r2 = await upsert_catalog_entry(db, dict(fields, title="updated"))
+    with SessionLocal() as db:
+        r1 = upsert_catalog_entry(db, fields)
+        r2 = upsert_catalog_entry(db, dict(fields, title="updated"))
         assert (r1["status"], r2["status"]) == ("created", "updated")
         # 多 owner：同内容进另一 session / project = 独立行（R0-7）。
-        r3 = await upsert_catalog_entry(
+        r3 = upsert_catalog_entry(
             db, _entry(owner="sess-other", sha=sha),
         )
-        r4 = await upsert_catalog_entry(
+        r4 = upsert_catalog_entry(
             db, _entry(owner="proj-a", owner_type="project", sha=sha),
         )
         assert r3["status"] == "created" and r4["status"] == "created"
-        rows = (await db.execute(select(LakehouseCatalogItem))).scalars().all()
+        rows = db.execute(select(LakehouseCatalogItem)).scalars().all()
         assert len(rows) == 3
 
 
-@pytest.mark.asyncio
-async def test_search_filters_and_pagination(db_tables):
-    from app.core.database import AsyncSessionLocal
+def test_search_filters_and_pagination(db_tables):
+    from app.core.database import SessionLocal
 
-    async with AsyncSessionLocal() as db:
+    with SessionLocal() as db:
         for i in range(5):
-            await upsert_catalog_entry(db, _entry(
+            upsert_catalog_entry(db, _entry(
                 object_id=f"obj-{i}",
                 minx=float(i), maxx=float(i + 1),
                 tags_json=["optical"] if i % 2 == 0 else ["sar"],
                 time_start=datetime(2024, 1 + i, 1, tzinfo=timezone.utc),
                 time_end=datetime(2024, 2 + i, 1, tzinfo=timezone.utc),
             ))
-        result = await search_catalog(
+        result = search_catalog(
             db, owner_type="session", owner_id="sess-cat", limit=3,
         )
         assert result["count"] == 3
         assert result["next_offset"] == 3
         assert not result["total_bounded"]
         # bbox 过滤（索引列谓词）。
-        b = await search_catalog(
+        b = search_catalog(
             db, owner_type="session", owner_id="sess-cat",
             bbox=[0.5, -1, 1.5, 3],
         )
         assert b["count"] == 2
         # time 过滤：区间 [03→04]/[04→05]/[05→06] 的 end >= 04-01。
-        t = await search_catalog(
+        t = search_catalog(
             db, owner_type="session", owner_id="sess-cat",
             time_from="2024-04-01T00:00:00Z",
         )
         assert t["count"] == 3
         # tags 行集过滤。
-        g = await search_catalog(
+        g = search_catalog(
             db, owner_type="session", owner_id="sess-cat", tags=["sar"],
         )
         assert g["count"] == 2
         # 无 owner typed 拒绝。
         with pytest.raises(CatalogError, match="owner"):
-            await search_catalog(db, owner_type="session", owner_id="")
+            search_catalog(db, owner_type="session", owner_id="")
 
 
-@pytest.mark.asyncio
-async def test_revoke_and_reconcile(tmp_path, db_tables):
+def test_revoke_and_reconcile(tmp_path, db_tables):
     from app.core.config import settings
     from app.services.durable_blob_store import reset_filesystem_blob_store
 
@@ -157,34 +154,34 @@ async def test_revoke_and_reconcile(tmp_path, db_tables):
         {"data.bin": b"cat"}, kind="cog_raster",
         owner_scope=normalize_owner_scope(session_id="sess-cat"),
     )
-    from app.core.database import AsyncSessionLocal
+    from app.core.database import SessionLocal
 
-    async with AsyncSessionLocal() as db:
+    with SessionLocal() as db:
         oid_real = real.data_object_id  # manifest 在场 → 对账保留
         oid_ghost = f"{'b' * 64}"       # 无 manifest 的幽灵（对账目标）
-        await upsert_catalog_entry(db, _entry(object_id=oid_real, sha=real.content_sha256))
-        await upsert_catalog_entry(db, _entry(object_id=oid_ghost, sha="b" * 64))
-        report = await reconcile_catalog(
+        upsert_catalog_entry(db, _entry(object_id=oid_real, sha=real.content_sha256))
+        upsert_catalog_entry(db, _entry(object_id=oid_ghost, sha="b" * 64))
+        report = reconcile_catalog(
             db, owner_type="session", owner_id="sess-cat",
         )
         assert report["checked"] == 2
         assert report["reaped"] == [oid_ghost]
         # 幂等：再跑一轮零新增收割。
-        report2 = await reconcile_catalog(
+        report2 = reconcile_catalog(
             db, owner_type="session", owner_id="sess-cat",
         )
         assert report2["reaped"] == []
         # 撤销 tombstone。
-        rev = await revoke_catalog_entries(
+        rev = revoke_catalog_entries(
             db, owner_type="session", owner_id="sess-cat",
             object_ids=[oid_real],
         )
         assert rev["revoked"] == [oid_real]
-        visible = await search_catalog(
+        visible = search_catalog(
             db, owner_type="session", owner_id="sess-cat",
         )
         assert visible["count"] == 0  # revoked 默认不可见
-        with_revoked = await search_catalog(
+        with_revoked = search_catalog(
             db, owner_type="session", owner_id="sess-cat",
             include_revoked=True,
         )
