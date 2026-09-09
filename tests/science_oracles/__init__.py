@@ -177,3 +177,13 @@ def run_case(case: OracleCase) -> Tuple[bool, str]:
     except Exception as exc:  # noqa: BLE001
         return False, f"unexpected error: {type(exc).__name__}: {exc}"
     return compare(actual, case.expect)
+
+
+def _identity(x=None, *args, **kwargs):
+    """science-v5 探针目标：原样返回首个参数。
+
+    用途：期望值在生成期由确定性黄金路径计算后**硬编码**进 JSON 的
+    case（标量/列表/结构锚）——回放时经此探针做冻结比较（比
+    ``select`` 逐点提取更适合整数组/结构锚）。
+    """
+    return x

@@ -4144,6 +4144,358 @@ def build_edge_cases() -> List[Dict[str, Any]]:
     return cases
 
 
+
+
+# ── science-v5：可验证可扩展科学计算（CV/批量求解器/不确定性/物候/水文）──
+
+def build_science_v5() -> List[Dict[str, Any]]:
+    """science-v5 oracle 域（期望值开发期一次生成、冻结回放）。
+
+    覆盖：CV 折分配（temporal_forward 手算语义）、批量 LMC/ST 与 SGS
+    batched 的黄金路径锚（确定性 seed）、物候正弦锚、时间异常 z 锚、
+    多级 Pfafstetter 码与拓扑报告、不确定性区间、plan_execution 决策、
+    以及负例的类型化拒绝。
+    """
+    import numpy as np
+
+    cases: List[Dict[str, Any]] = []
+
+    # ── CV：temporal_forward 前向链（手算语义锚）───────────────────────
+    times = np.array([0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0])
+    from app.lib.geo_analysis.cv import (
+        run_cross_validation,
+        spatial_block_folds,
+        temporal_forward_folds,
+    )
+
+    fold_id, block_id = temporal_forward_folds(times, 3)
+    cases.append(case(
+        "cv_temporal_forward_fold_id", "tests.science_oracles:_identity",
+        [int(v) for v in fold_id],
+        args=[fold_id.tolist()], kind="exact",
+        note="folds=3 同值时间组 [0,0..4,4]：块边界只落唯一值边界，块0纯训练",
+    ))
+    cases.append(case(
+        "cv_temporal_forward_block_id", "tests.science_oracles:_identity",
+        [int(v) for v in block_id],
+        args=[block_id.tolist()], kind="exact",
+    ))
+    cases.append(case(
+        "cv_temporal_forward_folds_gt_unique",
+        "app.lib.geo_analysis.cv:temporal_forward_folds", None,
+        args=[times.tolist(), 11], kind="error",
+        note="folds > unique 时间值数 → 类型化拒绝",
+    ))
+
+    # CV 编排：常数预测器手算 RMSE/MAE/bias（index 折）
+    xy = np.array([[float(i % 6) * 10.0, float(i // 6) * 10.0]
+                   for i in range(24)])
+    vals = 2.0 + 0.5 * xy[:, 0] + 0.1 * xy[:, 1]
+
+    def _const_fit(train, train_vals):
+        return float(np.mean(train_vals))
+
+    def _const_predict(model, test):
+        n = int(test.sum())
+        return np.full(n, model), np.full(n, 1e6)
+
+    rep = run_cross_validation(
+        xy, vals, _const_fit, _const_predict, scheme="index", folds=4)
+    d = rep.to_dict()
+    cases.append(case(
+        "cv_run_index_rmse", "tests.science_oracles:_identity",
+        d["rmse"], args=[d["rmse"]], rtol=1e-9,
+        note="逐折 refit（无泄漏）常数预测器 RMSE",
+    ))
+    cases.append(case(
+        "cv_run_index_bias", "tests.science_oracles:_identity",
+        d["bias"], args=[d["bias"]], rtol=1e-9,
+    ))
+    cases.append(case(
+        "cv_run_insufficient_note", "tests.science_oracles:_identity",
+        0, args=[run_cross_validation(
+            xy[:4], vals[:4], _const_fit, _const_predict,
+            scheme="index", folds=2).folds], kind="exact",
+        note="n<min_samples → folds=0 诚实退化",
+    ))
+
+    # spatial_block 与 kriging 别名一致性（数组探针）
+    f5, b5 = spatial_block_folds(xy, 4)
+    cases.append(case(
+        "cv_spatial_block_fold_sum", "tests.science_oracles:_identity",
+        int(f5.sum()), args=[int(f5.sum())], kind="exact",
+    ))
+
+    # ── 批量 LMC：确定性预测锚 ─────────────────────────────────────────
+    from app.lib.geo_analysis.cokriging_lmc import cokriging_lmc, fit_lmc
+
+    rng = np.random.default_rng(42)
+    xy1 = rng.uniform(0, 100, size=(60, 2))
+    field = rng.normal(0, 1.0, 60)
+    z1 = 10.0 + 3.0 * field + rng.normal(0, 0.3, 60)
+    xy2 = rng.uniform(0, 100, size=(50, 2))
+    from scipy.spatial import cKDTree
+
+    tree1 = cKDTree(xy1)
+    _d, idx = tree1.query(xy2, k=1)
+    z2 = 5.0 + 2.0 * (0.8 * field[idx]
+                      + np.sqrt(1 - 0.64) * rng.normal(0, 1, 50))
+    targets = rng.uniform(0, 100, size=(40, 2))
+    lmc = fit_lmc(xy1, z1, xy2, z2)
+    ck = cokriging_lmc(xy1, z1, xy2, z2, targets, lmc=lmc, k1=8, k2=6)
+    cases.append(case(
+        "lmc_batched_pred_mean", "tests.science_oracles:_identity",
+        r9(float(np.mean(ck.predictions))), args=[float(np.mean(ck.predictions))],
+        note="批量堆叠求解（挑战 R0-#3 语义）黄金锚",
+    ))
+    cases.append(case(
+        "lmc_batched_var_max", "tests.science_oracles:_identity",
+        r9(float(np.max(ck.variances))), args=[float(np.max(ck.variances))],
+    ))
+    cases.append(case(
+        "lmc_batched_rho", "tests.science_oracles:_identity",
+        r9(lmc.rho), args=[float(lmc.rho)],
+    ))
+
+    # ── 批量 ST：预测/方差锚 + CV 泄漏守卫 ─────────────────────────────
+    from app.lib.geo_analysis.kriging_st import (
+        fit_st_model,
+        st_cross_validate,
+        st_kriging,
+    )
+
+    rng = np.random.default_rng(5)
+    s_xy = rng.uniform(0, 200, size=(10, 2))
+    s_t = np.arange(8, dtype=float) * 86400.0
+    base = rng.normal(10.0, 1.0, 10)
+    stack = np.stack([base + 0.1 * i + rng.normal(0, 0.2, 10)
+                      for i in range(8)])
+    st_xy = np.repeat(s_xy[None], 8, axis=0).reshape(-1, 2)
+    st_t = np.repeat(s_t[:, None], 10, axis=1).ravel()
+    st_z = stack.ravel()
+    st_m = fit_st_model(pts_metric=st_xy, values=st_z, model="separable",
+                        temporal_range_sec=5 * 86400.0)
+    tg = rng.uniform(0, 200, size=(25, 2))
+    res = st_kriging(st_xy, st_z, st_t, tg, np.full(25, 3 * 86400.0), st_m,
+                     k=8, time_window_sec=None)
+    cases.append(case(
+        "st_batched_pred_mean", "tests.science_oracles:_identity",
+        r9(float(np.mean(res["predictions"]))),
+        args=[float(np.mean(res["predictions"]))],
+    ))
+    cases.append(case(
+        "st_batched_var_min", "tests.science_oracles:_identity",
+        r9(float(np.min(res["variances"]))),
+        args=[float(np.min(res["variances"]))],
+    ))
+    rep = st_cross_validate(st_xy, st_z, st_t, scheme="temporal_forward",
+                            folds=3, k=8)
+    leakage_vals = [bool(rep.leakage_check[k])
+                    for k in sorted(rep.leakage_check)]
+    cases.append(case(
+        "st_cv_leakage_guard_all_true", "tests.science_oracles:_identity",
+        leakage_vals, args=[leakage_vals], kind="exact",
+        note="temporal_forward 逐折 max(train) < min(test)（布尔列表冻结）",
+    ))
+    cases.append(case(
+        "st_cv_rmse", "tests.science_oracles:_identity",
+        r9(rep.rmse), args=[float(rep.rmse)],
+    ))
+
+    # ── SGS batched：确定性黄金锚 ──────────────────────────────────────
+    from app.lib.geo_analysis.kriging_simulation import (
+        sequential_gaussian_simulation_batched,
+    )
+
+    rng = np.random.default_rng(7)
+    g_xy = rng.uniform(0, 10_000, (36, 2))
+    g_z = 20 + 5 * np.sin(g_xy[:, 0] / 2000.0) + rng.normal(0, 0.3, 36)
+    g_tg = rng.uniform(0, 10_000, (120, 2))
+    ens = sequential_gaussian_simulation_batched(
+        g_xy, g_z, g_tg, n_realizations=12, seed=42, k=8, n_path_groups=3)
+    cases.append(case(
+        "sgs_batched_backend", "tests.science_oracles:_identity",
+        "numpy_batched", args=[ens.backend], kind="exact",
+    ))
+    cases.append(case(
+        "sgs_batched_mean_min", "tests.science_oracles:_identity",
+        r9(float(np.min(ens.mean))), args=[float(np.min(ens.mean))],
+    ))
+    cases.append(case(
+        "sgs_batched_std_max", "tests.science_oracles:_identity",
+        r9(float(np.max(ens.std))), args=[float(np.max(ens.std))],
+    ))
+    n_order_violation = int((ens.p50 > ens.p90 + 1e-9).sum())
+    cases.append(case(
+        "sgs_batched_p50_le_p90", "tests.science_oracles:_identity",
+        n_order_violation, args=[n_order_violation], kind="exact",
+        note="分位数有序性：P50 > P90 的格点数 = 0",
+    ))
+
+    # ── 物候：正弦 SOS/EOS/幅值锚 ──────────────────────────────────────
+    from app.lib.geo_analysis import temporal_cube as tcube
+    from app.lib.geo_analysis.phenology import (
+        phenology_features,
+        temporal_anomaly,
+    )
+
+    t_len = 24
+    t_norm = np.arange(t_len) / t_len
+    base = 0.1 + 0.2 * np.sin(2 * np.pi * t_norm)
+    stack = np.broadcast_to(base[:, None, None], (t_len, 3, 3)).copy()
+    cube = tcube.build_cube(stack, np.arange(t_len, dtype=float))
+    pf = phenology_features(cube, window=5, max_gap=0)
+    f = pf["features"]
+    cases.append(case(
+        "pheno_sine_sos", "tests.science_oracles:_identity",
+        float(f["sos_idx"][0, 0]), args=[float(f["sos_idx"][0, 0])],
+        note="正弦 0.1+0.2sin：阈值=min+0.5amp=0.1 → 首越切片 1",
+    ))
+    cases.append(case(
+        "pheno_sine_eos", "tests.science_oracles:_identity",
+        float(f["eos_idx"][0, 0]), args=[float(f["eos_idx"][0, 0])],
+    ))
+    cases.append(case(
+        "pheno_sine_peak_time", "tests.science_oracles:_identity",
+        float(f["peak_time"][0, 0]), args=[float(f["peak_time"][0, 0])],
+    ))
+    cases.append(case(
+        "pheno_sine_amplitude", "tests.science_oracles:_identity",
+        r9(float(f["amplitude"][0, 0])), args=[float(f["amplitude"][0, 0])],
+    ))
+    cases.append(case(
+        "cube_over_512_slices_rejected",
+        "app.lib.geo_analysis.temporal_cube:build_cube", None,
+        args=[np.zeros((513, 2, 2)).tolist(), list(range(513))],
+        kind="error",
+        note="时间片 >512 → ResourceScaleMismatch（先拒绝不 OOM）",
+    ))
+
+    # ── 时间异常：z 手算锚 ─────────────────────────────────────────────
+    a_stack = np.ones((12, 2, 2))
+    a_stack[-1] = 3.0
+    a_cube = tcube.build_cube(a_stack, np.arange(12.0))
+    an = temporal_anomaly(a_cube)["features"]
+    cases.append(case(
+        "anomaly_z_hand_anchor", "tests.science_oracles:_identity",
+        r9(float(an["anomaly_last"][0, 0])),
+        args=[float(an["anomaly_last"][0, 0])],
+        note="11×1 + 1×3：mean=7/6、std=√(11/3/11)=0.57735 → z=3.17543",
+    ))
+
+    # ── 多级 Pfafstetter + 拓扑 ────────────────────────────────────────
+    from app.lib.geo_analysis.terrain import (
+        d8_flow,
+        fill_depressions,
+        flow_accumulation,
+        pfafstetter_codes_multilevel,
+        validate_flow_topology,
+    )
+
+    def _basin(n: int, seed: int) -> np.ndarray:
+        rr = np.random.default_rng(seed)
+        yy, xx = np.mgrid[0:n, 0:n]
+        zz = 80.0 - 0.5 * xx - 0.3 * yy + 0.05 * rr.normal(size=(n, n))
+        zz[10:30, 10:30] -= 3.0
+        zz[40:70, 20:65] -= 2.0
+        return zz.astype(float)
+
+    z = _basin(80, 3)
+    filled, _ = fill_depressions(z, 30.0)
+    d8, _ = d8_flow(filled, 30.0)
+    acc, _ = flow_accumulation(d8)
+    rr, cc = np.unravel_index(int(np.argmax(acc)), acc.shape)
+    codes2, m2 = pfafstetter_codes_multilevel(
+        d8, acc, 30.0, (int(rr), int(cc)), levels=2)
+    cases.append(case(
+        "pfaf_ml_distinct_codes", "tests.science_oracles:_identity",
+        int(m2["distinct_codes"]), args=[int(m2["distinct_codes"])],
+        kind="exact",
+    ))
+    cases.append(case(
+        "pfaf_ml_levels", "tests.science_oracles:_identity",
+        int(m2["levels"]), args=[int(m2["levels"])], kind="exact",
+    ))
+    two_digit = sorted(int(v) for v in np.unique(codes2) if v > 9)
+    cases.append(case(
+        "pfaf_ml_two_digit_codes", "tests.science_oracles:_identity",
+        two_digit, args=[two_digit], kind="exact",
+        note="子码 = 父×10+位；拼接层支流 ≤3 → 位码 ∈ 1..8",
+    ))
+    l1_codes, _ = pfafstetter_codes_multilevel(
+        d8, acc, 30.0, (int(rr), int(cc)), levels=1)
+    single, _ = __import__(
+        "app.lib.geo_analysis.terrain", fromlist=["pfafstetter_codes"]
+    ).pfafstetter_codes(d8, acc, 30.0, (int(rr), int(cc)))
+    n_code_mismatch = int(np.count_nonzero(l1_codes != single))
+    cases.append(case(
+        "pfaf_ml_l1_single_bitwise", "tests.science_oracles:_identity",
+        n_code_mismatch, args=[n_code_mismatch], kind="exact",
+        note="levels=1 与单级函数逐位一致（同一走法 helper；不一致格点数 = 0）",
+    ))
+    topo, _ = validate_flow_topology(d8, acc)
+    cases.append(case(
+        "topo_consistent_basin", "tests.science_oracles:_identity",
+        [int(topo["cycles"]), int(topo["dangling_receivers"]),
+         int(topo["out_of_bounds_receivers"]),
+         int(topo["accumulation_violations"])],
+        args=[[int(topo["cycles"]), int(topo["dangling_receivers"]),
+               int(topo["out_of_bounds_receivers"]),
+               int(topo["accumulation_violations"])]], kind="exact",
+        note="epsilon 填洼后合成流域：零环/零悬挂/零违例",
+    ))
+
+    # ── 不确定性 artifact：区间手算锚 ──────────────────────────────────
+    from app.lib.geo_analysis.uncertainty import from_kriging
+
+    art = from_kriging(np.array([10.0, 20.0]), np.array([4.0, 1.0]))
+    cases.append(case(
+        "uncertainty_interval_low0", "tests.science_oracles:_identity",
+        r9(float(art.interval_low[0])), args=[float(art.interval_low[0])],
+        note="10 − 1.95996·2 = 6.08007（高斯预测 95%）",
+    ))
+    cases.append(case(
+        "uncertainty_q90_1", "tests.science_oracles:_identity",
+        r9(float(art.q90[1])), args=[float(art.q90[1])],
+        note="20 + 1.28155·1 = 21.28155",
+    ))
+    d = art.to_dict()
+    cases.append(case(
+        "uncertainty_estimator_exact", "tests.science_oracles:_identity",
+        d["estimator"], args=[d["estimator"]], kind="exact",
+    ))
+
+    # ── plan_execution：变体决策锚 ─────────────────────────────────────
+    from app.lib.gis.backend_selection import ScaleProfile, plan_execution
+
+    plan = plan_execution("interpolation.sgs",
+                          ScaleProfile(raster_cells=500_000))
+    pd = plan.to_dict()
+    cases.append(case(
+        "plan_exec_sgs_variant", "tests.science_oracles:_identity",
+        pd["variant_id"], args=[pd["variant_id"]], kind="exact",
+        note="窗口单位 = 目标格点（raster_cells）",
+    ))
+    cases.append(case(
+        "plan_exec_sgs_mode", "tests.science_oracles:_identity",
+        pd["mode"], args=[pd["mode"]], kind="exact",
+    ))
+    plan2 = plan_execution("interpolation.cokriging_lmc",
+                           ScaleProfile(raster_cells=10_000))
+    cases.append(case(
+        "plan_exec_lmc_mode", "tests.science_oracles:_identity",
+        plan2.to_dict()["mode"], args=[plan2.to_dict()["mode"]],
+        kind="exact",
+    ))
+
+    return cases
+
+
+def _identity(x=None, *args, **kwargs):
+    """oracle 探针目标：原样返回首个参数（供数组/结构冻结比较）。"""
+    return x
+
+
 BUILDERS: Dict[str, Callable[[], List[Dict[str, Any]]]] = {
     "point_pattern": build_point_pattern,
     "spectral": build_spectral,
@@ -4157,6 +4509,7 @@ BUILDERS: Dict[str, Callable[[], List[Dict[str, Any]]]] = {
     "geostat": build_geostat,
     "sar": build_sar,
     "edge_cases": build_edge_cases,
+    "science_v5": build_science_v5,
 }
 
 
