@@ -63,6 +63,15 @@ def _with_evidence(res, base: Dict[str, Any]) -> Dict[str, Any]:
         base["cartographic_review"] = res.cartographic_review
     if getattr(res, "mapspec_fingerprint", None) is not None:
         base["mapspec_fingerprint"] = res.mapspec_fingerprint
+    # review R2 MAJOR-2：机器可读错误码 + 锁拒绝载荷三行转发 —— 锁拒绝的
+    # error_code（单码契约 layer_locked）与 locked_* 目标清单必须随 adapter
+    # 结果透出，否则调用方只见 message 文本，无法机器判定 LOCK_CONFLICT。
+    if getattr(res, "error_code", ""):
+        base["error_code"] = res.error_code
+    if getattr(res, "locked_layer_ids", None):
+        base["locked_layer_ids"] = list(res.locked_layer_ids)
+    if getattr(res, "locked_component_ids", None):
+        base["locked_component_ids"] = list(res.locked_component_ids)
     base["runtime_observation_seq"] = getattr(res, "runtime_observation_seq", 0)
     base["mutation_revision"] = getattr(res, "mutation_revision", 0)
     if getattr(res, "superseded", False):

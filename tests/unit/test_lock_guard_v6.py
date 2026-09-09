@@ -580,3 +580,64 @@ async def test_batch_provenance_records_per_intent_overrides():
          "source": "agent"},
     ]
     await session_data_manager.clear_session(sid)
+
+
+# ── review R2 MAJOR-2：error_code 透出链 ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_batch_lock_refusal_carries_error_code_wire():
+    """batch 锁拒绝：outcome.error_code == LOCK_CONFLICT_CODE 且 to_dict
+    逐项透出（调用方机器判定 LOCK_CONFLICT，不解析 message 文本）。"""
+    engine = MapSpecLifecycleEngine()
+    sid = _sid("batchcode")
+    await _seed_locked_session(
+        engine, sid, ["locked-lyr", "free-lyr"], locked_layers=["locked-lyr"])
+    batch = await apply_gis_mutation_batch(
+        sid,
+        [PatchLayerPresentationIntent(layer_id="locked-lyr", visible=False),
+         PatchLayerPresentationIntent(layer_id="free-lyr", visible=False)],
+        origin="agent", actor="test",
+    )
+    by_id = {o.layer_id: o for o in batch.outcomes}
+    assert by_id["locked-lyr"].status == "refused"
+    assert by_id["locked-lyr"].error_code == LOCK_CONFLICT_CODE == "layer_locked"
+    # 非锁裁决不带码（码只断言锁冲突一种语义）
+    assert by_id["free-lyr"].status == "applied"
+    assert by_id["free-lyr"].error_code is None
+    wire = batch.to_dict()
+    wire_by_id = {o["layer_id"]: o for o in wire["outcomes"]}
+    assert wire_by_id["locked-lyr"]["error_code"] == "layer_locked"
+    assert wire_by_id["free-lyr"]["error_code"] is None
+    await session_data_manager.clear_session(sid)
+
+
+def test_with_evidence_forwards_error_code_and_locked_ids():
+    """adapter _with_evidence：error_code / locked_layer_ids /
+    locked_component_ids 三行转发；空值不透出（键缺席）。"""
+    from app.services.mapspec.lifecycle_engine import MapSpecResult
+    from app.services.mapspec_store import _with_evidence
+
+    refused = MapSpecResult(
+        is_error=True, error_msg="[layer_locked] locked",
+        error_code="layer_locked", locked_layer_ids=["locked-lyr"],
+    )
+    out = _with_evidence(refused, {"success": False, "mapspec": None})
+    assert out["error_code"] == "layer_locked"
+    assert out["locked_layer_ids"] == ["locked-lyr"]
+    assert "locked_component_ids" not in out  # 空载荷不透出
+
+    comp_refused = MapSpecResult(
+        is_error=True, error_msg="[layer_locked] comp",
+        error_code="layer_locked", locked_component_ids=["legend-main"],
+    )
+    out2 = _with_evidence(comp_refused, {"success": False, "mapspec": None})
+    assert out2["error_code"] == "layer_locked"
+    assert out2["locked_component_ids"] == ["legend-main"]
+    assert "locked_layer_ids" not in out2
+
+    ok = MapSpecResult(is_error=False, mapspec={"version": "1.0"})
+    out3 = _with_evidence(ok, {"success": True, "mapspec": ok.mapspec})
+    assert "error_code" not in out3
+    assert "locked_layer_ids" not in out3
+    assert "locked_component_ids" not in out3

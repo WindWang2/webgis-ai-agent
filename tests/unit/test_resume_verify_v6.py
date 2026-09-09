@@ -445,3 +445,95 @@ async def test_scenario9_interrupt_resume_continue_full_green():
         assert await session_data_manager.get(new_sid, s["bound_ref"]) is not None
 
     await session_data_manager.clear_session(new_sid)
+
+
+# ── review R2 QUESTION 确认（注释＋测试，不改行为）─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_restorable_keys_never_carry_data_requirements():
+    """review R2 Q7：恢复章节永不含 data_requirements —— 源章节纵有数据行，
+    建锚也只拷 RESTORABLE_CHAPTER_KEYS；下游按行缺席走 pending 兜底 →
+    verify unknown（无证据不断言存活），陈旧绑定不跨 session 复活。"""
+    from app.services.gis_harness.resume_anchor import RESTORABLE_CHAPTER_KEYS
+
+    assert "data_requirements" not in RESTORABLE_CHAPTER_KEYS
+    sid = f"v6-q7-rows-{uuid.uuid4().hex[:6]}"
+    await _seed_instance(
+        sid, [_stage("interpolate", "pending")],
+        extra_chapter={
+            "data_requirements": [
+                {"capability": "interpolate", "status": "available",
+                 "bound_ref": "ref:old-stale"},
+            ],
+        },
+    )
+    try:
+        anchor = await build_anchor(sid)
+        assert "data_requirements" not in anchor["gis_chapter"]
+        assert set(anchor["gis_chapter"]) <= set(RESTORABLE_CHAPTER_KEYS)
+    finally:
+        await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_resume_gate_is_anchor_user_id_only():
+    """review R2 Q8：跨 session 直读的唯一门是 anchor user_id —— project_id
+    不参与门控（同 user 换 project 照常恢复）；新旧 session 必异 id，
+    旧载荷经直读重水合（旧 session 存活时）。"""
+    sid = f"v6-q8-gate-{uuid.uuid4().hex[:6]}"
+    await _seed_instance(sid, [_stage("interpolate", "pending")])
+    ref = await session_data_manager.store(sid, _payload("q8"))
+    try:
+        db = _FakeDb()
+        saved = await save_anchor(
+            db, session_id=sid, user_id="u-q8", project_id="proj-a")
+        result = await resume_from_anchor(
+            db, anchor_id=saved["anchor_id"], user_id="u-q8")
+        assert result["source_session_id"] == sid
+        assert result["session_id"] != sid  # 跨 session：旧的不复活，新的承载
+        assert result["ref_map"][ref]  # 直读旧载荷重水合成功
+        assert await session_data_manager.get(
+            result["session_id"], result["ref_map"][ref]) is not None
+        await session_data_manager.clear_session(result["session_id"])
+    finally:
+        await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_anonymous_can_anchor_but_cannot_resume():
+    """review R2 Q9（既定语义）：匿名可建锚（user_id=None 落库成功），但
+    匿名不可恢复（None 一律 PermissionError —— 与 chat_resume 同门）。"""
+    sid = f"v6-q9-anon-{uuid.uuid4().hex[:6]}"
+    await _seed_instance(sid, [_stage("interpolate", "pending")])
+    try:
+        db = _FakeDb()
+        saved = await save_anchor(db, session_id=sid, user_id=None)
+        assert saved["anchor_id"]
+        with pytest.raises(PermissionError):
+            await resume_from_anchor(
+                db, anchor_id=saved["anchor_id"], user_id=None)
+    finally:
+        await session_data_manager.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_anchor_ref_list_bounded_for_sequential_rehydrate():
+    """review R2 Q10：顺序 IO 有界 —— ref 清单建锚时截断 ≤ MAX_ANCHOR_REFS，
+    恢复期逐 ref 轮数恒有界（低频路径，正确优先，不扇出）。"""
+    from app.services.gis_harness.resume_anchor import (
+        MAX_ANCHOR_REFS,
+        build_anchor,
+    )
+
+    assert MAX_ANCHOR_REFS == 128
+    sid = f"v6-q10-bound-{uuid.uuid4().hex[:6]}"
+    await _seed_instance(sid, [_stage("interpolate", "pending")])
+    try:
+        for i in range(MAX_ANCHOR_REFS + 10):
+            await session_data_manager.store(sid, _payload(f"q10-{i}"))
+        anchor = await build_anchor(sid)
+        assert len(anchor["ref_ids"]) == MAX_ANCHOR_REFS
+        assert anchor["refs_truncated"] is True
+    finally:
+        await session_data_manager.clear_session(sid)

@@ -138,6 +138,9 @@ class BatchIntentOutcome:
     status: str
     visible: Optional[bool] = None
     error_msg: Optional[str] = None
+    # review R2 MAJOR-2：锁拒绝的机器可读码（单码契约 LOCK_CONFLICT_CODE；
+    # 非锁 refused / applied / not_found 留空 —— 码只断言锁冲突一种语义）。
+    error_code: Optional[str] = None
 
 
 @dataclass
@@ -180,6 +183,8 @@ class MapSpecBatchResult:
                     "status": o.status,
                     "visible": o.visible,
                     "error_msg": o.error_msg,
+                    # review R2 MAJOR-2：锁拒绝码随项透出（调用方机器判定）。
+                    "error_code": o.error_code,
                 }
                 for o in self.outcomes
             ],
@@ -2226,6 +2231,7 @@ class MapSpecLifecycleEngine:
                                 layer_id=intent.layer_id, status="refused",
                                 visible=intent.visible,
                                 error_msg=disclosure["message"],
+                                error_code=LOCK_CONFLICT_CODE,
                             ))
                             continue
                     if pre_commit_check is not None:

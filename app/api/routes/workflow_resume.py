@@ -31,7 +31,12 @@ async def create_workflow_resume_anchor(
     db: AsyncSession = Depends(get_async_db),
     _user: dict = Depends(get_current_user_optional),
 ):
-    """把当前 session 的可恢复事实存为项目级锚点（DB 持久）。"""
+    """把当前 session 的可恢复事实存为项目级锚点（DB 持久）。
+
+    review R2 Q9（既定语义，不改行为）：匿名可建锚（user_id=None 落库，
+    建锚只记录指针不授权读）—— 但匿名不可恢复（恢复端走 get_current_user
+    强鉴权 + 服务层 user_id 一致比对，None 一律 PermissionError）。
+    """
     from app.services.gis_harness.resume_anchor import save_anchor
 
     user_id = _user.get("user_id") if isinstance(_user, dict) else None

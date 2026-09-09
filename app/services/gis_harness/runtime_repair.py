@@ -361,11 +361,20 @@ async def run_runtime_repair(
     required_slots: Optional[List[List[str]]] = None,
     map_state: Optional[Dict[str, Any]] = None,
 ) -> RuntimeRepairOutcome:
-    """有界 runtime 修复执行（调用方持 session lock；一次至多一轮修复）。
+    """有界 runtime 修复执行（锁外调用；一次至多一轮修复）。
 
-    轮数 ledger（``REPAIR_STATE_KEY``）：按 **observation fingerprint** 分代
-    —— spec 内容不变而同一发散反复出现时消耗预算（≤ MAX），spec 内容变化
-    即重置（新代次的新发散有新预算）。收敛（计划空）时清账。
+    并发模型：本函数**不持 session lock**（调用方在观察锁释放后调用，
+    见 chat 观察端点「修复在锁外按 revision 门执行」）—— 正确性靠两道门，
+    不靠锁：
+    1. revision 门：stale 观察（盖章 revision ≠ current）提前返回空计划；
+    2. CAS：全部提交带 expected_revision = 观察盖章 revision，并发突变
+       推进后提交变 superseded / committed=False，旧内容绝不覆盖新编辑。
+    轮数 ledger（``REPAIR_STATE_KEY``）是无锁 read-modify-write，并发两轮
+    允许 ±1 轮漂移（last-writer-wins 丢一轮计数）—— 只影响预算耗尽早晚一
+    轮，不影响有界性（fingerprint 分代 + MAX 上限钳死，永不无界对抗）：
+    按 **observation fingerprint** 分代 —— spec 内容不变而同一发散反复
+    出现时消耗预算（≤ MAX），spec 内容变化即重置（新代次的新发散有新预
+    算）。收敛（计划空）时清账。
 
     返回 outcome；``applied`` 非空时附带修复后 spec + revision（前端提交后
     reconcile 重跑 → 新观察 → 回路闭合）。

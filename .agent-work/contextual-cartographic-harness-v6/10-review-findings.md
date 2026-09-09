@@ -11,9 +11,11 @@ Lens B（制图/观测/前端）：CRITICAL 1 —— quality_loop 与 lib runtim
 
 遗留 follow-up（非 blocking，另起任务）：chat.py 观测持久化丢 canvas（offscreen 生产恒缺证据）；MapSpecBatchResult 未加 error_code；derive_runtime_block“memo”表述与实现不符。
 
-## Round 2（performance/concurrency/security/tenant isolation/memory/context explosion/visual privacy/retry loops/resume correctness/backward compatibility/跨系统 seam）
+## Round 2（2026-09-10，上半 PASS＋下半 2 MAJOR 已修→150 passed 全绿）
 
-（待填）
+上半（性能/资源/并发/兼容）：PASS，无 BLOCKER/CRITICAL。有界性 11 项全成立（derive 窗口 64/边 128、artifact_index 96、lineage 8、floats 32、v6 块 2048/4096/2048、语义索引 512、findings 24、repair 账本 32、anchor 128、visual 默认关）；兼容 5 项全 ✅（anchor v2 纯 additive、lockedComponentIds 缺席空、新字段零漂移、resumed pending 不污染旧流程、熔断）；MINOR 3（ledger RMW 漂移注记、语义 opt-in 阻塞注记、env 快照→实时读）＋QUESTION 3 均已处置。
+
+下半（安全/隔离/隐私/seam）：MAJOR 2 已修 —— canvas 持久化丢失（observation 落库加有界 canvas＋DTO 归一＋键集合测试，offscreen 生产复活）；error_code 三条 egress 只通一条（store adapter 转发＋BatchIntentOutcome 加码进 to_dict）。QUESTION 4（跨 user 共享 anchor 不在 roadmap／恢复无行不变式钉死／匿名可建不可恢复既定语义／顺序 IO 有界）全部注释＋测试锁定。MINOR 2（canvas DTO 无界、anchor 无 TTL）随 MAJOR-1 修其一、其一另起任务。
 
 ## Claim Honesty（§54）
 

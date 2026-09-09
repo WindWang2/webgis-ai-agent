@@ -39,6 +39,10 @@ MAX_ANCHOR_REFS = 128
 #: 锚点内证据快照上限（与 ref 清单同界）。
 MAX_ANCHOR_EVIDENCE = 128
 #: gis_chapter 中可跨 session 恢复的关键块键。
+#: 不变式（review R2 Q7，钉死勿动）：``data_requirements`` 永不进此表 ——
+#: 恢复章节无数据行在场证据；下游按行缺席走 pending 兜底 → verify unknown
+#: 路径（无证据不断言存活）。陈旧绑定证据一旦跨 session 复活，verify 会把
+#: 旧 satisfied 误判为可继续 —— 故绑定类行一律不恢复，只恢复指针与指纹。
 RESTORABLE_CHAPTER_KEYS = (
     "workflow_instance",
     "map_product",
@@ -214,6 +218,10 @@ async def resume_from_anchor(
     row = await db.get(WorkflowResumeAnchor, anchor_id)
     if row is None:
         raise LookupError("resume anchor not found")
+    # review R2 Q8：跨 session 直读的唯一门 —— 恢复管线直接读旧 session 载
+    # 荷（旧 session 消亡即按缺席披露），读旧载荷的授权仅系于此处的 user_id
+    # 一致比对。跨 user 共享 anchor 不在 roadmap（共享即授权外读 —— 如需协
+    # 作语义另立 ADR，不在本模块隐式实现）；project_id 不参与门控。
     if not user_id or str(row.user_id or "") != str(user_id):
         raise PermissionError("resume anchor is not owned by current user")
 
@@ -244,6 +252,10 @@ async def resume_from_anchor(
 
     # ref 载荷重水合：旧 session 仍在 → 直取；否则 RefSpill（24h）兜底；
     # 双双缺席 → missing_refs 诚实披露（不伪造）。
+    # review R2 Q10：顺序 IO 说明 —— 低频路径（中断恢复才走），正确优先：
+    # 逐 ref 直读 + spill 兜底 + 新 session 写；ref_ids 建锚时已截断 ≤
+    # MAX_ANCHOR_REFS（128），轮数恒有界，不做并发扇出（扇出省毫秒级、
+    # 引入限流/半写复杂度 —— 不值得）。
     # review R1 #1（CRITICAL 修复）：ref id 是 session 域能力令牌 —— store
     # 生成**新** id，必须返回 old→new 映射（ref_map），restored_refs 以
     # 新 id 计，调用方用新 id 寻址；绝不把旧 id 谎报为可用。

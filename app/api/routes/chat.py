@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -236,6 +236,37 @@ def _bounded_observation_list(entries: Any) -> list[dict[str, Any]]:
         if isinstance(projected, dict):
             out.append(projected)
     return out
+
+
+#: canvas 上限（CSS 像素；16K 显示器约 15360px，16384 取 2 的幂对齐上界）。
+_MAX_CANVAS_PX = 16384
+
+
+def _bounded_canvas(raw: Any) -> Optional[dict[str, int]]:
+    """canvas 有界校验（V6 W8 证据门）。
+
+    width/height 须为正整数（bool 除外；整数值 float 归一为 int）且
+    ≤ _MAX_CANVAS_PX；缺席 / 非 dict / 非数字 / 非正 / 超限 → None
+    （调用方省略该键 —— 按「证据缺席」诚实降级，不做像素级判定）。
+    只返回 {width, height} 投影（不透传客户端多发键）。
+    """
+    if not isinstance(raw, dict):
+        return None
+    vals: list[int] = []
+    for key in ("width", "height"):
+        value = raw.get(key)
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            ivalue = value
+        elif isinstance(value, float) and value.is_integer():
+            ivalue = int(value)
+        else:
+            return None
+        if not 0 < ivalue <= _MAX_CANVAS_PX:
+            return None
+        vals.append(ivalue)
+    return {"width": vals[0], "height": vals[1]}
 
 
 async def _record_frontend_cartographic_observation(
@@ -1444,6 +1475,13 @@ class CartographicRuntimeObservationRequest(BaseModel):
     # 服务端按「证据缺席」降级：不做像素级判定，不产生误伤 finding。
     canvas: Optional[dict[str, Any]] = None
 
+    @field_validator("canvas", mode="before")
+    @classmethod
+    def _normalize_canvas(cls, value: Any) -> Any:
+        # 非法 canvas 不 422 —— 按证据缺席省略（旧客户端零新 finding
+        # 语义）；只保留 {width, height} 投影（多发键不透传）。
+        return _bounded_canvas(value)
+
     @model_validator(mode="after")
     def _cap_serialized_size(self):
         if len(self.model_dump_json().encode("utf-8")) > 256 * 1024:
@@ -1547,6 +1585,9 @@ async def push_cartographic_runtime_observation(
                 )
             except (TypeError, ValueError):
                 stamped_revision = 0
+            # V6 W8：canvas 经有界校验后落库（DTO 已归一，此处再门一次 ——
+            # 直接构造 DTO 的内部路径同样收敛到同一投影；非法/缺席即省略）。
+            canvas = _bounded_canvas(req.canvas)
             observation = {
                 "session_id": session_id,
                 "sequence": sequence,
@@ -1567,6 +1608,9 @@ async def push_cartographic_runtime_observation(
                 # （旧客户端缺席）≠ 空集（上报了但全无数据），二者语义不同。
                 **({"charts": _bounded_observation_list(req.charts)}
                    if req.charts is not None else {}),
+                # V6 W8：canvas 在场（校验通过）才落键 —— 缺席/非法时省略，
+                # 下游 offscreen 检查按「证据缺席」整体缺席（诚实降级）。
+                **({"canvas": canvas} if canvas is not None else {}),
                 "map_idle": bool(req.map_idle) if req.map_idle is not None else None,
                 "observed_at": req.observed_at,
             }

@@ -11,10 +11,14 @@
    重叠对双方 diagnostics 均含 layout_conflict（对称）；
 4. 布局 findings 进入 validate_render_observation 主链且受
    MAX_RENDER_FINDINGS 有界；_MAX_LAYOUT_FINDINGS 按对原子截断。
+5. canvas 端到端：DTO 归一为有界投影（非法→None，不 422）→ 落库仅在场
+   键（缺席不存）→ 读回一致（review R2 MAJOR-1）。
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List
+
+import pytest
 
 from app.services.gis_harness.map_completion import (
     F_LAYOUT_CONFLICT,
@@ -309,3 +313,120 @@ def test_run_visual_evaluation_failure_degrades_empty() -> None:
         raise RuntimeError("vlm backend unreachable")
 
     assert run_visual_evaluation(boom, {}) == []
+
+
+# ── 5. canvas DTO→持久化键集合（review R2 MAJOR-1）───────────────────────
+
+def _canvas_dto(canvas: Any):
+    from app.api.routes.chat import CartographicRuntimeObservationRequest
+
+    return CartographicRuntimeObservationRequest(
+        client_generation=1,
+        mapspec_fingerprint="fp-aaaaaaaaaaaaaaaa",
+        layers=[],
+        viewport={},
+        style_loaded=True,
+        canvas=canvas,
+    )
+
+
+def test_canvas_dto_normalizes_to_bounded_projection() -> None:
+    """DTO 层：合法 canvas 归一为 {width, height} 投影（多发键剥离），
+    非法 canvas → None（省略，不 422 —— 证据缺席语义）。"""
+    assert _canvas_dto(
+        {"width": 800, "height": 600}).canvas == {"width": 800, "height": 600}
+    # 整数值 float 归一（JSON 800.0 形）
+    assert _canvas_dto(
+        {"width": 800.0, "height": 600.0}).canvas == {"width": 800, "height": 600}
+    # 多发键不透传
+    assert _canvas_dto(
+        {"width": 800, "height": 600, "dpr": 2}).canvas == {"width": 800, "height": 600}
+    assert _canvas_dto(None).canvas is None
+    for bad in (
+        {}, {"width": 800}, {"height": 600},
+        {"width": "800", "height": 600},       # 非数字
+        {"width": None, "height": 600},        # 缺席
+        {"width": 0, "height": 600},           # 非正
+        {"width": -1, "height": 600},
+        {"width": 800.5, "height": 600},       # 非整数值
+        {"width": True, "height": 600},        # bool 不是尺寸
+        {"width": 16385, "height": 600},       # 超限
+        {"width": 800, "height": 1 << 30},
+        "800x600", [800, 600], 800,
+    ):
+        assert _canvas_dto(bad).canvas is None, bad
+
+
+def test_bounded_canvas_helper_bounds() -> None:
+    """_bounded_canvas：上限 16384（含边界值通过），非法一律 None。"""
+    from app.api.routes.chat import _bounded_canvas
+
+    assert _bounded_canvas({"width": 16384, "height": 16384}) == {
+        "width": 16384, "height": 16384}
+    assert _bounded_canvas({"width": 16385, "height": 1}) is None
+    assert _bounded_canvas(None) is None
+    assert _bounded_canvas({}) is None
+
+
+@pytest.mark.asyncio
+async def test_canvas_persisted_when_present_absent_when_missing() -> None:
+    """DTO→持久化键集合：canvas 在场落库、可读回；缺席不存键。"""
+    import shutil
+    import uuid
+
+    from app.api.routes.chat import (
+        CartographicRuntimeObservationRequest,
+        push_cartographic_runtime_observation,
+    )
+    from app.lib.cartography.quality_loop import cartographic_fingerprint
+    from app.services.mapspec.store import (
+        BASE_STORAGE_DIR,
+        mapspec_store_instance,
+    )
+    from app.services.session_data import session_data_manager
+
+    sid = f"canvas-persist-{uuid.uuid4().hex[:8]}"
+    await session_data_manager.clear_session(sid)
+    try:
+        mapspec = {
+            "version": "1.0", "view": {}, "sources": {}, "layers": [],
+            "layout": {}, "thresholds": {},
+        }
+        await mapspec_store_instance.save_mapspec(sid, mapspec)
+        # 指纹门比对的是落库后读回的 spec —— 以读回值计算，避开存取变换。
+        loaded = await mapspec_store_instance.get_mapspec(sid)
+        assert isinstance(loaded, dict)
+        fingerprint = cartographic_fingerprint(loaded)
+
+        first = await push_cartographic_runtime_observation(
+            sid,
+            CartographicRuntimeObservationRequest(
+                client_generation=1,
+                mapspec_fingerprint=fingerprint,
+                layers=[], viewport={}, style_loaded=True,
+                canvas={"width": 800, "height": 600},
+            ),
+            _conv=object(),
+        )
+        assert first["observation_accepted"] is True
+        stored = await session_data_manager.get_map_state(sid)
+        assert stored["_cartographic_observation"]["canvas"] == {
+            "width": 800, "height": 600}
+
+        second = await push_cartographic_runtime_observation(
+            sid,
+            CartographicRuntimeObservationRequest(
+                client_generation=2,
+                mapspec_fingerprint=fingerprint,
+                layers=[], viewport={}, style_loaded=True,
+            ),
+            _conv=object(),
+        )
+        assert second["observation_accepted"] is True
+        stored2 = await session_data_manager.get_map_state(sid)
+        assert "canvas" not in stored2["_cartographic_observation"]
+    finally:
+        await session_data_manager.clear_session(sid)
+        d = BASE_STORAGE_DIR / sid
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)

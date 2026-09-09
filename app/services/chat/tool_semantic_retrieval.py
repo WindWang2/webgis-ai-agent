@@ -127,6 +127,8 @@ class ToolSemanticIndex:
         self._key = key
 
     def query(self, registry: Any, query: str, top_k: int) -> List[RetrievalHit]:
+        # opt-in 说明：首轮 / registry 指纹变更重建时本调用同步阻塞（模型
+        # encode 在查询线程内执行）—— 高频首轮场景由调用方预热 build_if_stale。
         self.build_if_stale(registry)
         if not self._names:
             return []

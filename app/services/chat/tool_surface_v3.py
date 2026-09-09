@@ -40,7 +40,10 @@ logger = logging.getLogger(__name__)
 #: kill-switch（W12a）：spec 取 off/0/disabled/none（大小写/空白不敏感）
 #: 或 ``GIS_TOOL_SEMANTIC=0`` → 语义路径整体缺席，静默返回 None（不打
 #: warning —— 关掉就是关掉，不算故障），选择逐位回退词法。
-_SEMANTIC_RETRIEVER_SPEC = os.getenv("TOOL_RETRIEVAL_SEMANTIC", "").strip()
+def _semantic_retriever_spec() -> str:
+    """注入点实时读 env（与 visual seam ``_evaluator_spec`` 同门 —— 导入时
+    快照会让测试/运维改变量后必须重载进程才生效）。"""
+    return os.getenv("TOOL_RETRIEVAL_SEMANTIC", "").strip()
 
 #: kill-switch 的 spec 取值（调用期 strip + lower 后命中）。
 _SEMANTIC_OFF_SPECS = frozenset({"off", "0", "disabled", "none"})
@@ -48,6 +51,9 @@ _SEMANTIC_OFF_SPECS = frozenset({"off", "0", "disabled", "none"})
 #: 投影规模（goal §三：10-30 个）
 DEFAULT_K_MIN = 10
 DEFAULT_K_MAX = 30
+#: 调用方自保硬上限（review R2 Q6）：k_max 再大也只取前 64 —— 防止失控
+#: 调用方把全 catalog 灌进模型上下文（schema 字节与注意力双重爆炸）。
+_MAX_K_MAX = 64
 
 #: 核心前门工具：无论检索结果如何都在面上（Tier-1 会话骨架）。
 CORE_TOOL_NAMES: Tuple[str, ...] = (
@@ -240,19 +246,19 @@ class SurfaceSelection:
 
 
 def _load_semantic_retriever():
-    spec = (_SEMANTIC_RETRIEVER_SPEC or "").strip()
+    spec = (_semantic_retriever_spec() or "").strip()
     if not spec or spec.lower() in _SEMANTIC_OFF_SPECS:
         return None
     if os.getenv("GIS_TOOL_SEMANTIC", "").strip() == "0":
         return None
     try:
-        module_name, _, attr = _SEMANTIC_RETRIEVER_SPEC.partition(":")
+        module_name, _, attr = spec.partition(":")
         module = __import__(module_name, fromlist=[attr])
         return getattr(module, attr)
     except Exception:  # noqa: BLE001 — 注入失败降级词法，不阻断
         logger.warning(
             "[ToolSurfaceV3] semantic retriever %r failed to load; falling back to lexical",
-            _SEMANTIC_RETRIEVER_SPEC, exc_info=True,
+            spec, exc_info=True,
         )
         return None
 
@@ -469,7 +475,8 @@ class DynamicToolSurface:
     # ------------------------------------------------------------------
     def select(self, ctx: ToolSelectionContext) -> SurfaceSelection:
         selection = SurfaceSelection()
-        k_max = max(1, int(ctx.k_max))
+        # review R2 Q6：调用方自保钳位 —— k_max > 64 按 64 收敛（投影永有界）。
+        k_max = min(max(1, int(ctx.k_max)), _MAX_K_MAX)
         k_min = max(0, min(int(ctx.k_min), k_max))
         # V4 排序证据门：kill switch 开 且 有上下文证据（phase/预算/会话
         # 信号）才启用 V4 词法增补 + rerank；否则与 V3 逐位一致。
@@ -528,7 +535,7 @@ class DynamicToolSurface:
         if self._semantic is not None and query:
             try:
                 semantic_hits = list(self._semantic(self.registry, query, k_max * 2))
-                selection.retriever = f"semantic:{_SEMANTIC_RETRIEVER_SPEC}"
+                selection.retriever = f"semantic:{_semantic_retriever_spec()}"
                 for hit in semantic_hits:
                     scores[hit.name] = scores.get(hit.name, 0.0) + float(hit.score)
                     selection.reasons.setdefault(hit.name, []).append(

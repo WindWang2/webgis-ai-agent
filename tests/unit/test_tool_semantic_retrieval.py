@@ -130,7 +130,7 @@ def test_index_deterministic(registry):
 ])
 def test_kill_switch_spec_silent(monkeypatch, caplog, spec):
     # kill-switch 走静默路径：返回 None 且本模块不打 warning。
-    monkeypatch.setattr(v3, "_SEMANTIC_RETRIEVER_SPEC", spec)
+    monkeypatch.setenv("TOOL_RETRIEVAL_SEMANTIC", spec)
     monkeypatch.delenv("GIS_TOOL_SEMANTIC", raising=False)
     with caplog.at_level(logging.WARNING):
         assert v3._load_semantic_retriever() is None
@@ -140,7 +140,7 @@ def test_kill_switch_spec_silent(monkeypatch, caplog, spec):
 
 def test_kill_switch_env_silent(monkeypatch, caplog):
     # GIS_TOOL_SEMANTIC=0：即使 spec 看似有效也不尝试 import，静默缺席。
-    monkeypatch.setattr(v3, "_SEMANTIC_RETRIEVER_SPEC", "no.such.module:fn")
+    monkeypatch.setenv("TOOL_RETRIEVAL_SEMANTIC", "no.such.module:fn")
     monkeypatch.setenv("GIS_TOOL_SEMANTIC", "0")
     with caplog.at_level(logging.WARNING):
         assert v3._load_semantic_retriever() is None
@@ -150,7 +150,7 @@ def test_kill_switch_env_silent(monkeypatch, caplog):
 
 def test_kill_switch_surface_falls_back_lexical(monkeypatch, registry):
     # kill-switch 下 surface 逐位回退词法：retriever=lexical 且面非空。
-    monkeypatch.setattr(v3, "_SEMANTIC_RETRIEVER_SPEC", "off")
+    monkeypatch.setenv("TOOL_RETRIEVAL_SEMANTIC", "off")
     monkeypatch.delenv("GIS_TOOL_SEMANTIC", raising=False)
     surface = DynamicToolSurface(registry)
     assert surface._semantic is None
@@ -161,7 +161,7 @@ def test_kill_switch_surface_falls_back_lexical(monkeypatch, registry):
 
 def test_loader_failure_still_warns(monkeypatch, caplog):
     # 非 kill-switch 的真实加载失败仍走 warning 降级（kill-switch 不吞故障痕）。
-    monkeypatch.setattr(v3, "_SEMANTIC_RETRIEVER_SPEC", "no.such.module:fn")
+    monkeypatch.setenv("TOOL_RETRIEVAL_SEMANTIC", "no.such.module:fn")
     monkeypatch.delenv("GIS_TOOL_SEMANTIC", raising=False)
     with caplog.at_level(logging.WARNING):
         assert v3._load_semantic_retriever() is None
@@ -171,7 +171,7 @@ def test_loader_failure_still_warns(monkeypatch, caplog):
 
 def test_default_is_lexical(monkeypatch, registry):
     # 默认（无注入）即 lexical —— test_tool_surface_v3.py:139 的前置语义。
-    monkeypatch.setattr(v3, "_SEMANTIC_RETRIEVER_SPEC", "")
+    monkeypatch.setenv("TOOL_RETRIEVAL_SEMANTIC", "")
     monkeypatch.delenv("GIS_TOOL_SEMANTIC", raising=False)
     assert v3._load_semantic_retriever() is None
     sel = DynamicToolSurface(registry).select(
@@ -186,7 +186,7 @@ def test_surface_semantic_fusion(monkeypatch, registry):
     def fake_semantic(reg, query, top_k):
         return index.query(reg, "heat map", top_k)
 
-    monkeypatch.setattr(v3, "_SEMANTIC_RETRIEVER_SPEC", "fake:index")
+    monkeypatch.setenv("TOOL_RETRIEVAL_SEMANTIC", "fake:index")
     monkeypatch.setattr(v3, "_load_semantic_retriever", lambda: fake_semantic)
     monkeypatch.delenv("GIS_TOOL_SEMANTIC", raising=False)
     surface = DynamicToolSurface(registry)

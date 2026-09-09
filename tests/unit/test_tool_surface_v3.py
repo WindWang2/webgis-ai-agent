@@ -118,7 +118,7 @@ def test_semantic_retriever_injection(monkeypatch, registry):
         from app.services.chat.tool_retrieval import RetrievalHit
         return [RetrievalHit(name="webgis_map_intent", score=99.0, matched=("fake",))]
 
-    monkeypatch.setattr(v3, "_SEMANTIC_RETRIEVER_SPEC", "tests.fake:retriever")
+    monkeypatch.setenv("TOOL_RETRIEVAL_SEMANTIC", "tests.fake:retriever")
     monkeypatch.setattr(v3, "_load_semantic_retriever", lambda: fake_semantic)
     surface = DynamicToolSurface(registry)
     sel = surface.select(_ctx())
@@ -132,7 +132,7 @@ def test_semantic_retriever_failure_degrades(monkeypatch, registry):
     def broken(*a, **k):
         raise RuntimeError("provider down")
 
-    monkeypatch.setattr(v3, "_SEMANTIC_RETRIEVER_SPEC", "tests.fake:retriever")
+    monkeypatch.setenv("TOOL_RETRIEVAL_SEMANTIC", "tests.fake:retriever")
     monkeypatch.setattr(v3, "_load_semantic_retriever", lambda: broken)
     surface = DynamicToolSurface(registry)
     sel = surface.select(_ctx())
@@ -145,3 +145,26 @@ def test_empty_context_gives_core_surface(registry):
     sel = surface.select(ToolSelectionContext())
     assert set(CORE_TOOL_NAMES) <= set(sel.names)
     assert len(sel.names) <= ToolSelectionContext().k_max
+
+
+def test_k_max_clamped_to_hard_ceiling(registry):
+    """review R2 Q6：k_max 调用方自保钳位 —— 再大也只取前 64（投影永有界）。"""
+    from app.services.chat.tool_surface_v3 import _MAX_K_MAX
+
+    assert _MAX_K_MAX == 64
+    surface = DynamicToolSurface(registry)
+    sel = surface.select(_ctx(k_max=10_000))
+    assert len(sel.names) <= _MAX_K_MAX
+    assert sel.selection_trace["k_requested"] == (10, _MAX_K_MAX)
+
+
+def test_semantic_spec_reads_env_live(monkeypatch, registry):
+    """review R2 MINOR-5：注入点实时读 env（与 visual seam 同门）—— 进程
+    启动后改变量即生效，无需重载；空串回落词法。"""
+    from app.services.chat import tool_surface_v3 as v3
+
+    monkeypatch.setenv("TOOL_RETRIEVAL_SEMANTIC", "live.mod:fn")
+    assert v3._semantic_retriever_spec() == "live.mod:fn"
+    monkeypatch.setenv("TOOL_RETRIEVAL_SEMANTIC", "")
+    monkeypatch.delenv("GIS_TOOL_SEMANTIC", raising=False)
+    assert v3._load_semantic_retriever() is None
