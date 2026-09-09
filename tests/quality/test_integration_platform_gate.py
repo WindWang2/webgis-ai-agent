@@ -47,14 +47,19 @@ def test_no_production_import_of_integration_package():
         f"生产代码 import 协调面包（架构不变量 1 破坏）: {violations}")
 
 
-def test_v3_scripts_are_git_tracked_and_whitelisted():
-    """不变量 2：脚本被 .gitignore 白名单放行且实际 tracked。"""
+def test_v3_scripts_on_disk_are_git_tracked():
+    """不变量 2：**存在于磁盘上**的协调面脚本必须被 .gitignore 白名单放行
+    且实际 tracked（事故模式：脚本本地可跑、被静默忽略 → master 红；
+    history: check_tool_descriptor_coverage.py）。尚未交付的脚本由
+    test_quality_v3_completion_proof 在 W16 收紧为全量存在。"""
     tracked = set(subprocess.run(
         ["git", "ls-files"], cwd=REPO, capture_output=True, text=True,
         timeout=30).stdout.splitlines())
-    missing = [s for s in V3_SCRIPTS if s not in tracked]
+    on_disk = [s for s in V3_SCRIPTS if (REPO / s).exists()]
+    assert on_disk, "协调面脚本至少应有 preflight 已交付"
+    missing = [s for s in on_disk if s not in tracked]
     assert missing == [], (
-        f"协调面脚本未入库（.gitignore 白名单缺漏？）: {missing}")
+        f"协调面脚本在磁盘上但未入库（.gitignore 白名单缺漏？）: {missing}")
 
 
 def test_preflight_wired_into_quick_lane():
