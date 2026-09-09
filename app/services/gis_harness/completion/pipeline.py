@@ -407,6 +407,8 @@ def map_product_block(
     render_observation_seq: int = 0,
     methodology_warnings: Optional[List[Dict[str, Any]]] = None,
     chapter: Optional[Dict[str, Any]] = None,
+    observation: Optional[Dict[str, Any]] = None,
+    intent_verified: bool = False,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -445,6 +447,19 @@ def map_product_block(
         block["product_verdict"] = derive_product_verdict(
             result, methodology_warnings, chapter=chapter)
     except Exception:  # noqa: BLE001 — 裁决是增值投影，绝不阻断 finalization
+        pass
+    # V6（ADR-0119 D9）：observation 状态阶梯摘要 —— mounted/loaded/
+    # rendered/data_present/semantically_correct + workflow health 词汇。
+    # 恒发射：缺席 observation → aggregate=unknown / health=blocked
+    # （诚实缺席，workflow 消费方按三态裁决，绝不假通过）。
+    try:
+        from app.services.gis_harness.observation_states import (
+            build_observation_summary,
+        )
+
+        block["observation_health"] = build_observation_summary(
+            observation, intent_verified=intent_verified)
+    except Exception:  # noqa: BLE001 — 摘要是增值投影，绝不阻断
         pass
     return block
 
@@ -620,10 +635,13 @@ async def maybe_finalize_map_product(
                 # 盖章 —— 留给下一触发点（含 POST 触发本身）按新观察重验。
                 try:
                     fresh_state = await session_data_manager.get_map_state(session_id)
+                    current_observation = await load_render_observation(
+                        session_id, fresh_state)
                 except Exception:  # noqa: BLE001 — 读失败按无漂移处理
                     fresh_state = None
+                    current_observation = None
                 if observation_sequence(
-                    await load_render_observation(session_id, fresh_state)
+                    current_observation
                 ) != render_seq:
                     logger.info(
                         "[MapFinalizer] render observation advanced mid-run session=%s — persist skipped",
@@ -648,6 +666,8 @@ async def maybe_finalize_map_product(
                     methodology_warnings=list(
                         fresh.gis_chapter.get("methodology_warnings") or []),
                     chapter=fresh.gis_chapter,
+                    observation=current_observation,
+                    intent_verified=(result.status == "complete"),
                 )
                 await save_session_plan(fresh)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试
