@@ -657,7 +657,14 @@ class WorkflowInstanceNodeRow(Base):
     reuse = Column(JSON, nullable=False, default=dict)
     attempts_log = Column(JSON, nullable=False, default=list)
     transitions = Column(JSON, nullable=False, default=list)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, onupdate=lambda: datetime.now(timezone.utc))
+    # Workflow V6 durable execution：节点级租约（分布式认领的生命周期真相，
+    # 与 run 级租约独立 —— coordinator 存活不等于 worker 存活）、心跳、
+    # 节点级取消旗标、重试退避门（下一次允许 READY 的时刻）。
+    lease_expires_at = Column(DateTime, nullable=True)
+    heartbeat_at = Column(DateTime, nullable=True)
+    cancel_requested = Column(Boolean, nullable=False, default=False)
+    next_ready_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         UniqueConstraint("instance_id", "node_id", name="uq_wf_node_inst_node"),
@@ -666,6 +673,34 @@ class WorkflowInstanceNodeRow(Base):
             "'BLOCKED','SKIPPED','CANCELLED','STALE')",
             name="ck_wf_node_state"),
         Index("idx_wf_node_inst_state", "instance_id", "state"),
+        Index("idx_wf_node_lease", "instance_id", "state", "lease_expires_at"),
+    )
+
+
+class WorkflowEventRow(Base):
+    """Workflow V6 事件日志（append-only journal；replay/inspect/recovery 真相）。
+
+    与节点行内嵌 ``transitions`` 环（上限 8 条，调度热路径快照）互补：
+    journal 是**完整**历史 —— 状态转移、租约、取消、恢复、重试、补偿全部
+    落一行。写路径与状态转移同事务（atomic truth）；读路径分页有界。
+    """
+    __tablename__ = "workflow_events"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    instance_id = Column(String(64), nullable=False)
+    node_id = Column(String(64), nullable=False, default="")
+    kind = Column(String(40), nullable=False)
+    from_state = Column(String(16), nullable=False, default="")
+    to_state = Column(String(16), nullable=False, default="")
+    reason = Column(String(96), nullable=False, default="")
+    actor = Column(String(64), nullable=False, default="")
+    attempt = Column(Integer, nullable=False, default=0)
+    payload = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        Index("idx_wf_event_inst_id", "instance_id", "id"),
+        Index("idx_wf_event_inst_kind", "instance_id", "kind"),
     )
 
 
@@ -700,4 +735,4 @@ class WorkflowNodeReuseRow(Base):
     )
 
 
-__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeRunEvent", "GeoComputeWorkerCache", "GeoComputeResourceUsage", "get_init_sql"]
+__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeRunEvent", "GeoComputeWorkerCache", "GeoComputeResourceUsage", "WorkflowEventRow", "get_init_sql"]

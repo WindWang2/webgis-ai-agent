@@ -35,7 +35,11 @@ from app.services.workflow_runtime.adapters_geocompute import (
     load_ref_features,
     node_executable_op,
 )
-from app.services.workflow_runtime.store import InstanceStore
+from app.services.workflow_runtime.store import (
+    DEFAULT_LEASE_TTL_S,
+    DEFAULT_NODE_LEASE_TTL_S,
+    InstanceStore,
+)
 from app.services.workflow_runtime.store import StoreUnavailable
 
 logger = logging.getLogger(__name__)
@@ -64,7 +68,11 @@ def _utcnow() -> datetime:
 
 
 class Driver:
-    """波次执行驱动（async；阻塞面经 to_thread 卸载）。"""
+    """波次执行驱动（async；阻塞面经 to_thread 卸载）。
+
+    V6：节点认领携带**节点租约**（``node_lease_ttl_s``）；波界为在飞节点
+    续租 —— worker 死亡后节点租约过期即孤儿（与 run 租约独立判定）。
+    """
 
     def __init__(
         self, store: InstanceStore, *,
@@ -76,6 +84,7 @@ class Driver:
         descriptor_probe: Optional[Any] = None,
         subworkflow_executor: Optional[Any] = None,
         parent_visited: Optional[List[str]] = None,
+        node_lease_ttl_s: float = DEFAULT_NODE_LEASE_TTL_S,
     ):
         self.store = store
         self.reuse_index = reuse_index
@@ -89,6 +98,7 @@ class Driver:
         self.descriptor_probe = descriptor_probe
         self.subworkflow_executor = subworkflow_executor
         self.parent_visited = list(parent_visited or [])
+        self.node_lease_ttl_s = max(1.0, float(node_lease_ttl_s))
 
     # ── 主循环 ────────────────────────────────────────────────────────
 
@@ -207,10 +217,15 @@ class Driver:
                         complete=True, reason="NODE_EXCEPTION",
                         event="driver",
                         patch={"error_code": "NODE_EXCEPTION"})
-            # 租约续期（波次边界）
+            # 租约续期（波次边界）：run 租约 + 在飞节点租约（V6 两级续期）
             await asyncio.to_thread(
                 self.store.acquire_run_lease, instance_id,
                 owner_scope=self.owner_scope, token=run_token)
+            for nid, st in states.items():
+                if st == C.NodeState.RUNNING:
+                    await asyncio.to_thread(
+                        self.store.heartbeat_node, instance_id, nid,
+                        token=run_token, ttl_s=self.node_lease_ttl_s)
 
         states = await asyncio.to_thread(
             self.store.get_node_states, instance_id)
@@ -295,12 +310,15 @@ class Driver:
             if not r.ok:
                 return
             states[node_id] = C.NodeState.READY
-        # 派发权仲裁（唯一）；输家直接退出（他认领他完成）
+        # 派发权仲裁（唯一）；输家直接退出（他认领他完成）。
+        # claim 即写节点租约（V6）：本 driver 死亡 → 租约过期 → 孤儿可被
+        # 接管，绝不 zombie RUNNING。
         r = await asyncio.to_thread(
             store.transition_node,
             instance_id, node_id, C.NodeState.RUNNING,
             expected_from=C.NodeState.READY, claim=True,
-            claimed_by=run_token, reason="DISPATCH", event="driver")
+            claimed_by=run_token, reason="DISPATCH", event="driver",
+            lease_ttl_s=self.node_lease_ttl_s)
         if not r.ok:
             states[node_id] = (await asyncio.to_thread(
                 store.get_node, instance_id, node_id)

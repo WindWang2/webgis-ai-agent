@@ -95,6 +95,42 @@ MAX_INSTANCE_NODES = 64
 BINDING_ACTIONS = ("pass", "blocked", "degraded")
 
 
+#: 事件日志词表（Workflow V6 append-only journal；kind 列的唯一真相）。
+class EventKind:
+    STATE_TRANSITION = "state_transition"
+    INSTANCE_CANCEL_REQUESTED = "instance_cancel_requested"
+    NODE_CANCEL_REQUESTED = "node_cancel_requested"
+    LEASE_ACQUIRED = "lease_acquired"
+    LEASE_RELEASED = "lease_released"
+    NODE_HEARTBEAT = "node_heartbeat"
+    RECOVERY_ORPHAN_RESET = "recovery_orphan_reset"
+    RECOVERY_FINALIZE = "recovery_finalize"
+    RETRY_SCHEDULED = "retry_scheduled"
+    RETRY_EXHAUSTED = "retry_exhausted"
+    COMPENSATION = "compensation"
+    ATTEMPT_STARTED = "attempt_started"
+    DUPLICATE_SUPPRESSED = "duplicate_suppressed"
+    DISPATCH = "dispatch"
+    WORKER_LOSS = "worker_loss"
+
+
+EVENT_KINDS: Tuple[str, ...] = (
+    EventKind.STATE_TRANSITION, EventKind.INSTANCE_CANCEL_REQUESTED,
+    EventKind.NODE_CANCEL_REQUESTED, EventKind.LEASE_ACQUIRED,
+    EventKind.LEASE_RELEASED, EventKind.NODE_HEARTBEAT,
+    EventKind.RECOVERY_ORPHAN_RESET, EventKind.RECOVERY_FINALIZE,
+    EventKind.RETRY_SCHEDULED, EventKind.RETRY_EXHAUSTED,
+    EventKind.COMPENSATION, EventKind.ATTEMPT_STARTED,
+    EventKind.DUPLICATE_SUPPRESSED, EventKind.DISPATCH,
+    EventKind.WORKER_LOSS,
+)
+
+
+def event_kind_for_transition(to_state: str) -> str:
+    """状态转移 → 事件 kind（journal 词表与状态机词表解耦的映射点）。"""
+    return EventKind.STATE_TRANSITION
+
+
 def is_terminal(node_state: str) -> bool:
     """「已决」状态（执行序不再推进；SUCCEEDED 仍可被 STALE 失效，
     FAILED/SKIPPED 仍可重新资格化 —— 终态语义见 LEGAL_TRANSITIONS）。"""

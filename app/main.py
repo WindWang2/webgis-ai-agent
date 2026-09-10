@@ -234,6 +234,13 @@ async def lifespan(app: FastAPI):
     # 收敛为 stale（终态但可 retry）。
     stale_sweep_task = asyncio.create_task(_periodic_stale_job_sweep())
 
+    # Workflow V6：workflow 实例恢复清扫（crash → recover 的主动面）。
+    # driver 死亡后 RUNNING 实例/节点会永久滞留 —— 周期把孤儿节点复位
+    # READY、消费遗留取消旗标、愈合 finalize 边界崩溃。多副本安全（条件
+    # 更新幂等）；GIS_WORKFLOW_RECOVERY_INTERVAL_S=0 关闭。
+    workflow_recovery_task = asyncio.create_task(
+        _periodic_workflow_recovery_sweep())
+
     # GeoCompute V6（B1 修复）：cluster coordinator 接线 —— opt-in
     # （WEBGIS_CLUSTER_COORDINATOR=1），默认关闭时提交端点之外的调度面
     # 不存在、行为与 V5 一致。run_forever 是阻塞循环（DB 轮询），放
@@ -273,7 +280,7 @@ async def lifespan(app: FastAPI):
         _ext_tick.cancel()
 
     # 关闭后台清理任务
-    for bg_task in (cleanup_task, stale_sweep_task):
+    for bg_task in (cleanup_task, stale_sweep_task, workflow_recovery_task):
         bg_task.cancel()
         try:
             await bg_task
@@ -416,6 +423,32 @@ async def _periodic_stale_job_sweep(interval_seconds: int = 60) -> None:
             raise
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[lifespan] stale job sweep tick failed: {e}")
+
+
+async def _periodic_workflow_recovery_sweep(interval_seconds: float | None = None) -> None:
+    """Workflow V6：workflow 实例恢复清扫（crash → recover 的主动面）。
+
+    扫描 RUNNING 且 run 租约过期 / 无主超时 / 挂着取消旗标的实例，逐个：
+    孤儿节点复位 READY（attempts 保留）、消费遗留取消、愈合 finalize 边界
+    崩溃。全部收敛走条件更新，多副本 API 同时扫安全。
+    """
+    import logging
+
+    from app.services.workflow_runtime import recovery as _wf_recovery
+
+    logger = logging.getLogger(__name__)
+    if interval_seconds is None:
+        interval_seconds = _wf_recovery.recovery_interval_s()
+    if interval_seconds <= 0:
+        return
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            await _wf_recovery.sweep_recoverable_async()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[lifespan] workflow recovery tick failed: {e}")
 
 
 
