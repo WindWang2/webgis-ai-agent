@@ -163,14 +163,18 @@ function inferType(values: unknown[]): ColumnType {
   return 'string';
 }
 
-/** Dynamically extract column schema from all rows */
+/** FRONT-06: Maximum rows sampled for schema and type inference */
+const SCHEMA_SAMPLE_SIZE = 100;
+
+/** Dynamically extract column schema from a sampled subset of rows */
 function extractColumnSchema(rows: Array<Record<string, unknown>>): ColumnSchema[] {
   if (rows.length === 0) return [];
 
+  const sampleRows = rows.length > SCHEMA_SAMPLE_SIZE ? rows.slice(0, SCHEMA_SAMPLE_SIZE) : rows;
   const keySet = new Set<string>();
   const keyValuesMap = new Map<string, unknown[]>();
 
-  for (const row of rows) {
+  for (const row of sampleRows) {
     for (const key of Object.keys(row)) {
       keySet.add(key);
       if (!keyValuesMap.has(key)) {

@@ -235,4 +235,19 @@ describe('TabularDataGrid', () => {
     });
     expect(handleRowClick.mock.calls[0][1]).toBe(0);
   });
+
+  it('samples top 100 rows for schema inference on large datasets (FRONT-06)', () => {
+    // 500 rows where only first 100 have `sampledField`, rows > 100 have `lateField`
+    const rows = Array.from({ length: 500 }, (_, i) => ({
+      id: `row-${i}`,
+      val: i,
+      ...(i < 100 ? { sampledField: `sample-${i}` } : { lateField: `late-${i}` }),
+    }));
+
+    render(<TabularDataGrid data={rows} />);
+    // Column headers should include sampledField from top 100 rows
+    expect(screen.getByRole('columnheader', { name: /sampledField/i })).toBeInTheDocument();
+    // lateField which only exists past row 100 was not scanned in schema extraction
+    expect(screen.queryByRole('columnheader', { name: /lateField/i })).toBeNull();
+  });
 });
