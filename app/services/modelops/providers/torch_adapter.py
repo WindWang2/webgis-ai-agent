@@ -187,9 +187,15 @@ class TorchScriptProvider:
             torch = model.state["torch"]
             module = model.state["module"]
             pixels = np.ascontiguousarray(batch.pixels, dtype=np.float32)
+            device_index = int(ctx.extras.get("device_index", 0) or 0)
             try:
                 with _TorchNoGrad(torch):
-                    outputs = module(torch.from_numpy(pixels))
+                    if model.device == DEVICE_CUDA:
+                        # 多 GPU 亲和：forward 在亲和设备上下文中执行。
+                        with torch.cuda.device(device_index):
+                            outputs = module(torch.from_numpy(pixels))
+                    else:
+                        outputs = module(torch.from_numpy(pixels))
             except Exception as exc:  # noqa: BLE001 — 运行时错误分类
                 raise _classify_torch_error(exc) from exc
             raw = self._to_numpy(outputs, torch)

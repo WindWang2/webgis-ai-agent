@@ -192,6 +192,8 @@ class InferenceEngine:
         loaded_cache: Optional[LoadedModelCache] = None,
         reuse_store: Optional[Any] = None,
         cancel_registry: Optional[Any] = None,
+        vram_ledger: Optional[Any] = None,
+        gpu_devices: Tuple[Any, ...] = (),
     ) -> None:
         self._registry = registry
         self._providers = providers
@@ -201,6 +203,15 @@ class InferenceEngine:
         )
         self._reuse = reuse_store
         self._slots = threading.BoundedSemaphore(self._settings.max_concurrent_inferences)
+        # V3 §E：VRAM 账本（进程内预订；None = 只观测不记账——直构引擎的
+        # 测试路径保持零依赖）。
+        self._ledger = vram_ledger
+        self._gpu_devices = gpu_devices
+
+    @property
+    def loaded_cache(self) -> LoadedModelCache:
+        """loaded cache 只读视图（warm pool 等调度组件消费）。"""
+        return self._loaded_cache
 
     # ── public ──────────────────────────────────────────────────────
     def run(
@@ -503,12 +514,21 @@ class InferenceEngine:
             max_batch=caps.max_batch,
             recommended_batch=estimate.recommended_batch,
         )
+        # V3 §E：多 GPU 亲和（确定性 hash → 设备号；单卡/无卡 = 0）。
+        from app.services.modelops.scheduling import model_affinity_index
+
+        device_index = 0
+        if device_plan.device == "cuda":
+            device_index = model_affinity_index(
+                descriptor.model_id, max(1, len(self._gpu_devices))
+            )
         device_plan = DevicePlan(
             device=device_plan.device,
             batch=batch,
             vram_bytes=estimate.vram_bytes * batch,
             host_ram_bytes=estimate.host_ram_bytes * batch,
             accounting="externally_enforced" if estimate.externally_enforced else "provider_visible",
+            device_index=device_index,
         )
         perf.note_resources(
             estimated_vram_bytes=device_plan.vram_bytes, device=device_plan.device
@@ -516,6 +536,20 @@ class InferenceEngine:
         # R2-M8：host 峰值内存观测（POSIX ru_maxrss / win32 GetProcessMemoryInfo；
         # 不可得 = 0，manifest 如实呈现，不虚标）。
         perf.note_resources(peak_host_memory_bytes=_process_peak_rss_bytes())
+        # V3 §E：VRAM 预订（load + 推理全程持有；无账本 = 只观测）。
+        reservation = None
+        if self._ledger is not None:
+            reservation = self._ledger.acquire(
+                device_plan.device,
+                device_plan.device_index,
+                bytes_needed=max(0, device_plan.vram_bytes),
+                run_id=run_id,
+            )
+            ctx.extras["vram_reservation"] = {
+                "device": device_plan.device,
+                "device_index": device_plan.device_index,
+                "bytes": reservation.bytes_reserved,
+            }
 
         # ── loaded model（single-flight cache）──────────────────────
         _emit(progress, stage="load", run_id=run_id)
@@ -591,6 +625,9 @@ class InferenceEngine:
             raise
         finally:
             self._loaded_cache.release(cache_key)
+            # V3 §E：释放 VRAM 预订（成功/失败路径都要归还）。
+            if reservation is not None and self._ledger is not None:
+                self._ledger.release(reservation)
             # R2-M8：provider 侧观测 VRAM（如 mock_gpu 的 vram_observed_peak）
             # 如实回传；协议成员 provider.cancel 在取消路径被调用（此前零调用方）。
             state = getattr(model, "state", None)
@@ -769,6 +806,8 @@ class InferenceEngine:
                     try:
                         output = provider.infer(model, batch_obj, ctx)
                     except ProviderOOM:
+                        if self._ledger is not None:
+                            self._ledger.report_oom(device_plan.device, device_plan.device_index)
                         if oom_downshifts >= MAX_OOM_DOWNSHIFTS or current_batch <= 1:
                             raise
                         oom_downshifts += 1
@@ -1158,6 +1197,8 @@ class InferenceEngine:
                     try:
                         output = provider.infer(model, batch_obj, ctx)
                     except ProviderOOM:
+                        if self._ledger is not None:
+                            self._ledger.report_oom(device_plan.device, device_plan.device_index)
                         if oom_downshifts >= MAX_OOM_DOWNSHIFTS or current_batch <= 1:
                             raise
                         oom_downshifts += 1

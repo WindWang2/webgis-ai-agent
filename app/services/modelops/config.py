@@ -87,6 +87,8 @@ class ModelOpsSettings:
     #: V3 §B：operator 登记的子进程 worker（slot=/abs/path，原始大小写）。
     subprocess_workers: List[str] = field(default_factory=list)
     subprocess_deadline_s: float = _DEFAULT_SUBPROCESS_DEADLINE_S
+    #: V3 §E：warm pool 常驻模型 id 清单（逗号分隔）。
+    warm_pool: List[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, *, base_dir: Optional[Path] = None) -> "ModelOpsSettings":
@@ -127,6 +129,7 @@ class ModelOpsSettings:
                 _DEFAULT_SUBPROCESS_DEADLINE_S,
                 _SUBPROCESS_DEADLINE_CAP_S,
             ),
+            warm_pool=_env_raw_list("MODELOPS_WARM_POOL"),
         )
 
 

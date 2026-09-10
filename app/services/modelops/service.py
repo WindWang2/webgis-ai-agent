@@ -53,15 +53,49 @@ class ModelOpsService:
             max_entries=self._settings.reuse_max_entries,
             max_bytes=self._settings.reuse_max_bytes,
         )
+        # V3 §E：GPU 探测（GeoCompute probe 优先）+ VRAM 账本 + warm pool。
+        from app.services.modelops.scheduling import (
+            VramLedger,
+            WarmPoolManager,
+            probe_gpu_devices,
+        )
+
+        self._gpu_devices = probe_gpu_devices()
+        self._ledger = VramLedger(
+            devices=self._gpu_devices,
+            fallback_budget_bytes=self._settings.vram_budget_bytes,
+        )
         self._engine = InferenceEngine(
             self._registry,
             self._providers,
             self._settings,
             reuse_store=self._reuse,
+            vram_ledger=self._ledger,
+            gpu_devices=self._gpu_devices,
         )
+        self._warm_pool = WarmPoolManager(
+            self._engine.loaded_cache, self._registry, self._providers
+        )
+        self._settle_warm_pool()
         self._evaluation = EvaluationService()
         self._cancel_lock = threading.Lock()
         self._cancel_tokens: Dict[str, CancellationToken] = {}
+
+    def _settle_warm_pool(self) -> None:
+        """启动时把 settings 声明的 warm pool 钉进 loaded cache（幂等）。"""
+        for model_id in self._settings.warm_pool:
+            self._warm_pool.pin(model_id.strip())
+
+    def warm_pool_status(self) -> Dict[str, Any]:
+        """warm pool / GPU 账本状态（观测面）。"""
+        return {
+            "pinned": self._warm_pool.status(),
+            "vram_ledger": self._ledger.snapshot(),
+        }
+
+    def pin_warm_pool(self, model_id: str, *, device: str = "cpu") -> Dict[str, Any]:
+        """运行期把一个模型钉进 warm pool（幂等；typed 结果不抛）。"""
+        return self._warm_pool.pin(model_id, device=device)
 
     def _wire_dl_providers(self) -> None:
         """V3 §B：ONNX Runtime / TorchScript / subprocess provider 接线。
