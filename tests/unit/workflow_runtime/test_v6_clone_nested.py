@@ -284,7 +284,7 @@ def test_parent_cancel_propagates_to_running_child(factory):
 
     # 慢执行器：子实例在飞时父取消落地
     async def slow_executor(node, input_refs, params, ctx):
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(4.0)
         from app.services.workflow_runtime.adapters_geocompute import (
             GeoComputeNodeOutcome,
         )
@@ -322,7 +322,17 @@ def test_parent_cancel_propagates_to_running_child(factory):
                     "package_id": "recipe-x", "remaining_s": 15.0},
             parent_visited=[], session_id="s1",
             input_refs=["ref:data-1"]))
-        await asyncio.sleep(0.4)  # 子实例已展开并在飞
+        # 等子实例展开并在飞（轮询节点 RUNNING，重载下展开可能变慢）
+        for _ in range(100):
+            child_rows = [r for r in store.list_owner_instances("u:abc")
+                          if r.get("parent_instance_id")
+                          == parent["instance_id"]]
+            if child_rows:
+                cid0 = child_rows[0]["instance_id"]
+                if any(s == C.NodeState.RUNNING for s in
+                       store.get_node_states(cid0).values()):
+                    break
+            await asyncio.sleep(0.05)
         store.update_instance(parent["instance_id"],
                               fields={"cancel_requested": True})
         result = await task
