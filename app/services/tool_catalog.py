@@ -65,6 +65,7 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
         "NDVI", "NDWI", "EVI", "NBR", "植被指数", "植被", "植被覆盖",
         "Sentinel", "Landsat", "湿地", "燃烧比", "火灾", "干旱",
         "云覆盖", "波段",
+        "模型", "推理", "GeoAI", "modelops", "分割", "目标检测",
     ],
     # 路网 / 路径 / 可达性 / 选址优化 / 巡航
     "network": [
@@ -120,6 +121,7 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
         # audit #831: spawn_subagent 的文档激活词（subagent.py docstring 承诺
         # 「批量/子任务/委派」触发载入）此前不在词表 —— 按文档触发永远无法激活。
         "批量", "子任务", "委派", "子代理", "spawn subagent",
+        "方法", "方法论", "方法推荐", "组件目录", "methodology",
     ],
 }
 

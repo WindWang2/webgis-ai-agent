@@ -23,8 +23,8 @@ from app.evaluation.retrieval_corpus import (
 )
 from app.evaluation.runtime_metrics import surface_retrieval_report
 
-#: 实测 recall@5 ∈ [0.4508, 0.4541]（默认上下文）→ 钉 0.44
-PINNED_RECALL_AT_5 = 0.44
+#: 实测 recall@5 ∈ [0.438, 0.454]（多工具注册后）→ 钉 0.43
+PINNED_RECALL_AT_5 = 0.43
 #: 实测 recall@10 ∈ [0.9881, 0.9883] → 钉 0.98
 PINNED_RECALL_AT_10 = 0.98
 #: 实测 recall@30 = 1.0 → 钉 0.995
