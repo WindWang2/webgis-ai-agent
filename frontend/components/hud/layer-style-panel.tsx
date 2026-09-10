@@ -100,6 +100,13 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
     }
   }, [isRenaming]);
 
+  // V7（审计 §2-M 防线二）：编辑目标行消失（会话切换/图层删除）时自愈
+  // 复位 —— 此前 return null 把图层 tab 渲染成整页空白且钻入态永久滞留。
+  const layerMissing = !layer && editingLayerId != null;
+  useEffect(() => {
+    if (layerMissing) setEditingLayerId(null);
+  }, [layerMissing, setEditingLayerId]);
+
   if (!layer) return null;
 
   const style = layer.style || {};

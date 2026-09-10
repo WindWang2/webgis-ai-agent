@@ -25,6 +25,8 @@ const hudState = vi.hoisted(() => ({
   clearProcessLayers: vi.fn(),
   setCartographyTitle: vi.fn(),
   focusLayer: vi.fn(),
+  // V7：会话切换清理样式钻入视图（editingLayerId）。
+  setEditingLayerId: vi.fn(),
   historyOpen: false,
   resetDockState: vi.fn(),
   // Workbench V4：会话切换清理分组树/多选/锁定/隔离。

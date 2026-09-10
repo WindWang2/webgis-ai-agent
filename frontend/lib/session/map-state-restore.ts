@@ -192,6 +192,14 @@ export interface RestoreMapLayersOptions {
  * `_mapspecLayerId`（开关/删除走 user-mutation 的 presentation/removed
  * 路径）与 `_refId`（数据由 ref-source-resolver 回填）。幂等——按 id
  * 与 `_mapspecLayerId` 双重去重，重复提交零副作用。
+ *
+ * V7（审计 §1-C）：再按 `_refId` 第三重去重 —— SSE 挂载的 HUD 行
+ * （无 runtime_patch 时没有 `_mapspecLayerId`）与 committed spec 的
+ * product-* 镜像行可指向同一份 ref 数据；此前只按 id 去重会产出两行，
+ * 地图渲两份、任一眼睛开关只遮住一份（显隐失真的第二个来源）。命中
+ * ref 且该行尚未绑定 spec 时，回填 `_mapspecLayerId` 到既有行（用户
+ * 可辨识的名字保留），不再新增镜像行；已绑定 spec 的行不参与 ref
+ * 去重，spec 内 `id__variant` 同 ref 变体层不受影响。
  */
 export function syncSpecLayersToStore(
   mapspec: { layers?: unknown[]; sources?: Record<string, any> } | null | undefined,
@@ -204,9 +212,14 @@ export function syncSpecLayersToStore(
 
   const storeLayers = useHudStore.getState().layers ?? [];
   const known = new Set<string>();
+  // refId → 尚未绑定 spec 的 HUD 行（SSE addLayer 无 runtime_patch 的形态）。
+  const unboundByRef = new Map<string, Record<string, any>>();
   for (const row of storeLayers) {
     known.add(String(row.id));
     if (row._mapspecLayerId) known.add(String(row._mapspecLayerId));
+    else if (row._refId && !unboundByRef.has(String(row._refId))) {
+      unboundByRef.set(String(row._refId), row as Record<string, any>);
+    }
   }
 
   // P1（幽灵面板行修复）：用户删除图层触发 double-superseded 时 pendingRemoved
@@ -224,6 +237,27 @@ export function syncSpecLayersToStore(
     const source = mapspec?.sources?.[String(layer.source || '')] ?? {};
     const refId = typeof source?.ref_id === 'string' ? source.ref_id
       : typeof source?.ref === 'string' ? source.ref : undefined;
+    // V7：同一 ref 的未绑定 HUD 行 —— 回填绑定而非加第二行（两行/两份渲染
+    // 分叉的根因）。服务端 presentation 一并落到该行（source:'server'，保留
+    // 认证语义）。known 补记防同轮后续 spec 事件重复回填。
+    const unbound = refId ? unboundByRef.get(refId) : undefined;
+    if (unbound) {
+      const presentation = presentationFromMapSpec(mapspec as any, id);
+      useHudStore.getState().updateLayer(
+        String(unbound.id),
+        {
+          _mapspecLayerId: id,
+          _refId: unbound._refId ?? refId,
+          ...(presentation.visible !== undefined ? { visible: presentation.visible } : {}),
+          ...(presentation.opacity !== undefined ? { opacity: presentation.opacity } : {}),
+        },
+        { source: 'server' },
+      );
+      known.add(id);
+      // 绑定后该行不再参与后续 ref 命中（一行只绑一个 spec 层）。
+      unboundByRef.delete(refId);
+      continue;
+    }
     // 命名链：spec 自带 name/title → legend 标题 → 算法语义名 → id 兜底。
     // 之前 product-* 直写层只能得到 "分析结果: <uuid 后缀>"，用户在面板
     // 里根本认不出哪个是 POI 查询结果。

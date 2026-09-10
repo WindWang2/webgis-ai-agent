@@ -214,6 +214,61 @@ describe('syncSpecLayersToStore（product-* 直写图层镜像）', () => {
     syncSpecLayersToStore(productSpec as any, 'sid-1');
     expect(useHudStore.getState().layers).toHaveLength(1);
   });
+
+  // V7（审计 §1-C）：SSE 挂载行（无 runtime_patch → 无 _mapspecLayerId）与
+  // committed spec 镜像同 ref —— 此前按 id 去重产出两行，地图渲两份且
+  // 任一眼睛开关只遮住一份。回填绑定后单行单图。
+  it('V7 §1-C: 同 ref 的未绑定 SSE 行回填 _mapspecLayerId，不新增镜像行', () => {
+    useHudStore.getState().clearLayers();
+    useHudStore.getState().addLayer({
+      id: 'ref:geojson-poi',
+      name: '搜索结果: 小学',
+      type: 'vector',
+      visible: true,
+      opacity: 1,
+      group: 'analysis',
+      source: { type: 'FeatureCollection', features: [] },
+      _refId: 'ref:geojson-poi',
+    } as any);
+    syncSpecLayersToStore(productSpec as any, 'sid-1');
+    const rows = useHudStore.getState().layers;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: 'ref:geojson-poi',
+      name: '搜索结果: 小学',
+      _mapspecLayerId: 'product-930-points',
+      _refId: 'ref:geojson-poi',
+    });
+  });
+
+  // V7：已绑定 spec 的行不参与 ref 去重 —— spec 内 `id__variant` 同 ref
+  // 变体层各自成行（否则变体被合并进基行，丢失符号化差异）。
+  it('V7: 已绑定行不参与 ref 去重，__variant 同 ref 变体层不受影响', () => {
+    useHudStore.getState().clearLayers();
+    useHudStore.getState().addLayer({
+      id: 'product-930-points',
+      name: '点位分布图',
+      type: 'vector',
+      visible: true,
+      opacity: 1,
+      group: 'analysis',
+      source: { type: 'FeatureCollection', features: [] },
+      _refId: 'ref:geojson-poi',
+      _mapspecLayerId: 'product-930-points',
+    } as any);
+    syncSpecLayersToStore({
+      version: '1.0',
+      sources: {
+        webgis_map_product_layer_source: { type: 'geojson', ref_id: 'ref:geojson-poi' },
+      },
+      layers: [
+        { id: 'product-930-points', source: 'webgis_map_product_layer_source', type: 'circle', name: '点位分布图' },
+        { id: 'product-930-points__labels', source: 'webgis_map_product_layer_source', type: 'symbol', name: '标注' },
+      ],
+    } as any, 'sid-1');
+    const ids = useHudStore.getState().layers.map((r) => r.id).sort();
+    expect(ids).toEqual(['product-930-points', 'product-930-points__labels']);
+  });
 });
 
 describe('restoreSessionMapLayers', () => {

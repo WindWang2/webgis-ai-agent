@@ -170,6 +170,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
+      // V7（审计 §2-M）：样式钻入视图描述的是旧会话的图层行 —— 不清则
+      // 切换后图层 tab 渲染 LayerStylePanel，找不到层 return null → 整页空白。
+      useHudStore.getState().setEditingLayerId(null);
       // Workspace V2：dock 归属描述的是旧会话的组件实例 —— 新会话的
       // MapSpec 没有这些 id，停靠区随之清空（避免空 dock/幽灵面板）。
       useHudStore.getState().resetDockState();
@@ -341,6 +344,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
+      // V7（审计 §2-M）：同 selectSession —— 样式钻入视图随会话清空。
+      useHudStore.getState().setEditingLayerId(null);
       // Workspace V2：dock 归属描述的是旧会话的组件实例 —— 新会话的
       // MapSpec 没有这些 id，停靠区随之清空（避免空 dock/幽灵面板）。
       useHudStore.getState().resetDockState();

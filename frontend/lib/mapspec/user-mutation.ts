@@ -5,6 +5,7 @@ import {
   clearPendingPresentation,
   clearPendingRemoved,
   commitMapSpecDocument,
+  getCommittedMapSpec,
   getMapSpecSessionCursor,
   getPendingPresentation,
   markPendingRemoved,
@@ -43,22 +44,16 @@ function supersededFromError(err: unknown): MutationResponse | null {
   return null;
 }
 
-function applyCommittedMapSpec(
-  mapspec: { layers?: any[] } | undefined,
-  revision?: number,
-): boolean {
-  if (!commitMapSpecDocument(mapspec, revision)) return false;
-  
-  if (!mapspec) return true;
+function applyCommittedPresentationToHud(mapspec: { layers?: any[] } | null | undefined): void {
   for (const layer of useHudStore.getState().layers) {
     const specLayerId = mapspecLayerId(layer.id);
     // 在途乐观态保护（ST-P1-2 放大器）：响应 mapspec 的 presentation 是
     // 服务端该时刻的真相，但其它层可能还有未落定的本地 pending——
     // 全层无差别回灌会把在途乐观 toggle/opacity 改回旧值。仍有 pending
-    // 的层跳过（调用方已先清掉本次收敛目标自己的 pending），由它们自己
+    // 的层跳过（compose 会以 pending 表达其期望），由它们自己
     // 的提交响应或 superseded 收敛。
     if (getPendingPresentation()[specLayerId] != null) continue;
-    const pres = presentationFromMapSpec(mapspec, specLayerId);
+    const pres = presentationFromMapSpec(mapspec ?? undefined, specLayerId);
     if (pres.visible !== undefined || pres.opacity !== undefined) {
       // #739: skip no-op updates — rewriting every layer per response (even
       // when values are equal) churned the layers identity and re-triggered
@@ -75,6 +70,25 @@ function applyCommittedMapSpec(
       useHudStore.getState().updateLayer(layer.id, pres, { source: 'server' });
     }
   }
+}
+
+function applyCommittedMapSpec(
+  mapspec: { layers?: any[] } | undefined,
+  revision?: number,
+): boolean {
+  if (!commitMapSpecDocument(mapspec, revision)) {
+    // V7（审计 §1-M）：权威文档缺席/畸形/旧代次 —— 地图只能继续以当前
+    // committed 真相渲染。此前直接 return false，HUD 行停在乐观新值而
+    // compose 回落旧 committed 值（「面板已切换、地图没变」分叉面）。
+    // 现按 committed presentation 强制回灌 HUD（pending 层跳过 —— compose
+    // 以 pending 表达其期望，两处一致）；下一个权威文档（SSE 镜像/下一笔
+    // 响应）到达时自然收敛到新真相。
+    applyCommittedPresentationToHud((getCommittedMapSpec() ?? undefined) as { layers?: any[] } | undefined);
+    return false;
+  }
+
+  if (!mapspec) return true;
+  applyCommittedPresentationToHud(mapspec);
   return true;
 }
 
@@ -136,14 +150,19 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
       }
-      // 先清本次收敛目标自己的 pending，再回灌——applyCommittedMapSpec
+      // 先清本次收敛目标自己的 pending，再回灌 —— 响应文档对目标层有
+      // 裁决权（含并发 doc 带来的其它 presentation 字段）；applyCommittedMapSpec
       // 跳过其它仍有 pending 的层（它们的旧真相不得覆盖在途乐观态）。
+      // 文档提交失败（缺席/畸形）时 applyCommittedMapSpec 内部会把 HUD
+      // 强制对齐 committed presentation，杜绝「面板新值/地图旧值」分叉。
       clearPendingPresentation(specLayerId);
       clearPendingPresentation(patch.layerId);
       applyCommittedMapSpec(data.mapspec, data.mutation_revision);
     } catch (err) {
       const superseded = supersededFromError(err);
       if (!superseded) {
+        // 非 superseded 失败：服务端未接受本笔 mutation —— compose 回落
+        // committed 真相（清 pending），调用方回滚 HUD 行，两处一致。
         clearPendingPresentation(specLayerId);
         clearPendingPresentation(patch.layerId);
         throw err;
@@ -152,11 +171,14 @@ export async function commitLayerPresentation(patch: LayerPresentationPatch): Pr
       if (typeof superseded.mutation_revision === 'number') {
         setMapSpecRevision(superseded.mutation_revision);
       }
-      // superseded：目标层的 pending 同样先清——服务端真相对它有裁决权
-      //（#692 回滚语义），其它在途层不受影响。
+      // superseded：服务端真相对目标层有裁决权（#692 回滚语义）——
+      // 目标 pending 先清再回灌（与成功路径同序）；文档缺席时 apply 内部
+      // 把 HUD 对齐 committed，调用方随后回滚 HUD，两处一致。
       clearPendingPresentation(specLayerId);
       clearPendingPresentation(patch.layerId);
-      applyCommittedMapSpec(superseded.mapspec, superseded.mutation_revision);
+      if (superseded.mapspec) {
+        applyCommittedMapSpec(superseded.mapspec, superseded.mutation_revision);
+      }
       // #692 真实性：409 superseded 此前静默回滚用户操作（面板/地图突然变回
       // 服务端真相零解释）——用已解析的 correction_hint 出提示（缺省兜底文案）
       try {
@@ -476,14 +498,18 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
     // #1078(G-7): 外科式回滚 —— 只把被删的行按原位置放回，不用 await 窗口
     // 前的整表快照覆盖（快照会抹掉窗口内 SSE 并发挂载的新行，直到下一个
     // mapspec 事件才重新镜像）。
-    const removedIdx = previous.findIndex((l) => l.id === layerId);
-    const current = useHudStore.getState().layers;
-    if (removedIdx >= 0 && !current.some((l) => l.id === layerId)) {
-      const restored = [...current];
-      restored.splice(Math.min(removedIdx, restored.length), 0, previous[removedIdx]);
-      useHudStore.getState().setLayers(restored);
+    // V7（审计 §4-M）：await 之后的会话复核 —— 网络失败恰逢切会话时，
+    // 旧会话的行不得回插进新会话的空表（resetLiveState 已清行）。
+    if (getMapSpecSessionCursor().sessionId === enqueuedSessionId) {
+      const removedIdx = previous.findIndex((l) => l.id === layerId);
+      const current = useHudStore.getState().layers;
+      if (removedIdx >= 0 && !current.some((l) => l.id === layerId)) {
+        const restored = [...current];
+        restored.splice(Math.min(removedIdx, restored.length), 0, previous[removedIdx]);
+        useHudStore.getState().setLayers(restored);
+      }
+      toastRollback('删除图层', err);
     }
-    toastRollback('删除图层', err);
     clearPendingRemoved(specLayerId);
     clearPendingRemoved(layerId);
     return;
@@ -509,6 +535,7 @@ export async function removeLayerAndCommit(layerId: string): Promise<void> {
 
 export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayerId?: string }[]): Promise<void> {
   const previous = useHudStore.getState().layers;
+  const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
   // V5/W4：z 序可逆命令（inverse=先前序重放同通道）。
   reorderCommand(
     '调整图层顺序',
@@ -526,15 +553,19 @@ export async function reorderLayersAndCommit(layers: { id: string; _mapspecLayer
     // #1078(G-7): 外科式回滚 —— 在**当前**数组上恢复提交前的相对顺序，
     // await 窗口内并发挂载的新行保留在末尾；整表 setLayers(previous) 会
     // 把这些新行一并抹掉（直到下一个 mapspec 事件才重新镜像）。
-    const current = useHudStore.getState().layers;
-    const prevIds = new Set(previous.map((row) => String(row.id)));
-    const byId = new Map(current.map((row) => [String(row.id), row]));
-    const ordered = previous
-      .map((row) => byId.get(String(row.id)))
-      .filter((row): row is NonNullable<typeof row> => row != null);
-    const additions = current.filter((row) => !prevIds.has(String(row.id)));
-    useHudStore.getState().setLayers([...ordered, ...additions]);
-    toastRollback('图层排序', err);
+    // V7（审计 §4-M）：回滚前会话复核 —— 失败恰逢切会话时旧会话的顺序
+    // 不得覆盖新会话的图层表。
+    if (getMapSpecSessionCursor().sessionId === enqueuedSessionId) {
+      const current = useHudStore.getState().layers;
+      const prevIds = new Set(previous.map((row) => String(row.id)));
+      const byId = new Map(current.map((row) => [String(row.id), row]));
+      const ordered = previous
+        .map((row) => byId.get(String(row.id)))
+        .filter((row): row is NonNullable<typeof row> => row != null);
+      const additions = current.filter((row) => !prevIds.has(String(row.id)));
+      useHudStore.getState().setLayers([...ordered, ...additions]);
+      toastRollback('图层排序', err);
+    }
   }
 }
 

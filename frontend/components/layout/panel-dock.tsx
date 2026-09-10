@@ -62,6 +62,7 @@ function DockChrome({
   tabs,
   activePanel,
   onSelect,
+  bottomInset = 0,
 }: {
   region: 'right' | 'bottom';
   title: string;
@@ -69,6 +70,8 @@ function DockChrome({
   tabs: Array<{ id: string; label: string }>;
   activePanel: string | null;
   onSelect: (id: string) => void;
+  /** 右区共存的底部抬升（底部停靠区开启时右区不再延伸到视口底）。 */
+  bottomInset?: number;
 }) {
   // Wave 11（audit 07 P1）：dock 标签页此前无键盘导航 —— roving tabindex +
   // 方向键（WAI-APG tabs；与 nav-rail 同款习惯，水平 tablist 用 ←/→）。
@@ -96,9 +99,10 @@ function DockChrome({
       data-dock-region={region}
       className={
         region === 'right'
-          ? 'absolute right-0 top-0 bottom-0 z-40 flex w-[340px] max-w-[85vw] flex-col border-l border-edge-subtle bg-surface-panel/95 backdrop-blur-sm shadow-panel'
+          ? 'absolute right-0 top-0 z-40 flex w-[340px] max-w-[85vw] flex-col border-l border-edge-subtle bg-surface-panel/95 backdrop-blur-sm shadow-panel'
           : 'absolute left-0 right-0 bottom-0 z-40 flex h-[300px] max-h-[60vh] flex-col border-t border-edge-subtle bg-surface-panel/95 backdrop-blur-sm shadow-panel'
       }
+      style={region === 'right' && bottomInset > 0 ? { bottom: bottomInset } : undefined}
       role="region"
       aria-label={title}
     >
@@ -161,6 +165,9 @@ function panelLabel(type: string, id: string): string {
   return id;
 }
 
+/** 底部停靠区默认高度（右区共存时按此抬升；Phase B 由可持久化的 dock 尺寸取代）。 */
+export const BOTTOM_DOCK_HEIGHT_PX = 300;
+
 export function PanelDockHost() {
   // committed spec 变化（面板增删/重命名/禁用）时重算标签与实例。
   const specGeneration = useSyncExternalStore(subscribeMapSpecLive, getMapSpecLiveGeneration);
@@ -180,6 +187,11 @@ export function PanelDockHost() {
   const pruneDockPanels = useHudStore((s) => s.pruneDockPanels);
   useEffect(() => {
     // spec 演进：离开 MapSpec 的组件实例，其 dock 归属失效（不留空壳/幽灵）。
+    // V7（审计 §2-M）：只在 committed spec 是「组件完备文档」时 prune ——
+    // SSE 中间态文档可能暂时缺 components 数组（空 id 集），此前每次
+    // spec generation 都执行 prune，一次中间态就把全部 dock 归属永久清空。
+    const spec = getCommittedMapSpec();
+    if (!spec || !Array.isArray(spec.layout?.components)) return;
     pruneDockPanels(new Set(tabsById.keys()));
   }, [tabsById, pruneDockPanels]);
   const tabsFor = useCallback(
@@ -195,42 +207,45 @@ export function PanelDockHost() {
 
   return (
     <>
+      {/* V7（审计 §2-C）：两区独立渲染。此前 IIFE 在右侧停靠时提前 return，
+          右/下两个停靠区永远无法同时显示（底部面板静默不可见）。共存时
+          右区抬高底部停靠区的高度，避免两区相互压盖。 */}
       {(() => {
         // 只渲染 spec 里仍存在的面板（同会话 spec 演进可能移除实例）；
         // 全部失效时停靠区整体不渲染 —— 不出现空壳。
         const rightTabs = tabsFor(rightDock.panels)
-        if (rightDock.open && rightTabs.length > 0) {
-          const fallback = rightTabs[rightTabs.length - 1].id
-          return (
-            <DockChrome
-              region="right"
-              title="停靠面板"
-              onClose={toggleRightDock}
-              tabs={rightTabs}
-              activePanel={rightTabs.some((t) => t.id === rightDock.activePanel)
-                ? (rightDock.activePanel as string)
-                : fallback}
-              onSelect={(id) => setActiveDockPanel('right', id)}
-            />
-          )
-        }
         const bottomTabs = tabsFor(bottomDock.panels)
-        if (bottomDock.open && bottomTabs.length > 0) {
-          const fallback = bottomTabs[bottomTabs.length - 1].id
-          return (
-            <DockChrome
-              region="bottom"
-              title="停靠面板"
-              onClose={toggleBottomDock}
-              tabs={bottomTabs}
-              activePanel={bottomTabs.some((t) => t.id === bottomDock.activePanel)
-                ? (bottomDock.activePanel as string)
-                : fallback}
-              onSelect={(id) => setActiveDockPanel('bottom', id)}
-            />
-          )
-        }
-        return null
+        const showRight = rightDock.open && rightTabs.length > 0
+        const showBottom = bottomDock.open && bottomTabs.length > 0
+        return (
+          <>
+            {showRight && (
+              <DockChrome
+                region="right"
+                title="停靠面板"
+                onClose={toggleRightDock}
+                tabs={rightTabs}
+                bottomInset={showBottom ? BOTTOM_DOCK_HEIGHT_PX : 0}
+                activePanel={rightTabs.some((t) => t.id === rightDock.activePanel)
+                  ? (rightDock.activePanel as string)
+                  : rightTabs[rightTabs.length - 1].id}
+                onSelect={(id) => setActiveDockPanel('right', id)}
+              />
+            )}
+            {showBottom && (
+              <DockChrome
+                region="bottom"
+                title="停靠面板"
+                onClose={toggleBottomDock}
+                tabs={bottomTabs}
+                activePanel={bottomTabs.some((t) => t.id === bottomDock.activePanel)
+                  ? (bottomDock.activePanel as string)
+                  : bottomTabs[bottomTabs.length - 1].id}
+                onSelect={(id) => setActiveDockPanel('bottom', id)}
+              />
+            )}
+          </>
+        )
       })()}
     </>
   );

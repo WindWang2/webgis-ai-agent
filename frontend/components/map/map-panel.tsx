@@ -1320,7 +1320,14 @@ export function MapPanel({
             features={poiPanel.features}
             layerIds={layerIdsSetRef.current}
             layersMap={layersMapRef.current}
-            onClose={() => { setPoiPanel(null); setSelectedFeature(null) }}
+            onClose={() => {
+              setPoiPanel(null)
+              setSelectedFeature(null)
+              // V7（审计 §3-M）：与「选中层消失」清理缝同款 —— 关闭弹窗也要
+              // 清共享选择，否则 selection-store 仍持有 id 过滤，地图/表格
+              // 高亮在弹窗关闭后残留。
+              publishSelection('clear_selection', { source: 'map', layer_id: '' })
+            }}
             onZoomToFeature={handleZoomToFeature}
           />
         )}

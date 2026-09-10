@@ -157,8 +157,43 @@ describe('workbench 多 tab 协同（W5）', () => {
     expect(useHudStore.getState().layerGroups).toHaveLength(0);
   });
 
-  it('C5b: 无 BroadcastChannel 环境（jsdom 缺省）降级 no-op 不崩溃', () => {
-    stopWorkbenchPersistence();
+  // V7（审计 §6-M）：会话 A→B 切换必须重开通道 —— 此前 startWorkbenchCollab
+  // 见 channel 非空即早退，hello/doc 仍发进 wb5:A，多 tab 协同自首次切会话
+  // 起静默失效。
+  it('C6: 会话切换重开通道 —— 新会话消息可收，旧会话消息被忽略', async () => {
+    const other = 'sess-collab-2';
+    collabSessionChanged(S);
+    startWorkbenchCollab();
+    // 切到新会话（persistence 重新武装到 other；内部会经 collabSessionChanged 换通道）
+    notifyWorkbenchSessionChanged(other);
+    setMapSpecSessionCursor(other, 5);
+    hydrateWorkbenchFromSpec(undefined);
+    // 旧会话通道广播 → 忽略（boundSessionId 已是 other）
+    const stale = new FakeBroadcastChannel(`wb5:${S}`);
+    stale.postMessage({
+      kind: 'doc',
+      from: 'tab-other',
+      sessionId: S,
+      revision: 99,
+      doc: docOf(),
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(useHudStore.getState().layerGroups).toHaveLength(0);
+    // 新会话通道广播 → 水合（通道确实重开到 wb5:other）
+    const fresh = new FakeBroadcastChannel(`wb5:${other}`);
+    fresh.postMessage({
+      kind: 'doc',
+      from: 'tab-other',
+      sessionId: other,
+      revision: 9,
+      doc: docOf(),
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(useHudStore.getState().layerGroups).toHaveLength(1);
+    expect(useHudStore.getState().layerGroups[0].name).toBe('远端组');
+  });
+
+  it('C5b: 无 BroadcastChannel 环境（jsdom 缺省）降级 no-op 不崩溃', () => {    stopWorkbenchPersistence();
     vi.unstubAllGlobals();
     expect(() => {
       notifyWorkbenchSessionChanged(S);
