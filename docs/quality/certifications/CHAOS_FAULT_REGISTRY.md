@@ -28,5 +28,8 @@
 | `CANCEL_STORM` | CANCEL | 取消风暴：N 个并发请求同时取消同一 token | asyncio.Barrier 编排 N 路并发 cancel()（纯编排注入；接缝 = CancellationToken.cancel 的幂等/CAS 语义） | 恰好一次返回 True（其余 False）；cancelled 状态与 cancelled_at 单调稳定；无异常泄漏 | `app/lib/cancellation.py:71 cancel（Quality V3 W13）` |
 | `JOBS_STALE_REVISION_CAS` | JOBS | stale revision CAS：并发状态转移中失败方携带过期 expected | 确定性交错：胜者 transition 提交后，败者携带已作废的 expected 再 transition（纯编排注入） | 恰好一路成功；败者返回 False（诚实拒绝，不覆盖、不部分写）；终态 == 胜者目标 | `app/services/jobs/store.py:384-445 transition CAS（Quality V3 W13）` |
 | `DB_TRANSIENT_SEQUENCE` | DB | DB 瞬时故障序列：job 创建路径前 N 次连接级失败 | 包装 DurableJobStore.create，前 fail_times 次抛 sqlalchemy OperationalError（monkeypatch 接缝） | 类型化异常透传调用方（不静默吞）；无半截行落库；恢复后重试创建成功 | `app/services/jobs/store.py:188-255 create（Quality V3 W13）` |
+| `STORAGE_PARTIAL_WRITE` | STORAGE | 制品 publish 的流式拷贝中途源读失败（半截字节已进 tmp） | 包装 builtins.open：仅哨兵文件名的读句柄在第 fail_after 块后抛 OSError（monkeypatch 接缝） | publish 清理 tmp、缓存不可见半截制品（get=miss）、调用方拿到直出 fallback 路径 | `app/lib/artifact_cache.py:152-165 publish 拷贝循环（Platform V4）` |
+| `JOBS_ENQUEUE_FAIL_STORM` | JOBS | 入队重试风暴：broker 连续失败后的重复提交 | fake celery task 的 apply_async 前 fail_times 次抛 ConnectionError（纯编排注入；接缝 = apply_async 依赖注入 + 幂等复用语义） | 首次失败 job 诚实落 failed（无孤儿 queued）；同参数重提交命中幂等复用，不重复入队 | `app/services/jobs/submit.py:161-173 enqueue 失败收敛（Platform V4）` |
+| `JOBS_REDELIVERY_STORM` | JOBS | 重复投递风暴：N 路并发认领同一 pending job（acks_late 重投语义） | asyncio.Barrier 编排 N 路并发 transition（纯编排注入；接缝 = expected CAS） | 恰好一路 pending→queued 胜出，其余诚实 False；无重复执行入口 | `app/services/jobs/store.py:427-445 transition CAS（Platform V4）` |
 
-共 17 个注册故障点；子系统：`CACHE`、`CANCEL`、`DB`、`INGEST`、`JOBS`、`LLM`、`LOCK`、`REGISTRY`、`STORAGE`。
+共 20 个注册故障点；子系统：`CACHE`、`CANCEL`、`DB`、`INGEST`、`JOBS`、`LLM`、`LOCK`、`REGISTRY`、`STORAGE`。

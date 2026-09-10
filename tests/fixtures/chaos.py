@@ -56,6 +56,11 @@ Quality V3（Epic 10 W13）跨系统场景归属（诚实披露，避免重复�
   真实服务瞬时断连由 ``tests/integration/test_real_services_lane.py``
   （REAL_SERVICES opt-in）覆盖。health 端点的内联 redis 连接无接缝，
   不谎报可注入。
+
+Platform V4（ADR-0131 D8）新增：STORAGE_PARTIAL_WRITE（部分上传 →
+无半截制品可见）、JOBS_ENQUEUE_FAIL_STORM（入队风暴 → 诚实 failed +
+幂等复用）、JOBS_REDELIVERY_STORM（并发重复认领 → 恰好一个执行者）。
+行为套件见 ``tests/quality/test_chaos_platform_v4.py``。
 """
 from __future__ import annotations
 
@@ -67,6 +72,7 @@ import tempfile
 import threading
 import unittest.mock
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Callable, Iterator, Optional
 
 # ── journal：每次注入做了什么，全量可审计 ─────────────────────────────────
@@ -705,6 +711,97 @@ def _db_transient_sequence(handle: ChaosFault) -> Iterator[None]:
         DurableJobStore.create = staticmethod(real_create)
 
 
+# ── Platform V4（ADR-0131 D8）fault ───────────────────────────────────
+
+@contextlib.contextmanager
+def _artifact_partial_write(handle: ChaosFault) -> Iterator[None]:
+    """制品 publish 拷贝中途失败：源文件读块在第 fail_after 块后抛
+    OSError（模拟上传/拷贝中断 → 半截字节已进 tmp）。接缝 = 包装
+    builtins.open：仅对哨兵文件名返回坏读句柄，其余透传（有界作用域）。"""
+    import builtins
+
+    fail_after = int(handle.params.get("fail_after", 1))
+    sentinel = str(handle.params.get("sentinel", "chaos-partial-src"))
+
+    class _BrokenAfterChunks:
+        def __init__(self, real_fp):
+            self._fp = real_fp
+            self._chunks = 0
+
+        def read(self, size):
+            self._chunks += 1
+            if self._chunks > fail_after:
+                handle.record(
+                    "fired",
+                    f"src read chunk #{self._chunks} -> OSError (partial copy)",
+                )
+                raise OSError(5, "[chaos] partial write: source read failed")
+            return self._fp.read(size)
+
+        def __enter__(self):
+            self._fp.__enter__()
+            return self
+
+        def __exit__(self, *exc):
+            return self._fp.__exit__(*exc)
+
+    real_open = builtins.open
+
+    def _patched_open(file, mode="r", *args, **kwargs):
+        fp = real_open(file, mode, *args, **kwargs)
+        if sentinel in str(file) and "r" in mode:
+            return _BrokenAfterChunks(fp)
+        return fp
+
+    with unittest.mock.patch.object(builtins, "open", _patched_open):
+        yield
+
+
+@contextlib.contextmanager
+def _jobs_enqueue_fail_storm(handle: ChaosFault) -> Iterator[None]:
+    """入队重试风暴：fake celery task 的 apply_async 前 fail_times 次
+    抛 ConnectionError（broker 抖动），之后成功。纯编排注入 —— 接缝是
+    submit_durable_job 的 apply_async 依赖注入点与幂等复用语义。"""
+    import asyncio as _asyncio
+
+    fail_times = int(handle.params.get("fail_times", 1))
+    lock = _asyncio.Lock()
+
+    class _StormTask:
+        name = "chaos.storm_task"
+
+        def __init__(self):
+            self.calls = 0
+
+        def apply_async(self, *args, **kwargs):
+            self.calls += 1
+            n = self.calls
+            if n <= fail_times:
+                handle.record("fired", f"apply_async call #{n} -> ConnectionError")
+                raise ConnectionError(f"[chaos] broker down #{n}")
+            return SimpleNamespace(id=f"celery-storm-{n}")
+
+    storm = _StormTask()
+    handle.storm_task = storm
+    handle.lock = lock
+    yield
+
+
+@contextlib.contextmanager
+def _jobs_redelivery_storm(handle: ChaosFault) -> Iterator[None]:
+    """重复投递风暴：编排 N 路并发对同一 pending job 的 claim（ackS_late
+    重投语义）。接缝 = transition 的 expected CAS：恰好一路 pending→queued
+    胜出，其余诚实失败 —— 绝不重复执行不可逆 GIS 操作。"""
+    import asyncio as _asyncio
+
+    parties = int(handle.params.get("parties", 8))
+    barrier = _asyncio.Barrier(parties)
+    handle.barrier = barrier
+    handle.results = []
+    handle.record("armed", f"redelivery storm: {parties} 路并发 claim 待屏障放行")
+    yield
+
+
 _FAULT_LIST = [
     FaultSpec(
         fault_id="CACHE_CAP_SHRINK",
@@ -858,6 +955,33 @@ _FAULT_LIST = [
         expected="类型化异常透传调用方（不静默吞）；无半截行落库；恢复后重试创建成功",
         injection_point="app/services/jobs/store.py:188-255 create（Quality V3 W13）",
         factory=_db_transient_sequence,
+    ),
+    FaultSpec(
+        fault_id="STORAGE_PARTIAL_WRITE",
+        subsystem="STORAGE",
+        description="制品 publish 的流式拷贝中途源读失败（半截字节已进 tmp）",
+        attack="包装 builtins.open：仅哨兵文件名的读句柄在第 fail_after 块后抛 OSError（monkeypatch 接缝）",
+        expected="publish 清理 tmp、缓存不可见半截制品（get=miss）、调用方拿到直出 fallback 路径",
+        injection_point="app/lib/artifact_cache.py:152-165 publish 拷贝循环（Platform V4）",
+        factory=_artifact_partial_write,
+    ),
+    FaultSpec(
+        fault_id="JOBS_ENQUEUE_FAIL_STORM",
+        subsystem="JOBS",
+        description="入队重试风暴：broker 连续失败后的重复提交",
+        attack="fake celery task 的 apply_async 前 fail_times 次抛 ConnectionError（纯编排注入；接缝 = apply_async 依赖注入 + 幂等复用语义）",
+        expected="首次失败 job 诚实落 failed（无孤儿 queued）；同参数重提交命中幂等复用，不重复入队",
+        injection_point="app/services/jobs/submit.py:161-173 enqueue 失败收敛（Platform V4）",
+        factory=_jobs_enqueue_fail_storm,
+    ),
+    FaultSpec(
+        fault_id="JOBS_REDELIVERY_STORM",
+        subsystem="JOBS",
+        description="重复投递风暴：N 路并发认领同一 pending job（acks_late 重投语义）",
+        attack="asyncio.Barrier 编排 N 路并发 transition（纯编排注入；接缝 = expected CAS）",
+        expected="恰好一路 pending→queued 胜出，其余诚实 False；无重复执行入口",
+        injection_point="app/services/jobs/store.py:427-445 transition CAS（Platform V4）",
+        factory=_jobs_redelivery_storm,
     ),
 ]
 
