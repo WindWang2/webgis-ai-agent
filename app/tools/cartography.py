@@ -427,6 +427,7 @@ def register_cartography_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, tier=2, domains=["report"], name="export_thematic_map",
+    anti_examples=("工作区状态快照存档（用 save_workspace_snapshot）",),
     capabilities=['map_export_publishing'],
            description=(
                "当用户请求导出精美地图、制图排版、保存当前地图视图为图片或 PDF 时调用。"

@@ -14,11 +14,22 @@ V3 解决的是完整选择管线：
 - ToolRegistry 是唯一执行真相 —— 本模块只产出**投影**（names + reasons），
   schema 一律从 registry 现取，绝不手写第二清单；
 - 词法检索是可靠 baseline：无 embedding provider、无网络时管线完整工作；
-  语义检索只能经由环境变量显式注入（module:attr），失败降级词法并留痕；
+  语义检索默认指向内置 embedding 检索器（semantic_retrieval，
+  懒加载 + 有界失败降级词法，TOOL_RETRIEVAL_EMBEDDING=0 关停），
+  显式 env 注入（module:attr）仍可覆盖；
 - 同输入必同输出（排序 tie-break 用工具名），选择过程全量可解释
   （reasons / dropped / retriever / scores 进 trace 与评测断言面）；
 - 安全红线：tier-3 / destructive 永不经本管线进入模型可见面（显式语义
   通道不变）；角色策略可进一步收紧（如 corpus worker 拿不到地图变更工具）。
+
+V6（ADR-0119）：hybrid 检索 + 置信度弃权。select() 在词法之后追加
+hybrid 信号阶段（双语扩展词二次词法融合 + capability 别名 + 方法论
+证据 + 否定反证，全确定性、GIS_TOOL_RETRIEVAL_V6=0 一键关闭 → 与 V5
+逐位一致），排序后由 (分数水平, top1-top2 margin, 证据通道数) 校准出
+confidence；低于钉死阈值 → abstained=True（低置信度不静默乱选，
+pi_native_surface 消费为「不注入动态面 + 链上披露」）。金标门
+358 条（tests/unit/test_retrieval_eval_v6.py）：p@1 0.4944→0.5587、
+r@5 0.6731→0.7523（同语料 vs V5 词法基线），invalid 持平 0.25。
 """
 from __future__ import annotations
 
@@ -31,11 +42,14 @@ from app.tools.descriptor import SideEffectClass, ToolStatus
 from app.tools.registry import ToolRegistry
 from app.services.chat.schema_compression import compress_schema, schema_bytes
 from app.services.chat.tool_retrieval import RetrievalHit, rank_tools, v4_retrieval_enabled
+from app.services.chat.semantic_retrieval import v6_retrieval_enabled
 
 logger = logging.getLogger(__name__)
 
 #: 语义检索注入点：``TOOL_RETRIEVAL_SEMANTIC="module:callable"``。
 #: callable 签名 ``(registry, query: str, top_k: int) -> Sequence[RetrievalHit]``。
+#: V6 默认指向内置 embedding 检索器（懒加载 + 有界失败降级词法；
+#: ``TOOL_RETRIEVAL_EMBEDDING=0`` 关停）；显式 env 覆盖默认。
 #: 未设置 / 加载失败 / 调用异常 → 词法 baseline（绝不让投影失败）。
 #: kill-switch（W12a）：spec 取 off/0/disabled/none（大小写/空白不敏感）
 #: 或 ``GIS_TOOL_SEMANTIC=0`` → 语义路径整体缺席，静默返回 None（不打
@@ -47,6 +61,19 @@ def _semantic_retriever_spec() -> str:
 
 #: kill-switch 的 spec 取值（调用期 strip + lower 后命中）。
 _SEMANTIC_OFF_SPECS = frozenset({"off", "0", "disabled", "none"})
+def _resolve_semantic_spec() -> str:
+    explicit = os.getenv("TOOL_RETRIEVAL_SEMANTIC", "").strip()
+    if explicit:
+        return explicit
+    try:
+        from app.services.chat.semantic_retrieval import default_semantic_spec
+
+        return default_semantic_spec()
+    except Exception:  # noqa: BLE001 — V5 行为兜底
+        return ""
+
+
+_SEMANTIC_RETRIEVER_SPEC = _resolve_semantic_spec()
 
 #: 投影规模（goal §三：10-30 个）
 DEFAULT_K_MIN = 10
@@ -231,6 +258,11 @@ class SurfaceSelection:
     selection_trace: Dict[str, Any] = field(default_factory=dict)
     # V4：每工具 rerank 分量（signal → delta，有界）；V3 模式恒为空。
     score_components: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    # V6（ADR-0119 D2）：排序置信度与诚实弃权。V6 关闭时 confidence=1.0
+    # / abstained=False（与 V5 行为逐位一致）。
+    confidence: float = 1.0
+    abstained: bool = False
+    abstain_reason: str = ""
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -242,6 +274,9 @@ class SurfaceSelection:
             "score_components": {
                 k: dict(v) for k, v in self.score_components.items()
             },
+            "confidence": self.confidence,
+            "abstained": self.abstained,
+            "abstain_reason": self.abstain_reason,
         }
 
 
@@ -551,6 +586,72 @@ class DynamicToolSurface:
             scores[tool] = scores.get(tool, 0.0) + _CAPABILITY_HIT_SCORE * len(caps)
             selection.reasons.setdefault(tool, []).append(f"capability:{','.join(caps)}")
 
+        # 5.5) V6 hybrid 信号（ADR-0119 D1）：双语扩展词二次词法分（降权
+        #      融合）+ capability 别名 + 方法论证据。全通道确定性、失败
+        #      零贡献；kill switch GIS_TOOL_RETRIEVAL_V6=0 → 整段跳过
+        #      （与 V5 逐位一致）。
+        v6_applied = False
+        v6_trace: Dict[str, Any] = {}
+        if v6_retrieval_enabled():
+            try:
+                from app.services.chat.semantic_retrieval import (
+                    _EXPANSION_FUSION,
+                    hybrid_signals,
+                )
+
+                signals = hybrid_signals(self.registry, query)
+                if signals.expanded_terms and query:
+                    exp_hits = rank_tools(
+                        self.registry, " ".join(signals.expanded_terms),
+                        boosts={}, top_k=k_max * 2, enriched=v4_ranking,
+                    )
+                    for hit in exp_hits:
+                        fused = round(hit.score * _EXPANSION_FUSION, 4)
+                        if fused <= 0.0:
+                            continue
+                        scores[hit.name] = scores.get(hit.name, 0.0) + fused
+                        selection.reasons.setdefault(hit.name, []).append(
+                            f"semantic_expand(score={hit.score:.1f},"
+                            f"fused={_EXPANSION_FUSION})"
+                        )
+                for tool, boost in signals.boosts.items():
+                    scores[tool] = scores.get(tool, 0.0) + boost
+                    if boost:  # 证据留痕（hybrid_signals.evidence 同键）
+                        for ch in signals.evidence.get(tool, ()):
+                            selection.reasons.setdefault(tool, []).append(
+                                f"v6:{ch}(+{boost:.1f})")
+                # 否定反证：「没有X / 无X」→ X 域词命中候选减分（只降不剔）
+                if signals.anti_terms:
+                    from app.services.chat.semantic_retrieval import (
+                        _NEGATION_PENALTY,
+                    )
+                    for name in list(scores.keys()):
+                        try:
+                            desc = self.registry.descriptor(name)
+                        except KeyError:
+                            continue
+                        corpus = " %s %s " % (
+                            desc.name.replace("_", " ").lower(),
+                            " ".join(str(t).lower() for t in desc.tags),
+                        )
+                        hit_anti = [t for t in signals.anti_terms
+                                    if t.lower() in corpus]
+                        if hit_anti:
+                            scores[name] = scores.get(name, 0.0) - _NEGATION_PENALTY
+                            selection.reasons.setdefault(name, []).append(
+                                "v6:negation_anti(-%.1f,term=%s)" % (
+                                    _NEGATION_PENALTY, hit_anti[0][:24]))
+                v6_applied = True
+                v6_trace = {
+                    "expanded_terms": len(signals.expanded_terms),
+                    "capability_alias_hits": list(signals.capability_alias_hits),
+                    "methodology_family": signals.methodology_family,
+                    "boosted_tools": len(signals.boosts),
+                }
+            except Exception:  # noqa: BLE001 — hybrid 故障退回词法序
+                logger.debug("[ToolSurfaceV3] v6 hybrid failed; base served",
+                             exc_info=True)
+
         # 6) 数据画像域 boost（会话里已有的数据类型 → 相关工具优先）
         if ctx.data_profile_domains:
             for name in self.registry.list_tools():
@@ -587,6 +688,12 @@ class DynamicToolSurface:
             if drop:
                 selection.dropped[name] = drop
                 continue
+            if score <= 0.0:
+                # V6 负分地板（审查 R1 M-minor-4）：否定扣减可把仅有微量
+                # 扩展融合分的候选打成负分 —— V5 数学不存在负分入选路径，
+                # V6 保持同一不变式
+                selection.dropped.setdefault(name, "non_positive_score")
+                continue
             candidates.append((name, score))
         candidates.sort(key=lambda t: (-t[1], t[0]))  # 分数降序，tie 按名（确定性）
 
@@ -600,6 +707,47 @@ class DynamicToolSurface:
         # 规模下限：检索不中时不再强行凑数（k_min 是提示不是配额 —— 宁缺勿滥，
         # 模型有 list_available_tools 两跳通道）
         selection.names = names
+
+        # 8) V6 置信度 / 诚实弃权（ADR-0119 D2）：在去 CORE 的检索排序段上
+        #    校准（CORE 常驻工具与 query 无关，不计入证据）；弃权不改变
+        #    投影内容，只把「不确定」如实暴露给消费方（生产 seam 收缩面 +
+        #    披露；评测门计弃权正确率/误弃率）。V6 关闭 → 保持 1.0/False。
+        if v6_applied:
+            try:
+                from app.services.chat.semantic_retrieval import compute_confidence
+
+                core_set = set(CORE_TOOL_NAMES)
+                ranked_non_core = [
+                    (n, s) for n, s in candidates if n not in core_set
+                ]
+
+                def _channels(tool: str) -> int:
+                    # 结构化通道计数（审查 R2 m-5）：reason 头部到 "(" 为
+                    # 止即通道名 —— v6:capability_alias 与 v6:methodology
+                    # 是不同通道（塌缩为 "v6" 会系统性少计覆盖度）
+                    ev = set()
+                    for r in selection.reasons.get(tool, ()):
+                        head = r.split("(", 1)[0]
+                        if head.startswith((
+                            "lexical", "semantic", "semantic_expand",
+                            "v6:", "capability:", "capability_alias",
+                            "data_profile",
+                        )):
+                            ev.add(head.rstrip(":"))
+                    return len(ev)
+
+                conf, abstain, reason = compute_confidence(
+                    ranked_non_core,
+                    channels_for_top=(
+                        _channels(ranked_non_core[0][0]) if ranked_non_core else 0
+                    ),
+                )
+                selection.confidence = conf
+                selection.abstained = abstain
+                selection.abstain_reason = reason
+            except Exception:  # noqa: BLE001 — 置信度故障不阻断投影
+                logger.debug("[ToolSurfaceV3] v6 confidence failed", exc_info=True)
+
         selection.selection_trace = {
             "k_requested": (k_min, k_max),
             "query_chars": len(query),
@@ -607,6 +755,11 @@ class DynamicToolSurface:
             "lexical_hits": len(lexical_hits),
             "selected": len(names),
         }
+        if v6_applied:
+            selection.selection_trace["v6"] = dict(v6_trace)
+            selection.selection_trace["confidence"] = selection.confidence
+            if selection.abstained:
+                selection.selection_trace["abstain_reason"] = selection.abstain_reason
         if rerank_applied:
             selection.selection_trace["rerank"] = {
                 "tools_with_components": len(selection.score_components),

@@ -83,6 +83,59 @@
 - Fabric counters per execution (remote requests, bytes, rows, peak
   streaming bytes, server placements, fallbacks, pushdowns, cache hits,
   replans, probe cost) surfaced in the additive `fabric` result section.
+### Added (harness-v6: Semantic Retrieval, Durable Context & Long-Horizon Autonomy)
+- Hybrid tool retrieval V6 (`semantic_retrieval.py`): bilingual synonym
+  expansion (fused secondary lexical pass), capability aliasing to the 139-cap
+  vocabulary, methodology-evidence channel (12 families, priority-weighted),
+  negation anti-evidence, optional embedding retriever (lazy, bounded-failure,
+  `TOOL_RETRIEVAL_EMBEDDING=0` off-switch); kill switch
+  `GIS_TOOL_RETRIEVAL_V6=0` restores V5 bit-identical behavior.
+- Retrieval confidence & abstention: calibrated score (level/margin/coverage),
+  pinned 0.35 threshold; production seam withholds the dynamic surface on
+  abstention with a chain-disclosed reason (no silent blind dispatch).
+- Golden corpus 66 -> 358 open-loop query->tool cases (direct / near-duplicate
+  / hard-negative / ambiguous / out-of-scope, zh+en+mixed) with per-kind gates,
+  oos-abstention / over-abstention / ECE calibration metrics. Same-corpus vs
+  V5 lexical baseline: p@1 0.4944->0.5587, r@5 0.6731->0.7523, r@10
+  0.7289->0.8059, invalid-selection flat at 0.25.
+- Lexical discriminability fix (`tool_retrieval.py`): closed CJK stopword set
+  (zero weight) + single-char down-weighting (x0.25) + multi-char-only
+  anti-evidence; V3 == V4-off contract preserved. 22 declarative
+  `anti_examples` added to confusable sibling tools.
+- Durable recovery ledger (`recovery_ledger.py`): per-(session, tool,
+  failure-class) attempt budget persisted session-plane with flock +
+  write-through; success write-back clears a tool's counts; TTL lazy decay;
+  LRU-bounded; resume carries budget across sessions (no budget rebirth).
+  `classify_and_remediate` prefers the durable channel when a session id is
+  present; process ledger remains the no-session fallback.
+- Trace store V6: segmented layout (`trace_v6/seg_N.jsonl(.gz)` + manifest),
+  O(segment) appends with gzip roll archive, exact 64-record window with
+  per-record FINAL_VERDICT protection preserved, `read_chains_since`
+  incremental reads (skipped segments never parsed), manifest O(1) `last_seq`,
+  torn-tail healing, `iter_session_chains` bridging API. V4/V5 single-file
+  layouts remain read-tolerant with seq continuation.
+- Durable context three-tier model (`durable_context.py`): closed
+  durable-facts / rebuildable-projections / forbidden vocabularies (conservative
+  default), bounded recovery_state (position/loop budgets/history) at turn
+  boundaries; resume anchors now carry `recovery_state` + `reasoning_digest`
+  (additive JSON keys, no migration).
+- Long-horizon continuation (`continuation.py`): single pure decision point —
+  budget-exhausted/unrecoverable failures abort with disclosure; render
+  failures run repair->reobserve; insufficient data qualification runs
+  deepen->requalify then refuses to execute; pending observations force
+  re-observation. Wired into runtime repair outcomes.
+- Subagent budget classes: light/standard/heavy/research vocabulary with
+  intersect semantics (classes can only tighten), token ceilings, usage()
+  audit field; existing role numbers untouched.
+- Observation state ladder (`observation_states.py`): unknown->pending->
+  mounted->loaded->rendered->data_present->semantically_correct with
+  `to_workflow_health` (ok/degraded/partial/blocked) consumed via the additive
+  `map_product.observation_health` key (always emitted; missing observation =
+  blocked).
+- Chaos corpus (`chaos_corpus.py`): 16 deterministic scenarios covering all
+  eight epic-mandated classes, each pinned to a real pytest node (meta-gate
+  verifies existence); real kill -9 flock-release, cross-session isolation,
+  and resume-budget continuity invariant tests.
 
 
 

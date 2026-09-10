@@ -413,6 +413,8 @@ def map_product_block(
     methodology_warnings: Optional[List[Dict[str, Any]]] = None,
     chapter: Optional[Dict[str, Any]] = None,
     repair_plan: Optional[Dict[str, Any]] = None,
+    observation: Optional[Dict[str, Any]] = None,
+    intent_verified: bool = False,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -455,6 +457,19 @@ def map_product_block(
     # V6 W10/W11：修复计划快照（additive；finding→分类→护栏→计划的证据面）。
     if repair_plan:
         block["repair_plan"] = repair_plan
+    # V6（ADR-0119 D9）：observation 状态阶梯摘要 —— mounted/loaded/
+    # rendered/data_present/semantically_correct + workflow health 词汇。
+    # 恒发射：缺席 observation → aggregate=unknown / health=blocked
+    # （诚实缺席，workflow 消费方按三态裁决，绝不假通过）。
+    try:
+        from app.services.gis_harness.observation_states import (
+            build_observation_summary,
+        )
+
+        block["observation_health"] = build_observation_summary(
+            observation, intent_verified=intent_verified)
+    except Exception:  # noqa: BLE001 — 摘要是增值投影，绝不阻断
+        pass
     return block
 
 
@@ -649,8 +664,12 @@ async def maybe_finalize_map_product(
                     fresh_state = await session_data_manager.get_map_state(session_id)
                 except Exception:  # noqa: BLE001 — 读失败按无漂移处理
                     fresh_state = None
+                # 与原实现同语义：state 读失败 → load_render_observation(sid, None)
+                # 内部再读一次（瞬态失败不误判「观察已推进」，审查 R1 M-minor-8）
+                current_observation = await load_render_observation(
+                    session_id, fresh_state)
                 if observation_sequence(
-                    await load_render_observation(session_id, fresh_state)
+                    current_observation
                 ) != render_seq:
                     logger.info(
                         "[MapFinalizer] render observation advanced mid-run session=%s — persist skipped",
@@ -676,6 +695,8 @@ async def maybe_finalize_map_product(
                         fresh.gis_chapter.get("methodology_warnings") or []),
                     chapter=fresh.gis_chapter,
                     repair_plan=repair_plan_dict,
+                    observation=current_observation,
+                    intent_verified=(result.status == "complete"),
                 )
                 await save_session_plan(fresh)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试

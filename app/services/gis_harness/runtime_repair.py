@@ -139,6 +139,9 @@ class RuntimeRepairOutcome:
     # applied 非空时携带修复后的 spec 快照与 revision（响应侧带前端提交）。
     mapspec: Optional[Dict[str, Any]] = None
     mutation_revision: Optional[int] = None
+    # V6（ADR-0119 D7）：continuation 裁决（exhausted / applied 时挂载；
+    # 有界 payload —— verdict/loop/reason/disclosure）。
+    continuation: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {
@@ -146,6 +149,8 @@ class RuntimeRepairOutcome:
             "exhausted": self.exhausted,
             "passes": self.passes_used,
         }
+        if self.continuation is not None:
+            out["continuation"] = dict(self.continuation)
         if self.execution_debts:
             out["execution_debts"] = self.execution_debts[:4]
         if self.user_owned:
@@ -350,6 +355,41 @@ def _trace_repair(session_id: str, outcome: RuntimeRepairOutcome) -> None:
         pass
 
 
+async def _attach_continuation(
+    outcome: RuntimeRepairOutcome, session_id: str, *, exhausted: bool,
+) -> None:
+    """V6（D7）：修复事件记入 recovery_state 并挂 continuation 裁决。
+
+    exhausted → 失败类 renderer_failure 进入裁决（repair 余量 0 →
+    reobserve / abort_with_disclosure）；applied → 记回路使用后裁决
+    （continue = 前端提交后 reconcile 闭合回路）。任何失败静默 ——
+    裁决面绝不阻断修复响应。"""
+    try:
+        from app.services.gis_harness.continuation import decide_continuation
+        from app.services.gis_harness.durable_context import (
+            update_recovery_state,
+        )
+
+        if exhausted:
+            # 耗尽也必须计入 repair 回路使用 —— 否则 recovery_state 看不
+            # 到预算消耗，裁决与 exhausted 披露打架（审查 R1 M-minor-5）
+            state = await update_recovery_state(
+                session_id, loop="repair",
+                detail=f"repair exhausted passes={outcome.passes_used}")
+        else:
+            state = await update_recovery_state(
+                session_id, loop="repair",
+                detail=f"repair applied={outcome.applied[:3]}")
+        decision = decide_continuation(
+            recovery_state=state,
+            failure={"class": "renderer_failure"} if exhausted else None,
+        )
+        outcome.continuation = decision.to_payload()
+    except Exception:  # noqa: BLE001 — 裁决面绝不阻断
+        logger.debug("[RuntimeRepair] continuation attach failed",
+                     exc_info=True)
+
+
 async def run_runtime_repair(
     session_id: str,
     *,
@@ -442,6 +482,7 @@ async def run_runtime_repair(
         # 而观察仍未收敛 —— 交回 Pi（needs_repair 披露），绝不无限对抗。
         outcome.passes_used = len(passes)
         outcome.exhausted = True
+        await _attach_continuation(outcome, session_id, exhausted=True)
         _trace_repair(session_id, outcome)
         return outcome
 
@@ -576,6 +617,9 @@ async def run_runtime_repair(
             pass
     elif len(passes) >= MAX_RUNTIME_REPAIR_PASSES:
         outcome.exhausted = True
+        await _attach_continuation(outcome, session_id, exhausted=True)
+    if outcome.applied and outcome.continuation is None:
+        await _attach_continuation(outcome, session_id, exhausted=False)
     _trace_repair(session_id, outcome)
     return outcome
 

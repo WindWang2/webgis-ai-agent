@@ -329,12 +329,31 @@ def classify_and_remediate(
     session_id: str = "",
     ledger: Optional[RemediationLedger] = None,
 ) -> Dict[str, Any]:
-    """dispatch seam 单点入口：分类 → 记账 → 裁决 → LLM 可读 payload。"""
+    """dispatch seam 单点入口：分类 → 记账 → 裁决 → LLM 可读 payload。
+
+    V6（ADR-0119 D5）记账通道选择：
+    - 显式 ``ledger``（测试/特殊调用方）→ 按注入账本（既有行为）；
+    - 有 ``session_id`` → **durable** ``RecoveryLedger``（跨 worker/重启
+      预算一致 —— authority 通道，不重复记进程账）；
+    - 无 session 上下文 → 进程级 ``_global_ledger``（tool_metrics 同门
+      诚实口径，兜底保留）。
+    """
     try:
         fc = classify_harness_failure(
             status=status, code=code, error_type=error_type,
             message=message, exception=exception,
         )
+        if ledger is None and session_id:
+            try:
+                from app.services.gis_harness.recovery_ledger import (
+                    get_recovery_ledger,
+                )
+
+                attempts = get_recovery_ledger().record_failure(
+                    session_id, tool_name or "", fc.value)
+                return remediation_for(fc, attempts=attempts).to_payload()
+            except Exception:  # noqa: BLE001 — durable 缺席降级进程账
+                pass
         led = ledger if ledger is not None else _global_ledger
         key = (session_id or "", tool_name or "", fc.value)
         attempts = led.record(key)

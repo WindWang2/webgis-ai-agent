@@ -36,6 +36,7 @@ def register_change_detection_tools(registry: ToolRegistry):
     """注册变化检测相关工具"""
 
     @tool(registry, name="detect_vegetation_change",
+    anti_examples=("单期指数分布图（用 compute_ndvi）",),
     capabilities=['raster_change_detection'],
           tier=2, domains=["raster"],
           description=(

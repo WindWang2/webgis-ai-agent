@@ -90,6 +90,7 @@ def _backend_selection_diagnostic(algorithm_id: str, feature_count: Optional[int
 def register_spatial_stats_tools(registry: ToolRegistry):
 
     @tool(registry, name="spatial_cluster",
+    anti_examples=("K函数尺度显著性（用 ripley_k_analysis）",),
            description="空间聚类分析（DBSCAN密度聚类或K-Means分割），返回每个要素的聚类标签；value_field为取值维度（已标准化），value_weight为其权重（默认1.0保守等权，非显式单位语义）",
            tier=2, domains=["statistics"],
            param_descriptions={
@@ -360,6 +361,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return payload
 
     @tool(registry, name="ripley_k_analysis",
+    anti_examples=("直接把点分簇分类（用 spatial_cluster）",),
            description="Ripley's K 点格局分析（各向同性边缘校正）：K(r)/L(r)/CSR参考πr²，"
                        "描述性判断聚集/均匀/随机随半径的变化；需米制坐标（自动投影UTM），无显著性p值",
            tier=2, domains=["statistics"],

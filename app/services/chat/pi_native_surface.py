@@ -11,11 +11,14 @@ projection. Names outside the dump still reject with the discover-via-
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Dict, Literal, Mapping, Optional, Sequence
+
+logger = logging.getLogger(__name__)
 
 NATIVE_TOOL_NAMES: tuple[str, ...] = (
     "webgis_map_intent",
@@ -415,6 +418,7 @@ def compute_turn_active_tools(
     workflow_stage: str = "",
     k_max: int = 30,
     role: str = "execution",
+    disclosure: Optional[Dict[str, Any]] = None,
 ) -> list[str]:
     """per-turn 动态工具面（Phase 3）：SelectionContext → 激活名单。
 
@@ -462,6 +466,46 @@ def compute_turn_active_tools(
         except Exception:  # noqa: BLE001 — 证据缺席 = 空贡献
             pass
         selection = DynamicToolSurface(registry).select(ctx)
+        # V6（ADR-0119 D2）低置信度弃权：检索无法确证动态面与 query 的
+        # 匹配时**不注入**低置信度工具面（拒绝派发语义）—— native 前门
+        # （含 list_available_tools 两跳通道）保持，不静默乱选；弃权与
+        # 置信度入链披露，消费方可据此触发 deepen_profile / 语义编译。
+        if getattr(selection, "abstained", False):
+            try:
+                logger.warning(
+                    "[PiNativeSurface] tool retrieval abstained (conf=%.2f, %s)"
+                    " — dynamic surface withheld, native front door kept",
+                    float(selection.confidence),
+                    str(selection.abstain_reason)[:80],
+                )
+            except Exception:  # noqa: BLE001 — 披露面绝不阻断
+                pass
+            try:
+                from app.lib.runtime.chain_emitters import emit_chain_once
+                from app.lib.runtime.gis_trace import Stage
+
+                emit_chain_once(
+                    Stage.TOOL_SURFACE,
+                    abstained=True,
+                    confidence=float(selection.confidence),
+                    abstain_reason=str(selection.abstain_reason)[:96],
+                    dynamic_count=0,
+                    workflow_stage=str(workflow_stage or "")[:48],
+                )
+            except Exception:  # noqa: BLE001 — 记录面绝不阻断 turn
+                pass
+            if disclosure is not None:
+                disclosure.update({
+                    "abstained": True,
+                    "confidence": float(selection.confidence),
+                    "reason": str(selection.abstain_reason)[:96],
+                })
+            return list(NATIVE_TOOL_NAMES)
+        if disclosure is not None:
+            disclosure.update({
+                "abstained": False,
+                "confidence": float(getattr(selection, "confidence", 1.0) or 1.0),
+            })
         names = list(dict.fromkeys([*NATIVE_TOOL_NAMES, *selection.names]))
         # V4 Wave 8（ADR-0104）：证据链阶段 7（TOOL_SURFACE）——per-turn
         # 动态面裁决入链（emit-once：每 turn 一条；上下文缺席静默跳过）。
@@ -472,6 +516,7 @@ def compute_turn_active_tools(
             emit_chain_once(
                 Stage.TOOL_SURFACE,
                 dynamic_count=len(selection.names),
+                confidence=float(getattr(selection, "confidence", 1.0) or 1.0),
                 workflow_stage=str(workflow_stage or "")[:48],
             )
         except Exception:  # noqa: BLE001 — 记录面绝不阻断 turn

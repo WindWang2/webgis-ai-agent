@@ -76,6 +76,23 @@ async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
     # 恢复时判 unknown 并披露，绝不假设存活）。
     ref_evidence = await _snapshot_ref_evidence(session_id, ref_ids)
     workflow_fingerprint = _snapshot_workflow_fingerprint(chapter)
+    # V6（ADR-0119 D4）：durable context —— recovery 状态 + reasoning 摘要
+    # 入锚（分层词表内的 durable facts；不含 LLM raw context / 密钥）。
+    from app.services.gis_harness.durable_context import (
+        RECOVERY_STATE_KEY,
+        reasoning_digest,
+        recovery_state_for_anchor,
+    )
+
+    recovery_state: Dict[str, Any] = {}
+    try:
+        map_state = await session_data_manager.get_map_state(session_id)
+        if isinstance(map_state, dict):
+            raw = map_state.get(RECOVERY_STATE_KEY)
+            if isinstance(raw, dict):
+                recovery_state = recovery_state_for_anchor(raw)
+    except Exception:  # noqa: BLE001 — recovery 态缺席照常建锚
+        recovery_state = {}
     return {
         "schema_version": _ANCHOR_SCHEMA_VERSION,
         "created_at": time.time(),
@@ -89,6 +106,10 @@ async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
         "refs_truncated": refs_truncated,
         "ref_evidence": ref_evidence,
         "workflow_fingerprint": workflow_fingerprint,
+        "ref_ids": ref_ids[:MAX_ANCHOR_REFS],
+        "refs_truncated": len(ref_ids) > MAX_ANCHOR_REFS,
+        "recovery_state": recovery_state,
+        "reasoning_digest": reasoning_digest(chapter, recovery_state),
     }
 
 
@@ -353,6 +374,44 @@ async def resume_from_anchor(
         new_sid, "_resumed_from", {"anchor_id": anchor_id, "source_session_id": old_sid}
     )
 
+    # V6（ADR-0119 D4）：锚点内 recovery_state 重注入新 session —— 恢复后
+    # 的 continuation 裁决从 durable 证据（循环预算余量）出发，不机械
+    # replay 也不凭空重置预算。同时续接 durable 恢复账本（D5）。
+    try:
+        from app.services.gis_harness.durable_context import (
+            RECOVERY_STATE_KEY,
+            new_recovery_state,
+            recovery_state_for_anchor,
+        )
+
+        carried_state = recovery_state_for_anchor(
+            anchor.get("recovery_state") or {})
+        if carried_state:
+            await session_data_manager.set_map_state(
+                new_sid, RECOVERY_STATE_KEY, carried_state)
+        else:
+            await session_data_manager.set_map_state(
+                new_sid, RECOVERY_STATE_KEY, new_recovery_state())
+    except Exception:  # noqa: BLE001 — 注入失败不阻断恢复
+        logger.warning("[ResumeAnchor] recovery_state re-inject failed",
+                       exc_info=True)
+
+    # V6（ADR-0119 D5）：恢复预算续接 —— 旧 session 的 durable 恢复账本
+    # （有界截取）拷进新 session。恢复后的会话**不**重新获得完整重试
+    # 预算（防「重启/恢复 → 预算复活 → 无限重试」）。失败不阻断恢复
+    # （恢复本身成功，账本缺席 = 诚实降级，recovery_state 披露）。
+    carried_entries = 0
+    try:
+        from app.services.gis_harness.recovery_ledger import (
+            get_recovery_ledger,
+        )
+
+        carried_entries = get_recovery_ledger().copy_between_sessions(
+            old_sid, new_sid)
+    except Exception:  # noqa: BLE001 — 预算续接失败不阻断恢复
+        logger.warning("[ResumeAnchor] recovery ledger carry-over failed",
+                       exc_info=True)
+
     # review R2 #2：立即创建归属当前用户的 Conversation 行 —— 否则所有
     # require_owned_session 路径（observation 上报/map mutation）对新
     # session 404，且首个发言者可「认领」该 session（所有权泄漏窗口）。
@@ -392,6 +451,7 @@ async def resume_from_anchor(
         "stale_nodes": verify_report.get("stale_nodes") or [],
         "recompute_plan": verify_report.get("recompute_plan") or {},
         "verify_disclosures": verify_report.get("disclosures") or [],
+        "recovery_budget_carried": carried_entries,
     }
 
 

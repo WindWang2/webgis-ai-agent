@@ -112,6 +112,7 @@ def register_rs_tools(registry: ToolRegistry):
     """注册遥感数据工具"""
 
     @tool(registry, name="fetch_sentinel",
+    anti_examples=("选片前质量筛查（用 cloud_qc_basic）",),
     capabilities=['raster_source'],
            description=(
                "Sentinel-2 卫星影像快视图获取：从 AWS STAC 拉取指定 bbox + 日期窗内最少云覆盖的一景影像缩略图。"
@@ -151,6 +152,7 @@ def register_rs_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, name="compute_ndvi",
+    anti_examples=("两期长势对比退化（用 detect_vegetation_change）",),
            description=(
                "在线 NDVI 计算 (Sentinel-2)：给 bbox + 日期窗，自动从 STAC 拉 B04/B08 并算 NDVI，返回统计 + 覆盖率分类。"
                "\n何时用：『北京海淀区上个月植被覆盖如何』『查 XX 区 NDVI 趋势』；"
@@ -2058,6 +2060,7 @@ def register_rs_tools(registry: ToolRegistry):
         )
 
     @tool(registry, name="cloud_qc_basic",
+    anti_examples=("挑选下载无云影像（用 fetch_sentinel）",),
     side_effect="deterministic_compute",
     tags=('云检测', '质量掩膜', 'cloud_mask', '遥感'),
           description=(
