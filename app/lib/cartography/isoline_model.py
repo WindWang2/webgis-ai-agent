@@ -106,166 +106,168 @@ def generate_contour_features_from_grid(
     levels = resolve_contour_levels(Z, spec)
     fig, ax = plt.subplots()
 
-    features: List[Dict[str, Any]] = []
+    try:
+        features: List[Dict[str, Any]] = []
 
-    # 1. Line Contours
-    if spec.mode in ("lines", "both"):
-        cs_lines = ax.contour(X, Y, Z, levels=levels)
-        raw_lines = []
-        for lvl_idx, segs in enumerate(cs_lines.allsegs):
-            lvl_val = float(cs_lines.levels[lvl_idx])
-            is_index = bool((lvl_idx + 1) % spec.index_contour_interval == 0)
-            for line_coords in segs:
-                if len(line_coords) < 2:
-                    continue
-                ls = LineString(line_coords)
-                if not ls.is_empty and ls.length > 0:
-                    raw_lines.append((ls, lvl_val, is_index))
+        # 1. Line Contours
+        if spec.mode in ("lines", "both"):
+            cs_lines = ax.contour(X, Y, Z, levels=levels)
+            raw_lines = []
+            for lvl_idx, segs in enumerate(cs_lines.allsegs):
+                lvl_val = float(cs_lines.levels[lvl_idx])
+                is_index = bool((lvl_idx + 1) % spec.index_contour_interval == 0)
+                for line_coords in segs:
+                    if len(line_coords) < 2:
+                        continue
+                    ls = LineString(line_coords)
+                    if not ls.is_empty and ls.length > 0:
+                        raw_lines.append((ls, lvl_val, is_index))
 
-        if raw_lines and utm_crs:
-            gdf_lines = gpd.GeoDataFrame(
-                [{"level": r[1], "value": r[1], "is_index": r[2]} for r in raw_lines],
-                geometry=[r[0] for r in raw_lines],
-                crs=utm_crs,
-            ).to_crs("EPSG:4326")
-            for _, row in gdf_lines.iterrows():
-                geom = row.geometry
-                lvl = float(row["level"])
-                is_idx = bool(row["is_index"])
-                label_str = f"{lvl:g} {spec.unit}".strip()
-                features.append({
-                    "type": "Feature",
-                    "geometry": mapping(geom),
-                    "properties": {
-                        "level": lvl,
-                        "value": lvl,
-                        "unit": spec.unit,
-                        "label": label_str,
-                        "is_index_contour": is_idx,
-                        "line_width": spec.line_width_index if is_idx else spec.line_width_base,
-                        "layer_kind": "contour_line",
-                    },
-                })
-        elif raw_lines:
-            for ls, lvl, is_idx in raw_lines:
-                label_str = f"{lvl:g} {spec.unit}".strip()
-                features.append({
-                    "type": "Feature",
-                    "geometry": mapping(ls),
-                    "properties": {
-                        "level": lvl,
-                        "value": lvl,
-                        "unit": spec.unit,
-                        "label": label_str,
-                        "is_index_contour": is_idx,
-                        "line_width": spec.line_width_index if is_idx else spec.line_width_base,
-                        "layer_kind": "contour_line",
-                    },
-                })
+            if raw_lines and utm_crs:
+                gdf_lines = gpd.GeoDataFrame(
+                    [{"level": r[1], "value": r[1], "is_index": r[2]} for r in raw_lines],
+                    geometry=[r[0] for r in raw_lines],
+                    crs=utm_crs,
+                ).to_crs("EPSG:4326")
+                for _, row in gdf_lines.iterrows():
+                    geom = row.geometry
+                    lvl = float(row["level"])
+                    is_idx = bool(row["is_index"])
+                    label_str = f"{lvl:g} {spec.unit}".strip()
+                    features.append({
+                        "type": "Feature",
+                        "geometry": mapping(geom),
+                        "properties": {
+                            "level": lvl,
+                            "value": lvl,
+                            "unit": spec.unit,
+                            "label": label_str,
+                            "is_index_contour": is_idx,
+                            "line_width": spec.line_width_index if is_idx else spec.line_width_base,
+                            "layer_kind": "contour_line",
+                        },
+                    })
+            elif raw_lines:
+                for ls, lvl, is_idx in raw_lines:
+                    label_str = f"{lvl:g} {spec.unit}".strip()
+                    features.append({
+                        "type": "Feature",
+                        "geometry": mapping(ls),
+                        "properties": {
+                            "level": lvl,
+                            "value": lvl,
+                            "unit": spec.unit,
+                            "label": label_str,
+                            "is_index_contour": is_idx,
+                            "line_width": spec.line_width_index if is_idx else spec.line_width_base,
+                            "layer_kind": "contour_line",
+                        },
+                    })
 
-    # 2. Filled Contour Bands
-    if spec.mode in ("filled_bands", "both"):
-        cs_bands = ax.contourf(X, Y, Z, levels=levels)
-        raw_bands = []
+        # 2. Filled Contour Bands
+        if spec.mode in ("filled_bands", "both"):
+            cs_bands = ax.contourf(X, Y, Z, levels=levels)
+            raw_bands = []
 
-        for lvl_idx, segs in enumerate(cs_bands.allsegs):
-            if lvl_idx >= len(cs_bands.levels) - 1:
-                lvl_val = float(cs_bands.levels[lvl_idx])
-                max_val = lvl_val
-            else:
-                lvl_val = float(cs_bands.levels[lvl_idx])
-                max_val = float(cs_bands.levels[lvl_idx + 1])
-
-            band_polys = []
-            for poly_coords in segs:
-                if len(poly_coords) < 3:
-                    continue
-                p = Polygon(poly_coords)
-                if not p.is_valid:
-                    p = p.buffer(0)
-                if not p.is_empty and p.area > 0:
-                    band_polys.append(p)
-
-            if not band_polys:
-                continue
-
-            # Reconstruct topological even-odd containment for holes (ADR-0095 & bug #762)
-            band_polys.sort(key=lambda p: p.area, reverse=True)
-            outers: List[Polygon] = []
-            inners: List[Polygon] = []
-            inner_parent: Dict[int, Polygon] = {}
-
-            for idx, p in enumerate(band_polys):
-                containers = [prev for prev in band_polys[:idx] if prev.contains(p)]
-                depth = len(containers)
-                if depth % 2 == 0:
-                    outers.append(p)
+            for lvl_idx, segs in enumerate(cs_bands.allsegs):
+                if lvl_idx >= len(cs_bands.levels) - 1:
+                    lvl_val = float(cs_bands.levels[lvl_idx])
+                    max_val = lvl_val
                 else:
-                    inners.append(p)
-                    # Immediate enclosing parent outer polygon is the smallest container
-                    inner_parent[id(p)] = min(containers, key=lambda cp: cp.area)
+                    lvl_val = float(cs_bands.levels[lvl_idx])
+                    max_val = float(cs_bands.levels[lvl_idx + 1])
 
-            if not outers:
-                continue
+                band_polys = []
+                for poly_coords in segs:
+                    if len(poly_coords) < 3:
+                        continue
+                    p = Polygon(poly_coords)
+                    if not p.is_valid:
+                        p = p.buffer(0)
+                    if not p.is_empty and p.area > 0:
+                        band_polys.append(p)
 
-            diff_parts: List[Any] = []
-            for o in outers:
-                assigned_inners = [inp for inp in inners if inner_parent.get(id(inp)) is o]
-                if assigned_inners:
-                    diff_geom = o.difference(unary_union(assigned_inners))
-                else:
-                    diff_geom = o
-                if not diff_geom.is_empty:
-                    diff_parts.append(diff_geom)
+                if not band_polys:
+                    continue
 
-            if not diff_parts:
-                continue
+                # Reconstruct topological even-odd containment for holes (ADR-0095 & bug #762)
+                band_polys.sort(key=lambda p: p.area, reverse=True)
+                outers: List[Polygon] = []
+                inners: List[Polygon] = []
+                inner_parent: Dict[int, Polygon] = {}
 
-            region = unary_union(diff_parts)
-            for geom in getattr(region, "geoms", [region]):
-                if not geom.is_empty and getattr(geom, "area", 0) > 0:
-                    if isinstance(geom, Polygon):
-                        geom = orient(geom, sign=1.0)
-                    raw_bands.append((geom, lvl_val, max_val))
+                for idx, p in enumerate(band_polys):
+                    containers = [prev for prev in band_polys[:idx] if prev.contains(p)]
+                    depth = len(containers)
+                    if depth % 2 == 0:
+                        outers.append(p)
+                    else:
+                        inners.append(p)
+                        # Immediate enclosing parent outer polygon is the smallest container
+                        inner_parent[id(p)] = min(containers, key=lambda cp: cp.area)
 
-        if raw_bands and utm_crs:
-            gdf_bands = gpd.GeoDataFrame(
-                [{"min_level": r[1], "max_level": r[2]} for r in raw_bands],
-                geometry=[r[0] for r in raw_bands],
-                crs=utm_crs,
-            ).to_crs("EPSG:4326")
-            for _, row in gdf_bands.iterrows():
-                geom = row.geometry
-                min_l = float(row["min_level"])
-                max_l = float(row["max_level"])
-                features.append({
-                    "type": "Feature",
-                    "geometry": mapping(geom),
-                    "properties": {
-                        "level": min_l,
-                        "min_level": min_l,
-                        "max_level": max_l,
-                        "unit": spec.unit,
-                        "label": f"{min_l:g} - {max_l:g} {spec.unit}".strip(),
-                        "layer_kind": "filled_contour_band",
-                    },
-                })
-        elif raw_bands:
-            for p, min_l, max_l in raw_bands:
-                features.append({
-                    "type": "Feature",
-                    "geometry": mapping(p),
-                    "properties": {
-                        "level": min_l,
-                        "min_level": min_l,
-                        "max_level": max_l,
-                        "unit": spec.unit,
-                        "label": f"{min_l:g} - {max_l:g} {spec.unit}".strip(),
-                        "layer_kind": "filled_contour_band",
-                    },
-                })
+                if not outers:
+                    continue
 
-    plt.close(fig)
+                diff_parts: List[Any] = []
+                for o in outers:
+                    assigned_inners = [inp for inp in inners if inner_parent.get(id(inp)) is o]
+                    if assigned_inners:
+                        diff_geom = o.difference(unary_union(assigned_inners))
+                    else:
+                        diff_geom = o
+                    if not diff_geom.is_empty:
+                        diff_parts.append(diff_geom)
+
+                if not diff_parts:
+                    continue
+
+                region = unary_union(diff_parts)
+                for geom in getattr(region, "geoms", [region]):
+                    if not geom.is_empty and getattr(geom, "area", 0) > 0:
+                        if isinstance(geom, Polygon):
+                            geom = orient(geom, sign=1.0)
+                        raw_bands.append((geom, lvl_val, max_val))
+
+            if raw_bands and utm_crs:
+                gdf_bands = gpd.GeoDataFrame(
+                    [{"min_level": r[1], "max_level": r[2]} for r in raw_bands],
+                    geometry=[r[0] for r in raw_bands],
+                    crs=utm_crs,
+                ).to_crs("EPSG:4326")
+                for _, row in gdf_bands.iterrows():
+                    geom = row.geometry
+                    min_l = float(row["min_level"])
+                    max_l = float(row["max_level"])
+                    features.append({
+                        "type": "Feature",
+                        "geometry": mapping(geom),
+                        "properties": {
+                            "level": min_l,
+                            "min_level": min_l,
+                            "max_level": max_l,
+                            "unit": spec.unit,
+                            "label": f"{min_l:g} - {max_l:g} {spec.unit}".strip(),
+                            "layer_kind": "filled_contour_band",
+                        },
+                    })
+            elif raw_bands:
+                for p, min_l, max_l in raw_bands:
+                    features.append({
+                        "type": "Feature",
+                        "geometry": mapping(p),
+                        "properties": {
+                            "level": min_l,
+                            "min_level": min_l,
+                            "max_level": max_l,
+                            "unit": spec.unit,
+                            "label": f"{min_l:g} - {max_l:g} {spec.unit}".strip(),
+                            "layer_kind": "filled_contour_band",
+                        },
+                    })
+
+    finally:
+        plt.close(fig)
 
     meta_isoline = {
         "model": "isoline_contour",
