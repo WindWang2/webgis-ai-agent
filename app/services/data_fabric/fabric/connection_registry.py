@@ -209,6 +209,11 @@ class ConnectionRecord(BaseModel):
     #: content-addressed revision（redacted profile + secret_ref 的 sha256 前 16）。
     revision: str
     name: str = ""
+    #: redacted profile 全量视图（V8：rehydrate 忠实重建的前提 —— 此前仅
+    #: 存 endpoint 四字段，options 形态的源（PostGIS host/port、本地文件
+    #: path）重建必失败）。构造上不含 secret：由 ``extract_profile_secrets``
+    #: 摘除后的 rest 直接落位。
+    redacted_profile: Dict[str, Any] = Field(default_factory=dict)
     created_at: float = Field(default_factory=time.time)
     #: None = 不过期（由 idle TTL 驱逐兜底）。
     expires_at: Optional[float] = None
@@ -277,13 +282,17 @@ class ConnectionRegistry:
         manager: Any = None,
         ttl_s: Optional[float] = None,
         build_adapter: bool = True,
+        prebuilt_adapter: Any = None,
     ) -> tuple:
         """注册（或以 CAS 语义更新）一条连接，返回 ``(record, adapter|None)``。
 
         - SSRF 门沿用 connection_manager 同一校验（host/port 形态同样覆盖）；
         - 凭证摘除进 SecretStore，record 存 redacted 视图 + ref；
         - 已存在同 (scope, profile_id) 且 revision 相同 → 幂等返回（adapter
-          复用）；revision 不同 → 原子替换（旧 secret 被逐出）。
+          复用）；revision 不同 → 原子替换（旧 secret 被逐出）；
+        - ``prebuilt_adapter``（V8）：调用方已有 adapter 实例时直接注册它，
+          不再经工厂二次构建（legacy manager 桥接路径单构建；与
+          ``build_adapter=False`` 组合使用）。
         """
         from app.services.data_fabric.connection_manager import (
             _ssrf_validate_profile,
@@ -309,6 +318,10 @@ class ConnectionRegistry:
                 if old_record.revision == rev:
                     # content-dedupe 保证同内容 → 同 ref：无重复条目可逐。
                     old_record.last_access_at = time.monotonic()
+                    if old_adapter is None and prebuilt_adapter is not None:
+                        # V8：幂等命中但 adapter 已被驱逐 → 回填调用方实例。
+                        old_adapter = prebuilt_adapter
+                        self._entries[key] = (old_record, old_adapter)
                     return old_record, old_adapter
                 # revision 变化：原子替换 + 旧 secret 逐出
                 self._evict_locked(key, release_secret=False)
@@ -322,23 +335,27 @@ class ConnectionRegistry:
                 secret_ref=secret_ref,
                 revision=rev,
                 name=str(profile.name or profile.id),
+                redacted_profile=redacted,
                 expires_at=(time.time() + ttl_s) if ttl_s else None,
             )
             self._entries[key] = (record, None)
-        # 锁外构建 adapter（probe/网络）。
+        # 锁外构建 adapter（probe/网络）；调用方预构建实例直接注册（V8）。
         if build_adapter:
-            try:
-                adapter = create_adapter_for_profile(profile)
-            except Exception:
-                # 构建失败不留半条目（仅回滚**本次**写入 —— revision 变化
-                # 说明并发方已替换，绝不误删他人条目，R1-MINOR 9）。
-                with self._lock:
-                    current = self._entries.get(key)
-                    if current is not None and current[0].revision == rev:
-                        self._entries.pop(key, None)
-                if secret_ref:
-                    self._secret_store.evict(secret_ref)
-                raise
+            if prebuilt_adapter is not None:
+                adapter = prebuilt_adapter
+            else:
+                try:
+                    adapter = create_adapter_for_profile(profile)
+                except Exception:
+                    # 构建失败不留半条目（仅回滚**本次**写入 —— revision 变化
+                    # 说明并发方已替换，绝不误删他人条目，R1-MINOR 9）。
+                    with self._lock:
+                        current = self._entries.get(key)
+                        if current is not None and current[0].revision == rev:
+                            self._entries.pop(key, None)
+                    if secret_ref:
+                        self._secret_store.evict(secret_ref)
+                    raise
             with self._lock:
                 current = self._entries.get(key)
                 if current is not None and current[0].revision == rev:
@@ -357,22 +374,73 @@ class ConnectionRegistry:
         return record, adapter
 
     def rehydrate_profile(self, record: ConnectionRecord) -> Dict[str, Any]:
-        """redacted record → 完整 profile dict（仅 adapter 构建瞬间注回）。"""
-        rest: Dict[str, Any] = json.loads(
-            json.dumps(
-                {
-                    "id": record.profile_id,
-                    "name": record.name,
-                    "source_type": record.source_type,
-                    "url": record.endpoint_ref,
-                }
+        """redacted record → 完整 profile dict（仅 adapter 构建瞬间注回 secret）。
+
+        V8：优先 ``record.redacted_profile``（attach 时的全量无凭证视图 ——
+        options/allow_private 等结构化字段保真）；legacy 最小四字段形状仅作
+        旧记录回退。secret 最后合并（顶层凭证字段优先级与原 profile 一致）。
+        """
+        if record.redacted_profile:
+            rest: Dict[str, Any] = json.loads(
+                json.dumps(record.redacted_profile, default=str)
             )
-        )
+        else:
+            rest = json.loads(
+                json.dumps(
+                    {
+                        "id": record.profile_id,
+                        "name": record.name,
+                        "source_type": record.source_type,
+                        "url": record.endpoint_ref,
+                    }
+                )
+            )
         if record.secret_ref:
             secret = self._secret_store.get(record.secret_ref)
             if secret:
                 rest.update(secret)
         return rest
+
+    def ensure_adapter(self, record: ConnectionRecord) -> Optional[Any]:
+        """record → adapter（丢失时按 redacted profile 重建并回填条目）。
+
+        V8 生产解析路径（fabric/runtime.py）使用：LRU 驱逐或 legacy 桥接
+        注册后 adapter 引用为 None 的条目可由此恢复。重建失败返回 None
+        （调用方走 DB/legacy 回退），**绝不**让治理层重建失败升级为查询
+        错误 —— 条目原样保留供诊断。
+        """
+        key = (record.scope_key, record.profile_id)
+        with self._lock:
+            current = self._entries.get(key)
+            if current is None:
+                return None  # 条目已消失：调用方走 DB/legacy 回退
+            if current[0].revision != record.revision:
+                return None  # 并发替换：以条目内最新 record 为准
+            if current[1] is not None:
+                current[0].last_access_at = time.monotonic()
+                return current[1]
+        try:
+            from app.schemas.data_fabric_schema import ConnectionProfile
+            from app.services.data_fabric.registry import build_adapter
+
+            profile = ConnectionProfile(**self.rehydrate_profile(record))
+            adapter = build_adapter(profile)
+        except Exception as exc:  # noqa: BLE001 - 重建失败不升级为查询错误
+            logger.warning(
+                "[ConnectionRegistry] adapter rebuild failed for %s: %s",
+                record.profile_id,
+                exc,
+            )
+            return None
+        with self._lock:
+            current = self._entries.get(key)
+            if current is not None and current[0].revision == record.revision:
+                current[0].last_access_at = time.monotonic()
+                self._entries[key] = (current[0], adapter)
+                return adapter
+            # 并发方已替换/驱逐：不回填旧 revision 的 adapter（新鲜条目
+            # 自带自己的构建路径）。
+            return None
 
     def resolve(
         self,

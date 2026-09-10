@@ -120,6 +120,31 @@ class DataFabricManager:
         return build_adapter(profile)
 
     @classmethod
+    def _governed_adapter(cls, ds_model: DataSourceModel) -> GeospatialDataSourceAdapter:
+        """V8（ADR-0130）：REST/worker 路径的治理解析（registry 优先）。
+
+        此前每请求 ``_profile_from_model + build_adapter`` 完全绕过
+        ConnectionRegistry —— 无 revision/健康/secret 分离（ADR-0120 披露
+        的接线缺口的 REST 半边）。registry 命中 → 复用受治理 adapter；
+        未命中 → 按 ds_model 归属域 attach（DB 行重建，SSRF 门不变）；registry
+        任何故障 → 回退既有工厂构建（行为契约逐字节保留）。
+        """
+        from app.services.data_fabric.fabric.runtime import get_fabric_runtime
+
+        try:
+            resolved = get_fabric_runtime().resolve(
+                ds_model.id, owner=getattr(ds_model, "owner_id", None)
+            )
+            if resolved is not None and resolved.adapter is not None:
+                return resolved.adapter
+        except Exception as exc:  # noqa: BLE001 - 治理层故障不改变 REST 契约
+            logger.debug(
+                "[DataFabricManager] runtime resolve failed for %s: %s",
+                ds_model.id, exc,
+            )
+        return cls.get_adapter(_profile_from_model(ds_model))
+
+    @classmethod
     def probe_profile(cls, profile: ConnectionProfile) -> DataFabricHealth:
         """Lightweight probe for a ConnectionProfile."""
         try:
@@ -226,9 +251,7 @@ class DataFabricManager:
         if not ds_model:
             raise ValueError(f"Data source '{source_id}' not found")
 
-        conn_profile = _profile_from_model(ds_model)
-
-        adapter = cls.get_adapter(conn_profile)
+        adapter = cls._governed_adapter(ds_model)
         datasets = adapter.list_datasets()
 
         names: List[str] = []
@@ -410,9 +433,7 @@ class DataFabricManager:
         if not ds_model:
             raise ValueError(f"Parent data source for item '{item_id}' not found")
 
-        conn_profile = _profile_from_model(ds_model)
-
-        adapter = cls.get_adapter(conn_profile)
+        adapter = cls._governed_adapter(ds_model)
         # #766/#770: run under the circuit breaker; in-band adapter failure
         # markers surface as typed DataFabricError (never a silent empty set).
         result = _execute_remote_query(adapter, ds_model.id, item.name, query_spec)
@@ -477,8 +498,7 @@ class DataFabricManager:
         if not ds_model:
             raise ValueError(f"Parent data source for item '{item_id}' not found")
 
-        conn_profile = _profile_from_model(ds_model)
-        adapter = cls.get_adapter(conn_profile)
+        adapter = cls._governed_adapter(ds_model)
 
         if cancel_token is not None:
             cancel_token.raise_if_cancelled()
@@ -543,8 +563,7 @@ class DataFabricManager:
         if cancel_token is not None:
             cancel_token.raise_if_cancelled()
 
-        conn_profile = _profile_from_model(ds_model)
-        adapter = cls.get_adapter(conn_profile)
+        adapter = cls._governed_adapter(ds_model)
 
         # 单管线：REST 路径与 materialize_dataset 工具同一 MaterializationService
         try:
@@ -678,10 +697,10 @@ class DataFabricManager:
                 "dataset_id": item_id,
             }
         # R1-M8：优先探测后 capability（与执行路径一致），静态默认兜底。
+        # V8：adapter 解析走治理解析（registry 优先），与执行路径同源。
         caps = None
         try:
-            conn_profile = _profile_from_model(item.data_source)
-            adapter = cls.get_adapter(conn_profile)
+            adapter = cls._governed_adapter(item.data_source)
             caps = getattr(adapter, "capabilities_v2", None)
             caps = caps(descriptor) if caps else None
         except Exception:

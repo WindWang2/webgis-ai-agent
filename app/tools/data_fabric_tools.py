@@ -18,7 +18,7 @@ from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 from app.services.data_fabric.materialization_service import materialization_service
 from app.services.data_fabric.health import data_fabric_health_check
 from app.services.data_fabric.connection_manager import connection_manager
-from app.services.data_fabric.registry import build_adapter, resolve_adapter_spec
+from app.services.data_fabric.registry import resolve_adapter_spec
 from app.services.data_fabric.errors import (
     DATASET_NOT_FOUND,
     SOURCE_UNREACHABLE,
@@ -37,6 +37,28 @@ def _is_demo_source_type(source_type) -> bool:
         return bool(resolve_adapter_spec(source_type).is_demo)
     except DataFabricError:
         return False
+
+
+def _resolve_source_adapter(profile_id, session_id):
+    """V8（ADR-0130）：工具层数据源解析的**单一入口**。
+
+    顺序：ConnectionRegistry（治理：作用域/revision/健康/secret 分离）→
+    legacy 会话（首次命中即注册进 registry，治理视图统一）→ None。
+    此前全部 11 处调用点直接走 ``connection_manager.get_adapter`` —— 治理
+    元数据对生产流量不可见（ADR-0120 披露的接线缺口）。Registry 层故障
+    fail-open 回退 legacy 语义，工具错误契约（None → UNSUPPORTED_SOURCE）
+    不变。
+    """
+    from app.services.data_fabric.fabric.runtime import get_fabric_runtime
+
+    try:
+        resolved = get_fabric_runtime().resolve(profile_id, owner=session_id)
+    except DataFabricError:
+        resolved = None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[data_fabric] runtime resolve failed for %s: %s", profile_id, exc)
+        resolved = None
+    return resolved.adapter if resolved is not None else None
 
 
 def _cap_payload_for_context(res: dict, list_key: str, cap: int = 10) -> None:
@@ -139,6 +161,23 @@ def register_data_fabric_tools(registry: ToolRegistry):
             )
 
             connected_profile, adapter = connection_manager.connect(profile, owner=session_id)
+            # V8（ADR-0130）：连接即治理 —— 同一 adapter 实例注册进
+            # ConnectionRegistry（secret 摘离、revision、生命周期归属 registry；
+            # legacy 会话存储原样保留）。best-effort：治理注册失败不阻断连接。
+            try:
+                from app.services.data_fabric.fabric.connection_registry import (
+                    TenantScope,
+                    get_connection_registry,
+                )
+
+                get_connection_registry().attach(
+                    connected_profile,
+                    TenantScope(owner=session_id),
+                    build_adapter=False,
+                    prebuilt_adapter=adapter,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[data_fabric] registry attach skipped for %s: %s", profile_id, exc)
             sanitized_profile = DataFabricSecurity.sanitize_profile_dict(connected_profile.model_dump())
             health = data_fabric_health_check.check_health(adapter)
             datasets = adapter.list_datasets()
@@ -184,15 +223,11 @@ def register_data_fabric_tools(registry: ToolRegistry):
     async def inspect_data_source(profile_id: str, session_id: Optional[str] = None) -> dict:
         """检查数据源健康度与能力清单"""
         def _sync_run():
-            adapter = connection_manager.get_adapter(profile_id, owner=session_id)
+            # V8：registry 优先的统一解析（含 legacy 会话回退与 profile-only
+            # 补建语义 —— 补建的 adapter 会被注册进 registry 成为受治理条目）。
+            adapter = _resolve_source_adapter(profile_id, session_id)
             if not adapter:
-                profile = connection_manager.get_profile(profile_id)
-                if not profile:
-                    raise RuntimeError(f"Data source connection profile '{profile_id}' not found. Please connect first.")
-                # Build the profile's real adapter via the canonical registry.
-                # An unregistered source type raises UnsupportedSourceError rather
-                # than silently producing mock data.
-                adapter = build_adapter(profile)
+                raise RuntimeError(f"Data source connection profile '{profile_id}' not found. Please connect first.")
 
             health = data_fabric_health_check.check_health(adapter)
             caps = adapter.capabilities()
@@ -300,7 +335,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
 
         if not desc and pid:
-            adapter = connection_manager.get_adapter(pid, owner=session_id)
+            adapter = _resolve_source_adapter(pid, session_id)
             if adapter:
                 desc = adapter.describe(dataset_id)
 
@@ -389,7 +424,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         """执行 QuerySpec 下推查询"""
         def _sync_run():
             pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
-            adapter = connection_manager.get_adapter(pid, owner=session_id) if pid else None
+            adapter = _resolve_source_adapter(pid, session_id) if pid else None
 
             if not adapter:
                 # Do NOT fabricate a geojson mock adapter — that would serve
@@ -511,7 +546,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
     ) -> dict:
         """数据下推查询与本地物化流水线 (生成 ref_id)"""
         pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
-        adapter = connection_manager.get_adapter(pid, owner=session_id) if pid else None
+        adapter = _resolve_source_adapter(pid, session_id) if pid else None
 
         if not adapter:
             # Do NOT fabricate a geojson mock adapter and materialize synthetic
@@ -577,7 +612,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
     async def refresh_data_source(profile_id: str, session_id: Optional[str] = None) -> dict:
         """刷新数据源缓存与 Catalog 索引"""
         def _sync_run():
-            adapter = connection_manager.get_adapter(profile_id, owner=session_id)
+            adapter = _resolve_source_adapter(profile_id, session_id)
             if not adapter:
                 raise RuntimeError(f"Connection profile '{profile_id}' not found. Cannot refresh.")
 
@@ -637,7 +672,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         """explain（dry-run）"""
         def _sync_run():
             pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
-            adapter = connection_manager.get_adapter(pid, owner=session_id) if pid else None
+            adapter = _resolve_source_adapter(pid, session_id) if pid else None
             if not adapter:
                 return {
                     "status": "error",
@@ -735,7 +770,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         """聚合统计（STATISTICS 结果模式）"""
         def _sync_run():
             pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
-            adapter = connection_manager.get_adapter(pid, owner=session_id) if pid else None
+            adapter = _resolve_source_adapter(pid, session_id) if pid else None
             if not adapter:
                 return {
                     "status": "error", "error_type": UNSUPPORTED_SOURCE,
@@ -823,7 +858,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
 
         def _adapter_of(dataset_id: str, profile_id: Optional[str]):
             pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
-            return (pid, connection_manager.get_adapter(pid, owner=session_id)) if pid else (pid, None)
+            return (pid, _resolve_source_adapter(pid, session_id)) if pid else (pid, None)
 
         def _sync_run():
             lp, left_adapter = _adapter_of(left_dataset_id, left_profile_id)
@@ -941,7 +976,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
 
         def _adapter_of(dataset_id: str, profile_id: Optional[str]):
             pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
-            return (pid, connection_manager.get_adapter(pid, owner=session_id)) if pid else (pid, None)
+            return (pid, _resolve_source_adapter(pid, session_id)) if pid else (pid, None)
 
         def _sync_run():
             if not isinstance(sources, list) or not isinstance(joins, list):
