@@ -21,12 +21,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.workflow_runtime import contracts as C
 from app.services.workflow_runtime import fingerprints as F
 from app.services.workflow_runtime import machine as M
+from app.services.workflow_runtime import retry as RT
 from app.services.workflow_runtime.adapters_geocompute import (
     ADAPTER_INLINE_ROW_CAP,
     GeoComputeNodeOutcome,
@@ -85,6 +86,8 @@ class Driver:
         subworkflow_executor: Optional[Any] = None,
         parent_visited: Optional[List[str]] = None,
         node_lease_ttl_s: float = DEFAULT_NODE_LEASE_TTL_S,
+        retry_policy: Optional[RT.RetryPolicy] = None,
+        node_timeout_s: Optional[float] = None,
     ):
         self.store = store
         self.reuse_index = reuse_index
@@ -99,6 +102,11 @@ class Driver:
         self.subworkflow_executor = subworkflow_executor
         self.parent_visited = list(parent_visited or [])
         self.node_lease_ttl_s = max(1.0, float(node_lease_ttl_s))
+        #: V6 重试策略（None = 环境默认）；per-node 超时（None = 不限时，
+        #: 由 run deadline 兜底）。
+        self.retry_policy = retry_policy or RT.default_policy()
+        self.node_timeout_s = (
+            float(node_timeout_s) if node_timeout_s else None)
 
     # ── 主循环 ────────────────────────────────────────────────────────
 
@@ -161,6 +169,32 @@ class Driver:
                     reason="ORPHAN_LEASE_EXPIRED", event="recovery")
                 if r.ok:
                     states[orphan] = C.NodeState.READY
+            # 节点级取消（V6）：旗标置位即事实 ——
+            # 1) 在飞 RUNNING 节点被标 → 点燃本地 cancel token（geocompute
+            #    协作中止 → 下个 outcome 走 CANCELLED 路径）；
+            # 2) 非在飞非终态节点被标 → 直接 CANCELLED（queued cancel 语义）。
+            cancel_flags = await asyncio.to_thread(
+                self.store.get_node_cancel_flags, instance_id)
+            if cancel_flags:
+                for nid in cancel_flags:
+                    if states.get(nid) == C.NodeState.RUNNING \
+                            and cancel_token is not None:
+                        try:
+                            cancel_token.cancel()
+                        except Exception:  # noqa: BLE001
+                            pass
+                for nid, st in list(states.items()):
+                    if st in (C.NodeState.RUNNING,) or st in (
+                            C.NodeState.SUCCEEDED, C.NodeState.FAILED,
+                            C.NodeState.SKIPPED, C.NodeState.CANCELLED):
+                        continue
+                    if nid in cancel_flags:
+                        r = await asyncio.to_thread(
+                            self.store.transition_node,
+                            instance_id, nid, C.NodeState.CANCELLED,
+                            reason="NODE_CANCELLED", event="cancel")
+                        if r.ok:
+                            states[nid] = C.NodeState.CANCELLED
             # STALE 重入队（拓扑安全，R1-C1）：上游未**结算**（非
             # SUCCEEDED/SKIPPED —— 含 READY/RUNNING/STALE）的节点本轮
             # 跳过 —— 否则会用「重算前的旧上游产物」做复用解除/派发，
@@ -195,11 +229,15 @@ class Driver:
                     if r.ok:
                         states[nid] = C.NodeState.READY
             ready = M.ready_set(dag, states)
+            ready, gated = await self._split_retry_gates(instance_id, ready)
             if not ready:
-                if not any(s == C.NodeState.RUNNING for s in states.values()):
-                    break  # 无 ready 无 running → 终态
-                await asyncio.sleep(0.05)
-                continue
+                if any(s == C.NodeState.RUNNING for s in states.values()) \
+                        or gated:
+                    # 有在飞或退避等待中的节点 → 不是终态（重试队列语义：
+                    # next_ready_at 未到 ≠ 无事可做）
+                    await asyncio.sleep(0.05)
+                    continue
+                break  # 无 ready 无 running 无退避等待 → 终态
             batch = ready[: self.max_concurrency]
             results = await asyncio.gather(*(
                 self._run_node(instance_id, dag, nid, states, node_params,
@@ -210,13 +248,14 @@ class Driver:
                 if isinstance(res, Exception):
                     logger.warning("[WorkflowRuntime] node %s raised: %s",
                                    nid, res)
-                    await asyncio.to_thread(
-                        self.store.transition_node,
-                        instance_id, nid, C.NodeState.FAILED,
-                        require_claim=True, claimed_by=run_token,
-                        complete=True, reason="NODE_EXCEPTION",
-                        event="driver",
-                        patch={"error_code": "NODE_EXCEPTION"})
+                    # 未预期异常 = NODE_EXCEPTION（可重试类）—— 走同一
+                    # 补偿/重试裁决路径，绝不旁路。
+                    await self._fail_or_cancel(
+                        instance_id, nid, session_id, run_token,
+                        GeoComputeNodeOutcome(
+                            ok=False, error_code="NODE_EXCEPTION",
+                            error_message=str(res)[:200],
+                            failure_class="transient_db"))
             # 租约续期（波次边界）：run 租约 + 在飞节点租约（V6 两级续期）
             await asyncio.to_thread(
                 self.store.acquire_run_lease, instance_id,
@@ -257,6 +296,42 @@ class Driver:
             owner_scope=self.owner_scope, fields=fields)
 
     # ── 单节点执行 ────────────────────────────────────────────────────
+
+    async def _split_retry_gates(
+        self, instance_id: str, ready: List[str],
+    ) -> Tuple[List[str], List[str]]:
+        """ready 集按重试退避门二分（next_ready_at 未到的回到等待）。
+
+        同查询顺带读 cancel_requested —— 被标节点不派发（pre-claim 门）。
+        """
+        if not ready:
+            return [], []
+        dispatchable: List[str] = []
+        gated: List[str] = []
+        now = _utcnow()
+        for nid in ready:
+            row = await asyncio.to_thread(
+                self.store.get_node, instance_id, nid)
+            if row is None:
+                continue
+            if row.get("cancel_requested"):
+                r = await asyncio.to_thread(
+                    self.store.transition_node,
+                    instance_id, nid, C.NodeState.CANCELLED,
+                    reason="NODE_CANCELLED", event="cancel")
+                if r.ok:
+                    pass  # states 由下一波刷新捕获
+                continue
+            gate = row.get("next_ready_at") or ""
+            if gate:
+                try:
+                    if datetime.fromisoformat(gate) > now:
+                        gated.append(nid)
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            dispatchable.append(nid)
+        return dispatchable, gated
 
     async def _run_node(
         self, instance_id: str, dag: Dict[str, Any], node_id: str,
@@ -421,15 +496,50 @@ class Driver:
 
         params = dict(node_params.get(node_id) or {})
         if self.plan_executor is not None:
-            outcome = await self.plan_executor(
-                node, input_refs, params,
-                {"session_id": session_id, "caller": self.caller,
-                 "cancel_token": cancel_token})
+
+            async def _invoke() -> GeoComputeNodeOutcome:
+                return await self.plan_executor(
+                    node, input_refs, params,
+                    {"session_id": session_id, "caller": self.caller,
+                     "cancel_token": cancel_token})
         else:
-            outcome = await self._execute_via_geocompute(
-                node, input_refs, params, session_id, cancel_token,
-                port_idents)
+
+            async def _invoke() -> GeoComputeNodeOutcome:
+                return await self._execute_via_geocompute(
+                    node, input_refs, params, session_id, cancel_token,
+                    port_idents)
+        if self.node_timeout_s:
+            # per-node 超时（V6）：截断等待者（线程内计算自然结束后被丢弃；
+            # durable 通道由 worker 侧硬超时兜底）→ NODE_TIMEOUT 可重试。
+            try:
+                outcome = await asyncio.wait_for(
+                    _invoke(), timeout=self.node_timeout_s)
+            except asyncio.TimeoutError:
+                outcome = GeoComputeNodeOutcome(
+                    ok=False, error_code="NODE_TIMEOUT",
+                    error_message=f"node exceeded {self.node_timeout_s}s",
+                    failure_class="transient_remote")
+        else:
+            outcome = await _invoke()
         if outcome.ok:
+            # 完成边界的取消裁决（jobs 同纪律：cancelling 中的 late success
+            # 收敛为 cancelled）—— 旗标在窗口内置位则成功作废、产物补偿。
+            inst_now = await asyncio.to_thread(
+                store.get_instance, instance_id, self.owner_scope)
+            node_row_c = await asyncio.to_thread(
+                store.get_node, instance_id, node_id)
+            cancel_hit = (
+                (inst_now or {}).get("cancel_requested")
+                or (node_row_c or {}).get("cancel_requested"))
+            if cancel_hit:
+                await self._fail_or_cancel(
+                    instance_id, node_id, session_id, run_token,
+                    GeoComputeNodeOutcome(ok=False, error_code="CANCELLED",
+                                          output_ref=outcome.output_ref,
+                                          duration_ms=outcome.duration_ms),
+                    cancelled=True)
+                states[node_id] = C.NodeState.CANCELLED
+                return
             out_fp = await self._ref_fingerprint(session_id, outcome.output_ref)
             node_row = await asyncio.to_thread(
                 store.get_node, instance_id, node_id)
@@ -453,37 +563,98 @@ class Driver:
                 outcome.output_ref, out_fp,
                 effective_params=effective_params)  # 同指纹源（R1-m1）
         else:
-            node_row = await asyncio.to_thread(
+            await self._fail_or_cancel(
+                instance_id, node_id, session_id, run_token, outcome)
+            fresh_row = await asyncio.to_thread(
                 store.get_node, instance_id, node_id)
-            attempts = (node_row or {}).get("attempts", 0) + 1
-            if outcome.error_code == "CANCELLED":
-                # 在飞取消：RUNNING→CANCELLED（落 FAILED 会与 cancelled
-                # 实例语义混杂，R1-m7）
-                await asyncio.to_thread(
-                    store.transition_node,
-                    instance_id, node_id, C.NodeState.CANCELLED,
-                    require_claim=True, claimed_by=run_token,
-                    reason="EXEC_CANCELLED", event="driver",
-                    patch={"attempts_increment": True,
-                           "attempt_log": {
-                               "attempt": attempts, "status": "cancelled",
-                               "backend": "geocompute_inprocess"}})
-                states[node_id] = C.NodeState.CANCELLED
-                return
+            states[node_id] = (fresh_row or {}).get(
+                "state", C.NodeState.FAILED)
+
+    async def _fail_or_cancel(
+        self, instance_id: str, node_id: str, session_id: str,
+        run_token: str, outcome: GeoComputeNodeOutcome, *,
+        cancelled: Optional[bool] = None,
+    ) -> None:
+        """失败/取消收敛（V6）：补偿半提交产物 → 重试裁决 → 终态落库。
+
+        - CANCELLED：RUNNING→CANCELLED（R1-m7）；已 materialize 的产物
+          走补偿清理（绝不留孤儿 session ref 不对账）；
+        - 失败：RUNNING→FAILED（attempt 证据）→ 可重试且预算未尽 →
+          FAILED→READY + ``next_ready_at`` 退避门（journal RETRY_SCHEDULED）；
+          预算耗尽 → RETRY_EXHAUSTED 证据。
+        """
+        store = self.store
+        node_row = await asyncio.to_thread(store.get_node, instance_id, node_id)
+        attempts = (node_row or {}).get("attempts", 0) + 1
+        is_cancel = bool(cancelled) or \
+            outcome.error_code == "CANCELLED"
+        if outcome.output_ref:
+            # 半提交产物补偿（成功路径不会进这里）
+            from app.services.workflow_runtime import compensation as CP
+
+            await CP.compensate_ref(
+                session_id, outcome.output_ref, node_id=node_id,
+                instance_id=instance_id, attempt=attempts,
+                reason="CANCELLED_WITH_ARTIFACT" if is_cancel
+                else "FAILED_WITH_ARTIFACT",
+                store=store)
+        if is_cancel:
             await asyncio.to_thread(
                 store.transition_node,
-                instance_id, node_id, C.NodeState.FAILED,
-                require_claim=True, claimed_by=run_token, complete=True,
-                reason=f"EXEC_FAIL:{outcome.error_code[:48]}",
-                event="driver",
-                patch={"error_code": outcome.error_code[:64],
-                       "attempts_increment": True,
+                instance_id, node_id, C.NodeState.CANCELLED,
+                require_claim=True, claimed_by=run_token,
+                reason="EXEC_CANCELLED", event="driver",
+                patch={"attempts_increment": True,
                        "attempt_log": {
-                           "attempt": attempts,
-                           "status": "failed",
-                           "error_code": outcome.error_code[:64],
+                           "attempt": attempts, "status": "cancelled",
                            "backend": "geocompute_inprocess"}})
-            states[node_id] = C.NodeState.FAILED
+            return
+        first = await asyncio.to_thread(
+            store.transition_node,
+            instance_id, node_id, C.NodeState.FAILED,
+            require_claim=True, claimed_by=run_token, complete=True,
+            reason=f"EXEC_FAIL:{outcome.error_code[:48]}",
+            event="driver",
+            patch={"error_code": outcome.error_code,
+                   "attempts_increment": True,
+                   "attempt_log": {
+                       "attempt": attempts,
+                       "status": "failed",
+                       "error_code": outcome.error_code,
+                       "failure_class": outcome.failure_class,
+                       "backend": "geocompute_inprocess"}})
+        if not first.ok:
+            return
+        policy = self.retry_policy
+        retryable = RT.error_retryable(outcome.error_code,
+                                       outcome.failure_class)
+        if not retryable or policy.attempts_exhausted(attempts):
+            if retryable:
+                await asyncio.to_thread(
+                    store.append_event, instance_id,
+                    kind=C.EventKind.RETRY_EXHAUSTED, node_id=node_id,
+                    reason=f"ATTEMPTS_{attempts}_{outcome.error_code[:48]}",
+                    actor="driver", attempt=attempts)
+            return
+        delay = policy.delay_for(attempts)
+        from app.services.workflow_runtime.store import _utcnow
+
+        next_ready = _utcnow() + timedelta(seconds=delay)
+        r = await asyncio.to_thread(
+            store.transition_node,
+            instance_id, node_id, C.NodeState.READY,
+            expected_from=C.NodeState.FAILED,
+            reason="RETRY_SCHEDULED", event="retry",
+            patch={"next_ready_at": next_ready})
+        if r.ok:
+            await asyncio.to_thread(
+                store.append_event, instance_id,
+                kind=C.EventKind.RETRY_SCHEDULED, node_id=node_id,
+                reason=f"BACKOFF_{delay:.2f}S_ATTEMPT_{attempts}",
+                actor="driver", attempt=attempts,
+                payload={"error_code": outcome.error_code,
+                         "failure_class": outcome.failure_class,
+                         "next_ready_at": next_ready.isoformat()})
 
     # ── 输入收集 / 绑定校验 ───────────────────────────────────────────
 

@@ -178,8 +178,14 @@ class WorkflowRuntimeService:
         caller: Optional[Dict[str, Any]] = None,
         deadline_s: float = 60.0,
         node_params: Optional[Dict[str, Dict[str, Any]]] = None,
+        node_timeout_s: Optional[float] = None,
+        retry_policy: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """显式执行入口（chat 路径绝不自动调用 —— AUTORUN 默认关）。"""
+        """显式执行入口（chat 路径绝不自动调用 —— AUTORUN 默认关）。
+
+        V6：``node_timeout_s``（per-node 超时；None = 仅 run deadline 兜底）
+        与 ``retry_policy``（RetryPolicy；None = 环境默认）经 driver 生效。
+        """
         inst = await asyncio.to_thread(
             self.store.get_instance, instance_id, owner_scope)
         if inst is None:
@@ -213,7 +219,8 @@ class WorkflowRuntimeService:
             deadline_s=deadline_s, owner_scope=owner_scope, caller=caller,
             subworkflow_executor=SubworkflowExecutor(
                 self, owner_scope=owner_scope, caller=caller,
-                deadline_s=deadline_s))
+                deadline_s=deadline_s),
+            node_timeout_s=node_timeout_s, retry_policy=retry_policy)
         run_token = new_run_token()
         effective = node_params if node_params is not None \
             else await self._node_params(inst, dag)
@@ -246,8 +253,47 @@ class WorkflowRuntimeService:
         updated = await asyncio.to_thread(
             self.store.update_instance, instance_id, owner_scope=owner_scope,
             fields={"cancel_requested": True})
+        await asyncio.to_thread(
+            self.store.append_event, instance_id,
+            kind=C.EventKind.INSTANCE_CANCEL_REQUESTED,
+            reason="INSTANCE_CANCEL", actor="api")
         return {"cancelled": updated is not None,
                 "status": (updated or inst)["status"]}
+
+    async def cancel_nodes(
+        self, instance_id: str, node_ids: List[str], *,
+        owner_scope: str, actor: str = "api",
+        include_descendants: bool = True,
+    ) -> Dict[str, Any]:
+        """节点级取消（V6）：目标 + 后代闭包置持久取消旗标。
+
+        - queued（PENDING/READY/STALE/BLOCKED）→ 旗标即取消事实（本进程
+          driver 波界消费；恢复清扫兜底消费）；
+        - running → 旗标经波界点燃在飞 cancel token（协作中止）；
+        - 终态节点不追改（既成事实）。
+        返回 {requested, flagged}（flagged = 实际置位成功的节点）。
+        """
+        inst = await asyncio.to_thread(
+            self.store.get_instance, instance_id, owner_scope)
+        if inst is None:
+            raise WorkflowRuntimeError("INSTANCE_NOT_FOUND", instance_id)
+        targets = [str(n) for n in node_ids if n]
+        if not targets:
+            raise WorkflowRuntimeError("NO_TARGET_NODES", "empty node_ids")
+        known = {str(n.get("node_id", ""))
+                 for n in (await self._instance_dag(inst)).get("nodes") or []}
+        unknown = [t for t in targets if t not in known]
+        if unknown:
+            raise WorkflowRuntimeError(
+                "NODE_NOT_IN_DAG", ",".join(unknown[:6])[:200])
+        closure = set(targets)
+        if include_descendants:
+            closure |= M.downstream_closure(
+                await self._instance_dag(inst), set(targets))
+        flagged = await asyncio.to_thread(
+            self.store.request_node_cancel, instance_id, sorted(closure),
+            actor=actor)
+        return {"requested": sorted(closure), "flagged": flagged}
 
     async def apply_changes(
         self, instance_id: str, changes: List[C.PendingChange], *,

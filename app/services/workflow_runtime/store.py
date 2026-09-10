@@ -658,6 +658,16 @@ class InstanceStore:
             db.commit()
         return out
 
+    def get_node_cancel_flags(self, instance_id: str) -> Dict[str, bool]:
+        """{node_id: cancel_requested}（driver 波界在飞取消观察；单查询）。"""
+        with self._factory() as db:
+            rows = db.query(
+                WorkflowInstanceNodeRow.node_id,
+                WorkflowInstanceNodeRow.cancel_requested,
+            ).filter(WorkflowInstanceNodeRow.instance_id == instance_id,
+                     WorkflowInstanceNodeRow.cancel_requested.is_(True)).all()
+            return {r.node_id: True for r in rows}
+
     def clear_node_cancel(
         self, instance_id: str, node_id: str,
     ) -> bool:

@@ -81,6 +81,8 @@ def sweep_recoverable(
                 report["cancelled"] += _consume_cancel(store, instance_id)
                 continue
             report["orphan_reset"] += _reset_orphans(store, instance_id)
+            report["orphan_reset"] += _consume_node_cancels(store,
+                                                             instance_id)
             report["finalized"] += _finalize_if_decided(store, instance_id)
         except Exception:  # noqa: BLE001 — 单实例失败不拖垮整轮
             logger.warning(
@@ -141,6 +143,31 @@ def _reset_orphans(store: InstanceStore, instance_id: str) -> int:
                 node_id=nid, reason="ORPHAN_LEASE_EXPIRED",
                 actor="recovery")
     return reset
+
+
+def _consume_node_cancels(store: InstanceStore, instance_id: str) -> int:
+    """消费节点级取消旗标（driver 死亡后旗标残留的兜底收敛）。
+
+    只动**非在飞**旗标节点：RUNNING 节点若租约仍活归 driver/孤儿路径管，
+    这里只收 READY/PENDING/STALE/BLOCKED —— 与 driver 波界同语义。
+    """
+    flags = store.get_node_cancel_flags(instance_id)
+    if not flags:
+        return 0
+    states = store.get_node_states(instance_id)
+    consumed = 0
+    for nid in flags:
+        st = states.get(nid)
+        if st in (None, C.NodeState.RUNNING, C.NodeState.SUCCEEDED,
+                  C.NodeState.FAILED, C.NodeState.SKIPPED,
+                  C.NodeState.CANCELLED):
+            continue
+        r = store.transition_node(
+            instance_id, nid, C.NodeState.CANCELLED,
+            reason="NODE_CANCELLED", event="recovery")
+        if r.ok:
+            consumed += 1
+    return consumed
 
 
 def _finalize_if_decided(store: InstanceStore, instance_id: str) -> int:
