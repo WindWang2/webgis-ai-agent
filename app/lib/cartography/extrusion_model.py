@@ -146,6 +146,15 @@ def build_extrusion_height_expression(
     if spec.transform == "uniform":
         return min_h
 
+    # Determine dynamic precision to avoid identical stops on sub-cent ranges
+    val_diff = max_v - min_v
+    precision = 2
+    if val_diff > 0 and val_diff < 1.0:
+        try:
+            precision = min(8, max(2, int(math.ceil(-math.log10(val_diff))) + 2))
+        except Exception:
+            precision = 6
+
     # Determine stops based on transform and distribution characteristics.
     # Use 5 quantiles to ensure smooth non-linear interpolation.
     quantiles = [0.0, 0.25, 0.50, 0.75, 1.0]
@@ -162,14 +171,14 @@ def build_extrusion_height_expression(
         for q in quantiles:
             domain_v = min_v + ((1.0 + span) ** q - 1.0)
             vis_h = round(min_h + q * (max_h - min_h), 1)
-            stops.append([round(domain_v, 2), vis_h])
+            stops.append([round(domain_v, precision), vis_h])
     elif transform == "sqrt":
         # Sqrt distribution spacing in domain space
         span = max(max_v - min_v, 0.0)
         for q in quantiles:
             domain_v = min_v + (q ** 2) * span
             vis_h = round(min_h + q * (max_h - min_h), 1)
-            stops.append([round(domain_v, 2), vis_h])
+            stops.append([round(domain_v, precision), vis_h])
     elif has_outlier:
         # Linear transform with extreme outliers: sample domain stops at distribution quantiles
         p25 = float(stats.get("p25", min_v + 0.25 * (stats.get("p50", (min_v + max_v) / 2.0) - min_v)))
@@ -178,13 +187,13 @@ def build_extrusion_height_expression(
         domain_points = [min_v, p25, p50, p75, max_v]
         for q, domain_v in zip(quantiles, domain_points):
             vis_h = round(min_h + q * (max_h - min_h), 1)
-            stops.append([round(domain_v, 2), vis_h])
+            stops.append([round(domain_v, precision), vis_h])
     else:
         # Standard linear stepping across domain
         for q in quantiles:
             domain_v = min_v + q * (max_v - min_v)
             vis_h = round(min_h + q * (max_h - min_h), 1)
-            stops.append([round(domain_v, 2), vis_h])
+            stops.append([round(domain_v, precision), vis_h])
 
     # Remove non-increasing domain stops (MapLibre requires strictly increasing domain stops)
     unique_stops: List[List[Union[float, int]]] = []
@@ -197,7 +206,12 @@ def build_extrusion_height_expression(
 
     if len(unique_stops) < 2:
         if max_v > min_v:
-            unique_stops = [[round(min_v, 2), min_h], [round(max_v, 2), max_h]]
+            r_min = round(min_v, precision)
+            r_max = round(max_v, precision)
+            if r_max <= r_min:
+                eps = 10 ** (-precision)
+                r_max = r_min + eps
+            unique_stops = [[r_min, min_h], [r_max, max_h]]
         else:
             return min_h
 
