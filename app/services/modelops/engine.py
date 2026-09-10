@@ -1036,7 +1036,6 @@ class InferenceEngine:
         from shapely.geometry import mapping as _mapping
         from shapely.geometry import shape as _shape
 
-        from app.lib.modelops.preprocess import preprocess_window
         from app.lib.modelops.foundation import (
             georeference_polygon,
             prompt_windows,
@@ -1163,8 +1162,6 @@ class InferenceEngine:
         temporal = request.temporal
         if temporal is None:
             raise PlanningError("temporal inference requires a TemporalStackSpec")
-        from app.lib.modelops.preprocess import preprocess_window as _tcls_pwin
-
         checkpoint()
         t = len(temporal.times)
         c = descriptor.input_bands
