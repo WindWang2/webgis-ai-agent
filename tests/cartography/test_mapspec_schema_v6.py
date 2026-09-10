@@ -181,15 +181,16 @@ class TestCanonicalContract:
 
 class TestVersioningAndMigration:
     def test_known_versions(self):
-        assert KNOWN_VERSIONS == ("1.0", "1.1")
-        assert LATEST_VERSION == "1.1"
+        # V7（Goal 08）：1.2 additive（layout.component_links）。
+        assert KNOWN_VERSIONS == ("1.0", "1.1", "1.2")
+        assert LATEST_VERSION == "1.2"
         assert DEFAULT_VERSION == "1.0"
 
     def test_missing_version_defaults_to_1_0_and_migrates(self):
         raw = {"layers": [], "sources": {}}
         result = parse_mapspec(raw)
         assert result.original_version == "1.0"
-        assert result.effective_version == "1.1"
+        assert result.effective_version == LATEST_VERSION
         assert result.migrated is True
         assert result.document.get("version") is None  # 迁移不改写存储字段
         assert "version" in {d.path for d in result.invalid_fields}  # 缺失披露
@@ -197,13 +198,19 @@ class TestVersioningAndMigration:
     def test_v1_0_migrates_to_latest_identity(self):
         result = parse_mapspec({"version": "1.0", "layers": [], "sources": {}})
         assert result.migrated is True
-        assert result.effective_version == "1.1"
+        assert result.effective_version == LATEST_VERSION
         assert result.valid is True
 
-    def test_v1_1_no_migration(self):
+    def test_v1_1_migrates_to_latest_identity(self):
+        # 1.1 → 1.2 纯 additive：identity 语义升级（1.1 本身不再是最前）
         result = parse_mapspec({"version": "1.1", "layers": [], "sources": {}})
+        assert result.migrated is True
+        assert result.effective_version == LATEST_VERSION
+
+    def test_v1_2_no_migration(self):
+        result = parse_mapspec({"version": "1.2", "layers": [], "sources": {}})
         assert result.migrated is False
-        assert result.effective_version == "1.1"
+        assert result.effective_version == LATEST_VERSION
 
     def test_forward_version_flagged_and_rejected(self):
         raw = {"version": "2.0", "layers": [], "sources": {}}
