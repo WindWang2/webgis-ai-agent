@@ -146,14 +146,21 @@ class KnowledgeEngine:
             if document_id and r.get("document_id") != document_id:
                 continue
 
-            # Additional tenant check defense-in-depth
-            if not is_admin and (user_id or org_id):
-                doc_user = r.get("user_id")
-                doc_org = r.get("org_id")
-                if doc_user and user_id and doc_user != user_id:
-                    continue
-                if doc_org and org_id and doc_org != org_id:
-                    continue
+            # Additional tenant check defense-in-depth (fail-closed, SEC-02)
+            if not is_admin:
+                c_user = r.get("user_id") or None
+                c_org = r.get("org_id") or None
+                u_id = user_id or None
+                o_id = org_id or None
+
+                if not u_id and not o_id:
+                    if c_user is not None or c_org is not None:
+                        continue
+                else:
+                    if c_user is not None and c_user != u_id:
+                        continue
+                    if c_org is not None and c_org != o_id:
+                        continue
 
             filtered.append(r)
             if len(filtered) >= top_k:

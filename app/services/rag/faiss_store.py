@@ -443,14 +443,21 @@ class FaissVectorStore:
             if chunk_meta.get("deleted", False):
                 continue
 
-            # Tenant filtering check
-            if not is_admin and (user_id or org_id):
-                c_user = chunk_meta.get("user_id")
-                c_org = chunk_meta.get("org_id")
-                if c_user and user_id and c_user != user_id:
-                    continue
-                if c_org and org_id and c_org != org_id:
-                    continue
+            # Tenant filtering check (fail-closed, SEC-02)
+            if not is_admin:
+                c_user = chunk_meta.get("user_id") or None
+                c_org = chunk_meta.get("org_id") or None
+                u_id = user_id or None
+                o_id = org_id or None
+
+                if not u_id and not o_id:
+                    if c_user is not None or c_org is not None:
+                        continue
+                else:
+                    if c_user is not None and c_user != u_id:
+                        continue
+                    if c_org is not None and c_org != o_id:
+                        continue
 
             chunk_meta["score"] = float(score)
             results.append(chunk_meta)
