@@ -321,6 +321,13 @@ class WorkflowRuntimeService:
             self.store.get_instance, instance_id, owner_scope)
         if inst is None:
             raise WorkflowRuntimeError("INSTANCE_NOT_FOUND", instance_id)
+        if inst["status"] not in C.INSTANCE_TERMINAL_STATUSES:
+            # 克隆 RUNNING 源会触发 instantiate 的 supersede 纪律（同
+            # session+package 只留一个活实例）—— 反向杀死源实例。克隆
+            # 只对终态实例开放（failed/cancelled 克隆 = 恢复语义主场景）。
+            raise WorkflowRuntimeError(
+                "INSTANCE_NOT_TERMINAL",
+                f"status={inst['status']}; wait or cancel first")
         dag = await self._instance_dag(inst)
         known = {str(n.get("node_id", "")) for n in (dag.get("nodes") or [])}
         only = [n for n in (only_nodes or []) if n in known]

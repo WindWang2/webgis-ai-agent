@@ -211,6 +211,11 @@ def test_cancel_nodes_endpoint(env):
 def test_clone_endpoint(env):
     client, svc = env["client"], env["svc"]
     inst = _make(svc, env["owner"])
+    # 克隆只对终态实例开放
+    svc.store.update_instance(inst["instance_id"],
+                              fields={"status": C.InstanceStatus.SUCCEEDED,
+                                      "terminal_at": __import__("datetime")
+                                      .datetime.utcnow()})
     r = client.post(f"/api/v1/workflow-runtime/instances/"
                     f"{inst['instance_id']}/clone", headers=_AUTH,
                     json={"skip_nodes": ["output:zone"]})

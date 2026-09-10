@@ -397,8 +397,9 @@ async def clone_instance(
             session_id=body.session_id,
             only_nodes=body.only_nodes, skip_nodes=body.skip_nodes)
     except SV.WorkflowRuntimeError as e:
-        raise _http(e.code, 404 if e.code == "INSTANCE_NOT_FOUND" else 422,
-                    e.detail)
+        status = 404 if e.code == "INSTANCE_NOT_FOUND" else (
+            409 if e.code == "INSTANCE_NOT_TERMINAL" else 422)
+        raise _http(e.code, status, e.detail)
 
 
 @router.get("/instances/{instance_id}/debug")

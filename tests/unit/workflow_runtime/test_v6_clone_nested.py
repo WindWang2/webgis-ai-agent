@@ -177,6 +177,8 @@ def test_clone_run_branch_workflow_with_only_nodes(factory):
     rig = Rig(factory)
     src = rig.make_instance()
     rig.bind(src["instance_id"])
+    # 克隆只对终态实例开放（supersede 纪律）—— 先驱动源实例到 SUCCEEDED
+    _run(rig, src["instance_id"])
     # 白名单 output:zone → keep = {data, buffer, output:zone}；分支
     # output:alt 不在 keep-set → SKIPPED
     result = asyncio.run(rig.svc.clone_run(
