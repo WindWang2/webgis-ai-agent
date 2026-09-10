@@ -4,13 +4,14 @@
 
 - Manifest 版本：**2**
 - 内容指纹：`cd57d22b071bbbdf…`
+- 内容指纹：`861e20f612830084…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
-| tools | 296 | 296 | 0 |
-| algorithms | 208 | 163 | 0 |
+| tools | 299 | 299 | 0 |
+| algorithms | 213 | 165 | 0 |
 | capabilities | 139 | 88 | 0 |
 | artifact_types | 21 | 21 | 0 |
 | recipes | 164 | 164（conformance 由 workflow 闸保护） | 0 |
@@ -25,12 +26,12 @@
 | memory_class | 100% | 95% | PASS（缺 0） |
 | capabilities | 100% | 95% | PASS（缺 0） |
 
-**gate: PASS**（`total=296`）
+**gate: PASS**（`total=299`）
 
 ## 行为化覆盖与 findings 棘轮（Quality V2）
 
-- 工具行为证据：dispatch **154** / mention 142 / none 0（dispatch 覆盖率 52%）
-- findings 棘轮：**PASS**（dispatch 下限 151，当前 154；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
+- 工具行为证据：dispatch **157** / mention 142 / none 0（dispatch 覆盖率 53%）
+- findings 棘轮：**PASS**（dispatch 下限 151，当前 157；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
 
 ## Findings（派生线索，非缺陷判定）
 

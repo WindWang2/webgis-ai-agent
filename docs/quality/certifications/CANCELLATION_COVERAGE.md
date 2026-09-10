@@ -5,7 +5,7 @@
 > cancellable）；行为认证：tests/quality/
 > test_cancellation_resource_certification.py。
 
-- 覆盖：**20/56** 个重计算文件含取消检查点。
+- 覆盖：**20/60** 个重计算文件含取消检查点。
 
 | file | cancellation sites | loop sites（粗计） | status |
 |---|---|---|---|
@@ -13,6 +13,7 @@
 | app/lib/geo_analysis/_vector.py | 0 | 6 | no-checkpoints |
 | app/lib/geo_analysis/aggregation.py | 2 | 26 | certified |
 | app/lib/geo_analysis/cokriging_lmc.py | 1 | 10 | certified |
+| app/lib/geo_analysis/cv.py | 0 | 6 | no-checkpoints |
 | app/lib/geo_analysis/dasymetric.py | 0 | 11 | no-checkpoints |
 | app/lib/geo_analysis/density.py | 2 | 23 | certified |
 | app/lib/geo_analysis/evidence.py | 0 | 1 | no-checkpoints |
@@ -22,10 +23,11 @@
 | app/lib/geo_analysis/heatmap_grid.py | 1 | 6 | certified |
 | app/lib/geo_analysis/interpolation.py | 2 | 23 | certified |
 | app/lib/geo_analysis/interpolation_compare.py | 0 | 4 | no-checkpoints |
-| app/lib/geo_analysis/kriging.py | 9 | 85 | certified |
-| app/lib/geo_analysis/kriging_simulation.py | 1 | 5 | certified |
+| app/lib/geo_analysis/kriging.py | 9 | 87 | certified |
+| app/lib/geo_analysis/kriging_simulation.py | 2 | 9 | certified |
 | app/lib/geo_analysis/kriging_st.py | 1 | 5 | certified |
 | app/lib/geo_analysis/network.py | 3 | 30 | certified |
+| app/lib/geo_analysis/phenology.py | 0 | 0 | no-checkpoints |
 | app/lib/geo_analysis/point_pattern.py | 6 | 76 | certified |
 | app/lib/geo_analysis/raster_change.py | 1 | 4 | certified |
 | app/lib/geo_analysis/raster_grid.py | 0 | 7 | no-checkpoints |
@@ -47,9 +49,11 @@
 | app/lib/geo_analysis/spectral.py | 0 | 8 | no-checkpoints |
 | app/lib/geo_analysis/statistics.py | 8 | 117 | certified |
 | app/lib/geo_analysis/tasseled_cap.py | 0 | 10 | no-checkpoints |
-| app/lib/geo_analysis/terrain.py | 10 | 88 | certified |
+| app/lib/geo_analysis/temporal_cube.py | 0 | 2 | no-checkpoints |
+| app/lib/geo_analysis/terrain.py | 12 | 102 | certified |
 | app/lib/geo_analysis/tin_interpolation.py | 0 | 21 | no-checkpoints |
 | app/lib/geo_analysis/trend_surface.py | 0 | 11 | no-checkpoints |
+| app/lib/geo_analysis/uncertainty.py | 0 | 5 | no-checkpoints |
 | app/lib/geo_raster/__init__.py | 0 | 1 | no-checkpoints |
 | app/lib/geo_raster/chunk.py | 0 | 23 | no-checkpoints |
 | app/lib/geo_raster/cog.py | 0 | 5 | no-checkpoints |

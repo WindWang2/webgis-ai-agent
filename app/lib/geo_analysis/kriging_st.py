@@ -29,6 +29,7 @@ from app.lib.gis.scientific_errors import (
     ResourceScaleMismatch,
 )
 
+from app.lib.geo_analysis import cv
 from app.lib.geo_analysis.kriging import (
     MAX_NEIGHBORS,
     VariogramFit,
@@ -153,6 +154,12 @@ def st_kriging(
     wᵗc₀（钳 ≥0，负值计数）。时间窗外的样本不进入邻域（诚实缺省，不
     用远处时相硬凑）。返回 ``{"predictions", "variances", "n_neighbors",
     "degraded_cells", "model"}``。
+
+    science-v5 W4 实现语义（数值与 V4 逐目标路径一致，differential 钉死）：
+    邻域定长 k 填充批量求解——窗口内候选 ≥2 取窗口内前 k（不足 k 哨兵
+    填充，掩膜行 w=0 精确置零：整行/列清零含约束行列）；窗口内 <2 放宽
+    为纯空间 k 近邻 + degraded 计数（V4 relax 语义）；solve 失败/非有限
+    → 邻域均值回退（counted）。
     """
     pts_metric = np.asarray(pts_metric, dtype=float)
     values = np.asarray(values, dtype=float)
@@ -179,69 +186,191 @@ def st_kriging(
     pts_t = apply_anisotropy(pts_metric, anisotropy_angle, anisotropy_ratio)
     targets_t = apply_anisotropy(targets_metric, anisotropy_angle, anisotropy_ratio)
 
-    # 时空邻域：空间 k* 候选 × 时间窗过滤（k 不足时逐步放宽空间候选）
+    # 时空邻域：空间 k* 候选 × 时间窗过滤（k 不足时逐步放宽空间候选）。
+    # Review R2-#6：邻域解析按 512-chunk 进行（避免 (n_t, k_query) 全量
+    # tau/argsort 中间量常驻）；距离数组不消费不落盘。
     tree = cKDTree(pts_t)
     k_query = min(MAX_NEIGHBORS * 4, n)
-    d_all, i_all = tree.query(targets_t, k=k_query)
-    d_all = np.asarray(d_all, float).reshape(len(targets_t), k_query)
+    _d_all, i_all = tree.query(targets_t, k=k_query)
     i_all = np.asarray(i_all, int).reshape(len(targets_t), k_query)
 
     C00 = float(st_covariance(st, np.array([0.0]), np.array([0.0]))[0])
-    preds = np.empty(len(targets_t), dtype=float)
-    varis = np.empty(len(targets_t), dtype=float)
-    degraded = 0
-    n_used = np.empty(len(targets_t), dtype=int)
+    n_t = len(targets_t)
 
-    for start in cancellable(range(0, len(targets_t), 512), every=1):
-        end = min(start + 512, len(targets_t))
-        for r_i in range(start, end):
-            tau = times_sec[i_all[r_i]] - target_times_sec[r_i]
-            in_window = (
-                np.abs(tau) <= (time_window_sec if time_window_sec is not None
-                                else np.inf))
-            idx = i_all[r_i][in_window][:k]
-            if len(idx) < 2:
-                # 时间窗内样本不足：放宽为纯空间 k 近邻（诚实计数披露）
-                idx = i_all[r_i][:k]
+    # science-v5 W4：逐目标循环 → 定长 k 填充批量系统。
+    # 邻域按逐目标 relaxed 列表定长化（架构挑战 C1）：窗口内候选 ≥2 →
+    # 取窗口内前 k 个（V4 语义：relax 后仍解克里金系统）；<2 → 放宽为
+    # 纯空间前 k 个 + degraded 计数（V4 同义）。不足 k 的槽位哨兵填充。
+    nb_idx = np.empty((n_t, k), dtype=int)
+    valid = np.empty((n_t, k), dtype=bool)
+    relaxed_total = 0
+    m = k + 1
+
+    preds = np.empty(n_t, dtype=float)
+    varis = np.empty(n_t, dtype=float)
+    degraded = 0
+    n_used = np.empty(n_t, dtype=int)
+
+    for start in cancellable(range(0, n_t, 512), every=1):
+        end = min(start + 512, n_t)
+        c = end - start
+        # ── 邻域解析（chunk 局部；窗口过滤 + 稳定保序）────────────────
+        i_c = i_all[start:end]
+        tau_c = times_sec[i_c] - target_times_sec[start:end, None]
+        in_window = (
+            np.abs(tau_c) <= (time_window_sec if time_window_sec is not None
+                              else np.inf))
+        win_counts = in_window.sum(axis=1)
+        relaxed = win_counts < 2
+        relaxed_total += int(relaxed.sum())
+        if relaxed.any():
+            r_idx = np.nonzero(relaxed)[0]
+            nb_idx[start:end][r_idx] = i_c[r_idx][:, :k]
+            valid[start:end][r_idx] = True
+        if (~relaxed).any():
+            w_idx = np.nonzero(~relaxed)[0]
+            w_order = np.argsort(~in_window[w_idx], axis=1, kind="stable")
+            w_sorted = i_c[w_idx][np.arange(len(w_idx))[:, None],
+                                  w_order][:, :k]
+            win_k = np.minimum(in_window[w_idx].sum(axis=1), k)
+            v = np.arange(k)[None, :] < win_k[:, None]
+            nb_idx[start:end][w_idx] = np.where(v, w_sorted, w_sorted[:, :1])
+            valid[start:end][w_idx] = v
+
+        idx = nb_idx[start:end]                   # (c, k)
+        vmask = valid[start:end]                  # (c, k)
+        nb_xy = pts_t[idx]                        # (c, k, 2)
+        t_xy = targets_t[start:end]               # (c, 2)
+        tau = times_sec[idx] - target_times_sec[start:end, None]
+
+        C = np.empty((c, m, m), dtype=float)
+        diff = nb_xy[:, :, None, :] - nb_xy[:, None, :, :]
+        h_ss = np.sqrt((diff ** 2).sum(-1))       # (c, k, k)
+        tau_ss = times_sec[idx][:, :, None] - times_sec[idx][:, None, :]
+        C[:, :k, :k] = st_covariance(st, h_ss, tau_ss)
+        diag = np.arange(k)
+        C[:, diag, diag] = C00
+        rhs = np.empty((c, m), dtype=float)
+        h0 = np.sqrt(((nb_xy - t_xy[:, None, :]) ** 2).sum(-1))   # (c, k)
+        rhs[:, :k] = st_covariance(st, h0, tau)
+        rhs[:, k] = 1.0
+        C[:, :k, k] = vmask.astype(float)         # 约束只统计有效槽位
+        C[:, k, :k] = vmask.astype(float)
+        C[:, k, k] = 0.0
+
+        # 哨兵槽位：整行/整列清零（含约束行/列条目——否则 w_pad = −μ 把
+        # 偏差拉进全部有效权重）→ 单位阵 + rhs=0 ⇒ w_pad 恰为 0。
+        pad_rows, pad_cols = np.nonzero(~vmask)
+        if pad_rows.size:
+            C[pad_rows, pad_cols, :] = 0.0
+            C[pad_rows, :, pad_cols] = 0.0
+            C[pad_rows, pad_cols, pad_cols] = 1.0
+            rhs[pad_rows, pad_cols] = 0.0
+
+        # 批量求解（隔离条件 = LinAlgError ∨ 非有限——与 LMC 同款：
+        # 恰奇异整栈 raise → 逐行重解；非有限 → 邻域均值回退，counted）
+        try:
+            sol_all = np.linalg.solve(C, rhs[:, :, None])[:, :, 0]
+        except np.linalg.LinAlgError:
+            sol_all = None
+        ok_mask = (np.isfinite(sol_all).all(axis=1)
+                   if sol_all is not None else None)
+        for r_i in range(c):
+            sol = None
+            if ok_mask is not None and ok_mask[r_i]:
+                sol = sol_all[r_i]
+            else:
+                try:
+                    cand = np.linalg.solve(C[r_i], rhs[r_i])
+                    if not np.isfinite(cand).all():
+                        raise np.linalg.LinAlgError("non-finite")
+                    sol = cand
+                except np.linalg.LinAlgError:
+                    sol = None
+            gi = start + r_i
+            vm = vmask[r_i]
+            if sol is None:
+                preds[gi] = float(np.mean(values[idx[r_i][vm]]))
+                varis[gi] = float(np.var(values[idx[r_i][vm]]))
                 degraded += 1
-            h = np.sqrt(((pts_t[idx] - targets_t[r_i]) ** 2).sum(axis=1))
-            nb_tau = times_sec[idx] - target_times_sec[r_i]
-            m = len(idx) + 1
-            C = np.empty((m, m), dtype=float)
-            diff = pts_t[idx][:, None, :] - pts_t[idx][None, :, :]
-            h_ss = np.sqrt((diff ** 2).sum(-1))
-            tau_ss = times_sec[idx][:, None] - times_sec[idx][None, :]
-            C[:m - 1, :m - 1] = st_covariance(st, h_ss, tau_ss)
-            np.fill_diagonal(C[:m - 1, :m - 1], C00)
-            C[:m - 1, m - 1] = 1.0
-            C[m - 1, :m - 1] = 1.0
-            C[m - 1, m - 1] = 0.0
-            rhs = np.empty(m, dtype=float)
-            rhs[:m - 1] = st_covariance(st, h, nb_tau)
-            rhs[m - 1] = 1.0
-            try:
-                sol = np.linalg.solve(C, rhs)
-                if not np.isfinite(sol).all():
-                    raise np.linalg.LinAlgError("non-finite")
-                w = sol[:m - 1]
-                preds[r_i] = float(w @ values[idx])
-                var = max(C00 - float(sol[:m - 1] @ rhs[:m - 1]) - float(sol[m - 1]), 0.0)
-                if var <= 0:
-                    degraded += 1
-                varis[r_i] = var
-            except np.linalg.LinAlgError:
-                preds[r_i] = float(np.mean(values[idx]))
-                varis[r_i] = float(np.var(values[idx]))
+                continue
+            w = sol[:k]
+            nb_vals = values[idx[r_i]]
+            preds[gi] = float(w[vm] @ nb_vals[vm])
+            var = C00 - float(w @ rhs[r_i, :k]) - float(sol[k])
+            var = max(var, 0.0)
+            if var <= 0:                          # V4 语义：钳后 ≤0 计 degraded
                 degraded += 1
-            n_used[r_i] = len(idx)
+            varis[gi] = var
+
+    n_used = valid.sum(axis=1).astype(int)
 
     return {
         "predictions": preds,
         "variances": varis,
         "n_neighbors": n_used,
-        "degraded_cells": int(degraded),
+        "degraded_cells": int(degraded + relaxed_total),
         "model": st,
     }
+
+
+def st_cross_validate(
+    pts_metric: np.ndarray,
+    values: np.ndarray,
+    times_sec: np.ndarray,
+    *,
+    scheme: str = "temporal_forward",
+    folds: int = 4,
+    k: int = 12,
+    time_window_sec: Optional[float] = None,
+    model: str = "product_sum",
+    temporal_range_sec: float = ST_DEFAULT_TIME_WINDOW_SEC,
+) -> "cv.CVReport":
+    """时空克里金交叉验证（science-v5 W4；CV 框架唯一事实源）。
+
+    scheme="temporal_forward"（默认）：时间前向链——fold k 的训练 = 严格
+    早于测试块首时刻的样本（expanding window，零 future leakage）；
+    ``scheme="spatial_block"``：空间块（同一时刻样本可跨训练/测试，
+    评的是空间外推诚实误差）。逐折**完整重拟合**时空模型（空间变异函数
+    + 模型装配），无跨折泄漏。
+
+    样本 < ST_MIN_SAMPLES → 诚实退化报告（不产指标）；个别折因训练子集
+    时间维退化（单时刻）失败 → fold_failures 计数，不静默。
+    """
+    pts_metric = np.asarray(pts_metric, dtype=float)
+    values = np.asarray(values, dtype=float)
+    times_sec = np.asarray(times_sec, dtype=float)
+    n = len(values)
+    if n < ST_MIN_SAMPLES:
+        return cv.CVReport(
+            n_samples=n, folds=0, folds_used=0, scheme=scheme,
+            note=(
+                f"样本量 {n} < {ST_MIN_SAMPLES}，无法进行可靠的时空交叉"
+                "验证；不确定性仅由模型方差表达。"),
+        )
+    from app.lib.geo_analysis.kriging import fit_variogram
+
+    def fit_fn(train, train_vals):
+        vfit = fit_variogram(pts_metric[train], train_vals, model="auto")
+        return fit_st_model(
+            spatial_variogram=vfit, temporal_range_sec=temporal_range_sec,
+            model=model)
+
+    def predict_fn(st_m, train, test):
+        # 条件集 = **仅训练子集**（Review R1-B1：全量条件会让测试样本
+        # 自条件——τ=0 邻居权重 ≈1，CV 指标无意义且时间守卫不可见）。
+        res = st_kriging(
+            pts_metric[train], values[train], times_sec[train],
+            pts_metric[test], times_sec[test], st_m,
+            k=k, time_window_sec=time_window_sec,
+        )
+        return res["predictions"], res["variances"]
+
+    return cv.run_cross_validation(
+        pts_metric, values, fit_fn, predict_fn,
+        scheme=scheme, folds=folds, times_sec=times_sec,
+        min_samples=ST_MIN_SAMPLES,
+    )
 
 
 def st_kriging_surface(
@@ -367,6 +496,27 @@ def st_kriging_surface(
         round(float(result["variances"].min()), 6),
         round(float(result["variances"].max()), 6),
     ]
+    # science-v5 W6/W7：uncertainty artifact + 执行方式规划（纯函数证据）
+    from app.lib.geo_analysis.uncertainty import (
+        data_quality_summary,
+        from_variance as _artifact_from_variance,
+    )
+
+    artifact = _artifact_from_variance(
+        "st_kriging_variance", result["predictions"], result["variances"],
+        provenance={"st_model": st.params(),
+                    "target_time_sec": float(target_time_sec)},
+        data_quality=data_quality_summary(
+            n_samples=int(len(values)), n_targets=len(target_cells),
+            value_field=value_field, working_crs=working_crs),
+    )
+    metadata["uncertainty"] = artifact.to_dict()
+    metadata["renderer"] = artifact.to_renderer_metadata()
+    from app.lib.gis.backend_selection import ScaleProfile, plan_execution
+
+    metadata["execution_plan"] = plan_execution(
+        "interpolation.st_kriging",
+        ScaleProfile(raster_cells=len(target_cells))).to_dict()
     records = [
         {
             "h3_index": cell,

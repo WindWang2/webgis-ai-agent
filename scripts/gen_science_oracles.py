@@ -4144,6 +4144,332 @@ def build_edge_cases() -> List[Dict[str, Any]]:
     return cases
 
 
+
+
+# ── science-v5：可验证可扩展科学计算（CV/批量求解器/不确定性/物候/水文）──
+
+def build_science_v5() -> List[Dict[str, Any]]:
+    """science-v5 oracle 域（Review R1-M2 修订：全部绑定**生产目标**）。
+
+    回放契约 = "import target → run → compare"：每个 case 的 target 都是
+    生产函数（含 JSON 原生驱动），期望值由生成期黄金路径计算后经
+    ``select`` 路径冻结。零 ``_identity`` 哑弹（R1 发现 33/35 case 永假
+    真的问题在此修正——哑弹 case 已删除，数值网移回生产绑定）。
+    """
+    import numpy as np
+
+    cases: List[Dict[str, Any]] = []
+
+    # ── CV：temporal_forward 前向链（生产目标 + 精确折分配锚）────────
+    times = [0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0]
+    from app.lib.geo_analysis.cv import temporal_forward_folds
+
+    fold_id, block_id = temporal_forward_folds(np.asarray(times), 3)
+    cases.append(case(
+        "cv_temporal_forward_fold_sum",
+        "app.lib.geo_analysis.cv:temporal_forward_folds",
+        int(fold_id.sum()),
+        args=[times, 3], select="sum:0", kind="exact",
+        note="folds=3 同值时间组：块边界只落唯一值边界（fold 数组求和冻结）",
+    ))
+    cases.append(case(
+        "cv_temporal_forward_block_sum",
+        "app.lib.geo_analysis.cv:temporal_forward_folds",
+        int(block_id.sum()),
+        args=[times, 3], select="sum:1", kind="exact",
+    ))
+    cases.append(case(
+        "cv_temporal_forward_first_test_sample",
+        "app.lib.geo_analysis.cv:temporal_forward_folds",
+        int(fold_id[4]),
+        args=[times, 3], select="0.4", kind="exact",
+        note="块 0 纯训练库 → 首个 fold=0 的样本在切片 4",
+    ))
+    cases.append(case(
+        "cv_temporal_forward_folds_gt_unique",
+        "app.lib.geo_analysis.cv:temporal_forward_folds", None,
+        args=[times, 11], kind="error",
+        note="folds > unique 时间值数 → 类型化拒绝",
+    ))
+
+    # ── 批量 LMC：surface 驱动（JSON 原生；内部 fit_lmc 黄金路径）─────
+    from app.lib.geo_analysis.cokriging_lmc import cokriging_lmc_surface
+
+    def _fc(points):
+        feats = []
+        for lon, lat, props in points:
+            feats.append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": dict(props),
+            })
+        return {"type": "FeatureCollection", "features": feats}
+
+    rng = np.random.default_rng(42)
+    xy1 = np.column_stack([
+        rng.uniform(116.0, 116.08, 60), rng.uniform(39.0, 39.08, 60)])
+    field = rng.normal(0, 1.0, 60)
+    z1 = 10.0 + 3.0 * field + rng.normal(0, 0.3, 60)
+    xy2 = np.column_stack([
+        rng.uniform(116.0, 116.08, 50), rng.uniform(39.0, 39.08, 50)])
+    from scipy.spatial import cKDTree
+
+    tree1 = cKDTree(xy1)
+    _d, idx = tree1.query(xy2, k=1)
+    z2 = 5.0 + 2.0 * (0.8 * field[idx]
+                      + np.sqrt(1 - 0.64) * rng.normal(0, 1, 50))
+    primary = _fc([(float(a), float(b), {"v": float(v)})
+                   for (a, b), v in zip(xy1, z1)])
+    secondary = _fc([(float(a), float(b), {"w": float(v)})
+                     for (a, b), v in zip(xy2, z2)])
+    res = cokriging_lmc_surface(primary, "v", secondary, "w", resolution=7)
+    meta = res["metadata"]
+    cases.append(case(
+        "lmc_driver_rho", "app.lib.geo_analysis.cokriging_lmc:cokriging_lmc_surface",
+        r9(meta["lmc"]["rho"]),
+        args=[primary, "v", secondary, "w", 7],
+        kwargs={"neighbors1": 12, "neighbors2": 8},
+        select="metadata.lmc.rho", rtol=1e-9,
+        note="内部 fit_lmc + 批量堆叠求解黄金路径（挑战 R0-#3 语义）",
+    ))
+    cases.append(case(
+        "lmc_driver_variance_max", "app.lib.geo_analysis.cokriging_lmc:cokriging_lmc_surface",
+        r9(meta["variance_range"][1]),
+        args=[primary, "v", secondary, "w", 7],
+        kwargs={"neighbors1": 12, "neighbors2": 8},
+        select="metadata.variance_range.1",
+    ))
+    cases.append(case(
+        "lmc_driver_estimator", "app.lib.geo_analysis.cokriging_lmc:cokriging_lmc_surface",
+        meta["uncertainty"]["estimator"],
+        args=[primary, "v", secondary, "w", 7],
+        kwargs={"neighbors1": 12, "neighbors2": 8},
+        select="metadata.uncertainty.estimator", kind="exact",
+    ))
+    cases.append(case(
+        "lmc_driver_execution_plan", "app.lib.geo_analysis.cokriging_lmc:cokriging_lmc_surface",
+        meta["execution_plan"]["variant_id"],
+        args=[primary, "v", secondary, "w", 7],
+        kwargs={"neighbors1": 12, "neighbors2": 8},
+        select="metadata.execution_plan.variant_id", kind="exact",
+    ))
+
+    # ── 批量 SGS：surface 驱动（backend=auto → numpy_batched 决策锚）──
+    from app.lib.geo_analysis.kriging_simulation import sgs_simulation_surface
+
+    rng = np.random.default_rng(7)
+    g_xy = np.column_stack([
+        rng.uniform(116.0, 116.05, 36), rng.uniform(39.0, 39.05, 36)])
+    g_z = 20 + 5 * np.sin(g_xy[:, 0] * 1e4) + rng.normal(0, 0.3, 36)
+    fc = _fc([(float(a), float(b), {"v": float(v)})
+              for (a, b), v in zip(g_xy, g_z)])
+    out = sgs_simulation_surface(fc, "v", resolution=7,
+                                 n_realizations=12, seed=42, neighbors=8)
+    ometa = out["metadata"]
+    cases.append(case(
+        "sgs_driver_backend", "app.lib.geo_analysis.kriging_simulation:sgs_simulation_surface",
+        ometa["backend"],
+        args=[fc, "v", 7, 12, 42, 8],
+        select="metadata.backend", kind="exact",
+        note="auto → plan_execution(raster_cells) → numpy_batched 决策链",
+    ))
+    cases.append(case(
+        "sgs_driver_std_max", "app.lib.geo_analysis.kriging_simulation:sgs_simulation_surface",
+        r9(ometa["ensemble_std_range"][1]),
+        args=[fc, "v", 7, 12, 42, 8],
+        select="metadata.ensemble_std_range.1",
+    ))
+    cases.append(case(
+        "sgs_driver_uncertainty_estimator",
+        "app.lib.geo_analysis.kriging_simulation:sgs_simulation_surface",
+        ometa["uncertainty"]["estimator"],
+        args=[fc, "v", 7, 12, 42, 8],
+        select="metadata.uncertainty.estimator", kind="exact",
+    ))
+
+    # ── 批量 ST：surface 驱动 ──────────────────────────────────────────
+    from app.lib.geo_analysis.kriging_st import st_kriging_surface
+
+    rng = np.random.default_rng(5)
+    t0 = 1_700_000_000.0
+    feats = []
+    for i in range(40):
+        s = i % 10
+        tt = t0 + (i // 10) * 86400
+        v = 10 + 0.5 * s + 0.1 * (i // 10) + float(
+            rng.normal(0, 0.2))
+        feats.append({"type": "Feature",
+                      "geometry": {"type": "Point",
+                                   "coordinates": [116.0 + s * 0.01,
+                                                   39.0 + s * 0.008]},
+                      "properties": {"v": v, "t": float(tt)}})
+    st_res = st_kriging_surface(
+        {"type": "FeatureCollection", "features": feats}, "v", "t",
+        target_time_sec=t0 + 2 * 86400, resolution=7,
+        temporal_range_sec=5 * 86400)
+    st_meta = st_res["metadata"]
+    cases.append(case(
+        "st_driver_variance_max", "app.lib.geo_analysis.kriging_st:st_kriging_surface",
+        r9(st_meta["variance_range"][1]),
+        args=[{"type": "FeatureCollection", "features": feats}, "v", "t",
+              t0 + 2 * 86400, 7],
+        kwargs={"temporal_range_sec": 5 * 86400.0},
+        select="metadata.variance_range.1",
+    ))
+    cases.append(case(
+        "st_driver_estimator", "app.lib.geo_analysis.kriging_st:st_kriging_surface",
+        st_meta["uncertainty"]["estimator"],
+        args=[{"type": "FeatureCollection", "features": feats}, "v", "t",
+              t0 + 2 * 86400, 7],
+        kwargs={"temporal_range_sec": 5 * 86400.0},
+        select="metadata.uncertainty.estimator", kind="exact",
+    ))
+    cases.append(case(
+        "st_driver_plan_variant", "app.lib.geo_analysis.kriging_st:st_kriging_surface",
+        st_meta["execution_plan"]["variant_id"],
+        args=[{"type": "FeatureCollection", "features": feats}, "v", "t",
+              t0 + 2 * 86400, 7],
+        kwargs={"temporal_range_sec": 5 * 86400.0},
+        select="metadata.execution_plan.variant_id", kind="exact",
+    ))
+
+    # ── 物候 / 异常：from_arrays 生产适配器（正弦手算锚）────────────────
+    from app.lib.geo_analysis.phenology import (
+        phenology_features_from_arrays,
+        temporal_anomaly_from_arrays,
+    )
+
+    t_len = 24
+    t_norm = np.arange(t_len) / t_len
+    base = 0.1 + 0.2 * np.sin(2 * np.pi * t_norm)
+    stack = np.broadcast_to(base[:, None, None], (t_len, 3, 3)).copy()
+    times_h = (np.arange(t_len) * 3600.0).tolist()
+    pf = phenology_features_from_arrays(stack.tolist(), times_h, window=5)
+    f = pf["features"]
+    cases.append(case(
+        "pheno_sine_sos",
+        "app.lib.geo_analysis.phenology:phenology_features_from_arrays",
+        float(f["sos_idx"][0, 0]),
+        args=[stack.tolist(), times_h], kwargs={"window": 5},
+        select="features.sos_idx.0.0", kind="exact",
+        note="正弦 0.1+0.2sin：thr=0.1 → 首越切片 1；SG 平滑后峰值 t=6",
+    ))
+    cases.append(case(
+        "pheno_sine_peak_time",
+        "app.lib.geo_analysis.phenology:phenology_features_from_arrays",
+        float(f["peak_time"][0, 0]),
+        args=[stack.tolist(), times_h], kwargs={"window": 5},
+        select="features.peak_time.0.0", kind="exact",
+    ))
+    cases.append(case(
+        "pheno_sine_amplitude",
+        "app.lib.geo_analysis.phenology:phenology_features_from_arrays",
+        r9(float(f["amplitude"][0, 0])),
+        args=[stack.tolist(), times_h], kwargs={"window": 5},
+        select="features.amplitude.0.0",
+    ))
+    a_stack = np.ones((12, 2, 2))
+    a_stack[-1] = 3.0
+    an = temporal_anomaly_from_arrays(a_stack.tolist(), np.arange(12.0).tolist())
+    cases.append(case(
+        "anomaly_z_hand_anchor",
+        "app.lib.geo_analysis.phenology:temporal_anomaly_from_arrays",
+        r9(float(an["features"]["anomaly_last"][0, 0])),
+        args=[a_stack.tolist(), np.arange(12.0).tolist()],
+        select="features.anomaly_last.0.0",
+        note="11×1 + 1×3：mean=7/6、std=√(1/3)=0.57735 → z=3.17543",
+    ))
+    cases.append(case(
+        "cube_over_512_slices_rejected",
+        "app.lib.geo_analysis.temporal_cube:build_cube", None,
+        args=[np.zeros((513, 2, 2)).tolist(), list(range(513))],
+        kind="error",
+        note="时间片 >512 → ResourceScaleMismatch（先拒绝不 OOM）",
+    ))
+
+    # ── 多级 Pfafstetter + 拓扑：生产函数（d8 数组 JSON 内嵌）──────────
+    from app.lib.geo_analysis.terrain import (
+        d8_flow,
+        fill_depressions,
+        flow_accumulation,
+        pfafstetter_codes_multilevel,
+        validate_flow_topology,
+    )
+
+    def _basin(n: int, seed: int) -> np.ndarray:
+        rr = np.random.default_rng(seed)
+        yy, xx = np.mgrid[0:n, 0:n]
+        zz = 80.0 - 0.5 * xx - 0.3 * yy + 0.05 * rr.normal(size=(n, n))
+        zz[10:30, 10:30] -= 3.0
+        zz[40:70, 20:65] -= 2.0
+        return zz.astype(float)
+
+    z = _basin(64, 3)
+    filled, _ = fill_depressions(z, 30.0)
+    d8, _ = d8_flow(filled, 30.0)
+    acc, _ = flow_accumulation(d8)
+    d8_json = {
+        "direction": d8["direction"].tolist(),
+        "receiver": d8["receiver"].tolist(),
+        "valid": d8["valid"].tolist(),
+    }
+    acc_list = acc.tolist()
+    rr_i, cc_i = np.unravel_index(int(np.argmax(acc)), acc.shape)
+    outlet = [int(rr_i), int(cc_i)]
+    codes2, m2 = pfafstetter_codes_multilevel(
+        d8, acc, 30.0, (outlet[0], outlet[1]), levels=2)
+    cases.append(case(
+        "pfaf_ml_distinct_codes",
+        "app.lib.geo_analysis.terrain:pfafstetter_codes_multilevel",
+        int(m2["distinct_codes"]),
+        args=[d8_json, acc_list, 30.0, outlet],
+        kwargs={"levels": 2}, select="1.distinct_codes", kind="exact",
+    ))
+    cases.append(case(
+        "pfaf_ml_code_distribution",
+        "app.lib.geo_analysis.terrain:pfafstetter_codes_multilevel",
+        {str(k): int(v) for k, v in m2["code_distribution"].items()},
+        args=[d8_json, acc_list, 30.0, outlet],
+        kwargs={"levels": 2}, select="1.code_distribution", kind="exact",
+        note="码分布冻结（含二位码结构：父×10+位，位 ≤8）",
+    ))
+    cases.append(case(
+        "pfaf_ml_sample_cell_code",
+        "app.lib.geo_analysis.terrain:pfafstetter_codes_multilevel",
+        int(codes2[outlet[0], outlet[1]]),
+        args=[d8_json, acc_list, 30.0, outlet],
+        kwargs={"levels": 2},
+        select=f"0.{outlet[0]}.{outlet[1]}",
+        kind="exact",
+        note="出口像元位码（level-1 干流段）",
+    ))
+    topo, _ = validate_flow_topology(d8, acc)
+    cases.append(case(
+        "topo_is_consistent",
+        "app.lib.geo_analysis.terrain:validate_flow_topology",
+        bool(topo["is_consistent"]),
+        args=[d8_json, acc_list],
+        select="0.is_consistent", kind="exact",
+        note="epsilon 填洼后合成流域：拓扑一致汇总位",
+    ))
+    cases.append(case(
+        "topo_cycle_count",
+        "app.lib.geo_analysis.terrain:validate_flow_topology",
+        int(topo["cycles"]),
+        args=[d8_json, acc_list],
+        select="0.cycles", kind="exact",
+    ))
+    cases.append(case(
+        "topo_accumulation_violations",
+        "app.lib.geo_analysis.terrain:validate_flow_topology",
+        int(topo["accumulation_violations"]),
+        args=[d8_json, acc_list],
+        select="0.accumulation_violations", kind="exact",
+    ))
+
+    return cases
+
+
 BUILDERS: Dict[str, Callable[[], List[Dict[str, Any]]]] = {
     "point_pattern": build_point_pattern,
     "spectral": build_spectral,
@@ -4157,6 +4483,7 @@ BUILDERS: Dict[str, Callable[[], List[Dict[str, Any]]]] = {
     "geostat": build_geostat,
     "sar": build_sar,
     "edge_cases": build_edge_cases,
+    "science_v5": build_science_v5,
 }
 
 

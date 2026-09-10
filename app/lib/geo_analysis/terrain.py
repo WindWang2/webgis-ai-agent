@@ -1721,6 +1721,45 @@ def shreve_magnitude(
     return magnitude, meta
 
 
+def _pfafstetter_mainstem_walk(
+    upstream_stream_cells, acc_flat: np.ndarray, outlet_flat: int,
+    max_tributaries: int, *, mask_flat: Optional[np.ndarray] = None,
+) -> Tuple[list, list]:
+    """单级 Pfafstetter 语义核心（唯一实现；单级/多级共用）。
+
+    干流上溯（每步取上游汇流最大的河网像元）+ 干流沿途 junction 支流
+    按汇流降序排序。``mask_flat`` 限定上游邻域（多级掩膜细分用；None =
+    全河网）。返回 ``(mainstem, chosen)``，chosen = [(acc, -pos, cell)]。
+    """
+    mainstem = [outlet_flat]
+    cur = outlet_flat
+    seen = {cur}
+    while True:
+        checkpoint()  # science-v4 review R1-M3：干流上溯取消点
+        if mask_flat is None:
+            ups = [c for c in upstream_stream_cells(cur) if c not in seen]
+        else:
+            ups = [c for c in upstream_stream_cells(cur, mask_flat)
+                   if c not in seen]
+        if not ups:
+            break
+        cur = max(ups, key=lambda c: (acc_flat[c], -c))
+        mainstem.append(cur)
+        seen.add(cur)
+    tributaries = []
+    for pos, cell in enumerate(mainstem):
+        if mask_flat is None:
+            for c in upstream_stream_cells(cell):
+                if c not in seen:
+                    tributaries.append((acc_flat[c], -pos, c))
+        else:
+            for c in upstream_stream_cells(cell, mask_flat):
+                if c not in seen:
+                    tributaries.append((acc_flat[c], -pos, c))
+    tributaries.sort(reverse=True)
+    return mainstem, tributaries[:int(max_tributaries)]
+
+
 def pfafstetter_codes(
     d8: Dict[str, np.ndarray], flow_accum: np.ndarray, threshold: float,
     outlet: Tuple[float, float],
@@ -1736,7 +1775,8 @@ def pfafstetter_codes(
     河网像元（下游-first 归属）。非河网像元 = 0。
 
     级别披露：本实现为**单级** Pfafstetter（多级递归子盆地编码未实现，
-    属 descriptor limitation）；max_tributaries ∈ [2, 6]。
+    属 descriptor limitation）；max_tributaries ∈ [2, 6]；levels=1 语义（多级函数的 level-1 切面，
+    同一走法 helper）。
     """
     if not (2 <= int(max_tributaries) <= 6):
         raise ValueError(f"max_tributaries must be in [2, 6] (got {max_tributaries!r})")
@@ -1777,26 +1817,9 @@ def pfafstetter_codes(
         hi = np.searchsorted(parents, cell, side="right")
         return [int(c) for c in children[lo:hi] if flat_streams[int(c)]]
 
-    # 干流：出口上溯，每步取汇流最大的上游
-    mainstem = [out_flat]
-    cur = out_flat
-    seen = {cur}
-    while True:
-        checkpoint()  # science-v4 review R1-M3：干流上溯取消点
-        ups = [c for c in upstream_stream_cells(cur) if c not in seen]
-        if not ups:
-            break
-        cur = max(ups, key=lambda c: (acc_flat[c], -c))
-        mainstem.append(cur)
-        seen.add(cur)
-    # 干流上的支流 junction（沿途非干流上游）
-    tributaries = []
-    for pos, cell in enumerate(mainstem):
-        for c in upstream_stream_cells(cell):
-            if c not in seen:
-                tributaries.append((acc_flat[c], -pos, c, pos))
-    tributaries.sort(reverse=True)
-    chosen = tributaries[:int(max_tributaries)]
+    # 干流走法 + 支流排序（共享 helper——单级/多级同一实现）
+    mainstem, chosen = _pfafstetter_mainstem_walk(
+        upstream_stream_cells, acc_flat, out_flat, max_tributaries)
 
     codes = np.zeros((h, w), dtype=np.int16)
     flat_codes = codes.ravel()
@@ -1821,7 +1844,7 @@ def pfafstetter_codes(
             seg = min(int(pos * n_seg / len(mainstem)), n_seg - 1)
             flat_codes[cell] = 2 * (seg + 1)
     # 支流奇数编码（按汇流降序：1,3,5,…）
-    for rank, (_acc_v, _negpos, c, pos) in enumerate(chosen):
+    for rank, (_acc_v, _negpos, c) in enumerate(chosen):
         assign_basin(c, 2 * rank + 1)
     coded = codes[streams]
     unique, counts = np.unique(coded, return_counts=True)
@@ -1834,12 +1857,310 @@ def pfafstetter_codes(
             "odd codes 1..(n−1) for the largest tributaries at junctions"),
         outlet=[int(row), int(col)],
         mainstem_cells=len(mainstem),
-        tributary_codes={str(2 * i + 1): int(acc_flat[c]) for i, (_a, _p, c, _pos) in enumerate(chosen)},
+        tributary_codes={str(2 * i + 1): int(acc_flat[c]) for i, (_a, _p, c) in enumerate(chosen)},
         max_tributaries=int(max_tributaries),
         hierarchy_note="single-level (multi-level recursive sub-basin coding not implemented)",
         code_distribution={str(int(c0)): int(n) for c0, n in zip(unique, counts)},
     )
     return codes, meta
+
+
+
+
+_PF_MAX_LEVELS = 4
+_PF_MIN_SEGMENT_CELLS = 8            # 细分下限：子段河网像元过少则停止（counted）
+
+
+def pfafstetter_codes_multilevel(
+    d8: Dict[str, np.ndarray], flow_accum: np.ndarray, threshold: float,
+    outlet: Tuple[float, float],
+    *,
+    transform: Optional[Sequence[float]] = None,
+    max_tributaries: int = 4,
+    levels: int = 2,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """多级 Pfafstetter 编码（science-v5 W9；单级的递归推广）。
+
+    - **level 1**：与 :func:`pfafstetter_codes` 同一走法 helper（levels=1
+      时编码位码逐位一致——differential 锚；meta 面向多级语义）；
+    - **level k≥2**：对每个**偶数码段**（干流段间盆地 inter-basin）以其
+      下游端为出口，在父码掩膜内重跑同一走法，子码 = ``父码×10 + 位码``
+      （偶=子干段、奇=支流子盆地；经典逐位拼接）；奇数码为叶子不细分；
+    - ``levels ∈ [1, 4]``；子段河网像元 < ``_PF_MIN_SEGMENT_CELLS`` →
+      停止细分并计数披露；取消点 = 每段走法边界（helper 内 checkpoint）。
+    """
+    levels = int(levels)
+    if not (1 <= levels <= _PF_MAX_LEVELS):
+        raise ValueError(
+            f"levels must be in [1, {_PF_MAX_LEVELS}] (got {levels!r})")
+    if not (2 <= int(max_tributaries) <= 6):
+        raise ValueError(
+            f"max_tributaries must be in [2, 6] (got {max_tributaries!r})")
+    acc = np.asarray(flow_accum, dtype=np.float64)
+    direction = np.asarray(d8["direction"])
+    receiver = np.asarray(d8["receiver"])
+    valid = np.asarray(d8["valid"])
+    h, w = direction.shape
+    if acc.shape != (h, w):
+        raise ValueError(
+            f"flow_accum shape {acc.shape} does not match d8 grid {(h, w)}")
+    _guard_cells((h, w), "terrain.pfafstetter")
+    if transform is not None:
+        ocol, orow = _world_to_cell(
+            transform, float(outlet[0]), float(outlet[1]))
+        row, col = int(round(float(orow))), int(round(float(ocol)))
+    else:
+        row, col = int(outlet[0]), int(outlet[1])
+    out_flat = row * w + col
+    if not (0 <= out_flat < h * w):
+        raise DegenerateData(
+            f"pfafstetter outlet ({row}, {col}) outside grid {(h, w)}",
+            correction_hint="pour point 必须落在栅格范围内")
+
+    streams = np.isfinite(acc) & (acc >= float(threshold)) & valid
+    flat_streams = streams.ravel()
+    if not flat_streams[out_flat]:
+        raise DegenerateData(
+            "出口像元不在河网上（accumulation < threshold）",
+            correction_hint="降低 stream_threshold 或移动出口到主河道")
+    children, parents = _child_table(receiver)
+    acc_flat = acc.ravel()
+    n_flat = h * w
+
+    def upstream_stream_cells(cell: int, mask_flat: Optional[np.ndarray] = None) -> list:
+        lo = np.searchsorted(parents, cell, side="left")
+        hi = np.searchsorted(parents, cell, side="right")
+        if mask_flat is None:
+            return [int(c) for c in children[lo:hi] if flat_streams[int(c)]]
+        return [int(c) for c in children[lo:hi]
+                if flat_streams[int(c)] and mask_flat[int(c)]]
+
+    codes = np.zeros(n_flat, dtype=np.int32)
+    skipped_segments = 0
+
+    def subdivide_segment(seg_outlet: int, base: int,
+                          parent_code: int) -> list:
+        """一个父段的单级走法实例化：写 base+位码，返回偶数子段入口。
+
+        ``base = parent_code * 10``；父段像元以 ``codes == parent_code``
+        界定（level-1 全域段 parent_code=0 → 掩膜 = 全河网）。
+        """
+        nonlocal skipped_segments
+        checkpoint()
+        if parent_code == 0:
+            mask_flat = None
+            seg_cells = int(flat_streams.sum())
+        else:
+            mask_flat = codes == parent_code
+            seg_cells = int(mask_flat.sum())
+        if seg_cells < _PF_MIN_SEGMENT_CELLS:
+            skipped_segments += 1
+            return []
+        # 子段位码必须保持单个十进制位（经典拼接：父×10+位）——偶数位码
+        # ≤8 ⇒ 子段数 ≤4 ⇒ 子段支流数 ≤3。level-1（base=0，无拼接）不受
+        # 此限——与单级函数位码逐位一致（differential 锚）。
+        seg_tributaries = (min(int(max_tributaries), 3)
+                           if base > 0 else int(max_tributaries))
+        mainstem, chosen = _pfafstetter_mainstem_walk(
+            upstream_stream_cells, acc_flat, seg_outlet, seg_tributaries,
+            mask_flat=mask_flat)
+        parent_marker = parent_code            # 待重写的父码（0=未编码）
+        n_seg = seg_tributaries + 1
+        for pos, cell in enumerate(mainstem):
+            if codes[cell] == parent_marker:
+                seg = min(int(pos * n_seg / len(mainstem)), n_seg - 1)
+                codes[cell] = base + 2 * (seg + 1)
+        for rank, (_acc_v, _negpos, c) in enumerate(chosen):
+            code = base + 2 * rank + 1
+            stack = [c]
+            local_seen = {c}
+            while stack:
+                cell = stack.pop()
+                if codes[cell] == parent_marker:
+                    codes[cell] = code
+                for cc in upstream_stream_cells(cell, mask_flat):
+                    if cc not in local_seen and codes[cc] == parent_marker:
+                        local_seen.add(cc)
+                        stack.append(cc)
+        # 偶数子段入口：每偶码在干流序中的**首次出现 = 段下游端**
+        even_entries: list = []
+        seen_codes = set()
+        for cell in mainstem:
+            code = int(codes[cell])
+            if (code > base and code % 2 == 0
+                    and code not in seen_codes):
+                seen_codes.add(code)
+                even_entries.append((cell, code))
+        return even_entries
+
+    # ── level 1（全域，parent_code=0）─────────────────────────────────
+    frontier = subdivide_segment(out_flat, 0, 0)
+    level_meta: list = []
+    for level in range(2, levels + 1):
+        if not frontier:
+            break
+        next_frontier: list = []
+        for seg_outlet, parent_code in frontier:
+            next_frontier.extend(
+                subdivide_segment(seg_outlet, parent_code * 10, parent_code))
+        level_meta.append({"level": level, "segments": len(next_frontier)})
+        frontier = next_frontier
+
+    codes_grid = codes.reshape(h, w)
+    max_code = int(codes_grid.max())
+    if max_code <= np.iinfo(np.int16).max:
+        codes_grid = codes_grid.astype(np.int16)
+    coded = codes_grid[streams]
+    unique, counts = np.unique(coded, return_counts=True)
+    meta = _meta_base(
+        "terrain.pfafstetter_multilevel", valid,
+        threshold=float(threshold),
+        levels=int(levels),
+        method=(
+            "multi-level Pfafstetter: level-1 mainstem walk from outlet; "
+            "even inter-basin segments recurse (parent_code*10 + digit) "
+            "with segment downstream end as pour point; odd basins are "
+            "leaves"),
+        outlet=[int(row), int(col)],
+        max_tributaries=int(max_tributaries),
+        skipped_segments=int(skipped_segments),
+        hierarchy_note=(
+            f"{levels}-level coding; segments below "
+            f"{_PF_MIN_SEGMENT_CELLS} stream cells not subdivided (counted)"),
+        code_distribution={
+            str(int(c0)): int(n) for c0, n in
+            sorted(zip(unique, counts), key=lambda kv: -kv[1])[:16]},
+        distinct_codes=int(unique.size),
+        level_segments=level_meta,
+    )
+    return codes_grid, meta
+
+
+def validate_flow_topology(
+    d8: Dict[str, np.ndarray], flow_accum: np.ndarray,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """流网拓扑校验（science-v5 W9）—— 结构事实报告，不 raise。
+
+    检查（全部有界步数，无无界递归/无无界重试）：
+
+    - ``outlets``：无 receiver 像元（receiver<0）数量与采样坐标（多出口
+      不是错误但影响流域圈定语义——披露）；
+    - ``cycles``：receiver 链染色法（0=未访/1=在栈/2=完成；步进总上限
+      2N 防御）；D8 图应无环——非零计数即拓扑破损；
+    - ``dangling``：receiver 指向无效/越界像元计数；
+    - ``accumulation_violations``：汇流非严格单调增（receiver 存在且
+      acc[cell] ≥ acc[receiver] > 0——相等即计违例：合规积流下等值是
+      病理信号）；``equal_accumulation_plateaus`` 另列同一批次的平台
+      像元计数（epsilon 填洼残留/未破平台的线索，供归因区分）。
+
+    返回 ``(report, meta)``；report 是结构化事实（采样坐标 ≤16 条），
+    工具层诚实披露——不是异常通道。
+    """
+    acc = np.asarray(flow_accum, dtype=np.float64)
+    receiver = np.asarray(d8["receiver"])
+    valid = np.asarray(d8["valid"])
+    direction = np.asarray(d8["direction"])
+    h, w = direction.shape
+    if acc.shape != (h, w):
+        raise ValueError(
+            f"flow_accum shape {acc.shape} does not match d8 grid {(h, w)}")
+    _guard_cells((h, w), "terrain.flow_topology")
+    rec_flat = np.asarray(receiver).ravel()
+    acc_flat = acc.ravel()
+    valid_flat = valid.ravel()
+    n = h * w
+
+    out_mask = rec_flat < 0
+    bad_receiver = rec_flat >= n
+    dangling = np.zeros(n, dtype=bool)
+    known = (rec_flat >= 0) & ~bad_receiver
+    dangling[known] = ~valid_flat[rec_flat[known]]
+
+    # 环检测：染色法。外层只从「链头」（入度 0）起步——dem D8 的链头数
+    # 通常远小于格元数；残留未访像元 = 环成员/环挂链，用向量化
+    # flatnonzero 逐链拾取（Review R2-#1：消除对全部 N 像元的纯 Python
+    # 扫描 + 每 checkpoint 尊重 coarse 取消画像）。
+    color = np.zeros(n, dtype=np.uint8)
+    cycle_cells = 0
+    steps_total = 0
+    indeg = np.bincount(
+        rec_flat[(rec_flat >= 0) & (rec_flat < n)].astype(np.int64),
+        minlength=n)
+    frontier = [int(x) for x in np.flatnonzero((indeg == 0) & valid_flat)]
+    pos = 0
+
+    def _next_start() -> Optional[int]:
+        """取下一个未访链起点：先链头，耗尽后向量化拾取环成员。"""
+        nonlocal pos
+        while pos < len(frontier):
+            cand = frontier[pos]
+            pos += 1
+            if color[cand] == 0:
+                return cand
+        remaining = np.flatnonzero(color == 0)
+        if remaining.size == 0:
+            return None
+        cand = int(remaining[0])              # 环成员/环挂链入口
+        frontier.append(cand)
+        pos += 1
+        return cand
+
+    while True:
+        start = _next_start()
+        if start is None:
+            break
+        checkpoint()                              # coarse 取消点（R2-#1）
+        if rec_flat[start] < 0:
+            color[start] = 2                      # 出口：非环成员
+            continue
+        path: list = []
+        cur = start
+        while 0 <= cur < n and color[cur] == 0 and rec_flat[cur] >= 0:
+            color[cur] = 1
+            path.append(cur)
+            cur = int(rec_flat[cur])
+            steps_total += 1
+            if steps_total > 2 * n:
+                break
+        if 0 <= cur < n and color[cur] == 1:
+            cycle_cells += 1              # 回到在栈节点 → 环
+        for q in path:
+            color[q] = 2
+
+    safe_rec = np.clip(rec_flat, 0, n - 1)
+    has_rec = (rec_flat >= 0) & ~bad_receiver
+    viol = has_rec & (acc_flat >= acc_flat[safe_rec]) & (acc_flat[safe_rec] > 0)
+    equal_acc = has_rec & (acc_flat == acc_flat[safe_rec]) & (acc_flat > 0)
+
+    def _sample(mask: np.ndarray, k: int = 16) -> list:
+        idx = np.flatnonzero(mask)[:k]
+        return [[int(i) // w, int(i) % w] for i in idx]
+
+    report = {
+        "n_cells": int(n),
+        "n_valid": int(valid_flat.sum()),
+        "outlets": int(out_mask.sum()),
+        "outlet_samples": _sample(out_mask),
+        "cycles": int(cycle_cells),
+        "dangling_receivers": int(dangling.sum()),
+        "dangling_samples": _sample(dangling),
+        "out_of_bounds_receivers": int(bad_receiver.sum()),
+        "accumulation_violations": int(viol.sum()),
+        "violation_samples": _sample(viol),
+        "equal_accumulation_plateaus": int(equal_acc.sum()),
+        "is_consistent": bool(
+            cycle_cells == 0 and not dangling.any()
+            and not bad_receiver.any() and viol.sum() == 0),
+    }
+    meta = _meta_base(
+        "terrain.flow_topology", valid,
+        method=(
+            "D8 topology audit: receiver-chain coloring cycle check "
+            "(step-bounded), dangling/out-of-bounds receivers, strict "
+            "accumulation monotonicity (equal-acc plateaus counted apart)"),
+        is_consistent=report["is_consistent"],
+    )
+    return report, meta
 
 
 # ── V2-5. 流域形态量测（Strahler 1957 水文地貌）──────────────────────

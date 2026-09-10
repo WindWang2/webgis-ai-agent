@@ -396,6 +396,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/lib/test_backend_dispatch_v5.py",
     "tests/unit/lib/test_geostat_v3.py"
    ],
    "uncertainty_outputs": [
@@ -403,7 +404,7 @@
    ]
   },
   {
-   "backend_variants": 1,
+   "backend_variants": 2,
    "capabilities": [
     "cokriging"
    ],
@@ -413,7 +414,9 @@
     "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_beats_ok_with_correlated_secondary",
     "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_weak_correlation_typed_reject",
     "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_strong_secondary_reduces_variance",
-    "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_deterministic"
+    "tests/unit/lib/test_cokriging_lmc_v4.py::test_cokriging_deterministic",
+    "tests/unit/lib/test_cokriging_lmc_batched_v5.py::test_bitwise_equal_well_conditioned",
+    "tests/unit/lib/test_cokriging_lmc_batched_v5.py::test_exactly_singular_row_isolated_to_fallback"
    ],
    "deterministic": true,
    "id": "interpolation.cokriging_lmc",
@@ -421,7 +424,9 @@
    "random_seed_policy": "deterministic",
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
-   "tests": [],
+   "tests": [
+    "tests/unit/lib/test_backend_dispatch_v5.py"
+   ],
    "uncertainty_outputs": [
     "raster_uncertainty"
    ]
@@ -526,6 +531,7 @@
    "tests": [
     "tests/unit/gis/test_scientific_contracts_vnext.py",
     "tests/unit/gis_harness/test_profile_resolver_seam_v4.py",
+    "tests/unit/lib/test_backend_dispatch_v5.py",
     "tests/unit/lib/test_interpolation_science_vnext.py",
     "tests/unit/lib/test_kriging_interpolation.py"
    ],
@@ -717,7 +723,7 @@
    ]
   },
   {
-   "backend_variants": 1,
+   "backend_variants": 2,
    "capabilities": [
     "geostatistical_simulation"
    ],
@@ -726,7 +732,10 @@
     "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_same_seed_bitwise_reproducible",
     "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_ensemble_quantiles_ordered",
     "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_budget_typed_reject",
-    "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_driver_end_to_end"
+    "tests/unit/lib/test_kriging_simulation_v4.py::test_sgs_driver_end_to_end",
+    "tests/unit/lib/test_sgs_batched_v5.py::TestSGSBatched::test_same_seed_bitwise_reproducible",
+    "tests/unit/lib/test_sgs_batched_v5.py::TestSGSBatched::test_statistical_differential_vs_reference",
+    "tests/unit/lib/test_sgs_batched_v5.py::TestReferenceConditioningFix::test_multichunk_conditioning_anchor_strengthens"
    ],
    "deterministic": true,
    "id": "interpolation.sgs",
@@ -735,6 +744,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/lib/test_backend_dispatch_v5.py",
     "tests/unit/lib/test_kriging_simulation_v4.py"
    ],
    "uncertainty_outputs": [
@@ -768,7 +778,7 @@
    ]
   },
   {
-   "backend_variants": 1,
+   "backend_variants": 2,
    "capabilities": [
     "spatiotemporal_interpolation"
    ],
@@ -778,7 +788,10 @@
     "tests/unit/lib/test_kriging_st_v4.py::test_separable_tau_zero_reduces_to_spatial",
     "tests/unit/lib/test_kriging_st_v4.py::test_st_kriging_deterministic_and_valid",
     "tests/unit/lib/test_kriging_st_v4.py::test_st_degenerate_time_typed_reject",
-    "tests/unit/lib/test_kriging_st_v4.py::test_st_driver_end_to_end"
+    "tests/unit/lib/test_kriging_st_v4.py::test_st_driver_end_to_end",
+    "tests/unit/lib/test_st_kriging_batched_v5.py::TestSTBatchedDifferential::test_bitwise_equal_no_padding",
+    "tests/unit/lib/test_st_kriging_batched_v5.py::TestSTBatchedDifferential::test_window_relax_matches_v4_semantics",
+    "tests/unit/lib/test_st_kriging_batched_v5.py::TestSTCrossValidation::test_temporal_forward_no_future_leakage"
    ],
    "deterministic": true,
    "id": "interpolation.st_kriging",
@@ -787,6 +800,7 @@
    "runtime_status": "native",
    "scientific_status": "VALIDATED",
    "tests": [
+    "tests/unit/lib/test_backend_dispatch_v5.py",
     "tests/unit/lib/test_kriging_st_v4.py"
    ],
    "uncertainty_outputs": [
@@ -3747,6 +3761,25 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "temporal_trend"
+   ],
+   "category": "temporal_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_phenology_v5.py::TestAnomaly::test_anomaly_z_hand_anchor",
+    "tests/unit/lib/test_phenology_v5.py::TestAnomaly::test_change_direction_and_nan_guard"
+   ],
+   "deterministic": true,
+   "id": "temporal.anomaly",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "change_detection"
    ],
    "category": "temporal_analysis",
@@ -3790,6 +3823,25 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "temporal_trend"
+   ],
+   "category": "temporal_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_temporal_cube_v5.py::TestTemporalCube::test_slice_spacing_report_missing_slices",
+    "tests/unit/lib/test_temporal_cube_v5.py::TestBuildCube::test_nodata_and_quality_masking"
+   ],
+   "deterministic": true,
+   "id": "temporal.cube_stats",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "emerging_hotspot_analysis"
    ],
    "category": "temporal_analysis",
@@ -3829,6 +3881,26 @@
    "tests": [
     "tests/unit/gis/test_algorithm_registry_phase2.py"
    ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "temporal_trend"
+   ],
+   "category": "temporal_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_phenology_v5.py::TestPhenology::test_synthetic_sine_sos_eos_anchor",
+    "tests/unit/lib/test_phenology_v5.py::TestPhenology::test_long_gap_excluded_not_extrapolated",
+    "tests/unit/lib/test_phenology_v5.py::TestPhenology::test_gap_filled_count_disclosed"
+   ],
+   "deterministic": true,
+   "id": "temporal.phenology",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
    "uncertainty_outputs": []
   },
   {
@@ -4066,6 +4138,26 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "terrain_hydrology"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v5.py::test_topology_consistent_basin",
+    "tests/unit/lib/test_hydrology_v5.py::test_topology_cycle_detection",
+    "tests/unit/lib/test_hydrology_v5.py::test_topology_dangling_and_monotonicity"
+   ],
+   "deterministic": true,
+   "id": "terrain.flow_topology_validate",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "terrain_geomorphometry"
    ],
    "category": "terrain_analysis",
@@ -4275,6 +4367,28 @@
    ],
    "deterministic": true,
    "id": "terrain.pfafstetter",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [
+    "tests/unit/lib/test_hydrology_v5.py"
+   ],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "terrain_hydrology"
+   ],
+   "category": "terrain_analysis",
+   "conformance_tests": [
+    "tests/unit/lib/test_hydrology_v5.py::test_multilevel_l1_matches_single_level",
+    "tests/unit/lib/test_hydrology_v5.py::test_multilevel_two_digit_codes",
+    "tests/unit/lib/test_hydrology_v5.py::test_multilevel_levels_validation"
+   ],
+   "deterministic": true,
+   "id": "terrain.pfafstetter_multilevel",
    "memory_cost": "medium",
    "random_seed_policy": "deterministic",
    "runtime_status": "native",
@@ -4842,7 +4956,7 @@
   }
  ],
  "behavioral": {
-  "dispatch": 154,
+  "dispatch": 157,
   "mention": 142,
   "none": 0
  },
@@ -6813,6 +6927,9 @@
    "domain": "statistics",
    "id": "temporal_trend",
    "producer_algorithms": [
+    "temporal.anomaly",
+    "temporal.cube_stats",
+    "temporal.phenology",
     "temporal.raster_ts",
     "temporal.seasonal_decompose",
     "temporal.trend"
@@ -6904,8 +7021,10 @@
    "producer_algorithms": [
     "terrain.breach",
     "terrain.flow",
+    "terrain.flow_topology_validate",
     "terrain.hand",
     "terrain.pfafstetter",
+    "terrain.pfafstetter_multilevel",
     "terrain.shreve",
     "terrain.watershed"
    ],
@@ -7136,16 +7255,16 @@
   }
  ],
  "counts": {
-  "algorithms": 208,
+  "algorithms": 213,
   "artifact_types": 21,
   "capabilities": 139,
   "findings": 0,
   "recipes": 164,
-  "tools": 296
+  "tools": 299
  },
  "findings": [],
  "findings_ratchet": {
-  "behavioral_dispatch": 154,
+  "behavioral_dispatch": 157,
   "expired_waivers": [],
   "min_behavioral_dispatch": 151,
   "pass": true,
@@ -7154,6 +7273,7 @@
   "waivers_active": 0
  },
  "fingerprint": "cd57d22b071bbbdf83619f0b322fd0629c3bc173d16050e43369fd3d5a9fa898",
+ "fingerprint": "861e20f612830084f6c46a885f9f1b4489b62a03d4bd4541b00e6e7506919b50",
  "gate": {
   "fields": {
    "capabilities": {
@@ -7193,7 +7313,7 @@
    }
   },
   "pass": true,
-  "total": 296
+  "total": 299
  },
  "manifest_version": 2,
  "recipes": {
@@ -7865,6 +7985,7 @@
     "表面"
    ],
    "tests": [
+    "tests/unit/lib/test_backend_dispatch_v5.py",
     "tests/unit/lib/test_cokriging_lmc_v4.py"
    ],
    "tier": 2
@@ -11901,6 +12022,34 @@
    "tier": 2
   },
   {
+   "behavior": "dispatch",
+   "capabilities": [
+    "temporal_trend"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "slow",
+   "memory_class": "heavy",
+   "name": "phenology_features",
+   "requires_confirmation": false,
+   "scale_class": "medium",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "物候",
+    "phenology",
+    "SOS",
+    "EOS",
+    "时序",
+    "science-v5"
+   ],
+   "tests": [
+    "tests/unit/lib/test_phenology_v5.py",
+    "tests/unit/lib/test_science_temporal_tools.py"
+   ],
+   "tier": 2
+  },
+  {
    "behavior": "mention",
    "capabilities": [
     "data_source_pipeline"
@@ -14386,6 +14535,7 @@
     "时序"
    ],
    "tests": [
+    "tests/unit/lib/test_backend_dispatch_v5.py",
     "tests/unit/lib/test_kriging_st_v4.py"
    ],
    "tier": 2
@@ -14556,6 +14706,33 @@
    "tier": 2
   },
   {
+   "behavior": "dispatch",
+   "capabilities": [
+    "temporal_trend"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "medium",
+   "memory_class": "heavy",
+   "name": "temporal_anomaly",
+   "requires_confirmation": false,
+   "scale_class": "medium",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "异常检测",
+    "变化检测",
+    "z-score",
+    "anomaly",
+    "science-v5"
+   ],
+   "tests": [
+    "tests/unit/lib/test_phenology_v5.py",
+    "tests/unit/lib/test_science_temporal_tools.py"
+   ],
+   "tier": 2
+  },
+  {
    "behavior": "mention",
    "capabilities": [
     "change_detection"
@@ -14607,6 +14784,33 @@
    ],
    "tests": [
     "tests/unit/tools/test_behavioral_spatial_stats.py"
+   ],
+   "tier": 2
+  },
+  {
+   "behavior": "dispatch",
+   "capabilities": [
+    "temporal_trend"
+   ],
+   "deterministic": true,
+   "execution_policy": "thread",
+   "latency_class": "medium",
+   "memory_class": "heavy",
+   "name": "temporal_cube_stats",
+   "requires_confirmation": false,
+   "scale_class": "medium",
+   "side_effect": "deterministic_compute",
+   "status": "stable",
+   "tags": [
+    "时序",
+    "立方体",
+    "物候",
+    "climate",
+    "cube",
+    "science-v5"
+   ],
+   "tests": [
+    "tests/unit/lib/test_science_temporal_tools.py"
    ],
    "tier": 2
   },

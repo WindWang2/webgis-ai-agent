@@ -58,6 +58,8 @@ _TOOL_MODULES = [
     ("app.tools.flow_tools", "register_flow_tools"),
     ("app.tools.dasymetric_tools", "register_dasymetric_tools"),
     ("app.tools.geocompute_tools", "register_geocompute_tools"),
+    # science-v5 W8：物候/时空立方体/时间异常工具面（独立模块防并发冲突）
+    ("app.tools.science_temporal_tools", "register_science_temporal_tools"),
 ]
 
 

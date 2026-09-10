@@ -66,6 +66,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.subagent": "debug_internal",
     "app.tools.templates": "rendering",                 # 模板/主题组合
     "app.tools.temporal_tools": "analysis",
+    "app.tools.science_temporal_tools": "analysis",  # science-v5 物候/立方体/异常
     "app.tools.terrain_analysis": "analysis",
     "app.tools.upload_tools": "inspection",
     "app.tools.workspace_tools": "data_access",         # workspace 持久化 save/restore

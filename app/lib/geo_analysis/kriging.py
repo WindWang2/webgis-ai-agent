@@ -126,6 +126,10 @@ from app.lib.gis.scientific_errors import (
     ScientificPreconditionFailed,
 )
 
+# science-v5 W1：折分配唯一事实源在 cv.py（本模块 re-import；cv 不反向
+# 依赖 kriging，无循环）。
+from app.lib.geo_analysis.cv import spatial_block_folds
+
 logger = logging.getLogger(__name__)
 
 VariogramModelNames = ("spherical", "exponential", "gaussian")
@@ -488,6 +492,48 @@ def _fit_model(
             rss=float(np.sum(resid ** 2)), n_pairs=int(weights.sum()),
             n_lags=len(lags),
         )
+    except Exception:
+        pass
+
+    # science-v5 W2：确定性 multi-start polish —— 仅在主起点失败后运行
+    # （主路径成功时逐位不变，oracle 锚定）。备选起点从经验 gamma 幅度与
+    # span 的固定比例导出（无 RNG）——覆盖主 p0 落入平坦区的难收敛 case；
+    # 取加权 RSS 最小者。仍全部失败 → 有界网格全局回退（既有，确定性）。
+    try:
+        from scipy.optimize import curve_fit
+
+        gamma_span = float(np.max(gamma) - np.min(gamma))
+        alt_starts = (
+            [max(var_floor, 1e-9), max(span / 6.0, lo[1]), 0.0],
+            [max(0.5 * var_floor, 1e-9), max(span / 3.0, lo[1]),
+             max(0.1 * var_floor, 0.0)],
+            [max(var_floor, 1e-9), max(span / 1.5, lo[1]), 0.0],
+            [max(1.5 * var_floor, 1e-9), max(gamma_span * span /
+             max(float(np.sum(weights)), 1.0), lo[1]), 0.0],
+        )
+        best_alt: Optional[VariogramFit] = None
+        for p0 in alt_starts:
+            if not (lo[0] <= p0[0] <= hi[0] and lo[1] <= p0[1] <= hi[1]
+                    and lo[2] <= p0[2] <= hi[2]):
+                continue
+            try:
+                popt, _ = curve_fit(
+                    f, lags, gamma, p0=p0, bounds=(lo, hi), sigma=sigma,
+                    maxfev=4000,
+                )
+                resid = (f(lags, *popt) - gamma) / sigma
+                cand = VariogramFit(
+                    model=model, sill=float(popt[0]), range_m=float(popt[1]),
+                    nugget=float(popt[2]), nu=float(nu),
+                    rss=float(np.sum(resid ** 2)),
+                    n_pairs=int(weights.sum()), n_lags=len(lags),
+                )
+                if best_alt is None or cand.rss < best_alt.rss:
+                    best_alt = cand
+            except Exception:
+                continue
+        if best_alt is not None:
+            return best_alt
     except Exception:
         pass
 
@@ -1095,24 +1141,9 @@ class CrossValidationReport:
         return out
 
 
-def _spatial_block_folds(xy: np.ndarray, folds: int) -> tuple[np.ndarray, np.ndarray]:
-    """Deterministic grid-stratified fold assignment (NO RNG).
-
-    Samples are ranked by x and by y (dense ranks via double argsort —
-    stable under input reordering), snapped to a ⌈√folds⌉ × ⌈√folds⌉ block
-    grid, and each block maps to fold ``block_id % folds``. Clustered
-    samples therefore share one fold and are validated against spatially
-    distant blocks — the honest error of an extrapolative design.
-    Returns ``(fold_id, block_id)``.
-    """
-    n = len(xy)
-    n_grid = max(1, int(math.ceil(math.sqrt(folds))))
-    rx = np.argsort(np.argsort(xy[:, 0], kind="stable"), kind="stable")
-    ry = np.argsort(np.argsort(xy[:, 1], kind="stable"), kind="stable")
-    gx = (rx * n_grid) // max(n, 1)
-    gy = (ry * n_grid) // max(n, 1)
-    block = gy * n_grid + gx
-    return block % folds, block
+# science-v5 W1：折分配唯一事实源在 cv.py；本别名 = 同一对象（非包装、
+# 非复制），V2 兼容（cross_validate_kriging 与既有测试的调用点不变）。
+_spatial_block_folds = spatial_block_folds
 
 
 def cross_validate_kriging(
@@ -1605,6 +1636,10 @@ def select_variogram_model(
     失败回退有界网格搜索）。返回 ``(ranking, meta)``；``ranking`` 按
     weighted_rss 升序（平局按模型名，确定性）排序，条目为
     ``{model, params, weighted_rss, aicc, fitted_manually, n_pairs}``。
+
+    science-v5 W2（additive）：条目增 ``diagnostics`` 合理性旗标
+    （range_at_bound / sill_at_bound / nugget_dominated——不稳定拟合
+    显式化），meta 增 ``best_model_flags`` 摘要。
     """
     if models is None:
         models = list(ALL_VARIOGRAM_MODELS)
@@ -1657,6 +1692,13 @@ def select_variogram_model(
             "aicc": float(aicc),
             "fitted_manually": bool(fit.fitted_manually),
             "n_pairs": int(fit.n_pairs),
+            # science-v5 W2：逐模型合理性诊断（additive；不稳定拟合的
+            # 显式旗标——避免把边界撞线/块金主导的拟合当"最优"静默消费）
+            "diagnostics": {
+                "range_at_bound": bool(fit.range_m >= 2.0 * span * 0.999),
+                "sill_at_bound": bool(fit.sill >= 4.0 * var_values * 0.999),
+                "nugget_dominated": bool(fit.sill > 0 and fit.nugget >= fit.sill),
+            },
         })
     if not ranking:
         raise KrigingInputError(
@@ -1677,6 +1719,10 @@ def select_variogram_model(
             "AICc 自由度 k=3（sill/range/nugget）；matern k=4（固定平滑度 ν 计入）——已披露"
         ),
         "failed_models": failures,
+        # science-v5 W2：全局诊断摘要——最优模型带旗标时显式警示
+        "best_model_flags": [
+            k for k, v in ranking[0]["diagnostics"].items() if v
+        ],
     }
     return ranking, meta
 

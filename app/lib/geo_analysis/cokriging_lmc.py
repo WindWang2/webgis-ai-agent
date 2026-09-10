@@ -315,23 +315,48 @@ def cokriging_lmc(
 
         z1_nb = z1[i1[start:end]]
         z2_nb = z2[i2[start:end]]
+
+        # science-v5 W3：批量求解（numpy 对堆叠矩阵逐片调同一 LAPACK 例程
+        # ——well-conditioned 行与逐行解同环境逐位一致，differential oracle
+        # 钉死）。隔离条件 = LinAlgError ∨ 非有限：整批恰奇异时 numpy 对
+        # 全栈 raise（不指认行）→ 逐行重解隔离；近奇异片可能静默解出
+        # 非有限值 → 逐行回退（V4 同语义，不静默吞）。
+        try:
+            # numpy ≥2.x 对堆叠矩阵 + 向量右端项不再自动按向量情形广播
+            # ——显式 (c, m, 1) 形状，解后去列轴（逐片仍是同一 LAPACK 例程）。
+            sol_all: Optional[np.ndarray] = np.linalg.solve(
+                C, rhs[:, :, None])[:, :, 0]
+        except np.linalg.LinAlgError:
+            sol_all = None
+        # 有限性掩膜一次向量化（R2-#5）；逐行 matmul 保留——与 reference
+        # 的逐位 differential 锚依赖同一 BLAS 求和次序
+        ok_mask = (np.isfinite(sol_all).all(axis=1)
+                   if sol_all is not None else None)
         for r_i in range(c):
-            try:
-                sol = np.linalg.solve(C[r_i], rhs[r_i])
-                if not np.isfinite(sol).all():
-                    raise np.linalg.LinAlgError("non-finite")
-                w1 = sol[:k1]
-                w2 = sol[k1:k1 + k2]
-                preds[start + r_i] = float(w1 @ z1_nb[r_i] + w2 @ z2_nb[r_i])
-                var = C00 - float(sol[:k1 + k2] @ rhs[r_i, :k1 + k2]) \
-                    - float(sol[m - 2])
-                varis[start + r_i] = max(var, 0.0)
-                if var < 0:
-                    degraded += 1
-            except np.linalg.LinAlgError:
+            sol: Optional[np.ndarray] = None
+            if ok_mask is not None and ok_mask[r_i]:
+                sol = sol_all[r_i]
+            else:
+                try:
+                    cand = np.linalg.solve(C[r_i], rhs[r_i])
+                    if not np.isfinite(cand).all():
+                        raise np.linalg.LinAlgError("non-finite")
+                    sol = cand
+                except np.linalg.LinAlgError:
+                    sol = None
+            if sol is None:
                 # 病态系统：主变量邻域均值回退（counted，从不静默）
                 preds[start + r_i] = float(np.mean(z1_nb[r_i]))
                 varis[start + r_i] = float(np.var(z1_nb[r_i]))
+                degraded += 1
+                continue
+            w1 = sol[:k1]
+            w2 = sol[k1:k1 + k2]
+            preds[start + r_i] = float(w1 @ z1_nb[r_i] + w2 @ z2_nb[r_i])
+            var = C00 - float(sol[:k1 + k2] @ rhs[r_i, :k1 + k2]) \
+                - float(sol[m - 2])
+            varis[start + r_i] = max(var, 0.0)
+            if var < 0:
                 degraded += 1
 
     return CokrigingResult(
@@ -461,6 +486,29 @@ def cokriging_lmc_surface(
     ]
     if result.disclosures:
         metadata["disclosures"] = list(result.disclosures)
+    # science-v5 W6/W7：uncertainty artifact + 执行方式规划（纯函数证据）
+    from app.lib.geo_analysis.uncertainty import (
+        data_quality_summary,
+        from_variance as _artifact_from_variance,
+    )
+
+    artifact = _artifact_from_variance(
+        "cokriging_variance", result.predictions, result.variances,
+        provenance={"lmc": result.lmc.params(),
+                    "neighbors": metadata["neighbors"]},
+        data_quality=data_quality_summary(
+            n_samples=int(len(values)), n_targets=len(target_cells),
+            value_field=primary_field, working_crs=working_crs),
+        disclosures=list(result.disclosures),
+    )
+    metadata["uncertainty"] = artifact.to_dict()
+    metadata["renderer"] = artifact.to_renderer_metadata()
+    from app.lib.gis.backend_selection import ScaleProfile, plan_execution
+
+    metadata["execution_plan"] = plan_execution(
+        "interpolation.cokriging_lmc",
+        ScaleProfile(raster_cells=len(target_cells),
+                     feature_count=int(len(values)))).to_dict()
     records = [
         {
             "h3_index": cell,

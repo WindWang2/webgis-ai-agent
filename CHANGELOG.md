@@ -1,5 +1,48 @@
 # Changelog
 
+## [Unreleased] - 2026-09-09 (science-v5)
+
+### Added (science-v5: Scalable Scientific Computing + Uncertainty + Spatiotemporal GeoAI)
+- Cross-validation framework (`app/lib/geo_analysis/cv.py`): method-agnostic
+  orchestration with deterministic splitters (index / spatial-block lifted
+  from kriging as a shared helper / temporal forward-chaining with strict
+  no-future-leakage evidence), z-score calibration, duplicate-coordinate
+  disclosure, honest insufficient-sample decline.
+- Variogram v5: deterministic multi-start polish on the fit failure path
+  (primary path bitwise unchanged) and per-model sanity diagnostics
+  (range/sill-at-bound, nugget-dominated) in `select_variogram_model`.
+- Batched solvers: LMC full co-kriging and spatiotemporal kriging switch
+  from per-target solves to stacked batched systems (bitwise-equal to the
+  per-row reference; isolation on LinAlgError OR non-finite); new SGS
+  `numpy_batched` backend (group-shared paths, chunk-stacked solves,
+  solve count scales with groups not realizations) alongside the bitwise
+  reference backend; dynamic target ceiling = ensemble budget / R.
+- Sequential-regime SGS fixes (owned P1s): simulated-neighbour
+  cross-covariance replaces the inconsistent diagonal approximation
+  (non-PSD systems made variances explode beyond 1 chunk), and the
+  conditioning tree position indices are mapped through the path before
+  reading simulated values.
+- `UncertaintyArtifact` contract: mandatory closed-vocabulary estimator,
+  model-uncertainty vs data-quality separation, honest std absence for
+  R<2 ensembles, bounded summaries + renderer metadata wired into
+  sgs / cokriging / st-kriging surface metadata.
+- Backend dispatch v5: `plan_execution` pure projection (closed
+  native/vectorized/chunked vocabulary — distributed deliberately absent),
+  `numpy_batched` variants declared in cell-space windows for
+  sgs / cokriging_lmc / st_kriging, driver wiring with execution-plan
+  evidence.
+- Temporal science: `TemporalCube` SAR/optical adapter (honest gap and
+  missing-slice disclosure), phenology engine (bounded gap fill +
+  Savitzky-Golay + double-harmonic LS + threshold SOS/EOS/LOS/peak, index
+  semantics disclosed), temporal anomaly/change (climatology z-score +
+  Welch-approx two-period effect size); new `science_temporal_tools`
+  surface with `science_temporal_analysis` parameter contract.
+- Hydrology v5: multi-level Pfafstetter coding (inter-basin recursion,
+  parent*10+digit, level-1 bitwise equal to the single-level function)
+  and D8 flow-topology validation (bounded coloring cycle check, dangling
+  receivers, strict accumulation monotonicity with equal-acc plateaus
+  counted apart); exposed via `hydrology_v4_analysis` (contract v2).
+
 ## [Unreleased] - 2026-09-09
 
 ### Added (harness-v6: Contextual Cartographic Harness V6)
