@@ -519,6 +519,9 @@ class TestSplitExecutionParity:
                     self._result = []
                 elif "pg_indexes" in sql_l:
                     self._result = None
+                elif "reltuples" in sql_l:
+                    self.description = [("reltuples",)]
+                    self._result = (2,)
                 elif "count(*)" in sql_l:
                     self._result = (2,)
                 elif "estimatedextent" in sql_l:
@@ -579,9 +582,10 @@ class TestSplitExecutionParity:
         assert "LIKE" not in main_sqls[0].upper(), "守卫路径 WHERE 绝不编译声明本地的 op"
         # 本地余项求值：只保留匹配行。
         assert [f["properties"]["name"] for f in res.features] == ["alpha"]
-        # m1：count 只在 meta 装载时出现过一次（feature_count），分页 count
-        # 被跳过（下推半为空 WHERE，其命中数不诚实）。
-        assert sum("count(*)" in sql.lower() for sql, _ in executed) == 1
+        # m1：SEC-05 元数据估计改走 reltuples，分页 count 因本地余项被跳过
+        # （下推半为空 WHERE，其命中数不诚实），因此无 count(*) 执行。
+        assert not any("count(*)" in sql.lower() for sql, _ in executed)
+        assert sum("reltuples" in sql.lower() for sql, _ in executed) == 1
         assert res.total_matching is None
         assert res.metadata["query_plan"]["filter_split"]["pushed"] is None
 

@@ -253,6 +253,18 @@ class MemorySessionStore(BaseSessionStore):
         # Session last-touch order for cleanup_idle_sessions (not first-insert).
         self._session_order: OrderedDict[str, None] = OrderedDict()
 
+    @staticmethod
+    def _touch_cache_item(session_cache: Any, ref_id: str) -> None:
+        """Update LRU recency for an item in session_cache.
+
+        Prefers OrderedDict.move_to_end() for O(1) in-place reordering.
+        Falls back to pop/reinsert for standard dict instances.
+        """
+        if hasattr(session_cache, "move_to_end"):
+            session_cache.move_to_end(ref_id)
+        elif ref_id in session_cache:
+            session_cache[ref_id] = session_cache.pop(ref_id)
+
     @property
     def _lock(self) -> asyncio.Lock:
         try:
@@ -403,7 +415,7 @@ class MemorySessionStore(BaseSessionStore):
                 # Same object re-persisted (plan_mode persists step_results after
                 # every wave) — nothing changed, skip the O(features) size
                 # estimate + descriptor recompute (G-2 hot-path guard).
-                session_cache.move_to_end(ref_id)
+                self._touch_cache_item(session_cache, ref_id)
                 self._touch_session(session_id)
                 return True
             session_cache[ref_id] = data
@@ -441,7 +453,7 @@ class MemorySessionStore(BaseSessionStore):
                 logger.warning(f"V3: Failed to recompute descriptor for {ref_id} on overwrite: {e}")
             # overwrite is the durability path for plans/checkpoints — bump LRU
             # recency so a just-updated plan is not the next eviction victim.
-            session_cache.move_to_end(ref_id)
+            self._touch_cache_item(session_cache, ref_id)
             self._touch_session(session_id)
             return True
 
@@ -506,7 +518,7 @@ class MemorySessionStore(BaseSessionStore):
             if data is None:
                 return None
             # LRU touch（与 get() 一致；dict 本体共享，move_to_end 保热度）
-            session_cache.move_to_end(ref_id)
+            self._touch_cache_item(session_cache, ref_id)
             self._touch_session(session_id)
             return data
 
@@ -533,7 +545,7 @@ class MemorySessionStore(BaseSessionStore):
                 return None
             
             # 移动到末尾 (LRU)
-            session_cache.move_to_end(ref_id)
+            self._touch_cache_item(session_cache, ref_id)
             self._touch_session(session_id)
             data = session_cache[ref_id]
 
@@ -799,7 +811,7 @@ class MemorySessionStore(BaseSessionStore):
         session_cache = self._store.get(session_id)
         if not session_cache or ref_id not in session_cache:
             return False
-        session_cache.move_to_end(ref_id)
+        self._touch_cache_item(session_cache, ref_id)
         self._touch_session(session_id)
         return True
 
