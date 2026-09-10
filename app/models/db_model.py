@@ -677,6 +677,34 @@ class WorkflowInstanceNodeRow(Base):
     )
 
 
+class WorkflowWorkerRow(Base):
+    """Workflow V6 worker/driver 注册表（能力 + 负载 + 心跳活性）。
+
+    workflow 调度域自有事实（与 geocompute cluster worker 表互不重复）：
+    任何执行 workflow 节点的进程（API 内 driver / 独立 worker）在这里
+    声明能力（CPU/内存/GPU/profile 槽位/IO）并维持心跳；调度面据此做
+    准入与 local/durable 派发决策。心跳过期 → stale（worker 死亡；
+    其在飞节点由节点租约独立接管 —— 两级真相解耦）。
+    """
+    __tablename__ = "workflow_workers"
+
+    worker_id = Column(String(64), primary_key=True)
+    role = Column(String(16), nullable=False, default="worker")
+    status = Column(String(16), nullable=False, default="active")
+    capabilities = Column(JSON, nullable=False, default=dict)
+    load = Column(JSON, nullable=False, default=dict)
+    runtime = Column(String(24), nullable=False, default="inprocess")
+    locality = Column(JSON, nullable=False, default=dict)
+    last_heartbeat_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("role IN ('driver','worker')", name="ck_wf_worker_role"),
+        CheckConstraint("status IN ('active','stale','retired')", name="ck_wf_worker_status"),
+        Index("idx_wf_worker_status_hb", "status", "last_heartbeat_at"),
+    )
+
+
 class WorkflowEventRow(Base):
     """Workflow V6 事件日志（append-only journal；replay/inspect/recovery 真相）。
 
@@ -735,4 +763,4 @@ class WorkflowNodeReuseRow(Base):
     )
 
 
-__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeRunEvent", "GeoComputeWorkerCache", "GeoComputeResourceUsage", "WorkflowEventRow", "get_init_sql"]
+__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeRunEvent", "GeoComputeWorkerCache", "GeoComputeResourceUsage", "WorkflowEventRow", "WorkflowWorkerRow", "get_init_sql"]

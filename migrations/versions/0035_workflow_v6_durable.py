@@ -10,7 +10,10 @@ Epic workflow-v6（durable distributed runtime）Phase B —— additive DDL，
 1. ``workflow_events`` — append-only 事件日志（与状态转移同事务写入；
    replay/inspect/recovery 的完整历史真相。节点行内嵌 ``transitions`` 环
    只是调度热路径快照，两者互补不重复）。
-2. ``workflow_instance_nodes`` 新列（Workflow V6 两级租约与严格取消/重试）：
+2. ``workflow_workers`` — worker/driver 能力注册表（CPU/内存/GPU/
+   profile 槽位/IO/后端 + 心跳活性；workflow 调度域自有事实，与
+   geocompute cluster worker 表互不重复）。
+3. ``workflow_instance_nodes`` 新列（Workflow V6 两级租约与严格取消/重试）：
    - ``lease_expires_at`` / ``heartbeat_at`` — 节点级租约（执行者 claim 时
      写入；worker 死亡 → 租约过期 → 孤儿接管。与 run 级租约独立：coordinator
      存活 ≠ worker 存活）；
@@ -35,6 +38,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 _NODE_TABLE = "workflow_instance_nodes"
 _EVENT_TABLE = "workflow_events"
+_WORKER_TABLE = "workflow_workers"
+
+_WORKER_CHECKS = (
+    ("ck_wf_worker_role", "role IN ('driver','worker')"),
+    ("ck_wf_worker_status", "status IN ('active','stale','retired')"),
+)
+_WORKER_INDEXES = {
+    "idx_wf_worker_status_hb": ["status", "last_heartbeat_at"],
+}
 
 _NODE_NEW_COLUMNS = (
     ("lease_expires_at", sa.DateTime(), True, None),
@@ -69,7 +81,39 @@ def _column_exists(table: str, column: str) -> bool:
     }
 
 
+def _create_table(table: str, *columns, checks=(), indexes=None) -> None:
+    """建表（CHECK 内联 —— SQLite 不可 ALTER 约束；0034 同款守卫）。"""
+    if _table_exists(table):
+        return
+    args = list(columns) + [
+        sa.CheckConstraint(expr, name=name) for name, expr in checks
+    ]
+    op.create_table(table, *args)
+    for name, cols in (indexes or {}).items():
+        if not _index_exists(table, name):
+            op.create_index(name, table, cols)
+
+
 def upgrade() -> None:
+    # 0) worker 注册表（additive）
+    _create_table(
+        _WORKER_TABLE,
+        sa.Column("worker_id", sa.String(length=64), primary_key=True),
+        sa.Column("role", sa.String(length=16), nullable=False,
+                  server_default="worker"),
+        sa.Column("status", sa.String(length=16), nullable=False,
+                  server_default="active"),
+        sa.Column("capabilities", sa.JSON(), nullable=False),
+        sa.Column("load", sa.JSON(), nullable=False),
+        sa.Column("runtime", sa.String(length=24), nullable=False,
+                  server_default="inprocess"),
+        sa.Column("locality", sa.JSON(), nullable=False),
+        sa.Column("last_heartbeat_at", sa.DateTime(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        checks=_WORKER_CHECKS,
+        indexes=_WORKER_INDEXES,
+    )
+
     # 1) journal 表（additive）
     if not _table_exists(_EVENT_TABLE):
         op.create_table(
@@ -111,6 +155,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if _table_exists(_WORKER_TABLE):
+        op.drop_table(_WORKER_TABLE)
     for name in _NODE_INDEXES:
         if _index_exists(_NODE_TABLE, name):
             op.drop_index(name, table_name=_NODE_TABLE)

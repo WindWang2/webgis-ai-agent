@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -88,6 +89,7 @@ class Driver:
         node_lease_ttl_s: float = DEFAULT_NODE_LEASE_TTL_S,
         retry_policy: Optional[RT.RetryPolicy] = None,
         node_timeout_s: Optional[float] = None,
+        dispatcher: Optional[Any] = None,
     ):
         self.store = store
         self.reuse_index = reuse_index
@@ -107,6 +109,9 @@ class Driver:
         self.retry_policy = retry_policy or RT.default_policy()
         self.node_timeout_s = (
             float(node_timeout_s) if node_timeout_s else None)
+        #: V6 派发面（None = 进程内路径不变；service 按 env 装配
+        #: Local/DurableDispatcher）。
+        self.dispatcher = dispatcher
 
     # ── 主循环 ────────────────────────────────────────────────────────
 
@@ -238,24 +243,49 @@ class Driver:
                     await asyncio.sleep(0.05)
                     continue
                 break  # 无 ready 无 running 无退避等待 → 终态
-            batch = ready[: self.max_concurrency]
-            results = await asyncio.gather(*(
-                self._run_node(instance_id, dag, nid, states, node_params,
-                               session_id, run_token, cancel_token)
+            batch = sorted(
+                ready,
+                key=lambda nid: -_node_priority(_dag_node(dag, nid)),
+            )[: self.max_concurrency]
+            # V6 硬截止：deadline 到点停止**等待**在飞节点（V5 在 gather
+            # 上无界等待 —— 卡死节点会拖穿 deadline）。被放弃的节点保持
+            # RUNNING 认领态，由租约/恢复面收尾：本地在后台收尾、远端
+            # worker 由孤儿复位接管 —— 绝不永久 zombie。
+            tasks = [
+                asyncio.create_task(
+                    self._run_node(instance_id, dag, nid, states,
+                                   node_params, session_id, run_token,
+                                   cancel_token))
                 for nid in batch
-            ), return_exceptions=True)
-            for nid, res in zip(batch, results):
-                if isinstance(res, Exception):
+            ]
+            done, pending = await asyncio.wait(
+                tasks, timeout=max(0.05, deadline - time.monotonic()))
+            for t in done:
+                exc = t.exception()
+                if exc is not None and not isinstance(exc,
+                                                      asyncio.CancelledError):
+                    nid = batch[tasks.index(t)]
                     logger.warning("[WorkflowRuntime] node %s raised: %s",
-                                   nid, res)
+                                   nid, exc)
                     # 未预期异常 = NODE_EXCEPTION（可重试类）—— 走同一
                     # 补偿/重试裁决路径，绝不旁路。
                     await self._fail_or_cancel(
                         instance_id, nid, session_id, run_token,
                         GeoComputeNodeOutcome(
                             ok=False, error_code="NODE_EXCEPTION",
-                            error_message=str(res)[:200],
+                            error_message=str(exc)[:200],
                             failure_class="transient_db"))
+            if pending:
+                # deadline 已到：点燃 cancel token（协作停止），放弃等待
+                if cancel_token is not None:
+                    with contextlib.suppress(Exception):
+                        cancel_token.cancel()
+                for t in pending:
+                    t.cancel()
+                logger.info(
+                    "[WorkflowRuntime] run deadline hit with %d in-flight "
+                    "node(s) instance=%s", len(pending), instance_id)
+                break
             # 租约续期（波次边界）：run 租约 + 在飞节点租约（V6 两级续期）
             await asyncio.to_thread(
                 self.store.acquire_run_lease, instance_id,
@@ -404,6 +434,42 @@ class Driver:
         await asyncio.to_thread(
             store.acquire_run_lease, instance_id,
             owner_scope=self.owner_scope, token=run_token)
+        # V6 执行期租约续期（真实竞态修复）：单次执行可能超过节点租约
+        # TTL —— 在飞期间独立续约任务（ttl/3 周期），终态即停。否则长
+        # 执行会被恢复面误判孤儿 → 双重执行。
+        renewal = asyncio.create_task(self._renew_node_lease(
+            instance_id, node_id, run_token))
+        try:
+            await self._run_node_claimed(
+                instance_id, dag, node, node_id, states, node_params,
+                session_id, run_token, cancel_token, input_refs, port_idents)
+        finally:
+            renewal.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await renewal
+
+    async def _renew_node_lease(
+        self, instance_id: str, node_id: str, run_token: str,
+    ) -> None:
+        """在飞节点租约续期（ttl/3 周期；持有人失配即停 —— 被接管）。"""
+        period = max(0.05, self.node_lease_ttl_s / 3.0)
+        while True:
+            await asyncio.sleep(period)
+            ok = await asyncio.to_thread(
+                self.store.heartbeat_node, instance_id, node_id,
+                token=run_token, ttl_s=self.node_lease_ttl_s)
+            if not ok:
+                return
+
+    async def _run_node_claimed(
+        self, instance_id: str, dag: Dict[str, Any], node: Dict[str, Any],
+        node_id: str, states: Dict[str, str],
+        node_params: Dict[str, Dict[str, Any]], session_id: str,
+        run_token: str, cancel_token: Any, input_refs: List[str],
+        port_idents: Dict[str, Dict[str, str]],
+    ) -> None:
+        """认领后的执行体（租约续期包裹中运行；所有终态路径经此收口）。"""
+        store = self.store
 
         # 绑定态节点：data_input/output 的「执行」= 绑定传递（产物已存在）。
         kind = str(node.get("kind") or "")
@@ -502,6 +568,14 @@ class Driver:
                     node, input_refs, params,
                     {"session_id": session_id, "caller": self.caller,
                      "cancel_token": cancel_token})
+        elif self.dispatcher is not None:
+            # V6 派发面（local/durable 由 env 决策；durable 复用 geocompute
+            # durable 通道的幂等键/心跳/WORKER_LOSS 既有真相）
+            async def _invoke() -> GeoComputeNodeOutcome:
+                return await self.dispatcher.execute(
+                    node=node, dag=dag, input_refs=input_refs,
+                    params=params, session_id=session_id,
+                    port_idents=port_idents, cancel_token=cancel_token)
         else:
 
             async def _invoke() -> GeoComputeNodeOutcome:
@@ -981,6 +1055,15 @@ def _plan_version() -> int:
 def _dag_node(dag: Dict[str, Any], node_id: str) -> Optional[Dict[str, Any]]:
     return next((n for n in dag.get("nodes") or []
                  if n.get("node_id") == node_id), None)
+
+
+def _node_priority(node: Optional[Dict[str, Any]]) -> int:
+    """节点派发优先级（有界词表；高先派；同优先级保持声明序 = FIFO 公平）。"""
+    try:
+        raw = int((node or {}).get("priority", 5))
+    except (TypeError, ValueError):
+        return 5
+    return raw if -10 <= raw <= 10 else 5
 
 
 def _verify_node(node: Dict[str, Any],

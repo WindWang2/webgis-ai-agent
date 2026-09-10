@@ -210,6 +210,7 @@ class WorkflowRuntimeService:
                 raise InstanceBusy(instance_id, "concurrent rerun")
         dag = await self._instance_dag(inst)
         from app.services.workflow_runtime.driver import Driver
+        from app.services.workflow_runtime.dispatch import build_dispatcher
         from app.services.workflow_runtime.subworkflow import (
             SubworkflowExecutor,
         )
@@ -220,7 +221,9 @@ class WorkflowRuntimeService:
             subworkflow_executor=SubworkflowExecutor(
                 self, owner_scope=owner_scope, caller=caller,
                 deadline_s=deadline_s),
-            node_timeout_s=node_timeout_s, retry_policy=retry_policy)
+            node_timeout_s=node_timeout_s, retry_policy=retry_policy,
+            dispatcher=build_dispatcher(owner_scope=owner_scope,
+                                        caller=caller))
         run_token = new_run_token()
         effective = node_params if node_params is not None \
             else await self._node_params(inst, dag)

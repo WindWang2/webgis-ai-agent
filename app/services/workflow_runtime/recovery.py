@@ -63,7 +63,7 @@ def sweep_recoverable(
     store = store or InstanceStore()
     report: Dict[str, Any] = {
         "scanned": 0, "cancelled": 0, "orphan_reset": 0,
-        "finalized": 0, "errors": 0,
+        "finalized": 0, "errors": 0, "workers_stale": [],
     }
     try:
         instances = store.list_recoverable_instances(
@@ -73,6 +73,14 @@ def sweep_recoverable(
                        exc_info=True)
         report["errors"] += 1
         return report
+    # worker 活性清扫（V6）：心跳过期 active → stale；其在飞节点由节点
+    # 租约独立接管（两级真相解耦），这里只管注册表词表卫生。
+    try:
+        from app.services.workflow_runtime.cluster import WorkerRegistry
+
+        report["workers_stale"] = WorkerRegistry(store._factory).sweep_dead()
+    except Exception:  # noqa: BLE001 — 注册表故障不阻断实例恢复
+        report["workers_stale"] = []
     for inst in instances:
         report["scanned"] += 1
         instance_id = inst["instance_id"]
