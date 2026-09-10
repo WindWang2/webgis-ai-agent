@@ -49,4 +49,40 @@ describe("SVG Marginalia Vector Renderer", () => {
     expect(svg).toContain("10 km");
     expect(svg).toContain(">N<");
   });
+
+  it("escapes malicious SVG text and attribute injection payloads (FRONT-01)", () => {
+    const xssPayload = `</text><script>alert("xss")</script><text>`;
+    const attrPayload = `red" onload="alert(1)`;
+
+    const scalebarSvg = renderSvgScalebar({
+      labelText: xssPayload,
+      color: attrPayload,
+    });
+    expect(scalebarSvg).not.toContain("<script>");
+    expect(scalebarSvg).toContain("&lt;/text&gt;&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;&lt;text&gt;");
+    expect(scalebarSvg).toContain(`stroke="red&quot; onload=&quot;alert(1)"`);
+
+    const legendSvg = renderSvgLegend({
+      title: xssPayload,
+      items: [
+        { label: `Label <tag> & "quote"`, color: attrPayload, type: "line" },
+      ],
+    });
+    expect(legendSvg).not.toContain("<script>");
+    expect(legendSvg).not.toContain("<tag>");
+    expect(legendSvg).toContain("&lt;tag&gt;");
+    expect(legendSvg).toContain("&amp;");
+    expect(legendSvg).toContain("&quot;quote&quot;");
+    expect(legendSvg).toContain(`stroke="red&quot; onload=&quot;alert(1)"`);
+
+    const printLayoutSvg = renderSvgPrintLayout({
+      title: xssPayload,
+      subtitle: `<style>body{display:none}</style>`,
+      scaleLabel: `100 < "km"`,
+    });
+    expect(printLayoutSvg).not.toContain("<script>");
+    expect(printLayoutSvg).not.toContain("<style>");
+    expect(printLayoutSvg).toContain("&lt;style&gt;body{display:none}&lt;/style&gt;");
+    expect(printLayoutSvg).toContain("100 &lt; &quot;km&quot;");
+  });
 });

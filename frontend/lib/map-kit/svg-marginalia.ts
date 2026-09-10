@@ -37,7 +37,7 @@ export function renderSvgFrameBorder(options: FrameBorderOptions): string {
   const y = margin;
   const w = Math.max(options.width - margin * 2, 0);
   const h = Math.max(options.height - margin * 2, 0);
-  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${color}" stroke-width="2" rx="4" />`;
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${escapeSvgText(color)}" stroke-width="2" rx="4" />`;
 }
 
 export interface NorthArrowOptions {
@@ -58,10 +58,13 @@ export function renderSvgNorthArrow(options: NorthArrowOptions = {}): string {
   const bottomY = height - 14;
   const midY = height / 2;
 
+  const escColor = escapeSvgText(color);
+  const escBg = escapeSvgText(bg);
+
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
-  <polygon points="${halfW},${topY} ${halfW},${bottomY} 6,${midY}" fill="${color}" />
-  <polygon points="${halfW},${topY} ${halfW},${bottomY} ${width - 6},${midY}" fill="${bg}" stroke="${color}" stroke-width="1" />
-  <text x="${halfW}" y="${height - 2}" font-family="sans-serif" font-size="12" font-weight="bold" fill="${color}" text-anchor="middle">N</text>
+  <polygon points="${halfW},${topY} ${halfW},${bottomY} 6,${midY}" fill="${escColor}" />
+  <polygon points="${halfW},${topY} ${halfW},${bottomY} ${width - 6},${midY}" fill="${escBg}" stroke="${escColor}" stroke-width="1" />
+  <text x="${halfW}" y="${height - 2}" font-family="sans-serif" font-size="12" font-weight="bold" fill="${escColor}" text-anchor="middle">N</text>
 </svg>`;
 }
 
@@ -80,12 +83,16 @@ export function renderSvgScalebar(options: ScalebarOptions = {}): string {
   const height = 28;
   const midX = len / 2;
 
+  const escColor = escapeSvgText(color);
+  const escFont = escapeSvgText(fontFamily);
+  const escLabel = escapeSvgText(label);
+
   return `<svg width="${len + 16}" height="${height}" viewBox="0 0 ${len + 16} ${height}" xmlns="http://www.w3.org/2000/svg">
-  <line x1="8" y1="16" x2="${len + 8}" y2="16" stroke="${color}" stroke-width="2" stroke-linecap="square" />
-  <line x1="8" y1="10" x2="8" y2="16" stroke="${color}" stroke-width="2" />
-  <line x1="${midX + 8}" y1="12" x2="${midX + 8}" y2="16" stroke="${color}" stroke-width="1.5" />
-  <line x1="${len + 8}" y1="10" x2="${len + 8}" y2="16" stroke="${color}" stroke-width="2" />
-  <text x="${midX + 8}" y="8" font-family="${fontFamily}" font-size="10" font-weight="600" fill="${color}" text-anchor="middle">${label}</text>
+  <line x1="8" y1="16" x2="${len + 8}" y2="16" stroke="${escColor}" stroke-width="2" stroke-linecap="square" />
+  <line x1="8" y1="10" x2="8" y2="16" stroke="${escColor}" stroke-width="2" />
+  <line x1="${midX + 8}" y1="12" x2="${midX + 8}" y2="16" stroke="${escColor}" stroke-width="1.5" />
+  <line x1="${len + 8}" y1="10" x2="${len + 8}" y2="16" stroke="${escColor}" stroke-width="2" />
+  <text x="${midX + 8}" y="8" font-family="${escFont}" font-size="10" font-weight="600" fill="${escColor}" text-anchor="middle">${escLabel}</text>
 </svg>`;
 }
 
@@ -115,25 +122,32 @@ export function renderSvgLegend(options: LegendOptions = {}): string {
   const legendWidth = 160;
   const legendHeight = padding * 2 + 18 + items.length * itemHeight;
 
+  const escColor = escapeSvgText(color);
+  const escBg = escapeSvgText(bg);
+  const escFont = escapeSvgText(fontFamily);
+  const escTitle = escapeSvgText(title);
+
   let itemsSvg = "";
   items.forEach((item, idx) => {
     const y = padding + 22 + idx * itemHeight;
+    const escItemColor = escapeSvgText(item.color);
+    const escItemLabel = escapeSvgText(item.label);
     let symbolSvg = "";
     if (item.type === "line") {
-      symbolSvg = `<line x1="${padding}" y1="${y - 4}" x2="${padding + 16}" y2="${y - 4}" stroke="${item.color}" stroke-width="3" />`;
+      symbolSvg = `<line x1="${padding}" y1="${y - 4}" x2="${padding + 16}" y2="${y - 4}" stroke="${escItemColor}" stroke-width="3" />`;
     } else if (item.type === "rect") {
-      symbolSvg = `<rect x="${padding}" y="${y - 10}" width="14" height="10" fill="${item.color}" rx="1" />`;
+      symbolSvg = `<rect x="${padding}" y="${y - 10}" width="14" height="10" fill="${escItemColor}" rx="1" />`;
     } else {
-      symbolSvg = `<circle cx="${padding + 7}" cy="${y - 5}" r="5" fill="${item.color}" />`;
+      symbolSvg = `<circle cx="${padding + 7}" cy="${y - 5}" r="5" fill="${escItemColor}" />`;
     }
 
     itemsSvg += `${symbolSvg}
-    <text x="${padding + 24}" y="${y}" font-family="${fontFamily}" font-size="11" fill="${color}">${item.label}</text>`;
+    <text x="${padding + 24}" y="${y}" font-family="${escFont}" font-size="11" fill="${escColor}">${escItemLabel}</text>`;
   });
 
   return `<svg width="${legendWidth}" height="${legendHeight}" viewBox="0 0 ${legendWidth} ${legendHeight}" xmlns="http://www.w3.org/2000/svg">
-  <rect x="0" y="0" width="${legendWidth}" height="${legendHeight}" fill="${bg}" stroke="#cbd5e1" stroke-width="1" rx="6" />
-  <text x="${padding}" y="${padding + 12}" font-family="${fontFamily}" font-size="12" font-weight="bold" fill="${color}">${title}</text>
+  <rect x="0" y="0" width="${legendWidth}" height="${legendHeight}" fill="${escBg}" stroke="#cbd5e1" stroke-width="1" rx="6" />
+  <text x="${padding}" y="${padding + 12}" font-family="${escFont}" font-size="12" font-weight="bold" fill="${escColor}">${escTitle}</text>
   ${itemsSvg}
 </svg>`;
 }
@@ -166,6 +180,13 @@ export function renderSvgPrintLayout(options: PrintLayoutOptions = {}): string {
   const fontFamily = isEngineering ? "monospace" : "sans-serif";
   const margin = isEngineering ? 20 : 28;
 
+  const escColor = escapeSvgText(color);
+  const escBorderColor = escapeSvgText(borderColor);
+  const escFont = escapeSvgText(fontFamily);
+  const escTitle = escapeSvgText(title);
+  const escSubtitle = escapeSvgText(subtitle);
+  const escLayoutId = escapeSvgText(layoutId);
+
   const northArrowSvg = renderSvgNorthArrow({ width: 44, height: 44, color: borderColor });
   const scalebarSvg = renderSvgScalebar({ lengthPx: 120, labelText: scaleLabel, color, fontFamily });
   const legendSvg = renderSvgLegend({
@@ -180,22 +201,22 @@ export function renderSvgPrintLayout(options: PrintLayoutOptions = {}): string {
   });
 
   const borderExtra = !isDarkReport && !isEngineering
-    ? `<rect x="${margin + 4}" y="${margin + 4}" width="${width - (margin + 4) * 2}" height="${height - (margin + 4) * 2}" fill="none" stroke="${borderColor}" stroke-width="0.75" />`
+    ? `<rect x="${margin + 4}" y="${margin + 4}" width="${width - (margin + 4) * 2}" height="${height - (margin + 4) * 2}" fill="none" stroke="${escBorderColor}" stroke-width="0.75" />`
     : "";
 
-  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" data-layout-id="${layoutId}" xmlns="http://www.w3.org/2000/svg">
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" data-layout-id="${escLayoutId}" xmlns="http://www.w3.org/2000/svg">
   <!-- MAP_CONTENT_HERE: compiled MapSpec vector layers are injected at this
        anchor by generateMapSpecVectorSvgString. Placing it BEFORE the frame
        and marginalia groups ensures the map paints at the bottom of the
        Z-order, so title banner / north arrow / legend stay visible on top. -->
   <!-- Outer Print Frame Border -->
-  <rect x="${margin}" y="${margin}" width="${width - margin * 2}" height="${height - margin * 2}" fill="none" stroke="${borderColor}" stroke-width="2" rx="${isEngineering ? 0 : 4}" />
+  <rect x="${margin}" y="${margin}" width="${width - margin * 2}" height="${height - margin * 2}" fill="none" stroke="${escBorderColor}" stroke-width="2" rx="${isEngineering ? 0 : 4}" />
   ${borderExtra}
 
   <!-- Title Block Banner -->
   <g transform="translate(${margin + 16}, ${margin + 16})">
-    <text x="0" y="24" font-family="${fontFamily}" font-size="22" font-weight="bold" fill="${color}">${title}</text>
-    <text x="0" y="44" font-family="${fontFamily}" font-size="12" fill="${color}" opacity="0.75">${subtitle}</text>
+    <text x="0" y="24" font-family="${escFont}" font-size="22" font-weight="bold" fill="${escColor}">${escTitle}</text>
+    <text x="0" y="44" font-family="${escFont}" font-size="12" fill="${escColor}" opacity="0.75">${escSubtitle}</text>
   </g>
 
   <!-- North Arrow (Top Right) -->
