@@ -43,6 +43,9 @@ from app.tools.registry import ToolRegistry
 from app.services.chat.schema_compression import compress_schema, schema_bytes
 from app.services.chat.tool_retrieval import RetrievalHit, rank_tools, v4_retrieval_enabled
 from app.services.chat.semantic_retrieval import v6_retrieval_enabled
+from app.services.gis_harness.capability_descriptors import (
+    v7_capability_retrieval_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -677,6 +680,39 @@ class DynamicToolSurface:
                 rerank_applied = True
             except Exception:  # noqa: BLE001 — rerank 故障退回 V3 序，绝不阻断
                 logger.debug("[ToolSurfaceV3] v4 rerank failed; V3 order served",
+                             exc_info=True)
+
+        # 6.7) V7 capability descriptor 信号（ADR-0130 D4）：结构化描述符
+        #      联合检索（preconditions/可靠性/cost）对已入分候选小幅加成
+        #      —— 只调整既有候选的相对序，不新增候选；kill switch
+        #      GIS_CAPABILITY_RETRIEVAL_V7=0 → 跳过（与 V6 逐位一致）；
+        #      任何失败零贡献。
+        if v7_capability_retrieval_enabled() and query:
+            try:
+                from app.services.gis_harness.capability_descriptors import (
+                    get_capability_index_cached,
+                    select_capabilities,
+                )
+
+                _index = get_capability_index_cached()
+                _picks = select_capabilities(_index, query, limit=8)
+                boost_by_tool: Dict[str, float] = {}
+                _weight = 0.8
+                for _pick in _picks:
+                    _desc = _index.get(_pick["id"])
+                    if _desc is None:
+                        continue
+                    for _tool in _desc.related_tools[:2]:
+                        boost_by_tool[_tool] = (
+                            boost_by_tool.get(_tool, 0.0) + _weight)
+                    _weight = max(0.1, _weight * 0.5)
+                for _tool, _boost in boost_by_tool.items():
+                    if _tool in scores and _boost > 0:
+                        scores[_tool] = scores.get(_tool, 0.0) + _boost
+                        selection.reasons.setdefault(_tool, []).append(
+                            f"v7:descriptor(+{_boost:.2f})")
+            except Exception:  # noqa: BLE001 — 描述符信号失败零贡献
+                logger.debug("[ToolSurfaceV3] v7 descriptor signal failed",
                              exc_info=True)
 
         # 7) contract 过滤 + 排序 + 规模控制
