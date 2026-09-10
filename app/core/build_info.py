@@ -3,8 +3,11 @@
 单一事实源：仓库根 ``VERSION`` 文件 + git commit（env 覆盖 → git 查询
 best-effort）。模块级缓存，查询失败诚实落 ``unknown``，绝不猜。
 
-修复既有漂移：``/health`` 的 version 曾硬编码 "0.1.3"，与 VERSION 文件
-（0.1.0.0）不一致——现在统一从本模块读取。
+漂移修复（review R1-M2）：历史上 /health 硬编码 "0.1.3" 而 VERSION 文件
+是 "0.1.0.0"——同一部署多面矛盾。现在 VERSION 文件已对齐到代码发布身份
+（0.1.3，与 ``app.__version__`` / FastAPI version / extensions_platform
+``CORE_RELEASE_VERSION`` 同源），/health 与 /version 从本模块读取，
+三个公开面口径一致。
 """
 from __future__ import annotations
 
