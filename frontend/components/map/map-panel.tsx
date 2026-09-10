@@ -94,7 +94,7 @@ import {
   type LayerFilterEvidence,
 } from "@/lib/layers/filter-evidence"
 import { useCartographicObservation } from "@/lib/hooks/use-cartographic-observation"
-import { useHoverTooltip } from "@/lib/hooks/use-hover-tooltip"
+import { HoverTooltipOverlay } from "./hover-tooltip-overlay"
 import { useFeatureSelection } from "@/lib/hooks/use-feature-selection"
 
 interface MapPanelProps {
@@ -871,14 +871,8 @@ export function MapPanel({
     })
   }, [measureMode, setSelectedFeature, commitSelection])
 
-  // 悬浮提示（rAF 节流 hover 查询 + mouseout/卸载清理）下沉到
-  // useHoverTooltip（#1009 分解）；监听仍由下方手势仲裁 effect 挂载。
-  const { hoverInfo, handleMapMouseMove, handleMapMouseOut } = useHoverTooltip({
-    mapRef,
-    interactiveIdsRef,
-    layerIdsSetRef,
-    layersMapRef,
-  })
+  // FRONT-04: 悬浮提示（rAF 节流 hover 查询 + mouseout/卸载清理）下沉至
+  // <HoverTooltipOverlay /> 孤立渲染，防止 60fps 指针移动引发 MapPanel 全量重渲染。
 
   // FIX-3-4: clear the selection (store + highlight + popup) when the layer it
   // belongs to is removed from the HUD layers — otherwise a stale highlight and
@@ -924,8 +918,6 @@ export function MapPanel({
     map.on('zoomend', gestureEnd)
     map.on('rotateend', gestureEnd)
     map.on('pitchend', gestureEnd)
-    map.on('mousemove', handleMapMouseMove)
-    map.on('mouseout', handleMapMouseOut)
     return () => {
       map.off('dragstart', gestureStart)
       map.off('zoomstart', gestureStart)
@@ -935,10 +927,8 @@ export function MapPanel({
       map.off('zoomend', gestureEnd)
       map.off('rotateend', gestureEnd)
       map.off('pitchend', gestureEnd)
-      map.off('mousemove', handleMapMouseMove)
-      map.off('mouseout', handleMapMouseOut)
     }
-  }, [mapReady, handleMapMouseMove, handleMapMouseOut])
+  }, [mapReady])
 
   // Runtime V4（§11）：框选模式接管画布拖拽（dragPan/boxZoom 让位），
   // 松手时 queryRenderedFeatures → 有界选择发布。矩形未达最小尺寸视为
@@ -1324,29 +1314,13 @@ export function MapPanel({
             onZoomToFeature={handleZoomToFeature}
           />
         )}
-        {!poiPanel && !selectedFeature && hoverInfo && (
-          <Popup
-            longitude={hoverInfo.point[0]}
-            latitude={hoverInfo.point[1]}
-            anchor="bottom"
-            closeOnClick={false}
-            closeButton={false}
-          >
-            <div className="p-1 font-sans text-meta">
-              <div className="mb-1 truncate border-b border-map-chrome-border pb-1 font-semibold text-map-chrome-ink" title={hoverInfo.layerName}>
-                {hoverInfo.layerName}
-              </div>
-              <div className="min-w-[120px] space-y-0.5">
-                {Object.entries(hoverInfo.props).map(([k, v]) => (
-                  <div key={k} className="flex justify-between gap-4">
-                    <span className="font-mono text-map-chrome-ink-muted">{k}:</span>
-                    <span className="break-all font-mono text-map-chrome-ink">{String(v)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </Popup>
-        )}
+        <HoverTooltipOverlay
+          mapRef={mapRef}
+          interactiveIdsRef={interactiveIdsRef}
+          layerIdsSetRef={layerIdsSetRef}
+          layersMapRef={layersMapRef}
+          visible={!poiPanel && !selectedFeature}
+        />
       </Map>
       </div>
       )}
