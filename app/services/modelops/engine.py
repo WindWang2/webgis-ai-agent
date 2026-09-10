@@ -1831,13 +1831,8 @@ class _SegmentationAccumulator:
             valid[y0:y1] = cov_band
             if probs_out is not None:
                 probs_out[:, y0:y1] = mean_band.astype(np.float32)
-        if confidence_floor > 0:
-            low = confidence < confidence_floor
-            classes[low] = 255
-            valid &= ~low
-        if input_nodata is not None:
-            valid &= ~input_nodata
-            classes[input_nodata] = 255
+        # 视图用尽后再 unmap（Windows：映射句柄存活时 rmtree 会失败泄漏）。
+        del acc_arr, weight_arr
         self.close()
         return classes, confidence, valid, probs_out
 
@@ -1845,7 +1840,12 @@ class _SegmentationAccumulator:
         if self._memmap_dir is not None:
             import shutil
 
-            del self._acc
-            del self._weight
+            for attr in ("_acc", "_weight"):
+                mm = getattr(self, attr, None)
+                if mm is not None:
+                    handle = getattr(mm, "_mmap", None)
+                    if handle is not None:
+                        handle.close()  # 显式 unmap（否则 Windows 删目录失败）
+                    setattr(self, attr, None)
             shutil.rmtree(self._memmap_dir, ignore_errors=True)
             self._memmap_dir = None
