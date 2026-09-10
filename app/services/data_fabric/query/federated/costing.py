@@ -39,6 +39,39 @@ _COMPLEXITY_NORM_VERTICES = 60.0
 #: 与 V5 链枚举同方向的「无估算」占位（federation.py _UNESTIMATED_ROWS）。
 _UNESTIMATED_ROWS = 1_000_000
 
+# ── V7（ADR-0119 W7）：估计不确定性与 rate-limit 成本 ────────────────────────
+#: 估计不确定性乘子（按统计置信度；确定性、EXPLAIN 可复述）。
+#: measured=实测 → 1.0；estimated=估计 → 轻度上调；assumption/无统计 →
+#: 显著上调（乐观估计不再是免费午餐，比较时偏向有统计的源）。
+_UNCERTAINTY_BY_CONFIDENCE = {
+    "measured": 1.0,
+    "estimated": 1.15,
+    "assumption": 1.5,
+}
+_DEFAULT_UNCERTAINTY = 1.5
+
+#: rate-limit 每请求惩罚基（已知限率 → penalty = base / requests_per_window；
+#: 未知 = 0 —— 诚实：不猜）。并入源扫描成本，使同基数下限流源排名靠后。
+_W_RATE_LIMIT_PENALTY_PER_REQUEST = 25.0
+
+
+def estimate_uncertainty_multiplier(stats: Optional[Any]) -> "tuple[float, str]":
+    """统计置信度 → (乘子, basis)（纯函数；EXPLAIN 披露 basis）。"""
+    confidence = getattr(stats, "confidence", None) if stats is not None else None
+    if not isinstance(confidence, str) or not confidence:
+        confidence = "assumption"
+    return _UNCERTAINTY_BY_CONFIDENCE.get(confidence, _DEFAULT_UNCERTAINTY), confidence
+
+
+def rate_limit_request_penalty(hints: Optional[Any]) -> float:
+    """RateLimitHints → 每请求惩罚（未知限率 = 0，绝不虚构）。"""
+    if hints is None:
+        return 0.0
+    rate = getattr(hints, "requests_per_window", None)
+    if not isinstance(rate, int) or rate <= 0:
+        return 0.0
+    return _W_RATE_LIMIT_PENALTY_PER_REQUEST / float(rate)
+
 _SHRINK_BY_OP = {
     "intersects": _SHRINK_INTERSECTS,
     "within": _SHRINK_WITHIN,
@@ -211,6 +244,7 @@ def decide_crs_transform(
     stats_left: Optional[DatasetStatistics] = None,
     stats_right: Optional[DatasetStatistics] = None,
     allow_server: bool = False,
+    server_feasible: "tuple[bool, bool]" = (True, True),
 ) -> CrsTransformDecision:
     """join 两侧 CRS 对齐决策：两侧分别估价，取总变换成本最小的一侧。
 
@@ -222,6 +256,11 @@ def decide_crs_transform(
       Limitations），计划绝不声称执行不了的 placement；
     - 属性 join 不比较几何 → 只记录 correctness note（几何列随行输出，
       结果 CRS 混合如实披露），不做变换。
+
+    V7（ADR-0119 W8）：``allow_server=True`` 时 server placement 还要求
+    该侧 caps 声明 ``output_crs_pushdown``（已验证的扫描通道 —— PostGIS
+    ST_Transform 输出包裹 / ArcGIS outSR + spatialReference 回读）；
+    仅 server_reprojection（服务器能变换）不等于通道可靠。
     """
     if left_crs_srid is None or right_crs_srid is None:
         return CrsTransformDecision(
@@ -246,22 +285,36 @@ def decide_crs_transform(
     rows_right = est_right_rows if est_right_rows is not None else _UNESTIMATED_ROWS
     complexity_left = max(1.0, _complexity(stats_left)) / _COMPLEXITY_NORM_VERTICES
     complexity_right = max(1.0, _complexity(stats_right)) / _COMPLEXITY_NORM_VERTICES
+    server_left = (
+        allow_server
+        and server_feasible[0]
+        and getattr(caps_left, "server_reprojection", False)
+        and getattr(caps_left, "output_crs_pushdown", False)
+    )
+    server_right = (
+        allow_server
+        and server_feasible[1]
+        and getattr(caps_right, "server_reprojection", False)
+        and getattr(caps_right, "output_crs_pushdown", False)
+    )
     cost_left = rows_left * (
         _W_SERVER_REPROJECT_PER_ROW
-        if (allow_server and getattr(caps_left, "server_reprojection", False))
+        if server_left
         else _W_LOCAL_REPROJECT_PER_ROW * complexity_left
     )
     cost_right = rows_right * (
         _W_SERVER_REPROJECT_PER_ROW
-        if (allow_server and getattr(caps_right, "server_reprojection", False))
+        if server_right
         else _W_LOCAL_REPROJECT_PER_ROW * complexity_right
     )
     if cost_right <= cost_left:
         side, src_srid, dst_srid = "right", right_crs_srid, left_crs_srid
-        caps, rows = caps_right, est_right_rows
+        rows = est_right_rows
+        side_server = server_right
     else:
         side, src_srid, dst_srid = "left", left_crs_srid, right_crs_srid
-        caps, rows = caps_left, est_left_rows
+        rows = est_left_rows
+        side_server = server_left
 
     note = None
     if join_kind != "spatial_join":
@@ -276,7 +329,7 @@ def decide_crs_transform(
                 )
             ),
         )
-    server = allow_server and getattr(caps, "server_reprojection", False)
+    server = side_server
     per_row = (
         _W_SERVER_REPROJECT_PER_ROW
         if server
@@ -319,6 +372,8 @@ __all__ = [
     "CrsTransformDecision",
     "decide_crs_transform",
     "estimate_spatial_selectivity",
+    "estimate_uncertainty_multiplier",
     "geojson_bbox",
     "is_geographic_srid",
+    "rate_limit_request_penalty",
 ]

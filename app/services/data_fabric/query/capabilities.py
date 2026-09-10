@@ -28,6 +28,7 @@ def _postgis_defaults() -> AdapterCapabilitiesV2:
         count=True,
         statistics=True,
         server_reprojection=True,
+        output_crs_pushdown=True,   # V7：ST_Transform 输出包裹（已验证通道）
         vector_tiles=True,          # server-side ST_AsMVT 路径（Wave I）
         range_requests=False,
         streaming=False,            # fetchall + LIMIT 有界读（非游标流式）
@@ -99,6 +100,9 @@ def _arcgis_defaults() -> AdapterCapabilitiesV2:
         count=True,                  # returnCountOnly=true
         statistics=False,
         server_reprojection=True,    # outSR
+        # V7：outSR 无响应端 SR 校验通道（f=geojson 不回 spatialReference）
+        # → 不声明 output_crs_pushdown（诚实：无法验证交付）。
+        output_crs_pushdown=False,
         vector_tiles=False,
         range_requests=False,
         streaming=False,

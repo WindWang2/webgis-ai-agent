@@ -218,6 +218,14 @@ class AdapterCapabilitiesV2(BaseModel):
     # 尽管 filter_pushdown=True，这些 AST op 仍必须本地求值（源诚实声明
     # "我只推一部分 op"）。空表 = 全有或全无（历史语义，逐位不变）。
     filter_ops_local: List[str] = Field(default_factory=list)
+    # ── V7 additive（ADR-0119 W3/W8）：探测驱动的下推通道契约 ──
+    # 服务端 CRS 变换的**已验证管道**（PostGIS ST_Transform 输出包裹 /
+    # ArcGIS outSR + spatialReference 回读）。与 server_reprojection（服务器
+    # 能否重投影）不同：本字段声明「本 fabric 的扫描通道能否安全携带
+    # output_crs 并可靠获得交付」。WFS/OGC-API 因轴序/协商歧义默认 False。
+    output_crs_pushdown: bool = False
+    # filter 下推编码（探测后升级："cql2-text" | "cql2-json" | None）。
+    filter_encoding: Optional[str] = None
 
     def supports_spatial_op(self, op: str) -> bool:
         return op in self.spatial_predicates

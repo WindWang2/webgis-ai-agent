@@ -472,6 +472,77 @@ def compile_bbox_fes(bbox: Sequence[float], *, srs_name: str = "urn:ogc:def:crs:
     )
 
 
+
+
+# ── CQL2-JSON（V7 / ADR-0119 W5）─────────────────────────────────────────────
+#
+# CQL2-JSON 编码（OGC 21-065）：谓词即 JSON 结构 —— 值保持 JSON 类型，
+# **无字符串拼接面**（注入不适用）；属性名仍包在 {"property": name} 中，
+# 且上游 ``validate_predicate_fields`` 白名单已先行校验。仅接受与
+# compile_predicate_cql2 相同的 op 词表；无法表达的 op 抛 typed
+# PredicateError（诚实失败，不降级为近似语义）。
+
+
+def _cql2_json_property(field: Any) -> Dict[str, Any]:
+    name = str(field)
+    if not name or any(ord(ch) < 0x20 for ch in name):
+        raise PredicateError("invalid property identifier")
+    return {"property": name}
+
+
+def compile_predicate_cql2_json(node: Any) -> Dict[str, Any]:
+    op = node.op
+    if op == "and":
+        return {"op": "and", "args": [compile_predicate_cql2_json(a) for a in node.args]}
+    if op == "or":
+        return {"op": "or", "args": [compile_predicate_cql2_json(a) for a in node.args]}
+    if op == "not":
+        return {"op": "not", "args": [compile_predicate_cql2_json(node.arg)]}
+    prop = _cql2_json_property(node.field)
+    if op == "eq":
+        return {"op": "=", "args": [prop, node.value]}
+    if op == "ne":
+        return {"op": "<>", "args": [prop, node.value]}
+    if op == "gt":
+        return {"op": ">", "args": [prop, node.value]}
+    if op == "ge":
+        return {"op": ">=", "args": [prop, node.value]}
+    if op == "lt":
+        return {"op": "<", "args": [prop, node.value]}
+    if op == "le":
+        return {"op": "<=", "args": [prop, node.value]}
+    if op == "in":
+        return {"op": "in", "args": [prop, list(node.values)]}
+    if op == "not_in":
+        return {"op": "not", "args": [{"op": "in", "args": [prop, list(node.values)]}]}
+    if op == "between":
+        return {"op": "between", "args": [prop, [node.low, node.high]]}
+    if op == "like":
+        return {"op": "like", "args": [prop, node.pattern]}
+    if op == "is_null":
+        return (
+            {"op": "isNull", "args": [prop]}
+            if not node.negated
+            else {"op": "not", "args": [{"op": "isNull", "args": [prop]}]}
+        )
+    raise PredicateError(f"cannot compile op {op!r} to CQL2-JSON")
+
+
+def compile_bbox_cql2_json(bbox: Sequence[float]) -> Dict[str, Any]:
+    """bbox → CQL2-JSON S_INTERSECTS 谓词（几何字面量为 GeoJSON polygon）。"""
+    from app.services.data_fabric.query.predicates import _check_bbox
+
+    minx, miny, maxx, maxy = _check_bbox(bbox)
+    ring = [[minx, miny], [maxx, miny], [maxx, maxy], [minx, maxy], [minx, miny]]
+    return {
+        "op": "s_intersects",
+        "args": [
+            {"property": "geometry"},
+            {"type": "Polygon", "coordinates": [ring]},
+        ],
+    }
+
+
 __all__ = [
     "quote_ident",
     "geojson_to_wkt",
@@ -480,6 +551,8 @@ __all__ = [
     "compile_spatial_sql",
     "compile_predicate_cql2",
     "compile_bbox_cql2",
+    "compile_predicate_cql2_json",
+    "compile_bbox_cql2_json",
     "compile_predicate_arcgis",
     "compile_predicate_fes",
     "compile_bbox_fes",

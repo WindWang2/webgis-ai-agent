@@ -70,13 +70,43 @@ def iter_scan_pages(
     budget: Any,
     token: CancelToken,
     page_size: int = DEFAULT_PAGE_SIZE,
+    output_crs: Optional[str] = None,
+    on_result: Optional[Any] = None,
 ) -> Iterator[List[Dict[str, Any]]]:
     """分页拉取一个源（每页一个 yield；页间检查取消/超时/预算）。
 
     与 V5 ``_source_query_page`` 同一 adapter 契约（legacy QuerySpec），
     同一 typed 错误；差别只在：V6 逐页消费 + 逐页检查，probe 侧不再
     一次性物化全源。
+
+    V7（ADR-0119 W6）：adapter 显式提供 Arrow 批通道（``iter_query_arrow_
+    batches``）且 pyarrow 可用时，委托 ``fabric.arrow_lane`` 批级扫描 ——
+    行形状/谓词语义/预算行为逐位同口径；typed ``VectorCarrierUnavailable``
+    诚实回落 dict lane。
     """
+    from app.services.data_fabric.fabric.arrow_lane import (
+        adapter_supports_arrow_lane,
+        iter_scan_pages_arrow,
+    )
+
+    if adapter_supports_arrow_lane(adapter) and not output_crs:
+        fetched_arrow = 0
+        for page in iter_scan_pages_arrow(
+            adapter, dataset_id,
+            where=where, fields=fields, bbox=bbox,
+            fetch_limit=fetch_limit, budget=budget, token=token,
+            page_size=page_size,
+        ):
+            fetched_arrow += len(page)
+            if fetched_arrow > budget.max_rows:
+                raise QueryBudgetExceededError(
+                    f"source scan fetched {fetched_arrow} rows (budget {budget.max_rows})",
+                    details={"hint": "narrow bbox or add filters on the source",
+                             "lane": "arrow"},
+                )
+            yield page
+        return
+
     from app.schemas.data_fabric_schema import QuerySpec
 
     fetched = 0
@@ -96,7 +126,16 @@ def iter_scan_pages(
             extras["where"] = where
         if bbox:
             extras["bbox"] = list(bbox)
+        if output_crs:
+            # V7（ADR-0119 W8）：server-side 交付 CRS（adapter normalize
+            # 映射 v2.output.crs；PostGIS ST_Transform / ArcGIS outSR）。
+            extras["output_crs"] = output_crs
         result = adapter.query(dataset_id, QuerySpec(**extras))
+        if on_result is not None:
+            try:
+                on_result(result)
+            except Exception:  # noqa: BLE001 - 证据回调绝不阻断扫描
+                pass
         rows = result.features or []
         fetched += len(rows)
         if fetched > budget.max_rows:

@@ -777,6 +777,10 @@ class ChainSource:
     fields: Optional[List[str]] = None
     estimated_rows: Optional[int] = None
     srs: Optional[str] = None
+    # ── V7（ADR-0119 additive）──
+    #: 源类型（如 "postgis"）：驱动静态 capability 注入（聚合下推证明、
+    #: 下推边界披露）。可选；缺省 = 能力未知（保守，不下推）。
+    source_type: Optional[str] = None
 
 
 @dataclass
@@ -788,6 +792,9 @@ class ChainSourceStats:
 
     estimated_rows: Optional[int] = None
     column_ndv: Optional[Dict[str, int]] = None  # 列名 → 近似基数
+    # ── V7（ADR-0119 W9）：measured 级唯一键声明（启用安全聚合下推证明；
+    # 调用方对声明真实性负责 —— 估计 NDV 不作数）。──
+    unique_keys: Optional[List[str]] = None
 
     def ndv(self, column: Optional[str]) -> Optional[int]:
         if column is None or not self.column_ndv:
@@ -845,6 +852,11 @@ class FederatedChainRequest:
     #: 执行引擎（V6 additive，ADR-0118）：``"v5"``（默认，位级不变）或
     #: ``"v6"``（cost-based 枚举 + 流式批执行；非 typed 异常回退 v5）。
     engine: str = "v5"
+    # ── V7（ADR-0119 W12 additive）──
+    #: 会话 owner（结果缓存作用域；None = 全局域 → 缓存禁入，R-M2）。
+    session_owner: Optional[str] = None
+    #: 结果缓存开关（默认开：命中必披露 + fingerprint 失效 + TTL 有界）。
+    use_cache: bool = True
 
 
 def _chain_budget(req: FederatedChainRequest) -> ExecutionBudget:
@@ -1691,6 +1703,64 @@ __all__ = [
 # ── V6 引擎（ADR-0118 W10）：cost-based 枚举 + 流式批执行 ──────────────────
 
 
+def _make_bushy_replan_fn(req, original_plan):
+    """V7（ADR-0119 W10）：bushy 整树重排回调（观测行数 pinned 后重枚举）。
+
+    - 以观测行数覆盖各源 ``estimated_rows`` → 同一 planner 纯函数重枚举；
+    - R1-M7 **同基准比较**：previous_cost = 原序在 **pinned 估计下**的链形
+      重估成本（_enumerate_fixed_chain）—— 绝不用未 pinned 的旧成本跨基准
+      比较；
+    - 新计划必须 hash 不同**且 pinned 成本严格更低**才切换；
+    - ``order_strategy="given"`` 上游已禁用 adaptive（双保险）。
+    """
+    from copy import replace as _dataclass_replace
+
+    from app.services.data_fabric.query.federated.planner import (
+        build_enumeration_context,
+        plan_federation_v6,
+    )
+    from app.services.data_fabric.query.federated.enumerator import (
+        _enumerate_fixed_chain,
+    )
+
+    def _pinned_req(actual_rows):
+        pinned = dict(actual_rows or {})
+        return _dataclass_replace(
+            req,
+            sources=[
+                _dataclass_replace(
+                    s,
+                    estimated_rows=(
+                        int(pinned[s.source_id])
+                        if s.source_id in pinned and pinned[s.source_id]
+                        else s.estimated_rows
+                    ),
+                )
+                for s in req.sources
+            ],
+        )
+
+    def _replan(actual_rows):
+        pinned_req = _pinned_req(actual_rows)
+        new_plan = plan_federation_v6(pinned_req)
+        # 同基准基线：原序（planned order）在 pinned 估计下的成本。
+        try:
+            ctx_pinned = build_enumeration_context(pinned_req)
+            baseline = _enumerate_fixed_chain(
+                ctx_pinned, list(original_plan.order), positional=False
+            )
+            previous_cost = baseline.cost
+        except Exception:  # noqa: BLE001 - 基线不可估 → 不切换（保守）
+            return None
+        try:
+            new_plan.previous_cost = previous_cost
+        except Exception:  # noqa: BLE001
+            pass
+        return new_plan
+
+    return _replan
+
+
 def execute_chain_v6(
     executor: "FederatedExecutor", req: FederatedChainRequest
 ) -> Dict[str, Any]:
@@ -1721,6 +1791,44 @@ def execute_chain_v6(
         ]
         return result
     validate_chain_shape(req, check_crs_mix=False)
+    # ── V7（ADR-0119 W12/W13）：结果缓存 + 计数器 + 反馈 ──
+    cache_ctx = (
+        _v7_cache_context(executor, req)
+        if getattr(req, "use_cache", True)
+        else None
+    )
+    cache_enabled = cache_ctx is not None
+    if cache_enabled:
+        scope_key, cache_key, fingerprints = cache_ctx
+        from app.services.data_fabric.fabric.result_cache import get_result_cache
+
+        cache = get_result_cache()
+        neg = cache.get_negative(cache_key)
+        if neg is not None:
+            from app.services.data_fabric.errors import (
+                SOURCE_AUTH_FAILED,
+                SOURCE_UNREACHABLE,
+                SourceAuthFailedError,
+                SourceUnreachableError,
+            )
+
+            cls = {
+                SOURCE_UNREACHABLE: SourceUnreachableError,
+                SOURCE_AUTH_FAILED: SourceAuthFailedError,
+            }.get(neg, SourceUnreachableError)
+            raise cls(
+                "recent attempt failed (negative cache)",
+                details={"cache": "negative_hit", "key": cache_key[:16]},
+            )
+        cached = cache.get(cache_key, current_fingerprints=fingerprints)
+        if cached is not None:
+            cached["fabric_counters"] = {
+                "cache_hit": True,
+                "cache_key": cache_key[:16],
+            }
+            return cached
+    counters = _v7_new_counters(cache_ctx)
+    plan = None  # R2-Mi-1：plan 期 typed 错误路径的反馈回调需要安全判空
     try:
         from app.services.data_fabric.query.federated.executor import (
             PhysicalExecutor,
@@ -1755,6 +1863,7 @@ def execute_chain_v6(
             bbox=req.bbox,
             adaptive=True,
             order_strategy=getattr(req, "order_strategy", "cost"),
+            replan_fn=_make_bushy_replan_fn(req, plan),
         )
         exec_result = px.execute(
             tree,
@@ -1765,7 +1874,27 @@ def execute_chain_v6(
                 if j.left_source_id and j.right_source_id
             },
         )
-    except DataFabricError:
+    except DataFabricError as e:
+        # V7 R1-M8：typed 错误契约不变（原样上抛），但错误面反馈与负缓存
+        # 在上抛前落账（均 fail-open）。
+        if cache_ctx is not None:
+            try:
+                from app.services.data_fabric.fabric.result_cache import (
+                    get_result_cache,
+                )
+
+                get_result_cache().put_negative(cache_ctx[1], e.code)
+            except Exception:  # noqa: BLE001
+                pass
+        if plan is not None:
+            try:
+                _v7_record_feedback(
+                    req, plan, {"per_source_rows": {}}, "error",
+                    scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
+                    error_code=e.code,
+                )
+            except Exception:  # noqa: BLE001
+                pass
         raise  # typed 错误契约与 V5 一致（预算/构造错误绝不静默回退）
     except Exception as e:  # noqa: BLE001 - V6 非 typed 异常 → 诚实回退 V5
         logger.warning("[Federation] V6 engine failed (%s); falling back to V5", e)
@@ -1783,7 +1912,17 @@ def execute_chain_v6(
     warnings = list(plan.warnings)
     if any(s.estimated_rows is not None for s in req.sources):
         warnings.append("join order chosen by cost-based enumeration (V6 DP)")
-    return {
+    # ── V7：计数器补齐 + 反馈记录（fail-open）──
+    from app.services.data_fabric.fabric.counters import collect_from_exec_result
+
+    collect_from_exec_result(counters, exec_result)
+    counters.cache_hit = False
+    fb_store = _v7_record_feedback(
+        req, plan, exec_result, "ok",
+        scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
+    )
+    counters.feedback_durable_failures = fb_store.failure_count
+    result_dict = {
         "status": "success",
         "engine": "v6",
         "strategy": "v6_cost_based_tree",
@@ -1805,7 +1944,26 @@ def execute_chain_v6(
         "semi_join_reduction": exec_result.get("hop_stats"),
         "bloom_reduction": exec_result.get("bloom_stats"),
         "replans_used": exec_result.get("replans_used", 0),
+        # ── V7（ADR-0119 W8/W10）执行证据 additive ──
+        "per_source_delivered_srid": exec_result.get(
+            "per_source_delivered_srid", {}
+        ),
+        "crs_fallbacks": exec_result.get("crs_fallbacks", []),
     }
+    result_dict["fabric"] = _v7_fabric_section(
+        counters, cache_ctx, feedback_store_feedback=True
+    )
+    # 缓存写入（fail-open；披露段在下一次命中时附入）
+    if cache_enabled:
+        try:
+            scope_key, cache_key, fingerprints = cache_ctx
+            cache.put(
+                cache_key, result_dict,
+                fingerprints=fingerprints, scope_key=scope_key,
+            )
+        except Exception as exc:  # noqa: BLE001 - 缓存绝不影响查询
+            logger.debug("[fabric] result cache put failed: %s", exc)
+    return result_dict
 
 
 def _v6_plan_dicts(plan) -> List[Dict[str, Any]]:
@@ -1885,3 +2043,146 @@ def _apply_scan_fields(tree, fields_by_sid):
                 logical_from_dict(child), fields_by_sid
             ).model_dump()
     return logical_from_dict(data)
+
+
+# ── V7（ADR-0119 W12/W13）：结果缓存 / 计数器 / 反馈的入口辅助 ────────────────
+
+
+def _v7_scope_key(req: FederatedChainRequest) -> str:
+    """作用域键：owner（session）即作用域；全局域显式标记。"""
+    from app.services.data_fabric.fabric.connection_registry import TenantScope
+
+    owner = getattr(req, "session_owner", None)
+    return TenantScope(owner=owner).scope_key()
+
+
+def _v7_cache_context(executor, req):
+    """缓存上下文（scope/key/per-source fingerprints）或 None（不可缓存）。
+
+    R-M2：owner=None 全局域禁入结果缓存；descriptor fingerprint 从
+    catalog（owner 过滤）解析 —— 本地读，无网络。fail-open：任何解析
+    失败 → 禁用缓存（宁可 miss 不可错命中）。
+    """
+    from app.services.data_fabric.fabric.connection_registry import TenantScope
+    from app.services.data_fabric.fabric.result_cache import (
+        canonical_request_payload,
+        result_cache_key,
+    )
+    from app.services.data_fabric.fingerprint import dataset_fingerprint_service
+    from app.services.data_fabric.spatial_catalog import spatial_catalog_service
+
+    try:
+        owner = getattr(req, "session_owner", None)
+        scope = TenantScope(owner=owner)
+        scope_key = scope.scope_key()
+        if scope.is_global:
+            return None
+        fingerprints: Dict[str, str] = {}
+        for s in req.sources:
+            desc = spatial_catalog_service.get_dataset(s.dataset_id, owner=owner)
+            if desc is None:
+                return None  # catalog 不可见 → 缓存键不完整 → 禁用
+            fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(desc)
+            fingerprints[s.source_id] = fp
+        key = result_cache_key(
+            scope_key=scope_key,
+            fingerprints=fingerprints,
+            engine="v6",
+            request=canonical_request_payload(
+                sources=req.sources,
+                joins=req.joins,
+                bbox=req.bbox,
+                limit=req.limit,
+                order_strategy=req.order_strategy,
+                derive_projection=getattr(req, "derive_projection", True),
+            ),
+        )
+        return scope_key, key, fingerprints
+    except Exception as exc:  # noqa: BLE001 - 缓存解析失败 = miss（绝不影响执行）
+        logger.debug("[fabric] cache context unavailable: %s", exc)
+        return None
+
+
+def _v7_new_counters(cache_ctx) -> Any:
+    from app.services.data_fabric.fabric.counters import FabricCounters
+
+    # 探测请求代价在 probing 服务侧记账（ProbeCost）；此处是执行期聚合起点。
+    return FabricCounters()
+
+
+def _v7_record_feedback(req, plan, exec_result, outcome, *, scope_key, error_code=None):
+    """把执行观测提交反馈存储（fail-open；返回 store 供计数披露）。
+
+    R1-C2：``unfiltered`` 消费执行器 trace 事实（无过滤 ∧ 取回完整未触及
+    窗口）—— trace 缺席（错误路径）时保守 False。
+    """
+    from app.services.data_fabric.fabric.feedback import (
+        ExecutionFeedback,
+        SourceObservation,
+        get_feedback_store,
+    )
+    from app.services.data_fabric.fingerprint import dataset_fingerprint_service
+    from app.services.data_fabric.spatial_catalog import spatial_catalog_service
+
+    store = get_feedback_store()
+    owner = getattr(req, "session_owner", None)
+    obs: List[SourceObservation] = []
+    fingerprints: Dict[str, str] = {}
+    for s in req.sources:
+        desc = spatial_catalog_service.get_dataset(s.dataset_id, owner=owner)
+        fp = (
+            dataset_fingerprint_service.calculate_descriptor_fingerprint(desc)
+            if desc is not None
+            else None
+        )
+        if fp:
+            fingerprints[s.source_id] = fp
+        actual = (exec_result.get("per_source_rows") or {}).get(s.source_id)
+        # R1-C2：unfiltered 消费执行器 trace 事实（无过滤 ∧ 取回完整未触及
+        # 窗口）；trace 缺席（错误路径）→ 保守 False。
+        unfiltered = bool(
+            (exec_result.get("per_source_scan_complete_unfiltered") or {}).get(
+                s.source_id
+            )
+        )
+        obs.append(
+            SourceObservation(
+                source_id=s.source_id,
+                dataset_fingerprint=fp,
+                estimated_rows=s.estimated_rows,
+                actual_rows=actual,
+                error=error_code if outcome == "error" else None,
+                unfiltered=unfiltered,
+            )
+        )
+    try:
+        store.record(
+            ExecutionFeedback(
+                plan_hash=plan.tree.plan_hash(),
+                scope_key=scope_key,
+                engine="v6",
+                outcome=outcome,
+                per_source=obs,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - feedback 绝不阻断
+        logger.debug("[fabric] feedback record failed: %s", exc)
+    return store
+
+
+def _v7_fabric_section(counters, cache_ctx, *, feedback_store_feedback: bool = False):
+    """explain_v7 的 fabric 段（结构性计数 + 披露）。"""
+    section = counters.to_dict()
+    if cache_ctx is not None:
+        section["cache"] = {
+            "enabled": True,
+            "scope": cache_ctx[0],
+            "key": cache_ctx[1][:16],
+            "fingerprinted_sources": sorted(cache_ctx[2].keys()),
+        }
+    else:
+        section["cache"] = {
+            "enabled": False,
+            "reason": "global-scope connection or fingerprint unavailable",
+        }
+    return section

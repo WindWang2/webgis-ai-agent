@@ -41,6 +41,33 @@ class _SkipDescribe(Exception):
     """sync_catalog 内部：describe 失败的条目跳过落库（M2 语义）。"""
 
 
+def _profile_from_model(ds_model: DataSourceModel) -> ConnectionProfile:
+    """从 DB 行重建 ConnectionProfile —— **恢复全部结构化字段**。
+
+    V7（ADR-0119 W2，修复 P1）：此前重建只带 ``options``/``allow_private``，
+    顶层 ``username/password/credentials`` 等被丢弃 —— 带独立凭证字段的持久
+    源二次使用必然失败。create_data_source 存的是完整 ``model_dump()``，这里
+    按字段恢复；DSN 内嵌凭证（model_post_init 解析）语义不变，显式结构化
+    字段优先。
+    """
+    stored = ds_model.connection_profile if isinstance(ds_model.connection_profile, dict) else {}
+    kwargs: Dict[str, Any] = {
+        "id": ds_model.id,
+        "name": ds_model.name,
+        "source_type": ds_model.source_type,
+        "url": ds_model.endpoint_url,
+        "options": stored.get("options", {}),
+        "allow_private": stored.get("allow_private", False),
+    }
+    for field in ("username", "password", "access_key", "secret_key", "region"):
+        value = stored.get(field)
+        if value:
+            kwargs[field] = value
+    if isinstance(stored.get("credentials"), dict) and stored["credentials"]:
+        kwargs["credentials"] = stored["credentials"]
+    return ConnectionProfile(**kwargs)
+
+
 def _execute_remote_query(
     adapter: GeospatialDataSourceAdapter,
     source_key: str,
@@ -199,14 +226,7 @@ class DataFabricManager:
         if not ds_model:
             raise ValueError(f"Data source '{source_id}' not found")
 
-        conn_profile = ConnectionProfile(
-            id=ds_model.id,
-            name=ds_model.name,
-            source_type=ds_model.source_type,
-            url=ds_model.endpoint_url,
-            options=ds_model.connection_profile.get("options", {}),
-            allow_private=ds_model.connection_profile.get("allow_private", False),
-        )
+        conn_profile = _profile_from_model(ds_model)
 
         adapter = cls.get_adapter(conn_profile)
         datasets = adapter.list_datasets()
@@ -390,14 +410,7 @@ class DataFabricManager:
         if not ds_model:
             raise ValueError(f"Parent data source for item '{item_id}' not found")
 
-        conn_profile = ConnectionProfile(
-            id=ds_model.id,
-            name=ds_model.name,
-            source_type=ds_model.source_type,
-            url=ds_model.endpoint_url,
-            options=ds_model.connection_profile.get("options", {}),
-            allow_private=ds_model.connection_profile.get("allow_private", False),
-        )
+        conn_profile = _profile_from_model(ds_model)
 
         adapter = cls.get_adapter(conn_profile)
         # #766/#770: run under the circuit breaker; in-band adapter failure
@@ -442,14 +455,7 @@ class DataFabricManager:
         if not ds_model:
             raise ValueError(f"Parent data source for item '{item_id}' not found")
 
-        conn_profile = ConnectionProfile(
-            id=ds_model.id,
-            name=ds_model.name,
-            source_type=ds_model.source_type,
-            url=ds_model.endpoint_url,
-            options=ds_model.connection_profile.get("options", {}),
-            allow_private=ds_model.connection_profile.get("allow_private", False),
-        )
+        conn_profile = _profile_from_model(ds_model)
         adapter = cls.get_adapter(conn_profile)
 
         if cancel_token is not None:
@@ -515,14 +521,7 @@ class DataFabricManager:
         if cancel_token is not None:
             cancel_token.raise_if_cancelled()
 
-        conn_profile = ConnectionProfile(
-            id=ds_model.id,
-            name=ds_model.name,
-            source_type=ds_model.source_type,
-            url=ds_model.endpoint_url,
-            options=ds_model.connection_profile.get("options", {}),
-            allow_private=ds_model.connection_profile.get("allow_private", False),
-        )
+        conn_profile = _profile_from_model(ds_model)
         adapter = cls.get_adapter(conn_profile)
 
         # 单管线：REST 路径与 materialize_dataset 工具同一 MaterializationService
@@ -659,14 +658,7 @@ class DataFabricManager:
         # R1-M8：优先探测后 capability（与执行路径一致），静态默认兜底。
         caps = None
         try:
-            conn_profile = ConnectionProfile(
-                id=item.data_source.id,
-                name=item.data_source.name,
-                source_type=item.data_source.source_type,
-                url=item.data_source.endpoint_url,
-                options=item.data_source.connection_profile.get("options", {}),
-                allow_private=item.data_source.connection_profile.get("allow_private", False),
-            )
+            conn_profile = _profile_from_model(item.data_source)
             adapter = cls.get_adapter(conn_profile)
             caps = getattr(adapter, "capabilities_v2", None)
             caps = caps(descriptor) if caps else None

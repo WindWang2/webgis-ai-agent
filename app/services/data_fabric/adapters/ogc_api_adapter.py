@@ -12,7 +12,10 @@ from app.services.data_fabric.errors import (
     SourceBadResponseError,
 )
 from app.services.data_fabric.query.capabilities import get_capabilities
-from app.services.data_fabric.query.compilers import compile_predicate_cql2
+from app.services.data_fabric.query.compilers import (
+    compile_predicate_cql2,
+    compile_predicate_cql2_json,
+)
 from app.services.data_fabric.query.evidence import build_evidence
 from app.services.data_fabric.query.models import CursorPage, OffsetPage
 from app.services.data_fabric.query.normalize import normalize_query_spec
@@ -82,9 +85,23 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
             "ogcapi-features-2"
         ) or any("cql2" in c.lower() for c in self._get_conformance())
 
+    def _cql2_encoding(self) -> Optional[str]:
+        """V7（ADR-0119 W5）：下推编码选择 —— JSON 优先（结构化无注入面），
+        text 回退；均未声明返回 None（filter 下推不启用）。"""
+        if not self._cql2_supported():
+            return None
+        classes = [c.lower() for c in self._get_conformance()]
+        if any("cql2-json" in c for c in classes):
+            return "cql2-json"
+        return "cql2-text"
+
     def _capabilities_v2(self):
         caps = get_capabilities("ogc_api")
-        return caps.model_copy(update={"filter_pushdown": self._cql2_supported()})
+        encoding = self._cql2_encoding()
+        return caps.model_copy(update={
+            "filter_pushdown": encoding is not None,
+            "filter_encoding": encoding,
+        })
 
     def capabilities_v2(self):
         return self._capabilities_v2()
@@ -350,14 +367,25 @@ class OGCAPIAdapter(GeospatialDataSourceAdapter):
 
         # CQL2 filter：仅当 conformance 声明且为 AST 时编译（filter-lang 显式）。
         # V5：拆分计划只把下推半编译为 CQL2，本地余项取回后求值。
+        # V7（ADR-0119 W5）：conformance 声明 cql2-json 时优先 JSON 编码
+        # （结构化无注入面）；否则 text。
         if remote_filter is not None:
-            if not self._cql2_supported():
+            encoding = self._cql2_encoding()
+            if encoding is None:
                 raise InvalidQueryError(
                     "server does not declare CQL2 conformance; attribute filter "
                     "unsupported for this source"
                 )
-            params["filter"] = compile_predicate_cql2(remote_filter)
-            params["filter-lang"] = "cql2-text"
+            if encoding == "cql2-json":
+                import json as _json
+
+                params["filter"] = _json.dumps(
+                    compile_predicate_cql2_json(remote_filter), separators=(",", ":")
+                )
+                params["filter-lang"] = "cql2-json"
+            else:
+                params["filter"] = compile_predicate_cql2(remote_filter)
+                params["filter-lang"] = "cql2-text"
 
         try:
             geojson = safe_json_get(

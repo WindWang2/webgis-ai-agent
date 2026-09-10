@@ -33,6 +33,18 @@ from app.services.data_fabric.query.predicates import (
 )
 
 
+def _canonical_aggregate_request(req):
+    """aggregate_request 的确定性规范化（None 透传；否则排序键序列化）。"""
+    if not isinstance(req, dict):
+        return None
+    return {
+        "group_by": sorted(req.get("group_by") or []),
+        "aggregates": sorted(
+            req.get("aggregates") or [], key=lambda a: json.dumps(a, sort_keys=True)
+        ),
+    }
+
+
 def _plan_fingerprint(canonical: Dict[str, Any]) -> str:
     payload = json.dumps(
         canonical, sort_keys=True, ensure_ascii=False, separators=(",", ":")
@@ -67,6 +79,13 @@ class LogicalScan(_LogicalBase):
     fetch_limit: Optional[int] = None  # None = 不设源级 limit
     crs: Optional[str] = None  # 源几何 CRS（costing 感知）
     estimated_rows: Optional[int] = None  # 成本提示（不进 plan_hash）
+    # ── V7（ADR-0119 W8/W9 additive）──
+    # server-side CRS 变换：扫描请求携带 output_crs（adapter caps
+    # output_crs_pushdown=True 才会由枚举器写入；None = 本地交付语义）。
+    output_crs: Optional[str] = None
+    # 安全聚合下推（aggregate_join 证明通过时写入右 scan）：{"group_by": [...],
+    # "aggregates": [{func, field}]}；scan 返回组行（result.data）。
+    aggregate_request: Optional[Dict[str, Any]] = None
 
     def canonical_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -81,6 +100,8 @@ class LogicalScan(_LogicalBase):
             "fields": sorted(self.fields) if self.fields is not None else None,
             "fetch_limit": self.fetch_limit,
             "crs": self.crs,
+            "output_crs": self.output_crs,
+            "aggregate_request": _canonical_aggregate_request(self.aggregate_request),
         }
         return d
 
@@ -125,6 +146,10 @@ class LogicalJoin(_LogicalBase):
     spatial_op: Optional[Literal["within", "intersects"]] = None
     group_by_right: Optional[List[str]] = None
     aggregates: Optional[List[Dict[str, Any]]] = None
+    # ── V7（ADR-0119 W9 additive）──
+    # 安全聚合下推已启用（R-C1 五条件证明通过；右 scan 携带
+    # aggregate_request，执行器拉组行后精确投影 —— 输出形状与本地内核逐位一致）。
+    aggregate_pushdown: bool = False
 
     def canonical_dict(self) -> Dict[str, Any]:
         return {
@@ -143,6 +168,7 @@ class LogicalJoin(_LogicalBase):
                 if self.aggregates
                 else None
             ),
+            "aggregate_pushdown": self.aggregate_pushdown,
         }
 
 

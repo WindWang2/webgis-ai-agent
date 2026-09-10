@@ -48,10 +48,34 @@ from app.services.data_fabric.query.predicates import predicate_to_canonical_dic
 logger = logging.getLogger(__name__)
 
 
+def _parse_crs_srid(crs: Optional[str]) -> Optional[int]:
+    """"EPSG:xxxx" / "OGC:CRS84" → int（执行期交付 CRS 解析；无效 None）。"""
+    if not crs:
+        return None
+    s = str(crs).strip().upper()
+    if s.endswith("CRS84") or s == "OGC:CRS84":
+        return 4326
+    if s.startswith("EPSG:"):
+        body = s[5:]
+        return int(body) if body.isdigit() else None
+    return int(s) if s.isdigit() else None
+
+
 @dataclass
 class ExecutionTrace:
     """执行证据（explain_v6 的 actual 侧）。"""
 
+    #: V7（ADR-0119 W8）：每源**交付**几何 SRID（metadata.delivered_crs 事实；
+    #: 缺失 = 声明 crs）。执行期 CRS 账本以此为准 —— 修复 V6「声明 vs 交付」
+    # 双重变换缺陷。
+    per_source_delivered_srid: Dict[str, int] = field(default_factory=dict)
+    #: server placement 交付校验失败并已本地回退的披露。
+    crs_fallbacks: List[Dict[str, Any]] = field(default_factory=list)
+    #: V7 R1-C2：每源「无过滤且取回完整（未触及窗口）」事实 —— 仅这类源
+    #: 允许 feedback 回写 SourceFacts 行数（observe_unfiltered_count 契约）。
+    per_source_scan_complete_unfiltered: Dict[str, bool] = field(default_factory=dict)
+    #: server placement 成功（output_crs 请求且交付一致）计数。
+    server_placements: int = 0
     per_source_rows: Dict[str, int] = field(default_factory=dict)
     pages_fetched: int = 0
     hop_stats: List[Dict[str, Any]] = field(default_factory=list)
@@ -76,6 +100,7 @@ class PhysicalExecutor:
         page_size: int = DEFAULT_PAGE_SIZE,
         adaptive: bool = True,
         order_strategy: str = "cost",
+        replan_fn: Optional[Any] = None,
     ):
         self._adapter_factory = adapter_factory
         self._budget = budget
@@ -84,6 +109,9 @@ class PhysicalExecutor:
         self._ndv_hints = ndv_hints or {}
         self._page_size = page_size
         self._order_strategy = order_strategy
+        #: V7（W10）bushy 整树重排回调：Dict[sid, actual_rows] -> 新 EnumeratedPlan
+        #: 或 None（federation 层注入；executor 不感知 planner 细节）。
+        self._replan_fn = replan_fn
         self.adaptive = AdaptiveController(
             enabled=adaptive and order_strategy != "given"
         )
@@ -120,6 +148,14 @@ class PhysicalExecutor:
                 )
             else:
                 rows, joined_total = self._eval(plan_tree, lift_key=None)
+                # V7（ADR-0119 W10）：bushy 自适应 —— 观测基数显著偏差
+                # （≥4×，与链形同阈）且 replan_fn 可用时，对剩余执行做
+                # **一次**受护栏整树重排（观测行数 pinned 后严格更优才
+                # 切换；R-M3 口径：计划可复述不可逐位复现，oracle 用序
+                # 不敏感比较）。
+                rows, joined_total = self._maybe_bushy_replan(
+                    plan_tree, rows, joined_total
+                )
         except CancelledError:
             self.trace.cancelled = True
             raise
@@ -130,6 +166,14 @@ class PhysicalExecutor:
             "row_count": len(final_rows),
             "joined_row_count": joined_total,
             "per_source_rows": self.trace.per_source_rows,
+            "per_source_delivered_srid": {
+                k: v for k, v in self.trace.per_source_delivered_srid.items()
+            },
+            "crs_fallbacks": list(self.trace.crs_fallbacks),
+            "per_source_scan_complete_unfiltered": dict(
+                self.trace.per_source_scan_complete_unfiltered
+            ),
+            "server_placements": self.trace.server_placements,
             "execution_duration_s": round(time.monotonic() - started, 4),
             "pages_fetched": self.trace.pages_fetched,
             "hop_stats": self.trace.hop_stats,
@@ -141,6 +185,84 @@ class PhysicalExecutor:
         }
 
     # ── 树求值 ───────────────────────────────────────────────────────
+
+    def _maybe_bushy_replan(
+        self,
+        plan_tree: "LogicalNode",
+        rows: List[Dict[str, Any]],
+        joined_total: int,
+    ) -> "Tuple[List[Dict[str, Any]], int]":
+        """bushy 树的观测驱动一次性重排（V7 W10，ADR-0119）。
+
+        护栏（绝不失控）：
+        - 最多 1 次（与链形 MAX_REPLANS 同界）；``order_strategy="given"``
+          或未注入 ``replan_fn`` 时禁用；
+        - 触发条件：任一源的 actual/estimated ≥ DEVIATION_THRESHOLD 偏差
+          （与链形同阈）；
+        - 重排候选 = replan_fn(观测行数 pinned) 的新计划；新计划 hash 与旧
+          不同且严格更优（更低成本）才重执行；
+        - 确定性口径（R-M3）：同输入（观测相同）同决策；explain 披露 pinned
+          证据 —— 「计划可复述、不可逐位复现」是显式决策。
+        """
+        if (
+            self._replan_fn is None
+            or not self.adaptive.enabled
+            or self.adaptive.replans_used >= 1
+        ):
+            return rows, joined_total
+        from app.services.data_fabric.query.federated.adaptive import (
+            DEVIATION_THRESHOLD,
+        )
+
+        actuals: Dict[str, int] = dict(self.trace.per_source_rows)
+        estimates: Dict[str, int] = _scan_estimate_map(plan_tree, {})
+        deviated = {
+            sid: (actuals[sid], estimates[sid])
+            for sid in actuals
+            if sid in estimates
+            and estimates[sid] > 0
+            and (
+                actuals[sid] >= estimates[sid] * DEVIATION_THRESHOLD
+                or actuals[sid] * DEVIATION_THRESHOLD <= estimates[sid]
+            )
+        }
+        if not deviated:
+            return rows, joined_total
+        try:
+            new_plan = self._replan_fn(actuals)
+        except Exception as exc:  # noqa: BLE001 - 重排失败保留原计划（诚实回退）
+            self.adaptive.notes.append(
+                f"bushy replan skipped: replan_fn failed ({exc})"
+            )
+            return rows, joined_total
+        if new_plan is None:
+            return rows, joined_total
+        new_tree = getattr(new_plan, "tree", None)
+        if new_tree is None or new_tree.plan_hash() == plan_tree.plan_hash():
+            return rows, joined_total
+        old_cost = getattr(new_plan, "previous_cost", None)
+        new_cost = getattr(new_plan, "cost", None)
+        if new_cost is None or old_cost is None or not (new_cost < old_cost):
+            self.adaptive.notes.append(
+                "bushy replan rejected: new plan not strictly cheaper "
+                f"(old={old_cost}, new={new_cost})"
+            )
+            return rows, joined_total
+        self.adaptive.replans_used += 1
+        self.adaptive.notes.append(
+            "bushy replan applied after cardinality deviation: "
+            + ", ".join(
+                f"{sid} actual={a} est={e}" for sid, (a, e) in sorted(deviated.items())
+            )
+            + f"; new cost {new_cost:.0f} < old cost {old_cost:.0f} (pinned basis)"
+        )
+        try:
+            return self._eval(new_tree, lift_key=None)
+        except Exception as exc:  # noqa: BLE001 - R1-M7：重执行失败保留首次合法结果
+            self.adaptive.notes.append(
+                f"bushy replan re-execution failed ({exc}); keeping first result"
+            )
+            return rows, joined_total
 
     def _eval(
         self, node: LogicalNode, *, lift_key: Optional[str]
@@ -180,29 +302,146 @@ class PhysicalExecutor:
                 details={"source_id": node.source_id},
             )
         fetch_window = min(node.fetch_limit or self._limit, self._budget.max_rows)
+        if getattr(node, "aggregate_request", None):
+            # V7（ADR-0119 W9）：安全聚合下推 —— 源侧 GROUP BY 拉组行
+            # （result.data，payload_type=aggregation）。组数 ≤ fetch 窗口；
+            # 交付 CRS 语义与行扫描一致（聚合无几何列 → 不需 output_crs）。
+            req = node.aggregate_request
+            rows: List[Dict[str, Any]] = []
+            adapter = self._adapter_factory(node.source_id)
+            if adapter is None:
+                from app.services.data_fabric.query.federation import (
+                    FederatedQueryError,
+                )
+
+                raise FederatedQueryError(
+                    f"chain source '{node.source_id}' is not connected",
+                    details={"source_id": node.source_id},
+                )
+            from app.schemas.data_fabric_schema import QuerySpec
+
+            extras: Dict[str, Any] = {
+                "limit": fetch_window,
+                "deadline_s": self._budget.deadline_s,
+                "max_rows": self._budget.max_rows,
+                "group_by": list(req.get("group_by") or []),
+                "aggregate": list(req.get("aggregates") or []),
+            }
+            where = None
+            if node.where is not None:
+                where = predicate_to_canonical_dict(node.where)
+            elif node.where_raw:
+                where = node.where_raw
+            if where is not None:
+                extras["where"] = where
+            if node.bbox or self._bbox:
+                extras["bbox"] = list(node.bbox or self._bbox)
+            self.token.check()
+            result = adapter.query(node.dataset_id, QuerySpec(**extras))
+            self.trace.pages_fetched += 1
+            rows = list(result.data or []) if isinstance(result.data, list) else []
+            self.trace.per_source_rows[node.source_id] = len(rows)
+            return rows, len(rows)
         where = None
         if node.where is not None:
             where = predicate_to_canonical_dict(node.where)
         elif node.where_raw:
             where = node.where_raw
-        rows: List[Dict[str, Any]] = []
-        for page in iter_scan_pages(
-            adapter,
-            node.dataset_id,
-            where=where,
-            fields=node.fields,
-            bbox=node.bbox or self._bbox,
-            fetch_limit=fetch_window,
-            budget=self._budget,
-            token=self.token,
-            page_size=self._page_size,
-        ):
-            rows.extend(page)
-            self.trace.pages_fetched += 1
+        rows, delivered, complete_unfiltered = self._fetch_scan_rows(
+            adapter, node, where=where, fetch_limit=fetch_window,
+            output_crs=node.output_crs,
+        )
+        if delivered is not None:
+            self.trace.per_source_delivered_srid[node.source_id] = delivered
+        if complete_unfiltered:
+            self.trace.per_source_scan_complete_unfiltered[node.source_id] = True
         self.trace.per_source_rows[node.source_id] = len(rows)
         if lift_key:
             self._lift(rows, lift_key)
         return rows, len(rows)
+
+    def _fetch_scan_rows(
+        self,
+        adapter: Any,
+        node: "LogicalScan",
+        *,
+        where: Any,
+        fetch_limit: int,
+        output_crs: Optional[str],
+    ) -> "Tuple[List[Dict[str, Any]], Optional[int], bool]":
+        """扫描取行 + 交付 CRS 事实（V7 W8，ADR-0119）。
+
+        - 每页结果经 ``on_result`` 消费 ``metadata.delivered_crs``（adapter
+          自报事实；缺失 = 声明 crs）—— 执行期 CRS 账本以交付为准；
+        - ``output_crs`` 已请求但交付不符（server 忽略/拒绝）→ **去
+          output_crs 一次性重扫** + 本地 pyproj 一次性变换（声明→目标），
+          回退披露进 trace（绝不静默交付错坐标）。
+        """
+        from app.services.data_fabric.query.federated.physical import (
+            transform_rows_geometry,
+        )
+
+        delivered_holder: Dict[str, Optional[int]] = {"srid": None}
+        declared = _parse_crs_srid(node.crs)
+
+        def _on_result(result: Any) -> None:
+            meta = getattr(result, "metadata", None)
+            got = meta.get("delivered_crs") if isinstance(meta, dict) else None
+            if isinstance(got, str):
+                delivered_holder["srid"] = _parse_crs_srid(got)
+
+        def _scan_once(crs: Optional[str]) -> List[Dict[str, Any]]:
+            rws: List[Dict[str, Any]] = []
+            for page in iter_scan_pages(
+                adapter,
+                node.dataset_id,
+                where=where,
+                fields=node.fields,
+                bbox=node.bbox or self._bbox,
+                fetch_limit=fetch_limit,
+                budget=self._budget,
+                token=self.token,
+                page_size=self._page_size,
+                output_crs=crs,
+                on_result=_on_result,
+            ):
+                rws.extend(page)
+                self.trace.pages_fetched += 1
+            return rws
+
+        unfiltered = (
+            where is None
+            and (node.bbox or self._bbox) is None
+            and not getattr(node, "aggregate_request", None)
+        )
+        rows = _scan_once(output_crs)
+        delivered = delivered_holder["srid"]
+        # R1-C2：取回数触及窗口 = 可能截断 → 不视为完整（宁可漏记事实）。
+        complete_unfiltered = bool(unfiltered and len(rows) < fetch_limit)
+        if output_crs is not None:
+            requested = _parse_crs_srid(output_crs)
+            effective = delivered if delivered is not None else declared
+            if requested is not None and effective != requested:
+                # server 未按请求交付（忽略或硬拒绝）→ 一次性回退：
+                # 无 output_crs 重扫 + 本地一次性变换（诚实披露）。
+                rows = _scan_once(None)
+                effective2 = delivered_holder["srid"]
+                from_srid = effective2 if effective2 is not None else declared
+                if from_srid is not None and from_srid != requested:
+                    rows = transform_rows_geometry(rows, from_srid, requested)
+                delivered = requested
+                self.trace.crs_fallbacks.append(
+                    {
+                        "source_id": node.source_id,
+                        "requested": f"EPSG:{requested}",
+                        "delivered": f"EPSG:{effective}" if effective else None,
+                        "fallback": "refetch+local transform",
+                    }
+                )
+            elif requested is not None:
+                delivered = requested
+                self.trace.server_placements += 1
+        return rows, delivered, complete_unfiltered
 
     def _reproject(
         self, node: LogicalReproject, *, lift_key: Optional[str]
@@ -212,6 +451,13 @@ class PhysicalExecutor:
 
         rows, total = self._eval(node.input, lift_key=lift_key)
         from_srid = parse_epsg(node.from_crs)
+        # V7（ADR-0119 W8）：交付事实优先 —— 单扫描子树且已记录交付 SRID 时，
+        # 用**交付**坐标系数值变换（修复 V6「声明 vs 交付」双重变换缺陷：
+        # PostGIS/ArcGIS 默认交付 4326，声明原生 SRID 时本地变换会错位）。
+        if isinstance(node.input, LogicalScan):
+            delivered = self.trace.per_source_delivered_srid.get(node.input.source_id)
+            if delivered is not None:
+                from_srid = delivered
         to_srid = parse_epsg(node.to_crs)
         if from_srid is None or to_srid is None:
             raise FederatedQueryError(
@@ -333,16 +579,27 @@ class PhysicalExecutor:
                 left_key_resolver=self._chain_row_key,
                 right_index=index,
             )
-            # O(组数) 增量聚合（_AggregateState 单一语义真相）
-            accumulated = aggregate_join_rows(
-                joined,
-                node.aggregates or [],
-                node.group_by_right or [],
-            )
+            if getattr(node, "aggregate_pushdown", False):
+                # V7（ADR-0119 W9）：右侧行已是**源侧组行**（R-C1 证明 ⇒
+                # 存活组与命中组一致、组值不重复计数）。输出 = 组行投影到
+                # 本地内核 finalize 的形状（group_by + agg 名）—— 逐位一致。
+                accumulated = _project_pushed_groups(
+                    joined, node.group_by_right or [], node.aggregates or []
+                )
+            else:
+                # O(组数) 增量聚合（_AggregateState 单一语义真相）
+                accumulated = aggregate_join_rows(
+                    joined,
+                    node.aggregates or [],
+                    node.group_by_right or [],
+                )
             self.trace.hop_stats.append(
                 {
                     "hop": hop_pos,
                     "kind": node.join_kind,
+                    "aggregate_pushdown": bool(
+                        getattr(node, "aggregate_pushdown", False)
+                    ),
                     "joined_rows": len(joined),
                     "output_rows": len(accumulated),
                     **semi_stats,
@@ -627,3 +884,66 @@ def _left_depth(node: LogicalNode) -> int:
 
 
 __all__ = ["PhysicalExecutor", "ExecutionTrace", "extract_hop_estimates"]
+
+
+def _project_pushed_groups(
+    joined_rows: List[Dict[str, Any]],
+    group_by: List[str],
+    aggregates: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """下推组行 → 本地内核 finalize 形状（V7 W9；单一投影真相）。
+
+    attribute_join_local 的产物行携带 ``__right__`` = 组行；唯一左键保证每
+    组行至多出现一次。输出键 = group_by 字段 + ``func_field``（count 无字段
+    时 = "count"）—— 与 ``_AggregateState.finalize`` 逐位一致。
+    """
+    agg_funcs: Dict[str, str] = {}
+    for a in aggregates:
+        func = str(a.get("func")) if isinstance(a, dict) else str(getattr(a, "func"))
+        field = a.get("field") if isinstance(a, dict) else getattr(a, "field")
+        name = func if field is None else f"{func}_{field}"
+        agg_funcs[name] = func
+    out: List[Dict[str, Any]] = []
+    seen: set = set()
+    for row in joined_rows:
+        right = row.get("__right__") or {}
+        key = tuple(right.get(g) for g in group_by)
+        if key in seen:
+            continue  # 唯一左键下不应发生；防御性去重（组行幂等）
+        seen.add(key)
+        result: Dict[str, Any] = {}
+        for g in group_by:
+            result[g] = right.get(g)
+        for name, func in agg_funcs.items():
+            v = right.get(name)
+            # R1-M6：与 _AggregateState.finalize 数值口径对齐 —— sum 累加器
+            # 从 0.0 起（float）、avg 是除法（float）。源侧 Decimal/int 原样
+            # 透传会破坏「逐位一致」与上层 JSON 序列化。
+            if func in ("sum", "avg") and v is not None:
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    pass
+            result[name] = v
+        out.append(result)
+    return out
+
+
+def _estimate_rows_of_tree(tree: "LogicalNode") -> Optional[int]:
+    """树根的行数估计（LogicalScan.estimated_rows 仅对单扫描树有意义）。"""
+    if isinstance(tree, LogicalScan):
+        return tree.estimated_rows
+    return None
+
+
+def _scan_estimate_map(tree: "LogicalNode", out: Dict[str, int]) -> Dict[str, int]:
+    """树中每个 scan 的行数估计（components 口径的执行期对偶）。"""
+    if isinstance(tree, LogicalScan):
+        if tree.estimated_rows is not None:
+            out[tree.source_id] = tree.estimated_rows
+        return out
+    for attr in ("input", "left", "right"):
+        child = getattr(tree, attr, None)
+        if child is not None and hasattr(child, "canonical_dict"):
+            _scan_estimate_map(child, out)
+    return out

@@ -76,6 +76,12 @@ class SourceFacts:
     fields: Optional[List[str]] = None
     stats: Optional[DatasetStatistics] = None  # 完整统计（可选；selectivity 消费）
     caps: Optional[Any] = None  # AdapterCapabilitiesV2（W10 探测注入；下推边界解释）
+    # ── V7（ADR-0119 additive）──
+    #: 被动观测的限流提示（probing；None = 未知 → 无惩罚，绝不虚构）。
+    rate_limit: Optional[Any] = None
+    #: measured 级唯一键字段（stats_hints 显式声明或 pg_index 探测；
+    #: 估计 NDV 不作数 —— R-C1 证明条件 3）。
+    unique_keys: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -177,12 +183,14 @@ def _crs_transform_meta(
     card_right: int,
     left_srid: Optional[int] = None,
     right_srid: Optional[int] = None,
+    *,
+    server_capable: Tuple[bool, bool] = (False, False),
 ) -> Tuple[float, Optional[Dict[str, Any]]]:
-    """CRS 对齐成本（单一决策 API：costing.decide_crs_transform，local-only）。
+    """CRS 对齐成本（单一决策 API：costing.decide_crs_transform）。
 
-    server placement 需要跨 adapter 的 output.crs 下推管道 —— 显式
-    follow-up（ADR-0118 Known Limitations）；本层计划绝不声称执行不了的
-    placement。
+    V7（ADR-0119 W8）：``server_capable`` 标记（left, right）两侧是否为
+    **scan-like 且 caps 声明 output_crs_pushdown** —— 此时允许 server
+    placement（ADR-0118 KL#2 兑现）；子树侧维持本地（无法回溯重扫）。
     """
     from app.services.data_fabric.query.federated.costing import decide_crs_transform
 
@@ -198,7 +206,10 @@ def _crs_transform_meta(
         caps_right=right,
         est_left_rows=card_left,
         est_right_rows=card_right,
-        allow_server=False,
+        allow_server=bool(server_capable[0] or server_capable[1]),
+        # 单侧可行性（scan-like + 已验证通道）进决策 —— 成本与可选 placement
+        # 一致，绝无「选中后降级」的不诚实估价。
+        server_feasible=server_capable,
     )
     if decision.placement == "none":
         return 0.0, {
@@ -289,6 +300,25 @@ def _scan_transfer_rows(src: SourceFacts) -> int:
 
 def _per_feature_bytes(fields: Optional[List[str]]) -> int:
     return _BYTE_PER_FEATURE_PROJECTED if fields else _BYTE_PER_FEATURE_GEO
+
+
+def _scan_cost(src: SourceFacts, *, bytes_cost: float) -> "tuple[float, Dict[str, Any]]":
+    """V7 扫描成本（W7）：传输字节 × 不确定性乘子 + 请求惩罚（rate-limit）。
+
+    返回 (cost, disclosure) —— disclosure 进 components 供 EXPLAIN 复述；
+    确定性：同输入同乘子（stats.confidence 与 hints 均为规划期事实）。
+    """
+    from app.services.data_fabric.query.federated.costing import (
+        estimate_uncertainty_multiplier,
+        rate_limit_request_penalty,
+    )
+
+    unc, basis = estimate_uncertainty_multiplier(src.stats)
+    rl_penalty = rate_limit_request_penalty(src.rate_limit)
+    disclosure: Dict[str, Any] = {"uncertainty": unc, "confidence": basis}
+    if rl_penalty:
+        disclosure["rate_limit_penalty"] = round(rl_penalty, 4)
+    return bytes_cost * unc + rl_penalty, disclosure
 
 
 def _scan_tree(src: SourceFacts, ctx: EnumerationContext) -> LogicalScan:
@@ -405,13 +435,17 @@ def enumerate_federation(ctx: EnumerationContext) -> EnumeratedPlan:
         src = by_id[sid]
         rows = _scan_transfer_rows(src)
         bytes_ = rows * _per_feature_bytes(src.fields)
+        scan_cost, scan_disc = _scan_cost(
+            src, bytes_cost=bytes_ * _W_BYTES_TRANSFERRED
+        )
+        scan_cost += _W_REMOTE_REQUEST
         dp[1 << i] = [
             _Candidate(
                 tree=_scan_tree(src, ctx),
                 sources_in=(sid,),
                 card=rows,
-                cost=bytes_ * _W_BYTES_TRANSFERRED + _W_REMOTE_REQUEST,
-                components={"scans": {sid: {"rows": rows, "bytes": bytes_}}},
+                cost=scan_cost,
+                components={"scans": {sid: {"rows": rows, "bytes": bytes_, **scan_disc}}},
                 crs_transforms=[],
                 key=f"scan:{sid}",
                 out_srid=_parse_srid(src.crs),
@@ -513,15 +547,17 @@ def _enumerate_fixed_chain(
         )
     tree: LogicalNode = _scan_tree(by_id[id_order[0]], ctx)
     card = _scan_transfer_rows(by_id[id_order[0]])
-    cost = (
-        card * _per_feature_bytes(by_id[id_order[0]].fields) * _W_BYTES_TRANSFERRED
-        + _W_REMOTE_REQUEST
+    first_bytes = card * _per_feature_bytes(by_id[id_order[0]].fields)
+    first_cost, first_disc = _scan_cost(
+        by_id[id_order[0]], bytes_cost=first_bytes * _W_BYTES_TRANSFERRED
     )
+    cost = first_cost + _W_REMOTE_REQUEST
     scans = {
         "scans": {
             id_order[0]: {
                 "rows": card,
-                "bytes": card * _per_feature_bytes(by_id[id_order[0]].fields),
+                "bytes": first_bytes,
+                **first_disc,
             }
         }
     }
@@ -539,11 +575,19 @@ def _enumerate_fixed_chain(
         crs_cost, crs_meta = _crs_transform_meta(
             edge, left_src, right_src, card, right_rows,
             left_srid=left_srid, right_srid=right_srid,
+            server_capable=(
+                _caps_output_crs(left_src),  # 累积侧恒为子树：server 不可行
+                _caps_output_crs(right_src),
+            ),
         )
         if crs_meta:
             transforms.append(crs_meta)
+        right_tree: LogicalNode = _scan_tree(right_src, ctx)
+        if crs_meta and crs_meta.get("placement") == "server" and right_tree is not None:
+            # server placement 必然落在右 scan（累积左子树无法回溯重扫）。
+            right_tree = _with_output_crs(right_tree, crs_meta["to_crs"])
         right_cand = _Candidate(
-            tree=_scan_tree(right_src, ctx),
+            tree=right_tree,
             sources_in=(right_sid,),
             card=right_rows,
             cost=right_bytes,
@@ -565,7 +609,6 @@ def _enumerate_fixed_chain(
         build = right_rows * _W_BUILD_PER_ROW
         cost = cost + right_bytes + cpu + build + crs_cost
         left_tree: LogicalNode = tree
-        right_tree: LogicalNode = right_cand.tree
         if (
             crs_meta
             and crs_meta.get("placement") == "local"
@@ -581,6 +624,9 @@ def _enumerate_fixed_chain(
                 left_tree = LogicalReproject(input=left_tree, **reproj_kwargs)
             else:
                 right_tree = LogicalReproject(input=right_tree, **reproj_kwargs)
+        elif crs_meta and crs_meta.get("placement") in ("local", "server") and crs_meta.get("transform_side"):
+            # server placement：交付即目标 CRS（scan 已带 output_crs）。
+            acc_out_srid = _parse_srid(crs_meta["to_crs"])
         elif left_srid is not None:
             acc_out_srid = left_srid
         tree = LogicalJoin(
@@ -659,6 +705,10 @@ def _join_candidate(
     crs_cost, crs_meta = _crs_transform_meta(
         eff, lsrc, rsrc, left.card, right.card,
         left_srid=left_srid, right_srid=right_srid,
+        server_capable=(
+            _is_scan_like(left.tree) and _caps_output_crs(lsrc),
+            _is_scan_like(right.tree) and _caps_output_crs(rsrc),
+        ),
     )
     card = _join_cardinality(eff, left, right, by_id)
     cpu = card * _W_LOCAL_CPU_PER_ROW
@@ -691,6 +741,13 @@ def _join_candidate(
                 left_tree = LogicalReproject(input=left_tree, **reproj_kwargs)
             else:
                 right_tree = LogicalReproject(input=right_tree, **reproj_kwargs)
+        # V7（ADR-0119 W8）：server placement → scan 携带 output_crs（服务端
+        # 变换交付）；无 Reproject 节点，out_srid 账本记交付 CRS。
+        elif crs_meta.get("placement") == "server" and crs_meta.get("transform_side"):
+            if crs_meta["transform_side"] == "left":
+                left_tree = _with_output_crs(left_tree, crs_meta["to_crs"])
+            else:
+                right_tree = _with_output_crs(right_tree, crs_meta["to_crs"])
     tree = LogicalJoin(
         join_kind=eff.kind,
         left=left_tree,
@@ -701,8 +758,9 @@ def _join_candidate(
         group_by_right=list(eff.group_by_right) if eff.group_by_right else None,
         aggregates=list(eff.aggregates) if eff.aggregates else None,
     )
-    # 输出几何 CRS：变换后 = 目标 CRS；否则沿左子树（V5 链累积几何来自左侧）。
-    if crs_meta and crs_meta.get("placement") == "local" and crs_meta.get("transform_side"):
+    # 输出几何 CRS：变换（local 或 server）后 = 目标 CRS；否则沿左子树
+    # （V5 链累积几何来自左侧）。
+    if crs_meta and crs_meta.get("placement") in ("local", "server") and crs_meta.get("transform_side"):
         out_srid = _parse_srid(crs_meta["to_crs"])
     else:
         out_srid = left_srid if left_srid is not None else right_srid
@@ -725,6 +783,29 @@ def _is_scan_like(tree: LogicalNode) -> bool:
     while isinstance(tree, LogicalReproject):
         tree = tree.input
     return isinstance(tree, LogicalScan)
+
+
+def _caps_output_crs(src: "SourceFacts") -> bool:
+    """该源是否具备已验证的 output_crs 扫描通道（V7 W8）。"""
+    caps = getattr(src, "caps", None)
+    return bool(caps is not None and getattr(caps, "output_crs_pushdown", False))
+
+
+def _with_output_crs(tree: LogicalNode, output_crs: str):
+    """scan-like 树根携带 output_crs（server placement 语义；返回新树）。
+
+    仅 LogicalScan / LogicalReproject(LogicalScan) 形态受支持
+    （调用方以 _is_scan_like 守卫）；其余形态抛错 —— 绝不静默忽略。
+    """
+    if isinstance(tree, LogicalScan):
+        return tree.model_copy(update={"output_crs": output_crs})
+    if isinstance(tree, LogicalReproject) and isinstance(tree.input, LogicalScan):
+        return tree.model_copy(
+            update={"input": tree.input.model_copy(update={"output_crs": output_crs})}
+        )
+    raise AssertionError("server placement requires a scan-like tree")
+
+
 
 
 def _first_src(cand: _Candidate, by_id: Dict[str, SourceFacts]) -> SourceFacts:
@@ -803,3 +884,73 @@ __all__ = [
     "TOP_K_PER_SUBSET",
     "MAX_ALTERNATIVES",
 ]
+
+
+# ── V7（ADR-0119 W9）：安全聚合下推证明（R-C1 五条件）─────────────────────
+
+#: 可安全下推的聚合函数（可合并内核；stddev 等需合并状态的不在列）。
+_SAFE_PUSH_AGG_FUNCS = frozenset({"count", "sum", "min", "max", "avg"})
+
+
+def aggregate_pushdown_proof(
+    edge: JoinEdge,
+    left_sources: Tuple[str, ...],
+    by_id: Dict[str, SourceFacts],
+) -> Optional[Dict[str, Any]]:
+    """aggregate_join → 源侧 GROUP BY 的**语义等价证明**（不满足返回 None）。
+
+    R-C1 五条件（缺一不可；全部计划期可证）：
+    1. 纯属性等值 join（join_field_left/right 均存在；spatial aggregate join
+       显式排除）；
+    2. ``group_by_right`` **包含** ``join_field_right`` —— 组内右行要么全部
+       被连接命中、要么全部未命中（未命中组被最终 join 丢弃）；
+    3. 左 join 键唯一性为 **measured 级证明**（``SourceFacts.unique_keys``：
+       stats_hints 显式声明或 pg_index 探测）—— 每右行至多匹配一左行，
+       杜绝 join-后聚合的右行重复计数；
+    4. 聚合函数 ⊆ {count, sum, min, max, avg}（可合并内核，组值可直接迁移）
+       且聚合字段**不出现在左侧顶层字段**（R1-M5：内核左优先解析 —— 左侧
+       未投影（字段集未知）或含同名列 → 无法证明，不下推）；
+    5. 右源 caps.aggregation=True（源真的能做 GROUP BY）。
+
+    等价性论证：条件 2+3 ⇒ 存活组与命中组一致且组内聚合不重复；条件 4 ⇒
+    聚合值可由源侧组值直接承载 ⇒ 源侧 GROUP BY ≡ join-后聚合（逐位）。
+    """
+    if edge.kind != "aggregate_join":
+        return None
+    if not edge.join_field_left or not edge.join_field_right:
+        return None
+    if not edge.group_by_right or edge.join_field_right not in edge.group_by_right:
+        return None
+    if edge.left_source_id not in left_sources:
+        return None
+    left_src = by_id.get(edge.left_source_id)
+    right_src = by_id.get(edge.right_source_id)
+    if left_src is None or right_src is None:
+        return None
+    if edge.join_field_left not in (left_src.unique_keys or []):
+        return None
+    right_caps = getattr(right_src, "caps", None)
+    if right_caps is None or not getattr(right_caps, "aggregation", False):
+        return None
+    for a in edge.aggregates or []:
+        func = str(a.get("func") if isinstance(a, dict) else getattr(a, "func", ""))
+        if func not in _SAFE_PUSH_AGG_FUNCS:
+            return None
+        # R1-M5：内核聚合字段解析是**左优先右回退**（_AggregateState.update）
+        # —— 左侧顶层存在同名列时本地读左值、下推算右值，不等价。左字段集
+        # 未知（未投影）→ 无法证明 → 不下推（保守诚实）。
+        field = a.get("field") if isinstance(a, dict) else getattr(a, "field")
+        if field is not None:
+            if left_src.fields is None:
+                return None
+            if field in left_src.fields:
+                return None
+    return {
+        "left_source_id": edge.left_source_id,
+        "right_source_id": edge.right_source_id,
+        "join_field_left": edge.join_field_left,
+        "join_field_right": edge.join_field_right,
+        "group_by_right": list(edge.group_by_right),
+        "basis": "unique_key_declaration" if (left_src.unique_keys) else "pg_index",
+        "aggregates": list(edge.aggregates or []),
+    }
