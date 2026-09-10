@@ -273,81 +273,82 @@ class MemorySessionStore(BaseSessionStore):
 
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """存储数据并返回生成的游标 ID"""
-        if session_id not in self._store:
-            self._store[session_id] = OrderedDict()
-        # 同步起点：若此 session 还没碰过 map_state，这里也算它的起点
-        if session_id not in self._map_state:
-            self._map_state[session_id] = {"_started_at": datetime.now(timezone.utc).isoformat()}
+        async with self._lock:
+            if session_id not in self._store:
+                self._store[session_id] = OrderedDict()
+            # 同步起点：若此 session 还没碰过 map_state，这里也算它的起点
+            if session_id not in self._map_state:
+                self._map_state[session_id] = {"_started_at": datetime.now(timezone.utc).isoformat()}
 
-        # 16 hex chars = 64 bits entropy. ref_id + session_id 是能力令牌，需难以枚举。
-        ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:16]}"
+            # 16 hex chars = 64 bits entropy. ref_id + session_id 是能力令牌，需难以枚举。
+            ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:16]}"
 
-        # 维护容量：按 LRU 淘汰最久未访问的项（entry 计数 + 字节预算）
-        # #912 byte cap: each entry can be 5k FC (~5MB). 200 × 5MB = 1GB per session.
-        # SESSION_STORE_MAX_BYTES (env, default 50MB) bounds memory before OOM.
-        _max_bytes = int(os.getenv("SESSION_STORE_MAX_BYTES", "52428800"))
-        session_cache = self._store[session_id]
-        try:
-            from app.lib.json_size import estimate_json_bytes as _est_bytes
-            _new_size = _est_bytes(data) if isinstance(data, (dict, list)) else len(str(data).encode())
-        except Exception:
-            _new_size = 0
+            # 维护容量：按 LRU 淘汰最久未访问的项（entry 计数 + 字节预算）
+            # #912 byte cap: each entry can be 5k FC (~5MB). 200 × 5MB = 1GB per session.
+            # SESSION_STORE_MAX_BYTES (env, default 50MB) bounds memory before OOM.
+            _max_bytes = int(os.getenv("SESSION_STORE_MAX_BYTES", "52428800"))
+            session_cache = self._store[session_id]
+            try:
+                from app.lib.json_size import estimate_json_bytes as _est_bytes
+                _new_size = _est_bytes(data) if isinstance(data, (dict, list)) else len(str(data).encode())
+            except Exception:
+                _new_size = 0
 
-        # DA-P2-1: O(1) incremental accounting (sizes maintained at each write
-        # point: store/overwrite/delete/evict/clear). A lazy one-off sync only
-        # for a session created before this field existed (defensive).
-        sizes = self._ref_sizes.get(session_id)
-        if sizes is None or len(sizes) != len(session_cache):
-            sizes = self._ref_sizes.setdefault(session_id, {})
-            total_bytes = 0
-            for r_id, v in session_cache.items():
-                try:
-                    from app.lib.json_size import estimate_json_bytes as _eb2
-                    sz = _eb2(v) if isinstance(v, (dict, list)) else len(str(v).encode())
-                except Exception:
-                    sz = 0
-                sizes[r_id] = sz
-                total_bytes += sz
-            self._session_bytes[session_id] = total_bytes
-        total_bytes = self._session_bytes.get(session_id, 0)
+            # DA-P2-1: O(1) incremental accounting (sizes maintained at each write
+            # point: store/overwrite/delete/evict/clear). A lazy one-off sync only
+            # for a session created before this field existed (defensive).
+            sizes = self._ref_sizes.get(session_id)
+            if sizes is None or len(sizes) != len(session_cache):
+                sizes = self._ref_sizes.setdefault(session_id, {})
+                total_bytes = 0
+                for r_id, v in session_cache.items():
+                    try:
+                        from app.lib.json_size import estimate_json_bytes as _eb2
+                        sz = _eb2(v) if isinstance(v, (dict, list)) else len(str(v).encode())
+                    except Exception:
+                        sz = 0
+                    sizes[r_id] = sz
+                    total_bytes += sz
+                self._session_bytes[session_id] = total_bytes
+            total_bytes = self._session_bytes.get(session_id, 0)
 
-        while session_cache and (len(session_cache) >= self.capacity or (total_bytes + _new_size > _max_bytes and total_bytes > 0)):
-            # ADR-0104 #6(f)：淘汰前先把 payload 落持久副本（RELOAD_REF 回退的
-            # "durable"半边）。peek→spill→pop；spill 失败绝不阻断淘汰本身。
-            oldest_ref = next(iter(session_cache))
-            evict_data = session_cache.get(oldest_ref)
-            if evict_data is not None:
-                try:
-                    await asyncio.to_thread(ref_spill_store.spill, session_id, oldest_ref, evict_data)
-                except Exception as e:  # noqa: BLE001 — spill 是增值面，失败只降级
-                    logger.debug(f"Session {session_id}: spill {oldest_ref} failed: {e}")
-            session_cache.popitem(last=False)
-            total_bytes -= sizes.pop(oldest_ref, 0)
-            self._remove_alias_by_ref(session_id, oldest_ref)
-            if session_id in self._descriptors:
-                self._descriptors[session_id].pop(oldest_ref, None)
-            self._ref_revisions.get(session_id, {}).pop(oldest_ref, None)
-            self._invalidate_derived_caches(session_id, oldest_ref, reason='EVICT')
-            logger.debug(f"Session {session_id}: evicted {oldest_ref} (capacity={self.capacity})")
+            while session_cache and (len(session_cache) >= self.capacity or (total_bytes + _new_size > _max_bytes and total_bytes > 0)):
+                # ADR-0104 #6(f)：淘汰前先把 payload 落持久副本（RELOAD_REF 回退的
+                # "durable"半边）。peek→spill→pop；spill 失败绝不阻断淘汰本身。
+                oldest_ref = next(iter(session_cache))
+                evict_data = session_cache.get(oldest_ref)
+                if evict_data is not None:
+                    try:
+                        await asyncio.to_thread(ref_spill_store.spill, session_id, oldest_ref, evict_data)
+                    except Exception as e:  # noqa: BLE001 — spill 是增值面，失败只降级
+                        logger.debug(f"Session {session_id}: spill {oldest_ref} failed: {e}")
+                session_cache.popitem(last=False)
+                total_bytes -= sizes.pop(oldest_ref, 0)
+                self._remove_alias_by_ref(session_id, oldest_ref)
+                if session_id in self._descriptors:
+                    self._descriptors[session_id].pop(oldest_ref, None)
+                self._ref_revisions.get(session_id, {}).pop(oldest_ref, None)
+                self._invalidate_derived_caches(session_id, oldest_ref, reason='EVICT')
+                logger.debug(f"Session {session_id}: evicted {oldest_ref} (capacity={self.capacity})")
 
-        session_cache[ref_id] = data
-        sizes[ref_id] = _new_size
-        self._session_bytes[session_id] = total_bytes + _new_size
-        self._ref_revisions.setdefault(session_id, {})[ref_id] = 1
-        self._touch_session(session_id)
+            session_cache[ref_id] = data
+            sizes[ref_id] = _new_size
+            self._session_bytes[session_id] = total_bytes + _new_size
+            self._ref_revisions.setdefault(session_id, {})[ref_id] = 1
+            self._touch_session(session_id)
 
-        # V3 Performance: compute descriptor once at store time so every subsequent
-        # descriptor read is O(1) instead of O(features).
-        try:
-            from app.schemas.ref_descriptor import compute_descriptor
-            descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
-            if session_id not in self._descriptors:
-                self._descriptors[session_id] = {}
-            self._descriptors[session_id][ref_id] = descriptor.to_dict()
-        except Exception as e:
-            logger.warning(f"V3: Failed to compute descriptor for {ref_id}: {e}")
+            # V3 Performance: compute descriptor once at store time so every subsequent
+            # descriptor read is O(1) instead of O(features).
+            try:
+                from app.schemas.ref_descriptor import compute_descriptor
+                descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
+                if session_id not in self._descriptors:
+                    self._descriptors[session_id] = {}
+                self._descriptors[session_id][ref_id] = descriptor.to_dict()
+            except Exception as e:
+                logger.warning(f"V3: Failed to compute descriptor for {ref_id}: {e}")
 
-        return ref_id
+            return ref_id
 
     async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool:
         """Overwrite the data stored at an existing ``ref_id``.
@@ -358,73 +359,75 @@ class MemorySessionStore(BaseSessionStore):
 
         Returns True if the ref_id existed and was updated, False otherwise.
         """
-        session_cache = self._store.get(session_id)
-        if not session_cache or ref_id not in session_cache:
-            return False
-        if data is session_cache[ref_id]:
-            # Same object re-persisted (plan_mode persists step_results after
-            # every wave) — nothing changed, skip the O(features) size
-            # estimate + descriptor recompute (G-2 hot-path guard).
+        async with self._lock:
+            session_cache = self._store.get(session_id)
+            if not session_cache or ref_id not in session_cache:
+                return False
+            if data is session_cache[ref_id]:
+                # Same object re-persisted (plan_mode persists step_results after
+                # every wave) — nothing changed, skip the O(features) size
+                # estimate + descriptor recompute (G-2 hot-path guard).
+                session_cache.move_to_end(ref_id)
+                self._touch_session(session_id)
+                return True
+            session_cache[ref_id] = data
+            # DA-P2-1：覆写尺寸 O(1) 增减
+            try:
+                from app.lib.json_size import estimate_json_bytes as _est_bytes
+                new_size = _est_bytes(data) if isinstance(data, (dict, list)) else len(str(data).encode())
+            except Exception:
+                new_size = 0
+            sizes = self._ref_sizes.get(session_id)
+            if sizes is not None:
+                self._session_bytes[session_id] = (
+                    self._session_bytes.get(session_id, 0) - sizes.get(ref_id, 0) + new_size
+                )
+                sizes[ref_id] = new_size
+            self._invalidate_derived_caches(session_id, ref_id, reason='OVERWRITE')
+            # V5-E: same ref identity, new content — bump the revision.
+            revs = self._ref_revisions.setdefault(session_id, {})
+            revs[ref_id] = revs.get(ref_id, 1) + 1
+            # #1113 P3-5: recompute the descriptor against the new payload (same
+            # as store()). Before this fix overwrite left the OLD payload's stale
+            # descriptor in place; a plain pop would be worse still — Memory
+            # readers have no lazy recompute fallback (unlike
+            # RedisSessionStore.get_ref_descriptor) and would see NotFound.
+            # G-2: identical-object overwrites (plan_mode re-persisting the same
+            # payload) skip the O(features) recompute entirely.
+            try:
+                from app.schemas.ref_descriptor import compute_descriptor
+                descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
+                if session_id not in self._descriptors:
+                    self._descriptors[session_id] = {}
+                self._descriptors[session_id][ref_id] = descriptor.to_dict()
+            except Exception as e:
+                self._descriptors.get(session_id, {}).pop(ref_id, None)
+                logger.warning(f"V3: Failed to recompute descriptor for {ref_id} on overwrite: {e}")
+            # overwrite is the durability path for plans/checkpoints — bump LRU
+            # recency so a just-updated plan is not the next eviction victim.
             session_cache.move_to_end(ref_id)
             self._touch_session(session_id)
             return True
-        session_cache[ref_id] = data
-        # DA-P2-1：覆写尺寸 O(1) 增减
-        try:
-            from app.lib.json_size import estimate_json_bytes as _est_bytes
-            new_size = _est_bytes(data) if isinstance(data, (dict, list)) else len(str(data).encode())
-        except Exception:
-            new_size = 0
-        sizes = self._ref_sizes.get(session_id)
-        if sizes is not None:
-            self._session_bytes[session_id] = (
-                self._session_bytes.get(session_id, 0) - sizes.get(ref_id, 0) + new_size
-            )
-            sizes[ref_id] = new_size
-        self._invalidate_derived_caches(session_id, ref_id, reason='OVERWRITE')
-        # V5-E: same ref identity, new content — bump the revision.
-        revs = self._ref_revisions.setdefault(session_id, {})
-        revs[ref_id] = revs.get(ref_id, 1) + 1
-        # #1113 P3-5: recompute the descriptor against the new payload (same
-        # as store()). Before this fix overwrite left the OLD payload's stale
-        # descriptor in place; a plain pop would be worse still — Memory
-        # readers have no lazy recompute fallback (unlike
-        # RedisSessionStore.get_ref_descriptor) and would see NotFound.
-        # G-2: identical-object overwrites (plan_mode re-persisting the same
-        # payload) skip the O(features) recompute entirely.
-        try:
-            from app.schemas.ref_descriptor import compute_descriptor
-            descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
-            if session_id not in self._descriptors:
-                self._descriptors[session_id] = {}
-            self._descriptors[session_id][ref_id] = descriptor.to_dict()
-        except Exception as e:
-            self._descriptors.get(session_id, {}).pop(ref_id, None)
-            logger.warning(f"V3: Failed to recompute descriptor for {ref_id} on overwrite: {e}")
-        # overwrite is the durability path for plans/checkpoints — bump LRU
-        # recency so a just-updated plan is not the next eviction victim.
-        session_cache.move_to_end(ref_id)
-        self._touch_session(session_id)
-        return True
 
     async def delete_ref(self, session_id: str, ref_id: str) -> bool:
         """Drop one stored ref (and its descriptor/alias). Returns False if missing."""
-        session_cache = self._store.get(session_id)
-        if not session_cache or ref_id not in session_cache:
-            return False
-        session_cache.pop(ref_id, None)
-        self._remove_alias_by_ref(session_id, ref_id)
-        if session_id in self._descriptors:
-            self._descriptors[session_id].pop(ref_id, None)
-        # DA-P2-1：删除尺寸 O(1) 扣减
-        sizes = self._ref_sizes.get(session_id)
-        if sizes is not None and ref_id in sizes:
-            self._session_bytes[session_id] = (
-                self._session_bytes.get(session_id, 0) - sizes.pop(ref_id)
-            )
-        self._invalidate_derived_caches(session_id, ref_id, reason='DELETE')
-        self._ref_revisions.get(session_id, {}).pop(ref_id, None)
-        return True
+        async with self._lock:
+            session_cache = self._store.get(session_id)
+            if not session_cache or ref_id not in session_cache:
+                return False
+            session_cache.pop(ref_id, None)
+            self._remove_alias_by_ref(session_id, ref_id)
+            if session_id in self._descriptors:
+                self._descriptors[session_id].pop(ref_id, None)
+            # DA-P2-1：删除尺寸 O(1) 扣减
+            sizes = self._ref_sizes.get(session_id)
+            if sizes is not None and ref_id in sizes:
+                self._session_bytes[session_id] = (
+                    self._session_bytes.get(session_id, 0) - sizes.pop(ref_id)
+                )
+            self._invalidate_derived_caches(session_id, ref_id, reason='DELETE')
+            self._ref_revisions.get(session_id, {}).pop(ref_id, None)
+            return True
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
         """为引用 ID 设置别名"""
@@ -455,20 +458,21 @@ class MemorySessionStore(BaseSessionStore):
         天然反映在下一次读取。只读约定见
         app/services/ref_payload_cache.py；需要可变副本走 ``get()``。
         """
-        session_cache = self._store.get(session_id)
-        if not session_cache:
-            return None
-        ref_id = ref_id_or_alias
-        aliases = self._aliases.get(session_id, {})
-        if ref_id_or_alias in aliases:
-            ref_id = aliases[ref_id_or_alias]
-        data = session_cache.get(ref_id)
-        if data is None:
-            return None
-        # LRU touch（与 get() 一致；dict 本体共享，move_to_end 保热度）
-        session_cache.move_to_end(ref_id)
-        self._touch_session(session_id)
-        return data
+        async with self._lock:
+            session_cache = self._store.get(session_id)
+            if not session_cache:
+                return None
+            ref_id = ref_id_or_alias
+            aliases = self._aliases.get(session_id, {})
+            if ref_id_or_alias in aliases:
+                ref_id = aliases[ref_id_or_alias]
+            data = session_cache.get(ref_id)
+            if data is None:
+                return None
+            # LRU touch（与 get() 一致；dict 本体共享，move_to_end 保热度）
+            session_cache.move_to_end(ref_id)
+            self._touch_session(session_id)
+            return data
 
     async def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
         """根据游标 ID 或别名获取原始数据
@@ -478,23 +482,24 @@ class MemorySessionStore(BaseSessionStore):
         - 内存侧必须 deepcopy，消除可变别名
         调用方就地改 payload 不影响存储；显式更新需调 store_* 方法。
         """
-        session_cache = self._store.get(session_id)
-        if not session_cache:
-            return None
-        
-        # 尝试作为别名查找
-        ref_id = ref_id_or_alias
-        aliases = self._aliases.get(session_id, {})
-        if ref_id_or_alias in aliases:
-            ref_id = aliases[ref_id_or_alias]
-        
-        if ref_id not in session_cache:
-            return None
-        
-        # 移动到末尾 (LRU)
-        data = session_cache.pop(ref_id)
-        session_cache[ref_id] = data
-        self._touch_session(session_id)
+        async with self._lock:
+            session_cache = self._store.get(session_id)
+            if not session_cache:
+                return None
+            
+            # 尝试作为别名查找
+            ref_id = ref_id_or_alias
+            aliases = self._aliases.get(session_id, {})
+            if ref_id_or_alias in aliases:
+                ref_id = aliases[ref_id_or_alias]
+            
+            if ref_id not in session_cache:
+                return None
+            
+            # 移动到末尾 (LRU)
+            session_cache.move_to_end(ref_id)
+            self._touch_session(session_id)
+            data = session_cache[ref_id]
 
         # 返回深拷贝副本（与 Redis 侧语义对齐）。
         # #799: 与 Redis 后端一致地下线程 —— 50k 要素级 ref 的内联 deepcopy
@@ -779,32 +784,33 @@ class MemorySessionStore(BaseSessionStore):
 
     async def clear_session(self, session_id: str) -> None:
         """清理会话数据"""
-        self._store.pop(session_id, None)
-        self._aliases.pop(session_id, None)
-        self._map_state.pop(session_id, None)
-        self._event_log.pop(session_id, None)
-        self._map_action_events.pop(session_id, None)
-        self._descriptors.pop(session_id, None)
-        self._ref_revisions.pop(session_id, None)
-        self._ref_sizes.pop(session_id, None)
-        self._session_bytes.pop(session_id, None)
-        self._session_order.pop(session_id, None)
-        # ADR-0104 #6(f)：会话终点同步清持久副本（TTL 的主动半边）。
-        try:
-            ref_spill_store.purge_session(session_id)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Session {session_id}: ref spill purge failed: {e}")
-        from app.services.mvt import spatial_index_cache, tile_lru_cache
-        spatial_index_cache.invalidate_session(session_id)
-        tile_lru_cache.invalidate_session(session_id)
-        # #470：会话没了，盘上状态（mapspec revisions/checkpoints/raster PNGs）
-        # 一并回收。失败容忍（purge 内部记日志不抛）—— 磁盘清理失败不得阻断
-        # 上面的内存清理或调用方（idle 淘汰 / DELETE 会话）的语义。
-        try:
-            from app.services.mapspec.store import purge_session_disk_state
-            await purge_session_disk_state(session_id)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Session {session_id}: disk state purge failed: {e}")
+        async with self._lock:
+            self._store.pop(session_id, None)
+            self._aliases.pop(session_id, None)
+            self._map_state.pop(session_id, None)
+            self._event_log.pop(session_id, None)
+            self._map_action_events.pop(session_id, None)
+            self._descriptors.pop(session_id, None)
+            self._ref_revisions.pop(session_id, None)
+            self._ref_sizes.pop(session_id, None)
+            self._session_bytes.pop(session_id, None)
+            self._session_order.pop(session_id, None)
+            # ADR-0104 #6(f)：会话终点同步清持久副本（TTL 的主动半边）。
+            try:
+                ref_spill_store.purge_session(session_id)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Session {session_id}: ref spill purge failed: {e}")
+            from app.services.mvt import spatial_index_cache, tile_lru_cache
+            spatial_index_cache.invalidate_session(session_id)
+            tile_lru_cache.invalidate_session(session_id)
+            # #470：会话没了，盘上状态（mapspec revisions/checkpoints/raster PNGs）
+            # 一并回收。失败容忍（purge 内部记日志不抛）—— 磁盘清理失败不得阻断
+            # 上面的内存清理或调用方（idle 淘汰 / DELETE 会话）的语义。
+            try:
+                from app.services.mapspec.store import purge_session_disk_state
+                await purge_session_disk_state(session_id)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Session {session_id}: disk state purge failed: {e}")
 
     def is_session_active(self, session_id: str) -> bool:
         """会话是否仍在本 store 中持有状态（供磁盘清扫判断存活性）。"""
