@@ -486,7 +486,7 @@ class FaissVectorStore:
                     ch["deleted"] = True
             self.save_metadata(meta)
 
-    def compact(self) -> Dict[str, Any]:
+    def compact(self, batch_size: int = 64) -> Dict[str, Any]:
         """Compact index by purging deleted chunks and rebuilding FAISS index.
 
         REVIEW-P0-PROMOTED, faiss_store durability. The previous
@@ -523,7 +523,14 @@ class FaissVectorStore:
             ]
             if rebuildable:
                 texts = [ch.get("content", ch.get("text", "")) for ch in rebuildable]
-                vectors = self.embed_texts(texts)
+                # SEC-04: Batch re-embedding to prevent unbounded memory allocation and OOM
+                effective_batch_size = max(1, batch_size)
+                batch_vectors = []
+                for start_idx in range(0, len(texts), effective_batch_size):
+                    batch = texts[start_idx : start_idx + effective_batch_size]
+                    batch_vec = self.embed_texts(batch)
+                    batch_vectors.append(batch_vec)
+                vectors = np.asarray(np.vstack(batch_vectors), dtype=np.float32)
                 new_index = faiss.IndexFlatIP(vectors.shape[1])
                 new_index.add(vectors)
 
