@@ -95,9 +95,14 @@ def test_breach_detection_semantics(registry):
     assert registry.observe("probe", 1.001) is not None  # 超限
 
 
-def test_unregistered_key_observed_without_crash(registry):
+def test_unregistered_key_creates_no_series(registry):
+    """未注册 key 不写任何 Prometheus 序列（封闭词表 = 基数有界，R1-M1）。"""
+    from prometheus_client import REGISTRY
+
     assert registry.observe("ghost_key", 9.9) is None
     assert "ghost_key" not in registry.keys()
+    assert REGISTRY.get_sample_value(
+        "perf_budget_observed_seconds_count", {"budget": "ghost_key"}) is None
 
 
 def test_duplicate_registration_rejected(registry):

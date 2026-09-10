@@ -2,9 +2,11 @@
 # WebGIS AI Agent 应用日志配置（Python）
 # ============================================================
 
+import json
 import sys
 import logging
 import logging.handlers
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -63,6 +65,11 @@ class JsonFormatter(logging.Formatter):
         "request_id", "session_id", "turn_id", "run_id", "project_id",
         "trace_id", "span_id",
     )
+    #: 标量 extra 并入时的键名拒绝词表（review R1-m5：防止调用方顺手
+    #: extra={"authorization": ...} 之类被序列化进聚合日志）
+    _DENIED_EXTRA_HINTS = ("key", "token", "secret", "password", "authorization",
+                           "credential", "passwd", "cookie", "private")
+
     _STD_LOGRECORD_KEYS = frozenset({
         "levelname", "levelno", "name", "msg", "args", "exc_info", "exc_text",
         "stack_info", "lineno", "funcName", "created", "msecs",
@@ -73,12 +80,11 @@ class JsonFormatter(logging.Formatter):
     })
 
     def format(self, record: logging.LogRecord) -> str:
-        import json as _json
-        import time as _time
-
+        # 秒与毫秒同源（record.created 的整数秒 + msecs），跨秒边一致（n5）
         payload = {
-            "ts": _time.strftime("%Y-%m-%dT%H:%M:%S", _time.gmtime(record.created))
-            + ".%03dZ" % (record.msecs,),
+            "ts": time.strftime(
+                "%Y-%m-%dT%H:%M:%S", time.gmtime(record.created)
+            ) + ".%03dZ" % (record.msecs,),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -91,12 +97,15 @@ class JsonFormatter(logging.Formatter):
         for key, value in record.__dict__.items():
             if key in payload or key in self._STD_LOGRECORD_KEYS or key.startswith("_"):
                 continue
+            if any(h in key.lower() for h in self._DENIED_EXTRA_HINTS):
+                payload[key] = "[REDACTED]"
+                continue
             if isinstance(value, (str, int, float, bool)) or value is None:
                 payload[key] = value
         try:
-            return _json.dumps(payload, ensure_ascii=False)
+            return json.dumps(payload, ensure_ascii=False)
         except (TypeError, ValueError):  # pragma: no cover — 防御非法值
-            return _json.dumps(
+            return json.dumps(
                 {"message": repr(record.getMessage()), "level": record.levelname}
             )
 

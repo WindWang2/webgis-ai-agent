@@ -107,7 +107,10 @@ def _bounded_context(context: Optional[Dict[str, Any]]) -> Dict[str, str]:
         return {}
     out: Dict[str, str] = {}
     for k, v in list(context.items())[:_MAX_CONTEXT_ENTRIES]:
-        out[str(k)[:64]] = str(v)[:_MAX_CONTEXT_VALUE_CHARS]
+        try:
+            out[str(k)[:64]] = str(v)[:_MAX_CONTEXT_VALUE_CHARS]
+        except Exception:  # noqa: BLE001 — __str__ 爆炸项跳过（review R1-m4）
+            continue
     return out
 
 
@@ -204,6 +207,8 @@ def classify_exception(exc: BaseException) -> ErrorClassification:
                 isinstance(status, int) and status >= 500
             ):
                 return _from_category(ErrorCategory.DEPENDENCY_FAILURE)
+            if isinstance(status, int) and status == 404:
+                return _from_category(ErrorCategory.DATA_UNAVAILABLE)
             if isinstance(status, int) and status >= 400:
                 return _from_category(ErrorCategory.VALIDATION)
         if isinstance(exc, httpx.InvalidURL):
@@ -233,7 +238,10 @@ def classify_exception(exc: BaseException) -> ErrorClassification:
         return _from_category(ErrorCategory.DATA_UNAVAILABLE)
     # HTTP 语义（HTTPException 及同形鸭子类型）：category 与既有 code 映射
     # 对齐（M5 表），保证响应里 code/category 两个字段讲同一个故事。
-    _status = getattr(exc, "status_code", None)
+    try:
+        _status = getattr(exc, "status_code", None)
+    except Exception:  # noqa: BLE001 — property 爆炸不破坏"分类永不抛"
+        _status = None
     if isinstance(_status, int) and 400 <= _status < 600:
         if _status == 429:
             return _from_category(ErrorCategory.RESOURCE_EXHAUSTED)
@@ -254,8 +262,12 @@ def classify_exception(exc: BaseException) -> ErrorClassification:
         return _from_category(ErrorCategory.RESOURCE_EXHAUSTED)
     if isinstance(exc, OSError):
         return _oserror_classification(exc)
-    if isinstance(exc, (ValueError, KeyError, TypeError, LookupError)):
+    if isinstance(exc, ValueError):
+        # 解析/参数类失败归 validation（调用方可修）；TypeError/KeyError
+        # 通常是服务端 bug——诚实落 permanent，不指责调用方（review R1-m3）。
         return _from_category(ErrorCategory.VALIDATION)
+    if isinstance(exc, (TypeError, KeyError, LookupError)):
+        return _from_category(ErrorCategory.PERMANENT)
 
     return _from_category(ErrorCategory.PERMANENT)
 
@@ -329,6 +341,8 @@ def decide_retry(
     第 ``attempt+1`` 次。取消/不可重试类目/预算耗尽都会诚实说 no。
     """
     cls = classify_exception(exc)
+    if attempt is None:
+        raise ValueError("attempt is required and 1-based (got None)")
     attempt = max(1, int(attempt))
     if not cls.retryable or attempt >= policy.max_attempts:
         return RetryDecision(

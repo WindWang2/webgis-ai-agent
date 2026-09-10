@@ -6,8 +6,8 @@ worker 下线的既有兜底是被动 stale sweep（60s tick + 300s 阈值）。
 - 进程内注册表：worker 身份（hostname:pid）、状态
   online|draining|offline、活跃任务计数；
 - 有界 drain：``deregister_worker`` 先停接新任务的意愿标记，再等在跑
-  任务清零，受 ``WORKER_DRAIN_TIMEOUT_S``（默认 20s）deadline 约束——
-  到点诚实记录并继续退出，绝不挂死进程；
+  任务清零，受 ``WORKER_DRAIN_TIMEOUT_S`` 环境变量（默认 20s）deadline
+  约束——到点诚实记录并继续退出，绝不挂死进程；
 - Celery signal 挂接：``install_celery_lifecycle_signals`` 把
   worker_ready / worker_shutting_down / worker_shutdown 接到上面三点，
   全部防御性（无信号环境/eager 模式 no-op）。
@@ -60,16 +60,33 @@ class WorkerLifecycleState:
         }
 
 
+def _env_drain_timeout_s() -> float:
+    """WORKER_DRAIN_TIMEOUT_S 环境覆盖（review R1-m6：让文档化的可配置为真）。"""
+    try:
+        return max(0.0, float(os.environ.get("WORKER_DRAIN_TIMEOUT_S",
+                                             DEFAULT_DRAIN_TIMEOUT_S)))
+    except (TypeError, ValueError):
+        return DEFAULT_DRAIN_TIMEOUT_S
+
+
 class WorkerLifecycle:
-    """单 worker 进程的生命周期状态（线程安全；Celery prefork 下主进程持有）。"""
+    """单 worker 进程的生命周期状态（线程安全；Celery prefork 下主进程持有）。
+
+    prefork 池披露（review R1-m7）：durable_job 的计数发生在 fork 子进程，
+    主进程 drain 看到的 active 恒 0——prefork 的在跑任务清空由 Celery warm
+    shutdown 兜底；本面的 drain 等待在 solo/threads/进程内池下生效。
+    """
 
     def __init__(self, worker_id: Optional[str] = None,
-                 drain_timeout_s: float = DEFAULT_DRAIN_TIMEOUT_S):
+                 drain_timeout_s: Optional[float] = None):
         self._lock = threading.Lock()
         self._state = WorkerLifecycleState(
             worker_id=worker_id or default_worker_id()
         )
-        self._drain_timeout_s = max(0.0, float(drain_timeout_s))
+        self._drain_timeout_s = max(
+            0.0, float(drain_timeout_s)
+            if drain_timeout_s is not None else _env_drain_timeout_s()
+        )
 
     # ── 查询 ────────────────────────────────────────────────────────
 
@@ -164,6 +181,11 @@ class WorkerLifecycle:
                         self._state.worker_id, remaining,
                         monotonic() - started, reason,
                     )
+                    logger.info(
+                        "[worker-lifecycle] offline worker=%s waited_s=%.3f "
+                        "reason=%s (drain incomplete)",
+                        self._state.worker_id, monotonic() - started, reason,
+                    )
                     break
                 sleep(_DRAIN_POLL_INTERVAL_S)
         with self._lock:
@@ -205,10 +227,11 @@ def reset_worker_lifecycle_for_tests(worker_id: Optional[str] = None,
 
 
 def install_celery_lifecycle_signals(
-    celery_app: Any = None,
     lifecycle: Optional[WorkerLifecycle] = None,
 ) -> bool:
-    """把生命周期接到 Celery 信号；成功挂接返回 True（重复挂接幂等）。
+    """把生命周期接到 Celery 信号（模块级信号总线，实例参数不需要）；
+    成功挂接返回 True。**不重复调用**：重复调用会注册重复 handler（效果
+    幂等——register/deregister 本身幂等——但 handler 条目会堆积）。
 
     worker_ready → register；worker_shutting_down → begin_drain；
     worker_shutdown → deregister（有界 drain）。任何 import/注册失败都

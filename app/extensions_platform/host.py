@@ -1185,6 +1185,9 @@ class ExtensionHost:
         in-process：``stream=True`` 返回原始事件迭代器（协作式取消 =
         提前 close）；``stream=False`` 返回聚合结果。
         worker：仅聚合单帧；``stream=True`` → typed 拒绝。
+        计量披露（review R1-n6）：``stream=True`` 的时长只覆盖迭代器创建，
+        流消费时长不入直方图（对流式调用系统性偏短——如需流式观测，
+        消费侧应在迭代结束时打点）。
         """
         from .metrics import InvocationTimer
 

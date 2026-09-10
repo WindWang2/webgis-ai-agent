@@ -78,7 +78,10 @@ def _bounded_attrs(attrs: Optional[Dict[str, Any]]) -> Dict[str, str]:
         return {}
     out: Dict[str, str] = {}
     for k, v in list(attrs.items())[:_MAX_ATTR_ENTRIES]:
-        out[str(k)[:_MAX_ATTR_KEY_CHARS]] = str(v)[:_MAX_ATTR_VALUE_CHARS]
+        try:
+            out[str(k)[:_MAX_ATTR_KEY_CHARS]] = str(v)[:_MAX_ATTR_VALUE_CHARS]
+        except Exception:  # noqa: BLE001 — __str__ 爆炸项跳过（review R1-m4）
+            continue
     return out
 
 
@@ -276,48 +279,24 @@ def start_span(
       asyncio.CancelledError 记 cancelled 后照常传播。
     - 返回的 SpanRecord 在 with 体内处于"进行中"（duration_s 为进入时刻的
       占位 0.0），退出时才完成并导出——体内不要持久化该对象。
+    - setup 失败（属性/名字序列化爆炸等）绝不阻断 with 体内的业务代码：
+      降级为一个零上下文的空 span（review R1-m4）。
     """
-    from app.lib.runtime.context import (
-        bind_runtime_context,
-        current_runtime_context,
-    )
-
-    ctx = None
+    setup = None
     try:
-        ctx = current_runtime_context()
+        setup = _span_setup(stage, name, attributes)
     except Exception:  # noqa: BLE001
-        ctx = None
-    trace_id = (ctx.trace_id if ctx is not None else None) or secrets.token_hex(16)
-    parent = _CURRENT_SPAN.get()
-    parent_span_id = parent.span_id if parent is not None else (
-        ctx.span_id if ctx is not None else None
-    )
-    span_id = _new_span_id()
-
-    active = _ActiveSpan(trace_id=trace_id, span_id=span_id,
-                         stage=stage.value, name=str(name)[:128])
-    token = _CURRENT_SPAN.set(active)
-    # span 作用域内日志带 span_id（与中间件的绑定语义一致；异常静默）
-    bind_cm = None
-    try:
-        bind_cm = bind_runtime_context(trace_id=trace_id, span_id=span_id)
-        bind_cm.__enter__()
-    except Exception:  # noqa: BLE001
-        bind_cm = None
-
-    started_wall = time.time()
-    started_mono = time.perf_counter()
-    record = SpanRecord(
-        name=str(name)[:128],
-        stage=stage.value,
-        trace_id=trace_id,
-        span_id=span_id,
-        parent_span_id=parent_span_id,
-        started_at=started_wall,
-        duration_s=0.0,
-        status=SpanStatus.OK.value,
-        attributes=_bounded_attrs(attributes),
-    )
+        logger.debug("start_span setup failed; business runs without span",
+                     exc_info=True)
+    if setup is None:
+        yield SpanRecord(
+            name="span", stage="unknown", trace_id="0" * 32,
+            span_id="0" * 16, parent_span_id=None,
+            started_at=time.time(), duration_s=0.0,
+            status=SpanStatus.OK.value,
+        )
+        return
+    active, token, bind_cm, record, started_mono = setup
     exit_status: Optional[SpanStatus] = None
     error_category: Optional[str] = None
     try:
@@ -339,8 +318,13 @@ def start_span(
         if bind_cm is not None:
             with contextlib.suppress(Exception):
                 bind_cm.__exit__(None, None, None)
-        with contextlib.suppress(Exception):
-            _CURRENT_SPAN.reset(token)
+        # review R1-m10：值被替换（跨 task 退出）时跳过 reset——此时原上下文
+        # 的 token 已不可安全 reset，重置别人的值比保留陈旧值更危险。
+        try:
+            if _CURRENT_SPAN.get() is active:
+                _CURRENT_SPAN.reset(token)
+        except Exception:  # noqa: BLE001 — 跨上下文 reset 的 ValueError
+            pass
         finished = SpanRecord(
             name=record.name,
             stage=record.stage,
@@ -355,6 +339,59 @@ def start_span(
         )
         with contextlib.suppress(Exception):
             _export(finished)
+
+
+def _span_setup(
+    stage: SpanStage,
+    name: str,
+    attributes: Dict[str, Any],
+):
+    """yield 之前的全部 setup（任何失败由 start_span 兜底，不阻断业务）。"""
+    from app.lib.runtime.context import (
+        bind_runtime_context,
+        current_runtime_context,
+    )
+
+    try:
+        ctx = current_runtime_context()
+    except Exception:  # noqa: BLE001
+        ctx = None
+    trace_id = (ctx.trace_id if ctx is not None else None) or secrets.token_hex(16)
+    parent = _CURRENT_SPAN.get()
+    parent_span_id = parent.span_id if parent is not None else (
+        ctx.span_id if ctx is not None else None
+    )
+    span_id = _new_span_id()
+
+    try:
+        safe_name = str(name)[:128]
+    except Exception:  # noqa: BLE001（review R1-m4）
+        safe_name = "span"
+    active = _ActiveSpan(trace_id=trace_id, span_id=span_id,
+                         stage=stage.value, name=safe_name)
+    token = _CURRENT_SPAN.set(active)
+    # span 作用域内日志带 span_id（与中间件的绑定语义一致；异常静默）
+    bind_cm = None
+    try:
+        bind_cm = bind_runtime_context(trace_id=trace_id, span_id=span_id)
+        bind_cm.__enter__()
+    except Exception:  # noqa: BLE001
+        bind_cm = None
+
+    started_wall = time.time()
+    started_mono = time.perf_counter()
+    record = SpanRecord(
+        name=safe_name,
+        stage=stage.value,
+        trace_id=trace_id,
+        span_id=span_id,
+        parent_span_id=parent_span_id,
+        started_at=started_wall,
+        duration_s=0.0,
+        status=SpanStatus.OK.value,
+        attributes=_bounded_attrs(attributes),
+    )
+    return active, token, bind_cm, record, started_mono
 
 
 __all__ = [

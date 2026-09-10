@@ -36,7 +36,10 @@ except ImportError:  # pragma: no cover - 旧版 execution_engine 没有该函�
 
 # Platform V4（ADR-0131 D4）：shutdown drain 的 deadline（秒）。到点记录
 # warning 并继续关停——进程自己先自觉，k8s terminationGracePeriod 只是最后防线。
-SHUTDOWN_DRAIN_DEADLINE_S: float = 20.0
+# SHUTDOWN_DRAIN_DEADLINE_S 环境变量可覆盖（review R1-m6）。
+SHUTDOWN_DRAIN_DEADLINE_S: float = float(
+    os.environ.get("SHUTDOWN_DRAIN_DEADLINE_S", 20.0) or 20.0
+)
 
 logger = logging.getLogger(__name__)
 
@@ -595,8 +598,9 @@ from app.lib.observability.trace_context import TraceContextMiddleware
 app.add_middleware(TraceContextMiddleware)
 
 # Platform V4（ADR-0131 D4）：in-flight 请求计数（drain 可观测性）。
-# 纯 ASGI 中间件，http + websocket 全 scope；注册在 trace 之后（内层），
-# 计数语义 = 「进入应用栈的请求」，shutdown 时归零即排空完成。
+# 纯 ASGI 中间件，http + websocket 全 scope；add_middleware 反序 → 本中间件
+# 在 trace 之外层（先于 trace 绑定计数）——计数语义 = 「进入应用栈的全部
+# http/ws 请求」，shutdown 时归零即排空完成（review R1-m8）。
 from app.lib.observability.metrics import InflightGaugeMiddleware
 app.add_middleware(InflightGaugeMiddleware)
 

@@ -23,8 +23,8 @@
 ### D1 统一 Span 面（不引入 OTel SDK）
 
 - `app/lib/observability/spans.py`：封闭阶段词表
-  `SpanStage`（user_request/harness/workflow/tool/geocompute/model/
-  cartography/artifact/extension），对齐 GisTraceChain 18 阶段的域语义
+  `SpanStage`（user_request/harness/workflow/tool/data/geocompute/
+  model/cartography/artifact/extension），对齐 GisTraceChain 18 阶段的域语义
   但**不替代**它——chain 是业务证据链，span 是基础设施观测树，两面
   各司其职（无第二事实源：span 不落库、不进 chain 注册表）。
 - Span 树挂靠 RuntimeContext（trace_id/span_id 已在 Quality V3 W10 落位）：
@@ -38,9 +38,10 @@
 
 ### D2 跨进程 Trace 传播（Celery headers，零 DB migration）
 
-- 派发侧（`submit_durable_job`）：从当前 RuntimeContext 生成 traceparent +
-  关联字段，放进 `apply_async(headers=...)`。headers 是 broker 消息的一部分，
-  与幂等键/业务参数正交。
+- 派发侧（`submit_durable_job`）：从当前 RuntimeContext 生成 traceparent，
+  放进 `apply_async(headers=...)`。headers 是 broker 消息的一部分，与幂等
+  键/业务参数正交。session/run/turn 继续走 job 行（单一通道，不双写）；
+  手动 retry 重投（`jobs.py send_task`）同样携带当前请求的 traceparent。
 - worker 侧（`durable_job`）：从 `celery_task.request.headers` 恢复
   trace_id/span_id，与 job 行关联字段合并绑定进 RuntimeContext；无 header
   （旧消息/直接调用/eager 模式）行为不变——纯 additive。
@@ -58,11 +59,12 @@
   映射到 (category, retryable, http_status, user_message)——包括
   OperationCancelled→cancellation、SQLAlchemy 连接错误→dependency_failure
   (retryable)、httpx.TimeoutException→timeout(retryable) 等标准映射。
-- `RetryDecision`/`DefaultRetryPolicy`：`decide(exc, attempt) -> RetryDecision`
+- `RetryPolicy`/`DEFAULT_RETRY_POLICY`：`decide_retry(exc, attempt) -> RetryDecision`
   给 Harness/Workflow/jobs 一个**基于类型**的重试判定点，不再解析字符串。
 - `app/core/exception.py` 接线：响应体 additive 增加
-  `category`/`retryable` 字段（PlatformError 才携带；既有响应形状不变），
-  日志记录 category——兼容性：老客户端多收到两个字段，无破坏。
+  `category`/`retryable` 字段（对所有异常经 classify 添加；`degraded` 仅
+  PlatformError 携带时出现；既有字段不变），日志记录 category——兼容性：
+  老客户端多收到一两个字段，无破坏。
 
 ### D4 Worker 生命周期与有界 Drain
 
@@ -75,6 +77,9 @@
   eager/测试路径可直接调用函数。
 - 心跳 + stale sweep（既有兜底）保持不变——主动注销把收敛从
   分钟级降到即时，被动 sweep 仍是唯一真相源。
+- **prefork 池披露**：durable_job 的活跃计数发生在 fork 子进程，主进程
+  drain 看到的 active 恒 0——prefork 的在跑任务清空由 Celery warm
+  shutdown 兜底；本面的 drain 等待在 solo/threads/进程内池下生效。
 - `app/main.py` lifespan：drain 阶段落进 deadline 看门狗
   （`SHUTDOWN_DRAIN_DEADLINE_S`，默认 20s；到点记录 warning 并继续关停，
   绝不挂死进程——k8s 的 terminationGracePeriod 是最后防线，但进程自身
@@ -115,17 +120,26 @@
   极简、无环境细节（防侦察纪律同 SEC-11）；`/health` 的 version 字段
   改从 build_info 取（消除 0.1.3 vs 0.1.0.0 漂移）。
 - `scripts/gen_config_schema.py`：pydantic `model_json_schema` 导出
-  `docs/quality/generated/config.schema.json` + `--check` 字节闸
+  `docs/platform-v4/generated/config.schema.json` + `--check` 字节闸
   （配置漂移即红）；`scripts/gen_app_inventory.py`：importlib.metadata
   依赖 inventory（可选应用级 SBOM-lite，零新依赖）。
 
 ### D8 Chaos 注册表扩展（既有接缝内）
 
-- 新增 3 fault：`ARTIFACT_PARTIAL_WRITE`（publish 拷贝中途失败 → 无半截
+- 新增 3 fault：`STORAGE_PARTIAL_WRITE`（publish 拷贝中途失败 → 无半截
   制品可见）、`JOBS_ENQUEUE_FAIL_STORM`（入队连续失败 → 诚实 failed、
   无孤儿 queued 行）、`JOBS_REDELIVERY_STORM`（并发重复认领同一 job →
   恰好一个执行者）。全部走已验证的 monkeypatch/编排接缝，生产零改动；
   注册表文档由 `scripts/gen_chaos_registry.py` 再生（字节闸）。
+
+## 接线现状（诚实披露）
+
+`start_span` / `observe_budget` 在 `app/` 生产路径的**调用点为 0**——本
+分支交付的是基础设施面（库 + 测试 + 字节闸），业务接线（chat_stream /
+durable_job / geocompute dispatch 的 2–3 个真实 span 与预算打点）留给
+后续业务分支，避免在本方向内侵入 Harness/Workflow 边界（并发红线）。
+端到端验收测试（`test_platform_v4_e2e_trace.py`）是进程内全链路模拟，
+真实链路的贯穿由跨进程传播的单测组合证明。
 
 ## 兼容与迁移
 

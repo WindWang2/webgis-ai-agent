@@ -114,7 +114,7 @@ celery_app.conf.update(
 # 的 warm shutdown 由 Celery 自身协调，本挂接补齐观测面与 solo/线程池路径。
 from app.services.jobs.worker_lifecycle import install_celery_lifecycle_signals  # noqa: E402
 
-install_celery_lifecycle_signals(celery_app)
+install_celery_lifecycle_signals()
 
 # 自动发现任务
 celery_app.autodiscover_tasks(["app.services"])

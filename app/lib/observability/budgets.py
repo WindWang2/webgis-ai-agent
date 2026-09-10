@@ -11,8 +11,9 @@
 - 本 manifest：**生产侧 SLO 语义**（用户可感知的路径预算，固定值不随
   机器缩放）。三者消费方不同、变更频率不同，合并反而制造第二真相源。
 
-预算 key 是封闭词表：manifest 声明即注册；``observe_budget`` 拒绝未登记
-key（与 sre_metrics 的封闭组件词表同纪律）。
+预算 key 是封闭词表：manifest 声明即注册；``observe_budget`` 对未登记
+key **不产生任何指标序列**（杜绝标签基数失控，与 sre_metrics 的封闭
+组件词表同纪律）。
 """
 from __future__ import annotations
 
@@ -116,16 +117,19 @@ class BudgetRegistry:
     # ── 观测 ────────────────────────────────────────────────────────
 
     def observe(self, key: str, seconds: float) -> Optional[Budget]:
-        """记录一次路径耗时；超限返回触发的 Budget（未注册 key 返回 None
-        并 debug 日志——观测面绝不抛、绝不阻断业务路径）。"""
+        """记录一次路径耗时；超限返回触发的 Budget。
+
+        未注册 key **不写任何 Prometheus 序列**（封闭词表 = 标签基数有界，
+        review R1-M1）且观测面绝不抛、绝不阻断业务路径。
+        """
+        budget = self.get(key)
+        if budget is None:
+            logger.debug("perf budget %r not registered; ignoring", key)
+            return None
         try:
             _PERF_BUDGET_OBSERVED.labels(budget=key).observe(max(0.0, float(seconds)))
         except Exception:  # noqa: BLE001
             logger.debug("perf budget histogram failed", exc_info=True)
-        budget = self.get(key)
-        if budget is None:
-            logger.debug("perf budget %r not registered; observed only", key)
-            return None
         if float(seconds) > budget.limit_s:
             try:
                 _PERF_BUDGET_BREACH.labels(budget=key).inc()

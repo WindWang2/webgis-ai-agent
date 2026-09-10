@@ -91,7 +91,8 @@ def test_platform_error_context_bounded():
     ("exc", "expected_category", "expected_retryable"),
     [
         (ValueError("bad input"), ErrorCategory.VALIDATION, False),
-        (KeyError("missing"), ErrorCategory.VALIDATION, False),
+        (KeyError("missing"), ErrorCategory.PERMANENT, False),
+        (TypeError("bug"), ErrorCategory.PERMANENT, False),
         (PermissionError("denied"), ErrorCategory.PERMISSION, False),
         (FileNotFoundError("nope"), ErrorCategory.DATA_UNAVAILABLE, False),
         (TimeoutError("slow"), ErrorCategory.TIMEOUT, True),
@@ -178,11 +179,13 @@ def test_decide_retry_backoff_bounds():
     policy = DEFAULT_RETRY_POLICY
     d1 = decide_retry(TimeoutError("t"), 1, policy)
     d2 = decide_retry(TimeoutError("t"), 2, policy)
-    d5 = decide_retry(TimeoutError("t"), 5, policy)
     assert d1.delay_s == pytest.approx(0.5)
     assert d2.delay_s == pytest.approx(1.0)
-    # 指数增长被 max_delay_s 钳制
-    assert d5.will_retry is False or d5.delay_s <= policy.max_delay_s
+    # 指数增长被 max_delay_s 真实钳制（长预算 policy 下 2^6 超过上界）
+    long_policy = DEFAULT_RETRY_POLICY.__class__(max_attempts=10)
+    d7 = decide_retry(TimeoutError("t"), 7, long_policy)
+    assert d7.will_retry is True
+    assert d7.delay_s == pytest.approx(long_policy.max_delay_s)
 
 
 def test_decide_retry_non_retryable_category():
@@ -227,7 +230,7 @@ def test_format_error_response_carries_category():
 
 
 def test_httpexception_401_maps_permission():
-    """401 → unauthorized 域（permission 类目的 HTTP 映射由 code 承担）。"""
+    """401 → UNAUTHORIZED（既有 code 映射）且 category=permission（对齐）。"""
     from fastapi import Request
 
     from app.core.exception import format_error_response
@@ -239,6 +242,41 @@ def test_httpexception_401_maps_permission():
     }
     resp = format_error_response(HTTPException(status_code=401), Request(scope))
     assert resp["code"] == "UNAUTHORIZED"
-    # 401 HTTPException 无 status 属性异常路径：分类走 PERMANENT 兜底，
-    # 但 code 字段仍是既有映射——两套语义正交，互不覆盖。
-    assert "category" in resp
+    assert resp["category"] == "permission"
+    assert resp["retryable"] is False
+
+
+def test_start_span_survives_exploding_attribute():
+    """__str__ 爆炸的属性：span 降级、with 体内业务照常执行（R1-m4）。"""
+    from app.lib.observability.spans import (
+        RingSpanExporter,
+        SpanStage,
+        SpanStatus,
+        install_exporter,
+        reset_exporters_for_tests,
+        start_span,
+    )
+
+    reset_exporters_for_tests()
+    ring = RingSpanExporter()
+    install_exporter(ring)
+
+    class _Boom:
+        def __str__(self):
+            raise RuntimeError("str explodes")
+
+    with start_span(SpanStage.TOOL, "boom-attrs", x=_Boom()) as span:
+        assert span.attributes == {}  # 爆炸项被跳过，业务照常进入
+    (rec,) = ring.snapshot()
+    assert rec.status == SpanStatus.OK.value
+
+
+def test_classify_survives_exploding_status_property():
+    """status_code 是会抛错的 property：分类退 permanent 而不是抛（R1-m4）。"""
+    class _Evil(Exception):
+        @property
+        def status_code(self):
+            raise RuntimeError("property explodes")
+
+    cls = classify_exception(_Evil())
+    assert cls.category is ErrorCategory.PERMANENT
