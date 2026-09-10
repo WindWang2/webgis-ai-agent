@@ -372,8 +372,6 @@ class SingleFlight:
 
     def run(self, key: str, fn):
         """单飞执行 ``fn``；返回 (result, shared)。shared=True = 复用 owner 结果。"""
-        import threading as _t
-
         with self._lock:
             flight = self._flights.get(key)
             if flight is None and len(self._flights) < self._max_entries:

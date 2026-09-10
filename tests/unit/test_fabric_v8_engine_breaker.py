@@ -152,8 +152,7 @@ def _executor(adapters: Dict[str, _FakeAdapter]) -> FederatedExecutor:
 
 
 def test_crash_falls_back_and_discloses_breaker(_clean_breaker):
-    executor = _executor({"s0": _FakeAdapter([]), "s1": _FakeAdapter([])})
-    # 打爆真实 V6 栈：用一个会抛非 typed 异常的 adapter。
+    # 打爆真实 V6 栈：用一个会抛非 typed 异常的 adapter（V5 回退可正常取数）。
     exploding = _executor({
         "s0": _FakeAdapter([], crash=True),
         "s1": _FakeAdapter([]),

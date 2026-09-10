@@ -12,7 +12,6 @@
 import pytest
 
 from app.services.data_fabric.connection_manager import connection_manager
-from app.services.data_fabric.errors import DataFabricError
 from app.services.data_fabric.fabric.connection_registry import (
     ConnectionRecord,
     TenantScope,
@@ -154,7 +153,6 @@ def test_ensure_adapter_rebuilds_with_options_intact():
 def test_ensure_adapter_stale_record_returns_none():
     registry = get_connection_registry()
     registry.attach(_make_profile("stale_src"), TenantScope(owner="s"))
-    record = registry.peek("stale_src", TenantScope(owner="s"))
     ghost = ConnectionRecord(
         profile_id="stale_src",
         scope_key=TenantScope(owner="s").scope_key(),

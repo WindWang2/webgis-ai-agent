@@ -70,8 +70,6 @@ def test_singleflight_owner_failure_lets_waiter_proceed():
         attempts.append("waiter")
         return {"v": "waiter-ok"}
 
-    out_box = {}
-
     def owner_thread():
         try:
             sf.run("k", owner_fn)
