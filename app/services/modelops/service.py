@@ -18,7 +18,11 @@ from app.lib.modelops.resources import batch_for_budget
 from app.lib.geo_raster.reader import RasterReader
 from app.services.modelops.config import ModelOpsSettings
 from app.services.modelops.engine import InferenceEngine, InferenceRequest, InferenceResult
-from app.services.modelops.evaluation_service import EvaluationRequest, EvaluationService
+from app.services.modelops.evaluation_service import (
+    DriftEvaluationRequest,
+    EvaluationRequest,
+    EvaluationService,
+)
 from app.services.modelops.package_store import ModelPackageStore
 from app.services.modelops.providers.base import ProviderRegistry, resolve_device_plan
 from app.services.modelops.registry import ModelRegistryStore
@@ -479,10 +483,48 @@ class ModelOpsService:
 
     # ── 评估 / 复用 / provenance ────────────────────────────────────
     def evaluate(self, request: EvaluationRequest) -> Dict[str, Any]:
-        return self._evaluation.evaluate(request)
+        report = self._evaluation.evaluate(request)
+        self._record_eval_lineage(request.model_id, request.model_version, report)
+        return report
+
+    def evaluate_drift(self, request: DriftEvaluationRequest) -> Dict[str, Any]:
+        """漂移评估（V3 §G）+ 自动 lineage 记录（model_id 提供时）。"""
+        report = self._evaluation.evaluate_drift(request)
+        self._record_eval_lineage(request.model_id, request.model_version, report)
+        return report
+
+    def _record_eval_lineage(
+        self,
+        model_id: Optional[str],
+        model_version: Optional[str],
+        report: Dict[str, Any],
+    ) -> None:
+        if not model_id or not model_version:
+            return
+        try:
+            metrics_summary = {
+                k: report.get(k)
+                for k in ("metrics", "miou", "agreement_miou",
+                          "class_distribution_psi", "confidence_psi", "boundary")
+                if report.get(k) is not None
+            }
+            self._lineage.append(
+                model_id, model_version,
+                event_type="evaluation",
+                payload={
+                    "evaluation_data_object_id": (report.get("artifact") or {}).get("data_object_id"),
+                    "metrics_summary": metrics_summary,
+                },
+                actor="modelops.evaluation",
+            )
+        except Exception as exc:  # noqa: BLE001 — lineage 记录失败不毁评估
+            logger.warning("evaluation lineage append failed: %s", exc)
 
     async def evaluate_async(self, request: EvaluationRequest) -> Dict[str, Any]:
         return await asyncio.to_thread(self._evaluation.evaluate, request)
+
+    async def evaluate_drift_async(self, request: DriftEvaluationRequest) -> Dict[str, Any]:
+        return await asyncio.to_thread(self.evaluate_drift, request)
 
     def compare_results(
         self,

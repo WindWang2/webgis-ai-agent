@@ -329,3 +329,134 @@ def leakage_guard(
         temporal_split=train_times is not None and eval_times is not None,
         detail=detail,
     )
+
+
+# ── 边界质量 / 分区指标 / 漂移（V3 §G）───────────────────────────────
+
+
+def boundary_band(mask: np.ndarray) -> np.ndarray:
+    """掩膜的边界带（内部 1 像元：erosion ⊕ mask；确定性 scipy）。"""
+    from scipy.ndimage import binary_erosion
+
+    if mask.size == 0 or not mask.any():
+        return np.zeros_like(mask, dtype=bool)
+    structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=bool)
+    eroded = binary_erosion(mask, structure=structure, border_value=0)
+    return mask & ~eroded
+
+
+def boundary_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    *,
+    tolerance_px: int = 1,
+    ignore_index: int = 255,
+) -> Dict[str, Any]:
+    """边界 F1/精确率/召回率（带容差膨胀匹配；同输入确定性）。
+
+    边界带 = 各类前景边界（y!=ignore 的掩膜边界 ∪ 真值边界并集）；
+    匹配在容差（膨胀 tolerance_px）内判定——GIS 边界评估的标准口径
+    （boundary F1, cf. instance/seg 边界文献）。
+    """
+    from scipy.ndimage import binary_dilation
+
+    valid = (y_true != ignore_index) & (y_pred != ignore_index)
+    t_fore = valid & (y_true > 0)
+    p_fore = valid & (y_pred > 0)
+    if not t_fore.any() and not p_fore.any():
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0, "tolerance_px": tolerance_px}
+    t_edge = boundary_band(t_fore)
+    p_edge = boundary_band(p_fore)
+    # 容差足迹：半径 = tolerance_px 的方形结构。注意 scipy 的膨胀不扩大
+    # 数组形状——重复膨胀是无效操作，必须直接构造 (2k+1)² 足迹。
+    size = 2 * max(1, int(tolerance_px)) + 1
+    dil = np.ones((size, size), dtype=bool)
+    t_edge_near_p = t_edge & binary_dilation(p_edge, structure=dil, border_value=0)
+    p_edge_near_t = p_edge & binary_dilation(t_edge, structure=dil, border_value=0)
+    precision = float(t_edge_near_p.sum()) / float(max(1, t_edge.sum()))
+    recall = float(p_edge_near_t.sum()) / float(max(1, p_edge.sum()))
+    f1 = (
+        2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    )
+    return {
+        "precision": round(precision, 6),
+        "recall": round(recall, 6),
+        "f1": round(f1, 6),
+        "tolerance_px": tolerance_px,
+    }
+
+
+def per_region_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    region_ids: np.ndarray,
+    *,
+    num_classes: int,
+    ignore_index: int = 255,
+) -> Dict[str, Any]:
+    """分区（地理块）指标：每 region 的 IoU/支持度 + 全局对照。
+
+    ``region_ids``: (H,W) int，0 = 无区域。同输入确定性；无样本的区域
+    如实标注 support=0，不虚构指标。
+    """
+    if region_ids.shape != y_true.shape:
+        raise ValueError(
+            f"region_ids shape {region_ids.shape} != labels shape {y_true.shape}"
+        )
+    regions: Dict[str, Any] = {}
+    for rid in np.unique(region_ids):
+        rid = int(rid)
+        if rid == 0:
+            continue
+        mask = region_ids == rid
+        if not mask.any():
+            continue
+        m = segmentation_metrics(
+            y_true[mask], y_pred[mask], num_classes=num_classes, ignore_index=ignore_index
+        )
+        regions[str(rid)] = {
+            "miou": m.miou,
+            "macro_f1": m.macro_f1,
+            "support_px": int(mask.sum()),
+        }
+    return {"regions": regions, "region_count": len(regions)}
+
+
+def population_stability_index(
+    baseline: Sequence[float], current: Sequence[float], *, bins: int = 10, eps: float = 1e-6
+) -> float:
+    """PSI（分布稳定性指数；等宽分箱、确定性）。
+
+    PSI = Σ (cur% - base%) * ln(cur% / base%)；<0.1 稳定，0.1–0.25 观察，
+    >0.25 显著漂移（行业经验阈值，报告只给数值不给结论）。
+    """
+    base = np.asarray(list(baseline), dtype=np.float64)
+    cur = np.asarray(list(current), dtype=np.float64)
+    if base.size == 0 or cur.size == 0:
+        return 0.0
+    lo = min(float(base.min()), float(cur.min()))
+    hi = max(float(base.max()), float(cur.max()))
+    if hi <= lo:
+        return 0.0
+    edges = np.linspace(lo, hi, bins + 1)
+    base_hist = np.histogram(base, bins=edges)[0].astype(np.float64)
+    cur_hist = np.histogram(cur, bins=edges)[0].astype(np.float64)
+    base_pct = np.maximum(base_hist / max(1, base_hist.sum()), eps)
+    cur_pct = np.maximum(cur_hist / max(1, cur_hist.sum()), eps)
+    psi = float(np.sum((cur_pct - base_pct) * np.log(cur_pct / base_pct)))
+    return round(psi, 6)
+
+
+def class_distribution_psi(
+    baseline_counts: Sequence[int], current_counts: Sequence[int]
+) -> float:
+    """类别分布 PSI（分类占比漂移；封闭类别空间上的 categorical PSI）。"""
+    base = np.asarray(list(baseline_counts), dtype=np.float64)
+    cur = np.asarray(list(current_counts), dtype=np.float64)
+    if base.size != cur.size or base.sum() == 0 or cur.sum() == 0:
+        return 0.0
+    eps = 1e-6
+    base_pct = np.maximum(base / base.sum(), eps)
+    cur_pct = np.maximum(cur / cur.sum(), eps)
+    psi = float(np.sum((cur_pct - base_pct) * np.log(cur_pct / base_pct)))
+    return round(psi, 6)
