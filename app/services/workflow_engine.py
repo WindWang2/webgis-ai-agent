@@ -98,6 +98,12 @@ class WorkflowEngine:
         Validates DAG topology and returns topologically sorted step_ids.
         Raises ValueError if cycle is detected or dependency is missing.
         """
+        seen_ids = set()
+        for step in steps:
+            if step.step_id in seen_ids:
+                raise ValueError(f"Duplicate step_id found: {step.step_id}")
+            seen_ids.add(step.step_id)
+
         step_map = {step.step_id: step for step in steps}
         in_degree = defaultdict(int)
         graph = defaultdict(list)
