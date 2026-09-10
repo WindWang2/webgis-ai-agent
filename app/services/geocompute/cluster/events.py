@@ -188,6 +188,54 @@ class RunEventStore:
         except Exception:  # noqa: BLE001 - trace 读失败 = 空窗口（诚实 404 语义在调用方）
             return []
 
+    def count_kind(self, event: str, *, within_s: float = 24 * 3600.0,
+                   factory: Optional[Any] = None) -> int:
+        """词表事件的窗口内总数（V8 观测聚合；created_at 索引，有界）。
+
+        失败 = 0（观测聚合绝不抛出）。
+        """
+        if event not in EVENT_VOCABULARY:
+            return 0
+        try:
+            from sqlalchemy import func
+
+            from app.services.geocompute.cluster.store import _utcnow
+            from datetime import timedelta
+
+            target = factory or self._factory
+            cutoff = _utcnow() - timedelta(seconds=max(1.0, float(within_s)))
+            with target() as db:
+                total = db.execute(
+                    select(func.count(_Event.id)).where(
+                        _Event.event == event,
+                        _Event.created_at >= cutoff,
+                    )
+                ).scalar()
+                return int(total or 0)
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def sum_bytes(self, *, within_s: float = 24 * 3600.0,
+                  factory: Optional[Any] = None) -> int:
+        """窗口内 ``bytes`` 列总和（transfer 吞吐观测；无行扫描）。"""
+        try:
+            from datetime import timedelta
+
+            from sqlalchemy import func
+
+            from app.services.geocompute.cluster.store import _utcnow
+
+            target = factory or self._factory
+            cutoff = _utcnow() - timedelta(seconds=max(1.0, float(within_s)))
+            with target() as db:
+                total = db.execute(
+                    select(func.coalesce(func.sum(_Event.bytes_), 0)).where(
+                        _Event.created_at >= cutoff)
+                ).scalar()
+                return int(total or 0)
+        except Exception:  # noqa: BLE001
+            return 0
+
     def progress_projection(self, run_id: str) -> dict[str, Any]:
         """读时进度投影（天然幂等跨 attempt —— DISTINCT 节点去重）。
 

@@ -131,9 +131,6 @@ def _percentile(samples: list[float], q: float) -> Optional[float]:
 class ClusterMetrics:
     """集群快照聚合器（store 只读查询的组合）。"""
 
-    def __init__(self, store: Optional[ClusterRunStore] = None):
-        self._store = store or ClusterRunStore()
-
     def snapshot(self) -> dict[str, Any]:
         """完整集群快照（一次调用 ≤ ~10 个聚合查询；无行扫描）。"""
         runs_by_status = self._store.count_runs_by_status()
@@ -179,7 +176,72 @@ class ClusterMetrics:
             "oom_avoided": oom_avoided_snapshot(),
             "gpu_fallbacks": gpu_fallbacks_snapshot(),
             "spill": spill_snapshot(),
+            # ── V8 Phase H：transfer / cache / lineage / utilization ──
+            "transfer": {"bytes_total": self._sum_bytes()},
+            "cache": {"worker_cache_hits": self._count_kind("worker_cache_hit")},
+            "lineage": {
+                "node_completed": self._count_kind("node_completed"),
+                "node_reused": self._count_kind("node_reused"),
+                "node_lost": self._count_kind("node_lost"),
+                "partition_planned": self._count_kind("partition_planned"),
+                "speculative_dispatched": self._count_kind(
+                    "speculative_dispatch"),
+                "poison_quarantined": self._count_kind("poison_quarantined"),
+            },
+            "utilization": self._utilization_summary(),
+            "quarantine": self._quarantine_summary(),
         }
+
+    def __init__(self, store: Optional[ClusterRunStore] = None):
+        self._store = store or ClusterRunStore()
+        self._event_store = self._make_event_store()
+
+    @staticmethod
+    def _make_event_store():
+        try:
+            from app.services.geocompute.cluster.events import RunEventStore
+
+            return RunEventStore()
+        except Exception:  # noqa: BLE001 - 观测缺席 = 空投影
+            return None
+
+    def _count_kind(self, event: str) -> int:
+        if self._event_store is None:
+            return 0
+        return self._event_store.count_kind(event)
+
+    def _sum_bytes(self) -> int:
+        if self._event_store is None:
+            return 0
+        return self._event_store.sum_bytes()
+
+    def _utilization_summary(self) -> dict[str, Any]:
+        """worker 利用率：账本在租 units ÷ 存活 worker 槽位总量（有界）。"""
+        try:
+            workers = self._store.live_workers()
+            capacity = 0
+            for w in workers:
+                for slots in (w.get("profiles") or {}).values():
+                    capacity += max(0, int(slots or 0))
+            reserved = 0
+            for entry in self._store.ledger_snapshot(limit=_MAX_LEDGER_SCOPES):
+                if entry.get("scope_key") == "global":
+                    reserved = int(entry.get("usage_units") or 0)
+            ratio = round(reserved / capacity, 3) if capacity > 0 else None
+            return {"reserved_units": reserved, "capacity_units": capacity,
+                    "ratio": ratio}
+        except Exception:  # noqa: BLE001
+            return {"reserved_units": 0, "capacity_units": 0, "ratio": None}
+
+    def _quarantine_summary(self) -> list[dict[str, Any]]:
+        try:
+            from app.services.geocompute.cluster.quarantine import (
+                get_quarantine,
+            )
+
+            return get_quarantine().snapshot(limit=10)
+        except Exception:  # noqa: BLE001
+            return []
 
     def _worker_summary(self) -> dict[str, Any]:
         workers = self._store.live_workers()
