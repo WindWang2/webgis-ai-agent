@@ -123,6 +123,13 @@ def _clip_plan_to_roi(
     分析窗口，语义如实写入 manifest）。返回 (ROI plan, (x0, y0))。
     """
     x0, y0, x1, y1 = (int(v) for v in roi_bbox)
+    # 乱序/退化 ROI = 调用方错误 → typed 拒绝（绝不静默改写成小框）。
+    if x1 <= x0 or y1 <= y0:
+        raise PlanningError(
+            f"invalid roi_bbox {list(roi_bbox)}: x1 must exceed x0 and y1 must "
+            "exceed y0 (pixel coords, top-left origin)",
+            correction_hint="pass [x0, y0, x1, y1] with x0<x1 and y0<y1",
+        )
     x0 = max(0, min(x0, raster_width - 4))
     y0 = max(0, min(y0, raster_height - 4))
     x1 = max(x0 + 4, min(x1, raster_width))
@@ -387,11 +394,20 @@ class InferenceEngine:
 
         # ── 计划 ────────────────────────────────────────────────────
         # C-1：tile 数守门在物化之前（纯算术）——超限 typed 拒绝，
-        # 绝不先构造 GB 级 TileSpec 列表。
+        # 绝不先构造 GB 级 TileSpec 列表。ROI 语义先于守门（小 ROI 于
+        # 大栅格是 ROI 的主要用途，不得按全幅 tile 数拒绝）。
         from app.lib.modelops.planning import estimated_tile_count
 
+        guard_h, guard_w = meta.height, meta.width
+        if request.roi_bbox is not None and task not in (
+            TASK_PROMPTABLE_SEGMENTATION, TASK_TEMPORAL_FORECAST,
+            TASK_TEMPORAL_CLASSIFICATION,
+        ):
+            rx0, ry0, rx1, ry1 = (int(v) for v in request.roi_bbox)
+            guard_w = max(4, min(rx1, meta.width) - max(0, rx0))
+            guard_h = max(4, min(ry1, meta.height) - max(0, ry0))
         est_tiles = estimated_tile_count(
-            descriptor, raster_height=meta.height, raster_width=meta.width
+            descriptor, raster_height=guard_h, raster_width=guard_w
         )
         if est_tiles > MAX_TILES_PER_RUN:
             raise ResourceUnavailable(
@@ -444,10 +460,14 @@ class InferenceEngine:
                 request.prompt.geometry_payload() if request.prompt else None
             ),
             "temporal": temporal_payload,
+            # V3 §H：prompt 坐标系是结果语义（同数字不同坐标系 = 不同结果，
+            # 必须区分复用键，否则地理 prompt 会命中像素 prompt 的缓存）。
+            "prompt_crs": bool(request.prompt_crs) if request.prompt else None,
             # V3 §D：ROI 与矢量化参数是结果语义的一部分（进指纹）。
             "roi": (
                 [int(v) for v in request.roi_bbox] if request.roi_bbox is not None else None
             ),
+            "postgis_table": request.postgis_table,
             "vectorize": {
                 "enabled": bool(request.vectorize_classes),
                 "params": VectorizeParams().fingerprint_payload(),
@@ -499,6 +519,9 @@ class InferenceEngine:
                 )
             perf.note_cache(hit=False)
 
+        # V3 §B/P2：引擎解析出的任务注入 ctx（多任务 descriptor 的 DL
+        # provider 按「请求任务」映射输出，而非 task_types[0]）。
+        ctx.extras["task"] = task
         # ── 设备与资源计划 ──────────────────────────────────────────
         device_plan = resolve_device_plan(descriptor, caps, device_override=request.device_override)
         estimate = provider.estimate_resources(descriptor, batch=caps.max_batch, device=device_plan.device)
@@ -552,6 +575,8 @@ class InferenceEngine:
                 "device_index": device_plan.device_index,
                 "bytes": reservation.bytes_reserved,
             }
+        # P1：多 GPU 亲和的设备号对 provider 可见（torch adapter 消费）。
+        ctx.extras["device_index"] = device_plan.device_index
 
         # ── loaded model（single-flight cache）──────────────────────
         # V3 §E：acquire 阶段（load_key/loaded_cache.acquire）失败也必须
@@ -918,10 +943,15 @@ class InferenceEngine:
             )
             class_names = list(descriptor.class_schema.classes) if descriptor.class_schema else None
             with RasterReader.open(str(source_path)) as reader:
+                det_transform = reader.dataset.transform
+                if roi_origin is not None:
+                    from affine import Affine as _Affine
+
+                    det_transform = det_transform * _Affine.translation(*roi_origin)
                 geojson = build_geojson_from_detections(
                     [r.as_dict() for r in records],
                     crs=reader.metadata().crs,
-                    transform=reader.dataset.transform,
+                    transform=det_transform,
                     class_names=class_names,
                 )
             det_path = write_geojson_output(output_dir / "detections.geojson", geojson)
@@ -941,6 +971,7 @@ class InferenceEngine:
                 template=RasterReader.open(str(source_path)),
                 nodata=0.0,
                 dtype="int32",
+                window_origin=roi_origin,
             )
             outputs["instances"] = self._publish_raster(
                 inst_path, request, role="instances", descriptor=descriptor
@@ -959,6 +990,21 @@ class InferenceEngine:
                 embeddings or label_outputs,
                 label_outputs if task == TASK_CLASSIFICATION and label_outputs else None,
             )
+            if roi_origin is not None:
+                # ROI 模式：空间锚定窗口平移回原栅格绝对坐标。
+                from dataclasses import replace as _dc_replace
+
+                dx, dy = roi_origin
+                items = [
+                    _dc_replace(
+                        item,
+                        core_window=(item.core_window[0] + dy,
+                                     item.core_window[1] + dx,
+                                     item.core_window[2],
+                                     item.core_window[3]),
+                    )
+                    for item in items
+                ]
             import json as _json
 
             emb_path = output_dir / "embeddings.json"
@@ -990,6 +1036,7 @@ class InferenceEngine:
         from shapely.geometry import mapping as _mapping
         from shapely.geometry import shape as _shape
 
+        from app.lib.modelops.preprocess import preprocess_window
         from app.lib.modelops.foundation import (
             georeference_polygon,
             prompt_windows,
@@ -1116,6 +1163,8 @@ class InferenceEngine:
         temporal = request.temporal
         if temporal is None:
             raise PlanningError("temporal inference requires a TemporalStackSpec")
+        from app.lib.modelops.preprocess import preprocess_window as _tcls_pwin
+
         checkpoint()
         t = len(temporal.times)
         c = descriptor.input_bands
@@ -1302,6 +1351,8 @@ class InferenceEngine:
         temporal = request.temporal
         if temporal is None:
             raise PlanningError("temporal classification requires a TemporalStackSpec")
+        from app.lib.modelops.preprocess import preprocess_window as _tcls_pwin
+
         checkpoint()
         t = len(temporal.times)
         c = descriptor.input_bands
@@ -1313,6 +1364,7 @@ class InferenceEngine:
                     "temporal classification reference path is single-window; "
                     "raster exceeds chip (tile-by-time not supported in v1)"
                 )
+            plan = build_preprocess_plan(descriptor, source_band_count=c)
             stack_channels: List[np.ndarray] = []
             for ti in range(t):
                 checkpoint()
@@ -1323,7 +1375,12 @@ class InferenceEngine:
                         "(time-major C*T band layout)"
                     )
                 data = reader.read_window((0, 0, meta.width, meta.height), bands=band_ids)
-                stack_channels.append(data)
+                nodata_mask = reader.read_mask((0, 0, meta.width, meta.height)) == 0
+                chip, _valid = _tcls_pwin(
+                    plan, descriptor, data,
+                    nodata_mask if nodata_mask.any() else None,
+                )
+                stack_channels.append(chip)
                 perf.note_window(1, bytes_read=int(data.nbytes))
             pixels = np.concatenate(stack_channels, axis=0)[None].astype(np.float32)
             batch = TileBatch(pixels=pixels, valid_mask=None,
@@ -1664,7 +1721,8 @@ class _StackAccumulator:
             ] = out
 
     def finalize(self) -> np.ndarray:
-        canvas = np.asarray(self._canvas)
+        # 拷出（memmap 路径视图会锁住映射 → Windows rmtree 失败泄漏）。
+        canvas = np.array(self._canvas, dtype=np.float32, copy=True)
         self.close()
         return canvas
 
@@ -1672,7 +1730,12 @@ class _StackAccumulator:
         if self._memmap_dir is not None:
             import shutil
 
-            del self._canvas
+            mm = getattr(self, "_canvas", None)
+            if mm is not None:
+                handle = getattr(mm, "_mmap", None)
+                if handle is not None:
+                    handle.close()  # 显式 unmap（Windows 删除映射文件会失败）
+                self._canvas = None
             shutil.rmtree(self._memmap_dir, ignore_errors=True)
             self._memmap_dir = None
 

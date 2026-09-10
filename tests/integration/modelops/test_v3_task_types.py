@@ -305,3 +305,87 @@ def test_roi_rejected_for_promptable(service, synthetic_raster):
                 roi_bbox=(0, 0, 64, 64),
             )
         )
+
+
+# ── review round 2：ROI 检测 georef + 非法 ROI + SR memmap 清理 ──────
+
+
+def test_detection_with_roi_georeferenced(service, sar_raster):
+    """检测 + ROI：GeoJSON 多边形落在 ROI 的地理位置（不整体位移）。"""
+    import json as _json
+
+    from app.services.modelops.engine import InferenceRequest
+
+    result = service.run_inference(
+        InferenceRequest(
+            model_id="tiny-sar-detector",
+            source_uri=str(sar_raster),
+            owner_scope={"session_id": "s-roi-det"},
+            roi_bbox=(16, 16, 48, 48),
+        )
+    )
+    assert result.status in ("completed", "reused")
+    det = result.outputs.get("detections")
+    if not det or not det.get("path"):
+        pytest.skip("tiny detector produced no detections for this raster")
+    fc = _json.loads(open(det["path"], encoding="utf-8").read())
+    # sar_raster transform 原点 (500000, 4000000)，10m 像素；ROI 原点
+    # (16,16) → 多边形坐标必须 ≥ 原点平移后的值（无 -160m 位移）。
+    xs = [pt[0] for f in fc["features"] for ring in f["geometry"]["coordinates"] for pt in ring]
+    assert min(xs) >= 500000.0 - 1e-6
+    # 若按全幅 transform（未平移），坐标会落在 500000-160 的错误位置。
+    assert min(xs) > 499900.0
+
+
+def test_invalid_roi_typed_rejection(service, synthetic_raster):
+    """乱序 ROI → typed 拒绝（不静默改写为小框）。"""
+    from app.lib.modelops.errors import PlanningError
+    from app.services.modelops.engine import InferenceRequest
+
+    with pytest.raises(PlanningError):
+        service.run_inference(
+            InferenceRequest(
+                model_id="tiny-landcover-seg",
+                source_uri=str(synthetic_raster),
+                owner_scope={"session_id": "s-roi-bad"},
+                roi_bbox=(84, 74, 20, 10),  # 逆序
+            )
+        )
+
+
+def test_superres_memmap_temp_cleanup(service, tmp_path, monkeypatch):
+    """SR 大画布走 memmap 兜底时临时目录清理（review P1-4 回归）。"""
+    import tempfile
+    from pathlib import Path
+
+    from app.services.modelops import engine as engine_module
+    from app.services.modelops.engine import InferenceRequest
+
+    path = tmp_path / "sr_mm.tif"
+    data = np.full((3, 80, 80), 0.4, dtype=np.float32)
+    with rasterio.open(
+        path, "w", driver="GTiff", width=80, height=80, count=3,
+        dtype="float32", crs="EPSG:4326",
+        transform=from_origin(116.0, 40.0, 1.0, 1.0), nodata=-9999.0,
+    ) as dst:
+        dst.write(data)
+    # SR 画布 = 160*160*3*4 ≈ 300KB → 预算 1KB 强制 memmap。
+    monkeypatch.setattr(engine_module, "MERGE_RAM_BUDGET_BYTES", 1024)
+    result = service.run_inference(
+        InferenceRequest(
+            model_id="tiny-superres-x2",
+            source_uri=str(path),
+            owner_scope={"session_id": "s-sr-mm"},
+        )
+    )
+    assert "superres" in result.outputs
+    before = {p.name for p in Path(tempfile.gettempdir()).glob("modelops-sr-*")}
+    _run_again = service.run_inference(
+        InferenceRequest(
+            model_id="tiny-superres-x2",
+            source_uri=str(path),
+            owner_scope={"session_id": "s-sr-mm2"},
+        )
+    )
+    after = {p.name for p in Path(tempfile.gettempdir()).glob("modelops-sr-*")}
+    assert after == before

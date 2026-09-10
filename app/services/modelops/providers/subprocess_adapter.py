@@ -226,37 +226,72 @@ class SubprocessWorkerProvider:
                 )
             except OSError as exc:
                 raise ProviderError(f"subprocess spawn failed: {exc}") from exc
-            try:
-                out, err = proc.communicate(input=request, timeout=self._deadline_s)
-            except subprocess.TimeoutExpired as exc:
-                proc.kill()
-                proc.communicate()
-                raise ProviderOOM(
-                    f"subprocess worker exceeded deadline {self._deadline_s}s "
-                    f"(killed); shrink batch or raise MODELOPS_SUBPROCESS_DEADLINE_S"
-                ) from exc
+            # 响应增量读取：字节上限在读取过程中生效（先全量缓冲的
+            # "cap" 防不住 output bomb）。stderr 有界随读。
+            out, err = self._read_bounded(proc, request)
             if proc.returncode != 0:
                 detail = (err or b"").decode("utf-8", "replace")[:400]
                 raise ProviderError(
                     f"subprocess worker exited {proc.returncode}: {detail}"
                 )
-            if len(out) > MAX_RESPONSE_BYTES:
-                raise ProviderOOM(
-                    f"subprocess response {len(out)} bytes exceeds cap (output bomb guard)"
-                )
-            return self._parse_response(model, batch, out)
+            return self._parse_response(model, batch, ctx, out)
         finally:
             with self._lock:
                 self._in_flight -= 1
 
+    def _read_bounded(self, proc: subprocess.Popen, request: bytes) -> tuple:
+        """stdin 一次性写入；stdout 以字节上限增量读取 + deadline kill。"""
+        import threading
+
+        proc.stdin.write(request)
+        proc.stdin.close()
+
+        buf = bytearray()
+        exceeded = threading.Event()
+
+        def _reader():
+            try:
+                while True:
+                    chunk = proc.stdout.read(65536)
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                    if len(buf) > MAX_RESPONSE_BYTES:
+                        exceeded.set()
+                        proc.kill()
+                        break
+            except Exception:  # noqa: BLE001 — 管道随 kill 断开是预期
+                pass
+
+        reader_thread = threading.Thread(target=_reader, daemon=True)
+        reader_thread.start()
+        try:
+            proc.wait(timeout=self._deadline_s)
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            proc.wait()
+            raise ProviderOOM(
+                f"subprocess worker exceeded deadline {self._deadline_s}s "
+                f"(killed); shrink batch or raise MODELOPS_SUBPROCESS_DEADLINE_S"
+            ) from exc
+        reader_thread.join(timeout=5.0)
+        if exceeded.is_set():
+            raise ProviderOOM(
+                f"subprocess response exceeds {MAX_RESPONSE_BYTES} bytes "
+                "(output bomb guard, killed mid-read)"
+            )
+        err = proc.stderr.read() if proc.stderr else b""
+        return bytes(buf), err
+
     def _parse_response(
-        self, model: LoadedModel, batch: TileBatch, raw: bytes
+        self, model: LoadedModel, batch: TileBatch, ctx: InferenceContext, raw: bytes
     ) -> TileOutput:
         try:
             payload = json.loads(raw.decode("utf-8"))
         except ValueError as exc:
             raise ProviderError(f"subprocess response is not valid JSON: {exc}") from exc
-        task = model.descriptor.task_types[0]
+        # 多任务 descriptor 按「引擎解析的请求任务」映射（缺失 = 首任务）。
+        task = ctx.extras.get("task") or model.descriptor.task_types[0]
         if task in (TASK_SEMANTIC_SEGMENTATION, "promptable_segmentation"):
             probs = self._array(payload, "class_probabilities_b64", ndim=4)
             return TileOutput(task_type=task, class_probabilities=probs)

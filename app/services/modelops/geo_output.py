@@ -52,9 +52,15 @@ def publish_geojson_to_postgis(
     validate_table_name(table)
     if if_exists not in _IF_EXISTS:
         raise ValueError(f"if_exists must be one of {sorted(_IF_EXISTS)} (got {if_exists!r})")
+    # 校验失败也走 honest skip（返回 reason 而非抛——引擎在推理完成后
+    # 调用本函数，抛错会毁掉已完成的推理产物）。
     features = feature_collection.get("features")
     if not isinstance(features, list) or not features:
         return {"published": False, "reason": "empty feature collection"}
+    if not _TABLE_NAME_RE.match(table or ""):
+        return {"published": False, "reason": f"invalid table name {table!r}"}
+    if if_exists not in _IF_EXISTS:
+        return {"published": False, "reason": f"invalid if_exists {if_exists!r}"}
     resolved_dsn = dsn or os.environ.get(POSTGIS_DSN_ENV, "")
     if not resolved_dsn:
         return {"published": False, "reason": f"no DSN ({POSTGIS_DSN_ENV} unset)"}
@@ -68,7 +74,10 @@ def publish_geojson_to_postgis(
         return {"published": False, "reason": f"sqlalchemy unavailable: {exc}"}
 
     try:
-        frame = gpd.GeoDataFrame.from_features(features, crs=feature_collection.get("crs"))
+        crs = feature_collection.get("crs")
+        if isinstance(crs, dict):
+            crs = (crs.get("properties") or {}).get("name")
+        frame = gpd.GeoDataFrame.from_features(features, crs=crs)
     except Exception as exc:  # noqa: BLE001
         return {"published": False, "reason": f"invalid features: {exc}"}
     if frame.geometry.isna().any():

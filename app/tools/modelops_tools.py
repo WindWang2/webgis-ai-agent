@@ -209,6 +209,11 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
                     correction_hint="pass exactly four numbers",
                 )
             roi = [float(v) for v in roi_bbox]
+            if not (roi[0] < roi[2] and roi[1] < roi[3]):
+                raise ModelOpsError(
+                    f"invalid roi_bbox {roi}: x0<x1 and y0<y1 required",
+                    correction_hint="pass [x0, y0, x1, y1] with x0<x1 and y0<y1",
+                )
         request = InferenceRequest(
             model_id=model_id,
             source_uri=source_uri[:MAX_SOURCE_URI_LEN],

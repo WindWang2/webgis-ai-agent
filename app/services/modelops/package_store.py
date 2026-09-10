@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 import re
-import threading
 import uuid
 from pathlib import Path
 from app.lib.data.fingerprints import sha256_of_file
@@ -39,7 +38,6 @@ class ModelPackageStore:
 
     def __init__(self, root: Path) -> None:
         self._root = Path(root)
-        self._lock = threading.Lock()
 
     def package_path(self, descriptor: GeoModelDescriptor) -> Path:
         suffix = SINGLE_FILE_FORMAT_SUFFIXES.get(descriptor.artifact_format, ".zip")

@@ -91,6 +91,21 @@ def test_ledger_released_when_provider_load_fails(service, tmp_path, isolated_bl
 
     original_load = provider.load
     provider.load = _boom
+    # 让预订非零（onnx CPU 估计 vram=0 → 0 字节预订测不出泄漏）。
+    from app.lib.modelops.resources import ResourceEstimate as _RE
+
+    original_estimate = provider.estimate_resources
+    provider.estimate_resources = (
+        lambda d, *, batch, device: _RE(vram_bytes=4096, host_ram_bytes=8192,
+                                        recommended_batch=1)
+    )
+    # spy：验证 release 被调用且带非零字节（否则断言空洞——onnx CPU
+    # 估计 vram=0 时 release(0) 无法区分泄漏）。
+    ledger = service._ledger
+    released = []
+    original_release = ledger.release
+    ledger.release = lambda res: (released.append(res.bytes_reserved),
+                                  original_release(res))
     try:
         with pytest.raises(ProviderLoadFailed):
             service.run_inference(
@@ -101,5 +116,8 @@ def test_ledger_released_when_provider_load_fails(service, tmp_path, isolated_bl
             )
     finally:
         provider.load = original_load
+        provider.estimate_resources = original_estimate
+        ledger.release = original_release
+    assert released and released[0] > 0, "load 失败路径必须释放非零预订"
     # 预订已归还（失败路径无泄漏）。
     assert service.warm_pool_status()["vram_ledger"]["used"].get("cpu:0", 0) == 0

@@ -40,6 +40,7 @@ def vectorize_class_raster(
     confidence: Optional[np.ndarray] = None,
     params: Optional[VectorizeParams] = None,
     ignore_value: int = 255,
+    crs: Optional[str] = None,
 ) -> Dict[str, Any]:
     """类别栅格 → GeoJSON FeatureCollection（地理坐标；拓扑修复 + 简化）。"""
     params = params or VectorizeParams()
@@ -67,7 +68,7 @@ def vectorize_class_raster(
                 transform_xy=transform_xy,
                 class_names=class_names,
                 confidence=confidence,
-                mask_slice=mask,
+                shape_hw=classes.shape,
                 params=params,
             )
             if record is not None:
@@ -80,7 +81,10 @@ def vectorize_class_raster(
             tuple(f["geometry"]["coordinates"][0][0]),
         )
     )
-    return {"type": "FeatureCollection", "features": features_out}
+    collection: Dict[str, Any] = {"type": "FeatureCollection", "features": features_out}
+    if crs:
+        collection["crs"] = {"type": "name", "properties": {"name": str(crs)}}
+    return collection
 
 
 def _build_feature(
@@ -91,7 +95,7 @@ def _build_feature(
     transform_xy: Any,
     class_names: Optional[Sequence[str]],
     confidence: Optional[np.ndarray],
-    mask_slice: np.ndarray,
+    shape_hw: Tuple[int, int],
     params: VectorizeParams,
 ) -> Optional[Dict[str, Any]]:
     """单多边形：地理变换 → 拓扑修复 → 简化 → 面积过滤 → 属性。"""
@@ -130,7 +134,15 @@ def _build_feature(
         "topology_repaired": topology_repaired,
     }
     if confidence is not None:
-        region_conf = confidence[mask_slice]
+        # 按多边形内部均值（非全类均值）：几何栅格化取掩膜。
+        from rasterio import features as _features
+
+        geom_mask = _features.geometry_mask(
+            [geom_pixels], out_shape=shape_hw,
+            transform=__import__("affine").Affine.identity(),
+            invert=True, all_touched=False,
+        )
+        region_conf = confidence[geom_mask]
         if region_conf.size:
             properties["mean_confidence"] = round(float(region_conf.mean()), 6)
     return {
@@ -166,11 +178,17 @@ def _transform_geom(geom: Any, transform: Any, transform_xy: Any) -> Any:
             _transform_geom(p, transform, transform_xy) for p in geom.geoms
         ]
         return MultiPolygon([p for p in parts if not p.is_empty])
-    # 其余形态（GeometryCollection 等）取第一个多边形部分。
+    # 其余形态（GeometryCollection 等）：收集全部非空多边形部分
+    # （make_valid 的修复碎片不静默丢弃）。
+    polygons = []
     for part in getattr(geom, "geoms", []):
         transformed = _transform_geom(part, transform, transform_xy)
         if not transformed.is_empty:
-            return transformed
+            polygons.append(transformed)
+    if len(polygons) == 1:
+        return polygons[0]
+    if polygons:
+        return MultiPolygon(polygons)
     return geom
 
 

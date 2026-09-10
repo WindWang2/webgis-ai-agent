@@ -290,12 +290,19 @@ def inspect_model_file(
         )
     if len(data) > DEFAULT_MAX_PACKAGE_BYTES:
         raise PackageSecurityError(f"package exceeds {DEFAULT_MAX_PACKAGE_BYTES} bytes")
-    # ONNX protobuf 的最小结构哨兵：首字节 field 1 (ir_version) varint——
-    # 只拒绝明显不是 protobuf 的载荷（如纯文本/空包），不做完整解析。
+    # 格式哨兵（只拒明显冒名载荷，不做完整解析）：
+    # - .onnx：protobuf 首字节 field 1 (ir_version) varint = 0x08；
+    # - .pt：TorchScript archive = zip 容器（PK 魔数）——改名 .pt 的
+    #   pickle/.pth 在此被拒（pickle 语义从不进入本平面）。
     if suffix == ".onnx" and (len(data) < 8 or data[0] != 0x08):
         raise PackageSecurityError(
             "package does not look like an ONNX protobuf (leading byte mismatch); "
             "refusing to treat it as a computation graph"
+        )
+    if suffix == ".pt" and data[:2] != b"PK":
+        raise PackageSecurityError(
+            "package does not look like a TorchScript archive (missing zip "
+            "magic); pickle payloads are never accepted"
         )
     return PackageReport(
         checksum=actual_checksum,

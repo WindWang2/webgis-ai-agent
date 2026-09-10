@@ -102,6 +102,18 @@ class ModelLineageStore:
         key = f"{model_id}@{model_version}"
         with self._lock:
             self._root.mkdir(parents=True, exist_ok=True)
+            if key not in self._seqs:
+                # 重启恢复：首 append 前扫盘取历史 max seq（防跨进程重启
+                # 后 seq 归零 → 排序碰撞 / 部署状态推导倒转）。
+                max_seq = 0
+                path = self._file(model_id, model_version)
+                if path.exists():
+                    for line in path.read_text(encoding="utf-8").splitlines():
+                        try:
+                            max_seq = max(max_seq, int(json.loads(line).get("seq", 0)))
+                        except (ValueError, TypeError):
+                            continue
+                self._seqs[key] = max_seq
             seq = self._seqs.get(key, 0) + 1
             event = {
                 "schema_version": LINEAGE_SCHEMA_VERSION,

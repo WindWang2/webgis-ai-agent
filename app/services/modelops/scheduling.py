@@ -231,6 +231,7 @@ class WarmPoolManager:
                 "model_id": model_id,
                 "device": device,
                 "pinned": True,
+                "cache_key": cache_key,
                 "load_latency_s": round(load_latency, 6),
                 "error": "",
             }
@@ -243,11 +244,19 @@ class WarmPoolManager:
             return state
 
     def release_all(self) -> int:
-        """释放全部钉扎（cache refcount 回落；LRU 恢复驱逐资格）。"""
+        """释放全部钉扎（cache refcount 真实回落；LRU 恢复驱逐资格）。"""
         with self._lock:
-            count = sum(1 for s in self._pinned.values() if s.get("pinned"))
+            pinned = [
+                (key, s) for key, s in self._pinned.items()
+                if s.get("pinned") and s.get("cache_key")
+            ]
             self._pinned.clear()
-        return count
+        for _key, state in pinned:
+            try:
+                self._cache.release(state["cache_key"])
+            except Exception as exc:  # noqa: BLE001 — 释放失败不阻断其余
+                logger.warning("warm pool release of %s failed: %s", state["model_id"], exc)
+        return len(pinned)
 
     def status(self) -> Dict[str, Dict[str, Any]]:
         with self._lock:

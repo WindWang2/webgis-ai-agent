@@ -185,21 +185,24 @@ class TorchScriptProvider:
 
                 raise InferenceCancelled(f"run {ctx.run_id} cancelled before batch")
             torch = model.state["torch"]
-            module = model.state["module"]
             pixels = np.ascontiguousarray(batch.pixels, dtype=np.float32)
             device_index = int(ctx.extras.get("device_index", 0) or 0)
             try:
                 with _TorchNoGrad(torch):
                     if model.device == DEVICE_CUDA:
-                        # 多 GPU 亲和：forward 在亲和设备上下文中执行。
-                        with torch.cuda.device(device_index):
-                            outputs = module(torch.from_numpy(pixels))
+                        module, device_tag = self._module_on(
+                            model, torch, f"cuda:{device_index}"
+                        )
+                        # 多 GPU 亲和：输入张量随模块同设备（CPU 张量喂 CUDA
+                        # 模块 = RuntimeError）。
+                        outputs = module(torch.from_numpy(pixels).to(device_tag))
                     else:
-                        outputs = module(torch.from_numpy(pixels))
+                        outputs = model.state["module"](torch.from_numpy(pixels))
             except Exception as exc:  # noqa: BLE001 — 运行时错误分类
                 raise _classify_torch_error(exc) from exc
             raw = self._to_numpy(outputs, torch)
-            task = model.descriptor.task_types[0]
+            # 多任务 descriptor 按「引擎解析的请求任务」映射（缺失 = 首任务）。
+            task = ctx.extras.get("task") or model.descriptor.task_types[0]
             return map_dl_outputs(task, raw, model.descriptor, batch)
         finally:
             with self._lock:
@@ -219,6 +222,14 @@ class TorchScriptProvider:
         model.state["module"] = None
 
     # ── internals ───────────────────────────────────────────────────
+    @staticmethod
+    def _module_on(model: LoadedModel, torch: Any, device_tag: str) -> tuple:
+        """模块随亲和设备迁移（迁移一次，缓存于 state；ScriptModule.to）。"""
+        if model.state.get("device_tag") != device_tag:
+            model.state["module"] = model.state["module"].to(device_tag)
+            model.state["device_tag"] = device_tag
+        return model.state["module"], device_tag
+
     @staticmethod
     def _to_numpy(outputs: Any, torch: Any) -> list:
         if isinstance(outputs, (list, tuple)):

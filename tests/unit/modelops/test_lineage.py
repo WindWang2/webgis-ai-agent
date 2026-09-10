@@ -56,3 +56,14 @@ def test_history_across_versions(tmp_path):
     assert {e["model_version"] for e in history} == {"1.0.0", "1.1.0"}
     single = store.history("m", model_version="1.1.0")
     assert len(single) == 1
+
+
+def test_seq_survives_store_reopen(tmp_path):
+    """重启恢复：新 store 实例 append 不重置 seq（部署状态推导不倒转）。"""
+    store = ModelLineageStore(tmp_path / "lineage")
+    store.append("m", "1.0.0", event_type="promotion", payload={"stage": "production"})
+    store.append("m", "1.0.0", event_type="retirement")
+    reopened = ModelLineageStore(tmp_path / "lineage")
+    event = reopened.append("m", "1.0.0", event_type="provenance_note", payload={})
+    assert event["seq"] == 3  # 不与历史 seq 碰撞
+    assert reopened.deployment_state("m", "1.0.0") == "retired"

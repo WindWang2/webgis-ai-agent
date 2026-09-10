@@ -202,7 +202,8 @@ class OnnxRuntimeProvider:
                 )
             except Exception as exc:  # noqa: BLE001 — 运行时错误分类
                 raise _classify_ort_error(exc) from exc
-            task = model.descriptor.task_types[0]
+            # 多任务 descriptor 按「引擎解析的请求任务」映射（缺失 = 首任务）。
+            task = ctx.extras.get("task") or model.descriptor.task_types[0]
             return map_dl_outputs(task, raw, model.descriptor, batch)
         finally:
             with self._lock:

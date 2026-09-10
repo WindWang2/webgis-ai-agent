@@ -373,8 +373,10 @@ def boundary_metrics(
     dil = np.ones((size, size), dtype=bool)
     t_edge_near_p = t_edge & binary_dilation(p_edge, structure=dil, border_value=0)
     p_edge_near_t = p_edge & binary_dilation(t_edge, structure=dil, border_value=0)
-    precision = float(t_edge_near_p.sum()) / float(max(1, t_edge.sum()))
-    recall = float(p_edge_near_t.sum()) / float(max(1, p_edge.sum()))
+    # 标准口径：precision = 预测边界落在真值容差内的占比；recall = 真值
+    # 边界被预测覆盖的占比（此前两个标签互换——F1 不变所以旧测试没抓到）。
+    precision = float(p_edge_near_t.sum()) / float(max(1, p_edge.sum()))
+    recall = float(t_edge_near_p.sum()) / float(max(1, t_edge.sum()))
     f1 = (
         2 * precision * recall / (precision + recall) if precision + recall else 0.0
     )

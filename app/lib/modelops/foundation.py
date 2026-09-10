@@ -168,7 +168,7 @@ def window_local_prompts(
     row: int,
     col: int,
 ) -> PromptSpec:
-    """prompt 平移到窗口局部坐标（prior mask 同步切片）。"""
+    """prompt 几何平移到窗口局部坐标（prior mask 切片由 engine 处理）。"""
     return PromptSpec(
         points=tuple((px - col, py - row) for px, py in prompt.points),
         boxes=tuple((bx - col, by - row, bw, bh) for bx, by, bw, bh in prompt.boxes),
