@@ -2,9 +2,10 @@
 import asyncio
 import hashlib
 import json
+import logging
+import threading
 import time
 import uuid
-import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -115,7 +116,7 @@ class RedisSessionStore(BaseSessionStore):
         self._bound_loop: Optional[asyncio.AbstractEventLoop] = None
         # R1-M4：per-loop 客户端表 + 交换锁（_ensure_connected 使用）
         self._loop_clients: dict = {}
-        self._client_lock = asyncio.Lock()
+        self._client_lock = threading.Lock()
         self.capacity = capacity
         # L1 in-process cache: { (session_id, kind): (value, expires_at_monotonic) }
         # kind ∈ {"map_state", "metadata"}. Read-through, write-invalidate.
@@ -148,7 +149,7 @@ class RedisSessionStore(BaseSessionStore):
         # 惰性字段（部分测试/旧调用路径绕过 __init__ 直接构造）
         if getattr(self, "_loop_clients", None) is None:
             self._loop_clients = {}
-            self._client_lock = asyncio.Lock()
+            self._client_lock = threading.Lock()
 
         # legacy 兼容快路径：手动注入/绑定的 _r（__new__ 构造 + _bound_loop
         # 指向当前 loop，见审计 TEST-13 helper）原样复用。
@@ -164,7 +165,7 @@ class RedisSessionStore(BaseSessionStore):
         if client is not None:
             return client
 
-        async with self._client_lock:
+        with self._client_lock:
             self._prune_closed_loops()
             # 双检
             client = self._loop_clients.get(loop) if loop is not None else None
