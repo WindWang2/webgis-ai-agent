@@ -299,6 +299,24 @@ def _default_session_factory():
     return db_session()
 
 
+def trace_kwargs_from_task(celery_task: Any) -> dict:
+    """从 Celery 任务请求头恢复 trace 关联（Platform V4，ADR-0131 D2）。
+
+    派发侧（submit_durable_job）把 traceparent 放进 apply_async(headers=...)；
+    这里是 worker 侧的对称读取。无任务对象/无消息头/头非法时返回 {}——
+    纯 additive，旧消息与直接调用（eager/测试）行为不变。
+    """
+    if celery_task is None:
+        return {}
+    try:
+        headers = getattr(getattr(celery_task, "request", None), "headers", None)
+        from app.lib.observability.spans import context_kwargs_from_headers
+
+        return context_kwargs_from_headers(headers)
+    except Exception:  # noqa: BLE001 — 关联失败绝不阻断执行
+        return {}
+
+
 @contextlib.contextmanager
 def durable_job(
     job_id: str | int,
@@ -408,7 +426,10 @@ def durable_job(
             turn_id=_job_turn_id,
         )
         with use_token(token), rt_ctx.bind_runtime_context(
-            session_id=_job_session_id, run_id=_job_run_id, turn_id=_job_turn_id
+            session_id=_job_session_id,
+            run_id=_job_run_id,
+            turn_id=_job_turn_id,
+            **trace_kwargs_from_task(celery_task),
         ), use_origin(_origin):
             yield handle
     except OperationCancelled:

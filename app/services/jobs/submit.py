@@ -23,6 +23,7 @@ from app.services.jobs.cancellation import registry as cancellation_registry
 from app.services.jobs.context import current_origin
 from app.services.jobs.lifecycle import JobKind, JobStatus
 from app.services.jobs.store import DurableJobStore
+from app.lib.observability.spans import trace_headers
 from app.tools._utils import db_session
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,12 @@ def submit_durable_job(
 
     try:
         send_options = {"queue": queue} if queue else {}
+        # Platform V4（ADR-0131 D2）：trace 关联随消息头跨进程——worker 侧
+        # durable_job 从 request.headers 恢复，日志/指标/错误才能并回同一
+        # trace。无 trace 上下文时 headers={}（best-effort，绝不阻断派发）。
+        _trace_headers = trace_headers()
+        if _trace_headers:
+            send_options["headers"] = _trace_headers
         async_result = celery_task.apply_async(
             args=list(task_args), kwargs=kwargs, **send_options
         )
