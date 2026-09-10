@@ -112,6 +112,34 @@ export default function Home() {
     autoRestoreFromAnchor,
   } = useWorkspaceSession(dispatchAction);
 
+  // FRONT-05: messages and active streaming token state decoupled from root Home component.
+  // StreamingChatHost owns useSSEStream, isolating 60fps streaming re-renders to the chat subtree.
+  const setMessagesRef = useRef<((updater: any) => void) | null>(null);
+  const registerSetMessages = useCallback((fn: (updater: any) => void) => {
+    setMessagesRef.current = fn;
+  }, []);
+  const messagesRef = useRef<any[]>([]);
+  const handleMessagesChange = useCallback((msgs: any[]) => {
+    messagesRef.current = msgs;
+  }, []);
+  const setMessages = useCallback((updater: any) => {
+    setMessagesRef.current?.(updater);
+    useChatStore.getState().setMessages(updater);
+  }, []);
+  const onViewportChangeRef = useRef<((center: [number, number], zoom: number, bearing: number, pitch: number) => void) | null>(null);
+  const handleRegisterViewportChange = useCallback(
+    (fn: (center: [number, number], zoom: number, bearing: number, pitch: number) => void) => {
+      onViewportChangeRef.current = fn;
+    },
+    []
+  );
+  const handleViewportChange = useCallback(
+    (center: [number, number], zoom: number, bearing: number, pitch: number) => {
+      onViewportChangeRef.current?.(center, zoom, bearing, pitch);
+    },
+    []
+  );
+
   // Workbench V5（W4）：全局 undo/redo 快捷键（Ctrl/⌘+Z、⇑+Z、Ctrl+Y）。
   useWorkbenchUndoKeys();
 
@@ -142,34 +170,6 @@ export default function Home() {
   // 下行路径）。增量由 useSSEStream 的分发链驱动，视图经 ContextPanel → ChatTab
   // 到 SessionPlanPanel；applySessionPlanEvent 恒稳，不影响 onEvent 身份。
   const sessionPlan = useSessionPlan(sessionId, activeSessionToken);
-
-  // FRONT-05: messages and active streaming token state decoupled from root Home component.
-  // StreamingChatHost owns useSSEStream, isolating 60fps streaming re-renders to the chat subtree.
-  const setMessagesRef = useRef<((updater: any) => void) | null>(null);
-  const registerSetMessages = useCallback((fn: (updater: any) => void) => {
-    setMessagesRef.current = fn;
-  }, []);
-  const messagesRef = useRef<any[]>([]);
-  const handleMessagesChange = useCallback((msgs: any[]) => {
-    messagesRef.current = msgs;
-  }, []);
-  const setMessages = useCallback((updater: any) => {
-    setMessagesRef.current?.(updater);
-    useChatStore.getState().setMessages(updater);
-  }, []);
-  const onViewportChangeRef = useRef<((center: [number, number], zoom: number, bearing: number, pitch: number) => void) | null>(null);
-  const handleRegisterViewportChange = useCallback(
-    (fn: (center: [number, number], zoom: number, bearing: number, pitch: number) => void) => {
-      onViewportChangeRef.current = fn;
-    },
-    []
-  );
-  const handleViewportChange = useCallback(
-    (center: [number, number], zoom: number, bearing: number, pitch: number) => {
-      onViewportChangeRef.current?.(center, zoom, bearing, pitch);
-    },
-    []
-  );
 
   // #667: keep the single lazy-hydration seam's session context in sync
   useEffect(() => {

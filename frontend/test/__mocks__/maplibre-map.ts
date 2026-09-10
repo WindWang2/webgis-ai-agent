@@ -342,6 +342,7 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     dragPan: { enable: vi.fn(), disable: vi.fn(), isEnabled: vi.fn(() => true) },
     boxZoom: { enable: vi.fn(), disable: vi.fn(), isEnabled: vi.fn(() => true) },
     getCanvas: vi.fn(() => makeCanvasLike()),
+    getContainer: vi.fn(() => (typeof document !== 'undefined' ? document.createElement('div') : null)),
     hasImage: vi.fn((id: string) => images.has(id)),
     removeImage: vi.fn((id: string) => {
       images.delete(id);

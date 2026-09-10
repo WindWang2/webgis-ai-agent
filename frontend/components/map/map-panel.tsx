@@ -4,7 +4,7 @@ import { AlertTriangle, RefreshCw } from "lucide-react"
 import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
 
 const EMPTY_SELECTION_FILTERS: Record<string, unknown[]> = {}
-import Map, { MapRef, ViewStateChangeEvent, Popup } from "react-map-gl/maplibre"
+import Map, { MapRef, ViewStateChangeEvent } from "react-map-gl/maplibre"
 import type { StyleSpecification } from "maplibre-gl"
 import type { Layer } from "@/lib/types/layer"
 
@@ -288,7 +288,7 @@ export function MapPanel({
   const transformRequest = useCallback(
     (url: string, resourceType?: string) =>
       buildTileTransformRequest(() => ownerToken ?? sessionTokenRef?.current ?? null)(url, resourceType),
-    [ownerToken],
+    [ownerToken, sessionTokenRef],
   )
 
   const handleFilterChange = useCallback((layerId: string, ranges: number[][]) => {
@@ -651,7 +651,7 @@ export function MapPanel({
       })
       // #1008：reconcile 失败的裸 console.error 泄漏内部细节 → devOnly。
       .catch((e) => devOnly.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, issueCartographicObservation])
+  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation])
 
   // Runtime V4（§14）：过滤命中证据 —— settle 后对「有过滤的内联层」做有界
   // 单遍计数（≤20k 要素；MVT/超限层如实 unknown），latest-wins 记录进
