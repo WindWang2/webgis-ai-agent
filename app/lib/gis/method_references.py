@@ -227,6 +227,13 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Pattern Analysis Program for Quantifying Landscape Structure. "
             "Gen. Tech. Rep. PNW-GTR-351, USDA Forest Service.",
         ),
+        MethodReference(
+            "savitzky_golay1964",
+            "Savitzky-Golay smoothing filter",
+            "Savitzky, A., & Golay, M. J. E. (1964). Smoothing and "
+            "Differentiation of Data by Simplified Least Squares Procedures. "
+            "Analytical Chemistry, 36(8), 1627–1639.",
+        ),
         # ── 空间抽样（Goal 07 Science V6）────────────────────────────
         MethodReference(
             "cochran1977",

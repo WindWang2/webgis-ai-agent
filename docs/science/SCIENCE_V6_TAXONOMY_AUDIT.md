@@ -6,7 +6,7 @@
 > `python scripts/science_taxonomy_audit.py`；`--check` 模式 diff。
 > 族对齐词表唯一维护于脚本内 `TAXONOMY_FAMILIES`。
 
-注册表算法总数：**221**。
+注册表算法总数：**222**。
 
 | 族 | 算法数 | native | VALIDATED/PRODUCTION | 代表算法 |
 |---|---|---|---|---|
@@ -19,7 +19,7 @@
 | 网络 | 19 | 19 | 16 | `network.accessibility`, `network.centrality`, `network.closest_facility` |
 | 变化检测 | 7 | 7 | 7 | `remote.change.raster`, `remote.cva`, `remote.mad_change` |
 | 遥感 | 31 | 31 | 28 | `remote.band_correlation`, `remote.ica`, `remote.linear_unmixing` |
-| 时间序列 | 10 | 10 | 10 | `temporal.aggregate`, `temporal.change`, `temporal.cube_stats` |
+| 时间序列 | 11 | 11 | 11 | `temporal.aggregate`, `temporal.change`, `temporal.cube_stats` |
 | 生态 | 2 | 2 | 2 | `ecology.habitat_suitability`, `ecology.landscape_metrics` |
 | 多准则决策 | 1 | 1 | 1 | `decision.mcda.wsm` |
 | 空间抽样 | 3 | 3 | 3 | `sampling.random_points`, `sampling.stratified_points`, `sampling.systematic_grid` |

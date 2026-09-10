@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：144 能力 · 221 算法 · 121 参数契约。
+统计：145 能力 · 222 算法 · 122 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -1207,6 +1207,17 @@ CUSUM 单均值漂移定位 + 固定种子 bootstrap 显著性（多变点不在
 - **`temporal.profile`** 时间画像（`native`·成熟度 已验证）
   - 假设：时间字段解析 NaT 剔除并披露（与 ST-DBSCAN 同约定）；画像/聚合为描述性统计，不做趋势推断
   - 局限：无时区归一（时间戳语义由输入披露决定）；空时间维度 → 类型化错误（不伪造空统计）
+
+## `temporal_smoothing` — 时序平滑与缺口填补
+
+时间序列预处理：Savitzky-Golay / 滑动均值平滑与线性/最近邻缺口填补（填补位置显式标记）；NDVI/EVI 时序、SAR 时序等连续观测序列的标准化预处理。
+
+- **`temporal.smooth_gapfill`** 时序平滑与缺口填补（`native`·成熟度 已验证，契约: `ts_smooth_gapfill_analysis`，出处: `savitzky_golay1964`, `cochran1977`）
+  - 假设：savgol（Savitzky-Golay 卷积平滑）/ moving_average（中心滑均）/none（只填补）三种方法；偶数窗口自动 +1 取奇并披露；缺口填补是显式步骤（linear 时间插值 / nearest 最近有效值 / none 保持 NaN），填补位置由 filled_mask 标记；缺口占比 ≥90% 或序列 <3 观测 → 类型化拒绝（缺口主导的平滑是伪像）
+  - 局限：与 temporal.phenology 内嵌的 SG 平滑互补：本算法是独立预处理（输出平滑序列），物候是特征提取（输出 SOS/EOS 指标）；滑动平均对趋势起点/终点有边缘偏差（edge 填充口径）；线性插值填补长缺口会抹平真实突变（连续缺口 >3 建议人工复核）
+  - 资源包络：24B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-12，atol=1e-12
 
 ## `temporal_trend` — 时序趋势
 
