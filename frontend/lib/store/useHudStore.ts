@@ -145,6 +145,14 @@ export interface HudSnapshot {
   timestamp: number;
 }
 
+/**
+ * @deprecated Legacy HUD engine history stack (FRONT-13).
+ *
+ * In Workbench V5, state mutations, history stacks, and undo/redo operations
+ * are managed exclusively by `workbenchSlice.ts` and `useWorkbenchUndoKeys`.
+ * This class is retained only for backwards compatibility with legacy tests.
+ * Do not use for new features or production state mutations.
+ */
 export class EmbodiedHudEngine {
   private static historyStack: HudSnapshot[] = [];
   private static redoStack: HudSnapshot[] = [];
