@@ -335,6 +335,7 @@ def await_node_jobs(
     session_id: str,
     deadline_ts: Optional[float],
     cancel_token: Any = None,
+    cancel_on_deadline: bool = True,
 ) -> dict[int, dict[str, Any]]:
     """等待**多个** durable job 终态（V8 分区 fan-out 的等待原语）。
 
@@ -429,16 +430,16 @@ def await_node_jobs(
                         cancel_requested.add(job_id)
             raise OperationCancelled("partition fan-out cancelled")
         if deadline_ts is not None and time.monotonic() > deadline_ts:
-            with factory() as db:
-                for job_id in sorted(outstanding):
-                    if job_id not in cancel_requested:
-                        DurableJobStore.request_cancel_sync(db, int(job_id))
-                        cancel_requested.add(job_id)
+            if cancel_on_deadline:
+                with factory() as db:
+                    for job_id in sorted(outstanding):
+                        if job_id not in cancel_requested:
+                            DurableJobStore.request_cancel_sync(db, int(job_id))
+                            cancel_requested.add(job_id)
             from app.services.geocompute.errors import DeadlineExceededError
 
             raise DeadlineExceededError(
-                f"partition fan-out exceeded node deadline "
-                f"({len(outstanding)} tile jobs outstanding)",
+                f"await window exceeded ({len(outstanding)} jobs outstanding)",
                 details={"outstanding": len(outstanding)},
             )
         time.sleep(poll_s)
