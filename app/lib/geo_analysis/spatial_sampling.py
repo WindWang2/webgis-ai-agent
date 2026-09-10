@@ -25,11 +25,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from app.lib.cancellation import checkpoint
 from app.lib.gis.scientific_errors import (
     DegenerateData,
     InsufficientSamples,
     MissingRequiredField,
     NoValidObservations,
+    ResourceScaleMismatch,
 )
 
 __all__ = [
@@ -153,7 +155,7 @@ def _validate_n(n: Any) -> int:
             correction_hint="request at least one sample per unit",
         )
     if n_i > 1_000_000:
-        raise InsufficientSamples(
+        raise ResourceScaleMismatch(
             f"sample count {n_i} exceeds the 1,000,000 guard",
             correction_hint="split the request or coarsen the design",
         )
@@ -203,6 +205,7 @@ def random_points_in_polygons(
     within: List[int] = []
     attempts_total = 0
     for i in valid_idx:
+        checkpoint()
         gx, gy, att = _sample_uniform_in_geom(geoms[i], n_i, rng,
                                               label=f"polygon {i}")
         xs.extend(gx.tolist())
@@ -243,9 +246,8 @@ def systematic_grid_points(
     仅保留落入任一多边形的格点。输出属性：``polygon_index``（命中的
     多边形，多点重叠取最小索引）、``row``、``col``、``sample_id``。
     """
+    from shapely import points as shp_points
     from shapely import prepare
-    from shapely.geometry import Point
-    from shapely.strtree import STRtree
 
     if not np.isfinite(spacing) or spacing <= 0:
         raise ValueError(f"spacing must be a positive number (got {spacing!r})")
@@ -272,34 +274,46 @@ def systematic_grid_points(
     off_x = rng.uniform(0.0, spacing)
     off_y = rng.uniform(0.0, spacing)
 
+    # 网格全量矢量化构造（行×列 meshgrid）+ 逐多边形 prepared covers
+    #（索引序首中，与逐点 STRtree 查询语义逐位一致 —— 含重叠面归属）。
+    col_ids = np.arange(n_cols)
+    xs_grid = min_x + off_x + col_ids * spacing
+    col_ids = col_ids[xs_grid <= max_x]
+    xs_grid = xs_grid[xs_grid <= max_x]
+    row_ids = np.arange(n_rows)
+    ys_grid = min_y + off_y + row_ids * spacing
+    row_ids = row_ids[ys_grid <= max_y]
+    ys_grid = ys_grid[ys_grid <= max_y]
+    n_cols = int(len(col_ids))
+    n_rows = int(len(row_ids))
+    XX, YY = np.meshgrid(xs_grid, ys_grid)
+    pts = shp_points(np.column_stack([XX.ravel(), YY.ravel()]))
+    pt_rows, pt_cols = np.meshgrid(row_ids, col_ids, indexing="ij")
+    pt_rows = pt_rows.ravel()
+    pt_cols = pt_cols.ravel()
+
     geoms = list(gdf.geometry)
     for g in geoms:
         prepare(g)
-    tree = STRtree(geoms)
-
+    taken = np.zeros(len(pts), dtype=bool)
     xs: List[float] = []
     ys: List[float] = []
     rows: List[int] = []
     cols: List[int] = []
     poly_idx: List[int] = []
-    for r in range(n_rows):
-        y = min_y + off_y + r * spacing
-        if y > max_y:
+    for gi, geom in enumerate(geoms):
+        if taken.all():
             break
-        for c in range(n_cols):
-            x = min_x + off_x + c * spacing
-            if x > max_x:
-                break
-            probe = Point(x, y)
-            hits = sorted(int(i) for i in tree.query(probe))
-            for gi in hits:
-                if geoms[gi].covers(probe):
-                    xs.append(x)
-                    ys.append(y)
-                    rows.append(r)
-                    cols.append(c)
-                    poly_idx.append(gi)
-                    break
+        candidate = (~taken) & geom.covers(pts)
+        if not candidate.any():
+            continue
+        idx = np.flatnonzero(candidate)
+        xs.extend(XX.ravel()[idx].tolist())
+        ys.extend(YY.ravel()[idx].tolist())
+        rows.extend(pt_rows[idx].tolist())
+        cols.extend(pt_cols[idx].tolist())
+        poly_idx.extend([gi] * len(idx))
+        taken |= candidate
     meta = {
         "design": "systematic_grid",
         "spacing": float(spacing),
@@ -363,6 +377,7 @@ def stratified_points_in_polygons(
     zero_area_skipped = 0
 
     for s in uniq:
+        checkpoint()
         members = [i for i in range(len(geoms))
                    if strata[i] == s and areas[i] > 0]
         zero_area_skipped += int(np.sum(

@@ -61,10 +61,14 @@ def test_gap_fill_semantics():
     s_none, mask_none, meta_none = smooth_gapfill(signal, window_length=7,
                                                   polyorder=2, fill="none")
     assert np.isnan(s_none[10:14]).all(), "fill=none must keep gaps NaN"
+    # 窗口扩散（保守口径）：缺口 ±(wl//2) 邻域同为 NaN
+    assert np.isnan(s_none[7:17]).all()
+    assert mask_none[7:17].sum() == 0
     # fill=none 不做填补：filled_mask 全 False，缺口由 filled_count=0 +
-    # gap_fraction 披露
+    # gap_fraction 披露；nan_window_bleed=True 披露扩散语义
     assert mask_none.sum() == 0
     assert meta_none["filled_count"] == 0
+    assert meta_none["nan_window_bleed"] is True
 
     assert meta["gap_fraction"] == pytest.approx(4 / 50, abs=1e-6)
 

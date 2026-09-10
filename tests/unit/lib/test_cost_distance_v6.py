@@ -125,8 +125,9 @@ def test_cost_distance_unreachable_and_zero_cost_rejection():
     with pytest.raises(NoValidObservations):
         cost_distance(np.full((3, 3), np.nan), [(0, 0)], cell_size=1.0)
     with pytest.raises(ResourceScaleMismatch):
-        # 硬顶护栏：超大网格在分配前拒绝（用小构造验证类型）
-        big = np.ones((1, 50_000_001))
+        # 硬顶护栏：超大网格在分配前拒绝（broadcast 零拷贝视图，
+        # 不真实分配 400MB）
+        big = np.broadcast_to(1.0, (1, 50_000_001))
         cost_distance(big, [(0, 0)], cell_size=1.0)
 
 

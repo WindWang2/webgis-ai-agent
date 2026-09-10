@@ -117,8 +117,12 @@ def test_landscape_patches_and_edge_density():
     """半分栅格 ED=500 m/ha（闭合式）；两块分离斑块 NP=2、LPI 正确。"""
     half = np.array([[1, 1, 2, 2]] * 4)
     table, m = landscape_metrics(half, cell_size=10.0)
-    # 对比边 8 条 × 10 m = 80 m；总面积 16×100 m² = 0.16 ha → 500
-    assert m["edge_density_m_per_ha"] == pytest.approx(500.0, abs=1e-6)
+    # 物理对比边 4 条 × 10 m = 40 m（类-类边界每条恰计一次）；总面积
+    # 16×100 m² = 0.16 ha → 250。逐类视角 ED 仍为 500（对方类视角重复）
+    # —— 双口径在 meta["edge_policy"] 披露。
+    assert m["edge_density_m_per_ha"] == pytest.approx(250.0, abs=1e-6)
+    assert table["classes"][0]["edge_density_m_per_ha"] == pytest.approx(
+        500.0, abs=1e-6)
 
     patchy = np.array([
         [1, 2, 1, 1],

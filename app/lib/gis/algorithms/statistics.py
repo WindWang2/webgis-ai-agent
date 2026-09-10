@@ -17,6 +17,7 @@ from typing import List
 from app.lib.gis.algorithm_registry import (
     AlgorithmDescriptor,
     BackendVariant,
+    NumericalTolerance,
     ResourceEnvelope,
 )
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
@@ -400,7 +401,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "I_i=(n−1)·z_i·(Wz)_i/Σz²，z 总体方差标准化（esda.Moran_Local "
                 "同式同尺度；行标准化 W）",
                 "条件随机化置换固定种子 42、双侧 (count+1)/(perms+1)；"
-                "对角无自权重 → 全局置换与 esda crand 条件置换同分布",
+                "对角无自权重 → 全局置换是 esda crand 条件置换的 "
+                "Monte-Carlo 近似（差 O(k/n)）",
                 "象限无条件分配（esda q：1=HH,2=LH,3=LL,4=HL；零滞后 q=0），"
                 "显著性独立由 p 表达",
                 "多重校正默认 BH-FDR（可 bonferroni/holm/none）",
@@ -408,7 +410,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             ],
             limitations=[
                 "本实现置换 p 为双侧；esda 默认 directed 是其半值（其文档明示 "
-                "uniformly too small）——p 不与 esda 默认逐位对账，统计量对账",
+                "uniformly too small）——conformance 只对统计量 1e-8 "
+                "逐位对账，p 与 esda two-sided 以相关性 ≥0.9 对账",
                 "knn 权重是邻接的近似；queen/rook 需要面要素",
                 "二值/重并列字段下置换分布退化，p 分辨率受格子限制",
                 "孤岛位置 I_i=0、p=1 中性（island_count 显式披露）",
@@ -430,6 +433,8 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 notes="稀疏权重 O(k·n) + 置换按 nnz 向量化；256B/要素覆盖 "
                       "8-NN 对称化权重与统计数组"),
             cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-8, atol=1e-8,
+                                         policy="reference_cross_check"),
             conformance_tests=[
                 "tests/unit/lib/test_local_moran_v6.py::"
                 "test_local_moran_matches_esda",

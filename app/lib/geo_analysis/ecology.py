@@ -24,10 +24,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from app.lib.cancellation import checkpoint
 from app.lib.gis.scientific_errors import (
     DegenerateData,
     MissingRequiredField,
     NoValidObservations,
+    ResourceScaleMismatch,
 )
 
 __all__ = [
@@ -120,6 +122,7 @@ def hsi_score_features(
     weights_norm = weights / weights.sum()
 
     field_names: List[str] = []
+    var_values: List[np.ndarray] = []
     for v in variables:
         f = str(v.get("field") or "")
         if not f:
@@ -136,11 +139,12 @@ def hsi_score_features(
                 correction_hint="check the attribute values on the frame",
             )
         field_names.append(f)
-        v["_values"] = raw
+        var_values.append(raw)
 
     score_cols: Dict[str, List[float]] = {}
+    score_matrix_cols: List[np.ndarray] = []
     for k, v in enumerate(variables):
-        x = np.nan_to_num(v["_values"], nan=0.0)
+        x = np.nan_to_num(var_values[k], nan=0.0)
         curve = str(v.get("curve") or "")
         params = v.get("params")
         if curve == "trapezoid":
@@ -158,11 +162,12 @@ def hsi_score_features(
                 f"variable '{field_names[k]}': unknown curve {curve!r} "
                 "(expected trapezoid/gaussian)")
         # 非有限原始值的变量得分记 0 并在 meta 披露计数（不静默）。
-        s = np.where(np.isfinite(v["_values"]), s, 0.0)
+        s = np.where(np.isfinite(var_values[k]), s, 0.0)
         score_cols[f"hsi_{field_names[k]}"] = [round(float(t), 6) for t in s]
-        v["_scores"] = s
+        var_scores = s
+        score_matrix_cols.append(var_scores)
 
-    score_matrix = np.column_stack([v["_scores"] for v in variables])
+    score_matrix = np.column_stack(score_matrix_cols)
     if aggregation == "arithmetic":
         hsi = score_matrix @ weights_norm
     else:
@@ -249,7 +254,7 @@ def landscape_metrics(
     if a.size == 0:
         raise NoValidObservations("raster is empty")
     if a.size > 50_000_000:
-        raise NoValidObservations(
+        raise ResourceScaleMismatch(
             f"raster has {a.size:,} cells (limit 50,000,000); "
             "coarsen or clip before computing landscape metrics")
 
@@ -267,16 +272,31 @@ def landscape_metrics(
         )
     cell_area_ha = (cell_size * cs_x) / _M2_TO_HA
     total_area_ha = float(valid.sum()) * cell_area_ha
+    h, w = a.shape
+
+    # 景观级物理对比边：每对 4 邻接像元恰计一次 —— 至少一侧有效且两值
+    # 不同（NaN != 值恒真 → 类 vs nodata 背景边计入；双 NaN 排除；
+    # 出界边缘与逐类视角一致，不计）。
+    phys_edge_h = 0
+    phys_edge_v = 0
+    if w > 1:
+        phys_edge_h = int(((np.isfinite(a[:, :-1]) | np.isfinite(a[:, 1:]))
+                           & (a[:, :-1] != a[:, 1:])).sum())
+    if h > 1:
+        phys_edge_v = int(((np.isfinite(a[:-1, :]) | np.isfinite(a[1:, :]))
+                           & (a[:-1, :] != a[1:, :])).sum())
 
     structure = _LANDSCAPE_STRUCTURE_4N
     class_rows: List[Dict[str, Any]] = []
-    edge_count_total = 0  # 类-类（含类-背景 nodata/边界）4 邻接对比边数
     for cls in classes:
+        checkpoint()
         mask = valid & (a == cls)
         n_patch = int(ndimage.label(mask, structure=structure)[1])
         patch_cells = int(mask.sum())
-        # 4 邻接对比边：本类像元的右/下（及左/上由对称计入）邻居为异类
-        # 或 nodata/边界（NaN != cls 恒真 —— 背景边缘按 FRAGSTATS 计入）。
+        # 逐类对比边：本类像元视角的右/下 + 左/上邻居为异类或
+        # nodata/边界（NaN != cls 恒真 —— 背景边缘按 FRAGSTATS 计入）。
+        # 注意：类-类边在此视角化计数中会出现两次（对方类的视角再计
+        # 一次），因此逐类 ED 只按类面积归一（局限已披露），不得求和。
         contrast_h = (
             (mask[:, :-1] & (a[:, 1:] != cls)).sum()
             + (mask[:, 1:] & (a[:, :-1] != cls)).sum())
@@ -284,7 +304,6 @@ def landscape_metrics(
             (mask[:-1, :] & (a[1:, :] != cls)).sum()
             + (mask[1:, :] & (a[:-1, :] != cls)).sum())
         n_edge = int(contrast_h + contrast_v)
-        edge_count_total += n_edge
         edge_m = n_edge * (cell_size + cs_x) / 2.0
         pland = 100.0 * patch_cells / float(valid.sum())
         class_rows.append({
@@ -310,8 +329,9 @@ def landscape_metrics(
     shdi = float(-np.sum(props * np.log(props)))
     sidi = float(1.0 - np.sum(props ** 2))
 
-    # 景观级边缘密度：总对比边（类 vs 类 + 类 vs nodata/边界）
-    edge_m_total = edge_count_total * (cell_size + cs_x) / 2.0
+    # 景观级边缘密度：物理对比边（类 vs 类 + 类 vs nodata）× 对角平均
+    # 像元宽（出界边缘不计 —— 与逐类视角一致）。
+    edge_m_total = (phys_edge_h + phys_edge_v) * (cell_size + cs_x) / 2.0
     meta = {
         "algorithm": "fragstats_4n_landscape_metrics",
         "connectivity": 4,
@@ -324,7 +344,10 @@ def landscape_metrics(
         "shdi": round(shdi, 6),
         "sidi": round(sidi, 6),
         "pr": int(classes.size),
-        "edge_policy": "class vs differing class / nodata / raster boundary",
+        "edge_policy": ("landscape total counts each physical contrast edge "
+                        "once; per-class ED is view-based (class-class edges "
+                        "appear in both classes) and normalized by class "
+                        "area; raster-boundary edges not counted"),
     }
     table = {"classes": class_rows}
     return table, meta

@@ -1887,12 +1887,11 @@ def local_moran_narrated(
     （esda q 值约定，无条件分配）：z_i>0、lag>0 → high_high（q=1）；
     z_i<0、lag>0 → low_high（q=2）；z_i<0、lag<0 → low_low（q=3）；
     z_i>0、lag<0 → high_low（q=4）；lag=0（孤岛）→ q=0。显著性独立于
-    象限由 p 值表达。置换推断：固定种子 42，条件随机化（对角无自权重 →
-    全局置换与 esda crand 的条件置换同分布），双侧 (count+1)/(perms+1)
-    （esda 的 p_sim 是单侧 directed —— 本实现双侧更保守，conformance 以
-    「p_mine ≥ p_esda（单侧 ⊆ 双侧）且 ≤ 2·p_esda + MC 容差」对账）；
-    多重校正 correction ∈ {bh(默认), bonferroni, holm, none}。孤岛（无
-    邻居）位置 I_i≡0、p=1 中性并显式披露计数。
+    象限由 p 值表达。置换推断：固定种子 42，条件随机化近似（对角无自
+    权重；z_i 的值仍可落入 i 的邻域，与 esda crand 差 O(k/n)），双侧
+    (count+1)/(perms+1)（esda 的 p_sim 是单侧 directed —— 本实现双侧更
+    保守）；多重校正 correction ∈ {bh(默认), bonferroni, holm, none}。
+    孤岛（无邻居）位置 I_i≡0、p=1 中性并显式披露计数。
 
     与 ``stats.h3_lisa``（H3 网格专用、esda 委托）和
     ``stats.bivariate_local_moran``（双变量）互补：本实现是任意

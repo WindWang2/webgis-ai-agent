@@ -15,6 +15,9 @@
 - **缺口语义**：填补是显式步骤（``fill`` 参数），平滑在**填补后的序列**
   上进行；输出携带 ``filled_mask``（填补位置）与 ``gap_fraction``，
   缺口不静默消失；
+- **``fill="none"`` 的 NaN 窗口扩散**：滑动窗口触及缺口的输出位置亦为
+  NaN（保守口径：不做部分窗口估计），扩散半径 = 窗口半径
+  （meta ``nan_window_bleed`` 披露）；
 - ``savgol`` 要求 ``window_length`` 为奇数、``> polyorder``、且
   ``window_length <= 有效观测数``（否则类型化报错）；
 - 确定性：全部方法无随机成分（random_seed_policy=deterministic）。
@@ -166,6 +169,9 @@ def smooth_gapfill(
         "valid_observations": valid_count,
         "filled_count": int(filled_mask.sum()),
         "gap_fraction": round(gap_fraction, 6),
+        "nan_window_bleed": (
+            bool(fill == "none" and method != "none"
+                 and (~np.isfinite(v)).any())),
         "deterministic": True,
     }
     return smoothed, filled_mask, meta

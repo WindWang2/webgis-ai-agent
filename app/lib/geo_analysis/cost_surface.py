@@ -271,7 +271,7 @@ def least_cost_path(
             v = a[nr, nc]
             if not np.isfinite(v):
                 continue
-            if v < cur_val - cost_tolerance and (
+            if v < cur_val + cost_tolerance and (
                     best is None or v < best[0]):
                 best = (float(v), nr, nc)
         if best is None:

@@ -147,9 +147,23 @@ def register_ecology_tools(registry: ToolRegistry):
         import rasterio
         from rasterio.errors import RasterioIOError
 
+        # 读取前护栏（与 terrain 工具 _read_terrain_window 同闸）：
+        # check_grid + 整读预算，先拒绝后分配。
+        from app.lib.geo_analysis.raster_guard import RasterResourceGuard
+
         try:
             with rasterio_env():
                 with rasterio.open(path) as src:
+                    RasterResourceGuard.check_grid(
+                        src.width, src.height, num_bands=src.count)
+                    estimated = (int(src.width) * int(src.height)
+                                 * (8 + int(np.dtype(src.dtypes[0]).itemsize)))
+                    if estimated > int(
+                            RasterResourceGuard.MAX_ESTIMATED_OUTPUT_BYTES):
+                        raise ValueError(
+                            f"landscape metrics full-read budget exceeded "
+                            f"(~{estimated / 1024 ** 3:.2f} GiB); clip or "
+                            "downsample first")
                     arr = src.read(1).astype("float64")
                     transform = tuple(float(v) for v in src.transform)[:6]
                     crs = str(src.crs) if src.crs is not None else ""
@@ -161,9 +175,13 @@ def register_ecology_tools(registry: ToolRegistry):
 
             raise RasterReaderError(
                 f"cannot open raster {path!r}: {exc}") from exc
-        # 像元尺寸取 affine 对角（与 terrain 工具同口径）
+        # 像元尺寸取 affine 对角并换算米制（地理 CRS 按 cos(lat) 政策，
+        # 与 terrain 工具 _metric_cell_sizes 同口径）。
         cell_size = abs(float(transform[4]))
         cell_size_x = abs(float(transform[0]))
+        if "4326" in crs or not crs:
+            cell_size *= 111320.0
+            cell_size_x *= 111320.0
         table, meta = landscape_metrics(
             arr, cell_size, cell_size_x=cell_size_x, nodata=eff_nodata)
         payload = {

@@ -214,7 +214,7 @@ def test_local_moran_matches_esda():
     assert np.abs(mine_p - np.asarray(ref.p_sim)).max() <= 0.2
 
 
-def test_local_moran_payload_stable_copy():
+def test_local_moran_knn_points_clusters():
     """kNN 权重（默认方案、点要素）路径：强聚集团全部显著。"""
     res = local_moran_narrated(_points_fc(_clustered_points()), "val",
                                weights_scheme="knn", k=6, permutations=199)

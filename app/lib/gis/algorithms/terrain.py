@@ -1318,7 +1318,7 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             input_artifact_types=["raster_surface"],
             output_artifact_type="line_feature_set", tool_candidates=["least_cost_path_analysis"],
             cpu_cost="low", memory_cost="low", io_cost="low",
-            preferred_execution_policy="THREAD", priority=46,
+            preferred_execution_policy="THREAD", priority=47,
             algorithm_family="terrain_cost_mapping",
             method_references=["dijkstra1959"],
             assumptions=[
@@ -1694,13 +1694,14 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
             ),
             ParameterSpec(
                 name="target_x", type="number", required=True,
-                unit="degrees",
-                description="目标点世界坐标 X",
+                unit="meters",
+                description="目标点 X（累积面栅格 CRS 原生坐标，与 "
+                            "cost_distance 产物同一坐标框架）",
             ),
             ParameterSpec(
                 name="target_y", type="number", required=True,
-                unit="degrees",
-                description="目标点世界坐标 Y",
+                unit="meters",
+                description="目标点 Y（同上）",
             ),
         ],
     ),
