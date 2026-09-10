@@ -272,8 +272,13 @@ def test_retry_failed_nodes_exhausted_stays_failed(factory):
 
 # ── Phase F：嵌套传播 ────────────────────────────────────────────────────
 
-def test_parent_cancel_propagates_to_running_child(factory):
-    """父取消旗标（子 run 在飞中置位）→ watcher → 子实例持久取消。"""
+def test_parent_cancel_propagates_to_running_child(factory, monkeypatch):
+    """父取消旗标（子 run 在飞中置位）→ watcher → 子实例持久取消。
+
+    确定性时序：慢执行器等 release 事件 —— 子节点 RUNNING 由测试观察确认
+    后置父取消旗标，等 watcher 周期（0.5s）落地再放行执行。不依赖
+    wall-clock 竞速（全量套件重载下依旧稳定）。
+    """
     from app.services.workflow_runtime.subworkflow import SubworkflowExecutor
 
     rig = Rig(factory)
@@ -281,10 +286,10 @@ def test_parent_cancel_propagates_to_running_child(factory):
     parent = rig.make_instance()
     rig.bind(parent["instance_id"])
     store = svc.store
+    release = asyncio.Event()
 
-    # 慢执行器：子实例在飞时父取消落地
-    async def slow_executor(node, input_refs, params, ctx):
-        await asyncio.sleep(4.0)
+    async def gated_executor(node, input_refs, params, ctx):
+        await release.wait()  # 在飞窗口由测试控制
         from app.services.workflow_runtime.adapters_geocompute import (
             GeoComputeNodeOutcome,
         )
@@ -299,7 +304,6 @@ def test_parent_cancel_propagates_to_running_child(factory):
 
     executor = SubworkflowExecutor(svc, owner_scope="u:abc",
                                    deadline_s=15.0)
-    # 独立 child 包（与父包不同 —— 同包嵌套会被环检测诚实拒绝）
     from types import SimpleNamespace
 
     rig.registry.register(SimpleNamespace(
@@ -310,41 +314,50 @@ def test_parent_cancel_propagates_to_running_child(factory):
         to_bounded_dict=lambda: {"compiled_form": {"typed_dag": _DAG}}),
         owner_scope="u:abc")
 
+    # executor 内部自建 Driver（无 plan_executor → 真实 geocompute 路径，
+    # 空 session 数据必失败）—— 注入 gated executor 使子执行确定性
+    import app.services.workflow_runtime.driver as _driver_mod
+
+    _real_driver = _driver_mod.Driver
+
+    def _gated_driver(*a, **kw):
+        kw.setdefault("plan_executor", gated_executor)
+        kw.setdefault("descriptor_probe", probe)
+        return _real_driver(*a, **kw)
+
     async def scenario():
-        # 子 driver 用慢执行器（独立 driver；绕过 Rig.driver 的计数器）
-        driver = Driver(store, reuse_index=rig.reuse, owner_scope="u:abc",
-                        deadline_s=15.0, plan_executor=slow_executor,
-                        descriptor_probe=probe,
-                        subworkflow_executor=executor)
+        monkeypatch.setattr(_driver_mod, "Driver", _gated_driver)
         task = asyncio.create_task(executor(
             {"node_id": "cap:sw", "subworkflow_package_id": "recipe-child"},
             parent={"instance_id": parent["instance_id"],
                     "package_id": "recipe-x", "remaining_s": 15.0},
             parent_visited=[], session_id="s1",
             input_refs=["ref:data-1"]))
-        # 等子实例展开并在飞（轮询节点 RUNNING，重载下展开可能变慢）
-        for _ in range(100):
-            child_rows = [r for r in store.list_owner_instances("u:abc")
-                          if r.get("parent_instance_id")
-                          == parent["instance_id"]]
-            if child_rows:
-                cid0 = child_rows[0]["instance_id"]
-                if any(s == C.NodeState.RUNNING for s in
-                       store.get_node_states(cid0).values()):
+        # 等子实例展开且 buffer 在飞（RUNNING）
+        child_id = ""
+        for _ in range(200):
+            rows = [r for r in store.list_owner_instances("u:abc")
+                    if r.get("parent_instance_id") == parent["instance_id"]]
+            if rows:
+                child_id = rows[0]["instance_id"]
+                if store.get_node_states(child_id).get(
+                        "transform:buffer:subject") == C.NodeState.RUNNING:
                     break
             await asyncio.sleep(0.05)
+        assert child_id, "child instance never started"
+        # 父取消 → watcher（0.5s 周期）应传播到子实例
         store.update_instance(parent["instance_id"],
                               fields={"cancel_requested": True})
+        await asyncio.sleep(0.7)  # > PARENT_POLL_S：旗标必达子实例
+        release.set()
         result = await task
-        return result
+        return result, child_id
 
-    result = asyncio.run(scenario())
+    result, child_id = asyncio.run(scenario())
     assert result["ok"] is False
     assert result["error_code"] == "SUBWORKFLOW_CANCELLED"
-    child_id = result["child_instance_id"]
     assert store.get_instance(child_id)[
         "status"] == C.InstanceStatus.CANCELLED
-    # 子节点被取消（不是跑完）
     child_states = store.get_node_states(child_id)
     assert C.NodeState.CANCELLED in set(child_states.values())
 
