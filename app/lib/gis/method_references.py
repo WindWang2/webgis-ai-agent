@@ -203,6 +203,15 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Dijkstra, E. W. (1959). A Note on Two Problems in Connexion with "
             "Graphs. Numerische Mathematik, 1, 269–271.",
         ),
+        # ── 地形/成本面（Goal 07 Science V6）──────────────────────────
+        MethodReference(
+            "tobler1993",
+            "Friction surface / cost distance (geographic movement)",
+            "Tobler, W. (1993). Three Presentations on Geographical Analysis "
+            "and Modeling: Non-Isotropic Geographic Modeling; Speculations on "
+            "the Geometry of Geography; Global Spatial Analysis. "
+            "NCGIA Technical Report 93-1.",
+        ),
         MethodReference(
             "teitz_bart1968",
             "Teitz-Bart p-median heuristic",

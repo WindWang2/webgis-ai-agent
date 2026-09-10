@@ -6,13 +6,13 @@
 > `python scripts/science_taxonomy_audit.py`；`--check` 模式 diff。
 > 族对齐词表唯一维护于脚本内 `TAXONOMY_FAMILIES`。
 
-注册表算法总数：**214**。
+注册表算法总数：**216**。
 
 | 族 | 算法数 | native | VALIDATED/PRODUCTION | 代表算法 |
 |---|---|---|---|---|
 | 栅格 | 4 | 4 | 4 | `raster.algebra`, `raster.reclassify.rule`, `raster.resample.grid` |
 | 矢量 | 9 | 9 | 5 | `geometry.buffer`, `geometry.convex_hull`, `geometry.multi_ring_buffer` |
-| 地形 | 18 | 18 | 18 | `terrain.aspect`, `terrain.contours`, `terrain.curvature` |
+| 地形 | 20 | 20 | 20 | `terrain.aspect`, `terrain.contours`, `terrain.cost_distance` |
 | 水文 | 16 | 16 | 16 | `terrain.breach`, `terrain.dinf_flow`, `terrain.flow` |
 | 空间统计 | 37 | 37 | 37 | `point_pattern.cross_k`, `point_pattern.cross_pcf`, `point_pattern.dbscan` |
 | 插值 | 21 | 21 | 21 | `interpolation.block_kriging`, `interpolation.cokriging`, `interpolation.cokriging_lmc` |

@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：139 能力 · 214 算法 · 114 参数契约。
+统计：141 能力 · 216 算法 · 116 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -156,6 +156,17 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
 - **`geometry.convex_hull`** 凸包（`native`·成熟度 已验证）
   - 假设：UTM 投影平面上的最小凸包（GEOS convex_hull），结果回 WGS84；group_by 给定时按属性分组各建一个凸包
   - 局限：<3 个非共线要素的组/集合退化为 Point/LineString —— 诚实拒绝不产出假多边形；度空间共线的点在 UTM 投影后可变成极薄三角形（投影非仿射），不保证仍失败
+
+## `cost_distance_analysis` — 累积成本面
+
+摩擦面上的最小累积通行成本（8 邻接 Dijkstra，Tobler 摩擦面语义）；可达性/廊道/设施覆盖分析的栅格输入。
+
+- **`terrain.cost_distance`** 累积成本面（最小成本距离）（`native`·成熟度 已验证，契约: `cost_distance_analysis`，出处: `dijkstra1959`, `tobler1993`）
+  - 假设：8 邻接 Dijkstra：边成本 = (cost_i+cost_j)/2 × dist(i,j)（平均摩擦 × 米距；对角 ×√2）——GRASS r.cost 同族语义；摩擦面必须严格为正（0/负成本是建模错误，DegenerateData 拒绝）；nodata/非有限像元不可通行；不可达像元输出 NaN 并披露计数
+  - 局限：各向同性摩擦：坡度方向效应（Tobler 徒步函数类）需先折算进摩擦面；O(N log N) 堆序 Dijkstra 全栅格驻留内存（50M 像元硬顶）；对角移动的 8 邻接测度在极细障碍下略低估路径长（栅格分辨率披露）
+  - 资源包络：40B/像元，像元硬上限 50000000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-09，atol=1e-09
 
 ## `cross_k_function` — 双变量交叉 K 函数
 
@@ -470,6 +481,17 @@ KDE 连续密度面/等值线（定量密度表达）。
 - **`platform.layer_display_control`** 图层显示控制（工具面绑定契约）（`native`·成熟度 —）
   - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
   - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
+## `least_cost_path_analysis` — 最小成本路径
+
+在累积成本面上从目标回溯排水到源的最小成本路径（像元折线），输出 LineString 要素与路径成本。
+
+- **`terrain.least_cost_path`** 最小成本路径（累积面排水）（`native`·成熟度 已验证，契约: `least_cost_path_analysis`，出处: `dijkstra1959`）
+  - 假设：从目标沿累积面严格下降回溯到源（并列行主序裁决）——与 cost_distance 的 Dijkstra 面配对即全局最优路径；输入必须是 cost_distance 产物（任意面上停滞 → 类型化报错）
+  - 局限：路径像元级离散：转弯以 8 邻接折线表达（无样条圆滑）；非 Dijkstra 面（如平滑后的表面）可能局部停滞/绕远
+  - 资源包络：8B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-09，atol=1e-09
 
 ## `local_data_query` — 本地数据目录与查询
 
