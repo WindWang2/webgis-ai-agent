@@ -297,6 +297,11 @@ class Settings(BaseSettings):
     # trial 探测恢复。进程级（引擎是进程资源，不是源资源）。
     DATA_FABRIC_V8_ENGINE_BREAKER_THRESHOLD: int = 3
     DATA_FABRIC_V8_ENGINE_BREAKER_COOLDOWN_S: float = 60.0
+    # 结果缓存 stampede 保护 + 可选分布式二线（进程内 LRU 恒为 L1，后端故障
+    # fail-open）。backend=redis 时经 REDIS_URL（或显式 URL）惰性连接。
+    DATA_FABRIC_V8_RESULT_CACHE_SINGLEFLIGHT_WAIT_S: float = 10.0
+    DATA_FABRIC_V8_RESULT_CACHE_BACKEND: str = "memory"
+    DATA_FABRIC_V8_RESULT_CACHE_REDIS_URL: str = ""
 
     # #690：原生热力图确定性守卫阈值（点数 < 阈值或非点几何 → 拦截 native heatmap）
     # 对齐 skill 正文 "<10 点热力图无统计意义"，移至配置层恒生效；settings/env 可覆盖，

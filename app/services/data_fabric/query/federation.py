@@ -1958,150 +1958,178 @@ def execute_chain_v6(
             }
             return cached
     counters = _v7_new_counters(cache_ctx)
-    plan = None  # R2-Mi-1：plan 期 typed 错误路径的反馈回调需要安全判空
-    try:
-        from app.services.data_fabric.query.federated.executor import (
-            PhysicalExecutor,
-            extract_hop_estimates,
-        )
-        from app.services.data_fabric.query.federated.explain import explain_v6_lines
-        from app.services.data_fabric.query.federated.planner import (
-            plan_federation_v6,
-        )
 
-        plan = plan_federation_v6(req)
-        # M2（评审 R1）：derive_projection 接线 —— 与 V5 derive_chain_fields
-        # 单一真相；仅当 V6 选择的序 == given 序（派生的"下一跳左键"集合
-        # 依赖跳序，重排序下宁可多取全列，绝不缺字段静默失真）。
-        tree = plan.tree
-        given_ids = [s.source_id for s in req.sources]
-        if getattr(req, "derive_projection", True) and plan.order == given_ids:
-            derived = derive_chain_fields(req, list(req.sources), list(req.joins))
-            if derived:
-                # C-1（评审 R2）：在**实际计划树**上写投影（保留
-                # LogicalReproject 等全部节点）—— 重建 given 序链会静默丢弃
-                # 变换节点，混 CRS 链默认配置下静默错答。
-                tree = _apply_scan_fields(plan.tree, derived)
-                plan.warnings.append(
-                    "minimal projection derived per source (V6, given-order): "
-                    + json.dumps(derived, ensure_ascii=False, sort_keys=True)
-                )
-        px = PhysicalExecutor(
-            adapter_factory=executor._adapter_factory,
-            budget=req.budget,
-            limit=req.limit,
-            bbox=req.bbox,
-            adaptive=True,
-            order_strategy=getattr(req, "order_strategy", "cost"),
-            replan_fn=_make_bushy_replan_fn(req, plan),
-        )
-        exec_result = px.execute(
-            tree,
-            hop_estimates=extract_hop_estimates(plan),
-            edge_specs={
-                (j.left_source_id, j.right_source_id): j
-                for j in req.joins
-                if j.left_source_id and j.right_source_id
-            },
-        )
-    except DataFabricError as e:
-        # V7 R1-M8：typed 错误契约不变（原样上抛），但错误面反馈与负缓存
-        # 在上抛前落账（均 fail-open）。
-        if cache_ctx is not None:
-            try:
-                from app.services.data_fabric.fabric.result_cache import (
-                    get_result_cache,
-                )
-
-                get_result_cache().put_negative(cache_ctx[1], e.code)
-            except Exception:  # noqa: BLE001
-                pass
-        if plan is not None:
-            try:
-                _v7_record_feedback(
-                    req, plan, {"per_source_rows": {}}, "error",
-                    scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
-                    error_code=e.code,
-                )
-            except Exception:  # noqa: BLE001
-                pass
-        raise  # typed 错误契约与 V5 一致（预算/构造错误绝不静默回退）
-    except Exception as e:  # noqa: BLE001 - V6 非 typed 异常 → 诚实回退 V5
-        logger.warning("[Federation] V6 engine failed (%s); falling back to V5", e)
-        # V8：崩溃记账（fail-open；连续崩溃触发进程级熔断，后续请求跳过 V6）。
+    # ── V8（ADR-0130 Phase F）：cache stampede 保护 ──
+    # miss 后的规划+执行+构建收进闭包，经 per-key SingleFlight 执行：并发
+    # 同键请求在界内等待首问结果（shared 命中如实披露），不重复打远端。
+    def _execute_and_build() -> Dict[str, Any]:
+        plan = None  # R2-Mi-1：plan 期 typed 错误路径的反馈回调需要安全判空
         try:
-            engine_breaker.record_v6_crash(e)
-        except Exception:  # noqa: BLE001
-            pass
-        result = execute_federated_chain(executor, req)
-        result["engine"] = "v5_fallback"
-        reason = str(e)[:200]
-        result["warnings"] = list(result.get("warnings") or []) + [
-            f"engine=v6 failed ({reason}); executed with V5 engine"
-        ]
-        result["engine_breaker"] = engine_breaker.disclosure()
-        return result
-
-    rows = exec_result["rows"]
-    per_source = exec_result.get("per_source_rows") or {}
-    rows_fetched = sum(per_source.values())
-    warnings = list(plan.warnings)
-    if any(s.estimated_rows is not None for s in req.sources):
-        warnings.append("join order chosen by cost-based enumeration (V6 DP)")
-    # ── V7：计数器补齐 + 反馈记录（fail-open）──
-    from app.services.data_fabric.fabric.counters import collect_from_exec_result
-
-    collect_from_exec_result(counters, exec_result)
-    counters.cache_hit = False
-    fb_store = _v7_record_feedback(
-        req, plan, exec_result, "ok",
-        scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
-    )
-    counters.feedback_durable_failures = fb_store.failure_count
-    result_dict = {
-        "status": "success",
-        "engine": "v6",
-        "strategy": "v6_cost_based_tree",
-        "order": plan.order,
-        "rows": rows,
-        "row_count": exec_result["row_count"],
-        "joined_row_count": exec_result.get("joined_row_count"),
-        "rows_fetched": rows_fetched,
-        "per_source_rows": per_source,
-        "plans": _v6_plan_dicts(plan),
-        "pushdown_ratio": (
-            round(exec_result["row_count"] / rows_fetched, 6) if rows_fetched else None
-        ),
-        "execution_duration_s": exec_result.get("execution_duration_s"),
-        "warnings": warnings,
-        "explain_v6": explain_v6_lines(
-            plan, _v6_explain_ctx(req), exec_result=exec_result
-        ),
-        "semi_join_reduction": exec_result.get("hop_stats"),
-        "bloom_reduction": exec_result.get("bloom_stats"),
-        "replans_used": exec_result.get("replans_used", 0),
-        # ── V7（ADR-0119 W8/W10）执行证据 additive ──
-        "per_source_delivered_srid": exec_result.get(
-            "per_source_delivered_srid", {}
-        ),
-        "crs_fallbacks": exec_result.get("crs_fallbacks", []),
-    }
-    result_dict["fabric"] = _v7_fabric_section(
-        counters, cache_ctx, feedback_store_feedback=True
-    )
-    # V8：V6 成功 → 熔断归零回 CLOSED（含 half-open trial 成功）。
-    engine_breaker.record_v6_success()
-    # 缓存写入（fail-open；披露段在下一次命中时附入）
-    if cache_enabled:
-        try:
-            scope_key, cache_key, fingerprints = cache_ctx
-            cache.put(
-                cache_key, result_dict,
-                fingerprints=fingerprints, scope_key=scope_key,
+            from app.services.data_fabric.query.federated.executor import (
+                PhysicalExecutor,
+                extract_hop_estimates,
             )
-        except Exception as exc:  # noqa: BLE001 - 缓存绝不影响查询
-            logger.debug("[fabric] result cache put failed: %s", exc)
-    return result_dict
+            from app.services.data_fabric.query.federated.explain import explain_v6_lines
+            from app.services.data_fabric.query.federated.planner import (
+                plan_federation_v6,
+            )
+
+            plan = plan_federation_v6(req)
+            # M2（评审 R1）：derive_projection 接线 —— 与 V5 derive_chain_fields
+            # 单一真相；仅当 V6 选择的序 == given 序（派生的"下一跳左键"集合
+            # 依赖跳序，重排序下宁可多取全列，绝不缺字段静默失真）。
+            tree = plan.tree
+            given_ids = [s.source_id for s in req.sources]
+            if getattr(req, "derive_projection", True) and plan.order == given_ids:
+                derived = derive_chain_fields(req, list(req.sources), list(req.joins))
+                if derived:
+                    # C-1（评审 R2）：在**实际计划树**上写投影（保留
+                    # LogicalReproject 等全部节点）—— 重建 given 序链会静默丢弃
+                    # 变换节点，混 CRS 链默认配置下静默错答。
+                    tree = _apply_scan_fields(plan.tree, derived)
+                    plan.warnings.append(
+                        "minimal projection derived per source (V6, given-order): "
+                        + json.dumps(derived, ensure_ascii=False, sort_keys=True)
+                    )
+            px = PhysicalExecutor(
+                adapter_factory=executor._adapter_factory,
+                budget=req.budget,
+                limit=req.limit,
+                bbox=req.bbox,
+                adaptive=True,
+                order_strategy=getattr(req, "order_strategy", "cost"),
+                replan_fn=_make_bushy_replan_fn(req, plan),
+            )
+            exec_result = px.execute(
+                tree,
+                hop_estimates=extract_hop_estimates(plan),
+                edge_specs={
+                    (j.left_source_id, j.right_source_id): j
+                    for j in req.joins
+                    if j.left_source_id and j.right_source_id
+                },
+            )
+        except DataFabricError as e:
+            # V7 R1-M8：typed 错误契约不变（原样上抛），但错误面反馈与负缓存
+            # 在上抛前落账（均 fail-open）。
+            if cache_ctx is not None:
+                try:
+                    from app.services.data_fabric.fabric.result_cache import (
+                        get_result_cache,
+                    )
+
+                    get_result_cache().put_negative(cache_ctx[1], e.code)
+                except Exception:  # noqa: BLE001
+                    pass
+            if plan is not None:
+                try:
+                    _v7_record_feedback(
+                        req, plan, {"per_source_rows": {}}, "error",
+                        scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
+                        error_code=e.code,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            raise  # typed 错误契约与 V5 一致（预算/构造错误绝不静默回退）
+        except Exception as e:  # noqa: BLE001 - V6 非 typed 异常 → 诚实回退 V5
+            logger.warning("[Federation] V6 engine failed (%s); falling back to V5", e)
+            # V8：崩溃记账（fail-open；连续崩溃触发进程级熔断，后续请求跳过 V6）。
+            try:
+                engine_breaker.record_v6_crash(e)
+            except Exception:  # noqa: BLE001
+                pass
+            result = execute_federated_chain(executor, req)
+            result["engine"] = "v5_fallback"
+            reason = str(e)[:200]
+            result["warnings"] = list(result.get("warnings") or []) + [
+                f"engine=v6 failed ({reason}); executed with V5 engine"
+            ]
+            result["engine_breaker"] = engine_breaker.disclosure()
+            return result
+
+        rows = exec_result["rows"]
+        per_source = exec_result.get("per_source_rows") or {}
+        rows_fetched = sum(per_source.values())
+        warnings = list(plan.warnings)
+        if any(s.estimated_rows is not None for s in req.sources):
+            warnings.append("join order chosen by cost-based enumeration (V6 DP)")
+        # ── V7：计数器补齐 + 反馈记录（fail-open）──
+        from app.services.data_fabric.fabric.counters import collect_from_exec_result
+
+        collect_from_exec_result(counters, exec_result)
+        counters.cache_hit = False
+        fb_store = _v7_record_feedback(
+            req, plan, exec_result, "ok",
+            scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
+        )
+        counters.feedback_durable_failures = fb_store.failure_count
+        result_dict = {
+            "status": "success",
+            "engine": "v6",
+            "strategy": "v6_cost_based_tree",
+            "order": plan.order,
+            "rows": rows,
+            "row_count": exec_result["row_count"],
+            "joined_row_count": exec_result.get("joined_row_count"),
+            "rows_fetched": rows_fetched,
+            "per_source_rows": per_source,
+            "plans": _v6_plan_dicts(plan),
+            "pushdown_ratio": (
+                round(exec_result["row_count"] / rows_fetched, 6) if rows_fetched else None
+            ),
+            "execution_duration_s": exec_result.get("execution_duration_s"),
+            "warnings": warnings,
+            "explain_v6": explain_v6_lines(
+                plan, _v6_explain_ctx(req), exec_result=exec_result
+            ),
+            "semi_join_reduction": exec_result.get("hop_stats"),
+            "bloom_reduction": exec_result.get("bloom_stats"),
+            "replans_used": exec_result.get("replans_used", 0),
+            # ── V7（ADR-0119 W8/W10）执行证据 additive ──
+            "per_source_delivered_srid": exec_result.get(
+                "per_source_delivered_srid", {}
+            ),
+            "crs_fallbacks": exec_result.get("crs_fallbacks", []),
+        }
+        result_dict["fabric"] = _v7_fabric_section(
+            counters, cache_ctx, feedback_store_feedback=True
+        )
+        # V8：V6 成功 → 熔断归零回 CLOSED（含 half-open trial 成功）。
+        engine_breaker.record_v6_success()
+        # 缓存写入（fail-open；披露段在下一次命中时附入）
+        if cache_enabled:
+            try:
+                scope_key, cache_key, fingerprints = cache_ctx
+                cache.put(
+                    cache_key, result_dict,
+                    fingerprints=fingerprints, scope_key=scope_key,
+                )
+            except Exception as exc:  # noqa: BLE001 - 缓存绝不影响查询
+                logger.debug("[fabric] result cache put failed: %s", exc)
+        return result_dict
+
+    # V8：单飞分发 —— cache 开启时并发同键共享首问结果（shared 命中披露
+    # basis=singleflight）；未开启缓存时直接执行（行为与 V7 逐位一致）。
+    if cache_enabled:
+        result_dict, shared = cache.single_flight().run(
+            cache_key, _execute_and_build
+        )
+        if shared:
+            result_dict = dict(result_dict)
+            result_dict["result_cache"] = {
+                "hit": True,
+                "age_s": 0.0,
+                "ttl_s": cache._ttl_s,
+                "basis": "singleflight",
+                "key": cache_key[:16],
+            }
+            result_dict["fabric_counters"] = {
+                "cache_hit": True,
+                "cache_key": cache_key[:16],
+                "shared_execution": True,
+            }
+        return result_dict
+    return _execute_and_build()
 
 
 def _v6_plan_dicts(plan) -> List[Dict[str, Any]]:
