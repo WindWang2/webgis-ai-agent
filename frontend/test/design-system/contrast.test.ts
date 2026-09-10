@@ -14,7 +14,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const CSS = readFileSync(resolve(__dirname, '../../app/globals.css'), 'utf8');
+// Normalize CRLF: Windows checkouts (core.autocrlf=true) must satisfy the
+// same literal `\n` selector lookups as CI's LF checkout.
+const CSS = readFileSync(resolve(__dirname, '../../app/globals.css'), 'utf8').replace(/\r\n/g, '\n');
 
 type RGB = [number, number, number];
 type RGBA = [number, number, number, number];
