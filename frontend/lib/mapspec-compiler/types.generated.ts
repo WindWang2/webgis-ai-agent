@@ -213,6 +213,13 @@ export interface MapLabelConfig {
   maxLabels?: number;
 }
 
+export interface ComponentLinkSpec {
+  src: string;
+  dst: string;
+  type: "binds_to" | "requires" | "groups" | "annotates" | "under";
+  dst_kind?: "component" | "layer" | "source";
+}
+
 export interface MapSpecLayoutConfig {
   legend?: MapSpecLegendConfig;
   controls?: MapSpecControlConfig[];
@@ -220,6 +227,7 @@ export interface MapSpecLayoutConfig {
   components?: MapSpecComponent[];
   frames?: MapSpecFrame[];
   labels?: MapLabelConfig;
+  component_links?: ComponentLinkSpec[];
 }
 
 export interface MapThresholds {

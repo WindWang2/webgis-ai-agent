@@ -307,8 +307,16 @@ def derive_product_verdict(
     methodology_warnings: Optional[List[Dict[str, Any]]] = None,
     *,
     chapter: Optional[Dict[str, Any]] = None,
+    cartographic_review: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """MapCompletionResult (+章节方法论警告 + workflow 契约) → 产品裁决。
+
+    ``cartographic_review``（V7 Goal 08，additive 可选）：quality_loop 的
+    ``CartographicLoopResult.to_dict()``。缺省 None = 不参与裁决（既有
+    调用零漂移）；传入时投影 additive ``cartography`` 摘要
+    （status/blocking_rules/warning_rules/auto_repairable），且 deterministic
+    fail（``no_deterministic_failures=False``）压低 READY 档位 ——
+    「布局破损不能被 Ready 掩盖」，与 runtime_stale 同序。
 
     纯函数、确定性、有界：
     - failed 且错误全部是数据族 → BLOCKED_BY_DATA；
@@ -375,7 +383,21 @@ def derive_product_verdict(
         verdict = VERDICT_NEEDS_REPAIR
         reasons = sorted(set(reasons) | {"runtime_node_stale"})[:6]
 
-    return {
+    # V7（Goal 08 Phase I）追加裁决：cartographic review 的 deterministic
+    # fail 压低 READY（additive 参数 —— 缺省 None 不参与，零漂移）。
+    cartography_summary = _cartography_review_summary(cartographic_review)
+    if (
+        cartography_summary is not None
+        and not cartography_summary["no_deterministic_failures"]
+        and verdict in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS)
+    ):
+        verdict = VERDICT_NEEDS_REPAIR
+        reasons = sorted(
+            set(reasons)
+            | {f"cartography:{r}" for r in cartography_summary["blocking_rules"]}
+        )[:6]
+
+    payload = {
         "verdict": verdict,
         "reasons": reasons,
         "methodology_warning_count": len(mw),
@@ -390,6 +412,57 @@ def derive_product_verdict(
         "workflow_contract_present": contract["workflow_present"],
         "runtime_stale_nodes": runtime_stale,
         "resumed_stale_nodes": resumed_stale,
+    }
+    if cartography_summary is not None:
+        payload["cartography"] = cartography_summary
+    return payload
+
+
+#: 制图评审摘要里各清单的 Disclosure 上界（有界载荷纪律）。
+_CARTOGRAPHY_RULE_LIMIT = 8
+
+
+def _cartography_review_summary(
+    review: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """quality_loop 产物 → 有界裁决摘要（blocking/advisory 分离）。
+
+    接受两种形状：``CartographicLoopResult.to_dict()``（review 嵌套 +
+    attempts）或内层 ``CartographyReport.to_dict()``（checks 直挂）。
+    """
+    if not isinstance(review, dict):
+        return None
+    inner = review.get("review") if isinstance(review.get("review"), dict) else review
+    checks = [c for c in inner.get("checks", []) if isinstance(c, dict)]
+    if not checks and "checks" not in inner:
+        # 两种合法形状都不携带 checks → 不是评审产物，不参与裁决
+        # （空 dict 不得伪装成「有失败证据」而误降档）。
+        return None
+    blocking = sorted({
+        str(c.get("rule")) for c in checks
+        if c.get("status") == "fail" and c.get("evidence_class") == "deterministic"
+    })
+    warnings = sorted({
+        str(c.get("rule")) for c in checks
+        if c.get("status") == "warning"
+    })[:_CARTOGRAPHY_RULE_LIMIT]
+    auto_ops: List[str] = []
+    for attempt in (review.get("attempts") or []):
+        if not isinstance(attempt, dict):
+            continue
+        for repair in (attempt.get("repairs") or []):
+            if isinstance(repair, dict) and repair.get("operation"):
+                op = str(repair["operation"])[:32]
+                if op not in auto_ops:
+                    auto_ops.append(op)
+    return {
+        "status": str(review.get("status") or inner.get("status")
+                      or "unknown")[:24],
+        "no_deterministic_failures": bool(
+            inner.get("no_deterministic_failures")),
+        "blocking_rules": blocking[:_CARTOGRAPHY_RULE_LIMIT],
+        "warning_rules": warnings,
+        "auto_repairable": auto_ops[:_CARTOGRAPHY_RULE_LIMIT],
     }
 
 
