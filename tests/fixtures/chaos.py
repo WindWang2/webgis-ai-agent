@@ -669,7 +669,6 @@ def _stale_revision_cas(handle: ChaosFault) -> Iterator[None]:
     """stale revision CAS：编排同一 job 的两次并发转移，后者携带已被
     胜出转移作废的 expected 状态集——store.transition 必须诚实拒绝。
     纯编排注入（接缝 = transition 的 expected CAS 语义）。"""
-    import asyncio
 
     handle.results = []
     handle.record("armed", "stale revision CAS: 确定性交错两路 transition")

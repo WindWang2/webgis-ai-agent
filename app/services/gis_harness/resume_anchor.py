@@ -70,7 +70,7 @@ async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
         ref_ids = list((await session_data_manager.list_refs(session_id)).keys())
     except Exception:  # noqa: BLE001 — ref 清单缺席照常建锚（恢复时披露）
         ref_ids = []
-    refs_truncated = len(ref_ids) > MAX_ANCHOR_REFS
+    _ref_count = len(ref_ids)
     ref_ids = ref_ids[:MAX_ANCHOR_REFS]
     # V6 W14：逐 ref 证据快照（恢复后验证的比对基准；快照失败的 ref 在
     # 恢复时判 unknown 并披露，绝不假设存活）。
@@ -102,12 +102,10 @@ async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
         "progress": [p.model_dump() for p in (plan.progress or [])][:32],
         "gis_chapter": restored_chapter,
         "trace_last_seq": last_seq(session_id),
-        "ref_ids": ref_ids,
-        "refs_truncated": refs_truncated,
         "ref_evidence": ref_evidence,
         "workflow_fingerprint": workflow_fingerprint,
-        "ref_ids": ref_ids[:MAX_ANCHOR_REFS],
-        "refs_truncated": len(ref_ids) > MAX_ANCHOR_REFS,
+        "ref_ids": ref_ids,
+        "refs_truncated": _ref_count > MAX_ANCHOR_REFS,
         "recovery_state": recovery_state,
         "reasoning_digest": reasoning_digest(chapter, recovery_state),
     }

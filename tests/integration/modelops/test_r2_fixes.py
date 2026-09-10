@@ -18,7 +18,7 @@ def test_tile_cap_typed_rejection(service, tmp_path):
         path, "w", driver="GTiff", width=50_000, height=50_000, count=3,
         dtype="float32", crs="EPSG:4326",
         transform=from_origin(116.0, 40.0, 1.0, 1.0), nodata=-9999.0,
-    ) as dst:
+    ):
         pass
     with pytest.raises(ResourceUnavailable):
         service.run_inference(InferenceRequest(
@@ -101,7 +101,7 @@ def test_package_bytes_registration_gate(tmp_path, tiny_desc_factory):
 
     store = ModelRegistryStore(ModelOpsSettings(registry_dir=tmp_path))
     descriptor = tiny_desc_factory()
-    payload = descriptor.fingerprint_payload()
+    descriptor.fingerprint_payload()
     real_checksum = sha256_of_bytes(b"weights")  # 与 descriptor 不符
     bad = descriptor.model_copy(update={"checksum": real_checksum})
     buf = io.BytesIO()

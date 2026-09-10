@@ -286,7 +286,7 @@ def build_spectral() -> List[Dict[str, Any]]:
     s = nir + red
     with np.errstate(invalid="ignore", divide="ignore"):
         expect_ndvi = (nir - red) / s
-    res_ndvi = sp.compute_spectral_index({"red": red, "nir": nir}, "ndvi")
+    sp.compute_spectral_index({"red": red, "nir": nir}, "ndvi")
     cases.append(case("ndvi_mean_reference",
                       "app.lib.geo_analysis.spectral:compute_spectral_index",
                       r9(float(np.nanmean(expect_ndvi))),
@@ -438,13 +438,6 @@ def build_statistics_global() -> List[Dict[str, Any]]:
     cases: List[Dict[str, Any]] = []
     from scipy.spatial import cKDTree
 
-    from app.lib.geo_analysis.spatial_weights import (
-        auto_band_8nn,
-        build_distance_band_weights,
-        build_inverse_distance_weights,
-        build_knn_weights,
-    )
-    from app.lib.geo_analysis.statistics import _validate_permutations
 
     # --- E-7 auto-band 规则：mean k-NN 距离（cKDTree 独立复算）----------
     band_fixtures = {
@@ -601,10 +594,6 @@ def build_statistics_global() -> List[Dict[str, Any]]:
 
 def build_statistics_local() -> List[Dict[str, Any]]:
     cases: List[Dict[str, Any]] = []
-    from app.lib.geo_analysis.spatial_regression import (
-        multiple_testing_correction as mtc,
-    )
-    from app.lib.geo_analysis.statistics import _bh_qvalues
 
     # --- BH q 值：单调已知序 fixtures + NaN 免疫 ------------------------
     rng = np.random.default_rng(91)
@@ -743,11 +732,7 @@ def build_geodetector() -> List[Dict[str, Any]]:
     from scipy import stats as sps
 
     from app.lib.geo_analysis.statistics import (
-        _classify_interaction,
-        _geodetector_q,
-        _ssw,
         geodetector_ecological,
-        geodetector_risk,
     )
 
     # --- q 统计量：q = 1 − Σ N_h σ_h² / (N σ²)（总体方差独立复算）------
@@ -1009,7 +994,7 @@ def build_geodetector() -> List[Dict[str, Any]]:
     gd_mod = "app.lib.geo_analysis.statistics"
     g12 = _metric_points(seed=37, n=12, jitter=0.0)
     g26 = _metric_points(seed=38, n=26, jitter=0.0)
-    fc_gd = _points_fc(g12, {"y": [float(v) for v in y_a],
+    _points_fc(g12, {"y": [float(v) for v in y_a],
                              "strata": ["a", "b", "c"] * 4})
     fc_gd_missing = _points_fc(g12, {"y": [float(v) for v in y_a]})
     fc_gd_single = _points_fc(g12, {"y": [float(v) for v in y_a],
@@ -1120,17 +1105,11 @@ def build_regression() -> List[Dict[str, Any]]:
         _bisquare,
         _bisquare_rows,
         _breusch_pagan,
-        _check_min_samples,
         _coef_table,
         _gwr_local_r2,
-        _gwr_summarize,
-        _jarque_bera,
         _log_jacobian,
-        _lr_test,
         _ols_core,
-        _spatial_model_suggestion,
         _vif,
-        _validate_permutation_count,
     )
 
     reg_mod = "app.lib.geo_analysis.spatial_regression"
@@ -1474,7 +1453,7 @@ def build_regression() -> List[Dict[str, Any]]:
     x_w, y_w = _ols_fixtures()["wide3var"]
     ref_w = _ols_reference(y_w, x_w)
     coef_names = ["intercept", "x1", "x2", "x3"]
-    tbl = _coef_table(ref_w["beta"], ref_w["se"],
+    _coef_table(ref_w["beta"], ref_w["se"],
                       np.where(np.isfinite(ref_w["se"]),
                                ref_w["beta"] / np.where(ref_w["se"] > 0,
                                                         ref_w["se"], 1.0),
@@ -1703,7 +1682,7 @@ def build_terrain() -> List[Dict[str, Any]]:
         select="0.0", rtol=1e-12))
 
     # --- D8 邻域米制距离（编码序 E,SE,S,SW,W,NW,N,NE）--------------------
-    nd = tn._neighbor_distances(2.0, 1.0)
+    tn._neighbor_distances(2.0, 1.0)
     ref_nd = [math.hypot(abs(dc) * 2.0, abs(dr) * 1.0)
               for _, _, dr, dc in tn._D8_NEIGHBORS]
     for i in range(8):
@@ -1717,7 +1696,7 @@ def build_terrain() -> List[Dict[str, Any]]:
             r9(math.sqrt(2.0)), args=[1.0, 1.0], select=str(i), rtol=1e-12))
 
     # --- 边界掩膜（True=非边界）· 形状对齐谓词 ---------------------------
-    border = tn._border_inside(3, 4)
+    tn._border_inside(3, 4)
     for i, j, want in ((0, 0, False), (1, 1, True), (1, 3, False),
                        (2, 2, False)):
         cases.append(case(
@@ -1755,7 +1734,7 @@ def build_terrain() -> List[Dict[str, Any]]:
     cases.append(case("sca_single_cell", f"{T_MOD}:_specific_catchment_area",
                       7.0 * (5.0 * 0.5) / 0.5, args=[acc_c, 5.0, 0.5, 0.5],
                       select="0.0", rtol=1e-12, note="各向异性像元 SCA 复算"))
-    nd2 = tn._neighbor_distances(5.0, 0.5)
+    tn._neighbor_distances(5.0, 0.5)
     ref_nd2 = [math.hypot(abs(dc) * 5.0, abs(dr) * 0.5)
                for _, _, dr, dc in tn._D8_NEIGHBORS]
     for i in range(8):
@@ -1772,7 +1751,7 @@ def build_terrain() -> List[Dict[str, Any]]:
             f"neighbor_distances_iso_diag_{i}", f"{T_MOD}:_neighbor_distances",
             r9(math.sqrt(2) * 2.0), args=[2.0, 2.0], select=str(i),
             rtol=1e-12, note="对角邻域距离 = sqrt(2)·cx"))
-    nd3 = tn._neighbor_distances(0.5, 3.0)
+    tn._neighbor_distances(0.5, 3.0)
     ref_nd3 = [math.hypot(abs(dc) * 0.5, abs(dr) * 3.0)
                for _, _, dr, dc in tn._D8_NEIGHBORS]
     for i in range(8):
@@ -1788,7 +1767,7 @@ def build_terrain() -> List[Dict[str, Any]]:
             f"sca_d{i}{j}", f"{T_MOD}:_specific_catchment_area",
             r9(float(sca_d[i, j])), args=[acc_d, 3.0, 1.0, 3.0],
             select=f"{i}.{j}", rtol=1e-12))
-    nd4 = tn._neighbor_distances(1.0, 2.0)
+    tn._neighbor_distances(1.0, 2.0)
     ref_nd4 = [math.hypot(abs(dc) * 1.0, abs(dr) * 2.0)
                for _, _, dr, dc in tn._D8_NEIGHBORS]
     for i in range(8):
@@ -2683,7 +2662,7 @@ def build_geostat() -> List[Dict[str, Any]]:
             f"gamma_matern_{i}", f"{G_MOD}:_gamma", r9(float(ref_m[i])),
             args=["matern", h_m, sill, rng_, nug, 0.5], select=str(i),
             rtol=1e-9, note="matern 闭式（scipy kv）独立复算"))
-    ref_nug = _gamma_ref("spherical", [100.0, 5000.0], 0.0, rng_, 1.5)
+    _gamma_ref("spherical", [100.0, 5000.0], 0.0, rng_, 1.5)
     for i in (0, 1):
         cases.append(case(
             f"gamma_pure_nugget_{i}", f"{G_MOD}:_gamma", 1.5,
@@ -2833,7 +2812,6 @@ def build_geostat() -> List[Dict[str, Any]]:
                 r9(float(pred_ref[i])), args=[pts_l, vals, targets, order],
                 select=f"predictions.{i}", rtol=1e-8,
                 note="design(u_t) @ beta 独立复算"))
-        stats_ref = ts_stats = None
         uvd = _unit_box_design_ref(pts_l, order)
         resid = np.asarray(vals) - uvd @ beta_ref
         ss_res = float(resid @ resid)
@@ -2866,7 +2844,7 @@ def build_geostat() -> List[Dict[str, Any]]:
     vals_noisy = [f(x, y) + noise[i]
                   for i, (x, y) in enumerate(pts_noisy)]
     uv_n = _unit_box_design_ref(pts_noisy, 1)
-    resid_ref = np.asarray(vals_noisy) - uv_n @ np.linalg.lstsq(
+    np.asarray(vals_noisy) - uv_n @ np.linalg.lstsq(
         uv_n, np.asarray(vals_noisy), rcond=None)[0]
     cases.append(case("trend_residual_mean_noisy", f"{TS_MOD}:trend_predict",
                       r9(0.0), args=[pts_noisy, vals_noisy, [[5.0, 5.0]], 1],
@@ -3107,7 +3085,7 @@ def build_geostat() -> List[Dict[str, Any]]:
                              rng_fc.uniform(39.90, 39.95, 24)])
     fc_vv = [float(v) for v in rng_fc.normal(10, 1, 24)]
     fc = _fixture_fc(fc_ll, fc_vv)
-    res_k = kriging_res = None
+    res_k = None
     from app.lib.geo_analysis import kriging as kg_build
     res_k = kg_build.kriging_interpolation(fc, "v", resolution=7,
                                            cross_validate=True)
@@ -3171,7 +3149,7 @@ def build_geostat() -> List[Dict[str, Any]]:
     res_sb = kg_build.kriging_interpolation(fc_sb, "v", resolution=7,
                                             cross_validate=True,
                                             cv_scheme="spatial_block")
-    sb_md = res_sb["metadata"]["cross_validation"]
+    res_sb["metadata"]["cross_validation"]
     n_grid = math.ceil(math.sqrt(folds_expected))
     rx = np.argsort(np.argsort(fc_ll[:, 0], kind="stable"), kind="stable")
     ry = np.argsort(np.argsort(fc_ll[:, 1], kind="stable"), kind="stable")
@@ -3327,7 +3305,7 @@ def build_geostat() -> List[Dict[str, Any]]:
         note="回归锚：首记录插值值（凸包内）"))
     ts_vals_driver = [float(v) for v in rng_fc.uniform(0, 10, 12)]
     fc_ts = _fixture_fc(tin_driver_pts, ts_vals_driver)
-    res_ts = ts_build.trend_surface(fc_ts, "v", resolution=7, order=1,
+    ts_build.trend_surface(fc_ts, "v", resolution=7, order=1,
                                     cross_validate=False)
     cases.append(case(
         "trend_driver_n_params", f"{TS_MOD}:trend_surface", 3,

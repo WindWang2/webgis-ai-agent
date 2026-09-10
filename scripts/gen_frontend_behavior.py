@@ -37,12 +37,12 @@ def scan() -> dict:
         if "node_modules" in path.parts or count >= _MAX_FILES:
             if count >= _MAX_FILES:
                 print(f"警告：文件数达上限 {_MAX_FILES}，扫描提前终止"
-                      f"（R2-NIT：不静默截断）", file=_sys.stderr)
+                      f"（R2-NIT：不静默截断）", file=sys.stderr)
             continue
         count += 1
         if len(behaviors) > _MAX_TEST_FILES:
             print(f"警告：测试文件数达上限 {_MAX_TEST_FILES}，扫描提前终止",
-                  file=_sys.stderr)
+                  file=sys.stderr)
             break
         rel = path.relative_to(REPO).as_posix()
         text = path.read_text(encoding="utf-8", errors="ignore")

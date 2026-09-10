@@ -29,8 +29,6 @@ from app.services.gis_harness.completion.contracts import (
     VERDICT_READY,
     VERDICT_READY_WITH_WARNINGS,
 )
-from app.services.gis_harness.completion.unified_findings import UNIFIED_DOMAINS
-from app.services.gis_harness.repair_planner import REPAIR_CLASSES
 
 #: W7 产品裁决词表（冻结 5 token；READY 仅作语料 completeness 哨兵位，
 #: 本语料故障场景不期望 READY——断言面显式排除，见测试）。

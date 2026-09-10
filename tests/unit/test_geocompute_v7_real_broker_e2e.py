@@ -566,7 +566,7 @@ class TestRealBrokerE2E:
             f"run not completed after worker crash: {row} "
             f"events={events.window(rid, limit=200)}")
         evs = events.window(rid, limit=200)
-        ev_names = [e["event"] for e in evs]
+        [e["event"] for e in evs]
         # 重派证据：同一节点被再次派发/执行（attempt 2）；node_lost 仅在
         # 重试耗尽时出现（成功重派路径的正确形态是没有它）
         started_by_node: dict[str, int] = {}

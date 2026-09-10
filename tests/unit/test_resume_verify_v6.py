@@ -311,8 +311,8 @@ async def test_mapspec_dependency_live_and_dangling():
     result = await resume_from_anchor(
         db, anchor_id=saved["anchor_id"], user_id="u-v6")
     assert ref_gone in result["missing_refs"]
-    layers = {l["layer_id"]: l
-              for l in result["mapspec_verify"]["layers"]}
+    layers = {lyr["layer_id"]: lyr
+              for lyr in result["mapspec_verify"]["layers"]}
     assert layers["lyr-live"]["verdict"] == VERDICT_LIVE, layers
     assert layers["lyr-gone"]["verdict"] == VERDICT_UNKNOWN, layers
     assert result["mapspec_verify"]["verdict"] == VERDICT_UNKNOWN

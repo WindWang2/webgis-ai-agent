@@ -251,7 +251,7 @@ class TestAdminSurface:
         # attempt 耗尽 → failed[WORKER_LOSS]
         rid2 = store.create_run(plan_snapshot=_plan(),
                                 plan_fingerprint="fp2", owner_scope="u:x")
-        ep = store.claim_lease(rid2, coordinator_id="c1", ttl_s=30)
+        store.claim_lease(rid2, coordinator_id="c1", ttl_s=30)
         with v7_env() as db:
             from app.models.db_model import GeoComputeClusterRun as Run
 
@@ -336,7 +336,7 @@ class TestSchedulerGating:
 
         import contextlib
 
-        with contextlib.ExitStack() as stack:
+        with contextlib.ExitStack():
             # tick 里读 celery conf → 用 monkeypatch 不可行（无 fixture），
             # 直接置 conf（测试进程内可接受）
             old = celery_app.conf.task_always_eager
@@ -387,7 +387,7 @@ class TestSchedulerGating:
         old = celery_app.conf.task_always_eager
         celery_app.conf.task_always_eager = False
         try:
-            rid = store.create_run(plan_snapshot=_plan(),
+            store.create_run(plan_snapshot=_plan(),
                                    plan_fingerprint="fp-plain",
                                    owner_scope="u:x")
             coord = make("coord-plain")
