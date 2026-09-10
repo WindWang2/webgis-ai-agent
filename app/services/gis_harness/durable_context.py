@@ -52,14 +52,18 @@ FORBIDDEN_KEYS: Tuple[str, ...] = (
 
 #: recovery_state 循环历史上限（bounded everything）。
 MAX_LOOP_HISTORY = 16
-#: 循环预算（**实际有生产驱动点**的 long-horizon 回路；有界重入数）。
-#: 「replan」回路目前无生产驱动点（remediation replan 走 REMEDIATION_POLICY
-#: 既有预算）—— 不入账本（入而无驱动 = 预算耗尽永不可达，审查 R1 M4）。
+#: 循环预算（**有生产驱动点**的 long-horizon 回路；有界重入数）。
+#: 「replan」回路的驱动点 = finalizer 出口 ``plan_runtime.request_replan``
+#: （V7 ADR-0130 D2：修复不可达 → 置 replan_pending → 计划事实一变即
+#: 消费）—— 预算与驱动点同一 commit 落地（入而无驱动 = 预算耗尽永不可
+#: 达，审查 R1 M4 的教训）。
 LOOP_BUDGETS: Dict[str, int] = {
     "deepen": 2,      # 数据资格不足 → deepen_profile
     "requalify": 2,   # 重资格裁决
     "repair": 2,      # 渲染/运行时修复回路（runtime_repair 另有自己的
                       # per-fingerprint 预算 —— 本账本是跨回路的总量）
+    "replan": 1,      # 重规划回路（修复不可达 → 重规划剩余步骤；
+                      # 保守 1 次 —— 重规划是结构级变更，不静默循环）
 }
 _MAX_STATE_BYTES = 2048
 

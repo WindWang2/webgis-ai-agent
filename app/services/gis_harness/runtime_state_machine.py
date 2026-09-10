@@ -607,6 +607,23 @@ async def maybe_update_runtime_state(
     if not chapter.get("plan_id") and not chapter.get("query"):
         return None
 
+    # V7 D2：计划版本随同一触发面推进（指纹门内 else 幂等 no-op；
+    # replan_pending 在计划事实变化时由版本推进清除 → 阶段派生读新值）。
+    try:
+        from app.services.gis_harness.plan_runtime import (
+            maybe_advance_plan_version,
+        )
+
+        await maybe_advance_plan_version(session_id, reason=reason)
+    except Exception:  # noqa: BLE001 — 版本面是增值披露
+        logger.debug(
+            "[HarnessRuntime] plan version advance failed session=%s",
+            session_id, exc_info=True)
+    plan = await load_session_plan(session_id)
+    if plan is None or not isinstance(plan.gis_chapter, dict):
+        return None
+    chapter = plan.gis_chapter
+
     from app.services.gis_harness.durable_context import load_recovery_state
 
     recovery = await load_recovery_state(session_id)
