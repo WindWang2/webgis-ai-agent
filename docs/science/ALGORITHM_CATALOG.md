@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：141 能力 · 216 算法 · 116 参数契约。
+统计：142 能力 · 219 算法 · 119 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -1050,6 +1050,26 @@ OLS+空间诊断 / SLX / SAR-ML / SEM-ML（LM 决策树支撑）。
 - **`spatial.slx`** SLX（空间滞后 X 的 OLS）（`native`·成熟度 已验证，契约: `slx_analysis`，出处: `anselin1988`, `cliff_ord1973`）
   - 假设：y~[X, WX]；WX 为行标准化权重的空间滞后解释变量；系数表含 WX 滞后项（邻居溢出的直接估计）；孤岛观测的 WX 行为 0（披露于 weights 元数据）
   - 局限：直接/间接效应分解未做（需 SAR/SDM 类模型的偏导推导）；参数量翻倍，n<2p+2 时拒绝
+
+## `spatial_sampling` — 空间抽样
+
+在面要素抽样框上生成统计样本点：简单随机（逐面 SRS）、系统网格（随机起点偏移）与分层设计（equal/proportional 面积分配）；种子可控、可复现。野外核查点、精度评估、地统计布点输入。
+
+- **`sampling.random_points`** 简单随机空间抽样（`native`·成熟度 已验证，契约: `random_sampling_analysis`，出处: `cochran1977`）
+  - 假设：逐多边形简单随机设计（SRS）：每面独立 n 个均匀随机点；均匀性在投影后度量空间定义（地理输入自动投影局部 UTM）；拒绝采样上限 200×需求（凹型框覆盖率过低 → 类型化报错）
+  - 局限：零面积多边形跳过（计数披露）；不约束点间最小距离（需要最小间距时用 systematic_grid）
+  - 资源包络：64B/要素，要素硬上限 1000000
+  - 取消：chunk_boundary
+- **`sampling.stratified_points`** 分层空间抽样（`native`·成熟度 已验证，契约: `stratified_sampling_analysis`，出处: `cochran1977`）
+  - 假设：按 stratum_field 分层；equal=每层 n，proportional=按层面积权重分配（floor + 大盘尼余数，总量恰为层样本数）；层内按多边形面积再分摊（比例分配），面级均匀随机；分配表进 meta（逐层样本数披露）
+  - 局限：层名取 str 的字符串化（数值层名按字典序排列）；比例分配下面积占比过小的多边形可能 0 样本（按需提高层预算）
+  - 资源包络：64B/要素，要素硬上限 1000000
+  - 取消：chunk_boundary
+- **`sampling.systematic_grid`** 系统网格空间抽样（`native`·成熟度 已验证，契约: `systematic_sampling_analysis`，出处: `cochran1977`）
+  - 假设：规则格网（spacing 米）+ 随机起点偏移（seed 决定，避免与坐标轴对齐的周期性偏差；Cochran 1977 系统抽样惯例）；仅保留落入抽样框的格点（prepared 覆盖判定）；格点数上限 4,000,000（间距过小时先拒绝后分配）
+  - 局限：系统抽样无设计无偏方差（需近似方差时用 random/stratified）；周期性地物（如规整田块）与固定间距可能混叠
+  - 资源包络：64B/要素，要素硬上限 4000000
+  - 取消：none
 
 ## `spatial_weights_diagnostics` — 空间权重诊断
 

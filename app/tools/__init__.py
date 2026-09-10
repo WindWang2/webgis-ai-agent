@@ -27,6 +27,8 @@ _TOOL_MODULES = [
     ("app.tools.local_osm", "register_local_osm_tools"),
     ("app.tools.local_stats", "register_local_stats_tools"),
     ("app.tools.spatial_stats", "register_spatial_stats_tools"),
+    # Science V6：空间抽样工具面（Goal 07 新域，独立模块防并发冲突）
+    ("app.tools.sampling_tools", "register_sampling_tools"),
     ("app.tools.point_pattern_tools", "register_point_pattern_tools"),
     ("app.tools.terrain_analysis", "register_terrain_tools"),
     ("app.tools.raster_tools_cog", "register_raster_cog_tools"),

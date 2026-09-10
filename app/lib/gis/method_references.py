@@ -212,6 +212,13 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "the Geometry of Geography; Global Spatial Analysis. "
             "NCGIA Technical Report 93-1.",
         ),
+        # ── 空间抽样（Goal 07 Science V6）────────────────────────────
+        MethodReference(
+            "cochran1977",
+            "Sampling design (simple random / systematic / stratified)",
+            "Cochran, W. G. (1977). Sampling Techniques (3rd ed.). "
+            "John Wiley & Sons.",
+        ),
         MethodReference(
             "teitz_bart1968",
             "Teitz-Bart p-median heuristic",

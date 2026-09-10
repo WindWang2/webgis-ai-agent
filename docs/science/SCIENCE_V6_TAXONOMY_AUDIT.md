@@ -6,7 +6,7 @@
 > `python scripts/science_taxonomy_audit.py`；`--check` 模式 diff。
 > 族对齐词表唯一维护于脚本内 `TAXONOMY_FAMILIES`。
 
-注册表算法总数：**216**。
+注册表算法总数：**219**。
 
 | 族 | 算法数 | native | VALIDATED/PRODUCTION | 代表算法 |
 |---|---|---|---|---|
@@ -22,7 +22,7 @@
 | 时间序列 | 10 | 10 | 10 | `temporal.aggregate`, `temporal.change`, `temporal.cube_stats` |
 | 生态 | 0 | 0 | 0 | — |
 | 多准则决策 | 1 | 1 | 1 | `decision.mcda.wsm` |
-| 空间抽样 | 0 | 0 | 0 | — |
+| 空间抽样 | 3 | 3 | 3 | `sampling.random_points`, `sampling.stratified_points`, `sampling.systematic_grid` |
 | 不确定性（横切） | 54（横切） | — | — | 声明 uncertainty_outputs 的算法全体 |
 
 ## 族对齐约定
