@@ -1,6 +1,6 @@
 # Harness V7 PR Summary — Long-Horizon Contextual GIS Agent Runtime
 
-分支 `feat/harness-v7-agentic-runtime`：2aabdc43..HEAD（10 commits）。
+分支 `feat/harness-v7-agentic-runtime`：2aabdc43..HEAD（12 commits，含两轮 review 修复）。
 本任务不等待/不依赖线上 CI/CD，全部本地验证（见「本地测试」）。
 
 ## Problem / Motivation
@@ -104,9 +104,9 @@ W9 两轮 review（自审 3 项全修 + 独立评审）。
 
 ## Local test matrix（exact results）
 
-- changed-scope 全量：**1244 passed / 9 failed / 4 skipped**（9 项与
-  master 基线逐项一致 = fcntl/h3 Windows 环境缺失，非本分支回归；
-  基线 1103 passed → 1244 = +141 新测试全绿）
+- changed-scope 全量：**1254 passed / 10 failed / 4 skipped**（10 项与
+  master 基线同因 = fcntl/h3 Windows 环境缺失，非本分支回归；
+  基线 1103 passed → 1254 = +151 新测试全绿）
 - V6 检索/面回归：retrieval_eval_v6 + semantic_retrieval_v6 +
   tool_surface_v3 + pi_native_surface（56 passed；1 项 fcntl 环境红在
   master 同样存在）
