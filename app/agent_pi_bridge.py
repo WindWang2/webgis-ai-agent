@@ -1292,6 +1292,7 @@ class PiBridge:
     adapter) stay at module level above - they are the deliberate rendezvous
     between the two adapters and cannot move.
     """
+    _current_turn: Optional[_ActiveTurnEntry] = None
 
     # Session id of the turn currently holding the bridge lock (set/cleared by
     # stream_prompt). Class-level default so tests that bypass __init__

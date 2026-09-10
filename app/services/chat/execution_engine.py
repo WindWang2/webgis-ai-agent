@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.tools.registry import ToolRegistry
 from app.services.task_tracker import TaskStatus, TaskTracker
 from app.services.session_data import session_data_manager
+from app.services.distributed_lock import session_lock
 from app.services.ws_service import broadcast_ws_event
 from app.tools._utils import async_db_session
 from app.services.history_service_async import AsyncHistoryService
@@ -107,7 +108,7 @@ class _AcquiredLock:
     disconnect) without re-indenting the ~650-line turn body.
     """
 
-    def __init__(self, lock: asyncio.Lock) -> None:
+    def __init__(self, lock: Any) -> None:
         self._lock = lock
         self._released = False
 
@@ -123,8 +124,16 @@ class _AcquiredLock:
             elif hasattr(self._lock, "release"):
                 self._lock.release()
 
-    async def __aexit__(self, *exc_info: object) -> None:
-        self.release()
+    async def __aexit__(self, exc_type: object = None, exc_val: object = None, exc_tb: object = None) -> None:
+        if not self._released:
+            self._released = True
+            if hasattr(self._lock, "__aexit__"):
+                await self._lock.__aexit__(exc_type, exc_val, exc_tb)
+            elif hasattr(self._lock, "release"):
+                try:
+                    self._lock.release()
+                except RuntimeError:
+                    pass
 
 
 async def _stream_with_token_keepalive(
@@ -1278,7 +1287,7 @@ class ChatExecutionEngine:
         # it acquires the SAME per-session lock internally for the DB-load path
         # (asyncio.Lock is not reentrant; acquiring it twice deadlocks).
         messages = await self._get_or_create_session(session_id, user_id=user_id)
-        lock = self._get_session_lock(session_id)
+        lock = session_lock(session_id)
         async with lock:
             self._reject_if_clearing(session_id)
             _task = asyncio.current_task()
@@ -1794,7 +1803,7 @@ class ChatExecutionEngine:
         # it acquires the SAME per-session lock internally for the DB-load path
         # (asyncio.Lock is not reentrant; acquiring it twice deadlocks).
         messages = await self._get_or_create_session(session_id, user_id=user_id)
-        lock = self._get_session_lock(session_id)
+        lock = session_lock(session_id)
         # #554 defect 1 (legacy sibling): the per-session lock is held for the
         # ENTIRE turn (RUN-03 above), so a same-session concurrent second
         # request blocks here with zero bytes on the wire — the SSE headers
@@ -1812,7 +1821,8 @@ class ChatExecutionEngine:
                 except asyncio.TimeoutError:
                     yield sse_event("keep_alive", {"message": "ping"})
 
-            async with acquired_lock:
+            acquired_lock = _AcquiredLock(lock)
+            async with _AcquiredLock(lock):
                 self._reject_if_clearing(session_id)
                 _task = asyncio.current_task()
                 if _task is not None:

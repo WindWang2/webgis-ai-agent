@@ -96,6 +96,9 @@ class _InProcessLock:
         else:
             await self._lock.acquire()
 
+    def locked(self) -> bool:
+        return self._lock.locked()
+
     def release(self) -> None:
         self._lock.release()
 
@@ -158,6 +161,40 @@ class _ResilientSessionLock:
     def lost(self) -> bool:
         """True if Redis lock ownership was lost during the critical section."""
         return self._lost
+
+    @property
+    def is_locked(self) -> bool:
+        if self._mode == "redis":
+            return bool(self._token and not self._lost)
+        return self._fallback._lock.locked()
+
+    def locked(self) -> bool:
+        return self.is_locked
+
+    async def acquire(self, timeout_s: Optional[float] = None) -> "_ResilientSessionLock":
+        if timeout_s is not None:
+            old_timeout = self._acquire_timeout_s
+            self._acquire_timeout_s = timeout_s
+            try:
+                return await self.__aenter__()
+            finally:
+                self._acquire_timeout_s = old_timeout
+        return await self.__aenter__()
+
+    def release(self) -> None:
+        if self._mode == "redis":
+            if self._renewer:
+                self._renewer.cancel()
+            if self._token and not self._lost and self._client is not None:
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(
+                        self._client.eval(_RELEASE_SCRIPT, 1, self._key, self._token)
+                    )
+                except (RuntimeError, Exception) as e:
+                    logger.debug("session lock async release scheduling failed for %s: %s", self._key, e)
+        else:
+            self._fallback.release()
 
     async def __aenter__(self):
         if self._client is not None:
@@ -423,3 +460,20 @@ class SessionLockRegistry:
 # in-process locks. Either way the per-session mutual exclusion holds within a
 # process; Redis extends it across pods.
 session_lock_registry = SessionLockRegistry()
+
+
+def session_lock(
+    session_id: str,
+    ttl_ms: int = _DEFAULT_TTL_MS,
+    acquire_timeout_s: float = _DEFAULT_ACQUIRE_TIMEOUT_S,
+    fail_on_degraded: bool = False,
+    fail_on_lost: bool = False,
+) -> _ResilientSessionLock:
+    """Return an async context manager mutually exclusive for session_id."""
+    return session_lock_registry.lock(
+        session_id,
+        ttl_ms=ttl_ms,
+        acquire_timeout_s=acquire_timeout_s,
+        fail_on_degraded=fail_on_degraded,
+        fail_on_lost=fail_on_lost,
+    )
