@@ -34,7 +34,7 @@
    "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "cf90ad238ffd2d665db74135203953d6f724b1cfa536abe57b32201c773fd9d5",
+   "input_fingerprint": "b3ea009138c1f4aabacdafaf6ddaa5eb4239d74cbe9a6a7c6d76584f7029f12f",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -124,7 +124,7 @@
    "content_fingerprint": "95739298ee4fde358d134f3b4241ad2303a32c35021ad0ab32efd3a21e3d47c1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "cf90ad238ffd2d665db74135203953d6f724b1cfa536abe57b32201c773fd9d5",
+   "input_fingerprint": "b3ea009138c1f4aabacdafaf6ddaa5eb4239d74cbe9a6a7c6d76584f7029f12f",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"

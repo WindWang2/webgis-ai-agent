@@ -431,10 +431,12 @@ class TestFairness:
         """轮转状态可从非终态行重建（M1：终态行不进聚合 —— 有 retention）。"""
         store, make_coordinator, factory = env
         coord = make_coordinator("coord-a")
-        for i in range(4):
+        rids = [
             _submit(store, _simple_plan(unique=f"fair{i}"), tenant_raw=f"org{i % 2}")
-        for _ in range(4):
-            coord.tick()
+            for i in range(4)
+        ]
+        for rid in rids:
+            assert _wait_terminal_ticked(store, coord, rid) == "completed"
         # 全部落定后聚合为空（终态行不污染 tick 热路径）
         assert store.tenant_last_dispatch() == {}
         # 造一个在跑 run（dispatch_seq 已记）→ 轮转状态可重建
