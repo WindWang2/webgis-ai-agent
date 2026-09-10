@@ -545,34 +545,44 @@ class Driver:
                                  effective_params=effective_params):
             return
 
-        op = node_executable_op(node)
-        if op is None:
-            blocked_verdict = {
-                "node_id": node_id, "ok": False, "action": "blocked",
-                "violations": [{"port": "", "code": "NODE_NOT_EXECUTABLE",
-                                "detail": "无已接线 GeoCompute 算子"
-                                          "（诚实阻断，不假装执行）"}],
-                "disclosures": [], "disclosure": "NODE_NOT_EXECUTABLE"}
-            # 已派发（RUNNING）后的不可执行 = 执行失败语义（RUNNING→BLOCKED
-            # 非法 —— 在飞工作不能"变回"阻断态，只能失败并留证据）。
-            await asyncio.to_thread(
-                store.transition_node,
-                instance_id, node_id, C.NodeState.FAILED,
-                require_claim=True, claimed_by=run_token, complete=True,
-                reason="NODE_NOT_EXECUTABLE", event="driver",
-                patch={"error_code": "NODE_NOT_EXECUTABLE",
-                       "binding": blocked_verdict})
-            states[node_id] = C.NodeState.FAILED
-            return
-
-        params = dict(node_params.get(node_id) or {})
+        # 生效参数 = DAG 声明 defaults ∪ 运行时覆盖（V5 缺陷修复：声明
+        # 参数从未到达执行面 —— buffer 以 distance=0 执行产出退化几何）。
+        params = {
+            **(node.get("params") or {}),
+            **(node_params.get(node_id) or {}),
+        }
+        # V6 Phase H：真实执行面选择（确定性优先级）——
+        # 测试钩子 > cartography 真实渲染 > science 真实聚合 > 派发面 >
+        # geocompute in-process。science/cartography 是 workflow 域自有
+        # 适配器（data_fabric/matplotlib/PDF 真实栈），不走 geocompute。
+        _backend = "geocompute_inprocess"
         if self.plan_executor is not None:
 
-            async def _invoke() -> GeoComputeNodeOutcome:
+            async def _invoke() -> Any:
                 return await self.plan_executor(
                     node, input_refs, params,
                     {"session_id": session_id, "caller": self.caller,
                      "cancel_token": cancel_token})
+        elif kind == "cartography":
+            _backend = "cartography_render"
+            from app.services.workflow_runtime.adapters_cartography import (
+                execute_cartography_node,
+            )
+
+            async def _invoke() -> Any:
+                return await execute_cartography_node(
+                    node, input_refs=input_refs, params=params,
+                    session_id=session_id)
+        elif kind == "analysis" and _science_executable(node):
+            _backend = "datafabric_science"
+            from app.services.workflow_runtime.adapters_science import (
+                execute_science_node,
+            )
+
+            async def _invoke() -> Any:
+                return await execute_science_node(
+                    node, input_refs=input_refs, params=params,
+                    session_id=session_id)
         elif self.dispatcher is not None:
             # V6 派发面（local/durable 由 env 决策；durable 复用 geocompute
             # durable 通道的幂等键/心跳/WORKER_LOSS 既有真相）
@@ -582,6 +592,26 @@ class Driver:
                     params=params, session_id=session_id,
                     port_idents=port_idents, cancel_token=cancel_token)
         else:
+            op = node_executable_op(node)
+            if op is None:
+                blocked_verdict = {
+                    "node_id": node_id, "ok": False, "action": "blocked",
+                    "violations": [{"port": "", "code": "NODE_NOT_EXECUTABLE",
+                                    "detail": "无已接线执行路径"
+                                              "（诚实阻断，不假装执行）"}],
+                    "disclosures": [],
+                    "disclosure": "NODE_NOT_EXECUTABLE"}
+                # 已派发（RUNNING）后的不可执行 = 执行失败语义（RUNNING→
+                # BLOCKED 非法 —— 在飞工作不能"变回"阻断态，只能失败留证）。
+                await asyncio.to_thread(
+                    store.transition_node,
+                    instance_id, node_id, C.NodeState.FAILED,
+                    require_claim=True, claimed_by=run_token, complete=True,
+                    reason="NODE_NOT_EXECUTABLE", event="driver",
+                    patch={"error_code": "NODE_NOT_EXECUTABLE",
+                           "binding": blocked_verdict})
+                states[node_id] = C.NodeState.FAILED
+                return
 
             async def _invoke() -> GeoComputeNodeOutcome:
                 return await self._execute_via_geocompute(
@@ -632,7 +662,7 @@ class Driver:
                        "attempt_log": {
                            "attempt": (node_row or {}).get("attempts", 0) + 1,
                            "status": "succeeded",
-                           "backend": "geocompute_inprocess",
+                           "backend": _backend,
                            "output_ref": outcome.output_ref[:96],
                            "duration_ms": outcome.duration_ms},
                        "output_fingerprint": out_fp})
@@ -652,7 +682,7 @@ class Driver:
     async def _fail_or_cancel(
         self, instance_id: str, node_id: str, session_id: str,
         run_token: str, outcome: GeoComputeNodeOutcome, *,
-        cancelled: Optional[bool] = None,
+        cancelled: Optional[bool] = None, backend: str = "geocompute_inprocess",
     ) -> None:
         """失败/取消收敛（V6）：补偿半提交产物 → 重试裁决 → 终态落库。
 
@@ -686,7 +716,7 @@ class Driver:
                 patch={"attempts_increment": True,
                        "attempt_log": {
                            "attempt": attempts, "status": "cancelled",
-                           "backend": "geocompute_inprocess"}})
+                           "backend": backend}})
             return
         first = await asyncio.to_thread(
             store.transition_node,
@@ -700,13 +730,13 @@ class Driver:
                        "attempt": attempts,
                        "status": "failed",
                        "error_code": outcome.error_code,
-                       "failure_class": outcome.failure_class,
-                       "backend": "geocompute_inprocess"}})
+                       "failure_class": getattr(outcome, "failure_class", ""),
+                       "backend": backend}})
         if not first.ok:
             return
         policy = self.retry_policy
         retryable = RT.error_retryable(outcome.error_code,
-                                       outcome.failure_class)
+                                       getattr(outcome, "failure_class", ""))
         if not retryable or policy.attempts_exhausted(attempts):
             if retryable:
                 await asyncio.to_thread(
@@ -732,7 +762,7 @@ class Driver:
                 reason=f"BACKOFF_{delay:.2f}S_ATTEMPT_{attempts}",
                 actor="driver", attempt=attempts,
                 payload={"error_code": outcome.error_code,
-                         "failure_class": outcome.failure_class,
+                         "failure_class": getattr(outcome, "failure_class", ""),
                          "next_ready_at": next_ready.isoformat()})
 
     # ── 输入收集 / 绑定校验 ───────────────────────────────────────────
@@ -1069,6 +1099,16 @@ def _node_priority(node: Optional[Dict[str, Any]]) -> int:
     except (TypeError, ValueError):
         return 5
     return raw if -10 <= raw <= 10 else 5
+
+
+def _science_executable(node: Dict[str, Any]) -> bool:
+    """analysis 节点是否有已接线的真实 science 执行路径（data_fabric）。"""
+    from app.services.workflow_runtime.adapters_science import (
+        science_executable,
+    )
+
+    cap = str(node.get("capability") or node.get("algorithm_id") or "")
+    return science_executable(cap)
 
 
 def _verify_node(node: Dict[str, Any],
