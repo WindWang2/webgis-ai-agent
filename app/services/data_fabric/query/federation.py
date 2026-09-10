@@ -795,6 +795,10 @@ class ChainSourceStats:
     # ── V7（ADR-0119 W9）：measured 级唯一键声明（启用安全聚合下推证明；
     # 调用方对声明真实性负责 —— 估计 NDV 不作数）。──
     unique_keys: Optional[List[str]] = None
+    # ── V8（ADR-0130 additive）：探测后能力覆盖（AdapterCapabilitiesV2）。
+    # 由 FabricRuntime 在规划前填充（IO 收敛在 runtime，planner 保持纯函数）；
+    # None = 静态默认矩阵。──
+    caps: Optional[Any] = None
 
     def ndv(self, column: Optional[str]) -> Optional[int]:
         if column is None or not self.column_ndv:
@@ -857,6 +861,11 @@ class FederatedChainRequest:
     session_owner: Optional[str] = None
     #: 结果缓存开关（默认开：命中必披露 + fingerprint 失效 + TTL 有界）。
     use_cache: bool = True
+    # ── V8（ADR-0130 additive）：治理面富集披露（source_id → basis dict）。
+    # FabricRuntime 填充：rows_basis（request_hint | source_facts:<basis>
+    # [×feedback:<factor>(samples=N)]）、caps_basis（probed|default）、
+    # governed。EXPLAIN 如实渲染；None = 无富集（行为与 V7 逐位一致）。
+    estimate_basis: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 def _chain_budget(req: FederatedChainRequest) -> ExecutionBudget:
@@ -1759,6 +1768,112 @@ def _make_bushy_replan_fn(req, original_plan):
         return new_plan
 
     return _replan
+
+
+# ── V8（ADR-0130）：治理面 → 规划输入的自适应闭环 ────────────────────────────
+
+
+def enrich_request_from_runtime(
+    req: "FederatedChainRequest",
+    resolved_by_sid: Dict[str, Any],
+) -> None:
+    """把 FabricRuntime 富集结果（探测/事实/反馈）拉平为规划纯数据提示。
+
+    职责（Phase C+D 闭环收口 —— 此前全部为孤儿库）：
+    - ``ChainSource.source_type`` ← registry record（激活静态能力注入：
+      下推边界披露 + 聚合下推证明资格 —— 此前工具路径恒为 None=保守不下推）；
+    - ``ChainSourceStats.caps`` ← 探测覆盖（probed 才注入；default/stale
+      不注入 —— 绝不把未验证能力当真）；
+    - ``estimated_rows`` 缺省时 ← SourceFacts 行数事实（exact/observed/estimate
+      basis 如实标注）× 反馈衰减修正因子（仅 ok 观测、半衰加权、样本≥3）；
+      显式提示永不覆盖（调用方明确性优先）；
+    - ``ChainSourceStats.column_ndv`` ← 事实 NDV（测量来源；已有提示不覆盖）；
+    - ``req.estimate_basis`` 披露段（EXPLAIN 渲染；无富集 = None = V7 行为）。
+
+    全程 fail-open：catalog/runtime/事实任一缺失 → 跳过该源（宁缺毋假）。
+    """
+    from app.services.data_fabric.fabric.runtime import get_fabric_runtime
+    from app.services.data_fabric.fingerprint import dataset_fingerprint_service
+    from app.services.data_fabric.query.capabilities import get_capabilities
+    from app.services.data_fabric.spatial_catalog import spatial_catalog_service
+
+    runtime = get_fabric_runtime()
+    owner = getattr(req, "session_owner", None)
+    basis: Dict[str, Dict[str, Any]] = {}
+    hints: Dict[str, Any] = dict(req.stats_hints or {})
+
+    for src in req.sources:
+        rs = resolved_by_sid.get(src.source_id)
+        if rs is None:
+            continue
+        entry: Dict[str, Any] = {
+            "governed": bool(getattr(rs, "governed", False)),
+        }
+        # 1) source_type（静态能力激活）。
+        if not src.source_type and getattr(rs, "source_type", None):
+            src.source_type = rs.source_type
+        entry["source_type"] = src.source_type
+        # 2) 探测能力覆盖（probed 才可信）。
+        if getattr(rs, "caps_basis", None) == "probed" and rs.caps_overrides:
+            try:
+                base_caps = get_capabilities(str(rs.source_type or ""), rs.caps_overrides)
+            except Exception:  # noqa: BLE001 - 未知源类型/非法覆盖 → 静态兜底
+                base_caps = None
+            if base_caps is not None:
+                hint = hints.get(src.source_id)
+                if hint is None:
+                    hint = ChainSourceStats()
+                    hints[src.source_id] = hint
+                if getattr(hint, "caps", None) is None:
+                    hint.caps = base_caps
+            entry["caps_basis"] = "probed"
+        elif getattr(rs, "caps_basis", None):
+            entry["caps_basis"] = rs.caps_basis
+        # 3) 事实 + 反馈 → 行数估计（仅缺省时）。
+        descriptor = None
+        fingerprint = None
+        try:
+            descriptor = spatial_catalog_service.get_dataset(src.dataset_id, owner=owner)
+            if descriptor is not None:
+                fingerprint = dataset_fingerprint_service.calculate_descriptor_fingerprint(
+                    descriptor
+                )
+        except Exception:  # noqa: BLE001 - catalog 缺失 → 无事实富集
+            descriptor = None
+        runtime.enrich(rs, fingerprint=fingerprint, descriptor=descriptor)
+        factor = getattr(rs, "feedback_factor", None)
+        if src.estimated_rows is None and getattr(rs, "facts_row_count", None):
+            base_rows = int(rs.facts_row_count)
+            rows_basis = f"source_facts:{rs.facts_row_count_basis}"
+            if factor:
+                base_rows = int(round(base_rows * float(factor)))
+                rows_basis += (
+                    f"×feedback:{factor}(samples={rs.feedback_samples})"
+                )
+            src.estimated_rows = max(1, base_rows)
+            entry["rows_basis"] = rows_basis
+        elif src.estimated_rows is not None:
+            entry["rows_basis"] = "request_hint"
+            if factor and factor != 1.0:
+                # 显式提示不覆盖；偏差证据如实披露供调用方自查。
+                entry["hint_feedback_drift"] = {
+                    "factor": factor, "samples": rs.feedback_samples,
+                }
+        # 4) 事实 NDV（测量来源；不覆盖显式提示）。
+        ndv = getattr(rs, "facts_ndv", None)
+        if ndv:
+            hint = hints.get(src.source_id)
+            if hint is None:
+                hint = ChainSourceStats()
+                hints[src.source_id] = hint
+            if not getattr(hint, "column_ndv", None):
+                hint.column_ndv = dict(ndv)
+        basis[src.source_id] = entry
+
+    if hints:
+        req.stats_hints = hints
+    if basis:
+        req.estimate_basis = basis
 
 
 def execute_chain_v6(

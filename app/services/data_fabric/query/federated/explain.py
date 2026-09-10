@@ -128,6 +128,23 @@ def explain_v6_lines(
             f"    source {n.source_id}: estimated_rows={n.estimated_rows}"
             f" fetch_window={n.fetch_limit}"
         )
+    # V8（ADR-0130）：治理面富集披露（估计依据/探测基础；无富集不渲染）。
+    basis = getattr(ctx, "estimate_basis", None) if ctx is not None else None
+    if basis:
+        lines.append("  estimate_basis:")
+        for sid in sorted(basis):
+            entry = basis[sid] or {}
+            parts = [f"source {sid}:"]
+            if entry.get("rows_basis"):
+                parts.append(f"rows={entry['rows_basis']}")
+            if entry.get("caps_basis"):
+                parts.append(f"caps={entry['caps_basis']}")
+            if "hint_feedback_drift" in entry:
+                d = entry["hint_feedback_drift"]
+                parts.append(
+                    f"hint_drift=x{d.get('factor')}(samples={d.get('samples')})"
+                )
+            lines.append(f"    {' '.join(parts)}")
     lines.append(
         "  materialization: build sides materialize up to their fetch_window"
         " (per-hop fail-fast at budget.max_rows); probe sides stream page-wise"

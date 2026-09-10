@@ -39,6 +39,17 @@ def _is_demo_source_type(source_type) -> bool:
         return False
 
 
+def _resolve_source(profile_id, session_id):
+    """V8：完整 ResolvedSource（adapter + 治理元数据；故障 → None）。"""
+    from app.services.data_fabric.fabric.runtime import get_fabric_runtime
+
+    try:
+        return get_fabric_runtime().resolve(profile_id, owner=session_id)
+    except Exception as exc:  # noqa: BLE001 - 解析面故障不改变工具错误契约
+        logger.warning("[data_fabric] runtime resolve failed for %s: %s", profile_id, exc)
+        return None
+
+
 def _resolve_source_adapter(profile_id, session_id):
     """V8（ADR-0130）：工具层数据源解析的**单一入口**。
 
@@ -49,15 +60,7 @@ def _resolve_source_adapter(profile_id, session_id):
     fail-open 回退 legacy 语义，工具错误契约（None → UNSUPPORTED_SOURCE）
     不变。
     """
-    from app.services.data_fabric.fabric.runtime import get_fabric_runtime
-
-    try:
-        resolved = get_fabric_runtime().resolve(profile_id, owner=session_id)
-    except DataFabricError:
-        resolved = None
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("[data_fabric] runtime resolve failed for %s: %s", profile_id, exc)
-        resolved = None
+    resolved = _resolve_source(profile_id, session_id)
     return resolved.adapter if resolved is not None else None
 
 
@@ -969,6 +972,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             FederatedChainRequest,
             FederatedExecutor,
             chain_explain_lines,
+            enrich_request_from_runtime,
         )
 
         #: 工具内联行上限（上下文载荷保护；row_count 仍报告真实总量）。
@@ -976,7 +980,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
 
         def _adapter_of(dataset_id: str, profile_id: Optional[str]):
             pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id, owner=session_id)
-            return (pid, _resolve_source_adapter(pid, session_id)) if pid else (pid, None)
+            return (pid, _resolve_source(pid, session_id)) if pid else (pid, None)
 
         def _sync_run():
             if not isinstance(sources, list) or not isinstance(joins, list):
@@ -984,6 +988,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
                         "error": "sources and joins must be lists of objects"}
             chain_sources = []
             adapters_by_id: dict = {}
+            resolved_by_sid: dict = {}
             for i, s in enumerate(sources):
                 if not isinstance(s, dict) or not s.get("dataset_id"):
                     return {"status": "error", "error_type": "INVALID_QUERY",
@@ -992,13 +997,15 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 if sid in adapters_by_id:
                     return {"status": "error", "error_type": "INVALID_QUERY",
                             "error": f"duplicate source_id {sid!r} in chain"}
-                pid, adapter = _adapter_of(str(s["dataset_id"]), s.get("profile_id"))
+                pid, resolved = _adapter_of(str(s["dataset_id"]), s.get("profile_id"))
+                adapter = resolved.adapter if resolved is not None else None
                 if adapter is None:
                     return {
                         "status": "error",
                         "error_type": UNSUPPORTED_SOURCE,
                         "error": f"No connected data source adapter for dataset '{s['dataset_id']}'.",
                     }
+                resolved_by_sid[sid] = resolved
                 est = s.get("estimated_rows")
                 # m3（审计 round1）：NaN/inf 估算不是合法的成本提示 ——
                 # int(nan) raises ValueError / int(inf) raises OverflowError
@@ -1053,6 +1060,12 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 use_cache=bool(use_cache),
             )
             executor = FederatedExecutor(lambda src: adapters_by_id.get(src))
+            # V8（ADR-0130）：规划前治理富集（探测能力/事实行数/反馈修正 →
+            # 纯数据提示 + estimate_basis 披露；fail-open，无富集 = V7 行为）。
+            try:
+                enrich_request_from_runtime(req, resolved_by_sid)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[data_fabric] chain enrich skipped: %s", exc)
             try:
                 result = executor.execute_chain(req)
             except DataFabricError as e:
