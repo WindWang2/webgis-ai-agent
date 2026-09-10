@@ -955,7 +955,10 @@ async def chat_stream(
         if db is not None:
             await db.close()
 
-    session_key = (pi_session_id if use_pi else req.session_id) or ""
+    # CORE-09: Assign unique session key for anonymous sessions to prevent buffer collision in TurnResumeRegistry
+    session_key = (pi_session_id if use_pi else req.session_id) or uuid.uuid4().hex
+    if not req.session_id:
+        req.session_id = session_key
 
     # #691：复用 middleware 已绑的 request_id，生成器内再合并 session_id。
     _mid = rt_ctx.current_runtime_context()
