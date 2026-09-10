@@ -6,12 +6,17 @@ manifest 与 DataObject 同纪律（canonical JSON → 内容寻址、确定性�
 无 wall-clock/随机、有界）：
 
 - **dataset 描述符**：``kind="dataset_descriptor"``，id = canonical
-  sha256。描述符不可变 —— 改名/改契约 = 新 dataset id（新注册行）；
+  sha256。owner_scope 参与身份（跨 owner 同名 = 不同逻辑数据集，
+  字节 blob 共享仍安全 —— DataObject 同款）。描述符不可变 ——
+  改名/改契约 = 新 dataset id（新注册行）；
 - **版本 commit record**：``kind="dataset_commit"``，id = canonical
   sha256 = version_id。字段 = (dataset_id, parent, data_object_id,
-  content_sha256, branch, action, provenance)。同 dataset 同 (parent,
+  content_sha256, action, provenance)。同 dataset 同 (parent,
   content, provenance) 的重提交幂等去重为同一版本 —— 「同内容同 id」
-  语义在版本层延续（实验复现由此可验证）。
+  语义在版本层延续（实验复现由此可验证）。**branch 不参与身份**
+  （git 语义 —— 分支是指针层落点注记）；台账行的 ``branch`` 列记录
+  **首触分支**（同版本经其他分支重放时注记不改写 —— 指针行才是
+  分支位置的真相）。
 
 **原子提交协议**（中断安全 —— 验收：中断写入不产生可见半成品版本）：
 
@@ -49,8 +54,16 @@ COMMIT_RECORD_SCHEMA_VERSION = 1
 
 #: commit record canonical 尺寸闸（与 DataObject manifest 同量级纪律）。
 MAX_COMMIT_JSON_BYTES = 64 * 1024
-#: provenance 有界约定（固定键集合；防御性键数上限）。
+#: provenance 有界约定（固定键白名单 + 键数上限；防御性双闸）。
 MAX_PROVENANCE_KEYS = 24
+#: provenance 契约白名单（ADR-0130 §4 —— 超集键 typed 拒绝，诚实边界；
+#: 结构化值（sources/coverage/parameters）在键内自持形状）。
+PROVENANCE_ALLOWED_KEYS = (
+    "action", "algorithm", "parameters", "code_version",
+    "model_id", "model_version",
+    "sources", "inputs", "coverage", "quality_flags",
+    "workflow_run_id", "workflow_step", "rollback_target",
+)
 #: 版本 DAG 上溯 / 列表有界（诚实截断披露）。
 MAX_LINEAGE_DEPTH = 64
 MAX_LIST_LIMIT = 200
@@ -184,6 +197,11 @@ def build_dataset_descriptor(
         if not isinstance(cube_contract, Mapping):
             raise DatasetRegistryError("cube_contract must be a mapping")
         descriptor["cube_contract"] = _redact(dict(cube_contract))
+    if len(_canonical_bytes(descriptor)) > MAX_COMMIT_JSON_BYTES:
+        raise DatasetRegistryError(
+            "dataset descriptor exceeds canonical size cap — contracts "
+            "must be summarized (oversized payloads belong in a blob)"
+        )
     return descriptor
 
 
@@ -265,7 +283,7 @@ def build_commit_record(
 def _bounded_provenance(
     provenance: Optional[Mapping[str, Any]],
 ) -> Dict[str, Any]:
-    """provenance 契约：固定键、redacted、有界（超界键拒绝 —— 诚实）。"""
+    """provenance 契约：白名单键、redacted、有界（越界键 typed 拒绝）。"""
     if provenance is None:
         return {}
     if not isinstance(provenance, Mapping):
@@ -273,6 +291,12 @@ def _bounded_provenance(
     if len(provenance) > MAX_PROVENANCE_KEYS:
         raise DatasetRegistryError(
             f"provenance exceeds {MAX_PROVENANCE_KEYS} keys"
+        )
+    unknown = [str(k) for k in provenance if str(k) not in PROVENANCE_ALLOWED_KEYS]
+    if unknown:
+        raise DatasetRegistryError(
+            f"unknown provenance keys {sorted(unknown)} — allowed: "
+            f"{list(PROVENANCE_ALLOWED_KEYS)}"
         )
     return _redact(dict(provenance))
 
@@ -358,6 +382,8 @@ def create_dataset(
     if existing is not None:
         # owner 参与描述符身份：id 相同 = 同一 (owner, 描述符) → 复用。
         return existing, False
+    from sqlalchemy.exc import IntegrityError
+
     row = LakehouseDataset(
         dataset_id=did,
         name=descriptor["name"],
@@ -366,9 +392,19 @@ def create_dataset(
         cube_contract=descriptor.get("cube_contract"),
         **owner,
     )
-    with db.begin_nested():
-        db.add(row)
-        db.flush()
+    try:
+        # savepoint：并发注册撞唯一键（对方先行落地）→ 复用其行，
+        # 绝不让幂等操作以 IntegrityError 500 收场。
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        winner = db.execute(
+            select(LakehouseDataset).where(LakehouseDataset.dataset_id == did)
+        ).scalar_one_or_none()
+        if winner is None:
+            raise
+        return winner, False
     return row, True
 
 
@@ -833,12 +869,14 @@ def version_lineage(
     db, dataset_row_id: str, version_id: str, *,
     max_depth: int = MAX_LINEAGE_DEPTH,
 ) -> Dict[str, Any]:
-    """沿 parent 链上溯（有界，诚实截断披露）。"""
+    """沿 parent 链上溯（有界，诚实截断披露；深度钳制到
+    MAX_LINEAGE_DEPTH —— REST 透传的超界参数不构成自我 DoS 通道）。"""
     chain: List[Dict[str, Any]] = []
     seen = set()
     current: Optional[str] = version_id
     truncated = False
-    while current is not None and len(chain) < max(1, int(max_depth)):
+    depth_cap = max(1, min(int(max_depth), MAX_LINEAGE_DEPTH))
+    while current is not None and len(chain) < depth_cap:
         if current in seen:
             truncated = True  # 环（不可能，防御性披露）
             break

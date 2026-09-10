@@ -123,6 +123,31 @@ async def create_lakehouse_dataset(
     return {"success": True, "created": created, "dataset": dataset}
 
 
+@router.get("/lakehouse/datasets")
+async def list_lakehouse_datasets(
+    session_id: str = "",
+    limit: int = 50,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+    db=Depends(get_async_db),
+) -> Dict[str, Any]:
+    """owner 域数据集清单（新→旧，有界 ≤200）。"""
+    conv = await verify_session_owner(
+        db, _require_session_id(session_id),
+        user_id=_user.get("user_id"), owner_token=owner_token,
+    )
+    from app.services.lakehouse import dataset_registry as reg
+
+    def _fn(sync_db):
+        rows = reg.list_datasets(
+            sync_db, session_id=str(conv.session_id), limit=limit,
+        )
+        return {"datasets": [r.to_dict() for r in rows], "count": len(rows)}
+
+    payload = await _call_in_thread(_fn)
+    return {"success": True, **payload}
+
+
 @router.get("/lakehouse/datasets/{dataset_id}")
 async def get_lakehouse_dataset(
     dataset_id: str,

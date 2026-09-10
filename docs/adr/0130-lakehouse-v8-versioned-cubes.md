@@ -66,13 +66,14 @@ CAS 发布 → ③ 版本行 savepoint 插入（唯一键撞 = 复用已落地�
 ### 3. N-D Cube v3（model × scenario）
 
 `ALLOWED_DIMS` 扩至 `{time, band, polarization, vertical, model,
-scenario, y, x}`。**契约版本按需升级**：维度集 ⊆ v2 六维 → 仍写
-schema v2（既有发布路径 id 零漂移）；出现 model/scenario → 写
-schema v3（`write_labeled_cube` 唯一写入器，attrs 分派）。v3 同步
-支持**逐变量 nodata**（root attr `nodata_per_variable`）。选择层
-（`labeled_selection`）与 REST `LabeledWindowRequest` additive 扩展
-model/scenario 选择子。单元格预算（8M/64M cells）不变 —— 多维轴长
-计入乘积，超界 typed 拒绝（诚实边界，不静默分摊）。
+scenario, y, x}`。**契约版本按需升级**：维度集 ⊆ v2 六维且无逐变量
+nodata → 仍写 schema v2（既有发布路径 id 零漂移）；出现
+model/scenario 或携带 nodata_per_variable → 写 schema v3（版本字段
+恒判别投影形状）。v3 同步支持**逐变量 nodata**（root attr
+`nodata_per_variable`）。选择层（`labeled_selection`）与 REST
+`LabeledWindowRequest` additive 扩展 model/scenario 选择子。单元格
+预算（8M/64M cells）不变 —— 多维轴长计入乘积，超界 typed 拒绝
+（诚实边界，不静默分摊）。
 
 ### 4. Provenance 契约
 

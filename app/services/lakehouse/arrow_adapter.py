@@ -97,16 +97,20 @@ def publish_arrow_ipc(
             f"got {type(table).__name__}"
         )
     num_rows = int(tab.num_rows)
-    num_batches = max(1, (num_rows + 65_535) // 65_535) if num_rows else 1
     proj = _schema_projection(tab.schema)
-    proj.update({"num_rows": num_rows, "format": "arrow_ipc"})
-    merged = {**(payload or {}), **proj}
     with tempfile.TemporaryDirectory(prefix="lh_arrow_") as td:
         path = Path(td) / "data.arrows"
         with pa_mod.OSFile(str(path), "wb") as sink:
             with ipc.new_file(sink, tab.schema) as writer:
-                for batch in tab.to_batches(max_chunksize=65_535):
+                batches_out = tab.to_batches(max_chunksize=65_535)
+                for batch in batches_out:
                     writer.write_batch(batch)
+        proj.update({
+            "num_rows": num_rows,
+            "num_batches": len(batches_out),
+            "format": "arrow_ipc",
+        })
+        merged = {**(payload or {}), **proj}
         return publish_data_object(
             {"data.arrows": path},
             kind="arrow_ipc",
@@ -186,15 +190,19 @@ def read_arrow_batches(
                     )
             # 行窗口 → 精确行集（IO 触相交批，值按窗口切片 —— 与 V6
             # lazy 读纪律一致：块边界只影响 IO，不影响返回值形状）。
+            # max_rows 预算无条件生效（row_offset-only 的读也截到预算
+            # —— 结构性资源边界绝不因参数组合而旁路）。
             row_start = int(row_offset or 0)
             row_stop = total_rows
-            if row_limit is not None:
-                row_stop = min(
-                    total_rows, row_start + min(int(row_limit), max_rows)
-                )
-            if row_limit is not None or row_offset:
+            if row_offset or row_limit is not None:
                 if row_offset < 0 or (row_limit is not None and row_limit < 0):
                     raise ArrowAdapterError("row window must be non-negative")
+                want = total_rows - row_start
+                if row_limit is not None:
+                    want = min(int(row_limit), max_rows)
+                else:
+                    want = min(want, max_rows)
+                row_stop = min(total_rows, row_start + want)
                 if row_start >= row_stop:
                     raise ArrowAdapterError(
                         f"row window [{row_start}, {row_stop}) is empty — "

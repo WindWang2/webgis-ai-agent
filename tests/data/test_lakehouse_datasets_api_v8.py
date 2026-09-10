@@ -124,6 +124,24 @@ def test_dataset_create_and_describe(client):
     assert resp.status_code == 400
 
 
+def test_list_datasets_endpoint(client):
+    _create_dataset(client, "list-a")
+    _create_dataset(client, "list-b")
+    resp = client.get(
+        "/api/v1/lakehouse/datasets",
+        params={"session_id": "sess-v8"},
+    )
+    assert resp.status_code == 200
+    names = [d["name"] for d in resp.json()["datasets"]]
+    assert "list-a" in names and "list-b" in names
+    # 非 owner → 守卫 404（无清单泄漏）。
+    resp = client.get(
+        "/api/v1/lakehouse/datasets",
+        params={"session_id": "intruder"},
+    )
+    assert resp.status_code == 404
+
+
 def test_commit_and_versions_flow(client):
     did = _create_dataset(client, "flow-ds")["dataset"]["dataset_id"]
     obj = _owned_object(b"flow-v1")

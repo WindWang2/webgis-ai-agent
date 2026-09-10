@@ -474,13 +474,13 @@ def _array_dims(arr: Any) -> List[str]:
 
 
 def _require_v1_cube(root: Any, *, what: str) -> List[str]:
-    """V6 入口的版本闸（评审 R0-2）：labeled（v2）store 进入 V6 读/fork
+    """V6 入口的版本闸（评审 R0-2）：labeled（v2/v3）store 进入 V6 读/fork
     路径 = typed 拒绝 —— v1 消费者对 4-D 数组的形状假设会静默读错轴。"""
     attrs = dict(root.attrs or {})
     if attrs.get("labeled"):
         raise CubeError(
             f"{what} requires a V6 cube (schema v1, per-band arrays); this "
-            "store is a labeled cube (schema v2) — use the labeled accessors"
+            "store is a labeled cube (schema v2/v3) — use the labeled accessors"
         )
     return [str(b) for b in (attrs.get("bands") or [])]
 

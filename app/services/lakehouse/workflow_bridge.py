@@ -67,6 +67,15 @@ def commit_dataset_version_from_artifact(
     ).scalar_one_or_none()
     if artifact is None:
         raise WorkflowBridgeError(f"artifact not found: {str(artifact_id)[:32]}")
+    # owner 链：project 域 dataset 要求 artifact 归属同一 project
+    # （外来 artifact 的 metadata 不得投影进本 owner 的 provenance）；
+    # session 域 dataset 属服务端内部通道（promotion 流程直调，不经
+    # REST），artifact 归属由调用方流程保证。
+    if (dataset_row.owner_type == "project"
+            and str(artifact.project_id or "") != str(dataset_row.owner_id)):
+        raise WorkflowBridgeError(
+            "artifact belongs to a different project than the dataset"
+        )
     storage_ref = str(artifact.storage_ref or "")
     if not _ID64_RE.match(storage_ref):
         raise WorkflowBridgeError(
@@ -123,9 +132,20 @@ def version_to_fabric_descriptor(
     manifest = version_dict.get("manifest") or {}
     payload = manifest.get("payload") or {}
     bbox = payload.get("bbox")
-    if isinstance(bbox, (list, tuple)) and len(bbox) != 4:
-        bbox = None
+    try:
+        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            bbox = [float(v) for v in bbox]
+        else:
+            bbox = None
+    except (TypeError, ValueError):
+        bbox = None  # 非法形状/非数值 → 诚实 None（绝不伪造）
     feature_count = payload.get("feature_count")
+    try:
+        feature_count = (
+            int(feature_count) if feature_count is not None else None
+        )
+    except (TypeError, ValueError):
+        feature_count = None
     provenance = version_dict.get("provenance") or {}
     return DatasetDescriptor(
         id=f"lakehouse:{dataset_row.dataset_id}@{version_dict['version_id'][:12]}",
@@ -138,8 +158,8 @@ def version_to_fabric_descriptor(
         feature_type=payload.get("feature_type") or "unknown",
         srs=payload.get("crs"),
         crs=payload.get("crs"),
-        bbox=[float(v) for v in bbox] if bbox else None,
-        feature_count=int(feature_count) if feature_count is not None else None,
+        bbox=bbox,
+        feature_count=feature_count,
         metadata={
             "version_id": str(version_dict.get("version_id")),
             "dataset_id": str(dataset_row.dataset_id),

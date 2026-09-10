@@ -113,6 +113,32 @@ def test_v3_projection_and_nodata_per_variable():
     assert again == proj
 
 
+def test_nodata_per_variable_bumps_schema_version():
+    """v2 维度 + 逐变量 nodata → 投影升 v3（版本字段判别投影形状）。"""
+    proj = validate_labeled_schema(
+        dims=["time", "band", "y", "x"],
+        shape=[2, 2, 4, 4],
+        coordinates=_coords(),
+        crs="EPSG:4326",
+        dtype="float32",
+        nodata_per_variable={"data": -1.0},
+    )
+    assert proj["cube_schema_version"] == CUBE_SCHEMA_VERSION_V3
+    assert proj["nodata_per_variable"] == {"data": -1.0}
+
+
+def test_nodata_per_variable_non_numeric_rejected():
+    with pytest.raises(CubeSchemaError):
+        validate_labeled_schema(
+            dims=["time", "band", "y", "x"],
+            shape=[2, 2, 4, 4],
+            coordinates=_coords(),
+            crs="EPSG:4326",
+            dtype="float32",
+            nodata_per_variable={"data": "not-a-number"},
+        )
+
+
 def test_nodata_per_variable_unknown_variable_rejected():
     with pytest.raises(CubeSchemaError):
         validate_labeled_schema(

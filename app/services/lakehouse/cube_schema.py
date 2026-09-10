@@ -305,6 +305,8 @@ def validate_labeled_schema(
 
     # 逐变量 nodata（V8 v3 契约）：变量必须存在、值可投影 float；
     # 键序规范化（sorted）—— 投影确定性（manifest 身份前提）。
+    # 携带 nodata_per_variable 的投影升 v3（版本字段判别投影形状 ——
+    # 旧 reader 不会遇到带该键的 v2 投影）。
     nodata_per_var_out: Optional[Dict[str, float]] = None
     if nodata_per_variable is not None:
         if not isinstance(nodata_per_variable, Mapping):
@@ -317,9 +319,15 @@ def validate_labeled_schema(
                 f"nodata_per_variable references unknown variables "
                 f"{sorted(unknown_vars)}"
             )
-        nodata_per_var_out = {
-            str(k): float(v) for k, v in sorted(nodata_per_variable.items())
-        }
+        try:
+            nodata_per_var_out = {
+                str(k): float(v)
+                for k, v in sorted(nodata_per_variable.items())
+            }
+        except (TypeError, ValueError) as exc:
+            raise CubeSchemaError(
+                f"nodata_per_variable values must be numeric: {exc}"
+            ) from exc
 
     crs_info = check_crs(crs)
 
@@ -345,7 +353,11 @@ def validate_labeled_schema(
 
     projection: Dict[str, Any] = {
         "labeled": True,
-        "cube_schema_version": resolve_cube_schema_version(dims),
+        "cube_schema_version": (
+            CUBE_SCHEMA_VERSION_V3
+            if nodata_per_var_out is not None
+            else resolve_cube_schema_version(dims)
+        ),
         "dims": dims,
         "shape": list(shape_t),
         "variables": vars_out,

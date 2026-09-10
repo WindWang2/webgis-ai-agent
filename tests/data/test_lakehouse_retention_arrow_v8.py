@@ -216,6 +216,26 @@ def test_retention_prune_exposes_content_to_gc(v8_env):
     assert vids[1] not in gc_plan["candidates"]
 
 
+def test_retention_scan_beyond_display_limit(v8_env):
+    """M1 回归：>200 版本的数据集必须仍可 prune（扫描不走展示型上限）。"""
+    from app.services.lakehouse import dataset_retention as ret
+    from app.services.lakehouse import dataset_registry as reg
+
+    row_id, did, vids = _dataset_with_versions(205, name="many-v")
+    _age_versions(vids)
+    with SessionLocal() as db:
+        row = reg.get_dataset(db, row_id)
+        plan = ret.plan_retention(
+            db, row, max_versions=10, min_age_hours=0.0)
+        # 扫描覆盖全部 205 行；候选 = 超窗且无指针的最老 195 个。
+        assert plan["scanned_versions"] == 205
+        assert len(plan["candidates"]) == 195
+        result = ret.execute_retention(db, plan)
+        db.commit()
+        assert result["pruned_count"] == 195
+        assert len(reg.list_versions(db, row_id)) == 10
+
+
 # ── Arrow IPC adapter ────────────────────────────────────────────────────
 
 
@@ -295,6 +315,23 @@ def test_arrow_publish_and_batch_window_read(v8_env, tmp_path):
             identity.data_object_id, row_offset=10_000_000, row_limit=5,
             session_id="sess-v8",
         )
+
+
+def test_arrow_offset_only_read_respects_budget(v8_env):
+    """M2 回归：row_offset-only 的读也被 max_rows 预算截断（不旁路）。"""
+    from app.services.lakehouse.arrow_adapter import (
+        publish_arrow_ipc,
+        read_arrow_batches,
+    )
+    from app.services.lakehouse.data_object import normalize_owner_scope
+
+    scope = normalize_owner_scope(session_id="sess-v8")
+    obj_id = publish_arrow_ipc(_arrow_table(), owner_scope=scope).data_object_id
+    out = read_arrow_batches(
+        obj_id, row_offset=100_000, session_id="sess-v8", max_rows=100,
+    )
+    assert out["rows"] == 100  # 预算生效（否则 = 50_000）
+    assert out["total_rows"] == 150_000
 
 
 def test_arrow_commit_as_dataset_version(v8_env):

@@ -34,6 +34,10 @@ DEFAULT_MIN_AGE_HOURS = 72.0
 #: 批量 prune 上限（单次 execute 有界）。
 MAX_BATCH_PRUNES = 5_000
 
+#: retention 扫描上限（独立于展示型 list_versions 的 200 上限 ——
+#: 超界 = typed 拒绝，绝不静默部分视图；部署规模到顶即分批执行）。
+MAX_SCAN_VERSIONS = 50_000
+
 
 class RetentionError(ValueError):
     code = "LAKEHOUSE_RETENTION_INVALID"
@@ -66,17 +70,36 @@ def plan_retention(
     返回候选（新→旧序中超出保留窗口、且受指针/年龄保护之外的版本）、
     保护计数与 token；绝不修改任何行。
     """
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
-    from app.services.lakehouse.dataset_registry import list_refs, list_versions
+    from sqlalchemy import select
+
+    from app.models.lakehouse_datasets import LakehouseDatasetVersion
+    from app.services.lakehouse.dataset_registry import list_refs
 
     if max_versions < 1:
         raise RetentionError("max_versions must be >= 1")
     if min_age_hours < 0:
         raise RetentionError("min_age_hours must be >= 0")
-    versions = list_versions(
-        db, dataset_row.id, limit=10_000  # 有界扫描（台账有界前提）
+    # 专用扫描（不走展示型 list_versions 的 200 上限 —— 超过 200 个
+    # 版本的数据集必须仍可 prune 到窗口内）；超扫描上限 = typed 拒绝
+    # （绝不静默部分视图 —— 与 GC R2-1 同纪律）。
+    rows = list(
+        db.execute(
+            select(LakehouseDatasetVersion)
+            .where(LakehouseDatasetVersion.dataset_row_id == dataset_row.id)
+            .order_by(LakehouseDatasetVersion.created_at.desc(),
+                      LakehouseDatasetVersion.id.desc())
+            .limit(MAX_SCAN_VERSIONS + 1)
+        ).scalars().all()
     )
+    if len(rows) > MAX_SCAN_VERSIONS:
+        raise RetentionError(
+            f"dataset has more than {MAX_SCAN_VERSIONS} versions — "
+            "retention refuses to run on a truncated view (prune in "
+            "batches or raise the scan cap)"
+        )
+    versions = rows
     protected_by_refs = {
         str(r.version_id) for r in list_refs(db, dataset_row.id)
     }
@@ -136,11 +159,13 @@ def execute_retention(db, plan: Dict[str, Any], *,
     """
     from sqlalchemy import select
 
-    from app.models.lakehouse_datasets import LakehouseDatasetVersion
+    from app.models.lakehouse_datasets import (
+        LakehouseDatasetRef,
+        LakehouseDatasetVersion,
+    )
     from app.services.lakehouse.dataset_registry import list_refs
 
-    dataset_row_id = str(plan.get("dataset_row_id")
-                         or plan.get("dataset_id") or "")
+    dataset_row_id = str(plan.get("dataset_row_id") or "")
     token = str(plan.get("token") or "")
     if not dataset_row_id or not token:
         raise RetentionError("plan must carry dataset_row_id and token")
@@ -151,6 +176,13 @@ def execute_retention(db, plan: Dict[str, Any], *,
         raise RetentionError(f"dataset not found: {dataset_row_id[:12]}")
     max_versions = int(plan.get("max_versions") or DEFAULT_MAX_VERSIONS)
     min_age_hours = float(plan.get("min_age_hours") or 0.0)
+    # 指针行锁（PG FOR UPDATE；SQLite 写全库序列化）—— 与并发
+    # create_tag/create_branch 串行化，收窄 m10 TOCTOU 窗口。
+    db.execute(
+        select(LakehouseDatasetRef.id)
+        .where(LakehouseDatasetRef.dataset_row_id == dataset_row.id)
+        .with_for_update()
+    )
     recheck = plan_retention(
         db, dataset_row, max_versions=max_versions,
         min_age_hours=min_age_hours,
@@ -164,9 +196,11 @@ def execute_retention(db, plan: Dict[str, Any], *,
     }
     pruned: List[str] = []
     skipped_protected: List[str] = []
+    overflow = 0
     for vid in list(plan.get("candidates") or []):
         if len(pruned) >= int(max_prunes):
-            break
+            overflow += 1
+            continue
         if vid in protected_now:
             skipped_protected.append(str(vid))
             continue
@@ -181,10 +215,22 @@ def execute_retention(db, plan: Dict[str, Any], *,
         db.delete(row)
         pruned.append(str(vid))
     db.flush()
+    # 删除后终验：本事务内新出现的指针若指向已删版本 → 整体拒绝
+    # （调用方回滚 —— tag pin 恒真不变式优先于 prune 完成）。
+    final_protected = {
+        str(r.version_id) for r in list_refs(db, dataset_row.id)
+    }
+    dangling = sorted(set(pruned) & final_protected)
+    if dangling:
+        raise RetentionStalePlan(
+            "ref moved onto a pruned version during retention — "
+            "transaction must roll back (tag pin invariant)"
+        )
     return {
         "dataset_row_id": str(dataset_row.id),
         "dataset_id": str(dataset_row.dataset_id),
         "pruned": sorted(pruned),
         "pruned_count": len(pruned),
         "skipped_protected": sorted(skipped_protected),
+        "skipped_overflow": overflow,
     }
