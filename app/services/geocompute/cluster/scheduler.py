@@ -332,6 +332,36 @@ class ClusterCoordinator:
             return
         candidates = self._store.scan_dispatchable(limit=self._batch_size)
         workers = self._eligible_workers()
+
+        # V8 GPU fallback：声明 fallback_cpu 的 GPU run 等过等待窗且集群里
+        # **一个存活 GPU worker 都没有** → 持久剥离 gpu 要求（下一 tick 走
+        # CPU 路径）。诚实可见：事件 + metric。eager（workers=None = 无
+        # worker 注册表视图 = 无 GPU worker）同样适用 —— 否则单进程部署
+        # 上声明了 fallback 的 GPU run 永远卡死。
+        if self._gpu_fallback_wait_s >= 0:
+            from app.services.geocompute.cluster.placement import (
+                request_from_run_row,
+            )
+
+            has_gpu_worker = any(
+                int(((w.get("capability") or {}).get("gpu_count")) or 0) > 0
+                for w in (workers or [])
+            )
+            if not has_gpu_worker:
+                now_ts = time.time()
+                for c in candidates:
+                    req = request_from_run_row(c)
+                    if req.gpu <= 0 or not req.fallback_cpu:
+                        continue
+                    if (now_ts - _created_ts(c)) < self._gpu_fallback_wait_s:
+                        continue
+                    if self._store.downgrade_gpu_request(c["run_id"]):
+                        self._events.append(
+                            c["run_id"], "gpu_fallback",
+                            status=f"gpu={req.gpu}", worker_id=self._coordinator_id,
+                        )
+                        record_gpu_fallback()
+
         picked: list[dict[str, Any]] = []
         within_tenant_key = None
         if workers is None:
@@ -347,29 +377,6 @@ class ClusterCoordinator:
                 request_from_run_row,
                 scarcity_rank_key,
             )
-
-            # V8 GPU fallback：声明 fallback_cpu 的 GPU run 等过等待窗且
-            # 集群里**一个存活 GPU worker 都没有** → 持久剥离 gpu 要求
-            # （下一 tick 走 CPU 路径）。诚实可见：事件 + metric。
-            if self._gpu_fallback_wait_s >= 0:
-                has_gpu_worker = any(
-                    int(((w.get("capability") or {}).get("gpu_count")) or 0) > 0
-                    for w in workers
-                )
-                if not has_gpu_worker:
-                    now_ts = time.time()
-                    for c in candidates:
-                        req = request_from_run_row(c)
-                        if req.gpu <= 0 or not req.fallback_cpu:
-                            continue
-                        if (now_ts - _created_ts(c)) < self._gpu_fallback_wait_s:
-                            continue
-                        if self._store.downgrade_gpu_request(c["run_id"]):
-                            self._events.append(
-                                c["run_id"], "gpu_fallback",
-                                status=f"gpu={req.gpu}", worker_id=self._coordinator_id,
-                            )
-                            record_gpu_fallback()
 
             gated: list[dict[str, Any]] = []
             eligible_counts: dict[str, int] = {}

@@ -133,10 +133,16 @@ def run_geocompute_node(
         guard = _placement_guard(self, exec_node, resource_envelope, worker_id)
         if guard == "retry":
             return  # celery self.retry 已抛 Retry（有界：max_retries=3）
-        _finalize_placement_failure(job_id, exec_node.node_id, run_id,
-                                    node_attempt, worker_id)
-        return {"rows": 0, "ref_id": None, "metadata": {
-            "error_code": "PLACEMENT_MISMATCH", "node_id": exec_node.node_id}}
+        # V8 修复（V7 潜伏缺陷）：``None`` = 合格或守卫缺席 → **继续执行**；
+        # 只有显式 ``"failed"``（重投耗尽）才落 job 行终态。此前 None 也会
+        # 走 finalize —— 任何带 envelope 的 durable 节点从未通过过守卫
+        #（V7 e2e 未携带 envelope，故未暴露；V8 acceptance 首次踩中）。
+        if guard == "failed":
+            _finalize_placement_failure(job_id, exec_node.node_id, run_id,
+                                        node_attempt, worker_id)
+            return {"rows": 0, "ref_id": None, "metadata": {
+                "error_code": "PLACEMENT_MISMATCH",
+                "node_id": exec_node.node_id}}
 
     if job_id is None:
         # 直调（无 durable 语义）只允许 eager 测试路径存在；生产派发必经
