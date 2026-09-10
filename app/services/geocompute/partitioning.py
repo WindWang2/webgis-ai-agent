@@ -123,12 +123,6 @@ class PartitionPlan:
     @property
     def parts_by_index(self) -> dict[int, Any]:
         return {p.index: p for p in self.parts}
-    #: 计划附随元数据（raster 源头 header 等；合并侧消费）
-    meta: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def parts_by_index(self) -> dict[int, Any]:
-        return {p.index: p for p in self.parts}
 
     def summary(self) -> dict[str, Any]:
         return {"scheme": self.scheme, "tiles": self.tiles,
@@ -200,7 +194,6 @@ def plan_raster(
             details={"width": width, "height": height},
         )
     cols, rows = _grid_dims(spec.target_tiles, float(width), float(height))
-    tiles = cols * rows
     halo = int(spec.halo_px)
     parts: list[RasterPartition] = []
     core_ws = max(1, math.ceil(width / cols))

@@ -29,7 +29,7 @@ class RasterioUnavailableError(RuntimeError):
 
 def _require_rasterio():
     try:
-        import rasterio  # noqa: F401
+        import rasterio  # noqa: F401 - 依赖探测（缺席 → 类型化失败）
         from rasterio import windows  # noqa: F401
 
         return True
@@ -46,7 +46,6 @@ def crop_window(raster_path: str, window: dict[str, int], out_path: str) -> dict
     返回 {output_path, width, height}。
     """
     _require_rasterio()
-    import numpy as np
     import rasterio
     from rasterio.windows import Window
 

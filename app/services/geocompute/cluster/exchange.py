@@ -96,7 +96,6 @@ class ArtifactExchange:
                   owner_scope: Optional[str], kind: str, codec: str) -> None:
         try:
             from app.models.db_model import GeoComputeArtifact
-            from app.services.geocompute.cluster.store import _utcnow
             from datetime import datetime, timezone
 
             now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -127,7 +126,6 @@ class ArtifactExchange:
     def _touch(self, key: str) -> None:
         try:
             from app.models.db_model import GeoComputeArtifact
-            from app.services.geocompute.cluster.store import _utcnow
             from datetime import datetime, timezone
 
             now = datetime.now(timezone.utc).replace(tzinfo=None)
