@@ -602,6 +602,10 @@ app.add_middleware(InflightGaugeMiddleware)
 
 app.include_router(auth_routes.router, prefix="/api/v1", tags=["认证"])
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
+# Platform V4（ADR-0131 D7）：构建身份端点（公开、极简）。
+from app.api.routes import version as version_routes  # noqa: E402
+
+app.include_router(version_routes.router, prefix="/api/v1", tags=["系统"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])

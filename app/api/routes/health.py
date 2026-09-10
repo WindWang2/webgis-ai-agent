@@ -92,11 +92,15 @@ def _live_agent_runtime() -> str:
 @router.get("/health")
 def health_check():
     """基础存活检查"""
+    # Platform V4（ADR-0131 D7）：version 从 build_info（VERSION 文件）取——
+    # 修复硬编码 "0.1.3" 与 VERSION 文件（0.1.0.0）的漂移。
+    from app.core.build_info import version_string
+
     return {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": "WebGIS AI Agent",
-        "version": "0.1.3",
+        "version": version_string(),
         "agent_runtime": _live_agent_runtime(),
         # V5-B: any-worker-alive is a service average — with a pool >1 some
         # workers can be down (sessions on them degrade to ChatEngine) while
