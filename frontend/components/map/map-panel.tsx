@@ -277,8 +277,8 @@ export function MapPanel({
   // MapLibre transformRequest re-apply).
   const transformRequest = useCallback(
     (url: string, resourceType?: string) =>
-      buildTileTransformRequest(() => sessionTokenRef?.current ?? ownerToken ?? null)(url, resourceType),
-    [ownerToken, sessionTokenRef],
+      buildTileTransformRequest(() => ownerToken ?? sessionTokenRef?.current ?? null)(url, resourceType),
+    [ownerToken],
   )
 
   const handleFilterChange = useCallback((layerId: string, ranges: number[][]) => {
@@ -579,7 +579,7 @@ export function MapPanel({
     const spec = injectResolvedRefSources(
       spec0,
       sessionId
-        ? { sessionId, ownerToken: sessionTokenRef?.current ?? ownerToken ?? null }
+        ? { sessionId, ownerToken: ownerToken ?? sessionTokenRef?.current ?? null }
         : null,
       hudOwnedRefs,
     )
@@ -641,7 +641,7 @@ export function MapPanel({
       })
       // #1008：reconcile 失败的裸 console.error 泄漏内部细节 → devOnly。
       .catch((e) => devOnly.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation])
+  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, issueCartographicObservation])
 
   // Runtime V4（§14）：过滤命中证据 —— settle 后对「有过滤的内联层」做有界
   // 单遍计数（≤20k 要素；MVT/超限层如实 unknown），latest-wins 记录进
