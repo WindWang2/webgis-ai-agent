@@ -109,6 +109,13 @@ celery_app.conf.update(
     task_soft_time_limit=3300,
 )
 
+# Platform V4（ADR-0131 D4）：worker 生命周期信号（online/draining/offline +
+# 有界 drain）。防御性挂接——无信号环境（eager/测试）下 no-op；prefork 模式
+# 的 warm shutdown 由 Celery 自身协调，本挂接补齐观测面与 solo/线程池路径。
+from app.services.jobs.worker_lifecycle import install_celery_lifecycle_signals  # noqa: E402
+
+install_celery_lifecycle_signals(celery_app)
+
 # 自动发现任务
 celery_app.autodiscover_tasks(["app.services"])
 

@@ -412,6 +412,10 @@ def durable_job(
 
     logger.info("[jobs] started job_id=%s worker=%s", job_id, worker_id or "-")
     watchdog.start()
+    from app.services.jobs.worker_lifecycle import get_worker_lifecycle
+
+    _lifecycle = get_worker_lifecycle()
+    _lifecycle.mark_task_started()
     try:
         # Runtime observability (W6): re-bind the turn's correlation (dropped at
         # the Celery process boundary) so the worker's tool_metrics / JobOrigin /
@@ -463,6 +467,7 @@ def durable_job(
     else:
         handle.cleanup_temps()
     finally:
+        _lifecycle.mark_task_finished()
         # 看门狗是守护线程，但必须在任务体结束时立刻停 —— 否则每个 job 留一个线程
         # 持续轮询 DB，长跑 worker 会累积成连接池压力。
         watchdog.stop()

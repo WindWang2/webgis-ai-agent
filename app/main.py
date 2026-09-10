@@ -34,6 +34,10 @@ try:
 except ImportError:  # pragma: no cover - 旧版 execution_engine 没有该函数
     drain_background_tasks = None  # type: ignore[assignment]
 
+# Platform V4（ADR-0131 D4）：shutdown drain 的 deadline（秒）。到点记录
+# warning 并继续关停——进程自己先自觉，k8s terminationGracePeriod 只是最后防线。
+SHUTDOWN_DRAIN_DEADLINE_S: float = 20.0
+
 logger = logging.getLogger(__name__)
 
 
@@ -288,9 +292,23 @@ async def lifespan(app: FastAPI):
 
     # F15-wiring：teardown 前排空 chat fire-and-forget 背景任务（标题生成、
     # ws 广播等），避免它们在 engine/http client 关闭后继续写已失效资源。
+    # Platform V4（ADR-0131 D4）：drain 落进 deadline 看门狗——到点记录并
+    # 继续关停，绝不挂死进程（k8s terminationGracePeriod 是最后防线，
+    # 进程自身先自觉）。SHUTDOWN_DRAIN_DEADLINE_S 可配（默认 20s）。
     if drain_background_tasks is not None:
+        deadline_s = SHUTDOWN_DRAIN_DEADLINE_S
         try:
-            await drain_background_tasks()
+            # wait_for 超时会 cancel 内部 drain（drain 自身的 finally 兜底
+            # 随之执行）——比 shield 更安全：超时后不留"还在写已失效资源"的
+            # 后台任务。
+            await asyncio.wait_for(drain_background_tasks(), timeout=deadline_s)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[lifespan] drain_background_tasks exceeded deadline (%.1fs); "
+                "proceeding with shutdown", deadline_s,
+            )
+        except asyncio.CancelledError:
+            raise
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[lifespan] drain_background_tasks failed: {e}")
 
@@ -575,6 +593,12 @@ app.add_middleware(RequestCorrelationMiddleware)
 # R1-NIT：fail-fast（模块存在性由结构闸锁定，静默禁用 = 关联链路静默断裂）
 from app.lib.observability.trace_context import TraceContextMiddleware
 app.add_middleware(TraceContextMiddleware)
+
+# Platform V4（ADR-0131 D4）：in-flight 请求计数（drain 可观测性）。
+# 纯 ASGI 中间件，http + websocket 全 scope；注册在 trace 之后（内层），
+# 计数语义 = 「进入应用栈的请求」，shutdown 时归零即排空完成。
+from app.lib.observability.metrics import InflightGaugeMiddleware
+app.add_middleware(InflightGaugeMiddleware)
 
 app.include_router(auth_routes.router, prefix="/api/v1", tags=["认证"])
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
