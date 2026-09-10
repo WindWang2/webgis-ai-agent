@@ -127,8 +127,14 @@ describe('workbench 多 tab 协同（W5）', () => {
     // 本 tab 先有本地组织态（已提交基线）
     useHudStore.getState().createLayerGroup('本地组');
     commitSpy.mockResolvedValueOnce({ mutation_revision: 6 });
-    await new Promise((r) => setTimeout(r, 950)); // 防抖窗口
-    expect(commitSpy).toHaveBeenCalled();
+    // 防抖窗口：轮询而非固定 950ms 睡眠 —— 全量并行跑时定时器拥挤，
+    // 固定窗口偶发不够（V7 review 后的稳定性修复）。
+    await vi.waitFor(
+      () => {
+        expect(commitSpy).toHaveBeenCalled();
+      },
+      { timeout: 4000, interval: 50 },
+    );
     // 晚到 tab hello → 本 tab 应答 doc
     const lateTab = new FakeBroadcastChannel(`wb5:${S}`);
     const received: unknown[] = [];
