@@ -121,13 +121,13 @@ def test_cascade_cancels_tracker_durable_and_bridge(monkeypatch):
     registry_cancels = []
     aborts = []
 
-    import app.api.routes.chat as chat_routes
+    import app.services.chat.engine_instance as engine_instance
     import app.services.jobs.store as store_mod
     from app.lib import cancellation as cancels
 
     engine_holder = _Engine()
     engine_holder.tracker = _Tracker()
-    monkeypatch.setattr(chat_routes, "get_engine", lambda: engine_holder)
+    monkeypatch.setattr(engine_instance, "try_get_chat_engine", lambda: engine_holder)
     async def _fake_request_cancel(db, jid):
         durable_calls.append(jid)
         return (True, "cancelling")
@@ -155,6 +155,26 @@ def test_cascade_cancels_tracker_durable_and_bridge(monkeypatch):
     assert durable_calls == ["dj-1"]
     assert registry_cancels and registry_cancels[0][0] == "dj-1"
     assert aborts == ["s-casc"]
+
+
+def test_cascade_graceful_when_engine_uninitialized(monkeypatch):
+    """CORE-03: When ChatEngine is not initialized, cancel_agent_task_and_turn does not raise HTTPException."""
+    from app.services.chat import session_cancellation as seam
+    import app.services.chat.engine_instance as engine_instance
+
+    monkeypatch.setattr(engine_instance, "try_get_chat_engine", lambda: None)
+    monkeypatch.setattr(
+        seam, "abort_active_pi_turn",
+        lambda sid, **kw: asyncio.sleep(0, result={"aborted": True, "detail": "ok"}),
+    )
+
+    async def run():
+        return await seam.cancel_agent_task_and_turn(None, "task-uninit")
+
+    result = asyncio.run(run())
+    assert result["cancelled"] is False
+    assert result["durable_cancels"] == []
+    assert result["pi_abort"] == {"aborted": True, "detail": "ok"}
 
 
 # ── session wave gate fairness ───────────────────────────────────────────────

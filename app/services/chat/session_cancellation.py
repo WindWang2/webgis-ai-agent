@@ -105,14 +105,24 @@ async def cancel_agent_task_and_turn(
     """
     from app.lib.cancellation import registry as cancellation_registry
     from app.services.jobs.store import DurableJobStore
-    from app.api.routes.chat import get_engine
+    from app.services.chat.engine_instance import try_get_chat_engine
 
-    tracker = get_engine().tracker
-    task_info = tracker.get(task_id)
-    background_job_ids = (
-        list(task_info.background_job_ids) if task_info else []
-    )
-    cancelled = tracker.cancel(task_id)
+    engine = try_get_chat_engine()
+    if engine is None:
+        logger.warning(
+            "[session_cancellation] ChatEngine not initialized; skipping tracker cancellation for task %s",
+            task_id,
+        )
+        task_info = None
+        background_job_ids = []
+        cancelled = False
+    else:
+        tracker = engine.tracker
+        task_info = tracker.get(task_id)
+        background_job_ids = (
+            list(task_info.background_job_ids) if task_info else []
+        )
+        cancelled = tracker.cancel(task_id)
     try:
         for job_id in background_job_ids:
             await DurableJobStore.request_cancel(db, job_id)
