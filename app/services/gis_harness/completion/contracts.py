@@ -385,10 +385,12 @@ def derive_product_verdict(
 
     # V7（Goal 08 Phase I）追加裁决：cartographic review 的 deterministic
     # fail 压低 READY（additive 参数 —— 缺省 None 不参与，零漂移）。
+    # 降档以 blocking_rules 非空为准（= 真实 deterministic fail 清单）；
+    # 键缺失的手工 dict 不得凭布尔缺省误降档。
     cartography_summary = _cartography_review_summary(cartographic_review)
     if (
         cartography_summary is not None
-        and not cartography_summary["no_deterministic_failures"]
+        and cartography_summary["blocking_rules"]
         and verdict in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS)
     ):
         verdict = VERDICT_NEEDS_REPAIR
@@ -439,12 +441,13 @@ def _cartography_review_summary(
         # （空 dict 不得伪装成「有失败证据」而误降档）。
         return None
     blocking = sorted({
-        str(c.get("rule")) for c in checks
-        if c.get("status") == "fail" and c.get("evidence_class") == "deterministic"
+        str(c["rule"]) for c in checks
+        if c.get("rule") and c.get("status") == "fail"
+        and c.get("evidence_class") == "deterministic"
     })
     warnings = sorted({
-        str(c.get("rule")) for c in checks
-        if c.get("status") == "warning"
+        str(c["rule"]) for c in checks
+        if c.get("rule") and c.get("status") == "warning"
     })[:_CARTOGRAPHY_RULE_LIMIT]
     auto_ops: List[str] = []
     for attempt in (review.get("attempts") or []):

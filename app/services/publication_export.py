@@ -367,7 +367,9 @@ def render_publication_pdf(
             comp = compile_mapspec_to_svg_detailed(
                 frame_doc,
                 target_dpi=target_dpi,
-                width=int(page_w * 4),   # mm→px 近似 4px/mm（≥300dpi 视觉）
+                # 栅格密度近似 4px/mm（固定，保输出 byte 一致）；target_dpi 驱动
+                # 文本/线宽的 dpi_scale（mapspec_to_svg），不改画布像素尺寸
+                width=int(page_w * 4),
                 height=int(page_h * 4),
                 padding=24,
                 include_chrome=True,

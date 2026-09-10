@@ -218,7 +218,7 @@ class TestVerdictCartographyConsumption:
                  "evidence_class": "deterministic"},
             ],
         }
-        payload = derive_product_verdict(self._make(),
+        payload = derive_product_verdict(_complete_result(),
                                          cartographic_review=review)
         assert payload["verdict"] == VERDICT_READY_WITH_WARNINGS
         assert payload["cartography"]["no_deterministic_failures"] is True
@@ -270,3 +270,78 @@ class TestVerdictCartographyConsumption:
         payload = derive_product_verdict(self._make(),
                                          cartographic_review=review)
         assert len(payload["cartography"]["warning_rules"]) <= 8
+
+
+def _complete_result():
+    from app.services.gis_harness.completion.contracts import (
+        MapCompletionFinding,
+        MapCompletionResult,
+    )
+    return MapCompletionResult(
+        status="complete",
+        findings=[MapCompletionFinding(code="minor_warning",
+                                       severity="warning")],
+    )
+
+
+class TestReviewP2Regressions:
+    """独立 review P2/P3 回归：duplicate 规则语义域 + 空 id 守卫。"""
+
+    def test_dual_charts_on_same_layer_not_flagged(self):
+        """chart_panel 同层多实例是合法构成（多图表产品）—— 不得触发
+        DUPLICATE_LEGEND_BINDING，review 状态不得被翻成 warning。"""
+        report = evaluate_cartography_semantics(_spec_with_components([
+            {"id": "chart-a", "type": "chart_panel",
+             "options": {"layerId": "districts"}},
+            {"id": "chart-b", "type": "chart_panel",
+             "options": {"layerId": "districts"}},
+        ]))
+        check = _checks_by_rule(report)["DUPLICATE_LEGEND_BINDING"]
+        assert check.status == "pass"
+
+    def test_empty_id_floating_component_skipped(self):
+        """空 id 浮动组件：不可达检测跳过（不产出悬空 auto_safe 建议）。"""
+        report = evaluate_cartography_semantics(_spec_with_components([
+            {"id": "", "type": "chart_panel",
+             "placement": {"mode": "floating", "x": -900, "y": 50,
+                           "width": 300, "height": 200}},
+        ]))
+        check = _checks_by_rule(report)["COMPONENT_OUTSIDE_CANVAS"]
+        assert check.status == "pass"
+
+    def test_verdict_all_pass_but_missing_bool_key_no_downgrade(self):
+        """手工 dict 缺 no_deterministic_failures 键：零 fail 不得误降档。"""
+        from app.services.gis_harness.completion.contracts import (
+            VERDICT_READY_WITH_WARNINGS,
+            derive_product_verdict,
+        )
+        review = {
+            "status": "passed",
+            "checks": [
+                {"rule": "COMPONENT_OUTSIDE_CANVAS", "status": "pass",
+                 "evidence_class": "deterministic"},
+            ],
+        }
+        payload = derive_product_verdict(_complete_result(),
+                                         cartographic_review=review)
+        assert payload["verdict"] == VERDICT_READY_WITH_WARNINGS
+
+    def test_verdict_checks_without_rule_keys(self):
+        """缺 rule 键的 check 不得产出 "None" 规则名。"""
+        from app.services.gis_harness.completion.contracts import (
+            derive_product_verdict,
+        )
+        review = {
+            "status": "failed_unrepairable",
+            "no_deterministic_failures": False,
+            "checks": [
+                {"status": "fail", "evidence_class": "deterministic"},
+                {"rule": "COMPONENT_LINK_CYCLE", "status": "fail",
+                 "evidence_class": "deterministic"},
+            ],
+        }
+        payload = derive_product_verdict(_complete_result(),
+                                         cartographic_review=review)
+        assert "None" not in payload["cartography"]["blocking_rules"]
+        assert payload["cartography"]["blocking_rules"] == \
+            ["COMPONENT_LINK_CYCLE"]

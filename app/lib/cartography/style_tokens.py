@@ -222,7 +222,7 @@ def _collect_paint_colors(paint: Any) -> List[str]:
     def _walk(node: Any) -> None:
         if isinstance(node, str):
             if _HEX_COLOR_RE.match(node):
-                found.append(node)
+                found.append(node.lower())
         elif isinstance(node, list):
             for item in node:
                 _walk(item)
@@ -307,10 +307,11 @@ def plan_palette_profile_migration(
 ) -> Dict[str, Any]:
     """主题/输出 profile 切换时的调色板迁移建议（**只建议，不执行**）。
 
-    识别规则：paint 的全部输出色精确命中同一已注册色带的连续窗口 →
-    可迁移；在 print 目标下选取同 kind、同级数、print_safe 的替代带
-    （逐色等位替换）。用户自定义颜色（不在本库色带内）→ ``applicable=
-    False`` + 披露，绝不猜近邻色改写（不虚构语义）。
+    识别规则：paint 的全部输出色（hex 大小写归一）为同一已注册色带的
+    子集（最紧拟合，见 ``_ramp_of_colors``）→ 可迁移；在 print 目标下
+    选取同 kind、同级数、print_safe 的替代带（语义位置等位替换）。用户
+    自定义颜色（不在本库色带内）→ ``applicable=False`` + 披露，绝不猜
+    近邻色改写（不虚构语义）。
 
     返回：``{applicable, source_palette, target_palette, patch, disclosures}``
     patch 为 paint 同形的等位色替换（消费方自行评审后经既有 mutation
@@ -366,9 +367,12 @@ def plan_palette_profile_migration(
 
 
 def _remap_paint_colors(paint: Any, remap: Dict[str, str]) -> Any:
-    """等位色替换（深度遍历 paint；结构与其余值原样保留）。"""
+    """等位色替换（深度遍历 paint；结构与其余值原样保留）。hex 查找
+    大小写无关 —— remap 键为小写（识别阶段归一），大写原色同样命中。"""
     if isinstance(paint, str):
-        return remap.get(paint, paint)
+        if _HEX_COLOR_RE.match(paint):
+            return remap.get(paint.lower(), paint)
+        return paint
     if isinstance(paint, list):
         return [_remap_paint_colors(item, remap) for item in paint]
     if isinstance(paint, dict):

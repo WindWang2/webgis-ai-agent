@@ -374,3 +374,40 @@ class TestRegistryV7Contract:
 
     def test_clean_registry_still_validates(self, registry):
         assert registry.validate() == []
+
+
+class TestRegistryEdgePaths:
+    """review P3 回归：弃用兜底分支与 deprecated×filter 组合。"""
+
+    def test_recommend_deprecated_fallback_when_all_excluded(self, registry):
+        for cid in registry.all_ids:
+            desc = registry.get(cid)
+            registry._by_id[cid] = desc.model_copy(
+                update={"deprecated": True,
+                        "deprecated_by": (registry.all_ids[1]
+                                          if cid == registry.all_ids[0]
+                                          else "")})
+        recs = registry.recommend(ComponentRecommendationContext(
+            output_target="interactive"), limit=4)
+        assert recs
+        assert all(r.reasons == ["deprecated fallback"] for r in recs)
+
+    def test_search_include_deprecated_with_filters(self, registry):
+        desc = registry.get("continuous_colorbar")
+        registry._by_id["continuous_colorbar"] = desc.model_copy(
+            update={"deprecated": True, "deprecated_by": "legend"})
+        # 弃用 + 类目过滤：缺省排除，显式 include 命中且仍受 category 约束
+        assert registry.search("色条", category="legend") == []
+        hits = registry.search("色条", category="legend",
+                               include_deprecated=True)
+        assert [h.descriptor.id for h in hits] == ["continuous_colorbar"]
+
+    def test_explicit_source_link_namespace(self):
+        """review P3：layer/source 命名空间不得混指（source id 冒充 layer
+        必须披露悬空）。"""
+        spec = _spec_with_links([
+            {"src": "chart-1", "dst": "districts", "type": "binds_to",
+             "dst_kind": "source"},
+        ])
+        graph = build_component_graph(spec)
+        assert any("source" in d for d in graph.disclosures)

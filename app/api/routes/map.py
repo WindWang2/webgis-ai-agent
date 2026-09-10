@@ -333,7 +333,8 @@ async def export_map_as_vector_pdf(
                 lambda: render_publication_pdf(
                     body.mapspec,
                     title=body.title or "WebGIS AI Agent 专题地图",
-                    target_dpi=body.target_dpi if body.target_dpi else 300,
+                    # 直传钳制：None→300 缺省，0/负→72 下限（生效值随响应披露）
+                    target_dpi=body.target_dpi,
                 ),
             ),
             timeout=120.0,

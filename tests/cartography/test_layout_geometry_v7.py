@@ -245,3 +245,38 @@ class TestFullReport:
         payload = layout_geometry_report(spec, _canvas()).to_bounded_dict()
         assert set(payload) == {"placements", "adjustments", "issues"}
         assert payload["placements"][0]["id"] == "c"
+
+
+class TestCascadeWrapRegression:
+    """review P1 回归：wrap 重置 x 会再入高遮挡列 —— 残余重叠必须显式
+    披露（unresolvable_overlap），不允许静默输出重叠位置。"""
+
+    def test_wrap_into_tall_blocker_discloses_unresolvable(self):
+        canvas = _canvas(width=800, height=600)
+        safe = safe_area_for(canvas, None)
+        report = resolve_floating_rects([
+            _floating("tall", 8, 8, 500, 2500, z=10),     # 高遮挡列
+            _floating("r1", 520, 8, 260, 100, z=20),      # 右缘堆叠
+            _floating("r2", 520, 120, 260, 100, z=30),
+            _floating("incoming", 300, 300, 200, 100, z=40),
+        ], canvas, safe)
+        # 无论级联是否收敛：最终 placement 不得残余重叠，或必须披露不可解
+        final = report.rect_for("incoming")
+        others = [report.rect_for(i) for i in ("tall", "r1", "r2")]
+        residual = any(final.intersects(o, gap=FLOATING_GAP_PX) for o in others)
+        disclosed = any(i.code == "unresolvable_overlap"
+                        and "incoming" in i.component_ids for i in report.issues)
+        assert not residual or disclosed
+
+    def test_deterministic_under_wrap(self):
+        canvas = _canvas(width=800, height=600)
+        safe = safe_area_for(canvas, None)
+        comps = [
+            _floating("tall", 8, 8, 500, 2500, z=10),
+            _floating("r1", 520, 8, 260, 100, z=20),
+            _floating("r2", 520, 120, 260, 100, z=30),
+            _floating("incoming", 300, 300, 200, 100, z=40),
+        ]
+        r1 = resolve_floating_rects(comps, canvas, safe)
+        r2 = resolve_floating_rects(comps, canvas, safe)
+        assert r1.to_bounded_dict() == r2.to_bounded_dict()

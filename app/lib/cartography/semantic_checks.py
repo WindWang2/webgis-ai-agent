@@ -2532,7 +2532,12 @@ def _check_component_graph_semantics(
             h = float(placement.get("height", 0) or 0)
         except (TypeError, ValueError):
             continue
-        cid = str(c.get("id") or c.get("type") or "?")
+        # 与 layout_geometry.check_component_bounds 的 id 归一同口径
+        # （id or ""）—— 空 id 时 bounds 侧不产条目，本侧也不得用
+        # type/"?" 兜底造出匹配不上的悬空引用（auto_safe 建议会失配）。
+        cid = str(c.get("id") or "")
+        if not cid:
+            continue
         if w <= 0 or h <= 0:
             continue
         if x + w <= 0 or y + h <= 0:

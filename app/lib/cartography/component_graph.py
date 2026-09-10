@@ -181,13 +181,18 @@ def _project_node(component: Dict[str, Any], comp_reg: Any) -> ComponentNode:
     desc = comp_reg.get(ctype) if hasattr(comp_reg, "get") else None
     if desc is None and hasattr(comp_reg, "get_by_type"):
         desc = comp_reg.get_by_type(ctype)
+    raw_priority = component.get("priority")
+    if isinstance(raw_priority, (int, float)) and not isinstance(raw_priority, bool):
+        priority = int(raw_priority)
+    else:
+        priority = int(desc.priority) if desc is not None else 50
     return ComponentNode(
         id=str(component.get("id") or ""),
         type=ctype,
         enabled=_visible_enabled(component),
         semantic_role=(desc.semantic_role if desc is not None else ""),
         collision_class=(desc.collision_class if desc is not None else "panel"),
-        priority=int(component.get("priority") or (desc.priority if desc is not None else 50)),
+        priority=priority,
         variant=str(component.get("variant") or ""),
         placement_mode=_placement_mode(component),
         layer_binding=_layer_binding_of(component),
@@ -223,14 +228,14 @@ def build_component_graph(spec: Optional[Dict[str, Any]]) -> ComponentGraph:
         by_id[cid] = component
         nodes.append(_project_node(component, comp_reg))
 
-    known_layer_ids = _collect_layer_ids(spec)
+    known_layers, known_sources = _collect_layer_and_source_ids(spec)
     links: List[ComponentLink] = []
 
     # ── derived 通道 ─────────────────────────────────────────────────
     for node in nodes:
         component = by_id.get(node.id, {})
         if node.layer_binding:
-            if node.layer_binding in known_layer_ids:
+            if node.layer_binding in known_layers:
                 links.append(ComponentLink(
                     src=node.id, dst=node.layer_binding,
                     dst_kind="layer", type="binds_to", origin="derived"))
@@ -271,11 +276,16 @@ def build_component_graph(spec: Optional[Dict[str, Any]]) -> ComponentGraph:
             dst_kind = str(raw.get("dst_kind") or "component")
             if dst_kind not in ("component", "layer", "source"):
                 dst_kind = "component"
+            # 命名空间各自校验：layer 指向 layers、source 指向 sources，
+            # 互不混用（混指是模板笔误，如实披露而非静默放行）。
             if dst_kind == "component" and dst not in by_id:
                 disclosures.append(f"component_link 悬空 dst：{dst[:48]}")
                 continue
-            if dst_kind == "layer" and dst not in known_layer_ids:
+            if dst_kind == "layer" and dst not in known_layers:
                 disclosures.append(f"component_link 悬空 layer：{dst[:48]}")
+                continue
+            if dst_kind == "source" and dst not in known_sources:
+                disclosures.append(f"component_link 悬空 source：{dst[:48]}")
                 continue
             links.append(ComponentLink(
                 src=src, dst=dst, dst_kind=dst_kind,  # type: ignore[arg-type]
@@ -287,17 +297,19 @@ def build_component_graph(spec: Optional[Dict[str, Any]]) -> ComponentGraph:
     return ComponentGraph(nodes=nodes, links=links, disclosures=disclosures)
 
 
-def _collect_layer_ids(spec: Optional[Dict[str, Any]]) -> set:
-    ids: set = set()
+def _collect_layer_and_source_ids(spec: Optional[Dict[str, Any]]) -> Tuple[set, set]:
+    """(layer ids, source ids) —— 两个命名空间分开维护。"""
+    layer_ids: set = set()
     layers = (spec or {}).get("layers")
     if isinstance(layers, list):
         for layer in layers:
             if isinstance(layer, dict) and isinstance(layer.get("id"), str):
-                ids.add(layer["id"])
+                layer_ids.add(layer["id"])
+    source_ids: set = set()
     sources = (spec or {}).get("sources")
     if isinstance(sources, dict):
-        ids.update(k for k in sources.keys() if isinstance(k, str))
-    return ids
+        source_ids.update(k for k in sources.keys() if isinstance(k, str))
+    return layer_ids, source_ids
 
 
 def _first_enabled_of_type(nodes: List[ComponentNode], ctype: str) -> str:
@@ -314,10 +326,18 @@ def _any_of_type(nodes: List[ComponentNode], ctype: str) -> bool:
 # ── 校验（QA / harness finalization 消费）───────────────────────────────
 
 
+#: duplicate_binding 检测的语义域：图例族同层重复才是冲突根语义
+#: （QA 规则 DUPLICATE_LEGEND_BINDING 的域）。chart_panel 等
+#: cardinality=multiple 组件同层多实例是合法构成（双图表产品），不在
+#: 此列 —— 它们的重复由 composition binding 语义另行裁决。
+LEGEND_FAMILY_TYPES = frozenset({"legend", "continuous_colorbar", "categorical_legend"})
+
+
 def validate_component_graph(graph: ComponentGraph) -> List[GraphIssue]:
     """图级结构校验。码表（QA 与测试锁词表）：
 
-    - ``duplicate_binding``：同型组件绑定同一图层（图例重复的根语义）
+    - ``duplicate_binding``：同型**图例族**组件绑定同一图层（图例重复的
+      根语义；其余类型同层多实例合法，不在此列）
     - ``cycle``：requires/under 边成环（z 序/依赖不可满足）
     - ``unknown_component_type``：registry 无该类型 descriptor
     - ``orphan_binding``：binds_to 的组件无 layer_binding 语义却被显式声明
@@ -325,13 +345,13 @@ def validate_component_graph(graph: ComponentGraph) -> List[GraphIssue]:
     """
     issues: List[GraphIssue] = []
 
-    # duplicate binding：同 type 的两个组件 binds_to 同一 layer
+    # duplicate binding：同型图例族组件 binds_to 同一 layer
     seen_binding: Dict[Tuple[str, str], List[str]] = {}
     for lk in graph.links:
         if lk.type != "binds_to" or lk.dst_kind != "layer":
             continue
         node = graph.node(lk.src)
-        if node is None:
+        if node is None or node.type not in LEGEND_FAMILY_TYPES:
             continue
         seen_binding.setdefault((node.type, lk.dst), []).append(lk.src)
     for (ctype, layer_id), ids in sorted(seen_binding.items()):
@@ -339,7 +359,7 @@ def validate_component_graph(graph: ComponentGraph) -> List[GraphIssue]:
             issues.append(GraphIssue(
                 code="duplicate_binding", severity="warning",
                 message=f"{len(ids)} 个 {ctype} 组件绑定同一图层 {layer_id}",
-                ids=sorted(ids)))
+                ids=sorted(ids)[:8]))
 
     # cycle 检测（requires / under；Kahn 残留 = 环）
     for cycle_type in ("requires", "under"):
@@ -390,7 +410,11 @@ def _precedence_edges(graph: ComponentGraph, link_type: str) -> List[Tuple[str, 
 
 
 def _cycle_nodes(graph: ComponentGraph, link_type: str) -> List[str]:
-    """Kahn 拓扑排序残量（环上节点，确定性序）。"""
+    """环上节点（确定性序）。
+
+    Kahn 残量包含环本身及其下游受害者（被环阻塞的无辜节点）—— 对下游
+    再做迭代零出度剪枝，只留真正在环上的节点（QA 证据不得诬指无辜）。
+    """
     indegree = {n.id: 0 for n in graph.nodes}
     adjacency: Dict[str, List[str]] = {n.id: [] for n in graph.nodes}
     for first, second in _precedence_edges(graph, link_type):
@@ -409,8 +433,16 @@ def _cycle_nodes(graph: ComponentGraph, link_type: str) -> List[str]:
         queue.sort()
     if visited == len(indegree):
         return []
-    residual = sorted(nid for nid, deg in indegree.items() if deg > 0)
-    return residual
+    residual = {nid for nid, deg in indegree.items() if deg > 0}
+    # 残量子图内反复剪零出度节点（出边指向残量外的不计），余下即环成员
+    changed = True
+    while changed and residual:
+        changed = False
+        for nid in sorted(residual):
+            if not any(nxt in residual for nxt in adjacency.get(nid, [])):
+                residual.discard(nid)
+                changed = True
+    return sorted(residual)
 
 
 def topological_component_order(graph: ComponentGraph) -> List[str]:

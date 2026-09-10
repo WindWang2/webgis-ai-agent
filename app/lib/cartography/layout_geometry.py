@@ -317,8 +317,11 @@ def resolve_floating_rects(
         if current != original:
             moved = True
             reason = "clamped_into_safe_area"
-        # 级联：最多 floating 数量轮（每轮把矩形推到所有重叠者右侧/下方）
-        for _ in range(len(placed) + 1):
+        # 级联：有限轮（每轮把矩形推到首个重叠者右侧/下方）。wrap 会把
+        # x 重置进高遮挡列 —— 同一遮挡者可能被再次命中，轮数上界不能保证
+        # 收敛；循环后**必须复查残余重叠**，仍在即按不可解披露（不允许
+        # 静默输出重叠位置）。
+        for _ in range(len(placed) ** 2 + 1):
             hit = next(
                 (prev for _, prev in placed
                  if current.intersects(prev, gap=FLOATING_GAP_PX)),
@@ -333,11 +336,13 @@ def resolve_floating_rects(
                 current = Rect(x=bounds.x, y=next_y, w=current.w, h=current.h)
             moved = True
             reason = "overlap_cascade"
-        if not bounds.contains_rect(current):
+        residual = any(
+            current.intersects(prev, gap=FLOATING_GAP_PX) for _, prev in placed)
+        if residual or not bounds.contains_rect(current):
             current = current.clamped_into(bounds)
             report.issues.append(GeometryIssue(
                 code="unresolvable_overlap", severity="warning",
-                message=f"浮动组件 {cid} 大于安全区或级联后仍越界，已钳制保留",
+                message=f"浮动组件 {cid} 大于安全区或级联后仍越界/重叠，已钳制保留",
                 component_ids=[cid]))
             moved = True
             reason = reason or "clamped_into_safe_area"
