@@ -1,0 +1,30 @@
+{
+ "behavior_count": 2,
+ "behaviors": {
+  "map-layer-lifecycle": [
+   {
+    "file": "frontend/tests/behavioral/map-behaviors.test.ts",
+    "tests": [
+     "first application reports every layer/source as add",
+     "style mutation emits update only for the touched layer",
+     "layer removal emits remove and keeps siblings untouched",
+     "source removal cascades: removed source reported, dependent layers removed",
+     "reordering layers emits reorder-aware change set without touching sources",
+     "data mutation (source feature change) emits source update with next payload",
+     "identical specs produce an empty patch (no MapLibre churn)"
+    ]
+   }
+  ],
+  "mapspec-reconcile": [
+   {
+    "file": "frontend/tests/behavioral/map-behaviors.test.ts",
+    "tests": [
+     "reordering layers emits reorder-aware change set without touching sources",
+     "data mutation (source feature change) emits source update with next payload",
+     "identical specs produce an empty patch (no MapLibre churn)"
+    ]
+   }
+  ]
+ },
+ "content_hash": "05135c9c6b70a9900b869062fa18d3a9d7e181e58e0879732e09a5f3d7368da0"
+}

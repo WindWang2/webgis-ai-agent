@@ -18,7 +18,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 #: 生成物账本自身（也是本图的派生物之一）
 ARTIFACT_GRAPH_PATH = "docs/quality/generated-artifacts.json"
@@ -61,9 +61,19 @@ class GeneratedEntry:
     artifact: str                      # repo 相对路径（生成物本体）
     generator: str                     # 生成脚本（repo 相对）
     inputs: Tuple[str, ...]            # 语义输入（文件或目录，repo 相对）
+    # Quality V3（Epic 10 W5，additive）：作用域与生成器版本。
+    # scope=global：全分支共享，rebase/merge 后必须重验再生成；
+    # scope=branch-local：单分支工作产物，不参与跨分支冲突。
+    scope: str = "global"
+    generator_version: int = 1
 
     def as_dict(self) -> Dict[str, Any]:
-        return {"generator": self.generator, "inputs": list(self.inputs)}
+        return {
+            "generator": self.generator,
+            "inputs": list(self.inputs),
+            "scope": self.scope,
+            "generator_version": self.generator_version,
+        }
 
     def input_fingerprint(self) -> str:
         entries: List[Tuple[str, Path]] = [(self.generator,
@@ -162,18 +172,86 @@ DECLARED: Tuple[GeneratedEntry, ...] = (
             "app/lib/quality/api_compat.py",
         ),
     ),
+    # Quality V3（Epic 10 / ownership parity）：science 声明面投影此前在
+    # artifact_graph 之外自管，导致 ownership 规则无法与之对齐（生成物
+    # 权威必须是单一账本）。登记后由同一 staleness 闸保护。
+    GeneratedEntry(
+        artifact="docs/science/BENCHMARK_MANIFEST.md",
+        generator="scripts/gen_science_benchmark_manifest.py",
+        # R1-M3：语义源是 registry + algorithm packs（_load_seed_algorithms
+        # 经 iter_domain_packs 消费 app/lib/gis/algorithms 全目录）——
+        # 漏记则 complexity/backend_variants 变更对 staleness 闸失明
+        inputs=("app/lib/gis/algorithm_registry.py", "app/lib/gis/algorithms"),
+    ),
+    # Quality V3（Epic 10 W14）：前端行为证据索引（@behavior 标签聚合）
+    GeneratedEntry(
+        artifact="docs/integration/frontend-behavior.json",
+        generator="scripts/gen_frontend_behavior.py",
+        inputs=("frontend/tests/behavioral",),
+    ),
+    # Quality V3（Epic 10 W15）：release readiness 证据（无车道证据的
+    # 机器无关快照；VERDICT 政策断言在 gen 脚本内）
+    GeneratedEntry(
+        artifact="docs/integration/RELEASE_READINESS.json",
+        generator="scripts/gen_release_readiness.py",
+        inputs=("scripts/gen_release_readiness.py",),
+    ),
+    GeneratedEntry(
+        artifact="docs/integration/RELEASE_READINESS.md",
+        generator="scripts/gen_release_readiness.py",
+        inputs=("scripts/gen_release_readiness.py",),
+    ),
 )
 
 
+def content_fingerprint(artifact: str) -> Optional[str]:
+    """生成物本体 sha256（确定性；产物不存在 = None，未生成是合法状态）。"""
+    path = REPO_ROOT / artifact
+    if not path.is_file():
+        return None
+    return _file_hash(path)
+
+
 def build_graph_state() -> Dict[str, Any]:
-    """{artifact: {generator, inputs, input_fingerprint}}（确定性）。"""
+    """{artifact: {generator, inputs, scope, generator_version,
+    input_fingerprint, content_fingerprint}}（确定性）。
+
+    Quality V3 W5：content_fingerprint 使再生成 diff 可归因——
+    输入指纹变 = 正常再生成；输入不变而内容变 = 手改（regenerate-dont-edit
+    被违反）或生成器非确定（由 DETERMINISM 认证另行覆盖）。
+    """
     out: Dict[str, Any] = {}
     for entry in DECLARED:
         out[entry.artifact] = {
             **entry.as_dict(),
             "input_fingerprint": entry.input_fingerprint(),
+            "content_fingerprint": content_fingerprint(entry.artifact),
         }
     return out
+
+
+def find_hand_edits(recorded: Dict[str, Any]) -> List[str]:
+    """手改检测（Quality V3 W5）：输入指纹未变而生成物内容已变的产物。
+
+    与 find_stale 正交：stale = 输入变（须再生成）；hand-edit = 输入没变
+    但产物被直接编辑（regenerate-dont-edit 违反，改动会随下次再生成静默
+    丢失，必须显式 waiver 或改为修改生成器输入）。
+    """
+    current = build_graph_state()
+    edited: List[str] = []
+    for artifact, state in sorted(current.items()):
+        rec = recorded.get(artifact)
+        if not rec:
+            continue
+        inputs_match = rec.get("input_fingerprint") == state["input_fingerprint"]
+        content_changed = (
+            state.get("content_fingerprint") is not None
+            and rec.get("content_fingerprint") is not None
+            and rec.get("content_fingerprint") != state["content_fingerprint"]
+        )
+        if inputs_match and content_changed:
+            edited.append(artifact)
+    return edited
 
 
 def find_stale(recorded: Dict[str, Any]) -> List[str]:

@@ -67,13 +67,23 @@ LANES: dict[str, dict] = {
         "commands": [
             PYTEST + ["tests/quality/", "--no-cov", "-q", "--timeout=60",
                       "--timeout-method=thread", "-p", "no:cacheprovider"],
-            [sys.executable, "scripts/gen_quality_manifest.py", "--check"],
-            [sys.executable, "scripts/gen_drift_report.py", "--check"],
+            # R2-M2 去重：manifest/drift 字节闸由 readiness --check 内部
+            # 执行（LIVE_GATES），不再直接挂载（省 ~9s 双跑）；readiness
+            # 渲染含各闸状态，任一闸漂移即 --check 红，强制力等价。
             [sys.executable, "scripts/gen_trace_certification.py", "--check"],
             [sys.executable, "scripts/gen_resource_certification.py", "--check"],
             [sys.executable, "scripts/gen_determinism_certification.py", "--check"],
             [sys.executable, "scripts/gen_quality_report.py", "--check"],
             [sys.executable, "scripts/check_generated_staleness.py"],
+            # Quality V3（Epic 10）：协调闸强制点（ADR watermark / migration
+            # 多头 / ownership parity / 生成物 staleness 聚合报告）
+            [sys.executable, "scripts/check_integration_preflight.py"],
+            # Quality V3 W14：前端行为证据索引字节闸（@behavior 标签漂移即红）
+            [sys.executable, "scripts/gen_frontend_behavior.py", "--check"],
+            # Quality V3 W15/R1-C1：release readiness 字节闸（内容性状态
+            # 锁定；commit 身份字段归一；内含 manifest/drift/preflight/
+            # frontend-behavior 四闸执行）
+            [sys.executable, "scripts/gen_release_readiness.py", "--check"],
         ],
     },
     "backend": {
@@ -264,13 +274,86 @@ def _render_md(report: dict) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lane", choices=[*LANES.keys(), "full",
-                                         "changed", "full-local"])
+                                         "changed", "full-local",
+                                         "impact", "integration", "real"])
     parser.add_argument("--retry-failed", action="store_true",
                         help="失败车道用 pytest --lf 重试")
     parser.add_argument("--json", action="store_true", help="只打印 JSON 摘要")
     args = parser.parse_args()
 
-    if args.lane == "changed":
+    if args.lane == "impact":
+        # Quality V3 W7/W9：import 图驱动的最小可靠测试面（完备性护栏；
+        # 不替代 domain full tests —— 只用于高效集成复测）
+        sys.path.insert(0, str(REPO))
+        from app.lib.integration.impact import build_graph, select_tests
+        from app.lib.integration.manifest import changed_files
+
+        files = changed_files("HEAD", "origin/master", REPO,
+                              include_worktree=True)
+        app_files = [f for f in files if f.startswith("app/")]
+        graph = build_graph(REPO, use_cache=True)
+        result = select_tests(app_files, repo_root=REPO, graph=graph,
+                              max_targets=80)
+        if not result.complete:
+            print("UNCOVERED（完备性护栏触发，--allow-uncovered 可豁免）:",
+                  file=sys.stderr)
+            for f in result.uncovered:
+                print(f"  - {f}", file=sys.stderr)
+            if not os.environ.get("ALLOW_UNCOVERED"):
+                return 2
+        targets = result.targets or ["tests/quality/"]
+        LANES["impact"] = {
+            "title": f"impact（import 闭包选择面 {len(targets)} 目标；"
+                     f"映射兜底 {len(result.via_mapping)}；"
+                     "改动的 tests/** 文件不在本选择面 —— 由 V2 changed/"
+                     "full lane 兜底）",
+            "commands": [
+                PYTEST + targets + ["--no-cov", "-q", "--timeout=120",
+                                    "--timeout-method=thread",
+                                    "-p", "no:cacheprovider"],
+            ],
+        }
+        lanes = ["impact"]
+    elif args.lane == "integration":
+        # Quality V3 W9：协调闸一条龙（preflight 已含在 quick；此 lane
+        # 额外生成本分支 manifest，供 merge-sim / release readiness 消费）
+        LANES["integration"] = {
+            "title": "integration（协调闸 + 分支 manifest）",
+            "commands": [
+                [sys.executable, "scripts/check_integration_preflight.py"],
+                [sys.executable, "scripts/gen_integration_manifest.py",
+                 "--branch", "HEAD", "--include-worktree"],
+            ],
+        }
+        lanes = ["integration"]
+    elif args.lane == "real":
+        # Quality V3 W12：real-services lane（opt-in）。REAL_SERVICES=1
+        # 才武装 pytest 的 real_services marker；migration 生命周期
+        # （SQLite 恒跑 + PG opt-in）+ 真实 Redis/PG 探测 + 多进程
+        # harness（含 API 重启 chaos）。**不会**替你启动 docker 服务 ——
+        # 服务由 compose/本机预先起好，本 lane 只做可达性探测后运行。
+        if not os.environ.get("REAL_SERVICES") and \
+                not os.environ.get("TEST_POSTGRES_URL"):
+            print("real lane 需要 REAL_SERVICES=1 或 TEST_POSTGRES_URL "
+                  "（opt-in 资源纪律）；默认 quick lane 不受影响。")
+            return 2
+        real_targets = ["tests/integration/test_migration_lifecycle.py",
+                        "tests/integration/test_real_services_lane.py",
+                        "tests/quality/test_storage_differential.py"]
+        harness_cmd = [sys.executable, "scripts/integration_harness.py",
+                       "--port", os.environ.get("HARNESS_PORT", "8901"),
+                       "--workers", "2", "--chaos"]
+        LANES["real"] = {
+            "title": "real（opt-in：真实服务 + migration 生命周期 + 多进程 harness chaos）",
+            "commands": [
+                PYTEST + real_targets + ["--no-cov", "-q", "--timeout=300",
+                                         "--timeout-method=thread",
+                                         "-p", "no:cacheprovider"],
+                harness_cmd,
+            ],
+        }
+        lanes = ["real"]
+    elif args.lane == "changed":
         # changed profile：受影响面 pytest + 红线再生成检查（顺序轮换已在
         # _changed_py_targets 内启用）
         targets = _changed_py_targets()

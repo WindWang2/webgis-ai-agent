@@ -143,6 +143,18 @@
 - Frontend: collab client (reconnect/jitter/heartbeat reconciliation), delta
   persistence channel, CollabBar (presence/degraded/conflict disclosure),
   group reparent drag & keyboard parity, O(n) tree traversal helpers.
+## [Unreleased] — Quality V3 / Integration Platform（Epic 10）
+
+### Added
+- 并发研发协调面（`app/lib/integration/`）：shared-file ownership 元契约、
+  migration/ADR 分配协调（watermark 棘轮）、语义 integration manifest、
+  import 图影响选择（完备性护栏）、跨分支合并模拟（checked/unknown/
+  not_checked 三段契约）、release readiness 证据（不可绕过政策断言）
+- W3C traceparent 关联（纯 ASGI 中间件，http+websocket 全覆盖）
+- SRE 组件健康面 `/api/v1/status/detailed`（鉴权）+ `sre_*` 有界指标
+  + staleness 告警；real-services lane 与多进程 harness（kill -9 chaos）
+- chaos V3：JOBS_WORKER_LOSS / CANCEL_STORM / JOBS_STALE_REVISION_CAS /
+  DB_TRANSIENT_SEQUENCE（生产零改动，注册表字节闸同步）
 
 ## [Unreleased] - 2026-09-09
 

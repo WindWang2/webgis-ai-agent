@@ -30,6 +30,24 @@ scripts/
 # 的闸测试引用其退出码语义，必须入库 —— history: check_tool_descriptor_
 # coverage.py 漏入库曾使 master 全量收集红）
 !/scripts/check_generated_staleness.py
+# Quality V3（Epic 10）：协调面脚本 —— preflight / 分配器 / manifest /
+# merge-sim / release readiness / 多进程 harness（闸测试 import 或 runner
+# 引用，必须入库；history: check_tool_descriptor_coverage.py 漏入库曾使
+# master 全量收集红 —— 本白名单 + 入库结构测试就是那场事故的闸）
+!/scripts/check_integration_preflight.py
+!/scripts/allocate_migration.py
+!/scripts/allocate_adr.py
+!/scripts/gen_integration_manifest.py
+!/scripts/simulate_merge.py
+!/scripts/gen_release_readiness.py
+!/scripts/integration_harness.py
+!/scripts/gen_frontend_behavior.py
+!/scripts/integration_completion_proof.py
+# Quality V3：per-branch 工作产物（manifests / merge-sim / import-graph
+# 缓存）与 runner 本地状态不入库（审计文档 .md 仍按惯例入库）
+.agent-work/integration/
+.agent-work/quality-v3/runner-report.json
+.agent-work/quality-v3/runner-report.md
 # runner 本地运行状态不入库（V1 历史 + V2 当前）
 .agent-work/quality-v1/runner-report.json
 .agent-work/quality-v2/runner-report.json

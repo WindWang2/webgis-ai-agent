@@ -556,13 +556,25 @@ app.add_middleware(
         "X-Session-Token",
         "X-Request-ID",
         "Last-Event-ID",
+        # Quality V3 W10：W3C trace 关联头（跨进程 trace 贯穿；浏览器
+        # tracer/前端读取响应中的 X-Trace-ID 需 expose）
+        "traceparent",
+        "tracestate",
     ],
-    expose_headers=["X-Request-ID"],
+    expose_headers=["X-Request-ID", "X-Trace-ID"],
 )
 # #691：X-Request-ID 关联与回显。add_middleware 是反序（最后注册最先执行），
 # 故该 middleware 必须在 CORS 之后注册才能成为最外层——即使 CORS 直接处理
 # OPTIONS 预检返回，也能回显 X-Request-ID。
 app.add_middleware(RequestCorrelationMiddleware)
+
+# Quality V3 W10（Epic 10）：W3C traceparent 关联。纯 ASGI 中间件，
+# http + websocket 全 scope 覆盖（chat WS 主链路的 trace 绑定点）；
+# add_middleware 反序 → 最后注册 = 最外层，先于 X-Request-ID 绑定执行，
+# 后续 bind_runtime_context 合并保留 trace 字段。
+# R1-NIT：fail-fast（模块存在性由结构闸锁定，静默禁用 = 关联链路静默断裂）
+from app.lib.observability.trace_context import TraceContextMiddleware
+app.add_middleware(TraceContextMiddleware)
 
 app.include_router(auth_routes.router, prefix="/api/v1", tags=["认证"])
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])

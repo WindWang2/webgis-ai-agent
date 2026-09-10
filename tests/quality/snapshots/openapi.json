@@ -14905,6 +14905,31 @@
     ]
    }
   },
+  "/api/v1/status/detailed": {
+   "get": {
+    "description": "鉴权 SRE 组件健康分类学（Epic 10 W11）。\n\n安全模型见文件头注释：不在限流豁免前缀内 + JWT 鉴权 + 组件拓扑\n细节只在鉴权面暴露（B-1）。TTL 10s 缓存，快照原子换入；k8s probe\n不得指向本端点（/health/live、/ready 语义不变）。整体 down → 503\n（与 /ready 的探测语义对齐，M-3），degraded 保持 200。",
+    "operationId": "sre_status_detailed_api_v1_status_detailed_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Sre Status Detailed",
+    "tags": [
+     "健康检查"
+    ]
+   }
+  },
   "/api/v1/tasks": {
    "get": {
     "description": "列出任务，必须按 session_id 过滤。\n\n审计 S33：之前 session_id 缺省时返回 tracker.list_all() —— 即所有用户\n所有任务的 original_request 原文，构成大面积信息泄漏。session_id 现在\n强制必填，且校验归属。",

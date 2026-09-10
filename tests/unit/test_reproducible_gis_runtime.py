@@ -112,6 +112,12 @@ def db():
         tbl.drop(bind=Engine, checkfirst=True)
     for tbl in metadata_tables:
         tbl.create(bind=Engine, checkfirst=True)
+    # 密闭性（Quality V3 审计）：本套件查询 users/orgs 等环境表，但它们
+    # 只由兄弟套件（auth 等）预建 —— 全新 worktree/CI 单跑本文件即
+    # "no such table"。checkfirst 只补缺失表，不动已有 schema。
+    for tbl in Base.metadata.sorted_tables:
+        if tbl.name not in _PROJECT_DOMAIN_TABLES:
+            tbl.create(bind=Engine, checkfirst=True)
 
 
 def _mk_project_and_workflow(project_id, workflow_id, steps, name="wf"):
