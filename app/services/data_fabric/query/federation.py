@@ -1906,6 +1906,21 @@ def execute_chain_v6(
         ]
         return result
     validate_chain_shape(req, check_crs_mix=False)
+    # ── V8（ADR-0130）：进程级引擎回退熔断（R2-Mi-4 收口）──
+    # 连续 V6 崩溃后直接走 V5（跳过 V6 规划+执行栈，双执行成本归零）；
+    # half-open 单 trial 探测 V6 恢复。开启/试验状态如实披露。
+    from app.services.data_fabric.fabric.engine_breaker import get_engine_breaker
+
+    engine_breaker = get_engine_breaker()
+    if not engine_breaker.allow_v6():
+        result = execute_federated_chain(executor, req)
+        result["engine"] = "v5_fallback"
+        result["warnings"] = list(result.get("warnings") or []) + [
+            "engine=v6 skipped: fallback breaker open (recent V6 crashes); "
+            "executed with V5 engine"
+        ]
+        result["engine_breaker"] = engine_breaker.disclosure()
+        return result
     # ── V7（ADR-0119 W12/W13）：结果缓存 + 计数器 + 反馈 ──
     cache_ctx = (
         _v7_cache_context(executor, req)
@@ -2013,12 +2028,18 @@ def execute_chain_v6(
         raise  # typed 错误契约与 V5 一致（预算/构造错误绝不静默回退）
     except Exception as e:  # noqa: BLE001 - V6 非 typed 异常 → 诚实回退 V5
         logger.warning("[Federation] V6 engine failed (%s); falling back to V5", e)
+        # V8：崩溃记账（fail-open；连续崩溃触发进程级熔断，后续请求跳过 V6）。
+        try:
+            engine_breaker.record_v6_crash(e)
+        except Exception:  # noqa: BLE001
+            pass
         result = execute_federated_chain(executor, req)
         result["engine"] = "v5_fallback"
         reason = str(e)[:200]
         result["warnings"] = list(result.get("warnings") or []) + [
             f"engine=v6 failed ({reason}); executed with V5 engine"
         ]
+        result["engine_breaker"] = engine_breaker.disclosure()
         return result
 
     rows = exec_result["rows"]
@@ -2068,6 +2089,8 @@ def execute_chain_v6(
     result_dict["fabric"] = _v7_fabric_section(
         counters, cache_ctx, feedback_store_feedback=True
     )
+    # V8：V6 成功 → 熔断归零回 CLOSED（含 half-open trial 成功）。
+    engine_breaker.record_v6_success()
     # 缓存写入（fail-open；披露段在下一次命中时附入）
     if cache_enabled:
         try:

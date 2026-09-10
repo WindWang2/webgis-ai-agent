@@ -291,6 +291,13 @@ class Settings(BaseSettings):
     DATA_FABRIC_V7_RESULT_CACHE_TTL_S: float = 300.0
     DATA_FABRIC_V7_FEEDBACK_MAX_ROWS: int = 20_000
 
+    # ── Data Fabric V8 自适应联邦数据面（ADR-0130）──────────────────────
+    # 引擎回退熔断：连续 V6 崩溃（非 typed 异常回退 V5）达阈值后，engine=v6
+    # 请求在 cool_down 窗口内直接走 V5（双执行成本归零）；窗口后半开单
+    # trial 探测恢复。进程级（引擎是进程资源，不是源资源）。
+    DATA_FABRIC_V8_ENGINE_BREAKER_THRESHOLD: int = 3
+    DATA_FABRIC_V8_ENGINE_BREAKER_COOLDOWN_S: float = 60.0
+
     # #690：原生热力图确定性守卫阈值（点数 < 阈值或非点几何 → 拦截 native heatmap）
     # 对齐 skill 正文 "<10 点热力图无统计意义"，移至配置层恒生效；settings/env 可覆盖，
     # 复用仓内 config 惯例。max(1,) 防零在读取侧 clamp，字段层仅定义默认值。
