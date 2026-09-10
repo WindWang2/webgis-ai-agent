@@ -40,14 +40,55 @@ def _is_demo_source_type(source_type) -> bool:
 
 
 def _resolve_source(profile_id, session_id):
-    """V8：完整 ResolvedSource（adapter + 治理元数据；故障 → None）。"""
-    from app.services.data_fabric.fabric.runtime import get_fabric_runtime
+    """V8：完整 ResolvedSource（adapter + 治理元数据；故障 → None）。
+
+    runtime（registry → legacy）未命中后回退**本模块级** ``connection_manager``
+    符号 —— 与历史 ``connection_manager.get_adapter`` 同一 patch 点（测试/子类
+    定制 seam 保真；生产中两者指向同一单例，此回退不会改变行为）。该路径的
+    adapter 经 ``attach_prebuilt`` 收编治理（best-effort）。
+    """
+    from app.services.data_fabric.fabric.runtime import (
+        ResolvedSource,
+        get_fabric_runtime,
+    )
 
     try:
-        return get_fabric_runtime().resolve(profile_id, owner=session_id)
+        resolved = get_fabric_runtime().resolve(profile_id, owner=session_id)
     except Exception as exc:  # noqa: BLE001 - 解析面故障不改变工具错误契约
         logger.warning("[data_fabric] runtime resolve failed for %s: %s", profile_id, exc)
+        resolved = None
+    if resolved is not None:
+        return resolved
+    try:
+        adapter = connection_manager.get_adapter(profile_id, owner=session_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[data_fabric] legacy seam resolve failed for %s: %s", profile_id, exc)
         return None
+    if adapter is None:
+        return None
+    profile = None
+    try:
+        profile = connection_manager.get_profile(profile_id, owner=session_id)
+    except Exception:  # noqa: BLE001 - mock/部分 seam 下 profile 可缺席
+        profile = None
+    source_type = ""
+    if profile is not None:
+        try:
+            resolved = get_fabric_runtime().attach_prebuilt(
+                profile, adapter, owner=session_id
+            )
+            if resolved is not None:
+                return resolved
+        except Exception:  # noqa: BLE001
+            pass
+        source_type = str(getattr(profile, "source_type", "") or "")
+    if not source_type:
+        source_type = str(
+            getattr(getattr(adapter, "profile", None), "source_type", "") or ""
+        )
+    return ResolvedSource(
+        adapter=adapter, profile_id=str(profile_id), source_type=source_type,
+    )
 
 
 def _resolve_source_adapter(profile_id, session_id):
