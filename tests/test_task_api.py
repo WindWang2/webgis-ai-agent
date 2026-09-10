@@ -4,13 +4,14 @@ Run with: python -m pytest tests/test_task_api.py -v
 """
 import pytest
 from httpx import AsyncClient, ASGITransport
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from app.services.chat_engine import ChatEngine
 from app.tools.registry import ToolRegistry
 from app.api.routes import chat as chat_mod
 from app.api.routes.task import router as task_router
-from app.core.auth import get_current_user, require_owned_session
+from app.core.auth import get_current_user, get_current_user_optional, require_owned_session
+from app.services.chat.engine_instance import set_chat_engine
 from app.models.db_model import Conversation
 
 # Create a real ChatEngine instance for tests
@@ -25,8 +26,10 @@ def _inject_engine():
     """Ensure chat module engine is set for every test in this module."""
     original = chat_mod.engine
     chat_mod.engine = _engine
+    set_chat_engine(_engine)
     yield
     chat_mod.engine = original
+    set_chat_engine(original)
 
 
 @pytest.fixture
@@ -35,6 +38,10 @@ def app(monkeypatch):
     单测不连真 DB，stub 成 return Conversation 即：隔离由 test_cross_tenant_isolation
     单独覆盖）。"""
     async def _noop_verify(db=None, session_id=None, user_id=None, owner_token=None):
+        if session_id == "anon-session":
+            if not owner_token or owner_token != "valid-owner-token":
+                raise HTTPException(status_code=404, detail="Session not found")
+            return Conversation(id="anon-session", user_id=None, owner_token="valid-owner-token")
         return Conversation(id=session_id or "test-session", user_id=user_id or "test-user")
 
     monkeypatch.setattr("app.core.auth.verify_session_owner", _noop_verify)
@@ -42,6 +49,7 @@ def app(monkeypatch):
 
     _app = FastAPI()
     _app.dependency_overrides[get_current_user] = lambda: _mock_user
+    _app.dependency_overrides[get_current_user_optional] = lambda: _mock_user
     _app.dependency_overrides[require_owned_session] = lambda: Conversation(id="test-session", user_id="test-user")
     _app.include_router(router, prefix="/api/v1")
     _app.include_router(task_router, prefix="/api/v1")
@@ -187,3 +195,70 @@ async def test_cancel_task_skips_abort_for_other_sessions(client, monkeypatch):
     )
     resp = await client.delete(f"/api/v1/tasks/{task.id}")
     assert resp.status_code == 200
+
+
+# ── SEC-06 Anonymous Owner Token Tests ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_anonymous_task_status_with_valid_owner_token(app, client):
+    """SEC-06: Anonymous user with valid owner_token can view task status."""
+    app.dependency_overrides[get_current_user_optional] = lambda: {"user_id": "anonymous", "role": "anonymous"}
+    task = _engine.tracker.create("anon-session", "匿名测试任务")
+
+    # With valid owner_token -> 200 OK
+    resp = await client.get(
+        f"/api/v1/tasks/{task.id}",
+        headers={"X-Session-Token": "valid-owner-token"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["task_id"] == task.id
+    assert data["session_id"] == "anon-session"
+
+
+@pytest.mark.asyncio
+async def test_anonymous_task_status_rejected_without_owner_token(app, client):
+    """SEC-06: Anonymous user without or with invalid owner_token receives 404."""
+    app.dependency_overrides[get_current_user_optional] = lambda: {"user_id": "anonymous", "role": "anonymous"}
+    task = _engine.tracker.create("anon-session", "匿名测试任务")
+
+    # Without token -> 404
+    resp = await client.get(f"/api/v1/tasks/{task.id}")
+    assert resp.status_code == 404
+
+    # With wrong token -> 404
+    resp_wrong = await client.get(
+        f"/api/v1/tasks/{task.id}",
+        headers={"X-Session-Token": "wrong-token"},
+    )
+    assert resp_wrong.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_anonymous_cancel_task_with_valid_owner_token(app, client):
+    """SEC-06: Anonymous user with valid owner_token can cancel a task."""
+    app.dependency_overrides[get_current_user_optional] = lambda: {"user_id": "anonymous", "role": "anonymous"}
+    task = _engine.tracker.create("anon-session", "匿名取消任务")
+
+    # With valid token -> 200 OK
+    resp = await client.delete(
+        f"/api/v1/tasks/{task.id}",
+        headers={"X-Session-Token": "valid-owner-token"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cancelled"] is True
+
+    task_info = _engine.tracker.get(task.id)
+    assert task_info.status.value == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_anonymous_cancel_task_rejected_without_owner_token(app, client):
+    """SEC-06: Cancel request without valid owner_token is rejected."""
+    app.dependency_overrides[get_current_user_optional] = lambda: {"user_id": "anonymous", "role": "anonymous"}
+    task = _engine.tracker.create("anon-session", "未授权取消测试")
+
+    resp = await client.delete(f"/api/v1/tasks/{task.id}")
+    assert resp.status_code == 404
