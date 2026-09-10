@@ -229,6 +229,13 @@ def validate_gis_library(
     issues.extend(component_registry.validate())  # 含 renderer 矩阵对账
     issues.extend(component_templates.validate())
     issues.extend(compositions.validate())
+    # V7（Goal 08）：组件目录组合智能自检 —— 类目→主表达亲和表
+    # referential integrity（id 必须可解析为 native 模型）。
+    from app.lib.cartography.composition_selection import validate_affinity_table
+    issues.extend(
+        f"composition_selection: {violation}"
+        for violation in validate_affinity_table()
+    )
 
     # ProductTemplate：composition_template_id / component_overrides /
     # component_requirements 的引用存在性（声明了就必须指向真实目标）
