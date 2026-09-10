@@ -288,6 +288,9 @@ class VectorPdfRequest(BaseModel):
     mapspec: dict
     title: Optional[str] = None
     """PDF 文档元数据标题（图面标题由 spec 标题组件驱动 —— user-wins）。"""
+    target_dpi: Optional[int] = None
+    """渲染 DPI（V7 可选；72-600，越界钳制，生效值随响应披露；缺省 300
+    = 既有输出不变）。"""
     # 安全决策（R2-M3/M8）：不提供 sessionId 水合 —— ref 载体源由调用方
     # 内联后提交（前端 exporter 内存中已持有数据）；未内联 → 400 typed 拒绝。
 
@@ -330,6 +333,7 @@ async def export_map_as_vector_pdf(
                 lambda: render_publication_pdf(
                     body.mapspec,
                     title=body.title or "WebGIS AI Agent 专题地图",
+                    target_dpi=body.target_dpi if body.target_dpi else 300,
                 ),
             ),
             timeout=120.0,
@@ -367,6 +371,7 @@ async def export_map_as_vector_pdf(
         "pages": result.page_count,
         "frames_rendered": result.frames_rendered,
         "frames_skipped": result.frames_skipped,
+        "target_dpi": result.target_dpi,
         "render_diagnostics": result.diagnostics,
         "schema_disclosures": result.disclosures,
         "message": "矢量 PDF 已生成（文本可选中检索）",
