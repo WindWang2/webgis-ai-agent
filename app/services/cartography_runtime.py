@@ -42,13 +42,38 @@ logger = logging.getLogger(__name__)
 _harness: Optional[PiAgentHarness] = None
 _harnesses: "OrderedDict[str, PiAgentHarness]" = OrderedDict()
 _cartography_eval_cache: "OrderedDict[tuple[str, str, int, str], dict[str, Any]]" = OrderedDict()
-_cartography_eval_locks: dict[str, asyncio.Lock] = {}
+_cartography_eval_locks: "OrderedDict[str, asyncio.Lock]" = OrderedDict()
+_CARTOGRAPHY_EVAL_LOCKS_LIMIT = 256
 _deleted_cartography_sessions: "OrderedDict[str, None]" = OrderedDict()
 _DELETED_SESSION_TOMBSTONE_LIMIT = 1_024
 _HARNESS_REGISTRY_LIMIT = 128
 _harness_feature_enabled = os.getenv("PI_HARNESS_ENABLED", "").lower() in (
     "true", "1", "yes"
 )
+
+
+def _get_cartography_eval_lock(session_id: str) -> asyncio.Lock:
+    """Get or create per-session cartography evaluation lock with LRU bounds."""
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    lock = _cartography_eval_locks.get(session_id)
+    if lock is not None:
+        lock_loop = getattr(lock, "_loop", None)
+        if lock_loop is not None and lock_loop is not current_loop:
+            lock = asyncio.Lock()
+            _cartography_eval_locks[session_id] = lock
+        _cartography_eval_locks.move_to_end(session_id)
+        return lock
+
+    lock = asyncio.Lock()
+    _cartography_eval_locks[session_id] = lock
+    _cartography_eval_locks.move_to_end(session_id)
+    while len(_cartography_eval_locks) > _CARTOGRAPHY_EVAL_LOCKS_LIMIT:
+        _cartography_eval_locks.popitem(last=False)
+    return lock
 
 
 def _build_session_harness(session_id: str) -> PiAgentHarness:
@@ -453,7 +478,7 @@ async def evaluate_cartographic_session(
         session_id, harness, state=state
     ):
         return _not_evaluated_no_harness(session_id)
-    lock = _cartography_eval_locks.setdefault(session_id, asyncio.Lock())
+    lock = _get_cartography_eval_lock(session_id)
     async with lock:
         return await _evaluate_cartographic_session_unlocked(session_id, state=state)
 
