@@ -110,6 +110,8 @@ _ENV_BASELINE = {
         # V3 §B：子进程 worker 通道默认关闭（钉扎空 = 无 allowlist）。
         "MODELOPS_SUBPROCESS_WORKERS": "",
         "MODELOPS_SUBPROCESS_DEADLINE_S": "120",
+        # V3 §D：PostGIS 矢量发布通道默认关闭（GeoJSON 兜底不受影响）。
+        "MODELOPS_POSTGIS_DSN": "",
         "RASTER_PROCESSING_MEMORY_MB": "256",
         "RASTER_GDAL_CACHE_MAX_MB": "64",
         "CLEAR_QUIESCE_TIMEOUT_S": "5.0",

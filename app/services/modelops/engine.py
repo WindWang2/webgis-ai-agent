@@ -71,6 +71,7 @@ from app.lib.modelops.stitching import (
     merge_instances,
 )
 from app.lib.modelops.temporal import TemporalStackSpec
+from app.lib.modelops.vectorize import VectorizeParams, vectorize_class_raster
 from app.lib.geo_raster.reader import RasterReader
 from app.services.modelops.artifacts import (
     build_geojson_from_detections,
@@ -105,6 +106,33 @@ _RUN_LOCAL: Dict[str, Any] = {}
 MAX_TILES_PER_RUN = 65536
 
 
+def _clip_plan_to_roi(
+    descriptor: GeoModelDescriptor,
+    roi_bbox: Tuple[int, int, int, int],
+    *,
+    raster_width: int,
+    raster_height: int,
+) -> Tuple[TilePlan, Tuple[int, int]]:
+    """把 tile 计划裁剪到 ROI 窗口（V3 §D）。
+
+    ROI = 像素框 (x0, y0, x1, y1)（左上原点，半开区间）。在 ROI 尺寸上
+    重排 tile 网格（planner 纯函数，确定性）；**窗口保持 ROI 本地坐标**
+    ——引擎在读取时统一平移 ``roi_origin``（绝对窗口从完整栅格取数），
+    融合累加器/产物数组都在 ROI 本地坐标上工作，georef 由产物写出的
+    ``window_origin`` 平移恢复。context halo 不越过 ROI 边界（ROI =
+    分析窗口，语义如实写入 manifest）。返回 (ROI plan, (x0, y0))。
+    """
+    x0, y0, x1, y1 = (int(v) for v in roi_bbox)
+    x0 = max(0, min(x0, raster_width - 4))
+    y0 = max(0, min(y0, raster_height - 4))
+    x1 = max(x0 + 4, min(x1, raster_width))
+    y1 = max(y0 + 4, min(y1, raster_height))
+    roi_plan = plan_tiles(
+        descriptor, raster_height=y1 - y0, raster_width=x1 - x0
+    )
+    return roi_plan, (x0, y0)
+
+
 @dataclass(frozen=True)
 class InferenceRequest:
     """一次推理请求（typed；owner scope 恰好一维）。"""
@@ -119,6 +147,13 @@ class InferenceRequest:
     #: V3 §C：双时相变化检测的后时相栅格（change_detection 任务必填；
     #: 网格（尺寸/CRS/transform）必须与 source_uri 严格一致）。
     source_uri_b: Optional[str] = None
+    #: V3 §D：ROI 像素框 (x0, y0, x1, y1)（左上原点，半开区间）；None =
+    #: 全幅。tile 计划在 ROI 窗口上执行，产物 georef 平移回原栅格位置。
+    roi_bbox: Optional[Tuple[int, int, int, int]] = None
+    #: V3 §D：分割/变化/融合的类别栅格 → 矢量多边形（GeoJSON 产物）。
+    vectorize_classes: bool = False
+    #: V3 §D：类别多边形同步发布到 PostGIS 表（前置缺失 = honest skip）。
+    postgis_table: Optional[str] = None
     score_threshold: float = 0.5
     confidence_floor: float = 0.0
     device_override: Optional[str] = None
@@ -360,6 +395,21 @@ class InferenceEngine:
             expected_bands=per_image_bands,
         )
         tile_plan = plan_tiles(descriptor, raster_height=meta.height, raster_width=meta.width)
+        roi_origin: Optional[Tuple[int, int]] = None
+        if request.roi_bbox is not None:
+            if task in (TASK_PROMPTABLE_SEGMENTATION, TASK_TEMPORAL_FORECAST,
+                        TASK_TEMPORAL_CLASSIFICATION):
+                raise ModelOpsError(
+                    f"roi_bbox is not supported for task {task!r} "
+                    "(single-window path); omit roi_bbox or use a tiled task",
+                    correction_hint="run promptable/temporal tasks on the full raster",
+                )
+            tile_plan, roi_origin = _clip_plan_to_roi(
+                descriptor,
+                request.roi_bbox,
+                raster_width=meta.width,
+                raster_height=meta.height,
+            )
         perf.chips_total = len(tile_plan.tiles)
         provider_payload = {
             "provider_ref": descriptor.provider_ref,
@@ -381,6 +431,14 @@ class InferenceEngine:
                 request.prompt.geometry_payload() if request.prompt else None
             ),
             "temporal": temporal_payload,
+            # V3 §D：ROI 与矢量化参数是结果语义的一部分（进指纹）。
+            "roi": (
+                [int(v) for v in request.roi_bbox] if request.roi_bbox is not None else None
+            ),
+            "vectorize": {
+                "enabled": bool(request.vectorize_classes),
+                "params": VectorizeParams().fingerprint_payload(),
+            },
         }
         input_payload = {
             "source_uri": str(source_path),
@@ -510,6 +568,7 @@ class InferenceEngine:
                     request, descriptor, provider, model, ctx, source_path,
                     tile_plan, batch, device_plan, preprocess_plan, output_dir,
                     perf, _checkpoint, progress,
+                    roi_origin=roi_origin,
                 )
             elif task == TASK_TEMPORAL_CLASSIFICATION:
                 outputs = self._run_temporal_classification(
@@ -522,6 +581,7 @@ class InferenceEngine:
                     tile_plan, batch, device_plan, preprocess_plan, output_dir,
                     perf, _checkpoint, progress,
                     source_path_b=source_path_b,
+                    roi_origin=roi_origin,
                 )
         except BaseException:
             # C-2：accumulator 的 memmap/临时目录在任何异常路径都释放。
@@ -623,6 +683,7 @@ class InferenceEngine:
         progress: Optional[Callable[[Dict[str, Any]], None]],
         *,
         source_path_b: Optional[Path] = None,
+        roi_origin: Optional[Tuple[int, int]] = None,
     ) -> Dict[str, Dict[str, Any]]:
         num_classes = len(descriptor.class_schema.classes) if descriptor.class_schema else 2
         merge_policy = SegmentationMergePolicy(
@@ -647,6 +708,8 @@ class InferenceEngine:
         current_batch = batch
         warm_latency: Optional[float] = None
         is_bitemporal = task == TASK_CHANGE_DETECTION
+        # ROI 本地坐标 → 绝对读取窗口的平移量（非 ROI = (0,0)）。
+        roi_dx, roi_dy = roi_origin if roi_origin is not None else (0, 0)
 
         with RasterReader.open(str(source_path)) as reader:
             reader_b: Optional[RasterReader] = (
@@ -661,8 +724,9 @@ class InferenceEngine:
                     checkpoint()
                     windows = []
                     for tile in group:
-                        col, row, w, h = (tile.read_window[1], tile.read_window[0],
-                                          tile.read_window[3], tile.read_window[2])
+                        col = tile.read_window[1] + roi_dx
+                        row = tile.read_window[0] + roi_dy
+                        w, h = tile.read_window[3], tile.read_window[2]
                         data = reader.read_window((col, row, w, h), bands=band_ids)
                         mask = reader.read_mask((col, row, w, h)) == 0
                         windows.append((data, mask if mask.any() else None))
@@ -673,8 +737,9 @@ class InferenceEngine:
                         # (2C,H,W)（provider 输入契约）。
                         b_windows = []
                         for tile in group:
-                            col, row, w, h = (tile.read_window[1], tile.read_window[0],
-                                              tile.read_window[3], tile.read_window[2])
+                            col = tile.read_window[1] + roi_dx
+                            row = tile.read_window[0] + roi_dy
+                            w, h = tile.read_window[3], tile.read_window[2]
                             data_b = reader_b.read_window((col, row, w, h), bands=band_ids)
                             mask_b = reader_b.read_mask((col, row, w, h)) == 0
                             b_windows.append(
@@ -767,8 +832,17 @@ class InferenceEngine:
                 confidence_floor=request.confidence_floor,
             )
             classes_path, confidence_path = self._write_seg_rasters(
-                source_path, classes, confidence, output_dir, descriptor
+                source_path, classes, confidence, output_dir, descriptor,
+                window_origin=roi_origin,
             )
+            if request.vectorize_classes:
+                # V3 §D：类别栅格 → 地理多边形（拓扑修复 + 简化 + 置信度）。
+                outputs.update(
+                    self._vectorize_and_publish(
+                        request, classes, confidence, output_dir, descriptor,
+                        roi_origin=roi_origin,
+                    )
+                )
             outputs["classes"] = self._publish_raster(
                 classes_path, request, role="classes", descriptor=descriptor
             )
@@ -1039,6 +1113,8 @@ class InferenceEngine:
         perf: PerfCounters,
         checkpoint: Callable[[], None],
         progress: Optional[Callable[[Dict[str, Any]], None]],
+        *,
+        roi_origin: Optional[Tuple[int, int]] = None,
     ) -> Dict[str, Dict[str, Any]]:
         stride_y, stride_x = tile_plan.stride_y, tile_plan.stride_x
         if stride_y != tile_plan.chip_h or stride_x != tile_plan.chip_w:
@@ -1058,14 +1134,16 @@ class InferenceEngine:
         try:
             with RasterReader.open(str(source_path)) as reader:
                 band_ids = [i + 1 for i in preprocess_plan.band_indices]
+                roi_dx, roi_dy = roi_origin if roi_origin is not None else (0, 0)
                 start = 0
                 while start < len(tile_plan.tiles):
                     group = tile_plan.tiles[start: start + current_batch]
                     checkpoint()
                     windows = []
                     for tile in group:
-                        col, row, w, h = (tile.read_window[1], tile.read_window[0],
-                                          tile.read_window[3], tile.read_window[2])
+                        col = tile.read_window[1] + roi_dx
+                        row = tile.read_window[0] + roi_dy
+                        w, h = tile.read_window[3], tile.read_window[2]
                         data = reader.read_window((col, row, w, h), bands=band_ids)
                         mask = reader.read_mask((col, row, w, h)) == 0
                         windows.append((data, mask if mask.any() else None))
@@ -1114,7 +1192,10 @@ class InferenceEngine:
         reader = RasterReader.open(str(source_path))
         try:
             src = reader.dataset
-            new_transform = src.transform * Affine.scale(1.0 / scale, 1.0 / scale)
+            new_transform = src.transform
+            if roi_origin is not None:
+                new_transform = new_transform * Affine.translation(*roi_origin)
+            new_transform = new_transform * Affine.scale(1.0 / scale, 1.0 / scale)
             profile = {
                 "driver": "GTiff", "height": full_h, "width": full_w,
                 "count": channels, "dtype": "float32",
@@ -1350,6 +1431,8 @@ class InferenceEngine:
         confidence: np.ndarray,
         output_dir: Path,
         descriptor: GeoModelDescriptor,
+        *,
+        window_origin: Optional[Tuple[int, int]] = None,
     ) -> Tuple[Path, Path]:
         reader = RasterReader.open(str(source_path))
         try:
@@ -1360,6 +1443,7 @@ class InferenceEngine:
                 template=reader,
                 nodata=255.0,
                 dtype="uint8",
+                window_origin=window_origin,
             )
             confidence_path = write_raster_output(
                 output_dir / "confidence.tif",
@@ -1368,10 +1452,61 @@ class InferenceEngine:
                 template=reader,
                 nodata=0.0,
                 dtype="float32",
+                window_origin=window_origin,
             )
         finally:
             reader.close()
         return classes_path, confidence_path
+
+    def _vectorize_and_publish(
+        self,
+        request: InferenceRequest,
+        classes: np.ndarray,
+        confidence: np.ndarray,
+        output_dir: Path,
+        descriptor: GeoModelDescriptor,
+        *,
+        roi_origin: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """类别栅格 → GeoJSON 多边形（→ 可选 PostGIS 同步发布）。"""
+        from affine import Affine
+
+        class_names = (
+            list(descriptor.class_schema.classes) if descriptor.class_schema else None
+        )
+        reader = RasterReader.open(str(request.source_uri))
+        try:
+            transform = reader.dataset.transform
+        finally:
+            reader.close()
+        if roi_origin is not None:
+            transform = transform * Affine.translation(*roi_origin)
+        feature_collection = vectorize_class_raster(
+            classes,
+            transform=transform,
+            class_names=class_names,
+            confidence=confidence,
+            params=VectorizeParams(),
+        )
+        poly_path = write_geojson_output(
+            output_dir / "class_polygons.geojson", feature_collection
+        )
+        published = publish_json_artifact(
+            poly_path,
+            owner_scope=request.owner_scope,
+            source_refs=[request.input_data_object_id] if request.input_data_object_id else [],
+            producer={"capability": "modelops.inference", "role": "class_polygons"},
+        )
+        result: Dict[str, Dict[str, Any]] = {"class_polygons": published}
+        if request.postgis_table:
+            from app.services.modelops.geo_output import publish_geojson_to_postgis
+
+            # PostGIS 是增量通道：失败 honest skip（GeoJSON 文件已兜底）。
+            result["class_polygons"]["postgis"] = publish_geojson_to_postgis(
+                feature_collection,
+                table=request.postgis_table,
+            )
+        return result
 
     def _publish_raster(
         self,

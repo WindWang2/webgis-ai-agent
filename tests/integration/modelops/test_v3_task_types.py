@@ -256,3 +256,52 @@ def test_new_task_types_in_service_listing(service):
     assert "super_resolution" in by_id["tiny-superres-x2"]["task_types"]
     assert "temporal_classification" in by_id["tiny-temporal-classifier"]["task_types"]
     assert "sar_optical_fusion" in by_id["tiny-sar-optical-fusion"]["task_types"]
+
+
+# ── V3 §D：ROI + 矢量化端到端 ────────────────────────────────────────
+
+
+def test_segmentation_with_roi_and_vectorize(service, synthetic_raster, isolated_blobs):
+    """ROI 裁剪推理 + 类别多边形：产物 georef 落在 ROI 范围。"""
+    from app.services.modelops.engine import InferenceRequest
+
+    result = service.run_inference(
+        InferenceRequest(
+            model_id="tiny-landcover-seg",
+            source_uri=str(synthetic_raster),
+            owner_scope={"session_id": "s-roi"},
+            roi_bbox=(20, 10, 84, 74),       # 64x64 ROI
+            vectorize_classes=True,
+        )
+    )
+    assert result.status in ("completed", "reused")
+    assert "class_polygons" in result.outputs
+    import rasterio
+
+    with rasterio.open(result.outputs["classes"]["path"]) as src:
+        # 产物只覆盖 ROI（64x64），且 transform 平移到 ROI 原点。
+        assert src.width == 64 and src.height == 64
+        assert src.crs == "EPSG:4326"
+        # 源 transform 原点 (116, 40)，1°/px；ROI (20,10) → 平移后原点。
+        assert abs(src.transform.c - (116.0 + 20 * 1.0)) < 1e-9
+        assert abs(src.transform.f - (40.0 - 10 * 1.0)) < 1e-9
+    poly = result.outputs["class_polygons"]
+    assert poly.get("data_object_id")
+    payload = result.manifest["postprocess"]
+    assert payload["roi"] == [20, 10, 84, 74]
+    assert payload["vectorize"]["enabled"] is True
+
+
+def test_roi_rejected_for_promptable(service, synthetic_raster):
+    from app.lib.modelops.errors import ModelOpsError
+    from app.services.modelops.engine import InferenceRequest
+
+    with pytest.raises(ModelOpsError):
+        service.run_inference(
+            InferenceRequest(
+                model_id="tiny-promptable-seg",
+                source_uri=str(synthetic_raster),
+                owner_scope={"session_id": "s-roi2"},
+                roi_bbox=(0, 0, 64, 64),
+            )
+        )

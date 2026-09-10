@@ -165,6 +165,9 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
             "source_uri": "输入栅格路径（COG/GeoTIFF；懒窗口读取，绝不整幅加载）",
             "task_type": "多任务模型时必填（如 semantic_segmentation）",
             "source_uri_b": "双时相变化检测的后时相栅格（change_detection 必填）",
+            "roi_bbox": "ROI 像素框 [x0, y0, x1, y1]（可选；缺省全幅）",
+            "vectorize": "分割/变化/融合结果矢量化为多边形 GeoJSON（可选）",
+            "postgis_table": "矢量多边形同步发布到 PostGIS 表名（可选；需环境 DSN）",
             "project_id": "项目 scope（与 session_id 二选一）",
             "session_id": "会话 scope",
             "score_threshold": "检测分数阈值（0-1）",
@@ -184,22 +187,37 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         source_uri: str,
         task_type: Optional[str] = None,
         source_uri_b: Optional[str] = None,
+        roi_bbox: Optional[List[float]] = None,
+        vectorize: bool = False,
+        postgis_table: Optional[str] = None,
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
         score_threshold: float = 0.5,
     ) -> dict:
         # 引擎契约在 services 平面（app/lib/modelops 是纯契约层，无 engine）。
+        from app.lib.modelops.errors import ModelOpsError
         from app.services.modelops.engine import InferenceRequest
         from app.services.modelops.service import get_modelops_service, normalize_scope
 
         scope = normalize_scope(session_id=session_id, project_id=project_id)
         service = get_modelops_service()
+        roi: Optional[List[float]] = None
+        if roi_bbox is not None:
+            if len(roi_bbox) != 4:
+                raise ModelOpsError(
+                    "roi_bbox must be [x0, y0, x1, y1] (pixel coords)",
+                    correction_hint="pass exactly four numbers",
+                )
+            roi = [float(v) for v in roi_bbox]
         request = InferenceRequest(
             model_id=model_id,
             source_uri=source_uri[:MAX_SOURCE_URI_LEN],
             owner_scope=scope,
             task_type=task_type,
             source_uri_b=source_uri_b[:MAX_SOURCE_URI_LEN] if source_uri_b else None,
+            roi_bbox=tuple(int(v) for v in roi) if roi is not None else None,
+            vectorize_classes=bool(vectorize),
+            postgis_table=postgis_table,
             score_threshold=float(score_threshold),
         )
         result = await service.run_inference_async(request)
