@@ -277,7 +277,9 @@ export default function Home() {
   // 注意写入的是 *-raw：主题校正（暗色下向白色混合）由 globals.css 完成，
   // 组件只需读 var(--agent-accent) 就能拿到当前主题下达标的 accent。
   useEffect(() => {
-    document.documentElement.style.setProperty('--agent-accent-raw', reactiveAccentColor);
+    if (/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$|^rgba?\([0-9,.\s]+\)$/i.test(reactiveAccentColor)) {
+      document.documentElement.style.setProperty('--agent-accent-raw', reactiveAccentColor);
+    }
   }, [reactiveAccentColor]);
 
   const currentSessionTitle = sessionId
