@@ -13,7 +13,7 @@
  * 订阅同一 store 高亮来自 map/chart 的选择 —— map↔table 双向单真相。
  * 无内联要素的 MVT/ref 大层：显式披露「瓦片通道无内联属性」，不静默空表。
  */
-import React, { useMemo, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 import { X } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useVirtualRows } from '@/lib/hooks/use-virtual-rows';
@@ -84,38 +84,56 @@ export function AttributeTablePanel() {
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null);
   const [search, setSearch] = useState('');
 
-  const rows = useMemo(() => {
-    type Row = { fid: string | null; topId: unknown; cells: string[]; raw: Record<string, unknown> };
-    const q = search.trim().toLowerCase();
-    const out: Row[] = [];
+  type Row = { fid: string | null; topId: unknown; raw: Record<string, unknown> };
+
+  // V7（review MAJOR-2）：三段派生，成本各自 memo 化且与高频输入解耦 ——
+  // 1) baseRows 只依赖 features/columns（每行 fid + 引用，不字符串化）；
+  // 2) 过滤在键入时只读 baseRows 的 haystack 缓存（随 1 一并构建一次）；
+  // 3) 排序对过滤结果做单列 decorate-once。
+  // 10 万行键入/排序不再触发全量 cells 字符串化（此前的 4M 次 cellText）。
+  const baseRows = useMemo(() => {
+    const q = null; // haystack 在此构建；q 在过滤段应用
+    void q;
+    const columnKeys = columns.map((c) => c.key);
+    const out: Array<Row & { haystack: string }> = [];
     for (let i = 0; i < features.length; i += 1) {
       const f = features[i];
       const raw = (f.properties ?? f) as Record<string, unknown>;
       const topId = (f as { id?: unknown }).id;
       const fid = resolveFeatureId(raw, topId);
-      const cells = columns.map((c) => cellText(raw[c.key]));
-      if (q) {
-        const hay = `${fid ?? ''}\u0000${cells.join('\u0000')}`.toLowerCase();
-        if (!hay.includes(q)) continue;
-      }
-      out.push({ fid: fid != null ? String(fid) : null, topId, cells, raw });
-    }
-    if (sort) {
-      const idx = columns.findIndex((c) => c.key === sort.key);
-      if (idx >= 0) {
-        const dir = sort.dir === 'asc' ? 1 : -1;
-        out.sort((a, b) => {
-          const av = a.cells[idx];
-          const bv = b.cells[idx];
-          const an = Number(av);
-          const bn = Number(bv);
-          if (Number.isFinite(an) && Number.isFinite(bn)) return (an - bn) * dir;
-          return av.localeCompare(bv) * dir;
-        });
-      }
+      const fidText = fid != null ? String(fid) : '';
+      const parts = columnKeys.map((k) => cellText(raw[k]));
+      out.push({
+        fid: fidText || null,
+        topId,
+        raw,
+        haystack: `${fidText}\u0000${parts.join('\u0000')}`.toLowerCase(),
+      });
     }
     return out;
-  }, [features, columns, search, sort]);
+  }, [features, columns]);
+
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = q ? baseRows.filter((r) => r.haystack.includes(q)) : baseRows;
+    if (!sort) return filtered;
+    // decorate-once：排序键每行提取一次，comparator 只比较已提取值。
+    const decorated = filtered.map((r) => ({ r, key: cellText(r.raw[sort.key]) }));
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    decorated.sort((a, b) => {
+      const an = Number(a.key);
+      const bn = Number(b.key);
+      if (Number.isFinite(an) && Number.isFinite(bn)) return (an - bn) * dir;
+      return a.key.localeCompare(b.key) * dir;
+    });
+    return decorated.map((d) => d.r);
+  }, [baseRows, search, sort]);
+
+  /** 渲染窗口的 cells 惰性构建（~30 行 × 列数，渲染期常量）。 */
+  const cellsOf = useCallback(
+    (row: Row) => columns.map((c) => cellText(row.raw[c.key])),
+    [columns],
+  );
 
   // map ↔ table 单真相：订阅 selection-store；表格高亮 = current 选中 ids。
   const selectionGeneration = useSyncExternalStore(subscribeSelection, getSelectionGeneration);
@@ -223,8 +241,8 @@ export function AttributeTablePanel() {
             </button>
           ))}
         </div>
-        <div style={{ height: virtual.totalHeight, position: 'relative' }}>
-          <div style={{ transform: `translateY(${virtual.offsetY}px)` }}>
+        <div role="presentation" style={{ height: virtual.totalHeight, position: 'relative' }}>
+          <div role="presentation" style={{ transform: `translateY(${virtual.offsetY}px)` }}>
             {rows.slice(virtual.start, virtual.end).map((row, i) => {
               const rowIndex = virtual.start + i;
               const highlighted = row.fid != null && selectedIds.has(row.fid);
@@ -248,7 +266,7 @@ export function AttributeTablePanel() {
                   style={{ height: ROW_HEIGHT }}
                 >
                   <span className="w-14 shrink-0 text-ink-disabled">{rowIndex + 1}</span>
-                  {row.cells.map((cell, ci) => (
+                  {cellsOf(row).map((cell, ci) => (
                     <span key={columns[ci].key} role="gridcell" className="min-w-0 flex-1 truncate" title={cell}>
                       {cell}
                     </span>

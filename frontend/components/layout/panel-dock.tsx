@@ -233,6 +233,7 @@ function DockResizeHandle({
       aria-orientation={area === 'right' ? 'vertical' : 'horizontal'}
       aria-label={label}
       aria-valuenow={currentSize}
+      aria-valuetext={`${currentSize} 像素`}
       aria-valuemin={min}
       aria-valuemax={max}
       title="拖拽调整尺寸（双击复位）"
@@ -403,6 +404,13 @@ function panelLabel(type: string, id: string): string {
   return id;
 }
 
+/** 底部区实际渲染高度：store 高度受 maxHeight:60vh 钳制 —— 右区抬升量按
+ *  同一钳制计算，矮视口下两区不留空隙（review MINOR-13）。 */
+function liveBottomDockHeight(storeHeight: number): number {
+  if (typeof window === 'undefined') return storeHeight;
+  return Math.min(storeHeight, Math.round(window.innerHeight * 0.6));
+}
+
 export function PanelDockHost() {
   // committed spec 变化（面板增删/重命名/禁用）时重算标签与实例。
   const specGeneration = useSyncExternalStore(subscribeMapSpecLive, getMapSpecLiveGeneration);
@@ -465,7 +473,7 @@ export function PanelDockHost() {
                 area="right"
                 title="停靠面板"
                 size={rightDockWidth}
-                bottomInset={showBottom ? bottomDockHeight : 0}
+                bottomInset={showBottom ? liveBottomDockHeight(bottomDockHeight) : 0}
                 tabs={rightTabs}
                 activePanel={rightTabs.some((t) => t.id === rightDock.activePanel)
                   ? (rightDock.activePanel as string)

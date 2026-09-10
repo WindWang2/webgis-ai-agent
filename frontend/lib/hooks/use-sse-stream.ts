@@ -95,14 +95,21 @@ function makeToolCallStatusMarker(
       if (idx === -1) return prev;
       const calls = prev[idx].toolCalls;
       if (!calls || calls.length === 0) return prev;
-      // V7：stepId 在场时优先精确匹配（同 turn 两次同名工具不错配）；
-      // 无命中或 stepId 缺席回落既有工具名匹配（向后兼容无 id 的载荷）。
+      // V7（review MAJOR-3）：两段式匹配 —— stepId 在场且能精确命中时**只用**
+      // 精确命中集（同 turn「带 id 行 E1 + 无 id 同名行 E2」并存时，E1 的终态
+      // 不得连带标掉 E2）；无精确命中才整体回落工具名匹配（无 id 载荷兼容）。
+      const running = calls.filter((c: ToolCallEntry) => c.status === 'running');
+      const exact = stepId ? running.filter((c: ToolCallEntry) => c.stepId === stepId) : [];
+      const matchedIds = new Set(
+        (exact.length > 0
+          ? exact
+          : running.filter((c: ToolCallEntry) => c.tool === tool)
+        ).map((c: ToolCallEntry) => c.id),
+      );
+      if (matchedIds.size === 0) return prev;
       let changed = false;
       const next = calls.map((c: ToolCallEntry) => {
-        const matched = stepId
-          ? (c.stepId === stepId || (c.stepId == null && c.tool === tool && c.status === 'running'))
-          : (c.tool === tool && c.status === 'running');
-        if (!matched || c.status !== 'running') return c;
+        if (!matchedIds.has(c.id)) return c;
         changed = true;
         return {
           ...c,

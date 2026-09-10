@@ -18,6 +18,9 @@ import {
   startWorkbenchPersistence,
   workbenchPersistenceArmed,
 } from '@/lib/workbench/persistence';
+// V7（review MINOR-10）：静态 import —— 会话切换路径上 resetSketchStore 必须
+// 同步落地，动态 import 的微任务延迟会让迟到 reset 清掉切换后的新草图。
+import { resetSketchStore } from '@/lib/edit/sketch-store';
 import { clearUndoHistory } from '@/lib/workbench/undo';
 import {
   clearSessionAnchor,
@@ -176,7 +179,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // V7（审计 §4-M）：工具激活态与脏标记跨会话残留（测量模式在新会话
       // 仍激活）；草图要素同理清空。
       useHudStore.getState().clearToolState();
-      void import('@/lib/edit/sketch-store').then((m) => m.resetSketchStore()).catch(() => {});
+      resetSketchStore();
       // Workspace V2：dock 归属描述的是旧会话的组件实例 —— 新会话的
       // MapSpec 没有这些 id，停靠区随之清空（避免空 dock/幽灵面板）。
       useHudStore.getState().resetDockState();
@@ -352,7 +355,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       useHudStore.getState().setEditingLayerId(null);
       // V7：同 selectSession —— 工具/脏标记/草图随会话清空。
       useHudStore.getState().clearToolState();
-      void import('@/lib/edit/sketch-store').then((m) => m.resetSketchStore()).catch(() => {});
+      resetSketchStore();
       // Workspace V2：dock 归属描述的是旧会话的组件实例 —— 新会话的
       // MapSpec 没有这些 id，停靠区随之清空（避免空 dock/幽灵面板）。
       useHudStore.getState().resetDockState();

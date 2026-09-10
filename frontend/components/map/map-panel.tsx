@@ -1342,12 +1342,20 @@ export function MapPanel({
             layerIds={layerIdsSetRef.current}
             layersMap={layersMapRef.current}
             onClose={() => {
+              // V7（review MINOR-12）：仅在当前共享选择确属本弹窗图层族时清除
+              // —— clear_selection 是全局清，不得连带抹掉属性表在其它层的
+              // 高亮。
+              const selLayerId = useHudStore.getState().selectedFeature?.layerId as string | undefined
+              const sel = getSelection()
+              const belongsToPanel = !sel || !selLayerId
+                || sel.layer_id === selLayerId
+                || sel.layer_id.startsWith(`${selLayerId}__`)
+                || selLayerId.startsWith(`${sel.layer_id}__`)
               setPoiPanel(null)
               setSelectedFeature(null)
-              // V7（审计 §3-M）：与「选中层消失」清理缝同款 —— 关闭弹窗也要
-              // 清共享选择，否则 selection-store 仍持有 id 过滤，地图/表格
-              // 高亮在弹窗关闭后残留。
-              publishSelection('clear_selection', { source: 'map', layer_id: '' })
+              if (belongsToPanel) {
+                publishSelection('clear_selection', { source: 'map', layer_id: '' })
+              }
             }}
             onZoomToFeature={handleZoomToFeature}
           />

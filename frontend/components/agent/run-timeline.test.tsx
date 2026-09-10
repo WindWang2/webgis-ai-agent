@@ -62,15 +62,29 @@ describe('RunTimeline（V7 Phase G）', () => {
     // 首页取满 2 条且 after_id == 最后一条 id → hasMore
     vi.mocked(getRunEvents).mockResolvedValueOnce(page());
     vi.mocked(getRunEvents).mockResolvedValueOnce(page({
-      after_id: 2,
+      after_id: 3,
+      count: 1,
       events: [
         { id: 3, run_id: 'run-1', event: 'run_completed', created_at: '2026-09-11T02:00:09Z' },
       ],
     }));
     render(<RunTimeline runId="run-1" />);
-    await waitFor(() => expect(screen.getByRole('button', { name: '继续读取更早事件' })).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: '继续读取更早事件' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '继续读取更多事件' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: '继续读取更多事件' }));
     await waitFor(() => expect(screen.getByText('run_completed')).toBeTruthy());
     expect(screen.getByText('run_started')).toBeTruthy();
+  });
+
+  it('耗尽页（count=0）收起续读按钮', async () => {
+    vi.mocked(getRunEvents).mockResolvedValueOnce(page({ after_id: 2, count: 2 }));
+    render(<RunTimeline runId="run-1" />);
+    await waitFor(() => expect(screen.getByTestId('run-timeline')).toBeTruthy());
+    // count=2 → 未耗尽（有游标时按钮在）
+    expect(screen.queryByRole('button', { name: '继续读取更多事件' })).toBeTruthy();
+    vi.mocked(getRunEvents).mockResolvedValueOnce(page({ after_id: 2, count: 0 }));
+    fireEvent.click(screen.getByRole('button', { name: '继续读取更多事件' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: '继续读取更多事件' })).toBeNull(),
+    );
   });
 });

@@ -55,6 +55,8 @@ export function RunTimeline({ runId }: { runId: string }) {
   const [error, setError] = useState<'not_found' | 'unavailable' | 'network' | null>(null);
   const [loading, setLoading] = useState(false);
   const [afterId, setAfterId] = useState(0);
+  /** 后端已无可读事件（page.count === 0）—— 续读按钮收起。 */
+  const [exhausted, setExhausted] = useState(false);
 
   const load = useCallback(async (cursor: number, append: boolean) => {
     setLoading(true);
@@ -63,6 +65,8 @@ export function RunTimeline({ runId }: { runId: string }) {
       const page = await getRunEvents(runId, { afterId: cursor, limit: 200 });
       setEvents((prev) => (append && prev ? [...prev, ...page.events] : page.events));
       setAfterId(page.after_id);
+      // after_id 是升序游标 —— 追加的是**更晚**事件；count 为 0 即耗尽。
+      setExhausted(page.count === 0);
     } catch (err) {
       if (err instanceof RunEventsUnavailableError) setError(err.reason);
       else setError('network');
@@ -74,6 +78,7 @@ export function RunTimeline({ runId }: { runId: string }) {
   useEffect(() => {
     setEvents(null);
     setAfterId(0);
+    setExhausted(false);
     void load(0, false);
   }, [load]);
 
@@ -135,13 +140,13 @@ export function RunTimeline({ runId }: { runId: string }) {
           </li>
         ))}
       </ol>
-      {hasMore && (
+      {hasMore && !exhausted && (
         <button
           type="button"
           className="mx-2 rounded-xs border border-edge-subtle px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-hover"
           onClick={() => void load(afterId, true)}
         >
-          继续读取更早事件
+          继续读取更多事件
         </button>
       )}
     </div>

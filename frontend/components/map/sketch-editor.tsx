@@ -9,9 +9,10 @@
  *   ↔ store」的双向缝合；
  * - 渲染走自管 source/layers（`wb-sketch*`），不经 MapSpecRuntime —— 草图
  *   是用户 transient 创作物，不进权威 MapSpec、不产生 user mutation；
- * - 图层树行（wb-sketch）在首个要素落库时创建：显隐/不透明度走既有
- *   updateLayer 通道，本组件回读行状态应用到自管图层（行 source 同步
- *   要素集，getFeatureCount 直接可见）；
+ * - 图层树行（wb-sketch）无 `_mapspecLayerId`：对该行的显隐/不透明度在
+ *   HUD 本地生效（本组件回读行状态应用到自管图层；user-mutation 对无
+ *   spec 绑定的行短路本地通道，不发服务端 mutation），删除同理走本地
+ *   通道 —— 图层树行的可见性/计数由行 source 同步保持；
  * - 所有几何变更经 recordCommand 进 workbench undo 栈（可逆编辑纪律）。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
@@ -121,7 +122,7 @@ function syncSketchLayerRow(): void {
   }, { source: 'server' });
 }
 
-/** 命令包装：捕获前后要素集，进 workbench undo 栈。 */
+/** 命令包装：捕获前后要素集，进 workbench undo 栈（重放后同步图层树行）。 */
 function commitSketchCommand(
   label: string,
   previous: SketchFeature[],
@@ -135,8 +136,14 @@ function commitSketchCommand(
     kind: 'sketch',
     actor: 'user',
     layerIds: [SKETCH_LAYER_ID],
-    undo: () => replaceSketchFeatures(before),
-    redo: () => replaceSketchFeatures(after),
+    undo: () => {
+      replaceSketchFeatures(before);
+      syncSketchLayerRow();
+    },
+    redo: () => {
+      replaceSketchFeatures(after);
+      syncSketchLayerRow();
+    },
   });
 }
 
@@ -273,6 +280,17 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
 
       if (active === 'draw_line' || active === 'draw_polygon') {
         const draft = draftRef.current ?? { kind: active === 'draw_polygon' ? 'polygon' as const : 'line' as const, coordinates: [] };
+        // 双击完成时 maplibre 仍派发两次 click —— 与上一点像素距离过近的
+        // 点击忽略，避免草稿尾部进入重复顶点（closeRing 不去重）。
+        const last = draft.coordinates[draft.coordinates.length - 1];
+        if (last) {
+          const mapForDedupe = getMap();
+          if (mapForDedupe) {
+            const a = mapForDedupe.project(last);
+            const b = mapForDedupe.project(lngLat);
+            if (Math.hypot(a.x - b.x, a.y - b.y) < 4) return;
+          }
+        }
         // 吸附：已有要素顶点 + 草图首点（闭环）
         let coordinate = lngLat;
         if (snappingRef.current) {
@@ -354,7 +372,6 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       const state = getSketchState();
       const feature = state.features.find((f) => f.id === parentId);
       if (!feature) return;
-      dragStartGeometry.set(parentId, feature.geometry);
       const vertices = geometryVertices(feature.geometry);
       const coord: [number, number] = [e.lngLat.lng, e.lngLat.lat];
       const hit = snapToVertex(coord, vertices, (p) => map.project(p), (p) => map.unproject([p.x, p.y]), 14);
@@ -365,6 +382,9 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
         );
       }
       if (vertexIndex < 0) return;
+      // 快照紧贴手势确认（vertexIndex 命中）之后 —— 未命中的提前 return
+      // 不留脏快照（review MINOR-6）。
+      dragStartGeometry.set(parentId, feature.geometry);
       dragging = { parentId, vertexIndex };
       if (typeof map.dragPan?.disable === 'function') map.dragPan.disable();
     };
@@ -394,8 +414,14 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
           kind: 'sketch',
           actor: 'user',
           layerIds: [SKETCH_LAYER_ID],
-          undo: () => updateSketchGeometry(done.parentId, before),
-          redo: () => updateSketchGeometry(done.parentId, after),
+          undo: () => {
+            updateSketchGeometry(done.parentId, before);
+            syncSketchLayerRow();
+          },
+          redo: () => {
+            updateSketchGeometry(done.parentId, after);
+            syncSketchLayerRow();
+          },
         });
       }
       dragStartGeometry.delete(done.parentId);
@@ -463,6 +489,8 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
   return (
     <div
       data-testid="sketch-save-bar"
+      role="status"
+      aria-live="polite"
       className="pointer-events-auto absolute bottom-3 left-3 z-30 flex items-center gap-2 rounded-md border border-edge-subtle bg-surface-raised/95 px-2.5 py-1.5 text-micro text-ink shadow-agent-md backdrop-blur-md"
     >
       <span>草图有未保存变更</span>

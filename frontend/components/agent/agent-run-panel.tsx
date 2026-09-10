@@ -12,7 +12,7 @@
  * - 地图效应：opsLog 图层类操作（add/remove/toggle/style/reorder）近 8 条；
  * 刷新：手动（不轮询 —— 投影端点是会话级快照）。
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Wrench, Package, Map as MapIcon, AlertTriangle, ListTree } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { getAnalysisGraph, type ExecutionNode } from '@/lib/api/analysis-graph';
@@ -76,6 +76,8 @@ export function AgentRunPanel() {
 
   const [graph, setGraph] = useState<Awaited<ReturnType<typeof getAnalysisGraph>>>(null);
   const [loadingGraph, setLoadingGraph] = useState(false);
+  // V7（review MINOR-9）：请求序号守卫 —— 快速连点刷新时旧响应不得覆盖新响应。
+  const graphSeqRef = useRef(0);
 
   const refreshGraph = useCallback(async () => {
     const { sessionId, ownerToken } = getSessionIdentity();
@@ -83,8 +85,10 @@ export function AgentRunPanel() {
       setGraph(null);
       return;
     }
+    const seq = ++graphSeqRef.current;
     setLoadingGraph(true);
     const g = await getAnalysisGraph(sessionId, ownerToken ?? null);
+    if (seq !== graphSeqRef.current) return; // superseded
     setGraph(g);
     setLoadingGraph(false);
   }, []);

@@ -113,6 +113,13 @@ export function enqueueUserMutation<T>(operation: () => Promise<T>): Promise<T> 
 
 export async function commitLayerPresentation(patch: LayerPresentationPatch): Promise<void> {
   if (patch.visible === undefined && patch.opacity === undefined) return;
+  // V7（review MAJOR-1）：无 `_mapspecLayerId` 的 HUD-only 行（草图层、SSE
+  // 预挂载行）对服务端是未知 layer —— patch_layer_presentation 会 400
+  // "Layer not found"（lifecycle_engine 对未知 id 拒绝）。本地乐观态即最终
+  // 态，跳过服务端提交；行随后被 spec 绑定（syncSpecLayersToStore 回填）时
+  // 会经 server 回灌对齐。
+  const row = useHudStore.getState().layers.find((item) => item.id === patch.layerId);
+  if (row && !row._mapspecLayerId) return;
   const specLayerId = mapspecLayerId(patch.layerId);
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
   // 乐观 pending 立即落（不等排队）——compose 在链等待期间即表达本地期望。
@@ -469,6 +476,18 @@ export async function removeLayerFromSpec(
 
 export async function removeLayerAndCommit(layerId: string): Promise<void> {
   const previous = useHudStore.getState().layers;
+  // V7（review MAJOR-1）：无 spec 绑定的 HUD-only 行（草图层等）对服务端
+  // 未知 —— remove_layer 会 400。本地删除 + journal 即完整语义。
+  const removedRow = previous.find((l) => l.id === layerId);
+  if (removedRow && !removedRow._mapspecLayerId) {
+    journalOnly({
+      type: 'remove',
+      label: `删除图层 ${layerId}`,
+      actor: 'user',
+    });
+    useHudStore.getState().removeLayer(layerId);
+    return;
+  }
   const specLayerId = mapspecLayerId(layerId);
   const enqueuedSessionId = getMapSpecSessionCursor().sessionId;
   // V5/W4：remove 落账不可逆（服务端 spec 已删、重挂需 source 数据重取）
