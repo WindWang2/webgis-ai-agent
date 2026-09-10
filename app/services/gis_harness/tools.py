@@ -1159,6 +1159,8 @@ def register_gis_harness_tools(registry: ToolRegistry):
             # #716: nothing was actually mounted — do not let the caller
             # (or the plan tick) treat this as a complete product.
             out["cartographic_authoring_failed"] = True
+            out["success"] = False
+            out["error"] = f"Failed to mount any map layers: {'; '.join(authoring_failures)}"
         final_spec = layout_res.get("mapspec") if isinstance(layout_res.get("mapspec"), dict) else None
         if final_spec is not None:
             out["mapspec"] = final_spec
