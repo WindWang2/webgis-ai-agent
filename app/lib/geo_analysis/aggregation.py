@@ -267,12 +267,15 @@ def _metric_zone_area_m2(zones_gdf: gpd.GeoDataFrame) -> tuple[pd.Series, str, s
         metric_crs = None
     if metric_crs is None:
         try:
-            centroid = zones_gdf.geometry.union_all().centroid
+            minx, miny, maxx, maxy = zones_gdf.total_bounds
+            mid_x = (minx + maxx) / 2.0
+            mid_y = (miny + maxy) / 2.0
         except Exception:
             centroid = zones_gdf.geometry.iloc[0].centroid
-        lon = (float(centroid.x) + 180.0) % 360.0 - 180.0
+            mid_x, mid_y = float(centroid.x), float(centroid.y)
+        lon = (float(mid_x) + 180.0) % 360.0 - 180.0
         zone = max(1, min(60, int((lon + 180) / 6) + 1))
-        hemisphere = 32600 if float(centroid.y) >= 0 else 32700
+        hemisphere = 32600 if float(mid_y) >= 0 else 32700
         metric_crs = f"EPSG:{hemisphere + zone}"
     areas = zones_gdf.geometry.to_crs(metric_crs).area
     return areas, str(metric_crs), data_class
