@@ -47,6 +47,48 @@ _BIN_SUFFIX = ".bin"
 _META_SUFFIX = ".meta"
 _STAGING_ROOT = "staging"
 
+#: multipart 默认参数（有界内存契约：峰值 O(part_size×并发 1)）。
+DEFAULT_PART_SIZE = 8 * 1024 * 1024
+MAX_PARTS = 10_000
+#: 网络操作重试（幂等读 + staging 写；final copy/complete 不盲目重试）。
+DEFAULT_ATTEMPTS = 3
+_RETRY_BASE_DELAY = 0.05  # 秒（测试友好；生产 0.2s 级由调用方覆写）
+
+
+def _to_epoch(value: Any) -> float:
+    """LastModified 归一化（datetime → epoch 秒；None/数值透传为 float）。"""
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return float(value.timestamp())
+    except AttributeError as e:
+        raise ValueError(f"cannot normalize last_modified: {value!r}") from e
+
+
+def _with_retries(fn, *, attempts: int = DEFAULT_ATTEMPTS,
+                  base_delay: float = _RETRY_BASE_DELAY):
+    """幂等操作重试（指数退避 + 固定 cap；非幂等操作不得走此包装）。
+    终败抛最后一次异常 —— 绝不把失败包装成成功。"""
+    import random
+    import time
+
+    last: Optional[Exception] = None
+    for attempt in range(max(1, attempts)):
+        try:
+            return fn()
+        except S3StoreUnavailable:
+            raise  # typed 降级不重试（配置问题重试无意义）
+        except Exception as e:  # noqa: BLE001
+            last = e
+            if attempt < attempts - 1:
+                time.sleep(min(base_delay * (2 ** attempt), 2.0)
+                           * (0.5 + random.random() / 2))
+    raise last  # type: ignore[misc]
+
 
 class S3StoreUnavailable(RuntimeError):
     """boto3 缺失 / 配置不完整时的 typed 降级（诚实，绝不假装成功）。"""
@@ -199,14 +241,23 @@ class S3BlobStore(BlobStore):
     ) -> None:
         staging_key = self._object_key(key, content_type, staging=True)
         try:
-            client.put_object(Bucket=self._bucket, Key=staging_key, Body=data)
-            client.copy_object(
-                Bucket=self._bucket,
-                Key=final_key,
-                CopySource={"Bucket": self._bucket, "Key": staging_key},
+            staging_resp = _with_retries(
+                lambda: client.put_object(
+                    Bucket=self._bucket, Key=staging_key, Body=data,
+                )
             )
-            self._put_meta(client, self._meta_key(final_key), content_type,
-                           len(data), digest)
+            _with_retries(
+                lambda: client.copy_object(
+                    Bucket=self._bucket,
+                    Key=final_key,
+                    CopySource={"Bucket": self._bucket, "Key": staging_key},
+                )
+            )
+            self._put_meta(
+                client, self._meta_key(final_key), content_type,
+                len(data), digest,
+                etag=str(staging_resp.get("ETag", "")) if staging_resp else "",
+            )
         except Exception:
             # staging 残留清理（final 未出场 = 读者只见"无对象"或旧版本）。
             try:
@@ -216,11 +267,12 @@ class S3BlobStore(BlobStore):
             raise
 
     def _put_meta(self, client: Any, meta_key: str, content_type: str,
-                  byte_size: int, digest: str) -> None:
+                  byte_size: int, digest: str, etag: str = "") -> None:
         body = json.dumps({
             "content_type": content_type,
             "byte_size": byte_size,
             "sha256": digest,
+            **({"etag": etag} if etag else {}),
         }).encode("utf-8")
         client.put_object(Bucket=self._bucket, Key=meta_key, Body=body)
 
@@ -326,6 +378,368 @@ class S3BlobStore(BlobStore):
             except (ValueError, UnicodeDecodeError):
                 return None
         return None
+
+    # ── V7 生产化：流式 / multipart / ETag / 枚举 / 孤儿清扫 ────────────
+
+    def remote_etag(self, key: str) -> Optional[str]:
+        """远端对象的当前 ETag（head 级；DR scrub 比对 sidecar 记录值）。"""
+        try:
+            key = safe_blob_key(key)
+        except BlobKeyError:
+            return None
+        client = self._require_client()
+        for content_type in ("json", "binary"):
+            head = self._head(client, self._object_key(key, content_type))
+            if head is not None and head.get("ETag"):
+                return str(head["ETag"])
+        return None
+
+    def put_blob_from_path(
+        self, key: str, path, content_type: str = "binary", *,
+        part_size: int = DEFAULT_PART_SIZE,
+    ) -> PutResult:
+        """文件 → blob 真流式：第一遍流式摘要（零驻留），第二遍 multipart
+        分块上传。digest 预先已知 → create_multipart_upload 的 Metadata
+        即携带（complete 前在场 —— 关闭 sidecar 时窗，评审 R0-13）。
+        小文件走既有原子发布路径（staging→copy）。"""
+        import hashlib as _hashlib
+        from pathlib import Path as _Path
+
+        key = safe_blob_key(key)
+        src = _Path(path)
+        total = src.stat().st_size
+        hasher = _hashlib.sha256()
+        with src.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(part_size), b""):
+                hasher.update(chunk)
+        digest = hasher.hexdigest()
+        client = self._require_client()
+        final_key = self._object_key(key, content_type)
+        location = self.location(key, content_type)
+        if self._head(client, final_key) is not None:
+            existing = self.read_meta(key) or {}
+            head = self._head(client, final_key) or {}
+            if (existing.get("sha256") == digest
+                    and int(head.get("ContentLength", -1)) == total):
+                return PutResult(put_new=False, location=location)
+        if total <= part_size:
+            return self.put_blob(key, src.read_bytes(), content_type)
+        # 内容寻址键守卫（评审 R1-16）：digest pass 与数据 pass 之间源
+        # 被改写 → 键不符 = typed 拒绝。
+        hasher2 = _hashlib.sha256()
+        with src.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(part_size), b""):
+                hasher2.update(chunk)
+        if len(key) == 64 and all(c in "0123456789abcdef" for c in key) \
+                and hasher2.hexdigest() != key:
+            from app.services.durable_blob_store import BlobDigestMismatch
+
+            raise BlobDigestMismatch(key)
+
+        def _parts():
+            with src.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(part_size), b""):
+                    yield chunk
+
+        etag = self._multipart_upload(
+            client, key, final_key, content_type, _parts(),
+            max_parts=MAX_PARTS, max_total_bytes=None,
+            metadata={"sha256": digest},
+        )
+        self._put_meta(client, self._meta_key(final_key), content_type,
+                       total, digest, etag=etag)
+        return PutResult(put_new=True, location=location)
+
+    def put_blob_stream(
+        self, key: str, chunks, content_type: str = "binary", *,
+        part_size: int = DEFAULT_PART_SIZE,
+        max_parts: int = MAX_PARTS,
+        max_total_bytes: Optional[int] = None,
+    ) -> PutResult:
+        """字节流 → blob（multipart；峰值内存 O(part_size)）。
+
+        digest 流式累计（调用方预先知道 digest 时优先
+        ``put_blob_from_path`` —— 那条路径的 digest 进 Metadata）。任一
+        part 终败 / 超界 → abort（无残留）→ typed 错误。"""
+        import hashlib as _hashlib
+
+        key = safe_blob_key(key)
+        if part_size < 1 or max_parts < 1:
+            raise BlobKeyError("invalid multipart parameters")
+        client = self._require_client()
+        final_key = self._object_key(key, content_type)
+        location = self.location(key, content_type)
+        state = {"digest": _hashlib.sha256(), "total": 0}
+        buffer = bytearray()
+
+        def _parts():
+            for chunk in chunks:
+                state["digest"].update(chunk)
+                state["total"] += len(chunk)
+                if max_total_bytes is not None and state["total"] > max_total_bytes:
+                    raise BlobKeyError(
+                        "stream exceeds max_total_bytes — multipart aborted"
+                    )
+                buffer.extend(chunk)
+                while len(buffer) >= part_size:
+                    yield bytes(buffer[:part_size])
+                    del buffer[:part_size]
+            if buffer:
+                yield bytes(buffer)
+
+        etag = self._multipart_upload(
+            client, key, final_key, content_type, _parts(),
+            max_parts=max_parts, max_total_bytes=max_total_bytes,
+            metadata=None,
+        )
+        self._put_meta(client, self._meta_key(final_key), content_type,
+                       state["total"], state["digest"].hexdigest(), etag=etag)
+        return PutResult(put_new=True, location=location)
+
+    def _multipart_upload(
+        self, client: Any, key: str, final_key: str, content_type: str,
+        parts, *, max_parts: int, max_total_bytes: Optional[int],
+        metadata: Optional[dict],
+    ) -> str:
+        """multipart 核心：create → 逐 part upload_part（重试）→ complete；
+        任一环节终败 → abort（无残留）。返回 ETag。"""
+        create_kwargs: dict = {"Bucket": self._bucket, "Key": final_key}
+        if metadata:
+            create_kwargs["Metadata"] = metadata
+        upload = client.create_multipart_upload(**create_kwargs)
+        upload_id = upload.get("UploadId")
+        if not upload_id:
+            raise S3StoreUnavailable(
+                "create_multipart_upload returned no UploadId"
+            )
+        parts_sent: list = []
+        try:
+            for part_number, chunk in enumerate(parts, start=1):
+                if part_number > max_parts:
+                    raise BlobKeyError(
+                        f"stream exceeds {max_parts} parts — multipart aborted"
+                    )
+                if max_total_bytes is not None:
+                    done = sum(int(p["Size"]) for p in parts_sent) + len(chunk)
+                    if done > max_total_bytes:
+                        raise BlobKeyError(
+                            "stream exceeds max_total_bytes — multipart aborted"
+                        )
+                resp = self._upload_part_with_retry(
+                    client, final_key, upload_id, part_number, chunk,
+                )
+                parts_sent.append({
+                    "ETag": resp["ETag"], "PartNumber": part_number,
+                    "Size": len(chunk),
+                })
+            if not parts_sent:
+                raise BlobKeyError("stream produced zero bytes")
+            complete = client.complete_multipart_upload(
+                Bucket=self._bucket, Key=final_key, UploadId=upload_id,
+                MultipartUpload={"Parts": [
+                    {"ETag": p["ETag"], "PartNumber": p["PartNumber"]}
+                    for p in parts_sent
+                ]},
+            )
+            return str(complete.get("ETag", ""))
+        except Exception:
+            try:
+                client.abort_multipart_upload(
+                    Bucket=self._bucket, Key=final_key, UploadId=upload_id,
+                )
+            except Exception:  # noqa: BLE001 — abort 失败由孤儿清扫兜底
+                logger.warning(
+                    "[s3_blob_store] abort failed for multipart %s", key,
+                )
+            raise
+
+    def _upload_part_with_retry(self, client, final_key, upload_id,
+                                part_number: int, chunk: bytes) -> dict:
+        import random
+        import time
+
+        last: Optional[Exception] = None
+        for attempt in range(DEFAULT_ATTEMPTS):
+            try:
+                return client.upload_part(
+                    Bucket=self._bucket, Key=final_key, UploadId=upload_id,
+                    PartNumber=part_number, Body=chunk,
+                )
+            except S3StoreUnavailable:
+                raise
+            except Exception as e:  # noqa: BLE001 — 网络/服务端瞬态故障
+                last = e
+                if attempt < DEFAULT_ATTEMPTS - 1:
+                    time.sleep(
+                        min(_RETRY_BASE_DELAY * (2 ** attempt), 2.0)
+                        * (0.5 + random.random() / 2)
+                    )
+        raise last  # type: ignore[misc]
+
+    def get_blob_stream(
+        self, key: str, expected_sha256: Optional[str] = None, *,
+        chunk_size: int = 1024 * 1024,
+    ):
+        """blob → 字节迭代器（流式 digest；尾部判定，不符 typed 异常）。"""
+        import hashlib as _hashlib
+
+        key = safe_blob_key(key)
+        client = self._require_client()
+        for content_type in ("json", "binary"):
+            object_key = self._object_key(key, content_type)
+            try:
+                resp = client.get_object(Bucket=self._bucket, Key=object_key)
+            except Exception as e:
+                if self._is_absent(e):
+                    continue
+                raise S3StoreUnavailable(
+                    f"s3 get failed for {object_key[:64]}: {e}"
+                ) from e
+            hasher = _hashlib.sha256()
+            body = resp["Body"]
+            while True:
+                chunk = body.read(chunk_size)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                yield chunk
+            if expected_sha256 and hasher.hexdigest() != expected_sha256:
+                from app.services.durable_blob_store import BlobDigestMismatch
+
+                raise BlobDigestMismatch(key)
+            return
+
+    @property
+    def supports_enumeration(self) -> bool:
+        return True
+
+    def iter_objects(self, *, limit: int = 10_000):
+        """有界分页枚举（list_objects_v2；相对布局键，含 staging/）。
+
+        孤儿扫描/GC 的 S3 parity 面 —— 元数据级，绝不读对象体。"""
+        client = self._require_client()
+        prefix = f"{self._prefix}/" if self._prefix else ""
+        yielded = 0
+        token: Optional[str] = None
+        while yielded < limit:
+            kwargs: dict = {
+                "Bucket": self._bucket,
+                "MaxKeys": min(1000, limit - yielded),
+            }
+            if prefix:
+                kwargs["Prefix"] = prefix
+            if token:
+                kwargs["ContinuationToken"] = token
+            resp = _with_retries(lambda: client.list_objects_v2(**kwargs))
+            for item in resp.get("Contents") or []:
+                raw_key = str(item.get("Key", ""))
+                rel = raw_key[len(prefix):] if prefix and raw_key.startswith(prefix) else raw_key
+                yield {
+                    "key": rel,
+                    "size": int(item.get("Size", 0)),
+                    "etag": str(item.get("ETag", "")),
+                    # 归一化为 epoch 秒（boto3 LastModified 是 aware
+                    # datetime —— 消费方（GC 宽限判定）需要可比 float，
+                    # 评审 R1-1：float(datetime) 直接 TypeError）。
+                    "last_modified": _to_epoch(item.get("LastModified")),
+                }
+                yielded += 1
+                if yielded >= limit:
+                    return
+            token = resp.get("NextContinuationToken")
+            if not token or not resp.get("IsTruncated"):
+                return
+
+    def sweep_stale_multipart_uploads(
+        self, *, max_age_hours: float = 24.0, cap: int = 1000,
+    ) -> dict:
+        """超龄 multipart 清扫（abort；有界 cap —— 孤儿多轮逐步收敛，
+        绝不做无界清扫）。返回确定性报告（排序稳定，可作删除证据）。"""
+        import datetime as _dt
+
+        client = self._require_client()
+        prefix = f"{self._prefix}/" if self._prefix else ""
+        now = _dt.datetime.now(_dt.timezone.utc)
+        cutoff = now - _dt.timedelta(hours=max_age_hours)
+        aborted: list = []
+        kept = 0
+        token: Optional[str] = None
+        while len(aborted) < cap:
+            kwargs: dict = {"Bucket": self._bucket, "MaxUploads": 1000}
+            if prefix:
+                kwargs["Prefix"] = prefix
+            if token:
+                kwargs["KeyMarker"] = token
+            resp = _with_retries(lambda: client.list_multipart_uploads(**kwargs))
+            for u in resp.get("Uploads") or []:
+                started = u.get("Started")
+                if started is not None and getattr(started, "tzinfo", None) is None:
+                    started = started.replace(tzinfo=_dt.timezone.utc)
+                if started is not None and started < cutoff and len(aborted) < cap:
+                    target = {"Key": u["Key"], "UploadId": u["UploadId"]}
+                    _with_retries(
+                        lambda t=target: client.abort_multipart_upload(
+                            Bucket=self._bucket, Key=t["Key"],
+                            UploadId=t["UploadId"],
+                        )
+                    )
+                    aborted.append(f"{u['Key']}:{str(u['UploadId'])[:8]}")
+                else:
+                    kept += 1
+            if not resp.get("IsTruncated"):
+                break
+            token = resp.get("NextKeyMarker")
+            if not token:
+                break
+        return {
+            "aborted": sorted(aborted),
+            "aborted_count": len(aborted),
+            "kept": kept,
+            "cutoff_hours": max_age_hours,
+        }
+
+    def sweep_stale_staging(
+        self, *, max_age_hours: float = 24.0, cap: int = 10_000,
+    ) -> dict:
+        """staging 前缀残留清理（超龄 delete —— 原子发布失败残留的兜底）。"""
+        import datetime as _dt
+
+        client = self._require_client()
+        now = _dt.datetime.now(_dt.timezone.utc)
+        cutoff = now - _dt.timedelta(hours=max_age_hours)
+        deleted: list = []
+        for item in self.iter_objects(limit=cap):
+            rel_key = item["key"]
+            if not rel_key.startswith(_STAGING_ROOT + "/"):
+                continue
+            modified = item.get("last_modified")
+            if modified is None:
+                continue
+            # iter_objects 已归一化为 epoch float（datetime 兼容防御）。
+            modified_s = (
+                float(modified)
+                if not hasattr(modified, "timestamp")
+                else modified.timestamp()
+            )
+            if modified_s >= cutoff.timestamp():
+                continue
+            full_key = "/".join(
+                p for p in (self._prefix, rel_key) if p
+            )
+            target = {"Key": full_key}
+            _with_retries(
+                lambda t=target: client.delete_object(
+                    Bucket=self._bucket, Key=t["Key"],
+                )
+            )
+            deleted.append(rel_key)
+            if len(deleted) >= cap:
+                break
+        return {
+            "deleted": sorted(deleted),
+            "deleted_count": len(deleted),
+            "cutoff_hours": max_age_hours,
+        }
 
 
 def build_s3_client_from_env() -> Any:

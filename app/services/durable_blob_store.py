@@ -52,6 +52,21 @@ class PutResult(NamedTuple):
     location: str  # 相对 root 的位置（存入 Artifact.metadata_json.content_location）
 
 
+class BlobDigestMismatch(RuntimeError):
+    """流式读的 digest 校验失败（typed —— get_blob 的 None 语义在流式
+    面上的等价物：字节已消费，只能以异常诚实终止）。"""
+
+    code = "BLOB_DIGEST_MISMATCH"
+
+    def __init__(self, key: str):
+        super().__init__(f"digest mismatch while streaming blob {key[:16]}")
+        self.key = key
+        self.message = str(self)
+
+    def to_dict(self) -> dict:
+        return {"success": False, "code": self.code, "message": self.message}
+
+
 def safe_blob_key(key: str) -> str:
     """键守卫：非空 + 无 ``/`` ``\\`` ``..`` + 无控制字符（与晋升同规则）。"""
     key = str(key or "").strip()
@@ -107,6 +122,62 @@ class BlobStore:
         digest = sha256_hex(blob)
         self.put_blob(digest, blob.encode("utf-8"), "json")
         return digest, digest
+
+    # ── V7 流式/枚举面（有界内存；后端可选实现）────────────────────────
+
+    def put_blob_from_path(
+        self, key: str, path, content_type: str = "binary", *,
+        chunk_size: int = 1024 * 1024,
+    ) -> PutResult:
+        """文件 → blob 的流式发布（峰值内存 O(chunk_size)，评审 R0-27：
+        publish 第二遍绝不 read_bytes 全量驻留）。默认实现 = 分块读 +
+        put_blob（仍驻留整体 —— 后端应覆写为真流式）。"""
+        import hashlib as _hashlib
+        from pathlib import Path as _Path
+
+        key = safe_blob_key(key)
+        src = _Path(path)
+        digest = _hashlib.sha256()
+        with src.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(chunk_size), b""):
+                digest.update(chunk)
+        return self.put_blob(key, src.read_bytes(), content_type)
+
+    def get_blob_stream(
+        self, key: str, expected_sha256: Optional[str] = None, *,
+        chunk_size: int = 1024 * 1024,
+    ):
+        """blob → 字节迭代器（峰值内存 O(chunk_size)；digest 流式累计，
+        尾部判定 —— 不符抛 :class:`BlobDigestMismatch`）。"""
+        import hashlib as _hashlib
+
+        key = safe_blob_key(key)
+        data = self.get_blob(key, expected_sha256=expected_sha256)
+        if data is None:
+            return
+        digest = _hashlib.sha256()
+        for i in range(0, len(data), chunk_size):
+            chunk = data[i:i + chunk_size]
+            digest.update(chunk)
+            yield chunk
+        if expected_sha256 and digest.hexdigest() != expected_sha256:
+            raise BlobDigestMismatch(key)
+
+    def iter_objects(self, *, limit: int = 10_000):
+        """有界对象枚举（元数据级；孤儿扫描/GC 的后端 parity 面）。
+        产出 ``{"key", "size", "etag", "last_modified"}``（key 为相对
+        布局键，如 ``<shard>/<key>.json``）。不支持枚举的后端 = 空迭代 +
+        ``supports_enumeration=False``。"""
+        return iter(())
+
+    @property
+    def supports_enumeration(self) -> bool:
+        return False
+
+    def remote_etag(self, key: str) -> Optional[str]:
+        """远端 ETag（DR scrub 用；后端无 ETag 语义 = None —— 诚实缺席，
+        scrub 跳过 etag 比对并披露）。"""
+        return None
 
 
 class FilesystemBlobStore(BlobStore):
@@ -235,6 +306,109 @@ class FilesystemBlobStore(BlobStore):
                 except Exception:  # noqa: BLE001 — 坏 sidecar 按缺失处理
                     return None
         return None
+
+    # ── V7 流式/枚举面（真流式实现）────────────────────────────────────
+
+    def put_blob_from_path(
+        self, key: str, path, content_type: str = "binary", *,
+        chunk_size: int = 1024 * 1024,
+    ) -> PutResult:
+        """文件 → blob 真流式（分块读写临时文件 + 原子 rename）；
+        峰值内存 O(chunk_size)。digest 边写边算，供 sidecar/校验。"""
+        import hashlib as _hashlib
+
+        key = safe_blob_key(key)
+        src = Path(path)
+        path_final = self.primary_path(key, content_type)
+        location = str(path_final.relative_to(self.root))
+        if path_final.exists():
+            # put-if-absent：与 put_blob 同纪律（流式 digest 一致 = 命中）。
+            existing_digest = self._digest_of(src)
+            live_digest = self._digest_of(path_final)
+            if existing_digest == live_digest:
+                return PutResult(put_new=False, location=location)
+        path_final.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path_final.with_name(f".{path_final.name}.tmp-{uuid.uuid4().hex[:8]}")
+        hasher = _hashlib.sha256()
+        size = 0
+        try:
+            with src.open("rb") as src_fh, tmp.open("wb") as dst_fh:
+                for chunk in iter(lambda: src_fh.read(chunk_size), b""):
+                    hasher.update(chunk)
+                    size += len(chunk)
+                    dst_fh.write(chunk)
+            # 内容寻址键守卫（评审 R1-16）：发布两遍之间源被改写 →
+            # 键不符 = typed 拒绝（绝不存错键字节）。
+            if len(key) == 64 and all(c in "0123456789abcdef" for c in key) \
+                    and hasher.hexdigest() != key:
+                tmp.unlink(missing_ok=True)
+                raise BlobDigestMismatch(key)
+            os.replace(tmp, path_final)
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        if content_type == "binary":
+            self._write_sidecar(key, size, content_type)
+        return PutResult(put_new=True, location=location)
+
+    @staticmethod
+    def _digest_of(path: Path, _ignore=None) -> str:
+        import hashlib as _hashlib
+
+        h = _hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    def get_blob_stream(
+        self, key: str, expected_sha256: Optional[str] = None, *,
+        chunk_size: int = 1024 * 1024,
+    ):
+        """blob → 字节迭代器（真流式；digest 流式累计，尾部判定）。"""
+        import hashlib as _hashlib
+
+        key = safe_blob_key(key)
+        path = self._first_existing(key)
+        if path is None:
+            return
+        hasher = _hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(chunk_size), b""):
+                hasher.update(chunk)
+                yield chunk
+        if expected_sha256 and hasher.hexdigest() != expected_sha256:
+            raise BlobDigestMismatch(key)
+
+    @property
+    def supports_enumeration(self) -> bool:
+        return True
+
+    def iter_objects(self, *, limit: int = 10_000):
+        """有界对象枚举（FS rglob；相对布局键）。"""
+        root = self.root
+        n = 0
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.name.endswith(_META_SUFFIX):
+                continue
+            if path.name.startswith("."):
+                continue
+            if n >= max(0, int(limit)):
+                return
+            n += 1
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            yield {
+                "key": str(path.relative_to(root)),
+                "size": st.st_size,
+                "etag": None,
+                "last_modified": st.st_mtime,
+            }
 
     def get_blob(self, key: str, expected_sha256: Optional[str] = None) -> Optional[bytes]:
         key = safe_blob_key(key)

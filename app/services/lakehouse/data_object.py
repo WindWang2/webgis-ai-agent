@@ -45,6 +45,10 @@ _DATA_OBJECT_ID_RE = re.compile(r"^[a-f0-9]{64}\Z")
 #: owner scope id 白名单（会话/项目 id 同一 charset 纪律 —— 路径段边界）。
 _SCOPE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}\Z")
 
+#: DataObject kind 白名单（单点真相 —— 消费方（dr/orphan 扫描等）必须
+#: 复用本常量，绝不各自手写清单（评审 R0-5））。
+DATA_OBJECT_KINDS = ("vector_parquet", "cog_raster", "zarr_cube", "virtual")
+
 
 class DataObjectError(ValueError):
     """DataObject 契约违例（非法 scope / 超界 / 身份不符）。"""
@@ -144,6 +148,16 @@ def compute_content_root(
     return root, sum(int(n) for _p, _d, n in entries)
 
 
+def _virtual_content_root(children: List[str]) -> str:
+    """virtual 内容根 = 有序去重 children ids 的 canonical sha256
+    （字节零复制；children 集即逻辑内容的身份）。"""
+    from app.lib.data.fingerprints import canonical_dumps, sha256_hex
+
+    return sha256_hex(canonical_dumps(
+        [{"child": str(c)} for c in sorted(set(children))]
+    ))
+
+
 # ── manifest 构造（确定性；无 wall-clock）───────────────────────────────
 
 
@@ -164,12 +178,38 @@ def build_object_manifest(
     - ``payload`` canonical 尺寸受 64KiB 闸（consolidated metadata 等大块
       结构必须放 blob，不进 manifest）。
     """
-    if kind not in ("vector_parquet", "cog_raster", "zarr_cube"):
+    if kind not in DATA_OBJECT_KINDS:
         raise DataObjectError(f"unknown data object kind: {kind!r}")
     scope = dict(owner_scope)
     if not scope or set(scope) - {"session_id", "project_id"}:
         raise DataObjectError("owner_scope must be exactly one of session/project")
-    root, total = compute_content_root(entries)
+    virtual = kind == "virtual"
+    if virtual:
+        # Virtual DataObject（评审 R0-4）：零字节复制 —— content root 从
+        # 有序去重的 children ids 计算（children 即内容的逻辑身份）。
+        children = list((payload or {}).get("virtual", {}).get("children") or [])
+        if not children:
+            raise DataObjectError(
+                "virtual objects require payload.virtual.children (non-empty)"
+            )
+        unknown = [c for c in children if not is_data_object_id(c)]
+        if unknown:
+            raise DataObjectError(
+                f"virtual children must be data object ids, got {unknown[:3]}"
+            )
+        unique_children = sorted(set(children))
+        if len(unique_children) > MAX_MANIFEST_BLOBS:
+            raise DataObjectTooLargeError(
+                f"virtual object declares {len(unique_children)} children, "
+                f"exceeding the bounded cap {MAX_MANIFEST_BLOBS}"
+            )
+        payload = dict(payload or {})
+        payload["virtual"] = {**payload["virtual"], "children": unique_children}
+        entries = []
+        root = _virtual_content_root(unique_children)
+        total = 0
+    else:
+        root, total = compute_content_root(entries)
     manifest: Dict[str, Any] = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "kind": kind,
@@ -292,10 +332,17 @@ def publish_data_object(
     )
 
     # 第二遍：blob 落盘（CAS；路径内容确定性 ⇒ 中断重试自然续齐）。
+    # 文件源走流式通道（put_blob_from_path，峰值 O(chunk) —— 评审 R0-27：
+    # 大对象发布绝不 read_bytes 全量驻留）；字节源保持原语义。
+    from pathlib import Path as _Path
+
+    streamed = getattr(store, "put_blob_from_path", None)
     for rel_path, digest, _size in entries:
         src = source_files[rel_path]
         if isinstance(src, bytes):
             store.put_blob(digest, src, "binary")
+        elif streamed is not None:
+            streamed(digest, _Path(src), "binary")
         else:
             store.put_blob(digest, Path(src).read_bytes(), "binary")
 

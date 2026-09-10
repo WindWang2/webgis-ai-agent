@@ -250,7 +250,9 @@ def read_cube_window(
     "nodata"}``；无参 slice = 读整个轴（显式全读是调用方的决定）。
     """
     root = open_cube(store)
-    wanted = list(bands) if bands else list(root.attrs.get("bands") or [])
+    # 版本闸（R0-2）：labeled v2 store 的 4-D 数组不满足本入口的
+    # (time,y,x) 形状假设 —— typed 拒绝，绝不静默读错轴。
+    wanted = _require_v1_cube(root, what="read_cube_window")
     if not wanted:
         raise CubeError("cube declares no bands")
     out: Dict[str, Any] = {}
@@ -274,7 +276,258 @@ def read_cube_window(
     return {"bands": out, **meta}
 
 
-# ── chunk 清点 / 发布 / 修订（内容寻址）────────────────────────────────
+# ── labeled cube（V7，ADR-0119）：xarray-zarr 约定的 n-D store ─────────
+
+
+def write_labeled_cube(
+    variables: Mapping[str, Tuple[Sequence[str], Any]],
+    coordinates: Mapping[str, Any],
+    out_store: Union[str, Path],
+    *,
+    crs: str,
+    transform: Optional[Sequence[float]] = None,
+    nodata: Optional[float] = None,
+    chunks: Optional[Sequence[int]] = None,
+    extra_attrs: Optional[Mapping[str, Any]] = None,
+    overwrite: bool = True,
+) -> Dict[str, Any]:
+    """labeled cube 唯一写入器（xarray 适配层也走这里 —— 单点写纪律）。
+
+    ``variables[name] = (dims, ndarray)``（dims 尾部两轴必须是 y/x）；
+    ``coordinates[dim] = 1-D 值序列``（数值轴 float64 / 标签轴 unicode，
+    zarr v3 原生 numpy U-dtype）。schema 校验**先于任何写入**；返回
+    schema 投影（与 manifest payload 的 labeled 投影同形 —— 身份含标签
+    语义）。``transform`` 缺席时从等距 y/x 中心坐标推导；不等距且无
+    transform = typed 拒绝（绝不猜测网格）。
+    """
+    from app.services.lakehouse.cube_schema import (
+        CubeSchemaError,
+        transform_from_coords,
+        validate_labeled_schema,
+    )
+
+    var_dims: Dict[str, List[str]] = {}
+    var_dtypes: Dict[str, str] = {}
+    arrays: Dict[str, np.ndarray] = {}
+    non_spatial: List[str] = []
+    has_y = has_x = False
+    size_of: Dict[str, int] = {}
+    anchor_dtype = ""
+    for name, (vd, arr) in variables.items():
+        data = np.asarray(arr)
+        vd = [str(d) for d in vd]
+        if data.ndim != len(vd):
+            raise CubeSchemaError(
+                f"variable {name!r}: dims {vd} rank != array ndim {data.ndim}"
+            )
+        if tuple(vd[-2:]) != ("y", "x"):
+            raise CubeSchemaError(
+                f"variable {name!r}: dims {vd} must end with (y, x)"
+            )
+        for d, size in zip(vd, data.shape):
+            if d in size_of and size_of[d] != int(size):
+                raise CubeSchemaError(
+                    f"variable {name!r}: dim {d!r} size {int(size)} != "
+                    f"established {size_of[d]}"
+                )
+            size_of[d] = int(size)
+        # 维度并集：非空间轴按首次出现序在前，y/x 恒在最后两轴。
+        for d in vd:
+            if d == "y":
+                has_y = True
+            elif d == "x":
+                has_x = True
+            elif d not in non_spatial:
+                non_spatial.append(d)
+        var_dims[str(name)] = vd
+        var_dtypes[str(name)] = str(data.dtype)
+        arrays[str(name)] = data
+        if not anchor_dtype:
+            anchor_dtype = str(data.dtype)
+    if not arrays:
+        raise CubeSchemaError("labeled cube needs at least one data variable")
+    dims = non_spatial + (["y"] if has_y else []) + (["x"] if has_x else [])
+    shape = [size_of[d] for d in dims]
+    # 逐变量 dtype（如 uint8 mask 与 float32 reflectance 同 cube）；
+    # 锚 dtype = 首个变量（manifest 投影的顶层 dtype）。
+    dtype = anchor_dtype
+    if transform is None:
+        y_vals = np.asarray(coordinates.get("y") or [])
+        x_vals = np.asarray(coordinates.get("x") or [])
+        if y_vals.size and x_vals.size:
+            transform = transform_from_coords(y_vals.tolist(), x_vals.tolist())
+        if transform is None:
+            raise CubeSchemaError(
+                "transform is required when coordinates cannot anchor the grid "
+                "(coordinates not equally spaced or missing)"
+            )
+    transform = [float(v) for v in transform][:6]
+    if len(transform) != 6:
+        raise CubeSchemaError("transform must carry 6 affine coefficients")
+
+    coords: Dict[str, Any] = {}
+    for dim in dims:
+        if dim not in coordinates:
+            raise CubeSchemaError(f"dim {dim!r} has no coordinate array")
+        coords[dim] = np.asarray(coordinates[dim])
+        if coords[dim].ndim != 1:
+            raise CubeSchemaError(f"coordinate {dim!r} must be 1-D")
+    # chunks 规范化：Mapping{dim: size} 或与 dims 并集对齐的序列。
+    chunks_by_dim: Optional[Dict[str, int]] = None
+    if chunks is not None:
+        if isinstance(chunks, Mapping):
+            chunks_by_dim = {str(k): int(v) for k, v in chunks.items()}
+        else:
+            seq = [int(v) for v in chunks]
+            if len(seq) != len(dims):
+                raise CubeSchemaError(
+                    f"chunks rank {len(seq)} != dims rank {len(dims)} — "
+                    "pass a {dim: size} mapping for multi-variable cubes"
+                )
+            chunks_by_dim = dict(zip(dims, seq))
+    projection = validate_labeled_schema(
+        dims=dims,
+        shape=shape,
+        coordinates=coords,
+        crs=crs,
+        dtype=dtype,
+        variables={
+            name: {"dims": vd, "dtype": var_dtypes[name]}
+            for name, vd in var_dims.items()
+        },
+        nodata=nodata,
+        chunks=chunks_by_dim,
+    )
+
+    zarr = _require_zarr()
+    out_store = Path(out_store)
+    if out_store.exists() and not overwrite:
+        raise CubeError(f"store already exists: {out_store}")
+    try:
+        root = zarr.open_group(store=str(out_store), mode="w")
+        for dim, values in coords.items():
+            arr = root.create_array(
+                dim,
+                shape=(values.shape[0],),
+                dtype=values.dtype,
+                # zarr v3 的维度绑定协议是元数据 dimension_names（评审
+                # R0-1：_ARRAY_DIMENSIONS attr 只是 v2 惯例，xarray v3
+                # 读取侧不认 —— attr 仍镜像一份供 v2 习惯的工具）。
+                dimension_names=(dim,),
+            )
+            arr[:] = values
+            arr.attrs["_ARRAY_DIMENSIONS"] = [dim]
+        for name, data in arrays.items():
+            if chunks_by_dim is not None:
+                var_chunks = tuple(
+                    int(chunks_by_dim[d]) for d in var_dims[name]
+                )
+            else:
+                var_chunks = tuple(
+                    max(1, min(int(s), 1024)) for s in data.shape
+                )
+            arr = root.create_array(
+                name,
+                shape=data.shape,
+                chunks=var_chunks,
+                dtype=var_dtypes[name],
+                dimension_names=tuple(var_dims[name]),
+            )
+            arr[:] = data
+            arr.attrs["_ARRAY_DIMENSIONS"] = list(var_dims[name])
+        root.attrs["labeled"] = True
+        root.attrs["cube_schema_version"] = projection["cube_schema_version"]
+        # 评审 R0-6：v2 属性用独立键（variables/dims），绝不复用 v1 的
+        # bands/times 键位（避免非分派消费者按 v1 语义误读）。
+        root.attrs["variables"] = sorted(var_dims)
+        root.attrs["dims"] = list(dims)
+        root.attrs["crs"] = str(crs)
+        root.attrs["transform"] = transform
+        if nodata is not None:
+            root.attrs["nodata"] = float(nodata)
+        for key, value in (extra_attrs or {}).items():
+            root.attrs[str(key)] = value
+    except CubeError:
+        raise
+    except Exception as e:  # noqa: BLE001 — zarr 故障 typed 包装
+        raise CubeError(
+            f"cannot write labeled cube store {str(out_store)!r}: {e}"
+        ) from e
+    consolidate_cube_metadata(out_store)
+    return projection
+
+
+def _array_dims(arr: Any) -> List[str]:
+    """zarr 数组的维度名（v3 协议 = metadata.dimension_names；attr 镜像
+    作 fallback —— 评审 R0-1）。"""
+    md = getattr(arr, "metadata", None)
+    dn = getattr(md, "dimension_names", None) if md is not None else None
+    if dn:
+        return [str(d) for d in dn]
+    return [str(d) for d in (arr.attrs.get("_ARRAY_DIMENSIONS") or [])]
+
+
+def _require_v1_cube(root: Any, *, what: str) -> List[str]:
+    """V6 入口的版本闸（评审 R0-2）：labeled（v2）store 进入 V6 读/fork
+    路径 = typed 拒绝 —— v1 消费者对 4-D 数组的形状假设会静默读错轴。"""
+    attrs = dict(root.attrs or {})
+    if attrs.get("labeled"):
+        raise CubeError(
+            f"{what} requires a V6 cube (schema v1, per-band arrays); this "
+            "store is a labeled cube (schema v2) — use the labeled accessors"
+        )
+    return [str(b) for b in (attrs.get("bands") or [])]
+
+
+def open_labeled_cube(store: Union[str, Path]) -> Tuple[Any, Dict[str, Any]]:
+    """labeled store → (zarr group, attrs)（typed；labeled 缺席 = 诚实错误）。"""
+    root = open_cube(store)
+    attrs = dict(root.attrs or {})
+    if not attrs.get("labeled"):
+        raise CubeError(
+            "store is not a labeled cube (write via write_labeled_cube or "
+            "use the V6 per-band accessors)"
+        )
+    return root, attrs
+
+
+def read_labeled_window(
+    store: Union[str, Path],
+    *,
+    index_slices: Mapping[str, slice],
+) -> Dict[str, Any]:
+    """索引切片窗口读（zarr chunk 粒度 —— 只触相交块；有界由调用方保证）。
+
+    返回 ``{"variables": {name: ndarray}, "coords": {dim: values},
+    "slices": {...}}``。标签级选择见 ``labeled_selection``（本函数只认
+    索引切片 —— 标签→索引的翻译发生在 schema 校验后的选择层）。
+    """
+    root, attrs = open_labeled_cube(store)
+    variables: Dict[str, Any] = {}
+    coords: Dict[str, Any] = {}
+    for name in root.array_keys():
+        arr = root[name]
+        adims = _array_dims(arr)
+        if adims == [name]:
+            coords[name] = np.asarray(arr)
+    for name in root.array_keys():
+        arr = root[name]
+        adims = _array_dims(arr)
+        if adims == [name] or not adims:
+            continue
+        sel = tuple(
+            index_slices.get(d, slice(None)) for d in adims
+        )
+        variables[name] = np.asarray(arr[sel])
+    return {
+        "variables": variables,
+        "coords": coords,
+        "slices": {str(k): v for k, v in index_slices.items()},
+        "attrs": {
+            k: attrs.get(k) for k in ("crs", "transform", "nodata", "dims")
+        },
+    }
+
 
 
 def collect_cube_entries(
@@ -357,6 +610,9 @@ def publish_cube(
             "deduped": identity.deduped,
             "entry_count": len(entries),
         }
+    # 诚实降级标记进 payload（身份的一部分）：scrub/DR 侧据此把
+    # "blob 缺席" 判为 manifest_only 而非 corrupt（评审 R1-11）。
+    payload = {**payload, "durable": "manifest_only"}
     identity = publish_manifest_only(
         entries,
         kind="zarr_cube",
@@ -409,7 +665,22 @@ def fork_cube_revision(
         raise CubeError(f"target revision store already exists: {dst}")
 
     root = zarr.open_group(store=str(src), mode="r")
-    bands = list(root.attrs.get("bands") or [])
+    # 版本闸（R0-2）：fork 的 (band, t) 跳过逻辑只对 v1 per-band 3-D 数组
+    # 成立；labeled v2 → typed 拒绝（v2-aware fork 是后续能力）。
+    bands = _require_v1_cube(root, what="fork_cube_revision")
+    if not bands:
+        raise CubeError("cube declares no bands")
+    # CoW 前提（评审 R0-16）：chunk 必须按时间独占（chunks[0]==1）。一个
+    # chunk 文件覆盖多个 t 时，"跳过被重写时间片"的硬链接选择会失真 ——
+    # 保守 typed 拒绝，绝不产出语义错误的修订。
+    for band in bands:
+        chunk_t = int(root[band].chunks[0])
+        if chunk_t != 1:
+            raise CubeError(
+                f"fork requires per-time chunking (chunks[0]==1); band "
+                f"{band!r} has chunks[0]={chunk_t} — CoW chunk selection "
+                "would be unsound"
+            )
     times = [str(t) for t in (root.attrs.get("times") or [])]
     for band, per_band in updates.items():
         if band not in bands:

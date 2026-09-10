@@ -296,10 +296,15 @@ def _read_window_bounded(
     path, time: Optional[Any], y: Optional[Any], x: Optional[Any],
 ) -> Dict[str, Any]:
     """窗口读 + 形状钳制 + 单元预算（切片越界 = 钳制，负号已在上游拒绝）。"""
-    from app.services.lakehouse.cube_store import open_cube, read_cube_window
+    from app.services.lakehouse.cube_store import (
+        _require_v1_cube,
+        open_cube,
+        read_cube_window,
+    )
 
     root = open_cube(path)
-    bands = list(root.attrs.get("bands") or [])
+    # 版本闸（R0-2）：labeled v2 store 不满足本入口的 (time,y,x) 假设。
+    bands = _require_v1_cube(root, what="session cube window read")
     if not bands:
         raise CubeServiceError("cube declares no bands")
     n_t, n_y, n_x = (int(v) for v in root[bands[0]].shape)
@@ -465,3 +470,92 @@ async def revise_session_cube(
         },
         **durable,
     }
+
+
+# ── V7（ADR-0119）：labeled cube 的会话选择读 ──────────────────────────
+
+
+async def read_session_labeled_window(
+    session_id: str,
+    ref: str,
+    *,
+    selection: Mapping[str, Any],
+    max_cells: int = CUBE_WINDOW_MAX_CELLS,
+) -> Dict[str, Any]:
+    """labeled cube 的标签级窗口读（owner = session 域；预算闸同 V6）。"""
+    from app.services.artifact_registry import (
+        cube_ref_exists,
+        cube_store_path,
+        is_cube_ref,
+    )
+    from app.services.lakehouse.cube_store import (
+        open_cube,
+        read_labeled_window,
+    )
+    from app.services.lakehouse.labeled_selection import plan_selection
+    from app.services.lakehouse.xarray_adapter import (
+        labeled_projection_from_store,
+    )
+
+    import numpy as np_
+
+    if not is_cube_ref(ref):
+        raise CubeServiceError(f"not a cube ref: {str(ref)[:64]!r}")
+    path = cube_store_path(session_id, ref)
+    if path is None or not cube_ref_exists(session_id, ref):
+        raise CubeServiceError(
+            f"cube not alive: {ref}", code="CUBE_REF_MISSING"
+        )
+    root = open_cube(path)
+    if not (root.attrs or {}).get("labeled"):
+        raise CubeServiceError(
+            "ref is a V6 cube — use the v1 window endpoint",
+            code="CUBE_SCHEMA_V1",
+        )
+    projection = await asyncio.to_thread(labeled_projection_from_store, path)
+    dims = [str(d) for d in (projection.get("dims") or [])]
+    coords = {}
+    for dim in dims:
+        arr = root[dim] if dim in root else None
+        if arr is not None:
+            coords[dim] = np_.asarray(arr)
+        else:
+            raise CubeServiceError(
+                f"cube dim {dim!r} has no coordinate array",
+                code="CUBE_WINDOW_INVALID",
+            )
+    plan = await asyncio.to_thread(
+        plan_selection,
+        projection=projection,
+        coordinates={d: np_.asarray(v) for d, v in coords.items()},
+        selection=selection,
+        max_cells=max_cells,
+    )
+    slices = {
+        d: slice(int(a), int(b)) for d, (a, b) in plan["slices"].items()
+    }
+    result = await asyncio.to_thread(
+        read_labeled_window, path, index_slices=slices,
+    )
+    # 坐标随切片裁剪 + JSON 安全化（评审 R2-3：numpy 数组既不能编码为
+    # JSON，全轴返回也是无界载荷）。
+    sliced_coords: Dict[str, Any] = {}
+    for dim, values in (result.get("coords") or {}).items():
+        sl = slices.get(dim, slice(None))
+        sliced_coords[dim] = [
+            v if not hasattr(v, "item") else v.item()
+            for v in np_.asarray(values)[sl].tolist()
+        ]
+    result["coords"] = sliced_coords
+    # slices 键里的 slice 对象 JSON 不可序列化 —— 统一为 [start, stop]。
+    result["slices"] = {
+        d: [s.start, s.stop] for d, s in (result.get("slices") or {}).items()
+    }
+    result["selection_plan"] = {
+        "cells": plan["cells"],
+        "touched_chunks": plan["plan"]["touched_chunks"],
+        "total_chunks": plan["plan"]["total_chunks"],
+        "slices": plan["slices"],
+    }
+    result["ref"] = ref
+    return result

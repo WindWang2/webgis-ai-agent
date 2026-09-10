@@ -15,7 +15,7 @@ ADR-0092 Phase A：
 """
 from typing import Sequence, Union
 
-from alembic import op, context
+from alembic import op
 import sqlalchemy as sa
 
 
