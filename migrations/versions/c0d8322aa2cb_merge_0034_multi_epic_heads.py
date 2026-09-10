@@ -24,5 +24,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade schema."""
+    """Deliberate no-op: merge revision for unifying independent 0034 branch heads."""
     pass
