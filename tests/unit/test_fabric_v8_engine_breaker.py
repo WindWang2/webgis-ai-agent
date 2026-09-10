@@ -199,3 +199,65 @@ def test_v6_success_resets_consecutive_failures(_clean_breaker):
     result = executor.execute_chain(_req())
     assert result["engine"] == "v6"
     assert breaker.disclosure()["consecutive_failures"] == 0
+
+
+# ── Subagent-B review 回归（P1-1：half-open trial 泄漏）────────────────
+
+
+def test_typed_error_exit_releases_half_open_trial(_clean_breaker, monkeypatch):
+    import app.services.data_fabric.fabric.engine_breaker as _eb_mod
+
+    def _patched_local_breaker():
+        clock = _FakeClock()
+        b = EngineFallbackBreaker(failure_threshold=1, cool_down_s=60.0, clock=clock)
+        b.record_v6_crash(RuntimeError("x"))
+        clock.t += 61.0
+        assert b.state() == "half_open"  # 已过冷却（不消耗 trial 名额）
+        monkeypatch.setattr(_eb_mod, "get_engine_breaker", lambda: b)
+        return b
+
+    b = _patched_local_breaker()
+    """trial 被一个从 typed 错误路径退出的请求消费后，名额必须归还 ——
+    否则 HALF_OPEN 卡死，V6 被禁用到进程重启。"""
+    from app.services.data_fabric.errors import SourceUnreachableError
+
+    class _TypedFailAdapter:
+        def query(self, dataset_id: str, spec):
+            raise SourceUnreachableError("typed remote failure")
+
+    executor = _executor({"s0": _TypedFailAdapter(), "s1": _TypedFailAdapter()})
+    with pytest.raises(Exception):
+        executor.execute_chain(_req())
+    # 名额归还：下一个请求仍可获得 trial（而非永久 V5）。
+    assert b.allow_v6() is True
+
+
+def test_cache_enabled_typed_error_exit_releases_trial(_clean_breaker, monkeypatch):
+    import app.services.data_fabric.fabric.engine_breaker as _eb_mod
+
+    def _patched_local_breaker():
+        clock = _FakeClock()
+        b = EngineFallbackBreaker(failure_threshold=1, cool_down_s=60.0, clock=clock)
+        b.record_v6_crash(RuntimeError("x"))
+        clock.t += 61.0
+        assert b.state() == "half_open"  # 已过冷却（不消耗 trial 名额）
+        monkeypatch.setattr(_eb_mod, "get_engine_breaker", lambda: b)
+        return b
+
+    b = _patched_local_breaker()
+    """review 场景原样复现：breaker open → 冷却 → 首个请求 typed 失败
+    （负缓存落账路径）→ trial 不卡死。"""
+    from app.schemas.data_fabric_schema import QueryResult  # noqa: F401
+    from app.services.data_fabric.errors import SourceUnreachableError
+
+    class _TypedFailAdapter:
+        def query(self, dataset_id: str, spec):
+            raise SourceUnreachableError("typed remote failure")
+
+    executor = _executor({"s0": _TypedFailAdapter(), "s1": _TypedFailAdapter()})
+    with pytest.raises(Exception):
+        executor.execute_chain(_req())
+    assert b.allow_v6() is True
+    # 且崩溃已被记账：再次失败会重开。
+    b.record_v6_crash(RuntimeError("still failing"))
+    assert b.state() == "open"

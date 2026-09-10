@@ -83,10 +83,9 @@ class FabricRuntime:
         profile_id: Optional[str],
         *,
         owner: Optional[str] = None,
-        db: Any = None,
         dataset_id: Optional[str] = None,
     ) -> Optional[ResolvedSource]:
-        """解析一个数据源（registry 优先 → legacy 会话 → DB 按需 attach）。
+        """解析一个数据源（registry 优先 → legacy 会话回退）。
 
         - ``profile_id`` 为空时尝试 ``dataset_id → profile_id``（catalog 本地
           读）；仍为空返回 None（调用方 typed 报错，行为与 V7 一致）。
@@ -94,8 +93,9 @@ class FabricRuntime:
           按 record 的 profile 重建（工厂链单一）。
         - legacy 会话命中 → 把 profile 注册进 registry（治理视图统一），
           复用既有 adapter（不重复构建、不触发二次 connect 副作用）。
-        - DB 注册源（此前必须先 REST connect 才能用）→ ``registry.attach``
-          按需构建 —— SSRF 门、secret 分离、revision 全部生效。
+          （DB 注册源的治理路径在 ``DataFabricManager._governed_adapter``：
+          行内重建 profile → 工厂构建 → ``attach_prebuilt`` 幂等登记，
+          无额外 DB 查询。）
         """
         from app.services.data_fabric.fabric.connection_registry import (
             get_connection_registry,
@@ -110,6 +110,7 @@ class FabricRuntime:
         scope = _tenant_scope(owner)
         scope_key = scope.scope_key()
         registry = get_connection_registry()
+        self._sweep_throttled(registry)
 
         # 1) registry 精确域（含全局域回退语义 —— resolve 内部处理）。
         try:
@@ -118,7 +119,12 @@ class FabricRuntime:
             # ConnectionExpiredError = 过期条目（typed）；与 None 同样走
             # 回退链（DB 重建可能拿到更新后的 profile）。
             adapter = None
+        # peek 无全局回退（review P2-5）：全局域条目对会话可见（resolve 已
+        # 命中），治理元数据（revision/source_type/health）必须同源 —— 否则
+        # 全局连接被误报 governed=False，探测/富集被静默禁用。
         record = registry.peek(str(pid), scope)
+        if record is None and not scope.is_global:
+            record = registry.peek(str(pid), _tenant_scope(None))
         if adapter is None and record is not None:
             # record 在、adapter 被 LRU 驱逐 → 按 redacted profile 重建
             # （secret 仅工厂构建瞬间注回；registry 契约）。
@@ -126,36 +132,52 @@ class FabricRuntime:
         if adapter is not None:
             return self._wrap(
                 adapter, profile_id=str(pid), source_type=record.source_type if record else "",
-                scope_key=scope_key, revision=record.revision if record else "",
+                scope_key=record.scope_key if record else scope_key,
+                revision=record.revision if record else "",
             )
 
         # 2) legacy 会话回退（包装式收敛：首次使用即注册进 registry）。
         legacy = self._legacy_adapter(str(pid), owner=owner)
-        if legacy is not None:
-            legacy_adapter, legacy_profile = legacy
+        if legacy is not None and legacy[0] is not None:
+            legacy_adapter, legacy_profile, legacy_owner = legacy
+            # 沿用条目**原属域**注册（review P2-9：全局连接不按会话复制
+            # —— 每个 session scope 一份条目会让治理视图碎片化）。
+            attach_scope = _tenant_scope(legacy_owner)
             record = None
             if legacy_profile is not None:
                 try:
                     registry.attach(
-                        legacy_profile, scope, build_adapter=False,
+                        legacy_profile, attach_scope, build_adapter=False,
                         prebuilt_adapter=legacy_adapter,
                     )
-                    record = registry.peek(str(pid), scope)
+                    record = registry.peek(str(pid), attach_scope)
                 except Exception as exc:  # noqa: BLE001 - 治理注册失败不阻断执行
                     logger.debug(
                         "[runtime] legacy attach failed for %s: %s", pid, exc)
             return self._wrap(
                 legacy_adapter, profile_id=str(pid),
                 source_type=str(getattr(legacy_profile, "source_type", "") or ""),
-                scope_key=scope_key,
+                scope_key=attach_scope.scope_key(),
                 revision=record.revision if record else "",
             )
-        # 3) DB 注册源按需 attach（owner 取 ds_model 的归属域 —— 行级权威）。
-        if db is not None:
-            resolved = self._resolve_from_db(str(pid), db)
-            if resolved is not None:
-                return resolved
+        # 3) 全部未命中 → None（调用方按既有契约 typed 报错）。
         return None
+
+    #: sweep 节流（进程级；60s 一次 —— idle-TTL 驱逐从此不是死代码）。
+    _last_sweep = 0.0
+
+    @classmethod
+    def _sweep_throttled(cls, registry: Any) -> None:
+        import time as _t
+
+        now = _t.monotonic()
+        if now - cls._last_sweep < 60.0:
+            return
+        cls._last_sweep = now
+        try:
+            registry.sweep()
+        except Exception as exc:  # noqa: BLE001 - 清扫绝不阻断解析
+            logger.debug("[runtime] sweep skipped: %s", exc)
 
     def attach_profile(
         self, profile: Any, *, owner: Optional[str] = None
@@ -372,52 +394,21 @@ class FabricRuntime:
         except Exception:  # noqa: BLE001
             return None
         adapter = connection_manager.get_adapter(profile_id, owner=owner)
-        if adapter is not None:
-            profile = connection_manager.get_profile(profile_id, owner=owner)
-            if profile is None:
-                profile = connection_manager.get_profile(profile_id)
-            return adapter, profile
-        # profile-only 条目（旧 inspect miss 路径语义）→ 补建 adapter。
-        profile = connection_manager.get_profile(profile_id, owner=owner)
-        if profile is None:
-            profile = connection_manager.get_profile(profile_id)
-        if profile is None:
+        scoped_profile = connection_manager.get_profile(profile_id, owner=owner)
+        profile = scoped_profile or connection_manager.get_profile(profile_id)
+        effective_owner = owner if scoped_profile is not None else None
+        if adapter is None and profile is None:
             return None
-        try:
-            from app.services.data_fabric.registry import build_adapter
+        if adapter is None:
+            # profile-only 条目（旧 inspect miss 路径语义）→ 补建 adapter。
+            try:
+                from app.services.data_fabric.registry import build_adapter
 
-            return build_adapter(profile), profile
-        except Exception:  # noqa: BLE001 - 补建失败按未解析处理
-            return None
-
-    def _resolve_from_db(self, profile_id: str, db: Any) -> Optional[ResolvedSource]:
-        """DB 注册源 → registry.attach（SSRF/secret/revision 全治理）。"""
-        try:
-            from app.models.data_fabric import DataSourceModel
-            from app.services.data_fabric.fabric.connection_registry import (
-                get_connection_registry,
-            )
-            from app.services.data_fabric.manager import _profile_from_model
-
-            ds_model = (
-                db.query(DataSourceModel).filter(DataSourceModel.id == profile_id).first()
-            )
-            if ds_model is None:
+                adapter = build_adapter(profile)
+            except Exception:  # noqa: BLE001 - 补建失败按未解析处理
                 return None
-            profile = _profile_from_model(ds_model)
-            scope = _tenant_scope(ds_model.owner_id)
-            registry = get_connection_registry()
-            record, adapter = registry.attach(profile, scope)
-            return self._wrap(
-                adapter,
-                profile_id=str(profile_id),
-                source_type=str(profile.source_type or ds_model.source_type or ""),
-                scope_key=scope.scope_key(),
-                revision=record.revision,
-            )
-        except Exception as exc:  # noqa: BLE001 - DB 回退失败 → 上层 typed 报错
-            logger.debug("[runtime] db resolve failed for %s: %s", profile_id, exc)
-            return None
+        # 全局域条目（owner=None）—— 治理注册沿用全局域（V5 可见性语义）。
+        return adapter, profile, effective_owner
 
     def _rebuild_from_record(self, registry: Any, record: Any) -> Optional[Any]:
         """（已由 ``registry.ensure_adapter`` 取代；保留占位便于测试打点。）"""
@@ -445,21 +436,28 @@ class FabricRuntime:
             return None
 
 
-#: 有探测原语的源类型（probing._overrides_for 的覆盖面；其余类型探测只会
-#: 回落默认矩阵 —— 不发无意义缓存条目）。
+#: 有探测原语的源类型（canonical 形态；别名经 canonical_source_type 归一。
+#: 其余类型探测只会回落默认矩阵 —— 不发无意义缓存条目）。
 _PROBEABLE_TYPES = frozenset({"arcgis", "ogc_api", "stac"})
 
 
 def _has_probe_primitive(source_type: str) -> bool:
-    return str(source_type or "").strip().lower() in _PROBEABLE_TYPES
+    from app.services.data_fabric.fabric.probing import canonical_source_type
+
+    return canonical_source_type(source_type) in _PROBEABLE_TYPES
 
 
 def _overrides_of(caps: Any, source_type: str) -> list:
-    """探测后 caps 与静态默认矩阵的 diff（[(k, v), …]；供 planner 覆盖注入）。"""
+    """探测后 caps 与静态默认矩阵的 diff（[(k, v), …]；供 planner 覆盖注入）。
+
+    基线矩阵用 canonical source_type（review P2-7：与探测原语同一规范化，
+    别名形态源不再拿错 diff 基线）。
+    """
     try:
+        from app.services.data_fabric.fabric.probing import canonical_source_type
         from app.services.data_fabric.query.capabilities import get_capabilities
 
-        default = get_capabilities(str(source_type or ""))
+        default = get_capabilities(canonical_source_type(source_type))
         return [
             (k, getattr(caps, k))
             for k in default.model_dump()

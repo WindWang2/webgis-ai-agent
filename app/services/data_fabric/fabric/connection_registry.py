@@ -135,39 +135,61 @@ def _is_sensitive_key(key: str) -> bool:
 
 
 def _move_sensitive_entries(node: Any, sink: Dict[str, Any]) -> None:
-    """就地摘除 dict 树中的敏感键值进 sink（同路径；原位置置 None）。
+    """就地摘除 dict/list 树中的敏感键值进 sink（同路径；原位置置 None）。
 
     V8：``create_data_source`` 的凭证经 ``options`` 传入（其签名无顶层
     password 字段）—— 只摘顶层键会让 ``options.password`` 落进 record 的
     redacted_profile 明文面。摘除后 redacted_profile 构造上无凭证；重建时
     经 ``_merge_sensitive_entries`` 从 SecretStore 深合并回填（保真）。
+    list 内的 dict 树同样遍历（review P2-2：``options.layers=[{"password":
+    …}]`` 与 sanitize_profile_dict 语义对齐）；sink 以 str(index) 记路径。
     """
-    if not isinstance(node, dict):
-        return
-    for k in list(node.keys()):
-        v = node[k]
-        if _is_sensitive_key(k):
-            if v is not None:
-                sink[k] = v
-                node[k] = None
-        elif isinstance(v, dict):
-            child: Dict[str, Any] = {}
-            _move_sensitive_entries(v, child)
-            if child:
-                sink[k] = child
-
-
-def _merge_sensitive_entries(node: Dict[str, Any], sink: Dict[str, Any]) -> None:
-    """``_move_sensitive_entries`` 的逆操作：sink 值按路径回填 None 槽位。"""
-    for k, v in sink.items():
-        if isinstance(v, dict):
-            child = node.get(k)
-            if not isinstance(child, dict):
+    if isinstance(node, dict):
+        for k in list(node.keys()):
+            v = node[k]
+            if _is_sensitive_key(k):
+                if v is not None:
+                    sink[k] = v
+                    node[k] = None
+            elif isinstance(v, (dict, list)):
+                child: Dict[str, Any] = {}
+                _move_sensitive_entries(v, child)
+                if child:
+                    sink[k] = child
+    elif isinstance(node, list):
+        for i, item in enumerate(node):
+            if isinstance(item, (dict, list)):
                 child = {}
-                node[k] = child
-            _merge_sensitive_entries(child, v)
-        elif node.get(k) is None:
-            node[k] = v
+                _move_sensitive_entries(item, child)
+                if child:
+                    sink[str(i)] = child
+
+
+def _merge_sensitive_entries(node: Any, sink: Dict[str, Any]) -> None:
+    """``_move_sensitive_entries`` 的逆操作：sink 值按路径回填 None 槽位。"""
+    if isinstance(sink, dict) and isinstance(node, dict):
+        for k, v in sink.items():
+            if isinstance(v, dict):
+                child = node.get(k)
+                if isinstance(child, list):
+                    # 摘除时 sink 以 str(index) 记 list 路径 —— node 保持
+                    # list 形态（绝不顶成 dict，否则重建产物走形）。
+                    _merge_sensitive_entries(child, v)
+                else:
+                    if not isinstance(child, dict):
+                        child = {}
+                        node[k] = child
+                    _merge_sensitive_entries(child, v)
+            elif node.get(k) is None:
+                node[k] = v
+    elif isinstance(sink, dict) and isinstance(node, list):
+        for k, v in sink.items():
+            try:
+                idx = int(k)
+            except ValueError:  # noqa: BLE001 - 非法索引跳过（不抛）
+                continue
+            if 0 <= idx < len(node):
+                _merge_sensitive_entries(node[idx], v)
 
 
 class InMemorySecretStore:
@@ -352,11 +374,19 @@ class ConnectionRegistry:
         profile_dict = profile.model_dump()
         redacted, secret = extract_profile_secrets(profile_dict)
         # V8：url 字段的 userinfo 摘除（DSN 内嵌凭证不落 record —— 与
-        # endpoint_ref 同一脱敏原语；URL 其余部分保真供重建）。
+        # endpoint_ref 同一脱敏原语）。被摘除的原文进 SecretStore：重建时
+        # 回填（否则 basic-auth URL 形态的源重建后静默无凭证），且仅
+        # userinfo 不同的重复注册产生不同 secret_ref/revision（轮换可感知）。
+        url_secrets: Dict[str, Any] = {}
         for _url_key in ("url", "endpoint", "endpoint_url"):
             _v = redacted.get(_url_key)
             if _v:
-                redacted[_url_key] = DataFabricSecurity.redact_url(_v)
+                _redacted = DataFabricSecurity.redact_url(_v)
+                if _redacted != _v:
+                    url_secrets[_url_key] = _v
+                redacted[_url_key] = _redacted
+        if url_secrets:
+            secret["url_fields"] = url_secrets
         # V8：options 等嵌套树中的敏感键值摘入 SecretStore（REST 创建路径
         # 的凭证就在 options 里 —— 只摘顶层会明文落 record）。
         if isinstance(redacted.get("options"), dict) and redacted["options"]:
@@ -384,10 +414,17 @@ class ConnectionRegistry:
                         old_adapter = prebuilt_adapter
                         self._entries[key] = (old_record, old_adapter)
                     return old_record, old_adapter
-                # revision 变化：原子替换 + 旧 secret 逐出
+                # revision 变化：原子替换 + 旧 secret 逐出（仅当无其他
+                # 条目仍引用 —— content-dedupe 共享 ref 的连坐防御，V8）。
                 self._evict_locked(key, release_secret=False)
                 if old_record.secret_ref and old_record.secret_ref != secret_ref:
-                    self._secret_store.evict(old_record.secret_ref)
+                    still_referenced = any(
+                        rec.secret_ref == old_record.secret_ref
+                        for other_key, (rec, _a) in self._entries.items()
+                        if other_key != key
+                    )
+                    if not still_referenced:
+                        self._secret_store.evict(old_record.secret_ref)
             record = ConnectionRecord(
                 profile_id=str(profile.id),
                 scope_key=scope.scope_key(),
@@ -461,7 +498,11 @@ class ConnectionRegistry:
             secret = self._secret_store.get(record.secret_ref)
             if secret:
                 opts_secret = secret.pop("options", None)
+                url_fields = secret.pop("url_fields", None)
                 rest.update(secret)
+                # V8：被 userinfo 摘除的 url 原文回填（重建后凭证完整）。
+                if isinstance(url_fields, dict):
+                    rest.update(url_fields)
                 # V8：options 内敏感键值按路径深合并回填（与摘除配对）。
                 if isinstance(opts_secret, dict) and opts_secret:
                     opts = rest.setdefault("options", {})
@@ -486,6 +527,12 @@ class ConnectionRegistry:
                 return None  # 条目已消失：调用方走 DB/legacy 回退
             if current[0].revision != record.revision:
                 return None  # 并发替换：以条目内最新 record 为准
+            if current[0].is_expired():
+                # V8（review P2）：过期连接不复活（resolve 语义一致 ——
+                # 过期条目逐出 adapter；此处同样拒绝重建回填）。
+                current[0].health = HEALTH_EXPIRED
+                self._entries[key] = (current[0], None)
+                return None
             if current[1] is not None:
                 current[0].last_access_at = time.monotonic()
                 return current[1]
@@ -636,10 +683,19 @@ class ConnectionRegistry:
             return False
         record, _adapter = entry
         if release_secret and record.secret_ref:
-            try:
-                self._secret_store.evict(record.secret_ref)
-            except Exception:  # noqa: BLE001 - 驱逐路径绝不抛
-                pass
+            # V8（review P2）：content-dedupe 使多个 record 可共享同一
+            # secret_ref —— 仅当无其他条目引用时才逐出，避免驱逐 A 连坐 B
+            # （B 的重建将静默无凭证）。
+            still_referenced = any(
+                rec.secret_ref == record.secret_ref
+                for other_key, (rec, _a) in self._entries.items()
+                if other_key != key
+            )
+            if not still_referenced:
+                try:
+                    self._secret_store.evict(record.secret_ref)
+                except Exception:  # noqa: BLE001 - 驱逐路径绝不抛
+                    pass
         return True
 
     def _enforce_capacity_locked(self) -> None:

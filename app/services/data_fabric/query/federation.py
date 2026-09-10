@@ -1797,10 +1797,17 @@ def enrich_request_from_runtime(
     from app.services.data_fabric.query.capabilities import get_capabilities
     from app.services.data_fabric.spatial_catalog import spatial_catalog_service
 
+    import copy as _copy
+
     runtime = get_fabric_runtime()
     owner = getattr(req, "session_owner", None)
     basis: Dict[str, Dict[str, Any]] = {}
-    hints: Dict[str, Any] = dict(req.stats_hints or {})
+    # review P2-10：浅拷贝 dict 仍共享 ChainSourceStats 实例 —— 注入 caps/
+    # ndv 会改写调用方的共享对象。逐值拷贝（dataclass）后注入只影响本次
+    # 请求。
+    hints: Dict[str, Any] = {
+        k: _copy.copy(v) for k, v in (req.stats_hints or {}).items()
+    }
 
     for src in req.sources:
         rs = resolved_by_sid.get(src.source_id)
@@ -1906,21 +1913,6 @@ def execute_chain_v6(
         ]
         return result
     validate_chain_shape(req, check_crs_mix=False)
-    # ── V8（ADR-0130）：进程级引擎回退熔断（R2-Mi-4 收口）──
-    # 连续 V6 崩溃后直接走 V5（跳过 V6 规划+执行栈，双执行成本归零）；
-    # half-open 单 trial 探测 V6 恢复。开启/试验状态如实披露。
-    from app.services.data_fabric.fabric.engine_breaker import get_engine_breaker
-
-    engine_breaker = get_engine_breaker()
-    if not engine_breaker.allow_v6():
-        result = execute_federated_chain(executor, req)
-        result["engine"] = "v5_fallback"
-        result["warnings"] = list(result.get("warnings") or []) + [
-            "engine=v6 skipped: fallback breaker open (recent V6 crashes); "
-            "executed with V5 engine"
-        ]
-        result["engine_breaker"] = engine_breaker.disclosure()
-        return result
     # ── V7（ADR-0119 W12/W13）：结果缓存 + 计数器 + 反馈 ──
     cache_ctx = (
         _v7_cache_context(executor, req)
@@ -1957,7 +1949,40 @@ def execute_chain_v6(
                 "cache_key": cache_key[:16],
             }
             return cached
+    # ── V8（ADR-0130）：进程级引擎回退熔断（R2-Mi-4 收口）──
+    # 位于缓存命中检查之后：熔断守卫的是 **V6 执行**，不剥夺有效缓存结果
+    # 的服务（review P2-6）。连续 V6 崩溃后直接走 V5（跳过 V6 规划+执行
+    # 栈，双执行成本归零）；half-open 单 trial 探测 V6 恢复。trial 经
+    # finally 释放（review P1-1）：请求从负缓存/typed 错误等不记账路径
+    # 退出时，half-open 名额不泄漏（否则 V6 被禁用到进程重启）。
+    from app.services.data_fabric.fabric.engine_breaker import get_engine_breaker
+
+    engine_breaker = get_engine_breaker()
+    if not engine_breaker.allow_v6():
+        result = execute_federated_chain(executor, req)
+        result["engine"] = "v5_fallback"
+        result["warnings"] = list(result.get("warnings") or []) + [
+            "engine=v6 skipped: fallback breaker open (recent V6 crashes); "
+            "executed with V5 engine"
+        ]
+        result["engine_breaker"] = engine_breaker.disclosure()
+        return result
+    try:
+        return _execute_v6_with_governance(
+            executor, req, engine_breaker, cache_ctx,
+            cache if cache_enabled else None,
+        )
+    finally:
+        engine_breaker.release_trial()
+
+
+def _execute_v6_with_governance(executor, req, engine_breaker, cache_ctx, cache):
+    """allow_v6() 通过后的 V6 规划+执行+构建主干（execute_chain_v6 拆出 ——
+    仅为熔断 trial 的 try/finally 作用域服务；行为与拆出前逐位一致）。"""
     counters = _v7_new_counters(cache_ctx)
+    cache_enabled = cache_ctx is not None
+    if cache_enabled:
+        scope_key, cache_key, fingerprints = cache_ctx
 
     # ── V8（ADR-0130 Phase F）：cache stampede 保护 ──
     # miss 后的规划+执行+构建收进闭包，经 per-key SingleFlight 执行：并发

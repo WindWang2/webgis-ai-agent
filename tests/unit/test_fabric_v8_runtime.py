@@ -279,3 +279,63 @@ def test_governed_adapter_attaches_db_source_on_first_use():
     assert record is not None and record.revision
     # 二次解析复用同一受治理 adapter（不再重复构建）。
     assert DataFabricManager._governed_adapter(ds) is adapter
+
+
+# ── Subagent-B review 回归（P1-2 / P2-1 / P2-2 / P2-3）─────────────────
+
+
+def test_url_userinfo_rotation_produces_new_revision_and_faithful_rebuild():
+    registry = get_connection_registry()
+    scope = TenantScope(owner="s")
+    p1 = _make_profile(
+        "rot_src", url="https://rotuser:token-one@host.example.com/path"
+    )
+    rec1, _ = registry.attach(p1, scope)
+    p2 = _make_profile(
+        "rot_src", url="https://rotuser:token-two@host.example.com/path"
+    )
+    rec2, _ = registry.attach(p2, scope)
+
+    assert rec1.revision != rec2.revision  # 轮换可感知（不再 idempotent 命中旧凭证）
+    assert "token-one" not in str(rec1.model_dump())
+    assert "token-two" not in str(rec2.model_dump())
+    rebuilt = ConnectionProfile(**registry.rehydrate_profile(rec2))
+    assert "token-two" in (rebuilt.url or "")
+
+
+def test_sensitive_keys_inside_options_lists_are_extracted_and_restored():
+    registry = get_connection_registry()
+    profile = _make_profile(
+        "list_src",
+        options={"layers": [{"name": "a", "password": "lp-secret"},
+                            {"name": "b"}]},
+    )
+    registry.attach(profile, TenantScope(owner="s"))
+    record = registry.peek("list_src", TenantScope(owner="s"))
+    assert "lp-secret" not in str(record.model_dump())
+    rebuilt = ConnectionProfile(**registry.rehydrate_profile(record))
+    assert rebuilt.options["layers"][0]["password"] == "lp-secret"
+    assert rebuilt.options["layers"][1] == {"name": "b"}
+
+
+def test_ensure_adapter_refuses_expired_record():
+    import time as _t
+
+    registry = get_connection_registry()
+    scope = TenantScope(owner="s")
+    registry.attach(_make_profile("exp_src"), scope, ttl_s=0.05)
+    record = registry.peek("exp_src", scope)
+    _t.sleep(0.06)
+    assert registry.ensure_adapter(record) is None
+    assert record.health == "expired"
+
+
+def test_shared_secret_ref_survives_sibling_record_revocation():
+    registry = get_connection_registry()
+    scope = TenantScope(owner="s")
+    _r1, _ = registry.attach(_make_profile("sh_a", password="same-pw"), scope)
+    r2, _ = registry.attach(_make_profile("sh_b", password="same-pw"), scope)
+    registry.revoke("sh_a", scope)  # content-dedupe：两个 ref 相同
+    # 兄弟条目的 secret 不被连坐逐出（重建仍拿得到凭证）。
+    rebuilt = ConnectionProfile(**registry.rehydrate_profile(r2))
+    assert rebuilt.password == "same-pw"

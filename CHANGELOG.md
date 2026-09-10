@@ -47,6 +47,19 @@
   `attach_prebuilt` (test monkeypatch/`build_adapter` seam preserved);
   fixed `attach(build_adapter=False, prebuilt_adapter=...)` never storing
   the prebuilt instance.
+- Engine-breaker half-open trial leak: trial slots are now released via
+  `finally` on exits that never reach success/crash accounting (negative
+  cache, cache hits, typed plan errors) — previously one such exit during
+  HALF_OPEN disabled V6 until process restart.
+- URL-userinfo secrets are captured into the SecretStore before
+  redaction: basic-auth/DSN URLs rebuild with credentials intact and
+  userinfo-only rotation now produces a new revision instead of an
+  idempotent stale hit; sensitive keys inside options lists are
+  extracted too; shared (content-deduped) secret refs are no longer
+  evicted while a sibling record references them; `ensure_adapter`
+  refuses expired records; global-scope connections report governed
+  metadata (probe/enrichment no longer silently disabled); throttled
+  `sweep()` wired into resolution (idle-TTL eviction is live).
 
 ## [Unreleased] - 2026-09-09 (science-v5)
 

@@ -73,6 +73,17 @@ class EngineFallbackBreaker:
                 self._half_open_trial_inflight = True
             return True
 
+    def release_trial(self) -> None:
+        """无条件释放 half-open trial 名额（review P1-1）。
+
+        请求经 allow_v6() 获得 trial 后，可能从**不触碰** record_success/
+        record_crash 的路径退出（缓存命中早退 / 负缓存 typed 抛出 / 计划期
+        typed 错误）—— 名额若不释放，HALF_OPEN 卡死，V6 被禁用到进程重启。
+        本方法只清 trial 旗标，不改状态机（成功/崩溃仍由 record_* 记账）。
+        """
+        with self._lock:
+            self._half_open_trial_inflight = False
+
     def record_v6_crash(self, exc: BaseException) -> None:
         """V6 非 typed 崩溃（已回退 V5）→ 记账并按阈值开闸。"""
         with self._lock:

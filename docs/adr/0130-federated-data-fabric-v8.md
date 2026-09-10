@@ -26,8 +26,10 @@ V5 回退路径全部不变。
 ### 1. FabricRuntime：单一生产解析路径（`fabric/runtime.py`）
 - 三级解析链：**registry 优先**（作用域/revision/健康/secret 分离生效）→
   **legacy 会话回退**（首次命中即注册进 registry —— 治理视图统一，单构建
-  复用，不做双份真相的新写入方）→ **DB 注册源按需 attach**（按 ds_model
-  归属域；此前 DB 源必须先 REST connect 进会话才能用）。
+  复用，不做双份真相的新写入方；沿用条目原属域 —— 全局连接不按会话复制）。
+  DB 注册源的治理路径在 `DataFabricManager._governed_adapter`：行内重建
+  profile（零额外 DB 查询）→ 工厂 seam 单次构建 → `attach_prebuilt` 幂等
+  登记（此前 DB 源完全绕过 registry）。
 - 接线面：工具层 11 处调用点收敛到 `_resolve_source_adapter`；
   `DataFabricManager._governed_adapter` 覆盖 query/async/materialize/sync/
   explain 五条 REST/worker 路径；registry 任何故障 fail-open 回退既有工厂
@@ -66,8 +68,11 @@ V5 回退路径全部不变。
 ### 5. 引擎回退进程级熔断（Phase G，收口 R2-Mi-4）
 `fabric/engine_breaker.py`：连续 V6 崩溃 ≥3（可配）→ OPEN，cool_down 60s
 内 engine=v6 请求直达 V5（V6 规划+执行栈零进入）；窗口后半开单 trial 探测
-恢复；成功归零。披露：回退结果 additive `engine_breaker` 段 + warnings。
-熔断只影响引擎选择，结果契约不变。
+恢复；成功归零。trial 经 `finally` 无条件释放（review P1-1：负缓存/typed
+错误等不记账路径退出时名额不泄漏 —— 否则 HALF_OPEN 卡死，V6 被禁用到进程
+重启）。守卫位于缓存命中检查之后（review P2-6：熔断剥夺的是 V6 执行，不
+剥夺有效缓存结果的服务）。披露：回退结果 additive `engine_breaker` 段 +
+warnings。熔断只影响引擎选择，结果契约不变。
 
 ### 6. 结果缓存强化（Phase F）
 - **stampede 保护**：miss 后的规划+执行收进闭包，经 per-key `SingleFlight`
