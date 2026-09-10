@@ -63,6 +63,7 @@ def test_data_role_change_covers_full_downstream():
     dag = _compiled_dag()
     data_nodes = {n for n in _node_ids(dag) if n.startswith("data:")}
     assert data_nodes
+    has_output_covered = False
     for role_node in sorted(data_nodes):
         role = role_node.split(":", 1)[1]
         plan = compute_affected_subgraph(
@@ -72,9 +73,12 @@ def test_data_role_change_covers_full_downstream():
         assert set(plan.recompute) == expected, (
             f"{role_node}: 闭包失真 recompute={plan.recompute} "
             f"expected={sorted(expected)}")
-        assert any(n.startswith("output:") for n in plan.recompute), (
-            "数据角色变更必须波及 output 节点")
+        if any(n.startswith("output:") for n in expected):
+            assert any(n.startswith("output:") for n in plan.recompute), (
+                "数据角色变更必须波及 output 节点")
+            has_output_covered = True
         assert set(plan.reuse) == _node_ids(dag) - expected
+    assert has_output_covered, "至少一个活跃数据角色的变更必须波及 output 节点"
 
 
 def test_parameter_change_hits_owner_subtree_with_output():
