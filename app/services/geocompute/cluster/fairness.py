@@ -12,7 +12,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 
 def fair_pick(
@@ -20,6 +20,7 @@ def fair_pick(
     *,
     slots: int,
     last_dispatch: Optional[dict[str, int]] = None,
+    within_tenant_key: Optional[Callable[[dict[str, Any]], Any]] = None,
 ) -> list[dict[str, Any]]:
     """从候选中按加权轮转选取至多 ``slots`` 个。
 
@@ -30,15 +31,23 @@ def fair_pick(
     排序成**固定环**，游标逐格推进、空队列跳过但游标不移除 —— 经典 DRR
     写法（round1 M5：重算 remaining + 取模会让租户队列中途耗尽时产生
     系统性跳位偏袒）。同一轮内确定性成立。
+
+    V8：可选 ``within_tenant_key(row) -> Comparable`` 定制租户内排序
+    （调度按资源稀缺度排序 —— GPU/高内存 run 在槽位紧张时优先占位）；
+    缺省 None = V6 的 (-priority, id) 逐字节不变。跨租户公平语义不受
+    影响（轮转环只约束「哪个租户」，租户内顺序由本键决定）。
     """
     slots = max(0, int(slots))
     if slots == 0 or not candidates:
         return []
     last = last_dispatch or {}
+
+    def _default_key(r: dict[str, Any]):
+        return (-int(r.get("priority") or 0), int(r.get("id") or 0))
+
+    key_fn = within_tenant_key or _default_key
     by_tenant: dict[str, list[dict[str, Any]]] = {}
-    for row in sorted(
-        candidates, key=lambda r: (-int(r.get("priority") or 0), int(r.get("id") or 0))
-    ):
+    for row in sorted(candidates, key=key_fn):
         by_tenant.setdefault(row.get("tenant_key") or "", []).append(row)
     tenant_cycle = sorted(
         by_tenant, key=lambda t: (last.get(t, -1), t)

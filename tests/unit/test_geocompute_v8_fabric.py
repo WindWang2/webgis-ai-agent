@@ -293,3 +293,236 @@ class TestClaimLeaseMemGpu:
                 scope_key="global").one()
             assert usage.usage_mem_mb == 0
             assert usage.usage_gpu == 0
+
+
+# ═══════════════ V8 wave 2：稀缺度排序 / reservation 派发 / GPU fallback ═══════════════
+
+
+class TestFairPickWithinTenantKey:
+    def test_default_key_unchanged(self):
+        from app.services.geocompute.cluster.fairness import fair_pick
+
+        cands = [
+            {"id": 1, "tenant_key": "t", "priority": 5},
+            {"id": 2, "tenant_key": "t", "priority": 5},
+            {"id": 3, "tenant_key": "t", "priority": 10},
+        ]
+        picked = fair_pick(cands, slots=2)
+        assert [p["id"] for p in picked] == [3, 1]
+
+    def test_scarcity_key_prefers_gpu_run(self):
+        """同租户 1 槽位竞争：GPU run（稀缺）先于普通 run 被选中。"""
+        from app.services.geocompute.cluster.fairness import fair_pick
+        from app.services.geocompute.cluster.placement import scarcity_rank_key
+        from app.services.geocompute.cluster.contracts import ResourceRequest
+
+        gpu_req = ResourceRequest(gpu=1)
+        plain_req = ResourceRequest()
+
+        def key(r):
+            req = gpu_req if r["id"] == 2 else plain_req
+            eligible = 1 if r["id"] == 2 else 3
+            return scarcity_rank_key(req, eligible) + (
+                -int(r.get("priority") or 0), int(r.get("id") or 0))
+
+        cands = [
+            {"id": 1, "tenant_key": "t", "priority": 5},
+            {"id": 2, "tenant_key": "t", "priority": 5},  # GPU run
+            {"id": 3, "tenant_key": "t", "priority": 5},
+        ]
+        picked = fair_pick(cands, slots=1, within_tenant_key=key)
+        assert [p["id"] for p in picked] == [2]
+
+    def test_scarcity_key_zero_for_plain_requests(self):
+        """无 envelope 要求 → V6 相对顺序不变。"""
+        from app.services.geocompute.cluster.placement import scarcity_rank_key
+        from app.services.geocompute.cluster.contracts import ResourceRequest
+
+        assert scarcity_rank_key(ResourceRequest(), 3) == (1, 1, 0)
+
+
+class TestSchedulerReservationAndFallback:
+    """coordinator tick 集成：enforcing 账本按维拒绝可观测留队 + GPU
+    fallback 剥离。eager/临时 SQLite + 置 conf 非 eager 模拟 worker 视图
+    （与 test_geocompute_v7_cluster 同惯例）。"""
+
+    @pytest.fixture()
+    def sched_env(self, tmp_path, monkeypatch):
+        eng = create_engine(f"sqlite:///{tmp_path / 'v8-sched.db'}",
+                            connect_args={"check_same_thread": False})
+        from app.models.db_model import Base
+
+        Base.metadata.create_all(eng)
+        factory = sessionmaker(bind=eng, expire_on_commit=False)
+        from app.services.geocompute import reuse_index, run_evidence
+        from app.services.geocompute.cluster import store as csm
+
+        monkeypatch.setattr(run_evidence, "session_factory", factory)
+        monkeypatch.setattr(reuse_index, "session_factory", factory)
+        monkeypatch.setattr(csm, "session_factory", factory)
+        from app.services.geocompute.cluster.scheduler import ClusterCoordinator
+
+        def make(name: str, **kw):
+            return ClusterCoordinator(
+                store=ClusterRunStore(factory),
+                coordinator_id=name, local_slots=kw.pop("local_slots", 1),
+                heartbeat_interval_s=0.05, tick_interval_s=0.02,
+                leadership_ttl_s=1.0, lease_ttl_s=5.0, **kw)
+
+        yield factory, make
+        eng.dispose()
+
+    def _plan(self) -> dict:
+        return {"plan_id": "v8", "nodes": [
+            {"node_id": "n0", "category": "source_scan", "operation": "inline",
+             "inputs": [], "parameters": {"features": []}},
+        ], "budget": {}}
+
+    def _submit(self, factory, store, **kw) -> str:
+        return store.create_run(
+            plan_snapshot=self._plan(), plan_fingerprint="fp-v8-sched",
+            owner_scope="u:v8", **kw)
+
+    def _events(self, rid):
+        from app.services.geocompute.cluster.events import RunEventStore
+
+        return RunEventStore().window(rid)
+
+    def _metrics_counters(self, monkeypatch):
+        """隔离进程内计数器（避免污染其它测试的 metrics 断言）。"""
+        import app.services.geocompute.cluster.metrics as m
+
+        monkeypatch.setattr(m, "_resource_rejections", {})
+        monkeypatch.setattr(m, "_oom_avoided", 0)
+        monkeypatch.setattr(m, "_gpu_fallbacks", 0)
+        return m
+
+    def test_enforcing_mem_reject_emits_resource_event(self, sched_env, monkeypatch):
+        factory, make = sched_env
+        metrics = self._metrics_counters(monkeypatch)
+        from app.services.geocompute.cluster.store import ClusterRunStore
+        from app.services.task_queue import celery_app
+
+        store = ClusterRunStore(factory)
+        # plan 估计峰值内存 8192MiB > 全局账本限额 1024MiB → 预防性拒绝
+        plan = {"plan_id": "v8", "nodes": [
+            {"node_id": "n0", "category": "source_scan", "operation": "inline",
+             "inputs": [], "parameters": {"features": []},
+             "estimate": {"rows": 10, "memory_mb": 8192,
+                          "confidence": "high"}},
+        ], "budget": {}}
+        rid = store.create_run(
+            plan_snapshot=plan, plan_fingerprint="fp-v8-mem",
+            owner_scope="u:v8")
+        ledger = ClusterLedger(
+            enforcing=True,
+            limits={"global": {"rows": None, "bytes": None, "units": None,
+                               "mem_mb": 1024, "gpu": None}},
+            factory=factory,
+        )
+        coord = make("coord-v8", ledger=ledger)
+        old = celery_app.conf.task_always_eager
+        celery_app.conf.task_always_eager = False
+        try:
+            store.upsert_worker("w-big", profiles={"celery": 1},
+                                capability={"cpu_cores": 8, "mem_mb": 32768,
+                                            "gpu_count": 0, "gpu_mem_mb": 0,
+                                            "backends": {}, "capabilities": [],
+                                            "zone": "default", "version": "v"})
+            for _ in range(2):
+                coord.tick()
+            # run 留队（内存超限被预防性拒绝 —— 不启动再 OOM）
+            assert store.get_run(rid)["status"] == "queued"
+            evs = self._events(rid)
+            waiting = [e for e in evs if e["event"] == "waiting_resource"]
+            assert len(waiting) == 1
+            assert waiting[0]["status"] == "resource:mem_mb"
+            # 观测：按维拒绝计数 + OOM 避免量化
+            snap = metrics.ClusterMetrics(store).snapshot()
+            assert snap["resource_rejections"].get("mem_mb", 0) >= 1
+            assert snap["oom_avoided"] >= 1
+        finally:
+            celery_app.conf.task_always_eager = old
+
+    def test_gpu_fallback_strips_gpu_request(self, sched_env, monkeypatch):
+        factory, make = sched_env
+        self._metrics_counters(monkeypatch)
+        from app.services.geocompute.cluster.store import ClusterRunStore
+        from app.services.task_queue import celery_app
+
+        store = ClusterRunStore(factory)
+        rid = self._submit(factory, store, resource_request={
+            "gpu": 1, "fallback_cpu": True, "min_mem_mb": 0, "min_cpu": 0,
+            "required_profiles": []})
+        coord = make("coord-fb", gpu_fallback_wait_s=0.0)
+        old = celery_app.conf.task_always_eager
+        celery_app.conf.task_always_eager = False
+        try:
+            store.upsert_worker("w-cpu", profiles={"celery": 1},
+                                capability={"cpu_cores": 4, "mem_mb": 8192,
+                                            "gpu_count": 0, "gpu_mem_mb": 0,
+                                            "backends": {}, "capabilities": [],
+                                            "zone": "default", "version": "v"})
+            stats = coord.tick()
+            # 立即回退（wait=0）：gpu 要求剥离 → gpu_fallback 事件；
+            # 本 tick 该 run 仍以旧 envelope 评估留队，下一 tick 派发。
+            assert stats.get("dispatched", 0) == 0
+            evs = self._events(rid)
+            assert any(e["event"] == "gpu_fallback" for e in evs)
+            row = store.get_run(rid)
+            assert row["resource_request"]["gpu"] == 0
+            assert row["resource_request"]["fallback_from_gpu"] is True
+            stats = coord.tick()
+            assert stats["dispatched"] == 1
+            assert store.get_run(rid)["status"] in ("leased", "running")
+        finally:
+            celery_app.conf.task_always_eager = old
+
+    def test_gpu_hold_unchanged_without_fallback_flag(self, sched_env, monkeypatch):
+        """V7 语义保留：未声明 fallback_cpu 的 GPU run 无限期留队。"""
+        factory, make = sched_env
+        self._metrics_counters(monkeypatch)
+        from app.services.geocompute.cluster.store import ClusterRunStore
+        from app.services.task_queue import celery_app
+
+        store = ClusterRunStore(factory)
+        rid = self._submit(factory, store, resource_request={
+            "gpu": 1, "min_mem_mb": 0, "min_cpu": 0,
+            "required_profiles": []})
+        coord = make("coord-hold", gpu_fallback_wait_s=0.0)
+        old = celery_app.conf.task_always_eager
+        celery_app.conf.task_always_eager = False
+        try:
+            store.upsert_worker("w-cpu", profiles={"celery": 1},
+                                capability={"cpu_cores": 4, "mem_mb": 8192,
+                                            "gpu_count": 0, "gpu_mem_mb": 0,
+                                            "backends": {}, "capabilities": [],
+                                            "zone": "default", "version": "v"})
+            for _ in range(2):
+                coord.tick()
+            row = store.get_run(rid)
+            assert row["status"] == "queued"
+            assert row["resource_request"]["gpu"] == 1
+        finally:
+            celery_app.conf.task_always_eager = old
+
+
+class TestDowngradeGpuRequest:
+    def test_cas_and_idempotence(self, env):
+        store, _ = env
+        rid = store.create_run(
+            plan_snapshot=_plan_snapshot(), plan_fingerprint="fp-dg",
+            owner_scope="u:abc", resource_request={"gpu": 2, "fallback_cpu": True},
+        )
+        assert store.downgrade_gpu_request(rid) is True
+        row = store.get_run(rid)
+        assert row["resource_request"]["gpu"] == 0
+        assert row["resource_request"]["fallback_from_gpu"] is True
+        # 幂等：已无 gpu 要求 → False
+        assert store.downgrade_gpu_request(rid) is False
+        # 终态 run 不可改写
+        from app.services.geocompute.cluster.contracts import ClusterRunStatus
+
+        epoch = store.claim_lease(rid, coordinator_id="c", ttl_s=30.0)
+        store.finish_run(rid, epoch=epoch, status=ClusterRunStatus.COMPLETED)
+        assert store.downgrade_gpu_request(rid) is False

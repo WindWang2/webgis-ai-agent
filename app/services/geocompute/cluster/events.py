@@ -38,6 +38,9 @@ MAX_NODE_EVENTS_PER_RUN = 1024
 MAX_EVENTS_PAGE = 200
 
 #: 事件词表（封闭；append 侧强校验 —— 开放词表会让读投影/OTel 映射失效）。
+#: V8 新增：gpu_fallback（CUDA 不可用回退）、partition_planned（空间分区
+#: fan-out）、speculative_dispatch / speculative_resolved（投机副本）、
+#: poison_quarantined（毒任务隔离）、artifact_spilled（大载荷落盘交换）。
 EVENT_VOCABULARY: frozenset[str] = frozenset({
     "run_started",
     "node_dispatched", "node_started", "node_output_ready",
@@ -45,12 +48,17 @@ EVENT_VOCABULARY: frozenset[str] = frozenset({
     "node_lost",
     "run_completed", "run_failed", "run_cancelled", "run_preempted",
     "waiting_resource", "worker_cache_hit", "straggler_detected",
+    "gpu_fallback", "partition_planned",
+    "speculative_dispatch", "speculative_resolved", "poison_quarantined",
+    "artifact_spilled",
 })
 
 #: 豁免节点级预算的事件（全 run ≤~10 条：run 级终态 + 治理可见性）。
 _BUDGET_EXEMPT: frozenset[str] = frozenset({
     "run_started", "run_completed", "run_failed", "run_cancelled",
     "run_preempted", "waiting_resource", "straggler_detected",
+    "gpu_fallback", "partition_planned",
+    "speculative_dispatch", "speculative_resolved", "poison_quarantined",
 })
 
 #: 有界进程内计数（metrics 投影；无 per-run/per-user 维度）。

@@ -981,6 +981,42 @@ class ClusterRunStore:
             db.commit()
             return "failed" if error_code else "requeued"
 
+    def downgrade_gpu_request(self, run_id: str) -> bool:
+        """V8 GPU fallback：把 run 的 resource_request.gpu 剥离为 0
+        （持久化 + ``fallback_from_gpu`` 诚实标记）。
+
+        CAS 限 dispatchable 状态（queued/preempted）—— 已认领/终态 run
+        绝不改写。返回 False = 竞争失败/缺席/无 gpu 要求（幂等安全）。
+        只在 coordinator leader 的 dispatch 路径调用；失败方向 =
+        下轮再试（run 多等一个 tick，不是错误）。
+        """
+        with self._factory() as db:
+            row = db.execute(
+                select(_Run).where(_Run.run_id == run_id)
+            ).scalar_one_or_none()
+            if row is None or row.status not in {
+                s.value for s in DISPATCHABLE_STATUSES
+            }:
+                return False
+            req = row.resource_request if isinstance(row.resource_request, dict) else {}
+            if not req.get("gpu"):
+                return False
+            new_req = dict(req)
+            new_req["gpu"] = 0
+            new_req["fallback_from_gpu"] = True
+            rowcount = db.execute(
+                update(_Run)
+                .where(
+                    _Run.id == row.id,
+                    _Run.status.in_([s.value for s in DISPATCHABLE_STATUSES]),
+                )
+                .values(resource_request=new_req, updated_at=_utcnow())
+            ).rowcount
+            if not rowcount:
+                return False
+            db.commit()
+            return True
+
     # ------------------------------------------------------ leadership
 
     def acquire_leadership(self, coordinator_id: str, *, ttl_s: float) -> Optional[int]:
@@ -1154,8 +1190,9 @@ class ClusterLedger:
     ) -> bool:
         """admin：设置 scope 限额（None = 解除该维限制）。
 
-        V8 新增 ``limit_mem_mb``/``limit_gpu`` 两维（缺省 None = 不动该维
-        的既有调用方逐字节兼容）。
+        V8 新增 ``limit_mem_mb``/``limit_gpu`` 两维（同语义：None = 解除；
+        未传新字段的旧调用方会把两维一并置 NULL —— 与「显式设置全部维」
+        的 V7 契约一致）。
 
         幂等 upsert：scope 行缺席时以给定限额预建（与 ensure_scopes 同一
         竞争纪律 —— INSERT 冲突回滚复检）。enforcing/advisory 模式不变。

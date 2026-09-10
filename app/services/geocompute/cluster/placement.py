@@ -145,3 +145,24 @@ def request_digest(req: ResourceRequest) -> dict[str, Any]:
         # V8：CUDA 不可用回退声明（False 缺省省略以保持 V7 投影逐字节同形）
         **({"fallback_cpu": True} if req.fallback_cpu else {}),
     }
+
+
+def scarcity_rank_key(
+    request: ResourceRequest, eligible_count: int
+) -> tuple[int, int, int]:
+    """V8 稀缺度准入排序键（同租户内；fair_pick ``within_tenant_key``）。
+
+    调度是真实的资源决策输入：槽位紧张时，**稀缺资源 run 优先占位** ——
+    GPU run（可服务它的 worker 一定更少）> 高内存下限 run > 普通 run；
+    同稀缺档内合格 worker 越少越优先（防「普通 run 先吃光槽位、GPU run
+    永远排队」的同租户饿死）。
+
+    返回升序元组（越小越先派发）；全部输入来自 scan 投影 + live worker
+    计数 —— 每 tick 零额外查询。V6 语义保底：无 envelope 要求的 run 得
+    (1, 1, 0)，与 priority/id 主排序组合后不改变既有相对顺序。
+    """
+    gpu_scarce = 0 if request.gpu > 0 else 1
+    mem_scarce = 0 if request.min_mem_mb > 0 else 1
+    # 合格 worker 少 → 更稀缺 → 排前（负数）；无 envelope 要求 → 0
+    scarcity = -eligible_count if (gpu_scarce == 0 or mem_scarce == 0) else 0
+    return (gpu_scarce, mem_scarce, scarcity)

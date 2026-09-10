@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from app.services.geocompute.cluster.contracts import (
     DISPATCHABLE_STATUSES,
+    RESOURCE_DIMENSIONS,
     ClusterRunStatus,
 )
 from app.services.geocompute.cluster.store import ClusterRunStore
@@ -43,6 +44,50 @@ def record_queue_wait_s(seconds: float) -> None:
         return
     with _lock:
         _queue_waits.append(float(seconds))
+
+
+# ── V8：资源拒绝 / OOM 避免观察（进程内有界计数；词表维度防基数爆炸）──
+
+_resource_rejections: dict[str, int] = {}
+_oom_avoided = 0
+_gpu_fallbacks = 0
+
+
+def record_resource_rejection(dim: str) -> None:
+    """enforcing 账本按维拒绝认领（调度决策可观测；词表外维丢弃）。"""
+    if dim not in RESOURCE_DIMENSIONS:
+        return
+    with _lock:
+        _resource_rejections[dim] = _resource_rejections.get(dim, 0) + 1
+
+
+def resource_rejections_snapshot() -> dict[str, int]:
+    with _lock:
+        return dict(_resource_rejections)
+
+
+def record_oom_avoided() -> None:
+    """内存维拒绝 = 一次「先启动再 OOM」被预防（V8 核心承诺的量化）。"""
+    global _oom_avoided
+    with _lock:
+        _oom_avoided += 1
+
+
+def oom_avoided_snapshot() -> int:
+    with _lock:
+        return _oom_avoided
+
+
+def record_gpu_fallback() -> None:
+    """GPU run 剥离 gpu 要求改派 CPU（诚实可见的降级决策）。"""
+    global _gpu_fallbacks
+    with _lock:
+        _gpu_fallbacks += 1
+
+
+def gpu_fallbacks_snapshot() -> int:
+    with _lock:
+        return _gpu_fallbacks
 
 
 def _percentile(samples: list[float], q: float) -> Optional[float]:
@@ -99,6 +144,10 @@ class ClusterMetrics:
             "workers": self._worker_summary(),
             "leader": self._leader_summary(),
             "ledger": self._store.ledger_snapshot(limit=_MAX_LEDGER_SCOPES),
+            # V8：资源拒绝/OOM 避免/GPU 降级（调度决策可观测性）
+            "resource_rejections": resource_rejections_snapshot(),
+            "oom_avoided": oom_avoided_snapshot(),
+            "gpu_fallbacks": gpu_fallbacks_snapshot(),
         }
 
     def _worker_summary(self) -> dict[str, Any]:
