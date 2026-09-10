@@ -24,13 +24,15 @@ export type AiStatus = 'idle' | 'thinking' | 'acting' | 'done' | 'error';
 // 新增 v2 类型
 export interface OpLogEntry {
   id: string;
-  /** V5 journal 词表（封闭）：组织/图层操作 + undo/redo + typed 冲突审计。 */
+  /** V5 journal 词表（封闭）：组织/图层操作 + undo/redo + typed 冲突审计。
+   *  V7 增补 'sketch'：草图绘制/顶点编辑/删除（可逆，undo 粒度 = 单手势）。 */
   type:
     | 'add'
     | 'remove'
     | 'toggle'
     | 'flyto'
     | 'style'
+    | 'sketch'
     | 'undo'
     | 'redo'
     | 'lock'
@@ -271,6 +273,15 @@ export interface HudState extends WorkbenchSlice {
   // 跨会话存活（项目 tab 的选择不因新会话而清空，清空会造成 UI 与请求不一致）。
   activeProjectId: string | null;
   setActiveProjectId: (projectId: string | null) => void;
+
+  /* ─── Tool（V7：全局地图工具唯一真相，单字段互斥）─── */
+  activeMapTool: import('./slices/toolSlice').ToolSlice['activeMapTool'];
+  setActiveMapTool: import('./slices/toolSlice').ToolSlice['setActiveMapTool'];
+  snappingEnabled: import('./slices/toolSlice').ToolSlice['snappingEnabled'];
+  toggleSnapping: import('./slices/toolSlice').ToolSlice['toggleSnapping'];
+  sketchDirty: import('./slices/toolSlice').ToolSlice['sketchDirty'];
+  setSketchDirty: import('./slices/toolSlice').ToolSlice['setSketchDirty'];
+  clearToolState: import('./slices/toolSlice').ToolSlice['clearToolState'];
 
   /* ─── v2 Panel Visibility ─── */
   hudOpen: boolean;

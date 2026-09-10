@@ -34,6 +34,7 @@ export function resolveFilterState(
   return { ...prev, [layerId]: ranges };
 }
 import { MapActionHandler } from "./map-action-handler"
+import { SketchEditor } from "./sketch-editor"
 import { LegendStack } from "./legend-stack"
 import { MapDecorations } from "./map-decorations"
 import { CHROME_RENDERABLE_TYPES, specHasDecorationComponent } from '@/lib/map-components/chrome-types'
@@ -228,7 +229,8 @@ export function MapPanel({
   // 命中投影为有界选择载荷（ids ≤50 超限走 bbox 谓词 + 计数披露）。
   // 矩形覆盖层走**命令式 ref 更新**（review：60Hz setState 会整组件重渲染
   // 一整个 MapPanel —— 只有 transform 变化的矩形不需要 React 渲染）。
-  const [brushSelectActive, setBrushSelectActive] = useState(false)
+  // V7：激活态迁 toolSlice（全局工具唯一真相，与测量/绘制互斥）。
+  const brushSelectActive = useHudStore((s) => s.activeMapTool === 'brush_select')
   const brushRectRef = useRef<HTMLDivElement | null>(null)
   const brushStartRef = useRef<{ x: number; y: number } | null>(null)
 
@@ -774,9 +776,19 @@ export function MapPanel({
     features: any[]
   } | null>(null)
 
-  // 交互测量工具状态（HUD 联动）
-  const [measureMode, setMeasureMode] = useState<MeasureMode>('none')
+  // 交互测量工具状态（HUD 联动）。V7：模式真相迁 toolSlice（与框选/绘制
+  // 互斥，会话切换自动复位）；在途测量点是瞬时草稿，保留本地 state。
+  const activeMapTool = useHudStore((s) => s.activeMapTool)
+  const measureMode: MeasureMode = activeMapTool === 'measure_distance'
+    ? 'distance'
+    : activeMapTool === 'measure_area'
+      ? 'area'
+      : 'none'
   const [measurePoints, setMeasurePoints] = useState<[number, number][]>([])
+  // 工具切换/退出时清掉在途测量点（跨工具残留的点会让下一次测量凭空多一段）。
+  useEffect(() => {
+    if (measureMode === 'none') setMeasurePoints((prev) => (prev.length ? [] : prev))
+  }, [measureMode])
 
   const handleCompleteMeasurement = useCallback(() => {
     if (measurePoints.length < 2) return
@@ -819,7 +831,7 @@ export function MapPanel({
       })
     }
     setMeasurePoints([])
-    setMeasureMode('none')
+    useHudStore.getState().setActiveMapTool(null)
   }, [measureMode, measurePoints])
 
   const handleZoomToFeature = useCallback((target: [number, number] | [number, number, number, number]) => {
@@ -839,6 +851,14 @@ export function MapPanel({
   const handleMapClick = useCallback((evt: any) => {
     const map = mapRef.current?.getMap()
     if (!map) return
+
+    // V7：草图工具激活时点选语义归 SketchEditor（它通过 map.on('click')
+    // 自行接管），这里不得再触发 POI/要素选择。
+    const sketchTool = useHudStore.getState().activeMapTool
+    if (sketchTool === 'draw_point' || sketchTool === 'draw_line' || sketchTool === 'draw_polygon'
+      || sketchTool === 'delete_feature' || sketchTool === 'edit_vertices') {
+      return
+    }
 
     // 测距/测面模式优先：捕获坐标并追加到测量路径，不触发要素选择
     if (measureMode !== 'none') {
@@ -1312,6 +1332,7 @@ export function MapPanel({
           transformRequest={transformRequest}
         >
         <MapActionHandler />
+        <SketchEditor mapRef={mapRef} />
         {poiPanel && (
           <PoiInfoPanel
             x={poiPanel.x}
@@ -1404,12 +1425,14 @@ export function MapPanel({
         bearing={decorProps.bearing}
         pitch={is3D ? 60 : 0}
         activeMeasureTool={measureMode}
-        onMeasureToolChange={setMeasureMode}
+        onMeasureToolChange={(mode) => useHudStore.getState().setActiveMapTool(
+          mode === 'distance' ? 'measure_distance' : mode === 'area' ? 'measure_area' : null,
+        )}
         measurePoints={measurePoints}
         onClearMeasurePoints={() => setMeasurePoints([])}
         onCompleteMeasurement={handleCompleteMeasurement}
         brushSelectActive={brushSelectActive}
-        onToggleBrushSelect={() => setBrushSelectActive((v) => !v)}
+        onToggleBrushSelect={() => useHudStore.getState().setActiveMapTool(brushSelectActive ? null : 'brush_select')}
       />
 
       {/* Runtime V4：框选矩形覆盖层 —— 命令式更新（mousedown/mousemove 直接
