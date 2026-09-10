@@ -437,6 +437,72 @@ class WorkflowRuntimeService:
                         "cancel_requested": False, "terminal_at": None})
         return {"requeued": requeued, "exhausted": exhausted}
 
+    async def retry_node(
+        self, instance_id: str, node_id: str, *, owner_scope: str,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """单节点重试（Inspector action）：FAILED/STALE→READY。
+
+        - 预算内（attempts < policy.max_attempts）→ 重排；
+        - ``force=True``：预算耗尽也重排（显式人工兜底 —— journal 留
+          FORCE 证据）；
+        - 同时清除节点取消旗标（旗标在则重排会被波界立即取消）；
+        - 终态实例复活（running 化，与 run_instance 重驱同规则）；
+        - CANCELLED 节点**不可**单点复活（absorbing 不变量；恢复语义走
+          clone_run —— 全新实例不携带取消事实）。
+        """
+        inst = await asyncio.to_thread(
+            self.store.get_instance, instance_id, owner_scope)
+        if inst is None:
+            raise WorkflowRuntimeError("INSTANCE_NOT_FOUND", instance_id)
+        dag = await self._instance_dag(inst)
+        known = {str(n.get("node_id", "")) for n in (dag.get("nodes") or [])}
+        if node_id not in known:
+            raise WorkflowRuntimeError("NODE_NOT_IN_DAG", node_id)
+        from app.services.workflow_runtime.retry import default_policy
+
+        policy = default_policy()
+        row = await asyncio.to_thread(self.store.get_node, instance_id,
+                                      node_id)
+        if row is None:
+            raise WorkflowRuntimeError("NODE_NOT_FOUND", node_id)
+        state = row["state"]
+        if state not in (C.NodeState.FAILED, C.NodeState.STALE):
+            raise WorkflowRuntimeError("NODE_NOT_RETRYABLE",
+                                       f"state={state}")
+        attempts = int(row.get("attempts", 0))
+        if not force and policy.attempts_exhausted(attempts) \
+                and state in (C.NodeState.FAILED,):
+            raise WorkflowRuntimeError(
+                "RETRY_EXHAUSTED", f"attempts={attempts}")
+        # 终态实例复活（CAS；竞争失败 = 他写手先行 → busy）
+        if inst["status"] in C.INSTANCE_TERMINAL_STATUSES:
+            reset = await asyncio.to_thread(
+                self.store.update_instance, instance_id,
+                owner_scope=owner_scope,
+                expected_revision=inst["revision"],
+                fields={"status": C.InstanceStatus.RUNNING,
+                        "error_code": "", "error_detail": "",
+                        "cancel_requested": False, "terminal_at": None})
+            if reset is None:
+                raise InstanceBusy(instance_id, "concurrent rerun")
+        await asyncio.to_thread(
+            self.store.clear_node_cancel, instance_id, node_id)
+        r = await asyncio.to_thread(
+            self.store.transition_node, instance_id, node_id,
+            C.NodeState.READY, expected_from=state,
+            reason="MANUAL_RETRY" if force else "NODE_RETRY",
+            event="inspect", patch={"next_ready_at": None})
+        if not r.ok:
+            raise InstanceBusy(instance_id, r.code)
+        await asyncio.to_thread(
+            self.store.append_event, instance_id,
+            kind=C.EventKind.NODES_REQUEUED, node_id=node_id,
+            reason="MANUAL_RETRY" if force else "NODE_RETRY", actor="api",
+            attempt=attempts)
+        return {"node": node_id, "state": C.NodeState.READY,
+                "attempts": attempts, "force": bool(force)}
+
     async def apply_changes(
         self, instance_id: str, changes: List[C.PendingChange], *,
         owner_scope: str, source: str = "api",

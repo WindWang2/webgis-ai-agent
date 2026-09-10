@@ -290,3 +290,145 @@ async def list_instances(user: Dict[str, Any] = Depends(get_current_user)):
     rows = await asyncio.to_thread(
         _svc().store.list_owner_instances, _owner(user))
     return {"success": True, "instances": rows}
+
+
+# ── Inspector / Debugger（V6 Phase G：可观测面 + 人工干预 action）────────
+
+class NodeCancelRequest(BaseModel):
+    node_ids: List[str] = Field(min_length=1, max_length=16)
+    include_descendants: bool = True
+
+
+class CloneRequest(BaseModel):
+    session_id: Optional[str] = Field(default=None, max_length=255)
+    only_nodes: Optional[List[str]] = Field(default=None, max_length=16)
+    skip_nodes: Optional[List[str]] = Field(default=None, max_length=16)
+
+
+@router.get("/instances/{instance_id}/events")
+async def get_events(
+    instance_id: str,
+    limit: int = 100,
+    after_id: int = 0,
+    kind: str = "",
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """事件日志（append-only journal；因果序 = id 升序；分页有界）。"""
+    svc = _svc()
+    owner = _owner(user)
+    inst = await asyncio.to_thread(svc.store.get_instance, instance_id, owner)
+    if inst is None:
+        raise _not_found()
+    limit = max(1, min(int(limit), 200))
+    events = await asyncio.to_thread(
+        svc.store.get_events, instance_id, limit=limit,
+        after_id=max(0, int(after_id)), kind=kind[:40])
+    return {"success": True, "instance_id": instance_id, "events": events}
+
+
+@router.get("/instances/{instance_id}/nodes/{node_id}")
+async def get_node_detail(
+    instance_id: str, node_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """节点检视：状态/attempts/转移环/绑定/复用证据/租约/取消旗标。"""
+    svc = _svc()
+    owner = _owner(user)
+    inst = await asyncio.to_thread(svc.store.get_instance, instance_id, owner)
+    if inst is None:
+        raise _not_found()
+    row = await asyncio.to_thread(svc.store.get_node, instance_id, node_id)
+    if row is None:
+        raise _not_found()
+    return {"success": True,
+            "instance": {"instance_id": instance_id,
+                         "status": inst["status"],
+                         "run_lease_owner": inst["run_lease_owner"],
+                         "run_lease_expires_at": inst["run_lease_expires_at"]},
+            "node": row}
+
+
+@router.post("/instances/{instance_id}/nodes/{node_id}/retry")
+async def retry_node(
+    instance_id: str, node_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """人工重试单节点（FAILED/STALE→READY；预算耗尽 409）。"""
+    svc = _svc()
+    owner = _owner(user)
+    try:
+        return await svc.retry_node(instance_id, node_id, owner_scope=owner)
+    except SV.InstanceBusy as e:
+        raise _http(e.code, 409, e.detail)
+    except SV.WorkflowRuntimeError as e:
+        status = 404 if e.code in ("INSTANCE_NOT_FOUND", "NODE_NOT_FOUND",
+                                   "NODE_NOT_IN_DAG") else 409
+        raise _http(e.code, status, e.detail)
+
+
+@router.post("/instances/{instance_id}/nodes/cancel")
+async def cancel_nodes(
+    instance_id: str, body: NodeCancelRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """节点级取消（目标 + 后代闭包；持久旗标，driver/恢复面消费）。"""
+    svc = _svc()
+    owner = _owner(user)
+    try:
+        return await svc.cancel_nodes(
+            instance_id, body.node_ids, owner_scope=owner,
+            include_descendants=body.include_descendants)
+    except SV.WorkflowRuntimeError as e:
+        status = 404 if e.code == "INSTANCE_NOT_FOUND" else 422
+        raise _http(e.code, status, e.detail)
+
+
+@router.post("/instances/{instance_id}/clone")
+async def clone_instance(
+    instance_id: str, body: CloneRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """克隆运行（同包同版本新实例；skip unchanged 走复用索引）。"""
+    svc = _svc()
+    owner = _owner(user)
+    try:
+        return await svc.clone_run(
+            instance_id, owner_scope=owner,
+            session_id=body.session_id,
+            only_nodes=body.only_nodes, skip_nodes=body.skip_nodes)
+    except SV.WorkflowRuntimeError as e:
+        raise _http(e.code, 404 if e.code == "INSTANCE_NOT_FOUND" else 422,
+                    e.detail)
+
+
+@router.get("/instances/{instance_id}/debug")
+async def debug_instance(
+    instance_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """一次性检视面：投影 + 节点明细 + 因果事件尾 + 子工作流树。"""
+    svc = _svc()
+    owner = _owner(user)
+    inst = await asyncio.to_thread(svc.store.get_instance, instance_id, owner)
+    if inst is None:
+        raise _not_found()
+    nodes = await asyncio.to_thread(svc.store.get_nodes, instance_id)
+    package = await asyncio.to_thread(
+        svc.registry.resolve, inst["package_id"], owner_scope=owner,
+        version=inst["package_version"])
+    proj = PR.instance_projection(inst, nodes, package=package)
+    proj["explain"] = PR.explain(proj["nodes"],
+                                 inst.get("decisions") or [])
+    events = await asyncio.to_thread(
+        svc.store.get_events, instance_id, limit=100)
+    # 子工作流树（一层反向指针聚合；有界）
+    children = [
+        {"instance_id": r["instance_id"],
+         "parent_node_id": r["parent_node_id"],
+         "status": r["status"], "package_id": r["package_id"]}
+        for r in await asyncio.to_thread(
+            svc.store.list_owner_instances, owner, limit=128)
+        if r.get("parent_instance_id") == instance_id
+    ][:32]
+    return {"success": True, "instance": proj, "recent_events": events,
+            "children": children}
