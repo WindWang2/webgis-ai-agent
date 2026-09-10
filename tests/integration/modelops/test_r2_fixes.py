@@ -13,13 +13,15 @@ def test_tile_cap_typed_rejection(service, tmp_path):
     from rasterio.transform import from_origin
 
     path = tmp_path / "huge_grid.tif"
-    # chip 16 → (50_000/16)^2 ≈ 9.7M tiles >> 65536（构造零拷贝 sparse tif）
-    with rasterio.open(
-        path, "w", driver="GTiff", width=50_000, height=50_000, count=3,
-        dtype="float32", crs="EPSG:4326",
-        transform=from_origin(116.0, 40.0, 1.0, 1.0), nodata=-9999.0,
-    ):
-        pass
+    # chip 64 → (17_000 / 64)^2 = 70,756 tiles > 65,536（构造零拷贝 sparse tif）
+    with rasterio.Env(CHECK_DISK_FREE_SPACE="FALSE"):
+        with rasterio.open(
+            path, "w", driver="GTiff", width=17_000, height=17_000, count=3,
+            dtype="float32", crs="EPSG:4326",
+            transform=from_origin(116.0, 40.0, 1.0, 1.0), nodata=-9999.0,
+            SPARSE_OK="TRUE",
+        ):
+            pass
     with pytest.raises(ResourceUnavailable):
         service.run_inference(InferenceRequest(
             model_id="tiny-landcover-seg", source_uri=str(path),

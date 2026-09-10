@@ -984,14 +984,9 @@ class InferenceEngine:
     def _sampled_nodata_ratio(reader: RasterReader, *, max_side: int = 64) -> float:
         try:
             meta = reader.metadata()
-            step_x = max(1, meta.width // max_side)
-            step_y = max(1, meta.height // max_side)
-
-            col = 0
-            row = 0
-            w = min(meta.width, step_x * max_side)
-            h = min(meta.height, step_y * max_side)
-            mask = reader.read_mask((col, row, w, h))
+            w = min(meta.width, max_side)
+            h = min(meta.height, max_side)
+            mask = reader.read_mask((0, 0, w, h))
             if mask.size == 0:
                 return 0.0
             return float((mask == 0).sum()) / float(mask.size)
