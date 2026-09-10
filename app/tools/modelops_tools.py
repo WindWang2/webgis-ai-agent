@@ -226,12 +226,13 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="modelops_run_promptable",
-        description="运行 promptable 分割（point/box prompt，像素坐标），输出目标掩膜",
+        description="运行 promptable 分割（point/box prompt，像素或地理坐标），输出目标掩膜",
         param_descriptions={
             "model_id": "promptable 模型 id",
             "source_uri": "输入栅格路径",
-            "points": "点 prompt 列表 [[x,y],…]（像素坐标）",
-            "boxes": "框 prompt 列表 [[x,y,w,h],…]（像素坐标）",
+            "points": "点 prompt 列表 [[x,y],…]",
+            "boxes": "框 prompt 列表 [[x,y,w,h],…]",
+            "geographic_coords": "prompt 为地图坐标（经仿射变换到像素；默认像素坐标）",
             "project_id": "项目 scope",
             "session_id": "会话 scope",
         },
@@ -250,6 +251,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         source_uri: str,
         points: Optional[List[List[float]]] = None,
         boxes: Optional[List[List[float]]] = None,
+        geographic_coords: bool = False,
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> dict:
@@ -273,6 +275,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
             source_uri=source_uri[:MAX_SOURCE_URI_LEN],
             owner_scope=scope,
             prompt=prompt,
+            prompt_crs=bool(geographic_coords),
         )
         result = await get_modelops_service().run_inference_async(request)
         return _result_payload(result)

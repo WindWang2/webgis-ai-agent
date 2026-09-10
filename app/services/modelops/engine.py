@@ -154,6 +154,8 @@ class InferenceRequest:
     vectorize_classes: bool = False
     #: V3 §D：类别多边形同步发布到 PostGIS 表（前置缺失 = honest skip）。
     postgis_table: Optional[str] = None
+    #: V3 §H：prompt 坐标为地理坐标（需仿射变换到像素；False = 已是像素）。
+    prompt_crs: bool = False
     score_threshold: float = 0.5
     confidence_floor: float = 0.0
     device_override: Optional[str] = None
@@ -963,7 +965,7 @@ class InferenceEngine:
             )
         return outputs
 
-    # ── promptable 单窗口路径 ───────────────────────────────────────
+    # ── promptable 路径（V3 §H：地理 prompt 变换 + tile 策略）────────
     def _run_promptable(
         self,
         request: InferenceRequest,
@@ -976,99 +978,114 @@ class InferenceEngine:
         perf: PerfCounters,
         checkpoint: Callable[[], None],
     ) -> Dict[str, Dict[str, Any]]:
+        from affine import Affine
+        from rasterio import features as _features
+
+        from app.lib.modelops.foundation import (
+            prompt_windows,
+            prompts_to_pixel,
+            window_local_prompts,
+        )
         from app.lib.modelops.preprocess import preprocess_window
 
         prompt = request.prompt
         if prompt is None:
             raise PreprocessError("promptable inference requires a prompt")
         checkpoint()
-        # 窗口 = prompt 几何包围盒 + chip 级 margin，clamp 到栅格。
-        xs: List[float] = []
-        ys: List[float] = []
-        for px, py in prompt.points:
-            xs.append(px)
-            ys.append(py)
-        for bx, by, bw, bh in prompt.boxes:
-            xs.extend([bx, bx + bw])
-            ys.extend([by, by + bh])
-        if not xs:
-            # 仅 mask prompt：全幅窗口（cap：promptable 参考路径为单窗口）。
-            xs = [0.0, 1.0]
-            ys = [0.0, 1.0]
-        chip_w, chip_h = descriptor.spatial.chip_size
-        margin_x, margin_y = chip_w, chip_h
-        x0 = max(0, int(min(xs)) - margin_x)
-        y0 = max(0, int(min(ys)) - margin_y)
-        x1 = int(max(xs)) + margin_x
-        y1 = int(max(ys)) + margin_y
+        outputs: Dict[str, Dict[str, Any]] = {}
         with RasterReader.open(str(source_path)) as reader:
             meta = reader.metadata()
-            x1 = min(meta.width, x1)
-            y1 = min(meta.height, y1)
-            win_w, win_h = max(4, x1 - x0), max(4, y1 - y0)
+            base_transform = reader.dataset.transform
+            if request.prompt_crs:
+                # V3 §H：地理坐标 prompt → 像素坐标（box 同变换）。
+                prompt = prompts_to_pixel(prompt, transform=base_transform)
             band_ids = [i + 1 for i in range(descriptor.input_bands)]
-            data = reader.read_window((x0, y0, win_w, win_h), bands=band_ids)
-            nodata_mask = reader.read_mask((x0, y0, win_w, win_h)) == 0
-            perf.note_window(1, bytes_read=int(data.nbytes))
+            windows = prompt_windows(
+                prompt,
+                raster_height=meta.height,
+                raster_width=meta.width,
+                chip_hw=descriptor.spatial.chip_size,
+            )
             plan = build_preprocess_plan(descriptor, source_band_count=meta.count)
-            chip, valid = preprocess_window(plan, descriptor, data,
-                                            nodata_mask if nodata_mask.any() else None)
-            # prompt 坐标平移到窗口像素坐标（prior mask 为全幅栅格尺寸数组）。
-            window_prompt = PromptSpec(
-                points=tuple((px - x0, py - y0) for px, py in prompt.points),
-                boxes=tuple((bx - x0, by - y0, bw, bh) for bx, by, bw, bh in prompt.boxes),
-                prior_masks=tuple(
-                    m[y0:y1, x0:x1] for m in prompt.prior_masks
-                ) if prompt.prior_masks else (),
-                text=prompt.text,
-                combine=prompt.combine,
-                labels=prompt.labels,
-            )
-            ctx.extras["prompt"] = window_prompt.to_payload()
-            ctx.extras["prompt_mask_arrays"] = window_prompt.prior_masks
-            batch = TileBatch(pixels=chip[None], valid_mask=valid[None, None]
-                              if valid.ndim == 2 and not bool(valid.all()) else None,
-                              chip_hw=(win_h, win_w))
-            output = provider.infer(model, batch, ctx)
-            output.validate_for(batch)
-            probs = output.class_probabilities[0]  # (2,H,W)
-            object_mask = probs.argmax(axis=0) == 1
-            if valid.ndim == 2:
-                object_mask &= valid
-            mask_arr = object_mask.astype(np.uint8)
-        mask_path = write_raster_output(
-            output_dir / "prompt_mask.tif",
-            arrays=[mask_arr],
-            band_names=["object"],
-            template=RasterReader.open(str(source_path)),
-            nodata=255.0,
-            window_origin=(x0, y0),  # R1-M2：窗口产物 georef 平移
-        )
-        perf.note_window(0, bytes_read=0)
-        perf.record_batch(1)
-        outputs: Dict[str, Dict[str, Any]] = {
-            "prompt_mask": self._publish_raster(mask_path, request, role="prompt_mask",
-                                                descriptor=descriptor)
-        }
-        try:
-            from rasterio import features as _features
-
-            geojson = {
-                "type": "FeatureCollection",
-                "features": [
-                    {"type": "Feature", "properties": {"class": 1}, "geometry": geom}
-                    for geom, val in _features.shapes(
-                        object_mask.astype(np.uint8), mask=object_mask, connectivity=4
+            features_out: List[Dict[str, Any]] = []
+            canvas: Optional[np.ndarray] = None
+            # 掩膜画布（可负担时）：整幅发布；超大栅格只发 GeoJSON（诚实降级）。
+            if meta.height * meta.width <= 256 * 1024 * 1024:
+                canvas = np.zeros((meta.height, meta.width), dtype=np.uint8)
+            for win_row, win_col, win_h, win_w in windows:
+                checkpoint()
+                data = reader.read_window((win_col, win_row, win_w, win_h),
+                                          bands=band_ids)
+                nodata_mask = reader.read_mask((win_col, win_row, win_w, win_h)) == 0
+                perf.note_window(1, bytes_read=int(data.nbytes))
+                chip, valid = preprocess_window(
+                    plan, descriptor, data,
+                    nodata_mask if nodata_mask.any() else None,
+                )
+                window_prompt = window_local_prompts(
+                    prompt, row=win_row, col=win_col
+                )
+                ctx.extras["prompt"] = window_prompt.to_payload()
+                ctx.extras["prompt_mask_arrays"] = (
+                    tuple(
+                        m[win_row: win_row + win_h, win_col: win_col + win_w]
+                        for m in window_prompt.prior_masks
+                    ) if window_prompt.prior_masks else ()
+                )
+                batch = TileBatch(
+                    pixels=chip[None],
+                    valid_mask=valid[None, None]
+                    if valid.ndim == 2 and not bool(valid.all()) else None,
+                    chip_hw=(win_h, win_w),
+                )
+                output = provider.infer(model, batch, ctx)
+                output.validate_for(batch)
+                probs = output.class_probabilities[0]  # (2,H,W)
+                object_mask = probs.argmax(axis=0) == 1
+                if valid.ndim == 2:
+                    object_mask &= valid
+                win_transform = base_transform * Affine.translation(win_col, win_row)
+                for geom, _val in _features.shapes(
+                    object_mask.astype(np.uint8), mask=object_mask, connectivity=4
+                ):
+                    features_out.append(
+                        {
+                            "type": "Feature",
+                            "properties": {
+                                "class": 1,
+                                "window": [win_row, win_col, win_h, win_w],
+                            },
+                            "geometry": geom,
+                        }
                     )
-                ],
-            }
-            poly_path = write_geojson_output(output_dir / "prompt_mask.geojson", geojson)
-            outputs["prompt_mask_geojson"] = publish_json_artifact(
-                poly_path, owner_scope=request.owner_scope, source_refs=[],
-                producer={"capability": "modelops.promptable_inference"},
+                if canvas is not None:
+                    canvas[win_row: win_row + win_h,
+                           win_col: win_col + win_w] |= object_mask.astype(np.uint8)
+            perf.record_batch(len(windows))
+        # 产物：可整幅缓存时发布掩膜栅格（全画布 uint8）；否则只发 GeoJSON
+        # （诚实降级，不物化超大画布）。多窗口 GeoJSON 每窗口独立仿射，
+        # 无跨窗口伪影。
+        if canvas is not None:
+            mask_path = write_raster_output(
+                output_dir / "prompt_mask.tif",
+                arrays=[canvas],
+                band_names=["object"],
+                template=RasterReader.open(str(source_path)),
+                nodata=255.0,
+                dtype="uint8",
             )
-        except Exception as exc:  # noqa: BLE001 — polygon 化失败不毁主产物
-            logger.warning("prompt mask polygonize failed: %s", exc)
+            outputs["prompt_mask"] = self._publish_raster(
+                mask_path, request, role="prompt_mask", descriptor=descriptor
+            )
+        geojson = {
+            "type": "FeatureCollection",
+            "features": features_out,
+        }
+        poly_path = write_geojson_output(output_dir / "prompt_mask.geojson", geojson)
+        outputs["prompt_mask_geojson"] = publish_json_artifact(
+            poly_path, owner_scope=request.owner_scope, source_refs=[],
+            producer={"capability": "modelops.promptable_inference"},
+        )
         return outputs
 
     # ── temporal 单窗口路径 ─────────────────────────────────────────
