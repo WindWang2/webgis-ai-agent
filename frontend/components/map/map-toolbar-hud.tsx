@@ -510,7 +510,7 @@ function SketchToolGroup() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- version drives the re-read
   const sketchFeatureCount = useMemo(() => getSketchState().features.length, [sketchVersion])
   const sketchLayerExists = useHudStore(
-    (s: HudState) => s.layers.some((l) => l.id === SKETCH_LAYER_ID),
+    (s: HudState) => s.layers?.some((l) => l.id === SKETCH_LAYER_ID) ?? false,
   )
   const canEdit = sketchFeatureCount > 0
 

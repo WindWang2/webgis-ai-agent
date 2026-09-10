@@ -144,8 +144,8 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
   const mapReady = useHudStore((s) => s.mapLoaded);
   const tool = useHudStore((s) => s.activeMapTool);
   const snapping = useHudStore((s) => s.snappingEnabled);
-  const sketchVisible = useHudStore((s) => s.layers.find((l) => l.id === SKETCH_LAYER_ID)?.visible !== false);
-  const sketchOpacity = useHudStore((s) => s.layers.find((l) => l.id === SKETCH_LAYER_ID)?.opacity ?? 1);
+  const sketchVisible = useHudStore((s) => s.layers?.find((l) => l.id === SKETCH_LAYER_ID)?.visible !== false);
+  const sketchOpacity = useHudStore((s) => s.layers?.find((l) => l.id === SKETCH_LAYER_ID)?.opacity ?? 1);
   const setSketchDirty = useHudStore((s) => s.setSketchDirty);
   const sketchDirty = useHudStore((s) => s.sketchDirty);
   const setActiveMapTool = useHudStore((s) => s.setActiveMapTool);

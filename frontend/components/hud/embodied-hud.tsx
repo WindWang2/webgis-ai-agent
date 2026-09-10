@@ -59,7 +59,7 @@ export function EmbodiedHud() {
   const aiStatus = useHudStore((s) => s.aiStatus);
   const is3D = useHudStore((s) => s.is3D);
   // V7 Phase F：执行详情面板停靠态（响应式 —— dockPanel 切换即重渲染按钮）。
-  const agentRunDocked = useHudStore((s) => (s.dockPlacements['agent-run'] ?? 'float') === 'right');
+  const agentRunDocked = useHudStore((s) => (s.dockPlacements?.['agent-run'] ?? 'float') === 'right');
 
   const isDark = theme === 'dark';
 
