@@ -94,12 +94,17 @@ class CapabilityBroker:
         limits: Optional[BrokerLimits] = None,
         audit: Optional[BrokerAuditLog] = None,
         http_transport: Optional[Any] = None,
+        artifact_namespace: bool = False,
     ) -> None:
         self._extension_id = extension_id
         self._grants = grants
         self._network_allow = frozenset(network_allow)
         self._secrets = dict(secrets or {})
         self._artifact_roots = tuple(Path(r).resolve() for r in artifact_roots)
+        # V3（ADR-0120 / M-8）：api>=1.2 的扩展相对路径限定到
+        # `<root>/<ext_id>/` 子命名空间（跨扩展 artifact 隔离）；
+        # 1.1 及更早扩展保持 V2 平铺语义（非隐性破坏）。
+        self._artifact_namespace = bool(artifact_namespace) and bool(extension_id)
         self._limits = limits or BrokerLimits()
         self._audit = audit or BrokerAuditLog()
         self._http_transport = http_transport  # 测试注入；None = 真实 httpx
@@ -273,6 +278,8 @@ class CapabilityBroker:
             raise _deny(DiagnosticCode.BROKER_DENIED, "artifact op requires 'path'",
                         extension_id=self._extension_id)
         candidate = Path(raw_path)
+        if self._artifact_namespace and not candidate.is_absolute():
+            candidate = Path(self._extension_id) / candidate
         resolved = candidate.resolve() if candidate.is_absolute() else None
         for root in self._artifact_roots:
             target = (root / candidate).resolve() if not candidate.is_absolute() else resolved

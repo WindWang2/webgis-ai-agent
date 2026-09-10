@@ -204,12 +204,15 @@ class WorkflowPackDeclaration(_StrictModel):
 
 
 class ExecutionDeclaration(_StrictModel):
-    """V2 执行策略（ADR-0105）。
+    """V2 执行策略（ADR-0105）+ V3 流式预算（ADR-0119）。
 
     ``mode="worker"``：扩展代码在独立子进程中执行，主进程不 import 它；
     所有宿主能力经 capability broker。``in_process``（缺省）保持 V1 语义。
     预算字段是宿主强制执行的上界（尽力而为：POSIX rlimit + 墙钟超时；
     OS 不支持时 typed 降级告警，不虚假承诺）。
+
+    V3：``max_stream_events``（单次流事件数上界）与 ``stream_window``
+    （初始信用窗口；宿主内存上界 ≈ window × max_output_bytes）。
     """
 
     mode: str = "in_process"
@@ -218,6 +221,8 @@ class ExecutionDeclaration(_StrictModel):
     max_memory_mb: int = Field(default=512, ge=32, le=MAX_WORKER_MEMORY_MB)
     max_cpu_seconds: int = Field(default=60, ge=1, le=MAX_WORKER_CPU_SECONDS)
     max_output_bytes: int = Field(default=1024 * 1024, ge=1024, le=MAX_WORKER_OUTPUT_BYTES)
+    max_stream_events: int = Field(default=10000, ge=1, le=1_000_000)
+    stream_window: int = Field(default=16, ge=1, le=1024)
 
     @field_validator("mode")
     @classmethod
@@ -415,11 +420,12 @@ class GisExtensionManifest(BaseModel):
         self._validate_v2_features()
         return self
 
-    # ── V2 特性门控（ADR-0105）─────────────────────────────────────────
+    # ── V2/V3 特性门控（ADR-0105 / ADR-0119）────────────────────────────
     def _validate_v2_features(self) -> None:
         """V2 特性（worker 模式 / model_provider / 依赖版本约束）要求
-        api_version >= 1.1.0。fail closed：旧 api_version 的 manifest 携带
-        V2 字段 → 结构性拒绝（precise message，不是 unknown field）。"""
+        api_version >= 1.1.0；V3 特性（worker + 类实例投影节 / worker
+        streaming）要求 api_version >= 1.2.0。fail closed：旧 api_version
+        的 manifest 携带新字段 → 结构性拒绝（precise message）。"""
         uses_v2 = (
             self.execution is not None
             or bool(self.model_providers)
@@ -436,21 +442,30 @@ class GisExtensionManifest(BaseModel):
                 f"got {self.api_version!r}"
             )
         if self.execution is not None and self.execution.mode == "worker":
-            # worker 仅支持工具型投影；类实例型投影必须 in-process。
-            unsupported = sorted(
-                section
-                for section, count in (
-                    ("algorithms", len(self.algorithms)),
-                    ("data_providers", len(self.data_providers)),
-                    ("cartography_items", len(self.cartography_items)),
-                    ("workflow_packs", len(self.workflow_packs)),
+            from .api_version import meets_api_floor as _floor
+
+            v3_enabled = _floor(self.api_version, (1, 2, 0))
+            # V3（ADR-0119）：api>=1.2 时 worker 支持全部声明节（协议 V3
+            # 流式 + 可序列化声明/代理投影）；1.1 manifest 保持 V2 语义
+            # 拒绝——版本门控而非静默放宽。
+            if v3_enabled:
+                unsupported: list[str] = []
+            else:
+                unsupported = sorted(
+                    section
+                    for section, count in (
+                        ("algorithms", len(self.algorithms)),
+                        ("data_providers", len(self.data_providers)),
+                        ("cartography_items", len(self.cartography_items)),
+                        ("workflow_packs", len(self.workflow_packs)),
+                    )
+                    if count
                 )
-                if count
-            )
             if unsupported:
                 raise ValueError(
                     f"execution.mode=worker does not support declared sections "
-                    f"{unsupported} (class-instance projections must be in_process)"
+                    f"{unsupported} in api_version {self.api_version!r} "
+                    "(class-instance projections require api_version >= 1.2.0)"
                 )
             forbidden = sorted(set(self.permissions) & WORKER_FORBIDDEN_PERMISSIONS)
             if forbidden:
@@ -458,15 +473,16 @@ class GisExtensionManifest(BaseModel):
                     f"execution.mode=worker forbids permissions {forbidden} "
                     "(no subprocess surface inside an isolated worker)"
                 )
-            # 单帧 RPC 传输无法投递事件流：worker 模式的 model provider
-            # 不得声明 streaming 能力（typed、确定性，握手前即拒绝）。
+            # V3：worker 模式的 model provider streaming 在协议 V3 下可用
+            # （api>=1.2）；1.1 manifest 仍拒绝（单帧 RPC 语义）。
             streaming_providers = sorted(
                 m.id for m in self.model_providers if "streaming" in m.capabilities
             )
-            if streaming_providers:
+            if streaming_providers and not v3_enabled:
                 raise ValueError(
                     f"execution.mode=worker model providers {streaming_providers} "
-                    "cannot declare the 'streaming' capability (single-frame RPC)"
+                    f"cannot declare the 'streaming' capability in api_version "
+                    f"{self.api_version!r} (streaming requires api_version >= 1.2.0)"
                 )
         # Round-1 MINOR-6（不限 worker）：工具 <pid>_invoke 与 provider <pid>
         # 都投影为 <ns>_<pid>_invoke —— 跨节投影名碰撞在解析期拒绝。

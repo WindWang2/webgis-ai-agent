@@ -38,13 +38,13 @@ def _base_manifest(**overrides):
 
 class TestApiVersion11:
     def test_host_is_1_1(self):
-        assert CORE_API_VERSION == "1.1.0"
+        assert CORE_API_VERSION == "1.2.0"  # ADR-0119：V3 additive bump
 
     def test_1_x_extensions_stay_compatible(self):
         for api in ("1.0.0", "1.0", "1.1.0", "1.1"):
             assert check_extension_api_compatibility(api).compatible, api
 
-    @pytest.mark.parametrize("api", ["2.0.0", "1.2.0", "0.9.0"])
+    @pytest.mark.parametrize("api", ["2.0.0", "1.3.0", "0.9.0"])  # 1.2.0 已随 V3 兼容
     def test_incompatible_apis_stay_incompatible(self, api):
         assert not check_extension_api_compatibility(api).compatible
 

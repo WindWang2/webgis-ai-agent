@@ -149,3 +149,43 @@ In-process 扩展不经过 broker、不做资源强制、没有超时——它�
 | 签名流（含 tampered→quarantine 即使 allowlisted） | `tests/unit/extensions_platform/test_signing.py` |
 | V2 manifest 契约（execution/model_providers/约束矩阵） | `tests/unit/extensions_platform/test_v2_contract.py` + `test_conformance_corpus.py` |
 | 认证套件（含示例包全绿） | `tests/unit/extensions_platform/test_certification.py` |
+
+## V3 isolation backends (ADR-0120)
+
+The V2 "process" backend remains the default and its semantics are
+unchanged. V3 adds an opt-in **bubblewrap** backend
+(`EXTENSIONS_ISOLATION_BACKEND=bubblewrap`):
+
+- `bwrap --unshare-all` — including the **network namespace**: direct
+  socket syscalls inside the worker fail at the OS level. The capability
+  broker becomes the only egress path *by construction*, not by SDK
+  discipline.
+- Minimal read-only bind set: the repo's `app/` package (mounted at
+  `/opt/webgis/app`), the resolved interpreter + stdlib + venv
+  site-packages, system libraries, and the pack directory (at
+  `/opt/ext/pack`). **The repository root is not in the sandbox** —
+  `.env`, local data and fixtures are unreachable (a corpus test opens a
+  repo-root marker from inside a real sandbox and asserts failure).
+- Writable surface: tmpfs only. rlimits and process-group kill semantics
+  are unchanged from V2.
+
+Claims we still do **not** make: bubblewrap confinement is not a kernel
+sandbox (no seccomp/LSM filter; the worker still runs as the service user
+inside its namespaces). A bwrap failure at spawn time is a typed
+activation failure (`isolation_unavailable`) — the platform never
+silently falls back to the weaker backend, and the effective backend is
+reported in status.
+
+## V3 supply chain
+
+- Signatures: Ed25519 (`cryptography`), payload binding
+  `(publisher, key_id, fingerprint)`; HMAC v1 packs keep verifying
+  byte-identically. Trust store: multiple keys per publisher (rotation),
+  per-key `active|retired|revoked`, plus fingerprint- and
+  package-level revocation lists. Revoked ⇒ quarantine regardless of
+  allowlists; retired ⇒ `signed_retired` (valid math, no elevation).
+- Installer: safe unpack (regular-file whitelist, entry/byte budgets,
+  traversal and link rejection), digest re-verification, staged
+  fingerprint-vs-signature check, atomic two-rename swap with crash
+  recovery, and one shared preflight for install/upgrade/rollback
+  (revocation and version pins apply to rollback too).

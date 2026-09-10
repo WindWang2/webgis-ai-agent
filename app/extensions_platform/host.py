@@ -58,6 +58,8 @@ from . import resolver
 from .signing import (
     STATUS_INVALID,
     STATUS_MISSING,
+    STATUS_REVOKED,
+    STATUS_SIGNED_RETIRED,
     STATUS_SIGNED_UNTRUSTED,
     STATUS_SIGNED_VERIFIED,
     STATUS_TAMPERED,
@@ -140,6 +142,20 @@ class HostPolicy:
     allow_unsigned_dev: bool = False
     # worker 连续崩溃达到该值 → quarantine。
     max_worker_crashes: int = 2
+    # ── V3（ADR-0119）：trust store / 隔离后端 / 流式 / pin ────────────
+    # trust store（发布者公钥 + rotation/retired/revocation）；None = 不启用
+    # （V2 HMAC 语义不变）。
+    trust_store: Optional[Any] = None
+    # worker 隔离后端："process"（V2 语义）| "bubblewrap"（namespace 级 OS
+    # 隔离；per-spawn 失败 = typed 激活失败，不静默回退）。
+    isolation_backend: str = "process"
+    # V3 流式初始 credit 窗口（宿主内存上界 ≈ window × max_output_bytes）。
+    stream_window: int = 16
+    # V3 单次流事件数上界。
+    max_stream_events: int = 10000
+    # 版本钉：{extension_id: version}；activate/upgrade/install/rollback 统一
+    # 预检。空 = 不钉。
+    version_pins: dict[str, str] = field(default_factory=dict)
 
 
 class ExtensionHost:
@@ -151,6 +167,9 @@ class ExtensionHost:
         self._broker_audit: dict[str, Any] = {}
         # V2（Wave 9）：投影变化钩子（main lifespan 接权威视图刷新器）。
         self._projection_hook: Any = None
+        # V3：吊销惰性复查的信任根 mtime 基线（None = 首查强制执行）。
+        self._revocation_mtime: Any = None
+        self._refresh_mtime: Any = None
 
     # ── 构造 ─────────────────────────────────────────────────────────
     @classmethod
@@ -180,6 +199,21 @@ class ExtensionHost:
 
     # ── discover / validate ──────────────────────────────────────────
     def discover(self) -> list[ExtensionDiagnostic]:
+        # V3（Round-2 M-1）：discover 前重读 trust store（文件加载实例），
+        # 运行中的服务器对发布后的吊销/rotation 即时生效，而非只在
+        # refresh_revocations 的周期面。
+        source = getattr(self._policy.trust_store, "source_path", None)
+        if source is not None:
+            from .trust_store import TrustStore
+
+            try:
+                # HostPolicy 为 frozen dataclass：内部刷新走 object.__setattr__
+                # （唯一写点；宿主代码之外信任根不可变）。
+                object.__setattr__(
+                    self._policy, "trust_store", TrustStore.load(Path(source))
+                )
+            except ExtensionPlatformError as exc:
+                logger.warning("trust store reload failed at discover: %s", exc)
         result: DiscoveryResult = discover_extensions(list(self._policy.roots))
         diagnostics: list[ExtensionDiagnostic] = list(result.diagnostics)
         for failure in result.failures:
@@ -238,7 +272,11 @@ class ExtensionHost:
                     self._apply_signature_verdict(
                         record,
                         verify_pack_signature(
-                            discovered.path, self._policy.trusted_publishers
+                            discovered.path,
+                            self._policy.trusted_publishers,
+                            trust_store=self._policy.trust_store,
+                            package_id=discovered.extension_id,
+                            version=discovered.manifest.version,
                         ),
                     )
                 )
@@ -283,6 +321,17 @@ class ExtensionHost:
                     extension_id=extension_id,
                 )
             ]
+        # V3（ADR-0119）：吊销 = 生死语义（吊销是运维意志，先于验签成立）。
+        if status.status == STATUS_REVOKED:
+            record.state = ExtensionState.QUARANTINED
+            return [
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.PACKAGE_REVOKED,
+                    f"package is revoked ({status.detail}); quarantined even if "
+                    "allowlisted — remove and reinstall an approved version",
+                    extension_id=extension_id,
+                )
+            ]
         diagnostics: list[ExtensionDiagnostic] = []
         if status.status == STATUS_SIGNED_VERIFIED:
             if self._policy.trust_signed:
@@ -296,6 +345,17 @@ class ExtensionHost:
                         extension_id=extension_id,
                     )
                 )
+        elif status.status == STATUS_SIGNED_RETIRED:
+            # V3：retired 密钥的签名数学有效但**绝不提权**（防 retire 绕过
+            # revoke 的降级攻击）；信任决策回落运维 allowlist。
+            diagnostics.append(
+                ExtensionDiagnostic.warning(
+                    DiagnosticCode.PUBLISHER_UNTRUSTED,
+                    f"signature from retired key {status.publisher!r}; valid but "
+                    "NOT eligible for trust elevation (re-sign with an active key)",
+                    extension_id=extension_id,
+                )
+            )
         elif status.status == STATUS_SIGNED_UNTRUSTED:
             if self._policy.trust_signed:
                 diagnostics.append(
@@ -584,6 +644,13 @@ class ExtensionHost:
             if record.state is ExtensionState.INCOMPATIBLE:
                 return list(record.diagnostics)
         assert record.state is ExtensionState.COMPATIBLE, record.state
+
+        # V3：版本钉（运维配置；activate/upgrade/install/rollback 统一消费）。
+        pin_error = self._version_pin_error(record.extension_id, record.manifest.version)
+        if pin_error is not None:
+            record.diagnostics.append(pin_error)
+            record.state = ExtensionState.INCOMPATIBLE
+            return [pin_error]
 
         flags = self._effective_flags(record.manifest)
         host_overridden = set(self._policy.feature_flags.get(extension_id, {}))
@@ -878,6 +945,11 @@ class ExtensionHost:
             max_memory_mb=execution.max_memory_mb,
             max_cpu_seconds=execution.max_cpu_seconds,
             broker_handler=self._make_broker_handler(record.extension_id),
+            isolation_backend=self._policy.isolation_backend,
+            stream_window=min(
+                self._policy.stream_window,
+                getattr(execution, "stream_window", self._policy.stream_window),
+            ),
         )
         try:
             worker.start()
@@ -894,18 +966,50 @@ class ExtensionHost:
                 )
             )
         # 声明对账：worker 握手申报 vs manifest 声明（undeclared = error）。
+        # V3（M-2 checklist）：对账集合扩展到全部 worker-capable 声明节。
         declared = {manifest.namespaced_tool_name(t.name) for t in manifest.tools}
         declared |= {manifest.namespaced_model_provider_tool(m.id) for m in manifest.model_providers}
         offered = {str(t.get("name")) for t in worker.tools}
+        # V3 声明节：算法/数据提供者/cartography/recipe 按各自投影名对账。
+        declared_algos = {manifest.namespaced_algorithm_id(a.id) for a in manifest.algorithms}
+        offered_algos = {
+            manifest.namespaced_algorithm_id(str(a.get("id")))
+            for a in (getattr(worker, "algorithms", None) or [])
+        }
+        declared_sts = {manifest.namespaced_source_type(p.source_type) for p in manifest.data_providers}
+        offered_sts = {
+            manifest.namespaced_source_type(str(p.get("source_type")))
+            for p in (getattr(worker, "data_providers", None) or [])
+        }
+        declared_carto = {(c.kind, c.id) for c in manifest.cartography_items}
+        offered_carto = {
+            (str(c.get("kind")), str(c.get("id")))
+            for c in (getattr(worker, "cartography_items", None) or [])
+        }
+        declared_packs = {w.pack_id for w in manifest.workflow_packs}
+        offered_packs = {
+            str(p.get("pack_id")) for p in (getattr(worker, "workflow_packs", None) or [])
+        }
+        undeclared_sections = []
+        if offered_algos - declared_algos:
+            undeclared_sections.append(f"algorithms {sorted(offered_algos - declared_algos)}")
+        if offered_sts - declared_sts:
+            undeclared_sections.append(f"data_providers {sorted(offered_sts - declared_sts)}")
+        if offered_carto - declared_carto:
+            undeclared_sections.append(f"cartography {sorted(offered_carto - declared_carto)}")
+        if offered_packs - declared_packs:
+            undeclared_sections.append(f"workflow_packs {sorted(offered_packs - declared_packs)}")
         undeclared = sorted(offered - declared)
         if undeclared:
+            undeclared_sections.append(f"tools {undeclared}")
+        if undeclared_sections:
             worker.shutdown()
             return self._fail_worker_activation(
                 record,
                 warnings,
                 ExtensionDiagnostic.error(
                     DiagnosticCode.UNDECLARED_REGISTRATION,
-                    f"worker offered undeclared tools {undeclared} "
+                    f"worker offered undeclared registrations {'; '.join(undeclared_sections)} "
                     "(declaration and handshake must match; fail closed)",
                     extension_id=record.extension_id,
                 ),
@@ -941,6 +1045,58 @@ class ExtensionHost:
                 )
             ledger.record("tool", projected, lambda n=projected: self._tool_registry.unregister(n))
             logger.info("extension %s projected worker tool %s", record.extension_id, projected)
+        # V3（ADR-0119）：worker 化声明节投影（经同一台账，失败逆序回滚）。
+        try:
+            from .worker import projection_v3
+
+            for namespaced in projection_v3.project_worker_algorithms(
+                manifest, ledger, worker, self
+            ):
+                logger.info(
+                    "extension %s projected worker algorithm %s",
+                    record.extension_id, namespaced,
+                )
+            for canonical in projection_v3.project_worker_providers(
+                manifest, ledger, worker, self
+            ):
+                logger.info(
+                    "extension %s projected worker provider %s",
+                    record.extension_id, canonical,
+                )
+            carto_ids, pack_ids = projection_v3.project_worker_cartography_and_recipes(
+                manifest,
+                ledger,
+                worker,
+                self,
+                grants=grants_for(manifest.id, self._policy.grants),
+                settings=dict(self._policy.extension_settings.get(manifest.id, {})),
+            )
+            for item_id in carto_ids:
+                logger.info(
+                    "extension %s projected worker cartography %s",
+                    record.extension_id, item_id,
+                )
+            for pack_id in pack_ids:
+                logger.info(
+                    "extension %s projected worker workflow pack %s",
+                    record.extension_id, pack_id,
+                )
+        except ExtensionPlatformError as exc:
+            worker.shutdown()
+            return self._fail_worker_activation(
+                record, warnings + ledger.rollback(), exc.diagnostic
+            )
+        except Exception as exc:  # noqa: BLE001 - 投影失败归一 typed
+            worker.shutdown()
+            return self._fail_worker_activation(
+                record,
+                warnings + ledger.rollback(),
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.REGISTRY_PROJECTION_FAILED,
+                    f"worker projection failed: {type(exc).__name__}: {exc}",
+                    extension_id=record.extension_id,
+                ),
+            )
         # 健康门：带超时 RPC（worker 模式不再有 unbounded sync health）。
         try:
             health_report = worker.health()
@@ -1030,19 +1186,45 @@ class ExtensionHost:
                     if record.manifest.namespaced_model_provider_tool(provider.id) != projected_tool:
                         continue
                     if stream:
-                        raise ExtensionPlatformError(
-                            ExtensionDiagnostic.error(
-                                DiagnosticCode.WORKER_MODE_INVALID,
-                                f"model provider {projected_tool!r} runs in a "
-                                "worker; streaming is unavailable (single-frame RPC)",
-                                extension_id=eid,
+                        # V3（ADR-0119）：worker 流式在协商协议 >= 3.0 时可用
+                        # （运行期门控，非仅 manifest api_version）。
+                        _pv = str(getattr(record.worker, "protocol_version", "1.0")).split(".")
+                        _pv_tuple = tuple(int(x) if x.isdigit() else 0 for x in _pv)
+                        if _pv_tuple < (3, 0):
+                            raise ExtensionPlatformError(
+                                ExtensionDiagnostic.error(
+                                    DiagnosticCode.WORKER_MODE_INVALID,
+                                    f"model provider {projected_tool!r} runs in a "
+                                    "worker with protocol "
+                                    f"{record.worker.protocol_version!r}; streaming "
+                                    "requires protocol 3.0",
+                                    extension_id=eid,
+                                )
                             )
+                        execution = record.manifest.execution
+                        return record.worker.call_stream(
+                            projected_tool,
+                            {"request": dict(request or {})},
+                            idle_timeout_s=(
+                                execution.call_timeout_s if execution else 30.0
+                            ),
+                            max_events=(
+                                self._policy.max_stream_events
+                            ),
+                            window=self._policy.stream_window,
+                            per_frame_max_bytes=(
+                                execution.max_output_bytes if execution else None
+                            ),
                         )
                     try:
                         return record.worker.call(
                             projected_tool, {"request": dict(request or {})},
                             timeout=record.manifest.execution.call_timeout_s
                             if record.manifest.execution else 30.0,
+                            max_output_bytes=(
+                                record.manifest.execution.max_output_bytes
+                                if record.manifest.execution else None
+                            ),
                         )
                     except ExtensionPlatformError as exc:
                         if exc.diagnostic.code in (
@@ -1103,6 +1285,14 @@ class ExtensionHost:
         from .broker import BrokerAuditLog, CapabilityBroker
 
         audit = self._broker_audit.setdefault(extension_id, BrokerAuditLog())
+        # V3（M-8）：api>=1.2 的 worker 扩展 artifact 相对路径自动限定到
+        # 本扩展子命名空间（跨扩展隔离）；旧 manifest 平铺语义不变。
+        record = self._records.get(extension_id)
+        from .api_version import meets_api_floor
+
+        namespaced = record is not None and meets_api_floor(
+            record.manifest.api_version, (1, 2, 0)
+        )
         broker = CapabilityBroker(
             extension_id=extension_id,
             grants=grants_for(extension_id, self._policy.grants),
@@ -1110,6 +1300,7 @@ class ExtensionHost:
             secrets=self._policy.secrets.get(extension_id, {}),
             artifact_roots=self._policy.artifact_roots,
             audit=audit,
+            artifact_namespace=namespaced,
         )
         return broker.handle
 
@@ -1219,7 +1410,20 @@ class ExtensionHost:
         return self.validate_extension(extension_id)
 
     # ── deactivate / unload / reload ─────────────────────────────────
-    def deactivate(self, extension_id: str) -> list[ExtensionDiagnostic]:
+    def deactivate(
+        self,
+        extension_id: str,
+        drain: bool = False,
+        drain_timeout_s: float = 10.0,
+    ) -> list[ExtensionDiagnostic]:
+        """停用；``drain=True`` 先有界等待 in-flight 调用清零（升级前置）。
+
+        - worker 模式：in-flight 中直接停用仍被拒绝（V2 语义）；drain=
+          True 时以 50ms 间隔轮询，超时 → typed ``DRAIN_TIMEOUT``（拒绝，
+          绝不悬挂）；
+        - in-process 模式无 in-flight 概念：drain 是显式 no-op（本平台
+          的 in-process 语义为 trusted-code，不做调用追踪——文档明示）。
+        """
         record = self._records.get(extension_id)
         if record is None:
             return [
@@ -1256,14 +1460,31 @@ class ExtensionHost:
         # 优雅关停 worker 进程（投影回滚仍在下方台账路径执行）。
         if record.worker is not None:
             if record.worker.in_flight:
-                return [
-                    ExtensionDiagnostic.error(
-                        DiagnosticCode.OPERATION_IN_FLIGHT,
-                        f"cannot deactivate {extension_id!r}: a worker call is "
-                        "in flight (retry after it completes)",
-                        extension_id=extension_id,
+                if drain:
+                    import time as _time
+
+                    deadline = _time.monotonic() + max(drain_timeout_s, 0.05)
+                    while record.worker.in_flight and _time.monotonic() < deadline:
+                        _time.sleep(0.05)
+                if record.worker.in_flight:
+                    code = (
+                        DiagnosticCode.DRAIN_TIMEOUT
+                        if drain
+                        else DiagnosticCode.OPERATION_IN_FLIGHT
                     )
-                ]
+                    reason = (
+                        f"drain timeout after {drain_timeout_s}s: a worker call "
+                        "is still in flight"
+                        if drain
+                        else "a worker call is in flight (retry after it completes)"
+                    )
+                    return [
+                        ExtensionDiagnostic.error(
+                            code,
+                            f"cannot deactivate {extension_id!r}: {reason}",
+                            extension_id=extension_id,
+                        )
+                    ]
             record.worker.shutdown()
             record.worker = None
             # Round-1 MINOR-1：优雅停用清零崩溃计数（「连续」= 跨越一次
@@ -1512,7 +1733,134 @@ class ExtensionHost:
         conflicts = resolver.check_upgrade_conflicts(extension_id, manifest.version, views)
         if conflicts:
             return conflicts
+        pin_error = self._version_pin_error(extension_id, manifest.version)
+        if pin_error is not None:
+            return [pin_error]
         return self.reload(extension_id, activate=True, allow_downgrade=allow_downgrade)
+
+    # ── V3：版本 pin / revocation 传播 ────────────────────────────────
+    def _version_pin_error(self, extension_id: str, version: str):
+        pinned = self._policy.version_pins.get(extension_id)
+        if pinned is not None and pinned != version:
+            return ExtensionDiagnostic.error(
+                DiagnosticCode.VERSION_PINNED,
+                f"extension {extension_id!r} is pinned to {pinned!r}; refusing "
+                f"activation of {version!r}",
+                extension_id=extension_id,
+            )
+        return None
+
+    def refresh_revocations(self) -> list[str]:
+        """惰性吊销复查：trust store 内已吊销的**激活**扩展 → 停用+隔离。
+
+        由宿主周期面（health tick / install / refresh 信号 mtime 变化）
+        调用；返回被隔离的扩展 id 列表。poll-on-operation 的最坏暴露窗
+        口如实在 limitations 文档化。
+        """
+        trust = self._policy.trust_store
+        if trust is None:
+            return []
+        quarantined: list[str] = []
+        # 惰性重读（与 installer 同语义）：任何复查都拿最新吊销面。
+        source = getattr(trust, "source_path", None)
+        if source is not None:
+            try:
+                mtime = Path(source).stat().st_mtime
+            except OSError:
+                return []
+            if mtime == self._revocation_mtime:
+                return []  # 信任根未变：零成本快路径（quarantined 必为空）
+            # Round-1 MAJ-8：load **成功后**才更新 mtime 基线——加载失败
+            # 不缓存，下一次复查自动重试（否则新吊销被永久短路）。
+            from .trust_store import TrustStore
+
+            try:
+                trust = TrustStore.load(Path(source))
+            except ExtensionPlatformError:
+                return []  # 信任根暂不可读：保留现有状态，下次复查重试
+            self._revocation_mtime = mtime
+        # Round-1 MAJ-5：key 集变化（密钥吊销/rotation 的主要响应手段）
+        # → 对全部激活扩展重验签，命中 revoked/invalid/tampered 即隔离。
+        if (
+            getattr(trust, "revoked_key_ids", frozenset())
+            and trust.revoked_key_ids != getattr(self, "_revoked_keys_seen", frozenset())
+        ):
+            self._revoked_keys_seen = trust.revoked_key_ids
+            quarantined.extend(self._quarantine_active_if_signature_revoked(trust))
+        for extension_id in sorted(self._records):
+            record = self._records[extension_id]
+            if record.state not in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
+                continue
+            revoked = trust.is_package_revoked(extension_id, record.manifest.version)
+            if not revoked and record.fingerprint is not None:
+                revoked = trust.is_fingerprint_revoked(record.fingerprint)
+            if revoked:
+                if record.worker is not None:
+                    record.worker.shutdown()
+                    record.worker = None
+                    if record.state in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
+                        self.deactivate(extension_id)
+                record.state = ExtensionState.QUARANTINED
+                record.diagnostics.append(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.PACKAGE_REVOKED,
+                        f"active extension {extension_id!r} is revoked in the "
+                        "trust store; deactivated and quarantined",
+                        extension_id=extension_id,
+                    )
+                )
+                quarantined.append(extension_id)
+                logger.warning(
+                    "extension %s revoked by trust store; quarantined", extension_id
+                )
+        return quarantined
+
+    def _quarantine_active_if_signature_revoked(self, trust: Any) -> list[str]:
+        """对激活扩展重验签；签名密钥被吊销/失效 → 停用 + 隔离。"""
+        from .signing import verify_pack_signature
+
+        quarantined: list[str] = []
+        for extension_id in sorted(self._records):
+            record = self._records[extension_id]
+            if record.state not in (ExtensionState.ACTIVE, ExtensionState.DEGRADED):
+                continue
+            status = verify_pack_signature(
+                record.path,
+                self._policy.trusted_publishers,
+                trust_store=trust,
+                package_id=record.manifest.id,
+                version=record.manifest.version,
+            )
+            if status.status in (STATUS_REVOKED, STATUS_INVALID, STATUS_TAMPERED):
+                if record.worker is not None:
+                    record.worker.shutdown()
+                    record.worker = None
+                    self.deactivate(extension_id)
+                record.state = ExtensionState.QUARANTINED
+                record.diagnostics.append(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.PACKAGE_REVOKED,
+                        f"signature re-check after key revocation: {status.status} "
+                        f"({status.detail}); deactivated and quarantined",
+                        extension_id=extension_id,
+                    )
+                )
+                quarantined.append(extension_id)
+        return quarantined
+
+    def refresh_signal_changed(self, install_root: Any) -> bool:
+        """.refresh 信号 mtime 是否晚于上次记录（纯通知；N-1 不做对账）。"""
+        from .distribution import REFRESH_FILENAME
+
+        signal = Path(install_root) / REFRESH_FILENAME
+        try:
+            mtime = signal.stat().st_mtime
+        except OSError:
+            return False
+        if mtime != getattr(self, "_refresh_mtime", None):
+            self._refresh_mtime = mtime
+            return True
+        return False
 
     # ── 批量激活（topo 序）────────────────────────────────────────────
     def activate_all(self) -> dict[str, list[ExtensionDiagnostic]]:
@@ -1592,6 +1940,10 @@ class ExtensionHost:
 
     def get_record(self, extension_id: str) -> Optional[ExtensionRecord]:
         return self._records.get(extension_id)
+
+    def record_views(self) -> dict[str, "resolver.RecordView"]:
+        """全部记录的解析层只读视图（分发的依赖冲突预检消费）。"""
+        return {eid: _record_view(r) for eid, r in self._records.items()}
 
     def extension_ids(self) -> list[str]:
         return sorted(self._records)

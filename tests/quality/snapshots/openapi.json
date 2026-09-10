@@ -521,63 +521,6 @@
     "title": "CartographicRuntimeObservationRequest",
     "type": "object"
    },
-   "ChangeIn": {
-    "properties": {
-     "detail": {
-      "default": "",
-      "maxLength": 200,
-      "title": "Detail",
-      "type": "string"
-     },
-     "dimension": {
-      "maxLength": 24,
-      "minLength": 1,
-      "title": "Dimension",
-      "type": "string"
-     },
-     "target": {
-      "default": "",
-      "maxLength": 64,
-      "title": "Target",
-      "type": "string"
-     },
-     "target_kind": {
-      "maxLength": 24,
-      "minLength": 1,
-      "title": "Target Kind",
-      "type": "string"
-     }
-    },
-    "required": [
-     "dimension",
-     "target_kind"
-    ],
-    "title": "ChangeIn",
-    "type": "object"
-   },
-   "ChangesRequest": {
-    "properties": {
-     "changes": {
-      "items": {
-       "$ref": "#/components/schemas/ChangeIn"
-      },
-      "maxItems": 16,
-      "minItems": 1,
-      "title": "Changes",
-      "type": "array"
-     },
-     "dry_run": {
-      "default": false,
-      "title": "Dry Run",
-      "type": "boolean"
-     }
-    },
-    "required": [
-     "changes"
-    ],
-    "title": "ChangesRequest",
-    "type": "object"
-   },
    "ChatRequest": {
     "description": "聊天请求",
     "properties": {
@@ -672,18 +615,6 @@
     "title": "ChatResponse",
     "type": "object"
    },
-   "ClusterRunResetRequest": {
-    "properties": {
-     "reason": {
-      "default": "admin reset",
-      "maxLength": 200,
-      "title": "Reason",
-      "type": "string"
-     }
-    },
-    "title": "ClusterRunResetRequest",
-    "type": "object"
-   },
    "ClusterSubmitRequest": {
     "description": "cluster submit 专属字段（不进入同步 /plans/execute 契约 —— round1 m4：\n共享模型会让同步端点静默接受并忽略 submit 语义的字段）。",
     "properties": {
@@ -705,18 +636,6 @@
        }
       ],
       "title": "Project Id"
-     },
-     "resource": {
-      "anyOf": [
-       {
-        "additionalProperties": true,
-        "type": "object"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Resource"
      },
      "session_id": {
       "anyOf": [
@@ -1553,39 +1472,6 @@
     "title": "InitProjectBody",
     "type": "object"
    },
-   "InstantiateRequest": {
-    "properties": {
-     "package_id": {
-      "maxLength": 64,
-      "minLength": 1,
-      "title": "Package Id",
-      "type": "string"
-     },
-     "project_id": {
-      "default": "",
-      "maxLength": 255,
-      "title": "Project Id",
-      "type": "string"
-     },
-     "session_id": {
-      "default": "",
-      "maxLength": 255,
-      "title": "Session Id",
-      "type": "string"
-     },
-     "version": {
-      "default": "",
-      "maxLength": 16,
-      "title": "Version",
-      "type": "string"
-     }
-    },
-    "required": [
-     "package_id"
-    ],
-    "title": "InstantiateRequest",
-    "type": "object"
-   },
    "JobCancelResponse": {
     "properties": {
      "cancel_requested": {
@@ -1967,58 +1853,6 @@
      }
     },
     "title": "LLMTestRequest",
-    "type": "object"
-   },
-   "LedgerLimitsRequest": {
-    "properties": {
-     "limit_bytes": {
-      "anyOf": [
-       {
-        "minimum": 0.0,
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Limit Bytes"
-     },
-     "limit_rows": {
-      "anyOf": [
-       {
-        "minimum": 0.0,
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Limit Rows"
-     },
-     "limit_units": {
-      "anyOf": [
-       {
-        "minimum": 0.0,
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Limit Units"
-     },
-     "scope_key": {
-      "maxLength": 80,
-      "minLength": 1,
-      "pattern": "^(global|[tp]:[A-Za-z0-9_-]{1,76})$",
-      "title": "Scope Key",
-      "type": "string"
-     }
-    },
-    "required": [
-     "scope_key"
-    ],
-    "title": "LedgerLimitsRequest",
     "type": "object"
    },
    "LoginRequest": {
@@ -2710,45 +2544,6 @@
     "title": "ObjectVerifyRequest",
     "type": "object"
    },
-   "PackageRegisterRequest": {
-    "properties": {
-     "profile": {
-      "anyOf": [
-       {
-        "additionalProperties": true,
-        "type": "object"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Profile"
-     },
-     "project_id": {
-      "default": "",
-      "maxLength": 255,
-      "title": "Project Id",
-      "type": "string"
-     },
-     "query": {
-      "maxLength": 400,
-      "minLength": 1,
-      "title": "Query",
-      "type": "string"
-     },
-     "recipe_id": {
-      "default": "",
-      "maxLength": 64,
-      "title": "Recipe Id",
-      "type": "string"
-     }
-    },
-    "required": [
-     "query"
-    ],
-    "title": "PackageRegisterRequest",
-    "type": "object"
-   },
    "Page_ArtifactSummary_": {
     "properties": {
      "has_more": {
@@ -3235,33 +3030,6 @@
      "paint"
     ],
     "title": "PatchLayerStyleBody",
-    "type": "object"
-   },
-   "PatchWorkbenchDeltaBody": {
-    "description": "Workbench V6 组织态**增量**补丁（绝对值语义；引擎内管线应用+全量校验）。\n\n见 app/services/collab/delta.py：setGroups（部分字段 create/patch）/\nremoveGroupIds（级联）/ membershipSet / membershipClear / locksAdd /\nlocksRemove。mode 不在 delta 域。patch ≤64KB、各列表 ≤2000。",
-    "properties": {
-     "delta": {
-      "additionalProperties": true,
-      "title": "Delta",
-      "type": "object"
-     },
-     "expected_revision": {
-      "minimum": 0.0,
-      "title": "Expected Revision",
-      "type": "integer"
-     },
-     "intent": {
-      "const": "patch_workbench_delta",
-      "title": "Intent",
-      "type": "string"
-     }
-    },
-    "required": [
-     "intent",
-     "expected_revision",
-     "delta"
-    ],
-    "title": "PatchWorkbenchDeltaBody",
     "type": "object"
    },
    "PiToolRequest": {
@@ -3778,21 +3546,6 @@
     "title": "PromoteArtifactsResponse",
     "type": "object"
    },
-   "PublishRequest": {
-    "properties": {
-     "version": {
-      "maxLength": 16,
-      "minLength": 1,
-      "title": "Version",
-      "type": "string"
-     }
-    },
-    "required": [
-     "version"
-    ],
-    "title": "PublishRequest",
-    "type": "object"
-   },
    "QuerySpec": {
     "additionalProperties": true,
     "properties": {
@@ -4229,19 +3982,6 @@
     "title": "RunReplayRequest",
     "type": "object"
    },
-   "RunRequest": {
-    "properties": {
-     "deadline_s": {
-      "default": 60.0,
-      "exclusiveMinimum": 0.0,
-      "maximum": 300.0,
-      "title": "Deadline S",
-      "type": "number"
-     }
-    },
-    "title": "RunRequest",
-    "type": "object"
-   },
    "RunResumeRequest": {
     "properties": {
      "allow_rerun": {
@@ -4542,20 +4282,8 @@
     "type": "object"
    },
    "SetWorkbenchStateBody": {
-    "description": "Workbench V5 组织态持久化（分组树/成员/锁/模式；引擎内结构+256KB 校验）。\n\nV6：base_workbench_revision —— workbench 级 CAS（引擎比对存储 doc 的\n`_rev` 盖章）；提供且不一致 → 409 superseded（回灌当前 doc）。缺省 =\nV5 语义。",
+    "description": "Workbench V5 组织态持久化（分组树/成员/锁/模式；引擎内结构+64KB 校验）。",
     "properties": {
-     "base_workbench_revision": {
-      "anyOf": [
-       {
-        "minimum": 0.0,
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Base Workbench Revision"
-     },
      "doc": {
       "additionalProperties": true,
       "title": "Doc",
@@ -6902,7 +6630,6 @@
           "patch_component": "#/components/schemas/PatchComponentBody",
           "patch_layer_presentation": "#/components/schemas/PatchLayerPresentationBody",
           "patch_layer_style": "#/components/schemas/PatchLayerStyleBody",
-          "patch_workbench_delta": "#/components/schemas/PatchWorkbenchDeltaBody",
           "patch_workbench_state": "#/components/schemas/SetWorkbenchStateBody",
           "rebind_component": "#/components/schemas/RebindComponentBody",
           "remove_component": "#/components/schemas/RemoveComponentBody",
@@ -6953,9 +6680,6 @@
          },
          {
           "$ref": "#/components/schemas/SetWorkbenchStateBody"
-         },
-         {
-          "$ref": "#/components/schemas/PatchWorkbenchDeltaBody"
          }
         ],
         "title": "Req"
@@ -7129,152 +6853,6 @@
      }
     ],
     "summary": "Get Session Table Artifact",
-    "tags": [
-     "AI对话",
-     "对话"
-    ]
-   }
-  },
-  "/api/v1/chat/sessions/{session_id}/workbench/artifact-status": {
-   "get": {
-    "description": "工作台 artifact/workflow 感知投影（V6 Must-have H；派生投影，零新真相）。\n\nSEC-KG-01：经 collab service 缝（artifact_status）只读投影 —— 路由不直调\n产物注册表。字段与有界性见 ``collab/artifact_status.py``。",
-    "operationId": "get_workbench_artifact_status_api_v1_chat_sessions__session_id__workbench_artifact_status_get",
-    "parameters": [
-     {
-      "in": "path",
-      "name": "session_id",
-      "required": true,
-      "schema": {
-       "title": "Session Id",
-       "type": "string"
-      }
-     },
-     {
-      "in": "header",
-      "name": "X-Session-Token",
-      "required": false,
-      "schema": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "title": "X-Session-Token"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "additionalProperties": true,
-         "title": "Response Get Workbench Artifact Status Api V1 Chat Sessions  Session Id  Workbench Artifact Status Get",
-         "type": "object"
-        }
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Get Workbench Artifact Status",
-    "tags": [
-     "AI对话",
-     "对话"
-    ]
-   }
-  },
-  "/api/v1/chat/sessions/{session_id}/workbench/state": {
-   "get": {
-    "description": "Workbench 组织态权威读（V6 协作对账通道）。\n\n与 map-state GET 的区别：**新鲜读** —— 先失效进程内 L1（2s 陈旧窗口）\n再读，重连/对账路径不得回灌陈旧基线（R1-M2）；meta=1 只返回 revision\n（定向单字段读，不物化 1MiB 级 mapspec）。doc 含服务端 `_rev` 盖章\n（workbench 级 CAS 锚点）。",
-    "operationId": "get_workbench_state_api_v1_chat_sessions__session_id__workbench_state_get",
-    "parameters": [
-     {
-      "in": "path",
-      "name": "session_id",
-      "required": true,
-      "schema": {
-       "title": "Session Id",
-       "type": "string"
-      }
-     },
-     {
-      "description": "仅返回 revision（轻量对账探测）",
-      "in": "query",
-      "name": "meta",
-      "required": false,
-      "schema": {
-       "default": false,
-       "description": "仅返回 revision（轻量对账探测）",
-       "title": "Meta",
-       "type": "boolean"
-      }
-     },
-     {
-      "in": "header",
-      "name": "X-Session-Token",
-      "required": false,
-      "schema": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "title": "X-Session-Token"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "additionalProperties": true,
-         "title": "Response Get Workbench State Api V1 Chat Sessions  Session Id  Workbench State Get",
-         "type": "object"
-        }
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Get Workbench State",
     "tags": [
      "AI对话",
      "对话"
@@ -9150,20 +8728,245 @@
     ]
    }
   },
-  "/api/v1/geocompute/cluster/ledger/limits": {
-   "post": {
-    "description": "V7 admin 设置账本 scope 限额（NULL = 解除该维限制；enforcing/advisory\n模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。\n\nscope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的\nscope 域词表；越界 typed 422）。",
-    "operationId": "cluster_set_ledger_limits_api_v1_geocompute_cluster_ledger_limits_post",
-    "requestBody": {
-     "content": {
-      "application/json": {
-       "schema": {
-        "$ref": "#/components/schemas/LedgerLimitsRequest"
-       }
+  "/api/v1/extensions/marketplace/packages": {
+   "get": {
+    "operationId": "search_packages_api_v1_extensions_marketplace_packages_get",
+    "parameters": [
+     {
+      "description": "搜索词（id/title/description 子串）",
+      "in": "query",
+      "name": "q",
+      "required": false,
+      "schema": {
+       "default": "",
+       "description": "搜索词（id/title/description 子串）",
+       "maxLength": 200,
+       "title": "Q",
+       "type": "string"
       }
      },
-     "required": true
+     {
+      "in": "query",
+      "name": "tag",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 64,
+       "title": "Tag",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "publisher",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 64,
+       "title": "Publisher",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "include_revoked",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Include Revoked",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "maximum": 1000000,
+       "minimum": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 100,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Search Packages Api V1 Extensions Marketplace Packages Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
     },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Search Packages",
+    "tags": [
+     "Extension Marketplace / 扩展市场（只读）"
+    ]
+   }
+  },
+  "/api/v1/extensions/marketplace/packages/{package_id}": {
+   "get": {
+    "operationId": "get_package_api_v1_extensions_marketplace_packages__package_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "package_id",
+      "required": true,
+      "schema": {
+       "title": "Package Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Package Api V1 Extensions Marketplace Packages  Package Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Package",
+    "tags": [
+     "Extension Marketplace / 扩展市场（只读）"
+    ]
+   }
+  },
+  "/api/v1/extensions/marketplace/packages/{package_id}/versions/{version}": {
+   "get": {
+    "operationId": "get_package_version_api_v1_extensions_marketplace_packages__package_id__versions__version__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "package_id",
+      "required": true,
+      "schema": {
+       "title": "Package Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "version",
+      "required": true,
+      "schema": {
+       "title": "Version",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Package Version Api V1 Extensions Marketplace Packages  Package Id  Versions  Version  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Package Version",
+    "tags": [
+     "Extension Marketplace / 扩展市场（只读）"
+    ]
+   }
+  },
+  "/api/v1/extensions/marketplace/packages/{package_id}/versions/{version}/download": {
+   "get": {
+    "operationId": "download_package_api_v1_extensions_marketplace_packages__package_id__versions__version__download_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "package_id",
+      "required": true,
+      "schema": {
+       "title": "Package Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "version",
+      "required": true,
+      "schema": {
+       "title": "Version",
+       "type": "string"
+      }
+     }
+    ],
     "responses": {
      "200": {
       "content": {
@@ -9189,11 +8992,9 @@
       "HTTPBearer": []
      }
     ],
-    "summary": "Cluster Set Ledger Limits",
+    "summary": "Download Package",
     "tags": [
-     "GeoCompute / 执行平面",
-     "GeoCompute / 执行平面",
-     "GeoCompute / Cluster Runtime V7"
+     "Extension Marketplace / 扩展市场（只读）"
     ]
    }
   },
@@ -9221,125 +9022,6 @@
      "GeoCompute / 执行平面",
      "GeoCompute / 执行平面",
      "GeoCompute / Cluster Runtime V6"
-    ]
-   }
-  },
-  "/api/v1/geocompute/cluster/runs/stuck": {
-   "get": {
-    "description": "V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run\n（admin 排障；有界 ≤50 行，无载荷）。",
-    "operationId": "cluster_stuck_runs_api_v1_geocompute_cluster_runs_stuck_get",
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Cluster Stuck Runs",
-    "tags": [
-     "GeoCompute / 执行平面",
-     "GeoCompute / 执行平面",
-     "GeoCompute / Cluster Runtime V7"
-    ]
-   }
-  },
-  "/api/v1/geocompute/cluster/runs/{run_id}/reset": {
-   "post": {
-    "description": "V7 admin 强制回队（stuck run 复位）：语义与 reclaim_expired 单行版本\n完全一致（attempt 预算内 → queued；耗尽 → failed[WORKER_LOSS]；\n同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。\n\nrequire_admin：这是全局控制面动作（与 metrics 同一信任域）。",
-    "operationId": "cluster_reset_run_api_v1_geocompute_cluster_runs__run_id__reset_post",
-    "parameters": [
-     {
-      "in": "path",
-      "name": "run_id",
-      "required": true,
-      "schema": {
-       "title": "Run Id",
-       "type": "string"
-      }
-     }
-    ],
-    "requestBody": {
-     "content": {
-      "application/json": {
-       "schema": {
-        "anyOf": [
-         {
-          "$ref": "#/components/schemas/ClusterRunResetRequest"
-         },
-         {
-          "type": "null"
-         }
-        ],
-        "title": "Body"
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Cluster Reset Run",
-    "tags": [
-     "GeoCompute / 执行平面",
-     "GeoCompute / 执行平面",
-     "GeoCompute / Cluster Runtime V7"
-    ]
-   }
-  },
-  "/api/v1/geocompute/cluster/workers": {
-   "get": {
-    "description": "V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。\n\ncapability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement\n对其退回 V6 profiles 匹配语义）。",
-    "operationId": "cluster_workers_api_v1_geocompute_cluster_workers_get",
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Cluster Workers",
-    "tags": [
-     "GeoCompute / 执行平面",
-     "GeoCompute / 执行平面",
-     "GeoCompute / Cluster Runtime V7"
     ]
    }
   },
@@ -9737,74 +9419,6 @@
      "GeoCompute / 执行平面",
      "GeoCompute / 执行平面",
      "GeoCompute / 执行平面"
-    ]
-   }
-  },
-  "/api/v1/geocompute/runs/{run_id}/events": {
-   "get": {
-    "description": "V7 分布式执行事件（有界 observability trace；断点续读游标 after_id）。\n\nowner 域读隔离（他人/未知 run 一律 404）。**诚实边界**：events 是尽力\n而为的过程 trace，随 run 行 retention 级联删除 —— run 行被清理后本\n端点 404（终态证据 of record 在 geocompute_run_evidence，经 GET\n/runs/{id} 的快照回放仍可读，与 trace 的保留策略不同源）。",
-    "operationId": "list_run_events_api_v1_geocompute_runs__run_id__events_get",
-    "parameters": [
-     {
-      "in": "path",
-      "name": "run_id",
-      "required": true,
-      "schema": {
-       "title": "Run Id",
-       "type": "string"
-      }
-     },
-     {
-      "in": "query",
-      "name": "after_id",
-      "required": false,
-      "schema": {
-       "default": 0,
-       "title": "After Id",
-       "type": "integer"
-      }
-     },
-     {
-      "in": "query",
-      "name": "limit",
-      "required": false,
-      "schema": {
-       "default": 200,
-       "title": "Limit",
-       "type": "integer"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "List Run Events",
-    "tags": [
-     "GeoCompute / 执行平面",
-     "GeoCompute / 执行平面",
-     "GeoCompute / Cluster Runtime V7"
     ]
    }
   },
@@ -16487,497 +16101,6 @@
     "summary": "Get Upload Geojson",
     "tags": [
      "数据上传"
-    ]
-   }
-  },
-  "/api/v1/workflow-runtime/instances": {
-   "get": {
-    "operationId": "list_instances_api_v1_workflow_runtime_instances_get",
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "List Instances",
-    "tags": [
-     "Workflow Runtime V5",
-     "Workflow Runtime V5"
-    ]
-   },
-   "post": {
-    "operationId": "create_instance_api_v1_workflow_runtime_instances_post",
-    "requestBody": {
-     "content": {
-      "application/json": {
-       "schema": {
-        "$ref": "#/components/schemas/InstantiateRequest"
-       }
-      }
-     },
-     "required": true
-    },
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Create Instance",
-    "tags": [
-     "Workflow Runtime V5",
-     "Workflow Runtime V5"
-    ]
-   }
-  },
-  "/api/v1/workflow-runtime/instances/{instance_id}": {
-   "get": {
-    "operationId": "get_instance_api_v1_workflow_runtime_instances__instance_id__get",
-    "parameters": [
-     {
-      "in": "path",
-      "name": "instance_id",
-      "required": true,
-      "schema": {
-       "title": "Instance Id",
-       "type": "string"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Get Instance",
-    "tags": [
-     "Workflow Runtime V5",
-     "Workflow Runtime V5"
-    ]
-   }
-  },
-  "/api/v1/workflow-runtime/instances/{instance_id}/cancel": {
-   "post": {
-    "operationId": "cancel_instance_api_v1_workflow_runtime_instances__instance_id__cancel_post",
-    "parameters": [
-     {
-      "in": "path",
-      "name": "instance_id",
-      "required": true,
-      "schema": {
-       "title": "Instance Id",
-       "type": "string"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Cancel Instance",
-    "tags": [
-     "Workflow Runtime V5",
-     "Workflow Runtime V5"
-    ]
-   }
-  },
-  "/api/v1/workflow-runtime/instances/{instance_id}/changes": {
-   "post": {
-    "operationId": "apply_changes_api_v1_workflow_runtime_instances__instance_id__changes_post",
-    "parameters": [
-     {
-      "in": "path",
-      "name": "instance_id",
-      "required": true,
-      "schema": {
-       "title": "Instance Id",
-       "type": "string"
-      }
-     }
-    ],
-    "requestBody": {
-     "content": {
-      "application/json": {
-       "schema": {
-        "$ref": "#/components/schemas/ChangesRequest"
-       }
-      }
-     },
-     "required": true
-    },
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Apply Changes",
-    "tags": [
-     "Workflow Runtime V5",
-     "Workflow Runtime V5"
-    ]
-   }
-  },
-  "/api/v1/workflow-runtime/instances/{instance_id}/recompute-plan": {
-   "get": {
-    "description": "GET 变体（无变更输入）—— 返回当前实例的复用/stale 全景。",
-    "operationId": "dry_run_plan_api_v1_workflow_runtime_instances__instance_id__recompute_plan_get",
-    "parameters": [
-     {
-      "in": "path",
-      "name": "instance_id",
-      "required": true,
-      "schema": {
-       "title": "Instance Id",
-       "type": "string"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Dry Run Plan",
-    "tags": [
-     "Workflow Runtime V5",
-     "Workflow Runtime V5"
-    ]
-   }
-  },
-  "/api/v1/workflow-runtime/instances/{instance_id}/run": {
-   "post": {
-    "operationId": "run_instance_api_v1_workflow_runtime_instances__instance_id__run_post",
-    "parameters": [
-     {
-      "in": "path",
-      "name": "instance_id",
-      "required": true,
-      "schema": {
-       "title": "Instance Id",
-       "type": "string"
-      }
-     }
-    ],
-    "requestBody": {
-     "content": {
-      "application/json": {
-       "schema": {
-        "$ref": "#/components/schemas/RunRequest"
-       }
-      }
-     },
-     "required": true
-    },
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Run Instance",
-    "tags": [
-     "Workflow Runtime V5",
-     "Workflow Runtime V5"
-    ]
-   }
-  },
-  "/api/v1/workflow-runtime/packages": {
-   "get": {
-    "operationId": "list_packages_api_v1_workflow_runtime_packages_get",
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "List Packages",
-    "tags": [
-     "Workflow Runtime V5",
-     "Workflow Runtime V5"
-    ]
-   }
-  },
-  "/api/v1/workflow-runtime/packages/register": {
-   "post": {
-    "operationId": "register_package_api_v1_workflow_runtime_packages_register_post",
-    "requestBody": {
-     "content": {
-      "application/json": {
-       "schema": {
-        "$ref": "#/components/schemas/PackageRegisterRequest"
-       }
-      }
-     },
-     "required": true
-    },
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Register Package",
-    "tags": [
-     "Workflow Runtime V5",
-     "Workflow Runtime V5"
-    ]
-   }
-  },
-  "/api/v1/workflow-runtime/packages/{package_id}/publish": {
-   "post": {
-    "operationId": "publish_package_api_v1_workflow_runtime_packages__package_id__publish_post",
-    "parameters": [
-     {
-      "in": "path",
-      "name": "package_id",
-      "required": true,
-      "schema": {
-       "title": "Package Id",
-       "type": "string"
-      }
-     }
-    ],
-    "requestBody": {
-     "content": {
-      "application/json": {
-       "schema": {
-        "$ref": "#/components/schemas/PublishRequest"
-       }
-      }
-     },
-     "required": true
-    },
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Publish Package",
-    "tags": [
-     "Workflow Runtime V5",
-     "Workflow Runtime V5"
-    ]
-   }
-  },
-  "/api/v1/workflow-runtime/packages/{package_id}/versions": {
-   "get": {
-    "operationId": "package_versions_api_v1_workflow_runtime_packages__package_id__versions_get",
-    "parameters": [
-     {
-      "in": "path",
-      "name": "package_id",
-      "required": true,
-      "schema": {
-       "title": "Package Id",
-       "type": "string"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {}
-       }
-      },
-      "description": "Successful Response"
-     },
-     "422": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      },
-      "description": "Validation Error"
-     }
-    },
-    "security": [
-     {
-      "HTTPBearer": []
-     }
-    ],
-    "summary": "Package Versions",
-    "tags": [
-     "Workflow Runtime V5",
-     "Workflow Runtime V5"
     ]
    }
   },

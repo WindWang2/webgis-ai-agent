@@ -7274,6 +7274,7 @@
  },
  "fingerprint": "cd57d22b071bbbdf83619f0b322fd0629c3bc173d16050e43369fd3d5a9fa898",
  "fingerprint": "861e20f612830084f6c46a885f9f1b4489b62a03d4bd4541b00e6e7506919b50",
+ "fingerprint": "9314795c5cc87d455717fe62e96e3b4028d12162202531d97930fcf2f497ac9e",
  "gate": {
   "fields": {
    "capabilities": {
@@ -10911,6 +10912,7 @@
    "tests": [
     "tests/test_event_loop_offload_425.py",
     "tests/unit/extensions_platform/test_ogc_stac_hardening.py",
+    "tests/unit/extensions_platform/test_worker_projection_v3.py",
     "tests/unit/test_adapter_contract_v2.py",
     "tests/unit/test_cloud_geospatial_adapters.py",
     "tests/unit/test_data_fabric_catalog_sync.py",

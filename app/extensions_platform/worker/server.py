@@ -65,8 +65,30 @@ class WorkerServer:
         self._broker_wait_id: Optional[str] = None
         self._broker_seq = 0
         self._broker_response: Optional[dict[str, Any]] = None
+        # V3 流式：共享信用账本 / 取消集（C-7：任何阻塞读点都可消费
+        # stream_credit / stream_cancel，迟到/多余 credit 幂等入账）。
+        self._stream_credits: dict[str, int] = {}
+        self._stream_cancelled: set[str] = set()
+        self._stream_window: int = 16
         # 资源强制报告（main() 入口施加；握手应答回传宿主）。
         self.resource_report: dict[str, Any] = {"applied": [], "warnings": []}
+
+    # ── V3：流状态共享账本 ────────────────────────────────────────────
+    def _account_stream_frame(self, frame: dict[str, Any]) -> bool:
+        """消费一帧流控制帧；返回 True 表示该帧已被处理（读点继续）。"""
+        ftype = frame.get("type")
+        if ftype == "stream_credit":
+            stream_id = str(frame.get("id"))
+            n = frame.get("n")
+            if isinstance(n, int) and n > 0:
+                self._stream_credits[stream_id] = (
+                    self._stream_credits.get(stream_id, 0) + n
+                )
+            return True
+        if ftype == "stream_cancel":
+            self._stream_cancelled.add(str(frame.get("id")))
+            return True
+        return False
 
     # ── 握手 ─────────────────────────────────────────────────────────
     def handshake(self) -> bool:
@@ -170,6 +192,9 @@ class WorkerServer:
             return False
         self._ctx = ctx
         self._module = module
+        # V3：宿主在握手中授予的初始信用窗口（结构性上界的宿主侧一半）。
+        window = frame.get("stream_window")
+        self._stream_window = window if isinstance(window, int) and window > 0 else 16
         write_frame(
             self._outfile,
             {
@@ -184,6 +209,11 @@ class WorkerServer:
                     }
                     for tool in ctx.declared_tools()
                 ],
+                # V3（ADR-0119）：worker 化投影的可序列化声明。
+                "algorithms": ctx.declared_algorithms(),
+                "data_providers": ctx.declared_data_providers(),
+                "cartography_items": ctx.declared_cartography(),
+                "workflow_packs": ctx.declared_workflow_packs(),
                 "resource_limits": dict(self.resource_report),
             },
         )
@@ -198,7 +228,7 @@ class WorkerServer:
             },
         )
 
-    # ── broker 传输（WorkerContext 回调）──────────────────────────────
+    # ── broker 传输（WorkerContext 回调；C-7 帧白名单）────────────────
     def _broker_transport(self, op: str, payload: dict[str, Any]) -> Any:
         self._broker_seq += 1
         request_id = f"b{self._broker_seq}-{op}"
@@ -224,6 +254,11 @@ class WorkerServer:
                 frame = read_frame(self._infile)  # EOF → ProtocolError → crash
                 if frame.get("type") == "broker_response" and frame.get("id") == request_id:
                     self._broker_response = frame
+                    continue
+                # C-7：broker 等待循环的合法帧 += {stream_credit, stream_cancel}
+                # ——宿主在流式工具经 broker 取数时照常补信用/取消，迟到帧
+                # 幂等入账，绝不按协议违规崩溃。
+                if self._account_stream_frame(frame):
                     continue
                 if frame.get("type") in _PENDING_FRAME_TYPES:
                     self._pending.append(frame)
@@ -258,6 +293,9 @@ class WorkerServer:
             except ProtocolError:
                 return False
         ftype = frame.get("type")
+        # V3：空闲期到达的流控帧幂等入账（信用领先/取消先行都合法）。
+        if self._account_stream_frame(frame):
+            return True
         if ftype == "call":
             self._handle_call(frame)
         elif ftype == "health":
@@ -283,6 +321,7 @@ class WorkerServer:
         call_id = frame.get("id")
         tool_name = frame.get("tool")
         args = frame.get("args")
+        want_stream = bool(frame.get("stream"))
         try:
             if not isinstance(call_id, str) or not isinstance(tool_name, str):
                 raise ProtocolError("call frame requires string 'id' and 'tool'")
@@ -290,6 +329,18 @@ class WorkerServer:
                 args = {}
             if not isinstance(args, dict):
                 raise ProtocolError("call frame 'args' must be an object")
+            # V3：worker 数据 provider 的 RPC 面（`provider:<st>:<method>`）。
+            if tool_name.startswith("provider:"):
+                value = self._handle_provider_call(tool_name, args)
+                if want_stream and value is not None and hasattr(value, "__next__"):
+                    # provider mixin 流（如 stream_features）→ 流帧协议。
+                    self._handle_stream_call(call_id, value)
+                    return
+                write_frame(
+                    self._outfile,
+                    {"type": "result", "id": call_id, "ok": True, "value": value},
+                )
+                return
             func = self._ctx.resolve_tool(tool_name)
             if func is None:
                 raise ExtensionPlatformError(
@@ -300,6 +351,16 @@ class WorkerServer:
                     )
                 )
             value = func(**args)
+            if want_stream and value is not None and hasattr(value, "__next__"):
+                # V3：事件迭代器 → 流帧协议（信用流控 + 协作取消）。
+                self._handle_stream_call(call_id, value)
+                return
+            if value is not None and hasattr(value, "__next__"):
+                # 非流式调用 + 迭代器结果：worker 侧聚合（与 V2 model
+                # provider 语义一致——单帧 result 承载聚合事件）。
+                from ..sdk.model import aggregate_stream_events
+
+                value = aggregate_stream_events(value)
             self._check_output_size(value)
             write_frame(self._outfile, {"type": "result", "id": call_id, "ok": True, "value": value})
         except ExtensionPlatformError as exc:
@@ -314,6 +375,140 @@ class WorkerServer:
                 DiagnosticCode.ENTRY_POINT_FAILED.value,
                 f"tool raised {type(exc).__name__}: {exc}",
             )
+
+    # ── V3：流式调用（背压 = 阻塞等信用直至 credit/EOF；M-6）──────────
+    def _handle_stream_call(self, call_id: str, events: Any) -> None:
+        execution = self._ctx.manifest.execution if self._ctx is not None else None
+        max_events = (
+            execution.max_stream_events
+            if execution is not None and getattr(execution, "max_stream_events", None)
+            else 10000
+        )
+        per_frame_cap = (
+            execution.max_output_bytes if execution is not None else None
+        )
+        self._stream_credits.setdefault(call_id, self._stream_window)
+        seq = 0
+        cancelled = False
+        write_frame(self._outfile, {"type": "stream_start", "id": call_id})
+        try:
+            for event in events:
+                if call_id in self._stream_cancelled:
+                    self._stream_cancelled.discard(call_id)
+                    cancelled = True
+                    break
+                while self._stream_credits.get(call_id, 0) <= 0:
+                    # 背压阻塞点：合法帧 = stream_credit / stream_cancel；
+                    # EOF（read_frame 抛 ProtocolError）= host 死亡，自然失败。
+                    frame = read_frame(self._infile)
+                    if not self._account_stream_frame(frame):
+                        raise ProtocolError(
+                            f"unexpected frame while awaiting stream credit: "
+                            f"{frame.get('type')!r}"
+                        )
+                if call_id in self._stream_cancelled:
+                    self._stream_cancelled.discard(call_id)
+                    cancelled = True
+                    break
+                payload = event if isinstance(event, dict) else {"type": "raw", "value": event}
+                frame_obj = {
+                    "type": "stream_frame",
+                    "id": call_id,
+                    "seq": seq,
+                    "more": True,
+                    "payload": payload,
+                }
+                # M-5：worker 侧每帧尺寸强制（与单帧 result 同一上限语义）。
+                if per_frame_cap is not None:
+                    from .protocol import encode_frame
+
+                    if len(encode_frame(frame_obj)) > per_frame_cap:
+                        raise ExtensionPlatformError(
+                            ExtensionDiagnostic.error(
+                                DiagnosticCode.OUTPUT_LIMIT_EXCEEDED,
+                                f"stream frame {seq} exceeds "
+                                f"execution.max_output_bytes={per_frame_cap}",
+                                extension_id=self._ctx.extension_id,
+                            )
+                        )
+                write_frame(self._outfile, frame_obj)
+                self._stream_credits[call_id] = self._stream_credits.get(call_id, 0) - 1
+                seq += 1
+                if seq >= max_events:
+                    raise ExtensionPlatformError(
+                        ExtensionDiagnostic.error(
+                            DiagnosticCode.STREAM_LIMIT_EXCEEDED,
+                            f"stream exceeded max_stream_events={max_events}",
+                            extension_id=self._ctx.extension_id,
+                        )
+                    )
+        finally:
+            # 生成器提前终止（取消/上限/异常）都要收尾，避免悬挂引用。
+            close = getattr(events, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001
+                    pass
+            self._stream_credits.pop(call_id, None)
+            self._stream_cancelled.discard(call_id)
+        try:
+            write_frame(
+                self._outfile,
+                {"type": "stream_end", "id": call_id, "cancelled": cancelled},
+            )
+        except ProtocolError:
+            raise SystemExit(EXIT_INTERNAL_ERROR)
+
+    # ── V3：worker 数据 provider 的 RPC 分派（C-6：实例单例随 worker）──
+    _PROVIDER_METHODS = frozenset(
+        {
+            "probe",
+            "capabilities",
+            "list_datasets",
+            "describe",
+            "preview",
+            "query",
+            "health",
+            # V3 mixin 面（streaming_vector / tiles / raster_window）。
+            "stream_features",
+            "get_tile",
+            "get_raster_window",
+        }
+    )
+
+    def _handle_provider_call(self, tool_name: str, args: dict[str, Any]) -> Any:
+        parts = tool_name.split(":")
+        if len(parts) != 3:
+            raise ProtocolError(f"malformed provider call {tool_name!r}")
+        _, source_type, method = parts
+        profile = args.pop("_profile", None) if isinstance(args, dict) else None
+        if method not in self._PROVIDER_METHODS:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                    f"provider method {method!r} is not part of the adapter contract",
+                    extension_id=self._ctx.extension_id if self._ctx else None,
+                )
+            )
+        instance = self._ctx.get_provider_instance(source_type, profile)
+        if not hasattr(instance, method):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                    f"provider {source_type!r} does not implement {method!r}",
+                    extension_id=self._ctx.extension_id,
+                )
+            )
+        result = getattr(instance, method)(**dict(args or {}))
+        # TilePayload（bytes）→ data_hex 传输形态（bytes 不可 JSON 帧）。
+        if method == "get_tile" and result is not None and hasattr(result, "data"):
+            return {
+                "data_hex": result.data.hex(),
+                "content_type": getattr(result, "content_type", "image/png"),
+                "metadata": _jsonable(getattr(result, "metadata", None)),
+            }
+        return _jsonable(result)
 
     def _check_output_size(self, value: Any) -> None:
         """输出上限：序列化字节数超过 manifest execution.max_output_bytes →
@@ -372,6 +567,23 @@ class WorkerServer:
             )
         except ProtocolError:
             raise SystemExit(EXIT_INTERNAL_ERROR)
+
+
+def _jsonable(value: Any) -> Any:
+    """provider 方法结果 → JSON-able（pydantic 模型 model_dump；其余原样）。"""
+    if hasattr(value, "model_dump"):
+        try:
+            return value.model_dump(mode="json")
+        except Exception:  # noqa: BLE001 - 序列化失败归一为 typed
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.WORKER_RESULT_INVALID,
+                    f"provider result {type(value).__name__} is not serializable",
+                )
+            )
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
 
 
 def main(argv: Optional[list[str]] = None) -> int:

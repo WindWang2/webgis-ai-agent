@@ -18,6 +18,8 @@ dependencies = [
     "pyogrio>=0.13.0",
     "pandas>=2.2.2,<3.0.0",
     "pydantic>=2.13.4",
+    # 扩展平台 V3 非对称包签名（Ed25519，ADR-0119）；直接使用的库必须直接声明。
+    "cryptography>=44.0.0",
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.0.0",
     "httpx>=0.26.0",

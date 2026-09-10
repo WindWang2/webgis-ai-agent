@@ -26,6 +26,26 @@ from ..permissions import PermissionGrantSet
 from ..trust import TrustLevel
 
 
+def _profile_cache_key(source_type: str, profile: Any) -> str:
+    """(source_type, profile) → 实例缓存键。"""
+    import json as _json
+
+    if profile is None:
+        return source_type
+    if isinstance(profile, dict):
+        pid = profile.get("id") or ""
+        canonical = _json.dumps(profile, ensure_ascii=False, sort_keys=True, default=str)
+    else:
+        pid = getattr(profile, "id", "") or ""
+        dump = getattr(profile, "model_dump", None)
+        canonical = (
+            _json.dumps(dump(mode="json"), ensure_ascii=False, sort_keys=True)
+            if callable(dump)
+            else repr(profile)
+        )
+    return f"{source_type}::{pid or canonical[:64]}::{hash(canonical) & 0xFFFF}"
+
+
 @dataclass(frozen=True)
 class DeclaredWorkerTool:
     """一个 worker 工具的完整可序列化声明（宿主投影的依据）。"""
@@ -117,6 +137,13 @@ class WorkerContext:
         self._tool_funcs: dict[str, Callable[..., Any]] = {}
         # 扩展侧 broker 门面（transport 为 None 时调用 typed 失败）。
         self.broker = BrokerFacade(self.broker_request)
+        # ── V3（ADR-0119）：worker 化投影声明收集 ─────────────────────
+        self._declared_algorithms: list[dict[str, Any]] = []
+        self._declared_providers: list[dict[str, Any]] = []
+        self._declared_cartography: list[Any] = []
+        self._declared_workflow_packs: list[Any] = []
+        self._provider_factories: dict[str, Callable[[Any], Any]] = {}
+        self._provider_instances: dict[str, Any] = {}
 
     # ── 工具注册（收集 + 校验，不写 registry）────────────────────────
     def register_tool(self, spec: Any) -> str:
@@ -180,7 +207,7 @@ class WorkerContext:
         通用 call 往返（聚合结果单帧返回）。本地名 `<pid>_invoke`
         与宿主投影名的前缀剥离形态精确一致。
         """
-        from ..sdk.model import ModelProviderSpec, aggregate_stream_events
+        from ..sdk.model import ModelProviderSpec
         from ..sdk.tool import ToolExtensionSpec
 
         if not isinstance(spec, ModelProviderSpec):
@@ -216,11 +243,13 @@ class WorkerContext:
 
         def _invoke(**kwargs: Any) -> Any:
             # 与 in-process 相同的扁平/包膜双形态规约（Round-1 CRITICAL-2）。
+            # V3：不再在此聚合——迭代器原样返回，server 按调用形态分流
+            # （stream=true → 流帧协议；stream=false → server 侧聚合单帧）。
             if set(kwargs) == {"request"} and isinstance(kwargs["request"], dict):
                 req = dict(kwargs["request"])
             else:
                 req = dict(kwargs)
-            return aggregate_stream_events(invoke_fn(req, owner_ctx))
+            return invoke_fn(req, owner_ctx)
 
         tool_spec = ToolExtensionSpec(
             name=local_name,
@@ -253,10 +282,18 @@ class WorkerContext:
             candidate = local
         return self._tool_funcs.get(candidate)
 
-    def _require_declared(self, section: str, key: str) -> None:
-        declared = {t.name for t in self.manifest.tools}
+    def _require_declared(self, section: str, key: Any) -> None:
+        declared: Any = {t.name for t in self.manifest.tools}
         if section == "model_providers":
             declared = {m.id for m in self.manifest.model_providers}
+        elif section == "algorithms":
+            declared = {a.id for a in self.manifest.algorithms}
+        elif section == "data_providers":
+            declared = {p.source_type for p in self.manifest.data_providers}
+        elif section == "cartography":
+            declared = {(c.kind, c.id) for c in self.manifest.cartography_items}
+        elif section == "workflow_packs":
+            declared = {w.pack_id for w in self.manifest.workflow_packs}
         if key not in declared:
             raise ExtensionPlatformError(
                 ExtensionDiagnostic.error(
@@ -267,25 +304,206 @@ class WorkerContext:
                 )
             )
 
-    # ── 类实例投影在 worker 内 typed 拒绝（纵深防御）──────────────────
+    # ── 类实例投影：V2 形状拒绝 / V3 形状收集（ADR-0119）──────────────
     def register_algorithm(self, spec: Any = None) -> str:
         raise self._worker_projection_rejected("register_algorithm")
 
     def register_data_provider(self, spec: Any = None) -> str:
         raise self._worker_projection_rejected("register_data_provider")
 
+    def _v3_gate(self, api: str) -> None:
+        """V3 投影门控（纵深防御层）：manifest api < 1.2 → typed 拒绝。"""
+        from ..api_version import parse_version
+
+        v = parse_version(self.manifest.api_version)
+        if v is None or v < (1, 2, 0):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.WORKER_MODE_INVALID,
+                    f"{api} in worker mode requires api_version >= 1.2.0, "
+                    f"manifest declares {self.manifest.api_version!r}",
+                    extension_id=self.extension_id,
+                )
+            )
+
+    def register_algorithm_v3(self, descriptor: dict[str, Any]) -> str:
+        """V3：worker 算法投影 = **可序列化描述符**（元数据面）。
+
+        与 in-process :meth:`AlgorithmExtensionSpec.build_descriptor` 的
+        kwargs 同构；执行体是本 worker 内的工具（``tool_candidates`` 引用
+        已注册的 worker 工具）。活对象/run fn 永不出 worker。
+        """
+        self._v3_gate("register_algorithm_v3")
+        if not isinstance(descriptor, dict):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    "register_algorithm_v3 expects a serializable descriptor dict",
+                    extension_id=self.extension_id,
+                )
+            )
+        algo_id = descriptor.get("id")
+        self._require_declared("algorithms", str(algo_id))
+        candidates = list(descriptor.get("tool_candidates") or [])
+        unknown = [
+            t for t in candidates
+            if t not in self._declared_tools and t not in {
+                m.id + "_invoke" for m in self.manifest.model_providers
+            }
+        ]
+        if unknown:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                    f"algorithm {algo_id!r} references worker tools {unknown} that "
+                    "are not registered in this worker (register tools first)",
+                    extension_id=self.extension_id,
+                )
+            )
+        if any(a.get("id") == algo_id for a in self._declared_algorithms):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.REGISTRY_PROJECTION_COLLISION,
+                    f"algorithm {algo_id!r} already registered in this worker",
+                    extension_id=self.extension_id,
+                )
+            )
+        self._declared_algorithms.append(dict(descriptor))
+        return self.manifest.namespaced_algorithm_id(str(algo_id))
+
+    def register_data_provider_v3(
+        self,
+        source_type: str,
+        factory: Callable[[Any], Any],
+        *,
+        description: str = "",
+        aliases: tuple[str, ...] = (),
+        mixins: tuple[str, ...] = (),
+    ) -> str:
+        """V3：worker 数据 provider = 工厂 + 串行 RPC 代理。
+
+        ``factory(ctx, profile) -> GeospatialDataSourceAdapter 实例``：
+        实例**留在 worker**（按 (source_type, profile) 维度懒创建缓存，
+        随 worker 存活；``profile`` 为宿主 ConnectionProfile 的 JSON
+        形态，含连接信息，绝不入日志/状态面）；宿主侧经 7 方法 RPC 代理
+        访问。``mixins`` ∈ {"streaming_vector","tiles","raster_window"} —
+        宿主代理类据此动态继承，保证 extended_provider_capabilities 可探测。
+        """
+        self._v3_gate("register_data_provider_v3")
+        self._require_declared("data_providers", source_type)
+        if not callable(factory):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"data provider {source_type!r}: factory must be callable",
+                    extension_id=self.extension_id,
+                )
+            )
+        valid_mixins = {"streaming_vector", "tiles", "raster_window"}
+        unknown = sorted(set(mixins) - valid_mixins)
+        if unknown:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    f"data provider {source_type!r}: unknown mixins {unknown}",
+                    extension_id=self.extension_id,
+                )
+            )
+        if source_type in self._provider_factories:
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.REGISTRY_PROJECTION_COLLISION,
+                    f"data provider {source_type!r} already registered in this worker",
+                    extension_id=self.extension_id,
+                )
+            )
+        self._provider_factories[source_type] = factory
+        self._declared_providers.append(
+            {
+                "source_type": source_type,
+                "description": description,
+                "aliases": list(aliases),
+                "mixins": list(mixins),
+            }
+        )
+        return self.manifest.namespaced_source_type(source_type)
+
+    def get_provider_instance(self, source_type: str, profile: Any = None) -> Any:
+        """懒创建 provider 实例（按 (source_type, profile) 维度缓存）。
+
+        Round-1 CR-1：data_fabric 语义 = 每 ConnectionProfile 一个 adapter
+        （同一 source_type 可注册多个不同 endpoint 的连接）。profile 首次
+        出现时跨 RPC 传入 worker，按 ``profile.id``（无 id 用规范化 JSON）
+        缓存——宿主代理每方法调用都携带 profile 引用键，杜绝「多连接同
+        source_type 全部命中同一无 profile 实例」的取错源静默错误。
+        """
+        cache_key = _profile_cache_key(source_type, profile)
+        if cache_key not in self._provider_instances:
+            factory = self._provider_factories.get(source_type)
+            if factory is None:
+                raise ExtensionPlatformError(
+                    ExtensionDiagnostic.error(
+                        DiagnosticCode.DECLARED_BUT_UNREGISTERED,
+                        f"data provider {source_type!r} is not registered in this worker",
+                        extension_id=self.extension_id,
+                    )
+                )
+            self._provider_instances[cache_key] = (
+                factory(self, profile) if profile is not None else factory(self)
+            )
+        return self._provider_instances[cache_key]
+
     def register_cartography_item(self, spec: Any = None) -> str:
-        raise self._worker_projection_rejected("register_cartography_item")
+        """V3：cartography 声明即 JSON payload —— worker 只收集。
+
+        payload 在握手应答中序列化，宿主走与 in-process 相同的投影路径
+        （零活对象跨进程）。api < 1.2 仍拒绝（V2 语义）。
+        """
+        from ..sdk.declarations import CartographyItemSpec
+
+        self._v3_gate("register_cartography_item")
+        if not isinstance(spec, CartographyItemSpec):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    "register_cartography_item expects a CartographyItemSpec",
+                    extension_id=self.extension_id,
+                )
+            )
+        self._require_declared("cartography", (spec.kind, spec.id))
+        diagnostics = spec.validate()
+        if any(d.severity.value == "error" for d in diagnostics):
+            raise ExtensionPlatformError(diagnostics[0])
+        self._declared_cartography.append(spec)
+        return f"{self.manifest.namespace}_{spec.id}"
 
     def register_workflow_pack(self, spec: Any = None) -> str:
-        raise self._worker_projection_rejected("register_workflow_pack")
+        """V3：recipe 是 pydantic 模型 → model_dump 序列化后握手回传。"""
+        from ..sdk.declarations import WorkflowPackSpec
+
+        self._v3_gate("register_workflow_pack")
+        if not isinstance(spec, WorkflowPackSpec):
+            raise ExtensionPlatformError(
+                ExtensionDiagnostic.error(
+                    DiagnosticCode.MANIFEST_INVALID,
+                    "register_workflow_pack expects a WorkflowPackSpec",
+                    extension_id=self.extension_id,
+                )
+            )
+        self._require_declared("workflow_packs", spec.pack_id)
+        diagnostics = spec.validate()
+        if any(d.severity.value == "error" for d in diagnostics):
+            raise ExtensionPlatformError(diagnostics[0])
+        self._declared_workflow_packs.append(spec)
+        return f"{self.manifest.namespace}_{spec.pack_id}"
 
     def _worker_projection_rejected(self, api: str) -> ExtensionPlatformError:
         return ExtensionPlatformError(
             ExtensionDiagnostic.error(
                 DiagnosticCode.WORKER_MODE_INVALID,
                 f"{api} is unavailable in worker execution mode (class-instance "
-                "projections require in_process; manifest declares worker mode)",
+                "projections require in_process; use the _v3 variants for "
+                "worker-capable shapes, api_version >= 1.2.0)",
                 extension_id=self.extension_id,
             )
         )
@@ -293,6 +511,40 @@ class WorkerContext:
     # ── 声明读取（server 握手应答用）──────────────────────────────────
     def declared_tools(self) -> list[DeclaredWorkerTool]:
         return [self._declared_tools[name] for name in sorted(self._declared_tools)]
+
+    def declared_algorithms(self) -> list[dict[str, Any]]:
+        return [dict(a) for a in self._declared_algorithms]
+
+    def declared_data_providers(self) -> list[dict[str, Any]]:
+        return [dict(p) for p in self._declared_providers]
+
+    def declared_cartography(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "kind": s.kind,
+                "id": s.id,
+                "description": s.description,
+                "runtime_status": s.runtime_status,
+                "payload": dict(s.payload),
+                "export_behavior": s.export_behavior,
+                "legend_behavior": s.legend_behavior,
+                "degradation_policy": s.degradation_policy,
+            }
+            for s in sorted(self._declared_cartography, key=lambda s: (s.kind, s.id))
+        ]
+
+    def declared_workflow_packs(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "pack_id": p.pack_id,
+                "description": p.description,
+                "recipes": [
+                    r.model_dump(mode="json") if hasattr(r, "model_dump") else dict(r)
+                    for r in p.recipes
+                ],
+            }
+            for p in sorted(self._declared_workflow_packs, key=lambda p: p.pack_id)
+        ]
 
     # ── 兄弟模块加载（与 ExtensionContext 同规则）─────────────────────
     def load_sibling(self, module_name: str) -> Any:

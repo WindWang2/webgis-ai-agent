@@ -423,6 +423,28 @@ class DataFabricManager:
         enforce_result_bounds(result.features)
         return result
 
+    # ── V3（ADR-0119）：provider mixin 的能力感知流式分发（additive）────
+    # 既有 query/materialize 路径逐字节不变；仅当扩展 adapter 声明了
+    # StreamingVectorProvider/TileProvider/RasterWindowProvider mixin 时，
+    # 消费方经本入口获得真流式/瓦片/栅格窗口行为（无 mixin → typed 拒绝
+    # 或诚实降级，见 extensions_platform.fabric_bridge）。
+    @classmethod
+    async def stream_catalog_item_features(
+        cls,
+        db: Session,
+        item_id: str,
+        query_spec: Optional[QuerySpec] = None,
+        cancel_token: Optional[object] = None,
+        page_size: int = 500,
+    ):
+        """按 adapter 能力流式产出目录条目的 GeoJSON Feature。"""
+        from app.extensions_platform import fabric_bridge
+
+        async for feature in fabric_bridge.stream_catalog_item_features(
+            db, item_id, query_spec, cancel_token, page_size
+        ):
+            yield feature
+
     @classmethod
     async def query_catalog_item_async(
         cls,

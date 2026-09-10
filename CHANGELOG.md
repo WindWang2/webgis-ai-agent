@@ -1344,3 +1344,17 @@ downgrade rather than being deleted). Dialect-split: SQLite rebuilds the table v
 - `trim_features` helper for payload reduction (caps FeatureCollection at
   5000 features, rounds coordinates to 6 decimals).
 - `buffer_analysis`, `heatmap_data`, `h3_binning`, `kde_contours` opted in.
+
+## [Unreleased] — GIS Extension Platform V3 (feat/extensions-v3-secure-ecosystem, ADR-0120)
+
+### Added
+- 扩展包非对称签名（Ed25519，`cryptography`）+ 文件型 trust store（rotation/retired/revocation）；HMAC v1 载荷逐字节保留
+- 服务端 marketplace registry（content-addressed blob、文件锁串行 publish、claim-once 防依赖混淆、确定性分页搜索、deprecate/revoke/yank）+ 只读 HTTP API
+- 分发安装器：统一 preflight（digest/验签/吊销/pin/降级/依赖冲突）、tar 白名单安全解包、原子换装（中断可恢复）、versions/ 归档与回滚
+- worker 隔离后端 `bubblewrap`（netns + 最小 bind 面 + tmpfs；per-spawn 失败 typed 拒绝不静默回退）
+- 流式协议 V3（信用流控/协作取消/逐帧 idle timeout/事件上界/宿主侧帧预算强制）
+- worker 化投影：algorithms（描述符）、data providers（7 方法 RPC 代理 + mixin 动态继承 + 串行排队 + DataFabricError 映射）、cartography/recipes（声明式 payload）
+- Data Fabric bridge：`stream_catalog_item_features` 能力感知流式分发（additive）
+- Lifecycle：drain、版本 pin、吊销惰性传播 + `.refresh` 通知信号
+- Certification V3 检查（signature_trust/package_layout/budget/protocol/provider conformance）+ 恶意语料 20 场景
+- 示例扩展 extdemo-v3-pack + 完成证明端到端测试（签名→发布→安装→隔离→broker→流式→升级→回滚→吊销不可回退）

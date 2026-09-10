@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "v3demo.ecosystem",
+  "name": "ecosystem",
+  "namespace": "v3demo",
+  "version": "1.0.0",
+  "api_version": "1.2.0",
+  "title": "V3 Ecosystem Demo Pack",
+  "description": "ADR-0119 完成证明示例：worker 隔离 + broker 出网 + 流式矢量 provider + 流式 model provider。由示例密钥签名（仅测试/演示用途，不得加入生产信任根）。",
+  "vendor": "webgis-ai-agent examples",
+  "extension_types": ["tools", "data_providers", "model_provider"],
+  "permissions": ["network", "model_provider"],
+  "trust": "local_untrusted",
+  "tools": [
+    {
+      "name": "fetch_title",
+      "description": "经 broker 出网抓取 URL 并返回响应前 200 字符（示例 broker 消费）"
+    },
+    {"name": "compute_index", "description": "演示 GIS 安全计算：区域形状指数（正方形近似）"}
+  ],
+  "data_providers": [
+    {"source_type": "streams", "description": "内存合成的流式矢量 provider（GIS-safe 合成数据，无外部网络）"}
+  ],
+  "model_providers": [
+    {
+      "id": "synth",
+      "description": "合成流式推理 provider：分块产出处理进度事件（GIS 域演示，无真实模型）",
+      "capabilities": ["streaming", "cancellation"]
+    }
+  ],
+  "execution": {
+    "mode": "worker",
+    "startup_timeout_s": 20.0,
+    "call_timeout_s": 15.0,
+    "max_memory_mb": 256,
+    "max_cpu_seconds": 30,
+    "max_output_bytes": 262144,
+    "max_stream_events": 5000,
+    "stream_window": 16
+  },
+  "entry_point": "main",
+  "diagnostics_entry": "health:report"
+}

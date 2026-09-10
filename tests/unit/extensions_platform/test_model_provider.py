@@ -177,10 +177,36 @@ class TestWorkerModeModelProvider:
         result = registry._tools["workerml_echo_invoke"](request={"text": "ping"})
         # dict 形态的 invoke 结果原样透传（聚合器仅包装迭代器形态）。
         assert result == {"type": "final", "echo": "ping"}
-        # worker 模式流式 → typed 拒绝。
-        with pytest.raises(Exception, match="streaming is unavailable"):
-            host.invoke_model_provider("workerml_echo_invoke", {}, stream=True)
+        # V3（ADR-0119）：worker 流式经协议 3.0 可用；事件迭代聚合为流帧。
+        events = list(
+            host.invoke_model_provider("workerml_echo_invoke", {"text": "hi"}, stream=True)
+        )
+        assert events and events[-1].get("type") == "final"
         host.reset()
+
+        # 协议 < 3.0 的 worker（模拟）→ 流式仍 typed 拒绝（运行期门控）。
+        host2 = ExtensionHost(
+            tool_registry=ToolRegistry(),
+            policy=HostPolicy(roots=(tmp_path,), max_worker_crashes=5),
+        )
+        host2.discover()
+        diags2 = host2.activate("workerml.pack")
+        assert not has_errors(diags2), [d.message for d in diags2]
+        record2 = host2.get_record("workerml.pack")
+        assert record2 is not None
+        record2.worker = type(
+            "FakeWorker",
+            (),
+            {
+                "protocol_version": "1.0",
+                "call_stream": lambda *a, **k: iter(()),
+                "kill": lambda self: None,
+                "shutdown": lambda self, grace_s=3.0: None,
+            },
+        )()
+        with pytest.raises(Exception, match="streaming.*requires protocol 3.0"):
+            host2.invoke_model_provider("workerml_echo_invoke", {}, stream=True)
+        host2.reset()
 
     def test_worker_streaming_capability_rejected_at_manifest(self):
         from app.extensions_platform.manifest import GisExtensionManifest
