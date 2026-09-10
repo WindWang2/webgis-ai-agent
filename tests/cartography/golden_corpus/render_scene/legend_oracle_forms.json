@@ -1,0 +1,94 @@
+{
+  "name": "legend_oracle_forms",
+  "spec": {
+    "version": "1.0",
+    "layers": [
+      {
+        "id": "categorical",
+        "source": "s",
+        "type": "fill",
+        "legend_spec": {
+          "type": "categorical",
+          "field": "landuse",
+          "categories": [
+            { "value": "residential", "color": "#fca5a5", "label": "居住" },
+            { "value": "industrial", "color": "#93c5fd", "label": "工业" },
+            { "value": "green", "color": "#86efac", "label": "绿地" }
+          ]
+        }
+      },
+      {
+        "id": "graduated_nodata",
+        "source": "s",
+        "type": "fill",
+        "legend_spec": {
+          "type": "graduated",
+          "breaks": [0, 10, 20, 30],
+          "palette_colors": ["#a", "#b", "#c"],
+          "nodata": { "color": "#e5e7eb" }
+        }
+      },
+      {
+        "id": "graduated_capped",
+        "source": "s",
+        "type": "fill",
+        "legend_spec": {
+          "type": "graduated",
+          "breaks": [0, 10, 20],
+          "palette_colors": ["#a", "#b", "#c", "#d"]
+        }
+      },
+      {
+        "id": "continuous_mm",
+        "source": "s",
+        "type": "fill",
+        "legend_spec": { "min": 0, "max": 100, "field": "temp" }
+      },
+      {
+        "id": "field_title",
+        "source": "s",
+        "type": "fill",
+        "legend_spec": { "type": "categorical", "field": "zone", "categories": [] }
+      },
+      {
+        "id": "untitled",
+        "source": "s",
+        "type": "fill",
+        "legend_spec": { "type": "categorical", "categories": [] }
+      },
+      {
+        "id": "no_nodata_color",
+        "source": "s",
+        "type": "fill",
+        "legend_spec": {
+          "type": "categorical",
+          "categories": [{ "value": "x", "color": "#fff" }],
+          "nodata": { "label": "缺省无色" }
+        }
+      }
+    ]
+  },
+  "degradations": [],
+  "expected": {
+    "layers": [
+      { "id": "categorical", "visible": true, "hasLegendSpec": true, "hasLabel": false },
+      { "id": "continuous_mm", "visible": true, "hasLegendSpec": true, "hasLabel": false },
+      { "id": "field_title", "visible": true, "hasLegendSpec": true, "hasLabel": false },
+      { "id": "graduated_capped", "visible": true, "hasLegendSpec": true, "hasLabel": false },
+      { "id": "graduated_nodata", "visible": true, "hasLegendSpec": true, "hasLabel": false },
+      { "id": "no_nodata_color", "visible": true, "hasLegendSpec": true, "hasLabel": false },
+      { "id": "untitled", "visible": true, "hasLegendSpec": true, "hasLabel": false }
+    ],
+    "components": [],
+    "legends": [
+      { "layerId": "categorical", "title": "字段: landuse", "entryCount": 3, "hasNodata": false },
+      { "layerId": "continuous_mm", "title": "字段: temp", "entryCount": 3, "hasNodata": false },
+      { "layerId": "field_title", "title": "字段: zone", "entryCount": 0, "hasNodata": false },
+      { "layerId": "graduated_capped", "title": "图例", "entryCount": 2, "hasNodata": false },
+      { "layerId": "graduated_nodata", "title": "图例", "entryCount": 4, "hasNodata": true },
+      { "layerId": "no_nodata_color", "title": "图例", "entryCount": 1, "hasNodata": false },
+      { "layerId": "untitled", "title": "图例", "entryCount": 0, "hasNodata": false }
+    ],
+    "degradationCodes": []
+  }
+}

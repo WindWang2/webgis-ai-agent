@@ -1,0 +1,21 @@
+{
+  "name": "categorical_key_fallback_and_dirty_color",
+  "legendSpec": {
+    "type": "categorical",
+    "categories": [
+      { "key": "residential", "color": "#fca5a5", "label": "居住" },
+      { "key": "industrial" },
+      { "key": 42, "label": "  " }
+    ]
+  },
+  "expected": {
+    "kind": "categorical",
+    "title": "图例",
+    "entries": [
+      { "label": "居住", "color": "#fca5a5", "kind": "class" },
+      { "label": "industrial", "color": "#888", "kind": "class" },
+      { "label": "42", "color": "#888", "kind": "class" }
+    ],
+    "hasNodata": false
+  }
+}

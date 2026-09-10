@@ -1,0 +1,20 @@
+{
+  "name": "continuous_three_readings",
+  "legendSpec": {
+    "type": "continuous",
+    "field": "temp",
+    "min": 0,
+    "max": 100,
+    "palette_colors": ["#ffffff", "#888888", "#000000"]
+  },
+  "expected": {
+    "kind": "continuous",
+    "title": "字段: temp",
+    "entries": [
+      { "label": "0", "color": "#ffffff", "kind": "class" },
+      { "label": "50", "color": "#888888", "kind": "class" },
+      { "label": "100", "color": "#000000", "kind": "class" }
+    ],
+    "hasNodata": false
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "bivariate_nodata_only_and_nulls",
+  "cases": [
+    {
+      "legendSpec": {
+        "type": "bivariate",
+        "n": 3,
+        "colors": ["#111", "#222"],
+        "label_a": "A",
+        "label_b": "B",
+        "breaks_a": [0, 1, 2],
+        "breaks_b": [0, 1, 2]
+      },
+      "expected": {
+        "kind": "bivariate",
+        "title": "图例",
+        "entries": [],
+        "hasNodata": false
+      }
+    },
+    {
+      "legendSpec": null,
+      "expected": null
+    },
+    {
+      "legendSpec": { "type": "continuous", "field": "x" },
+      "expected": null
+    },
+    {
+      "legendSpec": { "type": "categorical", "field": "zone", "categories": [] },
+      "expected": null
+    }
+  ]
+}

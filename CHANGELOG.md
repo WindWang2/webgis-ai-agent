@@ -85,6 +85,41 @@
   plane contention; durable node polling switched from fixed 50ms to
   adaptive backoff (0.05->0.5s, cancellation latency dominated by the
   0.5s run heartbeat).
+## [Unreleased] - 2026-09-10
+
+### Added (cartography-v6: Typed MapSpec + Publication Engine, ADR-0120)
+- Authoritative MapSpec schema (Pydantic v2 strict): typed spine with
+  structured invalid-field disclosure (no silent coercion), unknown-field
+  preservation, order-preserving canonical serialization, explicit migration
+  registry (1.0 -> 1.1 additive: layout.frames / layout.labels), forward
+  version typed rejection; deterministic TS projection generator
+  (types.generated.ts) replacing the hand-maintained parallel schema.
+- Publication engine: backend twin `include_chrome` renders canonical-scene
+  driven marginalia (title block, north arrow, projection-aware scale bar,
+  single-source legend box, frame border, graticule, inset locator) and
+  `bounds` explicit extent; `POST /api/v1/map/export/vector-pdf` renders
+  true vector PDFs via WeasyPrint (selectable text, per-frame pages, deny-all
+  url fetcher, process-level render mutex, honest raster-layer omission,
+  graceful 503 when the engine is absent).
+- Deterministic export label collision (opt-in `layout.labels.collision`):
+  portable Python solver + 1:1 TS port locked by differential fixtures;
+  top-level labels group; `label_collision_relaxed` / `label_budget_exceeded`
+  diagnostics (400/export budget).
+- Spec-level atlas frames (`layout.frames`, <=50) honored by backend
+  publication PDF (per-frame extents/views, layerOverride deep-merge,
+  @page sizes) and adapted for frontend frame export (title/extent/view).
+- Diagnostics dead-code gate: EMITTER_REGISTRY contract test binding every
+  vocabulary code to a real emission site; multi-frame DiagnosticSink with
+  per-frame quota and `diagnostics_truncated` meta disclosure.
+- Cross-language parity corpus: render-scene / legend-model / label-solver
+  golden fixtures consumed by both pytest and vitest; report chain upgraded
+  to the publication path (visual delta disclosed via publication_chrome).
+
+### Changed (cartography-v6, intentional deltas — see 05-legend-convergence-diff-table.md)
+- Canvas export legend now honors user labels and palette caps (previously
+  ignored labels, drew out-of-palette entries); legend range labels unified
+  on formatLegendValue (zh-CN aware); title fallback unified ("图例");
+  continuous legend entry count now 3 (was 0) in export disclosure math.
 
 ## [Unreleased] - 2026-09-09
 

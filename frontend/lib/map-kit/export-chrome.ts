@@ -31,6 +31,7 @@ import {
   boundsFromCenterZoom,
 } from '@/lib/map-components/geo-anchor';
 import { computeNiceScale, formatScaleLabel } from './scale-math';
+import { deriveLegendModel } from './legend-model';
 
 export interface StatsPanelData {
   title?: string;
@@ -702,19 +703,11 @@ export async function buildExportChrome(
     }
     // W7：与 live 的内容差异披露 —— live 图例仅示前 8 条（legends.tsx
     // entries.slice(0, 8) + 「…+N」指示），导出件画全集；条目超限时显式披露
-    // 该差异。entryCount 口径与 live legendEntries 一致：nodata 条目计入
-    // （legendEntries 在 entries 末尾追加 nodata 后再做 >8 判断）。
-    // review-r2：categorical 此前漏计 nodata（graduated 已计）—— 与 live
-    // 及 render-scene legendEntryCount 对齐。
-    const entryCount =
-      spec.type === 'categorical'
-        ? (spec.categories?.length ?? 0) + (spec.nodata?.color ? 1 : 0)
-        : spec.type === 'graduated'
-          ? Math.min(
-              Math.max((spec.breaks?.length ?? 0) - 1, 0),
-              (spec.palette_colors?.length ?? 0),
-            ) + (spec.nodata?.color ? 1 : 0)
-          : 0;
+    // 该差异。
+    // W5：entryCount 口径收敛至 legend-model 单源（条目 = 模型 entries，
+    // nodata 已计入末尾 —— 与 live legendEntries、render-scene oracle 同源）。
+    // 行为 delta（ADR-0120 收敛表）：continuous 此前计 0，现按三读数计 3。
+    const entryCount = deriveLegendModel(spec)?.entries.length ?? 0;
     if (entryCount > 8) {
       model.degradations.push({
         code: 'legend_entries_truncated',
@@ -1383,32 +1376,12 @@ export function drawChromeLegend(
     return;
   }
 
-  let colors: string[] = [];
-  let labels: string[] = [];
-  const fmt = (n: number) =>
-    n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : n.toFixed(1);
-  if (spec.type === 'categorical') {
-    colors = (spec.categories || []).map((c) => c.color || '#888');
-    labels = (spec.categories || []).map((c) => c.label || c.key || '');
-  } else {
-    colors = spec.palette_colors || [];
-    if (spec.breaks && spec.breaks.length >= 2) {
-      for (let i = 0; i < spec.breaks.length - 1; i++) {
-        labels.push(`${fmt(spec.breaks[i])} – ${fmt(spec.breaks[i + 1])}`);
-      }
-    } else if (typeof spec.min === 'number' && typeof spec.max === 'number') {
-      labels = [fmt(spec.min), fmt((spec.min + spec.max) / 2), fmt(spec.max)];
-      while (labels.length < colors.length) labels.push('');
-    }
-  }
-  // W7 nodata parity：与 live legendEntries 同源 —— nodata 色块条目追加在
-  // 末尾（色与 paint 侧 withNoDataGuard 同一 nodata.color，不另造）。
-  if (spec.nodata?.color) {
-    colors.push(spec.nodata.color);
-    labels.push(spec.nodata.label || '无数据');
-  }
-  const classes = Math.min(colors.length, labels.length);
-  if (classes === 0) return;
+  // W5：条目推导收敛至 legend-model 单源 —— canvas 侧此前忽略
+  // spec.labels 且不按 palette 截断（graduated 画超界条目），现与
+  // live/vector 同口径。行为 delta 已登记于 ADR-0120 收敛表。
+  const model = deriveLegendModel(spec as LegendSpec);
+  if (!model) return;
+  const entries = model.entries;
 
   const { ctx } = d;
   const itemH = d.scalePx(22);
@@ -1417,9 +1390,9 @@ export function drawChromeLegend(
   const gapX = d.scalePx(8);
   ctx.font = `${d.scalePx(11)}px sans-serif`;
   let maxTextW = 0;
-  for (const label of labels) maxTextW = Math.max(maxTextW, ctx.measureText(label).width);
+  for (const e of entries) maxTextW = Math.max(maxTextW, ctx.measureText(e.label).width);
   const legendW = padding * 2 + itemW + gapX + maxTextW + d.scalePx(10);
-  const legendH = padding * 2 + d.scalePx(24) + classes * itemH;
+  const legendH = padding * 2 + d.scalePx(24) + entries.length * itemH;
 
   const origin = el.rect
     ? { x: el.rect.x, y: el.rect.y, align: 'left' as const, vAlign: 'top' as const }
@@ -1430,18 +1403,19 @@ export function drawChromeLegend(
   _chromePanel(d, lx, ly, legendW, legendH);
   ctx.fillStyle = d.darkMode ? '#00f2ff' : '#1e293b';
   ctx.font = `bold ${d.scalePx(12)}px sans-serif`;
-  // W7 parity：live 图例标题源 = legend.title（缺失回退既有字段格式）。
-  _text(d, spec.title || `字段: ${spec.field || '未知字段'}`, lx + padding, ly + padding + d.scalePx(12), 'left');
-  for (let i = 0; i < classes; i++) {
+  // W5 parity：标题回退统一模型口径（原 '未知字段' 分支删除）。
+  _text(d, model.title, lx + padding, ly + padding + d.scalePx(12), 'left');
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
     const iy = ly + padding + d.scalePx(24) + i * itemH;
-    ctx.fillStyle = colors[i];
+    ctx.fillStyle = e.color;
     ctx.fillRect(lx + padding, iy, itemW, itemH - d.scalePx(4));
     ctx.strokeStyle = 'rgba(128,128,128,0.4)';
     ctx.lineWidth = d.scalePx(0.5);
     ctx.strokeRect(lx + padding, iy, itemW, itemH - d.scalePx(4));
     ctx.fillStyle = d.darkMode ? 'rgba(255,255,255,0.85)' : '#334155';
     ctx.font = `${d.scalePx(11)}px sans-serif`;
-    _text(d, labels[i], lx + padding + itemW + gapX, iy + itemH - d.scalePx(8), 'left');
+    _text(d, e.label, lx + padding + itemW + gapX, iy + itemH - d.scalePx(8), 'left');
   }
 }
 

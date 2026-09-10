@@ -1458,6 +1458,11 @@
       "message": "组件配置无效，已跳过渲染"
     },
     {
+      "code": "diagnostics_truncated",
+      "severity": "warning",
+      "message": "诊断条目超出导出预算，超出部分未进入产物披露（上限 {detail} 条）"
+    },
+    {
       "code": "export_timeout_partial",
       "severity": "error",
       "message": "导出超时，产物可能不完整（{detail}）"
@@ -1466,6 +1471,16 @@
       "code": "features_truncated",
       "severity": "warning",
       "message": "要素数量超出导出预算，已截断至 {detail} 条"
+    },
+    {
+      "code": "label_budget_exceeded",
+      "severity": "warning",
+      "message": "标签数量超出导出预算（{detail}），超出部分未渲染"
+    },
+    {
+      "code": "label_collision_relaxed",
+      "severity": "info",
+      "message": "标签碰撞求解：部分标签位移或省略（{detail}）"
     },
     {
       "code": "label_truncated",
@@ -1478,9 +1493,19 @@
       "message": "图例条目较多：live 界面仅显示前 8 条，导出件绘制全部条目"
     },
     {
+      "code": "pdf_font_fallback",
+      "severity": "info",
+      "message": "PDF 文本使用回退字体渲染（未找到首选 CJK 字体）"
+    },
+    {
       "code": "pdf_text_rasterized_cjk",
       "severity": "info",
       "message": "PDF 含中文文本，以位图形式嵌入（未内嵌 CJK 字体）"
+    },
+    {
+      "code": "raster_layer_unavailable_vector_pdf",
+      "severity": "warning",
+      "message": "栅格/瓦片图层无法以矢量形式进入 PDF，已在导出件中省略（layer: {detail}）"
     },
     {
       "code": "small_multiple_panel_skipped",
@@ -1496,6 +1521,11 @@
       "code": "terrain_3d_scale_caveat",
       "severity": "info",
       "message": "3D 地形/倾斜视角下比例尺按平面口径计算，可能与视觉距离不符"
+    },
+    {
+      "code": "vector_pdf_unavailable",
+      "severity": "warning",
+      "message": "服务端矢量 PDF 引擎不可用，已回退栅格导出"
     },
     {
       "code": "vector_svg_fallback_raster",

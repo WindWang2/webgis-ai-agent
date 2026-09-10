@@ -324,7 +324,8 @@ describe('drawChromeLegend — 分级图例', () => {
       { marginX: 40 },
     );
     const texts = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
-    expect(texts.some((t) => t.includes('0.0 – 10.0'))).toBe(true);
+    // W5 收敛：区间标签统一 formatLegendValue（zh-CN 感知）—— 整数不再带 .0
+    expect(texts.some((t) => t.includes('0 – 10'))).toBe(true);
   });
 });
 

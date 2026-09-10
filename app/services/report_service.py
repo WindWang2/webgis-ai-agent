@@ -416,8 +416,14 @@ class ReportService:
     ) -> Any:
         """在可被取消的任务里跑同步编译：``asyncio.wait_for`` 到点即返回，
         不再让 WeasyPrint 报告链路被无界编译阻塞（W4）。"""
+        # V6（ADR-0120 W7）：报告图面升级为 publication 链 —— 携带
+        # canonical scene 整饰（标题/图例/指北针/比例尺/图框），元数据
+        # publication_chrome 标志披露（行为 delta 见 CHANGELOG）。
         return await asyncio.wait_for(
-            asyncio.to_thread(compile_mapspec_to_svg_detailed, mapspec, 300),
+            asyncio.to_thread(
+                compile_mapspec_to_svg_detailed, mapspec, 300,
+                include_chrome=True,
+            ),
             timeout=timeout_s,
         )
 
@@ -548,7 +554,20 @@ class ReportService:
             raise ImportError(
                 "WeasyPrint is not installed. Install with: pip install weasyprint"
             )
-        weasyprint.HTML(string=html_content).write_pdf(output_path)
+        # V6 R1-M6：write_pdf 进程级互斥（官方无线程安全承诺）——
+        # 与 publication 矢量 PDF 端点共用同一串行槽位。
+        from app.services.publication_export import PublicationBusyError, render_pdf_exclusive
+
+        try:
+            render_pdf_exclusive(
+                lambda: weasyprint.HTML(string=html_content).write_pdf(output_path)
+            )
+        except PublicationBusyError:
+            # 报告链是排队型业务：忙时阻塞等待而非拒绝（与导出端点 429 语义区分）
+            from app.services.publication_export import _WEASYPRINT_LOCK
+
+            with _WEASYPRINT_LOCK:
+                weasyprint.HTML(string=html_content).write_pdf(output_path)
 
     # ------------------------------------------------------------------
     # Helpers

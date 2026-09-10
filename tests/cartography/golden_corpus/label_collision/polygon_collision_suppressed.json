@@ -1,0 +1,59 @@
+{
+  "name": "polygon_collision_suppressed",
+  "viewport": [
+    0,
+    0,
+    300,
+    300
+  ],
+  "labels": [
+    {
+      "id": "G1",
+      "text": "区域甲",
+      "kind": "polygon",
+      "x": 150,
+      "y": 150,
+      "angle": 0,
+      "font_size": 14,
+      "priority": 0
+    },
+    {
+      "id": "G2",
+      "text": "区域乙",
+      "kind": "polygon",
+      "x": 152,
+      "y": 150,
+      "angle": 0,
+      "font_size": 14,
+      "priority": 1
+    }
+  ],
+  "maxLabels": 400,
+  "expected": {
+    "placements": [
+      {
+        "id": "G1",
+        "x": 150,
+        "y": 150,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      },
+      {
+        "id": "G2",
+        "x": 152,
+        "y": 150,
+        "angle": 0.0,
+        "status": "suppressed",
+        "reason": "collision"
+      }
+    ],
+    "stats": {
+      "total": 2,
+      "placed": 1,
+      "suppressed": 1,
+      "collisions": 1
+    },
+    "budgetExceeded": false
+  }
+}

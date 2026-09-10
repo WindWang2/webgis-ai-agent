@@ -1,0 +1,22 @@
+{
+  "name": "degenerate_inputs",
+  "spec": {
+    "version": "1.0",
+    "layers": [
+      { "type": "fill" },
+      { "id": 42, "source": "s", "type": "fill" },
+      "not-an-object",
+      null
+    ],
+    "layout": { "components": [null, { "type": 7 }, { "id": "ok", "type": "attribution", "options": "not-a-dict" }] }
+  },
+  "degradations": [],
+  "expected": {
+    "layers": [],
+    "components": [
+      { "id": "ok", "type": "attribution", "position": "bottom-left", "variant": "", "enabled": true, "collapsed": false }
+    ],
+    "legends": [],
+    "degradationCodes": []
+  }
+}

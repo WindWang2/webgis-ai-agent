@@ -1,0 +1,59 @@
+{
+  "name": "point_declutter_displacement",
+  "viewport": [
+    0,
+    0,
+    200,
+    200
+  ],
+  "labels": [
+    {
+      "id": "A",
+      "text": "A",
+      "kind": "point",
+      "x": 100,
+      "y": 100,
+      "angle": 0,
+      "font_size": 10,
+      "priority": 0
+    },
+    {
+      "id": "B",
+      "text": "B",
+      "kind": "point",
+      "x": 100,
+      "y": 100,
+      "angle": 0,
+      "font_size": 10,
+      "priority": 1
+    }
+  ],
+  "maxLabels": 400,
+  "expected": {
+    "placements": [
+      {
+        "id": "A",
+        "x": 107.5,
+        "y": 107.5,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      },
+      {
+        "id": "B",
+        "x": 107.5,
+        "y": 92.5,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      }
+    ],
+    "stats": {
+      "total": 2,
+      "placed": 2,
+      "suppressed": 0,
+      "collisions": 0
+    },
+    "budgetExceeded": false
+  }
+}

@@ -29,6 +29,7 @@ import { hydrateMvtLayers } from '@/lib/store/layer-data';
 import { getComparisonExport } from '@/lib/map/comparison-export-registry';
 import { metersPerPixelAt } from './meters-per-pixel';
 import type { ExportFrame, FrameLayout } from './frame-composer';
+import { specFramesToExportFrames } from './spec-frames';
 export type { ExportFrame, ExportFrameWhere, FrameLayout } from './frame-composer';
 import {
   graticuleIntervalForZoom,
@@ -1530,13 +1531,23 @@ export async function runExport(
   // 提交进 MapSpec 后，未显式传参的导出请求应采用它（此前组件是死配置，
   // 一律落到 screen/96 默认）。
   let layoutOpts: Record<string, unknown> = {};
+  // V6（W9）：spec 级 frames 适配 —— 请求未显式给 frames 时，committed spec
+  // 的 layout.frames（spec 级 atlas）经 spec-frames 适配层参与导出。
+  let specLevelFrames: ExportFrame[] = [];
   try {
     const { getCommittedMapSpec } = await import('@/lib/mapspec/session-cursor');
-    const layoutComps = getCommittedMapSpec()?.layout?.components ?? [];
+    const committed = getCommittedMapSpec();
+    const layoutComps = committed?.layout?.components ?? [];
     const exportLayoutComp = layoutComps.find(
       (c) => c.type === 'export_layout' && c.enabled !== false,
     );
     layoutOpts = (exportLayoutComp?.options ?? {}) as Record<string, unknown>;
+    if (!Array.isArray(req.frames) || req.frames.length === 0) {
+      const adapted = specFramesToExportFrames(
+        (committed?.layout as { frames?: never[] } | undefined)?.frames,
+      );
+      specLevelFrames = adapted.frames;
+    }
   } catch {
     /* spec 面缺席 → 内置默认 */
   }
@@ -1685,8 +1696,10 @@ export async function runExport(
     // W9（ADR-0118）：多帧导出分支 —— frames 非空时走 frame-composer
     // （逐帧 filter/viewport 变换 + 有界 idle + 抓帧 + 恢复）；pixelRatio
     // 增益由上方统一设置、finally 统一恢复，帧抓取同享 dpi 增益。
-    if (Array.isArray(req.frames) && req.frames.length > 0) {
-      return await runFrameExport(deps, req, req.frames, {
+    const effectiveFrames =
+      Array.isArray(req.frames) && req.frames.length > 0 ? req.frames : specLevelFrames;
+    if (effectiveFrames.length > 0) {
+      return await runFrameExport(deps, req, effectiveFrames, {
         title: effTitle,
         subtitle: effSubtitle,
         author,

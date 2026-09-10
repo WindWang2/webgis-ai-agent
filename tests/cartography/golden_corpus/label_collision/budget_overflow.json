@@ -1,0 +1,113 @@
+{
+  "name": "budget_overflow",
+  "viewport": [
+    0,
+    0,
+    1000,
+    1000
+  ],
+  "labels": [
+    {
+      "id": "B0",
+      "text": "t",
+      "kind": "point",
+      "x": 100,
+      "y": 100,
+      "angle": 0,
+      "font_size": 10,
+      "priority": 0
+    },
+    {
+      "id": "B1",
+      "text": "t",
+      "kind": "point",
+      "x": 130,
+      "y": 100,
+      "angle": 0,
+      "font_size": 10,
+      "priority": 0
+    },
+    {
+      "id": "B2",
+      "text": "t",
+      "kind": "point",
+      "x": 160,
+      "y": 100,
+      "angle": 0,
+      "font_size": 10,
+      "priority": 0
+    },
+    {
+      "id": "B3",
+      "text": "t",
+      "kind": "point",
+      "x": 190,
+      "y": 100,
+      "angle": 0,
+      "font_size": 10,
+      "priority": 0
+    },
+    {
+      "id": "B4",
+      "text": "t",
+      "kind": "point",
+      "x": 220,
+      "y": 100,
+      "angle": 0,
+      "font_size": 10,
+      "priority": 0
+    }
+  ],
+  "maxLabels": 3,
+  "expected": {
+    "placements": [
+      {
+        "id": "B3",
+        "x": 190,
+        "y": 100,
+        "angle": 0.0,
+        "status": "suppressed",
+        "reason": "budget"
+      },
+      {
+        "id": "B4",
+        "x": 220,
+        "y": 100,
+        "angle": 0.0,
+        "status": "suppressed",
+        "reason": "budget"
+      },
+      {
+        "id": "B0",
+        "x": 107.5,
+        "y": 107.5,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      },
+      {
+        "id": "B1",
+        "x": 137.5,
+        "y": 107.5,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      },
+      {
+        "id": "B2",
+        "x": 167.5,
+        "y": 107.5,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      }
+    ],
+    "stats": {
+      "total": 5,
+      "placed": 3,
+      "suppressed": 2,
+      "collisions": 0
+    },
+    "budgetExceeded": true
+  }
+}

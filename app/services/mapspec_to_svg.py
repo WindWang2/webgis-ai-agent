@@ -24,6 +24,51 @@ from app.lib.cartography.label_engine import (
 from app.lib.cartography.label_engine import (
     fit_label_text as _fit_label_text,
 )
+from app.lib.cartography.label_collision import (
+    MAX_LABELS_PER_EXPORT as _MAX_LABELS_PER_EXPORT,
+)
+from app.lib.cartography.label_collision import (
+    CollisionLabel as _CollisionLabel,
+)
+from app.lib.cartography.label_collision import (
+    estimate_label_box as _estimate_collision_box,
+)
+from app.lib.cartography.label_collision import (
+    solve_export_labels as _solve_export_labels,
+)
+from app.lib.cartography.render_scene import (
+    derive_legend_items as _derive_legend_items,
+)
+from app.lib.cartography.render_scene import (
+    resolve_components as _resolve_components,
+)
+from app.lib.cartography.svg_marginalia import (
+    CHROME_MARGIN as _CHROME_MARGIN,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_attribution as _render_attribution,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_frame_border as _render_frame_border,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_graticule as _render_graticule,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_inset_locator as _render_inset_locator,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_legend_box as _render_legend_box,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_north_arrow as _render_north_arrow,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_scale_bar as _render_scale_bar,
+)
+from app.lib.cartography.svg_marginalia import (
+    render_title_block as _render_title_block,
+)
 from app.lib.cartography.render_diagnostics import (
     MAX_DIAGNOSTICS_PER_EXPORT as _MAX_DIAGNOSTICS_PER_EXPORT,
 )
@@ -377,6 +422,110 @@ def _source_geojson(src: Dict[str, Any]) -> Any:
     return src.get("data")
 
 
+def _render_chrome_groups(
+    mapspec: Dict[str, Any],
+    geo_bounds: List[float],
+    canvas_w: float,
+    canvas_h: float,
+    project: Any,
+) -> str:
+    """W7：canonical scene 组件 → publication 整饰 SVG 组（include_chrome）。
+
+    版面 = academic print 布局：title/subtitle 顶部（top-center 居中），
+    north_arrow 右上、scale_bar 右下、legend 左下（图例单源条目）、
+    attribution 左下角、map_border 全幅框、graticule 数据区经纬网、
+    inset_map = locator（上下文 = geo_bounds 4 倍外扩）。
+    组件 disabled / 缺席 → 对应整饰不画（user-wins，无 HUD 兜底 fabricated）。
+    """
+    resolved = _resolve_components(mapspec)
+    enabled = [c for c in resolved if c.enabled]
+    parts: List[str] = []
+    m = _CHROME_MARGIN
+
+    def _first_of_type(t: str):
+        return next((c for c in enabled if c.type == t), None)
+
+    # 全幅帧框
+    border = _first_of_type("map_border")
+    if border is not None:
+        variant = border.variant or ""
+        parts.append(_render_frame_border(canvas_w, canvas_h, academic=variant != "minimal"))
+
+    # 经纬网（数据区）
+    grat = _first_of_type("graticule")
+    if grat is not None:
+        parts.append(_render_graticule(geo_bounds, project, lines=6))
+
+    # 标题 / 副标题（top-center 居中；文本来自组件 options.text）
+    title = _first_of_type("title")
+    subtitle = _first_of_type("subtitle")
+    if title is not None or subtitle is not None:
+        t_text = title.text if title else ""
+        s_text = subtitle.text if subtitle else ""
+        tx = canvas_w / 2.0
+        if t_text and s_text:
+            parts.append(
+                f'<g class="chrome-title" text-anchor="middle">'
+                f'<text x="{_fmt_num(tx)}" y="{_fmt_num(m + 18.0)}" font-family="sans-serif" font-size="22" font-weight="bold" fill="#0f172a">{_escape_svg_attr(t_text)}</text>'
+                f'<text x="{_fmt_num(tx)}" y="{_fmt_num(m + 38.0)}" font-family="sans-serif" font-size="12" fill="#0f172a" opacity="0.75">{_escape_svg_attr(s_text)}</text>'
+                f"</g>"
+            )
+        elif t_text or s_text:
+            parts.append(_render_title_block(canvas_w / 2.0 - 150.0, m, t_text or "", "" if t_text else s_text))
+
+    # 指北针（右上）
+    if _first_of_type("north_arrow") is not None:
+        parts.append(_render_north_arrow(canvas_w - m - 30.0, m + 30.0))
+
+    # 比例尺（右下，投影感知）
+    if _first_of_type("scale_bar") is not None:
+        parts.append(
+            _render_scale_bar(canvas_w - m - 150.0, canvas_h - m - 8.0, geo_bounds, canvas_w)
+        )
+
+    # 图例族（图例单源：derive_legend_items；绑定 layerId 优先，未绑定取首解）
+    legend_specs_by_layer = {}
+    for layer in mapspec.get("layers", []) or []:
+        if isinstance(layer, dict) and isinstance(layer.get("legend_spec"), dict):
+            legend_specs_by_layer[layer.get("id")] = layer["legend_spec"]
+    legend_components = [c for c in enabled if c.type in ("legend", "categorical_legend")]
+    drawn_unbound = False
+    for comp in legend_components:
+        spec_d = None
+        if comp.layer_id and comp.layer_id in legend_specs_by_layer:
+            spec_d = legend_specs_by_layer[comp.layer_id]
+        elif not comp.layer_id and not drawn_unbound and legend_specs_by_layer:
+            spec_d = next(iter(legend_specs_by_layer.values()))
+            drawn_unbound = True
+        if not isinstance(spec_d, dict):
+            continue
+        legend_model = _derive_legend_items(spec_d)
+        if legend_model is None:
+            continue
+        parts.append(_render_legend_box(m, canvas_h - m - (24.0 * min(len(legend_model["entries"]), 12) + 42.0), legend_model))
+
+    # 区位插图（locator）
+    inset = _first_of_type("inset_map")
+    if inset is not None:
+        try:
+            w0, s0, e0, n0 = (float(v) for v in geo_bounds)
+            lng_pad = max((e0 - w0) * 1.5, 0.5)
+            lat_pad = max((n0 - s0) * 1.5, 0.5)
+            context = [w0 - lng_pad, s0 - lat_pad, e0 + lng_pad, n0 + lat_pad]
+            parts.append(_render_inset_locator(canvas_w - m - 150.0, m + 60.0, (150.0, 110.0), context, geo_bounds))
+        except (ValueError, TypeError):
+            pass
+
+    # 署名（左下）
+    attr = _first_of_type("attribution")
+    if attr is not None and attr.text:
+        parts.append(_render_attribution(m + 4.0, canvas_h - m - 14.0, attr.text))
+
+    if not parts:
+        return ""
+    return '  <g class="mapspec-chrome">\n    ' + "\n    ".join(parts) + "\n  </g>\n"
+
+
 def compile_mapspec_to_svg(
     mapspec: Dict[str, Any],
     target_dpi: int = 300,
@@ -399,15 +548,40 @@ def compile_mapspec_to_svg_detailed(
     padding: int = 40,
     max_features: Any = None,
     timeout_ms: Any = None,
+    include_chrome: bool = False,
+    bounds: Any = None,
+    max_labels: Any = None,
 ) -> SvgCompilation:
     cap, timeout_ms_val = _resolve_export_thresholds(
         mapspec, max_features, timeout_ms)
+    # W6/MINOR-8：标签预算解析——显式入参 > spec labels.maxLabels > 默认；
+    # 均被 MAX_LABELS_PER_EXPORT 封顶（防 spec 放大预算）。
+    try:
+        _labels_budget = int(max_labels)
+    except (ValueError, TypeError):
+        _labels_budget = 0
+    _layout_for_labels = mapspec.get("layout") if isinstance(mapspec, dict) else None
+    if _labels_budget <= 0 and isinstance(_layout_for_labels, dict):
+        _lc = _layout_for_labels.get("labels")
+        if isinstance(_lc, dict):
+            try:
+                _labels_budget = int(_lc.get("maxLabels"))
+            except (ValueError, TypeError):
+                _labels_budget = 0
+    _labels_budget = min(_labels_budget if _labels_budget > 0 else _MAX_LABELS_PER_EXPORT, _MAX_LABELS_PER_EXPORT)
     timeout_s = timeout_ms_val / 1000.0
     start_mono = _time.monotonic()
     diagnostics: List[Dict[str, Any]] = []
     feature_count = 0
     truncated_features = False
     timed_out = False
+
+    # W6：确定性标签碰撞模式（spec.layout.labels.collision == "deterministic"，
+    # v1.1 additive）。缺省关闭 —— legacy 路径 byte-stable。
+    _layout_cfg = mapspec.get("layout") if isinstance(mapspec, dict) else None
+    _labels_cfg = _layout_cfg.get("labels") if isinstance(_layout_cfg, dict) else None
+    collision_mode = isinstance(_labels_cfg, dict) and _labels_cfg.get("collision") == "deterministic"
+    label_requests: List[Dict[str, Any]] = []
 
     def _emit_diag(code: str, detail: str = "", layer_id: Any = None) -> None:
         """按权威词表发射诊断（封顶防 DoS；未知码由工厂拒绝为 None）。"""
@@ -511,6 +685,18 @@ def compile_mapspec_to_svg_detailed(
         ):
             min_x, max_x = -180.0, 180.0
             min_y, max_y = -80.0, 80.0
+
+        # W9：显式 bounds（frame extent/view 覆写；publication 帧几何）。
+        # additive —— 缺省 None 保持自动范围语义不变。
+        if isinstance(bounds, (list, tuple)) and len(bounds) == 4:
+            try:
+                _b = [float(v) for v in bounds]
+                if all(_math.isfinite(v) for v in _b) and _b[2] > _b[0] and _b[3] > _b[1]:
+                    min_x, min_y, max_x, max_y = _b[0], _b[1], _b[2], _b[3]
+            except (ValueError, TypeError):
+                pass
+
+        geo_bounds = [min_x, min_y, max_x, max_y]
 
         range_x = (max_x - min_x) if (_math.isfinite(max_x - min_x) and (max_x - min_x) > 0) else 1.0
         range_y = (max_y - min_y) if (_math.isfinite(max_y - min_y) and (max_y - min_y) > 0) else 1.0
@@ -898,11 +1084,61 @@ def compile_mapspec_to_svg_detailed(
                             text_escaped = _escape_svg_attr(fitted_text)
 
                             base_halo_w = _safe_float(_resolve_paint_value(paint.get("text-halo-width") or layout.get("text-halo-width") or paint.get("haloWidth") or layout.get("haloWidth") or paint.get("textHaloWidth"), props, 0.0), 0.0)
+                            halo_w = None
+                            halo_color = None
+                            halo_opacity = None
                             if base_halo_w > 0:
                                 halo_w = _fmt_num(base_halo_w * dpi_scale * 2.0)
                                 halo_color = _escape_svg_attr(_resolve_paint_value(paint.get("text-halo-color") or layout.get("text-halo-color") or paint.get("haloColor") or layout.get("haloColor") or paint.get("textHaloColor"), props, "#ffffff"))
                                 halo_opacity_val = _resolve_paint_value(paint.get("text-halo-opacity") or layout.get("text-halo-opacity") or paint.get("haloOpacity") or layout.get("haloOpacity"), props, 1.0)
                                 halo_opacity = _escape_svg_attr(_fmt_num(_safe_float(halo_opacity_val, 1.0)))
+
+                            if collision_mode:
+                                # W6：确定性碰撞模式 —— 不内联发射，收集
+                                # 请求供全图求解（标签组置顶，制图惯例）。
+                                # feature_count 按收集计数（求解抑制的要素
+                                # 在诊断 label_collision_relaxed 中披露）。
+                                _gtype_c = geom.get("type")
+                                _coords_c = geom.get("coordinates")
+                                _lkind = "point"
+                                _lang = 0.0
+                                if (
+                                    _gtype_c == "LineString"
+                                    and isinstance(_coords_c, list)
+                                    and len(_coords_c) >= 2
+                                ):
+                                    _lkind = "line"
+                                    _mi = len(_coords_c) // 2
+                                    _pa = project(_coords_c[_mi - 1] if _mi >= 1 else _coords_c[0])
+                                    _pb = project(_coords_c[_mi] if _mi >= 1 else _coords_c[1])
+                                    # project() 返回 fmt_num 字符串 —— 角度计算前转 float
+                                    _lang = _math.degrees(_math.atan2(
+                                        float(_pb[1]) - float(_pa[1]),
+                                        float(_pb[0]) - float(_pa[0]),
+                                    ))
+                                elif _gtype_c in ("Polygon", "MultiPolygon"):
+                                    _lkind = "polygon"
+                                label_requests.append({
+                                    "id": f"lbl{len(label_requests)}-{_lid}-{_fmt_num(coord[0])}-{_fmt_num(coord[1])}",
+                                    "text": fitted_text,
+                                    "kind": _lkind,
+                                    "x": float(x),
+                                    "y": float(y),
+                                    "angle": _lang,
+                                    "font_px": base_size * dpi_scale,
+                                    "font_size_attr": font_size,
+                                    "color": color,
+                                    "opacity": opacity,
+                                    "font_family": font_family,
+                                    "halo_w": halo_w,
+                                    "halo_color": halo_color,
+                                    "halo_opacity": halo_opacity,
+                                    "layer_id": _lid,
+                                })
+                                feature_count += 1
+                                continue
+
+                            if halo_w is not None:
                                 elements_svg += f'<text x="{x}" y="{y}" font-size="{font_size}" font-family="{font_family}" fill="none" stroke="{halo_color}" stroke-width="{halo_w}" stroke-opacity="{halo_opacity}" stroke-linejoin="round" stroke-linecap="round" text-anchor="{svg_text_anchor}" dominant-baseline="{svg_dominant_baseline}">{text_escaped}</text>\n'
 
                             elements_svg += f'<text x="{x}" y="{y}" font-size="{font_size}" font-family="{font_family}" fill="{color}" fill-opacity="{opacity}" text-anchor="{svg_text_anchor}" dominant-baseline="{svg_dominant_baseline}">{text_escaped}</text>\n'
@@ -918,13 +1154,97 @@ def compile_mapspec_to_svg_detailed(
         viewbox_w = _fmt_num(scaled_width)
         viewbox_h = _fmt_num(scaled_height)
 
+        labels_group = ""
+        if collision_mode and label_requests:
+            solution = _solve_export_labels(
+                [
+                    _CollisionLabel(
+                        id=r["id"], text=r["text"], kind=r["kind"],
+                        x=r["x"], y=r["y"], angle=r["angle"],
+                        font_size=r["font_px"], priority=i,
+                    )
+                    for i, r in enumerate(label_requests)
+                ],
+                [0.0, 0.0, float(scaled_width), float(scaled_height)],
+                max_labels=_labels_budget,
+            )
+            by_id = {r["id"]: r for r in label_requests}
+            parts: List[str] = []
+            for p in solution.placements:
+                if p.status != "placed":
+                    continue
+                r = by_id[p.id]
+                _fs = r["font_px"]
+                if r["kind"] == "point":
+                    # 渲染映射：求解盒左下角 → 基线 y（上升部补偿），文本
+                    # 起排 —— 盒与可见字形对齐；TS 侧同式（差分 fixtures 锁定）。
+                    _h = _estimate_collision_box(r["text"], _fs)[1]
+                    _tx, _ty = p.x, p.y + _h - 0.25 * _fs
+                    _anchor, _baseline, _transform = "start", "auto", ""
+                else:
+                    _tx, _ty = p.x, p.y
+                    _anchor, _baseline = "middle", "central"
+                    _transform = (
+                        f' transform="rotate({_fmt_num(p.angle)} {_fmt_num(p.x)} {_fmt_num(p.y)})"'
+                        if p.angle != 0.0 else ""
+                    )
+                _halo_main = ""
+                if r["halo_w"] is not None:
+                    _halo_main = (
+                        f'<text x="{_fmt_num(_tx)}" y="{_fmt_num(_ty)}" font-size="{r["font_size_attr"]}" '
+                        f'font-family="{r["font_family"]}" fill="none" stroke="{r["halo_color"]}" '
+                        f'stroke-width="{r["halo_w"]}" stroke-opacity="{r["halo_opacity"]}" '
+                        f'stroke-linejoin="round" stroke-linecap="round" '
+                        f'text-anchor="{_anchor}" dominant-baseline="{_baseline}"{_transform}>'
+                        f'{_escape_svg_attr(r["text"])}</text>\n'
+                    )
+                parts.append(
+                    _halo_main
+                    + f'<text x="{_fmt_num(_tx)}" y="{_fmt_num(_ty)}" font-size="{r["font_size_attr"]}" '
+                    f'font-family="{r["font_family"]}" fill="{r["color"]}" fill-opacity="{r["opacity"]}" '
+                    f'text-anchor="{_anchor}" dominant-baseline="{_baseline}"{_transform}>'
+                    f'{_escape_svg_attr(r["text"])}</text>'
+                )
+            _sup_n = solution.suppressed_count
+            if _sup_n:
+                _emit_diag(
+                    "label_collision_relaxed",
+                    detail=f"placed={solution.stats['placed']} suppressed={_sup_n}",
+                )
+            if solution.budget_exceeded:
+                _emit_diag("label_budget_exceeded", detail=str(_MAX_LABELS_PER_EXPORT))
+            if parts:
+                labels_group = (
+                    '  <g class="mapspec-labels">\n    '
+                    + "\n    ".join(parts)
+                    + "\n  </g>\n"
+                )
+
+        chrome_group = ""
+        a11y_role_attr = ""
+        a11y_title_elems = ""
+        if include_chrome:
+            chrome_group = _render_chrome_groups(mapspec, geo_bounds, scaled_width, scaled_height, project)
+            # W11 可访问性：publication 产物 role="img" + <title>/<desc>。
+            # legacy 路径不注入（byte-stable）。
+            _title_text = ""
+            for _c in _resolve_components(mapspec):
+                if _c.type == "title" and _c.enabled and _c.text:
+                    _title_text = _c.text
+                    break
+            a11y_role_attr = ' role="img"'
+            _t = _escape_svg_attr(_title_text or "WebGIS 专题地图导出")
+            a11y_title_elems = (
+                f"<title>{_t}</title><desc>WebGIS AI Agent 专题地图导出（矢量）</desc>"
+            )
+
         return SvgCompilation(
-            svg=f"""<svg width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">
+            svg=f"""<svg{a11y_role_attr} width="{width_val}" height="{height_val}" viewBox="0 0 {viewbox_w} {viewbox_h}" xmlns="http://www.w3.org/2000/svg">{a11y_title_elems}
   <rect width="100%" height="100%" fill="#ffffff" />
   <g class="mapspec-vector-layers">
     {elements_svg}
   </g>
-</svg>""",
+{labels_group}{chrome_group}</svg>""",
             diagnostics=diagnostics,
             feature_count=feature_count,
             truncated_features=truncated_features,

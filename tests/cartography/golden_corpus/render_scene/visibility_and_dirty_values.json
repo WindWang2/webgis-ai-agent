@@ -1,0 +1,39 @@
+{
+  "name": "visibility_and_dirty_values",
+  "spec": {
+    "version": "1.0",
+    "sources": { "s": { "type": "geojson", "inlineData": { "features": [] } } },
+    "layers": [
+      { "id": "a_none", "source": "s", "type": "fill", "layout": { "visibility": "none" } },
+      { "id": "b_visible_false", "source": "s", "type": "fill", "visible": false },
+      { "id": "c_dirty_false", "source": "s", "type": "fill", "visible": "false" },
+      { "id": "d_default", "source": "s", "type": "fill" },
+      {
+        "id": "e_labeled",
+        "source": "s",
+        "type": "circle",
+        "label": { "field": "name" },
+        "layout": { "labelField": "ignored_when_label_present" }
+      },
+      { "id": "f_layout_label", "source": "s", "type": "circle", "layout": { "labelField": "code" } }
+    ]
+  },
+  "degradations": [
+    { "code": "features_truncated" },
+    { "code": "label_truncated" },
+    { "code": "features_truncated" }
+  ],
+  "expected": {
+    "layers": [
+      { "id": "a_none", "visible": false, "hasLegendSpec": false, "hasLabel": false },
+      { "id": "b_visible_false", "visible": false, "hasLegendSpec": false, "hasLabel": false },
+      { "id": "c_dirty_false", "visible": true, "hasLegendSpec": false, "hasLabel": false },
+      { "id": "d_default", "visible": true, "hasLegendSpec": false, "hasLabel": false },
+      { "id": "e_labeled", "visible": true, "hasLegendSpec": false, "hasLabel": true },
+      { "id": "f_layout_label", "visible": true, "hasLegendSpec": false, "hasLabel": true }
+    ],
+    "components": [],
+    "legends": [],
+    "degradationCodes": ["features_truncated", "label_truncated"]
+  }
+}

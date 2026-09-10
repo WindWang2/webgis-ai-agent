@@ -135,6 +135,33 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "terrain_3d_scale_caveat", "info",
             "3D 地形/倾斜视角下比例尺按平面口径计算，可能与视觉距离不符",
         ),
+        # —— V6（ADR-0120）多帧聚合元披露 ——
+        RenderDiagnosticSpec(
+            "diagnostics_truncated", "warning",
+            "诊断条目超出导出预算，超出部分未进入产物披露（上限 {detail} 条）",
+        ),
+        # —— V6（ADR-0120 W6）确定性标签碰撞 ——
+        RenderDiagnosticSpec(
+            "label_collision_relaxed", "info",
+            "标签碰撞求解：部分标签位移或省略（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "label_budget_exceeded", "warning",
+            "标签数量超出导出预算（{detail}），超出部分未渲染",
+        ),
+        # —— V6（ADR-0120 W8）矢量 PDF publication ——
+        RenderDiagnosticSpec(
+            "raster_layer_unavailable_vector_pdf", "warning",
+            "栅格/瓦片图层无法以矢量形式进入 PDF，已在导出件中省略（layer: {detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "pdf_font_fallback", "info",
+            "PDF 文本使用回退字体渲染（未找到首选 CJK 字体）",
+        ),
+        RenderDiagnosticSpec(
+            "vector_pdf_unavailable", "warning",
+            "服务端矢量 PDF 引擎不可用，已回退栅格导出",
+        ),
     )
 }
 
@@ -197,6 +224,155 @@ def catalog_section() -> List[Dict[str, str]]:
             RENDER_DIAGNOSTICS[k] for k in sorted(RENDER_DIAGNOSTICS)
         )
     ]
+
+
+#: V6（ADR-0120 W1）死码门：code → 真实发射点清单。
+#: 后端条目为可导入模块路径（测试断言该模块源码含此码）；前端条目以
+#: ``frontend/`` 前缀标记（测试断言文件存在且源码含此码）。
+#: 新增诊断码必须同时登记 ≥1 个真实发射点，否则契约测试红灯
+#: （ADR-0118 D1 死码禁止的自动化收口，取代仅注释级约束）。
+EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
+    "chart_ref_unavailable": ("frontend/lib/map-kit/export-chrome.ts",),
+    "table_ref_unavailable": ("frontend/lib/map-kit/export-chrome.ts",),
+    "chart_kind_unsupported_export": ("frontend/lib/map-kit/export-chrome.ts",),
+    "component_skipped_invalid": ("frontend/lib/map-kit/export-chrome.ts",),
+    "label_truncated": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/map-kit/export-chrome.ts",
+        "frontend/lib/map-kit/vector-svg-export.ts",
+    ),
+    "legend_entries_truncated": ("frontend/lib/map-kit/export-chrome.ts",),
+    "features_truncated": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "export_timeout_partial": (
+        "app.services.mapspec_to_svg",
+        "app.services.report_service",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "vector_svg_fallback_raster": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+        "frontend/lib/map-kit/vector-svg-export.ts",
+    ),
+    "basemap_omitted_vector_svg": (
+        "frontend/lib/map-kit/export-chrome.ts",
+        "frontend/lib/map-kit/vector-svg-export.ts",
+    ),
+    "pdf_text_rasterized_cjk": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "comparison_second_view_not_exported": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "comparison_export_composed": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "cartogram_unsupported": (
+        "frontend/lib/map-kit/frame-composer.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "small_multiple_panel_skipped": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/frame-composer.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "atlas_page_skipped": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/frame-composer.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "atlas_page_limit_truncated": (
+        "frontend/lib/map-kit/frame-composer.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "terrain_3d_scale_caveat": (
+        "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    # diagnostics_truncated 的发射器是本模块 DiagnosticSink（publication
+    # 多帧聚合路径的真实消费方，见 render_publication_pdf / vector-pdf 链）。
+    "diagnostics_truncated": ("app.lib.cartography.render_diagnostics",),
+    "label_collision_relaxed": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
+    "label_budget_exceeded": (
+        "app.services.mapspec_to_svg",
+        "frontend/lib/mapspec-compiler/mapspec-to-svg.ts",
+    ),
+    "raster_layer_unavailable_vector_pdf": ("app.services.publication_export",),
+    "pdf_font_fallback": ("app.services.publication_export",),
+    # vector_pdf_unavailable 的发射器是导出路由（503 结构化错误回退提示）
+    "vector_pdf_unavailable": ("app.api.routes.map",),
+}
+
+
+#: 多帧聚合时单帧诊断子上限（publication 路径逐帧编译的披露预算）。
+#: 设计约束（R1-M3）：全局 64 条封顶下，50 帧的高频逐帧披露可能把失败类
+#: 诊断挤出预算 —— 聚合器因此按帧划分子配额并在溢出时显式发
+#: diagnostics_truncated 元披露，而不是静默丢弃。
+MAX_DIAGNOSTICS_PER_FRAME = 8
+
+
+class DiagnosticSink:
+    """多帧/多阶段导出的诊断聚合器（全局封顶 + 溢出显式披露）。
+
+    - ``add``：超全局封顶后停止接收，置 ``truncated`` 并（首次溢出时）
+      追加一条 ``diagnostics_truncated`` 元诊断；不静默吞。
+    - ``extend_frame``：单帧子配额入口（``MAX_DIAGNOSTICS_PER_FRAME``），
+      帧级溢出同样计入 truncation 披露（publication render_publication_pdf
+      逐帧消费 —— R1-M3 接线）。
+    """
+
+    def __init__(self, max_total: int = MAX_DIAGNOSTICS_PER_EXPORT) -> None:
+        self._items: List[RenderDiagnostic] = []
+        self._max_total = max_total
+        self.truncated: bool = False
+
+    def add(self, item: Optional[RenderDiagnostic]) -> bool:
+        """接收一条诊断；返回是否被接收（None/超限返回 False）。"""
+        if item is None:
+            return False
+        if len(self._items) >= self._max_total:
+            self._mark_truncated()
+            return False
+        self._items.append(item)
+        return True
+
+    def extend_frame(self, frame_items: List[RenderDiagnostic]) -> int:
+        """接收单帧诊断清单（受帧级子配额约束），返回实际接收条数。"""
+        accepted = 0
+        for item in frame_items[:MAX_DIAGNOSTICS_PER_FRAME]:
+            if not self.add(item):
+                break
+            accepted += 1
+        if len(frame_items) > MAX_DIAGNOSTICS_PER_FRAME:
+            self._mark_truncated()
+        return accepted
+
+    def _mark_truncated(self) -> None:
+        if self.truncated:
+            return
+        self.truncated = True
+        meta = diagnostic(
+            "diagnostics_truncated",
+            detail=str(MAX_DIAGNOSTICS_PER_EXPORT),
+        )
+        # 元披露不受全局封顶约束（cap+1）：溢出本身必须可观测，
+        # 否则静默丢弃恰好吞掉最关键的失败披露（R1-M3）。
+        if meta is not None:
+            self._items.append(meta)
+
+    def items(self) -> List[RenderDiagnostic]:
+        return list(self._items)
+
+    def to_payload(self) -> List[Dict[str, Any]]:
+        return [item.to_dict() for item in self._items]
 
 
 def normalize_render_diagnostics(

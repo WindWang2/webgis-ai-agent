@@ -1,0 +1,42 @@
+{
+  "name": "component_resolution",
+  "spec": {
+    "version": "1.1",
+    "layers": [],
+    "layout": {
+      "components": [
+        {
+          "id": "flt_note",
+          "type": "annotation",
+          "placement": { "mode": "floating", "x": 30, "y": 40, "width": 120, "zIndex": 55, "collapsed": true },
+          "options": { "text": "注记内容" }
+        },
+        {
+          "id": "anch_inset",
+          "type": "inset_map",
+          "placement": { "mode": "anchor", "anchor": "bottom-right" },
+          "position": "top-left",
+          "variant": "locator"
+        },
+        { "id": "pos_grat", "type": "graticule", "position": "top-left", "enabled": false },
+        { "id": "z_legacy_border", "type": "map_border" },
+        { "id": "a_title", "type": "title", "options": { "variant": "banner", "text": "主标题" } },
+        { "id": "t_disabled_legend", "type": "legend", "enabled": false }
+      ]
+    }
+  },
+  "degradations": [],
+  "expected": {
+    "layers": [],
+    "components": [
+      { "id": "a_title", "type": "title", "position": "top-center", "variant": "banner", "enabled": true, "collapsed": false },
+      { "id": "anch_inset", "type": "inset_map", "position": "bottom-right", "variant": "locator", "enabled": true, "collapsed": false },
+      { "id": "flt_note", "type": "annotation", "position": "top-left", "variant": "", "enabled": true, "collapsed": true },
+      { "id": "pos_grat", "type": "graticule", "position": "top-left", "variant": "", "enabled": false, "collapsed": false },
+      { "id": "t_disabled_legend", "type": "legend", "position": "bottom-left", "variant": "", "enabled": false, "collapsed": false },
+      { "id": "z_legacy_border", "type": "map_border", "position": "none", "variant": "", "enabled": true, "collapsed": false }
+    ],
+    "legends": [],
+    "degradationCodes": []
+  }
+}

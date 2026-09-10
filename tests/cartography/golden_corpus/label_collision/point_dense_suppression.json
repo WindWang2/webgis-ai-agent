@@ -1,0 +1,113 @@
+{
+  "name": "point_dense_suppression",
+  "viewport": [
+    0,
+    0,
+    60,
+    60
+  ],
+  "labels": [
+    {
+      "id": "P0",
+      "text": "城市",
+      "kind": "point",
+      "x": 30,
+      "y": 30,
+      "angle": 0,
+      "font_size": 12,
+      "priority": 0
+    },
+    {
+      "id": "P1",
+      "text": "城市",
+      "kind": "point",
+      "x": 30,
+      "y": 30,
+      "angle": 0,
+      "font_size": 12,
+      "priority": 1
+    },
+    {
+      "id": "P2",
+      "text": "城市",
+      "kind": "point",
+      "x": 30,
+      "y": 30,
+      "angle": 0,
+      "font_size": 12,
+      "priority": 2
+    },
+    {
+      "id": "P3",
+      "text": "城市",
+      "kind": "point",
+      "x": 30,
+      "y": 30,
+      "angle": 0,
+      "font_size": 12,
+      "priority": 3
+    },
+    {
+      "id": "P4",
+      "text": "城市",
+      "kind": "point",
+      "x": 30,
+      "y": 30,
+      "angle": 0,
+      "font_size": 12,
+      "priority": 4
+    }
+  ],
+  "maxLabels": 400,
+  "expected": {
+    "placements": [
+      {
+        "id": "P0",
+        "x": 30.0,
+        "y": 21.0,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      },
+      {
+        "id": "P1",
+        "x": 21.0,
+        "y": 39.0,
+        "angle": 0.0,
+        "status": "placed",
+        "reason": ""
+      },
+      {
+        "id": "P2",
+        "x": 30,
+        "y": 30,
+        "angle": 0.0,
+        "status": "suppressed",
+        "reason": "collision"
+      },
+      {
+        "id": "P3",
+        "x": 30,
+        "y": 30,
+        "angle": 0.0,
+        "status": "suppressed",
+        "reason": "collision"
+      },
+      {
+        "id": "P4",
+        "x": 30,
+        "y": 30,
+        "angle": 0.0,
+        "status": "suppressed",
+        "reason": "collision"
+      }
+    ],
+    "stats": {
+      "total": 5,
+      "placed": 2,
+      "suppressed": 3,
+      "collisions": 3
+    },
+    "budgetExceeded": false
+  }
+}

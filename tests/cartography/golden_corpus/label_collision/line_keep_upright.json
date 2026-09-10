@@ -1,0 +1,41 @@
+{
+  "name": "line_keep_upright",
+  "viewport": [
+    0,
+    0,
+    400,
+    400
+  ],
+  "labels": [
+    {
+      "id": "R1",
+      "text": "长江路",
+      "kind": "line",
+      "x": 200,
+      "y": 200,
+      "angle": 135,
+      "font_size": 14,
+      "priority": 0
+    }
+  ],
+  "maxLabels": 400,
+  "expected": {
+    "placements": [
+      {
+        "id": "R1",
+        "x": 200,
+        "y": 200,
+        "angle": 315.0,
+        "status": "placed",
+        "reason": ""
+      }
+    ],
+    "stats": {
+      "total": 1,
+      "placed": 1,
+      "suppressed": 0,
+      "collisions": 0
+    },
+    "budgetExceeded": false
+  }
+}
