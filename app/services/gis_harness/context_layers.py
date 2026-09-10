@@ -393,6 +393,11 @@ async def checkpoint_context_layers(session_id: str) -> Optional[Dict[str, Any]]
             runtime_state=runtime_state,
             stored=stored if isinstance(stored, dict) else None,
         )
+        # 评审 F7：内容指纹不变 → 不写（revision 沦为写计数器会稀释
+        # 锚点摘要的比对语义；幂等 checkpoint）。
+        if isinstance(stored, dict) and str(stored.get(
+                "content_fingerprint") or "") == state.content_fingerprint:
+            return stored
         block = state.to_bounded_dict()
         await session_data_manager.set_map_state(
             session_id, CONTEXT_LAYERS_KEY, block)

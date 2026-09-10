@@ -2286,12 +2286,17 @@ class PiBridge:
                                         except Exception:  # noqa: BLE001 — 增值披露
                                             pass
                                         # V7（ADR-0130 D3）：九域上下文 checkpoint
-                                        #（turn 边界落 map_state 单键；可重建）。
+                                        #（turn 边界落 map_state 单键；可重建；
+                                        # 受状态机同一 kill switch 门控）。
                                         try:
-                                            from app.services.gis_harness.context_layers import (
-                                                checkpoint_context_layers,
+                                            from app.services.gis_harness.runtime_state_machine import (
+                                                runtime_state_enabled as _rsm_on,
                                             )
-                                            await checkpoint_context_layers(turn_sid)
+                                            if _rsm_on():
+                                                from app.services.gis_harness.context_layers import (
+                                                    checkpoint_context_layers,
+                                                )
+                                                await checkpoint_context_layers(turn_sid)
                                         except Exception:  # noqa: BLE001 — 增值披露
                                             pass
                                         if _completion is not None and _completion.status != "pending":

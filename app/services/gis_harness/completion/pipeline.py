@@ -507,11 +507,14 @@ def map_product_block(
     # V7（ADR-0130 D6）：终验出口 continuation 裁决（decide_continuation
     # 直连 —— V6 follow-up 兑现；repair 不可达时经 request_replan 路由）。
     if isinstance(continuation, dict):
+        replan = continuation.get("replan")
         block["continuation"] = {
             "verdict": str(continuation.get("verdict") or "")[:40],
             "loop": str(continuation.get("loop") or "")[:16],
             "reason": str(continuation.get("reason") or "")[:160],
-            "replan_pending": bool(continuation.get("replan_pending")),
+            "replan_pending": bool((replan or {}).get("replan_pending")
+                                   if isinstance(replan, dict)
+                                   else continuation.get("replan_pending")),
             "disclosure": [str(d)[:160]
                            for d in (continuation.get("disclosure") or ())[:4]],
         }
@@ -527,6 +530,14 @@ def map_product_block(
         block["observation_health"] = build_observation_summary(
             observation, intent_verified=intent_verified)
     except Exception:  # noqa: BLE001 — 摘要是增值投影，绝不阻断
+        pass
+    # V7（ADR-0130 D6 修复评审 F1）：task_complete 随块持久化 —— 此前
+    # 只在 read_stored_map_product 读时折叠，生产块上无此键，导致
+    # runtime_state_machine 的 COMMITTED 判定与 commit_runtime_context
+    # 守卫恒假（键契约错位，新功能死代码）。同一折叠单一来源。
+    try:
+        block["task_complete"] = _is_task_complete(block)
+    except Exception:  # noqa: BLE001 — 折叠失败按旧形状（缺键）
         pass
     return block
 
@@ -782,35 +793,44 @@ async def maybe_finalize_map_product(
             session_id,
         )
     # V7（ADR-0130 D6）：READY → 上下文提交（九域 checkpoint + commit 标记
-    # + 阶段推进 verdict_ready）。增值披露，绝不阻断终验返回。
+    # + 阶段推进 verdict_ready）。受状态机 kill switch 门控（评审 F6 ——
+    # 关停时逐位回退，不写任何 V7 键）。增值披露，绝不阻断终验返回。
     if result.status == STATUS_COMPLETE:
         try:
-            from app.services.gis_harness.context_layers import (
-                checkpoint_context_layers,
-            )
             from app.services.gis_harness.runtime_state_machine import (
-                commit_runtime_context,
+                runtime_state_enabled,
             )
+            _rsm_on = runtime_state_enabled()
+        except Exception:  # noqa: BLE001
+            _rsm_on = False
+        if _rsm_on:
+            try:
+                from app.services.gis_harness.context_layers import (
+                    checkpoint_context_layers,
+                )
+                from app.services.gis_harness.runtime_state_machine import (
+                    commit_runtime_context,
+                )
 
-            _layers_block = await checkpoint_context_layers(session_id)
-            await commit_runtime_context(
-                session_id,
-                domains_digest=str(
-                    (_layers_block or {}).get("content_fingerprint") or ""),
-            )
-        except Exception:  # noqa: BLE001 — 提交缺席可由下个触发点补
-            logger.debug("[MapFinalizer] context commit failed session=%s",
-                         session_id, exc_info=True)
-        try:
-            from app.services.gis_harness.runtime_state_machine import (
-                maybe_update_runtime_state,
-            )
+                _layers_block = await checkpoint_context_layers(session_id)
+                await commit_runtime_context(
+                    session_id,
+                    domains_digest=str(
+                        (_layers_block or {}).get("content_fingerprint") or ""),
+                )
+            except Exception:  # noqa: BLE001 — 提交缺席可由下个触发点补
+                logger.debug("[MapFinalizer] context commit failed session=%s",
+                             session_id, exc_info=True)
+            try:
+                from app.services.gis_harness.runtime_state_machine import (
+                    maybe_update_runtime_state,
+                )
 
-            await maybe_update_runtime_state(
-                session_id, reason=reason, trigger="verdict_ready")
-        except Exception:  # noqa: BLE001 — 阶段投影是增值披露
-            logger.debug("[MapFinalizer] runtime state update failed session=%s",
-                         session_id, exc_info=True)
+                await maybe_update_runtime_state(
+                    session_id, reason=reason, trigger="verdict_ready")
+            except Exception:  # noqa: BLE001 — 阶段投影是增值披露
+                logger.debug("[MapFinalizer] runtime state update failed session=%s",
+                             session_id, exc_info=True)
     # ADR-0088 P7：内部 trace（best-effort，绝不影响业务路径）
     try:
         from app.services.gis_harness.trace import (
@@ -875,23 +895,25 @@ async def _finalizer_continuation(
     )
     payload: Dict[str, Any] = dict(decision.to_payload())
     if decision.verdict == "abort_with_disclosure":
-        # 修复预算尽 → 重规划驱动点（预算有余则置 replan_pending）。
-        # 不可恢复类（cancelled/budget_exhausted）不自动重规划 —— 用户取消
-        # 或资源耗尽不该被结构级重规划对抗（诚实中止语义优先）。
-        failure_class = str(failure.get("class") or "")
-        if failure_class not in ("cancelled", "budget_exhausted"):
-            try:
-                from app.services.gis_harness.plan_runtime import request_replan
+        # deep/requalify/repair 全耗尽（replan 不参与 abort 门槛 —— 评审
+        # F2：它是 abort 的逃生舱）→ 重规划生产驱动点（预算有余则置
+        # replan_pending；耗尽则诚实 abort 披露）。不可恢复类（cancelled/
+        # budget_exhausted）在规则 2 直接 abort，不经此处 —— 不与用户取消
+        # 或资源上限做结构级对抗。
+        try:
+            from app.services.gis_harness.plan_runtime import request_replan
 
-                replan = await request_replan(
-                    session_id,
-                    reason=str(result.summary or "")[:160],
-                    from_verdict=str(result.product_verdict or result.status)[:32],
-                )
-                payload.update(replan)
-            except Exception:  # noqa: BLE001 — 驱动点失败保留 abort 披露
-                logger.debug("[MapFinalizer] replan driver failed session=%s",
-                             session_id, exc_info=True)
+            replan = await request_replan(
+                session_id,
+                reason=str(result.summary or "")[:160],
+                from_verdict=str(result.product_verdict or result.status)[:32],
+            )
+            # abort 裁决保持权威 —— replan 路由结果挂子对象（覆盖 verdict
+            # 会让 continuation 消费方把「已诚实中止」误读为「已转重规划」）
+            payload["replan"] = replan
+        except Exception:  # noqa: BLE001 — 驱动点失败保留 abort 披露
+            logger.debug("[MapFinalizer] replan driver failed session=%s",
+                         session_id, exc_info=True)
     return payload
 
 
@@ -940,6 +962,17 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
     return payload
 
 
+def _product_verdict_token(stored: Dict[str, Any]) -> str:
+    """stored 块的裁决 token（兼容双形状）：map_product_block 持久化的是
+    ``derive_product_verdict`` 的完整 dict（含 reasons/dimensions），而
+    result.product_verdict / 旧读方语义是字符串 —— 形状错位使字符串
+    判定在真实块上恒 False（评审 F1 的深层根因，V4 起既有）。"""
+    verdict = stored.get("product_verdict")
+    if isinstance(verdict, dict):
+        return str(verdict.get("verdict") or "")
+    return str(verdict or "")
+
+
 def _is_task_complete(stored: Dict[str, Any]) -> bool:
     """stored map_product 块 → 任务级完成布尔（纯函数，有界输入）。
 
@@ -954,7 +987,7 @@ def _is_task_complete(stored: Dict[str, Any]) -> bool:
         VERDICT_READY_WITH_WARNINGS,
     )
 
-    verdict = str(stored.get("product_verdict") or "")
+    verdict = _product_verdict_token(stored)
     final_status = str(stored.get("final_map_status") or "")
     return (
         verdict in (VERDICT_READY, VERDICT_READY_WITH_WARNINGS)

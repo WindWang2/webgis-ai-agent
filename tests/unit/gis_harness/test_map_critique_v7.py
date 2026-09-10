@@ -96,19 +96,20 @@ def test_blank_map_absent_when_data_present_or_counts_missing():
 
 
 def test_invalid_bounds_detected():
+    # 评审 F12：只消费本轮观察证据，不读上一代成品块的陈旧 bbox
     ch = _chapter()
-    ch["map_product"] = {"result_bbox": [104.1, 30.6, 103.9, 30.2]}  # 倒置
-    findings = check_invalid_bounds(ch, None)
+    obs = {"result_bbox": [104.1, 30.6, 103.9, 30.2]}  # 倒置
+    findings = check_invalid_bounds(ch, obs)
     assert len(findings) == 1
     assert findings[0].code == C_INVALID_BOUNDS
     assert findings[0].severity == "error"
     # 非有限
-    ch["map_product"] = {"result_bbox": [float("nan"), 0, 1, 1]}
-    assert check_invalid_bounds(ch, None)[0].code == C_INVALID_BOUNDS
-    # 合法 bbox / 缺席 → 零
-    ch["map_product"] = {"result_bbox": [103.9, 30.2, 104.1, 30.6]}
+    obs2 = {"result_bbox": [float("nan"), 0, 1, 1]}
+    assert check_invalid_bounds(ch, obs2)[0].code == C_INVALID_BOUNDS
+    # 合法 bbox / 观察缺席 → 零；陈旧 stored bbox 不再触发
+    assert check_invalid_bounds(ch, {"result_bbox": [103.9, 30.2, 104.1, 30.6]}) == []
+    ch["map_product"] = {"result_bbox": [104.1, 30.6, 103.9, 30.2]}
     assert check_invalid_bounds(ch, None) == []
-    assert check_invalid_bounds(_chapter(), None) == []
 
 
 # ── 出版件完整性 ─────────────────────────────────────────────────────────
@@ -172,9 +173,9 @@ def test_overlay_mismatch_when_no_planned_layer_observed():
 
 def test_critique_aggregate_bounded_and_pure():
     ch = _chapter()
-    ch["map_product"] = {"result_bbox": [104.1, 30.6, 103.9, 30.2]}
     obs = _observation(label_collision_ratio=0.5)
     obs["layers"] = {"basemap": {"mounted": True}}
+    obs["result_bbox"] = [104.1, 30.6, 103.9, 30.2]
     spec = _mapspec(exports=["png"])
     a = critique_map_state(ch, spec, obs)
     b = critique_map_state(ch, spec, obs)

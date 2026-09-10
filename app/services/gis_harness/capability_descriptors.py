@@ -126,7 +126,8 @@ def _corpus_text(*parts: Iterable[Any]) -> str:
 
 
 def build_capability_index() -> Dict[str, CapabilityDescriptorV7]:
-    """registry 事实源 → 统一描述符索引（确定性；进程级缓存由调用方管）。
+    """registry 事实源 → 统一描述符索引（确定性；进程级缓存见
+    ``get_capability_index_cached``）。
 
     来源：
     - capability registry 全量（kind=capability；fallback_capabilities）；
@@ -135,7 +136,14 @@ def build_capability_index() -> Dict[str, CapabilityDescriptorV7]:
     - template catalog（kind=template；轻投影）；
     - component 目录（kind=component；默认组件 id 表投影）。
     任一来源缺席 → 跳过该段（不虚构）。"""
+    index, _complete = _build_capability_index_state()
+    return index
+
+
+def _build_capability_index_state() -> Tuple[Dict[str, CapabilityDescriptorV7], bool]:
+    """构建索引 + 完整性标记（评审 F10：残缺索引不缓存）。"""
     index: Dict[str, CapabilityDescriptorV7] = {}
+    complete = True
 
     # 1) capability registry
     try:
@@ -166,6 +174,7 @@ def build_capability_index() -> Dict[str, CapabilityDescriptorV7]:
                     d.fallback_capabilities or [])][:MAX_FALLBACK_CHAIN],
             )
     except Exception:  # noqa: BLE001 — registry 缺席跳过该段
+        complete = False
         logger.debug("[CapabilityIndex] capability registry unavailable",
                      exc_info=True)
 
@@ -211,6 +220,7 @@ def build_capability_index() -> Dict[str, CapabilityDescriptorV7]:
                 related_tools=[str(t) for t in (d.tool_candidates or [])][:6],
             )
     except Exception:  # noqa: BLE001
+        complete = False
         logger.debug("[CapabilityIndex] algorithm registry unavailable",
                      exc_info=True)
 
@@ -229,28 +239,45 @@ def build_capability_index() -> Dict[str, CapabilityDescriptorV7]:
                                          [t.task_affinity]),
             )
     except Exception:  # noqa: BLE001
+        complete = False
         logger.debug("[CapabilityIndex] template catalog unavailable",
                      exc_info=True)
 
-    # 4) component 目录（默认组件 id 表 → kind=component）
+    # 4) component 目录（completion contracts 的默认组件 id 表 —— 静态
+    #    单一来源；build_default_components 需要计划上下文，索引期不用）
     try:
-        from app.services.gis_harness.components import build_default_components
+        from app.services.gis_harness.completion.contracts import (
+            _COMPONENT_DEFAULT_IDS,
+        )
 
-        for comp in list(build_default_components())[:32]:
-            cid = str(getattr(comp, "component_id", "") or "")
-            if not cid:
-                continue
+        for comp_type, cid in list(_COMPONENT_DEFAULT_IDS.items())[:32]:
             index[f"component:{cid}"] = CapabilityDescriptorV7(
-                id=cid, kind=KIND_COMPONENT,
-                label=str(getattr(comp, "name", "") or cid),
-                corpus_text=_corpus_text([cid, getattr(comp, "name", "")],
-                                         [getattr(comp, "aliases", ())],
-                                         [getattr(comp, "family", "")]),
+                id=str(cid), kind=KIND_COMPONENT,
+                label=str(comp_type),
+                corpus_text=_corpus_text([comp_type, cid]),
             )
     except Exception:  # noqa: BLE001
+        complete = False
         logger.debug("[CapabilityIndex] component catalog unavailable",
                      exc_info=True)
-    return index
+
+    # F10：capability 段补 related_tools（algorithm registry 的
+    # capability→tools 反查）—— 让 durable ledger 的工具失败计数能命中
+    # capability 类描述符（否则可靠性反馈对 capability 永不生效）。
+    try:
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+
+        cap_tool_map = get_algorithm_registry().capability_tool_map()
+        for desc in index.values():
+            if desc.kind == KIND_CAPABILITY and not desc.related_tools:
+                bare = desc.id
+                desc.related_tools = [
+                    str(t)[:64] for t in (cap_tool_map.get(bare) or ())[:6]
+                ]
+    except Exception:  # noqa: BLE001 — 反查缺席不致命
+        logger.debug("[CapabilityIndex] capability→tool map unavailable",
+                     exc_info=True)
+    return index, complete
 
 
 # ── 可靠性反馈（durable ledger 聚合投影；中性缺省）──────────────────────
@@ -426,20 +453,49 @@ def _all_ids(registry: Any) -> List[str]:
 
 
 _INDEX_CACHE: Optional[Dict[str, CapabilityDescriptorV7]] = None
+_INDEX_CACHE_COMPLETE = False
 
 
 def get_capability_index_cached() -> Dict[str, CapabilityDescriptorV7]:
-    """进程级缓存（registry 为 import 期种子 —— 构建一次；测试可 reset）。"""
-    global _INDEX_CACHE
-    if _INDEX_CACHE is None:
-        _INDEX_CACHE = build_capability_index()
+    """进程级缓存（仅完整构建入缓存 —— 评审 F10：某段失败的残缺索引
+    不缓存，下次触发重建以免终身残缺）。"""
+    global _INDEX_CACHE, _INDEX_CACHE_COMPLETE
+    if _INDEX_CACHE is None or not _INDEX_CACHE_COMPLETE:
+        index, complete = _build_capability_index_state()
+        if complete:
+            _INDEX_CACHE = index
+            _INDEX_CACHE_COMPLETE = True
+        return index
     return _INDEX_CACHE
 
 
 def reset_capability_index() -> None:
     """测试钩子（registry 重载 / reset_recipe_registry 同门）。"""
-    global _INDEX_CACHE
+    global _INDEX_CACHE, _INDEX_CACHE_COMPLETE
     _INDEX_CACHE = None
+    _INDEX_CACHE_COMPLETE = False
+
+
+def descriptor_boosts(
+    index: Dict[str, CapabilityDescriptorV7],
+    query: str,
+    *,
+    limit: int = 8,
+) -> Dict[str, float]:
+    """描述符信号 → 工具加成映射（纯函数；评审 F11 抽出以便正路径测试）。
+
+    首位命中候选的 related_tools 各 +0.25，逐位减半（下限 0.05）——
+    「小幅」有界：远低于词法标签分（3.0/词），只影响并列区相对序。"""
+    boosts: Dict[str, float] = {}
+    weight = 0.25
+    for pick in select_capabilities(index, query, limit=limit):
+        desc = index.get(pick["id"])
+        if desc is None:
+            continue
+        for tool in desc.related_tools[:2]:
+            boosts[tool] = boosts.get(tool, 0.0) + weight
+        weight = max(0.05, weight * 0.5)
+    return {t: round(b, 4) for t, b in boosts.items() if b > 0}
 
 
 __all__ = [
@@ -455,5 +511,6 @@ __all__ = [
     "v7_capability_retrieval_enabled",
     "get_capability_index_cached",
     "reset_capability_index",
+    "descriptor_boosts",
     "MAX_RESULTS",
 ]

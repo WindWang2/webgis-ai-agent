@@ -170,13 +170,14 @@ def check_invalid_bounds(
     chapter: Dict[str, Any],
     observation: Optional[Dict[str, Any]],
 ) -> List[MapCompletionFinding]:
-    """结果 bbox 倒置/非有限 → invalid_result_bounds（error；仅在有 bbox 时）。"""
-    stored = chapter.get("map_product") if isinstance(chapter, dict) else None
-    bbox = None
-    if isinstance(stored, dict):
-        bbox = stored.get("result_bbox")
-    if bbox is None and isinstance(observation, dict):
-        bbox = observation.get("result_bbox")
+    """结果 bbox 倒置/非有限 → invalid_result_bounds（error；仅观察证据）。
+
+    评审 F12：只消费**本轮** render observation 携带的 bbox —— 上一代
+    成品块的 stored bbox 可能陈旧（本轮重验会误报 error → failed）；
+    观察缺席 → 不判（诚实缺席）。"""
+    if not isinstance(observation, dict):
+        return []
+    bbox = observation.get("result_bbox")
     if bbox is None:
         return []
     if not _finite_bbox(bbox):

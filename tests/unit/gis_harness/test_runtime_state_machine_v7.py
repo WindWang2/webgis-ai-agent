@@ -466,3 +466,52 @@ async def test_commit_context_idempotent_and_gated(clean_session):
     ch2 = _chapter()
     await _save_plan(clean_session, ch2)
     assert await commit_runtime_context(clean_session) is None
+
+
+def test_committed_reachable_via_real_map_product_block():
+    """F1 回归锁：真实 map_product_block 输出（生产写者形状）→ task_complete
+    持久化 → COMMITTED 判定可达（此前生产块无 task_complete 键，全链死代码）。"""
+    from app.services.gis_harness.completion.contracts import (
+        FINAL_MAP_VERIFIED,
+        MapCompletionResult,
+        VERDICT_READY,
+    )
+    from app.services.gis_harness.completion.pipeline import map_product_block
+
+    result = MapCompletionResult()
+    result.status = "complete"
+    result.product_verdict = VERDICT_READY
+    result.final_map_status = FINAL_MAP_VERIFIED
+    result.summary = "map product validated"
+    ch = _chapter()
+    block = map_product_block(
+        result, checked_revision=3,
+        chapter=ch, observation={"layers": {}})
+    assert block.get("task_complete") is True
+    ch["map_product"] = block
+    ch[RUNTIME_STATE_KEY] = {
+        "schema": "runtime_state.v1",
+        "context_commit": {"product_checked_revision": 3},
+    }
+    assert derive_runtime_phase(ch) == RuntimePhase.COMMITTED.value
+
+
+def test_abort_gate_excludes_replan_budget():
+    """F2 回归锁：replan 余量不参与 abort 门槛（逃生舱语义）——
+    deepen/requalify/repair 全耗尽 + replan 未用 → abort_with_disclosure
+    （V6 逐位行为恢复，且 replan 驱动可达）。"""
+    ch = _chapter(req_status="complete", step_status="complete", product={
+        "status": "needs_repair", "product_verdict": "NEEDS_REPAIR",
+    })
+    loops = {"deepen": 0, "requalify": 0, "repair": 0, "replan": 1}
+    assert derive_runtime_phase(ch, recovery_loops=loops) == (
+        RuntimePhase.ABORTED.value)
+
+
+def test_replan_pending_survives_not_after_commit_marker():
+    """F9 回归锁：commit 后 derive 不再判 replanning（READY 优先 + pending
+    由 commit 清除）。"""
+    ch = _chapter(req_status="complete", step_status="complete", product={
+        "status": "needs_repair", "product_verdict": "NEEDS_REPAIR",
+    }, plan_runtime={"replan_pending": True})
+    assert derive_runtime_phase(ch) == RuntimePhase.REPLANNING.value

@@ -684,28 +684,19 @@ class DynamicToolSurface:
 
         # 6.7) V7 capability descriptor 信号（ADR-0130 D4）：结构化描述符
         #      联合检索（preconditions/可靠性/cost）对已入分候选小幅加成
-        #      —— 只调整既有候选的相对序，不新增候选；kill switch
+        #      （首位 0.25 逐位减半 —— 远低于词法标签分，只影响并列区
+        #      相对序）。只调整既有候选、不新增候选；kill switch
         #      GIS_CAPABILITY_RETRIEVAL_V7=0 → 跳过（与 V6 逐位一致）；
         #      任何失败零贡献。
         if v7_capability_retrieval_enabled() and query:
             try:
                 from app.services.gis_harness.capability_descriptors import (
+                    descriptor_boosts,
                     get_capability_index_cached,
-                    select_capabilities,
                 )
 
-                _index = get_capability_index_cached()
-                _picks = select_capabilities(_index, query, limit=8)
-                boost_by_tool: Dict[str, float] = {}
-                _weight = 0.8
-                for _pick in _picks:
-                    _desc = _index.get(_pick["id"])
-                    if _desc is None:
-                        continue
-                    for _tool in _desc.related_tools[:2]:
-                        boost_by_tool[_tool] = (
-                            boost_by_tool.get(_tool, 0.0) + _weight)
-                    _weight = max(0.1, _weight * 0.5)
+                boost_by_tool = descriptor_boosts(
+                    get_capability_index_cached(), query, limit=8)
                 for _tool, _boost in boost_by_tool.items():
                     if _tool in scores and _boost > 0:
                         scores[_tool] = scores.get(_tool, 0.0) + _boost

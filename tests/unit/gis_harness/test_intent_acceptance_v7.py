@@ -107,13 +107,20 @@ def test_acceptance_rejects_verdict_and_spec_gaps():
         _chapter(), spec, None, product_verdict="READY")
     assert r2["accepted"] is False
     assert any("layer_not_in_spec" in u for u in r2["unmet"])
-    # spec 层隐藏
+    # spec 层隐藏 → user-wins：不阻断验收，仅披露（评审 F4）
     spec2 = _mapspec()
     spec2["layers"][1]["visible"] = False
     r3 = assess_intent_acceptance(
         _chapter(), spec2, None, product_verdict="READY")
-    assert r3["accepted"] is False
-    assert any("layer_hidden_in_spec" in u for u in r3["unmet"])
+    assert r3["accepted"] is True
+    assert r3["unmet"] == []
+    assert any("layer_hidden_by_user" in d for d in r3["disclosures"])
+    # 用户隐藏层不做 observed 核对（观察同样不可见也不降级）
+    obs_hidden = _observation()
+    obs_hidden["layers"]["layer-admin"]["visible"] = False
+    r4 = assess_intent_acceptance(
+        _chapter(), spec2, obs_hidden, product_verdict="READY")
+    assert r4["intent_verified"] is True
 
 
 def test_acceptance_observed_gaps():
@@ -225,10 +232,6 @@ async def _save_plan(sid: str, chapter: Dict[str, Any]) -> None:
 @pytest.mark.asyncio
 async def test_finalize_persists_acceptance_and_commit(clean_session):
     """终验落块带 intent_acceptance；complete → commit 标记 + 阶段推进。"""
-    from app.services.gis_harness.runtime_state_machine import (
-        RUNTIME_STATE_KEY,
-        runtime_phase_of,
-    )
     from app.services.gis_harness.map_completion import maybe_finalize_map_product
     from app.services.session_plan import load_session_plan
 
@@ -239,11 +242,15 @@ async def test_finalize_persists_acceptance_and_commit(clean_session):
     plan = await load_session_plan(clean_session)
     block = plan.gis_chapter.get("map_product") or {}
     assert "intent_acceptance" in block  # V7 验收面持久化
-    assert block["intent_acceptance"]["accepted"] in (True, False)
-    # 状态机推进（verdict_ready 或 executing 视终验结论而定 —— 只要求块在场）
-    assert RUNTIME_STATE_KEY in plan.gis_chapter or True
-    phase = runtime_phase_of(plan.gis_chapter)
-    assert phase in ("committed", "finalizing", "critiquing", "executing")
+    # F1 修复钉死：生产块必须携带 task_complete（否则 committed/commit
+    # 全链死代码 —— 独立评审 CRITICAL 1 的回归锁）
+    assert "task_complete" in block
+    assert block["task_complete"] in (True, False)
+    # 最小章节（无 spec/观察）终验 failed → continuation 裁决面持久化
+    assert "continuation" in block
+    assert block["continuation"]["verdict"] == "remediate_and_retry"
+    # committed 链由 test_committed_reachable_via_real_map_product_block
+    # 与 test_abort_gate_excludes_replan_budget 钉死（生产触发面）。
 
 
 @pytest.mark.asyncio
@@ -263,11 +270,12 @@ async def test_finalizer_continuation_verdicts(clean_session, monkeypatch, tmp_p
     payload = await _finalizer_continuation(
         clean_session, result, _finalizable_chapter())
     assert payload["verdict"] == "remediate_and_retry"
-    # 耗尽 deepen/requalify/repair → abort（replan 预算仍余 → 驱动点置 pending）
+    # 耗尽 deepen/requalify/repair（replan 不参与 abort 门槛 —— 评审 F2）
+    # → 确定性 abort + replan 驱动点置 pending（逃生舱语义回归锁）
     for loop in ("deepen", "requalify", "repair", "deepen", "requalify", "repair"):
         await update_recovery_state(clean_session, loop=loop, detail="x")
     payload2 = await _finalizer_continuation(
         clean_session, result, _finalizable_chapter())
-    assert payload2["verdict"] in ("abort_with_disclosure", "reobserve")
-    if payload2["verdict"] == "abort_with_disclosure":
-        assert payload2.get("replan_pending") is True
+    assert payload2["verdict"] == "abort_with_disclosure"
+    # replan 路由结果挂子对象（不覆盖 abort 裁决），pending 置位
+    assert payload2["replan"]["replan_pending"] is True

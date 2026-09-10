@@ -280,15 +280,21 @@ def build_scenario_corpus(
     return cases
 
 
-def coverage_report(cases: Optional[List[ScenarioCase]] = None) -> Dict[str, Any]:
+def coverage_report(
+    cases: Optional[List[ScenarioCase]] = None,
+    *,
+    build_max_cases: Optional[int] = None,
+) -> Dict[str, Any]:
     """结构覆盖报告（gate 消费）：
 
-    - ``total``：展开总数（≥MIN_CORPUS_SIZE = 结构门）；
+    - ``total``：展开总数（≥MIN_CORPUS_SIZE = 结构门）；``truncated``
+      标记构建期是否触达 max_cases 截断（评审 F13 —— 截断值不冒充全集）；
     - ``registry_missing``：expected 声明了但 registry 不存在的 id；
-    - ``coverage_gaps``：registry 中 analysis 类 capability 完全没有被
-      任何 pack 声明的 id（registry 长出新族而语料未跟 → 非空 = 门红）。
+    - ``coverage_gaps``：registry 中非 data_access 类 capability 完全没
+      有被任何 pack 声明的 id（registry 长出新族而语料未跟 → 非空 = 门红）。
     """
-    cases = cases if cases is not None else build_scenario_corpus()
+    cases = cases if cases is not None else build_scenario_corpus(
+        max_cases=build_max_cases or 5000)
     declared: Dict[str, str] = {}
     for c in cases:
         for cap in c.expected:
@@ -306,6 +312,7 @@ def coverage_report(cases: Optional[List[ScenarioCase]] = None) -> Dict[str, Any
         "total": len(cases),
         "min_required": MIN_CORPUS_SIZE,
         "size_ok": len(cases) >= MIN_CORPUS_SIZE,
+        "truncated": bool(build_max_cases and len(cases) >= build_max_cases),
         "registry_missing": registry_missing[:32],
         "coverage_gaps": coverage_gaps,
         "families": len({c.family for c in cases}),

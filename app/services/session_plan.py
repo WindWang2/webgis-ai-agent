@@ -263,8 +263,21 @@ def format_session_plan_projection(
             runtime_line = "\n" + runtime_line
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         runtime_line = ""
+    # V7（ADR-0130 D2）：计划版本/replan 挂起/最小重算清单单行（additive；
+    # 评审 F3 —— replan_pending 与 min-rerun/reuse 是 Pi 的重规划指令面）。
+    plan_runtime_line = ""
+    try:
+        from app.services.gis_harness.plan_runtime import (
+            format_plan_runtime_line,
+        )
+
+        plan_runtime_line = format_plan_runtime_line(plan.gis_chapter)
+        if plan_runtime_line:
+            plan_runtime_line = "\n" + plan_runtime_line
+    except Exception:  # noqa: BLE001 — 投影失败只少一行
+        plan_runtime_line = ""
     if not plan.gis_chapter.get("data_requirements"):
-        return head + instance_line + recompute_line + progress_line + runtime_line + product_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + product_line
     try:
         from app.services.gis_harness.plan_graph import (
             build_plan_graph,
@@ -273,9 +286,9 @@ def format_session_plan_projection(
         graph = build_plan_graph(plan.gis_chapter)
         block = project_graph_block(graph)
     except Exception:  # noqa: BLE001 — 图投影是增值信号，绝不阻断 turn 上下文
-        return head + instance_line + recompute_line + progress_line + runtime_line + product_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + product_line
     if not block:
-        return head + instance_line + recompute_line + progress_line + runtime_line + product_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + product_line
     # ADR-0085：目标→产品 facets 投影行（纯派生、单行有界；章节/MapSpec
     # 之外零新状态 —— 让 Pi 看见"产品 = facets 集合"而非单个 heatmap）。
     products_line = ""

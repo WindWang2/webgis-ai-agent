@@ -142,10 +142,14 @@ async def _persist_records(
     records: List[DelegationRecord],
     *,
     validated_goal: Any,
-    validated_rows: str,
+    merge_by_id: Optional[DelegationRecord] = None,
 ) -> Optional[List[Dict[str, Any]]]:
+    """台账锁内合并写（评审 F5）。
+
+    台账是**事件日志**而非行派生块 —— 行漂移（子代理跑工具本身会改行）
+    不应丢弃审计记录：锁内重读 fresh 台账、按 delegation_id 合并本条后
+    整体写回；仅 supersede（goal 变化）放弃。"""
     from app.services.session_plan import goal_key, load_session_plan, save_session_plan
-    from app.services.gis_harness.workflow_instance import rows_fingerprint
 
     try:
         from app.services.distributed_lock import session_lock_registry
@@ -156,12 +160,23 @@ async def _persist_records(
                 return None
             if goal_key(fresh.gis_chapter, fresh.user_goal) != validated_goal:
                 return None
-            if rows_fingerprint(fresh.gis_chapter)[:2048] != validated_rows[:2048]:
-                return None
+            fresh_records = _parse_records(
+                fresh.gis_chapter.get(DELEGATIONS_KEY))
+            if merge_by_id is not None:
+                merged = {r.delegation_id: r for r in fresh_records}
+                merged[merge_by_id.delegation_id] = merge_by_id
+                fresh_records = list(merged.values())
+            else:
+                # 全量替换语义仅用于调用方已基于 fresh 台账构造的情形：
+                # 以 fresh 为基底合并本批（id 覆盖）
+                merged = {r.delegation_id: r for r in fresh_records}
+                for r in records:
+                    merged[r.delegation_id] = r
+                fresh_records = list(merged.values())
+            fresh_records = fresh_records[-MAX_DELEGATIONS:]
             block = {
                 "schema": "delegations.v1",
-                "records": [r.to_bounded_dict()
-                            for r in records[-MAX_DELEGATIONS:]],
+                "records": [r.to_bounded_dict() for r in fresh_records],
             }
             fresh.gis_chapter[DELEGATIONS_KEY] = block
             await save_session_plan(fresh)
@@ -190,15 +205,24 @@ async def delegate(
     from app.services.session_plan import goal_key, load_session_plan
     from app.services.subagent_roles import get_subagent_role
 
-    # fail-closed：未知角色拒绝（不 spawn）
+    # fail-closed：未知角色拒绝（不 spawn）；失败记录入台账（审计面）。
     try:
         get_subagent_role(spec.role)
     except Exception as exc:  # noqa: BLE001 — 角色校验失败即拒绝
-        return DelegationRecord(
+        record = DelegationRecord(
             delegation_id=f"dg-{uuid.uuid4().hex[:8]}",
             spec=spec, status=STATUS_FAILED,
             error=f"unknown role: {exc}"[:200],
         )
+        plan = await load_session_plan(session_id)
+        if plan is not None and isinstance(plan.gis_chapter, dict):
+            from app.services.session_plan import goal_key as _gk
+
+            await _persist_records(
+                session_id, [record],
+                validated_goal=_gk(plan.gis_chapter, plan.user_goal),
+                merge_by_id=record)
+        return record
 
     plan = await load_session_plan(session_id)
     if plan is None or not isinstance(plan.gis_chapter, dict):
@@ -207,18 +231,11 @@ async def delegate(
             spec=spec, status=STATUS_FAILED, error="no gis chapter",
         )
     validated_goal = goal_key(plan.gis_chapter, plan.user_goal)
-    from app.services.gis_harness.workflow_instance import rows_fingerprint
-
-    validated_rows = rows_fingerprint(plan.gis_chapter)
-    stored = plan.gis_chapter.get(DELEGATIONS_KEY)
-    records = _parse_records(stored)
 
     record = DelegationRecord(
         delegation_id=f"dg-{uuid.uuid4().hex[:8]}",
         spec=spec, status=STATUS_RUNNING,
     )
-    records.append(record)
-    records = records[-MAX_DELEGATIONS:]
 
     if dispatcher is None:
         from app.services.subagent import SubagentDispatcher
@@ -248,12 +265,15 @@ async def delegate(
                            or "subagent failed")[:200]
         if attempt == 1:
             from app.services.gis_harness.durable_context import (
+                LOOP_BUDGETS,
                 load_recovery_state,
             )
 
             recovery = await load_recovery_state(session_id)
+            repair_budget = int(LOOP_BUDGETS.get("repair", 2))
             remaining = max(
-                0, 2 - int((recovery.get("loops") or {}).get("repair") or 0))
+                0, repair_budget
+                - int((recovery.get("loops") or {}).get("repair") or 0))
             if remaining <= 0:
                 # 预算尽 → 不重试（诚实放弃）
                 record.status = STATUS_FAILED
@@ -262,9 +282,10 @@ async def delegate(
         else:
             record.status = STATUS_FAILED
 
-    await _persist_records(session_id, records,
+    # 台账合并写（评审 F5：子代理本身会改行 —— rows 漂移不丢审计记录）
+    await _persist_records(session_id, [record],
                            validated_goal=validated_goal,
-                           validated_rows=validated_rows)
+                           merge_by_id=record)
     return record
 
 

@@ -196,14 +196,13 @@ async def test_qa_driver_gated_and_idempotent(clean_session, monkeypatch):
             delegation_id="dg-x", spec=spec, status=STATUS_COMPLETED)
         # 与真实 delegate 一致：台账落账（幂等查重消费同一台账）
         from app.services.session_plan import goal_key, load_session_plan
-        from app.services.gis_harness.workflow_instance import rows_fingerprint
 
         plan = await load_session_plan(sid)
         await delegation_mod._persist_records(
             sid, delegation_mod._parse_records(
                 plan.gis_chapter.get(DELEGATIONS_KEY)) + [rec],
             validated_goal=goal_key(plan.gis_chapter, plan.user_goal),
-            validated_rows=rows_fingerprint(plan.gis_chapter))
+            merge_by_id=rec)
         return rec
 
     monkeypatch.setattr(delegation_mod, "delegate", _fake_delegate)

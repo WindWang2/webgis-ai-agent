@@ -40,17 +40,37 @@ MAX_UNMET = 8
 
 
 def derive_intent_requirements(chapter: Dict[str, Any]) -> Dict[str, List[str]]:
-    """章节意图事实 → 需求清单（层 id 按角色；组件槽位透传）。"""
+    """章节意图事实 → 需求清单（**计划结果层**单一来源 + 角色/组件披露）。
+
+    评审 F4：需求面 = ``_planned_result_layer_ids``（render_observation
+    既有判定 —— 与 finalizer 观察核对同一词表），非全部 map_layers；
+    辅助角色（basemap 等非结果层）不参与意图核对。"""
     layers: List[str] = []
     roles: List[str] = []
-    for ly in (chapter.get("map_layers") or [])[:MAX_REQUIREMENTS]:
-        if isinstance(ly, dict) and ly.get("layer_id"):
-            layers.append(str(ly["layer_id"])[:64])
-            roles.append(str(ly.get("role") or "secondary")[:24])
+    try:
+        from app.services.gis_harness.render_observation import (
+            _planned_result_layer_ids,
+        )
+
+        layers = [str(lid)[:64]
+                  for lid in (_planned_result_layer_ids(chapter) or [])]
+    except Exception:  # noqa: BLE001 — 助手缺席退化为 role 过滤
+        layers = []
+    if not layers:
+        for ly in (chapter.get("map_layers") or [])[:MAX_REQUIREMENTS]:
+            if isinstance(ly, dict) and ly.get("layer_id"):
+                layers.append(str(ly["layer_id"])[:64])
+    layer_roles = {
+        str(ly.get("layer_id")): str(ly.get("role") or "secondary")[:24]
+        for ly in (chapter.get("map_layers") or [])
+        if isinstance(ly, dict) and ly.get("layer_id")
+    }
+    roles = [layer_roles.get(lid, "secondary") for lid in layers]
     components = [
         str(slot)[:48] for slot in (chapter.get("required_components") or [])
     ][:MAX_REQUIREMENTS]
-    return {"layers": layers, "roles": roles, "components": components}
+    return {"layers": layers[:MAX_REQUIREMENTS], "roles": roles,
+            "components": components}
 
 
 def _spec_layers_by_id(mapspec: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -79,19 +99,25 @@ def assess_intent_acceptance(
     *,
     product_verdict: str = "",
 ) -> Dict[str, Any]:
-    """意图验收（纯函数）：verdict + desired + observed 三面独立核对。"""
+    """意图验收（纯函数）：verdict + desired + observed 三面独立核对。
+
+    user-wins（评审 F4）：spec 中用户主动隐藏的层**不阻断**验收 —— 与
+    V6 ``F_LAYER_HIDDEN``（warning 级、只披露）同语义；只记入
+    ``disclosures`` 并跳过其 observed 核对（用户选择即最终语义）。"""
     if not isinstance(chapter, dict) or not chapter:
         return {"accepted": False, "intent_verified": False, "unmet": ["no_chapter"]}
     requirements = derive_intent_requirements(chapter)
     spec_layers = _spec_layers_by_id(mapspec)
     observed = _observed_by_id(observation)
     unmet: List[str] = []
+    disclosures: List[str] = []
 
     verdict_ok = str(product_verdict or "").startswith("READY")
     if not verdict_ok:
         unmet.append(f"verdict:{product_verdict or 'none'}")
 
     desired_ok = True
+    user_hidden: List[str] = []
     for layer_id in requirements["layers"]:
         spec_layer = spec_layers.get(layer_id)
         if spec_layer is None:
@@ -99,12 +125,15 @@ def assess_intent_acceptance(
             unmet.append(f"layer_not_in_spec:{layer_id}")
             continue
         if spec_layer.get("visible") is False:
-            desired_ok = False
-            unmet.append(f"layer_hidden_in_spec:{layer_id}")
+            # user-wins：不阻断、不核 observed（用户选择即最终语义）
+            user_hidden.append(layer_id)
+            disclosures.append(f"layer_hidden_by_user:{layer_id}")
 
     observed_confirmed = bool(observed) and desired_ok
     if bool(observed):
         for layer_id in requirements["layers"]:
+            if layer_id in user_hidden:
+                continue
             entry = observed.get(layer_id)
             if entry is None:
                 observed_confirmed = False
@@ -124,6 +153,7 @@ def assess_intent_acceptance(
         "verdict_ok": verdict_ok,
         "requirements": requirements,
         "unmet": [u[:96] for u in unmet[:MAX_UNMET]],
+        "disclosures": [d[:96] for d in disclosures[:MAX_UNMET]],
     }
 
 

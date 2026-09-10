@@ -206,10 +206,33 @@ def test_v7_gate_kill_switch(monkeypatch):
     assert not v7_capability_retrieval_enabled()
 
 
-def test_surface_select_v7_reasons_present():
-    """select() 在 V7 开启时对命中候选带 v7:descriptor 证据；关闭时缺席。"""
+def test_descriptor_boosts_positive_mapping():
+    """F11 正路径回归锁：首位命中的 related_tools 得有界加成（≤0.25）。"""
+    from app.services.gis_harness.capability_descriptors import descriptor_boosts
+
+    index = {
+        "algorithm:a": _desc(id="algorithm:a", label="density surface",
+                             fallback_chain=[]),
+        "algorithm:b": _desc(id="algorithm:b", label="unrelated thing",
+                             fallback_chain=[]),
+    }
+    index["algorithm:a"].related_tools = ["tool_a", "tool_b"]
+    boosts = descriptor_boosts(index, "density", limit=4)
+    assert set(boosts) == {"tool_a", "tool_b"}
+    assert 0 < boosts["tool_a"] <= 0.25
+    # 同一 pick 的工具同权重；跨 pick 才衰减（第二命中的工具更小）
+    index["algorithm:b"].related_tools = ["tool_c"]
+    index["algorithm:b"].label = "density model"
+    boosts2 = descriptor_boosts(index, "density", limit=4)
+    assert boosts2["tool_a"] == boosts2["tool_b"] == 0.25
+    assert 0 < boosts2["tool_c"] < 0.25
+    # 无命中 → 无加成
+    assert descriptor_boosts(index, "totally unrelated query xyz") == {}
+
+
+def test_surface_select_v7_kill_switch_bitwise_off():
+    """select() V7 信号：开启不崩；关闭路径严格无 v7 证据（逐位回退）。"""
     from app.services.chat.tool_surface_v3 import DynamicToolSurface, ToolSelectionContext
-    from app.services.chat.semantic_retrieval import hybrid_signals  # noqa: F401
 
     pytest.importorskip("app.tools.registry")
     from app.tools.registry import ToolRegistry
@@ -220,14 +243,10 @@ def test_surface_select_v7_reasons_present():
     monkeypatch_default = os.environ.get("GIS_CAPABILITY_RETRIEVAL_V7", "1")
     try:
         os.environ["GIS_CAPABILITY_RETRIEVAL_V7"] = "1"
-        sel = surface.select(ctx)
-        v7_on = any("v7:descriptor" in r for rs in sel.reasons.values() for r in rs)
+        surface.select(ctx)  # 开启路径不崩即可（registry 内容决定命中面）
         os.environ["GIS_CAPABILITY_RETRIEVAL_V7"] = "0"
         sel_off = surface.select(ctx)
         v7_off = any("v7:descriptor" in r for rs in sel_off.reasons.values() for r in rs)
         assert v7_off is False
-        # 开启时也不强制要求命中（registry 空 → 无候选 → 无理由），仅验证
-        # 关闭路径严格缺席。
-        assert v7_on in (True, False)
     finally:
         os.environ["GIS_CAPABILITY_RETRIEVAL_V7"] = monkeypatch_default

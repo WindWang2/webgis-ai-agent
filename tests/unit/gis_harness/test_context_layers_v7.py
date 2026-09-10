@@ -222,9 +222,10 @@ async def test_checkpoint_roundtrip():
         stored = (state or {}).get(CONTEXT_LAYERS_KEY)
         assert stored is not None
         assert stored["content_fingerprint"] == block["content_fingerprint"]
-        # 再跑一次：revision 单调 +1，内容指纹稳定
+        # 再跑一次：内容指纹不变 → 幂等跳写（评审 F7 —— revision 不做
+        # 写计数器；返回存储块原样）
         block2 = await checkpoint_context_layers(sid)
-        assert block2["revision"] == block["revision"] + 1
+        assert block2["revision"] == block["revision"]
         assert block2["content_fingerprint"] == block["content_fingerprint"]
     finally:
         await session_data_manager.clear_session(sid)

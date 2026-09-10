@@ -56,6 +56,12 @@ def _enabled() -> bool:
     return os.getenv("GIS_RUNTIME_STATE_MACHINE", "1") not in ("0", "false", "False")
 
 
+def runtime_state_enabled() -> bool:
+    """公共门（F6：commit/checkpoint 等旁路写者消费同一开关 —— kill
+    switch 真正逐位回退）。"""
+    return _enabled()
+
+
 # ── 封闭词表 ─────────────────────────────────────────────────────────────
 
 class RuntimePhase(str, Enum):
@@ -253,25 +259,54 @@ def _committed_marker(chapter: Dict[str, Any]) -> Dict[str, Any]:
     return marker if isinstance(marker, dict) else {}
 
 
+def _plan_replan_pending(chapter: Dict[str, Any]) -> bool:
+    """plan_runtime.replan_pending 的只读判定（幂等门辅助）。"""
+    pr = chapter.get("plan_runtime") if isinstance(chapter, dict) else None
+    return bool(isinstance(pr, dict) and pr.get("replan_pending"))
+
+
 def _verdict_ready(chapter: Dict[str, Any]) -> bool:
     product = chapter.get("map_product")
     if not isinstance(product, dict):
         return False
-    return str(product.get("product_verdict") or "").startswith("READY")
+    # 兼容双形状（评审 F1 深层根因）：块上可能是 derive 的完整 dict
+    verdict = product.get("product_verdict")
+    if isinstance(verdict, dict):
+        verdict = str(verdict.get("verdict") or "")
+    return str(verdict or "").startswith("READY")
 
 
 def _task_complete(chapter: Dict[str, Any]) -> bool:
+    """成品块 → 任务级完成布尔。
+
+    V7 修复（评审 F1）：优先读显式 ``task_complete`` 键（map_product_block
+    现随块持久化，单一折叠来源）；旧块缺键时回退 verdict + final_map
+    折叠（与 completion.pipeline._is_task_complete 同语义），COMMITTED
+    判定对历史块同样成立。"""
     product = chapter.get("map_product")
     if not isinstance(product, dict):
         return False
-    return bool(product.get("task_complete")) is True
+    if "task_complete" in product:
+        return bool(product.get("task_complete")) is True
+    verdict = product.get("product_verdict")
+    if isinstance(verdict, dict):
+        verdict = str(verdict.get("verdict") or "")
+    final_status = str(product.get("final_map_status") or "")
+    return verdict.startswith("READY") and final_status in (
+        "verified", "verified_with_degradation")
 
 
 def _budgets_exhausted(recovery_loops: Dict[str, int]) -> bool:
-    """recovery 预算余量全 0（deepen/requalify/repair/replan）。"""
+    """abort 判定的预算门槛：deepen/requalify/repair 全 0（**不含
+    replan** —— 与 continuation 的 abort 门槛同口径：replan 是 abort 的
+    逃生舱而非被 gate 对象，评审 F2）。"""
     if not recovery_loops:
         return False
-    return all(int(v) <= 0 for v in recovery_loops.values())
+    return all(
+        int(v) <= 0
+        for k, v in recovery_loops.items()
+        if k != "replan"
+    )
 
 
 def _unresolved(chapter: Dict[str, Any]) -> bool:
@@ -669,6 +704,18 @@ async def maybe_update_runtime_state(
                 return None
             if rows_fingerprint(fresh.gis_chapter)[:2048] != validated_rows[:2048]:
                 return None
+            # F8：锁内全输入守卫 —— 等锁窗口内 map_product /
+            # workflow_instance / plan_runtime 任一漂移都会让本次派生基于
+            # 旧输入。重算 gate（O(rows)，与预锁同函数）不一致即放弃，
+            # 下一触发点基于新输入重派生。
+            _fresh_pr = fresh.gis_chapter.get("plan_runtime")
+            fresh_gate = _input_gate_fingerprint(
+                fresh.gis_chapter, loops_remaining,
+                int(_fresh_pr.get("version") or 0)
+                if isinstance(_fresh_pr, dict) else 0,
+            )
+            if fresh_gate != gate:
+                return None
             fresh_stored = fresh.gis_chapter.get(RUNTIME_STATE_KEY)
             if (
                 isinstance(stored, dict)
@@ -714,7 +761,8 @@ async def commit_runtime_context(
         return None
     chapter = plan.gis_chapter
     product = chapter.get("map_product")
-    if not isinstance(product, dict) or not product.get("task_complete"):
+    # F1 回退折叠：旧块可能无显式 task_complete 键 —— 与派生器同语义。
+    if not isinstance(product, dict) or not _task_complete(chapter):
         return None
     try:
         map_state = await session_data_manager.get_map_state(session_id)
@@ -727,8 +775,9 @@ async def commit_runtime_context(
     if (
         block.context_commit.product_checked_revision == checked
         and block.context_commit.product_checked_revision > 0
+        and not _plan_replan_pending(chapter)
     ):
-        return None  # 幂等：已提交同一成品
+        return None  # 幂等：已提交同一成品（且无陈旧 replan_pending 待清）
 
     async def _persist() -> Optional[Dict[str, Any]]:
         from app.services.session_plan import goal_key
@@ -741,7 +790,8 @@ async def commit_runtime_context(
             if goal_key(fresh.gis_chapter, fresh.user_goal) != goal_key(chapter, plan.user_goal):
                 return None
             fresh_product = fresh.gis_chapter.get("map_product")
-            if not isinstance(fresh_product, dict) or not fresh_product.get("task_complete"):
+            if not isinstance(fresh_product, dict) or not _task_complete(
+                    fresh.gis_chapter):
                 return None
             stored_now = _parse_stored(fresh.gis_chapter.get(RUNTIME_STATE_KEY))
             stored_now.context_commit = RuntimeContextCommit(
@@ -755,6 +805,13 @@ async def commit_runtime_context(
             if not stored_now.phase:
                 stored_now.phase = RuntimePhase.FINALIZING.value
             fresh.gis_chapter[RUNTIME_STATE_KEY] = stored_now.to_bounded_dict()
+            # F9：READY/commit 时清陈旧 replan_pending（回路已被更好的
+            # 事实取代 —— 不让 pending 与 committed 并存污染后续派生）。
+            fresh_plan_runtime = fresh.gis_chapter.get("plan_runtime")
+            if isinstance(fresh_plan_runtime, dict) and fresh_plan_runtime.get(
+                    "replan_pending"):
+                fresh_plan_runtime["replan_pending"] = False
+                fresh.gis_chapter["plan_runtime"] = fresh_plan_runtime
             await save_session_plan(fresh)
             return fresh.gis_chapter[RUNTIME_STATE_KEY]
 
@@ -763,6 +820,7 @@ async def commit_runtime_context(
 
 __all__ = [
     "RUNTIME_STATE_KEY",
+    "runtime_state_enabled",
     "RuntimePhase",
     "TRIGGERS",
     "RuntimeTransition",
