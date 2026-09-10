@@ -264,6 +264,14 @@ class MemorySessionStore(BaseSessionStore):
             self._lock_bound_loop = loop
         return self._lock_obj
 
+    @_lock.setter
+    def _lock(self, val: Any) -> None:
+        self._lock_obj = val
+        try:
+            self._lock_bound_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._lock_bound_loop = None
+
     @property
     def _map_action_lock(self) -> asyncio.Lock:
         try:
@@ -274,6 +282,14 @@ class MemorySessionStore(BaseSessionStore):
             self._map_action_lock_obj = asyncio.Lock()
             self._map_action_lock_bound_loop = loop
         return self._map_action_lock_obj
+
+    @_map_action_lock.setter
+    def _map_action_lock(self, val: Any) -> None:
+        self._map_action_lock_obj = val
+        try:
+            self._map_action_lock_bound_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._map_action_lock_bound_loop = None
 
     def _touch_session(self, session_id: str) -> None:
         if session_id in self._session_order:
