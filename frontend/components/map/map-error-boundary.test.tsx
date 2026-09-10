@@ -12,6 +12,7 @@
  *   3. Retry clears the error locally (no window.location.reload, which would
  *      discard chat history).
  */
+import React, { useEffect } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MapErrorBoundary } from './map-error-boundary';
@@ -95,5 +96,33 @@ describe('MapErrorBoundary', () => {
 
     expect(screen.getByText('map canvas')).toBeInTheDocument();
     expect(screen.queryByText(/map unavailable/i)).not.toBeInTheDocument();
+  });
+
+  it('forces children remount via incremented retryKey on retry (FRONT-08)', () => {
+    let mountCount = 0;
+    let shouldThrow = true;
+
+    function ChildWithMountTracking() {
+      useEffect(() => {
+        mountCount += 1;
+      }, []);
+      if (shouldThrow) throw new Error('Crash on mount');
+      return <div>Mounted Child</div>;
+    }
+
+    render(
+      <MapErrorBoundary>
+        <ChildWithMountTracking />
+      </MapErrorBoundary>
+    );
+
+    expect(screen.getByText(/map unavailable/i)).toBeInTheDocument();
+    expect(mountCount).toBe(0);
+
+    shouldThrow = false;
+    fireEvent.click(screen.getByRole('button', { name: /retry map/i }));
+
+    expect(screen.getByText('Mounted Child')).toBeInTheDocument();
+    expect(mountCount).toBe(1);
   });
 });
