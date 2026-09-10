@@ -135,6 +135,13 @@ function DockResizeHandle({
     );
   }, [area]);
 
+  // 拖拽结束后摘除草稿变量：Chrome 根的 width/height 回落到
+  // var(--dock-draft-*, {store}px) 的 store 回退值。不摘除的话残留变量
+  // 会永远压过后续的 store 变化（双击复位/键盘调整看似失效）。
+  const clearDraft = useCallback(() => {
+    hostRef.current?.style.removeProperty(area === 'right' ? '--dock-draft-w' : '--dock-draft-h');
+  }, [area]);
+
   const scheduleApply = useCallback(() => {
     const d = dragRef.current;
     if (!d || d.rafPending) return;
@@ -153,10 +160,16 @@ function DockResizeHandle({
     dragRef.current = null;
     if (d.rafId !== null) cancelAnimationFrame(d.rafId);
     d.detachListeners.forEach((detach) => detach());
-    applyDraft(d.size);
-    if (d.size !== d.startSize) onCommit(d.size);
+    if (d.size !== d.startSize) {
+      // 先让可见宽度 == 即将提交的宽度，提交后摘除草稿变量 —— store 重渲染
+      // 的回退值随即接管（时序：同步 style 写 + 同步 store 写在同一事件里，
+      // React 提交前不会闪回旧尺寸）。
+      applyDraft(d.size);
+      onCommit(d.size);
+    }
+    clearDraft();
     setDragging(false);
-  }, [applyDraft, onCommit]);
+  }, [applyDraft, clearDraft, onCommit]);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
