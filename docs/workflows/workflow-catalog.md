@@ -14,7 +14,7 @@
 - Composite Recipe（跨族组合）：**12**
 - Scenario Template（场景模板）：**7**
 - 分层实体合计：**335**（覆盖靠组合生成，不是平铺复制）
-- 分层指纹：`dbc7d0080f775142…`
+- 分层指纹：`41cb64595f0cacaa…`
 
 ## Workflow Families（派生投影）
 
@@ -24,7 +24,7 @@
 - `accessibility.coverage_ratio` — 成员 1 个：`facility_coverage_ratio`；本体任务：`cartographic.statistical_map`, `decision.multi_criteria`, `decision.spatial_equity`, `decision.vulnerability`
 - `accessibility.emergency_coverage` — 成员 1 个：`emergency_response_coverage`；本体任务：`decision.risk_exposure`, `decision.vulnerability`, `network.accessibility`, `network.service_area`
 - `accessibility.location_allocation` — 成员 1 个：`location_allocation_planning`；本体任务：`decision.multi_criteria`, `decision.site_selection`, `network.accessibility`, `network.facility_location`
-- `accessibility.service_area` — 成员 1 个：`service_area_isochrone`；本体任务：`network.accessibility`, `network.route`, `network.service_area`
+- `accessibility.service_area` — 成员 1 个：`service_area_isochrone`；本体任务：`decision.overlay_composite`, `network.accessibility`, `network.proximity_buffer`, `network.route`
 - `accessibility.transit_walk_access` — 成员 1 个：`transit_stop_accessibility`；本体任务：`network.accessibility`, `network.service_area`
 - `change_detection.area_accounting` — 成员 1 个：`change_area_accounting`；本体任务：`cartographic.comparison_map`, `cartographic.statistical_map`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
 - `change_detection.bitemporal_change` — 成员 1 个：`bitemporal_raster_change`；本体任务：`cartographic.comparison_map`, `remote_sensing.change_detection`, `remote_sensing.temporal_analysis`
@@ -32,32 +32,32 @@
 - `change_detection.poi_comparison` — 成员 1 个：`poi_temporal_comparison`；本体任务：`cartographic.comparison_map`, `cartographic.statistical_map`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
 - `change_detection.urban_expansion` — 成员 1 个：`urban_expansion_monitor`；本体任务：`cartographic.comparison_map`, `cartographic.statistical_map`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
 - `change_detection.vegetation_trend` — 成员 1 个：`ndvi_change_trend`；本体任务：`cartographic.comparison_map`, `remote_sensing.change_detection`, `remote_sensing.spectral_index`, `remote_sensing.temporal_analysis`
-- `density.grid_density` — 成员 2 个：`density_grid_fishnet`, `density_grid_h3`；本体任务：`cartographic.report_map`, `distribution.density_quantitative`, `distribution.point_distribution`, `distribution.ranking_comparison`
-- `density.hotspot_screening` — 成员 1 个：`density_hotspot_screening`；本体任务：`spatial_statistics.hotspot_significance`
-- `density.kde_density` — 成员 1 个：`density_kde_surface`；本体任务：`distribution.density_quantitative`, `spatial_statistics.hotspot_significance`
+- `density.grid_density` — 成员 2 个：`density_grid_fishnet`, `density_grid_h3`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `distribution.density_quantitative`, `distribution.point_distribution`
+- `density.hotspot_screening` — 成员 1 个：`density_hotspot_screening`；本体任务：`spatial_statistics.hotspot_significance`, `spatial_statistics.point_clustering`
+- `density.kde_density` — 成员 1 个：`density_kde_surface`；本体任务：`distribution.density_quantitative`, `spatial_statistics.hotspot_significance`, `spatial_statistics.point_clustering`
 - `density.quantitative_density` — 成员 1 个：`density_quantitative_per_area`；本体任务：`cartographic.statistical_map`, `distribution.density_quantitative`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
-- `density.visual_density` — 成员 1 个：`density_visual_overview`；本体任务：`cartographic.report_map`, `distribution.point_distribution`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
-- `disaster.hazard_inventory` — 成员 1 个：`geological_hazard_inventory`；本体任务：`cartographic.report_map`, `cartographic.statistical_map`, `decision.risk_exposure`, `decision.vulnerability`
-- `disaster.inundation_screen` — 成员 1 个：`flood_inundation_screen`；本体任务：`decision.risk_exposure`, `decision.vulnerability`, `network.route`, `network.service_area`
+- `density.visual_density` — 成员 1 个：`density_visual_overview`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `distribution.point_distribution`, `distribution.ranking_comparison`
+- `disaster.hazard_inventory` — 成员 1 个：`geological_hazard_inventory`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `cartographic.statistical_map`, `decision.risk_exposure`
+- `disaster.inundation_screen` — 成员 1 个：`flood_inundation_screen`；本体任务：`decision.overlay_composite`, `decision.risk_exposure`, `decision.vulnerability`, `network.proximity_buffer`
 - `disaster.resource_dispatch` — 成员 1 个：`emergency_resource_dispatch`；本体任务：`decision.risk_exposure`, `decision.vulnerability`, `network.accessibility`, `network.centrality`
 - `disaster.seismic_quick_screen` — 成员 1 个：`seismic_intensity_exposure_screen`；本体任务：`decision.risk_exposure`, `decision.vulnerability`
 - `disaster.shelter_accessibility` — 成员 1 个：`disaster_shelter_accessibility`；本体任务：`decision.multi_criteria`, `decision.risk_exposure`, `decision.spatial_equity`, `decision.vulnerability`
-- `distribution.facility_distribution` — 成员 9 个：`cultural_facility_distribution`, `edu_facility_distribution`, `emergency_shelter_distribution`, `financial_branch_distribution`；本体任务：`cartographic.report_map`, `distribution.category_breakdown`, `distribution.point_distribution`, `distribution.ranking_comparison`
-- `distribution.inventory_catalog` — 成员 2 个：`admin_feature_audit`, `poi_inventory_catalog`；本体任务：`cartographic.report_map`, `cartographic.statistical_map`, `distribution.category_breakdown`, `distribution.point_distribution`
+- `distribution.facility_distribution` — 成员 9 个：`cultural_facility_distribution`, `edu_facility_distribution`, `emergency_shelter_distribution`, `financial_branch_distribution`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `distribution.category_breakdown`, `distribution.point_distribution`
+- `distribution.inventory_catalog` — 成员 2 个：`admin_feature_audit`, `poi_inventory_catalog`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `cartographic.statistical_map`, `distribution.category_breakdown`
 - `distribution.simple_view` — 成员 1 个：`landmark_simple_view`；本体任务：`distribution.point_distribution`
 - `environment.air_quality_admin` — 成员 1 个：`air_quality_admin_stats`；本体任务：`cartographic.comparison_map`, `cartographic.statistical_map`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
 - `environment.air_quality_surface` — 成员 1 个：`air_quality_surface`；本体任务：`interpolation.deterministic_surface`, `interpolation.geostatistical_kriging`, `interpolation.regression_kriging`, `interpolation.trend_surface`
-- `environment.noise_screen` — 成员 1 个：`noise_buffer_screen`；本体任务：`decision.risk_exposure`, `decision.vulnerability`, `network.route`, `network.service_area`
-- `environment.pollution_buffer_screen` — 成员 1 个：`pollution_source_buffer_screen`；本体任务：`decision.risk_exposure`, `decision.vulnerability`, `network.route`, `network.service_area`
+- `environment.noise_screen` — 成员 1 个：`noise_buffer_screen`；本体任务：`decision.overlay_composite`, `decision.risk_exposure`, `decision.vulnerability`, `network.proximity_buffer`
+- `environment.pollution_buffer_screen` — 成员 1 个：`pollution_source_buffer_screen`；本体任务：`decision.overlay_composite`, `decision.risk_exposure`, `decision.vulnerability`, `network.proximity_buffer`
 - `environment.sensitivity_zoning` — 成员 1 个：`env_sensitivity_zoning`；本体任务：`decision.multi_criteria`, `decision.risk_exposure`, `decision.suitability`, `decision.vulnerability`
-- `environment.station_coverage` — 成员 1 个：`monitoring_station_coverage`；本体任务：`cartographic.report_map`, `cartographic.statistical_map`, `distribution.point_distribution`, `distribution.ranking_comparison`
+- `environment.station_coverage` — 成员 1 个：`monitoring_station_coverage`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `cartographic.statistical_map`, `distribution.point_distribution`
 - `equity.education_equity` — 成员 1 个：`education_equity_per_capita`；本体任务：`cartographic.statistical_map`, `decision.multi_criteria`, `decision.spatial_equity`, `decision.vulnerability`
 - `equity.emergency_equity` — 成员 1 个：`emergency_equity_coverage`；本体任务：`decision.multi_criteria`, `decision.spatial_equity`, `decision.vulnerability`, `network.accessibility`
 - `equity.healthcare_equity` — 成员 1 个：`healthcare_equity_access`；本体任务：`decision.multi_criteria`, `decision.spatial_equity`, `decision.vulnerability`, `network.accessibility`
 - `equity.park_equity` — 成员 1 个：`park_access_equity`；本体任务：`decision.multi_criteria`, `decision.spatial_equity`, `decision.vulnerability`, `network.accessibility`
 - `equity.per_capita_profile` — 成员 1 个：`facility_per_capita_profile`；本体任务：`cartographic.statistical_map`, `decision.multi_criteria`, `decision.spatial_equity`, `decision.vulnerability`
-- `exposure.buffer_receptor_screen` — 成员 1 个：`hazard_buffer_receptor_screen`；本体任务：`decision.risk_exposure`, `decision.vulnerability`, `network.route`, `network.service_area`
-- `exposure.facility_inventory` — 成员 1 个：`facility_exposure_inventory`；本体任务：`cartographic.report_map`, `decision.risk_exposure`, `decision.vulnerability`, `distribution.point_distribution`
+- `exposure.buffer_receptor_screen` — 成员 1 个：`hazard_buffer_receptor_screen`；本体任务：`decision.overlay_composite`, `decision.risk_exposure`, `decision.vulnerability`, `network.proximity_buffer`
+- `exposure.facility_inventory` — 成员 1 个：`facility_exposure_inventory`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `decision.risk_exposure`, `decision.vulnerability`
 - `exposure.population_exposure` — 成员 1 个：`population_exposure_estimate`；本体任务：`decision.multi_criteria`, `decision.risk_exposure`, `decision.spatial_equity`, `decision.vulnerability`
 - `exposure.vulnerability_profile` — 成员 1 个：`vulnerability_profile_overlay`；本体任务：`decision.multi_criteria`, `decision.risk_exposure`, `decision.spatial_equity`, `decision.vulnerability`
 - `hydrology.drainage_density` — 成员 1 个：`drainage_density_stats`；本体任务：`cartographic.statistical_map`, `distribution.ranking_comparison`, `distribution.regional_aggregation`, `terrain_hydrology.indices`
@@ -72,24 +72,24 @@
 - `interpolation.station_field` — 成员 1 个：`station_field_interpolation`；本体任务：`cartographic.comparison_map`, `interpolation.deterministic_surface`, `interpolation.geostatistical_kriging`, `interpolation.regression_kriging`
 - `interpolation.uncertainty_surface` — 成员 1 个：`interpolation_uncertainty_map`；本体任务：`interpolation.deterministic_surface`, `interpolation.geostatistical_kriging`, `interpolation.regression_kriging`, `interpolation.trend_surface`
 - `natural_resources.area_accounting` — 成员 1 个：`landcover_area_accounting`；本体任务：`cartographic.statistical_map`, `distribution.ranking_comparison`, `distribution.regional_aggregation`, `interpolation.deterministic_surface`
-- `natural_resources.cultivated_land` — 成员 1 个：`cultivated_land_distribution`；本体任务：`cartographic.report_map`, `cartographic.statistical_map`, `distribution.point_distribution`, `distribution.ranking_comparison`
-- `natural_resources.forest_inventory` — 成员 1 个：`forest_orchard_inventory`；本体任务：`cartographic.report_map`, `cartographic.statistical_map`, `distribution.point_distribution`, `distribution.ranking_comparison`
+- `natural_resources.cultivated_land` — 成员 1 个：`cultivated_land_distribution`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `cartographic.statistical_map`, `distribution.point_distribution`
+- `natural_resources.forest_inventory` — 成员 1 个：`forest_orchard_inventory`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `cartographic.statistical_map`, `distribution.point_distribution`
 - `natural_resources.grassland_condition` — 成员 1 个：`grassland_condition_index`；本体任务：`cartographic.comparison_map`, `remote_sensing.spectral_index`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`
 - `natural_resources.resource_change` — 成员 1 个：`resource_change_detection`；本体任务：`cartographic.comparison_map`, `cartographic.statistical_map`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
-- `natural_resources.water_inventory` — 成员 1 个：`water_body_inventory`；本体任务：`cartographic.report_map`, `cartographic.statistical_map`, `distribution.point_distribution`, `distribution.ranking_comparison`
+- `natural_resources.water_inventory` — 成员 1 个：`water_body_inventory`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `cartographic.statistical_map`, `distribution.point_distribution`
 - `network.closest_facility` — 成员 1 个：`closest_facility_assignment`；本体任务：`network.accessibility`, `network.centrality`, `network.route`, `network.service_area`
 - `network.od_corridor` — 成员 1 个：`od_corridor_mapping`；本体任务：`network.od_analysis`
 - `network.od_matrix` — 成员 1 个：`od_matrix_analysis`；本体任务：`network.centrality`, `network.od_analysis`, `network.route`
 - `network.route_optimization` — 成员 1 个：`route_optimization_tour`；本体任务：`decision.multi_criteria`, `decision.site_selection`, `network.centrality`, `network.facility_location`
-- `network.shortest_path` — 成员 1 个：`shortest_path_routing`；本体任务：`network.centrality`, `network.route`, `network.service_area`
+- `network.shortest_path` — 成员 1 个：`shortest_path_routing`；本体任务：`decision.overlay_composite`, `network.centrality`, `network.proximity_buffer`, `network.route`
 - `network.traffic_status` — 成员 1 个：`traffic_status_overview`；本体任务：`distribution.point_distribution`, `network.centrality`, `network.od_analysis`, `network.route`
 - `network.transit_accessibility` — 成员 1 个：`transit_accessibility_workflow`；本体任务：`network.accessibility`, `network.centrality`, `network.route`, `network.service_area`
-- `point_pattern.distance_analysis` — 成员 1 个：`point_pattern_distance`；本体任务：`spatial_statistics.hotspot_significance`
+- `point_pattern.distance_analysis` — 成员 1 个：`point_pattern_distance`；本体任务：`spatial_statistics.hotspot_significance`, `spatial_statistics.point_clustering`
 - `point_pattern.emergence_tracking` — 成员 1 个：`spatiotemporal_emergence_tracking`；本体任务：`cartographic.comparison_map`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`, `spatial_statistics.hotspot_significance`
-- `point_pattern.extent_delimitation` — 成员 1 个：`convex_hull_extent`；本体任务：`cartographic.report_map`, `distribution.point_distribution`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
+- `point_pattern.extent_delimitation` — 成员 1 个：`convex_hull_extent`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `decision.overlay_composite`, `distribution.point_distribution`
 - `point_pattern.quadrat_analysis` — 成员 1 个：`point_pattern_quadrat`；本体任务：`spatial_statistics.global_autocorrelation`, `spatial_statistics.heterogeneity`, `spatial_statistics.hotspot_significance`, `spatial_statistics.local_cluster`
-- `point_pattern.voronoi_coverage` — 成员 1 个：`voronoi_service_coverage`；本体任务：`network.accessibility`, `network.route`, `network.service_area`
-- `public_health.clinic_coverage` — 成员 1 个：`clinic_coverage_analysis`；本体任务：`cartographic.report_map`, `distribution.point_distribution`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
+- `point_pattern.voronoi_coverage` — 成员 1 个：`voronoi_service_coverage`；本体任务：`decision.overlay_composite`, `network.accessibility`, `network.proximity_buffer`, `network.route`
+- `public_health.clinic_coverage` — 成员 1 个：`clinic_coverage_analysis`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `distribution.point_distribution`, `distribution.ranking_comparison`
 - `public_health.epidemic_monitor` — 成员 1 个：`epidemic_density_monitor`；本体任务：`cartographic.comparison_map`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`, `spatial_statistics.hotspot_significance`
 - `public_health.hospital_service_area` — 成员 1 个：`hospital_service_area_stats`；本体任务：`cartographic.statistical_map`, `distribution.ranking_comparison`, `distribution.regional_aggregation`, `network.accessibility`
 - `public_health.per_capita_profile` — 成员 1 个：`health_resource_per_capita`；本体任务：`cartographic.statistical_map`, `decision.multi_criteria`, `decision.spatial_equity`, `decision.vulnerability`
@@ -99,11 +99,11 @@
 - `remote_sensing.index_timeseries` — 成员 1 个：`index_time_series_trend`；本体任务：`cartographic.comparison_map`, `remote_sensing.spectral_index`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`
 - `remote_sensing.landcover_map` — 成员 1 个：`landcover_categorical_map`；本体任务：`distribution.category_breakdown`, `interpolation.deterministic_surface`, `interpolation.geostatistical_kriging`, `interpolation.regression_kriging`
 - `remote_sensing.ndvi_monitor` — 成员 1 个：`ndvi_vegetation_monitor`；本体任务：`interpolation.deterministic_surface`, `interpolation.geostatistical_kriging`, `interpolation.regression_kriging`, `interpolation.trend_surface`
-- `remote_sensing.scene_inventory` — 成员 1 个：`rs_scene_inventory`；本体任务：`cartographic.report_map`, `distribution.point_distribution`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
+- `remote_sensing.scene_inventory` — 成员 1 个：`rs_scene_inventory`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `distribution.point_distribution`, `distribution.ranking_comparison`
 - `remote_sensing.water_index` — 成员 1 个：`ndwi_water_index`；本体任务：`interpolation.deterministic_surface`, `interpolation.geostatistical_kriging`, `interpolation.regression_kriging`, `interpolation.trend_surface`
 - `remote_sensing.zonal_index_report` — 成员 1 个：`zonal_rs_index_report`；本体任务：`cartographic.statistical_map`, `distribution.ranking_comparison`, `distribution.regional_aggregation`, `remote_sensing.spectral_index`
 - `risk.earthquake_exposure` — 成员 1 个：`earthquake_exposure_screening`；本体任务：`decision.risk_exposure`, `decision.vulnerability`
-- `risk.fire_risk` — 成员 1 个：`urban_fire_risk_hotspot`；本体任务：`decision.risk_exposure`, `decision.vulnerability`, `spatial_statistics.hotspot_significance`
+- `risk.fire_risk` — 成员 1 个：`urban_fire_risk_hotspot`；本体任务：`decision.risk_exposure`, `decision.vulnerability`, `spatial_statistics.hotspot_significance`, `spatial_statistics.point_clustering`
 - `risk.flood_risk` — 成员 1 个：`flood_risk_assessment`；本体任务：`decision.risk_exposure`, `decision.vulnerability`, `terrain_hydrology.indices`, `terrain_hydrology.stream_network`
 - `risk.hazard_exposure_overlay` — 成员 1 个：`hazard_exposure_overlay`；本体任务：`decision.risk_exposure`, `decision.vulnerability`
 - `risk.landslide_risk` — 成员 1 个：`landslide_risk_assessment`；本体任务：`decision.multi_criteria`, `decision.risk_exposure`, `decision.suitability`, `decision.vulnerability`
@@ -135,8 +135,8 @@
 - `temporal.aggregate_stats` — 成员 1 个：`temporal_aggregate_stats`；本体任务：`cartographic.comparison_map`, `cartographic.statistical_map`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
 - `temporal.changepoint_detection` — 成员 1 个：`changepoint_detection_workflow`；本体任务：`cartographic.comparison_map`, `remote_sensing.change_detection`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`
 - `temporal.interannual_comparison` — 成员 1 个：`interannual_comparison_workflow`；本体任务：`cartographic.comparison_map`, `remote_sensing.change_detection`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`
-- `temporal.linear_trend` — 成员 1 个：`linear_trend_analysis`；本体任务：`cartographic.comparison_map`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`
-- `temporal.seasonal_pattern` — 成员 1 个：`seasonal_pattern_analysis`；本体任务：`cartographic.comparison_map`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`
+- `temporal.linear_trend` — 成员 1 个：`linear_trend_analysis`；本体任务：`cartographic.comparison_map`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`, `spatial_statistics.spatiotemporal_pattern`
+- `temporal.seasonal_pattern` — 成员 1 个：`seasonal_pattern_analysis`；本体任务：`cartographic.comparison_map`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`, `spatial_statistics.spatiotemporal_pattern`
 - `temporal.station_profile` — 成员 1 个：`temporal_profile_station`；本体任务：`cartographic.comparison_map`, `distribution.point_distribution`, `remote_sensing.temporal_analysis`, `sar.temporal_analysis`
 - `terrain.aspect_analysis` — 成员 1 个：`aspect_analysis_workflow`；本体任务：`terrain_hydrology.composite_analysis`, `terrain_hydrology.hillshade_viewshed`, `terrain_hydrology.indices`, `terrain_hydrology.slope_aspect`
 - `terrain.contour_product` — 成员 1 个：`contour_map_product`；本体任务：`distribution.point_distribution`, `interpolation.deterministic_surface`, `interpolation.geostatistical_kriging`, `interpolation.regression_kriging`
@@ -147,26 +147,26 @@
 - `terrain.slope_zoning` — 成员 1 个：`slope_zoning_constraint`；本体任务：`decision.multi_criteria`, `decision.suitability`, `terrain_hydrology.composite_analysis`, `terrain_hydrology.hillshade_viewshed`
 - `terrain.viewshed_analysis` — 成员 1 个：`viewshed_analysis_workflow`；本体任务：`decision.multi_criteria`, `decision.site_selection`, `network.facility_location`, `terrain_hydrology.composite_analysis`
 - `transport.commute_corridor` — 成员 1 个：`commute_flow_corridor`；本体任务：`network.od_analysis`
-- `transport.network_inventory` — 成员 1 个：`road_network_inventory`；本体任务：`cartographic.report_map`, `cartographic.statistical_map`, `distribution.point_distribution`, `distribution.ranking_comparison`
-- `transport.station_catchment` — 成员 1 个：`station_catchment_profile`；本体任务：`network.accessibility`, `network.route`, `network.service_area`
+- `transport.network_inventory` — 成员 1 个：`road_network_inventory`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `cartographic.statistical_map`, `distribution.point_distribution`
+- `transport.station_catchment` — 成员 1 个：`station_catchment_profile`；本体任务：`decision.overlay_composite`, `network.accessibility`, `network.proximity_buffer`, `network.route`
 - `transport.transit_coverage` — 成员 1 个：`transit_service_coverage`；本体任务：`cartographic.statistical_map`, `distribution.ranking_comparison`, `distribution.regional_aggregation`, `network.accessibility`
 - `urban.function_mix` — 成员 1 个：`poi_function_mix`；本体任务：`cartographic.statistical_map`, `distribution.category_breakdown`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
 - `urban.greening_rate` — 成员 1 个：`greening_rate_admin`；本体任务：`cartographic.statistical_map`, `decision.multi_criteria`, `decision.spatial_equity`, `decision.vulnerability`
 - `urban.landuse_structure` — 成员 1 个：`landuse_structure_admin`；本体任务：`cartographic.statistical_map`, `distribution.category_breakdown`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
 - `urban.nightlight_vitality` — 成员 1 个：`nightlight_vitality_profile`；本体任务：`cartographic.comparison_map`, `interpolation.deterministic_surface`, `interpolation.geostatistical_kriging`, `interpolation.regression_kriging`
-- `urban.service_density_profile` — 成员 1 个：`urban_service_density_profile`；本体任务：`cartographic.report_map`, `cartographic.statistical_map`, `distribution.density_quantitative`, `distribution.point_distribution`
+- `urban.service_density_profile` — 成员 1 个：`urban_service_density_profile`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `cartographic.statistical_map`, `distribution.density_quantitative`
 - `seed.accessibility_analysis` — 成员 1 个：`accessibility_analysis`；本体任务：`network.accessibility`, `network.service_area`
 - `seed.administrative_choropleth` — 成员 1 个：`administrative_choropleth`；本体任务：`cartographic.statistical_map`, `distribution.density_quantitative`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
 - `seed.categorical_distribution` — 成员 1 个：`categorical_distribution`；本体任务：`distribution.category_breakdown`
 - `seed.extrusion_3d_thematic` — 成员 1 个：`extrusion_3d_thematic`；本体任务：—
-- `seed.grid_density_aggregate` — 成员 1 个：`grid_density_aggregate`；本体任务：`cartographic.report_map`, `distribution.density_quantitative`, `distribution.point_distribution`, `distribution.ranking_comparison`
-- `seed.hotspot_analysis` — 成员 1 个：`hotspot_analysis`；本体任务：`spatial_statistics.hotspot_significance`
+- `seed.grid_density_aggregate` — 成员 1 个：`grid_density_aggregate`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `distribution.density_quantitative`, `distribution.point_distribution`
+- `seed.hotspot_analysis` — 成员 1 个：`hotspot_analysis`；本体任务：`spatial_statistics.hotspot_significance`, `spatial_statistics.point_clustering`
 - `seed.isoline_contour_map` — 成员 1 个：`isoline_contour_map`；本体任务：—
 - `seed.od_flow_overview` — 成员 1 个：`od_flow_overview`；本体任务：`network.od_analysis`
-- `seed.poi_distribution_overview` — 成员 1 个：`poi_distribution_overview`；本体任务：`cartographic.report_map`, `distribution.point_distribution`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
-- `seed.point_density` — 成员 1 个：`point_density`；本体任务：`spatial_statistics.hotspot_significance`
-- `seed.proportional_symbol_map` — 成员 1 个：`proportional_symbol_map`；本体任务：`cartographic.report_map`, `distribution.point_distribution`, `distribution.ranking_comparison`, `distribution.regional_aggregation`
-- `seed.proximity_analysis` — 成员 1 个：`proximity_analysis`；本体任务：`network.route`, `network.service_area`
+- `seed.poi_distribution_overview` — 成员 1 个：`poi_distribution_overview`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `distribution.point_distribution`, `distribution.ranking_comparison`
+- `seed.point_density` — 成员 1 个：`point_density`；本体任务：`spatial_statistics.hotspot_significance`, `spatial_statistics.point_clustering`
+- `seed.proportional_symbol_map` — 成员 1 个：`proportional_symbol_map`；本体任务：`cartographic.atlas_reporting`, `cartographic.report_map`, `distribution.point_distribution`, `distribution.ranking_comparison`
+- `seed.proximity_analysis` — 成员 1 个：`proximity_analysis`；本体任务：`decision.overlay_composite`, `network.proximity_buffer`, `network.route`, `network.service_area`
 - `seed.raster_distribution` — 成员 1 个：`raster_distribution`；本体任务：`cartographic.comparison_map`, `interpolation.deterministic_surface`, `interpolation.geostatistical_kriging`, `interpolation.regression_kriging`
 - `seed.risk_exposure` — 成员 1 个：`risk_exposure`；本体任务：`decision.risk_exposure`, `decision.vulnerability`
 - `seed.site_selection` — 成员 1 个：`site_selection`；本体任务：`decision.multi_criteria`, `decision.site_selection`, `network.facility_location`

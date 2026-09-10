@@ -157,6 +157,45 @@
   DB_TRANSIENT_SEQUENCE（生产零改动，注册表字节闸同步）
 
 ## [Unreleased] - 2026-09-09
+## [Unreleased] - 2026-09-10
+
+### Added (methodology-v2: GIS Methodology & Template Intelligence V2, ADR-0120)
+- Method knowledge layer `app/lib/gis/methodology/`: 20-category GIS task
+  taxonomy (data demands projected from the task ontology, never hand-written),
+  method knowledge graph (typed read-only projection over canonical registries,
+  421 nodes / 883 edges, fail-closed integrity, fingerprint-keyed cache,
+  structural diff), 51 method enrichment descriptors (problem class /
+  assumptions / alternatives / invalid_when / assumes_continuous_measure),
+  knowledge provenance ledger (no LLM-generated source kind by design).
+- Unified method qualification engine: 8-dimension four-state adjudication
+  reusing scientific_preconditions + AlgorithmDescriptor.crs_class + crs_safety;
+  geographic-CRS buffers pass (built-in reprojection), categorical measures
+  reject continuous-assumption methods, explicit no-geometry profiles fail.
+- Method candidate ranker: frozen 7-component weighted scoring, category-pool
+  ranking with V4 routing consistency bonus, rejected-last partitioning,
+  minimal-tier descriptive fallback, abstention semantics; bilingual frozen
+  corpus (25 cases) benchmarked recall@1=0.96 / MRR=0.98 / invalid=0.04.
+- Template intelligence: TemplateSpecV2 (data bindings / capability
+  requirements / export constraints / uncertainty & comparison obligations)
+  with 12 category-affinity specs and a deterministic composition planner
+  (base slots ∪ taxonomy expectations ∪ viz-bridge bindings; forbidden slots
+  skipped; no query hardcoding).
+- Algorithm-output ↔ visualization bridge: 16 viz families, 6 legend
+  semantics, 21 artifact entries; cross-source divergences become structured
+  disclosures (curated reconcile table) while dangling ids stay fatal.
+- KnowledgeService facade + 6 tier-1 read-only agent tools
+  (gis_task_classify / gis_method_qualify / gis_method_rank /
+  gis_method_explain / gis_template_plan / gis_component_query).
+- GIS end-to-end case corpus: 22 fixture cases covering Epic §9 scenarios
+  (schools / medical accessibility / POI density / admin stats /
+  raw-vs-normalized / hotspot / clustering / interpolation fit & misfit /
+  land change / DEM / hydrology / service areas / RS classification /
+  uncertainty / multi-period / mixed CRS / antimeridian / tiny sample /
+  invalid geometry / no geometry / large layers).
+- Ontology additive completion: 5 new tasks (proximity/clustering/
+  spatiotemporal/overlay/atlas) and a 13th methodology family (proximity)
+  with 7 new curated candidate methods.
+
 
 ### Added (harness-v6: Contextual Cartographic Harness V6)
 

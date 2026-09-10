@@ -39,9 +39,10 @@ from pydantic import BaseModel, Field
 #: 方法论族 schema 版本（进入 registry 指纹）。
 METHODOLOGY_SCHEMA_VERSION = 4
 
-#: 12 个方法论族（稳定词表，纯加法演进）。覆盖 ADR-0118 的方法论面：
+#: 方法论族（稳定词表，纯加法演进）。覆盖 ADR-0118 的方法论面：
 #: 描述制图 / 分布密度 / 插值 / 分区统计 / 适宜性 / 网络 / 地形水文 /
-#: 遥感 / 变化检测 / 空间统计 / 多准则 / 组合制图。
+#: 遥感 / 变化检测 / 空间统计 / 多准则 / 组合制图，
+#: 及 Epic 11 纯加法补齐的邻近缓冲（proximity）。
 METHODOLOGY_FAMILIES = (
     "descriptive_mapping",
     "distribution_density",
@@ -55,6 +56,7 @@ METHODOLOGY_FAMILIES = (
     "spatial_statistics",
     "multi_criteria",
     "compositional_mapping",
+    "proximity",
 )
 
 #: 方法资格裁决状态（selected 供编译器直接消费；与 rejected 并列完整保留）。
@@ -261,6 +263,11 @@ _CURATED_CANDIDATES: Tuple[MethodCandidate, ...] = (
        geometry_kinds=(_GEO_POINT,), requires_roles=("subject", "measure"),
        min_sample_size=8, approximate=True, downgrade_class="degraded",
        priority=40, output_artifacts=("raster_surface",)),
+    _c("interp.indicator_kriging", "interpolation", "指示克里金（类别/二值）",
+       capabilities=("indicator_kriging",),
+       algorithm_ids=("interpolation.indicator_kriging",),
+       geometry_kinds=(_GEO_POINT,), requires_roles=("subject", "measure"),
+       min_sample_size=20, priority=25, output_artifacts=("raster_surface",)),
     # ── zonal_statistics（分区统计）──────────────────────────────────
     _c("zonal.admin_stats", "zonal_statistics", "行政区统计",
        capabilities=("zonal_statistics", "admin_aggregation"),
@@ -283,6 +290,26 @@ _CURATED_CANDIDATES: Tuple[MethodCandidate, ...] = (
        capabilities=("geometry_overlay",), algorithm_ids=("geometry.buffer",),
        requires_roles=("constraint",), priority=20,
        output_artifacts=("proximity_zone", "polygon_feature_set")),
+    _c("suit.overlay_composite", "suitability", "多图层叠加合成",
+       capabilities=("geometry_overlay",), algorithm_ids=("geometry.overlay",),
+       requires_roles=("constraint",), priority=25,
+       output_artifacts=("polygon_feature_set",)),
+    # ── proximity（邻近与缓冲；Epic 11 纯加法族）──────────────────────
+    _c("proximity.multi_ring_buffer", "proximity", "多环缓冲分析",
+       capabilities=("multi_ring_buffer",),
+       algorithm_ids=("geometry.multi_ring_buffer",),
+       geometry_kinds=("point", "line", "polygon"), requires_roles=("subject",),
+       priority=10, output_artifacts=("proximity_zone",)),
+    _c("proximity.euclidean_buffer", "proximity", "欧氏缓冲区",
+       capabilities=("geometry_buffer", "proximity_buffer"),
+       algorithm_ids=("geometry.buffer", "spatial.buffer.proximity"),
+       geometry_kinds=("point", "line", "polygon"), requires_roles=("subject",),
+       priority=20, output_artifacts=("proximity_zone",)),
+    _c("proximity.closest_facility", "proximity", "最近设施",
+       capabilities=("closest_facility",),
+       algorithm_ids=("network.closest_facility",),
+       requires_roles=("subject", "network"), priority=30,
+       output_artifacts=("line_feature_set",)),
     # ── network（网络分析）──────────────────────────────────────────
     _c("network.shortest_path", "network", "最短路径",
        capabilities=("shortest_path", "route_optimization"),
@@ -319,7 +346,8 @@ _CURATED_CANDIDATES: Tuple[MethodCandidate, ...] = (
     _c("terrain.stream_network", "terrain_hydrology", "河网提取",
        capabilities=("terrain_hydrology_advanced",),
        algorithm_ids=("terrain.streams", "terrain.strahler"),
-       geometry_kinds=(_GEO_RASTER,), requires_roles=("elevation",), priority=25,
+       geometry_kinds=(_GEO_RASTER,), requires_roles=("elevation",),
+       preconditions=("local_metric_crs_required",), priority=25,
        output_artifacts=("line_feature_set",)),
     _c("terrain.indices", "terrain_hydrology", "地形指数（TWI/LS）",
        capabilities=("terrain_wetness_indices",),
@@ -388,8 +416,22 @@ _CURATED_CANDIDATES: Tuple[MethodCandidate, ...] = (
     _c("stats.weights_diagnostics", "spatial_statistics", "空间权重诊断",
        capabilities=("spatial_weights_diagnostics",),
        algorithm_ids=("stats.weights_diagnostics",),
-       requires_roles=("subject", "measure"), priority=30,
+       requires_roles=("subject", "measure"), min_sample_size=8,
+       preconditions=("numeric_field_required",), priority=30,
        output_artifacts=("stats_table",)),
+    _c("stats.point_cluster_dbscan", "spatial_statistics", "点密度聚类（DBSCAN）",
+       capabilities=("point_pattern_analysis",),
+       algorithm_ids=("point_pattern.dbscan",),
+       geometry_kinds=(_GEO_POINT,), requires_roles=("subject",),
+       min_sample_size=10, priority=20,
+       output_artifacts=("hotspot_result", "stats_table")),
+    _c("stats.space_time_pattern", "spatial_statistics", "时空聚集格局",
+       capabilities=("space_time_interaction", "space_time_k_function",
+                     "spatiotemporal_clustering"),
+       algorithm_ids=("point_pattern.space_time_k", "stats.st_dbscan"),
+       geometry_kinds=(_GEO_POINT,), requires_roles=("subject",),
+       preconditions=("temporal_field_required",), min_sample_size=20,
+       priority=35, output_artifacts=("stats_table", "hotspot_result")),
     # ── multi_criteria（多准则决策）─────────────────────────────────
     _c("mcda.wsm", "multi_criteria", "加权求和多准则评价",
        capabilities=("mcda_evaluation",), algorithm_ids=("decision.mcda.wsm",),
@@ -420,7 +462,7 @@ _CURATED_CANDIDATES: Tuple[MethodCandidate, ...] = (
        output_artifacts=("stats_table", "chart_spec")),
     _c("compose.report_map", "compositional_mapping", "报告主图",
        capabilities=("poi_query",), requires_roles=("subject",), priority=20,
-       output_artifacts=("point_feature_set",)),
+       output_artifacts=("point_feature_set", "feature_collection")),
 )
 
 
@@ -523,9 +565,20 @@ _CURATED_FAMILIES: Tuple[MethodologyFamily, ...] = (
     _f("compositional_mapping", "组合制图", "Compositional Mapping",
        "多产品组合输出：对比图/统计图/报告图的多图层组合。",
        ("cartographic.comparison_map", "cartographic.statistical_map",
-        "cartographic.report_map", "distribution.ranking_comparison"),
+        "cartographic.report_map", "cartographic.atlas_reporting",
+        "distribution.ranking_comparison"),
        tuple(m for m in _CURATED_CANDIDATES if m.family_id == "compositional_mapping"),
        keywords_zh=("对比图", "统计表", "报告", "组合", "专题图集",), keywords_en=("report", "comparison map", "stats table", "compose",),
+),
+    # ── proximity（Epic 11 纯加法族）─────────────────────────────────
+    # 关键词刻意长且特异（R1-F9）：追加族在 tie-break 中按 index 恒败，
+    # 必须靠专属长词唯一胜出；禁用「距离」等短泛词。
+    _f("proximity", "邻近与缓冲", "Proximity & Buffer",
+       "围绕主体的欧氏邻近域：缓冲/多环缓冲/最近设施（欧氏缓冲≠路网可达）。",
+       ("network.proximity_buffer", "decision.overlay_composite"),
+       tuple(m for m in _CURATED_CANDIDATES if m.family_id == "proximity"),
+       keywords_zh=("缓冲区", "缓冲", "周边", "半径", "覆盖范围", "范围内",),
+       keywords_en=("buffer", "within", "radius", "surrounding", "walkshed",),
 ),
 )
 

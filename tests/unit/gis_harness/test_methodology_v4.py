@@ -25,9 +25,10 @@ def registry() -> MethodologyRegistry:
 
 # ── Wave 1：族模型与词表 ─────────────────────────────────────────────────
 
-def test_twelve_families_exact_vocabulary(registry: MethodologyRegistry) -> None:
+def test_family_vocabulary_exact(registry: MethodologyRegistry) -> None:
+    """Epic 11：12 族 + 纯加法 proximity = 13 族（唯一允许改动的计数断言）。"""
     assert METHODOLOGY_SCHEMA_VERSION == 4
-    assert registry.family_count() == 12
+    assert registry.family_count() == 13
     assert {f.family_id for f in registry.families()} == set(METHODOLOGY_FAMILIES)
     assert [f.family_id for f in registry.families()] == list(METHODOLOGY_FAMILIES)
 
