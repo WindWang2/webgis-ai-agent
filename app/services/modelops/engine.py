@@ -554,21 +554,28 @@ class InferenceEngine:
             }
 
         # ── loaded model（single-flight cache）──────────────────────
-        _emit(progress, stage="load", run_id=run_id)
-        cache_key = load_key(
-            descriptor,
-            provider_ref=descriptor.provider_ref,
-            device=device_plan.device,
-            runtime_fingerprint=software_env_fingerprint(),
-        )
-        model, load_latency = self._loaded_cache.acquire(
-            cache_key,
-            descriptor,
-            provider_ref=descriptor.provider_ref,
-            device=device_plan.device,
-            load_fn=lambda: provider.load(descriptor, device=device_plan.device),
-            unload_fn=provider.unload,
-        )
+        # V3 §E：acquire 阶段（load_key/loaded_cache.acquire）失败也必须
+        # 归还 VRAM 预订——否则 provider load 永久失败会耗尽账本。
+        try:
+            _emit(progress, stage="load", run_id=run_id)
+            cache_key = load_key(
+                descriptor,
+                provider_ref=descriptor.provider_ref,
+                device=device_plan.device,
+                runtime_fingerprint=software_env_fingerprint(),
+            )
+            model, load_latency = self._loaded_cache.acquire(
+                cache_key,
+                descriptor,
+                provider_ref=descriptor.provider_ref,
+                device=device_plan.device,
+                load_fn=lambda: provider.load(descriptor, device=device_plan.device),
+                unload_fn=provider.unload,
+            )
+        except BaseException:
+            if reservation is not None and self._ledger is not None:
+                self._ledger.release(reservation)
+            raise
         # R1-C5：acquire 之后的一切都纳入 finally —— warmup/mkdir 抛错
         # 不得泄漏 refcount（否则该 key 永久不可驱逐）。
         try:
@@ -980,8 +987,11 @@ class InferenceEngine:
     ) -> Dict[str, Dict[str, Any]]:
         from affine import Affine
         from rasterio import features as _features
+        from shapely.geometry import mapping as _mapping
+        from shapely.geometry import shape as _shape
 
         from app.lib.modelops.foundation import (
+            georeference_polygon,
             prompt_windows,
             prompts_to_pixel,
             window_local_prompts,
@@ -1048,6 +1058,8 @@ class InferenceEngine:
                 for geom, _val in _features.shapes(
                     object_mask.astype(np.uint8), mask=object_mask, connectivity=4
                 ):
+                    # 多边形地理参考：像素几何 × 窗口仿射（V3 §H 输出 georef）。
+                    geometry = georeference_polygon(_shape(geom), win_transform)
                     features_out.append(
                         {
                             "type": "Feature",
@@ -1055,7 +1067,7 @@ class InferenceEngine:
                                 "class": 1,
                                 "window": [win_row, win_col, win_h, win_w],
                             },
-                            "geometry": geom,
+                            "geometry": _mapping(geometry),
                         }
                     )
                 if canvas is not None:

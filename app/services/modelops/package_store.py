@@ -21,8 +21,6 @@ import re
 import threading
 import uuid
 from pathlib import Path
-from typing import Optional
-
 from app.lib.data.fingerprints import sha256_of_file
 from app.lib.modelops.descriptor import GeoModelDescriptor
 from app.lib.modelops.errors import ProviderError

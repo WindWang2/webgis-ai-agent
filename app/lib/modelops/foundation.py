@@ -14,13 +14,13 @@ foundation 模型接入本平面的架构面，provider 实现走既有
 - :func:`prompt_windows`：**tile 策略**——prompt 锚定窗口序列（跨距
   超过单窗口上限时按 prompt 拆分；确定性排序）；
 - :func:`window_local_prompts`：prompt 平移到窗口局部坐标；
-- :func:`georeference_mask_polygons`：输出掩膜 → 地理多边形（复用
-  vectorize 的仿射/拓扑管线）。
+- :func:`georeference_polygon`：输出掩膜多边形（像素）→ 地理坐标
+  （仿射直乘；与 rasterio window transform 同一口径）。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Tuple
 
 from app.lib.modelops.errors import PlanningError
 from app.lib.modelops.promptable import PromptSpec
@@ -179,6 +179,14 @@ def window_local_prompts(
     )
 
 
+def georeference_polygon(geom_pixels: Any, transform: Any) -> Any:
+    """像素坐标多边形 → 地理坐标（仿射 (a,b,c,d,e,f) 直乘；确定性）。"""
+    from shapely import affinity
+
+    a, b, c, d, e, f = tuple(transform)[:6]
+    return affinity.affine_transform(geom_pixels, (a, b, c, d, e, f))
+
+
 __all__ = [
     "FAMILIES",
     "FAMILY_REMOTE_FOUNDATION",
@@ -189,6 +197,7 @@ __all__ = [
     "TILE_STRATEGIES",
     "TILE_PROMPT_ANCHORED",
     "TILE_SINGLE_WINDOW",
+    "georeference_polygon",
     "prompt_span",
     "prompt_windows",
     "prompts_to_pixel",

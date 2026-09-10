@@ -60,11 +60,10 @@ def publish_geojson_to_postgis(
         return {"published": False, "reason": f"no DSN ({POSTGIS_DSN_ENV} unset)"}
     try:
         import geopandas as gpd
-        from shapely.geometry import shape
     except Exception as exc:  # noqa: BLE001 — 重依赖缺席是常态
         return {"published": False, "reason": f"geopandas unavailable: {exc}"}
     try:
-        import sqlalchemy  # noqa: F401
+        import sqlalchemy  # noqa: F401 — 可用性探测（驱动在 create_engine 时消费）
     except Exception as exc:  # noqa: BLE001
         return {"published": False, "reason": f"sqlalchemy unavailable: {exc}"}
 

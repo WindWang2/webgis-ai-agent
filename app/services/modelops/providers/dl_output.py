@@ -18,7 +18,7 @@ softmax（默认；logits 归一为概率）/ sigmoid（二类 p/(1-p) 展开）
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Sequence
 
 import numpy as np
 

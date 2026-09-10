@@ -119,7 +119,6 @@ class TinyFusionProvider:
             ensure_not_cancelled(ctx)
             descriptor = model.descriptor
             anchors = model.state["anchors"]
-            k = anchors.shape[0]
             # 融合拆分：SAR 通道数由 band_order 的极化语义计数（缺省对半）。
             bands = list(descriptor.band_order)
             n_sar = sum(1 for b in bands if b in {"VV", "VH", "HH", "HV"}) if bands else \

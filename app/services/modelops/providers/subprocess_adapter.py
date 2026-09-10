@@ -145,7 +145,7 @@ class SubprocessWorkerProvider:
             provider_type="local_subprocess",
             semantic_version=f"subprocess/{self._slot}/1.0.0",
             tasks=frozenset(_SERVED_TASKS),
-            prompt_modes=frozenset({"point", "box"}),
+            prompt_modes=frozenset(),  # promptable 不在 _SERVED_TASKS（诚实声明）
             devices=frozenset({DEVICE_CPU}),
             max_batch=4,
             streaming=False,
@@ -257,7 +257,6 @@ class SubprocessWorkerProvider:
         except ValueError as exc:
             raise ProviderError(f"subprocess response is not valid JSON: {exc}") from exc
         task = model.descriptor.task_types[0]
-        descriptor = model.descriptor
         if task in (TASK_SEMANTIC_SEGMENTATION, "promptable_segmentation"):
             probs = self._array(payload, "class_probabilities_b64", ndim=4)
             return TileOutput(task_type=task, class_probabilities=probs)

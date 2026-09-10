@@ -112,7 +112,6 @@ class TinyTemporalClassificationProvider:
             ensure_not_cancelled(ctx)
             descriptor = model.descriptor
             anchors = model.state["anchors"]  # (K,)
-            k = anchors.shape[0]
             c = descriptor.input_bands          # 每时相波段数（C*T 布局）
             t = int(ctx.extras.get("stack_length") or 1)
             pixels = batch.pixels               # (N, T*C, H, W)

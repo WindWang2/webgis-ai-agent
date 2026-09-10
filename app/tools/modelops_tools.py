@@ -491,7 +491,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         from pathlib import Path as _Path
 
         from app.lib.modelops.errors import ModelOpsError
-        from app.services.modelops.layer_delivery import build_layer_packages, publish_layers
+        from app.services.modelops.layer_delivery import publish_layers
 
         if not session_id and not project_id:
             raise ModelOpsError(
