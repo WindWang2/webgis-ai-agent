@@ -128,12 +128,16 @@ async def run_map_finalization(
     max_passes: int = MAX_FINALIZATION_PASSES,
     reason: str = "manual",
     prior_repairs: Optional[List[str]] = None,
+    acceptance_out: Optional[Dict[str, Any]] = None,
 ) -> Optional[MapCompletionResult]:
     """对一个会话运行完成度终验。无 GIS 章节 → None（无事可终验）。
 
     有界：至多 ``max_passes`` 轮 validate→repair→revalidate；每轮 repair
     后重读 MapSpec（修复改变 desired state）。不可修复的 error 直接落
     needs_repair/failed，绝不循环。
+
+    ``acceptance_out``（V7 D6）：可变 dict 出参 —— 调用方传入时回填意图
+    验收判定（accepted / intent_verified / unmet），随 map_product 持久化。
     """
     from app.services.session_plan import load_session_plan
 
@@ -342,6 +346,27 @@ async def run_map_finalization(
     except Exception:  # noqa: BLE001 — 快照失败留空（旧路径语义）
         result.product_verdict = ""
 
+    # V7（ADR-0130 D6）：意图验收独立判定（打破 intent_verified=complete
+    # 的循环论证）。verdict + desired(spec) + observed(渲染证据) 三面核对；
+    # acceptance_out 由调用方提供时回填（验收摘要随 map_product 持久化）。
+    try:
+        from app.services.gis_harness.intent_acceptance import (
+            assess_intent_acceptance,
+        )
+
+        _acceptance = assess_intent_acceptance(
+            chapter, inputs.get("mapspec"), inputs.get("render_observation"),
+            product_verdict=result.product_verdict,
+        )
+        if acceptance_out is not None:
+            acceptance_out.clear()
+            acceptance_out.update(_acceptance)
+    except Exception:  # noqa: BLE001 — 验收缺席退回诚实未知
+        if acceptance_out is not None:
+            acceptance_out.clear()
+            acceptance_out.update({"accepted": False, "intent_verified": False,
+                                   "unmet": ["acceptance_failed"]})
+
     # V4 Wave 8：证据链阶段 15/16/17（VERIFICATION / REPAIR /
     # FINAL_VERDICT）—— 终验事实入链（turn 上下文缺席时静默跳过）。
     _emit_finalization_chain(result, passes=result.passes)
@@ -424,6 +449,8 @@ def map_product_block(
     repair_plan: Optional[Dict[str, Any]] = None,
     observation: Optional[Dict[str, Any]] = None,
     intent_verified: bool = False,
+    intent_acceptance: Optional[Dict[str, Any]] = None,
+    continuation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """章节持久化块（additive、bounded、单一键 ``map_product``）。
 
@@ -466,6 +493,28 @@ def map_product_block(
     # V6 W10/W11：修复计划快照（additive；finding→分类→护栏→计划的证据面）。
     if repair_plan:
         block["repair_plan"] = repair_plan
+    # V7（ADR-0130 D6）：意图验收摘要（additive；accepted/intent_verified/
+    # unmet —— 打破 intent_verified=complete 的循环论证的持久化证据面）。
+    if isinstance(intent_acceptance, dict):
+        block["intent_acceptance"] = {
+            "accepted": bool(intent_acceptance.get("accepted")),
+            "intent_verified": bool(intent_acceptance.get("intent_verified")),
+            "observed_confirmed": bool(
+                intent_acceptance.get("observed_confirmed")),
+            "unmet": [str(u)[:96]
+                      for u in (intent_acceptance.get("unmet") or [])[:8]],
+        }
+    # V7（ADR-0130 D6）：终验出口 continuation 裁决（decide_continuation
+    # 直连 —— V6 follow-up 兑现；repair 不可达时经 request_replan 路由）。
+    if isinstance(continuation, dict):
+        block["continuation"] = {
+            "verdict": str(continuation.get("verdict") or "")[:40],
+            "loop": str(continuation.get("loop") or "")[:16],
+            "reason": str(continuation.get("reason") or "")[:160],
+            "replan_pending": bool(continuation.get("replan_pending")),
+            "disclosure": [str(d)[:160]
+                           for d in (continuation.get("disclosure") or ())[:4]],
+        }
     # V6（ADR-0119 D9）：observation 状态阶梯摘要 —— mounted/loaded/
     # rendered/data_present/semantically_correct + workflow health 词汇。
     # 恒发射：缺席 observation → aggregate=unknown / health=blocked
@@ -582,6 +631,7 @@ async def maybe_finalize_map_product(
         return None
 
     validated_fingerprint = _rows_fingerprint(chapter)
+    acceptance: Dict[str, Any] = {}
     result = await run_map_finalization(
         session_id,
         chapter=chapter,
@@ -596,6 +646,7 @@ async def maybe_finalize_map_product(
             if isinstance(stored, dict)
             else None
         ),
+        acceptance_out=acceptance,
     )
     if result is None:
         return None
@@ -634,6 +685,19 @@ async def maybe_finalize_map_product(
     except Exception:  # noqa: BLE001 — 修复计划是增值披露，绝不阻断终验
         logger.debug("[MapFinalizer] repair plan failed session=%s", session_id,
                      exc_info=True)
+
+    # V7（ADR-0130 D6）：终验出口直连 decide_continuation（V6 follow-up
+    # 兑现）—— needs_repair/failed 时裁决 repair/replan/abort；修复不可达
+    # 且 replan 预算有余 → request_replan 生产驱动点（replan_pending 置位 +
+    # durable 记账）。增值披露，绝不阻断终验。
+    continuation_dict: Optional[Dict[str, Any]] = None
+    if result.status in (STATUS_NEEDS_REPAIR, STATUS_FAILED):
+        try:
+            continuation_dict = await _finalizer_continuation(
+                session_id, result, chapter)
+        except Exception:  # noqa: BLE001 — 裁决缺席按既有回路
+            logger.debug("[MapFinalizer] continuation decision failed session=%s",
+                         session_id, exc_info=True)
 
     # 持久化（锁内重读——终验本身的 repair 突变可能已推进 revision）
     try:
@@ -705,7 +769,11 @@ async def maybe_finalize_map_product(
                     chapter=fresh.gis_chapter,
                     repair_plan=repair_plan_dict,
                     observation=current_observation,
-                    intent_verified=(result.status == "complete"),
+                    # V7（D6）：意图验收的独立判定（打破循环论证 —— 渲染
+                    # 证据缺席时不再自证 semantically_correct）。
+                    intent_verified=bool(acceptance.get("intent_verified")),
+                    intent_acceptance=acceptance or None,
+                    continuation=continuation_dict,
                 )
                 await save_session_plan(fresh)
     except Exception:  # noqa: BLE001 — 披露失败不阻断 turn；下一触发点重试
@@ -713,6 +781,36 @@ async def maybe_finalize_map_product(
             "[MapFinalizer] chapter persist failed session=%s (will retry on next trigger)",
             session_id,
         )
+    # V7（ADR-0130 D6）：READY → 上下文提交（九域 checkpoint + commit 标记
+    # + 阶段推进 verdict_ready）。增值披露，绝不阻断终验返回。
+    if result.status == STATUS_COMPLETE:
+        try:
+            from app.services.gis_harness.context_layers import (
+                checkpoint_context_layers,
+            )
+            from app.services.gis_harness.runtime_state_machine import (
+                commit_runtime_context,
+            )
+
+            _layers_block = await checkpoint_context_layers(session_id)
+            await commit_runtime_context(
+                session_id,
+                domains_digest=str(
+                    (_layers_block or {}).get("content_fingerprint") or ""),
+            )
+        except Exception:  # noqa: BLE001 — 提交缺席可由下个触发点补
+            logger.debug("[MapFinalizer] context commit failed session=%s",
+                         session_id, exc_info=True)
+        try:
+            from app.services.gis_harness.runtime_state_machine import (
+                maybe_update_runtime_state,
+            )
+
+            await maybe_update_runtime_state(
+                session_id, reason=reason, trigger="verdict_ready")
+        except Exception:  # noqa: BLE001 — 阶段投影是增值披露
+            logger.debug("[MapFinalizer] runtime state update failed session=%s",
+                         session_id, exc_info=True)
     # ADR-0088 P7：内部 trace（best-effort，绝不影响业务路径）
     try:
         from app.services.gis_harness.trace import (
@@ -745,6 +843,54 @@ async def maybe_finalize_map_product(
     return result
 
 
+async def _finalizer_continuation(
+    session_id: str,
+    result: MapCompletionResult,
+    chapter: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """终验出口的 continuation 裁决（V7 D6；decide_continuation 直连）。
+
+    - needs_repair/failed → decide_continuation（recovery 预算 + 渲染失败
+      分类）；
+    - verdict=remediate_and_retry/reobserve → 原样披露（修复回路已由
+      repair planner / observation POST 驱动）；
+    - verdict=abort_with_disclosure（repair 预算尽）→ request_replan
+      生产驱动点（replan 预算有余 → 置 replan_pending；否则诚实 abort）。
+    """
+    from app.services.gis_harness.continuation import decide_continuation
+    from app.services.gis_harness.durable_context import load_recovery_state
+
+    recovery = await load_recovery_state(session_id)
+    render_state = str(result.render_status or "")
+    failure = {
+        "class": "renderer_failure" if render_state in ("stale", "unknown", "error")
+        else "tool_error",
+        "tool": "render",
+        "code": str(result.findings[0].code) if result.findings else "",
+    }
+    decision = decide_continuation(
+        recovery_state=recovery,
+        observation={"state": render_state or "unknown"},
+        failure=failure,
+    )
+    payload: Dict[str, Any] = dict(decision.to_payload())
+    if decision.verdict == "abort_with_disclosure":
+        # 修复预算尽 → 重规划驱动点（预算有余则置 replan_pending）
+        try:
+            from app.services.gis_harness.plan_runtime import request_replan
+
+            replan = await request_replan(
+                session_id,
+                reason=str(result.summary or "")[:160],
+                from_verdict=str(result.product_verdict or result.status)[:32],
+            )
+            payload.update(replan)
+        except Exception:  # noqa: BLE001 — 驱动点失败保留 abort 披露
+            logger.debug("[MapFinalizer] replan driver failed session=%s",
+                         session_id, exc_info=True)
+    return payload
+
+
 async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
     """读取已持久化的完成块（turn 收尾的 task_complete 披露兜底）。
 
@@ -763,7 +909,7 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
     stored = chapter.get("map_product") if isinstance(chapter, dict) else None
     if not isinstance(stored, dict):
         return None
-    return {
+    payload = {
         # session_id 参与 frontend INV-2 跨会话守卫（review B-P3）：缺 sid
         # 的载荷绕过守卫，可能把别的会话相机 fit 走 / 弹错 toast。
         "session_id": session_id,
@@ -774,6 +920,20 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
         # disclosure-only 的 complete。additive 键，旧读者忽略。
         "task_complete": _is_task_complete(stored),
     }
+    # V7（ADR-0130 D6）：最终显示确认（默认 auto → True，零行为变化；
+    # required 模式等待显式 ack —— human confirmation seam）。
+    try:
+        from app.services.gis_harness.display_confirmation import (
+            is_display_confirmed,
+        )
+
+        payload["display_confirmed"] = await is_display_confirmed(
+            session_id,
+            render_seq=int(stored.get("render_observation_seq") or 0),
+        )
+    except Exception:  # noqa: BLE001 — 确认面缺席按 auto（True）
+        payload["display_confirmed"] = True
+    return payload
 
 
 def _is_task_complete(stored: Dict[str, Any]) -> bool:
