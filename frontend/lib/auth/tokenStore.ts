@@ -9,11 +9,10 @@
  * the Data Sources tab that drives them — unusable for every real user.
  * This store plus the transport wiring below closes that gap.
  *
- * Storage: localStorage under one JSON key. The access token is short-lived
- * (30 min) and the refresh token is rotated on every refresh; neither is a
- * long-lived password. localStorage (not a cookie) keeps the token out of
- * every cross-site request automatically — the transport attaches it
- * explicitly per request.
+ * Storage: accessToken and user profile in localStorage under one JSON key.
+ * FRONT-03 hardening: refreshToken is kept in memory only (not persisted in
+ * plaintext localStorage) to prevent long-lived credential harvesting via XSS.
+ * The access token is short-lived (30 min) and transport attaches it explicitly.
  */
 
 const STORAGE_KEY = 'webgis_auth';
@@ -48,6 +47,7 @@ interface StoredAuth extends AuthTokens {
 }
 
 let cached: StoredAuth | null = null;
+let inMemoryRefreshToken: string | null = null;
 let loaded = false;
 
 const listeners = new Set<() => void>();
@@ -82,11 +82,24 @@ function load(): StoredAuth | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as StoredAuth;
+    const parsed = JSON.parse(raw) as {
+      accessToken?: string;
+      refreshToken?: unknown;
+      user?: AuthUser | null;
+    };
+    if (parsed && 'refreshToken' in parsed) {
+      // FRONT-03: purge legacy plaintext refreshToken from localStorage
+      delete parsed.refreshToken;
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+      } catch {
+        /* ignore */
+      }
+    }
     if (typeof parsed?.accessToken === 'string' && parsed.accessToken) {
       cached = {
         accessToken: parsed.accessToken,
-        refreshToken: typeof parsed.refreshToken === 'string' ? parsed.refreshToken : null,
+        refreshToken: inMemoryRefreshToken,
         user: parsed.user ?? null,
       };
     }
@@ -103,11 +116,20 @@ function load(): StoredAuth | null {
 
 function persist(next: StoredAuth | null): void {
   cached = next;
+  inMemoryRefreshToken = next?.refreshToken ?? null;
   loaded = true;
   if (isBrowser()) {
     try {
-      if (next) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      else window.localStorage.removeItem(STORAGE_KEY);
+      if (next) {
+        // FRONT-03: Do not persist refreshToken in localStorage to prevent XSS harvesting
+        const safeStorage = {
+          accessToken: next.accessToken,
+          user: next.user ?? null,
+        };
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(safeStorage));
+      } else {
+        window.localStorage.removeItem(STORAGE_KEY);
+      }
     } catch {
       /* storage write failed — in-memory state still updated */
     }
