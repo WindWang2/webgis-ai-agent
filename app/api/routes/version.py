@@ -11,11 +11,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter
 
 from app.core.build_info import build_info
+from app.extensions_platform.api_version import CORE_API_VERSION
 
 router = APIRouter()
-
-#: 扩展平台宿主 API 版本（与 extensions_platform.api_version 对齐的展示面）
-_EXTENSIONS_HOST_API = "1.2.0"
 
 
 @router.get("/version")
@@ -26,7 +24,7 @@ def version():
         "version": info["version"],
         "commit": info["commit"],
         "python": info["python"],
-        "extensions_api": _EXTENSIONS_HOST_API,
+        "extensions_api": CORE_API_VERSION,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
