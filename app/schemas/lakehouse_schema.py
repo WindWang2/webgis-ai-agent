@@ -83,6 +83,9 @@ class LabeledWindowRequest(BaseModel):
     band: Optional[List[str]] = Field(default=None, max_items=64)
     polarization: Optional[List[str]] = Field(default=None, max_items=16)
     vertical: Optional[List[str]] = Field(default=None, max_items=64)
+    # V8（ADR-0130）：model/scenario 标签维度（v3 cube 契约）。
+    model: Optional[List[str]] = Field(default=None, max_items=16)
+    scenario: Optional[List[str]] = Field(default=None, max_items=16)
     bbox: Optional[List[float]] = Field(default=None, min_items=4, max_items=4)
     index_slices: Optional[Dict[str, List[int]]] = Field(
         default=None,
