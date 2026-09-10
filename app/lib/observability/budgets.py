@@ -21,7 +21,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from prometheus_client import Counter, Histogram
 

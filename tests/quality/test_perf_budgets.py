@@ -17,7 +17,6 @@ from prometheus_client import REGISTRY
 from app.lib.observability.budgets import (
     BUDGET_MANIFEST_PATH,
     Budget,
-    BudgetRegistry,
     load_manifest,
     reset_budget_registry_for_tests,
 )

@@ -98,7 +98,6 @@ async def test_enqueue_storm_honest_failure_then_idempotent_reuse(
 ):
     """broker 连续失败：首次提交诚实 failed；同参数重提交幂等复用，
     绝不为同一逻辑操作堆出第二条 job/第二条消息。"""
-    from app.services.jobs import submit as submit_mod
 
     with chaos("JOBS_ENQUEUE_FAIL_STORM", fail_times=2) as fault:
         storm = fault.storm_task

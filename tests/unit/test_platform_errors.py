@@ -14,7 +14,6 @@ from app.core.errors import (
     CATEGORY_DEFAULTS,
     DEFAULT_RETRY_POLICY,
     ErrorCategory,
-    ErrorClassification,
     PlatformError,
     category_defaults,
     classify_exception,
