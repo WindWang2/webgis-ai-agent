@@ -24,10 +24,10 @@ V7（distributed dataflow，01-architecture.md §2.2-§2.5）：
   全部有界落库；
 - 事件/缓存/注册全部尽力而为：任何观测失败绝不倒灌执行结果。
 """
-import os
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any, Optional
 
