@@ -142,4 +142,6 @@ def request_digest(req: ResourceRequest) -> dict[str, Any]:
         "gpu": req.gpu,
         "zone": req.zone,
         "required_profiles": list(req.required_profiles),
+        # V8：CUDA 不可用回退声明（False 缺省省略以保持 V7 投影逐字节同形）
+        **({"fallback_cpu": True} if req.fallback_cpu else {}),
     }

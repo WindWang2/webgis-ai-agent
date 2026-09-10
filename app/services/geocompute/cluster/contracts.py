@@ -163,12 +163,20 @@ class ResourceClaim(BaseModel):
     粒度是 run：认领时 reserve（估计值，上限钳制），终态/reclaim 时精确
     release（同一事务，CAS 保证 exactly-once）。节点级记账仍是进程内 L1
     governor（budgets.ResourceGovernor）—— 两层各管一个爆炸半径。
+
+    V8 新增维度（additive；缺省 0 = V7 语义逐字节兼容）：
+    - ``mem_mb``：run 估计峰值内存（节点 estimate.memory_mb 之和，钳上界），
+      enforcing 账本以此做「先预留后启动」的 OOM 预防；
+    - ``gpu``：run 声明的 GPU 卡数（ResourceRequest.gpu），计数级预留 ——
+      防 N 个 GPU run 叠加超卖同一池卡。
     """
 
     scope_key: str = Field(min_length=1, max_length=80)
     rows: int = Field(default=0, ge=0)
     bytes: int = Field(default=0, ge=0)
     units: int = Field(default=0, ge=0, description="并发槽位单位（重节点 2，复用 slot_units_for 语义）")
+    mem_mb: int = Field(default=0, ge=0, description="估计峰值内存（MiB）；0 = 无估计/不预留")
+    gpu: int = Field(default=0, ge=0, le=64, description="GPU 卡数计数预留")
 
 
 class ResourceRequest(BaseModel):
@@ -192,6 +200,10 @@ class ResourceRequest(BaseModel):
     zone: Optional[str] = Field(
         default=None, max_length=64, pattern=r"^[A-Za-z0-9_.-]{1,64}$")
     required_profiles: list[str] = Field(default_factory=list, max_length=8)
+    #: V8：CUDA 不可用回退。True 且 GPU run 等待超过 fallback 等待窗
+    #: （scheduler 层计时）→ 剥离 gpu 要求改派 CPU worker（``gpu_fallback``
+    #: 事件，诚实可见）。False（默认）= V7 语义：无限期留队等待 GPU worker。
+    fallback_cpu: bool = False
 
     def normalized(self) -> "ResourceRequest":
         """词表过滤后的规范投影（非法 profile 词在 submit 端 422，这里兜底）。"""
@@ -206,6 +218,7 @@ class ResourceRequest(BaseModel):
                 {p for p in self.required_profiles
                  if p in EXECUTION_QUEUE_PROFILES}
             ),
+            fallback_cpu=self.fallback_cpu,
         )
 
 
@@ -218,6 +231,12 @@ DEFAULT_MAX_RUN_ATTEMPTS = 3
 
 #: 抢占次数安全上界（livelock 保险丝；超过 → failed[PREEMPT_EXHAUSTED]）。
 MAX_PREEMPTS = 64
+
+#: V8 账本拒绝维度词表（enforcing reserve 拒绝时定位维度）。
+#: ``waiting_resource`` 事件的 status 投影 = f"resource:{dim}"（≤20 字符）。
+RESOURCE_DIMENSIONS: tuple[str, ...] = (
+    "rows", "bytes", "units", "mem_mb", "gpu",
+)
 
 
 def run_error_for_reclaim(attempts: int, max_attempts: int) -> Optional[str]:

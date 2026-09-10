@@ -227,13 +227,20 @@ class ClusterRunStore:
         ttl_s: float,
         max_attempts: int = DEFAULT_MAX_RUN_ATTEMPTS,
         ledger: Optional["ClusterLedger"] = None,
-    ) -> Optional[int]:
+        return_detail: bool = False,
+    ) -> "Optional[int] | tuple[Optional[int], Optional[str]]":
         """认领：queued/preempted → leased（epoch+1）。
 
         同一事务内 reserve 集群账本（run 粒度）；enforcing 账本拒绝 →
         整体回滚返回 None（背压：这个 run 留队，不制造超卖）。attempts 已
         耗尽（≥ max_attempts，理论上有 reclaim 兜底）同样拒绝认领。
         返回新 epoch；竞争失败/不可派发 → None。
+
+        V8：``return_detail=True`` 时返回 ``(epoch_or_None, reject_dim)``；
+        ``reject_dim`` ∈ RESOURCE_DIMENSIONS（enforcing 账本按维拒绝时）
+        或 None（成功/竞争失败）。scheduler 据此发 ``waiting_resource
+        [resource:<dim>]`` 事件 + OOM-avoided 计数（内存维）—— 拒绝从
+        静默留队变成可观测调度决策。
         """
         # 账本 scope 行预建（独立事务；业务事务内只读检查，无 session 中毒）
         if ledger is not None:
@@ -249,7 +256,7 @@ class ClusterRunStore:
                 select(_Run).where(_Run.run_id == run_id)
             ).scalar_one_or_none()
             if row is None or row.attempts >= max_attempts:
-                return None
+                return (None, None) if return_detail else None
             now = _utcnow()
             new_epoch = row.lease_epoch + 1
             claimed = db.execute(
@@ -272,23 +279,28 @@ class ClusterRunStore:
                 )
             ).rowcount
             if not claimed:
-                return None
+                return (None, None) if return_detail else None
             if ledger is not None:
                 claims = _claims_for_row(row, units=1)
-                ok = ledger.reserve_claims(db, claims)
-                if not ok:
+                reject_dim = ledger.reserve_claims_checked(db, claims)
+                # enforcing 拒绝 → 整体回滚留队（不制造超卖）；
+                # advisory 拒绝 → 放行（V6 语义：只记账诚实暴露超卖），
+                # 维度仅供调用方观测计数。
+                if reject_dim is not None and ledger.enforcing:
                     db.rollback()
-                    return None
+                    return (None, reject_dim) if return_detail else None
                 db.execute(
                     update(_Run)
                     .where(_Run.id == row.id)
                     .values(reserved_rows=claims["global"].rows,
                             reserved_bytes=claims["global"].bytes,
-                            reserved_units=claims["global"].units)
+                            reserved_units=claims["global"].units,
+                            reserved_mem_mb=claims["global"].mem_mb,
+                            reserved_gpu=claims["global"].gpu)
                 )
             db.commit()
-            return new_epoch
-        return None
+            return (new_epoch, None) if return_detail else new_epoch
+        return (None, None) if return_detail else None
 
     def mark_running(self, run_id: str, *, epoch: int) -> bool:
         """leased → running（expect_epoch；执行体真正启动时）。"""
@@ -1085,6 +1097,11 @@ class ClusterRunStore:
                     "limit_rows": u.limit_rows,
                     "limit_bytes": u.limit_bytes,
                     "limit_units": u.limit_units,
+                    # V8：内存/GPU 维度投影（getattr 兜底旧 schema）
+                    "usage_mem_mb": getattr(u, "usage_mem_mb", 0) or 0,
+                    "limit_mem_mb": getattr(u, "limit_mem_mb", None),
+                    "usage_gpu": getattr(u, "usage_gpu", 0) or 0,
+                    "limit_gpu": getattr(u, "limit_gpu", None),
                 }
                 for u in rows
             ]
@@ -1112,9 +1129,12 @@ class ClusterLedger:
         #: 默认与进程内层级并发常数对齐（api.GOVERNOR_*_MAX_CONCURRENCY）。
         self._enforcing = bool(enforcing)
         self._limits = limits or {
-            "global": {"rows": None, "bytes": None, "units": 8},
-            "tenant": {"rows": None, "bytes": None, "units": 8},
-            "project": {"rows": None, "bytes": None, "units": 4},
+            "global": {"rows": None, "bytes": None, "units": 8,
+                       "mem_mb": None, "gpu": None},
+            "tenant": {"rows": None, "bytes": None, "units": 8,
+                       "mem_mb": None, "gpu": None},
+            "project": {"rows": None, "bytes": None, "units": 4,
+                        "mem_mb": None, "gpu": None},
         }
         self._factory = factory or session_factory
 
@@ -1129,8 +1149,13 @@ class ClusterLedger:
         limit_rows: Optional[int],
         limit_bytes: Optional[int],
         limit_units: Optional[int],
+        limit_mem_mb: Optional[int] = None,
+        limit_gpu: Optional[int] = None,
     ) -> bool:
         """admin：设置 scope 限额（None = 解除该维限制）。
+
+        V8 新增 ``limit_mem_mb``/``limit_gpu`` 两维（缺省 None = 不动该维
+        的既有调用方逐字节兼容）。
 
         幂等 upsert：scope 行缺席时以给定限额预建（与 ensure_scopes 同一
         竞争纪律 —— INSERT 冲突回滚复检）。enforcing/advisory 模式不变。
@@ -1146,8 +1171,10 @@ class ClusterLedger:
                     db.add(_Usage(
                         scope_key=scope_key,
                         usage_rows=0, usage_bytes=0, usage_units=0,
+                        usage_mem_mb=0, usage_gpu=0,
                         limit_rows=limit_rows, limit_bytes=limit_bytes,
                         limit_units=limit_units,
+                        limit_mem_mb=limit_mem_mb, limit_gpu=limit_gpu,
                     ))
                     try:
                         db.commit()
@@ -1158,7 +1185,9 @@ class ClusterLedger:
                     .where(_Usage.scope_key == scope_key)
                     .values(
                         limit_rows=limit_rows, limit_bytes=limit_bytes,
-                        limit_units=limit_units, updated_at=_utcnow(),
+                        limit_units=limit_units,
+                        limit_mem_mb=limit_mem_mb, limit_gpu=limit_gpu,
+                        updated_at=_utcnow(),
                     )
                 )
                 db.commit()
@@ -1186,14 +1215,18 @@ class ClusterLedger:
                     continue
                 limits = self._limits.get(scope_key) or self._limits.get(
                     scope_key.split(":", 1)[0],
-                    {"rows": None, "bytes": None, "units": None},
+                    {"rows": None, "bytes": None, "units": None,
+                     "mem_mb": None, "gpu": None},
                 )
                 db.add(_Usage(
                     scope_key=scope_key,
                     usage_rows=0, usage_bytes=0, usage_units=0,
+                    usage_mem_mb=0, usage_gpu=0,
                     limit_rows=limits.get("rows"),
                     limit_bytes=limits.get("bytes"),
                     limit_units=limits.get("units"),
+                    limit_mem_mb=limits.get("mem_mb"),
+                    limit_gpu=limits.get("gpu"),
                 ))
                 try:
                     db.commit()
@@ -1214,15 +1247,28 @@ class ClusterLedger:
         limits = self._limits.get(scope_key) or self._limits.get(family) or {}
         return limits.get(dim)
 
-    def reserve_claims(self, db: Any, claims: dict[str, ResourceClaim]) -> bool:
-        """在**调用方事务内**做条件 UPDATE 预留。任一 enforcing 拒绝 → False
-        （调用方回滚整个认领）。"""
+    def reserve_claims_checked(
+        self, db: Any, claims: dict[str, ResourceClaim]
+    ) -> Optional[str]:
+        """在**调用方事务内**做条件 UPDATE 预留（V8 按维报告版）。
+
+        返回 None = 全部成功；否则返回**首个拒绝维度**
+        （RESOURCE_DIMENSIONS 词表：rows/bytes/units/mem_mb/gpu —— 含
+        scope 行缺席这种 enforcing 硬拒绝，归一为 "units" 槽位语义）。
+        调用方（claim_lease）回滚整个认领。
+
+        advisory 模式下条件被拒（超限）→ 补一条无条件记账（诚实暴露
+        超卖），同样返回维度（供观测计数，不阻塞派发）。
+        """
+        from app.services.geocompute.cluster.contracts import RESOURCE_DIMENSIONS
+
         for scope_key, claim in claims.items():
-            if not any((claim.rows, claim.bytes, claim.units)):
+            if not any((claim.rows, claim.bytes, claim.units,
+                        claim.mem_mb, claim.gpu)):
                 continue
             if not self._ensure_scope_row(db, scope_key):
                 if self._enforcing:
-                    return False
+                    return "units"
                 continue  # advisory：记账竞争失败 → 本轮放弃（fail-open 有界）
             values: dict[str, Any] = {"updated_at": _utcnow()}
             conds = []
@@ -1241,6 +1287,16 @@ class ClusterLedger:
                 limit = self._scope_limit(scope_key, "units")
                 if limit is not None:
                     conds.append(_Usage.usage_units + claim.units <= limit)
+            if claim.mem_mb:
+                values["usage_mem_mb"] = _Usage.usage_mem_mb + claim.mem_mb
+                limit = self._scope_limit(scope_key, "mem_mb")
+                if limit is not None:
+                    conds.append(_Usage.usage_mem_mb + claim.mem_mb <= limit)
+            if claim.gpu:
+                values["usage_gpu"] = _Usage.usage_gpu + claim.gpu
+                limit = self._scope_limit(scope_key, "gpu")
+                if limit is not None:
+                    conds.append(_Usage.usage_gpu + claim.gpu <= limit)
             q = update(_Usage).where(_Usage.scope_key == scope_key).values(**values)
             if conds:
                 from sqlalchemy import and_
@@ -1248,20 +1304,60 @@ class ClusterLedger:
                 q = q.where(and_(*conds))
             rowcount = db.execute(q).rowcount
             if not rowcount:
+                # 按维定位：只读复测 —— 哪个维的条件不满足就报哪个维
+                # （多维修测只在拒绝路径发生，成本有界）。
+                reject_dim = self._locate_reject_dim(db, scope_key, claim)
                 if self._enforcing:
-                    return False
+                    return reject_dim
                 # advisory：条件被拒（超限）→ 补一条无条件记账（诚实暴露超卖）
                 db.execute(
                     update(_Usage)
                     .where(_Usage.scope_key == scope_key)
                     .values(**values)
                 )
-        return True
+                return reject_dim
+        return None
+
+    def _locate_reject_dim(
+        self, db: Any, scope_key: str, claim: ResourceClaim
+    ) -> str:
+        """拒绝路径的维度定位（只读；缺省 "units" 槽位语义）。"""
+        row = db.execute(
+            select(_Usage).where(_Usage.scope_key == scope_key)
+        ).scalar_one_or_none()
+        if row is None:
+            return "units"
+        checks = (
+            ("rows", claim.rows, row.usage_rows,
+             self._scope_limit(scope_key, "rows")),
+            ("bytes", claim.bytes, row.usage_bytes,
+             self._scope_limit(scope_key, "bytes")),
+            ("units", claim.units, row.usage_units,
+             self._scope_limit(scope_key, "units")),
+            ("mem_mb", claim.mem_mb, row.usage_mem_mb,
+             self._scope_limit(scope_key, "mem_mb")),
+            ("gpu", claim.gpu, row.usage_gpu,
+             self._scope_limit(scope_key, "gpu")),
+        )
+        for dim, delta, usage, limit in checks:
+            if delta and limit is not None and usage + delta > limit:
+                return dim
+        return "units"
+
+    def reserve_claims(self, db: Any, claims: dict[str, ResourceClaim]) -> bool:
+        """在**调用方事务内**做条件 UPDATE 预留。任一 enforcing 拒绝 → False
+        （调用方回滚整个认领）；advisory 恒 True（超限也记账放行，V6 语义）。
+        V8 起按维报告的版本见 ``reserve_claims_checked``。"""
+        dim = self.reserve_claims_checked(db, claims)
+        if not self._enforcing:
+            return True
+        return dim is None
 
     def release_claims(self, db: Any, claims: dict[str, ResourceClaim]) -> None:
         """在**调用方事务内**归还（钳零）。claims = 行上记录的 reserved_*。"""
         for scope_key, claim in claims.items():
-            if not any((claim.rows, claim.bytes, claim.units)):
+            if not any((claim.rows, claim.bytes, claim.units,
+                        claim.mem_mb, claim.gpu)):
                 continue
             if not self._ensure_scope_row(db, scope_key):
                 continue  # 归还失败钳零兜底仍在（usage 从未累计）
@@ -1272,6 +1368,8 @@ class ClusterLedger:
                     usage_rows=func.max(0, _Usage.usage_rows - claim.rows),
                     usage_bytes=func.max(0, _Usage.usage_bytes - claim.bytes),
                     usage_units=func.max(0, _Usage.usage_units - claim.units),
+                    usage_mem_mb=func.max(0, _Usage.usage_mem_mb - claim.mem_mb),
+                    usage_gpu=func.max(0, _Usage.usage_gpu - claim.gpu),
                     updated_at=_utcnow(),
                 )
             )
@@ -1300,47 +1398,82 @@ def _estimate_from_snapshot(plan_snapshot: Optional[dict[str, Any]]
     return est_rows, est_bytes
 
 
+#: V8：run 级内存估计钳制（MiB）—— estimate.memory_mb 是客户端供给的
+#: 自由浮点，钳上界防「预留值本身超限造成永久锁死」（无自 DoS）。
+_MAX_CLAIM_MEM_MB = 2_097_152
+
+
 def _claims_for_row(row: Any, *, units: int) -> dict[str, ResourceClaim]:
     """run 行 → 账本 claim 集（global + tenant + project；估计值钳上限防止
-    预留值本身超限造成永久锁死 —— 无自 DoS）。"""
+    预留值本身超限造成永久锁死 —— 无自 DoS）。
+
+    V8 两维（诚实估计，缺席 = 0 = 不预留该维）：
+    - ``mem_mb``：节点 ``estimate.memory_mb`` 之和（V7 起存在的字段首次
+      被调度路径消费 —— OOM 预防预留）；
+    - ``gpu``：``resource_request.gpu``（enforcing 账本的 GPU 池计数
+      预留，防 N 个 GPU run 超卖同一池卡）。
+    """
     claims: dict[str, ResourceClaim] = {}
     est_rows = 0
     est_bytes = 0
+    est_mem_mb = 0.0
     for node in (row.plan_snapshot or {}).get("nodes") or []:
         est = node.get("estimate") or {}
         est_rows += int(est.get("rows") or 0)
         est_bytes += int(est.get("bytes") or 0)
+        try:
+            est_mem_mb += float(est.get("memory_mb") or 0)
+        except (TypeError, ValueError):
+            pass
+    est_mem_mb = float(min(int(est_mem_mb), _MAX_CLAIM_MEM_MB))
+    raw_req = row.resource_request if isinstance(row.resource_request, dict) else {}
+    try:
+        est_gpu = max(0, min(int(raw_req.get("gpu") or 0), 64))
+    except (TypeError, ValueError):
+        est_gpu = 0
     claims["global"] = ResourceClaim(
-        scope_key="global", rows=est_rows, bytes=est_bytes, units=units
+        scope_key="global", rows=est_rows, bytes=est_bytes, units=units,
+        mem_mb=int(est_mem_mb), gpu=est_gpu,
     )
     if row.tenant_key:
         claims[row.tenant_key] = ResourceClaim(
-            scope_key=row.tenant_key, rows=est_rows, bytes=est_bytes, units=units
+            scope_key=row.tenant_key, rows=est_rows, bytes=est_bytes,
+            units=units, mem_mb=int(est_mem_mb), gpu=est_gpu,
         )
     if row.project_key:
         claims[row.project_key] = ResourceClaim(
-            scope_key=row.project_key, rows=est_rows, bytes=est_bytes, units=units
+            scope_key=row.project_key, rows=est_rows, bytes=est_bytes,
+            units=units, mem_mb=int(est_mem_mb), gpu=est_gpu,
         )
     return claims
 
 
 def _reserved_claims_from_row(row: Any) -> dict[str, ResourceClaim]:
-    """行上记录的预留值 → 精确归还集（reclaim/finish 共用）。"""
+    """行上记录的预留值 → 精确归还集（reclaim/finish 共用）。
+
+    V8：``reserved_mem_mb``/``reserved_gpu`` 列缺席（旧 schema 库）→
+    getattr 兜底 0 —— 归还维与预留维天然一致，绝不超还。
+    """
+    mem_mb = getattr(row, "reserved_mem_mb", 0) or 0
+    gpu = getattr(row, "reserved_gpu", 0) or 0
     claims: dict[str, ResourceClaim] = {
         "global": ResourceClaim(
             scope_key="global", rows=row.reserved_rows,
             bytes=row.reserved_bytes, units=row.reserved_units,
+            mem_mb=mem_mb, gpu=gpu,
         )
     }
     if row.tenant_key:
         claims[row.tenant_key] = ResourceClaim(
             scope_key=row.tenant_key, rows=row.reserved_rows,
             bytes=row.reserved_bytes, units=row.reserved_units,
+            mem_mb=mem_mb, gpu=gpu,
         )
     if row.project_key:
         claims[row.project_key] = ResourceClaim(
             scope_key=row.project_key, rows=row.reserved_rows,
             bytes=row.reserved_bytes, units=row.reserved_units,
+            mem_mb=mem_mb, gpu=gpu,
         )
     return claims
 
