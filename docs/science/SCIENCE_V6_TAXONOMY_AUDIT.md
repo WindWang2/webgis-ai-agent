@@ -6,7 +6,7 @@
 > `python scripts/science_taxonomy_audit.py`；`--check` 模式 diff。
 > 族对齐词表唯一维护于脚本内 `TAXONOMY_FAMILIES`。
 
-注册表算法总数：**213**。
+注册表算法总数：**214**。
 
 | 族 | 算法数 | native | VALIDATED/PRODUCTION | 代表算法 |
 |---|---|---|---|---|
@@ -14,7 +14,7 @@
 | 矢量 | 9 | 9 | 5 | `geometry.buffer`, `geometry.convex_hull`, `geometry.multi_ring_buffer` |
 | 地形 | 18 | 18 | 18 | `terrain.aspect`, `terrain.contours`, `terrain.curvature` |
 | 水文 | 16 | 16 | 16 | `terrain.breach`, `terrain.dinf_flow`, `terrain.flow` |
-| 空间统计 | 36 | 36 | 36 | `point_pattern.cross_k`, `point_pattern.cross_pcf`, `point_pattern.dbscan` |
+| 空间统计 | 37 | 37 | 37 | `point_pattern.cross_k`, `point_pattern.cross_pcf`, `point_pattern.dbscan` |
 | 插值 | 21 | 21 | 21 | `interpolation.block_kriging`, `interpolation.cokriging`, `interpolation.cokriging_lmc` |
 | 网络 | 19 | 19 | 16 | `network.accessibility`, `network.centrality`, `network.closest_facility` |
 | 变化检测 | 7 | 7 | 7 | `remote.change.raster`, `remote.cva`, `remote.mad_change` |
@@ -23,7 +23,7 @@
 | 生态 | 0 | 0 | 0 | — |
 | 多准则决策 | 1 | 1 | 1 | `decision.mcda.wsm` |
 | 空间抽样 | 0 | 0 | 0 | — |
-| 不确定性（横切） | 53（横切） | — | — | 声明 uncertainty_outputs 的算法全体 |
+| 不确定性（横切） | 54（横切） | — | — | 声明 uncertainty_outputs 的算法全体 |
 
 ## 族对齐约定
 

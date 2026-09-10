@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：139 能力 · 213 算法 · 113 参数契约。
+统计：139 能力 · 214 算法 · 114 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -502,6 +502,11 @@ KDE 连续密度面/等值线（定量密度表达）。
 - **`stats.h3_lisa`** H3 LISA 局部自相关（`native`·成熟度 已验证，出处: `anselin1995`）
   - 假设：esda.Moran_Local（Queen 邻接、行标准化、seed=42）；孤岛格网给中性结果（p=1、q=0），保持行对齐（#927）；输入为带数值字段的 H3 网格（如 h3_binning 产物）
   - 局限：逐格 p_sim<0.05 在随机数据下期望产出 ~0.05n 假显著（结果内披露期望数）；H3 分辨率改变邻接结构，跨分辨率结果不可比
+- **`stats.local_moran`** 局部 Moran / LISA（单变量）（`native`·成熟度 已验证，契约: `local_moran_analysis`，出处: `anselin1995`, `moran1950`, `benjamini_hochberg1995`）
+  - 假设：I_i=(n−1)·z_i·(Wz)_i/Σz²，z 总体方差标准化（esda.Moran_Local 同式同尺度；行标准化 W）；条件随机化置换固定种子 42、双侧 (count+1)/(perms+1)；对角无自权重 → 全局置换与 esda crand 条件置换同分布；象限无条件分配（esda q：1=HH,2=LH,3=LL,4=HL；零滞后 q=0），显著性独立由 p 表达
+  - 局限：本实现置换 p 为双侧；esda 默认 directed 是其半值（其文档明示 uniformly too small）——p 不与 esda 默认逐位对账，统计量对账；knn 权重是邻接的近似；queen/rook 需要面要素；二值/重并列字段下置换分布退化，p 分辨率受格子限制
+  - 资源包络：256B/要素
+  - 取消：chunk_boundary
 
 ## `location_allocation` — 区位配置
 
