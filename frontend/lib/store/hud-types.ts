@@ -259,6 +259,8 @@ export interface HudState extends WorkbenchSlice {
   toggleDock: import('./slices/dockSlice').DockSlice['toggleDock'];
   undockRegion: import('./slices/dockSlice').DockSlice['undockRegion'];
   setActiveDockPanel: import('./slices/dockSlice').DockSlice['setActiveDockPanel'];
+  attributeTableLayerId: import('./slices/dockSlice').DockSlice['attributeTableLayerId'];
+  setAttributeTableLayerId: import('./slices/dockSlice').DockSlice['setAttributeTableLayerId'];
   resetDockState: import('./slices/dockSlice').DockSlice['resetDockState'];
   resetWorkbenchLayout: import('./slices/dockSlice').DockSlice['resetWorkbenchLayout'];
   pruneDockPanels: import('./slices/dockSlice').DockSlice['pruneDockPanels'];

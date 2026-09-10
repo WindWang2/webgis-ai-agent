@@ -17,8 +17,10 @@ import type { RendererContext } from '@/components/map/map-components/types';
 import {
   BOTTOM_DOCK_DEFAULT_HEIGHT,
   RIGHT_DOCK_DEFAULT_WIDTH,
+  STATIC_DOCK_PANELS,
   type DockArea,
 } from '@/lib/store/slices/dockSlice';
+import { AttributeTablePanel } from '@/components/table/attribute-table-panel';
 
 /**
  * Panel Dock Host（Workspace V2 / Goal C5 → V7 布局系统）—— 轻量 dock 基座的渲染面。
@@ -58,6 +60,16 @@ function useRendererContext(): RendererContext {
 }
 
 function DockedPanelBody({ componentId }: { componentId: string }) {
+  // V7：静态工作台面板（属性表等）不来自 MapSpec components —— 分发器
+  // 保持无 hooks，hooks 全部下沉到 SpecPanelBody（条件调用红线）。
+  if (STATIC_DOCK_PANELS.has(componentId)) {
+    return <StaticDockPanel panelId={componentId} />;
+  }
+  return <SpecPanelBody componentId={componentId} />;
+}
+
+/** spec 承载面板：内容渲染器与地图 chrome 同源（committed spec 唯一真相）。 */
+function SpecPanelBody({ componentId }: { componentId: string }) {
   const ctx = useRendererContext();
   const specGeneration = useSyncExternalStore(subscribeMapSpecLive, getMapSpecLiveGeneration);
   const component = useMemo(() => {
@@ -68,6 +80,12 @@ function DockedPanelBody({ componentId }: { componentId: string }) {
   if (!component || component.enabled === false) return null;
   const node = renderComponent(component, ctx);
   return <>{node}</>;
+}
+
+/** V7：静态面板注册表（内容与 spec 演进无关，dock 归属同样有效）。 */
+function StaticDockPanel({ panelId }: { panelId: string }) {
+  if (panelId === 'attribute-table') return <AttributeTablePanel />;
+  return null;
 }
 
 /**
@@ -365,6 +383,7 @@ function DockChrome({
 function panelLabel(type: string, id: string): string {
   if (type === 'chart_panel') return '图表';
   if (type === 'statistics_panel') return '统计';
+  if (id === 'attribute-table') return '属性表';
   return id;
 }
 
@@ -394,14 +413,17 @@ export function PanelDockHost() {
     // V7（审计 §2-M）：只在 committed spec 是「组件完备文档」时 prune ——
     // SSE 中间态文档可能暂时缺 components 数组（空 id 集），此前每次
     // spec generation 都执行 prune，一次中间态就把全部 dock 归属永久清空。
+    // 静态工作台面板恒有效（不来自 spec）。
     const spec = getCommittedMapSpec();
     if (!spec || !Array.isArray(spec.layout?.components)) return;
-    pruneDockPanels(new Set(tabsById.keys()));
+    pruneDockPanels(new Set([...tabsById.keys(), ...STATIC_DOCK_PANELS]));
   }, [tabsById, pruneDockPanels]);
   const tabsFor = useCallback(
     (ids: string[]) =>
       ids
         .map((id) => {
+          // V7：静态工作台面板恒有效（不来自 spec）。
+          if (STATIC_DOCK_PANELS.has(id)) return { id, label: panelLabel('', id) };
           const comp = tabsById.get(id);
           return comp ? { id, label: panelLabel(comp.type, id) } : null;
         })

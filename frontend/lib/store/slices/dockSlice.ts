@@ -22,6 +22,13 @@ export type DockRegion = 'float' | 'right' | 'bottom';
 
 export type DockArea = 'right' | 'bottom';
 
+/**
+ * V7：静态停靠面板 —— 非宿主为 MapSpec component 的内置工作台面板。
+ * 它们不随 spec 演进 prune（pruneDockPanels 的 valid 集恒含这些 id），
+ * 但仍是 dock 状态（dockPanel/dockPlacements 通吃）。
+ */
+export const STATIC_DOCK_PANELS: ReadonlySet<string> = new Set(['attribute-table']);
+
 export interface DockRegionState {
   open: boolean;
   /** 该区停靠的面板 id（dock 声明序）。 */
@@ -52,6 +59,9 @@ export interface DockSlice {
   undockRegion: (area: DockArea) => void;
   /** 多面板标签切换。 */
   setActiveDockPanel: (area: DockArea, panelId: string) => void;
+  /** V7：属性表面板当前绑定的图层（null = 自动跟随图层选择/首层）。 */
+  attributeTableLayerId: string | null;
+  setAttributeTableLayerId: (layerId: string | null) => void;
   /** 会话切换清理（面板实例随 MapSpec 生命周期走，dock 状态不跨会话）。 */
   resetDockState: () => void;
   /** V7：一键复位工作台布局（dock 状态/尺寸 + 左栏宽度/开合）。 */
@@ -145,11 +155,15 @@ export const createDockSlice: StateCreator<HudState, [], [], DockSlice> = (set, 
       return area === 'right' ? { rightDock: next } : { bottomDock: next };
     }),
 
+  attributeTableLayerId: null,
+  setAttributeTableLayerId: (layerId) => set({ attributeTableLayerId: layerId }),
+
   resetDockState: () =>
     set({
       dockPlacements: {},
       rightDock: { ...EMPTY_REGION },
       bottomDock: { ...EMPTY_REGION },
+      attributeTableLayerId: null,
     }),
 
   resetWorkbenchLayout: () => {
