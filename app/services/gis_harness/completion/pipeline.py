@@ -109,6 +109,15 @@ def _validate_all(inputs: Dict[str, Any], chapter: Dict[str, Any]) -> List[MapCo
         findings.extend(_vlvq(chapter, mapspec))
     except Exception:  # noqa: BLE001 — 增值审计缺席不阻断终验
         pass
+    # V7（ADR-0130 D5）：地图感知批评（blank map / 出版件完整性 / label
+    # collision / 聚合错位 —— 纯函数；增值披露，缺席不阻断终验）。
+    try:
+        from app.services.gis_harness.map_critique import critique_map_state
+
+        findings.extend(critique_map_state(
+            chapter, mapspec, inputs.get("render_observation")))
+    except Exception:  # noqa: BLE001 — 增值批评缺席不阻断终验
+        pass
     return findings[:MAX_FINDINGS]
 
 
