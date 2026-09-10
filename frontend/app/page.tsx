@@ -9,8 +9,9 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 // Refactored custom hooks
 import { useWorkspaceSession } from '@/lib/hooks/use-workspace-session';
 import { useWorkbenchUndoKeys } from '@/lib/workbench/use-undo';
-import { useSSEStream } from '@/lib/hooks/use-sse-stream';
 import { useSessionPlan } from '@/lib/hooks/use-session-plan';
+import { StreamingChatHost } from '@/components/chat/streaming-chat-host';
+import { useChatStore } from '@/lib/store/useChatStore';
 
 // #553: 会话删除客户端 + 新会话确认守卫
 import { deleteSession } from '@/lib/api/chat';
@@ -23,7 +24,6 @@ import { setLayerDataSession } from '@/lib/store/layer-data';
 // New layout components
 import TopBar from '@/components/layout/top-bar';
 import { NavRail } from '@/components/layout/nav-rail';
-import { ContextPanel } from '@/components/layout/context-panel';
 import FloatingLegend from '@/components/map/floating-legend';
 import { getCommittedMapSpec, getMapSpecLiveGeneration, subscribeMapSpecLive } from '@/lib/mapspec/session-cursor';
 import { MapStatusReadout } from '@/components/map/map-status-readout';
@@ -143,26 +143,32 @@ export default function Home() {
   // 到 SessionPlanPanel；applySessionPlanEvent 恒稳，不影响 onEvent 身份。
   const sessionPlan = useSessionPlan(sessionId, activeSessionToken);
 
-  // 3. SSE Stream and Event Bridge Hook
-  const {
-    messages,
-    setMessages,
-    aiStatus,
-    handleSend,
-    handlePlanAction,
-    bridge,
-    agentRuntime,
-  } = useSSEStream(
-    sessionId,
-    setSessionId,
-    sessionIdRef,
-    dispatchAction,
-    getMapSnapshot,
-    userLocation,
-    sessionTokenRef,
-    rememberSessionToken,
-    getSessionTokenFor,
-    sessionPlan.applySessionPlanEvent
+  // FRONT-05: messages and active streaming token state decoupled from root Home component.
+  // StreamingChatHost owns useSSEStream, isolating 60fps streaming re-renders to the chat subtree.
+  const setMessagesRef = useRef<((updater: any) => void) | null>(null);
+  const registerSetMessages = useCallback((fn: (updater: any) => void) => {
+    setMessagesRef.current = fn;
+  }, []);
+  const messagesRef = useRef<any[]>([]);
+  const handleMessagesChange = useCallback((msgs: any[]) => {
+    messagesRef.current = msgs;
+  }, []);
+  const setMessages = useCallback((updater: any) => {
+    setMessagesRef.current?.(updater);
+    useChatStore.getState().setMessages(updater);
+  }, []);
+  const onViewportChangeRef = useRef<((center: [number, number], zoom: number, bearing: number, pitch: number) => void) | null>(null);
+  const handleRegisterViewportChange = useCallback(
+    (fn: (center: [number, number], zoom: number, bearing: number, pitch: number) => void) => {
+      onViewportChangeRef.current = fn;
+    },
+    []
+  );
+  const handleViewportChange = useCallback(
+    (center: [number, number], zoom: number, bearing: number, pitch: number) => {
+      onViewportChangeRef.current?.(center, zoom, bearing, pitch);
+    },
+    []
   );
 
   // #667: keep the single lazy-hydration seam's session context in sync
@@ -193,10 +199,8 @@ export default function Home() {
     [selectSession, setMessages, setHistoryOpen]
   );
 
-  // #553: 新会话确认守卫读取最新 messages（ref 镜像，避免让 handleNewSession
+  // #553: 新会话确认守卫读取最新 messagesRef（避免让 handleNewSession
   // 的引用随每个流式 token 批次变化 —— MemoTopBar 的 memo 依赖 props 稳定）。
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
   const [confirmNewSession, setConfirmNewSession] = useState(false);
 
   // 稳定引用：内联箭头会让 RagIndependentPanel 的 Escape 监听在 Home 每次
@@ -337,7 +341,7 @@ export default function Home() {
               layers={layers}
               onRemoveLayer={removeLayer}
               onToggleLayer={toggleLayer}
-              onViewportChange={bridge.onViewportChange}
+              onViewportChange={handleViewportChange}
               sessionId={sessionId}
               ownerToken={activeSessionToken}
               sessionTokenRef={sessionTokenRef}
@@ -366,16 +370,22 @@ export default function Home() {
 
         {/* Workspace navigation rail + context panel (UI V3) */}
         <MemoNavRail />
-        <ContextPanel
-          messages={messages}
-          aiStatus={aiStatus}
-          onSend={handleSend}
-          onCancel={bridge.cancel}
+        <StreamingChatHost
           sessionId={sessionId}
-          ownerToken={activeSessionToken}
-          onPlanAction={handlePlanAction}
-          agentRuntime={agentRuntime}
-          sessionPlan={sessionPlan.view}
+          setSessionId={setSessionId}
+          sessionIdRef={sessionIdRef}
+          dispatchAction={dispatchAction}
+          getMapSnapshot={getMapSnapshot}
+          userLocation={userLocation}
+          sessionTokenRef={sessionTokenRef}
+          rememberSessionToken={rememberSessionToken}
+          getSessionTokenFor={getSessionTokenFor}
+          activeSessionToken={activeSessionToken}
+          sessionPlanView={sessionPlan.view}
+          applySessionPlanEvent={sessionPlan.applySessionPlanEvent}
+          onRegisterSetMessages={registerSetMessages}
+          onRegisterViewportChange={handleRegisterViewportChange}
+          onMessagesChange={handleMessagesChange}
         />
 
         {/* RAG Independent Panel */}
