@@ -169,6 +169,9 @@ def invalidate_ref_caches(
     return count
 
 
+_staleness_propagation_tasks: set = set()
+
+
 def _schedule_staleness_propagation(session_id: str, ref_id: str) -> None:
     """V3 data foundation（§十一）：上游 ref 被覆写/回滚 → 下游产物传播 stale。
 
@@ -203,7 +206,9 @@ def _schedule_staleness_propagation(session_id: str, ref_id: str) -> None:
                 session_id, ref_id, exc_info=True,
             )
 
-    loop.create_task(_job())
+    task = loop.create_task(_job())
+    _staleness_propagation_tasks.add(task)
+    task.add_done_callback(_staleness_propagation_tasks.discard)
 
 
 def emit_ref_event(

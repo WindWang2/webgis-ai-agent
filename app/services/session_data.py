@@ -246,14 +246,34 @@ class MemorySessionStore(BaseSessionStore):
         # BUG-14: serialize read-modify-write mutations of the layers list so
         # two concurrent update_layer_in_state calls don't clobber each other.
         # A single instance lock is sufficient for the in-memory backend (it is
-        # only a fallback when Redis is unavailable).
-        self._lock = asyncio.Lock()
-        # F27: dedicated lock for the append_map_action_event dedupe critical
-        # section (see its docstring). Kept separate from `self._lock` so ACK
-        # appends don't serialize against layer mutations.
-        self._map_action_lock = asyncio.Lock()
+        self._lock_obj: Optional[asyncio.Lock] = None
+        self._lock_bound_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._map_action_lock_obj: Optional[asyncio.Lock] = None
+        self._map_action_lock_bound_loop: Optional[asyncio.AbstractEventLoop] = None
         # Session last-touch order for cleanup_idle_sessions (not first-insert).
         self._session_order: OrderedDict[str, None] = OrderedDict()
+
+    @property
+    def _lock(self) -> asyncio.Lock:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if self._lock_bound_loop is not loop or self._lock_obj is None:
+            self._lock_obj = asyncio.Lock()
+            self._lock_bound_loop = loop
+        return self._lock_obj
+
+    @property
+    def _map_action_lock(self) -> asyncio.Lock:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if self._map_action_lock_bound_loop is not loop or self._map_action_lock_obj is None:
+            self._map_action_lock_obj = asyncio.Lock()
+            self._map_action_lock_bound_loop = loop
+        return self._map_action_lock_obj
 
     def _touch_session(self, session_id: str) -> None:
         if session_id in self._session_order:

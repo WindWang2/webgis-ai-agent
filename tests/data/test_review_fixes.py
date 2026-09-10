@@ -106,7 +106,8 @@ class TestCRSClassifier:
 class TestStalenessWiring:
     async def test_overwrite_triggers_downstream_stale(self):
         """§十一接线：ref 覆写 → invalidate_ref_caches 钩子 → 下游 stale。"""
-        sid = "rf-wiring"
+        import uuid
+        sid = f"rf-wiring-{uuid.uuid4().hex[:8]}"
         fc = {"type": "FeatureCollection", "features": []}
         ref = await session_data_manager.store(sid, fc, prefix="geojson")
         await register_artifact(sid, artifact_id=ref, producer_tool="t")
