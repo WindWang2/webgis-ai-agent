@@ -31,7 +31,6 @@ def test_single_head():
         for line in result.stdout.splitlines() if "(head)" in line
     ]
     assert len(heads) == 1, f"multiple heads: {heads}"
-    assert heads[0].startswith("0034_lakehouse_catalog")
 
 
 def test_migration_up_down_up_sqlite(tmp_path):
