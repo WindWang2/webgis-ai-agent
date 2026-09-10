@@ -360,20 +360,29 @@ export function ContextPanel({
       />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {/* V7（审计 §7-M）：全部 tab 统一 boundary —— 此前 chat/project/
+            analysis/data_sources/export_layout 裸渲染，任一 tab 抛错白屏
+            整个 ContextPanel。 */}
         {activeTab === 'chat' && (
-          <ChatTab
-            messages={messages}
-            aiStatus={aiStatus}
-            onSend={onSend}
-            onCancel={onCancel}
-            onPlanAction={onPlanAction}
-            sessionId={sessionId}
-            agentRuntime={agentRuntime}
-            ownerToken={ownerToken}
-            sessionPlan={sessionPlan}
-          />
+          <PanelErrorBoundary label="对话">
+            <ChatTab
+              messages={messages}
+              aiStatus={aiStatus}
+              onSend={onSend}
+              onCancel={onCancel}
+              onPlanAction={onPlanAction}
+              sessionId={sessionId}
+              agentRuntime={agentRuntime}
+              ownerToken={ownerToken}
+              sessionPlan={sessionPlan}
+            />
+          </PanelErrorBoundary>
         )}
-        {activeTab === 'project' && <ProjectTab sessionId={sessionId} />}
+        {activeTab === 'project' && (
+          <PanelErrorBoundary label="项目">
+            <ProjectTab sessionId={sessionId} />
+          </PanelErrorBoundary>
+        )}
         {activeTab === 'layers' && (
           <PanelErrorBoundary label="图层">
             {editingLayerId ? <LayerStylePanel /> : <LayersTab />}
@@ -384,12 +393,24 @@ export function ContextPanel({
             <ComponentsTab sessionId={sessionId} />
           </PanelErrorBoundary>
         )}
-        {activeTab === 'analysis' && <AnalysisTab onSend={onSend} aiStatus={aiStatus} />}
+        {activeTab === 'analysis' && (
+          <PanelErrorBoundary label="分析">
+            <AnalysisTab onSend={onSend} aiStatus={aiStatus} />
+          </PanelErrorBoundary>
+        )}
         {/* #463: sessionId/ownerToken are threaded into the Data Sources tab so
             实例化至图层 materializes into the REAL conversation session instead of
             the phantom 'default_session' (and the layer's ref is fetchable). */}
-        {activeTab === 'data_sources' && <DataSourcesTab sessionId={sessionId} ownerToken={ownerToken} />}
-        {(activeTab === 'export_layout' || activeTab === 'exports') && <MapStudioTab />}
+        {activeTab === 'data_sources' && (
+          <PanelErrorBoundary label="数据">
+            <DataSourcesTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+        {(activeTab === 'export_layout' || activeTab === 'exports') && (
+          <PanelErrorBoundary label="制图工坊">
+            <MapStudioTab />
+          </PanelErrorBoundary>
+        )}
         {activeTab === 'tasks' && (
           <PanelErrorBoundary label="任务">
             <TasksTab sessionId={sessionId} ownerToken={ownerToken} />

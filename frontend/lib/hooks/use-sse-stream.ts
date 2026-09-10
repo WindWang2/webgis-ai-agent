@@ -492,22 +492,38 @@ export function useSSEStream(
     if (!getAccessToken() && !getRefreshToken()) return;
     explorerStreamsRef.current.add(taskId);
     const signal = explorerAbortRef.current?.signal;
+    // V7（审计 §6-M）：有限重连 —— 此前非 abort 失败只 warn，任务卡「进行中」
+    // 直到终态（槽位只在 completed/failed 释放）。最多重试 2 次（指数退避
+    // 1s/2s）；终态释放槽位的语义不变，重试不复活已终态的任务流。
     (async () => {
-      try {
-        for await (const ev of streamExplorerProgress(taskId, signal)) {
-          if (ev.event === 'explorer_progress' && ev.data && typeof ev.data === 'object') {
-            applyExplorerProgressToStore(ev.data as Record<string, unknown>);
-            // 终态后释放 per-task 槽位：未来可重开流（断线恢复），且不再去重拦截。
-            const status = (ev.data as Record<string, unknown>).status;
-            if (status === 'completed' || status === 'failed') {
-              explorerStreamsRef.current.delete(taskId);
+      const MAX_ATTEMPTS = 3;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+        try {
+          let sawTerminal = false;
+          for await (const ev of streamExplorerProgress(taskId, signal)) {
+            if (ev.event === 'explorer_progress' && ev.data && typeof ev.data === 'object') {
+              applyExplorerProgressToStore(ev.data as Record<string, unknown>);
+              // 终态后释放 per-task 槽位：未来可重开流（断线恢复），且不再去重拦截。
+              const status = (ev.data as Record<string, unknown>).status;
+              if (status === 'completed' || status === 'failed') {
+                sawTerminal = true;
+                explorerStreamsRef.current.delete(taskId);
+              }
             }
           }
+          // 服务端正常收尾但未发终态（连接被对端关闭）：等同断线，走重试判定。
+          if (sawTerminal) return;
+        } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') return;
+          devOnly.warn(`[useSSEStream] explorer progress stream attempt ${attempt} failed:`, err);
         }
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return;
-        devOnly.warn('[useSSEStream] explorer progress stream failed:', err);
+        if (signal?.aborted) return;
+        // 重试前预留：槽位仍持有 → 同 taskId 不会并发重开。
+        if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 1000 * attempt));
       }
+      // 次数耗尽仍无终态：释放槽位并如实记日志（不再无限占位）。
+      explorerStreamsRef.current.delete(taskId);
+      devOnly.warn('[useSSEStream] explorer progress stream gave up after retries:', taskId);
     })();
   }, []);
 
