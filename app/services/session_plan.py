@@ -250,8 +250,21 @@ def format_session_plan_projection(
             progress_line = "\n" + progress_line
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         progress_line = ""
+    # V7（ADR-0130 D1）：HarnessRuntime 任务级阶段单行（additive；状态块
+    # 缺席时零漂移 —— 派生器只在触发点写块，投影只读 stored 值）。
+    runtime_line = ""
+    try:
+        from app.services.gis_harness.runtime_state_machine import (
+            format_runtime_line,
+        )
+
+        runtime_line = format_runtime_line(plan.gis_chapter)
+        if runtime_line:
+            runtime_line = "\n" + runtime_line
+    except Exception:  # noqa: BLE001 — 投影失败只少一行
+        runtime_line = ""
     if not plan.gis_chapter.get("data_requirements"):
-        return head + instance_line + recompute_line + progress_line + product_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + product_line
     try:
         from app.services.gis_harness.plan_graph import (
             build_plan_graph,
@@ -260,9 +273,9 @@ def format_session_plan_projection(
         graph = build_plan_graph(plan.gis_chapter)
         block = project_graph_block(graph)
     except Exception:  # noqa: BLE001 — 图投影是增值信号，绝不阻断 turn 上下文
-        return head + instance_line + recompute_line + progress_line + product_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + product_line
     if not block:
-        return head + instance_line + recompute_line + progress_line + product_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + product_line
     # ADR-0085：目标→产品 facets 投影行（纯派生、单行有界；章节/MapSpec
     # 之外零新状态 —— 让 Pi 看见"产品 = facets 集合"而非单个 heatmap）。
     products_line = ""
@@ -298,8 +311,8 @@ def format_session_plan_projection(
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         next_action_line = ""
     if not products_line.strip():
-        return head + instance_line + recompute_line + progress_line + "\n" + block + product_line
-    return head + instance_line + recompute_line + progress_line + "\n" + block + products_line + next_action_line + product_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + "\n" + block + product_line
+    return head + instance_line + recompute_line + progress_line + runtime_line + "\n" + block + products_line + next_action_line + product_line
 
 
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:

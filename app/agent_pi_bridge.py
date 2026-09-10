@@ -778,6 +778,22 @@ async def _dispatch_tool_bound(
                     "[PiBridge] workflow instance update failed session=%s tool=%s",
                     session_id, tool_name, exc_info=True,
                 )
+            # V7（ADR-0130 D1）：HarnessRuntime 任务级阶段推进（同一触发点；
+            # 阶段是权威事实的只读派生 —— 增值披露，绝不阻断）。
+            try:
+                from app.services.gis_harness.runtime_state_machine import (
+                    maybe_update_runtime_state,
+                )
+                await maybe_update_runtime_state(
+                    session_id,
+                    reason=f"tool_result:{tool_name}",
+                    trigger="execution_progressed",
+                )
+            except Exception:  # noqa: BLE001 — 阶段投影是增值披露
+                logger.debug(
+                    "[PiBridge] runtime state update failed session=%s tool=%s",
+                    session_id, tool_name, exc_info=True,
+                )
             # V6 Wave 2：typed DAG 运行态投影同步推进（增值披露，可关停）。
             try:
                 from app.services.gis_harness.runtime_bridge import (
@@ -2253,6 +2269,19 @@ class PiBridge:
                                             )
                                             await _wfi_update(
                                                 turn_sid, reason="turn_settled", event="auto",
+                                            )
+                                        except Exception:  # noqa: BLE001 — 增值披露
+                                            pass
+                                        # V7（ADR-0130 D1）：turn 收尾阶段推进 +
+                                        # suspended 旗标（未终态任务可经锚点恢复）。
+                                        try:
+                                            from app.services.gis_harness.runtime_state_machine import (
+                                                maybe_update_runtime_state as _rts_update,
+                                            )
+                                            await _rts_update(
+                                                turn_sid, reason="turn_settled",
+                                                trigger="execution_settled",
+                                                turn_settled=True,
                                             )
                                         except Exception:  # noqa: BLE001 — 增值披露
                                             pass
