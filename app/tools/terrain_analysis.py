@@ -2022,8 +2022,16 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
         from app.lib.geo_processor.core import safe_parse, to_feature_collection
         from app.lib.geo_analysis.cost_surface import cost_distance
 
+        params = apply_contract("cost_distance_analysis", {
+            "raster_path": raster_path,
+            "sources_geojson": sources_geojson,
+            "nodata": nodata,
+        })
+        raster_path = str(params["raster_path"])
+        sources_geojson = params["sources_geojson"]
+        nodata = float(params["nodata"])
         arr, transform, crs, eff_nodata, bounds = _read_terrain_window(
-            raster_path, float(nodata) if nodata else None)
+            raster_path, nodata if nodata else None)
         cy, cx, transformations = _metric_cell_sizes(crs, transform, bounds)
 
         parsed = safe_parse(sources_geojson)
@@ -2107,6 +2115,14 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
                                  target_x: float, target_y: float) -> dict:
         from app.lib.geo_analysis.cost_surface import least_cost_path
 
+        params = apply_contract("least_cost_path_analysis", {
+            "accumulated_raster_path": accumulated_raster_path,
+            "target_x": target_x,
+            "target_y": target_y,
+        })
+        accumulated_raster_path = str(params["accumulated_raster_path"])
+        target_x = float(params["target_x"])
+        target_y = float(params["target_y"])
         arr, transform, crs, eff_nodata, bounds = _read_terrain_window(
             accumulated_raster_path, None)
         row, col = _world_to_rc(transform, float(target_x), float(target_y))

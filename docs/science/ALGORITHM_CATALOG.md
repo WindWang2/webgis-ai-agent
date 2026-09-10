@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：142 能力 · 219 算法 · 119 参数契约。
+统计：144 能力 · 221 算法 · 121 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -402,6 +402,16 @@ Hansen 势能模型 A_i=Σ S_j^α/d_ij^β：以路网 OD 成本为距离，输�
   - 假设：每个设计列（含截距项）独立带宽的 bisquare kNN 反向拟合；联合 GWR 解热启动；逐项部分残差 + LOO-CV 带宽搜索（≤20 候选）；ENP=逐项帽矩阵对角迹之和；AICc 用 q=ENP+1 高斯近似
   - 局限：反向拟合是不动点迭代：收敛到局部最优，不保证全局最优；带宽为有界网格穷举而非连续优化；等带宽锚在精确可表示表面上逐位成立，噪声数据的等带宽解与 GWR 有平滑交互偏差；局部共线性会让局部系数失真；AICc 无唯一公认公式
 
+## `habitat_suitability` — 生境适宜度
+
+生境适宜度指数（HSI，USFWS 1981 口径）：逐要素的梯形/高斯响应曲线评分 + 加权（算术/几何）聚合，输出 0-1 适宜度与适宜度分级；保护区选址/栖息地评估输入。
+
+- **`ecology.habitat_suitability`** 生境适宜度指数（HSI）（`native`·成熟度 已验证，契约: `habitat_suitability_analysis`，出处: `usfws1981`）
+  - 假设：USFWS 1981 HSI 程序：逐变量响应曲线评分（trapezoid 四参数 / gaussian 最优幅适），0-1 归一；聚合 arithmetic=加权平均；geometric=限制因子语义（任一变量 0 → 整体 0）；权重归一化后进 meta；缺失/非有限属性按 0 分计并披露
+  - 局限：响应曲线参数是建模输入（非本算法估计）——须有生态学依据；变量间相关性不做校正（共线性会重复计权）；0-1 分级切点（<0.25 不适宜 … ≥0.75 最优）是缺省披露口径，可按物种生物学重定义
+  - 资源包络：48B/要素
+  - 取消：none
+
 ## `hotspot` — 热点显著性分析
 
 Getis-Ord Gi* 等空间聚类显著性检验。
@@ -473,6 +483,16 @@ KDE 连续密度面/等值线（定量密度表达）。
   - 假设：Silverman 规则或显式带宽（scipy gaussian_kde）；点数上限触发时降级披露；bandwidth_method=fixed（默认）：单一各向同性带宽，行为与历史逐位一致
   - 局限：高斯核假设；大规模点集走聚合通道（fallback 已声明）；adaptive 为一步先导近似（非迭代变带宽）；先导带宽与λ 范围随结果披露；自适应评估与固定路径同阶 O(n·grid)，点数上限同 #384
   - 回退：`spatial.kde.contours`→equivalent
+
+## `landscape_metrics` — 景观格局指标
+
+分类栅格景观格局（FRAGSTATS 口径 4 邻接）：PLAND/斑块数/斑块密度/最大斑块指数/边缘密度与 SHDI/SIDI 多样性；景观破碎化与连通性诊断。
+
+- **`ecology.landscape_metrics`** 景观格局指标（FRAGSTATS 族）（`native`·成熟度 已验证，契约: `landscape_metrics_analysis`，出处: `mcgarigal_marks1995`）
+  - 假设：FRAGSTATS 缺省 4 邻接连通（8 邻接会高估连通性）；类级：PLAND / NP / PD（每 100ha）/ LPI / ED（米每公顷）；景观级：ED / SHDI / SIDI / PR；nodata 像元不计面积；类 vs nodata/边界的对比边计入边缘
+  - 局限：连通性对栅格分辨率敏感（跨分辨率比较需同化像元尺寸）；逐类边缘密度按类面积归一（与景观级 ED 口径不同）
+  - 资源包络：24B/像元，像元硬上限 50000000
+  - 取消：chunk_boundary
 
 ## `layer_display_control` — 图层显示控制
 

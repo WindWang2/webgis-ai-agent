@@ -212,6 +212,21 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "the Geometry of Geography; Global Spatial Analysis. "
             "NCGIA Technical Report 93-1.",
         ),
+        # ── 生态（Goal 07 Science V6）───────────────────────────────
+        MethodReference(
+            "usfws1981",
+            "Habitat Suitability Index (HSI) procedures",
+            "USFWS. (1981). Standards for the Development of Habitat "
+            "Suitability Index Models. U.S. Fish and Wildlife Service, "
+            "Division of Ecological Services, ESM 103.",
+        ),
+        MethodReference(
+            "mcgarigal_marks1995",
+            "FRAGSTATS landscape pattern metrics",
+            "McGarigal, K., & Marks, B. J. (1995). FRAGSTATS: Spatial "
+            "Pattern Analysis Program for Quantifying Landscape Structure. "
+            "Gen. Tech. Rep. PNW-GTR-351, USDA Forest Service.",
+        ),
         # ── 空间抽样（Goal 07 Science V6）────────────────────────────
         MethodReference(
             "cochran1977",
