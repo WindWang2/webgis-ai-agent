@@ -21,3 +21,20 @@ from app.services.lakehouse.data_object import (  # noqa: F401
     resolve_data_object,
     verify_data_object,
 )
+from app.services.lakehouse.dataset_registry import (  # noqa: F401
+    CommitResult,
+    DatasetNotFound,
+    DatasetRegistryError,
+    build_commit_record,
+    build_dataset_descriptor,
+    commit_version,
+    create_branch,
+    create_dataset,
+    create_tag,
+    dataset_descriptor_id,
+    list_versions,
+    resolve_commit_record,
+    resolve_dataset_descriptor,
+    resolve_version,
+    rollback_branch,
+)
