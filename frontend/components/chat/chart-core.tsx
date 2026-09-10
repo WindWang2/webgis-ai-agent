@@ -38,30 +38,54 @@ const PolarRadiusAxisJsx = PolarRadiusAxis as unknown as React.FC<Record<string,
 // V4：heat_matrix 固定 Blues 色阶（与 palette 家族同源的展示用 ramp）
 const HEAT_RAMP = ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"]
 
+// FRONT-11: Cache computed theme colors across chart renders to avoid synchronous layout thrashing.
+const themeColorCache = new Map<string, string>();
+
+export function clearThemeColorCache(): void {
+  themeColorCache.clear();
+}
+
+function resolveThemeKey(themeKey?: string): string {
+  if (themeKey) return themeKey;
+  if (typeof document !== 'undefined') {
+    return (
+      document.documentElement.getAttribute('data-theme') ||
+      (document.documentElement.classList.contains('dark') ? 'dark' : 'light')
+    );
+  }
+  return 'default';
+}
+
 // #741: recharts can't consume CSS vars in SVG tick fills directly — read
 // the computed token at module/init time via a helper so charts follow the
 // active theme (light or dark) instead of hard-coded dark-cyan values that
 // were near-unreadable in light theme.
-function themeColor(varName: string, fallback: string): string {
+function themeColor(varName: string, fallback: string, themeKey?: string): string {
   if (typeof window === "undefined") return fallback;
+  const key = `${resolveThemeKey(themeKey)}:${varName}`;
+  const cached = themeColorCache.get(key);
+  if (cached !== undefined) return cached;
+
   const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-  return value || fallback;
+  const resolved = value || fallback;
+  themeColorCache.set(key, resolved);
+  return resolved;
 }
 
 // #807: 主题键参数化 —— themeColor 读的是渲染时刻的 computed token；外层
 // ChatMessageItem 是 memo 边界，主题切换不会跨过它，旧值会一直滞留。
 // 各 Render* 子组件以当前 theme 为键重派生样式。
-function tickStyle(_themeKey?: string) {
-  return { fill: themeColor("--text-muted", "#5b6b82"), fontSize: 13 };
+function tickStyle(themeKey?: string) {
+  return { fill: themeColor("--text-muted", "#5b6b82", themeKey), fontSize: 13 };
 }
 
-function tooltipStyle(_themeKey?: string) {
+function tooltipStyle(themeKey?: string) {
   return {
     contentStyle: {
-      backgroundColor: themeColor("--surface-raised", "#ffffff"),
+      backgroundColor: themeColor("--surface-raised", "#ffffff", themeKey),
       border: "1px solid rgba(100,116,139,0.3)",
       borderRadius: "6px",
-      color: themeColor("--text-primary", "#1c2733"),
+      color: themeColor("--text-primary", "#1c2733", themeKey),
       fontSize: "14px",
     },
   };

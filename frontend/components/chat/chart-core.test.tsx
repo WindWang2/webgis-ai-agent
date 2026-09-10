@@ -43,7 +43,7 @@ vi.mock('recharts', async () => {
   };
 });
 
-import { ChartCore, isChartTypeSupported } from './chart-core';
+import { ChartCore, isChartTypeSupported, clearThemeColorCache } from './chart-core';
 
 describe('ChartCore', () => {
   it('bar 图按类型分发渲染核并透传 data', () => {
@@ -62,5 +62,21 @@ describe('ChartCore', () => {
     expect(isChartTypeSupported('radar')).toBe(true);
     // violin planned：live 引擎未实现，词表诚实排除
     expect(isChartTypeSupported('violin')).toBe(false);
+  });
+  it('caches computed theme colors to avoid repeated getComputedStyle calls (FRONT-11)', () => {
+    clearThemeColorCache();
+    const spy = vi.spyOn(window, 'getComputedStyle');
+    const callCountBefore = spy.mock.calls.length;
+
+    render(<ChartCore chart={{ type: 'bar', title: 't1', data: [{ name: 'a', value: 1 }] }} />);
+    const callsAfterFirst = spy.mock.calls.length - callCountBefore;
+
+    // Render another chart under same theme
+    render(<ChartCore chart={{ type: 'bar', title: 't2', data: [{ name: 'b', value: 2 }] }} />);
+    const callsAfterSecond = spy.mock.calls.length - callCountBefore;
+
+    // Second render should hit cache, no additional getComputedStyle calls
+    expect(callsAfterSecond).toBe(callsAfterFirst);
+    spy.mockRestore();
   });
 });
