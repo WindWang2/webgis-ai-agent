@@ -19,6 +19,7 @@ from app.lib.geo_raster.reader import RasterReader
 from app.services.modelops.config import ModelOpsSettings
 from app.services.modelops.engine import InferenceEngine, InferenceRequest, InferenceResult
 from app.services.modelops.evaluation_service import EvaluationRequest, EvaluationService
+from app.services.modelops.package_store import ModelPackageStore
 from app.services.modelops.providers.base import ProviderRegistry, resolve_device_plan
 from app.services.modelops.registry import ModelRegistryStore
 from app.services.modelops.reuse import ReuseStore
@@ -41,8 +42,10 @@ class ModelOpsService:
     def __init__(self, settings: Optional[ModelOpsSettings] = None) -> None:
         self._settings = settings or ModelOpsSettings.load()
         self._registry = ModelRegistryStore(self._settings)
+        self._packages = ModelPackageStore(self._settings.registry_dir / "packages")
         self._providers = ProviderRegistry()
         seed_providers(self._providers)
+        self._wire_dl_providers()
         self._wire_remote_providers()
         seed_registry(self._registry, self._providers)
         self._reuse = ReuseStore(
@@ -59,6 +62,101 @@ class ModelOpsService:
         self._evaluation = EvaluationService()
         self._cancel_lock = threading.Lock()
         self._cancel_tokens: Dict[str, CancellationToken] = {}
+
+    def _wire_dl_providers(self) -> None:
+        """V3 §B：ONNX Runtime / TorchScript / subprocess provider 接线。
+
+        探测驱动：onnxruntime 缺席时 provider 仍注册（capabilities 如实
+        反映 devices/tasks），load 时 typed 失败——注册面永不冒充可用，
+        也不因运行时缺席而拒绝注册（honest failure，不阻塞主路径）。
+        """
+        from app.services.modelops.providers.onnx_adapter import OnnxRuntimeProvider
+        from app.services.modelops.providers.subprocess_adapter import (
+            SubprocessWorkerProvider,
+            parse_worker_allowlist,
+        )
+        from app.services.modelops.providers.torch_adapter import TorchScriptProvider
+
+        for provider in (
+            OnnxRuntimeProvider(self._packages),
+            TorchScriptProvider(self._packages),
+        ):
+            try:
+                self._providers.register(provider)
+            except Exception as exc:  # noqa: BLE001 — 单 provider 注册失败不阻断启动
+                logger.warning(
+                    "dl provider %s not registered: %s",
+                    provider.capabilities().provider_id, exc,
+                )
+        try:
+            allowlist = parse_worker_allowlist(self._settings.subprocess_workers)
+        except Exception as exc:  # noqa: BLE001 — operator 配置错误不阻断启动
+            logger.warning("subprocess worker allowlist rejected: %s", exc)
+            return
+        for slot, script_path in allowlist.items():
+            try:
+                self._providers.register(
+                    SubprocessWorkerProvider(
+                        slot,
+                        script_path,
+                        packages=self._packages,
+                        deadline_s=self._settings.subprocess_deadline_s,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("subprocess provider %s not registered: %s", slot, exc)
+
+    # ── 注册面（V3 §B：真实包的注册唯一入口）────────────────────────
+    def register_model(
+        self,
+        descriptor: Any,
+        *,
+        owner_scope: Dict[str, str],
+        package_bytes: Optional[bytes] = None,
+        registered_by: str = "",
+    ) -> Dict[str, Any]:
+        """注册一个模型（真实包过 package_security 门 + 内容寻址落盘）。
+
+        descriptor 接受 :class:`GeoModelDescriptor` 或其 JSON dict
+        （工具面友好）；synthetic（无包）种子路径仍走 ``seeds.py``。
+        """
+        from app.lib.modelops.descriptor import GeoModelDescriptor
+        from app.lib.modelops.package_security import (
+            SINGLE_FILE_FORMAT_SUFFIXES,
+            inspect_archive,
+            inspect_model_file,
+        )
+
+        if not isinstance(descriptor, GeoModelDescriptor):
+            descriptor = GeoModelDescriptor.model_validate(descriptor)
+        package_report: Optional[Dict[str, Any]] = None
+        if package_bytes is not None:
+            single_suffix = SINGLE_FILE_FORMAT_SUFFIXES.get(descriptor.artifact_format)
+            if single_suffix is not None:
+                report = inspect_model_file(
+                    package_bytes,
+                    expected_checksum=descriptor.checksum,
+                    allowed_suffix=single_suffix,
+                )
+            else:
+                report = inspect_archive(package_bytes, expected_checksum=descriptor.checksum)
+            package_report = report.as_dict()
+            self._packages.persist(descriptor, package_bytes)
+        record = self._registry.register(
+            descriptor,
+            owner_scope=owner_scope,
+            registered_by=registered_by or "modelops.service.register_model",
+            package_report=package_report,
+            known_provider_refs=self._providers.has,
+        )
+        return {
+            "model_id": record.descriptor.model_id,
+            "model_version": record.descriptor.model_version,
+            "checksum": record.descriptor.checksum,
+            "owner_scope": dict(record.owner_scope),
+            "package_stored": package_bytes is not None,
+            "seq": record.seq,
+        }
 
     def _wire_remote_providers(self) -> None:
         """operator allowlist 中的 endpoint → 每个注册一个 remote 实例。

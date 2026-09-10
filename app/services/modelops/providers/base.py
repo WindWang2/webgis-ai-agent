@@ -44,7 +44,7 @@ class TileBatch:
     """一个推理批（预处理已完成；provider 只看张量）。"""
 
     pixels: np.ndarray          # (N,C,H,W) float32
-    valid_mask: Optional[np.ndarray]  # (N,1,H,W) bool；None = 全有效
+    valid_mask: Optional[np.ndarray] = None  # (N,1,H,W) bool；None = 全有效
     chip_hw: tuple = (0, 0)     # (H, W) core 尺寸（含 pad 时大于 core）
     batch_index: int = 0
 

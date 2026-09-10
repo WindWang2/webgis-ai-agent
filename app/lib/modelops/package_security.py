@@ -45,6 +45,20 @@ FORBIDDEN_ARCHIVE_SUFFIXES: Set[str] = {".zip", ".tar", ".gz", ".tgz", ".bz2", "
 #: 遵守；object array 反序列化即代码执行）+ JSON。其余成员仅作数据存证。
 ALLOWED_WEIGHT_SUFFIXES: Set[str] = {".npy", ".npz", ".json"}
 
+#: 单文件模型工件的合法后缀（V3 §B）：ONNX 计算图（protobuf，非 pickle）
+#: 与 TorchScript archive（``torch.jit.load`` 语义，**不是** pickle 的
+#: .pth——后者在成员黑名单）。两者仍受 checksum 双验 + 尺寸上限约束。
+SINGLE_FILE_MODEL_SUFFIXES: Set[str] = {".onnx", ".pt"}
+
+#: descriptor.artifact_format → 单文件校验后缀（registry 分发依据；
+#: 其余 artifact_format 一律走 ``inspect_archive`` 结构审查）。
+ARTIFACT_FORMAT_ONNX = "onnx-v1"
+ARTIFACT_FORMAT_TORCHSCRIPT = "torchscript-v1"
+SINGLE_FILE_FORMAT_SUFFIXES: Dict[str, str] = {
+    ARTIFACT_FORMAT_ONNX: ".onnx",
+    ARTIFACT_FORMAT_TORCHSCRIPT: ".pt",
+}
+
 METADATA_FILENAME = "manifest.json"
 
 
@@ -242,6 +256,52 @@ def inspect_archive(
         )
     return PackageReport(
         checksum=actual_checksum, entries=entries, metadata=metadata, total_bytes=total
+    )
+
+
+def inspect_model_file(
+    data: bytes,
+    *,
+    expected_checksum: str = "",
+    allowed_suffix: str = ".onnx",
+) -> PackageReport:
+    """校验单文件模型工件（.onnx/.pt，V3 §B）：checksum → 后缀 → 尺寸。
+
+    单文件没有成员结构可审（无 manifest.json），以合成 entry + 格式元数据
+    构成报告——registry provenance 的形状与 archive 包一致。计算图运行时
+    的执行语义（图数据驱动、无任意代码路径）由对应 adapter 的 docstring
+    如实声明。
+    """
+    # 注意：不能用 PurePosixPath.suffix——'.onnx' 以点开头会被当作隐藏
+    # 文件名返回空 suffix。allowed_suffix 是受控常量参数，直接规范化。
+    suffix = allowed_suffix.lower()
+    if not suffix.startswith("."):
+        suffix = f".{suffix}"
+    if suffix not in SINGLE_FILE_MODEL_SUFFIXES:
+        raise PackageSecurityError(
+            f"single-file model suffix must be one of {sorted(SINGLE_FILE_MODEL_SUFFIXES)} "
+            f"(got {allowed_suffix!r})"
+        )
+    actual_checksum = sha256_of_bytes(data)
+    if expected_checksum and actual_checksum != expected_checksum.lower():
+        raise ModelChecksumError(
+            f"package checksum mismatch: expected {expected_checksum[:12]}…, "
+            f"got {actual_checksum[:12]}…"
+        )
+    if len(data) > DEFAULT_MAX_PACKAGE_BYTES:
+        raise PackageSecurityError(f"package exceeds {DEFAULT_MAX_PACKAGE_BYTES} bytes")
+    # ONNX protobuf 的最小结构哨兵：首字节 field 1 (ir_version) varint——
+    # 只拒绝明显不是 protobuf 的载荷（如纯文本/空包），不做完整解析。
+    if suffix == ".onnx" and (len(data) < 8 or data[0] != 0x08):
+        raise PackageSecurityError(
+            "package does not look like an ONNX protobuf (leading byte mismatch); "
+            "refusing to treat it as a computation graph"
+        )
+    return PackageReport(
+        checksum=actual_checksum,
+        entries=[PackageEntry(name=f"model{suffix}", size=len(data), digest=actual_checksum)],
+        metadata={"format": f"single-file{suffix}"},
+        total_bytes=len(data),
     )
 
 

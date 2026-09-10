@@ -198,6 +198,25 @@ class MemoryEstimate(BaseModel):
         return self.weights_bytes + self.peak_activation_bytes
 
 
+class OutputTransform(BaseModel):
+    """DL 运行时输出变换契约（V3 §B；进 fingerprint）。
+
+    - ``activation``：provider 把原始 runtime 输出映射为契约概率的口径
+      （softmax = logits 逐像素/逐样本 softmax；sigmoid = 二类 p/(1-p)
+      展开；none = 模型已输出归一概率，validate 抽验兜底）。**必须**进
+      指纹：同一模型不同 activation 是不同输出语义；
+    - ``output_scale``：super-resolution 输出上采样因子（1 = 常规任务）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    activation: Literal["softmax", "sigmoid", "none"] = "softmax"
+    output_scale: int = Field(default=1, ge=1, le=8)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {"activation": self.activation, "output_scale": self.output_scale}
+
+
 #: 复用资格所允许的种子策略（与 ``app/lib/gis/algorithm_registry.py``
 #: RandomSeedPolicy 同词表）。``unseeded``/``caller_seeded`` 的模型**不进
 #: reuse**（同 key 不保证同结果）；``caller_seeded`` 的 seed 值进 key。
@@ -247,6 +266,8 @@ class GeoModelDescriptor(BaseModel):
     device_requirements: DeviceRequirements = Field(default_factory=DeviceRequirements)
     #: 粗粒度内存估计（host 进程内 loaded 权重 + 峰值激活，bytes）。
     memory_estimate: MemoryEstimate = Field(default_factory=lambda: MemoryEstimate())
+    #: DL 运行时输出变换契约（V3 §B：activation/output_scale，进指纹）。
+    output_transform: OutputTransform = Field(default_factory=lambda: OutputTransform())
 
     # ── 治理 ────────────────────────────────────────────────────────
     license: str = Field(default="unknown", max_length=128)
@@ -361,6 +382,7 @@ class GeoModelDescriptor(BaseModel):
             "class_schema": self.class_schema.model_dump(mode="json") if self.class_schema else None,
             "spatial": self.spatial.model_dump(mode="json"),
             "temporal": self.temporal.model_dump(mode="json"),
+            "output_transform": self.output_transform.as_dict(),
             "artifact_format": self.artifact_format,
             "random_seed_policy": self.random_seed_policy,
         }

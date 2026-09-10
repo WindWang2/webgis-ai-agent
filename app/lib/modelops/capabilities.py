@@ -89,8 +89,9 @@ DEVICES: FrozenSet[str] = frozenset({DEVICE_CPU, DEVICE_CUDA})
 PROVIDER_LOCAL_REFERENCE = "local_reference"      # 仓库内可信代码（tiny/reference 模型）
 PROVIDER_EXTENSION_WORKER = "extension_worker"    # extensions platform 隔离子进程
 PROVIDER_REMOTE_ENDPOINT = "remote_endpoint"      # SSRF-gated HTTP 推理端点
-PROVIDER_ONNX_ADAPTER = "onnx_adapter"            # 前向声明：本 Epic 不声称可用
-PROVIDER_TORCH_ADAPTER = "torch_adapter"          # 前向声明：本 Epic 不声称可用
+PROVIDER_ONNX_ADAPTER = "onnx_adapter"            # ONNX Runtime 计算图（V3 §B 已接线）
+PROVIDER_TORCH_ADAPTER = "torch_adapter"          # TorchScript（V3 §B 已接线，运行时探测门）
+PROVIDER_LOCAL_SUBPROCESS = "local_subprocess"    # operator allowlist 子进程 worker（V3 §B）
 
 PROVIDER_TYPES: FrozenSet[str] = frozenset(
     {
@@ -99,13 +100,23 @@ PROVIDER_TYPES: FrozenSet[str] = frozenset(
         PROVIDER_REMOTE_ENDPOINT,
         PROVIDER_ONNX_ADAPTER,
         PROVIDER_TORCH_ADAPTER,
+        PROVIDER_LOCAL_SUBPROCESS,
     }
 )
 
-#: 本 Epic 真实接线的 provider 形态（其余为 descriptor 层前向声明，
+#: 本平面真实接线的 provider 形态（其余为 descriptor 层前向声明，
 #: qualifier/registry 在注册时对未接线形态给 typed 警告而非虚假能力）。
+#: onnx/torch/local_subprocess 自 V3 §B 起接线：运行时缺席/损坏在
+#: probe/load 层 typed 暴露（honest failure），不再以「未接线」遮蔽。
 WIRED_PROVIDER_TYPES: FrozenSet[str] = frozenset(
-    {PROVIDER_LOCAL_REFERENCE, PROVIDER_EXTENSION_WORKER, PROVIDER_REMOTE_ENDPOINT}
+    {
+        PROVIDER_LOCAL_REFERENCE,
+        PROVIDER_EXTENSION_WORKER,
+        PROVIDER_REMOTE_ENDPOINT,
+        PROVIDER_ONNX_ADAPTER,
+        PROVIDER_TORCH_ADAPTER,
+        PROVIDER_LOCAL_SUBPROCESS,
+    }
 )
 
 # ── 重采样策略（显式重投影/分辨率失配时）────────────────────────────

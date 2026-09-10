@@ -297,15 +297,29 @@ class ModelRegistryStore:
     ) -> ModelRecord:
         """注册一个模型版本（scope 内不可变；碰撞 typed 拒绝；跨 scope 隔离）。
 
-        R2 m-3：真实包路径必须传 ``package_bytes`` —— 走
-        ``package_security.inspect_archive`` 全门（checksum/结构/成员黑
-        名单）后以报告入册；synthetic 种子（无实体包）显式提供报告并
-        标注 ``synthetic: true``，两条路径都不可绕过校验叙事。
+        R2 m-3：真实包路径必须传 ``package_bytes`` —— 校验全门
+        （checksum/结构/成员黑名单）后以报告入册；synthetic 种子（无实体
+        包）显式提供报告并标注 ``synthetic: true``，两条路径都不可绕过
+        校验叙事。V3 §B：单文件模型工件（onnx/torchscript）按
+        ``descriptor.artifact_format`` 分发到 ``inspect_model_file``，
+        其余格式走 ``inspect_archive`` 结构审查。
         """
         if package_bytes is not None:
-            from app.lib.modelops.package_security import inspect_archive
+            from app.lib.modelops.package_security import (
+                SINGLE_FILE_FORMAT_SUFFIXES,
+                inspect_archive,
+                inspect_model_file,
+            )
 
-            report = inspect_archive(package_bytes, expected_checksum=descriptor.checksum)
+            single_suffix = SINGLE_FILE_FORMAT_SUFFIXES.get(descriptor.artifact_format)
+            if single_suffix is not None:
+                report = inspect_model_file(
+                    package_bytes,
+                    expected_checksum=descriptor.checksum,
+                    allowed_suffix=single_suffix,
+                )
+            else:
+                report = inspect_archive(package_bytes, expected_checksum=descriptor.checksum)
             if report.checksum != descriptor.checksum:
                 from app.lib.modelops.errors import ModelChecksumError
 

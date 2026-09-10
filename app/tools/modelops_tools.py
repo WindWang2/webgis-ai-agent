@@ -186,7 +186,8 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         session_id: Optional[str] = None,
         score_threshold: float = 0.5,
     ) -> dict:
-        from app.lib.modelops.engine import InferenceRequest
+        # 引擎契约在 services 平面（app/lib/modelops 是纯契约层，无 engine）。
+        from app.services.modelops.engine import InferenceRequest
         from app.services.modelops.service import get_modelops_service, normalize_scope
 
         scope = normalize_scope(session_id=session_id, project_id=project_id)
@@ -231,9 +232,9 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> dict:
-        from app.lib.modelops.engine import InferenceRequest
         from app.lib.modelops.errors import ModelOpsError
         from app.lib.modelops.promptable import PromptSpec
+        from app.services.modelops.engine import InferenceRequest
         from app.services.modelops.service import get_modelops_service, normalize_scope
 
         if not points and not boxes:

@@ -107,6 +107,9 @@ _ENV_BASELINE = {
         "MODELOPS_REUSE_MAX_ENTRIES": "128",
         "MODELOPS_REUSE_MAX_BYTES": "2147483648",
         "MODELOPS_REMOTE_ALLOWLIST": "",
+        # V3 §B：子进程 worker 通道默认关闭（钉扎空 = 无 allowlist）。
+        "MODELOPS_SUBPROCESS_WORKERS": "",
+        "MODELOPS_SUBPROCESS_DEADLINE_S": "120",
         "RASTER_PROCESSING_MEMORY_MB": "256",
         "RASTER_GDAL_CACHE_MAX_MB": "64",
         "CLEAR_QUIESCE_TIMEOUT_S": "5.0",
