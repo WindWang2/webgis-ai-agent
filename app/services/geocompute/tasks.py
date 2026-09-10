@@ -424,6 +424,10 @@ def _bounded_summary(payload: dict) -> dict[str, Any]:
     return {
         "rows": len(payload.get("features") or payload.get("rows") or []),
         "ref_id": payload.get("ref_id"),
+        # V8：raster tile 的输出路径经 result_summary 回传 coordinator
+        # （raster 载荷通货是路径字符串；partition 合并侧消费）。
+        **({"raster_path": payload["raster_path"]}
+           if payload.get("raster_path") else {}),
         "metadata": {
             k: v for k, v in meta.items()
             if isinstance(v, (str, int, float, bool, type(None)))

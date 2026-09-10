@@ -327,3 +327,120 @@ def await_node_job(
             )
         payload = {"ref_id": ref, "features": stored, "metadata": {"via": "durable_job"}}
     return {"payload": payload, "job_id": str(job_id)}
+
+
+def await_node_jobs(
+    job_ids: list[int],
+    *,
+    session_id: str,
+    deadline_ts: Optional[float],
+    cancel_token: Any = None,
+) -> dict[int, dict[str, Any]]:
+    """等待**多个** durable job 终态（V8 分区 fan-out 的等待原语）。
+
+    与 ``await_node_job`` 同一语义域（轮询/取消级联/deadline），区别：
+    - 单个 job 失败**不**立即上抛 —— 返回 per-job 终态投影，由调用方
+      （executor）决定逐 tile 重试；全部门类收敛后返回；
+    - 取消/deadline → 对全部未完 job 请求持久取消后抛 OperationCancelled /
+      DeadlineExceededError（与单 job 版一致）。
+
+    返回 ``{job_id: {"status": "completed"|"failed"|"cancelled"|"stale",
+    "payload": dict, "error": str|None}}``（completed 才有 payload；有
+    result_ref → session 重取 features；无 ref → result_summary 投影，
+    raster tile 的 raster_path 由此回传）。
+    """
+    from app.lib.cancellation import OperationCancelled
+    from app.services.jobs import DurableJobStore
+    from app.services.jobs.lifecycle import JobStatus
+
+    states: dict[int, dict[str, Any]] = {}
+    cancel_requested: set[int] = set()
+    outstanding = set(int(j) for j in job_ids)
+    poll_s = _POLL_INTERVAL_S
+    while outstanding:
+        factory = session_factory
+        terminal_now: list[int] = []
+        with factory() as db:
+            for job_id in sorted(outstanding):
+                job = DurableJobStore.get_sync(db, int(job_id))
+                if job is None:
+                    states[job_id] = {"status": "failed",
+                                      "payload": {},
+                                      "error": f"job row {job_id} missing"}
+                    terminal_now.append(job_id)
+                    continue
+                status = job.status
+                if status == JobStatus.completed:
+                    ref = getattr(job, "result_ref", None)
+                    summary = getattr(job, "result_summary", None)
+                    payload: dict[str, Any] = {}
+                    if ref:
+                        from app.services.geocompute._async_bridge import (
+                            run_coro_sync,
+                        )
+                        from app.services.session_data import (
+                            session_data_manager,
+                        )
+
+                        stored = run_coro_sync(
+                            session_data_manager.get(session_id, ref))
+                        if stored is None:
+                            states[job_id] = {
+                                "status": "failed", "payload": {},
+                                "error": f"result ref {ref} unresolvable",
+                            }
+                        else:
+                            payload = {"ref_id": ref, "features": stored,
+                                       "metadata": {"via": "partition_tile"}}
+                    elif isinstance(summary, dict):
+                        # raster tile：raster_path 经 result_summary 回传
+                        payload = dict(summary)
+                    if job_id not in states:
+                        states[job_id] = {"status": "completed",
+                                          "payload": payload, "error": None}
+                    terminal_now.append(job_id)
+                elif status == JobStatus.failed:
+                    states[job_id] = {
+                        "status": "failed", "payload": {},
+                        "error": getattr(job, "error_trace", None)
+                        or f"job {job_id} failed",
+                    }
+                    terminal_now.append(job_id)
+                elif status == JobStatus.stale:
+                    states[job_id] = {
+                        "status": "stale", "payload": {},
+                        "error": getattr(job, "error_trace", None)
+                        or f"job {job_id} worker lost",
+                    }
+                    terminal_now.append(job_id)
+                elif status == JobStatus.cancelled:
+                    states[job_id] = {"status": "cancelled", "payload": {},
+                                      "error": "cancelled"}
+                    terminal_now.append(job_id)
+        for job_id in terminal_now:
+            outstanding.discard(job_id)
+        if not outstanding:
+            break
+        if cancel_token is not None and cancel_token.cancelled:
+            with factory() as db:
+                for job_id in sorted(outstanding):
+                    if job_id not in cancel_requested:
+                        DurableJobStore.request_cancel_sync(db, int(job_id))
+                        cancel_requested.add(job_id)
+            raise OperationCancelled("partition fan-out cancelled")
+        if deadline_ts is not None and time.monotonic() > deadline_ts:
+            with factory() as db:
+                for job_id in sorted(outstanding):
+                    if job_id not in cancel_requested:
+                        DurableJobStore.request_cancel_sync(db, int(job_id))
+                        cancel_requested.add(job_id)
+            from app.services.geocompute.errors import DeadlineExceededError
+
+            raise DeadlineExceededError(
+                f"partition fan-out exceeded node deadline "
+                f"({len(outstanding)} tile jobs outstanding)",
+                details={"outstanding": len(outstanding)},
+            )
+        time.sleep(poll_s)
+        poll_s = min(poll_s * _POLL_BACKOFF, _POLL_INTERVAL_MAX_S)
+    return states
