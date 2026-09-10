@@ -90,6 +90,36 @@ def gpu_fallbacks_snapshot() -> int:
         return _gpu_fallbacks
 
 
+# ── V8 Phase E/H：spill 与传输观测 ──────────────────────────────
+
+_spill_count = 0
+_spill_bytes = 0
+_spill_rehydrate = {True: 0, False: 0}
+
+
+def record_spill(size_bytes: int) -> None:
+    """checkpoint 大载荷落盘（一次 spill = 一次内存压力规避）。"""
+    global _spill_count, _spill_bytes
+    if size_bytes < 0:
+        return
+    with _lock:
+        _spill_count += 1
+        _spill_bytes += int(size_bytes)
+
+
+def record_spill_rehydrate(ok: bool) -> None:
+    """spill 条目重读（True=命中回填；False=失败退化为重算）。"""
+    with _lock:
+        _spill_rehydrate[bool(ok)] += 1
+
+
+def spill_snapshot() -> dict[str, int]:
+    with _lock:
+        return {"count": _spill_count, "bytes": _spill_bytes,
+                "rehydrate_hits": _spill_rehydrate[True],
+                "rehydrate_misses": _spill_rehydrate[False]}
+
+
 def _percentile(samples: list[float], q: float) -> Optional[float]:
     if not samples:
         return None
@@ -148,6 +178,7 @@ class ClusterMetrics:
             "resource_rejections": resource_rejections_snapshot(),
             "oom_avoided": oom_avoided_snapshot(),
             "gpu_fallbacks": gpu_fallbacks_snapshot(),
+            "spill": spill_snapshot(),
         }
 
     def _worker_summary(self) -> dict[str, Any]:

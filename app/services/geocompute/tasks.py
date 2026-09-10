@@ -24,6 +24,7 @@ V7（distributed dataflow，01-architecture.md §2.2-§2.5）：
   全部有界落库；
 - 事件/缓存/注册全部尽力而为：任何观测失败绝不倒灌执行结果。
 """
+import os
 from __future__ import annotations
 
 import logging
@@ -197,8 +198,11 @@ def run_geocompute_node(
         # node_output_ready = worker 侧唯一的输出信号；节点终局事件
         # （node_completed 等）由 coordinator 统一发射（契约：终局事实
         # 单一来源，双写会让无重复输出断言失真）。
+        # V8：bytes_ = 载荷近似字节（transfer 可观测性；events.bytes 列
+        # 首个规模化写入方 —— 此前该列几乎无写入方）。
         _emit_event(run_id, "node_output_ready", node_id=exec_node.node_id,
-                    worker_id=worker_id, attempt=node_attempt, rows=rows)
+                    worker_id=worker_id, attempt=node_attempt, rows=rows,
+                    bytes_=_estimate_payload_bytes(payload))
 
         result = _bounded_summary(payload)
         finish_job(job_id, result=result, result_ref=ref_id)
@@ -416,6 +420,28 @@ def _store_payload(session_id: Optional[str], payload: dict, node) -> Optional[s
             session_id, data, prefix=f"geocompute-node-{node.semantic_fingerprint()}"
         )
     )
+
+
+def _estimate_payload_bytes(payload: dict[str, Any]) -> int:
+    """载荷近似字节（有界估计：64 条采样外推 + raster 文件大小）。
+
+    与 PayloadCache/NodeResultStore 同一采样口径 —— 绝不全量 str()（大
+    节点上的瞬时垃圾源）；估计值只服务 transfer 可观测性。
+    """
+    total = 0
+    for key in ("features", "rows"):
+        items = payload.get(key) or []
+        if items:
+            sample = items[:64]
+            avg = sum(len(str(f)) for f in sample) / len(sample)
+            total += int(avg * len(items))
+    rp = payload.get("raster_path")
+    if rp:
+        try:
+            total += max(0, int(os.path.getsize(str(rp))))
+        except OSError:
+            pass
+    return total
 
 
 def _bounded_summary(payload: dict) -> dict[str, Any]:

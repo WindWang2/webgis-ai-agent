@@ -55,6 +55,17 @@ from app.services.geocompute.plan import (
 #: 计划级最大并行度：独立于工具注册表信号量，小而有界（防线程池饥饿）。
 DEFAULT_MAX_WORKERS = 2
 
+
+def _default_exchange():
+    """V8：进程级 artifact exchange 单例（未配 WEBGIS_EXCHANGE_ROOT =
+    停用实例 → NodeResultStore spill 退回 V7 丢弃语义）。迟到 import 避环。"""
+    try:
+        from app.services.geocompute.cluster.exchange import get_exchange
+
+        return get_exchange()
+    except Exception:  # noqa: BLE001 - exchange 缺席 = 纯内存
+        return None
+
 #: 错误证据的字符上界（评审 MINOR：error_message 不承载无限文本）。
 _MAX_ERROR_MESSAGE_CHARS = 300
 
@@ -219,12 +230,28 @@ def _emit_run_event(
     )
 
 
-class NodeResultStore:
-    """进程内有界节点结果存储（LRU，双重界：条目数 + 字节预算）。"""
+#: spill stub 在 LRU 字节预算里的记账权重（载荷本体已落盘，驻留的只有
+#: 凭证 —— 小额固定值，保证 stub 永远装得下）。
+_SPILLED_STUB_BYTES = 512
 
-    def __init__(self, max_entries: int = 256, max_bytes: int = 128 * 1024 * 1024):
+
+class NodeResultStore:
+    """进程内有界节点结果存储（LRU，双重界：条目数 + 字节预算）。
+
+    V8 spill：超过整库预算的大载荷不再被直接丢弃（超预算 = 复用失效
+    + 下次全量重算），而是经 artifact exchange 落 BlobStore（zlib、
+    content-hash 完整性），LRU 里只留 ``__spilled__`` stub —— 命中时
+    按需重hydration。exchange 停用（未配 root）时退回 V7 语义（丢弃）。
+    """
+
+    #: spill stub 的保留键（与 dunder 保留命名空间同族）。
+    _SPILL_KEY = "__spilled__"
+
+    def __init__(self, max_entries: int = 256, max_bytes: int = 128 * 1024 * 1024,
+                 *, exchange: Optional[Any] = None):
         self._max_entries = max_entries
         self._max_bytes = max_bytes
+        self._exchange = exchange
         self._entries: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._bytes = 0
         self._lock = threading.Lock()
@@ -243,12 +270,77 @@ class NodeResultStore:
             total += int(avg * len(items))
         return total
 
+    def _spill(self, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """超预算载荷 → exchange stub（fail-open：失败 = V7 丢弃语义）。
+
+        绝不持有 ``self._lock`` 做 IO —— 序列化+zlib 在锁外完成，调用方
+        拿着锁等大载荷压缩会阻塞全部节点线程。
+        """
+        if self._exchange is None or not getattr(self._exchange, "enabled", False):
+            return None
+        try:
+            clean = {k: v for k, v in payload.items() if not k.startswith("__")}
+            import json as _json
+
+            blob = _json.dumps(clean, default=str).encode("utf-8")
+            handle = self._exchange.put_bytes(blob, kind="spill")
+            try:
+                from app.services.geocompute.cluster.metrics import record_spill
+
+                record_spill(handle.size_bytes)
+            except Exception:  # noqa: BLE001 - 观测失败不倒灌
+                pass
+            return {self._SPILL_KEY: {"key": handle.key,
+                                      "size_bytes": handle.size_bytes,
+                                      "codec": handle.codec}}
+        except Exception:  # noqa: BLE001 - spill 失败 = 诚实退回丢弃
+            return None
+
     def get(self, key: str) -> Optional[dict[str, Any]]:
         with self._lock:
             entry = self._entries.get(key)
-            if entry is not None:
-                self._entries.move_to_end(key)
-            return entry
+            if entry is None:
+                return None
+            self._entries.move_to_end(key)
+            if self._SPILL_KEY not in entry:
+                return entry
+        return self._rehydrate(entry, key)
+
+    def _rehydrate(self, entry: dict[str, Any], key: str) -> Optional[dict[str, Any]]:
+        """stub → 原载荷（锁外 IO；失败 = 复用 miss，诚实重算）。"""
+        try:
+            stub = entry[self._SPILL_KEY]
+            if self._exchange is None or not getattr(
+                    self._exchange, "enabled", False):
+                return None
+            from app.services.geocompute.cluster.exchange import SpillHandle
+
+            blob = self._exchange.get_bytes(SpillHandle(**stub))
+            import json as _json
+
+            payload = _json.loads(blob)
+            with self._lock:
+                self._entries[key] = {"__size__": stub.get("size_bytes", 0),
+                                      **payload}
+            try:
+                from app.services.geocompute.cluster.metrics import (
+                    record_spill_rehydrate,
+                )
+
+                record_spill_rehydrate(True)
+            except Exception:  # noqa: BLE001
+                pass
+            return self._entries.get(key)
+        except Exception:  # noqa: BLE001 - 重hydration失败 = 复用 miss
+            try:
+                from app.services.geocompute.cluster.metrics import (
+                    record_spill_rehydrate,
+                )
+
+                record_spill_rehydrate(False)
+            except Exception:  # noqa: BLE001
+                pass
+            return None
 
     def put(self, key: str, payload: dict[str, Any]) -> None:
         size = min(self._measure(payload), self._max_bytes + 1)
@@ -257,7 +349,22 @@ class NodeResultStore:
             if old is not None:
                 self._bytes -= old.get("__size__", 0)
             if size > self._max_bytes:
-                return  # 超预算的大结果不入复用存储（仍可作为本 run 内节点输出）
+                # V8：超预算 → spill 落盘。stub 只按**驻留字节**记账（小额
+                # 固定权重 —— 载荷本体已不在内存；预算约束的是驻留量），
+                # 挤掉至多一个更冷条目后必然满足预算，绝不自逐出。
+                # exchange 停用/失败 → V7 语义（直接丢弃）。
+                stub = self._spill(payload)
+                if stub is None:
+                    return
+                stub_size = min(_SPILLED_STUB_BYTES, self._max_bytes)
+                self._entries[key] = {**stub, "__size__": stub_size}
+                self._bytes += stub_size
+                while len(self._entries) > self._max_entries or self._bytes > self._max_bytes:
+                    if not self._entries:
+                        break
+                    _, evicted = self._entries.popitem(last=False)
+                    self._bytes -= evicted.get("__size__", 0)
+                return
             # dunder 键是存储保留命名空间：载荷侧同名键丢弃（评审 MINOR ——
             # 否则载荷 __size__ 会腐蚀字节记账，evaluation 期 TypeError）。
             clean = {k: v for k, v in payload.items() if not k.startswith("__")}
@@ -283,7 +390,8 @@ class GeoExecutionEngine:
         retain_outputs: bool = False,
         slot_lease_grace_s: float = DEFAULT_SLOT_LEASE_GRACE_S,
     ):
-        self._store = result_store or NodeResultStore()
+        self._store = result_store or NodeResultStore(
+            exchange=_default_exchange())
         self._max_workers = max(1, min(int(max_workers), 8))
         # 评审 M3 的逃生门：基准/测试需要在 run 终态后读取载荷做确定性
         # 断言。生产路径保持默认 False（终态即清除，证据/摘要为准）。

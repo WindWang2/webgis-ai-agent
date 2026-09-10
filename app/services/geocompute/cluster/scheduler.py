@@ -232,6 +232,14 @@ class ClusterCoordinator:
             self._drop_worker_caches(pruned)
         # M1：终态行 retention（分帧删除，每 tick 有界批）+ V7 级联 events
         self._store.purge_terminal(older_than_s=self._retention_s, limit=64)
+        # V8：artifact exchange 过期清扫（有界批；fail-open）
+        try:
+            from app.services.geocompute.cluster.exchange import get_exchange
+
+            stats["artifacts_purged"] = get_exchange().cleanup_expired(
+                limit=64)
+        except Exception:  # noqa: BLE001 - 清扫失败不阻断 tick
+            pass
         # V7：孤儿事件 TTL 兜底（不依赖 run 行存活）+ 缓存位置声明 TTL
         self._events.purge_older_than(older_than_s=self._retention_s, limit=256)
         if self._cache_registry is not None:
