@@ -38,6 +38,7 @@ DURABLE_FACT_KEYS: Tuple[str, ...] = (
     "user_goal", "workflow_position", "methodology_family",
     "source_fingerprints", "verdict_summary", "ref_ids",
     "recovery_state", "trace_last_seq", "resumed_from", "reasoning_digest",
+    "context_digest",
 )
 #: rebuildable projections（权威状态可重建 —— 不复制）。
 REBUILDABLE_KEYS: Tuple[str, ...] = (
