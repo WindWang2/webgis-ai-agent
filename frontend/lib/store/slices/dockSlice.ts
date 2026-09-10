@@ -27,7 +27,7 @@ export type DockArea = 'right' | 'bottom';
  * 它们不随 spec 演进 prune（pruneDockPanels 的 valid 集恒含这些 id），
  * 但仍是 dock 状态（dockPanel/dockPlacements 通吃）。
  */
-export const STATIC_DOCK_PANELS: ReadonlySet<string> = new Set(['attribute-table']);
+export const STATIC_DOCK_PANELS: ReadonlySet<string> = new Set(['attribute-table', 'agent-run']);
 
 export interface DockRegionState {
   open: boolean;

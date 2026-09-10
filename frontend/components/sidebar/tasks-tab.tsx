@@ -13,8 +13,8 @@
  */
 'use client';
 
-import { ListChecks, RefreshCw, RotateCcw, X, ClipboardList } from 'lucide-react';
-import { useMemo } from 'react';
+import { ListChecks, RefreshCw, RotateCcw, X, ClipboardList, ListTree } from 'lucide-react';
+import { useMemo, useState } from 'react';
 
 import type { JobStatus, JobView } from '@/lib/api/jobs';
 import { useJobCenter } from '@/lib/hooks/use-job-center';
@@ -25,6 +25,7 @@ import { InlineNotice } from '@/components/shared/inline-notice';
 import { ExplorerProgressPanel } from '@/components/explorer/explorer-progress-panel';
 import { LoadingState } from '@/components/shared/loading-state';
 import { StatusBadge } from '@/components/shared/status-badge';
+import { RunTimeline } from '@/components/agent/run-timeline';
 
 interface TasksTabProps {
   sessionId?: string | null;
@@ -70,6 +71,10 @@ function JobCard({
     isCancelling && job.active && job.status !== 'cancelling' ? 'cancelling' : job.status;
   const showProgress = job.active && job.progress !== null;
   const indeterminate = job.active && job.progress === null;
+  // V7 Phase G：geocompute run 的事件时间线可展开（分析/工作流任务；agent
+  // /explorer 不是 geocompute run，不显示入口）。
+  const timelineCapable = job.kind === 'analysis' || job.kind === 'workflow';
+  const [showTimeline, setShowTimeline] = useState(false);
 
   // Result Workbench entry point: link a durable job to a captured result by
   // shared background_job_ids / agent_step_id, and surface an inspector link.
@@ -179,8 +184,22 @@ function JobCard({
               重试
             </button>
           )}
+          {timelineCapable && (
+            <button
+              type="button"
+              onClick={() => setShowTimeline((v) => !v)}
+              aria-expanded={showTimeline}
+              className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
+              aria-label={`${showTimeline ? '收起' : '展开'} ${job.name} 执行时间线`}
+            >
+              <ListTree size={12} aria-hidden />
+              时间线
+            </button>
+          )}
         </div>
       </div>
+
+      {showTimeline && timelineCapable && <RunTimeline runId={job.id} />}
     </div>
   );
 }

@@ -87,7 +87,7 @@ function makeToolCallStatusMarker(
   thinkingMsgIdRef: { current: string },
   setMessages: (updater: (prev: any[]) => any[]) => void,
 ) {
-  return (tool: string, status: ToolCallStatus, error?: string, extra?: Partial<ToolCallEntry>): void => {
+  return (tool: string, status: ToolCallStatus, error?: string, extra?: Partial<ToolCallEntry>, stepId?: string): void => {
     if (!tool) return;
     setMessages((prev) => {
       const tid = thinkingMsgIdRef.current;
@@ -95,9 +95,14 @@ function makeToolCallStatusMarker(
       if (idx === -1) return prev;
       const calls = prev[idx].toolCalls;
       if (!calls || calls.length === 0) return prev;
+      // V7：stepId 在场时优先精确匹配（同 turn 两次同名工具不错配）；
+      // 无命中或 stepId 缺席回落既有工具名匹配（向后兼容无 id 的载荷）。
       let changed = false;
       const next = calls.map((c: ToolCallEntry) => {
-        if (c.tool !== tool || c.status !== 'running') return c;
+        const matched = stepId
+          ? (c.stepId === stepId || (c.stepId == null && c.tool === tool && c.status === 'running'))
+          : (c.tool === tool && c.status === 'running');
+        if (!matched || c.status !== 'running') return c;
         changed = true;
         return {
           ...c,
@@ -589,6 +594,8 @@ export function useSSEStream(
         // id and match terminal transitions by tool name.
         const toolName = typeof data.name === 'string' ? data.name : '';
         if (toolName) {
+          // V7：载荷带 step_id 时随行捕获（终态精确匹配键；缺席保持 ordinal id）。
+          const stepId = typeof data.step_id === 'string' ? data.step_id : undefined;
           setMessages((prev) => {
             const tid = thinkingMsgIdRef.current;
             const idx = tid ? prev.findIndex((m) => m.id === tid) : -1;
@@ -600,6 +607,7 @@ export function useSSEStream(
               arguments: typeof data.arguments === 'string' ? data.arguments : undefined,
               status: 'running' as const,
               startedAt: Date.now(),
+              ...(stepId ? { stepId } : {}),
             }];
             const copy = [...prev];
             copy[idx] = { ...prev[idx], toolCalls: next };
@@ -619,14 +627,14 @@ export function useSSEStream(
         const workbenchResultId = useHudStore.getState().captureStepResult(
           data as unknown as StepResultEvent,
         );
-        // FE-P3-3: terminal transition for the ToolCallChain row (matched by
-        // tool name — the SSE payload carries no call id). #608: stamp
+        // FE-P3-3: terminal transition for the ToolCallChain row (V7: matched
+        // by step_id when present, falling back to tool name). #608: stamp
         // completedAt (duration badge) and hasGeojson when the result mounts
         // a geojson_ref layer.
         markToolCallStatus(String(data.tool ?? ''), 'completed', undefined, {
           ...(data.geojson_ref ? { hasGeojson: true, layerId: String(data.geojson_ref) } : {}),
           result: data.result,
-        });
+        }, typeof data.step_id === 'string' ? data.step_id : undefined);
         // Plan Mode：propose_plan 返回的 plan 摘要挂到当前消息，由 PlanProposalCard 渲染
         if (data.tool === 'propose_plan' && data.result?.success && data.result?.plan_id) {
           // 守卫已确认 plan 字段在载荷中（运行时契约）；TS 无法跨 index-
@@ -1033,7 +1041,8 @@ export function useSSEStream(
         // args so the retry's step_result pairs with the retry's args.
         if (event.event === 'step_error' && typeof data?.tool === 'string' && data.tool) {
           useHudStore.getState().discardPendingToolArgs(data.tool);
-          markToolCallStatus(data.tool, 'failed', typeof data?.error === 'string' ? data.error : undefined);
+          markToolCallStatus(data.tool, 'failed', typeof data?.error === 'string' ? data.error : undefined, undefined,
+            typeof data?.step_id === 'string' ? data.step_id : undefined);
         } else if (event.event === 'error' || event.event === 'task_error') {
           // #466: a stream-level death ends the turn — remaining queued args
           // have no step_result coming and must not leak into the next turn.

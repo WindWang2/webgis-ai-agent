@@ -383,6 +383,9 @@ export interface ToolCallEntry {
   completedAt?: number;
   /** Bound map layer id derived from the step_result payload (geojson_ref). Empty when no layer was mounted. */
   layerId?: string;
+  /** V7：后端 step_id（tool_call/step_result 载荷在场时捕获）。终态匹配
+   *  优先按 stepId（同 turn 两次同名工具不再错配），缺席回落工具名。 */
+  stepId?: string;
 }
 
 export type PlanProposalStatus = 'pending' | 'approved' | 'rejected' | 'revising';

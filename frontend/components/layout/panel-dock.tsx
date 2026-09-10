@@ -21,6 +21,7 @@ import {
   type DockArea,
 } from '@/lib/store/slices/dockSlice';
 import { AttributeTablePanel } from '@/components/table/attribute-table-panel';
+import { AgentRunPanel } from '@/components/agent/agent-run-panel';
 
 /**
  * Panel Dock Host（Workspace V2 / Goal C5 → V7 布局系统）—— 轻量 dock 基座的渲染面。
@@ -85,6 +86,7 @@ function SpecPanelBody({ componentId }: { componentId: string }) {
 /** V7：静态面板注册表（内容与 spec 演进无关，dock 归属同样有效）。 */
 function StaticDockPanel({ panelId }: { panelId: string }) {
   if (panelId === 'attribute-table') return <AttributeTablePanel />;
+  if (panelId === 'agent-run') return <AgentRunPanel />;
   return null;
 }
 
@@ -384,6 +386,7 @@ function panelLabel(type: string, id: string): string {
   if (type === 'chart_panel') return '图表';
   if (type === 'statistics_panel') return '统计';
   if (id === 'attribute-table') return '属性表';
+  if (id === 'agent-run') return '执行详情';
   return id;
 }
 
