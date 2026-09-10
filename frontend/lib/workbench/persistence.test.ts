@@ -81,14 +81,45 @@ describe('workbench persistence（W3）', () => {
     // 基线内编辑（同 doc）不提交
     await tickDebounce();
     expect(commitSpy).not.toHaveBeenCalled();
-    // 组织态编辑 → 防抖提交 patch_workbench_state
+    // 组织态编辑 → 防抖提交（V6：结构化 delta 优先）
     useHudStore.getState().createLayerGroup('新组');
     await tickDebounce();
     expect(commitSpy).toHaveBeenCalledTimes(1);
-    const body = commitSpy.mock.calls[0][0] as { intent: string; doc: { version: number; groups: unknown[] } };
+    const body = commitSpy.mock.calls[0][0] as {
+      intent: string; doc?: { version: number; groups: unknown[] };
+      delta?: { setGroups?: Array<{ id: string; name?: string }> };
+    };
+    expect(body.intent).toBe('patch_workbench_delta');
+    expect(body.doc).toBeUndefined();
+    expect(body.delta?.setGroups).toHaveLength(1);
+    expect(body.delta?.setGroups?.[0].name).toBe('新组');
+    expect(body.delta?.setGroups?.[0].id).toBeTypeOf('string');
+  });
+
+  it('V6: diff 不可表达（mode 变更）→ 回退全量 patch_workbench_state + base_workbench_revision', async () => {
+    setMapSpecSessionCursor('sess-mode', 2);
+    notifyWorkbenchSessionChanged('sess-mode');
+    hydrateWorkbenchFromSpec({
+      workbench: {
+        version: 5,
+        groups: [{ id: 'g1', name: 'A', collapsed: false, parentId: null }],
+        membership: {},
+        lockedLayerIds: [],
+        mode: 'explore',
+        _rev: 7, // 服务端 V6 盖章
+      },
+    });
+    // mode 变更不在 delta 域 → 全量回退
+    useHudStore.getState().setWorkbenchMode('analyze', 'user');
+    await tickDebounce();
+    const body = commitSpy.mock.calls[0][0] as {
+      intent: string; doc: { mode: string };
+      base_workbench_revision?: number;
+    };
     expect(body.intent).toBe('patch_workbench_state');
-    expect(body.doc.version).toBe(5);
-    expect(body.doc.groups).toHaveLength(2);
+    expect(body.doc.mode).toBe('analyze');
+    // V6：全量携带 workbench 级 CAS 锚点 = 服务端 doc 的 _rev 盖章
+    expect(body.base_workbench_revision).toBe(7);
   });
 
   it('P2b: 旧会话（无 workbench 分支）空基线起跑', async () => {
@@ -101,7 +132,7 @@ describe('workbench persistence（W3）', () => {
     expect(commitSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('R1-C1: 409 superseded 不算提交成功 —— 不写基线/不广播，回灌服务端真相', async () => {
+  it('V6 R1-M5: 409 → 回灌服务端真相 + 在飞 delta 单次 rebase（bounded）', async () => {
     setMapSpecSessionCursor('sess-sup', 1);
     notifyWorkbenchSessionChanged('sess-sup');
     hydrateWorkbenchFromSpec(undefined);
@@ -120,14 +151,16 @@ describe('workbench persistence（W3）', () => {
       },
     });
     useHudStore.getState().createLayerGroup('本地未落盘组');
-    await tickDebounce();
-    expect(commitSpy).toHaveBeenCalledTimes(1);
-    // 服务端真相回灌（本地被拒版本不得残留）
-    const s = useHudStore.getState();
-    expect(s.layerGroups).toHaveLength(1);
-    expect(s.layerGroups[0].name).toBe('服务端组');
+    await tickDebounce(); // 第一窗口：提交被拒
+    await tickDebounce(); // rebase 重提交经新防抖窗口
+    // 第一次 = 被拒提交；rebase 后自动重提交一次（bounded 单次）
+    expect(commitSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // 服务端真相曾作为基线回灌（store 在 rebase 窗口 = 服务端 doc + 本地 delta）
     // superseded 响应的 revision 已收敛
     expect(getMapSpecSessionCursor().revision).toBe(9);
+    // rebase 的重提交仍是 delta intent（不是整表回写）
+    const second = commitSpy.mock.calls[1][0] as { intent: string };
+    expect(second.intent).toBe('patch_workbench_delta');
   });
 
   it('P3: 会话切换重置武装 —— 排队提交作废、跨会话不写', async () => {

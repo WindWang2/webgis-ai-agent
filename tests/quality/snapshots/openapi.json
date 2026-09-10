@@ -3237,6 +3237,33 @@
     "title": "PatchLayerStyleBody",
     "type": "object"
    },
+   "PatchWorkbenchDeltaBody": {
+    "description": "Workbench V6 组织态**增量**补丁（绝对值语义；引擎内管线应用+全量校验）。\n\n见 app/services/collab/delta.py：setGroups（部分字段 create/patch）/\nremoveGroupIds（级联）/ membershipSet / membershipClear / locksAdd /\nlocksRemove。mode 不在 delta 域。patch ≤64KB、各列表 ≤2000。",
+    "properties": {
+     "delta": {
+      "additionalProperties": true,
+      "title": "Delta",
+      "type": "object"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "patch_workbench_delta",
+      "title": "Intent",
+      "type": "string"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision",
+     "delta"
+    ],
+    "title": "PatchWorkbenchDeltaBody",
+    "type": "object"
+   },
    "PiToolRequest": {
     "description": "Request from Pi extension to execute a GIS tool.",
     "properties": {
@@ -4515,8 +4542,20 @@
     "type": "object"
    },
    "SetWorkbenchStateBody": {
-    "description": "Workbench V5 组织态持久化（分组树/成员/锁/模式；引擎内结构+64KB 校验）。",
+    "description": "Workbench V5 组织态持久化（分组树/成员/锁/模式；引擎内结构+256KB 校验）。\n\nV6：base_workbench_revision —— workbench 级 CAS（引擎比对存储 doc 的\n`_rev` 盖章）；提供且不一致 → 409 superseded（回灌当前 doc）。缺省 =\nV5 语义。",
     "properties": {
+     "base_workbench_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Base Workbench Revision"
+     },
      "doc": {
       "additionalProperties": true,
       "title": "Doc",
@@ -6863,6 +6902,7 @@
           "patch_component": "#/components/schemas/PatchComponentBody",
           "patch_layer_presentation": "#/components/schemas/PatchLayerPresentationBody",
           "patch_layer_style": "#/components/schemas/PatchLayerStyleBody",
+          "patch_workbench_delta": "#/components/schemas/PatchWorkbenchDeltaBody",
           "patch_workbench_state": "#/components/schemas/SetWorkbenchStateBody",
           "rebind_component": "#/components/schemas/RebindComponentBody",
           "remove_component": "#/components/schemas/RemoveComponentBody",
@@ -6913,6 +6953,9 @@
          },
          {
           "$ref": "#/components/schemas/SetWorkbenchStateBody"
+         },
+         {
+          "$ref": "#/components/schemas/PatchWorkbenchDeltaBody"
          }
         ],
         "title": "Req"
@@ -7086,6 +7129,152 @@
      }
     ],
     "summary": "Get Session Table Artifact",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/workbench/artifact-status": {
+   "get": {
+    "description": "工作台 artifact/workflow 感知投影（V6 Must-have H；派生投影，零新真相）。\n\nSEC-KG-01：经 collab service 缝（artifact_status）只读投影 —— 路由不直调\n产物注册表。字段与有界性见 ``collab/artifact_status.py``。",
+    "operationId": "get_workbench_artifact_status_api_v1_chat_sessions__session_id__workbench_artifact_status_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Workbench Artifact Status Api V1 Chat Sessions  Session Id  Workbench Artifact Status Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Workbench Artifact Status",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/workbench/state": {
+   "get": {
+    "description": "Workbench 组织态权威读（V6 协作对账通道）。\n\n与 map-state GET 的区别：**新鲜读** —— 先失效进程内 L1（2s 陈旧窗口）\n再读，重连/对账路径不得回灌陈旧基线（R1-M2）；meta=1 只返回 revision\n（定向单字段读，不物化 1MiB 级 mapspec）。doc 含服务端 `_rev` 盖章\n（workbench 级 CAS 锚点）。",
+    "operationId": "get_workbench_state_api_v1_chat_sessions__session_id__workbench_state_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "仅返回 revision（轻量对账探测）",
+      "in": "query",
+      "name": "meta",
+      "required": false,
+      "schema": {
+       "default": false,
+       "description": "仅返回 revision（轻量对账探测）",
+       "title": "Meta",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Workbench State Api V1 Chat Sessions  Session Id  Workbench State Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Workbench State",
     "tags": [
      "AI对话",
      "对话"

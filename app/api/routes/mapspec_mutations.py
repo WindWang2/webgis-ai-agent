@@ -1,7 +1,7 @@
 """User-origin MapSpec mutations — thin adapter over apply_mutation (#639/#640)."""
 from typing import Annotated, Any, Literal, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.core.auth import require_owned_session
@@ -27,6 +27,7 @@ from app.services.mapspec.lifecycle_engine import (
     SetTimeIntent,
     SetViewIntent,
     SetWorkbenchStateIntent,
+    PatchWorkbenchDeltaIntent,
 )
 
 router = APIRouter(prefix="/chat", tags=["对话"])
@@ -156,11 +157,30 @@ class InitProjectBody(BaseModel):
 
 
 class SetWorkbenchStateBody(BaseModel):
-    """Workbench V5 组织态持久化（分组树/成员/锁/模式；引擎内结构+64KB 校验）。"""
+    """Workbench V5 组织态持久化（分组树/成员/锁/模式；引擎内结构+256KB 校验）。
+
+    V6：base_workbench_revision —— workbench 级 CAS（引擎比对存储 doc 的
+    `_rev` 盖章）；提供且不一致 → 409 superseded（回灌当前 doc）。缺省 =
+    V5 语义。
+    """
 
     intent: Literal["patch_workbench_state"]
     expected_revision: int = Field(ge=0)
     doc: dict[str, Any]
+    base_workbench_revision: Optional[int] = Field(default=None, ge=0)
+
+
+class PatchWorkbenchDeltaBody(BaseModel):
+    """Workbench V6 组织态**增量**补丁（绝对值语义；引擎内管线应用+全量校验）。
+
+    见 app/services/collab/delta.py：setGroups（部分字段 create/patch）/
+    removeGroupIds（级联）/ membershipSet / membershipClear / locksAdd /
+    locksRemove。mode 不在 delta 域。patch ≤64KB、各列表 ≤2000。
+    """
+
+    intent: Literal["patch_workbench_delta"]
+    expected_revision: int = Field(ge=0)
+    delta: dict[str, Any]
 
 
 UserMapSpecMutationRequest = Annotated[
@@ -178,6 +198,7 @@ UserMapSpecMutationRequest = Annotated[
         SetTimeBody,
         InitProjectBody,
         SetWorkbenchStateBody,
+        PatchWorkbenchDeltaBody,
     ],
     Field(discriminator="intent"),
 ]
@@ -287,7 +308,12 @@ async def apply_user_mapspec_mutation(
     elif isinstance(req, InitProjectBody):
         intent = InitProjectIntent(view=req.view)
     elif isinstance(req, SetWorkbenchStateBody):
-        intent = SetWorkbenchStateIntent(doc=req.doc)
+        intent = SetWorkbenchStateIntent(
+            doc=req.doc,
+            base_workbench_revision=req.base_workbench_revision,
+        )
+    elif isinstance(req, PatchWorkbenchDeltaBody):
+        intent = PatchWorkbenchDeltaIntent(delta=req.delta)
     else:
         raise HTTPException(status_code=400, detail="unsupported mapspec mutation intent")
     # GISWorldState 门面（C2）：语义与 engine.apply_mutation 一致，额外记录
@@ -349,3 +375,62 @@ async def apply_user_mapspec_mutation(
     except Exception:  # noqa: BLE001 — 附加事实通道
         pass
     return payload
+
+
+@router.get("/sessions/{session_id}/workbench/state")
+async def get_workbench_state(
+    session_id: str,
+    meta: bool = Query(default=False, description="仅返回 revision（轻量对账探测）"),
+    _conv: Conversation = Depends(require_owned_session),
+) -> dict[str, Any]:
+    """Workbench 组织态权威读（V6 协作对账通道）。
+
+    与 map-state GET 的区别：**新鲜读** —— 先失效进程内 L1（2s 陈旧窗口）
+    再读，重连/对账路径不得回灌陈旧基线（R1-M2）；meta=1 只返回 revision
+    （定向单字段读，不物化 1MiB 级 mapspec）。doc 含服务端 `_rev` 盖章
+    （workbench 级 CAS 锚点）。
+    """
+    from app.services.session_data import session_data_manager
+
+    # R2-M-5：meta 分支不做 L1 失效 —— get_state_field 直连 HGET 天然新鲜；
+    # 失效会把热路径 map_state 一并打穿（对账轮询的读放大防护）。
+    if meta:
+        get_field = getattr(session_data_manager, "get_state_field", None)
+        raw_rev = (
+            await get_field(session_id, "_cartographic_mutation_revision")
+            if callable(get_field)
+            else None
+        )
+        try:
+            revision = int(raw_rev or 0)
+        except (TypeError, ValueError):
+            revision = 0
+        return {"session_id": session_id, "revision": revision}
+    pre_state = await session_data_manager.get_map_state(session_id)
+    try:
+        revision = int(pre_state.get("_cartographic_mutation_revision", 0))
+    except (TypeError, ValueError):
+        revision = 0
+    # 引擎权威读（含磁盘复活路径；Redis 过期时 spec 从盘上恢复）。
+    loaded = await _engine.store.get_mapspec(session_id, state_hint=pre_state)
+    workbench = loaded.get("workbench") if isinstance(loaded, dict) else None
+    return {
+        "session_id": session_id,
+        "revision": revision,
+        "doc": workbench if isinstance(workbench, dict) else None,
+    }
+
+
+@router.get("/sessions/{session_id}/workbench/artifact-status")
+async def get_workbench_artifact_status(
+    session_id: str,
+    _conv: Conversation = Depends(require_owned_session),
+) -> dict[str, Any]:
+    """工作台 artifact/workflow 感知投影（V6 Must-have H；派生投影，零新真相）。
+
+    SEC-KG-01：经 collab service 缝（artifact_status）只读投影 —— 路由不直调
+    产物注册表。字段与有界性见 ``collab/artifact_status.py``。
+    """
+    from app.services.collab.artifact_status import build_artifact_status
+
+    return await build_artifact_status(session_id)

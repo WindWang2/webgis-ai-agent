@@ -99,19 +99,29 @@ export function groupDepth(groups: readonly GroupNodeLike[], id: string): number
   return depth;
 }
 
-/** 子孙组 id 集合（不含自身）。 */
+/** 子孙组 id 集合（不含自身）。V6：children 索引一次建表 —— O(n)（原
+ * frontier.includes 为 O(n×f)，大树下 reparent 校验放大，G11）。 */
 export function descendantGroupIds(
   groups: readonly GroupNodeLike[],
   id: string,
 ): Set<string> {
   const out = new Set<string>();
+  const childrenOf = new Map<string, string[]>();
+  for (const g of groups) {
+    if (g.parentId == null) continue;
+    const bucket = childrenOf.get(g.parentId);
+    if (bucket != null) bucket.push(g.id);
+    else childrenOf.set(g.parentId, [g.id]);
+  }
   let frontier = [id];
   while (frontier.length > 0) {
     const next: string[] = [];
-    for (const g of groups) {
-      if (g.parentId != null && frontier.includes(g.parentId) && !out.has(g.id)) {
-        out.add(g.id);
-        next.push(g.id);
+    for (const fid of frontier) {
+      for (const child of childrenOf.get(fid) ?? []) {
+        if (!out.has(child)) {
+          out.add(child);
+          next.push(child);
+        }
       }
     }
     frontier = next;
@@ -137,14 +147,33 @@ export function canReparentGroup(
   return newParentDepth + subtreeHeight <= WORKBENCH_GROUP_MAX_DEPTH;
 }
 
-/** 子树高度（自身为 1；叶子 = 1）。 */
+/** 子树高度（自身为 1；叶子 = 1）。V6：children 索引层序提升 —— O(n)。 */
 export function subtreeMaxDepth(groups: readonly GroupNodeLike[], id: string): number {
-  const children = descendantGroupIds(groups, id);
-  let max = 1;
-  for (const cid of children) {
-    max = Math.max(max, groupDepth(groups, cid));
+  const childrenOf = new Map<string, string[]>();
+  for (const g of groups) {
+    if (g.parentId == null) continue;
+    const bucket = childrenOf.get(g.parentId);
+    if (bucket != null) bucket.push(g.id);
+    else childrenOf.set(g.parentId, [g.id]);
   }
-  return max - groupDepth(groups, id) + 1;
+  // 层序：起点为第 1 层；环由 visited 防护（与投影层同款防御）。
+  const visited = new Set<string>([id]);
+  let frontier = [id];
+  let depth = 1;
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (const fid of frontier) {
+      for (const child of childrenOf.get(fid) ?? []) {
+        if (!visited.has(child)) {
+          visited.add(child);
+          next.push(child);
+        }
+      }
+    }
+    if (next.length > 0) depth += 1;
+    frontier = next;
+  }
+  return depth;
 }
 
 /** 根组按创建序展开（组实体在 doc.groups 的数组序 = 各层内展示序）。 */
@@ -185,15 +214,50 @@ export function normalizeWorkbenchDoc(raw: unknown): WorkbenchDocV5 | null {
       parentId: null, // 先全部落根，第二轮再恢复合法父子
     });
   }
-  // 第二轮：恢复 parentId（仅当父已存在、不成环、不超深）。
-  const declared = candidate.groups as Array<Partial<WorkbenchGroupNode>>;
+  // 第二轮：恢复 parentId（R2-m-4：O(n) —— 原实现对每组做 trial 树 +
+  // canReparentGroup（内部多次建表），2000 组上限下为百毫秒级主线程阻塞）。
+  // 策略：先按声明挂父（父存在且非自身），再用 ≤深度闸+2 轮的松弛收敛
+  // 计算深度；环（深度永不定）与超深链切断为根。语义与原实现一致：
+  // 非法挂载最终落为根组。
+  const declaredById = new Map<string, Partial<WorkbenchGroupNode>>();
+  for (const r of candidate.groups as Array<Partial<WorkbenchGroupNode>>) {
+    if (r != null && typeof r.id === 'string' && !declaredById.has(r.id)) {
+      declaredById.set(r.id, r);
+    }
+  }
+  const depthById = new Map<string, number>();
+  for (const g of groups) depthById.set(g.id, 1); // 先全部视作根
   for (const g of groups) {
-    const rawParent = declared.find((r) => r?.id === g.id)?.parentId;
-    if (typeof rawParent !== 'string' || rawParent === g.id) continue;
-    if (!groups.some((p) => p.id === rawParent)) continue;
-    // 临时把 g 挂到 rawParent 后校验整树深度（防止恢复超深链）。
-    const trial = groups.map((x) => (x.id === g.id ? { ...x, parentId: rawParent } : x));
-    if (canReparentGroup(trial, g.id, rawParent)) g.parentId = rawParent;
+    const rawParent = declaredById.get(g.id)?.parentId;
+    if (typeof rawParent === 'string' && rawParent !== g.id && depthById.has(rawParent)) {
+      g.parentId = rawParent;
+    }
+  }
+  for (let round = 0; round <= WORKBENCH_GROUP_MAX_DEPTH + 1; round += 1) {
+    let changed = false;
+    depthById.clear();
+    for (const g of groups) {
+      if (g.parentId == null) {
+        depthById.set(g.id, 1);
+        continue;
+      }
+      const parentDepth = depthById.get(g.parentId);
+      if (parentDepth == null) continue; // 本轮尚无定深（链更长/成环）
+      const depth = parentDepth + 1;
+      if (depth > WORKBENCH_GROUP_MAX_DEPTH) {
+        g.parentId = null; // 超深：提升为根（与原「拒绝挂载」同终态）
+        depthById.set(g.id, 1);
+        changed = true;
+      } else {
+        depthById.set(g.id, depth);
+      }
+    }
+    // 全部有定深且无修正 → 收敛
+    if (!changed && depthById.size === groups.length) break;
+  }
+  // 环成员深度永不定（松弛不收敛）→ 切断为根。
+  for (const g of groups) {
+    if (!depthById.has(g.id)) g.parentId = null;
   }
 
   const membership: Record<string, string> = {};

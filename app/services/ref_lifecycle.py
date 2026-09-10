@@ -93,6 +93,11 @@ def _run_invalidation_hooks(
             )
 
 
+#: fire-and-forget artifact 事件的强引用集（asyncio 文档：丢弃引用会被 GC，
+#: 任务可能在完成前被取消）；上限 64 个未完成任务，超过则丢弃最旧完成项。
+_artifact_event_tasks: set = set()
+
+
 def invalidate_ref_caches(
     session_id: str,
     ref_ids: list[str],
@@ -135,6 +140,31 @@ def invalidate_ref_caches(
                 broadcast_ref_invalidation(session_id, ref_id, reason.value)
             except Exception:  # noqa: BLE001 - 通知绝不阻断失效路径
                 pass
+        # Workbench V6：向协作总线发 artifact 事件（跨浏览器 stale 徽标刷新）。
+        # 单向通知：collab bus 消费者只扇出给 WS 连接、不再触发失效 ——
+        # 无「失效→发布→收到→失效」环。无运行 loop（同步 worker 线程）则跳过。
+        try:
+            loop = __import__("asyncio").get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
+            from app.services.collab.bus import bus as _collab_bus
+
+            async def _publish_artifact_event(sid: str = session_id, rid: str = ref_id,
+                                              rsn: str = reason.value) -> None:
+                await _collab_bus.publish(
+                    sid, "artifact",
+                    {"refId": rid, "reason": rsn, "status": "invalidated"},
+                )
+
+            _artifact_event_tasks.add(
+                loop.create_task(_publish_artifact_event())
+            )
+            # 有界自清：完成的任务移出集合（防集合无界增长）。
+            if len(_artifact_event_tasks) > 64:
+                for _t in list(_artifact_event_tasks):
+                    if _t.done():
+                        _artifact_event_tasks.discard(_t)
         count += 1
     return count
 

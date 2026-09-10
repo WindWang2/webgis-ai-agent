@@ -19,6 +19,7 @@ from app.core.database import Engine
 from app.core.exception import global_exception_handler
 from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, ws_collab, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
@@ -64,6 +65,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"[lifespan] cache listener skipped: {e}")
+
+    # Workbench V6：协作总线 listener（Redis psubscribe → 本地 WS 扇出）。
+    # 无 Redis = 进程内降级（诚实披露于 hello.degraded），启动永不阻断。
+    try:
+        from app.services.collab.bus import bus as _collab_bus
+
+        _collab_bus.start()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[lifespan] collab bus skipped: {e}")
 
     registry = ToolRegistry()
     init_tools(registry)
@@ -193,6 +204,14 @@ async def lifespan(app: FastAPI):
         logger.warning(f"[lifespan] geocompute cluster coordinator skipped: {e}")
 
     yield
+
+    # Workbench V6：协作总线停机（取消 psubscribe listener task）。
+    try:
+        from app.services.collab.bus import bus as _collab_bus
+
+        await _collab_bus.stop()
+    except Exception:  # noqa: BLE001 - 停机尽力而为
+        pass
 
     # 关闭后台清理任务
     for bg_task in (cleanup_task, stale_sweep_task):
@@ -503,6 +522,7 @@ app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
 app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
+app.include_router(ws_collab.router, prefix="/api/v1", tags=["WebSocket 协作"])
 app.include_router(config.router, prefix="/api/v1", tags=["系统配置"])
 app.include_router(explorer.router, prefix="/api/v1", tags=["探索引擎"])
 app.include_router(templates.router, prefix="/api/v1", tags=["地图制图模板"])

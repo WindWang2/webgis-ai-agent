@@ -177,6 +177,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // resetLayerGroups 触发的组织态订阅不得以旧会话身份提交空 doc
       // （顺序敏感：disarm 与清 store 之间不得插入 await）。
       notifyWorkbenchSessionChanged(sid);
+      // Workbench V6：服务端协作通道随会话切换（认证矩阵/所有权由服务端强制）。
+      void import('@/lib/collab/adopt').then((m) => m.startWorkbenchCollabV6(sid)).catch(() => {});
       // Workbench V4：分组树/多选引用旧会话图层 id —— 同 dock 语义，随会话清空。
       useHudStore.getState().resetLayerGroups();
       // V5/W4：undo 栈随会话清空（跨会话命令不可撤销 —— 图层 id 语义已变）。
@@ -346,6 +348,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       useHudStore.getState().resetLayerGroups();
       // Workbench V5（W3）：新会话（尚无 sid）——解除组织态持久化武装。
       notifyWorkbenchSessionChanged(null);
+      // Workbench V6：新会话（无 sid）——停服务端协作通道。
+      void import('@/lib/collab/adopt').then((m) => m.stopWorkbenchCollabV6()).catch(() => {});
       // V5/W4：undo 栈随会话清空。
       clearUndoHistory();
       // W11：新会话语义 → 清刷新恢复锚。
@@ -376,6 +380,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       notifyWorkbenchSessionChanged(sid);
       markWorkbenchHydrated();
     }
+    // Workbench V6：新会话拿到 sid → 启动服务端协作通道。
+    void import('@/lib/collab/adopt').then((m) => m.startWorkbenchCollabV6(sid)).catch(() => {});
     // W11：新会话建立 → 写刷新恢复锚（认证会话可自动恢复）。
     writeSessionAnchor(sid);
     // Cap capability retention: long-lived tabs may visit many anonymous
