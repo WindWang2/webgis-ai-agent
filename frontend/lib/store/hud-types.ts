@@ -244,15 +244,21 @@ export interface HudState extends WorkbenchSlice {
   /** 模板库 V2 drawer（UI V3：与 history/settings 互斥的 overlay 之一） */
   templatesOpen: boolean;
   setTemplatesOpen: (open: boolean) => void;
-  /* ─── Dock（Workspace V2：工作区停靠，与语义组件状态分离）─── */
+  /* ─── Dock（Workspace V2：工作区停靠，与语义组件状态分离；V7 布局系统）─── */
   dockPlacements: import('./slices/dockSlice').DockSlice['dockPlacements'];
   rightDock: import('./slices/dockSlice').DockSlice['rightDock'];
   bottomDock: import('./slices/dockSlice').DockSlice['bottomDock'];
+  rightDockWidth: import('./slices/dockSlice').DockSlice['rightDockWidth'];
+  bottomDockHeight: import('./slices/dockSlice').DockSlice['bottomDockHeight'];
+  setRightDockWidth: import('./slices/dockSlice').DockSlice['setRightDockWidth'];
+  setBottomDockHeight: import('./slices/dockSlice').DockSlice['setBottomDockHeight'];
+  resetDockSizes: import('./slices/dockSlice').DockSlice['resetDockSizes'];
   dockPanel: import('./slices/dockSlice').DockSlice['dockPanel'];
-  toggleRightDock: import('./slices/dockSlice').DockSlice['toggleRightDock'];
-  toggleBottomDock: import('./slices/dockSlice').DockSlice['toggleBottomDock'];
+  toggleDock: import('./slices/dockSlice').DockSlice['toggleDock'];
+  undockRegion: import('./slices/dockSlice').DockSlice['undockRegion'];
   setActiveDockPanel: import('./slices/dockSlice').DockSlice['setActiveDockPanel'];
   resetDockState: import('./slices/dockSlice').DockSlice['resetDockState'];
+  resetWorkbenchLayout: import('./slices/dockSlice').DockSlice['resetWorkbenchLayout'];
   pruneDockPanels: import('./slices/dockSlice').DockSlice['pruneDockPanels'];
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;

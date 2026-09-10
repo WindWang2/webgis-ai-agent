@@ -69,14 +69,58 @@ describe('dockSlice', () => {
     expect(s.rightDock.activePanel).toBe('chart-b');
   });
 
-  it('closing a region returns its panels to float (no orphaned instances)', () => {
-    // 「收起停靠区」= 全部面板取消停靠 —— 只翻 open 会把面板渲染在两个
-    // 宿主之外（chrome 跳过 + host 不渲染），成为不可见面板。
+  it('collapse hides the region but preserves members (layout is restorable)', () => {
+    // V7 语义：「收起」= 折叠（open=false，成员与归属保留，再展开即恢复
+    // 布局）；「面板回浮动」是显式 undockRegion。面板不渲染在两个宿主之外
+    // —— 折叠本身就是「不可见」的用户意图。
     useHudStore.getState().dockPanel('chart-a', 'bottom');
-    useHudStore.getState().toggleBottomDock();
+    useHudStore.getState().toggleDock('bottom');
+    let s = useHudStore.getState();
+    expect(s.bottomDock.open).toBe(false);
+    expect(s.bottomDock.panels).toEqual(['chart-a']);
+    expect(s.dockPlacements['chart-a']).toBe('bottom');
+
+    useHudStore.getState().toggleDock('bottom');
+    s = useHudStore.getState();
+    expect(s.bottomDock.open).toBe(true);
+    expect(s.bottomDock.panels).toEqual(['chart-a']);
+  });
+
+  it('undockRegion floats every member of the region (explicit scatter)', () => {
+    useHudStore.getState().dockPanel('chart-a', 'right');
+    useHudStore.getState().dockPanel('chart-b', 'right');
+    useHudStore.getState().undockRegion('right');
     const s = useHudStore.getState();
-    expect(s.bottomDock.panels).toEqual([]);
     expect(s.dockPlacements['chart-a']).toBeUndefined();
+    expect(s.dockPlacements['chart-b']).toBeUndefined();
+    expect(s.rightDock.panels).toEqual([]);
+  });
+
+  it('dock sizes clamp, persist in the slice and reset', () => {
+    useHudStore.getState().setRightDockWidth(800);
+    expect(useHudStore.getState().rightDockWidth).toBe(560);
+    useHudStore.getState().setBottomDockHeight(10);
+    expect(useHudStore.getState().bottomDockHeight).toBe(160);
+    useHudStore.getState().setRightDockWidth(420);
+    useHudStore.getState().setBottomDockHeight(420);
+    useHudStore.getState().resetDockSizes();
+    expect(useHudStore.getState().rightDockWidth).toBe(340);
+    expect(useHudStore.getState().bottomDockHeight).toBe(300);
+  });
+
+  it('resetWorkbenchLayout restores the default layout composite', () => {
+    useHudStore.getState().dockPanel('chart-a', 'right');
+    useHudStore.getState().setRightDockWidth(520);
+    useHudStore.getState().setSidebarWidth(420);
+    useHudStore.getState().toggleLeftPanel();
+    expect(useHudStore.getState().leftPanelOpen).toBe(false);
+    useHudStore.getState().resetWorkbenchLayout();
+    const s = useHudStore.getState();
+    expect(s.dockPlacements).toEqual({});
+    expect(s.rightDockWidth).toBe(340);
+    expect(s.bottomDockHeight).toBe(300);
+    expect(s.sidebarWidth).toBe(330);
+    expect(s.leftPanelOpen).toBe(true);
   });
 
   it('session reset clears all dock state', () => {
