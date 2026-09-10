@@ -9,7 +9,7 @@
 - retryable：瞬时类（超时/驱动崩溃/DB busy/worker 丢失/远端抖动）；
 - non-retryable：确定性类（算子未接线/输入截断/绑定阻断/取消/科学失败）；
 - 未知错误码**保守不重试**（fail-closed —— 盲目重试非幂等副作用更危险）；
-- 退避：指数 + 抖音抖动（jitter），有界上界；退避门持久化在节点行
+- 退避：指数 + 比例抖动（jitter），有界上界；退避门持久化在节点行
   ``next_ready_at``（crash-safe：重启后退避门仍然生效）。
 """
 from __future__ import annotations

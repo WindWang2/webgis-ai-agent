@@ -400,3 +400,40 @@ def test_retry_does_not_duplicate_artifact(factory):
         assert "ref:attempt1-x" not in submissions
     finally:
         CP._handlers.pop("ref:", None)
+
+
+def test_compensation_failure_leaves_journal_evidence(factory):
+    """handler 清理失败 → COMPENSATION_FAILED journal（诚实暴露）。"""
+
+    async def boom(session_id, ref, detail):
+        raise RuntimeError("cleanup exploded")
+
+    CP.register_handler("ref:", boom)
+    try:
+        h = Harness(factory)
+        iid = h.inst["instance_id"]
+
+        # buffer 成功；clip 执行「中途」取消落地 + 半提交产物
+        async def clip_executor(node, input_refs, params, ctx):
+            await h._executor(node, input_refs, params, ctx)
+            if node["node_id"] == "transform:clip:subject":
+                h.store.update_instance(iid,
+                                        fields={"cancel_requested": True})
+                return _fail("CANCELLED", ref="ref:clip-x")
+            return _ok(f"ref:out-{node['node_id']}")
+
+        h.driver.plan_executor = clip_executor
+        summary = h.run()
+        assert summary["status"] == C.InstanceStatus.CANCELLED
+        failed = [e for e in store_events(h.store, iid)
+                  if e["kind"] == C.EventKind.COMPENSATION_FAILED]
+        assert failed and failed[0]["payload"]["ref"] == "ref:clip-x"
+        # 清理失败就没有 COMPENSATION 成功事件（不假装成功）
+        assert not [e for e in store_events(h.store, iid)
+                    if e["kind"] == C.EventKind.COMPENSATION]
+    finally:
+        CP._handlers.pop("ref:", None)
+
+
+def store_events(store, iid):
+    return store.get_events(iid)

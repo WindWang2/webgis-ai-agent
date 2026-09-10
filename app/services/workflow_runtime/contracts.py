@@ -100,31 +100,27 @@ class EventKind:
     STATE_TRANSITION = "state_transition"
     INSTANCE_CANCEL_REQUESTED = "instance_cancel_requested"
     NODE_CANCEL_REQUESTED = "node_cancel_requested"
-    LEASE_ACQUIRED = "lease_acquired"
-    LEASE_RELEASED = "lease_released"
-    NODE_HEARTBEAT = "node_heartbeat"
     RECOVERY_ORPHAN_RESET = "recovery_orphan_reset"
     RECOVERY_FINALIZE = "recovery_finalize"
     RETRY_SCHEDULED = "retry_scheduled"
     RETRY_EXHAUSTED = "retry_exhausted"
     COMPENSATION = "compensation"
-    ATTEMPT_STARTED = "attempt_started"
-    DUPLICATE_SUPPRESSED = "duplicate_suppressed"
-    DISPATCH = "dispatch"
-    WORKER_LOSS = "worker_loss"
+    COMPENSATION_FAILED = "compensation_failed"
     CLONE = "clone"
     NODES_REQUEUED = "nodes_requeued"
 
 
+#: journal 实际会发出的词表（review 修正：裁掉从未埋点的虚词 ——
+#: LEASE_*/NODE_HEARTBEAT/ATTEMPT_STARTED/DUPLICATE_SUPPRESSED/DISPATCH/
+#: WORKER_LOSS；这些事实分别在节点行租约列 / attempts_log / durable 通道
+#: 有自己的单一真相，不在 journal 重复记录）。
 EVENT_KINDS: Tuple[str, ...] = (
     EventKind.STATE_TRANSITION, EventKind.INSTANCE_CANCEL_REQUESTED,
-    EventKind.NODE_CANCEL_REQUESTED, EventKind.LEASE_ACQUIRED,
-    EventKind.LEASE_RELEASED, EventKind.NODE_HEARTBEAT,
-    EventKind.RECOVERY_ORPHAN_RESET, EventKind.RECOVERY_FINALIZE,
-    EventKind.RETRY_SCHEDULED, EventKind.RETRY_EXHAUSTED,
-    EventKind.COMPENSATION, EventKind.ATTEMPT_STARTED,
-    EventKind.DUPLICATE_SUPPRESSED, EventKind.DISPATCH,
-    EventKind.WORKER_LOSS, EventKind.CLONE, EventKind.NODES_REQUEUED,
+    EventKind.NODE_CANCEL_REQUESTED, EventKind.RECOVERY_ORPHAN_RESET,
+    EventKind.RECOVERY_FINALIZE, EventKind.RETRY_SCHEDULED,
+    EventKind.RETRY_EXHAUSTED, EventKind.COMPENSATION,
+    EventKind.COMPENSATION_FAILED, EventKind.CLONE,
+    EventKind.NODES_REQUEUED,
 )
 
 

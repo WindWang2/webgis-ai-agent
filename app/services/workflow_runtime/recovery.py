@@ -55,6 +55,7 @@ def sweep_recoverable(
     store: Optional[InstanceStore] = None, *,
     ttl_s: float = DEFAULT_LEASE_TTL_S,
     batch: int = SWEEP_BATCH,
+    worker_registry: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """一轮恢复清扫（同步；调用方负责 to_thread 卸载）。
 
@@ -78,7 +79,8 @@ def sweep_recoverable(
     try:
         from app.services.workflow_runtime.cluster import WorkerRegistry
 
-        report["workers_stale"] = WorkerRegistry(store._factory).sweep_dead()
+        registry = worker_registry or WorkerRegistry()
+        report["workers_stale"] = registry.sweep_dead()
     except Exception:  # noqa: BLE001 — 注册表故障不阻断实例恢复
         report["workers_stale"] = []
     for inst in instances:

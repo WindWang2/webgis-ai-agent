@@ -59,17 +59,19 @@ def isolation_enabled() -> bool:
         "1", "true", "True")
 
 
-#: 进程级派发信号量（惰性；绑定运行事件循环集合 —— Semaphore 跨 loop
-#: 使用会出问题，这里按需惰性建并在主事件循环中复用）。
-_slots_sem: Optional[asyncio.Semaphore] = None
+#: 进程级派发信号量（per-event-loop 字典 —— Semaphore 绑定首个 await 它
+#: 的 loop，跨 loop 复用会 RuntimeError；每 loop 各一份，容量同源）。
+_slots_sems: Dict[int, asyncio.Semaphore] = {}
 _slots_in_use = 0
 
 
 def get_slots_semaphore() -> asyncio.Semaphore:
-    global _slots_sem
-    if _slots_sem is None:
-        _slots_sem = asyncio.Semaphore(dispatch_slots())
-    return _slots_sem
+    loop_id = id(asyncio.get_running_loop())
+    sem = _slots_sems.get(loop_id)
+    if sem is None:
+        sem = asyncio.Semaphore(dispatch_slots())
+        _slots_sems[loop_id] = sem
+    return sem
 
 
 def slots_in_use() -> int:
@@ -230,6 +232,21 @@ class DurableDispatcher:
         for en in plan.nodes:
             en.policy = ExecutionPolicyKind.DURABLE_JOB
         op_node = plan.nodes[0]
+        global _slots_in_use
+        async with get_slots_semaphore():
+            _slots_in_use += 1
+            try:
+                return await self._await_job(
+                    node, plan, op_node, session_id, cancel_token)
+            finally:
+                _slots_in_use -= 1
+
+    async def _await_job(
+        self, node: Dict[str, Any], plan: Any, op_node: Any,
+        session_id: str, cancel_token: Any,
+    ) -> GeoComputeNodeOutcome:
+        import time as _time
+
         ret = await asyncio.to_thread(
             _dispatch_sync, op_node, plan, session_id, self.owner_scope)
         job_id = str(ret.get("job_id", "") or "")
@@ -241,7 +258,8 @@ class DurableDispatcher:
                     node.get("node_id"), job_id, ret.get("queue"))
         try:
             res = await asyncio.to_thread(
-                _await_job_sync, job_id, session_id, cancel_token)
+                _await_job_sync, job_id, session_id, cancel_token,
+                durable_wait_timeout_s())
         except Exception as exc:  # noqa: BLE001 — 分类由异常携带
             from app.services.geocompute.errors import classify_failure
             from app.services.geocompute.errors import GeoComputeError
@@ -315,8 +333,30 @@ def _dispatch_sync(op_node, plan, session_id: str, owner_scope: str) -> dict:
         deadline_s=None, owner_scope=owner_scope)
 
 
-def _await_job_sync(job_id: str, session_id: str, cancel_token: Any) -> dict:
+#: durable job 等待上界（秒）—— await 线程必须有界，否则 per-node 超时
+#: 放弃等待后轮询线程池泄漏（review MAJOR）。
+DEFAULT_DURABLE_WAIT_TIMEOUT_S = 300.0
+
+
+def durable_wait_timeout_s() -> float:
+    import os as _os
+
+    try:
+        return max(5.0, float(_os.getenv(
+            "GIS_WORKFLOW_DURABLE_WAIT_TIMEOUT_S",
+            str(DEFAULT_DURABLE_WAIT_TIMEOUT_S))))
+    except (TypeError, ValueError):
+        return DEFAULT_DURABLE_WAIT_TIMEOUT_S
+
+
+def _await_job_sync(job_id: str, session_id: str, cancel_token: Any,
+                    durable_wait_timeout_s: float = 300.0) -> dict:
+    import time as _time
+
     from app.services.geocompute.durable import await_node_job
 
-    return await_node_job(job_id, session_id=session_id,
-                          deadline_ts=None, cancel_token=cancel_token)
+    # await_node_job 的 deadline_ts 是 time.monotonic() 域（uptime）
+    return await_node_job(
+        job_id, session_id=session_id,
+        deadline_ts=_time.monotonic() + float(durable_wait_timeout_s),
+        cancel_token=cancel_token)

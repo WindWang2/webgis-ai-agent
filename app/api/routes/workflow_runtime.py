@@ -351,13 +351,15 @@ async def get_node_detail(
 @router.post("/instances/{instance_id}/nodes/{node_id}/retry")
 async def retry_node(
     instance_id: str, node_id: str,
+    force: bool = False,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """人工重试单节点（FAILED/STALE→READY；预算耗尽 409）。"""
+    """人工重试单节点（FAILED/STALE→READY；预算耗尽需 force=true）。"""
     svc = _svc()
     owner = _owner(user)
     try:
-        return await svc.retry_node(instance_id, node_id, owner_scope=owner)
+        return await svc.retry_node(instance_id, node_id, owner_scope=owner,
+                                    force=force)
     except SV.InstanceBusy as e:
         raise _http(e.code, 409, e.detail)
     except SV.WorkflowRuntimeError as e:

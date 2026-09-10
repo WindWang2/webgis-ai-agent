@@ -318,6 +318,12 @@ class InstanceStore:
             if complete:
                 fresh = self.get_node(instance_id, node_id)
                 if fresh is not None and fresh["state"] == to_state:
+                    if require_claim and (fresh.get("claimed_by") or "")                             != (claimed_by or ""):
+                        # 被接管后迟到完成：目标已达成但认领者非本 token
+                        # —— 拒绝（fencing 与入口预检同一纪律）
+                        return TransitionResult(
+                            False, "CLAIM_MISMATCH", state=to_state,
+                            state_revision=fresh["state_revision"])
                     return TransitionResult(
                         True, "OK_IDEMPOTENT", state=to_state,
                         state_revision=fresh["state_revision"])

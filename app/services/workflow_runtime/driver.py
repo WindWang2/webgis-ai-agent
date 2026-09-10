@@ -109,6 +109,7 @@ class Driver:
         self.retry_policy = retry_policy or RT.default_policy()
         self.node_timeout_s = (
             float(node_timeout_s) if node_timeout_s else None)
+        self._gated_earliest: Optional[float] = None
         #: V6 派发面（None = 进程内路径不变；service 按 env 装配
         #: Local/DurableDispatcher）。
         self.dispatcher = dispatcher
@@ -239,9 +240,16 @@ class Driver:
             if not ready:
                 if any(s == C.NodeState.RUNNING for s in states.values()) \
                         or gated:
-                    # 有在飞或退避等待中的节点 → 不是终态（重试队列语义：
-                    # next_ready_at 未到 ≠ 无事可做）
-                    await asyncio.sleep(0.05)
+                    # 有在飞或退避等待中的节点 → 不是终态。退避感知
+                    # 等待：睡到最早的 next_ready_at（0.5s 轮询上界兜底），
+                    # 不再固定 0.05s 空转打 DB（review MINOR）。
+                    if self._gated_earliest is not None:
+                        await asyncio.sleep(max(
+                            0.05, min(0.5,
+                                      self._gated_earliest
+                                      - _utcnow().timestamp())))
+                    else:
+                        await asyncio.sleep(0.05)
                     continue
                 break  # 无 ready 无 running 无退避等待 → 终态
             batch = sorted(
@@ -288,9 +296,18 @@ class Driver:
                     "node(s) instance=%s", len(pending), instance_id)
                 break
             # 租约续期（波次边界）：run 租约 + 在飞节点租约（V6 两级续期）
-            await asyncio.to_thread(
+            renewed = await asyncio.to_thread(
                 self.store.acquire_run_lease, instance_id,
                 owner_scope=self.owner_scope, token=run_token)
+            if not renewed:
+                # 续租失败 = 实例已被他 driver 接管 / 不可再驱动 —— 本
+                # driver 立即让位（双 driver 并存会使调度语义漂移）。
+                # 在飞节点保持 RUNNING（本 token 认领），由接管方按节点
+                # 租约接管，绝不双驱动。
+                logger.warning(
+                    "[WorkflowRuntime] run lease lost, yielding "
+                    "instance=%s token=%s", instance_id, run_token)
+                break
             for nid, st in states.items():
                 if st == C.NodeState.RUNNING:
                     await asyncio.to_thread(
@@ -335,10 +352,12 @@ class Driver:
 
         同查询顺带读 cancel_requested —— 被标节点不派发（pre-claim 门）。
         """
+        self._gated_earliest = None
         if not ready:
             return [], []
         dispatchable: List[str] = []
         gated: List[str] = []
+        gated_times: List[float] = []
         now = _utcnow()
         for nid in ready:
             row = await asyncio.to_thread(
@@ -356,12 +375,16 @@ class Driver:
             gate = row.get("next_ready_at") or ""
             if gate:
                 try:
-                    if datetime.fromisoformat(gate) > now:
+                    gate_dt = datetime.fromisoformat(gate)
+                    if gate_dt > now:
                         gated.append(nid)
+                        gated_times.append(gate_dt.timestamp())
                         continue
                 except (TypeError, ValueError):
                     pass
             dispatchable.append(nid)
+        if gated_times:
+            self._gated_earliest = min(gated_times)
         return dispatchable, gated
 
     async def _run_node(
@@ -431,10 +454,17 @@ class Driver:
                 or {}).get("state", C.NodeState.READY)
             return
         states[node_id] = C.NodeState.RUNNING
-        # 派发即续租（R1-m8：单波可超 120s TTL，波界续租不够密）
-        await asyncio.to_thread(
+        # 派发即续租（R1-m8：单波可超 120s TTL，波界续租不够密）；
+        # 失败 = 本 driver 已失去驱动权（他 driver 接管）→ 放弃本节点
+        # 执行，交回认领态（节点租约仍在本 token 手里，接管方按到期接管）。
+        still_driving = await asyncio.to_thread(
             store.acquire_run_lease, instance_id,
             owner_scope=self.owner_scope, token=run_token)
+        if not still_driving:
+            logger.warning(
+                "[WorkflowRuntime] run lease lost at dispatch, yielding "
+                "node=%s/%s", instance_id, node_id)
+            return
         # V6 执行期租约续期（真实竞态修复）：单次执行可能超过节点租约
         # TTL —— 在飞期间独立续约任务（ttl/3 周期），终态即停。否则长
         # 执行会被恢复面误判孤儿 → 双重执行。
@@ -698,15 +728,22 @@ class Driver:
         is_cancel = bool(cancelled) or \
             outcome.error_code == "CANCELLED"
         if outcome.output_ref:
-            # 半提交产物补偿（成功路径不会进这里）
+            # 半提交产物补偿（成功路径不会进这里）；清理失败留 journal
+            # 证据（诚实暴露，绝不静默假装清理成功）
             from app.services.workflow_runtime import compensation as CP
 
-            await CP.compensate_ref(
+            _reason = ("CANCELLED_WITH_ARTIFACT" if is_cancel
+                       else "FAILED_WITH_ARTIFACT")
+            cleaned = await CP.compensate_ref(
                 session_id, outcome.output_ref, node_id=node_id,
                 instance_id=instance_id, attempt=attempts,
-                reason="CANCELLED_WITH_ARTIFACT" if is_cancel
-                else "FAILED_WITH_ARTIFACT",
-                store=store)
+                reason=_reason, store=store)
+            if not cleaned:
+                await asyncio.to_thread(
+                    store.append_event, instance_id,
+                    kind=C.EventKind.COMPENSATION_FAILED, node_id=node_id,
+                    reason=_reason[:96], actor="driver", attempt=attempts,
+                    payload={"ref": outcome.output_ref[:96]})
         if is_cancel:
             await asyncio.to_thread(
                 store.transition_node,

@@ -315,3 +315,71 @@ def test_periodic_sweep_respects_interval_gate():
             RC.periodic_recovery_sweep(interval_seconds=0), timeout=1.0)
 
     asyncio.run(_run())
+
+
+# ── fencing / 补偿失败证据（独立 review 补测）────────────────────────────
+
+def test_late_completion_after_takeover_is_rejected(store):
+    """claim 被接管后，旧 worker 迟到完成必须被 CLAIM_MISMATCH 拒绝。"""
+    inst = _make(store)
+    iid = inst["instance_id"]
+    store.transition_node(iid, "cap:buffer", C.NodeState.READY,
+                          expected_from=C.NodeState.PENDING)
+    # 旧 worker 认领
+    store.transition_node(iid, "cap:buffer", C.NodeState.RUNNING,
+                          expected_from=C.NodeState.READY, claim=True,
+                          claimed_by="rt-old")
+    _backdate(store, iid, "cap:buffer")
+    # 接管方复位 + 新 token 认领
+    assert store.find_orphan_running_nodes(iid) == ["cap:buffer"]
+    store.transition_node(iid, "cap:buffer", C.NodeState.READY,
+                          reason="ORPHAN_LEASE_EXPIRED", event="recovery")
+    store.transition_node(iid, "cap:buffer", C.NodeState.RUNNING,
+                          expected_from=C.NodeState.READY, claim=True,
+                          claimed_by="rt-new")
+    # 旧 worker 迟到完成 → 拒绝（即使是幂等完成入口）
+    r = store.transition_node(
+        iid, "cap:buffer", C.NodeState.SUCCEEDED,
+        require_claim=True, claimed_by="rt-old", complete=True,
+        reason="EXEC_OK", event="driver",
+        patch={"output_ref": "ref:stale-attempt"})
+    assert not r.ok and r.code == "CLAIM_MISMATCH"
+    # 节点仍是 rt-new 的 RUNNING（未被旧 worker 污染）
+    row = store.get_node(iid, "cap:buffer")
+    assert row["state"] == C.NodeState.RUNNING
+    assert row["claimed_by"] == "rt-new"
+    assert row["output_ref"] == ""
+    # 新 token 完成正常
+    r2 = store.transition_node(
+        iid, "cap:buffer", C.NodeState.SUCCEEDED,
+        require_claim=True, claimed_by="rt-new", complete=True,
+        reason="EXEC_OK", event="driver",
+        patch={"output_ref": "ref:fresh"})
+    assert r2.ok
+
+
+def test_late_idempotent_completion_wrong_claimant_rejected(store):
+    """幂等完成入口（complete=True）的 CAS 冲突重读分支同样校验认领者。"""
+    inst = _make(store)
+    iid = inst["instance_id"]
+    store.transition_node(iid, "cap:buffer", C.NodeState.READY,
+                          expected_from=C.NodeState.PENDING)
+    store.transition_node(iid, "cap:buffer", C.NodeState.RUNNING,
+                          expected_from=C.NodeState.READY, claim=True,
+                          claimed_by="rt-a")
+    store.transition_node(iid, "cap:buffer", C.NodeState.FAILED,
+                          require_claim=True, claimed_by="rt-a",
+                          complete=True, reason="EXEC_FAIL:NODE_TIMEOUT",
+                          patch={"attempts_increment": True})
+    store.transition_node(iid, "cap:buffer", C.NodeState.READY,
+                          expected_from=C.NodeState.FAILED,
+                          reason="RETRY_SCHEDULED")
+    store.transition_node(iid, "cap:buffer", C.NodeState.RUNNING,
+                          expected_from=C.NodeState.READY, claim=True,
+                          claimed_by="rt-b")
+    # rt-a 对已不归它执行的节点做幂等 FAILED 完成 → CLAIM_MISMATCH
+    r = store.transition_node(
+        iid, "cap:buffer", C.NodeState.FAILED,
+        require_claim=True, claimed_by="rt-a", complete=True,
+        reason="EXEC_FAIL:NODE_TIMEOUT")
+    assert not r.ok and r.code == "CLAIM_MISMATCH"

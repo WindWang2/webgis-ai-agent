@@ -196,6 +196,10 @@ class SubworkflowExecutor:
                     "obligation_chain": chain}
         finally:
             watcher.cancel()
+            import contextlib as _cl
+
+            with _cl.suppress(_asyncio.CancelledError):
+                await watcher  # 等 watcher 真正退出（旗标写完）
         status = summary.get("status")
         if status == C.InstanceStatus.SUCCEEDED:
             return {"ok": True, "status": status,
