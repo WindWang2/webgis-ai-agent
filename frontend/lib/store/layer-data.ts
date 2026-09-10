@@ -60,10 +60,10 @@ export async function ensureLayerData(
   if (reason === 'selection-detail') {
     let fid: string | number | undefined = opts?.featureId;
     if (fid == null) {
-      const sel: any = (state as any).selectedFeature;
+      const sel = state.selectedFeature;
       if (sel) {
         // Try to match selection to this layer (parent id logic)
-        const selLayerId = sel.layerId as string | undefined;
+        const selLayerId = sel.layerId;
         const matchesLayer =
           !selLayerId ||
           selLayerId === layerId ||
@@ -72,7 +72,7 @@ export async function ensureLayerData(
           selLayerId.includes(layerId) ||
           layerId.includes(selLayerId);
         if (matchesLayer) {
-          fid = sel.featureId as string | number | undefined;
+          fid = sel.featureId;
           if (fid == null && sel.properties && typeof sel.properties === 'object') {
             for (const k of FEATURE_ID_KEYS) {
               const v = (sel.properties as Record<string, unknown>)[k];

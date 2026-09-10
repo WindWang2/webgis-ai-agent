@@ -33,11 +33,16 @@ export default function StoryPage() {
   )
 }
 
+interface StoryMessage {
+  role: 'user' | 'assistant' | 'system' | string;
+  content: string;
+}
+
 function StoryPageInner() {
   const searchParams = useSearchParams()
   const sessionId = searchParams.get("session_id")
 
-  const [messages, setMessages] = useState<any[]>([])
+  const [messages, setMessages] = useState<StoryMessage[]>([])
   const [loading, setLoading] = useState(true)
   // #552: 之前恢复失败被 isApiError 过滤器静默吞掉 → 匿名 / 无权限分享时整页
   // 空白无任何交代。现在任何失败都进入可见错误态。
@@ -132,7 +137,7 @@ function StoryPageInner() {
     setLoading(true);
     (async () => {
       try {
-        const data = await apiFetch<{ messages?: any[] }>(`/api/v1/chat/sessions/${encodeURIComponent(sessionId)}`, {
+        const data = await apiFetch<{ messages?: StoryMessage[] }>(`/api/v1/chat/sessions/${encodeURIComponent(sessionId)}`, {
           signal: controller.signal,
           label: 'Story session error',
         });

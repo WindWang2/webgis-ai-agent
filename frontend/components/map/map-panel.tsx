@@ -144,10 +144,20 @@ function getMapStyle(option: MapStyleOption, index: number): string | StyleSpeci
   return option.url
 }
 
-const DEFAULT_VIEW_STATE = {
+interface MapViewState {
+  longitude: number;
+  latitude: number;
+  zoom: number;
+  bearing?: number;
+  pitch?: number;
+}
+
+const DEFAULT_VIEW_STATE: MapViewState = {
   longitude: 116.4074,
   latitude: 39.9042,
   zoom: 4,
+  bearing: 0,
+  pitch: 0,
 }
 
 export function MapPanel({
@@ -615,7 +625,7 @@ export function MapPanel({
         // stacks every spec sublayer above it on any layer-changing patch.
         // Re-raise it alongside the selection highlight (no-op when the
         // stack isn't mounted, so reconcile-only patches stay cheap).
-        if (map && typeof (map as any).getLayer === 'function') {
+        if (map && typeof map.getLayer === 'function') {
           try {
             raiseAnnotationLayers(map);
           } catch {
@@ -904,10 +914,10 @@ export function MapPanel({
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
-    const gestureStart = (evt: any) => {
+    const gestureStart = (evt: { originalEvent?: unknown }) => {
       if (evt?.originalEvent) notifyUserGestureStart()
     }
-    const gestureEnd = (evt: any) => {
+    const gestureEnd = (evt: { originalEvent?: unknown }) => {
       if (evt?.originalEvent) notifyUserGestureEnd()
     }
     map.on('dragstart', gestureStart)
@@ -1136,8 +1146,8 @@ export function MapPanel({
         return {
           center: [cur.longitude, cur.latitude],
           zoom: cur.zoom,
-          bearing: (cur as any).bearing ?? 0,
-          pitch: (cur as any).pitch ?? 0,
+          bearing: cur.bearing ?? 0,
+          pitch: cur.pitch ?? 0,
           bounds: undefined,
         }
       }
