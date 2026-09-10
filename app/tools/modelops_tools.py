@@ -369,6 +369,97 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
+        name="modelops_record_metrics",
+        description="登记模型训练指标/评估结果/晋升退役状态（append-only lineage）",
+        param_descriptions={
+            "model_id": "模型 id",
+            "model_version": "模型版本",
+            "event_type": "training_metrics | evaluation | promotion | retirement",
+            "payload": "事件载荷（metrics 摘要/评估引用/阶段；不得含 secret）",
+            "actor": "操作者标识（可选）",
+        },
+        tier=2,
+        domains=["raster"],
+        cost="light",
+        side_effect="state_mutation",
+        tags=("modelops", "geoai"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
+    )
+    async def modelops_record_metrics(
+        model_id: str,
+        model_version: str,
+        event_type: str,
+        payload: Optional[dict] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        from app.services.modelops.service import get_modelops_service
+
+        service = get_modelops_service()
+        if event_type == "training_metrics":
+            event = service.record_training_metrics(
+                model_id, model_version,
+                metrics=(payload or {}).get("metrics") or {},
+                actor=actor or "",
+            )
+        elif event_type == "evaluation":
+            event = service.record_evaluation_ref(
+                model_id, model_version,
+                data_object_id=(payload or {}).get("evaluation_data_object_id"),
+                metrics_summary=(payload or {}).get("metrics_summary"),
+                dataset_refs=(payload or {}).get("dataset_refs"),
+                actor=actor or "",
+            )
+        elif event_type == "promotion":
+            event = service.set_deployment_state(
+                model_id, model_version,
+                promote=True,
+                stage=(payload or {}).get("stage") or "production",
+                actor=actor or "",
+            )
+        elif event_type == "retirement":
+            event = service.set_deployment_state(
+                model_id, model_version, promote=False, actor=actor or "",
+            )
+        else:
+            from app.lib.modelops.errors import ModelOpsError
+
+            raise ModelOpsError(
+                f"event_type must be training_metrics/evaluation/promotion/retirement "
+                f"(got {event_type!r})"
+            )
+        return {"recorded": True, "seq": event["seq"], "ts": event["ts"]}
+
+    @tool(
+        registry,
+        name="modelops_model_history",
+        description="查看模型版本的 lineage 时间线（指标/评估/部署状态推导）",
+        param_descriptions={
+            "model_id": "模型 id",
+            "model_version": "可选；缺省返回全部版本",
+        },
+        tier=2,
+        domains=["raster"],
+        cost="light",
+        side_effect="pure",
+        tags=("modelops", "geoai"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
+    )
+    async def modelops_model_history(
+        model_id: str,
+        model_version: Optional[str] = None,
+    ) -> dict:
+        from app.services.modelops.service import get_modelops_service
+
+        return get_modelops_service().model_history(
+            model_id, model_version=model_version
+        )
+
+    @tool(
+        registry,
         name="modelops_cancel_inference",
         description="取消一次进行中的推理（取消键 = 提交返回的 run_id）",
         param_descriptions={"cancel_key": "取消键（modelops_run_inference 返回的 run_id）"},

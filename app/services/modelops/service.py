@@ -77,6 +77,10 @@ class ModelOpsService:
             self._engine.loaded_cache, self._registry, self._providers
         )
         self._settle_warm_pool()
+        # V3 §F：模型 lineage / 指标 / 部署状态（side-car append-only）。
+        from app.services.modelops.lineage import ModelLineageStore
+
+        self._lineage = ModelLineageStore(self._settings.registry_dir / "lineage")
         self._evaluation = EvaluationService()
         self._cancel_lock = threading.Lock()
         self._cancel_tokens: Dict[str, CancellationToken] = {}
@@ -96,6 +100,86 @@ class ModelOpsService:
     def pin_warm_pool(self, model_id: str, *, device: str = "cpu") -> Dict[str, Any]:
         """运行期把一个模型钉进 warm pool（幂等；typed 结果不抛）。"""
         return self._warm_pool.pin(model_id, device=device)
+
+    # ── lineage / 指标（V3 §F）───────────────────────────────────────
+    def record_training_metrics(
+        self,
+        model_id: str,
+        model_version: str,
+        *,
+        metrics: Dict[str, Any],
+        actor: str = "",
+    ) -> Dict[str, Any]:
+        """登记一个模型版本的训练指标（append-only lineage 事件）。"""
+        return self._lineage.append(
+            model_id, model_version,
+            event_type="training_metrics", payload={"metrics": metrics}, actor=actor,
+        )
+
+    def record_evaluation_ref(
+        self,
+        model_id: str,
+        model_version: str,
+        *,
+        data_object_id: Optional[str] = None,
+        metrics_summary: Optional[Dict[str, Any]] = None,
+        dataset_refs: Optional[List[str]] = None,
+        actor: str = "",
+    ) -> Dict[str, Any]:
+        """登记一次评估（data_object 引用 + 摘要 + 数据 lineage）。"""
+        payload: Dict[str, Any] = {
+            "evaluation_data_object_id": data_object_id,
+            "metrics_summary": metrics_summary or {},
+            "dataset_refs": dataset_refs or [],
+        }
+        return self._lineage.append(
+            model_id, model_version,
+            event_type="evaluation", payload=payload, actor=actor,
+        )
+
+    def set_deployment_state(
+        self,
+        model_id: str,
+        model_version: str,
+        *,
+        promote: bool,
+        stage: str = "production",
+        actor: str = "",
+    ) -> Dict[str, Any]:
+        """晋升 / 退役一个模型版本（append-only；状态为推导值）。"""
+        if promote:
+            return self._lineage.append(
+                model_id, model_version,
+                event_type="promotion", payload={"stage": stage}, actor=actor,
+            )
+        return self._lineage.append(
+            model_id, model_version, event_type="retirement", payload={}, actor=actor,
+        )
+
+    def model_history(
+        self,
+        model_id: str,
+        *,
+        model_version: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """模型 lineage 时间线 + 推导状态（工具面/前端消费）。"""
+        events = self._lineage.history(model_id, model_version)
+        versions: Dict[str, Any] = {}
+        for event in events:
+            version = str(event.get("model_version"))
+            entry = versions.setdefault(version, {"events": [], "deployment_state": "registered"})
+            entry["events"].append(event)
+            if event.get("event_type") == "promotion":
+                entry["deployment_state"] = (event.get("payload") or {}).get("stage") or "production"
+            elif event.get("event_type") == "retirement":
+                entry["deployment_state"] = "retired"
+        return {"model_id": model_id, "versions": versions, "event_count": len(events)}
+
+    def model_metrics(
+        self, model_id: str, *, model_version: str
+    ) -> Optional[Dict[str, Any]]:
+        """最近一次训练/评估指标（registry inspect 的伴生查询）。"""
+        return self._lineage.latest_metrics(model_id, model_version)
 
     def _wire_dl_providers(self) -> None:
         """V3 §B：ONNX Runtime / TorchScript / subprocess provider 接线。
@@ -256,6 +340,12 @@ class ModelOpsService:
             "owner_scope": record.owner_scope,
             "revision": record.revision,
             "package_report": record.package_report,
+            # V3 §F：lineage 摘要（指标/评估/部署状态）。
+            "lineage": {
+                "deployment_state": self._lineage.deployment_state(d.model_id, d.model_version),
+                "latest_metrics": self._lineage.latest_metrics(d.model_id, d.model_version),
+                "event_count": len(self._lineage.load(d.model_id, d.model_version)),
+            },
         }
 
     def check_compatibility(
