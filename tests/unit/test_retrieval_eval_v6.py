@@ -56,7 +56,7 @@ def test_corpus_size_and_kinds():
     kinds = {c.kind for c in cases}
     assert kinds == {
         "direct", "near_duplicate", "hard_negative", "ambiguous",
-        "out_of_scope",
+        "out_of_scope", "paraphrase",
     }
     # 歧义类合法集 ≥2；hard_negative/near_duplicate 必带禁选集；
     # out_of_scope 必无期望工具（registry 无此能力）

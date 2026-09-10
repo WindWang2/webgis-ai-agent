@@ -90,7 +90,7 @@ def register_knowledge_tools(registry: ToolRegistry):
         args_model=QualifyArgs,
         side_effect="pure", deterministic=True,
         latency_class="fast", memory_class="light", scale_class="small",
-        tags=("GIS", "资格", "方法", "数据", "knowledge"),
+        tags=("GIS", "资格", "方法", "数据画像", "knowledge"),
         capabilities=["plan_workflow_orchestration"],
         output_semantic_type="object", result_size_policy="bounded",
     )
