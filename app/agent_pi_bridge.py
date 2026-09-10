@@ -27,6 +27,7 @@ import json
 import hashlib
 import logging
 import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -251,8 +252,8 @@ def _cache_session_is_active(sid: object) -> bool:
     """
     if isinstance(sid, str) and sid in _active_turns:
         return True
-    ctx_sid = _active_turn_context[0] if _active_turn_context else None
-    return isinstance(sid, str) and sid == ctx_sid
+    ctx = getattr(sys.modules[__name__], "_active_turn_context", None)
+    return isinstance(sid, str) and ctx is not None and sid == ctx[0]
 
 
 def _pop_session_entries(cache: dict, session_id: str) -> None:
@@ -574,18 +575,14 @@ async def _dispatch_tool_bound(
         t0 = time.monotonic()
         try:
             # V5-B: resolve the turn's cancellation token by SESSION from the
-            # active-turn table (pool-safe). Falls back to the legacy singleton
-            # slot for pool-size-1 flows that predate table registration.
-            _entry = get_active_turn_entry(session_id)
+            # active-turn table (pool-safe).
+            _entry = get_active_turn_entry(session_id) if session_id else None
             if _entry is not None:
                 dispatch_token = _entry.token
+            elif not session_id and len(_active_turns) == 1:
+                dispatch_token = next(iter(_active_turns.values())).token
             else:
-                dispatch_token = (
-                    _active_turn_token
-                    if _active_turn_context is not None
-                    and session_id == _active_turn_context[0]
-                    else None
-                )
+                dispatch_token = None
             # Pi 兼容（ADR-0052 parity）：legacy tool_pipeline 在 dispatch 外
             # 建 JobOrigin（contextvar），工具内创建的 durable job 由此带上
             # session/turn/step 关联、且 created_job_ids 可回读成
@@ -1139,13 +1136,6 @@ class _ActiveTurnEntry:
 
 _active_turns: dict[str, _ActiveTurnEntry] = {}
 
-# Legacy single-slot view (pool size 1 fast path + back-compat readers).
-_active_turn_token: Optional[CancellationToken] = None
-# Exact active capability for the singleton Pi subprocess.  A valid HMAC is
-# necessary but insufficient: once its turn ends, a delayed callback must not
-# remain executable for the token's remaining clock lifetime.
-_active_turn_context: Optional[tuple[str, str]] = None
-
 
 async def register_active_pi_turn(
     session_id: str,
@@ -1155,9 +1145,7 @@ async def register_active_pi_turn(
     run_id: Optional[str] = None,
 ) -> None:
     """Register active turn in local process memory and Redis (if available)."""
-    global _active_turn_context
-    _active_turn_context = (session_id, turn_id)
-    _active_turns[session_id] = _ActiveTurnEntry(
+    entry = _ActiveTurnEntry(
         session_id=session_id,
         turn_id=turn_id,
         token=token,
@@ -1165,18 +1153,20 @@ async def register_active_pi_turn(
         run_id=run_id,
         context=(session_id, turn_id),
     )
+    _active_turns[session_id] = entry
+    if bridge is not None:
+        bridge._current_turn = entry
     from app.services.chat.pi_turn_context import pi_turn_registry
     await pi_turn_registry.register_turn(session_id, turn_id)
 
 
 async def unregister_active_pi_turn(session_id: str, turn_id: str) -> None:
     """Unregister active turn in local memory and Redis (if owned)."""
-    global _active_turn_context
-    if _active_turn_context == (session_id, turn_id):
-        _active_turn_context = None
     entry = _active_turns.get(session_id)
     if entry is not None and entry.turn_id == turn_id:
         _active_turns.pop(session_id, None)
+        if entry.bridge is not None and entry.bridge._current_turn is entry:
+            entry.bridge._current_turn = None
     from app.services.chat.pi_turn_context import pi_turn_registry
     await pi_turn_registry.unregister_turn(session_id, turn_id)
 
@@ -1194,19 +1184,6 @@ async def is_active_pi_turn(session_id: str, turn_id: str) -> bool:
     from app.services.chat.pi_turn_context import pi_turn_registry
     return await pi_turn_registry.is_active(session_id, turn_id)
 
-# Runtime observability: 当前在飞 turn 的关联身份（turn_id / run_id / session_id）。
-# 与 ``_active_turn_token`` 同源——dispatch_tool 是独立的 HTTP 回调 task，看不到流
-# 任务的 ContextVar；故按「单例 bridge 严格串行 turn」这一既有不变量（cancel
-# token 已依赖它）暴露在飞 turn 的关联身份，让 dispatch_tool 能把工具证据按
-# turn_id 写进 TurnEvidence 注册表、并把 run_id/turn_id 透传给 tool_metrics /
-# JobOrigin。abort/超时的 finally 会先清 token 再清这里——迟到的回调读到 None
-# 时回退为空（graceful，不伪造关联）。session_id 用于 dispatch_tool 的归属守卫：
-# 回调携带的 session 与在飞 turn 的 session 不一致时，认定是迟到/跨 worker 的串号
-# 回调，不把它的工具证据误归属到当前 turn（仍执行工具，只放弃关联）。
-_active_turn_turn_id: Optional[str] = None
-_active_turn_run_id: Optional[str] = None
-_active_turn_session_id: Optional[str] = None
-
 
 def active_turn_correlation(
     session_id: Optional[str] = None,
@@ -1217,15 +1194,43 @@ def active_turn_correlation(
     回调 task）恢复 turn 级关联使用，并据 session_id 守卫串号回调。
 
     V5-B: 传 session_id 时按 active-turn 表解析该会话的在飞 turn（bridge pool
-    下同进程可有多个在飞 turn）；不传时保持单例 bridge 视图（pool size 1 下
-    等价）。
+    下同进程可有多个在飞 turn）；不传时仅在单一在飞 turn 时返回该 turn 视图，多在飞 turn
+    时返回 None 防止并发串号。
     """
     if session_id:
         entry = _active_turns.get(session_id)
         if entry is not None:
             return entry.turn_id, entry.run_id, entry.session_id
         return None, None, None
-    return _active_turn_turn_id, _active_turn_run_id, _active_turn_session_id
+    if len(_active_turns) == 1:
+        entry = next(iter(_active_turns.values()))
+        return entry.turn_id, entry.run_id, entry.session_id
+    return None, None, None
+
+
+def __getattr__(name: str) -> Any:
+    """Dynamic resolution for legacy module globals to preserve back-compat without concurrency crosstalk."""
+    if name == "_active_turn_context":
+        if len(_active_turns) == 1:
+            return next(iter(_active_turns.values())).context
+        return None
+    if name == "_active_turn_token":
+        if len(_active_turns) == 1:
+            return next(iter(_active_turns.values())).token
+        return None
+    if name == "_active_turn_turn_id":
+        if len(_active_turns) == 1:
+            return next(iter(_active_turns.values())).turn_id
+        return None
+    if name == "_active_turn_run_id":
+        if len(_active_turns) == 1:
+            return next(iter(_active_turns.values())).run_id
+        return None
+    if name == "_active_turn_session_id":
+        if len(_active_turns) == 1:
+            return next(iter(_active_turns.values())).session_id
+        return None
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 
@@ -1319,6 +1324,7 @@ class PiBridge:
         self._lock = asyncio.Lock()
         self._respawn_lock = asyncio.Lock()
         self._active_turn_sid: Optional[str] = None
+        self._current_turn: Optional[_ActiveTurnEntry] = None
         # #1108: explicit lock ownership. ``_lock_lease`` names the turn that
         # currently owns ``_lock``; release is owner-checked and idempotent so
         # one turn can never release another turn's acquisition (INV-P2) and
@@ -1513,7 +1519,7 @@ class PiBridge:
         if session_id is not None and active is not None and session_id != active:
             logger.warning(
                 "[PiBridge] abort(session_id=%s) skipped: turn for session %s "
-                "is in flight on the singleton bridge; a global abort would "
+                "is in flight on the bridge; a global abort would "
                 "kill the wrong session's turn",
                 session_id, active,
             )
@@ -1523,17 +1529,13 @@ class PiBridge:
         # page close → immediate resend is the most common disconnect pattern —
         # leaves _active_turn_sid UNCHANGED while the token and pending
         # futures belong to the NEW turn; sid equality alone would kill it.
-        # V5-B: the session-table token is the ONLY pool-accurate source. The
-        # singleton-slot fallback is additionally session-checked: under a
-        # pool, ``_active_turn_token`` holds whichever worker's turn registered
-        # LAST — an unguarded fallback would cancel ANOTHER worker's in-flight
-        # token when the aborting session has no active turn of its own.
+        # V5-B: resolve token from session table or instance turn state.
         if _entry is not None:
             abort_token = _entry.token
-        elif _active_turn_context is not None and (
-            session_id is None or _active_turn_context[0] == session_id
+        elif self._current_turn is not None and (
+            session_id is None or self._current_turn.session_id == session_id
         ):
-            abort_token = _active_turn_token
+            abort_token = self._current_turn.token
         else:
             abort_token = None
         abort_pending_ids = self._rpc.pending_request_ids()
@@ -1567,7 +1569,8 @@ class PiBridge:
         # turn is already gone).
         if abort_token is not None:
             abort_token.cancel("abort requested")
-        if _active_turn_token is not abort_token and _active_turn_token is not None:
+        current_token = self._current_turn.token if self._current_turn else None
+        if current_token is not abort_token and current_token is not None:
             logger.warning(
                 "[PiBridge] abort TOCTOU: active turn token was replaced while "
                 "the abort RPC was in flight; cancelled only the stale snapshot "
@@ -1668,7 +1671,6 @@ class PiBridge:
         Raises:
             PiRpcError: If the Pi agent returns an error or the request fails.
         """
-        global _active_turn_token, _active_turn_turn_id, _active_turn_run_id, _active_turn_session_id, _active_turn_context
         # Turn-scoped session id: attribution uses this local, never the
         # mutable self._session_id field (which a concurrent/preceding turn
         # could overwrite). Pi events carry no session of their own.
@@ -1736,10 +1738,6 @@ class PiBridge:
                     await register_active_pi_turn(
                         turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id
                     )
-                    _active_turn_token = _turn_token
-                    _active_turn_turn_id = turn_id
-                    _active_turn_run_id = run_id
-                    _active_turn_session_id = turn_sid or None
 
                     try:
                         from app.services.chat.engine_instance import try_get_chat_engine
@@ -1935,11 +1933,8 @@ class PiBridge:
                     _cleanup_turn_state(turn_sid)
                     # Clear the active-turn markers before releasing the lock.
                     self._active_turn_sid = None
-                    if _active_turn_turn_id == turn_id:
-                        _active_turn_token = None
-                        _active_turn_turn_id = None
-                        _active_turn_run_id = None
-                        _active_turn_session_id = None
+                    if self._current_turn is not None and self._current_turn.turn_id == turn_id:
+                        self._current_turn = None
                     # #1108 INV-P4: release the lease BEFORE the unregister await —
                     # the release is synchronous (uncancellable) and the unregister
                     # is a best-effort shielded call, so a re-delivered
@@ -1955,15 +1950,12 @@ class PiBridge:
             # cancellation delivered inside the inner finally before its own
             # release), the lease is released here exactly once.
             self._active_turn_sid = None
+            if self._current_turn is not None and self._current_turn.turn_id == turn_id:
+                self._current_turn = None
             self._release_turn_lease(lease)
             await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
             TURN_EVIDENCE.remove(turn_id)
             _cleanup_turn_state(turn_sid)
-            if _active_turn_turn_id == turn_id:
-                _active_turn_token = None
-                _active_turn_turn_id = None
-                _active_turn_run_id = None
-                _active_turn_session_id = None
 
         return {
             "sessionId": turn_sid,
@@ -1994,7 +1986,6 @@ class PiBridge:
         Yields:
             SSE-formatted event strings
         """
-        global _active_turn_token, _active_turn_turn_id, _active_turn_run_id, _active_turn_session_id, _active_turn_context
         # Turn-scoped session id: every SSE payload is stamped with this local
         # value, not the mutable self._session_id field. Pi events carry no
         # session of their own, so attribution must come from the request that
@@ -2100,10 +2091,6 @@ class PiBridge:
                 await register_active_pi_turn(
                     turn_sid, turn_id, token=_turn_token, bridge=self, run_id=run_id
                 )
-                _active_turn_token = _turn_token
-                _active_turn_turn_id = turn_id
-                _active_turn_run_id = run_id
-                _active_turn_session_id = turn_sid or None
 
                 try:
                     from app.services.chat.engine_instance import try_get_chat_engine
@@ -2458,11 +2445,8 @@ class PiBridge:
                     # Clear the active-turn markers AFTER the abort above (abort reads
                     # them to cancel the token) and before releasing the lock.
                     self._active_turn_sid = None
-                    if _active_turn_turn_id == turn_id:
-                        _active_turn_token = None
-                        _active_turn_turn_id = None
-                        _active_turn_run_id = None
-                        _active_turn_session_id = None
+                    if self._current_turn is not None and self._current_turn.turn_id == turn_id:
+                        self._current_turn = None
                     # #1108 INV-P4: release the lease BEFORE the unregister
                     # await — the release is synchronous (uncancellable) and
                     # the unregister is shielded best-effort, so a re-delivered
@@ -2531,6 +2515,8 @@ class PiBridge:
                 # here exactly once. Owner-checked, so a stale lease from a
                 # long-gone turn can never release the CURRENT turn's lock.
                 self._active_turn_sid = None
+                if self._current_turn is not None and self._current_turn.turn_id == turn_id:
+                    self._current_turn = None
                 self._release_turn_lease(lease)
                 # INV-P3 corollary (review V5-B-3): a cancellation delivered
                 # while ``register_active_pi_turn`` awaits its Redis I/O
@@ -2544,11 +2530,6 @@ class PiBridge:
                 await self._safe_unregister_active_pi_turn(turn_sid, turn_id)
                 TURN_EVIDENCE.remove(turn_id)
                 _cleanup_turn_state(turn_sid)
-                if _active_turn_turn_id == turn_id:
-                    _active_turn_token = None
-                    _active_turn_turn_id = None
-                    _active_turn_run_id = None
-                    _active_turn_session_id = None
 
 
 
