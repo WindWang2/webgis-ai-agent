@@ -105,6 +105,12 @@ class SecretStore(Protocol):
 _SECRET_KEYS = ("password", "secret_key", "access_key", "session_token")
 #: 嵌套 ``credentials`` dict 整体视为 secret。
 _NESTED_SECRET_KEYS = ("credentials",)
+#: 嵌套树（options 等）内的敏感键判定串（与 security.sanitize_profile_dict
+#: 的 sensitive_keys 同集 —— 近形键连字符形态一并覆盖）。
+_SENSITIVE_KEY_MATCHERS = (
+    "password", "secret", "token", "api_key", "api-key", "apikey",
+    "credential", "authorization", "auth", "passwd", "pwd", "private_key",
+)
 
 
 def extract_profile_secrets(profile_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -120,6 +126,48 @@ def extract_profile_secrets(profile_dict: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(v, dict) and v:
             secret[k] = v
     return rest, secret
+
+
+def _is_sensitive_key(key: str) -> bool:
+    """与 security.sanitize_profile_dict 同一敏感键判定（近形键含连字符）。"""
+    lowered = str(key).lower()
+    return any(s in lowered for s in _SENSITIVE_KEY_MATCHERS)
+
+
+def _move_sensitive_entries(node: Any, sink: Dict[str, Any]) -> None:
+    """就地摘除 dict 树中的敏感键值进 sink（同路径；原位置置 None）。
+
+    V8：``create_data_source`` 的凭证经 ``options`` 传入（其签名无顶层
+    password 字段）—— 只摘顶层键会让 ``options.password`` 落进 record 的
+    redacted_profile 明文面。摘除后 redacted_profile 构造上无凭证；重建时
+    经 ``_merge_sensitive_entries`` 从 SecretStore 深合并回填（保真）。
+    """
+    if not isinstance(node, dict):
+        return
+    for k in list(node.keys()):
+        v = node[k]
+        if _is_sensitive_key(k):
+            if v is not None:
+                sink[k] = v
+                node[k] = None
+        elif isinstance(v, dict):
+            child: Dict[str, Any] = {}
+            _move_sensitive_entries(v, child)
+            if child:
+                sink[k] = child
+
+
+def _merge_sensitive_entries(node: Dict[str, Any], sink: Dict[str, Any]) -> None:
+    """``_move_sensitive_entries`` 的逆操作：sink 值按路径回填 None 槽位。"""
+    for k, v in sink.items():
+        if isinstance(v, dict):
+            child = node.get(k)
+            if not isinstance(child, dict):
+                child = {}
+                node[k] = child
+            _merge_sensitive_entries(child, v)
+        elif node.get(k) is None:
+            node[k] = v
 
 
 class InMemorySecretStore:
@@ -303,6 +351,19 @@ class ConnectionRegistry:
         _ssrf_validate_profile(profile)
         profile_dict = profile.model_dump()
         redacted, secret = extract_profile_secrets(profile_dict)
+        # V8：url 字段的 userinfo 摘除（DSN 内嵌凭证不落 record —— 与
+        # endpoint_ref 同一脱敏原语；URL 其余部分保真供重建）。
+        for _url_key in ("url", "endpoint", "endpoint_url"):
+            _v = redacted.get(_url_key)
+            if _v:
+                redacted[_url_key] = DataFabricSecurity.redact_url(_v)
+        # V8：options 等嵌套树中的敏感键值摘入 SecretStore（REST 创建路径
+        # 的凭证就在 options 里 —— 只摘顶层会明文落 record）。
+        if isinstance(redacted.get("options"), dict) and redacted["options"]:
+            opts_secret: Dict[str, Any] = {}
+            _move_sensitive_entries(redacted["options"], opts_secret)
+            if opts_secret:
+                secret["options"] = opts_secret
         endpoint_ref = DataFabricSecurity.redact_url(
             profile_dict.get("url") or profile_dict.get("endpoint") or ""
         )
@@ -339,8 +400,9 @@ class ConnectionRegistry:
                 expires_at=(time.time() + ttl_s) if ttl_s else None,
             )
             self._entries[key] = (record, None)
-        # 锁外构建 adapter（probe/网络）；调用方预构建实例直接注册（V8）。
-        if build_adapter:
+        # 锁外构建 adapter（probe/网络）；调用方预构建实例直接注册（V8 ——
+        # 含 build_adapter=False + prebuilt 组合：registry 只登记不构建）。
+        if build_adapter or prebuilt_adapter is not None:
             if prebuilt_adapter is not None:
                 adapter = prebuilt_adapter
             else:
@@ -398,7 +460,15 @@ class ConnectionRegistry:
         if record.secret_ref:
             secret = self._secret_store.get(record.secret_ref)
             if secret:
+                opts_secret = secret.pop("options", None)
                 rest.update(secret)
+                # V8：options 内敏感键值按路径深合并回填（与摘除配对）。
+                if isinstance(opts_secret, dict) and opts_secret:
+                    opts = rest.setdefault("options", {})
+                    if not isinstance(opts, dict):
+                        opts = {}
+                        rest["options"] = opts
+                    _merge_sensitive_entries(opts, opts_secret)
         return rest
 
     def ensure_adapter(self, record: ConnectionRecord) -> Optional[Any]:

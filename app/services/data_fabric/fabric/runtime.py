@@ -157,6 +157,73 @@ class FabricRuntime:
                 return resolved
         return None
 
+    def attach_profile(
+        self, profile: Any, *, owner: Optional[str] = None
+    ) -> Optional[ResolvedSource]:
+        """已知完整 profile → 注册进 registry（幂等）并返回解析视图。
+
+        供已持有 profile 对象的调用方（``DataFabricManager._governed_adapter``
+        从 DB 行重建后）使用 —— 不再经 profile_id 二次查 DB。attach 失败
+        （SSRF 拒绝/工厂不支持等）原样抛出，由调用方按既有契约处理。
+        """
+        from app.services.data_fabric.fabric.connection_registry import (
+            get_connection_registry,
+        )
+
+        scope = _tenant_scope(owner)
+        scope_key = scope.scope_key()
+        registry = get_connection_registry()
+        try:
+            adapter = registry.resolve(str(profile.id), scope)
+        except Exception:
+            adapter = None
+        record = registry.peek(str(profile.id), scope)
+        if adapter is None and record is not None:
+            adapter = registry.ensure_adapter(record)
+        if adapter is None:
+            record, adapter = registry.attach(profile, scope)
+        return self._wrap(
+            adapter,
+            profile_id=str(profile.id),
+            source_type=str(getattr(profile, "source_type", "") or ""),
+            scope_key=scope_key,
+            revision=record.revision,
+        )
+
+    def attach_prebuilt(
+        self, profile: Any, adapter: Any, *, owner: Optional[str] = None
+    ) -> Optional[ResolvedSource]:
+        """调用方已经工厂构建的 adapter → 注册进 registry（幂等；单构建）。
+
+        与 ``attach_profile`` 的差别：构建发生在外部（保持 ``cls.get_adapter``
+        工厂 seam 单一 —— 测试 monkeypatch 与子类定制不被 registry 内部工厂
+        绕过）。best-effort 语义：attach 失败返回 None，不抛（调用方已持有
+        可用 adapter，治理注册只是增益）。
+        """
+        from app.services.data_fabric.fabric.connection_registry import (
+            get_connection_registry,
+        )
+
+        if adapter is None or profile is None:
+            return None
+        scope = _tenant_scope(owner)
+        try:
+            record, _ = get_connection_registry().attach(
+                profile, scope, build_adapter=False, prebuilt_adapter=adapter
+            )
+        except Exception as exc:  # noqa: BLE001 - 治理注册失败不阻断执行
+            logger.debug(
+                "[runtime] attach_prebuilt failed for %s: %s", profile.id, exc
+            )
+            return None
+        return self._wrap(
+            adapter,
+            profile_id=str(profile.id),
+            source_type=str(getattr(profile, "source_type", "") or ""),
+            scope_key=scope.scope_key(),
+            revision=record.revision,
+        )
+
     # ── 富集（探测 / 事实 / 反馈 → 纯数据提示）────────────────────────
 
     def enrich(

@@ -126,8 +126,10 @@ class DataFabricManager:
         此前每请求 ``_profile_from_model + build_adapter`` 完全绕过
         ConnectionRegistry —— 无 revision/健康/secret 分离（ADR-0120 披露
         的接线缺口的 REST 半边）。registry 命中 → 复用受治理 adapter；
-        未命中 → 按 ds_model 归属域 attach（DB 行重建，SSRF 门不变）；registry
-        任何故障 → 回退既有工厂构建（行为契约逐字节保留）。
+        未命中 → 仍走 ``cls.get_adapter`` 工厂 seam 构建单一实例，再经
+        ``runtime.attach_prebuilt`` 幂等注册（工厂 seam 单一：测试
+        monkeypatch/子类定制不被 registry 内部工厂绕过）；治理任何故障 →
+        行为契约逐字节保留。
         """
         from app.services.data_fabric.fabric.runtime import get_fabric_runtime
 
@@ -142,7 +144,12 @@ class DataFabricManager:
                 "[DataFabricManager] runtime resolve failed for %s: %s",
                 ds_model.id, exc,
             )
-        return cls.get_adapter(_profile_from_model(ds_model))
+        profile = _profile_from_model(ds_model)
+        adapter = cls.get_adapter(profile)
+        get_fabric_runtime().attach_prebuilt(
+            profile, adapter, owner=getattr(ds_model, "owner_id", None)
+        )
+        return adapter
 
     @classmethod
     def probe_profile(cls, profile: ConnectionProfile) -> DataFabricHealth:

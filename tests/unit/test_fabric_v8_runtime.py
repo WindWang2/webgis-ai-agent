@@ -215,3 +215,67 @@ def test_describe_source_is_secret_free():
     assert "topsecret" not in str(view)
     assert view["governed"] is True
     assert "@" not in str(view.get("endpoint_ref", ""))
+
+
+# ── V8 自审修复回归：redacted_profile 凭证零明文 + 重建保真 ──────────
+
+
+def test_dsn_userinfo_never_enters_record():
+    registry = get_connection_registry()
+    profile = _make_profile(
+        "dsn_src",
+        url="postgresql://pguser:pgpass123@db.example.com:5432/gisdb",
+    )
+    profile.model_post_init(None)  # DSN 凭证解析进结构化字段（url 仍含原文）
+    registry.attach(profile, TenantScope(owner="s"))
+
+    record = registry.peek("dsn_src", TenantScope(owner="s"))
+    assert record is not None
+    flat = str(record.model_dump())
+    assert "pgpass123" not in flat
+    assert "pguser:pgpass123" not in flat
+    # URL 其余部分保真（redact_url 只摘 userinfo）。
+    assert "db.example.com:5432/gisdb" in record.redacted_profile["url"]
+
+
+def test_options_password_extracted_and_rehydrated_faithfully():
+    registry = get_connection_registry()
+    profile = _make_profile(
+        "opt_src",
+        options={"sslmode": "require", "password": "opt-secret-9",
+                 "nested": {"api_key": "key-7"}},
+    )
+    registry.attach(profile, TenantScope(owner="s"))
+
+    record = registry.peek("opt_src", TenantScope(owner="s"))
+    flat = str(record.model_dump())
+    assert "opt-secret-9" not in flat
+    assert "key-7" not in flat
+
+    # 重建：SecretStore 深合并回填 → adapter 构建拿到真实凭证（保真）。
+    rebuilt_profile = ConnectionProfile(**registry.rehydrate_profile(record))
+    assert rebuilt_profile.options["password"] == "opt-secret-9"
+    assert rebuilt_profile.options["nested"]["api_key"] == "key-7"
+    assert rebuilt_profile.options["sslmode"] == "require"
+
+
+# ── V8 自审修复回归：manager 路径 DB-only 源首用即治理 ────────────────
+
+
+def test_governed_adapter_attaches_db_source_on_first_use():
+    from types import SimpleNamespace as _NS
+
+    from app.services.data_fabric.manager import DataFabricManager
+
+    ds = _NS(
+        id="db_src", owner_id="owner-db", name="DB Src",
+        source_type="generic", endpoint_url="https://gis.example.com/api",
+        connection_profile={"options": {}, "allow_private": False},
+    )
+    adapter = DataFabricManager._governed_adapter(ds)
+    assert adapter is not None
+    # 首用即治理：registry 按**行归属域**作用域出现 record。
+    record = get_connection_registry().peek("db_src", TenantScope(owner="owner-db"))
+    assert record is not None and record.revision
+    # 二次解析复用同一受治理 adapter（不再重复构建）。
+    assert DataFabricManager._governed_adapter(ds) is adapter
