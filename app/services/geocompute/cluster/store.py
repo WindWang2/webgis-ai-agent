@@ -110,6 +110,7 @@ class ClusterRunStore:
         project_raw: Optional[str] = None,
         priority: int = RunPriority.NORMAL,
         required_profiles: Optional[list[str]] = None,
+        resource_request: Optional[dict[str, Any]] = None,
         max_queued_per_tenant: int = 32,
         max_queued_total: int = 256,
     ) -> str:
@@ -117,7 +118,8 @@ class ClusterRunStore:
 
         有界背压：租户/全局 queued 计数超限 → ``ClusterBackpressureError``
         （防队列无界增长的自 DoS）。plan 快照超预算 →
-        ``PlanSnapshotTooLargeError``。
+        ``PlanSnapshotTooLargeError``。``resource_request`` ≤1KB（V7 资源
+        envelope 投影；超界截断为 None —— envelope 缺席退回 V6 语义）。
         """
         encoded = json.dumps(plan_snapshot, ensure_ascii=False, default=str)
         if len(encoded.encode("utf-8")) > MAX_PLAN_SNAPSHOT_BYTES:
@@ -127,6 +129,15 @@ class ClusterRunStore:
             )
         tenant_key = hash_scope_key(tenant_raw, "t:")
         project_key = hash_scope_key(project_raw, "p:")
+        # V7：资源 envelope 写入侧钳制（≤1KB；超界截断为 None = V6 语义）
+        if resource_request is not None:
+            try:
+                if len(json.dumps(
+                    resource_request, ensure_ascii=False, default=str
+                ).encode("utf-8")) > 1024:
+                    resource_request = None
+            except (TypeError, ValueError):
+                resource_request = None
         run_id = new_run_id()
         with self._factory() as db:
             tenant_count = 0
@@ -170,6 +181,7 @@ class ClusterRunStore:
                 project_key=project_key,
                 priority=RunPriority.coerce(priority),
                 required_profiles=sorted(set(required_profiles or [])),
+                resource_request=resource_request,
             ))
             db.commit()
         return run_id
@@ -605,6 +617,9 @@ class ClusterRunStore:
                 "project_id": row.project_id,
                 "project_key": row.project_key,
                 "coordinator_id": row.coordinator_id,
+                "resource_request": row.resource_request if isinstance(
+                    row.resource_request, dict
+                ) else None,
             })
             return proj
 
@@ -673,7 +688,11 @@ class ClusterRunStore:
 
     def purge_terminal(self, *, older_than_s: float, limit: int = 256) -> int:
         """终态行 retention（round2 M1）：run 生命周期真相有界，历史证据
-        仍在 geocompute_run_evidence（append-once）—— 这里只清控制面行。"""
+        仍在 geocompute_run_evidence（append-once）—— 这里清控制面行。
+
+        V7：同事务级联删除本批 run 的 run_events（V7 round1 #8 —— 终态
+        证据 of record 是 evidence 表，events 是有界 trace，随 run 消失）。
+        """
         cutoff = _utcnow() - timedelta(seconds=max(60.0, float(older_than_s)))
         with self._factory() as db:
             # PG 无 DELETE ... LIMIT —— 先选 id 再按 id 删（可移植、有界）
@@ -689,9 +708,20 @@ class ClusterRunStore:
             ).scalars().all()
             if not ids:
                 return 0
+            run_ids = db.execute(
+                select(_Run.run_id).where(_Run.id.in_(ids))
+            ).scalars().all()
             deleted = db.execute(
                 delete(_Run).where(_Run.id.in_(ids))
             ).rowcount
+            if run_ids:
+                # 同事务级联（V7 round1 #8 MINOR：部分失败 = trace 丢而行在，
+                # 终态行本就等下次 purge —— 单事务把窗口压到零）
+                from app.models.db_model import GeoComputeRunEvent as _Event
+
+                db.execute(
+                    delete(_Event).where(_Event.run_id.in_([str(r) for r in run_ids]))
+                )
             db.commit()
             return int(deleted or 0)
 
@@ -704,6 +734,7 @@ class ClusterRunStore:
         role: str = "worker",
         profiles: Optional[dict[str, int]] = None,
         info: Optional[dict[str, str]] = None,
+        capability: Optional[dict[str, Any]] = None,
         ttl_s: float = 60.0,
     ) -> None:
         with self._factory() as db:
@@ -714,6 +745,7 @@ class ClusterRunStore:
             if existing is None:
                 db.add(_Worker(
                     worker_id=worker_id, role=role, profiles=profiles or {},
+                    capability=capability,
                     heartbeat_at=now, lease_expires_at=now + timedelta(seconds=ttl_s),
                     info=info or {},
                 ))
@@ -721,7 +753,9 @@ class ClusterRunStore:
                 db.execute(
                     update(_Worker)
                     .where(_Worker.worker_id == worker_id)
-                    .values(profiles=profiles or {}, heartbeat_at=now,
+                    .values(profiles=profiles or {},
+                            capability=capability,
+                            heartbeat_at=now,
                             lease_expires_at=now + timedelta(seconds=ttl_s),
                             info=info or existing.info or {})
                 )
@@ -746,22 +780,74 @@ class ClusterRunStore:
             db.commit()
             return bool(rowcount)
 
-    def prune_workers(self, *, cutoff: Optional[datetime] = None) -> int:
-        """清理失联 worker（心跳过期即视为离开 —— 集群容量随之收缩）。"""
-        cutoff = cutoff or (_utcnow() - timedelta(seconds=180))
+    def prune_workers(self, *, cutoff: Optional[datetime] = None,
+                      ttl_s: Optional[float] = None) -> list[str]:
+        """清理失联 worker（心跳过期即视为离开 —— 集群容量随之收缩）。
+
+        返回被清理的 worker_id 列表（V7：调用方据此级联删除其对象缓存
+        位置声明，防幽灵位置）。``ttl_s``：V7 起单一 TTL 来源（worker 心跳
+        TTL）—— 缺省保留旧 180s 行为（兼容显式调用方）。
+        """
+        if ttl_s is not None:
+            cutoff = _utcnow() - timedelta(seconds=max(5.0, float(ttl_s)))
+        else:
+            cutoff = cutoff or (_utcnow() - timedelta(seconds=180))
         with self._factory() as db:
+            doomed = db.execute(
+                select(_Worker.worker_id)
+                .where(
+                    _Worker.heartbeat_at < cutoff,
+                    _Worker.role == "worker",
+                )
+            ).scalars().all()
+            # round1 m1：失联 coordinator 行一并清理（lease 过期远超 TTL
+            # 的 coordinator 已不可能仍是 leader；standby 行无心跳同样
+            # 清理，下次 acquire 重建）—— 否则注册表随部署重启无界增长。
+            doomed_coordinators = db.execute(
+                select(_Worker.worker_id)
+                .where(
+                    _Worker.heartbeat_at < cutoff,
+                    _Worker.role == "coordinator",
+                )
+            ).scalars().all()
+            doomed_all = [str(w) for w in doomed] + [
+                str(w) for w in doomed_coordinators
+            ]
+            if not doomed_all:
+                return []
             deleted = db.execute(
-                _Worker.__table__.delete().where(_Worker.heartbeat_at < cutoff)
+                _Worker.__table__.delete().where(
+                    _Worker.worker_id.in_(doomed_all),
+                    _Worker.heartbeat_at < cutoff,
+                )
             ).rowcount
             db.commit()
-            return int(deleted or 0)
+            return doomed_all if deleted else []
 
     def live_workers(
-        self, *, role: Optional[str] = None, within_s: float = 90.0
+        self, *, role: Optional[str] = None, within_s: Optional[float] = None
     ) -> list[dict[str, Any]]:
-        cutoff = _utcnow() - timedelta(seconds=within_s)
+        """存活 worker 投影（含 V7 capability）。
+
+        ``within_s`` 缺省 = worker 心跳 TTL（单一容量真相来源；V6 的 90s
+        硬编码会造成「心跳已死、容量仍在」的假窗口 —— 审计 M1）。
+        """
+        if within_s is None:
+            try:
+                from app.services.geocompute.cluster.workers import _WORKER_TTL_S
+
+                within_s = _WORKER_TTL_S
+            except Exception:  # noqa: BLE001 - 循环 import 防御（理论不触发）
+                within_s = 30.0
+        cutoff = _utcnow() - timedelta(seconds=max(1.0, float(within_s)))
         with self._factory() as db:
-            q = select(_Worker).where(_Worker.heartbeat_at >= cutoff)
+            q = (
+                select(_Worker)
+                .where(_Worker.heartbeat_at >= cutoff)
+                # round2 RM2：SQL 级限界（防注册表被刷爆后全量物化 4KB/行
+                # 的 capability JSON）；截断计数随投影返回供 admin 可见。
+                .limit(256)
+            )
             if role is not None:
                 q = q.where(_Worker.role == role)
             rows = db.execute(q).scalars().all()
@@ -770,12 +856,118 @@ class ClusterRunStore:
                     "worker_id": w.worker_id,
                     "role": w.role,
                     "profiles": dict(w.profiles or {}),
+                    "capability": w.capability if isinstance(
+                        w.capability, dict
+                    ) else None,
                     "heartbeat_age_s": max(
                         0.0, (_utcnow() - w.heartbeat_at).total_seconds()
                     ),
                 }
                 for w in rows
             ]
+
+    # ------------------------------------------------- V7 admin / waves
+
+    def waiting_profiles(self) -> dict[str, int]:
+        """留队 run 的必需 profile 计数（封闭词表维度；metrics 用）。
+
+        扫描上界 256（与 dispatch batch 同级 —— 热路径常数上界）。
+        """
+        counts: dict[str, int] = {}
+        with self._factory() as db:
+            rows = db.execute(
+                select(_Run.required_profiles)
+                .where(_Run.status.in_([s.value for s in DISPATCHABLE_STATUSES]))
+                .limit(256)
+            ).scalars().all()
+        for profiles in rows:
+            for p in profiles or []:
+                counts[p] = counts.get(p, 0) + 1
+        return counts
+
+    def stuck_runs(self, *, grace_s: float = 5.0, limit: int = 50
+                   ) -> list[dict[str, Any]]:
+        """stuck 视图：占用 lease 且 lease 已过期但 reclaim 尚未收敛的 run
+        （admin 排障用；有界 ≤50 行，绝无载荷）。"""
+        now = _utcnow()
+        cutoff = now - timedelta(seconds=max(0.0, float(grace_s)))
+        with self._factory() as db:
+            rows = db.execute(
+                select(_Run)
+                .where(
+                    _Run.status.in_([s.value for s in LEASED_STATUSES]),
+                    _Run.lease_expires_at.is_not(None),
+                    _Run.lease_expires_at < cutoff,
+                )
+                .order_by(_Run.lease_expires_at.asc())
+                .limit(max(1, int(limit)))
+            ).scalars().all()
+            return [_scan_projection(r) for r in rows]
+
+    def force_requeue(
+        self,
+        run_id: str,
+        *,
+        max_attempts: int = DEFAULT_MAX_RUN_ATTEMPTS,
+        ledger: Optional["ClusterLedger"] = None,
+        require_expired: bool = True,
+    ) -> Optional[str]:
+        """admin 强制回队（stuck run 复位）：语义与 ``reclaim_expired`` 的
+        单行版本完全一致 —— attempt 预算内 → queued（attempt++）；
+        耗尽 → failed[WORKER_LOSS]；同事务精确归还账本。
+
+        ``require_expired=True``（默认）：只允许复位 lease 已过期的占用态
+        run（与 stuck 视图同口径 —— 防止误杀健康在跑 run）。
+        返回 "requeued" | "failed" | None（无 CAS 命中 = run 已被并发转移/
+        不存在/不在占用态/lease 未过期 —— 幂等安全）。
+        """
+        with self._factory() as db:
+            row = db.execute(
+                select(_Run).where(_Run.run_id == run_id)
+            ).scalar_one_or_none()
+            if row is None or row.status not in {
+                s.value for s in LEASED_STATUSES
+            }:
+                return None
+            if require_expired:
+                if row.lease_expires_at is None:
+                    return None
+                if row.lease_expires_at >= _utcnow():
+                    return None  # 健康在跑 → 不可复位（stuck 语义）
+            new_attempts = row.attempts + 1
+            error_code = run_error_for_reclaim(new_attempts, max_attempts)
+            to_status = (
+                ClusterRunStatus.FAILED if error_code else ClusterRunStatus.QUEUED
+            )
+            now = _utcnow()
+            rowcount = db.execute(
+                update(_Run)
+                .where(
+                    _Run.id == row.id,
+                    _Run.status.in_([s.value for s in LEASED_STATUSES]),
+                    _Run.lease_epoch == row.lease_epoch,
+                )
+                .values(
+                    status=to_status.value,
+                    attempts=new_attempts,
+                    error_code=error_code,
+                    coordinator_id=None,
+                    lease_expires_at=None,
+                    updated_at=now,
+                    terminal_at=now if error_code else None,
+                )
+            ).rowcount
+            if not rowcount:
+                return None
+            if ledger is not None:
+                ledger.release_claims(db, _reserved_claims_from_row(row))
+                db.execute(
+                    update(_Run)
+                    .where(_Run.id == row.id)
+                    .values(reserved_rows=0, reserved_bytes=0, reserved_units=0)
+                )
+            db.commit()
+            return "failed" if error_code else "requeued"
 
     # ------------------------------------------------------ leadership
 
@@ -801,7 +993,15 @@ class ClusterRunStore:
                     worker_id=coordinator_id, role="coordinator", profiles={},
                     heartbeat_at=now, lease_expires_at=None,
                 ))
-                db.commit()
+            else:
+                # round2 Rn2：standby 行也要续心跳 —— 否则 prune 会每
+                # TTL 删行、下 tick 重建（永久 churn）。
+                db.execute(
+                    update(_Worker)
+                    .where(_Worker.worker_id == coordinator_id)
+                    .values(heartbeat_at=now)
+                )
+            db.commit()
         with self._factory() as db:
             now = _utcnow()
             other_leader = (
@@ -921,6 +1121,50 @@ class ClusterLedger:
     @property
     def enforcing(self) -> bool:
         return self._enforcing
+
+    def set_scope_limits(
+        self,
+        scope_key: str,
+        *,
+        limit_rows: Optional[int],
+        limit_bytes: Optional[int],
+        limit_units: Optional[int],
+    ) -> bool:
+        """admin：设置 scope 限额（None = 解除该维限制）。
+
+        幂等 upsert：scope 行缺席时以给定限额预建（与 ensure_scopes 同一
+        竞争纪律 —— INSERT 冲突回滚复检）。enforcing/advisory 模式不变。
+        """
+        if not scope_key or len(scope_key) > 80:
+            return False
+        with self._factory() as db:
+            try:
+                existing = db.execute(
+                    select(_Usage.scope_key).where(_Usage.scope_key == scope_key)
+                ).scalar_one_or_none()
+                if existing is None:
+                    db.add(_Usage(
+                        scope_key=scope_key,
+                        usage_rows=0, usage_bytes=0, usage_units=0,
+                        limit_rows=limit_rows, limit_bytes=limit_bytes,
+                        limit_units=limit_units,
+                    ))
+                    try:
+                        db.commit()
+                    except Exception:  # noqa: BLE001 - 并发首用 → 复检后更新
+                        db.rollback()
+                db.execute(
+                    update(_Usage)
+                    .where(_Usage.scope_key == scope_key)
+                    .values(
+                        limit_rows=limit_rows, limit_bytes=limit_bytes,
+                        limit_units=limit_units, updated_at=_utcnow(),
+                    )
+                )
+                db.commit()
+                return True
+            except Exception:  # noqa: BLE001 - admin 操作失败如实返回
+                return False
 
     def ensure_scopes(self, scope_keys: Iterable[str],
                       *, factory: Optional[Callable[[], Any]] = None) -> None:
@@ -1121,6 +1365,9 @@ def _run_projection(row: Any) -> dict[str, Any]:
         if row.yield_requested_at else None,
         "error_code": row.error_code,
         "required_profiles": list(row.required_profiles or []),
+        "resource_request": row.resource_request if isinstance(
+            row.resource_request, dict
+        ) else None,
         "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
         "started_at": row.started_at.isoformat() + "Z" if row.started_at else None,
         "terminal_at": row.terminal_at.isoformat() + "Z" if row.terminal_at else None,
@@ -1136,6 +1383,9 @@ def _scan_projection(row: Any) -> dict[str, Any]:
         # 内部拓扑键：仅控制面调度/leader 视图消费，绝不进用户 REST 投影
         "coordinator_id": row.coordinator_id,
         "dispatch_seq": row.dispatch_seq,
+        "heartbeat_at": (
+            row.heartbeat_at.isoformat() + "Z" if row.heartbeat_at else None
+        ),
         "started_at": row.started_at.isoformat() + "Z" if row.started_at else None,
         "lease_expires_at": (
             row.lease_expires_at.isoformat() + "Z" if row.lease_expires_at else None

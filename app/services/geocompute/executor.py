@@ -191,6 +191,32 @@ def _scrub_error_message(message: Any) -> str:
     return scrubbed
 
 
+def _emit_run_event(
+    run_id: str,
+    event: str,
+    *,
+    enabled: bool,
+    node_id: Optional[str] = None,
+    attempt: Optional[int] = None,
+    status: Optional[str] = None,
+    rows: Optional[int] = None,
+    error_code: Optional[str] = None,
+) -> None:
+    """coordinator 侧节点终局事件（V7；``enabled`` = cluster 路径 opt-in）。
+
+    RunEventStore.append 自身 fail-open（任何失败丢弃 + metric）——
+    观测绝不倒灌执行路径，这里不再叠加 try/except。
+    """
+    if not enabled or not run_id:
+        return
+    from app.services.geocompute.cluster.events import RunEventStore
+
+    RunEventStore().append(
+        run_id, event, node_id=node_id, attempt=attempt,
+        status=status, rows=rows, error_code=error_code,
+    )
+
+
 class NodeResultStore:
     """进程内有界节点结果存储（LRU，双重界：条目数 + 字节预算）。"""
 
@@ -288,6 +314,8 @@ class GeoExecutionEngine:
         run_id: Optional[str] = None,
         yield_check: Optional[Any] = None,
         owner_scope_override: Optional[str] = None,
+        resource_envelope: Optional[dict[str, Any]] = None,
+        emit_events: bool = False,
     ) -> ExecutionRun:
         """执行整个计划（同步；调用方负责卸载到线程）。
 
@@ -392,7 +420,9 @@ class GeoExecutionEngine:
                                 governor=governor, gov_path=gov_path,
                                 charge_ledger=charge_ledger,
                                 yield_check=yield_check,
-                                preempt_flag=preempt_requested)
+                                preempt_flag=preempt_requested,
+                                resource_envelope=resource_envelope,
+                                emit_events=emit_events)
         finally:
             if governor is not None and gov_path:
                 # Wave 8 R1：本 run 在祖先链上的全部占用（预留估计 + 实际
@@ -603,6 +633,8 @@ class GeoExecutionEngine:
         charge_ledger: Optional[Any] = None,
         yield_check: Optional[Any] = None,
         preempt_flag: Optional[dict[str, bool]] = None,
+        resource_envelope: Optional[dict[str, Any]] = None,
+        emit_events: bool = False,
     ) -> None:
         """就绪集调度（ADR-0101 D3）：indegree 驱动，无硬波次屏障。
 
@@ -741,6 +773,8 @@ class GeoExecutionEngine:
                         deadline_ts=deadline_ts, budget=plan.budget,
                         governor=governor, gov_path=gov_path,
                         charge_ledger=charge_ledger,
+                        resource_envelope=resource_envelope,
+                        emit_events=emit_events,
                     )
                     inflight[fut] = nid
                     inflight_units[fut] = units
@@ -809,6 +843,8 @@ class GeoExecutionEngine:
         governor: Optional[Any] = None,
         gov_path: Optional[str] = None,
         charge_ledger: Optional[Any] = None,
+        resource_envelope: Optional[dict[str, Any]] = None,
+        emit_events: bool = False,
     ) -> None:
         ev = run.evidence[node.node_id]
         node_deadline = deadline_ts
@@ -823,6 +859,8 @@ class GeoExecutionEngine:
                 governor=governor, gov_path=gov_path,
                 charge_ledger=charge_ledger,
                 budget=budget,
+                resource_envelope=resource_envelope,
+                emit_events=emit_events,
             )
             if ev.status in {"completed", "reused"} and node.node_id in outputs:
                 outputs_fp[node.node_id] = _output_fingerprint(outputs[node.node_id])
@@ -860,6 +898,8 @@ class GeoExecutionEngine:
                     ev.rows_emitted = self._count_rows(payload)
                     tracing.emit("node_reused", run_id=run.run_id, node_id=node.node_id,
                                  status="reused", rows=ev.rows_emitted, checkpoint="verified")
+                    _emit_run_event(run.run_id, "node_reused", enabled=emit_events,
+                                    node_id=node.node_id, rows=ev.rows_emitted)
                     return
                 tracing.emit("node_reused", run_id=run.run_id, node_id=node.node_id,
                              status="miss", checkpoint="stale",
@@ -912,6 +952,9 @@ class GeoExecutionEngine:
                 tracing.emit("node_completed", run_id=run.run_id, node_id=node.node_id,
                              status="completed", rows=ev.rows_emitted,
                              duration_s=ev.duration_s, attempts=attempt)
+                _emit_run_event(run.run_id, "node_completed", enabled=emit_events,
+                                node_id=node.node_id, attempt=attempt,
+                                rows=ev.rows_emitted)
                 return
             except OperationCancelled as exc:
                 ev.status = "cancelled"
@@ -920,6 +963,9 @@ class GeoExecutionEngine:
                 ev.duration_s = round(time.monotonic() - started, 6)
                 tracing.emit("node_cancelled", run_id=run.run_id, node_id=node.node_id,
                              status="cancelled", duration_s=ev.duration_s)
+                _emit_run_event(run.run_id, "node_cancelled", enabled=emit_events,
+                                node_id=node.node_id, attempt=attempt,
+                                error_code="CANCELLED")
                 return
             except GeoComputeError as exc:
                 last_err = exc
@@ -962,6 +1008,9 @@ class GeoExecutionEngine:
                      status="failed", error_code=ev.error_code,
                      duration_s=ev.duration_s,
                      failure_class=(classify_failure(last_err).value if last_err else "invalid_data"))
+        _emit_run_event(run.run_id, "node_failed", enabled=emit_events,
+                        node_id=node.node_id, attempt=ev.attempts,
+                        error_code=ev.error_code)
 
     # ------------------------------------------------------- retry helpers
 
@@ -1027,6 +1076,8 @@ class GeoExecutionEngine:
         gov_path: Optional[str],
         charge_ledger: Optional[Any] = None,
         budget: Any = None,
+        resource_envelope: Optional[dict[str, Any]] = None,
+        emit_events: bool = False,
     ) -> None:
         """durable_job 分支：穿透既有 AnalysisTask 运行时（无第二真相）。
 
@@ -1050,6 +1101,7 @@ class GeoExecutionEngine:
         if node.reuse == NodeReusePolicy.ALLOW and self._durable_reuse_hit(
             run, node, outputs, outputs_fp, ev, owner_scope,
             governor=governor, gov_path=gov_path, charge_ledger=charge_ledger,
+            emit_events=emit_events,
         ):
             ev.duration_s = round(time.monotonic() - started_dj, 6)
             return
@@ -1069,6 +1121,19 @@ class GeoExecutionEngine:
                         "result handoff (session ref)",
                         retry_safe=False, node_id=node.node_id,
                     )
+                # V7 input handoff：上游输出已有 session ref 的输入经
+                # task_kwargs 交给 worker 解析（全 durable 链首次可执行）；
+                # 无 ref 的内存输入（in_process 上游）worker 侧仍不可达 ——
+                # 与 V6 行为一致（诚实：混合 DAG 才能全分布式）。
+                input_refs = {
+                    src: str(outputs[src]["ref_id"])
+                    for src in node.inputs
+                    if src in outputs and outputs[src].get("ref_id")
+                }
+                input_keys = {
+                    src: outputs_fp[src]
+                    for src in node.inputs if src in outputs_fp
+                }
                 ret = durable.dispatch_node(
                     node,
                     session_id=session_id,
@@ -1076,6 +1141,12 @@ class GeoExecutionEngine:
                     deadline_s=(node_deadline - time.monotonic())
                     if node.deadline_s is not None else None,
                     budget=budget,
+                    run_id=run.run_id,
+                    node_attempt=attempt,
+                    input_refs=input_refs,
+                    input_keys=input_keys,
+                    resource_envelope=resource_envelope,
+                    owner_scope=owner_scope,
                 )
                 if ret.get("backend_variant"):
                     # V5 step 5：eager 降级诚实披露（reproducibility honesty）。
@@ -1086,6 +1157,10 @@ class GeoExecutionEngine:
                              category=node.category.value,
                              queue=ret.get("queue"),
                              backend=ret.get("backend_variant"))
+                _emit_run_event(
+                    run.run_id, "node_dispatched", enabled=emit_events,
+                    node_id=node.node_id, attempt=attempt, status="running",
+                )
                 done = durable.await_node_job(
                     ret["job_id"],
                     session_id=session_id,
@@ -1108,6 +1183,9 @@ class GeoExecutionEngine:
                              status="completed", rows=ev.rows_emitted,
                              duration_s=ev.duration_s, job_id=done["job_id"],
                              policy="durable_job")
+                _emit_run_event(run.run_id, "node_completed", enabled=emit_events,
+                                node_id=node.node_id, attempt=attempt,
+                                rows=ev.rows_emitted)
                 self._governor_charge(
                     governor, gov_path, node, payload, charge_ledger
                 )
@@ -1123,6 +1201,9 @@ class GeoExecutionEngine:
                 ev.duration_s = round(time.monotonic() - started_dj, 6)
                 tracing.emit("node_cancelled", run_id=run.run_id, node_id=node.node_id,
                              status="cancelled", policy="durable_job")
+                _emit_run_event(run.run_id, "node_cancelled", enabled=emit_events,
+                                node_id=node.node_id, attempt=attempt,
+                                error_code="CANCELLED")
                 return
             except GeoComputeError as exc:
                 last_err = exc
@@ -1148,6 +1229,15 @@ class GeoExecutionEngine:
                      status="failed", error_code=ev.error_code,
                      policy="durable_job",
                      failure_class=(classify_failure(last_err).value if last_err else "invalid_data"))
+        # V7：WORKER_LOSS（stale/worker 死亡）单列 node_lost —— 与计算失败区分
+        _emit_run_event(
+            run.run_id,
+            "node_lost" if isinstance(last_err, NodeExecutionError)
+            and getattr(last_err, "failure_class", None) == FailureClass.WORKER_LOSS
+            else "node_failed",
+            enabled=emit_events, node_id=node.node_id,
+            attempt=ev.attempts, error_code=ev.error_code,
+        )
 
     # ------------------------------------------- V5 durable reuse helpers
 
@@ -1163,6 +1253,7 @@ class GeoExecutionEngine:
         governor: Optional[Any] = None,
         gov_path: Optional[str] = None,
         charge_ledger: Optional[Any] = None,
+        emit_events: bool = False,
     ) -> bool:
         """durable 节点派发前的跨进程 checkpoint 复用（audit 06 §6.1 step 3）。
 
@@ -1186,6 +1277,7 @@ class GeoExecutionEngine:
                     run, node, outputs, outputs_fp, ev, payload,
                     source="in_process", out_fp=cached.get(_OUT_FP_KEY),
                     governor=governor, gov_path=gov_path, charge_ledger=charge_ledger,
+                    emit_events=emit_events,
                 )
                 return True
             self._note_reuse_skip(
@@ -1244,6 +1336,7 @@ class GeoExecutionEngine:
             run, node, outputs, outputs_fp, ev, payload,
             source="cross_process_index", out_fp=out_fp,
             governor=governor, gov_path=gov_path, charge_ledger=charge_ledger,
+            emit_events=emit_events,
         )
         return True
 
@@ -1261,6 +1354,7 @@ class GeoExecutionEngine:
         governor: Optional[Any] = None,
         gov_path: Optional[str] = None,
         charge_ledger: Optional[Any] = None,
+        emit_events: bool = False,
     ) -> None:
         """接受复用：写载荷/指纹/证据（浅拷贝防缓存别名腐蚀，同 in_process 路径）。
 
@@ -1278,6 +1372,8 @@ class GeoExecutionEngine:
         tracing.emit("node_reused", run_id=run.run_id, node_id=node.node_id,
                      status="reused", rows=ev.rows_emitted, checkpoint="verified",
                      reuse_source=source)
+        _emit_run_event(run.run_id, "node_reused", enabled=emit_events,
+                        node_id=node.node_id, rows=ev.rows_emitted)
 
     def _record_durable_result(
         self,

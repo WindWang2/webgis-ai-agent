@@ -26,8 +26,12 @@ from app.services.geocompute.plan import ExecutionNode
 
 logger = logging.getLogger(__name__)
 
-#: job 终态轮询间隔（秒）。eager/本地模式下任务体同步完成，首轮即命中。
+#: job 终态轮询起始间隔（秒）。eager/本地模式下任务体同步完成，首轮即命中。
+#: V7（审计 B2）：自适应退避 0.05→0.5s —— 100 并发在飞节点时纯轮询 DB qps
+#: 从 2000 降到 ≤数百；取消传播延迟上界仍由 run 心跳（0.5s）主导，不劣化。
 _POLL_INTERVAL_S = 0.05
+_POLL_INTERVAL_MAX_S = 0.5
+_POLL_BACKOFF = 1.5
 
 # ── V5 异构 worker profile（audit 06 §6.1 step 1 / ADR-0101 Deferred 落地）──
 #: profile 词表：light_cpu | heavy_cpu | high_memory | raster | network |
@@ -162,6 +166,12 @@ def dispatch_node(
     plan_fingerprint: str,
     deadline_s: Optional[float],
     budget: Optional[Any] = None,
+    run_id: Optional[str] = None,
+    node_attempt: Optional[int] = None,
+    input_refs: Optional[dict[str, str]] = None,
+    input_keys: Optional[dict[str, str]] = None,
+    resource_envelope: Optional[dict[str, Any]] = None,
+    owner_scope: Optional[str] = None,
 ) -> dict[str, Any]:
     """把节点提交为 durable job（幂等键 = 节点语义指纹 + 会话）。
 
@@ -170,6 +180,11 @@ def dispatch_node(
     （eager）时 Celery 忽略队列，任务同步执行 —— 返回 dict 追加
     ``backend_variant="in_process_eager"``，证据侧据此诚实标注（V5 step 5：
     durable 语义在 eager 下静默降级为进程内执行，必须可见）。
+
+    V7：``run_id``/``node_attempt`` 经 **task_kwargs**（不进 params —— 幂等键
+    不含治理/观测元数据，budget 同款先例）穿透到 worker 任务体 —— Celery
+    边界丢 contextvars，显式传参是 worker 侧分布式事件（run_events）的唯一
+    可靠关联通道；缺席 = eager/旧路径，worker 只跳过事件发射。
     """
     from app.services.geocompute.tasks import run_geocompute_node
     from app.services.jobs.submit import submit_durable_job
@@ -197,6 +212,14 @@ def dispatch_node(
                 if budget is not None and hasattr(budget, "model_dump")
                 else budget
             ),
+            # V7：分布式事件关联（观测元数据，不进幂等键）。
+            "run_id": run_id,
+            "node_attempt": node_attempt,
+            # V7 input handoff / 准入守卫 / 缓存身份（同上：全不进幂等键）
+            "input_refs": input_refs,
+            "input_keys": input_keys,
+            "resource_envelope": resource_envelope,
+            "owner_scope": owner_scope,
         },
         session_id=session_id,
         queue=queue,
@@ -231,6 +254,7 @@ def await_node_job(
 
     cancel_requested = False
     terminal: Optional[dict[str, Any]] = None
+    poll_s = _POLL_INTERVAL_S
     while True:
         factory = session_factory
         with factory() as db:
@@ -283,7 +307,10 @@ def await_node_job(
                 f"durable job {job_id} exceeded node deadline",
                 details={"job_id": str(job_id)},
             )
-        time.sleep(_POLL_INTERVAL_S)
+        # V7（审计 B2）：自适应退避 —— 首轮 50ms 保 eager/短任务响应，
+        # 长任务退到 0.5s（取消传播的主导延迟是 run 心跳 0.5s，不劣化）。
+        time.sleep(poll_s)
+        poll_s = min(poll_s * _POLL_BACKOFF, _POLL_INTERVAL_MAX_S)
 
     ref = terminal.get("result_ref")
     payload: dict[str, Any] = {}

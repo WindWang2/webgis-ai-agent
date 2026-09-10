@@ -77,6 +77,8 @@ class ClusterSubmitRequest(ExecutePlanRequest):
     # V6（cluster submit）：优先级（0/5/10）与项目归属（公平/账本键）
     priority: int = 5
     project_id: Optional[str] = None
+    # V7：run 级资源 envelope（placement 准入；可选 —— 缺省 = V6 行为）
+    resource: Optional[Dict[str, Any]] = None
 
 
 def _plan_from_request(data: ExecutionPlanIn):
@@ -299,6 +301,37 @@ async def submit_execution_plan(
                 for n in plan.nodes if n.policy.value == "durable_job"
             ) if p in EXECUTION_QUEUE_PROFILES
         })
+        # V7：资源 envelope —— required_profiles 合并语义（架构 round1 #7）：
+        # 最终 = derive(durable 节点) ∪ resource.required_profiles（用户只能
+        # 加宽不能收窄 —— 收窄会把「安全留队」劣化为必然 WORKER_LOSS）；
+        # 用户传入词越界 → typed 422（词表单一来源）。
+        resource_request = None
+        if body.resource:
+            from app.services.geocompute.cluster.contracts import ResourceRequest
+            from app.services.geocompute.cluster.placement import request_digest
+
+            try:
+                req = ResourceRequest(**body.resource)
+            except Exception as exc:
+                raise HTTPException(status_code=422, detail={
+                    "code": "RESOURCE_REQUEST_INVALID",
+                    "message": str(exc)[:200],
+                })
+            unknown = [
+                p for p in req.required_profiles
+                if p not in EXECUTION_QUEUE_PROFILES
+            ]
+            if unknown:
+                raise HTTPException(status_code=422, detail={
+                    "code": "RESOURCE_REQUEST_INVALID",
+                    "message": f"unknown required_profiles: {unknown[:4]}",
+                    "details": {"allowed": sorted(EXECUTION_QUEUE_PROFILES)},
+                })
+            req = req.normalized()
+            req.required_profiles = sorted(
+                set(req.required_profiles) | set(profiles)
+            )
+            resource_request = request_digest(req)
         store = ClusterRunStore()
         run_id = store.create_run(
             plan_snapshot=plan.model_dump(mode="json"),
@@ -312,6 +345,7 @@ async def submit_execution_plan(
             project_raw=body.project_id,
             priority=RunPriority.coerce(body.priority),
             required_profiles=profiles,
+            resource_request=resource_request,
         )
         return store.get_run(run_id)
 
@@ -332,6 +366,7 @@ async def submit_execution_plan(
         "status": row.get("status"),
         "plan_fingerprint": row.get("plan_fingerprint"),
         "required_profiles": row.get("required_profiles") or [],
+        "resource": row.get("resource_request"),
         "source": "cluster",
     }
 
@@ -442,6 +477,21 @@ async def get_execution_run(
         })
     if row is None:
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
+    # V7：进度读投影（架构 round1 #5 —— done 由事件 DISTINCT 节点投影派生，
+    # 天然幂等跨 attempt；total 取 plan_snapshot 节点数，零漂移零新增列）。
+    def _progress():
+        from app.services.geocompute.cluster.events import RunEventStore
+        from app.services.geocompute.cluster.store import ClusterRunStore
+
+        settled = RunEventStore().progress_projection(run_id)
+        internal = ClusterRunStore().get_run_internal(run_id)
+        total = len((internal or {}).get("plan_snapshot", {}).get("nodes") or [])
+        return {**settled, "total": total}
+
+    try:
+        progress = await asyncio.to_thread(_progress)
+    except Exception:  # noqa: BLE001 - 进度是尽力投影，绝不影响 run 读取
+        progress = None
     return {
         "run_id": row["run_id"],
         "plan_fingerprint": row["plan_fingerprint"],
@@ -457,6 +507,7 @@ async def get_execution_run(
         "created_at": row["created_at"],
         "started_at": row["started_at"],
         "terminal_at": row["terminal_at"],
+        **({"progress": progress} if progress else {}),
     }
 
 
@@ -559,6 +610,200 @@ async def get_execution_run_summary(
     if run is None:
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
     return {"lines": run.summary_lines()}
+
+
+@router.get("/runs/{run_id}/events", tags=["GeoCompute / Cluster Runtime V7"])
+async def list_run_events(
+    run_id: str,
+    after_id: int = 0,
+    limit: int = 200,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """V7 分布式执行事件（有界 observability trace；断点续读游标 after_id）。
+
+    owner 域读隔离（他人/未知 run 一律 404）。**诚实边界**：events 是尽力
+    而为的过程 trace，随 run 行 retention 级联删除 —— run 行被清理后本
+    端点 404（终态证据 of record 在 geocompute_run_evidence，经 GET
+    /runs/{id} 的快照回放仍可读，与 trace 的保留策略不同源）。
+    """
+    from app.services.geocompute.executor import owner_scope_for
+
+    owner_scope = owner_scope_for(user)
+
+    def _events():
+        from app.services.geocompute.cluster.store import ClusterRunStore
+
+        store = ClusterRunStore()
+        if store.get_run_owned(run_id, owner_scope) is None:
+            return None
+        from app.services.geocompute.cluster.events import RunEventStore
+
+        return RunEventStore().window(
+            run_id, after_id=after_id, limit=limit
+        )
+
+    try:
+        events = await asyncio.to_thread(_events)
+    except Exception as exc:  # noqa: BLE001 - 控制面不可用 → typed 503（M5 同款）
+        logger.warning("[geocompute] events store unavailable: %s", run_id)
+        raise HTTPException(status_code=503, detail={
+            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
+        })
+    if events is None:
+        raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND"})
+    next_after = events[-1]["id"] if events else int(after_id)
+    return {
+        "run_id": run_id,
+        "events": events,
+        "after_id": next_after,
+        "count": len(events),
+    }
+
+
+@router.get("/cluster/workers", tags=["GeoCompute / Cluster Runtime V7"])
+async def cluster_workers(user: Dict[str, Any] = Depends(require_admin)):
+    """V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。
+
+    capability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement
+    对其退回 V6 profiles 匹配语义）。
+    """
+    from app.services.geocompute.cluster.store import ClusterRunStore
+
+    def _workers():
+        from app.services.geocompute.cluster.locality import (
+            WorkerCacheRegistry,
+        )
+
+        store = ClusterRunStore()
+        workers = store.live_workers()
+        registry = WorkerCacheRegistry()
+        for w in workers:
+            # round2 RM2：注册表的生产读取方 —— 缓存占用对 admin 可见
+            #（只写不读的表会误导运维）
+            w["cache_entries"] = registry.worker_entries(w.get("worker_id", ""))
+            w["cache_bytes"] = registry.worker_cached_bytes(
+                w.get("worker_id", ""))
+        return workers
+
+    try:
+        workers = await asyncio.to_thread(_workers)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail={
+            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
+        })
+    return {"workers": workers[:256], "live": len(workers)}
+
+
+@router.get("/cluster/runs/stuck", tags=["GeoCompute / Cluster Runtime V7"])
+async def cluster_stuck_runs(user: Dict[str, Any] = Depends(require_admin)):
+    """V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run
+    （admin 排障；有界 ≤50 行，无载荷）。"""
+    from app.services.geocompute.cluster.store import ClusterRunStore
+
+    def _stuck():
+        return ClusterRunStore().stuck_runs()
+
+    try:
+        runs = await asyncio.to_thread(_stuck)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail={
+            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
+        })
+    return {"runs": runs, "count": len(runs)}
+
+
+class ClusterRunResetRequest(BaseModel):
+    reason: str = Field(default="admin reset", max_length=200)
+
+
+@router.post("/cluster/runs/{run_id}/reset", tags=["GeoCompute / Cluster Runtime V7"])
+async def cluster_reset_run(
+    run_id: str,
+    body: ClusterRunResetRequest | None = None,
+    user: Dict[str, Any] = Depends(require_admin),
+):
+    """V7 admin 强制回队（stuck run 复位）：语义与 reclaim_expired 单行版本
+    完全一致（attempt 预算内 → queued；耗尽 → failed[WORKER_LOSS]；
+    同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。
+
+    require_admin：这是全局控制面动作（与 metrics 同一信任域）。
+    """
+    from app.services.geocompute.cluster.store import ClusterRunStore
+
+    def _reset():
+        from app.services.geocompute.cluster.store import ClusterLedger
+
+        store = ClusterRunStore()
+        # round1 M1：必须传与 run 行同库的 ledger —— 否则 reset 回队时
+        # 账本预留不归还，每次 reset 永久泄漏一份 reserve（enforcing 下
+        # 数次即持续性 admission 拒绝）。
+        outcome = store.force_requeue(
+            run_id, ledger=ClusterLedger(factory=store._factory))
+        return store.get_run(run_id), outcome
+
+    try:
+        row, outcome = await asyncio.to_thread(_reset)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail={
+            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
+        })
+    if outcome is None:
+        raise HTTPException(status_code=409, detail={
+            "code": "RUN_NOT_RESETTABLE",
+            "message": "run is terminal/queued or was concurrently transitioned",
+        })
+    return {
+        "run_id": run_id,
+        "outcome": outcome,
+        "status": (row or {}).get("status"),
+        "attempts": (row or {}).get("attempts"),
+    }
+
+
+class LedgerLimitsRequest(BaseModel):
+    scope_key: str = Field(min_length=1, max_length=80, pattern=r"^(global|[tp]:[A-Za-z0-9_-]{1,76})$")
+    limit_rows: Optional[int] = Field(default=None, ge=0)
+    limit_bytes: Optional[int] = Field(default=None, ge=0)
+    limit_units: Optional[int] = Field(default=None, ge=0)
+
+
+@router.post("/cluster/ledger/limits", tags=["GeoCompute / Cluster Runtime V7"])
+async def cluster_set_ledger_limits(
+    body: LedgerLimitsRequest,
+    user: Dict[str, Any] = Depends(require_admin),
+):
+    """V7 admin 设置账本 scope 限额（NULL = 解除该维限制；enforcing/advisory
+    模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。
+
+    scope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的
+    scope 域词表；越界 typed 422）。
+    """
+    from app.services.geocompute.cluster.store import ClusterLedger
+
+    def _set():
+        return ClusterLedger().set_scope_limits(
+            body.scope_key,
+            limit_rows=body.limit_rows,
+            limit_bytes=body.limit_bytes,
+            limit_units=body.limit_units,
+        )
+
+    try:
+        ok = await asyncio.to_thread(_set)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail={
+            "code": "CLUSTER_UNAVAILABLE", "message": str(exc)[:200],
+        })
+    if not ok:
+        raise HTTPException(status_code=500, detail={
+            "code": "LEDGER_LIMITS_FAILED", "message": "scope upsert failed",
+        })
+    return {
+        "scope_key": body.scope_key,
+        "limit_rows": body.limit_rows,
+        "limit_bytes": body.limit_bytes,
+        "limit_units": body.limit_units,
+    }
 
 
 @router.post("/plans/drift-check", tags=["GeoCompute / 执行平面"])

@@ -76,9 +76,11 @@ class WorkerHeartbeatThread(threading.Thread):
         backoff = self._interval_s
         while not self._stop.wait(self._interval_s):
             try:
-                self._store.upsert_worker(
-                    self._worker_id, role="worker", profiles=self._profiles,
-                    ttl_s=_WORKER_TTL_S,
+                # V7 round1 C1：心跳只续期（单列 UPDATE），**不得**走
+                # upsert_worker —— 那会把 worker_ready 写入的 capability
+                # 覆写回 NULL，能力放置在首个心跳后静默失效。
+                self._store.worker_heartbeat(
+                    self._worker_id, ttl_s=_WORKER_TTL_S,
                 )
                 backoff = self._interval_s
             except Exception:  # noqa: BLE001 - DB 抖动不 crash worker
@@ -105,16 +107,17 @@ def connect_celery_signals() -> bool:
     except Exception:  # noqa: BLE001 - celery 不可用 → 不接入
         return False
 
-    @worker_ready.connect
     def _on_ready(**_):
         global _thread
         worker_id = celery_worker_id()
         profiles = worker_profile_slots()
+        capability = _probe_capability_safe()
         cap = WorkerCapability(worker_id=worker_id, role="worker",
                                profiles=profiles)
         try:
             ClusterRunStore().upsert_worker(
                 cap.worker_id, role=cap.role, profiles=cap.profiles,
+                capability=capability,
                 ttl_s=_WORKER_TTL_S,
             )
         except Exception:  # noqa: BLE001 - 注册失败不影响 worker 启动
@@ -127,7 +130,6 @@ def connect_celery_signals() -> bool:
         logger.info("[geocompute-v6] worker registered: %s profiles=%s",
                     worker_id, sorted(profiles))
 
-    @worker_shutdown.connect
     def _on_shutdown(**_):
         global _thread
         with _thread_lock:
@@ -135,9 +137,42 @@ def connect_celery_signals() -> bool:
                 _thread.stop()
                 _thread = None
         try:
-            ClusterRunStore().remove_worker(celery_worker_id())
+            worker_id = celery_worker_id()
+            ClusterRunStore().remove_worker(worker_id)
+            # V7 级联：清掉本 worker 的对象缓存位置声明（防幽灵位置）
+            try:
+                from app.services.geocompute.cluster.locality import (
+                    WorkerCacheRegistry,
+                )
+
+                WorkerCacheRegistry().drop_worker(worker_id)
+            except Exception:  # noqa: BLE001 - 级联失败 = miss 方向安全
+                pass
         except Exception:  # noqa: BLE001 - 尽力注销；失联 prune 兜底
             pass
 
+    # V7 P1 修复（V6 潜伏缺陷）：kombu Signal.connect 默认 ``weak=True``，
+    # 闭包 handler 的唯一引用是弱引用 —— connect_celery_signals 返回后
+    # handler 即被 GC，``worker_ready`` 永不触发。后果：真实 worker 的
+    # 注册/心跳从未生效（集群容量恒为空视图），而 V6 全部测试都是 eager，
+    # real-services lane 也从未跑过 geocompute worker —— 直到 V7
+    # real-broker E2E 才暴露。必须显式 ``weak=False`` 强引用注册。
+    worker_ready.connect(_on_ready, weak=False)
+    worker_shutdown.connect(_on_shutdown, weak=False)
     _signals_connected = True
     return True
+
+
+def _probe_capability_safe() -> Optional[dict]:
+    """V7：能力剖面探针（worker_ready 一次；失败 → None = V6 语义）。"""
+    try:
+        from app.services.geocompute.cluster.capabilities import (
+            capability_json,
+            probe_capability,
+        )
+
+        return capability_json(probe_capability())
+    except Exception:  # noqa: BLE001 - 探针绝不阻断注册
+        logger.warning("[geocompute-v7] capability probe failed; "
+                       "registering profiles-only", exc_info=True)
+        return None

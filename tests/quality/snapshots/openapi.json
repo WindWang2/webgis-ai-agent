@@ -672,6 +672,18 @@
     "title": "ChatResponse",
     "type": "object"
    },
+   "ClusterRunResetRequest": {
+    "properties": {
+     "reason": {
+      "default": "admin reset",
+      "maxLength": 200,
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "title": "ClusterRunResetRequest",
+    "type": "object"
+   },
    "ClusterSubmitRequest": {
     "description": "cluster submit 专属字段（不进入同步 /plans/execute 契约 —— round1 m4：\n共享模型会让同步端点静默接受并忽略 submit 语义的字段）。",
     "properties": {
@@ -693,6 +705,18 @@
        }
       ],
       "title": "Project Id"
+     },
+     "resource": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Resource"
      },
      "session_id": {
       "anyOf": [
@@ -1943,6 +1967,58 @@
      }
     },
     "title": "LLMTestRequest",
+    "type": "object"
+   },
+   "LedgerLimitsRequest": {
+    "properties": {
+     "limit_bytes": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit Bytes"
+     },
+     "limit_rows": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit Rows"
+     },
+     "limit_units": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit Units"
+     },
+     "scope_key": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^(global|[tp]:[A-Za-z0-9_-]{1,76})$",
+      "title": "Scope Key",
+      "type": "string"
+     }
+    },
+    "required": [
+     "scope_key"
+    ],
+    "title": "LedgerLimitsRequest",
     "type": "object"
    },
    "LoginRequest": {
@@ -8885,6 +8961,53 @@
     ]
    }
   },
+  "/api/v1/geocompute/cluster/ledger/limits": {
+   "post": {
+    "description": "V7 admin 设置账本 scope 限额（NULL = 解除该维限制；enforcing/advisory\n模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。\n\nscope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的\nscope 域词表；越界 typed 422）。",
+    "operationId": "cluster_set_ledger_limits_api_v1_geocompute_cluster_ledger_limits_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/LedgerLimitsRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cluster Set Ledger Limits",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V7"
+    ]
+   }
+  },
   "/api/v1/geocompute/cluster/metrics": {
    "get": {
     "description": "V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。\n\n有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；\n取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。",
@@ -8909,6 +9032,125 @@
      "GeoCompute / 执行平面",
      "GeoCompute / 执行平面",
      "GeoCompute / Cluster Runtime V6"
+    ]
+   }
+  },
+  "/api/v1/geocompute/cluster/runs/stuck": {
+   "get": {
+    "description": "V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run\n（admin 排障；有界 ≤50 行，无载荷）。",
+    "operationId": "cluster_stuck_runs_api_v1_geocompute_cluster_runs_stuck_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cluster Stuck Runs",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V7"
+    ]
+   }
+  },
+  "/api/v1/geocompute/cluster/runs/{run_id}/reset": {
+   "post": {
+    "description": "V7 admin 强制回队（stuck run 复位）：语义与 reclaim_expired 单行版本\n完全一致（attempt 预算内 → queued；耗尽 → failed[WORKER_LOSS]；\n同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。\n\nrequire_admin：这是全局控制面动作（与 metrics 同一信任域）。",
+    "operationId": "cluster_reset_run_api_v1_geocompute_cluster_runs__run_id__reset_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/ClusterRunResetRequest"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Body"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cluster Reset Run",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V7"
+    ]
+   }
+  },
+  "/api/v1/geocompute/cluster/workers": {
+   "get": {
+    "description": "V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。\n\ncapability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement\n对其退回 V6 profiles 匹配语义）。",
+    "operationId": "cluster_workers_api_v1_geocompute_cluster_workers_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cluster Workers",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V7"
     ]
    }
   },
@@ -9306,6 +9548,74 @@
      "GeoCompute / 执行平面",
      "GeoCompute / 执行平面",
      "GeoCompute / 执行平面"
+    ]
+   }
+  },
+  "/api/v1/geocompute/runs/{run_id}/events": {
+   "get": {
+    "description": "V7 分布式执行事件（有界 observability trace；断点续读游标 after_id）。\n\nowner 域读隔离（他人/未知 run 一律 404）。**诚实边界**：events 是尽力\n而为的过程 trace，随 run 行 retention 级联删除 —— run 行被清理后本\n端点 404（终态证据 of record 在 geocompute_run_evidence，经 GET\n/runs/{id} 的快照回放仍可读，与 trace 的保留策略不同源）。",
+    "operationId": "list_run_events_api_v1_geocompute_runs__run_id__events_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "after_id",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "title": "After Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 200,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Run Events",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V7"
     ]
    }
   },
