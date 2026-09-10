@@ -463,6 +463,66 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
+        name="modelops_publish_layers",
+        description="把推理产物注册为地图图层（含样式建议与模型 provenance），返回可供 display_layer/finalize_display 使用的图层引用",
+        param_descriptions={
+            "outputs": "modelops_run_inference 返回的 outputs 字典",
+            "manifest": "同一次推理的 manifest（provenance 链来源）",
+            "project_id": "项目 scope（与 session_id 二选一）",
+            "session_id": "会话 scope",
+        },
+        tier=2,
+        domains=["raster"],
+        cost="light",
+        timeout=120.0,
+        side_effect="state_mutation",
+        tags=("modelops", "geoai", "图层"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
+    )
+    async def modelops_publish_layers(
+        outputs: dict,
+        manifest: Optional[dict] = None,
+        project_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> dict:
+        import json as _json
+        from pathlib import Path as _Path
+
+        from app.lib.modelops.errors import ModelOpsError
+        from app.services.modelops.layer_delivery import build_layer_packages, publish_layers
+
+        if not session_id and not project_id:
+            raise ModelOpsError(
+                "modelops_publish_layers requires session_id or project_id",
+                correction_hint="pass the same owner scope used for run_inference",
+            )
+        # 矢量产物：从磁盘读 GeoJSON（outputs 只带路径）。
+        feature_collections: Dict[str, Dict[str, Any]] = {}
+        for role, payload in (outputs or {}).items():
+            path = payload.get("path") if isinstance(payload, dict) else None
+            if path and str(path).endswith(".geojson") and _Path(path).exists():
+                try:
+                    feature_collections[role] = _json.loads(
+                        _Path(path).read_text(encoding="utf-8")
+                    )
+                except Exception as exc:  # noqa: BLE001 — 读文件失败的角色跳过
+                    logger.warning("layer payload read failed for %s: %s", role, exc)
+        result = await publish_layers(
+            outputs,
+            manifest,
+            session_id=session_id,
+            project_id=project_id,
+            feature_collections=feature_collections,
+        )
+        result["suggested_show_refs"] = [
+            layer["ref_id"] for layer in result["layers"] if layer.get("registered")
+        ]
+        return result
+
+    @tool(
+        registry,
         name="modelops_cancel_inference",
         description="取消一次进行中的推理（取消键 = 提交返回的 run_id）",
         param_descriptions={"cancel_key": "取消键（modelops_run_inference 返回的 run_id）"},
