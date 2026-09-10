@@ -875,19 +875,23 @@ async def _finalizer_continuation(
     )
     payload: Dict[str, Any] = dict(decision.to_payload())
     if decision.verdict == "abort_with_disclosure":
-        # 修复预算尽 → 重规划驱动点（预算有余则置 replan_pending）
-        try:
-            from app.services.gis_harness.plan_runtime import request_replan
+        # 修复预算尽 → 重规划驱动点（预算有余则置 replan_pending）。
+        # 不可恢复类（cancelled/budget_exhausted）不自动重规划 —— 用户取消
+        # 或资源耗尽不该被结构级重规划对抗（诚实中止语义优先）。
+        failure_class = str(failure.get("class") or "")
+        if failure_class not in ("cancelled", "budget_exhausted"):
+            try:
+                from app.services.gis_harness.plan_runtime import request_replan
 
-            replan = await request_replan(
-                session_id,
-                reason=str(result.summary or "")[:160],
-                from_verdict=str(result.product_verdict or result.status)[:32],
-            )
-            payload.update(replan)
-        except Exception:  # noqa: BLE001 — 驱动点失败保留 abort 披露
-            logger.debug("[MapFinalizer] replan driver failed session=%s",
-                         session_id, exc_info=True)
+                replan = await request_replan(
+                    session_id,
+                    reason=str(result.summary or "")[:160],
+                    from_verdict=str(result.product_verdict or result.status)[:32],
+                )
+                payload.update(replan)
+            except Exception:  # noqa: BLE001 — 驱动点失败保留 abort 披露
+                logger.debug("[MapFinalizer] replan driver failed session=%s",
+                             session_id, exc_info=True)
     return payload
 
 

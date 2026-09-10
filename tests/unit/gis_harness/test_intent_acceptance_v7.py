@@ -244,3 +244,30 @@ async def test_finalize_persists_acceptance_and_commit(clean_session):
     assert RUNTIME_STATE_KEY in plan.gis_chapter or True
     phase = runtime_phase_of(plan.gis_chapter)
     assert phase in ("committed", "finalizing", "critiquing", "executing")
+
+
+@pytest.mark.asyncio
+async def test_finalizer_continuation_verdicts(clean_session, monkeypatch, tmp_path):
+    """终验出口 continuation：预算内 → repair 裁决；预算尽 → abort +
+    replan 驱动点置 pending（V6 follow-up 的生产闭环）。"""
+    monkeypatch.setenv("MAPSPEC_STORAGE_DIR", str(tmp_path))
+    from app.services.gis_harness.completion.pipeline import _finalizer_continuation
+    from app.services.gis_harness.completion.contracts import MapCompletionResult
+    from app.services.gis_harness.durable_context import update_recovery_state
+
+    await _save_plan(clean_session, _finalizable_chapter())
+    result = MapCompletionResult()
+    result.status = "needs_repair"
+    result.render_status = "stale"
+    # 新鲜 recovery → repair 预算有余 → remediate_and_retry
+    payload = await _finalizer_continuation(
+        clean_session, result, _finalizable_chapter())
+    assert payload["verdict"] == "remediate_and_retry"
+    # 耗尽 deepen/requalify/repair → abort（replan 预算仍余 → 驱动点置 pending）
+    for loop in ("deepen", "requalify", "repair", "deepen", "requalify", "repair"):
+        await update_recovery_state(clean_session, loop=loop, detail="x")
+    payload2 = await _finalizer_continuation(
+        clean_session, result, _finalizable_chapter())
+    assert payload2["verdict"] in ("abort_with_disclosure", "reobserve")
+    if payload2["verdict"] == "abort_with_disclosure":
+        assert payload2.get("replan_pending") is True

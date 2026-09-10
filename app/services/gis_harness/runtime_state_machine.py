@@ -286,7 +286,6 @@ def derive_runtime_phase(
     chapter: Dict[str, Any],
     *,
     recovery_loops: Optional[Dict[str, int]] = None,
-    stored: Optional[Dict[str, Any]] = None,
 ) -> str:
     """章节权威事实 → 运行时阶段（确定性；同输入同输出）。
 
@@ -445,8 +444,7 @@ def derive_runtime_state(
     """
     loops = {k: int(v) for k, v in (recovery_loops or {}).items()}
     stored_block = _parse_stored(stored)
-    phase = derive_runtime_phase(
-        chapter, recovery_loops=loops, stored=stored)
+    phase = derive_runtime_phase(chapter, recovery_loops=loops)
     plan_runtime = chapter.get("plan_runtime") if isinstance(chapter, dict) else None
     plan_version = int((plan_runtime or {}).get("version") or 0)
 
