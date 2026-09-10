@@ -58,7 +58,9 @@ def register_raster_cog_tools(registry: ToolRegistry):
     ) -> dict:
         try:
             src = validate_data_path(raster_path)
-            dst = validate_data_path(out_dir)
+            # GIS-08: Isolate output directory by session_id to prevent multi-tenant file collision
+            effective_out_dir = str(Path(out_dir) / session_id) if session_id else out_dir
+            dst = validate_data_path(effective_out_dir)
         except ValueError as e:
             return std_error_response(
                 str(e), code="INVALID_PATH",
@@ -68,7 +70,7 @@ def register_raster_cog_tools(registry: ToolRegistry):
         from app.lib.geo_raster.cog import ensure_cog, validate_cog
 
         try:
-            out = await asyncio.to_thread(ensure_cog, src, dst)
+            out = await asyncio.to_thread(ensure_cog, src, dst, session_id=session_id)
         except ValueError as e:  # CogWriteError ⊂ ValueError（类型化拒绝）
             return std_error_response(
                 str(e), code="COG_CONVERT_FAILED",
