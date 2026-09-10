@@ -84,6 +84,14 @@ _ENV_BASELINE = {
         "DATA_FABRIC_SYNC_CONCURRENCY": "4",
         "DATA_FABRIC_LOCAL_FILE_ROOTS": "",
         "DATA_FABRIC_LOCAL_FILE_MAX_BYTES": "1073741824",
+        # Data Fabric V7（ADR-0115）：连接池与结果缓存
+        "DATA_FABRIC_V7_CONNECTION_MAX_ENTRIES": "1024",
+        "DATA_FABRIC_V7_CONNECTION_IDLE_TTL_S": "1800.0",
+        "DATA_FABRIC_V7_PROBE_TTL_S": "300.0",
+        "DATA_FABRIC_V7_RESULT_CACHE_MAX_ENTRIES": "256",
+        "DATA_FABRIC_V7_RESULT_CACHE_MAX_BYTES": "67108864",
+        "DATA_FABRIC_V7_RESULT_CACHE_TTL_S": "300.0",
+        "DATA_FABRIC_V7_FEEDBACK_MAX_ROWS": "20000",
         "DATA_DIR": "./data",
         "TMP_DIR": "./tmp",
         "PROJECT_ARTIFACT_CONTENT_DIR": "",
@@ -127,6 +135,16 @@ _ENV_BASELINE = {
         "EXTENSIONS_TRUST_SIGNED": "false",
         "EXTENSIONS_ALLOW_UNSIGNED_DEV": "false",
         "EXTENSIONS_MAX_WORKER_CRASHES": "2",
+        # ADR-0109 V3：分发市场、版本钉扎与流式窗口
+        "EXTENSION_TRUST_STORE_PATH": "",
+        "EXTENSION_REGISTRY_DIR": "",
+        "EXTENSION_REGISTRY_URLS": "",
+        "EXTENSIONS_INSTALL_ROOT": "",
+        "EXTENSIONS_ISOLATION_BACKEND": "process",
+        "EXTENSION_VERSION_PIN": "",
+        "EXTENSIONS_KEEP_VERSIONS": "3",
+        "EXTENSION_STREAM_WINDOW": "16",
+        "EXTENSION_MAX_STREAM_EVENTS": "10000",
         "STAC_API_URL": "https://earth-search.aws.element84.com/v1",
         # Spatial Lakehouse V6（ADR-0118）：对象存储后端选择（默认 filesystem
         # = 行为零变化）。s3 凭据钉空串 —— 测试进程绝不持有真实 secret。

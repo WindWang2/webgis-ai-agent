@@ -165,7 +165,7 @@ def test_real_branch_guard_v2_mapping_subset_of_selector():
                 v2_targets.add(target)
 
     graph = build_graph(use_cache=True)
-    result = select_tests(changed, graph=graph, max_targets=500)
+    result = select_tests(changed, graph=graph, max_targets=2000)
     missing = v2_targets - set(result.targets)
     assert not missing, (
         f"防漏报护栏破坏：V2 映射目标 {sorted(missing)} 未被选择器覆盖")

@@ -23,6 +23,7 @@ from typing import Dict, List
 
 # 模块默认归类（混合职责模块用 _NAME_OVERRIDES 细分）
 _MODULE_DEFAULTS: Dict[str, str] = {
+    "app.services.gis_harness.knowledge_tools": "inspection",
     "app.services.gis_harness.tools": "planning",      # 名字覆盖细分
     "app.tools.advanced_spatial": "analysis",           # 名字覆盖细分
     "app.tools.annotation": "map_mutation",             # 量测是检视，名字覆盖
@@ -46,6 +47,7 @@ _MODULE_DEFAULTS: Dict[str, str] = {
     "app.tools.local_stats": "data_access",
     "app.tools.map_view": "map_mutation",
     "app.tools.meta_tools": "debug_internal",
+    "app.tools.modelops_tools": "analysis",
     "app.tools.monitoring_report": "export",
     "app.tools.nature_resources": "analysis",
     "app.tools.network_tools": "analysis",
@@ -126,6 +128,14 @@ _NAME_OVERRIDES: Dict[str, str] = {
     # workspace_tools：盘点/列表是检视；save/restore 走模块默认 data_access
     "describe_workspace": "inspection",
     "list_workspace_snapshots": "inspection",
+    # modelops_tools：模型检视/资源/出处/对比是检视；cancel 是运行控制状态突变
+    "modelops_list_models": "inspection",
+    "modelops_inspect_model": "inspection",
+    "modelops_check_compatibility": "inspection",
+    "modelops_estimate_resources": "inspection",
+    "modelops_compare_results": "inspection",
+    "modelops_inspect_provenance": "inspection",
+    "modelops_cancel_inference": "map_mutation",
 }
 
 #: 分类有限集合（审计与披露依赖）

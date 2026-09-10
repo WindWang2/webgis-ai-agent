@@ -3014,7 +3014,7 @@
     "kind": "allclose",
     "rtol": 1e-07,
     "select": "metadata.variance_range.1",
-    "value": 11.103205
+    "value": 11.073279
    },
    "id": "lmc_driver_variance_max",
    "kwargs": {

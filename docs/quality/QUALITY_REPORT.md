@@ -11,7 +11,6 @@
 
 | finding code | count |
 |---|---|
-| TOOL_DESCRIPTOR_INCOMPLETE | 16 |
 
 ## Contract Drift
 

@@ -26,6 +26,7 @@ from app.api.routes.chat import ChatRequest, MapStatePushRequest
 from app.services.session_data_redis import RedisSessionStore
 
 _main_thread = threading.get_ident()
+_real_dumps = json.dumps
 
 
 def _make_store() -> RedisSessionStore:
@@ -42,10 +43,12 @@ def _slow_dumps(observed: dict):
     enough that the test can observe the loop staying responsive while a
     worker thread does the work."""
 
-    def _dumps(*a, **kw):
-        observed["thread"] = threading.get_ident()
-        time.sleep(0.7)
-        return "{}"
+    def _dumps(obj, *a, **kw):
+        if "thread" not in observed:
+            observed["thread"] = threading.get_ident()
+            time.sleep(0.7)
+            return "{}"
+        return _real_dumps(obj, *a, **kw)
 
     return _dumps
 

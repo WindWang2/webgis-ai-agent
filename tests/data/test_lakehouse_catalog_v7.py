@@ -137,13 +137,13 @@ def test_search_filters_and_pagination(db_tables):
             search_catalog(db, owner_type="session", owner_id="")
 
 
-def test_revoke_and_reconcile(tmp_path, db_tables):
+def test_revoke_and_reconcile(tmp_path, db_tables, monkeypatch):
     from app.core.config import settings
     from app.services.durable_blob_store import reset_filesystem_blob_store
 
     monkey_dir = tmp_path / "catdata"
     monkey_dir.mkdir(parents=True, exist_ok=True)
-    settings.DATA_DIR = str(monkey_dir)  # blob 根随之（conftest 重置缓存）
+    monkeypatch.setattr(settings, "DATA_DIR", str(monkey_dir))  # blob 根随之（conftest 重置缓存）
     reset_filesystem_blob_store()
     from app.services.lakehouse.data_object import (
         normalize_owner_scope,

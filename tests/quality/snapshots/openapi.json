@@ -405,6 +405,18 @@
    "CartographicRuntimeObservationRequest": {
     "description": "Bounded actual MapLibre evidence for one MapSpec generation.",
     "properties": {
+     "canvas": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Canvas"
+     },
      "charts": {
       "anyOf": [
        {
@@ -521,6 +533,63 @@
     "title": "CartographicRuntimeObservationRequest",
     "type": "object"
    },
+   "ChangeIn": {
+    "properties": {
+     "detail": {
+      "default": "",
+      "maxLength": 200,
+      "title": "Detail",
+      "type": "string"
+     },
+     "dimension": {
+      "maxLength": 24,
+      "minLength": 1,
+      "title": "Dimension",
+      "type": "string"
+     },
+     "target": {
+      "default": "",
+      "maxLength": 64,
+      "title": "Target",
+      "type": "string"
+     },
+     "target_kind": {
+      "maxLength": 24,
+      "minLength": 1,
+      "title": "Target Kind",
+      "type": "string"
+     }
+    },
+    "required": [
+     "dimension",
+     "target_kind"
+    ],
+    "title": "ChangeIn",
+    "type": "object"
+   },
+   "ChangesRequest": {
+    "properties": {
+     "changes": {
+      "items": {
+       "$ref": "#/components/schemas/ChangeIn"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Changes",
+      "type": "array"
+     },
+     "dry_run": {
+      "default": false,
+      "title": "Dry Run",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "changes"
+    ],
+    "title": "ChangesRequest",
+    "type": "object"
+   },
    "ChatRequest": {
     "description": "聊天请求",
     "properties": {
@@ -615,6 +684,18 @@
     "title": "ChatResponse",
     "type": "object"
    },
+   "ClusterRunResetRequest": {
+    "properties": {
+     "reason": {
+      "default": "admin reset",
+      "maxLength": 200,
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "title": "ClusterRunResetRequest",
+    "type": "object"
+   },
    "ClusterSubmitRequest": {
     "description": "cluster submit 专属字段（不进入同步 /plans/execute 契约 —— round1 m4：\n共享模型会让同步端点静默接受并忽略 submit 语义的字段）。",
     "properties": {
@@ -636,6 +717,18 @@
        }
       ],
       "title": "Project Id"
+     },
+     "resource": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Resource"
      },
      "session_id": {
       "anyOf": [
@@ -1381,6 +1474,49 @@
     "title": "ExploreStatusResponse",
     "type": "object"
    },
+   "GCExecuteRequest": {
+    "properties": {
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "plan",
+     "session_id"
+    ],
+    "title": "GCExecuteRequest",
+    "type": "object"
+   },
+   "GCPlanRequest": {
+    "properties": {
+     "grace_hours": {
+      "default": 72.0,
+      "maximum": 720.0,
+      "minimum": 0.0,
+      "title": "Grace Hours",
+      "type": "number"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "GCPlanRequest",
+    "type": "object"
+   },
    "GenerateReportRequest": {
     "properties": {
      "format": {
@@ -1470,6 +1606,39 @@
      "expected_revision"
     ],
     "title": "InitProjectBody",
+    "type": "object"
+   },
+   "InstantiateRequest": {
+    "properties": {
+     "package_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Package Id",
+      "type": "string"
+     },
+     "project_id": {
+      "default": "",
+      "maxLength": 255,
+      "title": "Project Id",
+      "type": "string"
+     },
+     "session_id": {
+      "default": "",
+      "maxLength": 255,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "version": {
+      "default": "",
+      "maxLength": 16,
+      "title": "Version",
+      "type": "string"
+     }
+    },
+    "required": [
+     "package_id"
+    ],
+    "title": "InstantiateRequest",
     "type": "object"
    },
    "JobCancelResponse": {
@@ -1853,6 +2022,182 @@
      }
     },
     "title": "LLMTestRequest",
+    "type": "object"
+   },
+   "LabeledWindowRequest": {
+    "description": "labeled 选择窗口读（标签 / bbox / 索引切片至少一种）。",
+    "properties": {
+     "band": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 64,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Band"
+     },
+     "bbox": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "maxItems": 4,
+        "minItems": 4,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bbox"
+     },
+     "index_slices": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "items": {
+          "type": "integer"
+         },
+         "type": "array"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "dim -> [start, stop]（显式索引切片，优先于标签/bbox）",
+      "title": "Index Slices"
+     },
+     "max_cells": {
+      "default": 8000000,
+      "maximum": 8000000.0,
+      "minimum": 1.0,
+      "title": "Max Cells",
+      "type": "integer"
+     },
+     "polarization": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 16,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Polarization"
+     },
+     "ref": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Ref",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "time": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 64,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Time"
+     },
+     "vertical": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 64,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Vertical"
+     }
+    },
+    "required": [
+     "session_id",
+     "ref"
+    ],
+    "title": "LabeledWindowRequest",
+    "type": "object"
+   },
+   "LedgerLimitsRequest": {
+    "properties": {
+     "limit_bytes": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit Bytes"
+     },
+     "limit_rows": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit Rows"
+     },
+     "limit_units": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit Units"
+     },
+     "scope_key": {
+      "maxLength": 80,
+      "minLength": 1,
+      "pattern": "^(global|[tp]:[A-Za-z0-9_-]{1,76})$",
+      "title": "Scope Key",
+      "type": "string"
+     }
+    },
+    "required": [
+     "scope_key"
+    ],
+    "title": "LedgerLimitsRequest",
     "type": "object"
    },
    "LoginRequest": {
@@ -2514,6 +2859,54 @@
     "title": "MaterializeRequest",
     "type": "object"
    },
+   "ObjectScrubRequest": {
+    "properties": {
+     "etag_check": {
+      "default": true,
+      "title": "Etag Check",
+      "type": "boolean"
+     },
+     "mode": {
+      "default": "sample",
+      "pattern": "^(sample|full)$",
+      "title": "Mode",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Project Id"
+     },
+     "sample_k": {
+      "default": 8,
+      "maximum": 64.0,
+      "minimum": 1.0,
+      "title": "Sample K",
+      "type": "integer"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "maxLength": 128,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     }
+    },
+    "title": "ObjectScrubRequest",
+    "type": "object"
+   },
    "ObjectVerifyRequest": {
     "properties": {
      "project_id": {
@@ -2542,6 +2935,45 @@
      }
     },
     "title": "ObjectVerifyRequest",
+    "type": "object"
+   },
+   "PackageRegisterRequest": {
+    "properties": {
+     "profile": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Profile"
+     },
+     "project_id": {
+      "default": "",
+      "maxLength": 255,
+      "title": "Project Id",
+      "type": "string"
+     },
+     "query": {
+      "maxLength": 400,
+      "minLength": 1,
+      "title": "Query",
+      "type": "string"
+     },
+     "recipe_id": {
+      "default": "",
+      "maxLength": 64,
+      "title": "Recipe Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "title": "PackageRegisterRequest",
     "type": "object"
    },
    "Page_ArtifactSummary_": {
@@ -3030,6 +3462,33 @@
      "paint"
     ],
     "title": "PatchLayerStyleBody",
+    "type": "object"
+   },
+   "PatchWorkbenchDeltaBody": {
+    "description": "Workbench V6 组织态**增量**补丁（绝对值语义；引擎内管线应用+全量校验）。\n\n见 app/services/collab/delta.py：setGroups（部分字段 create/patch）/\nremoveGroupIds（级联）/ membershipSet / membershipClear / locksAdd /\nlocksRemove。mode 不在 delta 域。patch ≤64KB、各列表 ≤2000。",
+    "properties": {
+     "delta": {
+      "additionalProperties": true,
+      "title": "Delta",
+      "type": "object"
+     },
+     "expected_revision": {
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+     },
+     "intent": {
+      "const": "patch_workbench_delta",
+      "title": "Intent",
+      "type": "string"
+     }
+    },
+    "required": [
+     "intent",
+     "expected_revision",
+     "delta"
+    ],
+    "title": "PatchWorkbenchDeltaBody",
     "type": "object"
    },
    "PiToolRequest": {
@@ -3671,6 +4130,103 @@
     "title": "QuerySpec",
     "type": "object"
    },
+   "RSCubeBuildRequest": {
+    "properties": {
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "sources": {
+      "items": {
+       "$ref": "#/components/schemas/RSCubeSource"
+      },
+      "maxItems": 512,
+      "minItems": 1,
+      "title": "Sources",
+      "type": "array"
+     },
+     "title": {
+      "default": "rs cube",
+      "maxLength": 256,
+      "title": "Title",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "sources"
+    ],
+    "title": "RSCubeBuildRequest",
+    "type": "object"
+   },
+   "RSCubeSource": {
+    "properties": {
+     "band": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Band"
+     },
+     "band_index": {
+      "anyOf": [
+       {
+        "maximum": 1024.0,
+        "minimum": 1.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Band Index"
+     },
+     "polarization": {
+      "anyOf": [
+       {
+        "maxLength": 16,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Polarization"
+     },
+     "role": {
+      "maxLength": 32,
+      "minLength": 1,
+      "title": "Role",
+      "type": "string"
+     },
+     "source": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "title": "Source",
+      "type": "string"
+     },
+     "time": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Time",
+      "type": "string"
+     }
+    },
+    "required": [
+     "time",
+     "source",
+     "role"
+    ],
+    "title": "RSCubeSource",
+    "type": "object"
+   },
    "RagTestRequest": {
     "description": "知识库连通性测试参数（#390）。当前后端使用内置本地向量库，\naddress/collection 仅作展示用途，不影响后端行为。",
     "properties": {
@@ -3907,6 +4463,31 @@
     "title": "ReorderLayersBody",
     "type": "object"
    },
+   "RevokeRequest": {
+    "properties": {
+     "object_ids": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 200,
+      "minItems": 1,
+      "title": "Object Ids",
+      "type": "array"
+     },
+     "project_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Project Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "project_id",
+     "object_ids"
+    ],
+    "title": "RevokeRequest",
+    "type": "object"
+   },
    "RunComparisonResponse": {
     "properties": {
      "dataset_versions_changed": {
@@ -3980,6 +4561,19 @@
      }
     },
     "title": "RunReplayRequest",
+    "type": "object"
+   },
+   "RunRequest": {
+    "properties": {
+     "deadline_s": {
+      "default": 60.0,
+      "exclusiveMinimum": 0.0,
+      "maximum": 300.0,
+      "title": "Deadline S",
+      "type": "number"
+     }
+    },
+    "title": "RunRequest",
     "type": "object"
    },
    "RunResumeRequest": {
@@ -4282,8 +4876,20 @@
     "type": "object"
    },
    "SetWorkbenchStateBody": {
-    "description": "Workbench V5 组织态持久化（分组树/成员/锁/模式；引擎内结构+64KB 校验）。",
+    "description": "Workbench V5 组织态持久化（分组树/成员/锁/模式；引擎内结构+256KB 校验）。\n\nV6：base_workbench_revision —— workbench 级 CAS（引擎比对存储 doc 的\n`_rev` 盖章）；提供且不一致 → 409 superseded（回灌当前 doc）。缺省 =\nV5 语义。",
     "properties": {
+     "base_workbench_revision": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Base Workbench Revision"
+     },
      "doc": {
       "additionalProperties": true,
       "title": "Doc",
@@ -4774,6 +5380,32 @@
      "type"
     ],
     "title": "ValidationError",
+    "type": "object"
+   },
+   "VectorPdfRequest": {
+    "description": "V6（ADR-0120 W8）：publication 矢量 PDF 请求体。",
+    "properties": {
+     "mapspec": {
+      "additionalProperties": true,
+      "title": "Mapspec",
+      "type": "object"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     }
+    },
+    "required": [
+     "mapspec"
+    ],
+    "title": "VectorPdfRequest",
     "type": "object"
    },
    "VectorScanRequest": {
@@ -5745,6 +6377,68 @@
     ],
     "title": "WorkspaceSnapshotSummary",
     "type": "object"
+   },
+   "app__api__routes__workflow_runtime__PublishRequest": {
+    "properties": {
+     "version": {
+      "maxLength": 16,
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+     }
+    },
+    "required": [
+     "version"
+    ],
+    "title": "PublishRequest",
+    "type": "object"
+   },
+   "app__schemas__lakehouse_schema__PublishRequest": {
+    "properties": {
+     "object_ids": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 200,
+      "minItems": 1,
+      "title": "Object Ids",
+      "type": "array"
+     },
+     "project_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Project Id",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "tags": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 32,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tags"
+     }
+    },
+    "required": [
+     "session_id",
+     "project_id",
+     "object_ids"
+    ],
+    "title": "PublishRequest",
+    "type": "object"
    }
   },
   "securitySchemes": {
@@ -6630,6 +7324,7 @@
           "patch_component": "#/components/schemas/PatchComponentBody",
           "patch_layer_presentation": "#/components/schemas/PatchLayerPresentationBody",
           "patch_layer_style": "#/components/schemas/PatchLayerStyleBody",
+          "patch_workbench_delta": "#/components/schemas/PatchWorkbenchDeltaBody",
           "patch_workbench_state": "#/components/schemas/SetWorkbenchStateBody",
           "rebind_component": "#/components/schemas/RebindComponentBody",
           "remove_component": "#/components/schemas/RemoveComponentBody",
@@ -6680,6 +7375,9 @@
          },
          {
           "$ref": "#/components/schemas/SetWorkbenchStateBody"
+         },
+         {
+          "$ref": "#/components/schemas/PatchWorkbenchDeltaBody"
          }
         ],
         "title": "Req"
@@ -6859,9 +7557,155 @@
     ]
    }
   },
+  "/api/v1/chat/sessions/{session_id}/workbench/artifact-status": {
+   "get": {
+    "description": "工作台 artifact/workflow 感知投影（V6 Must-have H；派生投影，零新真相）。\n\nSEC-KG-01：经 collab service 缝（artifact_status）只读投影 —— 路由不直调\n产物注册表。字段与有界性见 ``collab/artifact_status.py``。",
+    "operationId": "get_workbench_artifact_status_api_v1_chat_sessions__session_id__workbench_artifact_status_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Workbench Artifact Status Api V1 Chat Sessions  Session Id  Workbench Artifact Status Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Workbench Artifact Status",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
+  "/api/v1/chat/sessions/{session_id}/workbench/state": {
+   "get": {
+    "description": "Workbench 组织态权威读（V6 协作对账通道）。\n\n与 map-state GET 的区别：**新鲜读** —— 先失效进程内 L1（2s 陈旧窗口）\n再读，重连/对账路径不得回灌陈旧基线（R1-M2）；meta=1 只返回 revision\n（定向单字段读，不物化 1MiB 级 mapspec）。doc 含服务端 `_rev` 盖章\n（workbench 级 CAS 锚点）。",
+    "operationId": "get_workbench_state_api_v1_chat_sessions__session_id__workbench_state_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "仅返回 revision（轻量对账探测）",
+      "in": "query",
+      "name": "meta",
+      "required": false,
+      "schema": {
+       "default": false,
+       "description": "仅返回 revision（轻量对账探测）",
+       "title": "Meta",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Workbench State Api V1 Chat Sessions  Session Id  Workbench State Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Workbench State",
+    "tags": [
+     "AI对话",
+     "对话"
+    ]
+   }
+  },
   "/api/v1/chat/sessions/{session_id}/workflow-resume-anchor": {
    "post": {
-    "description": "把当前 session 的可恢复事实存为项目级锚点（DB 持久）。",
+    "description": "把当前 session 的可恢复事实存为项目级锚点（DB 持久）。\n\nreview R2 Q9（既定语义，不改行为）：匿名可建锚（user_id=None 落库，\n建锚只记录指针不授权读）—— 但匿名不可恢复（恢复端走 get_current_user\n强鉴权 + 服务层 user_id 一致比对，None 一律 PermissionError）。",
     "operationId": "create_workflow_resume_anchor_api_v1_chat_sessions__session_id__workflow_resume_anchor_post",
     "parameters": [
      {
@@ -8728,6 +9572,52 @@
     ]
    }
   },
+  "/api/v1/export/vector-pdf": {
+   "post": {
+    "description": "MapSpec → 真矢量 PDF（publication 链：可选文本 + 出版整饰 + spec 级帧）。\n\n- 引擎不可用（weasyprint 缺席）→ 503 + vector_pdf_unavailable 结构化\n  错误（前端回退既有栅格导出并披露，不静默伪矢量）。\n- 渲染槽位占用（WeasyPrint 进程级串行，R1-M6）→ 429 vector_pdf_busy。\n- forward version / 非对象 spec → 400 mapspec_forward_version /\n  mapspec_not_an_object（typed 拒绝，不静默）。\n- CPU/IO 在工作线程执行；调用方返回时效由 wait_for 保护（编译本身\n  受孪生协作式超时约束 —— 不用 wait_for 当预算，R1-C1）。",
+    "operationId": "export_map_as_vector_pdf_api_v1_export_vector_pdf_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/VectorPdfRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Export Map As Vector Pdf",
+    "tags": [
+     "地图管理",
+     "地图制图"
+    ]
+   }
+  },
   "/api/v1/extensions/marketplace/packages": {
    "get": {
     "operationId": "search_packages_api_v1_extensions_marketplace_packages_get",
@@ -8998,6 +9888,53 @@
     ]
    }
   },
+  "/api/v1/geocompute/cluster/ledger/limits": {
+   "post": {
+    "description": "V7 admin 设置账本 scope 限额（NULL = 解除该维限制；enforcing/advisory\n模式不变 —— 限额只定义「账本行的 limit_* 列」这一事实）。\n\nscope_key 词表：``global`` | ``t:<hash>`` | ``p:<hash>``（store 的\nscope 域词表；越界 typed 422）。",
+    "operationId": "cluster_set_ledger_limits_api_v1_geocompute_cluster_ledger_limits_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/LedgerLimitsRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cluster Set Ledger Limits",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V7"
+    ]
+   }
+  },
   "/api/v1/geocompute/cluster/metrics": {
    "get": {
     "description": "V6 集群快照（**require_admin**：暴露队列/账本/worker 全局视图）。\n\n有界基数：status/priority/role/profile 封闭词表；账本投影 ≤20 scope；\n取消延迟样本 ≤128（分位数暴露）。无任何 per-run/per-user 维度。",
@@ -9022,6 +9959,125 @@
      "GeoCompute / 执行平面",
      "GeoCompute / 执行平面",
      "GeoCompute / Cluster Runtime V6"
+    ]
+   }
+  },
+  "/api/v1/geocompute/cluster/runs/stuck": {
+   "get": {
+    "description": "V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run\n（admin 排障；有界 ≤50 行，无载荷）。",
+    "operationId": "cluster_stuck_runs_api_v1_geocompute_cluster_runs_stuck_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cluster Stuck Runs",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V7"
+    ]
+   }
+  },
+  "/api/v1/geocompute/cluster/runs/{run_id}/reset": {
+   "post": {
+    "description": "V7 admin 强制回队（stuck run 复位）：语义与 reclaim_expired 单行版本\n完全一致（attempt 预算内 → queued；耗尽 → failed[WORKER_LOSS]；\n同事务精确归还账本）。CAS 幂等：并发转移/非占用态 → 409。\n\nrequire_admin：这是全局控制面动作（与 metrics 同一信任域）。",
+    "operationId": "cluster_reset_run_api_v1_geocompute_cluster_runs__run_id__reset_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/ClusterRunResetRequest"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Body"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cluster Reset Run",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V7"
+    ]
+   }
+  },
+  "/api/v1/geocompute/cluster/workers": {
+   "get": {
+    "description": "V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。\n\ncapability 为 NULL 的旧 worker 诚实标注 ``capability: null``（placement\n对其退回 V6 profiles 匹配语义）。",
+    "operationId": "cluster_workers_api_v1_geocompute_cluster_workers_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cluster Workers",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V7"
     ]
    }
   },
@@ -9422,6 +10478,74 @@
     ]
    }
   },
+  "/api/v1/geocompute/runs/{run_id}/events": {
+   "get": {
+    "description": "V7 分布式执行事件（有界 observability trace；断点续读游标 after_id）。\n\nowner 域读隔离（他人/未知 run 一律 404）。**诚实边界**：events 是尽力\n而为的过程 trace，随 run 行 retention 级联删除 —— run 行被清理后本\n端点 404（终态证据 of record 在 geocompute_run_evidence，经 GET\n/runs/{id} 的快照回放仍可读，与 trace 的保留策略不同源）。",
+    "operationId": "list_run_events_api_v1_geocompute_runs__run_id__events_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "after_id",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "title": "After Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 200,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Run Events",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / Cluster Runtime V7"
+    ]
+   }
+  },
   "/api/v1/geocompute/runs/{run_id}/summary": {
    "get": {
     "description": "查询 run 摘要（强制认证 + 与 GET /runs 相同的读隔离）。",
@@ -9797,6 +10921,266 @@
     ]
    }
   },
+  "/api/v1/lakehouse/catalog": {
+   "get": {
+    "description": "域内检索（双域显式分支 —— 评审 R0-24：session 域走所有权守卫，\nproject 域走 publish 同族 owner 校验；均 fail-closed 404）。",
+    "operationId": "search_lakehouse_catalog_api_v1_lakehouse_catalog_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "owner_type",
+      "required": true,
+      "schema": {
+       "title": "Owner Type",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "owner_id",
+      "required": true,
+      "schema": {
+       "title": "Owner Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "kind",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Kind",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "time_from",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Time From",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "time_to",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Time To",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "producer",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Producer",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "include_revoked",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Include Revoked",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Search Lakehouse Catalog Api V1 Lakehouse Catalog Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Search Lakehouse Catalog",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/catalog/stac": {
+   "get": {
+    "description": "STAC 1.0.0 投影（只读；分页 links 有界）。",
+    "operationId": "lakehouse_catalog_stac_api_v1_lakehouse_catalog_stac_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "owner_type",
+      "required": true,
+      "schema": {
+       "title": "Owner Type",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "owner_id",
+      "required": true,
+      "schema": {
+       "title": "Owner Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "offset",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "title": "Offset",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Lakehouse Catalog Stac Api V1 Lakehouse Catalog Stac Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Lakehouse Catalog Stac",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
   "/api/v1/lakehouse/cubes": {
    "post": {
     "description": "时间片栅格 → 会话 cube（``ref:cube/<id>`` + durable 身份）。",
@@ -9859,6 +11243,73 @@
      }
     ],
     "summary": "Build Lakehouse Cube",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/cubes/labeled/window": {
+   "post": {
+    "description": "labeled cube 标签级窗口读（计划触达块证据随响应披露）。",
+    "operationId": "read_lakehouse_labeled_window_api_v1_lakehouse_cubes_labeled_window_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/LabeledWindowRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Read Lakehouse Labeled Window Api V1 Lakehouse Cubes Labeled Window Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Read Lakehouse Labeled Window",
     "tags": [
      "Lakehouse / 空间数据湖仓"
     ]
@@ -9931,6 +11382,73 @@
     ]
    }
   },
+  "/api/v1/lakehouse/cubes/rs": {
+   "post": {
+    "description": "光学/SAR/掩膜多源 → 对齐 labeled cube（不重采样；typed 网格闸）。",
+    "operationId": "build_rs_lakehouse_cube_api_v1_lakehouse_cubes_rs_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RSCubeBuildRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Build Rs Lakehouse Cube Api V1 Lakehouse Cubes Rs Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Build Rs Lakehouse Cube",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
   "/api/v1/lakehouse/cubes/window": {
    "post": {
     "description": "cube 窗口读（zarr chunk 粒度；至少一个有限切片，防全 cube 读取）。",
@@ -9993,6 +11511,140 @@
      }
     ],
     "summary": "Read Lakehouse Cube Window",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/gc/execute": {
+   "post": {
+    "description": "执行 GC 计划（admin 专用 —— 同 plan 的跨租户理由；R1-2）。\n\ntoken 重验；漂移 → 409 语义 typed 拒绝。",
+    "operationId": "execute_lakehouse_gc_api_v1_lakehouse_gc_execute_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/GCExecuteRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Execute Lakehouse Gc Api V1 Lakehouse Gc Execute Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Execute Lakehouse Gc",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/gc/plan": {
+   "post": {
+    "description": "GC dry-run 计划（只读；plan token + 确定性候选清单）。\n\n**admin 专用**（评审 R1-2）：GC 作用于全局对象存储与全局 DB 根，\n会话所有权不足以授权 —— 任何租户可借此删除宽限外的他人对象、\nplan 响应也会枚举全局孤儿 id（跨租户泄漏）。",
+    "operationId": "plan_lakehouse_gc_api_v1_lakehouse_gc_plan_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/GCPlanRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Plan Lakehouse Gc Api V1 Lakehouse Gc Plan Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Plan Lakehouse Gc",
     "tags": [
      "Lakehouse / 空间数据湖仓"
     ]
@@ -10084,6 +11736,158 @@
     ]
    }
   },
+  "/api/v1/lakehouse/objects/{data_object_id}/lineage": {
+   "get": {
+    "description": "DataObject 血缘祖先视图（manifest source_refs / virtual children；\n深度/节点双闸）。owner 校验同对象读取。",
+    "operationId": "get_lakehouse_object_lineage_api_v1_lakehouse_objects__data_object_id__lineage_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "data_object_id",
+      "required": true,
+      "schema": {
+       "title": "Data Object Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Lakehouse Object Lineage Api V1 Lakehouse Objects  Data Object Id  Lineage Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Lakehouse Object Lineage",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/objects/{data_object_id}/scrub": {
+   "post": {
+    "description": "DR scrub（采样/全量 digest 校验 + ETag 记录值比对）。",
+    "operationId": "scrub_lakehouse_object_api_v1_lakehouse_objects__data_object_id__scrub_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "data_object_id",
+      "required": true,
+      "schema": {
+       "title": "Data Object Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ObjectScrubRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Scrub Lakehouse Object Api V1 Lakehouse Objects  Data Object Id  Scrub Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Scrub Lakehouse Object",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
   "/api/v1/lakehouse/objects/{data_object_id}/verify": {
    "post": {
     "description": "DR 完整性校验（manifest + 全部 content blob 的 digest 校验）。",
@@ -10155,6 +11959,215 @@
      }
     ],
     "summary": "Verify Lakehouse Object",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/projects/{project_id}/objects/{object_id}": {
+   "get": {
+    "description": "项目域 DataObject 解析（R1-8/R0-9）：catalog ``status=active`` 行\n授权读取 session 出身的 manifest；无授权行 → 404（不泄漏存在性）。\nproject owner 校验与 publish 同族。",
+    "operationId": "get_project_lakehouse_object_api_v1_lakehouse_projects__project_id__objects__object_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+       "title": "Project Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "object_id",
+      "required": true,
+      "schema": {
+       "title": "Object Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Project Lakehouse Object Api V1 Lakehouse Projects  Project Id  Objects  Object Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Project Lakehouse Object",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/publish": {
+   "post": {
+    "description": "session → project 零字节发布（owner 链校验；幂等）。",
+    "operationId": "publish_lakehouse_objects_api_v1_lakehouse_publish_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__schemas__lakehouse_schema__PublishRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Publish Lakehouse Objects Api V1 Lakehouse Publish Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Publish Lakehouse Objects",
+    "tags": [
+     "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/revoke": {
+   "post": {
+    "description": "撤销项目内发布（tombstone；既有引用仍可解析）。",
+    "operationId": "revoke_lakehouse_objects_api_v1_lakehouse_revoke_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RevokeRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Revoke Lakehouse Objects Api V1 Lakehouse Revoke Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Revoke Lakehouse Objects",
     "tags": [
      "Lakehouse / 空间数据湖仓"
     ]
@@ -15423,6 +17436,22 @@
        "title": "Task Id",
        "type": "string"
       }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
      }
     ],
     "responses": {
@@ -15469,6 +17498,22 @@
       "schema": {
        "title": "Task Id",
        "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
       }
      }
     ],
@@ -16126,6 +18171,497 @@
     "summary": "Get Upload Geojson",
     "tags": [
      "数据上传"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/instances": {
+   "get": {
+    "operationId": "list_instances_api_v1_workflow_runtime_instances_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Instances",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   },
+   "post": {
+    "operationId": "create_instance_api_v1_workflow_runtime_instances_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/InstantiateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Instance",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/instances/{instance_id}": {
+   "get": {
+    "operationId": "get_instance_api_v1_workflow_runtime_instances__instance_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "instance_id",
+      "required": true,
+      "schema": {
+       "title": "Instance Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Instance",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/instances/{instance_id}/cancel": {
+   "post": {
+    "operationId": "cancel_instance_api_v1_workflow_runtime_instances__instance_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "instance_id",
+      "required": true,
+      "schema": {
+       "title": "Instance Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel Instance",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/instances/{instance_id}/changes": {
+   "post": {
+    "operationId": "apply_changes_api_v1_workflow_runtime_instances__instance_id__changes_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "instance_id",
+      "required": true,
+      "schema": {
+       "title": "Instance Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ChangesRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Apply Changes",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/instances/{instance_id}/recompute-plan": {
+   "get": {
+    "description": "GET 变体（无变更输入）—— 返回当前实例的复用/stale 全景。",
+    "operationId": "dry_run_plan_api_v1_workflow_runtime_instances__instance_id__recompute_plan_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "instance_id",
+      "required": true,
+      "schema": {
+       "title": "Instance Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Dry Run Plan",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/instances/{instance_id}/run": {
+   "post": {
+    "operationId": "run_instance_api_v1_workflow_runtime_instances__instance_id__run_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "instance_id",
+      "required": true,
+      "schema": {
+       "title": "Instance Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RunRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Run Instance",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/packages": {
+   "get": {
+    "operationId": "list_packages_api_v1_workflow_runtime_packages_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Packages",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/packages/register": {
+   "post": {
+    "operationId": "register_package_api_v1_workflow_runtime_packages_register_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PackageRegisterRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Register Package",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/packages/{package_id}/publish": {
+   "post": {
+    "operationId": "publish_package_api_v1_workflow_runtime_packages__package_id__publish_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "package_id",
+      "required": true,
+      "schema": {
+       "title": "Package Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/app__api__routes__workflow_runtime__PublishRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Publish Package",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/packages/{package_id}/versions": {
+   "get": {
+    "operationId": "package_versions_api_v1_workflow_runtime_packages__package_id__versions_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "package_id",
+      "required": true,
+      "schema": {
+       "title": "Package Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Package Versions",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
     ]
    }
   },

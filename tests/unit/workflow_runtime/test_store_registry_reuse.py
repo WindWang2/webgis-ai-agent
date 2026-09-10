@@ -344,14 +344,14 @@ def test_migration_single_head():
         m = _re.search(
             r"^revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)['\"]", text, _re.M)
         d = _re.search(
-            r"^down_revision(?::[^=]*)?\s*=\s*"
-            r"(?:Union\[[^\]]*,\s*)?['\"]([^'\"]+)['\"]", text, _re.M)
+            r"^down_revision(?::[^=]*)?\s*=\s*(.+)$", text, _re.M)
         if m:
             revs[m.group(1)] = f.name
         if d:
-            downs.add(d.group(1))
+            for down in _re.findall(r"['\"]([^'\"]+)['\"]", d.group(1)):
+                downs.add(down)
     heads = [r for r in revs if r not in downs]
-    assert heads == ["0034_workflow_v5_runtime"], heads
+    assert len(heads) == 1, heads
 
 
 @pytest.fixture

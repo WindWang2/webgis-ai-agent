@@ -635,15 +635,14 @@ class ReportService:
 
         try:
             render_pdf_exclusive(
-                lambda: weasyprint.HTML(string=html_content).write_pdf(output_path)
+                lambda: weasyprint.HTML(string=html_content, url_fetcher=safe_url_fetcher).write_pdf(output_path)
             )
         except PublicationBusyError:
             # 报告链是排队型业务：忙时阻塞等待而非拒绝（与导出端点 429 语义区分）
             from app.services.publication_export import _WEASYPRINT_LOCK
 
             with _WEASYPRINT_LOCK:
-                weasyprint.HTML(string=html_content).write_pdf(output_path)
-        weasyprint.HTML(string=html_content, url_fetcher=safe_url_fetcher).write_pdf(output_path)
+                weasyprint.HTML(string=html_content, url_fetcher=safe_url_fetcher).write_pdf(output_path)
 
     # ------------------------------------------------------------------
     # Helpers

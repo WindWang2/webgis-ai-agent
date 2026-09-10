@@ -90,9 +90,9 @@ describe('@behavior:mapspec-reconcile z-order and data mutations are patch-minim
       { s1: geojsonSource() },
     );
     const patch = diffSpecs(mk(['a', 'b']), mk(['b', 'a']));
-    // 每个存活层都因 z 序变化需要 update（顺序敏感的确定性应用）
+    // 每个存活层都因 z 序变化需要 update/recompile（顺序敏感的确定性应用）
     expect(patch.sources).toHaveLength(0);
-    expect(patch.layers.every((l) => l.kind === 'update')).toBe(true);
+    expect(patch.layers.every((l) => l.kind === 'recompile')).toBe(true);
   });
 
   it('data mutation (source feature change) emits source update with next payload', () => {

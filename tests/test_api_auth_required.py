@@ -48,6 +48,8 @@ BODY_OWNERSHIP_CHECKS = frozenset(
         "get_project_with_auth",
         "authorize_session_write",
         "_durable_or_404",  # jobs.py: owner-scoped fetch, 404 if not owned
+        "_verify_task_owner",  # task.py: owner-scoped fetch, 404/403 if not owned
+        "revoke_project_objects",  # lakehouse.py: project owner-scoped revoke
     }
 )
 

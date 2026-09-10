@@ -7295,179 +7295,27 @@
   "algorithms": 213,
   "artifact_types": 21,
   "capabilities": 139,
-  "findings": 16,
+  "findings": 0,
   "recipes": 164,
   "tools": 315
  },
- "findings": [
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "gis_component_query",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "gis_method_explain",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "gis_method_qualify",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "gis_method_rank",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "gis_task_classify",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "gis_template_plan",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "modelops_cancel_inference",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "modelops_check_compatibility",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "modelops_compare_results",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "modelops_estimate_resources",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "modelops_evaluate_model",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "modelops_inspect_model",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "modelops_inspect_provenance",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "modelops_list_models",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "modelops_run_inference",
-   "surface": "tools"
-  },
-  {
-   "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-   "detail": "missing descriptor fields: side_effect,tags,capabilities",
-   "domain": "tools",
-   "severity": "low",
-   "subject": "modelops_run_promptable",
-   "surface": "tools"
-  }
- ],
+ "findings": [],
  "findings_ratchet": {
   "behavioral_dispatch": 157,
   "expired_waivers": [],
   "min_behavioral_dispatch": 151,
-  "pass": false,
-  "violations": [
-   {
-    "baseline": 0,
-    "code": "TOOL_DESCRIPTOR_INCOMPLETE",
-    "current": 16
-   }
-  ],
+  "pass": true,
+  "violations": [],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "915a5dd8615d9bcca1d8a8403473431b68e6e09010071e1f7f8f4b6f12a063fd",
+ "fingerprint": "55c979b30129812610a9a2622e08a5ad6513676d15bf1c1740bb8e3015558d7d",
  "gate": {
   "fields": {
    "capabilities": {
-    "coverage": 95,
-    "missing": [
-     "gis_component_query",
-     "gis_method_explain",
-     "gis_method_qualify",
-     "gis_method_rank",
-     "gis_task_classify",
-     "gis_template_plan",
-     "modelops_cancel_inference",
-     "modelops_check_compatibility",
-     "modelops_compare_results",
-     "modelops_estimate_resources",
-     "modelops_evaluate_model",
-     "modelops_inspect_model",
-     "modelops_inspect_provenance",
-     "modelops_list_models",
-     "modelops_run_inference",
-     "modelops_run_promptable"
-    ],
-    "missing_count": 16,
+    "coverage": 100,
+    "missing": [],
+    "missing_count": 0,
     "pass": true,
     "threshold": 95
    },
@@ -7486,38 +7334,16 @@
     "threshold": 95
    },
    "side_effect": {
-    "coverage": 97,
-    "missing": [
-     "modelops_cancel_inference",
-     "modelops_check_compatibility",
-     "modelops_compare_results",
-     "modelops_estimate_resources",
-     "modelops_evaluate_model",
-     "modelops_inspect_model",
-     "modelops_inspect_provenance",
-     "modelops_list_models",
-     "modelops_run_inference",
-     "modelops_run_promptable"
-    ],
-    "missing_count": 10,
+    "coverage": 100,
+    "missing": [],
+    "missing_count": 0,
     "pass": true,
     "threshold": 95
    },
    "tags": {
-    "coverage": 97,
-    "missing": [
-     "modelops_cancel_inference",
-     "modelops_check_compatibility",
-     "modelops_compare_results",
-     "modelops_estimate_resources",
-     "modelops_evaluate_model",
-     "modelops_inspect_model",
-     "modelops_inspect_provenance",
-     "modelops_list_models",
-     "modelops_run_inference",
-     "modelops_run_promptable"
-    ],
-    "missing_count": 10,
+    "coverage": 100,
+    "missing": [],
+    "missing_count": 0,
     "pass": true,
     "threshold": 95
    }
@@ -10300,12 +10126,11 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "gis_component_query",
@@ -10322,16 +10147,15 @@
    "tests": [
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "gis_method_explain",
@@ -10348,16 +10172,15 @@
    "tests": [
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "gis_method_qualify",
@@ -10375,16 +10198,15 @@
    "tests": [
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "gis_method_rank",
@@ -10402,16 +10224,15 @@
    "tests": [
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "plan_workflow_orchestration"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "gis_task_classify",
@@ -10429,16 +10250,15 @@
    "tests": [
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "thematic_cartography"
+   ],
    "deterministic": true,
    "execution_policy": "thread",
-   "flags": [
-    "descriptor_incomplete"
-   ],
    "latency_class": "fast",
    "memory_class": "light",
    "name": "gis_template_plan",
@@ -10456,7 +10276,7 @@
    "tests": [
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
@@ -11775,213 +11595,233 @@
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "image_segmentation"
+   ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
-   "latency_class": "unknown",
-   "memory_class": "unknown",
+   "latency_class": "fast",
+   "memory_class": "light",
    "name": "modelops_cancel_inference",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "state_mutation",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "modelops",
+    "geoai"
+   ],
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "image_segmentation"
+   ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
-   "latency_class": "unknown",
-   "memory_class": "unknown",
+   "latency_class": "fast",
+   "memory_class": "light",
    "name": "modelops_check_compatibility",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "modelops",
+    "geoai"
+   ],
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "image_segmentation"
+   ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
-   "latency_class": "unknown",
-   "memory_class": "unknown",
+   "latency_class": "fast",
+   "memory_class": "light",
    "name": "modelops_compare_results",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "modelops",
+    "geoai"
+   ],
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "image_segmentation"
+   ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
-   "latency_class": "unknown",
-   "memory_class": "unknown",
+   "latency_class": "fast",
+   "memory_class": "light",
    "name": "modelops_estimate_resources",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "modelops",
+    "geoai"
+   ],
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "image_segmentation"
+   ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
-   "latency_class": "unknown",
-   "memory_class": "unknown",
+   "latency_class": "medium",
+   "memory_class": "medium",
    "name": "modelops_evaluate_model",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "modelops",
+    "geoai"
+   ],
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "image_segmentation"
+   ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
-   "latency_class": "unknown",
-   "memory_class": "unknown",
+   "latency_class": "fast",
+   "memory_class": "light",
    "name": "modelops_inspect_model",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "modelops",
+    "geoai"
+   ],
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "image_segmentation"
+   ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
-   "latency_class": "unknown",
-   "memory_class": "unknown",
+   "latency_class": "fast",
+   "memory_class": "light",
    "name": "modelops_inspect_provenance",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "modelops",
+    "geoai"
+   ],
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "image_segmentation"
+   ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
-   "latency_class": "unknown",
-   "memory_class": "unknown",
+   "latency_class": "fast",
+   "memory_class": "light",
    "name": "modelops_list_models",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "pure",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "modelops",
+    "geoai"
+   ],
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "image_segmentation"
+   ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
-   "latency_class": "unknown",
-   "memory_class": "unknown",
+   "latency_class": "slow",
+   "memory_class": "heavy",
    "name": "modelops_run_inference",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "artifact_creation",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "modelops",
+    "geoai"
+   ],
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "mention",
-   "capabilities": [],
+   "capabilities": [
+    "image_segmentation"
+   ],
    "deterministic": null,
    "execution_policy": "async",
-   "flags": [
-    "descriptor_incomplete"
-   ],
-   "latency_class": "unknown",
-   "memory_class": "unknown",
+   "latency_class": "slow",
+   "memory_class": "heavy",
    "name": "modelops_run_promptable",
    "requires_confirmation": false,
    "scale_class": "unknown",
-   "side_effect": "unclassified",
+   "side_effect": "artifact_creation",
    "status": "stable",
-   "tags": [],
+   "tags": [
+    "modelops",
+    "geoai"
+   ],
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 1
+   "tier": 2
   },
   {
    "behavior": "dispatch",

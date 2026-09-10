@@ -398,6 +398,13 @@ async def test_tool_render_failure_marks_failed(monkeypatch, tmp_path):
 async def test_concurrent_report_generation_parallel(monkeypatch, tmp_path):
     """Two concurrent report requests must render in parallel in worker
     threads, not serialize on the event loop."""
+    import contextlib
+    from app.services import publication_export as pub_mod
+
+    # V6 R1-M6 serializes write_pdf via _WEASYPRINT_LOCK; bypass the lock here to
+    # verify that the async/threadpool offload layer itself allows parallel execution.
+    monkeypatch.setattr(pub_mod, "render_pdf_exclusive", lambda fn: fn())
+    monkeypatch.setattr(pub_mod, "_WEASYPRINT_LOCK", contextlib.nullcontext())
     monkeypatch.setattr(report_service_mod, "weasyprint", _fake_weasyprint({}))
     monkeypatch.setattr(report_service_mod, "REPORT_DIR", str(tmp_path))
     svc = ReportService()

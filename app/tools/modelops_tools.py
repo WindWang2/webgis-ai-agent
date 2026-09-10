@@ -23,6 +23,7 @@ MAX_SOURCE_URI_LEN = 2048
 def register_modelops_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
+        tier=2,
         name="modelops_list_models",
         description="列出当前 owner scope 可见的 GeoAI 推理模型（内置种子 + 自注册）",
         param_descriptions={
@@ -32,6 +33,11 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         },
         domains=["modelops"],
         cost="light",
+        side_effect="pure",
+        tags=("modelops", "geoai"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
     )
     async def modelops_list_models(
         task_type: Optional[str] = None,
@@ -51,6 +57,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
+        tier=2,
         name="modelops_inspect_model",
         description="检视一个 GeoAI 模型的完整描述符（能力/空间要求/资源/包校验报告）",
         param_descriptions={
@@ -61,6 +68,11 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         },
         domains=["modelops"],
         cost="light",
+        side_effect="pure",
+        tags=("modelops", "geoai"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
     )
     async def modelops_inspect_model(
         model_id: str,
@@ -80,6 +92,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
+        tier=2,
         name="modelops_check_compatibility",
         description="检查模型与输入栅格的语义兼容性（波段/分辨率/CRS/时序），失败 typed",
         param_descriptions={
@@ -90,6 +103,11 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         },
         domains=["modelops"],
         cost="light",
+        side_effect="pure",
+        tags=("modelops", "geoai"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
     )
     async def modelops_check_compatibility(
         model_id: str,
@@ -107,6 +125,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
+        tier=2,
         name="modelops_estimate_resources",
         description="估算一次推理的资源需求（设备/批尺寸/tile 数/VRAM/host 内存）",
         param_descriptions={
@@ -117,6 +136,11 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         },
         domains=["modelops"],
         cost="light",
+        side_effect="pure",
+        tags=("modelops", "geoai"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
     )
     async def modelops_estimate_resources(
         model_id: str,
@@ -134,6 +158,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
+        tier=2,
         name="modelops_run_inference",
         description="运行 GeoAI 推理（分割/检测/实例/嵌入/分类/时序），产物可渲染并带完整 provenance",
         param_descriptions={
@@ -147,6 +172,11 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         domains=["modelops"],
         cost="heavy",
         timeout=900.0,
+        side_effect="artifact_creation",
+        tags=("modelops", "geoai"),
+        latency_class="slow",
+        memory_class="heavy",
+        capabilities=["image_segmentation"],
     )
     async def modelops_run_inference(
         model_id: str,
@@ -173,6 +203,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
+        tier=2,
         name="modelops_run_promptable",
         description="运行 promptable 分割（point/box prompt，像素坐标），输出目标掩膜",
         param_descriptions={
@@ -186,6 +217,11 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         domains=["modelops"],
         cost="heavy",
         timeout=600.0,
+        side_effect="artifact_creation",
+        tags=("modelops", "geoai"),
+        latency_class="slow",
+        memory_class="heavy",
+        capabilities=["image_segmentation"],
     )
     async def modelops_run_promptable(
         model_id: str,
@@ -221,6 +257,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
+        tier=2,
         name="modelops_evaluate_model",
         description="评估模型输出（IoU/F1/混淆矩阵 或 检测 P/R/AP），含空间泄漏审计",
         param_descriptions={
@@ -233,6 +270,11 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         domains=["modelops"],
         cost="heavy",
         timeout=600.0,
+        side_effect="pure",
+        tags=("modelops", "geoai"),
+        latency_class="medium",
+        memory_class="medium",
+        capabilities=["image_segmentation"],
     )
     async def modelops_evaluate_model(
         task_type: str,
@@ -261,6 +303,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
+        tier=2,
         name="modelops_compare_results",
         description="对比两次推理的 manifest（模型/参数/性能/复用身份差异）",
         param_descriptions={
@@ -269,6 +312,11 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         },
         domains=["modelops"],
         cost="light",
+        side_effect="pure",
+        tags=("modelops", "geoai"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
     )
     async def modelops_compare_results(manifest_a: dict, manifest_b: dict) -> dict:
         from app.services.modelops.service import get_modelops_service
@@ -277,6 +325,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
+        tier=2,
         name="modelops_inspect_provenance",
         description="检视推理 manifest 的出处字段（模型/预处理/tile/性能/产物，已脱敏）",
         param_descriptions={
@@ -285,6 +334,11 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         },
         domains=["modelops"],
         cost="light",
+        side_effect="pure",
+        tags=("modelops", "geoai"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
     )
     async def modelops_inspect_provenance(manifest: dict, section: Optional[str] = None) -> dict:
         from app.services.modelops.service import get_modelops_service
@@ -293,11 +347,17 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
 
     @tool(
         registry,
+        tier=2,
         name="modelops_cancel_inference",
         description="取消一次进行中的推理（取消键 = 提交返回的 run_id）",
         param_descriptions={"cancel_key": "取消键（modelops_run_inference 返回的 run_id）"},
         domains=["modelops"],
         cost="light",
+        side_effect="state_mutation",
+        tags=("modelops", "geoai"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
     )
     async def modelops_cancel_inference(cancel_key: str) -> dict:
         from app.services.modelops.service import get_modelops_service
