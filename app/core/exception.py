@@ -10,6 +10,7 @@ from typing import Any, Dict
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from app.core.config import settings
+from app.core.errors import classify_exception
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,17 @@ def format_error_response(
         "message": PRODUCTION_ERROR_MESSAGE,
         "data": None,
     }
+
+    # Platform V4（ADR-0131 D3）：additive 结构化分类字段。分类永不抛、
+    # 永不改既有字段——老客户端多收到两个字段，无破坏。
+    try:
+        _cls = classify_exception(exc)
+        response_data["category"] = _cls.category.value
+        response_data["retryable"] = _cls.retryable
+        if _cls.degraded:
+            response_data["degraded"] = _cls.degraded
+    except Exception:  # noqa: BLE001 — 分类失败不改变既有响应形状
+        logger.debug("error classification failed", exc_info=True)
     
     # 开发环境返回详细错误信息
     if include_details:
@@ -133,11 +145,16 @@ async def global_exception_handler(
     include_details = not settings.is_production()
 
     
-    # 无论哪种环境都记录完整日志便于服务端调试
+    # 无论哪种环境都记录完整日志便于服务端调试；category 供日志侧按类型
+    # 聚合（告警/回归面直接用结构化字段，不再 grep 消息文本）。
+    try:
+        _category = classify_exception(exc).category.value
+    except Exception:  # noqa: BLE001
+        _category = "unknown"
     logger.error(
-        "[{0}] [{1}] {2} - {3}: {4}".format(
+        "[{0}] [{1}] {2} - {3}: {4} category={5}".format(
             settings.ENV, request.method, request.url.path,
-            type(exc).__name__, str(exc)
+            type(exc).__name__, str(exc), _category
         ),
         exc_info=True
     )
