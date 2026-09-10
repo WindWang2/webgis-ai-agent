@@ -573,14 +573,16 @@ def to_utm_gdf_with_note(
                 utm_crs = None
 
         if utm_crs is None:
-            centroid = gdf.geometry.union_all().centroid
+            minx, miny, maxx, maxy = gdf.total_bounds
+            mid_x = (minx + maxx) / 2.0
+            mid_y = (miny + maxy) / 2.0
             # Normalize longitude to [-180, 180] so a centroid at, e.g., 200°
             # does not pick a zone on the far side of the globe.
-            lon = (centroid.x + 180.0) % 360.0 - 180.0
+            lon = (mid_x + 180.0) % 360.0 - 180.0
             if polar:
                 # UTM is undefined poleward of 84N/80S; polar stereographic
                 # (NSIDC) is the correct metric frame there.
-                utm_crs = "EPSG:3413" if centroid.y >= 0 else "EPSG:3031"
+                utm_crs = "EPSG:3413" if mid_y >= 0 else "EPSG:3031"
                 logger.warning(
                     "to_utm_gdf: data reaches |lat| %.1f (polar); UTM is "
                     "undefined there, using polar stereographic %s. Metric "
@@ -590,7 +592,7 @@ def to_utm_gdf_with_note(
             else:
                 zone_number = int((lon + 180) / 6) + 1
                 zone_number = max(1, min(60, zone_number))
-                hemisphere = 32600 if centroid.y >= 0 else 32700
+                hemisphere = 32600 if mid_y >= 0 else 32700
                 utm_crs = f"EPSG:{hemisphere + zone_number}"
 
             projected = gdf.to_crs(utm_crs)

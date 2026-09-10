@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+from app.services.data_fabric.security import DataFabricSecurity, DataFabricSecurityError
 """
 报告生成服务 - 从会话历史生成 PDF/HTML/Markdown 报告
 使用 Jinja2 模板渲染 HTML，WeasyPrint 转换为 PDF
@@ -80,6 +82,76 @@ class ReportSagaResult:
     err_code: Optional[ErrCode] = None
 
 
+
+def safe_url_fetcher(url: str, timeout: int = 10, ssl_context=None):
+    """Safe URL fetcher for WeasyPrint rejecting SSRF / LFI / private targets."""
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme == "data":
+        if weasyprint is not None and hasattr(weasyprint, "default_url_fetcher"):
+            return weasyprint.default_url_fetcher(url, timeout=timeout, ssl_context=ssl_context)
+        return {"string": b"", "mime_type": "image/svg+xml"}
+    if scheme not in ("http", "https"):
+        raise ValueError(f"Disallowed URL scheme in PDF renderer: {scheme}")
+    try:
+        DataFabricSecurity.validate_url(url, allow_private=False)
+    except DataFabricSecurityError as err:
+        raise ValueError(f"Blocked URL in PDF renderer: {err}") from err
+    if weasyprint is not None and hasattr(weasyprint, "default_url_fetcher"):
+        return weasyprint.default_url_fetcher(url, timeout=timeout, ssl_context=ssl_context)
+    return None
+
+
+def sanitize_report_svg(svg_content: Optional[str]) -> str:
+    """Sanitize SVG content for inclusion in HTML/PDF reports.
+
+    Prevents XXE (entity expansion/DTD injection), local file inclusion (file://),
+    SSRF, and script execution.
+    """
+    if not svg_content or not isinstance(svg_content, str):
+        return ""
+    s = svg_content.strip()
+    if not s:
+        return ""
+    if "<!ENTITY" in s.upper():
+        logger.warning("Rejecting SVG with <!ENTITY declaration")
+        return ""
+    if "<!DOCTYPE" in s.upper():
+        s = re.sub(r"<!DOCTYPE[^>]*(\[[^\]]*\])?>", "", s, flags=re.IGNORECASE | re.DOTALL)
+    try:
+        from defusedxml import ElementTree as DET
+        from xml.etree import ElementTree as ET
+        root = DET.fromstring(s)
+        for elem in list(root.iter()):
+            tag = elem.tag.split("}", 1)[-1] if "}" in elem.tag else elem.tag
+            if tag.lower() in ("script", "iframe", "link", "object", "embed"):
+                elem.clear()
+            for attr in list(elem.attrib.keys()):
+                local = attr.split("}", 1)[-1] if "}" in attr else attr
+                if local.lower().startswith("on"):
+                    del elem.attrib[attr]
+                if local.lower() in ("href", "src") or "href" in attr.lower():
+                    val = elem.attrib[attr].strip()
+                    val_lower = val.lower()
+                    if val_lower.startswith(("file:", "javascript:", "data:text", "data:application")):
+                        del elem.attrib[attr]
+                    elif val_lower.startswith(("http://", "https://")):
+                        try:
+                            DataFabricSecurity.validate_url(val, allow_private=False)
+                        except Exception:
+                            del elem.attrib[attr]
+        return ET.tostring(root, encoding="unicode")
+    except Exception as e:
+        logger.warning(f"Error sanitizing SVG with defusedxml: {e}, applying regex fallback")
+        cleaned = re.sub(r"<!DOCTYPE[^>]*(\[[^\]]*\])?>", "", s, flags=re.IGNORECASE | re.DOTALL)
+        cleaned = re.sub(r"<!ENTITY[^>]*>", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"(href|xlink:href)\s*=\s*['\"]\s*(file:|javascript:|data:text)[^'\"]*['\"]", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'<script[^>]*>.*?</script>', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+        cleaned = re.sub(r'<iframe[^>]*>.*?</iframe>', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+        cleaned = re.sub(r'<link[^>]*>', '', cleaned, flags=re.IGNORECASE)
+        return cleaned
+
+
 class ReportService:
     def __init__(self):
         template_path = os.path.join(os.path.dirname(__file__), "templates")
@@ -87,6 +159,7 @@ class ReportService:
             loader=jinja2.FileSystemLoader(template_path),
             autoescape=jinja2.select_autoescape(["html", "xml"]),
         )
+        self.template_env.filters["sanitize_svg"] = sanitize_report_svg
 
     async def create_and_generate(
         self,
@@ -392,6 +465,8 @@ class ReportService:
         vector_svg = None
         if mapspec:
             vector_svg = self._compile_vector_svg_for_report(mapspec)
+        if vector_svg:
+            vector_svg = sanitize_report_svg(vector_svg)
 
         return {
             "title": f"分析报告: {session_title}",
@@ -568,6 +643,7 @@ class ReportService:
 
             with _WEASYPRINT_LOCK:
                 weasyprint.HTML(string=html_content).write_pdf(output_path)
+        weasyprint.HTML(string=html_content, url_fetcher=safe_url_fetcher).write_pdf(output_path)
 
     # ------------------------------------------------------------------
     # Helpers

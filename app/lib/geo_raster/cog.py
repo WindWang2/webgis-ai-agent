@@ -179,6 +179,7 @@ def to_cog(
     src_path: str | Path,
     dst_dir: str | Path,
     *,
+    session_id: str = "",
     compress: str = "DEFLATE",
     blocksize: int = 512,
 ) -> Path:
@@ -194,6 +195,8 @@ def to_cog(
     if not src.is_file():
         raise CogWriteError(f"source raster not found: {src}")
     out_dir = Path(dst_dir)
+    if session_id and out_dir.name != session_id:
+        out_dir = out_dir / session_id
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{src.stem}.tif"
     write_cog(str(src), out, compress=compress, blocksize=blocksize)
@@ -206,7 +209,12 @@ def to_cog(
     return out
 
 
-def ensure_cog(path: str | Path, out_dir: str | Path) -> Path:
+def ensure_cog(
+    path: str | Path,
+    out_dir: str | Path,
+    *,
+    session_id: str = "",
+) -> Path:
     """Idempotent ingest utility: return the path if it is ALREADY a
     structurally valid COG, otherwise convert it via :func:`to_cog`.
 
@@ -219,4 +227,4 @@ def ensure_cog(path: str | Path, out_dir: str | Path) -> Path:
         raise CogWriteError(f"raster not found: {p}")
     if validate_cog(str(p)).get("ok"):
         return p
-    return to_cog(p, out_dir)
+    return to_cog(p, out_dir, session_id=session_id)

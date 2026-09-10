@@ -187,6 +187,14 @@ _rate_limiter: RateLimiter | None = None
 # 切换回 Redis 后端，失败则刷新回退时刻（避免每次调用都打 Redis）。
 _FALLBACK_REPROBE_S = 60.0
 _rate_limiter_fallback_at: float | None = None
+_limiter_lock: asyncio.Lock | None = None
+
+
+def _get_limiter_lock() -> asyncio.Lock:
+    global _limiter_lock
+    if _limiter_lock is None:
+        _limiter_lock = asyncio.Lock()
+    return _limiter_lock
 
 
 async def get_rate_limiter() -> RateLimiter:
@@ -201,22 +209,33 @@ async def get_rate_limiter() -> RateLimiter:
     ):
         return _rate_limiter
 
-    try:
-        import redis.asyncio as aioredis
+    async with _get_limiter_lock():
+        # Double-check inside lock to prevent socket leaks under burst
+        if _rate_limiter is not None and not isinstance(_rate_limiter, MemoryRateLimiter):
+            return _rate_limiter
+        if (
+            _rate_limiter is not None
+            and _rate_limiter_fallback_at is not None
+            and (time.monotonic() - _rate_limiter_fallback_at) < _FALLBACK_REPROBE_S
+        ):
+            return _rate_limiter
 
-        client = aioredis.from_url(
-            settings.REDIS_URL,
-            socket_connect_timeout=2,
-            socket_timeout=1,  # C-F10: bound read latency on the hot-path client
-            decode_responses=True,
-        )
-        await client.ping()
-        _rate_limiter = RedisRateLimiter(client)
-        _rate_limiter_fallback_at = None
-        logger.info("[RateLimiter] Using Redis backend")
-    except Exception as exc:
-        logger.warning(f"[RateLimiter] Redis unavailable ({exc}), falling back to in-memory")
-        _rate_limiter = MemoryRateLimiter()
-        _rate_limiter_fallback_at = time.monotonic()
+        try:
+            import redis.asyncio as aioredis
 
-    return _rate_limiter
+            client = aioredis.from_url(
+                settings.REDIS_URL,
+                socket_connect_timeout=2,
+                socket_timeout=1,  # C-F10: bound read latency on the hot-path client
+                decode_responses=True,
+            )
+            await client.ping()
+            _rate_limiter = RedisRateLimiter(client)
+            _rate_limiter_fallback_at = None
+            logger.info("[RateLimiter] Using Redis backend")
+        except Exception as exc:
+            logger.warning(f"[RateLimiter] Redis unavailable ({exc}), falling back to in-memory")
+            _rate_limiter = MemoryRateLimiter()
+            _rate_limiter_fallback_at = time.monotonic()
+
+        return _rate_limiter

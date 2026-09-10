@@ -19,6 +19,7 @@ import { useMapAction } from "@/lib/contexts/map-action-context";
 // 作为页面导出（CI `next build` 会拒绝非 Page 导出字段）。
 import { applyStoryMapState, type SessionMapState } from "@/lib/session/map-state-restore";
 import { useToastStore } from "@/components/ui/toast";
+import { MapErrorBoundary } from "@/components/map/map-error-boundary";
 import { Pause, Play, SkipBack, Share2 } from "lucide-react"
 
 /** 播放模式下逐条消息推进的间隔（ms）。 */
@@ -32,11 +33,16 @@ export default function StoryPage() {
   )
 }
 
+interface StoryMessage {
+  role: 'user' | 'assistant' | 'system' | string;
+  content: string;
+}
+
 function StoryPageInner() {
   const searchParams = useSearchParams()
   const sessionId = searchParams.get("session_id")
 
-  const [messages, setMessages] = useState<any[]>([])
+  const [messages, setMessages] = useState<StoryMessage[]>([])
   const [loading, setLoading] = useState(true)
   // #552: 之前恢复失败被 isApiError 过滤器静默吞掉 → 匿名 / 无权限分享时整页
   // 空白无任何交代。现在任何失败都进入可见错误态。
@@ -131,7 +137,7 @@ function StoryPageInner() {
     setLoading(true);
     (async () => {
       try {
-        const data = await apiFetch<{ messages?: any[] }>(`/api/v1/chat/sessions/${encodeURIComponent(sessionId)}`, {
+        const data = await apiFetch<{ messages?: StoryMessage[] }>(`/api/v1/chat/sessions/${encodeURIComponent(sessionId)}`, {
           signal: controller.signal,
           label: 'Story session error',
         });
@@ -257,11 +263,13 @@ function StoryPageInner() {
         {/* Adds Cinematic Gradient */}
         <div className="absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-surface-canvas to-transparent z-10 pointer-events-none" />
 
-        <MapPanel
-          layers={layers}
-          onRemoveLayer={removeLayer}
-          onToggleLayer={toggleLayer}
-        />
+        <MapErrorBoundary>
+          <MapPanel
+            layers={layers}
+            onRemoveLayer={removeLayer}
+            onToggleLayer={toggleLayer}
+          />
+        </MapErrorBoundary>
       </div>
     </div>
   )

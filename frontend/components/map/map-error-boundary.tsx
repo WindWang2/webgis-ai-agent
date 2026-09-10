@@ -5,6 +5,7 @@ import React, { Component, type ReactNode } from 'react';
 interface MapErrorBoundaryState {
   hasError: boolean;
   error: Error | null;
+  retryKey: number;
 }
 
 /**
@@ -21,18 +22,20 @@ interface MapErrorBoundaryState {
  * discard the user's chat history and session state.
  */
 export class MapErrorBoundary extends Component<{ children: ReactNode }, MapErrorBoundaryState> {
-  state: MapErrorBoundaryState = { hasError: false, error: null };
+  state: MapErrorBoundaryState = { hasError: false, error: null, retryKey: 0 };
 
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, error };
   }
 
   private handleRetry = () => {
-    this.setState({ hasError: false, error: null });
+    this.setState((prev) => ({ hasError: false, error: null, retryKey: prev.retryKey + 1 }));
   };
 
   render() {
-    if (!this.state.hasError) return this.props.children;
+    if (!this.state.hasError) {
+      return <React.Fragment key={this.state.retryKey}>{this.props.children}</React.Fragment>;
+    }
 
     const message = this.state.error?.message ?? 'Unknown map error';
     // MapLibre surfaces an unreachable tile/style endpoint as "Style is not done

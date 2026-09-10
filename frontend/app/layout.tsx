@@ -37,7 +37,7 @@ var v=(JSON.parse(s)||{}).state||{};
 var r=document.documentElement;
 if(v.theme==='dark'){r.classList.add('dark');r.setAttribute('data-theme','dark');}
 else{r.setAttribute('data-theme','light');}
-if(typeof v.accentColor==='string')r.style.setProperty('--agent-accent-raw',v.accentColor);
+if(typeof v.accentColor==='string'&&/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$|^rgba?\([0-9,.\s]+\)$/i.test(v.accentColor))r.style.setProperty('--agent-accent-raw',v.accentColor);
 }catch(e){}})();`
 
 export default function RootLayout({

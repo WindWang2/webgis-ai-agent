@@ -443,14 +443,21 @@ class FaissVectorStore:
             if chunk_meta.get("deleted", False):
                 continue
 
-            # Tenant filtering check
-            if not is_admin and (user_id or org_id):
-                c_user = chunk_meta.get("user_id")
-                c_org = chunk_meta.get("org_id")
-                if c_user and user_id and c_user != user_id:
-                    continue
-                if c_org and org_id and c_org != org_id:
-                    continue
+            # Tenant filtering check (fail-closed, SEC-02)
+            if not is_admin:
+                c_user = chunk_meta.get("user_id") or None
+                c_org = chunk_meta.get("org_id") or None
+                u_id = user_id or None
+                o_id = org_id or None
+
+                if not u_id and not o_id:
+                    if c_user is not None or c_org is not None:
+                        continue
+                else:
+                    if c_user is not None and c_user != u_id:
+                        continue
+                    if c_org is not None and c_org != o_id:
+                        continue
 
             chunk_meta["score"] = float(score)
             results.append(chunk_meta)
@@ -479,7 +486,7 @@ class FaissVectorStore:
                     ch["deleted"] = True
             self.save_metadata(meta)
 
-    def compact(self) -> Dict[str, Any]:
+    def compact(self, batch_size: int = 64) -> Dict[str, Any]:
         """Compact index by purging deleted chunks and rebuilding FAISS index.
 
         REVIEW-P0-PROMOTED, faiss_store durability. The previous
@@ -516,7 +523,14 @@ class FaissVectorStore:
             ]
             if rebuildable:
                 texts = [ch.get("content", ch.get("text", "")) for ch in rebuildable]
-                vectors = self.embed_texts(texts)
+                # SEC-04: Batch re-embedding to prevent unbounded memory allocation and OOM
+                effective_batch_size = max(1, batch_size)
+                batch_vectors = []
+                for start_idx in range(0, len(texts), effective_batch_size):
+                    batch = texts[start_idx : start_idx + effective_batch_size]
+                    batch_vec = self.embed_texts(batch)
+                    batch_vectors.append(batch_vec)
+                vectors = np.asarray(np.vstack(batch_vectors), dtype=np.float32)
                 new_index = faiss.IndexFlatIP(vectors.shape[1])
                 new_index.add(vectors)
 

@@ -546,13 +546,19 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         # 行数 + extent（lightweight 跳过：瓦片路径不需要）
         if not lightweight:
             try:
-                # 与 PK 探测同款参数化：标识符经 %s::regclass 绑定，不做字符串拼接
                 cur.execute(
-                    "SELECT COUNT(*) FROM %s::regclass;",
+                    "SELECT reltuples::bigint FROM pg_class WHERE oid = %s::regclass;",
                     (f'"{schema_name}"."{table_name}"',),
                 )
                 row = cur.fetchone()
-                meta.feature_count = int(row[0]) if row and row[0] is not None else None
+                if row and row[0] is not None and int(row[0]) >= 0:
+                    meta.feature_count = int(row[0])
+                else:
+                    cur.execute(
+                        f"SELECT COUNT(*) FROM {quote_ident(schema_name)}.{quote_ident(table_name)};"
+                    )
+                    cnt_row = cur.fetchone()
+                    meta.feature_count = int(cnt_row[0]) if cnt_row and cnt_row[0] is not None else 0
             except Exception:
                 conn.rollback()
                 cur = conn.cursor()

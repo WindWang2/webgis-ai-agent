@@ -9,12 +9,14 @@ from typing import Optional
 from app.api.routes.chat import get_engine
 from app.core.auth import (
     get_current_user,
+    get_current_user_optional,
     get_owner_token,
     require_owned_session,
     verify_session_owner,
 )
 from app.core.database import get_async_db
 from app.models.db_model import Conversation
+from app.services.task_tracker import TaskInfo
 from app.services.jobs import DurableJobStore
 from app.services.jobs import registry as cancellation_registry
 from app.services.task_queue import TaskQueueService
@@ -51,11 +53,16 @@ class TaskCancelResponse(BaseModel):
     cancelled: bool
 
 
-async def _verify_task_owner(db: AsyncSession, task_id: str, user_id) -> None:
+async def _verify_task_owner(
+    db: AsyncSession,
+    task_id: str,
+    user_id: Optional[str] = None,
+    owner_token: Optional[str] = None,
+) -> TaskInfo:
     """跨租户守卫：任务必须属于调用方（经 session 所有权解析）。
 
     审计 S34：task_id 之前不验主，且仅 8 hex（32 位熵）可被暴力枚举。
-    这里通过 task.session_id → Conversation.user_id 链路验证。
+    这里通过 task.session_id → Conversation.user_id / owner_token 链路验证 (SEC-06)。
     """
     task_info = get_engine().tracker.get(task_id)
     if not task_info:
@@ -64,21 +71,30 @@ async def _verify_task_owner(db: AsyncSession, task_id: str, user_id) -> None:
     # 旧任务可能 session_id 为空字符串 —— 此时无法做所有权证明，统一拒绝
     if not task_info.session_id:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    await verify_session_owner(db, task_info.session_id, user_id=user_id)
+    await verify_session_owner(
+        db,
+        task_info.session_id,
+        user_id=user_id,
+        owner_token=owner_token,
+    )
+    return task_info
 
 
 @router.get("/{task_id}", response_model=TaskStatusResponse)
 async def get_task(
     task_id: str,
     db: AsyncSession = Depends(get_async_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ) -> TaskStatusResponse:
     """查询任务状态和步骤详情"""
-    await _verify_task_owner(db, task_id, _user.get("user_id"))
-    task_info = get_engine().tracker.get(task_id)
-    # _verify_task_owner 已确认存在；防御性再读一次
-    if not task_info:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    user_id = _user.get("user_id") if isinstance(_user, dict) else None
+    task_info = await _verify_task_owner(
+        db,
+        task_id,
+        user_id=user_id,
+        owner_token=owner_token,
+    )
 
     steps = [
         TaskStepResponse(
@@ -140,7 +156,8 @@ async def list_tasks(
 async def cancel_task(
     task_id: str,
     db: AsyncSession = Depends(get_async_db),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ) -> TaskCancelResponse:
     """取消正在执行的任务。
 
@@ -148,7 +165,13 @@ async def cancel_task(
     取消请求**落库** —— 否则跨进程 worker 观察不到取消，后台 GIS 计算会一路跑完。
     行为与新的 ``DELETE /tasks/jobs/{job_id}`` 端点一致。
     """
-    await _verify_task_owner(db, task_id, _user.get("user_id"))
+    user_id = _user.get("user_id") if isinstance(_user, dict) else None
+    await _verify_task_owner(
+        db,
+        task_id,
+        user_id=user_id,
+        owner_token=owner_token,
+    )
     # ADR-0100: 统一取消级联（tracker token + durable 落库 + registry 点燃
     # + Pi 活跃回合 abort）—— 原先三处手写编排（task/job/session-delete）
     # 各自记住 #1066 的教训，现在只有一个实现点。

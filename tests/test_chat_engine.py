@@ -108,3 +108,108 @@ async def test_session_persistence(registry):
                 assert r1["session_id"] == "s1"
                 assert r2["session_id"] == "s1"
                 assert len(engine._sessions["s1"]) >= 4
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_session_lock_released_on_disconnect(registry, monkeypatch):
+    """CORE-04: Verify session lock is released when client disconnects during stream."""
+    engine = ChatEngine(registry)
+    from app.services.distributed_lock import session_lock
+    session_id = "test-disconnect-lock-sess"
+    lock = session_lock(session_id)
+
+    async def fake_get_or_create_session(sid, user_id=None):
+        return []
+
+    async def fake_save_msg_async(*a, **kw):
+        return None
+
+    async def fake_stream(*args, **kwargs):
+        yield ("chunk", {"content": "token-1"})
+        yield ("chunk", {"content": "token-2"})
+
+    monkeypatch.setattr(engine, "_get_or_create_session", fake_get_or_create_session)
+    monkeypatch.setattr(engine, "_save_msg_async", fake_save_msg_async)
+
+    # 1. Start stream and read one event while lock is held
+    with patch.object(engine, "_call_llm_stream", return_value=fake_stream()):
+        gen = engine.chat_stream("你好", session_id=session_id)
+        first_event = await gen.__anext__()
+        assert first_event is not None
+        assert lock.locked(), "Lock must be held during active stream"
+
+        # Simulate client disconnect (GeneratorExit via aclose)
+        await gen.aclose()
+        assert not lock.locked(), "Lock must be released on client disconnect"
+
+    # 2. Verify subsequent turn on the same session acquires the lock without hanging
+    with patch.object(engine, "_call_llm_stream", return_value=fake_stream()):
+        gen2 = engine.chat_stream("你好第二轮", session_id=session_id)
+        await gen2.aclose()
+        assert not lock.locked(), "Lock must be released on immediate disconnect"
+
+
+@pytest.mark.asyncio
+async def test_fire_and_forget_forwards_kwargs_to_sync_func(registry):
+    """CORE-07: Verify kwargs are preserved when dispatching sync functions via _fire_and_forget."""
+    import asyncio
+    engine = ChatEngine(registry)
+    result = {}
+    done_event = asyncio.Event()
+
+    def sync_worker(pos, *, key1, key2="default"):
+        result["pos"] = pos
+        result["key1"] = key1
+        result["key2"] = key2
+        done_event.set()
+
+    engine._fire_and_forget(sync_worker, "val_pos", key1="val_key1", key2="val_key2")
+    await asyncio.wait_for(done_event.wait(), timeout=2.0)
+    assert result == {"pos": "val_pos", "key1": "val_key1", "key2": "val_key2"}
+
+@pytest.mark.asyncio
+async def test_chat_engine_uses_distributed_session_lock(registry, monkeypatch):
+    """CORE-06: Verify distributed session_lock is invoked during turn execution."""
+    from app.services import distributed_lock
+    engine = ChatEngine(registry)
+    session_id = "test-distributed-lock-sess"
+
+    invoked_sessions = []
+    orig_session_lock = distributed_lock.session_lock
+
+    def recording_session_lock(sid, **kwargs):
+        invoked_sessions.append(sid)
+        return orig_session_lock(sid, **kwargs)
+
+    monkeypatch.setattr(distributed_lock, "session_lock", recording_session_lock)
+    monkeypatch.setattr("app.services.chat.execution_engine.session_lock", recording_session_lock)
+
+    async def fake_get_or_create_session(sid, user_id=None):
+        return []
+
+    async def fake_save_msg_async(*a, **kw):
+        return None
+
+    async def fake_stream(*args, **kwargs):
+        yield ("chunk", {"content": "token-1"})
+
+    monkeypatch.setattr(engine, "_get_or_create_session", fake_get_or_create_session)
+    monkeypatch.setattr(engine, "_save_msg_async", fake_save_msg_async)
+
+    # 1. Test chat_stream uses session_lock
+    with patch.object(engine, "_call_llm_stream", return_value=fake_stream()):
+        gen = engine.chat_stream("hello stream", session_id=session_id)
+        async for _ in gen:
+            pass
+
+    assert session_id in invoked_sessions, "chat_stream must invoke distributed session_lock"
+
+    # 2. Test chat uses session_lock
+    invoked_sessions.clear()
+    async def fake_chat_locked(*args, **kwargs):
+        return {"response": "ok", "executed_tools": []}
+
+    monkeypatch.setattr(engine, "_chat_locked", fake_chat_locked)
+    await engine.chat("hello sync", session_id=session_id)
+
+    assert session_id in invoked_sessions, "chat must invoke distributed session_lock"

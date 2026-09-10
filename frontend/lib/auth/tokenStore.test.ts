@@ -47,10 +47,28 @@ describe('tokenStore', () => {
     expect(getAccessToken()).toBe('acc-1');
     expect(getRefreshToken()).toBe('ref-1');
     expect(getAuthUser()).toEqual({ id: 'u1', username: 'ops', role: 'admin' });
-    expect(JSON.parse(window.localStorage.getItem(KEY) ?? '{}')).toMatchObject({
+    const stored = JSON.parse(window.localStorage.getItem(KEY) ?? '{}');
+    expect(stored).toMatchObject({
       accessToken: 'acc-1',
-      refreshToken: 'ref-1',
     });
+    // FRONT-03: refreshToken must NOT be stored in plaintext localStorage
+    expect(stored.refreshToken).toBeUndefined();
+  });
+
+  it('purges legacy plaintext refreshToken if present in localStorage (FRONT-03)', () => {
+    window.localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        accessToken: 'legacy-acc',
+        refreshToken: 'legacy-refresh-leaked',
+        user: { id: 'u1', username: 'legacy' },
+      }),
+    );
+    window.dispatchEvent(new StorageEvent('storage', { key: KEY }));
+    expect(getAccessToken()).toBe('legacy-acc');
+    const stored = JSON.parse(window.localStorage.getItem(KEY) ?? '{}');
+    expect(stored.refreshToken).toBeUndefined();
+    expect(getRefreshToken()).toBeNull();
   });
 
   it('clearAuth drops everything, including the persisted entry', () => {

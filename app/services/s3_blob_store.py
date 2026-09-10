@@ -265,6 +265,11 @@ class S3BlobStore(BlobStore):
             except Exception:  # noqa: BLE001 — 清理失败只留 staging 垃圾
                 logger.warning("[s3_blob_store] staging cleanup failed for %s", key)
             raise
+        else:
+            try:
+                client.delete_object(Bucket=self._bucket, Key=staging_key)
+            except Exception as cleanup_err:  # noqa: BLE001
+                logger.warning("[s3_blob_store] failed to delete staging object %s: %s", staging_key, cleanup_err)
 
     def _put_meta(self, client: Any, meta_key: str, content_type: str,
                   byte_size: int, digest: str, etag: str = "") -> None:

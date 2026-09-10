@@ -85,12 +85,23 @@ def normalize_criterion_values(
         score = 0.0
         # Edge case: All values identical (zero range)
         if abs(val_range) < 1e-12:
-            # If all alternatives have the same value, they are tied
             if direction == CriterionDirection.TARGET and criterion.target_value is not None:
                 diff = abs(raw_val - criterion.target_value)
                 score = max(0.0, 1.0 - diff / max(abs(criterion.target_value), 1.0))
+            elif direction == CriterionDirection.RANGE and criterion.range_bounds:
+                r_min, r_max = min(criterion.range_bounds), max(criterion.range_bounds)
+                if r_min <= raw_val <= r_max:
+                    score = 1.0
+                elif raw_val < r_min:
+                    score = max(0.0, 1.0 - (r_min - raw_val) / max(abs(r_min), 1.0))
+                else:
+                    score = max(0.0, 1.0 - (raw_val - r_max) / max(abs(r_max), 1.0))
+            elif direction == CriterionDirection.MINIMIZE:
+                score = 0.5
+            elif direction == CriterionDirection.MAXIMIZE:
+                score = 0.5
             else:
-                score = 1.0
+                score = 0.5
             normalized[alt_id] = round(max(0.0, min(1.0, score)), 6)
             continue
 

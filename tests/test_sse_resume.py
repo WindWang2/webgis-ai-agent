@@ -567,3 +567,56 @@ async def test_resume_via_last_event_id_query_param(monkeypatch):
     second_ids = [_event_id(b) for b in second.decode().split("\n\n") if b]
     assert second_ids == [5, 6, 7], second_ids
     assert bridge.prompt_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_anonymous_sessions_receive_distinct_event_buffers(monkeypatch):
+    """CORE-09: Verify distinct anonymous sessions receive distinct event buffers
+    in TurnResumeRegistry and do not overwrite each other on key "".
+    """
+    from app.api.routes.chat import _turn_resume_registry
+    from app.api.routes.chat import ChatRequest
+
+    async def fake_stream(*args, **kwargs):
+        yield 'data: {"event": "chunk"}\n\n'
+
+    mock_engine = MagicMock()
+    mock_engine.chat_stream = fake_stream
+    monkeypatch.setattr(chat_route, "get_engine", lambda: mock_engine)
+    monkeypatch.setattr(chat_route, "_ensure_pi_bridge_available", AsyncMock(return_value=False))
+
+    registered_keys = []
+    orig_register = _turn_resume_registry.register
+
+    def tracking_register(key, buf):
+        registered_keys.append(key)
+        return orig_register(key, buf)
+
+    monkeypatch.setattr(_turn_resume_registry, "register", tracking_register)
+
+    # 1. First anonymous request
+    req1 = ChatRequest(message="anon 1")
+    resp1 = await chat_route.chat_stream(req1, _user={}, owner_token=None, db=None)
+    async for _ in resp1.body_iterator:
+        pass
+
+    # 2. Second anonymous request
+    req2 = ChatRequest(message="anon 2")
+    resp2 = await chat_route.chat_stream(req2, _user={}, owner_token=None, db=None)
+    async for _ in resp2.body_iterator:
+        pass
+
+    # Assertions
+    assert len(registered_keys) >= 2
+    key1, key2 = registered_keys[0], registered_keys[1]
+    assert key1 != "", "Anonymous session key must not be empty string"
+    assert key2 != "", "Anonymous session key must not be empty string"
+    assert key1 != key2, f"Anonymous sessions must receive distinct keys: {key1} vs {key2}"
+    assert req1.session_id == key1
+    assert req2.session_id == key2
+
+    # Verify both buffers exist distinctly in the registry without collision
+    buf1 = _turn_resume_registry.get(key1)
+    buf2 = _turn_resume_registry.get(key2)
+    assert buf1 is not None and buf1.message == "anon 1"
+    assert buf2 is not None and buf2.message == "anon 2"

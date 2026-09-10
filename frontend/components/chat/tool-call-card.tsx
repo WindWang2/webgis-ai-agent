@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useId, useState, useEffect, useCallback } from 'react';
+import React, { useId, useState, useEffect, useCallback, useMemo } from 'react';
 import {
   ChevronRight,
   ChevronDown,
@@ -165,6 +165,7 @@ export function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded:
       ? formatDuration(call.completedAt - call.startedAt)
       : null;
   const parsedArgs = parseArgs(call.arguments);
+  const formattedJson = useMemo(() => formatJson(call.result), [call.result]);
 
   const CARTO_TOOLS = new Set([
     'create_thematic_map',
@@ -295,11 +296,11 @@ export function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded:
                 <p className="text-micro font-semibold text-ink-muted uppercase tracking-wider">
                   结果
                 </p>
-                <CopyButton text={formatJson(call.result)} label="复制结果" />
+                <CopyButton text={formattedJson} label="复制结果" />
               </div>
               <pre className="p-2 rounded-md bg-surface-raised border border-edge-subtle text-caption leading-relaxed text-ink-secondary font-mono overflow-x-auto max-h-[160px] overflow-y-auto">
-                {formatJson(call.result).slice(0, 1500)}
-                {formatJson(call.result).length > 1500 ? '\n...' : ''}
+                {formattedJson.slice(0, 1500)}
+                {formattedJson.length > 1500 ? '\n...' : ''}
               </pre>
             </div>
           )}

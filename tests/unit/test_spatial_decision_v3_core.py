@@ -76,9 +76,9 @@ def test_normalization_zero_range_tied():
     crit = Criterion(id="equal", name="Equal", direction=CriterionDirection.MAXIMIZE)
     raw = {"A": 50.0, "B": 50.0, "C": 50.0}
     norm = normalize_criterion_values(raw, crit)
-    assert norm["A"] == 1.0
-    assert norm["B"] == 1.0
-    assert norm["C"] == 1.0
+    assert norm["A"] == 0.5
+    assert norm["B"] == 0.5
+    assert norm["C"] == 0.5
 
 
 def test_normalization_negative_values():
