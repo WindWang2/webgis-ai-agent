@@ -54,11 +54,15 @@ def test_qualification_budget() -> None:
 def test_ranking_budget() -> None:
     facts = QualificationFacts.from_profile(
         {"featureCount": 100, "geometryTypes": ["Point"]})
+    # 预热（Round2 #4：冷启动 174ms 是单例装载不是排序工作——
+    # 预算约束排序本身；防 -k/--lf/xdist 隔离下测量到装载成本）。
+    rank_methods("分析周边设施密度并找热点", facts, category_id="density")
     t0 = time.perf_counter()
     for _ in range(5):
         rank_methods("分析周边设施密度并找热点", facts,
                      category_id="density")
     elapsed = (time.perf_counter() - t0) / 5
+    # 实测热路径中位 ~4ms；预算 50ms ≈ 10x 裕度（CI 负载容忍）
     assert elapsed < 0.05, f"ranking {elapsed*1000:.1f}ms > 10ms×5 预算"
 
 

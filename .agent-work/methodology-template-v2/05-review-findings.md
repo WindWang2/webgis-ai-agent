@@ -52,4 +52,26 @@ INFO 命名漂移（实现自洽，文档已对齐）：ADR/CHANGELOG 列真实�
 
 ## Round 2 — 性能/安全/可维护性 review（Subagent-B）
 
-（待填）
+结论：**APPROVE-WITH-FIXES**。无生产热路径/安全/跨租户/API 兼容阻塞。
+实测：validate_gis_library 5s（既有 AST 成本，本 Epic 段 0.005s）；
+rank_methods 热 3.6ms；图 build 热 12-14ms；工具 schema +1.18%；
+6 工具名无碰撞；diff 无删除面（全 additive）；KnowledgeService 无状态。
+
+Must-fix（1，已修复）：
+1. test_ranking_budget 冷启动仅 10-24% 裕度（-k/--lf/xdist 下会 flake）
+   → 预热一次 + 预算语义注明
+
+Should-fix（全部已修复）：
+2. 图缓存键热路径 ~1.9ms 重哈希 → taxonomy/descriptors 指纹记忆化
+   （单例不可变，缓存随实例生命周期；V4 methodology 先例同款）
+3. _taxonomy_component 每候选重复 match_query → 提升出循环（3.6→~2ms）
+4. 工具 profile dict 无界 → fields 扫描封顶 [:64]（_measure_kind_fact /
+   _adjudicate_nodata_quality）
+5. 查询截断只在工具层 → KnowledgeService.classify 防御性 [:2000]
+6. 组件语义角色接线（Round2 #12）：components_for_role 改读
+   descriptor.semantic_role（字段成为被消费投影）；examples 19 组件
+   回填审定一行例；stale docstring 修正
+
+INFO（不改）：unknown method_id 行为不一致但安全（dispatch 结构化
+VALIDATION_ERROR）；feedback writer 零调用方（离线契约）；workflow
+计划将因指纹变化被 is_stale_plan 标记（by design）。

@@ -290,6 +290,9 @@ def rank_family_methods(
     cat = taxonomy.get(category_id) if category_id else None
     category_families = cat.methodology_family_ids if cat else ()
     category_artifacts = cat.output_artifact_types if cat else ()
+    # taxonomy 分量对同类别全部候选相同——提升出循环（Round2 #3）
+    taxonomy_score = (_taxonomy_component(query, category_id, taxonomy)
+                      if category_id else 0.5)
 
     scored: List[MethodCandidateScore] = []
     for m in family.candidate_methods:
@@ -299,8 +302,7 @@ def rank_family_methods(
                                 methodology_registry=methodology_registry)
         qual = qualification_score(report)
         comps = {
-            "taxonomy": _taxonomy_component(query, category_id, taxonomy)
-            if category_id else 0.5,
+            "taxonomy": taxonomy_score,
             "qualification": qual,
             "graph": _graph_component(
                 m.method_id, family_id, category_families,
@@ -411,6 +413,8 @@ def rank_methods(
     category_families = cat.methodology_family_ids
     category_artifacts = cat.output_artifact_types
     desc_reg = get_method_descriptor_registry()
+    # taxonomy 分量对同类别全部候选相同——提升出循环（Round2 #3）
+    taxonomy_score = _taxonomy_component(query, target_category, taxonomy)
 
     scored: List[MethodCandidateScore] = []
     for fid in category_families:
@@ -421,8 +425,7 @@ def rank_methods(
             report = qualify_method(m.method_id, facts,
                                     methodology_registry=methodology_registry)
             comps = {
-                "taxonomy": _taxonomy_component(query, target_category,
-                                                taxonomy),
+                "taxonomy": taxonomy_score,
                 "qualification": qualification_score(report),
                 "graph": _graph_component(
                     m.method_id, fid, category_families, category_artifacts,

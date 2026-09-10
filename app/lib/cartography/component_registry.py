@@ -75,9 +75,9 @@ class MapComponentDescriptor(BaseModel):
         default_factory=ComponentAccessibility)
     # ── V5（Epic 11 Component Registry V2）：语义角色 + 示例（纯增量）──
     # semantic_role 回答「该组件在地图语义里承担什么角色」（组合规划器
-    # 的查询键；与 category 的目录学定位正交）。空 = 未声明（存量零迁移，
-    # 语义角色表见 template_intelligence_component_roles.COMPONENT_ROLES
-    # 的单一事实源——本字段是目录侧投影）。
+    # 的查询键；与 category 的目录学定位正交）。载入期从
+    # COMPONENT_SEMANTIC_ROLES 单一事实源投影回填（空 = 未声明，存量
+    # 零迁移）；components_for_role 消费本字段。
     semantic_role: str = ""
     examples: List[str] = Field(default_factory=list)
 
@@ -121,14 +121,39 @@ COMPONENT_SEMANTIC_ROLES: dict = {
 }
 
 
+#: 组件使用示例（审定一行例；descriptor.examples 的回填源）。
+_COMPONENT_EXAMPLES: dict = {
+    "north_arrow": "学术成图/报告版面的方向参考（top-right）",
+    "scale_bar": "含缓冲/服务区的度量类专题图（bottom-right）",
+    "legend": "分区统计填色的分级图例（绑定主题层）",
+    "continuous_colorbar": "KDE 密度面/插值面的连续色条",
+    "categorical_legend": "土地覆盖分类图的类别图例",
+    "title": "任何产品图的主标题（top-center）",
+    "subtitle": "主标题下的时间/口径副题",
+    "attribution": "OSM/数据源版权注记（bottom-left）",
+    "graticule": "小比例尺区域图的经纬网参考",
+    "map_border": "导出版式的图框/neatline",
+    "statistics_panel": "各区统计 KPI 面板（top-left）",
+    "chart_panel": "各区数量对比柱图/构成饼图（artifact 绑定）",
+    "table_panel": "聚合统计表的虚拟化表格面板",
+    "export_layout": "A4 横版导出页面",
+    "annotation": "要点 callout/数据来源脚注",
+    "inset_map": "全国区位插图（研究区定位）",
+    "methodology_note": "分母缺失/近似方法的诚实披露卡",
+    "uncertainty_panel": "克里金方差/样本限制披露",
+    "decision_panel": "MCDA 权重来源与候选排名面板",
+}
+
+
 def components_for_role(semantic_role: str) -> List[str]:
-    """按语义角色查组件 id（词表序，稳定）。"""
+    """按语义角色查组件 id（消费 descriptor.semantic_role 投影，词表序）。"""
     if semantic_role not in SEMANTIC_ROLES:
         return []
     comp_reg = get_component_registry()
     return sorted(
         cid for cid in comp_reg.all_ids
-        if COMPONENT_SEMANTIC_ROLES.get(cid) == semantic_role
+        if comp_reg.get(cid) is not None
+        and comp_reg.get(cid).semantic_role == semantic_role
     )
 
 
@@ -486,9 +511,16 @@ class ComponentRegistry:
         单一事实源；register/load 后调用，扩展组件缺省空 = 未声明）。"""
         for cid, role in COMPONENT_SEMANTIC_ROLES.items():
             desc = self._by_id.get(cid)
-            if desc is None or desc.semantic_role == role:
+            if desc is None:
                 continue
-            self._by_id[cid] = desc.model_copy(update={"semantic_role": role})
+            example = _COMPONENT_EXAMPLES.get(cid, "")
+            updates: dict = {}
+            if desc.semantic_role != role:
+                updates["semantic_role"] = role
+            if example and example not in desc.examples:
+                updates["examples"] = [example]
+            if updates:
+                self._by_id[cid] = desc.model_copy(update=updates)
 
     def register(self, desc: MapComponentDescriptor) -> None:
         if desc.id in self._by_id:

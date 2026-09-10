@@ -183,9 +183,10 @@ def _measure_kind_fact(facts: QualificationFacts) -> str:
     if facts.measure_kind in ("categorical", "continuous"):
         return facts.measure_kind
     # 画像推断：measure/数值字段全为非数值类型 → categorical 倾向
+    # （Round2 #5：扫描封顶——采样判定不需要全量遍历巨型 fields）
     fields = _profile_fact(facts.profile, "fields")
     if isinstance(fields, dict) and fields:
-        measure_like = [v for k, v in fields.items()
+        measure_like = [v for k, v in list(fields.items())[:64]
                         if str(k).lower() in
                         ("measure", "value", "count", "rate", "price")]
         target = measure_like or list(fields.values())
@@ -390,7 +391,7 @@ def _adjudicate_nodata_quality(
     fields = _profile_fact(profile, "fields")
     if not isinstance(fields, dict) or not fields:
         return DimensionState(dimension="nodata_quality", state="unknown")
-    null_heavy = [str(k) for k, v in fields.items()
+    null_heavy = [str(k) for k, v in list(fields.items())[:64]
                   if isinstance(v, dict)
                   and isinstance(v.get("null_ratio"), (int, float))
                   and v["null_ratio"] > _HIGH_NULL_RATIO]

@@ -48,6 +48,7 @@ class KnowledgeService:
     # ── classify ─────────────────────────────────────────────────────
     def classify(self, query: str) -> Dict[str, Any]:
         """query → 类目/本体任务/方法族证据（V4 路由优先，tie-break 用）。"""
+        query = (query or "")[:2000]  # 防御性截断（Round2 #6：非工具入口）
         taxonomy = get_task_taxonomy()
         ontology = _ontology()
         category_matches = taxonomy.match_query(query, limit=3)

@@ -199,6 +199,7 @@ class MethodDescriptorRegistry:
         if method_exists is None:
             method_exists = _default_method_exists()
         self._method_exists = method_exists
+        self._fingerprint_cache: str = ""
         self._by_id: Dict[str, MethodologyDescriptorV2] = {}
         for d in descriptors:
             if d.method_id in self._by_id:
@@ -243,6 +244,9 @@ class MethodDescriptorRegistry:
         return violations
 
     def fingerprint(self) -> str:
+        """内容指纹（记忆化——登记表构造后不可变，缓存随实例生命周期）。"""
+        if self._fingerprint_cache:
+            return self._fingerprint_cache
         payload = {
             "version": DESCRIPTOR_SCHEMA_VERSION,
             "descriptors": [
@@ -252,7 +256,9 @@ class MethodDescriptorRegistry:
         }
         canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                                separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        self._fingerprint_cache = hashlib.sha256(
+            canonical.encode("utf-8")).hexdigest()
+        return self._fingerprint_cache
 
 
 def _default_method_exists() -> Callable[[str], bool]:

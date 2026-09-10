@@ -392,6 +392,7 @@ class TaskTaxonomy:
         if task_lookup is None or family_lookup is None:
             task_lookup, family_lookup = _default_lookups()
         self._by_id: Dict[str, TaskCategoryDescriptor] = {}
+        self._fingerprint_cache: str = ""
         self._task_keywords: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {}
         self._family_keywords: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {}
         for cat in categories:
@@ -584,6 +585,13 @@ class TaskTaxonomy:
         return violations
 
     def fingerprint(self) -> str:
+        """内容指纹（记忆化——单例不可变，缓存随实例生命周期；
+        Round2 #2：热路径每次 model_dump+sha256 ~0.3ms × 调用频次）。
+
+        审定表在实例构造后不可变（无 mutate API；演进 = reset 重建单例），
+        因此实例级缓存是安全的。"""
+        if self._fingerprint_cache:
+            return self._fingerprint_cache
         payload = {
             "version": TAXONOMY_SCHEMA_VERSION,
             "categories": [
@@ -593,7 +601,9 @@ class TaskTaxonomy:
         }
         canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                                separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        self._fingerprint_cache = hashlib.sha256(
+            canonical.encode("utf-8")).hexdigest()
+        return self._fingerprint_cache
 
 
 def _default_lookups() -> Tuple[Callable[[str], Any], Callable[[str], Any]]:
