@@ -7309,7 +7309,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "55c979b30129812610a9a2622e08a5ad6513676d15bf1c1740bb8e3015558d7d",
+ "fingerprint": "9519b4329a79d851c0de2cdf70e23b5f00b73748afd131a19edd4870ca2861a3",
  "gate": {
   "fields": {
    "capabilities": {
@@ -10147,7 +10147,7 @@
    "tests": [
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -10172,7 +10172,7 @@
    "tests": [
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -10198,7 +10198,7 @@
    "tests": [
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -10224,7 +10224,7 @@
    "tests": [
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -10250,7 +10250,7 @@
    "tests": [
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -10276,7 +10276,7 @@
    "tests": [
     "tests/unit/gis_harness/test_knowledge_tools.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -11614,7 +11614,7 @@
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -11637,7 +11637,7 @@
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -11660,7 +11660,7 @@
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -11683,7 +11683,7 @@
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -11706,7 +11706,7 @@
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -11729,7 +11729,7 @@
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -11752,7 +11752,7 @@
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -11775,7 +11775,7 @@
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -11798,7 +11798,7 @@
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "mention",
@@ -11821,7 +11821,7 @@
    "tests": [
     "tests/integration/modelops/test_tools_service.py"
    ],
-   "tier": 2
+   "tier": 1
   },
   {
    "behavior": "dispatch",

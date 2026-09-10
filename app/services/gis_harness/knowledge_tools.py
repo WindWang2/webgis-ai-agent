@@ -60,7 +60,7 @@ def register_knowledge_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        tier=2, name="gis_task_classify",
+        tier=1, name="gis_task_classify",
         description=(
             "GIS 任务分类器（确定性，无副作用）。输入自然语言请求，返回任务类目"
             "（20 类分类学）、本体任务与专业方法族路由证据。"
@@ -80,7 +80,7 @@ def register_knowledge_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        tier=2, name="gis_method_qualify",
+        tier=1, name="gis_method_qualify",
         description=(
             "方法资格裁决（确定性）。给定方法 id 与数据画像事实，返回四态维度报告"
             "（几何/样本/CRS/量测语义/时间/空值/角色/科学前提）、拒绝理由码、"
@@ -106,7 +106,7 @@ def register_knowledge_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        tier=2, name="gis_method_rank",
+        tier=1, name="gis_method_rank",
         description=(
             "方法候选检索与排序（确定性混合排序）。返回类目池内候选的有序评分"
             "（分量：类目匹配/资格/图兼容/词汇/先验/成本/约束）、弃权语义与解释。"
@@ -132,7 +132,7 @@ def register_knowledge_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        tier=2, name="gis_method_explain",
+        tier=1, name="gis_method_explain",
         description=(
             "方法解释器（确定性）。返回方法的 problem class、假设、参数、"
             "失效条件、不确定性支持与出处（provenance）。"
@@ -151,7 +151,7 @@ def register_knowledge_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        tier=2, name="gis_template_plan",
+        tier=1, name="gis_template_plan",
         description=(
             "模板组合规划（确定性规则驱动）。给定方法与类目，返回基底组合模板、"
             "组件槽位填充、数据绑定与义务组件（不确定性/方法论披露）。"
@@ -172,7 +172,7 @@ def register_knowledge_tools(registry: ToolRegistry):
 
     @tool(
         registry,
-        tier=2, name="gis_component_query",
+        tier=1, name="gis_component_query",
         description=(
             "组件目录查询（确定性）。按语义角色（legend/disclosure/statistics/"
             "orientation/measure/…）或产物兼容性过滤地图组件。"
