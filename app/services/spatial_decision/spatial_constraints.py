@@ -7,6 +7,7 @@ import math
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 from shapely.geometry import shape, Point, GeometryCollection
+from shapely.ops import nearest_points
 from pyproj import Geod
 
 from app.services.spatial_decision.models_v3 import (
@@ -28,10 +29,39 @@ def _is_wgs84_lonlat(coord: Tuple[float, float]) -> bool:
     return -180.0 <= lon <= 180.0 and -90.0 <= lat <= 90.0
 
 
+def _is_wgs84_geometry(geom: Any) -> bool:
+    """Checks if geometry bounding box falls within WGS84 degree bounds."""
+    if geom is None or geom.is_empty:
+        return True
+    bounds = geom.bounds
+    return (
+        -180.0 <= bounds[0] <= 180.0
+        and -180.0 <= bounds[2] <= 180.0
+        and -90.0 <= bounds[1] <= 90.0
+        and -90.0 <= bounds[3] <= 90.0
+    )
+
+
 def _compute_geodesic_distance_m(point_a: Point, point_b: Point) -> float:
     """Computes exact ellipsoidal distance in meters between two lon/lat points."""
     _, _, dist_m = _GEOD.inv(point_a.x, point_a.y, point_b.x, point_b.y)
     return float(dist_m)
+
+
+def _compute_geometry_distance_m(geom_a: Any, geom_b: Any) -> float:
+    """Computes true boundary-to-boundary metric distance between two geometries."""
+    if geom_a is None or geom_b is None or geom_a.is_empty or geom_b.is_empty:
+        return float("inf")
+    if geom_a.intersects(geom_b):
+        return 0.0
+
+    if _is_wgs84_geometry(geom_a) and _is_wgs84_geometry(geom_b):
+        p_a, p_b = nearest_points(geom_a, geom_b)
+        _, _, dist_m = _GEOD.inv(p_a.x, p_a.y, p_b.x, p_b.y)
+        if not math.isnan(dist_m):
+            return float(dist_m)
+
+    return float(geom_a.distance(geom_b))
 
 
 def _meters_to_degree_buffer(lat: float, meters: float) -> Tuple[float, float]:
@@ -200,8 +230,7 @@ def evaluate_spatial_constraint(
                 evidence_statement="No reference feature to calculate distance against.",
             )
 
-        # Geodesic distance calculation to nearest reference feature
-        alt_centroid = alt_geom.centroid
+        # Boundary-to-boundary distance calculation to nearest reference feature
         distances = []
         for g in ref_geoms:
             if not g or g.is_empty:
@@ -209,16 +238,16 @@ def evaluate_spatial_constraint(
             if g.intersects(alt_geom):
                 distances.append(0.0)
             else:
-                distances.append(_compute_geodesic_distance_m(alt_centroid, g.centroid))
+                distances.append(_compute_geometry_distance_m(alt_geom, g))
         dist_m = min(distances) if distances else float("inf")
 
         passed = dist_m >= threshold_m
         margin = dist_m - threshold_m
         penalty = 0.0 if passed else (constraint.penalty_weight if constraint.constraint_type == ConstraintType.SOFT else 0.0)
         stmt = (
-            f"Geodesic distance {round(dist_m, 1)}m >= required minimum {threshold_m}m."
+            f"Distance {round(dist_m, 1)}m >= required minimum {threshold_m}m."
             if passed
-            else f"Geodesic distance {round(dist_m, 1)}m < required minimum {threshold_m}m (Violation)."
+            else f"Distance {round(dist_m, 1)}m < required minimum {threshold_m}m (Violation)."
         )
         return ConstraintEvaluation(
             constraint_id=constraint.id,
@@ -247,7 +276,6 @@ def evaluate_spatial_constraint(
                 evidence_statement="No reference feature specified.",
             )
 
-        alt_centroid = alt_geom.centroid
         distances = []
         for g in ref_geoms:
             if not g or g.is_empty:
@@ -255,7 +283,7 @@ def evaluate_spatial_constraint(
             if g.intersects(alt_geom):
                 distances.append(0.0)
             else:
-                distances.append(_compute_geodesic_distance_m(alt_centroid, g.centroid))
+                distances.append(_compute_geometry_distance_m(alt_geom, g))
         dist_m = min(distances) if distances else float("inf")
 
         passed = dist_m <= threshold_m
