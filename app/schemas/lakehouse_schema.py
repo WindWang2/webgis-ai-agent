@@ -136,3 +136,56 @@ class GCPlanRequest(BaseModel):
 class GCExecuteRequest(BaseModel):
     plan: Dict[str, Any]
     session_id: str = Field(min_length=1, max_length=128)
+
+
+# ── V8（ADR-0130）：dataset 版本层 ───────────────────────────────────────
+
+
+class DatasetCreateRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    description: str = Field(default="", max_length=512)
+    default_branch: str = Field(default="main", max_length=128)
+    cube_contract: Optional[Dict[str, Any]] = Field(default=None, max_length=32)
+
+
+class DatasetCommitRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    branch: str = Field(min_length=1, max_length=128)
+    data_object_id: str = Field(min_length=64, max_length=64)
+    action: str = Field(
+        default="commit",
+        pattern="^(commit|rollback|delta|import|workflow_publish)$",
+    )
+    provenance: Optional[Dict[str, Any]] = Field(default=None, max_length=24)
+    parent_version_id: Optional[str] = Field(default=None, max_length=64)
+    workflow_run_id: Optional[str] = Field(default=None, max_length=64)
+
+
+class DatasetBranchRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    from_version_id: Optional[str] = Field(default=None, max_length=64)
+
+
+class DatasetTagRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    version_id: str = Field(min_length=64, max_length=64)
+
+
+class DatasetRollbackRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    branch: str = Field(min_length=1, max_length=128)
+    to_version_id: str = Field(min_length=64, max_length=64)
+
+
+class DatasetRetentionPlanRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    max_versions: int = Field(default=64, ge=1, le=10_000)
+    min_age_hours: float = Field(default=72.0, ge=0.0, le=24 * 365)
+
+
+class DatasetRetentionExecuteRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    plan: Dict[str, Any]
