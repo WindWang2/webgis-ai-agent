@@ -1,4 +1,4 @@
-# ADR-0119: Federated Data Fabric V7 — Adaptive Distributed Spatial Data Plane
+# ADR-0120: Federated Data Fabric V7 — Adaptive Distributed Spatial Data Plane
 
 ## Status
 Accepted（Epic 03，2026-09-09；前身 ADR-0118 Federated Spatial Query Optimizer V6）

@@ -1,4 +1,4 @@
-# 0119. GIS Harness Semantic Autonomy V6 — Semantic Retrieval, Durable Context & Long-Horizon Autonomy
+# ADR-0121: GIS Harness Semantic Autonomy V6 — Semantic Retrieval, Durable Context & Long-Horizon Autonomy
 
 **Date:** 2026-09-09
 **Status:** Proposed

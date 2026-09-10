@@ -1,4 +1,4 @@
-# ADR-0119: Spatial Lakehouse V7 — Cloud-Native N-D Geospatial Lakehouse
+# ADR-0122: Spatial Lakehouse V7 — Cloud-Native N-D Geospatial Lakehouse
 
 - status: Accepted
 - date: 2026-09-09

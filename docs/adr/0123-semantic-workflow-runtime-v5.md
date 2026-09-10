@@ -1,4 +1,4 @@
-# ADR-0119: Semantic Workflow Runtime V5（Executable Typed DAG + Incremental Recompute + Artifact Reuse）
+# ADR-0123: Semantic Workflow Runtime V5（Executable Typed DAG + Incremental Recompute + Artifact Reuse）
 
 - 状态：Proposed
 - 日期：2026-09-09

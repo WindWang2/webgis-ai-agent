@@ -1,4 +1,4 @@
-# ADR-0120: GIS Methodology & Template Intelligence V2 — Method Knowledge Graph + Cartographic Composition + Agent Planning Intelligence
+# ADR-0129: GIS Methodology & Template Intelligence V2 — Method Knowledge Graph + Cartographic Composition + Agent Planning Intelligence
 
 - 状态: Proposed
 - 日期: 2026-09-10

@@ -1,4 +1,4 @@
-# ADR-0120: Cartographic Rendering V6 — Typed MapSpec + Publication Engine
+# ADR-0126: Cartographic Rendering V6 — Typed MapSpec + Publication Engine
 
 - 状态: Accepted（本 PR 落地）
 - 日期: 2026-09-10

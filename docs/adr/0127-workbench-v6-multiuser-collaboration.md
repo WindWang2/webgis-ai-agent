@@ -1,4 +1,4 @@
-# ADR-0119: Workbench V6 —— 服务端多用户协作
+# ADR-0127: Workbench V6 —— 服务端多用户协作
 
 日期：2026-09-10 ｜ 状态：Proposed ｜ 关联：ADR-0105（Workbench V5）、ADR-0058（CAS）、CONCURRENCY-V2（分布式锁）
 

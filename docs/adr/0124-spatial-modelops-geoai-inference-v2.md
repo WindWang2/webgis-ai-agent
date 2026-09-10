@@ -1,4 +1,4 @@
-# ADR-0119: Spatial ModelOps & GeoAI Inference Platform V2
+# ADR-0124: Spatial ModelOps & GeoAI Inference Platform V2
 
 **Date:** 2026-09-10
 **Status:** Accepted

@@ -1,4 +1,4 @@
-# ADR 0120 — GIS Extension Platform V3 (Secure Ecosystem)
+# ADR 0128 — GIS Extension Platform V3 (Secure Ecosystem)
 
 日期：2026-09-10
 状态：Proposed（随 feat/extensions-v3-secure-ecosystem 分支交付）

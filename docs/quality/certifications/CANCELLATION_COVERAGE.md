@@ -68,7 +68,7 @@
 | app/services/data_ingest/pipeline.py | 0 | 1 | no-checkpoints |
 | app/services/data_ingest/repair_planning.py | 0 | 6 | no-checkpoints |
 | app/services/mapspec_layer_pipeline.py | 0 | 0 | no-checkpoints |
-| app/services/mapspec_to_svg.py | 0 | 27 | no-checkpoints |
+| app/services/mapspec_to_svg.py | 0 | 39 | no-checkpoints |
 
 > no-checkpoints 是如实披露的缺口（非失败）：该文件当前没有
 > 长循环或尚未接线；认证表随补齐更新。

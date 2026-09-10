@@ -46,6 +46,7 @@ scripts/
 # Quality V3：per-branch 工作产物（manifests / merge-sim / import-graph
 # 缓存）与 runner 本地状态不入库（审计文档 .md 仍按惯例入库）
 .agent-work/integration/
+.agent-work/merged-prs-archive/
 .agent-work/quality-v3/runner-report.json
 .agent-work/quality-v3/runner-report.md
 # runner 本地运行状态不入库（V1 历史 + V2 当前）
