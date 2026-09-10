@@ -112,6 +112,8 @@ class EventKind:
     DUPLICATE_SUPPRESSED = "duplicate_suppressed"
     DISPATCH = "dispatch"
     WORKER_LOSS = "worker_loss"
+    CLONE = "clone"
+    NODES_REQUEUED = "nodes_requeued"
 
 
 EVENT_KINDS: Tuple[str, ...] = (
@@ -122,7 +124,7 @@ EVENT_KINDS: Tuple[str, ...] = (
     EventKind.RETRY_SCHEDULED, EventKind.RETRY_EXHAUSTED,
     EventKind.COMPENSATION, EventKind.ATTEMPT_STARTED,
     EventKind.DUPLICATE_SUPPRESSED, EventKind.DISPATCH,
-    EventKind.WORKER_LOSS,
+    EventKind.WORKER_LOSS, EventKind.CLONE, EventKind.NODES_REQUEUED,
 )
 
 

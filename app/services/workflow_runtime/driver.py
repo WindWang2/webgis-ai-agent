@@ -133,6 +133,7 @@ class Driver:
                 owner_scope=self.owner_scope, token=run_token):
             return {"status": "busy", "states": {}}
         deadline = time.monotonic() + self.deadline_s
+        self._parent_deadline = deadline
         cancel_token = self._make_cancel_token()
         try:
             return await self._run_loop(
@@ -501,7 +502,11 @@ class Driver:
                 return
             sw = await self.subworkflow_executor(
                 node, parent={"instance_id": instance_id,
-                              "package_id": getattr(self, "_package_id", "")},
+                              "package_id": getattr(self, "_package_id", ""),
+                              # deadline 继承（V6 Phase F）：父剩余时间
+                              "remaining_s": max(
+                                  0.0, self._parent_deadline
+                                  - time.monotonic())},
                 parent_visited=self.parent_visited, session_id=session_id,
                 input_refs=input_refs)
             if sw.get("ok"):

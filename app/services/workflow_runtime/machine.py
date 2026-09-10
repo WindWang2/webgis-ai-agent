@@ -116,6 +116,20 @@ def downstream_closure(dag: Dict[str, Any], seeds: Set[str]) -> Set[str]:
     return out
 
 
+def upstream_closure(dag: Dict[str, Any], seeds: Set[str]) -> Set[str]:
+    """seeds 的全部（传递）上游（分支工作流 keep-set 用；环安全）。"""
+    upstream = upstream_of(dag)
+    out: Set[str] = set()
+    stack = list(seeds)
+    while stack:
+        cur = stack.pop()
+        for prv in upstream.get(cur, ()):
+            if prv not in out:
+                out.add(prv)
+                stack.append(prv)
+    return out
+
+
 def check_transition(from_state: str, to_state: str) -> Optional[str]:
     """转移合法性（contracts 裁决的直通门；测试/调用方单入口）。"""
     return validate_transition(from_state, to_state)

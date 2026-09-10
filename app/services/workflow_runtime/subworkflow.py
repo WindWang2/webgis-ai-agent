@@ -69,7 +69,14 @@ def merged_obligation_fingerprint(
 
 
 class SubworkflowExecutor:
-    """父驱动调用的子工作流展开+执行（生产实现；测试可注入假件）。"""
+    """父驱动调用的子工作流展开+执行（生产实现；测试可注入假件）。
+
+    V6 Phase F：父取消**全异步传播**（后台轮询父旗标 → 子实例持久取消）
+    + deadline 继承（子 deadline ≤ 父剩余时间 —— 嵌套链不再突破父时限）。
+    """
+
+    #: 父取消轮询周期（秒）。
+    PARENT_POLL_S = 0.5
 
     def __init__(self, service: Any, *, owner_scope: str,
                  caller: Optional[Dict[str, Any]] = None,
@@ -91,8 +98,7 @@ class SubworkflowExecutor:
         child_pkg = str(node.get("subworkflow_package_id", "") or "")
         if not child_pkg:
             return {"ok": False, "error_code": "SUBWORKFLOW_NO_PACKAGE_REF"}
-        # 父取消传播（入口检查；子实例与父 run 同步在飞 —— 父取消旗标
-        # 置位即不再展开。全异步取消传播为 follow-up，docstring 已披露）。
+        # 父取消传播（入口检查；展开后由后台轮询接管全异步传播）
         import asyncio as _aio
 
         parent_row = await _aio.to_thread(
@@ -100,6 +106,10 @@ class SubworkflowExecutor:
             self.owner_scope)
         if parent_row is not None and parent_row.get("cancel_requested"):
             return {"ok": False, "error_code": "SUBWORKFLOW_CANCELLED"}
+        # deadline 继承（V6）：子 ≤ 父剩余时间（嵌套链不再重置时钟）
+        remaining_s = float(parent.get("remaining_s") or 0.0)
+        child_deadline = min(self.deadline_s, remaining_s) \
+            if remaining_s > 0 else self.deadline_s
         # 深度 + 环守卫（visited = 祖先链上的包指纹/包 id 集）
         visited = list(parent_visited or [])
         if parent.get("package_id") not in visited:
@@ -148,15 +158,30 @@ class SubworkflowExecutor:
                 event="subworkflow", patch={"bound_ref": ref[:96]})
         chain = merged_obligation_fingerprint(
             parent["package_id"], child_pkg, depth=depth)
-        try:
+        driver = Driver(
+            self.service.store, reuse_index=self.service.reuse_index,
+            deadline_s=child_deadline, owner_scope=self.owner_scope,
+            caller=self.caller,
+            subworkflow_executor=self,
+            parent_visited=visited + [child_pkg])
+        child_dag = await self.service._instance_dag(child)
 
-            driver = Driver(
-                self.service.store, reuse_index=self.service.reuse_index,
-                deadline_s=self.deadline_s, owner_scope=self.owner_scope,
-                caller=self.caller,
-                subworkflow_executor=self,
-                parent_visited=visited + [child_pkg])
-            child_dag = await self.service._instance_dag(child)
+        async def _watch_parent() -> None:
+            """父取消旗标 → 子实例持久取消（全异步传播；V6 Phase F）。"""
+            import asyncio as _a
+
+            while True:
+                await _a.sleep(self.PARENT_POLL_S)
+                row = await _a.to_thread(
+                    self.service.store.get_instance, parent["instance_id"],
+                    self.owner_scope)
+                if row is None or row.get("cancel_requested"):
+                    await self.service.cancel_instance(
+                        child["instance_id"], owner_scope=self.owner_scope)
+                    return
+
+        watcher = _asyncio.create_task(_watch_parent())
+        try:
             summary = await driver.run(
                 child["instance_id"], child_dag,
                 node_params=await self.service._node_params(
@@ -169,6 +194,8 @@ class SubworkflowExecutor:
                     "detail": str(exc)[:120],
                     "child_instance_id": child["instance_id"],
                     "obligation_chain": chain}
+        finally:
+            watcher.cancel()
         status = summary.get("status")
         if status == C.InstanceStatus.SUCCEEDED:
             return {"ok": True, "status": status,
