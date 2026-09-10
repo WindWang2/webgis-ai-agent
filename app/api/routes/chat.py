@@ -720,6 +720,9 @@ async def _guard_body_session(
     if deleted is True:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    if db is None or not hasattr(db, "execute"):
+        return
+
     # #525: guard-only variant — no message-collection selectinload on the
     # request-admission path.
     owned = await AsyncHistoryService(db).get_session_meta(
