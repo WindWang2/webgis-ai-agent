@@ -348,6 +348,16 @@ class GeoModelDescriptor(BaseModel):
         seg_tasks = {"semantic_segmentation", "promptable_segmentation", "instance_segmentation"}
         if set(self.task_types) & seg_tasks and self.class_schema is None:
             raise DescriptorError("segmentation tasks require class_schema")
+        if "temporal_classification" in self.task_types and self.class_schema is None:
+            raise DescriptorError("temporal_classification requires class_schema")
+        if "change_detection" in self.task_types and self.input_bands % 2 != 0:
+            raise DescriptorError(
+                "change_detection input_bands must be 2*C (bitemporal A|B concat)"
+            )
+        if "super_resolution" in self.task_types and self.output_transform.output_scale < 2:
+            raise DescriptorError(
+                "super_resolution requires output_transform.output_scale >= 2"
+            )
         _reject_secret_keys("descriptor.provenance", self.provenance)
         _reject_secret_keys("descriptor", {"provider_ref": self.provider_ref})
         return self

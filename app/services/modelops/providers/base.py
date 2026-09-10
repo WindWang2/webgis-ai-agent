@@ -82,8 +82,8 @@ class TileOutput:
     """单批推理输出（任务判别；其余成员为 None）。"""
 
     task_type: str
-    #: segmentation/promptable： (N,num_classes,H,W) float32 概率（或 logits
-    #: 归一后）；provider 保证已归一（engine 抽验和≈1）。
+    #: segmentation/promptable/change/fusion： (N,num_classes,H,W) float32
+    #: 概率（provider 保证已归一；engine 抽验和≈1）。
     class_probabilities: Optional[np.ndarray] = None
     #: detection：结构化数组/列表（dict：box=[x,y,w,h] tile 像素坐标、
     #: score、label）。
@@ -94,11 +94,17 @@ class TileOutput:
     embeddings: Optional[np.ndarray] = None
     #: classification： (N,num_classes) float32。
     label_probabilities: Optional[np.ndarray] = None
+    #: super-resolution： (N,C,H*s,W*s) float32 重建栈（s = descriptor
+    #: output_transform.output_scale；非概率，不参与归一抽验）。
+    raster_stack: Optional[np.ndarray] = None
+    #: temporal classification： (N,T,K) float32 逐时相类别概率。
+    label_sequence: Optional[np.ndarray] = None
 
     def validate_for(self, batch: TileBatch) -> None:
         """输出形状/预算校验（output bomb 防护的 provider 侧执行点）。"""
         n = batch.pixels.shape[0]
-        if self.task_type in ("semantic_segmentation", "promptable_segmentation"):
+        if self.task_type in ("semantic_segmentation", "promptable_segmentation",
+                              "change_detection", "sar_optical_fusion"):
             if self.class_probabilities is None:
                 raise ProviderError(f"{self.task_type} output requires class_probabilities")
             if self.class_probabilities.shape[0] != n:
@@ -116,6 +122,13 @@ class TileOutput:
             raise ProviderError("embedding output requires embeddings")
         if self.task_type == "classification" and self.label_probabilities is None:
             raise ProviderError("classification output requires label_probabilities")
+        if self.task_type == "super_resolution":
+            if self.raster_stack is None:
+                raise ProviderError("super_resolution output requires raster_stack")
+            if self.raster_stack.shape[0] != n:
+                raise ProviderError("raster_stack batch mismatch")
+        if self.task_type == "temporal_classification" and self.label_sequence is None:
+            raise ProviderError("temporal_classification output requires label_sequence")
         if self.class_probabilities is not None and self.task_type != "temporal_forecast":
             # 概率语义抽验（docstring 承诺的实现点，m-5）：每像素和 ≈ 1。
             # temporal_forecast 的 class_probabilities 通道承载预测栈

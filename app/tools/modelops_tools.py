@@ -159,11 +159,12 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="modelops_run_inference",
-        description="运行 GeoAI 推理（分割/检测/实例/嵌入/分类/时序），产物可渲染并带完整 provenance",
+        description="运行 GeoAI 推理（分割/检测/实例/嵌入/分类/时序/变化检测/融合），产物可渲染并带完整 provenance",
         param_descriptions={
             "model_id": "模型 id",
             "source_uri": "输入栅格路径（COG/GeoTIFF；懒窗口读取，绝不整幅加载）",
             "task_type": "多任务模型时必填（如 semantic_segmentation）",
+            "source_uri_b": "双时相变化检测的后时相栅格（change_detection 必填）",
             "project_id": "项目 scope（与 session_id 二选一）",
             "session_id": "会话 scope",
             "score_threshold": "检测分数阈值（0-1）",
@@ -182,6 +183,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         model_id: str,
         source_uri: str,
         task_type: Optional[str] = None,
+        source_uri_b: Optional[str] = None,
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
         score_threshold: float = 0.5,
@@ -197,6 +199,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
             source_uri=source_uri[:MAX_SOURCE_URI_LEN],
             owner_scope=scope,
             task_type=task_type,
+            source_uri_b=source_uri_b[:MAX_SOURCE_URI_LEN] if source_uri_b else None,
             score_threshold=float(score_threshold),
         )
         result = await service.run_inference_async(request)

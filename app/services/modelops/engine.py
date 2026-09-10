@@ -27,12 +27,16 @@ import numpy as np
 from app.lib.cancellation import CancellationToken
 from app.lib.data.fingerprints import sha256_of_file
 from app.lib.modelops.capabilities import (
+    TASK_CHANGE_DETECTION,
     TASK_CLASSIFICATION,
     TASK_EMBEDDING,
     TASK_INSTANCE_SEGMENTATION,
     TASK_OBJECT_DETECTION,
     TASK_PROMPTABLE_SEGMENTATION,
+    TASK_SAR_OPTICAL_FUSION,
     TASK_SEMANTIC_SEGMENTATION,
+    TASK_SUPER_RESOLUTION,
+    TASK_TEMPORAL_CLASSIFICATION,
     TASK_TEMPORAL_FORECAST,
 )
 from app.lib.modelops.compatibility import (
@@ -112,6 +116,9 @@ class InferenceRequest:
     task_type: Optional[str] = None             # 多任务 descriptor 时必填
     prompt: Optional[PromptSpec] = None
     temporal: Optional[TemporalStackSpec] = None
+    #: V3 §C：双时相变化检测的后时相栅格（change_detection 任务必填；
+    #: 网格（尺寸/CRS/transform）必须与 source_uri 严格一致）。
+    source_uri_b: Optional[str] = None
     score_threshold: float = 0.5
     confidence_floor: float = 0.0
     device_override: Optional[str] = None
@@ -235,6 +242,17 @@ class InferenceEngine:
         # ── 输入身份（B1 唯一口径）+ profile ────────────────────────
         _emit(progress, stage="profile", run_id=run_id)
         input_content_sha = self._content_identity(request)
+        source_path_b: Optional[Path] = None
+        content_b_sha: Optional[str] = None
+        if task == TASK_CHANGE_DETECTION or request.source_uri_b is not None:
+            if request.source_uri_b is None:
+                raise ModelOpsError(
+                    "change_detection inference requires source_uri_b (after image)",
+                    correction_hint="pass the bitemporal pair: source_uri (before) "
+                    "+ source_uri_b (after)",
+                )
+            source_path_b = Path(request.source_uri_b)
+            content_b_sha = sha256_of_file(str(source_path_b))
         with RasterReader.open(request.source_uri) as reader:
             meta = reader.metadata()
             m_per_px = self._meters_per_pixel(meta)
@@ -264,6 +282,27 @@ class InferenceEngine:
         report = qualify(descriptor, profile, prompt=request.prompt, temporal=request.temporal)
         if not report.compatible:
             raise report_to_error(report)
+        if source_path_b is not None:
+            # 双时相网格一致性（typed 拒绝错位比较——变化语义要求逐像素对齐）。
+            with RasterReader.open(str(source_path_b)) as rb:
+                meta_b = rb.metadata()
+            mismatch = []
+            if (meta_b.width, meta_b.height) != (meta.width, meta.height):
+                mismatch.append(
+                    f"shape A {meta.width}x{meta.height} vs B {meta_b.width}x{meta_b.height}"
+                )
+            if (meta.crs or None) != (meta_b.crs or None):
+                mismatch.append(f"crs A {meta.crs!r} vs B {meta_b.crs!r}")
+            if meta.transform is not None and meta_b.transform is not None:
+                if max(abs(a - b) for a, b in zip(tuple(meta.transform)[:6],
+                                                  tuple(meta_b.transform)[:6])) > 1e-9:
+                    mismatch.append("transform differs")
+            if mismatch:
+                raise PlanningError(
+                    "bitemporal rasters are not grid-aligned: " + "; ".join(mismatch),
+                    correction_hint="co-register both rasters (same grid) before "
+                    "change detection",
+                )
         # R2-M7：prompt 模式必须 ⊆ provider caps（qualifier 只看 descriptor
         # 任务语义；provider 能力是第二道门——否则静默丢弃 prompt 出错结果）。
         if request.prompt is not None:
@@ -311,10 +350,14 @@ class InferenceEngine:
                 f"tile plan needs {est_tiles} tiles > per-run cap {MAX_TILES_PER_RUN}; "
                 "increase chip size / stride or tile the request externally"
             )
+        per_image_bands = (
+            descriptor.input_bands // 2 if task == TASK_CHANGE_DETECTION else None
+        )
         preprocess_plan = build_preprocess_plan(
             descriptor,
             source_band_count=profile.band_count,
             source_band_names=profile.band_names,
+            expected_bands=per_image_bands,
         )
         tile_plan = plan_tiles(descriptor, raster_height=meta.height, raster_width=meta.width)
         perf.chips_total = len(tile_plan.tiles)
@@ -342,6 +385,8 @@ class InferenceEngine:
         input_payload = {
             "source_uri": str(source_path),
             "content_sha256": input_content_sha,
+            "source_b_uri": str(source_path_b) if source_path_b else None,
+            "content_b_sha256": content_b_sha,
             "data_object_id": request.input_data_object_id,
             "width": profile.width,
             "height": profile.height,
@@ -353,6 +398,7 @@ class InferenceEngine:
             descriptor_payload=descriptor.fingerprint_payload(),
             provider_payload=provider_payload,
             input_content_sha256=input_content_sha,
+            input_b_content_sha256=content_b_sha,
             preprocess_payload=preprocess_plan.fingerprint_payload(),
             tile_plan_payload=tile_plan.fingerprint_payload(),
             postprocess_payload=postprocess_payload,
@@ -459,11 +505,23 @@ class InferenceEngine:
                     request, descriptor, provider, model, ctx, source_path,
                     output_dir, perf, _checkpoint,
                 )
+            elif task == TASK_SUPER_RESOLUTION:
+                outputs = self._run_superres(
+                    request, descriptor, provider, model, ctx, source_path,
+                    tile_plan, batch, device_plan, preprocess_plan, output_dir,
+                    perf, _checkpoint, progress,
+                )
+            elif task == TASK_TEMPORAL_CLASSIFICATION:
+                outputs = self._run_temporal_classification(
+                    request, descriptor, provider, model, ctx, source_path,
+                    output_dir, perf, _checkpoint,
+                )
             else:
                 outputs = self._run_tiled(
                     request, task, descriptor, provider, model, ctx, source_path,
                     tile_plan, batch, device_plan, preprocess_plan, output_dir,
                     perf, _checkpoint, progress,
+                    source_path_b=source_path_b,
                 )
         except BaseException:
             # C-2：accumulator 的 memmap/临时目录在任何异常路径都释放。
@@ -545,7 +603,7 @@ class InferenceEngine:
             manifest=manifest, outputs=outputs, perf=perf.export(), reuse_key=reuse_key,
         )
 
-    # ── 有界 tile 循环（segmentation/detection/instance/embedding）──
+    # ── 有界 tile 循环（segmentation/change/fusion/detection/…）─────
     def _run_tiled(
         self,
         request: InferenceRequest,
@@ -563,13 +621,16 @@ class InferenceEngine:
         perf: PerfCounters,
         checkpoint: Callable[[], None],
         progress: Optional[Callable[[Dict[str, Any]], None]],
+        *,
+        source_path_b: Optional[Path] = None,
     ) -> Dict[str, Dict[str, Any]]:
         num_classes = len(descriptor.class_schema.classes) if descriptor.class_schema else 2
         merge_policy = SegmentationMergePolicy(
             output_probabilities=request.output_probabilities
         )
         accumulator: Optional["_SegmentationAccumulator"] = None
-        if task == TASK_SEMANTIC_SEGMENTATION:
+        if task in (TASK_SEMANTIC_SEGMENTATION, TASK_CHANGE_DETECTION,
+                    TASK_SAR_OPTICAL_FUSION):
             accumulator = _SegmentationAccumulator(
                 tile_plan.raster_height,
                 tile_plan.raster_width,
@@ -585,85 +646,118 @@ class InferenceEngine:
         oom_downshifts = 0
         current_batch = batch
         warm_latency: Optional[float] = None
+        is_bitemporal = task == TASK_CHANGE_DETECTION
 
         with RasterReader.open(str(source_path)) as reader:
+            reader_b: Optional[RasterReader] = (
+                RasterReader.open(str(source_path_b)) if is_bitemporal and source_path_b
+                else None
+            )
             band_ids = [i + 1 for i in preprocess_plan.band_indices]
             start = 0
-            while start < len(tile_plan.tiles):
-                group = tile_plan.tiles[start: start + current_batch]
-                checkpoint()
-                windows = []
-                for tile in group:
-                    col, row, w, h = (tile.read_window[1], tile.read_window[0],
-                                      tile.read_window[3], tile.read_window[2])
-                    data = reader.read_window((col, row, w, h), bands=band_ids)
-                    mask = reader.read_mask((col, row, w, h)) == 0
-                    windows.append((data, mask if mask.any() else None))
-                    perf.note_window(1, bytes_read=int(data.nbytes))
-                pixels, valid_mask = preprocess_batch(
-                    preprocess_plan, descriptor, windows,
-                    tiles=[t for t in group],
-                )
-                batch_obj = TileBatch(
-                    pixels=pixels, valid_mask=valid_mask,
-                    chip_hw=(group[0].chip_hw[0], group[0].chip_hw[1]),
-                    batch_index=start // max(1, batch),
-                )
-                infer_started = time.perf_counter()
-                try:
-                    output = provider.infer(model, batch_obj, ctx)
-                except ProviderOOM:
-                    if oom_downshifts >= MAX_OOM_DOWNSHIFTS or current_batch <= 1:
-                        raise
-                    oom_downshifts += 1
-                    current_batch = max(1, current_batch // 2)
-                    perf.note_oom_downshift()
-                    continue  # 不推进 start：当前批降批重跑（有界重试）
-                latency = time.perf_counter() - infer_started
-                warm_latency = (
-                    latency if warm_latency is None
-                    else 0.7 * warm_latency + 0.3 * latency
-                )
-                perf.note_latency(warm=warm_latency, provider_rtt=latency)
-                perf.record_batch(len(group))
-                perf.pixels_done += int(pixels.size)
-                output.validate_for(batch_obj)
-
-                if accumulator is not None:
-                    accumulator.add_tiles(
-                        tile_plan.tiles[start: start + len(group)],
-                        output.class_probabilities,
-                        valid_masks=valid_mask,
-                    )
-                elif task == TASK_OBJECT_DETECTION:
-                    # R1-C4：按 provider 报告的 batch_index 展开到全局 tile 槽。
-                    for det in output.detections or []:
-                        tile_idx = start + int(det.get("batch_index", 0))
-                        detections_by_tile.setdefault(tile_idx, []).append(det)
-                elif task == TASK_INSTANCE_SEGMENTATION:
-                    masks_out = output.instance_masks
-                    if masks_out.ndim == 2:
-                        masks_out = masks_out[None]
-                    for i in range(masks_out.shape[0]):
-                        instance_by_tile.append(masks_out[i])
-                        instance_classes_by_tile.append({1: 1})
-                elif task in (TASK_EMBEDDING, TASK_CLASSIFICATION):
-                    if len(embeddings) + len(label_outputs) + len(group) > MAX_TILES_PER_RUN:
-                        from app.lib.modelops.errors import ResourceUnavailable
-
-                        raise ResourceUnavailable(
-                            "per-chip output collection exceeds tile budget"
+            try:
+                while start < len(tile_plan.tiles):
+                    group = tile_plan.tiles[start: start + current_batch]
+                    checkpoint()
+                    windows = []
+                    for tile in group:
+                        col, row, w, h = (tile.read_window[1], tile.read_window[0],
+                                          tile.read_window[3], tile.read_window[2])
+                        data = reader.read_window((col, row, w, h), bands=band_ids)
+                        mask = reader.read_mask((col, row, w, h)) == 0
+                        windows.append((data, mask if mask.any() else None))
+                        perf.note_window(1, bytes_read=int(data.nbytes))
+                    if is_bitemporal and reader_b is not None:
+                        # 双时相：B 栅格同窗口读取 + 同一 preprocess plan
+                        # （band_indices 已是单栅格 C 口径），通道维拼接为
+                        # (2C,H,W)（provider 输入契约）。
+                        b_windows = []
+                        for tile in group:
+                            col, row, w, h = (tile.read_window[1], tile.read_window[0],
+                                              tile.read_window[3], tile.read_window[2])
+                            data_b = reader_b.read_window((col, row, w, h), bands=band_ids)
+                            mask_b = reader_b.read_mask((col, row, w, h)) == 0
+                            b_windows.append(
+                                (data_b, mask_b if mask_b.any() else None)
+                            )
+                            perf.note_window(1, bytes_read=int(data_b.nbytes))
+                        pixels_b, _ = preprocess_batch(
+                            preprocess_plan, descriptor, b_windows,
+                            tiles=[t for t in group],
                         )
-                    if output.embeddings is not None:
-                        for i in range(output.embeddings.shape[0]):
-                            embeddings.append(output.embeddings[i])
-                    if output.label_probabilities is not None:
-                        for i in range(output.label_probabilities.shape[0]):
-                            label_outputs.append(output.label_probabilities[i])
-                start += len(group)
-                _emit(progress, stage="infer", run_id=ctx.run_id,
-                      tiles_done=min(start, len(tile_plan.tiles)),
-                      tiles_total=len(tile_plan.tiles))
+                        pixels_a, valid_mask = preprocess_batch(
+                            preprocess_plan, descriptor, windows,
+                            tiles=[t for t in group],
+                        )
+                        pixels = np.concatenate([pixels_a, pixels_b], axis=1)
+                    else:
+                        pixels, valid_mask = preprocess_batch(
+                            preprocess_plan, descriptor, windows,
+                            tiles=[t for t in group],
+                        )
+                    batch_obj = TileBatch(
+                        pixels=pixels, valid_mask=valid_mask,
+                        chip_hw=(group[0].chip_hw[0], group[0].chip_hw[1]),
+                        batch_index=start // max(1, batch),
+                    )
+                    infer_started = time.perf_counter()
+                    try:
+                        output = provider.infer(model, batch_obj, ctx)
+                    except ProviderOOM:
+                        if oom_downshifts >= MAX_OOM_DOWNSHIFTS or current_batch <= 1:
+                            raise
+                        oom_downshifts += 1
+                        current_batch = max(1, current_batch // 2)
+                        perf.note_oom_downshift()
+                        continue  # 不推进 start：当前批降批重跑（有界重试）
+                    latency = time.perf_counter() - infer_started
+                    warm_latency = (
+                        latency if warm_latency is None
+                        else 0.7 * warm_latency + 0.3 * latency
+                    )
+                    perf.note_latency(warm=warm_latency, provider_rtt=latency)
+                    perf.record_batch(len(group))
+                    perf.pixels_done += int(pixels.size)
+                    output.validate_for(batch_obj)
+
+                    if accumulator is not None:
+                        accumulator.add_tiles(
+                            tile_plan.tiles[start: start + len(group)],
+                            output.class_probabilities,
+                            valid_masks=valid_mask,
+                        )
+                    elif task == TASK_OBJECT_DETECTION:
+                        # R1-C4：按 provider 报告的 batch_index 展开到全局 tile 槽。
+                        for det in output.detections or []:
+                            tile_idx = start + int(det.get("batch_index", 0))
+                            detections_by_tile.setdefault(tile_idx, []).append(det)
+                    elif task == TASK_INSTANCE_SEGMENTATION:
+                        masks_out = output.instance_masks
+                        if masks_out.ndim == 2:
+                            masks_out = masks_out[None]
+                        for i in range(masks_out.shape[0]):
+                            instance_by_tile.append(masks_out[i])
+                            instance_classes_by_tile.append({1: 1})
+                    elif task in (TASK_EMBEDDING, TASK_CLASSIFICATION):
+                        if len(embeddings) + len(label_outputs) + len(group) > MAX_TILES_PER_RUN:
+                            from app.lib.modelops.errors import ResourceUnavailable
+
+                            raise ResourceUnavailable(
+                                "per-chip output collection exceeds tile budget"
+                            )
+                        if output.embeddings is not None:
+                            for i in range(output.embeddings.shape[0]):
+                                embeddings.append(output.embeddings[i])
+                        if output.label_probabilities is not None:
+                            for i in range(output.label_probabilities.shape[0]):
+                                label_outputs.append(output.label_probabilities[i])
+                    start += len(group)
+                    _emit(progress, stage="infer", run_id=ctx.run_id,
+                          tiles_done=min(start, len(tile_plan.tiles)),
+                          tiles_total=len(tile_plan.tiles))
+            finally:
+                if reader_b is not None:
+                    reader_b.close()
             checkpoint()
 
         outputs: Dict[str, Dict[str, Any]] = {}
@@ -928,6 +1022,198 @@ class InferenceEngine:
             )
         }
 
+    # ── super-resolution：逐 chip 上采样 + 全图重建（stride=chip）────
+    def _run_superres(
+        self,
+        request: InferenceRequest,
+        descriptor: GeoModelDescriptor,
+        provider: Any,
+        model: Any,
+        ctx: InferenceContext,
+        source_path: Path,
+        tile_plan: TilePlan,
+        batch: int,
+        device_plan: DevicePlan,
+        preprocess_plan: Any,
+        output_dir: Path,
+        perf: PerfCounters,
+        checkpoint: Callable[[], None],
+        progress: Optional[Callable[[Dict[str, Any]], None]],
+    ) -> Dict[str, Dict[str, Any]]:
+        stride_y, stride_x = tile_plan.stride_y, tile_plan.stride_x
+        if stride_y != tile_plan.chip_h or stride_x != tile_plan.chip_w:
+            raise PlanningError(
+                "super_resolution requires stride == chip (no-overlap tiling); "
+                f"got stride {stride_x}x{stride_y} vs chip {tile_plan.chip_w}x{tile_plan.chip_h}",
+                correction_hint="register the model without stride overlap "
+                "(SR 重叠会产生鬼影)",
+            )
+        scale = descriptor.output_transform.output_scale
+        full_h, full_w = tile_plan.raster_height * scale, tile_plan.raster_width * scale
+        channels = descriptor.input_bands
+        accumulator = _StackAccumulator(full_h, full_w, channels)
+        _RUN_LOCAL["accumulator"] = accumulator
+        oom_downshifts = 0
+        current_batch = max(1, batch)
+        try:
+            with RasterReader.open(str(source_path)) as reader:
+                band_ids = [i + 1 for i in preprocess_plan.band_indices]
+                start = 0
+                while start < len(tile_plan.tiles):
+                    group = tile_plan.tiles[start: start + current_batch]
+                    checkpoint()
+                    windows = []
+                    for tile in group:
+                        col, row, w, h = (tile.read_window[1], tile.read_window[0],
+                                          tile.read_window[3], tile.read_window[2])
+                        data = reader.read_window((col, row, w, h), bands=band_ids)
+                        mask = reader.read_mask((col, row, w, h)) == 0
+                        windows.append((data, mask if mask.any() else None))
+                        perf.note_window(1, bytes_read=int(data.nbytes))
+                    pixels, valid_mask = preprocess_batch(
+                        preprocess_plan, descriptor, windows, tiles=[t for t in group]
+                    )
+                    batch_obj = TileBatch(
+                        pixels=pixels, valid_mask=valid_mask,
+                        chip_hw=(group[0].chip_hw[0], group[0].chip_hw[1]),
+                    )
+                    try:
+                        output = provider.infer(model, batch_obj, ctx)
+                    except ProviderOOM:
+                        if oom_downshifts >= MAX_OOM_DOWNSHIFTS or current_batch <= 1:
+                            raise
+                        oom_downshifts += 1
+                        current_batch = max(1, current_batch // 2)
+                        perf.note_oom_downshift()
+                        continue
+                    output.validate_for(batch_obj)
+                    perf.record_batch(len(group))
+                    accumulator.add_tiles(
+                        tile_plan.tiles[start: start + len(group)],
+                        output.raster_stack,
+                        scale=scale,
+                        valid_masks=valid_mask,
+                    )
+                    start += len(group)
+                    _emit(progress, stage="infer", run_id=ctx.run_id,
+                          tiles_done=min(start, len(tile_plan.tiles)),
+                          tiles_total=len(tile_plan.tiles))
+                checkpoint()
+            canvas = accumulator.finalize()
+        except BaseException:
+            accumulator.close()
+            raise
+        finally:
+            _RUN_LOCAL.pop("accumulator", None)
+        perf.note_merge(int(canvas.size))
+        # 输出 georef：同一地理范围，分辨率 = 源 / scale（R1-M2 同源纪律）。
+        sr_path = output_dir / "superres.tif"
+        import rasterio
+        from affine import Affine
+
+        reader = RasterReader.open(str(source_path))
+        try:
+            src = reader.dataset
+            new_transform = src.transform * Affine.scale(1.0 / scale, 1.0 / scale)
+            profile = {
+                "driver": "GTiff", "height": full_h, "width": full_w,
+                "count": channels, "dtype": "float32",
+                "crs": src.crs, "transform": new_transform,
+                "nodata": 0.0, "tiled": True,
+                "blockxsize": 256, "blockysize": 256, "compress": "deflate",
+            }
+            sr_path.parent.mkdir(parents=True, exist_ok=True)
+            with rasterio.open(sr_path, "w", **profile) as dst:
+                for c in range(channels):
+                    dst.write(canvas[c].astype("float32"), c + 1)
+                    dst.set_band_description(c + 1, f"band_{c + 1}")
+        finally:
+            reader.close()
+        return {
+            "superres": self._publish_raster(
+                sr_path, request, role="superres", descriptor=descriptor
+            )
+        }
+
+    # ── temporal classification：单窗口逐时相分类（v1 与 forecast 同界）─
+    def _run_temporal_classification(
+        self,
+        request: InferenceRequest,
+        descriptor: GeoModelDescriptor,
+        provider: Any,
+        model: Any,
+        ctx: InferenceContext,
+        source_path: Path,
+        output_dir: Path,
+        perf: PerfCounters,
+        checkpoint: Callable[[], None],
+    ) -> Dict[str, Dict[str, Any]]:
+        temporal = request.temporal
+        if temporal is None:
+            raise PlanningError("temporal classification requires a TemporalStackSpec")
+        checkpoint()
+        t = len(temporal.times)
+        c = descriptor.input_bands
+        with RasterReader.open(str(source_path)) as reader:
+            meta = reader.metadata()
+            if meta.width > descriptor.spatial.chip_size[0] or \
+                    meta.height > descriptor.spatial.chip_size[1]:
+                raise PlanningError(
+                    "temporal classification reference path is single-window; "
+                    "raster exceeds chip (tile-by-time not supported in v1)"
+                )
+            stack_channels: List[np.ndarray] = []
+            for ti in range(t):
+                checkpoint()
+                band_ids = [ti * c + j + 1 for j in range(c)]
+                if max(band_ids) > meta.count:
+                    raise PlanningError(
+                        f"source has {meta.count} bands; temporal stack needs {max(band_ids)} "
+                        "(time-major C*T band layout)"
+                    )
+                data = reader.read_window((0, 0, meta.width, meta.height), bands=band_ids)
+                stack_channels.append(data)
+                perf.note_window(1, bytes_read=int(data.nbytes))
+            pixels = np.concatenate(stack_channels, axis=0)[None].astype(np.float32)
+            batch = TileBatch(pixels=pixels, valid_mask=None,
+                              chip_hw=(meta.height, meta.width))
+            ctx.extras["stack_length"] = t
+            output = provider.infer(model, batch, ctx)
+            output.validate_for(batch)
+            seq = output.label_sequence[0]  # (T,K)
+        classes = seq.argmax(axis=1).astype(np.uint8)  # (T,)
+        conf = seq.max(axis=1).astype(np.float32)
+        class_names = (
+            list(descriptor.class_schema.classes) if descriptor.class_schema else []
+        )
+        payload = {
+            "times": list(temporal.times),
+            "classes": [
+                {
+                    "time": temporal.times[i],
+                    "label": int(classes[i]),
+                    "label_name": (
+                        class_names[int(classes[i])]
+                        if 0 <= int(classes[i]) < len(class_names) else str(int(classes[i]))
+                    ),
+                    "confidence": round(float(conf[i]), 6),
+                }
+                for i in range(t)
+            ],
+        }
+        import json as _json
+
+        seq_path = output_dir / "temporal_classification.json"
+        seq_path.write_text(_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        perf.record_batch(1)
+        outputs = {
+            "temporal_classification": publish_json_artifact(
+                seq_path, owner_scope=request.owner_scope, source_refs=[],
+                producer={"capability": "modelops.inference", "task": "temporal_classification"},
+            )
+        }
+        return outputs
+
     # ── helpers ─────────────────────────────────────────────────────
     def _resolve_task(self, descriptor: GeoModelDescriptor, request: InferenceRequest) -> str:
         if request.task_type:
@@ -1108,6 +1394,82 @@ class InferenceEngine:
         )
         result.setdefault("path", str(path))
         return result
+
+
+class _StackAccumulator:
+    """super-resolution 全图重建缓冲（float32 栈；RAM/memmap 两级有界）。
+
+    语义：stride=chip 无重叠 → 每 chip 的输出直接写入对应放大窗口
+    （crop 权重语义）；nodata chip 写 0 并在 weight 上记 0（finalize
+    可输出有效掩膜语义——SR 栅格本身以 0=nodata 发布）。
+    """
+
+    def __init__(self, height: int, width: int, channels: int) -> None:
+        self._h = height
+        self._w = width
+        self._c = channels
+        need = channels * height * width * 4
+        if need <= MERGE_RAM_BUDGET_BYTES:
+            self._canvas = np.zeros((channels, height, width), dtype=np.float32)
+            self._memmap_dir: Optional[Path] = None
+        else:
+            if need > MERGE_DISK_HARD_CAP_BYTES:
+                raise ResourceUnavailable(
+                    f"super-resolution canvas needs {need} bytes > disk cap "
+                    f"{MERGE_DISK_HARD_CAP_BYTES}"
+                )
+            import tempfile
+
+            self._memmap_dir = Path(tempfile.mkdtemp(prefix="modelops-sr-"))
+            self._canvas = np.memmap(
+                self._memmap_dir / "sr.npy", dtype=np.float32, mode="w+",
+                shape=(channels, height, width),
+            )
+            self._canvas[:] = 0
+
+    def add_tiles(
+        self,
+        tiles: Any,
+        stacks: np.ndarray,
+        *,
+        scale: int,
+        valid_masks: Optional[np.ndarray] = None,
+    ) -> None:
+        for i, tile in enumerate(tiles):
+            row, col, core_h, core_w = tile.core_window
+            out = stacks[i]  # (C, core_h*scale, core_w*scale)
+            if out.shape[1] != core_h * scale or out.shape[2] != core_w * scale:
+                raise PreprocessError(
+                    f"super_resolution chip output {out.shape[1:]} != expected "
+                    f"({core_h * scale}, {core_w * scale})"
+                )
+            if valid_masks is not None:
+                vm = valid_masks[i]
+                if vm.ndim == 3:
+                    vm = vm[0]
+                core_vm = vm[:core_h, :core_w]
+                if not bool(core_vm.all()):
+                    # 部分 nodata 的 chip：无效像元输出置 0（nodata 语义）。
+                    vm_up = np.kron(core_vm, np.ones((scale, scale), dtype=bool))
+                    out = out * vm_up[None].astype(np.float32)
+            self._canvas[
+                :,
+                row * scale: (row + core_h) * scale,
+                col * scale: (col + core_w) * scale,
+            ] = out
+
+    def finalize(self) -> np.ndarray:
+        canvas = np.asarray(self._canvas)
+        self.close()
+        return canvas
+
+    def close(self) -> None:
+        if self._memmap_dir is not None:
+            import shutil
+
+            del self._canvas
+            shutil.rmtree(self._memmap_dir, ignore_errors=True)
+            self._memmap_dir = None
 
 
 def _process_peak_rss_bytes() -> int:

@@ -16,6 +16,11 @@ TASK_CLASSIFICATION = "classification"
 TASK_EMBEDDING = "embedding"
 TASK_PROMPTABLE_SEGMENTATION = "promptable_segmentation"
 TASK_TEMPORAL_FORECAST = "temporal_forecast"
+# V3 §C：GeoAI 任务全集扩展。
+TASK_CHANGE_DETECTION = "change_detection"              # 双时相 → 变化图
+TASK_SUPER_RESOLUTION = "super_resolution"              # 上采样栅格重建
+TASK_TEMPORAL_CLASSIFICATION = "temporal_classification"  # 逐时相类别
+TASK_SAR_OPTICAL_FUSION = "sar_optical_fusion"          # SAR+光学融合分割
 
 TASK_TYPES: FrozenSet[str] = frozenset(
     {
@@ -26,6 +31,10 @@ TASK_TYPES: FrozenSet[str] = frozenset(
         TASK_EMBEDDING,
         TASK_PROMPTABLE_SEGMENTATION,
         TASK_TEMPORAL_FORECAST,
+        TASK_CHANGE_DETECTION,
+        TASK_SUPER_RESOLUTION,
+        TASK_TEMPORAL_CLASSIFICATION,
+        TASK_SAR_OPTICAL_FUSION,
     }
 )
 
@@ -57,6 +66,10 @@ OUTPUT_INSTANCE_MASKS = "instance_masks"
 OUTPUT_EMBEDDINGS = "embeddings"
 OUTPUT_LABELS = "labels"
 OUTPUT_TEMPORAL_STACK = "temporal_stack"
+# V3 §C：新任务输出形态。
+OUTPUT_CHANGE_MAP = "change_map"                # 双时相变化图（类别栅格语义）
+OUTPUT_SUPERRES_RASTER = "super_res_raster"     # 上采样 float 栅格栈
+OUTPUT_LABEL_SEQUENCE = "label_sequence"        # 逐时相类别序列
 
 OUTPUT_TYPES: FrozenSet[str] = frozenset(
     {
@@ -68,6 +81,9 @@ OUTPUT_TYPES: FrozenSet[str] = frozenset(
         OUTPUT_EMBEDDINGS,
         OUTPUT_LABELS,
         OUTPUT_TEMPORAL_STACK,
+        OUTPUT_CHANGE_MAP,
+        OUTPUT_SUPERRES_RASTER,
+        OUTPUT_LABEL_SEQUENCE,
     }
 )
 
