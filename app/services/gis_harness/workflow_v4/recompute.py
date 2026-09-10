@@ -92,6 +92,22 @@ def _seed_nodes(
     return []
 
 
+def _node_id_of(endpoint: str, node_set: Set[str]) -> str:
+    """bounded 边端点（"node.port"）→ 节点 id 归一化（V5 修复）。
+
+    ``to_bounded_dict()`` 形态的边端点携带端口后缀（``"data:x.data"``），
+    而种子/节点 id 是裸节点 id —— 不归一则邻接表键与种子永不相遇，
+    正向闭包失效（真实包形态实测：data_role 变更只标记种子自身）。
+    仅当剥离端口后缀后的前缀确实是已知节点 id 时归一（节点 id 词表
+    ``<kind>:<name>`` 与端口名均不含 ``.``；无法归一时保持原样）。
+    """
+    ep = str(endpoint or "")
+    if ep in node_set:
+        return ep
+    head, sep, _tail = ep.rpartition(".")
+    return head if sep and head and head in node_set else ep
+
+
 def compute_affected_subgraph(
     dag: Dict[str, Any],
     changes: Sequence[WorkflowChange],
@@ -122,6 +138,8 @@ def compute_affected_subgraph(
             src = src.rsplit(".", 1)[0]
         if dst not in node_set and "." in dst:
             dst = dst.rsplit(".", 1)[0]
+        src = _node_id_of(e.get("from", ""), node_set)
+        dst = _node_id_of(e.get("to", ""), node_set)
         adjacency.setdefault(src, []).append(dst)
     for n in dag.get("nodes") or []:
         for dep in n.get("depends_on", ()) or []:

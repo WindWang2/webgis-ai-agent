@@ -169,6 +169,28 @@
 - DR scrub: deterministic sample/full digest verification, ETag
   record-vs-head comparison, virtual deep states.
 
+### Added (workflow-v5: Semantic Workflow Runtime V5)
+- Executable typed-DAG runtime consuming Workflow V4 packages: durable
+  package registry (semver publish, re-emit fingerprint verification),
+  runtime instances with per-node CAS state machine (9-state table incl.
+  STALE reuse-resolution and lease-gated orphan recovery), and bounded
+  wave scheduling over the existing GeoCompute execution plane
+  ([op, MATERIALIZE] plans; unwired operators honestly NODE_NOT_EXECUTABLE).
+- Incremental recompute closed loop: semantic changes drive V4
+  compute_affected_subgraph (fixed for real bounded edge form), mark
+  exact stale subtrees via node-level CAS, resolve via reuse-first
+  verdicts (content-level fingerprints with content_revision; shape-level
+  recorded but never reused), and re-execute only dirty nodes with
+  effective parameter values in reuse fingerprints.
+- Runtime typed-port verification against live artifact descriptors
+  (artifact type / geometry family / CRS class via crs_safety / unit /
+  required / cardinality), PASS and blocked evidence both persisted.
+- REST /api/v1/workflow-runtime (packages/instances lifecycle, dry-run
+  recompute plan, explanations), fail-open chat-session hooks
+  (plan attach, tool-result record outside the session lock, MapSpec
+  style changes), and a minimal workflow runtime inspector panel.
+- Migration 0034 (packages/instances/nodes/reuse tables, additive,
+  re-entrant DDL, single-head asserted).
 
 ### Added (science-v4: Spatial Science & GeoAI Platform V4)
 - Geostatistics V4: simple kriging, external-drift kriging (KED), normal-score

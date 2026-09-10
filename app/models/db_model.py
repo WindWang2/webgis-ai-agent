@@ -480,4 +480,153 @@ class GeoComputeResourceUsage(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
-__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeResourceUsage", "get_init_sql"]
+__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeResourceUsage",
+           "WorkflowPackageRow", "WorkflowInstanceRow", "WorkflowInstanceNodeRow",
+           "WorkflowNodeReuseRow", "get_init_sql"]
+
+# ═══════════════════════════════════════════════════════════════════════
+# Workflow Runtime V5（Epic workflow-v5；架构见
+# .agent-work/workflow-v5-executable-runtime/01-architecture.md §3）
+#
+# 事实源边界：
+# - workflow_packages 是「包存在/发布态」的真相；包内容真相仍是 V4 编译器
+#   （注册时 re-emit 比对指纹，不一致拒绝注册）；
+# - workflow_instances/workflow_instance_nodes 是**执行面**运行态真相；
+#   会话行状态写手仍是 SessionPlan._mark_progress，两域互不写；
+# - workflow_node_reuse 是缓存索引（fail-open），不是第二 artifact registry
+#   —— 载荷事实源仍是 session ref / ArtifactRegistry / DataObject。
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class WorkflowPackageRow(Base):
+    """durable WorkflowPackage registry（semver 发布态）。"""
+    __tablename__ = "workflow_packages"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    package_id = Column(String(64), nullable=False)
+    version = Column(String(16), nullable=False)
+    schema_version = Column(String(16), nullable=False)
+    compiler_version = Column(String(16), nullable=False)
+    methodology_family = Column(String(40), nullable=False, default="")
+    recipe_fingerprint = Column(String(64), nullable=False, default="")
+    methodology_fingerprint = Column(String(64), nullable=False, default="")
+    environment_fingerprint = Column(String(64), nullable=False, default="")
+    compiled_form = Column(JSON, nullable=False)
+    fingerprint = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False, default="draft")
+    owner_scope = Column(String(40), nullable=False)
+    project_id = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    published_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        # (owner, package_id, version) 唯一 [R2-B1]：package_id 是全局
+        # recipe 常量且指纹含用户 query —— 全局唯一会让第二条消息永久
+        # 409（attach 自失效）并构成跨租户注册投毒。
+        UniqueConstraint("owner_scope", "package_id", "version",
+                         name="uq_wf_pkg_owner_id_ver"),
+        CheckConstraint("status IN ('draft','published','deprecated')", name="ck_wf_pkg_status"),
+        Index("idx_wf_pkg_owner", "owner_scope", "package_id"),
+    )
+
+
+class WorkflowInstanceRow(Base):
+    """工作流运行实例（实例级；轻量聚合 + 决策环 + pending 变更）。"""
+    __tablename__ = "workflow_instances"
+
+    instance_id = Column(String(64), primary_key=True)
+    package_id = Column(String(64), nullable=False)
+    package_version = Column(String(16), nullable=False)
+    package_fingerprint = Column(String(64), nullable=False)
+    status = Column(String(20), nullable=False, default="running")
+    revision = Column(Integer, nullable=False, default=1)
+    owner_scope = Column(String(40), nullable=False)
+    session_id = Column(String(255), nullable=True)
+    project_id = Column(String(255), nullable=True)
+    parent_instance_id = Column(String(64), nullable=True)
+    parent_node_id = Column(String(64), nullable=True)
+    run_lease_owner = Column(String(64), nullable=True)
+    run_lease_expires_at = Column(DateTime, nullable=True)
+    cancel_requested = Column(Boolean, nullable=False, default=False)
+    pending_changes = Column(JSON, nullable=False, default=list)
+    decisions = Column(JSON, nullable=False, default=list)
+    visited_packages = Column(JSON, nullable=False, default=list)
+    error_code = Column(String(64), nullable=True)
+    error_detail = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, onupdate=lambda: datetime.now(timezone.utc))
+    started_at = Column(DateTime, nullable=True)
+    terminal_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running','succeeded','failed','cancelled','superseded')",
+            name="ck_wf_inst_status"),
+        Index("idx_wf_inst_owner", "owner_scope", "instance_id"),
+        Index("idx_wf_inst_session", "session_id", "status"),
+        Index("idx_wf_inst_parent", "parent_instance_id"),
+    )
+
+
+class WorkflowInstanceNodeRow(Base):
+    """工作流实例节点运行态（**每节点一行**：节点级 CAS 消除整行争用）。"""
+    __tablename__ = "workflow_instance_nodes"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    instance_id = Column(String(64), nullable=False)
+    node_id = Column(String(64), nullable=False)
+    state = Column(String(16), nullable=False, default="PENDING")
+    state_revision = Column(Integer, nullable=False, default=1)
+    claimed_by = Column(String(64), nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    error_code = Column(String(64), nullable=True)
+    bound_ref = Column(String(96), nullable=True)
+    output_ref = Column(String(96), nullable=True)
+    output_fingerprint = Column(String(64), nullable=True)
+    binding = Column(JSON, nullable=False, default=dict)
+    reuse = Column(JSON, nullable=False, default=dict)
+    attempts_log = Column(JSON, nullable=False, default=list)
+    transitions = Column(JSON, nullable=False, default=list)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("instance_id", "node_id", name="uq_wf_node_inst_node"),
+        CheckConstraint(
+            "state IN ('PENDING','READY','RUNNING','SUCCEEDED','FAILED',"
+            "'BLOCKED','SKIPPED','CANCELLED','STALE')",
+            name="ck_wf_node_state"),
+        Index("idx_wf_node_inst_state", "instance_id", "state"),
+    )
+
+
+class WorkflowNodeReuseRow(Base):
+    """工作流节点复用索引（缓存，fail-open；每 owner LRU 剪枝）。
+
+    eligibility 硬规则（架构 §6 [R1-M3]）：``fingerprint_level='shape'``
+    只记录不复用；``content_revision`` 参与指纹 —— 同 ref 原地覆写必 miss。
+    """
+    __tablename__ = "workflow_node_reuse"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    owner_scope = Column(String(40), nullable=False)
+    reuse_fingerprint = Column(String(32), nullable=False)
+    session_scope = Column(String(40), nullable=False, default="")
+    node_id = Column(String(64), nullable=False)
+    package_fingerprint = Column(String(64), nullable=False)
+    artifact_ref = Column(String(96), nullable=False)
+    artifact_session_id = Column(String(255), nullable=False)
+    fingerprint_level = Column(String(24), nullable=False, default="shape")
+    input_fingerprints = Column(JSON, nullable=False, default=dict)
+    algorithm_id = Column(String(64), nullable=False, default="")
+    params_fp = Column(String(64), nullable=False, default="")
+    env_fp = Column(String(64), nullable=False, default="")
+    source_instance_id = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    last_verified_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("owner_scope", "reuse_fingerprint", name="uq_wf_reuse_owner_fp"),
+        Index("idx_wf_reuse_owner_created", "owner_scope", "created_at"),
+    )
+
+

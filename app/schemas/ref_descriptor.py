@@ -323,17 +323,24 @@ def _opt_in_content_hash(data) -> Optional[str]:
 def compute_descriptor(ref_id: str, data) -> RefDescriptor:
     """Compute descriptor from raw data at store time.
     
-    Handles three shapes:
+    Handles four shapes:
     - FeatureCollection dict
     - Wrapped: {"geojson": FeatureCollection}
     - Tool result: {"type": "...", "geojson": FeatureCollection}
+    - Bare feature list（geocompute MATERIALIZE 产出形态；V5 修复——
+      此前列表载荷的 feature_count 恒 0，产物描述符失真）
     
     Returns descriptor with all fields populated. For non-FC data,
     feature_count/point_count/geometry_types will be zero/empty.
     """
     # Extract FeatureCollection
     fc = data
-    if isinstance(data, dict):
+    if isinstance(data, list) and (
+        not data or isinstance(data[0], dict)
+    ):
+        # 裸要素列表 → FC 投影（geometry 键存在性由下游逐要素判断）
+        fc = {"type": "FeatureCollection", "features": data}
+    elif isinstance(data, dict):
         nested = data.get("geojson")
         if isinstance(nested, dict):
             fc = nested
