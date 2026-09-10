@@ -19,6 +19,7 @@ import { useMapAction } from "@/lib/contexts/map-action-context";
 // 作为页面导出（CI `next build` 会拒绝非 Page 导出字段）。
 import { applyStoryMapState, type SessionMapState } from "@/lib/session/map-state-restore";
 import { useToastStore } from "@/components/ui/toast";
+import { MapErrorBoundary } from "@/components/map/map-error-boundary";
 import { Pause, Play, SkipBack, Share2 } from "lucide-react"
 
 /** 播放模式下逐条消息推进的间隔（ms）。 */
@@ -257,11 +258,13 @@ function StoryPageInner() {
         {/* Adds Cinematic Gradient */}
         <div className="absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-surface-canvas to-transparent z-10 pointer-events-none" />
 
-        <MapPanel
-          layers={layers}
-          onRemoveLayer={removeLayer}
-          onToggleLayer={toggleLayer}
-        />
+        <MapErrorBoundary>
+          <MapPanel
+            layers={layers}
+            onRemoveLayer={removeLayer}
+            onToggleLayer={toggleLayer}
+          />
+        </MapErrorBoundary>
       </div>
     </div>
   )
