@@ -2333,6 +2333,10 @@ def evaluate_cartography_semantics(
     # floating 矩形重叠——desired-state 证据即可评，不再恒 not_evaluated。
     _check_component_layout(report, mapspec)
 
+    # 7pre-V7（Goal 08 Phase I）：组件图级 QA —— 重复绑定 / 越界浮动 /
+    # 显式边成环。与 LAYOUT_COLLISION 正交（图语义 vs 槽位计数）。
+    _check_component_graph_semantics(report, mapspec)
+
     # 7. Legend / style field consistency (warning).
     legend = (mapspec.get("layout") or {}).get("legend") or {}
     legend_field = legend.get("field") if isinstance(legend, dict) else None
@@ -2425,6 +2429,171 @@ def _check_component_layout(report: CartographyReport, mapspec: Dict[str, Any]) 
         evidence_class="desired_state",
         evidence={"issues": issues},
     )
+
+
+def _check_component_graph_semantics(
+    report: CartographyReport, mapspec: Dict[str, Any]
+) -> None:
+    """V7（Goal 08 Phase I）组件图级 QA——图语义与几何越界。
+
+    规则（与 LAYOUT_COLLISION 的槽位计数正交）：
+    - ``DUPLICATE_LEGEND_BINDING``：同型组件 binds_to 同一图层（图例族
+      重复的根语义；per-layer 图例展开是合法构成，不在此列）。warning，
+      修复需改绑定语义 → 非 auto。
+    - ``COMPONENT_OUTSIDE_CANVAS``：浮动矩形完全在画布负象限（不可见、
+      不可达 —— 不是用户摆放意图，是破损状态）。fail + auto_safe，
+      suggested_fix 走 ``resolve_floating_layout``（确定性钳制进安全区）。
+      可见的部分越界沿用 LAYOUT_COLLISION 的 user-wins 边界，不在此报。
+    - ``COMPONENT_LINK_CYCLE``：显式 requires/under 边成环（z 序/依赖
+      不可满足）。error，需模板/用户裁决 → 非 auto。
+
+    无组件时本维度不适用（不产检查项，同 _check_component_layout）。
+    """
+    from app.lib.cartography.component_graph import (
+        build_component_graph,
+        validate_component_graph,
+    )
+    from app.lib.cartography.layout_geometry import (
+        CanvasSpec,
+        check_component_bounds,
+        resolve_floating_rects,
+        safe_area_for,
+    )
+
+    layout = mapspec.get("layout") if isinstance(mapspec.get("layout"), dict) else {}
+    raw = layout.get("components")
+    if not isinstance(raw, list) or not raw:
+        return
+    components = [c for c in raw if isinstance(c, dict)]
+
+    graph = build_component_graph(mapspec)
+    issues = validate_component_graph(graph)
+
+    dup = [i for i in issues if i.code == "duplicate_binding"]
+    if dup:
+        report.add_check(
+            "DUPLICATE_LEGEND_BINDING",
+            "warning",
+            "; ".join(i.message for i in dup[:3]),
+            severity="warning",
+            evidence_class="deterministic",
+            evidence={"bindings": [i.model_dump() for i in dup[:4]]},
+            repairability="not_repairable",
+            suggested_fix=None,
+        )
+    else:
+        report.add_check(
+            "DUPLICATE_LEGEND_BINDING",
+            "pass",
+            "no duplicate same-type layer binding",
+            evidence_class="deterministic",
+        )
+
+    cycles = [i for i in issues if i.code == "cycle"]
+    if cycles:
+        report.add_check(
+            "COMPONENT_LINK_CYCLE",
+            "fail",
+            "; ".join(i.message for i in cycles[:3]),
+            severity="error",
+            evidence_class="deterministic",
+            evidence={"cycles": [i.model_dump() for i in cycles[:4]]},
+            repairability="not_repairable",
+        )
+    else:
+        report.add_check(
+            "COMPONENT_LINK_CYCLE",
+            "pass",
+            "no explicit link cycle",
+            evidence_class="deterministic",
+        )
+
+    # 浮动越界双层语义：
+    # - 完全不可达（x+w<=0 或 y+h<=0，负象限）——任何视口都不可见，破损
+    #   状态 → fail + auto_safe（resolve_floating_layout 确定性钳回）；
+    # - 超出标称视口（1280×720 假设）但坐标为正 —— 大屏可能是合法摆放，
+    #   不定罪 → warning + auto_safe 建议（quality_loop 只自动修 fail，
+    #   假设性修复不进自动通道，供 harness 评审采纳）。
+    # 可见的部分越界沿用 LAYOUT_COLLISION 的 user-wins 边界，不在此报。
+    canvas = CanvasSpec(width=1280, height=720)
+    safe = safe_area_for(canvas, layout.get("margins")
+                         if isinstance(layout.get("margins"), dict) else None)
+    bounds_issues = check_component_bounds(components, canvas, safe)
+    unreachable = []
+    assumed_out = []
+    for c in components:
+        placement = c.get("placement") if isinstance(c.get("placement"), dict) else {}
+        if placement.get("mode") != "floating" or not c.get("enabled", True):
+            continue
+        try:
+            x = float(placement.get("x", 0))
+            y = float(placement.get("y", 0))
+            w = float(placement.get("width", 0) or 0)
+            h = float(placement.get("height", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        # 与 layout_geometry.check_component_bounds 的 id 归一同口径
+        # （id or ""）—— 空 id 时 bounds 侧不产条目，本侧也不得用
+        # type/"?" 兜底造出匹配不上的悬空引用（auto_safe 建议会失配）。
+        cid = str(c.get("id") or "")
+        if not cid:
+            continue
+        if w <= 0 or h <= 0:
+            continue
+        if x + w <= 0 or y + h <= 0:
+            unreachable.append(
+                {"component_ids": [cid], "message": f"浮动组件 {cid} 完全在负象限（不可见）"})
+        else:
+            for i in bounds_issues:
+                if i.code in ("outside_safe_area", "outside_canvas") \
+                        and cid in i.component_ids:
+                    assumed_out.append({"component_ids": [cid],
+                                        "message": i.message})
+    fix_placements: List[Dict[str, Any]] = []
+    if unreachable or assumed_out:
+        fix_report = resolve_floating_rects(components, canvas, safe)
+        target_ids = {c for i in (*unreachable, *assumed_out)
+                      for c in i["component_ids"]}
+        fix_placements = [
+            {"component_id": a.component_id,
+             "x": round(a.to_rect.x, 2), "y": round(a.to_rect.y, 2)}
+            for a in fix_report.adjustments if a.component_id in target_ids
+        ]
+    if unreachable:
+        report.add_check(
+            "COMPONENT_OUTSIDE_CANVAS",
+            "fail",
+            "; ".join(i["message"] for i in unreachable[:3]),
+            severity="error",
+            evidence_class="deterministic",
+            evidence={"outside": unreachable[:4]},
+            repairability="auto_safe",
+            suggested_fix={
+                "operation": "resolve_floating_layout",
+                "placements": fix_placements,
+            } if fix_placements else None,
+        )
+    elif assumed_out:
+        report.add_check(
+            "COMPONENT_OUTSIDE_CANVAS",
+            "warning",
+            "; ".join(i["message"] for i in assumed_out[:3]),
+            severity="warning",
+            evidence_class="deterministic",
+            evidence={"outside": assumed_out[:4]},
+            repairability="auto_safe",
+            suggested_fix={
+                "operation": "resolve_floating_layout",
+                "placements": fix_placements,
+            } if fix_placements else None,
+        )
+    else:
+        report.add_check(
+            "COMPONENT_OUTSIDE_CANVAS",
+            "pass",
+            "no floating component fully outside canvas",
+            evidence_class="deterministic",
+        )
 
 
 def _detect_floating_overlaps(components: List[Dict[str, Any]]) -> List[str]:

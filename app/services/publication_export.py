@@ -84,6 +84,8 @@ class PublicationPdfResult:
     font_cjk: bool = True
     frames_rendered: int = 0
     frames_skipped: int = 0
+    # V7（Goal 08 Phase H）：生效 DPI（用户值被钳制后如实披露 —— 不静默）。
+    target_dpi: int = 300
 
 
 def _probe_cjk_font() -> bool:
@@ -280,18 +282,36 @@ def _unhydrated_geojson_keys(doc: Dict[str, Any]) -> List[str]:
     return out
 
 
+#: DPI 合法域（印刷 72 线屏下限到喷墨 600 上限；越界钳制并披露生效值）。
+DPI_MIN, DPI_MAX, DPI_DEFAULT = 72, 600, 300
+
+
+def clamp_target_dpi(value: Any) -> int:
+    """渲染 DPI 钳制（None/非法 → 缺省 300；越界钳到 [72, 600]）。"""
+    try:
+        dpi = int(value)
+    except (TypeError, ValueError):
+        return DPI_DEFAULT
+    return max(DPI_MIN, min(DPI_MAX, dpi))
+
+
 def render_publication_pdf(
     payload: Dict[str, Any],
     *,
     title: str = "",
     max_frames: int = MAX_SPEC_FRAMES,
     max_labels: int = MAX_LABELS_PER_EXPORT,
+    target_dpi: int = 300,
 ) -> PublicationPdfResult:
     """publication PDF 主入口（同步；CPU/IO 由调用方置于工作线程）。
 
     ``title``：PDF 文档元数据标题（<title>）；图面标题仍由 spec 标题组件
     驱动（user-wins，不虚构）。``max_labels``：每帧标签预算上界（≤400）。
+    ``target_dpi``：渲染 DPI（V7 Goal 08 Phase H 可选；72-600 之外的值
+    钳到边界，生效值经 result.target_dpi 如实披露 —— 缺省 300 与既有
+    输出 byte 一致）。
     """
+    target_dpi = clamp_target_dpi(target_dpi)
     if weasyprint is None:
         raise PublicationUnavailableError(
             "weasyprint is not installed; vector PDF unavailable"
@@ -346,8 +366,10 @@ def render_publication_pdf(
         try:
             comp = compile_mapspec_to_svg_detailed(
                 frame_doc,
-                target_dpi=300,
-                width=int(page_w * 4),   # mm→px 近似 4px/mm（≥300dpi 视觉）
+                target_dpi=target_dpi,
+                # 栅格密度近似 4px/mm（固定，保输出 byte 一致）；target_dpi 驱动
+                # 文本/线宽的 dpi_scale（mapspec_to_svg），不改画布像素尺寸
+                width=int(page_w * 4),
                 height=int(page_h * 4),
                 padding=24,
                 include_chrome=True,
@@ -445,6 +467,7 @@ def render_publication_pdf(
         font_cjk=_probe_cjk_font(),
         frames_rendered=rendered,
         frames_skipped=skipped,
+        target_dpi=target_dpi,
     )
 
 

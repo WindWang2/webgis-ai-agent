@@ -26,7 +26,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "annotation",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "✎",
+        "accent": "#b45309"
+      }
     },
     {
       "type": "attribution",
@@ -46,7 +53,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "reference",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "©",
+        "accent": "#6b7280"
+      }
     },
     {
       "type": "basemap",
@@ -57,7 +71,14 @@
       "runtimeStatus": "native",
       "rendererRequired": false,
       "rendererSupport": [],
-      "exporterSupport": []
+      "exporterSupport": [],
+      "semanticRole": "",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "",
+        "accent": ""
+      }
     },
     {
       "type": "categorical_legend",
@@ -80,7 +101,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "legend",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "▤",
+        "accent": "#059669"
+      }
     },
     {
       "type": "chart_panel",
@@ -120,7 +148,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "statistics",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "▥",
+        "accent": "#7c3aed"
+      }
     },
     {
       "type": "continuous_colorbar",
@@ -143,7 +178,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "legend",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "▰",
+        "accent": "#dc2626"
+      }
     },
     {
       "type": "decision_panel",
@@ -163,7 +205,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "disclosure",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "⚖",
+        "accent": "#525252"
+      }
     },
     {
       "type": "export_layout",
@@ -182,7 +231,14 @@
       "exporterSupport": [
         "png",
         "pdf"
-      ]
+      ],
+      "semanticRole": "export",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "▭",
+        "accent": "#0f766e"
+      }
     },
     {
       "type": "graticule",
@@ -203,7 +259,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "reference",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "▦",
+        "accent": "#9ca3af"
+      }
     },
     {
       "type": "inset_map",
@@ -224,7 +287,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "inset",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "◭",
+        "accent": "#0369a1"
+      }
     },
     {
       "type": "legend",
@@ -251,7 +321,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "legend",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "≡",
+        "accent": "#2563eb"
+      }
     },
     {
       "type": "map_border",
@@ -273,7 +350,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "map_frame",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "▢",
+        "accent": "#374151"
+      }
     },
     {
       "type": "methodology_note",
@@ -294,7 +378,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "disclosure",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "§",
+        "accent": "#525252"
+      }
     },
     {
       "type": "north_arrow",
@@ -318,7 +409,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "orientation",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "↑",
+        "accent": "#1f2933"
+      }
     },
     {
       "type": "scale_bar",
@@ -340,7 +438,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "measure",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "↔",
+        "accent": "#1f2933"
+      }
     },
     {
       "type": "statistics_panel",
@@ -362,7 +467,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "statistics",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "𝍢",
+        "accent": "#7c3aed"
+      }
     },
     {
       "type": "subtitle",
@@ -384,7 +496,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "title_block",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "t",
+        "accent": "#4b5563"
+      }
     },
     {
       "type": "table_panel",
@@ -405,7 +524,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "statistics",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "▦",
+        "accent": "#7c3aed"
+      }
     },
     {
       "type": "title",
@@ -430,7 +556,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "title_block",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "T",
+        "accent": "#111827"
+      }
     },
     {
       "type": "uncertainty_panel",
@@ -450,7 +583,14 @@
         "png",
         "pdf",
         "svg"
-      ]
+      ],
+      "semanticRole": "disclosure",
+      "deprecated": false,
+      "deprecatedBy": "",
+      "preview": {
+        "glyph": "±",
+        "accent": "#525252"
+      }
     }
   ],
   "palettes": [

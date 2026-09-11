@@ -371,7 +371,42 @@ def _apply_repairs(
             "set_layer_visibility",
             "change_palette",
             "set_map_legend_visibility",
+            "resolve_floating_layout",
         ):
+            continue
+        if operation == "resolve_floating_layout":
+            # V7（Goal 08 Phase G/I）：浮动组件越界的确定性钳回 —— 只挪
+            # x/y（尺寸/状态/数据绑定不动），presentation-only；目标坐标
+            # 来自 layout_geometry.resolve_floating_rects 的调整建议。
+            placements = repair.get("placements")
+            if not isinstance(placements, list):
+                continue
+            layout = candidate.get("layout")
+            if not isinstance(layout, dict):
+                continue
+            components = layout.get("components")
+            if not isinstance(components, list):
+                continue
+            moves = {
+                p.get("component_id"): p
+                for p in placements
+                if isinstance(p, dict) and p.get("component_id")
+            }
+            for component in components:
+                if not isinstance(component, dict):
+                    continue
+                move = moves.get(component.get("id"))
+                if move is None:
+                    continue
+                placement = component.get("placement")
+                if not isinstance(placement, dict):
+                    continue
+                if placement.get("mode") != "floating":
+                    continue  # 用户 anchor 槽组件不由本修复触碰
+                x, y = move.get("x"), move.get("y")
+                if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                    placement["x"] = x
+                    placement["y"] = y
             continue
         if operation == "set_map_legend_visibility":
             layout = candidate.get("layout")

@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased] - 2026-09-11 (cartography-v7: Template Component Runtime)
+
+### Added (cartography-v7: Component Graph + Constraint Set + Style Tokens, Goal 08)
+- Component graph (`app/lib/cartography/component_graph.py`): MapSpec 扁平
+  组件列表之上的运行时图投影 —— 节点带 registry 语义投影，类型化边
+  binds_to/requires/groups/annotates/under（derived：options.layerId、
+  subtitle→title；explicit：layout.component_links）；validate 输出
+  duplicate_binding/cycle/orphan_binding 结构化问题；确定性拓扑序
+  （under=src 先绘制）。MapSpec schema 1.2 additive（identity upgrader，
+  round-trip 保真，TS 投影再生成）。
+- Registry intelligence（`component_registry.py`）：search() 确定性 token
+  评分（受控中英关键词词表 + 过滤器硬约束 + 弃用缺省排除）、recommend()
+  可解释上下文推荐（模型兼容/语义角色/类目亲和/在场去重）；descriptor
+  新增 deprecated/deprecated_by/preview/search_keywords_zh。
+- Layout geometry（`layout_geometry.py`）：margins/bleed 安全区、zone
+  矩形近似、浮动组件 user-wins 确定性布放（越界钳制 + 重叠级联推移，
+  不可解显式披露）—— QA 与 repair 共用同一几何真值。
+- Style tokens（`style_tokens.py`）：线宽/符号/视觉层级比例尺 ×
+  screen/publication 输出预设；调色板 profile 迁移建议器（色带子集精确
+  反查，用户自定义色不猜测改写）。
+- Multi-alternative composition selection（`composition_selection.py`）：
+  同一数据 → 排序的候选组合（类目亲和审定表 + plan_composition 复用 +
+  确定性加权评分 + 类目轮转多样性合并）；「学校分布」场景由结构化事实
+  推导出点图/热力/统计组件组合，无 query 硬编码。
+- Graph-level cartographic QA（semantic_checks 新增三条 deterministic
+  规则 DUPLICATE_LEGEND_BINDING / COMPONENT_OUTSIDE_CANVAS /
+  COMPONENT_LINK_CYCLE）+ AUTO_SAFE `resolve_floating_layout`（只挪
+  floating x/y）+ `derive_product_verdict` additive cartographic_review
+  参数（deterministic fail 压低 READY 档位）。
+- Publication DPI 参数化：`/export/vector-pdf` 可选 target_dpi（72-600
+  钳制 + 生效值披露；缺省 300 输出 byte 一致）。
+
 ## [Unreleased] - 2026-09-10 (harness-v7)
 
 ### Added (harness-v7: Long-Horizon Contextual GIS Agent Runtime, ADR-0130)
