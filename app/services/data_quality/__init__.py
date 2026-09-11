@@ -1,16 +1,19 @@
-"""Data Quality —— Wave-4 修复计划 / 修复执行证据面。
+"""Data Quality —— 质量规则引擎 + 修复计划/执行证据面（V9 升为子系统）。
 
-审计 08 §4.3（repair-plan state machine MISSING）：质量发现 → 修复计划 →
-已执行修复 → 新修订 → 复查 之间没有任何持久对象串联。本包补上这一环：
+历史（Wave-4）：``repair_plan`` / ``repair_execution`` —— 质量发现 → 修复
+计划 → 显式执行的证据链。V9（ADR-0140 前身段，任务书 P1）补齐规则面：
 
-- ``repair_plan``      —— RepairPlan 实体（plan-only；确定性 plan_id）；
-- ``repair_execution`` —— 显式执行缝（新 ref + 有界 repair_evidence，
-  绝不静默覆写源载荷）。
+- ``rules``           —— 规则 DSL / 16 类内置规则注册表（封闭词表）；
+- ``rule_functions``  —— 纯函数判定实现（vector/raster 双族）；
+- ``engine``          —— evaluate（同步小数据集）/ durable job（大数据集）
+  双路径 + QualityReport 落库（migration 0046）；
+- ``autofix``         —— autofixable 子集的确定性修复（dry-run 优先、
+  new-ref 语义）；
+- ``metrics``         —— 规则耗时/命中率 prometheus 指标。
 
-红线：修复词表单一事实源仍是
-``app.services.gis_harness.data_qualification.REMEDIATION_OPS``（经
-``app.services.data_ingest.repair_planning`` 的 W3 映射表），本包不发明
-第四套词表；计划绝不自动执行 —— 执行只经显式调用（工具 / REST）。
+红线（延续）：修复词表单一事实源仍是
+``app.services.gis_harness.data_qualification.REMEDIATION_OPS``；计划绝不
+自动执行 —— 执行只经显式调用（工具 / REST），且产出新载荷不覆写源。
 """
 from app.services.data_quality.repair_plan import (
     RepairPlan,

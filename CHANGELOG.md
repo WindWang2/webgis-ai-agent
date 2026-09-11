@@ -1,5 +1,65 @@
 # Changelog
 
+## [Unreleased] - 2026-09-11 (data-lifecycle-v9: 数据基础与生命周期治理 V9, ADR-0140)
+
+### Added
+- Quality rule engine (P1): dict/YAML rule DSL with 16 closed-vocabulary rule
+  types (null rate, CRS validity, geometry validity, envelope sanity, attribute
+  domain, PK uniqueness, FK referential, duplicate features, field type drift,
+  temporal gaps, nodata ratio, resolution drift, encoding mojibake, band stats
+  outlier, topology adjacency, mixed geometry families); pure evaluation
+  functions with bounded scans and per-rule error isolation; `QualityReport` /
+  `QualityRuleResult` persistence (migration 0046); sync small-dataset and
+  durable-job large-dataset evaluate paths with idempotent reuse and honest
+  failure; autofix pipeline (plan → dry-run → apply with new-ref semantics)
+  bound to the shared REMEDIATION_OPS vocabulary; prometheus rule metrics.
+- Unified lifecycle policy engine (P3, migration 0047): registry upserting
+  five object kinds (lakehouse dataset, fabric materialization, artifact cache,
+  COG output, worker cache) via read-only adapters; hot/warm/cold tiering with
+  revive-on-reference; per-kind policies with **observe-only defaults =
+  behavior-preserving** (equivalence-verified; lakehouse dataset is
+  observe-only by design); lifecycle REST surface (/data-lifecycle/objects,
+  assess, policies).
+- data-gc closed loop (P5): fixed dry-run plan tree (object → dependencies →
+  reason → estimated bytes), approval state machine (pending_approval →
+  approved → executing → done/failed/rolled_back/rejected/cancelled),
+  durable-job execution with two-phase staging (rename into
+  `data/.gc-staging/<plan>`), observation-window rollback and explicit admin
+  purge; plan-digest idempotent reuse.
+- Data profile deepening (P2): unified vector/raster bounded profile with H3
+  spatial-distribution histogram (auto-coarsening, honest truncation),
+  mergeable incremental profiling state (incremental merge == full scan,
+  pinned by test), profile → rule threshold suggestions, profile cache
+  invalidation wired into the ref_lifecycle single invalidation authority.
+- Template versioning (P4, migration 0048): immutable `template_versions`
+  snapshots, cross-template inheritance chains with deep-merge override
+  semantics (depth-capped), deprecation markers with compatible reads, and
+  Cartography V7 component-registry constraint validation; REST surface under
+  `/templates/{id}/versions` (existing templates routes untouched).
+- Alembic anti-collision mechanism (P6): `scripts/alloc_migration.py`
+  (number allocation from `migrations/.alloc.json` with pre-registered
+  down_revision + `--check` mode), CI db-migrations gate step, strengthened
+  `tests/test_alembic_metadata.py` (revision-id uniqueness, ScriptDirectory
+  single-head, duplicate-number copy must fail), and the multi-line migration
+  protocol doc (`docs/dev/migration-protocol.md`).
+
+### Changed
+- `rs/spectral_engine.py`: long-standing TODO cleared — computed `legend_spec`
+  is now attached to `RasterAnalysisResult` and flows into tool results
+  (downstream consumers already read the key).
+- `app/tasks/README.md` / `app/skills/README.md`: structural-debt inventory
+  documented (task_chain keepers, skills data-directory nature).
+
+### Removed
+- Dead package `app/db/` (zero imports; real models live in `app/models/`,
+  Base in `app/core/database.py`).
+
+### Fixed
+- WeasyPrint optional-dependency guards now catch `OSError` (missing GTK
+  libs on Windows raise OSError, not ImportError), restoring app import /
+  test collection on Windows dev machines (#1221 D-7 same class); two
+  cartography PDF tests skip honestly in that environment.
+
 ## [Unreleased] - 2026-09-10 (V7/V8 epic integration round)
 
 Ten prepared epic branches (platform-v4, lakehouse-v8, data-fabric-v8,
