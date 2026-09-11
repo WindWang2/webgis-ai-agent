@@ -13,11 +13,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 
+from app.schemas.workflow_runtime_schema import (  # noqa: F401 - 模块属性保持
+    ChangeIn,    ChangesRequest,    CloneRequest,    InstantiateRequest,
+    NodeCancelRequest,    PackageRegisterRequest,    PublishRequest,    RunRequest,
+    InstanceChangesResponse,    InstanceCloneResponse,    InstanceCreateResponse,
+    InstanceDebugResponse,    InstanceDetailResponse,    InstanceEventsResponse,
+    InstanceListResponse,    InstanceRunResponse,    InstanceCancelResponse,
+    NodeDetailResponse,    NodeRetryResponse,    NodesCancelResponse,
+    PackageListResponse,    PackagePublishResponse,    PackageRegisterResponse,
+    PackageVersionsResponse,    RecomputePlanResponse,
+)
 from app.core.auth import get_current_user
 from app.services.workflow_runtime import contracts as C
 from app.services.workflow_runtime import service as SV
@@ -30,40 +39,6 @@ router = APIRouter(prefix="/workflow-runtime", tags=["Workflow Runtime V5"])
 
 _MAX_QUERY_CHARS = 400
 _MAX_CHANGES = C.MAX_APPLY_CHANGES
-
-
-class PackageRegisterRequest(BaseModel):
-    query: str = Field(min_length=1, max_length=_MAX_QUERY_CHARS)
-    recipe_id: str = Field(default="", max_length=64)
-    project_id: str = Field(default="", max_length=255)
-    profile: Optional[Dict[str, Any]] = None
-
-
-class PublishRequest(BaseModel):
-    version: str = Field(min_length=1, max_length=16)
-
-
-class InstantiateRequest(BaseModel):
-    package_id: str = Field(min_length=1, max_length=64)
-    version: str = Field(default="", max_length=16)
-    session_id: str = Field(default="", max_length=255)
-    project_id: str = Field(default="", max_length=255)
-
-
-class ChangeIn(BaseModel):
-    dimension: str = Field(min_length=1, max_length=24)
-    target_kind: str = Field(min_length=1, max_length=24)
-    target: str = Field(default="", max_length=64)
-    detail: str = Field(default="", max_length=200)
-
-
-class ChangesRequest(BaseModel):
-    changes: List[ChangeIn] = Field(min_length=1, max_length=_MAX_CHANGES)
-    dry_run: bool = False
-
-
-class RunRequest(BaseModel):
-    deadline_s: float = Field(default=60.0, gt=0, le=300.0)
 
 
 _MAX_PROFILE_BYTES = 32_768
@@ -112,7 +87,7 @@ def _not_found():
 
 # ── 包 ───────────────────────────────────────────────────────────────────
 
-@router.post("/packages/register")
+@router.post("/packages/register", response_model=PackageRegisterResponse)
 async def register_package(
     body: PackageRegisterRequest,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -139,7 +114,7 @@ async def register_package(
     return {"success": True, **result}
 
 
-@router.post("/packages/{package_id}/publish")
+@router.post("/packages/{package_id}/publish", response_model=PackagePublishResponse)
 async def publish_package(
     package_id: str, body: PublishRequest,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -153,14 +128,14 @@ async def publish_package(
     return {"success": True, "package": row}
 
 
-@router.get("/packages")
+@router.get("/packages", response_model=PackageListResponse)
 async def list_packages(user: Dict[str, Any] = Depends(get_current_user)):
     rows = await asyncio.to_thread(
         _svc().registry.list_packages, owner_scope=_owner(user))
     return {"success": True, "packages": rows}
 
 
-@router.get("/packages/{package_id}/versions")
+@router.get("/packages/{package_id}/versions", response_model=PackageVersionsResponse)
 async def package_versions(
     package_id: str, user: Dict[str, Any] = Depends(get_current_user),
 ):
@@ -173,7 +148,7 @@ async def package_versions(
 
 # ── 实例 ─────────────────────────────────────────────────────────────────
 
-@router.post("/instances")
+@router.post("/instances", response_model=InstanceCreateResponse)
 async def create_instance(
     body: InstantiateRequest,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -194,7 +169,7 @@ async def create_instance(
             "instance": PR.instance_projection(inst, nodes)}
 
 
-@router.post("/instances/{instance_id}/run")
+@router.post("/instances/{instance_id}/run", response_model=InstanceRunResponse)
 async def run_instance(
     instance_id: str, body: RunRequest,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -212,7 +187,7 @@ async def run_instance(
                     e.detail)
 
 
-@router.post("/instances/{instance_id}/cancel")
+@router.post("/instances/{instance_id}/cancel", response_model=InstanceCancelResponse)
 async def cancel_instance(
     instance_id: str, user: Dict[str, Any] = Depends(get_current_user),
 ):
@@ -222,7 +197,7 @@ async def cancel_instance(
         raise _http(e.code, 404, e.detail)
 
 
-@router.post("/instances/{instance_id}/changes")
+@router.post("/instances/{instance_id}/changes", response_model=InstanceChangesResponse)
 async def apply_changes(
     instance_id: str, body: ChangesRequest,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -245,7 +220,7 @@ async def apply_changes(
         raise _http(e.code, 404, e.detail)
 
 
-@router.get("/instances/{instance_id}")
+@router.get("/instances/{instance_id}", response_model=InstanceDetailResponse)
 async def get_instance(
     instance_id: str, user: Dict[str, Any] = Depends(get_current_user),
 ):
@@ -265,7 +240,7 @@ async def get_instance(
     return {"success": True, "instance": proj}
 
 
-@router.get("/instances/{instance_id}/recompute-plan")
+@router.get("/instances/{instance_id}/recompute-plan", response_model=RecomputePlanResponse)
 async def dry_run_plan(
     instance_id: str, user: Dict[str, Any] = Depends(get_current_user),
 ):
@@ -285,7 +260,7 @@ async def dry_run_plan(
             "decisions": proj["decisions"]}
 
 
-@router.get("/instances")
+@router.get("/instances", response_model=InstanceListResponse)
 async def list_instances(user: Dict[str, Any] = Depends(get_current_user)):
     rows = await asyncio.to_thread(
         _svc().store.list_owner_instances, _owner(user))
@@ -294,18 +269,7 @@ async def list_instances(user: Dict[str, Any] = Depends(get_current_user)):
 
 # ── Inspector / Debugger（V6 Phase G：可观测面 + 人工干预 action）────────
 
-class NodeCancelRequest(BaseModel):
-    node_ids: List[str] = Field(min_length=1, max_length=16)
-    include_descendants: bool = True
-
-
-class CloneRequest(BaseModel):
-    session_id: Optional[str] = Field(default=None, max_length=255)
-    only_nodes: Optional[List[str]] = Field(default=None, max_length=16)
-    skip_nodes: Optional[List[str]] = Field(default=None, max_length=16)
-
-
-@router.get("/instances/{instance_id}/events")
+@router.get("/instances/{instance_id}/events", response_model=InstanceEventsResponse)
 async def get_events(
     instance_id: str,
     limit: int = 100,
@@ -326,7 +290,7 @@ async def get_events(
     return {"success": True, "instance_id": instance_id, "events": events}
 
 
-@router.get("/instances/{instance_id}/nodes/{node_id}")
+@router.get("/instances/{instance_id}/nodes/{node_id}", response_model=NodeDetailResponse)
 async def get_node_detail(
     instance_id: str, node_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -348,7 +312,7 @@ async def get_node_detail(
             "node": row}
 
 
-@router.post("/instances/{instance_id}/nodes/{node_id}/retry")
+@router.post("/instances/{instance_id}/nodes/{node_id}/retry", response_model=NodeRetryResponse)
 async def retry_node(
     instance_id: str, node_id: str,
     force: bool = False,
@@ -368,7 +332,7 @@ async def retry_node(
         raise _http(e.code, status, e.detail)
 
 
-@router.post("/instances/{instance_id}/nodes/cancel")
+@router.post("/instances/{instance_id}/nodes/cancel", response_model=NodesCancelResponse)
 async def cancel_nodes(
     instance_id: str, body: NodeCancelRequest,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -385,7 +349,7 @@ async def cancel_nodes(
         raise _http(e.code, status, e.detail)
 
 
-@router.post("/instances/{instance_id}/clone")
+@router.post("/instances/{instance_id}/clone", response_model=InstanceCloneResponse)
 async def clone_instance(
     instance_id: str, body: CloneRequest,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -404,7 +368,7 @@ async def clone_instance(
         raise _http(e.code, status, e.detail)
 
 
-@router.get("/instances/{instance_id}/debug")
+@router.get("/instances/{instance_id}/debug", response_model=InstanceDebugResponse)
 async def debug_instance(
     instance_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
