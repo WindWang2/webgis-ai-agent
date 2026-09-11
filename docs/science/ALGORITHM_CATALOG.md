@@ -636,6 +636,7 @@ Agent 自省与扩展面：工具清单查询、子代理委派、技能脚本�
   - 局限：跨传感器对的辐射归一化由 preprocess 声明承载
   - 资源包络：0B/要素，要素硬上限 65536
   - 取消：chunk_boundary
+  - 数值容差：rtol=0.001，atol=0.001
 
 ## `model_embedding` — 模型特征嵌入
 
@@ -655,6 +656,7 @@ Agent 自省与扩展面：工具清单查询、子代理委派、技能脚本�
   - 局限：模型可用性受 owner scope 与 provider 运行时约束；GPU 资源由 ModelOps VRAM ledger 调度（无 GPU 时降 CPU 模型）
   - 资源包络：0B/要素，要素硬上限 65536
   - 取消：chunk_boundary
+  - 数值容差：rtol=0.001，atol=0.001
 
 ## `model_instance_segmentation` — 模型实例分割
 
@@ -665,6 +667,7 @@ Agent 自省与扩展面：工具清单查询、子代理委派、技能脚本�
   - 局限：矢量化为可选后处理（polygonize_instances）
   - 资源包络：0B/要素，要素硬上限 65536
   - 取消：chunk_boundary
+  - 数值容差：rtol=0.001，atol=0.001
 
 ## `model_object_detection` — 模型目标检测
 
@@ -675,6 +678,7 @@ Agent 自省与扩展面：工具清单查询、子代理委派、技能脚本�
   - 局限：边缘 tile 检测框按 pad 偏移校正（全局像素坐标）
   - 资源包络：0B/要素，要素硬上限 65536
   - 取消：chunk_boundary
+  - 数值容差：rtol=0.001，atol=0.001
 
 ## `model_super_resolution` — 模型超分辨率
 
@@ -685,6 +689,7 @@ Agent 自省与扩展面：工具清单查询、子代理委派、技能脚本�
   - 局限：仅支持无重叠 stride 的模型注册
   - 资源包络：0B/要素，要素硬上限 65536
   - 取消：chunk_boundary
+  - 数值容差：rtol=0.001，atol=0.001
 
 ## `model_temporal_classification` — 模型时序分类
 
