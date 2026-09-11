@@ -11,8 +11,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-import pytest
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.idempotency import IdempotencyMiddleware, _LazyRedis

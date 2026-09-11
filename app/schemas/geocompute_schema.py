@@ -6,7 +6,7 @@ geocompute 服务投影构成，响应模型用 extra="allow" 开放对象声明
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
