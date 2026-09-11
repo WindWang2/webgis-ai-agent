@@ -213,7 +213,7 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
               data-testid={`mode-${m}`}
               onClick={() => switchMode(m)}
               className={clsx(
-                'relative flex h-9 w-9 items-center justify-center rounded-md transition-colors',
+                'touch-target relative flex h-9 w-9 items-center justify-center rounded-md transition-colors',
                 active
                   ? 'bg-status-accent-soft text-status-accent'
                   : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
@@ -237,7 +237,7 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
             aria-label={t('nav.agentRevertAria')}
             title={t('nav.agentRevertTitle')}
             onClick={revertAgentMode}
-            className="flex h-9 w-9 items-center justify-center rounded-md text-status-warning transition-colors hover:bg-surface-hover"
+            className="touch-target flex h-9 w-9 items-center justify-center rounded-md text-status-warning transition-colors hover:bg-surface-hover"
           >
             <Undo2 size={15} aria-hidden />
           </button>
@@ -277,7 +277,7 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
               // 现在 selected = accent 软底 + accent 图标 + 左侧指示条，
               // hover 只是中性底色，两者不再混淆。
               className={clsx(
-                'relative flex h-9 w-9 items-center justify-center rounded-md transition-colors',
+                'touch-target relative flex h-9 w-9 items-center justify-center rounded-md transition-colors',
                 active
                   ? 'bg-status-accent-soft text-status-accent'
                   : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
@@ -312,7 +312,7 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
           aria-label={t('nav.templates')}
           title={t('nav.templates')}
           onClick={() => setTemplatesOpen(true)}
-          className="flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          className="touch-target flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
           <LayoutTemplate size={17} strokeWidth={1.6} aria-hidden />
         </button>
@@ -323,7 +323,7 @@ export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bott
           aria-controls="workspace-panel"
           title={leftPanelOpen ? t('nav.collapsePanel') : t('nav.expandPanel')}
           onClick={toggleLeftPanel}
-          className="flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          className="touch-target flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
           {leftPanelOpen ? (
             <PanelLeftClose size={17} strokeWidth={1.6} aria-hidden />

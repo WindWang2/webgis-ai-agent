@@ -390,6 +390,12 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       dragStartGeometry.set(parentId, feature.geometry);
       dragging = { parentId, vertexIndex };
       if (typeof map.dragPan?.disable === 'function') map.dragPan.disable();
+      // P7 触控：编辑期间禁用双指旋转/俯仰（触屏上双指常被识别为旋转手势，
+      // 与顶点拖拽冲突）；平移保留 —— 单指拖动地图仍是预期行为。
+      if (typeof map.touchZoomRotate?.disableRotation === 'function') map.touchZoomRotate.disableRotation();
+      if (typeof (map as unknown as { touchPitch?: { disable: () => void } }).touchPitch?.disable === 'function') {
+        (map as unknown as { touchPitch: { disable: () => void } }).touchPitch.disable();
+      }
     };
 
     const onMove = (e: MapMouseEvent) => {
@@ -406,6 +412,10 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       const done = dragging;
       dragging = null;
       if (typeof map.dragPan?.enable === 'function') map.dragPan.enable();
+      if (typeof map.touchZoomRotate?.enableRotation === 'function') map.touchZoomRotate.enableRotation();
+      if (typeof (map as unknown as { touchPitch?: { enable: () => void } }).touchPitch?.enable === 'function') {
+        (map as unknown as { touchPitch: { enable: () => void } }).touchPitch.enable();
+      }
       const state = getSketchState();
       const feature = state.features.find((f) => f.id === done.parentId);
       if (!feature) return;

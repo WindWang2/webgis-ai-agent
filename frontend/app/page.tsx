@@ -81,6 +81,10 @@ export default function Home() {
   // P5 三档布局：desktop 现状 / thin 覆盖 / mobile sheet + 地图全屏
   const layoutMode = useLayoutMode();
   const isMobile = layoutMode === 'mobile';
+  // e2e/visual 依赖的模式标记（hydration 后由 effect 写入，SSR 无标记）
+  useEffect(() => {
+    document.documentElement.setAttribute('data-layout-mode', layoutMode);
+  }, [layoutMode]);
   const { getMapSnapshot, dispatchAction } = useMapAction();
   // FE-07：用单字段 selector 订阅，避免订阅整个 store 导致每次状态变更
   // （视口平移、opsLog push、图层变更等）都触发本组件及全部子树重渲染。
