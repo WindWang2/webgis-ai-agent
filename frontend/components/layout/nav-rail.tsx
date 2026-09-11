@@ -81,7 +81,7 @@ function modeRailTabs(mode: WorkbenchMode): RailTabDef[] {
   return RAIL_TABS.filter((tab) => allowed.has(tab.key));
 }
 
-export function NavRail() {
+export function NavRail({ variant = 'vertical' }: { variant?: 'vertical' | 'bottom' }) {
   const t = useT('layout');
   const activeTab = useHudStore((s) => s.activeLeftTab);
   const setActiveTab = useHudStore((s) => s.setActiveLeftTab);
@@ -178,19 +178,25 @@ export function NavRail() {
   return (
     <nav
       aria-label={t('nav.main')}
+      data-rail-variant={variant}
       // V4：宽度/顶距改用 --railW / --topH token；背景改为不透明 surface-panel，
       // 去掉 blur(28px) —— 面板压在持续重绘的地图画布上，backdrop-filter 是最贵
       // 的那一类，而且半透明面板会让底下的地图干扰图标可读性。
-      className="fixed left-0 top-topbar z-40 flex w-rail flex-col items-center border-r border-edge-subtle bg-surface-panel"
-      style={{
-        bottom: hudOpen ? 234 : 24,
-        transition: 'bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-      }}
+      className={
+        variant === 'bottom'
+          ? 'fixed inset-x-0 bottom-0 z-40 flex h-rail flex-row items-center gap-1 overflow-x-auto border-t border-edge-subtle bg-surface-panel px-1'
+          : 'fixed left-0 top-topbar z-40 flex w-rail flex-col items-center border-r border-edge-subtle bg-surface-panel'
+      }
+      style={
+        variant === 'bottom'
+          ? { paddingBottom: 'env(safe-area-inset-bottom, 0px)' }
+          : { bottom: hudOpen ? 234 : 24, transition: 'bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)' }
+      }
     >
       {/* Workbench V4：模式切换（只改面板组合，不复制地图状态） */}
       {/* Review R1（a11y MINOR-7）：radiogroup 的必需子元素只能是 radio ——
           agent 回执按钮移出分组容器；roving tabindex + 方向键按 APG radio。 */}
-      <div className="flex w-full flex-col items-center gap-1 border-b border-edge-subtle py-2">
+      <div className={variant === 'bottom' ? "flex flex-row items-center gap-1 border-b-0 px-1" : "flex w-full flex-col items-center gap-1 border-b border-edge-subtle py-2"}>
         <div role="radiogroup" aria-label={t('nav.workbenchMode')} className="flex w-full flex-col items-center gap-1">
         {WORKBENCH_MODES.map((m) => {
           const ModeIcon = MODE_META[m].icon;
@@ -241,7 +247,7 @@ export function NavRail() {
       <div
         role="tablist"
         aria-label={t('nav.workspacePanels')}
-        aria-orientation="vertical"
+        aria-orientation={variant === 'bottom' ? 'horizontal' : 'vertical'}
         onKeyDown={onTablistKeyDown}
         className="flex w-full flex-1 flex-col items-center gap-1 overflow-y-auto py-2"
       >
@@ -300,7 +306,7 @@ export function NavRail() {
       </div>
 
       {/* 工具区：模板库（drawer）+ 面板折叠 */}
-      <div className="flex w-full flex-col items-center gap-1 border-t border-edge-subtle py-2">
+      <div className={variant === 'bottom' ? "flex flex-row items-center gap-1 border-t-0 px-1" : "flex w-full flex-col items-center gap-1 border-t border-edge-subtle py-2"}>
         <button
           type="button"
           aria-label={t('nav.templates')}

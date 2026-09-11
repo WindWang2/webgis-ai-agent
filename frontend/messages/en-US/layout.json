@@ -94,5 +94,10 @@
     },
     "resizeAria": "Resize panel",
     "resizeTitle": "Drag to resize panel (double-click to reset)"
+  },
+  "sheet": {
+    "handleAria": "Drag to resize panel height; pull down to close",
+    "snapHalf": "Half screen",
+    "snapFull": "Full screen"
   }
 }

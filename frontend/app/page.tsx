@@ -21,6 +21,7 @@ import { mapInsetLeft, mapChromeLeft } from '@/lib/utils/workspace-inset';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import { setLayerDataSession } from '@/lib/store/layer-data';
 import { useT } from '@/lib/i18n/useT';
+import { useLayoutMode } from '@/lib/hooks/use-layout-mode';
 
 // New layout components
 import TopBar from '@/components/layout/top-bar';
@@ -77,6 +78,9 @@ function MapLoadingHint() {
 export default function Home() {
   const t = useT('layout');
   const tChat = useT('chat');
+  // P5 三档布局：desktop 现状 / thin 覆盖 / mobile sheet + 地图全屏
+  const layoutMode = useLayoutMode();
+  const isMobile = layoutMode === 'mobile';
   const { getMapSnapshot, dispatchAction } = useMapAction();
   // FE-07：用单字段 selector 订阅，避免订阅整个 store 导致每次状态变更
   // （视口平移、opsLog push、图层变更等）都触发本组件及全部子树重渲染。
@@ -104,6 +108,8 @@ export default function Home() {
   const templatesOpen = useHudStore((s) => s.templatesOpen);
   const setTemplatesOpen = useHudStore((s) => s.setTemplatesOpen);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
+  // 地图 inset 只在 desktop 档推挤地图（thin 覆盖、mobile 全屏优先）
+  const insetOpen = layoutMode === 'desktop' && leftPanelOpen;
 
   const { location: userLocation } = useGeolocation();
 
@@ -345,7 +351,7 @@ export default function Home() {
             top: 0,
             bottom: 0,
             right: 0,
-            left: mapInsetLeft(leftPanelOpen, sidebarWidth),
+            left: mapInsetLeft(insetOpen, sidebarWidth),
             transition: 'left 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
           }}
         >
@@ -382,7 +388,7 @@ export default function Home() {
         )}
 
         {/* Workspace navigation rail + context panel (UI V3) */}
-        <MemoNavRail />
+        <MemoNavRail variant={isMobile ? 'bottom' : 'vertical'} />
         <StreamingChatHost
           sessionId={sessionId}
           setSessionId={setSessionId}
@@ -399,6 +405,7 @@ export default function Home() {
           onRegisterSetMessages={registerSetMessages}
           onRegisterViewportChange={handleRegisterViewportChange}
           onMessagesChange={handleMessagesChange}
+          layoutMode={layoutMode}
         />
 
         {/* RAG Independent Panel */}

@@ -48,6 +48,8 @@ import { DataSourcesTab } from '@/components/sidebar/data-sources-tab';
 import { TasksTab } from '@/components/sidebar/tasks-tab';
 import { ResultsTab } from '@/components/sidebar/results-tab';
 import { PanelErrorBoundary } from '@/components/layout/panel-error-boundary';
+import { BottomSheet } from '@/components/layout/bottom-sheet';
+import type { LayoutMode } from '@/lib/hooks/use-layout-mode';
 
 export interface ContextPanelProps {
   messages: Array<{
@@ -69,6 +71,11 @@ export interface ContextPanelProps {
   agentRuntime?: AgentRuntime | null;
   /** #1048：SessionPlan 流式实时状态（useSessionPlan.view）→ ChatTab → 面板。 */
   sessionPlan?: SessionPlanViewState;
+  /**
+   * 布局档（ADR-0144 / P5）：desktop = 现状 dock + 拖拽调宽；
+   * thin = 覆盖模式（不推挤地图、拖拽禁用）；mobile = bottom-sheet。
+   */
+  layoutMode?: LayoutMode;
 }
 
 const PANEL_MIN = 280;
@@ -118,6 +125,7 @@ export function ContextPanel({
   onPlanAction,
   agentRuntime,
   sessionPlan,
+  layoutMode = 'desktop',
 }: ContextPanelProps) {
   const t = useT('layout');
   const activeTab = useHudStore((s) => s.activeLeftTab);
@@ -329,6 +337,80 @@ export function ContextPanel({
     if (target && focusNeedsRestore) target.focus();
   }, [leftPanelOpen]);
 
+  // P5 mobile 档：面板 bottom-sheet 化（拖拽把手两档吸附 + 焦点圈闭），
+  // 地图全屏优先（不推挤 inset）。tab 内容与 docked 档完全同源。
+  if (layoutMode === 'mobile') {
+    return (
+      <BottomSheet open={leftPanelOpen} onClose={handleClose} titleId="workspace-panel-title">
+        <PanelHeader
+          icon={meta.icon}
+          title={metaTitle}
+          description={metaDesc}
+          badge={badge}
+          onClose={handleClose}
+          id={`workspace-panel-title`}
+        />
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {activeTab === 'chat' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.chat')}>
+              <ChatTab
+                messages={messages}
+                aiStatus={aiStatus}
+                onSend={onSend}
+                onCancel={onCancel}
+                onPlanAction={onPlanAction}
+                sessionId={sessionId}
+                agentRuntime={agentRuntime}
+                ownerToken={ownerToken}
+                sessionPlan={sessionPlan}
+              />
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'project' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.project')}>
+              <ProjectTab sessionId={sessionId} />
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'layers' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.layers')}>
+              {editingLayerId ? <LayerStylePanel /> : <LayersTab />}
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'components' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.components')}>
+              <ComponentsTab sessionId={sessionId} />
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'analysis' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.analysis')}>
+              <AnalysisTab onSend={onSend} aiStatus={aiStatus} />
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'data_sources' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.data_sources')}>
+              <DataSourcesTab sessionId={sessionId} ownerToken={ownerToken} />
+            </PanelErrorBoundary>
+          )}
+          {(activeTab === 'export_layout' || activeTab === 'exports') && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.export_layout')}>
+              <MapStudioTab />
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'tasks' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.tasks')}>
+              <TasksTab sessionId={sessionId} ownerToken={ownerToken} />
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'results' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.results')}>
+              <ResultsTab sessionId={sessionId} ownerToken={ownerToken} onSend={onSend} />
+            </PanelErrorBoundary>
+          )}
+        </div>
+      </BottomSheet>
+    );
+  }
+
   return (
     // V4：壳层度量改用 token（left-rail / top-topbar），背景改为不透明
     // surface-panel 并移除 backdrop-blur —— 面板压在持续重绘的地图画布上，
@@ -430,6 +512,7 @@ export function ContextPanel({
           注意 hover/focus 着色必须用可编译的 token 类：Tailwind 3 对
           var() 颜色加 /NN 透明度修饰符会静默丢弃整个规则（旧实现的
           hover:bg-[var(--agent-accent,#16a34a)]/30 从未生效过）。 */}
+      {layoutMode === 'desktop' && (
       <div
         ref={separatorRef}
         role="separator"
@@ -450,6 +533,7 @@ export function ContextPanel({
         className="absolute -right-1 bottom-0 top-0 w-2 cursor-col-resize touch-none hover:bg-status-accent-soft focus-visible:bg-status-accent-soft"
         style={dragging ? { background: 'var(--agent-accent)', opacity: 0.4 } : undefined}
       />
+      )}
     </aside>
   );
 }

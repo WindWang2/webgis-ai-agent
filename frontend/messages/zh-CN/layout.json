@@ -94,5 +94,10 @@
     },
     "resizeAria": "调整面板宽度",
     "resizeTitle": "拖拽调整面板宽度（双击复位）"
+  },
+  "sheet": {
+    "handleAria": "拖拽调整面板高度，下拉关闭",
+    "snapHalf": "半屏",
+    "snapFull": "全屏"
   }
 }
