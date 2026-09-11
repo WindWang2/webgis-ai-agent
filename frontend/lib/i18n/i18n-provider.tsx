@@ -15,7 +15,7 @@ import {
   rehydrateLocale,
   useLanguageStore,
 } from './language-store'
-import type { AppLocale } from './config'
+import { DEFAULT_LOCALE, type AppLocale } from './config'
 import { defaultTranslator, translatorFor, type TranslateFn } from './translator'
 
 interface I18nContextValue {
@@ -51,7 +51,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
 export function useI18n(): I18nContextValue {
   const ctx = useContext(I18nContext)
   // 无 provider（单测裸渲染）：zh 默认 —— 保持既有测试断言中文文案零改造。
-  return ctx ?? { locale: 'zh-CN', t: defaultTranslator }
+  return ctx ?? { locale: DEFAULT_LOCALE, t: defaultTranslator }
 }
 
 export function useI18nOptional(): I18nContextValue | null {

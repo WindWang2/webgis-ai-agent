@@ -694,7 +694,7 @@ export function useSSEStream(
           const layerId = data.geojson_ref ?? `layer-${Date.now()}`;
           const layerName =
             data.tool === 'search_poi'
-              ? t('chat.searchResult', { name: data.name ?? 'POI' })
+              ? t('chat.searchResult', { name: data.name || 'POI' })
               : data.tool === 'heatmap_data'
               ? t('chat.heatmapAnalysis')
               : t('chat.analysisResult', { tool: data.tool ?? 'unknown' });

@@ -97,8 +97,10 @@ def parse_accept_language(header: str | None) -> str:
                     q = float(param[2:])
                 except ValueError:
                     q = 0.0
+        # RFC 7231：q=0 = 不可接受，直接排除（避免末尾选到明确排除的 tag）
         try:
-            candidates.append((float(q), tag))
+            if q > 0:
+                candidates.append((float(q), tag))
         except Exception:  # noqa: BLE001 — 解析失败忽略该段
             continue
     candidates.sort(key=lambda item: item[0], reverse=True)
@@ -158,6 +160,10 @@ class AcceptLanguageMiddleware(BaseHTTPMiddleware):
 
         content_type = response.headers.get("content-type", "")
         if "application/json" not in content_type:
+            return response
+        # 只处理错误面（4xx/5xx）：成功响应与 3xx 重定向零缓冲、零改动，
+        # 大载荷与流式语义不受中间件影响。
+        if response.status_code < 400:
             return response
 
         locale = current_locale.get()

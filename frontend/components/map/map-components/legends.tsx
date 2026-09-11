@@ -6,7 +6,6 @@ import { positionClass, resolveVariant, stackedBottomStyle } from './helpers';
 import type { RendererContext } from './types';
 import type { LegendSpec } from '@/lib/map-kit/types';
 import { deriveLegendModel } from '@/lib/map-kit/legend-model';
-import { useT } from '@/lib/i18n/useT';
 import { t as tNow } from '@/lib/i18n/t';
 
 function legendForComponent(component: MapSpecComponent, spec: RendererContext['spec']): LegendSpec | undefined {
