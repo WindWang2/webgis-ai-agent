@@ -150,6 +150,37 @@ jobs:
           path: perf-report.json
           retention-days: 14
 
+  chaos:
+    name: Chaos smoke (compose stack, nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install backend deps
+        run: pip install -r requirements-dev.txt httpx psycopg2-binary
+      - name: Bring up chaos compose stack
+        run: |
+          docker compose -f tests/integration/chaos/docker-compose.chaos.yml up -d
+          docker compose -f tests/integration/chaos/docker-compose.chaos.yml ps
+      - name: Run chaos suite (real fault injection)
+        env:
+          CHAOS_STACK: '1'
+          CHAOS_REDIS_URL: redis://localhost:6399/0
+          REDIS_URL: redis://localhost:6399/0
+          USE_NEW_AGENT: 'false'
+          JWT_SECRET_KEY: chaos-ci-secret-key-32-chars
+          ENV: development
+          LLM_API_KEY: chaos-not-real
+        run: pytest tests/integration/chaos -m heavy --no-cov -q
+      - name: Tear down chaos stack
+        if: always()
+        run: docker compose -f tests/integration/chaos/docker-compose.chaos.yml down -v
+
   journey-real:
     name: Journeys real (backend + LLM stub, nightly)
     runs-on: ubuntu-latest
