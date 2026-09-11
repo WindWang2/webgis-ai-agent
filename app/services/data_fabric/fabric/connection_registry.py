@@ -105,6 +105,12 @@ class SecretStore(Protocol):
 _SECRET_KEYS = ("password", "secret_key", "access_key", "session_token")
 #: 嵌套 ``credentials`` dict 整体视为 secret。
 _NESTED_SECRET_KEYS = ("credentials",)
+#: 嵌套树（options 等）内的敏感键判定串（与 security.sanitize_profile_dict
+#: 的 sensitive_keys 同集 —— 近形键连字符形态一并覆盖）。
+_SENSITIVE_KEY_MATCHERS = (
+    "password", "secret", "token", "api_key", "api-key", "apikey",
+    "credential", "authorization", "auth", "passwd", "pwd", "private_key",
+)
 
 
 def extract_profile_secrets(profile_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -120,6 +126,70 @@ def extract_profile_secrets(profile_dict: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(v, dict) and v:
             secret[k] = v
     return rest, secret
+
+
+def _is_sensitive_key(key: str) -> bool:
+    """与 security.sanitize_profile_dict 同一敏感键判定（近形键含连字符）。"""
+    lowered = str(key).lower()
+    return any(s in lowered for s in _SENSITIVE_KEY_MATCHERS)
+
+
+def _move_sensitive_entries(node: Any, sink: Dict[str, Any]) -> None:
+    """就地摘除 dict/list 树中的敏感键值进 sink（同路径；原位置置 None）。
+
+    V8：``create_data_source`` 的凭证经 ``options`` 传入（其签名无顶层
+    password 字段）—— 只摘顶层键会让 ``options.password`` 落进 record 的
+    redacted_profile 明文面。摘除后 redacted_profile 构造上无凭证；重建时
+    经 ``_merge_sensitive_entries`` 从 SecretStore 深合并回填（保真）。
+    list 内的 dict 树同样遍历（review P2-2：``options.layers=[{"password":
+    …}]`` 与 sanitize_profile_dict 语义对齐）；sink 以 str(index) 记路径。
+    """
+    if isinstance(node, dict):
+        for k in list(node.keys()):
+            v = node[k]
+            if _is_sensitive_key(k):
+                if v is not None:
+                    sink[k] = v
+                    node[k] = None
+            elif isinstance(v, (dict, list)):
+                child: Dict[str, Any] = {}
+                _move_sensitive_entries(v, child)
+                if child:
+                    sink[k] = child
+    elif isinstance(node, list):
+        for i, item in enumerate(node):
+            if isinstance(item, (dict, list)):
+                child = {}
+                _move_sensitive_entries(item, child)
+                if child:
+                    sink[str(i)] = child
+
+
+def _merge_sensitive_entries(node: Any, sink: Dict[str, Any]) -> None:
+    """``_move_sensitive_entries`` 的逆操作：sink 值按路径回填 None 槽位。"""
+    if isinstance(sink, dict) and isinstance(node, dict):
+        for k, v in sink.items():
+            if isinstance(v, dict):
+                child = node.get(k)
+                if isinstance(child, list):
+                    # 摘除时 sink 以 str(index) 记 list 路径 —— node 保持
+                    # list 形态（绝不顶成 dict，否则重建产物走形）。
+                    _merge_sensitive_entries(child, v)
+                else:
+                    if not isinstance(child, dict):
+                        child = {}
+                        node[k] = child
+                    _merge_sensitive_entries(child, v)
+            elif node.get(k) is None:
+                node[k] = v
+    elif isinstance(sink, dict) and isinstance(node, list):
+        for k, v in sink.items():
+            try:
+                idx = int(k)
+            except ValueError:  # noqa: BLE001 - 非法索引跳过（不抛）
+                continue
+            if 0 <= idx < len(node):
+                _merge_sensitive_entries(node[idx], v)
 
 
 class InMemorySecretStore:
@@ -209,6 +279,11 @@ class ConnectionRecord(BaseModel):
     #: content-addressed revision（redacted profile + secret_ref 的 sha256 前 16）。
     revision: str
     name: str = ""
+    #: redacted profile 全量视图（V8：rehydrate 忠实重建的前提 —— 此前仅
+    #: 存 endpoint 四字段，options 形态的源（PostGIS host/port、本地文件
+    #: path）重建必失败）。构造上不含 secret：由 ``extract_profile_secrets``
+    #: 摘除后的 rest 直接落位。
+    redacted_profile: Dict[str, Any] = Field(default_factory=dict)
     created_at: float = Field(default_factory=time.time)
     #: None = 不过期（由 idle TTL 驱逐兜底）。
     expires_at: Optional[float] = None
@@ -277,13 +352,17 @@ class ConnectionRegistry:
         manager: Any = None,
         ttl_s: Optional[float] = None,
         build_adapter: bool = True,
+        prebuilt_adapter: Any = None,
     ) -> tuple:
         """注册（或以 CAS 语义更新）一条连接，返回 ``(record, adapter|None)``。
 
         - SSRF 门沿用 connection_manager 同一校验（host/port 形态同样覆盖）；
         - 凭证摘除进 SecretStore，record 存 redacted 视图 + ref；
         - 已存在同 (scope, profile_id) 且 revision 相同 → 幂等返回（adapter
-          复用）；revision 不同 → 原子替换（旧 secret 被逐出）。
+          复用）；revision 不同 → 原子替换（旧 secret 被逐出）；
+        - ``prebuilt_adapter``（V8）：调用方已有 adapter 实例时直接注册它，
+          不再经工厂二次构建（legacy manager 桥接路径单构建；与
+          ``build_adapter=False`` 组合使用）。
         """
         from app.services.data_fabric.connection_manager import (
             _ssrf_validate_profile,
@@ -294,6 +373,27 @@ class ConnectionRegistry:
         _ssrf_validate_profile(profile)
         profile_dict = profile.model_dump()
         redacted, secret = extract_profile_secrets(profile_dict)
+        # V8：url 字段的 userinfo 摘除（DSN 内嵌凭证不落 record —— 与
+        # endpoint_ref 同一脱敏原语）。被摘除的原文进 SecretStore：重建时
+        # 回填（否则 basic-auth URL 形态的源重建后静默无凭证），且仅
+        # userinfo 不同的重复注册产生不同 secret_ref/revision（轮换可感知）。
+        url_secrets: Dict[str, Any] = {}
+        for _url_key in ("url", "endpoint", "endpoint_url"):
+            _v = redacted.get(_url_key)
+            if _v:
+                _redacted = DataFabricSecurity.redact_url(_v)
+                if _redacted != _v:
+                    url_secrets[_url_key] = _v
+                redacted[_url_key] = _redacted
+        if url_secrets:
+            secret["url_fields"] = url_secrets
+        # V8：options 等嵌套树中的敏感键值摘入 SecretStore（REST 创建路径
+        # 的凭证就在 options 里 —— 只摘顶层会明文落 record）。
+        if isinstance(redacted.get("options"), dict) and redacted["options"]:
+            opts_secret: Dict[str, Any] = {}
+            _move_sensitive_entries(redacted["options"], opts_secret)
+            if opts_secret:
+                secret["options"] = opts_secret
         endpoint_ref = DataFabricSecurity.redact_url(
             profile_dict.get("url") or profile_dict.get("endpoint") or ""
         )
@@ -309,11 +409,22 @@ class ConnectionRegistry:
                 if old_record.revision == rev:
                     # content-dedupe 保证同内容 → 同 ref：无重复条目可逐。
                     old_record.last_access_at = time.monotonic()
+                    if old_adapter is None and prebuilt_adapter is not None:
+                        # V8：幂等命中但 adapter 已被驱逐 → 回填调用方实例。
+                        old_adapter = prebuilt_adapter
+                        self._entries[key] = (old_record, old_adapter)
                     return old_record, old_adapter
-                # revision 变化：原子替换 + 旧 secret 逐出
+                # revision 变化：原子替换 + 旧 secret 逐出（仅当无其他
+                # 条目仍引用 —— content-dedupe 共享 ref 的连坐防御，V8）。
                 self._evict_locked(key, release_secret=False)
                 if old_record.secret_ref and old_record.secret_ref != secret_ref:
-                    self._secret_store.evict(old_record.secret_ref)
+                    still_referenced = any(
+                        rec.secret_ref == old_record.secret_ref
+                        for other_key, (rec, _a) in self._entries.items()
+                        if other_key != key
+                    )
+                    if not still_referenced:
+                        self._secret_store.evict(old_record.secret_ref)
             record = ConnectionRecord(
                 profile_id=str(profile.id),
                 scope_key=scope.scope_key(),
@@ -322,23 +433,28 @@ class ConnectionRegistry:
                 secret_ref=secret_ref,
                 revision=rev,
                 name=str(profile.name or profile.id),
+                redacted_profile=redacted,
                 expires_at=(time.time() + ttl_s) if ttl_s else None,
             )
             self._entries[key] = (record, None)
-        # 锁外构建 adapter（probe/网络）。
-        if build_adapter:
-            try:
-                adapter = create_adapter_for_profile(profile)
-            except Exception:
-                # 构建失败不留半条目（仅回滚**本次**写入 —— revision 变化
-                # 说明并发方已替换，绝不误删他人条目，R1-MINOR 9）。
-                with self._lock:
-                    current = self._entries.get(key)
-                    if current is not None and current[0].revision == rev:
-                        self._entries.pop(key, None)
-                if secret_ref:
-                    self._secret_store.evict(secret_ref)
-                raise
+        # 锁外构建 adapter（probe/网络）；调用方预构建实例直接注册（V8 ——
+        # 含 build_adapter=False + prebuilt 组合：registry 只登记不构建）。
+        if build_adapter or prebuilt_adapter is not None:
+            if prebuilt_adapter is not None:
+                adapter = prebuilt_adapter
+            else:
+                try:
+                    adapter = create_adapter_for_profile(profile)
+                except Exception:
+                    # 构建失败不留半条目（仅回滚**本次**写入 —— revision 变化
+                    # 说明并发方已替换，绝不误删他人条目，R1-MINOR 9）。
+                    with self._lock:
+                        current = self._entries.get(key)
+                        if current is not None and current[0].revision == rev:
+                            self._entries.pop(key, None)
+                    if secret_ref:
+                        self._secret_store.evict(secret_ref)
+                    raise
             with self._lock:
                 current = self._entries.get(key)
                 if current is not None and current[0].revision == rev:
@@ -357,22 +473,91 @@ class ConnectionRegistry:
         return record, adapter
 
     def rehydrate_profile(self, record: ConnectionRecord) -> Dict[str, Any]:
-        """redacted record → 完整 profile dict（仅 adapter 构建瞬间注回）。"""
-        rest: Dict[str, Any] = json.loads(
-            json.dumps(
-                {
-                    "id": record.profile_id,
-                    "name": record.name,
-                    "source_type": record.source_type,
-                    "url": record.endpoint_ref,
-                }
+        """redacted record → 完整 profile dict（仅 adapter 构建瞬间注回 secret）。
+
+        V8：优先 ``record.redacted_profile``（attach 时的全量无凭证视图 ——
+        options/allow_private 等结构化字段保真）；legacy 最小四字段形状仅作
+        旧记录回退。secret 最后合并（顶层凭证字段优先级与原 profile 一致）。
+        """
+        if record.redacted_profile:
+            rest: Dict[str, Any] = json.loads(
+                json.dumps(record.redacted_profile, default=str)
             )
-        )
+        else:
+            rest = json.loads(
+                json.dumps(
+                    {
+                        "id": record.profile_id,
+                        "name": record.name,
+                        "source_type": record.source_type,
+                        "url": record.endpoint_ref,
+                    }
+                )
+            )
         if record.secret_ref:
             secret = self._secret_store.get(record.secret_ref)
             if secret:
+                opts_secret = secret.pop("options", None)
+                url_fields = secret.pop("url_fields", None)
                 rest.update(secret)
+                # V8：被 userinfo 摘除的 url 原文回填（重建后凭证完整）。
+                if isinstance(url_fields, dict):
+                    rest.update(url_fields)
+                # V8：options 内敏感键值按路径深合并回填（与摘除配对）。
+                if isinstance(opts_secret, dict) and opts_secret:
+                    opts = rest.setdefault("options", {})
+                    if not isinstance(opts, dict):
+                        opts = {}
+                        rest["options"] = opts
+                    _merge_sensitive_entries(opts, opts_secret)
         return rest
+
+    def ensure_adapter(self, record: ConnectionRecord) -> Optional[Any]:
+        """record → adapter（丢失时按 redacted profile 重建并回填条目）。
+
+        V8 生产解析路径（fabric/runtime.py）使用：LRU 驱逐或 legacy 桥接
+        注册后 adapter 引用为 None 的条目可由此恢复。重建失败返回 None
+        （调用方走 DB/legacy 回退），**绝不**让治理层重建失败升级为查询
+        错误 —— 条目原样保留供诊断。
+        """
+        key = (record.scope_key, record.profile_id)
+        with self._lock:
+            current = self._entries.get(key)
+            if current is None:
+                return None  # 条目已消失：调用方走 DB/legacy 回退
+            if current[0].revision != record.revision:
+                return None  # 并发替换：以条目内最新 record 为准
+            if current[0].is_expired():
+                # V8（review P2）：过期连接不复活（resolve 语义一致 ——
+                # 过期条目逐出 adapter；此处同样拒绝重建回填）。
+                current[0].health = HEALTH_EXPIRED
+                self._entries[key] = (current[0], None)
+                return None
+            if current[1] is not None:
+                current[0].last_access_at = time.monotonic()
+                return current[1]
+        try:
+            from app.schemas.data_fabric_schema import ConnectionProfile
+            from app.services.data_fabric.registry import build_adapter
+
+            profile = ConnectionProfile(**self.rehydrate_profile(record))
+            adapter = build_adapter(profile)
+        except Exception as exc:  # noqa: BLE001 - 重建失败不升级为查询错误
+            logger.warning(
+                "[ConnectionRegistry] adapter rebuild failed for %s: %s",
+                record.profile_id,
+                exc,
+            )
+            return None
+        with self._lock:
+            current = self._entries.get(key)
+            if current is not None and current[0].revision == record.revision:
+                current[0].last_access_at = time.monotonic()
+                self._entries[key] = (current[0], adapter)
+                return adapter
+            # 并发方已替换/驱逐：不回填旧 revision 的 adapter（新鲜条目
+            # 自带自己的构建路径）。
+            return None
 
     def resolve(
         self,
@@ -498,10 +683,19 @@ class ConnectionRegistry:
             return False
         record, _adapter = entry
         if release_secret and record.secret_ref:
-            try:
-                self._secret_store.evict(record.secret_ref)
-            except Exception:  # noqa: BLE001 - 驱逐路径绝不抛
-                pass
+            # V8（review P2）：content-dedupe 使多个 record 可共享同一
+            # secret_ref —— 仅当无其他条目引用时才逐出，避免驱逐 A 连坐 B
+            # （B 的重建将静默无凭证）。
+            still_referenced = any(
+                rec.secret_ref == record.secret_ref
+                for other_key, (rec, _a) in self._entries.items()
+                if other_key != key
+            )
+            if not still_referenced:
+                try:
+                    self._secret_store.evict(record.secret_ref)
+                except Exception:  # noqa: BLE001 - 驱逐路径绝不抛
+                    pass
         return True
 
     def _enforce_capacity_locked(self) -> None:
