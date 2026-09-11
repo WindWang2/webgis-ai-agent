@@ -1,3 +1,4 @@
+import pytest
 """V7 反馈 / 结果缓存 / 计数器测试（ADR-0119 W11-W13）。"""
 
 
@@ -14,6 +15,17 @@ from app.services.data_fabric.fabric.result_cache import (
 
 
 # ── W11：反馈 ───────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _clean_engine_breaker():
+    """隔离进程级 V6 熔断：前序用例崩溃记账不得污染本文件 engine=v6 断言。"""
+    from app.services.data_fabric.fabric.engine_breaker import reset_engine_breaker
+
+    reset_engine_breaker()
+    yield
+    reset_engine_breaker()
+
 
 
 class _NoDB:

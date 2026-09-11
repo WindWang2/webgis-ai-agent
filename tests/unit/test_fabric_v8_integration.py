@@ -22,6 +22,17 @@ from app.tools.data_fabric_tools import register_data_fabric_tools
 from app.tools.registry import ToolRegistry
 
 
+@pytest.fixture(autouse=True)
+def _clean_engine_breaker():
+    """隔离进程级 V6 熔断：前序用例崩溃记账不得污染本文件 engine=v6 断言。"""
+    from app.services.data_fabric.fabric.engine_breaker import reset_engine_breaker
+
+    reset_engine_breaker()
+    yield
+    reset_engine_breaker()
+
+
+
 @pytest.fixture()
 def tools():
     reset_connection_registry()

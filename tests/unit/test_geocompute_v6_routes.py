@@ -56,9 +56,12 @@ def v6_env(tmp_path, monkeypatch):
     # require_admin 实时读 DB role —— admin 用户必须真落库）
     from datetime import datetime, timezone
 
-    from app.core.database import SessionLocal
+    from app.core.database import Engine as GlobalEngine, SessionLocal
     from app.models.db_model import Organization, User
 
+    # 全局 Engine 可能是空 sqlite 文件（本地）或已 migrate 的 Postgres（CI）。
+    # create_all(checkfirst) 保证 organizations/users 存在后再 seed。
+    Base.metadata.create_all(bind=GlobalEngine, checkfirst=True)
     db = SessionLocal()
     try:
         # Postgres（CI）强制 users.org_id → organizations.id 外键；sqlite
@@ -67,6 +70,7 @@ def v6_env(tmp_path, monkeypatch):
         # seed 惯例相同）。slug 用专属词表避免与全局库其他 org 行撞唯一键。
         if db.get(Organization, 1) is None:
             db.add(Organization(id=1, name="gc-v6", slug="gc-v6-org"))
+        now = datetime.now(timezone.utc)
         for uid, uname, role in (
             ("gc-v6-user", "gc-v6-user", "editor"),
             ("gc-v6-admin", "gc-v6-admin", "admin"),
@@ -78,7 +82,7 @@ def v6_env(tmp_path, monkeypatch):
                     id=uid, username=uname, email=f"{uname}@example.com",
                     password_hash="scrypt$16384$8$1$00$00", role=role,
                     is_active=True, token_version=0, org_id=1,
-                    created_at=datetime.now(timezone.utc),
+                    created_at=now, updated_at=now,
                 ))
             else:
                 # dev 库残留的同名用户可能是旧 seed（无 org_id）——
@@ -86,6 +90,7 @@ def v6_env(tmp_path, monkeypatch):
                 u.org_id = 1
                 u.role = role
                 u.is_active = True
+                u.updated_at = now
         db.commit()
     finally:
         db.close()
