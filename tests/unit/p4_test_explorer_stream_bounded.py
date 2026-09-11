@@ -1,7 +1,6 @@
 """Explorer — stream_progress 有界兜底（P4 补强 E2：#593 不静默挂住）。"""
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 

@@ -5,7 +5,6 @@ submit 链失败路径的进程内证据：collect_stage_ids 必须返回 first�
 """
 from __future__ import annotations
 
-import pytest
 
 from app.services.explorer.orchestrator import collect_stage_ids
 
@@ -37,7 +36,6 @@ def test_explorer_stream_max_is_bounded_constant() -> None:
 def test_task_chain_adapter_raises_on_failed_stage() -> None:
     # fetch 段失败 → 适配器 raise → Celery chain 短路（E6 语义）。
     # 直接对适配器函数的失败分支做进程内验证（不起 broker）。
-    import asyncio
 
     from app.services.explorer.models import StageResult
     from app.services.explorer import fetch_stage

@@ -13,7 +13,6 @@ lane 静默失去测试映射。本测试通过 monkeypatch subprocess.run 伪�
 from __future__ import annotations
 
 import importlib.util
-import sys
 import types
 from pathlib import Path
 

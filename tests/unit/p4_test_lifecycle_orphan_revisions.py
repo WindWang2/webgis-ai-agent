@@ -74,7 +74,7 @@ def test_plan_respects_limit(db) -> None:
 
 
 def test_execute_deletes_only_still_orphan_rows(db) -> None:
-    aid = _mk_artifact(db)
+    _mk_artifact(db)
     orphan = _mk_revision(db, str(uuid.uuid4()))
     plan = plan_orphan_revision_cleanup(db)
     result = execute_orphan_revision_cleanup(plan, db=db)
@@ -86,7 +86,6 @@ def test_execute_rechecks_freshness_before_delete(db) -> None:
     # plan 后 artifact 行回归 → 执行期复检跳过（不再孤儿）。
     aid = _mk_artifact(db)
     rev = _mk_revision(db, aid)
-    plan = plan_orphan_revision_cleanup(db, limit=0)  # 空 plan 不会用到
     # 人为构造 stale plan：把 kept 修订放进候选（模拟 plan 后 artifact 刚被删又被建）。
     stale_plan = {"candidate_revision_ids": [rev]}
     result = execute_orphan_revision_cleanup(stale_plan, db=db)

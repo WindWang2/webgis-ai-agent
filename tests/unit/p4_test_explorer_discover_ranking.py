@@ -6,7 +6,7 @@ import pytest
 from app.adapters.base import DataSource
 from app.adapters.gov.gov_data_adapter import GovDataAdapter  # noqa: F401 — 契约参照
 from app.services.explorer.discover_stage import run_discover_stage
-from app.services.explorer.models import DataSourceQualityScore, SearchContext
+from app.services.explorer.models import DataSourceQualityScore
 
 
 class _Adapter:

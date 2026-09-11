@@ -1,7 +1,6 @@
 """Data Lifecycle — ProjectQuotaPolicy 环境解析（P4 补强 D3 相邻面）。"""
 from __future__ import annotations
 
-import pytest
 
 from app.services.data_lifecycle.quota import ProjectQuotaPolicy
 

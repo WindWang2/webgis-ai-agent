@@ -6,10 +6,8 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from app.services.explorer.geocode_stage import geocode_stage
-from app.services.geocode_strategy import GeocodeAddressResult
 
 
 def _ok(lat: float, lon: float, provider: str = "amap") -> dict:

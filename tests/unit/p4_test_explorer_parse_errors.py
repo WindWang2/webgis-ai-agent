@@ -21,8 +21,6 @@ def _payload(rows: list[dict], fieldnames: list[str]) -> str:
 
 
 def _fetch_result(source_id: str, csv_text: str) -> dict:
-    payload = {"data": base64.b64encode(csv_text.encode("utf-8")).decode("ascii"),
-               "codec": "base64", "content_type": "text/csv", "encoding": "utf-8"}
     return {"source_id": source_id, "ref_id": f"ref_{source_id}", "size_bytes": 10, "format": "csv"}
 
 

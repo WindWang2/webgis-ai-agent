@@ -5,7 +5,6 @@ fetch_errors、全失败与零候选的消息区分。
 """
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 
