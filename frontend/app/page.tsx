@@ -22,6 +22,7 @@ import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import { setLayerDataSession } from '@/lib/store/layer-data';
 import { useRegisterCommands } from '@/lib/commands/registry';
 import { CommandPaletteRoot } from '@/components/command/command-palette-root';
+import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
 
 // New layout components
 import TopBar from '@/components/layout/top-bar';
@@ -41,6 +42,7 @@ const HistoryDrawer = dynamic(() => import('@/components/drawers/history-drawer'
 const SettingsPanel = dynamic(() => import('@/components/settings/settings-panel').then(m => ({ default: m.SettingsPanel })), { ssr: false });
 const ExportMask = dynamic(() => import('@/components/map/export-mask').then(m => ({ default: m.ExportMask })), { ssr: false });
 const TemplateGalleryV2 = dynamic(() => import('@/components/drawers/template-gallery-v2').then(m => ({ default: m.TemplateGalleryV2 })), { ssr: false });
+const QueryConsole = dynamic(() => import('@/components/console/query-console').then(m => ({ default: m.QueryConsole })), { ssr: false });
 
 const MapPanel = dynamic(
   () => import('@/components/map/map-panel').then((m) => ({ default: m.MapPanel })),
@@ -241,6 +243,13 @@ export default function Home() {
   // 动态注册（新会话走 #553 确认守卫；故事视图新开 tab 不打断当前工作区）。
   useRegisterCommands(
     [
+      {
+        id: 'tools.queryConsole',
+        title: '打开高级查询控制台',
+        group: '工具',
+        keywords: 'query sql console filter chaxun',
+        run: () => useQueryConsoleStore.getState().openWith(),
+      },
       {
         id: 'session.new',
         title: '新建会话',
@@ -472,6 +481,9 @@ export default function Home() {
 
       {/* ADR-0147：命令面板（Ctrl+K）/ 快捷键总览（?）挂载根 */}
       <CommandPaletteRoot />
+
+      {/* ADR-0147：高级查询控制台（data-fabric query 契约消费面） */}
+      <QueryConsole sessionId={sessionId} ownerToken={activeSessionToken} />
     </div>
   );
 }
