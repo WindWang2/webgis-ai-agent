@@ -1,4 +1,4 @@
-"""Unified Capability Graph —— Harness V8 统一能力投影（ADR-0136）。
+"""Unified Capability Graph —— Harness V8 统一能力投影（ADR-0137）。
 
 V7 基线（capability_descriptors.py）已把 capability/algorithm/template/
 component 投影为统一描述符并驱动结构化检索；V8 把同一「只读派生投影」

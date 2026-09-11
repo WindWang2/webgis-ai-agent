@@ -1,4 +1,4 @@
-"""ContextLayers —— 九域分层上下文投影 + durable 侧预算（V7 ADR-0135 D3）。
+"""ContextLayers —— 九域分层上下文投影 + durable 侧预算（V7 ADR-0134 D3）。
 
 V6 基线（durable_context.py）有 durable/rebuildable/forbidden 三分层词表
 与 recovery_state 载体，但上下文仍是「workflow 位置级」散键 —— V7 Goal

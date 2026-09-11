@@ -6,7 +6,6 @@ quality_loop 的 resolve_floating_layout AUTO_SAFE 修复（只挪 x/y、
 user-wins 边界）、derive_product_verdict 的 additive cartographic_review
 参数（None 零漂移 / deterministic fail 降档 / 有界摘要 / 畸形输入守卫）。
 """
-import pytest
 
 from app.lib.cartography.quality_loop import review_and_repair_cartography
 from app.lib.cartography.semantic_checks import evaluate_cartography_semantics

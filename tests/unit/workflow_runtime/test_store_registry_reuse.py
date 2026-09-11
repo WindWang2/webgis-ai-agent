@@ -378,7 +378,8 @@ def test_anonymous_session_scope():
 # ── 迁移单 head + up/down/up ─────────────────────────────────────────────
 
 def test_migration_single_head():
-    """全链无双 head（R1-M1 撞号守卫；引号风格双兼容）。"""
+    """全链无双 head（R1-M1 撞号守卫；引号风格双兼容；支持多行 merge tuple）。"""
+    import ast
     import re as _re
     from pathlib import Path
 
@@ -389,12 +390,18 @@ def test_migration_single_head():
         m = _re.search(
             r"^revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)['\"]", text, _re.M)
         d = _re.search(
-            r"^down_revision(?::[^=]*)?\s*=\s*(.+)$", text, _re.M)
+            r"^down_revision(?::[^=]*)?\s*=\s*(\([^)]*\)|[^\n]+)", text, _re.M | _re.S)
         if m:
             revs[m.group(1)] = f.name
         if d:
-            for down in _re.findall(r"['\"]([^'\"]+)['\"]", d.group(1)):
-                downs.add(down)
+            try:
+                val = ast.literal_eval(d.group(1).strip())
+            except (SyntaxError, ValueError):
+                val = _re.findall(r"['\"]([^'\"]+)['\"]", d.group(1))
+            if isinstance(val, str):
+                downs.add(val)
+            elif val is not None:
+                downs.update(str(x) for x in val)
     heads = [r for r in revs if r not in downs]
     assert len(heads) == 1, heads
 

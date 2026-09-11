@@ -1,4 +1,4 @@
-"""FinalDisplayConfirmation —— 最终显示确认钩子（V7 ADR-0135 D6）。
+"""FinalDisplayConfirmation —— 最终显示确认钩子（V7 ADR-0134 D6）。
 
 V6/V6- 基线：task_complete 的「最终显示」语义 = 后端 finalizer 的裁决
 （READY + final verified），渲染是否真的被用户看见没有确认面 —— 前端

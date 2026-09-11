@@ -109,7 +109,7 @@ def _validate_all(inputs: Dict[str, Any], chapter: Dict[str, Any]) -> List[MapCo
         findings.extend(_vlvq(chapter, mapspec))
     except Exception:  # noqa: BLE001 — 增值审计缺席不阻断终验
         pass
-    # V7（ADR-0135 D5）：地图感知批评（blank map / 出版件完整性 / label
+    # V7（ADR-0134 D5）：地图感知批评（blank map / 出版件完整性 / label
     # collision / 聚合错位 —— 纯函数；增值披露，缺席不阻断终验）。
     try:
         from app.services.gis_harness.map_critique import critique_map_state
@@ -346,7 +346,7 @@ async def run_map_finalization(
     except Exception:  # noqa: BLE001 — 快照失败留空（旧路径语义）
         result.product_verdict = ""
 
-    # V7（ADR-0135 D6）：意图验收独立判定（打破 intent_verified=complete
+    # V7（ADR-0134 D6）：意图验收独立判定（打破 intent_verified=complete
     # 的循环论证）。verdict + desired(spec) + observed(渲染证据) 三面核对；
     # acceptance_out 由调用方提供时回填（验收摘要随 map_product 持久化）。
     try:
@@ -493,7 +493,7 @@ def map_product_block(
     # V6 W10/W11：修复计划快照（additive；finding→分类→护栏→计划的证据面）。
     if repair_plan:
         block["repair_plan"] = repair_plan
-    # V7（ADR-0135 D6）：意图验收摘要（additive；accepted/intent_verified/
+    # V7（ADR-0134 D6）：意图验收摘要（additive；accepted/intent_verified/
     # unmet —— 打破 intent_verified=complete 的循环论证的持久化证据面）。
     if isinstance(intent_acceptance, dict):
         block["intent_acceptance"] = {
@@ -504,7 +504,7 @@ def map_product_block(
             "unmet": [str(u)[:96]
                       for u in (intent_acceptance.get("unmet") or [])[:8]],
         }
-    # V7（ADR-0135 D6）：终验出口 continuation 裁决（decide_continuation
+    # V7（ADR-0134 D6）：终验出口 continuation 裁决（decide_continuation
     # 直连 —— V6 follow-up 兑现；repair 不可达时经 request_replan 路由）。
     if isinstance(continuation, dict):
         replan = continuation.get("replan")
@@ -531,7 +531,7 @@ def map_product_block(
             observation, intent_verified=intent_verified)
     except Exception:  # noqa: BLE001 — 摘要是增值投影，绝不阻断
         pass
-    # V7（ADR-0135 D6 修复评审 F1）：task_complete 随块持久化 —— 此前
+    # V7（ADR-0134 D6 修复评审 F1）：task_complete 随块持久化 —— 此前
     # 只在 read_stored_map_product 读时折叠，生产块上无此键，导致
     # runtime_state_machine 的 COMMITTED 判定与 commit_runtime_context
     # 守卫恒假（键契约错位，新功能死代码）。同一折叠单一来源。
@@ -697,7 +697,7 @@ async def maybe_finalize_map_product(
         logger.debug("[MapFinalizer] repair plan failed session=%s", session_id,
                      exc_info=True)
 
-    # V7（ADR-0135 D6）：终验出口直连 decide_continuation（V6 follow-up
+    # V7（ADR-0134 D6）：终验出口直连 decide_continuation（V6 follow-up
     # 兑现）—— needs_repair/failed 时裁决 repair/replan/abort；修复不可达
     # 且 replan 预算有余 → request_replan 生产驱动点（replan_pending 置位 +
     # durable 记账）。增值披露，绝不阻断终验。
@@ -792,7 +792,7 @@ async def maybe_finalize_map_product(
             "[MapFinalizer] chapter persist failed session=%s (will retry on next trigger)",
             session_id,
         )
-    # V7（ADR-0135 D6）：READY → 上下文提交（九域 checkpoint + commit 标记
+    # V7（ADR-0134 D6）：READY → 上下文提交（九域 checkpoint + commit 标记
     # + 阶段推进 verdict_ready）。受状态机 kill switch 门控（评审 F6 ——
     # 关停时逐位回退，不写任何 V7 键）。增值披露，绝不阻断终验返回。
     if result.status == STATUS_COMPLETE:
@@ -946,7 +946,7 @@ async def read_stored_map_product(session_id: str) -> Optional[Dict[str, Any]]:
         # disclosure-only 的 complete。additive 键，旧读者忽略。
         "task_complete": _is_task_complete(stored),
     }
-    # V7（ADR-0135 D6）：最终显示确认（默认 auto → True，零行为变化；
+    # V7（ADR-0134 D6）：最终显示确认（默认 auto → True，零行为变化；
     # required 模式等待显式 ack —— human confirmation seam）。
     try:
         from app.services.gis_harness.display_confirmation import (

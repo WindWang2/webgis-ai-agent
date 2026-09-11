@@ -1,3 +1,4 @@
+import pytest
 """V7 cost/placement/pushdown/adaptive 测试（ADR-0119 W7-W10）。
 
 - W7：不确定性乘子按统计置信度；rate-limit 惩罚（未知=0）；
@@ -20,6 +21,17 @@ from app.services.data_fabric.query.federated.costing import (
     rate_limit_request_penalty,
 )
 from app.services.data_fabric.query.statistics import DatasetStatistics
+
+
+@pytest.fixture(autouse=True)
+def _clean_engine_breaker():
+    """隔离进程级 V6 熔断：前序用例崩溃记账不得污染本文件 engine=v6 断言。"""
+    from app.services.data_fabric.fabric.engine_breaker import reset_engine_breaker
+
+    reset_engine_breaker()
+    yield
+    reset_engine_breaker()
+
 
 
 def _pt(x, y, **props):

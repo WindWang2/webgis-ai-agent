@@ -308,23 +308,34 @@ async def test_boolean_strict_pg(pg_env):
 
 def test_alembic_single_head():
     """迁移链单一 head：多 head = 并行 Epic 迁移冲突未消解。"""
+    import ast
     import re
 
     versions = REPO / "migrations" / "versions"
     down_to: dict = {}
     revision_files: dict = {}
     for path in sorted(versions.glob("*.py")):
-        src = path.read_text(encoding="utf-8")
-        m = re.search(r"revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)['\"]", src)
+        text = path.read_text(encoding="utf-8")
+        m = re.search(r"revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)['\"]", text)
         if not m:
             continue
         rev = m.group(1)
         revision_files[rev] = path.name
-        downs = re.findall(
-            r"down_revision(?::[^=]*)?\s*=\s*(.+?)(?:\n|$)", src)
-        if downs:
-            tokens = re.findall(r"['\"]([^'\"]+)['\"]", downs[0])
-            down_to[rev] = [t for t in tokens if t]
+        # Capture through closing paren / EOL so multiline merge tuples work.
+        dm = re.search(
+            r"down_revision(?::[^=]*)?\s*=\s*(\([^)]*\)|[^\n]+)", text, re.S)
+        if dm:
+            try:
+                val = ast.literal_eval(dm.group(1).strip())
+            except (SyntaxError, ValueError):
+                tokens = re.findall(r"['\"]([^'\"]+)['\"]", dm.group(1))
+                val = tokens
+            if val is None:
+                down_to[rev] = []
+            elif isinstance(val, str):
+                down_to[rev] = [val]
+            else:
+                down_to[rev] = [str(t) for t in val]
     heads = [r for r in revision_files
              if r not in {d for ds in down_to.values() for d in ds}]
     assert len(heads) == 1, (

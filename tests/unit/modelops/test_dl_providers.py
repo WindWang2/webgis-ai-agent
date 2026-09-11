@@ -1,15 +1,11 @@
 """V3 §B：ONNX Runtime / TorchScript / subprocess provider 契约测试。"""
 from __future__ import annotations
 
-import json
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 from app.lib.modelops.backends import BACKEND_TORCH, probe_backend, reset_probe_cache
-from app.lib.modelops.descriptor import OutputTransform
 from app.lib.modelops.errors import ProviderLoadFailed, ProviderOOM
 from app.lib.modelops.package_security import sha256_of_bytes
 from app.services.modelops.package_store import ModelPackageStore

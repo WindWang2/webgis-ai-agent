@@ -1,4 +1,4 @@
-"""模型推理算法域包（Harness V8 / ADR-0136，B-10/#1212 链路闭合）。
+"""模型推理算法域包（Harness V8 / ADR-0137，B-10/#1212 链路闭合）。
 
 `model_*` capability（capabilities/modelops.py）的实现者不是统计算法，
 而是 ModelOps 的深度学习模型族 —— 本包为每族注册一条**模型推理算法**

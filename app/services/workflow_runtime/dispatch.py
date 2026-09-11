@@ -22,8 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from app.services.workflow_runtime.adapters_geocompute import (
     GeoComputeNodeOutcome,
@@ -198,12 +197,7 @@ class DurableDispatcher:
         input_refs: List[str], params: Dict[str, Any], session_id: str,
         port_idents: Dict[str, Dict[str, str]], cancel_token: Any,
     ) -> GeoComputeNodeOutcome:
-        from app.services.geocompute.durable import (
-            await_node_job,
-            dispatch_node,
-        )
         from app.services.geocompute.plan import (
-            ExecutionNode,
             ExecutionPolicyKind,
         )
         from app.services.workflow_runtime.adapters_geocompute import (
@@ -245,7 +239,6 @@ class DurableDispatcher:
         self, node: Dict[str, Any], plan: Any, op_node: Any,
         session_id: str, cancel_token: Any,
     ) -> GeoComputeNodeOutcome:
-        import time as _time
 
         ret = await asyncio.to_thread(
             _dispatch_sync, op_node, plan, session_id, self.owner_scope)
@@ -262,7 +255,6 @@ class DurableDispatcher:
                 durable_wait_timeout_s())
         except Exception as exc:  # noqa: BLE001 — 分类由异常携带
             from app.services.geocompute.errors import classify_failure
-            from app.services.geocompute.errors import GeoComputeError
 
             failure = classify_failure(exc)
             code = getattr(exc, "code", None) or "DURABLE_JOB_FAILED"

@@ -1,18 +1,10 @@
 {
  "counts": {
-  "BLOCKER": 1,
+  "BLOCKER": 0,
   "MAJOR": 0,
   "MINOR": 0,
-  "total": 1
+  "total": 0
  },
- "fingerprint": "0ad9267bd11a71fedd6694448d6232487120b3665fa8abec56f05025e1324a10",
- "issues": [
-  {
-   "checker": "api_frontend",
-   "code": "FRONTEND_CALL_NO_BACKEND_ROUTE",
-   "detail": "frontend calls /api/v1/geocompute/runs/*/cancel ×1 but no backend route matches",
-   "severity": "BLOCKER",
-   "subject": "/api/v1/geocompute/runs/*/cancel"
-  }
- ]
+ "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+ "issues": []
 }

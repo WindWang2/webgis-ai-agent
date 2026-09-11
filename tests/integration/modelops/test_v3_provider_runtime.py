@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import hashlib
 
-import numpy as np
 import pytest
 
 from app.lib.modelops.backends import probe_backend
+pytest.importorskip("onnx")
 from tests.unit.modelops.onnx_fixtures import build_onnx_segmentation_model
 
 pytest.importorskip("onnxruntime")
@@ -129,7 +129,6 @@ def test_onnx_same_model_different_activation_invalidates_reuse(service, synthet
     from app.lib.modelops.descriptor import OutputTransform
 
     onnx_bytes = build_onnx_segmentation_model()
-    import hashlib
 
     base = _onnx_descriptor(service, onnx_bytes, model_id="onnx-act-a")
     descriptor = base.model_copy(update={"output_transform": OutputTransform(activation="none")})

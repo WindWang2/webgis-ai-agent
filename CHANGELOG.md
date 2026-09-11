@@ -6,8 +6,9 @@ Ten prepared epic branches (platform-v4, lakehouse-v8, data-fabric-v8,
 geocompute-v8, science-v6, modelops-v3, workflow-v6, cartography-v7,
 workbench-v7, harness-v7) integrated into master in dependency order.
 Cross-branch collisions resolved: ADR-0130 five-way renumber
-(lakehouse keeps 0130; data-fabric→0132, geocompute→0133, modelops→0134,
-harness→0135; watermark advanced to 135), three 0035 migration heads
+(lakehouse keeps 0130→0135; data-fabric→0132, geocompute→0133,
+harness-v7→0134, modelops→0136 — final numbering aligned with
+origin/master PRs; watermark 137 after Harness V8), three 0035 migration heads
 converged by merge revision e7a51c9d2f04, CHANGELOG sections unified.
 Per-epic detail sections follow; entries for epics that documented in their
 ADR/work records rather than CHANGELOG are summarized below.
@@ -33,7 +34,7 @@ ADR/work records rather than CHANGELOG are summarized below.
   (habitat suitability HSI + landscape metrics with ED double-count fix),
   temporal smooth_gapfill, tolerance semantics + purity guards.
 
-### Added (modelops-v3: Production GeoAI Inference Runtime, ADR-0134)
+### Added (modelops-v3: Production GeoAI Inference Runtime, ADR-0136)
 - Inference scheduling, vectorization + georeferenced output, memmap merge
   cleanup with Windows unmap-before-rmtree, VRAM reservation leak fix,
   determinism acceptance, review rounds 1-2 fixes.
@@ -141,9 +142,10 @@ ADR/work records rather than CHANGELOG are summarized below.
 - Publication DPI 参数化：`/export/vector-pdf` 可选 target_dpi（72-600
   钳制 + 生效值披露；缺省 300 输出 byte 一致）。
 
+
 ## [Unreleased] - 2026-09-10 (harness-v7)
 
-### Added (harness-v7: Long-Horizon Contextual GIS Agent Runtime, ADR-0135)
+### Added (harness-v7: Long-Horizon Contextual GIS Agent Runtime, ADR-0134)
 - Runtime state machine (`gis_harness/runtime_state_machine.py`): task-level
   cognitive-loop phase (12-state closed vocabulary) + legal transition table
   (docs/test-oracle/commanded fail-closed) + ring transition records; phases
@@ -206,6 +208,69 @@ ADR/work records rather than CHANGELOG are summarized below.
   driver `delegate_cartography_qa` (env `GIS_HARNESS_DELEGATION=1`,
   idempotent per product revision).
 - New ADR: `docs/adr/0130-gis-harness-v7-agentic-runtime.md`.
+
+- New ADR: `docs/adr/0134-gis-harness-v7-agentic-runtime.md`.
+
+## [Unreleased] - 2026-09-10 (data-fabric-v8)
+
+### Added (data-fabric-v8: Adaptive Federated Spatial Data Plane, ADR-0130)
+- FabricRuntime single production resolution path: registry-first
+  (scope/revision/health/secret separation) -> legacy session fallback
+  (first use registers into the registry — unified governance view,
+  single-construction reuse) -> DB-registered sources attach on demand
+  under the row's owner scope. All 11 tool-layer call sites and the five
+  DataFabricManager REST/worker paths converge; any governance failure
+  fails open to the existing factory build (byte-identical contract).
+- Adaptive loop closed (orphan libraries activated): probed capability
+  overrides (probed-basis-only), SourceFacts row counts, and decayed
+  feedback correction factors are flattened into pure planning hints
+  before planning; explicit caller hints are never overridden and hint
+  drift is disclosed. `ChainSource.source_type` now flows from the
+  registry record, activating static capability injection (pushdown
+  disclosure / aggregate-pushdown eligibility) on the tool path.
+- EXPLAIN `estimate_basis:` disclosure (rows basis / caps basis / hint
+  drift); output is byte-identical to V7 when no enrichment is present.
+- Process-level engine fallback breaker: >=3 consecutive V6 crashes open
+  the breaker so engine=v6 requests run V5 directly (double-execution
+  cost eliminated), half-open single trial after cool-down, success
+  resets; additive `engine_breaker` disclosure on fallback results
+  (closes the ADR-0120 R2-Mi-4 known limitation).
+- Result cache strengthening: per-key single-flight around the miss path
+  (concurrent identical requests share the first execution; owner
+  failure/waiter timeout proceed independently) and an optional Redis
+  second tier behind a fail-open `ResultCacheBackend` seam (write-through,
+  fingerprint-baked keys, honest `basis=ttl+fingerprint+distributed`
+  disclosure with age=None).
+- Connection Registry V8: `ConnectionRecord.redacted_profile` fixes the
+  V7 rebuild defect (records previously kept only four endpoint fields,
+  so options-shaped sources could never be rebuilt) with
+  `ensure_adapter` faithful rebuild+backfill and
+  `attach(prebuilt_adapter=)` single-construction legacy bridging.
+
+### Fixed (data-fabric-v8)
+- Credential-leak hardening: `redacted_profile` now strips URL userinfo
+  via `redact_url` and moves sensitive keys inside nested trees (options,
+  the REST `create_data_source` credential path) into the SecretStore,
+  with deep-merge restoration on rehydrate — records and diagnostics are
+  constructively secret-free.
+- Factory-seam fidelity: governed resolution reuses `cls.get_adapter` as
+  the single construction point and registers the built instance via
+  `attach_prebuilt` (test monkeypatch/`build_adapter` seam preserved);
+  fixed `attach(build_adapter=False, prebuilt_adapter=...)` never storing
+  the prebuilt instance.
+- Engine-breaker half-open trial leak: trial slots are now released via
+  `finally` on exits that never reach success/crash accounting (negative
+  cache, cache hits, typed plan errors) — previously one such exit during
+  HALF_OPEN disabled V6 until process restart.
+- URL-userinfo secrets are captured into the SecretStore before
+  redaction: basic-auth/DSN URLs rebuild with credentials intact and
+  userinfo-only rotation now produces a new revision instead of an
+  idempotent stale hit; sensitive keys inside options lists are
+  extracted too; shared (content-deduped) secret refs are no longer
+  evicted while a sibling record references them; `ensure_adapter`
+  refuses expired records; global-scope connections report governed
+  metadata (probe/enrichment no longer silently disabled); throttled
+  `sweep()` wired into resolution (idle-TTL eviction is live).
 
 ## [Unreleased] - 2026-09-09 (science-v5)
 

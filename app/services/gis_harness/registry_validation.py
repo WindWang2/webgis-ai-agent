@@ -71,7 +71,7 @@ def validate_gis_library(
         )
     )
 
-    # ── V8（ADR-0136）：Unified Capability Graph 机器闸 ──────────────
+    # ── V8（ADR-0137）：Unified Capability Graph 机器闸 ──────────────
     #   图级 dangling/duplicate/词表违规（model→capability implements、
     #   algorithm exposed_by 等跨 registry 边的完整性）。error 级 fatal；
     #   warning 级留痕（随治理收敛为 fatal）。

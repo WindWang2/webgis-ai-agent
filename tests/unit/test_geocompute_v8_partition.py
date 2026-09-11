@@ -190,7 +190,6 @@ def _celery_offline(monkeypatch):
 def scan_stub(monkeypatch):
     """SOURCE_SCAN 测试桩（与 test_geocompute_v6_scheduler 同惯例）：
     parameters.features / parameters.raster_path 内联返回。"""
-    import time as _time
 
     from app.services.geocompute.ops import REGISTRY
     from app.services.geocompute.plan import NodeCategory
@@ -342,9 +341,6 @@ class TestPartitionE2E:
         assert ev.output_summary.get("partition_dedup_removed", 0) > 0
 
     def test_partition_on_unsupported_category_fails_honest(self, engine_env):
-        from app.services.geocompute.errors import (
-            NodeExecutionError,
-        )
         from app.services.geocompute.executor import GeoExecutionEngine
         from app.services.geocompute.plan import ExecutionPlan, ExecutionRunStatus
         from app.services.geocompute import graph
@@ -444,8 +440,6 @@ class TestRasterPartitionE2E:
         assert ev.output_summary.get("partition_tiles") == 2
         assert ev.output_summary.get("partition_scheme") == "raster_grid"
         # 合并输出 = 全幅 a*2，halo 裁除后无接缝伪影
-        out = ev.output_summary and None
-        merged_path = None
         for line in run.summary_lines():
             pass
         # 从 session ref 取合并输出路径（executor 输出在 outputs 内部 ——

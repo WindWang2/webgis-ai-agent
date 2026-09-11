@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 
 def deterministic_conv_weights(num_classes: int, bands: int, *, bright_class: int = 1) -> tuple:
@@ -28,6 +29,7 @@ def deterministic_conv_weights(num_classes: int, bands: int, *, bright_class: in
 
 def build_onnx_segmentation_model(num_classes: int = 3, bands: int = 3) -> bytes:
     """(N,C,H,W) → 1x1 Conv → (N,K,H,W) **logits**（activation=softmax 消费）。"""
+    pytest.importorskip("onnx")
     import onnx
     from onnx import TensorProto, helper, numpy_helper
 
@@ -50,6 +52,7 @@ def build_onnx_segmentation_model(num_classes: int = 3, bands: int = 3) -> bytes
 
 def build_onnx_classification_model(num_classes: int = 3, bands: int = 3) -> bytes:
     """(N,C,H,W) → GlobalAveragePool → 1x1 Conv → Reshape → (N,K) logits。"""
+    pytest.importorskip("onnx")
     import onnx
     from onnx import TensorProto, helper, numpy_helper
 

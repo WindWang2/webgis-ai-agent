@@ -9971,7 +9971,7 @@
   },
   "/api/v1/export/vector-pdf": {
    "post": {
-    "description": "MapSpec → 真矢量 PDF（publication 链：可选文本 + 出版整饰 + spec 级帧）。\n\n- 引擎不可用（weasyprint 缺席）→ 503 + vector_pdf_unavailable 结构化\n  错误（前端回退既有栅格导出并披露，不静默伪矢量）。\n- 渲染槽位占用（WeasyPrint 进程级串行，R1-M6）→ 429 vector_pdf_busy。\n- forward version / 非对象 spec → 400 mapspec_forward_version /\n  mapspec_not_an_object（typed 拒绝，不静默）。\n- CPU/IO 在工作线程执行；调用方返回时效由 wait_for 保护（编译本身\n  受孪生协作式超时约束 —— 不用 wait_for 当预算，R1-C1）。",
+    "description": "MapSpec → 真矢量 PDF（publication 链：可选文本 + 出版整饰 + spec 级帧）。\n\n- 引擎不可用（weasyprint 缺席）→ 503 + vector_pdf_unavailable 结构化\n  错误（前端回退既有栅格导出并披露，不静默伪矢量）。\n- 渲染槽位占用（WeasyPrint 进程级串行，R1-M6）→ 429 vector_pdf_busy。\n- forward version / 非对象 spec → 400 mapspec_forward_version /\n  mapspec_not_an_object（typed 拒绝，不静默）。\n- CPU/IO 在工作线程执行；调用方返回时效由 wait_for 保护（编译本身\n  受孪生协作式超时约束 —— 不用 wait_for 当预算，R1-C1）。\n\n契约披露（audit3 C-4 / #1213）：本端点为 backend-only 交付 —— 前端\nexporter 当前仍走栅格 PDF 链（lib/map-kit/exporter.ts → POST /api/v1/export），\n矢量入口待接线（接线时：ref 载体源须由调用方内联；未内联 → 400 typed\n拒绝；503 时回退栅格并向用户披露 vector_pdf_unavailable）。",
     "operationId": "export_map_as_vector_pdf_api_v1_export_vector_pdf_post",
     "requestBody": {
      "content": {
@@ -10868,6 +10868,54 @@
      }
     ],
     "summary": "Get Execution Run",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面"
+    ]
+   }
+  },
+  "/api/v1/geocompute/runs/{run_id}/cancel": {
+   "post": {
+    "description": "请求取消一个 run（V6 起跨进程生效）。\n\n与 run 读端点同一 authz 纪律：强制认证 + owner 域读隔离（未知 run 与\n他人 run 一律 404，不泄漏存在性）。\n\n取消链路（两级，幂等）：\n1. 本进程内存 token（``engine.cancel_run``）：在飞节点经协作 checkpoint\n   收敛；durable 分支级联写 job 行取消（既有机制）。\n2. 持久取消旗标（``geocompute_runs.cancel_requested_at``）：V6 新增 ——\n   任意进程可写；执行侧 coordinator 心跳（≤0.5s）点燃本地 token；\n   排队中的 run 由 coordinator cancel sweep 直接收敛终态。\n\n幂等：已终态 / 快照回放的 run 返回 200 且 ``cancelled=false`` 并附当前\n终态 —— 与 durable job 取消的幂等语义一致。",
+    "operationId": "cancel_execution_run_api_v1_geocompute_runs__run_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel Execution Run",
     "tags": [
      "GeoCompute / 执行平面",
      "GeoCompute / 执行平面",

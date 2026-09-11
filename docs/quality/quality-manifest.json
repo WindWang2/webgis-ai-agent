@@ -6159,7 +6159,9 @@
    ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/unit/gis_harness/test_capability_graph_v8.py"
+   ]
   },
   {
    "category": "analysis",
@@ -6217,6 +6219,7 @@
    "supports_large_data": true,
    "tests": [
     "tests/unit/gis/test_gis_lib_registries.py",
+    "tests/unit/gis_harness/test_capability_graph_v8.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/gis_harness/test_intent.py",
     "tests/unit/gis_harness/test_multiturn_scenarios.py",
@@ -6488,7 +6491,9 @@
    ],
    "status": "native",
    "supports_large_data": true,
-   "tests": []
+   "tests": [
+    "tests/unit/gis_harness/test_capability_graph_v8.py"
+   ]
   },
   {
    "category": "analysis",
@@ -7977,20 +7982,15 @@
   "pass": false,
   "violations": [
    {
-    "baseline": 0,
+    "baseline": 1,
     "code": "ALGO_HEAVY_NO_VARIANTS",
     "current": 6
-   },
-   {
-    "baseline": 0,
-    "code": "TOOL_UNTESTED",
-    "current": 8
    }
   ],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "fb5d8ee4545a8b40471f5828d0f0960dcdfe1fb772d297c19d387065eb665e28",
+ "fingerprint": "30d2f1aca6f46e459eddfdac02caebbe4c310ff25e2457905113b60eface9233",
  "gate": {
   "fields": {
    "capabilities": {
@@ -11160,6 +11160,7 @@
     "tests/test_tool_metrics.py",
     "tests/unit/gis/test_cost_model.py",
     "tests/unit/gis/test_gis_lib_registries.py",
+    "tests/unit/gis_harness/test_capability_graph_v8.py",
     "tests/unit/gis_harness/test_component_tools_v2.py",
     "tests/unit/gis_harness/test_components.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
@@ -11607,6 +11608,7 @@
     "tests/test_kde_contours_caching.py",
     "tests/unit/gis/test_analysis_reuse.py",
     "tests/unit/gis/test_gis_lib_registries.py",
+    "tests/unit/gis_harness/test_capability_graph_v8.py",
     "tests/unit/gis_harness/test_golden_cases_orchestration.py",
     "tests/unit/lib/test_density.py",
     "tests/unit/lib/test_density_hardening.py",
@@ -11640,6 +11642,7 @@
    "tests": [
     "tests/test_tool_argument_aliases.py",
     "tests/unit/gis/test_gis_lib_registries.py",
+    "tests/unit/gis_harness/test_capability_graph_v8.py",
     "tests/unit/lib/test_completeness_v3.py",
     "tests/unit/lib/test_density.py",
     "tests/unit/lib/test_density_hardening.py",

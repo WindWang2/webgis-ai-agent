@@ -1,6 +1,6 @@
 """Lakehouse V8 — dataset registry（版本层：dataset/version/branch/tag/rollback）。
 
-覆盖面（ADR-0130，验收标准对应）：
+覆盖面（ADR-0135，验收标准对应）：
 - 描述符确定性：同 (owner, name, 契约) ⇒ 同 dataset_id；owner 参与身份；
 - commit 原子协议：中断（manifest 后 / 版本行后）不产生可见半成品版本；
   重试同 version_id 幂等收敛；
@@ -12,7 +12,6 @@
 """
 from __future__ import annotations
 
-import uuid
 from pathlib import Path
 
 import pytest
@@ -24,7 +23,7 @@ from app.core.database import Base, SessionLocal
 _DOMAIN_TABLES = (
     "artifact_revisions", "artifacts", "artifact_lineages", "workflow_runs",
     "workflow_revisions", "workflows", "project_datasets",
-    "carto_project_facts", "projects", "lakehouse_catalog_items",
+    "carto_project_facts", "map_products", "projects", "lakehouse_catalog_items",
     "lakehouse_datasets", "lakehouse_dataset_versions",
     "lakehouse_dataset_refs",
 )

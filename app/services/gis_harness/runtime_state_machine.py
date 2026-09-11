@@ -1,4 +1,4 @@
-"""HarnessRuntime —— 任务级运行时状态机（V7 / ADR-0135 决策 D1）。
+"""HarnessRuntime —— 任务级运行时状态机（V7 / ADR-0134 决策 D1）。
 
 V6 基线缺口（harness-v6 PR summary follow-ups + V7 Goal Phase A）：编排
 事实散落在触发点（agent_pi_bridge 的 tool_result / turn_settled 分别驱动

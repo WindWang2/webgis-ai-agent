@@ -1,8 +1,8 @@
-# ADR-0136: Harness V8 — Unified GIS Capability / Tool / Model Runtime
+# ADR-0137: Harness V8 — Unified GIS Capability / Tool / Model Runtime
 
 - 状态：Accepted（本地验证；随 full-master-audit-2026-09 / Harness V8 交付）
 - 日期：2026-09-11
-- 关联：ADR-0135（Harness V7 agentic runtime）、ADR-0134（ModelOps V3）、
+- 关联：ADR-0134（Harness V7 agentic runtime）、ADR-0136（ModelOps V3）、
   ADR-0133（GeoCompute V8）、ADR-0119（Harness V6 semantic autonomy）
 
 ## 背景

@@ -38,7 +38,6 @@ from app.services.workflow_runtime.adapters_geocompute import (
     node_executable_op,
 )
 from app.services.workflow_runtime.store import (
-    DEFAULT_LEASE_TTL_S,
     DEFAULT_NODE_LEASE_TTL_S,
     InstanceStore,
 )

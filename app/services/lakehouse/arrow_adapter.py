@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from app.services.lakehouse.data_object import publish_data_object
 
@@ -56,7 +56,7 @@ def _require_pyarrow():
 
 def _schema_projection(schema: Any) -> Dict[str, Any]:
     """schema → 有界 payload 投影（列名/类型/行数 —— 确定性排序）。"""
-    pa = _require_pyarrow()
+    _require_pyarrow()
     names = list(schema.names)[:MAX_SCHEMA_COLUMNS]
     return {
         "columns": names,
@@ -82,7 +82,7 @@ def publish_arrow_ipc(
     """
     import tempfile
 
-    pa = _require_pyarrow()
+    _require_pyarrow()
     import pyarrow as pa_mod
     import pyarrow.ipc as ipc
 

@@ -1,4 +1,4 @@
-"""Qualification Engine + ExecutionEstimate —— Harness V8（ADR-0136）。
+"""Qualification Engine + ExecutionEstimate —— Harness V8（ADR-0137）。
 
 V8.3 统一资格判断：graph 实体（capability/algorithm/tool/model）× 上下文
 六面（Task/Data/Map/Runtime/Resource/UserConstraint）→ 结构化结论

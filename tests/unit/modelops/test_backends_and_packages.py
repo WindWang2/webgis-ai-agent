@@ -66,6 +66,7 @@ def test_probe_torch_honest_when_broken(monkeypatch):
 
 
 def test_onnx_execution_providers_ends_with_cpu():
+    pytest.importorskip("onnxruntime")
     eps = onnx_execution_providers()
     assert eps, "onnxruntime available in test env must yield providers"
     assert eps[-1] == "CPUExecutionProvider"
@@ -163,7 +164,7 @@ def test_package_store_persist_rejects_checksum_mismatch(tmp_path):
 
 
 def test_descriptor_output_transform_in_fingerprint():
-    from app.lib.modelops.descriptor import GeoModelDescriptor, OutputTransform
+    from app.lib.modelops.descriptor import OutputTransform
 
     desc = _desc_with_checksum("c" * 64)
     payload = desc.fingerprint_payload()

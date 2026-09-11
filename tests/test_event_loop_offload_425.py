@@ -298,6 +298,23 @@ async def test_query_catalog_item_route_off_loop(monkeypatch):
 # ─── Secondary defect: result bounds on the preview/query path ───────────────
 
 
+
+def _reset_fabric_adapter_cache():
+    """V8 runtime caches prebuilt adapters by source id.
+
+    ``query_catalog_item`` resolves via ``_governed_adapter`` → registry first,
+    so a prior test that monkeypatched ``get_adapter`` to return an oversized
+    payload can leave that adapter attached and poison later bounds tests.
+    """
+    from app.services.data_fabric.fabric.runtime import reset_fabric_runtime
+    from app.services.data_fabric.fabric.connection_registry import (
+        reset_connection_registry,
+    )
+
+    reset_fabric_runtime()
+    reset_connection_registry()
+
+
 def _patched_adapter_query(n_features):
     from app.services.data_fabric.manager import DataFabricManager
 
@@ -314,6 +331,8 @@ def _patched_adapter_query(n_features):
 def test_query_catalog_item_enforces_result_bounds(monkeypatch):
     """The sync query path (preview/query routes) must enforce
     enforce_result_bounds — only materialize did before (#425)."""
+    _reset_fabric_adapter_cache()
+
     from app.services.data_fabric.errors import ResultTooLargeError
     from app.services.data_fabric.limits import max_features
     from app.services.data_fabric.manager import DataFabricManager
@@ -327,6 +346,7 @@ def test_query_catalog_item_enforces_result_bounds(monkeypatch):
 
 
 def test_query_catalog_item_allows_bounded_results(monkeypatch):
+    _reset_fabric_adapter_cache()
     from app.services.data_fabric.manager import DataFabricManager
     from app.schemas.data_fabric_schema import QuerySpec
 
@@ -342,6 +362,8 @@ def test_query_catalog_item_allows_bounded_results(monkeypatch):
 def test_query_catalog_item_empty_result_passes(monkeypatch):
     """Adversarial: an empty (failed/empty remote) result must pass through —
     bounds guard rejects oversized payloads, never invents data."""
+    _reset_fabric_adapter_cache()
+
     from app.services.data_fabric.manager import DataFabricManager
     from app.schemas.data_fabric_schema import QuerySpec
 
@@ -358,6 +380,8 @@ def test_query_catalog_item_empty_result_passes(monkeypatch):
 async def test_query_catalog_item_async_enforces_result_bounds(monkeypatch):
     """The async path (used by the preview/query routes after the offload
     fix, and by materialize) must enforce bounds too."""
+    _reset_fabric_adapter_cache()
+
     from app.services.data_fabric.errors import ResultTooLargeError
     from app.services.data_fabric.limits import max_features
     from app.services.data_fabric.manager import DataFabricManager

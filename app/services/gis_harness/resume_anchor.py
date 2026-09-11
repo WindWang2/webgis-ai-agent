@@ -93,7 +93,7 @@ async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
                 recovery_state = recovery_state_for_anchor(raw)
     except Exception:  # noqa: BLE001 — recovery 态缺席照常建锚
         recovery_state = {}
-    # V7（ADR-0135 D3）：九域上下文摘要入锚（rebuildable 纪律 —— 只带
+    # V7（ADR-0134 D3）：九域上下文摘要入锚（rebuildable 纪律 —— 只带
     # 域指纹/压缩态，载荷可由权威事实重建，永不复制）。
     context_digest: Dict[str, Any] = {}
     try:

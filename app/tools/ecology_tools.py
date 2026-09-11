@@ -56,7 +56,7 @@ def register_ecology_tools(registry: ToolRegistry):
                        "（trapezoid[a,b,c,d] / gaussian[mu,sigma]）给每个要素"
                        "评分，加权聚合为 0-1 适宜度并分级（unsuitable/marginal/"
                        "suitable/optimal）。geometric 聚合为限制因子语义",
-           tier=2, domains=["statistics"], cost="light",
+           tier=2, domains=["what_if", "raster"], cost="light",
            param_descriptions={
                "geojson": "分析框 GeoJSON 或数据引用(ref:xxx)（要素属性含全部变量字段）",
                "variables_json": "变量定义 JSON 数组：[{field, curve: trapezoid|gaussian, params: [a,b,c,d]|[mu,sigma], weight}]",

@@ -1,4 +1,4 @@
-"""Lakehouse V8 — 完成证明：端到端版本化闭环（ADR-0130）。
+"""Lakehouse V8 — 完成证明：端到端版本化闭环（ADR-0135）。
 
 验收标准逐条对应（/goal 04）：
 - snapshot/branch/rollback 真实可用：commit → branch → revert 回滚；
@@ -11,7 +11,6 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -23,7 +22,7 @@ from app.core.database import Base, SessionLocal
 _DOMAIN_TABLES = (
     "artifact_revisions", "artifacts", "artifact_lineages", "workflow_runs",
     "workflow_revisions", "workflows", "project_datasets",
-    "carto_project_facts", "projects", "lakehouse_catalog_items",
+    "carto_project_facts", "map_products", "projects", "lakehouse_catalog_items",
     "lakehouse_datasets", "lakehouse_dataset_versions",
     "lakehouse_dataset_refs",
 )
@@ -114,8 +113,18 @@ def test_v8_end_to_end_versioned_lakehouse(v8_env, tmp_path):
             == v2.version_id
 
     # 3. workflow run → dataset version（bridge；lineage 可追踪）。
-    # SQLite FK 未启用（测试方言）—— workflow/run 行直接内联构造。
+    # Postgres 强制 workflows.project_id → projects.id（及 owner → users）；
+    # SQLite 测试方言不强制 FK，所以旧实现跳过项目行在本地全绿、CI 红。
     with SessionLocal() as db:
+        from app.models.db_model import User
+        from app.models.project import Project
+
+        db.merge(User(
+            id="u_e2e", username="u_e2e", email="u_e2e@example.com",
+            password_hash="x", role="viewer", is_active=True,
+        ))
+        db.merge(Project(id="proj-e2e", name="e2e", owner_id="u_e2e"))
+        db.flush()
         project_row = Workflow(
             project_id="proj-e2e", name="wf", version=1,
             graph_spec={"steps": []},

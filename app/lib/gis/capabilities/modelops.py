@@ -1,4 +1,4 @@
-"""模型推理能力包（Harness V8 / ADR-0136，B-10 拆分）。
+"""模型推理能力包（Harness V8 / ADR-0137，B-10 拆分）。
 
 历史缺口：capability registry 的 ``image_segmentation`` 描述绑定 k-means
 统计语义，而模型推理（GeoAI）只是 modelops 工具的 ToolRegistry 标签 ——

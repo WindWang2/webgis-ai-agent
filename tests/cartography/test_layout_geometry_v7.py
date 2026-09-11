@@ -4,7 +4,6 @@
 确定性级联（user-wins 钳制/重叠推移/换行/不可解披露）、宽高比适配、
 越界检查、完整报告与有界载荷。
 """
-import pytest
 
 from app.lib.cartography.layout_geometry import (
     DEFAULT_FLOATING_SIZE,

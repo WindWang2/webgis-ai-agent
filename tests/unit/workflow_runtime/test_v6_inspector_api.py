@@ -7,7 +7,6 @@ owner 隔离（404 语义）。
 """
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 from fastapi import FastAPI
