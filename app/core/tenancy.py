@@ -23,8 +23,12 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth import get_current_user_optional
+from app.core.database import get_async_db
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +132,48 @@ async def effective_org_id(
             if org is not None:
                 return str(org)
     return await get_or_create_default_org_id(db)
+
+
+class OrgContext:
+    """请求级租户上下文（require_org_context 依赖的产出）。
+
+    ``org_id``：effective org（字符串原文）；``is_anonymous``：匿名
+    owner_token 会话（default 桶内由既有 owner/session 过滤收口）；
+    ``user_id``：已归一化的身份（None = 匿名/系统）。
+    """
+
+    __slots__ = ("org_id", "user_id", "is_anonymous")
+
+    def __init__(self, org_id: str, user_id: Optional[str],
+                 is_anonymous: bool):
+        self.org_id = org_id
+        self.user_id = user_id
+        self.is_anonymous = is_anonymous
+
+    def __repr__(self) -> str:  # 调试投影；绝不含明文 token
+        return (f"OrgContext(org_id={self.org_id!r}, "
+                f"user_id={self.user_id!r}, anonymous={self.is_anonymous})")
+
+
+async def require_org_context(
+    user: Optional[dict] = Depends(get_current_user_optional),
+    db: AsyncSession = Depends(get_async_db),
+) -> "OrgContext":
+    """FastAPI 依赖：解析请求的租户上下文（ADR-0139 §D2）。
+
+    用法：``ctx: OrgContext = Depends(require_org_context)`` 后以
+    ``ctx.org_id`` 传入 scoped_query / store 调用。异步路由推荐本依赖；
+    同步线程闭包用 ``effective_org_in_thread``。
+    """
+    uid = None
+    is_anon = True
+    if user:
+        raw = user.get("user_id") or user.get("id") or user.get("sub")
+        is_anon = raw is None or str(raw).lower() in {"anonymous", "anon"}
+        if not is_anon:
+            uid = str(raw)
+    org = await effective_org_id(user, db)
+    return OrgContext(org, uid, is_anon)
 
 
 def scoped_query(stmt, model, org_id: str):

@@ -82,30 +82,14 @@ class ClusterSubmitRequest(ExecutePlanRequest):
 
 
 async def _enforce_org_quota(user):
-    """ADR-0139 P5：org 配额三查（并发 + 速率；存储在 lakehouse 写面收口）。
+    """ADR-0139 P5：org 配额三查（速率 + 并发；存储在 lakehouse 写面收口）。
 
-    org 解析/配额查询失败 fail-open（保护性限流不放大故障）；越限抛
-    QuotaExceededError（QUOTA → 429 分类学信封，A 线协调点已声明）。
+    薄封装 org_quota.enforce_for_principal（单一实现纪律）；配额面
+    不可用 fail-open，越限 QUOTA → 429 分类学信封（A 线协调点）。
     """
-    from app.core import tenancy
-    from app.core.database import AsyncSessionLocal
     from app.services import org_quota
 
-    if AsyncSessionLocal is None:
-        return
-    try:
-        async with AsyncSessionLocal() as qdb:
-            org_eff = await tenancy.effective_org_id(user, qdb)
-            limits = await org_quota.effective_limits(qdb, org_eff)
-            if not await org_quota.check_rate(
-                    org_eff, limit_per_min=limits.rate_per_min):
-                raise org_quota.QuotaExceededError(
-                    "rate_per_min", org_eff, limit=limits.rate_per_min)
-            await org_quota.check_concurrency(qdb, org_eff)
-    except org_quota.QuotaExceededError:
-        raise
-    except Exception:  # noqa: BLE001 - 配额面不可用不阻塞提交
-        pass
+    await org_quota.enforce_for_principal(user)
 
 
 def _plan_from_request(data: ExecutionPlanIn):

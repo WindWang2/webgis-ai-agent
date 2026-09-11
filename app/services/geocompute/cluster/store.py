@@ -88,39 +88,6 @@ def hash_scope_key(raw: Optional[str], prefix: str) -> Optional[str]:
     return prefix + hashlib.sha1(str(raw).encode(), usedforsecurity=False).hexdigest()[:12]
 
 
-def resolve_org_for_run(run_id: Optional[str]) -> Optional[str]:
-    """run 的租户作用域（ADR-0139）：派生表（events/evidence/artifacts）
-    写入侧惰性解析——org 锚定 run 行真相，绝不由派生路径自造。"""
-    if not run_id:
-        return None
-    with session_factory() as db:
-        return db.execute(
-            select(_Run.org_id).where(_Run.run_id == run_id)
-        ).scalar_one_or_none()
-
-
-def resolve_org_for_owner(owner_scope: Optional[str]) -> Optional[str]:
-    """owner 域 → 租户作用域（无 run_id 的派生写入路径；同 owner 同 org）。
-    owner 哈希是 per-principal 事实，任一关联 run 的 org 即该 owner 的 org。"""
-    if not owner_scope:
-        return None
-    with session_factory() as db:
-        return db.execute(
-            select(_Run.org_id)
-            .where(_Run.owner_scope == owner_scope)
-            .order_by(_Run.id.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-
-
-def default_org_id() -> str:
-    """default 隔离桶（ADR-0139）：派生写入在 run/owner 皆不可解析时的兜底。"""
-    from app.core import tenancy
-
-    with session_factory() as db:
-        return tenancy.get_or_create_default_org_id_sync(db)
-
-
 class ClusterRunStore:
     """geocompute_runs / geocompute_workers / geocompute_resource_usage 的 CAS 门面。"""
 
@@ -242,12 +209,13 @@ class ClusterRunStore:
         域过滤仍然生效）。
         """
         with self._factory() as db:
-            conds = [_Run.run_id == run_id, _Run.owner_scope == owner_scope]
+            stmt = select(_Run).where(
+                _Run.run_id == run_id, _Run.owner_scope == owner_scope)
             if org_id is not None:
-                conds.append(_Run.org_id == org_id)
-            row = db.execute(
-                select(_Run).where(*conds)
-            ).scalar_one_or_none()
+                from app.core.tenancy import scoped_query
+
+                stmt = scoped_query(stmt, _Run, org_id)
+            row = db.execute(stmt).scalar_one_or_none()
             return _run_projection(row) if row is not None else None
 
     def list_runs(
@@ -266,10 +234,11 @@ class ClusterRunStore:
         limit = max(1, min(int(limit), 100))
         offset = max(0, int(offset))
         with self._factory() as db:
-            conds = [_Run.owner_scope == owner_scope]
+            q = select(_Run).where(_Run.owner_scope == owner_scope)
             if org_id is not None:
-                conds.append(_Run.org_id == org_id)
-            q = select(_Run).where(*conds)
+                from app.core.tenancy import scoped_query
+
+                q = scoped_query(q, _Run, org_id)
             if statuses:
                 q = q.where(_Run.status.in_([str(s) for s in statuses]))
             q = q.order_by(_Run.id.desc()).limit(limit).offset(offset)

@@ -236,7 +236,9 @@ class InstanceStore:
                 if owner_scope is not None:
                     q = q.filter(WorkflowInstanceRow.owner_scope == owner_scope)
                 if org_id is not None:
-                    q = q.filter(WorkflowInstanceRow.org_id == org_id)
+                    from app.core.tenancy import scoped_query
+
+                    q = scoped_query(q, WorkflowInstanceRow, org_id)
                 row = q.first()
                 return _row_to_instance(row) if row is not None else None
         except OperationalError as exc:

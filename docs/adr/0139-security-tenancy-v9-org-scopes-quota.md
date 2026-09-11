@@ -70,6 +70,13 @@ viewer/editor/admin），错误分类学与限流成熟，但：
   （存量 token）按角色默认集回退**——无需强制重登录的平滑迁移。
   claim 中未知词丢弃；claim 与角色基线取交集（角色降级即时收敛，
   宽词不复活）。`token_version` 不因此 bump（见风险 R3）。
+- 匿名 owner_token 会话持隐式最小集 `ANON_SCOPES`
+  （public:read + session:read + session:write）；匿名哨兵在
+  `scopes_for_role` 特判，避免误落 viewer 全集。
+- **refresh 语义**：任务书的「刷新时合并」在 scope 纯角色派生的当前
+  实现下落地为**按当前角色整体重算**（等价于以最新角色集合并）——
+  角色降级在下次 refresh 即收敛，不会复活旧宽词；引入非角色派生的
+  精细授权（per-user scope 授予）时再演进为真合并。
 - `require_scope("...")` 依赖工厂：词汇表外 scope 是编程错误（抛
   ValueError）；scope 缺失 → 403 `INSUFFICIENT_SCOPE`（401 留给未认证）。
 - **端点 scope 矩阵**：`docs/dev/endpoint-scope-matrix.csv` +

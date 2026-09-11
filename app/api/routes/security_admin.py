@@ -70,12 +70,14 @@ async def set_org_quota(
     """per-org 配额覆盖（upsert；admin 动作落审计）。"""
     from app.models.db_model import OrgQuota
 
+    from sqlalchemy import select
+
     actor = scope_user.get("user_id")
     row = (await db.execute(
-        _select_org_quota(org_id)
+        select(OrgQuota).where(OrgQuota.org_id == org_id)
     )).scalar_one_or_none()
     if row is None:
-        row = OrgQuota(org_id=org_id, updated_by=actor)
+        row = OrgQuota(org_id=org_id)
         db.add(row)
     row.max_storage_bytes = body.max_storage_bytes
     row.max_concurrent_tasks = body.max_concurrent_tasks
@@ -101,14 +103,6 @@ async def set_org_quota(
         trace_id=_trace_id(request),
     )
     return {"success": True, "org_id": org_id}
-
-
-async def _select_org_quota(org_id: str):
-    from sqlalchemy import select
-
-    from app.models.db_model import OrgQuota
-
-    return select(OrgQuota).where(OrgQuota.org_id == org_id)
 
 
 @router.get("/orgs/{org_id}/quota/usage")
@@ -158,7 +152,7 @@ async def query_global_audit(
     action: Optional[str] = None,
     limit: int = 100,
     before_id: Optional[int] = None,
-    _scope: dict = Depends(require_scope("admin:read")),
+    scope_user: dict = Depends(require_scope("admin:read")),
     _admin: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_async_db),
 ) -> Dict[str, Any]:
@@ -166,5 +160,13 @@ async def query_global_audit(
     events = await audit_service.query_audit(
         db, org_id=org_id, actor_id=actor_id, action=action,
         limit=limit, before_id=before_id,
+    )
+    await audit_service.record_audit(
+        db,
+        action=audit_service.ACTION_ADMIN_AUDIT_QUERY,
+        actor_id=scope_user.get("user_id"),
+        org_id=org_id,
+        target_type="audit_events",
+        trace_id=_trace_id(request),
     )
     return {"events": events, "limit": max(1, min(int(limit), 500))}

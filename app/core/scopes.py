@@ -80,7 +80,10 @@ CLAIM_KEY = "scopes"
 
 
 def scopes_for_role(role: Optional[str]) -> frozenset[str]:
-    """角色 → 默认 scope 集；未知角色按 viewer（最小特权）。"""
+    """角色 → 默认 scope 集；匿名哨兵 → ANON_SCOPES（最小集）；
+    其余未知角色按 viewer（最小特权）。"""
+    if role == "anonymous":
+        return ANON_SCOPES
     return ROLE_SCOPES.get(role or "", _VIEWER_SCOPES)
 
 

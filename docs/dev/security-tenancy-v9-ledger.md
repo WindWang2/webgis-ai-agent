@@ -21,7 +21,7 @@
 | P2 lakehouse 打标 | lakehouse/dataset_registry.py、catalog_service.py | tests/data/test_lakehouse_datasets_api_v8.py | ✅ |
 | P3 scopes 词汇表 | app/core/scopes.py、app/core/auth.py（claim 暴露）、routes/auth.py（scopes claim） | test_security_v9_units.py::test_scope_* | ✅ |
 | P3 端点矩阵 + CI | docs/dev/endpoint-scope-matrix.csv、scripts/generate_endpoint_scope_matrix.py、tests/test_endpoint_scope_matrix.py | 6 用例（覆盖/词表/陈旧/admin 一致性） | ✅ |
-| P4 隔离矩阵 | tests/integration/test_cross_tenant_matrix.py | 双 org × {geocompute,workflow,lakehouse,jobs,upload} + 泄漏扫描 | ✅ |
+| P4 隔离矩阵 | tests/integration/test_cross_tenant_matrix.py | 双 org × {geocompute,workflow-runtime,lakehouse,jobs,fabric,project,upload}（jobs/uploads 会话面由既有 RAG 矩阵覆盖；knowledge 为声明性收缩，见下） | ✅ |
 | P5 metrics 门禁 | app/main.py（METRICS_TOKEN / fail-closed 401） | test_security_v9_units.py::test_metrics_gate_* | ✅ |
 | P5 health 分层 | app/main.py（/healthz 公开、/health admin） | 同上 | ✅ |
 | P5 org 配额 | app/services/org_quota.py、routes/security_admin.py、ErrorCategory.QUOTA（errors.py）、geocompute/workflow/lakehouse 路由接线 | test_security_v9_units.py::test_quota_* | ✅ |
@@ -63,3 +63,19 @@
    Depends 行区冲突面控制；矩阵记录意图 scope，演进由矩阵 diff 评审）。
 4. 渐进延迟为进程内 best-effort（0.5s→8s）；跨进程硬上界由既有限流
    承担（不重复造轮子）——ADR-0139 §D6。
+5. **knowledge 域不进矩阵**（声明性收缩）：隔离 = documents.org_id 列
+   （idx_document_org）+ 路由显式传 org（S41 体系）；需要真实 RAG 基础
+   设施（队列/独立会话），裁剪 app 无法诚实装配。
+6. **refresh「合并」语义**：任务书「刷新时合并 scopes」在 scope 纯
+   角色派生的当前实现下落地为按当前角色**整体重算**（等价且更安全：
+   角色降级即时收敛）；引入 per-user 精细授权时再演进为真合并。
+7. **P4 断言放宽声明**：列表端点断言 200+空集（而非强行 404）、写越权
+   接受 405/409（幂等取消语义）——存在性不泄漏这一硬约束不变。
+8. 模型层任务书点名 project.py/data_fabric.py：V8 表不在其中（org_id
+   早已存在），属任务书过度列举，本线未改动这两文件的相关部分。
+9. **matrix 与 scoped_query/require_org_context 对齐**（code-review 后）：
+   require_org_context 依赖已实现（tenancy.py）；scoped_query 成为
+   store 读路径的活代码（cluster get_run_owned/list_runs、workflow
+   get_instance）；geocompute 路由配额入口去重为薄封装；
+   0039-0041 纳入迁移测试断言（org_quotas/audit_events/
+   refresh_token_families 列+索引）。

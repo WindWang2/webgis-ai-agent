@@ -21,7 +21,7 @@ from sqlalchemy import text
 
 REPO = Path(__file__).resolve().parents[1]
 PRE_V9_HEAD = "c1e2f3a4b5c6"
-POST_V9_HEAD = "0038_security_v9_lakehouse_org"
+POST_V9_HEAD = "0041_security_v9_refresh_families"
 
 
 def _make_config(db_url: str):
@@ -293,6 +293,25 @@ def test_v9_org_backfill_up_down_up(tmp_path, monkeypatch):
         assert conn.execute(text(
             "SELECT org_id FROM geocompute_resource_usage LIMIT 1"
         )).scalar() is None
+
+        # ── 0039–0041：配额 / 审计 / refresh 家族表 ──
+        quota_cols = {r[1] for r in conn.execute(
+            text("PRAGMA table_info(org_quotas)")).fetchall()}
+        assert {"org_id", "max_storage_bytes", "max_concurrent_tasks",
+                "rate_limit_per_min"} <= quota_cols
+        audit_cols = {r[1] for r in conn.execute(
+            text("PRAGMA table_info(audit_events)")).fetchall()}
+        assert {"id", "org_id", "actor_id", "action", "target_type",
+                "target_id", "detail", "trace_id", "created_at"} <= audit_cols
+        audit_idx = _indexes(conn, "audit_events")
+        assert {"idx_audit_org_created", "idx_audit_actor_created",
+                "idx_audit_action"} <= audit_idx
+        fam_cols = {r[1] for r in conn.execute(
+            text("PRAGMA table_info(refresh_token_families)")).fetchall()}
+        assert {"user_id", "family_id", "current_jti",
+                "reuse_detected", "expires_at"} <= fam_cols
+        fam_idx = _indexes(conn, "refresh_token_families")
+        assert {"idx_refresh_family_user", "idx_refresh_family_jti"} <= fam_idx
     engine.dispose()
 
     # ── downgrade：列移除（runs 保留 nullable 列）、索引清理 ──

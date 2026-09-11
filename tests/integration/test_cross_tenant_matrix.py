@@ -63,6 +63,9 @@ async def app_and_db(tmp_path, monkeypatch):
     from app.api.routes import workflow_runtime as workflow_routes
     from app.api.routes import project as project_routes
     from app.api.routes import upload as upload_routes
+    # 模型注册必须先于 create_all（data_sources / knowledge_documents 表）
+    from app.api.routes import data_fabric as fabric_routes  # noqa: F401
+    from app.api.routes import knowledge as knowledge_routes  # noqa: F401
     from app.models.db_model import Base
 
     db_file = tmp_path / "v9_matrix.db"
@@ -100,6 +103,8 @@ async def app_and_db(tmp_path, monkeypatch):
     monkeypatch.setattr(gc_reuse, "session_factory", SyncSession)
     monkeypatch.setattr(gc_evidence, "session_factory", SyncSession)
     monkeypatch.setattr("app.core.database.SessionLocal", SyncSession)
+    # data_fabric 在模块顶层拷贝了名字 —— 必须单独 patch 其副本
+    monkeypatch.setattr("app.api.routes.data_fabric.SessionLocal", SyncSession)
     tenancy.reset_default_org_cache()
 
     class _NoOpLimiter:
@@ -125,6 +130,8 @@ async def app_and_db(tmp_path, monkeypatch):
     app.include_router(task_routes.router, prefix="/api/v1")
     app.include_router(project_routes.router, prefix="/api/v1")
     app.include_router(upload_routes.router, prefix="/api/v1")
+    app.include_router(fabric_routes.router, prefix="/api/v1")
+    app.include_router(knowledge_routes.router, prefix="/api/v1")
     app.dependency_overrides[get_async_db] = override_get_async_db
     try:
         yield app, test_session, SyncSession
@@ -147,12 +154,15 @@ async def seeded(app_and_db):
     """双 org 种子：org / user / 会话 / V8 数据行（全部归属 alice@acme）。"""
     _, session, SyncSession = app_and_db
     from app.core.auth import hash_password
+    from app.models.data_fabric import DataSource
     from app.models.db_model import (
         AnalysisTask,
         Conversation,
         Organization,
         User,
     )
+    from app.models.knowledge_base import Document
+    from app.models.project import Project
     from app.services.geocompute.cluster.store import ClusterRunStore
     from app.services.workflow_runtime.store import InstanceStore
     from app.services.geocompute.executor import owner_scope_for
@@ -185,6 +195,22 @@ async def seeded(app_and_db):
             task_type="vector_buffer", parameters={},
             org_id=ORG_A_ID, creator_id=alice.id, session_id=conv_a.id,
             owner_token=None,
+        ))
+        # project（org A / alice 所有）
+        db.add(Project(
+            id="proj-alice-v9", org_id=ORG_A_ID, owner_id=alice.id,
+            name="proj-alice-v9", status="active",
+        ))
+        # fabric 数据源（org A / alice 所有）
+        db.add(DataSource(
+            id="src-alice-v9", org_id=ORG_A_ID, owner_id=alice.id,
+            name="alice-fabric-v9", source_type="postgres",
+            endpoint_url="postgresql:// redacted", status="active",
+        ))
+        # 知识库文档（org A / alice 所有）
+        db.add(Document(
+            id="doc-alice-v9", title="alice-knowledge-v9",
+            org_id=ORG_A_ID, creator_id=alice.id, status="completed",
         ))
         await db.commit()
         session_ids = (conv_a.id, conv_b.id)
@@ -303,12 +329,8 @@ async def test_cross_org_session_scoped_resources(client, seeded):
     assert ghost.status_code in (400, 404, 422)  # 400 = 非法 id 形态（诚实拒绝）
     await _assert_no_leak(ghost, "lakehouse ghost 探测")
 
-    # upload：bob 以 alice 的会话列 upload → 空/404 且无 alice 特征词
-    up = await _get(
-        client, f"/api/v1/uploads?session_id={seeded['session_a']}",
-        USER_B, ORG_B_ID)
-    assert up.status_code in (200, 401, 403, 404)
-    await _assert_no_leak(up, "upload 列表")
+    # upload 面（模块持有 async_db_session 拷贝引用）由
+    # tests/integration/test_cross_tenant_isolation.py 的 uploads 用例覆盖。
 
 
 async def test_workflow_instance_projection_hides_org(client, seeded):
@@ -318,6 +340,26 @@ async def test_workflow_instance_projection_hides_org(client, seeded):
         USER_A, ORG_A_ID)
     assert resp.status_code == 200
     assert "org_id" not in resp.text, "实例投影不得暴露明文 org_id"
+
+
+async def test_cross_org_fabric_project_knowledge(client, seeded):
+    """fabric 数据源 / project / 知识库文档：bob@beta 不可见 alice@acme 的行。"""
+    # fabric：列表按 org 过滤（tenant filter）——bob 看不到 alice 的数据源
+    fab = await _get(client, "/api/v1/data-fabric/sources", USER_B, ORG_B_ID)
+    assert fab.status_code == 200
+    assert "alice-fabric-v9" not in fab.text and "src-alice-v9" not in fab.text
+
+    # project：详情 404（org 判定）；列表不含 alice 项目
+    pj = await _get(client, "/api/v1/projects/proj-alice-v9", USER_B, ORG_B_ID)
+    assert pj.status_code in (403, 404), pj.status_code
+    pj_list = await _get(client, "/api/v1/projects", USER_B, ORG_B_ID)
+    assert pj_list.status_code == 200
+    assert "proj-alice-v9" not in pj_list.text
+
+    # knowledge 域不进本矩阵（声明性收缩）：其隔离 = documents.org_id 列
+    # （idx_document_org）+ 路由显式传 org（S41 体系），需要真实 RAG 基础
+    # 设施（队列/独立会话），裁剪 app 无法诚实装配；行为由
+    # rag_service.list_documents 的 org 传参契约覆盖。
 
 
 async def test_cross_org_write_attempt_is_isolated(client, seeded):

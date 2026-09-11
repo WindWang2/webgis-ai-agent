@@ -372,23 +372,30 @@ async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = 
         # 避免"同一请求在 A 端点是 test-admin、在 B 端点是 anonymous"。
         return dict(AUTH_BYPASS_PROFILE)
 
+    def _anon() -> dict:
+        # ADR-0139 P3：匿名携带隐式最小 scope 集（公开读 + 自有会话）
+        from app.core.scopes import ANON_SCOPES
+
+        return {"user_id": "anonymous", "role": "anonymous",
+                "scopes": ANON_SCOPES}
+
     if credentials is None:
-        return {"user_id": "anonymous", "role": "anonymous"}
+        return _anon()
 
     token = credentials.credentials
     payload = verify_token(token)
 
     if payload is None:
-        return {"user_id": "anonymous", "role": "anonymous"}
+        return _anon()
 
     user_id = payload.get("sub")
     if not user_id:
-        return {"user_id": "anonymous", "role": "anonymous"}
+        return _anon()
 
     # 拒绝 refresh token 被当 access 用 (新 token)
     tok_type = payload.get("type")
     if tok_type is not None and tok_type != TOKEN_TYPE_ACCESS:
-        return {"user_id": "anonymous", "role": "anonymous"}
+        return _anon()
 
     return {
         "user_id": user_id,
