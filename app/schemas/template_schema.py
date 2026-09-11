@@ -1271,3 +1271,89 @@ SEED_TEMPLATES: List[Dict[str, Any]] = [
         "version": 1,
     },
 ]
+
+
+# ── 路由契约模型（V9 契约基石，ADR-0138）────────────────────────────────
+# 对应 app/api/routes/templates.py；与上方 payload 模型同属制图模板子系统。
+
+
+class CreateTemplateRequest(BaseModel):
+    """POST /templates 请求体（另存为新模板）。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "我的底图模板",
+                    "kind": "basemap",
+                    "description": "深色底图配置",
+                    "keywords": ["dark", "basemap"],
+                    "payload": {"providerId": "dark"},
+                    "thumbnail_url": None,
+                }
+            ]
+        }
+    )
+
+    name: str = Field(..., description="模板名称", min_length=1, max_length=100)
+    kind: str = Field(..., description="模板类别: basemap, symbology, layout, thematic")
+    description: Optional[str] = Field(None, description="模板描述")
+    keywords: List[str] = Field(default_factory=list, description="搜索关键词标签")
+    payload: Dict[str, Any] = Field(..., description="对应 kind 的样式/配置 payload")
+    thumbnail_url: Optional[str] = Field(None, description="缩略图 URL")
+
+
+class TemplateView(BaseModel):
+    """模板视图 DTO。
+
+    列表路径（summary=True）省略 payload/org/creator（_to_summary），
+    详情路径含 payload；extra=allow 兼容两种形态不裁剪。
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": "tmpl_user_ab12cd34",
+                    "kind": "basemap",
+                    "name": "我的底图模板",
+                    "category": "basemap",
+                    "keywords": ["dark"],
+                    "description": "深色底图配置",
+                    "payload": {"providerId": "dark"},
+                    "is_builtin": False,
+                    "version": 1,
+                    "created_at": "2026-09-11T00:00:00",
+                    "updated_at": "2026-09-11T00:00:00",
+                    "thumbnail_url": None,
+                }
+            ]
+        },
+    )
+
+    id: str
+    kind: str
+    name: str
+    category: Optional[str] = None
+    keywords: List[str] = []
+    description: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+    is_builtin: bool = False
+    version: int = 1
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+
+
+class TemplateDeleteResponse(BaseModel):
+    """DELETE /templates/{template_id} 返回。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [{"status": "deleted", "template_id": "tmpl_user_ab12cd34"}]
+        }
+    )
+
+    status: str
+    template_id: str
