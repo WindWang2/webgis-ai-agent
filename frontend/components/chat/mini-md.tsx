@@ -9,6 +9,17 @@ import { downloadWithAuth, isProtectedDownloadUrl } from '@/lib/api/authenticate
 import { devOnly } from '@/lib/utils/logger';
 import { AuthImage } from './auth-image';
 import { CodeBlock } from '@/components/code-highlight/code-block';
+// V9 citation 扩展（ADR-0145）：知识库引用角标。chat 气泡实际渲染走 MiniMd，
+// 故在此以最小改动消费 citation.tsx（story-markdown 是契约指定的同源扩展点）。
+// 无引用定义块的消息：正文逐字节不变、组件表行为不变（零回归）。
+import {
+  CitationAnchor,
+  CitationSourceList,
+  CitationSourcesProvider,
+  citeTextPreprocess,
+  isCitationHref,
+  splitCitationBlocks,
+} from './citation';
 
 export interface MiniMdProps {
   text: string;
@@ -37,7 +48,10 @@ export const safeUrlTransform: UrlTransform = (url) => {
 };
 
 export default function MiniMd({ text }: MiniMdProps) {
+  const { body, sources } = splitCitationBlocks(text);
+  const prepared = citeTextPreprocess(body, sources);
   return (
+    <CitationSourcesProvider sources={sources}>
     <div className="prose-agent text-body leading-[1.7] text-ink-secondary max-w-none break-words">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
@@ -80,6 +94,8 @@ export default function MiniMd({ text }: MiniMdProps) {
             );
           },
           a: ({ href, children }) => {
+            // V9 citation：#cite-n 锚点 → 引用角标（来源由 Provider 提供）。
+            if (isCitationHref(href)) return <CitationAnchor href={href ?? ''} />;
             // 审计 F36：纵然顶层 urlTransform={safeUrlTransform} 已过滤，
             // 这里再显式应用一次作为纵深防御 —— 避免未来 ReactMarkdown
             // 版本变更 component props 传递顺序时绕过过滤。
@@ -161,8 +177,11 @@ export default function MiniMd({ text }: MiniMdProps) {
           hr: () => <hr className="my-3.5 border-t border-edge-subtle" />,
         }}
       >
-        {text}
+        {prepared}
       </ReactMarkdown>
+      {/* V9 citation：注入块剥离后的「引用来源」集中展示（无引用时不渲染） */}
+      <CitationSourceList sources={sources} />
     </div>
+    </CitationSourcesProvider>
   );
 }

@@ -26,6 +26,9 @@ export function defaultLeftPanelOpen(): boolean {
   return window.innerWidth >= LEFT_PANEL_MIN_VIEWPORT_PX;
 }
 
+/** citation 注入序号：模块级自增，保证每次注入的 nonce 唯一（防重复消费）。 */
+let injectionSeq = 0;
+
 export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set) => ({
   /* ─── HUD Panels (legacy compat) ─── */
   leftPanelOpen: defaultLeftPanelOpen(),
@@ -154,10 +157,18 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   /* ─── v2 Panel Visibility ─── */
   hudOpen: false,
   setHudOpen: (open) => set({ hudOpen: open }),
+  // ragPanel 与 settings 同层 drawer（z-[101]），打开时互斥（同上 UI V3 overlay 互斥）。
   ragPanelOpen: false,
-  setRagPanelOpen: (open) => set({ ragPanelOpen: open }),
+  setRagPanelOpen: (open) =>
+    set(open ? { ragPanelOpen: true, settingsOpen: false } : { ragPanelOpen: false }),
   tweaksOpen: false,
   setTweaksOpen: (open) => set({ tweaksOpen: open }),
+
+  /* ─── 知识库 citation 注入（ADR-0145）─── */
+  pendingChatInjection: null,
+  setPendingChatInjection: (text) =>
+    set({ pendingChatInjection: { nonce: ++injectionSeq, text } }),
+  clearPendingChatInjection: () => set({ pendingChatInjection: null }),
 
   /* ─── v2 UI Tweaks ─── */
   // 与 --accent 同值：accent 底 + 白字需达 AA（旧的 #16a34a 只有 3.3:1）。

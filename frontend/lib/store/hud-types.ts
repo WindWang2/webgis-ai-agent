@@ -293,6 +293,14 @@ export interface HudState extends WorkbenchSlice {
   tweaksOpen: boolean;
   setTweaksOpen: (open: boolean) => void;
 
+  /* ─── 知识库 citation 注入（ADR-0145）─── */
+  // 非空时 ChatTab 把 text 拼入输入框草稿并立即 clear（nonce 防重复消费）。
+  // chat API 的 message 是纯字符串、无结构化附件字段 —— 注入走草稿由用户
+  // 确认发送，不静默代发。
+  pendingChatInjection: { nonce: number; text: string } | null;
+  setPendingChatInjection: (text: string) => void;
+  clearPendingChatInjection: () => void;
+
   /* ─── v2 UI Tweaks ─── */
   accentColor: string;
   setAccentColor: (color: string) => void;
