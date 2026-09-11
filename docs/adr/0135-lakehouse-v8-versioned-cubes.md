@@ -1,4 +1,4 @@
-# ADR-0130: Lakehouse V8 — Versioned Geospatial Lakehouse & N-D Cube
+# ADR-0135: Lakehouse V8 — Versioned Geospatial Lakehouse & N-D Cube
 
 - status: Accepted
 - date: 2026-09-10

@@ -222,6 +222,31 @@
       "title": "Data Fabric V7 Result Cache Ttl S",
       "type": "number"
     },
+    "DATA_FABRIC_V8_ENGINE_BREAKER_COOLDOWN_S": {
+      "default": 60.0,
+      "title": "Data Fabric V8 Engine Breaker Cooldown S",
+      "type": "number"
+    },
+    "DATA_FABRIC_V8_ENGINE_BREAKER_THRESHOLD": {
+      "default": 3,
+      "title": "Data Fabric V8 Engine Breaker Threshold",
+      "type": "integer"
+    },
+    "DATA_FABRIC_V8_RESULT_CACHE_BACKEND": {
+      "default": "memory",
+      "title": "Data Fabric V8 Result Cache Backend",
+      "type": "string"
+    },
+    "DATA_FABRIC_V8_RESULT_CACHE_REDIS_URL": {
+      "default": "",
+      "title": "Data Fabric V8 Result Cache Redis Url",
+      "type": "string"
+    },
+    "DATA_FABRIC_V8_RESULT_CACHE_SINGLEFLIGHT_WAIT_S": {
+      "default": 10.0,
+      "title": "Data Fabric V8 Result Cache Singleflight Wait S",
+      "type": "number"
+    },
     "DEBUG": {
       "default": false,
       "title": "Debug",

@@ -66,6 +66,7 @@ def test_probe_torch_honest_when_broken(monkeypatch):
 
 
 def test_onnx_execution_providers_ends_with_cpu():
+    pytest.importorskip("onnxruntime")
     eps = onnx_execution_providers()
     assert eps, "onnxruntime available in test env must yield providers"
     assert eps[-1] == "CPUExecutionProvider"

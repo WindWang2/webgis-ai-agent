@@ -1,4 +1,4 @@
-# ADR-0130: GIS Harness V7 — Long-Horizon Contextual GIS Agent Runtime
+# ADR-0134: GIS Harness V7 — Long-Horizon Contextual GIS Agent Runtime
 
 - 状态：Accepted（本地验证；随 PR `feat/harness-v7-agentic-runtime` 交付）
 - 日期：2026-09-10

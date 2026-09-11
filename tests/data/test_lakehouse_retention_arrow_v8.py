@@ -1,6 +1,6 @@
 """Lakehouse V8 — retention（元数据级 plan/execute）+ Arrow IPC adapter。
 
-覆盖面（ADR-0130 §5/§6）：
+覆盖面（ADR-0135 §5/§6）：
 - retention 谓词：指针保护（branch/tag）恒真、min_age、max_versions
   保留窗口；dry-run 确定性 token；stale plan typed 拒绝；
 - retention 只删版本行（元数据级）—— 内容 blob 的删除仍归 GC；
@@ -21,7 +21,7 @@ from app.core.database import Base, SessionLocal
 _DOMAIN_TABLES = (
     "artifact_revisions", "artifacts", "artifact_lineages", "workflow_runs",
     "workflow_revisions", "workflows", "project_datasets",
-    "carto_project_facts", "projects", "lakehouse_catalog_items",
+    "carto_project_facts", "map_products", "projects", "lakehouse_catalog_items",
     "lakehouse_datasets", "lakehouse_dataset_versions",
     "lakehouse_dataset_refs",
 )

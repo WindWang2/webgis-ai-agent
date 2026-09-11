@@ -511,6 +511,7 @@ async def get_execution_run(
     }
 
 
+@router.post("/runs/{run_id}/cancel", tags=["GeoCompute / 执行平面"])
 @router.post("/plans/runs/{run_id}/cancel", tags=["GeoCompute / 执行平面"])
 async def cancel_execution_run(
     run_id: str,

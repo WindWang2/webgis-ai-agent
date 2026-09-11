@@ -23,7 +23,7 @@ from app.core.database import Base, SessionLocal
 _DOMAIN_TABLES = (
     "artifact_revisions", "artifacts", "artifact_lineages", "workflow_runs",
     "workflow_revisions", "workflows", "project_datasets",
-    "carto_project_facts", "projects", "lakehouse_catalog_items",
+    "carto_project_facts", "map_products", "projects", "lakehouse_catalog_items",
 )
 
 
