@@ -16,6 +16,11 @@ vi.mock('@/components/map/map-panel', () => ({
 vi.mock('@/components/chat/story-markdown', () => ({
   default: ({ text }: { text: string }) => <div data-testid="story-md">{text}</div>,
 }));
+// ADR-0147：story-view 直接读 useMap() 取地图实例（分享卡/叙事 PDF 快照用）。
+// jsdom 无 GL 上下文，桩为空注册表即可。
+vi.mock('react-map-gl/maplibre', () => ({
+  useMap: () => ({}),
+}));
 
 const dispatchActionMock = vi.fn();
 vi.mock('@/lib/contexts/map-action-context', () => ({
