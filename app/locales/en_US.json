@@ -1,0 +1,16 @@
+{
+  "validation": "Invalid request parameters",
+  "permission": "You do not have permission to perform this action",
+  "data_unavailable": "The requested data is unavailable or does not exist",
+  "crs": "Coordinate reference system unsupported or cannot be transformed",
+  "resource_exhausted": "Resource quota exhausted. Please try again later",
+  "timeout": "The operation timed out. Please try again later",
+  "cancellation": "The operation was cancelled",
+  "retryable": "Service temporarily unavailable. Please try again later",
+  "permanent": "Internal server error. Please try again later",
+  "dependency_failure": "A dependent service is unavailable. Please try again later",
+  "worker_lost": "Lost contact with the execution node; the task will be rescheduled",
+  "model_failure": "Model service error. Please try again later",
+  "render_failure": "Rendering failed. Please adjust the parameters and try again",
+  "storage_corruption": "Stored data is corrupted. Please contact the administrator"
+}

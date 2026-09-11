@@ -581,6 +581,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RateLimitMiddleware, max_requests=240, window_seconds=60)
 
+# ADR-0144 P6：Accept-Language 协商（请求侧 contextvar + 响应侧错误信封
+# message 本地化；结构化字段与成功响应零触碰）。详见 app/core/i18n.py。
+from app.core.i18n import AcceptLanguageMiddleware as _AcceptLanguageMiddleware  # noqa: E402
+app.add_middleware(_AcceptLanguageMiddleware)
+
 # CORS
 # THREAT MODEL: CORS_ORIGINS=["*"] + allow_credentials=True causes the middleware
 # to echo the request Origin header back as Access-Control-Allow-Origin. Any site
