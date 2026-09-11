@@ -15,7 +15,7 @@
  * When the upload zone ships, the upload leg should be re-pointed at the UI.
  */
 import { test, expect } from 'playwright/test';
-import { bootstrapMock, defaultWorld, sendChat, awaitShellReady } from '../helpers/bootstrap';
+import { bootstrapMock, defaultWorld, loginViaApi, sendChat, awaitShellReady } from '../helpers/bootstrap';
 import { analysisTurn } from '../fixtures/sse';
 import {
   expectMapReady,
@@ -82,8 +82,10 @@ test.describe('journey-1 分析出图导出 @smoke', () => {
 
   test('real：对话分析 → 图层挂载 → 制图发布 → PNG 导出落盘', async ({ page }) => {
     test.skip(MODE !== 'real', REAL_ONLY_REASON);
-    // Real stack: the nightly lane provisions a session with a seeded upload
-    // and a scripted (deterministic) LLM stub, so the same turn contract holds.
+    // Real stack: the nightly lane provisions admin credentials (E2E_USER/
+    // E2E_PASS) and runs a deterministic LLM stub behind LLM_BASE_URL, so the
+    // turn contract holds without LLM randomness. Export requires login.
+    await loginViaApi(page);
     await page.goto('/');
     await awaitShellReady(page);
     await sendChat(page, '对上传的数据做热点分析');

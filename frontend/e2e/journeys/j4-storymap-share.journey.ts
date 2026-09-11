@@ -74,8 +74,19 @@ test.describe('journey-4 StoryMap 分享回放', () => {
 
   test('real：播放推进 → 分享链接回放', async ({ page }) => {
     test.skip(MODE !== 'real', REAL_ONLY_REASON);
-    // Nightly stack seeds session s-j4 with story messages (same seed).
-    await openStory(page, SESSION_ID);
+    // Self-seeding: create the story session through the real (stub-backed)
+    // chat API — two turns produce user+assistant messages server-side; the
+    // scripted LLM answers with deterministic markdown.
+    const turns = ['用标题总结商业 POI 分析：## 商业 POI 空间分布', '继续：生成 15 分钟等时圈结论'];
+    let sessionId = '';
+    for (const message of turns) {
+      const res = await page.request.post('/api/v1/chat/completions', { data: { message } });
+      if (!res.ok()) throw new Error(`real-mode story seeding failed: ${res.status()}`);
+      const payload = (await res.json()) as { session_id?: string };
+      sessionId = payload.session_id || sessionId;
+    }
+    if (!sessionId) throw new Error('real-mode story seeding produced no session id');
+    await openStory(page, sessionId);
     const play = page.locator('button[aria-label="播放"]').first();
     await expect(play).toBeEnabled({ timeout: 15_000 });
     await play.click();

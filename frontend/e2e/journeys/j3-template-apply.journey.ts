@@ -90,6 +90,14 @@ test.describe('journey-3 模板应用', () => {
     test.skip(MODE !== 'real', REAL_ONLY_REASON);
     await page.goto('/');
     await expectMapReady(page);
+    // Explicit, honest skip: the real backend's template registry may not
+    // carry this builtin — visible in the run, never silent green.
+    await page.getByRole('button', { name: '模板库' }).click();
+    const card = page.locator('div.cursor-pointer').filter({ hasText: '深色影像底图' }).first();
+    if (!(await card.isVisible().catch(() => false))) {
+      test.skip(true, 'real-mode template registry has no 深色影像底图 builtin (seed templates in nightly to enable)');
+    }
+    await page.getByRole('button', { name: '关闭模板库' }).click();
     const before = await shootMap(page);
     await applyDarkBasemap(page);
     await expect

@@ -1,0 +1,233 @@
+# quality-e2e — journey E2E lane (quality-e2e-v9, ADR-0146)
+#
+# Layering (mirrors production.yml's "PR fast gate + nightly heavy" split):
+#   journey-smoke   PR + nightly + dispatch — mock mode, @smoke subset (J1, J5),
+#                   no backend, ≤8 min hard budget.
+#   journeys-mock   nightly + dispatch — full six-journey mock suite.
+#   journey-real    nightly + dispatch — real backend (uvicorn, SQLite minimal
+#                   config) + deterministic LLM stub + real frontend, real-mode
+#                   journeys with REQUIRE_BROWSER=1 (missing browser = hard red,
+#                   never a green skip — same contract as runtime-validator).
+#
+# Runner-minute budget (§0.4): PR ≈ 8 min/job × 1 job; nightly ≈ 8 + 15 + 40
+# ≈ 63 min across 3 jobs, staggered at 02:30 UTC to avoid the 02:00
+# production.yml nightly-matrix (180 min tier).
+#
+# Failure artifacts (trace/video/screenshot + HTML report) upload on any
+# journey failure; retries are config-level 0 — flaky = red here.
+
+name: quality-e2e
+
+on:
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+  pull_request:
+
+concurrency:
+  group: quality-e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  E2E_PORT: '3310'
+
+jobs:
+  journey-smoke:
+    name: Journey smoke (mock, @smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile --prefer-offline
+      - name: Install chromium
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+      # The lane's own changed-lane mapping must stay correct (#1216-class).
+      - name: Changed-lane mapping self-test
+        working-directory: frontend
+        run: pnpm exec vitest run tests/e2e-lanes/changed-lanes.test.ts
+      - name: Decide lane from diff (PR only)
+        if: github.event_name == 'pull_request'
+        id: lanes
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
+            | node frontend/e2e/tools/changed-lanes.mjs > lanes.json || true
+          cat lanes.json
+          echo "run=$(python3 -c "import json,sys;print(str(json.load(open('lanes.json'))['run']).lower())" 2>/dev/null || echo true)" >> "$GITHUB_OUTPUT"
+      - name: Run smoke journeys (mock)
+        if: github.event_name != 'pull_request' || steps.lanes.outputs.run != 'false'
+        working-directory: frontend
+        env:
+          E2E_MODE: mock
+          CI: '1'
+        run: pnpm exec playwright test --grep @smoke
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: journey-smoke-artifacts
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+          retention-days: 14
+
+  journeys-mock:
+    name: Journeys full (mock, nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile --prefer-offline
+      - name: Install chromium
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run full mock journeys
+        working-directory: frontend
+        env:
+          E2E_MODE: mock
+          CI: '1'
+        run: pnpm exec playwright test
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: journeys-mock-artifacts
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+          retention-days: 14
+
+  journey-real:
+    name: Journeys real (backend + LLM stub, nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+      postgis:
+        image: postgis/postgis:15-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gis
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      JWT_SECRET_KEY: ci-journey-secret-key-32-chars-ok
+      ENV: development
+      REQUIRE_BROWSER: '1'
+      E2E_MODE: real
+      E2E_API_URL: http://localhost:8001
+      E2E_USER: e2e-admin
+      E2E_PASS: journey-admin-pass-2026
+      # Deterministic LLM boundary: the backend talks OpenAI wire format to the
+      # scripted stub; everything behind it is the real backend.
+      LLM_BASE_URL: http://localhost:8767/v1
+      LLM_API_KEY: quality-e2e-stub-key
+      USE_NEW_AGENT: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install backend deps
+        run: pip install -r requirements-dev.txt httpx psycopg2-binary
+      - name: Seed postgis fixture table (fabric source target)
+        run: |
+          psql postgresql://postgres:postgres@localhost:5432/gis -c "
+            CREATE TABLE IF NOT EXISTS poi_commercial (
+              id serial PRIMARY KEY,
+              name text,
+              geom geometry(Point, 4326)
+            );
+            INSERT INTO poi_commercial (name, geom)
+            SELECT 'poi_' || g,
+                   ST_SetSRID(ST_MakePoint(116.2 + (g % 100)::float / 100, 39.7 + (g / 100)::float / 100), 4326)
+            FROM generate_series(1, 6000) g;"
+      - name: Start deterministic LLM stub
+        working-directory: frontend
+        run: |
+          node e2e/tools/llm-stub.mjs > /tmp/llm-stub.log 2>&1 &
+          curl --retry 5 --retry-connrefused --silent http://localhost:8767/healthz > /dev/null || true
+      - name: Provision admin account
+        run: python manage.py create-admin "$E2E_USER" e2e@example.org "$E2E_PASS"
+      - name: Start backend (uvicorn, minimal config)
+        run: |
+          python -m uvicorn app.main:app --host 0.0.0.0 --port 8001 > /tmp/backend.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl --silent http://localhost:8001/api/v1/health && break || sleep 2
+          done
+          curl --fail --silent http://localhost:8001/api/v1/health
+      - name: Build frontend (API baked to :8001)
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8001
+        run: |
+          pnpm install --frozen-lockfile --prefer-offline
+          pnpm exec playwright install --with-deps chromium
+          pnpm build
+      - name: Start frontend (next start)
+        working-directory: frontend
+        run: |
+          pnpm exec next start -p "$E2E_PORT" > /tmp/frontend.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl --silent "http://localhost:$E2E_PORT" > /dev/null && break || sleep 2
+          done
+      - name: Run real-mode journeys
+        working-directory: frontend
+        env:
+          CI: '1'
+        run: pnpm exec playwright test
+      - name: Dump service logs on failure
+        if: failure()
+        run: |
+          echo '=== backend ==='; tail -100 /tmp/backend.log || true
+          echo '=== frontend ==='; tail -60 /tmp/frontend.log || true
+          echo '=== llm-stub ==='; cat /tmp/llm-stub.log || true
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: journey-real-artifacts
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+          retention-days: 14

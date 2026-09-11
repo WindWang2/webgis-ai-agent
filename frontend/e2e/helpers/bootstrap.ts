@@ -18,6 +18,43 @@ export async function bootstrapMock(page: Page, world: JourneyWorld): Promise<vo
   await installJourneyStubs(page, world);
 }
 
+/**
+ * Real-mode auth: sign in through the real backend /auth/login with the
+ * credentials the nightly lane provisions (manage.py create_admin) and write
+ * the result through the same tokenStore channel the UI login uses.
+ * Skips with an explicit reason when credentials are absent — never silently.
+ */
+export async function loginViaApi(page: Page): Promise<void> {
+  const user = process.env.E2E_USER;
+  const password = process.env.E2E_PASS;
+  if (!user || !password) {
+    throw new Error(
+      'real-mode journeys require E2E_USER/E2E_PASS (nightly lane provisions them via manage.py create_admin)',
+    );
+  }
+  const res = await page.request.post('/api/v1/auth/login', {
+    data: { identifier: user, password },
+  });
+  if (!res.ok()) {
+    throw new Error(`real-mode login failed: ${res.status()} (check nightly provisioning)`);
+  }
+  const tokens = (await res.json()) as {
+    access_token: string;
+    user: { id: string; username: string; display_name?: string; roles?: string[] };
+  };
+  await page.addInitScript(
+    (seed: { token: string; authUser: unknown }) => {
+      try {
+        window.localStorage.setItem(
+          'webgis_auth',
+          JSON.stringify({ accessToken: seed.token, user: seed.authUser }),
+        );
+      } catch { /* surfaced by the 401 path */ }
+    },
+    { token: tokens.access_token, authUser: tokens.user },
+  );
+}
+
 /** Seed the auth token store key before any app script runs (pre-hydration).
  * Shape mirrors lib/auth/tokenStore.ts persist(): flat {accessToken, user}. */
 export async function seedAuthUser(page: Page): Promise<void> {
