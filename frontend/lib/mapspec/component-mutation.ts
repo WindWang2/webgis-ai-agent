@@ -198,6 +198,9 @@ export async function commitComponentLifecycle(
           label: `MapSpec component ${mutation.action} mutation`,
         },
       );
+      // #1201：await 后会话复核 —— lifecycle 响应与 patch 通道同款守卫
+      // （旧会话迟到响应不得把 revision 与 committed spec 写进新会话游标）。
+      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof data.mutation_revision === 'number') {
         setMapSpecRevision(data.mutation_revision);
       }
@@ -205,6 +208,7 @@ export async function commitComponentLifecycle(
     } catch (err) {
       const superseded = supersededFromError(err);
       if (!superseded) throw err;
+      if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return;
       if (typeof superseded.mutation_revision === 'number') {
         setMapSpecRevision(superseded.mutation_revision);
       }

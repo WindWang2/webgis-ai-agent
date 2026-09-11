@@ -418,7 +418,14 @@ async function removeLayerFromSpecOnce(
   if (!sessionId) return 'reflected';
   // Review R2（MINOR-4）：重试前的预检 —— 首笔 409 与重试之间切会话时，
   // remove_layer 不得落在新会话的端点（破坏性写 + 新会话 revision）。
-  if (sessionId !== enqueuedSessionId) return 'reflected';
+  // #1200 加固：区分「未传参」与「会话切换」—— 未传参按当前会话继续
+  // （旧行为把 undefined 折叠成 reflected，durability POST 被静默吞掉）。
+  if (enqueuedSessionId === undefined) {
+    // eslint-disable-next-line no-console -- 防御性披露：调用点应显式传入
+    console.warn('[removeLayerFromSpec] no enqueuedSessionId supplied; using current session');
+  } else if (sessionId !== enqueuedSessionId) {
+    return 'reflected';
+  }
   try {
     const data = await apiFetch<MutationResponse>(
       `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
@@ -433,8 +440,10 @@ async function removeLayerFromSpecOnce(
         label: 'MapSpec remove_layer mutation',
       },
     );
-    // Review R1 MAJOR-1：await 后会话复核。
-    if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return 'reflected';
+    // Review R1 MAJOR-1：await 后会话复核（#1200：未传参按当前会话语义，
+    // 与预检分支一致 —— 否则旧调用点的 POST 永远被吞）。
+    if (enqueuedSessionId !== undefined
+        && getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return 'reflected';
     if (typeof data.mutation_revision === 'number') {
       setMapSpecRevision(data.mutation_revision);
     }
@@ -445,7 +454,8 @@ async function removeLayerFromSpecOnce(
   } catch (err) {
     const superseded = supersededFromError(err);
     if (!superseded) throw err;
-    if (getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return 'reflected';
+    if (enqueuedSessionId !== undefined
+        && getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return 'reflected';
     if (typeof superseded.mutation_revision === 'number') {
       setMapSpecRevision(superseded.mutation_revision);
     }

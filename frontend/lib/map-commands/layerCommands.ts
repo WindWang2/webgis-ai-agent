@@ -438,7 +438,10 @@ export const layerCommands: Record<string, CommandEntry> = {
           if (!enqueuedSessionId || getMapSpecSessionCursor().sessionId !== enqueuedSessionId) break;
           markPendingRemoved(specLayerId);
           try {
-            const outcome = await removeLayerFromSpec(specLayerId);
+            // #1200：必须传 enqueuedSessionId —— removeLayerFromSpecOnce 的
+            // 会话守卫把“未传参(undefined)”判为会话切换并直接返回
+            // 'reflected'（不发 POST 即清 pending → 已删层被 reconcile 复活）。
+            const outcome = await removeLayerFromSpec(specLayerId, enqueuedSessionId);
             if (outcome === 'unsynced') {
               devOnly.warn('[remove_layer] backend spec removal unsynced; keeping pendingRemoved:', specLayerId);
               continue;
@@ -936,6 +939,31 @@ export const layerCommands: Record<string, CommandEntry> = {
           storeOrder.splice(toIdx, 0, moved);
           getHudState().reorderLayers(storeOrder);
           storeReordered = true;
+          // #1202：spec 承载层的 agent reorder 走与用户拖拽相同的 durable
+          // 通道（intent=reorder_layers）—— 此前只重排 HUD store，compose
+          // 层序恒为 committed spec 顺序（地图 z 序不动、reload 失序、
+          // 面板/地图分叉）。fire-and-forget：ack 语义不变（store_updated），
+          // 提交成功后由 applyCommittedMapSpec/reconcile 把新序投影回地图。
+          const specIds = storeOrder
+            .map((l: any) => String(l?._mapspecLayerId || ''))
+            .filter(Boolean);
+          if (specIds.length > 0) {
+            void (async () => {
+              const { getMapSpecSessionCursor } = await import('@/lib/mapspec/session-cursor');
+              const enqueuedReorderSession = getMapSpecSessionCursor().sessionId;
+              if (!enqueuedReorderSession
+                  || getMapSpecSessionCursor().sessionId !== enqueuedReorderSession) return;
+              const { commitMapSpecMutation } = await import('@/lib/mapspec/user-mutation');
+              try {
+                await commitMapSpecMutation({
+                  intent: 'reorder_layers',
+                  layer_ids: specIds,
+                });
+              } catch (err) {
+                devOnly.warn('[reorder_layer] spec reorder durability failed:', err);
+              }
+            })();
+          }
         }
       }
 

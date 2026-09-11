@@ -113,6 +113,12 @@ async function postPresentationOnce(
 ): Promise<'committed' | 'reflected' | 'retry' | 'lost'> {
   const { sessionId, revision, ownerToken } = getMapSpecSessionCursor();
   if (!sessionId) return 'lost';
+  // #1201：POST 在飞期间可能切会话 —— 旧会话的迟到响应不得把 revision 与
+  // committed spec 写进新会话游标（姊妹路径 user-mutation.ts Review R1
+  // MAJOR-1 同款守卫；此前仅入队时检查一次）。
+  const enqueuedSessionId = sessionId;
+  const sessionStillCurrent = () =>
+    getMapSpecSessionCursor().sessionId === enqueuedSessionId;
   try {
     const data = await apiFetch<MutationResponse>(
       `/api/v1/chat/sessions/${sessionId}/mapspec/mutations`,
@@ -128,6 +134,7 @@ async function postPresentationOnce(
         label: 'Layer visibility durability commit',
       },
     );
+    if (!sessionStillCurrent()) return 'lost';
     if (typeof data.mutation_revision === 'number') {
       setMapSpecRevision(data.mutation_revision);
     }
@@ -147,6 +154,8 @@ async function postPresentationOnce(
     }
     // superseded：收敛 revision + 服务端真相；若真相已含期望值（并发同值
     // 写）→ 完成；否则调用方带新 revision 重试一次。
+    // #1201：superseded 响应同样过会话复核（会话已切 → 整笔丢弃）。
+    if (!sessionStillCurrent()) return 'lost';
     if (typeof superseded.mutation_revision === 'number') {
       setMapSpecRevision(superseded.mutation_revision);
     }

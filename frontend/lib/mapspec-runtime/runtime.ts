@@ -243,6 +243,17 @@ export class MapSpecRuntime {
    * strict order.
    */
   private applyPatchDirect(patch: SpecPatch, nextSpec: MapSpec): void {
+    // #459（#1220 C-9）：与 applyPatchDebounced 同款 ref-only 源跳过 ——
+    // 同步 reconcile（style 恢复窗口）此前对 {ref_id} 占位源直接
+    // addLayerSafe，MapLibre 报 "source not found" → lastError 污染、
+    // appliedSpec 停留在旧世代。数据到达后的下一次 diff 补挂载。
+    const pendingRefSources = new Set<string>();
+    for (const layer of nextSpec.layers) {
+      if (layer.source && isRefOnlySource(nextSpec.sources?.[layer.source])) {
+        pendingRefSources.add(layer.source);
+      }
+    }
+
     // --- layers (remove + recompile may free sources) ---
     for (const change of patch.layers) {
       if (change.kind === "remove") {
@@ -261,6 +272,7 @@ export class MapSpecRuntime {
       if (change.kind === "remove") {
         this.removeSourceSafe(change.id);
       } else if ((change.kind === "add" || change.kind === "update") && change.next) {
+        if (pendingRefSources.has(change.id)) continue;
         // add/update both route through the idempotent renderer helpers (they
         // carry the F28/F31 cache logic). Tile-URL sources carry no cache state
         // and addRasterTileSource is itself idempotent.
@@ -271,6 +283,7 @@ export class MapSpecRuntime {
     // --- layers (add + recompile re-add) ---
     for (const change of patch.layers) {
       if ((change.kind === "add" || change.kind === "recompile") && change.next) {
+        if (pendingRefSources.has(change.next.source)) continue;
         this.addLayerSafe(change.next);
       }
     }
