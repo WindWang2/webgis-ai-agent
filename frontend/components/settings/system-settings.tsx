@@ -3,6 +3,7 @@
 import React from 'react';
 import { STitle } from '@/components/shared/section-title';
 import { API_BASE } from '@/lib/api/config';
+import { useOnboardingStore } from '@/lib/onboarding/use-onboarding';
 
 /**
  * 系统设置面板。
@@ -106,6 +107,38 @@ export function SystemSettings() {
         </div>
         <div className="text-body text-ink-muted italic">
           &quot;All is Agent&quot;
+        </div>
+      </div>
+
+      {/* ADR-0147（P6）：新手引导重看 / 提示重置入口 */}
+      <div>
+        <div className="text-title uppercase tracking-wide text-ink-muted font-medium mb-2">
+          新手引导
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            data-testid="restart-tour"
+            onClick={() => useOnboardingStore.getState().startTour()}
+            className="flex-1 rounded-md border px-3 py-2 text-body font-medium transition-colors"
+            style={{
+              borderColor: 'var(--agent-accent, #16a34a)',
+              color: 'var(--agent-accent)',
+            }}
+          >
+            重看新手引导
+          </button>
+          <button
+            type="button"
+            data-testid="reset-hints"
+            onClick={() => useOnboardingStore.getState().resetHints()}
+            className="rounded-md border border-edge-subtle px-3 py-2 text-body font-medium text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          >
+            重置全部提示
+          </button>
+        </div>
+        <div className="text-body text-ink-muted mt-1">
+          引导覆盖命令面板（Ctrl+K）、查询控制台、跨会话搜索与操作历史等入口；提示卡每条只出现一次。
         </div>
       </div>
     </div>

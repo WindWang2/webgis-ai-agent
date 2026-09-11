@@ -26,6 +26,7 @@ import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
 import { useSearchDrawerStore } from '@/lib/hooks/use-search-drawer';
 import { useUndoHistoryStore } from '@/lib/hooks/use-undo-history';
 import { UndoFlash, UndoHistoryPanel } from '@/components/workbench/undo-history-panel';
+import { OnboardingRoot } from '@/components/onboarding/onboarding-root';
 
 // New layout components
 import TopBar from '@/components/layout/top-bar';
@@ -514,6 +515,9 @@ export default function Home() {
       {/* ADR-0147：操作历史弹层 + 撤销/重做可见反馈 */}
       <UndoHistoryPanel />
       <UndoFlash />
+
+      {/* ADR-0147：首次运行引导 + 上下文提示队列（重看入口在设置 → 系统） */}
+      <OnboardingRoot />
     </div>
   );
 }
