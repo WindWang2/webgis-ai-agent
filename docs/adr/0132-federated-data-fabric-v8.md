@@ -1,4 +1,4 @@
-# ADR-0130: Data Fabric V8 — Adaptive Federated Spatial Data Plane
+# ADR-0132: Data Fabric V8 — Adaptive Federated Spatial Data Plane
 
 ## Status
 Accepted（Epic 03，2026-09-10；前身 ADR-0120 Federated Data Fabric V7）

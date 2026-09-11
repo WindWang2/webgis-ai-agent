@@ -96,7 +96,7 @@
   (one retry within repair budget, then honest fail); optional production
   driver `delegate_cartography_qa` (env `GIS_HARNESS_DELEGATION=1`,
   idempotent per product revision).
-- New ADR: `docs/adr/0130-gis-harness-v7-agentic-runtime.md`.
+- New ADR: `docs/adr/0134-gis-harness-v7-agentic-runtime.md`.
 
 ## [Unreleased] - 2026-09-10 (data-fabric-v8)
 

@@ -1,4 +1,4 @@
-# ADR-0130: GeoCompute V8 — Distributed Spatial Compute Fabric
+# ADR-0133: GeoCompute V8 — Distributed Spatial Compute Fabric
 
 ## 状态（Status）
 

@@ -25,7 +25,7 @@ from app.core.database import Base, SessionLocal
 _PROJECT_DOMAIN_TABLES = (
     "artifact_revisions",
     "artifacts", "artifact_lineages", "workflow_runs", "workflow_revisions",
-    "workflows", "project_datasets", "carto_project_facts", "projects",
+    "workflows", "project_datasets", "carto_project_facts", "map_products", "projects",
     "lakehouse_catalog_items",
 )
 

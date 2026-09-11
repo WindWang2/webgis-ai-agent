@@ -684,6 +684,54 @@
     "title": "ChatResponse",
     "type": "object"
    },
+   "CloneRequest": {
+    "properties": {
+     "only_nodes": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 16,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Only Nodes"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "maxLength": 255,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "skip_nodes": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 16,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Skip Nodes"
+     }
+    },
+    "title": "CloneRequest",
+    "type": "object"
+   },
    "ClusterRunResetRequest": {
     "properties": {
      "reason": {
@@ -1208,6 +1256,267 @@
      "source_type"
     ],
     "title": "DatasetAttach",
+    "type": "object"
+   },
+   "DatasetBranchRequest": {
+    "properties": {
+     "from_version_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "From Version Id"
+     },
+     "name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "name"
+    ],
+    "title": "DatasetBranchRequest",
+    "type": "object"
+   },
+   "DatasetCommitRequest": {
+    "properties": {
+     "action": {
+      "default": "commit",
+      "pattern": "^(commit|rollback|delta|import|workflow_publish)$",
+      "title": "Action",
+      "type": "string"
+     },
+     "branch": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Branch",
+      "type": "string"
+     },
+     "data_object_id": {
+      "maxLength": 64,
+      "minLength": 64,
+      "title": "Data Object Id",
+      "type": "string"
+     },
+     "parent_version_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Parent Version Id"
+     },
+     "provenance": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "maxProperties": 24,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provenance"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "workflow_run_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Workflow Run Id"
+     }
+    },
+    "required": [
+     "session_id",
+     "branch",
+     "data_object_id"
+    ],
+    "title": "DatasetCommitRequest",
+    "type": "object"
+   },
+   "DatasetCreateRequest": {
+    "properties": {
+     "cube_contract": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "maxProperties": 32,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cube Contract"
+     },
+     "default_branch": {
+      "default": "main",
+      "maxLength": 128,
+      "title": "Default Branch",
+      "type": "string"
+     },
+     "description": {
+      "default": "",
+      "maxLength": 512,
+      "title": "Description",
+      "type": "string"
+     },
+     "name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "name"
+    ],
+    "title": "DatasetCreateRequest",
+    "type": "object"
+   },
+   "DatasetRetentionExecuteRequest": {
+    "properties": {
+     "plan": {
+      "additionalProperties": true,
+      "title": "Plan",
+      "type": "object"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "plan"
+    ],
+    "title": "DatasetRetentionExecuteRequest",
+    "type": "object"
+   },
+   "DatasetRetentionPlanRequest": {
+    "properties": {
+     "max_versions": {
+      "default": 64,
+      "maximum": 10000.0,
+      "minimum": 1.0,
+      "title": "Max Versions",
+      "type": "integer"
+     },
+     "min_age_hours": {
+      "default": 72.0,
+      "maximum": 8760.0,
+      "minimum": 0.0,
+      "title": "Min Age Hours",
+      "type": "number"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "title": "DatasetRetentionPlanRequest",
+    "type": "object"
+   },
+   "DatasetRollbackRequest": {
+    "properties": {
+     "branch": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Branch",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "to_version_id": {
+      "maxLength": 64,
+      "minLength": 64,
+      "title": "To Version Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "branch",
+     "to_version_id"
+    ],
+    "title": "DatasetRollbackRequest",
+    "type": "object"
+   },
+   "DatasetTagRequest": {
+    "properties": {
+     "name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+     },
+     "version_id": {
+      "maxLength": 64,
+      "minLength": 64,
+      "title": "Version Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id",
+     "name",
+     "version_id"
+    ],
+    "title": "DatasetTagRequest",
     "type": "object"
    },
    "DuplicateComponentBody": {
@@ -2083,6 +2392,21 @@
       "title": "Max Cells",
       "type": "integer"
      },
+     "model": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 16,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model"
+     },
      "polarization": {
       "anyOf": [
        {
@@ -2103,6 +2427,21 @@
       "minLength": 1,
       "title": "Ref",
       "type": "string"
+     },
+     "scenario": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "maxItems": 16,
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scenario"
      },
      "session_id": {
       "maxLength": 128,
@@ -2161,6 +2500,30 @@
        }
       ],
       "title": "Limit Bytes"
+     },
+     "limit_gpu": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit Gpu"
+     },
+     "limit_mem_mb": {
+      "anyOf": [
+       {
+        "minimum": 0.0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit Mem Mb"
      },
      "limit_rows": {
       "anyOf": [
@@ -2857,6 +3220,29 @@
      "catalog_item_id"
     ],
     "title": "MaterializeRequest",
+    "type": "object"
+   },
+   "NodeCancelRequest": {
+    "properties": {
+     "include_descendants": {
+      "default": true,
+      "title": "Include Descendants",
+      "type": "boolean"
+     },
+     "node_ids": {
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Node Ids",
+      "type": "array"
+     }
+    },
+    "required": [
+     "node_ids"
+    ],
+    "title": "NodeCancelRequest",
     "type": "object"
    },
    "ObjectScrubRequest": {
@@ -5389,6 +5775,17 @@
       "additionalProperties": true,
       "title": "Mapspec",
       "type": "object"
+     },
+     "target_dpi": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Target Dpi"
      },
      "title": {
       "anyOf": [
@@ -10478,6 +10875,54 @@
     ]
    }
   },
+  "/api/v1/geocompute/runs/{run_id}/cancel": {
+   "post": {
+    "description": "请求取消一个 run（V6 起跨进程生效）。\n\n与 run 读端点同一 authz 纪律：强制认证 + owner 域读隔离（未知 run 与\n他人 run 一律 404，不泄漏存在性）。\n\n取消链路（两级，幂等）：\n1. 本进程内存 token（``engine.cancel_run``）：在飞节点经协作 checkpoint\n   收敛；durable 分支级联写 job 行取消（既有机制）。\n2. 持久取消旗标（``geocompute_runs.cancel_requested_at``）：V6 新增 ——\n   任意进程可写；执行侧 coordinator 心跳（≤0.5s）点燃本地 token；\n   排队中的 run 由 coordinator cancel sweep 直接收敛终态。\n\n幂等：已终态 / 快照回放的 run 返回 200 且 ``cancelled=false`` 并附当前\n终态 —— 与 durable job 取消的幂等语义一致。",
+    "operationId": "cancel_execution_run_api_v1_geocompute_runs__run_id__cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+       "title": "Run Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel Execution Run",
+    "tags": [
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面",
+     "GeoCompute / 执行平面"
+    ]
+   }
+  },
   "/api/v1/geocompute/runs/{run_id}/events": {
    "get": {
     "description": "V7 分布式执行事件（有界 observability trace；断点续读游标 after_id）。\n\nowner 域读隔离（他人/未知 run 一律 404）。**诚实边界**：events 是尽力\n而为的过程 trace，随 run 行 retention 级联删除 —— run 行被清理后本\n端点 404（终态证据 of record 在 geocompute_run_evidence，经 GET\n/runs/{id} 的快照回放仍可读，与 trace 的保留策略不同源）。",
@@ -11513,6 +11958,956 @@
     "summary": "Read Lakehouse Cube Window",
     "tags": [
      "Lakehouse / 空间数据湖仓"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/datasets": {
+   "get": {
+    "description": "owner 域数据集清单（新→旧，有界 ≤200）。",
+    "operationId": "list_lakehouse_datasets_api_v1_lakehouse_datasets_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Lakehouse Datasets Api V1 Lakehouse Datasets Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Lakehouse Datasets",
+    "tags": [
+     "Lakehouse / 数据集版本（V8）"
+    ]
+   },
+   "post": {
+    "description": "注册数据集（描述符 CAS + 台账行；幂等）。",
+    "operationId": "create_lakehouse_dataset_api_v1_lakehouse_datasets_post",
+    "parameters": [
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DatasetCreateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Lakehouse Dataset Api V1 Lakehouse Datasets Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Lakehouse Dataset",
+    "tags": [
+     "Lakehouse / 数据集版本（V8）"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/datasets/{dataset_id}": {
+   "get": {
+    "description": "数据集描述 + 指针（branches/tags/head；owner fail-closed 404）。",
+    "operationId": "get_lakehouse_dataset_api_v1_lakehouse_datasets__dataset_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "dataset_id",
+      "required": true,
+      "schema": {
+       "title": "Dataset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Lakehouse Dataset Api V1 Lakehouse Datasets  Dataset Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Lakehouse Dataset",
+    "tags": [
+     "Lakehouse / 数据集版本（V8）"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/datasets/{dataset_id}/branches": {
+   "post": {
+    "description": "开分支（从指定版本或默认分支 head）。",
+    "operationId": "create_lakehouse_dataset_branch_api_v1_lakehouse_datasets__dataset_id__branches_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "dataset_id",
+      "required": true,
+      "schema": {
+       "title": "Dataset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DatasetBranchRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Lakehouse Dataset Branch Api V1 Lakehouse Datasets  Dataset Id  Branches Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Lakehouse Dataset Branch",
+    "tags": [
+     "Lakehouse / 数据集版本（V8）"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/datasets/{dataset_id}/commit": {
+   "post": {
+    "description": "提交新版本（原子协议：CAS manifest → 台账行 → 指针 CAS）。",
+    "operationId": "commit_lakehouse_dataset_version_api_v1_lakehouse_datasets__dataset_id__commit_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "dataset_id",
+      "required": true,
+      "schema": {
+       "title": "Dataset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DatasetCommitRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Commit Lakehouse Dataset Version Api V1 Lakehouse Datasets  Dataset Id  Commit Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Commit Lakehouse Dataset Version",
+    "tags": [
+     "Lakehouse / 数据集版本（V8）"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/datasets/{dataset_id}/lineage": {
+   "get": {
+    "description": "版本血缘（parent 链上溯；截断诚实披露）。",
+    "operationId": "get_lakehouse_dataset_lineage_api_v1_lakehouse_datasets__dataset_id__lineage_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "dataset_id",
+      "required": true,
+      "schema": {
+       "title": "Dataset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "version_id",
+      "required": true,
+      "schema": {
+       "title": "Version Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "max_depth",
+      "required": false,
+      "schema": {
+       "default": 64,
+       "title": "Max Depth",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Get Lakehouse Dataset Lineage Api V1 Lakehouse Datasets  Dataset Id  Lineage Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Lakehouse Dataset Lineage",
+    "tags": [
+     "Lakehouse / 数据集版本（V8）"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/datasets/{dataset_id}/retention/execute": {
+   "post": {
+    "description": "执行 retention prune（token 重验；漂移 → 409；只删版本行）。",
+    "operationId": "execute_lakehouse_dataset_retention_api_v1_lakehouse_datasets__dataset_id__retention_execute_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "dataset_id",
+      "required": true,
+      "schema": {
+       "title": "Dataset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DatasetRetentionExecuteRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Execute Lakehouse Dataset Retention Api V1 Lakehouse Datasets  Dataset Id  Retention Execute Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Execute Lakehouse Dataset Retention",
+    "tags": [
+     "Lakehouse / 数据集版本（V8）"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/datasets/{dataset_id}/retention/plan": {
+   "post": {
+    "description": "retention dry-run（只读；per-dataset 元数据级 prune 计划）。",
+    "operationId": "plan_lakehouse_dataset_retention_api_v1_lakehouse_datasets__dataset_id__retention_plan_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "dataset_id",
+      "required": true,
+      "schema": {
+       "title": "Dataset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DatasetRetentionPlanRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Plan Lakehouse Dataset Retention Api V1 Lakehouse Datasets  Dataset Id  Retention Plan Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Plan Lakehouse Dataset Retention",
+    "tags": [
+     "Lakehouse / 数据集版本（V8）"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/datasets/{dataset_id}/rollback": {
+   "post": {
+    "description": "revert 式回滚（历史只增不减；head 已在目标 → 400）。",
+    "operationId": "rollback_lakehouse_dataset_api_v1_lakehouse_datasets__dataset_id__rollback_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "dataset_id",
+      "required": true,
+      "schema": {
+       "title": "Dataset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DatasetRollbackRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Rollback Lakehouse Dataset Api V1 Lakehouse Datasets  Dataset Id  Rollback Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Rollback Lakehouse Dataset",
+    "tags": [
+     "Lakehouse / 数据集版本（V8）"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/datasets/{dataset_id}/tags": {
+   "post": {
+    "description": "创建不可变 tag（重复 → 409）。",
+    "operationId": "create_lakehouse_dataset_tag_api_v1_lakehouse_datasets__dataset_id__tags_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "dataset_id",
+      "required": true,
+      "schema": {
+       "title": "Dataset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DatasetTagRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Create Lakehouse Dataset Tag Api V1 Lakehouse Datasets  Dataset Id  Tags Post",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Create Lakehouse Dataset Tag",
+    "tags": [
+     "Lakehouse / 数据集版本（V8）"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/datasets/{dataset_id}/versions": {
+   "get": {
+    "description": "版本历史（新→旧，有界；branch 过滤）。",
+    "operationId": "list_lakehouse_dataset_versions_api_v1_lakehouse_datasets__dataset_id__versions_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "dataset_id",
+      "required": true,
+      "schema": {
+       "title": "Dataset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "branch",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Branch",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 50,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response List Lakehouse Dataset Versions Api V1 Lakehouse Datasets  Dataset Id  Versions Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "List Lakehouse Dataset Versions",
+    "tags": [
+     "Lakehouse / 数据集版本（V8）"
+    ]
+   }
+  },
+  "/api/v1/lakehouse/datasets/{dataset_id}/versions/{version_id}": {
+   "get": {
+    "description": "版本解析（内容 manifest 合成；commit record 同步披露）。",
+    "operationId": "resolve_lakehouse_dataset_version_api_v1_lakehouse_datasets__dataset_id__versions__version_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "dataset_id",
+      "required": true,
+      "schema": {
+       "title": "Dataset Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "version_id",
+      "required": true,
+      "schema": {
+       "title": "Version Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "session_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "header",
+      "name": "X-Session-Token",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Session-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "title": "Response Resolve Lakehouse Dataset Version Api V1 Lakehouse Datasets  Dataset Id  Versions  Version Id  Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Resolve Lakehouse Dataset Version",
+    "tags": [
+     "Lakehouse / 数据集版本（V8）"
     ]
    }
   },
@@ -18174,6 +19569,26 @@
     ]
    }
   },
+  "/api/v1/version": {
+   "get": {
+    "description": "构建身份（公开、极简、无环境细节）。",
+    "operationId": "version_api_v1_version_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Version",
+    "tags": [
+     "系统"
+    ]
+   }
+  },
   "/api/v1/workflow-runtime/instances": {
    "get": {
     "operationId": "list_instances_api_v1_workflow_runtime_instances_get",
@@ -18384,6 +19799,366 @@
      }
     ],
     "summary": "Apply Changes",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/instances/{instance_id}/clone": {
+   "post": {
+    "description": "克隆运行（同包同版本新实例；skip unchanged 走复用索引）。",
+    "operationId": "clone_instance_api_v1_workflow_runtime_instances__instance_id__clone_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "instance_id",
+      "required": true,
+      "schema": {
+       "title": "Instance Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CloneRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Clone Instance",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/instances/{instance_id}/debug": {
+   "get": {
+    "description": "一次性检视面：投影 + 节点明细 + 因果事件尾 + 子工作流树。",
+    "operationId": "debug_instance_api_v1_workflow_runtime_instances__instance_id__debug_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "instance_id",
+      "required": true,
+      "schema": {
+       "title": "Instance Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Debug Instance",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/instances/{instance_id}/events": {
+   "get": {
+    "description": "事件日志（append-only journal；因果序 = id 升序；分页有界）。",
+    "operationId": "get_events_api_v1_workflow_runtime_instances__instance_id__events_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "instance_id",
+      "required": true,
+      "schema": {
+       "title": "Instance Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 100,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "after_id",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "title": "After Id",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "kind",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Kind",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Events",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/instances/{instance_id}/nodes/cancel": {
+   "post": {
+    "description": "节点级取消（目标 + 后代闭包；持久旗标，driver/恢复面消费）。",
+    "operationId": "cancel_nodes_api_v1_workflow_runtime_instances__instance_id__nodes_cancel_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "instance_id",
+      "required": true,
+      "schema": {
+       "title": "Instance Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/NodeCancelRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Cancel Nodes",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/instances/{instance_id}/nodes/{node_id}": {
+   "get": {
+    "description": "节点检视：状态/attempts/转移环/绑定/复用证据/租约/取消旗标。",
+    "operationId": "get_node_detail_api_v1_workflow_runtime_instances__instance_id__nodes__node_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "instance_id",
+      "required": true,
+      "schema": {
+       "title": "Instance Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "node_id",
+      "required": true,
+      "schema": {
+       "title": "Node Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Get Node Detail",
+    "tags": [
+     "Workflow Runtime V5",
+     "Workflow Runtime V5"
+    ]
+   }
+  },
+  "/api/v1/workflow-runtime/instances/{instance_id}/nodes/{node_id}/retry": {
+   "post": {
+    "description": "人工重试单节点（FAILED/STALE→READY；预算耗尽需 force=true）。",
+    "operationId": "retry_node_api_v1_workflow_runtime_instances__instance_id__nodes__node_id__retry_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "instance_id",
+      "required": true,
+      "schema": {
+       "title": "Instance Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "node_id",
+      "required": true,
+      "schema": {
+       "title": "Node Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "force",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Force",
+       "type": "boolean"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "summary": "Retry Node",
     "tags": [
      "Workflow Runtime V5",
      "Workflow Runtime V5"

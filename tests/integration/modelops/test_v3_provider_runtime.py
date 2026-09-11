@@ -10,6 +10,7 @@ import hashlib
 import pytest
 
 from app.lib.modelops.backends import probe_backend
+pytest.importorskip("onnx")
 from tests.unit.modelops.onnx_fixtures import build_onnx_segmentation_model
 
 pytest.importorskip("onnxruntime")

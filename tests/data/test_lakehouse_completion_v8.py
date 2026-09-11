@@ -1,4 +1,4 @@
-"""Lakehouse V8 — 完成证明：端到端版本化闭环（ADR-0130）。
+"""Lakehouse V8 — 完成证明：端到端版本化闭环（ADR-0135）。
 
 验收标准逐条对应（/goal 04）：
 - snapshot/branch/rollback 真实可用：commit → branch → revert 回滚；
@@ -22,7 +22,7 @@ from app.core.database import Base, SessionLocal
 _DOMAIN_TABLES = (
     "artifact_revisions", "artifacts", "artifact_lineages", "workflow_runs",
     "workflow_revisions", "workflows", "project_datasets",
-    "carto_project_facts", "projects", "lakehouse_catalog_items",
+    "carto_project_facts", "map_products", "projects", "lakehouse_catalog_items",
     "lakehouse_datasets", "lakehouse_dataset_versions",
     "lakehouse_dataset_refs",
 )

@@ -291,7 +291,7 @@ class Settings(BaseSettings):
     DATA_FABRIC_V7_RESULT_CACHE_TTL_S: float = 300.0
     DATA_FABRIC_V7_FEEDBACK_MAX_ROWS: int = 20_000
 
-    # ── Data Fabric V8 自适应联邦数据面（ADR-0130）──────────────────────
+    # ── Data Fabric V8 自适应联邦数据面（ADR-0132）──────────────────────
     # 引擎回退熔断：连续 V6 崩溃（非 typed 异常回退 V5）达阈值后，engine=v6
     # 请求在 cool_down 窗口内直接走 V5（双执行成本归零）；窗口后半开单
     # trial 探测恢复。进程级（引擎是进程资源，不是源资源）。
