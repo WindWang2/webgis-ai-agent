@@ -13,6 +13,7 @@ import {
 import {
   commitExplicitView,
   removeLayerAndCommit,
+  reorderLayersAndCommit,
   setLayerOpacityAndCommit,
   toggleLayerAndCommit,
 } from '@/lib/mapspec/user-mutation';
@@ -372,5 +373,85 @@ describe('session cursor revision monotonicity (ST-P3-1)', () => {
     // 同代次（== 当前）允许提交：正常路径不受影响。
     commitMapSpecDocument({ layers: [{ id: 'SAME-REV', layout: {} }] }, 5);
     expect(getCommittedMapSpec()?.layers?.[0]?.id).toBe('SAME-REV');
+  });
+});
+
+describe('V7: HUD-only rows (no _mapspecLayerId) bypass the server mutation channel', () => {
+  it('toggle on an unbound row is local-only (no POST, no pending, no toast path)', async () => {
+    useHudStore.getState().clearLayers();
+    useHudStore.getState().addLayer({
+      id: 'wb-sketch', name: '草图图层', type: 'vector', visible: true, opacity: 1,
+      group: 'analysis', source: { type: 'FeatureCollection', features: [] } as any,
+      // 无 _mapspecLayerId —— 服务端未知层
+    } as any);
+
+    await toggleLayerAndCommit('wb-sketch');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(useHudStore.getState().layers[0].visible).toBe(false);
+    expect(getPendingPresentation()).toEqual({});
+  });
+
+  it('opacity on an unbound row is local-only', async () => {
+    useHudStore.getState().clearLayers();
+    useHudStore.getState().addLayer({
+      id: 'wb-sketch', name: '草图图层', type: 'vector', visible: true, opacity: 1,
+      group: 'analysis', source: { type: 'FeatureCollection', features: [] } as any,
+    } as any);
+
+    await setLayerOpacityAndCommit('wb-sketch', 0.4);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(useHudStore.getState().layers[0].opacity).toBe(0.4);
+  });
+
+  it('remove of an unbound row deletes locally without POST and stays deleted', async () => {
+    useHudStore.getState().clearLayers();
+    useHudStore.getState().addLayer({
+      id: 'wb-sketch', name: '草图图层', type: 'vector', visible: true, opacity: 1,
+      group: 'analysis', source: { type: 'FeatureCollection', features: [] } as any,
+    } as any);
+    fetchMock.mockRejectedValue(new Error('must not be called'));
+
+    await removeLayerAndCommit('wb-sketch');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(useHudStore.getState().layers).toHaveLength(0);
+  });
+});
+
+describe('V7: rollback session guards', () => {
+  it('remove failure after a session switch does not resurrect the row into the new session', async () => {
+    fetchMock.mockImplementation(() => new Promise((_resolve, reject) => {
+      reject(new TypeError('network down'));
+    }));
+
+    const done = removeLayerAndCommit('L1');
+    // 网络失败窗口内切会话：游标指向新会话。
+    setMapSpecSessionCursor('sid-2', 1);
+    await done;
+
+    // 新会话表内不得出现旧会话的行（回滚被会话复核拦截）。
+    const ids = useHudStore.getState().layers.map((l) => l.id);
+    expect(ids).not.toContain('L1');
+  });
+
+  it('reorder failure after a session switch does not overwrite the new session order', async () => {
+    useHudStore.getState().clearLayers();
+    useHudStore.getState().addLayer({
+      id: 'N1', name: 'N1', type: 'vector', visible: true, opacity: 1,
+      group: 'analysis', source: { type: 'FeatureCollection', features: [] } as any,
+      _mapspecLayerId: 'N1',
+    } as any);
+    fetchMock.mockImplementation(() => new Promise((_resolve, reject) => {
+      reject(new TypeError('network down'));
+    }));
+
+    const done = reorderLayersAndCommit([{ id: 'N1', _mapspecLayerId: 'N1' }]);
+    setMapSpecSessionCursor('sid-2', 1);
+    await done;
+
+    // 新会话的行仍在（旧会话顺序回滚被拦截）。
+    expect(useHudStore.getState().layers.map((l) => l.id)).toEqual(['N1']);
   });
 });

@@ -67,8 +67,10 @@ describe('后端命令发射 ⊆ 前端命令目录（#535 幽灵命令不变量
     const pyFiles = collectPyFiles(BACKEND_ROOT);
     expect(pyFiles.length).toBeGreaterThan(100);
     // 我们关心的发射站点确实在扫描范围内
-    const spatial = pyFiles.find((f) => f.includes('tools/spatial.py'));
-    const dispatch = pyFiles.find((f) => f.includes('services/tool_dispatch_service.py'));
+    //（Windows 检出下 join 产生 `\` 分隔符 —— 归一化后匹配，与 CI 的 POSIX 路径一致）
+    const toPosix = (f: string) => f.replace(/\\/g, '/');
+    const spatial = pyFiles.find((f) => toPosix(f).includes('tools/spatial.py'));
+    const dispatch = pyFiles.find((f) => toPosix(f).includes('services/tool_dispatch_service.py'));
     expect(spatial).toBeTruthy();
     expect(dispatch).toBeTruthy();
   });
