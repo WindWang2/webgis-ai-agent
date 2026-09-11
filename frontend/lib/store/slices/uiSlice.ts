@@ -26,9 +26,6 @@ export function defaultLeftPanelOpen(): boolean {
   return window.innerWidth >= LEFT_PANEL_MIN_VIEWPORT_PX;
 }
 
-/** citation 注入序号：模块级自增，保证每次注入的 nonce 唯一（防重复消费）。 */
-let injectionSeq = 0;
-
 export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set) => ({
   /* ─── HUD Panels (legacy compat) ─── */
   leftPanelOpen: defaultLeftPanelOpen(),
@@ -166,8 +163,7 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
 
   /* ─── 知识库 citation 注入（ADR-0145）─── */
   pendingChatInjection: null,
-  setPendingChatInjection: (text) =>
-    set({ pendingChatInjection: { nonce: ++injectionSeq, text } }),
+  setPendingChatInjection: (text) => set({ pendingChatInjection: text }),
   clearPendingChatInjection: () => set({ pendingChatInjection: null }),
 
   /* ─── v2 UI Tweaks ─── */

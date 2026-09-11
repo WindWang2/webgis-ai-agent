@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased] - 2026-09-12 (knowledge & marketplace & modelops surfaces, ADR-0145)
+
+### Added (feat/knowledge-market-ui-v9)
+- Knowledge panel: `rag-independent-panel.tsx` `return null` stub (#607) replaced
+  with a real surface — document upload (client-side text read, .txt/.md/.json,
+  honest rejection of PDF/DOCX), offset-paginated catalog with creator-only
+  delete + two-step confirm, semantic search with raw-L2 score display, and
+  "inject into chat" composing `[n]` citation blocks into the chat draft
+  (user confirms send; the chat API `message` is a plain string).
+- Citation rendering: shared `components/chat/citation.tsx` — definition blocks
+  peeled from the message body into a source list, known `[n]` markers rendered
+  as keyboard-accessible superscripts with hover/focus source cards; consumed by
+  story-markdown.tsx (31 lines, the contract's sanctioned extension point) and
+  minimally by mini-md.tsx (chat bubbles render through MiniMd). Zero-regression
+  rule: messages without definition blocks are byte-identical.
+- rag-config: real test retrieval (GET /knowledge/search) with score
+  distribution bars (linear L2, no fake similarity %), knowledge-panel
+  navigation entry; embedding model shown as backend-fixed (no read/write
+  endpoint; the model name is a backend code constant, deliberately not
+  hard-coded in UI).
+- Extension market browser (read-only per backend contract): package
+  list/search/tag filter, detail with version history, permission claims,
+  dependencies, digest/fingerprint/SBOM digest, authenticated .tar.gz download.
+  Install/uninstall/enable/disable are operator-CLI only — honest install note
+  instead of fake buttons; list 404 renders "market disabled" empty state.
+- ModelOps panel: registry list/inspect/history driven through
+  POST /api/v1/chat/tools/execute (ModelOps has no dedicated HTTP routes);
+  #1212 capability-projection gap presented honestly (provenance verbatim +
+  fixed explanatory note); run history limited to session-local observation of
+  chat tool events (backend has no persisted run-history endpoint).
+- Rail: append-only market/modelops group (RAIL_GROUPS, MODE_TABS all modes,
+  LeftTab union); tool-call-card modelops run-id jump link (29 lines).
+- Recon doc: frontend/docs/knowledge-market-recon.md (endpoint contract tables
+  + backend gap list). ADR-0145.
+
+### Notes
+- Task-book "msw fixtures" adapted to the repo's established fixture pattern
+  (vi.stubGlobal fetch in tests, Playwright route interception in
+  test/visual/capture.mjs) — the repo has no msw dependency; avoids lockfile
+  contention across concurrent V9 lines.
+
 ## [Unreleased] - 2026-09-10 (V7/V8 epic integration round)
 
 Ten prepared epic branches (platform-v4, lakehouse-v8, data-fabric-v8,

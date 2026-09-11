@@ -296,10 +296,10 @@ export interface HudState extends WorkbenchSlice {
   setTweaksOpen: (open: boolean) => void;
 
   /* ─── 知识库 citation 注入（ADR-0145）─── */
-  // 非空时 ChatTab 把 text 拼入输入框草稿并立即 clear（nonce 防重复消费）。
-  // chat API 的 message 是纯字符串、无结构化附件字段 —— 注入走草稿由用户
-  // 确认发送，不静默代发。
-  pendingChatInjection: { nonce: number; text: string } | null;
+  // 非空时 ChatTab 把该文本拼入输入框草稿并立即 clear（对象/字符串身份
+  // 变化即触发消费，无需额外序号）。chat API 的 message 是纯字符串、无
+  // 结构化附件字段 —— 注入走草稿由用户确认发送，不静默代发。
+  pendingChatInjection: string | null;
   setPendingChatInjection: (text: string) => void;
   clearPendingChatInjection: () => void;
 

@@ -10,16 +10,9 @@ import { devOnly } from '@/lib/utils/logger';
 import { AuthImage } from './auth-image';
 import { CodeBlock } from '@/components/code-highlight/code-block';
 // V9 citation 扩展（ADR-0145）：知识库引用角标。chat 气泡实际渲染走 MiniMd，
-// 故在此以最小改动消费 citation.tsx（story-markdown 是契约指定的同源扩展点）。
+// 与 story-markdown 共用同一 CitationArea 组合件（单一实现，避免双路径漂移）。
 // 无引用定义块的消息：正文逐字节不变、组件表行为不变（零回归）。
-import {
-  CitationAnchor,
-  CitationSourceList,
-  CitationSourcesProvider,
-  citeTextPreprocess,
-  isCitationHref,
-  splitCitationBlocks,
-} from './citation';
+import { CitationAnchor, CitationArea, isCitationHref } from './citation';
 
 export interface MiniMdProps {
   text: string;
@@ -48,14 +41,14 @@ export const safeUrlTransform: UrlTransform = (url) => {
 };
 
 export default function MiniMd({ text }: MiniMdProps) {
-  const { body, sources } = splitCitationBlocks(text);
-  const prepared = citeTextPreprocess(body, sources);
   return (
-    <CitationSourcesProvider sources={sources}>
-    <div className="prose-agent text-body leading-[1.7] text-ink-secondary max-w-none break-words">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        urlTransform={safeUrlTransform}
+    <CitationArea
+      text={text}
+      renderMarkdown={(body) => (
+        <div className="prose-agent text-body leading-[1.7] text-ink-secondary max-w-none break-words">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          urlTransform={safeUrlTransform}
         components={{
           p: ({ children }) => <p className="mb-2.5 last:mb-0 leading-relaxed">{children}</p>,
           // 可访问性（V4）：聊天气泡里的 markdown 标题从 h4 起跳（h1→h4、h2→h5、h3→h6），
@@ -177,11 +170,10 @@ export default function MiniMd({ text }: MiniMdProps) {
           hr: () => <hr className="my-3.5 border-t border-edge-subtle" />,
         }}
       >
-        {prepared}
+        {body}
       </ReactMarkdown>
-      {/* V9 citation：注入块剥离后的「引用来源」集中展示（无引用时不渲染） */}
-      <CitationSourceList sources={sources} />
-    </div>
-    </CitationSourcesProvider>
+      </div>
+    )}
+    />
   );
 }

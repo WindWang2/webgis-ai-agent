@@ -9,8 +9,7 @@
  */
 import { useMemo } from 'react';
 import { useChatStore } from '@/lib/store/useChatStore';
-
-const RUN_TOOLS = new Set(['modelops_run_inference', 'modelops_run_promptable']);
+import { MODELOPS_RUN_TOOLS } from '@/lib/api/modelops';
 
 export interface ModelOpsSessionRun {
   callId: string;
@@ -50,7 +49,8 @@ export function useModelopsRuns(): ModelOpsSessionRun[] {
       const calls = Array.isArray(msg.toolCalls) ? msg.toolCalls : [];
       for (const raw of calls) {
         const call = asRecord(raw);
-        if (!call || typeof call.tool !== 'string' || !RUN_TOOLS.has(call.tool)) continue;
+        if (!call || typeof call.tool !== 'string') continue;
+        if (!MODELOPS_RUN_TOOLS.includes(call.tool)) continue;
         const result = asRecord(call.result);
         const outputsRaw = asRecord(result?.outputs);
         const outputs: ModelOpsSessionRun['outputs'] = {};

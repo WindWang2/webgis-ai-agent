@@ -318,9 +318,9 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
   const pendingInjection = useHudStore((s) => s.pendingChatInjection);
   const clearPendingChatInjection = useHudStore((s) => s.clearPendingChatInjection);
   useEffect(() => {
-    if (!pendingInjection) return;
+    if (pendingInjection === null) return;
     setInput((prev) =>
-      prev.trim() ? `${prev}\n\n${pendingInjection.text}` : pendingInjection.text,
+      prev.trim() ? `${prev}\n\n${pendingInjection}` : pendingInjection,
     );
     clearPendingChatInjection();
   }, [pendingInjection, clearPendingChatInjection]);

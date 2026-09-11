@@ -81,8 +81,8 @@ describe('RagIndependentPanel', () => {
     await user.click(screen.getByRole('button', { name: '注入对话' }));
     const injected = useHudStore.getState().pendingChatInjection;
     expect(injected).not.toBeNull();
-    expect(injected?.text).toContain('[1] 来源：《文档1》 分块 chk_1');
-    expect(injected?.text).toContain('请基于以下知识库片段回答：FAISS [1]');
+    expect(injected).toContain('[1] 来源：《文档1》 分块 chk_1');
+    expect(injected).toContain('请基于以下知识库片段回答：FAISS [1]');
     expect(onClose).toHaveBeenCalled();
   });
 

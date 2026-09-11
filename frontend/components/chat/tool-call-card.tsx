@@ -18,6 +18,7 @@ import { CartographyResultCard } from './cartography-result-card';
 import { H3LisaResultCard } from './h3-lisa-result-card';
 import { IsochroneResultCard } from './isochrone-result-card';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { MODELOPS_RUN_TOOLS as MODELOPS_RUN_TOOL_NAMES } from '@/lib/api/modelops';
 
 export interface ToolCallEntry {
   id: string;
@@ -163,7 +164,8 @@ function CopyButton({ text, label = '复制' }: { text: string; label?: string }
 /* ── Single tool call card (minimal row when collapsed) ── */
 
 // V9（ADR-0145）：modelops 推理 run → ModelOps 面板跳转（契约 ≤30 行）。
-const MODELOPS_RUN_TOOLS = new Set(['modelops_run_inference', 'modelops_run_promptable']);
+// 工具名词表与 use-modelops-runs 共用（lib/api/modelops.ts）。
+const MODELOPS_RUN_TOOLS = new Set<string>(MODELOPS_RUN_TOOL_NAMES);
 
 function ModelOpsRunLink({ runId }: { runId: string }) {
   const setActiveLeftTab = useHudStore((s: { setActiveLeftTab: (t: 'modelops') => void }) => s.setActiveLeftTab);

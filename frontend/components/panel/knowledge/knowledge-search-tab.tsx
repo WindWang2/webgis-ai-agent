@@ -20,6 +20,8 @@ import { useHudStore } from '@/lib/store/useHudStore';
 const TOP_K_CHOICES = [1, 3, 5, 10, 20] as const;
 /** 注入草稿时单片段截断长度（聊天消息体积约束，截断可见为 …）。 */
 const INJECT_EXCERPT_CHARS = 600;
+/** 内容超过该字符数才显示「展开全文」按钮（短内容无需展开）。 */
+const PREVIEW_COLLAPSE_CHARS = 160;
 
 type SearchState =
   | { status: 'idle' }
@@ -109,7 +111,7 @@ function HitCard({
       >
         {highlightContent(hit.content, query)}
       </p>
-      {hit.content.length > 160 && (
+      {hit.content.length > PREVIEW_COLLAPSE_CHARS && (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}

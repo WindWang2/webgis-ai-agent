@@ -12,6 +12,15 @@
  */
 import { executeToolDirect } from './chat';
 
+/**
+ * 产生推理 run 的工具名（tool-call-card 跳转链接与 use-modelops-runs
+ * 共用同一词表，防漂移）。
+ */
+export const MODELOPS_RUN_TOOLS: readonly string[] = [
+  'modelops_run_inference',
+  'modelops_run_promptable',
+];
+
 /** modelops_list_models 的列表投影（service.py:304-325，checksum 为截断串）。 */
 export interface ModelOpsListItem {
   model_id: string;
