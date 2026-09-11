@@ -407,6 +407,9 @@ class GeoComputeClusterRun(Base):
     reserved_rows = Column(Integer, nullable=False, default=0)
     reserved_bytes = Column(Integer, nullable=False, default=0)
     reserved_units = Column(Integer, nullable=False, default=0)
+    #: V8：内存/GPU 维度预留（同 reserved_* 精确归还纪律）
+    reserved_mem_mb = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
+    reserved_gpu = Column(Integer, nullable=False, default=0)
     #: 必需 profile 通道（["raster","heavy_cpu"]）；能力匹配的依据
     required_profiles = Column(JSON, nullable=True)
     #: V7：run 级资源 envelope（cluster.contracts.ResourceRequest 投影；
@@ -547,10 +550,73 @@ class GeoComputeResourceUsage(Base):
     limit_rows = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=True)
     limit_bytes = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=True)
     limit_units = Column(Integer, nullable=True)
+    #: V8：内存（MiB）与 GPU 卡数计数维度（enforcing reserve 防超卖）。
+    #: 0/NULL 缺省 = V7 语义逐字节兼容（不记账/不设限）。
+    usage_mem_mb = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
+    limit_mem_mb = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=True)
+    usage_gpu = Column(Integer, nullable=False, default=0)
+    limit_gpu = Column(Integer, nullable=True)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
-__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeResourceUsage",
+class GeoComputeArtifact(Base):
+    """GeoCompute V8 artifact exchange 登记（内容寻址 BlobStore 的元数据投影）。
+
+    事实源边界：载荷字节真相 = BlobStore（内容哈希寻址，put-if-absent）；
+    本表只承载**元数据**（大小/编解码/run 归属/TTL）——cleanup 与可观测
+    （transfer/spill 指标）的查询输入，绝不复制载荷。行丢失 = 孤儿字节
+    （TTL 清扫兜底），绝不是数据丢失。
+    """
+    __tablename__ = "geocompute_artifacts"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    #: 内容哈希（sha256 hex 64；与 BlobStore 键同一词表）
+    artifact_key = Column(String(64), nullable=False)
+    #: 归属（cleanup 按 run retention 级联；owner 域隔离读）
+    run_id = Column(String(64), nullable=True)
+    owner_scope = Column(String(40), nullable=True)
+    #: payload | spill | export（封闭词表，exchange 写入侧校验）
+    kind = Column(String(20), nullable=False, default="payload")
+    #: raw | zlib（V8 内置两种；新编解码走词表扩展）
+    codec = Column(String(10), nullable=False, default="raw")
+    size_bytes = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
+    stored_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    last_hit_at = Column(DateTime, nullable=True)
+    #: NULL = 不过期（跟随 run retention）；cleanup 只动 expires 过期行
+    expires_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("artifact_key", name="uq_gc_artifact_key"),
+        Index("idx_gc_artifact_run", "run_id", "id"),
+        Index("idx_gc_artifact_expiry", "expires_at"),
+    )
+
+
+class GeoComputeTaskQuarantine(Base):
+    """GeoCompute V8 poison task quarantine（同指纹反复失败 → 有界隔离）。
+
+    同一 owner 域内同一节点语义指纹在多个 run 反复非瞬态失败 → 记数并
+    在窗口内快失败（``POISON_QUARANTINED``）—— 防「毒任务」反复占用
+    集群槽位。窗口过期自动解封（查询侧惰性判定，无后台清扫依赖）。
+    """
+    __tablename__ = "geocompute_task_quarantine"
+
+    #: owner 域隔离（与复用索引同纪律：毒是 per-owner 事实，不跨域传染）
+    owner_scope = Column(String(40), primary_key=True)
+    task_fingerprint = Column(String(64), primary_key=True)
+    failure_count = Column(Integer, nullable=False, default=0)
+    last_error_code = Column(String(64), nullable=True)
+    last_run_id = Column(String(64), nullable=True)
+    #: 隔离窗截止（NULL = 未隔离，只记数）
+    quarantined_until = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        Index("idx_gc_quarantine_until", "quarantined_until"),
+    )
+
+
+__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeResourceUsage", "GeoComputeArtifact", "GeoComputeTaskQuarantine",
            "WorkflowPackageRow", "WorkflowInstanceRow", "WorkflowInstanceNodeRow",
            "WorkflowNodeReuseRow", "get_init_sql"]
 
@@ -700,4 +766,4 @@ class WorkflowNodeReuseRow(Base):
     )
 
 
-__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeRunEvent", "GeoComputeWorkerCache", "GeoComputeResourceUsage", "get_init_sql"]
+__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeRunEvent", "GeoComputeWorkerCache", "GeoComputeResourceUsage", "GeoComputeArtifact", "GeoComputeTaskQuarantine", "get_init_sql"]

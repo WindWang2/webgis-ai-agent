@@ -147,6 +147,37 @@ class CrsExpectation(BaseModel):
     allow_reproject: bool = True
 
 
+class PartitionSpec(BaseModel):
+    """V8 空间分区声明（节点级；Phase D，ADR-0130 §4）。
+
+    节点声明 ``partition`` 后，durable 执行在该节点上做空间 fan-out：
+    输入按 scheme 切成 N 个空间分区（每个分区一个独立 durable job，
+    幂等键 = 节点指纹 + 分区索引），完成后按明确的 seam 语义合并：
+    - ``raster_grid``：像素窗口网格 + halo（halo 参与计算、合并时裁除，
+      重叠区 first-wins）；输出栅格 CRS/transform 与源一致；
+    - ``vector_grid``：bbox 网格 + halo_ratio（中心点分配；halo 邻域
+      复制，合并按内容指纹去重 —— 内容相同的要素塌缩为一个）。
+
+    ``target_tiles`` 是请求值；执行期 ``adaptive_tile_count`` 可按资源
+    估计收缩（小输入不值得 fan-out），上限 256（事件/证据基数有界）。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    scheme: str = Field(pattern="^(raster_grid|vector_grid)$")
+    target_tiles: int = Field(default=4, ge=1, le=256)
+    #: raster halo（像素；参与邻域计算，合并时裁除）
+    halo_px: int = Field(default=0, ge=0, le=4096)
+    #: vector halo（bbox 外扩比例 ≤0.25；合并按内容去重）
+    halo_ratio: float = Field(default=0.0, ge=0.0, le=0.25)
+    #: 分区元数据 CRS（缺省继承节点 crs.output_crs / 栅格头）
+    crs: Optional[str] = Field(default=None, max_length=128)
+    #: 自适应下界：估计单 tile 内存超过该预算（MiB）时增加 tile 数
+    per_tile_mem_budget_mb: Optional[float] = Field(default=None, gt=0)
+    #: 单 tile 最小行数（低于则收缩 tile 数 —— 防 fan-out 开销倒挂）
+    min_rows_per_tile: int = Field(default=1000, ge=0)
+
+
 class ExecutionNode(BaseModel):
     """可执行节点：有界、可序列化、可指纹化（ADR-0101 D2 完整契约）。"""
 
@@ -181,14 +212,18 @@ class ExecutionNode(BaseModel):
     lineage_inputs: list[LineageLink] = Field(default_factory=list, max_length=16)
     #: 节点证据 schema（字段 → 类型名，≤32 项）：消费者契约声明。
     evidence_schema: dict[str, str] = Field(default_factory=dict, max_length=32)
+    #: V8 空间分区声明（durable 执行 fan-out；None = 不分区）。
+    #: **参与语义指纹** —— 分区方案改变 seam 合并语义（halo/去重边界），
+    #: 与 parameters 同等地位。
+    partition: Optional[PartitionSpec] = None
 
     def semantic_fingerprint(self) -> str:
         """确定性语义指纹：只含影响输出的字段。
 
         排除 estimate/policy/deadline/reuse/locality/resource_class/
         deterministic/upstream_fingerprints/lineage/evidence_schema ——
-        换执行策略或调度提示不改变结果语义；数据集指纹、参数或载荷
-        类型契约变化 → 指纹变化 → 后代失效。
+        换执行策略或调度提示不改变结果语义；数据集指纹、参数、分区方案
+        或载荷类型契约变化 → 指纹变化 → 后代失效。
         """
         payload = {
             "v": EXECUTION_PLAN_VERSION,
@@ -200,6 +235,10 @@ class ExecutionNode(BaseModel):
             "crs": self._normalized_crs(),
             "produces": self.produces.value if self.produces else None,
             "accepts": sorted(a.value for a in self.accepts),
+            "partition": (
+                canonical_dumps(self.partition.model_dump())
+                if self.partition is not None else None
+            ),
         }
         canonical = canonical_dumps(payload)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]

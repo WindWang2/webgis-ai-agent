@@ -765,6 +765,10 @@ class LedgerLimitsRequest(BaseModel):
     limit_rows: Optional[int] = Field(default=None, ge=0)
     limit_bytes: Optional[int] = Field(default=None, ge=0)
     limit_units: Optional[int] = Field(default=None, ge=0)
+    #: V8：内存（MiB）/GPU 卡数限额（enforcing 账本的 OOM 预防与 GPU 池
+    #: 计数预留的限额输入；None = 解除该维限制，与其它维同语义）。
+    limit_mem_mb: Optional[int] = Field(default=None, ge=0)
+    limit_gpu: Optional[int] = Field(default=None, ge=0)
 
 
 @router.post("/cluster/ledger/limits", tags=["GeoCompute / Cluster Runtime V7"])
@@ -786,6 +790,8 @@ async def cluster_set_ledger_limits(
             limit_rows=body.limit_rows,
             limit_bytes=body.limit_bytes,
             limit_units=body.limit_units,
+            limit_mem_mb=body.limit_mem_mb,
+            limit_gpu=body.limit_gpu,
         )
 
     try:
@@ -803,6 +809,8 @@ async def cluster_set_ledger_limits(
         "limit_rows": body.limit_rows,
         "limit_bytes": body.limit_bytes,
         "limit_units": body.limit_units,
+        "limit_mem_mb": body.limit_mem_mb,
+        "limit_gpu": body.limit_gpu,
     }
 
 

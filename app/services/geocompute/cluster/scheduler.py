@@ -37,7 +37,12 @@ from app.services.geocompute.cluster.contracts import (
     ClusterRunStatus,
 )
 from app.services.geocompute.cluster.fairness import fair_pick
-from app.services.geocompute.cluster.metrics import record_queue_wait_s
+from app.services.geocompute.cluster.metrics import (
+    record_gpu_fallback,
+    record_oom_avoided,
+    record_queue_wait_s,
+    record_resource_rejection,
+)
 from app.services.geocompute.cluster.store import ClusterLedger, ClusterRunStore
 from app.services.geocompute.errors import GeoComputeError
 
@@ -128,6 +133,7 @@ class ClusterCoordinator:
         preempt_wait_s: float = DEFAULT_PREEMPT_WAIT_S,
         max_preempts: int = MAX_PREEMPTS,
         retention_s: float = 24 * 3600.0,
+        gpu_fallback_wait_s: Optional[float] = None,
         governor: Optional[Any] = None,
         engine: Optional[Any] = None,
     ):
@@ -159,6 +165,15 @@ class ClusterCoordinator:
         #: waiting_resource 事件存在性去重的进程内缓存（有界：≤ batch；
         #: 跨进程由 events.exists 兜底）。
         self._waiting_noted: set[str] = set()
+        #: V8：GPU fallback 等待窗（构造参数优先；缺省 env
+        #: ``WEBGIS_GPU_FALLBACK_WAIT_S``=30s。GPU run 声明 fallback_cpu 且
+        #: 窗内一直没有 GPU worker → 剥离 gpu 要求改派 CPU。0 = 立即回退；
+        #: 负值 = 禁用回退 —— GPU run 无限期留队等待 GPU worker（V7 语义）。
+        self._gpu_fallback_wait_s = float(
+            gpu_fallback_wait_s
+            if gpu_fallback_wait_s is not None
+            else _env_float("WEBGIS_GPU_FALLBACK_WAIT_S", 30.0)
+        )
         self._pool = ThreadPoolExecutor(
             max_workers=self._local_slots, thread_name_prefix="geocompute-cluster"
         )
@@ -217,6 +232,14 @@ class ClusterCoordinator:
             self._drop_worker_caches(pruned)
         # M1：终态行 retention（分帧删除，每 tick 有界批）+ V7 级联 events
         self._store.purge_terminal(older_than_s=self._retention_s, limit=64)
+        # V8：artifact exchange 过期清扫（有界批；fail-open）
+        try:
+            from app.services.geocompute.cluster.exchange import get_exchange
+
+            stats["artifacts_purged"] = get_exchange().cleanup_expired(
+                limit=64)
+        except Exception:  # noqa: BLE001 - 清扫失败不阻断 tick
+            pass
         # V7：孤儿事件 TTL 兜底（不依赖 run 行存活）+ 缓存位置声明 TTL
         self._events.purge_older_than(older_than_s=self._retention_s, limit=256)
         if self._cache_registry is not None:
@@ -309,7 +332,38 @@ class ClusterCoordinator:
             return
         candidates = self._store.scan_dispatchable(limit=self._batch_size)
         workers = self._eligible_workers()
+
+        # V8 GPU fallback：声明 fallback_cpu 的 GPU run 等过等待窗且集群里
+        # **一个存活 GPU worker 都没有** → 持久剥离 gpu 要求（下一 tick 走
+        # CPU 路径）。诚实可见：事件 + metric。eager（workers=None = 无
+        # worker 注册表视图 = 无 GPU worker）同样适用 —— 否则单进程部署
+        # 上声明了 fallback 的 GPU run 永远卡死。
+        if self._gpu_fallback_wait_s >= 0:
+            from app.services.geocompute.cluster.placement import (
+                request_from_run_row,
+            )
+
+            has_gpu_worker = any(
+                int(((w.get("capability") or {}).get("gpu_count")) or 0) > 0
+                for w in (workers or [])
+            )
+            if not has_gpu_worker:
+                now_ts = time.time()
+                for c in candidates:
+                    req = request_from_run_row(c)
+                    if req.gpu <= 0 or not req.fallback_cpu:
+                        continue
+                    if (now_ts - _created_ts(c)) < self._gpu_fallback_wait_s:
+                        continue
+                    if self._store.downgrade_gpu_request(c["run_id"]):
+                        self._events.append(
+                            c["run_id"], "gpu_fallback",
+                            status=f"gpu={req.gpu}", worker_id=self._coordinator_id,
+                        )
+                        record_gpu_fallback()
+
         picked: list[dict[str, Any]] = []
+        within_tenant_key = None
         if workers is None:
             # eager：本地全可执行（V6 语义 —— 逐字节兼容）
             picked = fair_pick(
@@ -321,33 +375,56 @@ class ClusterCoordinator:
             from app.services.geocompute.cluster.placement import (
                 eligible_workers,
                 request_from_run_row,
+                scarcity_rank_key,
             )
 
             gated: list[dict[str, Any]] = []
+            eligible_counts: dict[str, int] = {}
             for c in candidates:
                 req = request_from_run_row(c)
                 if req == ResourceRequest():
                     # V6 语义保留：无 profile、无 envelope 要求的 run 恒可
                     # 派发（本地直跑路径不依赖 worker 存活 —— 逐字节兼容）
                     gated.append(c)
-                elif eligible_workers(req, workers):
+                    continue
+                eligible = eligible_workers(req, workers)
+                if eligible:
                     gated.append(c)
+                    eligible_counts[c["run_id"]] = len(eligible)
                 else:
-                    self._note_waiting_resource(c["run_id"], req)
+                    self._note_waiting(c["run_id"], self._waiting_reason(req))
+            # V8：同租户内稀缺资源优先（GPU/高内存 run 在槽位紧张时先占位，
+            # 防同租户饿死）；跨租户公平环不受影响。
+            within_tenant_key = lambda r: (  # noqa: E731 - 派发循环内的小适配器
+                scarcity_rank_key(
+                    request_from_run_row(r),
+                    eligible_counts.get(r["run_id"], 0),
+                )
+                + (-int(r.get("priority") or 0), int(r.get("id") or 0))
+            )
             picked = fair_pick(
                 gated, slots=free,
                 last_dispatch=self._store.tenant_last_dispatch(),
+                within_tenant_key=within_tenant_key,
             )
         for row in picked:
             run_id = row["run_id"]
-            epoch = self._store.claim_lease(
+            epoch, reject_dim = self._store.claim_lease(
                 run_id,
                 coordinator_id=self._coordinator_id,
                 ttl_s=self._lease_ttl_s,
                 max_attempts=self._max_run_attempts,
                 ledger=self._ledger,
+                return_detail=True,
             )
             if epoch is None:
+                if reject_dim is not None:
+                    # V8：enforcing 账本按维拒绝 → 可观测留队（维度事件 +
+                    # 拒绝计数；内存维即「OOM 避免」量化）。
+                    self._note_waiting(run_id, f"resource:{reject_dim}")
+                    record_resource_rejection(reject_dim)
+                    if reject_dim == "mem_mb":
+                        record_oom_avoided()
                 continue  # 竞争失败/账本拒绝（enforcing）→ 留队下轮再试
             self._events.append(run_id, "run_started",
                                 worker_id=self._coordinator_id)
@@ -375,8 +452,24 @@ class ClusterCoordinator:
             self._pool.submit(self._execute_run, exec_state)
             stats["dispatched"] += 1
 
-    def _note_waiting_resource(self, run_id: str, req: Any) -> None:
-        """无合格 worker → waiting_resource 事件（一次性；有界去重）。"""
+    @staticmethod
+    def _waiting_reason(req: Any) -> str:
+        """无合格 worker 的短原因词表（status 列 ≤20 字符，round1 n2）。"""
+        if req is not None and getattr(req, "gpu", 0):
+            return "no_worker_gpu"
+        if req is not None and getattr(req, "required_profiles", None):
+            return "no_worker_profiles"
+        if req is not None and getattr(req, "min_mem_mb", 0):
+            return "no_worker_mem"
+        return "no_worker"
+
+    def _note_waiting(self, run_id: str, reason: str) -> None:
+        """资源不满足 → waiting_resource 事件（一次性；有界去重）。
+
+        V8 语义扩展：reason 词表 = no_worker[_gpu|_profiles|_mem] ∪
+        ``resource:<dim>``（enforcing 账本按维拒绝）。每 run 只发**第一条**
+        （events.exists 跨进程兜底）—— 留队 run 不被重复事件刷屏。
+        """
         if run_id in self._waiting_noted:
             return
         self._waiting_noted.add(run_id)
@@ -386,13 +479,7 @@ class ClusterCoordinator:
             self._waiting_noted.clear()
         if self._events.exists(run_id, "waiting_resource"):
             return
-        # status 列 ≤20 字符（round1 n2）：reason 用短词表
-        reason = "no_worker"
-        if req is not None and getattr(req, "gpu", 0):
-            reason = "no_worker_gpu"
-        elif req is not None and getattr(req, "required_profiles", None):
-            reason = "no_worker_profiles"
-        self._events.append(run_id, "waiting_resource", status=reason[:20])
+        self._events.append(run_id, "waiting_resource", status=(reason or "no_worker")[:20])
 
     def _detect_stragglers(self) -> int:
         """run 级 straggler：**真实心跳**滞后 > 3× 心跳间隔的在跑 run

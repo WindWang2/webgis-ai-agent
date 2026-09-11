@@ -38,6 +38,9 @@ MAX_NODE_EVENTS_PER_RUN = 1024
 MAX_EVENTS_PAGE = 200
 
 #: 事件词表（封闭；append 侧强校验 —— 开放词表会让读投影/OTel 映射失效）。
+#: V8 新增：gpu_fallback（CUDA 不可用回退）、partition_planned（空间分区
+#: fan-out）、speculative_dispatch / speculative_resolved（投机副本）、
+#: poison_quarantined（毒任务隔离）、artifact_spilled（大载荷落盘交换）。
 EVENT_VOCABULARY: frozenset[str] = frozenset({
     "run_started",
     "node_dispatched", "node_started", "node_output_ready",
@@ -45,12 +48,16 @@ EVENT_VOCABULARY: frozenset[str] = frozenset({
     "node_lost",
     "run_completed", "run_failed", "run_cancelled", "run_preempted",
     "waiting_resource", "worker_cache_hit", "straggler_detected",
+    "gpu_fallback", "partition_planned",
+    "speculative_dispatch", "speculative_resolved", "poison_quarantined",
 })
 
 #: 豁免节点级预算的事件（全 run ≤~10 条：run 级终态 + 治理可见性）。
 _BUDGET_EXEMPT: frozenset[str] = frozenset({
     "run_started", "run_completed", "run_failed", "run_cancelled",
     "run_preempted", "waiting_resource", "straggler_detected",
+    "gpu_fallback", "partition_planned",
+    "speculative_dispatch", "speculative_resolved", "poison_quarantined",
 })
 
 #: 有界进程内计数（metrics 投影；无 per-run/per-user 维度）。
@@ -179,6 +186,54 @@ class RunEventStore:
                 return [_projection(r) for r in rows]
         except Exception:  # noqa: BLE001 - trace 读失败 = 空窗口（诚实 404 语义在调用方）
             return []
+
+    def count_kind(self, event: str, *, within_s: float = 24 * 3600.0,
+                   factory: Optional[Any] = None) -> int:
+        """词表事件的窗口内总数（V8 观测聚合；created_at 索引，有界）。
+
+        失败 = 0（观测聚合绝不抛出）。
+        """
+        if event not in EVENT_VOCABULARY:
+            return 0
+        try:
+            from sqlalchemy import func
+
+            from app.services.geocompute.cluster.store import _utcnow
+            from datetime import timedelta
+
+            target = factory or self._factory
+            cutoff = _utcnow() - timedelta(seconds=max(1.0, float(within_s)))
+            with target() as db:
+                total = db.execute(
+                    select(func.count(_Event.id)).where(
+                        _Event.event == event,
+                        _Event.created_at >= cutoff,
+                    )
+                ).scalar()
+                return int(total or 0)
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def sum_bytes(self, *, within_s: float = 24 * 3600.0,
+                  factory: Optional[Any] = None) -> int:
+        """窗口内 ``bytes`` 列总和（transfer 吞吐观测；无行扫描）。"""
+        try:
+            from datetime import timedelta
+
+            from sqlalchemy import func
+
+            from app.services.geocompute.cluster.store import _utcnow
+
+            target = factory or self._factory
+            cutoff = _utcnow() - timedelta(seconds=max(1.0, float(within_s)))
+            with target() as db:
+                total = db.execute(
+                    select(func.coalesce(func.sum(_Event.bytes_), 0)).where(
+                        _Event.created_at >= cutoff)
+                ).scalar()
+                return int(total or 0)
+        except Exception:  # noqa: BLE001
+            return 0
 
     def progress_projection(self, run_id: str) -> dict[str, Any]:
         """读时进度投影（天然幂等跨 attempt —— DISTINCT 节点去重）。

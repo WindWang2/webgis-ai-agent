@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import random
 import re
 import threading
@@ -30,6 +31,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 from app.lib.cancellation import CancellationToken, OperationCancelled, use_token
+from app.lib.geo_analysis.raster_mosaic import RasterioUnavailableError
 from app.services.geocompute import graph, ops, tracing
 from app.services.geocompute.errors import (
     BudgetExceededError,
@@ -52,6 +54,17 @@ from app.services.geocompute.plan import (
 
 #: 计划级最大并行度：独立于工具注册表信号量，小而有界（防线程池饥饿）。
 DEFAULT_MAX_WORKERS = 2
+
+
+def _default_exchange():
+    """V8：进程级 artifact exchange 单例（未配 WEBGIS_EXCHANGE_ROOT =
+    停用实例 → NodeResultStore spill 退回 V7 丢弃语义）。迟到 import 避环。"""
+    try:
+        from app.services.geocompute.cluster.exchange import get_exchange
+
+        return get_exchange()
+    except Exception:  # noqa: BLE001 - exchange 缺席 = 纯内存
+        return None
 
 #: 错误证据的字符上界（评审 MINOR：error_message 不承载无限文本）。
 _MAX_ERROR_MESSAGE_CHARS = 300
@@ -217,12 +230,28 @@ def _emit_run_event(
     )
 
 
-class NodeResultStore:
-    """进程内有界节点结果存储（LRU，双重界：条目数 + 字节预算）。"""
+#: spill stub 在 LRU 字节预算里的记账权重（载荷本体已落盘，驻留的只有
+#: 凭证 —— 小额固定值，保证 stub 永远装得下）。
+_SPILLED_STUB_BYTES = 512
 
-    def __init__(self, max_entries: int = 256, max_bytes: int = 128 * 1024 * 1024):
+
+class NodeResultStore:
+    """进程内有界节点结果存储（LRU，双重界：条目数 + 字节预算）。
+
+    V8 spill：超过整库预算的大载荷不再被直接丢弃（超预算 = 复用失效
+    + 下次全量重算），而是经 artifact exchange 落 BlobStore（zlib、
+    content-hash 完整性），LRU 里只留 ``__spilled__`` stub —— 命中时
+    按需重hydration。exchange 停用（未配 root）时退回 V7 语义（丢弃）。
+    """
+
+    #: spill stub 的保留键（与 dunder 保留命名空间同族）。
+    _SPILL_KEY = "__spilled__"
+
+    def __init__(self, max_entries: int = 256, max_bytes: int = 128 * 1024 * 1024,
+                 *, exchange: Optional[Any] = None):
         self._max_entries = max_entries
         self._max_bytes = max_bytes
+        self._exchange = exchange
         self._entries: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._bytes = 0
         self._lock = threading.Lock()
@@ -241,21 +270,143 @@ class NodeResultStore:
             total += int(avg * len(items))
         return total
 
+    def _spill(self, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """超预算载荷 → exchange stub（fail-open：失败 = V7 丢弃语义）。
+
+        **只能在 ``self._lock`` 外调用** —— 序列化+zlib+BlobStore 写 +
+        元数据 DB 注册全在这条路径上（持锁做大载荷 IO 会阻塞全部节点
+        线程的 get/put）。
+        """
+        if self._exchange is None or not getattr(self._exchange, "enabled", False):
+            return None
+        try:
+            clean = {k: v for k, v in payload.items() if not k.startswith("__")}
+            import json as _json
+
+            blob = _json.dumps(clean, default=str).encode("utf-8")
+            handle = self._exchange.put_bytes(blob, kind="spill")
+            try:
+                from app.services.geocompute.cluster.metrics import record_spill
+
+                record_spill(handle.size_bytes)
+            except Exception:  # noqa: BLE001 - 观测失败不倒灌
+                pass
+            return {self._SPILL_KEY: {"key": handle.key,
+                                      "size_bytes": handle.size_bytes,
+                                      "codec": handle.codec}}
+        except Exception:  # noqa: BLE001 - spill 失败 = 诚实退回丢弃
+            return None
+
     def get(self, key: str) -> Optional[dict[str, Any]]:
         with self._lock:
             entry = self._entries.get(key)
-            if entry is not None:
-                self._entries.move_to_end(key)
-            return entry
+            if entry is None:
+                return None
+            self._entries.move_to_end(key)
+            if self._SPILL_KEY not in entry:
+                return entry
+        return self._rehydrate(entry, key)
+
+    def _rehydrate(self, entry: dict[str, Any], key: str) -> Optional[dict[str, Any]]:
+        """stub → 原载荷（锁外 IO；失败 = 复用 miss，诚实重算）。
+
+        回填走与 ``put`` 相同的**入账 + 驱逐**路径（评审 MAJOR：此前回填
+        不入账也不驱逐 —— 后续驱逐会反向扣减从未加过的逻辑尺寸，导致
+        ``_bytes`` 漂移为负、整库内存上界失效）。回填载荷超驻留预算 →
+        立即重新 spill 回 stub 化（载荷本就被压缩在 exchange，避免常驻
+        突破预算）；重新 spill 失败 → 摘除条目（诚实 miss）。
+        """
+        try:
+            stub = entry[self._SPILL_KEY]
+            if self._exchange is None or not getattr(
+                    self._exchange, "enabled", False):
+                return None
+            from app.services.geocompute.cluster.exchange import SpillHandle
+
+            blob = self._exchange.get_bytes(SpillHandle(**stub))
+            import json as _json
+
+            payload = _json.loads(blob)
+            clean = {k: v for k, v in payload.items()
+                     if not k.startswith("__")}
+            size = min(self._measure(clean) or stub.get("size_bytes", 0),
+                       self._max_bytes + 1)
+            stub_size = min(_SPILLED_STUB_BYTES, self._max_bytes)
+            re_spilled: Optional[dict[str, Any]] = None
+            if size > self._max_bytes:
+                # 大载荷回填后立即重新落盘（IO 在锁外；内部驻留回到 stub，
+                # 内存上界不被单次回填突破）；失败 → 摘除条目
+                re_spilled = self._spill(clean)
+                if re_spilled is None:
+                    with self._lock:
+                        self._entries.pop(key, None)
+                    return None
+            with self._lock:
+                old = self._entries.pop(key, None)
+                if old is not None:
+                    self._bytes -= old.get("__size__", 0)
+                if re_spilled is not None:
+                    self._entries[key] = {**re_spilled, "__size__": stub_size}
+                    self._bytes += stub_size
+                else:
+                    self._entries[key] = {"__size__": size, **clean}
+                    self._bytes += size
+                while len(self._entries) > self._max_entries or self._bytes > self._max_bytes:
+                    if not self._entries:
+                        break
+                    _, evicted = self._entries.popitem(last=False)
+                    self._bytes -= evicted.get("__size__", 0)
+            if re_spilled is not None:
+                # 调用方仍拿到完整载荷（一次性拷贝）；内部驻留是 stub
+                return {k: v for k, v in clean.items()}
+            try:
+                from app.services.geocompute.cluster.metrics import (
+                    record_spill_rehydrate,
+                )
+
+                record_spill_rehydrate(True)
+            except Exception:  # noqa: BLE001
+                pass
+            return self._entries.get(key)
+        except Exception:  # noqa: BLE001 - 重hydration失败 = 复用 miss
+            try:
+                from app.services.geocompute.cluster.metrics import (
+                    record_spill_rehydrate,
+                )
+
+                record_spill_rehydrate(False)
+            except Exception:  # noqa: BLE001
+                pass
+            return None
 
     def put(self, key: str, payload: dict[str, Any]) -> None:
         size = min(self._measure(payload), self._max_bytes + 1)
+        if size > self._max_bytes:
+            # V8：超预算 → spill 落盘。**序列化+zlib+BlobStore 写 + 元数据
+            # DB 注册全部在锁外完成**（评审 MAJOR：持锁做大载荷 IO 会阻塞
+            # 全部节点线程的 get/put）；锁内只做 stub 插入与驱逐。stub 按
+            # 驻留字节小额记账 —— 载荷本体已不在内存，预算约束的是驻留
+            # 量。exchange 停用/失败 → V7 语义（直接丢弃）。
+            stub = self._spill(payload)
+            if stub is None:
+                return
+            stub_size = min(_SPILLED_STUB_BYTES, self._max_bytes)
+            with self._lock:
+                old = self._entries.pop(key, None)
+                if old is not None:
+                    self._bytes -= old.get("__size__", 0)
+                self._entries[key] = {**stub, "__size__": stub_size}
+                self._bytes += stub_size
+                while len(self._entries) > self._max_entries or self._bytes > self._max_bytes:
+                    if not self._entries:
+                        break
+                    _, evicted = self._entries.popitem(last=False)
+                    self._bytes -= evicted.get("__size__", 0)
+                return
         with self._lock:
             old = self._entries.pop(key, None)
             if old is not None:
                 self._bytes -= old.get("__size__", 0)
-            if size > self._max_bytes:
-                return  # 超预算的大结果不入复用存储（仍可作为本 run 内节点输出）
             # dunder 键是存储保留命名空间：载荷侧同名键丢弃（评审 MINOR ——
             # 否则载荷 __size__ 会腐蚀字节记账，evaluation 期 TypeError）。
             clean = {k: v for k, v in payload.items() if not k.startswith("__")}
@@ -280,14 +431,25 @@ class GeoExecutionEngine:
         run_cache_size: int = 128,
         retain_outputs: bool = False,
         slot_lease_grace_s: float = DEFAULT_SLOT_LEASE_GRACE_S,
+        speculative_after_s: Optional[float] = None,
     ):
-        self._store = result_store or NodeResultStore()
+        self._store = result_store or NodeResultStore(
+            exchange=_default_exchange())
         self._max_workers = max(1, min(int(max_workers), 8))
         # 评审 M3 的逃生门：基准/测试需要在 run 终态后读取载荷做确定性
         # 断言。生产路径保持默认 False（终态即清除，证据/摘要为准）。
         self._retain_outputs = bool(retain_outputs)
         # R9：槽位租约宽限（节点 deadline 之后多久可强制回收其并发槽位）。
         self._slot_lease_grace_s = max(0.0, float(slot_lease_grace_s))
+        # V8 Phase F：节点级 straggler → 投机副本的触发阈值（durable 节点
+        # 已运行秒数；0/负 = 停用 —— 副本有真实算力成本，显式 opt-in）。
+        if speculative_after_s is None:
+            try:
+                speculative_after_s = float(
+                    os.environ.get("WEBGIS_SPECULATIVE_AFTER_S", "") or 0)
+            except ValueError:
+                speculative_after_s = 0.0
+        self._speculative_after_s = max(0.0, float(speculative_after_s))
         self._runs: OrderedDict[str, ExecutionRun] = OrderedDict()
         self._run_outputs: dict[str, dict[str, dict[str, Any]]] = {}
         # SEC：run 归属域（owner_scope_for 派生）；REST 读路径按它做
@@ -852,16 +1014,30 @@ class GeoExecutionEngine:
             node_deadline = min(node_deadline, time.monotonic() + node.deadline_s)
 
         if node.policy.value == "durable_job":
-            self._execute_durable(
-                run, node, outputs, outputs_fp, ev, session_id=session_id,
-                owner_scope=owner_scope,
-                cancel_token=cancel_token, node_deadline=node_deadline,
-                governor=governor, gov_path=gov_path,
-                charge_ledger=charge_ledger,
-                budget=budget,
-                resource_envelope=resource_envelope,
-                emit_events=emit_events,
-            )
+            if node.partition is not None:
+                # V8：空间分区 fan-out（Phase D）—— 节点被切成 N 个空间
+                # 分区 job（各自独立幂等/重试），完成后按 seam 语义合并。
+                self._execute_durable_partitioned(
+                    run, node, outputs, outputs_fp, ev, session_id=session_id,
+                    owner_scope=owner_scope,
+                    cancel_token=cancel_token, node_deadline=node_deadline,
+                    governor=governor, gov_path=gov_path,
+                    charge_ledger=charge_ledger,
+                    budget=budget,
+                    resource_envelope=resource_envelope,
+                    emit_events=emit_events,
+                )
+            else:
+                self._execute_durable(
+                    run, node, outputs, outputs_fp, ev, session_id=session_id,
+                    owner_scope=owner_scope,
+                    cancel_token=cancel_token, node_deadline=node_deadline,
+                    governor=governor, gov_path=gov_path,
+                    charge_ledger=charge_ledger,
+                    budget=budget,
+                    resource_envelope=resource_envelope,
+                    emit_events=emit_events,
+                )
             if ev.status in {"completed", "reused"} and node.node_id in outputs:
                 outputs_fp[node.node_id] = _output_fingerprint(outputs[node.node_id])
             return
@@ -1060,6 +1236,479 @@ class GeoExecutionEngine:
         ]
         return changed or None
 
+    # ------------------------------------------- V8 spatial partitioning
+
+    def _execute_durable_partitioned(
+        self,
+        run: ExecutionRun,
+        node: ExecutionNode,
+        outputs: dict[str, dict[str, Any]],
+        outputs_fp: dict[str, str],
+        ev: NodeEvidence,
+        *,
+        session_id: Optional[str],
+        owner_scope: str,
+        cancel_token: Optional[CancellationToken],
+        node_deadline: float,
+        governor: Optional[Any],
+        gov_path: Optional[str],
+        charge_ledger: Optional[Any] = None,
+        budget: Any = None,
+        resource_envelope: Optional[dict[str, Any]] = None,
+        emit_events: bool = False,
+    ) -> None:
+        """分区 fan-out 执行（V8 Phase D，ADR-0130 §4）。
+
+        输入形状（内存中的上游输出）→ 空间分区计划 → N 个 tile job
+        （每个是普通 durable job：独立幂等键/独立重试/独立放置）→
+        逐 tile 收敛（stale 可重派；failed 为该 tile 终局）→ seam 合并
+        （vector：内容去重；raster：core 窗口写回，halo 裁除）。
+
+        复用与普通 durable 节点同层（合并结果按节点语义指纹记录 ——
+        分区方案进指纹，tile 变化自然失效）。取消/deadline 级联到全部
+        在飞 tile job（await_node_jobs 持久取消）。
+        """
+        started_pt = time.monotonic()
+        from app.services.geocompute import partitioning as P
+
+        def _fail(code: str, message: str) -> None:
+            ev.status = "failed"
+            ev.error_code = code
+            ev.error_message = _scrub_error_message(message)
+            ev.retry_safe = False
+            ev.duration_s = round(time.monotonic() - started_pt, 6)
+            _emit_run_event(run.run_id, "node_failed", enabled=emit_events,
+                            node_id=node.node_id, error_code=code)
+
+        try:
+            P.ensure_partition_supported(node)
+        except GeoComputeError as exc:
+            _fail(exc.code, str(exc))
+            return
+        if node.reuse == NodeReusePolicy.ALLOW and self._durable_reuse_hit(
+            run, node, outputs, outputs_fp, ev, owner_scope,
+            governor=governor, gov_path=gov_path, charge_ledger=charge_ledger,
+            emit_events=emit_events,
+        ):
+            ev.duration_s = round(time.monotonic() - started_pt, 6)
+            return
+        try:
+            plan = self._build_partition_plan(node, outputs)
+        except RasterioUnavailableError as exc:
+            _fail("RASTERIO_UNAVAILABLE", str(exc))
+            return
+        except GeoComputeError as exc:
+            _fail(exc.code, str(exc))
+            return
+        _emit_run_event(run.run_id, "partition_planned", enabled=emit_events,
+                        node_id=node.node_id,
+                        status=f"tiles={plan.tiles}", rows=plan.tiles)
+        tracing.emit("partition_planned", run_id=run.run_id,
+                     node_id=node.node_id, tiles=plan.tiles,
+                     scheme=plan.scheme)
+        _emit_run_event(run.run_id, "node_dispatched", enabled=emit_events,
+                        node_id=node.node_id, attempt=1, status="running")
+
+        input_refs = {
+            src: str(outputs[src]["ref_id"])
+            for src in node.inputs
+            if src in outputs and outputs[src].get("ref_id")
+        }
+        input_keys = {
+            src: outputs_fp[src] for src in node.inputs if src in outputs_fp
+        }
+        max_tile_attempts = max(1, int(node.retry.max_attempts))
+        results: dict[int, dict[str, Any]] = {}
+        outstanding: dict[int, dict[str, Any]] = {}
+        for part in plan.parts:
+            entry: dict[str, Any] = {
+                "attempts": 1,
+                "node": self._tile_node(
+                    node, part, plan.scheme, plan.tiles,
+                    raster_input_path=plan.meta.get("raster_input_path"),
+                ),
+                "job_id": None,
+                "dispatch_failed": False,
+            }
+            job_id = self._dispatch_tile(
+                entry["node"], run, session_id, node_deadline, budget,
+                input_refs, input_keys, resource_envelope, owner_scope,
+            )
+            if job_id is None:
+                entry["attempts"] += 1
+                entry["dispatch_failed"] = True
+            else:
+                entry["job_id"] = job_id
+            outstanding[part.index] = entry
+
+        from app.services.geocompute import durable as _durable
+
+        while outstanding:
+            live_ids = [e["job_id"] for e in outstanding.values()
+                        if e.get("job_id") is not None]
+            try:
+                states = _durable.await_node_jobs(
+                    live_ids,
+                    session_id=session_id or "",
+                    deadline_ts=node_deadline,
+                    cancel_token=cancel_token if node.cancellable else None,
+                )
+            except OperationCancelled:
+                ev.status = "cancelled"
+                ev.error_code = "CANCELLED"
+                ev.duration_s = round(time.monotonic() - started_pt, 6)
+                tracing.emit("node_cancelled", run_id=run.run_id,
+                             node_id=node.node_id, status="cancelled",
+                             policy="durable_job")
+                _emit_run_event(run.run_id, "node_cancelled",
+                                enabled=emit_events, node_id=node.node_id,
+                                error_code="CANCELLED")
+                return
+            except GeoComputeError as exc:
+                # deadline：await 已对在飞 tile 请求持久取消
+                _fail(exc.code, str(exc))
+                return
+            still: dict[int, dict[str, Any]] = {}
+            for idx, entry in list(outstanding.items()):
+                st = states.get(entry["job_id"]) \
+                    if entry["job_id"] is not None else None
+                if entry["dispatch_failed"]:
+                    # 派发失败按「可重派」处理（消耗 attempt 预算，与
+                    # _dispatch_tile 的异常捕获语义一致）
+                    st = {"status": "stale", "payload": {},
+                          "error": "dispatch failed"}
+                if st is None:
+                    still[idx] = entry
+                    continue
+                if st["status"] == "completed":
+                    results[idx] = st["payload"]
+                    continue
+                # stale/cancelled → 可重派（worker 丢失语义）；failed = 终局
+                retryable = st["status"] in {"stale", "cancelled"} \
+                    and entry["attempts"] < max_tile_attempts
+                if retryable:
+                    entry["attempts"] += 1
+                    entry["dispatch_failed"] = False
+                    tile_node = self._tile_node(
+                        node, plan.parts_by_index[idx],
+                        plan.scheme, plan.tiles,
+                        raster_input_path=plan.meta.get("raster_input_path"),
+                    )
+                    entry["node"] = tile_node
+                    new_job = self._dispatch_tile(
+                        tile_node, run, session_id, node_deadline, budget,
+                        input_refs, input_keys, resource_envelope, owner_scope,
+                    )
+                    if new_job is not None:
+                        entry["job_id"] = new_job
+                    else:
+                        entry["dispatch_failed"] = True
+                    still[idx] = entry
+                    continue
+                # 兄弟 tile 持久取消（终局已定 —— 不让在飞 tile 空转到
+                # 自然终局浪费集群算力；取消失败 = 资源浪费非正确性问题）
+                live = [e["job_id"] for e in outstanding.values()
+                        if e.get("job_id") is not None]
+                if live:
+                    try:
+                        from app.services.jobs import DurableJobStore as _DJS
+
+                        with _durable.session_factory() as db:
+                            for jid in live:
+                                _DJS.request_cancel_sync(db, int(jid))
+                    except Exception:  # noqa: BLE001
+                        pass
+                _fail(
+                    "PARTITION_TILE_LOST"
+                    if st["status"] in {"stale", "cancelled"} else "TILE_FAILED",
+                    f"tile {idx} ({st['status']}): "
+                    f"{st.get('error') or 'unknown'}",
+                )
+                return
+            outstanding = still
+
+        # ── seam 合并 ──
+        try:
+            payload = self._merge_partition_results(
+                node, plan, results, session_id=session_id,
+                cancel_token=cancel_token,
+            )
+        except RasterioUnavailableError as exc:
+            _fail("RASTERIO_UNAVAILABLE", str(exc))
+            return
+        except GeoComputeError as exc:
+            _fail(exc.code, str(exc))
+            return
+        except OperationCancelled:
+            ev.status = "cancelled"
+            ev.error_code = "CANCELLED"
+            ev.duration_s = round(time.monotonic() - started_pt, 6)
+            return
+        outputs[node.node_id] = payload
+        ev.status = "completed"
+        ev.rows_emitted = self._count_rows(payload)
+        ev.duration_s = round(time.monotonic() - started_pt, 6)
+        ev.output_ref = payload.get("ref_id")
+        meta = payload.get("metadata") or {}
+        ev.output_summary = {
+            k: v for k, v in meta.items()
+            if isinstance(v, (str, int, float, bool, type(None)))
+        }
+        tracing.emit("node_completed", run_id=run.run_id,
+                     node_id=node.node_id, status="completed",
+                     rows=ev.rows_emitted, duration_s=ev.duration_s,
+                     policy="durable_job", tiles=plan.tiles)
+        _emit_run_event(run.run_id, "node_completed", enabled=emit_events,
+                        node_id=node.node_id, rows=ev.rows_emitted)
+        self._governor_charge(governor, gov_path, node, payload, charge_ledger)
+        self._record_durable_result(
+            run, node, outputs, outputs_fp, owner_scope,
+            session_id=session_id, payload=payload,
+        )
+
+    def _build_partition_plan(
+        self, node: ExecutionNode, outputs: dict[str, dict[str, Any]]
+    ) -> Any:
+        """输入形状 → 分区计划（纯函数；形状不可得 = 类型化失败）。"""
+        from app.services.geocompute import partitioning as P
+
+        spec = node.partition
+        est = node.estimate
+        est_mem = float(getattr(est, "memory_mb", None) or 0) if est else 0.0
+        if spec.scheme == "raster_grid":
+            raster_path = None
+            for src in node.inputs:
+                rp = outputs.get(src, {}).get("raster_path")
+                if rp:
+                    raster_path = str(rp)
+                    break
+            if not raster_path:
+                raise NodeExecutionError(
+                    "raster partition requires an upstream raster_path input",
+                    retry_safe=False, node_id=node.node_id,
+                    details={"reason": "PARTITION_INPUT_UNRESOLVABLE"},
+                )
+            from app.lib.geo_analysis.raster_mosaic import raster_header
+
+            head = raster_header(raster_path)
+            spec_eff = spec
+            if spec.per_tile_mem_budget_mb and est_mem:
+                # raster 自适应（内存维）：单 tile 估计超预算 → 增加网格
+                # 密度（行数维对 raster 不可知，不参与）
+                tiles = P.adaptive_tile_count(
+                    spec, est_total_mem_mb=est_mem, input_rows=None)
+                spec_eff = spec.model_copy(update={"target_tiles": tiles})
+            crs = spec.crs or (node.crs.output_crs if node.crs else None)
+            plan = P.plan_raster(
+                spec_eff, width=int(head["width"]),
+                height=int(head["height"]), crs=crs,
+            )
+            plan.meta["header"] = {
+                "width": int(head["width"]), "height": int(head["height"]),
+                "crs": head.get("crs"), "transform": head.get("transform"),
+            }
+            # 源路径注入 tile 参数（durable tile 的 worker 无 in-process
+            # 上游可见性；路径字符串是既有 raster 载荷通货）
+            plan.meta["raster_input_path"] = raster_path
+            return plan
+        # vector_grid
+        features = None
+        for src in node.inputs:
+            feats = outputs.get(src, {}).get("features")
+            if isinstance(feats, list):
+                features = feats
+                break
+        if features is None:
+            raise NodeExecutionError(
+                "vector partition requires an upstream inline features input",
+                retry_safe=False, node_id=node.node_id,
+                details={"reason": "PARTITION_INPUT_UNRESOLVABLE"},
+            )
+        if not features:
+            raise NodeExecutionError(
+                "vector partition input is empty",
+                retry_safe=False, node_id=node.node_id,
+                details={"reason": "PARTITION_INPUT_EMPTY"},
+            )
+        xs: list[float] = []
+        ys: list[float] = []
+        for f in features:
+            pt = P.representative_point(f)
+            if pt is not None:
+                xs.append(pt[0])
+                ys.append(pt[1])
+        if not xs:
+            raise NodeExecutionError(
+                "vector partition input has no resolvable geometries",
+                retry_safe=False, node_id=node.node_id,
+                details={"reason": "PARTITION_INPUT_EMPTY"},
+            )
+        bbox = (min(xs), min(ys), max(xs), max(ys))
+        tiles = P.adaptive_tile_count(
+            spec, est_total_mem_mb=est_mem or None, input_rows=len(features))
+        spec_eff = spec.model_copy(update={"target_tiles": tiles})
+        crs = spec.crs or (node.crs.output_crs if node.crs else None)
+        return P.plan_vector(
+            spec_eff, bbox=bbox, crs=crs, input_rows=len(features),
+        )
+
+    @staticmethod
+    def _tile_node(
+        node: ExecutionNode, part: Any, scheme: str, count: int,
+        raster_input_path: Optional[str] = None,
+    ) -> ExecutionNode:
+        """分区 job 的节点副本（``_partition`` 进参数 → 独立幂等键）。
+
+        raster_grid：把上游源路径注入 ``parameters.raster_path`` ——
+        durable tile 的 worker 对 in-process 上游不可见（V7 诚实边界），
+        路径字符串是既有 raster 载荷通货。
+        """
+        if scheme == "raster_grid":
+            part_meta: dict[str, Any] = {
+                "index": part.index, "count": count, "scheme": scheme,
+                "window": part.window(),
+            }
+            params = {**node.parameters, "_partition": part_meta}
+            if raster_input_path and not params.get("raster_path"):
+                params["raster_path"] = str(raster_input_path)
+            return node.model_copy(update={"parameters": params})
+        part_meta = {
+            "index": part.index, "count": count, "scheme": scheme,
+            "halo_bbox": list(part.halo_bbox),
+        }
+        return node.model_copy(update={
+            "parameters": {**node.parameters, "_partition": part_meta},
+        })
+
+    def _dispatch_tile(
+        self,
+        tile_node: ExecutionNode,
+        run: ExecutionRun,
+        session_id: Optional[str],
+        node_deadline: float,
+        budget: Any,
+        input_refs: dict[str, str],
+        input_keys: dict[str, str],
+        resource_envelope: Optional[dict[str, Any]],
+        owner_scope: str,
+    ) -> Optional[int]:
+        """派发单个 tile job；返回 job_id（派发失败 None → tile 重试）。"""
+        from app.services.geocompute import durable
+
+        try:
+            ret = durable.dispatch_node(
+                tile_node,
+                session_id=session_id or "",
+                plan_fingerprint=run.plan_fingerprint,
+                deadline_s=(node_deadline - time.monotonic())
+                if tile_node.deadline_s is not None else None,
+                budget=budget,
+                run_id=run.run_id,
+                node_attempt=1,
+                input_refs=input_refs,
+                input_keys=input_keys,
+                resource_envelope=resource_envelope,
+                owner_scope=owner_scope,
+            )
+        except GeoComputeError:
+            # 派发异常（DB 抖动/快照超限等）→ None = 消耗一次 tile attempt
+            # （fan-out 循环按 stale 语义重派，预算耗尽才终局）—— 与单节点
+            # durable 路径的分类重试纪律一致，不再让异常逃逸线程裸失败。
+            return None
+        try:
+            return int(ret.get("job_id"))
+        except (TypeError, ValueError):
+            return None
+
+    def _merge_partition_results(
+        self,
+        node: ExecutionNode,
+        plan: Any,
+        results: dict[int, dict[str, Any]],
+        *,
+        session_id: Optional[str] = None,
+        cancel_token: Optional[CancellationToken] = None,
+    ) -> dict[str, Any]:
+        """tile 结果 → 单一节点输出（seam 语义的唯一执行点）。"""
+        from app.services.geocompute import partitioning as P
+
+        if cancel_token is not None and cancel_token.cancelled:
+            raise OperationCancelled("partition merge cancelled")
+        meta: dict[str, Any] = {
+            "partition_tiles": plan.tiles, "partition_scheme": plan.scheme,
+        }
+        if plan.crs:
+            meta["partition_crs"] = str(plan.crs)
+        if plan.scheme == "vector_grid":
+            missing = [p.index for p in plan.parts if p.index not in results]
+            if missing:
+                raise NodeExecutionError(
+                    f"tiles produced no result: {missing[:8]}",
+                    retry_safe=False, node_id=node.node_id,
+                )
+            ordered = [results[i] for i in sorted(results)]
+            payload = P.merge_vector_payloads(ordered, node_id=node.node_id)
+            merge_meta = payload.get("metadata", {}).get("partition_merge", {})
+            meta["partition_dedup_removed"] = int(
+                merge_meta.get("dedup_removed", 0))
+            skew = P.detect_skew([
+                len(p.get("features") or []) for p in ordered
+            ])
+            if skew:
+                meta["partition_skew_ratio"] = skew["ratio"]
+            ref_id = self._store_merged_payload(node, payload, session_id)
+            if ref_id:
+                payload["ref_id"] = ref_id
+            # 业务 metadata（首 tile）与分区证据合并（评审 MINOR：此前
+            # 整包覆盖丢掉了 merge_vector_payloads 精心保留的业务元数据）
+            base_meta = payload.get("metadata") or {}
+            payload["metadata"] = {**base_meta, **meta}
+            return payload
+        # raster_grid：core 窗口写回（halo 裁除）
+        head = plan.meta.get("header") or {}
+        tiles: list[dict[str, Any]] = []
+        for part in plan.parts:
+            payload = results.get(part.index)
+            if not payload or not payload.get("raster_path"):
+                raise NodeExecutionError(
+                    f"tile {part.index} produced no raster output",
+                    retry_safe=False, node_id=node.node_id,
+                )
+            tiles.append({
+                "path": str(payload["raster_path"]),
+                "core_window": part.core_window(),
+                "window": part.window(),
+            })
+        out_dir = os.path.dirname(str(tiles[0]["path"])) or "."
+        out_path = os.path.join(
+            out_dir, f"merged-{node.semantic_fingerprint()}.tif")
+        merged = P.merge_raster_tiles(
+            tiles, out_path=out_path,
+            width=int(head.get("width", 0)), height=int(head.get("height", 0)),
+            crs=head.get("crs"), transform=head.get("transform"),
+        )
+        meta["raster_op"] = f"partitioned:{node.operation or 'raster'}"
+        return {"raster_path": merged["output_path"], "metadata": meta}
+
+    def _store_merged_payload(
+        self, node: ExecutionNode, payload: dict[str, Any],
+        session_id: Optional[str],
+    ) -> Optional[str]:
+        """合并后的 vector 载荷 → session ref（下游输入交接）。"""
+        data = payload.get("features")
+        if data is None or not session_id:
+            return None
+        try:
+            from app.services.geocompute._async_bridge import run_coro_sync
+            from app.services.session_data import session_data_manager
+
+            return run_coro_sync(session_data_manager.store(
+                session_id, data,
+                prefix=f"geocompute-part-{node.semantic_fingerprint()}",
+            ))
+        except Exception:  # noqa: BLE001 - 落存失败 → 无 ref（诚实降级）
+            return None
+
     def _execute_durable(
         self,
         run: ExecutionRun,
@@ -1104,6 +1753,22 @@ class GeoExecutionEngine:
             emit_events=emit_events,
         ):
             ev.duration_s = round(time.monotonic() - started_dj, 6)
+            return
+        # V8 Phase F：毒任务隔离快失败（per-owner × 节点语义指纹；窗口内
+        # 直接终局 —— 不再消耗派发/重试预算）。
+        node_fp = node.semantic_fingerprint()
+        if self._quarantine().is_quarantined(owner_scope, node_fp):
+            ev.status = "failed"
+            ev.error_code = "POISON_QUARANTINED"
+            ev.error_message = (
+                "node quarantined after repeated failures "
+                "(cooldown active; fails fast to protect cluster capacity)"
+            )
+            ev.retry_safe = False
+            ev.duration_s = round(time.monotonic() - started_dj, 6)
+            _emit_run_event(run.run_id, "poison_quarantined",
+                            enabled=emit_events, node_id=node.node_id,
+                            error_code="POISON_QUARANTINED")
             return
         attempts_allowed = node.retry.max_attempts
         last_err: Optional[GeoComputeError] = None
@@ -1161,11 +1826,14 @@ class GeoExecutionEngine:
                     run.run_id, "node_dispatched", enabled=emit_events,
                     node_id=node.node_id, attempt=attempt, status="running",
                 )
-                done = durable.await_node_job(
-                    ret["job_id"],
-                    session_id=session_id,
+                done = self._await_with_speculative(
+                    node, run, ret, session_id=session_id,
                     deadline_ts=node_deadline,
                     cancel_token=cancel_token if node.cancellable else None,
+                    owner_scope=owner_scope, budget=budget,
+                    input_refs=input_refs, input_keys=input_keys,
+                    resource_envelope=resource_envelope,
+                    emit_events=emit_events,
                 )
                 payload = done["payload"]
                 if not payload:
@@ -1225,6 +1893,19 @@ class GeoExecutionEngine:
         ev.error_message = _scrub_error_message(str(last_err) if last_err else "unknown failure")
         ev.retry_safe = getattr(last_err, "retry_safe", False)
         ev.duration_s = round(time.monotonic() - started_dj, 6)
+        # V8：非瞬态终局失败 → 毒任务计数（WORKER_LOSS/瞬态是 reclaim 与
+        # 重试的职责，不是毒）。
+        fclass_at_fail = classify_failure(last_err) if last_err else None
+        if last_err is not None and fclass_at_fail not in (
+            FailureClass.WORKER_LOSS, FailureClass.TRANSIENT_REMOTE,
+            FailureClass.TRANSIENT_DB,
+        ):
+            try:
+                self._quarantine().record_failure(
+                    owner_scope, node_fp, run_id=run.run_id,
+                    error_code=ev.error_code)
+            except Exception:  # noqa: BLE001 - 登记失败不倒灌
+                pass
         tracing.emit("node_failed", run_id=run.run_id, node_id=node.node_id,
                      status="failed", error_code=ev.error_code,
                      policy="durable_job",
@@ -1238,6 +1919,154 @@ class GeoExecutionEngine:
             enabled=emit_events, node_id=node.node_id,
             attempt=ev.attempts, error_code=ev.error_code,
         )
+
+    # --------------------------------- V8 quarantine / speculative
+
+    @staticmethod
+    def _quarantine():
+        try:
+            from app.services.geocompute.cluster.quarantine import (
+                get_quarantine,
+            )
+
+            return get_quarantine()
+        except Exception:  # noqa: BLE001 - 隔离缺席 = 放行
+            from app.services.geocompute.cluster.quarantine import TaskQuarantine
+
+            return TaskQuarantine(cooldown_s=0.0)
+
+    def _await_with_speculative(
+        self,
+        node: ExecutionNode,
+        run: ExecutionRun,
+        primary_ret: dict[str, Any],
+        *,
+        session_id: Optional[str],
+        deadline_ts: float,
+        cancel_token: Optional[CancellationToken],
+        owner_scope: str,
+        budget: Any = None,
+        input_refs: dict[str, str],
+        input_keys: dict[str, str],
+        resource_envelope: Optional[dict[str, Any]],
+        emit_events: bool = False,
+    ) -> dict[str, Any]:
+        """durable job 等待；straggler 触发时派发**投机副本**（Phase F）。
+
+        门控（全部满足才启用）：``WEBGIS_SPECULATIVE_AFTER_S`` > 0、节点
+        deterministic 且 reuse ALLOW（幂等 —— 副本只多花算力，不产生第
+        二份可见副作用）。语义：primary 等过阈值未终态 → 派副本（独立
+        幂等键）→ **先到先得**（primary 优先），败者请求持久取消（late
+        success 由 jobs 状态机丢弃）。事件 speculative_dispatch /
+        speculative_resolved 提供诚实可见性。
+        """
+        from app.services.geocompute import durable
+        from app.services.geocompute.errors import DeadlineExceededError
+
+        primary_id = int(primary_ret["job_id"])
+        if (
+            self._speculative_after_s <= 0
+            or not node.deterministic
+            or node.reuse is not NodeReusePolicy.ALLOW
+        ):
+            return durable.await_node_job(
+                primary_id, session_id=session_id or "",
+                deadline_ts=deadline_ts, cancel_token=cancel_token)
+
+        # 窗口一：primary 独自等待 after_s。**必须走非取消等待**——
+        # await_node_job 的 deadline 路径会先对 job 落持久取消再上抛
+        # （评审 MAJOR：那会把「慢」直接变成「被取消」，双副本竞速退化
+        # 为取消重派，违背先到先得语义）。
+        try:
+            states = durable.await_node_jobs(
+                [primary_id], session_id=session_id or "",
+                deadline_ts=min(deadline_ts,
+                                time.monotonic() + self._speculative_after_s),
+                cancel_token=cancel_token,
+                cancel_on_deadline=False,
+            )
+        except DeadlineExceededError:
+            pass  # primary 是 straggler（窗口到点，仍在跑）→ 派投机副本
+        else:
+            st = states.get(primary_id, {})
+            if st.get("status") == "completed":
+                return {"payload": st.get("payload") or {},
+                        "job_id": str(primary_id)}
+            # 窗口内终态但非 completed（failed/cancelled）→ 按原语义抛类型
+            # 化错误（走 _execute_durable 的重试/分类路径）。
+            raise NodeExecutionError(
+                st.get("error") or f"primary job {primary_id} "
+                f"ended {st.get('status')}",
+                retry_safe=st.get("status") == "stale",
+                failure_class=FailureClass.WORKER_LOSS
+                if st.get("status") == "stale" else None,
+                node_id=node.node_id,
+                details={"job_id": str(primary_id),
+                         "job_status": str(st.get("status"))},
+            )
+        # 投机副本：参数带 _speculative → 独立幂等键（语义指纹随参数
+        # 变化 —— 副本只在等待窗口内存活，绝不被复用记录/消费）。
+        spec_node = node.model_copy(update={
+            "parameters": {**node.parameters, "_speculative": True},
+        })
+        spec_ret = durable.dispatch_node(
+            spec_node,
+            session_id=session_id or "",
+            plan_fingerprint=run.plan_fingerprint,
+            deadline_s=(deadline_ts - time.monotonic())
+            if node.deadline_s is not None else None,
+            budget=budget,
+            run_id=run.run_id,
+            node_attempt=1,
+            input_refs=input_refs,
+            input_keys=input_keys,
+            resource_envelope=resource_envelope,
+            owner_scope=owner_scope,
+        )
+        spec_id = int(spec_ret["job_id"])
+        _emit_run_event(run.run_id, "speculative_dispatch",
+                        enabled=emit_events, node_id=node.node_id,
+                        status=f"after={self._speculative_after_s}s")
+        tracing.emit("speculative_dispatch", run_id=run.run_id,
+                     node_id=node.node_id, primary_job=primary_id,
+                     speculative_job=spec_id)
+        states = durable.await_node_jobs(
+            [primary_id, spec_id], session_id=session_id or "",
+            deadline_ts=deadline_ts, cancel_token=cancel_token,
+        )
+        primary_state = states.get(primary_id, {})
+        spec_state = states.get(spec_id, {})
+        if primary_state.get("status") == "completed":
+            winner_id, payload = primary_id, primary_state.get("payload") or {}
+        elif spec_state.get("status") == "completed":
+            winner_id, payload = spec_id, spec_state.get("payload") or {}
+        else:
+            # 双输（失败/取消）→ 按 primary 的错误语义类型化上抛。
+            # （NodeExecutionError 用模块级导入 —— 本地 import 会把名字
+            # 变成函数级局部变量，前面窗口分支的 raise 会 UnboundLocal。）
+            raise NodeExecutionError(
+                f"speculative pair failed: primary={primary_state.get('status')} "
+                f"speculative={spec_state.get('status')}",
+                retry_safe=False, node_id=node.node_id,
+                details={"primary": primary_state.get("error"),
+                         "speculative": spec_state.get("error")},
+            )
+        # 败者请求持久取消（late success 由 jobs 状态机丢弃）
+        loser = spec_id if winner_id == primary_id else primary_id
+        try:
+            from app.services.jobs import DurableJobStore
+
+            with durable.session_factory() as db:
+                DurableJobStore.request_cancel_sync(db, loser)
+        except Exception:  # noqa: BLE001 - 取消失败 = 资源浪费，非正确性问题
+            pass
+        _emit_run_event(run.run_id, "speculative_resolved",
+                        enabled=emit_events, node_id=node.node_id,
+                        status="winner=primary" if winner_id == primary_id
+                        else "winner=speculative")
+        tracing.emit("speculative_resolved", run_id=run.run_id,
+                     node_id=node.node_id, winner_job=winner_id)
+        return {"payload": payload, "job_id": str(winner_id)}
 
     # ------------------------------------------- V5 durable reuse helpers
 
