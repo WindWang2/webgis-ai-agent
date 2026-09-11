@@ -173,11 +173,12 @@ def test_promptable_mask_georef(service, synthetic_raster):
         owner_scope={"session_id": "s-geo"}, prompt=prompt))
     with RasterReader.open(result.outputs["prompt_mask"]["path"]) as reader:
         meta = reader.metadata()
-    # 引擎 margin=chip(64)：x0 = max(0, 70-64) = 6, y0 = max(0, 50-64) = 0。
-    # 产物 transform 原点必须平移到窗口原点（非全幅 (116,40)）。
+    # V3 §H：promptable 产物现为整幅画布（tile 策略统一），georef 必须与
+    # 源栅格网格精确对齐（transform 原点 = 全幅 (116,40)）。
     assert meta.transform is not None
-    assert abs(meta.transform[2] - 122.0) < 1e-6  # 116 + x0(6)
-    assert abs(meta.transform[5] - 40.0) < 1e-6   # 40 - y0(0)
+    assert abs(meta.transform[2] - 116.0) < 1e-6
+    assert abs(meta.transform[5] - 40.0) < 1e-6
+    assert (meta.width, meta.height) == (130, 100)
 
 
 def test_mask_prompt_zero_prior_yields_empty(service, synthetic_raster):

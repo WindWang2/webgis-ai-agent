@@ -122,6 +122,10 @@ def build_node_plan(
             wf_node_id,
             f"inline input rows {len(input_features)} exceeds adapter cap "
             f"{ADAPTER_INLINE_ROW_CAP}（先物化/裁剪上游）")
+    # 幂等键（durable 通道防重复提交；IN_PROCESS 下作为 geocompute 语义
+    # 指纹输入）—— docstring 承诺与实现一致（V6 Phase C）。
+    op_params["idempotent"] = True
+    op_params["attempt_key"] = f"{wf_node_id}"
     op_node = ExecutionNode(
         node_id=f"wf:{wf_node_id}",
         category=category,
@@ -155,20 +159,28 @@ def build_node_plan(
 
 
 class GeoComputeNodeOutcome:
-    """一次节点执行的结果（有界；载荷留在 session ref）。"""
+    """一次节点执行的结果（有界；载荷留在 session ref）。
+
+    ``failure_class`` 是 geocompute ``FailureClass`` 值（ADR-0101 D5）——
+    workflow 重试裁决的单一分类真相（retry.py 消费）。
+    ``output_ref`` 在失败/取消路径也可能携带：执行已 materialize 但完成
+    CAS 未到的「半提交产物」—— driver 据此做补偿清理（compensation）。
+    """
 
     __slots__ = ("ok", "output_ref", "error_code", "error_message",
-                 "duration_ms", "rows_emitted")
+                 "duration_ms", "rows_emitted", "failure_class")
 
     def __init__(self, *, ok: bool, output_ref: str = "",
                  error_code: str = "", error_message: str = "",
-                 duration_ms: int = 0, rows_emitted: int = 0):
+                 duration_ms: int = 0, rows_emitted: int = 0,
+                 failure_class: str = ""):
         self.ok = ok
         self.output_ref = output_ref
-        self.error_code = error_code
+        self.error_code = error_code[:64]
         self.error_message = error_message[:200]
         self.duration_ms = duration_ms
         self.rows_emitted = rows_emitted
+        self.failure_class = (failure_class or "")[:32]
 
 
 def execute_node_plan(
@@ -187,6 +199,7 @@ def execute_node_plan(
 
         engine = get_engine()
     start = _time.monotonic()
+    failure_class = ""
     try:
         run = engine.execute_plan(
             plan, session_id=session_id, caller=caller,
@@ -195,16 +208,22 @@ def execute_node_plan(
         from app.services.geocompute.errors import classify_failure
 
         failure = classify_failure(exc)
+        failure_class = getattr(failure, "value", "") or ""
         return GeoComputeNodeOutcome(
             ok=False,
             error_code=getattr(failure, "code", None) or "NODE_EXECUTION_ERROR",
             error_message=str(exc),
-            duration_ms=int((_time.monotonic() - start) * 1000))
+            duration_ms=int((_time.monotonic() - start) * 1000),
+            failure_class=failure_class)
     duration_ms = int((_time.monotonic() - start) * 1000)
     ev = run.evidence.get(plan.nodes[0].node_id)
     out_ev = run.evidence.get(f"{plan.nodes[0].node_id}:out")
+    # 失败/取消路径也可能已有物化产物（MATERIALIZE 先于 run 终态收敛）—
+    # 提取 ref 供 driver 补偿清理（绝不留孤儿 session ref 不对账）。
+    partial_ref = (out_ev.output_ref if out_ev is not None else "") or ""
     if run.status.value in ("cancelled",):
         return GeoComputeNodeOutcome(ok=False, error_code="CANCELLED",
+                                     output_ref=partial_ref,
                                      duration_ms=duration_ms)
     if run.status.value != "completed" or ev is None \
             or ev.status not in ("completed", "reused"):
@@ -214,6 +233,7 @@ def execute_node_plan(
             or run.error_message or ""
         return GeoComputeNodeOutcome(ok=False, error_code=code,
                                      error_message=msg,
+                                     output_ref=partial_ref,
                                      duration_ms=duration_ms)
     ref = (out_ev.output_ref if out_ev is not None else "") or ""
     return GeoComputeNodeOutcome(

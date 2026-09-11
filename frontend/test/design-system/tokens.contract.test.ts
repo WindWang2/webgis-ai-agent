@@ -19,7 +19,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import config from '../../tailwind.config';
 
-const CSS = readFileSync(resolve(__dirname, '../../app/globals.css'), 'utf8');
+// Normalize CRLF: Windows checkouts (core.autocrlf=true) must satisfy the
+// same literal `\n` selector lookups as CI's LF checkout.
+const CSS = readFileSync(resolve(__dirname, '../../app/globals.css'), 'utf8').replace(/\r\n/g, '\n');
 
 /** Extracts `--name: value` declarations from one CSS block. */
 function tokensIn(selector: string): Map<string, string> {

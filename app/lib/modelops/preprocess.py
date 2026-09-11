@@ -47,6 +47,7 @@ def build_plan(
     *,
     source_band_count: int,
     source_band_names: Optional[Sequence[str]] = None,
+    expected_bands: Optional[int] = None,
 ) -> PreprocessPlan:
     """从 descriptor 构造预处理计划（band 语义→索引解析在此，R1-m2）。
 
@@ -54,15 +55,21 @@ def build_plan(
     语义名（COG descriptions/STAC）⇒ 按名解析索引。R1-M3-5：归一化
     统计必须 descriptor 固定声明；逐景采样统计是隐藏参数——本层没有
     也不允许有采样路径。
+
+    ``expected_bands``：V3 §C 双时相任务按**单栅格**波段数（C）建计划
+    （descriptor.input_bands = 2C 覆盖 A|B 两景）；缺省 = input_bands。
     """
-    n = descriptor.input_bands
+    n = expected_bands if expected_bands is not None else descriptor.input_bands
+    band_order = (
+        tuple(descriptor.band_order[:n]) if expected_bands is not None
+        else tuple(getattr(descriptor, "band_order", ()))
+    )
     if source_band_count < n:
         raise PreprocessError(
             f"source has {source_band_count} bands; model needs {n} "
             "(qualifier should have rejected this)"
         )
     band_indices: Tuple[int, ...] = tuple(range(n))
-    band_order = getattr(descriptor, "band_order", ())
     if band_order and source_band_names:
         name_to_idx = {name: i for i, name in enumerate(source_band_names)}
         if all(b in name_to_idx for b in band_order):

@@ -21,6 +21,7 @@ from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes
 from app.api.routes import ws_collab
 from app.api.routes import extensions_marketplace as extensions_marketplace_routes
+from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
@@ -33,6 +34,13 @@ try:
     from app.services.chat.execution_engine import drain_background_tasks
 except ImportError:  # pragma: no cover - 旧版 execution_engine 没有该函数
     drain_background_tasks = None  # type: ignore[assignment]
+
+# Platform V4（ADR-0131 D4）：shutdown drain 的 deadline（秒）。到点记录
+# warning 并继续关停——进程自己先自觉，k8s terminationGracePeriod 只是最后防线。
+# SHUTDOWN_DRAIN_DEADLINE_S 环境变量可覆盖（review R1-m6）。
+SHUTDOWN_DRAIN_DEADLINE_S: float = float(
+    os.environ.get("SHUTDOWN_DRAIN_DEADLINE_S", 20.0) or 20.0
+)
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +242,13 @@ async def lifespan(app: FastAPI):
     # 收敛为 stale（终态但可 retry）。
     stale_sweep_task = asyncio.create_task(_periodic_stale_job_sweep())
 
+    # Workflow V6：workflow 实例恢复清扫（crash → recover 的主动面）。
+    # driver 死亡后 RUNNING 实例/节点会永久滞留 —— 周期把孤儿节点复位
+    # READY、消费遗留取消旗标、愈合 finalize 边界崩溃。多副本安全（条件
+    # 更新幂等）；GIS_WORKFLOW_RECOVERY_INTERVAL_S=0 关闭。
+    workflow_recovery_task = asyncio.create_task(
+        _periodic_workflow_recovery_sweep())
+
     # GeoCompute V6（B1 修复）：cluster coordinator 接线 —— opt-in
     # （WEBGIS_CLUSTER_COORDINATOR=1），默认关闭时提交端点之外的调度面
     # 不存在、行为与 V5 一致。run_forever 是阻塞循环（DB 轮询），放
@@ -273,7 +288,7 @@ async def lifespan(app: FastAPI):
         _ext_tick.cancel()
 
     # 关闭后台清理任务
-    for bg_task in (cleanup_task, stale_sweep_task):
+    for bg_task in (cleanup_task, stale_sweep_task, workflow_recovery_task):
         bg_task.cancel()
         try:
             await bg_task
@@ -288,9 +303,23 @@ async def lifespan(app: FastAPI):
 
     # F15-wiring：teardown 前排空 chat fire-and-forget 背景任务（标题生成、
     # ws 广播等），避免它们在 engine/http client 关闭后继续写已失效资源。
+    # Platform V4（ADR-0131 D4）：drain 落进 deadline 看门狗——到点记录并
+    # 继续关停，绝不挂死进程（k8s terminationGracePeriod 是最后防线，
+    # 进程自身先自觉）。SHUTDOWN_DRAIN_DEADLINE_S 可配（默认 20s）。
     if drain_background_tasks is not None:
+        deadline_s = SHUTDOWN_DRAIN_DEADLINE_S
         try:
-            await drain_background_tasks()
+            # wait_for 超时会 cancel 内部 drain（drain 自身的 finally 兜底
+            # 随之执行）——比 shield 更安全：超时后不留"还在写已失效资源"的
+            # 后台任务。
+            await asyncio.wait_for(drain_background_tasks(), timeout=deadline_s)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[lifespan] drain_background_tasks exceeded deadline (%.1fs); "
+                "proceeding with shutdown", deadline_s,
+            )
+        except asyncio.CancelledError:
+            raise
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[lifespan] drain_background_tasks failed: {e}")
 
@@ -416,6 +445,32 @@ async def _periodic_stale_job_sweep(interval_seconds: int = 60) -> None:
             raise
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[lifespan] stale job sweep tick failed: {e}")
+
+
+async def _periodic_workflow_recovery_sweep(interval_seconds: float | None = None) -> None:
+    """Workflow V6：workflow 实例恢复清扫（crash → recover 的主动面）。
+
+    扫描 RUNNING 且 run 租约过期 / 无主超时 / 挂着取消旗标的实例，逐个：
+    孤儿节点复位 READY（attempts 保留）、消费遗留取消、愈合 finalize 边界
+    崩溃。全部收敛走条件更新，多副本 API 同时扫安全。
+    """
+    import logging
+
+    from app.services.workflow_runtime import recovery as _wf_recovery
+
+    logger = logging.getLogger(__name__)
+    if interval_seconds is None:
+        interval_seconds = _wf_recovery.recovery_interval_s()
+    if interval_seconds <= 0:
+        return
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            await _wf_recovery.sweep_recoverable_async()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[lifespan] workflow recovery tick failed: {e}")
 
 
 
@@ -576,8 +631,19 @@ app.add_middleware(RequestCorrelationMiddleware)
 from app.lib.observability.trace_context import TraceContextMiddleware
 app.add_middleware(TraceContextMiddleware)
 
+# Platform V4（ADR-0131 D4）：in-flight 请求计数（drain 可观测性）。
+# 纯 ASGI 中间件，http + websocket 全 scope；add_middleware 反序 → 本中间件
+# 在 trace 之外层（先于 trace 绑定计数）——计数语义 = 「进入应用栈的全部
+# http/ws 请求」，shutdown 时归零即排空完成（review R1-m8）。
+from app.lib.observability.metrics import InflightGaugeMiddleware
+app.add_middleware(InflightGaugeMiddleware)
+
 app.include_router(auth_routes.router, prefix="/api/v1", tags=["认证"])
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
+# Platform V4（ADR-0131 D7）：构建身份端点（公开、极简）。
+from app.api.routes import version as version_routes  # noqa: E402
+
+app.include_router(version_routes.router, prefix="/api/v1", tags=["系统"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
@@ -601,6 +667,7 @@ app.include_router(raster_routes.router, prefix="/api/v1", tags=["栅格图层"]
 app.include_router(project_routes.router, prefix="/api/v1", tags=["项目工作区"])
 app.include_router(data_fabric.router, prefix="/api/v1", tags=["Data Fabric / 数据织网"])
 app.include_router(lakehouse_routes.router, prefix="/api/v1", tags=["Lakehouse / 空间数据湖仓"])
+app.include_router(lakehouse_datasets_routes.router, prefix="/api/v1", tags=["Lakehouse / 数据集版本（V8）"])
 app.include_router(extensions_marketplace_routes.router, prefix="/api/v1", tags=["Extension Marketplace / 扩展市场（只读）"])
 app.include_router(geocompute_routes.router, prefix="/api/v1", tags=["GeoCompute / 执行平面"])
 app.include_router(workflow_runtime_routes.router, prefix="/api/v1", tags=["Workflow Runtime V5"])

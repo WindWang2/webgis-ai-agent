@@ -33,6 +33,10 @@ _REUSE_MAX_ENTRIES_CAP = 4096
 _DEFAULT_REUSE_MAX_BYTES = 2 * 1024**3
 _REUSE_MAX_BYTES_CAP = 64 * 1024**3
 
+#: V3 §B：子进程 worker deadline（秒；超时 kill）。
+_DEFAULT_SUBPROCESS_DEADLINE_S = 120.0
+_SUBPROCESS_DEADLINE_CAP_S = 900.0
+
 
 def _env_int(name: str, default: int, cap: int, floor: int = 1) -> int:
     raw = os.environ.get(name)
@@ -62,6 +66,12 @@ def _env_allowlist(name: str) -> List[str]:
     return [item.strip().lower() for item in raw.split(",") if item.strip()]
 
 
+def _env_raw_list(name: str) -> List[str]:
+    """逗号分隔的原始条目（不 lower——路径大小写在 Windows 有意义）。"""
+    raw = os.environ.get(name, "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 @dataclass(frozen=True)
 class ModelOpsSettings:
     """进程级快照（启动时读取一次；测试可显式构造覆盖）。"""
@@ -74,6 +84,11 @@ class ModelOpsSettings:
     reuse_max_entries: int = _DEFAULT_REUSE_MAX_ENTRIES
     reuse_max_bytes: int = _DEFAULT_REUSE_MAX_BYTES
     remote_allowlist: List[str] = field(default_factory=list)
+    #: V3 §B：operator 登记的子进程 worker（slot=/abs/path，原始大小写）。
+    subprocess_workers: List[str] = field(default_factory=list)
+    subprocess_deadline_s: float = _DEFAULT_SUBPROCESS_DEADLINE_S
+    #: V3 §E：warm pool 常驻模型 id 清单（逗号分隔）。
+    warm_pool: List[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, *, base_dir: Optional[Path] = None) -> "ModelOpsSettings":
@@ -108,6 +123,13 @@ class ModelOpsSettings:
                 "MODELOPS_REUSE_MAX_BYTES", _DEFAULT_REUSE_MAX_BYTES, _REUSE_MAX_BYTES_CAP, floor=0
             ),
             remote_allowlist=_env_allowlist("MODELOPS_REMOTE_ALLOWLIST"),
+            subprocess_workers=_env_raw_list("MODELOPS_SUBPROCESS_WORKERS"),
+            subprocess_deadline_s=_env_float(
+                "MODELOPS_SUBPROCESS_DEADLINE_S",
+                _DEFAULT_SUBPROCESS_DEADLINE_S,
+                _SUBPROCESS_DEADLINE_CAP_S,
+            ),
+            warm_pool=_env_raw_list("MODELOPS_WARM_POOL"),
         )
 
 

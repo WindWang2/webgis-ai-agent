@@ -91,7 +91,9 @@ def _scan_manifests() -> Dict[str, Dict[str, Any]]:
         )
     manifests: Dict[str, Dict[str, Any]] = {}
     for item in _iter_bounded(store):
-        rel = str(item["key"])
+        # 路径分隔符归一化（FS 后端在 Windows 上产出反斜杠相对路径；
+        # S3 key 恒为 '/' —— 归一化对两者无歧义）。
+        rel = str(item["key"]).replace("\\", "/")
         if not rel.endswith(".json"):
             continue
         name = rel.rsplit("/", 1)[-1][: -len(".json")]
@@ -189,6 +191,26 @@ def _protected_references() -> Set[str]:
                 ref = str(storage_ref)
                 if len(ref) == 64:
                     protected.add(ref)
+        # 4. V8 dataset registry（ADR-0130）：数据集描述符 / 版本 commit
+        #    manifest / 版本内容 —— 版本历史是引用；仅被历史引用的
+        #    manifest/blob 绝不回收（tag/branch 指向的 version 行已覆盖
+        #    —— 指针不直接进 root，经由版本行传递，与 union 规则正交）。
+        from app.models.lakehouse_datasets import (
+            LakehouseDataset,
+            LakehouseDatasetVersion,
+        )
+
+        for (did,) in db.execute(select(LakehouseDataset.dataset_id)):
+            if did and len(str(did)) == 64:
+                protected.add(str(did))
+        for (vid,) in db.execute(select(LakehouseDatasetVersion.version_id)):
+            if vid and len(str(vid)) == 64:
+                protected.add(str(vid))
+        for (oid,) in db.execute(
+            select(LakehouseDatasetVersion.data_object_id)
+        ):
+            if oid and len(str(oid)) == 64:
+                protected.add(str(oid))
     return protected
 
 

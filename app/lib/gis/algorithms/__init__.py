@@ -12,6 +12,7 @@ from app.lib.gis.algorithm_registry import AlgorithmDescriptor
 from app.lib.gis.algorithms import aggregation as _aggregation_mod
 from app.lib.gis.algorithms import data_access as _data_access_mod
 from app.lib.gis.algorithms import decision as _decision_mod
+from app.lib.gis.algorithms import ecology as _ecology_mod
 from app.lib.gis.algorithms import density as _density_mod
 from app.lib.gis.algorithms import geometry as _geometry_mod
 from app.lib.gis.algorithms import interpolation as _interpolation_mod
@@ -20,6 +21,7 @@ from app.lib.gis.algorithms import platform as _platform_mod
 from app.lib.gis.algorithms import point_pattern as _point_pattern_mod
 from app.lib.gis.algorithms import raster as _raster_mod
 from app.lib.gis.algorithms import remote_sensing as _remote_mod
+from app.lib.gis.algorithms import sampling as _sampling_mod
 from app.lib.gis.algorithms import statistics as _statistics_mod
 from app.lib.gis.algorithms import temporal as _temporal_mod
 from app.lib.gis.algorithms import terrain as _terrain_mod
@@ -28,7 +30,7 @@ _ALL_MODULES = (
     _data_access_mod, _geometry_mod, _aggregation_mod, _density_mod,
     _statistics_mod, _point_pattern_mod, _interpolation_mod, _network_mod,
     _terrain_mod, _raster_mod, _remote_mod, _temporal_mod, _decision_mod,
-    _platform_mod,
+    _platform_mod, _sampling_mod, _ecology_mod,
 )
 
 

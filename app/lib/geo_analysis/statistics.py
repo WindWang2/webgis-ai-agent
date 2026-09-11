@@ -1870,6 +1870,172 @@ def local_geary_narrated(
     return GeoAnalysisResult(True, data_out, summary)
 
 
+def local_moran_narrated(
+    geojson: dict,
+    value_field: str,
+    weights_scheme: str = "knn",
+    k: int = 8,
+    distance_band: float = 0,
+    permutations: int = 99,
+    correction: str = "bh",
+) -> GeoAnalysisResult:
+    """单变量局部 Moran（LISA，Anselin 1995）—— 多边形/点权重的方向配对。
+
+    I_i = (n−1)·z_i·(W z)_i / Σz²（esda.Moran_Local 同式同尺度；行标准化
+    W 下 (W z)_i 即邻域 z 均值）。全局分解：Σ_i I_i · n/(S₀·(n−1)) = 全局
+    Moran's I（S₀ 为权重矩阵实际总和），由 conformance 锚定。象限语义
+    （esda q 值约定，无条件分配）：z_i>0、lag>0 → high_high（q=1）；
+    z_i<0、lag>0 → low_high（q=2）；z_i<0、lag<0 → low_low（q=3）；
+    z_i>0、lag<0 → high_low（q=4）；lag=0（孤岛）→ q=0。显著性独立于
+    象限由 p 值表达。置换推断：固定种子 42，条件随机化近似（对角无自
+    权重；z_i 的值仍可落入 i 的邻域，与 esda crand 差 O(k/n)），双侧
+    (count+1)/(perms+1)（esda 的 p_sim 是单侧 directed —— 本实现双侧更
+    保守）；多重校正 correction ∈ {bh(默认), bonferroni, holm, none}。
+    孤岛（无邻居）位置 I_i≡0、p=1 中性并显式披露计数。
+
+    与 ``stats.h3_lisa``（H3 网格专用、esda 委托）和
+    ``stats.bivariate_local_moran``（双变量）互补：本实现是任意
+    knn/queen/rook/distance_band 权重下的原生 numpy 路径。
+    """
+    res = to_utm_gdf(geojson)
+    if res is None or res[0] is None:
+        raise NoValidObservations(
+            "invalid GeoJSON or no features found",
+            correction_hint="pass a FeatureCollection with at least 3 numeric features",
+        )
+    gdf, _ = res
+    aligned = _filter_numeric_gdf(gdf, value_field)
+    if aligned is None or len(aligned[1]) == 0:
+        raise MissingRequiredField(
+            f"field '{value_field}' is missing or non-numeric",
+            correction_hint=f"provide a numeric property '{value_field}' on every feature",
+        )
+    gdf, values = aligned
+    n = len(values)
+    if n < 3:
+        raise InsufficientSamples(
+            f"local Moran needs at least 3 valid numeric features (got {n})",
+            correction_hint="add observations or use a method valid at this sample size",
+        )
+    if float(np.ptp(values)) == 0.0:
+        raise DegenerateData(
+            f"all '{value_field}' values are identical; local Moran is undefined",
+            correction_hint="check the numeric field for constant values",
+        )
+    if str(correction).lower() not in _CORRECTION_METHODS:
+        raise ValueError(
+            f"correction must be one of {_CORRECTION_METHODS} (got {correction!r})")
+    correction = str(correction).lower()
+    perms = _validate_permutations(permutations)
+
+    wm = _autocorr_weights(gdf, n, weights_scheme, k, distance_band)
+    if wm.s0 == 0:
+        raise DegenerateData(
+            "spatial weights matrix is empty (every observation is an island)",
+            correction_hint="increase the distance band / k, or check geometry connectivity",
+        )
+    w = wm.matrix.tocoo()
+    w_vals, i_idx, j_idx = w.data, w.row, w.col
+
+    # z 标准化（总体方差 ddof=0，与 esda.Moran_Local 同尺度）。
+    z = (values - values.mean()) / values.std(ddof=0)
+    # esda 同尺度：I_i = (n−1)·z_i·(W z)_i / Σz²（ddof=0 z 下 Σz²=n）。
+    scale = (n - 1.0) / n
+    lag = np.bincount(i_idx, weights=w_vals * z[j_idx], minlength=n)
+    i_obs = scale * z * lag
+    # S₀ = 权重矩阵实际总和（行标准化下 = 非孤岛行数）——只用于全局分解
+    # 披露：Σ I_i·n/(S₀·(n−1)) = 全局 Moran's I。
+    s0 = float(w.data.sum())
+    # 置换期望：z 均值中心化 → E[lag_i] = 行和·mean(z) = 0 → E[I_i] ≈ 0。
+    rng = np.random.default_rng(_PERMUTATION_SEED)
+    extreme = np.zeros(n, dtype=np.int64)
+    for _ in cancellable(range(perms)):
+        pz = rng.permutation(z)
+        # 对角恒 0（include_self=False 的四套权重方案）→ 置换位置 i 的值
+        # 不进入 lag_i，全局置换即 esda crand 的条件随机化。置换统计量与
+        # 观测同式（同 scale）。
+        lag_perm = np.bincount(i_idx, weights=w_vals * pz[j_idx], minlength=n)
+        extreme += np.abs(scale * z * lag_perm) >= np.abs(i_obs)
+    p_vals = (extreme + 1) / (perms + 1)
+    p_adj = multiple_testing_correction(p_vals, correction)
+
+    significant = p_adj < 0.05
+    z_high = z > 0
+    lag_zero = lag == 0.0
+    lag_high = lag > 0
+    # 象限无条件分配（esda q 约定 1=HH, 2=LH, 3=LL, 4=HL）；孤岛/零滞后
+    # q=0 —— 方向语义对零滞后无定义，宁给 0 不冒充象限。
+    q_values = np.select(
+        [lag_zero, z_high & lag_high, ~z_high & lag_high,
+         ~z_high & ~lag_high, z_high & ~lag_high],
+        [0, 1, 2, 3, 4],
+    ).tolist()
+    clusters = np.where(significant, np.select(
+        [lag_zero, z_high & lag_high, ~z_high & lag_high,
+         ~z_high & ~lag_high, z_high & ~lag_high],
+        ["neutral", "high_high", "low_high", "low_low", "high_low"],
+        default="neutral",
+    ), "neutral").tolist()
+    island_count = int(np.sum(np.asarray(wm.matrix.sum(axis=1)).ravel() == 0))
+
+    counts = {c: int(sum(1 for v in clusters if v == c))
+              for c in ("high_high", "low_high", "low_low", "high_low",
+                        "neutral")}
+    sig_count = int(np.sum(significant))
+    expected_fp = round(0.05 * n, 1)
+
+    gdf_wgs84 = gdf.to_crs("EPSG:4326")
+    features = _assemble_features(
+        gdf_wgs84,
+        {
+            # 统计量字段保留 10 位小数：conformance 锚（vs esda.Moran_Local
+            # 1e-8）要穿工具载荷比较，6 位舍入会把 agreement 卡在舍入误差。
+            "local_moran_i": [round(float(v), 10) for v in i_obs],
+            "lisa_q": q_values,
+            "p_value": [round(float(v), 6) for v in p_vals],
+            f"p_{correction}" if correction != "none" else "p_value_adjusted": [
+                round(float(v), 6) for v in p_adj],
+            "lisa_cluster": clusters,
+        },
+    )
+
+    data_out = {
+        "type": "FeatureCollection",
+        "features": features,
+        "lisa_counts": counts,
+        "significant_count": sig_count,
+        "expected_false_positives": expected_fp,
+        "island_count": island_count,
+        "correction": correction,
+        "n_features": n,
+        "permutations": perms,
+        # 全局分解（Σ I_i·n/(S₀·(n−1)) = 全局 Moran's I；conformance 锚消费）。
+        "global_moran_from_local": (
+            float(np.sum(i_obs) * n / (s0 * (n - 1.0))) if s0 > 0 and n > 1
+            else 0.0
+        ),
+        "weights": wm.metadata(),
+        "uncertainty": StatisticalSignificance(
+            target="local_moran",
+            statistic_name="share of significant local Moran I_i (α=0.05)",
+            statistic_value=sig_count / n,
+            p_value=None,
+            method="permutation",
+            permutations=perms,
+            multiple_testing=_CORRECTION_LABELS[correction],
+        ).to_evidence(),
+    }
+    summary = (
+        f"LISA 局部 Moran：{sig_count}/{n} 个要素校正后显著"
+        f"（{correction.upper()}；未校正 α=0.05 随机期望假阳性 ≈{expected_fp} 个）。"
+        f"high_high={counts['high_high']}、low_low={counts['low_low']}、"
+        f"high_low={counts['high_low']}、low_high={counts['low_high']}、"
+        f"neutral={counts['neutral']}。"
+        + (f"孤岛位置 {island_count} 个（无邻居，I_i=0 中性）。" if island_count else "")
+        + "方向配对语义与 h3_lisa 一致；双变量用 bivariate_local_moran。")
+    return GeoAnalysisResult(True, data_out, summary)
+
+
 def join_count_narrated(
     geojson: dict,
     binary_field: str,

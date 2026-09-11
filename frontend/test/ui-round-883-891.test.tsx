@@ -90,7 +90,9 @@ describe('U-3 (#885) 非 409 提交失败回滚必 toast', () => {
 
     useHudStore.setState({
       layers: [
-        { id: 'layer-x', name: 'X', visible: true, opacity: 1 } as never,
+        // _mapspecLayerId 必须在场：U-3 测的是「服务端 mutation 失败 → toast」
+        // 路径；无绑定的 HUD-only 行（V7）走本地通道，不发 POST 也无 toast。
+        { id: 'layer-x', name: 'X', visible: true, opacity: 1, _mapspecLayerId: 'layer-x' } as never,
       ],
     });
     // 提供 mapspec 会话游标，避免因无 session 提前返回

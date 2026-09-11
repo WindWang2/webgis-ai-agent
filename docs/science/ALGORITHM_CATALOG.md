@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：139 能力 · 213 算法 · 113 参数契约。
+统计：145 能力 · 222 算法 · 122 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -156,6 +156,17 @@ x 与 W·y 的空间共变（Wartenberg 1985；共位相关非因果）。
 - **`geometry.convex_hull`** 凸包（`native`·成熟度 已验证）
   - 假设：UTM 投影平面上的最小凸包（GEOS convex_hull），结果回 WGS84；group_by 给定时按属性分组各建一个凸包
   - 局限：<3 个非共线要素的组/集合退化为 Point/LineString —— 诚实拒绝不产出假多边形；度空间共线的点在 UTM 投影后可变成极薄三角形（投影非仿射），不保证仍失败
+
+## `cost_distance_analysis` — 累积成本面
+
+摩擦面上的最小累积通行成本（8 邻接 Dijkstra，Tobler 摩擦面语义）；可达性/廊道/设施覆盖分析的栅格输入。
+
+- **`terrain.cost_distance`** 累积成本面（最小成本距离）（`native`·成熟度 已验证，契约: `cost_distance_analysis`，出处: `dijkstra1959`, `tobler1993`）
+  - 假设：8 邻接 Dijkstra：边成本 = (cost_i+cost_j)/2 × dist(i,j)（平均摩擦 × 米距；对角 ×√2）——GRASS r.cost 同族语义；摩擦面必须严格为正（0/负成本是建模错误，DegenerateData 拒绝）；nodata/非有限像元不可通行；不可达像元输出 NaN 并披露计数
+  - 局限：各向同性摩擦：坡度方向效应（Tobler 徒步函数类）需先折算进摩擦面；O(N log N) 堆序 Dijkstra 全栅格驻留内存（50M 像元硬顶）；对角移动的 8 邻接测度在极细障碍下略低估路径长（栅格分辨率披露）
+  - 资源包络：40B/像元，像元硬上限 50000000
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-09，atol=1e-09
 
 ## `cross_k_function` — 双变量交叉 K 函数
 
@@ -391,6 +402,16 @@ Hansen 势能模型 A_i=Σ S_j^α/d_ij^β：以路网 OD 成本为距离，输�
   - 假设：每个设计列（含截距项）独立带宽的 bisquare kNN 反向拟合；联合 GWR 解热启动；逐项部分残差 + LOO-CV 带宽搜索（≤20 候选）；ENP=逐项帽矩阵对角迹之和；AICc 用 q=ENP+1 高斯近似
   - 局限：反向拟合是不动点迭代：收敛到局部最优，不保证全局最优；带宽为有界网格穷举而非连续优化；等带宽锚在精确可表示表面上逐位成立，噪声数据的等带宽解与 GWR 有平滑交互偏差；局部共线性会让局部系数失真；AICc 无唯一公认公式
 
+## `habitat_suitability` — 生境适宜度
+
+生境适宜度指数（HSI，USFWS 1981 口径）：逐要素的梯形/高斯响应曲线评分 + 加权（算术/几何）聚合，输出 0-1 适宜度与适宜度分级；保护区选址/栖息地评估输入。
+
+- **`ecology.habitat_suitability`** 生境适宜度指数（HSI）（`native`·成熟度 已验证，契约: `habitat_suitability_analysis`，出处: `usfws1981`）
+  - 假设：USFWS 1981 HSI 程序：逐变量响应曲线评分（trapezoid 四参数 / gaussian 最优幅适），0-1 归一；聚合 arithmetic=加权平均；geometric=限制因子语义（任一变量 0 → 整体 0）；权重归一化后进 meta；缺失/非有限属性按 0 分计并披露
+  - 局限：响应曲线参数是建模输入（非本算法估计）——须有生态学依据；变量间相关性不做校正（共线性会重复计权）；0-1 分级切点（<0.25 不适宜 … ≥0.75 最优）是缺省披露口径，可按物种生物学重定义
+  - 资源包络：48B/要素
+  - 取消：none
+
 ## `hotspot` — 热点显著性分析
 
 Getis-Ord Gi* 等空间聚类显著性检验。
@@ -463,6 +484,16 @@ KDE 连续密度面/等值线（定量密度表达）。
   - 局限：高斯核假设；大规模点集走聚合通道（fallback 已声明）；adaptive 为一步先导近似（非迭代变带宽）；先导带宽与λ 范围随结果披露；自适应评估与固定路径同阶 O(n·grid)，点数上限同 #384
   - 回退：`spatial.kde.contours`→equivalent
 
+## `landscape_metrics` — 景观格局指标
+
+分类栅格景观格局（FRAGSTATS 口径 4 邻接）：PLAND/斑块数/斑块密度/最大斑块指数/边缘密度与 SHDI/SIDI 多样性；景观破碎化与连通性诊断。
+
+- **`ecology.landscape_metrics`** 景观格局指标（FRAGSTATS 族）（`native`·成熟度 已验证，契约: `landscape_metrics_analysis`，出处: `mcgarigal_marks1995`）
+  - 假设：FRAGSTATS 缺省 4 邻接连通（8 邻接会高估连通性）；类级：PLAND / NP / PD（每 100ha）/ LPI / ED（米每公顷）；景观级：ED / SHDI / SIDI / PR；nodata 像元不计面积；类 vs nodata/边界的对比边计入边缘
+  - 局限：连通性对栅格分辨率敏感（跨分辨率比较需同化像元尺寸）；逐类边缘密度按类面积归一（与景观级 ED 口径不同）
+  - 资源包络：24B/像元，像元硬上限 50000000
+  - 取消：chunk_boundary
+
 ## `layer_display_control` — 图层显示控制
 
 会话图层的显示生命周期：显隐/置顶排序/别名/清单盘点、基础图切换、外观样式提示、按属性条件动态过滤与收尾显示收口。
@@ -470,6 +501,17 @@ KDE 连续密度面/等值线（定量密度表达）。
 - **`platform.layer_display_control`** 图层显示控制（工具面绑定契约）（`native`·成熟度 —）
   - 假设：绑定契约：每个候选工具已在 ToolRegistry 注册，且其描述符显式声明本能力（conformance 节点逐能力钉住，漂移即红）
   - 局限：能力语义 planned：算法级参数契约/科学元数据尚未建立；planned 能力不进入分析派发（resolver 对非 native 能力 unavailable）
+
+## `least_cost_path_analysis` — 最小成本路径
+
+在累积成本面上从目标回溯排水到源的最小成本路径（像元折线），输出 LineString 要素与路径成本。
+
+- **`terrain.least_cost_path`** 最小成本路径（累积面排水）（`native`·成熟度 已验证，契约: `least_cost_path_analysis`，出处: `dijkstra1959`）
+  - 假设：从目标沿累积面严格下降回溯到源（并列行主序裁决）——与 cost_distance 的 Dijkstra 面配对即全局最优路径；输入必须是 cost_distance 产物（任意面上停滞 → 类型化报错）
+  - 局限：路径像元级离散：转弯以 8 邻接折线表达（无样条圆滑）；非 Dijkstra 面（如平滑后的表面）可能局部停滞/绕远
+  - 资源包络：8B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-09，atol=1e-09
 
 ## `local_data_query` — 本地数据目录与查询
 
@@ -502,6 +544,12 @@ KDE 连续密度面/等值线（定量密度表达）。
 - **`stats.h3_lisa`** H3 LISA 局部自相关（`native`·成熟度 已验证，出处: `anselin1995`）
   - 假设：esda.Moran_Local（Queen 邻接、行标准化、seed=42）；孤岛格网给中性结果（p=1、q=0），保持行对齐（#927）；输入为带数值字段的 H3 网格（如 h3_binning 产物）
   - 局限：逐格 p_sim<0.05 在随机数据下期望产出 ~0.05n 假显著（结果内披露期望数）；H3 分辨率改变邻接结构，跨分辨率结果不可比
+- **`stats.local_moran`** 局部 Moran / LISA（单变量）（`native`·成熟度 已验证，契约: `local_moran_analysis`，出处: `anselin1995`, `moran1950`, `benjamini_hochberg1995`）
+  - 假设：I_i=(n−1)·z_i·(Wz)_i/Σz²，z 总体方差标准化（esda.Moran_Local 同式同尺度；行标准化 W）；条件随机化置换固定种子 42、双侧 (count+1)/(perms+1)；对角无自权重 → 全局置换是 esda crand 条件置换的 Monte-Carlo 近似（差 O(k/n)）；象限无条件分配（esda q：1=HH,2=LH,3=LL,4=HL；零滞后 q=0），显著性独立由 p 表达
+  - 局限：本实现置换 p 为双侧；esda 默认 directed 是其半值（其文档明示 uniformly too small）——conformance 只对统计量 1e-8 逐位对账，p 与 esda two-sided 以相关性 ≥0.9 对账；knn 权重是邻接的近似；queen/rook 需要面要素；二值/重并列字段下置换分布退化，p 分辨率受格子限制
+  - 资源包络：256B/要素
+  - 取消：chunk_boundary
+  - 数值容差：rtol=1e-08，atol=1e-08
 
 ## `location_allocation` — 区位配置
 
@@ -1024,6 +1072,26 @@ OLS+空间诊断 / SLX / SAR-ML / SEM-ML（LM 决策树支撑）。
   - 假设：y~[X, WX]；WX 为行标准化权重的空间滞后解释变量；系数表含 WX 滞后项（邻居溢出的直接估计）；孤岛观测的 WX 行为 0（披露于 weights 元数据）
   - 局限：直接/间接效应分解未做（需 SAR/SDM 类模型的偏导推导）；参数量翻倍，n<2p+2 时拒绝
 
+## `spatial_sampling` — 空间抽样
+
+在面要素抽样框上生成统计样本点：简单随机（逐面 SRS）、系统网格（随机起点偏移）与分层设计（equal/proportional 面积分配）；种子可控、可复现。野外核查点、精度评估、地统计布点输入。
+
+- **`sampling.random_points`** 简单随机空间抽样（`native`·成熟度 已验证，契约: `random_sampling_analysis`，出处: `cochran1977`）
+  - 假设：逐多边形简单随机设计（SRS）：每面独立 n 个均匀随机点；均匀性在投影后度量空间定义（地理输入自动投影局部 UTM）；拒绝采样上限 200×需求（凹型框覆盖率过低 → 类型化报错）
+  - 局限：零面积多边形跳过（计数披露）；不约束点间最小距离（需要最小间距时用 systematic_grid）
+  - 资源包络：64B/要素，要素硬上限 1000000
+  - 取消：chunk_boundary
+- **`sampling.stratified_points`** 分层空间抽样（`native`·成熟度 已验证，契约: `stratified_sampling_analysis`，出处: `cochran1977`）
+  - 假设：按 stratum_field 分层；equal=每层 n，proportional=按层面积权重分配（floor + 大盘尼余数，总量恰为层样本数）；层内按多边形面积再分摊（比例分配），面级均匀随机；分配表进 meta（逐层样本数披露）
+  - 局限：层名取 str 的字符串化（数值层名按字典序排列）；比例分配下面积占比过小的多边形可能 0 样本（按需提高层预算）
+  - 资源包络：64B/要素，要素硬上限 1000000
+  - 取消：chunk_boundary
+- **`sampling.systematic_grid`** 系统网格空间抽样（`native`·成熟度 已验证，契约: `systematic_sampling_analysis`，出处: `cochran1977`）
+  - 假设：规则格网（spacing 米）+ 随机起点偏移（seed 决定，避免与坐标轴对齐的周期性偏差；Cochran 1977 系统抽样惯例）；仅保留落入抽样框的格点（prepared 覆盖判定）；格点数上限 4,000,000（间距过小时先拒绝后分配）
+  - 局限：系统抽样无设计无偏方差（需近似方差时用 random/stratified）；周期性地物（如规整田块）与固定间距可能混叠
+  - 资源包络：64B/要素，要素硬上限 4000000
+  - 取消：none
+
 ## `spatial_weights_diagnostics` — 空间权重诊断
 
 权重结构体检：稀疏度/对称性/邻居分布/孤岛/连通分量。
@@ -1140,6 +1208,17 @@ CUSUM 单均值漂移定位 + 固定种子 bootstrap 显著性（多变点不在
 - **`temporal.profile`** 时间画像（`native`·成熟度 已验证）
   - 假设：时间字段解析 NaT 剔除并披露（与 ST-DBSCAN 同约定）；画像/聚合为描述性统计，不做趋势推断
   - 局限：无时区归一（时间戳语义由输入披露决定）；空时间维度 → 类型化错误（不伪造空统计）
+
+## `temporal_smoothing` — 时序平滑与缺口填补
+
+时间序列预处理：Savitzky-Golay / 滑动均值平滑与线性/最近邻缺口填补（填补位置显式标记）；NDVI/EVI 时序、SAR 时序等连续观测序列的标准化预处理。
+
+- **`temporal.smooth_gapfill`** 时序平滑与缺口填补（`native`·成熟度 已验证，契约: `ts_smooth_gapfill_analysis`，出处: `savitzky_golay1964`, `cochran1977`）
+  - 假设：savgol（Savitzky-Golay 卷积平滑）/ moving_average（中心滑均）/none（只填补）三种方法；偶数窗口自动 +1 取奇并披露；缺口填补是显式步骤（linear 时间插值 / nearest 最近有效值 / none 保持 NaN），填补位置由 filled_mask 标记；缺口占比 ≥90% 或序列 <3 观测 → 类型化拒绝（缺口主导的平滑是伪像）
+  - 局限：与 temporal.phenology 内嵌的 SG 平滑互补：本算法是独立预处理（输出平滑序列），物候是特征提取（输出 SOS/EOS 指标）；滑动平均对趋势起点/终点有边缘偏差（edge 填充口径）；线性插值填补长缺口会抹平真实突变（连续缺口 >3 建议人工复核）
+  - 资源包络：24B/像元
+  - 取消：none
+  - 数值容差：rtol=1e-12，atol=1e-12
 
 ## `temporal_trend` — 时序趋势
 

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react'
 import {
   ZoomIn,
   ZoomOut,
@@ -16,6 +16,11 @@ import {
   ChevronDown,
   RotateCcw,
   SquareDashedMousePointer,
+  MapPin,
+  Spline,
+  Hexagon,
+  MousePointerSquareDashed,
+  Magnet,
 } from 'lucide-react'
 import type { MapRef } from 'react-map-gl/maplibre'
 import { useHudStore, type HudState } from '@/lib/store/useHudStore'
@@ -25,6 +30,13 @@ import {
   formatDistance,
   formatArea,
 } from '@/lib/map-kit/navigation'
+import {
+  getSketchState,
+  getSketchSnapshot,
+  subscribeSketch,
+  SKETCH_LAYER_ID,
+} from '@/lib/edit/sketch-store'
+import type { MapToolId } from '@/lib/store/slices/toolSlice'
 
 export type MeasureMode = 'none' | 'distance' | 'area'
 
@@ -481,7 +493,102 @@ export function MapToolbarHUD({
             </button>
           </div>
         )}
+
+        {/* V7：草图编辑工具组 —— 激活态/吸附读 toolSlice（全局工具唯一真相），
+            可用性按状态推导（edit/delete 需要草图要素存在）。 */}
+        {!collapsed && <SketchToolGroup />}
       </div>
+    </div>
+  )
+}
+
+/** 草图工具组（V7 Phase E）：draw point/line/polygon + vertex edit + delete + snapping。 */
+function SketchToolGroup() {
+  const activeTool = useHudStore((s: HudState) => s.activeMapTool)
+  const snappingEnabled = useHudStore((s: HudState) => s.snappingEnabled)
+  const sketchVersion = useSyncExternalStore(subscribeSketch, getSketchSnapshot)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- version drives the re-read
+  const sketchFeatureCount = useMemo(() => getSketchState().features.length, [sketchVersion])
+  const sketchLayerExists = useHudStore(
+    (s: HudState) => s.layers?.some((l) => l.id === SKETCH_LAYER_ID) ?? false,
+  )
+  const canEdit = sketchFeatureCount > 0
+
+  const toggleTool = useCallback((tool: MapToolId) => {
+    const store = useHudStore.getState()
+    store.setActiveMapTool(store.activeMapTool === tool ? null : tool)
+  }, [])
+
+  const tools: Array<{
+    id: MapToolId
+    label: string
+    title: string
+    icon: React.ComponentType<{ className?: string }>
+    disabled?: boolean
+    disabledReason?: string
+  }> = [
+    { id: 'draw_point', label: '绘制点', title: '绘制点要素（点击地图放置）', icon: MapPin },
+    { id: 'draw_line', label: '绘制线', title: '绘制线要素（点击加点，双击/Enter 完成，Escape 取消）', icon: Spline },
+    { id: 'draw_polygon', label: '绘制面', title: '绘制面要素（点击加点，双击/Enter 闭合，Escape 取消）', icon: Hexagon },
+    {
+      id: 'edit_vertices',
+      label: '编辑顶点',
+      title: canEdit ? '编辑顶点（点击选中要素后拖动顶点）' : '暂无可编辑草图要素 —— 先绘制点/线/面',
+      icon: MousePointerSquareDashed,
+      disabled: !canEdit,
+      disabledReason: '暂无可编辑草图要素',
+    },
+    {
+      id: 'delete_feature',
+      label: '删除要素',
+      title: canEdit ? '删除要素（点击草图要素移除）' : '暂无可删除草图要素',
+      icon: Trash2,
+      disabled: !canEdit,
+      disabledReason: '暂无可删除草图要素',
+    },
+  ]
+
+  return (
+    <div className="mt-0.5 flex flex-col items-center gap-1 border-t border-edge-subtle pt-1">
+      {tools.map(({ id, label, title, icon: Icon, disabled, disabledReason }) => {
+        const active = activeTool === id
+        return (
+          <button
+            key={id}
+            type="button"
+            aria-label={`${label}（草图）`}
+            aria-pressed={active}
+            title={disabled ? disabledReason : title}
+            disabled={disabled}
+            onClick={() => toggleTool(id)}
+            className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${
+              active
+                ? 'bg-status-accent-soft text-status-accent font-bold ring-1 ring-status-accent'
+                : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
+            } disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent`}
+          >
+            <Icon className="h-4 w-4" />
+          </button>
+        )
+      })}
+      <button
+        type="button"
+        aria-label={snappingEnabled ? '关闭顶点吸附' : '开启顶点吸附'}
+        aria-pressed={snappingEnabled}
+        title={snappingEnabled ? '顶点吸附：开（绘制/编辑时吸附既有顶点）' : '顶点吸附：关'}
+        onClick={() => useHudStore.getState().toggleSnapping()}
+        className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${
+          snappingEnabled
+            ? 'bg-status-accent-soft text-status-accent'
+            : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
+        }`}
+      >
+        <Magnet className="h-4 w-4" />
+      </button>
+      {/* 草图行存在性只用于可用性提示语义；计数变化经 sketchVersion 触发。 */}
+      <span className="sr-only" aria-live="polite">
+        {sketchLayerExists ? `草图要素 ${sketchFeatureCount} 个` : '尚未创建草图'}
+      </span>
     </div>
   )
 }

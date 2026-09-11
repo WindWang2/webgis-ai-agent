@@ -95,6 +95,40 @@ MAX_INSTANCE_NODES = 64
 BINDING_ACTIONS = ("pass", "blocked", "degraded")
 
 
+#: 事件日志词表（Workflow V6 append-only journal；kind 列的唯一真相）。
+class EventKind:
+    STATE_TRANSITION = "state_transition"
+    INSTANCE_CANCEL_REQUESTED = "instance_cancel_requested"
+    NODE_CANCEL_REQUESTED = "node_cancel_requested"
+    RECOVERY_ORPHAN_RESET = "recovery_orphan_reset"
+    RECOVERY_FINALIZE = "recovery_finalize"
+    RETRY_SCHEDULED = "retry_scheduled"
+    RETRY_EXHAUSTED = "retry_exhausted"
+    COMPENSATION = "compensation"
+    COMPENSATION_FAILED = "compensation_failed"
+    CLONE = "clone"
+    NODES_REQUEUED = "nodes_requeued"
+
+
+#: journal 实际会发出的词表（review 修正：裁掉从未埋点的虚词 ——
+#: LEASE_*/NODE_HEARTBEAT/ATTEMPT_STARTED/DUPLICATE_SUPPRESSED/DISPATCH/
+#: WORKER_LOSS；这些事实分别在节点行租约列 / attempts_log / durable 通道
+#: 有自己的单一真相，不在 journal 重复记录）。
+EVENT_KINDS: Tuple[str, ...] = (
+    EventKind.STATE_TRANSITION, EventKind.INSTANCE_CANCEL_REQUESTED,
+    EventKind.NODE_CANCEL_REQUESTED, EventKind.RECOVERY_ORPHAN_RESET,
+    EventKind.RECOVERY_FINALIZE, EventKind.RETRY_SCHEDULED,
+    EventKind.RETRY_EXHAUSTED, EventKind.COMPENSATION,
+    EventKind.COMPENSATION_FAILED, EventKind.CLONE,
+    EventKind.NODES_REQUEUED,
+)
+
+
+def event_kind_for_transition(to_state: str) -> str:
+    """状态转移 → 事件 kind（journal 词表与状态机词表解耦的映射点）。"""
+    return EventKind.STATE_TRANSITION
+
+
 def is_terminal(node_state: str) -> bool:
     """「已决」状态（执行序不再推进；SUCCEEDED 仍可被 STALE 失效，
     FAILED/SKIPPED 仍可重新资格化 —— 终态语义见 LEGAL_TRANSITIONS）。"""

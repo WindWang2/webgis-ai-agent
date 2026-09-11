@@ -41,12 +41,16 @@ def build_enumeration_context(req: Any) -> EnumerationContext:
         )
         # V7：声明了 source_type → 注入静态默认能力矩阵（纯函数、无 IO；
         # 聚合下推证明与下推边界披露消费）。缺省 = 能力未知（保守不下推）。
+        # V8：stats_hints.caps（探测后覆盖，probed 才注入）优先于静态矩阵。
         caps = None
-        st = getattr(s, "source_type", None)
-        if st:
-            from app.services.data_fabric.query.capabilities import get_capabilities
+        if hint is not None and getattr(hint, "caps", None) is not None:
+            caps = hint.caps
+        if caps is None:
+            st = getattr(s, "source_type", None)
+            if st:
+                from app.services.data_fabric.query.capabilities import get_capabilities
 
-            caps = get_capabilities(st)
+                caps = get_capabilities(st)
         sources.append(
             SourceFacts(
                 source_id=s.source_id,
@@ -85,6 +89,7 @@ def build_enumeration_context(req: Any) -> EnumerationContext:
         limit=req.limit,
         bbox=list(req.bbox) if getattr(req, "bbox", None) else None,
         order_strategy=getattr(req, "order_strategy", "cost"),
+        estimate_basis=getattr(req, "estimate_basis", None),
     )
 
 

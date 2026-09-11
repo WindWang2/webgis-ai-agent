@@ -21,7 +21,7 @@ import {
   Eye, EyeOff, GripVertical, Layers as LayersIcon, LocateFixed, Palette,
   Lock, LockOpen, Crosshair, Copy, ClipboardPaste, RotateCw, FolderPlus,
   ChevronDown, ChevronRight, CheckSquare, Square, Trash2, MoreHorizontal, Group,
-  Columns2, Workflow, Undo2, Redo2,
+  Columns2, Workflow, Undo2, Redo2, Table2,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { Layer, LayerStyle } from '@/lib/types/layer';
@@ -696,6 +696,18 @@ function LayerRow({
           />
           <span className="text-micro text-ink-muted">粘贴样式</span>
           <ComparePicker layer={layer} />
+          {/* V7 Phase D：属性表停靠底部区（静态 dock 面板；map↔table 选择联动）。 */}
+          <IconButton
+            size="sm"
+            label={`查看属性表 ${layer.name}（停靠底部区）`}
+            icon={Table2}
+            onClick={() => {
+              const store = useHudStore.getState();
+              store.setAttributeTableLayerId(layer.id);
+              store.dockPanel('attribute-table', 'bottom');
+            }}
+          />
+          <span className="text-micro text-ink-muted">属性表</span>
           {layer._refId && (
             <>
               <IconButton

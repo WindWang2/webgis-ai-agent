@@ -795,6 +795,10 @@ class ChainSourceStats:
     # ── V7（ADR-0119 W9）：measured 级唯一键声明（启用安全聚合下推证明；
     # 调用方对声明真实性负责 —— 估计 NDV 不作数）。──
     unique_keys: Optional[List[str]] = None
+    # ── V8（ADR-0130 additive）：探测后能力覆盖（AdapterCapabilitiesV2）。
+    # 由 FabricRuntime 在规划前填充（IO 收敛在 runtime，planner 保持纯函数）；
+    # None = 静态默认矩阵。──
+    caps: Optional[Any] = None
 
     def ndv(self, column: Optional[str]) -> Optional[int]:
         if column is None or not self.column_ndv:
@@ -857,6 +861,11 @@ class FederatedChainRequest:
     session_owner: Optional[str] = None
     #: 结果缓存开关（默认开：命中必披露 + fingerprint 失效 + TTL 有界）。
     use_cache: bool = True
+    # ── V8（ADR-0130 additive）：治理面富集披露（source_id → basis dict）。
+    # FabricRuntime 填充：rows_basis（request_hint | source_facts:<basis>
+    # [×feedback:<factor>(samples=N)]）、caps_basis（probed|default）、
+    # governed。EXPLAIN 如实渲染；None = 无富集（行为与 V7 逐位一致）。
+    estimate_basis: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 def _chain_budget(req: FederatedChainRequest) -> ExecutionBudget:
@@ -1761,6 +1770,119 @@ def _make_bushy_replan_fn(req, original_plan):
     return _replan
 
 
+# ── V8（ADR-0130）：治理面 → 规划输入的自适应闭环 ────────────────────────────
+
+
+def enrich_request_from_runtime(
+    req: "FederatedChainRequest",
+    resolved_by_sid: Dict[str, Any],
+) -> None:
+    """把 FabricRuntime 富集结果（探测/事实/反馈）拉平为规划纯数据提示。
+
+    职责（Phase C+D 闭环收口 —— 此前全部为孤儿库）：
+    - ``ChainSource.source_type`` ← registry record（激活静态能力注入：
+      下推边界披露 + 聚合下推证明资格 —— 此前工具路径恒为 None=保守不下推）；
+    - ``ChainSourceStats.caps`` ← 探测覆盖（probed 才注入；default/stale
+      不注入 —— 绝不把未验证能力当真）；
+    - ``estimated_rows`` 缺省时 ← SourceFacts 行数事实（exact/observed/estimate
+      basis 如实标注）× 反馈衰减修正因子（仅 ok 观测、半衰加权、样本≥3）；
+      显式提示永不覆盖（调用方明确性优先）；
+    - ``ChainSourceStats.column_ndv`` ← 事实 NDV（测量来源；已有提示不覆盖）；
+    - ``req.estimate_basis`` 披露段（EXPLAIN 渲染；无富集 = None = V7 行为）。
+
+    全程 fail-open：catalog/runtime/事实任一缺失 → 跳过该源（宁缺毋假）。
+    """
+    from app.services.data_fabric.fabric.runtime import get_fabric_runtime
+    from app.services.data_fabric.fingerprint import dataset_fingerprint_service
+    from app.services.data_fabric.query.capabilities import get_capabilities
+    from app.services.data_fabric.spatial_catalog import spatial_catalog_service
+
+    import copy as _copy
+
+    runtime = get_fabric_runtime()
+    owner = getattr(req, "session_owner", None)
+    basis: Dict[str, Dict[str, Any]] = {}
+    # review P2-10：浅拷贝 dict 仍共享 ChainSourceStats 实例 —— 注入 caps/
+    # ndv 会改写调用方的共享对象。逐值拷贝（dataclass）后注入只影响本次
+    # 请求。
+    hints: Dict[str, Any] = {
+        k: _copy.copy(v) for k, v in (req.stats_hints or {}).items()
+    }
+
+    for src in req.sources:
+        rs = resolved_by_sid.get(src.source_id)
+        if rs is None:
+            continue
+        entry: Dict[str, Any] = {
+            "governed": bool(getattr(rs, "governed", False)),
+        }
+        # 1) source_type（静态能力激活）。
+        if not src.source_type and getattr(rs, "source_type", None):
+            src.source_type = rs.source_type
+        entry["source_type"] = src.source_type
+        # 2) 探测能力覆盖（probed 才可信）。
+        if getattr(rs, "caps_basis", None) == "probed" and rs.caps_overrides:
+            try:
+                base_caps = get_capabilities(str(rs.source_type or ""), rs.caps_overrides)
+            except Exception:  # noqa: BLE001 - 未知源类型/非法覆盖 → 静态兜底
+                base_caps = None
+            if base_caps is not None:
+                hint = hints.get(src.source_id)
+                if hint is None:
+                    hint = ChainSourceStats()
+                    hints[src.source_id] = hint
+                if getattr(hint, "caps", None) is None:
+                    hint.caps = base_caps
+            entry["caps_basis"] = "probed"
+        elif getattr(rs, "caps_basis", None):
+            entry["caps_basis"] = rs.caps_basis
+        # 3) 事实 + 反馈 → 行数估计（仅缺省时）。
+        descriptor = None
+        fingerprint = None
+        try:
+            descriptor = spatial_catalog_service.get_dataset(src.dataset_id, owner=owner)
+            if descriptor is not None:
+                fingerprint = dataset_fingerprint_service.calculate_descriptor_fingerprint(
+                    descriptor
+                )
+        except Exception:  # noqa: BLE001 - catalog 缺失 → 无事实富集
+            descriptor = None
+        runtime.enrich(rs, fingerprint=fingerprint, descriptor=descriptor)
+        factor = getattr(rs, "feedback_factor", None)
+        if src.estimated_rows is None and getattr(rs, "facts_row_count", None):
+            base_rows = int(rs.facts_row_count)
+            rows_basis = f"source_facts:{rs.facts_row_count_basis}"
+            if factor:
+                base_rows = int(round(base_rows * float(factor)))
+                rows_basis += (
+                    f"×feedback:{factor}(samples={rs.feedback_samples})"
+                )
+            src.estimated_rows = max(1, base_rows)
+            entry["rows_basis"] = rows_basis
+        elif src.estimated_rows is not None:
+            entry["rows_basis"] = "request_hint"
+            if factor and factor != 1.0:
+                # 显式提示不覆盖；偏差证据如实披露供调用方自查。
+                entry["hint_feedback_drift"] = {
+                    "factor": factor, "samples": rs.feedback_samples,
+                }
+        # 4) 事实 NDV（测量来源；不覆盖显式提示）。
+        ndv = getattr(rs, "facts_ndv", None)
+        if ndv:
+            hint = hints.get(src.source_id)
+            if hint is None:
+                hint = ChainSourceStats()
+                hints[src.source_id] = hint
+            if not getattr(hint, "column_ndv", None):
+                hint.column_ndv = dict(ndv)
+        basis[src.source_id] = entry
+
+    if hints:
+        req.stats_hints = hints
+    if basis:
+        req.estimate_basis = basis
+
+
 def execute_chain_v6(
     executor: "FederatedExecutor", req: FederatedChainRequest
 ) -> Dict[str, Any]:
@@ -1827,143 +1949,212 @@ def execute_chain_v6(
                 "cache_key": cache_key[:16],
             }
             return cached
-    counters = _v7_new_counters(cache_ctx)
-    plan = None  # R2-Mi-1：plan 期 typed 错误路径的反馈回调需要安全判空
-    try:
-        from app.services.data_fabric.query.federated.executor import (
-            PhysicalExecutor,
-            extract_hop_estimates,
-        )
-        from app.services.data_fabric.query.federated.explain import explain_v6_lines
-        from app.services.data_fabric.query.federated.planner import (
-            plan_federation_v6,
-        )
+    # ── V8（ADR-0130）：进程级引擎回退熔断（R2-Mi-4 收口）──
+    # 位于缓存命中检查之后：熔断守卫的是 **V6 执行**，不剥夺有效缓存结果
+    # 的服务（review P2-6）。连续 V6 崩溃后直接走 V5（跳过 V6 规划+执行
+    # 栈，双执行成本归零）；half-open 单 trial 探测 V6 恢复。trial 经
+    # finally 释放（review P1-1）：请求从负缓存/typed 错误等不记账路径
+    # 退出时，half-open 名额不泄漏（否则 V6 被禁用到进程重启）。
+    from app.services.data_fabric.fabric.engine_breaker import get_engine_breaker
 
-        plan = plan_federation_v6(req)
-        # M2（评审 R1）：derive_projection 接线 —— 与 V5 derive_chain_fields
-        # 单一真相；仅当 V6 选择的序 == given 序（派生的"下一跳左键"集合
-        # 依赖跳序，重排序下宁可多取全列，绝不缺字段静默失真）。
-        tree = plan.tree
-        given_ids = [s.source_id for s in req.sources]
-        if getattr(req, "derive_projection", True) and plan.order == given_ids:
-            derived = derive_chain_fields(req, list(req.sources), list(req.joins))
-            if derived:
-                # C-1（评审 R2）：在**实际计划树**上写投影（保留
-                # LogicalReproject 等全部节点）—— 重建 given 序链会静默丢弃
-                # 变换节点，混 CRS 链默认配置下静默错答。
-                tree = _apply_scan_fields(plan.tree, derived)
-                plan.warnings.append(
-                    "minimal projection derived per source (V6, given-order): "
-                    + json.dumps(derived, ensure_ascii=False, sort_keys=True)
-                )
-        px = PhysicalExecutor(
-            adapter_factory=executor._adapter_factory,
-            budget=req.budget,
-            limit=req.limit,
-            bbox=req.bbox,
-            adaptive=True,
-            order_strategy=getattr(req, "order_strategy", "cost"),
-            replan_fn=_make_bushy_replan_fn(req, plan),
-        )
-        exec_result = px.execute(
-            tree,
-            hop_estimates=extract_hop_estimates(plan),
-            edge_specs={
-                (j.left_source_id, j.right_source_id): j
-                for j in req.joins
-                if j.left_source_id and j.right_source_id
-            },
-        )
-    except DataFabricError as e:
-        # V7 R1-M8：typed 错误契约不变（原样上抛），但错误面反馈与负缓存
-        # 在上抛前落账（均 fail-open）。
-        if cache_ctx is not None:
-            try:
-                from app.services.data_fabric.fabric.result_cache import (
-                    get_result_cache,
-                )
-
-                get_result_cache().put_negative(cache_ctx[1], e.code)
-            except Exception:  # noqa: BLE001
-                pass
-        if plan is not None:
-            try:
-                _v7_record_feedback(
-                    req, plan, {"per_source_rows": {}}, "error",
-                    scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
-                    error_code=e.code,
-                )
-            except Exception:  # noqa: BLE001
-                pass
-        raise  # typed 错误契约与 V5 一致（预算/构造错误绝不静默回退）
-    except Exception as e:  # noqa: BLE001 - V6 非 typed 异常 → 诚实回退 V5
-        logger.warning("[Federation] V6 engine failed (%s); falling back to V5", e)
+    engine_breaker = get_engine_breaker()
+    if not engine_breaker.allow_v6():
         result = execute_federated_chain(executor, req)
         result["engine"] = "v5_fallback"
-        reason = str(e)[:200]
         result["warnings"] = list(result.get("warnings") or []) + [
-            f"engine=v6 failed ({reason}); executed with V5 engine"
+            "engine=v6 skipped: fallback breaker open (recent V6 crashes); "
+            "executed with V5 engine"
         ]
+        result["engine_breaker"] = engine_breaker.disclosure()
         return result
+    try:
+        return _execute_v6_with_governance(
+            executor, req, engine_breaker, cache_ctx,
+            cache if cache_enabled else None,
+        )
+    finally:
+        engine_breaker.release_trial()
 
-    rows = exec_result["rows"]
-    per_source = exec_result.get("per_source_rows") or {}
-    rows_fetched = sum(per_source.values())
-    warnings = list(plan.warnings)
-    if any(s.estimated_rows is not None for s in req.sources):
-        warnings.append("join order chosen by cost-based enumeration (V6 DP)")
-    # ── V7：计数器补齐 + 反馈记录（fail-open）──
-    from app.services.data_fabric.fabric.counters import collect_from_exec_result
 
-    collect_from_exec_result(counters, exec_result)
-    counters.cache_hit = False
-    fb_store = _v7_record_feedback(
-        req, plan, exec_result, "ok",
-        scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
-    )
-    counters.feedback_durable_failures = fb_store.failure_count
-    result_dict = {
-        "status": "success",
-        "engine": "v6",
-        "strategy": "v6_cost_based_tree",
-        "order": plan.order,
-        "rows": rows,
-        "row_count": exec_result["row_count"],
-        "joined_row_count": exec_result.get("joined_row_count"),
-        "rows_fetched": rows_fetched,
-        "per_source_rows": per_source,
-        "plans": _v6_plan_dicts(plan),
-        "pushdown_ratio": (
-            round(exec_result["row_count"] / rows_fetched, 6) if rows_fetched else None
-        ),
-        "execution_duration_s": exec_result.get("execution_duration_s"),
-        "warnings": warnings,
-        "explain_v6": explain_v6_lines(
-            plan, _v6_explain_ctx(req), exec_result=exec_result
-        ),
-        "semi_join_reduction": exec_result.get("hop_stats"),
-        "bloom_reduction": exec_result.get("bloom_stats"),
-        "replans_used": exec_result.get("replans_used", 0),
-        # ── V7（ADR-0119 W8/W10）执行证据 additive ──
-        "per_source_delivered_srid": exec_result.get(
-            "per_source_delivered_srid", {}
-        ),
-        "crs_fallbacks": exec_result.get("crs_fallbacks", []),
-    }
-    result_dict["fabric"] = _v7_fabric_section(
-        counters, cache_ctx, feedback_store_feedback=True
-    )
-    # 缓存写入（fail-open；披露段在下一次命中时附入）
+def _execute_v6_with_governance(executor, req, engine_breaker, cache_ctx, cache):
+    """allow_v6() 通过后的 V6 规划+执行+构建主干（execute_chain_v6 拆出 ——
+    仅为熔断 trial 的 try/finally 作用域服务；行为与拆出前逐位一致）。"""
+    counters = _v7_new_counters(cache_ctx)
+    cache_enabled = cache_ctx is not None
     if cache_enabled:
+        scope_key, cache_key, fingerprints = cache_ctx
+
+    # ── V8（ADR-0130 Phase F）：cache stampede 保护 ──
+    # miss 后的规划+执行+构建收进闭包，经 per-key SingleFlight 执行：并发
+    # 同键请求在界内等待首问结果（shared 命中如实披露），不重复打远端。
+    def _execute_and_build() -> Dict[str, Any]:
+        plan = None  # R2-Mi-1：plan 期 typed 错误路径的反馈回调需要安全判空
         try:
-            scope_key, cache_key, fingerprints = cache_ctx
-            cache.put(
-                cache_key, result_dict,
-                fingerprints=fingerprints, scope_key=scope_key,
+            from app.services.data_fabric.query.federated.executor import (
+                PhysicalExecutor,
+                extract_hop_estimates,
             )
-        except Exception as exc:  # noqa: BLE001 - 缓存绝不影响查询
-            logger.debug("[fabric] result cache put failed: %s", exc)
-    return result_dict
+            from app.services.data_fabric.query.federated.explain import explain_v6_lines
+            from app.services.data_fabric.query.federated.planner import (
+                plan_federation_v6,
+            )
+
+            plan = plan_federation_v6(req)
+            # M2（评审 R1）：derive_projection 接线 —— 与 V5 derive_chain_fields
+            # 单一真相；仅当 V6 选择的序 == given 序（派生的"下一跳左键"集合
+            # 依赖跳序，重排序下宁可多取全列，绝不缺字段静默失真）。
+            tree = plan.tree
+            given_ids = [s.source_id for s in req.sources]
+            if getattr(req, "derive_projection", True) and plan.order == given_ids:
+                derived = derive_chain_fields(req, list(req.sources), list(req.joins))
+                if derived:
+                    # C-1（评审 R2）：在**实际计划树**上写投影（保留
+                    # LogicalReproject 等全部节点）—— 重建 given 序链会静默丢弃
+                    # 变换节点，混 CRS 链默认配置下静默错答。
+                    tree = _apply_scan_fields(plan.tree, derived)
+                    plan.warnings.append(
+                        "minimal projection derived per source (V6, given-order): "
+                        + json.dumps(derived, ensure_ascii=False, sort_keys=True)
+                    )
+            px = PhysicalExecutor(
+                adapter_factory=executor._adapter_factory,
+                budget=req.budget,
+                limit=req.limit,
+                bbox=req.bbox,
+                adaptive=True,
+                order_strategy=getattr(req, "order_strategy", "cost"),
+                replan_fn=_make_bushy_replan_fn(req, plan),
+            )
+            exec_result = px.execute(
+                tree,
+                hop_estimates=extract_hop_estimates(plan),
+                edge_specs={
+                    (j.left_source_id, j.right_source_id): j
+                    for j in req.joins
+                    if j.left_source_id and j.right_source_id
+                },
+            )
+        except DataFabricError as e:
+            # V7 R1-M8：typed 错误契约不变（原样上抛），但错误面反馈与负缓存
+            # 在上抛前落账（均 fail-open）。
+            if cache_ctx is not None:
+                try:
+                    from app.services.data_fabric.fabric.result_cache import (
+                        get_result_cache,
+                    )
+
+                    get_result_cache().put_negative(cache_ctx[1], e.code)
+                except Exception:  # noqa: BLE001
+                    pass
+            if plan is not None:
+                try:
+                    _v7_record_feedback(
+                        req, plan, {"per_source_rows": {}}, "error",
+                        scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
+                        error_code=e.code,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            raise  # typed 错误契约与 V5 一致（预算/构造错误绝不静默回退）
+        except Exception as e:  # noqa: BLE001 - V6 非 typed 异常 → 诚实回退 V5
+            logger.warning("[Federation] V6 engine failed (%s); falling back to V5", e)
+            # V8：崩溃记账（fail-open；连续崩溃触发进程级熔断，后续请求跳过 V6）。
+            try:
+                engine_breaker.record_v6_crash(e)
+            except Exception:  # noqa: BLE001
+                pass
+            result = execute_federated_chain(executor, req)
+            result["engine"] = "v5_fallback"
+            reason = str(e)[:200]
+            result["warnings"] = list(result.get("warnings") or []) + [
+                f"engine=v6 failed ({reason}); executed with V5 engine"
+            ]
+            result["engine_breaker"] = engine_breaker.disclosure()
+            return result
+
+        rows = exec_result["rows"]
+        per_source = exec_result.get("per_source_rows") or {}
+        rows_fetched = sum(per_source.values())
+        warnings = list(plan.warnings)
+        if any(s.estimated_rows is not None for s in req.sources):
+            warnings.append("join order chosen by cost-based enumeration (V6 DP)")
+        # ── V7：计数器补齐 + 反馈记录（fail-open）──
+        from app.services.data_fabric.fabric.counters import collect_from_exec_result
+
+        collect_from_exec_result(counters, exec_result)
+        counters.cache_hit = False
+        fb_store = _v7_record_feedback(
+            req, plan, exec_result, "ok",
+            scope_key=cache_ctx[0] if cache_ctx else "org:_|owner:_|proj:_",
+        )
+        counters.feedback_durable_failures = fb_store.failure_count
+        result_dict = {
+            "status": "success",
+            "engine": "v6",
+            "strategy": "v6_cost_based_tree",
+            "order": plan.order,
+            "rows": rows,
+            "row_count": exec_result["row_count"],
+            "joined_row_count": exec_result.get("joined_row_count"),
+            "rows_fetched": rows_fetched,
+            "per_source_rows": per_source,
+            "plans": _v6_plan_dicts(plan),
+            "pushdown_ratio": (
+                round(exec_result["row_count"] / rows_fetched, 6) if rows_fetched else None
+            ),
+            "execution_duration_s": exec_result.get("execution_duration_s"),
+            "warnings": warnings,
+            "explain_v6": explain_v6_lines(
+                plan, _v6_explain_ctx(req), exec_result=exec_result
+            ),
+            "semi_join_reduction": exec_result.get("hop_stats"),
+            "bloom_reduction": exec_result.get("bloom_stats"),
+            "replans_used": exec_result.get("replans_used", 0),
+            # ── V7（ADR-0119 W8/W10）执行证据 additive ──
+            "per_source_delivered_srid": exec_result.get(
+                "per_source_delivered_srid", {}
+            ),
+            "crs_fallbacks": exec_result.get("crs_fallbacks", []),
+        }
+        result_dict["fabric"] = _v7_fabric_section(
+            counters, cache_ctx, feedback_store_feedback=True
+        )
+        # V8：V6 成功 → 熔断归零回 CLOSED（含 half-open trial 成功）。
+        engine_breaker.record_v6_success()
+        # 缓存写入（fail-open；披露段在下一次命中时附入）
+        if cache_enabled:
+            try:
+                scope_key, cache_key, fingerprints = cache_ctx
+                cache.put(
+                    cache_key, result_dict,
+                    fingerprints=fingerprints, scope_key=scope_key,
+                )
+            except Exception as exc:  # noqa: BLE001 - 缓存绝不影响查询
+                logger.debug("[fabric] result cache put failed: %s", exc)
+        return result_dict
+
+    # V8：单飞分发 —— cache 开启时并发同键共享首问结果（shared 命中披露
+    # basis=singleflight）；未开启缓存时直接执行（行为与 V7 逐位一致）。
+    if cache_enabled:
+        result_dict, shared = cache.single_flight().run(
+            cache_key, _execute_and_build
+        )
+        if shared:
+            result_dict = dict(result_dict)
+            result_dict["result_cache"] = {
+                "hit": True,
+                "age_s": 0.0,
+                "ttl_s": cache._ttl_s,
+                "basis": "singleflight",
+                "key": cache_key[:16],
+            }
+            result_dict["fabric_counters"] = {
+                "cache_hit": True,
+                "cache_key": cache_key[:16],
+                "shared_execution": True,
+            }
+        return result_dict
+    return _execute_and_build()
 
 
 def _v6_plan_dicts(plan) -> List[Dict[str, Any]]:

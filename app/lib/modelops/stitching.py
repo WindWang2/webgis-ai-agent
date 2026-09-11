@@ -262,7 +262,12 @@ def merge_instances(
     if input_nodata is not None:
         canvas[input_nodata] = 0
     if _mm_dir is not None:
-        result_arr = np.asarray(canvas)
+        # 拷出后再 unmap/删目录（Windows：句柄存活时 rmtree 失败；后续
+        # polygonize 还要读 result_arr——不能直接 unmap）。
+        result_arr = np.array(canvas, dtype=np.int32, copy=True)
+        handle = getattr(canvas, "_mmap", None)
+        if handle is not None:
+            handle.close()
         del canvas
         import shutil as _shutil
 

@@ -896,6 +896,72 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             )
         return payload
 
+    @tool(registry, name="local_moran",
+           description="单变量局部 Moran / LISA（Anselin 1995）：逐要素的高-高/低-低"
+                       "（聚集）与高-低/低-高（离群）方向配对检测；任意 knn/queen/"
+                       "rook/distance_band 权重，统计量与 esda.Moran_Local 同式同尺度。"
+                       "默认 BH-FDR 多重校正，固定种子 42 双侧置换推断",
+           tier=2, domains=["statistics"], cost="medium",
+           param_descriptions={
+               "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "value_field": "待检验的数值字段名",
+               "weights_scheme": "空间权重方案：'knn'(默认) / 'queen' / 'rook'（需面要素）/ 'distance_band'",
+               "k": "kNN 邻居数（仅 knn 方案，默认8，范围2-16）",
+               "distance_band": "distance_band 权重的距离阈值（米），0=按8近邻平均距离自动（默认）",
+               "permutations": "置换次数：99(默认)/199/499/999，固定种子42",
+               "correction": "逐格 p 的多重校正：bh(默认)/bonferroni/holm/none",
+           },
+           side_effect="deterministic_compute",
+           network=False,
+           deterministic=True,
+           latency_class="medium",
+           memory_class="medium",
+           scale_class="medium",
+           tags=("lisa", "局部moran", "局部自相关", "高高聚集", "冷点", "热点", "fdr"),
+           output_semantic_type="geojson_fc",
+           result_size_policy="ref_offload",
+           crs_semantics="auto_project",
+           failure_modes=("invalid_args", "missing_data"))
+    def local_moran(geojson: Any, value_field: str, weights_scheme: str = "knn",
+                    k: int = 8, distance_band: float = 0, permutations: int = 99,
+                    correction: str = "bh") -> dict:
+        data = safe_parse_geojson(geojson)
+        if not isinstance(data, dict):
+            raise ValueError("invalid GeoJSON input: could not parse a FeatureCollection")
+        params = apply_contract("local_moran_analysis", {
+            "value_field": value_field,
+            "weights_scheme": weights_scheme,
+            "k": k,
+            "permutations": permutations,
+            "correction": correction,
+        })
+        res = _geo_lib.statistics.local_moran_narrated(
+            data, params["value_field"],
+            weights_scheme=params["weights_scheme"],
+            k=int(params["k"]),
+            distance_band=float(distance_band or 0),
+            permutations=int(params["permutations"]),
+            correction=str(params["correction"]),
+        )
+        payload = res.to_llm_response()
+        if res.success:
+            _attach_scientific_evidence(
+                payload, "stats.local_moran", tool="local_moran",
+                parameters_applied={
+                    "value_field": params["value_field"],
+                    "weights_scheme": params["weights_scheme"],
+                    "k": int(params["k"]),
+                    "distance_band": float(distance_band or 0),
+                    "permutations": int(params["permutations"]),
+                    "correction": str(params["correction"]),
+                },
+                feature_count=res.data.get("n_features"),
+                crs=extract_declared_crs(data) or "EPSG:4326",
+                uncertainty=_coerce_uncertainty_blocks(res.data),
+                seed=42,
+            )
+        return payload
+
     @tool(registry, name="join_count",
            description="二元 Join Count（Cliff-Ord 1973）：二值(0/1)场的邻接同/异类连接检验；"
                        "n_BB/n_BW/n_WW + free-sampling 解析 z 检验，可选置换复核。"

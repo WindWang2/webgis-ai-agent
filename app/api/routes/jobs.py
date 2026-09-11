@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.routes.chat import get_engine
 from app.core.auth import get_current_user_optional, get_owner_token, verify_session_owner
 from app.core.database import get_async_db
+from app.lib.observability.spans import trace_headers
 from app.services.task_queue import DECLARED_QUEUE_NAMES, celery_app
 from app.services.jobs import (
     ACTIVE_POLL_INTERVAL_MS,
@@ -259,12 +260,17 @@ async def retry_job(
                 retry_queue = None
             # 计算隔离不变式 1：send_task publish 是 broker socket I/O，
             # offload 到线程（#386）。
+            # Platform V4（ADR-0131 D2 / review R1-m2）：手动重试也携带
+            # 当前请求的 trace 关联——重试恰恰是最需要并回 trace 的路径。
+            # 无 trace 上下文（如后台任务触发）时 headers 省略，形状不变。
+            _retry_headers = trace_headers()
             async_result = await asyncio.to_thread(
                 celery_app.send_task,
                 spec["task"],
                 args=list(spec.get("args") or []),
                 kwargs={**(spec.get("kwargs") or {}), "job_id": int(record.id)},
                 **({"queue": retry_queue} if retry_queue else {}),
+                **({"headers": _retry_headers} if _retry_headers else {}),
             )
         except Exception as exc:  # noqa: BLE001 —— broker 不可用不应让端点 500
             # 入队本身失败 → 消息不存在，把 job 收敛为 failed 才是真话
