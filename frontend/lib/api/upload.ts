@@ -24,12 +24,27 @@ export interface UploadResponse {
   original_name: string;
   file_type: "vector" | "raster";
   format: string;
-  crs: string;
+  /**
+   * #1217（audit3 D-6）：V4 起 CRS 未确认（如未声明的 CSV）时后端如实返回
+   * null（crs_source 披露证据来源）—— 此前 TS 声明非空 string，信任该类型
+   * 的调用方会在 null 上踩 TypeError。
+   */
+  crs: string | null;
   geometry_type: string | null;
   feature_count: number;
   bbox: number[] | null;
   file_size: number;
   message?: string;
+  // ---- V4 additive（后端 UploadResponse 全量字段镜像）----
+  crs_source?: string | null;
+  deduplicated?: boolean;
+  ignored_files?: string[];
+  warnings?: string[];
+  meta?: Record<string, unknown> | null;
+  session_ref?: string | null;
+  profile_summary?: Record<string, unknown> | null;
+  quality?: Record<string, unknown> | null;
+  ref_registration_error?: string | null;
 }
 
 export interface UploadListResponse {

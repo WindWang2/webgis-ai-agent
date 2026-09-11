@@ -236,7 +236,9 @@ def hydrate_ref_sources_sync(payload: Dict[str, Any], session_id: str) -> Dict[s
         return payload
     spec = _copy.deepcopy(payload)
     out_sources = spec.get("sources", {})
-    refs: List[Tuple[str, str]] = []
+    # #1220（audit3 C-5）：必须收集 dict 引用本身 —— 此前误存 id(src)（int），
+    # 消费端 `src["inlineData"] = ...` 对 int 赋值直接 TypeError（接线即炸）。
+    refs: List[Tuple[Dict[str, Any], str]] = []
     for src in out_sources.values():
         if not isinstance(src, dict):
             continue
@@ -244,7 +246,7 @@ def hydrate_ref_sources_sync(payload: Dict[str, Any], session_id: str) -> Dict[s
             continue
         ref = src.get("ref") or src.get("ref_id")
         if isinstance(ref, str) and ref.startswith("ref:"):
-            refs.append((id(src), ref))
+            refs.append((src, ref))
     if not refs:
         return spec
 

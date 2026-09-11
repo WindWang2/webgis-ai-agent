@@ -309,6 +309,11 @@ async def export_map_as_vector_pdf(
       mapspec_not_an_object（typed 拒绝，不静默）。
     - CPU/IO 在工作线程执行；调用方返回时效由 wait_for 保护（编译本身
       受孪生协作式超时约束 —— 不用 wait_for 当预算，R1-C1）。
+
+    契约披露（audit3 C-4 / #1213）：本端点为 backend-only 交付 —— 前端
+    exporter 当前仍走栅格 PDF 链（lib/map-kit/exporter.ts → POST /api/v1/export），
+    矢量入口待接线（接线时：ref 载体源须由调用方内联；未内联 → 400 typed
+    拒绝；503 时回退栅格并向用户披露 vector_pdf_unavailable）。
     """
     # R2-M6：载荷体积检查在事件循环外（线程）执行，避免主循环全量序列化
     import json as _json

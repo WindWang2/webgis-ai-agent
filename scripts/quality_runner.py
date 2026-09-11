@@ -176,22 +176,26 @@ def _changed_py_targets() -> list:
     files |= set(_git(["diff", "--name-only", "origin/master...HEAD"]
                       ).splitlines())
     targets: list = []
+    # #1216（audit3 D-5）：前缀匹配（按特异性降序）—— 此前
+    # `"/".join(parts[:3])` 对两段键（app/tools、app/services、app/api、
+    # app/core）永不匹配，主应用面的改动在 changed lane 静默失去测试映射。
+    prefix_map = [
+        ("app/lib/gis", "tests/unit/gis"),
+        ("app/lib/quality", "tests/quality"),
+        ("app/tools", "tests/unit/tools"),
+        ("app/services", "tests/unit"),
+        ("app/api", "tests"),
+        ("app/core", "tests"),
+    ]
     for f in sorted(files):
         if f.startswith("tests/") and f.endswith(".py"):
             targets.append(f)
         elif f.startswith("app/"):
-            # app/lib/gis/algorithms → tests/unit/gis；app/tools → tests/unit/tools
-            parts = f.split("/")
-            mapped = {
-                "app/lib/gis": "tests/unit/gis",
-                "app/lib/quality": "tests/quality",
-                "app/tools": "tests/unit/tools",
-                "app/services": "tests/unit",
-                "app/api": "tests",
-                "app/core": "tests",
-            }.get("/".join(parts[:3]))
-            if mapped and (REPO / mapped).is_dir():
-                targets.append(mapped)
+            for prefix, mapped in prefix_map:
+                if f == prefix or f.startswith(prefix + "/"):
+                    if (REPO / mapped).is_dir():
+                        targets.append(mapped)
+                    break
     # 顺序污染轮换：changed profile 恒定启用（Quality V2 W10）
     os.environ.setdefault("QUALITY_ORDER_SEED", str(int(time.time()) % 100000))
     # 红线闸恒跑 + 去重有界
