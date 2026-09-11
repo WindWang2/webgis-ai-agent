@@ -46,9 +46,15 @@
 
 | Job | 触发 | 上限 | 实测/预估 |
 |---|---|---|---|
-| journey-smoke | PR+nightly+dispatch | 8 min | 本地 6 用例 ~15s + 安装 ~3min ≈ 4-5 min |
-| journeys-mock | nightly+dispatch | 20 min | ~5 min |
-| perf-budgets | PR+nightly+dispatch | 20 min | 自证 2s + 门禁 ~2 min + 安装 ~4 min ≈ 7 min |
-| chaos | nightly+dispatch | 30 min | ~10 min |
-| journey-real | nightly+dispatch | 40 min | build+栈启动 ~10 min + 6 用例 ~5 min ≈ 15-20 min |
-| **合计** | PR ≈ 12 min/PR；nightly ≈ 75-85 min | 错峰 02:30 UTC（避开 production.yml 02:00 nightly-matrix 180min 档） |
+| journey-smoke | PR+nightly+dispatch | 8 min | **CI 实测 36s**（run 34652223843，含安装） |
+| perf-budgets | PR+nightly+dispatch | 20 min | **CI 实测 ~2.7 min**（含自证+安装） |
+| journeys-mock | nightly+dispatch | 20 min | ~5 min（预估） |
+| chaos | nightly+dispatch | 30 min | ~10 min（预估） |
+| journey-real | nightly+dispatch | 40 min | 15-20 min（预估） |
+| **合计** | PR ≈ 4 min/PR（实测）；nightly ≈ 40-55 min | 错峰 02:30 UTC（避开 production.yml 02:00 nightly-matrix 180min 档） |
+
+## CI 取证记录
+
+- PR 档 run 34651708458：journey-smoke ✅（36s）；perf-budgets ❌（cube fixture 误用 write_cube 描述符契约）→ 已修（fixture 直写 v1 store 布局，预算线按含开 store 的真实口径上调至 500ms）。
+- PR 档 run 34652223843：**全绿** —— journey-smoke ✅；perf-budgets ✅（SSE 50 并发 50.9ms / MVT P95 3.1ms / cube window P95 3.2ms / 首 token 路由面 0.05ms）；nightly 档按设计 skip。
+- 平台说明：workflow_dispatch 需 workflow 存在于默认分支（GitHub 硬约束，404 实证）——nightly/chaos/real 档 dispatch 取证在合入后可用。
