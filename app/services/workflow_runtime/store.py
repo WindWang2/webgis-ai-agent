@@ -1,4 +1,4 @@
-"""Workflow Runtime V5 —— durable 实例存储（实例行 + 每节点行，两级 CAS）。
+"""Workflow Runtime V5/V6 —— durable 实例存储（实例行 + 每节点行，两级 CAS）。
 
 并发模型（架构 §3 [R1-C3]）：
 
@@ -9,8 +9,12 @@
 - **完成类转移永不放弃** [R1-C3]：claim token 持有者对 RUNNING→终态的
   转移在 CAS 冲突后重读——若目标状态已达成（幂等重复完成）按成功返回；
   若被他人认领才拒绝；
-- **租约**：driver 持 run lease（每波次续期）；孤儿清扫把 RUNNING 且
-  租约过期的节点复位 READY（attempts 保留）；
+- **租约（两级）**：run 租约（driver 持有，波次续期）管「谁在驱动实例」；
+  节点租约（V6，执行者 claim 时写入 ``lease_expires_at``）管「谁在执行
+  该节点」—— coordinator 存活不等于 worker 存活，孤儿判定以节点租约
+  过期为准（NULL 租约的旧式同步认领回退 run 租约语义）；
+- **事件日志（V6）**：``workflow_events`` append-only journal，与状态转移
+  **同事务**写入（atomic truth）；取消/恢复/重试/补偿经 ``append_event``；
 - owner 隔离：全部读路径按 owner_scope 过滤（他人 404 语义 → None）。
 """
 from __future__ import annotations
@@ -33,6 +37,10 @@ logger = logging.getLogger(__name__)
 _BACKOFF_S = (0.01, 0.02, 0.05, 0.1)
 #: 默认 run 租约 TTL（秒）；driver 每波次续期。
 DEFAULT_LEASE_TTL_S = 120.0
+#: 默认节点租约 TTL（秒）；claim 时写入，heartbeat 续期。
+DEFAULT_NODE_LEASE_TTL_S = 120.0
+#: journal 单次查询上界（inspect API 分页；防全量拖库）。
+MAX_JOURNAL_QUERY = 200
 
 
 def _default_session_factory():
@@ -94,6 +102,13 @@ def _row_to_node(row: Any) -> Dict[str, Any]:
         "reuse": dict(row.reuse or {}),
         "attempts_log": list(row.attempts_log or [])[:C.MAX_NODE_ATTEMPTS],
         "transitions": list(row.transitions or [])[:C.MAX_NODE_TRANSITIONS],
+        "lease_expires_at": row.lease_expires_at.isoformat()
+        if row.lease_expires_at else "",
+        "heartbeat_at": row.heartbeat_at.isoformat()
+        if row.heartbeat_at else "",
+        "cancel_requested": bool(row.cancel_requested),
+        "next_ready_at": row.next_ready_at.isoformat()
+        if row.next_ready_at else "",
     }
 
 
@@ -248,16 +263,20 @@ class InstanceStore:
         require_claim: bool = False,
         patch: Optional[Dict[str, Any]] = None,
         complete: bool = False,
+        lease_ttl_s: Optional[float] = None,
     ) -> TransitionResult:
         """节点状态 CAS 转移（乐观锁 + 冲突重读重评 + busy 退避）。
 
         - ``expected_from``：要求当前状态（调度安全门）；
-        - ``claim``：READY→RUNNING 时写 claimed_by；
+        - ``claim``：READY→RUNNING 时写 claimed_by **并写节点租约**
+          （V6：``lease_ttl_s`` 缺省用 ``DEFAULT_NODE_LEASE_TTL_S``）；
         - ``require_claim``：完成类转移校验认领者；
         - ``complete``：完成类语义 —— CAS 冲突后重读，目标状态已达成按
           幂等成功返回（**完成永不放弃** [R1-C3]）；
         - ``patch``：随转移写入的列（bound_ref/output_ref/binding/reuse/
-          error_code/output_fingerprint/attempts+1 等，白名单键）。
+          error_code/output_fingerprint/attempts+1/next_ready_at 等，
+          白名单键）；
+        - 每次成功转移**同事务**写一行 ``workflow_events`` journal。
         """
         patch = dict(patch or {})
         # 幂等完成入口：目标状态已达成 → OK_IDEMPOTENT（重复完成事件
@@ -282,6 +301,7 @@ class InstanceStore:
                     expected_from=expected_from, reason=reason, event=event,
                     claim=claim, claimed_by=claimed_by,
                     require_claim=require_claim, patch=patch,
+                    lease_ttl_s=lease_ttl_s,
                 )
             except OperationalError:
                 # SQLite busy：安全重试（事务未提交）
@@ -298,6 +318,12 @@ class InstanceStore:
             if complete:
                 fresh = self.get_node(instance_id, node_id)
                 if fresh is not None and fresh["state"] == to_state:
+                    if require_claim and (fresh.get("claimed_by") or "")                             != (claimed_by or ""):
+                        # 被接管后迟到完成：目标已达成但认领者非本 token
+                        # —— 拒绝（fencing 与入口预检同一纪律）
+                        return TransitionResult(
+                            False, "CLAIM_MISMATCH", state=to_state,
+                            state_revision=fresh["state_revision"])
                     return TransitionResult(
                         True, "OK_IDEMPOTENT", state=to_state,
                         state_revision=fresh["state_revision"])
@@ -311,7 +337,7 @@ class InstanceStore:
         self, instance_id: str, node_id: str, to_state: str, *,
         expected_from: Optional[str], reason: str, event: str,
         claim: bool, claimed_by: str, require_claim: bool,
-        patch: Dict[str, Any],
+        patch: Dict[str, Any], lease_ttl_s: Optional[float] = None,
     ) -> TransitionResult:
         with self._factory() as db:
             row = db.query(WorkflowInstanceNodeRow).filter(
@@ -334,27 +360,44 @@ class InstanceStore:
                     False, "CAS_CONFLICT", state=row.state,
                     detail=f"expected {expected_from} got {row.state}")
             new_rev = row.state_revision + 1
+            now = _utcnow()
+            # SQLA 2.0 session.execute(update()) 默认 synchronize_session
+            # 会就地刷新会话内 ORM 属性 —— journal 的 from_state 必须**先**
+            # 捕获，否则写进的是 to_state（事件序污化）。
+            from_state = str(row.state)
             values: Dict[str, Any] = {
                 "state": to_state,
                 "state_revision": new_rev,
-                "updated_at": _utcnow(),
+                "updated_at": now,
             }
             if claim:
                 values["claimed_by"] = (claimed_by or "")[:64] or None
+                # V6 节点租约：认领即持约（worker 死亡 → 租约过期 → 孤儿）
+                ttl = float(lease_ttl_s) if lease_ttl_s is not None \
+                    else DEFAULT_NODE_LEASE_TTL_S
+                values["lease_expires_at"] = now + timedelta(
+                    seconds=max(1.0, ttl))
+                values["heartbeat_at"] = now
             if to_state in (C.NodeState.READY, C.NodeState.CANCELLED,
                             C.NodeState.SKIPPED):
                 values["claimed_by"] = None
+            if to_state in (C.NodeState.SUCCEEDED, C.NodeState.FAILED,
+                            C.NodeState.CANCELLED):
+                # 节点执行生命周期结束：清租约（孤儿判定不再看它）
+                values["lease_expires_at"] = None
+                values["heartbeat_at"] = None
             col_map = {
                 "bound_ref": "bound_ref", "output_ref": "output_ref",
                 "output_fingerprint": "output_fingerprint",
                 "error_code": "error_code", "binding": "binding",
-                "reuse": "reuse",
+                "reuse": "reuse", "next_ready_at": "next_ready_at",
             }
             for key, col in col_map.items():
                 if key in patch:
                     values[col] = patch[key]
             if patch.get("attempts_increment"):
                 values["attempts"] = row.attempts + 1
+            new_attempt = int(values.get("attempts", row.attempts) or 0)
             new_log = list(row.attempts_log or [])
             if patch.get("attempt_log"):
                 new_log.append(patch["attempt_log"])
@@ -377,6 +420,18 @@ class InstanceStore:
             )
             if updated.rowcount == 0:
                 return TransitionResult(False, "CAS_CONFLICT", state=row.state)
+            # V6 journal：与转移同事务 append（atomic truth；绝不丢事件）
+            db.add(WorkflowEventRow(
+                instance_id=instance_id,
+                node_id=node_id[:64],
+                kind=C.EventKind.STATE_TRANSITION,
+                from_state=from_state[:16],
+                to_state=to_state[:16],
+                reason=str(reason)[:96],
+                actor=str(event)[:64],
+                attempt=new_attempt,
+                payload=_bounded_event_payload(patch),
+            ))
             db.commit()
             return TransitionResult(True, "OK", state=to_state,
                                     state_revision=new_rev)
@@ -488,10 +543,16 @@ class InstanceStore:
     ) -> List[str]:
         """孤儿 RUNNING 节点清单（恢复复位）。
 
-        liveness 以实例租约为准：租约被**其他** token 活持 → 有主不扫；
-        租约过期/无主/由当前 token 持有（本 driver 刚接管）→ RUNNING 且
-        claimed_by ≠ 当前 token 的节点即孤儿（claimed_by == 当前 token 的
-        在飞节点由本 driver 自己的 cancel/deadline 管辖）。
+        V6 两级租约语义：
+
+        - 节点租约**已写**（V6 claim 路径）：``lease_expires_at`` 过期即孤儿
+          —— 执行者死亡与 coordinator 死亡解耦（run 租约活着但 worker 死了
+          也能被本 driver/清扫接管）；
+        - 节点租约 NULL（旧式同步认领，如 chat 通道）：回退 run 租约语义 —
+          租约被**其他** token 活持 → 有主不扫；租约过期/无主/由当前 token
+          持有（本 driver 刚接管）→ RUNNING 且 claimed_by ≠ 当前 token 的
+          节点即孤儿（claimed_by == 当前 token 的在飞节点由本 driver 自己
+          的 cancel/deadline 管辖）。
         """
         inst = self.get_instance(instance_id)
         if inst is None or inst["status"] != C.InstanceStatus.RUNNING:
@@ -507,13 +568,218 @@ class InstanceStore:
             and inst["run_lease_owner"] != current_token)
         if lease_held_elsewhere:
             return []
+        now = _utcnow()
         with self._factory() as db:
             rows = db.query(WorkflowInstanceNodeRow).filter(
                 WorkflowInstanceNodeRow.instance_id == instance_id,
                 WorkflowInstanceNodeRow.state == C.NodeState.RUNNING,
             ).all()
-            return [r.node_id for r in rows
-                    if (r.claimed_by or "") != current_token]
+            out: List[str] = []
+            for r in rows:
+                if (r.claimed_by or "") == current_token:
+                    continue
+                if r.lease_expires_at is not None:
+                    if r.lease_expires_at <= now:
+                        out.append(r.node_id)
+                    # 未过期的节点租约 = 活 worker 持有，绝不接管
+                    continue
+                # NULL 节点租约：旧式认领，run 租约已判过期/无主 → 孤儿
+                out.append(r.node_id)
+            return out
+
+    # ── 节点租约 / 心跳 / 节点级取消（V6）────────────────────────────
+
+    def heartbeat_node(
+        self, instance_id: str, node_id: str, *, token: str,
+        ttl_s: float = DEFAULT_NODE_LEASE_TTL_S,
+    ) -> bool:
+        """续期节点租约（仅 RUNNING 且持有人匹配；worker 活性证据）。
+
+        rowcount=0 = 节点已不再由该 token 执行（被接管/完成）—— 调用方应
+        停止执行并重读状态（fencing：迟到的 worker 不能覆盖新 attempt）。
+        """
+        now = _utcnow()
+        try:
+            with self._factory() as db:
+                updated = db.execute(
+                    sa.update(WorkflowInstanceNodeRow)
+                    .where(
+                        WorkflowInstanceNodeRow.instance_id == instance_id,
+                        WorkflowInstanceNodeRow.node_id == node_id,
+                        WorkflowInstanceNodeRow.state == C.NodeState.RUNNING,
+                        WorkflowInstanceNodeRow.claimed_by == (token or "")[:64],
+                    )
+                    .values(
+                        lease_expires_at=now + timedelta(
+                            seconds=max(1.0, float(ttl_s))),
+                        heartbeat_at=now,
+                        updated_at=now,
+                    )
+                )
+                db.commit()
+                return bool(updated.rowcount)
+        except OperationalError:
+            return False
+
+    def request_node_cancel(
+        self, instance_id: str, node_ids: List[str], *,
+        actor: str = "api",
+    ) -> List[str]:
+        """节点级取消请求（持久旗标；执行者经心跳探针/波界观察）。
+
+        只对**非终态**节点置位；终态节点是既成事实，不追改。
+        返回实际置位成功的 node_id（条件更新，多写手安全）。
+        """
+        wanted = [str(n)[:64] for n in node_ids if n]
+        if not wanted:
+            return []
+        now = _utcnow()
+        out: List[str] = []
+        with self._factory() as db:
+            for nid in wanted:
+                updated = db.execute(
+                    sa.update(WorkflowInstanceNodeRow)
+                    .where(
+                        WorkflowInstanceNodeRow.instance_id == instance_id,
+                        WorkflowInstanceNodeRow.node_id == nid,
+                        WorkflowInstanceNodeRow.state.in_([
+                            C.NodeState.PENDING, C.NodeState.READY,
+                            C.NodeState.RUNNING, C.NodeState.BLOCKED,
+                            C.NodeState.STALE,
+                        ]),
+                        WorkflowInstanceNodeRow.cancel_requested.is_(False),
+                    )
+                    .values(cancel_requested=True, updated_at=now)
+                )
+                if updated.rowcount:
+                    out.append(nid)
+            db.add_all(WorkflowEventRow(
+                instance_id=instance_id,
+                node_id=nid[:64],
+                kind=C.EventKind.NODE_CANCEL_REQUESTED,
+                reason="NODE_CANCEL_REQUESTED",
+                actor=str(actor)[:64],
+                payload={},
+            ) for nid in out)
+            db.commit()
+        return out
+
+    def get_node_cancel_flags(self, instance_id: str) -> Dict[str, bool]:
+        """{node_id: cancel_requested}（driver 波界在飞取消观察；单查询）。"""
+        with self._factory() as db:
+            rows = db.query(
+                WorkflowInstanceNodeRow.node_id,
+                WorkflowInstanceNodeRow.cancel_requested,
+            ).filter(WorkflowInstanceNodeRow.instance_id == instance_id,
+                     WorkflowInstanceNodeRow.cancel_requested.is_(True)).all()
+            return {r.node_id: True for r in rows}
+
+    def clear_node_cancel(
+        self, instance_id: str, node_id: str,
+    ) -> bool:
+        """清除节点取消旗标（显式 retry/resume 前置；与置位同条件更新风格）。"""
+        with self._factory() as db:
+            updated = db.execute(
+                sa.update(WorkflowInstanceNodeRow)
+                .where(
+                    WorkflowInstanceNodeRow.instance_id == instance_id,
+                    WorkflowInstanceNodeRow.node_id == node_id,
+                )
+                .values(cancel_requested=False, updated_at=_utcnow())
+            )
+            db.commit()
+            return bool(updated.rowcount)
+
+    # ── 事件日志（V6 journal）────────────────────────────────────────
+
+    def append_event(
+        self, instance_id: str, *, kind: str, node_id: str = "",
+        reason: str = "", actor: str = "", attempt: int = 0,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """非转移类事实入 journal（取消请求/租约/恢复/重试/补偿）。"""
+        with self._factory() as db:
+            db.add(WorkflowEventRow(
+                instance_id=instance_id,
+                node_id=(node_id or "")[:64],
+                kind=str(kind)[:40],
+                reason=str(reason)[:96],
+                actor=str(actor)[:64],
+                attempt=int(attempt or 0),
+                payload=dict(payload or {}),
+            ))
+            db.commit()
+
+    def get_events(
+        self, instance_id: str, *, limit: int = MAX_JOURNAL_QUERY,
+        after_id: int = 0, kind: str = "",
+    ) -> List[Dict[str, Any]]:
+        """journal 顺序读（id 升序 = 因果序；分页有界）。"""
+        limit = max(1, min(int(limit), MAX_JOURNAL_QUERY))
+        with self._factory() as db:
+            q = db.query(WorkflowEventRow).filter(
+                WorkflowEventRow.instance_id == instance_id,
+                WorkflowEventRow.id > int(after_id))
+            if kind:
+                q = q.filter(WorkflowEventRow.kind == str(kind)[:40])
+            rows = q.order_by(WorkflowEventRow.id.asc()).limit(limit).all()
+            return [
+                {
+                    "id": r.id,
+                    "instance_id": r.instance_id,
+                    "node_id": r.node_id or "",
+                    "kind": r.kind,
+                    "from_state": r.from_state or "",
+                    "to_state": r.to_state or "",
+                    "reason": r.reason or "",
+                    "actor": r.actor or "",
+                    "attempt": r.attempt or 0,
+                    "payload": dict(r.payload or {}),
+                    "created_at": r.created_at.isoformat()
+                    if r.created_at else "",
+                }
+                for r in rows
+            ]
+
+    # ── 恢复扫描（V6 startup/periodic sweep）────────────────────────
+
+    def list_recoverable_instances(
+        self, *, now: Optional[datetime] = None,
+        ttl_s: float = DEFAULT_LEASE_TTL_S, limit: int = 16,
+    ) -> List[Dict[str, Any]]:
+        """RUNNING 且需要恢复的实例（租约过期 / 无主超时 / 挂了取消旗标）。
+
+        - run 租约过期 → driver 死亡，节点按孤儿处理；
+        - 无租约且 created_at 早于 ttl → 创建后从未被驱动（提交即崩）；
+        - cancel_requested → 旗标置位后 driver 死亡，取消语义未消费完。
+        刚创建（< ttl）的 NULL 租约实例**不在列**——正常驱动可能尚未起步。
+        """
+        now = now or _utcnow()
+        cutoff = now - timedelta(seconds=max(1.0, float(ttl_s)))
+        with self._factory() as db:
+            rows = db.query(WorkflowInstanceRow).filter(
+                WorkflowInstanceRow.status == C.InstanceStatus.RUNNING,
+                sa.or_(
+                    sa.and_(
+                        WorkflowInstanceRow.run_lease_expires_at.isnot(None),
+                        WorkflowInstanceRow.run_lease_expires_at < now,
+                    ),
+                    sa.and_(
+                        WorkflowInstanceRow.run_lease_expires_at.is_(None),
+                        WorkflowInstanceRow.created_at < cutoff,
+                    ),
+                    WorkflowInstanceRow.cancel_requested.is_(True),
+                ),
+            ).order_by(WorkflowInstanceRow.created_at.asc()) \
+                .limit(max(1, min(int(limit), 64))).all()
+            return [_row_to_instance(r) for r in rows]
+
+    def count_running_nodes(self, instance_id: str) -> int:
+        with self._factory() as db:
+            return db.query(WorkflowInstanceNodeRow).filter(
+                WorkflowInstanceNodeRow.instance_id == instance_id,
+                WorkflowInstanceNodeRow.state == C.NodeState.RUNNING,
+            ).count()
 
     def list_session_instances(
         self, session_id: str, *, owner_scope: Optional[str] = None,
@@ -587,6 +853,16 @@ class InstanceStore:
 
 #: 模型延迟绑定（与 db_model 保持单一定义）。
 from app.models.db_model import (  # noqa: E402
+    WorkflowEventRow,
     WorkflowInstanceNodeRow,
     WorkflowInstanceRow,
 )
+
+
+def _bounded_event_payload(patch: Dict[str, Any]) -> Dict[str, Any]:
+    """转移事件的 bounded payload（证据键投影；绝不内嵌大载荷）。"""
+    keys = ("error_code", "output_ref", "bound_ref", "output_fingerprint")
+    out = {k: str(patch[k])[:96] for k in keys if patch.get(k)}
+    if patch.get("attempts_increment"):
+        out["attempts_increment"] = True
+    return out
