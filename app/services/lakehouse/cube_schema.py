@@ -26,11 +26,20 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-#: labeled cube 契约版本（V6 cube 隐式 v1；V7 labeled = v2）。
+#: labeled cube 契约版本（V6 cube 隐式 v1；V7 labeled = v2；
+#: V8 = v3 —— model/scenario 维度 + 逐变量 nodata，ADR-0130）。
 CUBE_SCHEMA_VERSION_V2 = 2
+CUBE_SCHEMA_VERSION_V3 = 3
+
+#: V2 维度白名单（V7 契约 —— 兼容基线：维度集 ⊆ 此集 ⇒ 投影恒为 v2，
+#: 既有发布路径字节级不变）。
+ALLOWED_DIMS_V2 = ("time", "band", "polarization", "vertical", "y", "x")
+
+#: V8 新增标签维度（多模型 × 多情景产物 —— ADR-0130 §3）。
+V3_DIMS = ("model", "scenario")
 
 #: 维度白名单（超出 = 契约违例；新增维度 = 升契约版本）。
-ALLOWED_DIMS = ("time", "band", "polarization", "vertical", "y", "x")
+ALLOWED_DIMS = ALLOWED_DIMS_V2 + V3_DIMS
 
 #: 网格轴（必须存在且为最后两轴）。
 SPATIAL_DIMS = ("y", "x")
@@ -161,6 +170,19 @@ def check_crs(crs: str) -> Dict[str, str]:
     raise CubeSchemaError(f"invalid CRS: {text[:64]!r}")
 
 
+def resolve_cube_schema_version(dims: Sequence[str]) -> int:
+    """维度集 → 契约版本（⊆ v2 六维 = 2；含 model/scenario = 3）。
+
+    版本按需升级：既有 v2 发布路径的投影（与 manifest 身份）字节级
+    不变，只有真正使用新维度的 cube 升 v3 —— 一次性身份冲断仅限
+    v3 采用者（ADR-0130 §3）。
+    """
+    dim_set = {str(d) for d in dims}
+    if dim_set & set(V3_DIMS):
+        return CUBE_SCHEMA_VERSION_V3
+    return CUBE_SCHEMA_VERSION_V2
+
+
 def validate_labeled_schema(
     *,
     dims: Sequence[str],
@@ -171,6 +193,7 @@ def validate_labeled_schema(
     variables: Optional[Mapping[str, Any]] = None,
     nodata: Optional[float] = None,
     chunks: Optional[Any] = None,
+    nodata_per_variable: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """labeled cube 契约总校验（纯函数；违规 → :class:`CubeSchemaError`）。
 
@@ -280,6 +303,32 @@ def validate_labeled_schema(
                 )
         vars_out[str(name)] = {"dims": vd, "dtype": var_dtype}
 
+    # 逐变量 nodata（V8 v3 契约）：变量必须存在、值可投影 float；
+    # 键序规范化（sorted）—— 投影确定性（manifest 身份前提）。
+    # 携带 nodata_per_variable 的投影升 v3（版本字段判别投影形状 ——
+    # 旧 reader 不会遇到带该键的 v2 投影）。
+    nodata_per_var_out: Optional[Dict[str, float]] = None
+    if nodata_per_variable is not None:
+        if not isinstance(nodata_per_variable, Mapping):
+            raise CubeSchemaError("nodata_per_variable must be a mapping")
+        unknown_vars = [
+            str(k) for k in nodata_per_variable if str(k) not in vars_out
+        ]
+        if unknown_vars:
+            raise CubeSchemaError(
+                f"nodata_per_variable references unknown variables "
+                f"{sorted(unknown_vars)}"
+            )
+        try:
+            nodata_per_var_out = {
+                str(k): float(v)
+                for k, v in sorted(nodata_per_variable.items())
+            }
+        except (TypeError, ValueError) as exc:
+            raise CubeSchemaError(
+                f"nodata_per_variable values must be numeric: {exc}"
+            ) from exc
+
     crs_info = check_crs(crs)
 
     # chunk 布局（可选）：Mapping{dim: size}（每维度必须有值）或与 dims
@@ -304,7 +353,11 @@ def validate_labeled_schema(
 
     projection: Dict[str, Any] = {
         "labeled": True,
-        "cube_schema_version": CUBE_SCHEMA_VERSION_V2,
+        "cube_schema_version": (
+            CUBE_SCHEMA_VERSION_V3
+            if nodata_per_var_out is not None
+            else resolve_cube_schema_version(dims)
+        ),
         "dims": dims,
         "shape": list(shape_t),
         "variables": vars_out,
@@ -325,6 +378,8 @@ def validate_labeled_schema(
             for d in dims
         },
     }
+    if nodata_per_var_out is not None:
+        projection["nodata_per_variable"] = nodata_per_var_out
     return projection
 
 

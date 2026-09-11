@@ -1,0 +1,596 @@
+{
+  "description": "应用配置",
+  "properties": {
+    "ALLOW_PUBLIC_REGISTER": {
+      "default": false,
+      "title": "Allow Public Register",
+      "type": "boolean"
+    },
+    "AMAP_API_KEY": {
+      "default": "",
+      "title": "Amap Api Key",
+      "type": "string"
+    },
+    "AMAP_JS_KEY": {
+      "default": "",
+      "title": "Amap Js Key",
+      "type": "string"
+    },
+    "AMAP_JS_SECURITY_KEY": {
+      "default": "",
+      "title": "Amap Js Security Key",
+      "type": "string"
+    },
+    "API_V1_STR": {
+      "default": "/api",
+      "title": "Api V1 Str",
+      "type": "string"
+    },
+    "AUTH_DISABLED": {
+      "default": false,
+      "title": "Auth Disabled",
+      "type": "boolean"
+    },
+    "BAIDU_MAP_AK": {
+      "default": "",
+      "title": "Baidu Map Ak",
+      "type": "string"
+    },
+    "BAIDU_QIANFAN_TOKEN": {
+      "default": "",
+      "title": "Baidu Qianfan Token",
+      "type": "string"
+    },
+    "BING_MAP_KEY": {
+      "default": "",
+      "title": "Bing Map Key",
+      "type": "string"
+    },
+    "CANCEL_WAIT_TIMEOUT_S": {
+      "default": 5.0,
+      "title": "Cancel Wait Timeout S",
+      "type": "number"
+    },
+    "CARTO_COLOR_SEP_FAIL_DELTA_E": {
+      "default": 5.0,
+      "title": "Carto Color Sep Fail Delta E",
+      "type": "number"
+    },
+    "CARTO_COLOR_SEP_WARN_DELTA_E": {
+      "default": 10.0,
+      "title": "Carto Color Sep Warn Delta E",
+      "type": "number"
+    },
+    "CARTO_DRIFT_NULL_RATIO_THRESHOLD": {
+      "default": 0.1,
+      "title": "Carto Drift Null Ratio Threshold",
+      "type": "number"
+    },
+    "CARTO_DRIFT_RELATIVE_THRESHOLD": {
+      "default": 0.15,
+      "title": "Carto Drift Relative Threshold",
+      "type": "number"
+    },
+    "CARTO_LABEL_FAIL_RATIO": {
+      "default": 0.25,
+      "title": "Carto Label Fail Ratio",
+      "type": "number"
+    },
+    "CARTO_LABEL_WARN_RATIO": {
+      "default": 0.1,
+      "title": "Carto Label Warn Ratio",
+      "type": "number"
+    },
+    "CARTO_LOAD_FAIL_RATIO": {
+      "default": 0.4,
+      "title": "Carto Load Fail Ratio",
+      "type": "number"
+    },
+    "CARTO_LOAD_WARN_RATIO": {
+      "default": 0.15,
+      "title": "Carto Load Warn Ratio",
+      "type": "number"
+    },
+    "CARTO_SVS_AREA_PX": {
+      "default": 2.25,
+      "title": "Carto Svs Area Px",
+      "type": "number"
+    },
+    "CARTO_VISUALVAR_FAIL_COUNT": {
+      "default": 4,
+      "title": "Carto Visualvar Fail Count",
+      "type": "integer"
+    },
+    "CARTO_VISUALVAR_WARN_COUNT": {
+      "default": 3,
+      "title": "Carto Visualvar Warn Count",
+      "type": "integer"
+    },
+    "CELERY_BROKER_URL": {
+      "default": "redis://localhost:16379/0",
+      "title": "Celery Broker Url",
+      "type": "string"
+    },
+    "CELERY_RESULT_BACKEND": {
+      "default": "redis://localhost:16379/1",
+      "title": "Celery Result Backend",
+      "type": "string"
+    },
+    "CHAT_MAX_ROUNDS": {
+      "default": 60,
+      "title": "Chat Max Rounds",
+      "type": "integer"
+    },
+    "CLEAR_QUIESCE_TIMEOUT_S": {
+      "default": 5.0,
+      "title": "Clear Quiesce Timeout S",
+      "type": "number"
+    },
+    "CORS_ORIGINS": {
+      "default": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Cors Origins",
+      "type": "array"
+    },
+    "DATABASE_URL": {
+      "default": "sqlite:///./data/webgis.db",
+      "title": "Database Url",
+      "type": "string"
+    },
+    "DATA_DIR": {
+      "default": "./data",
+      "title": "Data Dir",
+      "type": "string"
+    },
+    "DATA_FABRIC_LOCAL_FILE_MAX_BYTES": {
+      "default": 1073741824,
+      "title": "Data Fabric Local File Max Bytes",
+      "type": "integer"
+    },
+    "DATA_FABRIC_LOCAL_FILE_ROOTS": {
+      "default": "./data",
+      "title": "Data Fabric Local File Roots",
+      "type": "string"
+    },
+    "DATA_FABRIC_MAX_FEATURES": {
+      "default": 50000,
+      "title": "Data Fabric Max Features",
+      "type": "integer"
+    },
+    "DATA_FABRIC_MAX_PAGES": {
+      "default": 200,
+      "title": "Data Fabric Max Pages",
+      "type": "integer"
+    },
+    "DATA_FABRIC_MAX_RESPONSE_BYTES": {
+      "default": 268435456,
+      "title": "Data Fabric Max Response Bytes",
+      "type": "integer"
+    },
+    "DATA_FABRIC_QUERY_TIMEOUT": {
+      "default": 30.0,
+      "title": "Data Fabric Query Timeout",
+      "type": "number"
+    },
+    "DATA_FABRIC_SYNC_CONCURRENCY": {
+      "default": 4,
+      "title": "Data Fabric Sync Concurrency",
+      "type": "integer"
+    },
+    "DATA_FABRIC_TOTAL_QUERY_TIMEOUT": {
+      "default": 120.0,
+      "title": "Data Fabric Total Query Timeout",
+      "type": "number"
+    },
+    "DATA_FABRIC_V7_CONNECTION_IDLE_TTL_S": {
+      "default": 1800.0,
+      "title": "Data Fabric V7 Connection Idle Ttl S",
+      "type": "number"
+    },
+    "DATA_FABRIC_V7_CONNECTION_MAX_ENTRIES": {
+      "default": 1024,
+      "title": "Data Fabric V7 Connection Max Entries",
+      "type": "integer"
+    },
+    "DATA_FABRIC_V7_FEEDBACK_MAX_ROWS": {
+      "default": 20000,
+      "title": "Data Fabric V7 Feedback Max Rows",
+      "type": "integer"
+    },
+    "DATA_FABRIC_V7_PROBE_TTL_S": {
+      "default": 300.0,
+      "title": "Data Fabric V7 Probe Ttl S",
+      "type": "number"
+    },
+    "DATA_FABRIC_V7_RESULT_CACHE_MAX_BYTES": {
+      "default": 67108864,
+      "title": "Data Fabric V7 Result Cache Max Bytes",
+      "type": "integer"
+    },
+    "DATA_FABRIC_V7_RESULT_CACHE_MAX_ENTRIES": {
+      "default": 256,
+      "title": "Data Fabric V7 Result Cache Max Entries",
+      "type": "integer"
+    },
+    "DATA_FABRIC_V7_RESULT_CACHE_TTL_S": {
+      "default": 300.0,
+      "title": "Data Fabric V7 Result Cache Ttl S",
+      "type": "number"
+    },
+    "DEBUG": {
+      "default": false,
+      "title": "Debug",
+      "type": "boolean"
+    },
+    "ENV": {
+      "default": "development",
+      "title": "Env",
+      "type": "string"
+    },
+    "EXTENSIONS_ACTIVATE_UNTRUSTED": {
+      "default": false,
+      "title": "Extensions Activate Untrusted",
+      "type": "boolean"
+    },
+    "EXTENSIONS_ALLOW": {
+      "default": "",
+      "title": "Extensions Allow",
+      "type": "string"
+    },
+    "EXTENSIONS_ALLOW_UNSIGNED_DEV": {
+      "default": false,
+      "title": "Extensions Allow Unsigned Dev",
+      "type": "boolean"
+    },
+    "EXTENSIONS_BLOCK": {
+      "default": "",
+      "title": "Extensions Block",
+      "type": "string"
+    },
+    "EXTENSIONS_BUILTIN_IDS": {
+      "default": "",
+      "title": "Extensions Builtin Ids",
+      "type": "string"
+    },
+    "EXTENSIONS_DIRS": {
+      "default": "",
+      "title": "Extensions Dirs",
+      "type": "string"
+    },
+    "EXTENSIONS_ENABLED": {
+      "default": false,
+      "title": "Extensions Enabled",
+      "type": "boolean"
+    },
+    "EXTENSIONS_INSTALL_ROOT": {
+      "default": "",
+      "title": "Extensions Install Root",
+      "type": "string"
+    },
+    "EXTENSIONS_ISOLATION_BACKEND": {
+      "default": "process",
+      "title": "Extensions Isolation Backend",
+      "type": "string"
+    },
+    "EXTENSIONS_KEEP_VERSIONS": {
+      "default": 3,
+      "title": "Extensions Keep Versions",
+      "type": "integer"
+    },
+    "EXTENSIONS_MAX_WORKER_CRASHES": {
+      "default": 2,
+      "title": "Extensions Max Worker Crashes",
+      "type": "integer"
+    },
+    "EXTENSIONS_TRUST_SIGNED": {
+      "default": false,
+      "title": "Extensions Trust Signed",
+      "type": "boolean"
+    },
+    "EXTENSION_ARTIFACT_ROOTS": {
+      "default": "",
+      "title": "Extension Artifact Roots",
+      "type": "string"
+    },
+    "EXTENSION_FEATURE_FLAGS": {
+      "default": "{}",
+      "title": "Extension Feature Flags",
+      "type": "string"
+    },
+    "EXTENSION_MAX_STREAM_EVENTS": {
+      "default": 10000,
+      "title": "Extension Max Stream Events",
+      "type": "integer"
+    },
+    "EXTENSION_NETWORK_ALLOW": {
+      "default": "",
+      "title": "Extension Network Allow",
+      "type": "string"
+    },
+    "EXTENSION_PERMISSION_GRANTS": {
+      "default": "",
+      "title": "Extension Permission Grants",
+      "type": "string"
+    },
+    "EXTENSION_REGISTRY_DIR": {
+      "default": "",
+      "title": "Extension Registry Dir",
+      "type": "string"
+    },
+    "EXTENSION_REGISTRY_URLS": {
+      "default": "",
+      "title": "Extension Registry Urls",
+      "type": "string"
+    },
+    "EXTENSION_SECRETS_JSON": {
+      "default": "{}",
+      "title": "Extension Secrets Json",
+      "type": "string"
+    },
+    "EXTENSION_SETTINGS_JSON": {
+      "default": "{}",
+      "title": "Extension Settings Json",
+      "type": "string"
+    },
+    "EXTENSION_STREAM_WINDOW": {
+      "default": 16,
+      "title": "Extension Stream Window",
+      "type": "integer"
+    },
+    "EXTENSION_TRUSTED_PUBLISHERS": {
+      "default": "",
+      "title": "Extension Trusted Publishers",
+      "type": "string"
+    },
+    "EXTENSION_TRUST_STORE_PATH": {
+      "default": "",
+      "title": "Extension Trust Store Path",
+      "type": "string"
+    },
+    "EXTENSION_VERSION_PIN": {
+      "default": "",
+      "title": "Extension Version Pin",
+      "type": "string"
+    },
+    "HEATMAP_MIN_POINTS": {
+      "default": 10,
+      "title": "Heatmap Min Points",
+      "type": "integer"
+    },
+    "HTTPS_PROXY": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Https Proxy"
+    },
+    "HTTP_PROXY": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Http Proxy"
+    },
+    "JWT_SECRET_KEY": {
+      "default": "",
+      "title": "Jwt Secret Key",
+      "type": "string"
+    },
+    "LLM_API_KEY": {
+      "default": "your-api-key-here",
+      "title": "Llm Api Key",
+      "type": "string"
+    },
+    "LLM_BASE_URL": {
+      "default": "https://api.stepfun.com/step_plan/v1",
+      "title": "Llm Base Url",
+      "type": "string"
+    },
+    "LLM_CONTEXT_WINDOW": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Llm Context Window"
+    },
+    "LLM_MAX_TOKENS": {
+      "default": 16384,
+      "title": "Llm Max Tokens",
+      "type": "integer"
+    },
+    "LLM_MODEL": {
+      "default": "step-3.7-flash",
+      "title": "Llm Model",
+      "type": "string"
+    },
+    "LLM_NO_PROGRESS_THRESHOLD": {
+      "default": 3,
+      "title": "Llm No Progress Threshold",
+      "type": "integer"
+    },
+    "LLM_PLANNER_MODEL": {
+      "default": "",
+      "title": "Llm Planner Model",
+      "type": "string"
+    },
+    "LLM_PROMPT_CACHING_ENABLED": {
+      "default": true,
+      "title": "Llm Prompt Caching Enabled",
+      "type": "boolean"
+    },
+    "LLM_TEMPERATURE": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Llm Temperature"
+    },
+    "LLM_TIMEOUT_S": {
+      "default": 120.0,
+      "title": "Llm Timeout S",
+      "type": "number"
+    },
+    "LLM_TITLE_MODEL": {
+      "default": "",
+      "title": "Llm Title Model",
+      "type": "string"
+    },
+    "LOCAL_GEODATA_DIR": {
+      "default": "",
+      "title": "Local Geodata Dir",
+      "type": "string"
+    },
+    "LOCAL_QUERY_FIRST": {
+      "default": true,
+      "title": "Local Query First",
+      "type": "boolean"
+    },
+    "MAPBOX_TOKEN": {
+      "default": "",
+      "title": "Mapbox Token",
+      "type": "string"
+    },
+    "NASA_EARTHDATA_PASSWORD": {
+      "default": "",
+      "title": "Nasa Earthdata Password",
+      "type": "string"
+    },
+    "NASA_EARTHDATA_USERNAME": {
+      "default": "",
+      "title": "Nasa Earthdata Username",
+      "type": "string"
+    },
+    "NOMINATIM_URL": {
+      "default": "https://nominatim.openstreetmap.org/search",
+      "title": "Nominatim Url",
+      "type": "string"
+    },
+    "OPENTOPOGRAPHY_API_KEY": {
+      "default": "",
+      "title": "Opentopography Api Key",
+      "type": "string"
+    },
+    "OVERPASS_API_URL": {
+      "default": "https://overpass.openstreetmap.fr/api/interpreter",
+      "title": "Overpass Api Url",
+      "type": "string"
+    },
+    "PROJECT_ARTIFACT_CONTENT_DIR": {
+      "default": "",
+      "title": "Project Artifact Content Dir",
+      "type": "string"
+    },
+    "PROJECT_NAME": {
+      "default": "WebGIS AI Agent",
+      "title": "Project Name",
+      "type": "string"
+    },
+    "RAG_EMBEDDING_OFFLINE": {
+      "default": false,
+      "title": "Rag Embedding Offline",
+      "type": "boolean"
+    },
+    "RASTER_GDAL_CACHE_MAX_MB": {
+      "default": 64,
+      "title": "Raster Gdal Cache Max Mb",
+      "type": "integer"
+    },
+    "RASTER_PROCESSING_MEMORY_MB": {
+      "default": 256,
+      "title": "Raster Processing Memory Mb",
+      "type": "integer"
+    },
+    "REDIS_URL": {
+      "default": "redis://localhost:16379/0",
+      "title": "Redis Url",
+      "type": "string"
+    },
+    "SENTINELHUB_CLIENT_ID": {
+      "default": "",
+      "title": "Sentinelhub Client Id",
+      "type": "string"
+    },
+    "SENTINELHUB_CLIENT_SECRET": {
+      "default": "",
+      "title": "Sentinelhub Client Secret",
+      "type": "string"
+    },
+    "SESSION_CACHE_SIZE": {
+      "default": 200,
+      "title": "Session Cache Size",
+      "type": "integer"
+    },
+    "SESSION_MESSAGE_CAP": {
+      "default": 200,
+      "title": "Session Message Cap",
+      "type": "integer"
+    },
+    "STAC_API_URL": {
+      "default": "https://earth-search.aws.element84.com/v1",
+      "title": "Stac Api Url",
+      "type": "string"
+    },
+    "TENCENT_MAP_KEY": {
+      "default": "",
+      "title": "Tencent Map Key",
+      "type": "string"
+    },
+    "TIANDITU_TOKEN": {
+      "default": "",
+      "title": "Tianditu Token",
+      "type": "string"
+    },
+    "TMP_DIR": {
+      "default": "./tmp",
+      "title": "Tmp Dir",
+      "type": "string"
+    },
+    "TOOL_TIMEOUT_S": {
+      "default": 300.0,
+      "title": "Tool Timeout S",
+      "type": "number"
+    },
+    "TURN_TOTAL_TIMEOUT_S": {
+      "default": 900.0,
+      "title": "Turn Total Timeout S",
+      "type": "number"
+    },
+    "USE_NEW_AGENT": {
+      "default": true,
+      "title": "Use New Agent",
+      "type": "boolean"
+    },
+    "USE_REDIS": {
+      "default": true,
+      "title": "Use Redis",
+      "type": "boolean"
+    }
+  },
+  "title": "Settings",
+  "type": "object"
+}

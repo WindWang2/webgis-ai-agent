@@ -14,7 +14,12 @@ from __future__ import annotations
 
 from typing import List
 
-from app.lib.gis.algorithm_registry import AlgorithmDescriptor, BackendVariant
+from app.lib.gis.algorithm_registry import (
+    AlgorithmDescriptor,
+    BackendVariant,
+    NumericalTolerance,
+    ResourceEnvelope,
+)
 from app.lib.gis.parameter_contracts import ParameterContract, ParameterSpec
 
 ALGORITHMS: List[AlgorithmDescriptor] = [
@@ -379,6 +384,77 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/lib/test_local_spatial_stats_v2.py::test_local_geary_adversarial_inputs",
             ],
             parameter_contract_ref="local_geary_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="stats.local_moran", name="局部 Moran / LISA（单变量）",
+            category="spatial_statistics",
+            capabilities=["local_morans_i"],
+            input_artifact_types=["admin_aggregate_table", "grid_aggregate"],
+            output_artifact_type="hotspot_result", tool_candidates=["local_moran"],
+            cpu_cost="high", memory_cost="medium", io_cost="low",
+            preferred_execution_policy="THREAD", priority=10,
+            algorithm_family="spatial_autocorrelation",
+            method_references=["anselin1995", "moran1950",
+                               "benjamini_hochberg1995"],
+            assumptions=[
+                "I_i=(n−1)·z_i·(Wz)_i/Σz²，z 总体方差标准化（esda.Moran_Local "
+                "同式同尺度；行标准化 W）",
+                "条件随机化置换固定种子 42、双侧 (count+1)/(perms+1)；"
+                "对角无自权重 → 全局置换是 esda crand 条件置换的 "
+                "Monte-Carlo 近似（差 O(k/n)）",
+                "象限无条件分配（esda q：1=HH,2=LH,3=LL,4=HL；零滞后 q=0），"
+                "显著性独立由 p 表达",
+                "多重校正默认 BH-FDR（可 bonferroni/holm/none）",
+                "地理输入自动投影到局部 UTM 后建权重",
+            ],
+            limitations=[
+                "本实现置换 p 为双侧；esda 默认 directed 是其半值（其文档明示 "
+                "uniformly too small）——conformance 只对统计量 1e-8 "
+                "逐位对账，p 与 esda two-sided 以相关性 ≥0.9 对账",
+                "knn 权重是邻接的近似；queen/rook 需要面要素",
+                "二值/重并列字段下置换分布退化，p 分辨率受格子限制",
+                "孤岛位置 I_i=0、p=1 中性（island_count 显式披露）",
+            ],
+            crs_class="PROJECTED_REQUIRED",
+            scientific_preconditions=[
+                "numeric_field_required",
+                "nonzero_variance_required",
+                "min_numeric_samples:3",
+            ],
+            uncertainty_outputs=["statistical_significance"],
+            random_seed_policy="fixed_seed",
+            numerical_tolerance=(
+                "I_i 与 esda.Moran_Local（同 Queen 行标准化权重）差 <1e-8；"
+                "Σ I_i·n/(S₀(n−1)) = 全局 Moran I"),
+            scientific_status="VALIDATED",
+            resource_envelope=ResourceEnvelope(
+                bytes_per_feature=256,
+                notes="稀疏权重 O(k·n) + 置换按 nnz 向量化；256B/要素覆盖 "
+                      "8-NN 对称化权重与统计数组"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-8, atol=1e-8,
+                                         policy="reference_cross_check"),
+            conformance_tests=[
+                "tests/unit/lib/test_local_moran_v6.py::"
+                "test_local_moran_matches_esda",
+                "tests/unit/lib/test_local_moran_v6.py::"
+                "test_local_moran_rook_checkerboard_golden",
+                "tests/unit/lib/test_local_moran_v6.py::"
+                "test_local_moran_clustered_classification",
+                "tests/unit/lib/test_local_moran_v6.py::"
+                "test_local_moran_global_decomposition",
+                "tests/unit/lib/test_local_moran_v6.py::"
+                "test_local_moran_islands_disclosed",
+                "tests/unit/lib/test_local_moran_v6.py::"
+                "test_local_moran_adversarial_inputs",
+            ],
+            uncertainty_producer_tests={
+                "statistical_significance":
+                    "tests/unit/lib/test_local_moran_v6.py::"
+                    "test_local_moran_clustered_classification",
+            },
+            parameter_contract_ref="local_moran_analysis",
         ),
 
         AlgorithmDescriptor(
@@ -1152,6 +1228,43 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
     ParameterContract(
         id="local_geary_analysis", version=1,
         description="局部 Geary's C_i：权重方案 / k / 距离阈值 / 置换数 / 多重校正。",
+        parameters=[
+            ParameterSpec(
+                name="value_field", type="string", required=True,
+                description="待检验的数值字段名",
+            ),
+            ParameterSpec(
+                name="weights_scheme", type="enum", default="knn",
+                enum_values=["knn", "queen", "rook", "distance_band"],
+                description="空间权重方案；queen/rook 需要面要素",
+            ),
+            ParameterSpec(
+                name="k", type="integer", default=8, minimum=2, maximum=16,
+                unit="count",
+                description="kNN 邻居数（仅 weights_scheme=knn）",
+            ),
+            ParameterSpec(
+                name="distance_band", type="number", default=0, minimum=0,
+                unit="meters",
+                data_dependent_default="distance_band_8nn",
+                description="distance_band 权重阈值（米）；0=按 8 近邻平均距离自动",
+            ),
+            ParameterSpec(
+                name="permutations", type="enum", default="99",
+                enum_values=["99", "199", "499", "999"],
+                description="置换次数（固定种子 42；p 值分辨率 1/(n+1)）",
+            ),
+            ParameterSpec(
+                name="correction", type="enum", default="bh",
+                enum_values=["bh", "bonferroni", "holm", "none"],
+                description="逐格 p 的多重校正方法",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="local_moran_analysis", version=1,
+        description="单变量局部 Moran（LISA）：权重方案 / k / 距离阈值 / "
+                    "置换数 / 多重校正。",
         parameters=[
             ParameterSpec(
                 name="value_field", type="string", required=True,

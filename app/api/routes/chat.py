@@ -1721,6 +1721,20 @@ async def push_cartographic_runtime_observation(
                 "Post-observation runtime projection update failed for %s",
                 session_id, exc_info=True,
             )
+        # V7（ADR-0130 D1）：观察到达 → OBSERVING 回路的取证事件（增值披露）。
+        try:
+            from app.services.gis_harness.runtime_state_machine import (
+                maybe_update_runtime_state,
+            )
+            await maybe_update_runtime_state(
+                session_id, reason="render_observation",
+                trigger="observation_received",
+            )
+        except Exception:  # noqa: BLE001 — 阶段投影是增值披露
+            logger.debug(
+                "Post-observation runtime state update failed for %s",
+                session_id, exc_info=True,
+            )
     except Exception:  # noqa: BLE001 — 终验是增值披露，不阻断观察响应
         logger.warning(
             "Post-observation map finalization failed for %s", session_id, exc_info=True

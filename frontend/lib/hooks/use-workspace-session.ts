@@ -18,6 +18,9 @@ import {
   startWorkbenchPersistence,
   workbenchPersistenceArmed,
 } from '@/lib/workbench/persistence';
+// V7（review MINOR-10）：静态 import —— 会话切换路径上 resetSketchStore 必须
+// 同步落地，动态 import 的微任务延迟会让迟到 reset 清掉切换后的新草图。
+import { resetSketchStore } from '@/lib/edit/sketch-store';
 import { clearUndoHistory } from '@/lib/workbench/undo';
 import {
   clearSessionAnchor,
@@ -170,6 +173,13 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
+      // V7（审计 §2-M）：样式钻入视图描述的是旧会话的图层行 —— 不清则
+      // 切换后图层 tab 渲染 LayerStylePanel，找不到层 return null → 整页空白。
+      useHudStore.getState().setEditingLayerId(null);
+      // V7（审计 §4-M）：工具激活态与脏标记跨会话残留（测量模式在新会话
+      // 仍激活）；草图要素同理清空。
+      useHudStore.getState().clearToolState();
+      resetSketchStore();
       // Workspace V2：dock 归属描述的是旧会话的组件实例 —— 新会话的
       // MapSpec 没有这些 id，停靠区随之清空（避免空 dock/幽灵面板）。
       useHudStore.getState().resetDockState();
@@ -341,6 +351,11 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
+      // V7（审计 §2-M）：同 selectSession —— 样式钻入视图随会话清空。
+      useHudStore.getState().setEditingLayerId(null);
+      // V7：同 selectSession —— 工具/脏标记/草图随会话清空。
+      useHudStore.getState().clearToolState();
+      resetSketchStore();
       // Workspace V2：dock 归属描述的是旧会话的组件实例 —— 新会话的
       // MapSpec 没有这些 id，停靠区随之清空（避免空 dock/幽灵面板）。
       useHudStore.getState().resetDockState();

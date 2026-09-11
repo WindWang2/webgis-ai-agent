@@ -73,6 +73,9 @@ class ReuseKeyComponents:
     tile_plan_payload: Dict[str, Any]
     postprocess_payload: Dict[str, Any]
     owner_scope: Dict[str, str]
+    #: V3 §C：双时相任务的 B 时相内容身份（None = 单栅格任务；不参与 key
+    #  会造成「同 key 不同结果」——不同 B 影像命中同一缓存）。
+    input_b_content_sha256: Optional[str] = None
     include_software_env: bool = True
 
     def canonical(self) -> Dict[str, Any]:
@@ -87,6 +90,8 @@ class ReuseKeyComponents:
             "postprocess": self.postprocess_payload,
             "owner_scope": dict(sorted(self.owner_scope.items())),
         }
+        if self.input_b_content_sha256 is not None:
+            payload["input_b_content_sha256"] = self.input_b_content_sha256
         if self.include_software_env:
             payload["software_env"] = _SOFTWARE_ENV
         return payload
@@ -104,6 +109,7 @@ def build_reuse_key(
     tile_plan_payload: Dict[str, Any],
     postprocess_payload: Dict[str, Any],
     owner_scope: Dict[str, str],
+    input_b_content_sha256: Optional[str] = None,
     include_software_env: bool = True,
 ) -> str:
     """一次性构造复用 key（sha256 hex）。"""
@@ -115,6 +121,7 @@ def build_reuse_key(
         tile_plan_payload=tile_plan_payload,
         postprocess_payload=postprocess_payload,
         owner_scope=owner_scope,
+        input_b_content_sha256=input_b_content_sha256,
         include_software_env=include_software_env,
     ).digest()
 

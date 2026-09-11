@@ -153,6 +153,9 @@ class FederatedResultCache:
         self._lock = threading.Lock()
         self.hits = 0
         self.misses = 0
+        # ── V8（ADR-0130 Phase F）──
+        self._single = SingleFlight()
+        self._backend = _backend_from_settings()
 
     def get(
         self,
@@ -165,10 +168,18 @@ class FederatedResultCache:
             entry = self._entries.get(key)
             if entry is None:
                 self.misses += 1
+                remote = self._backend_get(key)
+                if remote is not None:
+                    self.hits += 1
+                    return remote
                 return None
             if entry.is_expired():
                 self._drop_locked(key)
                 self.misses += 1
+                remote = self._backend_get(key)
+                if remote is not None:
+                    self.hits += 1
+                    return remote
                 return None
             if current_fingerprints is not None and any(
                 entry.fingerprints.get(sid) != fp
@@ -229,6 +240,7 @@ class FederatedResultCache:
             ):
                 _, evicted = self._entries.popitem(last=False)
                 self._bytes -= evicted.bytes_len
+        self._backend_put(key, payload, ttl_s=self._ttl_s)
 
     def put_negative(self, key: str, error_code: str) -> None:
         if error_code not in _NEGATIVE_CODES:
@@ -262,7 +274,7 @@ class FederatedResultCache:
 
     def stats(self) -> Dict[str, Any]:
         with self._lock:
-            return {
+            out = {
                 "entries": len(self._entries),
                 "bytes": self._bytes,
                 "max_entries": self._max_entries,
@@ -271,11 +283,212 @@ class FederatedResultCache:
                 "misses": self.misses,
                 "negative_entries": len(self._negative),
             }
+        out["singleflight_inflight"] = self._single.inflight()
+        out["distributed_backend"] = type(self._backend).__name__ if self._backend else None
+        if self._backend is not None:
+            out["backend_failures"] = getattr(self._backend, "failures", 0)
+        return out
+
+    def single_flight(self) -> SingleFlight:
+        """stampede 保护的 per-key 单飞（execute_chain_v6 的 miss 路径用）。"""
+        return self._single
+
+    # ── V8：分布式二线（全部 fail-open；键已含 fingerprints —— 命中即一致）──
+
+    def _backend_get(self, key: str) -> Optional[Dict[str, Any]]:
+        if self._backend is None:
+            return None
+        try:
+            raw = self._backend.get(key)
+        except Exception:  # noqa: BLE001
+            return None
+        if raw is None:
+            return None
+        try:
+            payload = json.loads(raw)
+        except Exception:  # noqa: BLE001 - 反序列化失败按 miss
+            return None
+        if isinstance(payload, dict):
+            payload["result_cache"] = {
+                "hit": True,
+                "age_s": None,  # 分布式 TTL 不回传创建时刻 —— 诚实未知
+                "ttl_s": self._ttl_s,
+                "basis": "ttl+fingerprint+distributed",
+                "key": key[:16],
+            }
+        return payload
+
+    def _backend_put(self, key: str, payload: Any, *, ttl_s: float) -> None:
+        if self._backend is None:
+            return
+        try:
+            self._backend.put(
+                key, json.dumps(payload, default=str), ttl_s=ttl_s
+            )
+        except Exception:  # noqa: BLE001 - 写穿失败不影响本地缓存语义
+            pass
 
     def _drop_locked(self, key: str) -> None:
         entry = self._entries.pop(key, None)
         if entry is not None:
             self._bytes -= entry.bytes_len
+
+
+# ── V8（ADR-0130 Phase F）：stampede 保护 + 可选分布式后端 ─────────────────
+
+
+class _Flight:
+    __slots__ = ("event", "result", "exc", "done")
+
+    def __init__(self):
+        import threading as _t
+
+        self.event = _t.Event()
+        self.result = None
+        self.exc = None
+        self.done = False
+
+
+class SingleFlight:
+    """per-key 单飞（cache stampede 保护）。
+
+    首个调用者成为 owner 执行 ``fn``；并发同键调用者在 ``max_wait_s`` 界内
+    等 owner 的结果（拿到即复用，不重复打远端）。等待超时/owner 失败时
+    调用者**自行执行**（降级为无单飞 —— 保护是延迟优化，绝不变成可用性
+    单点）。条目数有界：超界退化直执行。
+    """
+
+    def __init__(self, *, max_wait_s: Optional[float] = None, max_entries: int = 256):
+        import threading as _t
+
+        if max_wait_s is None:
+            from app.services.data_fabric.fabric.probing import _setting
+
+            max_wait_s = _setting("DATA_FABRIC_V8_RESULT_CACHE_SINGLEFLIGHT_WAIT_S", 10.0)
+        self._max_wait_s = float(max_wait_s)
+        self._max_entries = int(max_entries)
+        self._flights: "OrderedDict[str, _Flight]" = OrderedDict()
+        self._lock = _t.Lock()
+
+    def run(self, key: str, fn):
+        """单飞执行 ``fn``；返回 (result, shared)。shared=True = 复用 owner 结果。"""
+        with self._lock:
+            flight = self._flights.get(key)
+            if flight is None and len(self._flights) < self._max_entries:
+                flight = _Flight()
+                self._flights[key] = flight
+                owner = True
+            else:
+                owner = flight is None  # 超界 → 自行执行
+        if owner and flight is not None:
+            try:
+                result = fn()
+                with self._lock:
+                    flight.result = result
+                    flight.done = True
+                    flight.event.set()
+                    self._flights.pop(key, None)
+                return result, False
+            except BaseException as exc:
+                with self._lock:
+                    flight.exc = exc
+                    flight.done = True
+                    flight.event.set()
+                    self._flights.pop(key, None)
+                # owner 失败：等方自行执行（不传播同一异常 —— 各自独立重试
+                # 避免同因失败放大；owner 路径原样上抛由调用方契约处理）。
+                raise
+        # waiter：有界等待 owner 结果。
+        if flight is not None:
+            signaled = flight.event.wait(self._max_wait_s)
+            if signaled and flight.done and flight.exc is None:
+                return flight.result, True
+            # 超时或 owner 失败 → 自行执行（等价无单飞）。
+        return fn(), False
+
+    def inflight(self) -> int:
+        with self._lock:
+            return len(self._flights)
+
+
+class ResultCacheBackend:
+    """分布式后端 seam（可选；V8 additive）。
+
+    契约：全部方法 fail-open（后端故障 = 本地 LRU 继续服务）；值是 JSON
+    字符串（载荷已按 ``json.dumps(default=str)`` 计量，可序列化性成立）。
+    """
+
+    def get(self, key: str) -> Optional[str]:  # pragma: no cover - 接口
+        raise NotImplementedError
+
+    def put(self, key: str, value: str, *, ttl_s: float) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+    def ping(self) -> bool:  # pragma: no cover
+        raise NotImplementedError
+
+
+class RedisResultCacheBackend(ResultCacheBackend):
+    """Redis 后端（惰性连接；双界超时；故障 fail-open 计数披露）。"""
+
+    def __init__(self, *, url: Optional[str] = None, socket_timeout_s: float = 0.25):
+        import threading as _t
+
+        if url is None:
+            from app.services.data_fabric.fabric.probing import _setting
+
+            url = _setting("DATA_FABRIC_V8_RESULT_CACHE_REDIS_URL", "")                 or _setting("REDIS_URL", "")
+        self._url = url
+        self._socket_timeout_s = float(socket_timeout_s)
+        self._client = None
+        self._client_lock = _t.Lock()
+        self.failures = 0
+
+    def _get_client(self):
+        with self._client_lock:
+            if self._client is None:
+                import redis as _redis
+
+                self._client = _redis.Redis.from_url(
+                    self._url,
+                    socket_connect_timeout=self._socket_timeout_s,
+                    socket_timeout=self._socket_timeout_s,
+                    decode_responses=True,
+                )
+            return self._client
+
+    def get(self, key: str) -> Optional[str]:
+        try:
+            return self._get_client().get(f"fabric_rc:{key}")
+        except Exception:  # noqa: BLE001 - 后端故障 fail-open
+            self.failures += 1
+            return None
+
+    def put(self, key: str, value: str, *, ttl_s: float) -> None:
+        try:
+            self._get_client().setex(f"fabric_rc:{key}", max(1, int(ttl_s)), value)
+        except Exception:  # noqa: BLE001
+            self.failures += 1
+
+    def ping(self) -> bool:
+        try:
+            return bool(self._get_client().ping())
+        except Exception:  # noqa: BLE001
+            self.failures += 1
+            return False
+
+
+def _backend_from_settings():
+    """settings → 后端实例（memory = None；redis 故障惰性，绝不阻断导入）。"""
+    from app.services.data_fabric.fabric.probing import _setting
+
+    mode = str(_setting("DATA_FABRIC_V8_RESULT_CACHE_BACKEND", "memory") or "memory")
+    if mode.strip().lower() != "redis":
+        return None
+    try:
+        return RedisResultCacheBackend()
+    except Exception:  # noqa: BLE001 - redis 包缺失 → 本地 LRU
+        return None
 
 
 _cache: Optional[FederatedResultCache] = None

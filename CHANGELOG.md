@@ -1,5 +1,164 @@
 # Changelog
 
+## [Unreleased] - 2026-09-11 (cartography-v7: Template Component Runtime)
+
+### Added (cartography-v7: Component Graph + Constraint Set + Style Tokens, Goal 08)
+- Component graph (`app/lib/cartography/component_graph.py`): MapSpec 扁平
+  组件列表之上的运行时图投影 —— 节点带 registry 语义投影，类型化边
+  binds_to/requires/groups/annotates/under（derived：options.layerId、
+  subtitle→title；explicit：layout.component_links）；validate 输出
+  duplicate_binding/cycle/orphan_binding 结构化问题；确定性拓扑序
+  （under=src 先绘制）。MapSpec schema 1.2 additive（identity upgrader，
+  round-trip 保真，TS 投影再生成）。
+- Registry intelligence（`component_registry.py`）：search() 确定性 token
+  评分（受控中英关键词词表 + 过滤器硬约束 + 弃用缺省排除）、recommend()
+  可解释上下文推荐（模型兼容/语义角色/类目亲和/在场去重）；descriptor
+  新增 deprecated/deprecated_by/preview/search_keywords_zh。
+- Layout geometry（`layout_geometry.py`）：margins/bleed 安全区、zone
+  矩形近似、浮动组件 user-wins 确定性布放（越界钳制 + 重叠级联推移，
+  不可解显式披露）—— QA 与 repair 共用同一几何真值。
+- Style tokens（`style_tokens.py`）：线宽/符号/视觉层级比例尺 ×
+  screen/publication 输出预设；调色板 profile 迁移建议器（色带子集精确
+  反查，用户自定义色不猜测改写）。
+- Multi-alternative composition selection（`composition_selection.py`）：
+  同一数据 → 排序的候选组合（类目亲和审定表 + plan_composition 复用 +
+  确定性加权评分 + 类目轮转多样性合并）；「学校分布」场景由结构化事实
+  推导出点图/热力/统计组件组合，无 query 硬编码。
+- Graph-level cartographic QA（semantic_checks 新增三条 deterministic
+  规则 DUPLICATE_LEGEND_BINDING / COMPONENT_OUTSIDE_CANVAS /
+  COMPONENT_LINK_CYCLE）+ AUTO_SAFE `resolve_floating_layout`（只挪
+  floating x/y）+ `derive_product_verdict` additive cartographic_review
+  参数（deterministic fail 压低 READY 档位）。
+- Publication DPI 参数化：`/export/vector-pdf` 可选 target_dpi（72-600
+  钳制 + 生效值披露；缺省 300 输出 byte 一致）。
+
+## [Unreleased] - 2026-09-10 (harness-v7)
+
+### Added (harness-v7: Long-Horizon Contextual GIS Agent Runtime, ADR-0130)
+- Runtime state machine (`gis_harness/runtime_state_machine.py`): task-level
+  cognitive-loop phase (12-state closed vocabulary) + legal transition table
+  (docs/test-oracle/commanded fail-closed) + ring transition records; phases
+  are deterministic derivations of chapter facts (no second truth source);
+  persisted additively at `gis_chapter["runtime_state"]` with gate
+  fingerprint idempotency + in-lock drift guards; `suspended` overlay flag
+  marks unfinished tasks at turn settle (anchor-resumable); wired to the
+  three existing production triggers (tool_result / turn_settled / render
+  observation) — zero new event sources; `[GIS Runtime]` projection line.
+- Plan runtime (`gis_harness/plan_runtime.py`): plan identity fingerprint
+  (goal+rows+contract) → monotonic versioning with bounded history (≤8) and
+  rollback points (≤4); replan loop gets BOTH a budget entry
+  (`LOOP_BUDGETS.replan=1`) and its first production driver (`request_replan`,
+  invoked from the finalizer exit when repair is unreachable) — flag cleared
+  when plan facts change (replan consumed); `seed_recompute_from_failures`
+  emits a minimal-rerun list (failed row + downstream closure, reuse for
+  unaffected satisfied nodes).
+- Context layers (`gis_harness/context_layers.py`): nine bounded domain
+  projections (turn/session/project/workspace/map/data/workflow/artifact/
+  capability), all rebuildable — anchor carries only per-domain digests
+  (`context_digest` durable key); deterministic budget (per-domain byte caps
+  → total-budget prune order, violations recorded); single-key checkpoint
+  with monotonic revision + content fingerprint (turn-boundary automatic).
+- Capability descriptors (`gis_harness/capability_descriptors.py`): unified
+  read-only projection over capability/algorithm/template/component
+  registries with preconditions (geometry/CRS class/min features/required
+  fields/scientific), postconditions (outputs/uncertainty), cost/latency
+  profile, fallback chains; `select_capabilities` (hard precondition filter
+  + CJK-bigram lexical seed + cost bias + bounded reliability penalty from
+  the durable recovery ledger); gated additive signal in
+  `tool_surface_v3.select` (kill switch `GIS_CAPABILITY_RETRIEVAL_V7=0`).
+- Scenario corpus (`app/evaluation/scenario_corpus.py`): generative gold
+  structure — domain packs × bounded slot tables × deterministic expansion
+  (14 families, 2316 scenarios ≥ 2000 gate), expected lists validated
+  against the live registries (`registry_missing=[]`), coverage gate that
+  flags registry families with no pack, deterministic stride sampling with
+  p@1 evaluation.
+- Map critique (`gis_harness/map_critique.py`): deterministic checks —
+  blank_map_risk (all rendered layers explicitly report count 0),
+  invalid_result_bounds, publication export completeness (title/north_arrow/
+  scale_bar with family repair routing), label collision (telemetry ratio vs
+  existing CARTO_LABEL_* thresholds, honest absence), planned/observed
+  overlay mismatch; aggregated as bounded `MapCompletionFinding`s and merged
+  additively into the finalizer's validate pass.
+- Finalization hook (V7): independent intent acceptance
+  (`gis_harness/intent_acceptance.py` — verdict/desired/observed three-way
+  check replacing the `intent_verified=(status==complete)` tautology;
+  missing telemetry honestly downgrades `intent_verified`); finalizer exit
+  directly consumes `decide_continuation` (V6 follow-up) with replan routing
+  through `request_replan`; READY triggers context commit (nine-domain
+  checkpoint + `commit_runtime_context` + `verdict_ready` phase advance);
+  display confirmation hook (`gis_harness/display_confirmation.py`, default
+  auto-confirm, `GIS_FINAL_DISPLAY_CONFIRM=required` opts into explicit
+  ack with render-seq freshness).
+- Delegation (`gis_harness/delegation.py`): handoff schema
+  (`DelegationSpec`, role fail-closed) wrapping `SubagentDispatcher` with a
+  bounded parent-side ledger (`gis_chapter["delegations"]`, ring ≤8, closed
+  status vocabulary, lineage write-back); deterministic failure recovery
+  (one retry within repair budget, then honest fail); optional production
+  driver `delegate_cartography_qa` (env `GIS_HARNESS_DELEGATION=1`,
+  idempotent per product revision).
+- New ADR: `docs/adr/0130-gis-harness-v7-agentic-runtime.md`.
+
+## [Unreleased] - 2026-09-10 (data-fabric-v8)
+
+### Added (data-fabric-v8: Adaptive Federated Spatial Data Plane, ADR-0130)
+- FabricRuntime single production resolution path: registry-first
+  (scope/revision/health/secret separation) -> legacy session fallback
+  (first use registers into the registry — unified governance view,
+  single-construction reuse) -> DB-registered sources attach on demand
+  under the row's owner scope. All 11 tool-layer call sites and the five
+  DataFabricManager REST/worker paths converge; any governance failure
+  fails open to the existing factory build (byte-identical contract).
+- Adaptive loop closed (orphan libraries activated): probed capability
+  overrides (probed-basis-only), SourceFacts row counts, and decayed
+  feedback correction factors are flattened into pure planning hints
+  before planning; explicit caller hints are never overridden and hint
+  drift is disclosed. `ChainSource.source_type` now flows from the
+  registry record, activating static capability injection (pushdown
+  disclosure / aggregate-pushdown eligibility) on the tool path.
+- EXPLAIN `estimate_basis:` disclosure (rows basis / caps basis / hint
+  drift); output is byte-identical to V7 when no enrichment is present.
+- Process-level engine fallback breaker: >=3 consecutive V6 crashes open
+  the breaker so engine=v6 requests run V5 directly (double-execution
+  cost eliminated), half-open single trial after cool-down, success
+  resets; additive `engine_breaker` disclosure on fallback results
+  (closes the ADR-0120 R2-Mi-4 known limitation).
+- Result cache strengthening: per-key single-flight around the miss path
+  (concurrent identical requests share the first execution; owner
+  failure/waiter timeout proceed independently) and an optional Redis
+  second tier behind a fail-open `ResultCacheBackend` seam (write-through,
+  fingerprint-baked keys, honest `basis=ttl+fingerprint+distributed`
+  disclosure with age=None).
+- Connection Registry V8: `ConnectionRecord.redacted_profile` fixes the
+  V7 rebuild defect (records previously kept only four endpoint fields,
+  so options-shaped sources could never be rebuilt) with
+  `ensure_adapter` faithful rebuild+backfill and
+  `attach(prebuilt_adapter=)` single-construction legacy bridging.
+
+### Fixed (data-fabric-v8)
+- Credential-leak hardening: `redacted_profile` now strips URL userinfo
+  via `redact_url` and moves sensitive keys inside nested trees (options,
+  the REST `create_data_source` credential path) into the SecretStore,
+  with deep-merge restoration on rehydrate — records and diagnostics are
+  constructively secret-free.
+- Factory-seam fidelity: governed resolution reuses `cls.get_adapter` as
+  the single construction point and registers the built instance via
+  `attach_prebuilt` (test monkeypatch/`build_adapter` seam preserved);
+  fixed `attach(build_adapter=False, prebuilt_adapter=...)` never storing
+  the prebuilt instance.
+- Engine-breaker half-open trial leak: trial slots are now released via
+  `finally` on exits that never reach success/crash accounting (negative
+  cache, cache hits, typed plan errors) — previously one such exit during
+  HALF_OPEN disabled V6 until process restart.
+- URL-userinfo secrets are captured into the SecretStore before
+  redaction: basic-auth/DSN URLs rebuild with credentials intact and
+  userinfo-only rotation now produces a new revision instead of an
+  idempotent stale hit; sensitive keys inside options lists are
+  extracted too; shared (content-deduped) secret refs are no longer
+  evicted while a sibling record references them; `ensure_adapter`
+  refuses expired records; global-scope connections report governed
+  metadata (probe/enrichment no longer silently disabled); throttled
+  `sweep()` wired into resolution (idle-TTL eviction is live).
+
 ## [Unreleased] - 2026-09-09 (science-v5)
 
 ### Added (science-v5: Scalable Scientific Computing + Uncertainty + Spatiotemporal GeoAI)

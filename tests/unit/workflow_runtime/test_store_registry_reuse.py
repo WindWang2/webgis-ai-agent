@@ -185,7 +185,52 @@ def test_run_lease_mutual_exclusion(store):
     assert store.acquire_run_lease(iid, owner_scope="u:abc", token="drv-1")
 
 
-def test_orphan_recovery_requires_expired_lease(store):
+def _backdate_node_lease(factory, iid: str, node_id: str,
+                         seconds: float = 1.0,
+                         null_lease: bool = False) -> None:
+    """测试辅助：把节点租约回拨到过去（模拟 worker 死亡）或清空（旧式认领）。"""
+    import sqlalchemy as sa
+    from datetime import datetime, timedelta
+
+    from app.models.db_model import WorkflowInstanceNodeRow
+
+    with factory() as db:
+        values: dict = {"lease_expires_at": datetime.utcnow()
+                        - timedelta(seconds=seconds)}
+        if null_lease:
+            values = {"lease_expires_at": None, "heartbeat_at": None}
+        db.execute(
+            sa.update(WorkflowInstanceNodeRow)
+            .where(WorkflowInstanceNodeRow.instance_id == iid,
+                   WorkflowInstanceNodeRow.node_id == node_id)
+            .values(**values)
+        )
+        db.commit()
+
+
+def test_orphan_recovery_requires_expired_lease(store, factory):
+    """V6 两级租约：claim 写节点租约；过期才孤儿；run 租约不复活过期节点。"""
+    inst = _make(store)
+    iid = inst["instance_id"]
+    store.transition_node(iid, "data:subject", C.NodeState.READY,
+                          expected_from=C.NodeState.PENDING)
+    # claim 即写节点租约（未过期）→ 活 worker 持有，非孤儿
+    store.transition_node(iid, "data:subject", C.NodeState.RUNNING,
+                          expected_from=C.NodeState.READY, claim=True,
+                          claimed_by="rt-1")
+    assert store.find_orphan_running_nodes(iid) == []
+    # 节点租约过期 → 孤儿
+    _backdate_node_lease(factory, iid, "data:subject")
+    assert store.find_orphan_running_nodes(iid) == ["data:subject"]
+    # worker 死亡独立于 coordinator：活 run 租约（他持/本持）都不掩盖
+    # 过期节点租约 —— 这正是「coordinator 活着但 worker 死了」的接管面
+    store.acquire_run_lease(iid, owner_scope="u:abc", token="drv-1")
+    assert store.find_orphan_running_nodes(iid, current_token="drv-1") == \
+        ["data:subject"]
+
+
+def test_orphan_null_node_lease_falls_back_to_run_lease(store, factory):
+    """NULL 节点租约（旧式同步认领）→ run 租约语义：无主即孤儿。"""
     inst = _make(store)
     iid = inst["instance_id"]
     store.transition_node(iid, "data:subject", C.NodeState.READY,
@@ -193,9 +238,9 @@ def test_orphan_recovery_requires_expired_lease(store):
     store.transition_node(iid, "data:subject", C.NodeState.RUNNING,
                           expected_from=C.NodeState.READY, claim=True,
                           claimed_by="rt-1")
-    # 无租约（从未 acquire）→ 孤儿
+    _backdate_node_lease(factory, iid, "data:subject", null_lease=True)
+    # 无 run 租约 → 孤儿；活 run 租约他持 → 非孤儿
     assert store.find_orphan_running_nodes(iid) == ["data:subject"]
-    # 活租约 → 非孤儿
     store.acquire_run_lease(iid, owner_scope="u:abc", token="drv-1")
     assert store.find_orphan_running_nodes(iid) == []
 

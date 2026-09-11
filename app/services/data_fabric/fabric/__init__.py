@@ -1,4 +1,4 @@
-"""Data Fabric V7 — Adaptive Distributed Spatial Data Plane（ADR-0119）。
+"""Data Fabric V7/V8 — Adaptive Distributed Spatial Data Plane（ADR-0119/0130）。
 
 联邦数据面治理层，位于 V6 优化器（``query/federated/``）之下：
 
@@ -8,7 +8,9 @@
 - ``source_facts``：SourceFacts 记录/采集/持久层（advisory，fail-open）；
 - ``feedback``：分布式执行反馈（持久、作用域、时间衰减 → SourceFacts 回路）；
 - ``result_cache``：联邦查询结果缓存（revision 键控、命中必披露）；
-- ``counters``：per-execution 结构性计数器。
+- ``counters``：per-execution 结构性计数器；
+- ``runtime``（V8）：生产单一解析路径 —— registry 优先的 adapter 解析 +
+  治理数据富集（探测/事实/反馈 → 规划纯数据提示）。
 
 设计红线（与 V6/statistics 同纪律）：advisory 层 fail-open 绝不阻断查询；
 secrets 永不进 record/feedback/EXPLAIN；新增公共契约全部 typed + 有界。
@@ -23,6 +25,11 @@ from app.services.data_fabric.fabric.connection_registry import (
     TenantScope,
     get_connection_registry,
 )
+from app.services.data_fabric.fabric.runtime import (
+    FabricRuntime,
+    ResolvedSource,
+    get_fabric_runtime,
+)
 
 __all__ = [
     "ConnectionExpiredError",
@@ -31,5 +38,8 @@ __all__ = [
     "InMemorySecretStore",
     "SecretStore",
     "TenantScope",
+    "FabricRuntime",
+    "ResolvedSource",
     "get_connection_registry",
+    "get_fabric_runtime",
 ]

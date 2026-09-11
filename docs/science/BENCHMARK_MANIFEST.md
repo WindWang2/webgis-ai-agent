@@ -9,12 +9,14 @@
 > （ResourceScaleMismatch / RasterResourceGuard），benchmark 结构门消费
 > 同一批声明。空字段 = 未声明（不构成承诺）。
 
-统计：102/213 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
+统计：111/222 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
 
 | 算法 | 复杂度 | 精度 | 资源包络 | 变体(窗口) | 取消 | 容差 | 成本 cpu/mem | 执行策略 |
 |---|---|---|---|---|---|---|---|---|
 | `data.ingest.pipeline` | — | — | — | pure_python_inline(pure_python,[1,50000]) | — | — | medium/high | ASYNC |
 | `density.analytical.mixed` | — | approximate | — | — | — | — | high/medium | CELERY |
+| `ecology.habitat_suitability` | — | — | 48B/feat | — | none | — | low/low | THREAD |
+| `ecology.landscape_metrics` | — | — | 24B/cell cells≤50000000 | — | chunk_boundary | — | medium/medium | THREAD |
 | `interpolation.block_kriging` | 块离散化 2×2 + OK 系统（−γ̄(B,B) 修正） | approximate | 24B/feat pairs≤200000 feat≤500000 | numpy_block_discretized(numpy,[8,500000]) | chunk_boundary | rtol=0.001,atol=1e-09 | high/high | CELERY |
 | `interpolation.cokriging` | 协同定位系统 O(m·(k+2)³)（MM1 近似） | approximate | 24B/feat pairs≤200000 feat≤500000 | numpy_mm1_collocated(numpy,[8,500000]) | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
 | `interpolation.cokriging_lmc` | 逐目标 (k1+k2+2)³ 系统求解 + LMC 拟合 O(N_fit²) | exact | 32B/feat feat≤500000 | numpy_batched(numpy,[8,500000],exact);numpy_lmc_exact(numpy,[8,500000],exact) | chunk_boundary | rtol=1e-09,atol=0 | high/high | CELERY |
@@ -63,6 +65,9 @@
 | `remote.mnf` | — | — | — | numpy_noise_whitened_pca(numpy,[1,16777216]) | — | — | high/high | THREAD |
 | `remote.ndvi` | — | — | — | numpy_band_math(numpy,[1,16777216]) | — | — | medium/high | THREAD |
 | `remote.pca` | — | — | — | numpy_cov_pca(numpy,[1,16777216]) | — | — | high/high | THREAD |
+| `sampling.random_points` | — | — | 64B/feat feat≤1000000 | — | chunk_boundary | — | low/low | THREAD |
+| `sampling.stratified_points` | — | — | 64B/feat feat≤1000000 | — | chunk_boundary | — | low/low | THREAD |
+| `sampling.systematic_grid` | — | — | 64B/feat feat≤4000000 | — | none | — | low/low | THREAD |
 | `sar.glcm_texture` | — | — | — | numpy_glcm_windows(numpy,[1,64000000]) | — | — | high/high | THREAD |
 | `sar.multitemporal_speckle` | — | — | — | numpy_mt_lee(numpy,[1,16777216]) | — | — | high/high | THREAD |
 | `sar.speckle_filter` | — | — | — | numpy_speckle_filters(numpy,[1,16777216]) | — | — | high/high | THREAD |
@@ -76,14 +81,17 @@
 | `stats.h3_hotspot` | — | — | — | — | — | — | high/medium | THREAD |
 | `stats.h3_lisa` | — | — | — | — | — | — | high/medium | THREAD |
 | `stats.local_geary` | — | — | — | — | — | — | high/medium | THREAD |
+| `stats.local_moran` | — | — | 256B/feat | — | chunk_boundary | rtol=1e-08,atol=1e-08 | high/medium | THREAD |
 | `stats.st_dbscan` | — | — | — | — | — | — | high/medium | THREAD |
 | `temporal.anomaly` | O(T·H·W)（气候态 + 分段 Welch 近似） | approximate | 8B/cell cells≤8388608 | — | coarse | rtol=1e-09,atol=1e-09 | medium/medium | THREAD |
 | `temporal.cube_stats` | O(T·H·W)（nan-aware 逐切片统计；T≤512 硬顶） | exact | 8B/cell cells≤8388608 | — | coarse | rtol=1e-12,atol=1e-12 | medium/medium | THREAD |
 | `temporal.hotspot` | — | — | — | — | — | — | high/medium | THREAD |
 | `temporal.phenology` | O(T·N) 填充/平滑 + O(T·N_ok·6) 联合 LS（N=像元，n_ok=完整序列） | approximate | 8B/cell cells≤8388608 | — | coarse | rtol=1e-09,atol=1e-09 | high/medium | THREAD |
+| `temporal.smooth_gapfill` | — | — | 24B/cell | — | none | rtol=1e-12,atol=1e-12 | low/low | THREAD |
 | `terrain.aspect` | — | — | 40B/cell | numpy_horn_gradient(numpy,[1,25000000]) | none | rtol=1e-06,atol=1e-09 | medium/high | THREAD |
 | `terrain.breach` | O(N log N)（priority-flood ×2 + 逐洼地路径切沟） | approximate | 32B/cell cells≤50000000 | numpy_priority_flood(numpy,[1,50000000],approximate) | chunk_boundary | rtol=1e-09,atol=0 | medium/high | — |
 | `terrain.contours` | — | — | 16B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
+| `terrain.cost_distance` | — | — | 40B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-09,atol=1e-09 | high/high | THREAD |
 | `terrain.curvature` | — | — | 48B/cell | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.dinf_flow` | O(N log N) | — | 40B/cell cells≤50000000 | — | chunk_boundary | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.flow` | — | — | 48B/cell | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
@@ -96,6 +104,7 @@
 | `terrain.horizon_angle` | — | — | 24B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.hypsometry` | O(N)（确定性直方） | approximate | 8B/cell | — | coarse | rtol=1e-09,atol=0 | low/low | — |
 | `terrain.landform` | — | — | 32B/cell cells≤50000000 | — | none | rtol=1e-12,atol=0 | medium/medium | THREAD |
+| `terrain.least_cost_path` | — | — | 8B/cell | — | none | rtol=1e-09,atol=1e-09 | low/low | THREAD |
 | `terrain.ls_factor` | — | — | 24B/cell | — | none | rtol=1e-06,atol=1e-09 | low/low | INLINE |
 | `terrain.morphometry` | — | — | 40B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |
 | `terrain.openness` | — | — | 32B/cell cells≤50000000 | — | none | rtol=1e-06,atol=1e-09 | medium/medium | THREAD |

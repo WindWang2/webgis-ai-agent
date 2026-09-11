@@ -83,6 +83,14 @@ def build_design_system_manifest() -> Dict[str, Any]:
                 "responsive": d.responsive,
                 "interactions": list(d.interactions),
                 "runtimeStatus": d.runtime_status,
+                # V7（Goal 08）：语义角色/弃用/预览投影（additive）。
+                "semanticRole": d.semantic_role,
+                "deprecated": d.deprecated,
+                "deprecatedBy": d.deprecated_by,
+                "preview": {
+                    "glyph": d.preview.glyph,
+                    "accent": d.preview.accent,
+                },
             }
             for d in sorted(
                 comp_reg.native_descriptors(), key=lambda d: d.id)

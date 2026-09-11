@@ -16,8 +16,9 @@ dict 约定 + 手维护的前端 TS 镜像（frontend/lib/mapspec-compiler/types
 - **canonical serialization**：输入 dict 的**保序深拷贝**（非 model_dump ——
   dump 会重排键序且受 lax 转换影响，R1-M1）；corpus golden 锁定
   ``dumps(canonicalize(x)) == dumps(x)``。
-- **version / migration**：已知版本 {1.0, 1.1}；1.1 纯 additive（frames、
-  labels.collision、组件 options 扩展）。迁移注册表显式声明升级路径；
+- **version / migration**：已知版本 {1.0, 1.1, 1.2}；1.1/1.2 纯 additive
+  （1.1：frames、labels.collision、组件 options 扩展；1.2：
+  layout.component_links 组件图显式边）。迁移注册表显式声明升级路径；
   未注册路径（更新版本）→ forward_version 标记（publication 消费方拒绝，
   不静默）。spec 自身 ``version`` 字段永不改写 —— 迁移是语义升级而非
   存储改写（desired-state 事实源仍是 lifecycle_engine/store）。
@@ -54,15 +55,19 @@ from pydantic import (
 #: 数字脊柱原语：接受 int|float，拒绝 str/bool（不 coerce —— 保真披露）。
 Number = Union[StrictInt, StrictFloat]
 
-#: 已知 MapSpec 契约版本。1.0 = V5 既有面；1.1 = V6 additive。
-KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1")
-LATEST_VERSION = "1.1"
+#: 已知 MapSpec 契约版本。1.0 = V5 既有面；1.1 = V6 additive；
+#: 1.2 = V7 additive（layout.component_links 组件图显式边）。
+KNOWN_VERSIONS: Tuple[str, ...] = ("1.0", "1.1", "1.2")
+LATEST_VERSION = "1.2"
 
 #: 版本缺省口径：lifecycle_engine 既有写入恒带 "1.0"；缺失视为 1.0 并披露。
 DEFAULT_VERSION = "1.0"
 
 #: spec 级帧数上限（与前端 frame-composer atlas ≤50 页同口径）。
 MAX_SPEC_FRAMES = 50
+
+#: 组件图显式边上限（V7：组合关系声明稀有，32 条远超合法构图需求）。
+MAX_COMPONENT_LINKS = 32
 
 
 class _SpecModel(BaseModel):
@@ -292,6 +297,39 @@ class MapLabelConfig(_SpecModel):
     maxLabels: Optional[StrictInt] = None
 
 
+#: 组件图显式边类型（V7 Goal 08 Phase B：Component Graph）。
+#: - binds_to：组件 → 图层/源的数据绑定（图例绑主题层、图表绑聚合表）
+#: - requires：组件 → 组件的依赖（subtitle 依赖 title 在场）
+#: - groups：容器 → 子组件的逻辑分组（版面容器）
+#: - annotates：注记 → 被注记对象（callout 指向组件/图层）
+#: - under：z 序约束（src 渲染在 dst 之下）
+COMPONENT_LINK_TYPES = (
+    "binds_to",
+    "requires",
+    "groups",
+    "annotates",
+    "under",
+)
+
+_COMPONENT_LINK_TARGET_KINDS = ("component", "layer", "source")
+
+
+class ComponentLinkSpec(_SpecModel):
+    """组件图显式边（v1.2 additive，写入面 = layout.component_links）。
+
+    derived 边（options.layerId 等既有语义）不在此登记 —— 它们由
+    component_graph.build_component_graph 推导；本表只承载**显式声明**
+    （推导规则覆盖不了的组合关系）。src/dst 必须是已注册组件 id 或
+    spec 内 layer/source id，悬空由 component_graph.validate 披露。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    src: StrictStr
+    dst: StrictStr
+    type: Literal[COMPONENT_LINK_TYPES]  # type: ignore[valid-type]
+    dst_kind: Optional[Literal[_COMPONENT_LINK_TARGET_KINDS]] = None  # type: ignore[valid-type]
+
+
 class MapSpecLayoutConfig(_SpecModel):
     legend: Optional[MapSpecLegendConfig] = None
     controls: Optional[List[MapSpecControlConfig]] = None
@@ -299,6 +337,9 @@ class MapSpecLayoutConfig(_SpecModel):
     components: Optional[List[MapSpecComponent]] = None
     frames: Optional[List[MapSpecFrame]] = Field(default=None, max_length=MAX_SPEC_FRAMES)
     labels: Optional[MapLabelConfig] = None
+    #: v1.2 additive：组件图显式边（有界 —— 组合关系是稀有声明，不是数据）。
+    component_links: Optional[List[ComponentLinkSpec]] = Field(
+        default=None, max_length=MAX_COMPONENT_LINKS)
 
 
 class MapSpecDocument(_SpecModel):
@@ -334,6 +375,7 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("FramePageSize", FramePageSize),
     ("MapSpecFrame", MapSpecFrame),
     ("MapLabelConfig", MapLabelConfig),
+    ("ComponentLinkSpec", ComponentLinkSpec),
     ("MapSpecLayoutConfig", MapSpecLayoutConfig),
     ("MapThresholds", MapThresholds),
 )
@@ -406,6 +448,9 @@ _UPGRADERS: Dict[Tuple[str, str], Callable[[Dict[str, Any]], Dict[str, Any]]] = 
     # 1.1 相对 1.0 纯 additive（frames/labels 组件 options 均可选）：
     # 语义升级 = 通过校验，不需要改写文档（identity 拷贝）。
     ("1.0", "1.1"): lambda doc: doc,
+    # 1.2 相对 1.1 纯 additive（layout.component_links 可选；缺省无图 =
+    # 组件图全部由 derived 通道推导 —— 存量 spec 语义不变）。
+    ("1.1", "1.2"): lambda doc: doc,
 }
 
 

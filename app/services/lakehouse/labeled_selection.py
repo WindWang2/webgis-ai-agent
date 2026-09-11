@@ -27,7 +27,9 @@ from app.services.lakehouse.cube_schema import CubeSchemaError
 #: 8M cells 同量级 —— 有界读契约不变）。
 DEFAULT_MAX_CELLS = 8_000_000
 
-_LABEL_DIMS = ("time", "band", "polarization", "vertical")
+#: 标签维度（V8 起含 model/scenario —— ADR-0130 §3；与 cube_schema
+#: 白名单的非空间标签轴同源扩展）。
+_LABEL_DIMS = ("time", "band", "polarization", "vertical", "model", "scenario")
 
 
 def _axis_index(values: np.ndarray, dim: str) -> Dict[str, int]:

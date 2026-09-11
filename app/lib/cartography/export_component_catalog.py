@@ -58,6 +58,15 @@ def build_catalog() -> dict:
             # 导出器各自真正消费该组件类型的目标清单。
             "rendererSupport": list(support.renderers) if support else [],
             "exporterSupport": list(support.exporters) if support else [],
+            # V7（Goal 08）：语义角色/弃用指针/预览元数据（additive ——
+            # 旧前端读者忽略零漂移；弃用组件仍可渲染，只是不再推荐）。
+            "semanticRole": desc.semantic_role if desc else "",
+            "deprecated": desc.deprecated if desc else False,
+            "deprecatedBy": desc.deprecated_by if desc else "",
+            "preview": {
+                "glyph": desc.preview.glyph if desc else "",
+                "accent": desc.preview.accent if desc else "",
+            },
         }
         components.append(entry)
     # V3（ADR-0101 D3/D4）：additive —— themes/palettes 描述层随目录

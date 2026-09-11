@@ -288,6 +288,7 @@ def write_labeled_cube(
     transform: Optional[Sequence[float]] = None,
     nodata: Optional[float] = None,
     chunks: Optional[Sequence[int]] = None,
+    nodata_per_variable: Optional[Mapping[str, float]] = None,
     extra_attrs: Optional[Mapping[str, Any]] = None,
     overwrite: bool = True,
 ) -> Dict[str, Any]:
@@ -397,6 +398,7 @@ def write_labeled_cube(
         },
         nodata=nodata,
         chunks=chunks_by_dim,
+        nodata_per_variable=nodata_per_variable,
     )
 
     zarr = _require_zarr()
@@ -445,6 +447,10 @@ def write_labeled_cube(
         root.attrs["transform"] = transform
         if nodata is not None:
             root.attrs["nodata"] = float(nodata)
+        if nodata_per_variable:
+            root.attrs["nodata_per_variable"] = {
+                str(k): float(v) for k, v in sorted(nodata_per_variable.items())
+            }
         for key, value in (extra_attrs or {}).items():
             root.attrs[str(key)] = value
     except CubeError:
@@ -468,13 +474,13 @@ def _array_dims(arr: Any) -> List[str]:
 
 
 def _require_v1_cube(root: Any, *, what: str) -> List[str]:
-    """V6 入口的版本闸（评审 R0-2）：labeled（v2）store 进入 V6 读/fork
+    """V6 入口的版本闸（评审 R0-2）：labeled（v2/v3）store 进入 V6 读/fork
     路径 = typed 拒绝 —— v1 消费者对 4-D 数组的形状假设会静默读错轴。"""
     attrs = dict(root.attrs or {})
     if attrs.get("labeled"):
         raise CubeError(
             f"{what} requires a V6 cube (schema v1, per-band arrays); this "
-            "store is a labeled cube (schema v2) — use the labeled accessors"
+            "store is a labeled cube (schema v2/v3) — use the labeled accessors"
         )
     return [str(b) for b in (attrs.get("bands") or [])]
 
@@ -524,7 +530,9 @@ def read_labeled_window(
         "coords": coords,
         "slices": {str(k): v for k, v in index_slices.items()},
         "attrs": {
-            k: attrs.get(k) for k in ("crs", "transform", "nodata", "dims")
+            k: attrs.get(k)
+            for k in ("crs", "transform", "nodata", "nodata_per_variable",
+                      "cube_schema_version", "dims")
         },
     }
 

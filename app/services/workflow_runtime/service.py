@@ -178,8 +178,14 @@ class WorkflowRuntimeService:
         caller: Optional[Dict[str, Any]] = None,
         deadline_s: float = 60.0,
         node_params: Optional[Dict[str, Dict[str, Any]]] = None,
+        node_timeout_s: Optional[float] = None,
+        retry_policy: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """显式执行入口（chat 路径绝不自动调用 —— AUTORUN 默认关）。"""
+        """显式执行入口（chat 路径绝不自动调用 —— AUTORUN 默认关）。
+
+        V6：``node_timeout_s``（per-node 超时；None = 仅 run deadline 兜底）
+        与 ``retry_policy``（RetryPolicy；None = 环境默认）经 driver 生效。
+        """
         inst = await asyncio.to_thread(
             self.store.get_instance, instance_id, owner_scope)
         if inst is None:
@@ -204,6 +210,7 @@ class WorkflowRuntimeService:
                 raise InstanceBusy(instance_id, "concurrent rerun")
         dag = await self._instance_dag(inst)
         from app.services.workflow_runtime.driver import Driver
+        from app.services.workflow_runtime.dispatch import build_dispatcher
         from app.services.workflow_runtime.subworkflow import (
             SubworkflowExecutor,
         )
@@ -213,7 +220,10 @@ class WorkflowRuntimeService:
             deadline_s=deadline_s, owner_scope=owner_scope, caller=caller,
             subworkflow_executor=SubworkflowExecutor(
                 self, owner_scope=owner_scope, caller=caller,
-                deadline_s=deadline_s))
+                deadline_s=deadline_s),
+            node_timeout_s=node_timeout_s, retry_policy=retry_policy,
+            dispatcher=build_dispatcher(owner_scope=owner_scope,
+                                        caller=caller))
         run_token = new_run_token()
         effective = node_params if node_params is not None \
             else await self._node_params(inst, dag)
@@ -246,8 +256,259 @@ class WorkflowRuntimeService:
         updated = await asyncio.to_thread(
             self.store.update_instance, instance_id, owner_scope=owner_scope,
             fields={"cancel_requested": True})
+        await asyncio.to_thread(
+            self.store.append_event, instance_id,
+            kind=C.EventKind.INSTANCE_CANCEL_REQUESTED,
+            reason="INSTANCE_CANCEL", actor="api")
         return {"cancelled": updated is not None,
                 "status": (updated or inst)["status"]}
+
+    async def cancel_nodes(
+        self, instance_id: str, node_ids: List[str], *,
+        owner_scope: str, actor: str = "api",
+        include_descendants: bool = True,
+    ) -> Dict[str, Any]:
+        """节点级取消（V6）：目标 + 后代闭包置持久取消旗标。
+
+        - queued（PENDING/READY/STALE/BLOCKED）→ 旗标即取消事实（本进程
+          driver 波界消费；恢复清扫兜底消费）；
+        - running → 旗标经波界点燃在飞 cancel token（协作中止）；
+        - 终态节点不追改（既成事实）。
+        返回 {requested, flagged}（flagged = 实际置位成功的节点）。
+        """
+        inst = await asyncio.to_thread(
+            self.store.get_instance, instance_id, owner_scope)
+        if inst is None:
+            raise WorkflowRuntimeError("INSTANCE_NOT_FOUND", instance_id)
+        targets = [str(n) for n in node_ids if n]
+        if not targets:
+            raise WorkflowRuntimeError("NO_TARGET_NODES", "empty node_ids")
+        known = {str(n.get("node_id", ""))
+                 for n in (await self._instance_dag(inst)).get("nodes") or []}
+        unknown = [t for t in targets if t not in known]
+        if unknown:
+            raise WorkflowRuntimeError(
+                "NODE_NOT_IN_DAG", ",".join(unknown[:6])[:200])
+        closure = set(targets)
+        if include_descendants:
+            closure |= M.downstream_closure(
+                await self._instance_dag(inst), set(targets))
+        flagged = await asyncio.to_thread(
+            self.store.request_node_cancel, instance_id, sorted(closure),
+            actor=actor)
+        return {"requested": sorted(closure), "flagged": flagged}
+
+    # ── clone / 重排（Phase E：partial rerun 正门）───────────────────
+
+    async def clone_run(
+        self, instance_id: str, *, owner_scope: str,
+        session_id: Optional[str] = None,
+        only_nodes: Optional[List[str]] = None,
+        skip_nodes: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """克隆运行（V6 Phase E）：同包同版本新实例（全 PENDING 起步）。
+
+        - **skip unchanged 是复用索引的自由结论**：同 session + 同包指纹 +
+          同参数 → 成功节点复用命中（零重算）；克隆不改写任何上游状态
+          （诚实：复用 miss 就真算）；
+        - ``only_nodes``：白名单（闭包外节点转 SKIPPED = 分支工作流）；
+        - ``skip_nodes``：黑名单（转 SKIPPED，下游按依赖规则结算）；
+        - 参数覆盖走 run_instance 的 node_params 入口（参数是执行输入，
+          实例行不内嵌）；
+        - clone 溯源经 journal CLONE 事件（payload 携带源实例 id）。
+        """
+        inst = await asyncio.to_thread(
+            self.store.get_instance, instance_id, owner_scope)
+        if inst is None:
+            raise WorkflowRuntimeError("INSTANCE_NOT_FOUND", instance_id)
+        if inst["status"] not in C.INSTANCE_TERMINAL_STATUSES:
+            # 克隆 RUNNING 源会触发 instantiate 的 supersede 纪律（同
+            # session+package 只留一个活实例）—— 反向杀死源实例。克隆
+            # 只对终态实例开放（failed/cancelled 克隆 = 恢复语义主场景）。
+            raise WorkflowRuntimeError(
+                "INSTANCE_NOT_TERMINAL",
+                f"status={inst['status']}; wait or cancel first")
+        dag = await self._instance_dag(inst)
+        known = {str(n.get("node_id", "")) for n in (dag.get("nodes") or [])}
+        only = [n for n in (only_nodes or []) if n in known]
+        skip = [n for n in (skip_nodes or []) if n in known]
+        unknown = [n for n in (only_nodes or []) + (skip_nodes or [])
+                   if n not in known]
+        if unknown:
+            raise WorkflowRuntimeError(
+                "NODE_NOT_IN_DAG", ",".join(unknown[:6])[:200])
+        clone = await asyncio.to_thread(
+            self.instantiate, inst["package_id"],
+            owner_scope=owner_scope,
+            session_id=session_id if session_id is not None
+            else inst["session_id"],
+            version=inst["package_version"],
+            project_id=inst.get("project_id") or "")
+        cid = clone["instance_id"]
+        await asyncio.to_thread(
+            self.store.append_event, cid, kind=C.EventKind.CLONE,
+            reason="CLONE_RUN", actor="api",
+            payload={"source_instance_id": instance_id,
+                     "only_nodes": only[:16], "skip_nodes": skip[:16]})
+        # data 角色绑定继承（绑定是会话事实，非计算结果 —— 同会话克隆
+        # 诚实继承；PENDING→READY + bound_ref 与 attach 同路径）
+        src_nodes = {n["node_id"]: n for n in
+                     await asyncio.to_thread(self.store.get_nodes,
+                                             instance_id)}
+        dag_nodes = {str(n.get("node_id", "")): n
+                     for n in (dag.get("nodes") or [])}
+        states = await asyncio.to_thread(self.store.get_node_states, cid)
+        for nid, src in src_nodes.items():
+            node_def = dag_nodes.get(nid) or {}
+            if str(node_def.get("kind", "")) != "data_input":
+                continue
+            if not src.get("bound_ref"):
+                continue
+            if states.get(nid) != C.NodeState.PENDING:
+                continue
+            r = await asyncio.to_thread(
+                self.store.transition_node, cid, nid, C.NodeState.READY,
+                expected_from=C.NodeState.PENDING, reason="CLONE_BOUND",
+                event="clone", patch={"bound_ref": src["bound_ref"][:96]})
+            if r.ok:
+                states[nid] = C.NodeState.READY
+        for nid in skip:
+            if states.get(nid) in (C.NodeState.PENDING,):
+                r = await asyncio.to_thread(
+                    self.store.transition_node, cid, nid,
+                    C.NodeState.SKIPPED, reason="CLONE_SKIP",
+                    event="clone")
+                if r.ok:
+                    states[nid] = C.NodeState.SKIPPED
+        if only:
+            # keep-set = 祖先闭包（必需输入）∪ 白名单 ∪ 后代闭包（受影响
+            # 分支）；闭包外节点 SKIPPED（分支工作流：无关分支不参与调度）
+            keep = M.upstream_closure(dag, set(only)) | set(only) \
+                | M.downstream_closure(dag, set(only))
+            for nid in states:
+                if nid not in keep and states.get(nid) == \
+                        C.NodeState.PENDING:
+                    r = await asyncio.to_thread(
+                        self.store.transition_node, cid, nid,
+                        C.NodeState.SKIPPED, reason="CLONE_ONLY_EXCLUDED",
+                        event="clone")
+                    if r.ok:
+                        states[nid] = C.NodeState.SKIPPED
+        return {"instance": clone, "only_nodes": only, "skip_nodes": skip}
+
+    async def retry_failed_nodes(
+        self, instance_id: str, *, owner_scope: str,
+    ) -> Dict[str, Any]:
+        """失败节点重排（V6 Phase E）：FAILED→READY（预算内）。
+
+        预算耗尽的节点诚实拒绝（FAILED 保终态语义）；全无重排对象 →
+        typed NOTHING_TO_RETRY。调用方随后 run_instance 完成重驱。
+        """
+        inst = await asyncio.to_thread(
+            self.store.get_instance, instance_id, owner_scope)
+        if inst is None:
+            raise WorkflowRuntimeError("INSTANCE_NOT_FOUND", instance_id)
+        from app.services.workflow_runtime.retry import default_policy
+
+        policy = default_policy()
+        nodes = await asyncio.to_thread(self.store.get_nodes, instance_id)
+        requeued: List[str] = []
+        exhausted: List[str] = []
+        for row in nodes:
+            if row["state"] != C.NodeState.FAILED:
+                continue
+            if policy.attempts_exhausted(int(row.get("attempts", 0))):
+                exhausted.append(row["node_id"])
+                continue
+            r = await asyncio.to_thread(
+                self.store.transition_node, instance_id, row["node_id"],
+                C.NodeState.READY, expected_from=C.NodeState.FAILED,
+                reason="RERUN_REQUEUE", event="rerun",
+                patch={"next_ready_at": None})
+            if r.ok:
+                requeued.append(row["node_id"])
+        if not requeued and not exhausted:
+            raise WorkflowRuntimeError("NOTHING_TO_RETRY", instance_id)
+        await asyncio.to_thread(
+            self.store.append_event, instance_id,
+            kind=C.EventKind.NODES_REQUEUED, reason="RERUN_REQUEUE",
+            actor="api",
+            payload={"requeued": requeued[:32],
+                     "exhausted": exhausted[:32]})
+        if requeued:
+            await asyncio.to_thread(
+                self.store.update_instance, instance_id,
+                owner_scope=owner_scope,
+                fields={"status": C.InstanceStatus.RUNNING,
+                        "error_code": "", "error_detail": "",
+                        "cancel_requested": False, "terminal_at": None})
+        return {"requeued": requeued, "exhausted": exhausted}
+
+    async def retry_node(
+        self, instance_id: str, node_id: str, *, owner_scope: str,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """单节点重试（Inspector action）：FAILED/STALE→READY。
+
+        - 预算内（attempts < policy.max_attempts）→ 重排；
+        - ``force=True``：预算耗尽也重排（显式人工兜底 —— journal 留
+          FORCE 证据）；
+        - 同时清除节点取消旗标（旗标在则重排会被波界立即取消）；
+        - 终态实例复活（running 化，与 run_instance 重驱同规则）；
+        - CANCELLED 节点**不可**单点复活（absorbing 不变量；恢复语义走
+          clone_run —— 全新实例不携带取消事实）。
+        """
+        inst = await asyncio.to_thread(
+            self.store.get_instance, instance_id, owner_scope)
+        if inst is None:
+            raise WorkflowRuntimeError("INSTANCE_NOT_FOUND", instance_id)
+        dag = await self._instance_dag(inst)
+        known = {str(n.get("node_id", "")) for n in (dag.get("nodes") or [])}
+        if node_id not in known:
+            raise WorkflowRuntimeError("NODE_NOT_IN_DAG", node_id)
+        from app.services.workflow_runtime.retry import default_policy
+
+        policy = default_policy()
+        row = await asyncio.to_thread(self.store.get_node, instance_id,
+                                      node_id)
+        if row is None:
+            raise WorkflowRuntimeError("NODE_NOT_FOUND", node_id)
+        state = row["state"]
+        if state not in (C.NodeState.FAILED, C.NodeState.STALE):
+            raise WorkflowRuntimeError("NODE_NOT_RETRYABLE",
+                                       f"state={state}")
+        attempts = int(row.get("attempts", 0))
+        if not force and policy.attempts_exhausted(attempts) \
+                and state in (C.NodeState.FAILED,):
+            raise WorkflowRuntimeError(
+                "RETRY_EXHAUSTED", f"attempts={attempts}")
+        # 终态实例复活（CAS；竞争失败 = 他写手先行 → busy）
+        if inst["status"] in C.INSTANCE_TERMINAL_STATUSES:
+            reset = await asyncio.to_thread(
+                self.store.update_instance, instance_id,
+                owner_scope=owner_scope,
+                expected_revision=inst["revision"],
+                fields={"status": C.InstanceStatus.RUNNING,
+                        "error_code": "", "error_detail": "",
+                        "cancel_requested": False, "terminal_at": None})
+            if reset is None:
+                raise InstanceBusy(instance_id, "concurrent rerun")
+        await asyncio.to_thread(
+            self.store.clear_node_cancel, instance_id, node_id)
+        r = await asyncio.to_thread(
+            self.store.transition_node, instance_id, node_id,
+            C.NodeState.READY, expected_from=state,
+            reason="MANUAL_RETRY" if force else "NODE_RETRY",
+            event="inspect", patch={"next_ready_at": None})
+        if not r.ok:
+            raise InstanceBusy(instance_id, r.code)
+        await asyncio.to_thread(
+            self.store.append_event, instance_id,
+            kind=C.EventKind.NODES_REQUEUED, node_id=node_id,
+            reason="MANUAL_RETRY" if force else "NODE_RETRY", actor="api",
+            attempt=attempts)
+        return {"node": node_id, "state": C.NodeState.READY,
+                "attempts": attempts, "force": bool(force)}
 
     async def apply_changes(
         self, instance_id: str, changes: List[C.PendingChange], *,

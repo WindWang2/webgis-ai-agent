@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "description": "Platform V4 生产运行时性能预算（SLO 语义；ADR-0131 D6）。limit_s 为用户可感知路径的固定上界，不随机器缩放——与 tests/benchmarks/baselines.json（机器相对基线）、tests/fixtures/perf_budget.py（测试断言助手）口径互不合并。",
+  "budgets": [
+    {
+      "key": "agent_first_response",
+      "limit_s": 3.0,
+      "component": "harness",
+      "description": "Agent 首响应：从用户发出消息到首个 SSE token/事件到达"
+    },
+    {
+      "key": "tool_dispatch",
+      "limit_s": 0.5,
+      "component": "workflow",
+      "description": "工具派发：从模型给出 tool_call 到工具开始执行"
+    },
+    {
+      "key": "data_query",
+      "limit_s": 10.0,
+      "component": "data",
+      "description": "数据查询：会话数据/目录查询单次往返"
+    },
+    {
+      "key": "map_render",
+      "limit_s": 5.0,
+      "component": "cartography",
+      "description": "地图渲染：MapSpec 合成到图层可见（服务端产物路径）"
+    },
+    {
+      "key": "workflow_scheduling",
+      "limit_s": 2.0,
+      "component": "workflow",
+      "description": "Workflow 调度：job 提交到 worker 开始执行（不含执行本身）"
+    },
+    {
+      "key": "artifact_transfer",
+      "limit_s": 15.0,
+      "component": "artifact",
+      "description": "制品传输：产物上传/下载单件传输时长"
+    }
+  ]
+}

@@ -35,6 +35,8 @@ export type WbCollabMessage = WbCollabDocMessage | WbCollabHelloMessage;
 
 let channel: BroadcastChannel | null = null;
 let boundSessionId: string | null = null;
+/** 通道对象当前实际打开的会话（重开判定依据；channel 本体非空但绑旧会话 = 需重开）。 */
+let channelSessionId: string | null = null;
 const tabId = `tab-${Math.random().toString(36).slice(2, 10)}`;
 
 /** 接收远端 doc 时的落地回调（persistence 注册：水合 + 基线对齐 + 防回声）。 */
@@ -68,17 +70,22 @@ function post(message: WbCollabMessage): void {
 /**
  * 启动协同通道（workspace 挂载一次；幂等）。无 BroadcastChannel 环境为
  * no-op（单 tab 场景完整可用 —— 协同是增强不是依赖）。
+ *
+ * V7（审计 §6-M）：幂等按「通道实际绑定的会话」判定 —— 此前只判
+ * `channel != null`，会话 A→B 切换后 hello 仍发进 `wb5:A` 的旧通道，
+ * 多 tab 协同自首次切会话起静默失效。
  */
 export function startWorkbenchCollab(): void {
-  if (channel != null) return;
-  if (typeof BroadcastChannel === 'undefined') return;
   if (boundSessionId == null) return;
+  if (channel != null && channelSessionId === boundSessionId) return;
+  if (typeof BroadcastChannel === 'undefined') return;
   openChannel(boundSessionId);
 }
 
 function openChannel(sessionId: string): void {
   channel?.close();
   channel = new BroadcastChannel(channelName(sessionId));
+  channelSessionId = sessionId;
   channel.onmessage = (event: MessageEvent) => {
     const msg = event.data as WbCollabMessage | null;
     if (!msg || typeof msg !== 'object') return;
@@ -116,6 +123,7 @@ export function collabSessionChanged(sessionId: string | null): void {
   if (sessionId == null) {
     channel?.close();
     channel = null;
+    channelSessionId = null;
     return;
   }
   if (typeof BroadcastChannel === 'undefined') return;
@@ -133,6 +141,7 @@ export function collabBroadcastDoc(doc: WorkbenchDocV5, revision: number): void 
 export function stopWorkbenchCollab(): void {
   channel?.close();
   channel = null;
+  channelSessionId = null;
   boundSessionId = null;
 }
 

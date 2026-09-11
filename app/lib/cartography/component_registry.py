@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -32,6 +32,13 @@ class ComponentAccessibility(BaseModel):
     label_zh: str = ""
     keyboard_operable: bool = True
     contrast_checked: bool = False
+
+
+class ComponentPreview(BaseModel):
+    """预览元数据（V7：目录 UI / Harness 候选卡消费；纯描述，无渲染职责）。"""
+    glyph: str = ""          # 单字符示意（unicode glyph / 短标签）
+    accent: str = ""         # hex 强调色（#rrggbb；空 = 主题缺省）
+    min_canvas_px: int = 0   # 建议最小画布边长（px；0 = 无建议）
 
 
 class MapComponentDescriptor(BaseModel):
@@ -80,6 +87,48 @@ class MapComponentDescriptor(BaseModel):
     # 零迁移）；components_for_role 消费本字段。
     semantic_role: str = ""
     examples: List[str] = Field(default_factory=list)
+    # ── V7（Goal 08）：目录智能面（纯增量，全默认值 —— 存量零迁移）────
+    # 弃用：deprecated=True 的组件仍可渲染（不破坏存量 spec），但不再被
+    # search/recommend 默认推荐；deprecated_by 指向后继组件 id。
+    deprecated: bool = False
+    deprecated_by: str = ""
+    # 预览元数据（目录 UI / 候选卡）
+    preview: ComponentPreview = Field(default_factory=ComponentPreview)
+    # 语义搜索关键词（中文为主 + 英文同义词；审定静态表，非 per-query）
+    search_keywords_zh: List[str] = Field(default_factory=list)
+    # 模板引用：该组件常与哪些 component/composition template 关联
+    # （登记面；不校验强存在 —— 模板可独立弃用）
+    template_references: List[str] = Field(default_factory=list)
+
+
+class ComponentSearchHit(BaseModel):
+    """search() 命中项：descriptor + 确定性得分 + 命中字段（可解释）。"""
+    descriptor: MapComponentDescriptor
+    score: int
+    matched_fields: List[str] = Field(default_factory=list)
+
+
+class ComponentRecommendationContext(BaseModel):
+    """recommend() 上下文：Harness 侧已知事实（全部可选，纯结构化）。
+
+    ``existing_components`` 承载**类型级在场知识**：descriptor id 或
+    component type（``north_arrow``/``legend``；横线归一为下划线）。
+    组合流程里 Harness 天然持有类型清单（ComponentComposer 的
+    selection.selected）；任意命名的实例 id（``legend-main``）不含可靠
+    类型信息，不参与去重判定。"""
+    map_model: str = ""                  # 主表达 MapModel id（可别名）
+    output_target: str = "interactive"   # interactive/png/pdf/svg/print
+    task_categories: Tuple[str, ...] = ()     # 任务类目（亲和提示）
+    semantic_roles: Tuple[str, ...] = ()      # 期望语义角色
+    existing_components: Tuple[str, ...] = () # 已在场组件（类型级，见上）
+    artifact_types: Tuple[str, ...] = ()      # 在场产物语义类型
+
+
+class ComponentRecommendation(BaseModel):
+    """recommend() 候选项：确定性得分 + 有界理由（可解释推荐）。"""
+    component_id: str
+    score: int
+    reasons: List[str] = Field(default_factory=list)
 
 
 # 组件语义角色词表（Epic 11 §5.G 冻结；组合规划器按角色查询）。
@@ -142,6 +191,60 @@ _COMPONENT_EXAMPLES: dict = {
     "methodology_note": "分母缺失/近似方法的诚实披露卡",
     "uncertainty_panel": "克里金方差/样本限制披露",
     "decision_panel": "MCDA 权重来源与候选排名面板",
+}
+
+
+#: V7 语义搜索关键词（审定静态表；search() 匹配词汇 —— 中文为主 + 英文
+#: 同义词。点分布/热力/区县统计等**任务语义**通过这些受控词命中组件，
+#: 而不是 per-query 硬编码：planner 的 query→类目跳变仍在上游 taxonomy）。
+COMPONENT_SEARCH_KEYWORDS: dict = {
+    "north_arrow": ["指北针", "方向", "北", "north", "orientation"],
+    "scale_bar": ["比例尺", "比例", "距离", "scale", "度量"],
+    "legend": ["图例", "分级", "legend", "分级设色"],
+    "continuous_colorbar": ["色条", "色卡", "颜色带", "colorbar", "连续色标",
+                            "热力", "密度"],
+    "categorical_legend": ["分类图例", "类别图例", "category legend", "类别"],
+    "title": ["标题", "主标题", "title"],
+    "subtitle": ["副标题", "subtitle", "时间口径"],
+    "attribution": ["版权", "署名", "数据源", "attribution", "来源"],
+    "graticule": ["经纬网", "坐标网", "网格", "graticule", "grid"],
+    "map_border": ["图框", "边框", "内图廓", "border", "neatline", "框架"],
+    "statistics_panel": ["统计面板", "指标", "kpi", "统计卡", "汇总"],
+    "chart_panel": ["图表", "柱状图", "饼图", "折线图", "统计图", "chart",
+                    "bar", "pie", "line chart", "直方图", "散点", "区县统计",
+                    "统计对比"],
+    "table_panel": ["表格", "数据表", "table", "明细"],
+    "export_layout": ["导出", "版面", "打印", "a4", "export", "页面"],
+    "annotation": ["注记", "标注", "文字", "脚注", "annotation", "标注文字",
+                   "数据来源说明"],
+    "inset_map": ["插图", "区位图", "缩略图", "inset", "概览图", "定位图"],
+    "methodology_note": ["方法论", "披露", "方法说明", "methodology"],
+    "uncertainty_panel": ["不确定性", "方差", "置信", "uncertainty", "误差"],
+    "decision_panel": ["决策", "多准则", "权重", "排名", "decision", "mcda"],
+}
+
+
+#: V7 预览元数据（glyph/accent；审定静态表，投影回填 descriptor.preview）。
+COMPONENT_PREVIEWS: dict = {
+    "north_arrow": {"glyph": "↑", "accent": "#1f2933"},
+    "scale_bar": {"glyph": "↔", "accent": "#1f2933"},
+    "legend": {"glyph": "≡", "accent": "#2563eb"},
+    "continuous_colorbar": {"glyph": "▰", "accent": "#dc2626"},
+    "categorical_legend": {"glyph": "▤", "accent": "#059669"},
+    "title": {"glyph": "T", "accent": "#111827"},
+    "subtitle": {"glyph": "t", "accent": "#4b5563"},
+    "attribution": {"glyph": "©", "accent": "#6b7280"},
+    "graticule": {"glyph": "▦", "accent": "#9ca3af"},
+    "map_border": {"glyph": "▢", "accent": "#374151"},
+    "statistics_panel": {"glyph": "𝍢", "accent": "#7c3aed"},
+    "chart_panel": {"glyph": "▥", "accent": "#7c3aed"},
+    "table_panel": {"glyph": "▦", "accent": "#7c3aed"},
+    "export_layout": {"glyph": "▭", "accent": "#0f766e"},
+    "annotation": {"glyph": "✎", "accent": "#b45309"},
+    "inset_map": {"glyph": "◭", "accent": "#0369a1"},
+    "methodology_note": {"glyph": "§", "accent": "#525252"},
+    "uncertainty_panel": {"glyph": "±", "accent": "#525252"},
+    "decision_panel": {"glyph": "⚖", "accent": "#525252"},
 }
 
 
@@ -505,6 +608,7 @@ class ComponentRegistry:
         for desc in _SEED_DESCRIPTORS:
             self.register(desc)
         self._apply_semantic_roles()
+        self._apply_v7_projections()
 
     def _apply_semantic_roles(self) -> None:
         """Epic 11：语义角色/示例回填（投影自 COMPONENT_SEMANTIC_ROLES
@@ -521,6 +625,26 @@ class ComponentRegistry:
                 updates["examples"] = [example]
             if updates:
                 self._by_id[cid] = desc.model_copy(update=updates)
+
+    def _apply_v7_projections(self) -> None:
+        """V7：搜索关键词 + 预览元数据投影（单一事实源表 → descriptor）。
+        显式构造传入的字段不被覆盖（扩展组件自带关键词优先）。"""
+        for cid, keywords in COMPONENT_SEARCH_KEYWORDS.items():
+            desc = self._by_id.get(cid)
+            if desc is None or desc.search_keywords_zh:
+                continue
+            self._by_id[cid] = desc.model_copy(
+                update={"search_keywords_zh": list(keywords)})
+        for cid, preview in COMPONENT_PREVIEWS.items():
+            desc = self._by_id.get(cid)
+            if desc is None or desc.preview.glyph:
+                continue
+            bounded = ComponentPreview(
+                glyph=str(preview.get("glyph", ""))[:4],
+                accent=str(preview.get("accent", ""))[:9],
+            )
+            self._by_id[cid] = self._by_id[cid].model_copy(
+                update={"preview": bounded})
 
     def register(self, desc: MapComponentDescriptor) -> None:
         if desc.id in self._by_id:
@@ -588,6 +712,250 @@ class ComponentRegistry:
             key=lambda d: d.priority,
         )
 
+    # ── V7：语义搜索 + 可解释推荐（确定性；无外呼、无 per-query 硬编码）──
+
+    @staticmethod
+    def _search_field_text(desc: MapComponentDescriptor) -> "dict[str, str]":
+        """参与搜索的字段 → 文本（id/name_zh 在多字段同权前已单独计分）。"""
+        return {
+            "name": desc.name or "",
+            "name_zh": desc.name_zh or "",
+            "description": desc.description or "",
+            "semantic_role": desc.semantic_role or "",
+            "category": desc.category or "",
+        }
+
+    def search(
+        self,
+        query: str,
+        *,
+        category: str = "",
+        semantic_role: str = "",
+        output_target: str = "",
+        map_model: str = "",
+        include_deprecated: bool = False,
+        limit: int = 8,
+    ) -> List[ComponentSearchHit]:
+        """组件目录语义搜索（确定性 token 评分；无嵌入/无网络）。
+
+        匹配面：id / name / name_zh / description / semantic_role / category /
+        tags / search_keywords_zh / examples。query 先整串、后空格分词，
+        双通道取最大命中；得分权重：id 精确 100 > id 子串 40 > name_zh
+        精确 60 > 关键词 25 > name_zh 词 20 > tags 15 > 语义角色 12 >
+        描述 8 > 示例 5。过滤器（category 前缀 / role / output / model /
+        弃用）是硬约束。返回按 (-score, id) 稳定排序，有界 limit。
+        """
+        q = (query or "").strip().lower()
+        if not q:
+            return []
+        tokens = [t for t in q.split() if t][:6]
+        hits: List[ComponentSearchHit] = []
+        for desc in self._by_id.values():
+            if not include_deprecated and desc.deprecated:
+                continue
+            if category and not (
+                desc.category == category or desc.category.startswith(category + ".")
+            ):
+                continue
+            if semantic_role and desc.semantic_role != semantic_role:
+                continue
+            if output_target and output_target not in desc.supported_outputs:
+                continue
+            if map_model and desc.compatible_map_models and \
+                    map_model not in desc.compatible_map_models:
+                continue
+            fields = self._search_field_text(desc)
+            keywords = [k.lower() for k in desc.search_keywords_zh]
+            tags = [t.lower() for t in desc.tags]
+            examples = [e.lower() for e in desc.examples]
+
+            score = 0
+            matched: List[str] = []
+            did = desc.id.lower()
+            if q == did:
+                score += 100
+                matched.append("id")
+            elif q in did:
+                score += 40
+                matched.append("id")
+            if fields["name_zh"] and q == fields["name_zh"].lower():
+                score += 60
+                matched.append("name_zh")
+
+            def _match_pool(pool: List[str], weight: int, field: str) -> int:
+                best = 0
+                for cand in pool:
+                    if not cand:
+                        continue
+                    if q == cand or q in cand or cand in q:
+                        return weight
+                    for token in tokens:
+                        if token and (token in cand or cand in token):
+                            best = max(best, max(weight // 2, 1))
+                return best
+
+            kw_score = _match_pool(keywords, 25, "keyword")
+            if kw_score:
+                score += kw_score
+                matched.append("keyword")
+            zh_score = _match_pool([fields["name_zh"]], 20, "name_zh")
+            if zh_score:
+                score += zh_score
+                matched.append("name_zh")
+            tag_score = _match_pool(tags, 15, "tags")
+            if tag_score:
+                score += tag_score
+                matched.append("tags")
+            role_score = _match_pool([fields["semantic_role"]], 12, "semantic_role")
+            if role_score:
+                score += role_score
+                matched.append("semantic_role")
+            desc_score = _match_pool([fields["description"]], 8, "description")
+            if desc_score:
+                score += desc_score
+                matched.append("description")
+            ex_score = _match_pool(examples, 5, "examples")
+            if ex_score:
+                score += ex_score
+                matched.append("examples")
+
+            if score <= 0:
+                continue
+            deduped = list(dict.fromkeys(matched))
+            hits.append(ComponentSearchHit(
+                descriptor=desc, score=score, matched_fields=deduped))
+        hits.sort(key=lambda h: (-h.score, h.descriptor.id))
+        return hits[: max(1, min(limit, 16))]
+
+    def recommend(
+        self,
+        context: ComponentRecommendationContext,
+        *,
+        limit: int = 8,
+    ) -> List[ComponentRecommendation]:
+        """上下文推荐（确定性评分；理由有界 —— Harness 候选卡可解释）。
+
+        评分因素：输出目标支持 +2；语义角色命中 +3；map_model 兼容（限定型
+        未命中 −4，通用型 +1）；任务类目与 category 语义族命中 +2（受控
+        亲和表）；已在场组件：single/zero_or_one 直接排除（非「推荐新增」
+        的合法候选），multiple −1 保留；弃用组件强过滤（除非无候选）。
+        priority 数值小者优先 +（100−priority)/25。
+        """
+        model_reg = None
+        if context.map_model:
+            try:
+                from app.lib.cartography.model_library import get_map_model_registry
+                model_reg = get_map_model_registry()
+            except Exception:  # pragma: no cover - 防御性
+                model_reg = None
+        resolved_model = ""
+        if model_reg is not None and context.map_model:
+            m = model_reg.resolve(context.map_model)
+            resolved_model = m.id if m is not None else ""
+
+        # 在场判定：类型级输入（descriptor id / component type；横线归一）。
+        # 组合流程里 Harness 天然持有 selected 类型清单（ComponentComposer
+        # 的 selection.selected），任意命名的实例 id 不参与类型去重。
+        existing = {e.strip().replace("-", "_")
+                    for e in context.existing_components if e}
+
+        def _is_present(desc: MapComponentDescriptor) -> bool:
+            return (desc.id.replace("-", "_") in existing
+                    or desc.type.replace("-", "_") in existing)
+        want_roles = {r for r in context.semantic_roles if r}
+        want_cats = {c for c in context.task_categories if c}
+        # 任务类目 → 组件 category 语义族亲和（受控映射，非 query 硬编码）
+        category_affinity = {
+            "spatial_distribution": {"analysis", "legend"},
+            "density": {"legend", "analysis"},
+            "thematic_cartography": {"legend", "annotation", "navigation"},
+            "administrative_aggregation": {"analysis"},
+            "atlas_reporting": {"export", "annotation"},
+            "interpolation": {"legend"},
+            "terrain": {"legend", "navigation"},
+            "hydrology": {"legend"},
+            "hotspot": {"legend"},
+            "change_detection": {"analysis", "legend"},
+            "remote_sensing_extraction": {"legend"},
+            "multi_criteria": {"analysis", "disclosure"},
+        }
+
+        out: List[ComponentRecommendation] = []
+        for desc in self._by_id.values():
+            if desc.deprecated:
+                continue
+            if context.output_target and \
+                    context.output_target not in desc.supported_outputs:
+                continue
+            score = 0
+            reasons: List[str] = []
+
+            role_hits = 0
+            if desc.semantic_role and desc.semantic_role in want_roles:
+                role_hits += 1
+                score += 3
+                reasons.append(f"语义角色命中 {desc.semantic_role}")
+            if role_hits > 1:  # 防御：单 descriptor 至多一角色
+                score -= 3 * (role_hits - 1)
+
+            if context.output_target and context.output_target in desc.supported_outputs:
+                score += 2
+
+            if desc.compatible_map_models:
+                if resolved_model and resolved_model in desc.compatible_map_models:
+                    score += 3
+                    reasons.append(f"兼容主表达 {resolved_model}")
+                elif resolved_model:
+                    score -= 4
+            elif resolved_model:
+                score += 1  # 通用型组件对所有模型开放
+
+            affinity_hit = False
+            top_cat = desc.category.split(".")[0]
+            for cat in want_cats:
+                if cat in category_affinity and top_cat in category_affinity[cat]:
+                    affinity_hit = True
+                    break
+            if affinity_hit:
+                score += 2
+                reasons.append(f"任务类目亲和 {top_cat}")
+
+            if _is_present(desc):
+                if desc.cardinality in ("single", "zero_or_one"):
+                    # 已在场且不可重复 → 不是「推荐新增」的合法候选，
+                    # 直接排除（比扣分更诚实： Harness 问的是"还该加什么"）
+                    continue
+                score -= 1
+                reasons.append("已在场（可多实例）")
+
+            if desc.dependencies:
+                missing = [d for d in desc.dependencies
+                           if d.replace("-", "_") not in existing]
+                if missing:
+                    score -= 2
+                    reasons.append(f"依赖缺失 {','.join(missing[:2])}")
+
+            score += (100 - desc.priority) // 25
+
+            if score <= 0:
+                continue
+            out.append(ComponentRecommendation(
+                component_id=desc.id, score=score,
+                reasons=reasons[:4]))
+        out.sort(key=lambda r: (-r.score, r.component_id))
+        if not out:
+            # 弃用组件兜底：宁可推荐弃用态也不空手（显式披露由调用方承担）
+            fallback = sorted(
+                (d for d in self._by_id.values() if d.deprecated),
+                key=lambda d: (d.priority, d.id))
+            out = [
+                ComponentRecommendation(component_id=d.id, score=1,
+                                        reasons=["deprecated fallback"])
+                for d in fallback[:limit]
+            ]
+        return out[: max(1, min(limit, 16))]
+
+
     def native_descriptors(self) -> List[MapComponentDescriptor]:
         return [d for d in self._by_id.values() if d.runtime_status == "native"]
 
@@ -645,6 +1013,21 @@ class ComponentRegistry:
                                     f"'{mid}' 未注册")
                     except Exception:  # pragma: no cover - 防御性
                         pass
+                # V7：弃用指针与预览元数据契约
+                if desc.deprecated and not desc.deprecated_by:
+                    issues.append(
+                        f"descriptor {desc.id}: deprecated 但缺 deprecated_by 后继")
+                if desc.deprecated_by and desc.deprecated_by not in self._by_id:
+                    issues.append(
+                        f"descriptor {desc.id}: deprecated_by "
+                        f"{desc.deprecated_by} 未注册")
+                accent = desc.preview.accent
+                if accent and not (
+                    accent.startswith("#") and len(accent) in (4, 7)
+                    and all(c in "0123456789abcdefABCDEF" for c in accent[1:])
+                ):
+                    issues.append(
+                        f"descriptor {desc.id}: preview.accent {accent!r} 非合法 hex")
             # renderer/exporter 支持声明必须与机器真值矩阵一致（防契约撒谎）
             issues.extend(get_component_renderer_registry().validate_against_descriptors())
         except Exception:
@@ -678,8 +1061,13 @@ def reset_component_registry() -> None:
 
 __all__ = [
     "MapComponentDescriptor",
+    "ComponentPreview",
+    "ComponentSearchHit",
+    "ComponentRecommendationContext",
+    "ComponentRecommendation",
     "ComponentRegistry",
     "get_component_registry",
     "reset_component_registry",
     "_SEED_DESCRIPTORS",
+    "components_for_role",
 ]

@@ -227,6 +227,16 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
             onChange={(v) => setSidebarWidth(Math.round(v))}
           />
 
+          {/* V7 布局系统：dock 尺寸/归属 + 左栏组合一键复位（布局持久化的
+              对偶操作 —— 用户搞乱布局后不必逐项手动还原）。 */}
+          <button
+            type="button"
+            className="rounded-xs border border-edge-subtle px-2 py-1 text-micro text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+            onClick={() => useHudStore.getState().resetWorkbenchLayout()}
+          >
+            复位工作台布局（面板位置与尺寸）
+          </button>
+
           <div>
             <div className="eyebrow mb-1.5">面板</div>
             <div className="space-y-0.5">

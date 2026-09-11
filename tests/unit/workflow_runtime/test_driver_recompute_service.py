@@ -276,14 +276,28 @@ def test_cancel_propagates_to_descendants(env):
     assert all(s == C.NodeState.CANCELLED for s in states.values())
 
 
-def test_recovery_resets_orphans_and_completes(env):
-    """崩溃恢复：孤儿 RUNNING（无租约）复位 READY 后可继续执行。"""
+def test_recovery_resets_orphans_and_completes(env, factory):
+    """崩溃恢复：孤儿 RUNNING（节点租约过期）复位 READY 后可继续执行。"""
+    import sqlalchemy as sa
+    from datetime import datetime, timedelta
+
+    from app.models.db_model import WorkflowInstanceNodeRow
+
     store, inst = env["store"], env["inst"]
     store.transition_node(inst["instance_id"], "data:subject",
                           C.NodeState.READY, expected_from=C.NodeState.PENDING)
+    # rt-dead 认领（V6：claim 即写节点租约）后进程死亡 → 回拨租约模拟
     store.transition_node(inst["instance_id"], "data:subject",
                           C.NodeState.RUNNING, expected_from=C.NodeState.READY,
                           claim=True, claimed_by="rt-dead")
+    with factory() as db:
+        db.execute(
+            sa.update(WorkflowInstanceNodeRow)
+            .where(WorkflowInstanceNodeRow.instance_id == inst["instance_id"],
+                   WorkflowInstanceNodeRow.node_id == "data:subject")
+            .values(lease_expires_at=datetime.utcnow() - timedelta(seconds=1))
+        )
+        db.commit()
     assert store.find_orphan_running_nodes(inst["instance_id"]) == \
         ["data:subject"]
     summary = asyncio.run(env["driver"].run(

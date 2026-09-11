@@ -87,7 +87,7 @@ function makeToolCallStatusMarker(
   thinkingMsgIdRef: { current: string },
   setMessages: (updater: (prev: any[]) => any[]) => void,
 ) {
-  return (tool: string, status: ToolCallStatus, error?: string, extra?: Partial<ToolCallEntry>): void => {
+  return (tool: string, status: ToolCallStatus, error?: string, extra?: Partial<ToolCallEntry>, stepId?: string): void => {
     if (!tool) return;
     setMessages((prev) => {
       const tid = thinkingMsgIdRef.current;
@@ -95,9 +95,21 @@ function makeToolCallStatusMarker(
       if (idx === -1) return prev;
       const calls = prev[idx].toolCalls;
       if (!calls || calls.length === 0) return prev;
+      // V7（review MAJOR-3）：两段式匹配 —— stepId 在场且能精确命中时**只用**
+      // 精确命中集（同 turn「带 id 行 E1 + 无 id 同名行 E2」并存时，E1 的终态
+      // 不得连带标掉 E2）；无精确命中才整体回落工具名匹配（无 id 载荷兼容）。
+      const running = calls.filter((c: ToolCallEntry) => c.status === 'running');
+      const exact = stepId ? running.filter((c: ToolCallEntry) => c.stepId === stepId) : [];
+      const matchedIds = new Set(
+        (exact.length > 0
+          ? exact
+          : running.filter((c: ToolCallEntry) => c.tool === tool)
+        ).map((c: ToolCallEntry) => c.id),
+      );
+      if (matchedIds.size === 0) return prev;
       let changed = false;
       const next = calls.map((c: ToolCallEntry) => {
-        if (c.tool !== tool || c.status !== 'running') return c;
+        if (!matchedIds.has(c.id)) return c;
         changed = true;
         return {
           ...c,
@@ -487,22 +499,38 @@ export function useSSEStream(
     if (!getAccessToken() && !getRefreshToken()) return;
     explorerStreamsRef.current.add(taskId);
     const signal = explorerAbortRef.current?.signal;
+    // V7（审计 §6-M）：有限重连 —— 此前非 abort 失败只 warn，任务卡「进行中」
+    // 直到终态（槽位只在 completed/failed 释放）。最多重试 2 次（指数退避
+    // 1s/2s）；终态释放槽位的语义不变，重试不复活已终态的任务流。
     (async () => {
-      try {
-        for await (const ev of streamExplorerProgress(taskId, signal)) {
-          if (ev.event === 'explorer_progress' && ev.data && typeof ev.data === 'object') {
-            applyExplorerProgressToStore(ev.data as Record<string, unknown>);
-            // 终态后释放 per-task 槽位：未来可重开流（断线恢复），且不再去重拦截。
-            const status = (ev.data as Record<string, unknown>).status;
-            if (status === 'completed' || status === 'failed') {
-              explorerStreamsRef.current.delete(taskId);
+      const MAX_ATTEMPTS = 3;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+        try {
+          let sawTerminal = false;
+          for await (const ev of streamExplorerProgress(taskId, signal)) {
+            if (ev.event === 'explorer_progress' && ev.data && typeof ev.data === 'object') {
+              applyExplorerProgressToStore(ev.data as Record<string, unknown>);
+              // 终态后释放 per-task 槽位：未来可重开流（断线恢复），且不再去重拦截。
+              const status = (ev.data as Record<string, unknown>).status;
+              if (status === 'completed' || status === 'failed') {
+                sawTerminal = true;
+                explorerStreamsRef.current.delete(taskId);
+              }
             }
           }
+          // 服务端正常收尾但未发终态（连接被对端关闭）：等同断线，走重试判定。
+          if (sawTerminal) return;
+        } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') return;
+          devOnly.warn(`[useSSEStream] explorer progress stream attempt ${attempt} failed:`, err);
         }
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return;
-        devOnly.warn('[useSSEStream] explorer progress stream failed:', err);
+        if (signal?.aborted) return;
+        // 重试前预留：槽位仍持有 → 同 taskId 不会并发重开。
+        if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 1000 * attempt));
       }
+      // 次数耗尽仍无终态：释放槽位并如实记日志（不再无限占位）。
+      explorerStreamsRef.current.delete(taskId);
+      devOnly.warn('[useSSEStream] explorer progress stream gave up after retries:', taskId);
     })();
   }, []);
 
@@ -589,6 +617,8 @@ export function useSSEStream(
         // id and match terminal transitions by tool name.
         const toolName = typeof data.name === 'string' ? data.name : '';
         if (toolName) {
+          // V7：载荷带 step_id 时随行捕获（终态精确匹配键；缺席保持 ordinal id）。
+          const stepId = typeof data.step_id === 'string' ? data.step_id : undefined;
           setMessages((prev) => {
             const tid = thinkingMsgIdRef.current;
             const idx = tid ? prev.findIndex((m) => m.id === tid) : -1;
@@ -600,6 +630,7 @@ export function useSSEStream(
               arguments: typeof data.arguments === 'string' ? data.arguments : undefined,
               status: 'running' as const,
               startedAt: Date.now(),
+              ...(stepId ? { stepId } : {}),
             }];
             const copy = [...prev];
             copy[idx] = { ...prev[idx], toolCalls: next };
@@ -619,14 +650,14 @@ export function useSSEStream(
         const workbenchResultId = useHudStore.getState().captureStepResult(
           data as unknown as StepResultEvent,
         );
-        // FE-P3-3: terminal transition for the ToolCallChain row (matched by
-        // tool name — the SSE payload carries no call id). #608: stamp
+        // FE-P3-3: terminal transition for the ToolCallChain row (V7: matched
+        // by step_id when present, falling back to tool name). #608: stamp
         // completedAt (duration badge) and hasGeojson when the result mounts
         // a geojson_ref layer.
         markToolCallStatus(String(data.tool ?? ''), 'completed', undefined, {
           ...(data.geojson_ref ? { hasGeojson: true, layerId: String(data.geojson_ref) } : {}),
           result: data.result,
-        });
+        }, typeof data.step_id === 'string' ? data.step_id : undefined);
         // Plan Mode：propose_plan 返回的 plan 摘要挂到当前消息，由 PlanProposalCard 渲染
         if (data.tool === 'propose_plan' && data.result?.success && data.result?.plan_id) {
           // 守卫已确认 plan 字段在载荷中（运行时契约）；TS 无法跨 index-
@@ -1033,7 +1064,8 @@ export function useSSEStream(
         // args so the retry's step_result pairs with the retry's args.
         if (event.event === 'step_error' && typeof data?.tool === 'string' && data.tool) {
           useHudStore.getState().discardPendingToolArgs(data.tool);
-          markToolCallStatus(data.tool, 'failed', typeof data?.error === 'string' ? data.error : undefined);
+          markToolCallStatus(data.tool, 'failed', typeof data?.error === 'string' ? data.error : undefined, undefined,
+            typeof data?.step_id === 'string' ? data.step_id : undefined);
         } else if (event.event === 'error' || event.event === 'task_error') {
           // #466: a stream-level death ends the turn — remaining queued args
           // have no step_result coming and must not leak into the next turn.

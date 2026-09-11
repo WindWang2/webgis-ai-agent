@@ -30,6 +30,7 @@ import { createTaskSlice } from './slices/taskSlice';
 import { createUiSlice } from './slices/uiSlice';
 import { createDockSlice } from './slices/dockSlice';
 import { createWorkbenchSlice } from './slices/workbenchSlice';
+import { createToolSlice } from './slices/toolSlice';
 
 // Type re-exports（保留旧导入习惯）
 export type {
@@ -104,6 +105,7 @@ export const useHudStore = create<HudState>()(
       ...createUiSlice(...a),
       ...createDockSlice(...a),
       ...createWorkbenchSlice(...a),
+      ...createToolSlice(...a),
     }) as HudState,
     {
       name: PERSIST_KEY,
@@ -131,6 +133,23 @@ export const useHudStore = create<HudState>()(
         llmConfigFull: state.llmConfigFull
           ? { ...state.llmConfigFull, apiKey: '' }
           : state.llmConfigFull,
+        // ── V7 布局系统（审计 §2-M）：工作台布局刷新可恢复 ──
+        // 左栏开合/宽度/活动 tab、3D、workbench 模式（含各模式 tab 记忆）、
+        // dock 区尺寸与归属。归属（dockPlacements/rightDock/bottomDock）描述
+        // 的组件 id 来自会话 MapSpec：刷新后锚恢复同会话 → id 重新有效；
+        // 恢复失败/切会话 → resetDockState 或 pruneDockPanels 兜底清理，
+        // 不会产生幽灵面板。语义组织态仍走服务端 workbench doc（单一真相）。
+        sidebarWidth: state.sidebarWidth,
+        leftPanelOpen: state.leftPanelOpen,
+        activeLeftTab: state.activeLeftTab,
+        is3D: state.is3D,
+        mode: state.mode,
+        modeActiveTab: state.modeActiveTab,
+        rightDockWidth: state.rightDockWidth,
+        bottomDockHeight: state.bottomDockHeight,
+        dockPlacements: state.dockPlacements,
+        rightDock: state.rightDock,
+        bottomDock: state.bottomDock,
         // 注意：刻意 *不* 持久化 layers - 单个分析结果可能数百 MB GeoJSON，
         // 会爆掉 localStorage 5–10 MB 配额并连带破坏 setItem (静默丢失其它字段)。
       }),

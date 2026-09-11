@@ -71,6 +71,16 @@ from .trust import TrustLevel, resolve_trust
 logger = logging.getLogger(__name__)
 
 
+def _metrics_safely(fn) -> None:
+    """计量调用包装：import/执行任何失败都静默（计量绝不影响扩展执行）。"""
+    try:
+        from . import metrics as _metrics
+
+        fn(_metrics)
+    except Exception:  # noqa: BLE001
+        logger.debug("extension platform metric failed", exc_info=True)
+
+
 class ExtensionState(str, Enum):
     DISCOVERED = "discovered"
     COMPATIBLE = "compatible"
@@ -831,6 +841,7 @@ class ExtensionHost:
             else ExtensionState.ACTIVE
         )
         logger.info("extension %s activated (state=%s)", extension_id, record.state.value)
+        _metrics_safely(lambda m: m.record_activation("activated"))
         self._notify_projection_change(extension_id, "activate")
         return list(record.diagnostics)
 
@@ -913,6 +924,7 @@ class ExtensionHost:
             [e.message for e in errors],
         )
         self._notify_projection_change(record.extension_id, "rollback")
+        _metrics_safely(lambda m: m.record_activation("failed"))
         return list(record.diagnostics)
 
     # ── V2：worker 隔离执行（ADR-0105）────────────────────────────────
@@ -1141,6 +1153,7 @@ class ExtensionHost:
             "extension %s activated in worker mode (state=%s, pid=%s)",
             record.extension_id, record.state.value, worker.pid,
         )
+        _metrics_safely(lambda m: m.record_activation("activated"))
         self._notify_projection_change(record.extension_id, "activate")
         return list(record.diagnostics)
 
@@ -1167,12 +1180,30 @@ class ExtensionHost:
         *,
         stream: bool = False,
     ) -> Any:
-        """直接调用已投影的扩展 model provider。
+        """直接调用已投影的扩展 model provider（含 host 级时长计量）。
 
         in-process：``stream=True`` 返回原始事件迭代器（协作式取消 =
         提前 close）；``stream=False`` 返回聚合结果。
         worker：仅聚合单帧；``stream=True`` → typed 拒绝。
+        计量披露（review R1-n6）：``stream=True`` 的时长只覆盖迭代器创建，
+        流消费时长不入直方图（对流式调用系统性偏短——如需流式观测，
+        消费侧应在迭代结束时打点）。
         """
+        from .metrics import InvocationTimer
+
+        with InvocationTimer():
+            return self._invoke_model_provider_impl(
+                projected_tool, request, stream=stream
+            )
+
+    def _invoke_model_provider_impl(
+        self,
+        projected_tool: str,
+        request: dict[str, Any] | None = None,
+        *,
+        stream: bool = False,
+    ) -> Any:
+        """invoke_model_provider 的原始实现（上方薄壳负责计量）。"""
         for eid in sorted(self._records):
             record = self._records[eid]
             if record.state not in (
@@ -1340,6 +1371,7 @@ class ExtensionHost:
             record.worker.kill()
             record.worker = None
         record.worker_crash_count += 1
+        _metrics_safely(lambda m: m.record_worker_crash())
         logger.warning(
             "extension %s worker died: %s (crashes=%d/%d)",
             record.extension_id,
@@ -1351,6 +1383,8 @@ class ExtensionHost:
             self.deactivate(record.extension_id)
         if record.worker_crash_count >= self._policy.max_worker_crashes:
             record.state = ExtensionState.QUARANTINED
+            _metrics_safely(lambda m: m.record_quarantine("worker_crash"))
+            _metrics_safely(lambda m: m.record_activation("quarantined"))
             record.diagnostics.append(
                 ExtensionDiagnostic.error(
                     DiagnosticCode.WORKER_RESTART_QUARANTINED,

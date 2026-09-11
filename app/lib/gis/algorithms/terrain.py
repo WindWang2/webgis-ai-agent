@@ -1261,6 +1261,93 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             cancellation_profile="coarse",
             tolerance=NumericalTolerance(rtol=0.02, atol=0.5, policy="analytic_anchor"),
             ),
+
+        AlgorithmDescriptor(
+            id="terrain.cost_distance", name="累积成本面（最小成本距离）",
+            category="terrain_analysis",
+            capabilities=["cost_distance_analysis"],
+            input_artifact_types=["raster_surface", "terrain_surface"],
+            output_artifact_type="raster_surface", tool_candidates=["cost_distance_analysis"],
+            cpu_cost="high", memory_cost="high", io_cost="low",
+            preferred_execution_policy="THREAD", compatible_map_models=["raster_surface"], priority=46,
+            algorithm_family="terrain_cost_mapping",
+            method_references=["dijkstra1959", "tobler1993"],
+            assumptions=[
+                "8 邻接 Dijkstra：边成本 = (cost_i+cost_j)/2 × dist(i,j)"
+                "（平均摩擦 × 米距；对角 ×√2）——GRASS r.cost 同族语义",
+                "摩擦面必须严格为正（0/负成本是建模错误，DegenerateData 拒绝）",
+                "nodata/非有限像元不可通行；不可达像元输出 NaN 并披露计数",
+                "源像元累积成本 = 0（支持布尔掩膜或 (row,col) 序列）",
+            ],
+            limitations=[
+                "各向同性摩擦：坡度方向效应（Tobler 徒步函数类）需先折算进摩擦面",
+                "O(N log N) 堆序 Dijkstra 全栅格驻留内存（50M 像元硬顶）",
+                "对角移动的 8 邻接测度在极细障碍下略低估路径长（栅格分辨率披露）",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="与 networkx Dijkstra（同 8 邻接边权）最大差 <1e-9",
+            scientific_status="VALIDATED",
+            resource_envelope=ResourceEnvelope(
+                bytes_per_cell=40,
+                hard_max_cells=50000000,
+                notes="累积面+visited+堆条目 3×float64/int 系；50M 像元硬顶"),
+            cancellation_profile="chunk_boundary",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=1e-9, policy="reference_cross_check"),
+            conformance_tests=[
+                "tests/unit/lib/test_cost_distance_v6.py::"
+                "test_cost_distance_uniform_closed_form",
+                "tests/unit/lib/test_cost_distance_v6.py::"
+                "test_cost_distance_matches_networkx_dijkstra",
+                "tests/unit/lib/test_cost_distance_v6.py::"
+                "test_cost_distance_barrier_detour",
+                "tests/unit/lib/test_cost_distance_v6.py::"
+                "test_cost_distance_unreachable_and_zero_cost_rejection",
+                "tests/unit/lib/test_cost_distance_v6.py::"
+                "test_cost_distance_determinism",
+            ],
+            parameter_contract_ref="cost_distance_analysis",
+        ),
+
+        AlgorithmDescriptor(
+            id="terrain.least_cost_path", name="最小成本路径（累积面排水）",
+            category="terrain_analysis",
+            capabilities=["least_cost_path_analysis"],
+            input_artifact_types=["raster_surface"],
+            output_artifact_type="line_feature_set", tool_candidates=["least_cost_path_analysis"],
+            cpu_cost="low", memory_cost="low", io_cost="low",
+            preferred_execution_policy="THREAD", priority=47,
+            algorithm_family="terrain_cost_mapping",
+            method_references=["dijkstra1959"],
+            assumptions=[
+                "从目标沿累积面严格下降回溯到源（并列行主序裁决）——"
+                "与 cost_distance 的 Dijkstra 面配对即全局最优路径",
+                "输入必须是 cost_distance 产物（任意面上停滞 → 类型化报错）",
+            ],
+            limitations=[
+                "路径像元级离散：转弯以 8 邻接折线表达（无样条圆滑）",
+                "非 Dijkstra 面（如平滑后的表面）可能局部停滞/绕远",
+            ],
+            crs_class="RASTER_GRID",
+            scientific_preconditions=["raster_band_required:1"],
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="路径总成本 == 累积面目标值（同面自洽，<1e-9）",
+            scientific_status="VALIDATED",
+            resource_envelope=ResourceEnvelope(
+                bytes_per_cell=8, notes="只读累积面 + O(路径长) 回溯列表"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-9, atol=1e-9, policy="self_consistency"),
+            conformance_tests=[
+                "tests/unit/lib/test_cost_distance_v6.py::"
+                "test_least_cost_path_drain_monotone",
+                "tests/unit/lib/test_cost_distance_v6.py::"
+                "test_least_cost_path_typed_errors",
+            ],
+            parameter_contract_ref="least_cost_path_analysis",
+        ),
 ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
@@ -1576,6 +1663,45 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="max_search_radius", type="integer", default=100, minimum=1, maximum=100,
                 unit="pixels",
                 description="地平线射线搜索半径（像元；≤100 护栏）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="cost_distance_analysis", version=1,
+        description="累积成本面：摩擦栅格 / 源点 GeoJSON / nodata。",
+        parameters=[
+            ParameterSpec(
+                name="raster_path", type="string", required=True,
+                description="摩擦（成本）面 GeoTIFF 路径（data_dir 内）",
+            ),
+            ParameterSpec(
+                name="sources_geojson", type="string", required=True,
+                description="源点要素 GeoJSON（Point FeatureCollection）或数据引用(ref:xxx)",
+            ),
+            ParameterSpec(
+                name="nodata", type="number", default=0,
+                description="nodata 覆盖值（0=用栅格自带 nodata）；NaN 视为无效",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="least_cost_path_analysis", version=1,
+        description="最小成本路径：累积成本面 / 目标点。",
+        parameters=[
+            ParameterSpec(
+                name="accumulated_raster_path", type="string", required=True,
+                description="cost_distance 产出的累积成本面 GeoTIFF 路径",
+            ),
+            ParameterSpec(
+                name="target_x", type="number", required=True,
+                unit="meters",
+                description="目标点 X（累积面栅格 CRS 原生坐标，与 "
+                            "cost_distance 产物同一坐标框架）",
+            ),
+            ParameterSpec(
+                name="target_y", type="number", required=True,
+                unit="meters",
+                description="目标点 Y（同上）",
             ),
         ],
     ),
