@@ -85,6 +85,8 @@ class LoadedModelCache:
         self._lock = threading.RLock()
         self._entries: Dict[str, _Entry] = {}
         self._negative: Dict[str, _Negative] = {}
+        # #1219（B-14）：invalidate 竞态窗口返回的孤儿句柄（release 卸载）。
+        self._orphans: Dict[str, tuple] = {}
         self._key_locks: Dict[str, threading.Lock] = {}
         self._stats = {"hits": 0, "misses": 0, "evictions": 0, "negative_hits": 0}
 
@@ -148,6 +150,11 @@ class LoadedModelCache:
                     key in self._entries and self._entries[key].poisoned
                 ):
                     self._key_locks.pop(key, None)
+                    # #1219（B-14）：不回插即无条目 → 调用方 release() 此前是
+                    # no-op，load 分配的资源（模拟 VRAM/句柄）无人释放。登记
+                    # 孤儿句柄：调用方仍要用 model（不能在此卸载），release()
+                    # 命中孤儿表即卸载。
+                    self._orphans[key] = (model, unload_fn)
                     # 等待者按 miss 处理（统计口径：真正触发 load 的进程计数）
                     return model, latency
                 self._entries[key] = _Entry(model=model, refcount=1, unload_cb=unload_fn)
@@ -156,6 +163,15 @@ class LoadedModelCache:
             return model, latency
 
     def release(self, key: str) -> None:
+        with self._lock:
+            orphan = self._orphans.pop(key, None)
+        if orphan is not None:
+            model, unload_fn = orphan
+            try:
+                unload_fn(model)
+            except Exception:  # noqa: BLE001 — best-effort
+                pass
+            return
         with self._lock:
             entry = self._entries.get(key)
             if entry is None:

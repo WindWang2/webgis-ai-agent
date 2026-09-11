@@ -1816,13 +1816,14 @@ class ChatExecutionEngine:
             while True:
                 try:
                     await asyncio.wait_for(lock.acquire(), timeout=_PLANNER_KEEPALIVE_S)
-                    acquired_lock = _AcquiredLock(lock)
                     break
                 except asyncio.TimeoutError:
                     yield sse_event("keep_alive", {"message": "ping"})
 
+            # #1218（audit3 A-7）：单一适配器实例 —— 此前连续构造三个
+            # _AcquiredLock（两次死赋值），二次释放仅靠 locked() 防护兜底。
             acquired_lock = _AcquiredLock(lock)
-            async with _AcquiredLock(lock):
+            async with acquired_lock:
                 self._reject_if_clearing(session_id)
                 _task = asyncio.current_task()
                 if _task is not None:

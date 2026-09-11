@@ -453,38 +453,45 @@ class FaissVectorStore:
     ) -> List[Dict[str, Any]]:
         """Search top-k most similar vectors with optional tenant filtering."""
         idx = self._get_index()
+        # #1219（B-18）：渐进扩取 —— 固定 4× 超取在多租户索引（近邻大量
+        # 属他人）下耗尽即止，即便更深处仍有本租户块。不足 top_k 时加倍
+        # 直至 idx.ntotal（有界：至多 log2(ntotal) 次额外 search）。
         fetch_count = min(top_k * 4, idx.ntotal) if idx.ntotal > 0 else top_k
-        scores, indices = idx.search(query_vector, fetch_count)
         meta = self.load_metadata()
-        results = []
-        for score, i in zip(scores[0], indices[0]):
-            if i < 0 or i >= len(meta.get("chunks", [])):
-                continue
-            chunk_meta = dict(meta["chunks"][int(i)])
+        results: List[Dict[str, Any]] = []
+        while True:
+            scores, indices = idx.search(query_vector, fetch_count)
+            for score, i in zip(scores[0], indices[0]):
+                if i < 0 or i >= len(meta.get("chunks", [])):
+                    continue
+                chunk_meta = dict(meta["chunks"][int(i)])
 
-            if chunk_meta.get("deleted", False):
-                continue
+                if chunk_meta.get("deleted", False):
+                    continue
 
-            # Tenant filtering check (fail-closed, SEC-02)
-            if not is_admin:
-                c_user = chunk_meta.get("user_id") or None
-                c_org = chunk_meta.get("org_id") or None
-                u_id = user_id or None
-                o_id = org_id or None
+                # Tenant filtering check (fail-closed, SEC-02)
+                if not is_admin:
+                    c_user = chunk_meta.get("user_id") or None
+                    c_org = chunk_meta.get("org_id") or None
+                    u_id = user_id or None
+                    o_id = org_id or None
 
-                if not u_id and not o_id:
-                    if c_user is not None or c_org is not None:
-                        continue
-                else:
-                    if c_user is not None and c_user != u_id:
-                        continue
-                    if c_org is not None and c_org != o_id:
-                        continue
+                    if not u_id and not o_id:
+                        if c_user is not None or c_org is not None:
+                            continue
+                    else:
+                        if c_user is not None and c_user != u_id:
+                            continue
+                        if c_org is not None and c_org != o_id:
+                            continue
 
-            chunk_meta["score"] = float(score)
-            results.append(chunk_meta)
-            if len(results) >= top_k:
+                chunk_meta["score"] = float(score)
+                results.append(chunk_meta)
+                if len(results) >= top_k:
+                    break
+            if len(results) >= top_k or fetch_count >= idx.ntotal or fetch_count == 0:
                 break
+            fetch_count = min(fetch_count * 2, idx.ntotal)
         return results
 
     def mark_deleted(self, document_id: str) -> None:

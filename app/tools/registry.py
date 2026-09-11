@@ -131,7 +131,7 @@ class ToolExecutionPolicy(str, Enum):
     INLINE = "inline"    # <5ms, immediate execution in event loop task (state mutation/meta/UI JSON response)
     ASYNC = "async"      # Genuine non-blocking async I/O (httpx, session_data_manager, async DB)
     THREAD = "thread"    # Sync blocking file I/O or fast CPU/Shapely operations via asyncio.to_thread + semaphore
-    CELERY = "celery"    # Heavy GDAL, raster warps, large spatial joins, KDE/IDW surfaces via Celery background tasks
+    CELERY = "celery"    # reserved（#1218/A-3：Celery 投递未落地 —— 运行时等价 THREAD 本地线程；勿据此推断重工具已被进程外隔离）
 
 # #996: 工具成本先验 —— 注册契约的一部分。light = 常规元数据/廉价查询；
 # medium = 常规空间计算/一次外部 API；heavy = 栅格级计算、内部投递 Celery 的
@@ -1052,6 +1052,11 @@ class ToolRegistry:
 
         from app.services import tool_metrics
         from app.lib.tool_cache import cache_hit_var
+
+        # #1218（audit3 A-2）：入口即折叠别名（与 _dispatch_impl 同一映射）——
+        # 此前外层指标用原始名查元数据：别名调用的策略上报恒 THREAD/UNKNOWN、
+        # 指标按别名分裂，recent_failure_hints 的失败降权对别名调用失效。
+        name = _TOOL_NAME_ALIASES.get(name, name)
 
         token = cache_hit_var.set(False)  # 重置 — 每次 dispatch 都从未命中开始
         start = _time.perf_counter()

@@ -172,6 +172,16 @@ class ClassSchema(BaseModel):
 
     classes: Tuple[str, ...] = ()          # index → 名称；index 0 通常是背景
     ignore_index: int = Field(default=255, ge=0, le=255)
+
+    @model_validator(mode="after")
+    def _class_count_fits_uint8(self) -> "ClassSchema":
+        # #1219（B-17）：accumulator 输出 dtype=uint8 —— >256 类会静默回绕错类。
+        if len(self.classes) > 256:
+            raise DescriptorError(
+                f"class count {len(self.classes)} exceeds the uint8 output vocabulary (256)"
+            )
+        return self
+
     nodata_class: Optional[int] = None
 
     @model_validator(mode="after")
@@ -241,8 +251,10 @@ class GeoModelDescriptor(BaseModel):
     schema_version: str = DESCRIPTOR_SCHEMA_VERSION
 
     # ── 身份 ────────────────────────────────────────────────────────
-    model_id: str = Field(min_length=3, max_length=128)
-    model_version: str = Field(min_length=1, max_length=64)
+    # #1219（B-11）：identity 字符集白名单 —— registry 的文件名 sanitize 是
+    # 替换式（"a b" 与 "a_b" 落同一文档路径互相覆盖）；入口拒绝即无碰撞。
+    model_id: str = Field(min_length=3, max_length=128, pattern=r"^[A-Za-z0-9_.\-]+$")
+    model_version: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.\-]+$")
     #: 内容完整性（模型包/权重工件的 sha256 hex）。注册时与 load 时双验。
     checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     provider_type: str

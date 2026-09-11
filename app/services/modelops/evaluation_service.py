@@ -98,8 +98,10 @@ class EvaluationService:
             if request.confidence_path is not None:
                 from app.lib.geo_raster.reader import RasterReader as _RR
 
+                # #1219（B-16）：confidence 走有界读 —— budget_ok=True 是
+                # 审计明示的后门（512MiB 预算护栏不应被评估路径绕开）。
                 with _RR.open(str(request.confidence_path)) as cr:
-                    conf = cr.read_full(budget_ok=True)
+                    conf = cr.read_full()
                     if conf.ndim == 3:
                         conf = conf[0]
                 mask = pred != request.ignore_index
@@ -283,7 +285,7 @@ class EvaluationService:
 
     @staticmethod
     def _read_pair(pred_path: Path, ref_path: Path) -> tuple:
-        """读预测/参考栅格（有界：同形状校验 + 预算护栏由 RasterReader 兜底）。"""
+        """读预测/参考栅格（有界：geoid 校验 + 预算护栏由 RasterReader 兜底）。"""
         # R2-M5：不绕过 reader 预算（budget_ok=True 是审计眼里的后门）。
         with RasterReader.open(str(pred_path)) as pr:
             pred = pr.read_full()
@@ -295,6 +297,15 @@ class EvaluationService:
             raise ModelOpsError(
                 f"prediction {pred_meta.width}x{pred_meta.height} and reference "
                 f"{ref_meta.width}x{ref_meta.height} shapes differ"
+            )
+        # #1219（B-16）：形状相同但 CRS/仿射不同的两张栅格逐像素对比是无意义
+        # 指标（误导性评估报告直出 modelops_evaluate_model）—— geoid 一致
+        # 才可比；不一致时 typed 拒绝并提示重采样。
+        if (str(pred_meta.crs) != str(ref_meta.crs)
+                or tuple(pred_meta.transform or []) != tuple(ref_meta.transform or [])):
+            raise ModelOpsError(
+                "prediction and reference grids differ in CRS/transform — "
+                "resample onto a common grid before evaluation"
             )
         if pred.ndim == 3:
             pred = pred[0]

@@ -558,12 +558,21 @@ class GeoExecutionEngine:
             self._runs[run_id] = run
             self._run_outputs[run_id] = outputs
             self._run_owners[run_id] = owner_scope
+            # #1219（B-19）：驱逐仅限非 RUNNING 的 run —— 此前按注册序 FIFO
+            # 淘汰，128 个新 run 注册即可把在飞长 run 的 owner/outputs 条目
+            # 逐出（REST 读 404、可观测性失联）。新 run 自身是 RUNNING，循环
+            # 在只剩在飞 run 时自然停止（注册表临时超界，终态回调收敛）。
             while len(self._runs) > self._run_cache_size:
-                old = next(iter(self._runs))
-                self._runs.pop(old)
-                self._run_outputs.pop(old, None)
-                self._run_owners.pop(old, None)
-                self._run_extras.pop(old, None)
+                victim = next(
+                    (k for k in self._runs if getattr(self._runs[k], "status", None) != "running"),
+                    None,
+                )
+                if victim is None:
+                    break
+                self._runs.pop(victim)
+                self._run_outputs.pop(victim, None)
+                self._run_owners.pop(victim, None)
+                self._run_extras.pop(victim, None)
         # run 级取消令牌注册（REST/工具凭 run_id 请求取消；M1）
         if cancel_token is None:
             cancel_token = CancellationToken(job_id=run_id)

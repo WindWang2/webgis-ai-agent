@@ -76,8 +76,6 @@ def _resolve_semantic_spec() -> str:
         return ""
 
 
-_SEMANTIC_RETRIEVER_SPEC = _resolve_semantic_spec()
-
 #: 投影规模（goal §三：10-30 个）
 DEFAULT_K_MIN = 10
 DEFAULT_K_MAX = 30

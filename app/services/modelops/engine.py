@@ -108,6 +108,34 @@ _RUN_LOCAL: Dict[str, Any] = {}
 MAX_TILES_PER_RUN = 65536
 
 
+def _validate_output_channels(
+    output: Any, descriptor: Any, *, promptable: bool = False
+) -> None:
+    """#1219（B-15）：概率栈通道数与 class_schema 一致性（typed 失败）。
+
+    validate_for 只见 batch（无 descriptor），通道语义校验落在此处 ——
+    恶意/漂移的远端或扩展返回 K'≠K 的概率栈时，accumulator 会以晦涩的
+    numpy 广播错误崩溃（或 promptable 路径 argmax==1 语义错位不报错）。
+    """
+    probs = getattr(output, "class_probabilities", None)
+    if probs is None or probs.ndim < 2:
+        return
+    if promptable:
+        expected = 2
+    else:
+        classes = getattr(getattr(descriptor, "class_schema", None), "classes", None)
+        if not classes:
+            return
+        expected = len(classes)
+    k = int(probs.shape[1]) if probs.ndim >= 3 else int(probs.shape[0])
+    if k != expected:
+        from app.services.modelops.providers.base import ProviderError
+
+        raise ProviderError(
+            f"class_probabilities channel count {k} != descriptor classes {expected}"
+        )
+
+
 def _clip_plan_to_roi(
     descriptor: GeoModelDescriptor,
     roi_bbox: Tuple[int, int, int, int],
@@ -844,7 +872,7 @@ class InferenceEngine:
                     batch_obj = TileBatch(
                         pixels=pixels, valid_mask=valid_mask,
                         chip_hw=(group[0].chip_hw[0], group[0].chip_hw[1]),
-                        batch_index=start // max(1, batch),
+                        batch_index=start // max(1, current_batch),  # #1219（B-12）：降批后按实际批大小
                     )
                     infer_started = time.perf_counter()
                     try:
@@ -1111,6 +1139,7 @@ class InferenceEngine:
                 )
                 output = provider.infer(model, batch, ctx)
                 output.validate_for(batch)
+                _validate_output_channels(output, descriptor, promptable=True)
                 probs = output.class_probabilities[0]  # (2,H,W)
                 object_mask = probs.argmax(axis=0) == 1
                 if valid.ndim == 2:
@@ -1402,6 +1431,18 @@ class InferenceEngine:
             ctx.extras["stack_length"] = t
             output = provider.infer(model, batch, ctx)
             output.validate_for(batch)
+            # #1219（B-15）：temporal_classification 的类别语义在 label_sequence
+            # 末维 —— 通道不符时 typed 拒绝（forecast 栈的通道=变量，跳过）。
+            _ls = getattr(output, "label_sequence", None)
+            if _ls is not None and descriptor.class_schema:
+                _k = int(_ls.shape[-1])
+                _expected = len(descriptor.class_schema.classes)
+                if _k != _expected:
+                    from app.services.modelops.providers.base import ProviderError
+
+                    raise ProviderError(
+                        f"label_sequence class count {_k} != descriptor classes {_expected}"
+                    )
             seq = output.label_sequence[0]  # (T,K)
         classes = seq.argmax(axis=1).astype(np.uint8)  # (T,)
         conf = seq.max(axis=1).astype(np.float32)

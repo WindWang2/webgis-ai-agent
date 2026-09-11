@@ -82,7 +82,7 @@ def _env_float_drain(name: str, default: float) -> float:
 # (the extension ignores ``_onUpdate``). Bounding a SINGLE inter-event gap at 2s
 # killed every turn with a >2s tool or slow first token. Failure semantics now
 # mirror stream_prompt: only CONTINUOUS silence reaching PI_EVENT_STREAM_TIMEOUT
-# (the stall budget) or the whole turn exceeding PI_TURN_TOTAL_TIMEOUT fails.
+# (the stall budget, default 120s) or the whole turn exceeding PI_TURN_TOTAL_TIMEOUT fails.
 PI_EVENT_DRAIN_TIMEOUT = _env_float_drain("PI_EVENT_DRAIN_TIMEOUT", 2.0)    # prompt() 单次事件等待粒度
 PI_TURN_TOTAL_TIMEOUT = _env_float_drain("PI_TURN_TOTAL_TIMEOUT", 300.0)    # prompt() 非流式整回合兜底上限 (#910: 900→300, env wins)
 
@@ -96,8 +96,9 @@ PI_HEARTBEAT_INTERVAL = _env_float_drain("PI_HEARTBEAT_INTERVAL", 8.0)
 # which false-failed any healthy turn whose tool phase produced no SSE event
 # for >30s (the tool kept running server-side while the user saw an error +
 # retried → duplicate execution). With heartbeats the connection stays alive,
-# so this now only needs to catch a true Pi hang; bumped to 180s to tolerate
-# long toolchains (still well under PI_RPC_TIMEOUT=300s that bounds one RPC).
+# so this now only needs to catch a true Pi hang; default 120s tolerates long
+# toolchains (well under PI_RPC_TIMEOUT=300s that bounds one RPC).
+# #1218（audit3 A-5）：注释与默认值对齐（两处旧注释误写 180s）。
 # Operators may tune via the env var.
 PI_EVENT_STREAM_TIMEOUT = _env_float_drain("PI_EVENT_STREAM_TIMEOUT", 120.0)
 
@@ -1083,8 +1084,13 @@ async def _record_gis_progress(
     """
     from app.services.chat.no_progress import GisProgressTracker
 
-    tracker = _gis_progress_trackers.get(session_id)
-    if tracker is None:
+    tracker = _gis_progress_trackers.pop(session_id, None)
+    if tracker is not None:
+        # #1218（audit3 A-8）：命中重插 —— 真 LRU（原实现按插入序 FIFO 淘汰，
+        # >64 会话时会把长会话的活跃 streak 清零，正是注释声称要避免的失效
+        # 模式）。
+        _gis_progress_trackers[session_id] = tracker
+    else:
         if len(_gis_progress_trackers) >= _GIS_TRACKER_MAX_SESSIONS:
             # review R2 minor：LRU 淘汰最旧会话（整体 clear 会把活跃会话的
             # 停滞 streak 一起清零，no-progress 检测间歇性失效）。
@@ -2183,7 +2189,7 @@ class PiBridge:
                     # G: watch the subprocess death signal alongside the event queue so
                     # a mid-stream Pi crash ends the turn promptly (error + done +
                     # no abort) instead of parking on heartbeat silence for the whole
-                    # PI_EVENT_STREAM_TIMEOUT=180s stall budget and then retrying with
+                    # PI_EVENT_STREAM_TIMEOUT stall budget (default 120s) and then retrying with
                     # duplicate side effects. Bare MagicMock rpc fakes (used by other
                     # test suites) auto-create a MagicMock for ``process_died_event``,
                     # which is not awaitable — fall back to a never-set event so those
