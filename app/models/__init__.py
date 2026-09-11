@@ -28,6 +28,11 @@ from app.models.project import (
 from app.models.lakehouse_catalog import (  # noqa: F401 — 模型注册 + 再导出
     LakehouseCatalogItem,
 )
+from app.models.lakehouse_datasets import (  # noqa: F401 — 模型注册 + 再导出
+    LakehouseDataset,
+    LakehouseDatasetRef,
+    LakehouseDatasetVersion,
+)
 from app.models.data_fabric import (
     DataSource,
     DataFabricDataset,
