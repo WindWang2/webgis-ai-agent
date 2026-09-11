@@ -119,21 +119,32 @@ def _pick_e2e_dbs() -> tuple[int, int]:
 
 def _recycle_celery_broker(app) -> None:
     """丢弃可能绑在旧 broker_url 上的 producer/connection 池，迫使下次
-    publish 按当前 ``CELERY_BROKER_URL`` 重建。``force_close_all`` alone 会
-    永久关闭池对象 —— 必须把 ``_pool``/``_producer_pool`` 置空以允许重建。
+    publish 按当前 ``CELERY_BROKER_URL`` 重建。
+
+    **关键（#1226 后遗）**：仅 ``force_close_all`` + ``app._pool = None``
+    不够 —— ``force_close_all`` 把池标成 ``_closed=True``，但
+    ``kombu.pools.connections`` / ``producers`` 仍按 connection 身份持有
+    **同一已关闭对象**；下次 ``app.pool`` / ``app.amqp.producer_pool``
+    从注册表取回 closed pool → ``Acquire on closed pool``（smoke E2E
+    enqueue 全失败 → NODE_FAILED）。且 producer 池在 ``app.amqp``，不在
+    ``app`` 上。正确做法：``kombu.pools.reset()``（关资源 + ``group.clear()``）
+    并清空 ``app._pool`` / ``app.amqp._producer_pool``，让下次访问走
+    ``__missing__`` 建新池。
     """
-    for attr in ("_pool", "_producer_pool"):
-        pool = getattr(app, attr, None)
-        if pool is None:
-            continue
-        try:
-            pool.force_close_all()
-        except Exception:  # noqa: BLE001 - best-effort recycle
-            pass
-        try:
-            setattr(app, attr, None)
-        except Exception:  # noqa: BLE001
-            pass
+    from kombu import pools as kombu_pools
+
+    try:
+        kombu_pools.reset()
+    except Exception:  # noqa: BLE001 - best-effort recycle
+        pass
+    try:
+        app._pool = None
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        app.amqp._producer_pool = None
+    except Exception:  # noqa: BLE001
+        pass
 
 
 #: 进程级固定一组 db：celery app 的连接池按 conf 建连并跨测试复用 ——
