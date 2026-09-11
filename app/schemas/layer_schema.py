@@ -14,34 +14,38 @@ from pydantic import BaseModel, ConfigDict
 class LayerDescriptorResponse(BaseModel):
     """GET /layers/descriptor/{ref_id} —— 轻量图层元数据描述符。
 
-    形状与 `app/schemas/ref_descriptor.py` 的 RefDescriptor 同源
-    （在线回退路径与存储侧 compute_descriptor 的证据面一致）。
+    存储快路径与在线回退路径归一为同一形状（ref_id/feature_count/
+    mvt_capable …）；证据面与 app/schemas/ref_descriptor.py 同源。
     """
 
     model_config = ConfigDict(
-        extra="allow",
         json_schema_extra={
             "examples": [
                 {
-                    "points": 1200,
-                    "features": 1200,
-                    "geom_types": ["Point"],
+                    "ref_id": "ref:abc123",
+                    "session_id": "sess-123",
+                    "feature_count": 1200,
+                    "point_count": 1200,
+                    "geometry_types": ["Point"],
                     "bbox": [120.0, 30.0, 121.0, 31.5],
+                    "mvt_capable": True,
                     "raster_capable": False,
                     "estimated_bytes": 204800,
                     "filterable_fields": ["name"],
                     "field_schema": {"name": {"type": "string"}},
                     "field_schema_complete": True,
-                    "crs": None,
                 }
             ]
-        },
+        }
     )
 
-    points: Optional[int] = None
-    features: Optional[int] = None
-    geom_types: list[str] = []
+    ref_id: str
+    session_id: str
+    feature_count: int
+    point_count: int
+    geometry_types: list[str] = []
     bbox: Optional[list[float]] = None
+    mvt_capable: bool = False
     raster_capable: bool = False
     estimated_bytes: Optional[int] = None
     filterable_fields: Optional[list[str]] = None

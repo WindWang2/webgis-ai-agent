@@ -436,18 +436,18 @@ def _compute_descriptor_fallback(data) -> dict:
     except Exception:
         crs = None
 
-    return LayerDescriptorResponse(
-        points=points,
-        features=features,
-        geom_types=list(geom_types),
-        bbox=bbox,
-        raster_capable=raster_capable,
-        estimated_bytes=estimated,
-        filterable_fields=filterable_fields,
-        field_schema=field_schema,
-        field_schema_complete=field_schema_complete,
-        crs=crs,
-    )
+    return {
+        "points": points,
+        "features": features,
+        "geom_types": list(geom_types),
+        "bbox": bbox,
+        "raster_capable": raster_capable,
+        "estimated_bytes": estimated,
+        "filterable_fields": filterable_fields,
+        "field_schema": field_schema,
+        "field_schema_complete": field_schema_complete,
+        "crs": crs,
+    }
 
 
 @router.get("/layers/descriptor/{ref_id}", tags=["图层数据"], response_model=LayerDescriptorResponse)
