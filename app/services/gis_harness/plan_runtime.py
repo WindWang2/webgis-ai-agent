@@ -1,4 +1,4 @@
-"""PlanRuntime —— 计划版本化 / 重规划驱动 / 失败种子最小重算（V7 ADR-0130 D2）。
+"""PlanRuntime —— 计划版本化 / 重规划驱动 / 失败种子最小重算（V7 ADR-0135 D2）。
 
 V6 基线缺口（harness-v6 PR follow-ups + 审计 W2）：
 
@@ -381,7 +381,7 @@ async def request_replan(
     reason: str = "",
     from_verdict: str = "",
 ) -> Dict[str, Any]:
-    """重规划生产驱动点（finalizer 出口调用；ADR-0130 D2）。
+    """重规划生产驱动点（finalizer 出口调用；ADR-0135 D2）。
 
     - replan 预算有余 → ``plan_runtime.replan_pending`` 置位 + durable
       记账（update_recovery_state(loop="replan")），返回 verdict=replan；

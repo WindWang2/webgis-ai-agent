@@ -1,4 +1,4 @@
-"""GeoCompute V8 poison task quarantine（Phase F，ADR-0130 §6）。
+"""GeoCompute V8 poison task quarantine（Phase F，ADR-0133 §6）。
 
 同一 owner 域内、同一节点语义指纹的 run 反复非瞬态失败 → 计数并在
 冷却窗内**快失败**（``POISON_QUARANTINED``）—— 防「毒任务」在不同

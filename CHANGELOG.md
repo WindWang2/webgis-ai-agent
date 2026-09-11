@@ -1,8 +1,56 @@
 # Changelog
 
+## [Unreleased] - 2026-09-10 (V7/V8 epic integration round)
+
+Ten prepared epic branches (platform-v4, lakehouse-v8, data-fabric-v8,
+geocompute-v8, science-v6, modelops-v3, workflow-v6, cartography-v7,
+workbench-v7, harness-v7) integrated into master in dependency order.
+Cross-branch collisions resolved: ADR-0130 five-way renumber
+(lakehouse keeps 0130; data-fabric→0132, geocompute→0133, modelops→0134,
+harness→0135; watermark advanced to 135), three 0035 migration heads
+converged by merge revision e7a51c9d2f04, CHANGELOG sections unified.
+Per-epic detail sections follow; entries for epics that documented in their
+ADR/work records rather than CHANGELOG are summarized below.
+
+### Added (platform-v4: Production Control)
+- Production build identity (VERSION alignment, extensions_api sourced from
+  CORE_API_VERSION), error taxonomy semantics, end-to-end single-trace
+  acceptance, worker lifecycle control (ADR-0131).
+
+### Added (lakehouse-v8: Versioned Geospatial Lakehouse, ADR-0130)
+- Cube v3 schema (model/scenario dims, per-variable nodata), retention
+  plan/execute with bounded scans, Arrow IPC adapter for dataset exchange,
+  workflow/fabric bridges, dataset REST surface + e2e acceptance.
+
+### Added (geocompute-v8: Distributed Spatial Compute Fabric, ADR-0133)
+- V8 partitioning (plan/spill/rehydrate accounting, speculative windows),
+  placement guard with latent-bug fix, observability completion
+  (transfer/cache/lineage/utilization/quarantine), robustness + acceptance
+  suites.
+
+### Added (science-v6: Spatial Intelligence Domain Packs)
+- Sampling pack (spatial random/systematic/stratified), ecology pack
+  (habitat suitability HSI + landscape metrics with ED double-count fix),
+  temporal smooth_gapfill, tolerance semantics + purity guards.
+
+### Added (modelops-v3: Production GeoAI Inference Runtime, ADR-0134)
+- Inference scheduling, vectorization + georeferenced output, memmap merge
+  cleanup with Windows unmap-before-rmtree, VRAM reservation leak fix,
+  determinism acceptance, review rounds 1-2 fixes.
+
+### Added (workflow-v6: Durable Cluster Runtime)
+- Two-level leases / journal / recovery / retry / dispatch surfaces,
+  Inspector API, real GIS adapter execution path (fixing a V5 param-loss
+  defect), clone_run terminal-state guard, independent review fixes.
+
+### Added (workbench-v7: Professional GIS Workbench)
+- HUD-only rows bypass server mutations, lazy attribute rows, two-phase
+  tool-call matching, dock draft CSS cleanup, null-safe store selectors,
+  persistence debounce polling in tests.
+
 ## [Unreleased] - 2026-09-10 (data-fabric-v8)
 
-### Added (data-fabric-v8: Adaptive Federated Spatial Data Plane, ADR-0130)
+### Added (data-fabric-v8: Adaptive Federated Spatial Data Plane, ADR-0132)
 - FabricRuntime single production resolution path: registry-first
   (scope/revision/health/secret separation) -> legacy session fallback
   (first use registers into the registry — unified governance view,
@@ -95,7 +143,7 @@
 
 ## [Unreleased] - 2026-09-10 (harness-v7)
 
-### Added (harness-v7: Long-Horizon Contextual GIS Agent Runtime, ADR-0130)
+### Added (harness-v7: Long-Horizon Contextual GIS Agent Runtime, ADR-0135)
 - Runtime state machine (`gis_harness/runtime_state_machine.py`): task-level
   cognitive-loop phase (12-state closed vocabulary) + legal transition table
   (docs/test-oracle/commanded fail-closed) + ring transition records; phases

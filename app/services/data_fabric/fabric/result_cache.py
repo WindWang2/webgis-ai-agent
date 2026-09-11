@@ -153,7 +153,7 @@ class FederatedResultCache:
         self._lock = threading.Lock()
         self.hits = 0
         self.misses = 0
-        # ── V8（ADR-0130 Phase F）──
+        # ── V8（ADR-0132 Phase F）──
         self._single = SingleFlight()
         self._backend = _backend_from_settings()
 
@@ -334,7 +334,7 @@ class FederatedResultCache:
             self._bytes -= entry.bytes_len
 
 
-# ── V8（ADR-0130 Phase F）：stampede 保护 + 可选分布式后端 ─────────────────
+# ── V8（ADR-0132 Phase F）：stampede 保护 + 可选分布式后端 ─────────────────
 
 
 class _Flight:

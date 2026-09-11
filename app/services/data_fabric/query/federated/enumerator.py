@@ -126,7 +126,7 @@ class EnumerationContext:
     limit: int = 10_000
     bbox: Optional[List[float]] = None
     order_strategy: str = "cost"  # cost | given | cost_stats
-    # ── V8（ADR-0130 additive）：治理面富集披露（source_id → basis）。
+    # ── V8（ADR-0132 additive）：治理面富集披露（source_id → basis）。
     # 纯数据传递；EXPLAIN 如实渲染，None = 无富集（输出与 V7 逐位一致）。
     estimate_basis: Optional[Dict[str, Dict[str, Any]]] = None
 

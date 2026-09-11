@@ -1,4 +1,4 @@
-"""GeoCompute V8 空间感知分区（Phase D，ADR-0130 §4）。
+"""GeoCompute V8 空间感知分区（Phase D，ADR-0133 §4）。
 
 纯函数/有界数据契约：把输入切成分区（plan）、把分区结果按明确的 seam
 语义合并（merge）。本模块**不执行**任何算法 —— 执行仍是既有 ops 算子

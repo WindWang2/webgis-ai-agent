@@ -92,7 +92,7 @@ def _resolve_source(profile_id, session_id):
 
 
 def _resolve_source_adapter(profile_id, session_id):
-    """V8（ADR-0130）：工具层数据源解析的**单一入口**。
+    """V8（ADR-0132）：工具层数据源解析的**单一入口**。
 
     顺序：ConnectionRegistry（治理：作用域/revision/健康/secret 分离）→
     legacy 会话（首次命中即注册进 registry，治理视图统一）→ None。
@@ -205,7 +205,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             )
 
             connected_profile, adapter = connection_manager.connect(profile, owner=session_id)
-            # V8（ADR-0130）：连接即治理 —— 同一 adapter 实例注册进
+            # V8（ADR-0132）：连接即治理 —— 同一 adapter 实例注册进
             # ConnectionRegistry（secret 摘离、revision、生命周期归属 registry；
             # legacy 会话存储原样保留）。best-effort：治理注册失败不阻断连接。
             try:
@@ -1101,7 +1101,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 use_cache=bool(use_cache),
             )
             executor = FederatedExecutor(lambda src: adapters_by_id.get(src))
-            # V8（ADR-0130）：规划前治理富集（探测能力/事实行数/反馈修正 →
+            # V8（ADR-0132）：规划前治理富集（探测能力/事实行数/反馈修正 →
             # 纯数据提示 + estimate_basis 披露；fail-open，无富集 = V7 行为）。
             try:
                 enrich_request_from_runtime(req, resolved_by_sid)

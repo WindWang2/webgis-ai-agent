@@ -1,4 +1,4 @@
-"""ScenarioCorpus —— 生成式 GIS 任务金标语料（V7 ADR-0130 D4-W5）。
+"""ScenarioCorpus —— 生成式 GIS 任务金标语料（V7 ADR-0135 D4-W5）。
 
 V6 基线缺口：``retrieval_eval_corpus`` 是 **598 条硬编码 ``_c(...)`` 行**
 （V6 PR 时 358 → master 增长）。按此增速到 2k-5k 场景的行式维护不可持续

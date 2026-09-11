@@ -1,4 +1,4 @@
-"""CapabilityDescriptors —— 结构化能力描述符联合检索（V7 ADR-0130 D4）。
+"""CapabilityDescriptors —— 结构化能力描述符联合检索（V7 ADR-0135 D4）。
 
 V6 基线：hybrid 检索（词法 + 双语扩展 + capability graph + 方法论 +
 embedding 可选）已超越字符串匹配（ADR-0119 D1-D3），但**结构面**缺失 ——

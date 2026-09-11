@@ -1,7 +1,7 @@
 {
  "version": 1,
- "adr_watermark": 129,
- "migration_watermark": 34,
+ "adr_watermark": 135,
+ "migration_watermark": 35,
  "rules": [
   {"pattern": "docs/adr/*", "owner": "docs", "policy": "allocator"},
   {"pattern": "migrations/versions/*", "owner": "core", "policy": "allocator", "suites": ["integration"]},

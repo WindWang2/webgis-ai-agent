@@ -795,7 +795,7 @@ class ChainSourceStats:
     # ── V7（ADR-0119 W9）：measured 级唯一键声明（启用安全聚合下推证明；
     # 调用方对声明真实性负责 —— 估计 NDV 不作数）。──
     unique_keys: Optional[List[str]] = None
-    # ── V8（ADR-0130 additive）：探测后能力覆盖（AdapterCapabilitiesV2）。
+    # ── V8（ADR-0132 additive）：探测后能力覆盖（AdapterCapabilitiesV2）。
     # 由 FabricRuntime 在规划前填充（IO 收敛在 runtime，planner 保持纯函数）；
     # None = 静态默认矩阵。──
     caps: Optional[Any] = None
@@ -861,7 +861,7 @@ class FederatedChainRequest:
     session_owner: Optional[str] = None
     #: 结果缓存开关（默认开：命中必披露 + fingerprint 失效 + TTL 有界）。
     use_cache: bool = True
-    # ── V8（ADR-0130 additive）：治理面富集披露（source_id → basis dict）。
+    # ── V8（ADR-0132 additive）：治理面富集披露（source_id → basis dict）。
     # FabricRuntime 填充：rows_basis（request_hint | source_facts:<basis>
     # [×feedback:<factor>(samples=N)]）、caps_basis（probed|default）、
     # governed。EXPLAIN 如实渲染；None = 无富集（行为与 V7 逐位一致）。
@@ -1770,7 +1770,7 @@ def _make_bushy_replan_fn(req, original_plan):
     return _replan
 
 
-# ── V8（ADR-0130）：治理面 → 规划输入的自适应闭环 ────────────────────────────
+# ── V8（ADR-0132）：治理面 → 规划输入的自适应闭环 ────────────────────────────
 
 
 def enrich_request_from_runtime(
@@ -1949,7 +1949,7 @@ def execute_chain_v6(
                 "cache_key": cache_key[:16],
             }
             return cached
-    # ── V8（ADR-0130）：进程级引擎回退熔断（R2-Mi-4 收口）──
+    # ── V8（ADR-0132）：进程级引擎回退熔断（R2-Mi-4 收口）──
     # 位于缓存命中检查之后：熔断守卫的是 **V6 执行**，不剥夺有效缓存结果
     # 的服务（review P2-6）。连续 V6 崩溃后直接走 V5（跳过 V6 规划+执行
     # 栈，双执行成本归零）；half-open 单 trial 探测 V6 恢复。trial 经
@@ -1984,7 +1984,7 @@ def _execute_v6_with_governance(executor, req, engine_breaker, cache_ctx, cache)
     if cache_enabled:
         scope_key, cache_key, fingerprints = cache_ctx
 
-    # ── V8（ADR-0130 Phase F）：cache stampede 保护 ──
+    # ── V8（ADR-0132 Phase F）：cache stampede 保护 ──
     # miss 后的规划+执行+构建收进闭包，经 per-key SingleFlight 执行：并发
     # 同键请求在界内等待首问结果（shared 命中如实披露），不重复打远端。
     def _execute_and_build() -> Dict[str, Any]:

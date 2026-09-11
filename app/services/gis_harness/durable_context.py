@@ -55,7 +55,7 @@ FORBIDDEN_KEYS: Tuple[str, ...] = (
 MAX_LOOP_HISTORY = 16
 #: 循环预算（**有生产驱动点**的 long-horizon 回路；有界重入数）。
 #: 「replan」回路的驱动点 = finalizer 出口 ``plan_runtime.request_replan``
-#: （V7 ADR-0130 D2：修复不可达 → 置 replan_pending → 计划事实一变即
+#: （V7 ADR-0135 D2：修复不可达 → 置 replan_pending → 计划事实一变即
 #: 消费）—— 预算与驱动点同一 commit 落地（入而无驱动 = 预算耗尽永不可
 #: 达，审查 R1 M4 的教训）。
 LOOP_BUDGETS: Dict[str, int] = {

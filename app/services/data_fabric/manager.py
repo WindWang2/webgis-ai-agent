@@ -121,7 +121,7 @@ class DataFabricManager:
 
     @classmethod
     def _governed_adapter(cls, ds_model: DataSourceModel) -> GeospatialDataSourceAdapter:
-        """V8（ADR-0130）：REST/worker 路径的治理解析（registry 优先）。
+        """V8（ADR-0132）：REST/worker 路径的治理解析（registry 优先）。
 
         此前每请求 ``_profile_from_model + build_adapter`` 完全绕过
         ConnectionRegistry —— 无 revision/健康/secret 分离（ADR-0120 披露

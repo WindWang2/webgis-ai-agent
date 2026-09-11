@@ -250,7 +250,7 @@ def format_session_plan_projection(
             progress_line = "\n" + progress_line
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         progress_line = ""
-    # V7（ADR-0130 D1）：HarnessRuntime 任务级阶段单行（additive；状态块
+    # V7（ADR-0135 D1）：HarnessRuntime 任务级阶段单行（additive；状态块
     # 缺席时零漂移 —— 派生器只在触发点写块，投影只读 stored 值）。
     runtime_line = ""
     try:
@@ -263,7 +263,7 @@ def format_session_plan_projection(
             runtime_line = "\n" + runtime_line
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         runtime_line = ""
-    # V7（ADR-0130 D2）：计划版本/replan 挂起/最小重算清单单行（additive；
+    # V7（ADR-0135 D2）：计划版本/replan 挂起/最小重算清单单行（additive；
     # 评审 F3 —— replan_pending 与 min-rerun/reuse 是 Pi 的重规划指令面）。
     plan_runtime_line = ""
     try:

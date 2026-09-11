@@ -778,7 +778,7 @@ async def _dispatch_tool_bound(
                     "[PiBridge] workflow instance update failed session=%s tool=%s",
                     session_id, tool_name, exc_info=True,
                 )
-            # V7（ADR-0130 D1）：HarnessRuntime 任务级阶段推进（同一触发点；
+            # V7（ADR-0135 D1）：HarnessRuntime 任务级阶段推进（同一触发点；
             # 阶段是权威事实的只读派生 —— 增值披露，绝不阻断）。
             try:
                 from app.services.gis_harness.runtime_state_machine import (
@@ -2272,7 +2272,7 @@ class PiBridge:
                                             )
                                         except Exception:  # noqa: BLE001 — 增值披露
                                             pass
-                                        # V7（ADR-0130 D1）：turn 收尾阶段推进 +
+                                        # V7（ADR-0135 D1）：turn 收尾阶段推进 +
                                         # suspended 旗标（未终态任务可经锚点恢复）。
                                         try:
                                             from app.services.gis_harness.runtime_state_machine import (
@@ -2285,7 +2285,7 @@ class PiBridge:
                                             )
                                         except Exception:  # noqa: BLE001 — 增值披露
                                             pass
-                                        # V7（ADR-0130 D3）：九域上下文 checkpoint
+                                        # V7（ADR-0135 D3）：九域上下文 checkpoint
                                         #（turn 边界落 map_state 单键；可重建；
                                         # 受状态机同一 kill switch 门控）。
                                         try:

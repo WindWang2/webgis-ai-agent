@@ -128,7 +128,7 @@ def explain_v6_lines(
             f"    source {n.source_id}: estimated_rows={n.estimated_rows}"
             f" fetch_window={n.fetch_limit}"
         )
-    # V8（ADR-0130）：治理面富集披露（估计依据/探测基础；无富集不渲染）。
+    # V8（ADR-0132）：治理面富集披露（估计依据/探测基础；无富集不渲染）。
     basis = getattr(ctx, "estimate_basis", None) if ctx is not None else None
     if basis:
         lines.append("  estimate_basis:")

@@ -1,4 +1,4 @@
-"""IntentAcceptance —— 用户意图满足的独立验收判定（V7 ADR-0130 D6）。
+"""IntentAcceptance —— 用户意图满足的独立验收判定（V7 ADR-0135 D6）。
 
 V6 基线缺口：finalizer 持久化时 ``intent_verified=(result.status ==
 "complete")`` —— **循环论证**（完成 → 意图满足），observation ladder 的

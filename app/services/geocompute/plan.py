@@ -148,7 +148,7 @@ class CrsExpectation(BaseModel):
 
 
 class PartitionSpec(BaseModel):
-    """V8 空间分区声明（节点级；Phase D，ADR-0130 §4）。
+    """V8 空间分区声明（节点级；Phase D，ADR-0133 §4）。
 
     节点声明 ``partition`` 后，durable 执行在该节点上做空间 fan-out：
     输入按 scheme 切成 N 个空间分区（每个分区一个独立 durable job，

@@ -1,4 +1,4 @@
-"""GeoCompute V8 Artifact Exchange（Phase E，ADR-0130 §5）。
+"""GeoCompute V8 Artifact Exchange（Phase E，ADR-0133 §5）。
 
 执行面与**内容寻址 BlobStore**（durable_blob_store）的接线层 —— 之前
 BlobStore 的 content-hash/流式原语已存在但 geocompute 从未使用，执行面

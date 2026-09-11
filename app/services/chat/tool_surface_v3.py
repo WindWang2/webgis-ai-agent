@@ -682,7 +682,7 @@ class DynamicToolSurface:
                 logger.debug("[ToolSurfaceV3] v4 rerank failed; V3 order served",
                              exc_info=True)
 
-        # 6.7) V7 capability descriptor 信号（ADR-0130 D4）：结构化描述符
+        # 6.7) V7 capability descriptor 信号（ADR-0135 D4）：结构化描述符
         #      联合检索（preconditions/可靠性/cost）对已入分候选小幅加成
         #      （首位 0.25 逐位减半 —— 远低于词法标签分，只影响并列区
         #      相对序）。只调整既有候选、不新增候选；kill switch

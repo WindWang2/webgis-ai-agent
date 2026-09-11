@@ -1,4 +1,4 @@
-"""MapCritique —— 地图感知观察批评（V7 ADR-0130 D5）。
+"""MapCritique —— 地图感知观察批评（V7 ADR-0135 D5）。
 
 V6 基线（render_observation + observation_states + completion validators）
 已覆盖图层可见性 / 挂载 / 数据在场 / 组件槽位 / 布局重叠 / 导出对齐；

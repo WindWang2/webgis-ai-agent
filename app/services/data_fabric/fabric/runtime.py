@@ -1,4 +1,4 @@
-"""FabricRuntime V8（ADR-0130）：联邦数据面的**单一生产解析路径**。
+"""FabricRuntime V8（ADR-0132）：联邦数据面的**单一生产解析路径**。
 
 V7（ADR-0120）把治理面（ConnectionRegistry / CapabilityProbeService /
 SourceFactsService / FabricFeedbackStore）交付为库 + 测试，但生产工具路径

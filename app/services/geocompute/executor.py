@@ -1257,7 +1257,7 @@ class GeoExecutionEngine:
         resource_envelope: Optional[dict[str, Any]] = None,
         emit_events: bool = False,
     ) -> None:
-        """分区 fan-out 执行（V8 Phase D，ADR-0130 §4）。
+        """分区 fan-out 执行（V8 Phase D，ADR-0133 §4）。
 
         输入形状（内存中的上游输出）→ 空间分区计划 → N 个 tile job
         （每个是普通 durable job：独立幂等键/独立重试/独立放置）→

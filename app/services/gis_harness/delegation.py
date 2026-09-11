@@ -1,4 +1,4 @@
-"""Delegation —— Harness 程序化委派（V7 ADR-0130 决策 D7）。
+"""Delegation —— Harness 程序化委派（V7 ADR-0135 决策 D7）。
 
 V6 基线缺口（审计 G）：12 个专用角色（gis_inspector /
 cartography_reviewer / algorithm_reviewer / result_verifier …）已注册但
