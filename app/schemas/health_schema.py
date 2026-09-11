@@ -105,7 +105,7 @@ class VersionResponse(BaseModel):
                     "version": "0.1.3",
                     "commit": "8b5b8375",
                     "python": "3.12.7",
-                    "extensions_api": 3,
+                    "extensions_api": "1.2.0",
                 }
             ]
         }
@@ -114,5 +114,5 @@ class VersionResponse(BaseModel):
     version: str
     commit: str
     python: str
-    extensions_api: int
+    extensions_api: str
     timestamp: str

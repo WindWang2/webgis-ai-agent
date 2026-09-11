@@ -10,13 +10,21 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.config import settings
 from app.core.database import Engine
-from app.core.exception import global_exception_handler
+from app.core.exception import (
+    global_exception_handler,
+    unified_http_exception_handler,
+    unified_validation_exception_handler,
+)
+from app.core.idempotency import IdempotencyMiddleware
+from prometheus_client import Counter
+from app.api.v2 import V1_SUNSET_DATE, build_v2_router
 from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes
 from app.api.routes import ws_collab
@@ -485,6 +493,12 @@ app = FastAPI(
 
 app.add_exception_handler(Exception, global_exception_handler)
 
+# V9 契约基石（ADR-0138）：HTTPException / 422 校验错误接入统一错误信封，
+# 根治 {"detail"} 与 ApiResponse 双信封并存（LEGACY_DETAIL_ENVELOPE /
+# X-Error-Envelope: detail 可回退旧体，过渡期开关）。
+app.add_exception_handler(HTTPException, unified_http_exception_handler)
+app.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
+
 
 # Prometheus metrics — 审计 I11：之前 prometheus.yml 抓 /api/v1/metrics 但 app
 # 从未暴露任何 metrics 端点 → 监控全是 up==0 / No data。instrumentator 在 /metrics
@@ -581,6 +595,44 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RateLimitMiddleware, max_requests=240, window_seconds=60)
 
+# V9 契约基石（ADR-0138）：HTTP 幂等 —— 只对携带 Idempotency-Key 的 JSON POST
+# 生效（重放首次响应 24h / SET NX 单飞 / Redis 故障 fail-open）。
+app.add_middleware(IdempotencyMiddleware)
+
+# v1 弃用头 + 使用量打点（ADR-0138 / P7）：v1 响应带 Deprecation/Sunset，
+# 计数器为未来下线决策提供数据（不下线任何 v1 端点）。
+api_version_requests = Counter(
+    "webgis_api_version_requests_total",
+    "API requests by version (v1/v2)",
+    ["version"],
+)
+
+
+class ApiVersionDeprecationMiddleware(BaseHTTPMiddleware):
+    """v1 响应补 Deprecation/Sunset 头；v1/v2 打点。纯响应头改写，零语义变化。"""
+
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+        version = "v2" if path.startswith("/api/v2") else (
+            "v1" if path.startswith("/api/v1") else "other"
+        )
+        response = await call_next(request)
+        if version in ("v1", "v2"):
+            try:
+                api_version_requests.labels(version=version).inc()
+            except Exception:  # noqa: BLE001 — 打点失败不影响响应
+                pass
+        if version == "v1":
+            response.headers["Deprecation"] = "true"
+            response.headers["Sunset"] = V1_SUNSET_DATE
+            response.headers["Link"] = (
+                '</api/v2>; rel="successor-version"'
+            )
+        return response
+
+
+app.add_middleware(ApiVersionDeprecationMiddleware)
+
 # CORS
 # THREAT MODEL: CORS_ORIGINS=["*"] + allow_credentials=True causes the middleware
 # to echo the request Origin header back as Access-Control-Allow-Origin. Any site
@@ -674,6 +726,11 @@ app.include_router(workflow_runtime_routes.router, prefix="/api/v1", tags=["Work
 app.include_router(local_data.router, prefix="/api/v1/local-data", tags=["本地地理数据"])
 app.include_router(metrics.router, prefix="/api/v1", tags=["性能遥测"])
 app.include_router(pi_tools.router, tags=["PI工具"])
+
+# ── API v2（V9 契约基石，ADR-0138 / P7）─────────────────────────────
+# v2 = 同一 router 的示范复用挂载（lakehouse / geocompute /
+# workflow-runtime），默认新错误信封 + 统一分页语义；v1 不受影响。
+app.include_router(build_v2_router(), tags=["API v2"])
 
 # 静态文件服务 — 用 FastAPI 路由替代原 StaticFiles mount（A4 修复）：
 # 路径强校验 + 可选 HMAC 签名 + 访问日志 + JWT 鉴权或公共白名单。

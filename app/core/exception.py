@@ -6,8 +6,10 @@ import logging
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+from fastapi import HTTPException as StarletteHTTPException
 from fastapi import Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.errors import classify_exception
@@ -171,15 +173,112 @@ async def global_exception_handler(
     status_code = 500
     if hasattr(exc, "status_code"):
         status_code = getattr(exc, "status_code", 500)
-    
+
     return JSONResponse(
         status_code=status_code,
         content=response_data,
     )
+
+
+# ── 统一错误信封（V9 契约基石，ADR-0138）────────────────────────────────
+#
+# 双信封根治：HTTPException / RequestValidationError 原本走 FastAPI 默认
+# 处理器返回 `{"detail": ...}`，与全局 handler 的 ApiResponse 形状并存
+# （docs/api-docs.md 曾同时记载两套）。本段把前两者接入同一信封：
+# {code, success: false, message, data: null} + errors 分类学附加字段。
+#
+# 过渡策略：
+# - settings.LEGACY_DETAIL_ENVELOPE=true → 全局回退旧体 {"detail"}；
+# - 请求头 X-Error-Envelope: detail → 按请求回退旧体（未迁移 v1 客户端灰度）。
+
+LEGACY_ENVELOPE_HEADER = "x-error-envelope"
+
+
+def wants_legacy_envelope(request: Request) -> bool:
+    """legacy 信封判定：settings 总开关 OR 请求头按请求覆盖。"""
+    if getattr(settings, "LEGACY_DETAIL_ENVELOPE", False):
+        return True
+    return request.headers.get(LEGACY_ENVELOPE_HEADER, "").strip().lower() == "detail"
+
+
+def unified_error_envelope(
+    status_code: int,
+    message: str,
+    *,
+    request: Optional[Request] = None,
+    exc: Optional[BaseException] = None,
+    include_details: bool = False,
+) -> Dict[str, Any]:
+    """按状态码 + message 构造统一错误体（与 format_error_response 同形状）。"""
+    code = _STATUS_CODE_TO_CODE.get(status_code, "SERVER_ERROR")
+    envelope: Dict[str, Any] = {
+        "code": code,
+        "success": False,
+        "message": message,
+        "data": None,
+    }
+    if exc is not None:
+        try:
+            _cls = classify_exception(exc)
+            envelope["category"] = _cls.category.value
+            envelope["retryable"] = _cls.retryable
+            if _cls.degraded:
+                envelope["degraded"] = _cls.degraded
+        except Exception:  # noqa: BLE001 — 分类失败不改变既有响应形状
+            logger.debug("error classification failed", exc_info=True)
+    if include_details and request is not None:
+        envelope["path"] = str(request.url.path)
+        envelope["method"] = request.method
+    return envelope
+
+
+async def unified_http_exception_handler(
+    request: Request,
+    exc: StarletteHTTPException,
+) -> JSONResponse:
+    """HTTPException（含路由 raise HTTPException）→ 统一信封 / legacy detail。"""
+    detail = getattr(exc, "detail", None)
+    message = detail if isinstance(detail, str) else PRODUCTION_ERROR_MESSAGE
+    if wants_legacy_envelope(request):
+        return JSONResponse(status_code=exc.status_code, content={"detail": detail})
+    envelope = unified_error_envelope(
+        exc.status_code,
+        message,
+        request=request,
+        exc=exc,
+    )
+    return JSONResponse(status_code=exc.status_code, content=envelope)
+
+
+async def unified_validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    """请求体/参数校验失败（422）→ 统一信封 / legacy detail。"""
+    if wants_legacy_envelope(request):
+        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+    errors = [
+        {
+            "loc": list(map(str, e.get("loc", []))),
+            "msg": str(e.get("msg", "")),
+            "type": str(e.get("type", "")),
+        }
+        for e in list(exc.errors())[:20]
+    ]
+    envelope = unified_error_envelope(422, "请求参数校验失败", request=request)
+    if not settings.is_production():
+        envelope["errors"] = errors
+    return JSONResponse(status_code=422, content=envelope)
+
 
 __all__ = [
     "global_exception_handler",
     "format_error_response",
     "sanitize_traceback",
     "PRODUCTION_ERROR_MESSAGE",
+    "unified_http_exception_handler",
+    "unified_validation_exception_handler",
+    "unified_error_envelope",
+    "wants_legacy_envelope",
+    "LEGACY_ENVELOPE_HEADER",
 ]

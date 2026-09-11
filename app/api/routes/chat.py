@@ -1156,10 +1156,15 @@ async def list_sessions(
     user_id = _user.get("user_id")
     async with async_db_session() as db:
         sessions = await AsyncHistoryService(db).list_sessions(limit=limit, offset=offset, user_id=user_id)
+        # P4（ADR-0138）：additive 补齐分页元数据（total 已有，has_more 新增）。
+        # has_more 语义：本页满页即视为可能还有更多（list_sessions 无 total
+        # count，避免为列表页做全表计数 —— 与 #618-9 的 DB 分页纪律一致）。
+        total_sessions = len(sessions)
         return SessionListResponse(
-            total=len(sessions),
+            total=total_sessions,
             limit=limit,
             offset=offset,
+            has_more=total_sessions == limit,
             sessions=[
                 {
                     "id": s.id,

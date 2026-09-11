@@ -141,9 +141,13 @@ export function isApiError(err: unknown): err is ApiError {
  */
 export function describeApiError(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
-    const body = err.body as { detail?: unknown } | null;
+    const body = err.body as { detail?: unknown; message?: unknown } | null;
+    // 双信封兼容（ADR-0138）：v1 旧体 {detail} 与统一信封 {code,success,message,data}
     if (body && typeof body === 'object' && typeof body.detail === 'string' && body.detail) {
       return body.detail;
+    }
+    if (body && typeof body === 'object' && typeof body.message === 'string' && body.message) {
+      return body.message;
     }
     return `${fallback}（HTTP ${err.status}）`;
   }

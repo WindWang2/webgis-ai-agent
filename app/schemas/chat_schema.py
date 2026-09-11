@@ -297,17 +297,20 @@ class SessionSummary(BaseModel):
 
 
 class SessionListResponse(BaseModel):
-    """GET /chat/sessions 响应（审计 A5 分页）。"""
+    """GET /chat/sessions 响应（审计 A5 分页；P4 补 has_more，additive）。"""
 
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [{"total": 1, "limit": 50, "offset": 0, "sessions": []}]
+            "examples": [
+                {"total": 1, "limit": 50, "offset": 0, "has_more": False, "sessions": []}
+            ]
         }
     )
 
     total: int
     limit: int
     offset: int
+    has_more: bool = False
     sessions: list[SessionSummary] = []
 
 
