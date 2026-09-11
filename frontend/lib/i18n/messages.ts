@@ -16,6 +16,8 @@ import zhChat from '@/messages/zh-CN/chat.json'
 import zhTweaks from '@/messages/zh-CN/tweaks.json'
 import zhSidebar from '@/messages/zh-CN/sidebar.json'
 import zhMap from '@/messages/zh-CN/map.json'
+import zhDrawers from '@/messages/zh-CN/drawers.json'
+import zhStory from '@/messages/zh-CN/story.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
@@ -24,6 +26,8 @@ import enChat from '@/messages/en-US/chat.json'
 import enTweaks from '@/messages/en-US/tweaks.json'
 import enSidebar from '@/messages/en-US/sidebar.json'
 import enMap from '@/messages/en-US/map.json'
+import enDrawers from '@/messages/en-US/drawers.json'
+import enStory from '@/messages/en-US/story.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
@@ -35,6 +39,8 @@ export interface AppMessages {
   tweaks: typeof zhTweaks
   sidebar: typeof zhSidebar
   map: typeof zhMap
+  drawers: typeof zhDrawers
+  story: typeof zhStory
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -47,6 +53,8 @@ export const messages: Record<AppLocale, AppMessages> = {
     tweaks: zhTweaks,
     sidebar: zhSidebar,
     map: zhMap,
+    drawers: zhDrawers,
+    story: zhStory,
   },
   'en-US': {
     // en 与 zh 的 catalog 结构由 test/i18n/key-completeness.test.ts 强制一致。
@@ -58,5 +66,7 @@ export const messages: Record<AppLocale, AppMessages> = {
     tweaks: enTweaks as unknown as AppMessages['tweaks'],
     sidebar: enSidebar as unknown as AppMessages['sidebar'],
     map: enMap as unknown as AppMessages['map'],
+    drawers: enDrawers as unknown as AppMessages['drawers'],
+    story: enStory as unknown as AppMessages['story'],
   },
 }

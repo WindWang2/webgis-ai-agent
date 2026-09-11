@@ -1,3 +1,4 @@
+import { useT } from '@/lib/i18n/useT';
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -27,6 +28,7 @@ function ReadOnlyRow({ label, value }: { label: string; value: string }) {
 }
 
 export function LlmConfig() {
+  const t = useT();
   const [serverConfig, setServerConfig] = useState<ServerLlmConfig | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -81,15 +83,15 @@ export function LlmConfig() {
 
   return (
     <div className="flex flex-col gap-5">
-      <STitle title="大模型配置" sub="LLM Model Settings" />
+      <STitle title={t('settings.llm.title')} sub="LLM Model Settings" />
 
       {/* #390：LLM 配置由服务端统一管理，前端保存从未被后端消费 ——
           改为只读展示并在 UI 明说，不再假装前端设置有效。 */}
       <div className="rounded-md border border-edge-subtle bg-surface-raised px-4 py-3 text-body text-ink-secondary">
-        LLM 配置由服务端统一管理，前端保存不会生效。如需修改，请使用管理员账号在服务端完成，之后点击「刷新配置」更新显示。
+        {t('settings.llm.serverManaged')}
       </div>
 
-      {loading && <div className="text-body text-ink-muted">加载中…</div>}
+      {loading && <div className="text-body text-ink-muted">{t('common.loading')}</div>}
 
       {!loading && loadError && (
         <div className="text-body font-medium text-status-critical">{loadError}</div>
@@ -147,7 +149,7 @@ export function LlmConfig() {
           disabled={loading}
           className="inline-flex items-center gap-1.5 rounded-sm border border-edge-subtle bg-surface-sunken px-3 py-1 text-body font-medium text-ink-secondary transition-all hover:bg-surface-hover disabled:opacity-50"
         >
-          刷新配置
+          {t('settings.llm.refresh')}
         </button>
       </div>
       {testState === 'success' && (

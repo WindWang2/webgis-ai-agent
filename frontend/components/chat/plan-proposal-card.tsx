@@ -1,3 +1,4 @@
+import { useT } from '@/lib/i18n/useT';
 'use client';
 
 /**
@@ -40,6 +41,7 @@ export interface PlanProposalCardProps {
 }
 
 export function PlanProposalCard(props: PlanProposalCardProps) {
+  const t = useT();
   const {
     planId,
     title,
@@ -83,21 +85,21 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
                 backgroundColor: 'color-mix(in srgb, var(--agent-accent) 12%, transparent)',
               }}
             >
-              计划 · {stepCount} 步
+              {t('chat.plan.head', { steps: stepCount })}
             </span>
             {status === 'approved' && (
               <span className="inline-flex items-center gap-1 rounded-pill bg-status-success-soft px-2 py-px text-meta text-status-success">
-                <CheckCircle2 size={10} /> 已批准
+                <CheckCircle2 size={10} /> {t('chat.plan.approved')}
               </span>
             )}
             {status === 'rejected' && (
               <span className="inline-flex items-center gap-1 rounded-pill bg-status-critical-soft px-2 py-px text-meta text-status-critical">
-                <X size={10} /> 已取消
+                <X size={10} /> {t('chat.plan.cancelled')}
               </span>
             )}
             {status === 'revising' && (
               <span className="inline-flex items-center gap-1 rounded-pill bg-status-info-soft px-2 py-px text-meta text-status-info">
-                <Edit3 size={10} /> 修改中
+                <Edit3 size={10} /> {t('chat.plan.revising')}
               </span>
             )}
           </div>
@@ -112,8 +114,10 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
         <div className="mt-2 flex items-start gap-1.5 rounded-md border border-status-warning-border bg-status-warning-soft p-2 text-body leading-relaxed text-status-warning">
           <AlertTriangle size={12} className="mt-[1px] shrink-0" />
           <span>
-            本计划含 {destructiveSteps.length} 个破坏性步骤（{destructiveSteps.join('、')}），
-            执行前请确认这些操作可逆且经过授权。
+            {t('chat.plan.destructiveWarn', {
+              count: destructiveSteps.length,
+              names: destructiveSteps.join('、'),
+            })}
           </span>
         </div>
       )}
@@ -126,7 +130,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
             onClick={() => setExpanded((v) => !v)}
             className="cursor-pointer border-none bg-transparent p-0 text-meta text-ink-muted"
           >
-            {expanded ? '▾' : '▸'} 步骤明细
+            {expanded ? '▾' : '▸'} {t('chat.plan.steps')}
           </button>
           {expanded && (
             <ol className="mt-1.5 flex list-none flex-col gap-1 p-0">
@@ -143,7 +147,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
                       <code className="text-meta text-agent-accent">{step.tool}</code>
                       {step.destructive && (
                         <span className="ml-1.5 text-meta text-status-warning">
-                          ⚠ 破坏性
+                          {t('chat.plan.destructiveBadge')}
                         </span>
                       )}
                     </div>
@@ -186,7 +190,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
             color: locked ? 'var(--text-muted)' : 'var(--text-primary)',
           }}
         >
-          <Edit3 size={12} /> 修改
+          <Edit3 size={12} /> {t('chat.plan.revise')}
         </button>
         <button
           type="button"
@@ -199,7 +203,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
             color: locked ? 'var(--text-muted)' : 'var(--text-critical)',
           }}
         >
-          <X size={12} /> 取消
+          <X size={12} /> {t('common.cancel')}
         </button>
       </div>
     </div>

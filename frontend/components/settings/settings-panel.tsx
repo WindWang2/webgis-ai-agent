@@ -1,3 +1,4 @@
+import { useT } from '@/lib/i18n/useT';
 'use client';
 
 import React, { useCallback, useRef } from 'react';
@@ -27,21 +28,21 @@ import { AccountSection } from './account-section';
 
 interface NavItem {
   key: SettingsTab;
-  label: string;
+  labelKey: string;
   icon: React.ElementType;
   count?: number;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { key: 'llm', label: '大模型', icon: Sparkles },
-  { key: 'skills', label: 'Skills', icon: Hash, count: 0 },
-  { key: 'rag', label: '知识库', icon: Brain },
-  { key: 'map', label: '地图配置', icon: Crosshair },
+  { key: 'llm', labelKey: 'tabs.llm', icon: Sparkles },
+  { key: 'skills', labelKey: 'tabs.skills', icon: Hash, count: 0 },
+  { key: 'rag', labelKey: 'tabs.rag', icon: Brain },
+  { key: 'map', labelKey: 'tabs.map', icon: Crosshair },
   // Workspace V2（Goal C2 折叠）：图层管理收敛到工作区 Layers 标签页
   // （状态词表 + 样式 + 溯源 + 重排的单一入口）；设置面板不再保留第二
   // 份图层列表 —— 同一真相两个 UI 是漂移源。
-  { key: 'system', label: '系统', icon: Settings },
-  { key: 'account', label: '账户', icon: UserRound },
+  { key: 'system', labelKey: 'tabs.system', icon: Settings },
+  { key: 'account', labelKey: 'tabs.account', icon: UserRound },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -72,6 +73,7 @@ function TabContent({ tab }: { tab: string }) {
 /* ------------------------------------------------------------------ */
 
 export function SettingsPanel() {
+  const t = useT();
   const settingsOpen = useHudStore((s) => s.settingsOpen);
   const setSettingsOpen = useHudStore((s) => s.setSettingsOpen);
   const settingsTab = useHudStore((s) => s.settingsTab);
@@ -153,7 +155,7 @@ export function SettingsPanel() {
             盖住地图 —— 全部移除，改不透明 surface-panel + shadow-drawer。 */}
         {/* Left nav rail */}
         <nav
-          aria-label="设置分类"
+          aria-label={t('settings.panel.navLabel')}
           className="flex flex-col border-r border-edge-subtle bg-surface-panel py-4"
           style={{
             width: 136,
@@ -164,7 +166,7 @@ export function SettingsPanel() {
           <div className="px-4 mb-4">
             <div className="flex items-center gap-1.5">
               <ShieldCheck size={14} className="text-agent-accent" />
-              <span className="text-title font-semibold text-ink">控制中心</span>
+              <span className="text-title font-semibold text-ink">{t('settings.panel.title')}</span>
             </div>
           </div>
 
@@ -172,7 +174,7 @@ export function SettingsPanel() {
           <div
             role="tablist"
             aria-orientation="vertical"
-            aria-label="设置分类"
+            aria-label={t('settings.panel.navLabel')}
             onKeyDown={onNavKeyDown}
             className="flex flex-col gap-0.5 px-2 flex-1"
           >
@@ -213,7 +215,7 @@ export function SettingsPanel() {
                       className="text-body font-medium truncate flex-1"
                       style={{ color: isActive ? 'var(--agent-accent)' : 'var(--text-secondary)' }}
                     >
-                      {item.label}
+                      {t(`settings.${item.labelKey}`)}
                     </span>
                     {item.count !== undefined && item.count > 0 && (
                       <span
@@ -252,7 +254,7 @@ export function SettingsPanel() {
               </div>
               <div>
                 <div id="settings-panel-title" className="text-title font-bold leading-tight text-ink">
-                  Agent 控制中心
+                  {t('settings.panel.title')}
                 </div>
                 <div className="text-meta leading-tight text-ink-muted">Agent Command Center</div>
               </div>
@@ -267,13 +269,13 @@ export function SettingsPanel() {
                   className="inline-block h-1.5 w-1.5 rounded-full"
                   style={{ backgroundColor: 'var(--agent-accent, #16a34a)' }}
                 />
-                系统在线
+                {t('settings.panel.online')}
               </span>
             </div>
 
             <button
               onClick={() => setSettingsOpen(false)}
-              aria-label="关闭设置"
+              aria-label={t('settings.panel.close')}
               className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-surface-hover"
             >
               <X size={18} />

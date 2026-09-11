@@ -1,3 +1,4 @@
+import { useT } from '@/lib/i18n/useT';
 'use client';
 
 import React from 'react';
@@ -27,13 +28,14 @@ function providerDesc(provider: (typeof TILE_PROVIDERS)[number]): string {
  *     表单追加的条目永远无法变成可渲染的 provider（此前是假控件）。
  */
 export function MapConfig() {
+  const t = useT();
   const baseLayer = useHudStore((s) => s.baseLayer);
   const setBaseLayer = useHudStore((s) => s.setBaseLayer);
   const { selectedBaseLayer, setSelectedBaseLayer } = useMapAction();
 
   return (
     <div className="flex flex-col gap-5">
-      <STitle title="地图配置" sub="Map Configuration" />
+      <STitle title={t('settings.tabs.map')} sub="Map Configuration" />
 
       {/* Basemap style cards — sourced from TILE_PROVIDERS, same vocabulary
           the top-bar switcher and the renderer index use. */}

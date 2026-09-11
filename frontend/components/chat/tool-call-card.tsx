@@ -1,3 +1,4 @@
+import { useT } from '@/lib/i18n/useT';
 'use client';
 
 import React, { useId, useState, useEffect, useCallback, useMemo } from 'react';
@@ -159,6 +160,7 @@ function CopyButton({ text, label = '复制' }: { text: string; label?: string }
 /* ── Single tool call card (minimal row when collapsed) ── */
 
 export function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolean }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const duration =
     call.startedAt && call.completedAt
@@ -276,9 +278,9 @@ export function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded:
             <div>
               <div className="flex items-center justify-between mb-1">
                 <p className="text-micro font-semibold text-ink-muted uppercase tracking-wider">
-                  参数
+                  {t('chat.toolCall.args')}
                 </p>
-                <CopyButton text={formatJson(parsedArgs)} label="复制参数" />
+                <CopyButton text={formatJson(parsedArgs)} label={t('chat.toolCall.copyArgs')} />
               </div>
               <pre className="p-2 rounded-md bg-surface-raised border border-edge-subtle text-caption leading-relaxed text-ink-secondary font-mono overflow-x-auto max-h-[120px] overflow-y-auto">
                 {Object.entries(parsedArgs)
@@ -294,9 +296,9 @@ export function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded:
             <div>
               <div className="flex items-center justify-between mb-1">
                 <p className="text-micro font-semibold text-ink-muted uppercase tracking-wider">
-                  结果
+                  {t('chat.toolCall.result')}
                 </p>
-                <CopyButton text={formattedJson} label="复制结果" />
+                <CopyButton text={formattedJson} label={t('chat.toolCall.copyResult')} />
               </div>
               <pre className="p-2 rounded-md bg-surface-raised border border-edge-subtle text-caption leading-relaxed text-ink-secondary font-mono overflow-x-auto max-h-[160px] overflow-y-auto">
                 {formattedJson.slice(0, 1500)}
@@ -307,7 +309,7 @@ export function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded:
           {call.error && (
             <div>
               <p className="text-micro font-semibold text-status-critical uppercase tracking-wider mb-1">
-                错误
+                {t('chat.toolCall.error')}
               </p>
               <pre className="p-2 rounded-md bg-status-critical-soft border border-status-critical-border text-caption text-status-critical font-mono whitespace-pre-wrap">
                 {call.error}
@@ -323,6 +325,7 @@ export function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded:
 /* ── Collapsible tool chain wrapper ── */
 
 export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   // #1000：失败行抵达时链默认展开——错误详情此前埋在「展开链→展开单行」
   // 两级折叠之下，用户默认看不到失败原因难以调整重试。用户手动开合过
@@ -380,20 +383,20 @@ export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
         {allDone && !expanded && (
           failedCount > 0 ? (
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-micro bg-status-warning-soft text-status-warning font-medium">
-              <AlertTriangle size={11} aria-label="部分或全部调用失败" />
-              <span>{failedCount} 失败</span>
+              <AlertTriangle size={11} aria-label={t('chat.toolCall.partialFailAria')} />
+              <span>{failedCount} {t('chat.toolCall.failed')}</span>
             </span>
           ) : (
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-micro bg-status-success-soft text-status-success font-medium">
               <CheckCircle2 size={11} />
-              <span>已完成</span>
+              <span>{t('chat.toolCall.done')}</span>
             </span>
           )
         )}
         {!allDone && (
           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-micro bg-status-info-soft text-status-info font-medium">
             <Loader2 size={11} className="animate-spin text-status-info" />
-            <span>执行中</span>
+            <span>{t('chat.toolCall.running')}</span>
           </span>
         )}
       </button>
@@ -403,7 +406,7 @@ export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
         <div
           id={chainListId}
           role="region"
-          aria-label="工具调用链详情"
+          aria-label={t('chat.toolCall.detailsAria')}
           className="border-t border-edge-subtle px-2.5 py-2 space-y-1 bg-surface-sunken/40"
         >
           {calls.map((tc) => (

@@ -1,3 +1,4 @@
+import { useT } from '@/lib/i18n/useT';
 /**
  * Template Gallery V2 — F-FE-TPL.
  *
@@ -50,13 +51,13 @@ import { SearchField } from '@/components/shared/search-field';
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 200;
 
-const KIND_TABS: Array<{ kind: TemplateKind | 'all'; label: string; Icon: React.ComponentType<{ className?: string }> }> = [
-  { kind: 'all', label: '全部', Icon: Layers },
-  { kind: 'basemap', label: '底图', Icon: MapIcon },
-  { kind: 'symbology', label: '符号', Icon: Palette },
-  { kind: 'layout', label: '版式', Icon: LayoutIcon },
-  { kind: 'thematic', label: '专题', Icon: BarChart3 },
-  { kind: 'composite', label: '复合', Icon: Sparkles },
+const KIND_TABS: Array<{ kind: TemplateKind | 'all'; labelKey: string; Icon: React.ComponentType<{ className?: string }> }> = [
+  { kind: 'all', labelKey: 'templates.filter.all', Icon: Layers },
+  { kind: 'basemap', labelKey: 'templates.filter.basemap', Icon: MapIcon },
+  { kind: 'symbology', labelKey: 'templates.filter.symbol', Icon: Palette },
+  { kind: 'layout', labelKey: 'templates.filter.layout', Icon: LayoutIcon },
+  { kind: 'thematic', labelKey: 'templates.filter.thematic', Icon: BarChart3 },
+  { kind: 'composite', labelKey: 'templates.filter.composite', Icon: Sparkles },
 ];
 
 export interface TemplateGalleryV2Props {
@@ -176,6 +177,7 @@ function applyLayoutTemplate(detail: TemplateDetail, hud: HudApplyState): ApplyO
 }
 
 export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2Props) {
+  const t = useT();
   const [activeKind, setActiveKind] = useState<TemplateKind | 'all'>('all');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -341,9 +343,9 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
           )}
 
           {loading && templates.length === 0 ? (
-            <LoadingState label="加载模板…" />
+            <LoadingState label={t('drawers.templates.loading')} />
           ) : templates.length === 0 ? (
-            <EmptyState icon={Sparkles} title="无匹配模板" description="调整关键词或切换分类重试" />
+            <EmptyState icon={Sparkles} title={t('drawers.templates.noMatch')} description={t('drawers.templates.noMatchHint')} />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="tpl-grid">
               {templates.map((t) => (
@@ -383,14 +385,15 @@ function Header({
   setSearch: (s: string) => void;
   loading: boolean;
 }) {
+  const t = useT();
   return (
     <div className="flex items-center justify-between gap-3 border-b border-edge-subtle p-4">
       <div className="min-w-0">
         <h2 id="template-gallery-title" className="flex items-center gap-2 text-title font-semibold text-ink">
           <Sparkles className="h-4 w-4 text-agent-accent" aria-hidden />
-          地图制图模板库
+          {t('drawers.templates.title')}
         </h2>
-        <p className="mt-0.5 text-meta text-ink-muted">模板 · 按分类/关键词搜索 · 快速应用</p>
+        <p className="mt-0.5 text-meta text-ink-muted">{t('drawers.templates.subtitle')}</p>
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {/* 受控 + debounce=0：fetch 防抖由组件自身的 200ms debouncedSearch 承担；
@@ -398,12 +401,12 @@ function Header({
         <SearchField
           value={search}
           onChange={setSearch}
-          placeholder="搜索模板…"
-          aria-label="搜索模板"
+          placeholder={t('drawers.templates.searchPh')}
+          aria-label={t('drawers.templates.searchAria')}
           debounceMs={0}
         />
         {loading && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none text-ink-muted" aria-hidden />}
-        <IconButton label="关闭模板库" icon={X} onClick={onClose} />
+        <IconButton label={t('drawers.templates.closeAria')} icon={X} onClick={onClose} />
       </div>
     </div>
   );
@@ -416,10 +419,11 @@ function KindTabs({
   active: TemplateKind | 'all';
   onChange: (k: TemplateKind | 'all') => void;
 }) {
+  const t = useT();
   return (
     // 分类过滤是 toggle-button 组（不控制 tabpanel），不用 tablist 语义。
-    <div aria-label="模板分类" className="flex gap-1 overflow-x-auto border-b border-edge-subtle px-4 pt-2">
-      {KIND_TABS.map(({ kind, label, Icon }) => {
+    <div aria-label={t('drawers.templates.catsAria')} className="flex gap-1 overflow-x-auto border-b border-edge-subtle px-4 pt-2">
+      {KIND_TABS.map(({ kind, labelKey, Icon }) => {
         const selected = active === kind;
         return (
           <button
@@ -438,7 +442,7 @@ function KindTabs({
             }}
           >
             <Icon className="h-3.5 w-3.5" aria-hidden />
-            {label}
+            {t(`drawers.${labelKey}`)}
           </button>
         );
       })}
@@ -533,23 +537,24 @@ function Footer({
   isLastPage: boolean;
   onPage: (p: number) => void;
 }) {
+  const t = useT();
   return (
     <div className="flex items-center justify-between border-t border-edge-subtle p-3">
-      <span className="text-meta text-ink-muted">第 {page + 1} / {totalPages} 页</span>
+      <span className="text-meta text-ink-muted">{t('drawers.templates.pageOf', { page: page + 1 })} / {totalPages}</span>
       <div className="flex gap-2">
         <button
           onClick={() => onPage(page - 1)}
           disabled={isFirstPage}
           className="flex items-center gap-1 rounded-md border border-edge-subtle bg-surface-raised px-2 py-1 text-meta text-ink-secondary hover:bg-surface-hover disabled:opacity-40"
         >
-          <ChevronLeft className="h-3.5 w-3.5" aria-hidden /> 上一页
+          <ChevronLeft className="h-3.5 w-3.5" aria-hidden /> {t('drawers.templates.prev')}
         </button>
         <button
           onClick={() => onPage(page + 1)}
           disabled={isLastPage}
           className="flex items-center gap-1 rounded-md border border-edge-subtle bg-surface-raised px-2 py-1 text-meta text-ink-secondary hover:bg-surface-hover disabled:opacity-40"
         >
-          下一页 <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+          {t('drawers.templates.next')} <ChevronRight className="h-3.5 w-3.5" aria-hidden />
         </button>
       </div>
     </div>

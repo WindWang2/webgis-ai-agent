@@ -1,0 +1,37 @@
+{
+  "history": {
+    "title": "Session history",
+    "new": "New session",
+    "newAria": "New session",
+    "closeAria": "Close session history",
+    "searchAria": "Search session history",
+    "searchPh": "Search sessions…",
+    "listAria": "Session history list",
+    "messages": "{count} messages",
+    "delete": "Delete",
+    "confirmDelete": "Confirm delete?",
+    "total": "{count} sessions in total"
+  },
+  "templates": {
+    "filter": {
+      "all": "All",
+      "basemap": "Basemap",
+      "symbol": "Symbols",
+      "layout": "Layout",
+      "thematic": "Thematic",
+      "composite": "Composite"
+    },
+    "loading": "Loading templates…",
+    "noMatch": "No matching templates",
+    "noMatchHint": "Adjust keywords or switch category and retry",
+    "title": "Cartography template gallery",
+    "subtitle": "Templates · search by category/keyword · one-click apply",
+    "searchPh": "Search templates…",
+    "searchAria": "Search templates",
+    "closeAria": "Close template gallery",
+    "catsAria": "Template categories",
+    "pageOf": "Page {page}",
+    "prev": "Previous",
+    "next": "Next"
+  }
+}

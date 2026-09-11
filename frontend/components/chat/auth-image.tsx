@@ -1,3 +1,4 @@
+import { useT } from '@/lib/i18n/useT';
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
@@ -21,6 +22,7 @@ interface AuthImageProps {
  * URL. Public URLs (shared report views, external hosts) render directly.
  */
 export function AuthImage({ src, alt, className }: AuthImageProps) {
+  const t = useT();
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const objectUrlRef = useRef<string | null>(null);
@@ -62,7 +64,7 @@ export function AuthImage({ src, alt, className }: AuthImageProps) {
   if (failed) {
     return (
       <span className="inline-block rounded-sm border border-edge-subtle px-2 py-1 text-xs text-ink-muted">
-        图片加载失败（请先登录后重试）
+        {t('chat.authImageFailed')}
       </span>
     );
   }
@@ -71,7 +73,7 @@ export function AuthImage({ src, alt, className }: AuthImageProps) {
     <img src={objectUrl} alt={alt ?? ''} className={className} />
   ) : (
     <span className="inline-block animate-pulse rounded-sm bg-surface-sunken px-2 py-1 text-xs text-ink-muted">
-      加载图片…
+      {t('chat.authImageLoading')}
     </span>
   );
 }
