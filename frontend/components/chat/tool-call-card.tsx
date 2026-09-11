@@ -119,13 +119,9 @@ const TOOL_NAMES: Record<string, string> = {
   webgis_isochrones: '等时圈分析',
   stac_search: 'STAC 遥感检索',
   h3_binning: 'H3 网格化',
-  // V9（ADR-0145）：ModelOps 工具族
+  // V9（ADR-0145）：modelops 推理工具（chat 中实际出现卡片的工具族）
   modelops_run_inference: '模型推理',
   modelops_run_promptable: '可提示分割推理',
-  modelops_cancel_inference: '取消推理',
-  modelops_list_models: '模型注册表',
-  modelops_inspect_model: '模型详情',
-  modelops_check_compatibility: '兼容性检查',
 };
 
 function ToolName({ name }: { name: string }) {

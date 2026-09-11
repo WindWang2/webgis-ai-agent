@@ -9,6 +9,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import MiniMd from './mini-md';
 import StoryMarkdown from './story-markdown';
 import { citeTextPreprocess, splitCitationBlocks } from './citation';
@@ -80,6 +81,16 @@ describe('MiniMd 渲染 citation', () => {
     expect(screen.getByRole('button', { name: '在知识库面板打开' })).toBeInTheDocument();
     fireEvent.keyDown(card, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: /引用来源 1/ })).not.toBeInTheDocument();
+  });
+
+  it('键盘路径（a11y）：聚焦角标按 Enter 打开卡片，可读屏可达', async () => {
+    const user = userEvent.setup();
+    render(<MiniMd text={INJECTED} />);
+    const sup = screen.getByRole('button', { name: '引用来源 1：向量检索入门' });
+    sup.focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('dialog', { name: /引用来源 1/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '关闭引用卡片' })).toBeInTheDocument();
   });
 
   it('普通消息不出现引用来源区，也不产生任何角标按钮（零回归）', () => {
