@@ -102,6 +102,19 @@ def audit_registry_policies(registry: ToolRegistry) -> List[PolicyFinding]:
             cost=str(meta.get("cost", "light")),
             timeout=meta.get("timeout"),
         ))
+        # #1218（audit3 A-4）：INLINE 契约 <5ms 与自声明 latency_class=slow
+        # 矛盾 —— 此前交叉校验只覆盖 cost×INLINE 一对（execute_plan 以
+        # cost=light 漏过并被默认 300s 预算截断）。
+        if (
+            policy is ToolExecutionPolicy.INLINE
+            and str(meta.get("latency_class", "")).lower() == "slow"
+        ):
+            findings.append(PolicyFinding(
+                tool=name, severity=Severity.WARNING, code="slow_inline",
+                detail="INLINE 工具自声明 latency_class=slow：违反 INLINE <5ms "
+                       "契约，且无显式 timeout 时整计划落入默认工具预算。"
+                       "改 ASYNC/THREAD 并声明显式预算。",
+            ))
     return findings
 
 

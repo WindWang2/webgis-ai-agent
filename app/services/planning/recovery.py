@@ -103,6 +103,12 @@ def classify_error(
         return FailureClass.missing_ref
     if code_l == "unknown_tool":
         return FailureClass.tool_unavailable
+    # #1205（audit3 A-1）：registry 把超时折叠为正常返回的错误 dict
+    # （code=TOOL_TIMEOUT，不抛异常），异常分支（步骤 2）对该路径恒不触发
+    # —— 派发码层必须显式识别，否则落入 internal：plan-mode livelock
+    # guard 会把一次偶发超时判为确定性失败并永久拒绝 resume。
+    if code_l == "tool_timeout":
+        return FailureClass.transient_network
 
     # 4. TOOL_ERROR / ok / no code → message-level signals
     if code_l in ("tool_error", "ok", "success", ""):

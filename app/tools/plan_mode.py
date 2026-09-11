@@ -130,7 +130,11 @@ def register_plan_mode_tools(registry: ToolRegistry):
             "plan_id": "由 propose_plan 返回的 plan_id（形如 ref:plan-xxxxxxxxxxxxxxxx）",
             "confirm_destructive": "若计划包含 Tier 3 破坏性/高危步骤，必须在用户明确确认后传入 True",
         },
-        execution_policy=ToolExecutionPolicy.INLINE,
+        # #1218（audit3 A-4）：execute_plan 是最多 20 步重 GIS 工具的编排器，
+        # 违反 INLINE「<5ms」契约且无显式预算时整计划被默认 300s 工具预算
+        # 中途截断 —— 改 ASYNC + 显式整计划预算（每步仍受各自 300s 约束）。
+        execution_policy=ToolExecutionPolicy.ASYNC,
+        timeout=1800,
         side_effect="state_mutation",
         data_mutations=["session_state"],
         network=False,

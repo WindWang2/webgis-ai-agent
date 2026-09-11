@@ -171,7 +171,11 @@ class Driver:
                 self.store.find_orphan_running_nodes, instance_id,
                 current_token=run_token)
             for orphan in orphans:
-                r = self.store.transition_node(
+                # #1211（audit3 B-9）：store 写与同文件其余 transition_node
+                # 一样经 to_thread 卸载 —— 此前是全文件唯一的事件循环内同步
+                # DB 写（孤儿多时逐笔阻塞 loop）。
+                r = await asyncio.to_thread(
+                    self.store.transition_node,
                     instance_id, orphan, C.NodeState.READY,
                     reason="ORPHAN_LEASE_EXPIRED", event="recovery")
                 if r.ok:
