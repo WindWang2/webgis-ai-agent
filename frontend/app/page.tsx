@@ -20,6 +20,7 @@ import { hasWorkspaceContent } from '@/lib/utils/workspace-content';
 import { mapInsetLeft, mapChromeLeft } from '@/lib/utils/workspace-inset';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import { setLayerDataSession } from '@/lib/store/layer-data';
+import { useT } from '@/lib/i18n/useT';
 
 // New layout components
 import TopBar from '@/components/layout/top-bar';
@@ -46,9 +47,7 @@ const MapPanel = dynamic(
     ssr: false,
     loading: () => (
       <div className='flex-1 flex items-center justify-center bg-surface-canvas'>
-        <div className='animate-pulse text-ink-muted text-micro font-mono uppercase tracking-wider'>
-          地图加载中…
-        </div>
+        <MapLoadingHint />
       </div>
     ),
   }
@@ -65,7 +64,19 @@ const MemoSpatialCrosshair = memo(SpatialCrosshair);
 const MemoFloatingLegend = memo(FloatingLegend);
 const MemoMapStatusReadout = memo(MapStatusReadout);
 
+/** dynamic loading 占位在模块顶层定义，才能经 useT 跟随语言切换。 */
+function MapLoadingHint() {
+  const t = useT('layout');
+  return (
+    <div className='animate-pulse text-ink-muted text-micro font-mono uppercase tracking-wider'>
+      {t('mapLoading')}
+    </div>
+  );
+}
+
 export default function Home() {
+  const t = useT('layout');
+  const tChat = useT('chat');
   const { getMapSnapshot, dispatchAction } = useMapAction();
   // FE-07：用单字段 selector 订阅，避免订阅整个 store 导致每次状态变更
   // （视口平移、opsLog push、图层变更等）都触发本组件及全部子树重渲染。
@@ -215,14 +226,14 @@ export default function Home() {
         {
           id: '1',
           role: 'assistant',
-          content: '你好！我是 GeoAgent。\n\n我感知地图、分析空间、生成洞察——地图上的一切都是我的一部分。',
+          content: tChat('welcome'),
           timestamp: new Date(),
         },
       ]);
     });
     setHistoryOpen(false);
     setConfirmNewSession(false);
-  }, [startNewSession, setMessages, setHistoryOpen]);
+  }, [startNewSession, setMessages, setHistoryOpen, tChat]);
 
   const handleNewSession = useCallback(() => {
     // #553: 新会话会清空工作区（图层/标注/日志/结果/transcript）。仅当确实
@@ -247,12 +258,12 @@ export default function Home() {
         }
       } catch (err) {
         useToastStore.getState().addToast(
-          `删除会话失败：${describeApiError(err, '删除会话失败')}`,
+          t('deleteSessionFailed', { detail: describeApiError(err, t('deleteSessionFailedDetail')) }),
           'error'
         );
       }
     },
-    [sessionId, getSessionTokenFor, refreshSessions, startFreshSession]
+    [sessionId, getSessionTokenFor, refreshSessions, startFreshSession, t]
   );
 
   // Theme + accent drive CSS custom properties (see the effects below); the
@@ -283,8 +294,8 @@ export default function Home() {
   }, [reactiveAccentColor]);
 
   const currentSessionTitle = sessionId
-    ? sessions.find((s) => s.id === sessionId)?.title || '新会话'
-    : '新会话';
+    ? sessions.find((s) => s.id === sessionId)?.title || t('newSessionTitle')
+    : t('newSessionTitle');
 
   return (
     <div
@@ -297,7 +308,7 @@ export default function Home() {
         href='#map-canvas'
         className='sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-[200] focus:rounded-sm focus:bg-status-accent focus:px-2 focus:py-1 focus:text-caption focus:text-white'
       >
-        跳到地图画布
+        {t('skipToMap')}
       </a>
       <MemoTopBar
         sessionName={currentSessionTitle}
@@ -327,7 +338,7 @@ export default function Home() {
         <div
           id='map-canvas'
           role='region'
-          aria-label='地图画布'
+          aria-label={t('mapCanvas')}
           tabIndex={-1}
           style={{
             position: 'absolute',
@@ -423,9 +434,9 @@ export default function Home() {
       {/* #553: 新建会话确认 —— 仅当工作区有内容可丢时由 handleNewSession 打开。 */}
       <ConfirmDialog
         open={confirmNewSession}
-        title="开始新对话？"
-        description="开始新对话将清空当前工作区（地图图层、对话记录）。历史会话仍可在右上角历史记录中找回。"
-        confirmLabel="开始新对话"
+        title={t('newSessionConfirm.title')}
+        description={t('newSessionConfirm.description')}
+        confirmLabel={t('newSessionConfirm.confirm')}
         onConfirm={startFreshSession}
         onCancel={() => setConfirmNewSession(false)}
       />
@@ -436,7 +447,7 @@ export default function Home() {
       <TemplateGalleryV2
         open={templatesOpen}
         onClose={handleCloseTemplates}
-        onApply={(t) => useToastStore.getState().addToast(`模板已应用：${t.name}`, 'success')}
+        onApply={(tpl) => useToastStore.getState().addToast(t('templateApplied', { name: tpl.name }), 'success')}
       />
 
       {/* Tweaks Panel Wrapper */}

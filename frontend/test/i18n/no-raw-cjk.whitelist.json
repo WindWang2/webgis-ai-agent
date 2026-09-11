@@ -25,11 +25,8 @@
     "components/explorer/tabular-data-grid.tsx": 31,
     "components/hud/embodied-hud.tsx": 11,
     "components/hud/layer-style-panel.tsx": 25,
-    "components/layout/context-panel.tsx": 29,
-    "components/layout/nav-rail.tsx": 19,
     "components/layout/panel-dock.tsx": 5,
     "components/layout/panel-error-boundary.tsx": 2,
-    "components/layout/top-bar.tsx": 13,
     "components/map/comparison/comparison-view.tsx": 7,
     "components/map/legends/legend-card.tsx": 1,
     "components/map/map-components/chart-panel.tsx": 1,
@@ -81,11 +78,9 @@
     "components/sidebar/workflow/run-inspector.tsx": 19,
     "components/sidebar/workflow/runtime-inspector.tsx": 11,
     "components/table/attribute-table-panel.tsx": 8,
-    "components/tweaks-panel.tsx": 13,
     "components/ui/toast.tsx": 1,
     "components/upload/upload-zone.tsx": 3,
     "app/layout.tsx": 1,
-    "app/page.tsx": 4,
     "app/story/page.tsx": 7
   }
 }

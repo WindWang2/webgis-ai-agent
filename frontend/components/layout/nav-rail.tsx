@@ -36,6 +36,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useT } from '@/lib/i18n/useT';
 import { LayoutDashboard } from 'lucide-react';
 import type { LeftTab } from '@/lib/store/hud-types';
 import {
@@ -47,32 +48,31 @@ import {
 interface RailTabDef {
   key: LeftTab;
   icon: LucideIcon;
-  label: string;
 }
 
 /** 分组顺序即渲染顺序；null = 分隔线 */
 const RAIL_GROUPS: Array<Array<RailTabDef>> = [
-  [{ key: 'chat', icon: MessageCircle, label: '对话' }],
+  [{ key: 'chat', icon: MessageCircle }],
   [
-    { key: 'project', icon: Folder, label: '项目' },
-    { key: 'data_sources', icon: Database, label: '数据' },
-    { key: 'layers', icon: Layers, label: '图层' },
-    { key: 'components', icon: LayoutDashboard, label: '组件' },
+    { key: 'project', icon: Folder },
+    { key: 'data_sources', icon: Database },
+    { key: 'layers', icon: Layers },
+    { key: 'components', icon: LayoutDashboard },
   ],
   [
-    { key: 'analysis', icon: Triangle, label: '分析' },
-    { key: 'tasks', icon: ListChecks, label: '任务' },
-    { key: 'results', icon: ClipboardList, label: '结果' },
+    { key: 'analysis', icon: Triangle },
+    { key: 'tasks', icon: ListChecks },
+    { key: 'results', icon: ClipboardList },
   ],
-  [{ key: 'export_layout', icon: Printer, label: '制图' }],
+  [{ key: 'export_layout', icon: Printer }],
 ];
 
 const RAIL_TABS: RailTabDef[] = RAIL_GROUPS.flat();
 
-const MODE_META: Record<WorkbenchMode, { icon: LucideIcon; label: string }> = {
-  explore: { icon: Compass, label: '探索' },
-  analyze: { icon: FlaskConical, label: '分析' },
-  compose: { icon: PenTool, label: '制图' },
+const MODE_META: Record<WorkbenchMode, { icon: LucideIcon }> = {
+  explore: { icon: Compass },
+  analyze: { icon: FlaskConical },
+  compose: { icon: PenTool },
 };
 
 /** 'exports' tab 无 rail 图标（export_layout 别名），模式词表内过滤。 */
@@ -82,6 +82,7 @@ function modeRailTabs(mode: WorkbenchMode): RailTabDef[] {
 }
 
 export function NavRail() {
+  const t = useT('layout');
   const activeTab = useHudStore((s) => s.activeLeftTab);
   const setActiveTab = useHudStore((s) => s.setActiveLeftTab);
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
@@ -176,7 +177,7 @@ export function NavRail() {
 
   return (
     <nav
-      aria-label="主导航"
+      aria-label={t('nav.main')}
       // V4：宽度/顶距改用 --railW / --topH token；背景改为不透明 surface-panel，
       // 去掉 blur(28px) —— 面板压在持续重绘的地图画布上，backdrop-filter 是最贵
       // 的那一类，而且半透明面板会让底下的地图干扰图标可读性。
@@ -190,9 +191,10 @@ export function NavRail() {
       {/* Review R1（a11y MINOR-7）：radiogroup 的必需子元素只能是 radio ——
           agent 回执按钮移出分组容器；roving tabindex + 方向键按 APG radio。 */}
       <div className="flex w-full flex-col items-center gap-1 border-b border-edge-subtle py-2">
-        <div role="radiogroup" aria-label="工作台模式" className="flex w-full flex-col items-center gap-1">
+        <div role="radiogroup" aria-label={t('nav.workbenchMode')} className="flex w-full flex-col items-center gap-1">
         {WORKBENCH_MODES.map((m) => {
-          const { icon: ModeIcon, label } = MODE_META[m];
+          const ModeIcon = MODE_META[m].icon;
+          const modeLabel = t(`modes.${m}`);
           const active = mode === m;
           return (
             <button
@@ -200,8 +202,8 @@ export function NavRail() {
               role="radio"
               aria-checked={active}
               tabIndex={active ? 0 : -1}
-              aria-label={`${label}模式`}
-              title={`${label}模式`}
+              aria-label={t('nav.modeSuffix', { name: modeLabel })}
+              title={t('nav.modeSuffix', { name: modeLabel })}
               data-testid={`mode-${m}`}
               onClick={() => switchMode(m)}
               className={clsx(
@@ -226,8 +228,8 @@ export function NavRail() {
           <button
             type="button"
             data-testid="mode-agent-revert"
-            aria-label="Agent 已切换工作台模式，点此返回你之前的工作台模式"
-            title="Agent 已切换工作台模式 — 点此返回你之前的模式"
+            aria-label={t('nav.agentRevertAria')}
+            title={t('nav.agentRevertTitle')}
             onClick={revertAgentMode}
             className="flex h-9 w-9 items-center justify-center rounded-md text-status-warning transition-colors hover:bg-surface-hover"
           >
@@ -238,12 +240,13 @@ export function NavRail() {
 
       <div
         role="tablist"
-        aria-label="工作区面板"
+        aria-label={t('nav.workspacePanels')}
         aria-orientation="vertical"
         onKeyDown={onTablistKeyDown}
         className="flex w-full flex-1 flex-col items-center gap-1 overflow-y-auto py-2"
       >
-        {visibleTabs.map(({ key, icon: Icon, label }) => {
+        {visibleTabs.map(({ key, icon: Icon }) => {
+          const label = t(`tabs.${key}`);
           const active = isTabActive(key);
           const badge = badges[key];
           return (
@@ -300,8 +303,8 @@ export function NavRail() {
       <div className="flex w-full flex-col items-center gap-1 border-t border-edge-subtle py-2">
         <button
           type="button"
-          aria-label="模板库"
-          title="模板库"
+          aria-label={t('nav.templates')}
+          title={t('nav.templates')}
           onClick={() => setTemplatesOpen(true)}
           className="flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
@@ -309,10 +312,10 @@ export function NavRail() {
         </button>
         <button
           type="button"
-          aria-label={leftPanelOpen ? '折叠面板' : '展开面板'}
+          aria-label={leftPanelOpen ? t('nav.collapsePanel') : t('nav.expandPanel')}
           aria-expanded={leftPanelOpen}
           aria-controls="workspace-panel"
-          title={leftPanelOpen ? '折叠面板' : '展开面板'}
+          title={leftPanelOpen ? t('nav.collapsePanel') : t('nav.expandPanel')}
           onClick={toggleLeftPanel}
           className="flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >

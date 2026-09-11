@@ -11,15 +11,24 @@
 import zhCommon from '@/messages/zh-CN/common.json'
 import zhSettings from '@/messages/zh-CN/settings.json'
 import zhErrors from '@/messages/zh-CN/errors.json'
+import zhLayout from '@/messages/zh-CN/layout.json'
+import zhChat from '@/messages/zh-CN/chat.json'
+import zhTweaks from '@/messages/zh-CN/tweaks.json'
 import enCommon from '@/messages/en-US/common.json'
 import enSettings from '@/messages/en-US/settings.json'
 import enErrors from '@/messages/en-US/errors.json'
+import enLayout from '@/messages/en-US/layout.json'
+import enChat from '@/messages/en-US/chat.json'
+import enTweaks from '@/messages/en-US/tweaks.json'
 import type { AppLocale } from './config'
 
 export interface AppMessages {
   common: typeof zhCommon
   settings: typeof zhSettings
   errors: typeof zhErrors
+  layout: typeof zhLayout
+  chat: typeof zhChat
+  tweaks: typeof zhTweaks
 }
 
 export const messages: Record<AppLocale, AppMessages> = {
@@ -27,11 +36,17 @@ export const messages: Record<AppLocale, AppMessages> = {
     common: zhCommon,
     settings: zhSettings,
     errors: zhErrors,
+    layout: zhLayout,
+    chat: zhChat,
+    tweaks: zhTweaks,
   },
   'en-US': {
     // en 与 zh 的 catalog 结构由 test/i18n/key-completeness.test.ts 强制一致。
     common: enCommon as unknown as AppMessages['common'],
     settings: enSettings as unknown as AppMessages['settings'],
     errors: enErrors as unknown as AppMessages['errors'],
+    layout: enLayout as unknown as AppMessages['layout'],
+    chat: enChat as unknown as AppMessages['chat'],
+    tweaks: enTweaks as unknown as AppMessages['tweaks'],
   },
 }
