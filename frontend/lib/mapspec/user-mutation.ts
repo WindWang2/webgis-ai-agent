@@ -420,10 +420,13 @@ async function removeLayerFromSpecOnce(
   // remove_layer 不得落在新会话的端点（破坏性写 + 新会话 revision）。
   // #1200 加固：区分「未传参」与「会话切换」—— 未传参按当前会话继续
   // （旧行为把 undefined 折叠成 reflected，durability POST 被静默吞掉）。
+  // Review A RA-10：入口绑定 bound（undefined 时锚定当前会话），下方
+  // 两条 await 后复核统一对 bound —— 防御路径不再旁路会话守卫。
+  const bound = enqueuedSessionId ?? sessionId;
   if (enqueuedSessionId === undefined) {
     // eslint-disable-next-line no-console -- 防御性披露：调用点应显式传入
     console.warn('[removeLayerFromSpec] no enqueuedSessionId supplied; using current session');
-  } else if (sessionId !== enqueuedSessionId) {
+  } else if (sessionId !== bound) {
     return 'reflected';
   }
   try {
@@ -440,10 +443,9 @@ async function removeLayerFromSpecOnce(
         label: 'MapSpec remove_layer mutation',
       },
     );
-    // Review R1 MAJOR-1：await 后会话复核（#1200：未传参按当前会话语义，
-    // 与预检分支一致 —— 否则旧调用点的 POST 永远被吞）。
-    if (enqueuedSessionId !== undefined
-        && getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return 'reflected';
+    // Review R1 MAJOR-1 + Review A RA-10：await 后统一对 bound 复核
+    //（未传参路径同样受守卫保护）。
+    if (getMapSpecSessionCursor().sessionId !== bound) return 'reflected';
     if (typeof data.mutation_revision === 'number') {
       setMapSpecRevision(data.mutation_revision);
     }
@@ -454,8 +456,7 @@ async function removeLayerFromSpecOnce(
   } catch (err) {
     const superseded = supersededFromError(err);
     if (!superseded) throw err;
-    if (enqueuedSessionId !== undefined
-        && getMapSpecSessionCursor().sessionId !== enqueuedSessionId) return 'reflected';
+    if (getMapSpecSessionCursor().sessionId !== bound) return 'reflected';
     if (typeof superseded.mutation_revision === 'number') {
       setMapSpecRevision(superseded.mutation_revision);
     }

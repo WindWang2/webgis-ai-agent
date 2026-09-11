@@ -137,6 +137,16 @@ def plan_candidates_v8(
         if node is not None:
             nodes.append(node)
 
+    # Review A RA-2：跨面去重（model 面 + tool 面可能经由 implements/
+    # exposed_by 双路命中同一节点）—— 以 node.key（kind:id）为唯一键。
+    seen_keys = set()
+    deduped: List[GraphNode] = []
+    for node in nodes:
+        if node.key not in seen_keys:
+            seen_keys.add(node.key)
+            deduped.append(node)
+    nodes = deduped
+
     plan = CandidatePlan(capability_id)
     for node in nodes:
         qual = qualify_node(node, ctx, g)

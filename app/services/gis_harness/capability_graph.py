@@ -200,10 +200,15 @@ class CapabilityGraph:
     # ── V8.2 核心查询 ────────────────────────────────────────────────
 
     def models_for_capability(self, capability_id: str) -> List[GraphNode]:
-        """capability → 候选 model（implements 入边，确定性按 id 排序）。"""
+        """capability → 候选 model（implements 入边，确定性按 id 排序）。
+
+        Review A RA-1：implements 关系同时承载 model→capability 与
+        tool→capability 两类边 —— 必须按 kind 过滤，否则工具混入模型面。
+        """
         keys = self.reverse_neighbors(
             f"{KIND_CAPABILITY}:{capability_id}", REL_IMPLEMENTS)
-        nodes = [self._nodes[k] for k in keys if k in self._nodes]
+        nodes = [self._nodes[k] for k in keys
+                 if k in self._nodes and self._nodes[k].kind == KIND_MODEL]
         return sorted(nodes, key=lambda n: n.id)
 
     def tools_for_capability(self, capability_id: str) -> List[str]:
@@ -335,6 +340,10 @@ def build_capability_graph() -> CapabilityGraph:
     def _edge(src_kind: str, src_id: str, relation: str,
               dst_kind: str, dst_id: str) -> None:
         if len(edges) >= MAX_EDGES:
+            if not any(i.code == "edge_budget_exceeded" for i in issues):
+                issues.append(GraphIssue(
+                    "edge_budget_exceeded",
+                    f"graph edges truncated at {MAX_EDGES}"))
             return
         edges.append(GraphEdge(f"{src_kind}:{src_id}", relation,
                                f"{dst_kind}:{dst_id}"))
@@ -437,8 +446,12 @@ def build_capability_graph() -> CapabilityGraph:
         for key in sorted(records.keys())[:MAX_INDEX_MODELS]:
             scope_key, model_id, version = key
             desc = records[key].descriptor
+            # Review A RA-3：ModelOps 身份三元组含 owner scope —— 跨 scope
+            # 同名 (model_id, version) 是合法注册态。节点 id 对齐 registry
+            # listing 格式 `{skey}/{id}@{version}`，杜绝 duplicate_identity
+            # 假告警与先到者顶替真源。
             _add(GraphNode(
-                f"{model_id}@{version}", KIND_MODEL, "modelops_registry",
+                f"{scope_key}/{model_id}@{version}", KIND_MODEL, "modelops_registry",
                 label=f"{model_id}@{version}",
                 corpus=" ".join(filter(None, [
                     model_id, version, " ".join(desc.task_types),
@@ -458,11 +471,12 @@ def build_capability_graph() -> CapabilityGraph:
                         else None),
                 },
             ))
+            node_id = f"{scope_key}/{model_id}@{version}"
             for cap in _modelops_task_capabilities(desc.task_types):
-                _edge(KIND_MODEL, f"{model_id}@{version}", REL_IMPLEMENTS,
+                _edge(KIND_MODEL, node_id, REL_IMPLEMENTS,
                       KIND_CAPABILITY, cap)
             if desc.provider_ref:
-                _edge(KIND_MODEL, f"{model_id}@{version}", REL_RUNS_ON,
+                _edge(KIND_MODEL, node_id, REL_RUNS_ON,
                       KIND_EXECUTION_BACKEND, str(desc.provider_ref))
     except Exception:  # noqa: BLE001
         issues.append(GraphIssue("source_unavailable",
@@ -566,6 +580,8 @@ def graph_build_count_for_tests() -> int:
 
 def validate_graph(graph: Optional[CapabilityGraph] = None) -> List[GraphIssue]:
     """dangling / duplicate / contradiction 的机器可读报告。"""
+    if not v8_capability_graph_enabled():
+        return []  # kill switch：GIS_CAPABILITY_GRAPH_V8=0 关闸（Review B RB-2）
     g = graph or get_capability_graph()
     issues: List[GraphIssue] = list(g.build_issues)
     node_keys = set(g._nodes.keys())  # noqa: SLF001 — 同模块只读

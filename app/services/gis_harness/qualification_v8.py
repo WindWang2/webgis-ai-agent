@@ -165,6 +165,8 @@ def qualify_node(
         result = qualify_model_for_input(node, ctx)
         if result.status == QualificationStatus.INELIGIBLE:
             reasons.extend(result.reasons)
+        elif result.status == QualificationStatus.UNKNOWN:
+            unknown.extend(result.reasons)
         else:
             degraded.extend(result.reasons)
 
@@ -196,9 +198,16 @@ def qualify_model_for_input(
     """
     reasons: List[QualificationReason] = []
     soft: List[QualificationReason] = []
+    unknown: List[QualificationReason] = []
 
-    # bands
+    # bands（Review A RA-4：实体有声明而上下文缺席 → unknown 诚实披露）
     expected_bands = model_node.extras.get("input_bands")
+    if expected_bands is not None and ctx.raster_bands is None:
+        unknown.append(_reason(
+            "raster_bands_unknown",
+            "input band count not observed",
+            f"≥ {expected_bands}（{model_node.id}）",
+            "profile the raster before model selection"))
     if expected_bands is not None and ctx.raster_bands is not None:
         if int(ctx.raster_bands) < int(expected_bands):
             reasons.append(_reason(
@@ -218,6 +227,12 @@ def qualify_model_for_input(
                 f"{res} m/px",
                 f"[{lo}, {hi}] m/px",
                 "resample to the model range or pick another model"))
+    elif res is None and (lo is not None or hi is not None):
+        unknown.append(_reason(
+            "resolution_unknown",
+            "resolution context absent",
+            f"[{lo}, {hi}] m/px",
+            "provide resolution or projected CRS context"))
     elif res == 0:
         # 软结论（degraded 面）：地理 CRS 无法判定米制口径 —— 不硬拒
         #（R1-C3/B-6 同一纪律：未知 ≠ 不兼容），由 qualify_node 聚合为
@@ -250,18 +265,28 @@ def qualify_model_for_input(
     # owner scope（模型注册域 vs 请求域 —— 跨域不可见）
     owner_key = str(model_node.extras.get("owner_scope_key", ""))
     if owner_key and ctx.owner_scope_key and owner_key != ctx.owner_scope_key:
-        # 种子模型（modelops.seeds 全局域）对所有人可见
-        if "modelops.seeds" not in owner_key:
+        # 种子模型（modelops.seeds / builtin 全局域）对所有人可见
+        if "modelops.seeds" not in owner_key and "global-builtin" not in owner_key:
             reasons.append(_reason(
                 "owner_scope",
                 f"request scope={ctx.owner_scope_key}",
                 f"model registered under {owner_key}",
                 "register the model under the requesting scope"))
+    elif owner_key and not ctx.owner_scope_key:
+        # RA-4：请求域缺席 → 可见性未知（不静默 eligible）；builtin 种子豁免
+        if "modelops.seeds" not in owner_key and "global-builtin" not in owner_key:
+            unknown.append(_reason(
+                "owner_scope_unknown",
+                "request owner scope absent",
+                f"model registered under {owner_key}",
+                "provide the requesting owner scope for visibility gating"))
 
     if reasons:
         return QualificationResult(QualificationStatus.INELIGIBLE, reasons)
     if soft:
         return QualificationResult(QualificationStatus.DEGRADED, soft)
+    if unknown:
+        return QualificationResult(QualificationStatus.UNKNOWN, unknown)
     return QualificationResult(QualificationStatus.ELIGIBLE, [])
 
 

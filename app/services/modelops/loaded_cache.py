@@ -185,9 +185,11 @@ class LoadedModelCache:
         with self._lock:
             entry = self._entries.pop(key, None)
             self._negative.pop(key, None)
-        if entry is not None and entry.refcount > 0:
-            # 仍有 in-flight 使用者：先回插为 poisoned（release 后由 GC 移除）。
-            with self._lock:
+            if entry is not None and entry.refcount > 0:
+                # 仍有 in-flight 使用者：先回插为 poisoned（release 后由 GC
+                # 移除）。Review B RB-11：pop 与回插必须在同一临界区 ——
+                # 分离时同 key 的并发 load 完成会插入 fresh 条目并被本
+                # 回插覆盖，fresh (model, unload_fn) 永久泄漏。
                 entry.poisoned = True
                 self._entries[key] = entry
 

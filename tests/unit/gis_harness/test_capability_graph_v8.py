@@ -15,6 +15,7 @@ import pytest
 
 from app.services.gis_harness.capability_graph import (
     GRAPH_KINDS,
+    build_capability_graph,
     GRAPH_RELATIONS,
     get_capability_graph,
     graph_build_count_for_tests,
@@ -89,13 +90,13 @@ class TestModelFirstClassEntity:
         g = get_capability_graph()
         models = g.models_for_capability("model_image_segmentation")
         ids = [m.id for m in models]
-        assert "tiny-landcover-seg@1.0.0" in ids
-        assert "tiny-promptable-seg@1.0.0" in ids
+        assert any(i.endswith("tiny-landcover-seg@1.0.0") for i in ids)
+        assert any(i.endswith("tiny-promptable-seg@1.0.0") for i in ids)
 
     def test_model_node_carries_compatibility_extras(self) -> None:
         g = get_capability_graph()
         models = g.models_for_capability("model_image_segmentation")
-        m = next(x for x in models if x.id.startswith("tiny-landcover-seg"))
+        m = next(x for x in models if "tiny-landcover-seg" in x.id)
         assert m.extras["input_bands"] >= 1
         assert m.extras["task_types"]
         assert "min_m_per_px" in m.extras  # resolution range 投影在场
@@ -114,7 +115,7 @@ class TestQualification:
     def _model_node(self, model_prefix: str):
         g = get_capability_graph()
         for m in g.nodes_by_kind("model"):
-            if m.id.startswith(model_prefix):
+            if model_prefix in m.id:
                 return m
         raise AssertionError(f"model {model_prefix} not in graph")
 
@@ -197,15 +198,15 @@ class TestCandidatePlanner:
         ctx = QualificationContext(raster_bands=3, resolution_m_per_px=1.0)
         plan = plan_candidates_v8("model_image_segmentation", ctx)
         model_ids = [c.id for c in plan.candidates if c.kind == "model"]
-        assert "tiny-landcover-seg@1.0.0" in model_ids
+        assert any(i.endswith("tiny-landcover-seg@1.0.0") for i in model_ids)
 
     def test_case2_bands_incompatible_excluded_with_reason(self) -> None:
         ctx = QualificationContext(raster_bands=1, resolution_m_per_px=1.0)
         plan = plan_candidates_v8("model_image_segmentation", ctx)
         excluded_ids = [e["id"] for e in plan.excluded]
-        assert "tiny-landcover-seg@1.0.0" in excluded_ids
+        assert any(i.endswith("tiny-landcover-seg@1.0.0") for i in excluded_ids)
         entry = next(e for e in plan.excluded
-                     if e["id"] == "tiny-landcover-seg@1.0.0")
+                     if e["id"].endswith("tiny-landcover-seg@1.0.0"))
         assert entry["qualification"]["status"] == "ineligible"
         assert entry["qualification"]["reasons"]
 
@@ -249,3 +250,76 @@ class TestCandidatePlanner:
         assert plan.candidates == []
         assert plan.excluded and \
             plan.excluded[0]["reason"] == "capability_not_in_graph"
+
+
+class TestReviewAFixes:
+    """Review A（phase-c）MAJOR 修复的回归锁定。"""
+
+    def test_ra1_models_query_excludes_tools(self) -> None:
+        """models_for_capability 只返回 model 节点（RA-1）。"""
+        g = get_capability_graph()
+        # image_segmentation 有 13 个 tool 直连 implements —— 模型面必须为空
+        # 或仅含 model kind。
+        models = g.models_for_capability("image_segmentation")
+        assert all(m.kind == "model" for m in models), \
+            [m.key for m in models if m.kind != "model"]
+
+    def test_ra2_no_duplicate_candidates(self) -> None:
+        """plan_candidates_v8 候选无重复（kind:id 唯一）（RA-2）。"""
+        ctx = QualificationContext(raster_bands=3, resolution_m_per_px=1.0)
+        for cap in ("model_image_segmentation", "image_segmentation",
+                    "kde_density"):
+            plan = plan_candidates_v8(cap, ctx)
+            keys = [f"{c.kind}:{c.id}" for c in plan.candidates]
+            assert len(keys) == len(set(keys)), (cap, keys)
+
+    def test_ra3_cross_scope_model_no_false_duplicate(self, tmp_path) -> None:
+        """跨 owner scope 同名模型不触发 duplicate_identity（RA-3）。"""
+        from app.lib.gis.capability_registry import reset_capability_registry
+        from app.services.modelops.config import ModelOpsSettings
+        from app.services.modelops.providers.base import ProviderRegistry
+        from app.services.modelops.registry import ModelRegistryStore
+        from app.services.modelops.seeds import seed_descriptors, seed_providers
+
+        reset_capability_graph()
+        settings = ModelOpsSettings(registry_dir=tmp_path)
+        # 图构建读 ModelOpsSettings.load() 默认目录 —— 指向 tmp 注册表
+        monkeypatch_or_skip = None
+        from app.services.modelops.config import ModelOpsSettings as _MS
+        orig_load = _MS.load
+        _MS.load = staticmethod(lambda *a, **k: settings)
+        pr = ProviderRegistry()
+        seed_providers(pr)
+        store = ModelRegistryStore(settings)
+        desc = next(d for d in seed_descriptors()
+                    if d.model_id == "tiny-landcover-seg")
+        store.register(desc, owner_scope={"session_id": "scope-a"},
+                       registered_by="test")
+        store2 = ModelRegistryStore(settings)
+        store2.register(desc, owner_scope={"session_id": "scope-b"},
+                        registered_by="test")
+        try:
+            g = build_capability_graph()
+            errs = [i for i in validate_graph(g)
+                    if i.code == "duplicate_identity"]
+            assert errs == [], [e.to_dict() for e in errs]
+            # 两个 scope 各自的节点都在
+            ids = [n.id for n in g.nodes_by_kind("model")
+                   if "tiny-landcover-seg" in n.id]
+            assert len(ids) == 2, ids
+        finally:
+            _MS.load = orig_load
+            reset_capability_graph()
+            reset_capability_registry()
+
+    def test_ra4_absent_context_is_unknown_not_eligible(self) -> None:
+        """缺席上下文 → UNKNOWN + 结构化 reason（RA-4）。"""
+        g = get_capability_graph()
+        models = [m for m in g.models_for_capability("model_image_segmentation")
+                  if "tiny-landcover-seg" in m.id]
+        assert models
+        result = qualify_model_for_input(
+            models[0], QualificationContext())  # 全缺席
+        assert result.status == QualificationStatus.UNKNOWN, result.to_dict()
+        checks = {r.check for r in result.reasons}
+        assert "raster_bands_unknown" in checks or "resolution_unknown" in checks
