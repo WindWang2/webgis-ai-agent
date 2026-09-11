@@ -35,7 +35,7 @@ EXCLUSIONS: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/layers/data/{ref_id}/feature/{feature_id}"): "single feature passthrough (media_type)",
     ("GET", "/api/v1/uploads/{upload_id}/geojson"): "GeoJSON passthrough (application/geo+json)",
     ("GET", "/api/v1/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf"): "vector tile bytes",
-    ("GET", "/api/v1/metrics"): "Prometheus exposition format",
+    ("GET", "/metrics"): "Prometheus exposition format",
 }
 
 
@@ -67,10 +67,15 @@ def iter_routes_by_file(file_suffix: str) -> Iterator[tuple[str, APIRoute]]:
 
 
 def unguarded_routes(file_suffix: str | None = None):
-    """返回缺 response_model 且不在 EXCLUSIONS 的端点列表。"""
+    """返回缺 response_model 且不在豁免规则内的端点列表。
+
+    豁免：EXCLUSIONS（流式/二进制/定制 media type）+ 204/304 无体状态码。
+    """
     missing = []
     for path, route in iter_routes_by_file(file_suffix or ""):
         if route.response_model is not None:
+            continue
+        if route.status_code in (204, 304):
             continue
         for method in route.methods:
             if method not in ("GET", "POST", "PUT", "DELETE", "PATCH"):

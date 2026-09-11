@@ -21,8 +21,16 @@ import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 
+from app.schemas.geocompute_schema import (  # noqa: F401 - 模块属性保持
+    ClusterRunResetRequest,    ClusterSubmitRequest,    ExecutionNodeIn,
+    ExecutionPlanIn,    ExecutePlanRequest,    LedgerLimitsRequest,
+    ClusterMetricsResponse,    ClusterRunResetResponse,    ClusterStuckRunsResponse,
+    ClusterWorkersResponse,    LedgerLimitsResponse,    PlanDriftCheckResponse,
+    PlanExecuteResponse,    PlanRunCancelResponse,    PlanRunSubmitResponse,
+    PlanValidateResponse,    RunCancelResponse,    RunDetailResponse,
+    RunEventsResponse,    RunsListResponse,    RunSummaryResponse,
+)
 from app.core.auth import (
     get_current_user,
     get_current_user_optional,
@@ -34,51 +42,6 @@ from app.services.geocompute import BudgetExceededError, GeoComputeError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/geocompute", tags=["GeoCompute / 执行平面"])
-
-
-class ExecutionNodeIn(BaseModel):
-    node_id: str
-    category: str
-    operation: str = ""
-    inputs: list[str] = Field(default_factory=list)
-    dataset_fingerprints: Dict[str, str] = Field(default_factory=dict)
-    parameters: Dict[str, Any] = Field(default_factory=dict)
-    crs: Optional[Dict[str, Any]] = None
-    estimate: Optional[Dict[str, Any]] = None
-    policy: str = "in_process"
-    reuse: str = "allow"
-    retry: Dict[str, Any] = Field(default_factory=dict)
-    deadline_s: Optional[float] = None
-    cancellable: bool = True
-    locality_hint: Optional[str] = None
-    description: Optional[str] = None
-    # Wave-11（audit 08 §6.2.4）：到既有 Artifact/DatasetVersion 身份的
-    # lineage 边（{ref_id, kind}，≤16）—— 与 api.build_plan_from_json 同一
-    # 契约；缺省时构建侧从参数里的可证源身份诚实派生（或为空）。
-    lineage_inputs: list[Dict[str, str]] = Field(default_factory=list)
-
-
-class ExecutionPlanIn(BaseModel):
-    plan_id: str
-    nodes: list[ExecutionNodeIn] = Field(default_factory=list)
-    budget: Dict[str, Any] = Field(default_factory=dict)
-    description: Optional[str] = None
-
-
-class ExecutePlanRequest(BaseModel):
-    plan: ExecutionPlanIn
-    session_id: Optional[str] = None
-
-
-class ClusterSubmitRequest(ExecutePlanRequest):
-    """cluster submit 专属字段（不进入同步 /plans/execute 契约 —— round1 m4：
-    共享模型会让同步端点静默接受并忽略 submit 语义的字段）。"""
-
-    # V6（cluster submit）：优先级（0/5/10）与项目归属（公平/账本键）
-    priority: int = 5
-    project_id: Optional[str] = None
-    # V7：run 级资源 envelope（placement 准入；可选 —— 缺省 = V6 行为）
-    resource: Optional[Dict[str, Any]] = None
 
 
 def _plan_from_request(data: ExecutionPlanIn):
@@ -173,7 +136,7 @@ def _authorize_session_write_sync(
             raise HTTPException(status_code=404, detail="Session not found")
 
 
-@router.post("/plans/validate", tags=["GeoCompute / 执行平面"])
+@router.post("/plans/validate", response_model=PlanValidateResponse, tags=["GeoCompute / 执行平面"])
 async def validate_execution_plan(
     plan_in: ExecutionPlanIn,
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
@@ -202,7 +165,7 @@ async def validate_execution_plan(
     }
 
 
-@router.post("/plans/execute", tags=["GeoCompute / 执行平面"])
+@router.post("/plans/execute", response_model=PlanExecuteResponse, tags=["GeoCompute / 执行平面"])
 async def execute_execution_plan(
     body: ExecutePlanRequest,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -244,7 +207,7 @@ async def execute_execution_plan(
     return _run_response(run, owner_scope_for(dict(user)))
 
 
-@router.post("/plans/runs", status_code=202, tags=["GeoCompute / Cluster Runtime V6"])
+@router.post("/plans/runs", response_model=PlanRunSubmitResponse, status_code=202, tags=["GeoCompute / Cluster Runtime V6"])
 async def submit_execution_plan(
     body: ClusterSubmitRequest,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -371,7 +334,7 @@ async def submit_execution_plan(
     }
 
 
-@router.get("/runs", tags=["GeoCompute / Cluster Runtime V6"])
+@router.get("/runs", response_model=RunsListResponse, tags=["GeoCompute / Cluster Runtime V6"])
 async def list_execution_runs(
     status: Optional[str] = None,
     limit: int = 50,
@@ -420,7 +383,7 @@ async def list_execution_runs(
     }
 
 
-@router.get("/cluster/metrics", tags=["GeoCompute / Cluster Runtime V6"])
+@router.get("/cluster/metrics", response_model=ClusterMetricsResponse, tags=["GeoCompute / Cluster Runtime V6"])
 async def cluster_metrics(
     user: Dict[str, Any] = Depends(require_admin),
 ):
@@ -442,7 +405,7 @@ async def cluster_metrics(
         })
 
 
-@router.get("/runs/{run_id}", tags=["GeoCompute / 执行平面"])
+@router.get("/runs/{run_id}", response_model=RunDetailResponse, tags=["GeoCompute / 执行平面"])
 async def get_execution_run(
     run_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -511,8 +474,8 @@ async def get_execution_run(
     }
 
 
-@router.post("/runs/{run_id}/cancel", tags=["GeoCompute / 执行平面"])
-@router.post("/plans/runs/{run_id}/cancel", tags=["GeoCompute / 执行平面"])
+@router.post("/runs/{run_id}/cancel", response_model=RunCancelResponse, tags=["GeoCompute / 执行平面"])
+@router.post("/plans/runs/{run_id}/cancel", response_model=PlanRunCancelResponse, tags=["GeoCompute / 执行平面"])
 async def cancel_execution_run(
     run_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -599,7 +562,7 @@ async def cancel_execution_run(
     }
 
 
-@router.get("/runs/{run_id}/summary", tags=["GeoCompute / 执行平面"])
+@router.get("/runs/{run_id}/summary", response_model=RunSummaryResponse, tags=["GeoCompute / 执行平面"])
 async def get_execution_run_summary(
     run_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -613,7 +576,7 @@ async def get_execution_run_summary(
     return {"lines": run.summary_lines()}
 
 
-@router.get("/runs/{run_id}/events", tags=["GeoCompute / Cluster Runtime V7"])
+@router.get("/runs/{run_id}/events", response_model=RunEventsResponse, tags=["GeoCompute / Cluster Runtime V7"])
 async def list_run_events(
     run_id: str,
     after_id: int = 0,
@@ -661,7 +624,7 @@ async def list_run_events(
     }
 
 
-@router.get("/cluster/workers", tags=["GeoCompute / Cluster Runtime V7"])
+@router.get("/cluster/workers", response_model=ClusterWorkersResponse, tags=["GeoCompute / Cluster Runtime V7"])
 async def cluster_workers(user: Dict[str, Any] = Depends(require_admin)):
     """V7 worker 能力/健康投影（require_admin：全局拓扑视图；有界 ≤256 行）。
 
@@ -695,7 +658,7 @@ async def cluster_workers(user: Dict[str, Any] = Depends(require_admin)):
     return {"workers": workers[:256], "live": len(workers)}
 
 
-@router.get("/cluster/runs/stuck", tags=["GeoCompute / Cluster Runtime V7"])
+@router.get("/cluster/runs/stuck", response_model=ClusterStuckRunsResponse, tags=["GeoCompute / Cluster Runtime V7"])
 async def cluster_stuck_runs(user: Dict[str, Any] = Depends(require_admin)):
     """V7 stuck 视图：lease 已过期但 reclaim 尚未收敛的占用态 run
     （admin 排障；有界 ≤50 行，无载荷）。"""
@@ -713,11 +676,7 @@ async def cluster_stuck_runs(user: Dict[str, Any] = Depends(require_admin)):
     return {"runs": runs, "count": len(runs)}
 
 
-class ClusterRunResetRequest(BaseModel):
-    reason: str = Field(default="admin reset", max_length=200)
-
-
-@router.post("/cluster/runs/{run_id}/reset", tags=["GeoCompute / Cluster Runtime V7"])
+@router.post("/cluster/runs/{run_id}/reset", response_model=ClusterRunResetResponse, tags=["GeoCompute / Cluster Runtime V7"])
 async def cluster_reset_run(
     run_id: str,
     body: ClusterRunResetRequest | None = None,
@@ -761,18 +720,7 @@ async def cluster_reset_run(
     }
 
 
-class LedgerLimitsRequest(BaseModel):
-    scope_key: str = Field(min_length=1, max_length=80, pattern=r"^(global|[tp]:[A-Za-z0-9_-]{1,76})$")
-    limit_rows: Optional[int] = Field(default=None, ge=0)
-    limit_bytes: Optional[int] = Field(default=None, ge=0)
-    limit_units: Optional[int] = Field(default=None, ge=0)
-    #: V8：内存（MiB）/GPU 卡数限额（enforcing 账本的 OOM 预防与 GPU 池
-    #: 计数预留的限额输入；None = 解除该维限制，与其它维同语义）。
-    limit_mem_mb: Optional[int] = Field(default=None, ge=0)
-    limit_gpu: Optional[int] = Field(default=None, ge=0)
-
-
-@router.post("/cluster/ledger/limits", tags=["GeoCompute / Cluster Runtime V7"])
+@router.post("/cluster/ledger/limits", response_model=LedgerLimitsResponse, tags=["GeoCompute / Cluster Runtime V7"])
 async def cluster_set_ledger_limits(
     body: LedgerLimitsRequest,
     user: Dict[str, Any] = Depends(require_admin),
@@ -815,7 +763,7 @@ async def cluster_set_ledger_limits(
     }
 
 
-@router.post("/plans/drift-check", tags=["GeoCompute / 执行平面"])
+@router.post("/plans/drift-check", response_model=PlanDriftCheckResponse, tags=["GeoCompute / 执行平面"])
 async def drift_check(
     body: Dict[str, Any],
     user: Dict[str, Any] = Depends(get_current_user),
