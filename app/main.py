@@ -10,7 +10,8 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException as FastAPIHTTPException
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -496,7 +497,10 @@ app.add_exception_handler(Exception, global_exception_handler)
 # V9 契约基石（ADR-0138）：HTTPException / 422 校验错误接入统一错误信封，
 # 根治 {"detail"} 与 ApiResponse 双信封并存（LEGACY_DETAIL_ENVELOPE /
 # X-Error-Envelope: detail 可回退旧体，过渡期开关）。
-app.add_exception_handler(HTTPException, unified_http_exception_handler)
+# 注册键必须覆盖 starlette 基类：Starlette 内部（如 body 解析失败）抛的是
+# starlette.HTTPException，MRO 查找不会命中 fastapi 子类的注册键。
+app.add_exception_handler(StarletteHTTPException, unified_http_exception_handler)
+app.add_exception_handler(FastAPIHTTPException, unified_http_exception_handler)
 app.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
 
 

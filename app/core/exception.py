@@ -7,7 +7,7 @@ import sys
 import traceback
 from pathlib import Path
 from typing import Any, Dict, Optional
-from fastapi import HTTPException as StarletteHTTPException
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -31,6 +31,11 @@ _STATUS_CODE_TO_CODE: Dict[int, str] = {
     409: "CONFLICT",
     422: "VALIDATION_ERROR",
     429: "RATE_LIMITED",
+    # V9（ADR-0138）：503 = 服务/能力显式不可用（如公开注册关闭），
+    # 不是服务器内部错误 —— code 不再误标 SERVER_ERROR。
+    503: "SERVICE_UNAVAILABLE",
+    502: "UPSTREAM_ERROR",
+    504: "TIMEOUT",
 }
 
 def sanitize_traceback(tb_str: str) -> str:

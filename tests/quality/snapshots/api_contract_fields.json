@@ -1,0 +1,1307 @@
+{
+ "DELETE /api/v1/chat/sessions/{session_id}": {
+  "__model__": "ClearSessionResponse",
+  "status": "string"
+ },
+ "DELETE /api/v1/data-fabric/sources/{source_id}": {
+  "__model__": "SourceDeleteResponse",
+  "message": "null|string",
+  "success": "boolean|null"
+ },
+ "DELETE /api/v1/knowledge/document/{document_id}": {
+  "__model__": "ApiResponse",
+  "code": "string",
+  "data": "null|unknown",
+  "message": "string",
+  "success": "boolean"
+ },
+ "DELETE /api/v1/projects/artifacts/{artifact_id}/pin": {
+  "__model__": "ArtifactPinResponse",
+  "artifact_id": "string",
+  "content_sha256": "null|string",
+  "pinned": "boolean",
+  "pinned_at": "null|string",
+  "revision_no": "integer|null",
+  "status": "string"
+ },
+ "DELETE /api/v1/projects/{project_id}/carto-memory/{fact_id}": {
+  "__model__": "CartoFactActionResponse",
+  "fact": "object",
+  "status": "string"
+ },
+ "DELETE /api/v1/projects/{project_id}/datasets/{dataset_id}": {
+  "__model__": "DatasetDetachResponse",
+  "message": "string",
+  "status": "string"
+ },
+ "DELETE /api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}": {
+  "__model__": "WorkspaceSnapshotDeleteResponse",
+  "home": "string",
+  "snapshot_id": "string",
+  "status": "string"
+ },
+ "DELETE /api/v1/tasks/jobs/{job_id}": {
+  "__model__": "JobCancelResponse",
+  "cancel_requested": "boolean",
+  "cancelling": "boolean",
+  "id": "string",
+  "status": "string"
+ },
+ "DELETE /api/v1/tasks/status/{task_id}": {
+  "__model__": "CeleryTaskRevokeResponse",
+  "revoked": "boolean",
+  "task_id": "string"
+ },
+ "DELETE /api/v1/tasks/{task_id}": {
+  "__model__": "TaskCancelResponse",
+  "cancelled": "boolean"
+ },
+ "DELETE /api/v1/templates/{template_id}": {
+  "__model__": "TemplateDeleteResponse",
+  "status": "string",
+  "template_id": "string"
+ },
+ "DELETE /api/v1/uploads/{upload_id}": {
+  "__model__": "UploadDeleteResponse",
+  "message": "string",
+  "success": "boolean"
+ },
+ "GET /api/v1/auth/me": {
+  "__model__": "MeResponse",
+  "email": "null|string",
+  "full_name": "null|string",
+  "role": "null|string",
+  "user_id": "string",
+  "username": "null|string"
+ },
+ "GET /api/v1/chat/sessions": {
+  "__model__": "SessionListResponse",
+  "has_more": "boolean",
+  "limit": "integer",
+  "offset": "integer",
+  "sessions": "array<SessionSummary>",
+  "total": "integer"
+ },
+ "GET /api/v1/chat/sessions/{session_id}": {
+  "__model__": "SessionDetailResponse",
+  "createdAt": "null|number",
+  "has_more": "boolean",
+  "id": "string",
+  "limit": "integer",
+  "messages": "array<SessionMessage>",
+  "offset": "integer",
+  "title": "null|string",
+  "total": "integer",
+  "updatedAt": "null|number"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id}": {
+  "__model__": "ChartArtifactResponse",
+  "chart": "object"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/map-state": {
+  "__model__": "SessionMapStateResponse",
+  "map_state": "null|object",
+  "session_id": "string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/plan": {
+  "__model__": "SessionPlanViewResponse",
+  "envelope_id": "string",
+  "plan_id": "null|string",
+  "progress": "array<SessionPlanProgressRow>",
+  "query": "null|string",
+  "recipe_id": "null|string",
+  "replaced": "boolean",
+  "session_id": "string",
+  "superseded": "boolean",
+  "updated_at": "null|string",
+  "user_goal": "null|string"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}": {
+  "__model__": "TableArtifactResponse",
+  "table": "unknown"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/workbench/artifact-status": {
+  "__model__": "WorkbenchArtifactStatusResponse"
+ },
+ "GET /api/v1/chat/sessions/{session_id}/workbench/state": {
+  "__model__": "WorkbenchStateResponse",
+  "doc": "null|object",
+  "revision": "integer",
+  "session_id": "string"
+ },
+ "GET /api/v1/chat/skills": {
+  "__model__": "app__schemas__chat_schema__SkillsListResponse",
+  "skills": "array<unknown>"
+ },
+ "GET /api/v1/chat/tools": {
+  "__model__": "ToolsListResponse",
+  "tools": "array<unknown>"
+ },
+ "GET /api/v1/config/llm": {
+  "__model__": "LLMConfigResponse",
+  "api_key": "string",
+  "base_url": "null|string",
+  "model": "null|string",
+  "use_prompt_caching": "boolean"
+ },
+ "GET /api/v1/config/skills": {
+  "__model__": "app__schemas__config_schema__SkillsListResponse",
+  "skills": "array<SkillListItem>"
+ },
+ "GET /api/v1/data-fabric/catalog": {
+  "__model__": "CatalogListResponse"
+ },
+ "GET /api/v1/data-fabric/catalog/{item_id}": {
+  "__model__": "CatalogItemResponse"
+ },
+ "GET /api/v1/data-fabric/catalog/{item_id}/descriptor": {
+  "__model__": "CatalogDescriptorResponse"
+ },
+ "GET /api/v1/data-fabric/catalog/{item_id}/preview": {
+  "__model__": "CatalogPreviewResponse"
+ },
+ "GET /api/v1/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/data-fabric/sources": {
+  "__model__": "SourceListResponse",
+  "sources": "array<object>"
+ },
+ "GET /api/v1/data-fabric/sources/{source_id}": {
+  "__model__": "SourceDetailResponse",
+  "id": "null|string",
+  "name": "null|string",
+  "source_type": "null|string",
+  "status": "null|string"
+ },
+ "GET /api/v1/explorer/status/{task_id}": {
+  "__model__": "ExploreStatusResponse",
+  "progress": "integer",
+  "result": "null|object",
+  "status": "string",
+  "task_id": "string"
+ },
+ "GET /api/v1/explorer/stream/{task_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/export/diagnostics/{filename}": {
+  "__model__": "ExportDiagnosticsResponse",
+  "diagnostics": "array<unknown>|null",
+  "filename": "string",
+  "success": "boolean"
+ },
+ "GET /api/v1/export/download/{filename}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/extensions/marketplace/packages/{package_id}/versions/{version}/download": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/geocompute/cluster/metrics": {
+  "__model__": "ClusterMetricsResponse"
+ },
+ "GET /api/v1/geocompute/cluster/runs/stuck": {
+  "__model__": "ClusterStuckRunsResponse"
+ },
+ "GET /api/v1/geocompute/cluster/workers": {
+  "__model__": "ClusterWorkersResponse"
+ },
+ "GET /api/v1/geocompute/runs": {
+  "__model__": "RunsListResponse"
+ },
+ "GET /api/v1/geocompute/runs/{run_id}": {
+  "__model__": "RunDetailResponse"
+ },
+ "GET /api/v1/geocompute/runs/{run_id}/events": {
+  "__model__": "RunEventsResponse"
+ },
+ "GET /api/v1/geocompute/runs/{run_id}/summary": {
+  "__model__": "RunSummaryResponse"
+ },
+ "GET /api/v1/health": {
+  "__model__": "HealthResponse",
+  "agent_runtime": "string",
+  "pi_workers_alive": "null|string",
+  "service": "string",
+  "status": "string",
+  "timestamp": "string",
+  "version": "string"
+ },
+ "GET /api/v1/health/live": {
+  "__model__": "LivenessResponse",
+  "status": "string"
+ },
+ "GET /api/v1/knowledge/documents": {
+  "__model__": "ApiResponse",
+  "code": "string",
+  "data": "null|unknown",
+  "message": "string",
+  "success": "boolean"
+ },
+ "GET /api/v1/knowledge/search": {
+  "__model__": "ApiResponse",
+  "code": "string",
+  "data": "null|unknown",
+  "message": "string",
+  "success": "boolean"
+ },
+ "GET /api/v1/layer-types": {
+  "__model__": "LayerTypesResponse",
+  "analysis_types": "array<object>",
+  "layer_types": "array<object>"
+ },
+ "GET /api/v1/layers/data/{ref_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/layers/data/{ref_id}/feature/{feature_id}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/layers/descriptor/{ref_id}": {
+  "__model__": "LayerDescriptorResponse",
+  "bbox": "array<number>|null",
+  "crs": "null|string",
+  "estimated_bytes": "integer|null",
+  "feature_count": "integer",
+  "field_schema": "null|object",
+  "field_schema_complete": "boolean",
+  "filterable_fields": "array<string>|null",
+  "geometry_types": "array<string>",
+  "mvt_capable": "boolean",
+  "point_count": "integer",
+  "raster_capable": "boolean",
+  "ref_id": "string",
+  "session_id": "string"
+ },
+ "GET /api/v1/local-data/admin/children": {
+  "__model__": "AdminChildrenResponse",
+  "correction_hint": "null|string",
+  "count": "integer|null",
+  "error": "null|string",
+  "features": "array<object>|null",
+  "metadata": "null|object",
+  "type": "null|string"
+ },
+ "GET /api/v1/local-data/admin/{level}/boundary": {
+  "__model__": "AdminBoundaryResponse",
+  "correction_hint": "null|string",
+  "count": "integer|null",
+  "error": "null|string",
+  "features": "array<object>|null",
+  "metadata": "null|object",
+  "type": "null|string"
+ },
+ "GET /api/v1/local-data/osm/catalog": {
+  "__model__": "OsmCatalogResponse",
+  "note": "null|string",
+  "themes": "array<object>"
+ },
+ "GET /api/v1/local-data/osm/features": {
+  "__model__": "OsmFeaturesResponse",
+  "bbox": "array<number>|null",
+  "correction_hint": "null|string",
+  "count": "integer|null",
+  "error": "null|string",
+  "features": "array<object>|null",
+  "note": "null|string",
+  "truncated": "boolean|null",
+  "type": "null|string"
+ },
+ "GET /api/v1/projects": {
+  "__model__": "Page_ProjectSummary_",
+  "has_more": "boolean",
+  "items": "array<ProjectSummary>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
+ },
+ "GET /api/v1/projects/artifacts/{artifact_id}/lineage": {
+  "__model__": "ArtifactLineageResponse",
+  "artifact_id": "string",
+  "content_fingerprint": "null|string",
+  "created_at": "string",
+  "id": "string",
+  "mapspec_fingerprint": "null|string",
+  "parameters": "object",
+  "parent_artifact_id": "null|string",
+  "producing_algorithm": "null|string",
+  "producing_capability": "null|string",
+  "producing_tool": "string",
+  "source_dataset_fingerprint": "null|string",
+  "source_dataset_id": "null|string",
+  "tool_version": "null|string",
+  "workflow_run_id": "null|string"
+ },
+ "GET /api/v1/projects/{project_id}": {
+  "__model__": "ProjectResponse",
+  "created_at": "string",
+  "description": "null|string",
+  "id": "string",
+  "metadata_json": "object",
+  "name": "string",
+  "org_id": "integer|null",
+  "owner_id": "null|string",
+  "status": "string",
+  "updated_at": "string"
+ },
+ "GET /api/v1/projects/{project_id}/artifacts": {
+  "__model__": "Page_ArtifactSummary_",
+  "has_more": "boolean",
+  "items": "array<ArtifactSummary>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
+ },
+ "GET /api/v1/projects/{project_id}/carto-memory": {
+  "__model__": "CartoMemoryListResponse",
+  "counts": "object",
+  "facts": "array<object>",
+  "project_id": "string"
+ },
+ "GET /api/v1/projects/{project_id}/data-usage": {
+  "__model__": "DataUsageResponse",
+  "limits": "object",
+  "project_id": "string",
+  "quota": "object",
+  "usage": "object"
+ },
+ "GET /api/v1/projects/{project_id}/datasets": {
+  "__model__": "Page_ProjectDatasetSummary_",
+  "has_more": "boolean",
+  "items": "array<ProjectDatasetSummary>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
+ },
+ "GET /api/v1/projects/{project_id}/map-products": {
+  "__model__": "Page_MapProductVersionSummary_",
+  "has_more": "boolean",
+  "items": "array<MapProductVersionSummary>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
+ },
+ "GET /api/v1/projects/{project_id}/map-products/{from_version_no}/diff/{to_version_no}": {
+  "__model__": "MapProductDiffResponse"
+ },
+ "GET /api/v1/projects/{project_id}/map-products/{version_no}": {
+  "__model__": "MapProductVersionResponse",
+  "artifact_ids": "array<string>",
+  "compute_plan": "array<object>",
+  "created_at": "string",
+  "diff_summary": "object",
+  "id": "string",
+  "input_dataset_fingerprints": "object",
+  "label": "null|string",
+  "lineage_kind": "null|string",
+  "mapspec_fingerprint": "null|string",
+  "mapspec_revision": "integer|null",
+  "parent_version_no": "integer|null",
+  "product_fingerprint": "null|string",
+  "project_id": "string",
+  "recipe_id": "null|string",
+  "snapshot_available": "boolean",
+  "version_no": "integer",
+  "workflow_id": "null|string",
+  "workflow_run_id": "null|string"
+ },
+ "GET /api/v1/projects/{project_id}/map-products/{version_no}/open": {
+  "__model__": "MapProductOpenResponse"
+ },
+ "GET /api/v1/projects/{project_id}/runs": {
+  "__model__": "Page_WorkflowRunSummary_",
+  "has_more": "boolean",
+  "items": "array<WorkflowRunSummary>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
+ },
+ "GET /api/v1/projects/{project_id}/runs/{run_id}": {
+  "__model__": "WorkflowRunResponse",
+  "completed_at": "null|string",
+  "completed_steps": "array<string>",
+  "cost_perf_summary": "object",
+  "created_at": "string",
+  "error_message": "null|string",
+  "execution_trace": "array<object>",
+  "id": "string",
+  "input_bindings": "object",
+  "input_dataset_fingerprints": "object",
+  "outputs": "object",
+  "project_id": "null|string",
+  "run_fingerprint": "null|string",
+  "run_manifest": "null|object",
+  "started_at": "null|string",
+  "status": "string",
+  "workflow_id": "string",
+  "workflow_revision_id": "null|string",
+  "workflow_version": "integer"
+ },
+ "GET /api/v1/projects/{project_id}/workflows": {
+  "__model__": "Page_WorkflowSummary_",
+  "has_more": "boolean",
+  "items": "array<WorkflowSummary>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
+ },
+ "GET /api/v1/projects/{project_id}/workflows/{workflow_id}/revisions": {
+  "__model__": "Page_WorkflowRevisionSummary_",
+  "has_more": "boolean",
+  "items": "array<WorkflowRevisionSummary>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
+ },
+ "GET /api/v1/projects/{project_id}/workflows/{workflow_id}/revisions/{revision_id}": {
+  "__model__": "WorkflowRevisionResponse",
+  "created_at": "string",
+  "created_by": "null|string",
+  "graph_fingerprint": "string",
+  "id": "string",
+  "inputs_schema": "null|object",
+  "revision_no": "integer",
+  "workflow_id": "string"
+ },
+ "GET /api/v1/projects/{project_id}/workspace": {
+  "__model__": "WorkspaceDescribeResponse"
+ },
+ "GET /api/v1/projects/{project_id}/workspace/snapshots": {
+  "__model__": "WorkspaceSnapshotListResponse",
+  "bounded": "integer",
+  "count": "integer",
+  "items": "array<WorkspaceSnapshotSummary>",
+  "project_id": "string"
+ },
+ "GET /api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}": {
+  "__model__": "WorkspaceSnapshotInspectResponse"
+ },
+ "GET /api/v1/ready": {
+  "__model__": "ReadyResponse",
+  "ready": "boolean"
+ },
+ "GET /api/v1/reports": {
+  "__model__": "ApiResponse",
+  "code": "string",
+  "data": "null|unknown",
+  "message": "string",
+  "success": "boolean"
+ },
+ "GET /api/v1/reports/shared/{share_code}": {
+  "__model__": "ApiResponse",
+  "code": "string",
+  "data": "null|unknown",
+  "message": "string",
+  "success": "boolean"
+ },
+ "GET /api/v1/reports/shared/{share_code}/view": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/reports/{report_id}": {
+  "__model__": "ApiResponse",
+  "code": "string",
+  "data": "null|unknown",
+  "message": "string",
+  "success": "boolean"
+ },
+ "GET /api/v1/reports/{report_id}/download": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/sessions/{session_id}/raster/{raster_id}.png": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/static/{file_path}": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/status/detailed": {
+  "__model__": "SreStatusReport",
+  "components": "object",
+  "refresh_age_s": "null|number",
+  "status": "string",
+  "stuck_jobs": "integer|null"
+ },
+ "GET /api/v1/tasks": {
+  "__model__": "TaskListResponse",
+  "tasks": "array<TaskStatusResponse>"
+ },
+ "GET /api/v1/tasks/jobs": {
+  "__model__": "JobListResponse",
+  "has_active": "boolean",
+  "jobs": "array<JobView>",
+  "poll_after_ms": "integer|null"
+ },
+ "GET /api/v1/tasks/jobs/{job_id}": {
+  "__model__": "JobView",
+  "active": "boolean",
+  "agent_step_id": "null|string",
+  "agent_task_id": "null|string",
+  "attempt": "integer",
+  "background_job_ids": "array<string>",
+  "cancel_requested_at": "null|string",
+  "cancellable": "boolean",
+  "created_at": "null|string",
+  "error": "null|string",
+  "finished_at": "null|string",
+  "id": "string",
+  "kind": "string",
+  "message": "null|string",
+  "name": "string",
+  "progress": "integer|null",
+  "project_id": "null|string",
+  "result_ref": "null|string",
+  "retryable": "boolean",
+  "session_id": "null|string",
+  "started_at": "null|string",
+  "status": "string",
+  "step_count": "integer"
+ },
+ "GET /api/v1/tasks/status/{task_id}": {
+  "__model__": "CeleryTaskStatusResponse",
+  "durable_status": "null|string",
+  "job_id": "null|string",
+  "message": "null|string",
+  "progress": "null|number",
+  "result": "null|unknown",
+  "status": "null|string"
+ },
+ "GET /api/v1/tasks/{task_id}": {
+  "__model__": "TaskStatusResponse",
+  "original_request": "string",
+  "session_id": "string",
+  "status": "string",
+  "steps": "array<TaskStepResponse>",
+  "task_id": "string"
+ },
+ "GET /api/v1/templates": {
+  "__model__": "Page_TemplateView_",
+  "has_more": "boolean",
+  "items": "array<TemplateView>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
+ },
+ "GET /api/v1/templates/{template_id}": {
+  "__model__": "TemplateView",
+  "category": "null|string",
+  "created_at": "null|string",
+  "description": "null|string",
+  "id": "string",
+  "is_builtin": "boolean",
+  "keywords": "array<string>",
+  "kind": "string",
+  "name": "string",
+  "payload": "null|object",
+  "thumbnail_url": "null|string",
+  "updated_at": "null|string",
+  "version": "integer"
+ },
+ "GET /api/v1/uploads": {
+  "__model__": "UploadListResponse",
+  "total": "integer",
+  "uploads": "array<UploadResponse>"
+ },
+ "GET /api/v1/uploads/{upload_id}": {
+  "__model__": "UploadResponse",
+  "bbox": "array<number>|null",
+  "crs": "null|string",
+  "crs_source": "null|string",
+  "deduplicated": "boolean",
+  "feature_count": "integer",
+  "file_size": "integer",
+  "file_type": "string",
+  "format": "string",
+  "geometry_type": "null|string",
+  "id": "integer",
+  "ignored_files": "array<string>",
+  "message": "string",
+  "meta": "null|object",
+  "original_name": "string",
+  "profile_summary": "null|object",
+  "quality": "null|object",
+  "ref_registration_error": "null|string",
+  "session_ref": "null|string",
+  "warnings": "array<string>"
+ },
+ "GET /api/v1/uploads/{upload_id}/geojson": {
+  "__type__": "unknown"
+ },
+ "GET /api/v1/version": {
+  "__model__": "VersionResponse",
+  "commit": "string",
+  "extensions_api": "string",
+  "python": "string",
+  "timestamp": "string",
+  "version": "string"
+ },
+ "GET /api/v1/workflow-runtime/instances": {
+  "__model__": "InstanceListResponse",
+  "instances": "array<object>",
+  "success": "boolean|null"
+ },
+ "GET /api/v1/workflow-runtime/instances/{instance_id}": {
+  "__model__": "InstanceDetailResponse",
+  "instance": "null|object",
+  "success": "boolean|null"
+ },
+ "GET /api/v1/workflow-runtime/instances/{instance_id}/debug": {
+  "__model__": "InstanceDebugResponse",
+  "success": "boolean|null"
+ },
+ "GET /api/v1/workflow-runtime/instances/{instance_id}/events": {
+  "__model__": "InstanceEventsResponse",
+  "events": "array<object>",
+  "instance_id": "null|string",
+  "success": "boolean|null"
+ },
+ "GET /api/v1/workflow-runtime/instances/{instance_id}/nodes/{node_id}": {
+  "__model__": "NodeDetailResponse",
+  "success": "boolean|null"
+ },
+ "GET /api/v1/workflow-runtime/instances/{instance_id}/recompute-plan": {
+  "__model__": "RecomputePlanResponse",
+  "counts": "object",
+  "decisions": "array<unknown>",
+  "instance_id": "null|string",
+  "stale": "integer|null",
+  "success": "boolean|null"
+ },
+ "GET /api/v1/workflow-runtime/packages": {
+  "__model__": "PackageListResponse",
+  "packages": "array<object>",
+  "success": "boolean|null"
+ },
+ "GET /api/v1/workflow-runtime/packages/{package_id}/versions": {
+  "__model__": "PackageVersionsResponse",
+  "success": "boolean|null",
+  "versions": "array<object>"
+ },
+ "GET /api/v2/geocompute/cluster/metrics": {
+  "__model__": "ClusterMetricsResponse"
+ },
+ "GET /api/v2/geocompute/cluster/runs/stuck": {
+  "__model__": "ClusterStuckRunsResponse"
+ },
+ "GET /api/v2/geocompute/cluster/workers": {
+  "__model__": "ClusterWorkersResponse"
+ },
+ "GET /api/v2/geocompute/runs": {
+  "__model__": "RunsListResponse"
+ },
+ "GET /api/v2/geocompute/runs/{run_id}": {
+  "__model__": "RunDetailResponse"
+ },
+ "GET /api/v2/geocompute/runs/{run_id}/events": {
+  "__model__": "RunEventsResponse"
+ },
+ "GET /api/v2/geocompute/runs/{run_id}/summary": {
+  "__model__": "RunSummaryResponse"
+ },
+ "GET /api/v2/workflow-runtime/instances": {
+  "__model__": "InstanceListResponse",
+  "instances": "array<object>",
+  "success": "boolean|null"
+ },
+ "GET /api/v2/workflow-runtime/instances/{instance_id}": {
+  "__model__": "InstanceDetailResponse",
+  "instance": "null|object",
+  "success": "boolean|null"
+ },
+ "GET /api/v2/workflow-runtime/instances/{instance_id}/debug": {
+  "__model__": "InstanceDebugResponse",
+  "success": "boolean|null"
+ },
+ "GET /api/v2/workflow-runtime/instances/{instance_id}/events": {
+  "__model__": "InstanceEventsResponse",
+  "events": "array<object>",
+  "instance_id": "null|string",
+  "success": "boolean|null"
+ },
+ "GET /api/v2/workflow-runtime/instances/{instance_id}/nodes/{node_id}": {
+  "__model__": "NodeDetailResponse",
+  "success": "boolean|null"
+ },
+ "GET /api/v2/workflow-runtime/instances/{instance_id}/recompute-plan": {
+  "__model__": "RecomputePlanResponse",
+  "counts": "object",
+  "decisions": "array<unknown>",
+  "instance_id": "null|string",
+  "stale": "integer|null",
+  "success": "boolean|null"
+ },
+ "GET /api/v2/workflow-runtime/packages": {
+  "__model__": "PackageListResponse",
+  "packages": "array<object>",
+  "success": "boolean|null"
+ },
+ "GET /api/v2/workflow-runtime/packages/{package_id}/versions": {
+  "__model__": "PackageVersionsResponse",
+  "success": "boolean|null",
+  "versions": "array<object>"
+ },
+ "POST /api/v1/auth/login": {
+  "__model__": "TokenResponse",
+  "access_token": "string",
+  "expires_in": "integer",
+  "refresh_token": "null|string",
+  "token_type": "string",
+  "user": "UserInfo"
+ },
+ "POST /api/v1/auth/logout": {
+  "__model__": "LogoutResponse",
+  "message": "string",
+  "ok": "boolean"
+ },
+ "POST /api/v1/auth/refresh": {
+  "__model__": "TokenResponse",
+  "access_token": "string",
+  "expires_in": "integer",
+  "refresh_token": "null|string",
+  "token_type": "string",
+  "user": "UserInfo"
+ },
+ "POST /api/v1/chat/completions": {
+  "__model__": "ChatResponse",
+  "content": "string",
+  "owner_token": "null|string",
+  "session_id": "string"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/cartographic-observation": {
+  "__model__": "CartographicObservationResponse",
+  "observation_accepted": "boolean",
+  "observation_rejection_reason": "null|string",
+  "observation_sequence": "integer",
+  "overall_passed": "boolean|null"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/map-action-ack": {
+  "__model__": "MapActionAckResponse",
+  "accepted": "integer|null",
+  "dropped": "integer|null",
+  "duplicates": "integer|null",
+  "repair_action": "null|object"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/mapspec/mutations": {
+  "__model__": "MutationApplyResponse",
+  "revision": "integer",
+  "session_id": "string"
+ },
+ "POST /api/v1/chat/sessions/{session_id}/workflow-resume-anchor": {
+  "__model__": "ResumeAnchorResponse",
+  "anchor_id": "string",
+  "ref_count": "integer",
+  "trace_last_seq": "integer"
+ },
+ "POST /api/v1/chat/stream": {
+  "__type__": "unknown"
+ },
+ "POST /api/v1/chat/tools/execute": {
+  "__model__": "ToolExecuteResponse"
+ },
+ "POST /api/v1/chat/workflow-resume/{anchor_id}": {
+  "__model__": "WorkflowResumeResponse",
+  "mapspec_verify": "object",
+  "missing_refs": "array<string>",
+  "owner_token": "null|string",
+  "recompute_plan": "object",
+  "recovery_budget_carried": "integer",
+  "ref_map": "object",
+  "ref_verdicts": "object",
+  "restored_chapter_keys": "array<string>",
+  "restored_refs": "array<string>",
+  "session_id": "string",
+  "source_session_id": "string",
+  "stale_nodes": "array<unknown>",
+  "trace_last_seq": "integer",
+  "user_goal": "null|string",
+  "verify_disclosures": "array<unknown>",
+  "workflow_verify": "object"
+ },
+ "POST /api/v1/config/llm": {
+  "__model__": "LLMConfigUpdateResponse",
+  "config": "LLMConfig",
+  "status": "string"
+ },
+ "POST /api/v1/config/llm/test": {
+  "__model__": "LLMTestResponse",
+  "detail": "string",
+  "status": "string"
+ },
+ "POST /api/v1/config/rag/test": {
+  "__model__": "RagTestResponse",
+  "detail": "string",
+  "status": "string",
+  "store": "string"
+ },
+ "POST /api/v1/config/skills/refresh": {
+  "__model__": "RefreshSkillsResponse",
+  "status": "string"
+ },
+ "POST /api/v1/config/skills/upload": {
+  "__model__": "SkillUploadResponse",
+  "filename": "string",
+  "security": "string",
+  "status": "string"
+ },
+ "POST /api/v1/data-fabric/catalog/{item_id}/explain": {
+  "__model__": "CatalogExplainResponse"
+ },
+ "POST /api/v1/data-fabric/catalog/{item_id}/query": {
+  "__model__": "CatalogQueryResponse"
+ },
+ "POST /api/v1/data-fabric/materialize": {
+  "__model__": "MaterializeResponse"
+ },
+ "POST /api/v1/data-fabric/sources": {
+  "__model__": "SourceCreateResponse",
+  "data_source": "null|object",
+  "success": "boolean|null"
+ },
+ "POST /api/v1/data-fabric/sources/{source_id}/probe": {
+  "__model__": "SourceProbeResponse"
+ },
+ "POST /api/v1/data-fabric/sources/{source_id}/sync": {
+  "__model__": "SourceSyncResponse"
+ },
+ "POST /api/v1/explorer/abort/{task_id}": {
+  "__model__": "ExploreAbortResponse",
+  "aborted": "boolean",
+  "task_id": "string"
+ },
+ "POST /api/v1/explorer/start": {
+  "__model__": "StartExploreResponse",
+  "status": "string",
+  "task_id": "string"
+ },
+ "POST /api/v1/export": {
+  "__model__": "MapExportResponse",
+  "filename": "string",
+  "message": "string",
+  "render_diagnostics": "null|object",
+  "success": "boolean",
+  "url": "string"
+ },
+ "POST /api/v1/export/geojson": {
+  "__model__": "GeoJSONExportResponse",
+  "filename": "string",
+  "format": "string",
+  "message": "string",
+  "url": "string"
+ },
+ "POST /api/v1/export/pdf": {
+  "__model__": "PdfExportResponse",
+  "filename": "string",
+  "format": "string",
+  "message": "string",
+  "success": "boolean",
+  "url": "string"
+ },
+ "POST /api/v1/export/vector-pdf": {
+  "__model__": "VectorPdfExportResponse",
+  "filename": "string",
+  "format": "string",
+  "frames_rendered": "integer",
+  "frames_skipped": "integer",
+  "message": "string",
+  "pages": "integer",
+  "render_diagnostics": "array<unknown>|null",
+  "schema_disclosures": "array<unknown>|null",
+  "success": "boolean",
+  "target_dpi": "integer|null",
+  "url": "string",
+  "vector": "boolean"
+ },
+ "POST /api/v1/geocompute/cluster/ledger/limits": {
+  "__model__": "LedgerLimitsResponse"
+ },
+ "POST /api/v1/geocompute/cluster/runs/{run_id}/reset": {
+  "__model__": "ClusterRunResetResponse"
+ },
+ "POST /api/v1/geocompute/plans/drift-check": {
+  "__model__": "PlanDriftCheckResponse"
+ },
+ "POST /api/v1/geocompute/plans/execute": {
+  "__model__": "PlanExecuteResponse"
+ },
+ "POST /api/v1/geocompute/plans/runs/{run_id}/cancel": {
+  "__model__": "PlanRunCancelResponse"
+ },
+ "POST /api/v1/geocompute/plans/validate": {
+  "__model__": "PlanValidateResponse"
+ },
+ "POST /api/v1/geocompute/runs/{run_id}/cancel": {
+  "__model__": "RunCancelResponse"
+ },
+ "POST /api/v1/knowledge/documents": {
+  "__model__": "ApiResponse",
+  "code": "string",
+  "data": "null|unknown",
+  "message": "string",
+  "success": "boolean"
+ },
+ "POST /api/v1/knowledge/retrieve-context": {
+  "__model__": "ApiResponse",
+  "code": "string",
+  "data": "null|unknown",
+  "message": "string",
+  "success": "boolean"
+ },
+ "POST /api/v1/projects/artifacts/{artifact_id}/clone": {
+  "__model__": "ArtifactCloneResponse",
+  "artifact_id": "string",
+  "content_location": "null|string",
+  "content_sha256": "null|string",
+  "name": "null|string",
+  "source_artifact_id": "string",
+  "status": "string"
+ },
+ "POST /api/v1/projects/artifacts/{artifact_id}/pin": {
+  "__model__": "ArtifactPinResponse",
+  "artifact_id": "string",
+  "content_sha256": "null|string",
+  "pinned": "boolean",
+  "pinned_at": "null|string",
+  "revision_no": "integer|null",
+  "status": "string"
+ },
+ "POST /api/v1/projects/{project_id}/carto-memory/{fact_id}/activate": {
+  "__model__": "CartoFactActionResponse",
+  "fact": "object",
+  "status": "string"
+ },
+ "POST /api/v1/projects/{project_id}/data-gc/execute": {
+  "__model__": "DataGcExecuteResponse"
+ },
+ "POST /api/v1/projects/{project_id}/data-gc/plan": {
+  "__model__": "DataGcPlanResponse"
+ },
+ "POST /api/v1/projects/{project_id}/datasets": {
+  "__model__": "ProjectDatasetResponse",
+  "created_at": "string",
+  "crs": "null|string",
+  "id": "string",
+  "name": "string",
+  "project_id": "string",
+  "quality_status": "null|string",
+  "schema_profile": "object",
+  "source_ref": "null|string",
+  "source_type": "string",
+  "version_fingerprint": "null|string"
+ },
+ "POST /api/v1/projects/{project_id}/map-products/{version_no}/rerun": {
+  "__model__": "MapProductRerunResponse",
+  "recorded_version_no": "integer",
+  "run_id": "string"
+ },
+ "POST /api/v1/projects/{project_id}/map-products/{version_no}/restore": {
+  "__model__": "MapProductRestoreResponse",
+  "restored_version_no": "integer",
+  "source_version_no": "integer"
+ },
+ "POST /api/v1/projects/{project_id}/quality-audit": {
+  "__model__": "QualityAuditResponse"
+ },
+ "POST /api/v1/projects/{project_id}/repair": {
+  "__model__": "RepairResponse",
+  "feature_count": "integer|null",
+  "project_id": "string",
+  "repaired_ref": "null|string"
+ },
+ "POST /api/v1/projects/{project_id}/runs/compare": {
+  "__model__": "RunComparisonResponse",
+  "dataset_versions_changed": "object",
+  "inputs_changed": "object",
+  "metrics_changed": "object",
+  "output_artifacts_changed": "object",
+  "params_changed": "object",
+  "revision": "object",
+  "run_a_id": "string",
+  "run_b_id": "string",
+  "run_fingerprint": "object",
+  "tool_versions_changed": "object",
+  "warnings_changed": "object"
+ },
+ "POST /api/v1/projects/{project_id}/runs/{run_id}/promote-artifacts": {
+  "__model__": "PromoteArtifactsResponse",
+  "artifacts": "array<PromoteArtifactsReportItem>",
+  "materialized": "integer",
+  "note": "string",
+  "run_id": "string",
+  "status": "string"
+ },
+ "POST /api/v1/projects/{project_id}/runs/{run_id}/replay": {
+  "__model__": "WorkflowRunResponse",
+  "completed_at": "null|string",
+  "completed_steps": "array<string>",
+  "cost_perf_summary": "object",
+  "created_at": "string",
+  "error_message": "null|string",
+  "execution_trace": "array<object>",
+  "id": "string",
+  "input_bindings": "object",
+  "input_dataset_fingerprints": "object",
+  "outputs": "object",
+  "project_id": "null|string",
+  "run_fingerprint": "null|string",
+  "run_manifest": "null|object",
+  "started_at": "null|string",
+  "status": "string",
+  "workflow_id": "string",
+  "workflow_revision_id": "null|string",
+  "workflow_version": "integer"
+ },
+ "POST /api/v1/projects/{project_id}/runs/{run_id}/rerun": {
+  "__model__": "WorkflowRunResponse",
+  "completed_at": "null|string",
+  "completed_steps": "array<string>",
+  "cost_perf_summary": "object",
+  "created_at": "string",
+  "error_message": "null|string",
+  "execution_trace": "array<object>",
+  "id": "string",
+  "input_bindings": "object",
+  "input_dataset_fingerprints": "object",
+  "outputs": "object",
+  "project_id": "null|string",
+  "run_fingerprint": "null|string",
+  "run_manifest": "null|object",
+  "started_at": "null|string",
+  "status": "string",
+  "workflow_id": "string",
+  "workflow_revision_id": "null|string",
+  "workflow_version": "integer"
+ },
+ "POST /api/v1/projects/{project_id}/runs/{run_id}/resume": {
+  "__model__": "WorkflowRunResponse",
+  "completed_at": "null|string",
+  "completed_steps": "array<string>",
+  "cost_perf_summary": "object",
+  "created_at": "string",
+  "error_message": "null|string",
+  "execution_trace": "array<object>",
+  "id": "string",
+  "input_bindings": "object",
+  "input_dataset_fingerprints": "object",
+  "outputs": "object",
+  "project_id": "null|string",
+  "run_fingerprint": "null|string",
+  "run_manifest": "null|object",
+  "started_at": "null|string",
+  "status": "string",
+  "workflow_id": "string",
+  "workflow_revision_id": "null|string",
+  "workflow_version": "integer"
+ },
+ "POST /api/v1/projects/{project_id}/workflows": {
+  "__model__": "WorkflowResponse",
+  "created_at": "string",
+  "created_from_session": "null|string",
+  "current_revision_id": "null|string",
+  "description": "null|string",
+  "graph_spec": "object",
+  "id": "string",
+  "inputs_schema": "object",
+  "name": "string",
+  "project_id": "string",
+  "updated_at": "string",
+  "version": "integer"
+ },
+ "POST /api/v1/projects/{project_id}/workflows/{workflow_id}/run": {
+  "__model__": "WorkflowRunResponse",
+  "completed_at": "null|string",
+  "completed_steps": "array<string>",
+  "cost_perf_summary": "object",
+  "created_at": "string",
+  "error_message": "null|string",
+  "execution_trace": "array<object>",
+  "id": "string",
+  "input_bindings": "object",
+  "input_dataset_fingerprints": "object",
+  "outputs": "object",
+  "project_id": "null|string",
+  "run_fingerprint": "null|string",
+  "run_manifest": "null|object",
+  "started_at": "null|string",
+  "status": "string",
+  "workflow_id": "string",
+  "workflow_revision_id": "null|string",
+  "workflow_version": "integer"
+ },
+ "POST /api/v1/projects/{project_id}/workspace/snapshots": {
+  "__model__": "WorkspaceSnapshotSaveResponse",
+  "durable_pointers": "integer",
+  "home": "string",
+  "label": "string",
+  "materialize_skipped": "array<string>",
+  "project_id": "string",
+  "snapshot": "object",
+  "snapshot_id": "string",
+  "status": "string"
+ },
+ "POST /api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}/clone": {
+  "__model__": "WorkspaceSnapshotCloneResponse"
+ },
+ "POST /api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}/restore": {
+  "__model__": "WorkspaceSnapshotRestoreResponse"
+ },
+ "POST /api/v1/reports": {
+  "__model__": "ApiResponse",
+  "code": "string",
+  "data": "null|unknown",
+  "message": "string",
+  "success": "boolean"
+ },
+ "POST /api/v1/reports/{report_id}/share": {
+  "__model__": "ApiResponse",
+  "code": "string",
+  "data": "null|unknown",
+  "message": "string",
+  "success": "boolean"
+ },
+ "POST /api/v1/tasks/jobs/{job_id}/retry": {
+  "__model__": "JobRetryResponse",
+  "attempt": "integer",
+  "id": "string",
+  "reason": "string",
+  "retried": "boolean",
+  "status": "string"
+ },
+ "POST /api/v1/upload": {
+  "__model__": "UploadResponse",
+  "bbox": "array<number>|null",
+  "crs": "null|string",
+  "crs_source": "null|string",
+  "deduplicated": "boolean",
+  "feature_count": "integer",
+  "file_size": "integer",
+  "file_type": "string",
+  "format": "string",
+  "geometry_type": "null|string",
+  "id": "integer",
+  "ignored_files": "array<string>",
+  "message": "string",
+  "meta": "null|object",
+  "original_name": "string",
+  "profile_summary": "null|object",
+  "quality": "null|object",
+  "ref_registration_error": "null|string",
+  "session_ref": "null|string",
+  "warnings": "array<string>"
+ },
+ "POST /api/v1/workflow-runtime/instances": {
+  "__model__": "InstanceCreateResponse",
+  "instance": "null|object",
+  "success": "boolean|null"
+ },
+ "POST /api/v1/workflow-runtime/instances/{instance_id}/cancel": {
+  "__model__": "InstanceCancelResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v1/workflow-runtime/instances/{instance_id}/changes": {
+  "__model__": "InstanceChangesResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v1/workflow-runtime/instances/{instance_id}/clone": {
+  "__model__": "InstanceCloneResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v1/workflow-runtime/instances/{instance_id}/nodes/cancel": {
+  "__model__": "NodesCancelResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v1/workflow-runtime/instances/{instance_id}/nodes/{node_id}/retry": {
+  "__model__": "NodeRetryResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v1/workflow-runtime/instances/{instance_id}/run": {
+  "__model__": "InstanceRunResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v1/workflow-runtime/packages/register": {
+  "__model__": "PackageRegisterResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v1/workflow-runtime/packages/{package_id}/publish": {
+  "__model__": "PackagePublishResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v2/geocompute/cluster/ledger/limits": {
+  "__model__": "LedgerLimitsResponse"
+ },
+ "POST /api/v2/geocompute/cluster/runs/{run_id}/reset": {
+  "__model__": "ClusterRunResetResponse"
+ },
+ "POST /api/v2/geocompute/plans/drift-check": {
+  "__model__": "PlanDriftCheckResponse"
+ },
+ "POST /api/v2/geocompute/plans/execute": {
+  "__model__": "PlanExecuteResponse"
+ },
+ "POST /api/v2/geocompute/plans/runs/{run_id}/cancel": {
+  "__model__": "PlanRunCancelResponse"
+ },
+ "POST /api/v2/geocompute/plans/validate": {
+  "__model__": "PlanValidateResponse"
+ },
+ "POST /api/v2/geocompute/runs/{run_id}/cancel": {
+  "__model__": "RunCancelResponse"
+ },
+ "POST /api/v2/workflow-runtime/instances": {
+  "__model__": "InstanceCreateResponse",
+  "instance": "null|object",
+  "success": "boolean|null"
+ },
+ "POST /api/v2/workflow-runtime/instances/{instance_id}/cancel": {
+  "__model__": "InstanceCancelResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v2/workflow-runtime/instances/{instance_id}/changes": {
+  "__model__": "InstanceChangesResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v2/workflow-runtime/instances/{instance_id}/clone": {
+  "__model__": "InstanceCloneResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v2/workflow-runtime/instances/{instance_id}/nodes/cancel": {
+  "__model__": "NodesCancelResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v2/workflow-runtime/instances/{instance_id}/nodes/{node_id}/retry": {
+  "__model__": "NodeRetryResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v2/workflow-runtime/instances/{instance_id}/run": {
+  "__model__": "InstanceRunResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v2/workflow-runtime/packages/register": {
+  "__model__": "PackageRegisterResponse",
+  "success": "boolean|null"
+ },
+ "POST /api/v2/workflow-runtime/packages/{package_id}/publish": {
+  "__model__": "PackagePublishResponse",
+  "success": "boolean|null"
+ },
+ "POST /pi-tools/execute": {
+  "__model__": "PiToolResponse",
+  "content": "array<object>",
+  "details": "unknown",
+  "isError": "boolean",
+  "toolCallId": "string"
+ },
+ "PUT /api/v1/projects/{project_id}": {
+  "__model__": "ProjectResponse",
+  "created_at": "string",
+  "description": "null|string",
+  "id": "string",
+  "metadata_json": "object",
+  "name": "string",
+  "org_id": "integer|null",
+  "owner_id": "null|string",
+  "status": "string",
+  "updated_at": "string"
+ }
+}

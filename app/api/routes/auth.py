@@ -13,7 +13,6 @@ import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -35,6 +34,7 @@ from app.core.auth import (
 from app.core.database import get_async_db
 from app.core.rate_limiter import get_rate_limiter
 from app.models.db_model import User
+from app.models.api_response import ApiResponse
 from app.schemas.auth_schema import (
     LoginRequest,
     LogoutResponse,
@@ -101,7 +101,17 @@ def _issue_token_pair(user: User) -> TokenResponse:
     )
 
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=TokenResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"description": "username/email 格式非法", "model": ApiResponse},
+        409: {"description": "username 或 email 已被占用", "model": ApiResponse},
+        429: {"description": "注册限流", "model": ApiResponse},
+        503: {"description": "公开注册未开放", "model": ApiResponse},
+    },
+)
 async def register(
     req: RegisterRequest,
     request: Request,
@@ -160,7 +170,16 @@ async def register(
     return _issue_token_pair(user)
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    responses={
+        400: {"description": "请求体解析失败", "model": ApiResponse},
+        401: {"description": "凭证无效", "model": ApiResponse},
+        403: {"description": "账号停用", "model": ApiResponse},
+        429: {"description": "限流", "model": ApiResponse},
+    },
+)
 async def login(
     req: LoginRequest,
     request: Request,
@@ -209,7 +228,16 @@ async def login(
     return _issue_token_pair(user)
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    responses={
+        400: {"description": "请求体解析失败", "model": ApiResponse},
+        401: {"description": "refresh token 无效/类型错误/已吊销", "model": ApiResponse},
+        403: {"description": "账号停用", "model": ApiResponse},
+        429: {"description": "刷新限流", "model": ApiResponse},
+    },
+)
 async def refresh(
     req: RefreshRequest,
     request: Request,
