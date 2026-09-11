@@ -43,6 +43,35 @@ class EvaluationRequest:
     num_folds: int = 5
     model_manifest: Optional[Dict[str, Any]] = None   # 被评估模型的推理 manifest
     output_dir: Optional[Path] = None
+    #: V3 §G：分区栅格（region id raster；可选 per-region 指标）。
+    regions_path: Optional[Path] = None
+    #: V3 §G：边界质量指标（分割；默认开）。
+    compute_boundary: bool = True
+    boundary_tolerance_px: int = 1
+    #: V3 §G：评估结果自动入 lineage（需 model_id/model_version）。
+    model_id: Optional[str] = None
+    model_version: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DriftEvaluationRequest:
+    """漂移评估请求（V3 §G；baseline vs current 两次预测的对比）。"""
+
+    owner_scope: Dict[str, str]
+    baseline_path: Path
+    current_path: Path
+    baseline_confidence_path: Optional[Path] = None
+    current_confidence_path: Optional[Path] = None
+    #: 地理切片：region id 栅格（同网格）；逐 region 的 IoU/漂移。
+    regions_path: Optional[Path] = None
+    #: 时间/传感器标签（lineage 分组语义；进报告不做算法假设）。
+    baseline_tags: Optional[Dict[str, str]] = None
+    current_tags: Optional[Dict[str, str]] = None
+    num_classes: int = 2
+    ignore_index: int = 255
+    model_id: Optional[str] = None
+    model_version: Optional[str] = None
+    output_dir: Optional[Path] = None
 
 
 class EvaluationService:
@@ -92,6 +121,44 @@ class EvaluationService:
                 train_rows=[], eval_rows=samples, split=split,
             ).as_dict()
             report["spatial_split"] = split.as_dict()
+            # V3 §G：边界质量（分割语义的空间连续性指标）。
+            if request.compute_boundary:
+                from app.lib.modelops.evaluation import boundary_metrics
+
+                report["boundary"] = boundary_metrics(
+                    refs, pred,
+                    tolerance_px=request.boundary_tolerance_px,
+                    ignore_index=request.ignore_index,
+                )
+            # V3 §G：spatial fold 逐折指标（泄漏防护的分区复用为评估切片）。
+            from app.lib.modelops.evaluation import segmentation_metrics as _seg_m
+
+            assign = {(br_, bc_): fold for br_, bc_, fold in split.assignment}
+            br_idx = (np.arange(refs.shape[0]) // split.block_size_px)[:, None]
+            bc_idx = (np.arange(refs.shape[1]) // split.block_size_px)[None, :]
+            fold_grid = np.vectorize(
+                lambda a, b: assign.get((int(a), int(b)), -1), otypes=[np.int64]
+            )(br_idx, bc_idx)
+            folds: Dict[str, Any] = {}
+            for fold in range(request.num_folds):
+                mask = (fold_grid == fold) & (refs != request.ignore_index)
+                if not mask.any():
+                    continue
+                fm = _seg_m(refs[mask], pred[mask],
+                            num_classes=request.num_classes,
+                            ignore_index=request.ignore_index)
+                folds[str(fold)] = {"miou": fm.miou, "support_px": int(mask.sum())}
+            report["per_fold"] = folds
+            # V3 §G：地理分区指标（region id 栅格，可选）。
+            if request.regions_path is not None:
+                from app.lib.modelops.evaluation import per_region_metrics
+
+                regions = self._read_single(request.regions_path)
+                report["per_region"] = per_region_metrics(
+                    refs, pred, regions,
+                    num_classes=request.num_classes,
+                    ignore_index=request.ignore_index,
+                )
         elif request.task_type == "object_detection":
             if request.prediction_detections is None or request.reference_detections is None:
                 raise ModelOpsError(
@@ -140,6 +207,79 @@ class EvaluationService:
             published = {"published": False, "path": str(path)}
         report["artifact"] = published
         return report
+
+    # ── 漂移评估（V3 §G：baseline vs current 的空间/分布对比）────────
+    def evaluate_drift(self, request: DriftEvaluationRequest) -> Dict[str, Any]:
+        run_id = uuid.uuid4().hex[:16]
+        started = time.time()
+        from app.lib.modelops.evaluation import (
+            class_distribution_psi,
+            per_region_metrics,
+            population_stability_index,
+            segmentation_metrics,
+        )
+
+        base, cur = self._read_pair(request.baseline_path, request.current_path)
+        report: Dict[str, Any] = {
+            "run_id": run_id,
+            "report_type": "drift",
+            "baseline_tags": dict(request.baseline_tags or {}),
+            "current_tags": dict(request.current_tags or {}),
+        }
+        # 全局指标与 delta。
+        mb = segmentation_metrics(base, cur, num_classes=request.num_classes,
+                                  ignore_index=request.ignore_index)
+        report["agreement_miou"] = mb.miou  # 两次预测的一致性（自漂移代理）
+        # 类别分布 PSI。
+        base_counts = [
+            int((base == k).sum()) for k in range(request.num_classes)
+        ]
+        cur_counts = [
+            int((cur == k).sum()) for k in range(request.num_classes)
+        ]
+        report["class_distribution_psi"] = class_distribution_psi(base_counts, cur_counts)
+        # 置信度分布 PSI（可选）。
+        if request.baseline_confidence_path and request.current_confidence_path:
+            bconf = self._read_single(request.baseline_confidence_path)
+            cconf = self._read_single(request.current_confidence_path)
+            mask = (base != request.ignore_index) & (cur != request.ignore_index)
+            if mask.any() and bconf.shape == base.shape and cconf.shape == cur.shape:
+                report["confidence_psi"] = population_stability_index(
+                    bconf[mask].tolist(), cconf[mask].tolist()
+                )
+        # 地理切片：逐 region 的一致性（地理漂移定位）。
+        if request.regions_path is not None:
+            regions = self._read_single(request.regions_path)
+            report["per_region"] = per_region_metrics(
+                base, cur, regions,
+                num_classes=request.num_classes,
+                ignore_index=request.ignore_index,
+            )
+        report["duration_s"] = round(time.time() - started, 6)
+        import json
+
+        output_dir = Path(request.output_dir or Path("data/modelops/evaluations") / run_id)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / "drift_report.json"
+        path.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+        try:
+            published = publish_json_artifact(
+                path, owner_scope=request.owner_scope, source_refs=[],
+                producer={"capability": "modelops.drift", "run_id": run_id},
+            )
+        except Exception as exc:  # noqa: BLE001
+            published = {"published": False, "path": str(path), "reason": str(exc)}
+        report["artifact"] = published
+        return report
+
+    @staticmethod
+    def _read_single(path: Path) -> np.ndarray:
+        """读单波段栅格（regions/confidence；返回 2D）。"""
+        with RasterReader.open(str(path)) as reader:
+            data = reader.read_full()
+        if data.ndim == 3:
+            data = data[0]
+        return data
 
     @staticmethod
     def _read_pair(pred_path: Path, ref_path: Path) -> tuple:

@@ -42,6 +42,8 @@ class DevicePlan:
     est_seconds: float = 0.0
     #: 资源记账口径（"provider_visible" | "externally_enforced"）。
     accounting: str = "provider_visible"
+    #: V3 §E：多 GPU 亲和的设备号（cuda 且 gpu_count>1 时非 0）。
+    device_index: int = 0
 
     def as_dict(self) -> Dict[str, object]:
         return {
@@ -51,6 +53,7 @@ class DevicePlan:
             "host_ram_bytes": self.host_ram_bytes,
             "est_seconds": self.est_seconds,
             "accounting": self.accounting,
+            "device_index": self.device_index,
         }
 
 

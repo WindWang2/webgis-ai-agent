@@ -159,11 +159,15 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="modelops_run_inference",
-        description="运行 GeoAI 推理（分割/检测/实例/嵌入/分类/时序），产物可渲染并带完整 provenance",
+        description="运行 GeoAI 推理（分割/检测/实例/嵌入/分类/时序/变化检测/融合），产物可渲染并带完整 provenance",
         param_descriptions={
             "model_id": "模型 id",
             "source_uri": "输入栅格路径（COG/GeoTIFF；懒窗口读取，绝不整幅加载）",
             "task_type": "多任务模型时必填（如 semantic_segmentation）",
+            "source_uri_b": "双时相变化检测的后时相栅格（change_detection 必填）",
+            "roi_bbox": "ROI 像素框 [x0, y0, x1, y1]（可选；缺省全幅）",
+            "vectorize": "分割/变化/融合结果矢量化为多边形 GeoJSON（可选）",
+            "postgis_table": "矢量多边形同步发布到 PostGIS 表名（可选；需环境 DSN）",
             "project_id": "项目 scope（与 session_id 二选一）",
             "session_id": "会话 scope",
             "score_threshold": "检测分数阈值（0-1）",
@@ -182,20 +186,43 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         model_id: str,
         source_uri: str,
         task_type: Optional[str] = None,
+        source_uri_b: Optional[str] = None,
+        roi_bbox: Optional[List[float]] = None,
+        vectorize: bool = False,
+        postgis_table: Optional[str] = None,
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
         score_threshold: float = 0.5,
     ) -> dict:
-        from app.lib.modelops.engine import InferenceRequest
+        # 引擎契约在 services 平面（app/lib/modelops 是纯契约层，无 engine）。
+        from app.lib.modelops.errors import ModelOpsError
+        from app.services.modelops.engine import InferenceRequest
         from app.services.modelops.service import get_modelops_service, normalize_scope
 
         scope = normalize_scope(session_id=session_id, project_id=project_id)
         service = get_modelops_service()
+        roi: Optional[List[float]] = None
+        if roi_bbox is not None:
+            if len(roi_bbox) != 4:
+                raise ModelOpsError(
+                    "roi_bbox must be [x0, y0, x1, y1] (pixel coords)",
+                    correction_hint="pass exactly four numbers",
+                )
+            roi = [float(v) for v in roi_bbox]
+            if not (roi[0] < roi[2] and roi[1] < roi[3]):
+                raise ModelOpsError(
+                    f"invalid roi_bbox {roi}: x0<x1 and y0<y1 required",
+                    correction_hint="pass [x0, y0, x1, y1] with x0<x1 and y0<y1",
+                )
         request = InferenceRequest(
             model_id=model_id,
             source_uri=source_uri[:MAX_SOURCE_URI_LEN],
             owner_scope=scope,
             task_type=task_type,
+            source_uri_b=source_uri_b[:MAX_SOURCE_URI_LEN] if source_uri_b else None,
+            roi_bbox=tuple(int(v) for v in roi) if roi is not None else None,
+            vectorize_classes=bool(vectorize),
+            postgis_table=postgis_table,
             score_threshold=float(score_threshold),
         )
         result = await service.run_inference_async(request)
@@ -204,12 +231,13 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
     @tool(
         registry,
         name="modelops_run_promptable",
-        description="运行 promptable 分割（point/box prompt，像素坐标），输出目标掩膜",
+        description="运行 promptable 分割（point/box prompt，像素或地理坐标），输出目标掩膜",
         param_descriptions={
             "model_id": "promptable 模型 id",
             "source_uri": "输入栅格路径",
-            "points": "点 prompt 列表 [[x,y],…]（像素坐标）",
-            "boxes": "框 prompt 列表 [[x,y,w,h],…]（像素坐标）",
+            "points": "点 prompt 列表 [[x,y],…]",
+            "boxes": "框 prompt 列表 [[x,y,w,h],…]",
+            "geographic_coords": "prompt 为地图坐标（经仿射变换到像素；默认像素坐标）",
             "project_id": "项目 scope",
             "session_id": "会话 scope",
         },
@@ -228,12 +256,13 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         source_uri: str,
         points: Optional[List[List[float]]] = None,
         boxes: Optional[List[List[float]]] = None,
+        geographic_coords: bool = False,
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> dict:
-        from app.lib.modelops.engine import InferenceRequest
         from app.lib.modelops.errors import ModelOpsError
         from app.lib.modelops.promptable import PromptSpec
+        from app.services.modelops.engine import InferenceRequest
         from app.services.modelops.service import get_modelops_service, normalize_scope
 
         if not points and not boxes:
@@ -251,6 +280,7 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
             source_uri=source_uri[:MAX_SOURCE_URI_LEN],
             owner_scope=scope,
             prompt=prompt,
+            prompt_crs=bool(geographic_coords),
         )
         result = await get_modelops_service().run_inference_async(request)
         return _result_payload(result)
@@ -344,6 +374,157 @@ def register_modelops_tools(registry: ToolRegistry) -> None:
         from app.services.modelops.service import get_modelops_service
 
         return get_modelops_service().inspect_provenance(manifest, section=section)
+
+    @tool(
+        registry,
+        name="modelops_record_metrics",
+        description="登记模型训练指标/评估结果/晋升退役状态（append-only lineage）",
+        param_descriptions={
+            "model_id": "模型 id",
+            "model_version": "模型版本",
+            "event_type": "training_metrics | evaluation | promotion | retirement",
+            "payload": "事件载荷（metrics 摘要/评估引用/阶段；不得含 secret）",
+            "actor": "操作者标识（可选）",
+        },
+        tier=2,
+        domains=["raster"],
+        cost="light",
+        side_effect="state_mutation",
+        tags=("modelops", "geoai"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
+    )
+    async def modelops_record_metrics(
+        model_id: str,
+        model_version: str,
+        event_type: str,
+        payload: Optional[dict] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        from app.services.modelops.service import get_modelops_service
+
+        service = get_modelops_service()
+        if event_type == "training_metrics":
+            event = service.record_training_metrics(
+                model_id, model_version,
+                metrics=(payload or {}).get("metrics") or {},
+                actor=actor or "",
+            )
+        elif event_type == "evaluation":
+            event = service.record_evaluation_ref(
+                model_id, model_version,
+                data_object_id=(payload or {}).get("evaluation_data_object_id"),
+                metrics_summary=(payload or {}).get("metrics_summary"),
+                dataset_refs=(payload or {}).get("dataset_refs"),
+                actor=actor or "",
+            )
+        elif event_type == "promotion":
+            event = service.set_deployment_state(
+                model_id, model_version,
+                promote=True,
+                stage=(payload or {}).get("stage") or "production",
+                actor=actor or "",
+            )
+        elif event_type == "retirement":
+            event = service.set_deployment_state(
+                model_id, model_version, promote=False, actor=actor or "",
+            )
+        else:
+            from app.lib.modelops.errors import ModelOpsError
+
+            raise ModelOpsError(
+                f"event_type must be training_metrics/evaluation/promotion/retirement "
+                f"(got {event_type!r})"
+            )
+        return {"recorded": True, "seq": event["seq"], "ts": event["ts"]}
+
+    @tool(
+        registry,
+        name="modelops_model_history",
+        description="查看模型版本的 lineage 时间线（指标/评估/部署状态推导）",
+        param_descriptions={
+            "model_id": "模型 id",
+            "model_version": "可选；缺省返回全部版本",
+        },
+        tier=2,
+        domains=["raster"],
+        cost="light",
+        side_effect="pure",
+        tags=("modelops", "geoai"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
+    )
+    async def modelops_model_history(
+        model_id: str,
+        model_version: Optional[str] = None,
+    ) -> dict:
+        from app.services.modelops.service import get_modelops_service
+
+        return get_modelops_service().model_history(
+            model_id, model_version=model_version
+        )
+
+    @tool(
+        registry,
+        name="modelops_publish_layers",
+        description="把推理产物注册为地图图层（含样式建议与模型 provenance），返回可供 display_layer/finalize_display 使用的图层引用",
+        param_descriptions={
+            "outputs": "modelops_run_inference 返回的 outputs 字典",
+            "manifest": "同一次推理的 manifest（provenance 链来源）",
+            "project_id": "项目 scope（与 session_id 二选一）",
+            "session_id": "会话 scope",
+        },
+        tier=2,
+        domains=["raster"],
+        cost="light",
+        timeout=120.0,
+        side_effect="state_mutation",
+        tags=("modelops", "geoai", "图层"),
+        latency_class="fast",
+        memory_class="light",
+        capabilities=["image_segmentation"],
+    )
+    async def modelops_publish_layers(
+        outputs: dict,
+        manifest: Optional[dict] = None,
+        project_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> dict:
+        import json as _json
+        from pathlib import Path as _Path
+
+        from app.lib.modelops.errors import ModelOpsError
+        from app.services.modelops.layer_delivery import publish_layers
+
+        if not session_id and not project_id:
+            raise ModelOpsError(
+                "modelops_publish_layers requires session_id or project_id",
+                correction_hint="pass the same owner scope used for run_inference",
+            )
+        # 矢量产物：从磁盘读 GeoJSON（outputs 只带路径）。
+        feature_collections: Dict[str, Dict[str, Any]] = {}
+        for role, payload in (outputs or {}).items():
+            path = payload.get("path") if isinstance(payload, dict) else None
+            if path and str(path).endswith(".geojson") and _Path(path).exists():
+                try:
+                    feature_collections[role] = _json.loads(
+                        _Path(path).read_text(encoding="utf-8")
+                    )
+                except Exception as exc:  # noqa: BLE001 — 读文件失败的角色跳过
+                    logger.warning("layer payload read failed for %s: %s", role, exc)
+        result = await publish_layers(
+            outputs,
+            manifest,
+            session_id=session_id,
+            project_id=project_id,
+            feature_collections=feature_collections,
+        )
+        result["suggested_show_refs"] = [
+            layer["ref_id"] for layer in result["layers"] if layer.get("registered")
+        ]
+        return result
 
     @tool(
         registry,

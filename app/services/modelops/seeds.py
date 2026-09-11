@@ -12,7 +12,10 @@ from typing import Any, Dict, List
 from app.lib.data.fingerprints import canonical_dumps, sha256_hex
 from app.lib.modelops.capabilities import (
     MODALITY_OPTICAL_MULTISPECTRAL,
+    OUTPUT_CHANGE_MAP,
     OUTPUT_INSTANCE_MASKS,
+    OUTPUT_LABEL_SEQUENCE,
+    OUTPUT_SUPERRES_RASTER,
     MODALITY_OPTICAL_RGB,
     MODALITY_SAR,
     OUTPUT_CLASS_RASTER,
@@ -21,12 +24,16 @@ from app.lib.modelops.capabilities import (
     OUTPUT_EMBEDDINGS,
     OUTPUT_LABELS,
     OUTPUT_TEMPORAL_STACK,
+    TASK_CHANGE_DETECTION,
     TASK_CLASSIFICATION,
     TASK_EMBEDDING,
     TASK_INSTANCE_SEGMENTATION,
     TASK_OBJECT_DETECTION,
     TASK_PROMPTABLE_SEGMENTATION,
+    TASK_SAR_OPTICAL_FUSION,
     TASK_SEMANTIC_SEGMENTATION,
+    TASK_SUPER_RESOLUTION,
+    TASK_TEMPORAL_CLASSIFICATION,
     TASK_TEMPORAL_FORECAST,
 )
 from app.lib.modelops.descriptor import (
@@ -35,6 +42,7 @@ from app.lib.modelops.descriptor import (
     GeoModelDescriptor,
     MemoryEstimate,
     NormalizationSpec,
+    OutputTransform,
     ResolutionRange,
     SpatialRequirements,
     TemporalRequirements,
@@ -199,6 +207,88 @@ def seed_descriptors() -> List[GeoModelDescriptor]:
             license="CC0-1.0 (synthetic fixture)",
             random_seed_policy="deterministic",
         ),
+        # ── V3 §C：GeoAI 任务全集扩展种子 ────────────────────────────
+        make(
+            model_id="tiny-bitemporal-change",
+            model_version="1.0.0",
+            provider_type="local_reference",
+            provider_ref="change-reference",
+            provider_semantic_version="change-ref/1.0.0",
+            task_types=(TASK_CHANGE_DETECTION,),
+            input_modalities=(MODALITY_OPTICAL_RGB,),
+            input_bands=6,  # 2 时相 × 3 波段（A|B concat，engine 负责）
+            band_order=("red_t0", "green_t0", "blue_t0",
+                        "red_t1", "green_t1", "blue_t1"),
+            normalization=NormalizationSpec(kind="none"),
+            output_types=(OUTPUT_CHANGE_MAP, OUTPUT_CLASS_RASTER),
+            class_schema=ClassSchema(classes=("no_change", "change")),
+            spatial=SpatialRequirements(**common_spatial),
+            device_requirements=common_device,
+            memory_estimate=MemoryEstimate(weights_bytes=1024),
+            license="CC0-1.0 (synthetic fixture)",
+            random_seed_policy="deterministic",
+        ),
+        make(
+            model_id="tiny-superres-x2",
+            model_version="1.0.0",
+            provider_type="local_reference",
+            provider_ref="superres-reference",
+            provider_semantic_version="superres-ref/1.0.0",
+            task_types=(TASK_SUPER_RESOLUTION,),
+            input_modalities=(MODALITY_OPTICAL_RGB,),
+            input_bands=3,
+            normalization=NormalizationSpec(kind="none"),
+            output_types=(OUTPUT_SUPERRES_RASTER,),
+            output_transform=OutputTransform(activation="none", output_scale=2),
+            spatial=SpatialRequirements(
+                chip_size=(64, 64),
+                context_size=(64, 64),  # SR 无 context halo（v1：stride=chip 无重叠）
+                padding_mode="reflect",
+                resolution_range=ResolutionRange(min_m_per_px=0.1, max_m_per_px=100.0),
+            ),
+            device_requirements=common_device,
+            memory_estimate=MemoryEstimate(weights_bytes=1024),
+            license="CC0-1.0 (synthetic fixture)",
+            random_seed_policy="deterministic",
+        ),
+        make(
+            model_id="tiny-temporal-classifier",
+            model_version="1.0.0",
+            provider_type="local_reference",
+            provider_ref="temporal-class-reference",
+            provider_semantic_version="temporal-class-ref/1.0.0",
+            task_types=(TASK_TEMPORAL_CLASSIFICATION,),
+            input_modalities=(MODALITY_OPTICAL_MULTISPECTRAL,),
+            input_bands=2,  # 每时相 C=2（源栅格 = C*T 波段 time-major 布局）
+            normalization=NormalizationSpec(kind="none"),
+            output_types=(OUTPUT_LABEL_SEQUENCE,),
+            class_schema=ClassSchema(classes=("water", "vegetated", "bare")),
+            spatial=SpatialRequirements(**common_spatial),
+            temporal=TemporalRequirements(max_length=8, missing_policy="flag"),
+            device_requirements=common_device,
+            memory_estimate=MemoryEstimate(weights_bytes=1024),
+            license="CC0-1.0 (synthetic fixture)",
+            random_seed_policy="deterministic",
+        ),
+        make(
+            model_id="tiny-sar-optical-fusion",
+            model_version="1.0.0",
+            provider_type="local_reference",
+            provider_ref="fusion-reference",
+            provider_semantic_version="fusion-ref/1.0.0",
+            task_types=(TASK_SAR_OPTICAL_FUSION,),
+            input_modalities=(MODALITY_SAR, MODALITY_OPTICAL_RGB),
+            input_bands=5,  # VV/VH + red/green/blue
+            band_order=("VV", "VH", "red", "green", "blue"),
+            normalization=NormalizationSpec(kind="none"),
+            output_types=(OUTPUT_CLASS_RASTER, OUTPUT_CONFIDENCE_RASTER),
+            class_schema=ClassSchema(classes=("background", "flooded", "urban")),
+            spatial=SpatialRequirements(**common_spatial),
+            device_requirements=common_device,
+            memory_estimate=MemoryEstimate(weights_bytes=2048),
+            license="CC0-1.0 (synthetic fixture)",
+            random_seed_policy="deterministic",
+        ),
     ]
     return seeds
 
@@ -208,8 +298,18 @@ def seed_descriptors() -> List[GeoModelDescriptor]:
 
 def seed_providers(registry: ProviderRegistry) -> None:
     """把内置 reference providers 注册进 ProviderRegistry（幂等）。"""
+    from app.services.modelops.providers.change_reference import (
+        TinyChangeDetectionProvider,
+    )
+    from app.services.modelops.providers.fusion_reference import TinyFusionProvider
     from app.services.modelops.providers.promptable_reference import (
         PromptableReferenceProvider,
+    )
+    from app.services.modelops.providers.superres_reference import (
+        TinySuperResolutionProvider,
+    )
+    from app.services.modelops.providers.temporal_class_reference import (
+        TinyTemporalClassificationProvider,
     )
     from app.services.modelops.providers.temporal_reference import (
         TemporalReferenceProvider,
@@ -224,6 +324,10 @@ def seed_providers(registry: ProviderRegistry) -> None:
         PromptableReferenceProvider(),
         TemporalReferenceProvider(),
         TinyInstanceProvider(),
+        TinyChangeDetectionProvider(),
+        TinySuperResolutionProvider(),
+        TinyTemporalClassificationProvider(),
+        TinyFusionProvider(),
     ):
         if not registry.has(provider.capabilities().provider_id):
             registry.register(provider)
