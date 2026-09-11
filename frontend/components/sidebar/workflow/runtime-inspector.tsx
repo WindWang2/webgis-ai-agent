@@ -18,7 +18,8 @@ export interface RuntimeNode {
   node_id: string;
   state: string;
   attempts: number;
-  error_code: string;
+  /** 后端节点投影 error_code 可空（V6 投影）—— 契约漂移修正（ADR-0142 D2）。 */
+  error_code: string | null;
   reused: boolean;
   binding_violations: string[];
 }

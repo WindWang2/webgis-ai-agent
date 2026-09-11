@@ -32,6 +32,7 @@ import {
   FlaskConical,
   PenTool,
   Undo2,
+  Activity,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
@@ -65,6 +66,8 @@ const RAIL_GROUPS: Array<Array<RailTabDef>> = [
     { key: 'results', icon: ClipboardList, label: '结果' },
   ],
   [{ key: 'export_layout', icon: Printer, label: '制图' }],
+  // ADR-0142：运维控制台（ops-console-v9）—— append-only 注册行，与 D/F/H/J 同规则。
+  [{ key: 'ops', icon: Activity, label: '运维' }],
 ];
 
 const RAIL_TABS: RailTabDef[] = RAIL_GROUPS.flat();

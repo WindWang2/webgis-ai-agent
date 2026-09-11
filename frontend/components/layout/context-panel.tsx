@@ -28,6 +28,7 @@ import {
   Printer,
   ClipboardList,
   LayoutDashboard,
+  Activity,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -46,6 +47,7 @@ import { ProjectTab } from '@/components/sidebar/project-tab';
 import { DataSourcesTab } from '@/components/sidebar/data-sources-tab';
 import { TasksTab } from '@/components/sidebar/tasks-tab';
 import { ResultsTab } from '@/components/sidebar/results-tab';
+import { OpsConsole } from '@/components/sidebar/ops/ops-console';
 import { PanelErrorBoundary } from '@/components/layout/panel-error-boundary';
 
 export interface ContextPanelProps {
@@ -107,6 +109,8 @@ const PANEL_META: Record<string, PanelMeta> = {
   tasks: { icon: ListChecks, title: '任务', description: '后台作业中心' },
   results: { icon: ClipboardList, title: '分析结果', description: '结果工作台 · 输入 · 指标 · 输出' },
   export_layout: { icon: Printer, title: '制图工坊', description: '排版与导出' },
+  // ADR-0142：运维控制台（append-only 注册行）。
+  ops: { icon: Activity, title: '运维', description: '集群 · 计划 · 运行时 · 断路器 · 健康' },
 };
 
 export function ContextPanel({
@@ -414,6 +418,12 @@ export function ContextPanel({
         {activeTab === 'tasks' && (
           <PanelErrorBoundary label="任务">
             <TasksTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+        {/* ADR-0142：运维控制台（ops-console-v9）。 */}
+        {activeTab === 'ops' && (
+          <PanelErrorBoundary label="运维">
+            <OpsConsole sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
         {activeTab === 'results' && (

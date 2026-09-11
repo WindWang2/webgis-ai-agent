@@ -34,9 +34,9 @@ export const WORKBENCH_MODES: readonly WorkbenchMode[] = ['explore', 'analyze', 
 
 /** 模式 → 左栏 tab 组合（封闭词表投影；chat 恒在场）。 */
 export const MODE_TABS: Record<WorkbenchMode, readonly string[]> = {
-  explore: ['chat', 'layers', 'data_sources', 'project', 'tasks'],
-  analyze: ['chat', 'analysis', 'results', 'layers', 'tasks'],
-  compose: ['chat', 'components', 'export_layout', 'exports', 'layers'],
+  explore: ['chat', 'layers', 'data_sources', 'project', 'tasks', 'ops'],
+  analyze: ['chat', 'analysis', 'results', 'layers', 'tasks', 'ops'],
+  compose: ['chat', 'components', 'export_layout', 'exports', 'layers', 'ops'],
 };
 
 /** 模式切换来源（Agent 不应静默切换 —— 需要可发现的回执）。 */
