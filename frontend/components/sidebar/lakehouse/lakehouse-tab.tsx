@@ -4,7 +4,6 @@ import { useCallback, useRef, useState } from 'react';
 import {
   Boxes,
   GitMerge,
-  History,
   Satellite,
   Send,
 } from 'lucide-react';
@@ -17,6 +16,7 @@ import { CatalogToolbar } from './catalog-toolbar';
 import { CatalogItemCard } from './catalog-item-card';
 import { ObjectDetailPanel } from './object-detail-panel';
 import { DatasetsPanel } from './datasets-panel';
+import { QueryPane } from './query-pane';
 import { useLakehouseCatalog, EMPTY_CATALOG_FILTERS, type CatalogFilters } from './use-lakehouse-catalog';
 
 /**
@@ -261,10 +261,11 @@ export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
           aria-labelledby="lakehouse-tab-query"
           className="flex min-h-0 flex-1 flex-col"
         >
-          <PlaceholderPane
-            icon={History}
-            label="查询构建器"
-            detail={queryTarget ? `待查询对象：${queryTarget.slice(0, 16)}…（P4 接入表单与上图）` : undefined}
+          <QueryPane
+            sessionId={sessionId ?? ''}
+            ownerToken={ownerToken}
+            objectIdHint={queryTarget}
+            onHintConsumed={() => setQueryTarget(null)}
           />
         </div>
       )}
