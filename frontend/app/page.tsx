@@ -24,6 +24,8 @@ import { useRegisterCommands } from '@/lib/commands/registry';
 import { CommandPaletteRoot } from '@/components/command/command-palette-root';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
 import { useSearchDrawerStore } from '@/lib/hooks/use-search-drawer';
+import { useUndoHistoryStore } from '@/lib/hooks/use-undo-history';
+import { UndoFlash, UndoHistoryPanel } from '@/components/workbench/undo-history-panel';
 
 // New layout components
 import TopBar from '@/components/layout/top-bar';
@@ -251,6 +253,13 @@ export default function Home() {
         group: '面板',
         keywords: 'search cross-session suosou fulltext',
         run: () => useSearchDrawerStore.getState().openDrawer(),
+      },
+      {
+        id: 'edit.history',
+        title: '打开操作历史（撤销/重做时间线）',
+        group: '编辑',
+        keywords: 'undo history opslog caozuo lishi',
+        run: () => useUndoHistoryStore.getState().openPanel(),
       },
       {
         id: 'tools.queryConsole',
@@ -501,6 +510,10 @@ export default function Home() {
           handleSelectSession(sid);
         }}
       />
+
+      {/* ADR-0147：操作历史弹层 + 撤销/重做可见反馈 */}
+      <UndoHistoryPanel />
+      <UndoFlash />
     </div>
   );
 }
