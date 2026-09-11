@@ -133,17 +133,16 @@ export async function exportNarrativePdf(
 ): Promise<Blob> {
   if (chapters.length === 0) throw new Error('没有可导出的章节（全部隐藏或会话为空）');
   const { exportToPDF } = await import('@/lib/map-kit/exporter');
+  // exportToPDF 的 pages 契约（W9）：pages[0].canvas 即封面页 —— 全部章节
+  // 都要走 pages（含第 1 章），主 canvas 参数在 pages 在场时被忽略。
   const pages: Array<{ canvas: HTMLCanvasElement; title?: string }> = [];
-  let firstCanvas: HTMLCanvasElement | null = null;
   for (let i = 0; i < chapters.length; i++) {
     const chapter = chapters[i];
     onProgress?.({ current: i + 1, total: chapters.length, chapterTitle: chapter.title });
     const blob = await capture(chapter);
-    const canvas = await blobToCanvas(blob);
-    if (!firstCanvas) firstCanvas = canvas;
-    else pages.push({ canvas, title: chapter.title });
+    pages.push({ canvas: await blobToCanvas(blob), title: chapter.title });
   }
-  return exportToPDF(firstCanvas!, docTitle, `${chapters.length} 个章节`, {
+  return exportToPDF(pages[0].canvas, docTitle, `${chapters.length} 个章节`, {
     paperSize: 'A4',
     orientation: 'landscape',
     pages,

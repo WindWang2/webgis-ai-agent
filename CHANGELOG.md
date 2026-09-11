@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased] - 2026-09-12 (V9: 交互深度与专业用户体验, ADR-0147)
+
+### Added (frontend: feat/ux-depth-v9)
+- Command registry framework (`lib/commands/`) + Ctrl+K command palette
+  (APG combobox, fuzzy search with 5000-cmd <16ms budget, recents LRU,
+  parametric commands) + `?` shortcut overview with conflict detection;
+  public append-only registry API for downstream lines (D–H) to contribute
+  commands via `useRegisterCommands`.
+- Advanced query console: SQL/filter editor (lightweight highlight via
+  code-highlight tokenizer), fabric catalog picker, results grid, honest
+  pushdown/`query_plan` disclosure, dry-run explain, danger guard (read-only
+  endpoint: write verbs & multi-statement blocked pre-send), local query
+  history + samples, result-to-map via materialize + ref hydration.
+- StoryMap deepening: chapter model (derived from messages + local
+  orchestration overlay: rename/hide/reorder, backward-compatible read-back),
+  scrubber (drag + keyboard), per-chapter fly_to camera easing with
+  reduced-motion jump-cut, chart & table artifact replay (ref pipeline),
+  share card (OG compose) and narrative PDF via existing multi-page raster
+  chain (#1213 vector-pdf evaluated and NOT consumed — see ADR-0147 §4).
+- Cross-session search: client-side persisted index (20-session LRU + 1MB
+  budget) over transcripts/artifacts, grouped hits (session/message/artifact/
+  layer), jump-restore with message locate channel; backend full-text gap
+  disclosed in-panel and recorded as coordination point.
+- Undo/redo visibility: history popup (undo/redo stacks + opsLog journal
+  timeline + per-layer operation log), rollback-to-depth, toast flash on
+  Ctrl+Z/Ctrl+Shift+Z; undo.ts gains read-only accessors only.
+- Onboarding: first-run tour (10 steps, spotlight focus ring, keyboard
+  navigation, reduced-motion degrade, target-missing fallback), 8-hint
+  once-only context queue, restart/reset entries in Settings → System.
+
 ## [Unreleased] - 2026-09-10 (V7/V8 epic integration round)
 
 Ten prepared epic branches (platform-v4, lakehouse-v8, data-fabric-v8,
