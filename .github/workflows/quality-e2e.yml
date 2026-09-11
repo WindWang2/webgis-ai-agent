@@ -119,6 +119,32 @@ jobs:
             frontend/playwright-report/
           retention-days: 14
 
+  perf-budgets:
+    name: Performance budget gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install backend deps + zarr (cube window line)
+        run: pip install -r requirements-dev.txt httpx psycopg2-binary zarr
+      - name: Gate self-proof (synthetic breach must go red)
+        run: python scripts/perf/run_budget.py --self-test
+      - name: Run budget gate
+        run: |
+          python scripts/perf/run_budget.py --iterations 20 --report perf-report.json
+          cat perf-report.json
+      - name: Upload budget report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-budget-report
+          path: perf-report.json
+          retention-days: 14
+
   journey-real:
     name: Journeys real (backend + LLM stub, nightly)
     runs-on: ubuntu-latest
