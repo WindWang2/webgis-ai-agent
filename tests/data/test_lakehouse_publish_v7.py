@@ -172,6 +172,14 @@ async def test_publish_foreign_project_and_foreign_object(owned_object):
 
     foreign_project = f"proj_{uuid.uuid4().hex[:8]}"
     with SessionLocal() as s:
+        # Postgres 强制 projects.owner_id → users.id；先落 foreign owner。
+        from app.models.db_model import User
+
+        s.merge(User(
+            id="someone-else", username="someone-else",
+            email="someone-else@example.com", password_hash="x",
+            role="viewer", is_active=True,
+        ))
         s.add(Project(id=foreign_project, name="other", owner_id="someone-else"))
         s.commit()
 

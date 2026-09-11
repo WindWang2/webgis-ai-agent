@@ -76,13 +76,15 @@ def v7_env(tmp_path, monkeypatch):
     monkeypatch.setattr(cluster_store_mod, "session_factory", factory)
     from datetime import datetime, timezone
 
-    from app.core.database import SessionLocal
+    from app.core.database import Engine as GlobalEngine, SessionLocal
     from app.models.db_model import Organization, User
 
+    Base.metadata.create_all(bind=GlobalEngine, checkfirst=True)
     db = SessionLocal()
     try:
         if db.get(Organization, 1) is None:
             db.add(Organization(id=1, name="gc-v7", slug="gc-v7-org"))
+        now = datetime.now(timezone.utc)
         for uid, uname, role in (
             ("gc-v7-user", "gc-v7-user", "editor"),
             ("gc-v7-admin", "gc-v7-admin", "admin"),
@@ -94,9 +96,13 @@ def v7_env(tmp_path, monkeypatch):
                     id=uid, username=uname, email=f"{uname}@example.com",
                     password_hash="scrypt$16384$8$1$00$00", role=role,
                     is_active=True, token_version=0, org_id=1,
-                    created_at=datetime.now(timezone.utc),
-                    updated_at=datetime.now(timezone.utc),
+                    created_at=now, updated_at=now,
                 ))
+            else:
+                u.org_id = 1
+                u.role = role
+                u.is_active = True
+                u.updated_at = now
         db.commit()
     finally:
         db.close()

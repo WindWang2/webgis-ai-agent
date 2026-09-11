@@ -26,6 +26,17 @@ from app.services.data_fabric.fabric.result_cache import (
 # ── SingleFlight 单元 ─────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _clean_engine_breaker():
+    """隔离进程级 V6 熔断：前序用例崩溃记账不得污染本文件 engine=v6 断言。"""
+    from app.services.data_fabric.fabric.engine_breaker import reset_engine_breaker
+
+    reset_engine_breaker()
+    yield
+    reset_engine_breaker()
+
+
+
 def test_singleflight_executes_once_for_concurrent_keys():
     sf = SingleFlight(max_wait_s=5.0)
     calls = []

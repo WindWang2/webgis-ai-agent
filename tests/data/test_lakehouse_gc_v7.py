@@ -72,13 +72,32 @@ def _publish(session="sess-gc", tag=b"x"):
 
 
 def _register_revision(content_sha256):
-    """DB 根：artifact_revisions 引用（内容历史保护）。"""
+    """DB 根：artifact_revisions 引用（内容历史保护）。
+
+    Postgres 强制 artifact_revisions.artifact_id → artifacts.id，而 artifacts
+    又强制 project_id → projects.id（projects.owner_id → users.id）。SQLite
+    测试方言不强制 FK，所以旧实现只插 revision 行在本地全绿、CI 红。
+    """
+    from app.models.db_model import User
+    from app.models.project import Artifact, Project
     from app.services.artifact_revisions import record_revision
 
+    artifact_id = f"art_{uuid.uuid4().hex[:8]}"
+    project_id = f"proj_gc_{uuid.uuid4().hex[:8]}"
     with SessionLocal() as s:
+        s.merge(User(
+            id="u_gc", username="u_gc", email="u_gc@example.com",
+            password_hash="x", role="viewer", is_active=True,
+        ))
+        s.add(Project(id=project_id, name="gc", owner_id="u_gc"))
+        s.add(Artifact(
+            id=artifact_id, project_id=project_id, name="gc-root",
+            artifact_type="raster",
+        ))
+        s.flush()
         record_revision(
             s,
-            artifact_id=f"art_{uuid.uuid4().hex[:8]}",
+            artifact_id=artifact_id,
             content_sha256=content_sha256,
             content_location=f"{content_sha256[:4]}/{content_sha256}.json",
             content_type="json",
