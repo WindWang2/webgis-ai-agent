@@ -32,6 +32,34 @@ async def app_and_dir(tmp_path, monkeypatch):
 
     app = FastAPI()
     app.include_router(static_routes.router, prefix="/api/v1")
+
+    # #1221（D-9）：admin 通道现在做 ver 复核（DB User 行比对 token ver）。
+    # 注入临时 sqlite（建表 + 真实 admin 行），避免依赖全局测试 DB。
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+
+    from app.core.database import get_async_db
+    from app.models.db_model import Base, User
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'static-auth.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _seed_admin() -> None:
+        async with Session() as db:
+            db.add(User(
+                id="ops-admin", username="ops-admin", email="ops-admin@test",
+                password_hash="x", role="admin",
+            ))
+            await db.commit()
+
+    await _seed_admin()
+
+    async def _override_db():
+        async with Session() as db:
+            yield db
+
+    app.dependency_overrides[get_async_db] = _override_db
     yield app, data_dir
 
 
@@ -80,6 +108,42 @@ async def test_private_file_accessible_with_admin_jwt(client):
     )
     assert resp.status_code == 200
     assert resp.content == b"TOP_SECRET"
+
+
+@pytest.mark.asyncio
+async def test_private_file_rejected_after_logout_ver_bump(app_and_dir, monkeypatch):
+    """#1221（D-9）：登出（token_version bump）后旧 admin token 立即失效。"""
+    from sqlalchemy import update
+
+    app, _ = app_and_dir
+    from fastapi.testclient import TestClient  # noqa: F401 — 文档用途
+
+    from app.core.auth import create_access_token
+    from app.core.database import get_async_db
+    from app.models.db_model import User
+
+    override = app.dependency_overrides[get_async_db]
+
+    token = create_access_token({"sub": "ops-admin", "role": "admin", "ver": 0})
+
+    # bump ver=1（登出语义）
+    async def _bump():
+        async for db in override():
+            await db.execute(update(User).where(User.id == "ops-admin").values(token_version=1))
+            await db.commit()
+            break
+
+    await _bump()
+
+    from httpx import ASGITransport, AsyncClient
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get(
+            "/api/v1/static/private/secret.txt",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
