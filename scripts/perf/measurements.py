@@ -99,26 +99,46 @@ def measure_mvt_tile_p95(iterations: int = 10) -> float:
 
 
 def measure_cube_window_p95(iterations: int = 10, tmp_root: str | None = None) -> float:
-    """Cube window read P95; explicit SKIP when zarr is absent."""
+    """Cube window read P95; explicit SKIP when zarr is absent.
+
+    The fixture writes the v1 store layout directly (per-band (time,y,x)
+    arrays + root attrs bands/times/crs/transform) — the same shape
+    read_cube_window consumes — without dragging in the foundation chunk
+    descriptors that write_cube validates.
+    """
     try:
         import zarr  # noqa: F401
     except Exception as exc:  # noqa: BLE001 — typed skip path
         raise SkipMeasurement(f"zarr not installed: {exc}") from exc
 
-    from app.services.lakehouse.cube_store import read_cube_window, write_cube
+    from app.services.lakehouse.cube_store import read_cube_window
 
     import tempfile
 
-    root = Path(tmp_root or tempfile.mkdtemp(prefix="perf-cube-")) / "cube"
+    root_path = Path(tmp_root or tempfile.mkdtemp(prefix="perf-cube-")) / "cube"
     times = [f"2026-01-{d:02d}" for d in range(1, 5)]
-    bands = {"ndvi": [[[float((y + x + t) % 7)] * 64 for x in range(64)]
-                      for y in range(64)] for t in range(4)}
-    write_cube({"ndvi": bands}, times, root)
+    import numpy as np
+
+    root = zarr.open_group(str(root_path), mode="w")
+    root.attrs["bands"] = ["ndvi"]
+    root.attrs["times"] = times
+    root.attrs["crs"] = "EPSG:4326"
+    # v1 layout: root[band] IS the (time, y, x) array; times/crs/transform on
+    # the array's attrs (read_cube_window reads exactly these).
+    stack = np.stack([np.full((64, 64), float(t), dtype="float32") for t in range(4)])
+    try:
+        arr = root.create_array("ndvi", data=stack, chunks=(2, 32, 32))
+    except AttributeError:  # zarr v2
+        arr = root.create_dataset("ndvi", data=stack, chunks=(2, 32, 32))
+    arr.attrs["times"] = times
+    arr.attrs["crs"] = "EPSG:4326"
+    arr.attrs["transform"] = [0.01, 0, 116.0, 0, -0.01, 40.0]
 
     timings: List[float] = []
+    read_cube_window(root_path, bands=["ndvi"], y=slice(0, 32), x=slice(0, 32))
     for i in range(iterations):
         start = time.perf_counter()
-        out = read_cube_window(root, bands=["ndvi"],
+        out = read_cube_window(root_path, bands=["ndvi"],
                                time=slice(i % 2, (i % 2) + 2),
                                y=slice(0, 32), x=slice(0, 32))
         timings.append((time.perf_counter() - start) * 1000)

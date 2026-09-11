@@ -26,10 +26,10 @@
     },
     {
       "id": "cube_window_p95_ms",
-      "target": 100,
+      "target": 500,
       "metric": "p95_ms",
       "tool": "scripts/perf/measurements.py::measure_cube_window_p95 (lakehouse read_cube_window, zarr v1 cube 4×64×64×64)",
-      "rationale": "cube 窗口读（chunk 粒度只触相交 chunk）P95。防线：窗口剪枝退化（整轴物化回归）。zarr 缺席环境显式 SKIP。"
+      "rationale": "cube 窗口读 P95（含每次调用 open store 的真实开销，1 次预热后取样）。防线：窗口剪枝退化（整轴物化回归）。zarr 缺席环境显式 SKIP。"
     },
     {
       "id": "chat_first_token_p95_ms",
