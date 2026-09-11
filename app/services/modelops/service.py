@@ -18,7 +18,12 @@ from app.lib.modelops.resources import batch_for_budget
 from app.lib.geo_raster.reader import RasterReader
 from app.services.modelops.config import ModelOpsSettings
 from app.services.modelops.engine import InferenceEngine, InferenceRequest, InferenceResult
-from app.services.modelops.evaluation_service import EvaluationRequest, EvaluationService
+from app.services.modelops.evaluation_service import (
+    DriftEvaluationRequest,
+    EvaluationRequest,
+    EvaluationService,
+)
+from app.services.modelops.package_store import ModelPackageStore
 from app.services.modelops.providers.base import ProviderRegistry, resolve_device_plan
 from app.services.modelops.registry import ModelRegistryStore
 from app.services.modelops.reuse import ReuseStore
@@ -41,8 +46,10 @@ class ModelOpsService:
     def __init__(self, settings: Optional[ModelOpsSettings] = None) -> None:
         self._settings = settings or ModelOpsSettings.load()
         self._registry = ModelRegistryStore(self._settings)
+        self._packages = ModelPackageStore(self._settings.registry_dir / "packages")
         self._providers = ProviderRegistry()
         seed_providers(self._providers)
+        self._wire_dl_providers()
         self._wire_remote_providers()
         seed_registry(self._registry, self._providers)
         self._reuse = ReuseStore(
@@ -50,15 +57,228 @@ class ModelOpsService:
             max_entries=self._settings.reuse_max_entries,
             max_bytes=self._settings.reuse_max_bytes,
         )
+        # V3 §E：GPU 探测（GeoCompute probe 优先）+ VRAM 账本 + warm pool。
+        from app.services.modelops.scheduling import (
+            VramLedger,
+            WarmPoolManager,
+            probe_gpu_devices,
+        )
+
+        self._gpu_devices = probe_gpu_devices()
+        self._ledger = VramLedger(
+            devices=self._gpu_devices,
+            fallback_budget_bytes=self._settings.vram_budget_bytes,
+        )
         self._engine = InferenceEngine(
             self._registry,
             self._providers,
             self._settings,
             reuse_store=self._reuse,
+            vram_ledger=self._ledger,
+            gpu_devices=self._gpu_devices,
         )
+        self._warm_pool = WarmPoolManager(
+            self._engine.loaded_cache, self._registry, self._providers
+        )
+        self._settle_warm_pool()
+        # V3 §F：模型 lineage / 指标 / 部署状态（side-car append-only）。
+        from app.services.modelops.lineage import ModelLineageStore
+
+        self._lineage = ModelLineageStore(self._settings.registry_dir / "lineage")
         self._evaluation = EvaluationService()
         self._cancel_lock = threading.Lock()
         self._cancel_tokens: Dict[str, CancellationToken] = {}
+
+    def _settle_warm_pool(self) -> None:
+        """启动时把 settings 声明的 warm pool 钉进 loaded cache（幂等）。"""
+        for model_id in self._settings.warm_pool:
+            self._warm_pool.pin(model_id.strip())
+
+    def warm_pool_status(self) -> Dict[str, Any]:
+        """warm pool / GPU 账本状态（观测面）。"""
+        return {
+            "pinned": self._warm_pool.status(),
+            "vram_ledger": self._ledger.snapshot(),
+        }
+
+    def pin_warm_pool(self, model_id: str, *, device: str = "cpu") -> Dict[str, Any]:
+        """运行期把一个模型钉进 warm pool（幂等；typed 结果不抛）。"""
+        return self._warm_pool.pin(model_id, device=device)
+
+    # ── lineage / 指标（V3 §F）───────────────────────────────────────
+    def record_training_metrics(
+        self,
+        model_id: str,
+        model_version: str,
+        *,
+        metrics: Dict[str, Any],
+        actor: str = "",
+    ) -> Dict[str, Any]:
+        """登记一个模型版本的训练指标（append-only lineage 事件）。"""
+        return self._lineage.append(
+            model_id, model_version,
+            event_type="training_metrics", payload={"metrics": metrics}, actor=actor,
+        )
+
+    def record_evaluation_ref(
+        self,
+        model_id: str,
+        model_version: str,
+        *,
+        data_object_id: Optional[str] = None,
+        metrics_summary: Optional[Dict[str, Any]] = None,
+        dataset_refs: Optional[List[str]] = None,
+        actor: str = "",
+    ) -> Dict[str, Any]:
+        """登记一次评估（data_object 引用 + 摘要 + 数据 lineage）。"""
+        payload: Dict[str, Any] = {
+            "evaluation_data_object_id": data_object_id,
+            "metrics_summary": metrics_summary or {},
+            "dataset_refs": dataset_refs or [],
+        }
+        return self._lineage.append(
+            model_id, model_version,
+            event_type="evaluation", payload=payload, actor=actor,
+        )
+
+    def set_deployment_state(
+        self,
+        model_id: str,
+        model_version: str,
+        *,
+        promote: bool,
+        stage: str = "production",
+        actor: str = "",
+    ) -> Dict[str, Any]:
+        """晋升 / 退役一个模型版本（append-only；状态为推导值）。"""
+        if promote:
+            return self._lineage.append(
+                model_id, model_version,
+                event_type="promotion", payload={"stage": stage}, actor=actor,
+            )
+        return self._lineage.append(
+            model_id, model_version, event_type="retirement", payload={}, actor=actor,
+        )
+
+    def model_history(
+        self,
+        model_id: str,
+        *,
+        model_version: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """模型 lineage 时间线 + 推导状态（工具面/前端消费）。"""
+        events = self._lineage.history(model_id, model_version)
+        versions: Dict[str, Any] = {}
+        for event in events:
+            version = str(event.get("model_version"))
+            entry = versions.setdefault(version, {"events": [], "deployment_state": "registered"})
+            entry["events"].append(event)
+            if event.get("event_type") == "promotion":
+                entry["deployment_state"] = (event.get("payload") or {}).get("stage") or "production"
+            elif event.get("event_type") == "retirement":
+                entry["deployment_state"] = "retired"
+        return {"model_id": model_id, "versions": versions, "event_count": len(events)}
+
+    def model_metrics(
+        self, model_id: str, *, model_version: str
+    ) -> Optional[Dict[str, Any]]:
+        """最近一次训练/评估指标（registry inspect 的伴生查询）。"""
+        return self._lineage.latest_metrics(model_id, model_version)
+
+    def _wire_dl_providers(self) -> None:
+        """V3 §B：ONNX Runtime / TorchScript / subprocess provider 接线。
+
+        探测驱动：onnxruntime 缺席时 provider 仍注册（capabilities 如实
+        反映 devices/tasks），load 时 typed 失败——注册面永不冒充可用，
+        也不因运行时缺席而拒绝注册（honest failure，不阻塞主路径）。
+        """
+        from app.services.modelops.providers.onnx_adapter import OnnxRuntimeProvider
+        from app.services.modelops.providers.subprocess_adapter import (
+            SubprocessWorkerProvider,
+            parse_worker_allowlist,
+        )
+        from app.services.modelops.providers.torch_adapter import TorchScriptProvider
+
+        for provider in (
+            OnnxRuntimeProvider(self._packages),
+            TorchScriptProvider(self._packages),
+        ):
+            try:
+                self._providers.register(provider)
+            except Exception as exc:  # noqa: BLE001 — 单 provider 注册失败不阻断启动
+                logger.warning(
+                    "dl provider %s not registered: %s",
+                    provider.capabilities().provider_id, exc,
+                )
+        try:
+            allowlist = parse_worker_allowlist(self._settings.subprocess_workers)
+        except Exception as exc:  # noqa: BLE001 — operator 配置错误不阻断启动
+            logger.warning("subprocess worker allowlist rejected: %s", exc)
+            return
+        for slot, script_path in allowlist.items():
+            try:
+                self._providers.register(
+                    SubprocessWorkerProvider(
+                        slot,
+                        script_path,
+                        packages=self._packages,
+                        deadline_s=self._settings.subprocess_deadline_s,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("subprocess provider %s not registered: %s", slot, exc)
+
+    # ── 注册面（V3 §B：真实包的注册唯一入口）────────────────────────
+    def register_model(
+        self,
+        descriptor: Any,
+        *,
+        owner_scope: Dict[str, str],
+        package_bytes: Optional[bytes] = None,
+        registered_by: str = "",
+    ) -> Dict[str, Any]:
+        """注册一个模型（真实包过 package_security 门 + 内容寻址落盘）。
+
+        descriptor 接受 :class:`GeoModelDescriptor` 或其 JSON dict
+        （工具面友好）；synthetic（无包）种子路径仍走 ``seeds.py``。
+        """
+        from app.lib.modelops.descriptor import GeoModelDescriptor
+        from app.lib.modelops.package_security import (
+            SINGLE_FILE_FORMAT_SUFFIXES,
+            inspect_archive,
+            inspect_model_file,
+        )
+
+        if not isinstance(descriptor, GeoModelDescriptor):
+            descriptor = GeoModelDescriptor.model_validate(descriptor)
+        package_report: Optional[Dict[str, Any]] = None
+        if package_bytes is not None:
+            single_suffix = SINGLE_FILE_FORMAT_SUFFIXES.get(descriptor.artifact_format)
+            if single_suffix is not None:
+                report = inspect_model_file(
+                    package_bytes,
+                    expected_checksum=descriptor.checksum,
+                    allowed_suffix=single_suffix,
+                )
+            else:
+                report = inspect_archive(package_bytes, expected_checksum=descriptor.checksum)
+            package_report = report.as_dict()
+            self._packages.persist(descriptor, package_bytes)
+        record = self._registry.register(
+            descriptor,
+            owner_scope=owner_scope,
+            registered_by=registered_by or "modelops.service.register_model",
+            package_report=package_report,
+            known_provider_refs=self._providers.has,
+        )
+        return {
+            "model_id": record.descriptor.model_id,
+            "model_version": record.descriptor.model_version,
+            "checksum": record.descriptor.checksum,
+            "owner_scope": dict(record.owner_scope),
+            "package_stored": package_bytes is not None,
+            "seq": record.seq,
+        }
 
     def _wire_remote_providers(self) -> None:
         """operator allowlist 中的 endpoint → 每个注册一个 remote 实例。
@@ -124,6 +344,12 @@ class ModelOpsService:
             "owner_scope": record.owner_scope,
             "revision": record.revision,
             "package_report": record.package_report,
+            # V3 §F：lineage 摘要（指标/评估/部署状态）。
+            "lineage": {
+                "deployment_state": self._lineage.deployment_state(d.model_id, d.model_version),
+                "latest_metrics": self._lineage.latest_metrics(d.model_id, d.model_version),
+                "event_count": len(self._lineage.load(d.model_id, d.model_version)),
+            },
         }
 
     def check_compatibility(
@@ -257,10 +483,48 @@ class ModelOpsService:
 
     # ── 评估 / 复用 / provenance ────────────────────────────────────
     def evaluate(self, request: EvaluationRequest) -> Dict[str, Any]:
-        return self._evaluation.evaluate(request)
+        report = self._evaluation.evaluate(request)
+        self._record_eval_lineage(request.model_id, request.model_version, report)
+        return report
+
+    def evaluate_drift(self, request: DriftEvaluationRequest) -> Dict[str, Any]:
+        """漂移评估（V3 §G）+ 自动 lineage 记录（model_id 提供时）。"""
+        report = self._evaluation.evaluate_drift(request)
+        self._record_eval_lineage(request.model_id, request.model_version, report)
+        return report
+
+    def _record_eval_lineage(
+        self,
+        model_id: Optional[str],
+        model_version: Optional[str],
+        report: Dict[str, Any],
+    ) -> None:
+        if not model_id or not model_version:
+            return
+        try:
+            metrics_summary = {
+                k: report.get(k)
+                for k in ("metrics", "miou", "agreement_miou",
+                          "class_distribution_psi", "confidence_psi", "boundary")
+                if report.get(k) is not None
+            }
+            self._lineage.append(
+                model_id, model_version,
+                event_type="evaluation",
+                payload={
+                    "evaluation_data_object_id": (report.get("artifact") or {}).get("data_object_id"),
+                    "metrics_summary": metrics_summary,
+                },
+                actor="modelops.evaluation",
+            )
+        except Exception as exc:  # noqa: BLE001 — lineage 记录失败不毁评估
+            logger.warning("evaluation lineage append failed: %s", exc)
 
     async def evaluate_async(self, request: EvaluationRequest) -> Dict[str, Any]:
         return await asyncio.to_thread(self._evaluation.evaluate, request)
+
+    async def evaluate_drift_async(self, request: DriftEvaluationRequest) -> Dict[str, Any]:
+        return await asyncio.to_thread(self.evaluate_drift, request)
 
     def compare_results(
         self,

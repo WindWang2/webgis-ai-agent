@@ -131,8 +131,24 @@ def qualify(
     needs_reproject: Optional[Dict[str, Any]] = None
 
     # ── 波段 ────────────────────────────────────────────────────────
-    is_temporal_task = "temporal_forecast" in descriptor.task_types
-    if is_temporal_task:
+    is_bitemporal_task = "change_detection" in descriptor.task_types
+    is_temporal_task = "temporal_forecast" in descriptor.task_types or (
+        "temporal_classification" in descriptor.task_types
+    )
+    if is_bitemporal_task:
+        # 双时相源 = 两个独立栅格（A|B 由 engine 拼接）；descriptor 的
+        # input_bands = 2C，逐栅格要求 C 波段。
+        per_image_bands = descriptor.input_bands // 2
+        if descriptor.input_bands % 2 != 0 or profile.band_count != per_image_bands:
+            failures.append(
+                CompatibilityFailure(
+                    FAILURE_BAND_COUNT,
+                    f"change detection model expects two {per_image_bands}-band rasters; "
+                    f"input A has {profile.band_count} bands",
+                    fix_hint="pass two band-matched rasters (before/after) via source_uri_b",
+                )
+            )
+    elif is_temporal_task:
         # 时序源栅格 = C*T 波段（time-major 布局）；按整除关系判定。
         if (
             profile.band_count < descriptor.input_bands
@@ -166,8 +182,12 @@ def qualify(
                 )
             )
 
-    # ── SAR 极化语义（modality=sar 时 band_order 应为极化词表）──────
-    if "sar" in descriptor.input_modalities and descriptor.band_order:
+    # ── SAR 极化语义（纯 SAR 模型时 band_order 必须为极化词表；
+    #    sar_optical_fusion 的混合 band_order 豁免——极化头 + 光学尾）──
+    if (
+        set(descriptor.input_modalities) == {"sar"}
+        and descriptor.band_order
+    ):
         unknown_pol = [b for b in descriptor.band_order if b not in ("VV", "VH", "HH", "HV")]
         if unknown_pol:
             failures.append(
@@ -178,8 +198,12 @@ def qualify(
                 )
             )
 
-    # ── modality（RGB 模型 vs 多光谱输入等）────────────────────────
-    if MODALITY_OPTICAL_RGB in descriptor.input_modalities and profile.band_count > 3:
+    # ── modality（RGB 模型 vs 多光谱输入等；fusion 的混合输入豁免）──
+    if (
+        MODALITY_OPTICAL_RGB in descriptor.input_modalities
+        and "sar_optical_fusion" not in descriptor.task_types
+        and profile.band_count > 3
+    ):
         failures.append(
             CompatibilityFailure(
                 FAILURE_MODALITY,
@@ -281,7 +305,10 @@ def qualify(
                     fix_hint="add observations or relax required_length",
                 )
             )
-    elif descriptor.task_types and "temporal_forecast" in descriptor.task_types:
+    elif descriptor.task_types and (
+        "temporal_forecast" in descriptor.task_types
+        or "temporal_classification" in descriptor.task_types
+    ):
         if profile.temporal_length < 2:
             failures.append(
                 CompatibilityFailure(
