@@ -1,0 +1,24 @@
+        failed = [r.case_id for r in results if r.status == "fail"]
+>       assert failed == [], f"semantic regressions: {failed}"
+ERROR    app.tools.registry:registry.py:1607 Tool execution failed: kriging_interpolation
+ERROR    app.tools.registry:registry.py:1607 Tool execution failed: kriging_interpolation
+ERROR    app.tools.registry:registry.py:1607 Tool execution failed: idw_interpolation
+        failed = [(r.case_id, r.failures) for r in results if not r.passed]
+>       assert failed == [], f"{len(failed)} semantic regressions: {failed[:5]}"
+        failed = [(r.case_id, r.failures) for r in results if not r.passed]
+>       assert failed == [], f"{len(failed)} regressions in sample: {failed[:5]}"
+>           assert result.passed, f"{scenario.scenario_id}: {result.failures}"
+E            +  where False = ScenarioResult(scenario_id='S-site-selection', passed=False, case_results=[CaseResult(case_id='SC-ss-plan', group='con...a-undeclared', passed=True, failures=[])], failures=['SC-ss-plan: ["capabilities unresolved: [\'mcda_evaluation\']"]']).passed
+ERROR    app.tools.registry:registry.py:1607 Tool execution failed: kriging_interpolation
+ERROR    app.tools.registry:registry.py:1607 Tool execution failed: kriging_interpolation
+FAILED tests/unit/gis_harness/test_analysis_graph.py::TestRoute::test_route_registered
+FAILED tests/unit/gis_harness/test_benchmark_harness.py::test_golden_cases_no_semantic_regression
+FAILED tests/unit/gis_harness/test_component_lifecycle.py::TestUserRemoveWinsOverRepair::test_user_removed_title_not_resurrected[trio]
+FAILED tests/unit/gis_harness/test_conformance_corpus.py::test_corpus_full_run_green
+FAILED tests/unit/gis_harness/test_conformance_corpus.py::test_corpus_stratified_sample_green
+FAILED tests/unit/gis_harness/test_conformance_corpus.py::test_scenarios_all_green
+FAILED tests/unit/gis_harness/test_kriging_vertical_slice.py::test_kriging_dispatch_mints_and_registers_uncertainty_ref
+FAILED tests/unit/gis_harness/test_kriging_vertical_slice.py::test_kriging_beats_or_matches_idw_on_stationary_field
+FAILED tests/unit/gis_harness/test_kriging_vertical_slice.py::test_kriging_repeat_call_reuses_prediction_surface_not_uncertainty
+FAILED tests/unit/test_retrieval_eval_v6.py::test_gold_tools_exist_in_registry
+10 failed, 1254 passed, 4 skipped, 1266 warnings in 410.23s (0:06:50)
