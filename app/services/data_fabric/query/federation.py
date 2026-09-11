@@ -1722,7 +1722,8 @@ def _make_bushy_replan_fn(req, original_plan):
     - 新计划必须 hash 不同**且 pinned 成本严格更低**才切换；
     - ``order_strategy="given"`` 上游已禁用 adaptive（双保险）。
     """
-    from copy import replace as _dataclass_replace
+    # dataclasses.replace is 3.7+; copy.replace is 3.13-only (CI is 3.12).
+    from dataclasses import replace as _dataclass_replace
 
     from app.services.data_fabric.query.federated.planner import (
         build_enumeration_context,
