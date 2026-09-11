@@ -36,6 +36,8 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [keyword, setKeyword] = useState('');
+  const [timeFrom, setTimeFrom] = useState('');
+  const [timeTo, setTimeTo] = useState('');
   const [selected, setSelected] = useState<StacItem | null>(null);
 
   const addLayer = useHudStore((s) => s.addLayer);
@@ -86,12 +88,18 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
   // 卸载中止在途请求（ref 是稳定可变数据引用，读 .current 是刻意的）。
   useEffect(() => () => reqRef.current?.controller?.abort(), []);
 
-  // 客户端关键词收窄（id/kind/tags；服务端投影端点不接 q 参数）。
+  // 客户端时空收窄（关键词 + 时间范围；服务端投影端点只接分页 —— 勘察纪要
+  // 协调点 §3：过滤参数未在 REST 面暴露）。
   const visibleItems =
     result?.items.filter((it) => {
-      if (!keyword.trim()) return true;
-      const hay = `${it.id} ${it.properties['webgis:kind']} ${it.properties['webgis:tags']?.join(' ') ?? ''}`;
-      return hay.toLowerCase().includes(keyword.trim().toLowerCase());
+      if (keyword.trim()) {
+        const hay = `${it.id} ${it.properties['webgis:kind']} ${it.properties['webgis:tags']?.join(' ') ?? ''}`;
+        if (!hay.toLowerCase().includes(keyword.trim().toLowerCase())) return false;
+      }
+      const day = it.properties.datetime.slice(0, 10);
+      if (timeFrom && day < timeFrom) return false;
+      if (timeTo && day > timeTo) return false;
+      return true;
     }) ?? [];
 
   const mountGeometry = useCallback(
@@ -172,6 +180,28 @@ export function StacExplorer({ ownerType, ownerId, sessionId, ownerToken }: Stac
             aria-label="STAC 条目关键词"
             className="mt-2 w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 text-caption text-ink"
           />
+          <div className="mt-1.5 flex items-center gap-2 text-caption text-ink-secondary">
+            <label className="flex items-center gap-1">
+              从
+              <input
+                type="date"
+                value={timeFrom}
+                onChange={(e) => setTimeFrom(e.target.value)}
+                aria-label="时间范围起始"
+                className="rounded-sm border border-edge-subtle bg-surface-sunken px-1.5 py-1 text-ink"
+              />
+            </label>
+            <label className="flex items-center gap-1">
+              至
+              <input
+                type="date"
+                value={timeTo}
+                onChange={(e) => setTimeTo(e.target.value)}
+                aria-label="时间范围结束"
+                className="rounded-sm border border-edge-subtle bg-surface-sunken px-1.5 py-1 text-ink"
+              />
+            </label>
+          </div>
 
           <ul className="mt-2 space-y-1.5" data-testid="lakehouse-stac-items">
             {visibleItems.map((item) => (

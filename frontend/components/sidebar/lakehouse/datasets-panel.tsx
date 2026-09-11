@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ChevronRight, Database, GitCommitHorizontal, Tag } from 'lucide-react';
+import { lakehouseApi } from '@/lib/api/lakehouse';
 import type {
   DatasetRef,
   DatasetVersion,
   LakehouseDataset,
+  RetentionPlan,
 } from '@/lib/api/lakehouse';
 import { EmptyState } from '@/components/shared/empty-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
@@ -46,6 +48,82 @@ function formatBytes(n: number): string {
   if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`;
   if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)} KB`;
   return `${n} B`;
+}
+
+
+/**
+ * 保留策略只读预览（P3「保留策略展示」）：retention/plan dry-run 结果
+ * （候选/保护计数）。execute 是 prune 动作 —— 归 C 线闭环与 F 线治理面，
+ * 本面板不提供（与 ops GC 面同一只读纪律）。
+ */
+function RetentionPreview({
+  datasetId,
+  sessionId,
+  ownerToken,
+}: {
+  datasetId: string;
+  sessionId: string;
+  ownerToken?: string | null;
+}) {
+  const [plan, setPlan] = useState<RetentionPlan | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const p = await lakehouseApi.planRetention(
+        datasetId,
+        { session_id: sessionId, max_versions: 64, min_age_hours: 72 },
+        { ownerToken },
+      );
+      setPlan(p);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'retention 计划获取失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [datasetId, sessionId, ownerToken]);
+
+  return (
+    <div className="rounded-md border border-edge-subtle bg-surface-overlay px-panel py-2">
+      <STitle title="保留策略（dry-run）" sub="max_versions=64 · min_age=72h；执行归 C/F 线" />
+      <button
+        type="button"
+        onClick={() => void run()}
+        disabled={loading}
+        data-testid="lakehouse-retention-plan"
+        className="w-full rounded-sm bg-surface-sunken px-2 py-1 text-caption text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-40"
+      >
+        {loading ? '生成中…' : '查看保留策略候选'}
+      </button>
+      {error && (
+        <InlineNotice variant="warning" className="mt-1.5">
+          {error}
+        </InlineNotice>
+      )}
+      {plan && (
+        <div className="mt-1.5 space-y-0.5 text-micro text-ink-secondary" data-testid="lakehouse-retention-view">
+          <div className="flex justify-between gap-2">
+            <span className="text-ink-muted">prune 候选</span>
+            <span className="font-mono text-ink">{plan.candidate_count}</span>
+          </div>
+          <div className="flex justify-between gap-2">
+            <span className="text-ink-muted">tag/branch 保护</span>
+            <span className="font-mono text-ink">{plan.protected_by_refs}</span>
+          </div>
+          <div className="flex justify-between gap-2">
+            <span className="text-ink-muted">时间窗保护</span>
+            <span className="font-mono text-ink">{plan.protected_by_window}</span>
+          </div>
+          <p className="text-micro text-ink-muted">
+            token：<span className="font-mono">{plan.token.slice(0, 12)}…</span>（execute 重验；漂移 → 409）
+          </p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -145,6 +223,9 @@ export function DatasetsPanel({ ownerType, sessionId, ownerToken }: DatasetsPane
                 ))}
               </ol>
             )}
+
+            {/* 保留策略只读 dry-run（execute 归 C/F 线 —— P8 同款只读纪律） */}
+            <RetentionPreview datasetId={selectedId} sessionId={sessionId} ownerToken={ownerToken} />
           </div>
         )}
       </div>

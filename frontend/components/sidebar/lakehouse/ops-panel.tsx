@@ -50,6 +50,9 @@ export function OpsPanel({ sessionId, ownerToken, lineageTarget, onTargetConsume
     seq: 0,
   });
 
+  // 卸载中止在途检视（ref 是稳定可变数据引用，读 .current 是刻意的）。
+  useEffect(() => () => reqRef.current?.controller?.abort(), []);
+
   // 目录动线带进来的对象：自动加载血缘。
   useEffect(() => {
     if (lineageTarget) {

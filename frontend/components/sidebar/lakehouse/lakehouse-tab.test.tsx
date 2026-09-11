@@ -9,6 +9,7 @@ import {
   makeCatalogPage,
   makeDatasetDetail,
   makeObjectRead,
+  makeRetentionPlan,
 } from '@/test/lakehouse/fixtures';
 
 /**
@@ -34,6 +35,15 @@ const lakehouseApi = vi.hoisted(() => ({
   searchCatalogStac: vi.fn(),
   planGc: vi.fn(),
   getObjectLineage: vi.fn(),
+  planRetention: vi.fn(),
+  scanVector: vi.fn(),
+  readCubeWindow: vi.fn(),
+  readLabeledWindow: vi.fn(),
+  reviseCube: vi.fn(),
+  buildRsCube: vi.fn(),
+  publish: vi.fn(),
+  revoke: vi.fn(),
+  scrubObject: vi.fn(),
 }));
 vi.mock('@/lib/api/lakehouse', () => ({
   lakehouseApi,
@@ -189,6 +199,7 @@ describe('数据集（datasets）', () => {
       count: 1,
     });
     lakehouseApi.getDataset.mockResolvedValue(makeDatasetDetail());
+    lakehouseApi.planRetention.mockResolvedValue(makeRetentionPlan());
     lakehouseApi.listDatasetVersions.mockResolvedValue({
       success: true,
       versions: [{ ...makeDatasetDetail().refs[0], version_id: 'v1' }] as never,
@@ -202,6 +213,14 @@ describe('数据集（datasets）', () => {
     await waitFor(() => expect(screen.getByTestId('lakehouse-dataset-detail')).toBeInTheDocument());
     expect(lakehouseApi.getDataset).toHaveBeenCalledWith(DATASET_ID, SESSION_ID, expect.anything());
     expect(screen.getByText('分支与标签')).toBeInTheDocument();
+    // P3 保留策略展示（只读 dry-run）。
+    fireEvent.click(screen.getByTestId('lakehouse-retention-plan'));
+    await waitFor(() => expect(screen.getByTestId('lakehouse-retention-view')).toBeInTheDocument());
+    expect(lakehouseApi.planRetention).toHaveBeenCalledWith(
+      DATASET_ID,
+      expect.objectContaining({ session_id: SESSION_ID }),
+      expect.anything(),
+    );
   });
 });
 

@@ -47,6 +47,8 @@ export function QueryPane({ sessionId, ownerToken, objectIdHint, onHintConsumed 
   const { history, favorites, record, toggleFavorite, isFavorite } = useLakehouseHistory();
 
   const reqRef = useRef<{ controller: AbortController | null }>({ controller: null });
+  // 卸载中止在途查询（tab 切换即卸载 —— ContextPanel 语义）。
+  useEffect(() => () => reqRef.current?.controller?.abort(), []);
 
   // 目录动线：object_id → manifest payload.ref 解析（解析不出诚实提示）。
   useEffect(() => {

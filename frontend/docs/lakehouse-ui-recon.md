@@ -184,3 +184,25 @@ NavRail 已是 roving tabindex + ArrowUp/Down/Home/End 自动激活；ContextPan
 2. **无快照 diff 端点**：快照对比 = 前端拉两个版本响应做本地 diff（dataset versions 面已够用）。
 3. **gc/retention execute 为 admin/重验语义**：UI 只读展示 + 计划，执行动作归 C/F 线（任务书 §2 P8 已划定）。
 4. **cube 时序上图无瓦片端点**：window 读返回 JSON 数组，前端 canvas 渲染（P7 选型，见 ADR-0141）。
+
+## 4. 交付台账（任务 → 文件 → 测试 → 证据）
+
+| 任务 | 交付文件（新） | 测试 | 证据 |
+|---|---|---|---|
+| §0 复核/契约 | `frontend/docs/lakehouse-ui-recon.md`（本文） | — | 29 端点字段级契约表（S1 实测）|
+| P1 typed client | `lib/api/lakehouse.ts` | `lib/api/lakehouse.test.ts`（43 用例：每端点正常+错误+传输语义） | scope 跑全绿 |
+| P1 fixtures | `test/lakehouse/fixtures.ts` | 被全部 lakehouse 测试消费 | 正常/空/错误三态 × 29 端点 |
+| P2 rail tab | `lib/store/hud-types.ts`(+1 词表)、`components/layout/nav-rail.tsx`(+1 行)、`lib/store/slices/workbenchSlice.ts`(explore/analyze 词表 +1)、`components/layout/context-panel.tsx`(+meta 行 +渲染分支) | `components/layout/nav-rail.test.tsx`（更新 explore 词表期望） | typecheck 全绿；既有 store/layout 测试全绿 |
+| P2 tab 壳 | `components/sidebar/lakehouse/lakehouse-tab.tsx`（6 子页签 roving tabindex） | `lakehouse-tab.test.tsx`（tablist WAI-APG/目录三态/动线/分页） | 13 用例 |
+| P3 目录 | `use-lakehouse-catalog.ts`、`catalog-toolbar.tsx`、`catalog-item-card.tsx`、`object-detail-panel.tsx` | tab 测试覆盖（三态/动线/分页/manifest 拉取） | `total` 字符串下界诚实呈现 |
+| P3 datasets | `use-lakehouse-datasets.ts`、`datasets-panel.tsx` | tab 测试（project 域诚实空态、清单→详情→版本历史） | — |
+| P4 查询 | `query-forms.tsx`、`query-pane.tsx`、`query-results.tsx`、`lib/hooks/use-lakehouse-history.ts` | `query-pane.test.tsx`（主链/本地校验/上图/历史）、`raster-pipeline.test.ts`（buildRequest 校验） | window/labeled 全空选择本地 422 等价拒绝 |
+| P4 结果/上图 | `lib/map-kit/raster-canvas.ts` | `raster-pipeline.test.ts`（统计/掩膜/色带/像素） | HeatmapRasterSource 通道挂层断言 |
+| P5 STAC | `stac-explorer.tsx` | `panels.test.tsx`（collection/条目展开/assets/skipped/links 分页/几何上图） | — |
+| P6 版本 | `version-workbench.tsx` | `panels.test.tsx`（publish 确认+幂等报告、403 持久报告、tombstone、diff 双栏高亮+双屏） | ConfirmDialog 复用 |
+| P7 播放器 | `lib/map-kit/raster-timeline.ts`、`timeline-player.tsx` | `raster-timeline.perf.test.ts`（5 用例：绝对预算门控/丢帧策略/LRU/懒加载/跳步去重）、`timeline-player.test.tsx`（reduced-motion/键盘/colorbar） | LAKEHOUSE_PERF_DEDICATED=1 专用跑取证（S2 台账） |
+| P8 运维 | `ops-panel.tsx` | `panels.test.tsx`（检视/血缘/scrub 状态/GC 只读纪律——有 plan 无 execute/403 警告） | 执行动作不在本线 |
+| P9 视觉 | `test/visual/capture.mjs`（+2 surfaces +fixtures +clickSubTab） | Playwright 专用跑 | light/dark × 4 viewport × lakehouse-catalog/datasets |
+| 契约文档 | ADR-0141 `docs/adr/0141-lakehouse-cube-explorer-ui.md`、`CHANGELOG.md` Unreleased 条目 | — | — |
+
+**里程碑取证**：P3 后全量 307 文件/2918 测试/lines 79.16%；P6 后全量 311 文件/2952 测试/lines 78.55%（branches 68.51 / functions 78.05 / statements 81.42，门禁 75/60/70/75 全过）。typecheck 双 tsconfig 0 error；`pnpm lint --max-warnings 0` 绿。后端零改动：`git diff origin/master -- app/ migrations/` 为空。
