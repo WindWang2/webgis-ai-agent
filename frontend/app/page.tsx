@@ -20,6 +20,8 @@ import { hasWorkspaceContent } from '@/lib/utils/workspace-content';
 import { mapInsetLeft, mapChromeLeft } from '@/lib/utils/workspace-inset';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import { setLayerDataSession } from '@/lib/store/layer-data';
+import { useRegisterCommands } from '@/lib/commands/registry';
+import { CommandPaletteRoot } from '@/components/command/command-palette-root';
 
 // New layout components
 import TopBar from '@/components/layout/top-bar';
@@ -235,6 +237,32 @@ export default function Home() {
     startFreshSession();
   }, [startFreshSession]);
 
+  // ADR-0147：会话级命令贡献 —— 依赖本组件持有的会话句柄，按框架约定
+  // 动态注册（新会话走 #553 确认守卫；故事视图新开 tab 不打断当前工作区）。
+  useRegisterCommands(
+    [
+      {
+        id: 'session.new',
+        title: '新建会话',
+        group: '会话',
+        keywords: 'new session xinhua hua',
+        run: () => handleNewSession(),
+      },
+      {
+        id: 'session.story',
+        title: '在故事视图打开当前会话',
+        group: '会话',
+        keywords: 'story gushi narrative playback',
+        when: () => Boolean(sessionIdRef.current),
+        run: () => {
+          const sid = sessionIdRef.current;
+          if (sid) window.open(`/story?session_id=${encodeURIComponent(sid)}`, '_blank');
+        },
+      },
+    ],
+    [handleNewSession],
+  );
+
   const handleDeleteSession = useCallback(
     async (sid: string) => {
       try {
@@ -441,6 +469,9 @@ export default function Home() {
 
       {/* Tweaks Panel Wrapper */}
       <TweaksPanel />
+
+      {/* ADR-0147：命令面板（Ctrl+K）/ 快捷键总览（?）挂载根 */}
+      <CommandPaletteRoot />
     </div>
   );
 }
