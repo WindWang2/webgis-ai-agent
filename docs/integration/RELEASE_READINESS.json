@@ -34,7 +34,7 @@
    "status": "pass"
   }
  },
- "git_commit_generation_time": "6a1e3d9608147511b03949eb62f97806a761d1d1",
+ "git_commit_generation_time": "6ce1b962aaba6d1fc3ba4b4c6c7f6227791cfdc1",
  "known_gaps": [
   {
    "detail": "存量 ADR 0077 撞号（watermark 下 known limitation）: ['docs/adr/0077-multi-pod-topology-turn-ownership.md', 'docs/adr/0077-wrap-vendored-pi.md']",

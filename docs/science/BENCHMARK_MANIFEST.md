@@ -9,7 +9,7 @@
 > （ResourceScaleMismatch / RasterResourceGuard），benchmark 结构门消费
 > 同一批声明。空字段 = 未声明（不构成承诺）。
 
-统计：111/222 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
+统计：119/230 算法进入 heavy 清单（cpu/memory=high 或声明了资源/变体）。
 
 | 算法 | 复杂度 | 精度 | 资源包络 | 变体(窗口) | 取消 | 容差 | 成本 cpu/mem | 执行策略 |
 |---|---|---|---|---|---|---|---|---|
@@ -38,6 +38,14 @@
 | `interpolation.trend_surface` | O(n·d²)（单位盒缩放 OLS，d=多项式项数） | exact | 64B/feat | — | none | rtol=1e-09,atol=1e-12 | low/low | INLINE |
 | `interpolation.universal_kriging` | OLS 趋势 O(n·d²) + 残差 OK（同 kriging 窗口） | exact | 24B/feat pairs≤200000 feat≤500000 | numpy_kriging_with_trend(numpy,[12,500000]) | chunk_boundary | rtol=1e-06,atol=1e-09 | high/high | CELERY |
 | `interpolation.variogram_selection` | 6 家族 × 有界拟合 + AICc 排名（样本 ≤2000） | — | pairs≤200000 feat≤2000 | — | chunk_boundary | rtol=1e-09,atol=0 | high/medium | INLINE |
+| `model.inference.change_detection` | — | — | 0B/feat feat≤65536 | — | chunk_boundary | — | high/high | ASYNC |
+| `model.inference.embedding` | — | — | 0B/feat feat≤65536 | — | chunk_boundary | — | medium/medium | ASYNC |
+| `model.inference.instance_segmentation` | — | — | 0B/feat feat≤65536 | — | chunk_boundary | — | high/high | ASYNC |
+| `model.inference.object_detection` | — | — | 0B/feat feat≤65536 | — | chunk_boundary | — | high/high | ASYNC |
+| `model.inference.semantic_segmentation` | — | — | 0B/feat feat≤65536 | — | chunk_boundary | — | high/high | ASYNC |
+| `model.inference.super_resolution` | — | — | 0B/feat feat≤65536 | — | chunk_boundary | — | high/high | ASYNC |
+| `model.inference.temporal_classification` | — | — | 0B/feat feat≤1 | — | chunk_boundary | — | medium/medium | ASYNC |
+| `model.inference.temporal_forecast` | — | — | 0B/feat feat≤1 | — | chunk_boundary | — | medium/medium | ASYNC |
 | `network.accessibility` | — | — | — | — | — | — | high/medium | ASYNC |
 | `network.centrality` | — | — | — | exact_brandes(networkx,[,2000]);sampled_brandes(networkx,[2001,∞]) | — | — | high/high | ASYNC |
 | `network.closest_facility` | — | — | — | — | — | — | high/medium | ASYNC |

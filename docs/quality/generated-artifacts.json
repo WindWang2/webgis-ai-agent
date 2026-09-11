@@ -1,7 +1,7 @@
 {
  "artifacts": {
   "docs/integration/RELEASE_READINESS.json": {
-   "content_fingerprint": "a00bfb02106cec7116a372dea03028bfcf0a16937ac315532acd3ce2386b0e31",
+   "content_fingerprint": "c461e8dbe886c74db79ccc346c6ec4ff426959ab549fe2fbef3b7e487bfbf73c",
    "generator": "scripts/gen_release_readiness.py",
    "generator_version": 1,
    "input_fingerprint": "24ffc34e37e5123154f899761abf085fc61833a4801b53da0b4b4ae222213fd7",
@@ -11,7 +11,7 @@
    "scope": "global"
   },
   "docs/integration/RELEASE_READINESS.md": {
-   "content_fingerprint": "06bc82e55b380c78513b9b19af77b9452c64624463d35c8f315661367b9a39ef",
+   "content_fingerprint": "a08cb13447b48e9007dad837548737ba02e414d9514f4988a961b6a39d262aa4",
    "generator": "scripts/gen_release_readiness.py",
    "generator_version": 1,
    "input_fingerprint": "24ffc34e37e5123154f899761abf085fc61833a4801b53da0b4b4ae222213fd7",
@@ -42,10 +42,10 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_MANIFEST.md": {
-   "content_fingerprint": "76cd55cf7bd63f247f2e57b3e48e6b29f14c8102cf75178e7137cb94c359e5e1",
+   "content_fingerprint": "87b1df98027b277951f7f4b216acdd33969ed6adbd83689556ffb2e3cf34d7cb",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "91cb7d54c31b24bd074900d54815b26e9f100d199167cde5f4b8a553eed3036e",
+   "input_fingerprint": "ad93953a49b08b362a805c24fbf60a20f6d8cc011feede0a18a1eb3705bce8ed",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -60,7 +60,7 @@
    "content_fingerprint": "4e48460cbd8ff04659c737fc23ad3a1c8d9a85e47c199bbabf75268a067e549d",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "18fd8116997deb2a1382f98dead69bc2ff8765db067fac71773ac713a78f35e6",
+   "input_fingerprint": "bafead608b9e03a274eb78efb9f279288d0393e1042b645eb4297418952c88ba",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -93,7 +93,7 @@
    "content_fingerprint": "08ab081bfc6ff341ed0890dd46f25274c1dc19c67bb937384fa39541d2659e8c",
    "generator": "scripts/gen_determinism_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "ba5ee5c6a88049e601d6460cc4a3822ff540d3a950ac0befa456aa9def050cef",
+   "input_fingerprint": "e2fdd5affe74975d6022151ab441ae48e27924c9c0dc9bc54060d88e94c0bdd6",
    "inputs": [
     "app/lib/gis/algorithms"
    ],
@@ -132,10 +132,10 @@
    "scope": "global"
   },
   "docs/quality/quality-manifest.json": {
-   "content_fingerprint": "217679d858d8adf2cbdf33f5c9e31b13a3030ec722b0e27101142d85f023c87b",
+   "content_fingerprint": "42765f2d5ea429d17c48132fb651ab34f5b390a19ae3eaeefa4059e7f51b7caf",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "91cb7d54c31b24bd074900d54815b26e9f100d199167cde5f4b8a553eed3036e",
+   "input_fingerprint": "ad93953a49b08b362a805c24fbf60a20f6d8cc011feede0a18a1eb3705bce8ed",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -150,7 +150,7 @@
    "content_fingerprint": "00bfa87411f2f1efa7896af2dbc1add3fb6b8f420e6f613d8d4625d40ea5a11a",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "18fd8116997deb2a1382f98dead69bc2ff8765db067fac71773ac713a78f35e6",
+   "input_fingerprint": "bafead608b9e03a274eb78efb9f279288d0393e1042b645eb4297418952c88ba",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -159,10 +159,10 @@
    "scope": "global"
   },
   "docs/science/BENCHMARK_MANIFEST.md": {
-   "content_fingerprint": "001a63840eceaac542e9cb89261379e4924c74ef3520a169a5ffa1ccdb6064c0",
+   "content_fingerprint": "c4b07abbbc0057f4b8cbad48a3583c08cd39bf1baf693fe77bccd32b96163c30",
    "generator": "scripts/gen_science_benchmark_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "421a9553ec6ebf681076d62d1b107ef40d0b0829f89a945135ed292642285f12",
+   "input_fingerprint": "34e4b11fd20d9df5b1da57187b440c4c3164588be423502749e30b0f2a24597c",
    "inputs": [
     "app/lib/gis/algorithm_registry.py",
     "app/lib/gis/algorithms"

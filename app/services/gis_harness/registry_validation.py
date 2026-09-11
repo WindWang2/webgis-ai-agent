@@ -71,6 +71,19 @@ def validate_gis_library(
         )
     )
 
+    # ── V8（ADR-0136）：Unified Capability Graph 机器闸 ──────────────
+    #   图级 dangling/duplicate/词表违规（model→capability implements、
+    #   algorithm exposed_by 等跨 registry 边的完整性）。error 级 fatal；
+    #   warning 级留痕（随治理收敛为 fatal）。
+    try:
+        from app.services.gis_harness.capability_graph import validate_graph
+
+        for issue in validate_graph():
+            prefix = f"capability_graph[{issue.severity}]: "
+            issues.append(f"{prefix}{issue.code}: {issue.detail}")
+    except Exception as exc:  # noqa: BLE001 — 图构建失败按违规披露
+        issues.append(f"capability_graph: validation unavailable: {exc}")
+
     # ── V4：Methodology Registry 引用完整性（Epic workflow-v4）─────────
     #   方法族/候选方法的 capability/algorithm/artifact/task 引用全部
     #   对账单一事实源；悬空 fatal（与 ontology 同级）。

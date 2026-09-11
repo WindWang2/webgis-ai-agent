@@ -5,7 +5,7 @@
 > 各域包 `PARAMETER_CONTRACTS`（参数契约）。
 > 再生成：`python scripts/gen_science_catalog.py`。
 
-统计：145 能力 · 222 算法 · 122 参数契约。
+统计：153 能力 · 230 算法 · 122 参数契约。
 
 ## `accessibility` — 网络可达性
 
@@ -626,6 +626,83 @@ Agent 自省与扩展面：工具清单查询、子代理委派、技能脚本�
 - **`remote.mnf`** 最小噪声分数变换（MNF）（`native`·成熟度 已验证，契约: `mnf_analysis`，出处: `green1988`）
   - 假设：噪声协方差由水平/垂直一阶差分估计（(C_h+C_v)/4，差分加倍校正披露）；白化空间噪声方差=1，SNR_i = λ_i − 1（λ 为白化 PCA 特征值 ddof=1）；公共有效掩膜：任一波段无效 → 整行剔除（非 pairwise-complete）
   - 局限：无流式实现：n_bands·H·W ≤ 16M 像元，超限先拒绝；常量/共线波段使噪声协方差奇异 → DegenerateData（诚实拒绝）；分量/载荷代数符号依 LAPACK 约定（同一构建内稳定）
+
+## `model_change_detection` — 模型变化检测
+
+双时相（光学/光学、SAR/光学融合）模型变化检测：输出变化栅格/概率面。
+
+- **`model.inference.change_detection`** 模型变化检测（`native`·成熟度 已验证）
+  - 假设：双时相对齐（光学/光学、SAR/光学融合族）
+  - 局限：跨传感器对的辐射归一化由 preprocess 声明承载
+  - 资源包络：0B/要素，要素硬上限 65536
+  - 取消：chunk_boundary
+
+## `model_embedding` — 模型特征嵌入
+
+影像嵌入提取（相似性检索/下游统计的输入）。
+
+- **`model.inference.embedding`** 模型特征嵌入（`native`·成熟度 已验证）
+  - 假设：chip 级嵌入提取（相似性检索输入）
+  - 资源包络：0B/要素，要素硬上限 65536
+  - 取消：chunk_boundary
+
+## `model_image_segmentation` — 模型影像分割
+
+以深度学习模型对遥感影像做语义/可提示分割（GeoAI 推理路径，区别于 k-means 统计分割）：候选模型按 task_type/bands/分辨率兼容性筛选，输出类别/置信度栅格。
+
+- **`model.inference.semantic_segmentation`** 模型语义分割（`native`·成熟度 已验证）
+  - 假设：候选模型按 task_type/bands/分辨率兼容性筛选（ModelOps registry）；概率输出按类聚合，argmax 出类别栅格（置信度同帧披露）
+  - 局限：模型可用性受 owner scope 与 provider 运行时约束；GPU 资源由 ModelOps VRAM ledger 调度（无 GPU 时降 CPU 模型）
+  - 资源包络：0B/要素，要素硬上限 65536
+  - 取消：chunk_boundary
+
+## `model_instance_segmentation` — 模型实例分割
+
+实例级分割：逐实例 id 栅格 + 可选矢量化 GeoJSON（多边形地理参考）。
+
+- **`model.inference.instance_segmentation`** 模型实例分割（`native`·成熟度 已验证）
+  - 假设：逐实例 id 融合（跨 tile first-write-wins）
+  - 局限：矢量化为可选后处理（polygonize_instances）
+  - 资源包络：0B/要素，要素硬上限 65536
+  - 取消：chunk_boundary
+
+## `model_object_detection` — 模型目标检测
+
+深度学习目标检测（建筑物/车辆等）：tile 推理 + NMS 融合，输出检测框 GeoJSON（全局像素坐标 → 地理参考）。
+
+- **`model.inference.object_detection`** 模型目标检测（`native`·成熟度 已验证）
+  - 假设：tile 检测 + 类内 NMS 融合（确定性 tie-break）
+  - 局限：边缘 tile 检测框按 pad 偏移校正（全局像素坐标）
+  - 资源包络：0B/要素，要素硬上限 65536
+  - 取消：chunk_boundary
+
+## `model_super_resolution` — 模型超分辨率
+
+逐 chip 上采样重建（stride=chip 无重叠），输出放大栅格。
+
+- **`model.inference.super_resolution`** 模型超分辨率（`native`·成熟度 已验证）
+  - 假设：stride=chip 无重叠平铺（鬼影消除）
+  - 局限：仅支持无重叠 stride 的模型注册
+  - 资源包络：0B/要素，要素硬上限 65536
+  - 取消：chunk_boundary
+
+## `model_temporal_classification` — 模型时序分类
+
+逐时相类别概率（T,K）→ 时序类别序列。
+
+- **`model.inference.temporal_classification`** 模型时序分类（`native`·成熟度 已验证）
+  - 假设：逐时相类别概率（T,K）→ argmax 时序
+  - 资源包络：0B/要素，要素硬上限 1
+  - 取消：chunk_boundary
+
+## `model_temporal_forecast` — 模型时序预测
+
+时序栅格栈的模型化预测（波段=变量的预测栈输出）。
+
+- **`model.inference.temporal_forecast`** 模型时序预测（`native`·成熟度 已验证）
+  - 假设：时序栅格栈（波段=变量）单窗口推理
+  - 资源包络：0B/要素，要素硬上限 1
+  - 取消：chunk_boundary
 
 ## `multi_ring_buffer` — 多环缓冲
 

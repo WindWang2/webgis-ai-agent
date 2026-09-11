@@ -957,6 +957,162 @@
   {
    "backend_variants": 0,
    "capabilities": [
+    "model_change_detection"
+   ],
+   "category": "model_inference",
+   "conformance_tests": [
+    "tests/unit/modelops/test_backends_and_packages.py",
+    "tests/unit/modelops/test_compatibility.py"
+   ],
+   "deterministic": true,
+   "id": "model.inference.change_detection",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": [
+    "raster_uncertainty"
+   ]
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "model_embedding"
+   ],
+   "category": "model_inference",
+   "conformance_tests": [
+    "tests/unit/modelops/test_backends_and_packages.py",
+    "tests/unit/modelops/test_compatibility.py"
+   ],
+   "deterministic": true,
+   "id": "model.inference.embedding",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "model_instance_segmentation"
+   ],
+   "category": "model_inference",
+   "conformance_tests": [
+    "tests/unit/modelops/test_backends_and_packages.py",
+    "tests/unit/modelops/test_compatibility.py"
+   ],
+   "deterministic": true,
+   "id": "model.inference.instance_segmentation",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "model_object_detection"
+   ],
+   "category": "model_inference",
+   "conformance_tests": [
+    "tests/unit/modelops/test_backends_and_packages.py",
+    "tests/unit/modelops/test_compatibility.py"
+   ],
+   "deterministic": true,
+   "id": "model.inference.object_detection",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "model_image_segmentation"
+   ],
+   "category": "model_inference",
+   "conformance_tests": [
+    "tests/unit/modelops/test_backends_and_packages.py",
+    "tests/unit/modelops/test_compatibility.py"
+   ],
+   "deterministic": true,
+   "id": "model.inference.semantic_segmentation",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": [
+    "raster_uncertainty"
+   ]
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "model_super_resolution"
+   ],
+   "category": "model_inference",
+   "conformance_tests": [
+    "tests/unit/modelops/test_backends_and_packages.py",
+    "tests/unit/modelops/test_compatibility.py"
+   ],
+   "deterministic": true,
+   "id": "model.inference.super_resolution",
+   "memory_cost": "high",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "model_temporal_classification"
+   ],
+   "category": "model_inference",
+   "conformance_tests": [
+    "tests/unit/modelops/test_backends_and_packages.py",
+    "tests/unit/modelops/test_compatibility.py"
+   ],
+   "deterministic": true,
+   "id": "model.inference.temporal_classification",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
+    "model_temporal_forecast"
+   ],
+   "category": "model_inference",
+   "conformance_tests": [
+    "tests/unit/modelops/test_backends_and_packages.py",
+    "tests/unit/modelops/test_compatibility.py"
+   ],
+   "deterministic": true,
+   "id": "model.inference.temporal_forecast",
+   "memory_cost": "medium",
+   "random_seed_policy": "deterministic",
+   "runtime_status": "native",
+   "scientific_status": "VALIDATED",
+   "tests": [],
+   "uncertainty_outputs": []
+  },
+  {
+   "backend_variants": 0,
+   "capabilities": [
     "accessibility"
    ],
    "category": "network_analysis",
@@ -6301,6 +6457,102 @@
   {
    "category": "analysis",
    "deterministic": true,
+   "domain": "raster",
+   "id": "model_change_detection",
+   "producer_algorithms": [
+    "model.inference.change_detection"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "model_embedding",
+   "producer_algorithms": [
+    "model.inference.embedding"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "model_image_segmentation",
+   "producer_algorithms": [
+    "model.inference.semantic_segmentation"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "model_instance_segmentation",
+   "producer_algorithms": [
+    "model.inference.instance_segmentation"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "model_object_detection",
+   "producer_algorithms": [
+    "model.inference.object_detection"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "raster",
+   "id": "model_super_resolution",
+   "producer_algorithms": [
+    "model.inference.super_resolution"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "temporal",
+   "id": "model_temporal_classification",
+   "producer_algorithms": [
+    "model.inference.temporal_classification"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
+   "domain": "temporal",
+   "id": "model_temporal_forecast",
+   "producer_algorithms": [
+    "model.inference.temporal_forecast"
+   ],
+   "status": "native",
+   "supports_large_data": true,
+   "tests": []
+  },
+  {
+   "category": "analysis",
+   "deterministic": true,
    "domain": "general",
    "id": "multi_ring_buffer",
    "producer_algorithms": [
@@ -7597,14 +7849,54 @@
   }
  ],
  "counts": {
-  "algorithms": 222,
+  "algorithms": 230,
   "artifact_types": 21,
-  "capabilities": 145,
-  "findings": 9,
+  "capabilities": 153,
+  "findings": 14,
   "recipes": 164,
   "tools": 327
  },
  "findings": [
+  {
+   "code": "ALGO_HEAVY_NO_VARIANTS",
+   "detail": "memory_cost=high but no backend_variants scale windows",
+   "domain": "model",
+   "severity": "medium",
+   "subject": "model.inference.change_detection",
+   "surface": "algorithms"
+  },
+  {
+   "code": "ALGO_HEAVY_NO_VARIANTS",
+   "detail": "memory_cost=high but no backend_variants scale windows",
+   "domain": "model",
+   "severity": "medium",
+   "subject": "model.inference.instance_segmentation",
+   "surface": "algorithms"
+  },
+  {
+   "code": "ALGO_HEAVY_NO_VARIANTS",
+   "detail": "memory_cost=high but no backend_variants scale windows",
+   "domain": "model",
+   "severity": "medium",
+   "subject": "model.inference.object_detection",
+   "surface": "algorithms"
+  },
+  {
+   "code": "ALGO_HEAVY_NO_VARIANTS",
+   "detail": "memory_cost=high but no backend_variants scale windows",
+   "domain": "model",
+   "severity": "medium",
+   "subject": "model.inference.semantic_segmentation",
+   "surface": "algorithms"
+  },
+  {
+   "code": "ALGO_HEAVY_NO_VARIANTS",
+   "detail": "memory_cost=high but no backend_variants scale windows",
+   "domain": "model",
+   "severity": "medium",
+   "subject": "model.inference.super_resolution",
+   "surface": "algorithms"
+  },
   {
    "code": "ALGO_HEAVY_NO_VARIANTS",
    "detail": "memory_cost=high but no backend_variants scale windows",
@@ -7687,7 +7979,7 @@
    {
     "baseline": 0,
     "code": "ALGO_HEAVY_NO_VARIANTS",
-    "current": 1
+    "current": 6
    },
    {
     "baseline": 0,
@@ -7698,7 +7990,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "9d3d7bf333878858ed1f9da53e5f514712fa4421914805834d33bd79f229c78f",
+ "fingerprint": "fb5d8ee4545a8b40471f5828d0f0960dcdfe1fb772d297c19d387065eb665e28",
  "gate": {
   "fields": {
    "capabilities": {
