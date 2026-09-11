@@ -22,6 +22,11 @@ on:
   schedule:
     - cron: '30 2 * * *'
   workflow_dispatch:
+    inputs:
+      pi-real-e2e:
+        description: 'Run Pi bridge real-LLM E2E (needs LLM_API_KEY secret + vendor/pi)'
+        type: boolean
+        default: false
   pull_request:
 
 concurrency:
@@ -248,6 +253,14 @@ jobs:
           echo '=== backend ==='; tail -100 /tmp/backend.log || true
           echo '=== frontend ==='; tail -60 /tmp/frontend.log || true
           echo '=== llm-stub ==='; cat /tmp/llm-stub.log || true
+      - name: Pi bridge real-LLM E2E (manual, key-gated)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.pi-real-e2e }}
+        env:
+          PI_REAL_E2E: '1'
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          git submodule update --init vendor/pi
+          pytest tests/integration/test_pi_real_llm_e2e.py -m heavy --no-cov -q
       - name: Upload failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
