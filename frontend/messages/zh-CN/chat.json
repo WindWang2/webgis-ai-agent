@@ -66,5 +66,10 @@
     "done": "已完成",
     "running": "执行中",
     "detailsAria": "工具调用链详情"
-  }
+  },
+  "welcomeExtended": "你好！我是 GeoAgent。\n\n我感知地图、分析空间、生成洞察——地图上的一切都是我的一部分。\n\n试着告诉我：\n- 分析北京市学校分布密度\n- 成都市人口热力图\n- 计算各区 POI覆盖率",
+  "deepExploreTask": "深度探索 {id}",
+  "searchResult": "搜索结果: {name}",
+  "heatmapAnalysis": "热力图分析",
+  "analysisResult": "分析结果: {tool}"
 }

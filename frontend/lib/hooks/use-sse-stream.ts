@@ -23,6 +23,7 @@ import { IncrementalThinkParser, parseThink } from './incremental-think';
 import { streamExplorerProgress } from '@/lib/api/explorer';
 import { getAccessToken, getRefreshToken } from '@/lib/auth/tokenStore';
 import type { ExplorerStage, ExplorerStatus } from '@/lib/types/explorer';
+import { t } from '@/lib/i18n/t';
 
 
 import { devOnly } from "@/lib/utils/logger";
@@ -337,7 +338,7 @@ export function applyExplorerProgressToStore(
       progress,
       query:
         (typeof context.query === 'string' && context.query) ||
-        `深度探索 ${taskId.slice(0, 8)}`,
+        t('chat.deepExploreTask', { id: taskId.slice(0, 8) }),
       startedAt: Date.now(),
       updatedAt: Date.now(),
     });
@@ -693,10 +694,10 @@ export function useSSEStream(
           const layerId = data.geojson_ref ?? `layer-${Date.now()}`;
           const layerName =
             data.tool === 'search_poi'
-              ? `搜索结果: ${data.name || 'POI'}`
+              ? t('chat.searchResult', { name: data.name ?? 'POI' })
               : data.tool === 'heatmap_data'
-              ? '热力图分析'
-              : `分析结果: ${data.tool}`;
+              ? t('chat.heatmapAnalysis')
+              : t('chat.analysisResult', { tool: data.tool ?? 'unknown' });
           const accentColor = useHudStore.getState().accentColor;
           const legendSpec = data.result?.legend_spec ?? undefined;
           const runtimePatch = data.result?.runtime_patch;

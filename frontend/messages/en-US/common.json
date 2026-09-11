@@ -27,5 +27,6 @@
   "more": "More",
   "optional": "Optional",
   "required": "Required",
-  "default": "Default"
+  "default": "Default",
+  "loadSessionFailed": "Failed to load session: {detail}. History was not restored — you can start a new conversation."
 }

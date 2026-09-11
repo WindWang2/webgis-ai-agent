@@ -66,5 +66,10 @@
     "done": "Completed",
     "running": "Running",
     "detailsAria": "Tool call chain details"
-  }
+  },
+  "welcomeExtended": "Hi! I'm GeoAgent.\n\nI perceive the map, analyze space, and generate insights — everything on the map is part of me.\n\nTry asking:\n- Analyze school density across Beijing\n- Chengdu population heatmap\n- Compute POI coverage by district",
+  "deepExploreTask": "Deep explore {id}",
+  "searchResult": "Search results: {name}",
+  "heatmapAnalysis": "Heatmap analysis",
+  "analysisResult": "Analysis result: {tool}"
 }
