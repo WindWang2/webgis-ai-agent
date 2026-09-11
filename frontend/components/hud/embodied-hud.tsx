@@ -58,6 +58,8 @@ export function EmbodiedHud() {
   const setTheme = useHudStore((s) => s.setTheme);
   const aiStatus = useHudStore((s) => s.aiStatus);
   const is3D = useHudStore((s) => s.is3D);
+  // V7 Phase F：执行详情面板停靠态（响应式 —— dockPanel 切换即重渲染按钮）。
+  const agentRunDocked = useHudStore((s) => (s.dockPlacements?.['agent-run'] ?? 'float') === 'right');
 
   const isDark = theme === 'dark';
 
@@ -196,6 +198,25 @@ export function EmbodiedHud() {
 
         {/* Right Buttons */}
         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          {/* V7 Phase F：执行详情面板开关（停靠右侧区；Agent 执行可观察）。 */}
+          <button
+            type="button"
+            onClick={() => {
+              const placement = useHudStore.getState().dockPlacements['agent-run'] ?? 'float';
+              useHudStore.getState().dockPanel('agent-run', placement === 'right' ? 'float' : 'right');
+            }}
+            aria-label="切换执行详情面板（Agent 意图 / 执行链 / 产物 / 地图效应）"
+            aria-pressed={agentRunDocked}
+            title="执行详情"
+            className={`flex cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors ${
+              agentRunDocked ? 'text-status-accent' : 'text-ink-muted hover:text-status-accent'
+            }`}
+          >
+            <Activity size={12} />
+          </button>
+
+          <span className="text-caption text-ink-disabled">|</span>
+
           {/* Theme Toggle */}
           <button
             type="button"
