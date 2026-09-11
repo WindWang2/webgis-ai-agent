@@ -100,7 +100,9 @@ MERGE_DISK_HARD_CAP_BYTES = 64 * 1024**3
 #: extension worker 单帧输出上限（R1-M5：FRAME_MAX_BYTES 68MiB 留余量）。
 EXTENSION_BATCH_BYTES_CAP = 64 * 1024 * 1024
 MAX_OOM_DOWNSHIFTS = 2
-#: C-2：accumulator 的 finally 可达通道（一次一个 run，引擎串行于线程）。
+#: C-2：accumulator 的 finally 可达通道（#1199：按 run_id 键控 —— 引擎
+#: 信号量允许并发 run，共享单键会让并发 run 的异常路径互相关闭/删除对方
+#: 的 memmap 融合缓冲；_run_guarded 的 finally 以 run_id 统一清理）。
 _RUN_LOCAL: Dict[str, Any] = {}
 #: 单次 run 的 tile 数硬上限（C-1：TileSpec 物化 + 指纹都是有界的）。
 MAX_TILES_PER_RUN = 65536
@@ -216,6 +218,8 @@ class InferenceEngine:
         # 测试路径保持零依赖）。
         self._ledger = vram_ledger
         self._gpu_devices = gpu_devices
+        # #1199/B-13：取消通知通道按 run_id 键控（实例级单键被并发 run 竞写）。
+        self._active_providers: Dict[str, Any] = {}
 
     @property
     def loaded_cache(self) -> LoadedModelCache:
@@ -244,9 +248,11 @@ class InferenceEngine:
                                      cancel_token=cancel_token, progress=progress)
         except InferenceCancelled:
             # R2-M8：取消延迟真实入账 + 协议 cancel 钩子（引擎串行化通知）。
+            # #1199/B-13：provider 通知按 run_id 取（实例级单键会被并发 run 竞写，
+            # 取消通知可能发给别的 run 的 provider）。
             perf.note_latency(cancel=time.perf_counter() - run_started)
             try:
-                provider_ref = getattr(self, "_last_provider", None)
+                provider_ref = self._active_providers.get(run_id)
                 if provider_ref is not None:
                     provider_ref.cancel(None, run_id)  # best-effort 通知
             except Exception:  # noqa: BLE001 — 通知失败不改变取消语义
@@ -254,6 +260,9 @@ class InferenceEngine:
             raise
         finally:
             self._slots.release()
+            # per-run 通道统一清理（provider 通知 + accumulator 兜底句柄）。
+            self._active_providers.pop(run_id, None)
+            _RUN_LOCAL.pop(run_id, None)
 
     # ── 编排 ────────────────────────────────────────────────────────
     def _run_guarded(
@@ -290,7 +299,7 @@ class InferenceEngine:
         )
         descriptor = record.descriptor
         provider = self._providers.get(descriptor.provider_ref)  # R1-C1 门
-        self._last_provider = provider  # R2-M8：取消通知通道
+        self._active_providers[run_id] = provider  # R2-M8：取消通知通道（per-run）
         caps = provider.capabilities()
         task = self._resolve_task(descriptor, request)
 
@@ -653,7 +662,8 @@ class InferenceEngine:
                 )
         except BaseException:
             # C-2：accumulator 的 memmap/临时目录在任何异常路径都释放。
-            seg_acc = _RUN_LOCAL.get("accumulator")
+            # #1199：按本 run 的 run_id 取 —— 并发 run 各自的缓冲互不影响。
+            seg_acc = _RUN_LOCAL.get(run_id)
             if seg_acc is not None:
                 seg_acc.close()
             raise
@@ -769,7 +779,7 @@ class InferenceEngine:
                 num_classes,
                 policy=merge_policy,
             )
-            _RUN_LOCAL["accumulator"] = accumulator
+            _RUN_LOCAL[ctx.run_id] = accumulator  # #1199：per-run 键控
         detections_by_tile: Dict[int, List[Dict[str, Any]]] = {}
         instance_by_tile: List[np.ndarray] = []
         instance_classes_by_tile: List[Dict[int, int]] = []
@@ -923,14 +933,18 @@ class InferenceEngine:
                 confidence_path, request, role="confidence", descriptor=descriptor
             )
             if probs is not None:
-                prob_path = write_raster_output(
-                    output_dir / "probabilities.tif",
-                    arrays=[probs[k] for k in range(probs.shape[0])],
-                    band_names=[f"class_{k}" for k in range(probs.shape[0])],
-                    template=RasterReader.open(str(source_path)),
-                    dtype="float32",
-                    nodata=0.0,
-                )
+                # #1209：template reader 必须显式关闭（open-count 纪律，
+                # reader.py:209）—— 此前泄漏 GDAL dataset + env，Windows 上
+                # 还会阻塞重投影临时文件清理。
+                with RasterReader.open(str(source_path)) as _tpl:
+                    prob_path = write_raster_output(
+                        output_dir / "probabilities.tif",
+                        arrays=[probs[k] for k in range(probs.shape[0])],
+                        band_names=[f"class_{k}" for k in range(probs.shape[0])],
+                        template=_tpl,
+                        dtype="float32",
+                        nodata=0.0,
+                    )
                 outputs["probabilities"] = self._publish_raster(
                     prob_path, request, role="probabilities", descriptor=descriptor
                 )
@@ -964,15 +978,16 @@ class InferenceEngine:
                 tile_plan, instance_by_tile, instance_classes_by_tile,
                 polygonize=request.polygonize_instances,
             )
-            inst_path = write_raster_output(
-                output_dir / "instances.tif",
-                arrays=[merged.instance_ids],
-                band_names=["instance_id"],
-                template=RasterReader.open(str(source_path)),
-                nodata=0.0,
-                dtype="int32",
-                window_origin=roi_origin,
-            )
+            with RasterReader.open(str(source_path)) as _tpl:  # #1209
+                inst_path = write_raster_output(
+                    output_dir / "instances.tif",
+                    arrays=[merged.instance_ids],
+                    band_names=["instance_id"],
+                    template=_tpl,
+                    nodata=0.0,
+                    dtype="int32",
+                    window_origin=roi_origin,
+                )
             outputs["instances"] = self._publish_raster(
                 inst_path, request, role="instances", descriptor=descriptor
             )
@@ -1124,14 +1139,15 @@ class InferenceEngine:
         # （诚实降级，不物化超大画布）。多窗口 GeoJSON 每窗口独立仿射，
         # 无跨窗口伪影。
         if canvas is not None:
-            mask_path = write_raster_output(
-                output_dir / "prompt_mask.tif",
-                arrays=[canvas],
-                band_names=["object"],
-                template=RasterReader.open(str(source_path)),
-                nodata=255.0,
-                dtype="uint8",
-            )
+            with RasterReader.open(str(source_path)) as _tpl:  # #1209
+                mask_path = write_raster_output(
+                    output_dir / "prompt_mask.tif",
+                    arrays=[canvas],
+                    band_names=["object"],
+                    template=_tpl,
+                    nodata=255.0,
+                    dtype="uint8",
+                )
             outputs["prompt_mask"] = self._publish_raster(
                 mask_path, request, role="prompt_mask", descriptor=descriptor
             )
@@ -1195,14 +1211,15 @@ class InferenceEngine:
             output.validate_for(batch)
             forecast = output.class_probabilities[0]  # (C,H,W)
         # 输出：C 波段预测栈（temporal_stack 语义：波段=变量）。
-        out_path = write_raster_output(
-            output_dir / "temporal_forecast.tif",
-            arrays=[forecast[i] for i in range(forecast.shape[0])],
-            band_names=[f"band_{i + 1}" for i in range(forecast.shape[0])],
-            template=RasterReader.open(str(source_path)),
-            dtype="float32",
-            nodata=-9999.0,  # 有限 nodata（NaN 不可指纹化，publish 会拒）
-        )
+        with RasterReader.open(str(source_path)) as _tpl:  # #1209
+            out_path = write_raster_output(
+                output_dir / "temporal_forecast.tif",
+                arrays=[forecast[i] for i in range(forecast.shape[0])],
+                band_names=[f"band_{i + 1}" for i in range(forecast.shape[0])],
+                template=_tpl,
+                dtype="float32",
+                nodata=-9999.0,  # 有限 nodata（NaN 不可指纹化，publish 会拒）
+            )
         perf.record_batch(1)
         return {
             "temporal_forecast": self._publish_raster(
@@ -1242,7 +1259,7 @@ class InferenceEngine:
         full_h, full_w = tile_plan.raster_height * scale, tile_plan.raster_width * scale
         channels = descriptor.input_bands
         accumulator = _StackAccumulator(full_h, full_w, channels)
-        _RUN_LOCAL["accumulator"] = accumulator
+        _RUN_LOCAL[ctx.run_id] = accumulator  # #1199：per-run 键控
         oom_downshifts = 0
         current_batch = max(1, batch)
         try:
@@ -1298,7 +1315,7 @@ class InferenceEngine:
             accumulator.close()
             raise
         finally:
-            _RUN_LOCAL.pop("accumulator", None)
+            _RUN_LOCAL.pop(ctx.run_id, None)  # #1199：per-run 清理
         perf.note_merge(int(canvas.size))
         # 输出 georef：同一地理范围，分辨率 = 源 / scale（R1-M2 同源纪律）。
         sr_path = output_dir / "superres.tif"

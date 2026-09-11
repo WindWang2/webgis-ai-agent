@@ -169,7 +169,10 @@ class ReuseStore:
         """LRU+TTL 驱逐（锁内调用；全局视角——超界先删最旧条目）。"""
         now = self._clock()
         candidates: list = []
-        for entry_path in self._root.glob("*/*/entry.json"):
+        # 条目布局 root/<scope>/<key[:2]>/<key>/entry.json（_entry_dir）——
+        # 从 root 起是三层目录；此前误用两层 glob 导致永远匹配不到任何
+        # entry.json，TTL/max_entries/max_bytes 全部失效（#1198）。
+        for entry_path in self._root.glob("*/*/*/entry.json"):
             try:
                 entry = json.loads(entry_path.read_text(encoding="utf-8"))
             except (ValueError, OSError):

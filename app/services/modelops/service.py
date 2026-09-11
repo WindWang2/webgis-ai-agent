@@ -581,11 +581,10 @@ class ModelOpsService:
                 nodata_ratio = float((mask == 0).sum()) / float(max(1, mask.size))
             except Exception:  # noqa: BLE001 — 采样失败 = 未知
                 nodata_ratio = 0.0
-        m_per_px = 0.0
-        if meta.transform:
-            px, py = abs(float(meta.transform[0])), abs(float(meta.transform[4]))
-            if px and py:
-                m_per_px = round((px + py) / 2.0, 6)
+        # #1208：复用引擎的米/像素口径（R1-C3）—— 地理 CRS（度）返回 0=未知，
+        # 不参与分辨率判定。此前独立实现把度/像素当米，check_compatibility 与
+        # run_inference 对同一输入会给出互相矛盾的分辨率结论。
+        m_per_px = InferenceEngine._meters_per_pixel(meta)
         return InputProfile(
             width=meta.width,
             height=meta.height,

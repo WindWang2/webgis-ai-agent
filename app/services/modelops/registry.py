@@ -165,6 +165,10 @@ class ModelRegistryStore:
         self._records: Dict[Tuple[str, str, str], ModelRecord] = {}
         self._seq = 0
         self._loaded = False
+        # #1210：load() 时的 index 指纹快照 —— 多副本部署下其它进程 register
+        # 会重写 index.json；指纹变化即触发全量重扫（修 _loaded 短路导致的
+        # 内存注册表永不刷新 / seq 重复分配 / 碰撞漏检）。
+        self._index_fp: Optional[tuple] = None
 
     # ── 持久化 ──────────────────────────────────────────────────────
     def _scope_dir(self, owner_scope: Dict[str, str]) -> Path:
@@ -204,12 +208,35 @@ class ModelRegistryStore:
         tmp = path.with_suffix(f".json.tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
         os.replace(tmp, path)
+        # #1210：自己写的 index 也刷新快照（避免下一次 load 触发无谓重扫）。
+        self._index_fp = self._index_fingerprint()
+
+    def _index_fingerprint(self) -> Optional[tuple]:
+        """index.json 的廉价指纹（条目数 + max seq + mtime_ns）。"""
+        idx = self._index_path()
+        try:
+            data = json.loads(idx.read_text(encoding="utf-8"))
+            entries = data.get("entries", {})
+            max_seq = max(
+                (int(e.get("seq", 0)) for e in entries.values() if isinstance(e, dict)),
+                default=0,
+            )
+            return (len(entries), max_seq, idx.stat().st_mtime_ns)
+        except (OSError, ValueError, TypeError):
+            return None
 
     def load(self) -> None:
-        """从磁盘加载全部记录（幂等；损坏文档 → typed parity 错误）。"""
+        """从磁盘加载全部记录（幂等；损坏文档 → typed parity 错误）。
+
+        #1210：幂等短路前先比对 index 指纹 —— 其它进程 register 后
+        index.json 变化，本副本自动重扫（单进程路径指纹不变，零额外成本）。
+        """
         with self._lock:
             if self._loaded:
-                return
+                if self._index_fingerprint() == self._index_fp:
+                    return
+                self._records.clear()
+                self._seq = 0
             root = self._settings.registry_dir / "registry"
             if root.exists():
                 for path in sorted(root.glob("*/*.json")):
@@ -238,6 +265,7 @@ class ModelRegistryStore:
                     self._records[key] = record
                     self._seq = max(self._seq, record.seq)
             self._loaded = True
+            self._index_fp = self._index_fingerprint()
 
     def validate_parity(self) -> List[str]:
         """index vs documents 一致性（registry parity/health）。"""

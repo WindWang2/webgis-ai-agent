@@ -143,10 +143,13 @@ def merge_detections(
     """tile-local → 全局坐标 + 类内 NMS（边缘重复消除；确定性 tie-break）。"""
     mapped: List[DetectionRecord] = []
     for tile, dets in zip(plan.tiles, outputs):
-        # provider 的 box 是 **chip（context/read window）像素坐标**；
-        # 全局原点 = read_window 原点（R1-C4：core 原点在含 context 的
-        # chip 里整体偏移 half_ctx，用 core 原点会系统性错位）。
-        origin_row, origin_col = tile.read_window[0], tile.read_window[1]
+        # provider 的 box 是 **chip（含 pad 的 context 窗）像素坐标**。
+        # chip 数组原点 = read_window 原点 - pad（planning.py：边缘 tile 的
+        # pad_left/top>0，np.pad 把缺失 context 补在数组前部）。
+        # #1207：此前漏减 pad —— 边缘 tile 检测系统性偏移 halo 像素
+        # （instance 路径 :244-245 一直是含 pad 的正确形式，两处已对齐）。
+        origin_row = tile.read_window[0] - tile.pad[1]
+        origin_col = tile.read_window[1] - tile.pad[0]
         for det in dets or []:
             x, y, bw, bh = det["box"]
             score = float(det.get("score", 0.0))
@@ -261,6 +264,8 @@ def merge_instances(
             global_classes[new_id] = gcls
     if input_nodata is not None:
         canvas[input_nodata] = 0
+    # #1206：polygonize 一律消费 result_arr —— memmap 分支此前在
+    # ``del canvas`` 后仍引用 canvas，polygonize=True 时抛 UnboundLocalError。
     if _mm_dir is not None:
         # 拷出后再 unmap/删目录（Windows：句柄存活时 rmtree 失败；后续
         # polygonize 还要读 result_arr——不能直接 unmap）。
@@ -276,7 +281,7 @@ def merge_instances(
         result_arr = canvas
     result = InstanceMergeResult(instance_ids=result_arr, instance_labels=global_classes)
     if polygonize:
-        result.polygon_geojson = _polygonize(canvas)
+        result.polygon_geojson = _polygonize(result_arr)
     return result
 
 
