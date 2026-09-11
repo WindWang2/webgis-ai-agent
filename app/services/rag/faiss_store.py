@@ -2,7 +2,6 @@
 FAISS Vector Store implementation of VectorStoreProtocol.
 """
 import contextlib
-import fcntl
 import json
 import logging
 import os
@@ -10,6 +9,14 @@ import tempfile
 import threading
 from typing import Any, Dict, Iterator, List, Optional
 import numpy as np
+
+try:  # POSIX：跨进程 flock 可用
+    import fcntl  # type: ignore
+
+    _HAS_FCNTL = True
+except ImportError:  # 非 POSIX（Windows dev）：降级进程内锁（trace_store 同款披露）
+    fcntl = None  # type: ignore[assignment]
+    _HAS_FCNTL = False
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +27,9 @@ _EMBEDDING_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 
 # Thread-local re-entrancy depth for _write_lock (see its docstring).
 _lock_state = threading.local()
+
+# Windows 降级锁（_HAS_FCNTL=False 时 _write_lock 的进程内互斥）。
+_fallback_write_lock = threading.Lock()
 
 INDEX_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
@@ -68,12 +78,20 @@ def _write_lock(index_dir: str) -> Iterator[None]:
     lock_path = os.path.join(index_dir, ".rag-write.lock")
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        if _HAS_FCNTL:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        else:
+            # Windows dev 降级：进程内互斥（单进程部署语义等价；跨进程
+            # 写并发不在该平台的支撑矩阵内，POSIX 生产路径不受影响）。
+            _fallback_write_lock.acquire()
         _lock_state.depth = 1
         yield
     finally:
         _lock_state.depth = 0
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        if _HAS_FCNTL:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        else:
+            _fallback_write_lock.release()
         os.close(fd)
 
 
@@ -348,11 +366,15 @@ class FaissVectorStore:
         """Read+parse metadata.json from disk, no cache."""
         try:
             with open(meta_file, "r", encoding="utf-8") as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-                try:
-                    return json.load(f)
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                if _HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                    try:
+                        return json.load(f)
+                    finally:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                # Windows dev：共享锁缺席，读侧依赖写侧原子替换
+                # （_atomic_write_json 的 os.replace）保证不撕裂。
+                return json.load(f)
         except Exception as e:
             logger.warning(f"[RAG] Failed to load metadata: {e}")
             return {"chunks": []}

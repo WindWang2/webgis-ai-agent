@@ -463,14 +463,20 @@ class Settings(BaseSettings):
             return
         try:
             addr = ipaddress.ip_address(hostname)
-            if addr.is_private or addr.is_loopback or addr.is_link_local:
+            if not addr.is_global or addr.is_private or addr.is_loopback or addr.is_link_local:
+                # is_global 语义与错误消息一致（"Only public IPs"）：覆盖
+                # is_private 词表不包含的保留段（100.64/10 CGNAT、IPv6 ULA、
+                # benchmark/reserved 段）。
                 raise ValueError(
                     f"{field}='{url}' resolves to private/loopback IP {addr}. "
                     f"Only public IPs are allowed."
                 )
         except ValueError as exc:
-            # 不是纯 IP 地址（可能是域名如 api.openai.com）— 尝试 DNS 解析
-            if "is not allowed" in str(exc):
+            # 私有/回环 IP 字面量的拒绝必须重新抛出（#1214：原哨兵
+            # "is not allowed" 与实际消息 "Only public IPs are allowed."
+            # 不匹配，第一层防线被吞，仅靠后续 regex/DNS 层兜底）。
+            # ip_address() 对非 IP 字符串（域名）抛的 ValueError 则继续走域名分支。
+            if "Only public IPs are allowed" in str(exc):
                 raise
             # 域名：做基本黑名单检查
             _BLOCKED_DOMAIN_PATTERNS = [
@@ -504,18 +510,30 @@ class Settings(BaseSettings):
                         continue
                     if resolved_ip.is_global:
                         continue
-                    if (
-                        resolved_ip.is_private
-                        or resolved_ip.is_loopback
-                        or resolved_ip.is_link_local
-                        or resolved_ip.is_multicast
-                    ):
-                        if hostname in {"nominatim.openstreetmap.org", "tile.openstreetmap.org", "data.beijing.gov.cn", "data.sh.gov.cn", "gddata.gd.gov.cn"}:
-                            continue
-                        raise ValueError(
-                            f"{field}='{url}' hostname '{hostname}' resolves to "
-                            f"private/reserved IP {resolved_ip}. Blocked (SSRF)."
-                        )
+                    # 非 global 解析结果（private/loopback/link-local/multicast/
+                    # CGNAT/保留段）：除非在 fake-IP DNS 豁免清单内，否则拒绝。
+                    # 豁免清单（#1204）：Clash/VpnKit 类解析器把所有外部域名
+                    # 映射进 198.18.0.0/15 保留段，构造期硬失败会让应用/质量
+                    # 闸脚本在合法开发环境无法启动。清单覆盖 Settings 默认值
+                    # 与 tests/conftest 基线值所用的 OSM 域（默认
+                    # overpass.openstreetmap.fr、conftest 基线 overpass-api.de），
+                    # 保持与既有 nominatim/tile 先例同族。真实 SSRF 防线在请求层
+                    # （DataFabricSecurity pin + aiohttp connector）。
+                    if hostname in {
+                        "nominatim.openstreetmap.org",
+                        "tile.openstreetmap.org",
+                        "overpass-api.de",
+                        "overpass.openstreetmap.fr",
+                        "overpass.kumi.systems",
+                        "data.beijing.gov.cn",
+                        "data.sh.gov.cn",
+                        "gddata.gd.gov.cn",
+                    }:
+                        continue
+                    raise ValueError(
+                        f"{field}='{url}' hostname '{hostname}' resolves to "
+                        f"private/reserved IP {resolved_ip}. Blocked (SSRF)."
+                    )
             except socket.gaierror:
                 # DNS 解析失败 — 不阻断（可能是开发环境临时域名），
                 # 但 log warning 让运维知道。
