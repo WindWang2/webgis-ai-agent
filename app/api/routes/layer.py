@@ -58,7 +58,7 @@ async def _layer_data_budget(session_id: str) -> None:
     """
     from app.core.rate_limiter import get_rate_limiter
 
-    limiter = get_rate_limiter()
+    limiter = await get_rate_limiter()
     if not await limiter.is_allowed(
         f"layer_data:{session_id}", max_requests=600, window_seconds=60
     ):

@@ -3,14 +3,14 @@
 > 本文件由 `python scripts/gen_quality_manifest.py` 从各 registry 与测试引用索引派生，请勿手改。唯一事实源：ToolRegistry / AlgorithmRegistry / CapabilityRegistry / ArtifactTypeRegistry / RecipeRegistry 与 tests/ 源码本身。
 
 - Manifest 版本：**2**
-- 内容指纹：`30d2f1aca6f46e45…`
+- 内容指纹：`5a5abbd13ca6c5e3…`
 
 ## 总览
 
 | section | total | 静态测试引用 | findings |
 |---|---|---|---|
 | tools | 327 | 319 | 8 |
-| algorithms | 230 | 175 | 6 |
+| algorithms | 230 | 175 | 1 |
 | capabilities | 153 | 96 | 0 |
 | artifact_types | 21 | 21 | 0 |
 | recipes | 164 | 164（conformance 由 workflow 闸保护） | 0 |
@@ -30,8 +30,7 @@
 ## 行为化覆盖与 findings 棘轮（Quality V2）
 
 - 工具行为证据：dispatch **159** / mention 160 / none 8（dispatch 覆盖率 49%）
-- findings 棘轮：**FAIL**（dispatch 下限 151，当前 159；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
-  - 违规：`ALGO_HEAVY_NO_VARIANTS` 当前 6 > 基线 1
+- findings 棘轮：**PASS**（dispatch 下限 151，当前 159；active waivers 0，过期 0，被豁免 findings 0 —— 豁免项仍在上方法量清单中可见）
 
 ## Findings（派生线索，非缺陷判定）
 
@@ -68,13 +67,8 @@
 
 （无）
 
-### ALGO_HEAVY_NO_VARIANTS（6）
+### ALGO_HEAVY_NO_VARIANTS（1）
 
-- `model.inference.change_detection`（medium）— memory_cost=high but no backend_variants scale windows
-- `model.inference.instance_segmentation`（medium）— memory_cost=high but no backend_variants scale windows
-- `model.inference.object_detection`（medium）— memory_cost=high but no backend_variants scale windows
-- `model.inference.semantic_segmentation`（medium）— memory_cost=high but no backend_variants scale windows
-- `model.inference.super_resolution`（medium）— memory_cost=high but no backend_variants scale windows
 - `terrain.cost_distance`（medium）— memory_cost=high but no backend_variants scale windows
 
 ### ALGO_SEED_POLICY_CONFLICT（0）

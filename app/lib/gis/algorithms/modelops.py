@@ -16,6 +16,8 @@ from typing import List
 
 from app.lib.gis.algorithm_registry import (
     AlgorithmDescriptor,
+    BackendVariant,
+    NumericalTolerance,
     ResourceEnvelope,
 )
 
@@ -50,6 +52,15 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                   "tile 硬顶 MAX_TILES_PER_RUN）；精确 envelope 在 "
                   "ModelOps resource estimate（basis=declared）"),
         cancellation_profile="chunk_boundary",
+        tolerance=NumericalTolerance(
+            rtol=1e-3, atol=1e-3, policy="model_conformance"),
+        backend_variants=[
+            BackendVariant(
+                id="modelops_tiled", backend="external", deterministic=True,
+                min_features=1, max_features=65536,
+                notes="ModelOps tile inference (chip x context; VRAM ledger; "
+                      "MAX_TILES_PER_RUN=65536 hard cap)"),
+        ],
         conformance_tests=[
             "tests/unit/modelops/test_backends_and_packages.py",
             "tests/unit/modelops/test_compatibility.py",
@@ -75,6 +86,15 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             notes="按 tile 计费（MAX_TILES_PER_RUN 硬顶）；精确 envelope "
                   "在 ModelOps estimate"),
         cancellation_profile="chunk_boundary",
+        tolerance=NumericalTolerance(
+            rtol=1e-3, atol=1e-3, policy="model_conformance"),
+        backend_variants=[
+            BackendVariant(
+                id="modelops_tiled", backend="external", deterministic=True,
+                min_features=1, max_features=65536,
+                notes="ModelOps tile inference (chip x context; VRAM ledger; "
+                      "MAX_TILES_PER_RUN=65536 hard cap)"),
+        ],
         conformance_tests=[
             "tests/unit/modelops/test_backends_and_packages.py",
             "tests/unit/modelops/test_compatibility.py",
@@ -99,6 +119,15 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             bytes_per_feature=0, hard_max_features=65536,
             notes="融合缓冲 RAM>256MiB 走 memmap（磁盘有界；tile 顶同上）"),
         cancellation_profile="chunk_boundary",
+        tolerance=NumericalTolerance(
+            rtol=1e-3, atol=1e-3, policy="model_conformance"),
+        backend_variants=[
+            BackendVariant(
+                id="modelops_tiled", backend="external", deterministic=True,
+                min_features=1, max_features=65536,
+                notes="ModelOps tile inference (chip x context; VRAM ledger; "
+                      "MAX_TILES_PER_RUN=65536 hard cap)"),
+        ],
         conformance_tests=[
             "tests/unit/modelops/test_backends_and_packages.py",
             "tests/unit/modelops/test_compatibility.py",
@@ -123,6 +152,15 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             bytes_per_feature=0, hard_max_features=65536,
             notes="双时相读取（IO×2；tile 顶同上）"),
         cancellation_profile="chunk_boundary",
+        tolerance=NumericalTolerance(
+            rtol=1e-3, atol=1e-3, policy="model_conformance"),
+        backend_variants=[
+            BackendVariant(
+                id="modelops_tiled", backend="external", deterministic=True,
+                min_features=1, max_features=65536,
+                notes="ModelOps tile inference (chip x context; VRAM ledger; "
+                      "MAX_TILES_PER_RUN=65536 hard cap)"),
+        ],
         conformance_tests=[
             "tests/unit/modelops/test_backends_and_packages.py",
             "tests/unit/modelops/test_compatibility.py",
@@ -147,6 +185,15 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
             bytes_per_feature=0, hard_max_features=65536,
             notes="输出 = 输入×scale（显存按输出尺寸预算）"),
         cancellation_profile="chunk_boundary",
+        tolerance=NumericalTolerance(
+            rtol=1e-3, atol=1e-3, policy="model_conformance"),
+        backend_variants=[
+            BackendVariant(
+                id="modelops_tiled", backend="external", deterministic=True,
+                min_features=1, max_features=65536,
+                notes="ModelOps tile inference (chip x context; VRAM ledger; "
+                      "MAX_TILES_PER_RUN=65536 hard cap)"),
+        ],
         conformance_tests=[
             "tests/unit/modelops/test_backends_and_packages.py",
             "tests/unit/modelops/test_compatibility.py",

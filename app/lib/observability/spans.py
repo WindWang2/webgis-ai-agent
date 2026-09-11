@@ -365,7 +365,7 @@ def _span_setup(
 
     try:
         safe_name = str(name)[:128]
-    except Exception:  # noqa: BLE001（review R1-m4）
+    except Exception:  # noqa: BLE001  # review R1-m4
         safe_name = "span"
     active = _ActiveSpan(trace_id=trace_id, span_id=span_id,
                          stage=stage.value, name=safe_name)

@@ -27,7 +27,12 @@ async def client(app):
 
 @pytest.mark.asyncio
 async def test_upload_unsupported_format(client):
-    resp = await client.post("/api/v1/upload", files={"files": ("test.txt", b"hello", "text/plain")})
+    # #1221: session_id is required before format validation runs.
+    resp = await client.post(
+        "/api/v1/upload",
+        data={"session_id": "sess-upload-fmt-test"},
+        files={"files": ("test.txt", b"hello", "text/plain")},
+    )
     assert resp.status_code == 400
     assert "不支持" in resp.json()["detail"]
 
@@ -39,8 +44,12 @@ async def test_upload_raster_too_large(client):
     big_content = b"x" * (MAX_RASTER_SIZE + 1)
     with patch("builtins.open", MagicMock()), \
          patch.object(_mod, "get_upload_dir", return_value="/tmp/test"):
-        resp = await client.post("/api/v1/upload",
-                                files={"files": ("big.tif", big_content, "image/tiff")})
+        # #1221: session_id required before size gate (else 400 masks 413).
+        resp = await client.post(
+            "/api/v1/upload",
+            data={"session_id": "sess-upload-size-test"},
+            files={"files": ("big.tif", big_content, "image/tiff")},
+        )
         # SEC-F6: oversized bodies are now 413 — and the read is capped at
         # MAX+1 bytes BEFORE buffering the whole body.
         assert resp.status_code == 413
