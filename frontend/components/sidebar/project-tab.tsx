@@ -3,9 +3,7 @@
 import React, { useEffect, useId, useState } from 'react';
 import {
   Plus,
-  Layers,
   Activity,
-  Database,
   Workflow as WorkflowIcon,
   ChevronRight,
   Lock,
@@ -20,10 +18,15 @@ import { useToastStore } from '@/components/ui/toast';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useAuthUser } from '@/lib/auth/use-auth-user';
 import { useWorkflowWorkspace } from '@/lib/hooks/use-workflow-workspace';
-import { formatCrs, formatOutcomeMessage, outcomeToastVariant, shortId } from '@/lib/workflow/recovery';
+import { formatOutcomeMessage, outcomeToastVariant, shortId } from '@/lib/workflow/recovery';
 import { RunInspector } from './workflow/run-inspector';
 import { CartoMemoryPanel } from './carto-memory-panel';
 import { MapProductVersionsPanel } from './map-product-versions';
+import {
+  ProjectAssetsSection,
+  ASSET_TABS,
+  type AssetTab,
+} from './project/project-assets-section';
 
 export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
   const uid = useId();
@@ -36,6 +39,16 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
   // 匿名默认模式下点击会裸 401 —— 参照 #469 导出门控，未登录时禁用写控件
   // 并给出可见的登录引导。
   const authUser = useAuthUser();
+  // ADR-0143：资产区 tab 状态提升 —— 工作流视图的快捷回跳（P7）需要指明
+  // 目标页签；血缘定位（质量回执 → 产物）经 focusArtifactId 传入资产区。
+  const [assetsTab, setAssetsTab] = useState<AssetTab>('datasets');
+  const [focusArtifactId, setFocusArtifactId] = useState<string | null>(null);
+
+  const jumpToAsset = (tab: AssetTab) => {
+    setAssetsTab(tab);
+    setFocusArtifactId(null);
+    if (ws.view !== 'project') ws.back();
+  };
 
   // #558: 把项目 tab 的选择镜像进 HUD store —— chat 发送时据此在请求体携带
   // project_id（后端 context assembler 注入项目摘要）。workspace 级选择，
@@ -159,33 +172,17 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                   </select>
                 </div>
 
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-meta font-medium text-ink-secondary">
-                    <span className="flex items-center gap-1.5">
-                      <Layers size={14} className="text-ink-muted" aria-hidden /> 挂载数据集 ({ws.datasets.length})
-                    </span>
-                  </div>
-                  {ws.datasets.length === 0 ? (
-                    <EmptyState icon={Database} title="暂无挂载数据集" />
-                  ) : (
-                    <div className="space-y-1.5">
-                      {ws.datasets.map((d) => (
-                        <div
-                          key={d.id}
-                          className="flex items-center justify-between rounded-md border border-edge-subtle bg-surface-raised px-panel py-2"
-                        >
-                          <div className="min-w-0">
-                            <div className="text-meta font-medium text-ink">{d.name}</div>
-                            <div className="text-micro text-ink-muted">
-                              {formatCrs(d.crs)} • {d.source_type}
-                            </div>
-                          </div>
-                          <StatusBadge status={d.quality_status} />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {/* ADR-0143：项目资产区（数据集 CRUD/双模式预览、产物中心/血缘图/
+                    快照时间线/质量审计修复/数据回收）。取代原只读数据集列表 ——
+                    完整管理面见 frontend/docs/workspace-ui-recon.md §3.2。 */}
+                <ProjectAssetsSection
+                  projectId={ws.selectedProjectId}
+                  sessionId={sessionId}
+                  authed={Boolean(authUser)}
+                  tab={assetsTab}
+                  onTabChange={setAssetsTab}
+                  focusArtifactId={focusArtifactId}
+                />
 
                 {/* ADR-0069 / spec 开放问题 2：项目制图记忆治理面板。
                     放在数据集之下——记忆与数据集同属"项目的长期状态"。 */}
@@ -257,6 +254,19 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                 >
                   ← 返回项目
                 </button>
+                {/* ADR-0143 P7：工作流 → 资产交叉导航（回项目视图并指明页签）。 */}
+                <nav aria-label="项目资产快捷跳转" className="flex flex-wrap gap-1">
+                  {ASSET_TABS.map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => jumpToAsset(value)}
+                      className="rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-sunken"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </nav>
                 <div>
                   <div className="text-body font-semibold text-ink">
                     {ws.selectedWorkflow.name}
