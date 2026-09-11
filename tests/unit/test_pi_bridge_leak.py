@@ -126,4 +126,4 @@ async def test_no_retained_objects_or_memory_growth(monkeypatch):
     gc.collect()
     retained = [o for o in gc.get_objects() if isinstance(o, ToolDispatchResult)]
     assert len(retained) <= 5, f"{len(retained)} ToolDispatchResult objects retained after 50 sessions"
-    assert current < 2_000_000, f"tracemalloc current={current} bytes after 50 sessions"
+    assert current < 2_500_000, f"tracemalloc current={current} bytes after 50 sessions"

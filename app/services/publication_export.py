@@ -94,16 +94,46 @@ def _probe_cjk_font() -> bool:
         if "cjk" in _FONT_CACHE:
             return _FONT_CACHE["cjk"]
     found = False
-    try:  # matplotlib 已是 requirements 依赖；fontManager 扫描结果进程内稳定
-        import matplotlib.font_manager as fm
+    # Fast path: known Debian/Ubuntu package locations (fonts-noto-cjk).
+    from pathlib import Path as _Path
 
-        keywords = ("cjk", "noto sans cjk", "source han", "wqy", "simhei", "simsun", "yahei", "pingfang")
-        found = any(
-            any(kw in f.name.lower() for kw in keywords)
-            for f in fm.fontManager.ttflist
-        )
-    except Exception:  # pragma: no cover - 字体子系统异常时保守返回 False
-        found = False
+    for candidate in (
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    ):
+        if _Path(candidate).is_file():
+            found = True
+            break
+    if not found:
+        try:  # fontconfig is what WeasyPrint/Pango actually consult
+            import subprocess
+
+            out = subprocess.run(
+                ["fc-list", ":lang=zh", "file"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            found = bool((out.stdout or "").strip())
+        except Exception:  # pragma: no cover
+            found = False
+    if not found:
+        try:  # matplotlib 已是 requirements 依赖；fontManager 扫描结果进程内稳定
+            import matplotlib.font_manager as fm
+
+            keywords = (
+                "cjk", "noto sans cjk", "source han", "wqy",
+                "simhei", "simsun", "yahei", "pingfang",
+            )
+            found = any(
+                any(kw in f.name.lower() for kw in keywords)
+                for f in fm.fontManager.ttflist
+            )
+        except Exception:  # pragma: no cover - 字体子系统异常时保守返回 False
+            found = False
     with _FONT_CACHE_LOCK:
         _FONT_CACHE["cjk"] = found
     return found

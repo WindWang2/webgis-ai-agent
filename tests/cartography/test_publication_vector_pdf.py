@@ -12,6 +12,8 @@ from app.services.publication_export import (
     render_publication_pdf,
 )
 
+pytestmark = pytest.mark.cartography
+
 weasyprint = pytest.importorskip(
     "weasyprint", reason="WeasyPrint not installed (needs pango system libs)"
 )

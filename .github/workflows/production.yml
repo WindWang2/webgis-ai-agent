@@ -125,6 +125,16 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
+      - name: Install CJK fonts for vector PDF
+        # WeasyPrint/Pango resolve CJK via fontconfig. Without Noto CJK,
+        # publication PDFs emit .notdef glyphs and pypdf cannot extract
+        # 标题/图例 text (Backend historically ran unmarked cartography PDF
+        # tests; cartography-smoke owns the marked set).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+          fc-cache -f
+
       - name: Install Dependencies
         # requirements-dev.txt includes requirements.txt + test deps (pytest,
         # pytest-cov, fakeredis). psycopg2-binary for CI's Postgres service.
@@ -404,6 +414,12 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
+      - name: Install CJK fonts for vector PDF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+          fc-cache -f
+
       - name: Install Dependencies
         # 仅装核心依赖 + 测试工具（无需 Postgres service）。cartography smoke
         # 走纯 Python 语义校验 + Harness V2 evidence model + ref 真实解析，
@@ -515,6 +531,11 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
+      - name: Install CJK fonts for vector PDF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+          fc-cache -f
       - run: pip install -r requirements-dev.txt
       - name: Set Environment Variables
         run: |

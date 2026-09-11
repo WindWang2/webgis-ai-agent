@@ -7,6 +7,8 @@ import pytest
 fastapi_testclient = pytest.importorskip("fastapi.testclient")
 pytest.importorskip("weasyprint", reason="WeasyPrint not installed")
 
+pytestmark = pytest.mark.cartography
+
 from fastapi import FastAPI  # noqa: E402
 
 from app.api.routes.map import router as map_router  # noqa: E402
