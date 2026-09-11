@@ -87,7 +87,6 @@ function BivariateMatrix({ legend, title }: { legend: LegendSpec; title?: string
 }
 
 function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
-const t = useT();
   const legend = legendForComponent(component, ctx.spec);
   if (!legend) return null;
   const variant = resolveVariant(component, 'academic');
@@ -107,8 +106,8 @@ const t = useT();
   if (variant === 'size') {
     const sizes = [6, 10, 15];
     return (
-      <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={t('map.legends.sizeAria')}>
-        <div className="text-micro font-medium text-map-chrome-ink">{t('map.legends.sizeTitle')}</div>
+      <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={tNow('map.legends.sizeAria')}>
+        <div className="text-micro font-medium text-map-chrome-ink">{tNow('map.legends.sizeTitle')}</div>
         <div className="mt-1 flex items-end gap-2">
           {sizes.map((r, i) => (
             <span key={i} aria-hidden className="rounded-full border border-map-chrome-border bg-map-chrome-ink/20" style={{ width: r * 2, height: r * 2 }} />
@@ -120,8 +119,8 @@ const t = useT();
   // V4：line 变体 —— 线宽分级图例（graduated_line/network_flow 同契约）
   if (variant === 'line') {
     return (
-      <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={t('map.legends.widthAria')}>
-        <div className="text-micro font-medium text-map-chrome-ink">{t('map.legends.widthTitle')}</div>
+      <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={tNow('map.legends.widthAria')}>
+        <div className="text-micro font-medium text-map-chrome-ink">{tNow('map.legends.widthTitle')}</div>
         <div className="mt-1 flex flex-col gap-1">
           {[1, 2.5, 4.5].map((w, i) => (
             <div key={i} className="flex items-center gap-1.5">
@@ -159,7 +158,7 @@ const t = useT();
         )}
       </div>
       {variant === 'uncertainty' && (
-        <div className="mt-1 border-t border-map-chrome-border pt-0.5 text-micro text-map-chrome-ink-muted">{t('map.legends.opacityHint')}</div>
+        <div className="mt-1 border-t border-map-chrome-border pt-0.5 text-micro text-map-chrome-ink-muted">{tNow('map.legends.opacityHint')}</div>
       )}
     </div>
   );

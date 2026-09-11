@@ -30,7 +30,7 @@
     "searchAria": "搜索模板",
     "closeAria": "关闭模板库",
     "catsAria": "模板分类",
-    "pageOf": "第 {page} 页",
+    "pageOf": "第 {page} / {total} 页",
     "prev": "上一页",
     "next": "下一页"
   }

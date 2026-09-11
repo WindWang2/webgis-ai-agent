@@ -540,7 +540,7 @@ function Footer({
   const t = useT();
   return (
     <div className="flex items-center justify-between border-t border-edge-subtle p-3">
-      <span className="text-meta text-ink-muted">{t('drawers.templates.pageOf', { page: page + 1 })} / {totalPages}</span>
+      <span className="text-meta text-ink-muted">{t('drawers.templates.pageOf', { page: page + 1, total: totalPages })}</span>
       <div className="flex gap-2">
         <button
           onClick={() => onPage(page - 1)}

@@ -30,7 +30,7 @@
     "searchAria": "Search templates",
     "closeAria": "Close template gallery",
     "catsAria": "Template categories",
-    "pageOf": "Page {page}",
+    "pageOf": "Page {page} / {total}",
     "prev": "Previous",
     "next": "Next"
   }
