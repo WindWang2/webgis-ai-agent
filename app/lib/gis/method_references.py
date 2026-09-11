@@ -203,6 +203,44 @@ METHOD_REFERENCES: dict[str, MethodReference] = {
             "Dijkstra, E. W. (1959). A Note on Two Problems in Connexion with "
             "Graphs. Numerische Mathematik, 1, 269–271.",
         ),
+        # ── 地形/成本面（Goal 07 Science V6）──────────────────────────
+        MethodReference(
+            "tobler1993",
+            "Friction surface / cost distance (geographic movement)",
+            "Tobler, W. (1993). Three Presentations on Geographical Analysis "
+            "and Modeling: Non-Isotropic Geographic Modeling; Speculations on "
+            "the Geometry of Geography; Global Spatial Analysis. "
+            "NCGIA Technical Report 93-1.",
+        ),
+        # ── 生态（Goal 07 Science V6）───────────────────────────────
+        MethodReference(
+            "usfws1981",
+            "Habitat Suitability Index (HSI) procedures",
+            "USFWS. (1981). Standards for the Development of Habitat "
+            "Suitability Index Models. U.S. Fish and Wildlife Service, "
+            "Division of Ecological Services, ESM 103.",
+        ),
+        MethodReference(
+            "mcgarigal_marks1995",
+            "FRAGSTATS landscape pattern metrics",
+            "McGarigal, K., & Marks, B. J. (1995). FRAGSTATS: Spatial "
+            "Pattern Analysis Program for Quantifying Landscape Structure. "
+            "Gen. Tech. Rep. PNW-GTR-351, USDA Forest Service.",
+        ),
+        MethodReference(
+            "savitzky_golay1964",
+            "Savitzky-Golay smoothing filter",
+            "Savitzky, A., & Golay, M. J. E. (1964). Smoothing and "
+            "Differentiation of Data by Simplified Least Squares Procedures. "
+            "Analytical Chemistry, 36(8), 1627–1639.",
+        ),
+        # ── 空间抽样（Goal 07 Science V6）────────────────────────────
+        MethodReference(
+            "cochran1977",
+            "Sampling design (simple random / systematic / stratified)",
+            "Cochran, W. G. (1977). Sampling Techniques (3rd ed.). "
+            "John Wiley & Sons.",
+        ),
         MethodReference(
             "teitz_bart1968",
             "Teitz-Bart p-median heuristic",
