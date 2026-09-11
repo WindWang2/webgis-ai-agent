@@ -40,20 +40,13 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
   // 并给出可见的登录引导。
   const authUser = useAuthUser();
   // ADR-0143：资产区 tab 状态提升 —— 工作流视图的快捷回跳（P7）需要指明
-  // 目标页签；血缘定位（质量回执 → 产物）经 focusArtifactId 传入资产区。
+  // 目标页签。产物定位（质量回执 / gc 候选 → 产物中心）在资产区内部闭环
+  // （ProjectAssetsSection 的 localFocus + tab 切换），无需跨视图状态。
   const [assetsTab, setAssetsTab] = useState<AssetTab>('datasets');
-  const [focusArtifactId, setFocusArtifactId] = useState<string | null>(null);
 
   const jumpToAsset = (tab: AssetTab) => {
     setAssetsTab(tab);
-    setFocusArtifactId(null);
     if (ws.view !== 'project') ws.back();
-  };
-
-  // ADR-0143 P7 交叉导航：质量回执 / gc 候选 → 产物中心定位该产物的血缘。
-  const locateArtifact = (artifactId: string) => {
-    setFocusArtifactId(artifactId);
-    setAssetsTab('artifacts');
   };
 
   // ADR-0143 P7：产物中心的版本维度对比由下方 Map Product 版本台账承接。
@@ -193,7 +186,6 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                   authed={Boolean(authUser)}
                   tab={assetsTab}
                   onTabChange={setAssetsTab}
-                  focusArtifactId={focusArtifactId}
                   onViewVersionLedger={viewVersionLedger}
                 />
 
