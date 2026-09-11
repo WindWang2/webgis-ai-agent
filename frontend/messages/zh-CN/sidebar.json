@@ -49,5 +49,52 @@
     "confirmDelete": "确认删除？",
     "confirmDeleteGroup": "确认删除分组？",
     "deleteGroupLabel": "删除分组 {name}（图层保留）"
+  },
+  "ds": {
+    "subtabsAria": "数据子页签",
+    "loadingCatalog": "正在加载空间目录...",
+    "emptyCatalog": "暂无符合条件的空间数据集",
+    "syncNotice": "「{name}」目录同步：新增 {added} · 更新 {updated} · 不变 {unchanged} · 下线 {removed}",
+    "dismissSyncAria": "关闭同步通知",
+    "loadingSources": "加载数据源...",
+    "emptySources": "暂无注册的数据源"
+  },
+  "comp": {
+    "emptyNoSpecTitle": "暂无地图组件",
+    "emptyNoSpecDesc": "开始一次分析后，产品组件（图例/色条/图表/统计）会随地图生成",
+    "emptyNoInstanceTitle": "暂无地图组件",
+    "emptyNoInstanceDesc": "当前 MapSpec 没有可管理的 chrome 组件实例",
+    "unit": "个组件",
+    "enabledUnit": "启用",
+    "deleteConfirm": "删除 {name}？",
+    "confirmDelete": "确认删除",
+    "hidden": "已隐藏",
+    "collapsed": "已折叠",
+    "type": {
+      "title": "标题",
+      "subtitle": "副标题",
+      "north_arrow": "指北针",
+      "scale_bar": "比例尺",
+      "attribution": "数据来源",
+      "legend": "分级图例",
+      "categorical_legend": "分类图例",
+      "continuous_colorbar": "连续色条",
+      "statistics_panel": "统计面板",
+      "chart_panel": "图表面板",
+      "table_panel": "表格面板",
+      "annotation": "注记",
+      "inset_map": "区位插图"
+    }
+  },
+  "tasks": {
+    "elapsed": "已用 {time}",
+    "viewResultAria": "在结果工作台查看分析结果",
+    "timeline": "时间线",
+    "activeCount": "{count} 个活跃任务",
+    "refresh": "刷新任务",
+    "loading": "加载任务…",
+    "emptyTitle": "暂无后台任务",
+    "emptyDesc": "开始一次对话后即可查看任务",
+    "finished": "已结束"
   }
 }

@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useT } from '@/lib/i18n/useT';
+import { t as tNow } from '@/lib/i18n/t';
 import {
   Eye,
   EyeOff,
@@ -41,27 +43,30 @@ import {
  * 同一 CAS 串行链，不开第二套 semantic state 写路径。
  */
 
-const TYPE_LABELS: Record<string, string> = {
-  title: '标题',
-  subtitle: '副标题',
-  north_arrow: '指北针',
-  scale_bar: '比例尺',
-  attribution: '数据来源',
-  legend: '分级图例',
-  categorical_legend: '分类图例',
-  continuous_colorbar: '连续色条',
-  statistics_panel: '统计面板',
-  chart_panel: '图表面板',
-  table_panel: '表格面板',
-  annotation: '注记',
-  inset_map: '区位插图',
+const TYPE_LABEL_KEYS: Record<string, string> = {
+  title: 'comp.type.title',
+  subtitle: 'comp.type.subtitle',
+  north_arrow: 'comp.type.north_arrow',
+  scale_bar: 'comp.type.scale_bar',
+  attribution: 'comp.type.attribution',
+  legend: 'comp.type.legend',
+  categorical_legend: 'comp.type.categorical_legend',
+  continuous_colorbar: 'comp.type.continuous_colorbar',
+  statistics_panel: 'comp.type.statistics_panel',
+  chart_panel: 'comp.type.chart_panel',
+  table_panel: 'comp.type.table_panel',
+  annotation: 'comp.type.annotation',
+  inset_map: 'comp.type.inset_map',
 };
 
 function typeLabel(type: string): string {
-  return TYPE_LABELS[type] ?? type;
+  // render 期被组件调用：命令式 t 读 store 当前语言（随语言切换的重渲染自动刷新）
+  const key = TYPE_LABEL_KEYS[type];
+  return key ? tNow(`sidebar.${key}`) : type;
 }
 
 export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
+  const t = useT();
   const resolved = useMapComponents();
   const manageable = useMemo(() => manageableComponents(resolved), [resolved]);
   const maxZ = useMemo(() => maxFloatingZIndex(resolved), [resolved]);
@@ -109,8 +114,8 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
       <div className="flex h-full items-center justify-center">
         <EmptyState
           icon={LayoutDashboard}
-          title="暂无地图组件"
-          description="开始一次分析后，产品组件（图例/色条/图表/统计）会随地图生成"
+          title={t('sidebar.comp.emptyNoSpecTitle')}
+          description={t('sidebar.comp.emptyNoSpecDesc')}
         />
       </div>
     );
@@ -121,8 +126,8 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
       <div className="flex h-full items-center justify-center">
         <EmptyState
           icon={LayoutDashboard}
-          title="暂无地图组件"
-          description="当前 MapSpec 没有可管理的 chrome 组件实例"
+          title={t('sidebar.comp.emptyNoSpecTitle')}
+          description={t('sidebar.comp.emptyNoInstanceDesc')}
         />
       </div>
     );
@@ -133,13 +138,13 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
       <div className="flex shrink-0 items-center gap-3 border-b border-edge-subtle bg-surface-panel px-panel py-1">
         <div className="flex items-baseline gap-1">
           <span className="text-body font-semibold tabular-nums text-ink">{manageable.length}</span>
-          <span className="text-micro text-ink-muted">个组件</span>
+          <span className="text-micro text-ink-muted">{t('sidebar.comp.unit')}</span>
         </div>
         <div className="flex items-baseline gap-1">
           <span className="text-body font-semibold tabular-nums text-ink">
             {manageable.filter((c) => c.enabled).length}
           </span>
-          <span className="text-micro text-ink-muted">启用</span>
+          <span className="text-micro text-ink-muted">{t('sidebar.comp.enabledUnit')}</span>
         </div>
       </div>
 
@@ -167,7 +172,7 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
               {confirming ? (
                 <div className="flex min-w-0 flex-1 items-center justify-between gap-2 py-0.5">
                   <span className="min-w-0 truncate text-body text-status-critical">
-                    删除 {typeLabel(c.type)}？
+                    {t('sidebar.comp.deleteConfirm', { name: typeLabel(c.type) })}
                   </span>
                   <div className="flex shrink-0 items-center gap-1">
                     <button
@@ -179,14 +184,14 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
                         runLifecycle(c.id, { action: 'remove' });
                       }}
                     >
-                      确认删除
+                      {t('sidebar.comp.confirmDelete')}
                     </button>
                     <button
                       type="button"
                       className="rounded-xs border border-edge-subtle px-2 py-0.5 text-micro text-ink-secondary"
                       onClick={() => setConfirmRemoveId(null)}
                     >
-                      取消
+                      {t('common.cancel')}
                     </button>
                   </div>
                 </div>
@@ -198,8 +203,8 @@ export function ComponentsTab({ sessionId }: { sessionId?: string | null }) {
                       <span className="ml-1 text-micro text-ink-muted truncate">{binding}</span>
                     )}
                   </span>
-                  {!c.enabled && <StatusBadge status="hidden" label="已隐藏" />}
-                  {c.collapsed && c.enabled && <StatusBadge status="unknown" label="已折叠" />}
+                  {!c.enabled && <StatusBadge status="hidden" label={t('sidebar.comp.hidden')} />}
+                  {c.collapsed && c.enabled && <StatusBadge status="unknown" label={t('sidebar.comp.collapsed')} />}
 
                   <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                     {actions.dock && (

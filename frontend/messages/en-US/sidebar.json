@@ -49,5 +49,52 @@
     "confirmDelete": "Confirm delete?",
     "confirmDeleteGroup": "Delete this group?",
     "deleteGroupLabel": "Delete group {name} (layers are kept)"
+  },
+  "ds": {
+    "subtabsAria": "Data sub-tabs",
+    "loadingCatalog": "Loading spatial catalog…",
+    "emptyCatalog": "No spatial datasets match",
+    "syncNotice": "\"{name}\" catalog sync: +{added} added · {updated} updated · {unchanged} unchanged · {removed} retired",
+    "dismissSyncAria": "Dismiss sync notice",
+    "loadingSources": "Loading data sources…",
+    "emptySources": "No registered data sources"
+  },
+  "comp": {
+    "emptyNoSpecTitle": "No map components yet",
+    "emptyNoSpecDesc": "After you run an analysis, product components (legends / colorbars / charts / statistics) are generated with the map",
+    "emptyNoInstanceTitle": "No map components yet",
+    "emptyNoInstanceDesc": "The current MapSpec has no manageable chrome component instances",
+    "unit": "components",
+    "enabledUnit": "enabled",
+    "deleteConfirm": "Delete {name}?",
+    "confirmDelete": "Confirm delete",
+    "hidden": "Hidden",
+    "collapsed": "Collapsed",
+    "type": {
+      "title": "Title",
+      "subtitle": "Subtitle",
+      "north_arrow": "North arrow",
+      "scale_bar": "Scale bar",
+      "attribution": "Attribution",
+      "legend": "Graduated legend",
+      "categorical_legend": "Categorical legend",
+      "continuous_colorbar": "Continuous colorbar",
+      "statistics_panel": "Statistics panel",
+      "chart_panel": "Chart panel",
+      "table_panel": "Table panel",
+      "annotation": "Annotation",
+      "inset_map": "Inset map"
+    }
+  },
+  "tasks": {
+    "elapsed": "Elapsed {time}",
+    "viewResultAria": "View analysis result in the workbench",
+    "timeline": "Timeline",
+    "activeCount": "{count} active tasks",
+    "refresh": "Refresh tasks",
+    "loading": "Loading tasks…",
+    "emptyTitle": "No background tasks",
+    "emptyDesc": "Start a conversation to see tasks",
+    "finished": "Finished"
   }
 }

@@ -6,6 +6,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
 import { describeApiError, isApiError } from '@/lib/api/transport';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
+import { useT } from '@/lib/i18n/useT';
 import {
   dataFabricApi,
   type CatalogItem,
@@ -83,6 +84,7 @@ export interface DataSourcesTabProps {
 }
 
 export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
+  const t = useT();
   const [activeSubTab, setActiveSubTab] = useState<DataSubTab>('catalog');
   const [showAddForm, setShowAddForm] = useState(false);
 
@@ -396,7 +398,7 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
           V4 之前是裸 button，无任何 tab 语义，键盘用户只能 Tab 到按钮后回车。 */}
       <div
         role="tablist"
-        aria-label="数据子页签"
+        aria-label={t('sidebar.ds.subtabsAria')}
         onKeyDown={onSubTabKeyDown}
         className="flex shrink-0 gap-2 border-b border-edge-subtle bg-surface-overlay px-2.5 pt-2"
       >
@@ -427,9 +429,9 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
           {/* Catalog items list */}
           <div className="flex-1 space-y-2 overflow-y-auto p-2">
             {loadingCatalog ? (
-              <LoadingState label="正在加载空间目录..." />
+              <LoadingState label={t('sidebar.ds.loadingCatalog')} />
             ) : catalogItems.length === 0 ? (
-              <EmptyState icon={SearchX} title="暂无符合条件的空间数据集" />
+              <EmptyState icon={SearchX} title={t('sidebar.ds.emptyCatalog')} />
             ) : (
               catalogItems.map((item) => (
                 <CatalogItemCard
@@ -472,9 +474,13 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p>
-                      「{syncNotice.sourceName}」目录同步：新增 {syncNotice.diff?.added ?? 0} · 更新{' '}
-                      {syncNotice.diff?.updated ?? 0} · 不变 {syncNotice.diff?.unchanged ?? 0} · 下线{' '}
-                      {syncNotice.diff?.removed ?? 0}
+                      {t('sidebar.ds.syncNotice', {
+                        name: syncNotice.sourceName,
+                        added: syncNotice.diff?.added ?? 0,
+                        updated: syncNotice.diff?.updated ?? 0,
+                        unchanged: syncNotice.diff?.unchanged ?? 0,
+                        removed: syncNotice.diff?.removed ?? 0,
+                      })}
                     </p>
                     {syncNotice.warnings.length > 0 && (
                       <ul className="mt-1 list-disc pl-4">
@@ -487,10 +493,10 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
                   <button
                     type="button"
                     onClick={() => setSyncNotice(null)}
-                    aria-label="关闭同步通知"
+                    aria-label={t('sidebar.ds.dismissSyncAria')}
                     className="shrink-0 text-micro text-ink-muted underline-offset-2 hover:text-ink hover:underline"
                   >
-                    关闭
+                    {t('common.close')}
                   </button>
                 </div>
               </InlineNotice>
@@ -500,9 +506,9 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
           {/* Sources list */}
           <div className="flex-1 space-y-2 overflow-y-auto p-2">
             {loadingSources ? (
-              <LoadingState label="加载数据源..." />
+              <LoadingState label={t('sidebar.ds.loadingSources')} />
             ) : sources.length === 0 ? (
-              <EmptyState icon={Inbox} title="暂无注册的数据源" />
+              <EmptyState icon={Inbox} title={t('sidebar.ds.emptySources')} />
             ) : (
               sources.map((s) => (
                 <SourceItemCard
