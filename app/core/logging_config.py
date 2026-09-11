@@ -2,9 +2,11 @@
 # WebGIS AI Agent 应用日志配置（Python）
 # ============================================================
 
+import json
 import sys
 import logging
 import logging.handlers
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -31,6 +33,10 @@ class RuntimeCorrelationFilter(logging.Filter):
         # ADR-0104 Wave 6：活动项目进关联主干（session 域与 project 域的桥接
         # 已由 RuntimeContext.project_id 承载；日志面补齐同一字段）。
         record.project_id = getattr(ctx, "project_id", None) or "-" if ctx else "-"  # type: ignore[attr-defined]
+        # Platform V4（ADR-0131 D2）：trace 维度进 LogRecord（文本格式串不变，
+        # JSON 格式化器与自定义 handler 消费；span 作用域内自动是当前 span）。
+        record.trace_id = getattr(ctx, "trace_id", None) or "-" if ctx else "-"  # type: ignore[attr-defined]
+        record.span_id = getattr(ctx, "span_id", None) or "-" if ctx else "-"  # type: ignore[attr-defined]
         return True
 
 
@@ -47,6 +53,62 @@ CONSOLE_FORMATTER = logging.Formatter(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 
+
+class JsonFormatter(logging.Formatter):
+    """JSON 结构化日志（Platform V4，ADR-0131 D2；LOG_FORMAT=json 启用）。
+
+    面向 log aggregation：关联字段（req/sess/turn/run/proj/trace/span）恒在
+    （未绑定为 null——JSON 里显式 null 比 "-" 更可查询），异常带 exc_info。
+    """
+
+    _CORRELATION_FIELDS = (
+        "request_id", "session_id", "turn_id", "run_id", "project_id",
+        "trace_id", "span_id",
+    )
+    #: 标量 extra 并入时的键名拒绝词表（review R1-m5：防止调用方顺手
+    #: extra={"authorization": ...} 之类被序列化进聚合日志）
+    _DENIED_EXTRA_HINTS = ("key", "token", "secret", "password", "authorization",
+                           "credential", "passwd", "cookie", "private")
+
+    _STD_LOGRECORD_KEYS = frozenset({
+        "levelname", "levelno", "name", "msg", "args", "exc_info", "exc_text",
+        "stack_info", "lineno", "funcName", "created", "msecs",
+        "relativeCreated", "thread", "threadName", "processName", "process",
+        "taskName", "pathname", "filename", "module", "message",
+        "request_id", "session_id", "turn_id", "run_id", "project_id",
+        "trace_id", "span_id", "asctime",
+    })
+
+    def format(self, record: logging.LogRecord) -> str:
+        # 秒与毫秒同源（record.created 的整数秒 + msecs），跨秒边一致（n5）
+        payload = {
+            "ts": time.strftime(
+                "%Y-%m-%dT%H:%M:%S", time.gmtime(record.created)
+            ) + ".%03dZ" % (record.msecs,),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        for field_name in self._CORRELATION_FIELDS:
+            value = getattr(record, field_name, None)
+            payload[field_name] = value if value not in (None, "-") else None
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+        for key, value in record.__dict__.items():
+            if key in payload or key in self._STD_LOGRECORD_KEYS or key.startswith("_"):
+                continue
+            if any(h in key.lower() for h in self._DENIED_EXTRA_HINTS):
+                payload[key] = "[REDACTED]"
+                continue
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                payload[key] = value
+        try:
+            return json.dumps(payload, ensure_ascii=False)
+        except (TypeError, ValueError):  # pragma: no cover — 防御非法值
+            return json.dumps(
+                {"message": repr(record.getMessage()), "level": record.levelname}
+            )
+
 # 单一共享文件 handler（所有 logger 共用，避免文件描述符膨胀）
 _shared_file_handler: RotatingFileHandler | None = None
 
@@ -55,6 +117,13 @@ def _attach_correlation_filter(handler: logging.Handler) -> None:
     """Idempotently attach the runtime correlation filter to a handler."""
     if _RUNTIME_CORRELATION_FILTER not in handler.filters:
         handler.addFilter(_RUNTIME_CORRELATION_FILTER)
+
+
+def _json_logging_enabled() -> bool:
+    """LOG_FORMAT=json → 结构化输出（Platform V4；默认保持人类可读文本）。"""
+    import os
+
+    return os.environ.get("LOG_FORMAT", "").strip().lower() == "json"
 
 
 def _get_shared_file_handler(level: int = logging.INFO) -> RotatingFileHandler:
@@ -66,7 +135,9 @@ def _get_shared_file_handler(level: int = logging.INFO) -> RotatingFileHandler:
             backupCount=14,
             encoding="utf-8",
         )
-        _shared_file_handler.setFormatter(LOG_FORMATTER)
+        _shared_file_handler.setFormatter(
+            JsonFormatter() if _json_logging_enabled() else LOG_FORMATTER
+        )
         _shared_file_handler.setLevel(level)
         _attach_correlation_filter(_shared_file_handler)
     return _shared_file_handler
@@ -95,7 +166,9 @@ def get_logger(name: str, level: str = "INFO"):
 
     # 控制台 Handler
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(CONSOLE_FORMATTER)
+    console_handler.setFormatter(
+        JsonFormatter() if _json_logging_enabled() else CONSOLE_FORMATTER
+    )
     console_handler.setLevel(numeric_level)
     _attach_correlation_filter(console_handler)
     logger.addHandler(console_handler)
