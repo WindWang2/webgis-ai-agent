@@ -58,6 +58,9 @@ const TAB_LABELS: Record<string, string> = {
   tasks: '任务',
   results: '结果',
   export_layout: '制图',
+  // V9（ADR-0145）：智能资产面板追加 tab
+  market: '市场',
+  modelops: 'ModelOps',
 };
 
 describe('NavRail', () => {
@@ -80,8 +83,9 @@ describe('NavRail', () => {
 
     // Workbench V4：explore 模式只渲染 MODE_TABS.explore 组合内的 tab，
     // rail 顺序保持 RAIL_GROUPS 稳定序（不随模式重排 —— 空间记忆不变）。
+    // V9：market/modelops 尾部追加（ADR-0145）。
     const tabs = screen.getAllByRole('tab');
-    const exploreOrder = ['chat', 'project', 'data_sources', 'layers', 'tasks'];
+    const exploreOrder = ['chat', 'project', 'data_sources', 'layers', 'tasks', 'market', 'modelops'];
     expect(tabs).toHaveLength(exploreOrder.length);
     expect(tabs.map((t) => t.getAttribute('aria-label'))).toEqual(
       exploreOrder.map((k) => TAB_LABELS[k])
@@ -139,12 +143,12 @@ describe('NavRail', () => {
     render(<NavRail />);
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
 
-    // explore 可见序：chat → project → data_sources → layers → tasks
+    // explore 可见序：chat → project → data_sources → layers → tasks → market → modelops
     fireEvent.keyDown(tablist, { key: 'ArrowDown' });
     expect(setActiveLeftTab).toHaveBeenCalledWith('project');
 
     fireEvent.keyDown(tablist, { key: 'ArrowUp' });
-    expect(setActiveLeftTab).toHaveBeenCalledWith('tasks');
+    expect(setActiveLeftTab).toHaveBeenCalledWith('modelops');
   });
 
   it('Home/End jump to first/last tab (mode-filtered)', () => {
@@ -153,7 +157,7 @@ describe('NavRail', () => {
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
 
     fireEvent.keyDown(tablist, { key: 'End' });
-    expect(setActiveLeftTab).toHaveBeenCalledWith('tasks');
+    expect(setActiveLeftTab).toHaveBeenCalledWith('modelops');
 
     fireEvent.keyDown(tablist, { key: 'Home' });
     expect(setActiveLeftTab).toHaveBeenCalledWith('chat');

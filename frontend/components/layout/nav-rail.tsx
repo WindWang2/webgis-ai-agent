@@ -32,6 +32,8 @@ import {
   FlaskConical,
   PenTool,
   Undo2,
+  Store,
+  Boxes,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
@@ -65,6 +67,11 @@ const RAIL_GROUPS: Array<Array<RailTabDef>> = [
     { key: 'results', icon: ClipboardList, label: '结果' },
   ],
   [{ key: 'export_layout', icon: Printer, label: '制图' }],
+  // V9（ADR-0145）：智能资产面板（append-only 追加，不重排既有组）。
+  [
+    { key: 'market', icon: Store, label: '市场' },
+    { key: 'modelops', icon: Boxes, label: 'ModelOps' },
+  ],
 ];
 
 const RAIL_TABS: RailTabDef[] = RAIL_GROUPS.flat();

@@ -46,6 +46,8 @@ import { ProjectTab } from '@/components/sidebar/project-tab';
 import { DataSourcesTab } from '@/components/sidebar/data-sources-tab';
 import { TasksTab } from '@/components/sidebar/tasks-tab';
 import { ResultsTab } from '@/components/sidebar/results-tab';
+import { MarketTab } from '@/components/sidebar/market/market-tab';
+import { ModelOpsTab } from '@/components/sidebar/modelops/modelops-tab';
 import { PanelErrorBoundary } from '@/components/layout/panel-error-boundary';
 
 export interface ContextPanelProps {
@@ -419,6 +421,18 @@ export function ContextPanel({
         {activeTab === 'results' && (
           <PanelErrorBoundary label="结果">
             <ResultsTab sessionId={sessionId} ownerToken={ownerToken} onSend={onSend} />
+          </PanelErrorBoundary>
+        )}
+        {/* V9（ADR-0145）：扩展市场（只读浏览 + 下载，诚实空态见组件内说明） */}
+        {activeTab === 'market' && (
+          <PanelErrorBoundary label="市场">
+            <MarketTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+        {/* V9（ADR-0145）：ModelOps（注册表 + 本会话运行，诚实空态见组件内说明） */}
+        {activeTab === 'modelops' && (
+          <PanelErrorBoundary label="ModelOps">
+            <ModelOpsTab sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
       </div>
