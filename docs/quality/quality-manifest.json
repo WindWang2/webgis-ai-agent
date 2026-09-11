@@ -7698,7 +7698,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "3434fe72893bc29292e6f03962d1c0f95d1d663e520edf507d14dbae29bb5df1",
+ "fingerprint": "9d3d7bf333878858ed1f9da53e5f514712fa4421914805834d33bd79f229c78f",
  "gate": {
   "fields": {
    "capabilities": {
@@ -9392,7 +9392,7 @@
     "plan_workflow_orchestration"
    ],
    "deterministic": false,
-   "execution_policy": "inline",
+   "execution_policy": "async",
    "latency_class": "slow",
    "memory_class": "medium",
    "name": "execute_plan",
@@ -9418,6 +9418,7 @@
     "tests/test_security_audit_fixes.py",
     "tests/test_spatial_reasoning_honesty_437.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/test_audit3_batch4_fixes.py",
     "tests/unit/test_cache_lineage_v4.py",
     "tests/unit/test_geocompute_authz.py",
     "tests/unit/test_geocompute_chaos.py",

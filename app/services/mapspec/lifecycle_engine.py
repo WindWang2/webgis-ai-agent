@@ -73,10 +73,6 @@ class MapSpecResult:
     # Latest frontend observation already present when this mutation began.
     # A runtime snapshot must carry a strictly newer sequence to certify it.
     runtime_observation_seq: int = 0
-    # 机器可读精确错误码（ack/HTTP/tool 结果透出 error 精确值，不归一化）。
-    # 锁拒绝填 LOCK_CONFLICT_CODE（单码契约：组件锁亦复用 layer_locked，
-    # 载荷 locked_component_ids 区分）；非错误时为空。
-    error_code: str = ""
     # 锁拒绝载荷（单码契约的区分面：码唯一，id 列表指明被锁目标）。
     locked_layer_ids: List[str] = field(default_factory=list)
     locked_component_ids: List[str] = field(default_factory=list)
@@ -86,8 +82,10 @@ class MapSpecResult:
     origin: Optional[MutationOrigin] = None
     # Stale expected_revision: not a validation error and not a commit.
     superseded: bool = False
-    # Workbench V6: typed machine-readable error vocabulary（layer_locked）。
-    # 自由文本 error_msg/correction_hint 保持不变 —— 该字段纯增量。
+    # 机器可读精确错误码（单码契约：组件锁复用 layer_locked，载荷
+    # locked_*_ids 区分；非错误时为 None）。
+    # #1220（audit3 C-6）：此前重复声明（str "" 与 Optional[str] None
+    # 并存，第二声明胜出）—— 单一权威声明。
     error_code: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -108,8 +106,6 @@ class MapSpecResult:
             return res
         if self.is_error:
             res = {"success": False, "message": self.error_msg}
-            if self.error_code:
-                res["error_code"] = self.error_code
             if self.locked_layer_ids:
                 res["locked_layer_ids"] = list(self.locked_layer_ids)
             if self.locked_component_ids:
@@ -806,74 +802,7 @@ def strip_transient_state(mapspec: Optional[Dict[str, Any]]) -> Optional[Dict[st
     if not any(k in mapspec for k in TRANSIENT_INTERACTION_KEYS):
         return mapspec
     return {k: v for k, v in mapspec.items() if k not in TRANSIENT_INTERACTION_KEYS}
-def _locked_family_hit(target_id: str, locked_ids: List[str]) -> Optional[str]:
-    """family 语义命中检测（与 user-wins 守卫的层族谓词同向、双向保守）。
-
-    命中规则：locked == target，或一方为另一方的前缀族（``X-``/``X__``）。
-    返回命中的 locked id（供错误消息）；未命中 None。
-    """
-    for locked in locked_ids:
-        if locked == target_id:
-            return locked
-        if target_id.startswith(f"{locked}-") or target_id.startswith(f"{locked}__"):
-            return locked
-        if locked.startswith(f"{target_id}-") or locked.startswith(f"{target_id}__"):
-            return locked
-    return None
-
-
-def _agent_locked_layer_guard(
-    intent: "MutationIntent", prior_mapspec: Optional[Dict[str, Any]]
-) -> Optional[MapSpecResult]:
-    """服务端 lock 守卫：agent 目标层命中持久意图锁 → typed 拒绝。
-
-    覆盖 intent：RemoveLayer / UpsertLayer / PatchLayerPresentation /
-    PatchLayerStyle（目标均为 layer family）。RestoreStyle 是整 spec 制图
-    恢复操作，不走逐层锁语义（ADR 披露）。workbench 组织态 intent 不针对
-    层，不受此守卫限制（组锁由租约 advisory 协调）。
-    """
-    if prior_mapspec is None or not isinstance(prior_mapspec, dict):
-        return None
-    workbench = prior_mapspec.get("workbench")
-    if not isinstance(workbench, dict):
-        return None
-    locked = workbench.get("lockedLayerIds")
-    if not isinstance(locked, list) or not locked:
-        return None
-    locked_strs = [x for x in locked if isinstance(x, str) and x]
-    if not locked_strs:
-        return None
-
-    targets: List[str] = []
-    if isinstance(intent, RemoveLayerIntent):
-        targets = [intent.layer_id]
-    elif isinstance(intent, PatchLayerPresentationIntent):
-        targets = [intent.layer_id]
-    elif isinstance(intent, PatchLayerStyleIntent):
-        targets = [intent.layer_id]
-    elif isinstance(intent, UpsertLayerIntent):
-        layer = intent.layer if isinstance(intent.layer, dict) else {}
-        layer_id = layer.get("id")
-        targets = [str(layer_id)] if isinstance(layer_id, str) and layer_id else []
-    for target in targets:
-        hit = _locked_family_hit(target, locked_strs)
-        if hit is not None:
-            return MapSpecResult(
-                is_error=True,
-                origin="agent",
-                error_code="layer_locked",
-                error_msg=(
-                    f"图层 {target} 被用户锁定（locked by {hit}），"
-                    "Agent 不得修改或删除。"
-                ),
-                correction_hint=(
-                    "该图层已被用户显式锁定。请保留其现状继续成图；"
-                    "如确需变更，请向用户说明并由用户解锁（图层面板）后重试。"
-                ),
-            )
-    return None
-
-
+# #1220（audit3 C-7）：_locked_family_hit / _agent_locked_layer_guard 已删除
 _OPACITY_PAINT_KEYS = {
     "circle": "circle-opacity",
     "fill": "fill-opacity",
@@ -1240,17 +1169,10 @@ class MapSpecLifecycleEngine:
                     )
                     if guard_result is not None:
                         return guard_result
-                # Workbench V6（R1-C1）：服务端 lock 守卫 —— 内建于引擎而非
-                # mutation 门面。agent 工具（cartography_tools →
-                # mapspec_store → engine.apply_mutation）直连引擎、不经过
-                # 门面，守卫放门面会被结构性绕过。origin=agent 且目标层
-                # （family 语义）命中持久意图锁 lockedLayerIds → 拒绝。
-                # 用户路径不受限；无 workbench 分支 = 空 locked 集 = 零行为
-                # 变化。apply_presentation_batch 同型守卫见该方法内。
-                if origin == "agent":
-                    locked_guard = _agent_locked_layer_guard(intent, prior_mapspec)
-                    if locked_guard is not None:
-                        return locked_guard
+                # #1220（audit3 C-7）：V6 R1-C1 的 agent 层锁守卫已由上方
+                # W15 统一 guard（guard_intent_locks，agent/system 意图同拒）
+                # 完全覆盖 —— 删除双实现（谓词两份会单边漂移，正是 W15
+                # 要消灭的「换 id 拼法绕锁」形态）。
                 # CORR-2 companion: whether the session had a persisted spec
                 # BEFORE the auto-init skeleton below. Rollback of a first
                 # mutation must DISCARD the candidate, not "restore" the
@@ -2426,17 +2348,7 @@ class MapSpecLifecycleEngine:
                                 error_code=LOCK_CONFLICT_CODE,
                             ))
                             continue
-                    # V6（R1-C1）：batch 路径同样内建 lock 守卫（agent 批量
-                    # finalize 不得触碰用户锁定层）。
-                    if origin == "agent":
-                        locked_guard = _agent_locked_layer_guard(intent, loaded)
-                        if locked_guard is not None:
-                            outcomes.append(BatchIntentOutcome(
-                                layer_id=intent.layer_id, status="refused",
-                                visible=intent.visible,
-                                error_msg=str(locked_guard.error_msg or ""),
-                            ))
-                            continue
+                    # #1220（C-7）：agent 锁守卫由上方 W15 partition 统一承载。
                     if pre_commit_check is not None:
                         guard_result = await pre_commit_check(
                             session_id, intent, origin, loaded

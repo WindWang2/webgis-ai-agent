@@ -25,7 +25,6 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 #: NNNN 序号提取（文件名前缀或 revision id 前缀均可；0024 证明二者通常一致
 #: 但不保证相等，冲突检测对两种口径都报）
-_SEQ_RE = re.compile(r"^(?:\d{4}|(\d{4})_)")
 _DIGITS_RE = re.compile(r"^(\d{4})")
 
 #: DDL 提取（尽力而为）：upgrade() 内常见 op.* 调用的表名

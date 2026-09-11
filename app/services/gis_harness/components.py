@@ -1222,6 +1222,13 @@ _FACTORY_BY_TYPE = {
         id=component_id, type="inset_map", position="top-right", priority=65,
         variant="overview", options={"variant": "overview", "bbox": []},
     ),
+    # #1220（audit3 C-8）：ComponentType 词表内的 4 类此前缺工厂登记 ——
+    # webgis_component_update create=true 对 graticule / methodology_note /
+    # uncertainty_panel / decision_panel 恒失败（工厂已存在，只是没进表）。
+    "graticule": lambda component_id: graticule_component(component_id=component_id),
+    "methodology_note": lambda component_id: methodology_note_component(component_id=component_id),
+    "uncertainty_panel": lambda component_id: uncertainty_panel_component(component_id=component_id),
+    "decision_panel": lambda component_id: decision_panel_component(component_id=component_id),
 }
 
 

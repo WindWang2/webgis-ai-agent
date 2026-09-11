@@ -21,8 +21,11 @@ Epic workflow-v5（架构 .agent-work/workflow-v5-executable-runtime/
 0022-0033 同款）；索引按模型声明逐一建出（漂移守卫
 tests/test_deploy_migration_wiring.py 按列元组比对）。downgrade 反序回滚。
 
-撞号注记 [R1-M1]：geocompute-v7 分支若有 0034_*，合并时本迁移重编号为
-0035 并改 down_revision（见 01-architecture.md §16 rebase 协议）。
+撞号注记 [R1-M1]（#1221/D-10 修订）：多分支撞号有两种被接受的消解方式 ——
+(a) 重编号为下一空号并改 down_revision（01-architecture.md §16 rebase 协议）；
+(b) merge revision 收敛（先例：c0d8322aa2cb 合并 4 个 0034 head、e7a51c9d2f04
+合并 3 个 0035 head）。本仓实际采用 (b)：图完整性由 preflight migration_heads
+守护，人工阅读 versions/ 目录时以 down_revision 图为准，NNNN 前缀不蕴含顺序。
 """
 from typing import Sequence, Union
 

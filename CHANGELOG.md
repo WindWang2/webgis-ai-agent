@@ -653,7 +653,7 @@ ADR/work records rather than CHANGELOG are summarized below.
   rollback (including worker-crash auto-deactivation) now recompiles the
   runtime manifest and refreshes tool args, removing the V1 known
   limitation that left the manifest stale after deactivation.
-- Professional Cartographic Rendering V5 (ADR-0118): authoritative render
+- Professional Cartographic Rendering V5 (ADR-0118 cartographic-rendering-v5): authoritative render
   diagnostics vocabulary (`app/lib/cartography/render_diagnostics.py`, 18
   codes) exported via component catalog schemaVersion 5 and locked as a
   frontend subset by registry-parity tests; diagnostics now travel with the
@@ -675,7 +675,7 @@ ADR/work records rather than CHANGELOG are summarized below.
 - Semantic render-scene oracle (`describeRenderScene`) with golden corpus and
   live-composition semantics checks — live ↔ export parity assertions on
   meaning (presence/visibility/disclosure), not pixels.
-- Spatial Data Lakehouse & Cube V6 (ADR-0118): durable DataObject identity —
+- Spatial Data Lakehouse & Cube V6 (ADR-0118 spatial-data-lakehouse-cube-v6): durable DataObject identity —
   manifests are content-addressed (id = canonical sha256, deterministic,
   owner-scoped, with input reuse fingerprints and an environment
   fingerprint), published through the existing BlobStore CAS with free
@@ -764,7 +764,7 @@ ADR/work records rather than CHANGELOG are summarized below.
   intent persists a `WorkbenchDocV5` into the session's `mapspec["workbench"]`
   branch over the existing lock + CAS + provenance chain (256KB real-UTF-8
   gate, deterministic structural validation). Selection/isolate remain
-  session-transient per ADR-0104; no second truth store.
+  session-transient per ADR-0104 gis-harness-autonomous-runtime-v4; no second truth store.
 - Agent layer-lock enforcement: `set_layer_visibility` and `remove_layer`
   transactions partition targets by the user lock set - fully locked targets
   fail with a typed `layer_locked` ack error; partially locked targets apply
@@ -798,7 +798,7 @@ ADR/work records rather than CHANGELOG are summarized below.
   rename/remove/assign/lock/drop mutations are undoable doc commands;
   group removal promotes children.
 
-### Added (Harness V5 — ADR-0118)
+### Added (Harness V5 — ADR-0118 gis-harness-autonomous-runtime-v5)
 - Durable trace V5: session trace-chain JSONL is now multi-worker safe
   (cross-process flock + per-session monotonic `seq` + settle idempotency);
   FINAL_VERDICT records are never dropped by the rolling window; chains survive
@@ -922,7 +922,7 @@ ADR/work records rather than CHANGELOG are summarized below.
 ## [Unreleased] - 2026-09-08
 
 ### Added
-- GIS Extension Platform V1（ADR-0104）：第三方/内部扩展的统一宿主
+- GIS Extension Platform V1（ADR-0104 gis-extension-platform-v1）：第三方/内部扩展的统一宿主
   `app/extensions_platform/` —— `GisExtensionManifest`（fail-closed、
   schema 版本化、命名空间强制、保留词表）、typed 诊断码、扩展 API/核心
   版本窗口兼容判定、权限模型（声明≠授权、typed 拒绝、仅可收窄）、

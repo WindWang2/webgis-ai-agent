@@ -15,8 +15,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-DEFAULT_MD = Path("docs/quality/CONTRACT_DRIFT_REPORT.md")
-DEFAULT_JSON = Path("docs/quality/contract-drift-report.json")
+REPO = Path(__file__).resolve().parents[1]
+DEFAULT_MD = REPO / "docs/quality/CONTRACT_DRIFT_REPORT.md"
+DEFAULT_JSON = REPO / "docs/quality/contract-drift-report.json"
 
 
 def generate() -> tuple[str, str]:
