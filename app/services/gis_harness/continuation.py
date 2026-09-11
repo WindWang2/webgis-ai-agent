@@ -72,6 +72,13 @@ def loops_remaining(recovery_state: Dict[str, Any]) -> Dict[str, int]:
     return out
 
 
+#: 参与 abort 门槛的回路（V7）：``replan`` 是 abort 的**逃生舱**而非被
+#: gate 的对象 —— 计入总和会让 abort 依赖 replan 先被消费，而 replan 只
+#: 能经 abort 路由的 ``request_replan`` 记账（闭环死锁，独立评审 F2）。
+#: 排除后 abort 语义与 V6（无 replan 条目时）逐位一致。
+_ABORT_GATING_LOOPS: Tuple[str, ...] = ("deepen", "requalify", "repair")
+
+
 def decide_continuation(
     *,
     recovery_state: Dict[str, Any],
@@ -83,7 +90,9 @@ def decide_continuation(
     """long-horizon 续行裁决（确定性纯函数）。
 
     优先级（先急后缓、先硬预算后软回路）：
-    1. 总预算耗尽（durable ledger 或全回路余量 0）→ abort_with_disclosure；
+    1. 硬预算耗尽（durable ledger 或 deepen/requalify/repair 余量全 0，
+       **不含 replan** —— replan 是 abort 后的重规划逃生舱）→
+       abort_with_disclosure；
     2. 最近失败为不可恢复类（cancelled / budget_exhausted）→ abort；
     3. 渲染/运行时失败 → repair（余量内）或 reobserve（repair 已计）→
        rendered-state 再验证；
@@ -93,14 +102,15 @@ def decide_continuation(
     6. 其余 → continue。
     """
     remaining = loops_remaining(recovery_state)
-    total_remaining = sum(remaining.values())
+    total_remaining = sum(remaining[k] for k in _ABORT_GATING_LOOPS
+                          if k in remaining)
 
     # 1) 硬预算
     if total_remaining <= 0:
         return ContinuationDecision(
             verdict="abort_with_disclosure",
             reason="all continuation loops exhausted",
-            disclosure=("所有续行回路预算耗尽（deepen/repair/replan）—— "
+            disclosure=("修复/深化回路预算耗尽（deepen/requalify/repair）—— "
                         "诚实部分完成；恢复后按新证据重判，不自动续跑"),
         )
     if failure and ledger_attempts >= 3:

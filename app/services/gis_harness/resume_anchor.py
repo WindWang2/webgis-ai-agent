@@ -93,6 +93,40 @@ async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
                 recovery_state = recovery_state_for_anchor(raw)
     except Exception:  # noqa: BLE001 — recovery 态缺席照常建锚
         recovery_state = {}
+    # V7（ADR-0130 D3）：九域上下文摘要入锚（rebuildable 纪律 —— 只带
+    # 域指纹/压缩态，载荷可由权威事实重建，永不复制）。
+    context_digest: Dict[str, Any] = {}
+    try:
+        from app.services.gis_harness.context_layers import (
+            ContextLayersState,
+            DomainBlock,
+            checkpoint_context_layers,
+            context_digest_for_anchor,
+        )
+
+        layers_block = await checkpoint_context_layers(session_id)
+        if isinstance(layers_block, dict) and isinstance(
+                layers_block.get("domains"), dict):
+            state = ContextLayersState(
+                schema_version=str(layers_block.get("schema") or ""),
+                revision=int(layers_block.get("revision") or 1),
+                content_fingerprint=str(
+                    layers_block.get("content_fingerprint") or ""),
+                domains={
+                    k: DomainBlock(
+                        source_fingerprint=str(
+                            (v or {}).get("source_fingerprint") or ""),
+                        payload=(v or {}).get("payload") or {},
+                        compacted=bool((v or {}).get("compacted")),
+                        pruned=bool((v or {}).get("pruned")),
+                    )
+                    for k, v in layers_block["domains"].items()
+                    if isinstance(v, dict)
+                },
+            )
+            context_digest = context_digest_for_anchor(state)
+    except Exception:  # noqa: BLE001 — 摘要缺席照常建锚
+        context_digest = {}
     return {
         "schema_version": _ANCHOR_SCHEMA_VERSION,
         "created_at": time.time(),
@@ -108,6 +142,7 @@ async def build_anchor(session_id: str) -> Optional[Dict[str, Any]]:
         "refs_truncated": _ref_count > MAX_ANCHOR_REFS,
         "recovery_state": recovery_state,
         "reasoning_digest": reasoning_digest(chapter, recovery_state),
+        "context_digest": context_digest,
     }
 
 

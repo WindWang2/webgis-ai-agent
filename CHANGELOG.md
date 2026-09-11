@@ -60,6 +60,7 @@
   refuses expired records; global-scope connections report governed
   metadata (probe/enrichment no longer silently disabled); throttled
   `sweep()` wired into resolution (idle-TTL eviction is live).
+
 ## [Unreleased] - 2026-09-11 (cartography-v7: Template Component Runtime)
 
 ### Added (cartography-v7: Component Graph + Constraint Set + Style Tokens, Goal 08)
@@ -91,6 +92,72 @@
   参数（deterministic fail 压低 READY 档位）。
 - Publication DPI 参数化：`/export/vector-pdf` 可选 target_dpi（72-600
   钳制 + 生效值披露；缺省 300 输出 byte 一致）。
+
+## [Unreleased] - 2026-09-10 (harness-v7)
+
+### Added (harness-v7: Long-Horizon Contextual GIS Agent Runtime, ADR-0130)
+- Runtime state machine (`gis_harness/runtime_state_machine.py`): task-level
+  cognitive-loop phase (12-state closed vocabulary) + legal transition table
+  (docs/test-oracle/commanded fail-closed) + ring transition records; phases
+  are deterministic derivations of chapter facts (no second truth source);
+  persisted additively at `gis_chapter["runtime_state"]` with gate
+  fingerprint idempotency + in-lock drift guards; `suspended` overlay flag
+  marks unfinished tasks at turn settle (anchor-resumable); wired to the
+  three existing production triggers (tool_result / turn_settled / render
+  observation) — zero new event sources; `[GIS Runtime]` projection line.
+- Plan runtime (`gis_harness/plan_runtime.py`): plan identity fingerprint
+  (goal+rows+contract) → monotonic versioning with bounded history (≤8) and
+  rollback points (≤4); replan loop gets BOTH a budget entry
+  (`LOOP_BUDGETS.replan=1`) and its first production driver (`request_replan`,
+  invoked from the finalizer exit when repair is unreachable) — flag cleared
+  when plan facts change (replan consumed); `seed_recompute_from_failures`
+  emits a minimal-rerun list (failed row + downstream closure, reuse for
+  unaffected satisfied nodes).
+- Context layers (`gis_harness/context_layers.py`): nine bounded domain
+  projections (turn/session/project/workspace/map/data/workflow/artifact/
+  capability), all rebuildable — anchor carries only per-domain digests
+  (`context_digest` durable key); deterministic budget (per-domain byte caps
+  → total-budget prune order, violations recorded); single-key checkpoint
+  with monotonic revision + content fingerprint (turn-boundary automatic).
+- Capability descriptors (`gis_harness/capability_descriptors.py`): unified
+  read-only projection over capability/algorithm/template/component
+  registries with preconditions (geometry/CRS class/min features/required
+  fields/scientific), postconditions (outputs/uncertainty), cost/latency
+  profile, fallback chains; `select_capabilities` (hard precondition filter
+  + CJK-bigram lexical seed + cost bias + bounded reliability penalty from
+  the durable recovery ledger); gated additive signal in
+  `tool_surface_v3.select` (kill switch `GIS_CAPABILITY_RETRIEVAL_V7=0`).
+- Scenario corpus (`app/evaluation/scenario_corpus.py`): generative gold
+  structure — domain packs × bounded slot tables × deterministic expansion
+  (14 families, 2316 scenarios ≥ 2000 gate), expected lists validated
+  against the live registries (`registry_missing=[]`), coverage gate that
+  flags registry families with no pack, deterministic stride sampling with
+  p@1 evaluation.
+- Map critique (`gis_harness/map_critique.py`): deterministic checks —
+  blank_map_risk (all rendered layers explicitly report count 0),
+  invalid_result_bounds, publication export completeness (title/north_arrow/
+  scale_bar with family repair routing), label collision (telemetry ratio vs
+  existing CARTO_LABEL_* thresholds, honest absence), planned/observed
+  overlay mismatch; aggregated as bounded `MapCompletionFinding`s and merged
+  additively into the finalizer's validate pass.
+- Finalization hook (V7): independent intent acceptance
+  (`gis_harness/intent_acceptance.py` — verdict/desired/observed three-way
+  check replacing the `intent_verified=(status==complete)` tautology;
+  missing telemetry honestly downgrades `intent_verified`); finalizer exit
+  directly consumes `decide_continuation` (V6 follow-up) with replan routing
+  through `request_replan`; READY triggers context commit (nine-domain
+  checkpoint + `commit_runtime_context` + `verdict_ready` phase advance);
+  display confirmation hook (`gis_harness/display_confirmation.py`, default
+  auto-confirm, `GIS_FINAL_DISPLAY_CONFIRM=required` opts into explicit
+  ack with render-seq freshness).
+- Delegation (`gis_harness/delegation.py`): handoff schema
+  (`DelegationSpec`, role fail-closed) wrapping `SubagentDispatcher` with a
+  bounded parent-side ledger (`gis_chapter["delegations"]`, ring ≤8, closed
+  status vocabulary, lineage write-back); deterministic failure recovery
+  (one retry within repair budget, then honest fail); optional production
+  driver `delegate_cartography_qa` (env `GIS_HARNESS_DELEGATION=1`,
+  idempotent per product revision).
+- New ADR: `docs/adr/0130-gis-harness-v7-agentic-runtime.md`.
 
 ## [Unreleased] - 2026-09-09 (science-v5)
 
@@ -134,6 +201,7 @@
   and D8 flow-topology validation (bounded coloring cycle check, dangling
   receivers, strict accumulation monotonicity with equal-acc plateaus
   counted apart); exposed via `hydrology_v4_analysis` (contract v2).
+
 ## [Unreleased] - 2026-09-10
 
 ### Added (geocompute-v7: Distributed Adaptive Spatial Compute Fabric)
@@ -177,6 +245,7 @@
   plane contention; durable node polling switched from fixed 50ms to
   adaptive backoff (0.05->0.5s, cancellation latency dominated by the
   0.5s run heartbeat).
+
 ## [Unreleased] - 2026-09-10
 
 ### Added (cartography-v6: Typed MapSpec + Publication Engine, ADR-0120)
@@ -212,6 +281,7 @@
   ignored labels, drew out-of-palette entries); legend range labels unified
   on formatLegendValue (zh-CN aware); title fallback unified ("图例");
   continuous legend entry count now 3 (was 0) in export disclosure math.
+
 ## [Unreleased] - 2026-09-10
 
 ### Added (workbench-v6: Server-Side Multi-User Collaboration)
@@ -235,6 +305,7 @@
 - Frontend: collab client (reconnect/jitter/heartbeat reconciliation), delta
   persistence channel, CollabBar (presence/degraded/conflict disclosure),
   group reparent drag & keyboard parity, O(n) tree traversal helpers.
+
 ## [Unreleased] — Quality V3 / Integration Platform（Epic 10）
 
 ### Added
@@ -249,6 +320,7 @@
   DB_TRANSIENT_SEQUENCE（生产零改动，注册表字节闸同步）
 
 ## [Unreleased] - 2026-09-09
+
 ## [Unreleased] - 2026-09-10
 
 ### Added (methodology-v2: GIS Methodology & Template Intelligence V2, ADR-0120)
