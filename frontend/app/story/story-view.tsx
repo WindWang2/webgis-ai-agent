@@ -192,12 +192,23 @@ export function StoryView(): React.ReactElement {
     setChapterState(null);
     setMapState(null);
 
+    // 首章落位在装载路径内同步完成（派生+编排为纯函数，可在此直接计算）。
+    // 不用 effect 事后落位——它会与用户 seek 竞争提交顺序（flaky 源）。
+    const landFirstChapter = (msgs: StoryMessage[]) => {
+      const firstVisible = applyOrchestration(deriveChapters(msgs), loadOrchestration(sessionId)).find(
+        (c) => c.visible,
+      );
+      setActiveId(firstVisible?.id ?? null);
+    };
+
     if (!sessionId) {
       setLoading(false);
-      setMessages([
+      const intro: StoryMessage[] = [
         { role: 'assistant', content: '# StoryMap 回放模式\n以叙事形式重现 GeoAgent 的分析推演过程。' },
         { role: 'assistant', content: '您可以尝试在 URL 中追加 `?session_id=您的会话ID` 来回放之前的分析推演。' },
-      ]);
+      ];
+      setMessages(intro);
+      landFirstChapter(intro);
       return () => controller.abort();
     }
 
@@ -209,7 +220,9 @@ export function StoryView(): React.ReactElement {
           { signal: controller.signal, label: 'Story session error' },
         );
         if (controller.signal.aborted) return;
-        setMessages(data.messages && data.messages.length > 0 ? data.messages : []);
+        const msgs = data.messages && data.messages.length > 0 ? data.messages : [];
+        setMessages(msgs);
+        landFirstChapter(msgs);
 
         const stateData = await apiFetch<{ map_state?: SessionMapState }>(
           `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/map-state`,
@@ -231,16 +244,6 @@ export function StoryView(): React.ReactElement {
 
     return () => controller.abort();
   }, [sessionId, dispatchAction]);
-
-  // 装载完成后把激活章节落到第一章（ref 镜像判空：防止陈旧 effect 排队在
-  // 用户 seek 之后执行时把激活章节覆写回第一章）
-  const activeIdRef = useRef(activeId);
-  activeIdRef.current = activeId;
-  useEffect(() => {
-    if (activeIdRef.current === null && visibleChapters.length > 0) {
-      setActiveId(visibleChapters[0].id);
-    }
-  }, [visibleChapters]);
 
   const togglePlay = useCallback(() => {
     if (playing) {

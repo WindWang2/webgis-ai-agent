@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import { create } from 'zustand';
-import { getAllCommands, getCommandById, recordRecentCommand } from '@/lib/commands/registry';
+import { getCommandById, recordRecentCommand } from '@/lib/commands/registry';
 import { isEditableTarget, matchesShortcut, normalizeShortcut } from '@/lib/commands/shortcut';
 import type { CommandExecutionContext } from '@/lib/commands/types';
 
@@ -80,5 +80,3 @@ export function useCommandPaletteScrollLock(active: boolean): void {
     };
   }, [active]);
 }
-
-export { getAllCommands };

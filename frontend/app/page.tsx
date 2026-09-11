@@ -504,13 +504,8 @@ export default function Home() {
       {/* ADR-0147：高级查询控制台（data-fabric query 契约消费面） */}
       <QueryConsole sessionId={sessionId} ownerToken={activeSessionToken} />
 
-      {/* ADR-0147：跨会话搜索（本地索引 + 跳转恢复） */}
-      <SearchDrawer
-        onSelectSession={(sid) => {
-          setHistoryOpen(false);
-          handleSelectSession(sid);
-        }}
-      />
+      {/* ADR-0147：跨会话搜索（本地索引 + 跳转恢复；handleSelectSession 内含抽屉关闭语义） */}
+      <SearchDrawer onSelectSession={handleSelectSession} />
 
       {/* ADR-0147：操作历史弹层 + 撤销/重做可见反馈 */}
       <UndoHistoryPanel />

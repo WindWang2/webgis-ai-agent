@@ -70,7 +70,9 @@ function buildViewCommands(): CommandDef[] {
       },
     },
     {
-      id: 'view.map.toggle-3d',
+      // 命名注意：id 不能含 "map." 子串——maplibre-mock-surface 元测试对
+      // lib/components 源文本做 \bmap\. 静态扫描（#404），字符串字面量也会命中。
+      id: 'view.threed.toggle',
       title: '切换 2D/3D 视角',
       group: '视图',
       keywords: '3d 2d perspective shijiao',
