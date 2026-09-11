@@ -5,7 +5,6 @@ token 结构有界性、组件样式投影（按 token 消费面裁剪/未登记
 调色板 profile 迁移规划（色带识别/语义位置对齐/用户色不猜改/不可解
 诚实披露）。
 """
-import pytest
 
 from app.lib.cartography.style_tokens import (
     STYLE_PRESET_IDS,

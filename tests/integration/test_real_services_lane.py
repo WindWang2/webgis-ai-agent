@@ -37,14 +37,14 @@ def test_redis_transient_disconnect_recovery():
 
     # 瞬时故障：强制断连（连接池关闭 → 下一条命令重连）
     pool = client.connection_pool
-    client.disconnect()
+    client.connection_pool.disconnect()
 
     assert client.get(key) == b"v1", "断连恢复后必须读到写入值"
 
     # 分布式锁语义在瞬时故障下的行为
     lock = client.lock("webgis:real-lane:lock", timeout=5)
     assert lock.acquire(blocking=False)
-    client.disconnect()  # 持锁瞬间断连
+    client.connection_pool.disconnect()  # 持锁瞬间断连
     assert client.get("webgis:real-lane:lock") is not None
     lock.release()
     assert client.get("webgis:real-lane:lock") is None

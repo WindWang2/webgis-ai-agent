@@ -555,7 +555,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     meta.feature_count = int(row[0])
                 else:
                     cur.execute(
-                        f"SELECT COUNT(*) FROM {quote_ident(schema_name)}.{quote_ident(table_name)};"
+                        f"SELECT COUNT(*) FROM {quote_ident(schema_name)}.{quote_ident(table_name)};"  # nosec B608 — identifiers via quote_ident only
                     )
                     cnt_row = cur.fetchone()
                     meta.feature_count = int(cnt_row[0]) if cnt_row and cnt_row[0] is not None else 0

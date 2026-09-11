@@ -177,7 +177,7 @@ def hsi_score_features(
         hsi = np.where(any_zero, 0.0, np.exp(log_terms @ weights_norm))
 
     out_features = []
-    props_records = gdf.drop(columns="geometry", errors="ignore").to_dict("records")
+    gdf.drop(columns="geometry", errors="ignore").to_dict("records")
     for i, f in enumerate(features):
         p = {
             "hsi": round(float(hsi[i]), 6),

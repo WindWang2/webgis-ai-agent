@@ -15,7 +15,7 @@ Phase H「真实执行」的制图端：``cartography`` 节点调用**真实渲�
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 

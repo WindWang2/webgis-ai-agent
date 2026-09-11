@@ -218,7 +218,7 @@ class TestExecutorQuarantine:
 
     def test_isolation_from_other_owners(self, job_env, monkeypatch):
         from app.services.geocompute.executor import GeoExecutionEngine
-        from app.services.geocompute.plan import ExecutionPlan, ExecutionRunStatus
+        from app.services.geocompute.plan import ExecutionPlan
         from app.services.geocompute import graph
         from app.services.geocompute.cluster.quarantine import TaskQuarantine
 
@@ -312,7 +312,6 @@ class TestPlacementGuardWiring:
     def test_guard_retry_returns_without_finalize(self, job_env, monkeypatch):
         """守卫返回 "retry" → 任务体直接返回（celery 重投语义），job 行
         **不**被 finalize（保持 running/queued 由重投路径接管）。"""
-        from celery.exceptions import Retry
 
         import app.services.geocompute.tasks as tasks_mod
 
@@ -356,7 +355,7 @@ class TestSpeculativeDuplicate:
             ExecutionRunStatus,
         )
 
-        plan = ExecutionPlan(plan_id="p", nodes=[])
+        ExecutionPlan(plan_id="p", nodes=[])
         return ExecutionRun(run_id="gexec-spec", plan_id="p",
                             plan_fingerprint="fp",
                             status=ExecutionRunStatus.PENDING)
@@ -493,7 +492,6 @@ class TestSpeculativeDuplicate:
         node = self._node()
         run = self._run()
 
-        from app.services.geocompute.errors import DeadlineExceededError
 
         states = {42: {"status": "failed", "payload": {}, "error": "boom"},
                   999: {"status": "completed",
@@ -538,7 +536,6 @@ class TestSpeculativeDuplicate:
         node = self._node()
         run = self._run()
 
-        from app.services.geocompute.errors import DeadlineExceededError
 
         states = {42: {"status": "failed", "payload": {}, "error": "boom"},
                   999: {"status": "failed", "payload": {},

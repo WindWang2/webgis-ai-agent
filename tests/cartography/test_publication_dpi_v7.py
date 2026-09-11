@@ -5,7 +5,6 @@ publication 链此前的渲染 DPI 是常量 300；本分支将其参数化（72
 （如本机）只测纯函数钳制面与请求契约，渲染集成由既有 publication
 测试在可用环境覆盖。
 """
-import pytest
 
 from app.services.publication_export import (
     DPI_DEFAULT,

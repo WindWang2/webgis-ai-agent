@@ -806,7 +806,7 @@ def _apply_partition_slice(
     any_features_left = False
     for src, payload in payloads.items():
         feats = payload.get("features")
-        raster_path = payload.get("raster_path")
+        payload.get("raster_path")
         if isinstance(feats, list) and part.get("halo_bbox"):
             from app.services.geocompute.partitioning import (
                 in_bbox,

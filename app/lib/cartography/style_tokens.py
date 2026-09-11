@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 #: hex 颜色（#rgb / #rrggbb；与本库色带常量同形）。
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$|^#[0-9a-fA-F]{3}$")

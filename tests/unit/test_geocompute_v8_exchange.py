@@ -8,7 +8,6 @@ exchange 停用（无 root）→ V7 语义逐字节保留。
 from __future__ import annotations
 
 import json
-import zlib
 
 import pytest
 from sqlalchemy import create_engine
@@ -145,8 +144,7 @@ class TestDisabledExchange:
 
 class TestNodeResultStoreSpill:
     def _store(self, tmp_path, max_bytes):
-        from app.services.geocompute.executor import (_SPILLED_STUB_BYTES,
-                                               NodeResultStore)
+        from app.services.geocompute.executor import (NodeResultStore)
 
         exchange = ArtifactExchange(root=str(tmp_path / "blobs"))
         return NodeResultStore(max_entries=8, max_bytes=max_bytes,
@@ -180,8 +178,7 @@ class TestNodeResultStoreSpill:
 
     def test_spill_disabled_drops_oversize(self, tmp_path, monkeypatch):
         monkeypatch.delenv("WEBGIS_EXCHANGE_ROOT", raising=False)
-        from app.services.geocompute.executor import (_SPILLED_STUB_BYTES,
-                                               NodeResultStore)
+        from app.services.geocompute.executor import (NodeResultStore)
 
         store = NodeResultStore(max_entries=8, max_bytes=1000)
         store.put("k", self._payload(200))

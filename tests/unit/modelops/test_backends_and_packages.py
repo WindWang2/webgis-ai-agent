@@ -163,7 +163,7 @@ def test_package_store_persist_rejects_checksum_mismatch(tmp_path):
 
 
 def test_descriptor_output_transform_in_fingerprint():
-    from app.lib.modelops.descriptor import GeoModelDescriptor, OutputTransform
+    from app.lib.modelops.descriptor import OutputTransform
 
     desc = _desc_with_checksum("c" * 64)
     payload = desc.fingerprint_payload()

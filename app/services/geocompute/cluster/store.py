@@ -1297,7 +1297,6 @@ class ClusterLedger:
         advisory 模式下条件被拒（超限）→ 补一条无条件记账（诚实暴露
         超卖），同样返回维度（供观测计数，不阻塞派发）。
         """
-        from app.services.geocompute.cluster.contracts import RESOURCE_DIMENSIONS
 
         for scope_key, claim in claims.items():
             if not any((claim.rows, claim.bytes, claim.units,

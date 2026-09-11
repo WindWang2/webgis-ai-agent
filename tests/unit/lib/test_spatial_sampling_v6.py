@@ -22,7 +22,6 @@ from app.lib.geo_analysis.spatial_sampling import (
     systematic_grid_points,
 )
 from app.lib.gis.scientific_errors import (
-    DegenerateData,
     InsufficientSamples,
     MissingRequiredField,
     NoValidObservations,
@@ -93,7 +92,6 @@ def test_systematic_grid_spacing_and_alignment():
     fc = _grid_fc(3, 3)
     fc_out, meta = systematic_grid_points(fc, spacing=500.0, seed=42)
     assert meta["sample_count"] == len(fc_out["features"]) > 0
-    import geopandas as gpd
 
     from app.lib.geo_processor.core import to_utm_gdf
 
