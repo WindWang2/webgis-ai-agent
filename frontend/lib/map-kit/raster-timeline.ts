@@ -14,39 +14,39 @@ export type FrameGrid = number[][];
 
 /** 有界 LRU（Map 迭代序 = 插入序；get 命中重新插入保持新鲜度）。 */
 export class LruCache<K, V> {
-  private readonly map = new Map<K, V>();
+  private readonly entries = new Map<K, V>();
 
   constructor(public readonly capacity: number) {
     if (capacity < 1) throw new Error('LruCache capacity must be >= 1');
   }
 
   has(key: K): boolean {
-    return this.map.has(key);
+    return this.entries.has(key);
   }
 
   get(key: K): V | undefined {
-    if (!this.map.has(key)) return undefined;
-    const value = this.map.get(key) as V;
-    this.map.delete(key);
-    this.map.set(key, value);
+    if (!this.entries.has(key)) return undefined;
+    const value = this.entries.get(key) as V;
+    this.entries.delete(key);
+    this.entries.set(key, value);
     return value;
   }
 
   put(key: K, value: V): void {
-    if (this.map.has(key)) this.map.delete(key);
-    this.map.set(key, value);
-    while (this.map.size > this.capacity) {
-      const oldest = this.map.keys().next().value as K;
-      this.map.delete(oldest);
+    if (this.entries.has(key)) this.entries.delete(key);
+    this.entries.set(key, value);
+    while (this.entries.size > this.capacity) {
+      const oldest = this.entries.keys().next().value as K;
+      this.entries.delete(oldest);
     }
   }
 
   get size(): number {
-    return this.map.size;
+    return this.entries.size;
   }
 
   clear(): void {
-    this.map.clear();
+    this.entries.clear();
   }
 }
 
