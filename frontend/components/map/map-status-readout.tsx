@@ -1,6 +1,7 @@
 'use client';
 
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * Bottom-right map readout: cursor-independent centre coordinate, zoom level,
@@ -17,6 +18,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
  * stay off that path).
  */
 export function MapStatusReadout() {
+const t = useT();
   const viewport = useHudStore((s) => s.viewport);
 
   const [lng, lat] = viewport?.center ?? [0, 0];
@@ -27,7 +29,7 @@ export function MapStatusReadout() {
       className='map-chrome flex items-center gap-2 px-2 py-1 font-mono text-micro tabular-nums'
       // Not a live region: the values change on every pan frame and would flood
       // a screen reader. The static label carries the meaning instead.
-      aria-label='地图视图状态'
+      aria-label={t('map.readout.aria')}
     >
       <span className='text-map-chrome-ink'>
         {Number.isFinite(lat) ? lat.toFixed(4) : '—'}, {Number.isFinite(lng) ? lng.toFixed(4) : '—'}
