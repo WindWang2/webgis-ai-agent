@@ -180,10 +180,14 @@ NavRail 已是 roving tabindex + ArrowUp/Down/Home/End 自动激活；ContextPan
 
 ## 3. 端点缺口与协调点（不自行补后端）
 
-1. **catalog 缺 bbox/tags 检索参数**：schema `CatalogSearchQuery` 定义了 `bbox`/`tags`，但 REST GET 端点未暴露这两个 query 参数（只支持 kind/time/producer）。UI 先按实际暴露参数做过滤；差距记协调点。
-2. **无快照 diff 端点**：快照对比 = 前端拉两个版本响应做本地 diff（dataset versions 面已够用）。
-3. **gc/retention execute 为 admin/重验语义**：UI 只读展示 + 计划，执行动作归 C/F 线（任务书 §2 P8 已划定）。
-4. **cube 时序上图无瓦片端点**：window 读返回 JSON 数组，前端 canvas 渲染（P7 选型，见 ADR-0141）。
+1. **【联调实证 · 后端 bug】`Conversation.session_id` 属性不存在**：真实后端（worktree 启动 `uvicorn app.main:app`，sqlite）上，凡在守卫后解引用 `conv.session_id` 的 lakehouse 端点全部 500（`AttributeError: 'Conversation' object has no attribute 'session_id'`）——波及 dataset 版本层全部 12 端点、cubes POST 族、objects/{id}/lineage 等（模型主键是 `id`，见 `app/models/db_model.py:212`）。疑似改名重构遗留（V8 e2e 以 mock conv 通过，未暴露）。**建议后端线修复：`str(conv.session_id)` → `str(conv.id)`**。前端不受阻：所有错误按 status 分支，500 落 InlineNotice 优雅降级；catalog / STAC / fail-closed 404 已实测真实可用。
+2. **catalog 缺 bbox/tags 检索参数**：schema `CatalogSearchQuery` 定义了 `bbox`/`tags`，但 REST GET 端点未暴露这两个 query 参数（只支持 kind/time/producer）。UI 按实际暴露参数做服务端过滤 + 客户端收窄；差距记协调点。
+3. **无快照 diff 端点**：快照对比 = 前端拉两个版本解析响应做本地字段 diff（P6 已实现；位图级双屏对比复用 P7 管线，入口提示见 version-workbench）。
+4. **gc/retention execute 为 admin/重验语义**：UI 只读展示 + 计划，执行动作归 C/F 线（任务书 §2 P8 已划定）。实测非 admin 调 gc/plan 返回 **401**（勘察先验 403）——UI 按 status 无关的消息展示，不受影响。
+5. **cube 时序上图无瓦片端点**：window 读返回 JSON 数组，前端 canvas 渲染（P7 选型，见 ADR-0141；README「No Raster Push」红线一致）。
+6. **真实空域 catalog 返回 `total_bounded:false`**（fixtures 空态写的是 true）——类型 boolean 兼容，UI 仅用于 title 提示，无行为分支。
+7. **i18n**：`messages/` 不存在，G 线框架未合 —— 全部文案硬编码中文，待 G 收编（清单 = lakehouse 目录下全部用户可见字符串）。
+8. **visual capture 会话恢复路径在本机不填充**（既有 map-legends surface 同样表现，非本线引入）——lakehouse surfaces 以诚实空态留档；信息密度 fixtures 已就位（catalog/datasets GET），会话恢复修复后即生效。
 
 ## 4. 交付台账（任务 → 文件 → 测试 → 证据）
 

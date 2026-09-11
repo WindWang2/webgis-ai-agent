@@ -61,8 +61,8 @@ const SURFACES = [
     clickSubTab 走真实 tablist 点击。fixtures 填充 catalog 与 datasets 两个
     mount 期 GET，保证截图是真实信息密度而非空态。
   */
-  { name: 'lakehouse-catalog', tab: '数据湖' },
-  { name: 'lakehouse-datasets', tab: '数据湖', clickSubTab: '数据集' },
+  { name: 'lakehouse-catalog', tab: '数据湖', restoreSession: true },
+  { name: 'lakehouse-datasets', tab: '数据湖', restoreSession: true, clickSubTab: '数据集' },
   { name: 'layers', tab: '图层' },
   { name: 'analysis', tab: '分析' },
   { name: 'tasks', tab: '任务' },
