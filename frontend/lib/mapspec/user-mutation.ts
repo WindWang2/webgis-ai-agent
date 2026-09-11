@@ -424,7 +424,6 @@ async function removeLayerFromSpecOnce(
   // 两条 await 后复核统一对 bound —— 防御路径不再旁路会话守卫。
   const bound = enqueuedSessionId ?? sessionId;
   if (enqueuedSessionId === undefined) {
-    // eslint-disable-next-line no-console -- 防御性披露：调用点应显式传入
     console.warn('[removeLayerFromSpec] no enqueuedSessionId supplied; using current session');
   } else if (sessionId !== bound) {
     return 'reflected';
