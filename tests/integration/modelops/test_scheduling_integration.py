@@ -51,7 +51,7 @@ def test_ledger_released_when_provider_load_fails(service, tmp_path, isolated_bl
 
     # onnx 模型（真实包注册成功），但 load 抛 typed 错 → 账本泄漏路径。
     pytest.importorskip("onnx")
-from tests.unit.modelops.onnx_fixtures import build_onnx_segmentation_model
+    from tests.unit.modelops.onnx_fixtures import build_onnx_segmentation_model
 
     path = tmp_path / "tiny.tif"
     with rasterio.open(
