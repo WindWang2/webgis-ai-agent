@@ -1,13 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import {
-  Boxes,
-  GitMerge,
-  Satellite,
-  Send,
-} from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { Boxes } from 'lucide-react';
 import type { CatalogEntry, CatalogOwnerType } from '@/lib/api/lakehouse';
 import { EmptyState } from '@/components/shared/empty-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
@@ -17,6 +11,9 @@ import { CatalogItemCard } from './catalog-item-card';
 import { ObjectDetailPanel } from './object-detail-panel';
 import { DatasetsPanel } from './datasets-panel';
 import { QueryPane } from './query-pane';
+import { StacExplorer } from './stac-explorer';
+import { VersionWorkbench } from './version-workbench';
+import { OpsPanel } from './ops-panel';
 import { useLakehouseCatalog, EMPTY_CATALOG_FILTERS, type CatalogFilters } from './use-lakehouse-catalog';
 
 /**
@@ -277,7 +274,12 @@ export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
           aria-labelledby="lakehouse-tab-stac"
           className="flex min-h-0 flex-1 flex-col"
         >
-          <PlaceholderPane icon={Satellite} label="STAC 目录" />
+          <StacExplorer
+            ownerType={ownerType}
+            ownerId={ownerId}
+            sessionId={sessionId ?? ''}
+            ownerToken={ownerToken}
+          />
         </div>
       )}
 
@@ -288,7 +290,12 @@ export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
           aria-labelledby="lakehouse-tab-publish"
           className="flex min-h-0 flex-1 flex-col"
         >
-          <PlaceholderPane icon={Send} label="发布与快照对比" />
+          <VersionWorkbench
+            ownerType={ownerType}
+            sessionId={sessionId ?? ''}
+            projectId={projectId}
+            ownerToken={ownerToken}
+          />
         </div>
       )}
 
@@ -299,32 +306,15 @@ export function LakehouseTab({ sessionId, ownerToken }: LakehouseTabProps) {
           aria-labelledby="lakehouse-tab-ops"
           className="flex min-h-0 flex-1 flex-col"
         >
-          <PlaceholderPane
-            icon={GitMerge}
-            label="运维与血缘"
-            detail={lineageTarget ? `待检视对象：${lineageTarget.slice(0, 16)}…（P8 接入血缘与 gc/scrub 只读面）` : undefined}
+          <OpsPanel
+            sessionId={sessionId ?? ''}
+            ownerToken={ownerToken}
+            lineageTarget={lineageTarget}
+            onTargetConsumed={() => setLineageTarget(null)}
           />
         </div>
       )}
     </div>
-  );
-}
-
-function PlaceholderPane({
-  icon: Icon,
-  label,
-  detail,
-}: {
-  icon: LucideIcon;
-  label: string;
-  detail?: string;
-}) {
-  return (
-    <EmptyState
-      icon={Icon}
-      title={`${label}（建设子页签）`}
-      description={detail ?? '查询 / STAC / 发布 / 运维面在本线后续阶段接入。'}
-    />
   );
 }
 

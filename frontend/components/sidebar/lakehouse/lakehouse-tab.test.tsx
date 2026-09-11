@@ -9,7 +9,6 @@ import {
   makeCatalogPage,
   makeDatasetDetail,
   makeObjectRead,
-  emptyStacResult,
 } from '@/test/lakehouse/fixtures';
 
 /**
@@ -206,15 +205,24 @@ describe('数据集（datasets）', () => {
   });
 });
 
-describe('建子页签占位（P4–P8 前 interim）', () => {
-  it('查询/STAC/发布/运维显示建设占位', () => {
+describe('P4–P8 子页签真实面板', () => {
+  it('查询 → 表单渲染；STAC/发布/运维 → 各自面板与只读纪律', () => {
     lakehouseApi.searchCatalog.mockResolvedValue(emptyCatalogPage);
-    lakehouseApi.searchCatalogStac.mockResolvedValue(emptyStacResult);
     render(<LakehouseTab sessionId={SESSION_ID} />);
-    for (const label of ['STAC', '发布', '运维']) {
-      fireEvent.click(screen.getAllByRole('tab').find((t) => t.textContent === label)!);
-      expect(screen.getByText(new RegExp('建设子页签'))).toBeInTheDocument();
-    }
+    // 查询：表单 + 提交按钮。
+    fireEvent.click(screen.getAllByRole('tab').find((t) => t.textContent === '查询')!);
+    expect(screen.getByTestId('lakehouse-query-form')).toBeInTheDocument();
+    expect(screen.getByTestId('lakehouse-query-submit')).toBeInTheDocument();
+    // STAC：owner 空态（无会话/项目 id 时诚实提示）。
+    fireEvent.click(screen.getAllByRole('tab').find((t) => t.textContent === 'STAC')!);
+    expect(screen.getByText(/STAC 投影按 owner 域隔离|无可投影条目|STAC 目录/)).toBeInTheDocument();
+    // 发布：工作台 + 发布按钮（无对象时禁用）。
+    fireEvent.click(screen.getAllByRole('tab').find((t) => t.textContent === '发布')!);
+    expect(screen.getByTestId('lakehouse-publish')).toBeInTheDocument();
+    // 运维：只读纪律 —— 有 dry-run 按钮、无 execute 按钮。
+    fireEvent.click(screen.getAllByRole('tab').find((t) => t.textContent === '运维')!);
+    expect(screen.getByTestId('lakehouse-gc-plan')).toBeInTheDocument();
+    expect(screen.queryByText(/执行 GC/)).not.toBeInTheDocument();
   });
 });
 
