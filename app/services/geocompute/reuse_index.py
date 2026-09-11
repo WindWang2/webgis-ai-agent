@@ -23,6 +23,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
+from sqlalchemy import select
+
 logger = logging.getLogger(__name__)
 
 #: 每 owner 的结果条目上限（写入时按 created_at LRU 剪枝，audit step 3）。
@@ -66,7 +68,17 @@ def record_result(
         return False
     try:
         with session_factory() as db:
-            from app.models.db_model import GeoComputeNodeResult
+            from app.core import tenancy
+            from app.models.db_model import GeoComputeClusterRun, GeoComputeNodeResult
+
+            # ADR-0139：org 锚定 owner 域 → 关联 run 行真相（同 owner 同 org），
+            # 兜底 default 隔离桶 —— 复用索引行永不为 NULL。
+            org_id = db.execute(
+                select(GeoComputeClusterRun.org_id)
+                .where(GeoComputeClusterRun.owner_scope == owner_scope)
+                .order_by(GeoComputeClusterRun.id.desc())
+                .limit(1)
+            ).scalar_one_or_none() or tenancy.get_or_create_default_org_id_sync(db)
 
             existing = (
                 db.query(GeoComputeNodeResult)
@@ -81,6 +93,7 @@ def record_result(
                 db.delete(existing)
                 db.flush()
             db.add(GeoComputeNodeResult(
+                org_id=org_id,
                 owner_scope=owner_scope[:40],
                 node_fingerprint=node_fingerprint[:32],
                 result_ref=result_ref[:512],

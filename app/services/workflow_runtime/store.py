@@ -121,6 +121,9 @@ def _row_to_instance(row: Any) -> Dict[str, Any]:
         "status": row.status,
         "revision": row.revision,
         "owner_scope": row.owner_scope,
+        # ADR-0139：org 仅进**内部**投影（子工作流继承/克隆继承）；
+        # REST instance_projection 不暴露明文 org（与 owner_scope 同纪律）。
+        "org_id": row.org_id or "",
         "session_id": row.session_id or "",
         "project_id": row.project_id or "",
         "parent_instance_id": row.parent_instance_id or "",
@@ -154,6 +157,7 @@ class InstanceStore:
         package_version: str,
         package_fingerprint: str,
         owner_scope: str,
+        org_id: Optional[str] = None,
         session_id: str = "",
         project_id: str = "",
         parent_instance_id: str = "",
@@ -163,6 +167,8 @@ class InstanceStore:
         """创建实例 + 全节点 PENDING 行（原子单事务）。
 
         ``node_specs``: [{node_id, optional}]，≤ MAX_INSTANCE_NODES。
+        ``org_id``（ADR-0139）：租户作用域——REST 路径必传（effective
+        org）；缺席（进程内信任域/匿名）时经同一会话工厂归 default 桶。
         """
         if not node_specs:
             raise ValueError("instance requires at least one node")
@@ -173,6 +179,10 @@ class InstanceStore:
         instance_id = new_instance_id()
         now = _utcnow()
         with self._factory() as db:
+            if not org_id:
+                from app.core import tenancy
+
+                org_id = tenancy.get_or_create_default_org_id_sync(db)
             db.add(WorkflowInstanceRow(
                 instance_id=instance_id,
                 package_id=package_id[:64],
@@ -181,6 +191,7 @@ class InstanceStore:
                 status=C.InstanceStatus.RUNNING,
                 revision=1,
                 owner_scope=owner_scope[:40],
+                org_id=str(org_id)[:255],
                 session_id=(session_id or "")[:255],
                 project_id=(project_id or "")[:255] or None,
                 parent_instance_id=(parent_instance_id or "")[:64] or None,
@@ -194,6 +205,7 @@ class InstanceStore:
             for spec in node_specs[:C.MAX_INSTANCE_NODES]:
                 db.add(WorkflowInstanceNodeRow(
                     instance_id=instance_id,
+                    org_id=str(org_id)[:255],
                     node_id=str(spec["node_id"])[:64],
                     state=C.NodeState.PENDING,
                     state_revision=1,
@@ -208,9 +220,12 @@ class InstanceStore:
 
     def get_instance(
         self, instance_id: str, owner_scope: Optional[str] = None,
+        *, org_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """读实例（owner 过滤：他人实例 → None，防存在性预言机）。
 
+        ``org_id``（ADR-0139）：传入时叠加租户谓词（REST 路径必传；
+        进程内信任域路径传 None 保持跨 owner 语义）。
         DB busy（OperationalError）上抛 StoreUnavailable —— 与「不存在」
         是两种语义，混同会让 API 以成功形态返回 not_found（R2-m-3）。
         """
@@ -220,6 +235,8 @@ class InstanceStore:
                     WorkflowInstanceRow.instance_id == instance_id)
                 if owner_scope is not None:
                     q = q.filter(WorkflowInstanceRow.owner_scope == owner_scope)
+                if org_id is not None:
+                    q = q.filter(WorkflowInstanceRow.org_id == org_id)
                 row = q.first()
                 return _row_to_instance(row) if row is not None else None
         except OperationalError as exc:
@@ -421,8 +438,10 @@ class InstanceStore:
             if updated.rowcount == 0:
                 return TransitionResult(False, "CAS_CONFLICT", state=row.state)
             # V6 journal：与转移同事务 append（atomic truth；绝不丢事件）
+            # ADR-0139：org 随节点行传播（节点行在创建时即继承实例 org）。
             db.add(WorkflowEventRow(
                 instance_id=instance_id,
+                org_id=row.org_id,
                 node_id=node_id[:64],
                 kind=C.EventKind.STATE_TRANSITION,
                 from_state=from_state[:16],
@@ -636,6 +655,10 @@ class InstanceStore:
         now = _utcnow()
         out: List[str] = []
         with self._factory() as db:
+            # ADR-0139：journal org 锚定实例行真相。
+            inst = db.query(WorkflowInstanceRow).filter(
+                WorkflowInstanceRow.instance_id == instance_id).first()
+            inst_org = inst.org_id if inst is not None else ""
             for nid in wanted:
                 updated = db.execute(
                     sa.update(WorkflowInstanceNodeRow)
@@ -655,6 +678,7 @@ class InstanceStore:
                     out.append(nid)
             db.add_all(WorkflowEventRow(
                 instance_id=instance_id,
+                org_id=inst_org,
                 node_id=nid[:64],
                 kind=C.EventKind.NODE_CANCEL_REQUESTED,
                 reason="NODE_CANCEL_REQUESTED",
@@ -697,10 +721,16 @@ class InstanceStore:
         reason: str = "", actor: str = "", attempt: int = 0,
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """非转移类事实入 journal（取消请求/租约/恢复/重试/补偿）。"""
+        """非转移类事实入 journal（取消请求/租约/恢复/重试/补偿）。
+
+        ADR-0139：org 锚定实例行真相（同事务内解析）。
+        """
         with self._factory() as db:
+            inst = db.query(WorkflowInstanceRow).filter(
+                WorkflowInstanceRow.instance_id == instance_id).first()
             db.add(WorkflowEventRow(
                 instance_id=instance_id,
+                org_id=(inst.org_id if inst is not None else ""),
                 node_id=(node_id or "")[:64],
                 kind=str(kind)[:40],
                 reason=str(reason)[:96],
@@ -783,14 +813,21 @@ class InstanceStore:
 
     def list_session_instances(
         self, session_id: str, *, owner_scope: Optional[str] = None,
+        org_id: Optional[str] = None,
         active_only: bool = True,
     ) -> List[Dict[str, Any]]:
-        """会话实例清单（supersede/attach 判定用；有界 ≤16）。"""
+        """会话实例清单（supersede/attach 判定用；有界 ≤16）。
+
+        ``org_id``（ADR-0139）：REST 路径必传（叠加租户谓词）；进程内
+        信任域路径传 None 保持原语义。
+        """
         with self._factory() as db:
             q = db.query(WorkflowInstanceRow).filter(
                 WorkflowInstanceRow.session_id == session_id)
             if owner_scope is not None:
                 q = q.filter(WorkflowInstanceRow.owner_scope == owner_scope)
+            if org_id is not None:
+                q = q.filter(WorkflowInstanceRow.org_id == org_id)
             if active_only:
                 q = q.filter(WorkflowInstanceRow.status
                              == C.InstanceStatus.RUNNING)
@@ -799,17 +836,27 @@ class InstanceStore:
             return [_row_to_instance(r) for r in rows]
 
     def list_owner_instances(
-        self, owner_scope: str, *, limit: int = 32,
+        self, owner_scope: str, *, org_id: Optional[str] = None,
+        limit: int = 32,
         statuses: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         with self._factory() as db:
             q = db.query(WorkflowInstanceRow).filter(
                 WorkflowInstanceRow.owner_scope == owner_scope)
+            if org_id is not None:
+                q = q.filter(WorkflowInstanceRow.org_id == org_id)
             if statuses:
                 q = q.filter(WorkflowInstanceRow.status.in_(statuses))
             rows = q.order_by(WorkflowInstanceRow.created_at.desc()) \
                 .limit(max(1, min(int(limit), 128))).all()
             return [_row_to_instance(r) for r in rows]
+
+    def resolve_org_for_owner(self, owner_scope: str) -> Optional[str]:
+        """owner 域 → org（ADR-0139：同 owner 既有实例行的 org 即其 org）。"""
+        with self._factory() as db:
+            return db.query(WorkflowInstanceRow.org_id).filter(
+                WorkflowInstanceRow.owner_scope == owner_scope[:40],
+            ).limit(1).scalar()
 
     def count_active_subworkflows(
         self, owner_scope: str,

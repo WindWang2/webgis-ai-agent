@@ -88,6 +88,39 @@ def hash_scope_key(raw: Optional[str], prefix: str) -> Optional[str]:
     return prefix + hashlib.sha1(str(raw).encode(), usedforsecurity=False).hexdigest()[:12]
 
 
+def resolve_org_for_run(run_id: Optional[str]) -> Optional[str]:
+    """run 的租户作用域（ADR-0139）：派生表（events/evidence/artifacts）
+    写入侧惰性解析——org 锚定 run 行真相，绝不由派生路径自造。"""
+    if not run_id:
+        return None
+    with session_factory() as db:
+        return db.execute(
+            select(_Run.org_id).where(_Run.run_id == run_id)
+        ).scalar_one_or_none()
+
+
+def resolve_org_for_owner(owner_scope: Optional[str]) -> Optional[str]:
+    """owner 域 → 租户作用域（无 run_id 的派生写入路径；同 owner 同 org）。
+    owner 哈希是 per-principal 事实，任一关联 run 的 org 即该 owner 的 org。"""
+    if not owner_scope:
+        return None
+    with session_factory() as db:
+        return db.execute(
+            select(_Run.org_id)
+            .where(_Run.owner_scope == owner_scope)
+            .order_by(_Run.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+
+def default_org_id() -> str:
+    """default 隔离桶（ADR-0139）：派生写入在 run/owner 皆不可解析时的兜底。"""
+    from app.core import tenancy
+
+    with session_factory() as db:
+        return tenancy.get_or_create_default_org_id_sync(db)
+
+
 class ClusterRunStore:
     """geocompute_runs / geocompute_workers / geocompute_resource_usage 的 CAS 门面。"""
 
@@ -140,6 +173,12 @@ class ClusterRunStore:
                 resource_request = None
         run_id = new_run_id()
         with self._factory() as db:
+            # ADR-0139：org 缺席（匿名/无 org 提交）归 default 隔离桶——
+            # 经同一会话工厂解析（测试注入工厂时落在同一临时库）。
+            if not org_id:
+                from app.core import tenancy
+
+                org_id = tenancy.get_or_create_default_org_id_sync(db)
             tenant_count = 0
             if tenant_key is not None:
                 tenant_count = db.execute(
@@ -193,26 +232,44 @@ class ClusterRunStore:
             ).scalar_one_or_none()
             return _run_projection(row) if row is not None else None
 
-    def get_run_owned(self, run_id: str, owner_scope: str) -> Optional[dict[str, Any]]:
-        """owner 域隔离读取（不符一律 None —— 与 get_run 读纪律一致）。"""
-        row = self.get_run(run_id)
-        if row is None or row["owner_scope"] != owner_scope:
-            return None
-        return row
+    def get_run_owned(
+        self, run_id: str, owner_scope: str, *, org_id: Optional[str] = None
+    ) -> Optional[dict[str, Any]]:
+        """owner 域 + org 双键隔离读取（ADR-0139；不符一律 None）。
+
+        ``org_id``：REST 路径必传（租户硬边界）；None = 信任域直连
+        （与 workflow get_instance(owner_scope=None) 同一约定——owner
+        域过滤仍然生效）。
+        """
+        with self._factory() as db:
+            conds = [_Run.run_id == run_id, _Run.owner_scope == owner_scope]
+            if org_id is not None:
+                conds.append(_Run.org_id == org_id)
+            row = db.execute(
+                select(_Run).where(*conds)
+            ).scalar_one_or_none()
+            return _run_projection(row) if row is not None else None
 
     def list_runs(
         self,
         owner_scope: str,
         *,
+        org_id: Optional[str] = None,
         statuses: Optional[Iterable[str]] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """owner 域列表（id 降序 = 提交序倒序；limit 钳 ≤100）。"""
+        """owner 域 + org 隔离列表（id 降序 = 提交序倒序；limit 钳 ≤100）。
+
+        ``org_id``：REST 路径必传；None = 信任域直连（owner 过滤仍在）。
+        """
         limit = max(1, min(int(limit), 100))
         offset = max(0, int(offset))
         with self._factory() as db:
-            q = select(_Run).where(_Run.owner_scope == owner_scope)
+            conds = [_Run.owner_scope == owner_scope]
+            if org_id is not None:
+                conds.append(_Run.org_id == org_id)
+            q = select(_Run).where(*conds)
             if statuses:
                 q = q.where(_Run.status.in_([str(s) for s in statuses]))
             q = q.order_by(_Run.id.desc()).limit(limit).offset(offset)

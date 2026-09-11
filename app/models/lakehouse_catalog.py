@@ -56,6 +56,9 @@ class LakehouseCatalogItem(Base):
     object_id = Column(String(255), nullable=False)
     owner_type = Column(String(20), nullable=False)
     owner_id = Column(String(128), nullable=False)
+    #: ADR-0139 租户作用域（organizations.id 字符串原文）；目录检索的
+    #: 租户硬边界（与 owner 域谓词叠加）。
+    org_id = Column(String(255), nullable=False)
     kind = Column(String(32), nullable=False)
     title = Column(String(255), nullable=True)
     producer_capability = Column(String(128), nullable=True)
@@ -83,6 +86,7 @@ class LakehouseCatalogItem(Base):
         UniqueConstraint("owner_type", "owner_id", "content_sha256",
                          name="uq_lh_cat_owner_content"),
         Index("idx_lh_cat_owner_created", "owner_type", "owner_id", "created_at"),
+        Index("idx_lh_cat_org_created", "org_id", "created_at"),
         Index("idx_lh_cat_kind", "kind"),
         Index("idx_lh_cat_status", "status"),
         Index("idx_lh_cat_time_start", "time_start"),

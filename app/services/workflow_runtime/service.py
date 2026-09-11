@@ -58,6 +58,22 @@ def owner_scope_for(caller: Optional[Dict[str, Any]],
     return _osf(caller, session_id)
 
 
+def _resolve_owner_org(store: InstanceStore, owner_scope: str) -> str:
+    """owner 域 → org（ADR-0139 内部兜底链：既有实例行 → default 桶）。"""
+    from app.core import tenancy
+
+    try:
+        org = store.resolve_org_for_owner(owner_scope)
+    except Exception:  # noqa: BLE001 - 兜底链绝不阻断实例化
+        org = None
+    if org:
+        return str(org)
+    from app.services.workflow_runtime.store import session_factory
+
+    with session_factory() as db:
+        return tenancy.get_or_create_default_org_id_sync(db)
+
+
 class WorkflowRuntimeService:
     """门面（方法同步/异步与 I/O 对齐；store 经 to_thread 卸载）。"""
 
@@ -77,8 +93,13 @@ class WorkflowRuntimeService:
     def compile_and_register(
         self, query: str, *, owner_scope: str, recipe_id: str = "",
         profile: Optional[Dict[str, Any]] = None, project_id: str = "",
+        org_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """确定性编译 + 包注册（draft）。返回 {package, compilation 摘要}。"""
+        """确定性编译 + 包注册（draft）。返回 {package, compilation 摘要}。
+
+        ``org_id``（ADR-0139）：REST 路径必传（effective org）；缺席时
+        registry.register 内部按 owner 域锚定 + default 兜底。
+        """
         from app.services.gis_harness.workflow_v4.compiler_v4 import (
             compile_workflow_v4,
         )
@@ -101,7 +122,8 @@ class WorkflowRuntimeService:
             methodology_fingerprint=package.methodology_fingerprint)
         row = self.registry.register(
             package, owner_scope=owner_scope,
-            environment_fingerprint=env_fp, project_id=project_id)
+            environment_fingerprint=env_fp, project_id=project_id,
+            org_id=org_id)
         return {"package": row, "package_fingerprint": package.fingerprint,
                 "methodology_family": package.methodology_family,
                 "compiler_version": package.compiler_version}
@@ -111,8 +133,13 @@ class WorkflowRuntimeService:
         version: str = "", project_id: str = "",
         parent_instance_id: str = "", parent_node_id: str = "",
         visited_packages: Optional[List[str]] = None,
+        org_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """包 → 运行实例（全节点 PENDING；data 节点绑定由 attach/record 补齐）。"""
+        """包 → 运行实例（全节点 PENDING；data 节点绑定由 attach/record 补齐）。
+
+        ``org_id``（ADR-0139）：REST/子工作流/克隆路径必传（effective org
+        或父实例 org）；缺席时按 owner 域锚定 + default 兜底。
+        """
         from app.services.gis_harness.workflow_v4.package import (
             check_compatibility,
         )
@@ -161,7 +188,9 @@ class WorkflowRuntimeService:
             package_id=row["package_id"],
             package_version=row["version"],
             package_fingerprint=row["fingerprint"],
-            owner_scope=owner_scope, session_id=session_id,
+            owner_scope=owner_scope,
+            org_id=org_id or _resolve_owner_org(self.store, owner_scope),
+            session_id=session_id,
             project_id=project_id, node_specs=nodes,
             parent_instance_id=parent_instance_id,
             parent_node_id=parent_node_id)
@@ -220,7 +249,8 @@ class WorkflowRuntimeService:
             deadline_s=deadline_s, owner_scope=owner_scope, caller=caller,
             subworkflow_executor=SubworkflowExecutor(
                 self, owner_scope=owner_scope, caller=caller,
-                deadline_s=deadline_s),
+                deadline_s=deadline_s,
+                org_id=inst.get("org_id") or None),
             node_timeout_s=node_timeout_s, retry_policy=retry_policy,
             dispatcher=build_dispatcher(owner_scope=owner_scope,
                                         caller=caller))
@@ -343,7 +373,8 @@ class WorkflowRuntimeService:
             session_id=session_id if session_id is not None
             else inst["session_id"],
             version=inst["package_version"],
-            project_id=inst.get("project_id") or "")
+            project_id=inst.get("project_id") or "",
+            org_id=inst.get("org_id") or None)
         cid = clone["instance_id"]
         await asyncio.to_thread(
             self.store.append_event, cid, kind=C.EventKind.CLONE,
@@ -564,15 +595,17 @@ class WorkflowRuntimeService:
     async def attach_session_plan(
         self, session_id: str, *, owner_scope: str, query: str,
         recipe_id: str, profile: Optional[Dict[str, Any]] = None,
+        org_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """计划合成时：注册包 + 实例化 + 预绑数据角色（fail-open）。"""
         try:
             reg = await asyncio.to_thread(
                 self.compile_and_register, query, owner_scope=owner_scope,
-                recipe_id=recipe_id, profile=profile)
+                recipe_id=recipe_id, profile=profile, org_id=org_id)
             inst = await asyncio.to_thread(
                 self.instantiate, reg["package"]["package_id"],
-                owner_scope=owner_scope, session_id=session_id)
+                owner_scope=owner_scope, session_id=session_id,
+                org_id=org_id)
             await self._prefill_role_bindings(inst, owner_scope)
             return inst
         except Exception:  # noqa: BLE001 — 附加事实失败绝不阻断会话
