@@ -118,3 +118,27 @@ wire 形态保真：`response_model_exclude_none` 用于 map /export 与 chat ma
   错误体变更由 LEGACY 开关兜底 + transport.ts 双信封兼容已交付）。
 - TS 类型再生成（#1217 前端半边）未动手：§8 前端边界（仅 transport.ts ≤30 行）
   优先；字段闸已就位，前端镜像可独立跟进。
+
+## §6.2 /code-review 处置记录（round 1）
+
+### Standards 轴（无硬违规；以下为 judgment call 处置）
+
+| # | 发现 | 处置 |
+|---|---|---|
+| S1 | 路由遍历逻辑在 scripts/api_contract_recon.py 与 tests _contract_util.py 重复 | **保留**：脚本是独立 CLI（不得 import tests 包）；两者演进方向不同（脚本人读输出 / 测试做门禁）。已互引注释。 |
+| S2 | auth 路由 responses 表逐端点重复 `"model": ApiResponse` | **接受**（OpenAPI 元数据量级小，抽 map 反增间接层）。 |
+| S3 | idempotency.py 硬编码错误体字节串 | **已修**：改用 `unified_error_envelope`（502 缓冲失败 / 503 记录损坏）。 |
+| S4 | MeResponse 伪造 `""` 兜底 | **已修**：`user_id: Optional[str]`，透传 None（字段闸刷新快照佐证）。 |
+| S5 | Counter.inc() 的 try/except pass | **保留**：打点失败绝不影响响应（与全文 fail-open 纪律一致）。 |
+| S6 | transport.ts detail/message 双读重复 | **驳回**：≤30 行前端红线内，抽 picker 反增 3 行且降低直读性。 |
+
+### Spec 轴
+
+| # | 发现 | 处置 |
+|---|---|---|
+| C1 | v2 文档承诺拒绝 legacy 降级但未实现 | **已修**：`wants_legacy_envelope` 对 `/api/v2` 恒 False + 回归测试。 |
+| C2 | 幂等重放丢响应头（任务书「含状态码与头」） | **已修**：记录/回放保存可安全复制的响应头（跳过逐跳/长度类）+ 回归测试。 |
+| C3 | 覆盖率门禁为下界断言（ops>=210 / checked>=200） | **有意为之**：operation 数随 master 演进波动，硬等值会造成日常红；严格门禁由 `unguarded_routes()==空`（零豁免外缺口）承担。 |
+| A1 | P4「Page[T] 覆盖率 100%」未做端点级转换 | **部分采纳**：additive 元数据补齐 + clamp/信封/端点级边界测试已交付；信封整体切换破坏「接口不 breaking」（§8 优先），v2 为切换点（ADR-0138 D3）。 |
+| A2 | 模糊 shard 仅覆盖 5 路径 allowlist | **记录为范围裁剪**：无外部依赖面在单测/CI 环境无 2xx 可达性，强制扩面会产生虚假 5xx 噪声；ADR-0138 D7 说明。 |
+| A3 | 每文件契约测试改为参数化模块 | **接受**（参数化 19 模块覆盖同等面，避免 19 个近重复文件）。 |
