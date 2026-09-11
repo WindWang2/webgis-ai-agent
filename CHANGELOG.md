@@ -1,5 +1,44 @@
 # Changelog
 
+## [Unreleased] - 2026-09-11 (V9: API contract & versioning foundation, ADR-0138)
+
+### Added
+- Unified error envelope: HTTPException / 422 validation errors now return
+  `{code, success, message, data}` (+ `category`/`retryable` taxonomy fields);
+  rollback switch `LEGACY_DETAIL_ENVELOPE` + per-request `X-Error-Envelope: detail`
+  header. 503/502/504 no longer mis-coded as SERVER_ERROR.
+- HTTP idempotency: `Idempotency-Key` middleware (24h replay, SET-NX singleflight,
+  fail-open on Redis outage) — JSON POST only, SSE/binary excluded.
+- API v2 mount layer: lakehouse / geocompute / workflow-runtime demo reuse of the
+  same routers (59 paths); v1 responses carry `Deprecation`/`Sunset` headers +
+  `webgis_api_version_requests_total` usage counter. No v1 endpoint removed.
+- `scripts/gen_api_docs.py`: endpoint catalog generated from `app.openapi()`
+  into docs/api-docs.md (marker-scoped); `tests/test_api_docs_drift.py` fails CI
+  on handwritten drift — rate-limit 60/min vs 240/min drift fixed.
+- Field-level contract gate (#1217 backend half): per-endpoint response field
+  signatures snapshot; removals/renames/type changes fail with typed diff
+  (`tests/unit/api_contract/test_field_contract.py`).
+- Schemathesis contract fuzz shard (`max_examples=30`, ASGI in-process,
+  allowlisted no-dependency paths) + independent CI lane
+  `.github/workflows/contract.yml` (production.yml untouched).
+
+### Changed
+- response_model coverage: 123 uncovered endpoints typed (220 total; 16
+  streaming/binary exclusions ledgered in
+  `tests/unit/api_contract/_contract_util.py::EXCLUSIONS`); 65 inline route
+  BaseModels migrated verbatim to `app/schemas/<subsystem>_schema.py` (19
+  schema modules); naming `<Resource><Action>Request/Response`.
+- Pagination: additive completion of page metadata (chat/sessions `has_more`);
+  `Page[T]` envelope unchanged; ad-hoc limit deprecation deferred to v2.
+- docs/api-docs.md: lakehouse / geocompute / workflow-runtime chapters restored
+  via generator; rate limit documented as 240/60s matching code.
+
+### Fixed
+- weasyprint optional-dependency guards catch OSError (Windows GTK absence) —
+  22 test files now collectable on Windows.
+- starlette-layer HTTPException (malformed body 400) bypassing the unified
+  envelope handler (registration key must cover the starlette base class).
+
 ## [Unreleased] - 2026-09-10 (V7/V8 epic integration round)
 
 Ten prepared epic branches (platform-v4, lakehouse-v8, data-fabric-v8,
