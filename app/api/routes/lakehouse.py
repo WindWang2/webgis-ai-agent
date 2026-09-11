@@ -329,7 +329,7 @@ async def read_lakehouse_labeled_window(
     )
     session_id = str(conv.session_id)
     selection: Dict[str, Any] = {}
-    for dim in ("time", "band", "polarization", "vertical"):
+    for dim in ("time", "band", "polarization", "vertical", "model", "scenario"):
         value = getattr(req, dim)
         if value:
             selection[dim] = list(value)
