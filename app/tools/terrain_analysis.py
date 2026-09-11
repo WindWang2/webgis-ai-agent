@@ -1999,7 +1999,7 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
                        "Dijkstra（边成本 = 平均摩擦 × 米距，Tobler 摩擦面语义），"
                        "输出累积成本 GeoTIFF（下游 least_cost_path_analysis 直接消费）"
                        "与可达/不可达诊断。nodata 像元不可通行",
-           tier=2, domains=["terrain"], cost="heavy",
+           tier=2, domains=["raster"], cost="heavy",
            param_descriptions={
                "raster_path": "摩擦（成本）面 GeoTIFF 路径（data_dir 内，正值）",
                "sources_geojson": "源点要素 GeoJSON（Point FeatureCollection）或数据引用(ref:xxx)",
@@ -2093,7 +2093,7 @@ def _register_hydrology_v4_tool(registry, *, _load_dem) -> None:
            description="最小成本路径：在 cost_distance_analysis 产出的累积成本面上，"
                        "从目标像元沿严格下降方向回溯排水到源（GRASS r.drain 语义），"
                        "输出 LineString 折线要素与路径总成本。输入必须是累积成本面",
-           tier=2, domains=["terrain"], cost="light",
+           tier=2, domains=["raster"], cost="light",
            param_descriptions={
                "accumulated_raster_path": "累积成本面 GeoTIFF 路径（cost_distance_analysis 产物）",
                "target_x": "目标点世界坐标 X",

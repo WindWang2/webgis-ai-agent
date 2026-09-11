@@ -225,7 +225,8 @@ def test_chat_stream_lock_scope_comment():
     #554: the lock is now acquired by a keepalive polling loop and presented to
     the turn body through the pre-acquired ``_AcquiredLock`` adapter — the
     whole-loop-inside-the-lock invariant is unchanged, only the spelling is
-    ``async with _AcquiredLock(lock):``.
+    ``async with acquired_lock:``（#1218/A-7：单一适配器实例 —— async with
+    与外层 finally 共用，消除此前三实例两次死赋值的写法）。
     """
     import inspect
     from app.services.chat import execution_engine
@@ -234,10 +235,11 @@ def test_chat_stream_lock_scope_comment():
     # The lock must be acquired once and the whole loop body must be inside it:
     # exactly one 'async with _AcquiredLock(lock):' in chat_stream, and the
     # loop 'for round_index in range' must appear AFTER it.
-    lock_occurrences = src.count("async with _AcquiredLock(lock):")
+    lock_occurrences = src.count("async with acquired_lock:")
     assert lock_occurrences == 1, f"chat_stream lock count={lock_occurrences}"
+    assert src.count("acquired_lock = _AcquiredLock(lock)") == 1
     loop_pos = src.find("for round_index in range(self.max_rounds):")
-    lock_pos = src.find("async with _AcquiredLock(lock):")
+    lock_pos = src.find("async with acquired_lock:")
     assert lock_pos != -1 and loop_pos != -1
     assert lock_pos < loop_pos, (
         "RUN-03 regression: chat_stream loop is outside the session lock"

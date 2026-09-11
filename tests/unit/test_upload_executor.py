@@ -65,6 +65,17 @@ async def app_and_signals(tmp_path, monkeypatch):
                 pass
             async def refresh(self, _):
                 pass
+
+            # #1221（D-14）：session_id 必填后，归属/dedup 预检查询走
+            # db.execute —— stub 返回空结果集（会话首次写入 + 无重复）。
+            async def execute(self, *_a, **_k):
+                class _Result:
+                    def scalar_one_or_none(self):
+                        return None
+                return _Result()
+
+            async def commit(self):
+                pass
         yield _Db()
 
     monkeypatch.setattr(upload_routes, "parse_vector", fake_parse_vector)
@@ -88,7 +99,7 @@ async def test_upload_runs_parse_in_executor_thread(app_and_signals, client):
 
     # 构造一个最小 .geojson 上传
     files = {"files": ("test.geojson", b'{"type":"FeatureCollection","features":[]}', "application/geo+json")}
-    resp = await client.post("/api/v1/upload", files=files)
+    resp = await client.post("/api/v1/upload", files=files, data={"session_id": "sess-upload-executor"})
 
     assert resp.status_code == 200, resp.text
     assert signals["parse_thread"] is not None

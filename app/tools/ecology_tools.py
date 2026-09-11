@@ -56,7 +56,7 @@ def register_ecology_tools(registry: ToolRegistry):
                        "（trapezoid[a,b,c,d] / gaussian[mu,sigma]）给每个要素"
                        "评分，加权聚合为 0-1 适宜度并分级（unsuitable/marginal/"
                        "suitable/optimal）。geometric 聚合为限制因子语义",
-           tier=2, domains=["analysis"], cost="light",
+           tier=2, domains=["statistics"], cost="light",
            param_descriptions={
                "geojson": "分析框 GeoJSON 或数据引用(ref:xxx)（要素属性含全部变量字段）",
                "variables_json": "变量定义 JSON 数组：[{field, curve: trapezoid|gaussian, params: [a,b,c,d]|[mu,sigma], weight}]",
@@ -117,7 +117,7 @@ def register_ecology_tools(registry: ToolRegistry):
            description="景观格局指标（FRAGSTATS 口径 4 邻接）：分类栅格的类级"
                        "PLAND/斑块数/斑块密度/最大斑块指数/边缘密度与景观级"
                        "SHDI/SIDI/PR 多样性。破碎化与连通性诊断。类别 >256 先重分类",
-           tier=2, domains=["terrain"], cost="medium",
+           tier=2, domains=["raster"], cost="medium",
            param_descriptions={
                "raster_path": "分类栅格 GeoTIFF 路径（data_dir 内）",
                "nodata": "nodata 覆盖值（0=用栅格自带 nodata）",
