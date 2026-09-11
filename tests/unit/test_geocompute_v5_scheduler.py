@@ -272,7 +272,7 @@ class TestCancelRest:
         resp = client.post("/api/v1/geocompute/plans/runs/gexec-nope/cancel",
                            headers=_auth("v5-canceller"))
         assert resp.status_code == 404
-        assert resp.json()["detail"] == {"code": "RUN_NOT_FOUND"}
+        assert resp.json()["data"] == {"code": "RUN_NOT_FOUND"}
 
     def test_cancel_own_running_run_cooperatively(self, monkeypatch):
         """在飞 run：他人 404（存在性不泄漏），本人 200 且节点经 checkpoint 收敛。"""

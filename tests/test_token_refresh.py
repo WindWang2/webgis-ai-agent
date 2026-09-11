@@ -213,7 +213,7 @@ async def test_refresh_rejects_access_token_used_as_refresh(client):
         "refresh_token": body["access_token"],
     })
     assert resp.status_code == 401
-    assert "type" in resp.json()["detail"].lower() or "refresh" in resp.json()["detail"].lower()
+    assert "type" in resp.json()["message"].lower() or "refresh" in resp.json()["message"].lower()
 
 
 @pytest.mark.asyncio
@@ -310,7 +310,7 @@ async def test_logout_invalidates_refresh_token_too(client):
         "refresh_token": body["refresh_token"],
     })
     assert refresh_resp.status_code == 401
-    assert "revoked" in refresh_resp.json()["detail"].lower() or "re-login" in refresh_resp.json()["detail"].lower()
+    assert "revoked" in refresh_resp.json()["message"].lower() or "re-login" in refresh_resp.json()["message"].lower()
 
 
 @pytest.mark.asyncio

@@ -126,7 +126,7 @@ def test_rs_cube_grid_mismatch_is_typed_400(client, tmp_path):
         },
     )
     assert resp.status_code == 400
-    assert "grid differs" in resp.json()["detail"]
+    assert "grid differs" in resp.json()["message"]
 
 
 def test_catalog_dual_scope_fail_closed(client, monkeypatch):

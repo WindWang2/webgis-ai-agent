@@ -242,13 +242,40 @@ def unified_error_envelope(
     return envelope
 
 
+_STATUS_DEFAULT_MESSAGE: Dict[int, str] = {
+    400: "请求无法处理",
+    401: "未认证或凭证失效",
+    403: "无权访问该资源",
+    404: "资源不存在",
+    405: "方法不被允许",
+    409: "资源状态冲突",
+    413: "请求体过大",
+    422: "请求参数校验失败",
+    429: "请求过于频繁，请稍后再试",
+    503: "服务暂不可用",
+}
+
+
 async def unified_http_exception_handler(
     request: Request,
     exc: StarletteHTTPException,
 ) -> JSONResponse:
-    """HTTPException（含路由 raise HTTPException）→ 统一信封 / legacy detail。"""
+    """HTTPException（含路由 raise HTTPException）→ 统一信封 / legacy detail。
+
+    detail 为 dict 时（既有路由用 ``detail={"code": ...}`` 传结构化错误码），
+    结构化载荷移入 ``data``，message 取状态码缺省文案 —— 结构化信息不再被
+    吞成通用 5xx 文案（schemathesis/分片测试发现的保真缺陷）。
+    """
     detail = getattr(exc, "detail", None)
-    message = detail if isinstance(detail, str) else PRODUCTION_ERROR_MESSAGE
+    if isinstance(detail, str):
+        message = detail
+        data = None
+    elif isinstance(detail, dict):
+        message = _STATUS_DEFAULT_MESSAGE.get(exc.status_code, PRODUCTION_ERROR_MESSAGE)
+        data = detail
+    else:
+        message = _STATUS_DEFAULT_MESSAGE.get(exc.status_code, PRODUCTION_ERROR_MESSAGE)
+        data = None
     if wants_legacy_envelope(request):
         return JSONResponse(status_code=exc.status_code, content={"detail": detail})
     envelope = unified_error_envelope(
@@ -257,6 +284,7 @@ async def unified_http_exception_handler(
         request=request,
         exc=exc,
     )
+    envelope["data"] = data
     return JSONResponse(status_code=exc.status_code, content=envelope)
 
 
