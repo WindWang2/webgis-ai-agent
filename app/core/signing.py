@@ -3,7 +3,9 @@
 签名格式（追加到 URL 查询串）：
     ?exp=<unix ts>&sig=<hex hmac sha256>
 
-签名输入：`{path}|{exp}`，密钥是 JWT_SECRET_KEY。
+签名输入：`{path}|{exp}`，密钥由 JWT_SECRET_KEY 经域分离派生
+（#1221/D-13：静态文件能力 URL 与 JWT 不再共享同一对称密钥命名空间 ——
+任一信道的泄露/轮换不再耦合另一信道；派生确定性，密钥轮换行为不变）。
 TTL 默认 1 小时；超过 exp 即视为过期。
 """
 from __future__ import annotations
@@ -15,10 +17,15 @@ import time
 from app.core.config import settings
 
 _ALG = hashlib.sha256
+# HKDF-style 域分离标签（RFC 5869 expand 语义的简化：单块输出足够 SHA-256）。
+_INFO = b"webgis:static-url-signing:v1"
 
 
 def _secret() -> bytes:
-    return (settings.JWT_SECRET_KEY or "").encode("utf-8")
+    base = (settings.JWT_SECRET_KEY or "").encode("utf-8")
+    # extract-then-expand（单块）：prk = HMAC(base, salt=info)，key = HMAC(prk, info||0x01)
+    prk = hmac.new(_INFO, base, _ALG).digest()
+    return hmac.new(prk, _INFO + b"\x01", _ALG).digest()
 
 
 def make_signature(path: str, exp: int) -> str:

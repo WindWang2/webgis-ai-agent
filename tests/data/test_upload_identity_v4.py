@@ -10,6 +10,7 @@
 - V3 摄入管线增值车道：成功登记 session_ref；失败不阻断上传。
 """
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -446,16 +447,23 @@ class TestIngestLane:
 # ── 迁移守卫（0027，仿 test_uploads_index_migration 的 scratch SQLite）───
 
 def _alembic(db_path: Path, *args: str) -> subprocess.CompletedProcess:
+    env = {
+        "PATH": "/usr/bin:/bin:/usr/local/bin",
+        "DATABASE_URL": f"sqlite:///{db_path}",
+        "JWT_SECRET_KEY": "test-secret-migration-32-chars-okay",
+        "USE_REDIS": "false",
+        "HOME": str(Path.home()),
+    }
+    # Windows：用户 site-packages（pip --user 安装的 alembic）依赖 APPDATA
+    # 解析 —— 子进程剥离该变量会让 -m alembic 直接 ModuleNotFoundError。
+    for var in ("APPDATA", "LOCALAPPDATA", "SYSTEMROOT", "SYSTEMDRIVE"):
+        val = os.environ.get(var)
+        if val:
+            env[var] = val
     return subprocess.run(
         [sys.executable, "-m", "alembic", *args],
         cwd=str(REPO_ROOT),
-        env={
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "DATABASE_URL": f"sqlite:///{db_path}",
-            "JWT_SECRET_KEY": "test-secret-migration-32-chars-okay",
-            "USE_REDIS": "false",
-            "HOME": str(Path.home()),
-        },
+        env=env,
         capture_output=True,
         text=True,
         timeout=600,

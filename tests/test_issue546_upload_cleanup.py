@@ -105,6 +105,7 @@ async def test_parse_error_cleans_upload_dir(client, tmp_path):
         resp = await client.post(
             "/api/v1/upload",
             files={"files": ("broken.geojson", b"this is not geojson at all", "application/json")},
+            data={"session_id": "sess-issue546-upload"},
         )
     assert resp.status_code == 400
     assert _upload_dirs(tmp_path) == [], f"ParseError 后目录残留: {_upload_dirs(tmp_path)}"
@@ -126,6 +127,7 @@ async def test_dbapi_error_cleans_upload_dir(client, tmp_path):
         resp = await client.post(
             "/api/v1/upload",
             files={"files": ("ok.geojson", b'{"type":"FeatureCollection","features":[]}', "application/json")},
+            data={"session_id": "sess-issue546-upload"},
         )
     assert resp.status_code == 500
     assert _upload_dirs(tmp_path) == [], f"DBAPIError 后目录残留: {_upload_dirs(tmp_path)}"
@@ -145,6 +147,7 @@ async def test_save_meta_failure_cleans_upload_dir(client, tmp_path):
         resp = await client.post(
             "/api/v1/upload",
             files={"files": ("ok.geojson", b'{"type":"FeatureCollection","features":[]}', "application/json")},
+            data={"session_id": "sess-issue546-upload"},
         )
     assert resp.status_code == 500
     assert _upload_dirs(tmp_path) == [], f"save_meta 失败后目录残留: {_upload_dirs(tmp_path)}"
@@ -157,6 +160,7 @@ async def test_temp_write_failure_cleans_upload_dir(client, tmp_path):
         resp = await client.post(
             "/api/v1/upload",
             files={"files": ("ok.geojson", b'{"type":"FeatureCollection","features":[]}', "application/json")},
+            data={"session_id": "sess-issue546-upload"},
         )
     assert resp.status_code == 500
     assert _upload_dirs(tmp_path) == [], f"写入失败后目录残留: {_upload_dirs(tmp_path)}"
@@ -172,6 +176,7 @@ async def test_success_keeps_upload_dir(client, tmp_path, monkeypatch):
         resp = await client.post(
             "/api/v1/upload",
             files={"files": ("ok.geojson", b'{"type":"FeatureCollection","features":[]}', "application/json")},
+            data={"session_id": "sess-issue546-upload"},
         )
     assert resp.status_code == 200, resp.text
     dirs = _upload_dirs(tmp_path)

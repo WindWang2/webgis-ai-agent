@@ -372,6 +372,10 @@ async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = 
         "user_id": user_id,
         "role": payload.get("role") or "viewer",
         "org_id": payload.get("org_id"),
+        # #1221（D-9）：透传 ver claim —— 不查 DB 的轻量调用方（如 static
+        # admin 通道）可自行做版本复核；缺省 0 与 with_version 依赖的
+        # back-compat 语义一致。
+        "ver": payload.get("ver", 0),
     }
 
 

@@ -23,9 +23,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
+from sqlalchemy import select
 
 from app.core.auth import get_current_user_optional
 from app.core.config import settings
+from app.core.database import get_async_db
 from app.core.signing import verify_signature
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,7 @@ async def serve_static(
     sig: Optional[str] = Query(None, description="可选 HMAC 签名"),
     exp: Optional[int] = Query(None, description="签名过期时间（unix ts）"),
     user: dict = Depends(get_current_user_optional),
+    db=Depends(get_async_db),
 ):
     """带访问控制 + 越界防护的静态文件下发。"""
     target = _resolve_under_data_dir(file_path)
@@ -73,11 +76,25 @@ async def serve_static(
     # check on the parallel routes (upload/export/report) bypassable by path.
     # The JWT channel is admin-only now; regular users use the public tree
     # and signed URLs (the only channels any real flow uses).
+    # #1221（audit3 D-9）：admin 通道补 ver 复核 —— get_current_user_optional
+    # 只验签名+exp，登出（token_version bump）/降级后旧 admin token 在
+    # access TTL（30min）窗口内仍可读私有树；复核一次 indexed PK 查询，
+    # 仅在实际走 admin 通道时发生（公共/签名路径零额外开销）。
     is_admin = (
         bool(user)
         and user.get("user_id") not in (None, "", "anonymous")
         and user.get("role") == "admin"
     )
+    if is_admin:
+        from app.models.db_model import User
+
+        row = (
+            await db.execute(
+                select(User.token_version).where(User.id == user.get("user_id"))
+            )
+        ).first()
+        if row is None or int(user.get("ver") or 0) != int(row[0]):
+            is_admin = False
     is_signed = bool(sig and exp) and verify_signature(file_path, exp, sig)
 
     if not (is_public or is_admin or is_signed):

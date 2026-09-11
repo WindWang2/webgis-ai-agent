@@ -807,7 +807,12 @@ async def restore_map_product_version(
     input-drift disclosure) — never a silent in-place resurrection.
     """
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    # #1215（audit3 D-4）：async handler 内的同步 SQLAlchemy 调用一律经
+    # to_thread 卸载（CORE-02 同型残留 —— 内联调用会阻塞事件循环，冻结
+    # 并发 SSE/WS 流）。
+    project = await asyncio.to_thread(
+        ProjectService.get_project_with_auth, db=db, project_id=project_id,
+        user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if req.mode == "style_only":
@@ -824,7 +829,8 @@ async def restore_map_product_version(
             raise HTTPException(
                 status_code=404 if "not found" in str(e) else 409, detail=str(e))
     # full restore = rerun the bound run from scratch (fresh artifacts).
-    row = MapProductService.get_version(db, project_id, version_no)
+    row = await asyncio.to_thread(
+        MapProductService.get_version, db, project_id, version_no)
     if row is None:
         raise HTTPException(status_code=404, detail="Map product version not found")
     if not row.workflow_run_id:
@@ -852,10 +858,13 @@ async def restore_map_product_version(
         raise HTTPException(status_code=409, detail=f"full restore rerun failed: {e}")
     # review M-A2：引擎已对完成的 run 幂等自动记录 —— 这里只在其缺席时
     # 补一条谱系行（同 run+指纹去重），绝不双记。
-    new_row = MapProductService.maybe_auto_record_version(
+    # #1215：record/maybe_auto_record_version 同步 DB 写经 to_thread。
+    new_row = await asyncio.to_thread(
+        MapProductService.maybe_auto_record_version,
         db, run, label=f"restore-full from V{version_no}")
     if new_row is None or new_row.lineage_kind != "restore":
-        new_row = MapProductService.record_version(
+        new_row = await asyncio.to_thread(
+            MapProductService.record_version,
             db, project_id,
             workflow_run_id=run.id,
             label=f"restore-full from V{version_no}",
@@ -941,16 +950,21 @@ async def rerun_map_product_version(
     rerun. Style-only versions are refused — the machine contract says no
     recomputation is needed (use restore style_only instead)."""
     user_id, org_id = actor_ids(user)
-    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    # #1215：同 restore —— async handler 的同步 DB 调用经 to_thread。
+    project = await asyncio.to_thread(
+        ProjectService.get_project_with_auth, db=db, project_id=project_id,
+        user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    row = MapProductService.get_version(db, project_id, version_no)
+    row = await asyncio.to_thread(
+        MapProductService.get_version, db, project_id, version_no)
     if row is None:
         raise HTTPException(status_code=404, detail="Map product version not found")
     if not row.workflow_run_id:
         raise HTTPException(status_code=409, detail="version has no bound workflow run")
     if row.version_no > 1:
-        diff = MapProductService.diff_versions_pairwise(
+        diff = await asyncio.to_thread(
+            MapProductService.diff_versions_pairwise,
             db, project_id, row.version_no - 1, row.version_no)
         if not diff.get("analysis_recomputation_expected"):
             raise HTTPException(
@@ -1001,10 +1015,12 @@ async def rerun_map_product_version(
         raise HTTPException(status_code=409, detail=f"rerun failed: {e}")
     # review M-C3：auto-record 幂等；缺席时补谱系行（IntegrityError 由
     # record_version 的重试路径消化 —— 并发完成同 run 不双记）。
-    new_row = MapProductService.maybe_auto_record_version(
+    new_row = await asyncio.to_thread(
+        MapProductService.maybe_auto_record_version,
         db, run, label=f"rerun of V{version_no}")
     if new_row is None:
-        new_row = MapProductService.record_version(
+        new_row = await asyncio.to_thread(
+            MapProductService.record_version,
             db, project_id, workflow_run_id=run.id,
             label=f"rerun of V{version_no}",
             actor=str(user.get("user_id") or "user"),

@@ -163,6 +163,17 @@ async def upload_files(
     if not files:
         raise HTTPException(status_code=400, detail="请选择至少一个文件")
 
+    # #1221（audit3 D-14）：session_id 必填 —— dedup / 列表 / GET / DELETE
+    # 的归属语义都依赖它；此前 session_id=None 的上传可以写入，但 #1109
+    # 的 fail-closed 读/删守卫让这些记录 API 永远不可见不可删（只能等
+    # age sweep 回收磁盘）。前置拒绝，不制造孤儿。
+    if not session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="session_id is required: uploads are scoped to a chat "
+                   "session (ownership, dedup and listing all key on it)",
+        )
+
     # 只处理第一个文件（多文件上传可扩展）。V4：丢弃的文件必须如实披露，
     # 不再静默吞掉（审计 R8 —— 数据丢失形状的事实必须可见）。
     file = files[0]

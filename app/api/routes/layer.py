@@ -48,6 +48,26 @@ async def _verify_session_owner(
         await verify_session_owner(db, session_id, user_id=user_id, owner_token=owner_token)
 
 
+async def _layer_data_budget(session_id: str) -> None:
+    """数据面 per-session 预算（#1221/D-15）。
+
+    /layers/data/* 在全局限流中豁免（会话恢复的瓦片/要素突发），但豁免
+    必须换成作用域限制：单会话无限拉取 ≤50MB GeoJSON 会耗尽带宽/CPU。
+    每会话 600 次/分钟 —— 覆盖 3-4 层图层的全瓦片视口恢复突发，超限 429。
+    Redis 限流器缺席时 fail-open（与全局限流同语义）。
+    """
+    from app.core.rate_limiter import get_rate_limiter
+
+    limiter = get_rate_limiter()
+    if not await limiter.is_allowed(
+        f"layer_data:{session_id}", max_requests=600, window_seconds=60
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Layer data request budget exhausted for this session; retry shortly",
+        )
+
+
 @router.get("/layers/data/{ref_id}", tags=["图层数据"])
 async def get_session_layer_data(
     ref_id: str,
@@ -59,6 +79,7 @@ async def get_session_layer_data(
     """通过引用 ID 或别名获取会话缓存中的大数据对象（如分析产生的 GeoJSON）。"""
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
+    await _layer_data_budget(session_id)
 
     res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
     if not res.success:
@@ -123,6 +144,7 @@ async def get_session_layer_feature(
         raise HTTPException(status_code=400, detail="非法 ref_id")
     if not feature_id or len(feature_id) > 256:
         raise HTTPException(status_code=400, detail="非法 feature_id")
+    await _layer_data_budget(session_id)
 
     # P-2（#875）：MVT 瓦片路径的进程内空间索引常驻同一 ref 的 features
     # 列表 —— 命中时零 Redis 流量、零 json.loads，直接在已解析列表上扫描
@@ -269,6 +291,7 @@ async def get_mvt_tile(
     合法的空 MVT message（无 layer）。响应 gzip 压缩并携带 ETag，
     支持 If-None-Match 条件请求（304）。
     """
+    await _layer_data_budget(session_id)
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
     if not (0 <= z <= 20) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
