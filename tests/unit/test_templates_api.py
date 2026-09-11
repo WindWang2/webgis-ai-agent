@@ -5,6 +5,8 @@ get_async_db), mirroring the proven test_critical_auth_hardening pattern.
 The prior TestClient + real-Postgres-asyncpg combination raced asyncpg's
 loop-bound connections under TestClient's threadpool.
 """
+from datetime import timedelta
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -14,10 +16,19 @@ from app.models.db_model import Base, CartographyTemplate
 from app.core.database import get_async_db
 from app.core.auth import create_access_token
 
-user_token = create_access_token({"sub": "user_123", "role": "viewer"})
+# Suite runtime on CI Backend exceeds the default 30m access-token TTL; module-
+# level tokens minted at collection would expire before these late unit tests
+# run (~40m into the job), yielding 401 / anonymous-scoped list totals.
+_TEST_TOKEN_TTL = timedelta(hours=12)
+
+user_token = create_access_token(
+    {"sub": "user_123", "role": "viewer"}, expires_delta=_TEST_TOKEN_TTL
+)
 user_headers = {"Authorization": f"Bearer {user_token}"}
 
-other_user_token = create_access_token({"sub": "user_456", "role": "viewer"})
+other_user_token = create_access_token(
+    {"sub": "user_456", "role": "viewer"}, expires_delta=_TEST_TOKEN_TTL
+)
 other_user_headers = {"Authorization": f"Bearer {other_user_token}"}
 
 # Engine/session created per-test in setup_db (file-based sqlite so all sessions

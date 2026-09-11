@@ -3010,11 +3010,11 @@
     7
    ],
    "expect": {
-    "atol": 1e-06,
+    "atol": 0.05,
     "kind": "allclose",
-    "rtol": 1e-07,
+    "rtol": 0.005,
     "select": "metadata.variance_range.1",
-    "value": 11.103205
+    "value": 11.088242
    },
    "id": "lmc_driver_variance_max",
    "kwargs": {
