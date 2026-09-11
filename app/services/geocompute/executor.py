@@ -273,8 +273,9 @@ class NodeResultStore:
     def _spill(self, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
         """超预算载荷 → exchange stub（fail-open：失败 = V7 丢弃语义）。
 
-        绝不持有 ``self._lock`` 做 IO —— 序列化+zlib 在锁外完成，调用方
-        拿着锁等大载荷压缩会阻塞全部节点线程。
+        **只能在 ``self._lock`` 外调用** —— 序列化+zlib+BlobStore 写 +
+        元数据 DB 注册全在这条路径上（持锁做大载荷 IO 会阻塞全部节点
+        线程的 get/put）。
         """
         if self._exchange is None or not getattr(self._exchange, "enabled", False):
             return None
@@ -307,7 +308,14 @@ class NodeResultStore:
         return self._rehydrate(entry, key)
 
     def _rehydrate(self, entry: dict[str, Any], key: str) -> Optional[dict[str, Any]]:
-        """stub → 原载荷（锁外 IO；失败 = 复用 miss，诚实重算）。"""
+        """stub → 原载荷（锁外 IO；失败 = 复用 miss，诚实重算）。
+
+        回填走与 ``put`` 相同的**入账 + 驱逐**路径（评审 MAJOR：此前回填
+        不入账也不驱逐 —— 后续驱逐会反向扣减从未加过的逻辑尺寸，导致
+        ``_bytes`` 漂移为负、整库内存上界失效）。回填载荷超驻留预算 →
+        立即重新 spill 回 stub 化（载荷本就被压缩在 exchange，避免常驻
+        突破预算）；重新 spill 失败 → 摘除条目（诚实 miss）。
+        """
         try:
             stub = entry[self._SPILL_KEY]
             if self._exchange is None or not getattr(
@@ -319,9 +327,38 @@ class NodeResultStore:
             import json as _json
 
             payload = _json.loads(blob)
+            clean = {k: v for k, v in payload.items()
+                     if not k.startswith("__")}
+            size = min(self._measure(clean) or stub.get("size_bytes", 0),
+                       self._max_bytes + 1)
+            stub_size = min(_SPILLED_STUB_BYTES, self._max_bytes)
+            re_spilled: Optional[dict[str, Any]] = None
+            if size > self._max_bytes:
+                # 大载荷回填后立即重新落盘（IO 在锁外；内部驻留回到 stub，
+                # 内存上界不被单次回填突破）；失败 → 摘除条目
+                re_spilled = self._spill(clean)
+                if re_spilled is None:
+                    with self._lock:
+                        self._entries.pop(key, None)
+                    return None
             with self._lock:
-                self._entries[key] = {"__size__": stub.get("size_bytes", 0),
-                                      **payload}
+                old = self._entries.pop(key, None)
+                if old is not None:
+                    self._bytes -= old.get("__size__", 0)
+                if re_spilled is not None:
+                    self._entries[key] = {**re_spilled, "__size__": stub_size}
+                    self._bytes += stub_size
+                else:
+                    self._entries[key] = {"__size__": size, **clean}
+                    self._bytes += size
+                while len(self._entries) > self._max_entries or self._bytes > self._max_bytes:
+                    if not self._entries:
+                        break
+                    _, evicted = self._entries.popitem(last=False)
+                    self._bytes -= evicted.get("__size__", 0)
+            if re_spilled is not None:
+                # 调用方仍拿到完整载荷（一次性拷贝）；内部驻留是 stub
+                return {k: v for k, v in clean.items()}
             try:
                 from app.services.geocompute.cluster.metrics import (
                     record_spill_rehydrate,
@@ -344,19 +381,20 @@ class NodeResultStore:
 
     def put(self, key: str, payload: dict[str, Any]) -> None:
         size = min(self._measure(payload), self._max_bytes + 1)
-        with self._lock:
-            old = self._entries.pop(key, None)
-            if old is not None:
-                self._bytes -= old.get("__size__", 0)
-            if size > self._max_bytes:
-                # V8：超预算 → spill 落盘。stub 只按**驻留字节**记账（小额
-                # 固定权重 —— 载荷本体已不在内存；预算约束的是驻留量），
-                # 挤掉至多一个更冷条目后必然满足预算，绝不自逐出。
-                # exchange 停用/失败 → V7 语义（直接丢弃）。
-                stub = self._spill(payload)
-                if stub is None:
-                    return
-                stub_size = min(_SPILLED_STUB_BYTES, self._max_bytes)
+        if size > self._max_bytes:
+            # V8：超预算 → spill 落盘。**序列化+zlib+BlobStore 写 + 元数据
+            # DB 注册全部在锁外完成**（评审 MAJOR：持锁做大载荷 IO 会阻塞
+            # 全部节点线程的 get/put）；锁内只做 stub 插入与驱逐。stub 按
+            # 驻留字节小额记账 —— 载荷本体已不在内存，预算约束的是驻留
+            # 量。exchange 停用/失败 → V7 语义（直接丢弃）。
+            stub = self._spill(payload)
+            if stub is None:
+                return
+            stub_size = min(_SPILLED_STUB_BYTES, self._max_bytes)
+            with self._lock:
+                old = self._entries.pop(key, None)
+                if old is not None:
+                    self._bytes -= old.get("__size__", 0)
                 self._entries[key] = {**stub, "__size__": stub_size}
                 self._bytes += stub_size
                 while len(self._entries) > self._max_entries or self._bytes > self._max_bytes:
@@ -365,6 +403,10 @@ class NodeResultStore:
                     _, evicted = self._entries.popitem(last=False)
                     self._bytes -= evicted.get("__size__", 0)
                 return
+        with self._lock:
+            old = self._entries.pop(key, None)
+            if old is not None:
+                self._bytes -= old.get("__size__", 0)
             # dunder 键是存储保留命名空间：载荷侧同名键丢弃（评审 MINOR ——
             # 否则载荷 __size__ 会腐蚀字节记账，evaluation 期 TypeError）。
             clean = {k: v for k, v in payload.items() if not k.startswith("__")}
@@ -1331,7 +1373,9 @@ class GeoExecutionEngine:
                 st = states.get(entry["job_id"]) \
                     if entry["job_id"] is not None else None
                 if entry["dispatch_failed"]:
-                    st = {"status": "failed", "payload": {},
+                    # 派发失败按「可重派」处理（消耗 attempt 预算，与
+                    # _dispatch_tile 的异常捕获语义一致）
+                    st = {"status": "stale", "payload": {},
                           "error": "dispatch failed"}
                 if st is None:
                     still[idx] = entry
@@ -1361,6 +1405,19 @@ class GeoExecutionEngine:
                         entry["dispatch_failed"] = True
                     still[idx] = entry
                     continue
+                # 兄弟 tile 持久取消（终局已定 —— 不让在飞 tile 空转到
+                # 自然终局浪费集群算力；取消失败 = 资源浪费非正确性问题）
+                live = [e["job_id"] for e in outstanding.values()
+                        if e.get("job_id") is not None]
+                if live:
+                    try:
+                        from app.services.jobs import DurableJobStore as _DJS
+
+                        with _durable.session_factory() as db:
+                            for jid in live:
+                                _DJS.request_cancel_sync(db, int(jid))
+                    except Exception:  # noqa: BLE001
+                        pass
                 _fail(
                     "PARTITION_TILE_LOST"
                     if st["status"] in {"stale", "cancelled"} else "TILE_FAILED",
@@ -1434,9 +1491,17 @@ class GeoExecutionEngine:
             from app.lib.geo_analysis.raster_mosaic import raster_header
 
             head = raster_header(raster_path)
+            spec_eff = spec
+            if spec.per_tile_mem_budget_mb and est_mem:
+                # raster 自适应（内存维）：单 tile 估计超预算 → 增加网格
+                # 密度（行数维对 raster 不可知，不参与）
+                tiles = P.adaptive_tile_count(
+                    spec, est_total_mem_mb=est_mem, input_rows=None)
+                spec_eff = spec.model_copy(update={"target_tiles": tiles})
+            crs = spec.crs or (node.crs.output_crs if node.crs else None)
             plan = P.plan_raster(
-                spec, width=int(head["width"]), height=int(head["height"]),
-                crs=head.get("crs"),
+                spec_eff, width=int(head["width"]),
+                height=int(head["height"]), crs=crs,
             )
             plan.meta["header"] = {
                 "width": int(head["width"]), "height": int(head["height"]),
@@ -1482,11 +1547,11 @@ class GeoExecutionEngine:
         tiles = P.adaptive_tile_count(
             spec, est_total_mem_mb=est_mem or None, input_rows=len(features))
         spec_eff = spec.model_copy(update={"target_tiles": tiles})
+        crs = spec.crs or (node.crs.output_crs if node.crs else None)
         return P.plan_vector(
-            spec_eff, bbox=bbox, crs=spec.crs, input_rows=len(features),
+            spec_eff, bbox=bbox, crs=crs, input_rows=len(features),
         )
 
-    @staticmethod
     @staticmethod
     def _tile_node(
         node: ExecutionNode, part: Any, scheme: str, count: int,
@@ -1530,20 +1595,26 @@ class GeoExecutionEngine:
         """派发单个 tile job；返回 job_id（派发失败 None → tile 重试）。"""
         from app.services.geocompute import durable
 
-        ret = durable.dispatch_node(
-            tile_node,
-            session_id=session_id or "",
-            plan_fingerprint=run.plan_fingerprint,
-            deadline_s=(node_deadline - time.monotonic())
-            if tile_node.deadline_s is not None else None,
-            budget=budget,
-            run_id=run.run_id,
-            node_attempt=1,
-            input_refs=input_refs,
-            input_keys=input_keys,
-            resource_envelope=resource_envelope,
-            owner_scope=owner_scope,
-        )
+        try:
+            ret = durable.dispatch_node(
+                tile_node,
+                session_id=session_id or "",
+                plan_fingerprint=run.plan_fingerprint,
+                deadline_s=(node_deadline - time.monotonic())
+                if tile_node.deadline_s is not None else None,
+                budget=budget,
+                run_id=run.run_id,
+                node_attempt=1,
+                input_refs=input_refs,
+                input_keys=input_keys,
+                resource_envelope=resource_envelope,
+                owner_scope=owner_scope,
+            )
+        except GeoComputeError:
+            # 派发异常（DB 抖动/快照超限等）→ None = 消耗一次 tile attempt
+            # （fan-out 循环按 stale 语义重派，预算耗尽才终局）—— 与单节点
+            # durable 路径的分类重试纪律一致，不再让异常逃逸线程裸失败。
+            return None
         try:
             return int(ret.get("job_id"))
         except (TypeError, ValueError):
@@ -1588,7 +1659,10 @@ class GeoExecutionEngine:
             ref_id = self._store_merged_payload(node, payload, session_id)
             if ref_id:
                 payload["ref_id"] = ref_id
-            payload["metadata"] = meta
+            # 业务 metadata（首 tile）与分区证据合并（评审 MINOR：此前
+            # 整包覆盖丢掉了 merge_vector_payloads 精心保留的业务元数据）
+            base_meta = payload.get("metadata") or {}
+            payload["metadata"] = {**base_meta, **meta}
             return payload
         # raster_grid：core 窗口写回（halo 裁除）
         head = plan.meta.get("header") or {}
@@ -1899,16 +1973,37 @@ class GeoExecutionEngine:
                 primary_id, session_id=session_id or "",
                 deadline_ts=deadline_ts, cancel_token=cancel_token)
 
-        # 窗口一：primary 独自等待 after_s（窗口到点**不取消** job）
+        # 窗口一：primary 独自等待 after_s。**必须走非取消等待**——
+        # await_node_job 的 deadline 路径会先对 job 落持久取消再上抛
+        # （评审 MAJOR：那会把「慢」直接变成「被取消」，双副本竞速退化
+        # 为取消重派，违背先到先得语义）。
         try:
-            return durable.await_node_job(
-                primary_id, session_id=session_id or "",
+            states = durable.await_node_jobs(
+                [primary_id], session_id=session_id or "",
                 deadline_ts=min(deadline_ts,
                                 time.monotonic() + self._speculative_after_s),
                 cancel_token=cancel_token,
+                cancel_on_deadline=False,
             )
         except DeadlineExceededError:
-            pass  # primary 是 straggler（或窗口到点）→ 派投机副本
+            pass  # primary 是 straggler（窗口到点，仍在跑）→ 派投机副本
+        else:
+            st = states.get(primary_id, {})
+            if st.get("status") == "completed":
+                return {"payload": st.get("payload") or {},
+                        "job_id": str(primary_id)}
+            # 窗口内终态但非 completed（failed/cancelled）→ 按原语义抛类型
+            # 化错误（走 _execute_durable 的重试/分类路径）。
+            raise NodeExecutionError(
+                st.get("error") or f"primary job {primary_id} "
+                f"ended {st.get('status')}",
+                retry_safe=st.get("status") == "stale",
+                failure_class=FailureClass.WORKER_LOSS
+                if st.get("status") == "stale" else None,
+                node_id=node.node_id,
+                details={"job_id": str(primary_id),
+                         "job_status": str(st.get("status"))},
+            )
         # 投机副本：参数带 _speculative → 独立幂等键（语义指纹随参数
         # 变化 —— 副本只在等待窗口内存活，绝不被复用记录/消费）。
         spec_node = node.model_copy(update={
@@ -1947,8 +2042,8 @@ class GeoExecutionEngine:
             winner_id, payload = spec_id, spec_state.get("payload") or {}
         else:
             # 双输（失败/取消）→ 按 primary 的错误语义类型化上抛。
-            from app.services.geocompute.errors import NodeExecutionError
-
+            # （NodeExecutionError 用模块级导入 —— 本地 import 会把名字
+            # 变成函数级局部变量，前面窗口分支的 raise 会 UnboundLocal。）
             raise NodeExecutionError(
                 f"speculative pair failed: primary={primary_state.get('status')} "
                 f"speculative={spec_state.get('status')}",

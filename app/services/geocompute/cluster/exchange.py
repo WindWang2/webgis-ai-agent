@@ -164,9 +164,32 @@ class ArtifactExchange:
             codec = "zlib"
         self._store.put_blob(key, payload, content_type="binary")
         handle = SpillHandle(key=key, size_bytes=raw_size, codec=codec)
-        self._register(handle, run_id=run_id, owner_scope=owner_scope,
-                       kind=kind, codec=codec)
+        try:
+            self._register(handle, run_id=run_id, owner_scope=owner_scope,
+                           kind=kind, codec=codec)
+        except Exception:
+            raise
+        # 补偿（评审建议：register fail-open 的 blob 无元数据行 = TTL
+        # 永远扫不到的永久孤儿）。register 内部已吞异常，这里无法区分
+        # 成败 —— 改为可判定版本：直接检查行是否存在，缺席即删字节。
+        if not self._has_row(key):
+            try:
+                self._store.delete_blob(key)
+            except Exception:  # noqa: BLE001 - 补偿失败 = 有界孤儿
+                pass
         return handle
+
+    def _has_row(self, key: str) -> bool:
+        try:
+            from app.models.db_model import GeoComputeArtifact
+
+            with self._meta_session() as db:
+                return db.execute(
+                    select(GeoComputeArtifact.id).where(
+                        GeoComputeArtifact.artifact_key == key)
+                ).scalar_one_or_none() is not None
+        except Exception:  # noqa: BLE001 - 判定失败 = 保留字节（有界孤儿）
+            return True
 
     def get_bytes(self, handle: SpillHandle) -> bytes:
         """凭证 → 字节（digest 校验 + 有界瞬态重试；失败类型化上抛）。"""
@@ -189,6 +212,10 @@ class ArtifactExchange:
                         f"{len(blob)} != {handle.size_bytes}")
                 self._touch(handle.key)
                 return blob
+            except zlib.error as exc:
+                # 压缩流损坏 = 确定性腐坏（重试无意义）
+                raise RuntimeError(
+                    f"artifact {handle.key[:16]} corrupt: {exc}") from exc
             except BlobDigestMismatch as exc:
                 # 内容寻址下重试同一份坏字节无意义 —— 诚实失败
                 raise ValueError(f"artifact digest mismatch: {exc}") from exc

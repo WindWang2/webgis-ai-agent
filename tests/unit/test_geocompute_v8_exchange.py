@@ -145,7 +145,8 @@ class TestDisabledExchange:
 
 class TestNodeResultStoreSpill:
     def _store(self, tmp_path, max_bytes):
-        from app.services.geocompute.executor import NodeResultStore
+        from app.services.geocompute.executor import (_SPILLED_STUB_BYTES,
+                                               NodeResultStore)
 
         exchange = ArtifactExchange(root=str(tmp_path / "blobs"))
         return NodeResultStore(max_entries=8, max_bytes=max_bytes,
@@ -179,11 +180,33 @@ class TestNodeResultStoreSpill:
 
     def test_spill_disabled_drops_oversize(self, tmp_path, monkeypatch):
         monkeypatch.delenv("WEBGIS_EXCHANGE_ROOT", raising=False)
-        from app.services.geocompute.executor import NodeResultStore
+        from app.services.geocompute.executor import (_SPILLED_STUB_BYTES,
+                                               NodeResultStore)
 
         store = NodeResultStore(max_entries=8, max_bytes=1000)
         store.put("k", self._payload(200))
         assert store.get("k") is None  # V7 语义：超预算直接丢弃
+
+    def test_rehydrate_accounting_invariant(self, tmp_path):
+        """回填后字节记账必须守恒（评审 MAJOR：回填不入账 → 驱逐时反向
+        扣减从未加过的逻辑尺寸 → _bytes 漂移为负、预算失效）。"""
+        from app.services.geocompute.executor import (_SPILLED_STUB_BYTES,
+                                               NodeResultStore)
+
+        exchange = ArtifactExchange(root=str(tmp_path / "blobs"))
+        store = NodeResultStore(max_entries=8, max_bytes=1000,
+                                exchange=exchange)
+        big = self._payload(200)
+        store.put("k", big)
+        with store._lock:
+            assert store._bytes == min(_SPILLED_STUB_BYTES, 1000)
+        got = store.get("k")
+        assert got is not None and got["features"] == big["features"]
+        # 回填载荷超驻留预算 → 立即重新 stub 化：驻留记账回到 stub 权重
+        with store._lock:
+            assert store._bytes == min(_SPILLED_STUB_BYTES, 1000)
+            assert store._bytes >= 0
+            assert "__spilled__" in store._entries["k"]
 
     def test_spill_blob_corruption_degrades_to_miss(self, tmp_path):
         """blob 字节被删（TTL 清扫竞态）→ rehydrate 失败 → 复用 miss

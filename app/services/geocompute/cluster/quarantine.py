@@ -95,9 +95,13 @@ class TaskQuarantine:
                        factory: Optional[Any] = None) -> bool:
         """记录一次非瞬态终局失败；返回是否因此进入隔离窗。
 
-        单语句 upsert（复合主键行）；计数 达标 且 cooldown>0 → 写
-        ``quarantined_until = now + cooldown``。fail-open：任何 DB 故障
-        返回 False（不隔离）—— 隔离是保护机制，绝不倒灌执行路径。
+        诚实边界：实现是 select-then-update（复合主键行，**非**单语句
+        upsert）—— 并发同 (owner, fp) 失败会丢失个别计数（隔离推迟，
+        方向保守无害）。``failure_count`` **不随冷却窗重置**（语义 =
+        「每满 threshold 次失败进入一段冷却期」，非「解封后重新计数」）
+        —— 对毒任务这是刻意设计：反复失败的对象就该持续被限流。
+        fail-open：任何 DB 故障返回 False（不隔离）—— 隔离是保护机制，
+        绝不倒灌执行路径。
         """
         if not owner_scope or not task_fingerprint:
             return False

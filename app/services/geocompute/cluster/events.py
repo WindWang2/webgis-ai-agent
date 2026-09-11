@@ -50,7 +50,6 @@ EVENT_VOCABULARY: frozenset[str] = frozenset({
     "waiting_resource", "worker_cache_hit", "straggler_detected",
     "gpu_fallback", "partition_planned",
     "speculative_dispatch", "speculative_resolved", "poison_quarantined",
-    "artifact_spilled",
 })
 
 #: 豁免节点级预算的事件（全 run ≤~10 条：run 级终态 + 治理可见性）。

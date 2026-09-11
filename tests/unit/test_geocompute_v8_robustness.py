@@ -242,6 +242,95 @@ class TestExecutorQuarantine:
         assert run_failed(engine, plan, "s-y1", "u:y")
 
 
+class TestPlacementGuardWiring:
+    """worker 准入守卫接线的锁定回归（V7 潜伏缺陷：None 被当失败
+    finalize —— 任何带 envelope 的 durable 节点从未通过过守卫）。
+
+    直接打桩 ``_placement_guard`` 的三种返回（None=合格/"retry"/
+    "failed"）驱动 ``run_geocompute_node`` 内联执行，锁定调用方接线：
+    None → 继续执行；failed → 落 PLACEMENT_MISMATCH 终态。
+    """
+
+    def _submit_job(self, unique):
+        from app.services.geocompute.tasks import run_geocompute_node
+        from app.services.jobs.submit import submit_durable_job
+
+        feats = [{"type": "Feature", "geometry": None,
+                  "properties": {"kind": unique}}]
+        node = {"node_id": f"f-{unique}", "category": "filter",
+                "operation": "eq", "inputs": [],
+                "parameters": {"predicate": {"op": "eq", "field": "kind",
+                                             "value": unique},
+                               "features": feats}}
+        return submit_durable_job(
+            celery_task=run_geocompute_node, task_type="geocompute_node",
+            display_name=f"pg-{unique}", params={"node": node},
+            task_kwargs={"node": node, "session_id": f"s-pg-{unique}",
+                         "resource_envelope": {"min_cpu": 0, "min_mem_mb": 0,
+                                               "gpu": 0,
+                                               "required_profiles": []}},
+            session_id=f"s-pg-{unique}")
+
+    def test_guard_none_continues_execution(self, job_env, monkeypatch):
+        """守卫返回 None（合格）→ 节点继续执行 → job 完成
+        （修复回退为旧行为时本测试失败：None 被误 finalize）。"""
+        import app.services.geocompute.tasks as tasks_mod
+
+        calls = {"n": 0}
+
+        def fake_guard(task, node, envelope, worker_id):
+            calls["n"] += 1
+            return None  # 合格
+
+        monkeypatch.setattr(tasks_mod, "_placement_guard", fake_guard)
+        ret = self._submit_job("pgnone")
+        assert calls["n"] == 1
+        from app.services.jobs import DurableJobStore
+
+        with job_env() as db:
+            row = DurableJobStore.get_sync(db, int(ret["job_id"]))
+            assert str(row.status) in {"completed", "JobStatus.completed"}
+
+    def test_guard_failed_finalizes_placement_mismatch(
+            self, job_env, monkeypatch):
+        """守卫返回 "failed"（重投耗尽）→ job 落 PLACEMENT_MISMATCH 终态。"""
+        import app.services.geocompute.tasks as tasks_mod
+
+        def fake_guard(task, node, envelope, worker_id):
+            return "failed"
+
+        monkeypatch.setattr(tasks_mod, "_placement_guard", fake_guard)
+        ret = self._submit_job("pgfail")
+        from app.services.jobs import DurableJobStore
+
+        with job_env() as db:
+            row = DurableJobStore.get_sync(db, int(ret["job_id"]))
+            assert str(row.status) in {"failed", "JobStatus.failed"}
+            assert "NodePlacementMismatch" in (getattr(row, "error_trace",
+                                                        "") or "")
+
+    def test_guard_retry_returns_without_finalize(self, job_env, monkeypatch):
+        """守卫返回 "retry" → 任务体直接返回（celery 重投语义），job 行
+        **不**被 finalize（保持 running/queued 由重投路径接管）。"""
+        from celery.exceptions import Retry
+
+        import app.services.geocompute.tasks as tasks_mod
+
+        def fake_guard(task, node, envelope, worker_id):
+            # 模拟守卫内部 raise task.retry(...) 被 except Retry 捕获后
+            # 返回 "retry" 的路径
+            return "retry"
+
+        monkeypatch.setattr(tasks_mod, "_placement_guard", fake_guard)
+        ret = self._submit_job("pgretry")
+        from app.services.jobs import DurableJobStore
+
+        with job_env() as db:
+            row = DurableJobStore.get_sync(db, int(ret["job_id"]))
+            # 绝不被 finalize 成 failed（否则派发侧误判终局）
+            assert str(row.status) not in {"failed", "JobStatus.failed"}
+
+
 class TestSpeculativeDuplicate:
     """直接测 executor 的投机语义（monkeypatch durable 等待原语 —— 不做
     celery 内部体操）：primary 优先、败者取消请求、双输类型化失败。"""
@@ -285,24 +374,17 @@ class TestSpeculativeDuplicate:
         engine = self._engine(after_s=0.05)
         node = self._node()
         run = self._run()
-        calls = {"await": 0}
-
-        def fake_await_one(job_id, *, session_id, deadline_ts, cancel_token):
-            calls["await"] += 1
-            raise DeadlineExceededError("window elapsed", details={})
-
-        monkeypatch.setattr(durable, "await_node_job", fake_await_one)
-
-        dispatched = []
-
-        def fake_dispatch(node_copy, **kw):
-            dispatched.append(node_copy)
-            return {"job_id": "999", "status": "queued"}
-
-        monkeypatch.setattr(durable, "dispatch_node", fake_dispatch)
+        windows = {"n": 0}
 
         def fake_await_many(job_ids, *, session_id, deadline_ts,
                             cancel_token, cancel_on_deadline=True):
+            windows["n"] += 1
+            if windows["n"] == 1:
+                # 窗口一：primary 独自等待 —— 到点抛超时，且**不得**取消
+                assert cancel_on_deadline is False, (
+                    "speculation window must not cancel the primary")
+                assert int(job_ids[0]) == 42
+                raise DeadlineExceededError("window elapsed", details={})
             return {int(job_ids[0]): {"status": "completed",
                                       "payload": {"features": [1]},
                                       "error": None},
@@ -311,6 +393,14 @@ class TestSpeculativeDuplicate:
                                       "error": None}}
 
         monkeypatch.setattr(durable, "await_node_jobs", fake_await_many)
+
+        dispatched = []
+
+        def fake_dispatch(node_copy, **kw):
+            dispatched.append(node_copy)
+            return {"job_id": "999", "status": "queued"}
+
+        monkeypatch.setattr(durable, "dispatch_node", fake_dispatch)
 
         cancel_calls = []
         from app.services.jobs import DurableJobStore
@@ -325,7 +415,7 @@ class TestSpeculativeDuplicate:
             cancel_token=None, owner_scope="u:spec", budget=None,
             input_refs={}, input_keys={}, resource_envelope=None,
             emit_events=False)
-        assert calls["await"] == 1
+        assert windows["n"] == 2
         assert len(dispatched) == 1
         # 副本带 _speculative 标记（独立幂等键）
         assert dispatched[0].parameters.get("_speculative") is True
@@ -333,6 +423,66 @@ class TestSpeculativeDuplicate:
         assert done["payload"] == {"features": [1]}
         assert done["job_id"] == "42"
         assert cancel_calls == [999]
+
+    def test_window_primary_completes_no_speculation(
+            self, job_env, monkeypatch):
+        """primary 在窗口内完成 → 直接返回，不派副本。"""
+        from app.services.geocompute import durable
+
+        engine = self._engine(after_s=0.05)
+        node = self._node()
+        run = self._run()
+
+        def fake_await_many(job_ids, *, session_id, deadline_ts,
+                            cancel_token, cancel_on_deadline=True):
+            return {int(job_ids[0]): {"status": "completed",
+                                      "payload": {"features": ["fast"]},
+                                      "error": None}}
+
+        monkeypatch.setattr(durable, "await_node_jobs", fake_await_many)
+
+        def fail_dispatch(*a, **kw):
+            raise AssertionError("no speculative dispatch expected")
+
+        monkeypatch.setattr(durable, "dispatch_node", fail_dispatch)
+
+        done = engine._await_with_speculative(
+            node, run, {"job_id": 7}, session_id="s", deadline_ts=1e12,
+            cancel_token=None, owner_scope="u:spec", budget=None,
+            input_refs={}, input_keys={}, resource_envelope=None,
+            emit_events=False)
+        assert done["payload"] == {"features": ["fast"]}
+        assert done["job_id"] == "7"
+
+    def test_window_primary_failed_typed_error(self, job_env, monkeypatch):
+        """primary 窗口内终态为 stale/failed → 按原语义类型化失败
+        （走 _execute_durable 的重试/分类路径），不派副本。"""
+        from app.services.geocompute import durable
+        from app.services.geocompute.errors import NodeExecutionError
+
+        engine = self._engine(after_s=0.05)
+        node = self._node()
+        run = self._run()
+
+        def fake_await_many(job_ids, *, session_id, deadline_ts,
+                            cancel_token, cancel_on_deadline=True):
+            return {int(job_ids[0]): {"status": "stale",
+                                      "payload": {},
+                                      "error": "worker lost"}}
+
+        monkeypatch.setattr(durable, "await_node_jobs", fake_await_many)
+
+        def fail_dispatch(*a, **kw):
+            raise AssertionError("no speculative dispatch expected")
+
+        monkeypatch.setattr(durable, "dispatch_node", fail_dispatch)
+
+        with pytest.raises(NodeExecutionError, match="worker lost"):
+            engine._await_with_speculative(
+                node, run, {"job_id": 7}, session_id="s", deadline_ts=1e12,
+                cancel_token=None, owner_scope="u:spec", budget=None,
+                input_refs={}, input_keys={}, resource_envelope=None,
+                emit_events=False)
 
     def test_speculative_wins_when_primary_failed(self, job_env, monkeypatch):
         from app.services.geocompute import durable
@@ -343,21 +493,26 @@ class TestSpeculativeDuplicate:
         node = self._node()
         run = self._run()
 
-        def _raise_window(*a, **kw):
-            raise DeadlineExceededError("window", details={})
+        from app.services.geocompute.errors import DeadlineExceededError
 
-        monkeypatch.setattr(durable, "await_node_job", _raise_window)
+        states = {42: {"status": "failed", "payload": {}, "error": "boom"},
+                  999: {"status": "completed",
+                        "payload": {"features": ["spec"]}, "error": None}}
+
+        def await_many(job_ids, **kw):
+            # 首次 = primary 窗口等待（到点超时，primary 仍在跑）；
+            # 派副本后收敛调用返回双方终态
+            if len(job_ids) == 1 and int(job_ids[0]) == 42:
+                raise DeadlineExceededError("window elapsed", details={})
+            return {int(j): states.get(int(j), {"status": "running",
+                                                "payload": {},
+                                                "error": None})
+                    for j in job_ids}
+
+        monkeypatch.setattr(durable, "await_node_jobs", await_many)
         monkeypatch.setattr(
             durable, "dispatch_node",
             lambda node_copy, **kw: {"job_id": "999", "status": "queued"})
-        monkeypatch.setattr(
-            durable, "await_node_jobs",
-            lambda job_ids, **kw: {
-                int(job_ids[0]): {"status": "failed", "payload": {},
-                                  "error": "boom"},
-                int(job_ids[1]): {"status": "completed",
-                                  "payload": {"features": ["spec"]},
-                                  "error": None}})
         cancel_calls = []
         monkeypatch.setattr(
             DurableJobStore, "request_cancel_sync",
@@ -383,20 +538,24 @@ class TestSpeculativeDuplicate:
         node = self._node()
         run = self._run()
 
-        def _raise_window(*a, **kw):
-            raise DeadlineExceededError("window", details={})
+        from app.services.geocompute.errors import DeadlineExceededError
 
-        monkeypatch.setattr(durable, "await_node_job", _raise_window)
+        states = {42: {"status": "failed", "payload": {}, "error": "boom"},
+                  999: {"status": "failed", "payload": {},
+                        "error": "boom2"}}
+
+        def await_many(job_ids, **kw):
+            if len(job_ids) == 1 and int(job_ids[0]) == 42:
+                raise DeadlineExceededError("window elapsed", details={})
+            return {int(j): states.get(int(j), {"status": "running",
+                                                "payload": {},
+                                                "error": None})
+                    for j in job_ids}
+
+        monkeypatch.setattr(durable, "await_node_jobs", await_many)
         monkeypatch.setattr(
             durable, "dispatch_node",
             lambda node_copy, **kw: {"job_id": "999", "status": "queued"})
-        monkeypatch.setattr(
-            durable, "await_node_jobs",
-            lambda job_ids, **kw: {
-                int(job_ids[0]): {"status": "failed", "payload": {},
-                                  "error": "boom"},
-                int(job_ids[1]): {"status": "failed", "payload": {},
-                                  "error": "boom2"}})
         with pytest.raises(NodeExecutionError, match="speculative pair failed"):
             engine._await_with_speculative(
                 node, run, {"job_id": 42}, session_id="s", deadline_ts=1e12,
@@ -412,12 +571,12 @@ class TestSpeculativeDuplicate:
         def fail_dispatch(*a, **kw):
             raise AssertionError("dispatch should not engage")
 
-        def ok_await(*a, **kw):
-            return {"payload": {"ok": 1}, "job_id": "7"}
+        def ok_await_one(job_id, *, session_id, deadline_ts, cancel_token):
+            return {"payload": {"ok": 1}, "job_id": str(job_id)}
 
         engine = self._engine(after_s=0)  # 停用
         node = self._node()
-        monkeypatch.setattr(durable, "await_node_job", ok_await)
+        monkeypatch.setattr(durable, "await_node_job", ok_await_one)
         monkeypatch.setattr(durable, "dispatch_node", fail_dispatch)
         engine._await_with_speculative(
             node, run=self._run(), primary_ret={"job_id": 7},
@@ -429,7 +588,7 @@ class TestSpeculativeDuplicate:
         engine2 = self._engine(after_s=0.05)
         node2 = self._node()
         node2.reuse = NodeReusePolicy.DISALLOW
-        monkeypatch.setattr(durable, "await_node_job", ok_await)
+        monkeypatch.setattr(durable, "await_node_job", ok_await_one)
         monkeypatch.setattr(durable, "dispatch_node", fail_dispatch)
         engine2._await_with_speculative(
             node2, run=self._run(), primary_ret={"job_id": 7},

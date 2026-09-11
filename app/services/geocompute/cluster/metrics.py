@@ -132,8 +132,10 @@ class ClusterMetrics:
     """集群快照聚合器（store 只读查询的组合）。"""
 
     def snapshot(self) -> dict[str, Any]:
-        """完整集群快照（一次调用 ≤ ~10 个聚合查询；无行扫描）。"""
+        """完整集群快照（V8：≤ ~20 个有界聚合查询；全部命中索引/常量
+        投影，无行扫描；封闭词表防基数爆炸）。"""
         runs_by_status = self._store.count_runs_by_status()
+        workers = self._store.live_workers()
         waiting = sum(
             runs_by_status.get(s.value, 0) for s in DISPATCHABLE_STATUSES
         )
@@ -188,7 +190,7 @@ class ClusterMetrics:
                     "speculative_dispatch"),
                 "poison_quarantined": self._count_kind("poison_quarantined"),
             },
-            "utilization": self._utilization_summary(),
+            "utilization": self._utilization_summary(workers=workers),
             "quarantine": self._quarantine_summary(),
         }
 
@@ -215,10 +217,14 @@ class ClusterMetrics:
             return 0
         return self._event_store.sum_bytes()
 
-    def _utilization_summary(self) -> dict[str, Any]:
-        """worker 利用率：账本在租 units ÷ 存活 worker 槽位总量（有界）。"""
+    def _utilization_summary(self, *, workers=None) -> dict[str, Any]:
+        """worker 利用率：账本在租 units ÷ 存活 worker 槽位总量（有界）。
+
+        ``workers``：snapshot 主体已取的 live 投影（复用，免重复查询）。
+        """
         try:
-            workers = self._store.live_workers()
+            if workers is None:
+                workers = self._store.live_workers()
             capacity = 0
             for w in workers:
                 for slots in (w.get("profiles") or {}).values():
