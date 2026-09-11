@@ -78,8 +78,38 @@ def _skip_if_no_redis():
                     "real-broker E2E cannot run honestly offline")
 
 
+def _redis_db_index(url: str, default: int) -> int:
+    try:
+        path = (urlparse(url).path or "").lstrip("/")
+        return int(path) if path != "" else default
+    except (TypeError, ValueError):
+        return default
+
+
 def _pick_e2e_dbs() -> tuple[int, int]:
+    """选择 E2E broker/backend db。
+
+    **关键（CI smoke hang）**：Celery/kombu 连接池按首次 broker_url 建连并
+    复用。real-services lane 在 pytest 前已把 ``CELERY_BROKER_URL`` 钉到
+    ``redis://…/6``（prod-smoke），同进程里若再把 conf/env 切到随机 db
+    10–15，``apply_async`` 仍可能把消息打进旧池的 db 6，而 worker 子进程
+    听的是 10–15 → ``node_dispatched`` 之后永无 ``node_started``（run 卡在
+    ``running``）。因此：进程已钉 redis CELERY_* 时**必须沿用该 db**；仅在
+    尚未钉 redis broker 时才走随机池（本地隔离孤儿 worker）。
+    """
     import random
+
+    existing = os.environ.get("CELERY_BROKER_URL", "")
+    if existing.startswith("redis://"):
+        broker = _redis_db_index(existing, 6)
+        backend_url = os.environ.get("CELERY_RESULT_BACKEND", "")
+        if backend_url.startswith("redis://"):
+            backend = _redis_db_index(backend_url, 7 if broker != 7 else 6)
+        else:
+            backend = 7 if broker != 7 else 6
+        if backend == broker:
+            backend = (broker + 1) % 16
+        return broker, backend
 
     broker = random.choice(_DB_POOL)
     backend = (broker + 1) % 16 if (broker + 1) not in (0, 1, 5, 6, 7, 8, 9) \
@@ -87,10 +117,28 @@ def _pick_e2e_dbs() -> tuple[int, int]:
     return broker, backend
 
 
+def _recycle_celery_broker(app) -> None:
+    """丢弃可能绑在旧 broker_url 上的 producer/connection 池，迫使下次
+    publish 按当前 ``CELERY_BROKER_URL`` 重建。``force_close_all`` alone 会
+    永久关闭池对象 —— 必须把 ``_pool``/``_producer_pool`` 置空以允许重建。
+    """
+    for attr in ("_pool", "_producer_pool"):
+        pool = getattr(app, attr, None)
+        if pool is None:
+            continue
+        try:
+            pool.force_close_all()
+        except Exception:  # noqa: BLE001 - best-effort recycle
+            pass
+        try:
+            setattr(app, attr, None)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 #: 进程级固定一组 db：celery app 的连接池按 conf 建连并跨测试复用 ——
 #: 每测试换 db 会让 publish 落到旧连接的 db（消息黑洞，真实事故）；
-#: force_close_all 又是永久性关闭（后续 Acquire on closed pool）。
-#: 固定 db + 每 fixture flush = 一致性与隔离兼得。
+#: 已钉 redis CELERY_*（CI lane）时沿用 6/7，避免与预建池分叉。
 _E2E_BROKER_DB, _E2E_BACKEND_DB = _pick_e2e_dbs()
 
 
@@ -175,6 +223,11 @@ class _ClusterEnv:
         self.worker_proc: subprocess.Popen | None = None
         self._saved_env: dict[str, str | None] = {}
 
+    @property
+    def worker_log_path(self) -> Path:
+        logs = sorted(self.tmp_path.glob("worker-*.log"))
+        return logs[-1] if logs else (self.tmp_path / "worker-missing.log")
+
     # ------------------------------------------------------------- patch
 
     def patch_test_process(self, monkeypatch) -> None:
@@ -236,6 +289,13 @@ class _ClusterEnv:
         monkeypatch.setitem(celery_app.conf, "task_always_eager", False)
         monkeypatch.setitem(celery_app.conf, "broker_url", self.broker)
         monkeypatch.setitem(celery_app.conf, "result_backend", self.backend)
+        # Celery Settings.broker_url 优先读环境变量；但仍可能已有绑在旧 URL
+        # 上的 kombu 池（lane 其它 fixture 先投递过）—— 显式回收。
+        _recycle_celery_broker(celery_app)
+        assert celery_app.conf.broker_url == self.broker, (
+            f"celery broker rebind failed: {celery_app.conf.broker_url!r} "
+            f"!= {self.broker!r}")
+        assert celery_app.conf.task_always_eager is False
 
         # 跨进程会话存储（ref 交接的真相通道）：测试进程与 worker 同域
         from app.services import session_data as sd_mod
