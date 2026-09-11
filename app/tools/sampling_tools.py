@@ -58,7 +58,7 @@ def register_sampling_tools(registry: ToolRegistry):
            description="简单随机空间抽样：在面要素抽样框内逐多边形生成均匀随机"
                        "样本点（投影后度量空间拒绝采样，均匀性按面积定义）。"
                        "野外核查点/精度评估/地统计布点输入；种子可控可复现",
-           tier=2, domains=["analysis"], cost="light",
+           tier=2, domains=["statistics"], cost="light",
            param_descriptions={
                "geojson": "抽样框面要素 GeoJSON 或数据引用(ref:xxx)",
                "n_per_polygon": "每个多边形内生成的随机样本数（默认 10）",
@@ -117,7 +117,7 @@ def register_sampling_tools(registry: ToolRegistry):
            description="系统网格空间抽样：在抽样框上铺规则格网（spacing 米），"
                        "随机起点偏移避免周期性对齐偏差，仅保留面内格点。"
                        "注意：系统抽样无设计无偏方差",
-           tier=2, domains=["analysis"], cost="light",
+           tier=2, domains=["statistics"], cost="light",
            param_descriptions={
                "geojson": "抽样框面要素 GeoJSON 或数据引用(ref:xxx)",
                "spacing": "网格间距（米，投影后度量空间，默认 1000）",
@@ -173,7 +173,7 @@ def register_sampling_tools(registry: ToolRegistry):
            description="分层空间抽样：按层别字段把抽样框分层，层内按多边形面积"
                        "再分摊生成均匀随机样本。allocation=equal 每层等额 / "
                        "proportional 按面积权重；分配表随结果披露",
-           tier=2, domains=["analysis"], cost="light",
+           tier=2, domains=["statistics"], cost="light",
            param_descriptions={
                "geojson": "抽样框面要素 GeoJSON 或数据引用(ref:xxx)",
                "stratum_field": "层别字段名（每要素一个层别值）",
