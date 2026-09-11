@@ -161,27 +161,38 @@ def _probe_stac(adapter: Any, cost: ProbeCost) -> Dict[str, Any]:
     return overrides
 
 
+#: source_type 别名规范化（V8 导出：runtime 的探测门禁/能力 diff 与探测
+#: 原语必须使用同一规范化 —— 否则别名形态源被错误跳过探测或 diff 错基线）。
+_CANONICAL_SOURCE_TYPES = {
+    "postgres": "postgis",
+    "postgresql": "postgis",
+    "ogc_api_features": "ogc_api",
+    "ogc": "ogc_api",
+    "ogcapi": "ogc_api",
+    "wfs1": "wfs",
+    "wfs2": "wfs",
+    "wmts": "wms",
+    "wms_wmts": "wms",
+    "arcgis_rest": "arcgis",
+    "featureserver": "arcgis",
+    "mapserver": "arcgis",
+    "parquet": "geoparquet",
+    "fgb": "flatgeobuf",
+    "minio": "s3",
+    "object_storage": "s3",
+    "mock": "generic",
+    "sample": "generic",
+}
+
+
+def canonical_source_type(source_type: str) -> str:
+    return _CANONICAL_SOURCE_TYPES.get(
+        str(source_type or "").strip().lower(), str(source_type or "").strip().lower()
+    )
+
+
 def _overrides_for(source_type: str, adapter: Any, cost: ProbeCost) -> Dict[str, Any]:
-    canonical = {
-        "postgres": "postgis",
-        "postgresql": "postgis",
-        "ogc_api_features": "ogc_api",
-        "ogc": "ogc_api",
-        "ogcapi": "ogc_api",
-        "wfs1": "wfs",
-        "wfs2": "wfs",
-        "wmts": "wms",
-        "wms_wmts": "wms",
-        "arcgis_rest": "arcgis",
-        "featureserver": "arcgis",
-        "mapserver": "arcgis",
-        "parquet": "geoparquet",
-        "fgb": "flatgeobuf",
-        "minio": "s3",
-        "object_storage": "s3",
-        "mock": "generic",
-        "sample": "generic",
-    }.get(source_type, source_type)
+    canonical = canonical_source_type(source_type)
     if canonical == "ogc_api":
         return _probe_ogc_api(adapter, cost)
     if canonical == "stac":
@@ -318,6 +329,7 @@ def reset_capability_probe_service() -> None:
 
 __all__ = [
     "CapabilityProbeService",
+    "canonical_source_type",
     "ProbeCost",
     "ProviderCapabilitiesRecord",
     "RateLimitHints",
