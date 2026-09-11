@@ -1,0 +1,26 @@
+{
+  "panel": {
+    "title": "Agent 控制中心",
+    "subtitle": "Agent Command Center",
+    "online": "系统在线",
+    "close": "关闭设置",
+    "navLabel": "设置分类"
+  },
+  "tabs": {
+    "llm": "大模型",
+    "skills": "Skills",
+    "rag": "知识库",
+    "map": "地图配置",
+    "system": "系统",
+    "account": "账户"
+  },
+  "system": {
+    "title": "系统设置",
+    "subtitle": "System Settings",
+    "backendApiUrl": "Backend API URL",
+    "backendApiReadonlyAria": "后端 API 地址（只读，由构建时环境变量决定）",
+    "backendApiHint": "由 NEXT_PUBLIC_API_URL 环境变量在构建时确定，运行时不可修改。",
+    "language": "Language / 语言",
+    "languageHint": "界面语言，切换立即生效并记住选择。"
+  }
+}

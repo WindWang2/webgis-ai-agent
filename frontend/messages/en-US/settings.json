@@ -1,0 +1,26 @@
+{
+  "panel": {
+    "title": "Agent Command Center",
+    "subtitle": "Agent Command Center",
+    "online": "System online",
+    "close": "Close settings",
+    "navLabel": "Settings sections"
+  },
+  "tabs": {
+    "llm": "Models",
+    "skills": "Skills",
+    "rag": "Knowledge base",
+    "map": "Map config",
+    "system": "System",
+    "account": "Account"
+  },
+  "system": {
+    "title": "System Settings",
+    "subtitle": "System Settings",
+    "backendApiUrl": "Backend API URL",
+    "backendApiReadonlyAria": "Backend API address (read-only, fixed at build time)",
+    "backendApiHint": "Determined by the NEXT_PUBLIC_API_URL environment variable at build time; not editable at runtime.",
+    "language": "Language / 语言",
+    "languageHint": "Interface language. Changes apply immediately and are remembered."
+  }
+}
