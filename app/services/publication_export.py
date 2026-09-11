@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 try:  # 与 report_service 同模式：可选依赖，缺席诚实降级
     import weasyprint  # noqa: F401
-except ImportError:  # pragma: no cover - 环境相关
+except (ImportError, OSError):  # pragma: no cover - 环境相关（Windows 缺 GTK/pango 时 cffi 抛 OSError）
     weasyprint = None
 
 #: 页面尺寸上限（A0 = 841×1189mm 的毫米值以内）；超限帧拒绝。
