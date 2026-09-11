@@ -743,7 +743,6 @@ def commit_version(
     ``after_version_record``）—— 测试进程中断语义的确定性证据点；
     生产路径恒 None。
     """
-    from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
 
     from app.models.lakehouse_datasets import LakehouseDatasetVersion

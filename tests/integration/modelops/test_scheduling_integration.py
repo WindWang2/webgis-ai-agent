@@ -42,12 +42,9 @@ def test_service_run_with_ledger_records_reservation(service, synthetic_raster):
 
 def test_ledger_released_when_provider_load_fails(service, tmp_path, isolated_blobs):
     """provider load 永久失败 → VRAM 预订必须归还（账本无泄漏）。"""
-    import hashlib
 
 
 
-    import rasterio
-    from rasterio.transform import from_origin
 
     from app.lib.modelops.descriptor import GeoModelDescriptor
     from app.services.modelops.engine import InferenceRequest

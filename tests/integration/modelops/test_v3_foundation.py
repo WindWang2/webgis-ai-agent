@@ -74,7 +74,6 @@ def test_geographic_prompt_end_to_end(service, synthetic_raster):
     """prompt_crs=True：地理坐标 prompt 与等价像素 prompt 产物逐位一致。
 
     （坐标变换正确性的最强 oracle——两条路径共用同一 provider 确定性。）"""
-    import base64
 
     from app.services.modelops.engine import InferenceRequest
 

@@ -62,7 +62,7 @@ def probe_bubblewrap(force: bool = False) -> Optional[str]:
             "--proc",
             "/proc",
             "--tmpfs",
-            "/tmp",
+            "/tmp",  # nosec B108 — intentional bwrap tmpfs mount
             "--ro-bind",
             "/usr",
             "/usr",
@@ -202,9 +202,9 @@ def build_bwrap_command(
         "--proc",
         "/proc",
         "--tmpfs",
-        "/tmp",
+        "/tmp",  # nosec B108 — intentional bwrap tmpfs mount
         "--chdir",
-        "/tmp",
+        "/tmp",  # nosec B108 — intentional bwrap tmpfs mount
     ]
     argv += _bind_args()
     argv += _python_bind_args()

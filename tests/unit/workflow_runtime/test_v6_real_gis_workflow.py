@@ -17,12 +17,10 @@ import asyncio
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
 from app.services.workflow_runtime import contracts as C
 from app.services.workflow_runtime.driver import Driver
-from app.services.workflow_runtime.reuse import ReuseIndex
 from app.services.workflow_runtime.store import InstanceStore
 
 pytestmark = pytest.mark.heavy
@@ -147,7 +145,7 @@ def test_real_gis_workflow_data_science_cartography(factory, monkeypatch,
         assert ref_.startswith("blob:")
         return ref_
 
-    carto_ref = asyncio.run(_main())
+    asyncio.run(_main())
 
     # journal：全链转移历史可检视
     events = store.get_events(iid)

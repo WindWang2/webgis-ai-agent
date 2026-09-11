@@ -413,7 +413,6 @@ async def plan_lakehouse_dataset_retention(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
     )
-    from app.services.lakehouse import dataset_registry as reg
     from app.services.lakehouse import dataset_retention as ret
     from app.services.lakehouse.dataset_retention import RetentionError
 
@@ -445,7 +444,6 @@ async def execute_lakehouse_dataset_retention(
         db, _require_session_id(req.session_id),
         user_id=_user.get("user_id"), owner_token=owner_token,
     )
-    from app.services.lakehouse import dataset_registry as reg
     from app.services.lakehouse import dataset_retention as ret
     from app.services.lakehouse.dataset_retention import (
         RetentionError,

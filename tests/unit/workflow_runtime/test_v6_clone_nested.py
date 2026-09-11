@@ -14,7 +14,6 @@ from typing import Any, Dict, List
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
 from app.services.workflow_runtime import contracts as C

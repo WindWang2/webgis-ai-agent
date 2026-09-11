@@ -4,7 +4,6 @@
 → 多个**语义不同**的合理组合（点图 / 热力 / 基础组件齐备），排序确定、
 可解释，且全程无 query 字符串硬编码（case corpus 负例纪律）。
 """
-import pytest
 
 from app.lib.cartography.composition_selection import (
     MAX_ALTERNATIVES,

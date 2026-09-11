@@ -78,7 +78,7 @@ def test_inference_outputs_become_session_layers(service, seg_raster, monkeypatc
     )
     assert published["registered_count"] >= 1, published
     layers = published["layers"]
-    classes_layer = next(l for l in layers if l["role"] == "classes")
+    classes_layer = next(layer for layer in layers if layer["role"] == "classes")
     assert classes_layer["layer_kind"] == "raster"
     assert classes_layer["registered"] is True
     assert classes_layer["ref_id"]

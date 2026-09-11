@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import threading
 
-import numpy as np
 import pytest
 
 from app.lib.modelops.errors import ResourceUnavailable

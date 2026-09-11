@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any, Dict, List
 
 import pytest
@@ -25,7 +24,6 @@ from app.services.workflow_runtime import cluster as CL
 from app.services.workflow_runtime import contracts as C
 from app.services.workflow_runtime import dispatch as DP
 from app.services.workflow_runtime.driver import Driver
-from app.services.workflow_runtime.recovery import sweep_recoverable
 from app.services.workflow_runtime.store import InstanceStore
 
 
@@ -181,7 +179,6 @@ def test_local_dispatcher_executes_real_plan_via_session_refs(factory):
                 "value": "completed"})(), "evidence": ev,
                 "error_code": None, "error_message": ""})()
 
-    from app.services.session_data import session_data_manager
 
     disp = DP.LocalDispatcher(engine=FakeEngine(), owner_scope="u:abc")
     outcome = asyncio.run(disp.execute(
@@ -364,7 +361,7 @@ def test_isolation_requires_capable_worker(factory, monkeypatch):
 
 def test_node_priority_orders_batch(factory):
     """优先级降序派发；同优先级保持声明序（FIFO 公平，无饥饿）。"""
-    store = InstanceStore(factory=factory)
+    InstanceStore(factory=factory)
     from app.services.workflow_runtime.driver import _node_priority
 
     assert _node_priority({"priority": 10}) == 10

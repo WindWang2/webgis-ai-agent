@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 import pytest
@@ -303,7 +302,7 @@ def test_compensation_cleans_cancelled_partial_artifact(factory):
         cleaned.append(ref)
         return True
 
-    old = CP._handlers.get("ref:")
+    CP._handlers.get("ref:")
     CP.register_handler("ref:", fake_delete)
     try:
         h = Harness(factory)
