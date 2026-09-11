@@ -14,6 +14,7 @@ import { AnalysisGraphPanel } from '@/components/agent/analysis-graph-panel';
 import type { SessionPlanViewState } from '@/lib/session/session-plan-delta';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { apiFetch } from '@/lib/api/transport';
+import { consumePendingLocate } from '@/lib/search/locate';
 import {
   agentRuntimeLabel,
   parseAgentRuntime,
@@ -337,6 +338,28 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
     }
   }, [messages, aiStatus, scrollToBottom, isNearBottom]);
 
+  // ADR-0147（P4）：跨会话搜索「定位到消息」—— 会话恢复装载完成后，消费
+  // pendingLocate 滚动到目标消息并短暂高亮。会话不匹配/超时由 locate 模块
+  // 丢弃（append-only 接线，不改既有滚动行为）。
+  const [locateIndex, setLocateIndex] = useState<number | null>(null);
+  useEffect(() => {
+    if (!sessionId || messages.length === 0) return;
+    const target = consumePendingLocate(sessionId);
+    if (target === null || target >= messages.length) return;
+    setLocateIndex(target);
+    const t = setTimeout(() => {
+      const el = scrollRef.current?.querySelector<HTMLElement>(
+        `[data-chat-message-index="${target}"]`,
+      );
+      el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    }, 80);
+    const clear = setTimeout(() => setLocateIndex(null), 2600);
+    return () => {
+      clearTimeout(t);
+      clearTimeout(clear);
+    };
+  }, [sessionId, messages.length]);
+
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -424,13 +447,19 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
         */}
         <div className="space-y-2 px-panel py-2">
           {messages.map((msg, idx) => (
-            <ChatMessageItem
+            <div
               key={msg.id ?? `msg-${idx}`}
-              message={msg}
-              mounted={mounted}
-              thinkingText={thinkingText}
-              onPlanAction={onPlanAction}
-            />
+              data-chat-message-index={idx}
+              data-chat-locate-hit={locateIndex === idx ? 'true' : undefined}
+              className={locateIndex === idx ? 'rounded-md ring-2 ring-status-accent' : undefined}
+            >
+              <ChatMessageItem
+                message={msg}
+                mounted={mounted}
+                thinkingText={thinkingText}
+                onPlanAction={onPlanAction}
+              />
+            </div>
           ))}
 
 

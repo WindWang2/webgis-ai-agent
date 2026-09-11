@@ -23,6 +23,7 @@ import { setLayerDataSession } from '@/lib/store/layer-data';
 import { useRegisterCommands } from '@/lib/commands/registry';
 import { CommandPaletteRoot } from '@/components/command/command-palette-root';
 import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
+import { useSearchDrawerStore } from '@/lib/hooks/use-search-drawer';
 
 // New layout components
 import TopBar from '@/components/layout/top-bar';
@@ -43,6 +44,7 @@ const SettingsPanel = dynamic(() => import('@/components/settings/settings-panel
 const ExportMask = dynamic(() => import('@/components/map/export-mask').then(m => ({ default: m.ExportMask })), { ssr: false });
 const TemplateGalleryV2 = dynamic(() => import('@/components/drawers/template-gallery-v2').then(m => ({ default: m.TemplateGalleryV2 })), { ssr: false });
 const QueryConsole = dynamic(() => import('@/components/console/query-console').then(m => ({ default: m.QueryConsole })), { ssr: false });
+const SearchDrawer = dynamic(() => import('@/components/search/search-drawer').then(m => ({ default: m.SearchDrawer })), { ssr: false });
 
 const MapPanel = dynamic(
   () => import('@/components/map/map-panel').then((m) => ({ default: m.MapPanel })),
@@ -243,6 +245,13 @@ export default function Home() {
   // 动态注册（新会话走 #553 确认守卫；故事视图新开 tab 不打断当前工作区）。
   useRegisterCommands(
     [
+      {
+        id: 'panel.search',
+        title: '跨会话搜索',
+        group: '面板',
+        keywords: 'search cross-session suosou fulltext',
+        run: () => useSearchDrawerStore.getState().openDrawer(),
+      },
       {
         id: 'tools.queryConsole',
         title: '打开高级查询控制台',
@@ -484,6 +493,14 @@ export default function Home() {
 
       {/* ADR-0147：高级查询控制台（data-fabric query 契约消费面） */}
       <QueryConsole sessionId={sessionId} ownerToken={activeSessionToken} />
+
+      {/* ADR-0147：跨会话搜索（本地索引 + 跳转恢复） */}
+      <SearchDrawer
+        onSelectSession={(sid) => {
+          setHistoryOpen(false);
+          handleSelectSession(sid);
+        }}
+      />
     </div>
   );
 }
