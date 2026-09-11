@@ -955,7 +955,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "model_change_detection"
    ],
@@ -995,7 +995,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "model_instance_segmentation"
    ],
@@ -1014,7 +1014,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "model_object_detection"
    ],
@@ -1033,7 +1033,7 @@
    "uncertainty_outputs": []
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "model_image_segmentation"
    ],
@@ -1054,7 +1054,7 @@
    ]
   },
   {
-   "backend_variants": 0,
+   "backend_variants": 1,
    "capabilities": [
     "model_super_resolution"
    ],
@@ -7857,51 +7857,11 @@
   "algorithms": 230,
   "artifact_types": 21,
   "capabilities": 153,
-  "findings": 14,
+  "findings": 9,
   "recipes": 164,
   "tools": 327
  },
  "findings": [
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "model",
-   "severity": "medium",
-   "subject": "model.inference.change_detection",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "model",
-   "severity": "medium",
-   "subject": "model.inference.instance_segmentation",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "model",
-   "severity": "medium",
-   "subject": "model.inference.object_detection",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "model",
-   "severity": "medium",
-   "subject": "model.inference.semantic_segmentation",
-   "surface": "algorithms"
-  },
-  {
-   "code": "ALGO_HEAVY_NO_VARIANTS",
-   "detail": "memory_cost=high but no backend_variants scale windows",
-   "domain": "model",
-   "severity": "medium",
-   "subject": "model.inference.super_resolution",
-   "surface": "algorithms"
-  },
   {
    "code": "ALGO_HEAVY_NO_VARIANTS",
    "detail": "memory_cost=high but no backend_variants scale windows",
@@ -7979,18 +7939,12 @@
   "behavioral_dispatch": 159,
   "expired_waivers": [],
   "min_behavioral_dispatch": 151,
-  "pass": false,
-  "violations": [
-   {
-    "baseline": 1,
-    "code": "ALGO_HEAVY_NO_VARIANTS",
-    "current": 6
-   }
-  ],
+  "pass": true,
+  "violations": [],
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "30d2f1aca6f46e459eddfdac02caebbe4c310ff25e2457905113b60eface9233",
+ "fingerprint": "5a5abbd13ca6c5e3ef39dd043ea8ec49840b2d24eaba5ce171db90048a4f3050",
  "gate": {
   "fields": {
    "capabilities": {

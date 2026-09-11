@@ -1,21 +1,21 @@
 {
  "gates": {
   "contract_drift": {
-   "command": "C:\\ProgramData\\anaconda3\\python.exe scripts/gen_drift_report.py --check",
+   "command": "/workspace/venvs/webgis-ci/bin/python scripts/gen_drift_report.py --check",
    "detail": [
     "drift report up to date"
    ],
    "status": "pass"
   },
   "frontend_behavior": {
-   "command": "C:\\ProgramData\\anaconda3\\python.exe scripts/gen_frontend_behavior.py --check",
+   "command": "/workspace/venvs/webgis-ci/bin/python scripts/gen_frontend_behavior.py --check",
    "detail": [
     "ok: 2 behaviors"
    ],
    "status": "pass"
   },
   "integration_preflight": {
-   "command": "C:\\ProgramData\\anaconda3\\python.exe scripts/check_integration_preflight.py --report",
+   "command": "/workspace/venvs/webgis-ci/bin/python scripts/check_integration_preflight.py --report",
    "detail": [
     "   \"check\": \"generated_hand_edits\",",
     "   \"ok\": true,",
@@ -27,14 +27,14 @@
    "status": "fail"
   },
   "quality_manifest": {
-   "command": "C:\\ProgramData\\anaconda3\\python.exe scripts/gen_quality_manifest.py --check",
+   "command": "/workspace/venvs/webgis-ci/bin/python scripts/gen_quality_manifest.py --check",
    "detail": [
     "quality manifest up to date"
    ],
    "status": "pass"
   }
  },
- "git_commit_generation_time": "7119c83bf8a8e4d4b4fbfe92724d1c342eb8b468",
+ "git_commit_generation_time": "74952ef83d843bb7036c662c89ba4dd6b8ca56ab",
  "known_gaps": [
   {
    "detail": "存量 ADR 0077 撞号（watermark 下 known limitation）: ['docs/adr/0077-multi-pod-topology-turn-ownership.md', 'docs/adr/0077-wrap-vendored-pi.md']",

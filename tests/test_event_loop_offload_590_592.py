@@ -231,7 +231,12 @@ def _fake_upload_meta(**overrides) -> dict:
 
 
 class _FakeUploadDB:
-    """Minimal async_db_session double (session_id=None → skip conv check)."""
+    """Minimal async_db_session double.
+
+    #1221 makes session_id required, so the upload path always hits
+    Conversation lookup + optional dedup SELECT. Return None for both
+    (first-turn write / no duplicate) so authorize_session_write allows.
+    """
 
     def __init__(self):
         self.record = None
@@ -241,6 +246,13 @@ class _FakeUploadDB:
 
     async def __aexit__(self, *exc):
         return False
+
+    async def execute(self, *_a, **_k):
+        class _Result:
+            def scalar_one_or_none(self):
+                return None
+
+        return _Result()
 
     def add(self, record):
         self.record = record
@@ -283,7 +295,8 @@ async def test_upload_temp_write_off_loop(monkeypatch, tmp_path):
             lambda: upload_mod.upload_files(
                 # 直接函数调用不经过 FastAPI 依赖注入：Form 默认值是 truthy 的
                 # Form 对象 —— V4 新增参数必须显式传（crs/dedup/register_ref）。
-                files=[file], session_id=None, crs=None, dedup=True,
+                # #1221: session_id 必填；FakeUploadDB.execute → None 走首写放行。
+                files=[file], session_id=_VALID_SID, crs=None, dedup=True,
                 register_ref=False, x_session_id=None,
                 owner_token=None, _user={"user_id": "u1"},
             )

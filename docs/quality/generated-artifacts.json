@@ -1,40 +1,40 @@
 {
  "artifacts": {
   "docs/integration/RELEASE_READINESS.json": {
-   "content_fingerprint": "54b1a6b6921897d2de572e63cd554589261a4bb83d88baca48f3d8c71ab77408",
+   "content_fingerprint": "aaf8680531e164ee497ac1f95e6153a7bffe6be822440202c7a5b537849151c8",
    "generator": "scripts/gen_release_readiness.py",
    "generator_version": 1,
-   "input_fingerprint": "24ffc34e37e5123154f899761abf085fc61833a4801b53da0b4b4ae222213fd7",
+   "input_fingerprint": "943de3d62fa16b4dc25d014d5597a25bbaa4e44ab1718d36fedd67275eb29697",
    "inputs": [
     "scripts/gen_release_readiness.py"
    ],
    "scope": "global"
   },
   "docs/integration/RELEASE_READINESS.md": {
-   "content_fingerprint": "1b330efbdbc327ac3fa77ab068dafdf2d9e9cf4727d848434d0991fe13621045",
+   "content_fingerprint": "4e752c30f26bd3c7a926f9baa1d363253409e2a132b9f8e71796c9e920f90b9f",
    "generator": "scripts/gen_release_readiness.py",
    "generator_version": 1,
-   "input_fingerprint": "24ffc34e37e5123154f899761abf085fc61833a4801b53da0b4b4ae222213fd7",
+   "input_fingerprint": "943de3d62fa16b4dc25d014d5597a25bbaa4e44ab1718d36fedd67275eb29697",
    "inputs": [
     "scripts/gen_release_readiness.py"
    ],
    "scope": "global"
   },
   "docs/integration/frontend-behavior.json": {
-   "content_fingerprint": "9200b9680643bd38d8ce8d3cdc3722f55f5bce10fb3eefe0ca0a3bf4b9b8b43e",
+   "content_fingerprint": "e98b39f593f4d4f09eeebc9f59a5b98f75bf931007828598bc894592727c0de1",
    "generator": "scripts/gen_frontend_behavior.py",
    "generator_version": 1,
-   "input_fingerprint": "f0fcd786dbabf8aad2cb569e9340e02e161b2fb94b0d10ee91ed844b4926b46c",
+   "input_fingerprint": "27142c76c627ea14bd2b30ebdb008f3a3ce063b943b8155b110adbc903f9634c",
    "inputs": [
     "frontend/tests/behavioral"
    ],
    "scope": "global"
   },
   "docs/quality/CONTRACT_DRIFT_REPORT.md": {
-   "content_fingerprint": "e2343520112f08416832efa45822cf07ad02aaa5d84e6e6cacc143a244fca2dc",
+   "content_fingerprint": "ac962f3a27bb10e39ca8f5a86fc64067927e5ebee392cf42296c5f6d8113aef1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "a7219fd174eb65722adabfd4adb065aa7e2878a6ed0527c8563c87bf3f5e7154",
+   "input_fingerprint": "77775399716ef2ab47b5e785cf8c7b24b6f24164b547b06825c271d81abbee69",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -42,10 +42,10 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_MANIFEST.md": {
-   "content_fingerprint": "80026079eed5daadc6ce5205dcfb9da110656c31743acdcd05e204947b0dfbd4",
+   "content_fingerprint": "dd909469fe40b365447ee8e7a11d1d394f32197e9099480f06915415cd0c4c7e",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "a0d840106c3d815786fb226f0cfae67ef5b36fabe8e4972ccec92ae3fc537a27",
+   "input_fingerprint": "39a1df9fcbb4643f38dc875944dc00d17437820d9934cd990f0fcbd2e4053837",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -57,10 +57,10 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_REPORT.md": {
-   "content_fingerprint": "0f34523e3abd1c22d77a19280094bc3b503cb0f625a8975596521bc00618993c",
+   "content_fingerprint": "4881a3f3950290d11d25e0126eaf2a7d685881be2a8ca9f4f6981163fa1fe5f2",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "ef3270fb9387c630c0abc7cea78ddb10b1d36d39be56437e088e8a11f0c203a1",
+   "input_fingerprint": "cbc8257e916324ed4417b3a9bfe34218e481cfafbf6abc7475d8c83c57396bab",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -69,10 +69,10 @@
    "scope": "global"
   },
   "docs/quality/certifications/CANCELLATION_COVERAGE.md": {
-   "content_fingerprint": "6993210e3bb2457b5fc015c6c7579e511bd6228c82da3518221e12bc903cf1a9",
+   "content_fingerprint": "9aaa2eb7ae7f76a515775b2fd2a6f023aeb0fa18f1f7981f9db3135b77ff7c20",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "c6d045045825442d5be9ef373ba75269893f2b73f47c1d9d1c500b22be1fbde1",
+   "input_fingerprint": "08131a32ffc9995002fee02934bec50a77e137fa03cf24fa2a7e2950c6d2956d",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -80,30 +80,30 @@
    "scope": "global"
   },
   "docs/quality/certifications/CHAOS_FAULT_REGISTRY.md": {
-   "content_fingerprint": "6be0a2d769e420aacfd835407249ae2cbdad3f87d7a2c8dd65ad46f8bc242d86",
+   "content_fingerprint": "dcb8185a20196531bf9343ad6bff1802fb8e30d0883e9bb275f1e706a91897c4",
    "generator": "scripts/gen_chaos_registry.py",
    "generator_version": 1,
-   "input_fingerprint": "195e2c003866aa981c85240714f08afd07db127d0b60b1fc6d6b7b4987446c41",
+   "input_fingerprint": "27cfb2ee57f66b96f9a5698ee3c98c0d6e2f1cf9a5a97dabc4b030a0ccceae85",
    "inputs": [
     "tests/fixtures/chaos.py"
    ],
    "scope": "global"
   },
   "docs/quality/certifications/DETERMINISM.md": {
-   "content_fingerprint": "d466c27870163bce974f63bd660374eec06893b672295d26587bfa996cd836e3",
+   "content_fingerprint": "ba3ed6adae59f3dcf42433b851da9b5d4fb5e46c29428a8996af77e770a385da",
    "generator": "scripts/gen_determinism_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "ae3bff2190238bb58dba892c7ac4c50c43b77711b008abd1423d114e2b17c7b6",
+   "input_fingerprint": "9dad0dc4d67563873555d05ed1d0fbbeee186784756ae4c28fce57a5790252ba",
    "inputs": [
     "app/lib/gis/algorithms"
    ],
    "scope": "global"
   },
   "docs/quality/certifications/RESOURCE_SAFETY.md": {
-   "content_fingerprint": "6fedadc754cd7911f496937029b0f85d2d27c569bf49ac66469705a0dc4b9da6",
+   "content_fingerprint": "d2bf3659188267ba941161fd3ecf14b29dab68cdbe0a49f2b74ada1217fd8f88",
    "generator": "scripts/gen_resource_certification.py",
    "generator_version": 1,
-   "input_fingerprint": "c6d045045825442d5be9ef373ba75269893f2b73f47c1d9d1c500b22be1fbde1",
+   "input_fingerprint": "08131a32ffc9995002fee02934bec50a77e137fa03cf24fa2a7e2950c6d2956d",
    "inputs": [
     "app/lib/cancellation.py",
     "app/lib/geo_analysis"
@@ -111,20 +111,20 @@
    "scope": "global"
   },
   "docs/quality/certifications/SECURITY_CONTROLS.md": {
-   "content_fingerprint": "ae911fa1b402630c6457a39ecdbef6d99f3368546143be6251260c8fbe9c540a",
+   "content_fingerprint": "f0ce1b8bb090c03e9af2bc7ff28ea1ebf2ca11416769c9bab90725f0c69703b7",
    "generator": "scripts/gen_security_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "5614a12322e5e516792497e8309c32465ce0d4e0d4d71b5ea89cef083a857e44",
+   "input_fingerprint": "df4054b890e89aa3a0aa9747129886b0401952bf2a8668e698b1b86509778232",
    "inputs": [
     "app/lib/quality/security_manifest.py"
    ],
    "scope": "global"
   },
   "docs/quality/contract-drift-report.json": {
-   "content_fingerprint": "63dccfc973b9c61ed913e89a6e3147166aed5093fb79dfcf13309a77028fca27",
+   "content_fingerprint": "95739298ee4fde358d134f3b4241ad2303a32c35021ad0ab32efd3a21e3d47c1",
    "generator": "scripts/gen_drift_report.py",
    "generator_version": 1,
-   "input_fingerprint": "a7219fd174eb65722adabfd4adb065aa7e2878a6ed0527c8563c87bf3f5e7154",
+   "input_fingerprint": "77775399716ef2ab47b5e785cf8c7b24b6f24164b547b06825c271d81abbee69",
    "inputs": [
     "app/lib/quality/drift.py",
     "app/api/routes"
@@ -132,10 +132,10 @@
    "scope": "global"
   },
   "docs/quality/quality-manifest.json": {
-   "content_fingerprint": "8997aea725f64926aee9cfc7bb1a0b0ceb7ce1e2ec4c2bd3f07de57cf9460e7f",
+   "content_fingerprint": "82ac25c793c88d1cebf14ecf0675d806f43c18d526648240b0e91f223fa6e17a",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "a0d840106c3d815786fb226f0cfae67ef5b36fabe8e4972ccec92ae3fc537a27",
+   "input_fingerprint": "39a1df9fcbb4643f38dc875944dc00d17437820d9934cd990f0fcbd2e4053837",
    "inputs": [
     "app/lib/quality/manifest.py",
     "app/lib/quality/discovery.py",
@@ -147,10 +147,10 @@
    "scope": "global"
   },
   "docs/quality/quality-report.json": {
-   "content_fingerprint": "caa2294ea2417df8fdce8479bc2e0dce265d2e50bf3dc6f3a7bdf6a1dcafa1a4",
+   "content_fingerprint": "d18af50b58b5007da7b5903862be0d80115c2649e782715479fdc75468f84f8f",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "ef3270fb9387c630c0abc7cea78ddb10b1d36d39be56437e088e8a11f0c203a1",
+   "input_fingerprint": "cbc8257e916324ed4417b3a9bfe34218e481cfafbf6abc7475d8c83c57396bab",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -159,10 +159,10 @@
    "scope": "global"
   },
   "docs/science/BENCHMARK_MANIFEST.md": {
-   "content_fingerprint": "c4b07abbbc0057f4b8cbad48a3583c08cd39bf1baf693fe77bccd32b96163c30",
+   "content_fingerprint": "70415b7a3899f331aa0e2519b9631777623983d3fa0e4ba9f9b6aa3a7ff28bd7",
    "generator": "scripts/gen_science_benchmark_manifest.py",
    "generator_version": 1,
-   "input_fingerprint": "aafe8969a8bd5e0ed485f65c5a0bbcd985d102bd8b84fde44f3979e53992e021",
+   "input_fingerprint": "1265a45e8dc34fed6b21bd6838f1b7ba5ba308cb026dbd645c462df8dd81b458",
    "inputs": [
     "app/lib/gis/algorithm_registry.py",
     "app/lib/gis/algorithms"
@@ -170,10 +170,10 @@
    "scope": "global"
   },
   "tests/quality/snapshots/realtime-contract.json": {
-   "content_fingerprint": "3e091b3dbff4c0ab00039979f7c701061a14a3e3bee6704bf88368afd8acef8d",
+   "content_fingerprint": "07cf6ca279b5ba0ab676a0bf4845980eb0db476d42b1d38a1d12a2390fe23121",
    "generator": "app/lib/quality/api_compat.py",
    "generator_version": 1,
-   "input_fingerprint": "97f4890d349bd27181d2c05c4b2117bb6179c177965681c37e80f3a663292362",
+   "input_fingerprint": "9a83df59ab5de60ff87133bfaf99651f43d1be40c72415963f5cb4180be8ce1b",
    "inputs": [
     "app/services/ws_service.py",
     "app/api/routes/ws.py",
