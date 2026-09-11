@@ -36,7 +36,6 @@ const ChartRenderer = dynamic(
 const DOT_ANIMS = ['animate-dot-1', 'animate-dot-2', 'animate-dot-3'];
 
 function ThinkingDots({ text }: { text: string }) {
-const t = useT();
   return (
     <div className="flex items-center gap-2 py-1.5 px-1">
       <div className="flex gap-[3px]">

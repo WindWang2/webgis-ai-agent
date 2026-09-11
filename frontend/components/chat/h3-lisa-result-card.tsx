@@ -1,5 +1,5 @@
-import { useT } from '@/lib/i18n/useT';
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import { Hexagon, Target, Sparkles } from 'lucide-react';
 

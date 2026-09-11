@@ -1,5 +1,5 @@
-import { useT } from '@/lib/i18n/useT';
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { STitle } from '@/components/shared/section-title';

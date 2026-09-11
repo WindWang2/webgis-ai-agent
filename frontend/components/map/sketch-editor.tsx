@@ -455,7 +455,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       window.removeEventListener('mouseup', onMouseUpWindow);
       if (typeof map.dragPan?.enable === 'function') map.dragPan.enable();
     };
-  }, [tool, mapReady, getMap, setSketchDirty]);
+  }, [tool, mapReady, getMap, setSketchDirty, t]);
 
   /* ─── 键盘：Enter 完成 / Escape 取消草稿或退出工具 ─── */
   useEffect(() => {

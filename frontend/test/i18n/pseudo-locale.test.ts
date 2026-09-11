@@ -31,7 +31,7 @@ function flatten(obj: Catalog, prefix = ''): Map<string, string> {
   return out
 }
 
-function pseudo(value: string, key: string): string {
+function pseudo(value: string, _key: string): string {
   const placeholders = [...value.matchAll(/\{[^{}]+\}/g)].map((m) => m[0])
   let core = value.replace(/\{[^{}]+\}/g, '\0')
   // 长度膨胀 ~40%（repeat 1.4 截断到字符边界 + 包裹标记）

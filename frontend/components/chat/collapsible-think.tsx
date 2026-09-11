@@ -1,5 +1,5 @@
-import { useT } from '@/lib/i18n/useT';
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import React, { useId, useState, useEffect } from 'react';
 import { ChevronRight, Brain, Clock, Loader2, Sparkles } from 'lucide-react';

@@ -1,5 +1,5 @@
-import { useT } from '@/lib/i18n/useT';
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import React from 'react';
 import { AlertTriangle, CheckCircle2, HelpCircle, Palette, Target } from 'lucide-react';

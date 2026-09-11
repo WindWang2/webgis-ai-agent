@@ -1,3 +1,5 @@
+'use client';
+
 import { useT } from '@/lib/i18n/useT';
 /**
  * Template Gallery V2 — F-FE-TPL.
@@ -23,8 +25,6 @@ import { useT } from '@/lib/i18n/useT';
  * hud-cyan 收敛到 --theme-* 设计令牌 + accent；补齐 dialog 语义
  * （aria-modal / Escape / focus trap / 焦点归还）。
  */
-
-'use client';
 
 import React, {
   useCallback,

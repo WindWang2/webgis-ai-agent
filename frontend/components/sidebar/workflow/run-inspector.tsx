@@ -45,7 +45,6 @@ export interface RunInspectorProps {
 }
 
 function kv(label: string, value: string) {
-const t = useT();
   return (
     <div className="flex min-w-0 justify-between gap-2 text-[11px]">
       <span className="shrink-0 text-[var(--theme-text-muted)]">{label}</span>

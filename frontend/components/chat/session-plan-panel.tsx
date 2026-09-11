@@ -1,5 +1,5 @@
-import { useT } from '@/lib/i18n/useT';
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import { useEffect, useState } from 'react';
 import { ClipboardList, Check, Circle, MinusCircle, CircleSlash, RotateCcw } from 'lucide-react';

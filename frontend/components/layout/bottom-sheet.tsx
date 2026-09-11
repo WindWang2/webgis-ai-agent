@@ -26,7 +26,6 @@ export interface BottomSheetProps {
   children: React.ReactNode
 }
 
-const HANDLE_H = 44
 const SNAP_RATIO: Record<SheetSnap, string> = { half: '55%', full: '92%' }
 
 /**

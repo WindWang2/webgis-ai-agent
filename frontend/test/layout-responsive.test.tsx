@@ -35,7 +35,7 @@ class FakeMQL {
 const queries = new Map<string, FakeMQL>()
 
 function installMatchMedia(width: number) {
-  const make = (query: string) => {
+  const make = (query: string): FakeMQL => {
     // 同一 query 复用同一实例（跨用例持久，store 的监听器不丢）
     let mql = queries.get(query)
     if (!mql) {
@@ -44,22 +44,19 @@ function installMatchMedia(width: number) {
     }
     return mql
   }
-  const evaluate = (query: string, w: number): boolean => {
-    if (query === `(max-width: ${MOBILE_MAX_PX}px)`) return w <= MOBILE_MAX_PX
-    if (query === `(min-width: ${MOBILE_MAX_PX + 1}px) and (max-width: ${THIN_MAX_PX}px)`)
-      return w > MOBILE_MAX_PX && w <= THIN_MAX_PX
-    return false
-  }
-  vi.stubGlobal(
-    'matchMedia',
-    vi.fn((query: string) => {
+  // 预建两档查询（store 订阅生命周期跨用例持久，实例不可中途更换）
+  make(`(max-width: ${MOBILE_MAX_PX}px)`)
+  make(`(min-width: ${MOBILE_MAX_PX + 1}px) and (max-width: ${THIN_MAX_PX}px)`)
+  setWidth(width)
+
+  // 组件读 window.matchMedia（jsdom 不内置）—— 直接装到 window
+  ;(window as unknown as { matchMedia: unknown }).matchMedia = vi.fn(
+    (query: string) => {
       const existing = queries.get(query)
       if (existing) return existing
       return make(query)
-    })
+    }
   )
-  // 预建两档查询并同步初始宽度
-  setWidth(width)
 }
 
 function setWidth(width: number) {
@@ -77,7 +74,7 @@ describe('use-layout-mode 三档', () => {
     installMatchMedia(1440)
   })
   afterEach(() => {
-    vi.unstubAllGlobals()
+    delete (window as unknown as { matchMedia?: unknown }).matchMedia
   })
 
   function Probe() {
@@ -120,7 +117,7 @@ describe('BottomSheet', () => {
     installMatchMedia(390)
   })
   afterEach(() => {
-    vi.unstubAllGlobals()
+    delete (window as unknown as { matchMedia?: unknown }).matchMedia
   })
 
   it('关闭时渲染 null；打开时渲染 dialog + 把手', () => {

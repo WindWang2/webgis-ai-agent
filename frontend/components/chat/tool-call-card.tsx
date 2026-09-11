@@ -1,5 +1,5 @@
-import { useT } from '@/lib/i18n/useT';
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import React, { useId, useState, useEffect, useCallback, useMemo } from 'react';
 import {

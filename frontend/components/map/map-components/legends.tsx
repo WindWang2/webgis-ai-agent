@@ -7,6 +7,7 @@ import type { RendererContext } from './types';
 import type { LegendSpec } from '@/lib/map-kit/types';
 import { deriveLegendModel } from '@/lib/map-kit/legend-model';
 import { useT } from '@/lib/i18n/useT';
+import { t as tNow } from '@/lib/i18n/t';
 
 function legendForComponent(component: MapSpecComponent, spec: RendererContext['spec']): LegendSpec | undefined {
   const layerId = (component as unknown as { options?: Record<string, unknown> }).options?.['layerId'];
@@ -166,13 +167,12 @@ const t = useT();
 
 // V4：composite 变体 —— 多层复合图例（所有携带 legend_spec 的图层分组）
 function renderComposite(component: MapSpecComponent, ctx: RendererContext, variant: string) {
-const t = useT();
   const groups = (ctx.spec?.layers ?? [])
     .map((l) => l as unknown as { id: string; legend_spec?: LegendSpec & { title?: string } })
     .filter((l) => l.legend_spec != null)
     .slice(0, 3);
   return (
-    <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label={t('map.legends.compositeAria')}>
+    <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label={tNow('map.legends.compositeAria')}>
       {groups.map((g) => {
         const gEntries = legendEntries(g.legend_spec).slice(0, 6);
         if (!gEntries.length) return null;

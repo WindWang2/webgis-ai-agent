@@ -1,5 +1,5 @@
-import { useT } from '@/lib/i18n/useT';
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import { useEffect, useRef, useState } from 'react';
 import { apiFetchBlob } from '@/lib/api/transport';
