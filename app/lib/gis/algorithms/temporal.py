@@ -407,6 +407,57 @@ ALGORITHMS: List[AlgorithmDescriptor] = [
                 "tests/unit/lib/test_phenology_v5.py::TestAnomaly::test_change_direction_and_nan_guard",
             ],
         ),
+
+        AlgorithmDescriptor(
+            id="temporal.smooth_gapfill", name="时序平滑与缺口填补",
+            category="temporal_analysis",
+            capabilities=["temporal_smoothing"],
+            input_artifact_types=["stats_table"],
+            output_artifact_type="stats_table", tool_candidates=["ts_smooth_gapfill"],
+            cpu_cost="low", memory_cost="low", io_cost="low",
+            preferred_execution_policy="THREAD", priority=15,
+            algorithm_family="temporal_descriptive",
+            method_references=["savitzky_golay1964", "cochran1977"],
+            assumptions=[
+                "savgol（Savitzky-Golay 卷积平滑）/ moving_average（中心滑均）/"
+                "none（只填补）三种方法；偶数窗口自动 +1 取奇并披露",
+                "缺口填补是显式步骤（linear 时间插值 / nearest 最近有效值 / "
+                "none 保持 NaN），填补位置由 filled_mask 标记",
+                "缺口占比 ≥90% 或序列 <3 观测 → 类型化拒绝（缺口主导的"
+                "平滑是伪像）",
+                "无随机成分（deterministic）",
+            ],
+            limitations=[
+                "与 temporal.phenology 内嵌的 SG 平滑互补：本算法是独立"
+                "预处理（输出平滑序列），物候是特征提取（输出 SOS/EOS 指标）",
+                "滑动平均对趋势起点/终点有边缘偏差（edge 填充口径）",
+                "线性插值填补长缺口会抹平真实突变（连续缺口 >3 建议人工复核）",
+            ],
+            crs_class="CRS_AGNOSTIC",
+            uncertainty_outputs=[],
+            random_seed_policy="deterministic",
+            numerical_tolerance="多项式再现性：线性信号平滑误差 <1e-12（闭合式锚）",
+            scientific_status="VALIDATED",
+            resource_envelope=ResourceEnvelope(
+                bytes_per_cell=24,
+                notes="等长输入/输出/掩膜数组（时间序列逐像元/逐要素复用）"),
+            cancellation_profile="none",
+            tolerance=NumericalTolerance(rtol=1e-12, atol=1e-12,
+                                         policy="polynomial_reproduction"),
+            conformance_tests=[
+                "tests/unit/lib/test_ts_smoothing_v6.py::"
+                "test_savgol_linear_identity_and_noise_suppression",
+                "tests/unit/lib/test_ts_smoothing_v6.py::"
+                "test_gap_fill_semantics",
+                "tests/unit/lib/test_ts_smoothing_v6.py::"
+                "test_savgol_even_window_autocorrected",
+                "tests/unit/lib/test_ts_smoothing_v6.py::"
+                "test_smooth_gapfill_determinism",
+                "tests/unit/lib/test_ts_smoothing_v6.py::"
+                "test_smooth_gapfill_adversarial_inputs",
+            ],
+            parameter_contract_ref="ts_smooth_gapfill_analysis",
+        ),
 ]
 
 # ── 参数契约（§12；工具签名与契约参数名一致 —— parity 门校验）────────
@@ -487,6 +538,33 @@ PARAMETER_CONTRACTS: List[ParameterContract] = [
                 name="baseline_slices", type="integer", default=0,
                 minimum=0, maximum=511, unit="count",
                 description="时间异常基线段长（0 = 默认对半分）",
+            ),
+        ],
+    ),
+    ParameterContract(
+        id="ts_smooth_gapfill_analysis", version=1,
+        description="时序平滑/缺口填补：方法 / 窗口 / 多项式阶 / 填补方式。",
+        parameters=[
+            ParameterSpec(
+                name="method", type="enum", default="savgol",
+                enum_values=["savgol", "moving_average", "none"],
+                description="平滑方法（none = 只填补）",
+            ),
+            ParameterSpec(
+                name="window_length", type="integer", default=5,
+                minimum=1, maximum=99, unit="count",
+                description="滑动窗口（savgol 自动取奇）",
+            ),
+            ParameterSpec(
+                name="polyorder", type="integer", default=2,
+                minimum=1, maximum=9, unit="count",
+                description="savgol 多项式阶（须 < 窗口）",
+            ),
+            ParameterSpec(
+                name="fill", type="enum", default="linear",
+                enum_values=["linear", "nearest", "none"],
+                description="缺口填补：linear 时间插值 / nearest 最近有效 / "
+                            "none 保持 NaN",
             ),
         ],
     ),

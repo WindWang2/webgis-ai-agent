@@ -196,3 +196,82 @@ def register_science_temporal_tools(registry: ToolRegistry):
             },
             "meta": res["meta"],
         }
+
+    @tool(registry, name="ts_smooth_gapfill",
+          description=(
+              "时间序列平滑与缺口填补：Savitzky-Golay / 滑动均值平滑，"
+              "线性/最近邻缺口填补（填补位置由 filled_mask 显式标记）。"
+              "NDVI/EVI/SAR 时序的标准化预处理；缺口占比 ≥90% 或序列 <3 "
+              "观测 → 结构化拒绝。"
+              "\n何时用：趋势/物候/变化检测前的时间序列清洗。"
+              "\n何时不用：缺口主导的序列（先扩观测窗）；物候参数提取用 "
+              "phenology_analysis（其内嵌 SG 平滑各有用途）。"),
+          tier=2, domains=["temporal"], cost="light",
+          param_descriptions={
+              "values": "数值序列（JSON 数组；NaN/null 视为缺口）",
+              "method": "平滑方法：savgol(默认) / moving_average / none(只填补)",
+              "window_length": "滑动窗口（默认 5；savgol 自动取奇）",
+              "polyorder": "savgol 多项式阶（默认 2，须 < 窗口）",
+              "fill": "缺口填补：linear(默认) / nearest / none(保持 NaN)",
+          },
+          side_effect="deterministic_compute",
+          network=False, deterministic=True,
+          latency_class="fast", memory_class="light", scale_class="medium",
+          tags=("时序", "平滑", "savgol", "缺口填补", "预处理", "ndvi"),
+          output_semantic_type="stats",
+          result_size_policy="inline_small",
+          crs_semantics="crs_agnostic",
+          failure_modes=("invalid_args", "missing_data"))
+    def ts_smooth_gapfill(values: Any, method: str = "savgol",
+                          window_length: int = 5, polyorder: int = 2,
+                          fill: str = "linear") -> dict:
+        import numpy as np
+
+        from app.lib.gis.scientific_evidence import build_evidence
+        from app.lib.gis.algorithm_registry import get_algorithm_registry
+        from app.lib.gis.parameter_contracts import apply_contract
+        from app.lib.geo_analysis.ts_smoothing import smooth_gapfill
+
+        arr = _as_array(values, "values")
+        params = apply_contract("ts_smooth_gapfill_analysis", {
+            "method": method,
+            "window_length": window_length,
+            "polyorder": polyorder,
+            "fill": fill,
+        })
+        smoothed, filled_mask, meta = smooth_gapfill(
+            arr, method=str(params["method"]),
+            window_length=int(params["window_length"]),
+            polyorder=int(params["polyorder"]),
+            fill=str(params["fill"]))
+        payload = {
+            "success": True,
+            "summary": (
+                f"时序平滑完成：{meta['n_observations']} 观测"
+                f"（有效 {meta['valid_observations']}，填补 "
+                f"{meta['filled_count']}，缺口占比 "
+                f"{meta['gap_fraction']:.0%}），方法 "
+                f"{meta['method']}（窗口 {meta['window_length']}）。"),
+            "values_smoothed": [
+                None if not np.isfinite(v) else round(float(v), 6)
+                for v in smoothed
+            ],
+            "filled_mask": [bool(b) for b in filled_mask],
+            "smoothing_metadata": meta,
+        }
+        descriptor = get_algorithm_registry().get("temporal.smooth_gapfill")
+        if descriptor is not None:
+            payload["scientific_evidence"] = build_evidence(
+                descriptor, tool="ts_smooth_gapfill",
+                parameters_applied={
+                    "method": str(params["method"]),
+                    "window_length": int(params["window_length"]),
+                    "polyorder": int(params["polyorder"]),
+                    "fill": str(params["fill"]),
+                },
+                input_facts={
+                    "artifact_type": "stats_table",
+                    "feature_count": meta["n_observations"],
+                },
+            )
+        return payload

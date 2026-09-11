@@ -51,4 +51,16 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             output_artifact_types=["stats_table"],
             purpose_template="时序均值变点检测",
         ),
+
+        CapabilityDescriptor(
+            id="temporal_smoothing", name="时序平滑与缺口填补",
+            category="analysis",
+            description=(
+                "时间序列预处理：Savitzky-Golay / 滑动均值平滑与线性/"
+                "最近邻缺口填补（填补位置显式标记）；NDVI/EVI 时序、"
+                "SAR 时序等连续观测序列的标准化预处理。"),
+            input_artifact_types=["stats_table", "raster_surface"],
+            output_artifact_types=["stats_table"],
+            purpose_template="时序平滑与缺口填补",
+        ),
 ]

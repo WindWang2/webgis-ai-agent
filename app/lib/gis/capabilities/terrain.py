@@ -116,4 +116,29 @@ CAPABILITIES: List[CapabilityDescriptor] = [
             compatible_map_models=["raster_surface"],
             purpose_template="地平线与天空可视因子分析",
         ),
+
+        # ── Science V6（Goal 07 Phase E）：最小成本距离/路径 ─────────
+
+        CapabilityDescriptor(
+            id="cost_distance_analysis", name="累积成本面", category="raster",
+            domain="raster",
+            description=(
+                "摩擦面上的最小累积通行成本（8 邻接 Dijkstra，Tobler 摩擦面"
+                "语义）；可达性/廊道/设施覆盖分析的栅格输入。"),
+            input_artifact_types=["raster_surface", "terrain_surface"],
+            output_artifact_types=["raster_surface"],
+            compatible_map_models=["raster_surface"],
+            purpose_template="累积成本面计算",
+        ),
+
+        CapabilityDescriptor(
+            id="least_cost_path_analysis", name="最小成本路径", category="raster",
+            domain="raster",
+            description=(
+                "在累积成本面上从目标回溯排水到源的最小成本路径（像元折线），"
+                "输出 LineString 要素与路径成本。"),
+            input_artifact_types=["raster_surface"],
+            output_artifact_types=["line_feature_set"],
+            purpose_template="最小成本路径提取",
+        ),
 ]
