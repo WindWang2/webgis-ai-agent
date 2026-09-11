@@ -1,5 +1,32 @@
 # Changelog
 
+## [Unreleased] - 2026-09-12 (workspace-ui-v9, ADR-0143)
+
+### Added (frontend: 项目工作区 UI 完整化)
+- 项目资产区面板（`components/sidebar/project/`，append-only tab 条挂在
+  project-tab）：数据集管理（attach/detach + 两段确认与依赖警示、attach
+  捕获 schema、catalog 预览聚合的表格/SVG 足迹双模式预览）、产物中心
+  （分页/类型筛选/时间排序、pin/unpin 回执、指针克隆、血缘 SVG DAG
+  （lineage-adapter 分层布局，≥50 节点渲染预算断言）、引用/sha256 复制）、
+  Workspace 快照时间线（save/verify/restore(register)/clone/删除、
+  expired-degraded 披露、两快照 verify 报告的前端聚合 diff）、质量审计与
+  修复（审计经 data-fabric catalog preview 前端聚合取要素、截断披露、
+  修复执行前列操作 + 两段确认 + 回执）、数据回收（data-usage 配额条、
+  gc plan dry-run 候选树、危险样式执行确认、回执与保护跳过清单、
+  grace_hours 宽限期展示）。
+- typed client `lib/api/project-assets.ts`（datasets/artifacts/snapshots/
+  quality/gc 族 + data-fabric preview 聚合助手）与
+  `lib/hooks/use-project-assets.ts`（沿用 abort/generation/action-lock
+  纪律，无轮询——project.py 无 job 句柄）。
+- P7 交叉导航：工作流视图 → 资产页签快捷回跳；质量回执 / gc 候选 →
+  产物血缘定位；产物中心 → Map Product 版本台账滚动导航。
+- 测试：`test/project/` 10 文件 73 用例（含 100k 行 DOM 有界压力、血缘
+  60 节点渲染预算、两段确认/登录门控/a11y aria 断言）；旧 project-tab
+  16 用例全绿。
+- 后端契约缺口（rename/preview、artifact 下载/revisions、snapshot diff、
+  restore/gc job 化、gc staging、repair dry-run）以诚实降级 + 协调点交付，
+  详见 `frontend/docs/workspace-ui-recon.md` §2.10 与 ADR-0143。
+
 ## [Unreleased] - 2026-09-10 (V7/V8 epic integration round)
 
 Ten prepared epic branches (platform-v4, lakehouse-v8, data-fabric-v8,
