@@ -26,6 +26,10 @@ scripts/
 !/scripts/gen_quality_report.py
 !/scripts/quality_runner.py
 !/scripts/quality
+# Platform V4（ADR-0131）：配置 schema / 依赖 inventory 生成器（字节闸测试
+# import 它们，必须入库）。
+!/scripts/gen_config_schema.py
+!/scripts/gen_app_inventory.py
 # Quality V2（ADR-0118）：staleness 前置检查脚本（generated-artifacts 账本
 # 的闸测试引用其退出码语义，必须入库 —— history: check_tool_descriptor_
 # coverage.py 漏入库曾使 master 全量收集红）
