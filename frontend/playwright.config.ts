@@ -34,10 +34,10 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: true,
-  // No global retries in CI config: flaky = red here. A journey that proves
-  // flaky gets an explicit `test.info().retry` note in the flaky register and
-  // a determinism fix, not a silent second attempt.
-  retries: 0,
+  // §2 P3 retry contract: one retry in CI, and a journey is only red when it
+  // fails twice (first-failure-then-pass is annotated flaky by the report);
+  // locally 0 — a determinism fix is the answer, not a second attempt.
+  retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI
     ? [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]]
     : [['list']],
