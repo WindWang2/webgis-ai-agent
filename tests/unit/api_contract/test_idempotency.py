@@ -12,6 +12,7 @@ import asyncio
 import time
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from app.core.idempotency import IdempotencyMiddleware, _LazyRedis
@@ -200,3 +201,26 @@ class TestFailOpen:
 class TestLazyRedis:
     def test_lazy_redis_smoke(self):
         assert isinstance(_LazyRedis(), _LazyRedis)
+
+
+class TestReplayHeaders:
+    def test_replay_restores_stored_headers(self):
+        """任务书 P5：重放返回首次响应（含状态码与头）。"""
+        redis = FakeRedis()
+        app = FastAPI()
+        app.add_middleware(IdempotencyMiddleware, redis=_InlineRedis(redis))
+
+        @app.post("/hdr")
+        async def hdr():
+            return JSONResponse(
+                {"ok": True}, headers={"X-Custom-Trace": "t-123", "X-Request-ID": "r-1"}
+            )
+
+        client = TestClient(app)
+        r1 = client.post("/hdr", json={}, headers={"Idempotency-Key": "hk"})
+        r2 = client.post("/hdr", json={}, headers={"Idempotency-Key": "hk"})
+        assert r1.headers.get("X-Custom-Trace") == "t-123"
+        assert r2.headers.get("X-Custom-Trace") == "t-123"
+        assert r2.headers.get("Idempotent-Replay") == "true"
+        # 逐跳/长度类头不参与重放（由框架重算）
+        assert "transfer-encoding" not in {k.lower() for k in r2.headers}

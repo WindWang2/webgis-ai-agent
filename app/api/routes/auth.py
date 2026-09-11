@@ -342,4 +342,4 @@ async def me(current: dict = Depends(get_current_user_with_version)) -> MeRespon
             role=user.role,
         )
     # fallback (理论上不会触发，因为 with_version 总会带 user)
-    return MeResponse(user_id=current.get("user_id") or "")
+    return MeResponse(user_id=current.get("user_id"))

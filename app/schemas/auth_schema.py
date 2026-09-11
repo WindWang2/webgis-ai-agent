@@ -145,7 +145,7 @@ class MeResponse(BaseModel):
         }
     )
 
-    user_id: str
+    user_id: Optional[str] = None
     username: Optional[str] = None
     email: Optional[str] = None
     full_name: Optional[str] = None

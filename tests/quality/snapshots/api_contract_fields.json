@@ -71,7 +71,7 @@
   "email": "null|string",
   "full_name": "null|string",
   "role": "null|string",
-  "user_id": "string",
+  "user_id": "null|string",
   "username": "null|string"
  },
  "GET /api/v1/chat/sessions": {

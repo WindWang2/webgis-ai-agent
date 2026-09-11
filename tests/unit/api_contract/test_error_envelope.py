@@ -81,3 +81,17 @@ class TestLegacySwitch:
         r = client.post("/api/v1/auth/refresh", json={})
         assert r.status_code == 422
         assert "detail" in r.json()
+
+
+class TestV2RefusesLegacy:
+    def test_v2_header_override_ignored(self, client):
+        """v2 面（ADR-0138 D5）：即使带 X-Error-Envelope: detail 也保持新信封。"""
+        r = client.get(
+            "/api/v2/geocompute/runs/nonexistent-run",
+            headers={"X-Error-Envelope": "detail"},
+        )
+        body = r.json()
+        # 断言点 = 信封形状（非状态码——该端点鉴权在先，401/404 均可能）
+        assert body["success"] is False
+        assert "code" in body and "message" in body
+        assert "detail" not in body

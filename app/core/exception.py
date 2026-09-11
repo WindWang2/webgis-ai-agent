@@ -200,7 +200,12 @@ LEGACY_ENVELOPE_HEADER = "x-error-envelope"
 
 
 def wants_legacy_envelope(request: Request) -> bool:
-    """legacy 信封判定：settings 总开关 OR 请求头按请求覆盖。"""
+    """legacy 信封判定：settings 总开关 OR 请求头按请求覆盖。
+
+    v2 面不做 legacy 降级（ADR-0138 D5：v2 默认且仅新信封）。
+    """
+    if request.url.path.startswith("/api/v2"):
+        return False
     if getattr(settings, "LEGACY_DETAIL_ENVELOPE", False):
         return True
     return request.headers.get(LEGACY_ENVELOPE_HEADER, "").strip().lower() == "detail"

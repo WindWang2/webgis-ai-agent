@@ -27,11 +27,20 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.core.config import settings
+from app.core.exception import unified_error_envelope
 
 logger = logging.getLogger(__name__)
 
 #: 重放窗口：首次响应的可重放时长（任务书：TTL 24h）。
 RESPONSE_TTL_S = 24 * 3600
+#: 不随重放记录保存的响应头（逐跳 / 长度类 —— 重放时由框架重算）。
+_SKIP_STORED_HEADERS = {
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "date",
+}
 #: 单飞锁 TTL：过期即退化为重复处理。
 LOCK_TTL_S = 60
 #: 并发同 key 的等待上限与轮询间隔。
@@ -168,6 +177,14 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 record = json.dumps({
                     "status": response.status_code,
                     "content_type": content_type,
+                    # 任务书 P5：重放含「状态码与头」—— 保存可安全复制的
+                    # 简单值头（跳过逐跳/长度类头，重放时由框架重算）。
+                    "headers": {
+                        k: v
+                        for k, v in response.headers.items()
+                        if k.lower() not in _SKIP_STORED_HEADERS
+                        and isinstance(v, str)
+                    },
                     "body": body.decode("utf-8", errors="replace"),
                 })
                 await redis.set(f"{_RESP_PREFIX}{idem_key}", record, ex=RESPONSE_TTL_S)
@@ -183,26 +200,44 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 pass
         if buffered is None:
             # 超限或缓冲异常：迭代器可能已部分消费，以保守空体重建不撒谎的响应
+            # （信封与全局统一错误信封同形状 —— 不另造第二套错误体）
+            envelope = unified_error_envelope(
+                502, "idempotency buffering failed",
+            )
             return Response(
                 status_code=502,
-                content=b'{"code":"SERVER_ERROR","success":false,'
-                        b'"message":"idempotency buffering failed","data":null}',
+                content=json.dumps(envelope).encode("utf-8"),
                 media_type="application/json",
             )
+        preserved_headers = {
+            k: v
+            for k, v in response.headers.items()
+            if k.lower() not in _SKIP_STORED_HEADERS and k.lower() != "content-type"
+        }
         return Response(
             content=buffered,
             status_code=response.status_code,
             media_type=content_type,
+            headers=preserved_headers,
         )
 
     def _replay(self, record_json: str) -> Response:
         try:
             record = json.loads(record_json)
         except (TypeError, ValueError):
-            return Response(status_code=503, content=b"idempotency record corrupt")
+            logger.warning("[Idempotency] corrupt replay record; reprocess hint")
+            return Response(
+                status_code=503,
+                content=json.dumps(
+                    unified_error_envelope(503, "idempotency record corrupt")
+                ).encode("utf-8"),
+                media_type="application/json",
+            )
+        headers = dict(record.get("headers") or {})
+        headers["Idempotent-Replay"] = "true"
         return Response(
             content=record.get("body", ""),
             status_code=int(record.get("status", 200)),
             media_type=record.get("content_type", "application/json"),
-            headers={"Idempotent-Replay": "true"},
+            headers=headers,
         )

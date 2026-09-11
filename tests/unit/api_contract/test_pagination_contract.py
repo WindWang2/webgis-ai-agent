@@ -9,6 +9,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
@@ -44,3 +46,34 @@ def test_chat_sessions_response_has_pagination_meta():
     model = SessionListResponse(total=7, limit=50, offset=0, has_more=False, sessions=[])
     dumped = model.model_dump()
     assert {"total", "limit", "offset", "has_more", "sessions"} <= set(dumped)
+
+
+@pytest.fixture()
+def client_templates():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as c:
+        yield c
+
+
+def test_templates_list_endpoint_pagination_boundaries(client_templates):
+    """端级分页边界（任务书 P4：0、1、超界）—— templates 为 Page[T] 采样面。
+
+    该端点边界由 Query(ge=1, le=200) 表达：0/超上限 → 422 校验拒绝（契约本身）；
+    offset 无上界 → 超界 offset 返回空页而非错误。
+    """
+    r = client_templates.get("/api/v1/templates?limit=0")
+    assert r.status_code == 422, "limit=0 必须被 Query(ge=1) 拒绝"
+
+    r = client_templates.get("/api/v1/templates?limit=1&offset=0")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["limit"] == 1
+    assert {"items", "total", "limit", "offset", "has_more"} <= set(body)
+
+    r = client_templates.get("/api/v1/templates?limit=200&offset=100000")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["items"] == [] and body["has_more"] is False
