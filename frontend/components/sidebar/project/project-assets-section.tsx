@@ -38,6 +38,8 @@ export interface ProjectAssetsSectionProps {
   focusArtifactId?: string | null;
   /** layer 型数据集在主地图打开（无集成方提供则不渲染该按钮）。 */
   onOpenInMap?: (datasetId: string) => void;
+  /** 跳到 Map Product 版本台账（P7：版本维度对比由台账面板承接）。 */
+  onViewVersionLedger?: () => void;
 }
 
 export function ProjectAssetsSection({
@@ -48,6 +50,7 @@ export function ProjectAssetsSection({
   onTabChange,
   focusArtifactId,
   onOpenInMap,
+  onViewVersionLedger,
 }: ProjectAssetsSectionProps) {
   const [localFocus, setLocalFocus] = useState<string | null>(focusArtifactId ?? null);
 
@@ -91,13 +94,33 @@ export function ProjectAssetsSection({
         {tab === 'artifacts' && (
           <ArtifactCenter
             projectId={projectId}
+            authed={authed}
             onLocateArtifact={(id) => setLocalFocus(id)}
             focusArtifactId={localFocus}
+            onViewVersionLedger={onViewVersionLedger}
           />
         )}
         {tab === 'snapshots' && <SnapshotTimeline projectId={projectId} sessionId={sessionId} authed={authed} />}
-        {tab === 'quality' && <QualityPanel projectId={projectId} authed={authed} />}
-        {tab === 'gc' && <DataGcPanel projectId={projectId} authed={authed} />}
+        {tab === 'quality' && (
+          <QualityPanel
+            projectId={projectId}
+            authed={authed}
+            onLocateArtifact={(id) => {
+              setLocalFocus(id);
+              onTabChange('artifacts');
+            }}
+          />
+        )}
+        {tab === 'gc' && (
+          <DataGcPanel
+            projectId={projectId}
+            authed={authed}
+            onLocateArtifact={(id) => {
+              setLocalFocus(id);
+              onTabChange('artifacts');
+            }}
+          />
+        )}
       </div>
     </div>
   );

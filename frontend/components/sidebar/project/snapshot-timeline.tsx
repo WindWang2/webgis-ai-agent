@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Undo2,
   GitCompare,
+  Copy,
   Lock,
 } from 'lucide-react';
 
@@ -85,10 +86,21 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
   const [inspectOpenId, setInspectOpenId] = useState('');
   const [restoreTarget, setRestoreTarget] = useState<WorkspaceSnapshotSummary | null>(null);
   const [restoreMode, setRestoreMode] = useState<'verify' | 'register'>('verify');
+  const [cloneTarget, setCloneTarget] = useState<WorkspaceSnapshotSummary | null>(null);
+  const [cloneTargetSession, setCloneTargetSession] = useState('');
   const [diffA, setDiffA] = useState('');
   const [diffB, setDiffB] = useState('');
 
   const canAct = authed && sn.sessionReady;
+
+  const handleClone = async () => {
+    if (!cloneTarget) return;
+    const ok = await sn.clone(cloneTarget.snapshot_id, cloneTargetSession);
+    if (ok) {
+      addToast(`快照已克隆到会话 ${shortId(cloneTargetSession, 12)}`, 'success');
+      setCloneTarget(null);
+    }
+  };
 
   const handleSave = async () => {
     const saved = await sn.save({ label: label.trim() || undefined, materialize });
@@ -233,6 +245,19 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
                         </button>
                         <button
                           type="button"
+                          aria-label={`克隆快照 ${s.label || s.snapshot_id}`}
+                          title="克隆到另一会话"
+                          disabled={!canAct || restoring}
+                          onClick={() => {
+                            setCloneTarget(s);
+                            setCloneTargetSession('');
+                          }}
+                          className="rounded-sm p-1 text-ink-muted hover:bg-surface-sunken hover:text-ink disabled:opacity-50"
+                        >
+                          <Copy size={13} aria-hidden />
+                        </button>
+                        <button
+                          type="button"
                           aria-label={`恢复快照 ${s.label || s.snapshot_id}`}
                           title="恢复"
                           disabled={!canAct || restoring}
@@ -368,6 +393,38 @@ export function SnapshotTimeline({ projectId, sessionId, authed }: SnapshotTimel
             )}
           </div>
         </>
+      )}
+
+      {cloneTarget && (
+        <div className="space-y-2 rounded-md border border-edge-subtle bg-surface-raised px-panel py-2.5">
+          <p className="text-meta font-medium text-ink">
+            克隆快照 {cloneTarget.label || shortId(cloneTarget.snapshot_id, 10)}
+          </p>
+          <SField
+            label="目标会话 ID（target_session_id）"
+            value={cloneTargetSession}
+            onChange={setCloneTargetSession}
+            placeholder="目标会话…"
+            hint={`源会话：${shortId(sessionId, 16)}`}
+          />
+          <div className="flex gap-1.5">
+            <ConfirmAction
+              label="克隆"
+              confirmLabel="确认克隆？"
+              onConfirm={() => {
+                void handleClone();
+              }}
+              disabled={sn.busyId === cloneTarget.snapshot_id || !cloneTargetSession.trim()}
+            />
+            <button
+              type="button"
+              onClick={() => setCloneTarget(null)}
+              className="rounded-sm border border-edge-subtle px-2 py-0.5 text-caption text-ink-secondary hover:bg-surface-sunken"
+            >
+              取消
+            </button>
+          </div>
+        </div>
       )}
 
       {restoreTarget && (

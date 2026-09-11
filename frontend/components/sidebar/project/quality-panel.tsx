@@ -33,13 +33,15 @@ const KNOWN_OPERATIONS = ['make_valid', 'remove_empty'] as const;
 export interface QualityPanelProps {
   projectId: string;
   authed: boolean;
+  /** 修复回执的产物 → 产物中心定位（P7 交叉导航）。 */
+  onLocateArtifact?: (artifactId: string) => void;
 }
 
 function toFeatureCollection(features: Array<Record<string, unknown>>): Record<string, unknown> {
   return { type: 'FeatureCollection', features };
 }
 
-export function QualityPanel({ projectId, authed }: QualityPanelProps) {
+export function QualityPanel({ projectId, authed, onLocateArtifact }: QualityPanelProps) {
   const ds = useProjectDatasets(projectId);
   const q = useProjectQuality(projectId);
   const addToast = useToastStore((s) => s.addToast);
@@ -245,6 +247,15 @@ export function QualityPanel({ projectId, authed }: QualityPanelProps) {
           </p>
           {q.repair.ref_registration_error && (
             <p className="text-status-critical">引用注册失败: {q.repair.ref_registration_error}</p>
+          )}
+          {onLocateArtifact && q.repair.lineage_artifact_id && (
+            <button
+              type="button"
+              onClick={() => onLocateArtifact(q.repair!.lineage_artifact_id as string)}
+              className="text-status-accent underline-offset-2 hover:underline"
+            >
+              在产物血缘中定位 →
+            </button>
           )}
         </div>
       )}

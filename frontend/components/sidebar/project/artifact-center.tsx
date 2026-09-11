@@ -38,10 +38,13 @@ import { LineageGraphView } from './lineage-graph';
 
 export interface ArtifactCenterProps {
   projectId: string;
+  authed: boolean;
   /** 血缘图节点定位（P7 交叉导航回调）。 */
   onLocateArtifact?: (artifactId: string) => void;
   /** 交叉导航聚焦：外部（质量回执/gc 计划）要求展开并加载该产物血缘。 */
   focusArtifactId?: string | null;
+  /** 跳到 Map Product 版本台账（P7：版本维度对比由台账面板承接）。 */
+  onViewVersionLedger?: () => void;
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -53,16 +56,22 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export function ArtifactCenter({ projectId, onLocateArtifact, focusArtifactId }: ArtifactCenterProps) {
+export function ArtifactCenter({
+  projectId,
+  authed,
+  onLocateArtifact,
+  focusArtifactId,
+  onViewVersionLedger,
+}: ArtifactCenterProps) {
   const ac = useProjectArtifacts(projectId);
   const addToast = useToastStore((s) => s.addToast);
   const [expandedId, setExpandedId] = useState('');
   const [copiedId, setCopiedId] = useState('');
+  const [sortNewest, setSortNewest] = useState(true);
   const lastFocused = useRef('');
 
-  // 交叉导航：聚焦指定产物（展开 + 拉血缘）。lastFocused 防止 lineage 状态
-  // 更新引发的 effect 重跑重复请求；loadLineage 引用稳定随 lineage 缓存变化，
-  // 只取函数入口（ref 快照）避免 effect 跟随每次血缘刷新重跑。
+  // 交叉导航：聚焦指定产物（展开 + 拉血缘）。lastFocused 防重复聚焦；
+  // loadLineage 经 ref 快照调用，避免 effect 跟随血缘缓存刷新重跑。
   const loadLineageRef = useRef(ac.loadLineage);
   loadLineageRef.current = ac.loadLineage;
   useEffect(() => {
@@ -73,6 +82,11 @@ export function ArtifactCenter({ projectId, onLocateArtifact, focusArtifactId }:
   }, [focusArtifactId]);
 
   const types = Array.from(new Set(ac.artifacts.map((a) => a.artifact_type))).sort();
+  const sorted = [...ac.artifacts].sort((a, b) => {
+    const da = new Date(a.created_at).getTime() || 0;
+    const db = new Date(b.created_at).getTime() || 0;
+    return sortNewest ? db - da : da - db;
+  });
 
   const handlePin = async (a: ArtifactSummary) => {
     const pinned = ac.pinnedLocal[a.id];
@@ -109,6 +123,15 @@ export function ArtifactCenter({ projectId, onLocateArtifact, focusArtifactId }:
           <Package size={14} className="text-ink-muted" aria-hidden /> 产物 ({ac.total})
         </h3>
         <span className="flex items-center gap-1">
+          <select
+            aria-label="按时间排序产物"
+            value={sortNewest ? 'newest' : 'oldest'}
+            onChange={(e) => setSortNewest(e.target.value === 'newest')}
+            className="rounded-sm border border-edge-subtle bg-surface-sunken px-1 py-0.5 text-micro text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
+          >
+            <option value="newest">最新优先</option>
+            <option value="oldest">最早优先</option>
+          </select>
           {types.length > 0 && (
             <select
               aria-label="按类型筛选产物"
@@ -137,7 +160,19 @@ export function ArtifactCenter({ projectId, onLocateArtifact, focusArtifactId }:
       </div>
 
       <InlineNotice variant="info">
-        后端暂无产物下载端点——此处提供引用/校验和复制；下载能力见 PR 协调点。
+        后端暂无产物下载端点——此处提供引用/校验和复制；下载与版本对比能力见 PR 协调点。
+        {onViewVersionLedger && (
+          <>
+            {' '}
+            <button
+              type="button"
+              onClick={onViewVersionLedger}
+              className="text-status-accent underline-offset-2 hover:underline"
+            >
+              查看 Map Product 版本台账 →
+            </button>
+          </>
+        )}
       </InlineNotice>
 
       {ac.error && <InlineNotice variant="error">{ac.error}</InlineNotice>}
@@ -148,7 +183,7 @@ export function ArtifactCenter({ projectId, onLocateArtifact, focusArtifactId }:
         <EmptyState icon={Package} title="暂无产物" description="运行工作流或提升运行产物后出现在此" />
       ) : (
         <div className="space-y-1.5">
-          {ac.artifacts.map((a) => {
+          {sorted.map((a) => {
             const expanded = expandedId === a.id;
             const pinned = ac.pinnedLocal[a.id] === true;
             const receipt = ac.pinReceipts[a.id];
@@ -184,9 +219,9 @@ export function ArtifactCenter({ projectId, onLocateArtifact, focusArtifactId }:
                       onClick={() => {
                         void handlePin(a);
                       }}
-                      disabled={ac.busyId === a.id}
+                      disabled={!authed || ac.busyId === a.id}
                       aria-pressed={pinned}
-                      title={pinned ? '取消固定' : '固定（防回收）'}
+                      title={authed ? (pinned ? '取消固定' : '固定（防回收）') : '需要登录账号'}
                       className="rounded-sm p-1 text-ink-muted hover:bg-surface-sunken hover:text-ink disabled:opacity-50"
                     >
                       {pinned ? <PinOff size={13} aria-hidden /> : <Pin size={13} aria-hidden />}
@@ -197,8 +232,8 @@ export function ArtifactCenter({ projectId, onLocateArtifact, focusArtifactId }:
                       onConfirm={() => {
                         void handleClone(a);
                       }}
-                      disabled={ac.busyId === a.id}
-                      title="指针克隆（零复制）"
+                      disabled={!authed || ac.busyId === a.id}
+                      title={authed ? '指针克隆（零复制）' : '需要登录账号'}
                     />
                   </span>
                 </div>

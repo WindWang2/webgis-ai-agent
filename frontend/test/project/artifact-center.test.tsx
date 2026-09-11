@@ -66,13 +66,13 @@ beforeEach(() => {
 
 describe('ArtifactCenter', () => {
   it('渲染产物列表与总数', async () => {
-    render(<ArtifactCenter projectId="p1" />);
+    render(<ArtifactCenter projectId="p1" authed />);
     expect(await screen.findByText('产物 1')).toBeInTheDocument();
     expect(screen.getByText('产物 (3)')).toBeInTheDocument();
   });
 
   it('类型筛选过滤列表行', async () => {
-    render(<ArtifactCenter projectId="p1" />);
+    render(<ArtifactCenter projectId="p1" authed />);
     await screen.findByText('产物 1');
     fireEvent.change(screen.getByLabelText('按类型筛选产物'), { target: { value: 'vector' } });
     expect(screen.queryByText('产物 1')).not.toBeInTheDocument();
@@ -85,7 +85,7 @@ describe('ArtifactCenter', () => {
     api.pinArtifact.mockResolvedValue({
       status: 'ok', artifact_id: 'art-1', revision_no: 4, content_sha256: 'abc123def', pinned: true,
     });
-    render(<ArtifactCenter projectId="p1" />);
+    render(<ArtifactCenter projectId="p1" authed />);
     fireEvent.click(await screen.findByText('产物 1'));
     fireEvent.click((await screen.findAllByTitle('固定（防回收）'))[0]);
     await waitFor(() => expect(api.pinArtifact).toHaveBeenCalledWith('art-1', true));
@@ -98,7 +98,7 @@ describe('ArtifactCenter', () => {
     api.cloneArtifact.mockResolvedValue({
       status: 'ok', artifact_id: 'art-clone-9', source_artifact_id: 'art-1', name: '产物 1 副本',
     });
-    render(<ArtifactCenter projectId="p1" />);
+    render(<ArtifactCenter projectId="p1" authed />);
     fireEvent.click(await screen.findByText('产物 1'));
     const arm = (await screen.findAllByRole('button', { name: '克隆' }))[0];
     fireEvent.click(arm);
@@ -112,7 +112,7 @@ describe('ArtifactCenter', () => {
 
   it('血缘：点击后加载并渲染 SVG 图（含上游/下游计数）', async () => {
     projectApi.fetchArtifactLineage.mockResolvedValue(makeLineageGraph(12));
-    render(<ArtifactCenter projectId="p1" />);
+    render(<ArtifactCenter projectId="p1" authed />);
     fireEvent.click(await screen.findByText('产物 1'));
     fireEvent.click(await screen.findByRole('button', { name: /血缘图/ }));
     const svg = await screen.findByRole('img', { name: /的血缘图：上游/ });
@@ -124,7 +124,7 @@ describe('ArtifactCenter', () => {
     api.pinArtifact.mockResolvedValue({
       status: 'ok', artifact_id: 'art-1', revision_no: 4, content_sha256: 'abc123def', pinned: true,
     });
-    render(<ArtifactCenter projectId="p1" />);
+    render(<ArtifactCenter projectId="p1" authed />);
     fireEvent.click(await screen.findByText('产物 1'));
     fireEvent.click((await screen.findAllByTitle('固定（防回收）'))[0]);
     fireEvent.click(await screen.findByRole('button', { name: '复制引用' }));
@@ -133,14 +133,31 @@ describe('ArtifactCenter', () => {
 
   it('focusArtifactId 交叉导航：自动展开并拉取血缘', async () => {
     projectApi.fetchArtifactLineage.mockResolvedValue(makeLineageGraph(8, 'art-2'));
-    render(<ArtifactCenter projectId="p1" focusArtifactId="art-2" />);
+    render(<ArtifactCenter projectId="p1" authed focusArtifactId="art-2" />);
     await waitFor(() => expect(projectApi.fetchArtifactLineage).toHaveBeenCalledWith('art-2', expect.anything()));
     expect(await screen.findByRole('img', { name: /art-2 的血缘图/ })).toBeInTheDocument();
   });
 
   it('加载失败展示错误面', async () => {
     api.fetchProjectArtifacts.mockRejectedValue(new Error('boom'));
-    render(<ArtifactCenter projectId="p1" />);
+    render(<ArtifactCenter projectId="p1" authed />);
     expect(await screen.findByText(/boom/)).toBeInTheDocument();
+  });
+
+  it('匿名时 pin/clone 禁用（与其它面板一致的登录门控）', async () => {
+    render(<ArtifactCenter projectId="p1" authed={false} />);
+    expect((await screen.findAllByTitle(/需要登录账号/)).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: '克隆' })[0]).toBeDisabled();
+  });
+
+  it('时间排序：最早优先后首行变为最旧产物', async () => {
+    api.fetchProjectArtifacts.mockResolvedValue(
+      makeArtifactPage(2, { created_at: '2026-09-02T10:00:00Z' }),
+    );
+    render(<ArtifactCenter projectId="p1" authed />);
+    // 夹具默认同时间戳——覆写两条不同时间
+    await screen.findByText('产物 1');
+    fireEvent.change(screen.getByLabelText('按时间排序产物'), { target: { value: 'oldest' } });
+    expect((screen.getByRole('option', { name: '最早优先' }) as HTMLOptionElement).selected).toBe(true);
   });
 });

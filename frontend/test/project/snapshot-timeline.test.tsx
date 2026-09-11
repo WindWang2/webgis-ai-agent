@@ -28,6 +28,7 @@ const api = vi.hoisted(() => ({
   planDataGc: vi.fn(),
   repairQuality: vi.fn(),
   restoreWorkspaceSnapshot: vi.fn(),
+  cloneWorkspaceSnapshot: vi.fn(),
   saveWorkspaceSnapshot: vi.fn(),
   unpinArtifact: vi.fn(),
 }));
@@ -173,5 +174,27 @@ describe('SnapshotTimeline', () => {
     fireEvent.click(screen.getAllByRole('button', { name: '确认删除？' })[0]);
     await waitFor(() => expect(api.deleteWorkspaceSnapshot).toHaveBeenCalledWith('p1', 'snap-1', 's1'));
     await waitFor(() => expect(screen.queryByText('交付前基线')).not.toBeInTheDocument());
+  });
+
+  it('克隆快照：填目标会话后确认调用 clone API（spec P4）', async () => {
+    api.cloneWorkspaceSnapshot.mockResolvedValue({ status: 'ok' });
+    render(<SnapshotTimeline projectId="p1" sessionId="s1" authed />);
+    const arms = await screen.findAllByRole('button', { name: /克隆快照 交付前基线/ });
+    fireEvent.click(arms[0]);
+    fireEvent.change(screen.getByLabelText(/目标会话 ID/), { target: { value: 'session-target' } });
+    fireEvent.click(screen.getByRole('button', { name: '克隆' }));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 260));
+    });
+    fireEvent.click(screen.getByRole('button', { name: '确认克隆？' }));
+    await waitFor(() =>
+      expect(api.cloneWorkspaceSnapshot).toHaveBeenCalledWith('p1', 'snap-1', {
+        source_session_id: 's1',
+        target_session_id: 'session-target',
+      }),
+    );
+    await waitFor(() =>
+      expect(toastStore.addToast).toHaveBeenCalledWith(expect.stringContaining('已克隆到会话'), 'success'),
+    );
   });
 });

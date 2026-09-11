@@ -40,7 +40,7 @@
 
 1. **「msw fixtures」**：仓库前端**无 msw 依赖**（package.json 无 msw；test/ 无 setupServer）。既有 mock 契约是 `vi.hoisted + vi.mock('@/lib/api/...')` + fixture 工厂（见 `project-tab.test.tsx`、`use-workflow-workspace.test.ts`）。本线沿用该模式建 **三态 fixture 工厂**（success/empty/error + 大列表/血缘图形状），不引入新依赖。
 2. **「复用 analysis-graph-panel.tsx 做血缘图」**：实测该组件是**会话域执行 DAG 投影面板**（ADR-0097，内部自取 `/api/v1/sessions/{sid}/analysis-graph`，不接收任意图 props），与 artifact lineage（parents/consumers 边表）模型不同源。**偏差决策**：在 `components/sidebar/project/` 内自建 `lineage-graph.tsx`（SVG DAG，≥50 节点渲染断言）+ `lineage-adapter.ts`（LineageGraph → nodes/edges 适配层，为未来 C 线列级下钻留扩展点）。不改 `components/agent/analysis-graph-panel.tsx`。
-3. **「comparison/ swipe 组件」**：实际路径 `components/map/comparison/comparison-view.tsx`，是深度耦合 session MapSpec/HUD store 的**工作台级覆盖层**（react-map-gl 双实例 + 相机同步），无法嵌入侧栏面板复用其内部。**偏差决策**：P3 产物地图对比采用**轻量双屏预览 wrapper**（两个静态小地图 + swipe 分割把手，语义自包含于 project/ 目录），不改 comparison-view 语义；地图级完整对比引导用户到既有 map workspace（交叉导航 P7）。
+3. **「comparison/ swipe 组件」**：实际路径 `components/map/comparison/comparison-view.tsx`，是深度耦合 session MapSpec/HUD store 的**工作台级覆盖层**（react-map-gl 双实例 + 相机同步），无法嵌入侧栏面板复用其内部。**偏差决策**：产物地图双屏对比**不实现**（记录于 §2.10 协调点）；地图级对比走两条真实路径——a) P7 交叉导航把用户带到既有 map workspace / Map Product 版本台账（`onViewVersionLedger` → scrollIntoView）；b) 数据集预览的 SVG 足迹图为真实几何投影（非示意），可对两数据集分别目视对比。不改 comparison-view 语义。
 4. **端点数**：任务书 ~45，实测 **48**（`@router.(get|post|put|patch|delete)` 计数）。
 5. **`tabular-data-grid.tsx` 位置**：实为 `components/shared/tabular-data-grid.tsx`（re-export `components/explorer/tabular-data-grid.tsx`）。§8 的 `components/table/**` 扩展点 wrapper 落在 `components/sidebar/project/` 内部 wrapper，不移动原组件。
 6. **i18n**：无 `lib/i18n` → 按 §8 契约：中文硬编码 + 待收编清单（见 §8 记录）。
@@ -129,12 +129,17 @@ map-products：GET list（Page，newest first）/ GET `{version_no}`（含 compu
 | 任务书预期 | 后端现实 | 本线处置 |
 |---|---|---|
 | dataset 重命名 | 无端点 | 不做；协调点（需 `PATCH /datasets/{id}`） |
-| dataset schema/详情端点 | 无（schema_profile 仅 attach 响应返回一次） | 详情面板展示 list 字段 + attach 时捕获的 schema_profile（会话内）；协调点 |
+| dataset schema/详情端点 | 无（schema_profile 仅 attach 响应返回一次） | 详情面板展示 list 字段 + attach 时捕获的 schema_profile（会话内）；行数/大小/所有权/可见性无端点来源，不展示；数据集级血缘入口无反向索引端点，不提供——均列协调点 |
+| dataset「上传入口链接」 | upload 区在另一 sidebar tab（rail 状态归布局层，本线目录边界外） | 文字指路提示；真实跨 tab 深链列入协调点（需 rail tab 状态协同） |
 | artifact 下载端点 | 无（下载保护仅覆盖 `/api/v1/export/download/*`） | 下载中心降级为「存储引用 + sha256 复制」；协调点（需 artifact download 端点接入 authenticated-download） |
-| artifact revisions 历史端点 | 无（pin 响应含 revision_no/content_sha256 单点） | 版本历史降级：pin 回执记录的 revision 信息 + map-product 版本台账（已有）承接；协调点 |
+| artifact revisions 历史端点 / 版本对比（双栏 diff + 地图双屏） | 无（pin 响应含 revision_no/content_sha256 单点） | pin 回执记录 revision 信息；版本维度对比由 Map Product 版本台账承接（P7 `onViewVersionLedger` 滚动导航）；协调点 |
+| artifact 筛选（类型/时间/pinned） | 列表行无 pinned 字段 | 类型筛选（客户端）+ 时间排序（最新/最早）已实现；pinned 筛选无数据来源——pin 态为本会话易失镜像，协调点 |
 | 快照 diff 端点 | 无 | **前端聚合**：两快照 verify 报告 + list 元数据结构化对比（counts/missing/integrity/mapspec） |
+| 快照 clone | 有端点（`POST …/snapshots/{sid}/clone`，source/target session 必填） | 已实现：时间线节点「克隆」动作 + 目标会话输入 |
 | restore/gc 进度 job | 无 job_id（同步） | 长超时 + busy + 结果报告展示；`expired/degraded/skipped_protected` 如实披露；协调点（durable job 化后接 use-job-center） |
 | gc 回滚/staging | 无 staging 字段 | 展示 `grace_hours` 宽限期 + upcoming_candidates 预告；协调点 |
+| quality repair「dry-run 结果树」 | repair 端点无 dry-run 参数 | 审计报告即预检依据：执行前列出将应用的操作 + 两段确认；协调点（repair dry-run 参数） |
+| P8 visual snapshot（明/暗） | visual 走廊为 Playwright 全页截图（`test/visual/capture.mjs`），按 §0.4 仅最终门禁跑一次 | 最终门禁随 workbench 走廊统一取证；新面板不单独建基线（侧栏组件，RTL+a11y 断言覆盖），台账记录 |
 
 ## 3. 信息架构与扩展点
 

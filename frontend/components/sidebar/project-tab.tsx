@@ -50,6 +50,18 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
     if (ws.view !== 'project') ws.back();
   };
 
+  // ADR-0143 P7 交叉导航：质量回执 / gc 候选 → 产物中心定位该产物的血缘。
+  const locateArtifact = (artifactId: string) => {
+    setFocusArtifactId(artifactId);
+    setAssetsTab('artifacts');
+  };
+
+  // ADR-0143 P7：产物中心的版本维度对比由下方 Map Product 版本台账承接。
+  const viewVersionLedger = () => {
+    if (typeof document === 'undefined') return;
+    document.getElementById('map-product-versions')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   // #558: 把项目 tab 的选择镜像进 HUD store —— chat 发送时据此在请求体携带
   // project_id（后端 context assembler 注入项目摘要）。workspace 级选择，
   // 不随会话切换清空（项目 tab 的 select 始终显示当前选择，请求须与 UI 一致）。
@@ -182,6 +194,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                   tab={assetsTab}
                   onTabChange={setAssetsTab}
                   focusArtifactId={focusArtifactId}
+                  onViewVersionLedger={viewVersionLedger}
                 />
 
                 {/* ADR-0069 / spec 开放问题 2：项目制图记忆治理面板。
@@ -189,15 +202,18 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                 <CartoMemoryPanel projectId={ws.selectedProjectId} />
 
                 {/* ADR-0092 A6：Map Product 版本台账 + 五维差异（版本工作区）。
-                    只读真相 + 复用 rerun_from_step；仅样式变更不触发分析重算。 */}
-                <MapProductVersionsPanel
-                  projectId={ws.selectedProjectId}
-                  sessionId={sessionId}
-                  onRerunStarted={(runId) => {
-                    addToast(runId ? `已从分析步骤重跑（${shortId(runId, 8)}）` : '已触发重跑', 'success');
-                  }}
-                  onRerunError={(message) => addToast(message, 'error')}
-                />
+                    只读真相 + 复用 rerun_from_step；仅样式变更不触发分析重算。
+                    id 供产物中心「查看版本台账」交叉导航滚动定位。 */}
+                <div id="map-product-versions">
+                  <MapProductVersionsPanel
+                    projectId={ws.selectedProjectId}
+                    sessionId={sessionId}
+                    onRerunStarted={(runId) => {
+                      addToast(runId ? `已从分析步骤重跑（${shortId(runId, 8)}）` : '已触发重跑', 'success');
+                    }}
+                    onRerunError={(message) => addToast(message, 'error')}
+                  />
+                </div>
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-meta font-medium text-ink-secondary">

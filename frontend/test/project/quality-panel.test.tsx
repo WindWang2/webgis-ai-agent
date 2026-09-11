@@ -119,7 +119,7 @@ describe('QualityPanel', () => {
       expect(api.repairQuality).toHaveBeenCalledWith('p1', expect.objectContaining({
         dataset_id: 'ds-1',
         source_ref: 'cat-100',
-      })),
+      }), expect.anything()),
     );
     expect(await screen.findByText(/修复回执/)).toBeInTheDocument();
     expect(screen.getAllByText(/1240/).length).toBeGreaterThan(0);

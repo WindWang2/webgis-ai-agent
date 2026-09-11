@@ -92,7 +92,7 @@ describe('DataGcPanel', () => {
       await new Promise((r) => setTimeout(r, 260));
     });
     fireEvent.click(screen.getByRole('button', { name: '确认永久删除以上候选？' }));
-    await waitFor(() => expect(api.executeDataGc).toHaveBeenCalledWith('p1'));
+    await waitFor(() => expect(api.executeDataGc).toHaveBeenCalledWith('p1', expect.anything()));
     expect(await screen.findByText(/回收回执/)).toBeInTheDocument();
     expect(screen.getByText(/保护跳过（1）/)).toBeInTheDocument();
     expect(toastStore.addToast).toHaveBeenCalledWith(expect.stringContaining('回收完成：释放'), 'success');

@@ -20,6 +20,7 @@ import {
   auditSpatialQuality,
   cloneArtifact,
   deleteWorkspaceSnapshot,
+  cloneWorkspaceSnapshot,
   detachDataset,
   executeDataGc,
   fetchDataUsage,
@@ -523,6 +524,7 @@ export interface UseProjectSnapshotsResult {
   save: (req: Omit<SnapshotSaveRequest, 'session_id'>) => Promise<WorkspaceSnapshotSaveResponse | null>;
   inspect: (snapshotId: string) => Promise<SnapshotVerification | null>;
   restore: (snapshotId: string, mode: 'verify' | 'register') => Promise<SnapshotRestoreResponse | null>;
+  clone: (snapshotId: string, targetSessionId: string) => Promise<boolean>;
   remove: (snapshotId: string) => Promise<boolean>;
   loadDiff: (aId: string, bId: string) => Promise<SnapshotDiffResult | null>;
   clearDiff: () => void;
@@ -633,6 +635,28 @@ export function useProjectSnapshots(
     [projectId, sessionId, busyId],
   );
 
+  /** Spec P4: clone — copy snapshot from source session into a target session. */
+  const clone = useCallback(
+    async (snapshotId: string, targetSessionId: string) => {
+      if (!projectId || !sessionId || busyId || !targetSessionId.trim()) return false;
+      setBusyId(snapshotId);
+      try {
+        await cloneWorkspaceSnapshot(projectId, snapshotId, {
+          source_session_id: sessionId,
+          target_session_id: targetSessionId.trim(),
+        });
+        if (mounted.current) void reload({ forceRefresh: true });
+        return true;
+      } catch (err: unknown) {
+        if (mounted.current) setError(parseApiErrorDetail(err, '克隆快照失败'));
+        return false;
+      } finally {
+        if (mounted.current) setBusyId('');
+      }
+    },
+    [projectId, sessionId, busyId, reload],
+  );
+
   const remove = useCallback(
     async (snapshotId: string) => {
       if (!projectId || !sessionId || busyId) return false;
@@ -714,6 +738,7 @@ export function useProjectSnapshots(
     save,
     inspect,
     restore,
+    clone,
     remove,
     loadDiff,
     clearDiff,
@@ -742,6 +767,7 @@ export function useProjectQuality(projectId: string): UseProjectQualityResult {
   const [error, setError] = useState<string | null>(null);
   const [sourceGeojson, setSourceGeojson] = useState<Record<string, unknown> | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const repairLock = useRef(false);
   const mounted = useRef(true);
   const reportRef = useRef<SpatialQualityReport | null>(null);
   reportRef.current = report;
@@ -777,21 +803,29 @@ export function useProjectQuality(projectId: string): UseProjectQualityResult {
 
   const runRepair = useCallback(
     async (req: Omit<RepairRequest, 'geojson'>) => {
-      if (!projectId || !sourceGeojson) return null;
+      // 破坏性动作：hook 级锁，UI 禁用之外的第二道防双提交。
+      if (!projectId || !sourceGeojson || repairLock.current) return null;
+      repairLock.current = true;
+      abort.current?.abort();
+      const ac = new AbortController();
+      abort.current = ac;
       setError(null);
       setPhase('repairing');
       try {
-        const result = await repairQuality(projectId, { ...req, geojson: sourceGeojson });
+        const result = await repairQuality(projectId, { ...req, geojson: sourceGeojson }, { signal: ac.signal });
         if (!mounted.current) return null;
         setRepairResult(result);
         setPhase('repaired');
         return result;
       } catch (err: unknown) {
+        if (ac.signal.aborted || isAbortError(err)) return null;
         if (mounted.current) {
           setError(parseApiErrorDetail(err, '质量修复失败'));
           setPhase(reportRef.current ? 'reported' : 'idle');
         }
         return null;
+      } finally {
+        if (mounted.current) repairLock.current = false;
       }
     },
     [projectId, sourceGeojson],
@@ -852,20 +886,25 @@ export function useDataGc(projectId: string): UseDataGcResult {
   const [error, setError] = useState<string | null>(null);
 
   const gen = useRef(0);
+  const abort = useRef<AbortController | null>(null);
+  const executeLock = useRef(false);
   const mounted = useRef(true);
 
   const loadUsage = useCallback(
     async (opts?: FetchOpts) => {
       if (!projectId) return;
+      abort.current?.abort();
+      const ac = new AbortController();
+      abort.current = ac;
       const g = ++gen.current;
       setUsageLoading(true);
       setError(null);
       try {
-        const result = await fetchDataUsage(projectId, { forceRefresh: opts?.forceRefresh });
+        const result = await fetchDataUsage(projectId, { forceRefresh: opts?.forceRefresh, signal: ac.signal });
         if (g !== gen.current || !mounted.current) return;
         setUsage(result);
       } catch (err: unknown) {
-        if (isAbortError(err) || g !== gen.current) return;
+        if (ac.signal.aborted || isAbortError(err) || g !== gen.current) return;
         if (mounted.current) setError(parseApiErrorDetail(err, '加载用量失败'));
       } finally {
         if (g === gen.current && mounted.current) setUsageLoading(false);
@@ -876,14 +915,18 @@ export function useDataGc(projectId: string): UseDataGcResult {
 
   const runPlan = useCallback(async () => {
     if (!projectId) return null;
+    abort.current?.abort();
+    const ac = new AbortController();
+    abort.current = ac;
     setPlanLoading(true);
     setError(null);
     try {
-      const result = await planDataGc(projectId);
+      const result = await planDataGc(projectId, { signal: ac.signal });
       if (!mounted.current) return null;
       setPlan(result);
       return result;
     } catch (err: unknown) {
+      if (ac.signal.aborted || isAbortError(err)) return null;
       if (mounted.current) setError(parseApiErrorDetail(err, '生成回收计划失败'));
       return null;
     } finally {
@@ -892,19 +935,25 @@ export function useDataGc(projectId: string): UseDataGcResult {
   }, [projectId]);
 
   const execute = useCallback(async () => {
-    if (!projectId || executing) return null;
+    // 危险操作：hook 级锁 + 可中止（卸载/换项目时 abort 在飞的 300s 请求）。
+    if (!projectId || executing || executeLock.current) return null;
+    executeLock.current = true;
+    const ac = new AbortController();
+    abort.current = ac;
     setExecuting(true);
     setError(null);
     try {
-      const result = await executeDataGc(projectId);
+      const result = await executeDataGc(projectId, { signal: ac.signal });
       if (!mounted.current) return null;
       setExecuted(result);
       void loadUsage({ forceRefresh: true });
       return result;
     } catch (err: unknown) {
+      if (ac.signal.aborted || isAbortError(err)) return null;
       if (mounted.current) setError(parseApiErrorDetail(err, '执行数据回收失败'));
       return null;
     } finally {
+      executeLock.current = false;
       if (mounted.current) setExecuting(false);
     }
   }, [projectId, executing, loadUsage]);
@@ -914,6 +963,7 @@ export function useDataGc(projectId: string): UseDataGcResult {
   useEffect(
     () => () => {
       mounted.current = false;
+      abort.current?.abort();
     },
     [],
   );

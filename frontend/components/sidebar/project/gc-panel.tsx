@@ -24,9 +24,11 @@ import { formatBytes } from './format';
 export interface DataGcPanelProps {
   projectId: string;
   authed: boolean;
+  /** 回收候选产物 → 产物中心定位（P7 交叉导航）。 */
+  onLocateArtifact?: (artifactId: string) => void;
 }
 
-export function DataGcPanel({ projectId, authed }: DataGcPanelProps) {
+export function DataGcPanel({ projectId, authed, onLocateArtifact }: DataGcPanelProps) {
   const gc = useDataGc(projectId);
   const addToast = useToastStore((s) => s.addToast);
   const [planOpen, setPlanOpen] = useState(false);
@@ -159,7 +161,19 @@ export function DataGcPanel({ projectId, authed }: DataGcPanelProps) {
                         <span className="truncate font-mono">
                           {r.artifact_id.slice(0, 12)} · r{r.revision_no} · {r.age_days}天
                         </span>
-                        <span className="shrink-0 font-mono">{formatBytes(r.byte_size)}</span>
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          <span className="font-mono">{formatBytes(r.byte_size)}</span>
+                          {onLocateArtifact && (
+                            <button
+                              type="button"
+                              onClick={() => onLocateArtifact(r.artifact_id)}
+                              className="text-status-accent underline-offset-2 hover:underline"
+                              aria-label={`在产物中心定位 ${r.artifact_id}`}
+                            >
+                              定位
+                            </button>
+                          )}
+                        </span>
                       </li>
                     ))}
                   </ul>

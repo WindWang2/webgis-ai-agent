@@ -244,19 +244,6 @@ export interface SnapshotRestoreResponse {
   [key: string]: unknown;
 }
 
-export async function fetchWorkspaceOverview(
-  projectId: string,
-  opts?: { forceRefresh?: boolean; signal?: AbortSignal; sessionId?: string },
-): Promise<Record<string, unknown>> {
-  const result = await fastGet<Record<string, unknown>>(`${API}/${projectId}/workspace`, {
-    forceRefresh: opts?.forceRefresh,
-    signal: opts?.signal,
-    params: { session_id: opts?.sessionId },
-    label: 'Workspace overview error',
-  });
-  return result.data;
-}
-
 export async function listWorkspaceSnapshots(
   projectId: string,
   opts?: { forceRefresh?: boolean; signal?: AbortSignal; sessionId?: string },
@@ -433,11 +420,16 @@ export async function auditSpatialQuality(
   });
 }
 
-export async function repairQuality(projectId: string, req: RepairRequest): Promise<RepairResponse> {
+export async function repairQuality(
+  projectId: string,
+  req: RepairRequest,
+  opts?: { signal?: AbortSignal },
+): Promise<RepairResponse> {
   return apiFetch<RepairResponse>(`${API}/${projectId}/repair`, {
     method: 'POST',
     body: req,
     timeoutMs: 120_000,
+    signal: opts?.signal,
     label: 'Quality repair error',
   });
 }
