@@ -13,9 +13,6 @@ export const MODE: JourneyMode = process.env.E2E_MODE === 'real' ? 'real' : 'moc
 /** Backend origin the real frontend talks to (NEXT_PUBLIC_API_URL default :8001). */
 export const API_ORIGIN = process.env.E2E_API_URL ?? 'http://localhost:8001';
 
-/** Frontend origin under test (set by playwright.config baseURL). */
-export const REQUIRE_BROWSER = process.env.REQUIRE_BROWSER === '1';
-
 /** Skip helper for real-mode variants: one place carries the honest reason. */
 export const REAL_ONLY_REASON =
   'real-mode journey: needs a running backend (nightly quality-e2e lane; mock twin covers PRs)';
