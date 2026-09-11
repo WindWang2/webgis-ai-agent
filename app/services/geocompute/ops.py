@@ -27,6 +27,7 @@ from app.services.geocompute.errors import (
     UnsupportedOperationError,
     wrap_unexpected,
 )
+from app.lib.geo_analysis.raster_mosaic import RasterioUnavailableError
 from app.services.geocompute.plan import ExecutionNode, NodeCategory, ResourceBudget
 
 logger = logging.getLogger(__name__)
@@ -702,9 +703,129 @@ def execute_node(ctx: OperatorContext, node: ExecutionNode, payloads: dict[str, 
         )
     try:
         ctx.checkpoint()
+        part = node.parameters.get("_partition")
+        if part:
+            if part.get("window"):
+                # raster tile：源路径经 node.parameters 注入（coordinator
+                # 在 fan-out 时把上游 raster_path 写进 tile 参数 —— 路径
+                # 字符串是既有的 raster 载荷通货），worker 侧裁剪 halo 窗口。
+                node = _prepare_raster_tile_node(node, part, payloads)
+            payloads, tile_empty = _apply_partition_slice(payloads, part, node)
+            if tile_empty:
+                # 空格网 cell 是合法分区（该 cell 无数据）—— 跳过算子直接
+                # 返回空输出（filter/vector_operation 语义：空入 → 空出），
+                # 绝不让「空」伪装成「缺失输入」而打挂 tile job。
+                meta_p = dict(part)
+                return {"features": [],
+                        "metadata": {"partition": {
+                            k: meta_p[k]
+                            for k in ("index", "count", "scheme")
+                            if k in meta_p
+                        }, "partition_empty": True}}
+            payload = handler(ctx, node, payloads)
+            meta = payload.get("metadata")
+            meta = dict(meta) if isinstance(meta, dict) else {}
+            meta["partition"] = {
+                k: part[k] for k in ("index", "count", "scheme") if k in part
+            }
+            payload["metadata"] = meta
+            return payload
         return handler(ctx, node, payloads)
+    except RasterioUnavailableError as exc:
+        raise NodeExecutionError(
+            str(exc), retry_safe=False, node_id=node.node_id,
+            details={"node_id": node.node_id, "reason": "rasterio_unavailable"},
+        ) from exc
     except Exception as exc:
         raise wrap_unexpected(exc, node_id=node.node_id) from exc
+
+
+def _prepare_raster_tile_node(
+    node: ExecutionNode,
+    part: dict[str, Any],
+    payloads: dict[str, NodePayload],
+) -> ExecutionNode:
+    """raster tile 的源路径 → 裁剪后 tile 路径（返回参数重写后的节点副本）。
+
+    源解析优先级与算子一致：payloads 的 raster_path（in-process 上游）→
+    ``node.parameters["raster_path"]``（coordinator 注入，durable tile）。
+    裁剪发生在 worker 进程内（数据本地执行）；裁剪失败 = 类型化失败。
+    """
+    src_path = None
+    for payload in payloads.values():
+        rp = payload.get("raster_path")
+        if rp:
+            src_path = str(rp)
+            break
+    if not src_path:
+        src_path = node.parameters.get("raster_path")
+    if not src_path:
+        raise NodeExecutionError(
+            f"raster tile '{node.node_id}' has no resolvable source raster",
+            retry_safe=False, node_id=node.node_id,
+            details={"reason": "PARTITION_INPUT_UNRESOLVABLE"},
+        )
+    from app.services.geocompute.partitioning import crop_raster_window
+
+    # tile 路径保持合法扩展名（``<base>.tile<i>.tif``）—— 下游算子的
+    # 输出命名基于 stem（``<stem>_calc.tif``），非法扩展名会让多个 tile
+    # 的输出**互相覆盖**（同名 stem）。
+    import os as _os
+
+    base, ext = _os.path.splitext(str(src_path))
+    tile_path = "{}.tile{}{}".format(base, int(part.get("index", 0)),
+                                     ext or ".tif")
+    result = crop_raster_window(src_path, dict(part["window"]), tile_path)
+    params = {k: v for k, v in node.parameters.items()
+              if k not in ("raster_path", "raster_path_b")}
+    params["raster_path"] = result["output_path"]
+    return node.model_copy(update={"parameters": params})
+
+
+def _apply_partition_slice(
+    payloads: dict[str, NodePayload],
+    part: dict[str, Any],
+    node: ExecutionNode,
+) -> "tuple[dict[str, NodePayload], bool]":
+    """分区 job 的输入切片（V8 Phase D）。
+
+    ``_partition``（executor fan-out 时写入 node.parameters）：
+    - ``vector``：{index, count, scheme, halo_bbox} → 输入 features 按
+      代表点 ∈ halo_bbox 过滤（halo 邻域复制；合并去重）；
+    - ``raster``：window 裁剪由 ``_prepare_raster_tile_node`` 在进入本
+      函数前完成（参数重写为 tile 路径）；这里只处理 vector 切片。
+
+    切片失败方向 = 类型化失败（诚实），绝不静默全量执行 —— 那会让
+    「分布式 tile」悄悄变成重复全量计算。
+
+    返回 ``(payloads, tile_empty)``：``tile_empty=True`` 表示本 tile 的
+    vector 输入被切片后全空（合法状态，调用方短路为空输出）。
+    """
+    sliced: dict[str, NodePayload] = {}
+    had_features = False
+    any_features_left = False
+    for src, payload in payloads.items():
+        feats = payload.get("features")
+        raster_path = payload.get("raster_path")
+        if isinstance(feats, list) and part.get("halo_bbox"):
+            from app.services.geocompute.partitioning import (
+                in_bbox,
+                representative_point,
+            )
+
+            had_features = True
+            bbox = tuple(part["halo_bbox"])
+            kept = [
+                f for f in feats
+                if (pt := representative_point(f)) is None
+                or in_bbox(pt, bbox)
+            ]
+            if kept:
+                any_features_left = True
+            sliced[src] = {**payload, "features": kept}
+        else:
+            sliced[src] = payload
+    return sliced, (had_features and not any_features_left)
 
 
 #: 类型别名仅用于注解可读性。

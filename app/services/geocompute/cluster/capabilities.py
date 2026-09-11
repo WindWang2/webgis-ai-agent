@@ -41,17 +41,35 @@ _BACKEND_PROBES: tuple[tuple[str, str], ...] = (
 )
 
 
+class GpuCard(BaseModel):
+    """单卡清单（V8）：型号 + 显存（探测缺席 → 空表，诚实未知）。
+
+    ``gpu_count``/``gpu_mem_mb`` 仍是放置 gating 的**汇总真相**（V7 语义
+    不变）；卡级清单服务于 V8 多卡路由与型号亲和（advisory 层）。
+    """
+
+    name: str = Field(default="", max_length=120)
+    mem_mb: int = Field(default=0, ge=0)
+
+
 class WorkerCapabilityProfile(BaseModel):
     """worker 能力剖面（geocompute_workers.capability 列的契约投影）。
 
     放置语义（01-architecture.md §2.2）：eligible 判断的输入真相；
     缺省（NULL 列）= 只按 profiles 队列匹配（V6 语义，兼容旧 worker）。
+
+    V8 新增（全部可空缺省，旧行/旧 worker 逐字节兼容）：
+    - ``gpus``：卡级清单（型号 + 显存）；
+    - ``disk_free_mb``：执行机 temp/缓存根的可用磁盘（spill/exchange
+      放置的诚实输入；探测失败 = 0 = 未知，绝不虚构）。
     """
 
     cpu_cores: int = Field(default=0, ge=0, le=4096)
     mem_mb: int = Field(default=0, ge=0, le=4_194_304)
     gpu_count: int = Field(default=0, ge=0, le=64)
     gpu_mem_mb: int = Field(default=0, ge=0)
+    gpus: list[GpuCard] = Field(default_factory=list, max_length=8)
+    disk_free_mb: int = Field(default=0, ge=0)
     #: backend → 版本（缺席 = ""；≤16 项防词表膨胀）
     backends: Dict[str, str] = Field(default_factory=dict, max_length=16)
     #: 封闭词表能力（CAPABILITY_VOCABULARY 子集）
@@ -83,24 +101,62 @@ def _probe_mem_mb() -> int:
     return 0
 
 
-def _probe_gpu() -> tuple[int, int]:
-    """(gpu_count, total_mem_mb)。nvidia-smi 缺席/超时/解析失败 → (0, 0)。"""
+def _probe_gpu_cards() -> list[GpuCard]:
+    """卡级清单（name + memory.total）。nvidia-smi 缺席/超时/解析失败 → []。"""
     try:
         out = subprocess.run(
             [
                 "nvidia-smi",
-                "--query-gpu=memory.total",
+                "--query-gpu=name,memory.total",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True, text=True, timeout=_GPU_PROBE_TIMEOUT_S,
             check=False,
         )
         if out.returncode != 0:
-            return 0, 0
-        mems = [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
-        return len(mems), sum(int(float(m)) for m in mems)
+            return []
+        cards: list[GpuCard] = []
+        for ln in out.stdout.splitlines():
+            parts = [p.strip() for p in ln.split(",") if p.strip()]
+            if not parts:
+                continue
+            name = parts[0][:120]
+            mem_mb = 0
+            if len(parts) > 1:
+                try:
+                    mem_mb = int(float(parts[1]))
+                except ValueError:
+                    mem_mb = 0
+            cards.append(GpuCard(name=name, mem_mb=mem_mb))
+            if len(cards) >= 8:
+                break
+        return cards
     except Exception:  # noqa: BLE001 - 无 GPU 是常态不是故障
-        return 0, 0
+        return []
+
+
+def _probe_gpu() -> tuple[int, int]:
+    """(gpu_count, total_mem_mb)。nvidia-smi 缺席/超时/解析失败 → (0, 0)。"""
+    cards = _probe_gpu_cards()
+    return len(cards), sum(c.mem_mb for c in cards)
+
+
+def _probe_disk_free_mb() -> int:
+    """执行机 spill/缓存根的可用磁盘（MiB）。探测失败 → 0（诚实未知）。
+
+    根目录取 ``WEBGIS_BLOB_ROOT``（内容寻址存储根，与 exchange 同一磁盘
+    域）；缺席时退化到系统 temp —— 两者都不可得（受限容器）= 0。
+    """
+    import shutil
+    import tempfile
+
+    root = (os.environ.get("WEBGIS_BLOB_ROOT", "") or "").strip()
+    target = root or tempfile.gettempdir()
+    try:
+        usage = shutil.disk_usage(target)
+        return int(usage.free // (1024 * 1024))
+    except Exception:  # noqa: BLE001 - 非 POSIX/受限容器 → 诚实未知
+        return 0
 
 
 def _version_fingerprint(versions: Dict[str, str]) -> str:
@@ -133,7 +189,8 @@ def probe_capability() -> WorkerCapabilityProfile:
                 capabilities.append(name)
         except Exception:  # noqa: BLE001 - 未安装是事实不是错误
             backends[name] = ""
-    gpu_count, gpu_mem_mb = _probe_gpu()
+    gpu_cards = _probe_gpu_cards()
+    gpu_count, gpu_mem_mb = len(gpu_cards), sum(c.mem_mb for c in gpu_cards)
     if gpu_count > 0:
         capabilities.append("gpu")
     mem_mb = _probe_mem_mb()
@@ -154,6 +211,8 @@ def probe_capability() -> WorkerCapabilityProfile:
         mem_mb=mem_mb,
         gpu_count=gpu_count,
         gpu_mem_mb=gpu_mem_mb,
+        gpus=gpu_cards,
+        disk_free_mb=_probe_disk_free_mb(),
         backends=backends,
         capabilities=capabilities,
         zone=zone or "default",

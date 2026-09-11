@@ -105,7 +105,12 @@ def _validate_node_contract(node: ExecutionNode) -> None:
     if (
         node.policy is ExecutionPolicyKind.DURABLE_JOB
         and node.category in _DURABLE_UNSUPPORTED_CATEGORIES
+        and node.partition is None
     ):
+        # V8 例外：声明 partition 的 raster_window_operation 走分区
+        # fan-out（tile job 结果经 job result_summary 回传路径，合并
+        # 在 coordinator 进程内完成）—— tile 载荷不再依赖 session-ref
+        # features/rows 交接，该 V4 限制对分区路径不成立。
         raise PlanValidationError(
             f"node '{node.node_id}' ({node.category.value}) does not support "
             "durable_job policy (payload handoff is session-ref features/rows only)"

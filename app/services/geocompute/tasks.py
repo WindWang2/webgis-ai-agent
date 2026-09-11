@@ -27,6 +27,7 @@ V7（distributed dataflow，01-architecture.md §2.2-§2.5）：
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any, Optional
 
@@ -132,10 +133,16 @@ def run_geocompute_node(
         guard = _placement_guard(self, exec_node, resource_envelope, worker_id)
         if guard == "retry":
             return  # celery self.retry 已抛 Retry（有界：max_retries=3）
-        _finalize_placement_failure(job_id, exec_node.node_id, run_id,
-                                    node_attempt, worker_id)
-        return {"rows": 0, "ref_id": None, "metadata": {
-            "error_code": "PLACEMENT_MISMATCH", "node_id": exec_node.node_id}}
+        # V8 修复（V7 潜伏缺陷）：``None`` = 合格或守卫缺席 → **继续执行**；
+        # 只有显式 ``"failed"``（重投耗尽）才落 job 行终态。此前 None 也会
+        # 走 finalize —— 任何带 envelope 的 durable 节点从未通过过守卫
+        #（V7 e2e 未携带 envelope，故未暴露；V8 acceptance 首次踩中）。
+        if guard == "failed":
+            _finalize_placement_failure(job_id, exec_node.node_id, run_id,
+                                        node_attempt, worker_id)
+            return {"rows": 0, "ref_id": None, "metadata": {
+                "error_code": "PLACEMENT_MISMATCH",
+                "node_id": exec_node.node_id}}
 
     if job_id is None:
         # 直调（无 durable 语义）只允许 eager 测试路径存在；生产派发必经
@@ -197,8 +204,11 @@ def run_geocompute_node(
         # node_output_ready = worker 侧唯一的输出信号；节点终局事件
         # （node_completed 等）由 coordinator 统一发射（契约：终局事实
         # 单一来源，双写会让无重复输出断言失真）。
+        # V8：bytes_ = 载荷近似字节（transfer 可观测性；events.bytes 列
+        # 首个规模化写入方 —— 此前该列几乎无写入方）。
         _emit_event(run_id, "node_output_ready", node_id=exec_node.node_id,
-                    worker_id=worker_id, attempt=node_attempt, rows=rows)
+                    worker_id=worker_id, attempt=node_attempt, rows=rows,
+                    bytes_=_estimate_payload_bytes(payload))
 
         result = _bounded_summary(payload)
         finish_job(job_id, result=result, result_ref=ref_id)
@@ -418,12 +428,38 @@ def _store_payload(session_id: Optional[str], payload: dict, node) -> Optional[s
     )
 
 
+def _estimate_payload_bytes(payload: dict[str, Any]) -> int:
+    """载荷近似字节（有界估计：64 条采样外推 + raster 文件大小）。
+
+    与 PayloadCache/NodeResultStore 同一采样口径 —— 绝不全量 str()（大
+    节点上的瞬时垃圾源）；估计值只服务 transfer 可观测性。
+    """
+    total = 0
+    for key in ("features", "rows"):
+        items = payload.get(key) or []
+        if items:
+            sample = items[:64]
+            avg = sum(len(str(f)) for f in sample) / len(sample)
+            total += int(avg * len(items))
+    rp = payload.get("raster_path")
+    if rp:
+        try:
+            total += max(0, int(os.path.getsize(str(rp))))
+        except OSError:
+            pass
+    return total
+
+
 def _bounded_summary(payload: dict) -> dict[str, Any]:
     """有界摘要（进 job 行，经 redaction；绝不含载荷本体）。"""
     meta = payload.get("metadata") or {}
     return {
         "rows": len(payload.get("features") or payload.get("rows") or []),
         "ref_id": payload.get("ref_id"),
+        # V8：raster tile 的输出路径经 result_summary 回传 coordinator
+        # （raster 载荷通货是路径字符串；partition 合并侧消费）。
+        **({"raster_path": payload["raster_path"]}
+           if payload.get("raster_path") else {}),
         "metadata": {
             k: v for k, v in meta.items()
             if isinstance(v, (str, int, float, bool, type(None)))
