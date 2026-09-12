@@ -54,6 +54,7 @@ async def test_lock_lost_signal_on_renew_expiry():
     class FakeClient:
         def __init__(self):
             self.calls = 0
+            self.ownership_lost = asyncio.Event()
 
         async def set(self, *a, **k):
             return True
@@ -61,7 +62,10 @@ async def test_lock_lost_signal_on_renew_expiry():
         async def eval(self, script, numkeys, key, *args):
             self.calls += 1
             # First renewal succeeds, second reports ownership lost
-            return 1 if self.calls == 1 else 0
+            if self.calls == 1:
+                return 1
+            self.ownership_lost.set()
+            return 0
 
     client = FakeClient()
     lock = _ResilientSessionLock(
@@ -74,7 +78,7 @@ async def test_lock_lost_signal_on_renew_expiry():
         async with lock:
             assert lock.is_redis_backed is True
             assert lock.lost is False
-            await asyncio.sleep(0.06)
+            await asyncio.wait_for(client.ownership_lost.wait(), timeout=2)
             assert lock.lost is True
     finally:
         dl._RENEW_INTERVAL_S = orig_interval
@@ -88,7 +92,7 @@ async def test_lock_lost_signal_on_renew_expiry():
     try:
         with pytest.raises(LockLostError):
             async with strict_lock:
-                await asyncio.sleep(0.06)
+                await asyncio.wait_for(strict_client.ownership_lost.wait(), timeout=2)
     finally:
         dl._RENEW_INTERVAL_S = orig_interval
 

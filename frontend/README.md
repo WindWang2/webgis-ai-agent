@@ -1,8 +1,8 @@
 # WebGIS AI Agent 前端
 
-具身空间智能工作台前端:Next.js 14 + MapLibre GL,视觉体系为 **Visual System V4(专业 GIS 工作台)**,信息架构为 V3 的 NavRail + ContextPanel 外壳。
+具身空间智能工作台前端:Next.js 16 + MapLibre GL,视觉体系为 **Visual System V4(专业 GIS 工作台)**,信息架构为 V3 的 NavRail + ContextPanel 外壳。
 
-> **版本**: v0.1.3 · **状态**: 活文档 · **最后更新**: 2026-08-17
+> **版本**: v0.1.3 · **状态**: 活文档 · **最后更新**: 2026-09-12
 
 ## 目录
 

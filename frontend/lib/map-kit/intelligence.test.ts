@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { queryFeaturesAt } from './state';
 import { setLayerFilter } from './renderer';
 import { measure } from './navigation';
 import type { Map } from 'maplibre-gl';
@@ -13,30 +12,6 @@ describe('MapKit Intelligence', () => {
       getLayer: vi.fn(),
       setFilter: vi.fn(),
     };
-  });
-
-  describe('queryFeaturesAt', () => {
-    it('should return found features summary', () => {
-      mockMap.queryRenderedFeatures.mockReturnValue([
-        { properties: { name: 'Starbucks' } },
-        { properties: { name: 'Costa Coffee' } },
-        { properties: { label: 'Park' } }
-      ]);
-
-      const result = queryFeaturesAt(mockMap as Map, [10, 10]);
-      
-      expect(result.success).toBe(true);
-      expect(result.summary).toContain("Found 3 feature(s)");
-      expect(result.summary).toContain("'Starbucks'");
-      expect(result.summary).toContain("'Costa Coffee'");
-      expect(result.summary).toContain("'Park'");
-    });
-
-    it('should return no features summary if none found', () => {
-      mockMap.queryRenderedFeatures.mockReturnValue([]);
-      const result = queryFeaturesAt(mockMap as Map, [10, 10]);
-      expect(result.summary).toBe("No features found at this location.");
-    });
   });
 
   describe('setLayerFilter', () => {

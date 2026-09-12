@@ -77,7 +77,7 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  前端工作台  Next.js 14 + MapLibre GL + Zustand               │
+│  前端工作台  Next.js 16 + MapLibre GL + Zustand               │
 │  NavRail + ContextPanel 外壳 · SSE 流解析 · MapSpec 合成      │
 └──────────────┬──────────────────────────────▲────────────────┘
        POST /api/v1/chat/stream               │ SSE(结果/进度/心跳)
@@ -85,7 +85,7 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 ┌──────────────▼──────────────────────────────┴────────────────┐
 │  API 网关  FastAPI(非阻塞路由 + 限流 + JWT)                  │
 │  ChatEngine:规划 → 工具调用 → 观察 → 反思循环                  │
-│  (可选 Pi agent 桥:USE_NEW_AGENT,JSON-RPC 子进程)           │
+│  (默认 Pi agent 桥:JSON-RPC;ChatEngine 回退)           │
 └──────┬──────────────────────────────────────────┬────────────┘
        │ Celery broker(Redis)                     │ 状态/会话数据(Redis)
 ┌──────▼──────────────────────┐          ┌────────▼────────────┐
@@ -102,7 +102,7 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 
 | 层 | 技术选型 | 说明 |
 |---|---|---|
-| 前端 | Next.js 14 · React 18 · MapLibre GL · Zustand · Tailwind | App Router,双 tsconfig 严格类型 |
+| 前端 | Next.js 16 · React 19 · MapLibre GL · Zustand · Tailwind | App Router,双 tsconfig 严格类型 |
 | 网关 | FastAPI · uvicorn · PyJWT · prometheus-instrumentator | 全路由挂 `/api/v1`,SSE 流式 |
 | Agent | OpenAI 兼容 LLM 客户端(httpx)· ChatEngine · Pi agent 桥 | 默认阶跃 Step Plan,支持推理模型与流式 tool-call |
 | 计算 | Celery · Redis · GeoPandas · rasterio · scikit-learn | 重算力全部出离事件循环 |
@@ -124,7 +124,7 @@ WebGIS AI Agent 将 LLM Agent 与真实 GIS 计算栈(FastAPI + Celery + PostGIS
 │   ├── tasks/               # Celery 任务(explorer 任务链等)
 │   ├── tools/               # LLM 工具武库(空间分析 / 遥感 / 制图 / 中文地图源…)
 │   └── main.py              # FastAPI 应用入口
-├── frontend/                # Next.js 14 工作台(详见 frontend/README.md)
+├── frontend/                # Next.js 16 工作台(详见 frontend/README.md)
 │   ├── app/                 # 主工作台 + /story StoryMap 页
 │   ├── components/          # chat / map / hud / sidebar / explorer / report / settings
 │   ├── lib/                 # Zustand store · map-kit · SSE 解析 · MapSpec 编译器

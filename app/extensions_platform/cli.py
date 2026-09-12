@@ -1139,11 +1139,17 @@ def _installer_from_args(args: argparse.Namespace):
             )
         )
     trust = TrustStore.load(Path(args.trust_store)) if args.trust_store else None
+    keep_versions = args.keep_versions
+    if keep_versions is None:
+        # Resolve only on install/rollback: --help must not load Settings.
+        from app.core.config import settings
+
+        keep_versions = settings.EXTENSIONS_KEEP_VERSIONS
     return ExtensionInstaller(
         install_root=Path(args.install_root),
         registry=RegistryStore(Path(args.registry_dir)),
         trust_store=trust,
-        keep_versions=args.keep_versions,
+        keep_versions=keep_versions,
         version_pins=_parse_pins(args.pin),
     )
 
@@ -1339,7 +1345,10 @@ def _build_parser() -> argparse.ArgumentParser:
     common_install.add_argument("--registry-dir", required=True, metavar="DIR")
     common_install.add_argument("--trust-store", default="", metavar="PATH")
     common_install.add_argument("--install-root", default="", metavar="DIR")
-    common_install.add_argument("--keep-versions", type=int, default=3)
+    common_install.add_argument(
+        "--keep-versions", type=int, default=None,
+        help="历史版本保留数（默认读取 EXTENSIONS_KEEP_VERSIONS，缺省 3）",
+    )
     common_install.add_argument("--pin", default="", metavar="id==ver;...")
     common_install.add_argument("--json", action="store_true")
 

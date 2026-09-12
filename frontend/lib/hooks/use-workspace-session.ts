@@ -78,7 +78,6 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   const setStoreSessions = useHudStore((s) => s.setSessions);
   const setSelectedFeature = useHudStore((s) => s.setSelectedFeature);
   const setAiStatus = useHudStore((s) => s.setAiStatus);
-  const clearTask = useHudStore((s) => s.clearTask);
   const clearExplorerTasks = useHudStore((s) => s.clearExplorerTasks);
   const clearResults = useHudStore((s) => s.clearResults);
   const clearProcessLayers = useHudStore((s) => s.clearProcessLayers);
@@ -172,7 +171,6 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       focusLayer(null);
       setSelectedFeature(null);
       setAiStatus('idle');
-      clearTask();
       // V7（审计 §2-M）：样式钻入视图描述的是旧会话的图层行 —— 不清则
       // 切换后图层 tab 渲染 LayerStylePanel，找不到层 return null → 整页空白。
       useHudStore.getState().setEditingLayerId(null);
@@ -319,7 +317,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         }
       }
     },
-    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, clearProcessLayers, setCartographyTitle, focusLayer, clearTask, clearExplorerTasks, clearResults, setSelectedFeature, setAiStatus, dispatchAction]
+    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, clearProcessLayers, setCartographyTitle, focusLayer, clearExplorerTasks, clearResults, setSelectedFeature, setAiStatus, dispatchAction]
   );
 
   const startNewSession = useCallback(
@@ -350,7 +348,6 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       focusLayer(null);
       setSelectedFeature(null);
       setAiStatus('idle');
-      clearTask();
       // V7（审计 §2-M）：同 selectSession —— 样式钻入视图随会话清空。
       useHudStore.getState().setEditingLayerId(null);
       // V7：同 selectSession —— 工具/脏标记/草图随会话清空。
@@ -383,7 +380,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // (session ID 从未写入 localStorage，此 removeItem 是 no-op)
       onClearMessages();
     },
-    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, clearProcessLayers, setCartographyTitle, focusLayer, setSelectedFeature, setAiStatus, clearTask, clearExplorerTasks, clearResults]
+    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, clearProcessLayers, setCartographyTitle, focusLayer, setSelectedFeature, setAiStatus, clearExplorerTasks, clearResults]
   );
 
   const rememberSessionToken = useCallback((sid: string, token: string) => {

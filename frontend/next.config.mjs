@@ -9,7 +9,7 @@ const nextConfig = {
   transpilePackages: ["react-map-gl", "maplibre-gl"],
   output: "standalone",
   experimental: {
-    optimizePackageImports: ["lucide-react", "recharts", "framer-motion", "@dnd-kit/core"],
+    optimizePackageImports: ["lucide-react", "recharts", "framer-motion"],
   },
 }
 

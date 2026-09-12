@@ -189,6 +189,34 @@ describe('MapActionHandler', () => {
     _resetCameraArbitrationForTests();
   });
 
+  it.each(['not_a_map_command', '__proto__', 'constructor'])(
+    'rejects %s and settles the queue without executing a map command',
+    async (command) => {
+      actions = [{ command, params: {} }];
+      await act(async () => { render(<MapActionHandler />); });
+      expect(reportTerminalFn).toHaveBeenCalledWith(
+        expect.objectContaining({ command }), 'failed',
+        expect.objectContaining({ error: 'unknown_command' }),
+      );
+      expect(popAction).toHaveBeenCalledTimes(1);
+      expect(mockFlyTo).not.toHaveBeenCalled();
+      expect(mockAddAnnotation).not.toHaveBeenCalled();
+      expect(mockAnnotationsStore).toEqual([]);
+    },
+  );
+
+  it('rejects malformed command parameters before changing the map', async () => {
+    actions = [{ command: 'add_marker', params: { longitude: 'invalid' } }];
+    await act(async () => { render(<MapActionHandler />); });
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'add_marker' }), 'failed',
+      expect.objectContaining({ error: 'invalid_params' }),
+    );
+    expect(popAction).toHaveBeenCalledTimes(1);
+    expect(mockAddAnnotation).not.toHaveBeenCalled();
+    expect(mockAnnotationsStore).toEqual([]);
+  });
+
   it('forwards bearing and pitch to map.flyTo()', async () => {
     actions = [{
       command: 'fly_to',

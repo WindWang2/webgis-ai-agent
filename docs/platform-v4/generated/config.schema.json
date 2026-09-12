@@ -347,11 +347,6 @@
       "title": "Extension Registry Dir",
       "type": "string"
     },
-    "EXTENSION_REGISTRY_URLS": {
-      "default": "",
-      "title": "Extension Registry Urls",
-      "type": "string"
-    },
     "EXTENSION_SECRETS_JSON": {
       "default": "{}",
       "title": "Extension Secrets Json",

@@ -140,12 +140,16 @@ describe('workbench 多 tab 协同（W5）', () => {
     const received: unknown[] = [];
     lateTab.onmessage = (e) => received.push(e.data);
     lateTab.postMessage({ kind: 'hello', from: 'tab-late', sessionId: S });
-    await new Promise((r) => setTimeout(r, 20));
-    const docMsg = received.find((m) => (m as { kind?: string }).kind === 'doc') as
-      | { doc: { groups: { name: string }[] } }
-      | undefined;
-    expect(docMsg).toBeDefined();
-    expect(docMsg!.doc.groups.some((g) => g.name === '本地组')).toBe(true);
+    await vi.waitFor(
+      () => {
+        const docMsg = received.find((m) => (m as { kind?: string }).kind === 'doc') as
+          | { doc: { groups: { name: string }[] } }
+          | undefined;
+        expect(docMsg).toBeDefined();
+        expect(docMsg!.doc.groups.some((g) => g.name === '本地组')).toBe(true);
+      },
+      { timeout: 4000, interval: 50 },
+    );
   });
 
   it('C5a: 非本会话消息被忽略（权限边界）', async () => {

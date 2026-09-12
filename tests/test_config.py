@@ -253,7 +253,7 @@ def test_env_prod_example_contains_mandatory_llm_api_key():
             "CHANGE_ME_STRONG_GRAFANA_PASSWORD", "StrongGrafanaPass123"
         )
         prod_env += "\nAUTH_DISABLED=false\nALLOW_PUBLIC_REGISTER=false\n"
-        with tempfile.NamedTemporaryFile("w+", suffix=".env.prod", delete=False) as f:
+        with tempfile.NamedTemporaryFile("w+", suffix=".env.prod", delete=False, encoding="utf-8") as f:
             f.write(prod_env)
             temp_path = f.name
         import pytest
@@ -264,7 +264,7 @@ def test_env_prod_example_contains_mandatory_llm_api_key():
         os.remove(temp_path)
         # 填入真实 key 后应能启动
         prod_env_filled = prod_env.replace("LLM_API_KEY=", "LLM_API_KEY=sk-real-prod-key-12345")
-        with tempfile.NamedTemporaryFile("w+", suffix=".env.prod", delete=False) as f:
+        with tempfile.NamedTemporaryFile("w+", suffix=".env.prod", delete=False, encoding="utf-8") as f:
             f.write(prod_env_filled)
             temp_path = f.name
         with _mock.patch("socket.getaddrinfo", side_effect=_public_dns):

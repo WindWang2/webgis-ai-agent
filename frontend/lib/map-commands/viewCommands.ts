@@ -8,8 +8,7 @@ import { checkViewport } from '@/lib/map-product/finalizer';
  *
  * Each `run` body is the verbatim extraction of the corresponding `case` from
  * map-action-handler.tsx, reading from `ctx` instead of the closed-over scope.
- * Validators mirror the old `REQUIRED_PARAMS` table in map-action-renderer.tsx
- * so the renderer gate accepts exactly the same actions as before.
+ * Validators reject malformed params in the shared map action handler.
  *
  * V3 (design §6): camera commands return Promise<MapCommandResult> — they own
  * the human-vs-AI arbitration and always settle the action (the queue can never

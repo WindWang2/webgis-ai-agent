@@ -7,11 +7,11 @@ import { InlineNotice } from '@/components/shared/inline-notice';
 import { LoadingState } from '@/components/shared/loading-state';
 
 /**
- * Workflow Runtime V5 inspector（minimal wiring，Epic workflow-v5 §11）。
+ * Workflow Runtime V5 inspector（投影组件；尚未接入宿主面板）。
  *
  * 消费 /api/v1/workflow-runtime 实例投影：方法论族、节点状态徽章、
  * blocked 原因、stale/reused 计数、why_recomputed/why_reused 解释。
- * 只读投影组件 —— 数据获取由宿主面板传入（fetcher 注入便于测试）。
+ * 只读投影组件 —— 接入时由宿主提供 fetcher；缺席时显示不可用状态。
  */
 
 export interface RuntimeNode {
@@ -78,18 +78,10 @@ export function RuntimeInspector({ instanceId, fetcher }: RuntimeInspectorProps)
     };
   }, [instanceId, fetcher]);
 
-  if (!state) {
-    return (
-      <button
-        type="button"
-        onClick={() => setState('loading')}
-        className="rounded px-2 py-1 text-[11px] font-medium text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-hover)]"
-      >
-        加载运行时
-      </button>
-    );
+  if (!fetcher) {
+    return <InlineNotice variant="info">运行时信息暂不可用</InlineNotice>;
   }
-  if (state === 'loading') return <LoadingState label="加载运行时实例…" />;
+  if (!state || state === 'loading') return <LoadingState label="加载运行时实例…" />;
   if (state === 'error') return <InlineNotice variant="error">运行时实例加载失败</InlineNotice>;
 
   const inst = state as RuntimeInstance;

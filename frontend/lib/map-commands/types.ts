@@ -48,8 +48,7 @@ export interface MapCommandContext {
 }
 
 /**
- * Minimal schema validator for a command's params. Mirrors the shape of the old
- * `REQUIRED_PARAMS` table in map-action-renderer.tsx — returns true when the
+ * Minimal schema validator for a command's params. Returns true when the
  * params have the fields/types the handler requires, false to reject before
  * dispatch. Value-domain validation stays with MapLibre / the store reducers.
  */

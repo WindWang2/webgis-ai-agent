@@ -22,7 +22,7 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
-import type { HudState, LeftTab } from './hud-types';
+import type { HudState } from './hud-types';
 import { createLayersSlice } from './slices/layersSlice';
 import { createResultsSlice } from './slices/resultsSlice';
 import { createSettingsSlice } from './slices/settingsSlice';
@@ -156,108 +156,3 @@ export const useHudStore = create<HudState>()(
     },
   ),
 );
-
-export interface HudSnapshot {
-  hudOpen: boolean;
-  activeLeftTab: LeftTab;
-  activeTool: string | null;
-  timestamp: number;
-}
-
-/**
- * @deprecated Legacy HUD engine history stack (FRONT-13).
- *
- * In Workbench V5, state mutations, history stacks, and undo/redo operations
- * are managed exclusively by `workbenchSlice.ts` and `useWorkbenchUndoKeys`.
- * This class is retained only for backwards compatibility with legacy tests.
- * Do not use for new features or production state mutations.
- */
-export class EmbodiedHudEngine {
-  private static historyStack: HudSnapshot[] = [];
-  private static redoStack: HudSnapshot[] = [];
-  private static maxHistory = 20;
-
-  public static getState(): HudState {
-    return useHudStore.getState();
-  }
-
-  public static recordSnapshot(): HudSnapshot {
-    const state = useHudStore.getState();
-    const snapshot: HudSnapshot = {
-      hudOpen: state.hudOpen,
-      activeLeftTab: state.activeLeftTab,
-      activeTool: state.activeTool ?? null,
-      timestamp: Date.now(),
-    };
-    this.historyStack.push(snapshot);
-    if (this.historyStack.length > this.maxHistory) {
-      this.historyStack.shift();
-    }
-    this.redoStack = [];
-    return snapshot;
-  }
-
-  public static undo(): boolean {
-    if (this.historyStack.length === 0) return false;
-    const previous = this.historyStack.pop();
-    if (!previous) return false;
-    const state = useHudStore.getState();
-    this.redoStack.push({
-      hudOpen: state.hudOpen,
-      activeLeftTab: state.activeLeftTab,
-      activeTool: state.activeTool ?? null,
-      timestamp: Date.now(),
-    });
-    useHudStore.setState({
-      hudOpen: previous.hudOpen,
-      activeLeftTab: previous.activeLeftTab,
-      activeTool: previous.activeTool,
-    });
-    return true;
-  }
-
-  public static redo(): boolean {
-    if (this.redoStack.length === 0) return false;
-    const next = this.redoStack.pop();
-    if (!next) return false;
-    const state = useHudStore.getState();
-    this.historyStack.push({
-      hudOpen: state.hudOpen,
-      activeLeftTab: state.activeLeftTab,
-      activeTool: state.activeTool ?? null,
-      timestamp: Date.now(),
-    });
-    useHudStore.setState({
-      hudOpen: next.hudOpen,
-      activeLeftTab: next.activeLeftTab,
-      activeTool: next.activeTool,
-    });
-    return true;
-  }
-
-  public static toggleLeftDrawer(tab?: LeftTab): void {
-    this.recordSnapshot();
-    const state = useHudStore.getState();
-    if (tab && state.activeLeftTab === tab && state.hudOpen) {
-      state.setHudOpen(false);
-    } else if (tab) {
-      state.setActiveLeftTab(tab);
-      state.setHudOpen(true);
-    } else {
-      state.setHudOpen(!state.hudOpen);
-    }
-  }
-
-  public static setActiveTool(toolName: string | null): void {
-    this.recordSnapshot();
-    useHudStore.setState({ activeTool: toolName });
-  }
-
-  public static resetState(): void {
-    this.recordSnapshot();
-    useHudStore.setState({
-      activeTool: null,
-      hudOpen: false,
-    });
-  }
-}

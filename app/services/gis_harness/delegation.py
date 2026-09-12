@@ -18,10 +18,10 @@ V7 契约（**机制复用，不重建 agent 框架**）：
 - **失败回收**：确定性裁决 —— 首败同 role 重试一次（bounded），再败诚实
   放弃并披露（不换 role 盲目重试 —— 预算纪律）；裁决经 recovery_state
   ``repair`` 预算约束（有余才重试）。
-- **生产驱动点**：``delegate_cartography_qa`` —— finalizer 批评面存在
-  warning 级未修复发现时可选下发给 cartography_reviewer 复核；env
-  ``GIS_HARNESS_DELEGATION=1`` 显式开启（默认关 —— LLM 依赖不进终验
-  热路径；开启时每成品 revision 至多 1 次，幂等）。
+- **实验性接入点**：``delegate_cartography_qa`` 供显式调用方下发
+  cartography_reviewer 复核；``GIS_HARNESS_DELEGATION=1`` 只解除该
+  helper 的门控。当前 finalizer 和上下文组装尚未调用本模块，设置变量
+  不会开启生产自动复核。接入前仍需验证并发去重、预算扣减和取消收尾。
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ DEFAULT_MAX_ROUNDS = 4
 
 
 def delegation_enabled() -> bool:
-    """生产驱动点开关（默认关；显式 env 开启）。"""
+    """实验性 helper 的调用门控；不代表 finalizer 已接入。"""
     return os.getenv("GIS_HARNESS_DELEGATION", "0") in ("1", "true", "True")
 
 
@@ -295,7 +295,7 @@ def _registry_for():
     return ToolRegistry()
 
 
-# ── 生产驱动点（可选；默认关）────────────────────────────────────────────
+# ── 实验性接入点（未接入 finalizer）─────────────────────────────────────
 
 
 async def delegate_cartography_qa(
@@ -304,9 +304,10 @@ async def delegate_cartography_qa(
     findings_codes: List[str],
     product_revision: int,
 ) -> Optional[DelegationRecord]:
-    """finalizer 批评面的可选 QA 复核（env GIS_HARNESS_DELEGATION=1 开启）。
+    """显式调用的 QA 复核 helper；finalizer 尚未接入。
 
-    幂等：同一成品 revision 至多委派一次（台账查重）。关闭 → None。"""
+    env GIS_HARNESS_DELEGATION=1 解除调用门控。台账检查已运行/完成的
+    revision；当前检查不包含并发占位，接入生产前需补齐。关闭 → None。"""
     if not delegation_enabled() or not session_id:
         return None
     from app.services.session_plan import load_session_plan

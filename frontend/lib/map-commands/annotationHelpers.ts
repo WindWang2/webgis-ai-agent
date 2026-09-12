@@ -138,15 +138,14 @@ export const ANNOTATION_LAYER_IDS = [
  * imperatively and nothing else ever lifts them. Markers/measurements end up
  * under 0.3-opacity data fills; labels become fully invisible.
  *
- * Guarded the same way as raiseSelectionHighlight (map-panel.tsx FIX-3-2):
- * no-op when the stack isn't mounted, and moveLayer is wrapped so a layer
+ * No-op when the stack isn't mounted, and moveLayer is wrapped so a layer
  * that vanished mid-reconcile is skipped silently. Callers run it after a
- * reconcile settles, alongside the selection-highlight re-raise.
+ * reconcile settles.
  *
  * #460: a basemap setStyle wipes the whole imperative stack while nothing
  * re-creates it — the MapActionHandler refresh effect deps ([mapInstance,
  * annotations]) don't change on a style swap because the map instance is
- * stable across setStyle. Mirror #402's selection-highlight remount: when
+ * stable across setStyle. When
  * every annotation layer is gone but annotations exist in the store, RE-MOUNT
  * the source + layers and push the data instead of early-returning.
  */

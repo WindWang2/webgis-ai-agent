@@ -5,8 +5,8 @@
  * The mock used to be a closed object literal: any `map.<method>(...)` the
  * application code calls that was NOT in the literal TypeError'd at runtime.
  * Tests never walked those paths (they crashed), so entire feature branches —
- * style-loaded gating (runtime.ts), rendered-feature queries (map-panel,
- * map-kit/state), bounds/viewport reading (map-panel, runtime-evidence),
+ * style-loaded gating (runtime.ts), rendered-feature queries (map-panel),
+ * bounds/viewport reading (map-panel, runtime-evidence),
  * canvas export (map-kit/exporter), image bookkeeping (map-kit/renderer), DPI
  * management, controls and terrain — ran with zero coverage.
  *

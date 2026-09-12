@@ -555,11 +555,6 @@ export function MapPanel({
     syncInteractiveIds()
   }, [currentMapStyle, syncInteractiveIds])
 
-  // v2 重设计后选中态不再挂高亮图层（曾经的 raise/remount 机制连同
-  // 「画布切空白」的触发面一并移除）；保留一个空回调以维持 reconcile
-  // 依赖数组的形状稳定。
-  const raiseSelectionHighlight = useCallback(() => {}, [])
-
   const liveGeneration = useSyncExternalStore(
     subscribeMapSpecLive,
     getMapSpecLiveGeneration,
@@ -619,13 +614,10 @@ export function MapPanel({
           }
           renderer.raiseCustomOverlayLayers(map);
         }
-        // FIX-3-2: syncLayerZOrder buried the selection highlight under the
-        // spec sublayers — put it back on top now that the reconcile settled.
-        raiseSelectionHighlight()
         // FIX-3-9 (#401): the imperative annotation stack (markers /
         // measurements / labels) suffers the same burying — syncLayerZOrder
         // stacks every spec sublayer above it on any layer-changing patch.
-        // Re-raise it alongside the selection highlight (no-op when the
+        // Re-raise the annotation stack (no-op when the
         // stack isn't mounted, so reconcile-only patches stay cheap).
         if (map && typeof map.getLayer === 'function') {
           try {
@@ -653,7 +645,7 @@ export function MapPanel({
       })
       // #1008：reconcile 失败的裸 console.error 泄漏内部细节 → devOnly。
       .catch((e) => devOnly.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation])
+  }, [layers, processLayers, activeFilters, selectionFilters, is3D, liveGeneration, refSourcesGeneration, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, sessionId, ownerToken, sessionTokenRef, issueCartographicObservation])
 
   // Runtime V4（§14）：过滤命中证据 —— settle 后对「有过滤的内联层」做有界
   // 单遍计数（≤20k 要素；MVT/超限层如实 unknown），latest-wins 记录进

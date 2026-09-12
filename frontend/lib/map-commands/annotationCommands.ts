@@ -7,8 +7,8 @@ import { ensureAnnotationLayers, refreshAnnotations } from './annotationHelpers'
  * Each `run` body is the verbatim extraction of the corresponding `case` from
  * map-action-handler.tsx, reading from `ctx` instead of the closed-over scope.
  * `useHudStore.getState()` becomes `ctx.getHudState()`; the annotation helpers
- * come from the shared annotationHelpers.ts module. Validators mirror the old
- * `REQUIRED_PARAMS` table in map-action-renderer.tsx.
+ * come from the shared annotationHelpers.ts module. Validators reject malformed
+ * params in the shared map action handler.
  */
 export const annotationCommands: Record<string, CommandEntry> = {
   add_marker: {

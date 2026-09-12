@@ -284,7 +284,6 @@ class TestReviewAFixes:
         reset_capability_graph()
         settings = ModelOpsSettings(registry_dir=tmp_path)
         # 图构建读 ModelOpsSettings.load() 默认目录 —— 指向 tmp 注册表
-        monkeypatch_or_skip = None
         from app.services.modelops.config import ModelOpsSettings as _MS
         orig_load = _MS.load
         _MS.load = staticmethod(lambda *a, **k: settings)
