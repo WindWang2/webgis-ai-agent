@@ -50,6 +50,20 @@ scripts/
 !/scripts/check_integration_preflight.py
 !/scripts/allocate_migration.py
 !/scripts/allocate_adr.py
+# AC-10 制图质量回归基座（ADR-0159）：本地门禁四件套 + golden/计时工具
+# （quality_gate_local.sh 与其步骤脚本、P0 场景计时器；tests/quality 的
+# 闸测试与任务书验收依赖它们，必须入库）
+!/scripts/quality_gate_local.sh
+!/scripts/coverage_cartography_gate.py
+!/scripts/quality_ratchet_gate.py
+!/scripts/golden_baseline.py
+!/scripts/quality_trend_report.py
+!/scripts/measure_scenario_timing.py
+# AC-10：本地门禁生成的易变产物（golden 基线本体 map.png/golden.json/status.json
+# 入库；校验快照与趋势 CSV 每次门禁运行都会重写，不入库）
+/docs/dev/ac-10-quality-trend.csv
+tests/fixtures/runtime/*/golden/last_verify.json
+tests/fixtures/runtime/*/golden/last_failure.json
 !/scripts/gen_integration_manifest.py
 !/scripts/simulate_merge.py
 !/scripts/gen_release_readiness.py

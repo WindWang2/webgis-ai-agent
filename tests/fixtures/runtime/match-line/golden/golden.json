@@ -1,0 +1,27 @@
+{
+  "scenario": "match-line",
+  "generated_at": "2026-09-13T05:58:28+0800",
+  "app_version": "0.1.3",
+  "source_session": "ac10-golden-match-line-0d728b",
+  "seconds": 9.47,
+  "canvas_blank": true,
+  "score": 92.37,
+  "probes": [
+    {
+      "type": null,
+      "pass": true
+    },
+    {
+      "type": null,
+      "pass": true
+    },
+    {
+      "type": null,
+      "pass": true
+    },
+    {
+      "type": null,
+      "pass": true
+    }
+  ]
+}

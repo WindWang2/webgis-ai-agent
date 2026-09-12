@@ -1,0 +1,107 @@
+{
+  "meta": {
+    "generated_by": "/tmp/rule_baseline.py (AC-10 S1 recon, 2026-09-13)",
+    "method": "evaluate_cartography_semantics(mapspec) over 9 raw runtime fixtures + 8 golden-derived protocol-faithful scenes; percentiles = plain interpolation (calibrate script _percentile)",
+    "caveat": "golden corpus files store structural digests without sources/layers; golden scenes rebuilt via profile_geojson_source + thematic_spec builders mirroring each golden's model"
+  },
+  "baseline": {
+    "carto.load.ratio": {
+      "evidence_key": "load_ratio",
+      "n": 4,
+      "min": 0.0012,
+      "p33": 0.0013,
+      "p50": 0.0018,
+      "p66": 0.0024,
+      "p90": 0.0028,
+      "max": 0.003,
+      "scenes": [
+        "golden:categorized_point:composition.presentation_map",
+        "golden:categorized_line:composition.presentation_map",
+        "golden:visual_heatmap:composition.presentation_map",
+        "golden:flow_od_arc:composition.flow_map_report"
+      ]
+    },
+    "carto.color.separability": {
+      "evidence_key": "min_adjacent_delta_e",
+      "n": 8,
+      "min": 12.53,
+      "p33": 12.63,
+      "p50": 12.63,
+      "p66": 20.0018,
+      "p90": 48.98,
+      "max": 48.98,
+      "scenes": [
+        "golden:categorized_point:composition.presentation_map",
+        "golden:categorized_line:composition.presentation_map",
+        "golden:administrative_choropleth:composition.statistical_map",
+        "golden:classified_raster:composition.rs_classification",
+        "golden:visual_heatmap:composition.presentation_map",
+        "golden:flow_od_arc:composition.flow_map_report",
+        "golden:extrusion_3d:composition.presentation_map",
+        "golden:categorical_thematic:composition.zoning_plan_map"
+      ]
+    },
+    "carto.legend.completeness": {
+      "evidence_key": "thematic_visible_layers_count",
+      "n": 7,
+      "min": 1.0,
+      "p33": 1.0,
+      "p50": 1.0,
+      "p66": 1.0,
+      "p90": 1.0,
+      "max": 1.0,
+      "scenes": [
+        "golden:categorized_point:composition.presentation_map",
+        "golden:categorized_line:composition.presentation_map",
+        "golden:administrative_choropleth:composition.statistical_map",
+        "golden:visual_heatmap:composition.presentation_map",
+        "golden:flow_od_arc:composition.flow_map_report",
+        "golden:extrusion_3d:composition.presentation_map",
+        "golden:categorical_thematic:composition.zoning_plan_map"
+      ]
+    },
+    "carto.visualvar.overload": {
+      "evidence_key": "encoded_field_count",
+      "n": 10,
+      "min": 1.0,
+      "p33": 1.0,
+      "p50": 1.0,
+      "p66": 1.0,
+      "p90": 1.0,
+      "max": 1.0,
+      "scenes": [
+        "runtime:fault-wrong-color",
+        "runtime:interpolate-circle",
+        "runtime:match-line",
+        "runtime:mvt-basic",
+        "runtime:step-fill",
+        "golden:categorized_point:composition.presentation_map",
+        "golden:categorized_line:composition.presentation_map",
+        "golden:visual_heatmap:composition.presentation_map",
+        "golden:flow_od_arc:composition.flow_map_report",
+        "golden:categorical_thematic:composition.zoning_plan_map"
+      ]
+    },
+    "carto.label.collision_est": {
+      "evidence_key": "label_ink_ratio",
+      "n": 0,
+      "scenes": [],
+      "note": "no finite observations in the 17-scene sample"
+    },
+    "carto.scale.svs": {
+      "evidence_key": "avg_feature_area_px",
+      "n": 3,
+      "min": 22295.223,
+      "p33": 22295.223,
+      "p50": 22295.223,
+      "p66": 43698.6364,
+      "p90": 75803.7566,
+      "max": 89180.89,
+      "scenes": [
+        "golden:administrative_choropleth:composition.statistical_map",
+        "golden:extrusion_3d:composition.presentation_map",
+        "golden:categorical_thematic:composition.zoning_plan_map"
+      ]
+    }
+  }
+}
