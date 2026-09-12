@@ -14,6 +14,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
+
+# schemathesis 只在 contract lane 安装（contract.yml 显式 pip install）；
+# 其余 CI 作业全量收集 tests/ 时必须诚实跳过本模块，而非收集报错。
+pytest.importorskip("schemathesis", reason="schemathesis installed only in the contract lane")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 

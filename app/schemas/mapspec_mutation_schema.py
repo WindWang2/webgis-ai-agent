@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -190,16 +190,40 @@ MapSpecMutationUnion = UserMapSpecMutationRequest
 
 
 class MutationApplyResponse(BaseModel):
-    """POST /chat/sessions/{session_id}/mapspec/mutations 响应。"""
+    """POST /chat/sessions/{session_id}/mapspec/mutations 响应。
+
+    字段按 handler 实际返回逐项镜像（前端游标推进消费 ``mapspec`` +
+    ``mutation_revision``，见 frontend/lib/mapspec/user-mutation.ts）。
+    #1239 初版模型 {session_id, revision} 与实测形状不符，以实测为准重写。
+    """
 
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [{"session_id": "sess-123", "revision": 7}]
+            "examples": [
+                {
+                    "success": True,
+                    "mapspec": {"version": "1.0"},
+                    "warnings": [],
+                    "is_compiled": True,
+                    "checkpoint_id": "ckpt_1",
+                    "mapspec_fingerprint": "carto-sha256:...",
+                    "runtime_observation_seq": 0,
+                    "mutation_revision": 7,
+                    "origin": "user",
+                }
+            ]
         }
     )
 
-    session_id: str
-    revision: int
+    success: bool
+    mapspec: Dict[str, Any]
+    warnings: List[str] = Field(default_factory=list)
+    is_compiled: bool = False
+    checkpoint_id: Optional[str] = None
+    mapspec_fingerprint: Optional[str] = None
+    runtime_observation_seq: int = 0
+    mutation_revision: int
+    origin: str = "user"
 
 
 class WorkbenchStateResponse(BaseModel):

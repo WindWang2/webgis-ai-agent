@@ -24,6 +24,17 @@ from app.core.auth import get_current_user  # noqa: E402
 @pytest.fixture()
 def client():
     app = FastAPI()
+    # 镜像 app/main.py 的统一错误信封接线（ADR-0138）：结构化 detail dict
+    # 进 data 字段 —— 断言 data.code 的用例依赖该行为。
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from fastapi.exceptions import RequestValidationError
+    from app.core.exception import (
+        unified_http_exception_handler,
+        unified_validation_exception_handler,
+    )
+
+    app.add_exception_handler(StarletteHTTPException, unified_http_exception_handler)
+    app.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
     app.include_router(map_router, prefix="/api/v1")
     app.dependency_overrides[get_current_user] = lambda: {"user_id": "vec-pdf-user"}
     return fastapi_testclient.TestClient(app)
@@ -91,7 +102,7 @@ def test_vector_pdf_route_rejects_unhydrated_ref_sources(client, tmp_path, monke
     resp = client.post("/api/v1/export/vector-pdf", json=payload)
     assert resp.status_code == 400
     assert resp.json()["data"]["code"] == "mapspec_ref_sources_unhydrated"
-    assert "g" in resp.json()["message"]["message"]
+    assert "g" in resp.json()["data"]["message"]
 
 
 def test_vector_pdf_route_rejects_forward_version(client, tmp_path, monkeypatch):
