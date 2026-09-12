@@ -9,7 +9,7 @@ P0 勘察工具（AC-01 / ADR-0150）：把 ``app/services/gis_harness/intent.py
 
 用法（worktree 根目录）::
 
-    python scripts/dump_intent_rule_matrix.py \
+    python tests/cartography/dump_rule_matrix.py \
         --corpus tests/cartography/fixtures/intent_corpus.jsonl \
         --out docs/dev/ac-01-rule-matrix.csv
 
@@ -27,7 +27,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.services.gis_harness import intent as intent_mod  # noqa: E402
+from app.services.gis_harness import intent_semantic  # noqa: E402
 
 
 def _load_corpus(path: Path) -> list[dict]:
@@ -50,7 +50,11 @@ def main() -> int:
     args = parser.parse_args()
 
     corpus = _load_corpus(args.corpus)
-    rules = intent_mod._TASK_RULES
+    # AC-01 重构后规则表迁至 intent_semantic.TASK_RULES（TaskRule dataclass）。
+    # 注意：docs/dev/ac-01-rule-matrix.csv 是**基线快照**（重构前规则对语料
+    # 的命中，见 ac-01-intent-recon.md §1）；本脚本对当前规则重生成会覆盖
+    # 它——再生成时请换输出路径。
+    rules = intent_semantic.TASK_RULES
 
     # 每个 query 命中的全部规则（不只首条），用于冲突分析。
     hits_per_rule: dict[str, list[str]] = defaultdict(list)
@@ -62,11 +66,11 @@ def main() -> int:
     for item in corpus:
         query = item["query"]
         matched_all: list[str] = []
-        for rule_id, pattern, rule_task in rules:
-            if pattern.search(query):
-                matched_all.append(rule_id)
-                hits_per_rule[rule_id].append(item["id"])
-                hits_per_rule_task[rule_id].add(rule_task)
+        for rule in rules:
+            if rule.pattern.search(query):
+                matched_all.append(rule.rule_id)
+                hits_per_rule[rule.rule_id].append(item["id"])
+                hits_per_rule_task[rule.rule_id].add(rule.task)
         if matched_all:
             first = matched_all[0]
             first_rule_counter[first] += 1
@@ -81,14 +85,14 @@ def main() -> int:
             "rule_index", "rule_id", "task", "corpus_hits",
             "first_hit_wins", "example_hits", "conflicting_rules",
         ])
-        for idx, (rule_id, _pattern, rule_task) in enumerate(rules):
-            examples = hits_per_rule.get(rule_id, [])[:5]
+        for idx, rule in enumerate(rules):
+            examples = hits_per_rule.get(rule.rule_id, [])[:5]
             conflicts = ", ".join(
                 f"{other}({cnt})" for other, cnt
-                in co_occurrence.get(rule_id, Counter()).most_common(6))
+                in co_occurrence.get(rule.rule_id, Counter()).most_common(6))
             writer.writerow([
-                idx, rule_id, rule_task, len(hits_per_rule.get(rule_id, [])),
-                first_rule_counter.get(rule_id, 0),
+                idx, rule.rule_id, rule.task, len(hits_per_rule.get(rule.rule_id, [])),
+                first_rule_counter.get(rule.rule_id, 0),
                 " | ".join(examples), conflicts,
             ])
         writer.writerow([])
