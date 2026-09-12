@@ -181,6 +181,22 @@ def validate_gis_library(
             from app.services.gis_harness.gis_ontology import get_task_ontology
             if not get_task_ontology().has(task_id):
                 issues.append(f"recipe {rid}: unknown ontology task {task_id}")
+        # ── V4（ADR-0151）：声明式降级链悬空引用校验 ────────────────────
+        # fallback_links.to 指向不存在的 recipe id 时，链式降级会在生产期
+        # 静默跳过该环节 —— 知识库不完整必须启动期 fail-loud（与 recipe
+        # packs 加载语义一致）。通用兜底链目标同理对账。
+        from app.services.gis_harness.recipes import DEFAULT_FALLBACK_CHAIN
+
+        for link in (getattr(recipe, "fallback_links", None) or []):
+            if link.to not in recipes:
+                issues.append(
+                    f"recipe {rid}: dangling fallback link to unknown "
+                    f"recipe '{link.to}'")
+        for target in DEFAULT_FALLBACK_CHAIN:
+            if target not in recipes:
+                issues.append(
+                    f"recipe {rid}: DEFAULT_FALLBACK_CHAIN target "
+                    f"'{target}' not in RecipeRegistry")
 
     # ── V3：Recipe 分层组合（family / composite / scenario）───────────
     # 用**传入的** recipes registry 现建投影（review A5：单例投影 + 参数
