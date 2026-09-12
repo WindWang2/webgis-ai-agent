@@ -1,0 +1,75 @@
+{
+  "welcome": "你好！我是 GeoAgent。\n\n我感知地图、分析空间、生成洞察——地图上的一切都是我的一部分。",
+  "authImageFailed": "图片加载失败（请先登录后重试）",
+  "authImageLoading": "加载图片…",
+  "carto": {
+    "highlight": "高亮此图层",
+    "noFocus": "无可聚焦图层",
+    "qualityAria": "制图质量",
+    "highlightLayer": "高亮图层"
+  },
+  "thinking": "思考中",
+  "thinkDetailsAria": "思考过程详情",
+  "lisa": {
+    "hh": "高-高热点",
+    "ll": "低-低冷点",
+    "hl": "高-低异常",
+    "lh": "低-高异常",
+    "ns": "不显著",
+    "title": "H3 LISA 空间聚类分析",
+    "field": "字段:",
+    "highlightLayer": "高亮图层"
+  },
+  "iso": {
+    "title": "等时圈网络分析",
+    "mode": "模式",
+    "facilities": "设施点数量",
+    "coverage": "覆盖面积",
+    "speedBase": "速度基准:",
+    "highlightLayer": "高亮图层"
+  },
+  "mapCmdFailed": "地图指令解析失败",
+  "plan": {
+    "head": "计划 · {steps} 步",
+    "approved": "已批准",
+    "cancelled": "已取消",
+    "revising": "修改中",
+    "destructiveWarn": "本计划含 {count} 个破坏性步骤（{names}）， 执行前请确认这些操作可逆且经过授权。",
+    "steps": "步骤明细",
+    "destructiveBadge": "⚠ 破坏性",
+    "revise": "修改",
+    "cancel": "取消"
+  },
+  "sessionPlan": {
+    "status": {
+      "pending": "待完成",
+      "completed": "已完成",
+      "superseded": "已作废",
+      "unavailable": "不可用",
+      "failed": "失败（可重试）"
+    },
+    "title": "会话计划",
+    "goalChanged": "目标已更换：",
+    "goal": "目标",
+    "recipe": "配方",
+    "capability": "能力",
+    "empty": "暂无计划内容"
+  },
+  "toolCall": {
+    "args": "参数",
+    "copyArgs": "复制参数",
+    "result": "结果",
+    "copyResult": "复制结果",
+    "error": "错误",
+    "partialFailAria": "部分或全部调用失败",
+    "failed": "失败",
+    "done": "已完成",
+    "running": "执行中",
+    "detailsAria": "工具调用链详情"
+  },
+  "welcomeExtended": "你好！我是 GeoAgent。\n\n我感知地图、分析空间、生成洞察——地图上的一切都是我的一部分。\n\n试着告诉我：\n- 分析北京市学校分布密度\n- 成都市人口热力图\n- 计算各区 POI覆盖率",
+  "deepExploreTask": "深度探索 {id}",
+  "searchResult": "搜索结果: {name}",
+  "heatmapAnalysis": "热力图分析",
+  "analysisResult": "分析结果: {tool}"
+}

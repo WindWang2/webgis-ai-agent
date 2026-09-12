@@ -1,4 +1,5 @@
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import { Footprints, Car, Target, Clock, MapPin, Layers } from 'lucide-react';
 
@@ -28,6 +29,7 @@ interface Props {
 }
 
 export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
+  const t = useT();
   if (!result) return null;
 
   const payload = (result.result as IsochroneResultPayload) ?? (result.metadata as IsochroneResultPayload) ?? result;
@@ -50,11 +52,11 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
       <div className="flex items-center justify-between mb-2.5">
         <div className="flex items-center gap-1.5 font-semibold text-ink">
           <Clock className="h-4 w-4 text-status-success shrink-0" />
-          <span>等时圈网络分析{travelTime !== null ? ` (${travelTime} 分钟)` : ''}</span>
+          <span>{t('chat.iso.title')}{travelTime !== null ? ` (${travelTime} 分钟)` : ''}</span>
         </div>
         <span className="flex items-center gap-1 text-meta px-2 py-0.5 rounded-pill bg-status-success-soft text-status-success font-medium">
           <ModeIcon className="h-3.5 w-3.5" />
-          {modeLabel}模式
+          {modeLabel}{t('chat.iso.mode')}
         </span>
       </div>
 
@@ -63,7 +65,7 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
         <div className="flex items-center gap-2">
           <MapPin className="h-4 w-4 text-status-success shrink-0" />
           <div>
-            <div className="text-meta text-ink-muted font-medium">设施点数量</div>
+            <div className="text-meta text-ink-muted font-medium">{t('chat.iso.facilities')}</div>
             <div className="text-body font-mono font-bold text-ink">
               {facilityCount !== null ? `${facilityCount} 个设施` : '设施数未知'}
             </div>
@@ -73,7 +75,7 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
         <div className="flex items-center gap-2">
           <Layers className="h-4 w-4 text-status-success shrink-0" />
           <div>
-            <div className="text-meta text-ink-muted font-medium">覆盖面积</div>
+            <div className="text-meta text-ink-muted font-medium">{t('chat.iso.coverage')}</div>
             <div className="text-body font-mono font-bold text-ink">
               {areaKm2 !== null ? `${areaKm2.toFixed(2)} km²` : (travelTime !== null ? `${travelTime} 分钟圈` : '范围未知')}
             </div>
@@ -91,7 +93,7 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
       {/* Action Footer */}
       <div className="flex items-center justify-between pt-1.5 border-t border-edge-subtle text-meta">
         <span className="text-ink-muted font-mono">
-          速度基准: {modeLabel === '驾车' ? '400m/min' : '80m/min'}
+          {t('chat.iso.speedBase')} {modeLabel === '驾车' ? '400m/min' : '80m/min'}
         </span>
         {layerId && onFocus && (
           <button
@@ -100,7 +102,7 @@ export function IsochroneResultCard({ result, layerId, onFocus }: Props) {
             className="inline-flex items-center gap-1 font-medium text-status-success hover:underline transition-colors"
           >
             <Target className="h-3.5 w-3.5" />
-            高亮图层
+            {t('chat.carto.highlightLayer')}
           </button>
         )}
       </div>

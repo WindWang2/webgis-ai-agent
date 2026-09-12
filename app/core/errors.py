@@ -91,6 +91,29 @@ def category_defaults(category: ErrorCategory) -> CategorySpec:
     return CATEGORY_DEFAULTS.get(category, CATEGORY_DEFAULTS[ErrorCategory.PERMANENT])
 
 
+def localized_user_message(
+    classification_or_category: Any,
+    locale: Optional[str] = None,
+) -> str:
+    """输出层入口（ADR-0144 P6）：类目/裁决 → 按 Accept-Language 的用户文案。
+
+    委托 app.core.i18n（惰性导入避免环）；i18n 面缺失时回落分类学默认短语，
+    与"分类永不抛"纪律一致。（此处与 i18n.localized_user_message 的兜底形状
+    有意重复：本函数是 import 失败时的最后防线，不得反向依赖 i18n 面。）
+    """
+    try:
+        from app.core.i18n import localized_user_message as _impl
+
+        return _impl(classification_or_category, locale)
+    except Exception:  # noqa: BLE001 — 输出层绝不抛
+        cat = (
+            classification_or_category
+            if isinstance(classification_or_category, ErrorCategory)
+            else getattr(classification_or_category, "category", ErrorCategory.PERMANENT)
+        )
+        return category_defaults(cat).user_message
+
+
 def http_status_for(category: ErrorCategory) -> int:
     return category_defaults(category).http_status
 

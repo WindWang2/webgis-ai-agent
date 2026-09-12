@@ -1,5 +1,48 @@
 # Changelog
 
+## [Unreleased] - 2026-09-12 (foundation/i18n-responsive-v9)
+
+Internationalization & responsive touch foundation (ADR-0144, PR #1237).
+
+### Added (frontend i18n)
+- i18n framework: next-intl ICU engine + store-driven locale context
+  (`lib/i18n/`), namespace catalogs `messages/{zh-CN,en-US}/*.json`,
+  settings language switcher (System tab), instant switch, no-flash reload
+  via cookie SSR + pre-paint bootstrap (`window.__GEOAGENT_LOCALE__`).
+- Extraction tooling & guards: `scripts/i18n/` (scan/extract/apply-keys/
+  place-hooks), no-raw-cjk CI guard with anti-staleness whitelist
+  (82→18 files, zeroing plan v9.1/v9.2), key-completeness tests
+  (key-set diff / placeholder parity / empty values / registration).
+- Full zh/en catalogs for shell + chat/map/sidebar/settings/drawers/story
+  domains (five-domain en walkthrough gate); lib dynamic copy surfaces
+  (SSE welcome & result naming, session errors, upload) via imperative t();
+  system-message-bridge severity keywords now bilingual.
+- Pseudo-locale regression (placeholder integrity, display-width inflation
+  budget median ≤1.6, translator smoke).
+
+### Added (responsive)
+- Three-tier layout (ADR-0144 D5): desktop >1180 / thin 769–1180 (overlay,
+  drag disabled) / mobile ≤768 (NavRail folds to bottom bar, panels become
+  BottomSheet with 2-snap drag handle + focus trap, map full-bleed).
+- `lib/hooks/use-layout-mode.ts` (matchMedia + useSyncExternalStore),
+  `components/layout/bottom-sheet.tsx`, `html[data-layout-mode]` marker.
+- Playwright mobile main-flow spec (tests/e2e/mobile-workflow.spec.ts).
+
+### Added (backend i18n)
+- Accept-Language negotiation middleware (`app/core/i18n.py`) + category-keyed
+  catalogs `app/locales/{zh_CN,en_US}.json` (zh mirrors CATEGORY_DEFAULTS
+  verbatim); envelope `message` localized at the output layer with fallback
+  chain locale→zh_CN→taxonomy default; structured fields untouched
+  (dual-track: code/category primary, message auxiliary).
+- `errors.localized_user_message()` output-layer accessor; 19 pytest cases
+  incl. TestClient envelope integration.
+
+### Changed
+- `app/layout.tsx`: SSR locale from cookie, dynamic `<html lang>`, pre-paint
+  script extended (fixes latent early-return skipping the locale block).
+- Sketch editor: touch rotation/pitch disabled during edit sessions
+  (symmetric restore); coarse-pointer 44px touch targets on nav rail;
+  audit: `frontend/docs/touch-audit.md`.
 ## [Unreleased] - 2026-09-11 (data-lifecycle-v9: 数据基础与生命周期治理 V9, ADR-0140)
 
 ### Added

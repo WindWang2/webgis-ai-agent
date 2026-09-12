@@ -50,6 +50,28 @@ const NON_API_WHITELIST: Record<string, string> = {
   // （{enable,disable,isEnabled}），不是方法 —— mock 同款对象形态。
   dragPan: 'DragPanHandler object (map.dragPan.disable/enable) in map-panel brush mode',
   boxZoom: 'BoxZoomHandler object (map.boxZoom.disable/enable) in map-panel brush mode',
+  // ADR-0144 P6/P7：
+  //  - i18n catalog 键字符串（`t('map.xxx.yyy')` / messages.json 导入路径）
+  //    以 `map.` 开头但非 MapLibre 成员；
+  //  - touchZoomRotate/touchPitch 是 handler **对象**（旋转/俯仰开关），
+  //    sketch 编辑器触控消歧使用 —— mock 已补同款对象形态。
+  json: 'i18n import path & catalog strings beginning with "map." (lib/i18n/messages.ts)',
+  compare: "i18n key string `map.compare.*` in comparison-view",
+  toolbar: "i18n key string `map.toolbar.*` across map components",
+  poi: "i18n key string `map.poi.*` in poi-info-panel",
+  webgl: "i18n key string `map.webgl.*` in map-panel",
+  table: "i18n key string `map.table.*` in table-panel",
+  legends: "i18n key string `map.legends.*` in legends",
+  sketch: "i18n key string `map.sketch.*` in sketch-editor",
+  decision: "i18n key string `map.decision.*` in decision-panel",
+  chrome: "i18n key string `map.chrome.*` in floating-chrome",
+  methodology: "i18n key string `map.methodology.*` in methodology-note",
+  uncertainty: "i18n key string `map.uncertainty.*` in uncertainty-panel",
+  chartPanel: "i18n key string `map.chartPanel.*` in chart-panel",
+  statsPanel: "i18n key string `map.statsPanel.*` in statistics-panel",
+  readout: "i18n key string `map.readout.*` in map-status-readout",
+  touchZoomRotate: 'TouchZoomRotateHandler object (map.touchZoomRotate.disableRotation/enableRotation) in sketch-editor touch disambiguation',
+  touchPitch: 'TouchPitchHandler object (map.touchPitch.disable/enable) in sketch-editor touch disambiguation',
 };
 
 const ACCESS_RE = /\bmap\.([A-Za-z_][A-Za-z0-9_]*)/g;

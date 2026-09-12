@@ -5,6 +5,7 @@ import { registerComponentRenderer } from './registry';
 import { resolveVariant } from './helpers';
 import { FloatingChrome, usePlacementPatchedComponent } from './floating-chrome';
 import type { RendererContext } from './types';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * decision_panel 渲染器（VNext §12）：options.decision =
@@ -60,6 +61,7 @@ function parseDecision(raw: unknown): DecisionPayload | null {
 }
 
 function DecisionPanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
+const t = useT();
   const patched = usePlacementPatchedComponent(component);
   const variant = resolveVariant(patched, 'default') === 'compact' ? 'compact' : 'default';
   const decision = parseDecision(patched.options?.['decision']);
@@ -78,7 +80,7 @@ function DecisionPanelView({ component, ctx }: { component: MapSpecComponent; ct
         <div className={`flex flex-col ${variant === 'compact' ? 'gap-0.5' : 'gap-1'}`}>
           {decision.weightSource ? (
             <div className="px-1 text-micro text-map-chrome-ink-muted" data-testid="decision-weight-source">
-              权重来源：{decision.weightSource}
+              {t('map.decision.weightSource')}{decision.weightSource}
             </div>
           ) : null}
           {decision.rows ? (
@@ -109,7 +111,7 @@ function DecisionPanelView({ component, ctx }: { component: MapSpecComponent; ct
           ) : null}
           {decision.vetoes && decision.vetoes.length > 0 ? (
             <div className="border-t border-map-chrome-line px-1 pt-1">
-              <div className="text-micro text-map-chrome-ink-muted">硬约束否决：</div>
+              <div className="text-micro text-map-chrome-ink-muted">{t('map.decision.hardConstraints')}</div>
               {decision.vetoes.map((v, i) => (
                 <div key={`veto#${i}`} className="text-caption text-map-chrome-ink-muted">
                   · {v}
@@ -124,7 +126,7 @@ function DecisionPanelView({ component, ctx }: { component: MapSpecComponent; ct
           data-state="empty"
           role="status"
         >
-          暂无决策结果
+          {t('map.decision.empty')}
         </div>
       )}
     </FloatingChrome>

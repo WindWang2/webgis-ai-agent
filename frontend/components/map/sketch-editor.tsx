@@ -41,6 +41,8 @@ import {
   geometryVertices,
   snapToVertex,
 } from '@/lib/edit/sketch-geometry';
+import { useT } from '@/lib/i18n/useT';
+import { t as tNow } from '@/lib/i18n/t';
 
 const SKETCH_FILL_LAYER = 'wb-sketch-fill';
 const SKETCH_LINE_LAYER = 'wb-sketch-line';
@@ -148,6 +150,7 @@ function commitSketchCommand(
 }
 
 export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null> }) {
+  const t = useT();
   const mapReady = useHudStore((s) => s.mapLoaded);
   const tool = useHudStore((s) => s.activeMapTool);
   const snapping = useHudStore((s) => s.snappingEnabled);
@@ -387,6 +390,12 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       dragStartGeometry.set(parentId, feature.geometry);
       dragging = { parentId, vertexIndex };
       if (typeof map.dragPan?.disable === 'function') map.dragPan.disable();
+      // P7 触控：编辑期间禁用双指旋转/俯仰（触屏上双指常被识别为旋转手势，
+      // 与顶点拖拽冲突）；平移保留 —— 单指拖动地图仍是预期行为。
+      if (typeof map.touchZoomRotate?.disableRotation === 'function') map.touchZoomRotate.disableRotation();
+      if (typeof (map as unknown as { touchPitch?: { disable: () => void } }).touchPitch?.disable === 'function') {
+        (map as unknown as { touchPitch: { disable: () => void } }).touchPitch.disable();
+      }
     };
 
     const onMove = (e: MapMouseEvent) => {
@@ -403,6 +412,10 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       const done = dragging;
       dragging = null;
       if (typeof map.dragPan?.enable === 'function') map.dragPan.enable();
+      if (typeof map.touchZoomRotate?.enableRotation === 'function') map.touchZoomRotate.enableRotation();
+      if (typeof (map as unknown as { touchPitch?: { enable: () => void } }).touchPitch?.enable === 'function') {
+        (map as unknown as { touchPitch: { enable: () => void } }).touchPitch.enable();
+      }
       const state = getSketchState();
       const feature = state.features.find((f) => f.id === done.parentId);
       if (!feature) return;
@@ -410,7 +423,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       const after = feature.geometry;
       if (before && JSON.stringify(before) !== JSON.stringify(after)) {
         recordCommand({
-          label: '编辑草图顶点',
+          label: t('map.sketch.editVertices'),
           kind: 'sketch',
           actor: 'user',
           layerIds: [SKETCH_LAYER_ID],
@@ -442,7 +455,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       window.removeEventListener('mouseup', onMouseUpWindow);
       if (typeof map.dragPan?.enable === 'function') map.dragPan.enable();
     };
-  }, [tool, mapReady, getMap, setSketchDirty]);
+  }, [tool, mapReady, getMap, setSketchDirty, t]);
 
   /* ─── 键盘：Enter 完成 / Escape 取消草稿或退出工具 ─── */
   useEffect(() => {
@@ -493,7 +506,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
       aria-live="polite"
       className="pointer-events-auto absolute bottom-3 left-3 z-30 flex items-center gap-2 rounded-md border border-edge-subtle bg-surface-raised/95 px-2.5 py-1.5 text-micro text-ink shadow-agent-md backdrop-blur-md"
     >
-      <span>草图有未保存变更</span>
+      <span>{t('map.sketch.unsaved')}</span>
       <button
         type="button"
         className="rounded-xs bg-status-accent px-2 py-0.5 font-medium text-ink-on-accent hover:opacity-90"
@@ -510,13 +523,13 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
           useHudStore.getState().pushOpLog({
             id: `op-${Date.now()}`,
             type: 'add',
-            label: '导出草图 GeoJSON',
+            label: t('map.sketch.exportGeoJson'),
             time: new Date().toLocaleTimeString('zh-CN'),
             actor: 'user',
           });
         }}
       >
-        保存（导出 GeoJSON）
+        {t('map.sketch.save')}
       </button>
       <button
         type="button"
@@ -528,7 +541,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
           journalSketchDiscard();
         }}
       >
-        丢弃
+        {t('map.sketch.discard')}
       </button>
     </div>
   );
@@ -537,7 +550,7 @@ export function SketchEditor({ mapRef }: { mapRef: React.RefObject<MapRef | null
 function journalSketchDiscard(): void {
   // 丢弃是显式破坏性确认 —— 仅入 journal（不可逆），不进 undo 栈。
   import('@/lib/workbench/undo').then(({ journalOnly }) => {
-    journalOnly({ type: 'remove', label: '丢弃草图', actor: 'user' });
+    journalOnly({ type: 'remove', label: tNow('map.sketch.discardTitle'), actor: 'user' });
   }).catch(() => { /* noop */ });
 }
 
