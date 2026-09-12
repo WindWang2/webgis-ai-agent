@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased] - 2026-09-12 (knowledge & marketplace & modelops surfaces, ADR-0145)
+
+### Added (feat/knowledge-market-ui-v9)
+- Knowledge panel: `rag-independent-panel.tsx` `return null` stub (#607) replaced
+  with a real surface — document upload (client-side text read, .txt/.md/.json,
+  honest rejection of PDF/DOCX), offset-paginated catalog with creator-only
+  delete + two-step confirm, semantic search with raw-L2 score display, and
+  "inject into chat" composing `[n]` citation blocks into the chat draft
+  (user confirms send; the chat API `message` is a plain string).
+- Citation rendering: shared `components/chat/citation.tsx` — definition blocks
+  peeled from the message body into a source list, known `[n]` markers rendered
+  as keyboard-accessible superscripts with hover/focus source cards; consumed by
+  story-markdown.tsx (31 lines, the contract's sanctioned extension point) and
+  minimally by mini-md.tsx (chat bubbles render through MiniMd). Zero-regression
+  rule: messages without definition blocks are byte-identical.
+- rag-config: real test retrieval (GET /knowledge/search) with score
+  distribution bars (linear L2, no fake similarity %), knowledge-panel
+  navigation entry; embedding model shown as backend-fixed (no read/write
+  endpoint; the model name is a backend code constant, deliberately not
+  hard-coded in UI).
+- Extension market browser (read-only per backend contract): package
+  list/search/tag filter, detail with version history, permission claims,
+  dependencies, digest/fingerprint/SBOM digest, authenticated .tar.gz download.
+  Install/uninstall/enable/disable are operator-CLI only — honest install note
+  instead of fake buttons; list 404 renders "market disabled" empty state.
+- ModelOps panel: registry list/inspect/history driven through
+  POST /api/v1/chat/tools/execute (ModelOps has no dedicated HTTP routes);
+  #1212 capability-projection gap presented honestly (provenance verbatim +
+  fixed explanatory note); run history limited to session-local observation of
+  chat tool events (backend has no persisted run-history endpoint).
+- Rail: append-only market/modelops group (RAIL_GROUPS, MODE_TABS all modes,
+  LeftTab union); tool-call-card modelops run-id jump link (29 lines).
+- Recon doc: frontend/docs/knowledge-market-recon.md (endpoint contract tables
+  + backend gap list). ADR-0145.
+
+### Notes
+- Task-book "msw fixtures" adapted to the repo's established fixture pattern
+  (vi.stubGlobal fetch in tests, Playwright route interception in
+  test/visual/capture.mjs) — the repo has no msw dependency; avoids lockfile
+  contention across concurrent V9 lines.
+
 ## [Unreleased] - 2026-09-12 (quality-e2e-v9: journey E2E & budget gates, ADR-0146)
 
 ### Added
@@ -33,7 +74,7 @@
 - docs/dev/quality-e2e-recon.md (P0 recon: CI lane map, reusable infra,
   weak-coverage gap lists, benchmark inventory, #1223-#1233 fault lineage);
   docs/adr/0146-journey-tiered-testing-and-determinism.md.
-<<<<<<< HEAD
+
 ## [Unreleased] - 2026-09-12 (workspace-ui-v9, ADR-0143)
 
 ### Added (frontend: 项目工作区 UI 完整化)
@@ -60,8 +101,7 @@
 - 后端契约缺口（rename/preview、artifact 下载/revisions、snapshot diff、
   restore/gc job 化、gc staging、repair dry-run）以诚实降级 + 协调点交付，
   详见 `frontend/docs/workspace-ui-recon.md` §2.10 与 ADR-0143。
-=======
-<<<<<<< HEAD
+
 ## [Unreleased] - 2026-09-11 (V9: API contract & versioning foundation, ADR-0138)
 
 ### Added
@@ -100,7 +140,7 @@
   22 test files now collectable on Windows.
 - starlette-layer HTTPException (malformed body 400) bypassing the unified
   envelope handler (registration key must cover the starlette base class).
-=======
+
 ## [Unreleased] - 2026-09-11 (Security & Tenancy V9, ADR-0139)
 
 ### Added
@@ -133,6 +173,7 @@
   隔离矩阵 + 泄漏扫描）、`tests/unit/test_security_v9_units.py`
   （tenancy/scopes/password/quota/audit/rotation/metrics 门禁）、
   `tests/test_endpoint_scope_matrix.py`（矩阵 CI 三重校验）。
+
 ## [Unreleased] - 2026-09-12 (foundation/i18n-responsive-v9)
 
 Internationalization & responsive touch foundation (ADR-0144, PR #1237).
@@ -176,6 +217,7 @@ Internationalization & responsive touch foundation (ADR-0144, PR #1237).
 - Sketch editor: touch rotation/pitch disabled during edit sessions
   (symmetric restore); coarse-pointer 44px touch targets on nav rail;
   audit: `frontend/docs/touch-audit.md`.
+
 ## [Unreleased] - 2026-09-11 (data-lifecycle-v9: 数据基础与生命周期治理 V9, ADR-0140)
 
 ### Added
@@ -235,6 +277,7 @@ Internationalization & responsive touch foundation (ADR-0144, PR #1237).
   libs on Windows raise OSError, not ImportError), restoring app import /
   test collection on Windows dev machines (#1221 D-7 same class); two
   cartography PDF tests skip honestly in that environment.
+
 ## [Unreleased] - 2026-09-11 (feat/lakehouse-ui-v9: Lakehouse Cube Explorer UI, ADR-0141)
 
 ### Added (frontend: Lakehouse Cube Explorer UI, ADR-0141)
@@ -255,9 +298,6 @@ Internationalization & responsive touch foundation (ADR-0144, PR #1237).
 - 测试：29 端点契约单测（正常/空/错误三态 fixtures）、rail 注册/tablist
   a11y/面板契约组件测试、48 步时序性能门禁（确定性丢帧+LRU 有界断言；
   绝对 p95<16ms 由专用进程取证）。
-
->>>>>>> origin/master
->>>>>>> origin/master
 
 ## [Unreleased] - 2026-09-10 (V7/V8 epic integration round)
 

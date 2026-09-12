@@ -41,7 +41,9 @@
     "tasks": "任务",
     "results": "结果",
     "export_layout": "制图",
-    "exports": "导出"
+    "exports": "导出",
+    "market": "市场",
+    "modelops": "ModelOps"
   },
   "modes": {
     "explore": "探索",
@@ -70,7 +72,9 @@
       "analysis": "分析",
       "tasks": "任务",
       "results": "分析结果",
-      "export_layout": "制图工坊"
+      "export_layout": "制图工坊",
+      "market": "市场",
+      "modelops": "ModelOps"
     },
     "desc": {
       "chat": "AI 地理智能体",
@@ -82,7 +86,9 @@
       "analysis": "空间分析工具",
       "tasks": "后台作业中心",
       "results": "结果工作台 · 输入 · 指标 · 输出",
-      "export_layout": "排版与导出"
+      "export_layout": "排版与导出",
+      "market": "扩展市场 · 包浏览 · 下载",
+      "modelops": "模型注册表 · 本会话运行"
     },
     "boundary": {
       "chat": "对话",

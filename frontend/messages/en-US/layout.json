@@ -41,7 +41,9 @@
     "tasks": "Tasks",
     "results": "Results",
     "export_layout": "Map layout",
-    "exports": "Exports"
+    "exports": "Exports",
+    "market": "Market",
+    "modelops": "ModelOps"
   },
   "modes": {
     "explore": "Explore",
@@ -70,7 +72,9 @@
       "analysis": "Analysis",
       "tasks": "Tasks",
       "results": "Analysis results",
-      "export_layout": "Cartography studio"
+      "export_layout": "Cartography studio",
+      "market": "Market",
+      "modelops": "ModelOps"
     },
     "desc": {
       "chat": "AI geospatial agent",
@@ -82,7 +86,9 @@
       "analysis": "Spatial analysis tools",
       "tasks": "Background job center",
       "results": "Result workbench · Inputs · Metrics · Outputs",
-      "export_layout": "Layout & export"
+      "export_layout": "Layout & export",
+      "market": "Extension market · browse · download",
+      "modelops": "Model registry · in-session runs"
     },
     "boundary": {
       "chat": "Chat",

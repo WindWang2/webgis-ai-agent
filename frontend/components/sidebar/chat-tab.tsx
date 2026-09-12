@@ -317,6 +317,17 @@ const t = useT();
   useEffect(() => setMounted(true), []);
 
   const [input, setInput] = useState('');
+  // V9 citation 注入（ADR-0145）：知识库面板把带 [n] 引用块的文本拼入输入框
+  // 草稿，由用户确认发送（chat API 的 message 是纯字符串，不静默代发）。
+  const pendingInjection = useHudStore((s) => s.pendingChatInjection);
+  const clearPendingChatInjection = useHudStore((s) => s.clearPendingChatInjection);
+  useEffect(() => {
+    if (pendingInjection === null) return;
+    setInput((prev) =>
+      prev.trim() ? `${prev}\n\n${pendingInjection}` : pendingInjection,
+    );
+    clearPendingChatInjection();
+  }, [pendingInjection, clearPendingChatInjection]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isBusy = aiStatus === 'thinking' || aiStatus === 'acting';

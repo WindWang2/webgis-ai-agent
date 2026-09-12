@@ -67,6 +67,11 @@ const SURFACES = [
   { name: 'analysis', tab: '分析' },
   { name: 'tasks', tab: '任务' },
   { name: 'map-studio', tab: '制图' },
+  // V9（ADR-0145）：智能资产面板（rail 追加组；modelops 未打 fixture，
+  // 捕获的是其确定性诚实空态 —— 注册表工具经 /chat/tools/execute 走
+  // 通用空数组分支）。
+  { name: 'market', tab: '市场' },
+  { name: 'modelops', tab: 'ModelOps' },
   { name: 'settings', button: '设置' },
   { name: 'template-gallery', button: '模板库' },
   { name: 'history', button: '历史会话' },
@@ -534,6 +539,68 @@ const FIXTURES = [
       messages: [
         { role: 'user', content: '统计北京各区人口密度并出图', created_at: NOW },
         { role: 'assistant', content: '已生成分级设色图与商业 POI 热力图。', created_at: NOW },
+      ],
+    },
+  ],
+  // V9（ADR-0145）：知识库文档目录 + 扩展市场列表（market/modelops rail 面用）。
+  [
+    /\/api\/v1\/knowledge\/documents\?/,
+    {
+      code: 'SUCCESS',
+      success: true,
+      message: 'ok',
+      data: {
+        total: 2,
+        items: [
+          {
+            id: 'doc_a1b2c3d4e5f6',
+            title: '北京城市更新政策汇编（2025）',
+            file_type: 'markdown',
+            chunk_count: 42,
+            status: 'completed',
+            created_at: NOW,
+          },
+          {
+            id: 'doc_b2c3d4e5f6a1',
+            title: 'GIS 空间分析术语表',
+            file_type: 'text',
+            chunk_count: 17,
+            status: 'completed',
+            created_at: NOW,
+          },
+        ],
+      },
+    },
+  ],
+  [
+    /\/api\/v1\/extensions\/marketplace\/packages\?/,
+    {
+      total: 2,
+      offset: 0,
+      limit: 50,
+      items: [
+        {
+          id: 'io.webgis.gpkg',
+          title: 'GeoPackage 数据源扩展',
+          description: '读写 GeoPackage（.gpkg）矢量数据源，支持图层物化与字段类型映射。',
+          publisher: 'op-pub-1',
+          status: 'active',
+          deprecation_note: '',
+          latest_version: '1.4.0',
+          versions: ['1.4.0', '1.3.2', '1.2.0'],
+          tags: ['data-source', 'format'],
+        },
+        {
+          id: 'io.webgis.h3tools',
+          title: 'H3 工具箱',
+          description: 'H3 网格聚合、LISA 与制图辅助工具集（示例退役包）。',
+          publisher: 'op-pub-2',
+          status: 'deprecated',
+          deprecation_note: '由 webgis.h3tools v2 取代',
+          latest_version: '0.9.1',
+          versions: ['0.9.1'],
+          tags: ['grid'],
+        },
       ],
     },
   ],

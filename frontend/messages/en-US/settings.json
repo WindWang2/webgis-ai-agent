@@ -46,7 +46,25 @@
     "noDocs": "No indexed documents ({count} total)",
     "total": "{total} documents (showing first {shown})",
     "hintLocal": "Display only: the backend currently uses a built-in local vector store (FAISS) and does not depend on an external vector database.",
-    "hintDisplay": "Display only: saving does not change backend retrieval behavior."
+    "hintDisplay": "Display only: saving does not change backend retrieval behavior.",
+    "docsNeedLogin": "Sign in to view knowledge base documents",
+    "docsLoadFailed": "Failed to load knowledge base documents",
+    "testNeedAdmin": "Administrator permission is required to test the connection",
+    "testFailed": "Connection failed",
+    "testFailedDetail": "Connection failed: {detail}",
+    "testRetrieval": "Test Retrieval",
+    "retrievalQueryAria": "Test retrieval query",
+    "retrievalQueryPlaceholder": "Enter a query to inspect retrieval hits and the score distribution…",
+    "retrieving": "Retrieving…",
+    "retrieve": "Retrieve",
+    "retrievalFailed": "Retrieval failed",
+    "noHits": "No hits — \"{query}\" matched nothing in the currently indexed documents.",
+    "hitMeta": "Chunk {id} · L2 {score}",
+    "scoreDistAria": "Hit score distribution: {count} hits, L2 distance range {min} to {max}",
+    "scoreDistNote": "Bar length is proportional to L2 distance (linear relative to the worst hit). A smaller L2 distance means more relevant — not a similarity percentage.",
+    "embeddingNote": "The embedding model is fixed by the backend (a code constant with no read/write config endpoint); this only probes retrieval quality.",
+    "openPanel": "Open knowledge base panel",
+    "panelHint": "Upload / delete documents and chat injection are done in the panel"
   },
   "skills": {
     "uploaded": "Uploaded and hot-loaded: {name}"

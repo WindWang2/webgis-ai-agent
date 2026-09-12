@@ -13,11 +13,13 @@ import {
   Wrench,
   Copy,
   Check,
+  Boxes,
 } from 'lucide-react';
 import { CartographyResultCard } from './cartography-result-card';
 import { H3LisaResultCard } from './h3-lisa-result-card';
 import { IsochroneResultCard } from './isochrone-result-card';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { MODELOPS_RUN_TOOLS as MODELOPS_RUN_TOOL_NAMES } from '@/lib/api/modelops';
 
 export interface ToolCallEntry {
   id: string;
@@ -119,6 +121,9 @@ const TOOL_NAMES: Record<string, string> = {
   webgis_isochrones: '等时圈分析',
   stac_search: 'STAC 遥感检索',
   h3_binning: 'H3 网格化',
+  // V9（ADR-0145）：modelops 推理工具（chat 中实际出现卡片的工具族）
+  modelops_run_inference: '模型推理',
+  modelops_run_promptable: '可提示分割推理',
 };
 
 function ToolName({ name }: { name: string }) {
@@ -158,6 +163,25 @@ function CopyButton({ text, label = '复制' }: { text: string; label?: string }
 }
 
 /* ── Single tool call card (minimal row when collapsed) ── */
+
+// V9（ADR-0145）：modelops 推理 run → ModelOps 面板跳转（契约 ≤30 行）。
+// 工具名词表与 use-modelops-runs 共用（lib/api/modelops.ts）。
+const MODELOPS_RUN_TOOLS = new Set<string>(MODELOPS_RUN_TOOL_NAMES);
+
+function ModelOpsRunLink({ runId }: { runId: string }) {
+  const setActiveLeftTab = useHudStore((s: { setActiveLeftTab: (t: 'modelops') => void }) => s.setActiveLeftTab);
+  return (
+    <button
+      type="button"
+      onClick={() => setActiveLeftTab('modelops')}
+      aria-label={`在 ModelOps 面板查看运行 ${runId}`}
+      className="inline-flex items-center gap-1 rounded-sm border border-edge-subtle bg-surface-raised px-1.5 py-0.5 text-micro font-medium text-status-accent transition-colors hover:bg-surface-hover"
+    >
+      <Boxes size={10} aria-hidden />
+      ModelOps · run {runId.slice(0, 12)}
+    </button>
+  );
+}
 
 export function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolean }) {
   const t = useT();
@@ -266,6 +290,13 @@ export function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded:
           onFocus={hasOwnLayer ? (id) => id && focusLayer(id) : undefined}
         />
       )}
+
+      {MODELOPS_RUN_TOOLS.has(call.tool) &&
+        typeof (call.result as { run_id?: unknown } | undefined)?.run_id === 'string' && (
+          <div className="px-2.5 py-1.5">
+            <ModelOpsRunLink runId={(call.result as { run_id: string }).run_id} />
+          </div>
+        )}
 
       {open && (
         <div
