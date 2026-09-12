@@ -91,6 +91,30 @@ def image_diff(
     }
 
 
+def ink_ratio(
+    png_bytes: bytes, per_channel_tolerance: int = PER_CHANNEL_TOLERANCE
+) -> float:
+    """非背景像素占比：以左上角像素为背景参照，逐通道差 > 容差的像素份额。
+
+    回答 golden diff 的盲区：pass-ratio 预算（98%）远大于小要素墨量（稀疏
+    场景 ~0.4%），"要素整块消失"不会跌破像素通过线。墨量带校验补上这一层
+    ——要素消失 ⇒ 墨量骤降 ⇒ 拦截。
+    """
+    import numpy as np
+
+    width, height, rgb = decode_png(png_bytes)
+    if not width or not height:
+        return float("nan")
+    arr = (
+        np.frombuffer(rgb, dtype=np.uint8)
+        .reshape(height, width, 3)
+        .astype(np.int16)
+    )
+    background = arr[0, 0]
+    delta = np.abs(arr - background).max(axis=2)
+    return round(float((delta > per_channel_tolerance).mean()), 6)
+
+
 def sample_points_distinguishable(
     points: Sequence[Tuple[int, int, int]],
     min_distance: int = SAMPLE_POINT_MIN_DISTANCE,

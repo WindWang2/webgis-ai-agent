@@ -28,6 +28,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 DASHBOARD_BEGIN = "<!-- AC10:AUTO:BEGIN（脚本生成段，勿手改） -->"
+#: 趋势窗口系数：单 run 平均发射的 evidence 键数上界（窗口 = last × 此值）
+_EVIDENCE_KEYS_PER_RUN = 5
 DASHBOARD_END = "<!-- AC10:AUTO:END -->"
 
 
@@ -74,7 +76,8 @@ def render_text(grouped: Dict[str, List[Dict[str, Any]]], last: int) -> str:
     lines.append(f"{'check_id':52} {'n':>3} {'first':>10} {'last':>10} "
                  f"{'min':>10} {'max':>10} {'lane':13} trend")
     for check_id, series in grouped.items():
-        window = series[-last * 5:]
+        # 每检查项窗口：一次 run 可发多条 evidence 键，取 5× 覆盖同族键。
+        window = series[-last * _EVIDENCE_KEYS_PER_RUN:]
         values = [r["value"] for r in window]
         first, latest = values[0], values[-1]
         direction = "→" if len(values) < 2 else (
@@ -94,7 +97,7 @@ def write_csv(grouped: Dict[str, List[Dict[str, Any]]], last: int, path: Path) -
         writer = csv.writer(f)
         writer.writerow(["check_id", "ts", "lane", "scene_id", "value", "verdict"])
         for _check_id, series in grouped.items():
-            for row in series[-last * 5:]:
+            for row in series[-last * _EVIDENCE_KEYS_PER_RUN:]:
                 ts = row["ts"]
                 writer.writerow([
                     row["check_id"],
@@ -128,7 +131,8 @@ def top_level_metrics() -> Dict[str, str]:
     desired = [r for r in runs if r["lane"] == "desired_state"]
     runtime = [r for r in runs if r["lane"] == "runtime"]
 
-    # 全自动率：无人工介入终态（passed）占全部有判定 run 的比例。
+    # 全自动率（口径：有判定 run 中 passed=true 的占比；人工介入次数
+    # 当前无独立度量源，见 dashboard 口径表 —— 诚实披露，不冒充）。
     judged = [r for r in runs if isinstance(r.get("passed"), bool)]
     auto_rate = f"{len(passed_runs) / len(judged) * 100:.1f}%" if judged else "未测量"
 

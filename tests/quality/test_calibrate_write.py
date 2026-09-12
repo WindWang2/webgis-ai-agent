@@ -14,9 +14,7 @@ from pathlib import Path
 import pytest
 import sqlalchemy as sa
 
-import app.core.database as database
 from app.core.config import settings
-from app.core.database import Base
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "calibrate_cartography_thresholds.py"
 
@@ -39,37 +37,6 @@ _INPUT = {
         for v in (18.0, 15.5, 13.0, 11.5, 9.0, 7.5, 6.2, 5.4)
     ],
 }
-
-
-@pytest.fixture()
-async def facts_db(tmp_path, monkeypatch):
-    db_path = Path(tmp_path) / "facts.db"
-    from app.models.cartography_quality import (  # noqa: F401
-        CartographyQualityBaseline,
-        CartographyQualityMetric,
-        CartographyQualityRun,
-        CartographyQualityWaiver,
-    )
-
-    engine = sa.create_engine(
-        f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
-    )
-    Base.metadata.create_all(bind=engine)
-    engine.dispose()
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    from sqlalchemy.pool import NullPool
-
-    async_engine = create_async_engine(
-        f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool
-    )
-    async with async_engine.begin() as conn:
-        await conn.run_sync(lambda c: Base.metadata.create_all(c))
-    monkeypatch.setattr(
-        database, "AsyncSessionLocal",
-        async_sessionmaker(bind=async_engine, expire_on_commit=False),
-    )
-    yield db_path
-    await async_engine.dispose()
 
 
 def _db_path_for_async(sync_path: Path) -> str:

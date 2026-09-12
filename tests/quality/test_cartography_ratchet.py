@@ -154,56 +154,8 @@ def test_scene_baseline_overrides_global():
 # ── DB 面 ────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture()
-async def ratchet_db(tmp_path, monkeypatch):
-    from pathlib import Path
-
-    import sqlalchemy as sa
-
-    import app.core.database as database
-    from app.core.database import Base
-
-    db_path = Path(tmp_path) / "ratchet.db"
-    engine = sa.create_engine(
-        f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
-    )
-    from app.models import cartography_quality  # noqa: F401 — 注册四张表
-
-    Base.metadata.create_all(bind=engine, tables=[
-        Base.metadata.tables["cartography_quality_runs"],
-        Base.metadata.tables["cartography_quality_metrics"],
-        Base.metadata.tables["cartography_quality_baselines"],
-        Base.metadata.tables["cartography_quality_waivers"],
-    ])
-    engine.dispose()
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    from sqlalchemy.pool import NullPool
-
-    async_engine = create_async_engine(
-        f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool
-    )
-    async with async_engine.begin() as conn:
-        await conn.run_sync(
-            lambda sync_conn: Base.metadata.create_all(
-                sync_conn,
-                tables=[
-                    Base.metadata.tables["cartography_quality_runs"],
-                    Base.metadata.tables["cartography_quality_metrics"],
-                    Base.metadata.tables["cartography_quality_baselines"],
-                    Base.metadata.tables["cartography_quality_waivers"],
-                ],
-            )
-        )
-    monkeypatch.setattr(
-        database, "AsyncSessionLocal",
-        async_sessionmaker(bind=async_engine, expire_on_commit=False),
-    )
-    yield db_path
-    await async_engine.dispose()
-
-
 @pytest.mark.anyio
-async def test_baseline_write_load_activate_cycle(ratchet_db):
+async def test_baseline_write_load_activate_cycle(facts_db):
     rows = [
         {"scene_id": "heatmap-basic", "check_id": "carto.load.ratio.load_ratio",
          "value": 0.10},
@@ -231,7 +183,7 @@ async def test_baseline_write_load_activate_cycle(ratchet_db):
 
 
 @pytest.mark.anyio
-async def test_waiver_roundtrip_and_expiry_filter(ratchet_db):
+async def test_waiver_roundtrip_and_expiry_filter(facts_db):
     assert await add_waiver(
         "carto.load.ratio.load_ratio", reason="flaky upstream", days=30,
         created_by="ac-10",
@@ -243,7 +195,7 @@ async def test_waiver_roundtrip_and_expiry_filter(ratchet_db):
 
 
 @pytest.mark.anyio
-async def test_end_to_end_blocked_then_waived(ratchet_db, monkeypatch):
+async def test_end_to_end_blocked_then_waived(facts_db, monkeypatch):
     """验收主线：入库 → 激活 → 注入劣化被拦 → 豁免后放行 → 到期再拦。"""
     rows = [
         {"scene_id": "s", "check_id": "carto.load.ratio.load_ratio", "value": 0.10}

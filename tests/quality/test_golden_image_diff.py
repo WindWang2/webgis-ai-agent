@@ -16,6 +16,7 @@ from app.lib.cartography.golden_diff import (
     color_distance,
     compare_golden,
     image_diff,
+    ink_ratio,
     sample_points_distinguishable,
 )
 
@@ -146,3 +147,72 @@ def test_color_distance_respects_tolerance():
 def test_pass_ratio_constant_is_strict():
     """通过线必须严于 1.0 - 1/32：真实渲染抖动可过，成片劣化必拦。"""
     assert 0.95 <= PASS_PIXEL_RATIO < 1.0
+
+
+# ── 墨量带（review 修复：像素通过线对小要素消失是盲的） ─────────────────
+
+
+def test_ink_ratio_measures_feature_share():
+    """红块在浅底上的墨量 ≈ 其像素占比（角点为背景参照）。"""
+    from PIL import Image
+
+    img = Image.new("RGB", (100, 100), (240, 240, 240))
+    pixels = img.load()
+    for x in range(20, 30):        # 10x10 = 1% 墨量
+        for y in range(20, 30):
+            pixels[x, y] = (200, 30, 30)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    ink = ink_ratio(buf.getvalue())
+    assert ink == pytest.approx(0.01, abs=0.002)
+
+
+def test_ink_ratio_flat_canvas_is_zero():
+    png = _png_bytes((240, 240, 240))
+    assert ink_ratio(png) == 0.0
+
+
+def test_ink_band_catches_feature_vanish_that_pixel_budget_misses():
+    """1% 墨量的要素整块消失：within_ratio≈0.99 仍过 98% 线，墨量带必拦。"""
+    base = _png_bytes((240, 240, 240))
+    from PIL import Image
+
+    drifted = Image.new("RGB", (8, 8), (240, 240, 240))  # 要素没了
+    buf = io.BytesIO()
+    drifted.save(buf, format="PNG")
+    diff = image_diff(base, buf.getvalue())
+    assert diff["pass"] is True  # 像素通过线对 1.6% 墨量损失是盲的
+    ink_golden = ink_ratio(_png_bytes_with_dot())
+    ink_now = ink_ratio(buf.getvalue())
+    assert abs(ink_now - ink_golden) > max(0.001, 0.4 * ink_golden)  # 带拦截
+
+
+def _png_bytes_with_dot() -> bytes:
+    from PIL import Image
+
+    img = Image.new("RGB", (8, 8), (240, 240, 240))
+    pixels = img.load()
+    for x in range(0, 1):        # 单像素着色 ≈ 1.6% 墨量
+        pixels[x, 0] = (200, 30, 30)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+# ── 晋升分档谓词（review 修复：quarantine 机制必须有测试） ───────────────
+
+
+def test_blocking_predicate_matches_adr_0065_tiers():
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "golden_baseline.py"
+    spec = importlib.util.spec_from_file_location("golden_baseline_mod", script)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("golden_baseline_mod", mod)
+    spec.loader.exec_module(mod)
+
+    assert mod._is_blocking("pr-blocking") is True
+    assert mod._is_blocking("nightly-only") is False
+    assert mod._is_blocking("quarantine") is False

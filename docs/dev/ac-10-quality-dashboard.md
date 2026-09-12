@@ -8,10 +8,10 @@
 
 | 指标 | 口径 | 数据来源 |
 |---|---|---|
-| 全自动率 | 有判定 run 中 `passed=true` 的比例 | 事实库 `cartography_quality_runs` |
+| 全自动率 | 有判定 run 中 `passed=true` 的占比（人工介入次数暂无独立度量源，诚实口径见左） | 事实库 `cartography_quality_runs` |
 | 一次成功率 | desired_state lane 通过且零修复尝试 | 同上 |
 | 自愈成功率 | runtime lane 有修复尝试且终态通过 | 同上 |
-| 一致性 | golden lane（像素级 golden 校验）通过率 | 同上 |
+| 一致性 | golden lane（像素级 golden + 墨量带校验）通过率 | 同上 |
 | 出版就绪 | publish/export 产出处入账后计算（08 线接入前为 未测量） | 08 线调用本线写入 API |
 | 回归守护 | ratchet active 基线数 / 劣化 / waived | `cartography_quality_baselines` |
 
@@ -29,16 +29,16 @@
 
 <!-- AC10:AUTO:BEGIN（脚本生成段，勿手改） -->
 
-### 数值段（脚本自动生成 @ 2026-09-12 22:57 UTC）
+### 数值段（脚本自动生成 @ 2026-09-12 23:33 UTC）
 
 #### 顶层六项指标
 
 | 指标 | 当前值 |
 |---|---|
-| 全自动率 | 100.0% |
+| 全自动率 | 85.7% |
 | 一次成功率 | 未测量 |
 | 自愈成功率 | 未测量 |
-| 一致性 | 100.0% (n=42) |
+| 一致性 | 100.0% (n=18) |
 | 出版就绪 | 未测量 |
 | 回归守护 | 未测量（无 active 基线） |
 
@@ -48,16 +48,12 @@
 制图质量趋势（最近 10 次 run，按检查项；旧→新）
 ============================================================================================
 check_id                                               n      first       last        min        max lane          trend
-CLASSIFICATION_INTEGRITY.break_count                   1          5          5          5          5 adaptive      →
-OPACITY_VALIDITY.value                                 1          1          1          1          1 adaptive      →
-RESULT_DATA_PRESENCE.feature_count                     1         16         16         16         16 adaptive      →
-carto.color.separability.class_count                   1          4          4          4          4 adaptive      →
-carto.color.separability.min_adjacent_delta_e          1      33.49      33.49      33.49      33.49 adaptive      →
-carto.scale.svs.avg_feature_area_px                    1  3.314e+04  3.314e+04  3.314e+04  3.314e+04 adaptive      →
-carto.scale.svs.feature_count                          1         16         16         16         16 adaptive      →
-carto.scale.svs.svs_area_px                            1       2.25       2.25       2.25       2.25 adaptive      →
-carto.scale.svs.zoom                                   1         10         10         10         10 adaptive      →
-carto.visualvar.overload.encoded_field_count           1          1          1          1          1 adaptive      →
+gate.CartographicQuality                               1          0          0          0          0 runtime       →
+gate.CursorResolutionRate                              2          0          0          0          0 eval          ＝
+gate.ErrorRecoveryRate                                 2        100        100        100        100 eval          ＝
+gate.MapSpecValidity                                   2        100        100        100        100 eval          ＝
+gate.StepEfficiency                                    2        100        100        100        100 eval          ＝
+gate.ToolChoiceAccuracy                                2        100        100        100        100 eval          ＝
 ```
 
 <!-- AC10:AUTO:END -->

@@ -38,7 +38,11 @@ step() { echo; echo "===========================================================
 FAILED=0
 
 step "1/4 cartography lane 独立覆盖率闸（floor=${CARTO_COV_FLOOR}）"
-"$PY" scripts/coverage_cartography_gate.py || FAILED=1
+# lane 测试面会对默认 dev 库做建表/清理（repo 既有行为）——gate 的 lane 跑
+# 用一次性临时库隔离，保护 step 3 ratchet 依赖的事实库数据。
+_LANE_DB_DIR="$(mktemp -d)"
+DATABASE_URL="sqlite:///${_LANE_DB_DIR}/lane.db" "$PY" scripts/coverage_cartography_gate.py || FAILED=1
+rm -rf "${_LANE_DB_DIR}"
 
 if [ "${SKIP_BROWSER:-0}" != "1" ]; then
   step "2/4 头照场景 golden 像素校验（pr-blocking 硬门禁，单场景串行）"

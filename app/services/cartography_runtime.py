@@ -80,7 +80,8 @@ def _spawn_quality_fact_record(result: dict[str, Any]) -> None:
         },
         gate_scores=(
             {"CartographicQuality": gate_score}
-            if isinstance(gate_score, (int, float)) else None
+            if isinstance(gate_score, (int, float)) and not isinstance(gate_score, bool)
+            else None
         ),
     ))
     _quality_fact_tasks.add(task)

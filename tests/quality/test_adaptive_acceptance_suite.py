@@ -231,33 +231,14 @@ def memory_db(tmp_path):
 
 @pytest.fixture()
 async def facts_db(tmp_path, monkeypatch):
-    """ADR-0159 事实库（lane=adaptive 落账用）。"""
-    db_path = Path(tmp_path) / "facts.db"
-    from app.models.cartography_quality import (  # noqa: F401
-        CartographyQualityBaseline,
-        CartographyQualityMetric,
-        CartographyQualityRun,
-        CartographyQualityWaiver,
-    )
+    """ADR-0159 事实库（lane=adaptive 落账用），见 tests/quality/conftest.py。"""
+    from tests.quality.conftest import make_facts_db
 
-    engine = sa.create_engine(
-        f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
-    )
-    Base.metadata.create_all(bind=engine)
-    engine.dispose()
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    from sqlalchemy.pool import NullPool
-
-    async_engine = create_async_engine(
-        f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool
-    )
+    async_engine, session_maker = make_facts_db(Path(tmp_path) / "facts.db")
     async with async_engine.begin() as conn:
-        await conn.run_sync(
-            lambda sync_conn: Base.metadata.create_all(sync_conn)
-        )
+        await conn.run_sync(lambda c: Base.metadata.create_all(c))
     monkeypatch.setattr(
-        database, "AsyncSessionLocal",
-        async_sessionmaker(bind=async_engine, expire_on_commit=False),
+        database, "AsyncSessionLocal", session_maker,
     )
     monkeypatch.setattr(settings, "CARTO_METRICS_STORE_ENABLED", True)
     yield

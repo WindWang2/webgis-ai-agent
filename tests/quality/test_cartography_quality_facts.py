@@ -20,54 +20,6 @@ from app.core.config import settings
 from app.services import cartography_metrics_store as store
 
 
-@pytest.fixture()
-async def facts_db(tmp_path, monkeypatch):
-    """独立 sqlite（aiosqlite）事实库：建表 + 顶层 AsyncSessionLocal 替身。"""
-    db_path = tmp_path / "facts.db"
-    engine = sa.create_engine(
-        f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
-    )
-    from app.core.database import Base
-    from app.models.cartography_quality import (  # noqa: F401 — 注册两张表
-        CartographyQualityMetric,
-        CartographyQualityRun,
-    )
-
-    Base.metadata.create_all(
-        bind=engine,
-        tables=[
-            Base.metadata.tables["cartography_quality_runs"],
-            Base.metadata.tables["cartography_quality_metrics"],
-        ],
-    )
-    engine.dispose()
-
-    from sqlalchemy.ext.asyncio import (
-        async_sessionmaker,
-        create_async_engine,
-    )
-    from sqlalchemy.pool import NullPool
-
-    async_engine = create_async_engine(
-        f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool
-    )
-    async with async_engine.begin() as conn:
-        await conn.run_sync(
-            lambda sync_conn: Base.metadata.create_all(
-                sync_conn,
-                tables=[
-                    Base.metadata.tables["cartography_quality_runs"],
-                    Base.metadata.tables["cartography_quality_metrics"],
-                ],
-            )
-        )
-    session_maker = async_sessionmaker(bind=async_engine, expire_on_commit=False)
-    monkeypatch.setattr(database, "AsyncSessionLocal", session_maker)
-    monkeypatch.setattr(settings, "CARTO_METRICS_STORE_ENABLED", True)
-    yield db_path
-    await async_engine.dispose()
-
-
 def _check(rule: str, status: str, evidence: dict) -> dict:
     return {
         "rule": rule,
@@ -230,7 +182,6 @@ async def test_runtime_hook_records_without_altering_verdict(facts_db, monkeypat
         "gate": {"score": 0.0, "reason": "evaluated_failure"},
         "overall_passed": False,
     }
-    original = asyncio.tasks.all_tasks  # noqa: F841 — 仅供调试观感，无行为
     runtime._spawn_quality_fact_record(result)
     pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     await asyncio.gather(*pending)
@@ -292,3 +243,19 @@ def test_bounded_summary_projection():
     assert bounded is not None
     assert len(bounded) == store._MAX_SUMMARY_KEYS
     assert len(bounded["k0"]) == store._MAX_SUMMARY_STR
+
+
+@pytest.mark.anyio
+async def test_trend_prefix_query_escapes_like_wildcards(facts_db):
+    """check_id 前缀里的 _ 不当通配符（review 修复）：只命中真前缀。"""
+    await store.record_quality_run(
+        lane="runtime", source="test",
+        checks=[
+            _check("carto.load.ratio", "pass", {"load_ratio": 1.0}),
+            _check("carto_load_ratioX", "pass", {"load_ratio": 2.0}),
+        ],
+    )
+    trend = await store.query_quality_trend("carto.load.ratio")
+    ids = {row["check_id"] for row in trend}
+    assert any(i.startswith("carto.load.ratio") for i in ids)
+    assert not any(i.startswith("carto_load_ratioX") for i in ids)

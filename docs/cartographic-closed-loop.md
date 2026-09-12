@@ -231,9 +231,13 @@ checkpoint path. This prevents a style-only repair from downloading or copying
 a large dataset.
 
 Repair history is capped by the hard iteration limit. Slim tool/SSE payloads
-retain at most twelve non-pass checks and strip MapSpec source bodies. Evidence
-uses existing in-memory/session/harness retention; no database or migration is
-introduced.
+retain at most twelve non-pass checks and strip MapSpec source bodies. Review
+verdicts and their per-check observations are additionally mirrored, after the
+fact, into the cartography quality fact store (`cartography_quality_runs` /
+`cartography_quality_metrics`, migration 0056, ADR-0159) by fire-and-forget
+hooks at the production sites. That store is a downstream ledger for trend and
+ratchet gates only: it never participates in evaluation, and verdicts remain
+governed by the in-memory/session/harness retention above.
 
 The headless runtime validator's luminance, blank-canvas, and control-layout
 scores are retained as `heuristic_visual_proxies`. They can supplement the

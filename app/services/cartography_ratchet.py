@@ -117,12 +117,8 @@ class RatchetViolation:
         }
 
 
-def aggregate_observations(
-    rows: Iterable[Any],
-    quantile: float = 0.66,
-) -> List[Observation]:
-    """把 run 观测行（dict 形态：scene_id/check_id/value）聚合成
-    「图型 × 检查项」一条分位观测 —— 多样本同键取分位，抗离群。"""
+def _group_finite_rows(rows: Iterable[Any]) -> Dict[Tuple[str, str], List[float]]:
+    """观测行 → (scene, check) → 有限数值列表（bool/非有限/空键剔除）。"""
     grouped: Dict[Tuple[str, str], List[float]] = {}
     for row in rows:
         value = row.get("value") if isinstance(row, dict) else None
@@ -139,6 +135,16 @@ def aggregate_observations(
         if not check:
             continue
         grouped.setdefault((scene, check), []).append(numeric)
+    return grouped
+
+
+def aggregate_observations(
+    rows: Iterable[Any],
+    quantile: float = 0.66,
+) -> List[Observation]:
+    """把 run 观测行（dict 形态：scene_id/check_id/value）聚合成
+    「图型 × 检查项」一条分位观测 —— 多样本同键取分位，抗离群。"""
+    grouped = _group_finite_rows(rows)
     return [
         Observation(scene_id=scene, check_id=check, value=percentile(sorted(values), quantile))
         for (scene, check), values in sorted(grouped.items())
@@ -191,7 +197,12 @@ def evaluate_ratchet(
         if baseline is None:
             continue
         direction = baseline.direction or resolve_direction(obs.check_id)
-        tolerance = baseline.tolerance_pct if baseline.tolerance_pct else tolerance_pct
+        # 基线自带容差优先（显式 0 = 零容差，不得回退到调用方默认）。
+        tolerance = (
+            baseline.tolerance_pct
+            if baseline.tolerance_pct is not None
+            else tolerance_pct
+        )
         if not _is_regression(direction, baseline.value, obs.value, tolerance):
             continue
         violation = RatchetViolation(
@@ -224,19 +235,7 @@ def build_baseline_entries(
     tolerance_pct: float = 5.0,
 ) -> List[Baseline]:
     """从观测行构建基线条目（provisional，待显式激活）。"""
-    grouped: Dict[Tuple[str, str], List[float]] = {}
-    for row in rows:
-        value = row.get("value") if isinstance(row, dict) else None
-        if value is None or isinstance(value, bool):
-            continue
-        try:
-            numeric = float(value)
-        except (TypeError, ValueError, OverflowError):
-            continue
-        if not math.isfinite(numeric):
-            continue
-        key = (str(row.get("scene_id") or GLOBAL_SCOPE), str(row.get("check_id") or ""))
-        grouped.setdefault(key, []).append(numeric)
+    grouped = _group_finite_rows(rows)
     entries: List[Baseline] = []
     for (scene, check), values in sorted(grouped.items()):
         ordered = sorted(values)

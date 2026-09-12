@@ -78,3 +78,25 @@
 - findings 棘轮（`test_findings_ratchet_gate.py`）锁的是**工具/算法质量债**（`docs/quality/findings-baseline.json`，10 个 code），与制图指标无关。
 - 三份基线文件规模：`baselines.json` 15 条、`transport_baselines.json` 5 条、`structural_baselines.json` 6 条。
 - 产出的首基线全部为 pass 态健康观测（n=42），当前**没有任何跨运行机制消费这 6 条规则的数值**（无 DB、无文件、无棘轮、无 CI 阈值闸）——calibrate 脚本是唯一入口且只打印。
+
+---
+
+## (e) 执行期补充（主 agent，2026-09-13）
+
+以下数字产自实现阶段的本地实测，补入本侦察记录：
+
+- **cartography lane 覆盖率现状**（P0 第 4 项 / P4 下限参考）：`-m cartography`
+  lane（708 passed, 21 skipped）下 scope 计量 `app/lib/cartography` =
+  **50.10%**（7207 stmts）、`app/lib/harness` = 46.33%（1131 stmts，09 线所有，
+  仅报告不设闸）、合并 49.59%。计量命令与输出见 PR 门的步骤 1
+  （`scripts/coverage_cartography_gate.py`，pytest `-o addopts=` 覆盖 ini 的
+  `--cov=app` 后按 scope 求和）。
+- **渲染确定性实证**：9 场景 golden generate 后同机 verify，全部
+  `within_ratio=1.0`、`max_channel_diff=0` —— same-env 下渲染逐像素确定，
+  像素 golden 可作 0 容差回归锁；±16/48/98% 容差只为跨环境/跨版本漂移留裕度。
+- **墨量实测**（golden 场景非背景像素占比）：raster-overlay 0.71、其余场景
+  0.0007–0.0062 —— 证实"小要素整块消失"不会跌破 98% 像素通过线，verify 因此
+  叠加墨量带校验（`|Δink| ≤ max(0.001, 0.4×ink)`）。
+- 本文件 (b) 节基线已作为 42 条 provisional 基线入库
+  （`quality_ratchet_gate.py baseline --from-json`），激活时机见
+  `docs/dev/ac-10-decisions.md` D2。

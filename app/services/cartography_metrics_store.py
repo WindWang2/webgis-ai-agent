@@ -238,6 +238,14 @@ async def _record_quality_run_inner(
     return run_id
 
 
+def _like_prefix(check_id: str) -> str:
+    """前缀匹配转义 % / _（check_id 里出现下划线是常态，如 carto.load.ratio）。"""
+    escaped = (
+        str(check_id).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return f"{escaped}%"
+
+
 async def query_quality_trend(
     check_id: str,
     since: Optional[datetime] = None,
@@ -272,7 +280,11 @@ async def query_quality_trend(
             CartographyQualityRun,
             CartographyQualityMetric.run_id == CartographyQualityRun.id,
         )
-        .where(CartographyQualityMetric.check_id.like(f"{check_id}%"))
+        .where(
+            CartographyQualityMetric.check_id.like(
+                _like_prefix(check_id), escape="\\"
+            )
+        )
         .order_by(CartographyQualityRun.ts.asc(), CartographyQualityMetric.id.asc())
         .limit(max(1, min(int(limit), 5000)))
     )
@@ -526,7 +538,11 @@ def query_quality_trend_sync(
                     CartographyQualityRun,
                     CartographyQualityMetric.run_id == CartographyQualityRun.id,
                 )
-                .filter(CartographyQualityMetric.check_id.like(f"{check_id}%"))
+                .filter(
+                    CartographyQualityMetric.check_id.like(
+                        _like_prefix(check_id), escape="\\"
+                    )
+                )
             )
             if since is not None:
                 stmt = stmt.filter(CartographyQualityRun.ts >= since)

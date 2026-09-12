@@ -36,8 +36,6 @@ if str(REPO_ROOT) not in sys.path:
 
 CARTOGRAPHY_PREFIX = "app/lib/cartography/"
 HARNESS_PREFIX = "app/lib/harness/"
-#: 下限只升不降：历史最高下限记录（本文件内即可审计）。
-FLOOR_RATCHET_HISTORY = (50.0, 60.0)
 
 
 def _norm(key: str) -> str:

@@ -38,6 +38,11 @@ FIXTURE_ROOT = REPO_ROOT / "tests" / "fixtures" / "runtime"
 PROMOTIONS = ("pr-blocking", "nightly-only", "quarantine")
 
 
+def _is_blocking(promotion: str) -> bool:
+    """分档 → 是否 PR 阻断（ADR-0065 语义：quarantine / nightly-only 只报告）。"""
+    return str(promotion) == "pr-blocking"
+
+
 def _windows_cli_shim() -> None:
     """Windows 进程内 shim（只影响本进程；见 measure_scenario_timing.py）。"""
     import os
@@ -173,6 +178,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
         gdir = _golden_dir(scenario)
         gdir.mkdir(parents=True, exist_ok=True)
         (gdir / "map.png").write_bytes(png)
+        from app.lib.cartography.golden_diff import ink_ratio
+
         meta = {
             "scenario": scenario,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -180,6 +187,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
             "source_session": result.get("session_id"),
             "seconds": result.get("seconds"),
             "canvas_blank": result.get("canvas_blank"),
+            "ink_ratio": ink_ratio(png),
             "score": result.get("score"),
             "probes": result.get("probe_results"),
         }
@@ -216,17 +224,20 @@ def _app_version() -> str:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    from app.lib.cartography.golden_diff import image_diff
+    from app.lib.cartography.golden_diff import image_diff, ink_ratio
     from app.services.cartography_metrics_store import record_quality_run_sync
 
     _windows_cli_shim()
     scenarios = args.scenarios.split(",") if args.scenarios else _discover()
     blocking_failures: List[str] = []
     warnings: List[str] = []
+    missing_golden: List[str] = []
     for scenario in scenarios:
         gdir = _golden_dir(scenario)
         golden_png_path = gdir / "map.png"
-        if not golden_png_path.exists():
+        golden_meta_path = gdir / "golden.json"
+        if not golden_png_path.exists() or not golden_meta_path.exists():
+            missing_golden.append(scenario)
             warnings.append(f"{scenario}: 无 golden（先 generate）—— 跳过")
             continue
         status: Dict[str, Any] = {}
@@ -244,39 +255,69 @@ def cmd_verify(args: argparse.Namespace) -> int:
                 json.dumps(result, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
-            if promotion == "pr-blocking":
+            if _is_blocking(promotion):
                 blocking_failures.append(message)
             else:
                 warnings.append(message + "（失败样本已存 last_failure.json）")
             continue
         baseline_png = golden_png_path.read_bytes()
         diff = image_diff(baseline_png, png)
-        verdict = {"seconds": result.get("seconds"), "pixel_diff": diff}
+        # 墨量带校验：小要素整块消失不会跌破像素通过线（98% 预算 > 稀疏场景
+        # ~0.4% 墨量），用墨量骤降/暴增补位。带内判定：|Δ| ≤ max(0.001, 0.4×ink)。
+        # 本机渲染已实证逐像素确定（same-env 下 0.001 ≈ 1280px 容差足够抗
+        # 抖动；跨环境漂移走 nightly-only 分档 + 显式 generate 刷新流程）。
+        golden_meta = json.loads(golden_meta_path.read_text(encoding="utf-8"))
+        ink_golden = float(golden_meta.get("ink_ratio") or 0.0)
+        ink_now = ink_ratio(png)
+        ink_ok = (
+            abs(ink_now - ink_golden) <= max(0.001, 0.4 * abs(ink_golden))
+            if ink_golden > 0
+            else True
+        )
+        verdict = {
+            "seconds": result.get("seconds"),
+            "pixel_diff": diff,
+            "ink_golden": ink_golden,
+            "ink_now": ink_now,
+            "ink_ok": ink_ok,
+        }
         print(f"   within_ratio={diff.get('within_ratio')} "
               f"max_channel_diff={diff.get('max_channel_diff')} "
-              f"pass={diff.get('pass')} ({result.get('seconds')}s)", flush=True)
+              f"ink={ink_now:.4f}(golden {ink_golden:.4f}) "
+              f"pass={diff.get('pass') and ink_ok} ({result.get('seconds')}s)", flush=True)
         (gdir / "last_verify.json").write_text(
             json.dumps(verdict, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        if not diff["pass"]:
-            message = (f"{scenario}: golden diff 失败 "
-                       f"within_ratio={diff['within_ratio']} < {diff['pass_ratio_required']}")
-            if promotion == "pr-blocking":
+        passed = bool(diff["pass"]) and ink_ok
+        if not passed:
+            if ink_ok:
+                message = (f"{scenario}: golden diff 失败 "
+                           f"within_ratio={diff['within_ratio']} < {diff['pass_ratio_required']}")
+            else:
+                message = (f"{scenario}: 墨量带校验失败（要素消失/暴增）"
+                           f" ink golden={ink_golden:.4f} now={ink_now:.4f}")
+            if _is_blocking(promotion):
                 blocking_failures.append(message)
             else:
                 warnings.append(message)
         try:
             record_quality_run_sync(
                 lane="golden", source="golden_verify",
-                scene_id=scenario, passed=bool(diff["pass"]),
+                scene_id=scenario, passed=passed,
                 summary={"promotion": promotion,
                          "within_ratio": diff.get("within_ratio"),
+                         "ink_ok": ink_ok,
                          "seconds": result.get("seconds")},
             )
         except Exception:  # noqa: BLE001
             pass
     for warning in warnings:
         print(f"⚠️  {warning}", flush=True)
+    if missing_golden:
+        # 无证据 ≠ 通过：缺 golden 是配置错误，非阻断告警之外的放行。
+        print(f"\n❌ {len(missing_golden)} 个场景缺 golden 基线"
+              f"（先跑 generate）：{', '.join(missing_golden)}")
+        return 2
     if blocking_failures:
         print(f"\n❌ pr-blocking 场景 golden 校验失败 {len(blocking_failures)} 个：")
         for message in blocking_failures:
