@@ -143,7 +143,7 @@ class TestSubmitResource:
             "resource": {"required_profiles": ["quantum"]},
         }, headers=_AUTH)
         assert r.status_code == 422
-        assert r.json()["detail"]["code"] == "RESOURCE_REQUEST_INVALID"
+        assert r.json()["data"]["code"] == "RESOURCE_REQUEST_INVALID"
 
     def test_submit_envelope_oversize_clamped(self, v7_env):
         r = client.post("/api/v1/geocompute/plans/runs", json={

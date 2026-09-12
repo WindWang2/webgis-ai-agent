@@ -34,6 +34,18 @@ security = HTTPBearer(auto_error=False)
 # Never persist these as owner_id / user_id (no matching users row).
 _ANONYMOUS_USER_IDS = frozenset({"anonymous", "anon"})
 
+
+def scopes_from_payload(payload: Optional[dict],
+                        role_override: Optional[str] = None) -> frozenset:
+    """JWT payload → 有效 scope 集（ADR-0139 P3；词汇表封闭 + 角色回退）。
+
+    延迟 import 规避 scopes ↔ auth 的模块环。
+    """
+    from app.core.scopes import parse_scopes
+
+    role = role_override or (payload or {}).get("role")
+    return parse_scopes((payload or {}).get("scopes"), role)
+
 # ── 测试阶段免登录（AUTH_DISABLED=true）─────────────────────────────────
 # 所有受保护依赖退化为固定 admin 身份：不校验 Bearer token，无需登录。
 # bypass 身份是一个真实 User 行（test-admin, role=admin），使会话归属、
@@ -240,13 +252,19 @@ def create_refresh_token(
     data: dict,
     expires_delta: Optional[timedelta] = None,
     token_version: int = 0,
+    jti: Optional[str] = None,
+    family_id: Optional[str] = None,
 ) -> str:
     """创建 refresh token (默认 7d)。
 
     refresh token 只用于换取新的 access token，不能直接访问受保护资源
     (`get_current_user_with_version` 会拒绝 `type != access` 的 token)。
-    `jti` 是 token 的唯一 id；目前不服务端存储 (soft rotation)，将来若要
-    实现 per-device logout，可改用 refresh_tokens 表存 jti。
+    `jti` 是 token 的唯一 id。
+
+    ADR-0139 P6：``family_id``（32-hex）写入 ``fam`` claim —— 服务端
+    ``refresh_token_families`` 表按家族跟踪 ``current_jti``，refresh
+    轮换前移；旧 jti 重放 = 整个家族失效。``jti`` 可由调用方注入（轮换
+    时服务端先生成、写家族行、再签 token，保证行与 token 一致）。
     """
     to_encode = data.copy()
     now = datetime.now(timezone.utc)
@@ -256,8 +274,10 @@ def create_refresh_token(
         "iat": now,
         "type": TOKEN_TYPE_REFRESH,
         "ver": int(token_version),
-        "jti": secrets.token_hex(16),  # 32-char hex，碰撞概率可忽略
+        "jti": jti or secrets.token_hex(16),  # 32-char hex，碰撞概率可忽略
     })
+    if family_id:
+        to_encode["fam"] = str(family_id)
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -336,6 +356,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         "user_id": user_id,
         "role": payload.get("role") or "viewer",
         "org_id": payload.get("org_id"),
+        # ADR-0139 P3：有效 scope 集（claim 缺席/旧 token → 角色默认集）
+        "scopes": scopes_from_payload(payload),
     }
 
 
@@ -350,23 +372,30 @@ async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = 
         # 避免"同一请求在 A 端点是 test-admin、在 B 端点是 anonymous"。
         return dict(AUTH_BYPASS_PROFILE)
 
+    def _anon() -> dict:
+        # ADR-0139 P3：匿名携带隐式最小 scope 集（公开读 + 自有会话）
+        from app.core.scopes import ANON_SCOPES
+
+        return {"user_id": "anonymous", "role": "anonymous",
+                "scopes": ANON_SCOPES}
+
     if credentials is None:
-        return {"user_id": "anonymous", "role": "anonymous"}
+        return _anon()
 
     token = credentials.credentials
     payload = verify_token(token)
 
     if payload is None:
-        return {"user_id": "anonymous", "role": "anonymous"}
+        return _anon()
 
     user_id = payload.get("sub")
     if not user_id:
-        return {"user_id": "anonymous", "role": "anonymous"}
+        return _anon()
 
     # 拒绝 refresh token 被当 access 用 (新 token)
     tok_type = payload.get("type")
     if tok_type is not None and tok_type != TOKEN_TYPE_ACCESS:
-        return {"user_id": "anonymous", "role": "anonymous"}
+        return _anon()
 
     return {
         "user_id": user_id,
@@ -376,6 +405,8 @@ async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = 
         # admin 通道）可自行做版本复核；缺省 0 与 with_version 依赖的
         # back-compat 语义一致。
         "ver": payload.get("ver", 0),
+        # ADR-0139 P3：有效 scope 集
+        "scopes": scopes_from_payload(payload),
     }
 
 
@@ -465,6 +496,9 @@ async def get_current_user_with_version(
         "role": payload.get("role") or user.role or "viewer",
         "org_id": user.org_id,
         "user": user,
+        # ADR-0139 P3：有效 scope 集（role 以 DB 实时值为准 —— 降级即时生效）
+        "scopes": scopes_from_payload(
+            payload, role_override=payload.get("role") or user.role or "viewer"),
     }
 
 

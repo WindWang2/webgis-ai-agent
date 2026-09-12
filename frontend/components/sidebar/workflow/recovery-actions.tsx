@@ -6,6 +6,7 @@ import { InlineNotice } from '@/components/shared/inline-notice';
 import type { ReplayMode, WorkflowRunDetail } from '@/lib/api/project';
 import { useAuthUser } from '@/lib/auth/use-auth-user';
 import { REPLAY_MODE_COPY, shouldOfferResume } from '@/lib/workflow/recovery';
+import { useT } from '@/lib/i18n/useT';
 
 export interface RecoveryActionsProps {
   run: WorkflowRunDetail | null;
@@ -16,6 +17,7 @@ export interface RecoveryActionsProps {
 }
 
 export function RecoveryActions({ run, busy, error, onReplay, onResume }: RecoveryActionsProps) {
+const t = useT();
   const [mode, setMode] = useState<ReplayMode>('exact');
   const offerResume = shouldOfferResume(run);
   // #528：回放/续跑走后端写路径（#501 要求认证）——匿名用户禁用并提示登录，
@@ -26,15 +28,15 @@ export function RecoveryActions({ run, busy, error, onReplay, onResume }: Recove
   return (
     <section aria-labelledby="wf-recovery-heading" className="space-y-2">
       <h3 id="wf-recovery-heading" className="text-[11px] font-semibold uppercase tracking-wide text-[var(--theme-text-muted)]">
-        恢复
+        {t('sidebar.wf.recover')}
       </h3>
       {writeLocked && (
         <p className="text-[11px] text-[var(--theme-text-muted)]">
-          回放 / 续跑需要登录账号 — 请先在 设置 → 账户 登录
+          {t('sidebar.wf.loginHint')}
         </p>
       )}
       <fieldset className="space-y-1.5" disabled={busy}>
-        <legend className="sr-only">回放模式</legend>
+        <legend className="sr-only">{t('sidebar.wf.replayMode')}</legend>
         {(Object.keys(REPLAY_MODE_COPY) as ReplayMode[]).map((key) => {
           const copy = REPLAY_MODE_COPY[key];
           const id = `replay-mode-${key}`;
@@ -72,8 +74,8 @@ export function RecoveryActions({ run, busy, error, onReplay, onResume }: Recove
         />
         {offerResume && (
           <ConfirmAction
-            label="尝试续跑"
-            confirmLabel="确认从已完成步骤续跑？"
+            label={t('sidebar.wf.resume')}
+            confirmLabel={t('sidebar.wf.confirmResume')}
             onConfirm={onResume}
             disabled={busy || writeLocked || !run}
             title={writeLocked ? '需要登录账号（设置 → 账户）' : undefined}
@@ -82,7 +84,7 @@ export function RecoveryActions({ run, busy, error, onReplay, onResume }: Recove
       </div>
       {busy && (
         <p role="status" className="text-[11px] text-[var(--theme-text-muted)]">
-          正在等待后端确认…
+          {t('sidebar.wf.waitingBackend')}
         </p>
       )}
       {error && <InlineNotice variant="warning">{error}</InlineNotice>}

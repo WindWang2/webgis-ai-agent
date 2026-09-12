@@ -4,6 +4,7 @@ import { Activity, RefreshCw } from 'lucide-react';
 import type { DataSource } from '@/lib/api/data-fabric';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { ConfirmAction } from '@/components/shared/confirm-action';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * 数据源状态 → 共享 StatusBadge 映射（原 light-only 手写徽标收敛）。
@@ -15,10 +16,10 @@ import { ConfirmAction } from '@/components/shared/confirm-action';
  * ok（success 绿），degraded → stale（amber），其余 → error。
  * 这样 pulse 蓝始终只代表"有事情正在跑"。
  */
-function toStatusBadgeProps(status: string): { status: string; label: string } {
-  if (status === 'healthy' || status === 'active') return { status: 'ok', label: '正常' };
-  if (status === 'degraded') return { status: 'stale', label: '降级' };
-  return { status: 'error', label: '离线' };
+function toStatusBadgeProps(status: string): { status: string; labelKey: string } {
+  if (status === 'healthy' || status === 'active') return { status: 'ok', labelKey: 'ds.statusNormal' };
+  if (status === 'degraded') return { status: 'stale', labelKey: 'ds.statusDegraded' };
+  return { status: 'error', labelKey: 'ds.statusOffline' };
 }
 
 export interface SourceItemCardProps {
@@ -30,6 +31,7 @@ export interface SourceItemCardProps {
 
 /** 已注册数据源卡片：名称 + 状态徽标 + Endpoint + 探查/同步/两段式删除。 */
 export function SourceItemCard({ source, onProbe, onSync, onDelete }: SourceItemCardProps) {
+const t = useT();
   const badge = toStatusBadgeProps(source.status);
   return (
     /* 与 layers-tab 行同款交互配方：hover 底色 + 左侧 accent 指示条位
@@ -37,7 +39,7 @@ export function SourceItemCard({ source, onProbe, onSync, onDelete }: SourceItem
     <div className="rounded-md border border-l-2 border-edge-subtle border-l-transparent bg-surface-overlay px-panel py-2 transition-colors hover:bg-surface-hover">
       <div className="flex items-center justify-between">
         <span className="font-semibold text-ink">{source.name}</span>
-        <StatusBadge status={badge.status} label={badge.label} />
+        <StatusBadge status={badge.status} label={t(`sidebar.${badge.labelKey}`)} />
       </div>
       <div className="mt-1 truncate font-mono text-caption text-ink-muted">
         {source.endpoint_url}
@@ -49,7 +51,7 @@ export function SourceItemCard({ source, onProbe, onSync, onDelete }: SourceItem
           className="flex items-center gap-1 rounded-sm text-ink-secondary transition-colors hover:text-ink"
         >
           <Activity size={12} aria-hidden />
-          <span>探查</span>
+          <span>{t('sidebar.ds.probe')}</span>
         </button>
         <button
           type="button"
@@ -57,11 +59,11 @@ export function SourceItemCard({ source, onProbe, onSync, onDelete }: SourceItem
           className="flex items-center gap-1 rounded-sm text-ink-secondary transition-colors hover:text-ink"
         >
           <RefreshCw size={12} aria-hidden />
-          <span>同步</span>
+          <span>{t('sidebar.ds.sync')}</span>
         </button>
         <ConfirmAction
-          label="删除"
-          confirmLabel="确认删除？"
+          label={t('sidebar.ds.delete')}
+          confirmLabel={t('sidebar.ds.confirmDelete')}
           className="ml-auto"
           onConfirm={() => onDelete(source.id)}
         />

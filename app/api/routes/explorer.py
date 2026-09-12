@@ -2,13 +2,17 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-from typing import Optional
 
 from app.api.routes.layer import _verify_session_owner
 from app.services.explorer.orchestrator import ExplorerOrchestrator
 from app.services.explorer.models import SearchContext
 from app.core.auth import get_current_user
+from app.schemas.explorer_schema import (
+    ExploreAbortResponse,
+    ExploreStatusResponse,
+    StartExploreRequest,
+    StartExploreResponse,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/explorer", tags=["探索引擎"])
@@ -16,23 +20,8 @@ router = APIRouter(prefix="/explorer", tags=["探索引擎"])
 orchestrator = ExplorerOrchestrator()
 
 
-class StartExploreRequest(BaseModel):
-    query: str = Field(..., min_length=1, max_length=500)
-    session_id: Optional[str] = None
-    expected_data_type: str = "poi_list"
-    source_hint: list[str] = Field(default_factory=list)
-    auto_threshold: float = 0.7
-
-
-class ExploreStatusResponse(BaseModel):
-    task_id: str
-    status: str
-    progress: int = 0
-    result: Optional[dict] = None
-
-
-@router.post("/start")
-async def start_exploration(req: StartExploreRequest, _user: dict = Depends(get_current_user)) -> dict:
+@router.post("/start", response_model=StartExploreResponse)
+async def start_exploration(req: StartExploreRequest, _user: dict = Depends(get_current_user)) -> StartExploreResponse:
     """启动深度探索任务
 
     审计 S42：若带 session_id，校验归属 —— 防止匿名启动任务消耗 LLM/API 配额
@@ -53,13 +42,13 @@ async def start_exploration(req: StartExploreRequest, _user: dict = Depends(get_
             session_id=req.session_id or "",
             user_id=_user.get("user_id", ""),
         )
-        return {"task_id": task_id, "status": "started"}
+        return StartExploreResponse(task_id=task_id, status="started")
     except Exception as e:
         logger.error(f"Failed to start exploration: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/status/{task_id}")
+@router.get("/status/{task_id}", response_model=ExploreStatusResponse)
 async def get_task_status(task_id: str, _user: dict = Depends(get_current_user)) -> ExploreStatusResponse:
     """查询探索任务状态（审计 S42：校验任务所有权）"""
     # #526: durable owner check — the in-process _task_owners map dies with the
@@ -79,13 +68,13 @@ async def get_task_status(task_id: str, _user: dict = Depends(get_current_user))
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/abort/{task_id}")
-async def abort_task(task_id: str, _user: dict = Depends(get_current_user)) -> dict:
+@router.post("/abort/{task_id}", response_model=ExploreAbortResponse)
+async def abort_task(task_id: str, _user: dict = Depends(get_current_user)) -> ExploreAbortResponse:
     """中止探索任务（审计 S42：校验任务所有权）"""
     if not await orchestrator.verify_chain_owner(task_id, _user.get("user_id", "")):
         raise HTTPException(status_code=404, detail="Task not found")
     success = await orchestrator.abort_task(task_id)
-    return {"task_id": task_id, "aborted": success}
+    return ExploreAbortResponse(task_id=task_id, aborted=success)
 
 
 @router.get("/stream/{task_id}")

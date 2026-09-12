@@ -93,7 +93,7 @@ async def test_get_task_not_found(client):
     """测试获取不存在的任务"""
     resp = await client.get("/api/v1/tasks/task-nonexistent")
     assert resp.status_code == 404
-    assert "not found" in resp.json()["detail"]
+    assert "not found" in resp.json()["message"]
 
 
 @pytest.mark.asyncio

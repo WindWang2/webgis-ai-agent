@@ -3,14 +3,36 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Annotated, Any, Literal, Optional
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.chat_schema import (  # noqa: F401 - 模块属性保持（测试 _mod.X 引用）
+    _MAX_CANVAS_PX,
+    _bounded_canvas,
+    CartographicObservationResponse,
+    CartographicRuntimeObservationRequest,
+    ChartArtifactResponse,
+    ChatRequest,
+    ChatResponse,
+    ClearSessionResponse,
+    MapActionAck,
+    MapActionAckRequest,
+    MapActionAckResponse,
+    MapStatePushRequest,
+    SessionDetailResponse,
+    SessionListResponse,
+    SessionMapStateResponse,
+    SessionPlanViewResponse,
+    SkillsListResponse,
+    TableArtifactResponse,
+    ToolExecuteRequest,
+    ToolExecuteResponse,
+    ToolsListResponse,
+)
 from app.core.auth import (
     authorize_session_write,
     get_current_user,
@@ -239,36 +261,6 @@ def _bounded_observation_list(entries: Any) -> list[dict[str, Any]]:
 
 
 #: canvas 上限（CSS 像素；16K 显示器约 15360px，16384 取 2 的幂对齐上界）。
-_MAX_CANVAS_PX = 16384
-
-
-def _bounded_canvas(raw: Any) -> Optional[dict[str, int]]:
-    """canvas 有界校验（V6 W8 证据门）。
-
-    width/height 须为正整数（bool 除外；整数值 float 归一为 int）且
-    ≤ _MAX_CANVAS_PX；缺席 / 非 dict / 非数字 / 非正 / 超限 → None
-    （调用方省略该键 —— 按「证据缺席」诚实降级，不做像素级判定）。
-    只返回 {width, height} 投影（不透传客户端多发键）。
-    """
-    if not isinstance(raw, dict):
-        return None
-    vals: list[int] = []
-    for key in ("width", "height"):
-        value = raw.get(key)
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            ivalue = value
-        elif isinstance(value, float) and value.is_integer():
-            ivalue = int(value)
-        else:
-            return None
-        if not 0 < ivalue <= _MAX_CANVAS_PX:
-            return None
-        vals.append(ivalue)
-    return {"width": vals[0], "height": vals[1]}
-
-
 async def _record_frontend_cartographic_observation(
     session_id: Optional[str], map_state: Optional[dict]
 ) -> None:
@@ -643,50 +635,6 @@ async def _resume_generator(
     with rt_ctx.bind_runtime_context(request_id=request_id, session_id=session_key or None):
         async for evt in _chat_resume_module._resume_generator_impl(session_key, last_event_id, message):
             yield evt
-
-
-
-class ChatRequest(BaseModel):
-    """聊天请求"""
-    message: str = Field(..., min_length=1, max_length=5000)
-    session_id: Optional[str] = None
-    map_state: Optional[dict] = Field(None, description="当前的地图状态（视角、图层等）")
-    skill_name: Optional[str] = Field(None, description="要激活的技能名称")
-    project_id: Optional[str] = Field(
-        None,
-        description=(
-            "Active project workspace id; when set, the chat context "
-            "assembler renders the project-summary block (datasets + "
-            "workflows) for this project. The session metadata store "
-            "does not yet persist project_id, so the request body is "
-            "the only way to associate a chat turn with a project."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _cap_map_state_size(self):
-        # #521: map_state is client-controlled and persisted via set_map_state
-        # per key; without a bound a multi-MB payload stalls the event loop on
-        # every turn start (and is capped nowhere else). Reject truthfully —
-        # never silent truncation. NOTE: the bound is measured on the WHOLE
-        # serialized request (model_dump_json, mirroring the
-        # cartographic-observation DTO), not map_state alone — message is
-        # bounded at 5000 chars, so this is the map_state budget with a small
-        # constant slack, but the error text must not claim map_state itself
-        # exceeded the limit.
-        if self.map_state is not None and (
-            len(self.model_dump_json().encode("utf-8")) > 256 * 1024
-        ):
-            raise ValueError("serialized chat request exceeds 256KB (map_state budget)")
-        return self
-
-
-class ChatResponse(BaseModel):
-    """聊天响应"""
-    session_id: str
-    content: str
-    # SEC-08：新建匿名会话时由服务端签发，前端需存储并在后续请求头里回传。
-    owner_token: Optional[str] = None
 
 
 async def _guard_body_session(
@@ -1195,7 +1143,7 @@ async def chat_stream(
     )
 
 
-@router.get("/sessions")
+@router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
     limit: int = Query(50, ge=1, le=200, description="每页数量"),
     offset: int = Query(0, ge=0, description="偏移量"),
@@ -1208,11 +1156,16 @@ async def list_sessions(
     user_id = _user.get("user_id")
     async with async_db_session() as db:
         sessions = await AsyncHistoryService(db).list_sessions(limit=limit, offset=offset, user_id=user_id)
-        return {
-            "total": len(sessions),
-            "limit": limit,
-            "offset": offset,
-            "sessions": [
+        # P4（ADR-0138）：additive 补齐分页元数据（total 已有，has_more 新增）。
+        # has_more 语义：本页满页即视为可能还有更多（list_sessions 无 total
+        # count，避免为列表页做全表计数 —— 与 #618-9 的 DB 分页纪律一致）。
+        total_sessions = len(sessions)
+        return SessionListResponse(
+            total=total_sessions,
+            limit=limit,
+            offset=offset,
+            has_more=total_sessions == limit,
+            sessions=[
                 {
                     "id": s.id,
                     "title": s.title,
@@ -1221,10 +1174,10 @@ async def list_sessions(
                 }
                 for s in sessions
             ],
-        }
+        )
 
 
-@router.get("/sessions/{session_id}")
+@router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
 async def get_session_detail(
     session_id: str,
     conv: Conversation = Depends(require_owned_session),
@@ -1290,7 +1243,7 @@ async def get_session_detail(
     }
 
 
-@router.get("/sessions/{session_id}/map-state")
+@router.get("/sessions/{session_id}/map-state", response_model=SessionMapStateResponse)
 async def get_session_map_state(
     session_id: str,
     _conv: Conversation = Depends(require_owned_session),
@@ -1318,7 +1271,7 @@ async def get_session_map_state(
     return {"session_id": session_id, "map_state": response_state}
 
 
-@router.get("/sessions/{session_id}/chart-artifacts/{ref_id}")
+@router.get("/sessions/{session_id}/chart-artifacts/{ref_id}", response_model=ChartArtifactResponse)
 async def get_session_chart_artifact(
     session_id: str,
     ref_id: str,
@@ -1344,7 +1297,7 @@ async def get_session_chart_artifact(
     raise HTTPException(status_code=404, detail="ref 不是图表 artifact")
 
 
-@router.get("/sessions/{session_id}/table-artifacts/{ref_id}")
+@router.get("/sessions/{session_id}/table-artifacts/{ref_id}", response_model=TableArtifactResponse)
 async def get_session_table_artifact(
     session_id: str,
     ref_id: str,
@@ -1379,7 +1332,7 @@ async def get_session_table_artifact(
     raise HTTPException(status_code=404, detail="ref 不是表格 artifact")
 
 
-@router.get("/sessions/{session_id}/plan")
+@router.get("/sessions/{session_id}/plan", response_model=SessionPlanViewResponse)
 async def get_session_plan(
     session_id: str,
     _conv: Conversation = Depends(require_owned_session),
@@ -1411,24 +1364,6 @@ async def get_session_plan(
     }
 
 
-class MapStatePushRequest(BaseModel):
-    viewport: Optional[dict] = None
-    layers: Optional[list] = Field(default=None, max_length=128)
-    base_layer: Optional[str] = Field(default=None, max_length=500)
-    # F4: monotonic client seq for the viewport write — an out-of-order older
-    # POST landing after the turn-start write is rejected as stale.
-    seq: Optional[int] = None
-
-    @model_validator(mode="after")
-    def _cap_serialized_size(self):
-        # #521: client-controlled body. Viewport hints are persisted; layers
-        # are accepted for old clients but not written (#643). Bound at 256KB
-        # so a multi-MB push cannot stall the event loop's per-key json.dumps.
-        if len(self.model_dump_json().encode("utf-8")) > 256 * 1024:
-            raise ValueError("serialized map state push exceeds 256KB")
-        return self
-
-
 @router.post("/sessions/{session_id}/map-state", status_code=204)
 async def push_session_map_state(
     session_id: str,
@@ -1449,53 +1384,7 @@ async def push_session_map_state(
         await session_data_manager.set_map_state(session_id, "base_layer", req.base_layer)
 
 
-class CartographicRuntimeObservationRequest(BaseModel):
-    """Bounded actual MapLibre evidence for one MapSpec generation."""
-
-    # Client-minted wall-clock/monotonic hybrid. Arrival order is not state
-    # order: a slow stale POST must not overwrite a newer live observation.
-    client_generation: int = Field(ge=1, le=9_007_199_254_740_991)
-    mapspec_fingerprint: str = Field(min_length=16, max_length=96)
-    layers: list[dict[str, Any]] = Field(default_factory=list, max_length=128)
-    viewport: dict[str, Any] = Field(default_factory=dict)
-    style_loaded: bool
-    reconcile_error: str = Field(default="", max_length=500)
-    # P9 render observation（增维不换通道，全部 optional 向后兼容）：
-    # mapspec_revision 是客户端诊断值 —— 守卫语义由服务端在接受门通过后
-    # 盖章当前 _cartographic_mutation_revision（信任边界在服务端）。
-    mapspec_revision: Optional[int] = Field(default=None, ge=0, le=9_007_199_254_740_991)
-    # chrome 组件观察（resolveMapComponents 派生：id/type/enabled/mounted/
-    # anchor/floating/collapsed/rect —— ID 与布尔，无载荷体）。
-    components: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
-    # 有界 runtime error 环（dedup 后 ≤8 条：message≤160 + target）。
-    runtime_errors: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
-    # V5 W5：chart_panel 渲染 telemetry（id/rendered/data_points —— ID、
-    # 布尔与计数，无载荷体）。None = 客户端未上报（旧构建）—— 持久层
-    # 省略该键，服务端按「telemetry 缺席」诚实披露而非误读为空集。
-    charts: Optional[list[dict[str, Any]]] = Field(default=None, max_length=32)
-    # bounded settle 结果（map 'idle' race 超时）。
-    map_idle: Optional[bool] = None
-    observed_at: Optional[int] = Field(default=None, ge=0, le=9_007_199_254_740_991)
-    # V6 W8：地图容器像素尺寸（floating 组件 rect 的参照系 —— 确定性
-    # offscreen/重叠检查的坐标基准）。None = 客户端未上报（旧构建），
-    # 服务端按「证据缺席」降级：不做像素级判定，不产生误伤 finding。
-    canvas: Optional[dict[str, Any]] = None
-
-    @field_validator("canvas", mode="before")
-    @classmethod
-    def _normalize_canvas(cls, value: Any) -> Any:
-        # 非法 canvas 不 422 —— 按证据缺席省略（旧客户端零新 finding
-        # 语义）；只保留 {width, height} 投影（多发键不透传）。
-        return _bounded_canvas(value)
-
-    @model_validator(mode="after")
-    def _cap_serialized_size(self):
-        if len(self.model_dump_json().encode("utf-8")) > 256 * 1024:
-            raise ValueError("serialized cartographic observation exceeds 256KB")
-        return self
-
-
-@router.post("/sessions/{session_id}/cartographic-observation")
+@router.post("/sessions/{session_id}/cartographic-observation", response_model=CartographicObservationResponse)
 async def push_cartographic_runtime_observation(
     session_id: str,
     req: CartographicRuntimeObservationRequest,
@@ -1792,37 +1681,6 @@ async def push_cartographic_runtime_observation(
     return response
 
 
-class MapActionAck(BaseModel):
-    """单条地图动作终态 ACK（V3 闭环：前端上报命令执行终态）。"""
-
-    action_id: str = Field(min_length=1, max_length=64)
-    command: str = Field(max_length=64)
-    status: Literal["succeeded", "failed", "cancelled", "superseded"]
-    error: str = Field(default="", max_length=500)
-    started_at: str = Field(default="", max_length=64)
-    finished_at: str = Field(default="", max_length=64)
-    # le=1e15 拒绝 Infinity/超大值（json.loads("1e999") 会解析成 inf，存进
-    # duration_ms 会在序列化/聚合时产生非有限值）。
-    duration_ms: Optional[float] = Field(default=None, ge=0, le=1e15)
-    correlation: Optional[dict] = None
-    requested: Optional[dict] = None
-    actual: Optional[dict] = None
-
-    @model_validator(mode="after")
-    def _cap_serialized_size(self):
-        # 单条 ACK 序列化上限 16KB —— requested/actual 是无界 dict，防超大上报
-        # 撑爆会话存储。超限抛 ValueError -> FastAPI 返回 422。
-        if len(self.model_dump_json().encode("utf-8")) > 16 * 1024:
-            raise ValueError("serialized ack exceeds 16KB")
-        return self
-
-
-class MapActionAckRequest(BaseModel):
-    """地图动作 ACK 批量上报体（V3 闭环），单批 ≤50 条。"""
-
-    acks: list[MapActionAck] = Field(max_length=50)
-
-
 async def _persist_map_action_acks_locked(
     session_id: str, req: MapActionAckRequest
 ) -> dict[str, Any]:
@@ -1896,7 +1754,11 @@ async def _persist_map_action_acks_locked(
     return result
 
 
-@router.post("/sessions/{session_id}/map-action-ack")
+@router.post(
+    "/sessions/{session_id}/map-action-ack",
+    response_model=MapActionAckResponse,
+    response_model_exclude_none=True,  # 历史形态：非零/触发键才出现
+)
 async def push_map_action_acks(
     session_id: str,
     req: MapActionAckRequest,
@@ -1956,7 +1818,7 @@ async def push_map_action_acks(
         raise _session_busy_503()
 
 
-@router.get("/skills")
+@router.get("/skills", response_model=SkillsListResponse)
 async def list_skills_api(_user: dict = Depends(get_current_user_optional)):
     """列出可用的 .md 技能。
 
@@ -1970,7 +1832,7 @@ async def list_skills_api(_user: dict = Depends(get_current_user_optional)):
     return {"skills": list_md_skills()}
 
 
-@router.delete("/sessions/{session_id}")
+@router.delete("/sessions/{session_id}", response_model=ClearSessionResponse)
 async def clear_session(
     session_id: str,
     _user: dict = Depends(get_current_user_optional),
@@ -2081,25 +1943,16 @@ async def clear_session(
     # deleted session's buffered SSE events from the process-local resume
     # registry until LRU eviction.
     _turn_resume_registry.clear_session(session_id)
-    return {"status": "ok"}
+    return ClearSessionResponse(status="ok")
 
 
-@router.get("/tools")
+@router.get("/tools", response_model=ToolsListResponse)
 async def list_tools(_user: dict = Depends(get_current_user)):
     """列出可用工具 — 需要认证（工具 schema 含 tier-3 危险工具）。"""
     return {"tools": get_registry().get_schemas()}
 
 
-class ToolExecuteRequest(BaseModel):
-    tool: str
-    arguments: dict = {}
-    session_id: Optional[str] = None
-    # tier-3 工具（如 create_new_skill —— 写盘 + importlib.exec_module 等同 RCE）
-    # 必须显式确认才执行（审计 S30）。
-    confirm_destructive: bool = False
-
-
-@router.post("/tools/execute", response_model=None)
+@router.post("/tools/execute", response_model=ToolExecuteResponse)
 async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(require_admin)):
     """直接执行单个工具（非流式通过 chat）
 

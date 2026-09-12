@@ -1,0 +1,119 @@
+{
+  "toolbar": {
+    "measureDistanceMode": "距离测量模式",
+    "measureAreaMode": "面积测量模式",
+    "exitMeasure": "退出测量",
+    "pointsCollected": "已采集点数: {count} 个",
+    "currentResult": "当前测算结果:",
+    "measureHint": "在地图上点击添加测量点，双击或点击下方完成保存标注。",
+    "finishAnnotation": "完成标注",
+    "reset": "重置",
+    "zoomIn": "放大",
+    "zoomInTitle": "放大 (快捷键: +)",
+    "zoomOut": "缩小",
+    "zoomOutTitle": "缩小 (快捷键: -)",
+    "resetNorth": "重置指北与俯仰角",
+    "resetNorthTitle": "重置正北与俯仰角 (快捷键: 0)",
+    "toggle3d": "切换3D视图",
+    "boxSelect": "矩形框选",
+    "boxSelectTitle": "矩形框选（框选地图要素联动图表/表格，快捷键: B）",
+    "measureDistance": "距离测量",
+    "measureDistanceTitle": "距离测量 (快捷键: D)",
+    "measureArea": "面积测量",
+    "measureAreaTitle": "面积测量 (快捷键: A)",
+    "clearAnnotations": "清除标注与测量",
+    "clearAnnotationsTitle": "清除地图上的所有测量与标注",
+    "drawPoint": "绘制点",
+    "drawPointTitle": "绘制点要素（点击地图放置）",
+    "drawLine": "绘制线",
+    "drawLineTitle": "绘制线要素（点击加点，双击/Enter 完成，Escape 取消）",
+    "drawPolygon": "绘制面",
+    "drawPolygonTitle": "绘制面要素（点击加点，双击/Enter 闭合，Escape 取消）",
+    "editVertices": "编辑顶点",
+    "deleteFeature": "删除要素"
+  },
+  "poi": {
+    "focus": "聚焦位置",
+    "focusTitle": "聚焦到要素所在位置",
+    "close": "关闭",
+    "closeTitle": "关闭",
+    "tileApprox": "瓦片近似数据，正在核实…",
+    "copyCoords": "复制经纬度",
+    "copied": "已复制",
+    "copyAttrHint": "点击复制属性值",
+    "andMore": "...以及其他 {count} 个属性",
+    "noAttrs": "（无属性）",
+    "backToList": "← 返回要素列表"
+  },
+  "webgl": {
+    "title": "WebGL 上下文丢失或被阻止",
+    "desc": "浏览器 WebGL 渲染上下文发生丢失或被阻止 (Context Loss)。通常由于浏览器开启过多 3D/地图标签页或 GPU 资源紧张。",
+    "solutions": "建议解决方案：",
+    "s1": "关闭占用显存的其他 3D / 地图标签页",
+    "s2": "确认浏览器设置中已启用「硬件加速」",
+    "s3": "点击下方按钮重试或刷新当前网页",
+    "retry": "重试初始化地图",
+    "reload": "刷新页面",
+    "canvasAria": "地图画布（方向键平移，加号/减号缩放）"
+  },
+  "compare": {
+    "dividerAria": "对比分割线（左右拖动或方向键调整）",
+    "swipeTitle": "滑动对比（拖动分割线）",
+    "swipe": "滑动",
+    "doubleTitle": "双面板对比（主图收窄为左半幅）",
+    "double": "双面板",
+    "exit": "退出对比",
+    "exitTitle": "退出对比"
+  },
+  "table": {
+    "filterPh": "过滤行…",
+    "filterAria": "表格行过滤",
+    "viewportOnlyTitle": "只显示当前视口范围内的行",
+    "viewport": "视口",
+    "rowLimited": "仅显示前 {shown} 行（共 {total}）"
+  },
+  "legends": {
+    "sizeAria": "尺寸图例",
+    "sizeTitle": "尺寸（∝√值）",
+    "widthAria": "线宽图例",
+    "widthTitle": "线宽分级",
+    "opacityHint": "越透明 = 不确定性越高",
+    "compositeAria": "复合图例",
+    "title": "图例"
+  },
+  "sketch": {
+    "editVertices": "编辑草图顶点",
+    "unsaved": "草图有未保存变更",
+    "exportGeoJson": "导出草图 GeoJSON",
+    "save": "保存（导出 GeoJSON）",
+    "discard": "丢弃",
+    "discardTitle": "丢弃草图"
+  },
+  "decision": {
+    "weightSource": "权重来源：",
+    "hardConstraints": "硬约束否决：",
+    "empty": "暂无决策结果"
+  },
+  "chrome": {
+    "undock": "取消停靠",
+    "resetPos": "重置位置",
+    "hide": "隐藏面板"
+  },
+  "methodology": {
+    "title": "方法论披露",
+    "none": "无方法论限制披露"
+  },
+  "uncertainty": {
+    "title": "不确定性",
+    "none": "无不确定性披露"
+  },
+  "chartPanel": {
+    "viewportLinked": "地图视野联动：图表只统计当前视野内的要素"
+  },
+  "statsPanel": {
+    "empty": "暂无统计数据"
+  },
+  "readout": {
+    "aria": "地图视图状态"
+  }
+}

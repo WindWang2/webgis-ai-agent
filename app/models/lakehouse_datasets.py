@@ -62,6 +62,9 @@ class LakehouseDataset(Base):
     dataset_id = Column(String(64), nullable=False)
     owner_type = Column(String(20), nullable=False)
     owner_id = Column(String(128), nullable=False)
+    #: ADR-0139 租户作用域（organizations.id 字符串原文；明文纪律同
+    #: geocompute_runs.org_id）。版本/分支行经 dataset_row_id 继承同一 org。
+    org_id = Column(String(255), nullable=False)
     #: 用户可读名（charset 白名单在 service 边界强制；非身份）。
     name = Column(String(128), nullable=False)
     description = Column(String(512), nullable=True, default="")
@@ -74,6 +77,7 @@ class LakehouseDataset(Base):
     __table_args__ = (
         UniqueConstraint("dataset_id", name="uq_lh_dataset_descriptor"),
         Index("idx_lh_ds_owner_created", "owner_type", "owner_id", "created_at"),
+        Index("idx_lh_ds_org_created", "org_id", "created_at"),
         CheckConstraint("owner_type IN ('session','project')",
                         name="ck_lh_ds_owner_type"),
     )
@@ -108,6 +112,8 @@ class LakehouseDatasetVersion(Base):
         ForeignKey("lakehouse_datasets.id"),
         nullable=False,
     )
+    #: ADR-0139 租户作用域——随 dataset 行传播（commit_version 写入侧取）。
+    org_id = Column(String(255), nullable=False)
     #: commit manifest id（64 hex）。
     version_id = Column(String(64), nullable=False)
     #: 父版本（首个版本为 NULL —— DAG 根）。
@@ -130,6 +136,7 @@ class LakehouseDatasetVersion(Base):
         UniqueConstraint("dataset_row_id", "version_id",
                          name="uq_lh_dsv_dataset_version"),
         Index("idx_lh_dsv_dataset_created", "dataset_row_id", "created_at"),
+        Index("idx_lh_dsv_org_created", "org_id", "created_at"),
         Index("idx_lh_dsv_run", "workflow_run_id"),
         Index("idx_lh_dsv_object", "data_object_id"),
         CheckConstraint(
@@ -169,6 +176,8 @@ class LakehouseDatasetRef(Base):
         ForeignKey("lakehouse_datasets.id"),
         nullable=False,
     )
+    #: ADR-0139 租户作用域——随 dataset 行传播（branch/tag 创建侧取）。
+    org_id = Column(String(255), nullable=False)
     ref_type = Column(String(8), nullable=False)
     ref_name = Column(String(128), nullable=False)
     version_id = Column(String(64), nullable=False)
@@ -181,6 +190,7 @@ class LakehouseDatasetRef(Base):
         UniqueConstraint("dataset_row_id", "ref_type", "ref_name",
                          name="uq_lh_dsr_dataset_ref"),
         Index("idx_lh_dsr_dataset", "dataset_row_id", "ref_type"),
+        Index("idx_lh_dsr_org", "org_id", "created_at"),
         CheckConstraint("ref_type IN ('branch','tag')", name="ck_lh_dsr_type"),
     )
 

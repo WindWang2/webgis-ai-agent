@@ -1,4 +1,5 @@
 'use client';
+import { useT } from '@/lib/i18n/useT';
 import { useEffect, useState, useRef } from 'react';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { MapIcon, CheckCircle2 } from 'lucide-react';
@@ -42,6 +43,7 @@ interface MapActionRendererProps {
  * params。
  */
 export function MapActionRenderer({ content }: MapActionRendererProps) {
+  const t = useT();
   const { dispatchAction } = useMapAction();
   const [status, setStatus] = useState<'parsing' | 'success' | 'error'>('parsing');
   // FE-02: 跟踪已 dispatch 的 JSON 块，防重复
@@ -148,7 +150,7 @@ export function MapActionRenderer({ content }: MapActionRendererProps) {
   if (status === 'error') {
     return (
       <span role="status" aria-live="off" className="sr-only">
-        地图指令解析失败
+        {t('chat.mapCmdFailed')}
       </span>
     );
   }

@@ -93,9 +93,9 @@ def test_check_constraints_preserved_after_upgrade(alembic_cfg):
     con = sqlite3.connect(db_path)
     con.execute("PRAGMA foreign_keys=ON")
     # Need an org + project parent to satisfy FKs.
-    con.execute("INSERT INTO organizations (id, name, slug) VALUES (1, 'o', 'o')")
+    con.execute("INSERT INTO organizations (id, name, slug) VALUES (900, 'o', 'o')")
     con.execute(
-        "INSERT INTO projects (id, org_id, name, status) VALUES ('p1', 1, 'p', 'active')"
+        "INSERT INTO projects (id, org_id, name, status) VALUES ('p1', 900, 'p', 'active')"
     )
     con.execute(
         "INSERT INTO workflows (id, project_id, name, version) "
@@ -174,9 +174,9 @@ def test_migration_0022_map_products_and_lineage_semantics(alembic_cfg):
 
     con = sqlite3.connect(db_path)
     con.execute("PRAGMA foreign_keys=ON")
-    con.execute("INSERT INTO organizations (id, name, slug) VALUES (1, 'o', 'o')")
+    con.execute("INSERT INTO organizations (id, name, slug) VALUES (900, 'o', 'o')")
     con.execute(
-        "INSERT INTO projects (id, org_id, name, status) VALUES ('p1', 1, 'p', 'active')"
+        "INSERT INTO projects (id, org_id, name, status) VALUES ('p1', 900, 'p', 'active')"
     )
     # CHECK: version_no >= 1.
     with pytest.raises(sqlite3.IntegrityError):

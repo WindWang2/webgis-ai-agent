@@ -55,6 +55,7 @@ import {
 } from '@/lib/mapspec/session-cursor';
 import type { MapSpec, MapSpecSource } from '@/lib/mapspec-compiler/types';
 import { LegendStack, type LegendStackEntry } from '@/components/map/legend-stack';
+import { useT } from '@/lib/i18n/useT';
 import {
   clearComparisonExport,
   setComparisonExport,
@@ -136,6 +137,7 @@ export function ComparisonView({
   const exitComparison = useHudStore((s: HudState) => s.exitComparison);
   // 选择器禁止内联分配（`?? []` 每次 getSnapshot 造新数组 → useSyncExternalStore
   // 判定快照不稳定 → 无限重渲染）。缺省走模块级冻结空数组。
+  const t = useT();
   const layersRef = useHudStore((s: HudState) => s.layers);
   const layers = layersRef ?? EMPTY_LAYERS;
   // 主地图 onLoad 后才置 true —— 主图 MapLibre 实例的可用信号（同步监听挂载门）。
@@ -491,7 +493,7 @@ export function ComparisonView({
           data-testid="comparison-divider"
           role="slider"
           tabIndex={0}
-          aria-label="对比分割线（左右拖动或方向键调整）"
+          aria-label={t('map.compare.dividerAria')}
           aria-orientation="horizontal"
           aria-valuemin={0}
           aria-valuemax={1}
@@ -535,28 +537,28 @@ export function ComparisonView({
             data-testid="comparison-kind-swipe"
             aria-pressed={kind === 'swipe'}
             aria-current={kind === 'swipe' || undefined}
-            title="滑动对比（拖动分割线）"
+            title={t('map.compare.swipeTitle')}
             className={clsxPill(kind === 'swipe')}
             onClick={() => updateComparison?.({ kind: 'swipe' })}
           >
-            滑动
+            {t('map.compare.swipe')}
           </button>
           <button
             type="button"
             data-testid="comparison-kind-side-by-side"
             aria-pressed={sideBySide}
             aria-current={sideBySide || undefined}
-            title="双面板对比（主图收窄为左半幅）"
+            title={t('map.compare.doubleTitle')}
             className={clsxPill(sideBySide)}
             onClick={() => updateComparison?.({ kind: 'side-by-side' })}
           >
-            双面板
+            {t('map.compare.double')}
           </button>
           <button
             type="button"
             data-testid="comparison-exit"
-            aria-label="退出对比"
-            title="退出对比"
+            aria-label={t('map.compare.exitTitle')}
+            title={t('map.compare.exitTitle')}
             className="flex h-control-sm w-control-sm items-center justify-center rounded-pill text-ink-secondary hover:bg-surface-hover hover:text-ink"
             onClick={() => exitComparison?.()}
           >

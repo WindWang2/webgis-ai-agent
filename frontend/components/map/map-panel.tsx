@@ -1,4 +1,5 @@
 "use client"
+import { useT } from '@/lib/i18n/useT';
 import { useState, useRef, useCallback, useEffect, useMemo, useSyncExternalStore } from "react"
 import { AlertTriangle, RefreshCw } from "lucide-react"
 import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
@@ -170,6 +171,7 @@ export function MapPanel({
   ownerToken,
   sessionTokenRef,
 }: MapPanelProps) {
+  const t = useT();
   void _onRemoveLayer;
   void _onToggleLayer;
 
@@ -1274,17 +1276,17 @@ export function MapPanel({
               <AlertTriangle className="h-7 w-7" />
             </div>
             <div>
-              <h3 className="text-base font-semibold tracking-tight text-ink">WebGL 上下文丢失或被阻止</h3>
+              <h3 className="text-base font-semibold tracking-tight text-ink">{t('map.webgl.title')}</h3>
               <p className="mt-1 text-xs text-ink-muted leading-relaxed">
-                浏览器 WebGL 渲染上下文发生丢失或被阻止 (Context Loss)。通常由于浏览器开启过多 3D/地图标签页或 GPU 资源受限导致。
+                {t('map.webgl.desc')}
               </p>
             </div>
             <div className="rounded-lg bg-surface-sunken/80 p-3 text-left border border-edge-subtle text-[11px] text-ink-muted space-y-1">
-              <div className="font-medium text-ink-secondary">建议解决方案：</div>
+              <div className="font-medium text-ink-secondary">{t('map.webgl.solutions')}</div>
               <ul className="list-disc list-inside space-y-0.5 text-ink-muted">
-                <li>关闭占用显存的其他 3D / 地图标签页</li>
-                <li>确认浏览器设置中已启用「硬件加速」</li>
-                <li>点击下方按钮重试或刷新当前网页</li>
+                <li>{t('map.webgl.s1')}</li>
+                <li>{t('map.webgl.s2')}</li>
+                <li>{t('map.webgl.s3')}</li>
               </ul>
             </div>
             <div className="flex items-center gap-3 pt-2">
@@ -1294,14 +1296,14 @@ export function MapPanel({
                 className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-status-accent px-3.5 py-2 text-xs font-medium text-white shadow-sm hover:bg-status-accent-vivid transition-colors"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
-                重试初始化地图
+                {t('map.webgl.retry')}
               </button>
               <button
                 type="button"
                 onClick={() => window.location.reload()}
                 className="inline-flex items-center justify-center rounded-lg border border-edge-subtle bg-surface-sunken px-3.5 py-2 text-xs font-medium text-ink hover:bg-surface-subtle transition-colors"
               >
-                刷新页面
+                {t('map.webgl.reload')}
               </button>
             </div>
           </div>
@@ -1314,7 +1316,7 @@ export function MapPanel({
         <div
           className={comparisonSideBySide ? "absolute inset-y-0 left-0 right-1/2" : "absolute inset-0"}
           role="application"
-          aria-label="地图画布（方向键平移，加号/减号缩放）"
+          aria-label={t('map.webgl.canvasAria')}
         >
         <Map
           key={`maplibre-instance-${mapKey}`}

@@ -101,6 +101,20 @@ class ArtifactExchange:
             now = datetime.now(timezone.utc).replace(tzinfo=None)
             expires = now + timedelta(seconds=self._ttl_s)
             with self._meta_session() as db:
+                # ADR-0139：org 锚定 run 行真相（artifact 与 run 同租户），
+                # 无 run 上下文的登记兜底 default 桶。
+                from app.core import tenancy
+                from app.models.db_model import GeoComputeClusterRun
+
+                org_id = None
+                if run_id:
+                    org_id = db.execute(
+                        select(GeoComputeClusterRun.org_id).where(
+                            GeoComputeClusterRun.run_id == run_id)
+                    ).scalar_one_or_none()
+                if org_id is None:
+                    org_id = tenancy.get_or_create_default_org_id_sync(db)
+
                 existing = db.execute(
                     select(GeoComputeArtifact.id).where(
                         GeoComputeArtifact.artifact_key == handle.key)
@@ -108,6 +122,7 @@ class ArtifactExchange:
                 if existing is None:
                     db.add(GeoComputeArtifact(
                         artifact_key=handle.key, run_id=run_id,
+                        org_id=org_id,
                         owner_scope=owner_scope, kind=kind, codec=codec,
                         size_bytes=handle.size_bytes, stored_at=now,
                         expires_at=expires,

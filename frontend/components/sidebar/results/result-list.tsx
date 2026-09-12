@@ -17,6 +17,7 @@ import { familyLabel } from '@/lib/results/families';
 import type { AnalysisResult } from '@/lib/results/types';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { EmptyState } from '@/components/shared/empty-state';
+import { useT } from '@/lib/i18n/useT';
 
 interface ResultListProps {
   results: AnalysisResult[];
@@ -38,6 +39,7 @@ function formatTime(ms?: number): string {
 }
 
 export function ResultList({ results, selectedId, onSelect, restoreFocusId, onRestoredFocus }: ResultListProps) {
+const t = useT();
   // The focus contract needs a focusable container whichever branch renders
   // (list <ul> / empty-state wrapper <div>) — resolve at effect time.
   const listRef = useRef<HTMLUListElement>(null);
@@ -74,8 +76,8 @@ export function ResultList({ results, selectedId, onSelect, restoreFocusId, onRe
       >
         <EmptyState
           icon={ClipboardList}
-          title="暂无分析结果"
-          description="完成一次空间分析后，结果将自动出现在此处，供你查看输入、指标、输出与地图联动。"
+          title={t('sidebar.results.emptyTitle')}
+          description={t('sidebar.results.emptyDesc')}
         />
       </div>
     );
@@ -85,7 +87,7 @@ export function ResultList({ results, selectedId, onSelect, restoreFocusId, onRe
     <ul
       ref={listRef}
       tabIndex={-1}
-      aria-label="分析结果列表"
+      aria-label={t('sidebar.results.listAria')}
       className="flex min-h-0 flex-1 flex-col overflow-y-auto py-1 outline-none focus:outline-none"
     >
       {results.map((r) => {
@@ -117,13 +119,13 @@ export function ResultList({ results, selectedId, onSelect, restoreFocusId, onRe
                 {hasLayer ? (
                   <span className="inline-flex shrink-0 items-center gap-0.5 text-status-accent">
                     <Layers size={10} aria-hidden />
-                    图层
+                    {t('sidebar.results.layer')}
                   </span>
                 ) : null}
                 {r.warnings.length > 0 ? (
                   <span className="inline-flex shrink-0 items-center gap-0.5 text-status-warning">
                     <TriangleAlert size={10} aria-hidden />
-                    {r.warnings.length} 条告警
+                    {t('sidebar.results.warningsCount', { count: r.warnings.length })}
                   </span>
                 ) : null}
                 {r.summary ? (

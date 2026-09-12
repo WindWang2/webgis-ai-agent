@@ -10,18 +10,33 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import HTTPException as FastAPIHTTPException
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.config import settings
 from app.core.database import Engine
-from app.core.exception import global_exception_handler
+from app.core.exception import (
+    global_exception_handler,
+    unified_http_exception_handler,
+    unified_validation_exception_handler,
+)
+from app.core.idempotency import IdempotencyMiddleware
+from prometheus_client import Counter
+from app.api.v2 import V1_SUNSET_DATE, build_v2_router
 from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes, local_data, mapspec_mutations, analysis_graph as analysis_graph_routes, geocompute as geocompute_routes, workflow_resume as workflow_resume_routes, lakehouse as lakehouse_routes, workflow_runtime as workflow_runtime_routes
 from app.api.routes import ws_collab
 from app.api.routes import extensions_marketplace as extensions_marketplace_routes
 from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
+# V9 data-lifecycle（ADR-0140）：质量规则引擎 / 统一生命周期策略 —— 新增路由
+# 文件，不改任何既有路由的签名/response_model（§8 冲突契约）。
+from app.api.routes import data_quality as data_quality_routes
+from app.api.routes import data_lifecycle as data_lifecycle_routes
+from app.api.routes import template_versions as template_versions_routes
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
@@ -485,26 +500,97 @@ app = FastAPI(
 
 app.add_exception_handler(Exception, global_exception_handler)
 
+# V9 契约基石（ADR-0138）：HTTPException / 422 校验错误接入统一错误信封，
+# 根治 {"detail"} 与 ApiResponse 双信封并存（LEGACY_DETAIL_ENVELOPE /
+# X-Error-Envelope: detail 可回退旧体，过渡期开关）。
+# 注册键必须覆盖 starlette 基类：Starlette 内部（如 body 解析失败）抛的是
+# starlette.HTTPException，MRO 查找不会命中 fastapi 子类的注册键。
+app.add_exception_handler(StarletteHTTPException, unified_http_exception_handler)
+app.add_exception_handler(FastAPIHTTPException, unified_http_exception_handler)
+app.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
+
+
+from app.core.auth import require_admin  # noqa: E402 - 健康面鉴权依赖
+
+
+# ── 健康面分层（ADR-0139 P5；E 线 ops 消费端点形状保持稳定）────────────
+#   - /healthz（根级，公开）：liveness 极简 —— k8s probe 专用，绝无依赖
+#     拓扑/版本细节；与既有 /api/v1/health/live 语义一致（保持不变）。
+#   - /health（根级，require_admin）：依赖详情（DB/Redis/worker 心跳/
+#     object_store/stuck_jobs）—— 复用 /api/v1/status/detailed 的组件
+#     检查与 TTL 缓存实现（单一实现，两个鉴权面的入口）。
+#   - 既有 /api/v1/health、/api/v1/health/live、/api/v1/ready、
+#     /api/v1/status/detailed 全部保持原状（形状稳定承诺）。
+@app.get("/healthz", tags=["Ops"])
+async def healthz_root():
+    """公开 liveness（极简；无依赖探测、无细节泄漏）。"""
+    return {"status": "ok"}
+
+
+@app.get("/health", tags=["Ops"])
+async def health_admin_root(_admin: dict = Depends(require_admin)):
+    """管理员依赖详情健康面（复用 SRE 组件检查；down → 503）。"""
+    from app.api.routes.health import sre_status_detailed
+
+    return await sre_status_detailed()
 
 # Prometheus metrics — 审计 I11：之前 prometheus.yml 抓 /api/v1/metrics 但 app
 # 从未暴露任何 metrics 端点 → 监控全是 up==0 / No data。instrumentator 在 /metrics
 # 暴露 http_requests_total / http_request_duration_seconds 等，与 alerts-rules.json
 # 对齐。
 #
-# SEC-11: /metrics 暴露内部流量/延迟分布，prometheus-fastapi-instrumentator
-# 不原生支持鉴权钩子（expose 只是注册一个裸路由），强行加 BasicAuth 需要自己
-# 包一层 Depends，且 Prometheus scraper 端配置凭据较繁琐。
-# 因此推荐的网络层隔离方式（必须至少满足其一）：
-#   1. NetworkPolicy 限制 /metrics 仅允许监控 namespace（如 prometheus）的 Pod 访问；
-#   2. Ingress / 反向代理对 /metrics 做 IP 白名单或 mTLS；
-#   3. 部署时让 Prometheus 与本服务同 namespace，直接走 ClusterIP，不经过 Ingress。
-# 已设 include_in_schema=False，所以 /metrics 不会出现在公开的 OpenAPI 文档里，
-# 但这并不能阻止直接 HTTP 探测，必须配合上面的网络隔离。
+# SEC-11 / V9（ADR-0139 P5）：/metrics 暴露内部流量/延迟分布，现在有
+# **应用层门禁**（METRICS_TOKEN，默认开启 fail-closed）：
+#   - 未配置 METRICS_TOKEN → 一律 401（分类学错误体）。运维必须显式设置
+#     token（Prometheus scraper 侧 `Authorization: Bearer <token>`）或设
+#     METRICS_AUTH_DISABLED=true 显式回退「仅网络隔离」旧模式；
+#   - token 比较走 hmac.compare_digest（常量时间）；
+#   - 网络层隔离（NetworkPolicy / Ingress 白名单 / 同 namespace ClusterIP）
+#     仍然是推荐纵深 —— 应用层门禁是其上的第二道闸，不是替代。
+# E 线 ops 面板消费本端点：形状（Prometheus exposition）不变，仅新增鉴权头；
+# 协调点已在 PR 注明。
 try:
+    import hmac as _hmac
+
+    from prometheus_client import CONTENT_TYPE_LATEST as _PROM_CONTENT_TYPE
+    from prometheus_client import generate_latest as _prom_generate_latest
     from prometheus_fastapi_instrumentator import Instrumentator
-    # 不传 should_group_status_codes 等参数 —— 不同版本 API 不一致，使用默认最稳。
-    # 健康检查端点产生的噪声由 Prometheus 端的 metric relabel 过滤即可。
-    Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+    _METRICS_TOKEN = (os.getenv("METRICS_TOKEN") or "").strip()
+    _METRICS_AUTH_DISABLED = (os.getenv("METRICS_AUTH_DISABLED") or "").strip().lower() \
+        in ("1", "true", "yes")
+
+    async def _require_metrics_token(
+        authorization: str = Header(default=""),
+    ) -> None:
+        """METRICS_TOKEN 门禁（默认开启；显式 DISABLED 才回退旧模式）。"""
+        if _METRICS_AUTH_DISABLED:
+            return
+        if not _METRICS_TOKEN:
+            raise HTTPException(status_code=401, detail={
+                "code": "METRICS_AUTH_REQUIRED",
+                "message": "METRICS_TOKEN not configured on server; "
+                           "set METRICS_TOKEN or METRICS_AUTH_DISABLED=true",
+            })
+        provided = authorization.strip()
+        expected = f"Bearer {_METRICS_TOKEN}"
+        if not _hmac.compare_digest(provided.encode(), expected.encode()):
+            raise HTTPException(status_code=401, detail={
+                "code": "METRICS_AUTH_INVALID",
+                "message": "invalid or missing bearer token for /metrics",
+            })
+
+    _instrumentator = Instrumentator().instrument(app)
+    # 自管 /metrics 路由：带门禁依赖（expose() 的裸路由无法注入依赖）。
+    # 8.x：body = generate_latest(instrumentator.registry)（与 expose 内部
+    # 同一来源，形状不变 —— E 线协调点）。
+    @app.get("/metrics", include_in_schema=False,
+             dependencies=[Depends(_require_metrics_token)])
+    async def _metrics_endpoint():
+        from starlette.responses import Response
+
+        return Response(content=_prom_generate_latest(_instrumentator.registry),
+                        media_type=_PROM_CONTENT_TYPE)
 except ImportError:
     logger.warning("prometheus-fastapi-instrumentator not installed — /metrics endpoint disabled")
 
@@ -547,6 +633,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/api/v1/layers/data/",
         "/api/v1/health",
         "/api/v1/local-data/",
+        "/healthz",
     )
 
     def __init__(self, app, max_requests: int = 240, window_seconds: int = 60):
@@ -581,6 +668,48 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RateLimitMiddleware, max_requests=240, window_seconds=60)
 
+# V9 契约基石（ADR-0138）：HTTP 幂等 —— 只对携带 Idempotency-Key 的 JSON POST
+# 生效（重放首次响应 24h / SET NX 单飞 / Redis 故障 fail-open）。
+app.add_middleware(IdempotencyMiddleware)
+
+# v1 弃用头 + 使用量打点（ADR-0138 / P7）：v1 响应带 Deprecation/Sunset，
+# 计数器为未来下线决策提供数据（不下线任何 v1 端点）。
+api_version_requests = Counter(
+    "webgis_api_version_requests_total",
+    "API requests by version (v1/v2)",
+    ["version"],
+)
+
+
+class ApiVersionDeprecationMiddleware(BaseHTTPMiddleware):
+    """v1 响应补 Deprecation/Sunset 头；v1/v2 打点。纯响应头改写，零语义变化。"""
+
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+        version = "v2" if path.startswith("/api/v2") else (
+            "v1" if path.startswith("/api/v1") else "other"
+        )
+        response = await call_next(request)
+        if version in ("v1", "v2"):
+            try:
+                api_version_requests.labels(version=version).inc()
+            except Exception:  # noqa: BLE001 — 打点失败不影响响应
+                pass
+        if version == "v1":
+            response.headers["Deprecation"] = "true"
+            response.headers["Sunset"] = V1_SUNSET_DATE
+            response.headers["Link"] = (
+                '</api/v2>; rel="successor-version"'
+            )
+        return response
+
+
+app.add_middleware(ApiVersionDeprecationMiddleware)
+
+# ADR-0144 P6：Accept-Language 协商（请求侧 contextvar + 响应侧错误信封
+# message 本地化；结构化字段与成功响应零触碰）。详见 app/core/i18n.py。
+from app.core.i18n import AcceptLanguageMiddleware as _AcceptLanguageMiddleware  # noqa: E402
+app.add_middleware(_AcceptLanguageMiddleware)
 # CORS
 # THREAT MODEL: CORS_ORIGINS=["*"] + allow_credentials=True causes the middleware
 # to echo the request Origin header back as Access-Control-Allow-Origin. Any site
@@ -665,6 +794,10 @@ app.include_router(explorer.router, prefix="/api/v1", tags=["探索引擎"])
 app.include_router(templates.router, prefix="/api/v1", tags=["地图制图模板"])
 app.include_router(raster_routes.router, prefix="/api/v1", tags=["栅格图层"])
 app.include_router(project_routes.router, prefix="/api/v1", tags=["项目工作区"])
+# V9 data-lifecycle（ADR-0140）：质量规则引擎（P1）/ 统一生命周期策略（P3）。
+app.include_router(data_quality_routes.router, prefix="/api/v1", tags=["数据质量 V9"])
+app.include_router(data_lifecycle_routes.router, prefix="/api/v1", tags=["数据生命周期 V9"])
+app.include_router(template_versions_routes.router, prefix="/api/v1", tags=["地图制图模板 V9（版本化）"])
 app.include_router(data_fabric.router, prefix="/api/v1", tags=["Data Fabric / 数据织网"])
 app.include_router(lakehouse_routes.router, prefix="/api/v1", tags=["Lakehouse / 空间数据湖仓"])
 app.include_router(lakehouse_datasets_routes.router, prefix="/api/v1", tags=["Lakehouse / 数据集版本（V8）"])
@@ -673,7 +806,16 @@ app.include_router(geocompute_routes.router, prefix="/api/v1", tags=["GeoCompute
 app.include_router(workflow_runtime_routes.router, prefix="/api/v1", tags=["Workflow Runtime V5"])
 app.include_router(local_data.router, prefix="/api/v1/local-data", tags=["本地地理数据"])
 app.include_router(metrics.router, prefix="/api/v1", tags=["性能遥测"])
+# V9 安全管理面（ADR-0139 P5/P7：org 配额配置 + 审计查询；admin scope 双守卫）
+from app.api.routes import security_admin as security_admin_routes  # noqa: E402
+
+app.include_router(security_admin_routes.router, prefix="/api/v1", tags=["Security Admin (V9)"])
 app.include_router(pi_tools.router, tags=["PI工具"])
+
+# ── API v2（V9 契约基石，ADR-0138 / P7）─────────────────────────────
+# v2 = 同一 router 的示范复用挂载（lakehouse / geocompute /
+# workflow-runtime），默认新错误信封 + 统一分页语义；v1 不受影响。
+app.include_router(build_v2_router(), tags=["API v2"])
 
 # 静态文件服务 — 用 FastAPI 路由替代原 StaticFiles mount（A4 修复）：
 # 路径强校验 + 可选 HMAC 签名 + 访问日志 + JWT 鉴权或公共白名单。

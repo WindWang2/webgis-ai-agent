@@ -6,6 +6,7 @@ import { MapProvider } from "react-map-gl/maplibre"
 import { MapActionProvider } from "@/lib/contexts/map-action-context"
 import { ToastContainer } from "@/components/ui/toast"
 import { SystemMessageBridge } from "@/components/providers/system-message-bridge"
+import { I18nProvider } from "@/lib/i18n/i18n-provider"
 import { enableHudPersistWrites, useHudStore } from "@/lib/store/useHudStore"
 
 interface ErrorBoundaryState {
@@ -57,13 +58,15 @@ export function ClientProviders({ children }: { children: React.ReactNode }) {
     // 这里让 framer-motion 自行读取 prefers-reduced-motion 并降级。
     <MotionConfig reducedMotion="user">
       <ErrorBoundary>
-        <MapProvider>
-          <MapActionProvider>
-            {children}
-            <SystemMessageBridge />  {/* FE-01: 消费 pendingSystemMessage 队列 */}
-            <ToastContainer />
-          </MapActionProvider>
-        </MapProvider>
+        <I18nProvider>
+          <MapProvider>
+            <MapActionProvider>
+              {children}
+              <SystemMessageBridge />  {/* FE-01: 消费 pendingSystemMessage 队列 */}
+              <ToastContainer />
+            </MapActionProvider>
+          </MapProvider>
+        </I18nProvider>
       </ErrorBoundary>
     </MotionConfig>
   )

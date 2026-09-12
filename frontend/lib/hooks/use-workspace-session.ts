@@ -7,6 +7,7 @@ import type { ChatSession } from '@/lib/types/chat';
 import type { MapActionPayload } from '@/lib/types';
 import { restoreSessionMapLayers, selectCameraToRestore } from '@/lib/session/map-state-restore';
 import { setMapSpecSessionCursor } from '@/lib/mapspec/session-cursor';
+import { t } from '@/lib/i18n/t';
 
 
 import { devOnly } from "@/lib/utils/logger";
@@ -43,13 +44,13 @@ function sessionLoadErrorNotice(err: unknown): string {
         ? body.detail
         : `HTTP ${err.status}`;
   } else if (err instanceof TypeError) {
-    detail = '网络错误，无法连接服务器';
+    detail = t('common.networkError');
   } else if (err instanceof Error && err.message) {
     detail = err.message;
   } else {
-    detail = '未知错误';
+    detail = t('common.unknownError');
   }
-  return `加载会话失败：${detail}。历史记录未恢复，可开始新对话。`;
+  return t('common.loadSessionFailed', { detail });
 }
 
 export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) => void) {

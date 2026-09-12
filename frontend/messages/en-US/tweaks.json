@@ -1,0 +1,21 @@
+{
+  "title": "UI tweaks",
+  "accentColor": "Accent color",
+  "accentColorAria": "Accent color: {name}",
+  "color": {
+    "green": "Green",
+    "blue": "Blue",
+    "purple": "Purple",
+    "red": "Red",
+    "cyan": "Cyan"
+  },
+  "fontSize": "Font size",
+  "theme": "Theme",
+  "themeLight": "Light",
+  "themeDark": "Dark",
+  "sidebarWidth": "Sidebar width",
+  "resetLayout": "Reset workbench layout (panel positions & sizes)",
+  "panels": "Panels",
+  "hudPanel": "Agent HUD",
+  "ragPanel": "RAG panel"
+}

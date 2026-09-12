@@ -14,6 +14,7 @@ import { IconButton } from '@/components/shared/icon-button';
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
 import { devOnly } from '@/lib/utils/logger';
+import { useT } from '@/lib/i18n/useT';
 
 const iconForType: Record<string, string> = {
   png: '🖼',
@@ -23,12 +24,12 @@ const iconForType: Record<string, string> = {
 };
 
 const DECORATION_ITEMS = [
-  { key: 'showCompass', label: '指北针' },
-  { key: 'showScale', label: '比例尺' },
-  { key: 'showLegend', label: '图例' },
-  { key: 'showWatermark', label: 'AI 水印' },
-  { key: 'showMetadata', label: '元数据' },
-  { key: 'showGraticules', label: '坐标格网' },
+  { key: 'showCompass', labelKey: 'studio.decoration.showCompass' },
+  { key: 'showScale', labelKey: 'studio.decoration.showScale' },
+  { key: 'showLegend', labelKey: 'studio.decoration.showLegend' },
+  { key: 'showWatermark', labelKey: 'studio.decoration.showWatermark' },
+  { key: 'showMetadata', labelKey: 'studio.decoration.showMetadata' },
+  { key: 'showGraticules', labelKey: 'studio.decoration.showGraticules' },
 ] as const;
 
 const PAPER_LABEL: Record<ExportSettings['paperSize'], string> = {
@@ -106,6 +107,7 @@ function StudioSection({
 }
 
 export function MapStudioTab() {
+  const t = useT();
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('layout');
   const exportSettings = useHudStore((s) => s.exportSettings);
   const updateExportSettings = useHudStore((s) => s.updateExportSettings);
@@ -195,7 +197,7 @@ export function MapStudioTab() {
       <div className="shrink-0 border-b border-edge-subtle bg-surface-overlay p-3 pb-2.5">
         <div
           role="tablist"
-          aria-label="制图工坊子页签"
+          aria-label={t('sidebar.studio.subtabsAria')}
           className="flex rounded-md border border-edge-subtle bg-surface-sunken p-0.5 text-meta"
           onKeyDown={(e) => {
             if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
@@ -231,7 +233,7 @@ export function MapStudioTab() {
             }}
           >
             <Printer size={13} aria-hidden />
-            <span>制图排版</span>
+            <span>{t('sidebar.studio.tabLayout')}</span>
           </button>
           <button
             role="tab"
@@ -254,7 +256,7 @@ export function MapStudioTab() {
             }}
           >
             <History size={13} aria-hidden />
-            <span>导出历史</span>
+            <span>{t('sidebar.studio.tabHistory')}</span>
             {exports.length > 0 && (
               <span
                 className="h-1.5 w-1.5 rounded-full"
@@ -276,60 +278,60 @@ export function MapStudioTab() {
             className="p-3 space-y-2"
           >
             {/* 文档：图名 / 作者 / 数据来源 */}
-            <StudioSection title="文档" summary={docSummary} defaultOpen>
+            <StudioSection title={t('sidebar.studio.docTitle')} summary={docSummary} defaultOpen>
               <div className="space-y-3">
                 <div>
                   <label htmlFor={titleId} className="mb-1.5 block text-meta font-medium text-ink-secondary">
-                    主标题
+                    {t('sidebar.studio.mainTitle')}
                   </label>
                   <input
                     id={titleId}
                     type="text"
                     value={exportSettings.title}
                     onChange={(e) => handleChange('title', e.target.value)}
-                    placeholder="如：成都市高校分布图"
+                    placeholder={t('sidebar.studio.mainTitlePh')}
                     className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-medium text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   />
                 </div>
 
                 <div>
                   <label htmlFor={subtitleId} className="mb-1.5 block text-meta font-medium text-ink-secondary">
-                    副标题
+                    {t('sidebar.studio.subTitle')}
                   </label>
                   <input
                     id={subtitleId}
                     type="text"
                     value={exportSettings.subtitle}
                     onChange={(e) => handleChange('subtitle', e.target.value)}
-                    placeholder="如：数据来源: OSM, 制图日期: 2026"
+                    placeholder={t('sidebar.studio.subTitlePh')}
                     className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-medium text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   />
                 </div>
 
                 <div>
                   <label htmlFor={authorId} className="mb-1.5 block text-meta font-medium text-ink-secondary">
-                    作者
+                    {t('sidebar.studio.author')}
                   </label>
                   <input
                     id={authorId}
                     type="text"
                     value={exportSettings.author}
                     onChange={(e) => handleChange('author', e.target.value)}
-                    placeholder="制图者名称"
+                    placeholder={t('sidebar.studio.authorPh')}
                     className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-medium text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   />
                 </div>
 
                 <div>
                   <label htmlFor={dataSourceId} className="mb-1.5 block text-meta font-medium text-ink-secondary">
-                    数据来源
+                    {t('sidebar.studio.dataSource')}
                   </label>
                   <input
                     id={dataSourceId}
                     type="text"
                     value={exportSettings.dataSource}
                     onChange={(e) => handleChange('dataSource', e.target.value)}
-                    placeholder="如：OSM, 天地图"
+                    placeholder={t('sidebar.studio.dataSourcePh')}
                     className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-medium text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   />
                 </div>
@@ -337,7 +339,7 @@ export function MapStudioTab() {
             </StudioSection>
 
             {/* 地图元素：装饰开关 */}
-            <StudioSection title="地图元素" summary={elementSummary}>
+            <StudioSection title={t('sidebar.studio.mapElements')} summary={elementSummary}>
               <div className="grid grid-cols-2 gap-2.5">
                 {DECORATION_ITEMS.map((el) => {
                   const enabled = exportSettings[el.key];
@@ -365,7 +367,7 @@ export function MapStudioTab() {
                         className="rounded w-3.5 h-3.5"
                         style={{ accentColor: 'var(--agent-accent, #16a34a)' }}
                       />
-                      <span>{el.label}</span>
+                      <span>{t(`sidebar.${el.labelKey}`)}</span>
                     </label>
                   );
                 })}
@@ -373,38 +375,38 @@ export function MapStudioTab() {
             </StudioSection>
 
             {/* 页面与输出：纸张 / 方向 / DPI / 格式 */}
-            <StudioSection title="页面与输出" summary={outputSummary}>
+            <StudioSection title={t('sidebar.studio.pageAndOutput')} summary={outputSummary}>
               <div className="space-y-3 text-body font-medium">
                 <div className="flex items-center justify-between gap-4">
-                  <label htmlFor={formatId} className="text-ink-muted">输出格式</label>
+                  <label htmlFor={formatId} className="text-ink-muted">{t('sidebar.studio.outputFormat')}</label>
                   <select
                     id={formatId}
                     value={exportSettings.format}
                     onChange={(e) => handleChange('format', e.target.value)}
                     className="rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   >
-                    <option value="png">PNG 高清图片</option>
-                    <option value="pdf">PDF 印刷文档</option>
-                    <option value="svg">SVG（内嵌位图）</option>
+                    <option value="png">{t('sidebar.studio.fmtPng')}</option>
+                    <option value="pdf">{t('sidebar.studio.fmtPdf')}</option>
+                    <option value="svg">{t('sidebar.studio.fmtSvg')}</option>
                   </select>
                 </div>
 
                 <div className="flex items-center justify-between gap-4">
-                  <label htmlFor={paperSizeId} className="text-ink-muted">纸张尺寸</label>
+                  <label htmlFor={paperSizeId} className="text-ink-muted">{t('sidebar.studio.paperSize')}</label>
                   <select
                     id={paperSizeId}
                     value={exportSettings.paperSize}
                     onChange={(e) => handleChange('paperSize', e.target.value)}
                     className="rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   >
-                    <option value="screen">当前屏幕比例 (Screen)</option>
-                    <option value="A4">A4 标准纸张尺寸</option>
-                    <option value="A3">A3 大幅面纸张</option>
+                    <option value="screen">{t('sidebar.studio.sizeScreen')}</option>
+                    <option value="A4">{t('sidebar.studio.sizeA4')}</option>
+                    <option value="A3">{t('sidebar.studio.sizeA3')}</option>
                   </select>
                 </div>
 
                 <div className="flex items-center justify-between gap-4">
-                  <label htmlFor={orientationId} className="text-ink-muted">纸张方向</label>
+                  <label htmlFor={orientationId} className="text-ink-muted">{t('sidebar.studio.orientation')}</label>
                   <select
                     id={orientationId}
                     value={exportSettings.orientation}
@@ -412,22 +414,22 @@ export function MapStudioTab() {
                     disabled={exportSettings.paperSize === 'screen'}
                     className="rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)] disabled:opacity-40"
                   >
-                    <option value="landscape">横向 (Landscape)</option>
-                    <option value="portrait">纵向 (Portrait)</option>
+                    <option value="landscape">{t('sidebar.studio.orientLandscape')}</option>
+                    <option value="portrait">{t('sidebar.studio.orientPortrait')}</option>
                   </select>
                 </div>
 
                 <div className="flex items-center justify-between gap-4">
-                  <label htmlFor={dpiId} className="text-ink-muted">解析度 (DPI)</label>
+                  <label htmlFor={dpiId} className="text-ink-muted">{t('sidebar.studio.dpi')}</label>
                   <select
                     id={dpiId}
                     value={exportSettings.dpi}
                     onChange={(e) => handleChange('dpi', Number(e.target.value))}
                     className="rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   >
-                    <option value={96}>标准清晰度 (96 DPI)</option>
-                    <option value={150}>高清晰度 (150 DPI)</option>
-                    {exportSettings.paperSize === 'screen' && <option value={300}>超清印刷 (300 DPI)</option>}
+                    <option value={96}>{t('sidebar.studio.dpi96')}</option>
+                    <option value={150}>{t('sidebar.studio.dpi150')}</option>
+                    {exportSettings.paperSize === 'screen' && <option value={300}>{t('sidebar.studio.dpi300')}</option>}
                   </select>
                 </div>
               </div>
@@ -442,15 +444,15 @@ export function MapStudioTab() {
           >
             <div className="flex items-center justify-between px-2 py-1">
               <span className="text-meta font-semibold text-ink-secondary">
-                历史生成文件 ({exports.length})
+                {t('sidebar.studio.historyCount', { count: exports.length })}
               </span>
               {exports.length > 0 && (
-                <ConfirmAction label="清空列表" confirmLabel="确认清空？" onConfirm={() => setExports([])} />
+                <ConfirmAction label={t('sidebar.studio.clearList')} confirmLabel={t('sidebar.studio.confirmClear')} onConfirm={() => setExports([])} />
               )}
             </div>
 
             {exports.length === 0 ? (
-              <EmptyState icon={Download} title="暂无已导出的文件" description="完成的导出会出现在这里" />
+              <EmptyState icon={Download} title={t('sidebar.studio.emptyExportsTitle')} description={t('sidebar.studio.emptyExportsDesc')} />
             ) : (
               <div className="space-y-1 overflow-y-auto">
                 {exports.map((item) => (
@@ -480,8 +482,8 @@ export function MapStudioTab() {
                     </div>
 
                     <div className="flex items-center gap-1 flex-shrink-0">
-                      <IconButton label="下载" icon={Download} iconSize={13} onClick={() => handleDownload(item)} />
-                      <ConfirmAction label="删除" confirmLabel="确认删除？" onConfirm={() => handleDelete(item.id)} />
+                      <IconButton label={t('sidebar.studio.download')} icon={Download} iconSize={13} onClick={() => handleDownload(item)} />
+                      <ConfirmAction label={t('sidebar.studio.delete')} confirmLabel={t('sidebar.studio.confirmDelete')} onConfirm={() => handleDelete(item.id)} />
                     </div>
                   </div>
                 ))}
@@ -514,17 +516,17 @@ export function MapStudioTab() {
             }}
           >
             {authUser ? (
-              <>发布并导出 {exportSettings.format.toUpperCase()}</>
+              <>{t('sidebar.studio.publishAndExport')} {exportSettings.format.toUpperCase()}</>
             ) : (
               <span className="inline-flex items-center justify-center gap-1.5">
                 <Lock size={13} aria-hidden />
-                登录后可导出 {exportSettings.format.toUpperCase()}
+                {t('sidebar.studio.loginToExport')} {exportSettings.format.toUpperCase()}
               </span>
             )}
           </button>
           {!authUser && (
             <p className="mt-1.5 text-center text-caption text-ink-muted">
-              导出需要登录账号 — 请先在 设置 → 账户 登录
+              {t('sidebar.studio.loginRequired')}
             </p>
           )}
         </div>

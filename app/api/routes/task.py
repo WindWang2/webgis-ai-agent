@@ -3,7 +3,6 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
 from typing import Optional
 
 from app.api.routes.chat import get_engine
@@ -19,38 +18,17 @@ from app.models.db_model import Conversation
 from app.services.task_tracker import TaskInfo
 from app.services.jobs import DurableJobStore
 from app.services.jobs import registry as cancellation_registry
+from app.schemas.task_schema import (
+    CeleryTaskRevokeResponse,
+    CeleryTaskStatusResponse,
+    TaskCancelResponse,    TaskListResponse,    TaskStatusResponse,
+    TaskStepResponse,
+)
 from app.services.task_queue import TaskQueueService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/tasks", tags=["任务管理"])
 logger = logging.getLogger(__name__)
-
-
-class TaskStepResponse(BaseModel):
-    """任务步骤响应"""
-    id: str
-    tool: str
-    status: str
-    error: Optional[str] = None
-
-
-class TaskStatusResponse(BaseModel):
-    """任务状态响应"""
-    task_id: str
-    session_id: str
-    original_request: str
-    status: str
-    steps: list[TaskStepResponse]
-
-
-class TaskListResponse(BaseModel):
-    """任务列表响应"""
-    tasks: list[TaskStatusResponse]
-
-
-class TaskCancelResponse(BaseModel):
-    """任务取消响应"""
-    cancelled: bool
 
 
 async def _verify_task_owner(
@@ -206,7 +184,7 @@ async def _verify_celery_owner(
     raise HTTPException(status_code=404, detail="Task not found")
 
 
-@router.get("/status/{task_id}")
+@router.get("/status/{task_id}", response_model=CeleryTaskStatusResponse)
 async def get_celery_task_status(
     task_id: str,
     db: AsyncSession = Depends(get_async_db),
@@ -235,7 +213,7 @@ async def get_celery_task_status(
     return payload
 
 
-@router.delete("/status/{task_id}")
+@router.delete("/status/{task_id}", response_model=CeleryTaskRevokeResponse)
 async def revoke_celery_task(
     task_id: str,
     db: AsyncSession = Depends(get_async_db),
@@ -259,4 +237,4 @@ async def revoke_celery_task(
 
     # 计算隔离不变式 1：control.revoke 是 broker socket I/O，offload 到线程（#386）。
     revoked = await asyncio.to_thread(TaskQueueService.revoke_task, task_id)
-    return {"revoked": revoked, "task_id": task_id}
+    return CeleryTaskRevokeResponse(revoked=revoked, task_id=task_id)

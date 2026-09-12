@@ -2,6 +2,7 @@
 
 import { Info } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * The one legend container.
@@ -22,12 +23,13 @@ interface LegendCardProps {
 }
 
 export function LegendCard({ field, kind, children }: LegendCardProps) {
+const t = useT();
   return (
     <div className="map-chrome flex min-h-0 min-w-[188px] max-w-[260px] flex-col animate-in slide-in-from-right-4 duration-500">
       <div className="flex items-center gap-2 border-b border-map-chrome-border px-panel py-1.5">
         <Info aria-hidden className="h-icon-sm w-icon-sm shrink-0 text-status-accent" />
         <div className="flex min-w-0 flex-col">
-          <span className="eyebrow">图例</span>
+          <span className="eyebrow">{t('sidebar.results.legendTitle')}</span>
           {field && (
             <span
               className="truncate text-meta font-semibold text-map-chrome-ink"
