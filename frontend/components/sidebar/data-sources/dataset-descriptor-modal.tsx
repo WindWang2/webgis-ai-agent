@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import type { DatasetDescriptor } from '@/lib/api/data-fabric';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { IconButton } from '@/components/shared/icon-button';
+import { useT } from '@/lib/i18n/useT';
 
 export interface DatasetDescriptorModalProps {
   descriptor: DatasetDescriptor;
@@ -13,6 +14,7 @@ export interface DatasetDescriptorModalProps {
 
 /** DatasetDescriptor 契约弹窗：role=dialog + aria-modal + Escape + 焦点围栏/归还（共用 hook）。 */
 export function DatasetDescriptorModal({ descriptor, onClose }: DatasetDescriptorModalProps) {
+const t = useT();
   const dialogRef = useRef<HTMLDivElement | null>(null);
   useDialogFocus({ open: true, containerRef: dialogRef, onEscape: onClose });
 
@@ -23,27 +25,27 @@ export function DatasetDescriptorModal({ descriptor, onClose }: DatasetDescripto
       ref={dialogRef}
       role="dialog"
       aria-modal="true"
-      aria-label="DatasetDescriptor 契约"
+      aria-label={t('sidebar.ds.descriptorTitle')}
       tabIndex={-1}
       className="fixed inset-0 z-50 flex items-center justify-center bg-surface-scrim p-4"
     >
         <div className="max-h-[80vh] w-full max-w-md space-y-3 overflow-y-auto rounded-md bg-surface-panel p-4 shadow-overlay">
           <div className="flex items-center justify-between border-b border-edge-subtle pb-2">
-            <h3 className="text-title font-bold text-ink">DatasetDescriptor 契约</h3>
-            <IconButton label="关闭" icon={X} onClick={onClose} />
+            <h3 className="text-title font-bold text-ink">{t('sidebar.ds.descriptorTitle')}</h3>
+            <IconButton label={t('common.close')} icon={X} onClick={onClose} />
           </div>
           <div className="space-y-2 text-meta text-ink-secondary">
             <div>
               <span className="font-semibold text-ink">ID:</span> {descriptor.id}
             </div>
             <div>
-              <span className="font-semibold text-ink">标题:</span> {descriptor.title}
+              <span className="font-semibold text-ink">{t('sidebar.ds.titleLabel')}</span> {descriptor.title}
             </div>
             <div>
-              <span className="font-semibold text-ink">几何类型:</span> {descriptor.geometry_type}
+              <span className="font-semibold text-ink">{t('sidebar.ds.geomTypeLabel')}</span> {descriptor.geometry_type}
             </div>
             <div>
-              <span className="font-semibold text-ink">SRS 坐标系:</span> {descriptor.srs}
+              <span className="font-semibold text-ink">{t('sidebar.ds.srsLabel')}</span> {descriptor.srs}
             </div>
             <div>
               <span className="font-semibold text-ink">Bounding Box:</span>{' '}
@@ -51,7 +53,7 @@ export function DatasetDescriptorModal({ descriptor, onClose }: DatasetDescripto
             </div>
             <div>
               <span className="font-semibold text-ink">
-                字段 Schema ({descriptor.fields?.length || 0}):
+                {t('sidebar.ds.fieldSchema', { count: descriptor.fields?.length || 0 })}
               </span>
               <div className="mt-1 max-h-40 overflow-y-auto rounded-sm bg-surface-sunken p-2 font-mono text-caption">
                 {descriptor.fields?.map((f, i) => (

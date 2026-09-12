@@ -1,0 +1,16 @@
+{
+  "validation": "请求参数不合法",
+  "permission": "没有执行该操作的权限",
+  "data_unavailable": "所需数据不可用或不存在",
+  "crs": "坐标参考系不支持或无法转换",
+  "resource_exhausted": "资源配额已耗尽，请稍后重试",
+  "timeout": "操作超时，请稍后重试",
+  "cancellation": "操作已被取消",
+  "retryable": "服务暂时不可用，请稍后重试",
+  "permanent": "服务器内部错误，请稍后重试",
+  "dependency_failure": "依赖服务暂不可用，请稍后重试",
+  "worker_lost": "执行节点失联，任务将被重新调度",
+  "model_failure": "模型服务异常，请稍后重试",
+  "render_failure": "渲染失败，请调整参数后重试",
+  "storage_corruption": "存储数据损坏，请联系管理员"
+}

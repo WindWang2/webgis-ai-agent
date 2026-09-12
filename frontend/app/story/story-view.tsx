@@ -33,6 +33,7 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 import { applyStoryMapState, type SessionMapState } from '@/lib/session/map-state-restore';
 import { useToastStore } from '@/components/ui/toast';
 import { MapErrorBoundary } from '@/components/map/map-error-boundary';
+import { useT } from '@/lib/i18n/useT';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-prefers-reduced-motion';
 import { captureMapCanvas } from '@/lib/map-kit/exporter';
 import type { ChapterCamera } from './chapters';
@@ -60,6 +61,9 @@ interface StoryMessage {
 }
 
 export function StoryView(): React.ReactElement {
+  // master 的 story.* i18n 键化（ADR-0144）移植进章节模型视图；无 provider
+  // 时（单测裸渲染）useT 回落 zh 默认，既有中文断言零改造。
+  const t = useT('story');
   const layers = useHudStore((s) => s.layers);
   const removeLayer = useHudStore((s) => s.removeLayer);
   const toggleLayer = useHudStore((s) => s.toggleLayer);
@@ -359,8 +363,8 @@ export function StoryView(): React.ReactElement {
             </h1>
             <div className="flex gap-1">
               <button
-                aria-label="分享"
-                title="复制分享链接"
+                aria-label={t('share')}
+                title={t('shareTitle')}
                 onClick={handleShare}
                 className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info"
               >
@@ -520,14 +524,14 @@ export function StoryView(): React.ReactElement {
         <div className="p-8 pb-32 flex flex-col gap-12 font-sans">
           {loadError ? (
             <div role="alert" className="rounded-md border border-status-critical-border bg-status-critical-soft p-5">
-              <p className="text-body font-semibold text-status-critical">无法加载该会话</p>
+              <p className="text-body font-semibold text-status-critical">{t('loadFailed')}</p>
               <p className="mt-2 text-meta text-ink-secondary">{loadError}</p>
               <p className="mt-2 text-meta text-ink-muted">
-                匿名会话暂不支持跨页面分享（出于安全考虑，不将会话凭证放入 URL）；请登录后重试，或确认链接中的会话 ID 是否正确。
+                {t('anonShare')}
               </p>
             </div>
           ) : visibleChapters.length === 0 ? (
-            <p className="text-body text-ink-muted">该会话暂无内容。</p>
+            <p className="text-body text-ink-muted">{t('empty')}</p>
           ) : (
             visibleChapters.map((ch) => {
               const isActive = ch.id === activeChapter?.id;

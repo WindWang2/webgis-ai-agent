@@ -15,6 +15,7 @@
 
 import { ListChecks, RefreshCw, RotateCcw, X, ClipboardList, ListTree } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useT } from '@/lib/i18n/useT';
 
 import type { JobStatus, JobView } from '@/lib/api/jobs';
 import { useJobCenter } from '@/lib/hooks/use-job-center';
@@ -66,6 +67,7 @@ function JobCard({
   onRetry: (id: string) => void;
   now: number;
 }) {
+  const t = useT();
   // 「取消中」以本地乐观状态或后端状态任一为准；但「已取消」只认后端终态
   const displayStatus: JobStatus =
     isCancelling && job.active && job.status !== 'cancelling' ? 'cancelling' : job.status;
@@ -141,7 +143,7 @@ function JobCard({
       {job.error && <div className="mt-2 text-meta text-status-critical">{job.error}</div>}
 
       <div className="mt-2 flex items-center justify-between text-meta text-ink-muted">
-        <span>已用 {formatElapsed(job, now)}</span>
+        <span>{t('sidebar.tasks.elapsed', { time: formatElapsed(job, now) })}</span>
         <div className="flex items-center gap-2">
           {job.result_ref && !job.active && (
             canOpenResult && linkedResult ? (
@@ -150,7 +152,7 @@ function JobCard({
                 onClick={() => { selectResult(linkedResult.id); setActiveLeftTab('results'); }}
                 className="inline-flex max-w-[10rem] items-center gap-1 truncate rounded-sm px-1 py-0.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
                 title={`在结果工作台查看：${job.result_ref}`}
-                aria-label="在结果工作台查看分析结果"
+                aria-label={t('sidebar.tasks.viewResultAria')}
               >
                 <ClipboardList className="h-3 w-3" aria-hidden />
                 <span className="truncate">{job.result_ref.split('/').pop()}</span>
@@ -170,7 +172,7 @@ function JobCard({
               aria-label={`取消 ${job.name}`}
             >
               <X size={12} aria-hidden />
-              取消
+              {t('common.cancel')}
             </button>
           )}
           {job.retryable && (
@@ -181,7 +183,7 @@ function JobCard({
               aria-label={`重试 ${job.name}`}
             >
               <RotateCcw size={12} aria-hidden />
-              重试
+              {t('common.retry')}
             </button>
           )}
           {timelineCapable && (
@@ -193,7 +195,7 @@ function JobCard({
               aria-label={`${showTimeline ? '收起' : '展开'} ${job.name} 执行时间线`}
             >
               <ListTree size={12} aria-hidden />
-              时间线
+              {t('sidebar.tasks.timeline')}
             </button>
           )}
         </div>
@@ -205,6 +207,7 @@ function JobCard({
 }
 
 export function TasksTab({ sessionId, ownerToken }: TasksTabProps) {
+  const t = useT();
   // Review P2 修复：context panel 收起时 tab 内容保持挂载（visibility 隐藏），
   // 传 enabled 关闭轮询，避免看不见的面板持续打后端。
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
@@ -231,10 +234,10 @@ export function TasksTab({ sessionId, ownerToken }: TasksTabProps) {
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge-subtle bg-surface-panel px-panel py-1.5">
         {active.length > 0 && (
           <span className="text-caption font-medium text-ink-secondary">
-            {active.length} 个活跃任务
+            {t('sidebar.tasks.activeCount', { count: active.length })}
           </span>
         )}
-        <IconButton label="刷新任务" icon={RefreshCw} iconSize={13} onClick={() => void refresh()} />
+        <IconButton label={t('sidebar.tasks.refresh')} icon={RefreshCw} iconSize={13} onClick={() => void refresh()} />
       </div>
 
       {error && (
@@ -248,9 +251,9 @@ export function TasksTab({ sessionId, ownerToken }: TasksTabProps) {
             插入 store）；无任务时组件自渲染 null，不影响空态展示。 */}
         <ExplorerProgressPanel />
         {jobs.length === 0 && loading ? (
-          <LoadingState label="加载任务…" />
+          <LoadingState label={t('sidebar.tasks.loading')} />
         ) : jobs.length === 0 ? (
-          <EmptyState icon={ListChecks} title="暂无后台任务" description="开始一次对话后即可查看任务" />
+          <EmptyState icon={ListChecks} title={t('sidebar.tasks.emptyTitle')} description={t('sidebar.tasks.emptyDesc')} />
         ) : (
           <>
             {active.map((job) => (
@@ -265,7 +268,7 @@ export function TasksTab({ sessionId, ownerToken }: TasksTabProps) {
             ))}
 
             {finished.length > 0 && active.length > 0 && (
-              <div className="pt-2 text-meta text-ink-disabled">已结束</div>
+              <div className="pt-2 text-meta text-ink-disabled">{t('sidebar.tasks.finished')}</div>
             )}
 
             {finished.map((job) => (

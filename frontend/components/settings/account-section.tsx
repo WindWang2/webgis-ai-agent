@@ -1,4 +1,5 @@
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { STitle } from '@/components/shared/section-title';
@@ -21,6 +22,7 @@ import { useAuthUser } from '@/lib/auth/use-auth-user';
  */
 
 export function AccountSection() {
+  const t = useT();
   const user = useAuthUser();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -79,7 +81,7 @@ export function AccountSection() {
 
   return (
     <div className="flex flex-col gap-5">
-      <STitle title="账户" sub="Account" />
+      <STitle title={t('settings.account.title')} sub="Account" />
 
       {user ? (
         <div className="rounded-md border border-edge-subtle bg-surface-raised px-4 py-3">
@@ -96,21 +98,21 @@ export function AccountSection() {
               disabled={busy}
               className="rounded-md border border-edge-subtle bg-surface-raised px-3 py-1.5 text-body font-medium text-ink-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
             >
-              退出登录
+              {t('settings.account.logout')}
             </button>
           </div>
           <div className="mt-2 text-body text-ink-muted">
-            已登录：数据源管理等需要认证的操作现在可用。
+            {t('settings.account.loggedIn')}
           </div>
         </div>
       ) : (
-        <form onSubmit={handleLogin} className="flex flex-col gap-3" aria-label="登录">
+        <form onSubmit={handleLogin} className="flex flex-col gap-3" aria-label={t('settings.account.loginAria')}>
           <div>
             <label
               htmlFor="auth-identifier"
               className="mb-1 block text-body font-medium text-ink-secondary"
             >
-              用户名 / 邮箱
+              {t('settings.account.username')}
             </label>
             <input
               id="auth-identifier"
@@ -125,7 +127,7 @@ export function AccountSection() {
               htmlFor="auth-password"
               className="mb-1 block text-body font-medium text-ink-secondary"
             >
-              密码
+              {t('settings.account.password')}
             </label>
             <input
               id="auth-password"
@@ -150,8 +152,7 @@ export function AccountSection() {
             {busy ? '登录中…' : '登录'}
           </button>
           <div className="text-body text-ink-muted">
-            账号由运维通过 <code>manage.py create_admin</code> 创建（公开注册默认关闭）。
-            匿名使用不受影响；数据源管理等写操作需要登录。
+            {t('settings.account.provisioned', { what: 'manage.py create_admin' })}
           </div>
         </form>
       )}

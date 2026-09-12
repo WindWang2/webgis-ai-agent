@@ -52,12 +52,18 @@ const TAB_LABELS: Record<string, string> = {
   chat: '对话',
   project: '项目',
   data_sources: '数据',
+  lakehouse: '数据湖',
   layers: '图层',
   components: '组件',
   analysis: '分析',
   tasks: '任务',
   results: '结果',
   export_layout: '制图',
+  // V9（ADR-0145）：智能资产面板追加 tab
+  market: '市场',
+  modelops: 'ModelOps',
+  // ADR-0142：ops 运维控制台追加 tab
+  ops: '运维',
 };
 
 describe('NavRail', () => {
@@ -80,8 +86,11 @@ describe('NavRail', () => {
 
     // Workbench V4：explore 模式只渲染 MODE_TABS.explore 组合内的 tab，
     // rail 顺序保持 RAIL_GROUPS 稳定序（不随模式重排 —— 空间记忆不变）。
+    // V9（ADR-0141）：数据湖 tab 加入 explore/analyze 词表（数据源之后）；
+    // V9（ADR-0145）：market/modelops 智能资产面板尾部追加。
+    // ADR-0142：ops 运维 tab append-only 注册（词表尾）。
     const tabs = screen.getAllByRole('tab');
-    const exploreOrder = ['chat', 'project', 'data_sources', 'layers', 'tasks'];
+    const exploreOrder = ['chat', 'project', 'data_sources', 'lakehouse', 'layers', 'tasks', 'market', 'modelops', 'ops'];
     expect(tabs).toHaveLength(exploreOrder.length);
     expect(tabs.map((t) => t.getAttribute('aria-label'))).toEqual(
       exploreOrder.map((k) => TAB_LABELS[k])
@@ -139,12 +148,13 @@ describe('NavRail', () => {
     render(<NavRail />);
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
 
-    // explore 可见序：chat → project → data_sources → layers → tasks
+    // explore 可见序：chat → project → data_sources → lakehouse → layers → tasks → market → modelops → ops
+    // （ADR-0142：ops 运维 tab append-only 注册，居词表尾）
     fireEvent.keyDown(tablist, { key: 'ArrowDown' });
     expect(setActiveLeftTab).toHaveBeenCalledWith('project');
 
     fireEvent.keyDown(tablist, { key: 'ArrowUp' });
-    expect(setActiveLeftTab).toHaveBeenCalledWith('tasks');
+    expect(setActiveLeftTab).toHaveBeenCalledWith('ops');
   });
 
   it('Home/End jump to first/last tab (mode-filtered)', () => {
@@ -153,7 +163,7 @@ describe('NavRail', () => {
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
 
     fireEvent.keyDown(tablist, { key: 'End' });
-    expect(setActiveLeftTab).toHaveBeenCalledWith('tasks');
+    expect(setActiveLeftTab).toHaveBeenCalledWith('ops');
 
     fireEvent.keyDown(tablist, { key: 'Home' });
     expect(setActiveLeftTab).toHaveBeenCalledWith('chat');

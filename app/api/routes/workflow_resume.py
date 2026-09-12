@@ -18,19 +18,26 @@ from app.core.auth import (
     get_current_user_optional,
     require_owned_session,
 )
+from app.schemas.workflow_resume_schema import (
+    ResumeAnchorResponse,
+    WorkflowResumeResponse,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.post("/chat/sessions/{session_id}/workflow-resume-anchor")
+@router.post(
+    "/chat/sessions/{session_id}/workflow-resume-anchor",
+    response_model=ResumeAnchorResponse,
+)
 async def create_workflow_resume_anchor(
     session_id: str,
     conversation=Depends(require_owned_session),
     db: AsyncSession = Depends(get_async_db),
     _user: dict = Depends(get_current_user_optional),
-):
+) -> ResumeAnchorResponse:
     """把当前 session 的可恢复事实存为项目级锚点（DB 持久）。
 
     review R2 Q9（既定语义，不改行为）：匿名可建锚（user_id=None 落库，
@@ -51,25 +58,30 @@ async def create_workflow_resume_anchor(
     except Exception:  # noqa: BLE001
         logger.exception("[ResumeAnchor] save failed session=%s", session_id)
         raise HTTPException(status_code=500, detail="failed to save resume anchor")
-    return {
-        "anchor_id": result["anchor_id"],
-        "trace_last_seq": result["anchor"].get("trace_last_seq", 0),
-        "ref_count": len(result["anchor"].get("ref_ids") or []),
-    }
+    return ResumeAnchorResponse(
+        anchor_id=result["anchor_id"],
+        trace_last_seq=result["anchor"].get("trace_last_seq", 0),
+        ref_count=len(result["anchor"].get("ref_ids") or []),
+    )
 
 
-@router.post("/chat/workflow-resume/{anchor_id}")
+@router.post(
+    "/chat/workflow-resume/{anchor_id}",
+    response_model=WorkflowResumeResponse,
+)
 async def resume_workflow_from_anchor(
     anchor_id: str,
     db: AsyncSession = Depends(get_async_db),
     user: dict = Depends(get_current_user),
-):
+) -> WorkflowResumeResponse:
     """从锚点恢复新 session（旧 session 过期不影响锚点有效性）。"""
     from app.services.gis_harness.resume_anchor import resume_from_anchor
 
     user_id = user.get("user_id") if isinstance(user, dict) else None
     try:
-        return await resume_from_anchor(db, anchor_id=anchor_id, user_id=user_id)
+        return WorkflowResumeResponse(
+            **await resume_from_anchor(db, anchor_id=anchor_id, user_id=user_id)
+        )
     except LookupError:
         raise HTTPException(status_code=404, detail="resume anchor not found")
     except PermissionError:

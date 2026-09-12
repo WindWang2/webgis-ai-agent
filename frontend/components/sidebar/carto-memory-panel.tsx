@@ -19,6 +19,7 @@ import { LoadingState } from '@/components/shared/loading-state';
 import { IconButton } from '@/components/shared/icon-button';
 import { useToastStore } from '@/components/ui/toast';
 import { useAuthUser } from '@/lib/auth/use-auth-user';
+import { useT } from '@/lib/i18n/useT';
 import {
   activateCartoFact,
   getCartoMemory,
@@ -59,6 +60,7 @@ function factDetail(fact: CartoFact): string {
 }
 
 export function CartoMemoryPanel({ projectId }: { projectId: string | null }) {
+const t = useT();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -130,7 +132,7 @@ export function CartoMemoryPanel({ projectId }: { projectId: string | null }) {
   }, {});
 
   return (
-    <section aria-label="项目制图记忆" className="space-y-2">
+    <section aria-label={t('sidebar.memory.aria')} className="space-y-2">
       <button
         type="button"
         onClick={() => setOpen(!open)}
@@ -138,23 +140,23 @@ export function CartoMemoryPanel({ projectId }: { projectId: string | null }) {
       >
         {open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
         <Brain size={14} aria-hidden />
-        制图记忆
+        {t('sidebar.memory.title')}
         {open && counts.active > 0 && (
-          <span className="text-micro text-ink-muted">（{counts.active} 条生效）</span>
+          <span className="text-micro text-ink-muted">{t('sidebar.memory.countSuffix', { count: counts.active })}</span>
         )}
       </button>
 
       {open && (
         <div className="space-y-2 rounded-md border border-edge-subtle bg-surface-raised px-panel py-2.5">
           {loading ? (
-            <LoadingState label="加载制图记忆…" />
+            <LoadingState label={t('sidebar.memory.loading')} />
           ) : error ? (
             <InlineNotice variant="error">{error}</InlineNotice>
           ) : visible.length === 0 ? (
             <EmptyState
               icon={MapIcon}
-              title="暂无制图记忆"
-              description="同一项目出图并通过质量评审后，分类方案与偏好会在此沉淀"
+              title={t('sidebar.memory.empty')}
+              description={t('sidebar.memory.emptyDesc')}
             />
           ) : (
             <ul className="space-y-1.5">
@@ -184,7 +186,7 @@ export function CartoMemoryPanel({ projectId }: { projectId: string | null }) {
                     <div className="flex shrink-0 gap-1">
                       {fact.status !== 'active' && (
                         <IconButton
-                          label="激活"
+                          label={t('sidebar.memory.activate')}
                           icon={RotateCcw}
                           iconSize={13}
                           disabled={mutating === fact.id}
@@ -193,7 +195,7 @@ export function CartoMemoryPanel({ projectId }: { projectId: string | null }) {
                       )}
                       {fact.status !== 'retired' && (
                         <IconButton
-                          label="撤销"
+                          label={t('sidebar.memory.undo')}
                           icon={Trash2}
                           iconSize={13}
                           disabled={mutating === fact.id}
@@ -207,7 +209,7 @@ export function CartoMemoryPanel({ projectId }: { projectId: string | null }) {
             </ul>
           )}
           {!authUser && visible.length > 0 && (
-            <p className="text-micro text-ink-muted">登录后可撤销或激活记忆条目</p>
+            <p className="text-micro text-ink-muted">{t('sidebar.memory.loginHint')}</p>
           )}
         </div>
       )}

@@ -1,4 +1,5 @@
 'use client'
+import { useT } from '@/lib/i18n/useT';
 
 import React, { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react'
 import {
@@ -74,6 +75,7 @@ export function MapToolbarHUD({
 }: MapToolbarHUDProps) {
   // Local state fallbacks if uncontrolled
   const [uncontrolledMeasureTool, setUncontrolledMeasureTool] = useState<MeasureMode>('none')
+  const t = useT();
   const [uncontrolledMeasurePoints, setUncontrolledMeasurePoints] = useState<[number, number][]>(EMPTY_POINTS)
   const [collapsed, setCollapsed] = useState(false)
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null)
@@ -305,18 +307,18 @@ export function MapToolbarHUD({
               {activeMode === 'distance' ? (
                 <>
                   <Ruler className="h-4 w-4 text-status-accent" />
-                  <span>距离测量模式</span>
+                  <span>{t('map.toolbar.measureDistanceMode')}</span>
                 </>
               ) : (
                 <>
                   <Square className="h-4 w-4 text-status-accent" />
-                  <span>面积测量模式</span>
+                  <span>{t('map.toolbar.measureAreaMode')}</span>
                 </>
               )}
             </div>
             <button
               type="button"
-              aria-label="退出测量"
+              aria-label={t('map.toolbar.exitMeasure')}
               onClick={() => setMeasureMode('none')}
               className="rounded-xs p-0.5 text-ink-muted hover:bg-surface-hover hover:text-ink transition-colors"
             >
@@ -326,17 +328,16 @@ export function MapToolbarHUD({
 
           <div className="space-y-1 text-micro">
             <div className="flex justify-between text-ink-muted">
-              <span>已采集点数:</span>
-              <span className="font-mono font-medium text-ink">{points.length} 个</span>
+              <span>{t('map.toolbar.pointsCollected', { count: points.length })}</span>
             </div>
             <div className="flex justify-between items-baseline">
-              <span className="text-ink-muted">当前测算结果:</span>
+              <span className="text-ink-muted">{t('map.toolbar.currentResult')}</span>
               <span className="font-mono text-meta font-bold text-status-accent">
                 {measurementSummary?.formatted ?? (activeMode === 'distance' ? '需至少 2 点' : '需至少 3 点')}
               </span>
             </div>
             <p className="text-micro text-ink-disabled pt-0.5 leading-tight">
-              在地图上点击添加测量点，双击或点击下方完成保存标注。
+              {t('map.toolbar.measureHint')}
             </p>
           </div>
 
@@ -348,7 +349,7 @@ export function MapToolbarHUD({
               className="flex-1 inline-flex items-center justify-center gap-1 rounded-sm bg-status-accent px-2 py-1 text-micro font-medium text-ink-on-accent transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Check className="h-3 w-3" />
-              <span>完成标注</span>
+              <span>{t('map.toolbar.finishAnnotation')}</span>
             </button>
             <button
               type="button"
@@ -360,7 +361,7 @@ export function MapToolbarHUD({
               className="inline-flex items-center justify-center gap-1 rounded-sm border border-edge-subtle bg-surface-panel px-2 py-1 text-micro font-medium text-ink-secondary hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <RotateCcw className="h-3 w-3" />
-              <span>重置</span>
+              <span>{t('map.toolbar.reset')}</span>
             </button>
           </div>
         </div>
@@ -384,8 +385,8 @@ export function MapToolbarHUD({
             {/* Group 1: Navigation Controls */}
             <button
               type="button"
-              aria-label="放大"
-              title="放大 (快捷键: +)"
+              aria-label={t('map.toolbar.zoomIn')}
+              title={t('map.toolbar.zoomInTitle')}
               onClick={handleZoomIn}
               className="flex h-8 w-8 items-center justify-center rounded-sm text-ink-secondary hover:bg-surface-hover hover:text-ink active:bg-surface-selected transition-colors"
             >
@@ -394,8 +395,8 @@ export function MapToolbarHUD({
 
             <button
               type="button"
-              aria-label="缩小"
-              title="缩小 (快捷键: -)"
+              aria-label={t('map.toolbar.zoomOut')}
+              title={t('map.toolbar.zoomOutTitle')}
               onClick={handleZoomOut}
               className="flex h-8 w-8 items-center justify-center rounded-sm text-ink-secondary hover:bg-surface-hover hover:text-ink active:bg-surface-selected transition-colors"
             >
@@ -404,8 +405,8 @@ export function MapToolbarHUD({
 
             <button
               type="button"
-              aria-label="重置指北与俯仰角"
-              title="重置正北与俯仰角 (快捷键: 0)"
+              aria-label={t('map.toolbar.resetNorth')}
+              title={t('map.toolbar.resetNorthTitle')}
               onClick={handleResetNorthPitch}
               className="group relative flex h-8 w-8 items-center justify-center rounded-sm text-ink-secondary hover:bg-surface-hover hover:text-ink transition-colors"
             >
@@ -420,7 +421,7 @@ export function MapToolbarHUD({
 
             <button
               type="button"
-              aria-label="切换3D视图"
+              aria-label={t('map.toolbar.toggle3d')}
               title={is3D ? '切换为 2D 视图 (快捷键: 3)' : '切换为 3D 视图 (快捷键: 3)'}
               aria-pressed={is3D}
               onClick={handleToggle3D}
@@ -438,8 +439,8 @@ export function MapToolbarHUD({
             {/* Group 2: Measurement & Selection Tools */}
             <button
               type="button"
-              aria-label="矩形框选"
-              title="矩形框选（框选地图要素联动图表/表格，快捷键: B）"
+              aria-label={t('map.toolbar.boxSelect')}
+              title={t('map.toolbar.boxSelectTitle')}
               aria-pressed={brushSelectActive}
               onClick={() => onToggleBrushSelect?.()}
               className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${
@@ -453,8 +454,8 @@ export function MapToolbarHUD({
 
             <button
               type="button"
-              aria-label="距离测量"
-              title="距离测量 (快捷键: D)"
+              aria-label={t('map.toolbar.measureDistance')}
+              title={t('map.toolbar.measureDistanceTitle')}
               aria-pressed={activeMode === 'distance'}
               onClick={() => setMeasureMode(activeMode === 'distance' ? 'none' : 'distance')}
               className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${
@@ -468,8 +469,8 @@ export function MapToolbarHUD({
 
             <button
               type="button"
-              aria-label="面积测量"
-              title="面积测量 (快捷键: A)"
+              aria-label={t('map.toolbar.measureArea')}
+              title={t('map.toolbar.measureAreaTitle')}
               aria-pressed={activeMode === 'area'}
               onClick={() => setMeasureMode(activeMode === 'area' ? 'none' : 'area')}
               className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${
@@ -483,8 +484,8 @@ export function MapToolbarHUD({
 
             <button
               type="button"
-              aria-label="清除标注与测量"
-              title="清除地图上的所有测量与标注"
+              aria-label={t('map.toolbar.clearAnnotations')}
+              title={t('map.toolbar.clearAnnotationsTitle')}
               onClick={handleClearAnnotations}
               disabled={annotations.length === 0 && points.length === 0}
               className="flex h-8 w-8 items-center justify-center rounded-sm text-ink-muted hover:bg-status-critical-soft hover:text-status-critical disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-ink-muted transition-colors"
@@ -504,6 +505,7 @@ export function MapToolbarHUD({
 
 /** 草图工具组（V7 Phase E）：draw point/line/polygon + vertex edit + delete + snapping。 */
 function SketchToolGroup() {
+  const t = useT();
   const activeTool = useHudStore((s: HudState) => s.activeMapTool)
   const snappingEnabled = useHudStore((s: HudState) => s.snappingEnabled)
   const sketchVersion = useSyncExternalStore(subscribeSketch, getSketchSnapshot)
@@ -527,12 +529,12 @@ function SketchToolGroup() {
     disabled?: boolean
     disabledReason?: string
   }> = [
-    { id: 'draw_point', label: '绘制点', title: '绘制点要素（点击地图放置）', icon: MapPin },
-    { id: 'draw_line', label: '绘制线', title: '绘制线要素（点击加点，双击/Enter 完成，Escape 取消）', icon: Spline },
-    { id: 'draw_polygon', label: '绘制面', title: '绘制面要素（点击加点，双击/Enter 闭合，Escape 取消）', icon: Hexagon },
+    { id: 'draw_point', label: t('map.toolbar.drawPoint'), title: t('map.toolbar.drawPointTitle'), icon: MapPin },
+    { id: 'draw_line', label: t('map.toolbar.drawLine'), title: t('map.toolbar.drawLineTitle'), icon: Spline },
+    { id: 'draw_polygon', label: t('map.toolbar.drawPolygon'), title: t('map.toolbar.drawPolygonTitle'), icon: Hexagon },
     {
       id: 'edit_vertices',
-      label: '编辑顶点',
+      label: t('map.toolbar.editVertices'),
       title: canEdit ? '编辑顶点（点击选中要素后拖动顶点）' : '暂无可编辑草图要素 —— 先绘制点/线/面',
       icon: MousePointerSquareDashed,
       disabled: !canEdit,
@@ -540,7 +542,7 @@ function SketchToolGroup() {
     },
     {
       id: 'delete_feature',
-      label: '删除要素',
+      label: t('map.toolbar.deleteFeature'),
       title: canEdit ? '删除要素（点击草图要素移除）' : '暂无可删除草图要素',
       icon: Trash2,
       disabled: !canEdit,

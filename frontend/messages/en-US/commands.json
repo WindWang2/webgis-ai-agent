@@ -1,0 +1,13 @@
+{
+  "group": {
+    "panel": "Panels",
+    "edit": "Edit",
+    "tools": "Tools",
+    "session": "Session"
+  },
+  "searchCrossSession": "Cross-session search",
+  "editHistory": "Open edit history (undo/redo timeline)",
+  "queryConsole": "Open advanced query console",
+  "newSession": "New session",
+  "storyView": "Open current session in story view"
+}

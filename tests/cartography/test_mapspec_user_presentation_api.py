@@ -129,7 +129,7 @@ async def test_stale_user_mutation_is_conflict(client, session_id):
         },
     )
     assert resp.status_code == 409
-    detail = resp.json()["detail"]
+    detail = resp.json()["message"]
     assert detail["status"] == "superseded"
     assert detail["correction_hint"]
     assert detail["mapspec"]["layers"][0]["id"] == "L1"
@@ -173,7 +173,7 @@ async def test_empty_patch_layer_presentation_is_400(client, session_id):
         },
     )
     assert resp.status_code == 400
-    assert "visible" in resp.json()["detail"]
+    assert "visible" in resp.json()["message"]
 
 
 @pytest.mark.cartography
@@ -189,4 +189,4 @@ async def test_empty_set_view_is_400(client, session_id):
         },
     )
     assert resp.status_code == 400
-    assert "center" in resp.json()["detail"]
+    assert "center" in resp.json()["message"]

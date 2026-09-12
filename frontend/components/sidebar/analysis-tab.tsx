@@ -5,6 +5,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { Triangle, Layers, Scissors } from 'lucide-react';
 import type { Layer } from '@/lib/types/layer';
 import { InlineNotice } from '@/components/shared/inline-notice';
+import { useT } from '@/lib/i18n/useT';
 
 interface AnalysisTabProps {
   onSend: (text: string) => void;
@@ -14,18 +15,15 @@ type ToolKey = 'buffer' | 'overlay' | 'clip';
 
 interface ToolDef {
   key: ToolKey;
-  label: string;
   icon: typeof Triangle;
-  /** 工具目标（做什么） */
-  desc: string;
-  /** 期望产出 */
-  output: string;
+  /** catalog 键前缀（label/desc/output → sidebar.analysis.<prefix>.*） */
+  keyPrefix: string;
 }
 
 const TOOLS: ToolDef[] = [
-  { key: 'buffer', label: '缓冲区分析', icon: Triangle, desc: '为图层要素生成指定距离的缓冲区域', output: '新的缓冲区图层' },
-  { key: 'overlay', label: '叠加分析', icon: Layers, desc: '计算两个图层的空间叠加关系', output: '叠加结果图层' },
-  { key: 'clip', label: '裁剪', icon: Scissors, desc: '用边界图层裁剪目标图层范围', output: '裁剪结果图层' },
+  { key: 'buffer', icon: Triangle, keyPrefix: 'tool.buffer' },
+  { key: 'overlay', icon: Layers, keyPrefix: 'tool.overlay' },
+  { key: 'clip', icon: Scissors, keyPrefix: 'tool.clip' },
 ];
 
 function LayerSelect({ id, layers, value, onChange, placeholder }: {
@@ -62,6 +60,7 @@ function Field({ id, label, children }: { id: string; label: string; children: R
 }
 
 export function AnalysisTab({ onSend, aiStatus }: AnalysisTabProps & { aiStatus?: import('@/lib/store/hud-types').AiStatus }) {
+  const t = useT();
   const uid = useId();
   const [activeTool, setActiveTool] = useState<ToolKey>('buffer');
   const layers = useHudStore((s) => s.layers);
@@ -120,7 +119,7 @@ export function AnalysisTab({ onSend, aiStatus }: AnalysisTabProps & { aiStatus?
         <div
           className="grid grid-cols-3 gap-2"
           role="radiogroup"
-          aria-label="分析工具"
+          aria-label={t('sidebar.analysis.toolAria')}
           onKeyDown={(e) => {
             if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
             e.preventDefault();
@@ -131,7 +130,7 @@ export function AnalysisTab({ onSend, aiStatus }: AnalysisTabProps & { aiStatus?
             setTimeout(() => document.getElementById(`analysis-tool-${next.key}`)?.focus(), 0);
           }}
         >
-          {TOOLS.map(({ key, label, icon: Icon }) => (
+          {TOOLS.map(({ key, keyPrefix, icon: Icon }) => (
             <button
               key={key}
               id={`analysis-tool-${key}`}
@@ -153,13 +152,13 @@ export function AnalysisTab({ onSend, aiStatus }: AnalysisTabProps & { aiStatus?
               }}
             >
               <Icon size={16} aria-hidden />
-              {label}
+              {t(`sidebar.analysis.${keyPrefix}.label`)}
             </button>
           ))}
         </div>
         {/* 当前工具目标与产出（UI V3：强调任务目标而不是工具堆积） */}
         <p className="text-meta leading-relaxed text-ink-muted">
-          {activeDef.desc} · 输出：{activeDef.output}
+          {t(`sidebar.analysis.${activeDef.keyPrefix}.desc`)}{t('sidebar.analysis.goalSuffix', { output: t(`sidebar.analysis.${activeDef.keyPrefix}.output`) })}
         </p>
       </div>
 
@@ -167,22 +166,22 @@ export function AnalysisTab({ onSend, aiStatus }: AnalysisTabProps & { aiStatus?
       <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
         {vectorLayers.length === 0 && (
           <InlineNotice variant="info">
-            暂无可分析的矢量图层。可先在数据面板加载数据集，或直接告诉 AI 你要分析的内容。
+            {t('sidebar.analysis.noVectorLayers')}
           </InlineNotice>
         )}
 
         {activeTool === 'buffer' && (
           <>
-            <Field id={`${uid}-buffer-layer`} label="输入图层">
-              <LayerSelect id={`${uid}-buffer-layer`} layers={vectorLayers} value={bufferLayer} onChange={setBufferLayer} placeholder="选择图层" />
+            <Field id={`${uid}-buffer-layer`} label={t('sidebar.analysis.inputLayer')}>
+              <LayerSelect id={`${uid}-buffer-layer`} layers={vectorLayers} value={bufferLayer} onChange={setBufferLayer} placeholder={t('sidebar.analysis.layerPlaceholder')} />
             </Field>
-            <Field id={`${uid}-buffer-dist`} label="缓冲距离 (米)">
+            <Field id={`${uid}-buffer-dist`} label={t('sidebar.analysis.bufferDistance')}>
               <input
                 id={`${uid}-buffer-dist`}
                 type="number"
                 value={bufferDistance}
                 onChange={(e) => setBufferDistance(e.target.value)}
-                placeholder="输入缓冲距离，如 500"
+                placeholder={t('sidebar.analysis.bufferDistancePh')}
                 className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-meta text-ink"
               />
             </Field>
@@ -191,23 +190,23 @@ export function AnalysisTab({ onSend, aiStatus }: AnalysisTabProps & { aiStatus?
 
         {activeTool === 'overlay' && (
           <>
-            <Field id={`${uid}-overlay-a`} label="图层 A">
-              <LayerSelect id={`${uid}-overlay-a`} layers={vectorLayers} value={overlayLayerA} onChange={setOverlayLayerA} placeholder="选择图层 A" />
+            <Field id={`${uid}-overlay-a`} label={t('sidebar.analysis.layerA')}>
+              <LayerSelect id={`${uid}-overlay-a`} layers={vectorLayers} value={overlayLayerA} onChange={setOverlayLayerA} placeholder={t('sidebar.analysis.layerAPh')} />
             </Field>
-            <Field id={`${uid}-overlay-b`} label="图层 B">
-              <LayerSelect id={`${uid}-overlay-b`} layers={vectorLayers} value={overlayLayerB} onChange={setOverlayLayerB} placeholder="选择图层 B" />
+            <Field id={`${uid}-overlay-b`} label={t('sidebar.analysis.layerB')}>
+              <LayerSelect id={`${uid}-overlay-b`} layers={vectorLayers} value={overlayLayerB} onChange={setOverlayLayerB} placeholder={t('sidebar.analysis.layerBPh')} />
             </Field>
-            <Field id={`${uid}-overlay-op`} label="操作类型">
+            <Field id={`${uid}-overlay-op`} label={t('sidebar.analysis.opType')}>
               <select
                 id={`${uid}-overlay-op`}
                 value={overlayOp}
                 onChange={(e) => setOverlayOp(e.target.value)}
                 className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-meta text-ink"
               >
-                <option value="intersection">相交 (Intersection)</option>
-                <option value="union">合并 (Union)</option>
-                <option value="difference">差异 (Difference)</option>
-                <option value="symmetric_difference">对称差异 (Symmetric Difference)</option>
+                <option value="intersection">{t('sidebar.analysis.opIntersect')}</option>
+                <option value="union">{t('sidebar.analysis.opUnion')}</option>
+                <option value="difference">{t('sidebar.analysis.opDifference')}</option>
+                <option value="symmetric_difference">{t('sidebar.analysis.opSymDiff')}</option>
               </select>
             </Field>
           </>
@@ -215,11 +214,11 @@ export function AnalysisTab({ onSend, aiStatus }: AnalysisTabProps & { aiStatus?
 
         {activeTool === 'clip' && (
           <>
-            <Field id={`${uid}-clip-target`} label="目标图层">
-              <LayerSelect id={`${uid}-clip-target`} layers={vectorLayers} value={clipTarget} onChange={setClipTarget} placeholder="选择目标图层" />
+            <Field id={`${uid}-clip-target`} label={t('sidebar.analysis.targetLayer')}>
+              <LayerSelect id={`${uid}-clip-target`} layers={vectorLayers} value={clipTarget} onChange={setClipTarget} placeholder={t('sidebar.analysis.targetPh')} />
             </Field>
-            <Field id={`${uid}-clip-mask`} label="裁剪边界图层">
-              <LayerSelect id={`${uid}-clip-mask`} layers={vectorLayers} value={clipMask} onChange={setClipMask} placeholder="选择裁剪边界" />
+            <Field id={`${uid}-clip-mask`} label={t('sidebar.analysis.clipBoundary')}>
+              <LayerSelect id={`${uid}-clip-mask`} layers={vectorLayers} value={clipMask} onChange={setClipMask} placeholder={t('sidebar.analysis.clipBoundaryPh')} />
             </Field>
           </>
         )}
@@ -249,10 +248,10 @@ export function AnalysisTab({ onSend, aiStatus }: AnalysisTabProps & { aiStatus?
                 : '执行裁剪'}
         </button>
         {isBusy ? (
-          <p className="mt-1.5 text-caption text-ink-muted">AI 正在处理上一条指令，完成后可再次提交。</p>
+          <p className="mt-1.5 text-caption text-ink-muted">{t('sidebar.analysis.aiBusy')}</p>
         ) : !baseCanSubmit ? (
           <p className="mt-1.5 text-caption text-ink-muted">
-            请选择所需图层{activeTool === 'buffer' ? '并输入有效距离' : ''}后执行
+            {t('sidebar.analysis.needLayers', { extra: activeTool === 'buffer' ? t('sidebar.analysis.needDistance') : '' })}
           </p>
         ) : null}
       </div>

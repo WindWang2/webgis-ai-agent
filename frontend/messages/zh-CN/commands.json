@@ -1,0 +1,13 @@
+{
+  "group": {
+    "panel": "面板",
+    "edit": "编辑",
+    "tools": "工具",
+    "session": "会话"
+  },
+  "searchCrossSession": "跨会话搜索",
+  "editHistory": "打开操作历史（撤销/重做时间线）",
+  "queryConsole": "打开高级查询控制台",
+  "newSession": "新建会话",
+  "storyView": "在故事视图打开当前会话"
+}

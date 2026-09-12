@@ -340,6 +340,15 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     // Runtime V4 brush：框选模式接管画布拖拽（disable/enable 对）。
     // MapLibre 契约：dragPan/boxZoom 是 handler 对象（非函数）。
     dragPan: { enable: vi.fn(), disable: vi.fn(), isEnabled: vi.fn(() => true) },
+    // ADR-0144 P7：草图编辑期间的触控手势消歧（旋转/俯仰开关）
+    touchZoomRotate: {
+      enable: vi.fn(),
+      disable: vi.fn(),
+      isEnabled: vi.fn(() => true),
+      enableRotation: vi.fn(),
+      disableRotation: vi.fn(),
+    },
+    touchPitch: { enable: vi.fn(), disable: vi.fn() },
     boxZoom: { enable: vi.fn(), disable: vi.fn(), isEnabled: vi.fn(() => true) },
     getCanvas: vi.fn(() => makeCanvasLike()),
     getContainer: vi.fn(() => (typeof document !== 'undefined' ? document.createElement('div') : null)),

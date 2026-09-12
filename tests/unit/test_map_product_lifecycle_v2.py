@@ -362,7 +362,7 @@ def test_rest_merge_conflict_maps_to_409(lifecycle_project, _client):
         f"/api/v1/projects/{project_id}/map-products/merge",
         json={"from_version_no": v1, "to_version_no": v3}, headers=_auth())
     assert r.status_code == 409
-    assert "conflict" in r.json()["detail"] or "refused" in r.json()["detail"]
+    assert "conflict" in r.json()["message"] or "refused" in r.json()["message"]
 
 
 def test_rest_rerun_requires_bound_run(lifecycle_project, _client):

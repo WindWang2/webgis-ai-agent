@@ -6,6 +6,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { ConfirmAction } from '@/components/shared/confirm-action';
 import type { SessionSummary } from '@/lib/store/hud-types';
+import { useT } from '@/lib/i18n/useT';
 
 interface HistoryDrawerProps {
   open: boolean;
@@ -16,6 +17,7 @@ interface HistoryDrawerProps {
 }
 
 export function HistoryDrawer({ open, onClose, onSelect, onDeleteSession }: HistoryDrawerProps) {
+  const t = useT();
   const sessions = useHudStore((s) => s.sessions);
   const [search, setSearch] = useState('');
 
@@ -82,19 +84,19 @@ export function HistoryDrawer({ open, onClose, onSelect, onDeleteSession }: Hist
         {/* Header */}
         <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-edge-subtle">
           <History size={16} style={{ color: 'var(--agent-accent)' }} />
-          <h2 id="history-drawer-title" className="flex-1 text-body font-semibold text-ink">历史会话</h2>
+          <h2 id="history-drawer-title" className="flex-1 text-body font-semibold text-ink">{t('drawers.history.title')}</h2>
           <button
             onClick={() => { onSelect(null); onClose(); }}
-            aria-label="新建会话"
+            aria-label={t('layout.topbar.newSession')}
             className="flex items-center gap-1 px-2 py-1 rounded-sm text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-90"
             style={{ backgroundColor: 'var(--agent-accent)' }}
           >
             <Plus size={12} />
-            新建会话
+            {t('layout.topbar.newSession')}
           </button>
           <button
             onClick={onClose}
-            aria-label="关闭历史会话"
+            aria-label={t('drawers.history.closeAria')}
             className="p-1.5 rounded-sm text-ink-disabled hover:text-ink-secondary hover:bg-surface-hover transition-colors"
           >
             <X size={15} />
@@ -109,15 +111,15 @@ export function HistoryDrawer({ open, onClose, onSelect, onDeleteSession }: Hist
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              aria-label="搜索历史会话"
-              placeholder="搜索会话..."
+              aria-label={t('drawers.history.searchAria')}
+              placeholder={t('drawers.history.searchPh')}
               className="flex-1 bg-transparent text-body text-ink-secondary placeholder:text-ink-disabled outline-none"
             />
           </div>
         </div>
 
         {/* Session list */}
-        <div className="flex-1 overflow-y-auto" role="list" aria-label="历史会话列表">
+        <div className="flex-1 overflow-y-auto" role="list" aria-label={t('drawers.history.listAria')}>
           {filtered.length === 0 ? (
             <div
               className="flex flex-col items-center justify-center h-full text-center px-6"
@@ -151,7 +153,7 @@ export function HistoryDrawer({ open, onClose, onSelect, onDeleteSession }: Hist
                       <span className="text-micro text-ink-muted">{session.time}</span>
                       {session.msgs > 0 && (
                         <span className="text-micro text-ink-muted">
-                          {session.msgs} 条消息
+                          {t('drawers.history.messages', { count: session.msgs })}
                         </span>
                       )}
                     </div>
@@ -179,8 +181,8 @@ export function HistoryDrawer({ open, onClose, onSelect, onDeleteSession }: Hist
                       仅在有回调时渲染，避免破坏既有 drawer 的 tab 顺序测试。 */}
                   {onDeleteSession && (
                     <ConfirmAction
-                      label="删除"
-                      confirmLabel="确认删除？"
+                      label={t('common.delete')}
+                      confirmLabel={t('drawers.history.confirmDelete')}
                       onConfirm={() => onDeleteSession(session)}
                       aria-label={`删除会话 ${session.title || session.id}`}
                       className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
@@ -195,7 +197,7 @@ export function HistoryDrawer({ open, onClose, onSelect, onDeleteSession }: Hist
         {/* Footer */}
         <div className="shrink-0 px-4 py-2.5 border-t border-edge-subtle bg-surface-raised">
           <span className="text-body text-ink-muted">
-            共 {filtered.length} 条历史会话
+            {t('drawers.history.total', { count: filtered.length })}
           </span>
         </div>
       </div>

@@ -93,7 +93,11 @@ export interface CausalEntry {
   mapState?: Record<string, unknown>;
 }
 
-export type LeftTab = 'chat' | 'project' | 'layers' | 'components' | 'analysis' | 'exports' | 'export_layout' | 'data_sources' | 'tasks' | 'results';
+// V9（ADR-0145）：'market' / 'modelops' 为智能资产面板追加的 rail tab
+// （append-only，见 nav-rail RAIL_GROUPS 末组）；'lakehouse' 来自 lakehouse-ui
+// （ADR-0141），与二者并集共存。
+// ADR-0142：'ops' 为运维控制台追加的 rail tab（append-only，居词表尾）。
+export type LeftTab = 'chat' | 'project' | 'layers' | 'components' | 'analysis' | 'exports' | 'export_layout' | 'data_sources' | 'tasks' | 'results' | 'lakehouse' | 'market' | 'modelops' | 'ops';
 export type SettingsTab = 'llm' | 'skills' | 'rag' | 'map' | 'system' | 'account';
 
 // Workspace V2（Goal C5）：dock 基座 —— 工作区 UI 状态，与语义组件状态分离。
@@ -292,6 +296,14 @@ export interface HudState extends WorkbenchSlice {
   setRagPanelOpen: (open: boolean) => void;
   tweaksOpen: boolean;
   setTweaksOpen: (open: boolean) => void;
+
+  /* ─── 知识库 citation 注入（ADR-0145）─── */
+  // 非空时 ChatTab 把该文本拼入输入框草稿并立即 clear（对象/字符串身份
+  // 变化即触发消费，无需额外序号）。chat API 的 message 是纯字符串、无
+  // 结构化附件字段 —— 注入走草稿由用户确认发送，不静默代发。
+  pendingChatInjection: string | null;
+  setPendingChatInjection: (text: string) => void;
+  clearPendingChatInjection: () => void;
 
   /* ─── v2 UI Tweaks ─── */
   accentColor: string;

@@ -106,7 +106,7 @@ async def test_register_rejects_bad_username(client):
         "password": "super-secret-1!",
     })
     assert resp.status_code == 400
-    assert "username" in resp.json()["detail"]
+    assert "username" in resp.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -117,7 +117,7 @@ async def test_register_rejects_bad_email(client):
         "password": "super-secret-1!",
     })
     assert resp.status_code == 400
-    assert "email" in resp.json()["detail"]
+    assert "email" in resp.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -184,7 +184,7 @@ async def test_login_unknown_user_returns_401(client):
     })
     assert resp.status_code == 401
     # 信息上不区分『用户不存在』vs『密码错』
-    assert "用户名或密码" in resp.json()["detail"]
+    assert "用户名或密码" in resp.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -216,4 +216,4 @@ async def test_register_disabled_by_default(client, monkeypatch):
         "password": "super-secret-1!",
     })
     assert resp.status_code == 503
-    assert "禁用" in resp.json()["detail"]
+    assert "禁用" in resp.json()["message"]

@@ -324,7 +324,7 @@ async def test_local_data_routes_direct(admin_env, osm_env, tmp_path):
     res = await get_admin_boundary(
         level="city", name="成都市", to_wgs84=False, simplified=False, _user={}
     )
-    assert res["count"] == 1
+    assert res["count"] == 1  # service dict 透传；HTTP 层由 response_model 校验（ADR-0138）
 
     res = await get_admin_children(
         parent_name="成都市", parent_level="city", to_wgs84=False, simplified=False, _user={}
@@ -332,4 +332,4 @@ async def test_local_data_routes_direct(admin_env, osm_env, tmp_path):
     assert res["count"] == 2
 
     cat = await get_osm_catalog(_user={})
-    assert "themes" in cat
+    assert cat.themes

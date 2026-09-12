@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+
+const mocks = vi.hoisted(() => ({
+  setRagPanelOpen: vi.fn(),
+}));
 
 vi.mock('@/lib/store/useHudStore', () => ({
   useHudStore: (selector: (s: Record<string, unknown>) => unknown) =>
@@ -10,6 +14,7 @@ vi.mock('@/lib/store/useHudStore', () => ({
         collection: 'geoagent',
       },
       setRagConfig: vi.fn(),
+      setRagPanelOpen: mocks.setRagPanelOpen,
     }),
 }));
 
@@ -123,5 +128,75 @@ describe('RagConfig connectivity test (#390)', () => {
 
     const [url] = fetchMock.mock.calls.find(([u]) => String(u).includes('/knowledge/documents'))!;
     expect(String(url)).toContain('/api/v1/knowledge/documents');
+  });
+});
+
+describe('RagConfig V9 — 测试检索与面板导航（ADR-0145）', () => {
+  let searchResponse: () => ReturnType<typeof jsonOk>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+    searchResponse = () =>
+      jsonOk({
+        code: 'SUCCESS',
+        success: true,
+        message: 'ok',
+        data: { results: [] },
+      });
+    docsResponse = () =>
+      jsonOk({ code: 'SUCCESS', success: true, message: 'ok', data: { total: 0, items: [] } });
+    fetchMock.mockImplementation((url: string | URL) => {
+      const u = String(url);
+      if (u.includes('/api/v1/knowledge/search')) return Promise.resolve(searchResponse());
+      if (u.includes('/api/v1/config/rag/test')) return Promise.resolve(jsonOk({}));
+      return Promise.resolve(docsResponse());
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('测试检索渲染结构化命中 + 分数分布（原始 L2，不伪装百分比）', async () => {
+    const user = userEvent.setup();
+    searchResponse = () =>
+      jsonOk({
+        code: 'SUCCESS',
+        success: true,
+        message: 'ok',
+        data: {
+          results: [
+            { id: 'chk_1', document_id: 'd1', title: '向量入门', content: 'FAISS 是向量检索库', file_type: 'text', score: 0.42 },
+            { id: 'chk_2', document_id: 'd2', title: 'RAG 架构', content: '检索增强生成', file_type: 'text', score: 0.9 },
+          ],
+        },
+      });
+    render(<RagConfig />);
+
+    fireEvent.change(screen.getByLabelText('测试检索查询'), { target: { value: 'FAISS' } });
+    await user.click(screen.getByRole('button', { name: '检索' }));
+
+    expect(await screen.findByRole('img', { name: /命中分数分布：2 条/ })).toBeInTheDocument();
+    // 分数同时出现在分布条与结果行 —— 断言至少存在。
+    expect(screen.getAllByText(/0\.4200/).length).toBeGreaterThan(0);
+    expect(screen.getByText('向量入门')).toBeInTheDocument();
+    expect(screen.getByText(/条长 ∝ L2 距离/)).toBeInTheDocument();
+  });
+
+  it('测试检索空结果是诚实空态', async () => {
+    const user = userEvent.setup();
+    render(<RagConfig />);
+    fireEvent.change(screen.getByLabelText('测试检索查询'), { target: { value: '没有的主题' } });
+    await user.click(screen.getByRole('button', { name: '检索' }));
+    expect(await screen.findByText(/无命中/)).toBeInTheDocument();
+  });
+
+  it('「打开知识库面板」触发 setRagPanelOpen(true)（设置页 → 面板导航）', async () => {
+    const user = userEvent.setup();
+    render(<RagConfig />);
+    await user.click(screen.getByRole('button', { name: '打开知识库面板' }));
+    expect(mocks.setRagPanelOpen).toHaveBeenCalledWith(true);
   });
 });

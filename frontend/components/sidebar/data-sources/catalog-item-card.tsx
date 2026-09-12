@@ -3,6 +3,7 @@
 import { Download, Eye, Info, Table2 } from 'lucide-react';
 import type { CatalogItem } from '@/lib/api/data-fabric';
 import { StatusBadge } from '@/components/shared/status-badge';
+import { useT } from '@/lib/i18n/useT';
 
 export interface CatalogItemCardProps {
   item: CatalogItem;
@@ -28,6 +29,7 @@ export function CatalogItemCard({
   onMaterialize,
   onInspect,
 }: CatalogItemCardProps) {
+const t = useT();
   // 列表 summary 载荷未携带 availability 时视为可用（向后兼容）。
   const unavailable = (item.availability ?? 'available') === 'unavailable';
   return (
@@ -44,7 +46,7 @@ export function CatalogItemCard({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {unavailable && <StatusBadge status="stale" label="已下线" />}
+          {unavailable && <StatusBadge status="stale" label={t('sidebar.ds.filterRetired')} />}
           <span className="rounded-sm bg-surface-sunken px-1.5 py-0.5 font-mono text-micro text-ink-secondary">
             {item.geometry_type || 'Vector'}
           </span>
@@ -58,7 +60,7 @@ export function CatalogItemCard({
           className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 text-ink-secondary transition-colors hover:bg-surface-hover"
         >
           <Table2 size={12} aria-hidden />
-          <span>数据集</span>
+          <span>{t('sidebar.ds.dataset')}</span>
         </button>
         <button
           type="button"
@@ -66,7 +68,7 @@ export function CatalogItemCard({
           className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 text-ink-secondary transition-colors hover:bg-surface-hover"
         >
           <Info size={12} aria-hidden />
-          <span>契约</span>
+          <span>{t('sidebar.ds.contract')}</span>
         </button>
         <button
           type="button"
@@ -74,7 +76,7 @@ export function CatalogItemCard({
           className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 text-ink-secondary transition-colors hover:bg-surface-hover"
         >
           <Eye size={12} aria-hidden />
-          <span>预览</span>
+          <span>{t('sidebar.ds.preview')}</span>
         </button>
         <button
           type="button"

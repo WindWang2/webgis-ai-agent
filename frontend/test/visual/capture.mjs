@@ -56,10 +56,22 @@ const SURFACES = [
   { name: 'chat-narrow', tab: '对话', panelArrows: -6 },
   { name: 'project', tab: '项目' },
   { name: 'data', tab: '数据' },
+  /*
+    数据湖（V9 / ADR-0141）：rail tab → 目录（默认子页签）；数据集子页签经
+    clickSubTab 走真实 tablist 点击。fixtures 填充 catalog 与 datasets 两个
+    mount 期 GET，保证截图是真实信息密度而非空态。
+  */
+  { name: 'lakehouse-catalog', tab: '数据湖', restoreSession: true },
+  { name: 'lakehouse-datasets', tab: '数据湖', restoreSession: true, clickSubTab: '数据集' },
   { name: 'layers', tab: '图层' },
   { name: 'analysis', tab: '分析' },
   { name: 'tasks', tab: '任务' },
   { name: 'map-studio', tab: '制图' },
+  // V9（ADR-0145）：智能资产面板（rail 追加组；modelops 未打 fixture，
+  // 捕获的是其确定性诚实空态 —— 注册表工具经 /chat/tools/execute 走
+  // 通用空数组分支）。
+  { name: 'market', tab: '市场' },
+  { name: 'modelops', tab: 'ModelOps' },
   { name: 'settings', button: '设置' },
   { name: 'template-gallery', button: '模板库' },
   { name: 'history', button: '历史会话' },
@@ -110,6 +122,16 @@ const SURFACES = [
   */
   { name: 'map-legends', tab: '图层', restoreSession: true },
   { name: 'map-legends-collapsed', tab: '图层', restoreSession: true, collapse: true },
+  /*
+    Ops console (ADR-0142): the 运维 rail tab hosts the cluster dashboard /
+    plan console / runtime section / breaker panel / system health, plus a
+    fullscreen wallboard. Populated fixtures above → information-dense shots.
+  */
+  { name: 'ops-cluster', tab: '运维' },
+  { name: 'ops-runtime', tab: '运维', opsView: 'runtime' },
+  { name: 'ops-breaker', tab: '运维', opsView: 'breaker' },
+  { name: 'ops-health', tab: '运维', opsView: 'health' },
+  { name: 'ops-wallboard', tab: '运维', opsWallboard: true },
 ];
 
 /** Two features are enough to paint a thematic fill and a heatmap point. */
@@ -387,6 +409,221 @@ const template = (id, kind, name, category, description) => ({
  * the shots exercise real information density instead of only empty states.
  */
 const FIXTURES = [
+  // Ops console (ADR-0142): cluster control plane + workflow runtime + health
+  // surface — populated states so the dashboard shots carry information
+  // density. Registered before the generic fixtures; the ops panels poll
+  // these on mount.
+  [
+    /\/api\/v1\/geocompute\/cluster\/metrics/,
+    {
+      runs_by_status: { queued: 4, leased: 3, running: 9, completed: 128, failed: 6, cancelled: 2, preempted: 1 },
+      queue_depth: 5, inflight: 12, completed: 128, failed: 6, cancelled: 2,
+      preempted_total: 3, lease_loss_total: 1,
+      cancel_latency: { p50_s: 0.8, p95_s: 2.4, samples: 42 },
+      queue_wait: { p50_s: 1.5, p95_s: 9.1, samples: 128 },
+      waiting_by_profile: { light_cpu: 2, raster: 2, heavy_cpu: 1 },
+      events_counters: { event_rejected_invalid: 0, event_budget_exhausted_total: 1, event_append_failed_total: 0 },
+      workers: { live: 6, by_role: { worker: 5, coordinator: 1 }, profile_slots: { light_cpu: 12, heavy_cpu: 6, raster: 8 }, gpu_workers: 1 },
+      leader: { count: 1, ids: ['coord-primary'] },
+      ledger: [{ scope_key: 'global', rows: 154203, bytes: 48120000000, limit_rows: null, limit_bytes: null }],
+      resource_rejections: { rows: 2, bytes: 1, units: 4, mem_mb: 1, gpu: 0 },
+      oom_avoided: 3, gpu_fallbacks: 1,
+      spill: { count: 18, bytes: 6400000000, rehydrate_hits: 11, rehydrate_misses: 7 },
+      transfer: { bytes_total: 27140000000 },
+      cache: { worker_cache_hits: 431 },
+      lineage: { node_completed: 2140, node_reused: 312, node_lost: 9, partition_planned: 480, speculative_dispatched: 57, poison_quarantined: 3 },
+      utilization: { reserved_units: 14, capacity_units: 26, ratio: 0.538 },
+      quarantine: [{ owner_scope: 'owner:a1b2c3d4e5f6…', fingerprint: '9f2c1e07aa4b13dc', failure_count: 4, active: true, last_error_code: 'CRS_MISMATCH' }],
+    },
+  ],
+  [
+    /\/api\/v1\/geocompute\/cluster\/workers/,
+    {
+      live: 3,
+      workers: [
+        { worker_id: 'w-3f9d2a11c4e5', role: 'coordinator', profiles: { light_cpu: 2, heavy_cpu: 1 }, capability: { gpus: [], disk_free_mb: 204800 }, heartbeat_age_s: 2.1, cache_entries: 0, cache_bytes: 0 },
+        { worker_id: 'w-88aa00bb21cc', role: 'worker', profiles: { raster: 4, light_cpu: 4 }, capability: { gpus: [{ model: 'A10G', mem_mb: 24576 }] }, heartbeat_age_s: 5.4, cache_entries: 214, cache_bytes: 8410000000 },
+        { worker_id: 'w-77ccb43d9012', role: 'worker', profiles: { light_cpu: 2 }, capability: null, heartbeat_age_s: 47.2, cache_entries: 12, cache_bytes: 310000000 },
+      ],
+    },
+  ],
+  [
+    /\/api\/v1\/geocompute\/cluster\/runs\/stuck/,
+    {
+      count: 1,
+      runs: [
+        {
+          run_id: 'run-stuck-001', status: 'running', owner_scope: 'owner:test', plan_fingerprint: 'aa77bb00', session_id: 'sess-1',
+          priority: 5, attempts: 3, preempts: 0, lease_epoch: 4, cancel_requested_at: null, yield_requested_at: null,
+          error_code: null, required_profiles: ['light_cpu'], resource_request: null,
+          created_at: new Date(Date.now() - 31 * 60000).toISOString(),
+          started_at: new Date(Date.now() - 30 * 60000).toISOString(),
+          terminal_at: null, heartbeat_at: new Date(Date.now() - 9 * 60000).toISOString(),
+          lease_expires_at: new Date(Date.now() - 6 * 60000).toISOString(),
+          id: 1, tenant_key: 't:test', coordinator_id: 'coord-primary', dispatch_seq: 7,
+        },
+      ],
+    },
+  ],
+  [
+    /\/api\/v1\/geocompute\/runs\/run-live-100\/events/,
+    { run_id: 'run-live-100', events: [], after_id: 0, count: 0 },
+  ],
+  [
+    /\/api\/v1\/geocompute\/runs\/run-live-100/,
+    { run_id: 'run-live-100', plan_fingerprint: 'g1', status: 'running', source: 'cluster', priority: 5, attempts: 1, preempts: 0, error_code: null, required_profiles: ['light_cpu'], progress: { settled: 2, done: 3, failed: 0, total: 4 } },
+  ],
+  [
+    /\/api\/v1\/geocompute\/runs\?/,
+    { runs: [], terminal_snapshots: [], limit: 20, offset: 0 },
+  ],
+  [
+    /\/api\/v1\/workflow-runtime\/instances\/wi-ops-1\/recompute-plan/,
+    { success: true, instance_id: 'wi-ops-1', stale: 2, counts: {}, decisions: [], recompute: ['spatial_join'], reuse: ['extract_sources'], explanations: ['sources refreshed'], changed_dimensions: ['data'] },
+  ],
+  [
+    /\/api\/v1\/workflow-runtime\/instances\/wi-ops-1/,
+    {
+      success: true,
+      instance: {
+        instance_id: 'wi-ops-1', package_id: 'pkg.drainage.analysis', package_version: '1.4.2', package_fingerprint: 'pkgfp88',
+        status: 'running', revision: 7, cancel_requested: false,
+        nodes: [
+          { node_id: 'extract_sources', state: 'SUCCEEDED', attempts: 1, error_code: null, reused: true, binding_violations: [] },
+          { node_id: 'spatial_join', state: 'RUNNING', attempts: 1, error_code: null, reused: false, binding_violations: [] },
+          { node_id: 'validate_geom', state: 'FAILED', attempts: 3, error_code: 'GEOM_INVALID', reused: false, binding_violations: [] },
+        ],
+        counts: { SUCCEEDED: 1, RUNNING: 1, FAILED: 1 },
+        decisions: [], pending_changes: [], error_code: null, error_detail: null,
+        methodology_family: 'drainage-network-analysis',
+        explain: { why_recomputed: ['sources refreshed'], why_reused: ['topology unchanged'], blocked: [] },
+      },
+    },
+  ],
+  [
+    /\/api\/v1\/workflow-runtime\/instances/,
+    { success: true, instances: [{ instance_id: 'wi-ops-1', package_id: 'pkg.drainage.analysis', status: 'running', revision: 7 }] },
+  ],
+  [/\/api\/v1\/health\/live/, { status: 'alive' }],
+  [/\/api\/v1\/health/, { status: 'healthy', timestamp: '2026-01-01T08:30:00Z', service: 'WebGIS AI Agent', version: '0.1.3', agent_runtime: 'pi', pi_workers_alive: '4/4' }],
+  [/\/api\/v1\/ready/, { ready: true }],
+  [
+    /\/api\/v1\/status\/detailed/,
+    {
+      status: 'ok',
+      components: {
+        db: { status: 'ok', latency_ms: 2.4, detail: null },
+        redis: { status: 'ok', latency_ms: 0.6, detail: null },
+        llm: { status: 'ok', latency_ms: 412.8, detail: null },
+        worker: { status: 'ok', latency_ms: 5.1, detail: null },
+        object_store: { status: 'not_configured', latency_ms: null, detail: 'S3 not configured' },
+      },
+      stuck_jobs: 1, refresh_age_s: 0.4,
+    },
+  ],
+  [/\/api\/v1\/version/, { version: '0.1.3', commit: '8b5b8375abc', python: '3.12.7', extensions_api: '2', timestamp: '2026-01-01T08:30:00Z' }],
+  [/\/api\/v1\/tasks\/jobs\?.*active_only=true/, { jobs: [{ id: 'job-1', kind: 'workflow', name: '流域分析', status: 'running', progress: 42, active: true }], has_active: true, poll_after_ms: 3000 }],
+
+  /*
+    Lakehouse V9（ADR-0141）：catalog + datasets 两个 mount 期 GET 的形状
+    正确 fixtures（条目含 cube / 矢量 / 已撤销三种形态，数据集含 refs/head），
+    与 lib/api/lakehouse.ts 契约逐字段对齐（勘察纪要 §1.3）。
+  */
+  [
+    /\/api\/v1\/lakehouse\/catalog/,
+    {
+      items: [
+        {
+          object_id: 'a1'.repeat(32),
+          owner_type: 'session',
+          owner_id: 'sess-visual',
+          kind: 'zarr_cube',
+          title: '京津冀 PM2.5 预报 cube',
+          producer_capability: 'geocompute',
+          producer_tool: 'build_cube',
+          workflow_run_id: null,
+          tags: ['大气', '48 步'],
+          bbox: [115.4, 38.0, 118.5, 41.1],
+          time_start: '2026-08-01T00:00:00+00:00',
+          time_end: '2026-09-01T00:00:00+00:00',
+          content_sha256: 'b2'.repeat(32),
+          byte_size: 892_344_000,
+          status: 'active',
+          created_at: '2026-09-01T08:00:00+00:00',
+        },
+        {
+          object_id: 'c3'.repeat(32),
+          owner_type: 'session',
+          owner_id: 'sess-visual',
+          kind: 'vector_parquet',
+          title: '全国 POI 抽样',
+          producer_capability: 'data-fabric',
+          producer_tool: 'scan',
+          workflow_run_id: null,
+          tags: [],
+          bbox: null,
+          time_start: null,
+          time_end: null,
+          content_sha256: 'd4'.repeat(32),
+          byte_size: 12_884_901,
+          status: 'active',
+          created_at: '2026-08-28T02:00:00+00:00',
+        },
+        {
+          object_id: 'e5'.repeat(32),
+          owner_type: 'session',
+          owner_id: 'sess-visual',
+          kind: 'cog_raster',
+          title: 'Sentinel-2 NDVI 合成（已撤销）',
+          producer_capability: 'geocompute',
+          producer_tool: 'build_cube',
+          workflow_run_id: null,
+          tags: ['sentinel'],
+          bbox: [116.0, 39.0, 117.0, 40.0],
+          time_start: '2026-07-01T00:00:00+00:00',
+          time_end: '2026-07-31T00:00:00+00:00',
+          content_sha256: 'f6'.repeat(32),
+          byte_size: 44_040_192,
+          status: 'revoked',
+          created_at: '2026-08-01T00:00:00+00:00',
+        },
+      ],
+      count: 3,
+      total: '3',
+      total_bounded: true,
+      limit: 50,
+      offset: 0,
+      next_offset: null,
+    },
+  ],
+  [
+    /\/api\/v1\/lakehouse\/datasets/,
+    {
+      datasets: [
+        {
+          dataset_id: 'aa11'.repeat(16),
+          owner_type: 'session',
+          owner_id: 'sess-visual',
+          name: 'pm25-forecast-2026',
+          description: '京津冀 PM2.5 多模式预报数据集',
+          default_branch: 'main',
+          cube_contract: { dims: ['time', 'model', 'y', 'x'], variables: ['pm25'] },
+          created_at: '2026-09-01T08:00:00+00:00',
+        },
+        {
+          dataset_id: 'bb22'.repeat(16),
+          owner_type: 'session',
+          owner_id: 'sess-visual',
+          name: 'poi-sample-2026',
+          description: null,
+          default_branch: 'main',
+          cube_contract: null,
+          created_at: '2026-08-28T02:00:00+00:00',
+        },
+      ],
+      count: 2,
+    },
+  ],
   // Result Workbench seeding: the chat turn replay above is answered as an SSE
   // stream (must precede the generic localhost JSON branch in installStubs).
   // Kept here next to the other fixtures for discoverability; matched by URL in
@@ -427,6 +664,68 @@ const FIXTURES = [
       messages: [
         { role: 'user', content: '统计北京各区人口密度并出图', created_at: NOW },
         { role: 'assistant', content: '已生成分级设色图与商业 POI 热力图。', created_at: NOW },
+      ],
+    },
+  ],
+  // V9（ADR-0145）：知识库文档目录 + 扩展市场列表（market/modelops rail 面用）。
+  [
+    /\/api\/v1\/knowledge\/documents\?/,
+    {
+      code: 'SUCCESS',
+      success: true,
+      message: 'ok',
+      data: {
+        total: 2,
+        items: [
+          {
+            id: 'doc_a1b2c3d4e5f6',
+            title: '北京城市更新政策汇编（2025）',
+            file_type: 'markdown',
+            chunk_count: 42,
+            status: 'completed',
+            created_at: NOW,
+          },
+          {
+            id: 'doc_b2c3d4e5f6a1',
+            title: 'GIS 空间分析术语表',
+            file_type: 'text',
+            chunk_count: 17,
+            status: 'completed',
+            created_at: NOW,
+          },
+        ],
+      },
+    },
+  ],
+  [
+    /\/api\/v1\/extensions\/marketplace\/packages\?/,
+    {
+      total: 2,
+      offset: 0,
+      limit: 50,
+      items: [
+        {
+          id: 'io.webgis.gpkg',
+          title: 'GeoPackage 数据源扩展',
+          description: '读写 GeoPackage（.gpkg）矢量数据源，支持图层物化与字段类型映射。',
+          publisher: 'op-pub-1',
+          status: 'active',
+          deprecation_note: '',
+          latest_version: '1.4.0',
+          versions: ['1.4.0', '1.3.2', '1.2.0'],
+          tags: ['data-source', 'format'],
+        },
+        {
+          id: 'io.webgis.h3tools',
+          title: 'H3 工具箱',
+          description: 'H3 网格聚合、LISA 与制图辅助工具集（示例退役包）。',
+          publisher: 'op-pub-2',
+          status: 'deprecated',
+          deprecation_note: '由 webgis.h3tools v2 取代',
+          latest_version: '0.9.1',
+          versions: ['0.9.1'],
+          tags: ['grid'],
+        },
       ],
     },
   ],
@@ -704,6 +1003,22 @@ async function capture() {
           }
           if (surface.tab) await clickRailTab(page, surface.tab);
           if (surface.button) await clickTopBarButton(page, surface.button);
+          if (surface.opsView) {
+            const viewBtn = page.locator(`[data-testid="ops-view-${surface.opsView}"]`).first();
+            if (await viewBtn.count()) await viewBtn.click({ timeout: 5000 }).catch(() => {});
+          }
+          if (surface.opsWallboard) {
+            const enter = page.locator('[data-testid="ops-wallboard-enter"]').first();
+            if (await enter.count()) await enter.click({ timeout: 5000 }).catch(() => {});
+          }
+          if (surface.clickSubTab) {
+            const sub = page
+              .locator(`[role="tab"][aria-selected="false"]:has-text("${surface.clickSubTab}")`)
+              .first();
+            await sub.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+            if (await sub.count()) await sub.click({ timeout: 5000 }).catch(() => {});
+            else failures.push(`${vp.name}/${theme}/${surface.name}: sub-tab "${surface.clickSubTab}" not found`);
+          }
           if (surface.openResult && !(await openResult(page, surface.openResult))) {
             throw new Error(`result row "${surface.openResult}" not found`);
           }

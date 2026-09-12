@@ -17,6 +17,7 @@ import { GitCompare, GitBranch, RotateCcw, RefreshCw, GitMerge, FolderOpen } fro
 import { EmptyState } from '@/components/shared/empty-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { LoadingState } from '@/components/shared/loading-state';
+import { useT } from '@/lib/i18n/useT';
 import {
   diffMapProductVersions,
   forkMapProductVersion,
@@ -33,13 +34,13 @@ import {
 
 const DIMENSIONS: Array<{
   key: keyof Pick<MapProductVersionDiff, 'data_changed' | 'algorithm_changed' | 'parameter_changed' | 'style_changed' | 'output_changed'>;
-  label: string;
+  labelKey: string;
 }> = [
-  { key: 'data_changed', label: '数据' },
-  { key: 'algorithm_changed', label: '算法' },
-  { key: 'parameter_changed', label: '参数' },
-  { key: 'style_changed', label: '样式' },
-  { key: 'output_changed', label: '输出' },
+  { key: 'data_changed', labelKey: 'versions.dim.data_changed' },
+  { key: 'algorithm_changed', labelKey: 'versions.dim.algorithm_changed' },
+  { key: 'parameter_changed', labelKey: 'versions.dim.parameter_changed' },
+  { key: 'style_changed', labelKey: 'versions.dim.style_changed' },
+  { key: 'output_changed', labelKey: 'versions.dim.output_changed' },
 ];
 
 const LINEAGE_LABEL: Record<NonNullable<MapProductLineageKind>, string> = {
@@ -82,6 +83,7 @@ export function MapProductVersionsPanel({
   const [versions, setVersions] = useState<MapProductVersionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
   const [fromNo, setFromNo] = useState<number | null>(null);
   const [toNo, setToNo] = useState<number | null>(null);
   const [diff, setDiff] = useState<MapProductVersionDiff | null>(null);
@@ -274,7 +276,7 @@ export function MapProductVersionsPanel({
         id="mp-versions-heading"
         className="text-micro font-semibold uppercase tracking-wide text-ink-muted"
       >
-        产品版本
+        {t('sidebar.versions.title')}
       </h3>
       {lifecycleNotice ? (
         <InlineNotice variant="info" data-testid="mp-lifecycle-notice">
@@ -282,11 +284,11 @@ export function MapProductVersionsPanel({
         </InlineNotice>
       ) : null}
       {loading ? (
-        <LoadingState label="加载产品版本…" />
+        <LoadingState label={t('sidebar.versions.loading')} />
       ) : error ? (
         <InlineNotice variant="error">{error}</InlineNotice>
       ) : versions.length === 0 ? (
-        <EmptyState icon={GitCompare} title="暂无产品版本" />
+        <EmptyState icon={GitCompare} title={t('sidebar.versions.empty')} />
       ) : (
         <>
           <ul className="space-y-1">
@@ -305,7 +307,7 @@ export function MapProductVersionsPanel({
                         V{v.version_no}
                         {v.version_no === versions[0].version_no && (
                           <span className="ml-1.5 rounded-sm bg-surface-sunken px-1 text-micro text-ink-secondary">
-                            当前
+                            {t('sidebar.versions.current')}
                           </span>
                         )}
                         {lineage ? (
@@ -357,26 +359,28 @@ export function MapProductVersionsPanel({
                   {openVersion === v.version_no ? (
                     openDetail ? (
                       <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 border-t border-edge-subtle pt-1 text-micro text-ink-secondary" data-testid="mp-version-open">
-                        <dt className="font-medium">指纹</dt>
+                        <dt className="font-medium">{t('sidebar.versions.fingerprint')}</dt>
                         <dd className="truncate font-mono" title={openDetail.product_fingerprint}>
                           {shortFp(openDetail.product_fingerprint, 16)}
                         </dd>
-                        <dt className="font-medium">快照</dt>
+                        <dt className="font-medium">{t('sidebar.versions.snapshot')}</dt>
                         <dd>{openDetail.snapshot_available ? '在场（可恢复样式态）' : '缺席（仅可对比）'}</dd>
-                        <dt className="font-medium">来源</dt>
+                        <dt className="font-medium">{t('sidebar.versions.source')}</dt>
                         <dd>
                           {openDetail.workflow_run_id ? `运行 ${shortFp(openDetail.workflow_run_id, 10)}` : '无绑定运行'}
                         </dd>
-                        <dt className="font-medium">谱系</dt>
+                        <dt className="font-medium">{t('sidebar.versions.lineage')}</dt>
                         <dd>
                           {LINEAGE_LABEL[openDetail.lineage_kind ?? 'linear'] || '线性'}
                           {openDetail.parent_version_no ? ` ← V${openDetail.parent_version_no}` : ''}
                         </dd>
-                        <dt className="font-medium">证明</dt>
+                        <dt className="font-medium">{t('sidebar.versions.attestation')}</dt>
                         <dd>
-                          输入 {Object.keys(openDetail.provenance.input_dataset_fingerprints).length} 项 ·
-                          计划 {openDetail.provenance.plan_steps} 步 ·
-                          产物 {openDetail.provenance.artifact_count} 件
+                          {t('sidebar.versions.inputs', {
+                            count: Object.keys(openDetail.provenance.input_dataset_fingerprints).length,
+                            steps: openDetail.provenance.plan_steps,
+                            artifacts: openDetail.provenance.artifact_count,
+                          })}
                         </dd>
                         {openDetail.restore_modes.map((m) => (
                           <dt key={m.mode} className="font-medium">
@@ -388,7 +392,7 @@ export function MapProductVersionsPanel({
                         ))}
                       </dl>
                     ) : (
-                      <div className="mt-1 border-t border-edge-subtle pt-1 text-micro text-ink-muted">检视中…</div>
+                      <div className="mt-1 border-t border-edge-subtle pt-1 text-micro text-ink-muted">{t('sidebar.versions.inspecting')}</div>
                     )
                   ) : null}
                 </li>
@@ -400,7 +404,7 @@ export function MapProductVersionsPanel({
             <div className="space-y-2 rounded-md border border-edge-subtle bg-surface-panel p-2">
               <div className="flex items-center gap-1.5">
                 <label className="sr-only" htmlFor="mp-diff-from">
-                  对比起点版本
+                  {t('sidebar.versions.baseLabel')}
                 </label>
                 <select
                   id="mp-diff-from"
@@ -417,7 +421,7 @@ export function MapProductVersionsPanel({
                 </select>
                 <span className="text-micro text-ink-muted">→</span>
                 <label className="sr-only" htmlFor="mp-diff-to">
-                  对比终点版本
+                  {t('sidebar.versions.targetLabel')}
                 </label>
                 <select
                   id="mp-diff-to"
@@ -435,13 +439,13 @@ export function MapProductVersionsPanel({
               </div>
 
               {diffLoading ? (
-                <LoadingState label="对比版本…" />
+                <LoadingState label={t('sidebar.versions.compareAria')} />
               ) : diffError ? (
                 <InlineNotice variant="error">{diffError}</InlineNotice>
               ) : diff ? (
                 <div className="space-y-2">
-                  <ul className="grid grid-cols-5 gap-1" aria-label="五维差异">
-                    {DIMENSIONS.map(({ key, label }) => {
+                  <ul className="grid grid-cols-5 gap-1" aria-label={t('sidebar.versions.compareAria')}>
+                    {DIMENSIONS.map(({ key, labelKey }) => {
                       const changed = diff[key];
                       return (
                         <li
@@ -452,7 +456,7 @@ export function MapProductVersionsPanel({
                               : 'bg-surface-sunken text-ink-muted'
                           }`}
                         >
-                          <span className="block font-semibold">{label}</span>
+                          <span className="block font-semibold">{t(`sidebar.${labelKey}`)}</span>
                           <span className="block">{changed ? '已变更' : '未变'}</span>
                         </li>
                       );
@@ -480,7 +484,7 @@ export function MapProductVersionsPanel({
                       className="flex w-full items-center justify-center gap-1.5 rounded-sm border border-edge-subtle py-1 text-micro text-ink-secondary hover:bg-surface-sunken disabled:opacity-50"
                     >
                       <RefreshCw className={`h-3 w-3 ${rerunBusy ? 'animate-spin' : ''}`} aria-hidden />
-                      从分析步骤重跑（{rerunStep}）
+                      {t('sidebar.versions.rerunFrom', { step: rerunStep })}
                     </button>
                   )}
                   {/* ADR-0099 constrained merge：样式-only × 分析-only 可合；
@@ -492,14 +496,14 @@ export function MapProductVersionsPanel({
                     className="flex w-full items-center justify-center gap-1.5 rounded-sm border border-edge-subtle py-1 text-micro text-ink-secondary hover:bg-surface-sunken disabled:opacity-50"
                   >
                     <GitMerge className="h-3 w-3" aria-hidden />
-                    合并两版本（样式侧 × 分析侧）
+                    {t('sidebar.versions.merge')}
                   </button>
                   <details className="text-micro text-ink-secondary">
-                    <summary className="cursor-pointer select-none">差异明细</summary>
+                    <summary className="cursor-pointer select-none">{t('sidebar.versions.diffDetail')}</summary>
                     <div className="mt-1 space-y-1.5 pl-1">
                       {diff.details.input_dataset_fingerprints.changed_keys.length > 0 && (
                         <div>
-                          <span className="font-semibold">数据指纹变更键：</span>
+                          <span className="font-semibold">{t('sidebar.versions.fingerprintKeys')}</span>
                           <span className="font-mono">
                             {diff.details.input_dataset_fingerprints.changed_keys.join(', ')}
                           </span>
@@ -507,27 +511,29 @@ export function MapProductVersionsPanel({
                       )}
                       {diff.details.algorithm_steps.map((s) => (
                         <div key={`algo-${s.step_id}`} className="font-mono">
-                          算法[{s.step_id}]：{s.from ?? '∅'} → {s.to ?? '∅'}
+                          {t('sidebar.versions.algoDiff', { name: s.step_id })}{s.from ?? '∅'} → {s.to ?? '∅'}
                         </div>
                       ))}
                       {diff.details.parameter_steps.map((s) => (
                         <div key={`param-${s.step_id}`} className="font-mono">
-                          参数[{s.step_id}]：{JSON.stringify(s.from)} → {JSON.stringify(s.to)}
+                          {t('sidebar.versions.paramDiff', { name: s.step_id })}{JSON.stringify(s.from)} → {JSON.stringify(s.to)}
                         </div>
                       ))}
                       <div className="font-mono">
-                        MapSpec：{shortFp(diff.details.mapspec_fingerprint.from, 12)} →{' '}
+                        {t('sidebar.versions.mapspecDiff')}{shortFp(diff.details.mapspec_fingerprint.from, 12)} →{' '}
                         {shortFp(diff.details.mapspec_fingerprint.to, 12)}
                       </div>
                       <div>
-                        产物：+{diff.details.artifacts.added.length} / -
-                        {diff.details.artifacts.removed.length}（{diff.details.artifacts.unchanged_count} 不变）
+                        {t('sidebar.versions.artifactDiff', {
+                          added: diff.details.artifacts.added.length,
+                          unchanged: diff.details.artifacts.unchanged_count,
+                        })}
                       </div>
                     </div>
                   </details>
                 </div>
               ) : (
-                <p className="text-micro text-ink-muted">选择两个不同版本进行对比</p>
+                <p className="text-micro text-ink-muted">{t('sidebar.versions.pickTwo')}</p>
               )}
             </div>
           )}

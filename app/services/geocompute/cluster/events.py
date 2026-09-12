@@ -106,17 +106,29 @@ class RunEventStore:
         rows: Optional[int] = None,
         bytes_: Optional[int] = None,
         error_code: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> bool:
         """追加一条事件（尽力而为；返回是否落库）。
 
         失败语义（架构钉死）：词表外事件 / 预算超限 / run 行缺席（retention
         后的孤儿 append）/ DB 故障 → False + 有界计数，**绝不抛出**。
+
+        ADR-0139：``org_id`` 缺席时锚定 run 行真相惰性解析（一次唯一索引
+        查找；run 已被 purge 的孤儿 append 按 fail-open 丢弃），兜底 default
+        隔离桶 —— events 行的 org 永不为 NULL。
         """
         if event not in EVENT_VOCABULARY:
             _bump("event_rejected_invalid")
             return False
         try:
             with self._factory() as db:
+                if org_id is None:
+                    from app.core import tenancy
+                    from app.models.db_model import GeoComputeClusterRun as _RunModel
+
+                    org_id = db.execute(
+                        select(_RunModel.org_id).where(_RunModel.run_id == run_id)
+                    ).scalar_one_or_none() or tenancy.get_or_create_default_org_id_sync(db)
                 if event not in _BUDGET_EXEMPT:
                     # round1 n6：COUNT→INSERT 非串行，并发下真实上界 =
                     # 1024 + 在飞 appenders 数（有界：调用线程数）。正确性
@@ -141,6 +153,7 @@ class RunEventStore:
                     rows=rows,
                     bytes_=bytes_,
                     error_code=(error_code or None),
+                    org_id=org_id,
                 ))
                 db.commit()
                 return True

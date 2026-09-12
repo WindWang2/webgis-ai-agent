@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "schema": "quality-e2e-v9/ADR-0146 budget gate",
+  "tolerance_pct": 10,
+  "iterations_local": 5,
+  "iterations_ci": 20,
+  "notes": [
+    "预算线是数量级回归闸（防 O(n²)/算法退化），不是微基准 —— 与 tests/benchmarks 的 count/bytes 优先哲学一致。",
+    "数值以 CI runner 档（ubuntu-latest 2c）为参考机；本地窄幅波动由 tolerance_pct 吸收。",
+    "预算更新 = 显式改本文件（PR 可审；#1230-#1233 预算漂移波次的机制教训：刷新必须 opt-in）。"
+  ],
+  "budgets": [
+    {
+      "id": "sse_concurrent_50_total_ms",
+      "metric": "wall_ms",
+      "target": 20000,
+      "tool": "scripts/perf/measurements.py::measure_sse_concurrent_50 (asyncio in-process, route-level _sse_batched)",
+      "rationale": "SSE 并发 50 连接的出站批处理总时长；50 流 × 200 token 事件全量送达。防线：批处理/事件循环阻塞退化（#1226/#1228 波次的传输面回归）。"
+    },
+    {
+      "id": "mvt_tile_p95_ms",
+      "metric": "p95_ms",
+      "target": 50,
+      "tool": "scripts/perf/measurements.py::measure_mvt_tile_p95 (app/services/mvt.encode_tile, 2000-point FC)",
+      "rationale": "2000 要素点层单瓦片编码 P95。防线：MVT 几何编码退化（#598 AM-crossing 分片等历史热点）。"
+    },
+    {
+      "id": "cube_window_p95_ms",
+      "target": 500,
+      "metric": "p95_ms",
+      "tool": "scripts/perf/measurements.py::measure_cube_window_p95 (lakehouse read_cube_window, zarr v1 cube 4×64×64×64)",
+      "rationale": "cube 窗口读 P95（含每次调用 open store 的真实开销，1 次预热后取样）。防线：窗口剪枝退化（整轴物化回归）。zarr 缺席环境显式 SKIP。"
+    },
+    {
+      "id": "chat_first_token_p95_ms",
+      "metric": "p95_ms",
+      "target": 20,
+      "tool": "scripts/perf/measurements.py::measure_chat_first_token_p95 (route boundary _sse_batched first-event overhead)",
+      "rationale": "聊天首 token 的路由面附加开销（不含 LLM TTFT 外部项）P95。防线：首字节前新增同步重活（把首 token 推迟一个数量级）。"
+    }
+  ]
+}

@@ -5,7 +5,13 @@
 import pytest
 
 fastapi_testclient = pytest.importorskip("fastapi.testclient")
-pytest.importorskip("weasyprint", reason="WeasyPrint not installed")
+try:
+    import weasyprint  # noqa: F401
+except (ImportError, OSError):
+    # Windows 无 GTK 时 import 期抛 OSError（缺 libpango）——与
+    # ImportError 同等视为缺席（V9 data-lifecycle 线顺带修复）。
+    pytest.skip("WeasyPrint unavailable (ImportError/OSError)",
+                allow_module_level=True)
 
 pytestmark = pytest.mark.cartography
 
@@ -84,8 +90,8 @@ def test_vector_pdf_route_rejects_unhydrated_ref_sources(client, tmp_path, monke
     payload["mapspec"]["sources"]["g"] = {"type": "geojson", "ref": "ref:session/abc"}
     resp = client.post("/api/v1/export/vector-pdf", json=payload)
     assert resp.status_code == 400
-    assert resp.json()["detail"]["code"] == "mapspec_ref_sources_unhydrated"
-    assert "g" in resp.json()["detail"]["message"]
+    assert resp.json()["data"]["code"] == "mapspec_ref_sources_unhydrated"
+    assert "g" in resp.json()["message"]["message"]
 
 
 def test_vector_pdf_route_rejects_forward_version(client, tmp_path, monkeypatch):
@@ -94,4 +100,4 @@ def test_vector_pdf_route_rejects_forward_version(client, tmp_path, monkeypatch)
     payload["mapspec"]["version"] = "9.9"
     resp = client.post("/api/v1/export/vector-pdf", json=payload)
     assert resp.status_code == 400
-    assert resp.json()["detail"]["code"] == "mapspec_forward_version"
+    assert resp.json()["data"]["code"] == "mapspec_forward_version"

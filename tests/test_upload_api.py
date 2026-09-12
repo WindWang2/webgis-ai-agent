@@ -34,7 +34,7 @@ async def test_upload_unsupported_format(client):
         files={"files": ("test.txt", b"hello", "text/plain")},
     )
     assert resp.status_code == 400
-    assert "不支持" in resp.json()["detail"]
+    assert "不支持" in resp.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -53,7 +53,7 @@ async def test_upload_raster_too_large(client):
         # SEC-F6: oversized bodies are now 413 — and the read is capped at
         # MAX+1 bytes BEFORE buffering the whole body.
         assert resp.status_code == 413
-        assert "超过限制" in resp.json()["detail"]
+        assert "超过限制" in resp.json()["message"]
 
 
 @pytest.mark.asyncio
