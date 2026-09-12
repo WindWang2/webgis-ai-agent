@@ -192,7 +192,7 @@ class MapActionAck(BaseModel):
             "examples": [
                 {
                     "action_id": "act-1",
-                    "command": "zoomTo",
+                    "command": "zoom_to_bbox",
                     "status": "succeeded",
                     "error": "",
                     "started_at": "",
@@ -235,7 +235,7 @@ class MapActionAckRequest(BaseModel):
                     "acks": [
                         {
                             "action_id": "act-1",
-                            "command": "zoomTo",
+                            "command": "zoom_to_bbox",
                             "status": "succeeded",
                         }
                     ]
