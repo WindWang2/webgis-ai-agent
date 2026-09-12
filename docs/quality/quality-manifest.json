@@ -5407,7 +5407,8 @@
     "tests/unit/test_map_product_finalization_scenarios.py",
     "tests/unit/test_reproducible_gis_runtime.py",
     "tests/unit/test_runtime_metrics.py",
-    "tests/unit/test_tool_descriptor_v3.py"
+    "tests/unit/test_tool_descriptor_v3.py",
+    "tests/unit/workflow_runtime/p4_test_adapters_science.py"
    ]
   },
   {
@@ -5491,6 +5492,7 @@
     "tests/unit/test_raster_runtime_v3.py",
     "tests/unit/test_rs_service_module.py",
     "tests/unit/test_spectral_engine.py",
+    "tests/unit/test_spectral_legend_spec_v9.py",
     "tests/unit/test_stac_windowed_read.py",
     "tests/unit/test_terrain_compass.py"
    ]
@@ -5566,6 +5568,7 @@
     "tests/unit/gis_harness/test_product_closure_scenarios.py",
     "tests/unit/gis_harness/test_product_facets.py",
     "tests/unit/gis_harness/test_product_lineage.py",
+    "tests/unit/workflow_runtime/p4_test_adapters_science.py",
     "tests/unit/workflow_runtime/test_v6_real_gis_workflow.py"
    ]
   },
@@ -6626,6 +6629,7 @@
     "tests/unit/test_rs_service_module.py",
     "tests/unit/test_runtime_raster_rewrite.py",
     "tests/unit/test_spectral_engine.py",
+    "tests/unit/test_spectral_legend_spec_v9.py",
     "tests/unit/test_stac_windowed_read.py",
     "tests/unit/test_subagent.py",
     "tests/unit/test_tool_catalog.py",
@@ -6961,7 +6965,8 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
-    "tests/unit/lib/test_aggregation_semantics_vnext.py"
+    "tests/unit/lib/test_aggregation_semantics_vnext.py",
+    "tests/unit/workflow_runtime/p4_test_adapters_science.py"
    ]
   },
   {
@@ -7269,6 +7274,7 @@
    "status": "native",
    "supports_large_data": true,
    "tests": [
+    "frontend/test/fixtures/workflow-runtime-fixtures.ts",
     "tests/test_spatial_tasks.py",
     "tests/unit/gis/test_algo_conformance_v2.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
@@ -7944,7 +7950,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "5a5abbd13ca6c5e3ef39dd043ea8ec49840b2d24eaba5ce171db90048a4f3050",
+ "fingerprint": "1ebdc45ba6e6e28093c5287106754c280f418384f3d8bcd244711d1693e1518f",
  "gate": {
   "fields": {
    "capabilities": {
@@ -9659,6 +9665,7 @@
     "tests/benchmarks/bench_geocompute_v4.py",
     "tests/benchmarks/test_data_control_plane_v5.py",
     "tests/benchmarks/test_geobench_v3.py",
+    "tests/data/test_lifecycle_policy_v9.py",
     "tests/perf/test_geocompute_v7_perf.py",
     "tests/test_runtime_chaos_plan_mode.py",
     "tests/test_security_audit_fixes.py",
@@ -10245,6 +10252,9 @@
     "tests/test_tool_error_classification_529.py",
     "tests/test_tool_registry.py",
     "tests/unit/gis/test_platform_capabilities.py",
+    "tests/unit/p4_test_explorer_geocode_main.py",
+    "tests/unit/p4_test_explorer_pipeline_seams.py",
+    "tests/unit/p4_test_explorer_stream_bounded.py",
     "tests/unit/test_chat_helpers.py",
     "tests/unit/test_chinese_maps_providers.py",
     "tests/unit/test_chinese_maps_split.py",
@@ -15636,6 +15646,7 @@
     "拓扑关系"
    ],
    "tests": [
+    "frontend/test/fixtures/workflow-runtime-fixtures.ts",
     "tests/test_spatial_tasks.py",
     "tests/unit/gis/test_algo_conformance_v2.py",
     "tests/unit/gis/test_algorithm_registry_phase2.py",
@@ -17498,6 +17509,7 @@
     "分区"
    ],
    "tests": [
+    "frontend/test/project/fixtures.ts",
     "frontend/test/results/normalize.test.ts",
     "tests/data/test_lineage_query.py",
     "tests/test_critical_backend_correctness.py",

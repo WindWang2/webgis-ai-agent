@@ -24,8 +24,10 @@ from typing import Callable, Dict, FrozenSet, List, Optional, Tuple
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 #: NNNN 序号提取（文件名前缀或 revision id 前缀均可；0024 证明二者通常一致
-#: 但不保证相等，冲突检测对两种口径都报）
-_DIGITS_RE = re.compile(r"^(\d{4})")
+#: 但不保证相等，冲突检测对两种口径都报）。``NNNN_`` 后必须紧跟 ``_``：
+#: allocator 产物恒为 ``NNNN_<slug>``；12 位 hex revision id（如
+#: 184068cb4249）合法地可以纯数字开头，无 ``_`` 界定会被误读成 NNNN=1840。
+_DIGITS_RE = re.compile(r"^(\d{4})_")
 
 #: DDL 提取（尽力而为）：upgrade() 内常见 op.* 调用的表名
 _TABLE_OPS_RE = re.compile(
