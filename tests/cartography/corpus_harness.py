@@ -22,7 +22,6 @@ pytest 中作为库导入（``from corpus_harness import evaluate_corpus``）。
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import statistics
 import sys

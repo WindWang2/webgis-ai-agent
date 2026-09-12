@@ -16,6 +16,12 @@
 | D10 | 任务规则冲突裁决 | 特异性分级评分（specificity, span, index 字典序），分级值经 300 条语料 + 既有 golden 校准 | 纯 first-match 无法处理「视域分析（雷达站选址点）」类跨级冲突 |
 | D11 | LLM 结构化输出通道 | 复用 `chat/llm_client.call_llm`（无 JSON mode），按 `spatial_reasoning.py` 范式：prompt 内嵌 JSON schema + fence 剥离 + pydantic 校验失败降级 | 与仓库既有结构化抽取完全同构 |
 | D12 | P8 登记：`build_default_components` 旧词汇兼容分支 | 属 02 线边界，本线仅在 PR 登记，不动 | 任务书 §2 P8 原文约定 |
+| D13 | 任务书要求 `pytest -n 2`，但 `pytest-xdist` 不在 `requirements-dev.txt` | 本地临时装入 venv 失败后改为**串行**全量（更保守的资源占用）；不改 requirements-dev.txt（避免影响并行线） | `-n 2` 是资源上限不是并行要求 |
+| D14 | ruff 默认镜像安装 403 同 D2，阿里云镜像装入 venv（仅本地工具，不进依赖清单） | `ruff check <变更文件>` 0 告警取证 | 与 §0.4 纪律一致 |
+| D15 | 一致性语料（conformance 20,088 例）回归：人口/企业类「统计字段」主体标成 raster 会把 entity_type/geometry 拉向栅格，下游 `admin_aggregation` capability 与 administrative_choropleth recipe 全线失配（1188 例） | **撤销**该投机覆盖：人口/企业不进实体词表（legacy 口径 subject=unknown，几何由任务派生），词表注释留档 | 「既有语料无劣化」是硬门禁，覆盖扩展让位于契约稳定 |
+| D16 | golden 语义锁（benchmark 33 例）：G16/G17/C018 锁定「裸密度词=视觉分布概览」、M074 锁定「Show the DEM terrain」=simple_view、M083 锁定「遥感影像算 NDWI」=指数优先 | 密度补强规则收窄到显式单位锚点（每平方公里/单位按每/（人/平方公里）/per km²）；`zh_raster_domain` 降到 SPEC 27 三档夹缝（15 栅格主体 < 27 < 28 光谱指数 < 30 变化/分类）；`categorical_breakdown` 加 `(?<!土壤)` 守卫；`bare_density_visual`（SPEC 11）给裸密度查询规则头标记而非 fallback | golden 锁优先于语料命中：先改规则，仅当语料期望与 legacy 锁定语义真冲突时改语料（zh-049/en-029 两处，改为 distribution_overview） |
+| D17 | en-029 类「裸密度地图」查询落 fallback 头标记会误触发「缺主体」澄清 | `bare_density_visual`（SPEC_SPECIFIC 面内 SPEC 11，仅压过兜底）使其获得 distribution_overview 规则头；澄清策略不因「头标记=非 fallback」而误伤真模糊查询（语料模糊组 100% 仍触发，最低置信 0.24） | 零静默 fallback 与零误触发澄清的交界面 |
+| D18 | 校准锚点在规则调优后复拟合 | 实测最优分箱误差 0.038（锚点 `CALIBRATION_ANCHORS` 保持 (0,0.15)(0.43,0.67)(0.60,0.95)(0.70,0.97)(0.90,1.0)(1.0,1.0)），模糊条目最低置信 0.24 << 澄清阈 0.55 | 分箱表见 recon §7 回填 |
 
 ## 语义抽取与规则冲突的证据优先级实现口径（§0.5 表第 2 行）
 
