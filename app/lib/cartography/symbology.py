@@ -597,12 +597,17 @@ def resolve_symbology(
     """
     intent = intent or SymbologyIntent()
     constraints = constraints or SymbologyConstraints()
+    rejected: List[Dict[str, str]] = []
+    reasons: List[str] = []
     if intent.context not in _CONTEXTS:
+        # fail-closed：非法上下文按 screen 处置但必须留痕（禁止无声改数）。
+        rejected.append({
+            "kind": "context", "value": str(intent.context),
+            "reason": f"未知上下文——按 screen 处置（合法值：{', '.join(_CONTEXTS)}）",
+        })
         intent = intent.model_copy(update={"context": "screen"})
     data_kind = profile.data_kind if profile.data_kind in _DATA_KINDS else "sequential"
 
-    rejected: List[Dict[str, str]] = []
-    reasons: List[str] = []
     stats = distribution_stats_from_values(profile.values)
 
     method, choice, source, confidence, low_confidence = _adjudicate_method(
@@ -693,5 +698,5 @@ __all__ = [
     "DataKind", "PaletteContext", "ClipPolicy",
     "SymbologyProfile", "SymbologyIntent", "SymbologyConstraints",
     "SymbologyDecision", "resolve_symbology", "symbology_decision_from_values",
-    "apply_clip", "_context_separable",
+    "apply_clip",
 ]

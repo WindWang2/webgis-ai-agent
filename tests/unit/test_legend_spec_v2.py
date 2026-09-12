@@ -131,6 +131,39 @@ def test_normalize_legend_spec_unchanged_by_v2():
     assert "clip_policy" not in out and "why" not in out
 
 
+def test_print_context_transform_applies_to_emitted_colors():
+    """§0.4 print 强制降饱和作用于**输出色**（不只是校验）。"""
+    from app.lib.cartography.palettes import (
+        grayscale_ramp_separation, print_desaturate)
+    from app.lib.cartography.symbology import (
+        SymbologyIntent, SymbologyProfile, resolve_symbology)
+
+    values = [float(i) + 1 for i in range(20)]
+    profile = SymbologyProfile(values=values)
+    spec_screen = build_graduated_spec(
+        _fc(values), "pop", decision=resolve_symbology(profile))
+    spec_print = build_graduated_spec(
+        _fc(values), "pop",
+        decision=resolve_symbology(profile, SymbologyIntent(context="print")))
+    assert spec_print["context"] == "print"
+    # print 输出色 ≠ screen 输出色（变换真实作用），且仍灰度可分级
+    assert spec_print["palette_colors"] != spec_screen["palette_colors"]
+    assert grayscale_ramp_separation(spec_print["palette_colors"]) >= 0.06
+    # 与独立执行的 print_desaturate 一致（screen 色为变换输入）
+    assert spec_print["palette_colors"] == print_desaturate(
+        spec_screen["palette_colors"])
+
+
+def test_invalid_context_fails_loud_at_boundary():
+    """fail-closed：非法上下文在 pydantic 边界即拒绝（Literal 校验）。"""
+    import pytest as _pytest
+    from pydantic import ValidationError as _VE
+    from app.lib.cartography.symbology import SymbologyIntent
+
+    with _pytest.raises(_VE):
+        SymbologyIntent(context="holodeck")
+
+
 # ── JSON Schema 快照 ─────────────────────────────────────────────────────────
 
 

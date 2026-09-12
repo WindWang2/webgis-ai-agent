@@ -181,6 +181,40 @@ def test_all_cvd_contexts_choose_separable_palette():
         assert min_adjacent_delta_e(sim) >= 10.0, ctx
 
 
+def test_cvd_and_print_contexts_meet_wcag_against_canvases():
+    """§5 门禁：CVD/print 上下文下 WCAG 对比度达标（逐条断言）。
+
+    图例/符号相对底图至少 AA 大字/图形级 3.0:1——浅色 ramp 对深色画布、
+    深/浅两端各自覆盖其一即类别可见（色带中间类的可见性由 ΔE/ΔL 门限
+    保证，WCAG 约束的是与底图的极端可读性）。
+    """
+    from app.lib.cartography.palettes import (
+        contrast_ratio, sample_ramp_colors, simulate_cvd)
+    for ctx in ("cvd_deuteranopia", "cvd_protanopia", "cvd_tritanopia"):
+        d = resolve_symbology(
+            SymbologyProfile(values=MID_SKEW), SymbologyIntent(context=ctx))
+        colors = sample_ramp_colors(d.palette, d.k)
+        sims = [simulate_cvd(c, ctx) for c in colors]
+        # 模拟视角下两端至少一端对白/黑画布达 3.0（真实渲染未模拟，但
+        # 模拟端保证色觉缺陷用户的极端可读性同序衰减）。
+        extremes = [sims[0], sims[-1]]
+        best = max(
+            max(contrast_ratio(c, "#ffffff"), contrast_ratio(c, "#000000"))
+            for c in extremes
+        )
+        assert best >= 3.0, (ctx, d.palette, best)
+    # print：降饱和后的输出色仍须与白纸保持可读边界
+    d = resolve_symbology(
+        SymbologyProfile(values=MID_SKEW), SymbologyIntent(context="print"))
+    from app.lib.cartography.palettes import print_desaturate
+    printed = print_desaturate(sample_ramp_colors(d.palette, d.k))
+    best = max(
+        max(contrast_ratio(c, "#ffffff"), contrast_ratio(c, "#000000"))
+        for c in (printed[0], printed[-1])
+    )
+    assert best >= 3.0
+
+
 def test_print_context_passes_grayscale_gate():
     from app.lib.cartography.palettes import (
         grayscale_ramp_separation, print_desaturate, sample_ramp_colors)

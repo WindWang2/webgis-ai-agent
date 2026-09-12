@@ -52,6 +52,10 @@
       ]
     },
     "title": {"type": "string"},
+    "context": {
+      "enum": ["screen", "projector", "print", "cvd_deuteranopia", "cvd_protanopia", "cvd_tritanopia"],
+      "description": "v2: PaletteContext the decision was adjudicated for. When print, palette_colors are already desaturated (rendering requirement) — consumers must not re-transform."
+    },
     "unit": {"type": "string", "description": "v2: unit of the thematic field (empty string when unknown)."},
     "k": {
       "type": "integer",

@@ -62,7 +62,15 @@ class CartographyService:
             palette = decision.palette or None
 
         _resolved_decision = decision
-        if method is None or palette is None:
+        if method in ("categorical", "lisa"):
+            # 结构模式：引擎的分布推理对语义分类字段无意义——categorical 缺省
+            # 色带取定性族首选（与引擎 categorical→qualitative 切换一致），
+            # lisa 用制图学固定语义色；k 缺省沿用 5。
+            k = 5 if k is None else k
+            if palette is None and method == "categorical":
+                palette = "Set2"
+            _resolved_decision = decision
+        elif method is None or palette is None:
             from app.lib.cartography.symbology import symbology_decision_from_values
 
             _values = [
@@ -83,9 +91,9 @@ class CartographyService:
             k = k if k is not None else inferred.k
             palette = palette if palette is not None else (inferred.palette or palette)
             _resolved_decision = inferred
-        method = method if method is not None else "quantiles"
-        k = k if k is not None else 5
-        palette = palette if palette is not None else "YlOrRd"
+        if k is None:
+            # method 显式、仅 k 缺省的直调形态：沿用历史类数缺省 5。
+            k = 5
 
         values = []
         lisa_values = []

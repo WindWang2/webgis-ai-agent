@@ -178,7 +178,6 @@ def build_graduated_spec(
         apply_clip,
         symbology_decision_from_values,
     )
-    import math as _math
 
     features = (geojson or {}).get("features", []) or []
     raw = (f.get("properties", {}).get(field) for f in features if isinstance(f, dict))
@@ -213,7 +212,7 @@ def build_graduated_spec(
             clip_policy = "none"
             clip_high_val = None
     elif clip_policy == "log" and min(values) > 0:
-        classify_input = [_math.log10(v) for v in values]
+        classify_input = [math.log10(v) for v in values]
         in_log_space = True
     else:
         clip_policy = "none" if clip_policy in (None, "none") else clip_policy
@@ -235,6 +234,12 @@ def build_graduated_spec(
 
     min_val, max_val = min(values), max(values)
     palette_colors = resolve_thematic_colors(palette, len(breaks) - 1, breaks, min_val, max_val)
+    # print 上下文的降饱和是**渲染要求**（纸张媒体），作用于输出色本身；
+    # CVD 模拟仅用于可分辨校验（CVD 用户看到的是真实色，不模拟输出）。
+    if decision is not None and decision.context == "print" and palette_colors:
+        from app.lib.cartography.palettes import print_desaturate
+
+        palette_colors = print_desaturate(palette_colors)
     labels = [_graduated_label(breaks[i], breaks[i + 1]) for i in range(len(breaks) - 1)]
 
     spec: Dict[str, Any] = {
@@ -261,6 +266,8 @@ def build_graduated_spec(
     spec["clip_policy"] = clip_policy
     spec["why"] = decision.why() if decision is not None else ""
     spec["nodata_label"] = spec["nodata"].get("label", "No data")
+    if decision is not None:
+        spec["context"] = decision.context
     if clip_policy == "clip_p99" and clip_high_val is not None and n_clipped:
         # 裁剪禁止静默：图例必须携带 out_of_range 条目（颜色与最高类一致
         # ——step 语义下越界值渲染为最高类色）。
@@ -625,6 +632,16 @@ def apply_symbology_v2(
     legend_spec.setdefault("clip_policy", getattr(decision, "clip_policy", "none"))
     legend_spec.setdefault("why", decision.why())
     legend_spec.setdefault("nodata_label", legend_spec.get("nodata_label", "No data"))
+    legend_spec.setdefault("context", decision.context)
+    # print 上下文：输出色本身降饱和（与 build_graduated_spec 同口径）。
+    if (
+        decision.context == "print"
+        and isinstance(legend_spec.get("palette_colors"), list)
+        and legend_spec["palette_colors"]
+    ):
+        from app.lib.cartography.palettes import print_desaturate
+
+        legend_spec["palette_colors"] = print_desaturate(legend_spec["palette_colors"])
     if unit is not None:
         legend_spec.setdefault("unit", unit)
     # 裁剪禁止静默：clip_p99 实际发生截断时补 out_of_range 图例条目

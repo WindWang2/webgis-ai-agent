@@ -369,30 +369,58 @@ class CompositeMapSpecBuilder:
                             if isinstance(v, (int, float)) and not isinstance(v, bool)
                         ]
                         slot_method = thematic_slot.method
-                        decision = symbology_decision_from_values(
-                            _numeric,
-                            requested_method="lisa" if slot_method == "lisa" else None,
-                            recommended_method=(
-                                slot_method if slot_method != "lisa" else None
-                            ),
-                            recommended_k=thematic_slot.k,
-                            recommended_palette=thematic_slot.palette,
-                            origin=f"slot:{thematic_slot.field}",
-                        )
-                        candidate = build_graduated_spec(
-                            effective_geojson,
-                            thematic_slot.field,
-                            decision=decision,
-                        )
-                        if candidate is not None:
-                            paint_color, _warnings = spec_to_paint(candidate)
-                            # Degenerate classification (tiny/duplicate-valued
-                            # sample) yields an empty step expression the
-                            # validator rejects — treat as not-classifiable.
-                            if paint_color and paint_color.get("stops"):
-                                data_graduated = candidate
-                                layer_def["legend_spec"] = candidate
-                                layer_def["paint"]["color"] = paint_color
+                        if slot_method == "lisa":
+                            # AC-03：lisa 是语义分类（HH/LL/HL/LH/NS），不走
+                            # 分布分级 spec——经 build_thematic_style 的 lisa
+                            # 分支取制图学固定五色，再转 categorical 图例。
+                            from app.services.cartography_service import (
+                                CartographyService,
+                            )
+                            lisa_style = CartographyService.build_thematic_style(
+                                geojson=effective_geojson,
+                                field=thematic_slot.field,
+                                method="lisa",
+                            )
+                            lisa_legend = (
+                                CartographyService.build_legend_spec(lisa_style)
+                                if lisa_style else None
+                            )
+                            if lisa_legend is not None:
+                                paint_color, _warnings = spec_to_paint(lisa_legend)
+                                if paint_color and (
+                                    paint_color.get("cases") or paint_color.get("stops")
+                                ):
+                                    data_graduated = lisa_style
+                                    layer_def["legend_spec"] = lisa_legend
+                                    layer_def["paint"]["color"] = paint_color
+                            if data_graduated is None:
+                                logger.warning(
+                                    "Composite lisa slot %s: 无有效 LISA 语义值（HH/LL/HL/LH/NS）——"
+                                    "跳过数据驱动分类，回落 preset 合成图例",
+                                    thematic_slot.field,
+                                )
+                        else:
+                            decision = symbology_decision_from_values(
+                                _numeric,
+                                recommended_method=slot_method,
+                                recommended_k=thematic_slot.k,
+                                recommended_palette=thematic_slot.palette,
+                                origin=f"slot:{thematic_slot.field}",
+                            )
+                            candidate = build_graduated_spec(
+                                effective_geojson,
+                                thematic_slot.field,
+                                decision=decision,
+                            )
+                            if candidate is not None:
+                                paint_color, _warnings = spec_to_paint(candidate)
+                                # Degenerate classification (tiny/duplicate-valued
+                                # sample) yields an empty step expression the
+                                # validator rejects — treat as not-classifiable.
+                                if paint_color and paint_color.get("stops"):
+                                    data_graduated = candidate
+                                    layer_def["legend_spec"] = candidate
+                                    layer_def["paint"]["color"] = paint_color
                     except Exception as e:
                         logger.warning("Composite build_graduated_spec failed: %s", e)
                         data_graduated = None

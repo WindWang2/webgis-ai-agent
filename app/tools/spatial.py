@@ -162,6 +162,11 @@ class HeatmapDataArgs(BaseModel):
         "native", description="渲染模式: native(原生逐点密度，默认推荐), raster(服务端栅格PNG), grid(格网)")
     palette: Literal["classic", "magma", "viridis", "thermal"] = Field(
         "classic", description="配色方案: classic, magma, viridis, thermal")
+    palette_context: Optional[Literal[
+        "screen", "projector", "print",
+        "cvd_deuteranopia", "cvd_protanopia", "cvd_tritanopia"]] = Field(
+        None, description="显示上下文（ADR-0152）：无障碍/打印硬约束下的色带校验与换带；"
+                          "缺省 screen（恒等映射，默认渲染不变）")
     intensity: Optional[float] = Field(
         None, ge=0.0, le=10.0,
         description="[可选] 热力强度乘数 / 权重强度 (MapLibre heatmap-intensity)，缺省 1.0")
@@ -330,6 +335,7 @@ def register_spatial_tools(registry: ToolRegistry):
                      intensity: Optional[float] = None, weight_field: Optional[str] = None,
                      weight: Optional[float] = None, opacity: Optional[float] = None,
                      max_zoom: Optional[int] = None, min_zoom: Optional[int] = None,
+                     palette_context: Optional[str] = None,
                      **kwargs: Any) -> dict:
         from app.lib.cartography.heatmap_contract import normalize_heatmap_radius
         # 单位归一化唯一边界：legacy radius(米) → 显式 bandwidth_m(+视觉默认)，
@@ -381,9 +387,9 @@ def register_spatial_tools(registry: ToolRegistry):
 
         # 默认 native：MapLibre 逐点核密度渲染（轻量、密度真实）。raster 是
         # 服务端预渲染 PNG，仅在需要导出图片/离线渲染时显式指定。
-        # AC-03：色带经 resolve_symbology 上下文裁决（可选 palette_context
-        # kwarg；缺省 screen 恒等映射，默认渲染不变）。
-        heatmap_context = kwargs.get("palette_context") or "screen"
+        # AC-03：色带经 resolve_symbology 上下文裁决（palette_context 已在
+        # 签名/args schema 显式声明；缺省 screen 恒等映射，默认渲染不变）。
+        heatmap_context = palette_context or "screen"
         palette, heat_decision = _adjudicate_heatmap_palette(
             palette, data, weight_field, heatmap_context)
         if render_type == "native":
