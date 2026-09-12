@@ -78,11 +78,27 @@ class PackageRegistry:
     def register(
         self, package: Any, *, owner_scope: str,
         environment_fingerprint: str = "", project_id: str = "",
+        org_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """注册（draft）；同 (id, version) 指纹相同幂等，不同抛冲突。"""
+        """注册（draft）；同 (id, version) 指纹相同幂等，不同抛冲突。
+
+        ``org_id``（ADR-0139）：租户作用域；缺席时按 owner 域锚定既有
+        实例行，再兜底 default 隔离桶。
+        """
         from app.models.db_model import WorkflowPackageRow
 
         with self._factory() as db:
+            if not org_id:
+                from app.core import tenancy
+                from app.models.db_model import WorkflowInstanceRow
+
+                org_id = db.execute(
+                    sa.select(WorkflowInstanceRow.org_id)
+                    .where(WorkflowInstanceRow.owner_scope == owner_scope[:40])
+                    .limit(1)
+                ).scalar_one_or_none() \
+                    or tenancy.get_or_create_default_org_id_sync(db)
+
             existing = db.query(WorkflowPackageRow).filter(
                 WorkflowPackageRow.owner_scope == owner_scope[:40],
                 WorkflowPackageRow.package_id == package.package_id,
@@ -107,6 +123,7 @@ class PackageRegistry:
                 fingerprint=package.fingerprint[:64],
                 status=PKG_DRAFT,
                 owner_scope=owner_scope[:40],
+                org_id=str(org_id)[:255],
                 project_id=(project_id or "")[:255] or None,
                 created_at=_utcnow(),
             )

@@ -39,7 +39,7 @@ def test_vocabulary_matches_goal_list():
     """目标 Phase E 词表逐项落位（防手滑改名）。"""
     expected = {
         "validation", "permission", "data_unavailable", "crs",
-        "resource_exhausted", "timeout", "cancellation", "retryable",
+        "resource_exhausted", "quota", "timeout", "cancellation", "retryable",
         "permanent", "dependency_failure", "worker_lost", "model_failure",
         "render_failure", "storage_corruption",
     }

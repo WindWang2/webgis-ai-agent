@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased] - 2026-09-11 (Security & Tenancy V9, ADR-0139)
+
+### Added
+- **org_id 落库（0036–0038）**：geocompute 9 表 / workflow runtime 6 表 /
+  lakehouse 4 表全部带 org_id（String(255) 明文纪律）；租户数据面
+  （14 表）回填 + NOT NULL + (org_id, created_at) 索引；控制面信任域
+  （workers/ledger/quarantine 5 表）nullable 列；default 组织 ensure。
+- **查询级隔离**：`app/core/tenancy.py`（effective org + scoped_query +
+  default 隔离桶）；V8 全部 REST 读面叠加 org 谓词；派生表写入锚定
+  run/owner 真相惰性解析 org；解析失败 fail-closed（读 404）。
+- **OAuth scopes（P3）**：封闭词汇表 `app/core/scopes.py`（22 词）、
+  viewer/editor/admin 兼容映射、JWT `scopes` claim（缺席回退角色默认集）、
+  `require_scope` 依赖工厂、端点 scope 矩阵 `docs/dev/endpoint-scope-matrix.csv`
+  + 生成器 + CI 校验（100% 覆盖 / 词汇表封闭 / 无陈旧行）。
+- **metrics/health 管理面（P5）**：`/metrics` METRICS_TOKEN Bearer 门禁
+  （默认 fail-closed 401；METRICS_AUTH_DISABLED 显式回退）；根级
+  `/healthz`（公开 liveness）与 `/health`（require_admin 依赖详情）。
+- **组织配额（P5）**：存储字节 / 并发任务 / 速率三资源；per-org 覆盖
+  表 `org_quotas`（0039）+ admin 端点；越限 `ErrorCategory.QUOTA`
+  （append-only）→ 429 分类学信封 + 越限审计。
+- **认证增强（P6，README Phase 6 兑现）**：refresh token 家族轮换 +
+  重放检测（`refresh_token_families`，0041；重放 → 家族全失效）；
+  密码策略（长度/字符类/常见密码表）；登录失败渐进延迟（0.5s→8s）。
+- **组织审计（P7）**：`audit_events`（0040）+ fail-open 写入服务 +
+  W3C trace_id 关联 + admin 查询端点（org 级 / 跨 org）。
+
+### Tests
+- `tests/test_security_v9_migrations.py`（回填语义 + up/down/up）、
+  `tests/integration/test_cross_tenant_matrix.py`（双 org × 全子系统
+  隔离矩阵 + 泄漏扫描）、`tests/unit/test_security_v9_units.py`
+  （tenancy/scopes/password/quota/audit/rotation/metrics 门禁）、
+  `tests/test_endpoint_scope_matrix.py`（矩阵 CI 三重校验）。
 ## [Unreleased] - 2026-09-12 (foundation/i18n-responsive-v9)
 
 Internationalization & responsive touch foundation (ADR-0144, PR #1237).

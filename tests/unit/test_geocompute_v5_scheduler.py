@@ -700,8 +700,8 @@ class TestRunEvidenceSnapshot:
             from app.models.db_model import GeoComputeRunEvidence
 
             db.add(GeoComputeRunEvidence(
-                run_id="gexec-small", owner_scope="u:rt", status="completed",
-                snapshot=small_snap,
+                run_id="gexec-small", org_id="1", owner_scope="u:rt",
+                status="completed", snapshot=small_snap,
             ))
         replay = run_evidence.load_snapshot("gexec-small", owner_scope="u:rt")
         assert replay is not None and replay.evidence["n1"].rows_emitted == 3

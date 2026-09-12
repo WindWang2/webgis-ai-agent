@@ -47,6 +47,10 @@ class ErrorCategory(str, Enum):
     DATA_UNAVAILABLE = "data_unavailable"
     CRS = "crs"
     RESOURCE_EXHAUSTED = "resource_exhausted"
+    #: ADR-0139 P5：组织级配额越限（与 RESOURCE_EXHAUSTED 的区别——
+    #: 配额是**租户策略**裁决而非瞬时资源耗尽；V9 追加，append-only，
+    #: 变更已在与 A 线的 PR 协调点声明）。
+    QUOTA = "quota"
     TIMEOUT = "timeout"
     CANCELLATION = "cancellation"
     RETRYABLE = "retryable"
@@ -74,6 +78,7 @@ CATEGORY_DEFAULTS: Dict[ErrorCategory, CategorySpec] = {
     ErrorCategory.DATA_UNAVAILABLE: CategorySpec(False, 404, "所需数据不可用或不存在"),
     ErrorCategory.CRS: CategorySpec(False, 400, "坐标参考系不支持或无法转换"),
     ErrorCategory.RESOURCE_EXHAUSTED: CategorySpec(True, 429, "资源配额已耗尽，请稍后重试"),
+    ErrorCategory.QUOTA: CategorySpec(True, 429, "组织配额已超出，请调整用量或联系管理员"),
     ErrorCategory.TIMEOUT: CategorySpec(True, 504, "操作超时，请稍后重试"),
     ErrorCategory.CANCELLATION: CategorySpec(False, 499, "操作已被取消"),
     ErrorCategory.RETRYABLE: CategorySpec(True, 503, "服务暂时不可用，请稍后重试"),
