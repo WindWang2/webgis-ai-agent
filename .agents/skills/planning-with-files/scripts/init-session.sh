@@ -24,6 +24,21 @@
 
 set -e
 
+usage() {
+    cat << 'EOF'
+Usage: init-session.sh [OPTIONS] [PROJECT NAME]
+
+Initialize task_plan.md, findings.md, and progress.md for a planning session.
+
+Options:
+  -t, --template TYPE  Use the default or analytics template.
+      --plan-dir       Create an isolated plan directory without a name.
+      --autonomous     Enable autonomous mode and plan attestation.
+      --gated          Enable autonomous mode with the completion gate.
+  -h, --help           Print this help and exit without changing files.
+EOF
+}
+
 TEMPLATE="default"
 PROJECT_NAME=""
 USE_PLAN_DIR=0
@@ -50,6 +65,10 @@ while [ $# -gt 0 ]; do
         --gated)
             MODE="gated"
             shift
+            ;;
+        --help|-h)
+            usage
+            exit 0
             ;;
         *)
             if [ -z "$PROJECT_NAME" ]; then
@@ -133,6 +152,33 @@ gen_nonce() {
 #   $1 = plan dir (absolute or relative); dotfiles live directly inside it.
 #   $2 = plan file path (task_plan.md) used for auto-attestation resolution.
 # No-op when MODE is empty (legacy path stays byte-equivalent to v2.43.0).
+# Raise MODE to the project's committed floor before the side effects run
+# (issue #238). A project that ships a root .mode has made that setting a
+# reviewed part of the repo; a new slug plan must not start below it. Without
+# this, `init-session.sh <name>` created a plan with no .mode at all, and the
+# project's attestation requirement became a flag the agent chose at plan
+# creation time.
+#
+# inject-plan.sh enforces the same floor at read time, so this is not the
+# guard. It exists so the effective policy is VISIBLE in the plan directory
+# rather than only inside the resolver, and so the new plan gets the nonce and
+# the auto-attestation that autonomous mode needs to inject at all.
+#
+# An explicit --autonomous/--gated is never lowered: gated stays gated.
+inherit_root_mode() {
+    _root_mode="${PWD}/.mode"
+    [ -f "${_root_mode}" ] || return 0
+    [ "$MODE" = "gated" ] && return 0
+    if grep -q 'gate' "${_root_mode}" 2>/dev/null; then
+        MODE='gated'
+        return 0
+    fi
+    if grep -q 'autonomous' "${_root_mode}" 2>/dev/null; then
+        MODE='autonomous'
+    fi
+    return 0
+}
+
 apply_v3_mode() {
     _mode_dir="$1"
     _mode_plan="$2"
@@ -348,6 +394,7 @@ if [ "$SLUG_MODE" -eq 1 ]; then
     echo "PLAN_ID=$PLAN_ID"
     create_files_in "$PLAN_DIR"
     printf "%s\n" "$PLAN_ID" > "${PLAN_ROOT}/.active_plan"
+    inherit_root_mode
     apply_v3_mode "$PLAN_DIR" "${PLAN_DIR}/task_plan.md"
     echo ""
     echo "Active plan recorded: ${PLAN_ROOT}/.active_plan"

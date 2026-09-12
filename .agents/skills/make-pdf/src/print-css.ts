@@ -7,8 +7,8 @@
  *
  *   - Helvetica first, with Liberation Sans as a metric-compatible Linux
  *     fallback (Helvetica and Arial aren't installed on most Linux distros;
- *     Liberation Sans ships via the fonts-liberation package and Playwright's
- *     install-deps). No bundled webfonts — dodges the per-glyph Tj bug that
+ *     Liberation Sans ships via the fonts-liberation package). No bundled
+ *     webfonts — dodges the per-glyph Tj bug that
  *     breaks copy-paste extraction.
  *   - All paragraphs flush-left. No first-line indent, no justify, no
  *     p+p indent. text-align: left everywhere. 12pt margin-bottom.
@@ -37,8 +37,8 @@
 // Metric-compatible sans stack: Helvetica (macOS), Liberation Sans (Linux,
 // ships via fonts-liberation), Arial (Windows). Shared by every text surface.
 const SANS_STACK = `Helvetica, "Liberation Sans", Arial`;
-// CJK fallback families, appended to the body stack only.
-const CJK_STACK = `"Hiragino Kaku Gothic ProN", "Noto Sans CJK JP", "Microsoft YaHei"`;
+// CJK fallback families (Simplified-Chinese first), appended to the body stack only.
+const CJK_STACK = `"PingFang SC", "Heiti SC", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"`;
 // Color-emoji families: Apple (macOS), Segoe (Windows), Noto (Linux).
 const EMOJI_FAMILIES = `"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"`;
 
