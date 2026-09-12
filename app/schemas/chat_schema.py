@@ -408,12 +408,17 @@ class TableArtifactResponse(BaseModel):
 
 
 class SessionPlanProgressRow(BaseModel):
-    """SessionPlan 进度行投影。"""
+    """SessionPlan 进度行投影。
 
-    model_config = ConfigDict(extra="allow")
+    与服务端 ``CapabilityProgress`` 三键一一对应（capability/status/
+    bound_ref，字段拼写给死）。此前声明 extra="allow" + step/status 两个
+    幽灵字段，序列化会给每行注入 ``step: null`` —— 与路由实返投影不符
+    （以实测为准修正，同 MutationApplyResponse 先例）。
+    """
 
-    step: Optional[str] = None
-    status: Optional[str] = None
+    capability: str
+    status: str = "pending"
+    bound_ref: str = ""
 
 
 class SessionPlanViewResponse(BaseModel):
@@ -432,7 +437,7 @@ class SessionPlanViewResponse(BaseModel):
                     "progress": [],
                     "replaced": False,
                     "superseded": False,
-                    "updated_at": "2026-09-11T00:00:00",
+                    "updated_at": 1789123456.0,
                 }
             ]
         }
@@ -447,7 +452,10 @@ class SessionPlanViewResponse(BaseModel):
     progress: list[SessionPlanProgressRow] = []
     replaced: bool = False
     superseded: bool = False
-    updated_at: Optional[str] = None
+    # 与 SessionPlan.updated_at 同源：time.time() 秒级浮点（信封落盘即刷新）。
+    # 旧声明 Optional[str] 与路由实返 float 不符，每次 200 都触发
+    # ResponseValidationError（以实测为准修正，同 MutationApplyResponse 先例）。
+    updated_at: Optional[float] = None
 
 
 class CartographicObservationResponse(BaseModel):

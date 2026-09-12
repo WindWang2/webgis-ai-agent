@@ -6,12 +6,28 @@ validate 保持可选认证。非 401 断言一律携带同用户 Bearer token�
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.core.auth import create_access_token
 from app.main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _global_db_ready():
+    """全局 sqlite 库就绪（与应用启动同路径的 init_db）。
+
+    ``GET /runs/{id}`` 内存未命中时会回读 cluster run store（全局库）+
+    tenancy org 解析。生产/全量套件里全局库已建表，run 缺席 → 404；
+    单文件直跑时库缺席会把 store 不可用诚实映射为 503（CLUSTER_UNAVAILABLE），
+    与被测语义（missing run → 404）错位。这里走一次 init_db() 消除环境差。
+    """
+    from app.core.database import init_db
+
+    init_db()
+    yield
 
 FILTER_NODE = {
     "node_id": "f1",
@@ -90,9 +106,12 @@ def test_overbudget_admission_rejected_via_rest():
     resp = client.post("/api/v1/geocompute/plans/execute", json=body,
                        headers=_auth())
     assert resp.status_code == 422
-    detail = resp.json()["message"]
-    assert detail["code"] == "RESOURCE_BUDGET_EXCEEDED"
-    assert detail["details"]["suggestions"]
+    # ADR-0138：路由 raise HTTPException(422, detail=<dict>) 时，统一处理器把
+    # 结构化 detail 移入信封 data（message 为状态码缺省文案）—— 同上面
+    # test_validate_rejects_unknown_input 的 data["code"] 断言。
+    payload = resp.json()["data"]
+    assert payload["code"] == "RESOURCE_BUDGET_EXCEEDED"
+    assert payload["details"]["suggestions"]
 
 
 def test_unsupported_category_is_typed_failure():

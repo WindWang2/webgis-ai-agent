@@ -1,10 +1,10 @@
 """统一异常处理模块测试"""
 from unittest.mock import MagicMock
 
+from app.core.errors import classify_exception, localized_user_message
 from app.core.exception import (
     sanitize_traceback,
     format_error_response,
-    PRODUCTION_ERROR_MESSAGE,
 )
 
 
@@ -38,7 +38,11 @@ class TestFormatErrorResponse:
         resp = format_error_response(exc, request, include_details=False)
         assert resp["code"] == "SERVER_ERROR"
         assert resp["success"] is False
-        assert resp["message"] == PRODUCTION_ERROR_MESSAGE
+        # ADR-0144 P6：生产 message 按异常分类本地化（ValueError → validation
+        # 「请求参数不合法」），PRODUCTION_ERROR_MESSAGE 只是分类失败时的兜底。
+        # 生产模式纪律不变：message 不携带内部细节（"test error" 不得外泄）。
+        assert resp["message"] == localized_user_message(classify_exception(exc))
+        assert "test error" not in resp["message"]
         assert resp["data"] is None
         assert "error_type" not in resp
 

@@ -113,7 +113,7 @@
   "replaced": "boolean",
   "session_id": "string",
   "superseded": "boolean",
-  "updated_at": "null|string",
+  "updated_at": "null|number",
   "user_goal": "null|string"
  },
  "GET /api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}": {

@@ -58,7 +58,8 @@ def test_health_version_no_longer_hardcoded():
     from app.api.routes.health import health_check
 
     body = health_check()
-    assert body["version"] == version_string()
+    # 端点已声明 typed response_model（HealthResponse）—— 按模型属性断言。
+    assert body.version == version_string()
 
 
 # ── /version 端点 ────────────────────────────────────────────────────────
@@ -71,11 +72,12 @@ def test_version_endpoint_shape():
     from app.api.routes.version import version
 
     body = version()
-    assert body["version"] == version_string()
-    assert body["extensions_api"]
-    assert "timestamp" in body
+    # 端点已声明 typed response_model（VersionResponse）—— 按模型属性断言。
+    assert body.version == version_string()
+    assert body.extensions_api
+    assert body.timestamp
     # 防侦察纪律：无环境细节、无内部路径
-    blob = json.dumps(body).lower()
+    blob = json.dumps(body.model_dump()).lower()
     for leak in ("windows", "linux", "darwin", "c:\\", "/home/", "env"):
         assert leak not in blob
 
