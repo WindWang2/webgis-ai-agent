@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-from app.core.errors import CATEGORY_DEFAULTS, ErrorCategory, category_defaults
+from app.core.errors import ErrorCategory, category_defaults
 
 logger = logging.getLogger(__name__)
 
