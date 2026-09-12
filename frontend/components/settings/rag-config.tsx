@@ -131,7 +131,7 @@ export function RagConfig() {
       }
     })();
     return () => controller.abort();
-  }, []);
+  }, [t]);
 
   const addTimer = (cb: () => void, ms: number) => {
     const id = setTimeout(() => {
