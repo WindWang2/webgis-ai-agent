@@ -52,3 +52,25 @@ cd frontend && node scripts/ac08/pdf-text-probe.mjs --out ../docs/dev/ac-08-samp
 # 后端 scope 测试
 ./.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/cartography/test_layout_description_golden.py   tests/cartography/test_export_sample_pdf_text.py tests/cartography/test_diagnostics_dead_code_gate.py   tests/unit/test_report_layout_parity.py tests/unit/test_pdf_renderer.py
 ```
+
+## 交付台账（任务 → 文件 → 测试 → 证据）
+
+| 任务 | 文件 | 测试 | 证据 |
+|---|---|---|---|
+| P0 勘察 | docs/dev/ac-08-export-recon.md；frontend/scripts/ac08/dpi-line-probe.mjs、tilezoom-dpr-probe.mjs | —（只读 + 探针） | §6 基线表 + docs/dev/ac-08-samples/dpi-baseline/ |
+| P1 降级 | frontend/lib/export/highdpi.ts；exporter.ts（单飞/接线）；export-chrome.ts 词表 | highdpi.test.ts（10）；exporter.singleflight.test.ts | 300DPI 超时降级路径有测试（§5-6） |
+| P2 中间层 | frontend/lib/export/layout-description.ts；vector-svg-export.ts（IR 消费）；exporter.ts 装配 | layout-description.test.ts；vector-svg-ir-consumer.test.ts；layout-description.golden.test.ts | SVG-PNG 同源探针（§5-4） |
+| P3 文本层 | frontend/lib/export/pdf-font.ts；exporter.ts exportToPDF；public/fonts/ | pdf-font.test.ts；exporter.pdftext.test.ts；tests/cartography/test_export_sample_pdf_text.py（pypdf 4） | sample-export-cjk.pdf（Type0+FontFile2，中文可提取） |
+| P4 WYSIWYG | frontend/lib/export/extent.ts、spec-bounds.ts；exporter.ts prepareWysiwygCamera | extent.test.ts；exporter.wysiwyg.test.ts | fitBounds 接线 + 解析投影 ≤1px 基准（§5-3） |
+| P5 出版档 | exportToPDF 出血/裁切线；svg-marginalia.renderSvgCropMarks | exporter.pdftext.test.ts 出版档段 | 裁切线角点坐标断言 |
+| P6 后端对拍 | app/lib/cartography/layout_description.py、pdf_renderer.py、render_diagnostics.py（+6 码）、report_service.py | test_layout_description_golden.py；test_report_layout_parity.py；test_pdf_renderer.py；test_diagnostics_dead_code_gate.py | golden corpus 双端对拍 1e-9（§5-7） |
+| P7/P8 门禁 | — | 前端 390 绿；后端 scope 90 绿 1 skip；tsc 0；build exit 0；eslint/ruff 净 | 本表 + PR 门禁段原文 |
+| Review | 46a7ed21 | 回归：heatmap→mixed / 长标签→vector | S2 Spec 审查 PASS-WITH-FINDINGS → finding 已修 |
+
+## Review 取证（§6）
+
+1. `git diff origin/master --stat`：54 files，+4486/−165（含两份字体资产与样例）。
+2. code-review 双轴：Standards 轴主 agent 自审（含 atlas+cmyk addPage 尺寸漂移修复）；
+   Spec 轴 S2 独立 subagent → PASS-WITH-FINDINGS，唯一实质 finding（mixed 误判）
+   已修（46a7ed21），其余为已登记的文档化取舍（D5/D9）。
+3. §5 全量重跑取证：见上方「复现命令」与本表测试列（2026-09-13 原文）。
