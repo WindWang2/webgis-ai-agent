@@ -33,9 +33,9 @@ ComponentType = Literal[
     # Runtime V4（§10）：artifact-backed 交互表格面板（虚拟化 + 选择联动）。
     "table_panel",
     "export_layout",
-    # 区位插图（全国→省→市）：schema/registry/composition 已建模，
-    # descriptor.runtime_status=planned —— 渲染器未实现前 resolver 不会
-    # 选出，不伪装 native（renderer 豁免见 export_component_catalog）。
+    # 区位插图（全国→省→市）：v2 全链路 native —— live SVG 渲染器
+    # （inset-map.tsx）与导出 drawChromeInset 同链落地（AC-07 P6 复核：
+    # descriptor.runtime_status="native"，本注释此前仍写 planned，已校正）。
     "inset_map",
     # ── VNext §5/§9/§13：披露族组件（方法论诚实的产品面）──────────────
     "methodology_note",         # 方法论披露（警告码 + 文案，随产品渲染）

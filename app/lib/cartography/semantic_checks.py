@@ -2410,7 +2410,8 @@ def _check_component_layout(report: CartographyReport, mapspec: Dict[str, Any]) 
     issues: List[str] = []
     issues.extend(detect_collisions(adapted))
     issues.extend(detect_orphan_components(adapted, sorted(layer_ids)))
-    issues.extend(_detect_floating_overlaps(components))
+    overlap_issues = _detect_floating_overlaps(components)
+    issues.extend(overlap_issues)
 
     if not issues:
         report.add_check(
@@ -2421,6 +2422,14 @@ def _check_component_layout(report: CartographyReport, mapspec: Dict[str, Any]) 
             evidence_class="desired_state",
         )
         return
+    # AC-07（ADR-0156）：warning → 可自动修复。status 保持 warning（quality_loop
+    # 只自动修 fail —— user-wins 语义不回退），但附确定性修复建议：策略链
+    # 改 anchor → 缩尺寸 → 折叠进溢出面板 → 隐藏最低优先组件；前端
+    # composition-repair 执行同一词表的动作链。悬空 layerId 属绑定语义
+    # （非摆位），不在摆位修复链域内 —— 不为其生成动作。
+    from app.lib.cartography.component_composer import plan_layout_repairs
+
+    actions = plan_layout_repairs(components)
     report.add_check(
         "LAYOUT_COLLISION",
         "warning",
@@ -2428,6 +2437,11 @@ def _check_component_layout(report: CartographyReport, mapspec: Dict[str, Any]) 
         severity="warning",
         evidence_class="desired_state",
         evidence={"issues": issues},
+        repairability="auto_safe" if actions else "not_repairable",
+        suggested_fix={
+            "operation": "resolve_layout_collisions",
+            "actions": actions,
+        } if actions else None,
     )
 
 
@@ -2491,6 +2505,14 @@ def _check_component_graph_semantics(
 
     cycles = [i for i in issues if i.code == "cycle"]
     if cycles:
+        # AC-07（ADR-0156）：断环策略 —— 每环断开最低权重边（端点 priority
+        # 和最小，平局字典序），建议载荷 remove_links 与前端/评审消费同构。
+        # repairability=auto_with_semantic_risk：断边是语义手术（z 序/依赖
+        # 声明被移除），不进 quality_loop 自动通道（其语义即 explicit
+        # intent 才可执行），live 侧由 composition-repair 按同一策略执行。
+        from app.lib.cartography.component_graph import break_component_cycles
+
+        remove_links = break_component_cycles(graph)
         report.add_check(
             "COMPONENT_LINK_CYCLE",
             "fail",
@@ -2498,7 +2520,11 @@ def _check_component_graph_semantics(
             severity="error",
             evidence_class="deterministic",
             evidence={"cycles": [i.model_dump() for i in cycles[:4]]},
-            repairability="not_repairable",
+            repairability="auto_with_semantic_risk" if remove_links else "not_repairable",
+            suggested_fix={
+                "operation": "break_component_cycle",
+                "remove_links": remove_links,
+            } if remove_links else None,
         )
     else:
         report.add_check(
@@ -2601,37 +2627,15 @@ def _detect_floating_overlaps(components: List[Dict[str, Any]]) -> List[str]:
 
     仅报 warning：用户可能有意叠放（如临时收起的统计卡）；QA 曝光即可，
     不 auto_safe 修复（修复会挪动用户手动摆放的位置——user wins）。
+    几何单一实现在 component_composer.floating_overlap_pairs（AC-07：
+    披露与修复建议同源，不做二次实现）。
     """
-    floating: List[Dict[str, Any]] = []
-    for c in components:
-        placement = c.get("placement") if isinstance(c.get("placement"), dict) else {}
-        if not c.get("enabled", True) or placement.get("mode") != "floating":
-            continue
-        try:
-            floating.append({
-                "id": str(c.get("id") or c.get("type") or "?"),
-                "x": float(placement.get("x", 0)),
-                "y": float(placement.get("y", 0)),
-                "w": float(placement.get("width", 0) or 0),
-                "h": float(placement.get("height", 0) or 0),
-            })
-        except (TypeError, ValueError):
-            continue
+    from app.lib.cartography.component_composer import floating_overlap_pairs
 
-    issues: List[str] = []
-    for i in range(len(floating)):
-        for j in range(i + 1, len(floating)):
-            a, b = floating[i], floating[j]
-            if a["w"] <= 0 or a["h"] <= 0 or b["w"] <= 0 or b["h"] <= 0:
-                continue
-            overlap_x = min(a["x"] + a["w"], b["x"] + b["w"]) - max(a["x"], b["x"])
-            overlap_y = min(a["y"] + a["h"], b["y"] + b["h"]) - max(a["y"], b["y"])
-            if overlap_x > 0 and overlap_y > 0:
-                issues.append(
-                    f"floating components {a['id']} and {b['id']} overlap "
-                    f"({overlap_x:.2f}x{overlap_y:.2f} normalized units)"
-                )
-    return issues
+    return [
+        f"floating components {a_id} and {b_id} overlap"
+        for a_id, b_id in floating_overlap_pairs(components)
+    ]
 
 
 def _check_3d_extrusion_rules(

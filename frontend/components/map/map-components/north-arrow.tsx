@@ -5,6 +5,7 @@ import type { MapSpecComponent } from '@/lib/mapspec-compiler/types';
 import { registerComponentRenderer } from './registry';
 import { positionClass, resolveVariant } from './helpers';
 import type { RendererContext } from './types';
+import { bboxCenter, magneticDeclinationAt } from '@/lib/layout/magnetic-declination';
 
 // D7：arrow_simple —— 简单箭头字形（实心北向箭头 + 尾杆），随容器
 // rotate(-bearing) 一起旋转（与其它 glyph 同一方位角语义）。
@@ -31,10 +32,29 @@ function NorthArrowRenderer(component: MapSpecComponent, ctx: RendererContext) {
   // V3（ADR-0101 D3）：monochrome —— 灰度渲染（黑白出版/打印友好），
   // glyph 仍是 compass（单色语义），仅色彩通道去饱和。
   const mono = variant === 'monochrome';
+  // AC-07（ADR-0156 P4）：真北/磁北偏角注记 —— bbox 中心偶极子近似
+  // （恒 approximate 标记）；options.showDeclination === false 可关。
+  const options = (component.options ?? {}) as Record<string, unknown>;
+  const showDeclination = options['showDeclination'] !== false && !!ctx.bounds;
+  const declination = showDeclination && ctx.bounds
+    ? magneticDeclinationAt(
+        bboxCenter(ctx.bounds).lat,
+        bboxCenter(ctx.bounds).lng,
+      )
+    : undefined;
   return (
-    <div data-testid="spec-chrome-north-arrow" data-variant={variant} className={`map-chrome absolute z-30 flex h-control-lg w-control-lg flex-col items-center justify-center gap-px rounded-chrome ${mono ? 'grayscale opacity-80' : ''} ${positionClass(component)}`} style={{ transform: `rotate(${-ctx.bearing}deg)` }} aria-label={`指北针（${variant}），当前方位角 ${Math.round(ctx.bearing)}°`}>
+    <div data-testid="spec-chrome-north-arrow" data-variant={variant} className={`map-chrome absolute z-30 flex h-control-lg w-control-lg flex-col items-center justify-center gap-px rounded-chrome ${mono ? 'grayscale opacity-80' : ''} ${positionClass(component)}`} style={{ transform: `rotate(${-ctx.bearing}deg)` }} aria-label={`指北针（${variant}），当前方位角 ${Math.round(ctx.bearing)}°${declination ? `，磁偏角 ${declination.label}` : ''}`}>
       <Glyph variant={variant} />
       <span aria-hidden className="text-micro font-semibold leading-none text-map-chrome-ink-muted">N</span>
+      {declination && (
+        <span
+          data-testid="spec-chrome-north-declination"
+          className="text-micro leading-none tabular-nums text-map-chrome-ink-muted"
+          title="磁北相对真北的偏角（偶极子近似值）"
+        >
+          {declination.label}
+        </span>
+      )}
     </div>
   );
 }
