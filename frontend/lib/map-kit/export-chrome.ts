@@ -151,7 +151,14 @@ export type ExportDegradationCode =
   | 'terrain_3d_scale_caveat'
   /* ADR-0157 P1：高 DPI 渲染策略（发射器 lib/export/highdpi.ts）。 */
   | 'highdpi_rerender_timeout_degraded'
-  | 'raster_tile_detail_limited_highdpi';
+  | 'raster_tile_detail_limited_highdpi'
+  /* ADR-0157 P4：所见即所得范围契约（发射器 lib/export/layout-description.ts）。 */
+  | 'extent_overflow_data'
+  | 'extent_fit_timeout_degraded'
+  /* ADR-0157 P5：出版档栅格件 CMYK 近似披露。 */
+  | 'cmyk_approximate_raster'
+  /* ADR-0157 P3：PDF 出版字体嵌入（中文文本层可选取可检索）。 */
+  | 'pdf_cjk_font_embedded';
 
 export interface ExportDegradation {
   code: ExportDegradationCode;

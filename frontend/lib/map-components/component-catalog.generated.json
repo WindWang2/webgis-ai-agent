@@ -1583,6 +1583,11 @@
       "message": "图表组件引用的数据在导出时不可用，图表未进入导出件"
     },
     {
+      "code": "cmyk_approximate_raster",
+      "severity": "info",
+      "message": "栅格导出件无法承载真 CMYK 分色，出版档仅提供出血/裁切几何与近似色彩标记"
+    },
+    {
       "code": "comparison_export_composed",
       "severity": "info",
       "message": "对比模式导出为显式左右组合（分界位于 {detail}）"
@@ -1606,6 +1611,16 @@
       "code": "export_timeout_partial",
       "severity": "error",
       "message": "导出超时，产物可能不完整（{detail}）"
+    },
+    {
+      "code": "extent_fit_timeout_degraded",
+      "severity": "warning",
+      "message": "出图范围相机适配未在截止内完成，已回退视口裁切语义（{detail}）"
+    },
+    {
+      "code": "extent_overflow_data",
+      "severity": "warning",
+      "message": "数据范围超出出图范围，超界部分以背景呈现（{detail}）"
     },
     {
       "code": "features_truncated",
@@ -1636,6 +1651,11 @@
       "code": "legend_entries_truncated",
       "severity": "info",
       "message": "图例条目较多：live 界面仅显示前 8 条，导出件绘制全部条目"
+    },
+    {
+      "code": "pdf_cjk_font_embedded",
+      "severity": "info",
+      "message": "PDF 文本层嵌入 Noto Sans SC 子集字体，中文可选取/可检索"
     },
     {
       "code": "pdf_font_fallback",

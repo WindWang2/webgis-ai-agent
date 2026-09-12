@@ -35,6 +35,21 @@ import {
   MapIdleTimeoutError,
   waitForMapIdle,
 } from '../export/highdpi';
+import {
+  boundsContained,
+  exportBoundsForFrame,
+  type BoundsWSEN,
+} from '../export/extent';
+import { inferSpecDataBounds } from '../export/spec-bounds';
+import {
+  buildPublicationLayout,
+  frameAspectWH,
+  type PublicationLayout,
+} from '../export/layout-description';
+import {
+  ensurePublicationFont,
+  loadPublicationFontB64,
+} from '../export/pdf-font';
 export type { ExportFrame, ExportFrameWhere, FrameLayout } from './frame-composer';
 import {
   graticuleIntervalForZoom,
@@ -862,6 +877,33 @@ function _drawLegend(
  * W6：非 WinAnsi 字符检测（code point > U+00FF，含 CJK/emoji 等）——
  * jsPDF 标准 14 字体只编码 WinAnsi，越界字符在 PDF 文本层必然乱码。
  */
+/**
+ * ADR-0157 P5：出版档裁切角线 —— 自 trim 四角向页缘延伸（进入出血区），
+ * 黑色 0.2mm 细线。页面物理尺寸 = trim + 2×bleed，故线终点恰在页缘。
+ */
+function drawCropMarks(
+  doc: { setDrawColor: (c: number) => void; setLineWidth: (w: number) => void; line: (x1: number, y1: number, x2: number, y2: number) => void },
+  bleed: number,
+  trimW: number,
+  trimH: number,
+): void {
+  doc.setDrawColor(0);
+  doc.setLineWidth(0.2);
+  const corners: Array<[number, number, number, number]> = [
+    // [trimX, trimY, dirX, dirY]（dir = 向页缘方向）
+    [0, 0, -1, -1],
+    [trimW, 0, 1, -1],
+    [0, trimH, -1, 1],
+    [trimW, trimH, 1, 1],
+  ];
+  for (const [cx, cy, dx, dy] of corners) {
+    const ax = cx + bleed;
+    const ay = cy + bleed; // trim → 物理页坐标
+    doc.line(ax, ay, ax + dx * bleed, ay); // 水平臂
+    doc.line(ax, ay, ax, ay + dy * bleed); // 垂直臂
+  }
+}
+
 export function hasNonWinAnsiChars(s: string): boolean {
   return /[^ -ÿ]/.test(s);
 }
@@ -914,28 +956,50 @@ export async function exportToPDF(
     pages?: Array<{ canvas: HTMLCanvasElement; title?: string }>;
     /** W9：PDF 内部诊断回传（页标题栅格化）。 */
     onDegradation?: (d: ExportDegradation) => void;
+    /** ADR-0157 P3：出版字体 base64（Noto Sans SC 子集）—— 嵌入后 CJK
+     * 文本层可选取可检索；缺席/注册失败 → 标准 14 字体（ASCII only）。 */
+    fontB64?: string | null;
+    /** ADR-0157 P5：出版档 —— 页面外扩 3mm 出血 + 裁切角线（trim 线）。 */
+    colorMode?: 'srgb' | 'cmyk';
   } = {}
 ): Promise<Blob> {
   const { default: jsPDF } = await import('jspdf');
   const { paperSize = 'A4', orientation = 'landscape', author, dataSource } = options;
 
+  // ADR-0157 P5：出版档出血 —— 页面 = trim + 两侧 3mm；内容坐标整体按
+  // bleed 偏移（pageW/pageH 恒为 trim 尺寸，后续版式数学不变）。
+  const colorMode = options.colorMode ?? 'srgb';
+  const bleed = colorMode === 'cmyk' ? 3 : 0; // mm/侧
+
   const doc = new jsPDF({
     orientation,
     unit: 'mm',
-    format: paperSize === 'A3' ? 'a3' : 'a4',
+    format:
+      bleed > 0
+        ? (paperSize === 'A3' ? [426, 303] : [303, 216]) // A3/A4 landscape 含出血
+        : paperSize === 'A3'
+          ? 'a3'
+          : 'a4',
   });
 
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
+  // ADR-0157 P3：注册出版字体（成功 → doc 当前字体为 NotoSansSC，CJK 可写；
+  // 失败 → 维持标准字体，调用方语义不变）。
+  const fontOk = ensurePublicationFont(doc as unknown as Parameters<typeof ensurePublicationFont>[0], options.fontB64 ?? null);
+
+  // trim 尺寸 = 物理页面 − 两侧出血（后续版式坐标全部相对 trim 原点）。
+  const pageW = doc.internal.pageSize.getWidth() - bleed * 2;
+  const pageH = doc.internal.pageSize.getHeight() - bleed * 2;
   const margin = 10;
 
-  // Map image area
+  // Map image area（出版档：内容整体外推 bleed —— 版式数学相对 trim 不变）
+  const ox = bleed;
+  const oy = bleed;
   const mapTop = 25;
   const mapBottom = 15;
   const mapW = pageW - margin * 2;
   const mapH = pageH - mapTop - mapBottom;
-  const mapX = margin;
-  const mapY = mapTop;
+  const mapX = margin + ox;
+  const mapY = mapTop + oy;
 
   // Add map image（W9：pages 在场时首页嵌入 pages[0].canvas —— 封面页）
   const pages = options.pages ?? [];
@@ -967,28 +1031,31 @@ export async function exportToPDF(
   if (textVector) {
     doc.setFontSize(16);
     doc.setTextColor(30, 41, 59);
-    doc.text(title || 'WebGIS AI Agent', pageW / 2, 15, { align: 'center' });
+    doc.text(title || 'WebGIS AI Agent', pageW / 2 + ox, 15 + oy, { align: 'center' });
 
     // Subtitle
     if (subtitle) {
       doc.setFontSize(10);
       doc.setTextColor(100, 116, 139);
-      doc.text(subtitle, pageW / 2, 21, { align: 'center' });
+      doc.text(subtitle, pageW / 2 + ox, 21 + oy, { align: 'center' });
     }
   }
 
   // Footer（W6：标签改 ASCII —— jsPDF 标准字体编码不了 CJK，此前「日期:」
-  // 等前缀在 PDF 里必然乱码。非 WinAnsi 的 author/dataSource 值从页脚剔除
-  //（乱码比缺席更糟；PDF 元数据仍保留原文）。
+  // 等前缀在 PDF 里必然乱码。ADR-0157 P3：出版字体在场 → author/dataSource
+  // 值可含 CJK 真文本；缺席时仍按 WinAnsi 剔除（乱码比缺席更糟）。
   const dateStr = new Date().toISOString().slice(0, 10);
   const footerParts = [`Date: ${dateStr}`];
-  if (author && !hasNonWinAnsiChars(author)) footerParts.push(`Author: ${author}`);
-  if (dataSource && !hasNonWinAnsiChars(dataSource)) footerParts.push(`Data: ${dataSource}`);
+  if (author && (fontOk || !hasNonWinAnsiChars(author))) footerParts.push(`Author: ${author}`);
+  if (dataSource && (fontOk || !hasNonWinAnsiChars(dataSource))) footerParts.push(`Data: ${dataSource}`);
   footerParts.push('Generated by WebGIS AI Agent');
 
   doc.setFontSize(7);
   doc.setTextColor(148, 163, 184);
-  doc.text(footerParts.join('  |  '), pageW / 2, pageH - 5, { align: 'center' });
+  doc.text(footerParts.join('  |  '), pageW / 2 + ox, pageH - 5 + oy, { align: 'center' });
+
+  // ADR-0157 P5：出版档裁切线（trim 四角延伸至页缘，裁切基准线）。
+  if (bleed > 0) drawCropMarks(doc, bleed, pageW, pageH);
 
   // W9：附加帧页（atlas）—— 同版式 addPage；页标题 WinAnsi 可编码走
   // doc.text 矢量，否则随画布栅格化（诚实降级 + 显式诊断）。
@@ -997,7 +1064,8 @@ export async function exportToPDF(
     doc.addPage(paperSize === 'A3' ? 'a3' : 'a4', orientation);
     let pageCanvas = page.canvas;
     const pageTitle = page.title || '';
-    const pageTitleVector = !pageTitle || !hasNonWinAnsiChars(pageTitle);
+    // ADR-0157 P3：出版字体在场 → CJK 页标题也走真文本层（不再栅格化）。
+    const pageTitleVector = !pageTitle || fontOk || !hasNonWinAnsiChars(pageTitle);
     if (pageTitle && !pageTitleVector) {
       pageCanvas = rasterizeTitleOnCanvas(page.canvas, pageTitle);
       options.onDegradation?.({
@@ -1023,8 +1091,9 @@ export async function exportToPDF(
     if (pageTitle && pageTitleVector) {
       doc.setFontSize(12);
       doc.setTextColor(30, 41, 59);
-      doc.text(pageTitle, pageW / 2, 15, { align: 'center' });
+      doc.text(pageTitle, pageW / 2 + ox, 15 + oy, { align: 'center' });
     }
+    if (bleed > 0) drawCropMarks(doc, bleed, pageW, pageH);
   }
 
   // PDF metadata
@@ -1086,6 +1155,15 @@ export interface ExportRequest {
    */
   frames?: ExportFrame[];
   frameLayout?: FrameLayout;
+  /**
+   * ADR-0157 P4/P5：所见即所得 + 出版档。
+   * - fit_to_frame（默认 true）：纸张档出图前把相机 fit 到图框纵横比的
+   *   导出范围（⊇ 视口遮罩，零内容裁切；screen 档不干预相机）。
+   * - color_mode：'srgb'（默认）| 'cmyk'（出版档 —— 出血 3mm + 裁切标记；
+   *   栅格件色彩转换仅近似，发 cmyk_approximate_raster 披露）。
+   */
+  fit_to_frame?: boolean;
+  color_mode?: 'srgb' | 'cmyk';
 }
 
 export interface ExportDeps {
@@ -1492,6 +1570,113 @@ async function runFrameExport(
  *（资源纪律：高 DPI 重渲染 + PDF 生成不允许并发）。命令队列（exportCommands）
  * 已保证 agent 路径串行；本锁覆盖 story 叙事导出等直接调用方，第二并发
  * 调用得到类型化的如实失败，而非画布互踩。 */
+/** ADR-0157 P4 相机档位（fit 前保存 / 用后恢复）。 */
+interface WysiwygCamera {
+  center: { lng: number; lat: number };
+  zoom: number;
+  bearing: number;
+  pitch: number;
+}
+
+function readWysiwygCamera(map: Map): WysiwygCamera | null {
+  try {
+    return {
+      center: map.getCenter(),
+      zoom: map.getZoom(),
+      bearing: map.getBearing(),
+      pitch: map.getPitch(),
+    };
+  } catch {
+    return null; // 测试/无相机面 → 无法保存也无法恢复，跳过干预
+  }
+}
+
+/**
+ * ADR-0157 P4：纸张档出图前的 WYSIWYG 相机预备。
+ * - 读 live 视口 bounds（遮罩范围）；
+ * - 纸张档（A4/A3）→ exportBoundsForFrame 求同纵横比导出范围（⊇ 遮罩），
+ *   fitBounds（duration 0、padding 0）+ 有界 idle；
+ * - screen 档 / fit_to_frame=false / bounds 不可得 → 不干预相机，
+ *   exportExtent = 遮罩（现状裁切语义）。
+ * 返回 extent 记录与相机恢复闭包（未干预时恢复为 no-op）。
+ */
+async function prepareWysiwygCamera(
+  map: Map,
+  paperSize: 'screen' | 'A4' | 'A3',
+  orientation: 'landscape' | 'portrait',
+  fitToFrame: boolean,
+  idleTimeoutMs?: number,
+): Promise<{
+  maskExtent: BoundsWSEN | null;
+  exportExtent: BoundsWSEN | null;
+  fitted: boolean;
+  fitTimeout: boolean;
+  restoreCamera: () => void;
+}> {
+  let maskExtent: BoundsWSEN | null = null;
+  try {
+    const b = map.getBounds();
+    maskExtent = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+  } catch {
+    maskExtent = null;
+  }
+  const saved = readWysiwygCamera(map);
+
+  const noFit = {
+    maskExtent,
+    exportExtent: maskExtent,
+    fitted: false,
+    fitTimeout: false,
+    restoreCamera: () => {},
+  };
+  if (!fitToFrame || paperSize === 'screen' || !maskExtent || !saved) return noFit;
+
+  const aspect = frameAspectWH(paperSize, orientation);
+  const exportExtent = exportBoundsForFrame(maskExtent, aspect);
+  if (!exportExtent) return noFit;
+
+  const jumpBack = (): void => {
+    try {
+      map.jumpTo({
+        center: saved.center,
+        zoom: saved.zoom,
+        bearing: saved.bearing,
+        pitch: saved.pitch,
+      });
+    } catch {
+      /* 相机面缺席（测试）→ 无可恢复 */
+    }
+  };
+  try {
+    map.fitBounds(
+      [
+        [exportExtent[0], exportExtent[1]],
+        [exportExtent[2], exportExtent[3]],
+      ],
+      { duration: 0, padding: 0 },
+    );
+    await waitForMapIdle(map, Math.min(idleTimeoutMs ?? 5_000, 5_000));
+    return {
+      maskExtent,
+      exportExtent,
+      fitted: true,
+      fitTimeout: false,
+      restoreCamera: jumpBack,
+    };
+  } catch {
+    // fit 失败（idle 超时等）→ 立即恢复相机，退回旧裁切语义（不静默，
+    // 调用方据 fitted=false 发 extent_fit_timeout_degraded 披露）。
+    jumpBack();
+    return {
+      maskExtent,
+      exportExtent: maskExtent,
+      fitted: false,
+      fitTimeout: true,
+      restoreCamera: () => {},
+    };
+  }
+}
+
 let inFlightExport: Promise<ExportOutcome> | null = null;
 
 export function runExport(
@@ -1586,6 +1771,14 @@ async function runExportInternal(
     (dark_mode ?? hudTheme === 'dark') ? 'dark' : 'light';
   const origPixelRatio = map.getPixelRatio();
   const targetPixelRatio = dpi / 96;
+  // WYSIWYG 相机干预记录（try 内赋值；finally 恢复需在作用域内）。
+  let wysiwyg: Awaited<ReturnType<typeof prepareWysiwygCamera>> = {
+    maskExtent: null,
+    exportExtent: null,
+    fitted: false,
+    fitTimeout: false,
+    restoreCamera: () => {},
+  };
   try {
     // ADR-0157 P1：进入高 DPI 渲染 —— 有界 idle；超时按 §0.5 契约**降级**为
     // 当前分辨率画布导出（degraded-native + 诊断码），不再让整个导出失败。
@@ -1594,6 +1787,21 @@ async function runExportInternal(
     // 在 try 内调用：异常路径由下方 catch 给出失败文案、finally 恢复比率。
     const highDpi = await enterHighDpiRender(map, dpi, deps.idleTimeoutMs);
     const highDpiDegraded = highDpi.mode === 'degraded-native';
+
+    // ADR-0157 P4：所见即所得 —— 遮罩范围 → 图框导出范围。纸张档出图前把
+    // 相机 fit 到与图框同纵横比的导出范围（⊇ 视口遮罩，零内容裁切）；此后
+    // prepareExportCanvas 的视口中心裁切恰好等于导出范围（同纵横比 + 居中
+    // 贴合）。screen 档不干预相机（遮罩即导出件）。fit 失败/超时 → 如实
+    // 回退旧裁切语义（extent_fit_timeout_degraded，不静默）。
+    // 相机恢复：导出收尾的 finally 统一 restoreCamera。
+    const fitToFrame = (req as { fit_to_frame?: boolean }).fit_to_frame ?? true;
+    wysiwyg = await prepareWysiwygCamera(
+      map,
+      paperSize,
+      orientation,
+      fitToFrame,
+      deps.idleTimeoutMs,
+    );
 
     const baseCanvas = map.getCanvas();
     // #802: 默认 dpi=96 路径不调用 setPixelRatio，导出画布就是浏览器原生
@@ -1693,14 +1901,19 @@ async function runExportInternal(
       /* spec 面缺席 → 走请求/内置默认 */
     }
 
-    // W6（ADR-0118）：PDF 单一标题事实源 —— 标题/副标题全部 WinAnsi 可编码
-    // → 画布不画（skipTitle），doc.text 矢量书写一次；含非 WinAnsi（CJK 等）
-    // → 反向：画布栅格化承载，PDF 文本层跳过 + pdf_text_rasterized_cjk 诊断
-    //（jsPDF 标准字体写不了 CJK，此前双标题 + 中文乱码并存）。
+    // W6（ADR-0118）+ ac-08（ADR-0157 P3）：PDF 单一标题事实源。
+    // 出版字体（仓内 Noto Sans SC 子集）加载/注册成功 → CJK 也走 doc.text
+    // 真实文本层（可选取可检索），pdf_text_rasterized_cjk 不再是默认路径；
+    // 字体不可用（网络/载荷异常）→ 回退旧语义：CJK 随画布栅格化 + 诊断
+    //（最后兜底，§0.5）。
     const effTitle = title || specTitle || '';
     const effSubtitle = subtitle || specSubtitle || '';
-    const pdfVectorText =
+    const publicationFontB64 =
+      fmtEarly === 'pdf' ? await loadPublicationFontB64() : null;
+    const asciiOnly =
       !hasNonWinAnsiChars(effTitle) && !hasNonWinAnsiChars(effSubtitle);
+    const pdfFontEmbedded = publicationFontB64 != null;
+    const pdfVectorText = asciiOnly || pdfFontEmbedded;
     const pdfSkipCanvasTitle = fmtEarly === 'pdf' && pdfVectorText;
 
     // W9（ADR-0118）：多帧导出分支 —— frames 非空时走 frame-composer
@@ -1863,35 +2076,73 @@ async function runExportInternal(
       ...comparisonDegradations,
       // ADR-0157 P1：高 DPI 降级 / 栅格细节披露诊断并入导出面。
       ...highDpi.degradations,
+      // ADR-0157 P4：WYSIWYG 相机适配超时回退披露。
+      ...(wysiwyg.fitTimeout
+        ? [{ code: 'extent_fit_timeout_degraded' as const, detail: '相机 fit 未在截止内 idle，回退视口裁切' }]
+        : []),
     ];
     if (storeState.is3D && showScaleEffective) {
       chromeDegradations.push({ code: 'terrain_3d_scale_caveat' });
     }
 
+    // ADR-0157 P2：版面描述中间层（单一决策记录）—— canvas 消费
+    // chromeModel 字段（既有绘制面不变），SVG/PDF 消费全量字段（texts/
+    // 图例多实例/比例尺单源数字/范围契约/出版档），消除双链内容漂移。
+    const colorMode = (req as { color_mode?: 'srgb' | 'cmyk' }).color_mode ?? 'srgb';
+    const mppNow = (() => {
+      try {
+        return metersPerPixelAt(map.getZoom(), map.getCenter().lat);
+      } catch {
+        return undefined;
+      }
+    })();
+    const dataBounds = inferSpecDataBounds(committedSpec);
+    const publicationLayout: PublicationLayout = buildPublicationLayout({
+      paperSize,
+      orientation,
+      dpi,
+      frame: { width: exportCanvas.width, height: exportCanvas.height },
+      chromeModel: chromeModel ?? null,
+      requestTitle: title,
+      specTitle,
+      requestSubtitle: subtitle,
+      specSubtitle,
+      author,
+      dataSource,
+      attributionText: chromeModel?.attribution?.text ?? '',
+      metersPerPixel: mppNow,
+      extent: {
+        mask: wysiwyg.maskExtent,
+        export: wysiwyg.exportExtent,
+        dataOverflow: !boundsContained(dataBounds, wysiwyg.exportExtent),
+      },
+      colorMode,
+    });
+    // ADR-0157 P5：出版档栅格件 CMYK 近似披露（真分色需出版引擎，不假装精确）。
+    if (colorMode === 'cmyk') {
+      chromeDegradations.push({
+        code: 'cmyk_approximate_raster',
+        detail:
+          fmt === 'pdf'
+            ? '出版档启用：页面含 3mm 出血与裁切线；色彩为 sRGB 近似'
+            : fmt === 'png'
+              ? '出版档色彩为 sRGB 近似（PNG 无出血/裁切几何）'
+              : '出版档色彩为 sRGB 近似',
+      });
+    }
+
     if (fmt === 'svg') {
-      // V5（ADR-0118 W5）：真矢量优先 —— 孪生编译器产出数据层矢量要素 +
-      // svg-marginalia 整饰（图框/指北针/比例尺/图例）；编译/合成异常回退
-      // 既有位图包装（<image> 嵌 PNG）并显式发 vector_svg_fallback_raster。
+      // V5（ADR-0118 W5）真矢量优先；ac-08（ADR-0157 P2）版面决策全部
+      // 来自 publicationLayout（IR 单源）—— 编译/合成异常回退位图包装
+      //（<image> 嵌 PNG）并显式发 vector_svg_fallback_raster。
       let svgText: string;
       let svgDegradations: ExportDegradation[];
       try {
         const { buildVectorSvgExport } = await import('./vector-svg-export');
         const vector = buildVectorSvgExport({
           spec: committedSpec,
-          viewport: { width: exportCanvas.width, height: exportCanvas.height },
-          paperSize,
-          orientation,
+          layout: publicationLayout,
           dpi,
-          title: title || specTitle || '',
-          subtitle: subtitle || specSubtitle || '',
-          chromeModel,
-          metersPerPixel: (() => {
-            try {
-              return metersPerPixelAt(map.getZoom(), map.getCenter().lat);
-            } catch {
-              return undefined;
-            }
-          })(),
           fallbackRaster: () => buildSvgText(exportCanvas, title, dataUrl),
         });
         svgText = vector.svg;
@@ -1921,16 +2172,25 @@ async function runExportInternal(
       return { ok: true, format: 'svg', url: upload.url, filename: upload.filename };
     } else if (fmt === 'pdf') {
       // W6（ADR-0118）：文本层状态判定 —— CJK 等非 WinAnsi 字符已在画布
-      // 栅格化承载（composeLayout 正常画），PDF 文本层跳过 title/subtitle；
-      // ASCII 文本走 doc.text 真矢量。地图本体恒为位图画布嵌入（如实披露）。
-      const pdfDegradations: ExportDegradation[] = pdfVectorText
-        ? []
-        : [
-            {
-              code: 'pdf_text_rasterized_cjk',
-              detail: '标题/副标题含非 WinAnsi 字符，已随画布栅格化（PDF 文本层跳过，避免乱码）',
-            },
-          ];
+      // ac-08（ADR-0157 P3）：文本层披露 —— 出版字体嵌入（含 CJK 可检索）
+      // 为默认；字体不可用且含 CJK → 栅格化（最后兜底）。
+      const cjkInText = hasNonWinAnsiChars(effTitle) || hasNonWinAnsiChars(effSubtitle);
+      const pdfDegradations: ExportDegradation[] =
+        pdfFontEmbedded && cjkInText
+          ? [
+              {
+                code: 'pdf_cjk_font_embedded',
+                detail: 'PDF 文本层嵌入 Noto Sans SC 子集字体，中文可选取/可检索',
+              },
+            ]
+          : pdfVectorText
+            ? []
+            : [
+                {
+                  code: 'pdf_text_rasterized_cjk',
+                  detail: '标题/副标题含非 WinAnsi 字符，已随画布栅格化（PDF 文本层跳过，避免乱码）',
+                },
+              ];
       // ADR-0081：PDF 文本层 subtitle 与 canvas 同一事实源链（请求参数 >
       // spec 组件 > 空串）—— 此前 PDF 只读请求参数，spec 副标题在 PDF
       // 文本层静默丢失。
@@ -1944,6 +2204,8 @@ async function runExportInternal(
           author,
           dataSource,
           textLayer: pdfVectorText ? 'vector' : 'skip',
+          fontB64: publicationFontB64,
+          colorMode,
         },
       );
       const upload = await uploadExport(
@@ -1953,7 +2215,7 @@ async function runExportInternal(
       getHudState().setPendingSystemMessage(
         `[系统通知] 专题底图 PDF \`${title || '未命名'}\` 已成功生成` +
           (highDpiDegraded ? '（高 DPI 重渲染超时，已降级为当前分辨率）' : '') +
-          `（地图为位图画布 + 文本层${pdfVectorText ? '矢量（标题/副标题为 PDF 矢量文本）' : '栅格化（标题/副标题随画布位图，避免 CJK 乱码）'}），` +
+          `（地图为位图画布 + 文本层${pdfFontEmbedded ? '矢量（嵌入 Noto Sans SC 子集，中文可选取可检索）' : pdfVectorText ? '矢量（标题/副标题为 PDF 矢量文本）' : '栅格化（标题/副标题随画布位图，避免 CJK 乱码）'}），` +
           `文件已落盘并分配URL：${upload.url}。` +
           `请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${upload.url})。` +
           formatDegradationNote([...chromeDegradations, ...pdfDegradations]) +
@@ -1998,6 +2260,8 @@ async function runExportInternal(
     );
     return { ok: false, format: (format ?? 'png').toLowerCase(), error: errorMsg };
   } finally {
+    // ADR-0157 P4：WYSIWYG 相机恢复（未干预时为 no-op）。
+    wysiwyg.restoreCamera();
     if (targetPixelRatio > 1) {
       map.setPixelRatio(origPixelRatio);
     }
