@@ -16,7 +16,7 @@ layout_description/``：pytest 与 vitest 消费同一批 fixture，逐字段对
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 PUBLICATION_LAYOUT_VERSION = 1

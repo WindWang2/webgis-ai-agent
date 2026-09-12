@@ -17,14 +17,14 @@
 | 阶段 | 交付 | 状态 |
 |---|---|---|
 | P0 | recon 文档 + DPI 基线（探针脚本 `frontend/scripts/ac08/dpi-line-probe.mjs`） | ✅ |
-| P1 | `frontend/lib/export/highdpi.ts`：降级/单飞/oversample + exporter 接线 + 测试 | ⏳ |
-| P2 | `frontend/lib/export/layout-description.ts`（同源中间层）+ composeLayout/vector-svg 消费 + parity 测试 | ⏳ |
-| P3 | `frontend/lib/export/pdf-font.ts` + CJK 子集字体 + PDF 真文本层 + pypdf 提取断言 | ⏳ |
-| P4 | `frontend/lib/export/extent.ts`（WYSIWYG 数学）+ 接线 + 超界提示诊断 | ⏳ |
-| P5 | 出版档 `color_mode` + 出血 3mm + 裁切标记 | ⏳ |
-| P6 | `app/lib/cartography/layout_description.py` 镜像 + golden fixtures + pdf_renderer 整饰 + report 对拍 | ⏳ |
-| P7 | §5 门禁全绿（探针重跑取证） | ⏳ |
-| P8 | 唯一一次 `next build` + typecheck + CHANGELOG + ADR-0157 定稿 + 样例 | ⏳ |
+| P1 | `frontend/lib/export/highdpi.ts`：降级/单飞/栅格披露 + 词表 + 探针 | ✅ 4fd8fb3c |
+| P2 | 版面描述 IR + vector-svg IR 消费 + exporter 接线 + golden 对拍 | ✅ ff8b8883/531f2ded |
+| P3 | pdf-font + vendored Noto Sans SC + 真文本层 + pypdf 门禁（样例入档） | ✅ ff8b8883 |
+| P4 | extent 数学（修单位 bug）+ prepareWysiwygCamera + 超界/超时披露 | ✅ ff8b8883 |
+| P5 | color_mode=cmyk：PDF 出血页 + 裁切线、SVG 标记、栅格近似披露 | ✅ ff8b8883 |
+| P6 | layout_description.py 镜像 + golden 对拍 + pdf_renderer 整饰 + report 同源 | ✅ 531f2ded |
+| P7 | 前端 389 绿 + pypdf 提取 4 绿 + 死码门 67 绿 + ruff/eslint/build 净 | ✅ |
+| P8 | next build 一次通过 + CHANGELOG + ADR-0157 + 决策日志 + 样例 README | ✅ |
 
 ## 资源纪律遵守点
 
@@ -37,3 +37,18 @@
 
 - 2026-09-13 `pip install -e .` 不可行（flat-layout 多顶层包拒建；兄弟 worktree 同）→ requirements 安装 + `pytest.ini pythonpath=.`。已记入 recon §0.2。
 - 2026-09-13 P4「出图范围预览」以**数据 + 诊断词**形态交付（可视化预览组件属 `components/map/**` = 07 线禁改区），layout description 暴露 exportExtent/maskExtent/overflow 供 07 消费。
+
+## 复现命令（门禁）
+
+```bash
+# 前端单测（日常门禁）
+pnpm --dir frontend exec vitest run lib/map-kit lib/export --reporter=dot   # 389 passed
+# 类型检查 / 构建（P8 唯一一次）
+pnpm --dir frontend exec tsc --noEmit && pnpm --dir frontend exec next build
+# DPI 线宽基线（真重渲染 vs 放大插值）
+cd frontend && node scripts/ac08/dpi-line-probe.mjs --dpi 96,150,300 --out ../docs/dev/ac-08-samples/dpi-baseline
+# PDF 中文文本层样例（pypdf 门禁消费）
+cd frontend && node scripts/ac08/pdf-text-probe.mjs --out ../docs/dev/ac-08-samples
+# 后端 scope 测试
+./.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/cartography/test_layout_description_golden.py   tests/cartography/test_export_sample_pdf_text.py tests/cartography/test_diagnostics_dead_code_gate.py   tests/unit/test_report_layout_parity.py tests/unit/test_pdf_renderer.py
+```

@@ -197,7 +197,11 @@ async function main() {
   const dpiArg = (args.find((a) => a.startsWith('--dpi')) || '--dpi 96,300').split('=')[1] || args[args.indexOf('--dpi') + 1] || '96,300';
   const dpis = dpiArg.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
   const outIdx = args.indexOf('--out');
-  const outDir = path.resolve(outIdx >= 0 ? args[outIdx + 1] : path.join(__dirname, '..', '..', '..', 'docs', 'dev', 'ac-08-samples', 'dpi-baseline'));
+  // --out 相对 frontend/ 解析（../../docs/dev/ac-08-samples/... = 仓库 docs）
+  const outDir = path.resolve(
+    FRONTEND_ROOT,
+    outIdx >= 0 ? args[outIdx + 1] : path.join('..', 'docs', 'dev', 'ac-08-samples', 'dpi-baseline'),
+  );
   fs.mkdirSync(outDir, { recursive: true });
 
   const htmlPath = path.join(FRONTEND_ROOT, '.ac08-probe.html');

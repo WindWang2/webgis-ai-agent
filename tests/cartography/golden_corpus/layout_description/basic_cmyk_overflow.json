@@ -1,6 +1,6 @@
 {
   "name": "layout_description_basic_cmyk_overflow",
-  "_provenance": "ac-08 ADR-0157 P6 —— expected 由 TS 参照实现（frontend/lib/export/layout-description.ts + extent.ts）生成并冻结；pytest 镜像（app/lib/cartography/layout_description.py）须逐字段复现（浮点 1e-9）。",
+  "_provenance": "ac-08 ADR-0157 P6 —— expected 由 TS 参照实现（frontend/lib/export/layout-description.ts + extent.ts）生成并冻结；pytest 镜像（app/lib/cartography/layout_description.py）须逐字段复现（浮点 1e-9）。chromeModel 为 TS canvas 绘制面运行时字段，不属于跨语言 JSON 契约，显式不在本 expected 内。",
   "input": {
     "paperSize": "A4",
     "orientation": "landscape",

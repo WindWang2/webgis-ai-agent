@@ -22,7 +22,7 @@ const input = fixture.input as {
 };
 
 describe('layout description golden（ADR-0157 P6 双端对拍）', () => {
-  it('TS 参照实现复现 expected（全字段深等）', () => {
+  it('TS 参照实现复现 expected（全字段深等；chromeModel 为 canvas 运行时面不入 JSON 契约）', () => {
     const ir = buildPublicationLayout({
       paperSize: input.paperSize,
       orientation: input.orientation,
@@ -35,7 +35,13 @@ describe('layout description golden（ADR-0157 P6 双端对拍）', () => {
       colorMode: input.colorMode,
     });
     expect(ir.version).toBe(PUBLICATION_LAYOUT_VERSION);
-    expect(JSON.parse(JSON.stringify(ir))).toEqual(fixture.expected);
+    // chromeModel = TS 侧 canvas 绘制面（export-chrome 2657 行绘制器的消费
+    // 面），非跨语言契约字段（Python 镜像无对应物）→ JSON 对拍显式排除。
+    const { chromeModel: _canvasOnly, ...jsonIr } = ir as typeof ir & {
+      chromeModel?: unknown;
+    };
+    void _canvasOnly;
+    expect(jsonIr).toEqual(fixture.expected);
   });
 
   it('extent 数学复现冻结边界（Mercator 归一量纲）', () => {

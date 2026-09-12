@@ -121,17 +121,29 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
     const outerH = height + bleedPx * 2;
 
     // 数据层：targetDpi=72 → dpiScale=1，编译坐标系与图框 1:1。
+    // §0.5/§5 契约：矢量不支持的层类型（extrusion 压平 / heatmap 近似 /
+    // 栅格外链）→ 编译器逐层诚实标记（data-export-degraded / 外链 image），
+    // 根节点补 data-export-content="mixed" 内容态标记；无近似 → "vector"。
+    let compilerDiagnosticCount = 0;
     const compiled = compileMapSpecToSvg(input.spec, {
       targetDpi: 72,
       width,
       height,
       padding: 0,
+      onDiagnostic: () => {
+        compilerDiagnosticCount += 1;
+      },
     });
 
     const degradations: ExportDegradation[] = [
       { code: 'basemap_omitted_vector_svg', detail: '矢量 SVG 不含栅格底图' },
     ];
     const dataSvg = truncateCompiledLabels(compiled, degradations);
+    // 内容态：编译器诊断（label 截断/预算）或产物内近似标记（extrusion
+    // 压平）在场 → mixed；纯矢量数据层 → vector。
+    const hasApproximatedLayer = /data-export-degraded="true"/.test(dataSvg);
+    const contentMode =
+      compilerDiagnosticCount > 0 || hasApproximatedLayer ? 'mixed' : 'vector';
 
     const ink = colorMode === 'cmyk' ? '#000000' : '#1e293b';
     const title = layout.texts.find((t) => t.kind === 'title')?.text ?? '';
@@ -141,7 +153,7 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
     // 整饰层（与 print layout 同 Z 序：数据在最底，图框/整饰/title 在上）。
     const parts: string[] = [];
     parts.push(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${outerW}" height="${outerH}" viewBox="0 0 ${outerW} ${outerH}">`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${outerW}" height="${outerH}" viewBox="0 0 ${outerW} ${outerH}" data-export-content="${contentMode}">`,
     );
     if (title) parts.push(`<title>${escapeSvgText(title)}</title>`);
     // 出血底（页面最外层）+ 内容底色
