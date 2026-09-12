@@ -343,7 +343,6 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
         "frontend/lib/map-kit/export-chrome.ts",
     ),
     "pdf_cjk_font_embedded": (
-        "frontend/lib/export/pdf-font.ts",
         "frontend/lib/map-kit/exporter.ts",
         "frontend/lib/map-kit/export-chrome.ts",
     ),
