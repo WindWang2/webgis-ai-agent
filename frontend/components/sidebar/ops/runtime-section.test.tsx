@@ -114,8 +114,12 @@ describe('RuntimeSection —— runtime-inspector 复活（ADR-0142 D2）', () =
   it('recompute-plan 视图切换显示重算/复用清单', async () => {
     stubFetch(baseRoutes());
     render(<RuntimeSection ownerToken="tok" />);
-    fireEvent.click(await screen.findByRole('button', { name: '重算计划' }));
-    const plan = await screen.findByTestId('recompute-plan');
+    // CI 全量单进程跑 367 文件时 runner 繁忙，默认 1s 等待窗偶发不够
+    // （09d839d 轮实测失败、本地全量复跑通过）—— 放宽等待窗，断言不变。
+    fireEvent.click(
+      await screen.findByRole('button', { name: '重算计划' }, { timeout: 5000 })
+    );
+    const plan = await screen.findByTestId('recompute-plan', {}, { timeout: 5000 });
     expect(plan).toHaveTextContent(/stale 3/);
     expect(plan).toHaveTextContent('sources refreshed');
   });
