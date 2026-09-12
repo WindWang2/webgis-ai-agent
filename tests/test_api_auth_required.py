@@ -66,6 +66,19 @@ PUBLIC_MUTATING_ALLOWLIST: dict[tuple[str, str], str] = {
     ("geocompute.py", "validate_execution_plan"): (
         "stateless pure-CPU plan validation; no data/catalog access"
     ),
+    # data-lifecycle V9 (ADR-0140) quality surface: stateless compute over the
+    # caller-submitted payload (evaluate → derived report, dry-run → plan
+    # preview, profile → stats); no owned resource is touched. Persisting
+    # variants (POST /reports, /autofix/apply) stay enforcing-auth.
+    ("data_quality.py", "evaluate_quality"): (
+        "stateless payload evaluation; persistence goes through authed /reports"
+    ),
+    ("data_quality.py", "autofix_dry_run"): (
+        "plan preview only — never mutates input or store"
+    ),
+    ("data_quality.py", "unified_profile"): (
+        "stateless vector/raster profiling of the submitted payload"
+    ),
 }
 
 

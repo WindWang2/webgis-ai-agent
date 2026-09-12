@@ -151,9 +151,6 @@ async def _new_pair_with_family(db: AsyncSession, user: User) -> TokenResponse:
     return _issue_token_pair(user, family_id=family_id, refresh_jti=first_jti)
 
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-
-
 @router.post(
     "/register",
     response_model=TokenResponse,
