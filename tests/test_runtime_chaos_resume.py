@@ -700,7 +700,9 @@ async def test_clear_session_route_purges_resume_buffers(_pi_path, monkeypatch, 
         owner_token=None,
         _conv=MagicMock(),
     )
-    assert result == {"status": "ok"}
+    # #1239 后路由返回 response_model=ClearSessionResponse（生产行为），
+    # 不再是裸 dict。
+    assert result.status == "ok"
 
     # The durable deletion tombstone rejects the request before any replay
     # generator can expose buffered content.
@@ -756,7 +758,9 @@ async def test_clear_session_aborts_deleted_session(monkeypatch):
         owner_token=None,
         _conv=MagicMock(),
     )
-    assert result == {"status": "ok"}
+    # #1239 后路由返回 response_model=ClearSessionResponse（生产行为），
+    # 不再是裸 dict。
+    assert result.status == "ok"
     assert owner_bridge.abort_calls == ["victim-session"], (
         "clear_session must scope the abort to the deleted session"
     )

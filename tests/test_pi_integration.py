@@ -687,7 +687,9 @@ class TestClearSessionRoute:
         mock_engine.clear_session.assert_awaited_once_with(
             "sess-1", user_id="anonymous", owner_token=None,
         )
-        assert resp == {"status": "ok"}
+        # #1239 后路由返回 response_model=ClearSessionResponse（生产行为），
+        # 不再是裸 dict。
+        assert resp.status == "ok"
 
     @pytest.mark.asyncio
     async def test_clear_session_returns_404_when_not_found(self):

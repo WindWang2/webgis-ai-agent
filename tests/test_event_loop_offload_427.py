@@ -79,7 +79,8 @@ async def test_geojson_dumps_off_loop(monkeypatch, tmp_path):
                                        _user={"user_id": "u1"})
     )
     assert observed["thread"] != _main_thread, "json.dumps ran on the event loop thread"
-    assert res["format"] == "geojson"
+    # #1239 后 export_geojson 返回 response_model=GeoJSONExportResponse（生产行为）。
+    assert res.format == "geojson"
 
 
 @pytest.mark.asyncio
@@ -268,9 +269,10 @@ async def test_svg_sanitize_off_loop(monkeypatch, tmp_path):
                 file, title="t", render_diagnostics=None, _user={"user_id": "u1"}
             )
         )
-        assert res["success"] is True
+        # #1239 后 upload_map_export 返回 response_model=MapExportResponse（生产行为）。
+        assert res.success is True
         assert observed["thread"] != _main_thread, "_sanitize_svg ran on the event loop thread"
-        assert (tmp_path / res["filename"]).exists()
+        assert (tmp_path / res.filename).exists()
     finally:
         await file.close()
 

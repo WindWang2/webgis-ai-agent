@@ -90,4 +90,5 @@ async def test_delete_upload_removes_file_when_db_succeeds(tmp_path, monkeypatch
 
     assert not fake_file.exists(), "DB 成功后文件应被删除"
     assert not upload_dir.exists(), "upload 目录应被清理"
-    assert result["success"] is True
+    # #1239 后 delete_upload 返回 response_model=UploadDeleteResponse（生产行为）。
+    assert result.success is True
