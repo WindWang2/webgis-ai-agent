@@ -168,6 +168,9 @@ _ENV_BASELINE = {
         "WEBGIS_S3_ACCESS_KEY_ID": "",
         "WEBGIS_S3_SECRET_ACCESS_KEY": "",
         "WEBGIS_S3_PREFIX": "",
+        # V9 错误信封（ADR-0138）：测试套件默认统一信封（与 Settings 默认
+        # 等价）；legacy 回退由显式设置该变量的专项测试自行 monkeypatch。
+        "LEGACY_DETAIL_ENVELOPE": "false",
 }
 for _key, _value in _ENV_BASELINE.items():
     os.environ.setdefault(_key, _value)
