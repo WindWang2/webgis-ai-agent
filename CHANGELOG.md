@@ -1,5 +1,38 @@
 # Changelog
 
+## [Unreleased] - 2026-09-12 (quality-e2e-v9: journey E2E & budget gates, ADR-0146)
+
+### Added
+- Journey E2E tier (frontend/e2e/, ADR-0146): dual-mode (mock fixtures /
+  real backend with deterministic LLM stub), six core user journeys
+  (upload-analysis-export, task cancel-retry, template apply, StoryMap
+  share-replay, theme no-flash persistence, fabric register-probe-query-map),
+  journey registry as the D-J line extension point; mock mode 6/6 green.
+- quality-e2e.yml lane: PR journey smoke (@smoke, <=8 min, diff-driven via
+  changed-lane mapping with #1216-class regression tests on both engines),
+  nightly full mock suite, real-mode journeys, perf budget gate job
+  (self-proving red on synthetic breach), chaos smoke job (compose stack).
+- P4 coverage lift in the three weak areas: workflow_runtime 19->35,
+  explorer 18->30, data_lifecycle 8->20 test-file references (36 new test
+  files, 215 tests).
+- Pi tickets closed (WAYFINDER): real-LLM E2E smoke journeys
+  (tests/integration/test_pi_real_llm_e2e.py, key-gated) + Pi vs ChatEngine
+  benchmark harness and report framework
+  (scripts/perf/pi_vs_chatengine.py, docs/dev/pi-vs-chatengine-benchmark.md).
+- Chaos smoke on a real compose stack: worker SIGKILL durable-job recovery,
+  redis-stop API degradation/recovery, SSE Last-Event-ID resume.
+
+### Fixed
+- No-flash theme bootstrap read `localStorage.getItem(undefined)`: RSC
+  boundary voids client-module imports, so app/layout.tsx received an
+  undefined PERSIST_KEY and dark-mode users got a white flash on every
+  reload (journey-5 caught it; fix moves the key to lib/store/persist-key.ts,
+  6-line diff, commit 5e442223).
+
+### Documented
+- docs/dev/quality-e2e-recon.md (P0 recon: CI lane map, reusable infra,
+  weak-coverage gap lists, benchmark inventory, #1223-#1233 fault lineage);
+  docs/adr/0146-journey-tiered-testing-and-determinism.md.
 <<<<<<< HEAD
 ## [Unreleased] - 2026-09-12 (workspace-ui-v9, ADR-0143)
 

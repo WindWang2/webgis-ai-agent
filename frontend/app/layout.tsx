@@ -2,7 +2,10 @@ import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { DM_Sans, JetBrains_Mono } from "next/font/google"
 import { ClientProviders } from "@/components/providers/client-providers"
-import { PERSIST_KEY } from "@/lib/store/useHudStore"
+// RSC 边界注意：layout 是服务端组件，这里绝不能从 "use client" 模块
+// （useHudStore）取值 —— 该 import 在 SSR 输出里会静默变成 undefined，
+// no-flash 脚本曾因此变成 localStorage.getItem(undefined)（journey 5 捕获）。
+import { PERSIST_KEY } from "@/lib/store/persist-key"
 import { DEFAULT_LOCALE, LOCALE_COOKIE, LOCALE_GLOBAL_VAR, normalizeLocale } from "@/lib/i18n/config"
 import "./globals.css"
 

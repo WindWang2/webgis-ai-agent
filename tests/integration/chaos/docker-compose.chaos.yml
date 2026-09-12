@@ -1,0 +1,22 @@
+# Chaos minimal stack (quality-e2e-v9 P7, ADR-0146).
+#
+# Only redis lives in compose: the API and the celery worker are spawned as
+# subprocesses by the chaos fixtures (same discipline as real-services-smoke —
+# no image build, fault injection = real process control). Port 6399 keeps the
+# chaos broker away from any ambient redis.
+#
+# Usage (chaos lane):
+#   docker compose -f tests/integration/chaos/docker-compose.chaos.yml up -d
+#   CHAOS_STACK=1 pytest tests/integration/chaos -m heavy
+#   docker compose -f tests/integration/chaos/docker-compose.chaos.yml down -v
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6399:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

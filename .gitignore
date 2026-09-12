@@ -31,6 +31,7 @@ scripts/
 !/scripts/quality
 # Platform V4（ADR-0131）：配置 schema / 依赖 inventory 生成器（字节闸测试
 # import 它们，必须入库）。
+!/scripts/perf/
 !/scripts/gen_config_schema.py
 !/scripts/gen_app_inventory.py
 # Quality V2（ADR-0118）：staleness 前置检查脚本（generated-artifacts 账本
