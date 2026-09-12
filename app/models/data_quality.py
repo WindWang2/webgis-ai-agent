@@ -51,7 +51,10 @@ class QualityReport(Base):
     id = Column(String(36), primary_key=True, default=_uuid_hex)
     # B 线占位列：只落列不启用（§8 —— 查询侧兼容读取，列允许缺失）。
     org_id = Column(Integer, nullable=True)
-    project_id = Column(String(255), nullable=True, index=True)
+    # project_id 不声明 index=True：迁移链建的是复合覆盖索引
+    # idx_quality_report_project_created(project_id, created_at)
+    # （0046），单列索引是冗余 —— 模型必须与迁移产物一致（wiring drift 闸）。
+    project_id = Column(String(255), nullable=True)
     session_id = Column(String(255), nullable=True)
     created_by = Column(String(255), nullable=True)
 
