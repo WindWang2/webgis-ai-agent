@@ -278,31 +278,35 @@ class ToolExecutionPipeline:
                     step.background_job_ids = list(origin.created_job_ids)
 
         elapsed_ms = (time.time() - start_time) * 1000
-        if (
-            outcome.status == "ok"
-            and isinstance(outcome.raw_result, dict)
-            and outcome.raw_result.get("mapspec_fingerprint")
-        ):
+        if outcome.status == "ok" and isinstance(outcome.raw_result, dict):
             # Both the legacy and Pi agents converge into the same existing
             # harness. Dynamic import avoids coupling the generic pipeline at
             # module import time to the optional Pi transport.
-            from app.services.cartography_runtime import record_cartographic_dispatch_evidence
+            from app.services.cartography_runtime import (
+                record_cartographic_dispatch_evidence,
+                result_indicates_map_change,
+            )
 
-            try:
-                await record_cartographic_dispatch_evidence(
-                    session_id,
-                    tool_call_id,
-                    normalize_tool_name(tool_name),
-                    args_dict,
-                    outcome,
-                    int(elapsed_ms),
-                )
-            except Exception as review_error:  # noqa: BLE001 - GIS result already succeeded
-                logger.warning(
-                    "[ToolPipeline] cartographic evaluation unavailable for %s: %s",
-                    session_id,
-                    review_error,
-                )
+            # ADR-0158 P1：评审触发从「结果含 mapspec_fingerprint」改为
+            # 「产生了地图变更」—— fingerprint 路径语义不变；前端 command
+            # 渲染路径（模板 symbology/heatmap、图层样式族）经命令族白名单
+            # 同样进入评审。
+            if result_indicates_map_change(outcome.raw_result):
+                try:
+                    await record_cartographic_dispatch_evidence(
+                        session_id,
+                        tool_call_id,
+                        normalize_tool_name(tool_name),
+                        args_dict,
+                        outcome,
+                        int(elapsed_ms),
+                    )
+                except Exception as review_error:  # noqa: BLE001 - GIS result already succeeded
+                    logger.warning(
+                        "[ToolPipeline] cartographic evaluation unavailable for %s: %s",
+                        session_id,
+                        review_error,
+                    )
         result = ToolExecutionResult(
             tool_name=tool_name,
             tool_call_id=tool_call_id,

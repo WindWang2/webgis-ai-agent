@@ -1,5 +1,65 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-cartography/09: 视觉裁判与自愈闭环, ADR-0158)
+
+### Added (harness: adaptive-cartography/09-visual-judge-selfheal)
+- Visual judge production module `app/lib/harness/visual_evaluator.py`:
+  structured `VisualCritique` (5 dimensions: readability /
+  color_discriminability / composition_balance / information_density /
+  polish_completeness), strict fail-closed reporting (disabled / no_api_key /
+  no_screenshot / provider_error / invalid output ⇒ `not_evaluated`, never a
+  faked pass), per-evidence-state memoization (≤1 VLM call per state, no
+  retries), screenshot input from the existing headless validator
+  (`runtime_dir/map.png`) or test fixture injection, and a built-in optional
+  VLM callable (`CARTO_VISUAL_JUDGE_VLM=1`, OpenAI-compatible endpoint).
+  The W9 seam (`app/services/gis_harness/visual_evaluator.py`) remains
+  untouched (01/02-line domain).
+- L5 `goal_satisfaction` is now derived (`derive_goal_satisfaction`): real
+  pass/fail when the visual judge evaluated the generation AND the L4
+  deterministic anchor passed — visual evidence still can never alone
+  produce L4/L5 PASS (record-only: existing three-state verdict semantics
+  unchanged).
+- Self-heal action registry `app/lib/cartography/selfheal_actions.py`:
+  10 action types (restore_visibility / reapply_opacity / refresh_legend /
+  restore_style_projection / rotate_palette / clamp_layout /
+  adjust_classification / clip_value_domain / adjust_labels /
+  switch_map_type), risk-graded (auto_safe < auto_with_semantic_risk —
+  requires explicit `CARTO_SELFHEAL_EXPLICIT=1` — < explicit_only, suggest
+  only), ranked risk-ascending then expected_effect-descending, with
+  `SymbologyDecision.rejected[]` candidate consumption (03-line interface,
+  fixture-driven until #1258 lands).
+- Repair → re-evaluate → rollback chain in the runtime orchestrator:
+  quality snapshots (deterministic-first) judged once per succeeded action;
+  harmful projection patches are rolled back (same-generation
+  before/desired swap), non-improving presentation commits are reverted
+  (re-commit of captured before-presentation, anti palette-cycling via
+  inherited tried-sets across generations); exhaustion records
+  `repair_exhausted` with a full auditable attempt trail;
+  `MAX_RUNTIME_REPAIR_ITERATIONS` unchanged (2).
+- Presentation-commit execution surface: palette rotation (legend + paint
+  output colors rotated together, perceptual ΔE best from the palette
+  registry) and layout clamping go through the existing lifecycle
+  (`layer_upsert` ⇒ deterministic re-review + lock guard + generation
+  advance); commit generations are recorded into the harness mutation ledger
+  (`cartographic_selfheal_commit`) so post-commit evaluations never go
+  stale-superseded.
+
+### Changed (harness: ADR-0158)
+- Review trigger widened from "result carries mapspec_fingerprint" to "a map
+  change was produced": `MAP_CHANGE_COMMANDS` whitelist + structural
+  `result_indicates_map_change()` applied uniformly in the legacy tool
+  pipeline and the Pi bridge. Fingerprint-path semantics unchanged; command
+  paths without a generation tag still honestly evaluate to
+  `not_evaluated` (coverage ≠ fabricated convergence).
+- `apply_template` symbology branches now surface the lifecycle generation
+  they already committed (`mapspec_fingerprint` / `is_compiled` /
+  `runtime_observation_seq` / `mutation_revision`), restoring the full
+  evidence ladder for the #722 command path.
+- `[CARTOGRAPHY_VERDICT]` renders additive fields (`action_name`/`improved`
+  on repair attempts, `visual` judge summary, `selfheal_suggestions` for
+  unauthorized semantic actions); pass/fail/not_evaluated token semantics
+  unchanged.
+
 ## [Unreleased] - 2026-09-12 (V9: 交互深度与专业用户体验, ADR-0147)
 
 ### Added (frontend: feat/ux-depth-v9)

@@ -98,6 +98,37 @@ def _project_failed_checks(checks: Any) -> List[Dict[str, Any]]:
     return projected
 
 
+def _project_visual_summary(cartography: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """ADR-0158：视觉裁判摘要投影（有界；只披露，不改三态 token）。"""
+    for item in cartography.get("visual_evidence") or []:
+        if (
+            isinstance(item, dict)
+            and item.get("source") == "visual_judge"
+        ):
+            return {
+                "status": str(item.get("status") or "not_evaluated"),
+                "error_count": int(item.get("error_count") or 0),
+                "warning_count": int(item.get("warning_count") or 0),
+            }
+    return None
+
+
+def _project_selfheal_suggestions(cartography: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """ADR-0158：未授权自愈动作的建议投影（≤3 条，供 agent 显式决策）。"""
+    projected: List[Dict[str, Any]] = []
+    for suggestion in cartography.get("selfheal_suggestions") or []:
+        if not isinstance(suggestion, dict):
+            continue
+        projected.append({
+            "action_id": _clip(suggestion.get("action_id"), 60),
+            "risk": _clip(suggestion.get("risk"), 40),
+            "reason": _clip(suggestion.get("reason"), 60),
+        })
+        if len(projected) >= 3:
+            break
+    return projected
+
+
 def render_verdict_for_llm(review: Dict[str, Any]) -> str:
     """Render one bounded ``[CARTOGRAPHY_VERDICT]`` block for the model.
 
@@ -132,10 +163,25 @@ def render_verdict_for_llm(review: Dict[str, Any]) -> str:
                     "iteration": attempt.get("iteration"),
                     "status": str(attempt.get("status") or ""),
                     "repairability": str(attempt.get("repairability") or ""),
+                    # ADR-0158 增量字段：新动作类型/回退/改善判定可见。
+                    **(
+                        {"action_name": _clip(attempt.get("action_name"), 48)}
+                        if attempt.get("action_name") else {}
+                    ),
+                    **(
+                        {"improved": bool(attempt.get("improved"))}
+                        if attempt.get("improved") is not None else {}
+                    ),
                 }
                 for attempt in repair_attempts[-2:]
                 if isinstance(attempt, dict)
             ]
+        visual_summary = _project_visual_summary(cartography)
+        if visual_summary is not None:
+            body["visual"] = visual_summary
+        selfheal_suggestions = _project_selfheal_suggestions(cartography)
+        if selfheal_suggestions:
+            body["selfheal_suggestions"] = selfheal_suggestions
     serialized = json.dumps(body, ensure_ascii=False, sort_keys=True)
     if len(serialized) > _MAX_TOTAL_CHARS:
         # 兜底截断：逐字段封顶后正常到不了这里，防御未来字段膨胀。

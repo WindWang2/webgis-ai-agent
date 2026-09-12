@@ -825,6 +825,13 @@ class PiAgentHarness:
         # matches the current desired MapSpec.
         cartography = await self._collect_cartographic_evidence(results_by_id)
 
+        # ADR-0158 P2: structured visual judge (record-only). Bounded input,
+        # memoized single call, strictly fail-closed — a missing/broken oracle
+        # records explicit not_evaluated evidence and never fakes a pass.
+        from app.lib.harness.visual_evaluator import attach_visual_judgement
+
+        await attach_visual_judgement(self.session_id, cartography, results_by_id)
+
         # 4. Structured + float metrics (both honest).
         float_metrics = self.evaluate_all(expected_tools, ideal_step_count)
         return {
@@ -1754,6 +1761,8 @@ class PiAgentHarness:
             else "fail" if cartography.desired_status == "fail"
             else "not_evaluated"
         )
+        from app.lib.harness.visual_evaluator import derive_goal_satisfaction
+
         return {
             "execution_validity": {"level": 1, "status": execution_status},
             "map_state_validity": {"level": 2, "status": cartography.runtime_status},
@@ -1762,9 +1771,14 @@ class PiAgentHarness:
                 "level": 4,
                 "status": "pass" if cartography.passed else cartography.status,
             },
-            # No structured visual/goal oracle is installed. Missing evidence
-            # stays explicit rather than inheriting L4 success.
-            "goal_satisfaction": {"level": 5, "status": "not_evaluated"},
+            # ADR-0158 P3: the visual judge produces the real L5 conclusion
+            # when it evaluated this generation; without it (or without an L4
+            # deterministic anchor) L5 stays honestly not_evaluated — it never
+            # inherits L4 success (docs/cartographic-closed-loop.md).
+            "goal_satisfaction": {
+                "level": 5,
+                **derive_goal_satisfaction(cartography),
+            },
         }
 
     @staticmethod
