@@ -55,6 +55,12 @@ def _auth_headers():
 
 @pytest.fixture(autouse=True)
 def setup_db():
+    # 自足（同 test_lakehouse_api_v7 模式）：QualityReport 模型只在路由/
+    # 测试体内懒导入，缺这行时全新库上 create_all 不含 quality_reports，
+    # persist 用例报 no such table（全套件靠前序文件注册模型才绿）。
+    import app.models.data_quality  # noqa: F401
+    import app.models.db_model  # noqa: F401
+
     Base.metadata.create_all(bind=Engine)
     from app.core.database import SessionLocal
     from app.models.db_model import User
