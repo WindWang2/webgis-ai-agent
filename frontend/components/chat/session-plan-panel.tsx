@@ -1,4 +1,5 @@
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import { useEffect, useState } from 'react';
 import { ClipboardList, Check, Circle, MinusCircle, CircleSlash, RotateCcw } from 'lucide-react';
@@ -26,28 +27,28 @@ interface Props {
 // label 与 icon 同源一份 map，新增状态时不会漂移。
 const STATUS_META: Record<
   SessionPlanCapabilityStatus,
-  { label: string; icon: ReactElement }
+  { labelKey: string; icon: ReactElement }
 > = {
   pending: {
-    label: '待完成',
+    labelKey: 'sessionPlan.status.pending',
     icon: <Circle className="h-3 w-3 text-ink-disabled animate-pulse" />,
   },
   complete: {
-    label: '已完成',
+    labelKey: 'sessionPlan.status.completed',
     icon: <Check className="h-3 w-3 text-status-success" />,
   },
   voided: {
-    label: '已作废',
+    labelKey: 'sessionPlan.status.superseded',
     icon: <MinusCircle className="h-3 w-3 text-ink-disabled" />,
   },
   unavailable: {
-    label: '不可用',
+    labelKey: 'sessionPlan.status.unavailable',
     icon: <CircleSlash className="h-3 w-3 text-status-warning" />,
   },
   failed: {
     // v3(Phase E)：执行过但未产出 artifact —— 与 unavailable（裁决期就
     // 不可用）区分：failed 可重试，重试成功覆写 complete。
-    label: '失败（可重试）',
+    labelKey: 'sessionPlan.status.failed',
     icon: <RotateCcw className="h-3 w-3 text-status-warning" />,
   },
 };
@@ -63,6 +64,7 @@ const STATUS_META: Record<
  * 携带，GET 投影刻意不含 previous_goal。
  */
 export function SessionPlanPanel({ sessionId, ownerToken, live }: Props) {
+  const t = useT();
   const [hydrated, setHydrated] = useState<SessionPlanProjection | undefined>(undefined);
   const liveProvided = live !== undefined;
 
@@ -100,29 +102,29 @@ export function SessionPlanPanel({ sessionId, ownerToken, live }: Props) {
     >
       <div className="flex items-center gap-2 mb-2">
         <ClipboardList className="h-4 w-4 text-status-accent" />
-        <span className="text-body font-semibold text-ink">会话计划</span>
+        <span className="text-body font-semibold text-ink">{t('chat.sessionPlan.title')}</span>
       </div>
       {view.supersede && (
         <div
           data-testid="session-plan-superseded"
           className="mb-2 rounded-sm bg-status-accent-soft px-2 py-1 text-micro text-ink"
         >
-          目标已更换：{view.supersede.previous_goal} → {view.supersede.goal}
+          {t('chat.sessionPlan.goalChanged')}{view.supersede.previous_goal} → {view.supersede.goal}
         </div>
       )}
       {hasChapter ? (
         <>
           <div className="space-y-1 mb-2">
             <div className="flex items-start gap-2 text-body">
-              <span className="shrink-0 text-ink-muted">目标</span>
+              <span className="shrink-0 text-ink-muted">{t('chat.sessionPlan.goal')}</span>
               <span className="text-ink truncate">{plan.user_goal || plan.query}</span>
             </div>
             <div className="flex items-start gap-2 text-body">
-              <span className="shrink-0 text-ink-muted">配方</span>
+              <span className="shrink-0 text-ink-muted">{t('chat.sessionPlan.recipe')}</span>
               <span className="text-ink-muted truncate">{plan.recipe_id}</span>
             </div>
           </div>
-          <div className="text-meta uppercase tracking-wider text-ink-muted mb-1">能力</div>
+          <div className="text-meta uppercase tracking-wider text-ink-muted mb-1">{t('chat.sessionPlan.capability')}</div>
           <ul className="space-y-1">
             {plan.progress.map((row) => (
               <li key={row.capability} className="flex items-center gap-2 text-body">
@@ -138,7 +140,7 @@ export function SessionPlanPanel({ sessionId, ownerToken, live }: Props) {
                   )}
                 </span>
                 <span className="shrink-0 text-micro text-ink-muted">
-                  {STATUS_META[row.status].label}
+                  {t(`chat.${STATUS_META[row.status].labelKey}`)}
                 </span>
               </li>
             ))}
@@ -146,7 +148,7 @@ export function SessionPlanPanel({ sessionId, ownerToken, live }: Props) {
         </>
       ) : (
         <p data-testid="session-plan-empty" className="text-body text-ink-muted">
-          暂无计划内容
+          {t('chat.sessionPlan.empty')}
         </p>
       )}
     </div>

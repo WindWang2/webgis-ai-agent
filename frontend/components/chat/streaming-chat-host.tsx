@@ -3,11 +3,14 @@
 import React, { useEffect } from "react";
 import { useSSEStream } from "@/lib/hooks/use-sse-stream";
 import { ContextPanel } from "@/components/layout/context-panel";
+import type { LayoutMode } from "@/lib/hooks/use-layout-mode";
 import type { MapActionPayload } from "@/lib/types";
 import type { SessionPlanViewState } from "@/lib/session/session-plan-delta";
 import { useChatStore } from "@/lib/store/useChatStore";
 
 export interface StreamingChatHostProps {
+  /** P5 三档布局档位（透传给 ContextPanel 决定 dock/sheet 形态）。 */
+  layoutMode?: LayoutMode;
   sessionId: string | undefined;
   setSessionId: (id: string | undefined) => void;
   sessionIdRef: React.RefObject<string | undefined>;
@@ -47,6 +50,7 @@ export function StreamingChatHost({
   onRegisterSetMessages,
   onRegisterViewportChange,
   onMessagesChange,
+  layoutMode = 'desktop',
 }: StreamingChatHostProps) {
   const {
     messages,
@@ -93,6 +97,7 @@ export function StreamingChatHost({
       onPlanAction={handlePlanAction}
       agentRuntime={agentRuntime}
       sessionPlan={sessionPlanView}
+      layoutMode={layoutMode}
     />
   );
 }

@@ -34,9 +34,12 @@ export const WORKBENCH_MODES: readonly WorkbenchMode[] = ['explore', 'analyze', 
 
 /** 模式 → 左栏 tab 组合（封闭词表投影；chat 恒在场）。 */
 export const MODE_TABS: Record<WorkbenchMode, readonly string[]> = {
-  explore: ['chat', 'layers', 'data_sources', 'project', 'tasks', 'ops'],
-  analyze: ['chat', 'analysis', 'results', 'layers', 'tasks', 'ops'],
-  compose: ['chat', 'components', 'export_layout', 'exports', 'layers', 'ops'],
+  // V9（ADR-0145）：market / modelops 智能资产面板对全部模式可见（尾部追加）；
+  // lakehouse（ADR-0141）仅 explore / analyze 可见（与智能资产面板并集共存）。
+  // ADR-0142：ops 运维控制台对全部模式可见（尾部追加，居词表尾）。
+  explore: ['chat', 'layers', 'data_sources', 'project', 'tasks', 'lakehouse', 'market', 'modelops', 'ops'],
+  analyze: ['chat', 'analysis', 'results', 'layers', 'tasks', 'lakehouse', 'market', 'modelops', 'ops'],
+  compose: ['chat', 'components', 'export_layout', 'exports', 'layers', 'market', 'modelops', 'ops'],
 };
 
 /** 模式切换来源（Agent 不应静默切换 —— 需要可发现的回执）。 */

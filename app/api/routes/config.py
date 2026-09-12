@@ -11,8 +11,6 @@ import os
 import time
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from pydantic import BaseModel
-from typing import Optional
 
 import httpx
 
@@ -20,6 +18,20 @@ from app.api.routes.chat import get_engine, get_registry
 from app.tools.skills import load_skills
 from app.core.auth import require_admin
 from app.core.config import settings
+from app.schemas.config_schema import (
+    LLMConfig,
+    LLMConfigRequest,
+    LLMConfigResponse,
+    LLMConfigUpdateResponse,
+    LLMTestRequest,
+    LLMTestResponse,
+    RagTestRequest,
+    RagTestResponse,
+    RefreshSkillsResponse,
+    SkillListItem,
+    SkillUploadResponse,
+    SkillsListResponse,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/config", tags=["配置管理"])
@@ -51,32 +63,12 @@ _ALLOWED_SKILL_EXTS = {".py", ".md"}
 # audit4 #1005: 连通性测试去抖缓存（key -> 上次成功时刻的 monotonic 时间）
 _LLM_TEST_CACHE: dict[str, float] = {}
 
-class LLMConfigRequest(BaseModel):
-    base_url: Optional[str] = None
-    model: Optional[str] = None
-    api_key: Optional[str] = None
-    use_prompt_caching: Optional[bool] = None
-
-
-class LLMTestRequest(BaseModel):
-    """连通性测试参数（#390）。字段全可选：缺省时使用引擎当前生效的配置。"""
-    base_url: Optional[str] = None
-    api_key: Optional[str] = None
-    model: Optional[str] = None
-
-
-class RagTestRequest(BaseModel):
-    """知识库连通性测试参数（#390）。当前后端使用内置本地向量库，
-    address/collection 仅作展示用途，不影响后端行为。"""
-    address: Optional[str] = None
-    collection: Optional[str] = None
-
-@router.get("/llm")
-async def get_llm_config(_user: dict = Depends(require_admin)):
+@router.get("/llm", response_model=LLMConfigResponse)
+async def get_llm_config(_user: dict = Depends(require_admin)) -> LLMConfigResponse:
     """获取当前 LLM 配置（admin only）"""
-    return get_engine().get_config()
+    return LLMConfigResponse(**get_engine().get_config())
 
-@router.post("/llm")
+@router.post("/llm", response_model=LLMConfigUpdateResponse)
 async def update_llm_config(
     req: LLMConfigRequest,
     _user: dict = Depends(require_admin),
@@ -97,7 +89,7 @@ async def update_llm_config(
         api_key=req.api_key,
         use_prompt_caching=req.use_prompt_caching
     )
-    return {"status": "ok", "config": get_engine().get_config()}
+    return LLMConfigUpdateResponse(status="ok", config=LLMConfig(**get_engine().get_config()))
 
 
 def _provider_error_detail(err: httpx.HTTPError) -> str:
@@ -118,7 +110,7 @@ def _provider_error_detail(err: httpx.HTTPError) -> str:
     return str(err) or "未知网络错误"
 
 
-@router.post("/llm/test")
+@router.post("/llm/test", response_model=LLMTestResponse)
 async def test_llm_config(
     req: LLMTestRequest,
     _user: dict = Depends(require_admin),
@@ -156,7 +148,7 @@ async def test_llm_config(
         now = time.monotonic()
         hit = _LLM_TEST_CACHE.get(cache_key)
         if hit is not None and now - hit < 60.0:
-            return {"status": "ok", "detail": f"连接成功: {model}（60s 内已验证，复用缓存结果）"}
+            return LLMTestResponse(status="ok", detail=f"连接成功: {model}（60s 内已验证，复用缓存结果）")
         await test_llm_connection(cfg)
         _LLM_TEST_CACHE[cache_key] = now
         if len(_LLM_TEST_CACHE) > 32:
@@ -169,7 +161,7 @@ async def test_llm_config(
         logger.exception("LLM connectivity test failed unexpectedly")
         raise HTTPException(status_code=502, detail=f"连接测试失败: {e}")
 
-    return {"status": "ok", "detail": f"连接成功: {model}"}
+    return LLMTestResponse(status="ok", detail=f"连接成功: {model}")
 
 
 async def _check_rag_store() -> str:
@@ -188,7 +180,7 @@ async def _check_rag_store() -> str:
     return f"内置本地向量库（FAISS）就绪，已索引 {chunks} 个分块"
 
 
-@router.post("/rag/test")
+@router.post("/rag/test", response_model=RagTestResponse)
 async def test_rag_config(
     req: RagTestRequest,
     _user: dict = Depends(require_admin),
@@ -205,14 +197,14 @@ async def test_rag_config(
     except Exception as e:
         logger.warning(f"RAG store health check failed: {e}")
         raise HTTPException(status_code=502, detail=f"知识库不可用: {e}")
-    return {"status": "ok", "store": "local-faiss", "detail": detail}
+    return RagTestResponse(status="ok", store="local-faiss", detail=detail)
 
-@router.get("/skills")
-async def list_skills(_user: dict = Depends(require_admin)):
+@router.get("/skills", response_model=SkillsListResponse)
+async def list_skills(_user: dict = Depends(require_admin)) -> SkillsListResponse:
     """列出当前已加载的技能（.py + .md）"""
     skills_dir = "app/skills"
     if not os.path.exists(skills_dir):
-        return {"skills": []}
+        return SkillsListResponse(skills=[])
 
     skills = []
     for filename in os.listdir(skills_dir):
@@ -220,20 +212,20 @@ async def list_skills(_user: dict = Depends(require_admin)):
             continue
         filepath = os.path.join(skills_dir, filename)
         if filename.endswith(".py"):
-            skills.append({
-                "name": filename,
-                "type": "python",
-                "size": os.path.getsize(filepath)
-            })
+            skills.append(SkillListItem(
+                name=filename,
+                type="python",
+                size=os.path.getsize(filepath)
+            ))
         elif filename.endswith(".md"):
-            skills.append({
-                "name": filename,
-                "type": "workflow",
-                "size": os.path.getsize(filepath)
-            })
-    return {"skills": skills}
+            skills.append(SkillListItem(
+                name=filename,
+                type="workflow",
+                size=os.path.getsize(filepath)
+            ))
+    return SkillsListResponse(skills=skills)
 
-@router.post("/skills/upload")
+@router.post("/skills/upload", response_model=SkillUploadResponse)
 async def upload_skill(
     file: UploadFile = File(...),
     _user: dict = Depends(require_admin),
@@ -308,16 +300,16 @@ async def upload_skill(
         or "unknown",
         os.path.basename(file_path),
     )
-    return {
-        "status": "ok",
-        "filename": os.path.basename(file_path),
-        "security": "warning: skill code executes in-process via importlib.exec_module "
+    return SkillUploadResponse(
+        status="ok",
+        filename=os.path.basename(file_path),
+        security="warning: skill code executes in-process via importlib.exec_module "
         "(RCE-equivalent if malicious); AST deny-list is defense-in-depth, "
         "not a sandbox",
-    }
+    )
 
-@router.post("/skills/refresh")
-async def refresh_skills(_user: dict = Depends(require_admin)):
+@router.post("/skills/refresh", response_model=RefreshSkillsResponse)
+async def refresh_skills(_user: dict = Depends(require_admin)) -> RefreshSkillsResponse:
     """手动触发技能刷新（admin only）"""
     load_skills(get_registry())
-    return {"status": "ok"}
+    return RefreshSkillsResponse(status="ok")

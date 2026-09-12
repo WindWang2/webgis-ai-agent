@@ -95,7 +95,17 @@ class ReuseIndex:
         fp = rec.reuse_fingerprint[:32]  # 与列宽同规（写入/查询一致性）
         try:
             with self._factory() as db:
-                from app.models.db_model import WorkflowNodeReuseRow
+                from app.core import tenancy
+                from app.models.db_model import (
+                    WorkflowInstanceRow,
+                    WorkflowNodeReuseRow,
+                )
+
+                # ADR-0139：org 锚定 owner 域 → 既有实例行，兜底 default 桶。
+                org_id = db.query(WorkflowInstanceRow.org_id).filter(
+                    WorkflowInstanceRow.owner_scope == rec.owner_scope[:40],
+                ).limit(1).scalar() \
+                    or tenancy.get_or_create_default_org_id_sync(db)
 
                 existing = db.query(WorkflowNodeReuseRow).filter(
                     WorkflowNodeReuseRow.owner_scope == rec.owner_scope,
@@ -106,6 +116,7 @@ class ReuseIndex:
                     db.flush()
                 db.add(WorkflowNodeReuseRow(
                     owner_scope=rec.owner_scope[:40],
+                    org_id=str(org_id)[:255],
                     reuse_fingerprint=fp,
                     session_scope=(rec.session_scope or "")[:40],
                     node_id=rec.node_id[:64],

@@ -9,6 +9,10 @@ import { downloadWithAuth, isProtectedDownloadUrl } from '@/lib/api/authenticate
 import { devOnly } from '@/lib/utils/logger';
 import { AuthImage } from './auth-image';
 import { CodeBlock } from '@/components/code-highlight/code-block';
+// V9 citation 扩展（ADR-0145）：知识库引用角标。chat 气泡实际渲染走 MiniMd，
+// 与 story-markdown 共用同一 CitationArea 组合件（单一实现，避免双路径漂移）。
+// 无引用定义块的消息：正文逐字节不变、组件表行为不变（零回归）。
+import { CitationAnchor, CitationArea, isCitationHref } from './citation';
 
 export interface MiniMdProps {
   text: string;
@@ -38,10 +42,13 @@ export const safeUrlTransform: UrlTransform = (url) => {
 
 export default function MiniMd({ text }: MiniMdProps) {
   return (
-    <div className="prose-agent text-body leading-[1.7] text-ink-secondary max-w-none break-words">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        urlTransform={safeUrlTransform}
+    <CitationArea
+      text={text}
+      renderMarkdown={(body) => (
+        <div className="prose-agent text-body leading-[1.7] text-ink-secondary max-w-none break-words">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          urlTransform={safeUrlTransform}
         components={{
           p: ({ children }) => <p className="mb-2.5 last:mb-0 leading-relaxed">{children}</p>,
           // 可访问性（V4）：聊天气泡里的 markdown 标题从 h4 起跳（h1→h4、h2→h5、h3→h6），
@@ -80,6 +87,8 @@ export default function MiniMd({ text }: MiniMdProps) {
             );
           },
           a: ({ href, children }) => {
+            // V9 citation：#cite-n 锚点 → 引用角标（来源由 Provider 提供）。
+            if (isCitationHref(href)) return <CitationAnchor href={href ?? ''} />;
             // 审计 F36：纵然顶层 urlTransform={safeUrlTransform} 已过滤，
             // 这里再显式应用一次作为纵深防御 —— 避免未来 ReactMarkdown
             // 版本变更 component props 传递顺序时绕过过滤。
@@ -161,8 +170,10 @@ export default function MiniMd({ text }: MiniMdProps) {
           hr: () => <hr className="my-3.5 border-t border-edge-subtle" />,
         }}
       >
-        {text}
+        {body}
       </ReactMarkdown>
-    </div>
+      </div>
+    )}
+    />
   );
 }

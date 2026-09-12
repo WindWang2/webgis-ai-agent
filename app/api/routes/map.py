@@ -6,7 +6,6 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from pydantic import BaseModel
 from typing import Optional, Any
 import asyncio
 import json  # noqa: F401  (kept: tests/test_event_loop_offload_427 monkeypatches map_mod.json.dumps)
@@ -19,6 +18,15 @@ from fastapi.responses import FileResponse
 from app.core.config import settings
 from app.core.auth import get_current_user
 from app.lib.geojson_serializer import serialize_geojson as _serialize_geojson
+from app.schemas.map_schema import (
+    ExportDiagnosticsResponse,
+    GeoJSONExportRequest,
+    GeoJSONExportResponse,
+    MapExportResponse,
+    PdfExportResponse,
+    VectorPdfExportResponse,
+    VectorPdfRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +156,12 @@ def _sanitize_svg(content: bytes) -> bytes:
         return b'<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="utf-8")
 
 
-@router.post("/export", tags=["地图制图"])
+@router.post(
+    "/export",
+    tags=["地图制图"],
+    response_model=MapExportResponse,
+    response_model_exclude_none=True,  # 无诊断时保持旧 wire 形态（键缺席）
+)
 async def upload_map_export(
     file: UploadFile = File(...),
     title: Optional[str] = Form(default=None),
@@ -221,22 +234,24 @@ async def upload_map_export(
     _set_export_owner(filename, _user.get("user_id", "unknown"))
 
     download_url = f"/api/v1/export/download/{filename}"
-    out = {
-        "success": True,
-        "filename": filename,
-        "url": download_url,
-        "message": "地图制品已成功保存",
-    }
-    if render_diagnostics is not None:
-        out["render_diagnostics"] = {
+    return MapExportResponse(
+        success=True,
+        filename=filename,
+        url=download_url,
+        message="地图制品已成功保存",
+        render_diagnostics={
             "accepted": len(accepted_diagnostics),
             "rejected": rejected_diagnostics,
-        }
-    return out
+        } if render_diagnostics is not None else None,
+    )
 
 
-@router.get("/export/diagnostics/{filename}", tags=["地图制图"])
-def get_export_diagnostics(filename: str, _user: dict = Depends(get_current_user)):
+@router.get(
+    "/export/diagnostics/{filename}",
+    tags=["地图制图"],
+    response_model=ExportDiagnosticsResponse,
+)
+def get_export_diagnostics(filename: str, _user: dict = Depends(get_current_user)) -> dict:
     """读取导出成品的渲染诊断 sidecar（V5 导出证据锚点）。
 
     所有权校验与 download 同源 fail-closed；sidecar 文件名由服务端从
@@ -282,20 +297,7 @@ def _render_pdf_to_file(
         f.write(pdf_bytes)
 
 
-class VectorPdfRequest(BaseModel):
-    """V6（ADR-0120 W8）：publication 矢量 PDF 请求体。"""
-
-    mapspec: dict
-    title: Optional[str] = None
-    """PDF 文档元数据标题（图面标题由 spec 标题组件驱动 —— user-wins）。"""
-    target_dpi: Optional[int] = None
-    """渲染 DPI（V7 可选；72-600，越界钳制，生效值随响应披露；缺省 300
-    = 既有输出不变）。"""
-    # 安全决策（R2-M3/M8）：不提供 sessionId 水合 —— ref 载体源由调用方
-    # 内联后提交（前端 exporter 内存中已持有数据）；未内联 → 400 typed 拒绝。
-
-
-@router.post("/export/vector-pdf", tags=["地图制图"])
+@router.post("/export/vector-pdf", tags=["地图制图"], response_model=VectorPdfExportResponse)
 async def export_map_as_vector_pdf(
     body: VectorPdfRequest,
     _user: dict = Depends(get_current_user),
@@ -384,7 +386,7 @@ async def export_map_as_vector_pdf(
     }
 
 
-@router.post("/export/pdf", tags=["地图制图"])
+@router.post("/export/pdf", tags=["地图制图"], response_model=PdfExportResponse)
 async def export_map_as_pdf(
     file: UploadFile = File(...),
     title: Optional[str] = Form(default=None),
@@ -467,11 +469,6 @@ def download_map_export(filename: str, _user: dict = Depends(get_current_user)):
     )
 
 
-class GeoJSONExportRequest(BaseModel):
-    geojson: Any
-    filename: str = "export"
-
-
 def _persist_export_file(filename: str, content: bytes, ext: str) -> None:
     """同步 IO：写临时文件 + 原子 replace —— 移出事件循环（#592 与 #427 的
     _write_export_file 同款纪律：上传分支此前把 ≤50MB 的写入内联在 async def，
@@ -489,8 +486,8 @@ def _write_export_file(filepath: str, content: bytes) -> None:
         f.write(content)
 
 
-@router.post("/export/geojson", tags=["地图制图"])
-async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_current_user)):
+@router.post("/export/geojson", tags=["地图制图"], response_model=GeoJSONExportResponse)
+async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_current_user)) -> GeoJSONExportResponse:
     """接收 GeoJSON 数据并持久化为可下载文件。"""
     data = req.geojson
     if not isinstance(data, dict):
@@ -523,9 +520,9 @@ async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_cu
     # 审计 P0：记录文件所有权
     _set_export_owner(filename, _user.get("user_id", "unknown"))
 
-    return {
-        "filename": filename,
-        "url": f"/api/v1/export/download/{filename}",
-        "format": "geojson",
-        "message": f"GeoJSON 导出成功 ({len(content)} bytes)",
-    }
+    return GeoJSONExportResponse(
+        filename=filename,
+        url=f"/api/v1/export/download/{filename}",
+        format="geojson",
+        message=f"GeoJSON 导出成功 ({len(content)} bytes)",
+    )

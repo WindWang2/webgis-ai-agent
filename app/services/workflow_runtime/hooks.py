@@ -53,6 +53,35 @@ async def owner_scope_for_session(session_id: str) -> str:
     return _osf({"user_id": uid} if uid else None, None)
 
 
+async def org_id_for_session(session_id: str) -> Optional[str]:
+    """会话 → 租户作用域（ADR-0139：会话归属人 org → default 桶）。
+
+    与 ``owner_scope_for_session`` 同一信任缝（挂钩只在该会话所有权门
+    之后的路径调用）；解析失败返回 None（service 层按 owner 锚定兜底）。
+    """
+    import asyncio
+
+    def _query():
+        from sqlalchemy import select
+
+        from app.core.database import SessionLocal
+        from app.models.db_model import Conversation, User
+
+        with SessionLocal() as db:
+            row = db.execute(
+                select(User.org_id).join(
+                    Conversation, Conversation.user_id == User.id
+                ).where(Conversation.id == session_id)
+            ).first()
+        return row[0] if row else None
+
+    try:
+        org = await asyncio.to_thread(_query)
+    except Exception:  # noqa: BLE001 — 失败降级 None（service 层兜底）
+        return None
+    return str(org) if org is not None else None
+
+
 async def attach_plan_safe(
     session_id: str, *, query: str, recipe_id: str,
     owner_scope: Optional[str] = None,
@@ -63,11 +92,12 @@ async def attach_plan_safe(
         return
     if not owner_scope:
         owner_scope = await owner_scope_for_session(session_id)
+    org_id = await org_id_for_session(session_id)
     try:
         svc = get_service()
         inst = await svc.attach_session_plan(
             session_id, owner_scope=owner_scope, query=query,
-            recipe_id=recipe_id, profile=profile)
+            recipe_id=recipe_id, profile=profile, org_id=org_id)
         if inst is not None:
             logger.info(
                 "[WorkflowRuntime] attached instance %s session=%s pkg=%s",

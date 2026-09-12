@@ -85,6 +85,6 @@ async def test_multipod_turn_ownership_contract(async_client):
             },
         )
         assert resp409.status_code == 409
-        detail = resp409.json()["detail"]
+        detail = resp409.json()["message"]
         assert detail["code"] == "TURN_CONTEXT_INACTIVE"
         assert "guidance" in detail

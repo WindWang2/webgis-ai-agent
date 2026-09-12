@@ -693,3 +693,15 @@ textarea {
 .story-message-idle {
   opacity: 0.75;
 }
+
+
+/* ── P7 触控基础（ADR-0144）：粗指针设备 44px 最小命中区 ──────────────
+   rail / 工具条按钮在触屏上从 36px 提升到 44px（WCAG 2.5.5 / Apple HIG）。
+   通过类名 .touch-target 显式标注可触目标，避免全局 button 提升破坏
+   chip/徽标等小控件布局。 */
+@media (pointer: coarse) {
+  .touch-target {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

@@ -346,6 +346,33 @@ def _owner_kwargs(
     return {"owner_type": "project", "owner_id": str(project_id)}
 
 
+def _resolve_org_for_owner(db, owner_type: str, owner_id: str) -> str:
+    """owner 域 → 租户作用域（ADR-0139，同步 DAO 专用）。
+
+    project → projects.org_id；session → 会话归属人 users.org_id；
+    皆不可解析（匿名会话/孤儿）→ default 隔离桶。
+    """
+    from sqlalchemy import select
+
+    from app.core import tenancy
+    from app.models.db_model import Conversation, User
+    from app.models.project import Project
+
+    org: Any = None
+    if owner_type == "project":
+        org = db.execute(
+            select(Project.org_id).where(Project.id == str(owner_id))
+        ).scalar_one_or_none()
+    else:
+        org = db.execute(
+            select(User.org_id).join(
+                Conversation, Conversation.user_id == User.id
+            ).where(Conversation.id == str(owner_id))
+        ).scalar_one_or_none()
+    return str(org) if org is not None \
+        else tenancy.get_or_create_default_org_id_sync(db)
+
+
 def create_dataset(
     db,
     *,
@@ -390,6 +417,8 @@ def create_dataset(
         description=descriptor.get("description") or "",
         default_branch=descriptor["default_branch"],
         cube_contract=descriptor.get("cube_contract"),
+        org_id=_resolve_org_for_owner(db, owner["owner_type"],
+                                      owner["owner_id"]),
         **owner,
     )
     try:
@@ -578,6 +607,7 @@ def create_branch(
         )
     row = LakehouseDatasetRef(
         dataset_row_id=dataset_row.id,
+        org_id=dataset_row.org_id,
         ref_type="branch",
         ref_name=name,
         version_id=target.version_id,
@@ -614,6 +644,7 @@ def create_tag(
         )
     row = LakehouseDatasetRef(
         dataset_row_id=dataset_row.id,
+        org_id=dataset_row.org_id,
         ref_type="tag",
         ref_name=name,
         version_id=target.version_id,
@@ -642,6 +673,7 @@ def _move_branch_ref(db, dataset_row, *, branch: str, version_id: str,
     if expect is None:
         row = LakehouseDatasetRef(
             dataset_row_id=dataset_row.id,
+            org_id=dataset_row.org_id,
             ref_type="branch",
             ref_name=branch,
             version_id=version_id,
@@ -788,6 +820,7 @@ def commit_version(
     if existing is None:
         row = LakehouseDatasetVersion(
             dataset_row_id=dataset_row.id,
+            org_id=dataset_row.org_id,
             version_id=version_id,
             parent_version_id=parent,
             data_object_id=data_object_id,

@@ -5,6 +5,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { STitle } from '@/components/shared/section-title';
 import { getSkills } from '@/lib/api/skills';
 import { apiFetch, isApiError, describeApiError } from '@/lib/api/transport';
+import { useT } from '@/lib/i18n/useT';
 
 type UploadState =
   | { status: 'idle' }
@@ -26,6 +27,7 @@ type UploadState =
  *     写入 app/skills 并热加载）。
  */
 export function SkillsHub() {
+  const t = useT();
   const skills = useHudStore((s) => s.skills);
   const setSkills = useHudStore((s) => s.setSkills);
 
@@ -181,7 +183,7 @@ export function SkillsHub() {
         </button>
         {upload.status === 'success' && (
           <div className="mt-2 text-body font-medium text-status-success">
-            已上传并热加载：{upload.filename}
+            {t('settings.skills.uploaded', { name: upload.filename })}
           </div>
         )}
         {upload.status === 'error' && (

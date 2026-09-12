@@ -2,6 +2,7 @@
 
 import { SearchField } from '@/components/shared/search-field';
 import type { DataSource } from '@/lib/api/data-fabric';
+import { useT } from '@/lib/i18n/useT';
 
 export interface CatalogToolbarProps {
   searchQuery: string;
@@ -16,10 +17,10 @@ export interface CatalogToolbarProps {
 }
 
 /** 可用状态筛选项（chip 词表，与 CatalogItemCard 徽标同一用语）。 */
-const AVAILABILITY_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: '', label: '全部' },
-  { value: 'available', label: '可用' },
-  { value: 'unavailable', label: '已下线' },
+const AVAILABILITY_OPTIONS: Array<{ value: string; labelKey: string }> = [
+  { value: '', labelKey: 'ds.filterAll' },
+  { value: 'available', labelKey: 'ds.filterAvailable' },
+  { value: 'unavailable', labelKey: 'ds.filterRetired' },
 ];
 
 /**
@@ -36,13 +37,14 @@ export function CatalogToolbar({
   availabilityFilter,
   onAvailabilityFilterChange,
 }: CatalogToolbarProps) {
+const t = useT();
   return (
     <div className="shrink-0 space-y-2 border-b border-edge-subtle px-panel py-2">
       <SearchField
         value={searchQuery}
         onChange={onSearchChange}
-        placeholder="搜索空间数据集、图层或关键词..."
-        aria-label="搜索空间数据集"
+        placeholder={t('sidebar.ds.searchPh')}
+        aria-label={t('sidebar.ds.searchAria')}
         debounceMs={0}
       />
       <div className="flex items-center gap-2">
@@ -50,10 +52,10 @@ export function CatalogToolbar({
           <select
             value={selectedSourceFilter}
             onChange={(e) => onSourceFilterChange(e.target.value)}
-            aria-label="按数据源筛选空间目录"
+            aria-label={t('sidebar.ds.filterBySourceAria')}
             className="min-w-0 flex-1 rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 text-caption text-ink-secondary"
           >
-            <option value="">全部数据源</option>
+            <option value="">{t('sidebar.ds.allSources')}</option>
             {sources.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name} ({s.source_type})
@@ -63,7 +65,7 @@ export function CatalogToolbar({
         )}
         <div
           role="group"
-          aria-label="按可用状态筛选"
+          aria-label={t('sidebar.ds.filterByStatusAria')}
           className={`flex shrink-0 items-center gap-1 ${sources.length === 0 ? 'ml-auto' : ''}`}
         >
           {AVAILABILITY_OPTIONS.map((opt) => {
@@ -80,7 +82,7 @@ export function CatalogToolbar({
                     : 'border-edge-subtle bg-surface-sunken text-ink-muted hover:text-ink-secondary'
                 }`}
               >
-                {opt.label}
+                {t(`sidebar.${opt.labelKey}`)}
               </button>
             );
           })}

@@ -42,6 +42,305 @@
   plan-validate→submit→waterfall) as vitest integration tests; breaker
   three-state DOM snapshots.
 
+## [Unreleased] - 2026-09-12 (knowledge & marketplace & modelops surfaces, ADR-0145)
+
+### Added (feat/knowledge-market-ui-v9)
+- Knowledge panel: `rag-independent-panel.tsx` `return null` stub (#607) replaced
+  with a real surface — document upload (client-side text read, .txt/.md/.json,
+  honest rejection of PDF/DOCX), offset-paginated catalog with creator-only
+  delete + two-step confirm, semantic search with raw-L2 score display, and
+  "inject into chat" composing `[n]` citation blocks into the chat draft
+  (user confirms send; the chat API `message` is a plain string).
+- Citation rendering: shared `components/chat/citation.tsx` — definition blocks
+  peeled from the message body into a source list, known `[n]` markers rendered
+  as keyboard-accessible superscripts with hover/focus source cards; consumed by
+  story-markdown.tsx (31 lines, the contract's sanctioned extension point) and
+  minimally by mini-md.tsx (chat bubbles render through MiniMd). Zero-regression
+  rule: messages without definition blocks are byte-identical.
+- rag-config: real test retrieval (GET /knowledge/search) with score
+  distribution bars (linear L2, no fake similarity %), knowledge-panel
+  navigation entry; embedding model shown as backend-fixed (no read/write
+  endpoint; the model name is a backend code constant, deliberately not
+  hard-coded in UI).
+- Extension market browser (read-only per backend contract): package
+  list/search/tag filter, detail with version history, permission claims,
+  dependencies, digest/fingerprint/SBOM digest, authenticated .tar.gz download.
+  Install/uninstall/enable/disable are operator-CLI only — honest install note
+  instead of fake buttons; list 404 renders "market disabled" empty state.
+- ModelOps panel: registry list/inspect/history driven through
+  POST /api/v1/chat/tools/execute (ModelOps has no dedicated HTTP routes);
+  #1212 capability-projection gap presented honestly (provenance verbatim +
+  fixed explanatory note); run history limited to session-local observation of
+  chat tool events (backend has no persisted run-history endpoint).
+- Rail: append-only market/modelops group (RAIL_GROUPS, MODE_TABS all modes,
+  LeftTab union); tool-call-card modelops run-id jump link (29 lines).
+- Recon doc: frontend/docs/knowledge-market-recon.md (endpoint contract tables
+  + backend gap list). ADR-0145.
+
+### Notes
+- Task-book "msw fixtures" adapted to the repo's established fixture pattern
+  (vi.stubGlobal fetch in tests, Playwright route interception in
+  test/visual/capture.mjs) — the repo has no msw dependency; avoids lockfile
+  contention across concurrent V9 lines.
+
+## [Unreleased] - 2026-09-12 (quality-e2e-v9: journey E2E & budget gates, ADR-0146)
+
+### Added
+- Journey E2E tier (frontend/e2e/, ADR-0146): dual-mode (mock fixtures /
+  real backend with deterministic LLM stub), six core user journeys
+  (upload-analysis-export, task cancel-retry, template apply, StoryMap
+  share-replay, theme no-flash persistence, fabric register-probe-query-map),
+  journey registry as the D-J line extension point; mock mode 6/6 green.
+- quality-e2e.yml lane: PR journey smoke (@smoke, <=8 min, diff-driven via
+  changed-lane mapping with #1216-class regression tests on both engines),
+  nightly full mock suite, real-mode journeys, perf budget gate job
+  (self-proving red on synthetic breach), chaos smoke job (compose stack).
+- P4 coverage lift in the three weak areas: workflow_runtime 19->35,
+  explorer 18->30, data_lifecycle 8->20 test-file references (36 new test
+  files, 215 tests).
+- Pi tickets closed (WAYFINDER): real-LLM E2E smoke journeys
+  (tests/integration/test_pi_real_llm_e2e.py, key-gated) + Pi vs ChatEngine
+  benchmark harness and report framework
+  (scripts/perf/pi_vs_chatengine.py, docs/dev/pi-vs-chatengine-benchmark.md).
+- Chaos smoke on a real compose stack: worker SIGKILL durable-job recovery,
+  redis-stop API degradation/recovery, SSE Last-Event-ID resume.
+
+### Fixed
+- No-flash theme bootstrap read `localStorage.getItem(undefined)`: RSC
+  boundary voids client-module imports, so app/layout.tsx received an
+  undefined PERSIST_KEY and dark-mode users got a white flash on every
+  reload (journey-5 caught it; fix moves the key to lib/store/persist-key.ts,
+  6-line diff, commit 5e442223).
+
+### Documented
+- docs/dev/quality-e2e-recon.md (P0 recon: CI lane map, reusable infra,
+  weak-coverage gap lists, benchmark inventory, #1223-#1233 fault lineage);
+  docs/adr/0146-journey-tiered-testing-and-determinism.md.
+
+## [Unreleased] - 2026-09-12 (workspace-ui-v9, ADR-0143)
+
+### Added (frontend: 项目工作区 UI 完整化)
+- 项目资产区面板（`components/sidebar/project/`，append-only tab 条挂在
+  project-tab）：数据集管理（attach/detach + 两段确认与依赖警示、attach
+  捕获 schema、catalog 预览聚合的表格/SVG 足迹双模式预览）、产物中心
+  （分页/类型筛选/时间排序、pin/unpin 回执、指针克隆、血缘 SVG DAG
+  （lineage-adapter 分层布局，≥50 节点渲染预算断言）、引用/sha256 复制）、
+  Workspace 快照时间线（save/verify/restore(register)/clone/删除、
+  expired-degraded 披露、两快照 verify 报告的前端聚合 diff）、质量审计与
+  修复（审计经 data-fabric catalog preview 前端聚合取要素、截断披露、
+  修复执行前列操作 + 两段确认 + 回执）、数据回收（data-usage 配额条、
+  gc plan dry-run 候选树、危险样式执行确认、回执与保护跳过清单、
+  grace_hours 宽限期展示）。
+- typed client `lib/api/project-assets.ts`（datasets/artifacts/snapshots/
+  quality/gc 族 + data-fabric preview 聚合助手）与
+  `lib/hooks/use-project-assets.ts`（沿用 abort/generation/action-lock
+  纪律，无轮询——project.py 无 job 句柄）。
+- P7 交叉导航：工作流视图 → 资产页签快捷回跳；质量回执 / gc 候选 →
+  产物血缘定位；产物中心 → Map Product 版本台账滚动导航。
+- 测试：`test/project/` 10 文件 73 用例（含 100k 行 DOM 有界压力、血缘
+  60 节点渲染预算、两段确认/登录门控/a11y aria 断言）；旧 project-tab
+  16 用例全绿。
+- 后端契约缺口（rename/preview、artifact 下载/revisions、snapshot diff、
+  restore/gc job 化、gc staging、repair dry-run）以诚实降级 + 协调点交付，
+  详见 `frontend/docs/workspace-ui-recon.md` §2.10 与 ADR-0143。
+
+## [Unreleased] - 2026-09-11 (V9: API contract & versioning foundation, ADR-0138)
+
+### Added
+- Unified error envelope: HTTPException / 422 validation errors now return
+  `{code, success, message, data}` (+ `category`/`retryable` taxonomy fields);
+  rollback switch `LEGACY_DETAIL_ENVELOPE` + per-request `X-Error-Envelope: detail`
+  header. 503/502/504 no longer mis-coded as SERVER_ERROR.
+- HTTP idempotency: `Idempotency-Key` middleware (24h replay, SET-NX singleflight,
+  fail-open on Redis outage) — JSON POST only, SSE/binary excluded.
+- API v2 mount layer: lakehouse / geocompute / workflow-runtime demo reuse of the
+  same routers (59 paths); v1 responses carry `Deprecation`/`Sunset` headers +
+  `webgis_api_version_requests_total` usage counter. No v1 endpoint removed.
+- `scripts/gen_api_docs.py`: endpoint catalog generated from `app.openapi()`
+  into docs/api-docs.md (marker-scoped); `tests/test_api_docs_drift.py` fails CI
+  on handwritten drift — rate-limit 60/min vs 240/min drift fixed.
+- Field-level contract gate (#1217 backend half): per-endpoint response field
+  signatures snapshot; removals/renames/type changes fail with typed diff
+  (`tests/unit/api_contract/test_field_contract.py`).
+- Schemathesis contract fuzz shard (`max_examples=30`, ASGI in-process,
+  allowlisted no-dependency paths) + independent CI lane
+  `.github/workflows/contract.yml` (production.yml untouched).
+
+### Changed
+- response_model coverage: 123 uncovered endpoints typed (220 total; 16
+  streaming/binary exclusions ledgered in
+  `tests/unit/api_contract/_contract_util.py::EXCLUSIONS`); 65 inline route
+  BaseModels migrated verbatim to `app/schemas/<subsystem>_schema.py` (19
+  schema modules); naming `<Resource><Action>Request/Response`.
+- Pagination: additive completion of page metadata (chat/sessions `has_more`);
+  `Page[T]` envelope unchanged; ad-hoc limit deprecation deferred to v2.
+- docs/api-docs.md: lakehouse / geocompute / workflow-runtime chapters restored
+  via generator; rate limit documented as 240/60s matching code.
+
+### Fixed
+- weasyprint optional-dependency guards catch OSError (Windows GTK absence) —
+  22 test files now collectable on Windows.
+- starlette-layer HTTPException (malformed body 400) bypassing the unified
+  envelope handler (registration key must cover the starlette base class).
+
+## [Unreleased] - 2026-09-11 (Security & Tenancy V9, ADR-0139)
+
+### Added
+- **org_id 落库（0036–0038）**：geocompute 9 表 / workflow runtime 6 表 /
+  lakehouse 4 表全部带 org_id（String(255) 明文纪律）；租户数据面
+  （14 表）回填 + NOT NULL + (org_id, created_at) 索引；控制面信任域
+  （workers/ledger/quarantine 5 表）nullable 列；default 组织 ensure。
+- **查询级隔离**：`app/core/tenancy.py`（effective org + scoped_query +
+  default 隔离桶）；V8 全部 REST 读面叠加 org 谓词；派生表写入锚定
+  run/owner 真相惰性解析 org；解析失败 fail-closed（读 404）。
+- **OAuth scopes（P3）**：封闭词汇表 `app/core/scopes.py`（22 词）、
+  viewer/editor/admin 兼容映射、JWT `scopes` claim（缺席回退角色默认集）、
+  `require_scope` 依赖工厂、端点 scope 矩阵 `docs/dev/endpoint-scope-matrix.csv`
+  + 生成器 + CI 校验（100% 覆盖 / 词汇表封闭 / 无陈旧行）。
+- **metrics/health 管理面（P5）**：`/metrics` METRICS_TOKEN Bearer 门禁
+  （默认 fail-closed 401；METRICS_AUTH_DISABLED 显式回退）；根级
+  `/healthz`（公开 liveness）与 `/health`（require_admin 依赖详情）。
+- **组织配额（P5）**：存储字节 / 并发任务 / 速率三资源；per-org 覆盖
+  表 `org_quotas`（0039）+ admin 端点；越限 `ErrorCategory.QUOTA`
+  （append-only）→ 429 分类学信封 + 越限审计。
+- **认证增强（P6，README Phase 6 兑现）**：refresh token 家族轮换 +
+  重放检测（`refresh_token_families`，0041；重放 → 家族全失效）；
+  密码策略（长度/字符类/常见密码表）；登录失败渐进延迟（0.5s→8s）。
+- **组织审计（P7）**：`audit_events`（0040）+ fail-open 写入服务 +
+  W3C trace_id 关联 + admin 查询端点（org 级 / 跨 org）。
+
+### Tests
+- `tests/test_security_v9_migrations.py`（回填语义 + up/down/up）、
+  `tests/integration/test_cross_tenant_matrix.py`（双 org × 全子系统
+  隔离矩阵 + 泄漏扫描）、`tests/unit/test_security_v9_units.py`
+  （tenancy/scopes/password/quota/audit/rotation/metrics 门禁）、
+  `tests/test_endpoint_scope_matrix.py`（矩阵 CI 三重校验）。
+
+## [Unreleased] - 2026-09-12 (foundation/i18n-responsive-v9)
+
+Internationalization & responsive touch foundation (ADR-0144, PR #1237).
+
+### Added (frontend i18n)
+- i18n framework: next-intl ICU engine + store-driven locale context
+  (`lib/i18n/`), namespace catalogs `messages/{zh-CN,en-US}/*.json`,
+  settings language switcher (System tab), instant switch, no-flash reload
+  via cookie SSR + pre-paint bootstrap (`window.__GEOAGENT_LOCALE__`).
+- Extraction tooling & guards: `scripts/i18n/` (scan/extract/apply-keys/
+  place-hooks), no-raw-cjk CI guard with anti-staleness whitelist
+  (82→18 files, zeroing plan v9.1/v9.2), key-completeness tests
+  (key-set diff / placeholder parity / empty values / registration).
+- Full zh/en catalogs for shell + chat/map/sidebar/settings/drawers/story
+  domains (five-domain en walkthrough gate); lib dynamic copy surfaces
+  (SSE welcome & result naming, session errors, upload) via imperative t();
+  system-message-bridge severity keywords now bilingual.
+- Pseudo-locale regression (placeholder integrity, display-width inflation
+  budget median ≤1.6, translator smoke).
+
+### Added (responsive)
+- Three-tier layout (ADR-0144 D5): desktop >1180 / thin 769–1180 (overlay,
+  drag disabled) / mobile ≤768 (NavRail folds to bottom bar, panels become
+  BottomSheet with 2-snap drag handle + focus trap, map full-bleed).
+- `lib/hooks/use-layout-mode.ts` (matchMedia + useSyncExternalStore),
+  `components/layout/bottom-sheet.tsx`, `html[data-layout-mode]` marker.
+- Playwright mobile main-flow spec (tests/e2e/mobile-workflow.spec.ts).
+
+### Added (backend i18n)
+- Accept-Language negotiation middleware (`app/core/i18n.py`) + category-keyed
+  catalogs `app/locales/{zh_CN,en_US}.json` (zh mirrors CATEGORY_DEFAULTS
+  verbatim); envelope `message` localized at the output layer with fallback
+  chain locale→zh_CN→taxonomy default; structured fields untouched
+  (dual-track: code/category primary, message auxiliary).
+- `errors.localized_user_message()` output-layer accessor; 19 pytest cases
+  incl. TestClient envelope integration.
+
+### Changed
+- `app/layout.tsx`: SSR locale from cookie, dynamic `<html lang>`, pre-paint
+  script extended (fixes latent early-return skipping the locale block).
+- Sketch editor: touch rotation/pitch disabled during edit sessions
+  (symmetric restore); coarse-pointer 44px touch targets on nav rail;
+  audit: `frontend/docs/touch-audit.md`.
+
+## [Unreleased] - 2026-09-11 (data-lifecycle-v9: 数据基础与生命周期治理 V9, ADR-0140)
+
+### Added
+- Quality rule engine (P1): dict/YAML rule DSL with 16 closed-vocabulary rule
+  types (null rate, CRS validity, geometry validity, envelope sanity, attribute
+  domain, PK uniqueness, FK referential, duplicate features, field type drift,
+  temporal gaps, nodata ratio, resolution drift, encoding mojibake, band stats
+  outlier, topology adjacency, mixed geometry families); pure evaluation
+  functions with bounded scans and per-rule error isolation; `QualityReport` /
+  `QualityRuleResult` persistence (migration 0046); sync small-dataset and
+  durable-job large-dataset evaluate paths with idempotent reuse and honest
+  failure; autofix pipeline (plan → dry-run → apply with new-ref semantics)
+  bound to the shared REMEDIATION_OPS vocabulary; prometheus rule metrics.
+- Unified lifecycle policy engine (P3, migration 0047): registry upserting
+  five object kinds (lakehouse dataset, fabric materialization, artifact cache,
+  COG output, worker cache) via read-only adapters; hot/warm/cold tiering with
+  revive-on-reference; per-kind policies with **observe-only defaults =
+  behavior-preserving** (equivalence-verified; lakehouse dataset is
+  observe-only by design); lifecycle REST surface (/data-lifecycle/objects,
+  assess, policies).
+- data-gc closed loop (P5): fixed dry-run plan tree (object → dependencies →
+  reason → estimated bytes), approval state machine (pending_approval →
+  approved → executing → done/failed/rolled_back/rejected/cancelled),
+  durable-job execution with two-phase staging (rename into
+  `data/.gc-staging/<plan>`), observation-window rollback and explicit admin
+  purge; plan-digest idempotent reuse.
+- Data profile deepening (P2): unified vector/raster bounded profile with H3
+  spatial-distribution histogram (auto-coarsening, honest truncation),
+  mergeable incremental profiling state (incremental merge == full scan,
+  pinned by test), profile → rule threshold suggestions, profile cache
+  invalidation wired into the ref_lifecycle single invalidation authority.
+- Template versioning (P4, migration 0048): immutable `template_versions`
+  snapshots, cross-template inheritance chains with deep-merge override
+  semantics (depth-capped), deprecation markers with compatible reads, and
+  Cartography V7 component-registry constraint validation; REST surface under
+  `/templates/{id}/versions` (existing templates routes untouched).
+- Alembic anti-collision mechanism (P6): `scripts/alloc_migration.py`
+  (number allocation from `migrations/.alloc.json` with pre-registered
+  down_revision + `--check` mode), CI db-migrations gate step, strengthened
+  `tests/test_alembic_metadata.py` (revision-id uniqueness, ScriptDirectory
+  single-head, duplicate-number copy must fail), and the multi-line migration
+  protocol doc (`docs/dev/migration-protocol.md`).
+
+### Changed
+- `rs/spectral_engine.py`: long-standing TODO cleared — computed `legend_spec`
+  is now attached to `RasterAnalysisResult` and flows into tool results
+  (downstream consumers already read the key).
+- `app/tasks/README.md` / `app/skills/README.md`: structural-debt inventory
+  documented (task_chain keepers, skills data-directory nature).
+
+### Removed
+- Dead package `app/db/` (zero imports; real models live in `app/models/`,
+  Base in `app/core/database.py`).
+
+### Fixed
+- WeasyPrint optional-dependency guards now catch `OSError` (missing GTK
+  libs on Windows raise OSError, not ImportError), restoring app import /
+  test collection on Windows dev machines (#1221 D-7 same class); two
+  cartography PDF tests skip honestly in that environment.
+
+## [Unreleased] - 2026-09-11 (feat/lakehouse-ui-v9: Lakehouse Cube Explorer UI, ADR-0141)
+
+### Added (frontend: Lakehouse Cube Explorer UI, ADR-0141)
+- 「数据湖」rail tab（explore/analyze 模式词表）：六子页签接入 Lakehouse V8
+  全部 29 个 REST 端点 —— 目录（catalog 检索 + manifest 检视 + offset 分页）、
+  数据集（V8 版本层浏览：refs/head/版本历史）、查询（window/labeled/scan/
+  revise/rs 五类表单 + schema 预校验 + 查询历史/收藏本地持久化）、STAC
+  （1.0.0 投影浏览 + skipped 诚实披露 + 条目几何上图）、发布（publish/revoke
+  确认对话框 + 幂等/权限错误报告 + 快照双栏字段 diff + swipe 双屏）、运维
+  （verify/scrub 报告 + 血缘祖先链 + GC dry-run 只读树，执行动作归 C/F 线）。
+- `lib/api/lakehouse.ts`：29 端点全量 typed client（响应类型按后端服务层
+  dict 实测逐字段对齐；`total` 字符串下界、DurableBlock 判别、开放联合
+  state、STAC 包装结构等诚实形态全部类型化）。
+- `lib/map-kit/raster-canvas.ts` + `raster-timeline.ts`：动态栅格时序播放
+  管线（兑现 README Phase 6）—— nodata 掩膜/线性拉伸/定点色带 → canvas
+  位图 → 既有 HeatmapRasterSource 通道；切片懒加载 LRU + 滑动窗口预取 +
+  rAF 丢帧策略（16ms 帧预算）；reduced-motion 禁自动播放；键盘可达。
+- 测试：29 端点契约单测（正常/空/错误三态 fixtures）、rail 注册/tablist
+  a11y/面板契约组件测试、48 步时序性能门禁（确定性丢帧+LRU 有界断言；
+  绝对 p95<16ms 由专用进程取证）。
+
 ## [Unreleased] - 2026-09-10 (V7/V8 epic integration round)
 
 Ten prepared epic branches (platform-v4, lakehouse-v8, data-fabric-v8,

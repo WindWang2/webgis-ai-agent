@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 
+from app.schemas.layer_schema import LayerDescriptorResponse, LayerTypesResponse
 from app.core.auth import require_owned_session, verify_session_owner
 from app.lib.geojson_serializer import serialize_geojson
 from app.models.db_model import Conversation
@@ -449,7 +450,7 @@ def _compute_descriptor_fallback(data) -> dict:
     }
 
 
-@router.get("/layers/descriptor/{ref_id}", tags=["图层数据"])
+@router.get("/layers/descriptor/{ref_id}", tags=["图层数据"], response_model=LayerDescriptorResponse)
 async def get_layer_descriptor(
     ref_id: str,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
@@ -668,21 +669,21 @@ def _png_tile_response(png_bytes: bytes, if_none_match: Optional[str]) -> Respon
     )
 
 
-@router.get("/layer-types", tags=["元数据"])
-def get_layer_types():
+@router.get("/layer-types", tags=["元数据"], response_model=LayerTypesResponse)
+def get_layer_types() -> LayerTypesResponse:
     """获取支持的图层类型列表"""
-    return {
-        "layer_types": [
+    return LayerTypesResponse(
+        layer_types=[
             {"type": "vector", "description": "矢量图层", "formats": ["shapefile", "geojson", "gpx", "kml"]},
             {"type": "raster", "description": "栅格图层", "formats": ["tiff", "jpg", "png", "dem"]},
             {"type": "tile", "description": "瓦片图层", "formats": ["xyz", "wmts", "tms"]}
         ],
-        "analysis_types": [
+        analysis_types=[
             {"type": "buffer", "description": "缓冲区分析"},
             {"type": "clip", "description": "裁剪分析"},
             {"type": "intersect", "description": "相交分析"},
             {"type": "dissolve", "description": "融合分析"},
             {"type": "union", "description": "联合分析"},
             {"type": "spatial_join", "description": "空间连接"}
-        ]
-    }
+        ],
+    )

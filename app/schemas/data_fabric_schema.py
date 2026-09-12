@@ -161,3 +161,128 @@ class DataFabricHealth(BaseModel):
     capability_status: str = "healthy"
     last_checked: float = Field(default_factory=time.time)
     details: Dict[str, Any] = Field(default_factory=dict)
+
+
+# ── 路由契约模型（V9 契约基石，ADR-0138）────────────────────────────────
+# 请求模型从 app/api/routes/data_fabric.py 内联迁出；响应对应
+# data_fabric 服务投影 —— 开放对象（extra="allow"）+ 锚定键。
+
+
+class CreateDataSourceRequest(BaseModel):
+    """POST /data-fabric/sources 请求体。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "城市 poi 库",
+                    "source_type": "postgis",
+                    "endpoint_url": "postgresql://host/db",
+                    "options": {},
+                }
+            ]
+        }
+    )
+
+    name: str = Field(..., description="Data source display name")
+    source_type: str = Field(
+        ...,
+        description="Source adapter type (postgis, ogc_api, wfs, wms, wmts, arcgis)",
+    )
+    endpoint_url: str = Field(
+        ..., description="Endpoint URL or database connection string"
+    )
+    options: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional protocol options"
+    )
+
+
+class MaterializeRequest(BaseModel):
+    """POST /data-fabric/materialize 请求体。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                    "catalog_item_id": "cat-1",
+                    "query_spec": None,
+                }
+            ]
+        }
+    )
+
+    session_id: str = Field(..., description="Session identifier UUID")
+    catalog_item_id: str = Field(..., description="Catalog item identifier")
+    query_spec: Optional[QuerySpec] = Field(
+        None, description="Optional query pushdown specification"
+    )
+
+
+class _Open(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class SourceCreateResponse(_Open):
+    """POST /data-fabric/sources 响应。"""
+
+    success: Optional[bool] = None
+    data_source: Optional[Dict[str, Any]] = None
+
+
+class SourceListResponse(_Open):
+    """GET /data-fabric/sources 响应。"""
+
+    sources: List[Dict[str, Any]] = []
+
+
+class SourceDetailResponse(_Open):
+    """GET /data-fabric/sources/{source_id} 响应。"""
+
+    id: Optional[str] = None
+    name: Optional[str] = None
+    source_type: Optional[str] = None
+    status: Optional[str] = None
+
+
+class SourceDeleteResponse(_Open):
+    """DELETE /data-fabric/sources/{source_id} 响应。"""
+
+    success: Optional[bool] = None
+    message: Optional[str] = None
+
+
+class SourceProbeResponse(_Open):
+    """POST /data-fabric/sources/{source_id}/probe 响应。"""
+
+
+class SourceSyncResponse(_Open):
+    """POST /data-fabric/sources/{source_id}/sync 响应。"""
+
+
+class CatalogListResponse(_Open):
+    """GET /data-fabric/catalog 响应。"""
+
+
+class CatalogItemResponse(_Open):
+    """GET /data-fabric/catalog/{item_id} 响应。"""
+
+
+class CatalogDescriptorResponse(_Open):
+    """GET /data-fabric/catalog/{item_id}/descriptor 响应。"""
+
+
+class CatalogPreviewResponse(_Open):
+    """GET /data-fabric/catalog/{item_id}/preview 响应（有界预览载荷）。"""
+
+
+class CatalogExplainResponse(_Open):
+    """POST /data-fabric/catalog/{item_id}/explain 响应（查询计划解释）。"""
+
+
+class CatalogQueryResponse(_Open):
+    """POST /data-fabric/catalog/{item_id}/query 响应（下推查询结果）。"""
+
+
+class MaterializeResponse(_Open):
+    """POST /data-fabric/materialize 响应。"""

@@ -39,6 +39,7 @@ import type { AnalysisResult, ResultMetric, ResultWarning, SuggestedAction } fro
 import { StatusBadge } from '@/components/shared/status-badge';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { IconButton } from '@/components/shared/icon-button';
+import { useT } from '@/lib/i18n/useT';
 
 interface ResultDetailProps {
   result: AnalysisResult;
@@ -118,6 +119,7 @@ function WarningItem({ warning }: { warning: ResultWarning }) {
 }
 
 export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: ResultDetailProps) {
+const t = useT();
   // A failed result has no inspectable output — its content is the correction
   // hint. Skip the descriptor enrichment for it (nothing to enrich) and drop
   // the output/actions sections below instead of rendering rows of 未报告.
@@ -223,7 +225,7 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
       {/* Header — persistent compact bar (outside the scroll area, so the
           result identity + status survive any scroll depth). */}
       <header className="flex shrink-0 items-center gap-1.5 border-b border-edge-subtle px-panel py-1">
-        <IconButton ref={backRef} label="返回结果列表" icon={ArrowLeft} size="sm" onClick={onBack} />
+        <IconButton ref={backRef} label={t('sidebar.results.backToList')} icon={ArrowLeft} size="sm" onClick={onBack} />
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-title font-medium leading-tight text-ink">{result.toolLabel}</span>
           <span className="truncate text-caption leading-tight text-ink-muted">
@@ -232,7 +234,7 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
         </div>
         <StatusBadge status={result.status} />
         <IconButton
-          label="从列表移除"
+          label={t('sidebar.results.removeFromList')}
           icon={Trash2}
           size="sm"
           variant="ghost"
@@ -251,7 +253,7 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
 
         {/* Warnings — always visible, never buried */}
         {result.warnings.length > 0 ? (
-          <Section title="告警 / 提示">
+          <Section title={t('sidebar.results.warningsTitle')}>
             <div className="flex flex-col gap-1.5">
               {result.warnings.map((w) => (
                 <WarningItem key={w.code} warning={w} />
@@ -262,7 +264,7 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
 
         {/* Key metrics */}
         {result.metrics.length > 0 ? (
-          <Section title="关键指标">
+          <Section title={t('sidebar.results.metricsTitle')}>
             <div className="grid grid-cols-2 gap-x-2 gap-y-1">
               {result.metrics.map((m, i) => (
                 <MetricItem key={`${m.label}-${i}`} metric={m} />
@@ -272,7 +274,7 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
         ) : null}
 
         {/* Inputs */}
-        <Section title="输入">
+        <Section title={t('sidebar.results.inputsTitle')}>
           {result.inputs.length > 0 ? (
             <ul className="flex flex-col gap-0.5">
               {result.inputs.map((inp, i) => (
@@ -283,19 +285,19 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
                       {inp.ref}
                     </span>
                   ) : (
-                    <span className="text-caption italic text-ink-muted">推断</span>
+                    <span className="text-caption italic text-ink-muted">{t('sidebar.results.inference')}</span>
                   )}
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="text-meta italic text-ink-muted">未捕获输入参数（仅展示操作与输出）。</p>
+            <p className="text-meta italic text-ink-muted">{t('sidebar.results.noInputs')}</p>
           )}
         </Section>
 
         {/* Parameters */}
         {result.parameters.length > 0 ? (
-          <Section title="参数">
+          <Section title={t('sidebar.results.paramsTitle')}>
             <dl className="grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-0.5 text-meta">
               {result.parameters.map((p, i) => (
                 <div key={i} className="contents">
@@ -312,7 +314,7 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
         {/* Output + map linkage — the layer strip fuses live visibility with
             the map controls, then the metadata sheet follows. */}
         {showOutputSection ? (
-          <Section title="输出与地图">
+          <Section title={t('sidebar.results.outputMapTitle')}>
             {hasBoundLayer ? (
               <div className="flex items-center gap-1 rounded-md border border-edge-subtle bg-surface-raised px-1 py-0.5">
                 {toggleAction ? (
@@ -354,23 +356,23 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
             )}
 
             <div className="flex flex-col gap-0.5 rounded-md bg-surface-sunken px-2.5 py-1.5 text-meta">
-              <Row label="类型" value={outputKindLabel(output?.kind)} />
-              <Row label="要素数" value={featureCountLabel} />
-              <Row label="几何类型" value={geomLabel} />
+              <Row label={t('sidebar.results.type')} value={outputKindLabel(output?.kind)} />
+              <Row label={t('sidebar.results.featureCount')} value={featureCountLabel} />
+              <Row label={t('sidebar.results.geomType')} value={geomLabel} />
               <Row label="CRS" value={crsLabel} muted={crsLabel === '未知'} />
               {/* bbox/ref are data, not prose — wrap instead of truncating so a
                   coordinate is never silently cut mid-number. */}
-              <Row label="范围 (W,S,E,N)" value={bboxLabel} mono wrap />
-              {output?.estimatedBytes ? <Row label="估算大小" value={formatBytes(output.estimatedBytes)} /> : null}
-              {ref ? <Row label="引用" value={ref} mono wrap title={ref} /> : null}
-              {output?.note ? <Row label="备注" value={output.note} /> : null}
+              <Row label={t('sidebar.results.bbox')} value={bboxLabel} mono wrap />
+              {output?.estimatedBytes ? <Row label={t('sidebar.results.estSize')} value={formatBytes(output.estimatedBytes)} /> : null}
+              {ref ? <Row label={t('sidebar.results.ref')} value={ref} mono wrap title={ref} /> : null}
+              {output?.note ? <Row label={t('sidebar.results.notes')} value={output.note} /> : null}
             </div>
           </Section>
         ) : null}
 
         {/* Suggested next actions — analytical intents, secondary to map controls */}
         {!failed && analyticalActions.length > 0 ? (
-          <Section title="后续操作">
+          <Section title={t('sidebar.results.followUps')}>
             <div className="flex flex-wrap gap-1">
               {analyticalActions.map((a) => (
                 <ActionButton key={a.kind} action={a} onAction={handleAction} />
@@ -381,16 +383,16 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
 
         {/* Legend (compact; the live legend renders on the map) */}
         {result.legendSpec ? (
-          <Section title="图例">
+          <Section title={t('sidebar.results.legendTitle')}>
             <span className="text-meta text-ink-secondary">
-              {legendSummary(result.legendSpec)}（完整图例见地图）
+              {legendSummary(result.legendSpec)}{t('sidebar.results.fullLegendHint')}
             </span>
           </Section>
         ) : null}
 
         {/* Provenance */}
         {result.provenance.length > 0 ? (
-          <Section title="数据溯源">
+          <Section title={t('sidebar.results.provenanceTitle')}>
             <ol className="flex flex-col gap-0.5 text-meta text-ink-secondary">
               {result.provenance.map((p, i) => (
                 <li key={i} className="flex items-baseline gap-1.5">
@@ -405,7 +407,7 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
         {/* Raw — progressive disclosure */}
         <details className="rounded-sm border border-edge-subtle text-meta">
           <summary className="cursor-pointer select-none px-2 py-1 text-ink-muted transition-colors hover:bg-surface-hover">
-            原始结果（高级）
+            {t('sidebar.results.rawResult')}
           </summary>
           <pre className="max-h-64 overflow-auto px-2 py-1.5 font-mono text-caption leading-relaxed text-ink-secondary">
             {truncateJson(result.raw)}

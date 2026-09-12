@@ -5,6 +5,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { useInertWhenClosed } from '@/lib/hooks/use-inert';
 import ToggleSwitch from '@/components/shared/toggle-switch';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
+import { useT } from '@/lib/i18n/useT';
 
 interface TweaksPanelProps {
   children?: React.ReactNode;
@@ -15,12 +16,12 @@ interface TweaksPanelProps {
  * 白字只有 3.30:1 / 3.68:1，而 accent 底 + 白字正是主按钮与用户气泡的用法，
  * 也就是说其中两个预设一旦被选中，主按钮的文字就不达 AA。
  */
-const ACCENT_COLORS: { value: string; name: string }[] = [
-  { value: '#15803d', name: '绿色' },
-  { value: '#1d4ed8', name: '蓝色' },
-  { value: '#6d28d9', name: '紫色' },
-  { value: '#b91c1c', name: '红色' },
-  { value: '#0e7490', name: '青色' },
+const ACCENT_COLORS: { value: string; nameKey: string }[] = [
+  { value: '#15803d', nameKey: 'color.green' },
+  { value: '#1d4ed8', nameKey: 'color.blue' },
+  { value: '#6d28d9', nameKey: 'color.purple' },
+  { value: '#b91c1c', nameKey: 'color.red' },
+  { value: '#0e7490', nameKey: 'color.cyan' },
 ];
 
 /** 供测试断言：每个预设都必须能承载 --text-on-accent 的白色文字。 */
@@ -108,6 +109,8 @@ function SliderRow({
 }
 
 export function TweaksPanel({ children }: TweaksPanelProps) {
+  const t = useT('tweaks');
+  const tCommon = useT('common');
   const tweaksOpen = useHudStore((s) => s.tweaksOpen);
   const setTweaksOpen = useHudStore((s) => s.setTweaksOpen);
   const accentColor = useHudStore((s) => s.accentColor);
@@ -160,20 +163,20 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
       >
         <div className="mb-3 flex items-center justify-between">
           <h2 id="tweaks-panel-title" className="text-title font-semibold text-ink">
-            UI 调整
+            {t('title')}
           </h2>
           <button
             type="button"
             onClick={() => setTweaksOpen(false)}
             className="rounded-sm px-1.5 py-0.5 text-meta text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
           >
-            关闭
+            {tCommon('close')}
           </button>
         </div>
 
         <div className="space-y-3">
           <div>
-            <div className="eyebrow mb-1.5">主题色</div>
+            <div className="eyebrow mb-1.5">{t('accentColor')}</div>
             <div className="flex gap-1.5">
               {ACCENT_COLORS.map((color) => (
                 <button
@@ -181,8 +184,8 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
                   type="button"
                   /* a11y：这五颗色板此前是完全空的 <button>，既无 aria-label
                      也无 title —— 读屏只会读到「按钮」。 */
-                  aria-label={`主题色：${color.name}`}
-                  title={color.name}
+                  aria-label={t('accentColorAria', { name: t(color.nameKey) })}
+                  title={t(color.nameKey)}
                   aria-pressed={accentColor === color.value}
                   onClick={() => setAccentColor(color.value)}
                   className={`h-control-sm w-control-sm rounded-sm border-2 transition-colors ${
@@ -195,7 +198,7 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
           </div>
 
           <SliderRow
-            label="字体大小"
+            label={t('fontSize')}
             value={fontSize}
             suffix="px"
             min={11}
@@ -205,20 +208,20 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
           />
 
           <div>
-            <div className="eyebrow mb-1.5">主题</div>
+            <div className="eyebrow mb-1.5">{t('theme')}</div>
             <SegmentedControl
-              label="主题"
+              label={t('theme')}
               value={theme}
               options={[
-                { value: 'light' as const, label: '亮色' },
-                { value: 'dark' as const, label: '暗色' },
+                { value: 'light' as const, label: t('themeLight') },
+                { value: 'dark' as const, label: t('themeDark') },
               ]}
               onChange={setTheme}
             />
           </div>
 
           <SliderRow
-            label="侧边栏宽度"
+            label={t('sidebarWidth')}
             value={sidebarWidth}
             suffix="px"
             min={280}
@@ -234,17 +237,17 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
             className="rounded-xs border border-edge-subtle px-2 py-1 text-micro text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
             onClick={() => useHudStore.getState().resetWorkbenchLayout()}
           >
-            复位工作台布局（面板位置与尺寸）
+            {t('resetLayout')}
           </button>
 
           <div>
-            <div className="eyebrow mb-1.5">面板</div>
+            <div className="eyebrow mb-1.5">{t('panels')}</div>
             <div className="space-y-0.5">
               {/* 这三行原本是自绘的无名开关（无 role=switch / aria-checked，
                   label 只是旁边一个游离的 span）。改用共享 ToggleSwitch，
                   可访问名称由它的必填 prop 强制。 */}
-              <ToggleRow label="Agent 环境 HUD" value={hudOpen} onChange={setHudOpen} />
-              <ToggleRow label="RAG 独立面板" value={ragPanelOpen} onChange={setRagPanelOpen} />
+              <ToggleRow label={t('hudPanel')} value={hudOpen} onChange={setHudOpen} />
+              <ToggleRow label={t('ragPanel')} value={ragPanelOpen} onChange={setRagPanelOpen} />
             </div>
           </div>
         </div>

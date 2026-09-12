@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   MessageCircle,
   Folder,
+  Boxes,
   Database,
   Layers,
   Triangle,
@@ -32,6 +33,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useT } from '@/lib/i18n/useT';
 import type { AiStatus } from '@/lib/store/hud-types';
 import type { AgentRuntime } from '@/lib/agent-runtime';
 import type { SessionPlanViewState } from '@/lib/session/session-plan-delta';
@@ -45,10 +47,15 @@ import { AnalysisTab } from '@/components/sidebar/analysis-tab';
 import { MapStudioTab } from '@/components/sidebar/map-studio-tab';
 import { ProjectTab } from '@/components/sidebar/project-tab';
 import { DataSourcesTab } from '@/components/sidebar/data-sources-tab';
+import { LakehouseTab } from '@/components/sidebar/lakehouse/lakehouse-tab';
 import { TasksTab } from '@/components/sidebar/tasks-tab';
 import { ResultsTab } from '@/components/sidebar/results-tab';
 import { OpsConsole } from '@/components/sidebar/ops/ops-console';
+import { MarketTab } from '@/components/sidebar/market/market-tab';
+import { ModelOpsTab } from '@/components/sidebar/modelops/modelops-tab';
 import { PanelErrorBoundary } from '@/components/layout/panel-error-boundary';
+import { BottomSheet } from '@/components/layout/bottom-sheet';
+import type { LayoutMode } from '@/lib/hooks/use-layout-mode';
 
 export interface ContextPanelProps {
   messages: Array<{
@@ -70,6 +77,11 @@ export interface ContextPanelProps {
   agentRuntime?: AgentRuntime | null;
   /** #1048：SessionPlan 流式实时状态（useSessionPlan.view）→ ChatTab → 面板。 */
   sessionPlan?: SessionPlanViewState;
+  /**
+   * 布局档（ADR-0144 / P5）：desktop = 现状 dock + 拖拽调宽；
+   * thin = 覆盖模式（不推挤地图、拖拽禁用）；mobile = bottom-sheet。
+   */
+  layoutMode?: LayoutMode;
 }
 
 const PANEL_MIN = 280;
@@ -95,22 +107,21 @@ interface DragState {
 
 interface PanelMeta {
   icon: LucideIcon;
-  title: string;
-  description: string;
 }
 
 const PANEL_META: Record<string, PanelMeta> = {
-  chat: { icon: MessageCircle, title: '对话', description: 'AI 地理智能体' },
-  project: { icon: Folder, title: '项目', description: '工作区 · 数据集 · 工作流' },
-  data_sources: { icon: Database, title: '数据', description: '空间目录与数据源' },
-  layers: { icon: Layers, title: '图层', description: '可见性 · 样式 · 顺序' },
-  components: { icon: LayoutDashboard, title: '组件', description: '地图组件 · 布局 · 图表' },
-  analysis: { icon: Triangle, title: '分析', description: '空间分析工具' },
-  tasks: { icon: ListChecks, title: '任务', description: '后台作业中心' },
-  results: { icon: ClipboardList, title: '分析结果', description: '结果工作台 · 输入 · 指标 · 输出' },
-  export_layout: { icon: Printer, title: '制图工坊', description: '排版与导出' },
+  chat: { icon: MessageCircle },
+  project: { icon: Folder },
+  data_sources: { icon: Database },
+  lakehouse: { icon: Boxes },
+  layers: { icon: Layers },
+  components: { icon: LayoutDashboard },
+  analysis: { icon: Triangle },
+  tasks: { icon: ListChecks },
+  results: { icon: ClipboardList },
+  export_layout: { icon: Printer },
   // ADR-0142：运维控制台（append-only 注册行）。
-  ops: { icon: Activity, title: '运维', description: '集群 · 计划 · 运行时 · 断路器 · 健康' },
+  ops: { icon: Activity },
 };
 
 export function ContextPanel({
@@ -123,7 +134,9 @@ export function ContextPanel({
   onPlanAction,
   agentRuntime,
   sessionPlan,
+  layoutMode = 'desktop',
 }: ContextPanelProps) {
+  const t = useT('layout');
   const activeTab = useHudStore((s) => s.activeLeftTab);
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
   const toggleLeftPanel = useHudStore((s) => s.toggleLeftPanel);
@@ -140,6 +153,8 @@ export function ContextPanel({
 
   const metaKey = activeTab === 'exports' ? 'export_layout' : activeTab;
   const meta = PANEL_META[metaKey] ?? PANEL_META.chat;
+  const metaTitle = t(`panel.title.${metaKey}`);
+  const metaDesc = t(`panel.desc.${metaKey}`);
   const badge =
     metaKey === 'layers' ? layerCount
     : metaKey === 'export_layout' ? exportCount
@@ -331,6 +346,80 @@ export function ContextPanel({
     if (target && focusNeedsRestore) target.focus();
   }, [leftPanelOpen]);
 
+  // P5 mobile 档：面板 bottom-sheet 化（拖拽把手两档吸附 + 焦点圈闭），
+  // 地图全屏优先（不推挤 inset）。tab 内容与 docked 档完全同源。
+  if (layoutMode === 'mobile') {
+    return (
+      <BottomSheet open={leftPanelOpen} onClose={handleClose} titleId="workspace-panel-title">
+        <PanelHeader
+          icon={meta.icon}
+          title={metaTitle}
+          description={metaDesc}
+          badge={badge}
+          onClose={handleClose}
+          id={`workspace-panel-title`}
+        />
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {activeTab === 'chat' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.chat')}>
+              <ChatTab
+                messages={messages}
+                aiStatus={aiStatus}
+                onSend={onSend}
+                onCancel={onCancel}
+                onPlanAction={onPlanAction}
+                sessionId={sessionId}
+                agentRuntime={agentRuntime}
+                ownerToken={ownerToken}
+                sessionPlan={sessionPlan}
+              />
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'project' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.project')}>
+              <ProjectTab sessionId={sessionId} />
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'layers' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.layers')}>
+              {editingLayerId ? <LayerStylePanel /> : <LayersTab />}
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'components' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.components')}>
+              <ComponentsTab sessionId={sessionId} />
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'analysis' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.analysis')}>
+              <AnalysisTab onSend={onSend} aiStatus={aiStatus} />
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'data_sources' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.data_sources')}>
+              <DataSourcesTab sessionId={sessionId} ownerToken={ownerToken} />
+            </PanelErrorBoundary>
+          )}
+          {(activeTab === 'export_layout' || activeTab === 'exports') && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.export_layout')}>
+              <MapStudioTab />
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'tasks' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.tasks')}>
+              <TasksTab sessionId={sessionId} ownerToken={ownerToken} />
+            </PanelErrorBoundary>
+          )}
+          {activeTab === 'results' && (
+            <PanelErrorBoundary label={t('layout.panel.boundary.results')}>
+              <ResultsTab sessionId={sessionId} ownerToken={ownerToken} onSend={onSend} />
+            </PanelErrorBoundary>
+          )}
+        </div>
+      </BottomSheet>
+    );
+  }
+
   return (
     // V4：壳层度量改用 token（left-rail / top-topbar），背景改为不透明
     // surface-panel 并移除 backdrop-blur —— 面板压在持续重绘的地图画布上，
@@ -356,8 +445,8 @@ export function ContextPanel({
     >
       <PanelHeader
         icon={meta.icon}
-        title={meta.title}
-        description={meta.description}
+        title={metaTitle}
+        description={metaDesc}
         badge={badge}
         onClose={handleClose}
         id={`workspace-panel-title`}
@@ -368,7 +457,7 @@ export function ContextPanel({
             analysis/data_sources/export_layout 裸渲染，任一 tab 抛错白屏
             整个 ContextPanel。 */}
         {activeTab === 'chat' && (
-          <PanelErrorBoundary label="对话">
+          <PanelErrorBoundary label={t(`panel.boundary.$chat`)}>
             <ChatTab
               messages={messages}
               aiStatus={aiStatus}
@@ -383,22 +472,22 @@ export function ContextPanel({
           </PanelErrorBoundary>
         )}
         {activeTab === 'project' && (
-          <PanelErrorBoundary label="项目">
+          <PanelErrorBoundary label={t(`panel.boundary.$project`)}>
             <ProjectTab sessionId={sessionId} />
           </PanelErrorBoundary>
         )}
         {activeTab === 'layers' && (
-          <PanelErrorBoundary label="图层">
+          <PanelErrorBoundary label={t(`panel.boundary.$layers`)}>
             {editingLayerId ? <LayerStylePanel /> : <LayersTab />}
           </PanelErrorBoundary>
         )}
         {activeTab === 'components' && (
-          <PanelErrorBoundary label="组件">
+          <PanelErrorBoundary label={t(`panel.boundary.$components`)}>
             <ComponentsTab sessionId={sessionId} />
           </PanelErrorBoundary>
         )}
         {activeTab === 'analysis' && (
-          <PanelErrorBoundary label="分析">
+          <PanelErrorBoundary label={t(`panel.boundary.$analysis`)}>
             <AnalysisTab onSend={onSend} aiStatus={aiStatus} />
           </PanelErrorBoundary>
         )}
@@ -406,29 +495,46 @@ export function ContextPanel({
             实例化至图层 materializes into the REAL conversation session instead of
             the phantom 'default_session' (and the layer's ref is fetchable). */}
         {activeTab === 'data_sources' && (
-          <PanelErrorBoundary label="数据">
+          <PanelErrorBoundary label={t(`panel.boundary.$data_sources`)}>
             <DataSourcesTab sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
+        {activeTab === 'lakehouse' && (
+          <PanelErrorBoundary label={t('panel.boundary.lakehouse')}>
+            <LakehouseTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
         {(activeTab === 'export_layout' || activeTab === 'exports') && (
-          <PanelErrorBoundary label="制图工坊">
+          <PanelErrorBoundary label={t(`panel.boundary.$export_layout`)}>
             <MapStudioTab />
           </PanelErrorBoundary>
         )}
         {activeTab === 'tasks' && (
-          <PanelErrorBoundary label="任务">
+          <PanelErrorBoundary label={t(`panel.boundary.$tasks`)}>
             <TasksTab sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
         {/* ADR-0142：运维控制台（ops-console-v9）。 */}
         {activeTab === 'ops' && (
-          <PanelErrorBoundary label="运维">
+          <PanelErrorBoundary label={t('panel.boundary.ops')}>
             <OpsConsole sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
         {activeTab === 'results' && (
-          <PanelErrorBoundary label="结果">
+          <PanelErrorBoundary label={t(`panel.boundary.$results`)}>
             <ResultsTab sessionId={sessionId} ownerToken={ownerToken} onSend={onSend} />
+          </PanelErrorBoundary>
+        )}
+        {/* V9（ADR-0145）：扩展市场（只读浏览 + 下载，诚实空态见组件内说明） */}
+        {activeTab === 'market' && (
+          <PanelErrorBoundary label="市场">
+            <MarketTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+        {/* V9（ADR-0145）：ModelOps（注册表 + 本会话运行，诚实空态见组件内说明） */}
+        {activeTab === 'modelops' && (
+          <PanelErrorBoundary label="ModelOps">
+            <ModelOpsTab sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
       </div>
@@ -438,15 +544,16 @@ export function ContextPanel({
           注意 hover/focus 着色必须用可编译的 token 类：Tailwind 3 对
           var() 颜色加 /NN 透明度修饰符会静默丢弃整个规则（旧实现的
           hover:bg-[var(--agent-accent,#16a34a)]/30 从未生效过）。 */}
+      {layoutMode === 'desktop' && (
       <div
         ref={separatorRef}
         role="separator"
         aria-orientation="vertical"
-        aria-label="调整面板宽度"
+        aria-label={t('panel.resizeAria')}
         aria-valuenow={sidebarWidth}
         aria-valuemin={PANEL_MIN}
         aria-valuemax={PANEL_MAX}
-        title="拖拽调整面板宽度（双击复位）"
+        title={t('panel.resizeTitle')}
         tabIndex={0}
         onPointerDown={onHandlePointerDown}
         onPointerMove={onHandlePointerMove}
@@ -458,6 +565,7 @@ export function ContextPanel({
         className="absolute -right-1 bottom-0 top-0 w-2 cursor-col-resize touch-none hover:bg-status-accent-soft focus-visible:bg-status-accent-soft"
         style={dragging ? { background: 'var(--agent-accent)', opacity: 0.4 } : undefined}
       />
+      )}
     </aside>
   );
 }

@@ -5,6 +5,7 @@ import { registerComponentRenderer } from './registry';
 import { resolveVariant } from './helpers';
 import { FloatingChrome, usePlacementPatchedComponent } from './floating-chrome';
 import type { RendererContext } from './types';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * statistics_panel 渲染器（D2）：统计摘要面板。
@@ -48,6 +49,7 @@ function parseStats(raw: unknown): StatsPayload | null {
 }
 
 function StatisticsPanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
+const t = useT();
   const patched = usePlacementPatchedComponent(component);
   // V3（ADR-0101 D3）：kpi —— 大数字指标卡（执行摘要/汇报场景）；
   // 未知变体回退 default（与 legend 族约定一致）。
@@ -105,7 +107,7 @@ function StatisticsPanelView({ component, ctx }: { component: MapSpecComponent; 
           data-state="empty"
           role="status"
         >
-          暂无统计数据
+          {t('map.statsPanel.empty')}
         </div>
       )}
     </FloatingChrome>

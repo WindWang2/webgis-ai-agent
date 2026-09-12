@@ -416,6 +416,11 @@
       "title": "Jwt Secret Key",
       "type": "string"
     },
+    "LEGACY_DETAIL_ENVELOPE": {
+      "default": false,
+      "title": "Legacy Detail Envelope",
+      "type": "boolean"
+    },
     "LLM_API_KEY": {
       "default": "your-api-key-here",
       "title": "Llm Api Key",

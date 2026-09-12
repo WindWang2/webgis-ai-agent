@@ -8,8 +8,13 @@ scripts/
 # #671：根级 scripts/ 里只有 ci-local.sh 是提交的 CI 对齐门禁命令，其余仍忽略
 !/scripts/
 /scripts/*
+# frontend/scripts/ 曾被上面的 scripts/ 连带忽略：no-raw-cjk 守卫的
+# scan-lib.mjs 因此漏入库，守卫在 CI 从未真正运行（ADR-0144 事故）。
+# 该目录承载测试 import 的守卫脚本，必须入库。
+!/frontend/scripts/
 !/scripts/ci-local.sh
 !/scripts/gen_science_catalog.py
+!/scripts/alloc_migration.py
 # Science V6 taxonomy 覆盖矩阵审计（Goal 07 Phase A；审计文档的一致性门依赖它）
 !/scripts/science_taxonomy_audit.py
 !/scripts/gen_science_benchmark_manifest.py
@@ -30,6 +35,7 @@ scripts/
 !/scripts/quality
 # Platform V4（ADR-0131）：配置 schema / 依赖 inventory 生成器（字节闸测试
 # import 它们，必须入库）。
+!/scripts/perf/
 !/scripts/gen_config_schema.py
 !/scripts/gen_app_inventory.py
 # Quality V2（ADR-0118）：staleness 前置检查脚本（generated-artifacts 账本

@@ -10,6 +10,8 @@ export default defineConfig({
     testTimeout: 15000,
     setupFiles: ['./test/setup.ts'],
     include: ['**/*.{test,spec}.{ts,tsx}'],
+    // Playwright 用例由 playwright runner 执行（tests/e2e/），不进 vitest
+    exclude: ['**/node_modules/**', '**/.next/**', 'tests/e2e/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

@@ -22,6 +22,7 @@ import {
 import { ComparePanel } from './compare-panel';
 import { LineageList } from './lineage-list';
 import { RecoveryActions } from './recovery-actions';
+import { useT } from '@/lib/i18n/useT';
 
 export interface RunInspectorProps {
   workflow: WorkflowSummary | null;
@@ -71,12 +72,13 @@ export function RunInspector({
   onReplay,
   onResume,
 }: RunInspectorProps) {
+const t = useT();
   const [showManifest, setShowManifest] = useState(false);
   const [openArtifact, setOpenArtifact] = useState<string | null>(null);
 
-  if (loading && !run) return <LoadingState label="加载运行…" />;
+  if (loading && !run) return <LoadingState label={t('sidebar.wf.loadingRun')} />;
   if (!run) {
-    return <InlineNotice variant="error">未找到运行详情</InlineNotice>;
+    return <InlineNotice variant="error">{t('sidebar.wf.runNotFound')}</InlineNotice>;
   }
 
   const manifest = run.run_manifest;
@@ -90,7 +92,7 @@ export function RunInspector({
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-1.5">
-        <IconButton label="返回运行列表" icon={ArrowLeft} onClick={onBack} />
+        <IconButton label={t('sidebar.wf.backToRuns')} icon={ArrowLeft} onClick={onBack} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[12px] font-semibold text-[var(--theme-text-primary)]">
             {workflow?.name ?? '工作流'} · {shortId(run.id, 10)}
@@ -99,7 +101,7 @@ export function RunInspector({
             <StatusBadge status={run.status} />
             {partial && (
               <span className="text-[10px] text-[var(--theme-text-muted)]">
-                部分完成 {run.completed_steps.length} 步
+                {t('sidebar.wf.partial')} · {t('sidebar.project.stepsUnitCount', { count: run.completed_steps.length })}
               </span>
             )}
           </div>
@@ -110,7 +112,7 @@ export function RunInspector({
 
       <section aria-labelledby="wf-identity-heading" className="space-y-1">
         <h3 id="wf-identity-heading" className="text-[11px] font-semibold uppercase tracking-wide text-[var(--theme-text-muted)]">
-          身份
+          {t('sidebar.wf.identity')}
         </h3>
         {kv('修订', run.workflow_revision_id ? shortId(run.workflow_revision_id, 12) : '—')}
         {kv('图指纹', manifest?.graph_fingerprint ? shortId(manifest.graph_fingerprint, 12) : '—')}
@@ -119,10 +121,10 @@ export function RunInspector({
 
       <section aria-labelledby="wf-inputs-heading" className="space-y-1">
         <h3 id="wf-inputs-heading" className="text-[11px] font-semibold uppercase tracking-wide text-[var(--theme-text-muted)]">
-          输入数据集版本
+          {t('sidebar.wf.inputDatasetVersions')}
         </h3>
         {fpEntries.length === 0 ? (
-          <p className="text-[11px] text-[var(--theme-text-muted)]">未记录数据集指纹</p>
+          <p className="text-[11px] text-[var(--theme-text-muted)]">{t('sidebar.wf.noDatasetFp')}</p>
         ) : (
           <ul className="space-y-1">
             {fpEntries.map(([id, fp]) => (
@@ -137,10 +139,10 @@ export function RunInspector({
 
       <section aria-labelledby="wf-steps-heading" className="space-y-1">
         <h3 id="wf-steps-heading" className="text-[11px] font-semibold uppercase tracking-wide text-[var(--theme-text-muted)]">
-          步骤 / 工具
+          {t('sidebar.wf.stepsTools')}
         </h3>
         {steps.length === 0 ? (
-          <p className="text-[11px] text-[var(--theme-text-muted)]">清单中无步骤</p>
+          <p className="text-[11px] text-[var(--theme-text-muted)]">{t('sidebar.wf.noSteps')}</p>
         ) : (
           <ol className="space-y-1">
             {steps.map((s) => (
@@ -161,10 +163,10 @@ export function RunInspector({
 
       <section aria-labelledby="wf-arts-heading" className="space-y-1">
         <h3 id="wf-arts-heading" className="text-[11px] font-semibold uppercase tracking-wide text-[var(--theme-text-muted)]">
-          产物
+          {t('sidebar.wf.artifacts')}
         </h3>
         {artifacts.length === 0 ? (
-          <p className="text-[11px] text-[var(--theme-text-muted)]">无产物</p>
+          <p className="text-[11px] text-[var(--theme-text-muted)]">{t('sidebar.wf.noArtifacts')}</p>
         ) : (
           <ul className="space-y-1.5">
             {artifacts.map((art, idx) => {
@@ -179,7 +181,7 @@ export function RunInspector({
                     <span className="text-[10px] text-[var(--theme-text-muted)]">CRS {formatCrs(art.crs)}</span>
                   </div>
                   {missing ? (
-                    <p className="text-[10px] text-red-600 dark:text-red-300">产物缺失</p>
+                    <p className="text-[10px] text-red-600 dark:text-red-300">{t('sidebar.wf.missingArtifacts')}</p>
                   ) : (
                     <>
                       <div className="font-mono text-[10px] text-[var(--theme-text-muted)]">
@@ -217,17 +219,17 @@ export function RunInspector({
 
       <section aria-labelledby="wf-runtime-heading" className="space-y-1">
         <h3 id="wf-runtime-heading" className="text-[11px] font-semibold uppercase tracking-wide text-[var(--theme-text-muted)]">
-          运行指标
+          {t('sidebar.wf.runMetrics')}
         </h3>
         {Object.keys(perf).length === 0 ? (
-          <p className="text-[11px] text-[var(--theme-text-muted)]">无运行指标</p>
+          <p className="text-[11px] text-[var(--theme-text-muted)]">{t('sidebar.wf.noMetrics')}</p>
         ) : (
           <div className="space-y-0.5 text-[11px] text-[var(--theme-text-secondary)]">
-            {perf.total_steps != null && <div>步骤 {String(perf.total_steps)}</div>}
+            {perf.total_steps != null && <div>{t('sidebar.wf.step')} {String(perf.total_steps)}</div>}
             {perf.total_duration_seconds != null && (
-              <div>耗时 {String(perf.total_duration_seconds)}s</div>
+              <div>{t('sidebar.wf.duration')} {String(perf.total_duration_seconds)}s</div>
             )}
-            {perf.elapsed_ms != null && <div>耗时 {String(perf.elapsed_ms)}ms</div>}
+            {perf.elapsed_ms != null && <div>{t('sidebar.wf.duration')} {String(perf.elapsed_ms)}ms</div>}
           </div>
         )}
       </section>
@@ -256,7 +258,7 @@ export function RunInspector({
         open={showManifest}
         onToggle={(e) => setShowManifest((e.target as HTMLDetailsElement).open)}
       >
-        <summary className="cursor-pointer text-[11px] text-[var(--theme-text-secondary)]">原始清单</summary>
+        <summary className="cursor-pointer text-[11px] text-[var(--theme-text-secondary)]">{t('sidebar.wf.rawManifest')}</summary>
         <pre className="mt-1 max-h-40 overflow-auto font-mono text-[10px] text-[var(--theme-text-muted)]">
           {JSON.stringify(manifest ?? run, null, 2)}
         </pre>

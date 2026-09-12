@@ -53,7 +53,7 @@ def test_validate_rejects_unknown_input():
     bad = _plan_body(inputs=["ghost"])
     resp = client.post("/api/v1/geocompute/plans/validate", json=bad["plan"])
     assert resp.status_code == 422
-    assert resp.json()["detail"]["code"] == "PLAN_INVALID"
+    assert resp.json()["data"]["code"] == "PLAN_INVALID"
 
 
 def test_execute_plan_and_get_run():
@@ -90,7 +90,7 @@ def test_overbudget_admission_rejected_via_rest():
     resp = client.post("/api/v1/geocompute/plans/execute", json=body,
                        headers=_auth())
     assert resp.status_code == 422
-    detail = resp.json()["detail"]
+    detail = resp.json()["message"]
     assert detail["code"] == "RESOURCE_BUDGET_EXCEEDED"
     assert detail["details"]["suggestions"]
 
