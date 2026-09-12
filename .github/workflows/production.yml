@@ -258,6 +258,12 @@ jobs:
           DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_db
         run: alembic upgrade head
 
+      - name: Migration Number Allocation Check (V9 P6)
+        # 多线并发防撞号（0034×4 / 0035×3 两轮现场）：revision id 全局唯一、
+        # 前缀不得跨段位、单头强校验。规则见 docs/dev/migration-protocol.md，
+        # 登记簿 migrations/.alloc.json。
+        run: python scripts/alloc_migration.py --check
+
       - name: Model vs Migration Drift Check
         # 迁移建出的 schema 必须覆盖模型声明的表/列/索引 —— 漂移即失败
         # （这正是 #476 的根因：模型加列而迁移链不跟，生产库静默缺列）。

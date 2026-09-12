@@ -22,6 +22,10 @@ class RasterAnalysisResult:
     # array here (array/stats above stay the PRIMARY product for backwards
     # compatibility with emit_raster_layer and single-product consumers).
     product_arrays: Dict[str, np.ndarray] = field(default_factory=dict)
+    # V9 P7（真 TODO 清偿）：连续色带图例规范 —— live UI overlay 的图例
+    # 挂接面（tool_dispatch_service / chat 白名单 / project_memory 均已消费
+    # 该键；此前 spectral_engine 算出后丢弃）。
+    legend_spec: Optional[Dict[str, Any]] = None
 
     def to_llm_response(self) -> Dict[str, Any]:
         """格式化供 LLM 上下文阅读的精简响应 payload"""
@@ -31,7 +35,7 @@ class RasterAnalysisResult:
                 res["correction_hint"] = self.correction_hint
             return res
 
-        return {
+        res = {
             "success": True,
             "index_type": self.index_type,
             "bounds": self.bounds,
@@ -43,6 +47,9 @@ class RasterAnalysisResult:
                 f"有效像素率: {self.stats.get('valid_pixel_pct', '100%')}"
             ),
         }
+        if self.legend_spec:
+            res["legend_spec"] = self.legend_spec
+        return res
 
 
 # Pure index formulas for Sentinel-2 bands.
