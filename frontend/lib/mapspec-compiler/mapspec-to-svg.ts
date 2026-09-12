@@ -436,6 +436,11 @@ export function compileMapSpecToSvg(
           elementsSvg += `<path d="M ${pathPoints}" stroke="${color}" stroke-width="${lineWidth}" stroke-opacity="${opacity}" fill="none"${extraAttrs} />\n`;
         });
       } else if ((layerType === "fill" || layerType === "fill-extrusion") && (geom.type === "Polygon" || geom.type === "MultiPolygon")) {
+        if (layerType === "fill-extrusion") {
+          // 3D 透视压平为平面 fill —— 逐层近似诊断（与产物内
+          // data-export-degraded 标记同义，供 content="mixed" 判定）。
+          options.onDiagnostic?.("layer_approximated_extrusion", `layer=${layer.id}`);
+        }
         const polygons = geom.type === "Polygon" ? [geom.coordinates] : geom.coordinates;
         const defaultColor = layerType === "fill-extrusion" ? "#94a3b8" : "#60a5fa";
         const defaultOpacity = layerType === "fill-extrusion" ? 0.8 : 0.6;
@@ -463,6 +468,9 @@ export function compileMapSpecToSvg(
           elementsSvg += `<path d="${dStr}" fill="${color}" fill-opacity="${opacity}" fill-rule="evenodd" stroke="${outlineColor}" stroke-width="${outlineWidth}"${extraAttrs} />\n`;
         });
       } else if (layerType === "heatmap") {
+        // 核密度以半透明圆近似（无 kernel 权重）—— 逐层近似诊断，
+        // 导出面据此置 data-export-content="mixed"（不静默近似）。
+        options.onDiagnostic?.("layer_approximated_heatmap", `layer=${layer.id}`);
         const pts: [number, number][] = [];
         if (geom.type === "Point" && Array.isArray(geom.coordinates)) {
           pts.push(geom.coordinates as [number, number]);

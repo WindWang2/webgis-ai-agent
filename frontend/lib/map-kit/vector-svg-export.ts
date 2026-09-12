@@ -122,16 +122,19 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
 
     // 数据层：targetDpi=72 → dpiScale=1，编译坐标系与图框 1:1。
     // §0.5/§5 契约：矢量不支持的层类型（extrusion 压平 / heatmap 近似 /
-    // 栅格外链）→ 编译器逐层诚实标记（data-export-degraded / 外链 image），
-    // 根节点补 data-export-content="mixed" 内容态标记；无近似 → "vector"。
-    let compilerDiagnosticCount = 0;
+    // 栅格外链）→ 编译器逐层诚实标记 + `layer_approximated_*` 诊断，根节点
+    // 补 data-export-content="mixed"；label 截断/预算诊断不属于层近似，
+    // 不参与 mixed 判定（review-r1 修正：长标签不再误标 mixed）。
+    let layerApproximations = 0;
     const compiled = compileMapSpecToSvg(input.spec, {
       targetDpi: 72,
       width,
       height,
       padding: 0,
-      onDiagnostic: () => {
-        compilerDiagnosticCount += 1;
+      onDiagnostic: (code) => {
+        if (code === 'layer_approximated_heatmap' || code === 'layer_approximated_extrusion') {
+          layerApproximations += 1;
+        }
       },
     });
 
@@ -139,11 +142,11 @@ export function buildVectorSvgExport(input: VectorSvgExportInput): VectorSvgExpo
       { code: 'basemap_omitted_vector_svg', detail: '矢量 SVG 不含栅格底图' },
     ];
     const dataSvg = truncateCompiledLabels(compiled, degradations);
-    // 内容态：编译器诊断（label 截断/预算）或产物内近似标记（extrusion
-    // 压平）在场 → mixed；纯矢量数据层 → vector。
+    // 内容态：层近似诊断（heatmap/extrusion）或产物内近似标记在场 → mixed；
+    // 纯矢量数据层 → vector（label 截断不算层近似）。
     const hasApproximatedLayer = /data-export-degraded="true"/.test(dataSvg);
     const contentMode =
-      compilerDiagnosticCount > 0 || hasApproximatedLayer ? 'mixed' : 'vector';
+      layerApproximations > 0 || hasApproximatedLayer ? 'mixed' : 'vector';
 
     const ink = colorMode === 'cmyk' ? '#000000' : '#1e293b';
     const title = layout.texts.find((t) => t.kind === 'title')?.text ?? '';

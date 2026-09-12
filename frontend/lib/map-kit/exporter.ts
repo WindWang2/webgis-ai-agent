@@ -1061,7 +1061,15 @@ export async function exportToPDF(
   // doc.text 矢量，否则随画布栅格化（诚实降级 + 显式诊断）。
   for (let i = 1; i < pages.length; i++) {
     const page = pages[i];
-    doc.addPage(paperSize === 'A3' ? 'a3' : 'a4', orientation);
+    // 出版档：附加页与首页同尺寸（含出血）—— 否则 trim 与首页漂移。
+    doc.addPage(
+      bleed > 0
+        ? (paperSize === 'A3' ? [426, 303] : [303, 216])
+        : paperSize === 'A3'
+          ? 'a3'
+          : 'a4',
+      orientation,
+    );
     let pageCanvas = page.canvas;
     const pageTitle = page.title || '';
     // ADR-0157 P3：出版字体在场 → CJK 页标题也走真文本层（不再栅格化）。

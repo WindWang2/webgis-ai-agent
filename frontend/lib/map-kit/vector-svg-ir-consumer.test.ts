@@ -129,4 +129,57 @@ describe('SVG 消费端与 canvas 同源（版面描述 IR 单一决策记录）
     const { svg } = buildVectorSvgExport({ spec: SPEC, layout });
     expect(svg).toContain('stroke-width="0.75"'); // renderSvgCropMarks 臂线
   });
+
+  it('mixed 判定（review-r1 修正）：heatmap 近似层 → mixed；纯矢量长标签 → 仍 vector', () => {
+    const base = {
+      paperSize: 'screen' as const,
+      orientation: 'landscape' as const,
+      dpi: 96,
+      frame: { width: 1200, height: 800 },
+      chromeModel: null,
+    };
+    // heatmap 层 → 编译器 layer_approximated_heatmap 诊断 → mixed
+    const heatmapSpec = {
+      sources: {
+        s1: {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: [
+              { type: 'Feature', geometry: { type: 'Point', coordinates: [104.06, 30.67] }, properties: { w: 3 } },
+            ],
+          },
+        },
+      },
+      layers: [{ id: 'h1', type: 'heatmap', source: 's1', paint: { 'heatmap-radius': 15 } }],
+    };
+    const mixed = buildVectorSvgExport({ spec: heatmapSpec, layout: buildPublicationLayout(base) });
+    expect(mixed.svg).toContain('data-export-content="mixed"');
+
+    // 纯矢量（circle）+ 长标签截断：label 截断不属于层近似 → 仍 vector
+    const longLabelSpec = {
+      sources: {
+        s1: {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: [
+              {
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [104.06, 30.67] },
+                properties: { name: '成'.repeat(80) },
+              },
+            ],
+          },
+        },
+      },
+      layers: [
+        { id: 'p1', type: 'circle', source: 's1', paint: { 'circle-color': '#de2d26' } },
+        { id: 'lbl', type: 'symbol', source: 's1', layout: { 'text-field': '{name}' }, paint: {} },
+      ],
+    };
+    const pure = buildVectorSvgExport({ spec: longLabelSpec, layout: buildPublicationLayout(base) });
+    expect(pure.svg).toContain('data-export-content="vector"');
+    expect(pure.degradations.some((d) => d.code === 'label_truncated')).toBe(true);
+  });
 });
