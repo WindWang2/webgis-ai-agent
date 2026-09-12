@@ -87,3 +87,40 @@
 - **决定**：4 版式基线按「同语料 × 4 profile 求解折算 + 配对 margins」
   构造；归零验证在每版式下独立执行。不做 semantic_checks 签名扩展
   （跨线影响不可控）—— 版式敏感版面 QA 留给中间层消费方。
+
+## D13–D15（S2 独立复审后的修复裁决，2026-09-13）
+
+## D13. 可折叠词表单源化 + 真实 parity 测试
+
+- **发现**：COLLAPSIBLE_TYPES 在 composer/solver/前端三处复制，且注释声称
+  的「parity 测试锁定」并不存在（不实注释）。
+- **修复**：后端单源 = component_composer（solver 导入之，无环）；新增
+  `test_collapsible_vocabulary_parity`（is 断言）；前端集注明为渲染域
+  镜像。注释不再引用不存在的测试。
+
+## D14. 语料 harness 入库 + 归零门禁全量化
+
+- **发现**：scripts/ 被 `/scripts/*` gitignore 挡住，20×4 全量证据不可由
+  提交物复现。
+- **修复**：harness 移入 `tests/cartography/ac07_corpus_harness.py`；
+  `test_ac07_zero_regression.py` 升级为全量 20 案例 × 4 版式 × 2 口径。
+
+## D15. 前端镜像规则表与后端对齐 + A3 档
+
+- **发现**：镜像缺「screen+投影 → graticule 建议」分支；任务书 §2 P2 的
+  A3 档在双侧词表均缺席；isPrint 判定基准不一致（后端原始 vs 前端解析后）。
+- **修复**：后端补 A3（isPrint 统一以解析后 purpose 判定 —— 未知用途按
+  §0.5 归屏幕）；前端补 screen 投影分支 + A3；双侧词表/分支由测试锁定。
+
+## D16. 其余 findings 的处置
+
+- **修复**：floating 重叠披露恢复面积证据；compose elements 的 slot 改由
+  共享求解器真解析（去占位常量）；graticule-labels 死三元删除、
+  bboxCenter 文档如实化；scale-bar aria 与显示模式一致；legend nodata
+  消费 v2 color、label-only 呈现为虚线框；图例卡补快照测试；inset 静态
+  扫描扩展到 ctx.spec/sources。
+- **反驳（记录不动）**：render-observation.ts 的 `__fallback_*` 预测 id 与
+  autofill id 的差异 —— 该文件属 §8 禁改区（mapspec-runtime/**），其
+  「spec 缺席 → chrome 挂载」的预测语义仍然为真（chrome 以 autofill 或
+  fallback 之一挂载），无消费者按 id 字符串匹配；留待 06 线在其词表中
+  收敛。snapshot 断言为新增快照的首次落盘（锁定后续回归）。
