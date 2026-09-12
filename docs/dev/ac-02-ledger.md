@@ -1,6 +1,6 @@
 # AC-02 交付台账（任务 → 文件 → 测试 → 证据）
 
-> ADR-0151 · 分支 `adaptive-cartography/02-recipe-adjudication` · 2026-09-13
+> ADR-0151 · 分支 `adaptive-cartography/02-recipe-adjudication` · 2026-09-13 · PR #1257
 
 ## 任务 → 文件
 
@@ -27,7 +27,7 @@
 | 零「全禁+点图兜底」静默路径 | ✅ | `test_no_silent_point_map_path`；planner RECIPE_INELIGIBLE 分支强制 disclosure+attempts |
 | 6 检查器单测 + 边界（空集/单值/全 null/超大 n） | ✅ | `test_eligibility_v4.py` 39 例（含 empty profile / n=10^9 / 全 null 字段 / 边界值 8/30/500） |
 | `build_default_components` 兼容分支删除 + 既有测试绿 | ✅ | `test_components.py` 20 passed；`test_fact_signals_v4.py::TestComponentAuthorityConsolidated` |
-| 里程碑全量 `pytest tests/unit -m "not heavy and not real_services and not perf"` | ✅ | 见 PR 门禁证据（串行；xdist 不在仓依赖） |
+| 里程碑全量 `pytest tests/unit -m "not heavy and not real_services and not perf"` | ✅ | 10759 passed / 111 skipped / 50 failed；50 失败中 29 个在干净 origin/master 同机**逐条同集复现**（Windows 环境缺失 Node CLI/bwrap/pmtiles fixture），余 21 为顺序敏感环境 flake——零回归（串行跑；xdist 不在仓依赖） |
 | `ruff check <变更文件>` 0 告警 | ✅ | 逐文件执行记录 |
 | 未改 `.github/workflows/**` | ✅ | `git diff origin/master --stat | grep workflows` 为空 |
 | gis_harness 既有测试不劣化 | ✅ | `tests/unit/gis_harness/` 全绿（1247+ passed；3 skipped 为既有跳过） |
