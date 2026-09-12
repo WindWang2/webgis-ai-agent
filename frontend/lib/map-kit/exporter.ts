@@ -30,6 +30,11 @@ import { getComparisonExport } from '@/lib/map/comparison-export-registry';
 import { metersPerPixelAt } from './meters-per-pixel';
 import type { ExportFrame, FrameLayout } from './frame-composer';
 import { specFramesToExportFrames } from './spec-frames';
+import {
+  enterHighDpiRender,
+  MapIdleTimeoutError,
+  waitForMapIdle,
+} from '../export/highdpi';
 export type { ExportFrame, ExportFrameWhere, FrameLayout } from './frame-composer';
 import {
   graticuleIntervalForZoom,
@@ -1252,36 +1257,17 @@ function formatDegradationNote(degradations: ExportDegradation[]): string {
 }
 
 /**
- * #527：高 DPI 分支在 `map.once('idle')` 上无界等待 —— WebGL 上下文丢失或画布
- * 隐藏时 idle 永不触发，finally 里的 pixelRatio 恢复永远不可达（3.125x @300DPI
- * → ~10x backing store 泄漏）。这里给等待加 deadline：超时抛类型化错误，走既有
- * catch（如实的失败文案）+ finally（恢复原始 pixelRatio）。exportCommands.ts 的
- * EXPORT_RENDER_TIMEOUT_MS 是队列级兜底（覆盖 render 不触发等路径），与内层
- * 截止互不替代。
+ * #527 / ADR-0157 P1：高 DPI 渲染策略（有界 idle、超时降级、栅格细节披露）
+ * 收敛到 lib/export/highdpi.ts 单源 —— 此处保留符号再导出以兼容既有导入面。
  */
-export const EXPORT_IDLE_TIMEOUT_MS = 30_000;
-
-/** #527：idle 等待超时的类型化错误 —— catch 可识别并给出如实的失败文案。 */
-export class MapIdleTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(
-      `导出中止：地图在 ${timeoutMs}ms 内未进入 idle 状态` +
-        `（可能 WebGL 上下文已丢失或画布被隐藏）`,
-    );
-    this.name = 'MapIdleTimeoutError';
-  }
-}
-
-/** 有界等待 `map.once('idle')`：idle 触发即 resolve，截止前未触发即 reject。 */
-export async function waitForMapIdle(map: Map, timeoutMs: number): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new MapIdleTimeoutError(timeoutMs)), timeoutMs);
-    map.once('idle', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
-}
+export {
+  EXPORT_IDLE_TIMEOUT_MS,
+  MapIdleTimeoutError,
+  waitForMapIdle,
+  enterHighDpiRender,
+  detectRasterSourceIds,
+} from '../export/highdpi';
+export type { HighDpiRenderMode, HighDpiRenderResult } from '../export/highdpi';
 
 /**
  * W7（ADR-0118）：导出侧 spec 事实源 = live 同一合成器（composeLiveMapSpec）
@@ -1502,7 +1488,31 @@ async function runFrameExport(
   return { ok: true, format: 'png', url: upload.url, filename: upload.filename };
 }
 
-export async function runExport(
+/** ADR-0157 P1 单飞锁：引擎级互斥 —— 同一时刻只允许一个导出管线在跑
+ *（资源纪律：高 DPI 重渲染 + PDF 生成不允许并发）。命令队列（exportCommands）
+ * 已保证 agent 路径串行；本锁覆盖 story 叙事导出等直接调用方，第二并发
+ * 调用得到类型化的如实失败，而非画布互踩。 */
+let inFlightExport: Promise<ExportOutcome> | null = null;
+
+export function runExport(
+  deps: ExportDeps,
+  req: ExportRequest,
+): Promise<ExportOutcome> {
+  if (inFlightExport) {
+    return Promise.resolve({
+      ok: false,
+      format: String((req as { format?: string })?.format ?? 'png').toLowerCase(),
+      error: '已有导出任务进行中 —— 导出为串行重任务（高 DPI 重渲染 / PDF 生成），请等待当前导出完成后重试',
+    });
+  }
+  const task = runExportInternal(deps, req).finally(() => {
+    if (inFlightExport === task) inFlightExport = null;
+  });
+  inFlightExport = task;
+  return task;
+}
+
+async function runExportInternal(
   deps: ExportDeps,
   req: ExportRequest,
 ): Promise<ExportOutcome> {
@@ -1577,13 +1587,13 @@ export async function runExport(
   const origPixelRatio = map.getPixelRatio();
   const targetPixelRatio = dpi / 96;
   try {
-    if (targetPixelRatio > 1) {
-      map.setPixelRatio(targetPixelRatio);
-      // #527: 有界 idle 等待 —— 超时抛 MapIdleTimeoutError，让下方 catch
-      // 给出如实的失败文案、finally 恢复原始 pixelRatio（此前无界等待在
-      // WebGL 上下文丢失时挂死并泄漏 pixelRatio）。
-      await waitForMapIdle(map, deps.idleTimeoutMs ?? EXPORT_IDLE_TIMEOUT_MS);
-    }
+    // ADR-0157 P1：进入高 DPI 渲染 —— 有界 idle；超时按 §0.5 契约**降级**为
+    // 当前分辨率画布导出（degraded-native + 诊断码），不再让整个导出失败。
+    // 栅格瓦片源在高 DPI 下按原 zoom 取图（无细节增益），由 enterHighDpiRender
+    // 附 info 诊断如实披露（细节增益由矢量引擎孪生 oversample 承担）。
+    // 在 try 内调用：异常路径由下方 catch 给出失败文案、finally 恢复比率。
+    const highDpi = await enterHighDpiRender(map, dpi, deps.idleTimeoutMs);
+    const highDpiDegraded = highDpi.mode === 'degraded-native';
 
     const baseCanvas = map.getCanvas();
     // #802: 默认 dpi=96 路径不调用 setPixelRatio，导出画布就是浏览器原生
@@ -1851,6 +1861,8 @@ export async function runExport(
     const chromeDegradations = [
       ...(chromeModel?.degradations ?? []),
       ...comparisonDegradations,
+      // ADR-0157 P1：高 DPI 降级 / 栅格细节披露诊断并入导出面。
+      ...highDpi.degradations,
     ];
     if (storeState.is3D && showScaleEffective) {
       chromeDegradations.push({ code: 'terrain_3d_scale_caveat' });
@@ -1940,6 +1952,7 @@ export async function runExport(
       recordExport(getHudState, title, upload.filename, 'pdf', pdfBlob.size);
       getHudState().setPendingSystemMessage(
         `[系统通知] 专题底图 PDF \`${title || '未命名'}\` 已成功生成` +
+          (highDpiDegraded ? '（高 DPI 重渲染超时，已降级为当前分辨率）' : '') +
           `（地图为位图画布 + 文本层${pdfVectorText ? '矢量（标题/副标题为 PDF 矢量文本）' : '栅格化（标题/副标题随画布位图，避免 CJK 乱码）'}），` +
           `文件已落盘并分配URL：${upload.url}。` +
           `请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${upload.url})。` +
@@ -1953,7 +1966,9 @@ export async function runExport(
       const upload = await uploadExport(blob, 'export.png', title, chromeDegradations);
       recordExport(getHudState, title, upload.filename, 'png', blob.size);
       getHudState().setPendingSystemMessage(
-        `[系统通知] 专题地图 \`${title || '未命名'}\` 已成功排版合成，` +
+        `[系统通知] 专题地图 \`${title || '未命名'}\` 已成功排版合成` +
+          (highDpiDegraded ? '（高 DPI 重渲染超时，已降级为当前分辨率）' : '') +
+          `，` +
           `文件已落盘并分配URL：${upload.url}。 请利用Markdown的图片语法 \`![地图](${API_BASE}${upload.url})\` 将该成品展示给用户，并祝其研究顺利！` +
           formatDegradationNote(chromeDegradations) + `注意展示完图片后直接结束。`,
       );

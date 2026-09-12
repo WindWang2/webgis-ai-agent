@@ -149,6 +149,15 @@ RENDER_DIAGNOSTICS: Dict[str, RenderDiagnosticSpec] = {
             "label_budget_exceeded", "warning",
             "标签数量超出导出预算（{detail}），超出部分未渲染",
         ),
+        # —— 高 DPI 渲染策略（ADR-0157 P1）——
+        RenderDiagnosticSpec(
+            "highdpi_rerender_timeout_degraded", "warning",
+            "高 DPI 重渲染等待超时，已降级为当前分辨率画布导出（{detail}）",
+        ),
+        RenderDiagnosticSpec(
+            "raster_tile_detail_limited_highdpi", "info",
+            "高 DPI 导出下栅格瓦片源仍按原 zoom 取图，瓦片细节不随分辨率提升（{detail}）",
+        ),
         # —— V6（ADR-0120 W8）矢量 PDF publication ——
         RenderDiagnosticSpec(
             "raster_layer_unavailable_vector_pdf", "warning",
@@ -292,6 +301,16 @@ EMITTER_REGISTRY: Dict[str, Tuple[str, ...]] = {
     ),
     "terrain_3d_scale_caveat": (
         "frontend/lib/map-kit/exporter.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    # ADR-0157 P1：高 DPI 渲染策略 —— 发射器在 lib/export/highdpi.ts 单源；
+    # export-chrome.ts 持有前端词表联合类型（同一字面量）。
+    "highdpi_rerender_timeout_degraded": (
+        "frontend/lib/export/highdpi.ts",
+        "frontend/lib/map-kit/export-chrome.ts",
+    ),
+    "raster_tile_detail_limited_highdpi": (
+        "frontend/lib/export/highdpi.ts",
         "frontend/lib/map-kit/export-chrome.ts",
     ),
     # diagnostics_truncated 的发射器是本模块 DiagnosticSink（publication

@@ -148,7 +148,10 @@ export type ExportDegradationCode =
   | 'small_multiple_panel_skipped'
   | 'atlas_page_skipped'
   | 'atlas_page_limit_truncated'
-  | 'terrain_3d_scale_caveat';
+  | 'terrain_3d_scale_caveat'
+  /* ADR-0157 P1：高 DPI 渲染策略（发射器 lib/export/highdpi.ts）。 */
+  | 'highdpi_rerender_timeout_degraded'
+  | 'raster_tile_detail_limited_highdpi';
 
 export interface ExportDegradation {
   code: ExportDegradationCode;
