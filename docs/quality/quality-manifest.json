@@ -7950,7 +7950,7 @@
   "waived_current": 0,
   "waivers_active": 0
  },
- "fingerprint": "1ebdc45ba6e6e28093c5287106754c280f418384f3d8bcd244711d1693e1518f",
+ "fingerprint": "0a4cd6a813c3cff4881d2cb79645e87ad179710f9b1f8b96f68268f8ee3c1f57",
  "gate": {
   "fields": {
    "capabilities": {
@@ -9076,6 +9076,7 @@
    ],
    "tests": [
     "tests/test_skill_sandbox.py",
+    "tests/test_skills_tool_names_registered.py",
     "tests/unit/gis/test_platform_capabilities.py",
     "tests/unit/test_subagent.py",
     "tests/unit/test_tool_catalog.py"

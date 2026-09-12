@@ -69,6 +69,10 @@ scripts/
 .agent-work/quality-v1/runner-report.md
 # Security manifest 生成器（Wave 15：SECURITY_CONTROLS.md 字节一致性闸依赖）
 !/scripts/gen_security_manifest.py
+# 端点 scope 矩阵生成器（ADR-0139 P3：矩阵字节闸 + CI 校验依赖；
+# history: 漏加本例外曾使脚本被上面 /scripts/* 静默忽略、worktree 清理
+# 后丢失，ratchet/preflight 因悬空引用变红 —— 本行就是那场事故的闸）
+!/scripts/generate_endpoint_scope_matrix.py
 webgis-ai-agent/
 
 # 系统与临时文件
