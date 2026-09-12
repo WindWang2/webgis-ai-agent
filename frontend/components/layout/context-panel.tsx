@@ -22,6 +22,7 @@ import {
   MessageCircle,
   Folder,
   Database,
+  Boxes,
   Layers,
   Triangle,
   ListChecks,
@@ -44,6 +45,7 @@ import { AnalysisTab } from '@/components/sidebar/analysis-tab';
 import { MapStudioTab } from '@/components/sidebar/map-studio-tab';
 import { ProjectTab } from '@/components/sidebar/project-tab';
 import { DataSourcesTab } from '@/components/sidebar/data-sources-tab';
+import { LakehouseTab } from '@/components/sidebar/lakehouse/lakehouse-tab';
 import { TasksTab } from '@/components/sidebar/tasks-tab';
 import { ResultsTab } from '@/components/sidebar/results-tab';
 import { PanelErrorBoundary } from '@/components/layout/panel-error-boundary';
@@ -101,6 +103,7 @@ const PANEL_META: Record<string, PanelMeta> = {
   chat: { icon: MessageCircle, title: '对话', description: 'AI 地理智能体' },
   project: { icon: Folder, title: '项目', description: '工作区 · 数据集 · 工作流' },
   data_sources: { icon: Database, title: '数据', description: '空间目录与数据源' },
+  lakehouse: { icon: Boxes, title: '数据湖', description: 'Cube 目录 · 查询 · STAC · 版本' },
   layers: { icon: Layers, title: '图层', description: '可见性 · 样式 · 顺序' },
   components: { icon: LayoutDashboard, title: '组件', description: '地图组件 · 布局 · 图表' },
   analysis: { icon: Triangle, title: '分析', description: '空间分析工具' },
@@ -404,6 +407,11 @@ export function ContextPanel({
         {activeTab === 'data_sources' && (
           <PanelErrorBoundary label="数据">
             <DataSourcesTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+        {activeTab === 'lakehouse' && (
+          <PanelErrorBoundary label="数据湖">
+            <LakehouseTab sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
         {(activeTab === 'export_layout' || activeTab === 'exports') && (

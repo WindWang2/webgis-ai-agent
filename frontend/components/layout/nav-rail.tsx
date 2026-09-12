@@ -20,6 +20,7 @@ import {
   MessageCircle,
   Folder,
   Database,
+  Boxes,
   Layers,
   Triangle,
   ListChecks,
@@ -56,6 +57,7 @@ const RAIL_GROUPS: Array<Array<RailTabDef>> = [
   [
     { key: 'project', icon: Folder, label: '项目' },
     { key: 'data_sources', icon: Database, label: '数据' },
+    { key: 'lakehouse', icon: Boxes, label: '数据湖' },
     { key: 'layers', icon: Layers, label: '图层' },
     { key: 'components', icon: LayoutDashboard, label: '组件' },
   ],

@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased] - 2026-09-11 (feat/lakehouse-ui-v9: Lakehouse Cube Explorer UI, ADR-0141)
+
+### Added (frontend: Lakehouse Cube Explorer UI, ADR-0141)
+- 「数据湖」rail tab（explore/analyze 模式词表）：六子页签接入 Lakehouse V8
+  全部 29 个 REST 端点 —— 目录（catalog 检索 + manifest 检视 + offset 分页）、
+  数据集（V8 版本层浏览：refs/head/版本历史）、查询（window/labeled/scan/
+  revise/rs 五类表单 + schema 预校验 + 查询历史/收藏本地持久化）、STAC
+  （1.0.0 投影浏览 + skipped 诚实披露 + 条目几何上图）、发布（publish/revoke
+  确认对话框 + 幂等/权限错误报告 + 快照双栏字段 diff + swipe 双屏）、运维
+  （verify/scrub 报告 + 血缘祖先链 + GC dry-run 只读树，执行动作归 C/F 线）。
+- `lib/api/lakehouse.ts`：29 端点全量 typed client（响应类型按后端服务层
+  dict 实测逐字段对齐；`total` 字符串下界、DurableBlock 判别、开放联合
+  state、STAC 包装结构等诚实形态全部类型化）。
+- `lib/map-kit/raster-canvas.ts` + `raster-timeline.ts`：动态栅格时序播放
+  管线（兑现 README Phase 6）—— nodata 掩膜/线性拉伸/定点色带 → canvas
+  位图 → 既有 HeatmapRasterSource 通道；切片懒加载 LRU + 滑动窗口预取 +
+  rAF 丢帧策略（16ms 帧预算）；reduced-motion 禁自动播放；键盘可达。
+- 测试：29 端点契约单测（正常/空/错误三态 fixtures）、rail 注册/tablist
+  a11y/面板契约组件测试、48 步时序性能门禁（确定性丢帧+LRU 有界断言；
+  绝对 p95<16ms 由专用进程取证）。
+
+
 ## [Unreleased] - 2026-09-10 (V7/V8 epic integration round)
 
 Ten prepared epic branches (platform-v4, lakehouse-v8, data-fabric-v8,
