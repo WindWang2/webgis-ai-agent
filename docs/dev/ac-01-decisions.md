@@ -23,6 +23,36 @@
 | D17 | en-029 类「裸密度地图」查询落 fallback 头标记会误触发「缺主体」澄清 | `bare_density_visual`（SPEC_SPECIFIC 面内 SPEC 11，仅压过兜底）使其获得 distribution_overview 规则头；澄清策略不因「头标记=非 fallback」而误伤真模糊查询（语料模糊组 100% 仍触发，最低置信 0.24） | 零静默 fallback 与零误触发澄清的交界面 |
 | D18 | 校准锚点在规则调优后复拟合 | 实测最优分箱误差 0.038（锚点 `CALIBRATION_ANCHORS` 保持 (0,0.15)(0.43,0.67)(0.60,0.95)(0.70,0.97)(0.90,1.0)(1.0,1.0)），模糊条目最低置信 0.24 << 澄清阈 0.55 | 分箱表见 recon §7 回填 |
 
+## §6 Review 记录（2026-09-13，PR 前）
+
+**执行方式**：任务书 §4 硬约束全程 ≤2 subagent（S1 勘察已用、S2 留给门禁
+取证），`/code-review` 技能的双并行子代理机制由主代理串行自审替代，双轴
+（Standards / Spec）分开出具如下。
+
+### Standards 轴（含 Fowler smell 基线）
+
+| # | 严重度 | 发现 | 处置 |
+|---|---|---|---|
+| S1 | 高（真缺陷） | `resolve_intent_adaptive` 内部调用 `resolve_map_request_intent` 后再记一次 outcome → `gis_intent_resolve_total` 双重计数 | **已修复**：`record_metrics` 参数，入口统一记录最终 outcome |
+| S2 | 中 | `apply_answers` 直接 `subject.type = value`，SubjectIntent 未开 validate_assignment，越词表值会静默通过 | 评估后保留：候选值来自封闭 `_SUBJECT_OPTIONS` 词表，风险面为空；开 validate_assignment 反而可能让 legacy 调用方的 setattr 语义变化（tools.py:431 依赖直接赋值） |
+| S3 | 低（Data Clump 判断题） | 槽位 (value, confidence, source) 三元组出现频繁 —— 已有 `SlotValue` 类型承载，不重复造型 | 无需处置 |
+| S4 | 低 | `test_intent_adaptive.py` 内一处 `__import__(...).TaskType` 动态导入，可读性差 | **已修复**：改顶部 import（TaskType 常量导入） |
+| S5 | 信息 | `clarification.py` 对 intent 采用鸭子类型（getattr）避免循环 import，属有意解耦（模块头注释声明） | 保留，ADR-0150 D5 已记录 |
+| S6 | 信息 | `extract_slots` 对同一 query 三次扫描（scope/subject/task），O(规则数×3) | 20,088 例 conformance 实测 ~2ms/例，无性能问题；合并扫描会牺牲可读性 |
+
+ruff（变更文件）0 告警；仓库工具链（ruff/pydantic/pytest marker）覆盖的
+面按纪律不重复人审。
+
+### Spec 轴（对照任务书 §2/§5）
+
+| # | 发现 | 处置 |
+|---|---|---|
+| P1 | P0-P8 全部产物在位（recon/CSV/语料300/semantic/clarification/校准/澄清/evidence/回归/文档/ADR/CHANGELOG） | ✅ |
+| P2 | §5 门禁逐条：overall 1.0 ≥ 0.7733；en 1.0 ≥ 0.9×zh；澄清 100%+零静默 fallback（grep 等价断言在 `test_zero_silent_fallback`）；LLM 不可用全链路不抛错且 `degraded_reason` 有测试；204 条闭环语料冒烟通过；校准 ≤0.15；intent.py -31.6%；单测门禁见 PR 取证；ruff 0 告警；`.github/workflows/**` 零改动（diff stat 佐证） | ✅ |
+| P3 | §3 深化杠杆（600 语料/17 族难例/漂移脚本）为条件项——门禁已达标，未触发 | 按任务书条件语义跳过 |
+| P4 | `/plan-eng-review`（P1/P3 设计架构自评）结论：双轨入口拆分（确定性 resolve ⊕ adaptive）是本设计的承重墙——它同时满足评估复放锁、无 LLM 环境门禁、降级不抛错三约束；备选方案（resolve 内嵌 LLM + 缓存）被否，因缓存引入隐藏状态破坏「同一输入同一输出」的第一设计约束。特异性分级裁决的第一版设想（纯字典序）被语料实证否决（zh-152 跨级冲突），最终三级字典序 (specificity, span, -order) 经 golden 校准 | 结论入本日志 |
+| P5 | 范围自查：`app/core/config.py` 纯加法（D7）；`tests/conftest.py` 基线钉值（env hygiene 锁要求）；无越界文件 | ✅ |
+
 ## 语义抽取与规则冲突的证据优先级实现口径（§0.5 表第 2 行）
 
 结构化数据事实（实体解析结果）> LLM 语义槽位 > 正则规则，落地为：

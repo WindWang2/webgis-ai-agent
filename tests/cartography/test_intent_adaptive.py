@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import statistics
+import typing
 from typing import Any, Dict
 
 import pytest
@@ -31,6 +32,7 @@ from app.services.gis_harness.clarification import (
 )
 from app.services.gis_harness.intent import (
     MapRequestIntent,
+    TaskType,
     merge_intent_hints,
     resolve_intent_adaptive,
     resolve_map_request_intent,
@@ -436,10 +438,7 @@ class TestClosedLoopCorpusAlignment:
 
         scenarios = build_closed_loop_corpus()
         assert len(scenarios) == 204
-        import typing
-
-        valid_tasks = set(typing.get_args(
-            __import__("app.services.gis_harness.intent", fromlist=["TaskType"]).TaskType))
+        valid_tasks = set(typing.get_args(TaskType))
         for scenario in scenarios:
             intent = resolve_map_request_intent(scenario.map_intent)
             assert intent.task in valid_tasks, scenario.scenario_id

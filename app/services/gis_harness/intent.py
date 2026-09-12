@@ -256,13 +256,16 @@ def resolve_map_request_intent(
     session_consistency: float = 0.5,
     precomputed_slots: Optional[semantic.IntentSlots] = None,
     entity_service: Any = None,
+    record_metrics: bool = True,
 ) -> MapRequestIntent:
     """确定性解析自然语言 GIS 请求为 typed intent。
 
     规则快路径（特异性分级裁决）+ 双语槽位 + 证据加权置信度 + 证据包。
     本函数是**纯函数**（不调用 LLM、不产生网络 I/O）；LLM 双轨与澄清
-    见 :func:`resolve_intent_adaptive`。每次命中的规则、范围、主体与
-    降级原因都记录进 ``matched_rules`` / ``intent_evidence``（可审计）。
+    见 :func:`resolve_intent_adaptive`。``record_metrics=False`` 供
+    adaptive 入口复用（由入口统一记录最终 outcome，避免双重计数）。
+    每次命中的规则、范围、主体与降级原因都记录进 ``matched_rules`` /
+    ``intent_evidence``（可审计）。
     """
     query = (query or "").strip()
     assumptions: List[str] = []
@@ -412,8 +415,9 @@ def resolve_map_request_intent(
             "ontology_escalation": escalation,
         },
     )
-    semantic.record_resolve(
-        lang, "rule_fallback" if decision.fallback else "rule")
+    if record_metrics:
+        semantic.record_resolve(
+            lang, "rule_fallback" if decision.fallback else "rule")
     return intent
 
 
@@ -551,7 +555,8 @@ def resolve_intent_adaptive(
 
     intent = resolve_map_request_intent(
         query, session_consistency=session_consistency,
-        precomputed_slots=slots, entity_service=entity_service)
+        precomputed_slots=slots, entity_service=entity_service,
+        record_metrics=False)
 
     # 证据优先级：规则 fallback 时才允许 LLM 任务建议接管（decisions 口径）
     if llm_used and slots.task_candidate \
