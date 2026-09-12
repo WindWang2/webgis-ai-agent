@@ -72,4 +72,12 @@ P0→P1 的设计约束（全部来自实测）：
 4. **每步落结构化证据**：`FallbackAttempt`（含落选者与原因），
    `FallbackDecision` 扩展 `attempts`/`auto_generated`。
 
-（P0 完）
+## 4. 交付后复核（P7/P8 收口）
+
+- 覆盖率：164/164（100%）—— 100 元素级存量 + 64 链级新增
+  （60 `auto_generated` 通用链 + 4 seed 领域链）。
+- P0 失效集复跑：case03/05/06 全部走链式换案（方案 B），矛盾计划消失；
+  case01/02/04 元素级降级行为与历史逐位一致。
+- 30 样本回归 + 零静默路径 + 说明卡纵深：`test_recipe_downgrade_regression.py`
+  32 例全绿。
+- 黄金 Case B 逐位保留（7 点 → 点图回退契约）；Case C 按换案新契约更新。
