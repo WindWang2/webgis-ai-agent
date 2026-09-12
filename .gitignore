@@ -14,6 +14,7 @@ scripts/
 !/frontend/scripts/
 !/scripts/ci-local.sh
 !/scripts/gen_science_catalog.py
+!/scripts/gen_api_docs.py
 !/scripts/alloc_migration.py
 # Science V6 taxonomy 覆盖矩阵审计（Goal 07 Phase A；审计文档的一致性门依赖它）
 !/scripts/science_taxonomy_audit.py

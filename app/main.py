@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.config import settings
+from app.schemas.health_schema import LivenessResponse, SreStatusReport
 from app.core.database import Engine
 from app.core.exception import (
     global_exception_handler,
@@ -521,13 +522,13 @@ from app.core.auth import require_admin  # noqa: E402 - 健康面鉴权依赖
 #     检查与 TTL 缓存实现（单一实现，两个鉴权面的入口）。
 #   - 既有 /api/v1/health、/api/v1/health/live、/api/v1/ready、
 #     /api/v1/status/detailed 全部保持原状（形状稳定承诺）。
-@app.get("/healthz", tags=["Ops"])
+@app.get("/healthz", tags=["Ops"], response_model=LivenessResponse)
 async def healthz_root():
     """公开 liveness（极简；无依赖探测、无细节泄漏）。"""
     return {"status": "ok"}
 
 
-@app.get("/health", tags=["Ops"])
+@app.get("/health", tags=["Ops"], response_model=SreStatusReport)
 async def health_admin_root(_admin: dict = Depends(require_admin)):
     """管理员依赖详情健康面（复用 SRE 组件检查；down → 503）。"""
     from app.api.routes.health import sre_status_detailed
