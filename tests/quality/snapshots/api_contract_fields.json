@@ -174,6 +174,30 @@
   "source_type": "null|string",
   "status": "null|string"
  },
+ "GET /api/v1/data-lifecycle/gc/plans": {
+  "__model__": "Page_Dict_str__Any__",
+  "has_more": "boolean",
+  "items": "array<object>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
+ },
+ "GET /api/v1/data-lifecycle/objects": {
+  "__model__": "Page_Dict_str__Any__",
+  "has_more": "boolean",
+  "items": "array<object>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
+ },
+ "GET /api/v1/data-quality/reports": {
+  "__model__": "Page_Dict_str__Any__",
+  "has_more": "boolean",
+  "items": "array<object>",
+  "limit": "integer",
+  "offset": "integer",
+  "total": "integer"
+ },
  "GET /api/v1/explorer/status/{task_id}": {
   "__model__": "ExploreStatusResponse",
   "progress": "integer",
@@ -741,6 +765,17 @@
   "__model__": "PackageVersionsResponse",
   "success": "boolean|null",
   "versions": "array<object>"
+ },
+ "GET /health": {
+  "__model__": "SreStatusReport",
+  "components": "object",
+  "refresh_age_s": "null|number",
+  "status": "string",
+  "stuck_jobs": "integer|null"
+ },
+ "GET /healthz": {
+  "__model__": "LivenessResponse",
+  "status": "string"
  },
  "POST /api/v1/auth/login": {
   "__model__": "TokenResponse",
