@@ -55,7 +55,18 @@ def _auth_headers():
 
 @pytest.fixture(autouse=True)
 def setup_db():
-    Base.metadata.create_all(bind=Engine)
+    # 自足建表（test_lakehouse_api_v7.py 同款模式）：quality_reports /
+    # quality_rule_results 定义在 app.models.data_quality，产线代码只在
+    # 函数体内惰性 import —— 本模块顶层 import 链（app.main、
+    # services.data_quality.engine）不会注册它们，create_all 的 metadata
+    # 里没有这两张表就建不出 quality_reports；全量套件靠其他文件先跑时
+    # 顺带注册/建表（跨文件共享建表状态的顺序污染），单跑/换序即
+    # 「no such table: quality_reports」。显式 import 注册 + checkfirst=True
+    # 幂等补建：单独运行与任意前序组合都不缺表。
+    import app.models.data_quality  # noqa: F401
+    import app.models.db_model  # noqa: F401
+
+    Base.metadata.create_all(bind=Engine, checkfirst=True)
     from app.core.database import SessionLocal
     from app.models.db_model import User
     with SessionLocal() as db:
