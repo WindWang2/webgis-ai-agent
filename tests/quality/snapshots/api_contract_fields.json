@@ -820,8 +820,15 @@
  },
  "POST /api/v1/chat/sessions/{session_id}/mapspec/mutations": {
   "__model__": "MutationApplyResponse",
-  "revision": "integer",
-  "session_id": "string"
+  "checkpoint_id": "null|string",
+  "is_compiled": "boolean",
+  "mapspec": "object",
+  "mapspec_fingerprint": "null|string",
+  "mutation_revision": "integer",
+  "origin": "string",
+  "runtime_observation_seq": "integer",
+  "success": "boolean",
+  "warnings": "array<string>"
  },
  "POST /api/v1/chat/sessions/{session_id}/workflow-resume-anchor": {
   "__model__": "ResumeAnchorResponse",

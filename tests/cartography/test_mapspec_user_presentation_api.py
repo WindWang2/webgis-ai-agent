@@ -37,6 +37,16 @@ def session_id():
 @pytest.fixture
 def app(session_id):
     application = FastAPI()
+    # 镜像 app/main.py 的统一错误信封接线（ADR-0138）：message 断言依赖。
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from fastapi.exceptions import RequestValidationError
+    from app.core.exception import (
+        unified_http_exception_handler,
+        unified_validation_exception_handler,
+    )
+
+    application.add_exception_handler(StarletteHTTPException, unified_http_exception_handler)
+    application.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
     application.dependency_overrides[require_owned_session] = (
         lambda: Conversation(id=session_id)
     )
@@ -129,7 +139,7 @@ async def test_stale_user_mutation_is_conflict(client, session_id):
         },
     )
     assert resp.status_code == 409
-    detail = resp.json()["message"]
+    detail = resp.json()["data"]
     assert detail["status"] == "superseded"
     assert detail["correction_hint"]
     assert detail["mapspec"]["layers"][0]["id"] == "L1"

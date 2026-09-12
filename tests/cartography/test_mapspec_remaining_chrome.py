@@ -130,6 +130,16 @@ async def test_user_layout_and_time_commit_to_mapspec(clean_session):
 @pytest.fixture
 def app(clean_session):
     application = FastAPI()
+    # 镜像 app/main.py 的统一错误信封接线（ADR-0138）：message 断言依赖。
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from fastapi.exceptions import RequestValidationError
+    from app.core.exception import (
+        unified_http_exception_handler,
+        unified_validation_exception_handler,
+    )
+
+    application.add_exception_handler(StarletteHTTPException, unified_http_exception_handler)
+    application.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
     application.dependency_overrides[require_owned_session] = (
         lambda: Conversation(id=clean_session)
     )

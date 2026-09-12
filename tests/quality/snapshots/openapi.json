@@ -5334,26 +5334,85 @@
     "type": "object"
    },
    "MutationApplyResponse": {
-    "description": "POST /chat/sessions/{session_id}/mapspec/mutations 响应。",
+    "description": "POST /chat/sessions/{session_id}/mapspec/mutations 响应。\n\n字段按 handler 实际返回逐项镜像（前端游标推进消费 ``mapspec`` +\n``mutation_revision``，见 frontend/lib/mapspec/user-mutation.ts）。\n#1239 初版模型 {session_id, revision} 与实测形状不符，以实测为准重写。",
     "examples": [
      {
-      "revision": 7,
-      "session_id": "sess-123"
+      "checkpoint_id": "ckpt_1",
+      "is_compiled": true,
+      "mapspec": {
+       "version": "1.0"
+      },
+      "mapspec_fingerprint": "carto-sha256:...",
+      "mutation_revision": 7,
+      "origin": "user",
+      "runtime_observation_seq": 0,
+      "success": true,
+      "warnings": []
      }
     ],
     "properties": {
-     "revision": {
-      "title": "Revision",
+     "checkpoint_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Checkpoint Id"
+     },
+     "is_compiled": {
+      "default": false,
+      "title": "Is Compiled",
+      "type": "boolean"
+     },
+     "mapspec": {
+      "additionalProperties": true,
+      "title": "Mapspec",
+      "type": "object"
+     },
+     "mapspec_fingerprint": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mapspec Fingerprint"
+     },
+     "mutation_revision": {
+      "title": "Mutation Revision",
       "type": "integer"
      },
-     "session_id": {
-      "title": "Session Id",
+     "origin": {
+      "default": "user",
+      "title": "Origin",
       "type": "string"
+     },
+     "runtime_observation_seq": {
+      "default": 0,
+      "title": "Runtime Observation Seq",
+      "type": "integer"
+     },
+     "success": {
+      "title": "Success",
+      "type": "boolean"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
      }
     },
     "required": [
-     "session_id",
-     "revision"
+     "success",
+     "mapspec",
+     "mutation_revision"
     ],
     "title": "MutationApplyResponse",
     "type": "object"
