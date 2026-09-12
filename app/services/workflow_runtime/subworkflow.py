@@ -80,11 +80,14 @@ class SubworkflowExecutor:
 
     def __init__(self, service: Any, *, owner_scope: str,
                  caller: Optional[Dict[str, Any]] = None,
-                 deadline_s: float = 60.0):
+                 deadline_s: float = 60.0,
+                 org_id: Optional[str] = None):
         self.service = service
         self.owner_scope = owner_scope
         self.caller = caller
         self.deadline_s = deadline_s
+        #: ADR-0139：父实例 org（子实例继承同租户）。
+        self.org_id = org_id
 
     async def __call__(
         self, node: Dict[str, Any], *, parent: Dict[str, Any],
@@ -134,7 +137,10 @@ class SubworkflowExecutor:
                 session_id=session_id,
                 parent_instance_id=parent["instance_id"],
                 parent_node_id=str(node.get("node_id", "")),
-                visited_packages=visited + [child_pkg])
+                visited_packages=visited + [child_pkg],
+                org_id=self.org_id
+                or (parent_row.get("org_id") if parent_row else None)
+                or None)
         except Exception as exc:  # noqa: BLE001 — typed 错误映射
             return {"ok": False, "error_code": "SUBWORKFLOW_EXPAND_FAIL",
                     "detail": str(exc)[:120]}

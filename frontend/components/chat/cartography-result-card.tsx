@@ -1,4 +1,5 @@
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import React from 'react';
 import { AlertTriangle, CheckCircle2, HelpCircle, Palette, Target } from 'lucide-react';
@@ -48,6 +49,7 @@ function swatches(spec: LegendSpec): string[] {
 }
 
 export function CartographyResultCard({ result, layerId, onFocus }: Props) {
+  const t = useT();
   const spec = result?.legend_spec;
   const review = result?.cartographic_review;
   if (!spec && !review) return null;
@@ -89,7 +91,7 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-caption font-medium text-status-accent hover:bg-status-accent-soft transition-all cursor-pointer"
               >
                 <Target className="h-3.5 w-3.5" />
-                高亮此图层
+                {t('chat.carto.highlight')}
               </button>
             ) : (
               <button
@@ -97,10 +99,10 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
                 disabled
                 aria-disabled="true"
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-caption font-medium text-ink-disabled cursor-not-allowed"
-                title="无可聚焦图层"
+                title={t('chat.carto.noFocus')}
               >
                 <Target className="h-3.5 w-3.5" />
-                高亮此图层
+                {t('chat.carto.highlight')}
               </button>
             )}
           </div>
@@ -110,7 +112,7 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
       {review && (
         <div
           className="mt-2.5 border-t border-edge-subtle pt-2.5"
-          aria-label="制图质量"
+          aria-label={t('chat.carto.qualityAria')}
           role="status"
           aria-live="polite"
         >

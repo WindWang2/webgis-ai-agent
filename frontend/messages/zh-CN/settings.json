@@ -1,0 +1,72 @@
+{
+  "panel": {
+    "title": "Agent 控制中心",
+    "subtitle": "Agent Command Center",
+    "online": "系统在线",
+    "close": "关闭设置",
+    "navLabel": "设置分类"
+  },
+  "tabs": {
+    "llm": "大模型",
+    "skills": "Skills",
+    "rag": "知识库",
+    "map": "地图配置",
+    "system": "系统",
+    "account": "账户"
+  },
+  "system": {
+    "title": "系统设置",
+    "subtitle": "System Settings",
+    "backendApiUrl": "Backend API URL",
+    "backendApiReadonlyAria": "后端 API 地址（只读，由构建时环境变量决定）",
+    "backendApiHint": "由 NEXT_PUBLIC_API_URL 环境变量在构建时确定，运行时不可修改。",
+    "language": "Language / 语言",
+    "languageHint": "界面语言，切换立即生效并记住选择。"
+  },
+  "account": {
+    "title": "账户",
+    "logout": "退出登录",
+    "loggedIn": "已登录：数据源管理等需要认证的操作现在可用。",
+    "loginAria": "登录",
+    "username": "用户名 / 邮箱",
+    "password": "密码",
+    "provisioned": "账号由运维通过 {what} 创建（公开注册默认关闭）。 匿名使用不受影响；数据源管理等写操作需要登录。"
+  },
+  "llm": {
+    "title": "大模型配置",
+    "serverManaged": "LLM 配置由服务端统一管理，前端保存不会生效。如需修改，请使用管理员账号在服务端完成，之后点击「刷新配置」更新显示",
+    "loading": "加载中…",
+    "refresh": "刷新配置"
+  },
+  "map": {
+    "title": "地图配置"
+  },
+  "rag": {
+    "title": "知识库 · RAG",
+    "noDocs": "暂无已索引文档（{count} 篇）",
+    "total": "共 {total} 篇（仅显示前 {shown} 篇）",
+    "hintLocal": "仅供展示：当前后端使用内置本地向量库（FAISS），不依赖外部向量数据库。",
+    "hintDisplay": "仅供展示：保存不会改变后端检索行为。",
+    "docsNeedLogin": "需要登录后查看知识库文档",
+    "docsLoadFailed": "无法加载知识库文档",
+    "testNeedAdmin": "需要管理员权限才能测试连接",
+    "testFailed": "连接失败",
+    "testFailedDetail": "连接失败：{detail}",
+    "testRetrieval": "Test Retrieval · 测试检索",
+    "retrievalQueryAria": "测试检索查询",
+    "retrievalQueryPlaceholder": "输入查询，查看检索命中与分数分布…",
+    "retrieving": "检索中…",
+    "retrieve": "检索",
+    "retrievalFailed": "检索失败",
+    "noHits": "无命中 ——「{query}」在当前已索引文档中没有结果。",
+    "hitMeta": "分块 {id} · L2 {score}",
+    "scoreDistAria": "命中分数分布：{count} 条，L2 距离范围 {min} 到 {max}",
+    "scoreDistNote": "条长 ∝ L2 距离（相对最差命中的线性比例）。L2 距离越小越相关，非相似度百分比。",
+    "embeddingNote": "嵌入模型由后端固定（代码常量，无读写配置端点）；此处仅探测检索效果。",
+    "openPanel": "打开知识库面板",
+    "panelHint": "上传 / 删除文档与注入对话在面板中完成"
+  },
+  "skills": {
+    "uploaded": "已上传并热加载：{name}"
+  }
+}

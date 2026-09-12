@@ -234,7 +234,7 @@ class TestUploadEncoding:
             data={"session_id": "sess-enc-bad"},
         )
         assert r.status_code == 400
-        assert "编码" in r.json()["detail"]
+        assert "编码" in r.json()["message"]
 
 
 # ── Item 4：CRS 诚实 ─────────────────────────────────────────────────────

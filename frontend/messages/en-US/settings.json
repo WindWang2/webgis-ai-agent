@@ -1,0 +1,72 @@
+{
+  "panel": {
+    "title": "Agent Command Center",
+    "subtitle": "Agent Command Center",
+    "online": "System online",
+    "close": "Close settings",
+    "navLabel": "Settings sections"
+  },
+  "tabs": {
+    "llm": "Models",
+    "skills": "Skills",
+    "rag": "Knowledge base",
+    "map": "Map config",
+    "system": "System",
+    "account": "Account"
+  },
+  "system": {
+    "title": "System Settings",
+    "subtitle": "System Settings",
+    "backendApiUrl": "Backend API URL",
+    "backendApiReadonlyAria": "Backend API address (read-only, fixed at build time)",
+    "backendApiHint": "Determined by the NEXT_PUBLIC_API_URL environment variable at build time; not editable at runtime.",
+    "language": "Language / 语言",
+    "languageHint": "Interface language. Changes apply immediately and are remembered."
+  },
+  "account": {
+    "title": "Account",
+    "logout": "Sign out",
+    "loggedIn": "Signed in: authenticated operations such as data source management are now available.",
+    "loginAria": "Sign in",
+    "username": "Username / email",
+    "password": "Password",
+    "provisioned": "Accounts are provisioned by operators via {what} (public sign-up is off by default). Anonymous use is unaffected; write operations like data source management require signing in."
+  },
+  "llm": {
+    "title": "Model configuration",
+    "serverManaged": "LLM settings are managed centrally on the server; saving here has no effect. Ask an administrator to change them server-side, then click \"Refresh\" to update.",
+    "loading": "Loading…",
+    "refresh": "Refresh"
+  },
+  "map": {
+    "title": "Map configuration"
+  },
+  "rag": {
+    "title": "Knowledge base · RAG",
+    "noDocs": "No indexed documents ({count} total)",
+    "total": "{total} documents (showing first {shown})",
+    "hintLocal": "Display only: the backend currently uses a built-in local vector store (FAISS) and does not depend on an external vector database.",
+    "hintDisplay": "Display only: saving does not change backend retrieval behavior.",
+    "docsNeedLogin": "Sign in to view knowledge base documents",
+    "docsLoadFailed": "Failed to load knowledge base documents",
+    "testNeedAdmin": "Administrator permission is required to test the connection",
+    "testFailed": "Connection failed",
+    "testFailedDetail": "Connection failed: {detail}",
+    "testRetrieval": "Test Retrieval",
+    "retrievalQueryAria": "Test retrieval query",
+    "retrievalQueryPlaceholder": "Enter a query to inspect retrieval hits and the score distribution…",
+    "retrieving": "Retrieving…",
+    "retrieve": "Retrieve",
+    "retrievalFailed": "Retrieval failed",
+    "noHits": "No hits — \"{query}\" matched nothing in the currently indexed documents.",
+    "hitMeta": "Chunk {id} · L2 {score}",
+    "scoreDistAria": "Hit score distribution: {count} hits, L2 distance range {min} to {max}",
+    "scoreDistNote": "Bar length is proportional to L2 distance (linear relative to the worst hit). A smaller L2 distance means more relevant — not a similarity percentage.",
+    "embeddingNote": "The embedding model is fixed by the backend (a code constant with no read/write config endpoint); this only probes retrieval quality.",
+    "openPanel": "Open knowledge base panel",
+    "panelHint": "Upload / delete documents and chat injection are done in the panel"
+  },
+  "skills": {
+    "uploaded": "Uploaded and hot-loaded: {name}"
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "skipToMap": "跳到地图画布",
+  "mapCanvas": "地图画布",
+  "newSessionTitle": "新会话",
+  "newSessionConfirm": {
+    "title": "开始新对话？",
+    "description": "开始新对话将清空当前工作区（地图图层、对话记录）。历史会话仍可在右上角历史记录中找回。",
+    "confirm": "开始新对话"
+  },
+  "mapLoading": "地图加载中…",
+  "deleteSessionFailed": "删除会话失败：{detail}",
+  "deleteSessionFailedDetail": "删除会话失败",
+  "templateApplied": "模板已应用：{name}",
+  "topbar": {
+    "unnamed": "未命名",
+    "statusReady": "就绪",
+    "statusThinking": "感知中",
+    "statusActing": "执行中",
+    "statusDone": "完成",
+    "statusError": "异常",
+    "collapseSidebar": "收起侧栏",
+    "expandSidebar": "展开侧栏",
+    "sessionPrefix": "会话 / {name}",
+    "newSession": "新建会话",
+    "history": "历史记录",
+    "switchTo2D": "切换至 2D 视图",
+    "switchTo3D": "切换至 3D 视角",
+    "view3DTitle": "视角: 3D (点击切换 2D)",
+    "view2DTitle": "视角: 2D (点击切换 3D)",
+    "uiTweaks": "UI 调整",
+    "settings": "设置"
+  },
+  "tabs": {
+    "chat": "对话",
+    "project": "项目",
+    "data_sources": "数据",
+    "lakehouse": "数据湖",
+    "layers": "图层",
+    "components": "组件",
+    "analysis": "分析",
+    "tasks": "任务",
+    "results": "结果",
+    "export_layout": "制图",
+    "exports": "导出",
+    "market": "市场",
+    "modelops": "ModelOps"
+  },
+  "modes": {
+    "explore": "探索",
+    "analyze": "分析",
+    "compose": "制图"
+  },
+  "nav": {
+    "main": "主导航",
+    "workbenchMode": "工作台模式",
+    "modeSuffix": "{name}模式",
+    "agentRevertAria": "Agent 已切换工作台模式，点此返回你之前的工作台模式",
+    "agentRevertTitle": "Agent 已切换工作台模式 — 点此返回你之前的模式",
+    "workspacePanels": "工作区面板",
+    "templates": "模板库",
+    "collapsePanel": "折叠面板",
+    "expandPanel": "展开面板"
+  },
+  "panel": {
+    "title": {
+      "chat": "对话",
+      "project": "项目",
+      "data_sources": "数据",
+      "lakehouse": "数据湖",
+      "layers": "图层",
+      "components": "组件",
+      "analysis": "分析",
+      "tasks": "任务",
+      "results": "分析结果",
+      "export_layout": "制图工坊",
+      "market": "市场",
+      "modelops": "ModelOps"
+    },
+    "desc": {
+      "chat": "AI 地理智能体",
+      "project": "工作区 · 数据集 · 工作流",
+      "data_sources": "空间目录与数据源",
+      "lakehouse": "Cube 目录 · 查询 · STAC · 版本",
+      "layers": "可见性 · 样式 · 顺序",
+      "components": "地图组件 · 布局 · 图表",
+      "analysis": "空间分析工具",
+      "tasks": "后台作业中心",
+      "results": "结果工作台 · 输入 · 指标 · 输出",
+      "export_layout": "排版与导出",
+      "market": "扩展市场 · 包浏览 · 下载",
+      "modelops": "模型注册表 · 本会话运行"
+    },
+    "boundary": {
+      "chat": "对话",
+      "project": "项目",
+      "layers": "图层",
+      "components": "组件",
+      "analysis": "分析",
+      "data_sources": "数据",
+      "lakehouse": "数据湖",
+      "export_layout": "制图工坊",
+      "tasks": "任务",
+      "results": "结果"
+    },
+    "resizeAria": "调整面板宽度",
+    "resizeTitle": "拖拽调整面板宽度（双击复位）"
+  },
+  "sheet": {
+    "handleAria": "拖拽调整面板高度，下拉关闭",
+    "snapHalf": "半屏",
+    "snapFull": "全屏"
+  }
+}

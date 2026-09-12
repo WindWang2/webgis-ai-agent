@@ -21,6 +21,7 @@ import {
 } from '@/lib/agent-runtime';
 import { ChatAnnouncer } from '@/components/chat/chat-announcer';
 import { adaptChartData } from "@/lib/chart-adapter";
+import { useT } from '@/lib/i18n/useT';
 
 // Bundle-slimming: react-markdown (MiniMd) and recharts (ChartRenderer) load on
 // demand instead of riding the / first-load bundle; the tiny pure adapter stays
@@ -56,29 +57,30 @@ function ThinkingDots({ text }: { text: string }) {
 
 /* ─── Suggested prompts ─── */
 const SUGGESTED_PROMPTS = [
-  '分析该区域的 POI 分布',
-  '生成缓冲区分析',
-  '计算人口密度热力图',
-  '叠加分析两个图层',
+  'prompts.poi',
+  'prompts.buffer',
+  'prompts.heatmap',
+  'prompts.overlay',
 ];
 
 function SuggestedPromptButtons({ onSend }: { onSend: (text: string) => void }) {
+  const t = useT();
   return (
     <div className="px-3 pt-3 pb-2">
       {/* A: 快捷指令头是 14px uppercase 标签 —— 走 V4 的 title 档 + ink-muted，
           不再用裸 text-[14px] 与 --theme-* 双轨。 */}
-      <p className="text-title uppercase tracking-wider text-ink-muted mb-2">快捷指令</p>
+      <p className="text-title uppercase tracking-wider text-ink-muted mb-2">{t('sidebar.chat.quickCommands')}</p>
       <div className="flex flex-wrap gap-1.5">
         {SUGGESTED_PROMPTS.map((prompt) => (
           <button
-            key={prompt}
+            key={t(`sidebar.chat.${prompt}`)}
             onClick={() => onSend(prompt)}
             className="cursor-pointer rounded-md border bg-surface-raised px-2.5 py-1.5 text-body text-ink transition-colors"
             style={{ borderColor: 'var(--accent-border)' }}
             onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-hover)'; }}
             onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-raised)'; }}
           >
-            {prompt}
+            {t(`sidebar.chat.${prompt}`)}
           </button>
         ))}
       </div>
@@ -161,6 +163,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
   thinkingText: string;
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
 }) {
+const t = useT();
   const isUser = msg.role === 'user';
   const time = (mounted && msg.timestamp)
     ? new Date(msg.timestamp).toLocaleTimeString('zh-CN', {
@@ -179,7 +182,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
           {time && <span className="text-body text-ink-muted">{time}</span>}
           {/* 运行时 accent 直接作文字在暗色下只有 2.96–3.40:1 —— 角色标签改用
               主题校正后的 --agent-accent。 */}
-          <span className="text-title font-semibold text-agent-accent">你</span>
+          <span className="text-title font-semibold text-agent-accent">{t('sidebar.chat.you')}</span>
         </div>
         <div
           style={{
@@ -220,7 +223,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
             }}
           >
             <CheckCircle2 size={10} />
-            <span>感知图层已挂载：{msg.layerAdded}</span>
+            <span>{t('sidebar.chat.perceivedLayers')}{msg.layerAdded}</span>
             {msg.resultId && (
               <button
                 type="button"
@@ -230,9 +233,9 @@ const ChatMessageItem = memo(function ChatMessageItem({
                   s.setActiveLeftTab('results');
                 }}
                 className="ml-1 inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded-full bg-white/20 px-1.5 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-white/30"
-                aria-label="在结果工作台查看分析结果"
+                aria-label={t('sidebar.chat.viewResultAria')}
               >
-                查看结果
+                {t('sidebar.chat.viewResult')}
               </button>
             )}
           </div>
@@ -293,6 +296,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
 });
 
 export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, sessionId, agentRuntime, ownerToken, sessionPlan }: ChatTabProps) {
+const t = useT();
   const [configuredRuntime, setConfiguredRuntime] = useState<AgentRuntime | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -422,7 +426,7 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
               <Sparkles size={16} className="text-status-accent" />
             </span>
             <h3 className="mb-1 text-title font-semibold text-ink">GeoAgent</h3>
-            <p className="text-meta text-ink-muted">输入空间分析指令，开始智能 GIS 分析</p>
+            <p className="text-meta text-ink-muted">{t('sidebar.chat.composerPlaceholder')}</p>
           </div>
         )}
 
@@ -471,18 +475,18 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
               {/* #1000：失败后的恢复入口——一键重发最近一条 user 指令，
                   免去重新手打整条命令。 */}
               <div className="flex flex-wrap items-center gap-2">
-                <span className="min-w-0 flex-1">上一条指令执行失败，请调整后重试。</span>
+                <span className="min-w-0 flex-1">{t('sidebar.chat.lastFailed')}</span>
                 {lastUserMessage && (
                   <button
                     type="button"
                     onClick={handleRetry}
                     disabled={isBusy}
-                    aria-label="重试上一条指令"
+                    aria-label={t('sidebar.chat.retryAria')}
                     title={lastUserMessage}
                     className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm border border-status-critical-border bg-surface-raised px-1.5 py-0.5 text-micro font-medium text-status-critical transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <RotateCcw size={10} aria-hidden />
-                    重试上一条
+                    {t('sidebar.chat.retryLast')}
                   </button>
                 )}
               </div>
@@ -496,8 +500,8 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            aria-label="输入空间分析指令"
-            placeholder="输入空间分析指令..."
+            aria-label={t('sidebar.chat.inputAria')}
+            placeholder={t('sidebar.chat.inputPlaceholder')}
             rows={1}
             /* a11y 修复：这里原本是内联 `outline: 'none'`。内联样式压过
                globals.css 里那条 unlayered 的 *:focus-visible 规则，于是产品最
@@ -513,8 +517,8 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
             <button
               onClick={onCancel}
               disabled={!onCancel}
-              aria-label="停止生成"
-              title="停止生成"
+              aria-label={t('sidebar.chat.stopAria')}
+              title={t('sidebar.chat.stopAria')}
               className="flex h-control-md w-control-md shrink-0 cursor-pointer items-center justify-center rounded-sm border border-status-critical-border bg-status-critical-soft text-status-critical transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Square size={10} fill="currentColor" aria-hidden />
@@ -523,7 +527,7 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
             <button
               onClick={handleSend}
               disabled={!input.trim()}
-              aria-label="发送消息"
+              aria-label={t('sidebar.chat.sendAria')}
               className={`flex h-control-md w-control-md shrink-0 items-center justify-center rounded-sm transition-colors ${
                 input.trim()
                   ? 'cursor-pointer bg-status-accent text-ink-on-accent'
@@ -537,7 +541,7 @@ export function ChatTab({ messages, aiStatus, onSend, onCancel, onPlanAction, se
 
         {/* Hint */}
         <div className="px-panel pb-1.5">
-          <span className="text-micro text-ink-muted">Enter 发送 · Shift+Enter 换行</span>
+          <span className="text-micro text-ink-muted">{t('sidebar.chat.enterHint')}</span>
         </div>
       </div>
     </div>

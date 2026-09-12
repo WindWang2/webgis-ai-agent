@@ -85,9 +85,10 @@ class SpectralRasterEngine:
             arr, stats = await asyncio.to_thread(_compute_index)
 
             # Continuous color ramp specification for live UI map overlay.
-            # TODO: legend_spec is computed but not yet attached to the returned
-            # RasterAnalysisResult below — wire it through in a follow-up.
-            legend_spec = {  # noqa: F841 — kept so the intended overlay metadata is visible.
+            # V9 P7：真 TODO 清偿 —— legend_spec 已挂接到返回值对象
+            # （RasterAnalysisResult.legend_spec → to_llm_response），下游
+            # tool_dispatch_service / chat 白名单 / project_memory 直接消费。
+            legend_spec = {
                 "type": "continuous",
                 "palette": "Viridis",
                 "min": stats.get("min"),
@@ -98,6 +99,7 @@ class SpectralRasterEngine:
             return RasterAnalysisResult(
                 index_type=idx,
                 array=arr,
+                legend_spec=legend_spec,
                 # #381: stac_client 返回实际读取窗口的 WGS84 范围 (bbox ∩
                 # 影像足迹)，而不是用户请求的整个 bbox —— 统计与栅格叠加
                 # 必须配准到真实数据 footprint。

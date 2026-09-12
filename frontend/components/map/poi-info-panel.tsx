@@ -1,4 +1,5 @@
 'use client'
+import { useT } from '@/lib/i18n/useT';
 
 import React, { useMemo, useState, useCallback } from 'react'
 import { Copy, Check, Crosshair, X } from 'lucide-react'
@@ -76,6 +77,7 @@ export function PoiInfoPanel({
   onClose,
   onZoomToFeature,
 }: PoiInfoPanelProps) {
+  const t = useT();
   const [picked, setPicked] = useState<number>(features.length === 1 ? 0 : -1)
   const [dismissed, setDismissed] = useState(false)
   const [copiedCoords, setCopiedCoords] = useState(false)
@@ -209,8 +211,8 @@ export function PoiInfoPanel({
           {onZoomToFeature && resolvedCoordinates && (
             <button
               type="button"
-              aria-label="聚焦位置"
-              title="聚焦到要素所在位置"
+              aria-label={t('map.poi.focus')}
+              title={t('map.poi.focusTitle')}
               onClick={handleZoom}
               className="flex h-6 w-6 items-center justify-center rounded-xs text-ink-muted hover:bg-surface-hover hover:text-status-accent transition-colors"
             >
@@ -238,8 +240,8 @@ export function PoiInfoPanel({
           {/* Close button */}
           <button
             type="button"
-            aria-label="关闭"
-            title="关闭"
+            aria-label={t('common.close')}
+            title={t('common.close')}
             className="flex h-6 w-6 items-center justify-center rounded-xs text-ink-muted hover:bg-surface-hover hover:text-ink transition-colors"
             onClick={close}
           >
@@ -254,7 +256,7 @@ export function PoiInfoPanel({
           className="border-b border-edge-subtle bg-status-warning-soft px-2.5 py-1 font-sans text-micro text-status-warning"
           role="status"
         >
-          瓦片近似数据，正在核实…
+          {t('map.poi.tileApprox')}
         </div>
       )}
 
@@ -275,11 +277,11 @@ export function PoiInfoPanel({
                   type="button"
                   onClick={handleCopyCoords}
                   className="hover:text-ink transition-colors flex items-center gap-0.5"
-                  title="复制经纬度"
+                  title={t('map.poi.copyCoords')}
                 >
                   {copiedCoords ? (
                     <span className="text-status-accent flex items-center gap-0.5">
-                      <Check className="h-3 w-3" /> 已复制
+                      <Check className="h-3 w-3" /> {t('common.copied')}
                     </span>
                   ) : (
                     <Copy className="h-3 w-3" />
@@ -295,7 +297,7 @@ export function PoiInfoPanel({
               <div
                 key={k}
                 onClick={() => handleCopyProperty(k, v)}
-                title="点击复制属性值"
+                title={t('map.poi.copyAttrHint')}
                 className="group flex justify-between items-baseline gap-2.5 rounded px-1 py-0.5 hover:bg-surface-hover transition-colors cursor-pointer"
               >
                 <span className="shrink-0 font-mono text-micro text-ink-muted">{k}:</span>
@@ -311,11 +313,11 @@ export function PoiInfoPanel({
             ))}
             {Object.keys(current.props).length > MAX_ROWS && (
               <div className="text-micro italic text-ink-muted pt-0.5">
-                ...以及其他 {Object.keys(current.props).length - MAX_ROWS} 个属性
+                {t('map.poi.andMore', { count: Object.keys(current.props).length - MAX_ROWS })}
               </div>
             )}
             {Object.keys(current.props).length === 0 && (
-              <div className="text-micro italic text-ink-muted">（无属性）</div>
+              <div className="text-micro italic text-ink-muted">{t('map.poi.noAttrs')}</div>
             )}
           </div>
 
@@ -326,7 +328,7 @@ export function PoiInfoPanel({
               className="mt-2 flex w-full items-center gap-1 rounded-sm px-1.5 py-1 text-left text-micro font-medium text-ink-muted hover:bg-surface-hover hover:text-ink transition-colors"
               onClick={() => setPicked(-1)}
             >
-              ← 返回要素列表
+              {t('map.poi.backToList')}
             </button>
           )}
         </div>

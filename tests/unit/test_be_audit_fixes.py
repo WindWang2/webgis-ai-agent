@@ -214,8 +214,8 @@ async def test_be_audit_06_templates_and_config_sanitized():
             # Test SSRF validation failure in config route does not leak raw exception
             res = await ac.post("/api/v1/config/llm", json={"base_url": "http://127.0.0.1"}, headers=admin_headers)
             assert res.status_code == 400
-            assert "127.0.0.1" not in res.json()["detail"]
-            assert "base_url 校验失败" in res.json()["detail"]
+            assert "127.0.0.1" not in res.json()["message"]
+            assert "base_url 校验失败" in res.json()["message"]
     finally:
         chat_routes.engine = None
         chat_routes.registry = None

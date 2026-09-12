@@ -6,6 +6,7 @@ import { resolveVariant } from './helpers';
 import { FloatingChrome, usePlacementPatchedComponent } from './floating-chrome';
 import { uncertaintyKindLabel } from '@/lib/map-kit/disclosure-labels';
 import type { RendererContext } from './types';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * uncertainty_panel 渲染器（VNext §5）：options.uncertainty =
@@ -50,6 +51,7 @@ function parseUncertainty(raw: unknown): UncertaintyPayload | null {
 }
 
 function UncertaintyPanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
+const t = useT();
   const patched = usePlacementPatchedComponent(component);
   const variant = resolveVariant(patched, 'default') === 'compact' ? 'compact' : 'default';
   const uncertainty = parseUncertainty(patched.options?.['uncertainty']);
@@ -57,7 +59,7 @@ function UncertaintyPanelView({ component, ctx }: { component: MapSpecComponent;
   return (
     <FloatingChrome
       component={patched}
-      title="不确定性"
+      title={t('map.uncertainty.title')}
       topSlotIndexes={ctx?.topSlotIndexes}
       bottomSlotIndexes={ctx?.bottomSlotIndexes}
       testId="spec-chrome-uncertainty-panel"
@@ -97,7 +99,7 @@ function UncertaintyPanelView({ component, ctx }: { component: MapSpecComponent;
           data-state="empty"
           role="status"
         >
-          无不确定性披露
+          {t('map.uncertainty.none')}
         </div>
       )}
     </FloatingChrome>

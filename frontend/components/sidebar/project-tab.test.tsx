@@ -32,6 +32,30 @@ vi.mock('@/lib/auth/tokenStore', () => ({
   subscribeAuth: () => () => {},
 }));
 
+// ADR-0143：project-tab 现挂载资产区（use-project-assets → project-assets
+// client）。补齐模块 mock，默认空页使既有用例不受资产区影响。
+const assetsApi = vi.hoisted(() => ({
+  attachDataset: vi.fn(),
+  auditSpatialQuality: vi.fn(),
+  cloneArtifact: vi.fn(),
+  deleteWorkspaceSnapshot: vi.fn(),
+  detachDataset: vi.fn(),
+  executeDataGc: vi.fn(),
+  fetchCatalogItemPreview: vi.fn(),
+  fetchDataUsage: vi.fn(),
+  fetchProjectArtifacts: vi.fn(),
+  fetchProjectDatasetPage: vi.fn(),
+  inspectWorkspaceSnapshot: vi.fn(),
+  listWorkspaceSnapshots: vi.fn(),
+  pinArtifact: vi.fn(),
+  planDataGc: vi.fn(),
+  repairQuality: vi.fn(),
+  restoreWorkspaceSnapshot: vi.fn(),
+  saveWorkspaceSnapshot: vi.fn(),
+  unpinArtifact: vi.fn(),
+}));
+vi.mock('@/lib/api/project-assets', () => assetsApi);
+
 import { ProjectTab } from './project-tab';
 import { ApiError } from '@/lib/api/transport';
 import type { Project, WorkflowSummary } from '@/lib/api/project';
@@ -106,6 +130,18 @@ beforeEach(() => {
   api.fetchWorkflowRuns.mockResolvedValue(page([]));
   api.fetchWorkflowRevisions.mockResolvedValue(page([]));
   api.fetchWorkflowRun.mockResolvedValue(makeRun());
+  assetsApi.fetchProjectDatasetPage.mockResolvedValue(page([]));
+  assetsApi.fetchProjectArtifacts.mockResolvedValue(page([]));
+  assetsApi.listWorkspaceSnapshots.mockResolvedValue({
+    project_id: 'p1', count: 0, bounded: 50, items: [],
+  });
+  assetsApi.fetchDataUsage.mockResolvedValue({
+    project_id: 'p1',
+    usage: { bytes: 0, artifact_count: 0, revision_bytes: 0 },
+    limits: { max_bytes: 1, max_artifact_count: 1, max_revision_bytes_per_artifact: 1 },
+    quota: { allowed: true, reason: null },
+    retention: { policy: {}, upcoming_candidates: 0, upcoming_candidate_blobs: 0 },
+  });
 });
 
 describe('ProjectTab — 加载 / 错误 / 空态', () => {
@@ -217,6 +253,20 @@ describe('ProjectTab — run inspector / recovery', () => {
   }
 
   it('shows unknown CRS instead of fabricating EPSG:4326', async () => {
+    // 数据集面（ADR-0143 DatasetManager）与 run 产物两处都必须如实显示未知 CRS
+    assetsApi.fetchProjectDatasetPage.mockResolvedValue(
+      page([
+        {
+          id: 'ds1',
+          project_id: 'p1',
+          name: '某数据集',
+          source_type: 'external',
+          crs: null,
+          quality_status: 'unchecked',
+          created_at: '2026-08-12T00:00:00Z',
+        },
+      ]),
+    );
     render(<ProjectTab />);
     expect(await screen.findByText(/未知/)).toBeInTheDocument();
     expect(screen.queryByText(/EPSG:4326/)).not.toBeInTheDocument();

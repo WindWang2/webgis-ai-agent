@@ -94,8 +94,9 @@ export interface CausalEntry {
 }
 
 // V9（ADR-0145）：'market' / 'modelops' 为智能资产面板追加的 rail tab
-// （append-only，见 nav-rail RAIL_GROUPS 末组）。
-export type LeftTab = 'chat' | 'project' | 'layers' | 'components' | 'analysis' | 'exports' | 'export_layout' | 'data_sources' | 'tasks' | 'results' | 'market' | 'modelops';
+// （append-only，见 nav-rail RAIL_GROUPS 末组）；'lakehouse' 来自 lakehouse-ui
+// （ADR-0141），与二者并集共存。
+export type LeftTab = 'chat' | 'project' | 'layers' | 'components' | 'analysis' | 'exports' | 'export_layout' | 'data_sources' | 'tasks' | 'results' | 'lakehouse' | 'market' | 'modelops';
 export type SettingsTab = 'llm' | 'skills' | 'rag' | 'map' | 'system' | 'account';
 
 // Workspace V2（Goal C5）：dock 基座 —— 工作区 UI 状态，与语义组件状态分离。

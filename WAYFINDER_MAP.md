@@ -35,8 +35,8 @@ LLM API
 
 - [x] 完善 Pi RPC bridge（streaming prompt、abort、state 查询）
 - [x] 将 GIS 工具注入 Pi 的 customTools 机制
-- [ ] 端到端测试：用真实 LLM 验证 Pi bridge
-- [ ] 性能基准：对比 Pi vs ChatEngine
+- [x] 端到端测试：用真实 LLM 验证 Pi bridge —— 三条冒烟旅程落库（tests/integration/test_pi_real_llm_e2e.py，heavy + PI_REAL_E2E=1 + 真实 key 门控；quality-e2e.yml workflow_dispatch 可跑）〔quality-e2e-v9〕
+- [x] 性能基准：对比 Pi vs ChatEngine —— 基准 harness + 报告框架落库（scripts/perf/pi_vs_chatengine.py + docs/dev/pi-vs-chatengine-benchmark.md；数值产出需有 key 环境，复跑方式见文档）〔quality-e2e-v9〕
 
 - 前端 UI 重写 (仅 backend agent 系统)
 - 新的 LLM provider 接入 (保持现有 OpenAI-compatible 接口)

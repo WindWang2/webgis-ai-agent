@@ -27,6 +27,7 @@ import {
 } from '@/lib/selection/viewport-context';
 import { registerChartRenderState, unregisterChartRenderState } from '@/lib/map-components/chart-render-registry';
 import { commitComponentPatch } from '@/lib/mapspec/component-mutation';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * chart_panel 渲染器（D2）：MapSpec 图表面板。
@@ -162,6 +163,7 @@ function refChartState(chartRef: string, fetched: ChartData | null | undefined):
 }
 
 function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
+  const t = useT();
   const patched = usePlacementPatchedComponent(component);
   const variant = resolvePanelVariant(patched);
   const kindPreset = resolveKindPreset(patched);
@@ -338,7 +340,7 @@ function ChartPanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
               type="button"
               aria-pressed={extentLinked}
               data-testid="chart-extent-linked"
-              title="地图视野联动：图表只统计当前视野内的要素"
+              title={t('map.chartPanel.viewportLinked')}
               onClick={toggleExtentLinked}
               className="mt-1 rounded-xs px-1 py-0.5 text-micro text-map-chrome-ink-muted transition-colors hover:bg-surface-hover hover:text-map-chrome-ink"
             >

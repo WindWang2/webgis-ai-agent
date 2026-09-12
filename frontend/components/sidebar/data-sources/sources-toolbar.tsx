@@ -1,6 +1,7 @@
 'use client';
 
 import { Plus } from 'lucide-react';
+import { useT } from '@/lib/i18n/useT';
 
 export interface SourcesToolbarProps {
   showAddForm: boolean;
@@ -9,9 +10,10 @@ export interface SourcesToolbarProps {
 
 /** 数据源工具条：面板标题 + 添加/取消按钮。 */
 export function SourcesToolbar({ showAddForm, onToggleAddForm }: SourcesToolbarProps) {
+const t = useT();
   return (
     <div className="flex shrink-0 items-center justify-between border-b border-edge-subtle px-panel py-2">
-      <span className="text-caption font-medium text-ink-muted">已注册数据源</span>
+      <span className="text-caption font-medium text-ink-muted">{t('sidebar.ds.registeredSources')}</span>
       <button
         type="button"
         onClick={onToggleAddForm}

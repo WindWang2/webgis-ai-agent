@@ -1,0 +1,59 @@
+# V9 契约基石（ADR-0138）：contract lane
+# 与 production.yml 主 lane 解耦 —— 本文件独立，主 lane 零改动。
+# 覆盖面：response_model 覆盖率门禁 / 字段级契约闸 / api-docs drift /
+# schemathesis 模糊 shard / OpenAPI 快照（含 additive 刷新纪律）。
+name: contract
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements-dev.txt -r requirements.txt schemathesis httpx
+
+      - name: OpenAPI snapshot (no breaking changes, additive needs explicit refresh)
+        run: pytest tests/quality/test_api_compatibility.py -q
+        env:
+          JWT_SECRET_KEY: ci-contract-lane-secret
+
+      - name: Field-level contract gate (#1217)
+        run: pytest tests/unit/api_contract/test_field_contract.py -q
+        env:
+          JWT_SECRET_KEY: ci-contract-lane-secret
+
+      - name: response_model coverage + schema gates
+        run: pytest tests/unit/api_contract -q --ignore=tests/unit/api_contract/test_schemathesis.py
+        env:
+          JWT_SECRET_KEY: ci-contract-lane-secret
+
+      - name: api-docs drift gate
+        run: pytest tests/test_api_docs_drift.py -q
+        env:
+          JWT_SECRET_KEY: ci-contract-lane-secret
+
+      - name: Schemathesis fuzz shard (max_examples=30, allowlisted paths)
+        run: pytest tests/unit/api_contract/test_schemathesis.py -q
+        env:
+          JWT_SECRET_KEY: ci-contract-lane-secret
+
+      - name: Upload field snapshot on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-contract-fields-snapshot
+          path: tests/quality/snapshots/api_contract_fields.json
+          if-no-files-found: ignore

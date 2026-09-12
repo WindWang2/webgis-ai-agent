@@ -3,9 +3,8 @@ Project Workspace, Persistent Workflow, Spatial Data Quality & Lineage API Endpo
 """
 import asyncio
 import logging
-from typing import Dict, Any, List, Literal, Optional
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -34,6 +33,15 @@ from app.schemas.project_schema import (
     DataGcExecuteRequest,
     WorkspaceSnapshotSummary, WorkspaceSnapshotListResponse,
     WorkspaceSnapshotSaveResponse, WorkspaceSnapshotDeleteResponse,
+    DatasetDetachResponse, MapProductDiffResponse, MapProductOpenResponse,
+    MapProductRestoreRequest, MapProductRestoreResponse, MapProductForkRequest,
+    MapProductMergeRequest, MapProductRerunResponse, QualityAuditResponse,
+    RepairResponse, ArtifactLineageResponse, DataUsageResponse,
+    DataGcPlanResponse, DataGcExecuteResponse, CartoMemoryListResponse,
+    CartoFactActionResponse, WorkspaceSnapshotInspectResponse,
+    WorkspaceSnapshotRestoreRequest, WorkspaceSnapshotRestoreResponse,
+    WorkspaceSnapshotCloneRequest, WorkspaceSnapshotCloneResponse,
+    WorkspaceSnapshotSaveRequest, WorkspaceDescribeResponse,
 )
 from app.schemas.pagination import Page, clamp_pagination
 
@@ -176,7 +184,10 @@ def attach_dataset(
     return dataset
 
 
-@router.delete("/{project_id}/datasets/{dataset_id}")
+@router.delete(
+    "/{project_id}/datasets/{dataset_id}",
+    response_model=DatasetDetachResponse,
+)
 def detach_dataset(
     project_id: str,
     dataset_id: str,
@@ -187,7 +198,7 @@ def detach_dataset(
     success = ProjectService.detach_dataset(db=db, project_id=project_id, dataset_id=dataset_id, user_id=user_id, org_id=org_id)
     if not success:
         raise HTTPException(status_code=404, detail="Dataset or Project not found")
-    return {"status": "success", "message": f"Dataset {dataset_id} detached"}
+    return DatasetDetachResponse(status="success", message=f"Dataset {dataset_id} detached")
 
 
 @router.get("/{project_id}/datasets", response_model=Page[ProjectDatasetSummary])
@@ -395,8 +406,10 @@ def list_workflow_revisions(
                 has_more=(offset + limit) < total)
 
 
-@router.get("/{project_id}/workflows/{workflow_id}/revisions/{revision_id}",
-            response_model=WorkflowRevisionResponse)
+@router.get(
+    "/{project_id}/workflows/{workflow_id}/revisions/{revision_id}",
+    response_model=WorkflowRevisionResponse,
+)
 def get_workflow_revision(
     project_id: str,
     workflow_id: str,
@@ -687,7 +700,10 @@ def get_map_product_version(
     return row
 
 
-@router.get("/{project_id}/map-products/{from_version_no}/diff/{to_version_no}")
+@router.get(
+    "/{project_id}/map-products/{from_version_no}/diff/{to_version_no}",
+    response_model=MapProductDiffResponse,
+)
 def diff_map_product_versions(
     project_id: str,
     from_version_no: int,
@@ -757,7 +773,7 @@ def record_map_product_version(
         raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
 
 
-@router.get("/{project_id}/map-products/{version_no}/open")
+@router.get("/{project_id}/map-products/{version_no}/open", response_model=MapProductOpenResponse)
 def open_map_product_version(
     project_id: str,
     version_no: int,
@@ -781,14 +797,10 @@ def open_map_product_version(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-class MapProductRestoreRequest(BaseModel):
-    """style-only 恢复表达面；full 恢复 = 重放绑定 run（新鲜产物 + 输入
-    漂移披露）—— 不伪装原地还原。"""
-    mode: Literal["style_only", "full"] = "style_only"
-    session_id: str = Field(min_length=1, max_length=128)
-
-
-@router.post("/{project_id}/map-products/{version_no}/restore")
+@router.post(
+    "/{project_id}/map-products/{version_no}/restore",
+    response_model=MapProductRestoreResponse,
+)
 async def restore_map_product_version(
     project_id: str,
     version_no: int,
@@ -876,10 +888,6 @@ async def restore_map_product_version(
             "mode": "full", "run_id": run.id}
 
 
-class MapProductForkRequest(BaseModel):
-    label: Optional[str] = Field(default=None, max_length=200)
-
-
 @router.post("/{project_id}/map-products/{version_no}/fork", response_model=MapProductVersionResponse, status_code=201)
 def fork_map_product_version(
     project_id: str,
@@ -908,12 +916,6 @@ def fork_map_product_version(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-class MapProductMergeRequest(BaseModel):
-    from_version_no: int = Field(ge=1)
-    to_version_no: int = Field(ge=1)
-    label: Optional[str] = Field(default=None, max_length=200)
-
-
 @router.post("/{project_id}/map-products/merge", response_model=MapProductVersionResponse, status_code=201)
 def merge_map_product_versions(
     project_id: str,
@@ -938,7 +940,7 @@ def merge_map_product_versions(
         raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
 
 
-@router.post("/{project_id}/map-products/{version_no}/rerun")
+@router.post("/{project_id}/map-products/{version_no}/rerun", response_model=MapProductRerunResponse)
 async def rerun_map_product_version(
     project_id: str,
     version_no: int,
@@ -1029,7 +1031,7 @@ async def rerun_map_product_version(
             "from_step": from_step, "source_version_no": version_no}
 
 
-@router.post("/{project_id}/quality-audit")
+@router.post("/{project_id}/quality-audit", response_model=QualityAuditResponse)
 def audit_spatial_quality(
     project_id: str,
     payload: Dict[str, Any],
@@ -1050,7 +1052,7 @@ def audit_spatial_quality(
     return report.to_dict()
 
 
-@router.post("/{project_id}/repair")
+@router.post("/{project_id}/repair", response_model=RepairResponse)
 def repair_spatial_dataset(
     project_id: str,
     payload: Dict[str, Any],
@@ -1174,7 +1176,7 @@ def repair_spatial_dataset(
     }
 
 
-@router.get("/artifacts/{artifact_id}/lineage")
+@router.get("/artifacts/{artifact_id}/lineage", response_model=ArtifactLineageResponse)
 def get_artifact_lineage(
     artifact_id: str,
     db: Session = Depends(get_db),
@@ -1319,7 +1321,7 @@ def _bounded_items(items: List[Any], bound: int = 64) -> List[Any]:
     return list(items)[:bound]
 
 
-@router.get("/{project_id}/data-usage")
+@router.get("/{project_id}/data-usage", response_model=DataUsageResponse)
 def get_project_data_usage(
     project_id: str,
     db: Session = Depends(get_db),
@@ -1373,7 +1375,7 @@ def get_project_data_usage(
     }
 
 
-@router.post("/{project_id}/data-gc/plan")
+@router.post("/{project_id}/data-gc/plan", response_model=DataGcPlanResponse)
 def plan_project_data_gc(
     project_id: str,
     db: Session = Depends(get_db),
@@ -1459,7 +1461,7 @@ def plan_project_data_gc(
     }
 
 
-@router.post("/{project_id}/data-gc/execute")
+@router.post("/{project_id}/data-gc/execute", response_model=DataGcExecuteResponse)
 def execute_project_data_gc(
     project_id: str,
     data: DataGcExecuteRequest,
@@ -1553,7 +1555,7 @@ def _carto_fact_row(fact) -> Dict[str, Any]:
     }
 
 
-@router.get("/{project_id}/carto-memory")
+@router.get("/{project_id}/carto-memory", response_model=CartoMemoryListResponse)
 def list_carto_memory(
     project_id: str,
     db: Session = Depends(get_db),
@@ -1579,7 +1581,7 @@ def list_carto_memory(
     }
 
 
-@router.delete("/{project_id}/carto-memory/{fact_id}")
+@router.delete("/{project_id}/carto-memory/{fact_id}", response_model=CartoFactActionResponse)
 def retire_carto_fact(
     project_id: str,
     fact_id: str,
@@ -1602,7 +1604,7 @@ def retire_carto_fact(
     return {"status": "retired", "fact": _carto_fact_row(fact)}
 
 
-@router.post("/{project_id}/carto-memory/{fact_id}/activate")
+@router.post("/{project_id}/carto-memory/{fact_id}/activate", response_model=CartoFactActionResponse)
 def activate_carto_fact(
     project_id: str,
     fact_id: str,
@@ -1634,22 +1636,6 @@ def activate_carto_fact(
 # 路由强制认证（写路径 401 / 越权一律 404 不泄露存在性）+ 项目鉴权
 # （get_project_with_auth）+ 会话所有权（SEC-08 同款 _verify_session_access
 # —— session_id 是跨租户读写原语，照 map-product lifecycle 先例守卫）。
-
-
-class WorkspaceSnapshotSaveRequest(BaseModel):
-    session_id: str = Field(min_length=1, max_length=128)
-    label: str = Field(default="", max_length=96)
-    materialize: Literal["none", "claimed", "all"] = "none"
-
-
-class WorkspaceSnapshotRestoreRequest(BaseModel):
-    session_id: str = Field(min_length=1, max_length=128)
-    mode: Literal["verify", "register"] = "verify"
-
-
-class WorkspaceSnapshotCloneRequest(BaseModel):
-    source_session_id: str = Field(min_length=1, max_length=128)
-    target_session_id: str = Field(min_length=1, max_length=128)
 
 
 @router.post("/{project_id}/workspace/snapshots", response_model=WorkspaceSnapshotSaveResponse)
@@ -1724,7 +1710,10 @@ async def list_workspace_snapshots(
     )
 
 
-@router.get("/{project_id}/workspace/snapshots/{snapshot_id}")
+@router.get(
+    "/{project_id}/workspace/snapshots/{snapshot_id}",
+    response_model=WorkspaceSnapshotInspectResponse,
+)
 async def inspect_workspace_snapshot(
     project_id: str,
     snapshot_id: str,
@@ -1752,7 +1741,10 @@ async def inspect_workspace_snapshot(
     return report.to_dict()
 
 
-@router.post("/{project_id}/workspace/snapshots/{snapshot_id}/restore")
+@router.post(
+    "/{project_id}/workspace/snapshots/{snapshot_id}/restore",
+    response_model=WorkspaceSnapshotRestoreResponse,
+)
 async def restore_workspace_snapshot(
     project_id: str,
     snapshot_id: str,
@@ -1785,7 +1777,10 @@ async def restore_workspace_snapshot(
     return result
 
 
-@router.post("/{project_id}/workspace/snapshots/{snapshot_id}/clone")
+@router.post(
+    "/{project_id}/workspace/snapshots/{snapshot_id}/clone",
+    response_model=WorkspaceSnapshotCloneResponse,
+)
 async def clone_workspace_snapshot(
     project_id: str,
     snapshot_id: str,
@@ -1846,7 +1841,7 @@ async def delete_workspace_snapshot(
     )
 
 
-@router.get("/{project_id}/workspace")
+@router.get("/{project_id}/workspace", response_model=WorkspaceDescribeResponse)
 async def describe_workspace(
     project_id: str,
     session_id: Optional[str] = Query(None, max_length=128),

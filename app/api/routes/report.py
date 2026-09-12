@@ -9,12 +9,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user, get_owner_token, verify_session_owner
 from app.core.database import get_async_db
+from app.schemas.report_schema import (  # noqa: F401 - 模块属性保持（test _mod.X 引用）
+    GenerateReportRequest,    ReportListResponse,    ShareRequest,
+)
 from app.models.api_response import ApiResponse, ErrCode
 from app.models.report import Report
 from app.services.report_service import ReportService, REPORT_DIR, serialize_report as _serialize_report, file_ext as _file_ext
@@ -31,26 +33,11 @@ ALLOWED_FORMATS = {"pdf", "html", "markdown", "md"}
 # ── Schemas ──────────────────────────────────────────────────────────
 
 
-class GenerateReportRequest(BaseModel):
-    session_id: str
-    format: str = "pdf"
-    title: Optional[str] = None
-
-
 def _validate_file_path(file_path: str, allowed_dir: str) -> bool:
     """Ensure file_path resolves within allowed_dir (prevents traversal)."""
     resolved = os.path.realpath(file_path)
     root = os.path.realpath(allowed_dir)
     return resolved == root or resolved.startswith(root + os.sep)
-
-
-class ReportListResponse(BaseModel):
-    total: int
-    items: list[dict]
-
-
-class ShareRequest(BaseModel):
-    ttl_days: int = 7
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -101,7 +88,6 @@ async def create_report(
         )
 
     return ApiResponse.ok(data=res.report_data, message=res.message)
-
 
 
 @router.get("", response_model=ApiResponse)

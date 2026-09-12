@@ -5,6 +5,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { STitle, SField, SButton } from '@/components/shared/section-title';
 import { apiFetch, isApiError, describeApiError } from '@/lib/api/transport';
 import { searchKnowledge, type KnowledgeSearchHit } from '@/lib/api/knowledge';
+import { useT } from '@/lib/i18n/useT';
 
 interface BackendDoc {
   id: string;
@@ -31,12 +32,13 @@ type TestRetrievalState =
  * 不归一化成"相似度百分比"（诚实呈现：L2 越小越相关，条越短越好）。
  */
 function ScoreDistribution({ hits }: { hits: KnowledgeSearchHit[] }) {
+  const t = useT();
   const max = Math.max(...hits.map((h) => h.score));
   const min = Math.min(...hits.map((h) => h.score));
   return (
     <div
       role="img"
-      aria-label={`命中分数分布：${hits.length} 条，L2 距离范围 ${min.toFixed(3)} 到 ${max.toFixed(3)}`}
+      aria-label={t('settings.rag.scoreDistAria', { count: hits.length, min: min.toFixed(3), max: max.toFixed(3) })}
       data-state="score-distribution"
       className="flex flex-col gap-1"
     >
@@ -51,7 +53,7 @@ function ScoreDistribution({ hits }: { hits: KnowledgeSearchHit[] }) {
         </div>
       ))}
       <p className="mt-1 text-meta text-ink-muted">
-        条长 ∝ L2 距离（相对最差命中的线性比例）。L2 距离越小越相关，非相似度百分比。
+        {t('settings.rag.scoreDistNote')}
       </p>
     </div>
   );
@@ -76,6 +78,7 @@ function ScoreDistribution({ hits }: { hits: KnowledgeSearchHit[] }) {
  * 模型名 —— 它是后端代码常量，UI 显示会漂移）。
  */
 export function RagConfig() {
+  const t = useT();
   const ragConfig = useHudStore((s) => s.ragConfig);
   const setRagConfig = useHudStore((s) => s.setRagConfig);
   const setRagPanelOpen = useHudStore((s) => s.setRagPanelOpen);
@@ -122,8 +125,8 @@ export function RagConfig() {
         setDocs({
           status: 'error',
           message: isApiError(err) && err.status === 401
-            ? '需要登录后查看知识库文档'
-            : describeApiError(err, '无法加载知识库文档'),
+            ? t('settings.rag.docsNeedLogin')
+            : describeApiError(err, t('settings.rag.docsLoadFailed')),
         });
       }
     })();
@@ -168,8 +171,8 @@ export function RagConfig() {
       setTestResult('error');
       setTestDetail(
         isApiError(err) && err.status === 403
-          ? '需要管理员权限才能测试连接'
-          : describeApiError(err, '连接失败')
+          ? t('settings.rag.testNeedAdmin')
+          : describeApiError(err, t('settings.rag.testFailed'))
       );
     } finally {
       setTesting(false);
@@ -187,14 +190,14 @@ export function RagConfig() {
     } catch (err) {
       setRetrieval({
         status: 'error',
-        message: err instanceof Error ? err.message : '检索失败',
+        message: err instanceof Error ? err.message : t('settings.rag.retrievalFailed'),
       });
     }
-  }, [retrievalQuery, retrieval.status]);
+  }, [retrievalQuery, retrieval.status, t]);
 
   return (
     <div className="flex flex-col gap-5">
-      <STitle title="知识库 · RAG" sub="Retrieval-Augmented Generation" />
+      <STitle title={t('settings.rag.title')} sub="Retrieval-Augmented Generation" />
 
       {/* Indexed documents — 真实目录（原 Spatial/Semantic Index 展示的是
           零生产者的空数组假状态，已移除，改为后端真实列表） */}
@@ -212,7 +215,7 @@ export function RagConfig() {
         )}
         {docs.status === 'ready' && docs.items.length === 0 && (
           <div className="text-body text-ink-muted italic py-2">
-            暂无已索引文档（{docs.total} 篇）
+            {t('settings.rag.noDocs', { count: docs.total })}
           </div>
         )}
         {docs.status === 'ready' && docs.items.length > 0 && (
@@ -243,7 +246,7 @@ export function RagConfig() {
             ))}
             {docs.total > docs.items.length && (
               <div className="text-body text-ink-muted italic pt-1">
-                共 {docs.total} 篇（仅显示前 {docs.items.length} 篇）
+                {t('settings.rag.total', { total: docs.total, shown: docs.items.length })}
               </div>
             )}
           </div>
@@ -253,7 +256,7 @@ export function RagConfig() {
       {/* Test Retrieval — 真实语义检索 + 命中分数分布（V9） */}
       <div>
         <div className="text-heading uppercase tracking-wider text-ink-muted font-semibold mb-3">
-          Test Retrieval · 测试检索
+          {t('settings.rag.testRetrieval')}
         </div>
         <div className="flex flex-col gap-3 rounded-md border border-edge-subtle bg-surface-raised px-4 py-3">
           <form
@@ -267,8 +270,8 @@ export function RagConfig() {
             <input
               value={retrievalQuery}
               onChange={(e) => setRetrievalQuery(e.target.value)}
-              aria-label="测试检索查询"
-              placeholder="输入查询，查看检索命中与分数分布…"
+              aria-label={t('settings.rag.retrievalQueryAria')}
+              placeholder={t('settings.rag.retrievalQueryPlaceholder')}
               className="h-7 flex-1 rounded-sm border border-edge-subtle bg-surface-sunken px-2 text-body text-ink placeholder:text-ink-muted focus:outline-none focus:ring-1 focus:ring-status-accent"
             />
             <button
@@ -277,13 +280,13 @@ export function RagConfig() {
               aria-busy={retrieval.status === 'loading'}
               className="inline-flex items-center gap-1.5 rounded-sm border border-edge-subtle bg-surface-sunken px-3 py-1 text-body font-medium text-ink-secondary transition-all hover:bg-surface-hover disabled:opacity-50"
             >
-              {retrieval.status === 'loading' ? '检索中…' : '检索'}
+              {retrieval.status === 'loading' ? t('settings.rag.retrieving') : t('settings.rag.retrieve')}
             </button>
           </form>
 
           {retrieval.status === 'done' && retrieval.hits.length === 0 && (
             <p className="text-body text-ink-muted italic">
-              无命中 ——「{retrieval.query}」在当前已索引文档中没有结果。
+              {t('settings.rag.noHits', { query: retrieval.query })}
             </p>
           )}
           {retrieval.status === 'error' && (
@@ -304,7 +307,7 @@ export function RagConfig() {
                       <span className="font-semibold text-status-accent">[{i + 1}]</span>
                       <span className="truncate font-medium text-ink">{hit.title}</span>
                       <span className="ml-auto shrink-0 text-ink-muted">
-                        分块 {hit.id} · L2 {hit.score.toFixed(4)}
+                        {t('settings.rag.hitMeta', { id: hit.id, score: hit.score.toFixed(4) })}
                       </span>
                     </div>
                     <p className="mt-0.5 line-clamp-2 text-meta text-ink-muted">{hit.content}</p>
@@ -314,7 +317,7 @@ export function RagConfig() {
             </div>
           )}
           <p className="text-meta text-ink-muted">
-            嵌入模型由后端固定（代码常量，无读写配置端点）；此处仅探测检索效果。
+            {t('settings.rag.embeddingNote')}
           </p>
         </div>
       </div>
@@ -326,9 +329,9 @@ export function RagConfig() {
           onClick={() => setRagPanelOpen(true)}
           className="inline-flex items-center gap-1.5 rounded-sm border border-edge-subtle bg-surface-sunken px-3 py-1.5 text-body font-medium text-ink-secondary transition-all hover:bg-surface-hover"
         >
-          打开知识库面板
+          {t('settings.rag.openPanel')}
         </button>
-        <span className="text-meta text-ink-muted">上传 / 删除文档与注入对话在面板中完成</span>
+        <span className="text-meta text-ink-muted">{t('settings.rag.panelHint')}</span>
       </div>
 
       {/* Vector DB connection */}
@@ -342,14 +345,14 @@ export function RagConfig() {
             value={vectorDb}
             onChange={setVectorDb}
             placeholder="http://localhost:19530"
-            hint="仅供展示：当前后端使用内置本地向量库（FAISS），不依赖外部向量数据库。"
+            hint={t('settings.rag.hintLocal')}
           />
           <SField
             label="Collection"
             value={collection}
             onChange={setCollection}
             placeholder="geoagent"
-            hint="仅供展示：保存不会改变后端检索行为。"
+            hint={t('settings.rag.hintDisplay')}
           />
           <div className="flex items-center gap-3">
             <button
@@ -375,7 +378,7 @@ export function RagConfig() {
           )}
           {testResult === 'error' && (
             <div className="text-body font-medium text-status-critical">
-              {testDetail ? `连接失败：${testDetail}` : '连接失败'}
+              {testDetail ? t('settings.rag.testFailedDetail', { detail: testDetail }) : t('settings.rag.testFailed')}
             </div>
           )}
         </div>

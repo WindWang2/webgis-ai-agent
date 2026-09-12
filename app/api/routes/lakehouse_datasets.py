@@ -104,6 +104,18 @@ async def create_lakehouse_dataset(
     from app.services.lakehouse import dataset_registry as reg
     from app.services.lakehouse.dataset_registry import DatasetRegistryError
 
+    # ADR-0139 P5：org 速率配额（存储配额在 commit_version 写字节处收口；
+    # 此处是注册面）。配额面不可用放行，越限 QUOTA → 429。
+    from app.services import org_quota
+
+    try:
+        await org_quota.enforce_for_principal(
+            _user, include_concurrency=False)
+    except org_quota.QuotaExceededError:
+        raise
+    except Exception:  # noqa: BLE001
+        pass
+
     def _fn(sync_db):
         row, created = reg.create_dataset(
             sync_db,

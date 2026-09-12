@@ -56,6 +56,13 @@ const SURFACES = [
   { name: 'chat-narrow', tab: '对话', panelArrows: -6 },
   { name: 'project', tab: '项目' },
   { name: 'data', tab: '数据' },
+  /*
+    数据湖（V9 / ADR-0141）：rail tab → 目录（默认子页签）；数据集子页签经
+    clickSubTab 走真实 tablist 点击。fixtures 填充 catalog 与 datasets 两个
+    mount 期 GET，保证截图是真实信息密度而非空态。
+  */
+  { name: 'lakehouse-catalog', tab: '数据湖', restoreSession: true },
+  { name: 'lakehouse-datasets', tab: '数据湖', restoreSession: true, clickSubTab: '数据集' },
   { name: 'layers', tab: '图层' },
   { name: 'analysis', tab: '分析' },
   { name: 'tasks', tab: '任务' },
@@ -392,6 +399,106 @@ const template = (id, kind, name, category, description) => ({
  * the shots exercise real information density instead of only empty states.
  */
 const FIXTURES = [
+  /*
+    Lakehouse V9（ADR-0141）：catalog + datasets 两个 mount 期 GET 的形状
+    正确 fixtures（条目含 cube / 矢量 / 已撤销三种形态，数据集含 refs/head），
+    与 lib/api/lakehouse.ts 契约逐字段对齐（勘察纪要 §1.3）。
+  */
+  [
+    /\/api\/v1\/lakehouse\/catalog/,
+    {
+      items: [
+        {
+          object_id: 'a1'.repeat(32),
+          owner_type: 'session',
+          owner_id: 'sess-visual',
+          kind: 'zarr_cube',
+          title: '京津冀 PM2.5 预报 cube',
+          producer_capability: 'geocompute',
+          producer_tool: 'build_cube',
+          workflow_run_id: null,
+          tags: ['大气', '48 步'],
+          bbox: [115.4, 38.0, 118.5, 41.1],
+          time_start: '2026-08-01T00:00:00+00:00',
+          time_end: '2026-09-01T00:00:00+00:00',
+          content_sha256: 'b2'.repeat(32),
+          byte_size: 892_344_000,
+          status: 'active',
+          created_at: '2026-09-01T08:00:00+00:00',
+        },
+        {
+          object_id: 'c3'.repeat(32),
+          owner_type: 'session',
+          owner_id: 'sess-visual',
+          kind: 'vector_parquet',
+          title: '全国 POI 抽样',
+          producer_capability: 'data-fabric',
+          producer_tool: 'scan',
+          workflow_run_id: null,
+          tags: [],
+          bbox: null,
+          time_start: null,
+          time_end: null,
+          content_sha256: 'd4'.repeat(32),
+          byte_size: 12_884_901,
+          status: 'active',
+          created_at: '2026-08-28T02:00:00+00:00',
+        },
+        {
+          object_id: 'e5'.repeat(32),
+          owner_type: 'session',
+          owner_id: 'sess-visual',
+          kind: 'cog_raster',
+          title: 'Sentinel-2 NDVI 合成（已撤销）',
+          producer_capability: 'geocompute',
+          producer_tool: 'build_cube',
+          workflow_run_id: null,
+          tags: ['sentinel'],
+          bbox: [116.0, 39.0, 117.0, 40.0],
+          time_start: '2026-07-01T00:00:00+00:00',
+          time_end: '2026-07-31T00:00:00+00:00',
+          content_sha256: 'f6'.repeat(32),
+          byte_size: 44_040_192,
+          status: 'revoked',
+          created_at: '2026-08-01T00:00:00+00:00',
+        },
+      ],
+      count: 3,
+      total: '3',
+      total_bounded: true,
+      limit: 50,
+      offset: 0,
+      next_offset: null,
+    },
+  ],
+  [
+    /\/api\/v1\/lakehouse\/datasets/,
+    {
+      datasets: [
+        {
+          dataset_id: 'aa11'.repeat(16),
+          owner_type: 'session',
+          owner_id: 'sess-visual',
+          name: 'pm25-forecast-2026',
+          description: '京津冀 PM2.5 多模式预报数据集',
+          default_branch: 'main',
+          cube_contract: { dims: ['time', 'model', 'y', 'x'], variables: ['pm25'] },
+          created_at: '2026-09-01T08:00:00+00:00',
+        },
+        {
+          dataset_id: 'bb22'.repeat(16),
+          owner_type: 'session',
+          owner_id: 'sess-visual',
+          name: 'poi-sample-2026',
+          description: null,
+          default_branch: 'main',
+          cube_contract: null,
+          created_at: '2026-08-28T02:00:00+00:00',
+        },
+      ],
+      count: 2,
+    },
+  ],
   // Result Workbench seeding: the chat turn replay above is answered as an SSE
   // stream (must precede the generic localhost JSON branch in installStubs).
   // Kept here next to the other fixtures for discoverability; matched by URL in
@@ -771,6 +878,14 @@ async function capture() {
           }
           if (surface.tab) await clickRailTab(page, surface.tab);
           if (surface.button) await clickTopBarButton(page, surface.button);
+          if (surface.clickSubTab) {
+            const sub = page
+              .locator(`[role="tab"][aria-selected="false"]:has-text("${surface.clickSubTab}")`)
+              .first();
+            await sub.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+            if (await sub.count()) await sub.click({ timeout: 5000 }).catch(() => {});
+            else failures.push(`${vp.name}/${theme}/${surface.name}: sub-tab "${surface.clickSubTab}" not found`);
+          }
           if (surface.openResult && !(await openResult(page, surface.openResult))) {
             throw new Error(`result row "${surface.openResult}" not found`);
           }

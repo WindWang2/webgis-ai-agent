@@ -7,15 +7,29 @@ import threading
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header, Body
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.core.auth import get_current_user, get_current_user_optional
 from app.models.data_fabric import DataSourceModel, CatalogItemModel
-from app.schemas.data_fabric_schema import (
+from app.schemas.data_fabric_schema import (  # noqa: F401 - 模块属性保持
+    CatalogDescriptorResponse,
+    CatalogExplainResponse,
+    CatalogItemResponse,
+    CatalogListResponse,
+    CatalogPreviewResponse,
+    CatalogQueryResponse,
+    CreateDataSourceRequest,
+    MaterializeRequest,
+    MaterializeResponse,
     QuerySpec,
+    SourceCreateResponse,
+    SourceDeleteResponse,
+    SourceDetailResponse,
+    SourceListResponse,
+    SourceProbeResponse,
+    SourceSyncResponse,
 )
 from app.services.data_fabric.manager import data_fabric_manager
 from app.services.data_fabric.errors import (
@@ -221,22 +235,6 @@ def _run_async_manager(fn):
     return asyncio.to_thread(_worker)
 
 
-class CreateDataSourceRequest(BaseModel):
-    name: str = Field(..., description="Data source display name")
-    source_type: str = Field(..., description="Source adapter type (postgis, ogc_api, wfs, wms, wmts, arcgis)")
-    endpoint_url: str = Field(..., description="Endpoint URL or database connection string")
-    options: Dict[str, Any] = Field(default_factory=dict, description="Additional protocol options")
-
-
-class MaterializeRequest(BaseModel):
-    session_id: str = Field(..., description="Session identifier UUID")
-    catalog_item_id: str = Field(..., description="Catalog item identifier")
-    query_spec: Optional[QuerySpec] = Field(None, description="Optional query pushdown specification")
-
-
-# ── PostGIS server-side MVT tile cache（Wave I，ADR-0094）─────────────────────
-# 有界 LRU：键 (item_id, z, x, y)，值为 (gzip_bytes, fingerprint)。fingerprint
-# 参与响应 ETag；catalog 版本变化后旧条目自然失效（键重建 + LRU 逐出）。
 class _DfTileCache:
     """条目 + 字节双上限 LRU（R3-m9/R4：单瓦片可达 MB 级，仅条目上限会
     累积到 GB 级驻留内存）。"""
@@ -302,7 +300,7 @@ def _df_tile_response(gz_body: bytes, fingerprint: str, if_none_match: Optional[
     )
 
 
-@router.post("/data-fabric/sources", tags=["Data Fabric / 数据织网"])
+@router.post("/data-fabric/sources", tags=["Data Fabric / 数据织网"], response_model=SourceCreateResponse)
 async def create_data_source(
     req: CreateDataSourceRequest,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -378,7 +376,7 @@ async def create_data_source(
         raise HTTPException(status_code=400, detail="数据源创建失败")
 
 
-@router.get("/data-fabric/sources", tags=["Data Fabric / 数据织网"])
+@router.get("/data-fabric/sources", tags=["Data Fabric / 数据织网"], response_model=SourceListResponse)
 async def list_data_sources(
     source_type: Optional[str] = Query(None, description="Filter by source type"),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
@@ -411,7 +409,7 @@ async def list_data_sources(
     return {"sources": sources}
 
 
-@router.get("/data-fabric/sources/{source_id}", tags=["Data Fabric / 数据织网"])
+@router.get("/data-fabric/sources/{source_id}", tags=["Data Fabric / 数据织网"], response_model=SourceDetailResponse)
 async def get_data_source(
     source_id: str,
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
@@ -434,7 +432,7 @@ async def get_data_source(
     return await _run_sync_orm(_load)
 
 
-@router.delete("/data-fabric/sources/{source_id}", tags=["Data Fabric / 数据织网"])
+@router.delete("/data-fabric/sources/{source_id}", tags=["Data Fabric / 数据织网"], response_model=SourceDeleteResponse)
 async def delete_data_source(
     source_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -456,7 +454,7 @@ async def delete_data_source(
     return {"success": True, "message": f"Data source '{source_id}' deleted successfully"}
 
 
-@router.post("/data-fabric/sources/{source_id}/probe", tags=["Data Fabric / 数据织网"])
+@router.post("/data-fabric/sources/{source_id}/probe", tags=["Data Fabric / 数据织网"], response_model=SourceProbeResponse)
 async def probe_data_source(
     source_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -487,7 +485,7 @@ async def probe_data_source(
     return await _run_sync_orm(_probe)
 
 
-@router.post("/data-fabric/sources/{source_id}/sync", tags=["Data Fabric / 数据织网"])
+@router.post("/data-fabric/sources/{source_id}/sync", tags=["Data Fabric / 数据织网"], response_model=SourceSyncResponse)
 async def sync_data_source_catalog(
     source_id: str,
     user: Dict[str, Any] = Depends(get_current_user),
@@ -550,7 +548,7 @@ async def sync_data_source_catalog(
         raise HTTPException(status_code=400, detail="数据源目录同步失败")
 
 
-@router.get("/data-fabric/catalog", tags=["Data Fabric / 数据织网"])
+@router.get("/data-fabric/catalog", tags=["Data Fabric / 数据织网"], response_model=CatalogListResponse)
 async def list_spatial_catalog(
     q: Optional[str] = Query(None, description="Search keyword query"),
     source_id: Optional[str] = Query(None, description="Filter by source ID"),
@@ -651,7 +649,7 @@ async def list_spatial_catalog(
     }
 
 
-@router.get("/data-fabric/catalog/{item_id}", tags=["Data Fabric / 数据织网"])
+@router.get("/data-fabric/catalog/{item_id}", tags=["Data Fabric / 数据织网"], response_model=CatalogItemResponse)
 async def get_catalog_item(
     item_id: str,
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
@@ -677,7 +675,7 @@ async def get_catalog_item(
     return await _run_sync_orm(_get)
 
 
-@router.get("/data-fabric/catalog/{item_id}/descriptor", tags=["Data Fabric / 数据织网"])
+@router.get("/data-fabric/catalog/{item_id}/descriptor", tags=["Data Fabric / 数据织网"], response_model=CatalogDescriptorResponse)
 async def get_catalog_item_descriptor(
     item_id: str,
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
@@ -697,7 +695,7 @@ async def get_catalog_item_descriptor(
     return await _run_sync_orm(_get)
 
 
-@router.get("/data-fabric/catalog/{item_id}/preview", tags=["Data Fabric / 数据织网"])
+@router.get("/data-fabric/catalog/{item_id}/preview", tags=["Data Fabric / 数据织网"], response_model=CatalogPreviewResponse)
 async def preview_catalog_item(
     item_id: str,
     limit: int = Query(10, ge=1, le=100),
@@ -742,7 +740,7 @@ async def preview_catalog_item(
         raise HTTPException(status_code=400, detail="目录项预览失败")
 
 
-@router.post("/data-fabric/catalog/{item_id}/explain", tags=["Data Fabric / 数据织网"])
+@router.post("/data-fabric/catalog/{item_id}/explain", tags=["Data Fabric / 数据织网"], response_model=CatalogExplainResponse)
 async def explain_catalog_item(
     item_id: str,
     body: Optional[Dict[str, Any]] = Body(None),
@@ -853,7 +851,7 @@ async def get_catalog_mvt_tile(
     return _df_tile_response(gz, fingerprint, if_none_match)
 
 
-@router.post("/data-fabric/catalog/{item_id}/query", tags=["Data Fabric / 数据织网"])
+@router.post("/data-fabric/catalog/{item_id}/query", tags=["Data Fabric / 数据织网"], response_model=CatalogQueryResponse)
 async def query_catalog_item(
     item_id: str,
     query_spec: QuerySpec,
@@ -890,7 +888,7 @@ async def query_catalog_item(
         raise HTTPException(status_code=400, detail="目录项查询失败")
 
 
-@router.post("/data-fabric/materialize", tags=["Data Fabric / 数据织网"])
+@router.post("/data-fabric/materialize", tags=["Data Fabric / 数据织网"], response_model=MaterializeResponse)
 async def materialize_catalog_item(
     req: MaterializeRequest,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),

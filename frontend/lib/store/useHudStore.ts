@@ -21,6 +21,7 @@
  */
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
+import { PERSIST_KEY } from './persist-key';
 
 import type { HudState, LeftTab } from './hud-types';
 import { createLayersSlice } from './slices/layersSlice';
@@ -53,11 +54,14 @@ export {
 /**
  * localStorage key for the persisted slice.
  *
- * Exported because `app/layout.tsx` reads the same key in an inline script to
- * apply the theme before the first paint — a second literal there would let a
- * rename break the no-flash path silently.
+ * Lives in `./persist-key` (plain, non-"use client" module) because
+ * `app/layout.tsx` reads the same key in an inline script to apply the theme
+ * before the first paint — and layout renders as an RSC, where any value
+ * imported from this client module would silently be `undefined` (that bug
+ * shipped the bootstrap as `localStorage.getItem(undefined)`; caught by
+ * journey 5, quality-e2e-v9). Re-exported here for back-compat.
  */
-export const PERSIST_KEY = 'geoagent-settings';
+export { PERSIST_KEY };
 
 // Gate persist writes until after skipHydration rehydrate(). Any zustand
 // set() during the first mount (map loaded, ai status, session restore)

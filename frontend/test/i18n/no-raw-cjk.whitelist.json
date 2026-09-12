@@ -1,0 +1,27 @@
+{
+  "_meta": {
+    "rule": "文件 → 允许的裸 CJK 条数（JSX 位置）；实际少于配额也 fail，倒逼向下修剪",
+    "zeroing_plan": "P3 分批键化后逐条删除：批1 壳层(app/page+layout+TopBar+NavRail) → 批2 五域(chat/map/sidebar/settings/story+drawers) → 批3 动态文案面组件 → 批4 残余。目标：本 PR 收口时 components+app 全零，lib JSX 位置全零。",
+    "note": "lib/** 非对象字符串字面量（canvas 导出文案、toast 消息）v1 不在守卫范围，扩面列入后续版本。"
+  },
+  "files": {
+    "components/agent/agent-run-panel.tsx": 13,
+    "components/agent/analysis-graph-panel.tsx": 26,
+    "components/agent/run-timeline.tsx": 8,
+    "components/code-highlight/code-block.tsx": 2,
+    "components/explorer/explorer-progress-panel.tsx": 3,
+    "components/explorer/preview-modal.tsx": 10,
+    "components/explorer/tabular-data-grid.tsx": 31,
+    "components/hud/embodied-hud.tsx": 11,
+    "components/hud/layer-style-panel.tsx": 25,
+    "components/layout/panel-dock.tsx": 5,
+    "components/layout/panel-error-boundary.tsx": 2,
+    "components/shared/panel-header.tsx": 1,
+    "components/shared/search-field.tsx": 1,
+    "components/shared/status-badge.tsx": 19,
+    "components/table/attribute-table-panel.tsx": 8,
+    "components/ui/toast.tsx": 1,
+    "components/upload/upload-zone.tsx": 3,
+    "app/layout.tsx": 1
+  }
+}

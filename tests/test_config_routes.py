@@ -221,8 +221,9 @@ async def test_config_llm_test_connect_failure_returns_502(app_and_client, monke
     )
     assert resp.status_code == 502
     body = resp.json()
-    assert "连接失败" in body["detail"]
-    assert "connection refused" in body["detail"]
+    # V9（ADR-0138）：502 走统一信封 message（原 detail）
+    assert "连接失败" in body["message"]
+    assert "connection refused" in body["message"]
 
 
 @pytest.mark.asyncio
@@ -246,7 +247,7 @@ async def test_config_llm_test_provider_error_detail(app_and_client, monkeypatch
         "/api/v1/config/llm/test", json={}, headers=_admin_headers()
     )
     assert resp.status_code == 502
-    assert "invalid api key" in resp.json()["detail"]
+    assert "invalid api key" in resp.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -284,7 +285,7 @@ async def test_config_llm_test_missing_api_key_rejected(app_and_client):
             "/api/v1/config/llm/test", json={}, headers=_admin_headers()
         )
         assert resp.status_code == 400
-        assert "API Key" in resp.json()["detail"]
+        assert "API Key" in resp.json()["message"]
     finally:
         chat_routes.engine.api_key = original
 
@@ -329,7 +330,7 @@ async def test_config_rag_test_failure_returns_502(app_and_client, monkeypatch):
         "/api/v1/config/rag/test", json={}, headers=_admin_headers()
     )
     assert resp.status_code == 502
-    assert "index.faiss" in resp.json()["detail"]
+    assert "index.faiss" in resp.json()["message"]
 
 
 @pytest.mark.asyncio

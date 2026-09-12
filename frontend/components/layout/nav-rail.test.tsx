@@ -52,6 +52,7 @@ const TAB_LABELS: Record<string, string> = {
   chat: '对话',
   project: '项目',
   data_sources: '数据',
+  lakehouse: '数据湖',
   layers: '图层',
   components: '组件',
   analysis: '分析',
@@ -83,9 +84,10 @@ describe('NavRail', () => {
 
     // Workbench V4：explore 模式只渲染 MODE_TABS.explore 组合内的 tab，
     // rail 顺序保持 RAIL_GROUPS 稳定序（不随模式重排 —— 空间记忆不变）。
-    // V9：market/modelops 尾部追加（ADR-0145）。
+    // V9（ADR-0141）：数据湖 tab 加入 explore/analyze 词表（数据源之后）；
+    // V9（ADR-0145）：market/modelops 智能资产面板尾部追加。
     const tabs = screen.getAllByRole('tab');
-    const exploreOrder = ['chat', 'project', 'data_sources', 'layers', 'tasks', 'market', 'modelops'];
+    const exploreOrder = ['chat', 'project', 'data_sources', 'lakehouse', 'layers', 'tasks', 'market', 'modelops'];
     expect(tabs).toHaveLength(exploreOrder.length);
     expect(tabs.map((t) => t.getAttribute('aria-label'))).toEqual(
       exploreOrder.map((k) => TAB_LABELS[k])

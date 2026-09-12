@@ -1,0 +1,119 @@
+{
+  "toolbar": {
+    "measureDistanceMode": "Distance measure mode",
+    "measureAreaMode": "Area measure mode",
+    "exitMeasure": "Exit measuring",
+    "pointsCollected": "Points collected: {count}",
+    "currentResult": "Current result:",
+    "measureHint": "Click the map to add measure points; double-click or press Done below to save the annotation.",
+    "finishAnnotation": "Finish annotation",
+    "reset": "Reset",
+    "zoomIn": "Zoom in",
+    "zoomInTitle": "Zoom in (shortcut: +)",
+    "zoomOut": "Zoom out",
+    "zoomOutTitle": "Zoom out (shortcut: -)",
+    "resetNorth": "Reset north & pitch",
+    "resetNorthTitle": "Reset north & pitch (shortcut: 0)",
+    "toggle3d": "Toggle 3D view",
+    "boxSelect": "Box select",
+    "boxSelectTitle": "Box select (link chart/table to selected features, shortcut: B)",
+    "measureDistance": "Measure distance",
+    "measureDistanceTitle": "Measure distance (shortcut: D)",
+    "measureArea": "Measure area",
+    "measureAreaTitle": "Measure area (shortcut: A)",
+    "clearAnnotations": "Clear measurements & annotations",
+    "clearAnnotationsTitle": "Clear all measurements and annotations on the map",
+    "drawPoint": "Draw point",
+    "drawPointTitle": "Draw a point feature (click the map to place)",
+    "drawLine": "Draw line",
+    "drawLineTitle": "Draw a line feature (click to add vertices, double-click/Enter to finish, Escape to cancel)",
+    "drawPolygon": "Draw polygon",
+    "drawPolygonTitle": "Draw a polygon feature (click to add vertices, double-click/Enter to close, Escape to cancel)",
+    "editVertices": "Edit vertices",
+    "deleteFeature": "Delete feature"
+  },
+  "poi": {
+    "focus": "Focus location",
+    "focusTitle": "Focus on the feature's location",
+    "close": "Close",
+    "closeTitle": "Close",
+    "tileApprox": "Tile-approximate data, verifying…",
+    "copyCoords": "Copy lat/lon",
+    "copied": "Copied",
+    "copyAttrHint": "Click to copy attribute value",
+    "andMore": "…and {count} more attributes",
+    "noAttrs": "(no attributes)",
+    "backToList": "← Back to feature list"
+  },
+  "webgl": {
+    "title": "WebGL context lost or blocked",
+    "desc": "The browser's WebGL rendering context was lost or blocked (context loss). This usually happens with too many 3D/map tabs open or tight GPU resources.",
+    "solutions": "Suggested fixes:",
+    "s1": "Close other 3D / map tabs using GPU memory",
+    "s2": "Make sure \"hardware acceleration\" is enabled in browser settings",
+    "s3": "Retry with the button below or reload the page",
+    "retry": "Retry map init",
+    "reload": "Reload page",
+    "canvasAria": "Map canvas (arrow keys pan, plus/minus zoom)"
+  },
+  "compare": {
+    "dividerAria": "Compare divider (drag left/right or use arrow keys)",
+    "swipeTitle": "Swipe compare (drag the divider)",
+    "swipe": "Swipe",
+    "doubleTitle": "Dual-panel compare (main map narrows to the left half)",
+    "double": "Dual",
+    "exit": "Exit compare",
+    "exitTitle": "Exit compare"
+  },
+  "table": {
+    "filterPh": "Filter rows…",
+    "filterAria": "Filter table rows",
+    "viewportOnlyTitle": "Show only rows within the current viewport",
+    "viewport": "Viewport",
+    "rowLimited": "Showing first {shown} rows (of {total})"
+  },
+  "legends": {
+    "sizeAria": "Size legend",
+    "sizeTitle": "Size (∝√value)",
+    "widthAria": "Stroke-width legend",
+    "widthTitle": "Width classes",
+    "opacityHint": "More transparent = more uncertain",
+    "compositeAria": "Composite legend",
+    "title": "Legend"
+  },
+  "sketch": {
+    "editVertices": "Edit sketch vertices",
+    "unsaved": "Sketch has unsaved changes",
+    "exportGeoJson": "Export sketch GeoJSON",
+    "save": "Save (export GeoJSON)",
+    "discard": "Discard",
+    "discardTitle": "Discard sketch"
+  },
+  "decision": {
+    "weightSource": "Weight source:",
+    "hardConstraints": "Hard-constraint vetoes:",
+    "empty": "No decision result yet"
+  },
+  "chrome": {
+    "undock": "Undock",
+    "resetPos": "Reset position",
+    "hide": "Hide panel"
+  },
+  "methodology": {
+    "title": "Methodology disclosure",
+    "none": "No methodology limitations disclosed"
+  },
+  "uncertainty": {
+    "title": "Uncertainty",
+    "none": "No uncertainty disclosure"
+  },
+  "chartPanel": {
+    "viewportLinked": "Viewport-linked: the chart only counts features within the current view"
+  },
+  "statsPanel": {
+    "empty": "No statistics yet"
+  },
+  "readout": {
+    "aria": "Map view status"
+  }
+}

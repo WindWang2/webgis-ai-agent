@@ -295,6 +295,9 @@ class GeoComputeNodeResult(Base):
     __tablename__ = "geocompute_node_results"
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    #: ADR-0139 租户作用域（organizations.id 字符串原文；明文纪律同
+    #: geocompute_runs.org_id——无 FK，跨库可移植）。查询级隔离的过滤键。
+    org_id = Column(String(255), nullable=False)
     #: executor.owner_scope_for 输出（"u:<hash>" / "s:<hash>" / "anonymous"）
     owner_scope = Column(String(40), nullable=False)
     #: 节点语义指纹（plan.ExecutionNode.semantic_fingerprint，16 hex）
@@ -310,6 +313,7 @@ class GeoComputeNodeResult(Base):
     __table_args__ = (
         Index("uq_gc_node_result_owner_fp", "owner_scope", "node_fingerprint", unique=True),
         Index("idx_gc_node_result_owner_created", "owner_scope", "created_at"),
+        Index("idx_gc_node_result_org_created", "org_id", "created_at"),
     )
 
 
@@ -327,6 +331,8 @@ class GeoComputeRunEvidence(Base):
 
     #: run id（"gexec-<hex12>"）
     run_id = Column(String(64), primary_key=True)
+    #: ADR-0139 租户作用域（organizations.id 字符串原文；纪律同 geocompute_runs）
+    org_id = Column(String(255), nullable=False)
     #: owner 域（owner_scope_for）；读取侧按它做隔离，他人一律 404
     owner_scope = Column(String(40), nullable=False)
     #: 终态：completed | failed | cancelled
@@ -337,6 +343,7 @@ class GeoComputeRunEvidence(Base):
 
     __table_args__ = (
         Index("idx_gc_run_evidence_owner", "owner_scope"),
+        Index("idx_gc_run_evidence_org_created", "org_id", "created_at"),
     )
 
 
@@ -376,7 +383,9 @@ class GeoComputeClusterRun(Base):
     #: 同一**明文纪律**（但本表无 FK：org_id 存字符串原文，跨库可移植）——
     #: 绝不出现在任何用户面投影（get_run_internal 仅 coordinator 消费）。
     creator_id = Column(String(255), nullable=True)
-    org_id = Column(String(255), nullable=True)
+    #: ADR-0139：V8 全表 org_id 落库（0033 引入为 nullable；0036 起回填后
+    #: NOT NULL——租户作用域成为 run 行的硬约束）。
+    org_id = Column(String(255), nullable=False)
     #: 原始 project_id（与 analysis_tasks.project_id 同一明文纪律）——
     #: 治理作用域命名与同步执行路径一致（project_key 哈希只做账本/公平键，
     #: 再哈希会造成 cluster 与同步路径 scope 不互通，round1 m3）
@@ -430,6 +439,7 @@ class GeoComputeClusterRun(Base):
         ),
         CheckConstraint("priority IN (0,5,10)", name="ck_gc_run_priority"),
         Index("idx_gc_run_owner_id", "owner_scope", "id"),
+        Index("idx_gc_run_org_created", "org_id", "created_at"),
         Index("idx_gc_run_status_priority", "status", "priority"),
         Index("idx_gc_run_lease_expiry", "status", "lease_expires_at"),
         Index("idx_gc_run_tenant_dispatch", "tenant_key", "dispatch_seq"),
@@ -448,6 +458,10 @@ class GeoComputeClusterWorker(Base):
 
     worker_id = Column(String(128), primary_key=True)
     role = Column(String(20), nullable=False, default="worker")
+    #: ADR-0139：控制面信任域列（NULL = 服务全部租户）。worker/coordinator
+    #: 行不随 org 分裂（一个 worker 承载多租户 run），故保持 nullable、
+    #: 不参与查询级隔离（见 docs/dev/security-tenancy-recon.md §3.2）。
+    org_id = Column(String(255), nullable=True)
     #: {profile: slots}（coordinator 为空 dict）
     profiles = Column(JSON, nullable=True)
     #: V7：能力剖面（cluster.capabilities.WorkerCapabilityProfile 投影；
@@ -484,6 +498,9 @@ class GeoComputeRunEvent(Base):
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     run_id = Column(String(64), nullable=False)
+    #: ADR-0139 租户作用域（organizations.id 字符串原文）；写入侧由 run 行
+    #: 传播（append 调用方持 run 上下文），隔离读按 run 归属 + org 双键。
+    org_id = Column(String(255), nullable=False)
     #: 封闭词表（cluster.events.EVENT_VOCABULARY；≤32 字符）
     event = Column(String(32), nullable=False)
     node_id = Column(String(128), nullable=True)
@@ -498,6 +515,7 @@ class GeoComputeRunEvent(Base):
     __table_args__ = (
         Index("idx_gc_event_run_id", "run_id", "id"),
         Index("idx_gc_event_created", "created_at"),
+        Index("idx_gc_event_org_created", "org_id", "created_at"),
     )
 
 
@@ -519,6 +537,9 @@ class GeoComputeWorkerCache(Base):
     cache_key = Column(String(64), primary_key=True)
     #: owner 域哈希（与 cache_key 一致来源；审计投影用，不参与寻址）
     owner_scope = Column(String(40), nullable=False)
+    #: ADR-0139：控制面信任域列（NULL = 服务全部租户；本地缓存位置声明
+    #: 由 worker 进程写入，跨租户承载，不参与查询级隔离）。
+    org_id = Column(String(255), nullable=True)
     size_bytes = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
     cached_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     last_hit_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
@@ -544,6 +565,9 @@ class GeoComputeResourceUsage(Base):
 
     #: "global" | "t:<hash12>" | "p:<hash12>"
     scope_key = Column(String(80), primary_key=True)
+    #: ADR-0139：控制面信任域列（NULL = global/历史哈希行不可逆推）。
+    #: 新写入在调用方持真实 org_id 时打标（t: 作用域行），仅作审计投影。
+    org_id = Column(String(255), nullable=True)
     usage_rows = Column(Integer, nullable=False, default=0)
     usage_bytes = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=False, default=0)
     usage_units = Column(Integer, nullable=False, default=0)
@@ -575,6 +599,9 @@ class GeoComputeArtifact(Base):
     #: 归属（cleanup 按 run retention 级联；owner 域隔离读）
     run_id = Column(String(64), nullable=True)
     owner_scope = Column(String(40), nullable=True)
+    #: ADR-0139 租户作用域（organizations.id 字符串原文）；写入侧由 run 行
+    #: 传播（_register 调用方持 run 上下文）。
+    org_id = Column(String(255), nullable=False)
     #: payload | spill | export（封闭词表，exchange 写入侧校验）
     kind = Column(String(20), nullable=False, default="payload")
     #: raw | zlib（V8 内置两种；新编解码走词表扩展）
@@ -588,6 +615,7 @@ class GeoComputeArtifact(Base):
     __table_args__ = (
         UniqueConstraint("artifact_key", name="uq_gc_artifact_key"),
         Index("idx_gc_artifact_run", "run_id", "id"),
+        Index("idx_gc_artifact_org", "org_id", "stored_at"),
         Index("idx_gc_artifact_expiry", "expires_at"),
     )
 
@@ -604,6 +632,9 @@ class GeoComputeTaskQuarantine(Base):
     #: owner 域隔离（与复用索引同纪律：毒是 per-owner 事实，不跨域传染）
     owner_scope = Column(String(40), primary_key=True)
     task_fingerprint = Column(String(64), primary_key=True)
+    #: ADR-0139：控制面信任域列（NULL = 历史 owner_scope 哈希不可逆推；
+    #: dispatch/quarantine 判定本身是 coordinator 信任域路径）。
+    org_id = Column(String(255), nullable=True)
     failure_count = Column(Integer, nullable=False, default=0)
     last_error_code = Column(String(64), nullable=True)
     last_run_id = Column(String(64), nullable=True)
@@ -616,9 +647,85 @@ class GeoComputeTaskQuarantine(Base):
     )
 
 
+class OrgQuota(Base):
+    """组织配额配置（ADR-0139 P5；admin scope 端点维护）。
+
+    NULL 列 = 落到 env 默认值（``app/services/org_quota.py``）——显式
+    NULL 语义是「跟随全局默认」而非「无限」。
+    """
+    __tablename__ = "org_quotas"
+
+    #: organizations.id 字符串原文（与 V8 表 org_id 同一词表）
+    org_id = Column(String(255), primary_key=True)
+    max_storage_bytes = Column(BigInteger().with_variant(Integer, "sqlite"), nullable=True)
+    max_concurrent_tasks = Column(Integer, nullable=True)
+    rate_limit_per_min = Column(Integer, nullable=True)
+    updated_by = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class AuditEvent(Base):
+    """组织审计事件（ADR-0139 P7）：admin 动作 / 配额越限 / 安全事件。
+
+    fail-open 纪律：写入失败只记结构化日志，绝不阻断主流程（服务层
+    ``app/services/audit.py`` 单一入口）。
+    """
+    __tablename__ = "audit_events"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    #: actor 的 org（字符串原文；可空 = 系统级事件）
+    org_id = Column(String(255), nullable=True)
+    actor_id = Column(String(255), nullable=True)
+    #: 封闭词表前缀（"admin." / "quota." / "auth."；词表见 audit 服务）
+    action = Column(String(64), nullable=False)
+    target_type = Column(String(40), nullable=True)
+    target_id = Column(String(255), nullable=True)
+    detail = Column(JSON, nullable=True)
+    #: W3C traceparent 的 trace-id（32 hex；与请求中间件同一关联键）
+    trace_id = Column(String(32), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        Index("idx_audit_org_created", "org_id", "created_at"),
+        Index("idx_audit_actor_created", "actor_id", "created_at"),
+        Index("idx_audit_action", "action"),
+    )
+
+
+class RefreshTokenFamily(Base):
+    """refresh token 家族（ADR-0139 P6：rotation + 重用检测）。
+
+    - 登录/注册建家族（``fam`` claim 关联）；refresh 轮换前移
+      ``current_jti``；
+    - **重放检测**：携带旧 jti 的 refresh → ``reuse_detected=True``，
+      整个家族失效（防令牌被盗后攻击者与合法用户互踢循环）；
+    - 无 ``fam`` claim 的存量 token（部署窗口 ≤7d）走 soft rotation
+      back-compat 路径（与迁移 g1109 同款披露纪律）。
+    """
+    __tablename__ = "refresh_token_families"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    user_id = Column(String(255), nullable=False)
+    family_id = Column(String(32), nullable=False)
+    #: 当前有效的 refresh jti（轮换即前移；旧 jti 出现 = 重放）
+    current_jti = Column(String(32), nullable=False)
+    reuse_detected = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    rotated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("family_id", name="uq_refresh_family_id"),
+        Index("idx_refresh_family_user", "user_id", "family_id"),
+        Index("idx_refresh_family_jti", "current_jti"),
+    )
+
+
 __all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "GeoComputeNodeResult", "GeoComputeRunEvidence", "GeoComputeClusterRun", "GeoComputeClusterWorker", "GeoComputeResourceUsage", "GeoComputeArtifact", "GeoComputeTaskQuarantine",
            "WorkflowPackageRow", "WorkflowInstanceRow", "WorkflowInstanceNodeRow",
-           "WorkflowNodeReuseRow", "get_init_sql"]
+           "WorkflowNodeReuseRow", "OrgQuota", "AuditEvent", "RefreshTokenFamily", "get_init_sql"]
 
 # ═══════════════════════════════════════════════════════════════════════
 # Workflow Runtime V5（Epic workflow-v5；架构见
@@ -651,6 +758,9 @@ class WorkflowPackageRow(Base):
     fingerprint = Column(String(64), nullable=False)
     status = Column(String(16), nullable=False, default="draft")
     owner_scope = Column(String(40), nullable=False)
+    #: ADR-0139 租户作用域（organizations.id 字符串原文）；包注册/解析按
+    #: org 隔离（唯一键仍以 owner_scope 分桶，org 是其上的硬边界）。
+    org_id = Column(String(255), nullable=False)
     project_id = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     published_at = Column(DateTime, nullable=True)
@@ -663,6 +773,7 @@ class WorkflowPackageRow(Base):
                          name="uq_wf_pkg_owner_id_ver"),
         CheckConstraint("status IN ('draft','published','deprecated')", name="ck_wf_pkg_status"),
         Index("idx_wf_pkg_owner", "owner_scope", "package_id"),
+        Index("idx_wf_pkg_org_created", "org_id", "created_at"),
     )
 
 
@@ -677,6 +788,9 @@ class WorkflowInstanceRow(Base):
     status = Column(String(20), nullable=False, default="running")
     revision = Column(Integer, nullable=False, default=1)
     owner_scope = Column(String(40), nullable=False)
+    #: ADR-0139 租户作用域（organizations.id 字符串原文）；实例读/列表/
+    #: 恢复扫描的租户过滤键（coordinator 恢复路径同样按 org 收敛）。
+    org_id = Column(String(255), nullable=False)
     session_id = Column(String(255), nullable=True)
     project_id = Column(String(255), nullable=True)
     parent_instance_id = Column(String(64), nullable=True)
@@ -701,6 +815,7 @@ class WorkflowInstanceRow(Base):
         Index("idx_wf_inst_owner", "owner_scope", "instance_id"),
         Index("idx_wf_inst_session", "session_id", "status"),
         Index("idx_wf_inst_parent", "parent_instance_id"),
+        Index("idx_wf_inst_org_created", "org_id", "created_at"),
     )
 
 
@@ -710,6 +825,9 @@ class WorkflowInstanceNodeRow(Base):
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     instance_id = Column(String(64), nullable=False)
+    #: ADR-0139 租户作用域——随 instance 行传播（create_instance/transition
+    #: 写入侧从 instance 取），节点行自身无独立租户语义。
+    org_id = Column(String(255), nullable=False)
     node_id = Column(String(64), nullable=False)
     state = Column(String(16), nullable=False, default="PENDING")
     state_revision = Column(Integer, nullable=False, default=1)
@@ -740,6 +858,7 @@ class WorkflowInstanceNodeRow(Base):
             name="ck_wf_node_state"),
         Index("idx_wf_node_inst_state", "instance_id", "state"),
         Index("idx_wf_node_lease", "instance_id", "state", "lease_expires_at"),
+        Index("idx_wf_node_org_updated", "org_id", "updated_at"),
     )
 
 
@@ -757,6 +876,9 @@ class WorkflowWorkerRow(Base):
     worker_id = Column(String(64), primary_key=True)
     role = Column(String(16), nullable=False, default="worker")
     status = Column(String(16), nullable=False, default="active")
+    #: ADR-0139：控制面信任域列（NULL = 服务全部租户；workflow worker 与
+    #: geocompute worker 同纪律——行不随 org 分裂，不参与查询级隔离）。
+    org_id = Column(String(255), nullable=True)
     capabilities = Column(JSON, nullable=False, default=dict)
     load = Column(JSON, nullable=False, default=dict)
     runtime = Column(String(24), nullable=False, default="inprocess")
@@ -782,6 +904,8 @@ class WorkflowEventRow(Base):
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     instance_id = Column(String(64), nullable=False)
+    #: ADR-0139 租户作用域——随 instance 行传播（append 侧从 instance 取）。
+    org_id = Column(String(255), nullable=False)
     node_id = Column(String(64), nullable=False, default="")
     kind = Column(String(40), nullable=False)
     from_state = Column(String(16), nullable=False, default="")
@@ -795,6 +919,7 @@ class WorkflowEventRow(Base):
     __table_args__ = (
         Index("idx_wf_event_inst_id", "instance_id", "id"),
         Index("idx_wf_event_inst_kind", "instance_id", "kind"),
+        Index("idx_wf_event_org_created", "org_id", "created_at"),
     )
 
 
@@ -808,6 +933,9 @@ class WorkflowNodeReuseRow(Base):
 
     id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     owner_scope = Column(String(40), nullable=False)
+    #: ADR-0139 租户作用域（organizations.id 字符串原文）；复用命中判定
+    #: 先过 org 硬边界，再做 owner_scope 精确匹配。
+    org_id = Column(String(255), nullable=False)
     reuse_fingerprint = Column(String(32), nullable=False)
     session_scope = Column(String(40), nullable=False, default="")
     node_id = Column(String(64), nullable=False)
@@ -826,6 +954,7 @@ class WorkflowNodeReuseRow(Base):
     __table_args__ = (
         UniqueConstraint("owner_scope", "reuse_fingerprint", name="uq_wf_reuse_owner_fp"),
         Index("idx_wf_reuse_owner_created", "owner_scope", "created_at"),
+        Index("idx_wf_reuse_org_created", "org_id", "created_at"),
     )
 
 

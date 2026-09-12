@@ -13,6 +13,7 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { EmptyState } from '@/components/shared/empty-state';
 import { LoadingState } from '@/components/shared/loading-state';
+import { useT } from '@/lib/i18n/useT';
 
 /** 类型化错误（后端 DataFabricError.to_dict 的 error_type/error）。 */
 export interface TypedQueryError {
@@ -77,22 +78,23 @@ function EvidenceSummary({ evidence }: { evidence: QueryEvidenceInfo }) {
   const pushedKeys = Object.entries(evidence.pushdowns ?? {})
     .filter(([, v]) => v === true)
     .map(([k]) => k);
+  const t = useT();
   return (
     <div className="space-y-1 rounded-sm border border-edge-subtle bg-surface-sunken p-2 text-micro text-ink-secondary">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-ink-muted">查询指纹</span>
+        <span className="text-ink-muted">{t('sidebar.explain.queryFingerprint')}</span>
         <span className="truncate font-mono" title={evidence.query_fingerprint ?? ''}>
           {evidence.query_fingerprint ?? '—'}
         </span>
       </div>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-ink-muted">传输行数 / 返回行数</span>
+        <span className="text-ink-muted">{t('sidebar.explain.rowsTransferred')}</span>
         <span className="font-mono">
           {evidence.rows_fetched ?? '—'} / {evidence.rows_returned ?? '—'}
         </span>
       </div>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-ink-muted">下推命中</span>
+        <span className="text-ink-muted">{t('sidebar.explain.pushdownHits')}</span>
         <span className="truncate font-mono" title={pushedKeys.join(', ')}>
           {pushedKeys.length > 0 ? pushedKeys.join(', ') : '无'}
         </span>
@@ -103,10 +105,11 @@ function EvidenceSummary({ evidence }: { evidence: QueryEvidenceInfo }) {
 
 /** 错误展示：InlineNotice + error_type 等宽 chip。 */
 function TypedErrorNotice({ error, label }: { error: TypedQueryError; label: string }) {
+  const t = useT();
   return (
     <InlineNotice variant="error">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">{label}：</span>
+        <span className="font-medium">{label}{t('sidebar.explain.colon')}</span>
         <span>{error.message}</span>
         {error.errorType && (
           <code className="rounded-sm bg-surface-sunken px-1.5 py-0.5 font-mono text-micro text-status-critical">
@@ -139,13 +142,14 @@ export function ExplainResultsPanel({
   onCursorNext,
   onOffsetPage,
 }: ExplainResultsPanelProps) {
+  const t = useT();
   if (!item) {
     return (
       <div className="flex-1 overflow-y-auto p-2">
         <EmptyState
           icon={FileSearch}
-          title="尚未选择数据集"
-          description="在「数据集」子页签构建查询后，计划与结果将在此展示"
+          title={t('sidebar.inspector.emptyTitle')}
+          description={t('sidebar.explain.emptyDesc')}
         />
       </div>
     );
@@ -173,19 +177,19 @@ export function ExplainResultsPanel({
   return (
     <div className="flex-1 space-y-3 overflow-y-auto p-2">
       {/* ── explain 计划 ─────────────────────────────────────────────── */}
-      <section aria-label="查询计划" className="space-y-2">
+      <section aria-label={t('sidebar.explain.planTitle')} className="space-y-2">
         <div className="flex items-center justify-between">
-          <h4 className="text-body font-semibold text-ink">查询计划</h4>
+          <h4 className="text-body font-semibold text-ink">{t('sidebar.explain.planTitle')}</h4>
           <span className="truncate font-mono text-micro text-ink-muted">{item.id}</span>
         </div>
 
-        {explaining && <LoadingState label="正在生成查询计划..." />}
+        {explaining && <LoadingState label={t('sidebar.explain.planning')} />}
 
-        {!explaining && explainError && <TypedErrorNotice error={explainError} label="解释计划失败" />}
+        {!explaining && explainError && <TypedErrorNotice error={explainError} label={t('sidebar.explain.planFailed')} />}
 
         {!explaining && !explainError && explainLines.length === 0 && (
           <p className="text-meta text-ink-muted">
-            尚未生成计划：在「数据集」子页签点击「解释计划」查看下推划分与估算。
+            {t('sidebar.explain.noPlan')}
           </p>
         )}
 
@@ -193,7 +197,7 @@ export function ExplainResultsPanel({
           <>
             {/* 计划行 monospace 块（后端保证无 secret/连接 URI）。 */}
             <pre
-              aria-label="查询计划详情"
+              aria-label={t('sidebar.explain.planDetailAria')}
               className="max-h-52 overflow-auto rounded-sm border border-edge-subtle bg-surface-sunken p-2 font-mono text-caption leading-relaxed text-ink-secondary"
             >
               {explainLines.join('\n')}
@@ -206,24 +210,24 @@ export function ExplainResultsPanel({
                 <PushdownBadge label="aggregation" pushed={plan.pushed_aggregation === true} />
                 {plan.estimated_rows != null && (
                   <span className="rounded-pill border border-edge-subtle bg-surface-sunken px-1.5 py-0.5 font-mono text-micro text-ink-secondary">
-                    估算 {plan.estimated_rows} 行
+                    {t('sidebar.explain.estimateRows', { rows: plan.estimated_rows })}
                   </span>
                 )}
                 {plan.pagination_strategy && (
                   <span className="rounded-pill border border-edge-subtle bg-surface-sunken px-1.5 py-0.5 font-mono text-micro text-ink-secondary">
-                    分页 {plan.pagination_strategy}
+                    {t('sidebar.explain.pagination')} {plan.pagination_strategy}
                   </span>
                 )}
                 {plan.result_mode && (
                   <span className="rounded-pill border border-edge-subtle bg-surface-sunken px-1.5 py-0.5 font-mono text-micro text-ink-secondary">
-                    模式 {plan.result_mode}
+                    {t('sidebar.explain.mode')} {plan.result_mode}
                   </span>
                 )}
               </div>
             )}
             {explainResult?.dataset_fingerprint && (
               <p className="text-micro text-ink-muted">
-                数据集指纹 <span className="font-mono">{explainResult.dataset_fingerprint}</span>
+                {t('sidebar.inspector.fingerprint')} <span className="font-mono">{explainResult.dataset_fingerprint}</span>
               </p>
             )}
             {(plan?.warnings?.length ?? 0) > 0 && (
@@ -240,30 +244,30 @@ export function ExplainResultsPanel({
       </section>
 
       {/* ── 查询结果 ─────────────────────────────────────────────────── */}
-      <section aria-label="查询结果" className="space-y-2">
+      <section aria-label={t('sidebar.explain.resultTitle')} className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h4 className="text-body font-semibold text-ink">查询结果</h4>
-          {queryResult?.result_mode === 'sample' && <StatusBadge status="info" label="采样" />}
-          {queryResult?.is_demo && <StatusBadge status="warning" label="演示数据" />}
-          {queryResult?.truncated && <StatusBadge status="warning" label="已截断" />}
+          <h4 className="text-body font-semibold text-ink">{t('sidebar.explain.resultTitle')}</h4>
+          {queryResult?.result_mode === 'sample' && <StatusBadge status="info" label={t('sidebar.explain.sampled')} />}
+          {queryResult?.is_demo && <StatusBadge status="warning" label={t('sidebar.explain.demoData')} />}
+          {queryResult?.truncated && <StatusBadge status="warning" label={t('sidebar.explain.truncated')} />}
         </div>
 
-        {querying && <LoadingState label="正在执行查询..." />}
+        {querying && <LoadingState label={t('sidebar.explain.running')} />}
 
-        {!querying && queryError && <TypedErrorNotice error={queryError} label="查询失败" />}
+        {!querying && queryError && <TypedErrorNotice error={queryError} label={t('sidebar.explain.queryFailed')} />}
 
         {!querying && !queryError && !hasResult && hasAnyContent && (
-          <p className="text-meta text-ink-muted">尚未执行查询：在「数据集」子页签点击「执行查询」。</p>
+          <p className="text-meta text-ink-muted">{t('sidebar.explain.noResult')}</p>
         )}
 
         {!querying && !queryError && queryResult && (
           <>
             {/* 命中统计 */}
             <p className="text-micro text-ink-muted">
-              返回 <span className="font-mono text-ink-secondary">{queryResult.returned_count ?? queryResult.features.length}</span> 行
+              {t('sidebar.explain.returnedRows')} <span className="font-mono text-ink-secondary">{queryResult.returned_count ?? queryResult.features.length}</span> {t('sidebar.explain.rowsUnit')}
               {queryResult.total_matching != null && (
                 <>
-                  {' '}· 命中约 <span className="font-mono text-ink-secondary">{queryResult.total_matching}</span> 行
+                  {' '}{t('sidebar.explain.matchedApprox')} <span className="font-mono text-ink-secondary">{queryResult.total_matching}</span> {t('sidebar.explain.rowsUnit')}
                 </>
               )}
               {queryResult.has_more && ' · 还有更多'}
@@ -273,12 +277,12 @@ export function ExplainResultsPanel({
               /* 统计模式：聚合行表格 + 证据（不渲染要素网格）。 */
               <div className="space-y-2">
                 {aggRows.length === 0 ? (
-                  <p className="text-meta text-ink-muted">聚合结果为空（无匹配分组）。</p>
+                  <p className="text-meta text-ink-muted">{t('sidebar.explain.emptyAgg')}</p>
                 ) : (
                   <div className="max-h-64 overflow-auto rounded border border-edge-subtle bg-surface-sunken">
                     <table
                       role="table"
-                      aria-label="聚合结果"
+                      aria-label={t('sidebar.explain.aggResultAria')}
                       className="w-full border-collapse text-left text-meta"
                     >
                       <thead className="sticky top-0 bg-surface-raised">
@@ -308,7 +312,7 @@ export function ExplainResultsPanel({
               </div>
             ) : queryResult.result_mode === 'descriptor' ? (
               <p className="text-meta text-ink-muted">
-                描述符模式：仅返回数据集元数据（零数据传输），详情见上方契约摘要。
+                {t('sidebar.explain.descriptorMode')}
               </p>
             ) : (
               /* features / sample 模式：首页要素表格 + 服务端分页。 */
@@ -326,7 +330,7 @@ export function ExplainResultsPanel({
                 <div
                   className="flex items-center justify-between gap-2 border-t border-edge-subtle pt-2 text-caption text-ink-secondary"
                   role="group"
-                  aria-label="服务端分页"
+                  aria-label={t('sidebar.explain.serverPaginationAria')}
                 >
                   {isCursorMode ? (
                     <button
@@ -336,7 +340,7 @@ export function ExplainResultsPanel({
                       className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-50"
                     >
                       <ChevronRight size={12} aria-hidden />
-                      <span>下一页（游标）</span>
+                      <span>{t('sidebar.explain.nextCursor')}</span>
                     </button>
                   ) : (
                     <>
@@ -347,16 +351,16 @@ export function ExplainResultsPanel({
                         className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-50"
                       >
                         <ChevronLeft size={12} aria-hidden />
-                        <span>上一页</span>
+                        <span>{t('sidebar.explain.prevPage')}</span>
                       </button>
-                      <span className="font-mono text-micro">第 {page + 1} 页</span>
+                      <span className="font-mono text-micro">{t('sidebar.explain.pageOf', { page: page + 1 })}</span>
                       <button
                         type="button"
                         onClick={() => onOffsetPage((page + 1) * pageSize)}
                         disabled={!queryResult.has_more && queryResult.features.length < pageSize}
                         className="flex items-center gap-1 rounded-sm bg-surface-sunken px-2 py-1 transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-50"
                       >
-                        <span>下一页</span>
+                        <span>{t('sidebar.explain.nextPage')}</span>
                         <ChevronRight size={12} aria-hidden />
                       </button>
                     </>
@@ -364,7 +368,7 @@ export function ExplainResultsPanel({
                   {queryResult.is_demo && (
                     <span className="flex items-center gap-1 text-micro text-status-warning">
                       <FlaskConical size={11} aria-hidden />
-                      远端不可达，返回演示数据
+                      {t('sidebar.explain.fallbackDemo')}
                     </span>
                   )}
                 </div>
