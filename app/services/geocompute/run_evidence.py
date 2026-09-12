@@ -19,6 +19,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
+from sqlalchemy import select
+
 logger = logging.getLogger(__name__)
 
 #: 快照 JSON 字符预算（字节）。超出按确定性阶梯降级。
@@ -180,7 +182,14 @@ def save_snapshot(
             run.status.value if hasattr(run.status, "value") else str(run.status)
         )
         with session_factory() as db:
-            from app.models.db_model import GeoComputeRunEvidence
+            from app.core import tenancy
+            from app.models.db_model import GeoComputeClusterRun, GeoComputeRunEvidence
+
+            # ADR-0139：org 锚定 run 行真相（快照与 run 同租户），兜底 default 桶。
+            org_id = db.execute(
+                select(GeoComputeClusterRun.org_id)
+                .where(GeoComputeClusterRun.run_id == run.run_id)
+            ).scalar_one_or_none() or tenancy.get_or_create_default_org_id_sync(db)
 
             existing = (
                 db.query(GeoComputeRunEvidence)
@@ -194,6 +203,7 @@ def save_snapshot(
             else:
                 db.add(GeoComputeRunEvidence(
                     run_id=run.run_id[:64],
+                    org_id=org_id,
                     owner_scope=owner_scope[:40],
                     status=status,
                     snapshot=snapshot,

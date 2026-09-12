@@ -1,0 +1,20 @@
+{
+  "fallback": "Internal server error. Please try again later.",
+  "httpWrapper": "{fallback} (HTTP {status})",
+  "category": {
+    "VALIDATION": "Invalid request parameters",
+    "PERMISSION": "You do not have permission to perform this action",
+    "DATA_UNAVAILABLE": "The requested data is unavailable or does not exist",
+    "CRS": "Coordinate reference system unsupported or cannot be transformed",
+    "RESOURCE_EXHAUSTED": "Resource quota exhausted. Please try again later",
+    "TIMEOUT": "The operation timed out. Please try again later",
+    "CANCELLATION": "The operation was cancelled",
+    "RETRYABLE": "Service temporarily unavailable. Please try again later",
+    "PERMANENT": "Internal server error. Please try again later",
+    "DEPENDENCY_FAILURE": "A dependent service is unavailable. Please try again later",
+    "WORKER_LOST": "Lost contact with the execution node; the task will be rescheduled",
+    "MODEL_FAILURE": "Model service error. Please try again later",
+    "RENDER_FAILURE": "Rendering failed. Please adjust the parameters and try again",
+    "STORAGE_CORRUPTION": "Stored data is corrupted. Please contact the administrator"
+  }
+}

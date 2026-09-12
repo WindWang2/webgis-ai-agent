@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api"
     ENV: str = "development"
 
+    # V9 契约基石（ADR-0138）：统一错误信封。默认 False = 新信封
+    # {code, success, message, data}；置 True 回退 v1 旧体 {"detail"}（过渡期
+    # 开关，迁移计划见 ADR-0138）。请求头 X-Error-Envelope: detail 可按请求
+    # 覆盖为旧体（供未迁移的 v1 客户端灰度）。
+    LEGACY_DETAIL_ENVELOPE: bool = False
+
     # 测试阶段免登录开关：true 时所有受保护端点按 "test-admin"（admin 角色）
     # 放行，无需 Bearer token。仅限本地/测试环境；生产启动会打警告。
     AUTH_DISABLED: bool = False

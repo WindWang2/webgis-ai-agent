@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { STitle, SField, SButton } from '@/components/shared/section-title';
 import { apiFetch, isApiError, describeApiError } from '@/lib/api/transport';
+import { useT } from '@/lib/i18n/useT';
 
 interface BackendDoc {
   id: string;
@@ -34,6 +35,7 @@ type DocsState =
  * 不依赖外部向量库）；Test Connection 走真实的 /api/v1/config/rag/test。
  */
 export function RagConfig() {
+  const t = useT();
   const ragConfig = useHudStore((s) => s.ragConfig);
   const setRagConfig = useHudStore((s) => s.setRagConfig);
 
@@ -132,7 +134,7 @@ export function RagConfig() {
 
   return (
     <div className="flex flex-col gap-5">
-      <STitle title="知识库 · RAG" sub="Retrieval-Augmented Generation" />
+      <STitle title={t('settings.rag.title')} sub="Retrieval-Augmented Generation" />
 
       {/* Indexed documents — 真实目录（原 Spatial/Semantic Index 展示的是
           零生产者的空数组假状态，已移除，改为后端真实列表） */}
@@ -150,7 +152,7 @@ export function RagConfig() {
         )}
         {docs.status === 'ready' && docs.items.length === 0 && (
           <div className="text-body text-ink-muted italic py-2">
-            暂无已索引文档（{docs.total} 篇）
+            {t('settings.rag.noDocs', { count: docs.total })}
           </div>
         )}
         {docs.status === 'ready' && docs.items.length > 0 && (
@@ -181,7 +183,7 @@ export function RagConfig() {
             ))}
             {docs.total > docs.items.length && (
               <div className="text-body text-ink-muted italic pt-1">
-                共 {docs.total} 篇（仅显示前 {docs.items.length} 篇）
+                {t('settings.rag.total', { total: docs.total, shown: docs.items.length })}
               </div>
             )}
           </div>
@@ -199,14 +201,14 @@ export function RagConfig() {
             value={vectorDb}
             onChange={setVectorDb}
             placeholder="http://localhost:19530"
-            hint="仅供展示：当前后端使用内置本地向量库（FAISS），不依赖外部向量数据库。"
+            hint={t('settings.rag.hintLocal')}
           />
           <SField
             label="Collection"
             value={collection}
             onChange={setCollection}
             placeholder="geoagent"
-            hint="仅供展示：保存不会改变后端检索行为。"
+            hint={t('settings.rag.hintDisplay')}
           />
           <div className="flex items-center gap-3">
             <button

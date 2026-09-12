@@ -36,6 +36,7 @@ import { registerComponentRenderer } from './registry';
 import { resolveVariant } from './helpers';
 import { FloatingChrome, usePlacementPatchedComponent } from './floating-chrome';
 import type { RendererContext } from './types';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * table_panel 渲染器（Runtime V4 §10）：artifact/图层双通道交互表格。
@@ -85,6 +86,7 @@ function detectIdField(model: TableModel): string | null {
 }
 
 function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
+  const t = useT();
   const patched = usePlacementPatchedComponent(component);
   const variant = TABLE_PANEL_VARIANTS.has(resolveVariant(patched, 'default'))
     ? resolveVariant(patched, 'default')
@@ -359,21 +361,21 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
               type="text"
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
-              placeholder="过滤行…"
-              aria-label="表格行过滤"
+              placeholder={t('map.table.filterPh')}
+              aria-label={t('map.table.filterAria')}
               className="h-6 min-w-0 flex-1 rounded-xs border border-map-chrome-border bg-surface-sunken px-1.5 text-caption text-map-chrome-ink"
             />
             {layerId && (
               <button
                 type="button"
                 aria-pressed={viewportOnly}
-                title="只显示当前视口范围内的行"
+                title={t('map.table.viewportOnlyTitle')}
                 onClick={() => setViewportOnly((v) => !v)}
                 className={`h-6 shrink-0 rounded-xs border border-map-chrome-border px-1.5 text-caption ${
                   viewportOnly ? 'bg-status-accent-soft text-status-accent' : 'text-map-chrome-ink-muted'
                 }`}
               >
-                视口
+                {t('map.table.viewport')}
               </button>
             )}
             <span className="shrink-0 text-caption tabular-nums text-map-chrome-ink-muted" data-testid="table-panel-count">
@@ -441,7 +443,7 @@ function TablePanelView({ component, ctx }: { component: MapSpecComponent; ctx?:
           </div>
           {state.model.truncated && (
             <div className="shrink-0 text-caption text-map-chrome-ink-muted">
-              仅显示前 {state.model.rows.length} 行（共 {state.model.totalCount}）
+              {t('map.table.rowLimited', { shown: state.model.rows.length, total: state.model.totalCount })}
             </div>
           )}
         </div>

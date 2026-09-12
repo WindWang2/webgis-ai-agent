@@ -47,7 +47,10 @@ logger = logging.getLogger(__name__)
 
 try:  # 与 report_service 同模式：可选依赖，缺席诚实降级
     import weasyprint  # noqa: F401
-except ImportError:  # pragma: no cover - 环境相关
+except (ImportError, OSError):  # pragma: no cover - 环境相关
+    # V9 data-lifecycle 线顺带修复（#1221 D-7 同类）：Windows 无 GTK 时
+    # weasyprint 在 import 期抛 OSError（缺 libpango）而非 ImportError ——
+    # 只捕 ImportError 会让整个 app import 链（含测试收集）不可达。
     weasyprint = None
 
 #: 页面尺寸上限（A0 = 841×1189mm 的毫米值以内）；超限帧拒绝。

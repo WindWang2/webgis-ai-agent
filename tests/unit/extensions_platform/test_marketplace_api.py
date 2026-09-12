@@ -109,7 +109,7 @@ def test_marketplace_404_when_not_configured(monkeypatch):
     client = _client()
     resp = client.get("/api/v1/extensions/marketplace/packages")
     assert resp.status_code == 404
-    assert "EXTENSION_REGISTRY_DIR" in resp.json()["detail"]
+    assert "EXTENSION_REGISTRY_DIR" in resp.json()["message"]
 
 
 def test_marketplace_search_and_detail(marketplace_env):

@@ -57,6 +57,7 @@ import { comparisonFamilyId } from '@/components/map/comparison/comparison-sync'
 import { useVirtualRows } from '@/lib/hooks/use-virtual-rows';
 import { journalOnly, withDocUndo } from '@/lib/workbench/undo';
 import { useUndoRedo } from '@/lib/workbench/use-undo';
+import { useT } from '@/lib/i18n/useT';
 
 /* ─── W8：树行扁平化与窗口虚拟化 ───
  * 10k 图层不 O(N) 渲染：投影后扁平行描述符数组 + 固定行高窗口（自研
@@ -102,7 +103,8 @@ function provenanceTitle(layer: Layer): string {
 
 /** UI V3：删除图层走 ConfirmAction 两段式确认（危险操作防误触 + 防双击绕过）。 */
 function DeleteLayerButton({ onDelete, disabled }: { onDelete: () => void; disabled?: boolean }) {
-  return <ConfirmAction label="删除图层" confirmLabel="确认删除？" onConfirm={onDelete} disabled={disabled} />;
+  const t = useT();
+  return <ConfirmAction label={t('sidebar.layers.deleteLayer')} confirmLabel={t('sidebar.layers.confirmDelete')} onConfirm={onDelete} disabled={disabled} />;
 }
 
 interface FilterBadgeView {
@@ -118,6 +120,7 @@ interface FilterBadgeView {
  * - inactive / unknown / stale → 无徽标（未知 ≠ 异常，不为噪声占行宽）。
  */
 function useFilterEvidenceBadges(layers: Layer[]): Record<string, FilterBadgeView> {
+  const t = useT();
   const generation = useSyncExternalStore(subscribeFilterEvidence, getFilterEvidenceGeneration);
   return useMemo(() => {
     const out: Record<string, FilterBadgeView> = {};
@@ -126,14 +129,14 @@ function useFilterEvidenceBadges(layers: Layer[]): Record<string, FilterBadgeVie
       if (!evidence) continue;
       if (evidence.status === 'empty') {
         out[layer.id] = {
-          label: '过滤后 0 要素',
-          title: '当前过滤条件没有命中任何要素（检查图例区间/选择过滤/字段拼写）',
+          label: t('sidebar.layers.filterEmptyLabel'),
+          title: t('sidebar.layers.filterEmptyTitle'),
           tone: 'warn',
         };
       } else if (evidence.status === 'invalid') {
         out[layer.id] = {
-          label: '过滤字段不存在',
-          title: '过滤引用的字段在该层要素属性中不存在',
+          label: t('sidebar.layers.filterInvalidLabel'),
+          title: t('sidebar.layers.filterInvalidTitle'),
           tone: 'warn',
         };
       } else if (evidence.status === 'active' && evidence.matched_count != null) {
@@ -197,6 +200,7 @@ function GroupHeader({
   isGroupDragActive: boolean;
   draggedGroupId: string | null;
 }) {
+  const t = useT();
   const toggleGroupCollapsed = useHudStore((s) => s.toggleGroupCollapsed);
   const renameLayerGroup = useHudStore((s) => s.renameLayerGroup);
   const removeLayerGroup = useHudStore((s) => s.removeLayerGroup);
@@ -306,7 +310,7 @@ function GroupHeader({
         <input
           ref={(el) => el?.focus()}
           value={draftName}
-          aria-label="重命名分组"
+          aria-label={t('sidebar.layers.renameGroup')}
           onChange={(e) => setDraftName(e.target.value)}
           onBlur={commitRename}
           onKeyDown={(e) => {
@@ -363,8 +367,8 @@ function GroupHeader({
               }
             />
             <ConfirmAction
-              label={`删除分组 ${section.name}（图层保留）`}
-              confirmLabel="确认删除分组？"
+              label={t('sidebar.layers.deleteGroupLabel', { name: section.name })}
+              confirmLabel={t('sidebar.layers.confirmDeleteGroup')}
               onConfirm={() => {
                 if (!section.id) return;
                 withDocUndo(`删除分组 ${section.name}`, 'user', () =>
@@ -426,6 +430,7 @@ function LayerRow({
   styleClipboard: LayerStyle | null;
   setStyleClipboard: (style: LayerStyle | null) => void;
 }) {
+  const t = useT();
   const layer = row.layer;
   const selected = row.selected;
   const locked = row.locked;
@@ -492,7 +497,7 @@ function LayerRow({
           // Review R1（GIS F4）：叠放方向如实披露 —— 本仓数组序 = 自底向上
           // 渲染（index 0 最先 add = 最底层），Alt+↑ 即向底层移动。
           aria-label={`重新排序 ${layer.name}（自底向上第 ${globalIdx + 1} / ${totalCount} 层，Alt+↑ 移向底层 / Alt+↓ 移向顶层）`}
-          title="拖拽移动，或 Alt+↑/↓（↑ = 移向底层）"
+          title={t('sidebar.layers.dragHint')}
           disabled={locked}
           className="flex h-control-sm w-icon-md shrink-0 cursor-grab items-center justify-center rounded-xs text-ink-disabled transition-colors hover:text-ink-secondary active:cursor-grabbing disabled:cursor-not-allowed"
           onKeyDown={(e) => {
@@ -555,10 +560,10 @@ function LayerRow({
         {stale && (
           <span
             className="shrink-0 rounded-xs bg-status-warn-soft px-1 text-micro text-status-warn"
-            title="上游数据已变更，此图层的产物已过期 —— 重新运行分析可刷新"
+            title={t('sidebar.layers.staleTitle')}
             data-testid={`stale-badge-${layer.id}`}
           >
-            已过期
+            {t('sidebar.layers.stale')}
           </span>
         )}
 
@@ -578,8 +583,8 @@ function LayerRow({
         )}
 
         {isolatedActive === layer.id && (
-          <span className="shrink-0 rounded-xs bg-status-accent-soft px-1 text-micro text-status-accent" title="该图层处于隔离显示（solo）">
-            隔离
+          <span className="shrink-0 rounded-xs bg-status-accent-soft px-1 text-micro text-status-accent" title={t('sidebar.layers.soloTitle')}>
+            {t('sidebar.layers.solo')}
           </span>
         )}
 
@@ -675,7 +680,7 @@ function LayerRow({
               else void isolateLayerAndCommit(layer.id);
             }}
           />
-          <span className="text-micro text-ink-muted">隔离</span>
+          <span className="text-micro text-ink-muted">{t('sidebar.layers.solo')}</span>
           <IconButton
             size="sm"
             label={`复制图层样式 ${layer.name}`}
@@ -684,7 +689,7 @@ function LayerRow({
               if (layer.style) setStyleClipboard({ ...layer.style });
             }}
           />
-          <span className="text-micro text-ink-muted">复制样式</span>
+          <span className="text-micro text-ink-muted">{t('sidebar.layers.copyStyle')}</span>
           <IconButton
             size="sm"
             label={`粘贴样式到 ${layer.name}`}
@@ -694,7 +699,7 @@ function LayerRow({
               if (styleClipboard) void pasteStyle(styleClipboard, layer.id);
             }}
           />
-          <span className="text-micro text-ink-muted">粘贴样式</span>
+          <span className="text-micro text-ink-muted">{t('sidebar.layers.pasteStyle')}</span>
           <ComparePicker layer={layer} />
           {/* V7 Phase D：属性表停靠底部区（静态 dock 面板；map↔table 选择联动）。 */}
           <IconButton
@@ -707,7 +712,7 @@ function LayerRow({
               store.dockPanel('attribute-table', 'bottom');
             }}
           />
-          <span className="text-micro text-ink-muted">属性表</span>
+          <span className="text-micro text-ink-muted">{t('sidebar.layers.attributeTable')}</span>
           {layer._refId && (
             <>
               <IconButton
@@ -716,7 +721,7 @@ function LayerRow({
                 icon={RotateCw}
                 onClick={() => void retryLayerLoad(layer.id)}
               />
-              <span className="text-micro text-ink-muted">重载</span>
+              <span className="text-micro text-ink-muted">{t('sidebar.layers.reload')}</span>
             </>
           )}
           {row.groupId && (
@@ -725,7 +730,7 @@ function LayerRow({
               className="rounded-xs px-1 py-0.5 text-micro text-ink-secondary hover:bg-surface-hover hover:text-ink"
               onClick={() => useHudStore.getState().assignLayersToGroup([layer.id], null)}
             >
-              移出「{sectionNameOf(row.groupId)}」
+              {t('sidebar.layers.moveOutOfGroup', { name: sectionNameOf(row.groupId) })}
             </button>
           )}
         </div>
@@ -745,6 +750,7 @@ function sectionNameOf(groupId: string): string {
  * 图层 id 用 spec 层族 id（comparisonFamilyId，与 ComparisonView 的过滤同源）。
  */
 function ComparePicker({ layer }: { layer: Layer }) {
+  const t = useT();
   const layers = useHudStore((s) => s.layers);
   const enterComparison = useHudStore((s) => s.enterComparison);
   const familyId = comparisonFamilyId(layer);
@@ -765,7 +771,7 @@ function ComparePicker({ layer }: { layer: Layer }) {
   return (
     <label className="flex items-center gap-1 text-micro text-ink-muted">
       <Columns2 aria-hidden size={12} />
-      <span className="sr-only">对比显示 {layer.name}</span>
+      <span className="sr-only">{t('sidebar.layers.compare')} {layer.name}</span>
       <select
         aria-label={`对比显示 ${layer.name}`}
         defaultValue=""
@@ -780,7 +786,7 @@ function ComparePicker({ layer }: { layer: Layer }) {
           e.target.value = '';
         }}
       >
-        <option value="">对比显示…</option>
+        <option value="">{t('sidebar.layers.compareEllipsis')}</option>
         {options.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}
@@ -792,6 +798,7 @@ function ComparePicker({ layer }: { layer: Layer }) {
 /* ─────────────────────────── 批量操作条 ─────────────────────────── */
 
 function BatchActionBar({ scopeIds }: { scopeIds: string[] }) {
+  const t = useT();
   const selectedLayerIds = useHudStore((s) => s.selectedLayerIds);
   const clearLayerSelection = useHudStore((s) => s.clearLayerSelection);
   const assignLayersToGroup = useHudStore((s) => s.assignLayersToGroup);
@@ -811,33 +818,33 @@ function BatchActionBar({ scopeIds }: { scopeIds: string[] }) {
       className="flex shrink-0 flex-wrap items-center gap-2 border-b border-edge-subtle bg-surface-subtle px-panel py-1.5"
       data-testid="layer-batch-bar"
       role="toolbar"
-      aria-label="图层批量操作"
+      aria-label={t('sidebar.layers.batchActions')}
     >
       <span className="text-micro tabular-nums text-ink-secondary">
-        已选 {selectedLayerIds.length}
+        {t('sidebar.layers.selected')} {selectedLayerIds.length}
       </span>
       <button
         type="button"
         className="rounded-xs px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-hover hover:text-ink"
         onClick={() => void batchSetVisibility(scopeIds, true)}
       >
-        全部显示
+        {t('sidebar.layers.showAll')}
       </button>
       <button
         type="button"
         className="rounded-xs px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-hover hover:text-ink"
         onClick={() => void batchSetVisibility(scopeIds, false)}
       >
-        全部隐藏
+        {t('sidebar.layers.hideAll')}
       </button>
       <label className="flex items-center gap-1 text-micro text-ink-muted">
-        不透明度
+        {t('sidebar.layers.opacity')}
         <input
           type="range"
           min={0}
           max={100}
           defaultValue={100}
-          aria-label="批量设置不透明度"
+          aria-label={t('sidebar.layers.batchOpacity')}
           className="slider-track h-1 w-16"
           onChange={(e) => setOpacity(parseInt(e.target.value, 10))}
           onPointerUp={() => opacity != null && void batchSetOpacity(scopeIds, opacity / 100)}
@@ -845,10 +852,10 @@ function BatchActionBar({ scopeIds }: { scopeIds: string[] }) {
         />
       </label>
       <label className="flex items-center gap-1 text-micro text-ink-muted">
-        <span className="sr-only">移入分组</span>
+        <span className="sr-only">{t('sidebar.layers.moveToGroup')}</span>
         <Group aria-hidden size={12} />
         <select
-          aria-label="将选中图层移入分组"
+          aria-label={t('sidebar.layers.moveToGroupAria')}
           defaultValue=""
           className="h-control-sm rounded-xs border border-edge-subtle bg-surface-panel px-1 text-micro text-ink"
           onChange={(e) => {
@@ -868,17 +875,17 @@ function BatchActionBar({ scopeIds }: { scopeIds: string[] }) {
             e.target.value = '';
           }}
         >
-          <option value="">移入分组…</option>
-          <option value="__new__">＋ 新建分组</option>
+          <option value="">{t('sidebar.layers.moveToGroupEllipsis')}</option>
+          <option value="__new__">{t('sidebar.layers.newGroupPlus')}</option>
           {layerGroups.map((g) => (
             <option key={g.id} value={g.id}>{g.name}</option>
           ))}
-          <option value="__ungrouped__">移出分组</option>
+          <option value="__ungrouped__">{t('sidebar.layers.moveOutOfGroupPlain')}</option>
         </select>
       </label>
       {confirmingDelete ? (
         <span className="flex items-center gap-1 text-micro text-status-critical">
-          <span role="status">删除 {selectedLayerIds.length} 层？</span>
+          <span role="status">{t('sidebar.layers.deleteLayersConfirm', { count: selectedLayerIds.length })}</span>
           <button
             type="button"
             ref={confirmRef}
@@ -894,10 +901,10 @@ function BatchActionBar({ scopeIds }: { scopeIds: string[] }) {
               setConfirmingDelete(false);
             }}
           >
-            确认
+            {t('common.confirm')}
           </button>
           <button type="button" className="rounded-xs px-1.5 py-0.5" onClick={() => setConfirmingDelete(false)}>
-            取消
+            {t('common.cancel')}
           </button>
         </span>
       ) : (
@@ -906,16 +913,16 @@ function BatchActionBar({ scopeIds }: { scopeIds: string[] }) {
           className="flex items-center gap-1 rounded-xs px-1.5 py-0.5 text-micro text-status-critical hover:bg-status-critical-soft"
           onClick={() => setConfirmingDelete(true)}
         >
-          <Trash2 aria-hidden size={12} /> 删除
+          <Trash2 aria-hidden size={12} /> {t('common.delete')}
         </button>
       )}
       <button
         type="button"
-        aria-label="取消选择"
+        aria-label={t('sidebar.layers.clearSelection')}
         className="ml-auto rounded-xs px-1.5 py-0.5 text-micro text-ink-muted hover:bg-surface-hover hover:text-ink"
         onClick={clearLayerSelection}
       >
-        取消选择
+        {t('sidebar.layers.clearSelection')}
       </button>
     </div>
   );
@@ -924,6 +931,7 @@ function BatchActionBar({ scopeIds }: { scopeIds: string[] }) {
 /* ─────────────────────────── 主组件 ─────────────────────────── */
 
 export function LayersTab() {
+  const t = useT();
   const layers = useHudStore((s) => s.layers);
   const setActiveLeftTab = useHudStore((s) => s.setActiveLeftTab);
   const layerGroups = useHudStore((s) => s.layerGroups);
@@ -1210,12 +1218,12 @@ export function LayersTab() {
     <div className="flex flex-col h-full">
       {/* Stats header + 搜索 + 新建分组 */}
       <div className="flex shrink-0 items-center gap-3 border-b border-edge-subtle bg-surface-panel px-panel py-1">
-        <span className="text-micro text-ink-disabled" title="列表自下而上 = 地图自底向顶的叠放次序">
-          ↑顶层
+        <span className="text-micro text-ink-disabled" title={t('sidebar.layers.orderHint')}>
+          {t('sidebar.layers.topIndicator')}
         </span>
         {[
-          { label: '总图层', value: layers.length },
-          { label: '可见', value: visibleCount },
+          { label: t('sidebar.layers.statTotal'), value: layers.length },
+          { label: t('sidebar.layers.statVisible'), value: visibleCount },
         ].map((stat) => (
           <div key={stat.label} className="flex items-baseline gap-1">
             <span className="text-body font-semibold tabular-nums text-ink">{stat.value}</span>
@@ -1226,13 +1234,13 @@ export function LayersTab() {
           <SearchField
             value={search}
             onChange={setSearch}
-            placeholder="搜索图层"
-            aria-label="搜索图层（名称 / id / ref）"
+            placeholder={t('sidebar.layers.searchPlaceholder')}
+            aria-label={t('sidebar.layers.searchAria')}
           />
         </div>
         <IconButton
           size="sm"
-          label="新建分组"
+          label={t('sidebar.layers.newGroup')}
           icon={FolderPlus}
           onClick={() =>
             withDocUndo('新建分组', 'user', () =>
@@ -1243,14 +1251,14 @@ export function LayersTab() {
         {/* W9/R2-m-5：undo/redo 可见面板入口（快捷键之外的发现性 + 触屏路径）。 */}
         <IconButton
           size="sm"
-          label="撤销上一步工作台操作（Ctrl+Z）"
+          label={t('sidebar.layers.undoLabel')}
           icon={Undo2}
           disabled={!undoRedo.canUndo}
           onClick={undoRedo.undo}
         />
         <IconButton
           size="sm"
-          label="重做（Ctrl+Shift+Z）"
+          label={t('sidebar.layers.redoLabel')}
           icon={Redo2}
           disabled={!undoRedo.canRedo}
           onClick={undoRedo.redo}
@@ -1267,13 +1275,13 @@ export function LayersTab() {
       {isolatedLayerId && (
         <div className="flex shrink-0 items-center gap-2 border-b border-edge-subtle bg-status-accent-soft px-panel py-1 text-micro text-ink">
           <Crosshair aria-hidden size={12} />
-          <span>隔离显示中 —— 其余图层已临时隐藏</span>
+          <span>{t('sidebar.layers.soloBanner')}</span>
           <button
             type="button"
             className="ml-auto rounded-xs px-1.5 py-0.5 text-status-accent hover:bg-surface-hover"
             onClick={() => void clearIsolateAndCommit()}
           >
-            退出隔离
+            {t('sidebar.layers.exitSolo')}
           </button>
         </div>
       )}
@@ -1284,9 +1292,9 @@ export function LayersTab() {
           <div className="flex h-full items-center justify-center">
             <EmptyState
               icon={LayersIcon}
-              title="暂无图层"
-              description="开始分析后图层将自动添加；也可以从数据织网加载数据集"
-              action={{ label: '前往数据源', onClick: () => setActiveLeftTab('data_sources') }}
+              title={t('sidebar.layers.emptyTitle')}
+              description={t('sidebar.layers.emptyDesc')}
+              action={{ label: t('sidebar.layers.gotoDataSources'), onClick: () => setActiveLeftTab('data_sources') }}
             />
           </div>
         ) : flatRows.length > VIRTUAL_THRESHOLD ? (

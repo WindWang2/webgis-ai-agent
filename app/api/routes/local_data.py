@@ -16,11 +16,17 @@ from fastapi import APIRouter, Depends, Query
 from app.core.auth import get_current_user
 from app.services.local_osm import THEME_SPECS, catalog, query_osm_features
 from app.tools.local_admin import LEVELS, query_admin_boundary, query_child_districts
+from app.schemas.local_data_schema import (
+    AdminBoundaryResponse,
+    AdminChildrenResponse,
+    OsmCatalogResponse,
+    OsmFeaturesResponse,
+)
 
 router = APIRouter()
 
 
-@router.get("/admin/{level}/boundary")
+@router.get("/admin/{level}/boundary", response_model=AdminBoundaryResponse)
 async def get_admin_boundary(
     level: str,
     name: Optional[str] = None,
@@ -28,7 +34,7 @@ async def get_admin_boundary(
     to_wgs84: bool = False,
     simplified: bool = False,
     _user: dict = Depends(get_current_user),
-):
+) -> AdminBoundaryResponse:
     """GET 查询参数用朴素默认值（直接调用路由函数时 Query() 对象会泄漏为实参）。"""
     if level not in LEVELS:
         return {"error": f"不支持的级别: {level}（可选 {', '.join(LEVELS)}）"}
@@ -38,26 +44,26 @@ async def get_admin_boundary(
     )
 
 
-@router.get("/admin/children")
+@router.get("/admin/children", response_model=AdminChildrenResponse)
 async def get_admin_children(
     parent_name: str = Query(description="上级行政区名称，如'成都市'"),
     parent_level: str = Query(default="city", pattern="^(city|province)$"),
     to_wgs84: bool = False,
     simplified: bool = False,
     _user: dict = Depends(get_current_user),
-):
+) -> AdminChildrenResponse:
     return await asyncio.to_thread(
         query_child_districts,
         parent_name, parent_level, to_wgs84=to_wgs84, simplified=simplified,
     )
 
 
-@router.get("/osm/catalog")
-async def get_osm_catalog(_user: dict = Depends(get_current_user)):
-    return catalog()
+@router.get("/osm/catalog", response_model=OsmCatalogResponse)
+async def get_osm_catalog(_user: dict = Depends(get_current_user)) -> OsmCatalogResponse:
+    return OsmCatalogResponse(**catalog())
 
 
-@router.get("/osm/features")
+@router.get("/osm/features", response_model=OsmFeaturesResponse)
 async def get_osm_features(
     theme: str = Query(description=f"主题: {', '.join(THEME_SPECS)}"),
     bbox: str = Query(description="WGS84 边界框 'minx,miny,maxx,maxy'"),
@@ -65,9 +71,9 @@ async def get_osm_features(
     tag: Optional[str] = Query(default=None, description="标签过滤，如 'amenity=restaurant'"),
     limit: int = Query(default=200, ge=1, le=2000),
     _user: dict = Depends(get_current_user),
-):
+) -> OsmFeaturesResponse:
     bbox_list = [v.strip() for v in bbox.split(",")]
-    return await asyncio.to_thread(
+    return OsmFeaturesResponse(**await asyncio.to_thread(
         query_osm_features,
         theme, bbox_list, name_like=name, tag=tag, limit=limit,
-    )
+    ))

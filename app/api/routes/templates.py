@@ -5,14 +5,19 @@ import uuid
 import logging
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import TypeAdapter
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import actor_ids, get_current_user, get_current_user_optional
 from app.core.database import get_async_db
 from app.models.db_model import CartographyTemplate
+from app.schemas.pagination import Page as _Page  # noqa: F401 — re-export 供类型引用
 from app.schemas.template_schema import (
+    CreateTemplateRequest,
+    TemplateDeleteResponse,
+    TemplateView,
+
     BasemapPayload,
     SymbologyPayload,
     LayoutTemplatePayload,
@@ -23,15 +28,6 @@ from app.schemas.template_schema import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-class CreateTemplateRequest(BaseModel):
-    name: str = Field(..., description="模板名称", min_length=1, max_length=100)
-    kind: str = Field(..., description="模板类别: basemap, symbology, layout, thematic")
-    description: Optional[str] = Field(None, description="模板描述")
-    keywords: List[str] = Field(default_factory=list, description="搜索关键词标签")
-    payload: Dict[str, Any] = Field(..., description="对应 kind 的样式/配置 payload")
-    thumbnail_url: Optional[str] = Field(None, description="缩略图 URL")
 
 
 def _validate_payload(kind: str, payload: Dict[str, Any]):
@@ -146,7 +142,11 @@ def _template_to_dict(tmpl: CartographyTemplate) -> dict:
     }
 
 
-@router.get("/templates", summary="查询地图制图模板列表")
+@router.get(
+    "/templates",
+    summary="查询地图制图模板列表",
+    response_model=_Page[TemplateView],
+)
 async def list_templates(
     kind: Optional[str] = Query(None, description="按类别过滤: basemap, symbology, layout, thematic, composite"),
     q: Optional[str] = Query(None, description="搜索关键词 (匹配名称、描述或关键字)"),
@@ -272,7 +272,11 @@ def _to_summary(t: dict) -> dict:
     return out
 
 
-@router.get("/templates/{template_id}", summary="获取模板详情 (含 payload)")
+@router.get(
+    "/templates/{template_id}",
+    summary="获取模板详情 (含 payload)",
+    response_model=TemplateView,
+)
 async def get_template(
     template_id: str,
     _user: Optional[dict] = Depends(get_current_user_optional),
@@ -307,7 +311,12 @@ async def get_template(
     return seed
 
 
-@router.post("/templates", status_code=status.HTTP_201_CREATED, summary="另存为新模板 (Save as Template)")
+@router.post(
+    "/templates",
+    status_code=status.HTTP_201_CREATED,
+    summary="另存为新模板 (Save as Template)",
+    response_model=TemplateView,
+)
 async def create_template(
     req: CreateTemplateRequest,
     _user: dict = Depends(get_current_user),
@@ -348,7 +357,11 @@ async def create_template(
         )
 
 
-@router.delete("/templates/{template_id}", summary="删除用户模板")
+@router.delete(
+    "/templates/{template_id}",
+    summary="删除用户模板",
+    response_model=TemplateDeleteResponse,
+)
 async def delete_template(
     template_id: str,
     _user: dict = Depends(get_current_user),
@@ -391,6 +404,6 @@ async def delete_template(
 
     await db.delete(tmpl)
     await db.commit()
-    return {"status": "deleted", "template_id": template_id}
+    return TemplateDeleteResponse(status="deleted", template_id=template_id)
 
 

@@ -20,6 +20,7 @@ import { useMapAction } from "@/lib/contexts/map-action-context";
 import { applyStoryMapState, type SessionMapState } from "@/lib/session/map-state-restore";
 import { useToastStore } from "@/components/ui/toast";
 import { MapErrorBoundary } from "@/components/map/map-error-boundary";
+import { useT } from '@/lib/i18n/useT';
 import { Pause, Play, SkipBack, Share2 } from "lucide-react"
 
 /** 播放模式下逐条消息推进的间隔（ms）。 */
@@ -39,6 +40,7 @@ interface StoryMessage {
 }
 
 function StoryPageInner() {
+  const t = useT();
   const searchParams = useSearchParams()
   const sessionId = searchParams.get("session_id")
 
@@ -198,8 +200,8 @@ function StoryPageInner() {
             {/* #552: 三个按钮此前全部无 onClick —— 接上真实行为：上一条 /
                 播放暂停（逐条自动推进）/ 复制分享链接。 */}
             <button
-              aria-label="上一个"
-              title="上一条消息"
+              aria-label={t('story.prev')}
+              title={t('story.prevTitle')}
               onClick={handlePrevious}
               disabled={messages.length === 0 || activeIndex === 0}
               className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info disabled:opacity-40 disabled:pointer-events-none"
@@ -216,8 +218,8 @@ function StoryPageInner() {
               {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
             </button>
             <button
-              aria-label="分享"
-              title="复制分享链接"
+              aria-label={t('story.share')}
+              title={t('story.shareTitle')}
               onClick={handleShare}
               className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info"
             >
@@ -229,14 +231,14 @@ function StoryPageInner() {
         <div className="p-8 pb-32 flex flex-col gap-12 font-sans">
           {loadError ? (
             <div role="alert" className="rounded-md border border-status-critical-border bg-status-critical-soft p-5">
-              <p className="text-body font-semibold text-status-critical">无法加载该会话</p>
+              <p className="text-body font-semibold text-status-critical">{t('story.loadFailed')}</p>
               <p className="mt-2 text-meta text-ink-secondary">{loadError}</p>
               <p className="mt-2 text-meta text-ink-muted">
-                匿名会话暂不支持跨页面分享（出于安全考虑，不将会话凭证放入 URL）；请登录后重试，或确认链接中的会话 ID 是否正确。
+                {t('story.anonShare')}
               </p>
             </div>
           ) : messages.length === 0 ? (
-            <p className="text-body text-ink-muted">该会话暂无内容。</p>
+            <p className="text-body text-ink-muted">{t('story.empty')}</p>
           ) : (
             messages.map((msg, idx) => (
               <div

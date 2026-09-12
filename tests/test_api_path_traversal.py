@@ -157,7 +157,7 @@ async def test_download_rejects_absolute_path_outside_report_dir(report_env):
     await seed("r-abs", "/etc/passwd")
     resp = await client.get("/api/v1/reports/r-abs/download")
     assert resp.status_code == 400
-    assert "非法文件路径" in resp.json()["detail"]
+    assert "非法文件路径" in resp.json()["message"]
 
 
 @pytest.mark.asyncio

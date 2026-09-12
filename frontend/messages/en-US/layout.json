@@ -1,0 +1,107 @@
+{
+  "skipToMap": "Skip to map canvas",
+  "mapCanvas": "Map canvas",
+  "newSessionTitle": "New session",
+  "newSessionConfirm": {
+    "title": "Start a new conversation?",
+    "description": "Starting a new conversation clears the current workspace (map layers and chat history). Previous sessions remain available in History, top right.",
+    "confirm": "Start new conversation"
+  },
+  "mapLoading": "Loading map…",
+  "deleteSessionFailed": "Failed to delete session: {detail}",
+  "deleteSessionFailedDetail": "Failed to delete session",
+  "templateApplied": "Template applied: {name}",
+  "topbar": {
+    "unnamed": "Untitled",
+    "statusReady": "Ready",
+    "statusThinking": "Perceiving",
+    "statusActing": "Acting",
+    "statusDone": "Done",
+    "statusError": "Error",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar",
+    "sessionPrefix": "Session / {name}",
+    "newSession": "New session",
+    "history": "History",
+    "switchTo2D": "Switch to 2D view",
+    "switchTo3D": "Switch to 3D view",
+    "view3DTitle": "View: 3D (click for 2D)",
+    "view2DTitle": "View: 2D (click for 3D)",
+    "uiTweaks": "UI tweaks",
+    "settings": "Settings"
+  },
+  "tabs": {
+    "chat": "Chat",
+    "project": "Project",
+    "data_sources": "Data",
+    "lakehouse": "Lakehouse",
+    "layers": "Layers",
+    "components": "Components",
+    "analysis": "Analysis",
+    "tasks": "Tasks",
+    "results": "Results",
+    "export_layout": "Map layout",
+    "exports": "Exports"
+  },
+  "modes": {
+    "explore": "Explore",
+    "analyze": "Analyze",
+    "compose": "Compose"
+  },
+  "nav": {
+    "main": "Main navigation",
+    "workbenchMode": "Workbench mode",
+    "modeSuffix": "{name} mode",
+    "agentRevertAria": "Agent switched the workbench mode — click to return to your previous mode",
+    "agentRevertTitle": "Agent switched the workbench mode — click to revert",
+    "workspacePanels": "Workspace panels",
+    "templates": "Template gallery",
+    "collapsePanel": "Collapse panel",
+    "expandPanel": "Expand panel"
+  },
+  "panel": {
+    "title": {
+      "chat": "Chat",
+      "project": "Project",
+      "data_sources": "Data",
+      "lakehouse": "Lakehouse",
+      "layers": "Layers",
+      "components": "Components",
+      "analysis": "Analysis",
+      "tasks": "Tasks",
+      "results": "Analysis results",
+      "export_layout": "Cartography studio"
+    },
+    "desc": {
+      "chat": "AI geospatial agent",
+      "project": "Workspace · Datasets · Workflows",
+      "data_sources": "Spatial catalog & data sources",
+      "lakehouse": "Cube catalog · Query · STAC · versions",
+      "layers": "Visibility · Style · Order",
+      "components": "Map components · Layout · Charts",
+      "analysis": "Spatial analysis tools",
+      "tasks": "Background job center",
+      "results": "Result workbench · Inputs · Metrics · Outputs",
+      "export_layout": "Layout & export"
+    },
+    "boundary": {
+      "chat": "Chat",
+      "project": "Project",
+      "layers": "Layers",
+      "components": "Components",
+      "analysis": "Analysis",
+      "data_sources": "Data",
+      "lakehouse": "Lakehouse",
+      "export_layout": "Cartography studio",
+      "tasks": "Tasks",
+      "results": "Results"
+    },
+    "resizeAria": "Resize panel",
+    "resizeTitle": "Drag to resize panel (double-click to reset)"
+  },
+  "sheet": {
+    "handleAria": "Drag to resize panel height; pull down to close",
+    "snapHalf": "Half screen",
+    "snapFull": "Full screen"
+  }
+}

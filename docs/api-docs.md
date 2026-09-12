@@ -42,7 +42,7 @@
   1. 路由内 `HTTPException`（最常见）→ FastAPI 原生体 `{"detail": "..."}`，状态码即 HTTP 码。
   2. 未捕获异常 → 全局处理器（`app/core/exception.py`）返回 `{"code", "success": false, "message", "data": null}`；生产环境 message 固定为通用文案，非生产环境附带 `error_type / traceback` 等调试字段。部分资源（knowledge、reports 等）正常响应也使用 `ApiResponse` 信封 `{code, success, message, data}`。
 - **限流**（Redis 后端、内存兜底）：
-  - 全局：每客户端 IP 60 次 / 60 秒（`/docs`、`/redoc`、`/openapi.json` 豁免），超限 429。
+  - 全局：每客户端 IP 240 次 / 60 秒（`app/main.py` `RateLimitMiddleware(max_requests=240, window_seconds=60)`；`/docs`、`/redoc`、`/openapi.json` 豁免），超限 429。V9 前文档误载 60 次。
   - 登录失败：每 IP 5 次 / 5 分钟；注册：每 IP 5 次 / 小时；refresh：每用户 30 次 / 5 分钟；WebSocket 连接：每 IP 5 次 / 60 秒。
 - **CORS**：允许的请求头包含 `Authorization`、`Content-Type`、`X-Session-Token`；来源由 `CORS_ORIGINS` 配置（JSON 数组格式）。
 
@@ -497,3 +497,774 @@ Pi host 的计划真相是 SessionPlan 信封（ADR-0076）。三个事件名**�
 当前目录中的指令（按域）：视角 `fly_to`、`zoom_to_bbox`、`set_map_view`；图层 `add_layer`、`add_raster_layer`、`remove_layer`、`reorder_layer`、`base_layer_change`、`layer_visibility_update`、`layer_style_update`、`apply_layer_filter`、`cartographic_runtime_repair`；热力/制图 `add_heatmap_raster`、`add_native_heatmap`、`create_thematic_map`；标注 `add_marker`、`draw_measurement`、`clear_annotations`；查询/导出 `query_features`、`export_map`。
 
 指令参数 schema 以前端目录定义为单一事实源，此处不逐一展开。
+
+<!-- BEGIN GENERATED:API-CATALOG -->
+
+## 端点目录（自动生成）
+
+> 本节由 `scripts/gen_api_docs.py` 从 `app.openapi()` 生成 ——
+> **禁止手改**；漂移由 `tests/test_api_docs_drift.py` 在 CI 强制。
+
+### 通用约定（生成自代码常数）
+
+- 全局前缀：`/api/v1`（V8 前特性统一挂 v1；v2 见 ADR-0138）。
+- 全局限流：每客户端 IP **240 次 / 60 秒**（`app/main.py` `RateLimitMiddleware(max_requests=240, window_seconds=60)`，`/docs`、`/redoc`、`/openapi.json` 豁免），超限 429。
+- 登录失败：每 IP 5 次 / 5 分钟；注册：每 IP 5 次 / 小时；refresh：每用户 30 次 / 5 分钟；WebSocket 连接：每 IP 5 次 / 60 秒。
+- 错误信封：统一 `{code, success, message, data}`（含 `category`/`retryable` 分类附加字段）；过渡期回退见 ADR-0138（`LEGACY_DETAIL_ENVELOPE` / 请求头 `X-Error-Envelope: detail`）。
+
+### AI对话
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/chat/completions` | Chat Completions | ChatResponse |
+| `GET` | `/api/v1/chat/sessions` | List Sessions | SessionListResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}` | Get Session Detail | SessionDetailResponse |
+| `DELETE` | `/api/v1/chat/sessions/{session_id}` | Clear Session | ClearSessionResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/cartographic-observation` | Push Cartographic Runtime Observation | CartographicObservationResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id}` | Get Session Chart Artifact | ChartArtifactResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/map-action-ack` | Push Map Action Acks | MapActionAckResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/map-state` | Get Session Map State | SessionMapStateResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/map-state` | Push Session Map State | — |
+| `POST` | `/api/v1/chat/sessions/{session_id}/mapspec/mutations` | Apply User Mapspec Mutation | MutationApplyResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/plan` | Get Session Plan | SessionPlanViewResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}` | Get Session Table Artifact | TableArtifactResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/workbench/artifact-status` | Get Workbench Artifact Status | WorkbenchArtifactStatusResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/workbench/state` | Get Workbench State | WorkbenchStateResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/workflow-resume-anchor` | Create Workflow Resume Anchor | ResumeAnchorResponse |
+| `GET` | `/api/v1/chat/skills` | List Skills Api | app__schemas__chat_schema__SkillsListResponse |
+| `POST` | `/api/v1/chat/stream` | Chat Stream | object |
+| `GET` | `/api/v1/chat/tools` | List Tools | ToolsListResponse |
+| `POST` | `/api/v1/chat/tools/execute` | Execute Tool Direct | ToolExecuteResponse |
+| `POST` | `/api/v1/chat/workflow-resume/{anchor_id}` | Resume Workflow From Anchor | WorkflowResumeResponse |
+
+### API v2
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v2/geocompute/cluster/ledger/limits` | Cluster Set Ledger Limits | LedgerLimitsResponse |
+| `GET` | `/api/v2/geocompute/cluster/metrics` | Cluster Metrics | ClusterMetricsResponse |
+| `GET` | `/api/v2/geocompute/cluster/runs/stuck` | Cluster Stuck Runs | ClusterStuckRunsResponse |
+| `POST` | `/api/v2/geocompute/cluster/runs/{run_id}/reset` | Cluster Reset Run | ClusterRunResetResponse |
+| `GET` | `/api/v2/geocompute/cluster/workers` | Cluster Workers | ClusterWorkersResponse |
+| `POST` | `/api/v2/geocompute/plans/drift-check` | Drift Check | PlanDriftCheckResponse |
+| `POST` | `/api/v2/geocompute/plans/execute` | Execute Execution Plan | PlanExecuteResponse |
+| `POST` | `/api/v2/geocompute/plans/runs` | Submit Execution Plan | — |
+| `POST` | `/api/v2/geocompute/plans/runs/{run_id}/cancel` | Cancel Execution Run | PlanRunCancelResponse |
+| `POST` | `/api/v2/geocompute/plans/validate` | Validate Execution Plan | PlanValidateResponse |
+| `GET` | `/api/v2/geocompute/runs` | List Execution Runs | RunsListResponse |
+| `GET` | `/api/v2/geocompute/runs/{run_id}` | Get Execution Run | RunDetailResponse |
+| `POST` | `/api/v2/geocompute/runs/{run_id}/cancel` | Cancel Execution Run | RunCancelResponse |
+| `GET` | `/api/v2/geocompute/runs/{run_id}/events` | List Run Events | RunEventsResponse |
+| `GET` | `/api/v2/geocompute/runs/{run_id}/summary` | Get Execution Run Summary | RunSummaryResponse |
+| `GET` | `/api/v2/lakehouse/catalog` | Search Lakehouse Catalog | object |
+| `GET` | `/api/v2/lakehouse/catalog/stac` | Lakehouse Catalog Stac | object |
+| `POST` | `/api/v2/lakehouse/cubes` | Build Lakehouse Cube | object |
+| `POST` | `/api/v2/lakehouse/cubes/labeled/window` | Read Lakehouse Labeled Window | object |
+| `POST` | `/api/v2/lakehouse/cubes/revise` | Revise Lakehouse Cube | object |
+| `POST` | `/api/v2/lakehouse/cubes/rs` | Build Rs Lakehouse Cube | object |
+| `POST` | `/api/v2/lakehouse/cubes/window` | Read Lakehouse Cube Window | object |
+| `GET` | `/api/v2/lakehouse/datasets` | List Lakehouse Datasets | object |
+| `POST` | `/api/v2/lakehouse/datasets` | Create Lakehouse Dataset | object |
+| `GET` | `/api/v2/lakehouse/datasets/{dataset_id}` | Get Lakehouse Dataset | object |
+| `POST` | `/api/v2/lakehouse/datasets/{dataset_id}/branches` | Create Lakehouse Dataset Branch | object |
+| `POST` | `/api/v2/lakehouse/datasets/{dataset_id}/commit` | Commit Lakehouse Dataset Version | object |
+| `GET` | `/api/v2/lakehouse/datasets/{dataset_id}/lineage` | Get Lakehouse Dataset Lineage | object |
+| `POST` | `/api/v2/lakehouse/datasets/{dataset_id}/retention/execute` | Execute Lakehouse Dataset Retention | object |
+| `POST` | `/api/v2/lakehouse/datasets/{dataset_id}/retention/plan` | Plan Lakehouse Dataset Retention | object |
+| `POST` | `/api/v2/lakehouse/datasets/{dataset_id}/rollback` | Rollback Lakehouse Dataset | object |
+| `POST` | `/api/v2/lakehouse/datasets/{dataset_id}/tags` | Create Lakehouse Dataset Tag | object |
+| `GET` | `/api/v2/lakehouse/datasets/{dataset_id}/versions` | List Lakehouse Dataset Versions | object |
+| `GET` | `/api/v2/lakehouse/datasets/{dataset_id}/versions/{version_id}` | Resolve Lakehouse Dataset Version | object |
+| `POST` | `/api/v2/lakehouse/gc/execute` | Execute Lakehouse Gc | object |
+| `POST` | `/api/v2/lakehouse/gc/plan` | Plan Lakehouse Gc | object |
+| `GET` | `/api/v2/lakehouse/objects/{data_object_id}` | Get Lakehouse Object | object |
+| `GET` | `/api/v2/lakehouse/objects/{data_object_id}/lineage` | Get Lakehouse Object Lineage | object |
+| `POST` | `/api/v2/lakehouse/objects/{data_object_id}/scrub` | Scrub Lakehouse Object | object |
+| `POST` | `/api/v2/lakehouse/objects/{data_object_id}/verify` | Verify Lakehouse Object | object |
+| `GET` | `/api/v2/lakehouse/projects/{project_id}/objects/{object_id}` | Get Project Lakehouse Object | object |
+| `POST` | `/api/v2/lakehouse/publish` | Publish Lakehouse Objects | object |
+| `POST` | `/api/v2/lakehouse/revoke` | Revoke Lakehouse Objects | object |
+| `POST` | `/api/v2/lakehouse/vector/scan` | Scan Lakehouse Vector | object |
+| `GET` | `/api/v2/workflow-runtime/instances` | List Instances | InstanceListResponse |
+| `POST` | `/api/v2/workflow-runtime/instances` | Create Instance | InstanceCreateResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}` | Get Instance | InstanceDetailResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/cancel` | Cancel Instance | InstanceCancelResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/changes` | Apply Changes | InstanceChangesResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/clone` | Clone Instance | InstanceCloneResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}/debug` | Debug Instance | InstanceDebugResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}/events` | Get Events | InstanceEventsResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/nodes/cancel` | Cancel Nodes | NodesCancelResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}/nodes/{node_id}` | Get Node Detail | NodeDetailResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/nodes/{node_id}/retry` | Retry Node | NodeRetryResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}/recompute-plan` | Dry Run Plan | RecomputePlanResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/run` | Run Instance | InstanceRunResponse |
+| `GET` | `/api/v2/workflow-runtime/packages` | List Packages | PackageListResponse |
+| `POST` | `/api/v2/workflow-runtime/packages/register` | Register Package | PackageRegisterResponse |
+| `POST` | `/api/v2/workflow-runtime/packages/{package_id}/publish` | Publish Package | PackagePublishResponse |
+| `GET` | `/api/v2/workflow-runtime/packages/{package_id}/versions` | Package Versions | PackageVersionsResponse |
+
+### Agent Workbench
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/sessions/{session_id}/analysis-graph` | Get Analysis Graph | object |
+| `GET` | `/api/v1/sessions/{session_id}/analysis-graph` | Get Analysis Graph | object |
+
+### Data Fabric / 数据织网
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/data-fabric/catalog` | List Spatial Catalog | CatalogListResponse |
+| `GET` | `/api/v1/data-fabric/catalog` | List Spatial Catalog | CatalogListResponse |
+| `GET` | `/api/v1/data-fabric/catalog/{item_id}` | Get Catalog Item | CatalogItemResponse |
+| `GET` | `/api/v1/data-fabric/catalog/{item_id}` | Get Catalog Item | CatalogItemResponse |
+| `GET` | `/api/v1/data-fabric/catalog/{item_id}/descriptor` | Get Catalog Item Descriptor | CatalogDescriptorResponse |
+| `GET` | `/api/v1/data-fabric/catalog/{item_id}/descriptor` | Get Catalog Item Descriptor | CatalogDescriptorResponse |
+| `POST` | `/api/v1/data-fabric/catalog/{item_id}/explain` | Explain Catalog Item | CatalogExplainResponse |
+| `POST` | `/api/v1/data-fabric/catalog/{item_id}/explain` | Explain Catalog Item | CatalogExplainResponse |
+| `GET` | `/api/v1/data-fabric/catalog/{item_id}/preview` | Preview Catalog Item | CatalogPreviewResponse |
+| `GET` | `/api/v1/data-fabric/catalog/{item_id}/preview` | Preview Catalog Item | CatalogPreviewResponse |
+| `POST` | `/api/v1/data-fabric/catalog/{item_id}/query` | Query Catalog Item | CatalogQueryResponse |
+| `POST` | `/api/v1/data-fabric/catalog/{item_id}/query` | Query Catalog Item | CatalogQueryResponse |
+| `GET` | `/api/v1/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf` | Get Catalog Mvt Tile | object |
+| `GET` | `/api/v1/data-fabric/catalog/{item_id}/tiles/{z}/{x}/{y}.pbf` | Get Catalog Mvt Tile | object |
+| `POST` | `/api/v1/data-fabric/materialize` | Materialize Catalog Item | MaterializeResponse |
+| `POST` | `/api/v1/data-fabric/materialize` | Materialize Catalog Item | MaterializeResponse |
+| `GET` | `/api/v1/data-fabric/sources` | List Data Sources | SourceListResponse |
+| `GET` | `/api/v1/data-fabric/sources` | List Data Sources | SourceListResponse |
+| `POST` | `/api/v1/data-fabric/sources` | Create Data Source | SourceCreateResponse |
+| `POST` | `/api/v1/data-fabric/sources` | Create Data Source | SourceCreateResponse |
+| `GET` | `/api/v1/data-fabric/sources/{source_id}` | Get Data Source | SourceDetailResponse |
+| `GET` | `/api/v1/data-fabric/sources/{source_id}` | Get Data Source | SourceDetailResponse |
+| `DELETE` | `/api/v1/data-fabric/sources/{source_id}` | Delete Data Source | SourceDeleteResponse |
+| `DELETE` | `/api/v1/data-fabric/sources/{source_id}` | Delete Data Source | SourceDeleteResponse |
+| `POST` | `/api/v1/data-fabric/sources/{source_id}/probe` | Probe Data Source | SourceProbeResponse |
+| `POST` | `/api/v1/data-fabric/sources/{source_id}/probe` | Probe Data Source | SourceProbeResponse |
+| `POST` | `/api/v1/data-fabric/sources/{source_id}/sync` | Sync Data Source Catalog | SourceSyncResponse |
+| `POST` | `/api/v1/data-fabric/sources/{source_id}/sync` | Sync Data Source Catalog | SourceSyncResponse |
+
+### Extension Marketplace / 扩展市场（只读）
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/extensions/marketplace/packages` | Search Packages | object |
+| `GET` | `/api/v1/extensions/marketplace/packages/{package_id}` | Get Package | object |
+| `GET` | `/api/v1/extensions/marketplace/packages/{package_id}/versions/{version}` | Get Package Version | object |
+| `GET` | `/api/v1/extensions/marketplace/packages/{package_id}/versions/{version}/download` | Download Package | object |
+
+### GeoCompute / Cluster Runtime V6
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/geocompute/cluster/metrics` | Cluster Metrics | ClusterMetricsResponse |
+| `POST` | `/api/v1/geocompute/plans/runs` | Submit Execution Plan | — |
+| `GET` | `/api/v1/geocompute/runs` | List Execution Runs | RunsListResponse |
+| `GET` | `/api/v2/geocompute/cluster/metrics` | Cluster Metrics | ClusterMetricsResponse |
+| `POST` | `/api/v2/geocompute/plans/runs` | Submit Execution Plan | — |
+| `GET` | `/api/v2/geocompute/runs` | List Execution Runs | RunsListResponse |
+
+### GeoCompute / Cluster Runtime V7
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/geocompute/cluster/ledger/limits` | Cluster Set Ledger Limits | LedgerLimitsResponse |
+| `GET` | `/api/v1/geocompute/cluster/runs/stuck` | Cluster Stuck Runs | ClusterStuckRunsResponse |
+| `POST` | `/api/v1/geocompute/cluster/runs/{run_id}/reset` | Cluster Reset Run | ClusterRunResetResponse |
+| `GET` | `/api/v1/geocompute/cluster/workers` | Cluster Workers | ClusterWorkersResponse |
+| `GET` | `/api/v1/geocompute/runs/{run_id}/events` | List Run Events | RunEventsResponse |
+| `POST` | `/api/v2/geocompute/cluster/ledger/limits` | Cluster Set Ledger Limits | LedgerLimitsResponse |
+| `GET` | `/api/v2/geocompute/cluster/runs/stuck` | Cluster Stuck Runs | ClusterStuckRunsResponse |
+| `POST` | `/api/v2/geocompute/cluster/runs/{run_id}/reset` | Cluster Reset Run | ClusterRunResetResponse |
+| `GET` | `/api/v2/geocompute/cluster/workers` | Cluster Workers | ClusterWorkersResponse |
+| `GET` | `/api/v2/geocompute/runs/{run_id}/events` | List Run Events | RunEventsResponse |
+
+### GeoCompute / 执行平面
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/geocompute/cluster/ledger/limits` | Cluster Set Ledger Limits | LedgerLimitsResponse |
+| `POST` | `/api/v1/geocompute/cluster/ledger/limits` | Cluster Set Ledger Limits | LedgerLimitsResponse |
+| `GET` | `/api/v1/geocompute/cluster/metrics` | Cluster Metrics | ClusterMetricsResponse |
+| `GET` | `/api/v1/geocompute/cluster/metrics` | Cluster Metrics | ClusterMetricsResponse |
+| `GET` | `/api/v1/geocompute/cluster/runs/stuck` | Cluster Stuck Runs | ClusterStuckRunsResponse |
+| `GET` | `/api/v1/geocompute/cluster/runs/stuck` | Cluster Stuck Runs | ClusterStuckRunsResponse |
+| `POST` | `/api/v1/geocompute/cluster/runs/{run_id}/reset` | Cluster Reset Run | ClusterRunResetResponse |
+| `POST` | `/api/v1/geocompute/cluster/runs/{run_id}/reset` | Cluster Reset Run | ClusterRunResetResponse |
+| `GET` | `/api/v1/geocompute/cluster/workers` | Cluster Workers | ClusterWorkersResponse |
+| `GET` | `/api/v1/geocompute/cluster/workers` | Cluster Workers | ClusterWorkersResponse |
+| `POST` | `/api/v1/geocompute/plans/drift-check` | Drift Check | PlanDriftCheckResponse |
+| `POST` | `/api/v1/geocompute/plans/drift-check` | Drift Check | PlanDriftCheckResponse |
+| `POST` | `/api/v1/geocompute/plans/drift-check` | Drift Check | PlanDriftCheckResponse |
+| `POST` | `/api/v1/geocompute/plans/execute` | Execute Execution Plan | PlanExecuteResponse |
+| `POST` | `/api/v1/geocompute/plans/execute` | Execute Execution Plan | PlanExecuteResponse |
+| `POST` | `/api/v1/geocompute/plans/execute` | Execute Execution Plan | PlanExecuteResponse |
+| `POST` | `/api/v1/geocompute/plans/runs` | Submit Execution Plan | — |
+| `POST` | `/api/v1/geocompute/plans/runs` | Submit Execution Plan | — |
+| `POST` | `/api/v1/geocompute/plans/runs/{run_id}/cancel` | Cancel Execution Run | PlanRunCancelResponse |
+| `POST` | `/api/v1/geocompute/plans/runs/{run_id}/cancel` | Cancel Execution Run | PlanRunCancelResponse |
+| `POST` | `/api/v1/geocompute/plans/runs/{run_id}/cancel` | Cancel Execution Run | PlanRunCancelResponse |
+| `POST` | `/api/v1/geocompute/plans/validate` | Validate Execution Plan | PlanValidateResponse |
+| `POST` | `/api/v1/geocompute/plans/validate` | Validate Execution Plan | PlanValidateResponse |
+| `POST` | `/api/v1/geocompute/plans/validate` | Validate Execution Plan | PlanValidateResponse |
+| `GET` | `/api/v1/geocompute/runs` | List Execution Runs | RunsListResponse |
+| `GET` | `/api/v1/geocompute/runs` | List Execution Runs | RunsListResponse |
+| `GET` | `/api/v1/geocompute/runs/{run_id}` | Get Execution Run | RunDetailResponse |
+| `GET` | `/api/v1/geocompute/runs/{run_id}` | Get Execution Run | RunDetailResponse |
+| `GET` | `/api/v1/geocompute/runs/{run_id}` | Get Execution Run | RunDetailResponse |
+| `POST` | `/api/v1/geocompute/runs/{run_id}/cancel` | Cancel Execution Run | RunCancelResponse |
+| `POST` | `/api/v1/geocompute/runs/{run_id}/cancel` | Cancel Execution Run | RunCancelResponse |
+| `POST` | `/api/v1/geocompute/runs/{run_id}/cancel` | Cancel Execution Run | RunCancelResponse |
+| `GET` | `/api/v1/geocompute/runs/{run_id}/events` | List Run Events | RunEventsResponse |
+| `GET` | `/api/v1/geocompute/runs/{run_id}/events` | List Run Events | RunEventsResponse |
+| `GET` | `/api/v1/geocompute/runs/{run_id}/summary` | Get Execution Run Summary | RunSummaryResponse |
+| `GET` | `/api/v1/geocompute/runs/{run_id}/summary` | Get Execution Run Summary | RunSummaryResponse |
+| `GET` | `/api/v1/geocompute/runs/{run_id}/summary` | Get Execution Run Summary | RunSummaryResponse |
+| `POST` | `/api/v2/geocompute/cluster/ledger/limits` | Cluster Set Ledger Limits | LedgerLimitsResponse |
+| `POST` | `/api/v2/geocompute/cluster/ledger/limits` | Cluster Set Ledger Limits | LedgerLimitsResponse |
+| `GET` | `/api/v2/geocompute/cluster/metrics` | Cluster Metrics | ClusterMetricsResponse |
+| `GET` | `/api/v2/geocompute/cluster/metrics` | Cluster Metrics | ClusterMetricsResponse |
+| `GET` | `/api/v2/geocompute/cluster/runs/stuck` | Cluster Stuck Runs | ClusterStuckRunsResponse |
+| `GET` | `/api/v2/geocompute/cluster/runs/stuck` | Cluster Stuck Runs | ClusterStuckRunsResponse |
+| `POST` | `/api/v2/geocompute/cluster/runs/{run_id}/reset` | Cluster Reset Run | ClusterRunResetResponse |
+| `POST` | `/api/v2/geocompute/cluster/runs/{run_id}/reset` | Cluster Reset Run | ClusterRunResetResponse |
+| `GET` | `/api/v2/geocompute/cluster/workers` | Cluster Workers | ClusterWorkersResponse |
+| `GET` | `/api/v2/geocompute/cluster/workers` | Cluster Workers | ClusterWorkersResponse |
+| `POST` | `/api/v2/geocompute/plans/drift-check` | Drift Check | PlanDriftCheckResponse |
+| `POST` | `/api/v2/geocompute/plans/drift-check` | Drift Check | PlanDriftCheckResponse |
+| `POST` | `/api/v2/geocompute/plans/drift-check` | Drift Check | PlanDriftCheckResponse |
+| `POST` | `/api/v2/geocompute/plans/execute` | Execute Execution Plan | PlanExecuteResponse |
+| `POST` | `/api/v2/geocompute/plans/execute` | Execute Execution Plan | PlanExecuteResponse |
+| `POST` | `/api/v2/geocompute/plans/execute` | Execute Execution Plan | PlanExecuteResponse |
+| `POST` | `/api/v2/geocompute/plans/runs` | Submit Execution Plan | — |
+| `POST` | `/api/v2/geocompute/plans/runs` | Submit Execution Plan | — |
+| `POST` | `/api/v2/geocompute/plans/runs/{run_id}/cancel` | Cancel Execution Run | PlanRunCancelResponse |
+| `POST` | `/api/v2/geocompute/plans/runs/{run_id}/cancel` | Cancel Execution Run | PlanRunCancelResponse |
+| `POST` | `/api/v2/geocompute/plans/runs/{run_id}/cancel` | Cancel Execution Run | PlanRunCancelResponse |
+| `POST` | `/api/v2/geocompute/plans/validate` | Validate Execution Plan | PlanValidateResponse |
+| `POST` | `/api/v2/geocompute/plans/validate` | Validate Execution Plan | PlanValidateResponse |
+| `POST` | `/api/v2/geocompute/plans/validate` | Validate Execution Plan | PlanValidateResponse |
+| `GET` | `/api/v2/geocompute/runs` | List Execution Runs | RunsListResponse |
+| `GET` | `/api/v2/geocompute/runs` | List Execution Runs | RunsListResponse |
+| `GET` | `/api/v2/geocompute/runs/{run_id}` | Get Execution Run | RunDetailResponse |
+| `GET` | `/api/v2/geocompute/runs/{run_id}` | Get Execution Run | RunDetailResponse |
+| `GET` | `/api/v2/geocompute/runs/{run_id}` | Get Execution Run | RunDetailResponse |
+| `POST` | `/api/v2/geocompute/runs/{run_id}/cancel` | Cancel Execution Run | RunCancelResponse |
+| `POST` | `/api/v2/geocompute/runs/{run_id}/cancel` | Cancel Execution Run | RunCancelResponse |
+| `POST` | `/api/v2/geocompute/runs/{run_id}/cancel` | Cancel Execution Run | RunCancelResponse |
+| `GET` | `/api/v2/geocompute/runs/{run_id}/events` | List Run Events | RunEventsResponse |
+| `GET` | `/api/v2/geocompute/runs/{run_id}/events` | List Run Events | RunEventsResponse |
+| `GET` | `/api/v2/geocompute/runs/{run_id}/summary` | Get Execution Run Summary | RunSummaryResponse |
+| `GET` | `/api/v2/geocompute/runs/{run_id}/summary` | Get Execution Run Summary | RunSummaryResponse |
+| `GET` | `/api/v2/geocompute/runs/{run_id}/summary` | Get Execution Run Summary | RunSummaryResponse |
+
+### Lakehouse / 数据集版本（V8）
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/lakehouse/datasets` | List Lakehouse Datasets | object |
+| `POST` | `/api/v1/lakehouse/datasets` | Create Lakehouse Dataset | object |
+| `GET` | `/api/v1/lakehouse/datasets/{dataset_id}` | Get Lakehouse Dataset | object |
+| `POST` | `/api/v1/lakehouse/datasets/{dataset_id}/branches` | Create Lakehouse Dataset Branch | object |
+| `POST` | `/api/v1/lakehouse/datasets/{dataset_id}/commit` | Commit Lakehouse Dataset Version | object |
+| `GET` | `/api/v1/lakehouse/datasets/{dataset_id}/lineage` | Get Lakehouse Dataset Lineage | object |
+| `POST` | `/api/v1/lakehouse/datasets/{dataset_id}/retention/execute` | Execute Lakehouse Dataset Retention | object |
+| `POST` | `/api/v1/lakehouse/datasets/{dataset_id}/retention/plan` | Plan Lakehouse Dataset Retention | object |
+| `POST` | `/api/v1/lakehouse/datasets/{dataset_id}/rollback` | Rollback Lakehouse Dataset | object |
+| `POST` | `/api/v1/lakehouse/datasets/{dataset_id}/tags` | Create Lakehouse Dataset Tag | object |
+| `GET` | `/api/v1/lakehouse/datasets/{dataset_id}/versions` | List Lakehouse Dataset Versions | object |
+| `GET` | `/api/v1/lakehouse/datasets/{dataset_id}/versions/{version_id}` | Resolve Lakehouse Dataset Version | object |
+| `GET` | `/api/v2/lakehouse/datasets` | List Lakehouse Datasets | object |
+| `POST` | `/api/v2/lakehouse/datasets` | Create Lakehouse Dataset | object |
+| `GET` | `/api/v2/lakehouse/datasets/{dataset_id}` | Get Lakehouse Dataset | object |
+| `POST` | `/api/v2/lakehouse/datasets/{dataset_id}/branches` | Create Lakehouse Dataset Branch | object |
+| `POST` | `/api/v2/lakehouse/datasets/{dataset_id}/commit` | Commit Lakehouse Dataset Version | object |
+| `GET` | `/api/v2/lakehouse/datasets/{dataset_id}/lineage` | Get Lakehouse Dataset Lineage | object |
+| `POST` | `/api/v2/lakehouse/datasets/{dataset_id}/retention/execute` | Execute Lakehouse Dataset Retention | object |
+| `POST` | `/api/v2/lakehouse/datasets/{dataset_id}/retention/plan` | Plan Lakehouse Dataset Retention | object |
+| `POST` | `/api/v2/lakehouse/datasets/{dataset_id}/rollback` | Rollback Lakehouse Dataset | object |
+| `POST` | `/api/v2/lakehouse/datasets/{dataset_id}/tags` | Create Lakehouse Dataset Tag | object |
+| `GET` | `/api/v2/lakehouse/datasets/{dataset_id}/versions` | List Lakehouse Dataset Versions | object |
+| `GET` | `/api/v2/lakehouse/datasets/{dataset_id}/versions/{version_id}` | Resolve Lakehouse Dataset Version | object |
+
+### Lakehouse / 空间数据湖仓
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/lakehouse/catalog` | Search Lakehouse Catalog | object |
+| `GET` | `/api/v1/lakehouse/catalog/stac` | Lakehouse Catalog Stac | object |
+| `POST` | `/api/v1/lakehouse/cubes` | Build Lakehouse Cube | object |
+| `POST` | `/api/v1/lakehouse/cubes/labeled/window` | Read Lakehouse Labeled Window | object |
+| `POST` | `/api/v1/lakehouse/cubes/revise` | Revise Lakehouse Cube | object |
+| `POST` | `/api/v1/lakehouse/cubes/rs` | Build Rs Lakehouse Cube | object |
+| `POST` | `/api/v1/lakehouse/cubes/window` | Read Lakehouse Cube Window | object |
+| `POST` | `/api/v1/lakehouse/gc/execute` | Execute Lakehouse Gc | object |
+| `POST` | `/api/v1/lakehouse/gc/plan` | Plan Lakehouse Gc | object |
+| `GET` | `/api/v1/lakehouse/objects/{data_object_id}` | Get Lakehouse Object | object |
+| `GET` | `/api/v1/lakehouse/objects/{data_object_id}/lineage` | Get Lakehouse Object Lineage | object |
+| `POST` | `/api/v1/lakehouse/objects/{data_object_id}/scrub` | Scrub Lakehouse Object | object |
+| `POST` | `/api/v1/lakehouse/objects/{data_object_id}/verify` | Verify Lakehouse Object | object |
+| `GET` | `/api/v1/lakehouse/projects/{project_id}/objects/{object_id}` | Get Project Lakehouse Object | object |
+| `POST` | `/api/v1/lakehouse/publish` | Publish Lakehouse Objects | object |
+| `POST` | `/api/v1/lakehouse/revoke` | Revoke Lakehouse Objects | object |
+| `POST` | `/api/v1/lakehouse/vector/scan` | Scan Lakehouse Vector | object |
+| `GET` | `/api/v2/lakehouse/catalog` | Search Lakehouse Catalog | object |
+| `GET` | `/api/v2/lakehouse/catalog/stac` | Lakehouse Catalog Stac | object |
+| `POST` | `/api/v2/lakehouse/cubes` | Build Lakehouse Cube | object |
+| `POST` | `/api/v2/lakehouse/cubes/labeled/window` | Read Lakehouse Labeled Window | object |
+| `POST` | `/api/v2/lakehouse/cubes/revise` | Revise Lakehouse Cube | object |
+| `POST` | `/api/v2/lakehouse/cubes/rs` | Build Rs Lakehouse Cube | object |
+| `POST` | `/api/v2/lakehouse/cubes/window` | Read Lakehouse Cube Window | object |
+| `POST` | `/api/v2/lakehouse/gc/execute` | Execute Lakehouse Gc | object |
+| `POST` | `/api/v2/lakehouse/gc/plan` | Plan Lakehouse Gc | object |
+| `GET` | `/api/v2/lakehouse/objects/{data_object_id}` | Get Lakehouse Object | object |
+| `GET` | `/api/v2/lakehouse/objects/{data_object_id}/lineage` | Get Lakehouse Object Lineage | object |
+| `POST` | `/api/v2/lakehouse/objects/{data_object_id}/scrub` | Scrub Lakehouse Object | object |
+| `POST` | `/api/v2/lakehouse/objects/{data_object_id}/verify` | Verify Lakehouse Object | object |
+| `GET` | `/api/v2/lakehouse/projects/{project_id}/objects/{object_id}` | Get Project Lakehouse Object | object |
+| `POST` | `/api/v2/lakehouse/publish` | Publish Lakehouse Objects | object |
+| `POST` | `/api/v2/lakehouse/revoke` | Revoke Lakehouse Objects | object |
+| `POST` | `/api/v2/lakehouse/vector/scan` | Scan Lakehouse Vector | object |
+
+### PI工具
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/pi-tools/execute` | Execute Tool | PiToolResponse |
+
+### Project Workspace
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/projects` | List Projects | Page_ProjectSummary_ |
+| `POST` | `/api/v1/projects` | Create Project | — |
+| `POST` | `/api/v1/projects/artifacts/{artifact_id}/clone` | Clone Artifact Endpoint | ArtifactCloneResponse |
+| `GET` | `/api/v1/projects/artifacts/{artifact_id}/lineage` | Get Artifact Lineage | ArtifactLineageResponse |
+| `POST` | `/api/v1/projects/artifacts/{artifact_id}/pin` | Pin Artifact Endpoint | ArtifactPinResponse |
+| `DELETE` | `/api/v1/projects/artifacts/{artifact_id}/pin` | Unpin Artifact Endpoint | ArtifactPinResponse |
+| `GET` | `/api/v1/projects/{project_id}` | Get Project | ProjectResponse |
+| `PUT` | `/api/v1/projects/{project_id}` | Update Project | ProjectResponse |
+| `GET` | `/api/v1/projects/{project_id}/artifacts` | List Artifacts | Page_ArtifactSummary_ |
+| `GET` | `/api/v1/projects/{project_id}/carto-memory` | List Carto Memory | CartoMemoryListResponse |
+| `DELETE` | `/api/v1/projects/{project_id}/carto-memory/{fact_id}` | Retire Carto Fact | CartoFactActionResponse |
+| `POST` | `/api/v1/projects/{project_id}/carto-memory/{fact_id}/activate` | Activate Carto Fact | CartoFactActionResponse |
+| `POST` | `/api/v1/projects/{project_id}/data-gc/execute` | Execute Project Data Gc | DataGcExecuteResponse |
+| `POST` | `/api/v1/projects/{project_id}/data-gc/plan` | Plan Project Data Gc | DataGcPlanResponse |
+| `GET` | `/api/v1/projects/{project_id}/data-usage` | Get Project Data Usage | DataUsageResponse |
+| `GET` | `/api/v1/projects/{project_id}/datasets` | List Datasets | Page_ProjectDatasetSummary_ |
+| `POST` | `/api/v1/projects/{project_id}/datasets` | Attach Dataset | ProjectDatasetResponse |
+| `DELETE` | `/api/v1/projects/{project_id}/datasets/{dataset_id}` | Detach Dataset | DatasetDetachResponse |
+| `GET` | `/api/v1/projects/{project_id}/map-products` | List Map Products | Page_MapProductVersionSummary_ |
+| `POST` | `/api/v1/projects/{project_id}/map-products` | Record Map Product Version | — |
+| `POST` | `/api/v1/projects/{project_id}/map-products/merge` | Merge Map Product Versions | — |
+| `GET` | `/api/v1/projects/{project_id}/map-products/{from_version_no}/diff/{to_version_no}` | Diff Map Product Versions | MapProductDiffResponse |
+| `GET` | `/api/v1/projects/{project_id}/map-products/{version_no}` | Get Map Product Version | MapProductVersionResponse |
+| `POST` | `/api/v1/projects/{project_id}/map-products/{version_no}/fork` | Fork Map Product Version | — |
+| `GET` | `/api/v1/projects/{project_id}/map-products/{version_no}/open` | Open Map Product Version | MapProductOpenResponse |
+| `POST` | `/api/v1/projects/{project_id}/map-products/{version_no}/rerun` | Rerun Map Product Version | MapProductRerunResponse |
+| `POST` | `/api/v1/projects/{project_id}/map-products/{version_no}/restore` | Restore Map Product Version | MapProductRestoreResponse |
+| `POST` | `/api/v1/projects/{project_id}/quality-audit` | Audit Spatial Quality | QualityAuditResponse |
+| `POST` | `/api/v1/projects/{project_id}/repair` | Repair Spatial Dataset | RepairResponse |
+| `GET` | `/api/v1/projects/{project_id}/runs` | List Runs | Page_WorkflowRunSummary_ |
+| `POST` | `/api/v1/projects/{project_id}/runs/compare` | Compare Runs | RunComparisonResponse |
+| `GET` | `/api/v1/projects/{project_id}/runs/{run_id}` | Get Run Detail | WorkflowRunResponse |
+| `POST` | `/api/v1/projects/{project_id}/runs/{run_id}/promote-artifacts` | Promote Run Artifacts Endpoint | PromoteArtifactsResponse |
+| `POST` | `/api/v1/projects/{project_id}/runs/{run_id}/replay` | Replay Run | WorkflowRunResponse |
+| `POST` | `/api/v1/projects/{project_id}/runs/{run_id}/rerun` | Rerun From Step | WorkflowRunResponse |
+| `POST` | `/api/v1/projects/{project_id}/runs/{run_id}/resume` | Resume Run | WorkflowRunResponse |
+| `GET` | `/api/v1/projects/{project_id}/workflows` | List Workflows | Page_WorkflowSummary_ |
+| `POST` | `/api/v1/projects/{project_id}/workflows` | Save Workflow | WorkflowResponse |
+| `GET` | `/api/v1/projects/{project_id}/workflows/{workflow_id}/revisions` | List Workflow Revisions | Page_WorkflowRevisionSummary_ |
+| `GET` | `/api/v1/projects/{project_id}/workflows/{workflow_id}/revisions/{revision_id}` | Get Workflow Revision | WorkflowRevisionResponse |
+| `POST` | `/api/v1/projects/{project_id}/workflows/{workflow_id}/run` | Run Workflow | WorkflowRunResponse |
+| `GET` | `/api/v1/projects/{project_id}/workspace` | Describe Workspace | WorkspaceDescribeResponse |
+| `GET` | `/api/v1/projects/{project_id}/workspace/snapshots` | List Workspace Snapshots | WorkspaceSnapshotListResponse |
+| `POST` | `/api/v1/projects/{project_id}/workspace/snapshots` | Save Workspace Snapshot | WorkspaceSnapshotSaveResponse |
+| `GET` | `/api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}` | Inspect Workspace Snapshot | WorkspaceSnapshotInspectResponse |
+| `DELETE` | `/api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}` | Delete Workspace Snapshot | WorkspaceSnapshotDeleteResponse |
+| `POST` | `/api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}/clone` | Clone Workspace Snapshot | WorkspaceSnapshotCloneResponse |
+| `POST` | `/api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}/restore` | Restore Workspace Snapshot | WorkspaceSnapshotRestoreResponse |
+
+### Workflow Runtime V5
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/workflow-runtime/instances` | List Instances | InstanceListResponse |
+| `GET` | `/api/v1/workflow-runtime/instances` | List Instances | InstanceListResponse |
+| `POST` | `/api/v1/workflow-runtime/instances` | Create Instance | InstanceCreateResponse |
+| `POST` | `/api/v1/workflow-runtime/instances` | Create Instance | InstanceCreateResponse |
+| `GET` | `/api/v1/workflow-runtime/instances/{instance_id}` | Get Instance | InstanceDetailResponse |
+| `GET` | `/api/v1/workflow-runtime/instances/{instance_id}` | Get Instance | InstanceDetailResponse |
+| `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/cancel` | Cancel Instance | InstanceCancelResponse |
+| `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/cancel` | Cancel Instance | InstanceCancelResponse |
+| `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/changes` | Apply Changes | InstanceChangesResponse |
+| `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/changes` | Apply Changes | InstanceChangesResponse |
+| `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/clone` | Clone Instance | InstanceCloneResponse |
+| `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/clone` | Clone Instance | InstanceCloneResponse |
+| `GET` | `/api/v1/workflow-runtime/instances/{instance_id}/debug` | Debug Instance | InstanceDebugResponse |
+| `GET` | `/api/v1/workflow-runtime/instances/{instance_id}/debug` | Debug Instance | InstanceDebugResponse |
+| `GET` | `/api/v1/workflow-runtime/instances/{instance_id}/events` | Get Events | InstanceEventsResponse |
+| `GET` | `/api/v1/workflow-runtime/instances/{instance_id}/events` | Get Events | InstanceEventsResponse |
+| `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/nodes/cancel` | Cancel Nodes | NodesCancelResponse |
+| `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/nodes/cancel` | Cancel Nodes | NodesCancelResponse |
+| `GET` | `/api/v1/workflow-runtime/instances/{instance_id}/nodes/{node_id}` | Get Node Detail | NodeDetailResponse |
+| `GET` | `/api/v1/workflow-runtime/instances/{instance_id}/nodes/{node_id}` | Get Node Detail | NodeDetailResponse |
+| `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/nodes/{node_id}/retry` | Retry Node | NodeRetryResponse |
+| `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/nodes/{node_id}/retry` | Retry Node | NodeRetryResponse |
+| `GET` | `/api/v1/workflow-runtime/instances/{instance_id}/recompute-plan` | Dry Run Plan | RecomputePlanResponse |
+| `GET` | `/api/v1/workflow-runtime/instances/{instance_id}/recompute-plan` | Dry Run Plan | RecomputePlanResponse |
+| `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/run` | Run Instance | InstanceRunResponse |
+| `POST` | `/api/v1/workflow-runtime/instances/{instance_id}/run` | Run Instance | InstanceRunResponse |
+| `GET` | `/api/v1/workflow-runtime/packages` | List Packages | PackageListResponse |
+| `GET` | `/api/v1/workflow-runtime/packages` | List Packages | PackageListResponse |
+| `POST` | `/api/v1/workflow-runtime/packages/register` | Register Package | PackageRegisterResponse |
+| `POST` | `/api/v1/workflow-runtime/packages/register` | Register Package | PackageRegisterResponse |
+| `POST` | `/api/v1/workflow-runtime/packages/{package_id}/publish` | Publish Package | PackagePublishResponse |
+| `POST` | `/api/v1/workflow-runtime/packages/{package_id}/publish` | Publish Package | PackagePublishResponse |
+| `GET` | `/api/v1/workflow-runtime/packages/{package_id}/versions` | Package Versions | PackageVersionsResponse |
+| `GET` | `/api/v1/workflow-runtime/packages/{package_id}/versions` | Package Versions | PackageVersionsResponse |
+| `GET` | `/api/v2/workflow-runtime/instances` | List Instances | InstanceListResponse |
+| `GET` | `/api/v2/workflow-runtime/instances` | List Instances | InstanceListResponse |
+| `POST` | `/api/v2/workflow-runtime/instances` | Create Instance | InstanceCreateResponse |
+| `POST` | `/api/v2/workflow-runtime/instances` | Create Instance | InstanceCreateResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}` | Get Instance | InstanceDetailResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}` | Get Instance | InstanceDetailResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/cancel` | Cancel Instance | InstanceCancelResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/cancel` | Cancel Instance | InstanceCancelResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/changes` | Apply Changes | InstanceChangesResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/changes` | Apply Changes | InstanceChangesResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/clone` | Clone Instance | InstanceCloneResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/clone` | Clone Instance | InstanceCloneResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}/debug` | Debug Instance | InstanceDebugResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}/debug` | Debug Instance | InstanceDebugResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}/events` | Get Events | InstanceEventsResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}/events` | Get Events | InstanceEventsResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/nodes/cancel` | Cancel Nodes | NodesCancelResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/nodes/cancel` | Cancel Nodes | NodesCancelResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}/nodes/{node_id}` | Get Node Detail | NodeDetailResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}/nodes/{node_id}` | Get Node Detail | NodeDetailResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/nodes/{node_id}/retry` | Retry Node | NodeRetryResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/nodes/{node_id}/retry` | Retry Node | NodeRetryResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}/recompute-plan` | Dry Run Plan | RecomputePlanResponse |
+| `GET` | `/api/v2/workflow-runtime/instances/{instance_id}/recompute-plan` | Dry Run Plan | RecomputePlanResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/run` | Run Instance | InstanceRunResponse |
+| `POST` | `/api/v2/workflow-runtime/instances/{instance_id}/run` | Run Instance | InstanceRunResponse |
+| `GET` | `/api/v2/workflow-runtime/packages` | List Packages | PackageListResponse |
+| `GET` | `/api/v2/workflow-runtime/packages` | List Packages | PackageListResponse |
+| `POST` | `/api/v2/workflow-runtime/packages/register` | Register Package | PackageRegisterResponse |
+| `POST` | `/api/v2/workflow-runtime/packages/register` | Register Package | PackageRegisterResponse |
+| `POST` | `/api/v2/workflow-runtime/packages/{package_id}/publish` | Publish Package | PackagePublishResponse |
+| `POST` | `/api/v2/workflow-runtime/packages/{package_id}/publish` | Publish Package | PackagePublishResponse |
+| `GET` | `/api/v2/workflow-runtime/packages/{package_id}/versions` | Package Versions | PackageVersionsResponse |
+| `GET` | `/api/v2/workflow-runtime/packages/{package_id}/versions` | Package Versions | PackageVersionsResponse |
+
+### pi-tools
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/pi-tools/execute` | Execute Tool | PiToolResponse |
+
+### raster
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/sessions/{session_id}/raster/{raster_id}.png` | Serve a raster layer's rendered PNG (MapSpec `type:"raster"` source). | object |
+
+### 任务管理
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/tasks` | List Tasks | TaskListResponse |
+| `GET` | `/api/v1/tasks` | List Tasks | TaskListResponse |
+| `GET` | `/api/v1/tasks/jobs` | List Jobs | JobListResponse |
+| `GET` | `/api/v1/tasks/jobs` | List Jobs | JobListResponse |
+| `GET` | `/api/v1/tasks/jobs/{job_id}` | Get Job | JobView |
+| `GET` | `/api/v1/tasks/jobs/{job_id}` | Get Job | JobView |
+| `DELETE` | `/api/v1/tasks/jobs/{job_id}` | Cancel Job | JobCancelResponse |
+| `DELETE` | `/api/v1/tasks/jobs/{job_id}` | Cancel Job | JobCancelResponse |
+| `POST` | `/api/v1/tasks/jobs/{job_id}/retry` | Retry Job | JobRetryResponse |
+| `POST` | `/api/v1/tasks/jobs/{job_id}/retry` | Retry Job | JobRetryResponse |
+| `GET` | `/api/v1/tasks/status/{task_id}` | Get Celery Task Status | CeleryTaskStatusResponse |
+| `GET` | `/api/v1/tasks/status/{task_id}` | Get Celery Task Status | CeleryTaskStatusResponse |
+| `DELETE` | `/api/v1/tasks/status/{task_id}` | Revoke Celery Task | CeleryTaskRevokeResponse |
+| `DELETE` | `/api/v1/tasks/status/{task_id}` | Revoke Celery Task | CeleryTaskRevokeResponse |
+| `GET` | `/api/v1/tasks/{task_id}` | Get Task | TaskStatusResponse |
+| `GET` | `/api/v1/tasks/{task_id}` | Get Task | TaskStatusResponse |
+| `DELETE` | `/api/v1/tasks/{task_id}` | Cancel Task | TaskCancelResponse |
+| `DELETE` | `/api/v1/tasks/{task_id}` | Cancel Task | TaskCancelResponse |
+
+### 健康检查
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/health` | Health Check | HealthResponse |
+| `GET` | `/api/v1/health/live` | Liveness Check | LivenessResponse |
+| `GET` | `/api/v1/ready` | Readiness Check | ReadyResponse |
+| `GET` | `/api/v1/status/detailed` | Sre Status Detailed | SreStatusReport |
+
+### 元数据
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/layer-types` | Get Layer Types | LayerTypesResponse |
+
+### 图层数据
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/layers/data/{ref_id}` | Get Session Layer Data | object |
+| `GET` | `/api/v1/layers/data/{ref_id}/feature/{feature_id}` | Get Session Layer Feature | object |
+| `GET` | `/api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png` | Get Raster Tile | object |
+| `GET` | `/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt` | Get Mvt Tile | object |
+| `GET` | `/api/v1/layers/descriptor/{ref_id}` | Get Layer Descriptor | LayerDescriptorResponse |
+
+### 图层管理
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/layer-types` | Get Layer Types | LayerTypesResponse |
+| `GET` | `/api/v1/layers/data/{ref_id}` | Get Session Layer Data | object |
+| `GET` | `/api/v1/layers/data/{ref_id}/feature/{feature_id}` | Get Session Layer Feature | object |
+| `GET` | `/api/v1/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png` | Get Raster Tile | object |
+| `GET` | `/api/v1/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt` | Get Mvt Tile | object |
+| `GET` | `/api/v1/layers/descriptor/{ref_id}` | Get Layer Descriptor | LayerDescriptorResponse |
+
+### 地图制图
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/export` | Upload Map Export | MapExportResponse |
+| `GET` | `/api/v1/export/diagnostics/{filename}` | Get Export Diagnostics | ExportDiagnosticsResponse |
+| `GET` | `/api/v1/export/download/{filename}` | Download Map Export | object |
+| `POST` | `/api/v1/export/geojson` | Export Geojson | GeoJSONExportResponse |
+| `POST` | `/api/v1/export/pdf` | Export Map As Pdf | PdfExportResponse |
+| `POST` | `/api/v1/export/vector-pdf` | Export Map As Vector Pdf | VectorPdfExportResponse |
+
+### 地图制图模板
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/templates` | 查询地图制图模板列表 | Page_TemplateView_ |
+| `POST` | `/api/v1/templates` | 另存为新模板 (Save as Template) | — |
+| `GET` | `/api/v1/templates/{template_id}` | 获取模板详情 (含 payload) | TemplateView |
+| `DELETE` | `/api/v1/templates/{template_id}` | 删除用户模板 | TemplateDeleteResponse |
+
+### 地图管理
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/export` | Upload Map Export | MapExportResponse |
+| `GET` | `/api/v1/export/diagnostics/{filename}` | Get Export Diagnostics | ExportDiagnosticsResponse |
+| `GET` | `/api/v1/export/download/{filename}` | Download Map Export | object |
+| `POST` | `/api/v1/export/geojson` | Export Geojson | GeoJSONExportResponse |
+| `POST` | `/api/v1/export/pdf` | Export Map As Pdf | PdfExportResponse |
+| `POST` | `/api/v1/export/vector-pdf` | Export Map As Vector Pdf | VectorPdfExportResponse |
+
+### 对话
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/chat/completions` | Chat Completions | ChatResponse |
+| `GET` | `/api/v1/chat/sessions` | List Sessions | SessionListResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}` | Get Session Detail | SessionDetailResponse |
+| `DELETE` | `/api/v1/chat/sessions/{session_id}` | Clear Session | ClearSessionResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/cartographic-observation` | Push Cartographic Runtime Observation | CartographicObservationResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/chart-artifacts/{ref_id}` | Get Session Chart Artifact | ChartArtifactResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/map-action-ack` | Push Map Action Acks | MapActionAckResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/map-state` | Get Session Map State | SessionMapStateResponse |
+| `POST` | `/api/v1/chat/sessions/{session_id}/map-state` | Push Session Map State | — |
+| `POST` | `/api/v1/chat/sessions/{session_id}/mapspec/mutations` | Apply User Mapspec Mutation | MutationApplyResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/plan` | Get Session Plan | SessionPlanViewResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/table-artifacts/{ref_id}` | Get Session Table Artifact | TableArtifactResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/workbench/artifact-status` | Get Workbench Artifact Status | WorkbenchArtifactStatusResponse |
+| `GET` | `/api/v1/chat/sessions/{session_id}/workbench/state` | Get Workbench State | WorkbenchStateResponse |
+| `GET` | `/api/v1/chat/skills` | List Skills Api | app__schemas__chat_schema__SkillsListResponse |
+| `POST` | `/api/v1/chat/stream` | Chat Stream | object |
+| `GET` | `/api/v1/chat/tools` | List Tools | ToolsListResponse |
+| `POST` | `/api/v1/chat/tools/execute` | Execute Tool Direct | ToolExecuteResponse |
+
+### 性能遥测
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/metrics/digest` | Get Metrics Digest | object |
+
+### 报告生成
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/reports` | List Reports | ApiResponse |
+| `GET` | `/api/v1/reports` | List Reports | ApiResponse |
+| `POST` | `/api/v1/reports` | Create Report | ApiResponse |
+| `POST` | `/api/v1/reports` | Create Report | ApiResponse |
+| `GET` | `/api/v1/reports/shared/{share_code}` | Get Shared Report Info | ApiResponse |
+| `GET` | `/api/v1/reports/shared/{share_code}` | Get Shared Report Info | ApiResponse |
+| `GET` | `/api/v1/reports/shared/{share_code}/view` | View Shared Report | object |
+| `GET` | `/api/v1/reports/shared/{share_code}/view` | View Shared Report | object |
+| `GET` | `/api/v1/reports/{report_id}` | Get Report | ApiResponse |
+| `GET` | `/api/v1/reports/{report_id}` | Get Report | ApiResponse |
+| `GET` | `/api/v1/reports/{report_id}/download` | Download Report | object |
+| `GET` | `/api/v1/reports/{report_id}/download` | Download Report | object |
+| `POST` | `/api/v1/reports/{report_id}/share` | Create Share Link | ApiResponse |
+| `POST` | `/api/v1/reports/{report_id}/share` | Create Share Link | ApiResponse |
+
+### 探索引擎
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/explorer/abort/{task_id}` | Abort Task | ExploreAbortResponse |
+| `POST` | `/api/v1/explorer/abort/{task_id}` | Abort Task | ExploreAbortResponse |
+| `POST` | `/api/v1/explorer/start` | Start Exploration | StartExploreResponse |
+| `POST` | `/api/v1/explorer/start` | Start Exploration | StartExploreResponse |
+| `GET` | `/api/v1/explorer/status/{task_id}` | Get Task Status | ExploreStatusResponse |
+| `GET` | `/api/v1/explorer/status/{task_id}` | Get Task Status | ExploreStatusResponse |
+| `GET` | `/api/v1/explorer/stream/{task_id}` | Stream Progress | object |
+| `GET` | `/api/v1/explorer/stream/{task_id}` | Stream Progress | object |
+
+### 数据上传
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/upload` | Upload Files | UploadResponse |
+| `GET` | `/api/v1/uploads` | List Uploads | UploadListResponse |
+| `GET` | `/api/v1/uploads/{upload_id}` | Get Upload | UploadResponse |
+| `DELETE` | `/api/v1/uploads/{upload_id}` | Delete Upload | UploadDeleteResponse |
+| `GET` | `/api/v1/uploads/{upload_id}/geojson` | Get Upload Geojson | object |
+
+### 本地地理数据
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/local-data/admin/children` | Get Admin Children | AdminChildrenResponse |
+| `GET` | `/api/v1/local-data/admin/{level}/boundary` | Get Admin Boundary | AdminBoundaryResponse |
+| `GET` | `/api/v1/local-data/osm/catalog` | Get Osm Catalog | OsmCatalogResponse |
+| `GET` | `/api/v1/local-data/osm/features` | Get Osm Features | OsmFeaturesResponse |
+
+### 栅格图层
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/sessions/{session_id}/raster/{raster_id}.png` | Serve a raster layer's rendered PNG (MapSpec `type:"raster"` source). | object |
+
+### 知识库管理
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `DELETE` | `/api/v1/knowledge/document/{document_id}` | Delete Document | ApiResponse |
+| `DELETE` | `/api/v1/knowledge/document/{document_id}` | Delete Document | ApiResponse |
+| `GET` | `/api/v1/knowledge/documents` | List Documents | ApiResponse |
+| `GET` | `/api/v1/knowledge/documents` | List Documents | ApiResponse |
+| `POST` | `/api/v1/knowledge/documents` | Add Document | ApiResponse |
+| `POST` | `/api/v1/knowledge/documents` | Add Document | ApiResponse |
+| `POST` | `/api/v1/knowledge/retrieve-context` | Retrieve Context | ApiResponse |
+| `POST` | `/api/v1/knowledge/retrieve-context` | Retrieve Context | ApiResponse |
+| `GET` | `/api/v1/knowledge/search` | Semantic Search | ApiResponse |
+| `GET` | `/api/v1/knowledge/search` | Semantic Search | ApiResponse |
+
+### 系统
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/version` | Version | VersionResponse |
+
+### 系统配置
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/config/llm` | Get Llm Config | LLMConfigResponse |
+| `POST` | `/api/v1/config/llm` | Update Llm Config | LLMConfigUpdateResponse |
+| `POST` | `/api/v1/config/llm/test` | Test Llm Config | LLMTestResponse |
+| `POST` | `/api/v1/config/rag/test` | Test Rag Config | RagTestResponse |
+| `GET` | `/api/v1/config/skills` | List Skills | app__schemas__config_schema__SkillsListResponse |
+| `POST` | `/api/v1/config/skills/refresh` | Refresh Skills | RefreshSkillsResponse |
+| `POST` | `/api/v1/config/skills/upload` | Upload Skill | SkillUploadResponse |
+
+### 认证
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `POST` | `/api/v1/auth/login` | Login | TokenResponse |
+| `POST` | `/api/v1/auth/login` | Login | TokenResponse |
+| `POST` | `/api/v1/auth/logout` | Logout | LogoutResponse |
+| `POST` | `/api/v1/auth/logout` | Logout | LogoutResponse |
+| `GET` | `/api/v1/auth/me` | Me | MeResponse |
+| `GET` | `/api/v1/auth/me` | Me | MeResponse |
+| `POST` | `/api/v1/auth/refresh` | Refresh | TokenResponse |
+| `POST` | `/api/v1/auth/refresh` | Refresh | TokenResponse |
+| `POST` | `/api/v1/auth/register` | Register | — |
+| `POST` | `/api/v1/auth/register` | Register | — |
+
+### 配置管理
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/config/llm` | Get Llm Config | LLMConfigResponse |
+| `POST` | `/api/v1/config/llm` | Update Llm Config | LLMConfigUpdateResponse |
+| `POST` | `/api/v1/config/llm/test` | Test Llm Config | LLMTestResponse |
+| `POST` | `/api/v1/config/rag/test` | Test Rag Config | RagTestResponse |
+| `GET` | `/api/v1/config/skills` | List Skills | app__schemas__config_schema__SkillsListResponse |
+| `POST` | `/api/v1/config/skills/refresh` | Refresh Skills | RefreshSkillsResponse |
+| `POST` | `/api/v1/config/skills/upload` | Upload Skill | SkillUploadResponse |
+
+### 静态文件
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
+| `GET` | `/api/v1/static/{file_path}` | Serve Static | object |
+
+### 项目工作区
+
+| 方法 | 路径 | 说明 | 响应模型 |
+|---|---|---|---|
+| `GET` | `/api/v1/projects` | List Projects | Page_ProjectSummary_ |
+| `POST` | `/api/v1/projects` | Create Project | — |
+| `POST` | `/api/v1/projects/artifacts/{artifact_id}/clone` | Clone Artifact Endpoint | ArtifactCloneResponse |
+| `GET` | `/api/v1/projects/artifacts/{artifact_id}/lineage` | Get Artifact Lineage | ArtifactLineageResponse |
+| `POST` | `/api/v1/projects/artifacts/{artifact_id}/pin` | Pin Artifact Endpoint | ArtifactPinResponse |
+| `DELETE` | `/api/v1/projects/artifacts/{artifact_id}/pin` | Unpin Artifact Endpoint | ArtifactPinResponse |
+| `GET` | `/api/v1/projects/{project_id}` | Get Project | ProjectResponse |
+| `PUT` | `/api/v1/projects/{project_id}` | Update Project | ProjectResponse |
+| `GET` | `/api/v1/projects/{project_id}/artifacts` | List Artifacts | Page_ArtifactSummary_ |
+| `GET` | `/api/v1/projects/{project_id}/carto-memory` | List Carto Memory | CartoMemoryListResponse |
+| `DELETE` | `/api/v1/projects/{project_id}/carto-memory/{fact_id}` | Retire Carto Fact | CartoFactActionResponse |
+| `POST` | `/api/v1/projects/{project_id}/carto-memory/{fact_id}/activate` | Activate Carto Fact | CartoFactActionResponse |
+| `POST` | `/api/v1/projects/{project_id}/data-gc/execute` | Execute Project Data Gc | DataGcExecuteResponse |
+| `POST` | `/api/v1/projects/{project_id}/data-gc/plan` | Plan Project Data Gc | DataGcPlanResponse |
+| `GET` | `/api/v1/projects/{project_id}/data-usage` | Get Project Data Usage | DataUsageResponse |
+| `GET` | `/api/v1/projects/{project_id}/datasets` | List Datasets | Page_ProjectDatasetSummary_ |
+| `POST` | `/api/v1/projects/{project_id}/datasets` | Attach Dataset | ProjectDatasetResponse |
+| `DELETE` | `/api/v1/projects/{project_id}/datasets/{dataset_id}` | Detach Dataset | DatasetDetachResponse |
+| `GET` | `/api/v1/projects/{project_id}/map-products` | List Map Products | Page_MapProductVersionSummary_ |
+| `POST` | `/api/v1/projects/{project_id}/map-products` | Record Map Product Version | — |
+| `POST` | `/api/v1/projects/{project_id}/map-products/merge` | Merge Map Product Versions | — |
+| `GET` | `/api/v1/projects/{project_id}/map-products/{from_version_no}/diff/{to_version_no}` | Diff Map Product Versions | MapProductDiffResponse |
+| `GET` | `/api/v1/projects/{project_id}/map-products/{version_no}` | Get Map Product Version | MapProductVersionResponse |
+| `POST` | `/api/v1/projects/{project_id}/map-products/{version_no}/fork` | Fork Map Product Version | — |
+| `GET` | `/api/v1/projects/{project_id}/map-products/{version_no}/open` | Open Map Product Version | MapProductOpenResponse |
+| `POST` | `/api/v1/projects/{project_id}/map-products/{version_no}/rerun` | Rerun Map Product Version | MapProductRerunResponse |
+| `POST` | `/api/v1/projects/{project_id}/map-products/{version_no}/restore` | Restore Map Product Version | MapProductRestoreResponse |
+| `POST` | `/api/v1/projects/{project_id}/quality-audit` | Audit Spatial Quality | QualityAuditResponse |
+| `POST` | `/api/v1/projects/{project_id}/repair` | Repair Spatial Dataset | RepairResponse |
+| `GET` | `/api/v1/projects/{project_id}/runs` | List Runs | Page_WorkflowRunSummary_ |
+| `POST` | `/api/v1/projects/{project_id}/runs/compare` | Compare Runs | RunComparisonResponse |
+| `GET` | `/api/v1/projects/{project_id}/runs/{run_id}` | Get Run Detail | WorkflowRunResponse |
+| `POST` | `/api/v1/projects/{project_id}/runs/{run_id}/promote-artifacts` | Promote Run Artifacts Endpoint | PromoteArtifactsResponse |
+| `POST` | `/api/v1/projects/{project_id}/runs/{run_id}/replay` | Replay Run | WorkflowRunResponse |
+| `POST` | `/api/v1/projects/{project_id}/runs/{run_id}/rerun` | Rerun From Step | WorkflowRunResponse |
+| `POST` | `/api/v1/projects/{project_id}/runs/{run_id}/resume` | Resume Run | WorkflowRunResponse |
+| `GET` | `/api/v1/projects/{project_id}/workflows` | List Workflows | Page_WorkflowSummary_ |
+| `POST` | `/api/v1/projects/{project_id}/workflows` | Save Workflow | WorkflowResponse |
+| `GET` | `/api/v1/projects/{project_id}/workflows/{workflow_id}/revisions` | List Workflow Revisions | Page_WorkflowRevisionSummary_ |
+| `GET` | `/api/v1/projects/{project_id}/workflows/{workflow_id}/revisions/{revision_id}` | Get Workflow Revision | WorkflowRevisionResponse |
+| `POST` | `/api/v1/projects/{project_id}/workflows/{workflow_id}/run` | Run Workflow | WorkflowRunResponse |
+| `GET` | `/api/v1/projects/{project_id}/workspace` | Describe Workspace | WorkspaceDescribeResponse |
+| `GET` | `/api/v1/projects/{project_id}/workspace/snapshots` | List Workspace Snapshots | WorkspaceSnapshotListResponse |
+| `POST` | `/api/v1/projects/{project_id}/workspace/snapshots` | Save Workspace Snapshot | WorkspaceSnapshotSaveResponse |
+| `GET` | `/api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}` | Inspect Workspace Snapshot | WorkspaceSnapshotInspectResponse |
+| `DELETE` | `/api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}` | Delete Workspace Snapshot | WorkspaceSnapshotDeleteResponse |
+| `POST` | `/api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}/clone` | Clone Workspace Snapshot | WorkspaceSnapshotCloneResponse |
+| `POST` | `/api/v1/projects/{project_id}/workspace/snapshots/{snapshot_id}/restore` | Restore Workspace Snapshot | WorkspaceSnapshotRestoreResponse |
+
+_端点总数：568（OpenAPI operations，不含流式豁免面外资源）_
+
+<!-- END GENERATED:API-CATALOG -->

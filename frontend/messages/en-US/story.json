@@ -1,0 +1,9 @@
+{
+  "prev": "Previous",
+  "prevTitle": "Previous message",
+  "share": "Share",
+  "shareTitle": "Copy share link",
+  "loadFailed": "Unable to load this session",
+  "anonShare": "Anonymous sessions cannot be shared across pages yet (session credentials are never placed in URLs for security reasons); sign in and retry, or check the session ID in the link.",
+  "empty": "This session has no content yet."
+}
