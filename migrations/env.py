@@ -44,6 +44,9 @@ import app.models.upload    # noqa: F401, E402  (registers UploadRecord)
 import app.models.knowledge_base  # noqa: F401, E402  (registers KnowledgeDocument etc., 若存在)
 import app.models.project   # noqa: F401, E402  (registers Project/Workflow/WorkflowRun/Artifact etc.)
 import app.models.data_fabric  # noqa: F401, E402  (registers DataSource/CatalogItem/Materialization)
+import app.models.data_quality  # noqa: F401, E402  (V9: registers QualityReport/QualityRuleResult)
+import app.models.data_lifecycle  # noqa: F401, E402  (V9: registers LifecycleObject/LifecyclePolicy/GcPlan)
+import app.models.template_version  # noqa: F401, E402  (V9: registers TemplateVersion)
 # 注意：漏 import 任何一个 model 模块，autogenerate 都会把该模块的表当作
 # 「metadata 里不存在」→ 对已迁移库生成 drop_table（数据丢失风险）。
 

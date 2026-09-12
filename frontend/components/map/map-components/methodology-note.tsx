@@ -5,6 +5,7 @@ import { registerComponentRenderer } from './registry';
 import { resolveVariant } from './helpers';
 import { FloatingChrome, usePlacementPatchedComponent } from './floating-chrome';
 import type { RendererContext } from './types';
+import { useT } from '@/lib/i18n/useT';
 
 /**
  * methodology_note 渲染器（VNext §5 方法论诚实的产品面）：
@@ -37,6 +38,7 @@ function parseWarnings(raw: unknown): MethodologyWarning[] | null {
 }
 
 function MethodologyNoteView({ component, ctx }: { component: MapSpecComponent; ctx?: RendererContext }) {
+const t = useT();
   const patched = usePlacementPatchedComponent(component);
   const variant = resolveVariant(patched, 'default') === 'compact' ? 'compact' : 'default';
   const warnings = parseWarnings(patched.options?.['warnings']);
@@ -44,7 +46,7 @@ function MethodologyNoteView({ component, ctx }: { component: MapSpecComponent; 
   return (
     <FloatingChrome
       component={patched}
-      title="方法论披露"
+      title={t('map.methodology.title')}
       topSlotIndexes={ctx?.topSlotIndexes}
       bottomSlotIndexes={ctx?.bottomSlotIndexes}
       testId="spec-chrome-methodology-note"
@@ -76,7 +78,7 @@ function MethodologyNoteView({ component, ctx }: { component: MapSpecComponent; 
           data-state="empty"
           role="status"
         >
-          无方法论限制披露
+          {t('map.methodology.none')}
         </div>
       )}
     </FloatingChrome>

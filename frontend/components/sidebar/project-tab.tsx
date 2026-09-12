@@ -24,8 +24,10 @@ import { formatCrs, formatOutcomeMessage, outcomeToastVariant, shortId } from '@
 import { RunInspector } from './workflow/run-inspector';
 import { CartoMemoryPanel } from './carto-memory-panel';
 import { MapProductVersionsPanel } from './map-product-versions';
+import { useT } from '@/lib/i18n/useT';
 
 export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
+  const t = useT();
   const uid = useId();
   const [newProjName, setNewProjName] = useState('');
   const [showCreate, setShowCreate] = useState(false);
@@ -83,10 +85,10 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge-subtle bg-surface-panel px-panel py-1.5">
-        <span className="text-meta font-semibold text-ink-secondary">项目工作区</span>
+        <span className="text-meta font-semibold text-ink-secondary">{t('sidebar.project.title')}</span>
         {ws.view === 'project' && (
           <IconButton
-            label="新建项目"
+            label={t('sidebar.project.newProject')}
             icon={Plus}
             iconSize={15}
             active={showCreate}
@@ -98,7 +100,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
 
       <div className="flex-1 space-y-4 overflow-y-auto px-panel py-2 text-body">
         {ws.loading ? (
-          <LoadingState label="加载项目…" />
+          <LoadingState label={t('sidebar.project.loading')} />
         ) : (
           <>
             {ws.error && <InlineNotice variant="error">{ws.error}</InlineNotice>}
@@ -108,7 +110,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                 {!authUser && (
                   <p className="flex items-center gap-1.5 text-caption text-ink-muted">
                     <Lock size={12} aria-hidden />
-                    创建项目 / 运行工作流需要登录账号 — 请先在 设置 → 账户 登录
+                    {t('sidebar.project.loginRequired')}
                   </p>
                 )}
                 {showCreate && (
@@ -117,12 +119,12 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                       htmlFor={`${uid}-project-name`}
                       className="block text-meta font-medium text-ink-secondary"
                     >
-                      项目名称
+                      {t('sidebar.project.name')}
                     </label>
                     <input
                       id={`${uid}-project-name`}
                       type="text"
-                      placeholder="项目名称…"
+                      placeholder={t('sidebar.project.namePh')}
                       value={newProjName}
                       onChange={(e) => setNewProjName(e.target.value)}
                       className="w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2.5 py-1.5 text-meta text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
@@ -133,7 +135,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                       disabled={!authUser}
                       className="w-full rounded-sm bg-status-accent py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      创建项目
+                      {t('sidebar.project.create')}
                     </button>
                   </div>
                 )}
@@ -143,7 +145,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                     htmlFor={`${uid}-project-select`}
                     className="mb-1 block text-meta font-medium text-ink-secondary"
                   >
-                    当前项目
+                    {t('sidebar.project.current')}
                   </label>
                   <select
                     id={`${uid}-project-select`}
@@ -162,11 +164,11 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-meta font-medium text-ink-secondary">
                     <span className="flex items-center gap-1.5">
-                      <Layers size={14} className="text-ink-muted" aria-hidden /> 挂载数据集 ({ws.datasets.length})
+                      <Layers size={14} className="text-ink-muted" aria-hidden /> {t('sidebar.project.datasets', { count: ws.datasets.length })}
                     </span>
                   </div>
                   {ws.datasets.length === 0 ? (
-                    <EmptyState icon={Database} title="暂无挂载数据集" />
+                    <EmptyState icon={Database} title={t('sidebar.project.noDatasets')} />
                   ) : (
                     <div className="space-y-1.5">
                       {ws.datasets.map((d) => (
@@ -205,11 +207,11 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-meta font-medium text-ink-secondary">
                     <span className="flex items-center gap-1.5">
-                      <Activity size={14} className="text-ink-muted" aria-hidden /> 已保存工作流 ({ws.workflows.length})
+                      <Activity size={14} className="text-ink-muted" aria-hidden /> {t('sidebar.project.workflows', { count: ws.workflows.length })}
                     </span>
                   </div>
                   {ws.workflows.length === 0 ? (
-                    <EmptyState icon={WorkflowIcon} title="暂无已保存工作流" description="保存一份 Plan 即可创建" />
+                    <EmptyState icon={WorkflowIcon} title={t('sidebar.project.noWorkflows')} description={t('sidebar.project.savePlanHint')} />
                   ) : (
                     <div className="space-y-2">
                       {ws.workflows.map((w) => (
@@ -229,8 +231,8 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                               <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />
                             </button>
                             <ConfirmAction
-                              label="重新运行"
-                              confirmLabel="确认重新运行？"
+                              label={t('sidebar.project.rerun')}
+                              confirmLabel={t('sidebar.project.confirmRerun')}
                               onConfirm={() => {
                                 void handleRerunWorkflow(w.id);
                               }}
@@ -239,7 +241,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                               className="border border-edge-subtle bg-surface-raised text-ink hover:bg-surface-sunken"
                             />
                           </div>
-                          <div className="text-micro text-ink-muted">步骤 {w.step_count}</div>
+                          <div className="text-micro text-ink-muted">{t('sidebar.project.steps')} {w.step_count}</div>
                         </div>
                       ))}
                     </div>
@@ -255,22 +257,22 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                   onClick={ws.back}
                   className="text-micro text-ink-secondary hover:underline"
                 >
-                  ← 返回项目
+                  {t('sidebar.project.backToProject')}
                 </button>
                 <div>
                   <div className="text-body font-semibold text-ink">
                     {ws.selectedWorkflow.name}
                   </div>
                   <div className="text-micro text-ink-muted">
-                    v{ws.selectedWorkflow.version} · {ws.selectedWorkflow.step_count} 步
+                    v{ws.selectedWorkflow.version} · {t('sidebar.project.stepsUnitCount', { count: ws.selectedWorkflow.step_count })}
                   </div>
                 </div>
                 <section aria-labelledby="wf-rev-heading" className="space-y-1">
                   <h3 id="wf-rev-heading" className="text-micro font-semibold uppercase tracking-wide text-ink-muted">
-                    不可变修订
+                    {t('sidebar.project.immutableRevisions')}
                   </h3>
                   {ws.revisions.length === 0 ? (
-                    <p className="text-micro text-ink-muted">暂无修订</p>
+                    <p className="text-micro text-ink-muted">{t('sidebar.project.noRevisions')}</p>
                   ) : (
                     <ul className="space-y-1">
                       {ws.revisions.map((rev) => (
@@ -287,12 +289,12 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                 </section>
                 <section aria-labelledby="wf-runs-heading" className="space-y-1">
                   <h3 id="wf-runs-heading" className="text-micro font-semibold uppercase tracking-wide text-ink-muted">
-                    运行
+                    {t('sidebar.project.run')}
                   </h3>
                   {ws.detailLoading && ws.runs.length === 0 ? (
-                    <LoadingState label="加载运行…" />
+                    <LoadingState label={t('sidebar.project.loadingRuns')} />
                   ) : ws.runs.length === 0 ? (
-                    <EmptyState icon={Activity} title="暂无运行" />
+                    <EmptyState icon={Activity} title={t('sidebar.project.noRuns')} />
                   ) : (
                     <ul className="space-y-1.5">
                       {ws.runs.map((r) => (
@@ -329,7 +331,7 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                       }}
                       className="w-full rounded-sm border border-edge-subtle py-1 text-micro text-ink-secondary hover:bg-surface-sunken"
                     >
-                      加载更多运行
+                      {t('sidebar.project.loadMoreRuns')}
                     </button>
                   )}
                 </section>

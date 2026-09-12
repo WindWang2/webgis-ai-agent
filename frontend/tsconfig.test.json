@@ -1,7 +1,12 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": ["vitest/globals", "vite/client", "node", "next"],
+    "types": [
+      "vitest/globals",
+      "vite/client",
+      "node",
+      "next"
+    ],
     "noEmit": true
   },
   "include": [
@@ -11,5 +16,8 @@
     "**/*.spec.tsx",
     "test/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "tests/e2e"
+  ]
 }

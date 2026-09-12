@@ -15,6 +15,7 @@ import { DEFAULT_POSITION, isFloating, placementStyle, positionClass, resolvePos
 import { devOnly } from '@/lib/utils/logger';
 import { keyboardMoveDelta } from '@/lib/map-components/layout-runtime';
 import { COLLAPSIBLE_PANEL_TYPES } from '@/lib/map-components/resolve-layout';
+import { useT } from '@/lib/i18n/useT';
 
 
 /**
@@ -144,6 +145,7 @@ export function FloatingChrome({
   bottomSlotIndexes,
   children,
 }: FloatingChromeProps) {
+  const t = useT();
   // 内部再合并一次 override（幂等）：直接使用 FloatingChrome 的调用方
   // （渲染器已合并过）与裸组件都能在乐观提交后即时重渲
   const merged = usePlacementPatchedComponent(component);
@@ -538,7 +540,7 @@ export function FloatingChrome({
             </button>
             <button
               type="button"
-              aria-label="取消停靠"
+              aria-label={t('map.chrome.undock')}
               onClick={() => dockPanel(component.id, 'float')}
               className="rounded p-0.5 text-map-chrome-ink-muted transition-colors hover:text-map-chrome-ink"
             >
@@ -596,7 +598,7 @@ export function FloatingChrome({
           </button>
           <button
             type="button"
-            aria-label="重置位置"
+            aria-label={t('map.chrome.resetPos')}
             onClick={resetPlacement}
             className="rounded p-0.5 text-map-chrome-ink-muted transition-colors hover:text-map-chrome-ink"
           >
@@ -604,7 +606,7 @@ export function FloatingChrome({
           </button>
           <button
             type="button"
-            aria-label="隐藏面板"
+            aria-label={t('map.chrome.hide')}
             onClick={hidePanel}
             className="rounded p-0.5 text-map-chrome-ink-muted transition-colors hover:text-map-chrome-ink"
           >

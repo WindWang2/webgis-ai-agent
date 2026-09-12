@@ -19,6 +19,7 @@ import {
 } from '@/lib/collab/store';
 import { participantColor, COLLAB_MAX_PARTICIPANTS } from '@/lib/collab/protocol';
 import { sendCollabLease } from '@/lib/collab/client';
+import { useT } from '@/lib/i18n/useT';
 
 export function useCollabState(): CollabState {
   // R2-C1：snapshot 必须是 version 号 —— store 对象就地变异、引用恒定，
@@ -28,14 +29,15 @@ export function useCollabState(): CollabState {
 }
 
 function StatusPill({ status, degraded }: { status: CollabState['status']; degraded: boolean }) {
+const t = useT();
   if (status === 'online' && !degraded) {
     return (
       <span
         className="flex items-center gap-1 rounded-full bg-status-ok-soft px-1.5 py-0.5 text-micro text-ink-muted"
-        title="服务端协作通道已连接（跨浏览器实时同步）"
+        title={t('sidebar.collab.connectedTitle')}
       >
         <Wifi aria-hidden size={10} />
-        协作
+        {t('sidebar.collab.connected')}
       </span>
     );
   }
@@ -43,10 +45,10 @@ function StatusPill({ status, degraded }: { status: CollabState['status']; degra
     return (
       <span
         className="flex items-center gap-1 rounded-full bg-surface-sunken px-1.5 py-0.5 text-micro text-ink-disabled"
-        title="未连接服务端协作通道 —— 单用户模式（组织态仍经服务端 CAS 持久化）"
+        title={t('sidebar.collab.offlineTitle')}
       >
         <WifiOff aria-hidden size={10} />
-        单用户
+        {t('sidebar.collab.offline')}
       </span>
     );
   }
@@ -55,7 +57,7 @@ function StatusPill({ status, degraded }: { status: CollabState['status']; degra
   return (
     <span
       className="flex items-center gap-1 rounded-full bg-status-warn-soft px-1.5 py-0.5 text-micro text-ink"
-      title="服务端事件通道降级/建立中：变更仍经服务端 CAS 收敛，其他浏览器更新以对账轮询送达"
+      title={t('sidebar.collab.degradedTitle')}
     >
       <AlertTriangle aria-hidden size={10} />
       {label}
@@ -104,6 +106,7 @@ function PresenceAvatars({ state }: { state: CollabState }) {
 
 /** 编辑租约行（谁正在编辑什么 + 接管入口 = 请求同锁会被拒，披露即可）。 */
 function LeaseStrip({ state }: { state: CollabState }) {
+const t = useT();
   const { leases, clientId } = state;
   const others = leases.filter((l) => l.client !== clientId).slice(0, 3);
   if (others.length === 0) return null;
@@ -112,7 +115,7 @@ function LeaseStrip({ state }: { state: CollabState }) {
       <Pencil aria-hidden size={10} />
       {others.map((l) => (
         <span key={l.lockKey} className="truncate">
-          {l.label ?? '他人'} 正在编辑 {l.lockKey.startsWith('group:') ? '分组' : '图层'}
+          {l.label ?? '他人'} {t('sidebar.collab.editing')} {l.lockKey.startsWith('group:') ? '分组' : '图层'}
         </span>
       ))}
     </div>
@@ -121,6 +124,7 @@ function LeaseStrip({ state }: { state: CollabState }) {
 
 /** 冲突横幅（单次 rebase 失败后的显式态；用户确认后清除）。 */
 function ConflictBanner({ state }: { state: CollabState }) {
+const t = useT();
   const clear = useCallback(() => collabSetConflict(null), []);
   if (state.conflict == null) return null;
   return (
@@ -135,7 +139,7 @@ function ConflictBanner({ state }: { state: CollabState }) {
         className="ml-auto shrink-0 rounded-xs px-1 py-0.5 hover:bg-surface-hover"
         onClick={clear}
       >
-        知道了
+        {t('sidebar.collab.ack')}
       </button>
     </div>
   );
@@ -145,6 +149,7 @@ function ConflictBanner({ state }: { state: CollabState }) {
  * 协作状态条（LayersTab 头部下方常驻；单用户离线态同样诚实披露）。
  */
 export function CollabBar(): React.ReactElement | null {
+  const t = useT();
   const state = useCollabState();
   const showPresence = state.status === 'online' || state.status === 'degraded';
   return (
@@ -155,7 +160,7 @@ export function CollabBar(): React.ReactElement | null {
         {showPresence && <PresenceAvatars state={state} />}
         {state.status === 'offline' && (
           <span className="text-micro text-ink-disabled">
-            登录后可跨浏览器协作（组织态仍持久化）
+            {t('sidebar.collab.loginHint')}
           </span>
         )}
       </div>

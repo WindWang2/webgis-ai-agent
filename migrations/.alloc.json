@@ -1,0 +1,31 @@
+{
+  "_comment": "Alembic 迁移编号领号登记簿（V9 P6，docs/dev/migration-protocol.md）。segments: 分支 → 保留号段；legacy_merged: 历史撞号块（merge revision 收敛，勿再新增同号）；reservations: 单个号的预登记（branch/revision/down_revision）。领号：python scripts/alloc_migration.py --alloc 00NN --branch <branch> --revision <revision_id> --down <down_revision>",
+  "segments": {
+    "foundation/data-lifecycle-v9": ["0046", "0047", "0048", "0049", "0050", "0051", "0052", "0053", "0054", "0055"],
+    "foundation/security-tenancy-v9": ["0036", "0037", "0038", "0039", "0040", "0041", "0042", "0043", "0044", "0045"]
+  },
+  "legacy_merged": {
+    "0034": "四 epic 并行撞号 → c0d8322aa2cb merge（勿再新增 0034_ 前缀）",
+    "0035": "三 epic 并行撞号 → c1e2f3a4b5c6 merge（勿再新增 0035_ 前缀）"
+  },
+  "reservations": {
+    "0046": {
+      "branch": "foundation/data-lifecycle-v9",
+      "revision": "0046_quality_reports",
+      "down_revision": "c1e2f3a4b5c6",
+      "file": "0046_quality_reports.py"
+    },
+    "0047": {
+      "branch": "foundation/data-lifecycle-v9",
+      "revision": "0047_lifecycle_registry",
+      "down_revision": "0046_quality_reports",
+      "file": "0047_lifecycle_registry.py"
+    },
+    "0048": {
+      "branch": "foundation/data-lifecycle-v9",
+      "revision": "0048_template_versions",
+      "down_revision": "0047_lifecycle_registry",
+      "file": "0048_template_versions.py"
+    }
+  }
+}

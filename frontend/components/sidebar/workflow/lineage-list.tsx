@@ -6,6 +6,7 @@ import { InlineNotice } from '@/components/shared/inline-notice';
 import { LoadingState } from '@/components/shared/loading-state';
 import type { LineageGraph } from '@/lib/api/project';
 import { buildLineageRows, formatCrs, lineageTruncated, shortId } from '@/lib/workflow/recovery';
+import { useT } from '@/lib/i18n/useT';
 
 export interface LineageListProps {
   artifactId: string;
@@ -15,6 +16,7 @@ export interface LineageListProps {
 }
 
 export function LineageList({ artifactId, artifactCrs, state, onLoad }: LineageListProps) {
+const t = useT();
   if (!state) {
     return (
       <button
@@ -22,28 +24,28 @@ export function LineageList({ artifactId, artifactCrs, state, onLoad }: LineageL
         onClick={() => onLoad(artifactId)}
         className="rounded px-2 py-1 text-[11px] font-medium text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-hover)]"
       >
-        加载血统
+        {t('sidebar.wf.loadLineage')}
       </button>
     );
   }
-  if (state === 'loading') return <LoadingState label="加载血统…" />;
-  if (state === 'error') return <InlineNotice variant="error">血统加载失败</InlineNotice>;
+  if (state === 'loading') return <LoadingState label={t('sidebar.wf.loadingLineage')} />;
+  if (state === 'error') return <InlineNotice variant="error">{t('sidebar.wf.lineageFailed')}</InlineNotice>;
   if (state === 'empty') {
-    return <EmptyState icon={GitBranch} title="无血统" description="后端未返回上游或下游边" />;
+    return <EmptyState icon={GitBranch} title={t('sidebar.wf.noLineage')} description={t('sidebar.wf.noLineageDesc')} />;
   }
 
   const rows = buildLineageRows(state);
   if (rows.length === 0) {
-    return <EmptyState icon={GitBranch} title="无血统" description="后端未返回上游或下游边" />;
+    return <EmptyState icon={GitBranch} title={t('sidebar.wf.noLineage')} description={t('sidebar.wf.noLineageDesc')} />;
   }
 
   return (
-    <ul className="space-y-1" aria-label="产物血统">
+    <ul className="space-y-1" aria-label={t('sidebar.wf.artifactLineageAria')}>
       <li className="text-[10px] text-[var(--theme-text-muted)]">
-        当前产物 CRS {formatCrs(artifactCrs)}
+        {t('sidebar.wf.currentCrs')} {formatCrs(artifactCrs)}
       </li>
       {lineageTruncated(state) && (
-        <li className="text-[10px] text-[var(--theme-text-muted)]">仅显示前 {rows.length} 条血统边</li>
+        <li className="text-[10px] text-[var(--theme-text-muted)]">{t('sidebar.wf.limited', { count: rows.length })}</li>
       )}
       {rows.map((row) => (
         <li
@@ -60,7 +62,7 @@ export function LineageList({ artifactId, artifactCrs, state, onLoad }: LineageL
           </div>
           {row.sourceDatasetFingerprint && (
             <div className="text-[10px] text-[var(--theme-text-muted)]">
-              数据集 {shortId(row.sourceDatasetId, 8)} · {shortId(row.sourceDatasetFingerprint, 10)}
+              {t('sidebar.ds.dataset')} {shortId(row.sourceDatasetId, 8)} · {shortId(row.sourceDatasetFingerprint, 10)}
             </div>
           )}
         </li>

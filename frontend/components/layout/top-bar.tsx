@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-prefers-reduced-motion';
+import { useT } from '@/lib/i18n/useT';
 import BaselayerSwitcher from '@/components/map/baselayer-switcher';
 
 interface TopBarProps {
@@ -19,7 +20,8 @@ interface TopBarProps {
   onNewSession?: () => void;
 }
 
-export default function TopBar({ sessionName = '未命名', onNewSession }: TopBarProps) {
+export default function TopBar({ sessionName, onNewSession }: TopBarProps) {
+  const t = useT('layout.topbar');
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
   const toggleLeftPanel = useHudStore((s) => s.toggleLeftPanel);
   const aiStatus = useHudStore((s) => s.aiStatus);
@@ -30,16 +32,17 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
   const setIs3D = useHudStore((s) => s.setIs3D);
 
   const isActive = aiStatus === 'thinking' || aiStatus === 'acting';
+  const name = sessionName ?? t('unnamed');
 
   const getStatusConfig = (status: string) => {
     switch (status) {
-      case 'idle': return { label: '就绪', color: 'var(--text-muted)', bg: 'var(--surface-sunken)' };
-      case 'thinking': case 'acting': return { label: status === 'thinking' ? '感知中' : '执行中', color: 'var(--agent-accent)', bg: 'color-mix(in srgb, var(--agent-accent) 8%, transparent)' };
+      case 'idle': return { label: t('statusReady'), color: 'var(--text-muted)', bg: 'var(--surface-sunken)' };
+      case 'thinking': case 'acting': return { label: status === 'thinking' ? t('statusThinking') : t('statusActing'), color: 'var(--agent-accent)', bg: 'color-mix(in srgb, var(--agent-accent) 8%, transparent)' };
       // V4：走与 StatusBadge / InlineNotice / toast 同一套语义 token，
       // 不再各写一对明暗 hex（原先是 #4ade80/#16a34a 与 #fca5a5/#ef4444）。
-      case 'done': return { label: '完成', color: 'var(--success)', bg: 'var(--success-soft)' };
-      case 'error': return { label: '异常', color: 'var(--critical)', bg: 'var(--critical-soft)' };
-      default: return { label: '就绪', color: 'var(--text-muted)', bg: 'var(--surface-sunken)' };
+      case 'done': return { label: t('statusDone'), color: 'var(--success)', bg: 'var(--success-soft)' };
+      case 'error': return { label: t('statusError'), color: 'var(--critical)', bg: 'var(--critical-soft)' };
+      default: return { label: t('statusReady'), color: 'var(--text-muted)', bg: 'var(--surface-sunken)' };
     }
   };
 
@@ -92,8 +95,8 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
       {/* sidebar toggle */}
       <button
         onClick={toggleLeftPanel}
-        aria-label={leftPanelOpen ? '收起侧栏' : '展开侧栏'}
-        title={leftPanelOpen ? '收起侧栏' : '展开侧栏'}
+        aria-label={leftPanelOpen ? t('collapseSidebar') : t('expandSidebar')}
+        title={leftPanelOpen ? t('collapseSidebar') : t('expandSidebar')}
         className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink transition-colors hover:bg-surface-hover"
       >
         {leftPanelOpen ? <PanelLeftClose size={14} aria-hidden /> : <Menu size={14} aria-hidden />}
@@ -120,7 +123,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
 
       {/* session name pill */}
       <span className="ml-1 hidden sm:inline-block max-w-[140px] md:max-w-[180px] truncate rounded-pill border border-edge-subtle bg-surface-sunken px-2 py-0.5 text-meta text-ink-secondary">
-        会话 / {sessionName}
+        {t('sessionPrefix', { name })}
       </span>
 
       {/* spacer */}
@@ -143,8 +146,8 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
       <div className="flex shrink-0 items-center gap-0.5">
         <button
           onClick={onNewSession}
-          aria-label="新建会话"
-          title="新建会话"
+          aria-label={t('newSession')}
+          title={t('newSession')}
           className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
           <Plus size={14} aria-hidden />
@@ -152,8 +155,8 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
 
         <button
           onClick={() => setHistoryOpen(true)}
-          aria-label="历史记录"
-          title="历史记录"
+          aria-label={t('history')}
+          title={t('history')}
           className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
           <History size={14} aria-hidden />
@@ -166,8 +169,8 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
         <button
           type='button'
           onClick={() => setIs3D(!is3D)}
-          aria-label={is3D ? '切换至 2D 视图' : '切换至 3D 视角'}
-          title={is3D ? '视角: 3D (点击切换 2D)' : '视角: 2D (点击切换 3D)'}
+          aria-label={is3D ? t('switchTo2D') : t('switchTo3D')}
+          title={is3D ? t('view3DTitle') : t('view2DTitle')}
           className="flex items-center gap-1 rounded-md border border-edge-subtle bg-surface-overlay px-2.5 py-1 font-mono text-body text-ink-secondary shadow-overlay transition-colors hover:bg-surface-hover"
         >
           <svg width='11' height='11' viewBox='0 0 11 11' fill='none' style={{ display: 'block' }}>
@@ -191,8 +194,8 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
             面板永远不可达。这里补上真实 opener（顶栏 UI 调整按钮）。 */}
         <button
           onClick={() => setTweaksOpen(true)}
-          aria-label="UI 调整"
-          title="UI 调整"
+          aria-label={t('uiTweaks')}
+          title={t('uiTweaks')}
           className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
           <Sliders size={14} aria-hidden />
@@ -200,8 +203,8 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
 
         <button
           onClick={() => setSettingsOpen(true)}
-          aria-label="设置"
-          title="设置"
+          aria-label={t('settings')}
+          title={t('settings')}
           className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
           <Settings size={14} aria-hidden />
