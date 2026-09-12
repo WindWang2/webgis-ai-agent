@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   MessageCircle,
   Folder,
+  Boxes,
   Database,
   Layers,
   Triangle,
@@ -45,6 +46,7 @@ import { AnalysisTab } from '@/components/sidebar/analysis-tab';
 import { MapStudioTab } from '@/components/sidebar/map-studio-tab';
 import { ProjectTab } from '@/components/sidebar/project-tab';
 import { DataSourcesTab } from '@/components/sidebar/data-sources-tab';
+import { LakehouseTab } from '@/components/sidebar/lakehouse/lakehouse-tab';
 import { TasksTab } from '@/components/sidebar/tasks-tab';
 import { ResultsTab } from '@/components/sidebar/results-tab';
 import { PanelErrorBoundary } from '@/components/layout/panel-error-boundary';
@@ -107,6 +109,7 @@ const PANEL_META: Record<string, PanelMeta> = {
   chat: { icon: MessageCircle },
   project: { icon: Folder },
   data_sources: { icon: Database },
+  lakehouse: { icon: Boxes },
   layers: { icon: Layers },
   components: { icon: LayoutDashboard },
   analysis: { icon: Triangle },
@@ -488,6 +491,11 @@ export function ContextPanel({
         {activeTab === 'data_sources' && (
           <PanelErrorBoundary label={t(`panel.boundary.$data_sources`)}>
             <DataSourcesTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+        {activeTab === 'lakehouse' && (
+          <PanelErrorBoundary label="数据湖">
+            <LakehouseTab sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
         {(activeTab === 'export_layout' || activeTab === 'exports') && (

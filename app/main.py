@@ -22,6 +22,11 @@ from app.api.routes import health, map, chat, layer, report, task, upload, knowl
 from app.api.routes import ws_collab
 from app.api.routes import extensions_marketplace as extensions_marketplace_routes
 from app.api.routes import lakehouse_datasets as lakehouse_datasets_routes
+# V9 data-lifecycle（ADR-0140）：质量规则引擎 / 统一生命周期策略 —— 新增路由
+# 文件，不改任何既有路由的签名/response_model（§8 冲突契约）。
+from app.api.routes import data_quality as data_quality_routes
+from app.api.routes import data_lifecycle as data_lifecycle_routes
+from app.api.routes import template_versions as template_versions_routes
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
@@ -670,6 +675,10 @@ app.include_router(explorer.router, prefix="/api/v1", tags=["探索引擎"])
 app.include_router(templates.router, prefix="/api/v1", tags=["地图制图模板"])
 app.include_router(raster_routes.router, prefix="/api/v1", tags=["栅格图层"])
 app.include_router(project_routes.router, prefix="/api/v1", tags=["项目工作区"])
+# V9 data-lifecycle（ADR-0140）：质量规则引擎（P1）/ 统一生命周期策略（P3）。
+app.include_router(data_quality_routes.router, prefix="/api/v1", tags=["数据质量 V9"])
+app.include_router(data_lifecycle_routes.router, prefix="/api/v1", tags=["数据生命周期 V9"])
+app.include_router(template_versions_routes.router, prefix="/api/v1", tags=["地图制图模板 V9（版本化）"])
 app.include_router(data_fabric.router, prefix="/api/v1", tags=["Data Fabric / 数据织网"])
 app.include_router(lakehouse_routes.router, prefix="/api/v1", tags=["Lakehouse / 空间数据湖仓"])
 app.include_router(lakehouse_datasets_routes.router, prefix="/api/v1", tags=["Lakehouse / 数据集版本（V8）"])

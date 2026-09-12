@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   MessageCircle,
   Folder,
+  Boxes,
   Database,
   Layers,
   Triangle,
@@ -56,6 +57,7 @@ const RAIL_GROUPS: Array<Array<RailTabDef>> = [
   [
     { key: 'project', icon: Folder },
     { key: 'data_sources', icon: Database },
+    { key: 'lakehouse', icon: Boxes },
     { key: 'layers', icon: Layers },
     { key: 'components', icon: LayoutDashboard },
   ],

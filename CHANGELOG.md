@@ -43,6 +43,86 @@ Internationalization & responsive touch foundation (ADR-0144, PR #1237).
 - Sketch editor: touch rotation/pitch disabled during edit sessions
   (symmetric restore); coarse-pointer 44px touch targets on nav rail;
   audit: `frontend/docs/touch-audit.md`.
+## [Unreleased] - 2026-09-11 (data-lifecycle-v9: 数据基础与生命周期治理 V9, ADR-0140)
+
+### Added
+- Quality rule engine (P1): dict/YAML rule DSL with 16 closed-vocabulary rule
+  types (null rate, CRS validity, geometry validity, envelope sanity, attribute
+  domain, PK uniqueness, FK referential, duplicate features, field type drift,
+  temporal gaps, nodata ratio, resolution drift, encoding mojibake, band stats
+  outlier, topology adjacency, mixed geometry families); pure evaluation
+  functions with bounded scans and per-rule error isolation; `QualityReport` /
+  `QualityRuleResult` persistence (migration 0046); sync small-dataset and
+  durable-job large-dataset evaluate paths with idempotent reuse and honest
+  failure; autofix pipeline (plan → dry-run → apply with new-ref semantics)
+  bound to the shared REMEDIATION_OPS vocabulary; prometheus rule metrics.
+- Unified lifecycle policy engine (P3, migration 0047): registry upserting
+  five object kinds (lakehouse dataset, fabric materialization, artifact cache,
+  COG output, worker cache) via read-only adapters; hot/warm/cold tiering with
+  revive-on-reference; per-kind policies with **observe-only defaults =
+  behavior-preserving** (equivalence-verified; lakehouse dataset is
+  observe-only by design); lifecycle REST surface (/data-lifecycle/objects,
+  assess, policies).
+- data-gc closed loop (P5): fixed dry-run plan tree (object → dependencies →
+  reason → estimated bytes), approval state machine (pending_approval →
+  approved → executing → done/failed/rolled_back/rejected/cancelled),
+  durable-job execution with two-phase staging (rename into
+  `data/.gc-staging/<plan>`), observation-window rollback and explicit admin
+  purge; plan-digest idempotent reuse.
+- Data profile deepening (P2): unified vector/raster bounded profile with H3
+  spatial-distribution histogram (auto-coarsening, honest truncation),
+  mergeable incremental profiling state (incremental merge == full scan,
+  pinned by test), profile → rule threshold suggestions, profile cache
+  invalidation wired into the ref_lifecycle single invalidation authority.
+- Template versioning (P4, migration 0048): immutable `template_versions`
+  snapshots, cross-template inheritance chains with deep-merge override
+  semantics (depth-capped), deprecation markers with compatible reads, and
+  Cartography V7 component-registry constraint validation; REST surface under
+  `/templates/{id}/versions` (existing templates routes untouched).
+- Alembic anti-collision mechanism (P6): `scripts/alloc_migration.py`
+  (number allocation from `migrations/.alloc.json` with pre-registered
+  down_revision + `--check` mode), CI db-migrations gate step, strengthened
+  `tests/test_alembic_metadata.py` (revision-id uniqueness, ScriptDirectory
+  single-head, duplicate-number copy must fail), and the multi-line migration
+  protocol doc (`docs/dev/migration-protocol.md`).
+
+### Changed
+- `rs/spectral_engine.py`: long-standing TODO cleared — computed `legend_spec`
+  is now attached to `RasterAnalysisResult` and flows into tool results
+  (downstream consumers already read the key).
+- `app/tasks/README.md` / `app/skills/README.md`: structural-debt inventory
+  documented (task_chain keepers, skills data-directory nature).
+
+### Removed
+- Dead package `app/db/` (zero imports; real models live in `app/models/`,
+  Base in `app/core/database.py`).
+
+### Fixed
+- WeasyPrint optional-dependency guards now catch `OSError` (missing GTK
+  libs on Windows raise OSError, not ImportError), restoring app import /
+  test collection on Windows dev machines (#1221 D-7 same class); two
+  cartography PDF tests skip honestly in that environment.
+## [Unreleased] - 2026-09-11 (feat/lakehouse-ui-v9: Lakehouse Cube Explorer UI, ADR-0141)
+
+### Added (frontend: Lakehouse Cube Explorer UI, ADR-0141)
+- 「数据湖」rail tab（explore/analyze 模式词表）：六子页签接入 Lakehouse V8
+  全部 29 个 REST 端点 —— 目录（catalog 检索 + manifest 检视 + offset 分页）、
+  数据集（V8 版本层浏览：refs/head/版本历史）、查询（window/labeled/scan/
+  revise/rs 五类表单 + schema 预校验 + 查询历史/收藏本地持久化）、STAC
+  （1.0.0 投影浏览 + skipped 诚实披露 + 条目几何上图）、发布（publish/revoke
+  确认对话框 + 幂等/权限错误报告 + 快照双栏字段 diff + swipe 双屏）、运维
+  （verify/scrub 报告 + 血缘祖先链 + GC dry-run 只读树，执行动作归 C/F 线）。
+- `lib/api/lakehouse.ts`：29 端点全量 typed client（响应类型按后端服务层
+  dict 实测逐字段对齐；`total` 字符串下界、DurableBlock 判别、开放联合
+  state、STAC 包装结构等诚实形态全部类型化）。
+- `lib/map-kit/raster-canvas.ts` + `raster-timeline.ts`：动态栅格时序播放
+  管线（兑现 README Phase 6）—— nodata 掩膜/线性拉伸/定点色带 → canvas
+  位图 → 既有 HeatmapRasterSource 通道；切片懒加载 LRU + 滑动窗口预取 +
+  rAF 丢帧策略（16ms 帧预算）；reduced-motion 禁自动播放；键盘可达。
+- 测试：29 端点契约单测（正常/空/错误三态 fixtures）、rail 注册/tablist
+  a11y/面板契约组件测试、48 步时序性能门禁（确定性丢帧+LRU 有界断言；
+  绝对 p95<16ms 由专用进程取证）。
+
 
 ## [Unreleased] - 2026-09-10 (V7/V8 epic integration round)
 
