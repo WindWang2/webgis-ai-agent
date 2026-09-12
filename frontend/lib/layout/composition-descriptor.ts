@@ -17,12 +17,14 @@
 
 export type CompositionOrigin = 'spec' | 'autofill' | 'fallback';
 
-/** 版式档（画幅 × 横竖；与后端 layout_solver page profile 族对齐）。 */
+/** 版式档（画幅 × 横竖；screen/A4/A3 × 竖横，§2 P2 词表）。 */
 export type PageProfile =
   | 'screen_16_9'
   | 'screen_4_3'
   | 'a4_portrait'
-  | 'a4_landscape';
+  | 'a4_landscape'
+  | 'a3_portrait'
+  | 'a3_landscape';
 
 /** 修复策略链动作词表（与后端 REPAIR_ACTIONS 同表 —— 双侧锁定）。 */
 export type RepairActionKind =
@@ -118,8 +120,12 @@ export function pageProfileFor(
   height?: number,
   paperSize?: string,
 ): PageProfile {
-  if (paperSize === 'a4' && (width ?? 0) > (height ?? 0)) return 'a4_landscape';
-  if (paperSize === 'a4') return 'a4_portrait';
+  if (paperSize === 'a4' || paperSize === 'a3') {
+    if ((width ?? 0) > (height ?? 0)) {
+      return paperSize === 'a3' ? 'a3_landscape' : 'a4_landscape';
+    }
+    return paperSize === 'a3' ? 'a3_portrait' : 'a4_portrait';
+  }
   if (!width || !height || width <= 0 || height <= 0) return 'screen_16_9';
   const ratio = width / height;
   if (ratio > 1.2) return 'screen_16_9';

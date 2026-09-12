@@ -16,15 +16,24 @@ import {
 } from '@/lib/layout/legend-labels';
 
 /** AC-07（P7）：v2 消费面 —— nodata 标签覆写 / 单位尾注 / method /
- * out_of_range 条目 / k 类目披露。单一实现在此处，两个渲染器共用。 */
+ * out_of_range 条目 / k 类目数。单一实现在此处，两个渲染器共用。 */
 function v2NodataSwapped(legend: LegendSpec, entries: { color: string; label: string }[]) {
-  const hasNodata = !!(legend as unknown as { nodata?: unknown }).nodata;
-  if (!hasNodata || !entries.length) return entries;
+  const nodata = (legend as unknown as { nodata?: { color?: string; label?: string } }).nodata;
+  if (!nodata) return entries;
+  const label = legendNodataLabel(legend);
   const swapped = [...entries];
-  swapped[swapped.length - 1] = {
-    ...swapped[swapped.length - 1],
-    label: legendNodataLabel(legend),
-  };
+  if (swapped.length) {
+    // legend-model 的 nodata 条目（color 在场时）恒在末尾 —— 覆写其标签，
+    // 并消费 v2 的 nodata 颜色（若声明）
+    const last = swapped[swapped.length - 1];
+    swapped[swapped.length - 1] = {
+      color: nodata.color || last.color,
+      label,
+    };
+  } else {
+    // label-only nodata（无 color）：以无填充条目呈现（渲染为虚线框）
+    swapped.push({ color: nodata.color ?? '', label });
+  }
   return swapped;
 }
 
@@ -179,7 +188,7 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
       <div className={layoutClass}>
         {v2Entries.slice(0, 8).map((e, j) => (
           <div key={j} className="flex items-center gap-1.5">
-            <span aria-hidden className="h-2.5 w-4 rounded-sm" style={{ background: e.color, opacity: opacityFor(j) }} />
+            <span aria-hidden className={`h-2.5 w-4 rounded-sm ${e.color ? '' : 'border border-dashed border-map-chrome-border'}`} style={{ background: e.color || undefined, opacity: opacityFor(j) }} />
             <span className="text-micro tabular-nums text-map-chrome-ink-muted">{e.label}</span>
           </div>
         ))}
@@ -259,7 +268,7 @@ function CategoricalLegendRenderer(component: MapSpecComponent, ctx: RendererCon
       <div className={layoutClass}>
         {v2Entries.slice(0, 8).map((e, j) => (
           <div key={j} className="flex items-center gap-1.5">
-            <span aria-hidden className="h-2.5 w-4 rounded-sm" style={{ background: e.color }} />
+            <span aria-hidden className={`h-2.5 w-4 rounded-sm ${e.color ? '' : 'border border-dashed border-map-chrome-border'}`} style={{ background: e.color || undefined }} />
             <span className="text-micro text-map-chrome-ink-muted">{e.label}</span>
           </div>
         ))}

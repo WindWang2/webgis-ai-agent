@@ -12,7 +12,9 @@
 import type { CompositionDecision, PageProfile } from './composition-descriptor';
 
 export const OUTPUT_PURPOSES: readonly PageProfile[] = [
-  'screen_16_9', 'screen_4_3', 'a4_portrait', 'a4_landscape',
+  'screen_16_9', 'screen_4_3',
+  'a4_portrait', 'a4_landscape',
+  'a3_portrait', 'a3_landscape',
 ];
 
 export interface ContentFlags {
@@ -94,6 +96,9 @@ export function requiredComponentsFor(
     if (content.has_location_context) {
       add({ type: 'inset_map', reason: '区位语境在场 → 位置插图必配（印刷品）' });
     }
+  } else if (content.has_projection_info) {
+    // 与后端 required_components_for 同分支：屏幕档投影在场 → 经纬网建议
+    add({ type: 'graticule', reason: '投影信息在场 → 经纬网建议（屏幕）' });
   }
   let step = 0;
   for (const rule of plan.required) {

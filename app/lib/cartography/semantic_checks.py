@@ -2633,8 +2633,9 @@ def _detect_floating_overlaps(components: List[Dict[str, Any]]) -> List[str]:
     from app.lib.cartography.component_composer import floating_overlap_pairs
 
     return [
-        f"floating components {a_id} and {b_id} overlap"
-        for a_id, b_id in floating_overlap_pairs(components)
+        f"floating components {a_id} and {b_id} overlap "
+        f"({ox:.2f}x{oy:.2f} normalized units)"
+        for a_id, b_id, ox, oy in floating_overlap_pairs(components)
     ]
 
 

@@ -32,7 +32,8 @@ export function formatGraticuleLabel(
   const hemi = isLat ? (value >= 0 ? 'N' : 'S') : (value >= 0 ? 'E' : 'W');
   const abs = Math.abs(value);
   const deg = Math.floor(abs);
-  const degLabel = isLat ? pad2(deg) : String(deg).padStart(isLat ? 3 : 3, '0');
+  // 图廓注记等宽惯例：经度固定 3 位（008°），纬度固定 2 位（05°）
+  const degLabel = String(deg).padStart(isLat ? 2 : 3, '0');
   if (format === 'deg') return `${deg}°${hemi}`;
   const minFloat = (abs - deg) * 60;
   const min = Math.floor(minFloat);
@@ -43,7 +44,7 @@ export function formatGraticuleLabel(
   return `${degLabel}°${pad2(minNorm)}′${pad2(secNorm)}″${hemi}`;
 }
 
-/** 图廓注记集合：四角 + 边缘中点（west/east 用纬度标签，north/south 用经度标签）。 */
+/** 图廓注记集合：四角（经度上/下缘、纬度左/右缘）。 */
 export interface FrameAnnotation {
   position: 'nw' | 'ne' | 'sw' | 'se';
   lngLabel: string;

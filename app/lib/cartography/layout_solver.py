@@ -547,12 +547,12 @@ class LayoutSolutionV4(BaseModel):
         return not self.suppressed and not self.conflicts
 
 
-#: 可折叠面板族（与 component_composer.COLLAPSIBLE_TYPES 同表；本侧复制
-#: 以避免 solver → composer 的反向依赖，同步由 parity 测试锁定）。
-_V4_COLLAPSIBLE_TYPES = frozenset({
-    "statistics_panel", "chart_panel", "table_panel",
-    "decision_panel", "uncertainty_panel", "methodology_note",
-})
+#: 可折叠面板族 —— **单一语义源** = component_composer.COLLAPSIBLE_TYPES
+#: （solver 导入之，无反向依赖 —— composer 只依赖 layout_constraints）；
+#: 前端 composition-repair.COLLAPSIBLE_LIVE_TYPES 为渲染域子集镜像，
+#: 后端一致性由 test_layout_selfheal_ac07.py::test_collapsible_vocabulary_parity
+#: 锁定。
+from app.lib.cartography.component_composer import COLLAPSIBLE_TYPES as _V4_COLLAPSIBLE_TYPES
 
 
 def solve_layout_v4(

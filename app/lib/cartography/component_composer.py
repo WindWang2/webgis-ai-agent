@@ -128,8 +128,9 @@ def _zone_loads(comps: List[_Comp]) -> Dict[str, List[_Comp]]:
 
 
 def floating_overlap_pairs(components: List[Any]) -> List[tuple]:
-    """floating 组件矩形相交的 id 对（归一化 x/y/width/height 几何的
-    **单一实现** —— 字符串披露（semantic_checks）与修复建议两侧共用）。"""
+    """floating 组件矩形相交的 (id_a, id_b, overlap_x, overlap_y) 列表
+    （归一化 x/y/width/height 几何的**单一实现** —— 字符串披露
+    （semantic_checks）与修复建议两侧共用，证据含重叠面积）。"""
     floating: List[Dict[str, float]] = []
     for c in components:
         if isinstance(c, dict):
@@ -162,7 +163,7 @@ def floating_overlap_pairs(components: List[Any]) -> List[tuple]:
             overlap_x = min(a["x"] + a["w"], b["x"] + b["w"]) - max(a["x"], b["x"])
             overlap_y = min(a["y"] + a["h"], b["y"] + b["h"]) - max(a["y"], b["y"])
             if overlap_x > 0 and overlap_y > 0:
-                pairs.append((a["id"], b["id"]))
+                pairs.append((a["id"], b["id"], overlap_x, overlap_y))
     return pairs
 
 
@@ -308,9 +309,11 @@ def _rehome(
 
 # ── 2. 缺项自动补全 ──────────────────────────────────────────────────────
 
-#: 输出用途词表（画幅 × 横竖；与 layout_solver._PROFILES 版式族对齐）。
+#: 输出用途词表（画幅 × 横竖；screen/A4/A3 × 竖横 —— §2 P2 词表）。
 OUTPUT_PURPOSES = (
-    "screen_16_9", "screen_4_3", "a4_portrait", "a4_landscape",
+    "screen_16_9", "screen_4_3",
+    "a4_portrait", "a4_landscape",
+    "a3_portrait", "a3_landscape",
 )
 
 _SCREEN_PURPOSES = frozenset({"screen_16_9", "screen_4_3"})
@@ -354,15 +357,18 @@ def required_components_for(
 
     规则表（制图学必配基线 + 用途收紧）：
     - 全用途：title / scale_bar / north_arrow / attribution（署名不可省）；
-    - print（a4_*）：追加 legend（专题层在场时）、graticule（投影信息在场
-      时 —— 缺投影经纬网降级为经纬网 alone 的决策由渲染端做，清单仍列出
-      并附 advisory）、inset_map（区位语境在场时）；
-    - screen：统计面板 / 时序族不强制（交互面板由用户按需开）；
+    - print（a4_*/a3_*）：追加 legend（专题层在场时）、graticule（投影信息
+      在场时 —— 缺投影经纬网降级为经纬网 alone 的决策由渲染端做，清单仍
+      列出并附 advisory）、inset_map（区位语境在场时）；
+    - screen：graticule 为建议档（投影信息在场）；统计面板 / 时序族不强制
+      （交互面板由用户按需开）；
+    - 未知用途 → 按 screen_16_9 处理（§0.5：画布未知默认屏幕 16:9）；
     - 数据来源未知：attribution 补占位 options.text + advisory。
     """
     flags = {k: bool((content or {}).get(k)) for k in CONTENT_FLAGS}
-    is_print = purpose not in _SCREEN_PURPOSES
-    plan = RequiredComponentsPlan(purpose=purpose if purpose in OUTPUT_PURPOSES else "screen_16_9")
+    resolved_purpose = purpose if purpose in OUTPUT_PURPOSES else "screen_16_9"
+    is_print = resolved_purpose not in _SCREEN_PURPOSES
+    plan = RequiredComponentsPlan(purpose=resolved_purpose)
 
     def _add(rtype: str, reason: str, **kw: Any) -> None:
         plan.required.append(RequiredComponent(type=rtype, reason=reason, **kw))

@@ -49,7 +49,8 @@ export function magneticDeclinationAt(
   };
 }
 
-/** bbox 中心点（四角均值；跨经度 180 的退化输入按算术均值处理并披露）。 */
+/** bbox 中心点（算术均值；跨经度 180 的环形几何不在此处理 —— 调用方
+ * 传入的 bbox 应为普通有序范围，语义与 MapSpec bbox 契约一致）。 */
 export function bboxCenter(
   bounds: { west: number; south: number; east: number; north: number },
 ): { lat: number; lng: number } {

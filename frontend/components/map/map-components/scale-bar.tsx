@@ -73,7 +73,11 @@ function ScaleBarRenderer(component: MapSpecComponent, ctx: RendererContext) {
       className={`map-chrome absolute z-30 flex items-center gap-2 text-caption font-medium tabular-nums ${positionClass(component)} ${
         variant === 'boxed' ? 'rounded-chrome px-2.5 py-1.5' : variant === 'academic' ? 'rounded-chrome px-2 py-1' : 'px-2 py-1'
       }`}
-      aria-label={`比例尺 ${formatMeters(meters)}，${numeric.label}${variant === 'dual_unit' ? `（${formatImperial(meters)}）` : ''}`}
+      aria-label={
+        displayMode === 'numeric'
+          ? `比例尺 ${numeric.label}`
+          : `比例尺 ${formatMeters(meters)}${displayMode === 'both' ? `，${numeric.label}` : ''}${variant === 'dual_unit' ? `（${formatImperial(meters)}）` : ''}`
+      }
     >
       {displayMode === 'numeric' ? (
         numericTag

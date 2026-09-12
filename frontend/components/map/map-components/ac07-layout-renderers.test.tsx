@@ -233,6 +233,15 @@ describe('legend v2 fields (P7)', () => {
     expect(screen.queryByTestId('spec-chrome-legend-out-of-range')).toBeNull();
     expect(screen.getByTestId('spec-chrome-categorical-legend-unit')!.textContent).toContain('共 2 类');
   });
+
+  it('快照锁定：v2 图例卡 DOM 结构（unit/method/nodata/out_of_range/k）', () => {
+    const { container } = render(renderComponent(
+      comp({ id: 'lg', type: 'legend', options: { layerId: 'layer-primary' } }),
+      baseCtx({ spec: SPEC_WITH_V2_LEGEND }),
+    ));
+    const root = container.querySelector('[data-testid="spec-chrome-legend"]');
+    expect(root).toMatchSnapshot();
+  });
 });
 
 // ── P6：inset_map source 隔离 ────────────────────────────────────────────
@@ -246,6 +255,9 @@ describe('inset_map source isolation (P6)', () => {
     expect(source).not.toMatch(/from ['"]maplibre-gl/);
     expect(source).not.toMatch(/new\s+maplibre\.Map/);
     expect(source).not.toMatch(/useMap\(\)/);
+    // source 隔离：不读主图 spec 图层数据源（输入仅 options.* 与 ctx.bounds）
+    expect(source).not.toMatch(/ctx\.spec/);
+    expect(source).not.toMatch(/\.sources\b/);
   });
 
   it('bbox 在场即渲染；主图指示框走独立 options（不读主图数据源）', () => {

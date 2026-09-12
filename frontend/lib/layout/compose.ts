@@ -17,6 +17,12 @@ import {
   resolveMapComponents,
 } from '@/lib/map-components/resolve-components';
 import {
+  resolveSlotLayout,
+} from '@/lib/map-components/layout-runtime';
+import {
+  stackOffsetPx,
+} from '@/lib/map-components/resolve-layout';
+import {
   pageProfileFor,
   type CompositionDescriptor,
   type CompositionDecision,
@@ -197,20 +203,37 @@ export function composeMapLayout(input: ComposeMapLayoutInput): ComposeMapLayout
   const descriptor: CompositionDescriptor = {
     version: 1,
     page: { profile: purpose, ...(canvas ?? {}) },
-    elements: renderable.map((c) => {
-      const resolvedItem = resolveMapComponent(c);
-      return {
-        id: c.id,
-        type: c.type,
-        anchor: resolvedItem.anchor,
-        slot: { index: 0, size: 1 },
-        stackOffsetPx: 0,
-        origin: c.id.startsWith('__autofill_')
-          ? 'autofill'
-          : c.id.startsWith('__fallback_') ? 'fallback' : 'spec',
-        repairs: repair.steps.filter((s) => s.componentId === c.id),
-      };
-    }),
+    elements: (() => {
+      // 槽位裁决走共享求解器（与渲染同一语义源 —— 非占位常量）
+      const anchored = resolveMapComponents({ layout: { components: renderable } })
+        .filter((c) => c.enabled && !c.floating && c.anchor !== 'none');
+      const entries = anchored.map((c) => ({ type: c.type, anchor: c.anchor }));
+      const solvedSlots = resolveSlotLayout(entries);
+      const slotOf = new Map<string, { slot: string; index: number; slotSize: number; fallbackFrom?: string }>();
+      entries.forEach((entryObj, i) => {
+        const solved = solvedSlots.get(entryObj);
+        if (solved) slotOf.set(anchored[i].id, solved);
+      });
+      return renderable.map((c) => {
+        const resolvedItem = resolveMapComponent(c);
+        const solved = slotOf.get(c.id);
+        return {
+          id: c.id,
+          type: c.type,
+          anchor: resolvedItem.anchor,
+          slot: solved
+            ? { index: solved.index, size: solved.slotSize }
+            : { index: 0, size: 1 },
+          stackOffsetPx: solved
+            ? stackOffsetPx(solved as Parameters<typeof stackOffsetPx>[0], c.type)
+            : 0,
+          origin: c.id.startsWith('__autofill_')
+            ? 'autofill'
+            : c.id.startsWith('__fallback_') ? 'fallback' : 'spec',
+          repairs: repair.steps.filter((s) => s.componentId === c.id),
+        };
+      });
+    })(),
     decisions,
     chrome: {
       numericScale,

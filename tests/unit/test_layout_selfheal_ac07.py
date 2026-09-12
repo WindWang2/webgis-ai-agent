@@ -10,6 +10,7 @@ P1 验收域：
 """
 
 from app.lib.cartography.component_composer import (
+    COLLAPSIBLE_TYPES,
     plan_layout_repairs,
     required_components_for,
 )
@@ -23,6 +24,21 @@ from app.lib.cartography.layout_solver import (
     solve_layout_v4,
 )
 from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
+
+
+def test_collapsible_vocabulary_parity():
+    """solver 与 composer 的可折叠词表单源一致（parity 真实锁定）。"""
+    from app.lib.cartography import layout_solver
+
+    assert layout_solver._V4_COLLAPSIBLE_TYPES is COLLAPSIBLE_TYPES
+
+
+def test_required_components_purpose_vocabulary_includes_a3():
+    from app.lib.cartography.component_composer import OUTPUT_PURPOSES
+
+    assert {"a3_portrait", "a3_landscape"} <= set(OUTPUT_PURPOSES)
+    plan = required_components_for("a3_landscape", {"has_projection_info": True})
+    assert [r.type for r in plan.required if r.type == "graticule"]
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
