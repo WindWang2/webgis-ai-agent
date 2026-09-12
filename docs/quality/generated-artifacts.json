@@ -42,7 +42,7 @@
    "scope": "global"
   },
   "docs/quality/QUALITY_MANIFEST.md": {
-   "content_fingerprint": "96e6b3ee5cc49d757af3ed57625f706091daf72e153eecf2126349f6d7543b68",
+   "content_fingerprint": "c8a0062fc5bac9b3af3d6434b9146acd39b68182abc0749ff1c67431d6e3109a",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
    "input_fingerprint": "39a1df9fcbb4643f38dc875944dc00d17437820d9934cd990f0fcbd2e4053837",
@@ -60,7 +60,7 @@
    "content_fingerprint": "4881a3f3950290d11d25e0126eaf2a7d685881be2a8ca9f4f6981163fa1fe5f2",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "be33f1c254ff71510dc44786320349de81bb8a86dd31f0a8060f9cf77f6d7b9a",
+   "input_fingerprint": "08369508df6a92969159a55de458e686f0f9df170eee9a7d501ea30b0b481999",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
@@ -132,7 +132,7 @@
    "scope": "global"
   },
   "docs/quality/quality-manifest.json": {
-   "content_fingerprint": "9d0c805684a426f5f2f3994148b75cd91f0c4e393b52da44f3175ca56e51703f",
+   "content_fingerprint": "b2d155670fdaa224b260b8ea4e360cacbd267e57f86c299e6d37ab9a0eeff8fe",
    "generator": "scripts/gen_quality_manifest.py",
    "generator_version": 1,
    "input_fingerprint": "39a1df9fcbb4643f38dc875944dc00d17437820d9934cd990f0fcbd2e4053837",
@@ -147,10 +147,10 @@
    "scope": "global"
   },
   "docs/quality/quality-report.json": {
-   "content_fingerprint": "4dd881365ace43d4715da7169466b3c20de33bbea11318d524727925cf4f44d0",
+   "content_fingerprint": "c27ac8f0ef9416ed85434456fffb6840a6eafe1257a163cd4659824e1c0901f8",
    "generator": "scripts/gen_quality_report.py",
    "generator_version": 1,
-   "input_fingerprint": "be33f1c254ff71510dc44786320349de81bb8a86dd31f0a8060f9cf77f6d7b9a",
+   "input_fingerprint": "08369508df6a92969159a55de458e686f0f9df170eee9a7d501ea30b0b481999",
    "inputs": [
     "app/lib/quality/manifest.py",
     "docs/quality/quality-manifest.json",
