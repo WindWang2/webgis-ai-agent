@@ -12060,6 +12060,26 @@
       },
       "description": "Successful Response"
      },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ApiResponse"
+        }
+       }
+      },
+      "description": "username/email 格式非法"
+     },
+     "409": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ApiResponse"
+        }
+       }
+      },
+      "description": "username 或 email 已被占用"
+     },
      "422": {
       "content": {
        "application/json": {
@@ -12069,6 +12089,26 @@
        }
       },
       "description": "Validation Error"
+     },
+     "429": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ApiResponse"
+        }
+       }
+      },
+      "description": "注册限流"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ApiResponse"
+        }
+       }
+      },
+      "description": "公开注册未开放"
      }
     },
     "summary": "Register",
