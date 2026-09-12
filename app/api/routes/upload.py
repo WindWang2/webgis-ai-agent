@@ -10,10 +10,15 @@ from typing import Any, Dict, List, Optional
 
 import ijson
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile
-from pydantic import BaseModel
 from sqlalchemy import select, func, update as sa_update
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.schemas.upload_schema import (  # noqa: F401 - ErrorResponse 兼容保留
+    ErrorResponse,
+    UploadDeleteResponse,
+    UploadListResponse,
+    UploadResponse,
+)
 from app.core.config import settings
 from app.core.auth import authorize_session_write, get_current_user, verify_session_owner
 from app.lib.geojson_serializer import serialize_geojson
@@ -90,52 +95,6 @@ async def _verify_session_owner(
     await verify_session_owner(
         db, session_id, user_id=user_id, owner_token=owner_token
     )
-
-
-# ==================== 响应模型 ====================
-
-class UploadResponse(BaseModel):
-    """单文件上传响应
-
-    V4 增量字段（全部带默认值 —— 既有契约不变）：
-    - ``crs`` 放宽为可空：解析器未确认 CRS（CSV 未声明）时如实为 null，
-      不再谎称 confirmed EPSG:4326（``crs_source`` 披露证据来源）；
-    - ``deduplicated``：同会话同内容幂等导入命中，返回既有 upload_id；
-    - ``warnings`` / ``ignored_files`` / ``meta``：诚实披露（多文件丢弃、
-      CRS 假设、栅格 nodata/overviews 等）；
-    - ``session_ref`` / ``profile_summary`` / ``quality``：V3 摄入管线
-      增值车道（opt-in）的有界产物；失败不阻断上传（``ref_registration_error``）。
-    """
-    id: int
-    original_name: str
-    file_type: str
-    format: str
-    crs: Optional[str]
-    geometry_type: Optional[str]
-    feature_count: int
-    bbox: Optional[List[float]]
-    file_size: int
-    message: str = "上传成功"
-    # ---- V4 additive ----
-    crs_source: Optional[str] = None
-    deduplicated: bool = False
-    ignored_files: List[str] = []
-    warnings: List[str] = []
-    meta: Optional[Dict[str, Any]] = None
-    session_ref: Optional[str] = None
-    profile_summary: Optional[Dict[str, Any]] = None
-    quality: Optional[Dict[str, Any]] = None
-    ref_registration_error: Optional[str] = None
-
-
-class UploadListResponse(BaseModel):
-    """上传列表响应"""
-    total: int
-    uploads: List[UploadResponse]
-
-
-class ErrorResponse(BaseModel):
-    detail: str
 
 
 # ==================== 上传接口 ====================
@@ -673,7 +632,7 @@ async def get_upload_geojson(
     return Response(content=body, media_type="application/json")
 
 
-@router.delete("/uploads/{upload_id}")
+@router.delete("/uploads/{upload_id}", response_model=UploadDeleteResponse)
 async def delete_upload(
     upload_id: int,
     _user: dict = Depends(get_current_user),
@@ -702,4 +661,4 @@ async def delete_upload(
         if uploads_root in resolved.parents:
             shutil.rmtree(upload_dir, ignore_errors=True)
 
-    return {"success": True, "message": "已删除"}
+    return UploadDeleteResponse(success=True, message="已删除")

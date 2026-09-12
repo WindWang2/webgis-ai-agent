@@ -9,6 +9,12 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
+from app.schemas.health_schema import (
+    HealthResponse,
+    LivenessResponse,
+    ReadyResponse,
+    SreStatusReport,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -89,25 +95,25 @@ def _live_agent_runtime() -> str:
         return "chatengine"
 
 
-@router.get("/health")
-def health_check():
+@router.get("/health", response_model=HealthResponse)
+def health_check() -> HealthResponse:
     """基础存活检查"""
     # Platform V4（ADR-0131 D7）：version 从 build_info（VERSION 文件）取——
     # 修复硬编码 "0.1.3" 与 VERSION 文件（0.1.0.0）的漂移。
     from app.core.build_info import version_string
 
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "service": "WebGIS AI Agent",
-        "version": version_string(),
-        "agent_runtime": _live_agent_runtime(),
+    return HealthResponse(
+        status="healthy",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        service="WebGIS AI Agent",
+        version=version_string(),
+        agent_runtime=_live_agent_runtime(),
         # V5-B: any-worker-alive is a service average — with a pool >1 some
         # workers can be down (sessions on them degrade to ChatEngine) while
         # the badge still says "pi". Disclose the per-worker split so the
         # badge can be reconciled against reality.
-        "pi_workers_alive": _pi_workers_alive(),
-    }
+        pi_workers_alive=_pi_workers_alive(),
+    )
 
 
 def _pi_workers_alive() -> Optional[str]:
@@ -125,18 +131,18 @@ def _pi_workers_alive() -> Optional[str]:
         return None
 
 
-@router.get("/health/live")
-def liveness_check():
+@router.get("/health/live", response_model=LivenessResponse)
+def liveness_check() -> LivenessResponse:
     """轻量存活检查 — 仅确认进程可响应，不做依赖检查。
 
     专供 k8s livenessProbe / Docker HEALTHCHECK 使用：失败应直接杀进程，
     所以这里不能因 DB/Redis/Celery 抖动而失败。
     """
-    return {"status": "alive"}
+    return LivenessResponse(status="alive")
 
 
-@router.get("/ready")
-def readiness_check():
+@router.get("/ready", response_model=ReadyResponse)
+def readiness_check() -> JSONResponse:
     """就绪检查：数据库 + LLM + Redis + Celery 连通性。
 
     任一依赖不可达时返回 HTTP 503，让 k8s readinessProbe 暂停把流量打过来；
@@ -163,7 +169,7 @@ def readiness_check():
     # k8s readinessProbe 只看 HTTP 状态码；body 仅返回极简状态，避免信息泄露。
     return JSONResponse(
         status_code=200 if all_ready else 503,
-        content={"ready": all_ready},
+        content=ReadyResponse(ready=all_ready).model_dump(),
     )
 
 
@@ -182,22 +188,9 @@ import threading as _threading
 import time as _time
 
 from fastapi import Depends as _Depends
-from pydantic import BaseModel as _BaseModel
 
 from app.core.auth import get_current_user as _get_current_user
-
-
-class SreComponentStatus(_BaseModel):
-    status: str                 # ok | degraded | down | not_configured
-    latency_ms: Optional[float] = None
-    detail: Optional[str] = None
-
-
-class SreStatusReport(_BaseModel):
-    status: str                 # ok | degraded | down
-    components: dict
-    stuck_jobs: Optional[int] = None
-    refresh_age_s: float = 0.0
+from app.schemas.health_schema import SreComponentStatus
 
 
 _SRE_COMPONENTS = ("db", "redis", "llm", "worker", "object_store")
@@ -326,7 +319,7 @@ async def _count_stuck_jobs() -> Optional[int]:
         return None
 
 
-@router.get("/status/detailed")
+@router.get("/status/detailed", response_model=SreStatusReport)
 async def sre_status_detailed(
     _current_user: dict = _Depends(_get_current_user),
 ) -> JSONResponse:

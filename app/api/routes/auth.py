@@ -14,10 +14,8 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +42,16 @@ from app.core.auth import (
 from app.core.database import get_async_db
 from app.core.rate_limiter import get_rate_limiter
 from app.models.db_model import User
+from app.models.api_response import ApiResponse
+from app.schemas.auth_schema import (
+    LoginRequest,
+    LogoutResponse,
+    MeResponse,
+    RefreshRequest,
+    RegisterRequest,
+    TokenResponse,
+    UserInfo,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["认证"])
@@ -66,35 +74,6 @@ def _get_client_ip(request: Request) -> str:
     from app.core.client_ip import client_ip_from
 
     return client_ip_from(request)
-
-
-class RegisterRequest(BaseModel):
-    username: str = Field(..., min_length=3, max_length=40)
-    email: str = Field(..., max_length=255)
-    password: str = Field(..., min_length=8, max_length=128)
-    full_name: Optional[str] = Field(None, max_length=255)
-
-
-class LoginRequest(BaseModel):
-    # 支持用户名或邮箱登录
-    identifier: str = Field(..., min_length=3, max_length=255)
-    password: str = Field(..., min_length=1, max_length=128)
-
-
-class TokenResponse(BaseModel):
-    """登录/注册/refresh 的返回。
-
-    S41 起新增 `refresh_token` 字段；旧客户端忽略它不会破坏。
-    """
-    access_token: str
-    refresh_token: Optional[str] = None
-    token_type: str = "bearer"
-    expires_in: int  # 秒 (access token TTL)
-    user: dict
-
-
-class RefreshRequest(BaseModel):
-    refresh_token: str = Field(..., min_length=10, max_length=4096)
 
 
 def _user_to_dict(u: User) -> dict:
@@ -145,7 +124,7 @@ def _issue_token_pair(
         access_token=access,
         refresh_token=refresh,
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        user=_user_to_dict(user),
+        user=UserInfo(**_user_to_dict(user)),
     )
 
 
@@ -173,6 +152,19 @@ async def _new_pair_with_family(db: AsyncSession, user: User) -> TokenResponse:
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+
+
+@router.post(
+    "/register",
+    response_model=TokenResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"description": "username/email 格式非法", "model": ApiResponse},
+        409: {"description": "username 或 email 已被占用", "model": ApiResponse},
+        429: {"description": "注册限流", "model": ApiResponse},
+        503: {"description": "公开注册未开放", "model": ApiResponse},
+    },
+)
 async def register(
     req: RegisterRequest,
     request: Request,
@@ -238,7 +230,16 @@ async def register(
     return await _new_pair_with_family(db, user)
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    responses={
+        400: {"description": "请求体解析失败", "model": ApiResponse},
+        401: {"description": "凭证无效", "model": ApiResponse},
+        403: {"description": "账号停用", "model": ApiResponse},
+        429: {"description": "限流", "model": ApiResponse},
+    },
+)
 async def login(
     req: LoginRequest,
     request: Request,
@@ -294,7 +295,16 @@ async def login(
     return await _new_pair_with_family(db, user)
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    responses={
+        400: {"description": "请求体解析失败", "model": ApiResponse},
+        401: {"description": "refresh token 无效/类型错误/已吊销", "model": ApiResponse},
+        403: {"description": "账号停用", "model": ApiResponse},
+        429: {"description": "刷新限流", "model": ApiResponse},
+    },
+)
 async def refresh(
     req: RefreshRequest,
     request: Request,
@@ -404,11 +414,11 @@ async def refresh(
     return _issue_token_pair(user)
 
 
-@router.post("/logout")
+@router.post("/logout", response_model=LogoutResponse)
 async def logout(
     current: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
-) -> dict:
+) -> LogoutResponse:
     """登出 - bump `User.token_version` 让所有 access/refresh token 失效。
 
     语义：logout-everywhere (单设备 logout 需要 refresh_tokens 表跟踪 jti，
@@ -421,15 +431,15 @@ async def logout(
     user = result.scalar_one_or_none()
     if user is None:
         # 已删除的用户 -- 视为已登出
-        return {"ok": True, "message": "已登出"}
+        return LogoutResponse(ok=True, message="已登出")
 
     user.token_version = (user.token_version or 0) + 1
     await db.commit()
-    return {"ok": True, "message": "已登出"}
+    return LogoutResponse(ok=True, message="已登出")
 
 
-@router.get("/me")
-async def me(current: dict = Depends(get_current_user_with_version)) -> dict:
+@router.get("/me", response_model=MeResponse)
+async def me(current: dict = Depends(get_current_user_with_version)) -> MeResponse:
     """返回当前 JWT 所属用户的核心信息。
 
     S41: 改用 `get_current_user_with_version`，让 logout (ver bump) 立即生效。
@@ -438,12 +448,12 @@ async def me(current: dict = Depends(get_current_user_with_version)) -> dict:
     user = current.get("user")
     if user is not None:
         # 全量信息 (从 DB 取)
-        return {
-            "user_id": current["user_id"],
-            "username": user.username,
-            "email": user.email,
-            "full_name": user.full_name,
-            "role": user.role,
-        }
+        return MeResponse(
+            user_id=current["user_id"],
+            username=user.username,
+            email=user.email,
+            full_name=user.full_name,
+            role=user.role,
+        )
     # fallback (理论上不会触发，因为 with_version 总会带 user)
-    return {"user_id": current.get("user_id")}
+    return MeResponse(user_id=current.get("user_id"))

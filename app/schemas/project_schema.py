@@ -1,7 +1,7 @@
 """
 Project Workspace, Persistent Workflow, Artifact, Lineage, and Quality API Schemas
 """
-from typing import Optional, List, Dict, Any
+from typing import Literal, Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
@@ -492,3 +492,261 @@ class WorkspaceSnapshotDeleteResponse(BaseModel):
     status: str = "deleted"
     snapshot_id: str
     home: str = "project"
+
+
+# ── 路由契约模型（V9 契约基石，ADR-0138）────────────────────────────────
+# 对应 app/api/routes/project.py 剩余端点。服务层返回的动态证据面
+# （quality report / GC 计划 / 血缘图等）用 extra="allow" 声明为
+# 开放对象 + 锚定键 —— 例外项记入 PR 附表与 ADR-0138。
+
+
+class DatasetDetachResponse(BaseModel):
+    """DELETE /projects/{project_id}/datasets/{dataset_id} 响应。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [{"status": "success", "message": "Dataset d1 detached"}]
+        }
+    )
+
+    status: str
+    message: str
+
+
+class MapProductDiffResponse(BaseModel):
+    """GET /projects/{project_id}/map-products/{from}/diff/{to} 响应。"""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class MapProductOpenResponse(BaseModel):
+    """GET /projects/{project_id}/map-products/{version_no}/open 响应。"""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class MapProductRestoreResponse(BaseModel):
+    """POST /projects/{project_id}/map-products/{version_no}/restore 响应。"""
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "examples": [
+                {"restored_version_no": 3, "source_version_no": 1}
+            ]
+        },
+    )
+
+    restored_version_no: int
+    source_version_no: int
+
+
+class MapProductRerunResponse(BaseModel):
+    """POST /projects/{project_id}/map-products/{version_no}/rerun 响应。"""
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "examples": [
+                {"run_id": "run-1", "recorded_version_no": 4}
+            ]
+        },
+    )
+
+    run_id: str
+    recorded_version_no: int
+
+
+class QualityAuditResponse(BaseModel):
+    """POST /projects/{project_id}/quality-audit 响应（质检报告投影）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class RepairResponse(BaseModel):
+    """POST /projects/{project_id}/repair 响应（修复证据面，几何不回传）。"""
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "examples": [
+                {
+                    "project_id": "proj-1",
+                    "operations_applied": [],
+                    "feature_count": 120,
+                    "repaired_ref": "ref:abc",
+                }
+            ]
+        },
+    )
+
+    project_id: str
+    feature_count: Optional[int] = None
+    repaired_ref: Optional[str] = None
+
+
+class DataUsageResponse(BaseModel):
+    """GET /projects/{project_id}/data-usage 响应。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "project_id": "proj-1",
+                    "usage": {"bytes": 1024, "artifact_count": 3, "revision_bytes": 256},
+                    "limits": {
+                        "max_bytes": 1073741824,
+                        "max_artifact_count": 1000,
+                        "max_revision_bytes_per_artifact": 10485760,
+                    },
+                    "quota": {"allowed": True, "reason": ""},
+                }
+            ]
+        },
+        extra="allow",
+    )
+
+    project_id: str
+    usage: Dict[str, Any] = {}
+    limits: Dict[str, Any] = {}
+    quota: Dict[str, Any] = {}
+
+
+class DataGcPlanResponse(BaseModel):
+    """POST /projects/{project_id}/data-gc/plan 响应（脱敏 GC 计划）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class DataGcExecuteResponse(BaseModel):
+    """POST /projects/{project_id}/data-gc/execute 响应（有界执行结果）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class CartoMemoryListResponse(BaseModel):
+    """GET /projects/{project_id}/carto-memory 响应（管理视图）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    project_id: str
+    counts: Dict[str, Any] = {}
+    facts: List[Dict[str, Any]] = []
+
+
+class CartoFactActionResponse(BaseModel):
+    """carto-memory retire/activate 动作响应。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    status: str
+    fact: Dict[str, Any] = {}
+
+
+class WorkspaceSnapshotInspectResponse(BaseModel):
+    """GET /projects/{project_id}/workspace/snapshots/{snapshot_id} 响应。"""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class WorkspaceSnapshotRestoreResponse(BaseModel):
+    """POST /projects/{project_id}/workspace/snapshots/{snapshot_id}/restore 响应。"""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class WorkspaceSnapshotCloneResponse(BaseModel):
+    """POST /projects/{project_id}/workspace/snapshots/{snapshot_id}/clone 响应。"""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class WorkspaceDescribeResponse(BaseModel):
+    """GET /projects/{project_id}/workspace 响应（§十五工作空间盘点）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class MapProductRestoreRequest(BaseModel):
+    """POST /map-products/{version_no}/restore 请求体。
+
+    style-only 恢复表达面；full 恢复 = 重放绑定 run（新鲜产物 + 输入
+    漂移披露）—— 不伪装原地还原。
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [{"mode": "style_only", "session_id": "sess-123"}]
+        }
+    )
+
+    mode: Literal["style_only", "full"] = "style_only"
+    session_id: str = Field(min_length=1, max_length=128)
+
+
+class MapProductForkRequest(BaseModel):
+    """POST /map-products/{version_no}/fork 请求体。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [{"label": "fork from v1"}]}
+    )
+
+    label: Optional[str] = Field(default=None, max_length=200)
+
+
+class MapProductMergeRequest(BaseModel):
+    """POST /map-products/merge 请求体（ADR-0099 受限维度合并）。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [{"from_version_no": 1, "to_version_no": 2, "label": None}]
+        }
+    )
+
+    from_version_no: int = Field(ge=1)
+    to_version_no: int = Field(ge=1)
+    label: Optional[str] = Field(default=None, max_length=200)
+
+
+class WorkspaceSnapshotSaveRequest(BaseModel):
+    """POST /workspace/snapshots 请求体。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"session_id": "sess-123", "label": "里程碑 A", "materialize": "none"}
+            ]
+        }
+    )
+
+    session_id: str = Field(min_length=1, max_length=128)
+    label: str = Field(default="", max_length=96)
+    materialize: Literal["none", "claimed", "all"] = "none"
+
+
+class WorkspaceSnapshotRestoreRequest(BaseModel):
+    """POST /workspace/snapshots/{snapshot_id}/restore 请求体。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [{"session_id": "sess-123", "mode": "verify"}]
+        }
+    )
+
+    session_id: str = Field(min_length=1, max_length=128)
+    mode: Literal["verify", "register"] = "verify"
+
+
+class WorkspaceSnapshotCloneRequest(BaseModel):
+    """POST /workspace/snapshots/{snapshot_id}/clone 请求体。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"source_session_id": "sess-a", "target_session_id": "sess-b"}
+            ]
+        }
+    )
+
+    source_session_id: str = Field(min_length=1, max_length=128)
+    target_session_id: str = Field(min_length=1, max_length=128)

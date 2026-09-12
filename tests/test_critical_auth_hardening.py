@@ -385,7 +385,7 @@ async def test_s30_tier3_tool_requires_confirm(client, seeded_users):
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 403
-        assert "confirm_destructive" in resp.json()["detail"]
+        assert "confirm_destructive" in resp.json()["message"]
 
         # 有 confirm_destructive=true → 调用成功
         resp = await client.post(

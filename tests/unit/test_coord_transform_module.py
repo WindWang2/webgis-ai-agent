@@ -211,10 +211,14 @@ def test_tool_handlers_coercion_and_dependency_error(monkeypatch):
     assert res_cn["success"] is True
 
     # Test ImportError handling as DEPENDENCY_ERROR
+    # 先捕获真实 __import__：运行期再解析 builtins.__import__ 会指向
+    # mock 自身 —— pytest 9.1.1 下 teardown 顺序变化触发全局自递归。
+    real_import = __import__
+
     def mock_import(name, *args, **kwargs):
         if name == "pyproj":
             raise ImportError("No module named 'pyproj'")
-        return __import__(name, *args, **kwargs)
+        return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr("builtins.__import__", mock_import)
     

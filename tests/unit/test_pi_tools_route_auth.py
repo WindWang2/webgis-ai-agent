@@ -74,7 +74,7 @@ async def test_route_missing_bridge_secret_returns_401(async_client):
         },
     )
     assert resp.status_code == 401
-    assert "Invalid or missing bridge secret" in resp.json()["detail"]
+    assert "Invalid or missing bridge secret" in resp.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -91,7 +91,7 @@ async def test_route_invalid_bridge_secret_returns_401(async_client):
         },
     )
     assert resp.status_code == 401
-    assert "Invalid or missing bridge secret" in resp.json()["detail"]
+    assert "Invalid or missing bridge secret" in resp.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -108,7 +108,7 @@ async def test_route_missing_turn_token_returns_401(async_client):
         },
     )
     assert resp.status_code == 401
-    assert "Invalid, missing, or expired Pi turn context" in resp.json()["detail"]
+    assert "Invalid, missing, or expired Pi turn context" in resp.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -128,7 +128,7 @@ async def test_route_forged_turn_token_returns_401(async_client):
         },
     )
     assert resp.status_code == 401
-    assert "Invalid, missing, or expired Pi turn context" in resp.json()["detail"]
+    assert "Invalid, missing, or expired Pi turn context" in resp.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -150,7 +150,7 @@ async def test_route_expired_turn_token_returns_401(async_client):
         },
     )
     assert resp.status_code == 401
-    assert "Invalid, missing, or expired Pi turn context" in resp.json()["detail"]
+    assert "Invalid, missing, or expired Pi turn context" in resp.json()["message"]
 
 
 @pytest.mark.asyncio
@@ -175,7 +175,7 @@ async def test_route_inactive_turn_returns_409(async_client):
         },
     )
     assert resp.status_code == 409
-    detail = resp.json()["detail"]
+    detail = resp.json()["data"]
     detail_str = detail.get("error", "") if isinstance(detail, dict) else detail
     assert "Pi turn context is no longer active" in detail_str
 

@@ -12,21 +12,22 @@ from fastapi import APIRouter
 
 from app.core.build_info import build_info
 from app.extensions_platform.api_version import CORE_API_VERSION
+from app.schemas.health_schema import VersionResponse
 
 router = APIRouter()
 
 
-@router.get("/version")
-def version():
+@router.get("/version", response_model=VersionResponse)
+def version() -> VersionResponse:
     """构建身份（公开、极简、无环境细节）。"""
     info = build_info()
-    return {
-        "version": info["version"],
-        "commit": info["commit"],
-        "python": info["python"],
-        "extensions_api": CORE_API_VERSION,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
+    return VersionResponse(
+        version=info["version"],
+        commit=info["commit"],
+        python=info["python"],
+        extensions_api=CORE_API_VERSION,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 __all__ = ["router"]

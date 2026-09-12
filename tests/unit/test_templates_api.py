@@ -180,7 +180,8 @@ async def test_delete_built_in_template_forbidden(client):
     """Test deleting built-in template returns 403 Forbidden."""
     response = await client.delete("/api/v1/templates/tmpl_bm_positron", headers=user_headers)
     assert response.status_code == 403
-    assert "built-in" in response.json()["detail"].lower()
+    # V9（ADR-0138）：统一错误信封 message 取代 v1 的 detail
+    assert "built-in" in response.json()["message"].lower()
 
 
 @pytest.mark.asyncio
@@ -203,7 +204,7 @@ async def test_delete_user_template_forbidden_for_other_user(client):
 
     del_res = await client.delete(f"/api/v1/templates/{tmpl_id}", headers=other_user_headers)
     assert del_res.status_code == 403
-    assert "authorized" in del_res.json()["detail"].lower()
+    assert "authorized" in del_res.json()["message"].lower()
 
 
 @pytest.mark.asyncio
