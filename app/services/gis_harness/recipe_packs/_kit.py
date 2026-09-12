@@ -12,6 +12,7 @@ from typing import Iterable, List, Optional
 
 from app.services.gis_harness.recipes import (
     EligibilityRule,
+    FallbackLink,
     RecipeFallback,
 )
 from app.services.gis_harness.workflow_schema import (
@@ -175,6 +176,22 @@ MAP_COMPONENTS_BASE = ["title", "legend", "north_arrow", "scale_bar", "attributi
 MAP_COMPONENTS_CONTINUOUS = ["title", "continuous_colorbar", "north_arrow", "scale_bar", "attribution"]
 MAP_COMPONENTS_STATS = ["title", "legend", "statistics_panel", "north_arrow", "scale_bar", "attribution"]
 MAP_COMPONENTS_CHART = ["title", "legend", "chart_panel", "north_arrow", "scale_bar", "attribution"]
+
+
+def auto_fallback(
+    *,
+    when: str = "数据不达标（通用兜底链）",
+    targets: tuple = ("poi_distribution_overview", "administrative_choropleth"),
+) -> List[FallbackLink]:
+    """通用兜底链声明（ADR-0151 / P7）：点图 → 分级图。
+
+    无领域专属方案 B 的 recipe 显式挂通用链并标 ``auto_generated=True``
+    （覆盖率台账列明占比）。目标 id 由 registry_validation 悬空校验对账。
+    """
+    return [
+        FallbackLink(to=t, when=when, auto_generated=True)
+        for t in targets
+    ]
 
 
 def min_points_rule(element: str, min_points: Optional[int] = None, code: str = "INSUFFICIENT_POINTS") -> EligibilityRule:

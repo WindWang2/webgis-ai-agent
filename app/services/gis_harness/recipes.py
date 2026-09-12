@@ -996,6 +996,11 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=["title", "categorical_legend", "north_arrow", "scale_bar", "attribution", "statistics_panel"],
         fallbacks=[],
+        # ADR-0151：分类字段不可用时退通用分布族（方案 B）。
+        fallback_links=[
+            FallbackLink(to="poi_distribution_overview",
+                         when="分类字段基数不足或类别分布不可用"),
+        ],
         export_profile={"formats": ["png"], "chart": True},
         priority=35,
     ),
@@ -1011,6 +1016,11 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["density_overview", "point_overlay"],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution"],
         fallbacks=[],
+        # ADR-0151：显著性检验前提不满足 → 同族点密度（KDE 语义，方案 B）。
+        fallback_links=[
+            FallbackLink(to="point_density",
+                         when="统计显著性热点前提不满足（样本量/数值字段）"),
+        ],
         export_profile={"formats": ["png"]},
         priority=45,
     ),
@@ -1026,6 +1036,11 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution", "statistics_panel"],
         fallbacks=[],
+        # ADR-0151：缓冲/服务区前提不满足 → 通用点分布族。
+        fallback_links=[
+            FallbackLink(to="poi_distribution_overview",
+                         when="缓冲分析前提不满足（几何/范围数据缺失）"),
+        ],
         export_profile={"formats": ["png"]},
         priority=35,
     ),
@@ -1045,6 +1060,15 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=[],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution", "statistics_panel"],
         fallbacks=[],
+        # ADR-0151：OD 对不可构建（坐标/成本缺失）→ 通用兜底（auto）。
+        fallback_links=[
+            FallbackLink(to="poi_distribution_overview",
+                         when="OD 对不可构建（起终点/流量数据缺失）",
+                         auto_generated=True),
+            FallbackLink(to="administrative_choropleth",
+                         when="OD 对不可构建（起终点/流量数据缺失）",
+                         auto_generated=True),
+        ],
         validation_rules=["flow_bounded_output"],
         export_profile={"formats": ["png", "pdf"], "chart": True},
         priority=35,
@@ -1060,6 +1084,11 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=["point_overlay"],
         default_components=["title", "legend", "north_arrow", "scale_bar", "attribution", "statistics_panel"],
         fallbacks=[],
+        # ADR-0151：网络服务区前提不满足 → 同族缓冲表达（方案 B）。
+        fallback_links=[
+            FallbackLink(to="proximity_analysis",
+                         when="网络服务区前提不满足（路网数据缺失）"),
+        ],
         export_profile={"formats": ["png"]},
         priority=35,
     ),
@@ -1083,6 +1112,15 @@ SEED_RECIPES: List[CartographyRecipe] = [
         secondary_cartography=[],
         default_components=["title", "continuous_colorbar", "north_arrow", "scale_bar", "attribution"],
         fallbacks=[],
+        # ADR-0151：栅格源不可用/矢量主体 → 通用兜底（auto）。
+        fallback_links=[
+            FallbackLink(to="administrative_choropleth",
+                         when="栅格源不可用或主体为矢量数据",
+                         auto_generated=True),
+            FallbackLink(to="poi_distribution_overview",
+                         when="栅格源不可用或主体为矢量数据",
+                         auto_generated=True),
+        ],
         export_profile={"formats": ["png", "pdf"]},
         priority=40,
     ),
