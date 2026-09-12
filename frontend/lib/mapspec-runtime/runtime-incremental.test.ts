@@ -9,6 +9,7 @@ import {
   getSymbolLawEvidence,
   resetSymbolLawEvidence,
 } from "@/lib/map-kit/symbol-law";
+import { noteStyleLayerRemoved } from "@/lib/map-kit/renderer";
 
 /**
  * AC-06 (ADR-0155) P3/P7 — 属性级增量更新的运行时事件计数断言。
@@ -53,8 +54,19 @@ function makeMockMap() {
       if (i >= 0) layers.splice(i, 1);
       calls.removeLayer.push(id);
     },
-    moveLayer: (id: string) => {
-      calls.moveLayer.push(id);
+    moveLayer: (id: string, beforeId?: string) => {
+      calls.moveLayer.push(beforeId ? `${id}@${beforeId}` : id);
+      // 锚定移动真实改写栈序（bottom→top），使最终栈序可断言。
+      const i = layers.findIndex((l) => l.id === id);
+      if (i >= 0) {
+        const [moved] = layers.splice(i, 1);
+        if (beforeId) {
+          const j = layers.findIndex((l) => l.id === beforeId);
+          layers.splice(j >= 0 ? j : layers.length, 0, moved);
+        } else {
+          layers.push(moved);
+        }
+      }
     },
     setPaintProperty: (id: string, key: string, value: unknown) => {
       calls.setPaintProperty.push({ id, key, value });
@@ -222,6 +234,38 @@ describe("AC-06 P3: 属性级增量更新（事件计数）", () => {
     rt.reconcile(spec("#00ff00", 0.8));
 
     expect(map._calls.addLayer).toEqual(["L__point"]);
+    expect(getPerfCounters().recompileFallbacks).toBe(1);
+    expect(rt.getLastError()).toBeNull();
+  });
+
+  it("review R2: fallback re-add 强制 z-order 重同步（防 lastLayerOrderKey 漂移）", () => {
+    const map = makeMockMap();
+    const rt = new MapSpecRuntime(map as never);
+    // 期望顶→底 = [A, B, C]。初次挂载 + z 同步后栈（底→顶）= [C, B, A]。
+    const three: MapSpec = {
+      version: "1.0",
+      sources: { s: { type: "geojson", inlineData: fc(10) } },
+      layers: [
+        { id: "A__point", source: "s", type: "circle", paint: { "circle-color": "#111", "circle-opacity": 0.8 } } as any,
+        { id: "B__point", source: "s", type: "circle", paint: { "circle-color": "#222", "circle-opacity": 0.8 } } as any,
+        { id: "C__point", source: "s", type: "circle", paint: { "circle-color": "#333", "circle-opacity": 0.8 } } as any,
+      ],
+    };
+    rt.reconcile(three);
+    map._calls.moveLayer.length = 0;
+    // 契约内外部拆层：改 live 数组 + 同步登记（renderer 维护序账本）。
+    const idx = map.layers.findIndex((l) => l.id === "B__point");
+    map.layers.splice(idx, 1);
+    noteStyleLayerRemoved(map as never, "B__point");
+    // paint-patch B（spec 顺序未变）→ 层缺席 → fallback add 把 B 追加到栈顶
+    // （栈变为 [C, A, B]）→ 破坏期望序。fallback 必须强制 z 同步救回。
+    const changed: MapSpec = JSON.parse(JSON.stringify(three));
+    (changed.layers[1].paint as any)["circle-color"] = "#666";
+    rt.reconcile(changed);
+    // 强制 z 重同步已触发（fallback 前栈 [C,A]，B 回到期望中位至少 1 次移动），
+    // 最终栈序（底→顶）= [C, B, A] ⇔ 期望顶→底 [A, B, C]。
+    expect(map._calls.moveLayer.length).toBeGreaterThanOrEqual(1);
+    expect(map.layers.map((l) => l.id)).toEqual(["C__point", "B__point", "A__point"]);
     expect(getPerfCounters().recompileFallbacks).toBe(1);
     expect(rt.getLastError()).toBeNull();
   });

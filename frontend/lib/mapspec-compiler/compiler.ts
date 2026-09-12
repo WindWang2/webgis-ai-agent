@@ -297,12 +297,21 @@ export function compileMapSpec(
   // 点层按 inlineData 要素数裁决 native/cluster/heatmap；cluster 自动落到
   // geojson 源配置（复用既有 __clusters 子层范式）；heatmap 改写编译层型。
   // 阈值以 VIEWPORT_RENDER_BUDGET=5000 / MVT 5000 为基准（symbol-law）。
+  // review R2：共享源（多 circle 层引用同一 geojson 源）不做自动切换 ——
+  // 源级聚合会静默改写兄弟层的数据视图；仅单消费者源参与自适应。
+  const circleLayerCountPerSource = new Map<string, number>();
+  for (const layer of spec.layers || []) {
+    if (layer.type === "circle") {
+      circleLayerCountPerSource.set(layer.source, (circleLayerCountPerSource.get(layer.source) ?? 0) + 1);
+    }
+  }
   const autoClusterSourceIds = new Set<string>();
   const presentationByLayerId = new Map<string, DensityPresentation>();
   for (const layer of spec.layers || []) {
     if (layer.type !== "circle") continue;
     const srcDef = (spec.sources as any)?.[layer.source];
     if (srcDef?.type !== "geojson") continue;
+    if ((circleLayerCountPerSource.get(layer.source) ?? 0) !== 1) continue;
     const features = srcDef?.inlineData?.features;
     const count = Array.isArray(features) ? features.length : Number.NaN;
     if (!Number.isFinite(count)) continue;
@@ -316,7 +325,14 @@ export function compileMapSpec(
       autoClusterSourceIds.add(layer.source);
       recordSymbolLawEvidence("density-switch", { from: "native", to: "cluster", featureCount: count }, layer.id);
     } else if (presentation.mode === "heatmap") {
-      recordSymbolLawEvidence("density-switch", { from: "native", to: "heatmap", featureCount: count }, layer.id);
+      // review R2：heatmap 改写会丢失分类色面 —— 带 legend_spec 的层显式
+      // 披露图例分歧（图例描述分类、画布是密度热图）。
+      recordSymbolLawEvidence("density-switch", {
+        from: "native",
+        to: "heatmap",
+        featureCount: count,
+        legend_divergence: !!layer.legend_spec,
+      }, layer.id);
     } else {
       recordSymbolLawEvidence("presentation-decision", { mode: "native", featureCount: count }, layer.id);
     }

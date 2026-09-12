@@ -21,6 +21,12 @@
 | 14 | P0 性能基线的「帧率」口径 | 无浏览器 10k 帧率设施（S1 确认）→ 以 diff/compile CPU 中位时 + render-debouncer FrameStats 为代理；P7 增补 MapLibre 调用计数断言 | recon §3；任务允许「简易 performance.now 采样」 |
 | 15 | diff 键级分解替换 isFilterOnlyChange | 单次走查完成分类（旧实现 isDeepEqual + rest-spread 双重走查）；paint+filter 同帧变化由「paint patch + filter patch」两条承载（旧为 recompile） | 语义超集；reconciler.test.ts 全绿 |
 | 16 | z-order 最小移动集的并列裁决 | LDS 并列时取实现确定的选择（最早可保留者优先）；验收语义 = 移动数最小 + 最终栈序正确 | renderer-m4.test.ts 锁定具体行为 |
+| 17 | content_revision 相等即跳过 inlineData 比较 | **信任该字段是数据版本 CAS**（生产契约：改 inlineData 必须 bump revision；既有 MVT cache-buster `v=` 已同样信任它）。revision 相等但对象身份重建 → 只比较其余键 | review R2-P2；契约说明进 ADR-0155 D5；指纹在此路径不做交叉校验（省 10k 级 stringify） |
+| 18 | 共享源不参与密度自适应 | 同一 geojson 源被 ≥2 个 circle 层引用时跳过 auto-cluster/heatmap 改写 —— 源级聚合会静默改写兄弟层的数据视图 | review R2-P2；compiler.density.test.ts 回归用例 |
+| 19 | fallback re-add 强制 z-order 重同步 | paint/layout patch 的 layer-absent 回落路径置 `zSyncForcedByFallback`，双路径 gate 消费后复位 —— 防 lastLayerOrderKey 停留旧值导致持久 z 漂移 | review R2-P2；runtime-incremental.test.ts 回归用例 |
+| 20 | strokeWidthExpression 无生产消费者仍保留 | 符号律公开默认面的一部分（05 线 label 描边可 import）；非投机抽象 | review R2-P3；§8 协调点 |
+| 21 | paintKeys/layoutKeys 仅作信息位 | reconciler 保持纯 diff；runtime 以 native 字典重diff 决定 setter 目标（方言转换后才可见真实目标键） | review R2-P3；可接受的信息重复 |
+| 22 | heatmap 自动改写的图例分歧披露 | 带 legend_spec 的层改写 heatmap 时 evidence 携带 `legend_divergence: true` | review R3；compiler.density.test.ts |
 
 ## 与 05 线的文件切分声明（§8 硬约束）
 

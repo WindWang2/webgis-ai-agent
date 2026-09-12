@@ -110,6 +110,12 @@ export class MapSpecRuntime {
    * 据此把符号律兜底喂给 paint-bridge（显式 paint 键永远优先，缺省键才兜底）。
    */
   private sourceFeatureCounts = new Map<string, number>();
+  /**
+   * AC-06 review R2：paint/layout patch 走 fallback re-add（层不在图上）时
+   * 属于结构变化 —— addLayerSafe 把层追加到栈顶，必须强制 z-order 重同步，
+   * 否则 lastLayerOrderKey 停留旧值 → 持久 z 漂移到下一个结构 patch。
+   */
+  private zSyncForcedByFallback = false;
 
   constructor(map: MaplibreMap, options: MapSpecRuntimeOptions = {}) {
     this.map = map;
@@ -335,8 +341,11 @@ export class MapSpecRuntime {
     const orderKey = orderedIds.join("\u0000");
     // V4 review：filter-only 变化不改结构/顺序 —— 不重跑全量 z 同步
     // （选择翻转是最高频路径；z-order 幂等但白费）。
-    // AC-06 P3：paint/layout 属性 patch 同样零结构变化 —— 不触发 z 同步。
-    if (this.hasStructuralLayerChange(patch) || orderKey !== this.lastLayerOrderKey) {
+    // AC-06 P3：paint/layout 属性 patch 同样零结构变化 —— 不触发 z 同步；
+    // 但 fallback re-add 是结构变化（review R2），强制重同步。
+    const forceZSync = this.zSyncForcedByFallback;
+    this.zSyncForcedByFallback = false;
+    if (this.hasStructuralLayerChange(patch) || forceZSync || orderKey !== this.lastLayerOrderKey) {
       renderer.syncLayerZOrder(this.map, "", orderedIds);
       this.lastLayerOrderKey = orderKey;
     }
@@ -367,6 +376,7 @@ export class MapSpecRuntime {
     if (!this.map.getLayer(id)) {
       // 层不在图上（pending ref 源或 style 被换）→ 直接走 add 收敛。
       this.addLayerSafe(next);
+      this.zSyncForcedByFallback = true;
       recordRecompileFallback();
       recordSymbolLawEvidence("incremental-fallback", { channel: "paint", reason: "layer-absent" }, id);
       return;
@@ -411,6 +421,7 @@ export class MapSpecRuntime {
     const id = next.id;
     if (!this.map.getLayer(id)) {
       this.addLayerSafe(next);
+      this.zSyncForcedByFallback = true;
       recordRecompileFallback();
       recordSymbolLawEvidence("incremental-fallback", { channel: "layout", reason: "layer-absent" }, id);
       return;
@@ -588,7 +599,10 @@ export class MapSpecRuntime {
       type: "SET_STYLE",
       priority: "high",
       execute: () => {
-        if (this.hasStructuralLayerChange(patch) || orderKey !== this.lastLayerOrderKey) {
+        // fallback re-add（review R2）与结构变化同权：强制 z 重同步。
+        const forceZSync = this.zSyncForcedByFallback;
+        this.zSyncForcedByFallback = false;
+        if (this.hasStructuralLayerChange(patch) || forceZSync || orderKey !== this.lastLayerOrderKey) {
           renderer.syncLayerZOrder(this.map, "", orderedIds);
           this.lastLayerOrderKey = orderKey;
         }

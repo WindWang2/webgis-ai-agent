@@ -106,4 +106,46 @@ describe("AC-06 P2: 密度自适应切换", () => {
     const snap = getSymbolLawEvidence();
     expect(snap.counts["density-switch"] ?? 0).toBe(0);
   });
+
+  it("review R2: 共享源（≥2 个 circle 层）不参与自动聚合", () => {
+    const spec: MapSpec = {
+      version: "1.0",
+      sources: {
+        pts: {
+          type: "geojson",
+          inlineData: {
+            type: "FeatureCollection",
+            features: Array.from({ length: 6000 }, (_, i) => ({
+              type: "Feature",
+              properties: { value: i },
+              geometry: { type: "Point", coordinates: [1 + i * 1e-6, 1] },
+            })),
+          },
+        },
+      },
+      layers: [
+        { id: "A", source: "pts", type: "circle", paint: { color: "#111" } } as any,
+        { id: "B", source: "pts", type: "circle", paint: { color: "#222" } } as any,
+      ],
+    };
+    const result = compileMapSpec(spec);
+    // 源级聚合会静默改写 B 的数据视图 —— 共享源跳过密度切换。
+    expect(result.style.sources.pts.cluster).toBeUndefined();
+    const ids = result.style.layers.map((l: any) => l.id);
+    expect(ids).not.toContain("A__clusters");
+    expect(getSymbolLawEvidence().counts["density-switch"] ?? 0).toBe(0);
+  });
+
+  it("review R3: heatmap 改写 + legend_spec → evidence 披露图例分歧", () => {
+    const spec = pointSpec(25000);
+    (spec.layers[0] as any).legend_spec = {
+      type: "graduated",
+      field: "value",
+      breaks: [1, 2, 3],
+      palette_colors: ["#111", "#222", "#333"],
+    };
+    compileMapSpec(spec);
+    const sw = getSymbolLawEvidence().events.find((e) => e.kind === "density-switch");
+    expect((sw?.detail as any)?.legend_divergence).toBe(true);
+  });
 });

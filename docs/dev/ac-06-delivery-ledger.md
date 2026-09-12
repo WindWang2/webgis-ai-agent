@@ -66,12 +66,23 @@
 | 03 线 schema 本地 fixture | `docs/dev/ac-06-legend-spec-v2.schema.json`（03 分支冻结版快照） | 测试内 schema 关键字段核对 |
 | paint-bridge unmapped evidence | `paint-bridge.ts` passthrough 循环 | paint-bridge.test.ts（「无法映射的键写入 evidence」） |
 
-## P7/P8 门禁取证
+## P7/P8 门禁取证（最终轮，review 修复后）
 
-- `pnpm exec vitest run lib/mapspec lib/map-kit lib/mapspec-compiler lib/mapspec-runtime` → **778 passed**
-- `test/map-render-work-count.test.tsx`（Scenarios A–J work-count 契约）→ **10 passed**
+- `pnpm exec vitest run lib/mapspec lib/map-kit lib/mapspec-compiler lib/mapspec-runtime test/map-render-work-count.test.tsx` → **791 passed**（含 work-count Scenarios A–J 10 项）
 - `tsc --noEmit` → **0 错误**；eslint（22 个变更/相关文件）→ **0 告警**
+- `next build`（P8 唯一一次 + review 修复后复跑）→ **exit 0**
 - 后端 scoped：`pytest tests/cartography/test_mapspec_schema_v6.py tests/cartography/test_ts_projection_contract.py -q` → **26 passed**
 - 冒烟（worktree 建立时）：`vitest run lib/mapspec` → **320 passed**
 - P7 perf 复测原文：`PERF|compile_10k|13.786`、`PERF|diff_paint_only|0.012`、`PERF|diff_one_changed|0.002`、`PERF|diff_rev_equal|0.005`
 - 常量销项 grep：renderer.ts 中 `fill-opacity 0.8`/`circle-radius 6` 字面量 **0 命中**；`return 30` 为契约归一函数保留项（决策 #10）
+
+## §6 Review 轮（code-review 双轴 + 修复）
+
+- **Spec 轴**：任务书 (a)–(i) 全项 ✔（reviewer 逐项确认，无缺失/无未记账 scope creep）。
+- **Standards 轴** findings 与处置：
+  - P2 fallback re-add 不触发 z 重同步 → **已修**：`zSyncForcedByFallback` 强制位 + 双 gate 消费（决策 #19；回归测试「review R2: fallback re-add 强制 z-order 重同步」）。
+  - P2 共享源 auto-cluster 影响兄弟层 → **已修**：多消费者源跳过密度切换（决策 #18；回归测试「review R2: 共享源不参与自动聚合」）。
+  - P2 content_revision 信任边界 → **已记**：决策 #17（与既有 MVT cache-buster 同一生产契约）。
+  - P3 auto-heatmap 图例分歧 → **已修**：evidence 携带 `legend_divergence`（决策 #22）。
+  - P3 strokeWidthExpression 未消费 / paintKeys 信息位 / `as never` → 保留，决策 #20/#21（与既有 `def: any` 边界一致）。
+- 05 线领地核查：`git diff origin/master -- frontend/lib/mapspec-runtime/runtime.ts` 中 `addLabelSublayerSafe` 函数段 **0 hunk**；label 镜像行零改动；`frontend/components/**`、`migrations/**`、`.github/workflows/**` 零触碰；app/** 仅 mapspec_schema.py + ts_projection.py 两处契约胶水。
