@@ -22,6 +22,9 @@ export function OnboardingRoot(): React.ReactElement | null {
 
   useEffect(() => {
     if (tourSeen) return;
+    // 自动化上下文（Playwright/webdriver）不自动弹首跑引导：fresh profile
+    // 必然 tourSeen=false，弹层会遮住视觉采集 corpus 与 e2e 交互。
+    if (typeof navigator !== 'undefined' && navigator.webdriver) return;
     const t = setTimeout(() => startTour(), 1200);
     return () => clearTimeout(t);
   }, [tourSeen, startTour]);
