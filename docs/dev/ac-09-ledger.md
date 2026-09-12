@@ -28,7 +28,11 @@
 - [x] 修复-重评-回退 e2e；repair_exhausted 路径测试（repeated/iteration-limit/selfheal_actions_exhausted 三种终止）
 - [x] visual 不得单独判 L4/L5 PASS（显式断言 `test_l5_success_levels_visual_never_alone_passes`）
 - [x] 既有 tests/cartography 评审类测试全绿（1185 passed）；verdict 三态语义未破坏（快照测试）
-- [x] `pytest tests/unit -q -m "not heavy and not real_services and not perf"` 全绿（串行；仓库无 pytest-xdist，-n 2 不可用——D-12）
+- [x] `pytest tests/unit -q -m "not heavy and not real_services and not perf"`：**10700 passed**；
+      28 failed 中 27 项与 origin/master 干净基线逐一重合（本机缺 Node CLI / 真实 socket /
+      双进程 spawn / Windows 路径守卫 / 扩展沙箱资源限制等环境域，零制图·harness 域），
+      1 项（geocompute 事件端点）为双套件并行负载 flake（双分支隔离复跑均通过）——
+      **本次改动零新增失败**；仓库无 pytest-xdist，-n 2 不可用（D-12）
 - [x] `ruff check <变更文件>` 0 告警；未改 .github/workflows/**
 
 ## 已知边界（诚实披露）
