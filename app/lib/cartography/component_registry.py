@@ -221,6 +221,8 @@ COMPONENT_SEARCH_KEYWORDS: dict = {
     "methodology_note": ["方法论", "披露", "方法说明", "methodology"],
     "uncertainty_panel": ["不确定性", "方差", "置信", "uncertainty", "误差"],
     "decision_panel": ["决策", "多准则", "权重", "排名", "decision", "mcda"],
+    "label_layer": ["标注", "注记", "标签", "label", "annotation", "地名",
+                    "标注字段", "避让", "压盖"],
 }
 
 
@@ -245,6 +247,7 @@ COMPONENT_PREVIEWS: dict = {
     "methodology_note": {"glyph": "§", "accent": "#525252"},
     "uncertainty_panel": {"glyph": "±", "accent": "#525252"},
     "decision_panel": {"glyph": "⚖", "accent": "#525252"},
+    "label_layer": {"glyph": "A", "accent": "#0f766e"},
 }
 
 
@@ -586,6 +589,31 @@ _SEED_DESCRIPTORS: List[MapComponentDescriptor] = [
         required_context=["decision"],
         states=["visible", "hidden", "collapsed"], collision_class="panel",
         accessibility={"role": "group", "label_zh": "决策面板"},
+    ),
+    # ── ac-05（ADR-0154）：label_layer 正式注册为可寻址组件 ─────────────
+    # taxonomy `content.label_layer`（component_taxonomy.py）首次拿到
+    # descriptor。渲染不走 map-components chrome 注册表（labels 由
+    # MapSpec layer.label 子层承担：runtime label-layout.ts / 编译器 /
+    # SVG 导出三条消费路径），组件本体是**绑定与决策面**——持有
+    # label_plan（ADR-0154 P1/P2）产出的字段挑选与策略编排，支持
+    # rebind(field) 换字段局部突变。因此 renderer/exporter 支持矩阵
+    # 如实留空（诚实契约 —— 见 _SUPPORT_MATRIX note）。
+    MapComponentDescriptor(
+        id="label_layer", category="content.label_layer", type="label_layer",
+        name="Label Layer", name_zh="标注图层",
+        description="Automatic map labeling — field choice + strategy "
+                    "(mode/top_n/zoom bands) from label_plan (ADR-0154)",
+        placement_domain="layer", supported_outputs=["interactive", "png", "pdf", "svg"],
+        renderer_support=[], exporter_support=[],
+        default_variant="auto_field",
+        variants=["auto_field", "explicit_field", "top_n", "hover_only"],
+        default_position="none", allowed_positions=["none"],
+        cardinality="multiple", requires_layer_binding=True,
+        priority=20, runtime_status="native",
+        tags=["content", "label", "annotation", "标注"],
+        collision_class="none",
+        interactions=["switch_variant", "selection_linkage"],
+        accessibility={"role": "", "label_zh": "标注图层"},
     ),
 ]
 

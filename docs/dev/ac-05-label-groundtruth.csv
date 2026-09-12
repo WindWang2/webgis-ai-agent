@@ -1,0 +1,11 @@
+﻿dataset_id,generator,geometry,n_features,fields,has_name_like,best_label_field,rationale
+cn_provinces,tests/fixtures/labeling_datasets.py::cn_provinces,polygon,12,OBJECTID|code|名称|name_en|面积_km2|gdp_2023|更新时间,1,名称,_exact_vocab_hit_cjk_标签短且基数全唯一；OBJECTID/code/更新时间 均为诱饵
+cn_cities_points,tests/fixtures/labeling_datasets.py::cn_cities_points,point,12,osm_id|name|name_en|类别|population|address,1,name,exact_vocab_hit；address 长文本、类别 低基数、osm_id 主键诱饵
+rivers,tests/fixtures/labeling_datasets.py::rivers,line,12,fid|NAME|length_km|order|scalerank,1,NAME,exact_vocab_hit（大小写归一）；order/scalerank 数值分级、fid 主键
+metro_stations_en,tests/fixtures/labeling_datasets.py::metro_stations_en,point,12,station_id|title|line|zone|daily_ridership,1,title,无 name 字段 → 词汇次序落到 title；station_id 为 UUID 诱饵
+sensors,tests/fixtures/labeling_datasets.py::sensors,point,60,device_id|model|battery_pct|last_seen|value,0,,无任何 name-like 字段（device_id 为 hex）→ 退化不标注 + advisory
+land_parcels,tests/fixtures/labeling_datasets.py::land_parcels,polygon,40,parcel_no|地块名称|用途|area_ha,1,地块名称,exact_vocab_hit（含 '名称' 子词）；parcel_no 业务编码诱饵、用途 低基数
+countries_mixed,tests/fixtures/labeling_datasets.py::countries_mixed,polygon,10,FID|ISO_A3|name|中文名称|pop_est|gdp_md|continent,1,name,name exact 命中 > 中文名称 子串命中（确定性 tie-break 的最短路径）
+bus_routes,tests/fixtures/labeling_datasets.py::bus_routes,line,8,route_id|线路名|first_last|fleet_count,1,线路名,exact_vocab_hit（含 '名称' 子词）；first_last 长文本、fleet_count 数值
+air_quality_stations,tests/fixtures/labeling_datasets.py::air_quality_stations,point,36,station_code|站点名称|city|aqi|pm25,1,站点名称,exact_vocab_hit；city 跨站重复（低基数惩罚必须压过类名语义）
+hotels_dense,tests/fixtures/labeling_datasets.py::hotels_dense,point,3200,id|name|brand|stars|price,1,name,exact_vocab_hit；id 主键、brand 低基数、stars/price 数值

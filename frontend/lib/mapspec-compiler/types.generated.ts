@@ -151,6 +151,19 @@ export interface MapSpecLayerLabel {
   color?: string | StyleMethod;
   haloColor?: string;
   haloWidth?: number;
+  mode?: "all" | "top_n" | "hover_only";
+  topN?: number;
+  priorityField?: string;
+  zoomBands?: MapSpecLabelZoomBand[];
+  sizeRatio?: number;
+  haloMode?: "auto" | "static";
+}
+
+export interface MapSpecLabelZoomBand {
+  minZoom: number;
+  maxZoom: number;
+  topRatio?: number;
+  sizeRatio?: number;
 }
 
 export interface MapSpecLegendConfig {

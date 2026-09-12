@@ -494,7 +494,9 @@ export function compileMapSpec(
     }
 
     const labelSpec = layer.label || (layer.layout?.labelField ? { field: layer.layout.labelField } : undefined);
-    if (labelSpec && labelSpec.field) {
+    // ac-05（ADR-0154）：与活运行时对齐 —— raster/heatmap 不挂 label 子层
+    // （此前编译器生成、运行时排除，同 spec 屏幕与导出漂移）。
+    if (labelSpec && labelSpec.field && layer.type !== "raster" && layer.type !== "heatmap") {
       labelLayerCount++;
       const labelLayer: any = {
         id: `${layer.id}-label`,

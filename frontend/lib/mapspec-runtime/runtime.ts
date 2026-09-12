@@ -8,6 +8,23 @@ import { RenderDebouncer, type RenderOperation } from "@/lib/map-kit/render-debo
 import * as renderer from "@/lib/map-kit/renderer";
 import { recordDebounceFrame } from "@/lib/utils/perf-counters";
 import { devOnly } from "@/lib/utils/logger";
+import {
+  activeBandIndex,
+  averageLabelChars,
+  basemapLuminance,
+  buildSortKeyExpr,
+  buildTextSizeExpr,
+  estimateInkRatio,
+  hasCJKSample,
+  labelOnlyLayerChange,
+  normalizeLabelStrategy,
+  resolveDegrade,
+  resolveLabelStyle,
+  selectTopLabels,
+  type LabelRuntimeEvent,
+  type LabelStrategySpec,
+  type TopLabelSelection,
+} from "@/lib/mapspec-runtime/label-layout";
 
 /**
  * MapSpecRuntime — the deep module that reconciles a declarative MapSpec
@@ -93,6 +110,20 @@ export class MapSpecRuntime {
    */
   private layerSourceIndex = new Map<string, string>();
 
+  // ── 标注运行时状态（ac-05，ADR-0154；只服务 `${id}-label` 子层）──────
+  /** 标注决策/降级 evidence 环形日志（cap 200；getLabelEvents() 消费）。 */
+  private labelEvents: LabelRuntimeEvent[] = [];
+  private labelEventSeq = 0;
+  /** labelId → zoom 分级再抽稀注册（bands 声明才注册；removeLayerSafe 清理）。 */
+  private labelRegistrations = new Map<string, {
+    mainLayerId: string;
+    strategy: LabelStrategySpec;
+    sourceId: string;
+    lastBand: number;
+    thinFilter: unknown[] | null;
+  }>();
+  private zoomHooked = false;
+
   constructor(map: MaplibreMap, options: MapSpecRuntimeOptions = {}) {
     this.map = map;
     this.onStyleRecovery = options.onStyleRecovery;
@@ -116,6 +147,8 @@ export class MapSpecRuntime {
     // site — drop the runtime's layer→source index and the renderer's
     // layer-id order registry for this map (next read re-seeds cold).
     this.layerSourceIndex.clear();
+    // ac-05：label 子层同样被 setStyle 无截获清掉 —— 注册表一并作废。
+    this.labelRegistrations.clear();
     renderer.clearStyleLayerIds(this.map);
     // FE-P3-5: a base-style change wipes every source WITHOUT going through
     // removeSourceSafe — prune the inline-GeoJSON registry so the viewport
@@ -255,10 +288,21 @@ export class MapSpecRuntime {
     }
 
     // --- layers (remove + recompile may free sources) ---
+    // ac-05（ADR-0154）：label-only recompile（换标注字段/策略）走快路径
+    // —— 只替换 `${id}-label` 子层，主层不 remove/add（运行时事件计数
+    // 契约：局部突变不重建图层）。
+    const labelOnlyIds = new Set<string>();
+    const prevLayers = this.appliedSpec?.layers;
     for (const change of patch.layers) {
       if (change.kind === "remove") {
         this.removeLayerSafe(change.id);
       } else if (change.kind === "recompile") {
+        const prev = prevLayers?.find((l) => l.id === change.id);
+        if (prev && change.next && labelOnlyLayerChange(prev, change.next)) {
+          labelOnlyIds.add(change.id);
+          this.applyLabelOnlySafe(change.next, nextSpec);
+          continue;
+        }
         // Q3 fallback: remove + re-add rather than diffing individual paint props.
         this.removeLayerSafe(change.id);
       }
@@ -284,7 +328,9 @@ export class MapSpecRuntime {
     for (const change of patch.layers) {
       if ((change.kind === "add" || change.kind === "recompile") && change.next) {
         if (pendingRefSources.has(change.next.source)) continue;
-        this.addLayerSafe(change.next);
+        // label-only 快路径已在上面的循环处理（主层不动）。
+        if (labelOnlyIds.has(change.id)) continue;
+        this.addLayerSafe(change.next, nextSpec);
       }
     }
 
@@ -312,9 +358,18 @@ export class MapSpecRuntime {
     if (!this.lastError) this.appliedSpec = nextSpec;
   }
 
-  /** 结构性层变化 = 非 filter-only 的任一变化（add/remove/recompile）。 */
+  /** 结构性层变化 = 非 filter-only 的任一变化（add/remove/recompile）。
+   * ac-05：label-only recompile 不算结构 —— 主层不动，z-order 免重跑。 */
   private hasStructuralLayerChange(patch: SpecPatch): boolean {
-    return patch.layers.some((c) => c.kind !== "filter");
+    const prevLayers = this.appliedSpec?.layers;
+    return patch.layers.some((c) => {
+      if (c.kind === "filter") return false;
+      if (c.kind === "recompile" && prevLayers && c.next) {
+        const prev = prevLayers.find((l) => l.id === c.id);
+        if (prev && labelOnlyLayerChange(prev, c.next)) return false;
+      }
+      return true;
+    });
   }
 
   /**
@@ -364,8 +419,19 @@ export class MapSpecRuntime {
       }
     }
 
+    // ac-05（ADR-0154）：label-only recompile 的入队版快路径 —— 与同步
+    // 路径同判据；只入队一个 label 子层替换 op，主层 remove/add 不入队。
+    const prevLayers = this.appliedSpec?.layers;
+    const labelOnlyIds = new Set<string>();
     for (const change of patch.layers) {
-      if (change.kind === "remove" || change.kind === "recompile") {
+      if (change.kind === "recompile" && change.next) {
+        const prev = prevLayers?.find((l) => l.id === change.id);
+        if (prev && labelOnlyLayerChange(prev, change.next)) labelOnlyIds.add(change.id);
+      }
+    }
+
+    for (const change of patch.layers) {
+      if (change.kind === "remove" || (change.kind === "recompile" && !labelOnlyIds.has(change.id))) {
         ops.push({
           id: `layer:remove:${change.id}`,
           type: "REMOVE_LAYER",
@@ -399,11 +465,20 @@ export class MapSpecRuntime {
       if ((change.kind === "add" || change.kind === "recompile") && change.next) {
         if (pendingRefSources.has(change.next.source)) continue;
         const next = change.next;
+        if (change.kind === "recompile" && labelOnlyIds.has(change.id)) {
+          ops.push({
+            id: `layer:label:${change.id}`,
+            type: "ADD_LAYER",
+            priority: "high",
+            execute: () => this.applyLabelOnlySafe(next, nextSpec),
+          });
+          continue;
+        }
         ops.push({
           id: `layer:add:${change.id}`,
           type: "ADD_LAYER",
           priority: "high",
-          execute: () => this.addLayerSafe(next),
+          execute: () => this.addLayerSafe(next, nextSpec),
         });
       }
     }
@@ -498,6 +573,7 @@ export class MapSpecRuntime {
       this.pendingTimer = null;
     }
     this.clearStyleRecovery();
+    this.labelRegistrations.clear();
     this.debouncer?.dispose();
     this.debouncer = null;
     // FE-01: the worker-bridge keeps its module worker warm for
@@ -601,7 +677,7 @@ export class MapSpecRuntime {
     // else: nothing to apply (empty fallback source already added? skip).
   }
 
-  private addLayerSafe(layer: MapSpecLayer): void {
+  private addLayerSafe(layer: MapSpecLayer, spec?: MapSpec): void {
     // MapSpecLayer is already shaped close to a MapLibre layer spec. We pass it
     // through with only the fields MapLibre expects. Paint goes through the
     // dialect bridge: backend-authored layers carry canonical short keys
@@ -647,13 +723,13 @@ export class MapSpecRuntime {
           : (layer.layout?.labelField ? { field: layer.layout.labelField } : undefined)
       );
       if (labelSpec?.field && layer.type !== "raster" && layer.type !== "heatmap") {
-        this.addLabelSublayerSafe(layer, labelSpec);
+        this.addLabelSublayerSafe(layer, labelSpec, spec);
       }
     } catch (err) {
       // Defensive: a recompile that races with a style swap may find the layer
       // already re-added by the styledata path. Log and continue rather than
       // throwing the whole reconcile.
-       
+
       // #1008：addLayer 失败的裸 console.warn（泄漏内部层 id）→ devOnly，
       // 与同文件 reconcileAsync 的门禁一致。
       devOnly.warn(`[MapSpecRuntime] addLayer failed for ${layer.id}:`, err);
@@ -670,6 +746,7 @@ export class MapSpecRuntime {
     // FE2：label 子层（`${id}-label`）与主层同生命周期 —— 删主层必须
     // 一并删除，否则留下无 source 消费者的 ghost 文本层。
     const labelId = `${id}-label`;
+    this.labelRegistrations.delete(labelId);
     if (this.map.getLayer(labelId)) {
       try { this.map.removeLayer(labelId); } catch { /* already gone */ }
       renderer.noteStyleLayerRemoved(this.map, labelId);
@@ -694,9 +771,18 @@ export class MapSpecRuntime {
       this.map.setFilter(id, (filter ?? null) as any);
       // V4 review：label 子层（`${id}-label`）与主层同生命周期 —— 主层
       // 过滤翻转时同步应用，否则被滤要素的注记残留在画布上。
+      // ac-05：label 子层若带抽稀 filter，则与主层 filter 取 AND 合成
+      // —— 直接覆盖会清掉优先级抽稀（重挂 label 子层时恢复）。
       const labelId = `${id}-label`;
       if (this.map.getLayer(labelId)) {
-        this.map.setFilter(labelId, (filter ?? null) as any);
+        const thin = this.currentThinFilter(labelId);
+        if (thin && filter) {
+          this.map.setFilter(labelId, ["all", filter, thin] as any);
+        } else if (thin) {
+          this.map.setFilter(labelId, thin as any);
+        } else {
+          this.map.setFilter(labelId, (filter ?? null) as any);
+        }
       }
     } catch (err) {
       // A structurally invalid expression (style-spec rejection) must surface
@@ -706,30 +792,171 @@ export class MapSpecRuntime {
     }
   }
 
-  /** FE2：spec 层的 label symbol 子层（`${id}-label`，编译器同款方言/样式）。 */
+  // ── 标注子层（ac-05，ADR-0154：避让抽稀 / zoom 分级 / 样式自适应）────
+
+  /** 标注决策 evidence（环形 cap 200；测试与 HUD 消费）。 */
+  getLabelEvents(): readonly LabelRuntimeEvent[] {
+    return this.labelEvents;
+  }
+
+  private pushLabelEvent(ev: Omit<LabelRuntimeEvent, "seq">): void {
+    this.labelEventSeq += 1;
+    this.labelEvents.push({ ...ev, seq: this.labelEventSeq });
+    if (this.labelEvents.length > 200) this.labelEvents.splice(0, this.labelEvents.length - 200);
+  }
+
+  private currentThinFilter(labelId: string): unknown[] | null {
+    const reg = this.labelRegistrations.get(labelId);
+    return reg?.thinFilter ?? null;
+  }
+
+  /** label 子层的数据源要素（GeoJSON inlineData；取不到 → null=不抽稀）。 */
+  private resolveSourceFeatures(sourceId: string, spec?: MapSpec): Array<Record<string, unknown>> | null {
+    const source = (spec?.sources?.[sourceId] ?? this.appliedSpec?.sources?.[sourceId]) as
+      { inlineData?: { features?: Array<Record<string, unknown>> } } | undefined;
+    const features = source?.inlineData?.features;
+    return Array.isArray(features) ? features : null;
+  }
+
+  private labelSpecOf(layer: MapSpecLayer): { field: string; size?: unknown; color?: unknown; haloColor?: string; haloWidth?: number } | null {
+    const raw = (layer as any).label;
+    if (raw && typeof raw === "object" && raw.field) return raw;
+    if (layer.layout?.labelField) return { field: layer.layout.labelField as string };
+    return null;
+  }
+
+  /**
+   * label-only 快路径（换标注字段/策略）：主层不动，仅幂等替换
+   * `${id}-label` 子层。主层意外丢失时回退全量 addLayerSafe。
+   */
+  private applyLabelOnlySafe(layer: MapSpecLayer, spec?: MapSpec): void {
+    if (!this.map.getLayer(layer.id)) {
+      this.addLayerSafe(layer, spec);
+      return;
+    }
+    this.layerSourceIndex.set(layer.id, layer.source);
+    const labelSpec = this.labelSpecOf(layer);
+    if (labelSpec && layer.type !== "raster" && layer.type !== "heatmap") {
+      this.addLabelSublayerSafe(layer, labelSpec, spec);
+      this.pushLabelEvent({
+        layerId: layer.id, kind: "refield",
+        detail: { field: labelSpec.field, mode: normalizeLabelStrategy(labelSpec as any).mode },
+      });
+    } else {
+      // 标注被移除：只删子层。
+      const labelId = `${layer.id}-label`;
+      this.labelRegistrations.delete(labelId);
+      if (this.map.getLayer(labelId)) {
+        try { this.map.removeLayer(labelId); } catch { /* already gone */ }
+        renderer.noteStyleLayerRemoved(this.map, labelId);
+      }
+    }
+  }
+
+  /** FE2 + ac-05：spec 层的 label symbol 子层（编译器同款方言 + 策略编排）。 */
   private addLabelSublayerSafe(
     layer: MapSpecLayer,
     labelSpec: { field: string; size?: unknown; color?: unknown; haloColor?: string; haloWidth?: number },
+    spec?: MapSpec,
   ): void {
     const labelId = `${layer.id}-label`;
     const layout = (layer.layout as any) ?? {};
+    const strategy = normalizeLabelStrategy(labelSpec as any);
+    const features = this.resolveSourceFeatures(layer.source, spec);
+    // 字号绝对基准（06 线符号律落地后由其给出；本线只乘比例系数）。
+    const baseSize = Number(
+      typeof labelSpec.size === "number" ? labelSpec.size : (layout.labelSize as number) ?? 12,
+    );
+    const effFeatures: Array<{ properties: Record<string, unknown> | null }> = (features ?? []).map((f) => ({
+      properties: (f.properties ?? null) as Record<string, unknown> | null,
+    }));
+
+    // 策略编排（P3/P4）：抽稀 + 降级 + zoom 档。hover_only → 不挂常驻子层。
+    let selection: TopLabelSelection | null = null;
+    let thinFilter: unknown[] | null = null;
+    let degrade: ReturnType<typeof resolveDegrade> | null = null;
+    let zoom = 0;
+    try {
+      zoom = typeof (this.map as any).getZoom === "function" ? (this.map as any).getZoom() : 0;
+    } catch { /* mock without getZoom → 0 */ }
+
+    if (strategy.mode === "hover_only") {
+      this.labelRegistrations.delete(labelId);
+      this.pushLabelEvent({
+        layerId: layer.id, kind: "disabled",
+        detail: { reason: "hover_only", field: labelSpec.field },
+      });
+      return;
+    }
+    if (features) {
+      const avgChars = averageLabelChars(effFeatures, labelSpec.field);
+      const estCount = strategy.mode === "top_n" && strategy.topN
+        ? Math.min(effFeatures.length, strategy.topN)
+        : effFeatures.length;
+      const ink = estimateInkRatio(effFeatures.length, avgChars, baseSize, estCount);
+      degrade = resolveDegrade(ink);
+      if (degrade.level > 0) {
+        this.pushLabelEvent({
+          layerId: layer.id, kind: "degrade", level: degrade.level,
+          detail: { actions: degrade.actions, inkRatio: Number(ink.toFixed(4)), fontPx: baseSize },
+        });
+      }
+      if (degrade.disable) {
+        this.labelRegistrations.delete(labelId);
+        this.pushLabelEvent({
+          layerId: layer.id, kind: "disabled",
+          detail: { reason: "ink_ratio_extreme", inkRatio: Number(ink.toFixed(4)) },
+        });
+        return;
+      }
+      const degradedTopN = strategy.topN !== null && degrade.thinFactor < 1
+        ? Math.max(Math.round(strategy.topN * degrade.thinFactor), 1)
+        : strategy.topN;
+      selection = selectTopLabels(effFeatures, { ...strategy, topN: degradedTopN }, zoom);
+      thinFilter = selection.filter;
+      if (selection.method !== "skipped") {
+        this.pushLabelEvent({
+          layerId: layer.id, kind: "thin",
+          detail: { method: selection.method, kept: selection.kept, limit: selection.limit, reason: selection.reason },
+        });
+      }
+    }
+
+    // 样式自适应（P5）：底图亮度 / CJK / 降级系数。字号只乘比例系数
+    //（strategy.sizeRatio × degrade.sizeFactor × band 系数）。
+    const luminance = basemapLuminance((this.map as any).getStyle?.());
+    const style = resolveLabelStyle(labelSpec as any, strategy, {
+      luminance,
+      cjk: features ? hasCJKSample(effFeatures, labelSpec.field) : false,
+      degrade: degrade ?? resolveDegrade(0),
+    });
+    const scaledBase = baseSize * strategy.sizeRatio * (degrade ? degrade.sizeFactor : 1);
+    const sizeExpr = buildTextSizeExpr(scaledBase, strategy.zoomBands);
+
     const def: any = {
       id: labelId,
       type: "symbol",
       source: layer.source,
       paint: {
-        // 与 compiler.ts 的默认一致：黑字 + 白晕（任意底图可读，#1007）。
-        "text-color": (labelSpec.color as any) ?? layout.labelColor ?? "#000000",
-        "text-halo-color": labelSpec.haloColor ?? "#ffffff",
-        "text-halo-width": labelSpec.haloWidth ?? 1,
+        // 与 compiler.ts 的默认一致：黑字 + 白晕（#1007）；haloMode=auto
+        // 时按底图亮度反转配色（显式声明恒胜）。
+        "text-color": style.textColor,
+        "text-halo-color": style.haloColor,
+        "text-halo-width": style.haloWidth,
       },
       layout: {
         "text-field": ["get", String(labelSpec.field)],
-        "text-size": (labelSpec.size as any) ?? layout.labelSize ?? 12,
+        "text-size": sizeExpr,
         "text-allow-overlap": false,
+        "text-max-width": style.textMaxWidth,
+        "text-letter-spacing": style.letterSpacing,
         visibility: layout.visibility ?? "visible",
       },
     };
+    if (strategy.priorityField) {
+      def.layout["symbol-sort-key"] = buildSortKeyExpr(strategy.priorityField);
+    }
+    if (thinFilter) def.filter = thinFilter;
     const src = this.map.getSource(layer.source);
     if (src && (src as any).type === "vector") def["source-layer"] = "data";
     try {
@@ -737,9 +964,59 @@ export class MapSpecRuntime {
       this.map.addLayer(def);
       this.layerSourceIndex.set(labelId, layer.source);
       renderer.noteStyleLayerAdded(this.map, labelId);
+      // ac-05：产出过抽稀 filter 或声明了 bands 的都要注册 —— 前者保证
+      // 主层 filter 变化时合成（applyFilterSafe），后者驱动跨档再抽稀。
+      if (features && (strategy.zoomBands.length > 0 || thinFilter)) {
+        this.labelRegistrations.set(labelId, {
+          mainLayerId: layer.id, strategy, sourceId: layer.source,
+          lastBand: strategy.zoomBands.length > 0 ? activeBandIndex(zoom, strategy.zoomBands) : -1,
+          thinFilter,
+        });
+        this.hookZoomHandler();
+      } else {
+        this.labelRegistrations.delete(labelId);
+      }
     } catch (err) {
       devOnly.warn(`[MapSpecRuntime] label sublayer failed for ${layer.id}:`, err);
     }
+  }
+
+  /** 全局 zoom 钩子（懒注册一次；跨档才重算 setFilter —— 有界工作集）。 */
+  private hookZoomHandler(): void {
+    if (this.zoomHooked) return;
+    const mapAny = this.map as any;
+    if (typeof mapAny.on !== "function" || typeof mapAny.getZoom !== "function") return;
+    this.zoomHooked = true;
+    mapAny.on("zoomend", () => {
+      if (this.disposed) return;
+      let zoom = 0;
+      try { zoom = mapAny.getZoom(); } catch { return; }
+      for (const [labelId, reg] of Array.from(this.labelRegistrations)) {
+        if (reg.strategy.zoomBands.length === 0) continue; // 无 bands：无跨档语义
+        const band = activeBandIndex(zoom, reg.strategy.zoomBands);
+        if (band === reg.lastBand) continue;
+        reg.lastBand = band;
+        if (!this.map.getLayer(labelId)) continue;
+        const features = this.resolveSourceFeatures(reg.sourceId);
+        if (!features) continue;
+        const effFeatures = features.map((f) => ({ properties: (f.properties ?? null) as Record<string, unknown> | null }));
+        const sel = selectTopLabels(effFeatures, reg.strategy, zoom);
+        const thin = sel.filter;
+        reg.thinFilter = thin;
+        // 主层 filter 是主层的（不是 label 层自身 —— 那是上一轮抽稀 filter）
+        const mainFilter = (this.map.getLayer(reg.mainLayerId) as any)?.filter ?? null;
+        try {
+          const combined = thin && mainFilter ? ["all", mainFilter, thin] : (thin ?? mainFilter ?? null);
+          this.map.setFilter(labelId, (combined ?? null) as any);
+          this.pushLabelEvent({
+            layerId: reg.mainLayerId, kind: "band",
+            detail: { labelId, band, kept: sel.kept, limit: sel.limit, method: sel.method },
+          });
+        } catch (err) {
+          devOnly.warn(`[MapSpecRuntime] label band re-thin failed for ${labelId}:`, err);
+        }
+      }
+    });
   }
 
   private removeSourceSafe(id: string): void {

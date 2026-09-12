@@ -175,6 +175,16 @@ _SUPPORT_MATRIX: Dict[str, ComponentRendererSupport] = {
             "绘制排名卡，weightSource 显式入卡"
         ),
     ),
+    # ── ac-05（ADR-0154）：label_layer 的真值是「经地图层渲染」────────
+    # 标注不进 map-components chrome 注册表、也不进 exporter chrome：
+    # MapSpec layer.label 的 symbol 子层由 runtime label-layout.ts（live）、
+    # headless 编译器（导出画布）与 mapspec_to_svg（矢量导出）三条路径
+    # 消费。组件本体是绑定/决策面（label_plan 字段挑选 + 策略编排），
+    # 故 renderers/exporters 如实留空。
+    "label_layer": ComponentRendererSupport(
+        component_type="label_layer", renderers=[], exporters=[],
+        note="labels render via MapSpec layer.label sublayer (runtime/compiler/SVG); component is the binding+strategy surface",
+    ),
 }
 
 

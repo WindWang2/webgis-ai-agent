@@ -41,6 +41,10 @@ ComponentType = Literal[
     "methodology_note",         # 方法论披露（警告码 + 文案，随产品渲染）
     "uncertainty_panel",        # 不确定性面板（区间/置信度/样本限制）
     "decision_panel",           # 决策面板（候选排名/权重来源/硬约束否决）
+    # ── ac-05（ADR-0154）：标注图层（可寻址的标注绑定/决策面）────────
+    # options 持有 label_plan 的字段挑选与策略编排（field/mode/topN/
+    # priorityField/zoomBands）；rebind(field) 换字段 = 局部突变。
+    "label_layer",
 ]
 
 Position = Literal[
@@ -579,6 +583,52 @@ def map_border_component(component_id: str = "map-border") -> CartographyCompone
     )
 
 
+def label_layer_component(
+    field: Optional[str] = None,
+    layer_id: Optional[str] = None,
+    *,
+    profile: Optional[Dict[str, Any]] = None,
+    component_id: str = "label-layer",
+    variant: str = "auto_field",
+) -> CartographyComponent:
+    """标注图层组件（ac-05，ADR-0154）：可寻址的标注绑定/决策面。
+
+    - ``field`` 显式指定 → ``explicit_field`` 变体，options.field 直通；
+    - 缺省 + ``profile``（spatial_meta_profiler 产物或同形 dict）→
+      ``auto_field``：label_plan.choose_label_field 自动挑选并把策略
+      （mode/topN/priorityField/zoomBands）一并冻结进 ``options.label``；
+    - 无候选字段（如 sensors 型数据）→ auto 模式产出 ``auto: False`` 的
+      空绑定（**不用 ID 凑数**），仅留 advisory。
+
+    换字段走 ``rebind_component({field: ...})`` —— 只改 options，不重建
+    图层（前端 label-only 快路径消费同一契约）。
+    """
+    from app.lib.cartography.label_plan import build_label_spec
+
+    options: Dict[str, Any] = {"layerId": layer_id}
+    resolved_variant = variant
+    if field:
+        resolved_variant = "explicit_field" if variant in ("auto_field", "explicit_field") else variant
+        options["field"] = field
+        options["auto"] = False
+    elif profile is not None:
+        spec = build_label_spec(profile)
+        if spec is not None:
+            options["field"] = spec["field"]
+            options["label"] = spec
+            options["auto"] = True
+        else:
+            options["auto"] = False
+            options["advisory"] = "no_name_like_field"
+    else:
+        options["auto"] = True
+    return CartographyComponent(
+        id=component_id, type="label_layer", position="none", priority=20,
+        variant=coerce_variant("label_layer", resolved_variant),
+        options=options,
+    )
+
+
 def annotation_component(
     text: str = "",
     component_id: str = "annotation",
@@ -1053,6 +1103,8 @@ _REBIND_FIELDS = {
     "statistics_panel": ("layerId",),
     "inset_map": (),
     "annotation": (),
+    # ac-05（ADR-0154）：换标注字段 / 换目标图层 = 局部突变（不重建图层）。
+    "label_layer": ("field", "layerId"),
 }
 
 
@@ -1229,6 +1281,8 @@ _FACTORY_BY_TYPE = {
     "methodology_note": lambda component_id: methodology_note_component(component_id=component_id),
     "uncertainty_panel": lambda component_id: uncertainty_panel_component(component_id=component_id),
     "decision_panel": lambda component_id: decision_panel_component(component_id=component_id),
+    # ac-05（ADR-0154）：标注图层（空绑定起步形态，upsert 后突变/重绑填充）。
+    "label_layer": lambda component_id: label_layer_component(component_id=component_id),
 }
 
 
