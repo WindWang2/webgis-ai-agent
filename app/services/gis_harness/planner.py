@@ -38,9 +38,13 @@ from app.services.gis_harness.product_templates import (
 )
 from app.services.gis_harness.recipes import (
     CartographyRecipe,
+    ChainResolution,
     EligibilityReport,
     FallbackDecision,
+    default_charts_for_task,
+    default_statistics_for_task,
     get_recipe_registry,
+    resolve_fallback_chain,
 )
 from app.lib.gis.runtime_manifest import get_runtime_manifest
 from app.services.gis_harness.template_catalog import get_template_catalog
@@ -144,6 +148,97 @@ def _uncertainty_demand(query: str) -> bool:
             r"(不确定|方差|误差|置信|uncertaint|variance|confidence|error)", _re.I
         )
     return bool(_UNCERTAINTY_QUERY_RE.search(query or ""))
+
+
+# ── V4（ADR-0151 #P5）：事实优先信号通用化 ────────────────────────────
+#
+# _interpolation_fact_signals 的「结构化数据事实覆盖文本 hint」模式推广到
+# 通用裁决面：同一输入必同输出的纯投影，产出
+#   evidence    有界数据事实摘要（进 plan）；
+#   conflicts   事实与意图/hint 的冲突披露（走 methodology_warnings，
+#               绝不改写 intent —— _HINT_PROTECTED_TASKS 的护栏语义只读
+#               消费，降级一律显式披露，不静默）。
+# 事实缺席（ctx 全 unknown）→ 空投影 = 旧行为逐位保留。
+def fact_signals(
+    ctx: Any,
+    *,
+    intent: Optional[MapRequestIntent] = None,
+) -> Dict[str, Any]:
+    """EligibilityContext 事实 → 通用信号投影（确定性、有界）。"""
+    out: Dict[str, Any] = {
+        "evidence": {},
+        "conflicts": [],
+    }
+    if ctx is None:
+        return out
+    ev: Dict[str, Any] = {}
+    conflicts: List[Dict[str, Any]] = []
+
+    if ctx.n is not None:
+        ev["featureCount"] = ctx.n
+        ev["sample_tier"] = ctx.sample_tier()
+    if ctx.geometry and ctx.geometry != "unknown":
+        ev["geometry"] = ctx.geometry
+    if ctx.spatial is not None and (ctx.spatial.crs or ctx.spatial.crs_class):
+        ev["crs"] = ctx.spatial.crs
+        ev["crsClass"] = ctx.spatial.crs_class
+    if ctx.distribution is not None:
+        shape = ctx.distribution_shape()
+        if shape != "unknown":
+            ev["distribution_shape"] = shape
+
+    if intent is not None:
+        # 1) 几何期望 vs 真实几何：raster 期望遇矢量事实是最强冲突信号
+        #    （#781 同源语义，这里补事实侧披露）。
+        expectation = str(getattr(intent, "geometry_expectation", "") or "")
+        if expectation == "raster" and ev.get("geometry") not in (
+                None, "raster", "unknown"):
+            conflicts.append({
+                "code": "FACT_GEOMETRY_MISMATCH",
+                "hint": f"geometry_expectation={expectation}",
+                "fact": f"geometry={ev['geometry']}",
+                "disclosure": (
+                    f"请求按栅格数据理解，但实际数据是 {ev['geometry']} 几何："
+                    "栅格表达不可用，已按矢量事实裁决制图方案。"
+                ),
+            })
+        # 2) 聚合表达 vs CRS 事实：地理坐标系下的格网/聚合精度不可信。
+        carto_intents = {
+            str(c) for c in (getattr(intent, "cartography_intents", []) or [])
+        }
+        aggregation_family = bool(
+            carto_intents & {"aggregate_grid", "proportional_symbol"}
+        ) or str(getattr(intent, "task", "")) in (
+            "analytical_density", "administrative_statistic",
+        )
+        if aggregation_family and ev.get("crsClass") == "geographic":
+            conflicts.append({
+                "code": "FACT_PROJECTION_REQUIRED",
+                "hint": "aggregation/analytical expression",
+                "fact": "crsClass=geographic",
+                "disclosure": (
+                    "数据为地理坐标系（经纬度）：面积/密度类聚合在投影归一前"
+                    "只是近似，结论以投影后重算为准。"
+                ),
+            })
+        # 3) 零膨胀分布 vs 密度/分级语义：零值主导的度量直方图是制图谎报。
+        if ev.get("distribution_shape") == "zero_inflated" and (
+            "aggregate_grid" in carto_intents
+            or str(getattr(intent, "task", "")) == "analytical_density"
+        ):
+            conflicts.append({
+                "code": "FACT_ZERO_INFLATED_DISTRIBUTION",
+                "hint": "density/aggregation expression",
+                "fact": "distribution_shape=zero_inflated",
+                "disclosure": (
+                    "度量字段零值占比过高：密度/分级表达会被零值主导，"
+                    "建议先过滤无数据单元或改用计数表达并披露。"
+                ),
+            })
+
+    out["evidence"] = ev
+    out["conflicts"] = conflicts[:4]
+    return out
 
 
 def _profile_int(profile: Optional[Dict[str, Any]], key: str) -> Optional[int]:
@@ -385,6 +480,9 @@ class MapProductPlan(BaseModel):
     # ok_family_suitable/fact_hint/extra_capabilities/evidence/text_hint/
     # effective_hint）。空 = 未计划插值或 profile 缺席（行为与历史一致）。
     algorithm_fact_signals: Dict[str, Any] = Field(default_factory=dict)
+    # V4（ADR-0151 #P5）：通用数据事实信号摘要（sample_tier/geometry/crs/
+    # distribution_shape）。空 = profile 缺席（行为与历史一致）。
+    data_fact_signals: Dict[str, Any] = Field(default_factory=dict)
 
 
 def _plan_id(query: str, recipe_id: str) -> str:
@@ -400,6 +498,15 @@ class _CompositionRejectedError(Exception):
     def __init__(self, message: str, *, violations: Optional[List[Dict[str, Any]]] = None) -> None:
         super().__init__(message)
         self.violations = violations or []
+
+
+# 计划图层 cartography → 资格规则元素（同一制图能力的多态命名对齐；
+# 与 MapModel 的 geometry_layer_types 同思路：资格元素名与表达名分列时
+# 在此显式对齐，不散落 if/else）。
+_ELEMENT_ALIASES: Dict[str, str] = {
+    "density_overview": "visual_heatmap",
+    "native_heatmap": "visual_heatmap",
+}
 
 
 class MapProductPlanner:
@@ -700,13 +807,14 @@ class MapProductPlanner:
                 ))
         plan.map_model_selection = self._map_model_evidence(plan.map_layers)
 
-        # 统计/图表
+        # 统计/图表：recipe 声明优先（default_statistics/default_charts），
+        # 未声明时按 task 的确定性派生规则（单一事实源在 recipes 模块）。
         if "statistics" in intent.output_intents:
-            plan.statistics = ["feature_count", "admin_summary"]
-            if intent.task == "administrative_statistic":
-                plan.statistics = ["admin_aggregation", "ranking", "total"]
+            plan.statistics = list(recipe.default_statistics) or \
+                default_statistics_for_task(intent.task)
         if "chart" in intent.output_intents:
-            plan.charts = ["category_bar"] if intent.task == "categorical_distribution" else ["admin_bar"]
+            plan.charts = list(recipe.default_charts) or \
+                default_charts_for_task(intent.task)
 
         plan.validation = list(recipe.validation_rules)
 
@@ -826,6 +934,7 @@ class MapProductPlanner:
         *,
         min_points_default: int = 10,
         available_tools: Optional[Any] = None,
+        _chain_depth: int = 0,
     ) -> MapProductPlan:
         """Spatial Profile 到手后的确定性复检（§17 反一锤定音）。
 
@@ -833,7 +942,9 @@ class MapProductPlanner:
         - algorithm applicability 复检（resolver 带 profile 重裁决；
           available_tools 传入时与 draft 阶段同视图，evidence 不漂移）；
         - 不合格元素禁用 + fallback 记录（from/to/reason/evidence）；
-        - 主专题表达可能因此改变（heatmap → point），组件集随终稿重算。
+        - recipe 级失格 → 声明式降级链（方案 B/C）；链穷尽 → 数据不足
+          说明卡（非空白图）。``_chain_depth`` 供方案 B 重规划递归封顶，
+          外部调用保持缺省 0。
         """
         recipe = self.recipes.get(plan.recipe_id)
         finalized = plan.model_copy(deep=True)
@@ -870,6 +981,25 @@ class MapProductPlanner:
         }
         finalized.fallbacks = list(report.fallbacks)
 
+        # V4（ADR-0151 #P5）：事实优先信号 —— 数据事实覆盖文本 hint 的
+        # 冲突走披露面（绝不改写 intent / 路由）；证据摘要随 plan 下行。
+        try:
+            from app.services.gis_harness.recipes import EligibilityContext
+
+            _signals = fact_signals(
+                EligibilityContext.from_profile(profile), intent=plan.intent)
+            finalized.data_fact_signals = _signals["evidence"]
+            for conflict in _signals["conflicts"]:
+                finalized.methodology_warnings.append({
+                    "pattern": "fact_signals",
+                    "code": str(conflict.get("code") or ""),
+                    "warning_codes": [str(conflict.get("code") or "")],
+                    "disclosures": [str(conflict.get("disclosure") or "")],
+                    "stage": "finalize",
+                })
+        except Exception:  # noqa: BLE001 — 披露是增值，绝不阻断终稿
+            pass
+
         # Workflow V2（Goal C / C4+C6）：workflow 契约评估 —— 数据角色解析 +
         # 科学义务联动（precondition 委托算法层裁决，不重复实现）。仅对带
         # workflow 画像的 recipe 生效；产出的警告并入 methodology_warnings
@@ -897,18 +1027,21 @@ class MapProductPlanner:
             # 克里金与事实冲突（去重后样本不足/常量场/地理 CRS）时不再顶位
             # （硬门仍最终裁决，这里消除「必拒 + 补偿替补」的证据噪声）；
             # 事实支持而文本未点名时给 fact hint（被动→证据驱动升级）。
-            fact_signals: Optional[Dict[str, Any]] = None
+            # 命名注意：此处局部变量不得叫 fact_signals —— 与模块级
+            # fact_signals() 通用投影（ADR-0151 P5）同名会在函数域内遮蔽
+            # （finalize 前段的通用信号调用会 UnboundLocalError）。
+            interp_signals: Optional[Dict[str, Any]] = None
             if "spatial_interpolation" in capabilities:
-                fact_signals = _interpolation_fact_signals(
+                interp_signals = _interpolation_fact_signals(
                     profile, query=plan.intent.query)
-                if text_hint and not fact_signals["ok_family_suitable"]:
+                if text_hint and not interp_signals["ok_family_suitable"]:
                     hint = ""
-                elif not text_hint and fact_signals["fact_hint"]:
-                    hint = fact_signals["fact_hint"]
+                elif not text_hint and interp_signals["fact_hint"]:
+                    hint = interp_signals["fact_hint"]
                 # 事实支持的可选 capability 追加（≤2；仅当插值已被文本门
                 # 计划 —— 关键词门不放大）。optional 语义：不污染主数据流，
                 # resolver 独立裁决其可行性。
-                for extra in fact_signals["extra_capabilities"]:
+                for extra in interp_signals["extra_capabilities"]:
                     if extra not in capabilities:
                         capabilities.append(extra)
                         optional_set.add(extra)
@@ -918,12 +1051,12 @@ class MapProductPlanner:
                 optional_capabilities=optional_set,
                 algorithm_hint=hint)
             finalized.algorithm_selections = selections
-            if fact_signals is not None:
+            if interp_signals is not None:
                 finalized.algorithm_fact_signals = {
-                    "ok_family_suitable": fact_signals["ok_family_suitable"],
-                    "fact_hint": fact_signals["fact_hint"],
-                    "extra_capabilities": list(fact_signals["extra_capabilities"]),
-                    "evidence": fact_signals["evidence"],
+                    "ok_family_suitable": interp_signals["ok_family_suitable"],
+                    "fact_hint": interp_signals["fact_hint"],
+                    "extra_capabilities": list(interp_signals["extra_capabilities"]),
+                    "evidence": interp_signals["evidence"],
                     "text_hint": text_hint,
                     "effective_hint": hint,
                 }
@@ -966,98 +1099,130 @@ class MapProductPlanner:
                 layer.layer_type = resolved
         finalized.map_model_selection = self._map_model_evidence(finalized.map_layers)
 
-        # 图层级裁决：热力/格网主层被禁 → 降级 + （几何为点时）点层提升。
-        # 两种主表达各持独立 recorded 标志：混合模板（热力+格网）同被禁时
-        # 各自记录 fallback，不互相吞并。
-        heat_fallback_recorded = False
-        grid_fallback_recorded = False
-        for layer in finalized.map_layers:
-            if layer.cartography in ("visual_heatmap", "density_overview"):
-                if "visual_heatmap" in disabled_elements or "native_heatmap" in disabled_elements:
-                    reason = next(
-                        (d for d in report.disabled if d.element in ("visual_heatmap", "native_heatmap")),
-                        None,
-                    )
-                    layer.enabled = False
-                    layer.role = "secondary"  # 禁用层不再是 primary（单一 primary 不变式）
-                    layer.note = (
-                        f"disabled: {reason.reason_code}" if reason else "disabled"
-                    )
-                    if not heat_fallback_recorded:
-                        point_layer = next(
-                            (ly for ly in finalized.map_layers
-                             if ly.cartography in ("point_overlay", "simple_point_map")
-                             and ly.enabled),
-                            None,
-                        )
-                        # 点层提升为 primary（converter 会按真实几何推断图层
-                        # 类型——面数据上它落成 fill，不会是空转的 circle）。
-                        if point_layer:
-                            point_layer.role = "primary"
-                        finalized.fallbacks.append(FallbackDecision(
-                            from_element="visual_heatmap",
-                            to_element="point_distribution",
-                            reason_code=reason.reason_code if reason else "INELIGIBLE",
-                            evidence={
-                                **(reason.evidence if reason else {}),
-                                "profile_geometry": profile_geom,
-                            },
-                        ))
-                        heat_fallback_recorded = True
-            elif layer.cartography == "aggregate_grid":
-                if "aggregate_grid" in disabled_elements or "recipe" in disabled_elements:
-                    # 不按 reason_code 过滤：GEOMETRY_NOT_SUPPORTED 与
-                    # INSUFFICIENT_POINTS 都要保留真实原因码（此前过滤导致
-                    # 几何失配被硬编码误标为 INSUFFICIENT_POINTS）。
-                    reason = next(
-                        (d for d in report.disabled if d.element in ("aggregate_grid", "recipe")),
-                        None,
-                    )
-                    layer.enabled = False
-                    layer.role = "secondary"
-                    layer.note = f"disabled: {reason.reason_code}" if reason else "disabled"
-                    if not grid_fallback_recorded:
-                        point_layer = next(
-                            (ly for ly in finalized.map_layers
-                             if ly.cartography in ("point_overlay", "simple_point_map")
-                             and ly.enabled),
-                            None,
-                        )
-                        if point_layer:
-                            point_layer.role = "primary"
-                        finalized.fallbacks.append(FallbackDecision(
-                            from_element="aggregate_grid",
-                            to_element="point_distribution",
-                            reason_code=reason.reason_code if reason else "INELIGIBLE",
-                            evidence={
-                                **(reason.evidence if reason else {}),
-                                "profile_geometry": profile_geom,
-                            },
-                        ))
-                        grid_fallback_recorded = True
+        # ── recipe 级失格 → 声明式降级链（方案 B/C，ADR-0151 P3）────────
+        # 旧实现只有「全禁 + 追加点图兜底」的静默路径；现在先求声明链，
+        # 链上最优 eligible 目标产出真正的方案 B（按目标 recipe 完整重规划
+        # + 终稿，带链式尝试证据）；链穷尽才落「数据不足说明卡」（非空白
+        # 图、非空 MapSpec）。
+        chain: Optional[ChainResolution] = None
+        if not report.eligible and _chain_depth == 0:
+            chain = resolve_fallback_chain(
+                recipe, profile=profile,
+                registry=self.recipes,
+                min_points_default=min_points_default,
+            )
+            if chain.resolved and chain.final_recipe != recipe.id:
+                return self._finalize_with_fallback_recipe(
+                    plan, recipe, report, chain, profile,
+                    min_points_default=min_points_default,
+                    available_tools=available_tools,
+                )
 
-        # recipe 整体不合格 → 禁用与被禁元素对应的图层并记录 RECIPE_INELIGIBLE；
-        # 全部图层被禁时追加点图兜底层（gate 因此可达）。
+        # 图层级裁决（V4 通用化，ADR-0151 P3）：旧实现是
+        # visual_heatmap/density_overview 与 aggregate_grid 两条硬编码分支；
+        # 现按「被禁元素 × 计划图层」通用求解 —— 任何被禁元素命中的图层
+        # 一律禁用；声明了 use 目标且该元素有存活图层时提升 primary，否则
+        # 提升可用点叠加（converter 按真实几何定型）。每次降级都落带
+        # downgrade_class/disclosure 的 FallbackDecision。
+        disabled_by_element: Dict[str, Any] = {}
+        for d in report.disabled:
+            disabled_by_element.setdefault(d.element, d)
+        declared_use: Dict[str, str] = {}
+        for fb in recipe.fallbacks:
+            if fb.reason_code and fb.use and fb.reason_code not in declared_use:
+                declared_use[fb.reason_code] = fb.use
+        degraded_elements: List[str] = []
+        for layer in finalized.map_layers:
+            element = _ELEMENT_ALIASES.get(layer.cartography, layer.cartography)
+            reason = disabled_by_element.get(element)
+            if reason is None or not layer.enabled:
+                continue
+            layer.enabled = False
+            layer.role = "secondary"  # 禁用层不再是 primary（单一 primary 不变式）
+            layer.note = (
+                layer.note + "; " if layer.note else ""
+            ) + f"disabled: {reason.reason_code}"
+            if element not in degraded_elements:
+                degraded_elements.append(element)
+        for element in degraded_elements:
+            reason = disabled_by_element.get(element)
+            target_use = declared_use.get(reason.reason_code, "") if reason else ""
+            promoted = None
+            if target_use:
+                promoted = next(
+                    (ly for ly in finalized.map_layers
+                     if ly.cartography == target_use and ly.enabled),
+                    None,
+                )
+            if promoted is None:
+                promoted = next(
+                    (ly for ly in finalized.map_layers
+                     if ly.cartography in ("point_overlay", "simple_point_map")
+                     and ly.enabled),
+                    None,
+                )
+            if promoted is not None:
+                promoted.role = "primary"
+            resolved_to = target_use or (
+                promoted.cartography if promoted is not None else "")
+            finalized.fallbacks.append(FallbackDecision(
+                from_element=element,
+                to_element=resolved_to,
+                reason_code=reason.reason_code if reason else "INELIGIBLE",
+                evidence={
+                    **(reason.evidence if reason else {}),
+                    "profile_geometry": profile_geom,
+                },
+                downgrade_class="approximation",
+                disclosure=(
+                    f"{element} 因 {reason.reason_code if reason else '数据不达标'} "
+                    "不可用" + (f"，已降级为 {resolved_to}。" if resolved_to else "。")
+                ),
+            ))
+
+        # recipe 级失格且链穷尽/未启用链求解 → 禁用全部专题层（reference
+        # 保留）并记录带链证据的 RECIPE_INELIGIBLE。此前只禁 cartography 名
+        # 恰好出现在 disabled_elements 里的层 —— 失格 recipe 的主层常因此
+        # 存活，产出「失格 + 存活主层」的自相矛盾计划（P0 case05/06）。
+        insufficient_card: Optional[Dict[str, Any]] = None
         if not report.eligible:
             for layer in finalized.map_layers:
-                if layer.enabled and layer.cartography in disabled_elements:
+                if layer.enabled and layer.role != "reference":
                     layer.enabled = False
                     layer.role = "secondary"
-                    layer.note = "disabled: RECIPE_INELIGIBLE"
+                    layer.note = (
+                        layer.note + "; " if layer.note else ""
+                    ) + "disabled: RECIPE_INELIGIBLE"
+            attempts = [
+                a.to_bounded_dict() for a in chain.attempts
+            ] if chain is not None else []
             finalized.fallbacks.append(FallbackDecision(
                 from_element=recipe.id,
-                to_element="point_distribution",
+                to_element="",
                 reason_code="RECIPE_INELIGIBLE",
-                evidence={"disabled": sorted(disabled_elements)},
+                evidence={
+                    "disabled": sorted(disabled_elements),
+                    "chain": attempts[:16],
+                },
+                attempts=attempts[:16],
+                auto_generated=bool(chain and chain.auto_generated_used),
+                downgrade_class="degraded",
+                disclosure=(
+                    "数据不满足任何可用制图方案的最小要求："
+                    "本产品以数据说明卡替代专题图。"
+                ),
             ))
-            if not any(ly.enabled for ly in finalized.map_layers):
-                finalized.map_layers.append(PlannedLayer(
-                    role="primary",
-                    layer_type=layer_type_for_cartography("point_overlay"),
-                    cartography="point_overlay",
-                    source_capability="poi_query",
-                    note="recipe ineligible — fallback point map",
-                ))
+            disabled_brief = "；".join(
+                f"{d.element}:{d.reason_code}" for d in report.disabled[:4])
+            insufficient_card = {
+                "code": "INSUFFICIENT_DATA",
+                "pattern": recipe.id,
+                "text": (
+                    f"数据不足以支撑「{recipe.name or recipe.id}」：{disabled_brief}。"
+                    + (f"已尝试 {len(attempts)} 个替代方案，均不满足。" if attempts else "")
+                    + "请补充或更换数据后重试。"
+                ),
+            }
 
         # 终稿组件集：优先走 component_resolver/composer（composition 驱动），
         # 失败回退到 build_default_components（兼容旧路径）。
@@ -1210,6 +1375,9 @@ class MapProductPlanner:
             )
             self._append_methodology_disclosure(finalized)
 
+        if insufficient_card is not None:
+            self._append_insufficient_data_card(finalized, insufficient_card)
+
         finalized.status = "finalized"
         finalized.completeness = self.assess_completeness(finalized)
         return finalized
@@ -1257,6 +1425,84 @@ class MapProductPlanner:
             if notes:
                 finalized.components.append(methodology_note_component(notes))
         except Exception:  # noqa: BLE001 — 披露组件失败不阻断终稿
+            pass
+
+    def _finalize_with_fallback_recipe(
+        self,
+        plan: MapProductPlan,
+        origin_recipe: CartographyRecipe,
+        report: EligibilityReport,
+        chain: ChainResolution,
+        profile: Optional[Dict[str, Any]],
+        *,
+        min_points_default: int = 10,
+        available_tools: Optional[Any] = None,
+    ) -> MapProductPlan:
+        """链式降级命中方案 B：按目标 recipe 完整重规划并终稿（ADR-0151 P3）。
+
+        目标 recipe 已通过链上复检（eligible），其 finalize 不再进入链
+        求解（_chain_depth=1 封顶）。链式尝试证据（含落选者）以首条
+        FallbackDecision 随方案 B 下行 —— 降级可解释，绝不静默换案。
+        """
+        fb_plan = self.plan_from_intent(
+            plan.intent, recipe_id=chain.final_recipe,
+            available_tools=available_tools, use_memo=False,
+        )
+        fb_final = self.finalize_with_profile(
+            fb_plan, profile,
+            min_points_default=min_points_default,
+            available_tools=available_tools,
+            _chain_depth=1,
+        )
+        attempts = [a.to_bounded_dict() for a in chain.attempts][:16]
+        target = self.recipes.get(chain.final_recipe)
+        target_name = (target.name if target else "") or chain.final_recipe
+        fb_final.fallbacks.insert(0, FallbackDecision(
+            from_element=origin_recipe.id,
+            to_element=chain.final_recipe,
+            reason_code=chain.primary_reason_code,
+            evidence={
+                "origin_recipe": origin_recipe.id,
+                "origin_disabled": sorted({d.element for d in report.disabled}),
+                "chain": attempts,
+            },
+            attempts=attempts,
+            auto_generated=chain.auto_generated_used,
+            downgrade_class="approximation",
+            disclosure=(
+                f"首选方案「{origin_recipe.name or origin_recipe.id}」因 "
+                f"{chain.primary_reason_code} 不可用，已切换为方案 "
+                f"「{target_name}」。"
+            ),
+        ))
+        fb_final.completeness = self.assess_completeness(fb_final)
+        return fb_final
+
+    @staticmethod
+    def _append_insufficient_data_card(
+        finalized: MapProductPlan, card: Dict[str, Any],
+    ) -> None:
+        """数据不足说明卡（复用 methodology_note 通道，前端零改动）。
+
+        链穷尽时产品不落空白图：说明卡组件随 MapSpec 下行（07 线消费），
+        失败不阻断终稿。
+        """
+        if any(
+            getattr(c, "type", "") == "methodology_note"
+            and any(
+                w.get("code") == "INSUFFICIENT_DATA"
+                for w in (getattr(c, "options", {}) or {}).get("warnings", [])
+            )
+            for c in finalized.components
+        ):
+            return
+        try:
+            from app.services.gis_harness.components import (
+                methodology_note_component,
+            )
+
+            finalized.components.append(methodology_note_component([card]))
+        except Exception:  # noqa: BLE001 — 说明卡失败不阻断终稿
             pass
 
     def _evaluate_workflow_contract(

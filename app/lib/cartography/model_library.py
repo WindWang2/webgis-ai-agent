@@ -246,7 +246,9 @@ SEED_MAP_MODELS: List[MapModel] = [
         default_class_count=5,
         deck_gl_layer="PolygonLayer(+CPU 分级)", kepler_layer="geojson",
         qgis_renderer="graduated",
-        aliases=["graduated_choropleth", "choropleth"],
+        # ADR-0151：旧词汇 "graduated"（build_default_components 兼容分支的
+        # 唯一未收录词）收编为正式别名 —— 第二事实源得以删除。
+        aliases=["graduated_choropleth", "choropleth", "graduated"],
         accepted_artifact_types=["admin_aggregate_table", "admin_boundary_set"],
         recommended_components=["legend"],
         supported_template_kinds=["thematic"],

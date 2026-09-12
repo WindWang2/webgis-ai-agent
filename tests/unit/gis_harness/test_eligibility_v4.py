@@ -201,12 +201,15 @@ class TestCheckTemporalCoverage:
 
 class TestCheckEligibilityV4Integration:
     def test_legacy_profile_unchanged_behavior(self) -> None:
-        """旧三维场景（无新维度声明）：行为与历史逐位一致。"""
+        """旧三维场景（无新维度声明）：行为与历史逐位一致。
+
+        元素级失败只禁元素、不降 recipe 资格（golden Case B 契约）。
+        """
         recipe = _recipe(eligibility=[_rule(element="h", check_points=True,
                                             reason_code="INSUFFICIENT_POINTS")])
         report = check_eligibility(recipe, profile={
             "geometryTypes": ["Point"], "featureCount": 3})
-        assert report.eligible is False
+        assert report.eligible is True
         assert report.disabled[0].reason_code == "INSUFFICIENT_POINTS"
 
     def test_new_dimension_rejects_when_old_passes(self) -> None:

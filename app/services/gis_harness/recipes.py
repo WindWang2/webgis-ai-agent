@@ -448,7 +448,11 @@ def run_eligibility_rules(
     results: List[CheckResult] = []
     for rule in recipe.eligibility:
         prefix = f"{rule.element}:"
-        if rule.min_samples is not None or ctx.sample_tier() == "below_floor":
+        # 样本量分档：声明 min_samples 才产生硬性检查（<8 恒拒 →
+        # SAMPLE_BELOW_FLOOR；否则 SAMPLE_INSUFFICIENT）。不声明不检查
+        # —— 通用产品的「点少」由元素级降级表达（golden Case B 契约），
+        # 不得隐式升级为 recipe 失格。
+        if rule.min_samples is not None:
             r = check_sample_size(ctx, rule.min_samples)
             results.append(r.model_copy(update={"check": prefix + r.check}))
         for exp in rule.field_expectations:
