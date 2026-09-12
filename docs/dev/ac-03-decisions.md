@@ -103,3 +103,25 @@ app/services/gis_harness/**（01/02 线领地）在 audit 中只报告不拦截�
   其裁决经由与工具共享的 _adjudicate_heatmap_palette 断言等价（语义字段全等）。
 - apply_template 用中性探针模板（无任何偏好键）参与矩阵，带偏好模板的对照
   由 test_template_preference_contract 逐条锁定（59 条）。
+
+## Review 轮修复（两轴审查 findings，commit 72da2f55）
+
+Standards 轴 4 硬伤 + Spec 轴缺口，处置如下：
+
+1. **lisa 槽位静默降级**（Standards #1）：composite_builder 的 lisa 槽改走
+   build_thematic_style 的 lisa 分支（制图学固定五色 → categorical 图例），
+   无语义值时警告并回落 preset 合成图例——不再静默 equal_interval 化。
+2. **palette_context 不可达**（两轴共同）：heatmap_data 签名与 HeatmapDataArgs
+   显式声明 palette_context（原仅 kwargs 读取，schema 不可达）。
+3. **print 变换未作用于输出色**（Spec #c1，最重）：print 降饱和从"仅校验"
+   改为真实作用于 build_graduated_spec / apply_symbology_v2 的输出
+   palette_colors（渲染要求）；legend_spec 相应增加可选 `context` 字段
+   （schema 冻结前最后追加，消费方不得二次变换）。
+4. **WCAG 断言缺失**（Spec #a1）：补 CVD 三模式 + print 的极端类对白/黑画布
+   ≥3.0:1 逐条断言。
+5. visualization_plan docstring 与近均匀行为同步；非法上下文在 pydantic 边界
+   fail-loud（Literal）+ 引擎内防御留痕双保险；categorical/lisa 直调的
+   模式感知缺省（categorical→Set2）；死兜底分支清除。
+6. 未采纳：模板 payload 键位改名（破坏 API，消费侧语义降级已达成 spec 意图，
+   schema 级标记留待与模板库线协调）；入站值过滤去重（5 站点各自上下文略异，
+   抽取收益低于回归风险，登记为已知重复）。
