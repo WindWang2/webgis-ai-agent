@@ -85,15 +85,29 @@ P0 语料 20 MapSpec × 4 版式三类版面检查修复后**归零**。
 
 ## 本地门禁证据（无 CI，本机即门禁）
 
-- 前端 vitest（components/map + lib/map-kit + lib/layout）：
-  **78 files / 720 tests passed**（2026-09-13 04:42:50，48.85s）。
+- 前端 vitest（components/map + lib/map-kit + lib/layout，**最终提交树复跑**）：
+  **721 tests passed**（2026-09-13 07:15:46）。
 - 后端 pytest `tests/unit -q -m "not heavy and not real_services and not perf"`：
-  全绿（串行，同 CI 参数；结果原文见 PR 评论）。
-- `tsc --noEmit` 0 错误；`next build` 一次通过（原文见 PR 评论）。
-- `ruff check <9 变更文件>` All checks passed；`eslint <8 变更文件 + lib/layout>`
-  0 problems。
+  **10727 passed / 111 skipped**，29 failed —— 逐项归因均与本线无关（见下节
+  与 `docs/dev/ac-07-milestone-failures.md`）。
+- `tsc --noEmit` 0 错误；`next build` 通过（最终提交树复验，exit 0）。
+- `ruff check <变更文件>` All checks passed；`eslint <变更文件>` 0 problems。
 - 未修改 `.github/workflows/**`、`migrations/**`、mapspec-compiler/runtime、
   exporter.ts/frame-composer.ts、后端 symbology 族。
+
+## 里程碑失败归因（29 failed → 0 与本线相关）
+
+完整清单与逐项对照见 `docs/dev/ac-07-milestone-failures.md`。在纯净
+origin/master worktree（@1fd4b035，同一 venv 同参数）上复跑同样用例：
+
+- **27 项 master 同败**：extensions_platform 9（rlimit/bwrap/worker ——
+  Windows 沙箱语义）、pmtiles 族 9（真实文件 fixture）、data_fabric 路径
+  守卫 + postgis 5（符号链接/系统目录）、flatgeobuf 真实路径 1、
+  domain_c_raster 后缀 1、llm 真实 socket 1、mapspec_store 1、recovery
+  ledger 双进程 1；
+- **2 项顺序 flake**：geocompute events/gpu-gating —— master 通过、分支
+  单跑两次通过（全量套件时序敏感）；
+- 本线触及域失败数 0；新增 63 项测试全绿。
 
 ## 风险与回滚
 
