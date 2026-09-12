@@ -1,5 +1,83 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-cartography/04: 数据自适应预处理与制图前置门禁, ADR-0153)
+
+### Added (backend: adaptive-cartography/04-data-preprocess)
+- Pre-cartography quality gate: MapSpec lifecycle UpsertLayer/UpsertSource
+  pre-commit hook (`_run_quality_gate_hook`) audits inline vector payloads —
+  blocking-level issues refuse the mutation with an actionable one-shot repair
+  op sequence (`error_code=quality_gate_blocked`), warnings pass with
+  `quality_advisories[]` on layer/source metadata (bounded ≤16, consumed by
+  lines 07/09). Three-state switch `MAP_QUALITY_GATE_MODE=enforce|advisory|off`
+  (default enforce; off = pre-merge behavior, the rollback surface) +
+  per-intent `quality_gate_bypass` escape hatch that MUST leave an audit
+  event (structured log + `mapspec_quality_gate_events_total` counter) —
+  no silent pass-through. Audit bounded at 5000 features inline (aligned with
+  the #687 inline-carrier gate); heavy profiling runs off the event loop via
+  `asyncio.to_thread`.
+- Repair op orchestrator `plan_repair_ops` (spatial_repair_pipeline.py):
+  diagnostic codes → fixed-order executable op sequence (`CANONICAL_OP_ORDER`),
+  closing the "proposal without dispatcher" gap (repair proposals were
+  plan-only and nothing mapped them onto pipeline ops). Destructive ops
+  (deduplicate / normalize / attribute normalization / column-or-row drops)
+  default OFF and are enabled by adjudication thresholds (duplicate ratio ≥5%,
+  geometry mix ≥20%, attribute type mix ≥30%, overlap-pair ratio ≥1%) or
+  explicit `allow_destructive`, with the decision recorded; sub-threshold
+  removals disclosed in `skipped_ops`. Evidence bound ≤16 kept.
+- CRS auto-inference (`spatial_quality_gate.infer_crs`): bbox-magnitude +
+  coordinate-range heuristics covering EPSG:4326 / 3857 / CGCS2000
+  (4490 geographic, 3-degree GK zones 4513–4533 zone-prefixed and
+  4534–4554 CM-based) / UTM (326xx/327xx). Declared CRS wins; declared-
+  geographic-contradicted-by-metric-coordinates infers the true projected
+  source (root-cause path for SUSPICIOUS_CRS / IMPOSSIBLE_LAT_LON);
+  low-confidence cases (GK/UTM without geographic anchor, degenerate bbox,
+  extreme coords) emit `low_confidence` evidence + advisory and never guess.
+  `crs_transform` no longer requires a manual `source_crs` (manual still wins).
+- Outlier & value-distribution profiling (P4, profile-only — no trimming in
+  this line): `profile_outlier_policy` → `outlier_policy ∈ {none, clip_p99,
+  head_tail, log}` + `outlier_ratio` / `skew` / `zero_ratio` / `p99` /
+  `suggested_clip` (inlier-mass p99 — the usable clip value when raw p99 is
+  swallowed by the outlier itself). Field-level contract assertions pin the
+  schema for line 03.
+- Repair lineage (P5): `repair_dataset_with_lineage` returns per-op
+  `{op, before_count, after_count, area_delta, evidence[], ts}` reusing the
+  Wave-4 op-evidence keys (alignment with `build_repair_evidence`; no second
+  provenance structure). "Why repaired" = plan.reasons (codes→op) × lineage.
+- Three new repair ops (P6): `fix_topology_overlap` (difference mode: later
+  feature yields to earlier — deterministic first-come rule; empty-result
+  guard never deletes, counts failed honestly; flag mode default available;
+  pair budget ≤200 aligned with the audit's #539 discipline), `fix_gaps`
+  (pairwise `shapely.snap`, configurable tolerance in TARGET CRS units;
+  flag default), `drop_outliers_or_flag` (flag default via the peelable
+  top-level `ac04_quality_flags` key; drop requires allow_destructive and
+  outlier_ratio ≤2%), plus `attribute_drop_or_flag` for HIGH_NULL_RATIO
+  (flag default; drop_column explicit) and `remove_empty`
+  `drop_zero_coordinates` (Null Island purge, adjudication-gated).
+- Spatial Profile contract extension (P7, additive keys on the source
+  profile with `default_quality_profile()` fallback so lines 02/03 can
+  consume before this lands): `geometry_mix` {types, dominant, mix_ratio},
+  `n_valid`, `extent`, `crs_confidence` {crs, confidence, low_confidence,
+  method}, `outlier_policy`, `quality_advisories`.
+- P0 recon artifacts: `docs/dev/ac-04-quality-recon.md` (four-level
+  code→lib-code→proposal→pipeline-op mapping; 13/25 codes had no mapping at
+  all; default-op coverage 4/25) + `docs/dev/ac-04-code-op-matrix.csv`
+  (machine-readable matrix) + 15 minimal repro fixture sets under
+  `tests/cartography/fixtures/quality_cases/` + 5 reproducible
+  dirty-data-destroys-the-map phenomena as assertions
+  (`tests/unit/test_dirty_data_cartographic_effects.py`).
+- `pytest-xdist` added to requirements-dev.txt (milestone gate command
+  `pytest tests/unit -q -n 2 -m "not heavy and not real_services and not perf"`).
+
+### Honest gaps (disclosed, not force-fitted)
+- `DUPLICATE_PRIMARY_KEY`: pipeline dedup key is geom+attrs (no invented PK
+  semantics) — the plan discloses the skipped dedup; gate advisory carries it.
+- `INVALID_GEOMETRY_SYNTAX` / unparseable geometries: blocked by the gate;
+  the repair pipeline keeps its existing honest skip behavior.
+- `RING_CHECK_FAILED` is unreachable via standard GeoJSON parsing (shapely
+  auto-closes ≥3-point rings; 2-point rings raise → INVALID_GEOMETRY_SYNTAX) —
+  pinned by `tests/unit/test_quality_cases_matrix.py` and covered at the
+  planner-mapping level with a synthetic issue.
+
 ## [Unreleased] - 2026-09-12 (V9: 交互深度与专业用户体验, ADR-0147)
 
 ### Added (frontend: feat/ux-depth-v9)

@@ -1,0 +1,18 @@
+{
+ "code": "INVALID_GEOMETRY",
+ "audit_level": "error",
+ "gate_verdict": "warn",
+ "plan_ops": [
+  "make_valid"
+ ],
+ "repair": {
+  "ops": [
+   "make_valid"
+  ],
+  "allow_destructive": false
+ },
+ "post": {
+  "feature_count": 1,
+  "code_gone_after_repair": true
+ }
+}

@@ -102,6 +102,16 @@ class Settings(BaseSettings):
     CARTO_DRIFT_RELATIVE_THRESHOLD: float = 0.15
     CARTO_DRIFT_NULL_RATIO_THRESHOLD: float = 0.10
 
+    # ── 制图前置质量门禁（ADR-0153，ac-04 数据自适应预处理）──
+    # MapSpec UpsertLayer/UpsertSource 的 pre-commit 质量门禁模式：
+    #   enforce  = blocking 级数据质量问题拒绝上图（默认；返回可操作修复计划）
+    #   advisory = 只在 layer/source 元数据落 quality_advisories，不拒绝
+    #   off      = 完全关闭（回滚面：等价于本线合入前的行为）
+    MAP_QUALITY_GATE_MODE: str = "enforce"
+    # 门禁逐要素审计预算（对齐 inline 载体 #687 门 5000；超帽走 advisory
+    # 如实披露而非静默全量审计）。
+    MAP_QUALITY_GATE_MAX_FEATURES: int = 5000
+
     # LLM 配置 (OpenAI 兼容接口)
     # 项目默认：阶跃 Step Plan 的 step-3.7-flash（推理模型，响应含
     # reasoning_content，正文在 content）。API key 只经环境变量注入，
