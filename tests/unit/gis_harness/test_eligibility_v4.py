@@ -355,6 +355,76 @@ class TestRenderFallbackForLlm:
 
 # ── 悬空引用校验（P2 / §5 门禁）────────────────────────────────────────
 
+class TestStartupDanglingGate:
+    """启动闸：load_builtins 注入悬空 fallback 引用即失败（§5 门禁）。"""
+
+    def test_load_builtins_dangling_link_fails_startup(self, monkeypatch) -> None:
+        import sys
+        import types
+
+        from app.services.gis_harness import recipe_packs as packs_mod
+        from app.services.gis_harness import recipes as recipes_mod
+
+        fake_name = packs_mod._BASE + "fake_dangling_pack"
+        fake = types.ModuleType(fake_name)
+        bad = _recipe(id="fake_dangling_src")
+        bad.fallback_links = [FallbackLink(to="ghost_target_xyz")]
+        fake.RECIPES = [bad]
+        monkeypatch.setitem(sys.modules, fake_name, fake)
+        monkeypatch.setattr(
+            packs_mod, "PACK_MODULES",
+            packs_mod.PACK_MODULES + ("fake_dangling_pack",))
+        reg = recipes_mod.RecipeRegistry()
+        with __import__("pytest").raises(RuntimeError, match="悬空引用"):
+            reg.load_builtins()
+
+
+class TestContextScreenDensity:
+    """任务书 §2-P1 契约字段：screen_density（04 线供给前 unknown 放行）。"""
+
+    def test_passthrough_from_profile(self) -> None:
+        ctx = EligibilityContext.from_profile({"screenDensity": 12.5})
+        assert ctx.screen_density == 12.5
+
+    def test_absent_is_none(self) -> None:
+        assert EligibilityContext.from_profile({}).screen_density is None
+
+
+class TestFactHintWiring:
+    """evidence_hint 随链尝试转录；护栏词表只读消费。"""
+
+    def test_evidence_hint_propagates_to_attempt(self) -> None:
+        reg = get_recipe_registry()
+        a = _recipe(id="hint_a", required_geometry=["Polygon"])
+        b = _recipe(id="hint_b")
+        a.fallback_links = [FallbackLink(
+            to="hint_b", evidence_hint="点主体可退点图")]
+        for r in (a, b):
+            reg.register(r)
+        try:
+            res = resolve_fallback_chain(a, profile={
+                "geometryTypes": ["Point"], "featureCount": 50}, registry=reg)
+            assert res.resolved
+            att = next(x for x in res.attempts if x.to_recipe == "hint_b")
+            assert att.evidence.get("evidence_hint") == "点主体可退点图"
+        finally:
+            reg.unregister("hint_a")
+            reg.unregister("hint_b")
+
+    def test_protected_task_marked_readonly(self) -> None:
+        from app.services.gis_harness.planner import fact_signals
+
+        from app.services.gis_harness.intent import MapRequestIntent
+
+        ctx = EligibilityContext.from_profile({
+            "geometryTypes": ["Point"], "featureCount": 100,
+            "crs": "EPSG:4326", "crsClass": "geographic"})
+        intent = MapRequestIntent(query="自相关", task="spatial_autocorrelation")
+        out = fact_signals(ctx, intent=intent)
+        assert out["evidence"].get("protected_task") == "spatial_autocorrelation"
+        assert all(c.get("protected_task") for c in out["conflicts"])
+
+
 class TestDanglingFallbackLinkValidation:
     def test_dangling_link_reported(self) -> None:
         from app.services.gis_harness.registry_validation import validate_gis_library

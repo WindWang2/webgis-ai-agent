@@ -44,6 +44,7 @@ coverage_ratio}}` 由 04 线（数据剖析）逐步供给；本线定义接口�
 | 缺失率 | `FIELD_MISSING_RATIO_HIGH` | 超 max_missing_ratio |
 | 分布形态 | `DISTRIBUTION_UNFIT` | 零膨胀/偏态/重尾/近均匀不在白名单 |
 | CRS 与尺度 | `PROJECTED_CRS_REQUIRED` / `SPARSE_FOR_AGGREGATION` | 地理 CRS 聚合；点密度不足 |
+| （契约字段）screen_density | — | `EligibilityContext.screen_density` 预留（04 线供给前 unknown 放行） |
 | 时间覆盖 | `TEMPORAL_FIELD_ABSENT` / `TEMPORAL_COVERAGE_INSUFFICIENT` | 时间字段缺席/覆盖不足 |
 
 原则：**未知 ≠ 不满足**——事实缺席一律 unknown 放行（与义务评估同红线），
@@ -62,8 +63,11 @@ reason_code, evidence_hint, auto_generated}]`，与元素级 `RecipeFallback`
 - 起点 eligible → 原地 resolved；
 - 否则按声明序评估 links：原因码不匹配 → 落选留痕（eligible=None）；
   匹配 → 对目标做完整复检；
-- 多条目标同时 eligible → 按 registry 排序键（priority, id）取最优，
-  落选者显式记录（`demoted_by_sort_key`）；
+- 多条目标同时 eligible → 按 registry 排序键取最优，落选者显式记录
+  （`demoted_by_sort_key`）。说明：链求解是 intent 无关的纯函数，11 层
+  排序键的 1-9 层（task/cartography/keyword/本体/项目记忆路由）已在
+  **origin recipe 选择时**生效；链上仲裁取其设备无关的尾层
+  （priority, id）——不重复实现路由层；
 - 目标全败 → 递归进入目标的链（深度优先、环守卫、depth_limit=4）；
 - 链空/穷尽 → 通用兜底 `DEFAULT_FALLBACK_CHAIN`（点图 → 分级图，
   `auto_generated=True`）。
@@ -112,9 +116,10 @@ intent —— `intent._HINT_OVERRIDABLE` / `_HINT_PROTECTED_TASKS` 只读消费
 
 164/164 recipe 具备 fallback 声明：100 条元素级 `RecipeFallback`（存量）+
 64 条 `fallback_links`（本线补齐，其中 60 条 `auto_generated=true` 通用链，
-4 条 seed 领域链）。`registry_validation` 新增悬空引用校验：`fallback_links.to`
-或通用链目标指向未注册 recipe → 启动期 fail-loud（与 recipe packs 加载语义
-一致）。`scripts/recipe_eligibility_audit.py`（gitignore allowlist）供定期审计。
+4 条 seed 领域链）。悬空引用双重门：**运行闸**在 `load_builtins()`（构建后校验
+`fallback_links.to` 与 `DEFAULT_FALLBACK_CHAIN` 目标，悬空即 RuntimeError
+—— 知识库不完整拒绝服役，get_recipe_registry 惰性单例保证每次访问重抛）；
+**测试/工具闸**在 `validate_gis_library`（注入坏引用即红，有测试）。`scripts/recipe_eligibility_audit.py`（gitignore allowlist）供定期审计。
 
 ## 3. 后果
 

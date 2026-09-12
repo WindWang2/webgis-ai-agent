@@ -209,6 +209,9 @@ class EligibilityContext(BaseModel):
     distribution: Optional[DistributionFacts] = None
     spatial: Optional[SpatialFacts] = None
     temporal: Optional[TemporalFacts] = None
+    # 屏幕密度估计（要素数 / 目标视口面积；任务书 §2-P1 契约字段）。
+    # 04 线数据剖析供给前恒 None —— unknown 放行，不虚构。
+    screen_density: Optional[float] = None
 
     @classmethod
     def from_profile(cls, profile: Optional[Dict[str, Any]]) -> "EligibilityContext":
@@ -244,6 +247,7 @@ class EligibilityContext(BaseModel):
             geometry=_geometry_category(
                 list(geom_types) if isinstance(geom_types, (list, tuple)) else []),
             n=_profile_count(p.get("featureCount")),
+            screen_density=_finite_or_none(p.get("screenDensity")),
             fields=fields_facts,
             distribution=DistributionFacts(
                 skew=_finite_or_none((p.get("distribution") or {}).get("skew"))
@@ -458,7 +462,9 @@ def run_eligibility_rules(
         for exp in rule.field_expectations:
             r = check_field_cardinality(ctx, exp)
             results.append(r.model_copy(update={"check": prefix + r.check}))
-            if exp.max_missing_ratio is not None:
+            # 缺失率已被基数检查以同一原因码拒绝时不再重复记录（同一
+            # 条件一条 DisabledElement，决策不冗余）。
+            if exp.max_missing_ratio is not None                     and r.reason_code != "FIELD_MISSING_RATIO_HIGH":
                 r2 = check_missing_ratio(ctx, exp)
                 results.append(r2.model_copy(update={"check": prefix + r2.check}))
         if rule.allowed_distribution_shapes:
@@ -793,8 +799,13 @@ def resolve_fallback_chain(
                 note="" if report_target.eligible else next(
                     (d.reason_code for d in report_target.disabled), "ineligible"),
                 auto_generated=link.auto_generated or auto,
-                evidence={"disabled": [d.reason_code for d in report_target.disabled][:4]}
-                if not report_target.eligible else {},
+                evidence={
+                    **({"evidence_hint": link.evidence_hint}
+                       if link.evidence_hint else {}),
+                    **({"disabled": [d.reason_code
+                                     for d in report_target.disabled][:4]}
+                       if not report_target.eligible else {}),
+                },
             ))
             if report_target.eligible:
                 matched.append((link, target, report_target))
@@ -1416,6 +1427,25 @@ class RecipeRegistry:
             raise RuntimeError(
                 "recipe packs 加载失败（知识库不完整，拒绝退化服役）："
                 + "; ".join(failed_modules)
+            )
+        # V4（ADR-0151）：声明式降级链完整性 —— 悬空 fallback 目标会让
+        # 链式降级在生产期静默跳过环节。知识库不完整必须启动期显性失败
+        # （与上方逐模块 fail-loud 同一语义；validate_gis_library 的
+        # 同名检查是测试/工具面，本门才是启动闸）。
+        dangling = [
+            f"{rid} -> {link.to}"
+            for rid, r in self._by_id.items()
+            for link in (r.fallback_links or [])
+            if link.to not in self._by_id
+        ] + [
+            f"DEFAULT_FALLBACK_CHAIN -> {target}"
+            for target in DEFAULT_FALLBACK_CHAIN
+            if target not in self._by_id
+        ]
+        if dangling:
+            raise RuntimeError(
+                "recipe fallback 链悬空引用（知识库不完整，拒绝退化服役）："
+                + "; ".join(dangling[:8])
             )
 
     def register(self, recipe: CartographyRecipe) -> None:

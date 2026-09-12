@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Iterable, List, Optional
 
 from app.services.gis_harness.recipes import (
+    DEFAULT_FALLBACK_CHAIN,
     EligibilityRule,
     FallbackLink,
     RecipeFallback,
@@ -181,7 +182,7 @@ MAP_COMPONENTS_CHART = ["title", "legend", "chart_panel", "north_arrow", "scale_
 def auto_fallback(
     *,
     when: str = "数据不达标（通用兜底链）",
-    targets: tuple = ("poi_distribution_overview", "administrative_choropleth"),
+    targets: tuple = DEFAULT_FALLBACK_CHAIN,
 ) -> List[FallbackLink]:
     """通用兜底链声明（ADR-0151 / P7）：点图 → 分级图。
 

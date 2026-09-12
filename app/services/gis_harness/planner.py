@@ -236,6 +236,25 @@ def fact_signals(
                 ),
             })
 
+    # 只读消费 intent 护栏词表（intent.py 归 01 线，本线零改动）：
+    # 受保护任务不可被 hint 降级 —— 事实冲突的披露面上显式标注该约束，
+    # 消费方（LLM/完成管线）不得据此改写任务路由。
+    try:
+        from app.services.gis_harness.intent import (
+            _HINT_OVERRIDABLE,
+            _HINT_PROTECTED_TASKS,
+        )
+
+        task = str(getattr(intent, "task", "") or "") if intent is not None else ""
+        if task:
+            ev["hint_overridable_keys"] = sorted(_HINT_OVERRIDABLE)[:8]
+            if task in _HINT_PROTECTED_TASKS:
+                ev["protected_task"] = task
+                for c in conflicts:
+                    c["protected_task"] = task
+    except Exception:  # noqa: BLE001 — 词表缺席不影响投影主路
+        pass
+
     out["evidence"] = ev
     out["conflicts"] = conflicts[:4]
     return out
