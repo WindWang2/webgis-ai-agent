@@ -26,6 +26,12 @@
       "tablistAria": "系统设置分区",
       "general": "常规",
       "clusterHealth": "集群健康"
+    },
+    "onboarding": {
+      "title": "新手引导",
+      "restartTour": "重看新手引导",
+      "resetHints": "重置全部提示",
+      "hint": "引导覆盖命令面板（Ctrl+K）、查询控制台、跨会话搜索与操作历史等入口；提示卡每条只出现一次。"
     }
   },
   "account": {

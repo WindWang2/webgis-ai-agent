@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { Database, Inbox, Layers, SearchX, Sigma, Table2 } from 'lucide-react';
+import { Database, Inbox, Layers, SearchX, Sigma, Table2, TerminalSquare } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
+import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
 import { describeApiError, isApiError } from '@/lib/api/transport';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import { useT } from '@/lib/i18n/useT';
@@ -396,16 +397,29 @@ export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
       {/* Subtab navigation —— 完整 WAI-APG tablist（role/aria-selected/
           aria-controls/roving tabindex + 方向键与 Home/End 键盘导航）。
           V4 之前是裸 button，无任何 tab 语义，键盘用户只能 Tab 到按钮后回车。 */}
-      <div
-        role="tablist"
-        aria-label={t('sidebar.ds.subtabsAria')}
-        onKeyDown={onSubTabKeyDown}
-        className="flex shrink-0 gap-2 border-b border-edge-subtle bg-surface-overlay px-2.5 pt-2"
-      >
-        {renderSubTabButton('catalog', `空间目录 (${catalogTotal})`, Layers)}
-        {renderSubTabButton('sources', `数据源 (${sources.length})`, Database)}
-        {renderSubTabButton('dataset', '数据集', Table2)}
-        {renderSubTabButton('explain', '查询计划', Sigma)}
+      <div className="flex shrink-0 items-end justify-between border-b border-edge-subtle bg-surface-overlay px-2.5 pt-2">
+        <div
+          role="tablist"
+          aria-label={t('sidebar.ds.subtabsAria')}
+          onKeyDown={onSubTabKeyDown}
+          className="flex gap-2"
+        >
+          {renderSubTabButton('catalog', `空间目录 (${catalogTotal})`, Layers)}
+          {renderSubTabButton('sources', `数据源 (${sources.length})`, Database)}
+          {renderSubTabButton('dataset', '数据集', Table2)}
+          {renderSubTabButton('explain', '查询计划', Sigma)}
+        </div>
+        {/* ADR-0147：高级查询控制台入口（写 SQL 的用户直达，不必经 chat）。
+            tablist 内只放 tab（APG），入口按钮置于 tablist 兄弟位。 */}
+        <button
+          type="button"
+          onClick={() => useQueryConsoleStore.getState().openWith()}
+          className="mb-1 inline-flex shrink-0 items-center gap-1 rounded-md border border-edge-subtle px-2 py-1 text-meta font-medium text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          data-testid="open-query-console"
+        >
+          <TerminalSquare size={13} aria-hidden />
+          {t('sidebar.ds.queryConsole')}
+        </button>
       </div>
 
       {/* Catalog View */}

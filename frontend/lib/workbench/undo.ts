@@ -124,6 +124,26 @@ export function canRedo(): boolean {
   return redoStack.length > 0;
 }
 
+// ── ADR-0147（P5）只增只读访问器：undo 可视化时间线消费，不改变栈语义 ──
+
+/** 撤销栈内容（副本，栈顶在末尾）。只读；外部不得修改。 */
+export function getUndoStack(): readonly WorkbenchCommand[] {
+  return [...undoStack];
+}
+
+/** 重做栈内容（副本，栈顶在末尾）。只读；外部不得修改。 */
+export function getRedoStack(): readonly WorkbenchCommand[] {
+  return [...redoStack];
+}
+
+/** 下一步撤销/重做的标签（面板按钮 tooltip 与读屏播报用）。 */
+export function getNextUndoRedoLabels(): { undo: string | null; redo: string | null } {
+  return {
+    undo: undoStack.at(-1)?.label ?? null,
+    redo: redoStack.at(-1)?.label ?? null,
+  };
+}
+
 /** 撤销栈顶：执行其 undo 重放（旧会话命令已被清栈，不可能跨会话撤销）。 */
 export function undo(): boolean {
   const cmd = undoStack.pop();

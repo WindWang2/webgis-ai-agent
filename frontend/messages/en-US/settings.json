@@ -26,6 +26,12 @@
       "tablistAria": "System settings sections",
       "general": "General",
       "clusterHealth": "Cluster health"
+    },
+    "onboarding": {
+      "title": "Onboarding",
+      "restartTour": "Restart tour",
+      "resetHints": "Reset all hints",
+      "hint": "The tour covers the command palette (Ctrl+K), query console, cross-session search, and edit history; each hint card appears only once."
     }
   },
   "account": {

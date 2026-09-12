@@ -23,7 +23,9 @@
     "components/ui/toast.tsx": 1,
     "components/upload/upload-zone.tsx": 3,
     "app/layout.tsx": 1,
-    "app/story/page.tsx": 2,
+    "app/story/story-view.tsx": 11,
+    "app/story/chapter-artifact.tsx": 6,
+    "app/story/chapter-scrubber.tsx": 3,
     "components/chat/citation.tsx": 10,
     "components/chat/suggested-prompts.tsx": 4,
     "components/layout/context-panel.tsx": 1,
@@ -75,6 +77,15 @@
     "components/sidebar/project/lineage-graph.tsx": 3,
     "components/sidebar/project/project-assets-section.tsx": 7,
     "components/sidebar/project/quality-panel.tsx": 25,
-    "components/sidebar/project/snapshot-timeline.tsx": 58
+    "components/sidebar/project/snapshot-timeline.tsx": 58,
+    "components/command/command-palette-root.tsx": 4,
+    "components/command/command-palette.tsx": 4,
+    "components/command/shortcut-overview.tsx": 7,
+    "components/console/query-console.tsx": 38,
+    "components/onboarding/hint-queue.tsx": 3,
+    "components/onboarding/tour-steps.ts": 18,
+    "components/onboarding/tour.tsx": 4,
+    "components/search/search-drawer.tsx": 12,
+    "components/workbench/undo-history-panel.tsx": 23
   }
 }

@@ -52,6 +52,7 @@
   },
   "ds": {
     "subtabsAria": "Data sub-tabs",
+    "queryConsole": "Query console",
     "loadingCatalog": "Loading spatial catalog…",
     "emptyCatalog": "No spatial datasets match",
     "syncNotice": "\"{name}\" catalog sync: +{added} added · {updated} updated · {unchanged} unchanged · {removed} retired",

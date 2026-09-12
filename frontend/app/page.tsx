@@ -20,6 +20,13 @@ import { hasWorkspaceContent } from '@/lib/utils/workspace-content';
 import { mapInsetLeft, mapChromeLeft } from '@/lib/utils/workspace-inset';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import { setLayerDataSession } from '@/lib/store/layer-data';
+import { useRegisterCommands } from '@/lib/commands/registry';
+import { CommandPaletteRoot } from '@/components/command/command-palette-root';
+import { useQueryConsoleStore } from '@/lib/hooks/use-query-console';
+import { useSearchDrawerStore } from '@/lib/hooks/use-search-drawer';
+import { useUndoHistoryStore } from '@/lib/hooks/use-undo-history';
+import { UndoFlash, UndoHistoryPanel } from '@/components/workbench/undo-history-panel';
+import { OnboardingRoot } from '@/components/onboarding/onboarding-root';
 import { useT } from '@/lib/i18n/useT';
 import { useLayoutMode } from '@/lib/hooks/use-layout-mode';
 
@@ -41,6 +48,8 @@ const HistoryDrawer = dynamic(() => import('@/components/drawers/history-drawer'
 const SettingsPanel = dynamic(() => import('@/components/settings/settings-panel').then(m => ({ default: m.SettingsPanel })), { ssr: false });
 const ExportMask = dynamic(() => import('@/components/map/export-mask').then(m => ({ default: m.ExportMask })), { ssr: false });
 const TemplateGalleryV2 = dynamic(() => import('@/components/drawers/template-gallery-v2').then(m => ({ default: m.TemplateGalleryV2 })), { ssr: false });
+const QueryConsole = dynamic(() => import('@/components/console/query-console').then(m => ({ default: m.QueryConsole })), { ssr: false });
+const SearchDrawer = dynamic(() => import('@/components/search/search-drawer').then(m => ({ default: m.SearchDrawer })), { ssr: false });
 
 const MapPanel = dynamic(
   () => import('@/components/map/map-panel').then((m) => ({ default: m.MapPanel })),
@@ -78,6 +87,7 @@ function MapLoadingHint() {
 export default function Home() {
   const t = useT('layout');
   const tChat = useT('chat');
+  const tCmd = useT('commands');
   // P5 三档布局：desktop 现状 / thin 覆盖 / mobile sheet + 地图全屏
   const layoutMode = useLayoutMode();
   const isMobile = layoutMode === 'mobile';
@@ -255,6 +265,54 @@ export default function Home() {
     }
     startFreshSession();
   }, [startFreshSession]);
+
+  // ADR-0147：会话级命令贡献 —— 依赖本组件持有的会话句柄，按框架约定
+  // 动态注册（新会话走 #553 确认守卫；故事视图新开 tab 不打断当前工作区）。
+  useRegisterCommands(
+    [
+      {
+        id: 'panel.search',
+        title: tCmd('searchCrossSession'),
+        group: tCmd('group.panel'),
+        keywords: 'search cross-session suosou fulltext',
+        run: () => useSearchDrawerStore.getState().openDrawer(),
+      },
+      {
+        id: 'edit.history',
+        title: tCmd('editHistory'),
+        group: tCmd('group.edit'),
+        keywords: 'undo history opslog caozuo lishi',
+        run: () => useUndoHistoryStore.getState().openPanel(),
+      },
+      {
+        id: 'tools.queryConsole',
+        title: tCmd('queryConsole'),
+        group: tCmd('group.tools'),
+        keywords: 'query sql console filter chaxun',
+        run: () => useQueryConsoleStore.getState().openWith(),
+      },
+      {
+        id: 'session.new',
+        title: tCmd('newSession'),
+        group: tCmd('group.session'),
+        keywords: 'new session xinhua hua',
+        run: () => handleNewSession(),
+      },
+      {
+        id: 'session.story',
+        title: tCmd('storyView'),
+        group: tCmd('group.session'),
+        keywords: 'story gushi narrative playback',
+        when: () => Boolean(sessionIdRef.current),
+        run: () => {
+          const sid = sessionIdRef.current;
+          if (sid) window.open(`/story?session_id=${encodeURIComponent(sid)}`, '_blank');
+        },
+      },
+    ],
+    // tCmd 进 deps：语言切换后命令面板标题跟随重注册（registry 契约允许）。
+    [handleNewSession, tCmd],
+  );
 
   const handleDeleteSession = useCallback(
     async (sid: string) => {
@@ -463,6 +521,22 @@ export default function Home() {
 
       {/* Tweaks Panel Wrapper */}
       <TweaksPanel />
+
+      {/* ADR-0147：命令面板（Ctrl+K）/ 快捷键总览（?）挂载根 */}
+      <CommandPaletteRoot />
+
+      {/* ADR-0147：高级查询控制台（data-fabric query 契约消费面） */}
+      <QueryConsole sessionId={sessionId} ownerToken={activeSessionToken} />
+
+      {/* ADR-0147：跨会话搜索（本地索引 + 跳转恢复；handleSelectSession 内含抽屉关闭语义） */}
+      <SearchDrawer onSelectSession={handleSelectSession} />
+
+      {/* ADR-0147：操作历史弹层 + 撤销/重做可见反馈 */}
+      <UndoHistoryPanel />
+      <UndoFlash />
+
+      {/* ADR-0147：首次运行引导 + 上下文提示队列（重看入口在设置 → 系统） */}
+      <OnboardingRoot />
     </div>
   );
 }

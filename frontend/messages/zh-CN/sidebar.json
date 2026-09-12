@@ -52,6 +52,7 @@
   },
   "ds": {
     "subtabsAria": "数据子页签",
+    "queryConsole": "查询控制台",
     "loadingCatalog": "正在加载空间目录...",
     "emptyCatalog": "暂无符合条件的空间数据集",
     "syncNotice": "「{name}」目录同步：新增 {added} · 更新 {updated} · 不变 {unchanged} · 下线 {removed}",

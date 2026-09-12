@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { STitle } from '@/components/shared/section-title';
 import { API_BASE } from '@/lib/api/config';
+import { useOnboardingStore } from '@/lib/onboarding/use-onboarding';
 import { SystemHealthPanel } from '@/components/sidebar/ops/system-health-panel';
 import { LOCALE_LABELS, SUPPORTED_LOCALES, type AppLocale } from '@/lib/i18n/config';
 import { useLocale, useSetLocale, useT } from '@/lib/i18n/useT';
@@ -156,6 +157,38 @@ export function SystemSettings() {
         </div>
         <div className="text-body text-ink-muted italic">
           &quot;All is Agent&quot;
+        </div>
+      </div>
+
+      {/* ADR-0147（P6）：新手引导重看 / 提示重置入口 */}
+      <div>
+        <div className="text-title uppercase tracking-wide text-ink-muted font-medium mb-2">
+          {t('system.onboarding.title')}
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            data-testid="restart-tour"
+            onClick={() => useOnboardingStore.getState().startTour()}
+            className="flex-1 rounded-md border px-3 py-2 text-body font-medium transition-colors"
+            style={{
+              borderColor: 'var(--agent-accent, #16a34a)',
+              color: 'var(--agent-accent)',
+            }}
+          >
+            {t('system.onboarding.restartTour')}
+          </button>
+          <button
+            type="button"
+            data-testid="reset-hints"
+            onClick={() => useOnboardingStore.getState().resetHints()}
+            className="rounded-md border border-edge-subtle px-3 py-2 text-body font-medium text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
+          >
+            {t('system.onboarding.resetHints')}
+          </button>
+        </div>
+        <div className="text-body text-ink-muted mt-1">
+          {t('system.onboarding.hint')}
         </div>
       </div>
       </>
