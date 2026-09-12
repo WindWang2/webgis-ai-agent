@@ -85,6 +85,8 @@ async def test_multipod_turn_ownership_contract(async_client):
             },
         )
         assert resp409.status_code == 409
-        detail = resp409.json()["message"]
+        # ADR-0138 统一信封：detail 为 dict 时结构化载荷移入 data，
+        # message 退化为状态码缺省文案（此处为 "资源状态冲突"）。
+        detail = resp409.json()["data"]
         assert detail["code"] == "TURN_CONTEXT_INACTIVE"
         assert "guidance" in detail

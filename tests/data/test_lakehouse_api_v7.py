@@ -36,6 +36,22 @@ def client(monkeypatch, tmp_path):
     reset_filesystem_blob_store()
     reset_content_store_root_cache()
 
+    # GC 端点（gc/plan、gc/execute）经全局 SessionLocal 直查 catalog /
+    # artifact / run / dataset registry 根表。全套件运行时这些表由
+    # test_lakehouse_gc_v7 同款 create_all 前置建好；文件级单独运行则
+    # 报 no such table。这里自足补建（create_all 只补缺失表，幂等，
+    # 对全套件运行无行为影响）—— 与 test_lakehouse_gc_v7 模式一致。
+    from pathlib import Path as _Path
+
+    import app.models.db_model  # noqa: F401
+    import app.models.lakehouse_catalog  # noqa: F401
+    import app.models.lakehouse_datasets  # noqa: F401
+    import app.models.project  # noqa: F401
+    from app.core.database import Base, Engine
+
+    _Path("./data").mkdir(parents=True, exist_ok=True)
+    Base.metadata.create_all(bind=Engine, checkfirst=True)
+
     async def fake_verify(db, session_id, **kw):
         if session_id not in _OWNED_SESSIONS:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -43,6 +59,17 @@ def client(monkeypatch, tmp_path):
 
     monkeypatch.setattr(lakehouse_mod, "verify_session_owner", fake_verify)
     app = FastAPI()
+    # 镜像 app/main.py 的统一错误信封接线（ADR-0138）：裸 app 不挂 handler
+    # 会让 HTTPException 走默认 {"detail"} 体，与生产行为不符。
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from fastapi.exceptions import RequestValidationError
+    from app.core.exception import (
+        unified_http_exception_handler,
+        unified_validation_exception_handler,
+    )
+
+    app.add_exception_handler(StarletteHTTPException, unified_http_exception_handler)
+    app.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
     app.include_router(router, prefix="/api/v1")
 
     from app.core.auth import get_async_db

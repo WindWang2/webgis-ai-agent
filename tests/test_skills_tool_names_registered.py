@@ -68,6 +68,11 @@ NON_TOOL_IDENTIFIERS = {
     "name_like",
     "to_wgs84",
     "add_layer",
+    # V9 P7：README.md 结构说明里反引号引用的 services 模块文件名
+    # （app/services/skill_creator.py）。它不是工具名 —— 对应的活体工具
+    # 是 create_new_skill（app/tools/skills.py 注册），README.md 无
+    # frontmatter 不会注入 LLM，不存在 UNKNOWN_TOOL 风险。
+    "skill_creator",
 }
 
 

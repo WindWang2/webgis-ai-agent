@@ -337,8 +337,9 @@ async def test_map_export_upload_persist_off_loop(monkeypatch, tmp_path):
             )
         )
         assert observed["thread"] != _main_thread, "export write ran on the event loop thread"
-        assert res["success"] is True
-        assert (tmp_path / res["filename"]).exists()
+        # #1239 后 upload_map_export 返回 response_model=MapExportResponse（生产行为）。
+        assert res.success is True
+        assert (tmp_path / res.filename).exists()
     finally:
         await file.close()
 

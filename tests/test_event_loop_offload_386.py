@@ -204,8 +204,10 @@ async def test_register_kdf_off_loop(monkeypatch):
     fake_db.execute = AsyncMock(return_value=fake_result)
     fake_db.add = MagicMock()  # 同步调用点，避免未 await 的 coroutine 告警
 
+    # ADR-0139 P6 密码策略在 KDF 之前把关：测试输入须自身合规（4 类字符），
+    # 否则 422 抢先返回，offload 观测窗口直接失效。
     req = auth_mod.RegisterRequest(
-        username="tester", email="t@example.com", password="secret123"
+        username="tester", email="t@example.com", password="Secret123!x"
     )
     resp = await _assert_loop_responsive_while(
         lambda: auth_mod.register(req, MagicMock(), db=fake_db)

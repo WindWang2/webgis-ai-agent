@@ -48,6 +48,17 @@ def app(monkeypatch):
     monkeypatch.setattr("app.api.routes.task.verify_session_owner", _noop_verify)
 
     _app = FastAPI()
+    # 镜像 app/main.py 的统一错误信封接线（ADR-0138）：裸 app 不挂 handler
+    # 会让 HTTPException 走默认 {"detail"} 体，与生产行为不符。
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from fastapi.exceptions import RequestValidationError
+    from app.core.exception import (
+        unified_http_exception_handler,
+        unified_validation_exception_handler,
+    )
+
+    _app.add_exception_handler(StarletteHTTPException, unified_http_exception_handler)
+    _app.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
     _app.dependency_overrides[get_current_user] = lambda: _mock_user
     _app.dependency_overrides[get_current_user_optional] = lambda: _mock_user
     _app.dependency_overrides[require_owned_session] = lambda: Conversation(id="test-session", user_id="test-user")
