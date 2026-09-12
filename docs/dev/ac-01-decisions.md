@@ -50,8 +50,27 @@ ruff（变更文件）0 告警；仓库工具链（ruff/pydantic/pytest marker�
 | P1 | P0-P8 全部产物在位（recon/CSV/语料300/semantic/clarification/校准/澄清/evidence/回归/文档/ADR/CHANGELOG） | ✅ |
 | P2 | §5 门禁逐条：overall 1.0 ≥ 0.7733；en 1.0 ≥ 0.9×zh；澄清 100%+零静默 fallback（grep 等价断言在 `test_zero_silent_fallback`）；LLM 不可用全链路不抛错且 `degraded_reason` 有测试；204 条闭环语料冒烟通过；校准 ≤0.15；intent.py -31.6%；单测门禁见 PR 取证；ruff 0 告警；`.github/workflows/**` 零改动（diff stat 佐证） | ✅ |
 | P3 | §3 深化杠杆（600 语料/17 族难例/漂移脚本）为条件项——门禁已达标，未触发 | 按任务书条件语义跳过 |
-| P4 | `/plan-eng-review`（P1/P3 设计架构自评）结论：双轨入口拆分（确定性 resolve ⊕ adaptive）是本设计的承重墙——它同时满足评估复放锁、无 LLM 环境门禁、降级不抛错三约束；备选方案（resolve 内嵌 LLM + 缓存）被否，因缓存引入隐藏状态破坏「同一输入同一输出」的第一设计约束。特异性分级裁决的第一版设想（纯字典序）被语料实证否决（zh-152 跨级冲突），最终三级字典序 (specificity, span, -order) 经 golden 校准 | 结论入本日志 |
+### P4 | `/plan-eng-review`（P1/P3 设计架构自评）结论：双轨入口拆分（确定性 resolve ⊕ adaptive）是本设计的承重墙——它同时满足评估复放锁、无 LLM 环境门禁、降级不抛错三约束；备选方案（resolve 内嵌 LLM + 缓存）被否，因缓存引入隐藏状态破坏「同一输入同一输出」的第一设计约束。特异性分级裁决的第一版设想（纯字典序）被语料实证否决（zh-152 跨级冲突），最终三级字典序 (specificity, span, -order) 经 golden 校准 | 结论入本日志 |
 | P5 | 范围自查：`app/core/config.py` 纯加法（D7）；`tests/conftest.py` 基线钉值（env hygiene 锁要求）；无越界文件 | ✅ |
+
+### 全量单测门禁与基线甄别（2026-09-13）
+
+`pytest tests/unit -q -m "not heavy and not real_services and not perf"`
+（串行，46m48s）：**10,699 passed / 28 failed(unique) / 111 skipped**。
+
+28 个失败逐一在 `origin/master@bf049ad0` 干净 worktree（同一 venv）复跑，
+失败集合**逐条一致**——全部是本机环境既有失败，与本线零关联：
+
+- extensions_platform 9 例：bwrap/rlimit/双进程沙箱原语（Linux 专属）；
+- data_fabric_local_path_guard 4 例：symlink 创建需 Windows 特权；
+- file_adapters_v2 8 例：PMTiles/FlatGeobuf 真实二进制固件路径语义；
+- 零散 7 例：真实 socket / 双进程账本 / mapspec store / postgis 适配器
+  接口 / geocompute 分页 / security_v9（隔离复跑通过，全量序次下的
+  既有 flake）。
+
+另：`test_config_schema_artifact_matches` 初跑失败为**本线真实回归**
+（config.py 新字段未再生 `config.schema.json` 生成物），已通过
+`scripts/gen_config_schema.py` 再生修复并提交。
 
 ## 语义抽取与规则冲突的证据优先级实现口径（§0.5 表第 2 行）
 
