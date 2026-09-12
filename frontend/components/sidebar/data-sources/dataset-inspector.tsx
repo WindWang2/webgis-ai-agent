@@ -9,6 +9,7 @@ import { InlineNotice } from '@/components/shared/inline-notice';
 import { LoadingState } from '@/components/shared/loading-state';
 import { EmptyState } from '@/components/shared/empty-state';
 import { STitle } from '@/components/shared/section-title';
+import { useT } from '@/lib/i18n/useT';
 
 /** 大数据集物化阈值（ADR-0094：超过该规模建议瓦片预览而非 inline 物化）。 */
 export const MATERIALIZE_LARGE_DATASET_THRESHOLD = 5000;
@@ -57,6 +58,7 @@ export function DatasetInspector({
 }: DatasetInspectorProps) {
   // ── 查询构建器状态 ────────────────────────────────────────────────────
   const [selectedFields, setSelectedFields] = useState<string[]>([]);
+  const t = useT();
   const [whereText, setWhereText] = useState('');
   const [bboxEnabled, setBboxEnabled] = useState(false);
   const [useViewBbox, setUseViewBbox] = useState(true);
@@ -85,8 +87,8 @@ export function DatasetInspector({
       <div className="flex-1 overflow-y-auto p-2">
         <EmptyState
           icon={Table2}
-          title="尚未选择数据集"
-          description="在「空间目录」中点击条目的「数据集」按钮，检视契约并构建查询"
+          title={t('sidebar.inspector.emptyTitle')}
+          description={t('sidebar.inspector.emptyDesc')}
         />
       </div>
     );
@@ -144,33 +146,33 @@ export function DatasetInspector({
   return (
     <div className="flex-1 space-y-3 overflow-y-auto p-2">
       {/* ── 契约摘要 ──────────────────────────────────────────────────── */}
-      <section aria-label="数据集契约摘要">
+      <section aria-label={t('sidebar.inspector.contractAria')}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <h4 className="truncate text-body font-semibold text-ink">{item.title || item.name}</h4>
             <p className="mt-0.5 truncate font-mono text-micro text-ink-muted">{item.id}</p>
           </div>
-          {isUnavailable && <StatusBadge status="stale" label="已下线" />}
+          {isUnavailable && <StatusBadge status="stale" label={t('sidebar.inspector.retired')} />}
         </div>
 
         {loadingDescriptor ? (
-          <LoadingState label="正在加载数据集契约..." />
+          <LoadingState label={t('sidebar.inspector.loadingContract')} />
         ) : descriptor ? (
           <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-meta text-ink-secondary">
             <div className="col-span-2 flex justify-between gap-2">
-              <dt className="shrink-0 text-ink-muted">要素总数</dt>
+              <dt className="shrink-0 text-ink-muted">{t('sidebar.inspector.featureTotal')}</dt>
               <dd className="font-mono">{featureCount ?? '未知'}</dd>
             </div>
             <div className="col-span-2 flex justify-between gap-2">
-              <dt className="shrink-0 text-ink-muted">SRS 坐标系</dt>
+              <dt className="shrink-0 text-ink-muted">{t('sidebar.inspector.srs')}</dt>
               <dd className="truncate font-mono">{descriptor.srs || item.crs || '未知'}</dd>
             </div>
             <div className="col-span-2 flex justify-between gap-2">
-              <dt className="shrink-0 text-ink-muted">几何类型</dt>
+              <dt className="shrink-0 text-ink-muted">{t('sidebar.inspector.geomType')}</dt>
               <dd className="font-mono">{descriptor.geometry_type || item.geometry_type || '未知'}</dd>
             </div>
             <div className="col-span-2 flex justify-between gap-2">
-              <dt className="shrink-0 text-ink-muted">空间范围</dt>
+              <dt className="shrink-0 text-ink-muted">{t('sidebar.inspector.bbox')}</dt>
               <dd className="truncate font-mono text-micro" title={JSON.stringify(descriptor.bbox ?? item.bbox)}>
                 {descriptor.bbox?.length === 4
                   ? descriptor.bbox.map((v) => (typeof v === 'number' ? v.toFixed(3) : v)).join(', ')
@@ -179,7 +181,7 @@ export function DatasetInspector({
             </div>
             {fingerprint && (
               <div className="col-span-2 flex justify-between gap-2">
-                <dt className="shrink-0 text-ink-muted">数据集指纹</dt>
+                <dt className="shrink-0 text-ink-muted">{t('sidebar.inspector.fingerprint')}</dt>
                 <dd className="truncate font-mono text-micro" title={fingerprint}>
                   {fingerprint.slice(0, 16)}…
                 </dd>
@@ -187,13 +189,13 @@ export function DatasetInspector({
             )}
           </dl>
         ) : (
-          <p className="mt-2 text-meta text-ink-muted">契约信息不可用（获取 Descriptor 失败）</p>
+          <p className="mt-2 text-meta text-ink-muted">{t('sidebar.inspector.contractUnavailable')}</p>
         )}
 
         {fields.length > 0 && (
           <div className="mt-2">
             <p className={labelClass}>
-              字段 Schema（{fields.length}）
+              {t('sidebar.inspector.fieldSchema', { count: fields.length })}
             </p>
             <div className="mt-1 max-h-32 space-y-0.5 overflow-y-auto rounded-sm border border-edge-subtle bg-surface-sunken p-2 font-mono text-caption">
               {fields.map((f) => (
@@ -209,30 +211,32 @@ export function DatasetInspector({
         {/* 大数据集物化守卫（任务 3）：提示瓦片预览，但不阻断既有物化行为。 */}
         {largeDataset && (
           <InlineNotice variant="warning" className="mt-2">
-            该数据集规模较大（{featureCount} 个要素，阈值 {MATERIALIZE_LARGE_DATASET_THRESHOLD}）。
-            建议优先使用瓦片预览或聚合统计；继续物化可能影响地图性能。
+            {t('sidebar.inspector.largeWarning', {
+              count: featureCount,
+              threshold: MATERIALIZE_LARGE_DATASET_THRESHOLD,
+            })}
           </InlineNotice>
         )}
         {isUnavailable && (
           <InlineNotice variant="error" className="mt-2">
-            该数据集已从数据源下线（元数据保留）：查询与物化可能失败，请先执行「同步」刷新目录。
+            {t('sidebar.inspector.sourceRetired')}
           </InlineNotice>
         )}
       </section>
 
       {/* ── 查询构建器 ────────────────────────────────────────────────── */}
-      <section aria-label="查询构建器" className="space-y-2 rounded-md border border-edge-subtle bg-surface-overlay p-2">
-        <STitle title="查询构建器" sub="where 表达式遵循受限语法（单谓词 AND 连接）" />
+      <section aria-label={t('sidebar.inspector.qbTitle')} className="space-y-2 rounded-md border border-edge-subtle bg-surface-overlay p-2">
+        <STitle title={t('sidebar.inspector.qbTitle')} sub="where 表达式遵循受限语法（单谓词 AND 连接）" />
 
         {/* 字段投影多选 */}
         <fieldset>
-          <legend className={labelClass}>字段投影（不选 = 全部字段）</legend>
+          <legend className={labelClass}>{t('sidebar.inspector.fieldProjection')}</legend>
           {fields.length === 0 ? (
-            <p className="mt-1 text-caption text-ink-disabled">契约字段不可用</p>
+            <p className="mt-1 text-caption text-ink-disabled">{t('sidebar.inspector.fieldsUnavailable')}</p>
           ) : (
             <div
               role="group"
-              aria-label="选择投影字段"
+              aria-label={t('sidebar.inspector.selectProjectionAria')}
               className="mt-1 max-h-28 space-y-0.5 overflow-y-auto rounded-sm border border-edge-subtle bg-surface-sunken p-2"
             >
               {fields.map((f) => (
@@ -261,7 +265,7 @@ export function DatasetInspector({
               onClick={() => setSelectedFields([])}
               className="mt-1 text-micro text-ink-muted underline-offset-2 hover:text-ink hover:underline"
             >
-              清空已选（{selectedFields.length}）
+              {t('sidebar.inspector.clearSelected', { count: selectedFields.length })}
             </button>
           )}
         </fieldset>
@@ -269,7 +273,7 @@ export function DatasetInspector({
         {/* where 表达式 */}
         <div className="flex flex-col gap-1">
           <label htmlFor={whereId} className={labelClass}>
-            过滤表达式（where）
+            {t('sidebar.inspector.whereExpr')}
           </label>
           <input
             id={whereId}
@@ -283,17 +287,17 @@ export function DatasetInspector({
 
         {/* bbox 空间过滤 */}
         <fieldset>
-          <legend className={labelClass}>空间过滤（bbox）</legend>
+          <legend className={labelClass}>{t('sidebar.inspector.bboxFilter')}</legend>
           <label className="mt-1 flex cursor-pointer items-center gap-1.5 text-caption text-ink-secondary">
             <input
               type="checkbox"
               checked={bboxEnabled}
               onChange={(e) => setBboxEnabled(e.target.checked)}
-              aria-label="启用 bbox 空间过滤"
+              aria-label={t('sidebar.inspector.enableBboxAria')}
               className="rounded-sm border-edge-strong"
               style={{ accentColor: 'var(--agent-accent, #16a34a)' }}
             />
-            <span>启用空间范围过滤</span>
+            <span>{t('sidebar.inspector.enableBbox')}</span>
           </label>
           {bboxEnabled && (
             <div className="mt-1.5 space-y-1.5 pl-4">
@@ -306,7 +310,7 @@ export function DatasetInspector({
                     onChange={() => setUseViewBbox(true)}
                     style={{ accentColor: 'var(--agent-accent, #16a34a)' }}
                   />
-                  <span>使用当前视图范围</span>
+                  <span>{t('sidebar.inspector.useCurrentView')}</span>
                 </label>
                 <label className="flex cursor-pointer items-center gap-1">
                   <input
@@ -316,7 +320,7 @@ export function DatasetInspector({
                     onChange={() => setUseViewBbox(false)}
                     style={{ accentColor: 'var(--agent-accent, #16a34a)' }}
                   />
-                  <span>手动输入</span>
+                  <span>{t('sidebar.inspector.manualInput')}</span>
                 </label>
               </div>
               {useViewBbox ? (
@@ -357,7 +361,7 @@ export function DatasetInspector({
         <div className="flex gap-2">
           <div className="w-24">
             <label htmlFor={limitId} className={labelClass}>
-              行数上限
+              {t('sidebar.inspector.limitRows')}
             </label>
             <input
               id={limitId}
@@ -370,7 +374,7 @@ export function DatasetInspector({
           </div>
           <div className="flex-1">
             <label htmlFor="qb-order-field" className={labelClass}>
-              排序字段
+              {t('sidebar.inspector.sortField')}
             </label>
             <select
               id="qb-order-field"
@@ -378,7 +382,7 @@ export function DatasetInspector({
               onChange={(e) => setOrderField(e.target.value)}
               className={selectClass}
             >
-              <option value="">不排序</option>
+              <option value="">{t('sidebar.inspector.noSort')}</option>
               {fieldNames.map((n) => (
                 <option key={n} value={n}>
                   {n}
@@ -388,7 +392,7 @@ export function DatasetInspector({
           </div>
           <div className="w-20">
             <label htmlFor="qb-order-dir" className={labelClass}>
-              方向
+              {t('sidebar.inspector.direction')}
             </label>
             <select
               id="qb-order-dir"
@@ -396,17 +400,17 @@ export function DatasetInspector({
               onChange={(e) => setOrderDirection(e.target.value === 'desc' ? 'desc' : 'asc')}
               disabled={!orderField}
               className={selectClass}
-              aria-label="排序方向"
+              aria-label={t('sidebar.inspector.sortDirAria')}
             >
-              <option value="asc">升序</option>
-              <option value="desc">降序</option>
+              <option value="asc">{t('sidebar.inspector.asc')}</option>
+              <option value="desc">{t('sidebar.inspector.desc')}</option>
             </select>
           </div>
         </div>
 
         {/* 聚合 */}
         <fieldset>
-          <legend className={labelClass}>聚合（设置后自动切换为统计模式）</legend>
+          <legend className={labelClass}>{t('sidebar.inspector.aggregate')}</legend>
           <div className="mt-1 grid grid-cols-3 gap-1.5">
             <select
               value={aggFunc}
@@ -414,10 +418,10 @@ export function DatasetInspector({
                 setAggFunc(e.target.value);
                 setAggField('');
               }}
-              aria-label="聚合函数"
+              aria-label={t('sidebar.inspector.aggFuncAria')}
               className={selectClass}
             >
-              <option value="">无</option>
+              <option value="">{t('sidebar.inspector.none')}</option>
               {AGG_FUNCS.map((f) => (
                 <option key={f} value={f}>
                   {f}
@@ -428,7 +432,7 @@ export function DatasetInspector({
               value={aggField}
               onChange={(e) => setAggField(e.target.value)}
               disabled={!aggNeedsField}
-              aria-label="聚合字段"
+              aria-label={t('sidebar.inspector.aggFieldAria')}
               className={selectClass}
             >
               <option value="">{FIELDLESS_AGGS.has(aggFunc) ? '（无需字段）' : '选择字段'}</option>
@@ -442,10 +446,10 @@ export function DatasetInspector({
               value={groupByField}
               onChange={(e) => setGroupByField(e.target.value)}
               disabled={!aggFunc}
-              aria-label="分组字段（group by）"
+              aria-label={t('sidebar.inspector.groupByAria')}
               className={selectClass}
             >
-              <option value="">不分组</option>
+              <option value="">{t('sidebar.inspector.noGroup')}</option>
               {fieldNames.map((n) => (
                 <option key={n} value={n}>
                   {n}
@@ -456,7 +460,7 @@ export function DatasetInspector({
           {aggFunc && (
             <p className="mt-1 text-micro text-ink-muted">
               <Sigma size={10} className="mr-0.5 inline" aria-hidden />
-              result_mode 将切换为 statistics（仅返回聚合结果，不传输 geometry）
+              {t('sidebar.inspector.statsModeHint')}
             </p>
           )}
         </fieldset>

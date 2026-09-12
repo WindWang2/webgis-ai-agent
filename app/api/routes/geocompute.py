@@ -44,6 +44,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/geocompute", tags=["GeoCompute / 执行平面"])
 
 
+
+async def _enforce_org_quota(user):
+    """ADR-0139 P5：org 配额三查（速率 + 并发；存储在 lakehouse 写面收口）。
+
+    薄封装 org_quota.enforce_for_principal（单一实现纪律）；配额面
+    不可用 fail-open，越限 QUOTA → 429 分类学信封（A 线协调点）。
+    """
+    from app.services import org_quota
+
+    await org_quota.enforce_for_principal(user)
+
+
 def _plan_from_request(data: ExecutionPlanIn):
     from app.services.geocompute.plan import (
         CrsExpectation,
@@ -244,10 +256,16 @@ async def submit_execution_plan(
     except GeoComputeError as exc:
         raise HTTPException(status_code=422, detail=exc.to_dict())
 
+    # ADR-0139 P5：org 配额三查（并发/速率；存储在 lakehouse 写路径收口）。
+    # 查询失败 fail-open（服务层保护性限流不放大故障）；越限 →
+    # QuotaExceededError（category=QUOTA → 429 分类学信封）。
+    await _enforce_org_quota(user)
+
     def _submit():
         if body.session_id:
             _authorize_session_write_sync(body.session_id, user, owner_token)
         from app.core.auth import actor_ids
+        from app.core import tenancy
         from app.services.geocompute.durable import queue_for_node
         from app.services.geocompute.executor import owner_scope_for
 
@@ -302,7 +320,8 @@ async def submit_execution_plan(
             owner_scope=owner_scope_for(dict(user), body.session_id),
             session_id=body.session_id,
             creator_id=str(uid) if uid else None,
-            org_id=str(org_id) if org_id else None,
+            # ADR-0139：匿名/无 org 提交归 default 隔离桶（org 是 NOT NULL 硬约束）
+            org_id=tenancy.effective_org_in_thread(user),
             project_id=body.project_id,
             tenant_raw=str(org_id) if org_id else None,
             project_raw=body.project_id,
@@ -353,9 +372,11 @@ async def list_execution_runs(
     statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
 
     def _list():
+        from app.core import tenancy
+
         store = ClusterRunStore()
-        items = store.list_runs(owner_scope, statuses=statuses,
-                                limit=limit, offset=offset)
+        items = store.list_runs(owner_scope, org_id=tenancy.effective_org_in_thread(user),
+                                statuses=statuses, limit=limit, offset=offset)
         listed_ids = {item["run_id"] for item in items}
         snapshots: list[Dict[str, Any]] = []
         try:
@@ -427,9 +448,12 @@ async def get_execution_run(
         return _run_response(run, owner_scope)
 
     def _cluster_row():
+        from app.core import tenancy
         from app.services.geocompute.cluster.store import ClusterRunStore
 
-        return ClusterRunStore().get_run_owned(run_id, owner_scope)
+        return ClusterRunStore().get_run_owned(
+            run_id, owner_scope, org_id=tenancy.effective_org_in_thread(user)
+        )
 
     try:
         row = await asyncio.to_thread(_cluster_row)
@@ -506,10 +530,14 @@ async def cancel_execution_run(
         # 且 cluster 行缺席（纯同步执行路径）时是 no-op。
         try:
             def _persist_flag():
+                from app.core import tenancy
                 from app.services.geocompute.cluster.store import ClusterRunStore
 
                 store = ClusterRunStore()
-                if store.get_run_owned(run_id, owner_scope) is not None:
+                if store.get_run_owned(
+                    run_id, owner_scope,
+                    org_id=tenancy.effective_org_in_thread(user),
+                ) is not None:
                     store.request_cancel(run_id)
 
             await asyncio.to_thread(_persist_flag)
@@ -524,10 +552,13 @@ async def cancel_execution_run(
     # 本进程内存未命中（多副本在飞 run / cluster 排队 run）→ 持久旗标路径。
     # owner 域校验在 store 侧（他人/未知一律 None → 404，不泄漏存在性）。
     def _cancel_persistent():
+        from app.core import tenancy
         from app.services.geocompute.cluster.store import ClusterRunStore
 
         store = ClusterRunStore()
-        row = store.get_run_owned(run_id, owner_scope)
+        row = store.get_run_owned(
+            run_id, owner_scope, org_id=tenancy.effective_org_in_thread(user)
+        )
         if row is None:
             return None, None
         changed, observed = store.request_cancel(run_id)
@@ -595,10 +626,13 @@ async def list_run_events(
     owner_scope = owner_scope_for(user)
 
     def _events():
+        from app.core import tenancy
         from app.services.geocompute.cluster.store import ClusterRunStore
 
         store = ClusterRunStore()
-        if store.get_run_owned(run_id, owner_scope) is None:
+        if store.get_run_owned(
+            run_id, owner_scope, org_id=tenancy.effective_org_in_thread(user)
+        ) is None:
             return None
         from app.services.geocompute.cluster.events import RunEventStore
 

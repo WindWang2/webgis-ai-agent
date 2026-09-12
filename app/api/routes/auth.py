@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -18,8 +19,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.password_policy import (
+    PasswordPolicyError,
+    record_login_failure,
+    reset_login_failures,
+    validate_password_strength,
+)
 from app.core.auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
+    REFRESH_TOKEN_EXPIRE_DAYS,
     REFRESH_TOKEN_EXPIRE_MINUTES,
     TOKEN_TYPE_REFRESH,
     _DUMMY_STORED,
@@ -78,11 +86,28 @@ def _user_to_dict(u: User) -> dict:
     }
 
 
-def _issue_token_pair(user: User) -> TokenResponse:
-    """为给定 user 签发 access + refresh token 对。"""
+def _issue_token_pair(
+    user: User,
+    *,
+    family_id: Optional[str] = None,
+    refresh_jti: Optional[str] = None,
+) -> TokenResponse:
+    """为给定 user 签发 access + refresh token 对。
+
+    ADR-0139 P3：写入 ``scopes`` claim（角色默认集的线格式）。refresh
+    时按**当前**角色重算（角色降级在下次刷新即收敛，不等 access 过期）。
+    ADR-0139 P6：``family_id`` 提供时写入 ``fam`` claim（家族轮换语义）；
+    ``refresh_jti`` 提供时作为新 refresh 的 jti（家族行先行写入，保证
+    行与 token 一致）。
+    """
+    from app.core.scopes import scopes_for_role
+
     token_data = {"sub": user.id, "username": user.username, "role": user.role}
     if getattr(user, "org_id", None) is not None:
         token_data["org_id"] = user.org_id
+    token_data["scopes"] = " ".join(sorted(scopes_for_role(user.role)))
+    if family_id:
+        token_data["fam"] = str(family_id)
     access = create_access_token(
         data=token_data,
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
@@ -92,6 +117,8 @@ def _issue_token_pair(user: User) -> TokenResponse:
         data=token_data,
         expires_delta=timedelta(minutes=REFRESH_TOKEN_EXPIRE_MINUTES),
         token_version=user.token_version,
+        jti=refresh_jti,
+        family_id=family_id,
     )
     return TokenResponse(
         access_token=access,
@@ -99,6 +126,32 @@ def _issue_token_pair(user: User) -> TokenResponse:
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         user=UserInfo(**_user_to_dict(user)),
     )
+
+
+async def _new_pair_with_family(db: AsyncSession, user: User) -> TokenResponse:
+    """带家族的 token 对（登录/注册路径）：建家族 + 首对 token。
+
+    先定 jti → 写家族行（current_jti=jti）→ 以同一 jti 签 refresh，
+    保证「行与 token 一致」不变量。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.db_model import RefreshTokenFamily
+
+    family_id = secrets.token_hex(16)
+    first_jti = secrets.token_hex(16)
+    db.add(RefreshTokenFamily(
+        user_id=str(user.id),
+        family_id=family_id,
+        current_jti=first_jti,
+        expires_at=datetime.now(timezone.utc)
+        + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS + 1),
+    ))
+    await db.commit()
+    return _issue_token_pair(user, family_id=family_id, refresh_jti=first_jti)
+
+
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 
 
 @router.post(
@@ -128,6 +181,13 @@ async def register(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="公开注册已禁用；联系运维创建账号（manage.py create_admin）",
         )
+
+    # ADR-0139 P6：密码策略（长度/字符类/常见密码表）；422 与
+    # Pydantic 校验失败同一形态（诚实拒绝，不落入弱口令落库再修）。
+    try:
+        validate_password_strength(req.password)
+    except PasswordPolicyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
     # 限速：每 IP 每小时最多 5 次注册（防账号农场 + 减少攻击面）
     client_ip = _get_client_ip(request)
@@ -167,7 +227,7 @@ async def register(
     await db.commit()
     await db.refresh(user)
 
-    return _issue_token_pair(user)
+    return await _new_pair_with_family(db, user)
 
 
 @router.post(
@@ -216,6 +276,12 @@ async def login(
     if not user or not valid:
         # audit #839: 失败记入 fail 台账（窗口 5 分钟，计数 5 次锁出）
         await limiter.record(f"auth_login_fail:{client_ip}", 300)
+        # ADR-0139 P6：渐进延迟（进程内 best-effort；跨进程硬上界仍由
+        # 既有限流承担）。延迟在响应前施加 —— 不泄漏「失败但已延迟」
+        # 之外的任何信息，且 dummy-hash 路径同样走完整 scrypt。
+        delay_s = record_login_failure(req.identifier)
+        if delay_s > 0:
+            await asyncio.sleep(delay_s)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账号已停用")
@@ -224,8 +290,9 @@ async def login(
     user.login_count = (user.login_count or 0) + 1
     await db.commit()
     await db.refresh(user)
+    reset_login_failures(req.identifier)
 
-    return _issue_token_pair(user)
+    return await _new_pair_with_family(db, user)
 
 
 @router.post(
@@ -293,10 +360,57 @@ async def refresh(
     ):
         raise HTTPException(status_code=429, detail="刷新过于频繁，请稍后再试")
 
-    # Soft rotation: 发新 refresh token (新 jti)；旧 refresh token 仍签名有效，
-    # 但前端应当丢弃它 (recommended: refresh 后立即用新 token 替换旧 token)。
-    # 真正的 rotation 需要 refresh_tokens 表存 jti，本迭代不做 (logout =
-    # bump ver 已经覆盖主要威胁)。
+    # ── ADR-0139 P6：家族轮换 + 重用检测 ─────────────────────────────
+    # 带 ``fam`` claim 的 token 走严格 rotation：jti 必须等于家族行的
+    # current_jti（最新签发）；旧 jti 再次出现 = 重放 → 整个家族失效
+    # （合法用户与攻击者的并存被一次性终结，防互踢循环）。
+    fam = payload.get("fam")
+    tok_jti = payload.get("jti")
+    if fam:
+        from datetime import datetime, timezone
+
+        from app.models.db_model import RefreshTokenFamily
+
+        row = (await db.execute(
+            select(RefreshTokenFamily).where(
+                RefreshTokenFamily.family_id == str(fam),
+                RefreshTokenFamily.user_id == user_id,
+            )
+        )).scalar_one_or_none()
+        if row is None or row.reuse_detected:
+            raise HTTPException(
+                status_code=401,
+                detail="Refresh token family revoked, please re-login",
+            )
+        if not tok_jti or str(tok_jti) != row.current_jti:
+            # 重放（或陈旧副本）：家族全失效 + 审计事件（fail-open）
+            row.reuse_detected = True
+            await db.commit()
+            try:
+                from app.services.audit import (
+                    ACTION_AUTH_REFRESH_REUSE, record_audit)
+
+                await record_audit(
+                    db, action=ACTION_AUTH_REFRESH_REUSE,
+                    actor_id=user_id, org_id=user.org_id,
+                    target_type="refresh_family",
+                    target_id=str(fam),
+                )
+            except Exception:  # noqa: BLE001 - 审计失败不改变拒绝语义
+                pass
+            raise HTTPException(
+                status_code=401,
+                detail="Refresh token replayed; family revoked, please re-login",
+            )
+        # 严格 rotation：新 jti 前移家族行，再签新 token 对（行先行，一致）
+        new_jti = secrets.token_hex(16)
+        row.current_jti = new_jti
+        row.rotated_at = datetime.now(timezone.utc)
+        await db.commit()
+        return _issue_token_pair(user, family_id=str(fam), refresh_jti=new_jti)
+
+    # Legacy soft rotation：无 ``fam`` claim 的存量 token（部署窗口 ≤7d，
+    # 与迁移 back-compat 同纪律）；过期后该路径自然不再触达。
     return _issue_token_pair(user)
 
 

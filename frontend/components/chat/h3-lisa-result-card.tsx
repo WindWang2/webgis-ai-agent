@@ -1,4 +1,5 @@
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import { Hexagon, Target, Sparkles } from 'lucide-react';
 
@@ -24,18 +25,19 @@ interface Props {
   onFocus?: (layerId: string) => void;
 }
 
-const CLUSTER_CONFIG: Record<string, { label: string; bg: string; text: string; desc: string }> = {
+const CLUSTER_CONFIG: Record<string, { labelKey: string; bg: string; text: string; desc: string }> = {
   /* C：聚类色板收敛到 V4 status 词汇（红=critical / 蓝=info / 橙=warning /
      灰=neutral，均换 AA 达标值）。LH 的 cyan 在 V4 里没有对应 token，为保留
      四类聚类的色相区分而保留原色相，浅色档加深一档（cyan-700）过 AA。 */
-  HH: { label: '高-高热点', bg: 'bg-status-critical-soft border-status-critical-border', text: 'text-status-critical', desc: '显著高值聚集区' },
-  LL: { label: '低-低冷点', bg: 'bg-status-info-soft border-status-info-border', text: 'text-status-info', desc: '显著低值聚集区' },
-  HL: { label: '高-低异常', bg: 'bg-status-warning-soft border-status-warning-border', text: 'text-status-warning', desc: '高值包围低值' },
-  LH: { label: '低-高异常', bg: 'bg-cyan-500/15 border-cyan-500/30', text: 'text-cyan-700 dark:text-cyan-400', desc: '低值包围高值' },
-  NS: { label: '不显著', bg: 'bg-status-neutral-soft border-status-neutral-border', text: 'text-status-neutral', desc: '无显著空间关联' },
+  HH: { labelKey: 'lisa.hh', bg: 'bg-status-critical-soft border-status-critical-border', text: 'text-status-critical', desc: '显著高值聚集区' },
+  LL: { labelKey: 'lisa.ll', bg: 'bg-status-info-soft border-status-info-border', text: 'text-status-info', desc: '显著低值聚集区' },
+  HL: { labelKey: 'lisa.hl', bg: 'bg-status-warning-soft border-status-warning-border', text: 'text-status-warning', desc: '高值包围低值' },
+  LH: { labelKey: 'lisa.lh', bg: 'bg-cyan-500/15 border-cyan-500/30', text: 'text-cyan-700 dark:text-cyan-400', desc: '低值包围高值' },
+  NS: { labelKey: 'lisa.ns', bg: 'bg-status-neutral-soft border-status-neutral-border', text: 'text-status-neutral', desc: '无显著空间关联' },
 };
 
 export function H3LisaResultCard({ result, layerId, onFocus }: Props) {
+  const t = useT();
   if (!result) return null;
 
   // Extract counts from result body or metadata
@@ -59,10 +61,10 @@ export function H3LisaResultCard({ result, layerId, onFocus }: Props) {
       <div className="flex items-center justify-between mb-2.5">
         <div className="flex items-center gap-1.5 font-semibold text-ink">
           <Hexagon className="h-4 w-4 text-status-info shrink-0" />
-          <span>H3 LISA 空间聚类分析</span>
+          <span>{t('chat.lisa.title')}</span>
         </div>
         <span className="text-meta px-2 py-0.5 rounded-pill bg-status-info-soft text-status-info font-mono font-medium">
-          字段: {valueField}
+          {t('chat.lisa.field')} {valueField}
         </span>
       </div>
 
@@ -79,7 +81,7 @@ export function H3LisaResultCard({ result, layerId, onFocus }: Props) {
                 className={`p-2 rounded-md border ${cfg.bg} flex flex-col justify-between transition-all`}
               >
                 <div className="flex items-center justify-between">
-                  <span className={`text-meta font-bold ${cfg.text}`}>{cfg.label}</span>
+                  <span className={`text-meta font-bold ${cfg.text}`}>{t(`chat.${cfg.labelKey}`)}</span>
                   <span className={`text-body font-mono font-bold ${cfg.text}`}>{count}</span>
                 </div>
                 <span className="text-meta text-ink-muted truncate mt-0.5">{cfg.desc}</span>
@@ -109,7 +111,7 @@ export function H3LisaResultCard({ result, layerId, onFocus }: Props) {
             className="inline-flex items-center gap-1 font-medium text-status-info hover:underline transition-colors"
           >
             <Target className="h-3.5 w-3.5" />
-            高亮图层
+            {t('chat.carto.highlightLayer')}
           </button>
         )}
       </div>

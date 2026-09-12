@@ -5,7 +5,13 @@
 import pytest
 
 fastapi_testclient = pytest.importorskip("fastapi.testclient")
-pytest.importorskip("weasyprint", reason="WeasyPrint not installed")
+try:
+    import weasyprint  # noqa: F401
+except (ImportError, OSError):
+    # Windows 无 GTK 时 import 期抛 OSError（缺 libpango）——与
+    # ImportError 同等视为缺席（V9 data-lifecycle 线顺带修复）。
+    pytest.skip("WeasyPrint unavailable (ImportError/OSError)",
+                allow_module_level=True)
 
 pytestmark = pytest.mark.cartography
 

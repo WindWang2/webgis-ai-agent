@@ -73,6 +73,13 @@ def _owner(user: Dict[str, Any], session_id: str = "") -> str:
     return SV.owner_scope_for(user, session_id or None)
 
 
+def _org(user: Dict[str, Any]) -> str:
+    """effective org（ADR-0139）：JWT org → default 桶（同步线程解析）。"""
+    from app.core import tenancy
+
+    return tenancy.effective_org_in_thread(user)
+
+
 def _svc() -> SV.WorkflowRuntimeService:
     return SV.get_service()
 
@@ -99,7 +106,7 @@ async def register_package(
         result = await asyncio.to_thread(
             svc.compile_and_register, body.query, owner_scope=owner,
             recipe_id=body.recipe_id, profile=body.profile,
-            project_id=body.project_id)
+            project_id=body.project_id, org_id=_org(user))
     except SV.WorkflowRuntimeError as e:
         raise _http(e.code, 422, e.detail)
     except (ValueError, RecursionError) as e:
@@ -155,11 +162,20 @@ async def create_instance(
 ):
     svc = _svc()
     owner = _owner(user, body.session_id)
+    # ADR-0139 P5：org 配额（并发 + 速率；越限 QUOTA → 429；面不可用放行）
+    from app.services import org_quota
+
+    try:
+        org_eff = await org_quota.enforce_for_principal(user)
+    except org_quota.QuotaExceededError:
+        raise
+    except Exception:  # noqa: BLE001
+        org_eff = ""
     try:
         inst = await asyncio.to_thread(
             svc.instantiate, body.package_id, owner_scope=owner,
             session_id=body.session_id, version=body.version,
-            project_id=body.project_id)
+            project_id=body.project_id, org_id=org_eff or _org(user))
     except SV.WorkflowRuntimeError as e:
         status = 404 if e.code == "PACKAGE_NOT_FOUND" else 422
         raise _http(e.code, status, e.detail)

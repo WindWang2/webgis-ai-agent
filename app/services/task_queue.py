@@ -15,7 +15,9 @@ celery_app = Celery(
     "webgis_tasks",
     broker=broker_url,
     backend=result_backend,
-    include=["app.services.spatial_tasks", "app.tasks.explorer.task_chain", "app.services.geocompute.tasks"]
+    # V9 data-lifecycle：数据质量评估 + GC 计划执行 durable job（P1/P5）。
+    include=["app.services.spatial_tasks", "app.tasks.explorer.task_chain", "app.services.geocompute.tasks",
+             "app.services.data_quality.jobs", "app.services.data_lifecycle.jobs"]
 )
 
 # ── GeoCompute V5 异构队列（audit 06 §6.1 step 1）────────────────────────

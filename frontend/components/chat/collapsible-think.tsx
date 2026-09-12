@@ -1,4 +1,5 @@
 'use client';
+import { useT } from '@/lib/i18n/useT';
 
 import React, { useId, useState, useEffect } from 'react';
 import { ChevronRight, Brain, Clock, Loader2, Sparkles } from 'lucide-react';
@@ -36,6 +37,7 @@ export function CollapsibleThink({
   tokenCount,
   defaultExpanded = false,
 }: CollapsibleThinkProps) {
+  const t = useT();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [userToggled, setUserToggled] = useState(false);
   const panelId = useId();
@@ -106,7 +108,7 @@ export function CollapsibleThink({
         {active && (
           <span className="inline-flex items-center gap-1 text-micro text-status-accent animate-pulse font-mono ml-1">
             <Sparkles size={10} aria-hidden />
-            思考中
+            {t('chat.thinking')}
           </span>
         )}
       </button>
@@ -116,7 +118,7 @@ export function CollapsibleThink({
           <motion.div
             id={panelId}
             role="region"
-            aria-label="思考过程详情"
+            aria-label={t('chat.thinkDetailsAria')}
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}

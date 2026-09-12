@@ -3,10 +3,11 @@
 import { useId, useState } from 'react';
 import { dataFabricApi } from '@/lib/api/data-fabric';
 import { useToastStore } from '@/components/ui/toast';
+import { useT } from '@/lib/i18n/useT';
 
 const SOURCE_TYPES = [
   { value: 'ogc_api', label: 'OGC API Features' },
-  { value: 'postgis', label: 'PostGIS 数据库' },
+  { value: 'postgis', labelKey: 'ds.type.postgis' },
   { value: 'wfs', label: 'OGC WFS' },
   { value: 'wms', label: 'OGC WMS' },
   { value: 'wmts', label: 'OGC WMTS' },
@@ -24,6 +25,7 @@ export interface AddSourceFormProps {
  * 成功/失败 toast）。原 data-sources-tab 内联表单原样拆出。
  */
 export function AddSourceForm({ onCreated }: AddSourceFormProps) {
+const t = useT();
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState('ogc_api');
   const [newUrl, setNewUrl] = useState('');
@@ -70,15 +72,15 @@ export function AddSourceForm({ onCreated }: AddSourceFormProps) {
       onSubmit={handleSubmit}
       className="shrink-0 space-y-2 border-b border-edge-subtle bg-surface-raised p-3"
     >
-      <h5 className="text-meta font-semibold text-ink">注册新数据源</h5>
+      <h5 className="text-meta font-semibold text-ink">{t('sidebar.ds.registerNew')}</h5>
       <div>
         <label htmlFor={nameId} className={labelClass}>
-          数据源名称
+          {t('sidebar.ds.sourceName')}
         </label>
         <input
           id={nameId}
           type="text"
-          placeholder="例如: 国家地理 WFS 服务"
+          placeholder={t('sidebar.ds.namePh')}
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           className={inputClass}
@@ -87,7 +89,7 @@ export function AddSourceForm({ onCreated }: AddSourceFormProps) {
       <div className="flex gap-2">
         <div className="w-1/2">
           <label htmlFor={typeId} className={labelClass}>
-            协议类型
+            {t('sidebar.ds.protocol')}
           </label>
           <select
             id={typeId}
@@ -112,13 +114,13 @@ export function AddSourceForm({ onCreated }: AddSourceFormProps) {
               className="rounded-sm border-edge-strong"
               style={{ accentColor: 'var(--agent-accent, #16a34a)' }}
             />
-            <span>允许内网 (SSRF)</span>
+            <span>{t('sidebar.ds.allowIntranet')}</span>
           </label>
         </div>
       </div>
       <div>
         <label htmlFor={urlId} className={labelClass}>
-          Endpoint URL / 连接地址
+          {t('sidebar.ds.endpoint')}
         </label>
         <input
           id={urlId}

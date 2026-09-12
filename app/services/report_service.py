@@ -29,7 +29,9 @@ from app.services.mapspec_to_svg import (
 
 try:
     import weasyprint
-except (ImportError, OSError):  # OSError: Windows 缺 GTK/pango 时 cffi dlopen 抛 OSError 而非 ImportError
+except (ImportError, OSError):
+    # V9 data-lifecycle 线顺带修复：Windows 无 GTK 时 weasyprint 抛 OSError
+    # 而非 ImportError（缺 libpango），只捕 ImportError 使 app import 链不可达。
     weasyprint = None
 
 logger = logging.getLogger(__name__)

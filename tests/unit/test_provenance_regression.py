@@ -260,8 +260,10 @@ def test_migration_unique_revision_number_and_checks(tmp_path, monkeypatch):
 
     con = sqlite3.connect(str(db_path))
     con.execute("PRAGMA foreign_keys=ON")
-    con.execute("INSERT INTO organizations (id, name, slug) VALUES (1,'o','o')")
-    con.execute("INSERT INTO projects (id, org_id, name, status) VALUES ('p',1,'p','active')")
+    # V9 0036 迁移 ensure 了 slug='default' 的组织（自增 id=1）——
+    # 显式 seed 用高位 id 避免主键冲突
+    con.execute("INSERT INTO organizations (id, name, slug) VALUES (900,'o','o')")
+    con.execute("INSERT INTO projects (id, org_id, name, status) VALUES ('p',900,'p','active')")
     con.execute("INSERT INTO workflows (id, project_id, name, version) VALUES ('w','p','w',1)")
     con.execute(
         "INSERT INTO workflow_revisions (id, workflow_id, revision_no, graph_spec, "

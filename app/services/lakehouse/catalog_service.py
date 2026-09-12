@@ -152,7 +152,16 @@ def upsert_catalog_entry(db, fields: Mapping[str, Any]) -> Dict[str, Any]:
     # 拦截时只回退**本插入**（savepoint），绝不 db.rollback() 丢弃调用方
     # 同事务里的 Artifact/Revision 写入；随后回退为更新既有行。
     nested = db.begin_nested()
-    row = LakehouseCatalogItem(id=str(_uuid.uuid4()), **dict(fields))
+    row_fields = dict(fields)
+    # ADR-0139：org 自 owner 域锚定（缺席时派生；调用方显式给的优先）。
+    if not row_fields.get("org_id"):
+        from app.services.lakehouse.dataset_registry import (
+            _resolve_org_for_owner,
+        )
+
+        row_fields["org_id"] = _resolve_org_for_owner(
+            db, owner_type, owner_id)
+    row = LakehouseCatalogItem(id=str(_uuid.uuid4()), **row_fields)
     db.add(row)
     try:
         db.flush()

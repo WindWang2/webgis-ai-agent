@@ -12,7 +12,7 @@ from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from app.core.config import settings
-from app.core.errors import classify_exception
+from app.core.errors import classify_exception, localized_user_message
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,10 @@ def format_error_response(
         response_data["retryable"] = _cls.retryable
         if _cls.degraded:
             response_data["degraded"] = _cls.degraded
+        # ADR-0144 P6：message 按 Accept-Language 本地化（contextvar 由
+        # AcceptLanguageMiddleware 写入；缺省 zh 与既有行为等价）。
+        # 开发环境的 detailed message 在其后覆盖 —— 内部诊断优先，不受影响。
+        response_data["message"] = localized_user_message(_cls)
     except Exception:  # noqa: BLE001 — 分类失败不改变既有响应形状
         logger.debug("error classification failed", exc_info=True)
     

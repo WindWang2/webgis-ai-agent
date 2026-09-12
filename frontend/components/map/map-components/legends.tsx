@@ -6,6 +6,7 @@ import { positionClass, resolveVariant, stackedBottomStyle } from './helpers';
 import type { RendererContext } from './types';
 import type { LegendSpec } from '@/lib/map-kit/types';
 import { deriveLegendModel } from '@/lib/map-kit/legend-model';
+import { t as tNow } from '@/lib/i18n/t';
 
 function legendForComponent(component: MapSpecComponent, spec: RendererContext['spec']): LegendSpec | undefined {
   const layerId = (component as unknown as { options?: Record<string, unknown> }).options?.['layerId'];
@@ -104,8 +105,8 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
   if (variant === 'size') {
     const sizes = [6, 10, 15];
     return (
-      <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label="尺寸图例">
-        <div className="text-micro font-medium text-map-chrome-ink">尺寸（∝√值）</div>
+      <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={tNow('map.legends.sizeAria')}>
+        <div className="text-micro font-medium text-map-chrome-ink">{tNow('map.legends.sizeTitle')}</div>
         <div className="mt-1 flex items-end gap-2">
           {sizes.map((r, i) => (
             <span key={i} aria-hidden className="rounded-full border border-map-chrome-border bg-map-chrome-ink/20" style={{ width: r * 2, height: r * 2 }} />
@@ -117,8 +118,8 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
   // V4：line 变体 —— 线宽分级图例（graduated_line/network_flow 同契约）
   if (variant === 'line') {
     return (
-      <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label="线宽图例">
-        <div className="text-micro font-medium text-map-chrome-ink">线宽分级</div>
+      <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome ${classes.root} ${positionClass(component)}`} aria-label={tNow('map.legends.widthAria')}>
+        <div className="text-micro font-medium text-map-chrome-ink">{tNow('map.legends.widthTitle')}</div>
         <div className="mt-1 flex flex-col gap-1">
           {[1, 2.5, 4.5].map((w, i) => (
             <div key={i} className="flex items-center gap-1.5">
@@ -156,7 +157,7 @@ function LegendRenderer(component: MapSpecComponent, ctx: RendererContext) {
         )}
       </div>
       {variant === 'uncertainty' && (
-        <div className="mt-1 border-t border-map-chrome-border pt-0.5 text-micro text-map-chrome-ink-muted">越透明 = 不确定性越高</div>
+        <div className="mt-1 border-t border-map-chrome-border pt-0.5 text-micro text-map-chrome-ink-muted">{tNow('map.legends.opacityHint')}</div>
       )}
     </div>
   );
@@ -169,7 +170,7 @@ function renderComposite(component: MapSpecComponent, ctx: RendererContext, vari
     .filter((l) => l.legend_spec != null)
     .slice(0, 3);
   return (
-    <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label="复合图例">
+    <div data-testid="spec-chrome-legend" data-variant={variant} style={stackedBottomStyle(component, ctx.bottomSlotIndexes)} className={`map-chrome absolute z-30 rounded-chrome px-2 py-1.5 ${positionClass(component)}`} aria-label={tNow('map.legends.compositeAria')}>
       {groups.map((g) => {
         const gEntries = legendEntries(g.legend_spec).slice(0, 6);
         if (!gEntries.length) return null;

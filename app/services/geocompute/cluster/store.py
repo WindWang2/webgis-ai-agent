@@ -140,6 +140,12 @@ class ClusterRunStore:
                 resource_request = None
         run_id = new_run_id()
         with self._factory() as db:
+            # ADR-0139：org 缺席（匿名/无 org 提交）归 default 隔离桶——
+            # 经同一会话工厂解析（测试注入工厂时落在同一临时库）。
+            if not org_id:
+                from app.core import tenancy
+
+                org_id = tenancy.get_or_create_default_org_id_sync(db)
             tenant_count = 0
             if tenant_key is not None:
                 tenant_count = db.execute(
@@ -193,26 +199,46 @@ class ClusterRunStore:
             ).scalar_one_or_none()
             return _run_projection(row) if row is not None else None
 
-    def get_run_owned(self, run_id: str, owner_scope: str) -> Optional[dict[str, Any]]:
-        """owner 域隔离读取（不符一律 None —— 与 get_run 读纪律一致）。"""
-        row = self.get_run(run_id)
-        if row is None or row["owner_scope"] != owner_scope:
-            return None
-        return row
+    def get_run_owned(
+        self, run_id: str, owner_scope: str, *, org_id: Optional[str] = None
+    ) -> Optional[dict[str, Any]]:
+        """owner 域 + org 双键隔离读取（ADR-0139；不符一律 None）。
+
+        ``org_id``：REST 路径必传（租户硬边界）；None = 信任域直连
+        （与 workflow get_instance(owner_scope=None) 同一约定——owner
+        域过滤仍然生效）。
+        """
+        with self._factory() as db:
+            stmt = select(_Run).where(
+                _Run.run_id == run_id, _Run.owner_scope == owner_scope)
+            if org_id is not None:
+                from app.core.tenancy import scoped_query
+
+                stmt = scoped_query(stmt, _Run, org_id)
+            row = db.execute(stmt).scalar_one_or_none()
+            return _run_projection(row) if row is not None else None
 
     def list_runs(
         self,
         owner_scope: str,
         *,
+        org_id: Optional[str] = None,
         statuses: Optional[Iterable[str]] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """owner 域列表（id 降序 = 提交序倒序；limit 钳 ≤100）。"""
+        """owner 域 + org 隔离列表（id 降序 = 提交序倒序；limit 钳 ≤100）。
+
+        ``org_id``：REST 路径必传；None = 信任域直连（owner 过滤仍在）。
+        """
         limit = max(1, min(int(limit), 100))
         offset = max(0, int(offset))
         with self._factory() as db:
             q = select(_Run).where(_Run.owner_scope == owner_scope)
+            if org_id is not None:
+                from app.core.tenancy import scoped_query
+
+                q = scoped_query(q, _Run, org_id)
             if statuses:
                 q = q.where(_Run.status.in_([str(s) for s in statuses]))
             q = q.order_by(_Run.id.desc()).limit(limit).offset(offset)

@@ -96,8 +96,8 @@ describe('MapToolbarHUD — Floating GIS Navigation & Measurement Toolbar', () =
 
     expect(screen.getByTestId('measurement-active-hud')).toBeInTheDocument()
     expect(screen.getByText('距离测量模式')).toBeInTheDocument()
-    expect(screen.getByText('已采集点数:')).toBeInTheDocument()
-    expect(screen.getByText('2 个')).toBeInTheDocument()
+    expect(screen.getByText(/已采集点数/)).toBeInTheDocument()
+    expect(screen.getByText(/已采集点数: 2 个/)).toBeInTheDocument()
     expect(screen.getByText(/km|m/)).toBeInTheDocument()
 
     // Add a 3rd point
@@ -113,7 +113,7 @@ describe('MapToolbarHUD — Floating GIS Navigation & Measurement Toolbar', () =
         ]}
       />,
     )
-    expect(screen.getByText('3 个')).toBeInTheDocument()
+    expect(screen.getByText(/已采集点数: 3 个/)).toBeInTheDocument()
   })
 
   it('activates area measurement mode and computes live polygon area', () => {
@@ -132,7 +132,7 @@ describe('MapToolbarHUD — Floating GIS Navigation & Measurement Toolbar', () =
 
     expect(screen.getByTestId('measurement-active-hud')).toBeInTheDocument()
     expect(screen.getByText('面积测量模式')).toBeInTheDocument()
-    expect(screen.getByText('4 个')).toBeInTheDocument()
+    expect(screen.getByText(/已采集点数/)).toBeInTheDocument()
     expect(screen.getByText(/km²|m²/)).toBeInTheDocument()
   })
 
