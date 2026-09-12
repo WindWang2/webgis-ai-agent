@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://webgis-ai-agent.local/schemas/legend-spec-v2.schema.json",
+  "title": "legend_spec v2 (ADR-0152)",
+  "description": "Canonical thematic legend contract, v2 = v1 (ADR-0078 discriminated union) + additive provenance fields: k, palette_id, clip_policy, why, nodata_label, out_of_range_label, out_of_range. Frontend lines 06 (paint projection), 07 (legend rendering) and 09 (self-healing actions from SymbologyDecision.rejected[]) consume this schema. SCHEMA FROZEN at AC-03 merge: additive-only evolution after freeze.",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": {
+      "enum": ["graduated", "continuous", "categorical", "divergent"],
+      "description": "Discriminant (ADR-0078). bivariate/uncertainty_opacity exist in-code but are emitted by their own builders and out of scope for v2 freeze."
+    },
+    "field": {"type": "string", "description": "Single thematic field identity (thematic_field())."},
+    "palette": {"type": "string", "description": "v1 palette identity (traceability)."},
+    "palette_colors": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Resolved hex colors (single resolution path: resolve_thematic_colors)."
+    },
+    "labels": {"type": "array", "items": {"type": "string"}},
+    "method": {"type": "string", "description": "Classification method used (v1 field; v2 keeps semantics, engine fills when adjudicated)."},
+    "breaks": {
+      "type": "array",
+      "items": {"type": "number"},
+      "description": "graduated: class boundaries (len >= 2, sorted)."
+    },
+    "min": {"type": "number", "description": "continuous/divergent: domain lower bound."},
+    "max": {"type": "number", "description": "continuous/divergent: domain upper bound."},
+    "center": {"type": "number", "description": "divergent: meaningful center."},
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "color"],
+        "properties": {
+          "key": {},
+          "color": {"type": "string"},
+          "label": {"type": "string"}
+        }
+      }
+    },
+    "nodata": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "properties": {
+            "color": {"type": "string"},
+            "label": {"type": "string"}
+          }
+        }
+      ]
+    },
+    "title": {"type": "string"},
+    "context": {
+      "enum": ["screen", "projector", "print", "cvd_deuteranopia", "cvd_protanopia", "cvd_tritanopia"],
+      "description": "v2: PaletteContext the decision was adjudicated for. When print, palette_colors are already desaturated (rendering requirement) — consumers must not re-transform."
+    },
+    "unit": {"type": "string", "description": "v2: unit of the thematic field (empty string when unknown)."},
+    "k": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "v2: class count actually emitted (graduated: len(breaks)-1; categorical: len(categories)). Adjudicated k is clamped to [3,7] by resolve_symbology except degenerate/constant data."
+    },
+    "palette_id": {"type": "string", "description": "v2: canonical palette id chosen by resolve_symbology (echoes palette)."},
+    "clip_policy": {
+      "enum": ["none", "clip_p99", "head_tail", "log"],
+      "description": "v2: outlier/domain policy applied before classification. Any non-none policy MUST be disclosed by out_of_range / method semantics — silent clipping is forbidden."
+    },
+    "why": {"type": "string", "description": "v2: human-readable adjudication summary (SymbologyDecision.why(); ';'-joined reasons). Empty string when no decision evidence available."},
+    "nodata_label": {"type": "string", "description": "v2: legend label for the no-data swatch."},
+    "out_of_range_label": {"type": "string", "description": "v2: legend label for clipped tail; empty when clip_policy == none."},
+    "out_of_range": {
+      "type": "object",
+      "description": "v2: present ONLY when clip_p99 actually clipped values. Rendered values above `upper` show `color` (top class).",
+      "required": ["color", "label", "count", "upper"],
+      "properties": {
+        "color": {"type": "string"},
+        "label": {"type": "string"},
+        "count": {"type": "integer", "minimum": 1},
+        "upper": {"type": "number"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"type": {"const": "graduated"}}},
+      "then": {"required": ["field", "breaks", "palette_colors"]}
+    },
+    {
+      "if": {"properties": {"type": {"const": "continuous"}}},
+      "then": {"required": ["min", "max", "palette_colors"]}
+    },
+    {
+      "if": {"properties": {"type": {"const": "divergent"}}},
+      "then": {"required": ["field", "center", "min", "max", "palette_colors"]}
+    },
+    {
+      "if": {"properties": {"type": {"const": "categorical"}}},
+      "then": {"required": ["field", "categories"]}
+    }
+  ]
+}

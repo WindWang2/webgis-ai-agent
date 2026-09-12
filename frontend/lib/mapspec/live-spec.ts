@@ -38,6 +38,11 @@ function applyPending(layer: MapSpecLayer, pending: PendingPresentation): MapSpe
             raster: 'raster-opacity',
             heatmap: 'heatmap-opacity',
             'fill-extrusion': 'fill-extrusion-opacity',
+            // AC-06 (ADR-0155)：background 有原生 background-opacity；
+            // hillshade 无原生 opacity —— 沿编译器/桥的 canonical 语义
+            // （opacity → 渲染强度）落到 hillshade-exaggeration。
+            background: 'background-opacity',
+            hillshade: 'hillshade-exaggeration',
           } as const)[next.type]
     );
     if (key) paint[key] = patch.opacity;

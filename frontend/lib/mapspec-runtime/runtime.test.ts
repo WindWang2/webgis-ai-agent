@@ -253,12 +253,12 @@ describe("MapSpecRuntime (ADR-0036)", () => {
   });
 
   describe("z-order sync", () => {
-    it("calls syncLayerZOrder with the next spec's layer order", () => {
+    it("AC-06 P5: sync runs on add but issues ZERO redundant moveLayer calls", () => {
       const rt = new MapSpecRuntime(map);
       rt.reconcile(pointSpec());
-      // moveLayer is invoked by syncLayerZOrder; presence confirms the path ran.
-      // (Exact count depends on helper internals; we assert it was called.)
-      expect(map._calls.moveLayer.length).toBeGreaterThan(0);
+      // 最小移动集：新挂的层本就位于栈顶 —— syncLayerZOrder 路径已运行
+      // （#375 的 reorder 用例另行断言真实移动），但不再无条件逐层置顶。
+      expect(map._calls.moveLayer.length).toBe(0);
     });
 
     // ── FIX-3-9 (#375): pure reorder produces an EMPTY layer patch ──────────

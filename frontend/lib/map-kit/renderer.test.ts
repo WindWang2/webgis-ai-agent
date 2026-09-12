@@ -67,7 +67,9 @@ describe('renderer', () => {
         layout: {},
         paint: {
           'circle-color': ['step', ['get', 'density'], '#111', 5, '#222'],
-          'circle-radius': 6,
+          // AC-06 (ADR-0155)：点径不再是常量 6 —— zoom interpolate 符号律
+          // 表达式（要素数未知 → 出厂锚点 6 落在 zoom=8 停靠点）。
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 4.2, 8, 6, 12, 8.1, 16, 10.8],
           'circle-opacity': 0.8
         }
       }, undefined);
@@ -325,9 +327,12 @@ describe('renderer', () => {
         0, '#0000ff',
         1, '#ff0000',
       ]);
-      // 一等参数 intensity/radius 直达 paint
+      // 一等参数 intensity/radius 直达 paint。AC-06：radius 契约值 20 成为
+      // zoom 符号律锚点（zoom=8 停靠点 = 20），随 zoom 平滑展开。
       expect(layerArg.paint['heatmap-intensity']).toBe(0.6);
-      expect(layerArg.paint['heatmap-radius']).toBe(20);
+      expect(layerArg.paint['heatmap-radius']).toEqual(
+        ['interpolate', ['linear'], ['zoom'], 3, 12, 8, 20, 12, 27, 16, 34],
+      );
     });
 
     it('retunes classic stops to the gaussian density domain (单点峰值 0.4 落绿段，不再整片蓝)', () => {

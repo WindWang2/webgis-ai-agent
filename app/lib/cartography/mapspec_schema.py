@@ -141,10 +141,23 @@ class DataFabricMapSpecSource(_SpecModel):
     data_fingerprint: Optional[StrictStr] = None
 
 
+class RasterDemMapSpecSource(_SpecModel):
+    """raster-dem 源（AC-06 ADR-0155 additive：hillshade 层的数据面）。
+    MapLibre `raster-dem` 源的最小投影；encoding 缺省由 MapLibre 取 "mapbox"。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["raster-dem"]
+    url: StrictStr
+    tileSize: Optional[Number] = None
+    encoding: Optional[Literal["mapbox", "terrarium"]] = None
+
+
 MapSpecSource = Union[
     GeoJSONMapSpecSource,
     VectorMapSpecSource,
     RasterMapSpecSource,
+    RasterDemMapSpecSource,
     DataFabricMapSpecSource,
 ]
 
@@ -168,7 +181,20 @@ class MapSpecLayer(_SpecModel):
 
     id: StrictStr
     source: StrictStr
-    type: Literal["circle", "line", "fill", "symbol", "heatmap", "raster", "fill-extrusion"]
+    # AC-06（ADR-0155）additive：background/hillshade 表达力补齐。
+    # background 无数据面 —— 约定 source 携带 "" 哨兵（编译器/运行时省略
+    # source 键）；hillshade 消费 raster-dem 源。
+    type: Literal[
+        "circle",
+        "line",
+        "fill",
+        "symbol",
+        "heatmap",
+        "raster",
+        "fill-extrusion",
+        "background",
+        "hillshade",
+    ]
     paint: Optional[Dict[str, Any]] = None
     layout: Optional[Dict[str, Any]] = None
     label: Optional[MapSpecLayerLabel] = None
@@ -363,6 +389,7 @@ SCHEMA_EXPORT_MODELS: Tuple[Tuple[str, type], ...] = (
     ("GeoJSONMapSpecSource", GeoJSONMapSpecSource),
     ("VectorMapSpecSource", VectorMapSpecSource),
     ("RasterMapSpecSource", RasterMapSpecSource),
+    ("RasterDemMapSpecSource", RasterDemMapSpecSource),
     ("DataFabricMapSpecSource", DataFabricMapSpecSource),
     ("ClusterSourceConfig", ClusterSourceConfig),
     ("MapSpecLayer", MapSpecLayer),

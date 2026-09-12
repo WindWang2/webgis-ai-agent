@@ -1,5 +1,49 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (AC-06: 自适应符号律与运行时表达力, ADR-0155)
+
+### Added (frontend: adaptive-cartography/06-symbol-law-runtime)
+- Adaptive symbol law engine (`lib/map-kit/symbol-law.ts`): point radius /
+  line width / heatmap radius / opacity become `f(zoom, featureCount)`
+  MapLibre zoom-interpolate expressions with an overridable factory default
+  table; the shared density signal `densitySignal`/`density_signal` (05-line
+  import contract) and bounded evidence ring (law-applied, density-switch,
+  incremental-fallback, unmapped-paint-key, unknown-source-type,
+  legend-v2-metadata) land in the same module.
+- Density-adaptive presentation (headless compile path): point layers
+  ≥ 5000 features auto-cluster (explicit cluster config wins), ≥ 20000
+  compile as heatmap; dense lines get width downscale + MVT-simplification
+  evidence; all decisions recorded with thresholds baseline
+  VIEWPORT_RENDER_BUDGET=5000 / MVT 5000.
+- Property-level incremental updates: `diffSpecs` gains `paint`/`layout`
+  patch kinds (single-pass key-level decomposition); MapSpecRuntime applies
+  them via `setPaintProperty`/`setLayoutProperty` with ZERO remove/add and
+  falls back to the preserved recompile path on failure (fallback counters +
+  evidence). Paint-only color changes no longer flicker the layer.
+- Expressiveness (schema-truth pipeline): `mapspec_schema.py` LayerType
+  += background/hillshade, new RasterDemMapSpecSource; `ts_projection.py`
+  interpolate gains exponential / cubic-bezier interpolation modes and
+  paint known-keys += dashArray/blur/translate/translateAnchor/outlineWidth
+  (types.generated.ts regenerated). Compiler + paint-bridge gain symbol
+  (silent-empty-paint gap closed), background, hillshade branches, dash/
+  blur/translate keys, `field:"zoom"` camera interpolation; unknown source
+  types now fail with UNKNOWN_SOURCE_TYPE + evidence instead of a silent
+  empty FeatureCollection; unmappable paint keys (e.g. fill outline-width)
+  are recorded as evidence, never silently dropped.
+- Diff & z-order performance: inline-GeoJSON diff short-circuits via
+  `content_revision` equality + identity-cached fingerprint fast-fail
+  (10k-feature worst case 6.2ms → 0.002ms; rebuilt-but-equal source
+  9.7ms → 0.005ms, deterministic harness `mapspec-diff.perf.test.ts`);
+  `syncLayerZOrder` now computes a minimal move set (LDS keep-set +
+  anchored inserts) — zero moveLayer calls when order is unchanged.
+- legend_spec v2 (ADR-0152) paint projection: `out_of_range` clipped-tail
+  guard (explicit clipped color under the nodata guard), metadata fields
+  (unit/k/method/palette_id/why/…) disclosed as evidence for the legend
+  renderer; v1 projections byte-identical. Local frozen-schema snapshot:
+  `docs/dev/ac-06-legend-spec-v2.schema.json`.
+- Docs: ADR-0155, `docs/dev/ac-06-runtime-recon.md` (+ symbol-constant
+  ledger CSV), `docs/dev/ac-06-decisions.md`.
+
 ## [Unreleased] - 2026-09-12 (V9: 交互深度与专业用户体验, ADR-0147)
 
 ### Added (frontend: feat/ux-depth-v9)
