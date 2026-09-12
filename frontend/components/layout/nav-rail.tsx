@@ -33,6 +33,7 @@ import {
   FlaskConical,
   PenTool,
   Undo2,
+  Activity,
   Store,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -73,6 +74,8 @@ const RAIL_GROUPS: Array<Array<RailTabDef>> = [
     { key: 'market', icon: Store },
     { key: 'modelops', icon: Boxes },
   ],
+  // ADR-0142：运维控制台（ops-console-v9）—— append-only 注册行，与 D/F/H/J 同规则。
+  [{ key: 'ops', icon: Activity }],
 ];
 
 const RAIL_TABS: RailTabDef[] = RAIL_GROUPS.flat();

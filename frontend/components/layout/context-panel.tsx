@@ -29,6 +29,7 @@ import {
   Printer,
   ClipboardList,
   LayoutDashboard,
+  Activity,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -49,6 +50,7 @@ import { DataSourcesTab } from '@/components/sidebar/data-sources-tab';
 import { LakehouseTab } from '@/components/sidebar/lakehouse/lakehouse-tab';
 import { TasksTab } from '@/components/sidebar/tasks-tab';
 import { ResultsTab } from '@/components/sidebar/results-tab';
+import { OpsConsole } from '@/components/sidebar/ops/ops-console';
 import { MarketTab } from '@/components/sidebar/market/market-tab';
 import { ModelOpsTab } from '@/components/sidebar/modelops/modelops-tab';
 import { PanelErrorBoundary } from '@/components/layout/panel-error-boundary';
@@ -118,6 +120,8 @@ const PANEL_META: Record<string, PanelMeta> = {
   tasks: { icon: ListChecks },
   results: { icon: ClipboardList },
   export_layout: { icon: Printer },
+  // ADR-0142：运维控制台（append-only 注册行）。
+  ops: { icon: Activity },
 };
 
 export function ContextPanel({
@@ -496,7 +500,7 @@ export function ContextPanel({
           </PanelErrorBoundary>
         )}
         {activeTab === 'lakehouse' && (
-          <PanelErrorBoundary label="数据湖">
+          <PanelErrorBoundary label={t('panel.boundary.lakehouse')}>
             <LakehouseTab sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
@@ -508,6 +512,12 @@ export function ContextPanel({
         {activeTab === 'tasks' && (
           <PanelErrorBoundary label={t(`panel.boundary.$tasks`)}>
             <TasksTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
+        )}
+        {/* ADR-0142：运维控制台（ops-console-v9）。 */}
+        {activeTab === 'ops' && (
+          <PanelErrorBoundary label={t('panel.boundary.ops')}>
+            <OpsConsole sessionId={sessionId} ownerToken={ownerToken} />
           </PanelErrorBoundary>
         )}
         {activeTab === 'results' && (

@@ -21,7 +21,12 @@
     "backendApiReadonlyAria": "Backend API address (read-only, fixed at build time)",
     "backendApiHint": "Determined by the NEXT_PUBLIC_API_URL environment variable at build time; not editable at runtime.",
     "language": "Language / 语言",
-    "languageHint": "Interface language. Changes apply immediately and are remembered."
+    "languageHint": "Interface language. Changes apply immediately and are remembered.",
+    "tabs": {
+      "tablistAria": "System settings sections",
+      "general": "General",
+      "clusterHealth": "Cluster health"
+    }
   },
   "account": {
     "title": "Account",

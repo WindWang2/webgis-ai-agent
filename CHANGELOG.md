@@ -1,5 +1,47 @@
 # Changelog
 
+## [Unreleased] - 2026-09-12 (ops-console-v9: 运维控制台 UI)
+
+### Added (ops-console-v9: Ops Console, ADR-0142)
+- Runtime inspector revival: `components/sidebar/workflow/runtime-inspector.tsx`
+  (previously zero production callers) is now mounted in the new ops rail tab
+  "运维" via instance list → `GET /workflow-runtime/instances/{id}` fetcher
+  injection, with V6 interventions (node retry, instance cancel, recompute-plan
+  view). Contract drift fix: `RuntimeNode.error_code` widened to nullable.
+- New ops rail tab (append-only registration in `LeftTab`/`MODE_TABS`/
+  `RAIL_GROUPS`/context-panel) hosting cluster dashboard (workers heartbeat
+  table, ADR-0133 five-category metric time series with client-side observation
+  window + breaker-trip annotations, stuck-run intervention with confirm
+  dialogs, receipts and task-center linkage), plan console (JSON editor,
+  validation errors located to partition entries, cluster submit with cursor
+  event polling stage waterfall, memory execute evidence), runtime section,
+  breaker/cache disclosure panel, and system health view.
+- Typed clients: `lib/api/geocompute.ts` extended to the full ops surface
+  (cluster/metrics, cluster/workers, cluster/runs/stuck, run reset, ledger
+  limits, plans validate/execute/submit/drift-check, runs list/detail/summary/
+  cancel); new `lib/api/workflow-runtime.ts` (13 endpoints) and
+  `lib/api/system-health.ts` (`/health`, `/ready`, `/status/detailed`,
+  `/version`, `/metrics/digest`). Admin-required (403) and cluster-unavailable
+  (503) are first-class honest UI states.
+- data-fabric disclosure retention (`lib/api/data-fabric-disclosure.ts`):
+  engine breaker (closed/open/half_open) and result-cache disclosures captured
+  from federation payloads (no standalone endpoint exists — honest empty state
+  + coordination point recorded).
+- System health sub-tab appended to settings → 系统 (dual-queue-depth
+  semantics: global admin metrics vs owner-domain task center; honest
+  "capability pending backend" card for error-taxonomy top-N; polling channel
+  self-check).
+- Wallboard duty mode: fullscreen carousel (cluster → breaker → health),
+  keyboard-first (←/→/Space/F/Esc), reduced-motion defaults carousel off.
+- Bounded polling core (`use-cluster-*` hooks) mirroring the use-job-center
+  discipline: visibility pause + immediate catch-up, error-cap stop, stale
+  response guards, abort on unmount/reset, ≥3s floor.
+- Test infrastructure: zero-dep route-table fetch stub (`test/fixtures/api-stub.ts`)
+  with per-endpoint ok/empty/error three-state fixtures and a deterministic
+  60-minute synthetic metric series; acceptance journeys (cluster intervention,
+  plan-validate→submit→waterfall) as vitest integration tests; breaker
+  three-state DOM snapshots.
+
 ## [Unreleased] - 2026-09-12 (knowledge & marketplace & modelops surfaces, ADR-0145)
 
 ### Added (feat/knowledge-market-ui-v9)

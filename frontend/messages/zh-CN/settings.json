@@ -21,7 +21,12 @@
     "backendApiReadonlyAria": "后端 API 地址（只读，由构建时环境变量决定）",
     "backendApiHint": "由 NEXT_PUBLIC_API_URL 环境变量在构建时确定，运行时不可修改。",
     "language": "Language / 语言",
-    "languageHint": "界面语言，切换立即生效并记住选择。"
+    "languageHint": "界面语言，切换立即生效并记住选择。",
+    "tabs": {
+      "tablistAria": "系统设置分区",
+      "general": "常规",
+      "clusterHealth": "集群健康"
+    }
   },
   "account": {
     "title": "账户",

@@ -43,7 +43,8 @@
     "export_layout": "Map layout",
     "exports": "Exports",
     "market": "Market",
-    "modelops": "ModelOps"
+    "modelops": "ModelOps",
+    "ops": "Ops"
   },
   "modes": {
     "explore": "Explore",
@@ -74,7 +75,8 @@
       "results": "Analysis results",
       "export_layout": "Cartography studio",
       "market": "Market",
-      "modelops": "ModelOps"
+      "modelops": "ModelOps",
+      "ops": "Ops console"
     },
     "desc": {
       "chat": "AI geospatial agent",
@@ -88,7 +90,8 @@
       "results": "Result workbench · Inputs · Metrics · Outputs",
       "export_layout": "Layout & export",
       "market": "Extension market · browse · download",
-      "modelops": "Model registry · in-session runs"
+      "modelops": "Model registry · in-session runs",
+      "ops": "Cluster · Plans · Runtime · Breakers · Health"
     },
     "boundary": {
       "chat": "Chat",
@@ -100,7 +103,8 @@
       "lakehouse": "Lakehouse",
       "export_layout": "Cartography studio",
       "tasks": "Tasks",
-      "results": "Results"
+      "results": "Results",
+      "ops": "Ops"
     },
     "resizeAria": "Resize panel",
     "resizeTitle": "Drag to resize panel (double-click to reset)"

@@ -122,6 +122,16 @@ const SURFACES = [
   */
   { name: 'map-legends', tab: '图层', restoreSession: true },
   { name: 'map-legends-collapsed', tab: '图层', restoreSession: true, collapse: true },
+  /*
+    Ops console (ADR-0142): the 运维 rail tab hosts the cluster dashboard /
+    plan console / runtime section / breaker panel / system health, plus a
+    fullscreen wallboard. Populated fixtures above → information-dense shots.
+  */
+  { name: 'ops-cluster', tab: '运维' },
+  { name: 'ops-runtime', tab: '运维', opsView: 'runtime' },
+  { name: 'ops-breaker', tab: '运维', opsView: 'breaker' },
+  { name: 'ops-health', tab: '运维', opsView: 'health' },
+  { name: 'ops-wallboard', tab: '运维', opsWallboard: true },
 ];
 
 /** Two features are enough to paint a thematic fill and a heatmap point. */
@@ -399,6 +409,121 @@ const template = (id, kind, name, category, description) => ({
  * the shots exercise real information density instead of only empty states.
  */
 const FIXTURES = [
+  // Ops console (ADR-0142): cluster control plane + workflow runtime + health
+  // surface — populated states so the dashboard shots carry information
+  // density. Registered before the generic fixtures; the ops panels poll
+  // these on mount.
+  [
+    /\/api\/v1\/geocompute\/cluster\/metrics/,
+    {
+      runs_by_status: { queued: 4, leased: 3, running: 9, completed: 128, failed: 6, cancelled: 2, preempted: 1 },
+      queue_depth: 5, inflight: 12, completed: 128, failed: 6, cancelled: 2,
+      preempted_total: 3, lease_loss_total: 1,
+      cancel_latency: { p50_s: 0.8, p95_s: 2.4, samples: 42 },
+      queue_wait: { p50_s: 1.5, p95_s: 9.1, samples: 128 },
+      waiting_by_profile: { light_cpu: 2, raster: 2, heavy_cpu: 1 },
+      events_counters: { event_rejected_invalid: 0, event_budget_exhausted_total: 1, event_append_failed_total: 0 },
+      workers: { live: 6, by_role: { worker: 5, coordinator: 1 }, profile_slots: { light_cpu: 12, heavy_cpu: 6, raster: 8 }, gpu_workers: 1 },
+      leader: { count: 1, ids: ['coord-primary'] },
+      ledger: [{ scope_key: 'global', rows: 154203, bytes: 48120000000, limit_rows: null, limit_bytes: null }],
+      resource_rejections: { rows: 2, bytes: 1, units: 4, mem_mb: 1, gpu: 0 },
+      oom_avoided: 3, gpu_fallbacks: 1,
+      spill: { count: 18, bytes: 6400000000, rehydrate_hits: 11, rehydrate_misses: 7 },
+      transfer: { bytes_total: 27140000000 },
+      cache: { worker_cache_hits: 431 },
+      lineage: { node_completed: 2140, node_reused: 312, node_lost: 9, partition_planned: 480, speculative_dispatched: 57, poison_quarantined: 3 },
+      utilization: { reserved_units: 14, capacity_units: 26, ratio: 0.538 },
+      quarantine: [{ owner_scope: 'owner:a1b2c3d4e5f6…', fingerprint: '9f2c1e07aa4b13dc', failure_count: 4, active: true, last_error_code: 'CRS_MISMATCH' }],
+    },
+  ],
+  [
+    /\/api\/v1\/geocompute\/cluster\/workers/,
+    {
+      live: 3,
+      workers: [
+        { worker_id: 'w-3f9d2a11c4e5', role: 'coordinator', profiles: { light_cpu: 2, heavy_cpu: 1 }, capability: { gpus: [], disk_free_mb: 204800 }, heartbeat_age_s: 2.1, cache_entries: 0, cache_bytes: 0 },
+        { worker_id: 'w-88aa00bb21cc', role: 'worker', profiles: { raster: 4, light_cpu: 4 }, capability: { gpus: [{ model: 'A10G', mem_mb: 24576 }] }, heartbeat_age_s: 5.4, cache_entries: 214, cache_bytes: 8410000000 },
+        { worker_id: 'w-77ccb43d9012', role: 'worker', profiles: { light_cpu: 2 }, capability: null, heartbeat_age_s: 47.2, cache_entries: 12, cache_bytes: 310000000 },
+      ],
+    },
+  ],
+  [
+    /\/api\/v1\/geocompute\/cluster\/runs\/stuck/,
+    {
+      count: 1,
+      runs: [
+        {
+          run_id: 'run-stuck-001', status: 'running', owner_scope: 'owner:test', plan_fingerprint: 'aa77bb00', session_id: 'sess-1',
+          priority: 5, attempts: 3, preempts: 0, lease_epoch: 4, cancel_requested_at: null, yield_requested_at: null,
+          error_code: null, required_profiles: ['light_cpu'], resource_request: null,
+          created_at: new Date(Date.now() - 31 * 60000).toISOString(),
+          started_at: new Date(Date.now() - 30 * 60000).toISOString(),
+          terminal_at: null, heartbeat_at: new Date(Date.now() - 9 * 60000).toISOString(),
+          lease_expires_at: new Date(Date.now() - 6 * 60000).toISOString(),
+          id: 1, tenant_key: 't:test', coordinator_id: 'coord-primary', dispatch_seq: 7,
+        },
+      ],
+    },
+  ],
+  [
+    /\/api\/v1\/geocompute\/runs\/run-live-100\/events/,
+    { run_id: 'run-live-100', events: [], after_id: 0, count: 0 },
+  ],
+  [
+    /\/api\/v1\/geocompute\/runs\/run-live-100/,
+    { run_id: 'run-live-100', plan_fingerprint: 'g1', status: 'running', source: 'cluster', priority: 5, attempts: 1, preempts: 0, error_code: null, required_profiles: ['light_cpu'], progress: { settled: 2, done: 3, failed: 0, total: 4 } },
+  ],
+  [
+    /\/api\/v1\/geocompute\/runs\?/,
+    { runs: [], terminal_snapshots: [], limit: 20, offset: 0 },
+  ],
+  [
+    /\/api\/v1\/workflow-runtime\/instances\/wi-ops-1\/recompute-plan/,
+    { success: true, instance_id: 'wi-ops-1', stale: 2, counts: {}, decisions: [], recompute: ['spatial_join'], reuse: ['extract_sources'], explanations: ['sources refreshed'], changed_dimensions: ['data'] },
+  ],
+  [
+    /\/api\/v1\/workflow-runtime\/instances\/wi-ops-1/,
+    {
+      success: true,
+      instance: {
+        instance_id: 'wi-ops-1', package_id: 'pkg.drainage.analysis', package_version: '1.4.2', package_fingerprint: 'pkgfp88',
+        status: 'running', revision: 7, cancel_requested: false,
+        nodes: [
+          { node_id: 'extract_sources', state: 'SUCCEEDED', attempts: 1, error_code: null, reused: true, binding_violations: [] },
+          { node_id: 'spatial_join', state: 'RUNNING', attempts: 1, error_code: null, reused: false, binding_violations: [] },
+          { node_id: 'validate_geom', state: 'FAILED', attempts: 3, error_code: 'GEOM_INVALID', reused: false, binding_violations: [] },
+        ],
+        counts: { SUCCEEDED: 1, RUNNING: 1, FAILED: 1 },
+        decisions: [], pending_changes: [], error_code: null, error_detail: null,
+        methodology_family: 'drainage-network-analysis',
+        explain: { why_recomputed: ['sources refreshed'], why_reused: ['topology unchanged'], blocked: [] },
+      },
+    },
+  ],
+  [
+    /\/api\/v1\/workflow-runtime\/instances/,
+    { success: true, instances: [{ instance_id: 'wi-ops-1', package_id: 'pkg.drainage.analysis', status: 'running', revision: 7 }] },
+  ],
+  [/\/api\/v1\/health\/live/, { status: 'alive' }],
+  [/\/api\/v1\/health/, { status: 'healthy', timestamp: '2026-01-01T08:30:00Z', service: 'WebGIS AI Agent', version: '0.1.3', agent_runtime: 'pi', pi_workers_alive: '4/4' }],
+  [/\/api\/v1\/ready/, { ready: true }],
+  [
+    /\/api\/v1\/status\/detailed/,
+    {
+      status: 'ok',
+      components: {
+        db: { status: 'ok', latency_ms: 2.4, detail: null },
+        redis: { status: 'ok', latency_ms: 0.6, detail: null },
+        llm: { status: 'ok', latency_ms: 412.8, detail: null },
+        worker: { status: 'ok', latency_ms: 5.1, detail: null },
+        object_store: { status: 'not_configured', latency_ms: null, detail: 'S3 not configured' },
+      },
+      stuck_jobs: 1, refresh_age_s: 0.4,
+    },
+  ],
+  [/\/api\/v1\/version/, { version: '0.1.3', commit: '8b5b8375abc', python: '3.12.7', extensions_api: '2', timestamp: '2026-01-01T08:30:00Z' }],
+  [/\/api\/v1\/tasks\/jobs\?.*active_only=true/, { jobs: [{ id: 'job-1', kind: 'workflow', name: '流域分析', status: 'running', progress: 42, active: true }], has_active: true, poll_after_ms: 3000 }],
+
   /*
     Lakehouse V9（ADR-0141）：catalog + datasets 两个 mount 期 GET 的形状
     正确 fixtures（条目含 cube / 矢量 / 已撤销三种形态，数据集含 refs/head），
@@ -878,6 +1003,14 @@ async function capture() {
           }
           if (surface.tab) await clickRailTab(page, surface.tab);
           if (surface.button) await clickTopBarButton(page, surface.button);
+          if (surface.opsView) {
+            const viewBtn = page.locator(`[data-testid="ops-view-${surface.opsView}"]`).first();
+            if (await viewBtn.count()) await viewBtn.click({ timeout: 5000 }).catch(() => {});
+          }
+          if (surface.opsWallboard) {
+            const enter = page.locator('[data-testid="ops-wallboard-enter"]').first();
+            if (await enter.count()) await enter.click({ timeout: 5000 }).catch(() => {});
+          }
           if (surface.clickSubTab) {
             const sub = page
               .locator(`[role="tab"][aria-selected="false"]:has-text("${surface.clickSubTab}")`)

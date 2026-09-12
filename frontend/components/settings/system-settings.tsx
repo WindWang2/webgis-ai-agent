@@ -1,10 +1,13 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { STitle } from '@/components/shared/section-title';
 import { API_BASE } from '@/lib/api/config';
+import { SystemHealthPanel } from '@/components/sidebar/ops/system-health-panel';
 import { LOCALE_LABELS, SUPPORTED_LOCALES, type AppLocale } from '@/lib/i18n/config';
 import { useLocale, useSetLocale, useT } from '@/lib/i18n/useT';
+
+type SystemSettingsTab = 'general' | 'cluster-health';
 
 /**
  * 系统设置面板。
@@ -18,16 +21,52 @@ import { useLocale, useSetLocale, useT } from '@/lib/i18n/useT';
  *   append-only：保留原有行位置与双按钮形态，仅启用交互
  * - 版本号从 package.json 同步（通过构建时注入）
  * - 移除 fake Save 按钮 —— 没有可持久化的状态
+ *
+ * ADR-0142（ops-console-v9）：append 唯一一个 tab 入口「集群健康」——
+ * 挂载运维控制台的系统健康分区（/health、/version、/status/detailed、
+ * durable 队列深度双口径、通道自检）。不改动 settings-panel 的 NAV_ITEMS。
  */
 export function SystemSettings() {
   const t = useT('settings');
   const locale = useLocale();
   const setLocale = useSetLocale();
+  const [tab, setTab] = useState<SystemSettingsTab>('general');
 
   return (
     <div className="flex flex-col gap-5">
       <STitle title={t('system.title')} sub={t('system.subtitle')} />
 
+      {/* ADR-0142 唯一 append：二段 tab（常规 / 集群健康） */}
+      <div role="tablist" aria-label={t('system.tabs.tablistAria')} className="flex items-center gap-1 border-b border-edge-subtle pb-1">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'general'}
+          onClick={() => setTab('general')}
+          className={`rounded-sm px-2 py-1 text-meta font-medium transition-colors ${
+            tab === 'general' ? 'bg-status-accent-soft text-status-accent' : 'text-ink-secondary hover:bg-surface-hover'
+          }`}
+        >
+          {t('system.tabs.general')}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'cluster-health'}
+          data-testid="settings-tab-cluster-health"
+          onClick={() => setTab('cluster-health')}
+          className={`rounded-sm px-2 py-1 text-meta font-medium transition-colors ${
+            tab === 'cluster-health' ? 'bg-status-accent-soft text-status-accent' : 'text-ink-secondary hover:bg-surface-hover'
+          }`}
+        >
+          {t('system.tabs.clusterHealth')}
+        </button>
+      </div>
+
+      {tab === 'cluster-health' && <SystemHealthPanel />}
+
+      {tab === 'general' && (
+      <>
       {/* Backend API URL — read-only, determined at build time */}
       <div>
         <div className="text-title uppercase tracking-wide text-ink-muted font-medium mb-2">
@@ -119,6 +158,8 @@ export function SystemSettings() {
           &quot;All is Agent&quot;
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
