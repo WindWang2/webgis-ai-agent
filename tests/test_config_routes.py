@@ -39,6 +39,17 @@ async def app_and_client():
     # 让 role 仍从 JWT claim 中读取（require_admin 在缺 user 对象时
     # 会回退到 _user["role"]）。
     app.dependency_overrides[get_current_user_with_version] = get_current_user
+    # 镜像 app/main.py 的统一错误信封接线（ADR-0138）：裸 app 不挂 handler
+    # 会让 HTTPException 走默认 {"detail"} 体，与生产行为不符。
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from fastapi.exceptions import RequestValidationError
+    from app.core.exception import (
+        unified_http_exception_handler,
+        unified_validation_exception_handler,
+    )
+
+    app.add_exception_handler(StarletteHTTPException, unified_http_exception_handler)
+    app.add_exception_handler(RequestValidationError, unified_validation_exception_handler)
     app.include_router(config_routes.router, prefix="/api/v1")
     try:
         transport = ASGITransport(app=app)

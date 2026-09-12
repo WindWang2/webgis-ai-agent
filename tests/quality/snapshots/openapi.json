@@ -8330,32 +8330,26 @@
     "type": "object"
    },
    "SessionPlanProgressRow": {
-    "additionalProperties": true,
-    "description": "SessionPlan 进度行投影。",
+    "description": "SessionPlan 进度行投影。\n\n与服务端 ``CapabilityProgress`` 三键一一对应（capability/status/\nbound_ref，字段拼写给死）。此前声明 extra=\"allow\" + step/status 两个\n幽灵字段，序列化会给每行注入 ``step: null`` —— 与路由实返投影不符\n（以实测为准修正，同 MutationApplyResponse 先例）。",
     "properties": {
-     "status": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Status"
+     "bound_ref": {
+      "default": "",
+      "title": "Bound Ref",
+      "type": "string"
      },
-     "step": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Step"
+     "capability": {
+      "title": "Capability",
+      "type": "string"
+     },
+     "status": {
+      "default": "pending",
+      "title": "Status",
+      "type": "string"
      }
     },
+    "required": [
+     "capability"
+    ],
     "title": "SessionPlanProgressRow",
     "type": "object"
    },
@@ -8370,7 +8364,7 @@
       "replaced": false,
       "session_id": "sess-123",
       "superseded": false,
-      "updated_at": "2026-09-11T00:00:00",
+      "updated_at": 1789123456.0,
       "user_goal": "缓冲区分析"
      }
     ],
@@ -8437,7 +8431,7 @@
      "updated_at": {
       "anyOf": [
        {
-        "type": "string"
+        "type": "number"
        },
        {
         "type": "null"

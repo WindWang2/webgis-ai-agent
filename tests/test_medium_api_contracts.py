@@ -77,7 +77,14 @@ async def test_a5_list_sessions_rejects_invalid_limit(client):
 
 
 def test_a4_execute_tool_has_response_model_none():
-    """A4：/tools/execute 应显式声明 response_model=None（可变返回形状）。"""
+    """A4：/tools/execute 的 response_model 契约（V9 起为 ToolExecuteResponse）。
+
+    ADR-0138 例外项：工具 dispatch 结果形态由具体工具决定（工具层契约自
+    校验），响应模型声明为 extra=allow 的任意键对象透传 —— 不再是裸
+    response_model=None。
+    """
+    from app.schemas.chat_schema import ToolExecuteResponse
+
     mod = _load_chat_module()
     # router 有 prefix=/chat，所以 path 是 /chat/tools/execute
     route = next(
@@ -85,8 +92,8 @@ def test_a4_execute_tool_has_response_model_none():
         None,
     )
     assert route is not None, "未找到 /chat/tools/execute route"
-    # response_model=None 表示"返回原始 dict，不强制 schema"
-    assert route.response_model is None
+    # extra=allow 透传模型：OpenAPI 有声明（可生成文档），序列化不裁剪工具结果。
+    assert route.response_model is ToolExecuteResponse
 
 
 def test_a4_stream_has_response_model_none():
