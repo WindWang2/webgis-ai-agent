@@ -15,7 +15,7 @@ worktree `webgis-wt-ac-04`。
 | P5 修复血缘 | `spatial_repair_pipeline.py::repair_dataset_with_lineage`（既有 `repair_dataset`/`repair_dataset_detailed` 签名与返回元数不变） | `tests/unit/test_repair_lineage.py`（6 用例） | lineage 键封闭 {op,before,after,area_delta,evidence,ts}；evidence[] 复用 Wave-4 op 级键（与 build_repair_evidence 同形）；为何修解释链 plan.reasons×lineage |
 | P6 三个新 op | `fix_topology_overlap` / `fix_gaps` / `drop_outliers_or_flag` / `attribute_drop_or_flag` + `remove_empty.drop_zero_coordinates` | `tests/unit/test_repair_ops_new.py`（15 用例） | 边界：空集/单要素/全重叠(预算内)/远距离 no-op；difference 后入让先入（面积账 4-2=2）；flag 默认可整体剥离（`ac04_quality_flags`）；非破坏组合断言 |
 | P7 profile 契约 | `spatial_quality_gate.py::default_quality_profile/evaluate_quality_gate.profile_extension` + lifecycle 钩子写入 source.profile | `test_quality_gate_lifecycle.py::test_clean_data_passes_and_writes_profile_extension` | 6 契约键 {geometry_mix,n_valid,extent,crs_confidence,outlier_policy,quality_advisories}；默认值兜底函数供 02/03 先行消费 |
-| P8 回归收口 | `docs/adr/0153-pre-cartography-quality-gate.md`、`docs/dev/ac-04-decisions.md`、`CHANGELOG.md`、`requirements-dev.txt`(+pytest-xdist) | 全量 `pytest tests/unit -q -n 2 -m "not heavy and not real_services and not perf"` | 见 PR 门禁证据节；blocking 类 14 码样本 100% 拦截或自动修复（矩阵回归钉死） |
+| P8 回归收口 | `docs/adr/0153-pre-cartography-quality-gate.md`、`docs/dev/ac-04-decisions.md`、`CHANGELOG.md`、`requirements-dev.txt`(+pytest-xdist) | 全量 `pytest tests/unit -q -n 2 -m "not heavy and not real_services and not perf"` | 10775 passed / 111 skipped / 46 failed（S2 甄别：map_product_lifecycle_v2×3、workflow_api×2、reproducible_gis_runtime×2 串行重跑全过=并行 flaky；其余族与干净基线同 fam，含 1 个 ERROR 为 sqlite 共享缓存并行时序）；blocking 类 14 码样本 100% 拦截或自动修复（矩阵回归钉死） |
 
 ## 复核纪要（§0.2，进 PR 描述）
 
