@@ -3,9 +3,7 @@
 import React, { useEffect, useId, useState } from 'react';
 import {
   Plus,
-  Layers,
   Activity,
-  Database,
   Workflow as WorkflowIcon,
   ChevronRight,
   Lock,
@@ -20,11 +18,16 @@ import { useToastStore } from '@/components/ui/toast';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useAuthUser } from '@/lib/auth/use-auth-user';
 import { useWorkflowWorkspace } from '@/lib/hooks/use-workflow-workspace';
-import { formatCrs, formatOutcomeMessage, outcomeToastVariant, shortId } from '@/lib/workflow/recovery';
+import { useT } from '@/lib/i18n/useT';
+import { formatOutcomeMessage, outcomeToastVariant, shortId } from '@/lib/workflow/recovery';
 import { RunInspector } from './workflow/run-inspector';
 import { CartoMemoryPanel } from './carto-memory-panel';
 import { MapProductVersionsPanel } from './map-product-versions';
-import { useT } from '@/lib/i18n/useT';
+import {
+  ProjectAssetsSection,
+  ASSET_TABS,
+  type AssetTab,
+} from './project/project-assets-section';
 
 export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
   const t = useT();
@@ -38,6 +41,21 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
   // 匿名默认模式下点击会裸 401 —— 参照 #469 导出门控，未登录时禁用写控件
   // 并给出可见的登录引导。
   const authUser = useAuthUser();
+  // ADR-0143：资产区 tab 状态提升 —— 工作流视图的快捷回跳（P7）需要指明
+  // 目标页签。产物定位（质量回执 / gc 候选 → 产物中心）在资产区内部闭环
+  // （ProjectAssetsSection 的 localFocus + tab 切换），无需跨视图状态。
+  const [assetsTab, setAssetsTab] = useState<AssetTab>('datasets');
+
+  const jumpToAsset = (tab: AssetTab) => {
+    setAssetsTab(tab);
+    if (ws.view !== 'project') ws.back();
+  };
+
+  // ADR-0143 P7：产物中心的版本维度对比由下方 Map Product 版本台账承接。
+  const viewVersionLedger = () => {
+    if (typeof document === 'undefined') return;
+    document.getElementById('map-product-versions')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   // #558: 把项目 tab 的选择镜像进 HUD store —— chat 发送时据此在请求体携带
   // project_id（后端 context assembler 注入项目摘要）。workspace 级选择，
@@ -161,48 +179,35 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                   </select>
                 </div>
 
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-meta font-medium text-ink-secondary">
-                    <span className="flex items-center gap-1.5">
-                      <Layers size={14} className="text-ink-muted" aria-hidden /> {t('sidebar.project.datasets', { count: ws.datasets.length })}
-                    </span>
-                  </div>
-                  {ws.datasets.length === 0 ? (
-                    <EmptyState icon={Database} title={t('sidebar.project.noDatasets')} />
-                  ) : (
-                    <div className="space-y-1.5">
-                      {ws.datasets.map((d) => (
-                        <div
-                          key={d.id}
-                          className="flex items-center justify-between rounded-md border border-edge-subtle bg-surface-raised px-panel py-2"
-                        >
-                          <div className="min-w-0">
-                            <div className="text-meta font-medium text-ink">{d.name}</div>
-                            <div className="text-micro text-ink-muted">
-                              {formatCrs(d.crs)} • {d.source_type}
-                            </div>
-                          </div>
-                          <StatusBadge status={d.quality_status} />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {/* ADR-0143：项目资产区（数据集 CRUD/双模式预览、产物中心/血缘图/
+                    快照时间线/质量审计修复/数据回收）。取代原只读数据集列表 ——
+                    完整管理面见 frontend/docs/workspace-ui-recon.md §3.2。 */}
+                <ProjectAssetsSection
+                  projectId={ws.selectedProjectId}
+                  sessionId={sessionId}
+                  authed={Boolean(authUser)}
+                  tab={assetsTab}
+                  onTabChange={setAssetsTab}
+                  onViewVersionLedger={viewVersionLedger}
+                />
 
                 {/* ADR-0069 / spec 开放问题 2：项目制图记忆治理面板。
                     放在数据集之下——记忆与数据集同属"项目的长期状态"。 */}
                 <CartoMemoryPanel projectId={ws.selectedProjectId} />
 
                 {/* ADR-0092 A6：Map Product 版本台账 + 五维差异（版本工作区）。
-                    只读真相 + 复用 rerun_from_step；仅样式变更不触发分析重算。 */}
-                <MapProductVersionsPanel
-                  projectId={ws.selectedProjectId}
-                  sessionId={sessionId}
-                  onRerunStarted={(runId) => {
-                    addToast(runId ? `已从分析步骤重跑（${shortId(runId, 8)}）` : '已触发重跑', 'success');
-                  }}
-                  onRerunError={(message) => addToast(message, 'error')}
-                />
+                    只读真相 + 复用 rerun_from_step；仅样式变更不触发分析重算。
+                    id 供产物中心「查看版本台账」交叉导航滚动定位。 */}
+                <div id="map-product-versions">
+                  <MapProductVersionsPanel
+                    projectId={ws.selectedProjectId}
+                    sessionId={sessionId}
+                    onRerunStarted={(runId) => {
+                      addToast(runId ? `已从分析步骤重跑（${shortId(runId, 8)}）` : '已触发重跑', 'success');
+                    }}
+                    onRerunError={(message) => addToast(message, 'error')}
+                  />
+                </div>
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-meta font-medium text-ink-secondary">
@@ -259,6 +264,19 @@ export function ProjectTab({ sessionId }: { sessionId?: string | null } = {}) {
                 >
                   {t('sidebar.project.backToProject')}
                 </button>
+                {/* ADR-0143 P7：工作流 → 资产交叉导航（回项目视图并指明页签）。 */}
+                <nav aria-label="项目资产快捷跳转" className="flex flex-wrap gap-1">
+                  {ASSET_TABS.map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => jumpToAsset(value)}
+                      className="rounded-sm border border-edge-subtle px-1.5 py-0.5 text-micro text-ink-secondary hover:bg-surface-sunken"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </nav>
                 <div>
                   <div className="text-body font-semibold text-ink">
                     {ws.selectedWorkflow.name}
