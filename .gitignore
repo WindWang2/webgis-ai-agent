@@ -8,6 +8,10 @@ scripts/
 # #671：根级 scripts/ 里只有 ci-local.sh 是提交的 CI 对齐门禁命令，其余仍忽略
 !/scripts/
 /scripts/*
+# frontend/scripts/ 曾被上面的 scripts/ 连带忽略：no-raw-cjk 守卫的
+# scan-lib.mjs 因此漏入库，守卫在 CI 从未真正运行（ADR-0144 事故）。
+# 该目录承载测试 import 的守卫脚本，必须入库。
+!/frontend/scripts/
 !/scripts/ci-local.sh
 !/scripts/gen_science_catalog.py
 !/scripts/alloc_migration.py
