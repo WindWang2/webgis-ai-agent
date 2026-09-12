@@ -51,6 +51,48 @@ def _build_legend_spec(palette: str, min_val: float = 0.0, max_val: float = 1.0,
 _PALETTE_MAP_NAMED = set(NATIVE_HEATMAP_COLORS)
 
 
+def _adjudicate_heatmap_palette(palette: str, data: dict, weight_field: Optional[str],
+                                context: str) -> tuple:
+    """AC-03（ADR-0152）：热力族色带经 resolve_symbology 上下文裁决。
+
+    工具的 family 参数（classic/magma/viridis/thermal）映射到规范色带 id
+    （HEATMAP_LEGEND_PALETTE_KEY）后作为显式偏好交给引擎；引擎在 CVD/print
+    硬约束下可换带，换带结果再反向映射回热力族（无对应族时保留请求族并
+    在 decision.reasons 披露）。screen 上下文下恒等映射——默认渲染零变化。
+    返回 (family, decision)。
+    """
+    from app.lib.cartography.palettes import HEATMAP_LEGEND_PALETTE_KEY
+    from app.lib.cartography.symbology import symbology_decision_from_values
+
+    canonical = HEATMAP_LEGEND_PALETTE_KEY.get(palette, "YlOrRd")
+    weight_values: List[float] = []
+    if weight_field:
+        weight_values = [
+            f.get("properties", {}).get(weight_field)
+            for f in (data.get("features") or [])
+            if isinstance(f, dict)
+        ]
+        weight_values = [
+            float(v) for v in weight_values
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        ]
+    decision = symbology_decision_from_values(
+        weight_values,
+        context=context,  # type: ignore[arg-type]
+        requested_palette=canonical,
+    )
+    family = next(
+        (f for f, pid in HEATMAP_LEGEND_PALETTE_KEY.items() if pid == decision.palette),
+        None,
+    )
+    if family is None:
+        decision.reasons.append(
+            f"裁决色带 {decision.palette} 无对应热力族——保留请求族 {palette}"
+        )
+        family = palette
+    return family, decision
+
+
 def _buffer_scientific_evidence(distance: float, unit: str, res: Any) -> Optional[dict]:
     """Build the ADR-0099 ``scientific_evidence`` block for buffer_analysis.
 
@@ -339,6 +381,11 @@ def register_spatial_tools(registry: ToolRegistry):
 
         # 默认 native：MapLibre 逐点核密度渲染（轻量、密度真实）。raster 是
         # 服务端预渲染 PNG，仅在需要导出图片/离线渲染时显式指定。
+        # AC-03：色带经 resolve_symbology 上下文裁决（可选 palette_context
+        # kwarg；缺省 screen 恒等映射，默认渲染不变）。
+        heatmap_context = kwargs.get("palette_context") or "screen"
+        palette, heat_decision = _adjudicate_heatmap_palette(
+            palette, data, weight_field, heatmap_context)
         if render_type == "native":
             if isinstance(data, dict):
                 # #990: safe_parse_geojson 透传 dict 时可能原样返回共享只读
@@ -366,6 +413,8 @@ def register_spatial_tools(registry: ToolRegistry):
                     "palette": palette,
                     **radius_meta,
                 }
+                if heat_decision is not None:
+                    meta_dict["symbology_decision"] = heat_decision.to_dict()
                 if intensity is not None:
                     meta_dict["intensity"] = intensity
                 if weight_field is not None:
@@ -384,10 +433,14 @@ def register_spatial_tools(registry: ToolRegistry):
                 # 图例色与前端 heatmap-color 停靠点同源（palettes.NATIVE_HEATMAP_COLORS）。
                 try:
                     from app.lib.cartography.palettes import heatmap_legend_colors
-                    data["legend_spec"] = _build_legend_spec(
+                    from app.lib.cartography.thematic_spec import apply_symbology_v2
+                    _legend = _build_legend_spec(
                         palette,
                         colors=heatmap_legend_colors(palette),
                     )
+                    if heat_decision is not None:
+                        apply_symbology_v2(_legend, heat_decision)
+                    data["legend_spec"] = _legend
                 except Exception as e:
                     logger.warning(f"[heatmap_data] legend_spec generation failed: {e}")
             if isinstance(data, dict) and data.get("type") == "FeatureCollection":
@@ -424,12 +477,16 @@ def register_spatial_tools(registry: ToolRegistry):
                 # non-native modes emit continuous legend_spec
                 if render_type != "native":
                     try:
+                        from app.lib.cartography.thematic_spec import apply_symbology_v2
                         metadata = res_data.get("metadata", {})
-                        res_data["legend_spec"] = _build_legend_spec(
+                        _legend = _build_legend_spec(
                             palette,
                             min_val=float(metadata.get("min_value", 0.0)),
                             max_val=float(metadata.get("max_value", 1.0)),
                         )
+                        if heat_decision is not None:
+                            apply_symbology_v2(_legend, heat_decision)
+                        res_data["legend_spec"] = _legend
                     except Exception as e:
                         logger.warning(f"[heatmap_data] legend_spec generation failed (result path): {e}")
             if isinstance(res_data, dict) and res_data.get("type") == "FeatureCollection":

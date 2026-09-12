@@ -154,10 +154,12 @@ def choose_classification(
         )
 
     # 3/4. 推荐集或默认集内裁决
-    candidates = pool or ["natural_breaks"]
     range_pos = _range_position(stats)
     near_uniform = range_pos is not None and range_pos < _NEAR_UNIFORM_RANGE_POSITION
     if near_uniform:
+        # AC-03：近均匀且无推荐集时，按本函数文档承诺落到 equal_interval/
+        # quantiles（与直方图直觉对应），而不是掉进 natural_breaks 默认。
+        candidates = pool or ["equal_interval", "quantiles"]
         for m in ("equal_interval", "quantiles"):
             if m in candidates:
                 chosen = m
@@ -169,6 +171,7 @@ def choose_classification(
             method_meta[chosen].best_for_zh,
         ]
     else:
+        candidates = pool or ["natural_breaks"]
         chosen = "natural_breaks" if "natural_breaks" in candidates else candidates[0]
         if skew is not None:
             reasons = [

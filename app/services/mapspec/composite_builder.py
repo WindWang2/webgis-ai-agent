@@ -349,19 +349,40 @@ class CompositeMapSpecBuilder:
                         and effective_geojson.get("features")
                         and thematic_slot.field):
                     try:
+                        from app.lib.cartography.symbology import (
+                            symbology_decision_from_values,
+                        )
                         from app.lib.cartography.thematic_spec import (
                             build_graduated_spec, spec_to_paint,
+                        )
+                        # AC-03（ADR-0152）：slot 的 method/k/palette 是组件
+                        # 声明的偏好，交由 resolve_symbology 裁决（旧白名单把
+                        # std_dev/head_tail/lisa 静默降级 quantiles——引擎按
+                        # 数据形态与模式语义正确处置）。
+                        _slot_values = [
+                            f.get("properties", {}).get(thematic_slot.field)
+                            for f in (effective_geojson.get("features") or [])
+                            if isinstance(f, dict)
+                        ]
+                        _numeric = [
+                            v for v in _slot_values
+                            if isinstance(v, (int, float)) and not isinstance(v, bool)
+                        ]
+                        slot_method = thematic_slot.method
+                        decision = symbology_decision_from_values(
+                            _numeric,
+                            requested_method="lisa" if slot_method == "lisa" else None,
+                            recommended_method=(
+                                slot_method if slot_method != "lisa" else None
+                            ),
+                            recommended_k=thematic_slot.k,
+                            recommended_palette=thematic_slot.palette,
+                            origin=f"slot:{thematic_slot.field}",
                         )
                         candidate = build_graduated_spec(
                             effective_geojson,
                             thematic_slot.field,
-                            method=(
-                                thematic_slot.method
-                                if thematic_slot.method in ("quantiles", "equal_interval", "natural_breaks")
-                                else "quantiles"
-                            ),
-                            k=thematic_slot.k or 5,
-                            palette=thematic_slot.palette,
+                            decision=decision,
                         )
                         if candidate is not None:
                             paint_color, _warnings = spec_to_paint(candidate)

@@ -56,13 +56,16 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 from app.lib.cartography.palettes import (
     COLOR_PALETTES,
     get_color_from_palette,
     resolve_palette_colors,
 )
+
+if TYPE_CHECKING:
+    from app.lib.cartography.symbology import SymbologyDecision
 
 logger = logging.getLogger(__name__)
 
@@ -142,13 +145,16 @@ def resolve_thematic_colors(
 def build_graduated_spec(
     geojson: Dict[str, Any],
     field: str,
-    method: str = "quantiles",
-    k: int = 5,
-    palette: str = "YlOrRd",
+    method: Optional[str] = None,
+    k: Optional[int] = None,
+    palette: Optional[str] = None,
     *,
     nodata: Optional[Dict[str, str]] = None,
     unit: Optional[str] = None,
     title: Optional[str] = None,
+    decision: Optional[SymbologyDecision] = None,
+    clip_policy: Optional[str] = None,
+    out_of_range_label: str = "超出门限（已截断）",
 ) -> Optional[Dict[str, Any]]:
     """Build a graduated ``legend_spec`` from a GeoJSON feature collection.
 
@@ -157,10 +163,22 @@ def build_graduated_spec(
     ``resolve_thematic_colors``. Returns ``None`` when there is too little
     numeric data to classify (matches the legacy ``build_thematic_style``
     contract so existing callers/tests are unaffected).
+
+    AC-03（ADR-0152）：method/k/palette 缺省（None）时改由
+    ``resolve_symbology`` 唯一裁决（不再回落 quantiles/5/YlOrRd 硬编码）；
+    调用方已持有 ``decision`` 时直接传入，跳过重复裁决并携带 v2 溯源字段
+    （k/palette_id/clip_policy/why）。clip_policy 非空时在分类前应用值域
+    策略（clip_p99 截断 / log 空间分级），截断必须以 out_of_range 图例条目
+    明示——禁止静默裁剪。
     """
     # E-3（#894）：分类算法已下沉本层（classify.py），不再反向 import
     # services 层的 CartographyService。
     from app.lib.cartography.classify import classify_values
+    from app.lib.cartography.symbology import (
+        apply_clip,
+        symbology_decision_from_values,
+    )
+    import math as _math
 
     features = (geojson or {}).get("features", []) or []
     raw = (f.get("properties", {}).get(field) for f in features if isinstance(f, dict))
@@ -168,7 +186,41 @@ def build_graduated_spec(
     if len(values) < 2:
         return None
 
-    breaks = classify_values(values, method, k)
+    if decision is None and (method is None or k is None or palette is None):
+        decision = symbology_decision_from_values(
+            values,
+            requested_method=method,
+            requested_k=k,
+            requested_palette=palette,
+        )
+    if decision is not None:
+        method = decision.method
+        k = decision.k
+        palette = decision.palette or palette or "YlOrRd"
+        clip_policy = clip_policy or decision.clip_policy
+    method = method or "quantiles"
+    k = k or 5
+    palette = palette or "YlOrRd"
+
+    # 值域策略（P4）：裁剪在分类前应用；log 在 log10 空间分级后回原域。
+    classify_input = list(values)
+    in_log_space = False
+    clip_high_val = None
+    n_clipped = 0
+    if clip_policy == "clip_p99":
+        classify_input, _lo, clip_high_val, n_clipped = apply_clip(values, "clip_p99")
+        if n_clipped == 0:
+            clip_policy = "none"
+            clip_high_val = None
+    elif clip_policy == "log" and min(values) > 0:
+        classify_input = [_math.log10(v) for v in values]
+        in_log_space = True
+    else:
+        clip_policy = "none" if clip_policy in (None, "none") else clip_policy
+        if clip_policy not in ("none", "head_tail"):
+            clip_policy = "none"
+
+    breaks = classify_values(classify_input, method, k)
     if not breaks:
         return None
     # #618-19: 全等数值列（常量字段）在 n>k 时 classify 返回单断点 [v]，与
@@ -178,6 +230,8 @@ def build_graduated_spec(
         breaks = [breaks[0], breaks[0]]
     if len(breaks) < 2:
         return None
+    if in_log_space:
+        breaks = [float(10.0 ** b) for b in breaks]
 
     min_val, max_val = min(values), max(values)
     palette_colors = resolve_thematic_colors(palette, len(breaks) - 1, breaks, min_val, max_val)
@@ -200,6 +254,23 @@ def build_graduated_spec(
         spec["unit"] = unit
     if title is not None:
         spec["title"] = title
+
+    # ── legend_spec v2（ADR-0152）：纯加字段 ──
+    spec["k"] = len(breaks) - 1
+    spec["palette_id"] = palette
+    spec["clip_policy"] = clip_policy
+    spec["why"] = decision.why() if decision is not None else ""
+    spec["nodata_label"] = spec["nodata"].get("label", "No data")
+    if clip_policy == "clip_p99" and clip_high_val is not None and n_clipped:
+        # 裁剪禁止静默：图例必须携带 out_of_range 条目（颜色与最高类一致
+        # ——step 语义下越界值渲染为最高类色）。
+        spec["out_of_range"] = {
+            "color": palette_colors[-1] if palette_colors else "#cccccc",
+            "label": out_of_range_label,
+            "count": int(n_clipped),
+            "upper": float(clip_high_val),
+        }
+        spec["out_of_range_label"] = out_of_range_label
     return spec
 
 
@@ -500,6 +571,81 @@ def _categorical_to_match(
 # ─── normalization & identity (backward compat) ─────────────────────────────
 
 
+LEGEND_SPEC_V2_FIELDS = (
+    "k", "palette_id", "clip_policy", "why", "nodata_label",
+    "out_of_range_label", "unit",
+)
+
+
+def upgrade_legend_spec_v2(legend_spec: Any) -> Optional[Dict[str, Any]]:
+    """把 v1 ``legend_spec`` 升级为 v2 形状（ADR-0152）：**纯加字段**。
+
+    v1 字段语义零变化（normalize_legend_spec 继续只做 v1 归一）；本函数在
+    其上补齐 v2 溯源字段的缺省值——k 从断点/类别数推导，palette_id 取
+    palette，clip_policy 缺省 none，why 缺省空串（无裁决证据时不编造）。
+    非 dict 输入返回 None。
+    """
+    spec = normalize_legend_spec(legend_spec)
+    if spec is None:
+        return None
+    ltype = spec.get("type")
+    if "k" not in spec:
+        if ltype == GRADUATED and isinstance(spec.get("breaks"), list) and len(spec["breaks"]) >= 2:
+            spec["k"] = len(spec["breaks"]) - 1
+        elif ltype == CATEGORICAL and isinstance(spec.get("categories"), list):
+            spec["k"] = len(spec["categories"])
+    if "palette_id" not in spec:
+        spec["palette_id"] = spec.get("palette", "")
+    spec.setdefault("clip_policy", "none")
+    spec.setdefault("why", "")
+    if "nodata_label" not in spec:
+        nodata = spec.get("nodata")
+        spec["nodata_label"] = (
+            nodata.get("label", "No data") if isinstance(nodata, dict) else "No data"
+        )
+    spec.setdefault("out_of_range_label", "")
+    return spec
+
+
+def apply_symbology_v2(
+    legend_spec: Dict[str, Any],
+    decision: Any,
+    *,
+    unit: Optional[str] = None,
+) -> Dict[str, Any]:
+    """把 ``SymbologyDecision`` 的溯源信息以 v2 加字段写入 legend_spec。
+
+    与 build_graduated_spec 的内联 v2 组装同口径；供已持有 decision 的
+    入口（h3_binning / apply_template / heatmap_data）复用。
+    """
+    if not isinstance(legend_spec, dict) or decision is None:
+        return legend_spec
+    legend_spec.setdefault("k", decision.k)
+    legend_spec.setdefault("palette_id", decision.palette or legend_spec.get("palette", ""))
+    legend_spec.setdefault("clip_policy", getattr(decision, "clip_policy", "none"))
+    legend_spec.setdefault("why", decision.why())
+    legend_spec.setdefault("nodata_label", legend_spec.get("nodata_label", "No data"))
+    if unit is not None:
+        legend_spec.setdefault("unit", unit)
+    # 裁剪禁止静默：clip_p99 实际发生截断时补 out_of_range 图例条目
+    # （颜色与最高类一致——step 语义下越界值渲染为最高类色）。
+    if (
+        getattr(decision, "clip_policy", "none") == "clip_p99"
+        and getattr(decision, "n_clipped", 0)
+        and decision.clip_high is not None
+        and "out_of_range" not in legend_spec
+    ):
+        colors = legend_spec.get("palette_colors") or []
+        legend_spec["out_of_range"] = {
+            "color": colors[-1] if colors else "#cccccc",
+            "label": "超出门限（已按 P99 截断）",
+            "count": int(decision.n_clipped),
+            "upper": float(decision.clip_high),
+        }
+        legend_spec.setdefault("out_of_range_label", legend_spec["out_of_range"]["label"])
+    return legend_spec
+
+
 def normalize_legend_spec(legend_spec: Any) -> Optional[Dict[str, Any]]:
     """Normalize a legacy / inbound ``legend_spec`` into the canonical shape.
 
@@ -590,6 +736,9 @@ __all__ = [
     "build_divergent_spec",
     "spec_to_paint",
     "normalize_legend_spec",
+    "upgrade_legend_spec_v2",
+    "apply_symbology_v2",
+    "LEGEND_SPEC_V2_FIELDS",
     "thematic_field",
     "is_thematic",
     "palette_size",

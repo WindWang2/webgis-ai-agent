@@ -1,0 +1,63 @@
+template_id,kind,declared,neutral_decision,heavy_decision,note
+tmpl_bm_positron,basemap,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_bm_dark,basemap,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_bm_satellite,basemap,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_bm_grayscale,basemap,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_admin_blue,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_road_orange,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_poi_red,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_boundary_dash,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_landuse_cat,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_ly_academic,layout,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_ly_presentation,layout,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_ly_minimal,layout,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_ly_standard_report,layout,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_th_pop_choro,thematic,method=quantiles k=5 palette=YlOrRd,quantiles/k=5/YlOrRd[recommended],head_tail/k=5/YlOrRd[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_econ_lisa,thematic,method=lisa k=4 palette=RdBu,lisa/k=4/-[explicit],lisa/k=4/-[explicit],结构模式：显式保留
+tmpl_th_heatmap,thematic,variant=heatmap intensity=0.85 radius=30 heatPalette=5色,n/a,n/a,热力族：palette 偏好经映射裁决（非分级）
+tmpl_th_equal_interval,thematic,method=equal_interval k=5 palette=Blues,equal_interval/k=5/Blues[recommended],head_tail/k=5/Blues[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_natural_breaks,thematic,method=natural_breaks k=5 palette=Viridis,natural_breaks/k=5/Viridis[recommended],head_tail/k=5/Viridis[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_bm_hybrid_satellite,basemap,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_bm_terrain_context,basemap,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_bm_minimal_gray,basemap,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_bm_print_light,basemap,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_bm_presentation_dark,basemap,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_bm_high_contrast,basemap,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_city_blocks,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_railway_dash,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_river_blue,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_admin_boundary,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_parcel_outline,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_building_3d,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_route_origin_destination,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_survey_point,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_monitoring_station,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_fault_line,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_sym_contour_line,symbology,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_ly_dark_report,layout,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_ly_engineering,layout,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_ly_poster,layout,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_ly_dashboard,layout,,n/a,n/a,非 thematic，无符号化偏好
+tmpl_th_gdp_quantiles,thematic,method=quantiles k=6 palette=YlOrRd,quantiles/k=6/YlOrRd[recommended],head_tail/k=6/YlOrRd[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_income_equal,thematic,method=equal_interval k=5 palette=Greens,equal_interval/k=5/Greens[recommended],head_tail/k=5/Greens[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_land_price,thematic,method=natural_breaks k=7 palette=YlOrRd,natural_breaks/k=6/YlOrRd[recommended],head_tail/k=6/YlOrRd[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_slope,thematic,method=natural_breaks k=6 palette=YlOrRd,natural_breaks/k=6/YlOrRd[recommended],head_tail/k=6/YlOrRd[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_temperature,thematic,method=quantiles k=6 palette=RdBu,quantiles/k=5/RdBu[recommended],head_tail/k=5/RdBu[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_rainfall,thematic,method=natural_breaks k=6 palette=Blues,natural_breaks/k=5/Blues[recommended],head_tail/k=5/Blues[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_vegetation_index,thematic,method=natural_breaks k=7 palette=Greens,natural_breaks/k=5/Greens[recommended],head_tail/k=5/Greens[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_travel_time,thematic,method=quantiles k=5 palette=Plasma,quantiles/k=5/Plasma[recommended],head_tail/k=5/Plasma[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_risk_score,thematic,method=natural_breaks k=5 palette=YlOrRd,natural_breaks/k=5/YlOrRd[recommended],head_tail/k=5/YlOrRd[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_pollution,thematic,method=quantiles k=5 palette=Purples,quantiles/k=5/Purples[recommended],head_tail/k=5/Purples[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_change_intensity,thematic,method=natural_breaks k=5 palette=RdBu,natural_breaks/k=5/RdBu[recommended],head_tail/k=5/RdBu[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_growth_decline,thematic,method=natural_breaks k=5 palette=RdBu,natural_breaks/k=5/RdBu[recommended],head_tail/k=5/RdBu[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_anomaly,thematic,method=quantiles k=5 palette=RdBu,quantiles/k=5/RdBu[recommended],head_tail/k=5/RdBu[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_residual,thematic,method=natural_breaks k=5 palette=RdBu,natural_breaks/k=5/RdBu[recommended],head_tail/k=5/RdBu[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_ndvi_choro,thematic,method=natural_breaks k=6 palette=RdYlGn,natural_breaks/k=6/RdYlGn[recommended],head_tail/k=6/RdYlGn[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_burn_severity,thematic,method=natural_breaks k=5 palette=YlOrRd,natural_breaks/k=5/YlOrRd[recommended],head_tail/k=5/YlOrRd[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_water_extraction,thematic,method=natural_breaks k=5 palette=Blues,natural_breaks/k=5/Blues[recommended],head_tail/k=5/Blues[distribution],偏好获尊重（证据不反对）；重尾推翻偏好 → head_tail
+tmpl_th_zoning,thematic,method=categorical k=5 palette=Set2,categorical/k=5/Set2[explicit],categorical/k=5/Set2[explicit],结构模式：显式保留
+tmpl_th_soil_type,thematic,method=categorical k=6 palette=Set2,categorical/k=6/Set2[explicit],categorical/k=6/Set2[explicit],结构模式：显式保留
+tmpl_th_geology,thematic,method=categorical k=8 palette=Set1,categorical/k=7/Set1[explicit],categorical/k=7/Set1[explicit],结构模式：显式保留
+tmpl_th_facility_type,thematic,method=categorical k=7 palette=Pastel1,categorical/k=7/Pastel1[explicit],categorical/k=7/Pastel1[explicit],结构模式：显式保留
+tmpl_th_risk_category,thematic,method=categorical k=4 palette=YlOrRd,categorical/k=4/YlOrRd[explicit],categorical/k=4/YlOrRd[explicit],结构模式：显式保留
+tmpl_th_classification,thematic,method=categorical k=10 palette=Set1,categorical/k=7/Set1[explicit],categorical/k=7/Set1[explicit],结构模式：显式保留

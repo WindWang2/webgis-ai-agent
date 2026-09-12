@@ -1,5 +1,73 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-cartography-03: 自适应符号化引擎, ADR-0152)
+
+### Added (backend: adaptive-cartography/03-adaptive-symbology)
+- Adaptive symbology engine `app/lib/cartography/symbology.py`:
+  `resolve_symbology(profile, intent, constraints) -> SymbologyDecision` is the
+  single adjudication entry for classification method × class count × palette ×
+  outlier policy. Explicit user choices win (source=explicit), heavy-tail
+  evidence overrides template preferences, declared template/model preferences
+  are honored when evidence does not oppose, insufficient evidence (n<8 /
+  constant) falls back to equal_interval k=3 with low_confidence. Every
+  correction lands in `rejected[]` (kind/value/reason) — the self-healing
+  action list for line 09. `choose_classification` (ADR-0073) is reused, not
+  rewritten; its near-uniform empty-pool branch now honors its documented
+  equal_interval/quantiles contract.
+- k adjudication (P2): base k = explicit > preference > model-library default
+  (std_dev=6 metadata finally wired); downward corrections for n<8, unique-value
+  exhaustion, on-screen feature density, and the palette separability ceiling
+  (max classes within context ΔE/ΔL thresholds) — always clamped to [3,7],
+  every step disclosed.
+- Palette context adjudication (P3): `PaletteContext = screen | projector |
+  print | cvd_deuteranopia | cvd_protanopia | cvd_tritanopia`. New pure color
+  math in `palettes.py`: `simulate_cvd` (Machado 2009 severity=1.0 linear-RGB
+  matrices), `print_desaturate` (desaturate toward a monotone gray ramp),
+  `grayscale_ramp_separation` (adjacent ΔL, print gate 0.06),
+  `sample_ramp_colors` / `sample_heatmap_colors` (adjudication uses the same
+  midpoint sampling as emission). CVD gate ΔE00≥10 keeps all 18 ColorBrewer/
+  perceptual ramps unchanged on screen while CVD-simulated ColorBrewer
+  sequential ramps fail and perceptual-uniform ramps take over — accessibility
+  priority emerges from the threshold instead of special-casing. Dark basemap
+  (<0.3 luminance) promotes perceptual ramps; qualitative ramps under print
+  keep the family head with a shape/pattern disclosure instead of pretending
+  Viridis prints distinguishable categories.
+- Outlier / domain policy (P4): `clip_policy = none | clip_p99 | head_tail |
+  log` chosen from skew + tail ratio; clipping applies before classification
+  and MUST surface an `out_of_range` legend entry (color = top class, count,
+  upper bound) — silent clipping is forbidden. log classifies in log10 space
+  and reports breaks back in the original domain.
+- Five entry points rewired through the engine (P5): `build_thematic_style`
+  (defaults became None=adjudicate), `create_thematic_map` (tool args k/palette
+  default None; `symbology_decision` + upgraded `classification_plan` in the
+  result), `h3_binning` (adjudicates on grid statistics; no more
+  quantiles/5/YlOrRd hardcode), `heatmap_data` (family ↔ canonical palette
+  mapping through the engine, screen-context identity mapping = zero default
+  rendering change, optional palette_context kwarg), `apply_template` (62 SEED
+  template payloads demoted from commands to declared preferences; structural
+  modes categorical/lisa preserved; `recommended` echoed for contrast). Also
+  wired: `create_3d_extrusion_map` and composite `ThematicSlot` (the old
+  whitelist silently degraded std_dev/head_tail/lisa slots to quantiles).
+- legend_spec v2 (P6, schema frozen): additive fields `k`, `palette_id`,
+  `clip_policy`, `why`, `nodata_label`, `out_of_range_label`, `out_of_range`.
+  v1 semantics untouched; upgrade path `upgrade_legend_spec_v2` +
+  `apply_symbology_v2`; JSON Schema snapshot at
+  `docs/dev/ac-03-legend-spec-v2.schema.json` for lines 06 (paint), 07
+  (legend), 09 (self-healing actions).
+- Regression & golden suites (P7): 6 datasets × 5 entries produce the identical
+  `SymbologyDecision` (source-field differences only), per-context CVD/print
+  separability asserted item by item, numeric golden tests pin classification
+  breaks / CVD simulation / print transform / decision payloads with fixed
+  seeds. Template preference contract covers all 62 SEED templates (28
+  thematic end-to-end).
+- Tooling & docs: `scripts/symbology_audit.py` hardcode-resurgence gate
+  (allowlist = documented C-level exceptions; forbidden gis_harness territory
+  reported, not blocked), hardcode ledger `docs/dev/ac-03-hardcode-ledger.csv`,
+  recon `docs/dev/ac-03-symbology-recon.md`, decisions log
+  `docs/dev/ac-03-decisions.md`, palette×context matrix
+  `docs/dev/ac-03-palette-context-matrix.csv`, template preference matrix
+  `docs/dev/ac-03-template-preference-matrix.csv`, ADR-0152.
+
 ## [Unreleased] - 2026-09-12 (V9: 交互深度与专业用户体验, ADR-0147)
 
 ### Added (frontend: feat/ux-depth-v9)
