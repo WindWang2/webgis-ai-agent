@@ -1,29 +1,32 @@
 {
-  "round": 2,
+  "round": 3,
   "base_commit": "17c77c7382c3d461bd24f6dc0ee382b95a5558ed",
   "scope": ["app/lib/cartography/**", "app/services/gis_harness/**"],
   "fixed": [
-    {"id": "R2Q011", "fingerprint": "see round-2.pool.csv", "file": "app/services/gis_harness/runtime_state_machine.py", "line": 295, "severity": "P1", "category": "correctness", "commit": "dd82527f", "note": "_task_complete 对缺 product_verdict 键的 legacy 块按 _verdict_ready 同口径收窄，不再 AttributeError 冻结 V7 状态机"},
-    {"id": "R2Q001", "fingerprint": "see round-2.pool.csv", "file": "app/services/gis_harness/tool_surface.py", "line": 149, "severity": "P1", "category": "correctness", "commit": "0953174f", "note": "done 集合补 available（session_plan 完成态），阶段不再卡死 PHASE_DATA、分析域工具恢复激活"},
-    {"id": "R2Q013", "fingerprint": "see round-2.pool.csv", "file": "app/services/gis_harness/workflow_instance.py", "line": 615, "severity": "P1", "category": "correctness", "commit": "fc7f5382", "note": "gate_fingerprint 写侧传原始 contract 与读侧同形，「不变即跳过」恢复，消除每触发全量重推"}
+    {"id": "R2Q005", "file": "app/services/gis_harness/planner.py", "line": 698, "severity": "P1", "category": "correctness", "commit": "0468cc29", "note": "显式 recipe_id 路径 candidates 预置空表，CANDIDATE_WORKFLOWS/SELECTED_WORKFLOW 证据链恢复发射"},
+    {"id": "Q023", "file": "app/lib/cartography/component_registry.py", "line": 1063, "severity": "P1", "category": "error-handling", "commit": "c88ffe92", "note": "_validate_inner 内部异常转为 issue（fail-closed），不再静默 0 issues"},
+    {"id": "R2Q002", "file": "app/services/gis_harness/map_critique.py", "line": 79, "severity": "P1", "category": "correctness", "commit": "b5689596", "note": "_observed_layers 双形状兼容（canonical list 按 id/runtime_store_id 索引，dict 保留），五项 V7 检查恢复生效"}
   ],
   "reverted": [],
-  "gate_restoration": null,
+  "false_positives": [
+    {"id": "Q002", "file": "app/lib/cartography/pdf_renderer.py", "line": 81, "severity": "P1", "adjudicated_round": 3, "note": "误报：Figure.add_artist 对未设 transform 的 artist 自动补 transFigure（mpl 3.10.6 实证验证），指北针/图例框渲染正常；子代理把 Axes 语义套在了 Figure 上。相应无谓改动已回退"}
+  ],
   "metrics": {
     "p0": 0,
-    "p1": 14,
+    "p1": 13,
     "p2": 142,
-    "note": "open = round-1 池(65: 0/7/58, 修3 P1) + round-2 池(97: 0/13/84, 修3 P1)；全 scope 已扫完"
+    "note": "open = round-1 池(修3+误报1) + round-2 池(修3) + round-3 修3；全 scope 已扫完，后续 Δ 反映纯修复"
   },
   "delta_history": [
     {"round": 1, "delta": null, "note": "基线建立轮"},
-    {"round": 2, "delta": -35.2, "note": "发现爆发轮（首度扫完 gis_harness 114 文件）：开放池 0/4/58 → 0/14/142。发现(新 P1×10 P2×84)远超修复(3 P1)。E2 判定顺延至 round 3（池已封闭，Δ 自 round 3 起反映纯修复改善）"}
+    {"round": 2, "delta": -35.2, "note": "发现爆发轮（首度扫完 gis_harness）"},
+    {"round": 3, "delta": 1.0, "note": "纯修复轮首个 Δ；≥1.0，E2 未触发"}
   ],
   "cursor": {
     "order_file": "review/qa-loop/scan-order.txt",
     "next_index": 177,
     "scanned_files": 177,
-    "note": "全 scope 扫描完成：cartography 63 + gis_harness 114"
+    "note": "全 scope 扫描完成"
   },
   "status": "running"
 }
