@@ -294,3 +294,20 @@ def _offline_embedding_model(monkeypatch):
     fail_fast._real_implementation = FaissVectorStore._get_embedding_model
 
     monkeypatch.setattr(FaissVectorStore, "_get_embedding_model", fail_fast)
+
+
+# ── ads-v1 离线硬闸（DS0 / ADR-0170；缺省零影响）────────────────────────────
+# ADS_FORCE_OFFLINE=1 时阻断全部新建 AF_INET/AF_INET6 socket：离线门禁用它
+# **证明**数据 lane / fabric 测试全绿不靠外网（缺口 A11 的 socket 阻断器），
+# 防止测试悄悄联网。未设置该 env 的常规跑法完全不受影响。
+@pytest.fixture(scope="session", autouse=True)
+def _ads_offline_socket_guard():
+    from tests.data.offline_guard import install_global_if_flagged
+
+    installed = install_global_if_flagged()
+    yield
+    if installed:
+        from tests.data.offline_guard import _ACTIVE
+
+        if _ACTIVE is not None:
+            _ACTIVE.restore()

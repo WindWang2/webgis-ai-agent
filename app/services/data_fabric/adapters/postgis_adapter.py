@@ -30,6 +30,10 @@ from app.schemas.data_fabric_schema import (
     QueryResult,
     QuerySpec,
 )
+# A7 阈值单点（ADR-0170）：MVT 每瓦片要素上限数值定义收敛到 acquisition_limits。
+from app.services.data_fabric.acquisition_limits import (
+    MVT_TILE_FEATURE_LIMIT as MVT_MAX_FEATURES_PER_TILE,
+)
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import (
     DataFabricError,
@@ -59,7 +63,6 @@ logger = logging.getLogger(__name__)
 
 MAX_PREVIEW_LIMIT = 100
 MAX_QUERY_LIMIT = 10_000
-MVT_MAX_FEATURES_PER_TILE = 20_000
 MVT_MIN_ZOOM = 0
 MVT_MAX_ZOOM = 22
 

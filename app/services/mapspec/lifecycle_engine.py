@@ -21,6 +21,10 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Literal, Opti
 MutationOrigin = Literal["agent", "user", "system"]
 
 from app.services.session_data import session_data_manager
+from app.services.data_fabric.acquisition_limits import (
+    MAP_QUALITY_GATE_FALLBACK,
+    MAPSPEC_MAX_FEATURES,
+)
 from app.services.mapspec.store import mapspec_store_instance, _should_remove_layer
 from app.services.mapspec.pipeline import process_layer_ingestion
 from app.services.mapspec.coordinator import validate as validate_mapspec
@@ -1041,9 +1045,9 @@ async def _run_quality_gate_hook(
     declared_crs = processed_layer.get("crs") if isinstance(processed_layer.get("crs"), str) else None
     layer_id = str(processed_layer.get("id") or source_entry.get("ref_id") or "layer")[:80]
     try:
-        max_features = int(getattr(settings, "MAP_QUALITY_GATE_MAX_FEATURES", 5000))
+        max_features = int(getattr(settings, "MAP_QUALITY_GATE_MAX_FEATURES", MAP_QUALITY_GATE_FALLBACK))
     except (TypeError, ValueError):
-        max_features = 5000
+        max_features = MAP_QUALITY_GATE_FALLBACK
     # 重算离事件循环（仓库红线；与 process_layer_ingestion 的 to_thread 同纪律）。
     verdict = await _asyncio.to_thread(
         evaluate_quality_gate,
@@ -1373,7 +1377,7 @@ class MapSpecLifecycleEngine:
                             "legend": {"visible": True, "position": "top-right"},
                             "controls": [{"type": "navigation", "position": "top-right"}],
                         },
-                        "thresholds": {"maxFeatures": 50000, "timeoutMs": 30000},
+                        "thresholds": {"maxFeatures": MAPSPEC_MAX_FEATURES, "timeoutMs": 30000},
                     }
                     prior_mapspec = None
                     old_mapspec_snapshot = None
@@ -1402,7 +1406,7 @@ class MapSpecLifecycleEngine:
                             "legend": {"visible": True, "position": "top-right"},
                             "controls": [{"type": "navigation", "position": "top-right"}],
                         },
-                        "thresholds": intent.thresholds or {"maxFeatures": 50000, "timeoutMs": 30000},
+                        "thresholds": intent.thresholds or {"maxFeatures": MAPSPEC_MAX_FEATURES, "timeoutMs": 30000},
                     }
 
                 elif isinstance(intent, SetViewIntent):
@@ -2522,7 +2526,7 @@ class MapSpecLifecycleEngine:
                         "legend": {"visible": True, "position": "top-right"},
                         "controls": [{"type": "navigation", "position": "top-right"}],
                     },
-                    "thresholds": {"maxFeatures": 50000, "timeoutMs": 30000},
+                    "thresholds": {"maxFeatures": MAPSPEC_MAX_FEATURES, "timeoutMs": 30000},
                 }
             checkpoint_id_created: Optional[str] = None
             outcomes: List[BatchIntentOutcome] = []

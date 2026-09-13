@@ -31,13 +31,15 @@ from app.core.auth import (
     get_owner_token,
 )
 from app.schemas.pagination import Page, clamp_pagination
+# A7 阈值单点（ADR-0170）：内联要素上限数值定义收敛到 acquisition_limits。
+from app.services.data_fabric.acquisition_limits import (
+    PROFILE_INLINE_LIMIT as _MAX_INLINE_FEATURES,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/data-quality", tags=["数据质量 V9"])
 
-#: 同步评估的内联要素上限（更大必须走 durable job 路径）。
-_MAX_INLINE_FEATURES = 20000
 _MAX_INLINE_BYTES_ESTIMATE = 8 * 1024 * 1024
 
 

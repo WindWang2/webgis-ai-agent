@@ -1,5 +1,61 @@
 # Changelog
 
+## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS1 源注册表与四类新 adapter, ADR-0171)
+
+### Added (data-supply: adaptive-data-supply/v1-master, DS1)
+- Declarative source registry `app/services/data_fabric/source_registry.py` +
+  `config/sources/*.yaml` (12 sources: 3 gov portals + 3 local assets + 6
+  public). Schema-validated with loud file-attributed errors (duplicate id /
+  unknown protocol / plaintext credential), mtime hot-reload, capability
+  declaration (pushdown/quota/coverage/license/freshness/auth/verified), and a
+  fabric bridge (`to_profile`/`build_adapter`/`sync_source`) so adding a source
+  is a YAML file — proven by an end-to-end YAML-only demo test.
+- Registry lint `scripts/check_source_registry.py`: duplicate ids, bbox sanity,
+  missing quotas (warn), fallback-ref existence, plaintext-credential rejection,
+  **capability claims vs real adapter flags** (overclaiming = error), and
+  `verified: false` disclosure listing.
+- Four honest adapters registered in the fabric registry:
+  `geopackage_adapter` (pyogrio zero-row schema reads + bbox pushdown),
+  `local_file_adapter` (GeoJSON + read-only sqlite), `cog_adapter` (rasterio
+  header metadata; vector query typed-unsupported), `stats_api_adapter`
+  (declared response mapping over an SSRF-safe session). Missing local assets
+  are typed `SourceUnreachableError` — never empty results, never fabricated
+  features.
+- `GovDataAdapter` now reads the source registry for its platform list
+  (gap A2); the hardcoded `PLATFORMS` dict stays as a deprecated transitional
+  fallback until zero-reference cleanup (DS9).
+
+## [Unreleased] - 2026-09-13 (adaptive-data-supply/v1: DS0 契约/fixture/阈值单点, ADR-0170)
+
+### Added (data-supply: adaptive-data-supply/v1-master, DS0)
+- Frozen acquisition-supply contracts `app/services/data_fabric/contracts.py`
+  (D1 `D1DatasetDescriptor` as an additive subclass of the ADR-0094
+  `DatasetDescriptor` — version/pin semantics, temporal_coverage, granularity,
+  license, freshness, A12 quality-signals handshake, cost_hint; D2
+  `AcquisitionPlan` serializable/diffable/replayable; D3 `FallbackDecision`
+  with conservative `comparable=false` default; D4 `AcquisitionFact`) plus
+  dumped JSON Schemas in `docs/dev/ads-v1-contracts/` with drift-guard tests
+  (`tests/unit/test_data_fabric_ads_contracts.py`).
+- Offline fixture infrastructure for external source adapters
+  (`tests/data/fabric_fixtures.py`): `FakeSourceServer` serves minimal true
+  responses for OGC API Features / WFS 2.0 / STAC / ArcGIS REST over the
+  existing `FakeFabricAdapter` SSRF-validating seam and PostGIS via a canned
+  DB-API pool at `_POSTGIS_POOLS`; protocol fidelity locked by real-adapter
+  round-trip tests (`tests/data/test_ads_fixture_infra.py`). Socket blocker
+  (`tests/data/offline_guard.py`, `ADS_FORCE_OFFLINE=1`) makes the offline
+  gate *prove* a lane dials nothing (typed `NetworkBlockedError`).
+- Acquisition threshold single point (gap A7)
+  `app/services/data_fabric/acquisition_limits.py`: six surface constants +
+  the continuous `effective_feature_limit(base, avg_vertices=, viewport_features=)`
+  policy (provisional until DS8 calibration). The seven scattered literals
+  (`mapspec_source`, `postgis_adapter`, `data_quality`, `data_profile/unified`,
+  `mapspec/composite_builder`, `mapspec/lifecycle_engine`, `publication_export`)
+  now import the single point — behaviour unchanged, grep-zero assertions lock
+  the consolidation.
+- First-round ratchet baseline `scripts/ads_baseline.py` →
+  `docs/dev/ads-v1-baseline.md` (acquisition P50/P95, inline cache hit rate,
+  external-source availability measured honestly offline).
+
 ## [Unreleased] - 2026-09-13 (adaptive-cartography/09: 视觉裁判与自愈闭环, ADR-0158)
 
 ### Added (harness: adaptive-cartography/09-visual-judge-selfheal)

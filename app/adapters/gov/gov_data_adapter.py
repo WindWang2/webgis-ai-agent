@@ -22,7 +22,10 @@ class GovDataAdapter(BaseDataAdapter):
     name = "gov_data"
     supported_query_types = ["poi_list", "boundary", "statistics"]
 
-    # 已知的政务数据平台
+    # 已知的政务数据平台 — DEPRECATED（ADR-0171 / DS1）：平台清单已迁入
+    # config/sources/*.yaml（protocol: gov_portal），运行时经
+    # ``SourceRegistryService.gov_platforms()`` 读取。本常量仅为零引用确认
+    # 前的过渡兜底（DS9 清理项），新增平台一律加 YAML，不改这里。
     PLATFORMS = {
         "beijing": {
             "name": "北京市政务数据资源网",
@@ -44,11 +47,27 @@ class GovDataAdapter(BaseDataAdapter):
     def __init__(self):
         self.quality_engine = QualityEngine()
 
+    @classmethod
+    def _platforms(cls) -> dict:
+        """政务平台清单：源注册表为准（config/sources），装载异常时兜底 deprecated 常量。"""
+        try:
+            from app.services.data_fabric.source_registry import source_registry_service
+
+            platforms = source_registry_service.gov_platforms()
+            if platforms:
+                return platforms
+            logger.warning("[GovDataAdapter] registry has no gov_portal sources; "
+                           "falling back to deprecated PLATFORMS")
+        except Exception as e:  # noqa: BLE001 — discovery resilience over loud crash here
+            logger.warning("[GovDataAdapter] source registry unavailable (%s); "
+                           "falling back to deprecated PLATFORMS", e)
+        return dict(cls.PLATFORMS)
+
     async def discover(self, query: str, context: SearchContext) -> list[DataSource]:
         """探测政府开放数据平台"""
         sources = []
 
-        for platform_id, config in self.PLATFORMS.items():
+        for platform_id, config in self._platforms().items():
             try:
                 found = await self._search_platform(platform_id, config, query)
                 sources.extend(found)

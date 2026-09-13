@@ -12,6 +12,7 @@ from app.schemas.map_component_slots import (
     ViewportSlot,
 )
 from app.schemas.template_schema import SEED_TEMPLATES
+from app.services.data_fabric.acquisition_limits import MAPSPEC_MAX_FEATURES
 from app.services.mapspec.coordinator import validate as validate_mapspec
 
 logger = logging.getLogger(__name__)
@@ -249,7 +250,7 @@ class CompositeMapSpecBuilder:
                     "accentColor": layout_slot.accent_color,
                 },
             },
-            "thresholds": {"maxFeatures": 50000, "timeoutMs": 30000},
+            "thresholds": {"maxFeatures": MAPSPEC_MAX_FEATURES, "timeoutMs": 30000},
         }
 
         if basemap_slot.vector_style_url:

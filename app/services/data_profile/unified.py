@@ -17,9 +17,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-logger = logging.getLogger(__name__)
+# A7 阈值单点（ADR-0170）：内联要素上限与画像扫描行上限均收敛到 acquisition_limits。
+from app.services.data_fabric.acquisition_limits import (
+    PROFILE_INLINE_LIMIT as _MAX_INLINE_FEATURES,
+    PROFILE_SCAN_ROWS_LIMIT as _MAX_SCAN_ROWS,
+)
 
-_MAX_INLINE_FEATURES = 20000
+logger = logging.getLogger(__name__)
 
 
 # ── 统一画像 ─────────────────────────────────────────────────────────
@@ -53,7 +57,7 @@ def build_unified_profile(
         features = geojson["features"]
         vp, quality = profile_features(
             features, crs=str(payload.get("crs") or ""),
-            max_scan_rows=min(max_features, 50000),
+            max_scan_rows=min(max_features, _MAX_SCAN_ROWS),
         )
         return {
             "kind": "vector",

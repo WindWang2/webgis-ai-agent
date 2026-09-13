@@ -38,6 +38,7 @@ from app.lib.cartography.render_diagnostics import (
     DiagnosticSink,
     diagnostic,
 )
+from app.services.data_fabric.acquisition_limits import EXPORT_MAX_FEATURES
 from app.services.mapspec_to_svg import (
     compile_mapspec_to_svg_detailed,
     resolve_spec_timeout_ms,
@@ -143,7 +144,7 @@ def _probe_cjk_font() -> bool:
 
 
 def _effective_max_features(frame_doc: Dict[str, Any]) -> int:
-    """spec.thresholds.maxFeatures（合法时）否则 50000 —— 调用方再做绝对封顶。"""
+    """spec.thresholds.maxFeatures（合法时）否则 EXPORT_MAX_FEATURES —— 调用方再做绝对封顶。"""
     import math as _math
 
     thr = frame_doc.get("thresholds")
@@ -155,7 +156,7 @@ def _effective_max_features(frame_doc: Dict[str, Any]) -> int:
                     return int(val)
             except (ValueError, TypeError, OverflowError):
                 pass
-    return 50000
+    return EXPORT_MAX_FEATURES
 
 
 def _frame_geometry(frame: Optional[Dict[str, Any]]) -> Tuple[float, float, Optional[List[float]]]:
@@ -411,7 +412,7 @@ def render_publication_pdf(
                 bounds=bounds,
                 max_labels=max_labels,
                 # R2-M5/M7：服务端绝对封顶（spec 可声明更小预算，不得放大包络）
-                max_features=min(_effective_max_features(frame_doc), 50000),
+                max_features=min(_effective_max_features(frame_doc), EXPORT_MAX_FEATURES),
                 timeout_ms=min(resolve_spec_timeout_ms(frame_doc), 30000.0),
             )
         except Exception as ex:  # 单帧失败不中断 atlas（frame skip 政策）

@@ -66,8 +66,17 @@ scripts/
 /docs/dev/ac-10-quality-trend.csv
 tests/fixtures/runtime/*/golden/last_verify.json
 tests/fixtures/runtime/*/golden/last_failure.json
+/docs/dev/ac-10-quality-trend.csv
+tests/fixtures/runtime/*/golden/last_verify.json
+tests/fixtures/runtime/*/golden/last_failure.json
 !/scripts/gen_integration_manifest.py
 !/scripts/simulate_merge.py
+# ads-v1 数据供给线（ADR-0170/0171）：契约 schema dump（契约一致性闸测试
+# 依赖）、首轮基线测量（DS8 ratchet 复测依赖同协议）、源注册表 lint（DS1
+# 验收门）。闸测试/验收依赖它们，必须入库。
+!/scripts/ads_dump_contracts.py
+!/scripts/ads_baseline.py
+!/scripts/check_source_registry.py
 !/scripts/gen_release_readiness.py
 !/scripts/integration_harness.py
 !/scripts/gen_frontend_behavior.py
