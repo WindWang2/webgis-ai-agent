@@ -1030,8 +1030,12 @@ class ToolDispatchService:
                     {"ref_id": result_ref, "descriptor": descriptor or {}}, "data"
                 ),
             }
+            # 方向 8（U5）：工具 authoring 归因 —— actor=tool:<name> 进
+            # provenance/协作事件（apply_template 类 actor 自动分类为
+            # TEMPLATE，其余 AGENT_EXPLICIT）。
             lifecycle = await mapspec_store.layer_upsert(
-                session_id, converted_layer, source_data
+                session_id, converted_layer, source_data,
+                actor=f"tool:{tool_name}",
             )
             if not lifecycle.get("success"):
                 raise RuntimeError(
@@ -1256,7 +1260,8 @@ class ToolDispatchService:
                 "bounds": [float(v) for v in bounds],
             }
             lifecycle = await mapspec_store.layer_upsert(
-                session_id, layer, source_data
+                session_id, layer, source_data,
+                actor=f"tool:{tool_name}",
             )
             if not lifecycle.get("success"):
                 raise RuntimeError(

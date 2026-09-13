@@ -106,12 +106,47 @@ async def handle_viewport_change(session_id: str, data: dict):
             pass
 
 
+async def _ws_legacy_provenance(session_id: str, kind: str, target: str, detail: dict) -> None:
+    """方向 8（D-05）：遗留 socket 直写通道的 provenance 归因。
+
+    ST-P3-4：本通道直写 runtime layers（无 CAS、不同步 spec）—— 完整迁移
+    需要客户端携带 expected_revision（破坏性协议变更，超出本线边界）。此处
+    只补归因：决策链可见，reconciliation anomaly（VISIBILITY_MISMATCH 等）
+    可与此条 provenance 对照。best-effort，绝不影响消息处理。
+    """
+    try:
+        from datetime import datetime, timezone
+
+        from app.services.gis_world_state.provenance import ProvenanceEntry, append_provenance
+
+        await append_provenance(
+            session_id,
+            ProvenanceEntry(
+                seq=0,
+                ts=datetime.now(timezone.utc).isoformat(),
+                origin="user",
+                actor="ws_legacy",
+                kind=kind,
+                target=str(target)[:200],
+                revision=0,
+                summary=f"legacy socket {kind}",
+                detail=dict(detail),
+            ),
+        )
+    except Exception:  # noqa: BLE001 — 归因失败不阻断
+        pass
+
+
 async def handle_layer_toggled(session_id: str, data: dict):
     layer_id = data.get("layer_id")
     visible = data.get("visible")
     if layer_id is not None:
         await session_data_manager.update_layer_in_state(session_id, layer_id, {"visible": visible})
         await session_data_manager.append_event(session_id, "layer_toggled", data)
+        await _ws_legacy_provenance(
+            session_id, "PatchLayerPresentationIntent", layer_id,
+            {"visible": visible, "channel": "ws_legacy"},
+        )
 
 
 async def handle_layer_opacity(session_id: str, data: dict):
@@ -119,6 +154,10 @@ async def handle_layer_opacity(session_id: str, data: dict):
     opacity = data.get("opacity")
     if layer_id is not None and opacity is not None:
         await session_data_manager.update_layer_in_state(session_id, layer_id, {"opacity": opacity})
+        await _ws_legacy_provenance(
+            session_id, "PatchLayerPresentationIntent", layer_id,
+            {"opacity": opacity, "channel": "ws_legacy"},
+        )
 
 
 async def handle_layer_removed(session_id: str, data: dict):
@@ -126,6 +165,10 @@ async def handle_layer_removed(session_id: str, data: dict):
     if layer_id:
         await session_data_manager.remove_layer_from_state(session_id, layer_id)
         await session_data_manager.append_event(session_id, "layer_removed", data)
+        await _ws_legacy_provenance(
+            session_id, "RemoveLayerIntent", layer_id,
+            {"channel": "ws_legacy"},
+        )
 
 
 async def handle_base_layer_changed(session_id: str, data: dict):
