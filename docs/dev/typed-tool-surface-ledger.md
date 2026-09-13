@@ -59,7 +59,7 @@
 - [x] 跨模块回归已跑（dispatch/normalization/session-plan/bridge/auth/contract）
 - [x] master 预存失败基线归因（#1270 记录的 8 failures 为 quality artifact staleness 域，零交集；唯一中途失败为本线契约冲突已修复）
 - [x] 资源使用受控（无全量 build；focused tests 串行；无前端改动故跳过 next build）
-- [ ] 独立 review 完成并修复 P0/P1（Subagent B 进行中）
+- [x] 独立 review 完成并修复 P0/P1（Subagent B APPROVE-WITH-FIXES：1 P1 + 2 P2 + 4 nit 全部修复，commit a3c90ef5；修复后 gate+parity 20/20、consolidated 111、integration-side 44 全绿）
 - [x] 文档/ADR/ledger/生成物一致（ADR-0180 + tool-surface.md V1.5；无生成物触碰）
 - [ ] 独立 PR 已创建（未 merge、未 auto-merge）
 
