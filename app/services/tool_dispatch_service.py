@@ -293,6 +293,32 @@ class _SessionWaveGate:
         return len(self._held)
 
 
+def _get_governor_adapter(registry: "ToolRegistry"):
+    """ADR-0182：governor 适配器懒构造（kill-switch / 依赖缺失 → None 直通）。
+
+    Governor 任何异常在其内部 fail-open；本函数只在 import/构造层面兜底 ——
+    governor 包缺席时行为与主线完全一致。
+    """
+    try:
+        from app.services.governor.dispatch_adapter import (
+            GovernorDispatchAdapter,
+            surface_enabled,
+        )
+        if not surface_enabled():
+            return None
+        from app.services.governor.governor import get_governor
+
+        meta_fn = getattr(registry, "metadata", None)
+        return GovernorDispatchAdapter(
+            get_governor(),
+            metadata_fn=meta_fn if callable(meta_fn) else None,
+        )
+    except Exception:  # noqa: BLE001 — 直通纪律（governor 绝不阻断调度面）
+        logger.debug("[resource-governor] adapter unavailable; passthrough",
+                     exc_info=True)
+        return None
+
+
 class ToolDispatchService:
     """工具调度的单一拥有者。两条 agent 路径都应经由本服务。"""
 
@@ -492,7 +518,23 @@ class ToolDispatchService:
                         # V3 data foundation：捕获本调用参数消费的规范 ref
                         # （血缘证据；下方产物铸造后随登记写入账本边）。
                         with capture_arg_lineage_refs() as _arg_lineage:
-                            result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
+                            # ADR-0182 Harness Resource Governor：估算 → 准入 →
+                            # 预留 → 执行 → 记账/归还。拒绝/降级返回错误族
+                            # payload（走下方既有的失败折叠路径，dedup 诚实释放）。
+                            # kill-switch GOVERNOR_TOOL_SURFACE=0 → 完全直通。
+                            _governor_adapter = _get_governor_adapter(self._registry)
+                            if _governor_adapter is not None:
+                                result = await _governor_adapter.run(
+                                    tool_name=tool_name,
+                                    tool_args=tool_args_raw,
+                                    session_id=session_id or "",
+                                    dispatch_inner=lambda: self._registry.dispatch(
+                                        tool_name, tool_args_raw,
+                                        session_id=session_id),
+                                )
+                            else:
+                                result = await self._registry.dispatch(
+                                    tool_name, tool_args_raw, session_id=session_id)
                 finally:
                     await self._session_wave_gate.release(session_id or "")
             except OperationCancelled:

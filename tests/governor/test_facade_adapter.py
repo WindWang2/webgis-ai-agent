@@ -197,7 +197,9 @@ class TestFacadePipeline:
         gov.retries.cancel_session("s1")
         d2, _, _ = await gov.admit_and_reserve(
             _demand("s1", retry_class=RetryClass.TOOL, attempt=2))
-        assert not d2.allowed and d2.decision is AdmissionDecision.REJECT
+        assert not d2.allowed
+        assert d2.decision is AdmissionDecision.REJECT
+        assert d2.reasons == ["retry_budget:deny_cancelled"]
 
     @pytest.mark.asyncio
     async def test_internal_failure_fails_open(self):
@@ -263,8 +265,9 @@ class TestDispatchAdapter:
                 dispatch_inner=inner)
             assert calls == []
             assert result["success"] is False
-            assert result["governor_decision"] == "reject"
-            assert result["suggestions"]
+            assert result["governor"]["decision"] == "reject"
+            assert result["error"]  # 错误族形状（is_error_like_result 可识别）
+            assert result["governor"]["suggestions"]
         finally:
             os.environ.pop("GOVERNOR_MODE", None)
             reset_governor_config_for_tests()

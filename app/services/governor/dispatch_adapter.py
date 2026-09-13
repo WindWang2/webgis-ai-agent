@@ -168,20 +168,34 @@ class GovernorDispatchAdapter:
 
     @staticmethod
     def _rejection_payload(tool_name: str, decision) -> Dict[str, Any]:
-        """enforce 模式下拒绝执行时的诚实 payload（不伪装成功）。"""
+        """enforce 模式下拒绝执行时的诚实 payload（不伪装成功）。
+
+        形状对齐派发链已识别的错误族（``{"error": <str>, "success": False,
+        "code": ...}``，tool_dispatch_service 的 is_error_like_result 折叠
+        路径）—— 保证拒绝被当作「未执行的失败」处理：dedup 槽位释放、
+        诚实重试，绝不被「已成功执行」谎言拦截。
+        """
         degrade = decision.degrade_hint or {}
+        reasons_txt = "; ".join(decision.reasons) or "unspecified"
+        suggestion_txt = (" / ".join(decision.suggestions[:2])
+                          if decision.suggestions else "")
         return {
             "success": False,
-            "governor_decision": decision.decision.value,
-            "reasons": list(decision.reasons),
-            "suggestions": list(decision.suggestions),
-            "degrade_options": degrade.get("steps", []),
-            "degrade_semantics": degrade.get("best_semantics"),
-            "note": (
-                f"tool '{tool_name}' was not executed: resource governor "
-                f"decision={decision.decision.value} (ADR-0182); follow "
-                f"suggestions/degrade_options or retry with narrower scope"
+            "error": (
+                f"resource governor blocked '{tool_name}': "
+                f"decision={decision.decision.value} ({reasons_txt})"
             ),
+            "code": f"RESOURCE_GOVERNOR_{decision.decision.value.upper()}",
+            "correction_hint": suggestion_txt or (
+                "retry with narrower scope, or cancel other in-flight work"),
+            "governor": {
+                "decision": decision.decision.value,
+                "reasons": list(decision.reasons),
+                "suggestions": list(decision.suggestions),
+                "degrade_options": degrade.get("steps", []),
+                "degrade_semantics": degrade.get("best_semantics"),
+                "adr": "ADR-0182",
+            },
         }
 
 

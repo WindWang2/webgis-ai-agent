@@ -159,12 +159,19 @@ class HarnessResourceGovernor:
                     operation=demand.tool_name)
                 gmetrics.observe_retry(
                     demand.retry_class.value, "allowed" if allowed else why)
+                # 重试被预算/取消否决 → 诚实 REJECT（DEFER 是谎言：没有
+                # 可等的队列，等下去只会无限循环 —— R10「重试必须停止」）
                 if not allowed and enforce:
                     decision = ResourceDecision(
-                        decision=(AdmissionDecision.REJECT
-                                  if why == "deny_cancelled"
-                                  else AdmissionDecision.DEFER),
+                        decision=AdmissionDecision.REJECT,
                         reasons=[f"retry_budget:{why}"],
+                        suggestions=(
+                            ["retry has been cancelled; issue a fresh request"]
+                            if why == "deny_cancelled" else [
+                                "retry budget exhausted for this scope; "
+                                "wait for in-flight work to drain or "
+                                "escalate via a new goal",
+                            ]),
                         mode=self.config.mode.value,
                     )
                     gmetrics.observe_admission(decision.decision.value,
@@ -209,6 +216,16 @@ class HarnessResourceGovernor:
                     exc.channel or "direct", exc.waited_s)
                 if not enforce:
                     ticket = AcquireTicket(channel="", session_id=demand.scope_key())
+                elif exc.channel == "cancelled":
+                    # 排队期间会话被取消（R9）—— 诚实拒绝
+                    decision = ResourceDecision(
+                        decision=AdmissionDecision.REJECT,
+                        reasons=["session_cancelled_while_queued"],
+                        mode=self.config.mode.value,
+                    )
+                    gmetrics.observe_admission(decision.decision.value,
+                                               self.config.mode.value)
+                    return decision, None, None
                 else:
                     decision = ResourceDecision(
                         decision=AdmissionDecision.DEGRADE,
@@ -301,8 +318,9 @@ class HarnessResourceGovernor:
 
     async def cancel_session(self, session_id: str,
                              reason: CancelReason) -> int:
-        """取消会话：pending 不启动 + live reservation 全部释放。"""
+        """取消会话：live 释放 + 排队候补唤醒（pending 不启动）。"""
         released = await self._release_all(session_id)
+        await self.bp.cancel_session_waiters(session_id)
         self.cancellations.cancel(
             session_id, reason,
             release_reservations=lambda _sid: [r.reservation_id for r in released],

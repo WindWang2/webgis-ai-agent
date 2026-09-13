@@ -79,6 +79,10 @@ class _ChannelGate:
         self.name = name
         self._sched = FairScheduler(capacity, aging_threshold_s=aging_threshold_s)
         self._lock = asyncio.Lock()   # 串行化 FairScheduler（同步核心）
+        #: 会话 → 在队候补（cancel_session 用；有界 = 真实排队数）
+        self._waiters_by_session: Dict[str, list] = {}
+        #: 被取消的候补 seq（唤醒后据此走归零路径）
+        self._cancelled_seqs: set = set()
 
     @property
     def capacity(self) -> int:
@@ -94,10 +98,12 @@ class _ChannelGate:
 
     async def acquire(self, session_id: str, *, small: bool, priority: int,
                       est_cost: float, weight: float, max_wait_s: float,
-                      ) -> None:
-        """占用一个槽位（可能等待）；超时抛 QueueTimeoutError。
+                      ) -> bool:
+        """占用一个槽位（可能等待）。
 
-        成功时槽位已计入 scheduler.in_flight；调用方保证最终 release。
+        返回 True = 获得槽位（调用方保证最终 release）；
+        返回 False = 等待期间该会话被取消（R9：pending 不启动）；
+        超时抛 :class:`QueueTimeoutError`。
         """
         waiter = FairWaiter(
             session_id=session_id, weight=weight, priority=priority,
@@ -106,8 +112,15 @@ class _ChannelGate:
         waiter.granted_event = asyncio.Event()
         async with self._lock:
             if self._sched.try_grant_immediate(waiter):
-                return
+                if waiter.seq in self._cancelled_seqs:
+                    # 取消竞争窗口：判给发生在标记之后 —— 立即归还
+                    self._cancelled_seqs.discard(waiter.seq)
+                    self._sched.complete(session_id=session_id, small=small,
+                                         actual_cost=0.0)
+                    return False
+                return True
             self._sched.enqueue(waiter)
+            self._waiters_by_session.setdefault(session_id, []).append(waiter)
         started = time.monotonic()
         try:
             await asyncio.wait_for(waiter.granted_event.wait(), timeout=max_wait_s)
@@ -119,7 +132,41 @@ class _ChannelGate:
                     # → 槽位原样归还并唤醒下一个候补（无孤儿槽位）
                     self._return_slot_and_wake_locked(
                         session_id=session_id, small=small, actual_cost=0.0)
+                self._discard_waiter_locked(session_id, waiter)
             raise QueueTimeoutError(self.name, time.monotonic() - started, session_id)
+        async with self._lock:
+            self._discard_waiter_locked(session_id, waiter)
+        if waiter.seq in self._cancelled_seqs:
+            # 仍在队时被 cancel_session 唤醒 —— 从未获得槽位，无需归还
+            self._cancelled_seqs.discard(waiter.seq)
+            return False
+        return True
+
+    def _discard_waiter_locked(self, session_id: str,
+                               waiter: FairWaiter) -> None:
+        lst = self._waiters_by_session.get(session_id)
+        if lst is not None:
+            try:
+                lst.remove(waiter)
+            except ValueError:
+                pass
+            if not lst:
+                self._waiters_by_session.pop(session_id, None)
+
+    async def cancel_session(self, session_id: str) -> int:
+        """取消该会话的全部排队候补（R9：pending 不启动）。返回唤醒数。"""
+        async with self._lock:
+            waiters = self._waiters_by_session.pop(session_id, [])
+            woken = 0
+            for w in waiters:
+                if self._sched.cancel(w.seq):
+                    # 仍在队 → 标记并唤醒；acquire 唤醒后按标记走归还路径
+                    self._cancelled_seqs.add(w.seq)
+                    if w.granted_event is not None:
+                        w.granted_event.set()
+                    woken += 1
+                # 不在队（已判给/已超时）→ 由各自路径处理
+            return woken
 
     async def release(self, *, session_id: str, small: bool,
                       actual_cost: float) -> None:
@@ -138,7 +185,12 @@ class _ChannelGate:
 
 
 class _SessionGate:
-    """会话层闸：总并发（Semaphore）+ heavy 上限（Condition）。"""
+    """会话层闸：总并发（Semaphore）+ heavy 上限（Condition）。
+
+    所有等待都带 ``max_wait_s`` 上界（D6：拒绝无界等待）——调用方等待
+    超时抛 :class:`QueueTimeoutError`。失败原子性：任何路径超时/异常都不
+    持有半套槽位（semaphore 拿到但 heavy 没拿到 → 立即归还 semaphore）。
+    """
 
     def __init__(self, concurrency: int, heavy_cap: int):
         self._sem = asyncio.Semaphore(concurrency)
@@ -146,15 +198,36 @@ class _SessionGate:
         self._heavy_cap = max(1, heavy_cap)
         self._heavy_in_flight = 0
 
-    async def acquire(self, *, heavy: bool) -> None:
-        await self._sem.acquire()
+    async def acquire(self, *, heavy: bool, max_wait_s: float) -> None:
+        try:
+            await asyncio.wait_for(self._sem.acquire(), timeout=max_wait_s)
+        except asyncio.TimeoutError:
+            raise QueueTimeoutError("session", max_wait_s, "") from None
         if not heavy:
             return
+        # heavy 上限：Condition 等待（有界）；任何失败路径都不得既占
+        # semaphore 又不持 heavy 槽（失败原子性）。
+        released = False
         try:
             async with self._heavy_cond:
+                deadline = time.monotonic() + max_wait_s
                 while self._heavy_in_flight >= self._heavy_cap:
-                    await self._heavy_cond.wait()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    try:
+                        await asyncio.wait_for(self._heavy_cond.wait(),
+                                               timeout=remaining)
+                    except asyncio.TimeoutError:
+                        break
+                if self._heavy_in_flight >= self._heavy_cap:
+                    released = True   # 统一在此处归还 semaphore（恰好一次）
+                    raise QueueTimeoutError("session_heavy", max_wait_s, "")
                 self._heavy_in_flight += 1
+        except QueueTimeoutError:
+            if released:
+                self._sem.release()
+            raise
         except BaseException:
             self._sem.release()
             raise
@@ -208,6 +281,16 @@ class BackpressureManager:
         async with self._sessions_lock:
             self._session_gates.pop(session_id, None)
 
+    async def cancel_session_waiters(self, session_id: str) -> int:
+        """取消该会话在所有通道排队的候补（R9：pending 不启动）。"""
+        woken = 0
+        for channel in self._channels.values():
+            try:
+                woken += await channel.cancel_session(session_id)
+            except Exception:  # noqa: BLE001 — 取消路径绝不互相阻断
+                pass
+        return woken
+
     async def _gate_for(self, session_id: str) -> _SessionGate:
         async with self._sessions_lock:
             gate = self._session_gates.get(session_id)
@@ -231,14 +314,18 @@ class BackpressureManager:
             small = True   # 小估时任务享受 bypass 预留槽（防 heavy 队头阻塞）
         gate = await self._gate_for(session_id)
         heavy = resource_class is ResourceClass.HEAVY
-        await gate.acquire(heavy=heavy)
+        await gate.acquire(heavy=heavy, max_wait_s=max_wait_s)
         try:
             if channel_name:
                 channel = self._channels[channel_name]
-                await channel.acquire(
+                granted = await channel.acquire(
                     session_id, small=small, priority=priority,
                     est_cost=est_wall, weight=weight, max_wait_s=max_wait_s,
                 )
+                if not granted:
+                    # 等待期间会话被取消（R9）—— 会话闸槽位已由下方
+                    # except 路径归还，这里以取消信号上抛
+                    raise QueueTimeoutError("cancelled", 0.0, session_id)
             return AcquireTicket(
                 channel=channel_name, session_id=session_id,
                 heavy=heavy, small=small,

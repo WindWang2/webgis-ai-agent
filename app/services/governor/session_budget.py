@@ -259,15 +259,14 @@ class SessionBudgetLedger:
             return len(self._ledgers["session"])
 
     def live_memory_total(self) -> float:
-        """全局在飞 memory（adjudged 总和；admission 内存压力输入）。"""
+        """全局在飞 memory（adjudged 总和；admission 内存压力输入）。
+
+        只按 session 作用域求和 —— reservation 沿链记账后 global 作用域
+        是**祖先视图**而非增量，加进来会把同一份在飞量计双次。
+        """
         with self._lock:
-            total = 0.0
-            for led in self._ledgers["session"].values():
-                total += led.live.get(Dimension.MEMORY_BYTES, 0.0)
-            g = self._ledgers["global"].get("global")
-            if g is not None:
-                total += g.live.get(Dimension.MEMORY_BYTES, 0.0)
-            return total
+            return sum(led.live.get(Dimension.MEMORY_BYTES, 0.0)
+                       for led in self._ledgers["session"].values())
 
     def _scope_id_for(self, scope: str, demand: ResourceDemand) -> str:
         if scope == "turn":
