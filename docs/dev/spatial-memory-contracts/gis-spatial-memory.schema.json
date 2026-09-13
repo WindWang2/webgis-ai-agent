@@ -1,0 +1,65 @@
+{
+  "$id": "docs/dev/spatial-memory-contracts/gis-spatial-memory.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GISSpatialMemoryRecord",
+  "description": "GIS Spatial Reasoning Memory 记录契约（方向 9，ADR-0183）。模型面/日志面用 include_audit=false 形状；审计面追加 include_audit=true 的字段。漂移测试 tests/test_gis_memory_schema_drift.py 守护本文件与 contract.py 的一致性。",
+  "type": "object",
+  "required": [
+    "id", "kind", "scope", "subject", "value", "refs",
+    "confidence", "status", "version", "invalidation_rule"
+  ],
+  "properties": {
+    "id": {"type": "string", "description": "记忆 UUID"},
+    "kind": {
+      "type": "string",
+      "enum": [
+        "resolved_place", "boundary_ref", "dataset_semantics", "field_role",
+        "crs_resolution", "analysis_artifact", "successful_strategy",
+        "provider_failure", "product_decision", "user_cartographic_preference"
+      ]
+    },
+    "scope": {"type": "string", "enum": ["session", "project", "user"]},
+    "subject": {"type": "string", "maxLength": 255, "description": "语义主体：规范地名 / dataset_key / 工具名 / 产品键"},
+    "value": {
+      "type": "object",
+      "description": "有界 JSON（序列化 ≤2048 字符，写入侧裁剪）；ref-first，绝无大数据 payload"
+    },
+    "refs": {
+      "type": "array",
+      "items": {"type": "string"},
+      "maxItems": 8,
+      "description": "ref-only：artifact ref / dataset ref / session ref"
+    },
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "status": {"type": "string", "enum": ["active", "superseded", "invalidated"]},
+    "version": {"type": "integer", "minimum": 1, "description": "同 key 演化版本，再验证/取代时 +1"},
+    "invalidation_rule": {
+      "type": "string",
+      "enum": ["ttl", "dataset_version", "manual", "scope_gone"]
+    },
+    "org_id": {"type": "string", "description": "租户桶（调用方烙印；include_audit=true 才导出）"},
+    "scope_id": {"type": "string", "description": "session_id / project_id / 用户态键（include_audit=true 才导出）"},
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "intent_resolution", "review_passed", "tool_result", "tool_failure",
+            "dataset_pin", "data_profile", "explicit_user_correction",
+            "explicit_user_decision"
+          ]
+        },
+        "method": {"type": "string", "maxLength": 120},
+        "turn_id": {"type": "string", "maxLength": 64}
+      },
+      "description": "生产证据（closed vocab；include_audit=true 才导出）"
+    },
+    "fingerprint": {"type": "string", "maxLength": 64, "description": "语义指纹：矛盾判定锚点（include_audit=true 才导出）"},
+    "expires_at": {"type": ["string", "null"], "format": "date-time", "description": "include_audit=true 才导出"},
+    "created_at": {"type": ["string", "null"], "format": "date-time", "description": "include_audit=true 才导出"},
+    "last_validated_at": {"type": ["string", "null"], "format": "date-time", "description": "include_audit=true 才导出"},
+    "sensitive": {"type": "boolean", "description": "true = 永不进入模型投影（include_audit=true 才导出）"}
+  },
+  "additionalProperties": false
+}

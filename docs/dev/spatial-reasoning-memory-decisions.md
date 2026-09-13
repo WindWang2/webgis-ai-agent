@@ -36,6 +36,9 @@ invalidation_rule(ttl|dataset_version|manual|scope_gone)`
 - 决策：`policy.py` 的 `MemoryWriteGate` 对 `user_cartographic_preference` 类意图
   **路由**到 `cartography.project_memory.record_fact(kind="preference")`（有 project 时），
   其余 kind 落新表；读侧（检索/投影）做 read-through 合并两者。
+- 修订（M5）：显式用户来源（纠正/决策）路由时带 `supersede=True`——
+  ADR-0069 自身语义即「调用方已确认才显式升级」；否则用户改偏好会永久
+  卡在 conflicted、新偏好永不生效（eval conflicting_preference 剧本暴露）。
 - 理由：任务红线「不得重新建一套 cartography preference DB」；且 ADR-0069 的
   conflict/expires/LRU 纪律已评审过，不复制。
 

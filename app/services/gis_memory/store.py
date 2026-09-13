@@ -25,6 +25,7 @@ from app.services.gis_memory.contract import (
     STATUS_INVALIDATED,
     STATUS_SUPERSEDED,
     SOURCE_USER_CORRECTION,
+    SOURCE_USER_DECISION,
     MemoryPolicyError,
     MemoryWriteRequest,
     SpatialMemoryRecord,
@@ -214,9 +215,15 @@ def record_memory(db: Session, req: MemoryWriteRequest) -> Optional[GISSpatialMe
 def _route_to_carto_project_fact(
     db: Session, req: MemoryWriteRequest, verdict: PolicyVerdict
 ) -> Optional[GISSpatialMemory]:
-    """偏好 → ADR-0069 ``record_fact(kind=preference)``（单一 preference 真相）。"""
+    """偏好 → ADR-0069 ``record_fact(kind=preference)``（单一 preference 真相）。
+
+    ``supersede`` 语义沿用 ADR-0069 自身的纪律（「调用方已确认」才显式
+    升级）：显式用户来源（纠正/决策）= 用户已经改主意，新偏好落 active；
+    其余来源冲突时保持既有 conflicted 挂起语义，绝不静默覆盖。
+    """
     from app.services.cartography.project_memory import record_fact
 
+    explicit = req.evidence.source in (SOURCE_USER_CORRECTION, SOURCE_USER_DECISION)
     fact = record_fact(
         db,
         req.scope_id,
@@ -226,6 +233,7 @@ def _route_to_carto_project_fact(
         fingerprint=verdict.fingerprint,
         confidence=float(req.confidence),
         expires_at=_expires_at(_now_naive(), verdict.ttl_s),
+        supersede=explicit,
     )
     if fact is None:
         return None
