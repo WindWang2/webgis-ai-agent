@@ -216,6 +216,21 @@ def format_session_plan_projection(
         line = str(product.get("projection") or "")
         if line:
             product_line = "\n" + line
+    # ADR-0183：goal satisfaction 单行（additive；只读 finalizer 落账的
+    # goal_satisfaction 块 —— 任务语义 verdict/signal/缺失码。块缺席
+    # （未终验过/旧块）零漂移；投影失败只少一行，首行契约不变）。
+    goal_line = ""
+    try:
+        from app.services.gis_harness.goal_satisfaction import (
+            goal_line_from_block,
+        )
+
+        if isinstance(product, dict):
+            goal_line = goal_line_from_block(product.get("goal_satisfaction"))
+            if goal_line:
+                goal_line = "\n" + goal_line
+    except Exception:  # noqa: BLE001 — 投影失败只少一行
+        goal_line = ""
     # V4（ADR-0104 Wave 1）：WorkflowInstance 运行态行（additive、单行、
     # 有界；从章节实例块只读投影——rev/维度/阻断/stale/ready。首行契约
     # 不变，无实例块的旧章节零漂移）。
@@ -277,7 +292,7 @@ def format_session_plan_projection(
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         plan_runtime_line = ""
     if not plan.gis_chapter.get("data_requirements"):
-        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + product_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + product_line + goal_line
     try:
         from app.services.gis_harness.plan_graph import (
             build_plan_graph,
@@ -286,9 +301,9 @@ def format_session_plan_projection(
         graph = build_plan_graph(plan.gis_chapter)
         block = project_graph_block(graph)
     except Exception:  # noqa: BLE001 — 图投影是增值信号，绝不阻断 turn 上下文
-        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + product_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + product_line + goal_line
     if not block:
-        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + product_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + plan_runtime_line + product_line + goal_line
     # ADR-0085：目标→产品 facets 投影行（纯派生、单行有界；章节/MapSpec
     # 之外零新状态 —— 让 Pi 看见"产品 = facets 集合"而非单个 heatmap）。
     products_line = ""
@@ -324,8 +339,8 @@ def format_session_plan_projection(
     except Exception:  # noqa: BLE001 — 投影失败只少一行
         next_action_line = ""
     if not products_line.strip():
-        return head + instance_line + recompute_line + progress_line + runtime_line + "\n" + block + product_line
-    return head + instance_line + recompute_line + progress_line + runtime_line + "\n" + block + products_line + next_action_line + product_line
+        return head + instance_line + recompute_line + progress_line + runtime_line + "\n" + block + product_line + goal_line
+    return head + instance_line + recompute_line + progress_line + runtime_line + "\n" + block + products_line + next_action_line + product_line + goal_line
 
 
 def events_to_sse(events: list[SessionPlanEvent], session_id: str = "") -> str:

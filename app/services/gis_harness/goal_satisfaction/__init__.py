@@ -35,6 +35,7 @@ from .contracts import (
 )
 from .evidence import build_evidence_registry, data_family_blockers
 from .evaluator import evaluate_goal_satisfaction, resolve_goal_contract
+from .projection import bounded_payload, goal_line_from_block
 from .requirements import contract_fingerprint, derive_goal_contract
 
 __all__ = [
@@ -54,9 +55,11 @@ __all__ = [
     "RequirementState",
     "RequirementVerdict",
     "build_evidence_registry",
+    "bounded_payload",
     "contract_fingerprint",
     "data_family_blockers",
     "derive_goal_contract",
     "evaluate_goal_satisfaction",
+    "goal_line_from_block",
     "resolve_goal_contract",
 ]

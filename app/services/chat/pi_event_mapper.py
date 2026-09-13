@@ -266,6 +266,20 @@ def _handle_agent_settled(event: dict, session_id: str, cache_lookup: Optional[C
             "status": str(map_product.get("status")),
             "summary": str(map_product.get("summary") or "")[:120],
         }
+    # ADR-0183：goal satisfaction 投影（additive；verdict/signal/缺失码
+    # 摘要 —— 「地图 READY ≠ 任务完成」的任务语义面。旧 map_product 无
+    # 该键 / 投影失败 → 键省略，零漂移）。
+    if isinstance(map_product, dict):
+        try:
+            from app.services.gis_harness.goal_satisfaction import (
+                bounded_payload,
+            )
+
+            gs_payload = bounded_payload(map_product.get("goal_satisfaction"))
+            if gs_payload is not None:
+                payload["goal_satisfaction"] = gs_payload
+        except Exception:  # noqa: BLE001 — 投影失败只少一键
+            pass
     return sse_event("task_complete", _base_step_payload(event, session_id, payload))
 
 

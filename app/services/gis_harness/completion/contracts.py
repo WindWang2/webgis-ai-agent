@@ -547,6 +547,10 @@ class MapCompletionResult:
     # map_product_block["product_verdict"] 同源）—— SSE 载荷的
     # task_complete 折叠直接消费，避免载荷侧重复推导。空 = 旧路径。
     product_verdict: str = ""
+    # ADR-0183（G5）：终验点上已持久化的 goal satisfaction 块快照（单一
+    # 来源 = map_product["goal_satisfaction"]；仅供 SSE 载荷透传，不入
+    # ``to_dict`` 序列化面 —— 该面已由块承载）。None = 旧路径/评估缺席。
+    goal_satisfaction: Optional[Dict[str, Any]] = None
 
     # ── 派生 ─────────────────────────────────────────────────────────
     @property
