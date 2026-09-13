@@ -1,0 +1,108 @@
+file,line,kind,current_value,target_entry,migration_difficulty,notes
+app/services/cartography_service.py,18,method,quantiles,resolve_symbology (classify delegate),low,engine delegate signature default; corrected k clamps to [3,7]
+app/services/cartography_service.py,18,k,5,resolve_symbology,low,engine delegate signature default
+app/services/cartography_service.py,40,method,quantiles,resolve_symbology,low,build_thematic_style default -> adjudicated when method=None
+app/services/cartography_service.py,41,k,5,resolve_symbology,low,build_thematic_style default -> k adjudication
+app/services/cartography_service.py,42,palette,YlOrRd,resolve_symbology,low,build_thematic_style default -> palette adjudication
+app/services/cartography_service.py,96,palette,"LISA fixed hex HH=#ff0000 LL=#0000ff HL=#ffaaaa LH=#aaaaff NS=#cccccc",lisa semantic colors (out of scope),low,semantic classification colors (not a palette ramp); duplicated in composite_builder 413-419
+app/services/cartography_service.py,192,palette,YlOrRd,resolve_symbology,low,build_legend_spec default
+app/lib/cartography/classify.py,144,method,quantiles,engine internal default,low,allowed exception: default-value constant on the classification engine itself
+app/lib/cartography/classify.py,144,k,5,engine internal default,low,allowed exception
+app/lib/cartography/thematic_spec.py,145,method,quantiles,resolve_symbology,low,build_graduated_spec signature default -> Optional + adjudicated
+app/lib/cartography/thematic_spec.py,146,k,5,resolve_symbology,low,build_graduated_spec signature default
+app/lib/cartography/thematic_spec.py,147,palette,YlOrRd,resolve_symbology,low,build_graduated_spec signature default
+app/tools/cartography.py,40,k,5,ThematicMapArgs,low,tool args default (UI affordance); adjudicator clamps to [3,7]
+app/tools/cartography.py,41,palette,YlOrRd,ThematicMapArgs,low,tool args default (UI affordance)
+app/tools/cartography.py,176,k,5,resolve_symbology,low,create_thematic_map: already wired for method; re-wired through resolve_symbology
+app/tools/cartography.py,176,palette,YlOrRd,resolve_symbology,low,KNOWN WIRED ENTRY (task §1)
+app/tools/cartography.py,218,method,lisa,explicit branch,low,lisa is a semantic analysis mode; not a distribution-classified ramp
+app/tools/cartography.py,224,method,natural_breaks,resolve_symbology low_confidence fallback,low,no-distribution-evidence fallback (kept, now flagged low_confidence)
+app/tools/cartography.py,296,palette,Oranges,resolve_symbology,low,create_3d_extrusion_map default
+app/tools/cartography.py,298,k,5,resolve_symbology,low,create_3d_extrusion_map default
+app/tools/cartography.py,333,method,natural_breaks,resolve_symbology,low,extrusion method fallback -> resolve_symbology
+app/tools/advanced_spatial.py,2636,method,quantiles,resolve_symbology,medium,h3_binning fully hardcoded -> adjudicated
+app/tools/advanced_spatial.py,2636,k,5,resolve_symbology,medium,h3_binning fully hardcoded
+app/tools/advanced_spatial.py,2636,palette,YlOrRd,resolve_symbology,medium,h3_binning fully hardcoded
+app/tools/spatial.py,39,palette,YlOrRd,heatmap legend ramp key fallback,low,HEATMAP_LEGEND_PALETTE_KEY miss fallback
+app/tools/spatial.py,121,palette,classic,resolve_symbology (native heatmap family),low,classic/magma/viridis/thermal is a separate transparent-first-stop family; preference passed through
+app/tools/spatial.py,286,palette,classic,resolve_symbology,low,duplicates args model default
+app/lib/cartography/heatmap_contract.py,34,radius,30,DEFAULT_RADIUS_PX constant,low,allowed exception: named default constant in its own contract module
+app/tools/templates.py,557,intensity,0.8,heatmap payload passthrough,low,heatmap visual param (not classification); payload preference passthrough
+app/tools/templates.py,558,radius,25,heatmap payload passthrough,low,heatmap visual param
+app/tools/templates.py,559,palette,heatPalette 4-hex list,heatmap variant passthrough,medium,raw hex list bypasses registry; kept as explicit template artwork (heatmap band family)
+app/tools/templates.py,574,method,quantiles,resolve_symbology,low,apply_template fallback default -> preference route
+app/tools/templates.py,575,k,5,resolve_symbology,low,apply_template fallback default
+app/tools/templates.py,576,palette,YlOrRd,resolve_symbology,low,apply_template fallback default
+app/tools/templates.py,580,palette,YlOrRd,resolve_symbology,low,build_legend_spec echo
+app/tools/templates.py,616,method,quantiles,resolve_symbology echo,low,result echo block
+app/tools/templates.py,617,k,5,resolve_symbology echo,low,result echo block
+app/tools/templates.py,618,palette,YlOrRd,resolve_symbology echo,low,result echo block
+app/tools/templates.py,621,method,quantiles,resolve_symbology echo,low,result echo block
+app/tools/templates.py,622,k,5,resolve_symbology echo,low,result echo block
+app/tools/templates.py,623,palette,YlOrRd,resolve_symbology echo,low,result echo block
+app/schemas/template_schema.py,62,method,quantiles,ThematicChoroplethPayload,low,pydantic schema default; semantic changes to 'declared preference' documented
+app/schemas/template_schema.py,63,k,5,ThematicChoroplethPayload,low,schema default
+app/schemas/template_schema.py,64,palette,YlOrRd,ThematicChoroplethPayload,low,schema default
+app/schemas/template_schema.py,69,intensity,0.8,ThematicHeatmapPayload,low,heatmap visual param
+app/schemas/template_schema.py,70,radius,25,ThematicHeatmapPayload,low,heatmap visual param
+app/schemas/template_schema.py,71,palette,heatPalette 5-hex list,ThematicHeatmapPayload,medium,raw hex default (heatmap family artwork)
+app/schemas/template_schema.py,403,method,quantiles,SEED tmpl_th_pop_choro preference,medium,method=quantiles k=5 palette=YlOrRd
+app/schemas/template_schema.py,419,method,lisa,SEED tmpl_th_econ_lisa preference,medium,k=4 palette=RdBu
+app/schemas/template_schema.py,435,intensity,0.85,SEED tmpl_th_heatmap,medium,heatmap variant
+app/schemas/template_schema.py,436,radius,30,SEED tmpl_th_heatmap,medium,heatmap variant
+app/schemas/template_schema.py,437,palette,heatPalette 5-hex,SEED tmpl_th_heatmap,medium,heatmap variant
+app/schemas/template_schema.py,451,method,equal_interval,SEED tmpl_th_equal_interval preference,medium,k=5 palette=Blues
+app/schemas/template_schema.py,467,method,natural_breaks,SEED tmpl_th_natural_breaks preference,medium,k=5 palette=Viridis
+app/schemas/template_schema.py,912,method,quantiles,SEED tmpl_th_gdp_quantiles preference,medium,k=6 palette=YlOrRd
+app/schemas/template_schema.py,928,method,equal_interval,SEED tmpl_th_income_equal preference,medium,k=5 palette=Greens
+app/schemas/template_schema.py,944,method,natural_breaks,SEED tmpl_th_land_price preference,medium,k=7 palette=YlOrRd
+app/schemas/template_schema.py,960,method,natural_breaks,SEED tmpl_th_slope preference,medium,k=6 palette=YlOrRd
+app/schemas/template_schema.py,976,method,quantiles,SEED tmpl_th_temperature preference,medium,k=6 palette=RdBu
+app/schemas/template_schema.py,992,method,natural_breaks,SEED tmpl_th_rainfall preference,medium,k=6 palette=Blues
+app/schemas/template_schema.py,1008,method,natural_breaks,SEED tmpl_th_vegetation_index preference,medium,k=7 palette=Greens
+app/schemas/template_schema.py,1024,method,quantiles,SEED tmpl_th_travel_time preference,medium,k=5 palette=Plasma
+app/schemas/template_schema.py,1040,method,natural_breaks,SEED tmpl_th_risk_score preference,medium,k=5 palette=YlOrRd
+app/schemas/template_schema.py,1056,method,quantiles,SEED tmpl_th_pollution preference,medium,k=5 palette=Purples
+app/schemas/template_schema.py,1072,method,natural_breaks,SEED tmpl_th_change_intensity preference,medium,k=5 palette=RdBu
+app/schemas/template_schema.py,1088,method,natural_breaks,SEED tmpl_th_growth_decline preference,medium,k=5 palette=RdBu
+app/schemas/template_schema.py,1104,method,quantiles,SEED tmpl_th_anomaly preference,medium,k=5 palette=RdBu
+app/schemas/template_schema.py,1120,method,natural_breaks,SEED tmpl_th_residual preference,medium,k=5 palette=RdBu
+app/schemas/template_schema.py,1136,method,natural_breaks,SEED tmpl_th_ndvi_choro preference,medium,k=6 palette=RdYlGn
+app/schemas/template_schema.py,1152,method,natural_breaks,SEED tmpl_th_burn_severity preference,medium,k=5 palette=YlOrRd
+app/schemas/template_schema.py,1168,method,natural_breaks,SEED tmpl_th_water_extraction preference,medium,k=5 palette=Blues
+app/schemas/template_schema.py,1186,method,categorical,SEED tmpl_th_zoning preference,medium,k=5 palette=Set2
+app/schemas/template_schema.py,1202,method,categorical,SEED tmpl_th_soil_type preference,medium,k=6 palette=Set2
+app/schemas/template_schema.py,1218,method,categorical,SEED tmpl_th_geology preference,medium,k=8 palette=Set1
+app/schemas/template_schema.py,1234,method,categorical,SEED tmpl_th_facility_type preference,medium,k=7 palette=Pastel1
+app/schemas/template_schema.py,1250,method,categorical,SEED tmpl_th_risk_category preference,medium,k=4 palette=YlOrRd
+app/schemas/template_schema.py,1266,method,categorical,SEED tmpl_th_classification preference,medium,k=10 palette=Set1
+app/schemas/map_component_slots.py,38,method,quantiles,ThematicSlot,low,composite slot schema default
+app/schemas/map_component_slots.py,39,k,5,ThematicSlot,low,slot schema default
+app/schemas/map_component_slots.py,40,palette,YlOrRd,ThematicSlot,low,slot schema default
+app/schemas/map_component_slots.py,41,intensity,0.8,ThematicSlot,low,heatmap visual param
+app/schemas/map_component_slots.py,45,radius,25,ThematicSlot,low,heatmap visual param
+app/services/mapspec/composite_builder.py,138,method,quantiles,resolve_symbology,low,slot fallback default
+app/services/mapspec/composite_builder.py,139,k,5,resolve_symbology,low,slot fallback default
+app/services/mapspec/composite_builder.py,140,palette,YlOrRd,resolve_symbology,low,slot fallback default
+app/services/mapspec/composite_builder.py,141,intensity,0.8,heatmap visual param,low,out of classification scope
+app/services/mapspec/composite_builder.py,142,radius,25,heatmap visual param,low,out of classification scope
+app/services/mapspec/composite_builder.py,143,palette,heatPalette 4-hex,heatmap band artwork,medium,raw hex (heatmap family)
+app/services/mapspec/composite_builder.py,332,k,5,synthetic no-data spec,medium,synthetic even breaks over [0,1] when no data; kept (no evidence to adjudicate)
+app/services/mapspec/composite_builder.py,360,method,quantiles,resolve_symbology,low,method whitelist fallback
+app/services/mapspec/composite_builder.py,363,k,5,resolve_symbology,low,slot k or 5
+app/services/mapspec/composite_builder.py,413,palette,LISA fixed hex,lisa semantic colors,low,out of scope (same as cartography_service:96)
+app/services/raster_cartography_converter.py,30,palette,Viridis,DEFAULT_RASTER_PALETTE,low,named module constant (raster PNG family)
+app/services/raster_cartography_converter.py,206,palette,Gray,hillshade,low,hillshade semantics require grayscale
+app/services/raster_cartography_converter.py,287,palette,Oranges,classified PNG fallback,medium,classified raster fallback -> documented constant
+app/services/raster_cartography_converter.py,425,palette,Gray,hillshade,low,hillshade semantics
+app/services/raster_cartography_converter.py,430,palette,Gray,hillshade legend,low,hillshade semantics
+app/services/raster_cartography_converter.py,431,palette,Gray,hillshade legend,low,hillshade semantics
+app/services/raster_cartography_converter.py,462,palette,Viridis,raster legend fallback,low,DEFAULT_RASTER_PALETTE
+app/services/analysis_cartography_converter.py,552,palette,classic,heatmap band family,low,heatmap family (transparent-first-stop)
+app/services/gis_harness/tools.py,63,palette,classic,heatmap args default,low,FORBIDDEN FILE (01/02 line ownership) - documented, not migrated
+app/services/gis_harness/tools.py,590,palette,classic,heatmap pipeline default,low,FORBIDDEN FILE - documented, not migrated
+app/services/gis_harness/tools.py,802,palette,classic,heatmap legend,low,FORBIDDEN FILE - documented, not migrated
+app/services/spatial_tasks.py,487,palette,Viridis,change-detection preview,low,raster PNG preview render (documented constant)
+app/services/rs/spectral_engine.py,93,palette,Viridis,spectral index legend,low,spectral index semantics (continuous band); documented constant
+app/lib/cartography/model_library.py,62,k,default_k=5,metadata only,low,dead metadata: no production caller passes default_k (consumed only via choose_classification param)
+app/lib/cartography/model_library.py,90,k,default_k=6 (std_dev),metadata only,low,same

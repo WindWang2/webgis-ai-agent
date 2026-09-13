@@ -3,10 +3,10 @@
   "chars": 52404
  },
  "context_chars_network_turn": {
-  "chars": 48341
+  "chars": 48342
  },
  "context_chars_no_domain_first_turn": {
-  "chars": 28175
+  "chars": 28176
  },
  "schema_count_multi_domain_turn": {
   "count": 72
