@@ -27,7 +27,7 @@ keep-upright / AABB 判定 / 盒构造 / 均匀格网 / 8 方位候选表 / 文�
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 # ── 点标注 8 方位候选序（GIS 惯例：右上最优，代价 = 序号）────────────────
 DECLUTTER_CANDIDATE_OFFSETS: Tuple[Tuple[float, float], ...] = (
@@ -243,6 +243,8 @@ class LabelGrid:
 
 
 __all__ = [
+    "wrap_label_multilingual",
+    "polygon_label_point",
     "DECLUTTER_CANDIDATE_OFFSETS",
     "CJK_RANGES",
     "Box",
@@ -261,3 +263,104 @@ __all__ = [
     "inside_viewport",
     "LabelGrid",
 ]
+
+
+# ── W4.3 专业排版（ADR-0164）：多语言断行 + 面内标注点 ───────────────────
+
+def _cjk_ratio(text: str) -> float:
+    if not text:
+        return 0.0
+    return sum(1 for ch in text if is_cjk(ch)) / len(text)
+
+
+def wrap_label_multilingual(
+    text: str,
+    *,
+    max_chars: int = 25,
+    max_lines: int = 2,
+    wrap_mode: str = "auto",
+) -> List[str]:
+    """多语言断行（W4.3）：CJK 按字、拉丁按词、auto 按占比选。
+
+    - ``cjk_char``：逐字符贪心（与 :func:`wrap_label_text` 同宽度口径，
+      CJK 1em / 其他 0.6em）；任意位置可断 —— 中文词间无空格，按字断是
+      GIS 标注惯例；
+    - ``latin_word``：**词边界断行**（空格分割，单超长词再按字符兜底）；
+      拉丁文按字断词是排版错误；
+    - ``auto``：CJK 占比 ≥0.3 → cjk_char，否则 latin_word（中英混排以
+      主导文字决定断行策略，用例锁定）。
+
+    确定性：纯函数，同输入恒同输出。返回 1..max_lines 行。
+    """
+    s = text if isinstance(text, str) else str(text)
+    if max_lines < 1:
+        max_lines = 1
+    if max_chars < 1:
+        max_chars = 1
+    mode = wrap_mode
+    if mode == "auto":
+        mode = "cjk_char" if _cjk_ratio(s) >= 0.3 else "latin_word"
+    if mode == "cjk_char":
+        return wrap_label_text(s, max_chars=max_chars, max_lines=max_lines)
+
+    # latin_word：词边界贪心（三步，绝不丢词——评审纪律：断行丢内容 =
+    # 数据丢失）：
+    #   1) 分词；超预算词按字符硬断为原子单元（长 URL/编号不断行更糟）；
+    #   2) 单元贪心装箱（" " 连接，行预算 max_chars 窄字符位）；
+    #   3) 超出 max_lines 时尾部行合并并截断进末行。
+    units: List[str] = []
+    for word in s.split(" "):
+        while len(word) > max_chars:
+            units.append(word[:max_chars])
+            word = word[max_chars:]
+        if word:
+            units.append(word)
+    packed: List[str] = []
+    cur = ""
+    for unit in units:
+        candidate = unit if not cur else f"{cur} {unit}"
+        if len(candidate) <= max_chars or not cur:
+            cur = candidate[:max_chars] if len(candidate) > max_chars else candidate
+        else:
+            packed.append(cur)
+            cur = unit[:max_chars] if len(unit) > max_chars else unit
+    if cur:
+        packed.append(cur)
+    if len(packed) <= max_lines:
+        return packed
+    tail = " ".join(packed[max_lines - 1:])[:max_chars]
+    return packed[: max_lines - 1] + [tail]
+
+
+def polygon_label_point(ring: Sequence[Sequence[float]]) -> Tuple[float, float]:
+    """面内标注点（W4.3）：最大内接圆圆心（visually stable），质心兜底。
+
+    ``shapely.maximum_inscribed_circle``（2.1）：圆心对不规则面（狭长/
+    L 形）显著优于质心（质心可能落在面外）；退化/无效环回退
+    ``representative_point``（保证在面内）。确定性。
+    """
+    from shapely.geometry import Polygon
+
+    try:
+        poly = Polygon([(float(x), float(y)) for x, y in ring])
+    except Exception:  # noqa: BLE001
+        return (0.0, 0.0)
+    if poly.is_empty or not poly.is_valid:
+        try:
+            pt = poly.representative_point()
+            return (round(pt.x, 6), round(pt.y, 6))
+        except Exception:  # noqa: BLE001
+            return (0.0, 0.0)
+    try:
+        import shapely
+
+        mic = shapely.maximum_inscribed_circle(poly, 0.01)
+        # 2.x 返回两点 LineString：首点 = 内接圆圆心
+        center = mic.coords[0]
+        return (round(center[0], 6), round(center[1], 6))
+    except Exception:  # noqa: BLE001 —— 几何退化时回退 representative_point
+        try:
+            pt = poly.representative_point()
+            return (round(pt.x, 6), round(pt.y, 6))
+        except Exception:  # noqa: BLE001
+            return (0.0, 0.0)
