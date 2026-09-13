@@ -1,0 +1,20 @@
+{
+  "scenario": "raster-overlay",
+  "generated_at": "2026-09-13T05:58:49+0800",
+  "app_version": "0.1.3",
+  "source_session": "ac10-golden-raster-overlay-86fd12",
+  "seconds": 10.96,
+  "canvas_blank": false,
+  "score": 100.0,
+  "probes": [
+    {
+      "type": null,
+      "pass": true
+    },
+    {
+      "type": null,
+      "pass": true
+    }
+  ],
+  "ink_ratio": 0.711626
+}

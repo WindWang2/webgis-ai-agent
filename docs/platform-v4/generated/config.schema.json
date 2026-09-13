@@ -91,6 +91,21 @@
       "title": "Carto Load Warn Ratio",
       "type": "number"
     },
+    "CARTO_METRICS_MAX_RUNS": {
+      "default": 5000,
+      "title": "Carto Metrics Max Runs",
+      "type": "integer"
+    },
+    "CARTO_METRICS_RETENTION_DAYS": {
+      "default": 90,
+      "title": "Carto Metrics Retention Days",
+      "type": "integer"
+    },
+    "CARTO_METRICS_STORE_ENABLED": {
+      "default": true,
+      "title": "Carto Metrics Store Enabled",
+      "type": "boolean"
+    },
     "CARTO_SVS_AREA_PX": {
       "default": 2.25,
       "title": "Carto Svs Area Px",

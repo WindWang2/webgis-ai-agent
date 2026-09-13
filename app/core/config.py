@@ -102,6 +102,12 @@ class Settings(BaseSettings):
     CARTO_DRIFT_RELATIVE_THRESHOLD: float = 0.15
     CARTO_DRIFT_NULL_RATIO_THRESHOLD: float = 0.10
 
+    # 制图质量事实库（AC-10 / ADR-0159 P1）：落库开关与保留策略。
+    # 关闭时 record_quality_run 直接短路返回 None（评审主流程零开销）。
+    CARTO_METRICS_STORE_ENABLED: bool = True
+    CARTO_METRICS_RETENTION_DAYS: int = 90
+    CARTO_METRICS_MAX_RUNS: int = 5000
+
     # LLM 配置 (OpenAI 兼容接口)
     # 项目默认：阶跃 Step Plan 的 step-3.7-flash（推理模型，响应含
     # reasoning_content，正文在 content）。API key 只经环境变量注入，

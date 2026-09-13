@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from app.lib.harness.pi_agent_harness import PiAgentHarness
 from app.lib.harness.tool_call_event import ToolCallEvent
+from app.services.cartography_metrics_store import record_quality_run
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids runtime import cycle
     from app.services.tool_dispatch_service import ToolDispatchResult
@@ -50,6 +51,41 @@ _HARNESS_REGISTRY_LIMIT = 128
 _harness_feature_enabled = os.getenv("PI_HARNESS_ENABLED", "").lower() in (
     "true", "1", "yes"
 )
+# 质量事实库在途写入任务（ADR-0159 P1）：强引用防 GC，done 后自弃。
+_quality_fact_tasks: set = set()
+
+
+def _spawn_quality_fact_record(result: dict[str, Any]) -> None:
+    """落库钩子：``_cartographic_review`` 产出处 → 制图质量事实库。
+
+    只写账本、不改判定（store 自吞一切异常且可经
+    ``CARTO_METRICS_STORE_ENABLED=0`` 整体停用）；fire-and-forget，
+    不给评审主流程增加尾延迟。
+    """
+    cartography = result.get("cartography") or {}
+    gate = result.get("gate") or {}
+    gate_score = gate.get("score")
+    task = asyncio.create_task(record_quality_run(
+        lane="runtime",
+        source="runtime_review",
+        checks=cartography.get("checks") or (),
+        session_id=result.get("session_id"),
+        passed=result.get("overall_passed"),
+        summary={
+            "status": cartography.get("status"),
+            "termination_reason": cartography.get("termination_reason"),
+            "desired_status": cartography.get("desired_status"),
+            "runtime_status": cartography.get("runtime_status"),
+            "gate_reason": gate.get("reason"),
+        },
+        gate_scores=(
+            {"CartographicQuality": gate_score}
+            if isinstance(gate_score, (int, float)) and not isinstance(gate_score, bool)
+            else None
+        ),
+    ))
+    _quality_fact_tasks.add(task)
+    task.add_done_callback(_quality_fact_tasks.discard)
 
 
 def _get_cartography_eval_lock(session_id: str) -> asyncio.Lock:
@@ -651,6 +687,8 @@ async def _evaluate_cartographic_session_unlocked(
             },
             "overall_passed": False,
         }
+    # ADR-0159 P1 落库钩子：评审已确认为本会话权威事实，写入质量事实库。
+    _spawn_quality_fact_record(result)
     return result
 
 
