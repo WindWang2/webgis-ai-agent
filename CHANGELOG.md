@@ -1,6 +1,45 @@
 # Changelog
 
-## [Unreleased] - 2026-09-13 (AC-06: 自适应符号律与运行时表达力, ADR-0155)
+## [Unreleased] - 2026-09-13 (adaptive-cartography/07: 图面整饰自动排版, ADR-0156)
+
+### Added (adaptive-cartography/07-layout-auto-compose)
+- 版面描述中间层 `CompositionDescriptor`（frontend/lib/layout/）—— live 与
+  export 共用的可序列化版面合成结果：elements（落位 + provenance
+  spec|autofill|fallback + 修复轨迹）、decisions（可审计工件）、chrome
+  （numericScale/declination/graticule）。08 线（导出画幅）消费。
+- 冲突自愈：后端 `solve_layout_v4`（V2/V3 零改动的纯增量）策略链
+  改 anchor → 缩尺寸 → 折叠进溢出面板 → 隐藏最低优先；修复规划器
+  `component_composer.plan_layout_repairs`；`LAYOUT_COLLISION` 附
+  auto_safe 修复建议（status 保持 warning —— quality_loop 零回退）；
+  `break_component_cycles` 断环（最低权重边 + 证据），
+  `COMPONENT_LINK_CYCLE` 附 auto_with_semantic_risk 建议。前端
+  composition-repair 执行同链（user-pinned 组件绝不动）。验收：P0 语料
+  20×4 版式三类版面检查修复后归零（native 72→0 / corrupt 80→0）。
+- 缺项主动补全：`required_components_for(purpose, content)`（后端语义源 +
+  前端镜像）按 4 版式 × 内容要素决定必配清单；chrome 族自动注入
+  （`__autofill_*`），数据承载件只记 advisory（诚实渲染边界）；
+  数据来源未知自动补「数据来源：—（待补充）」占位 + advisory；
+  `__fallback_*` 降为安全网（命中即 decisions 计数）。
+- 数字比例尺：`numericScaleAt(zoom, lat)` 比率式 1:N（96dpi 像素物理
+  尺寸 + cos 纬度当地尺度修正），与图形比例尺条并存（可配二选一）；
+  赤道/中纬/高纬三档对照理论误差 ≤5%（测试锁定）。
+- 真北/磁北偏角：bbox 中心偶极子近似（恒 approximate 标记），指北针旁
+  注记（showDeclination 可关）；图廓四角经纬度注记，格式随跨度自适应
+  （度/度分/度分秒三档，测试锁定）。
+- 经纬网密度自适应：双维联合约束使网格线数落 [3,10]；显式
+  options.interval 覆盖优先；无 bounds 回退既有 zoom 表。
+- 图例 legend_spec v2 消费：unit 尾注 / nodata_label / out_of_range_label
+  （虚线条目）/ method / k 类目数 —— 图例卡与色条统一表达；v1 payload
+  干净回退。
+- inset_map 真值钉住：runtime_status=native 四项回归锁定 + 渲染器不 mount
+  第二 maplibre runtime 的静态源扫描（source 隔离）+ planned 注释漂移修正。
+
+### Docs
+- `docs/adr/0156-layout-auto-compose-selfhealing.md`；
+  `docs/dev/ac-07-layout-recon.md`（P0 勘察 + 20×4×2 基线）、
+  `docs/dev/ac-07-component-matrix.csv`、`docs/dev/ac-07-baseline.json`、
+  `docs/dev/ac-07-decisions.md`、`docs/dev/ac-07-plan.md`。
+
 
 ### Added (frontend: adaptive-cartography/06-symbol-law-runtime)
 - Adaptive symbol law engine (`lib/map-kit/symbol-law.ts`): point radius /

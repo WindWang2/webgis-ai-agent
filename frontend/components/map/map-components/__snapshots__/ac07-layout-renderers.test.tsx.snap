@@ -1,0 +1,100 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`legend v2 fields (P7) > 快照锁定：v2 图例卡 DOM 结构（unit/method/nodata/out_of_range/k） 1`] = `
+<div
+  aria-label="分级图例"
+  class="map-chrome absolute z-30 rounded-chrome px-2 py-1.5 bottom-3 left-3"
+  data-testid="spec-chrome-legend"
+  data-variant="academic"
+  style="bottom: calc(var(--map-chrome-bottom, 10px) + 6px);"
+>
+  <div
+    class="text-micro text-map-chrome-ink-muted"
+    data-testid="spec-chrome-legend-method"
+  >
+    natural_breaks
+  </div>
+  <div
+    class="flex flex-col mt-1 gap-1"
+  >
+    <div
+      class="flex items-center gap-1.5"
+    >
+      <span
+        aria-hidden="true"
+        class="h-2.5 w-4 rounded-sm "
+        style="background: rgb(17, 17, 17); opacity: 1;"
+      />
+      <span
+        class="text-micro tabular-nums text-map-chrome-ink-muted"
+      >
+        0 – 10
+      </span>
+    </div>
+    <div
+      class="flex items-center gap-1.5"
+    >
+      <span
+        aria-hidden="true"
+        class="h-2.5 w-4 rounded-sm "
+        style="background: rgb(34, 34, 34); opacity: 1;"
+      />
+      <span
+        class="text-micro tabular-nums text-map-chrome-ink-muted"
+      >
+        10 – 20
+      </span>
+    </div>
+    <div
+      class="flex items-center gap-1.5"
+    >
+      <span
+        aria-hidden="true"
+        class="h-2.5 w-4 rounded-sm "
+        style="background: rgb(51, 51, 51); opacity: 1;"
+      />
+      <span
+        class="text-micro tabular-nums text-map-chrome-ink-muted"
+      >
+        20 – 30
+      </span>
+    </div>
+    <div
+      class="flex items-center gap-1.5"
+    >
+      <span
+        aria-hidden="true"
+        class="h-2.5 w-4 rounded-sm "
+        style="background: rgb(204, 204, 204); opacity: 1;"
+      />
+      <span
+        class="text-micro tabular-nums text-map-chrome-ink-muted"
+      >
+        无数据（v2）
+      </span>
+    </div>
+    <div
+      class="flex items-center gap-1.5"
+      data-testid="spec-chrome-legend-out-of-range"
+    >
+      <span
+        aria-hidden="true"
+        class="h-2.5 w-4 rounded-sm border border-dashed border-map-chrome-border"
+      />
+      <span
+        class="text-micro text-map-chrome-ink-muted"
+      >
+        超出分级范围
+      </span>
+    </div>
+  </div>
+  <div
+    class="mt-0.5 text-micro text-map-chrome-ink-muted"
+    data-testid="spec-chrome-legend-unit"
+  >
+    单位：万人
+     · 
+    共 3 类
+  </div>
+</div>
+`;

@@ -7,6 +7,7 @@ import { buildBottomSlotIndexes, stackedBottomStyle } from './map-components/hel
 import { buildTopSlotIndexes } from './map-components/helpers';
 import { metersPerPixelAt } from '@/lib/map-kit/meters-per-pixel';
 import { resolveMapComponents } from '@/lib/map-components/resolve-components';
+import { composeMapLayout } from '@/lib/layout/compose';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 // U-2（#884）同槽堆叠原语经 helpers 供渲染器与测试复用
@@ -43,19 +44,19 @@ export const MapSpecChrome = React.memo(function MapSpecChrome({ components, zoo
   const enabled = resolved.filter((c) => c.enabled);
   if (!enabled.length) return null;
 
-  const hasType = (t: string) => resolved.some((c) => c.type === t) || components.some(
-    (c) => c.type === t && dockPlacements[c.id] !== undefined,
-  );
-  const fallbackDecor: MapSpecComponent[] = [];
-  if (!hasType('north_arrow')) {
-    fallbackDecor.push({ id: '__fallback_north_arrow', type: 'north_arrow', enabled: true } as MapSpecComponent);
+  // AC-07（ADR-0156）：版面合成 —— 缺项主动补全（P2）+ 冲突自愈轨迹
+  // （P1）+ 中间层描述。hasType 口径保持「类型在场即不注入」（含 dock
+  // 归属与显式 disabled —— 『不要指南针』语义不变）。
+  const dockedTypes = new Set<string>();
+  for (const c of components) {
+    if (dockPlacements[c.id] !== undefined && typeof c.type === 'string') {
+      dockedTypes.add(c.type);
+    }
   }
-  if (!hasType('scale_bar')) {
-    fallbackDecor.push({ id: '__fallback_scale_bar', type: 'scale_bar', enabled: true } as MapSpecComponent);
-  }
-  const renderableRaw = fallbackDecor.length
-    ? [...enabled.map((c) => c.component), ...fallbackDecor]
-    : enabled.map((c) => c.component);
+  const composed = composeMapLayout({
+    components: undocked, spec, zoom, centerLat, bounds, dockedTypes,
+  });
+  const renderableRaw = composed.renderable;
 
   // U-2（#884）：底部同槽组件分层索引（colorbar+scale_bar 不再互压）。
   const bottomSlotIndexes = buildBottomSlotIndexes(renderableRaw);
