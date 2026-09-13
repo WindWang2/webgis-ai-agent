@@ -59,6 +59,13 @@ _ENV_BASELINE = {
         "LLM_TITLE_MODEL": "",
         # Settings 默认 None（空串经 field_validator 折回 None = 服务端默认）
         "LLM_CONTEXT_WINDOW": "",
+        # AC-01（ADR-0150）：意图证据置信度权重 / 澄清阈值 / 实体服务开关
+        "INTENT_CONF_W_TASK": "0.40",
+        "INTENT_CONF_W_SLOTS": "0.25",
+        "INTENT_CONF_W_ENTITY": "0.20",
+        "INTENT_CONF_W_SESSION": "0.15",
+        "INTENT_CLARIFY_CONFIDENCE_FLOOR": "0.55",
+        "INTENT_ENTITY_SERVICE": "true",
         "MAPBOX_TOKEN": "",
         "BING_MAP_KEY": "",
         "TENCENT_MAP_KEY": "",
