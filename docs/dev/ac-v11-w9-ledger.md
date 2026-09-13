@@ -13,6 +13,13 @@
 | W9.5 | 安全复核 | ADR-0169 §5：导出临时文件（无落盘）、VLM 未接线（无外发面）、队列无路由暴露、svg2pdf MIT 动态加载 | — | 无高危项 |
 | W9.6 | 终版门禁 | `quality_gate_local.sh` 全量一次跑通 | **933 passed** | 覆盖率 **57.90%**（floor 50）；ratchet 步骤通过 |
 
+## 终版前端取证（W9.6）
+
+- `pnpm vitest run`：**394 文件 / 3639 测试全过**；
+- `next build`：exit 0（修复：svg2pdf ESM 子路径缺类型声明 → `types/svg2pdf-es.d.ts`
+  从主入口重导出，Next tsc 检查通过）；
+- eslint（变更文件）0 告警；ruff（全变更文件）0 告警。
+
 ## 终版门禁原文（W9.6，SKIP_BROWSER=1）
 
 ```
